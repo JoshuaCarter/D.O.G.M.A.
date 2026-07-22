@@ -1,0 +1,1269 @@
+-- Dorn's Fast Travel: Travel sequence, safety/surge, update loop, arrival and ambush.
+-- Loaded automatically before main.script (zzzz_dogma_travel_fast_travel_main.script)
+
+-- ============================================================
+-- 4. Travel Sequence
+-- ============================================================
+-- Shared dft globals (Anomaly isolates zzz_* script environments)
+local dft = _G.dft
+-- Forward declarations for this file's private (non-exported) helpers, so they can
+-- reference each other regardless of definition order below.
+local apply_final_stats, cancel_journey_emission, check_and_skip_surges, cleanup_dots, close_pda_for_travel, complete_travel_sequence, detect_ambush, enforce_transition_combat_lock, force_end_surge, get_surge_manager, is_emission_active, is_safety_active, journey_path_ratio, plan_emission_interrupt, play_ambush_alert, play_fade_teleport, seconds_until_surge, set_safety_active, should_emission_interrupt, stop_travel_logic, teleport_companions, trigger_emission_interrupt, trigger_encounter, update_debug_overlay, update_sneak_cooldown_hud
+local PP_FADE_ID = 22301
+local FADE_TELEPORT_DELAY_S = 0.5
+local TELEPORT_INVULN_S = 1.0
+
+play_fade_teleport = function(final_pos, lvid, gvid, on_done)
+    pcall(function()
+        level.add_pp_effector("dorn_ft_fade.ppe", PP_FADE_ID, false)
+        level.set_pp_effector_factor(PP_FADE_ID, 1.0)
+    end)
+    CreateTimeEvent("dft", "fade_tp", FADE_TELEPORT_DELAY_S, function()
+        if db.actor and final_pos then
+            db.actor:set_actor_position(final_pos)
+            teleport_companions(final_pos, lvid, gvid)
+            set_safety_active(TELEPORT_INVULN_S)
+            CreateTimeEvent("dft", "nudge_arrival_1", 0.05, function()
+                if db.actor then
+                    local cp = db.actor:position()
+                    db.actor:set_actor_position(vector():set(cp.x + 0.05, cp.y, cp.z + 0.05))
+                end
+                return true
+            end)
+            CreateTimeEvent("dft", "nudge_arrival_2", 0.1, function()
+                if db.actor then
+                    local cp = db.actor:position()
+                    db.actor:set_actor_position(vector():set(cp.x + 0.05, cp.y, cp.z + 0.05))
+                end
+                return true
+            end)
+        end
+        pcall(function() level.remove_pp_effector(PP_FADE_ID) end)
+        if on_done then on_done() end
+        return true
+    end)
+end
+
+local function start_travel_sequence(pos, lvid, gvid, is_transition, final_gvid)
+    if dft.is_traveling or not pos then return false end
+    if not (db and db.actor) then return false end
+
+    -- v2.0.8: Set traveling flag immediately to close double-click race window.
+    -- fail_start -> dft_clear will reset it if the travel attempt fails.
+    dft.is_traveling = true
+    dft_set_fft_trip_in_progress(true)
+
+    local function fail_start(message, style)
+        if message then dft_msg(message, style) end
+        dft_clear()
+        return false
+    end
+
+    -- Survival checks: Don't allow travel if bleeding or near death
+    if db.actor.health < 0.2 then
+        return fail_start(dft_str("dft_msg_too_wounded"), "warning")
+    end
+    if (db.actor.bleeding or 0) > 0.05 then
+        return fail_start(dft_str("dft_msg_must_stop_bleeding"), "warning")
+    end
+
+    if dft_actor_too_encumbered_to_move() then
+        return fail_start(dft_str("dft_msg_too_encumbered"), "warning")
+    end
+
+    local emission_blocks = _G.dft_emission_blocks_travel_start or emission_blocks_travel_start
+    if emission_blocks and emission_blocks() then
+        return fail_start(dft_str("dft_msg_emission_active"), "warning")
+    end
+
+    if dft.travel_mode == "sneaky" then
+        local sneak_cd_remaining = dft_sneak_cooldown_remaining_secs()
+        if sneak_cd_remaining > 0 then
+            return fail_start(string.format(dft_str("dft_msg_sneak_cooldown"), dft_format_duration(sneak_cd_remaining / 60)), "warning")
+        end
+    end
+
+    local sneaky_start = dft.travel_mode == "sneaky"
+    local actor_lid_start = dft_actor_level_id()
+    local start_targets = dft_scan_ambush_targets(db.actor:position(), sneaky_start, actor_lid_start)
+    if start_targets then
+        -- Player-facing distance is always the outer (main) range.
+        local outer_m = math.floor(dft_ambush_radius_m(sneaky_start) + 0.5)
+        return fail_start(string.format(dft_str("dft_msg_hostiles_nearby"), outer_m), "warning")
+    end
+
+    local gg = game_graph()
+    local ok_actor, actor_lid = pcall(function() return gg:vertex(db.actor:game_vertex_id()):level_id() end)
+    local ok_dest, dest_lid = pcall(function() return gg:vertex(gvid):level_id() end)
+
+    if not (ok_actor and ok_dest) then
+        dft_log("ERROR: Invalid vertex ID for actor (%s) or destination (%s)", tostring(db.actor:game_vertex_id()), tostring(gvid))
+        return fail_start()
+    end
+
+    dft.is_transition = is_transition or false
+    dft.final_gvid    = final_gvid or gvid
+
+    if is_transition then
+        local safe_pos, safe_lvid = dft_find_ground_pos(pos, lvid, gvid)
+        dft.dest_pos  = vector():set(safe_pos.x, safe_pos.y, safe_pos.z)
+        dft.dest_raw_pos = vector():set(safe_pos.x, safe_pos.y, safe_pos.z)
+        dft.dest_lvid = safe_lvid or lvid
+        dft.dest_gvid = gvid
+        dft_log("Traveling to zone exit on current map.")
+    elseif actor_lid ~= dest_lid then
+        return fail_start(dft_str("dft_msg_cross_zone_denied"), "warning")
+    else
+        local safe_pos, safe_lvid = dft_find_ground_pos(pos, lvid, gvid)
+        dft.dest_pos  = vector():set(safe_pos.x, safe_pos.y, safe_pos.z)
+        dft.dest_raw_pos = nil
+        dft.dest_lvid = safe_lvid or lvid
+        dft.dest_gvid = gvid
+    end
+
+    if not dft.start_pos then dft.start_pos = vector() end
+    local ap = db.actor:position()
+    dft.start_pos:set(ap.x, ap.y, ap.z)
+
+    dft_clear_path_preview()
+
+    -- Drop any stale preview cache so journey rebuilds from coarse nav.
+    dft.path_build_cache = nil
+
+    local dest_key = nil
+    if dft.last_menu_target_id and _G.dft_coarse_nav_dest_anchor_key then
+        dest_key = _G.dft_coarse_nav_dest_anchor_key(dft.last_menu_target_id)
+    end
+    dft.dest_anchor_key = dest_key
+
+    local straight_dist = dft_distance_pda(dft.start_pos, dft.dest_pos) or dft.start_pos:distance_to(dft.dest_pos)
+    local path_len = straight_dist
+    dft.dot_positions, path_len = dft_build_path_dots(dft.start_pos, dft.dest_pos, dest_key)
+    dft.dot_count = #(dft.dot_positions or {})
+    -- Coarse path polyline is authoritative. Densify can yield 0 dots on short paths
+    -- (spacing ~20m); those still fail via too_close below — not "no nav path".
+    if not (dft.path_chain and #dft.path_chain >= 2) then
+        return fail_start(dft_str("dft_msg_no_nav_path"), "warning")
+    end
+    dft.travel_dist = math.max(path_len or straight_dist, straight_dist)
+    if dft.travel_dist < 40 and not dft.is_transition then
+        return fail_start(dft_str("dft_msg_too_close"), "warning")
+    end
+
+    dft.dot_ids = {}
+    dft.dot_done = {}
+    dft.dot_path_ratio = {}
+
+    dft_assign_dot_path_ratios(dft.dot_positions, dft.travel_dist, dft.start_pos)
+    dft_log("Journey path: %d dots @ %dm, %.0fm along path (straight %.0fm)",
+        dft.dot_count, dft_path.dot_spacing_m, dft.travel_dist, straight_dist)
+    for i = 1, dft.dot_count do
+        dft_ensure_path_dot(i, true)
+    end
+
+    dft.current_dist   = 0
+    dft.last_update_tg = time_global()
+    dft.next_update    = dft.last_update_tg + 100
+    dft.start_game_time = game.get_game_time()
+
+    dft.encumbrance_speed_mult = dft_get_encumbrance_speed_mult()
+    dft.encumbrance_time_mult = 1.0 / dft.encumbrance_speed_mult
+    dft.encounters_avoided = 0
+    dft.arrival_forced_ambushes = 0
+    dft.arrival_short_m = 0
+    dft.target_stamina = 1.0
+    dft.journey_start_health = db.actor.health
+    dft_log("Trip start | %.0fm | sneak %d%%", dft.travel_dist, dft_calc_sneak_chance(dft.travel_mode == "sneaky"))
+    dft.expected_duration = dft_game_minutes_for_dist(dft.travel_dist, dft.travel_mode == "sneaky", dft.encumbrance_time_mult)
+    plan_emission_interrupt()
+    dft_log("Journey duration: %d game minutes (dist %.1f, mode %s, encumbrance %s speed x%.2f time x%.2f)",
+        dft.expected_duration, dft.travel_dist, dft.travel_mode,
+        dft_get_inventory_weight_band(), dft.encumbrance_speed_mult, dft.encumbrance_time_mult)
+
+    dft.journey_cost = 0
+
+    local refresh = _G.refresh_active_config or refresh_active_config
+    if refresh then refresh() end
+    dft.is_traveling = true
+    -- Grace window before "PDA must stay open" enforcement kicks in, covering the moment
+    -- right after starting travel (menu click) so that isn't mistaken for the player
+    -- closing the map themselves.
+    dft.pda_check_from = time_global() + 2000
+    dft_save(dft.dest_pos, dft.dest_lvid, dft.dest_gvid, dft.final_gvid)
+
+    -- Cooldown itself doesn't start here - only once the player is actually teleported
+    -- somewhere (complete_travel_sequence / trigger_encounter /
+    -- trigger_emission_interrupt), so a plain cancel (PDA closed, damage taken) never
+    -- costs any cooldown at all.
+
+    dft_log("Journey started (%s, %.0fm, ~%s).",
+        dft.is_transition and "zone exit" or dft.travel_mode,
+        dft.travel_dist,
+        dft_format_duration(dft.expected_duration or 1))
+    return true
+end
+
+-- ============================================================
+-- Emission / surge scheduling (GAMMA surge_manager)
+-- ============================================================
+
+get_surge_manager = function()
+    if surge_manager and surge_manager.get_surge_manager then
+        local ok, sm = pcall(surge_manager.get_surge_manager)
+        if ok then return sm end
+    end
+    return nil
+end
+
+local function get_psi_storm_manager()
+    if psi_storm_manager and psi_storm_manager.get_psi_storm_manager then
+        local ok, pm = pcall(psi_storm_manager.get_psi_storm_manager)
+        if ok then return pm end
+    end
+    return nil
+end
+
+seconds_until_surge = function(sm)
+    sm = sm or get_surge_manager()
+    if not (sm and sm._delta and sm.last_surge_time) then return nil end
+    local ok, elapsed = pcall(function() return game.get_game_time():diffSec(sm.last_surge_time) end)
+    if not ok then return nil end
+    return sm._delta - elapsed
+end
+
+is_emission_active = function()
+    if surge_manager and surge_manager.is_started then
+        local ok, active = pcall(surge_manager.is_started)
+        if ok and active then return true end
+    end
+    local sm = get_surge_manager()
+    if sm and sm.started then return true end
+    local pm = get_psi_storm_manager()
+    if pm and pm.started then return true end
+    return false
+end
+
+local function format_secs_until(secs)
+    secs = math.max(0, math.floor(secs + 0.5))
+    local h = math.floor(secs / 3600)
+    local m = math.floor((secs % 3600) / 60)
+    local s = secs % 60
+    if h > 0 then
+        return string.format("%dh %02dm %02ds", h, m, s)
+    end
+    if m > 0 then
+        return string.format("%dm %02ds", m, s)
+    end
+    return string.format("%ds", s)
+end
+
+update_debug_overlay = function()
+    local cfg = _G.dft_config
+    if not (cfg and cfg.debug_overlay) then return end
+    local ok, err = pcall(function()
+        local dft_dorn = _G.dft and _G.dft.dorn
+        if not (dft_dorn and dft_dorn.dbg and dft_dorn.dbg.overlay) then return end
+        if not get_hud then return end
+
+        local msg
+        if is_emission_active() then
+            msg = "Emission: active"
+        else
+            local secs = seconds_until_surge()
+            if secs == nil then
+                msg = "Emission: unknown"
+            elseif secs <= 0 then
+                msg = "Emission: due now"
+            else
+                msg = "Emission in: " .. format_secs_until(secs)
+            end
+        end
+        if dft._debug_overlay_msg == msg then return end
+        dft._debug_overlay_msg = msg
+        dft_dorn.dbg.overlay("dorn_fast_travel", 1, msg, "orange")
+    end)
+    if not ok then
+        dft_log("debug overlay error: %s", tostring(err))
+    end
+end
+
+local function emission_blocks_travel_start()
+    if is_emission_active() then return true end
+    local secs = seconds_until_surge()
+    if secs and secs <= 0 then return true end
+    return false
+end
+
+-- Precompute path % and time jump for a scheduled emission during this trip.
+plan_emission_interrupt = function()
+    dft.emission_interrupt_ratio = nil
+    dft.emission_time_jump_secs = nil
+    dft.emission_interrupt_pending = false
+
+    local secs_until = seconds_until_surge()
+    if not secs_until then return end
+
+    local journey_secs = (dft.expected_duration or 0) * 60
+    if journey_secs <= 0 then return end
+
+    if secs_until <= 0 then
+        dft_log("Emission due now - travel blocked at start.")
+        return
+    end
+    if secs_until > journey_secs then
+        dft_log("Emission after trip (%.0fs until surge, journey %.0fs) - no interrupt planned.", secs_until, journey_secs)
+        return
+    end
+
+    local ratio = secs_until / journey_secs
+    ratio = math.max(0, math.min(ratio, 1.0))
+    local lead = dft_travel.emission_lead_secs or 8
+    local jump_secs = math.max(0, math.floor(secs_until - lead + 0.5))
+
+    dft.emission_interrupt_ratio = ratio
+    dft.emission_time_jump_secs = jump_secs
+    dft_log("Emission planned at %.1f%% of route (%.0fs until surge, jump %.0fs, lead %ds).",
+        ratio * 100, secs_until, jump_secs, lead)
+end
+
+journey_path_ratio = function()
+    if not (dft.travel_dist and dft.travel_dist > 0) then return 0 end
+    return math.min((dft.current_dist or 0) / dft.travel_dist, 1.0)
+end
+
+local function emission_started_unexpectedly()
+    if not is_emission_active() then return false end
+    if dft.emission_interrupt_pending then return false end
+    local planned = dft.emission_interrupt_ratio
+    if not planned then return true end
+    return journey_path_ratio() + 0.001 < planned
+end
+
+should_emission_interrupt = function()
+    if not dft.emission_interrupt_ratio then return false end
+    if dft.emission_interrupt_pending then return false end
+    return journey_path_ratio() >= dft.emission_interrupt_ratio
+end
+
+cancel_journey_emission = function()
+    if not dft.is_traveling then return end
+    dft_log("Journey cancelled - emission started before planned interrupt point.")
+    close_pda_for_travel()
+    cleanup_dots()
+    stop_travel_logic()
+    dft_clear()
+    local cancel_opts = { outcome = "cancelled_emission" }
+    dft_msg(dft_journey_result_message(cancel_opts), dft_journey_result_style(cancel_opts))
+    pcall(function() save_var(db.actor, "surge_immuned", false) end)
+end
+
+local function advance_travel_time_seconds(sec, opts)
+    opts = opts or {}
+    if not sec or sec <= 0 or not (level and level.change_game_time) then return end
+    local total_sec = math.floor(sec + 0.5)
+    local days = math.floor(total_sec / 86400)
+    local hrs  = math.floor((total_sec % 86400) / 3600)
+    local mins = math.floor((total_sec % 3600) / 60)
+    local leftover = total_sec % 60
+    if leftover > 0 then
+        mins = mins + 1
+        if mins >= 60 then
+            hrs = hrs + math.floor(mins / 60)
+            mins = mins % 60
+        end
+    end
+    if not opts.allow_surge then
+        check_and_skip_surges()
+    end
+    level.change_game_time(days, hrs, mins)
+    dft_log("advance_travel_time_seconds: +%ds -> %dd %dh %dm (allow_surge=%s)",
+        total_sec, days, hrs, mins, tostring(opts.allow_surge == true))
+end
+
+-- The PDA map has to stay open for the whole journey (closing it is how you cancel now,
+-- instead of Escape/right-click) - so we need a reliable read of whether it's currently shown.
+local function is_pda_map_shown()
+    local shown = false
+    pcall(function()
+        if ActorMenu and ActorMenu.get_pda_menu then
+            local pda = ActorMenu.get_pda_menu()
+            if pda and pda:IsShown() then shown = true end
+        end
+    end)
+    return shown
+end
+
+close_pda_for_travel = function()
+    pcall(function()
+        if ActorMenu and ActorMenu.get_pda_menu then
+            local pda = ActorMenu.get_pda_menu()
+            if pda and pda:IsShown() then
+                pda:HideDialog()
+            end
+        end
+        if db.actor and db.actor:active_slot() == 8 then
+            db.actor:activate_slot(0)
+        end
+    end)
+end
+
+trigger_emission_interrupt = function()
+    local ratio = dft.emission_interrupt_ratio or journey_path_ratio()
+    ratio = math.max(0, math.min(ratio, 1.0))
+    dft.emission_interrupt_pending = true
+    dft_log("!!! EMISSION INTERRUPT at %.1f%% of route", ratio * 100)
+
+    -- Cut short by an emission partway through a sneak journey - same proportional cooldown
+    -- rule as an ambush. Grab dft.travel_mode now, before dft_clear() resets it further down.
+    if dft.travel_mode == "sneaky" then
+        dft_start_sneak_cooldown(ratio)
+    end
+
+    close_pda_for_travel()
+    cleanup_dots()
+    stop_travel_logic()
+
+    local interrupt_pos = dft_get_safe_lvid_pos(ratio)
+    if not interrupt_pos then
+        interrupt_pos = vector():set(
+            dft.start_pos.x + (dft.dest_pos.x - dft.start_pos.x) * ratio,
+            dft.start_pos.y + (dft.dest_pos.y - dft.start_pos.y) * ratio,
+            dft.start_pos.z + (dft.dest_pos.z - dft.start_pos.z) * ratio
+        )
+    end
+    local safe_landing, safe_lvid = dft_find_ground_pos(interrupt_pos, nil, dft.dest_gvid, {
+        anchor = interrupt_pos,
+        max_drift_m = dft_path.ground_snap_max_drift_m or 60,
+    })
+    local lvid = safe_lvid or dft_resolve_lvid_for_pos(safe_landing, nil, dft.dest_gvid)
+    if not lvid and safe_landing and level and level.vertex_id then
+        local ok, lv = pcall(function() return level.vertex_id(safe_landing) end)
+        if ok then lvid = lv end
+    end
+    local gvid = db.actor and db.actor:game_vertex_id() or 0
+    local jump_secs = dft.emission_time_jump_secs or 0
+
+    local function after_emission_tp()
+        local journey_secs = (dft.expected_duration or 1) * 60
+        local partial = journey_secs > 0 and math.min(jump_secs / journey_secs, 1.0) or 0
+        advance_travel_time_seconds(jump_secs, { allow_surge = true })
+        apply_final_stats(partial)
+        local emit_opts = { outcome = "emission" }
+        dft_msg(dft_journey_result_message(emit_opts), dft_journey_result_style(emit_opts))
+        dft_clear()
+    end
+
+    if db.actor and safe_landing then
+        play_fade_teleport(safe_landing, lvid, gvid, after_emission_tp)
+    else
+        after_emission_tp()
+    end
+end
+
+-- ============================================================
+-- ULTRA AGGRESSIVE SURGE PROTECTION (GAMMA)
+-- ============================================================
+
+force_end_surge = function(manager)
+    if not manager then return end
+    -- If a surge is actively running, use GAMMA's skip_surge() to cleanly end it.
+    -- skip_surge() is safe (unlike end_surge which calls kill_all_unhided).
+    if manager.started then
+        pcall(function()
+            if not manager.inited_time then manager.inited_time = game.get_game_time() end
+            if not manager.last_surge_time then manager.last_surge_time = game.get_game_time() end
+            if not manager.surge_time then manager.surge_time = 222 end
+            manager:skip_surge()
+        end)
+    end
+    -- CRITICAL: Set last_surge_time to NOW and _delta to 6+ hours.
+    -- This prevents a new surge from starting after a time jump.
+    -- Without this, skip_surge sets last_surge_time to a past value
+    -- and the next update() immediately starts a new surge.
+    pcall(function() manager.started = false end)
+    pcall(function() manager.finished = true end)
+    pcall(function() manager.time_forwarded = false end)
+    pcall(function() manager.last_surge_time = game.get_game_time() end)
+    pcall(function() manager._delta = 6 * 3600 end)  -- 6 hours until next surge
+end
+
+check_and_skip_surges = function()
+    -- Surge Manager
+    if surge_manager and surge_manager.get_surge_manager then
+        local sm = surge_manager.get_surge_manager()
+        if sm then force_end_surge(sm) end
+    end
+
+    -- Psi Storm Manager
+    if psi_storm_manager and psi_storm_manager.get_psi_storm_manager then
+        local pm = psi_storm_manager.get_psi_storm_manager()
+        if pm then force_end_surge(pm) end
+    end
+end
+
+set_safety_active = function(duration)
+    dft.safety_until = time_global() + (duration * 1000)
+    dft_log("SAFETY WINDOW ACTIVATED: %d seconds", duration)
+
+    -- Immediate kill
+    check_and_skip_surges()
+
+    -- Very frequent repeated kills (this is what was missing)
+    for i = 1, 40 do
+        CreateTimeEvent("dft_safety", "kill_"..i, i * 0.6, function()
+            if is_safety_active() then
+                check_and_skip_surges()
+            end
+            return true
+        end)
+    end
+end
+
+is_safety_active = function()
+    if dft.is_traveling then return true end
+    return dft.safety_until and dft.safety_until > time_global()
+end
+-- Sneak-travel cooldown countdown, shown while the PDA map is open. Attached as a real child of
+-- the live PDA dialog (not a flat HUD overlay) so it renders as part of the PDA's own UI, moving
+-- correctly with the 3D holographic PDA (g_3d_pda) the same way the vanilla clock/battery readouts
+-- do. Independent of dft.is_traveling - the cooldown can tick down while doing anything else.
+local DFT_SNEAK_CD_XML = "ui_dorn_fast_travel_sneak_cd.xml"
+local DFT_SNEAK_CD_ID = "dft_sneak_cd_label"
+update_sneak_cooldown_hud = function()
+    local remaining = (dft_sneak_cooldown_remaining_secs and dft_sneak_cooldown_remaining_secs()) or 0
+    local show = remaining > 0 and is_pda_map_shown()
+
+    if not show then
+        if dft._sneak_cd_label then
+            pcall(function() dft._sneak_cd_label:Show(false) end)
+        end
+        return
+    end
+
+    local ok = pcall(function()
+        if not dft._sneak_cd_label then
+            local pda = ActorMenu.get_pda_menu()
+            if not pda then return end
+            local xml = CScriptXmlInit()
+            xml:ParseFile(DFT_SNEAK_CD_XML)
+            dft._sneak_cd_label = xml:InitTextWnd(DFT_SNEAK_CD_ID, pda)
+        end
+        local text = string.format(dft_str("dft_hud_sneak_cooldown"), dft_format_duration(remaining / 60))
+        dft._sneak_cd_label:SetTextColor(GetARGB(255, 255, 224, 64))
+        dft._sneak_cd_label:SetText(text)
+        dft._sneak_cd_label:Show(true)
+    end)
+    if not ok then
+        -- Construction/attach failed (e.g. engine rejected the foreign parent) - drop the
+        -- reference and quietly stay hidden rather than retry-spamming every tick.
+        dft._sneak_cd_label = nil
+    end
+end
+
+-- ============================================================
+-- 6. Update Loop
+-- ============================================================
+enforce_transition_combat_lock = function()
+    local cfg = _G.dft_config
+    if cfg and cfg.block_transition_in_combat == false then
+        if dft._transition_locked then
+            dft_set_current_level_changers_locked(false)
+            dft._transition_locked = false
+        end
+        return
+    end
+    -- Mid fast-travel journey the actor's real position is teleport-managed elsewhere; the
+    -- zone-exit arrival itself syncs the lock directly (see complete_travel_sequence).
+    if dft.is_traveling then return end
+    if not (db.actor and db.actor:alive()) then return end
+
+    local tg = time_global()
+    local guard = _G.dft_transition_guard or {}
+    local interval = guard.scan_interval_ms or 150
+    if dft._transition_guard_next and tg < dft._transition_guard_next then return end
+    dft._transition_guard_next = tg + interval
+
+    local actor_pos = db.actor:position()
+    local radius = dft_ambush_radius_m(false)
+    local alerted, enemy_dist = dft_alerted_enemy_within(actor_pos, radius)
+
+    if alerted ~= dft._transition_locked then
+        dft_set_current_level_changers_locked(alerted)
+        dft._transition_locked = alerted
+        dft_log("Transition lock %s (nearest alerted enemy: %s).",
+            alerted and "ENGAGED - border crossings disabled" or "RELEASED - crossings re-enabled",
+            alerted and (tostring(enemy_dist) .. "m") or "none within " .. math.floor(radius) .. "m")
+    end
+
+    if alerted then
+        local buffer_m = guard.buffer_m or 12
+        local search_pad_m = guard.search_pad_m or 15
+        local _, door_dist = dft_nearest_transition_point(actor_pos, buffer_m + search_pad_m)
+        if door_dist and door_dist <= buffer_m then
+            local msg_cooldown_ms = (guard.msg_cooldown_s or 5) * 1000
+            if not dft._transition_guard_last_msg or (tg - dft._transition_guard_last_msg) > msg_cooldown_ms then
+                dft._transition_guard_last_msg = tg
+                dft_msg(dft_str("dft_msg_transition_combat_blocked"), "danger")
+            end
+        end
+    end
+end
+
+local function actor_on_update()
+    local tg_ui = time_global()
+    -- Keep the ring tight to the walking path while travelling; idle can stay slower.
+    local ring_ms = (dft.is_traveling and 100) or 500
+    if not dft._last_ambush_range_sync or (tg_ui - dft._last_ambush_range_sync) > ring_ms then
+        dft._last_ambush_range_sync = tg_ui
+        pcall(dft_sync_ambush_range_circle)
+    end
+
+    if not dft._last_sneak_cd_ui_tick or (tg_ui - dft._last_sneak_cd_ui_tick) > 500 then
+        dft._last_sneak_cd_ui_tick = tg_ui
+        pcall(update_sneak_cooldown_hud)
+    end
+
+    if not dft._last_debug_overlay_tick or (tg_ui - dft._last_debug_overlay_tick) > 500 then
+        dft._last_debug_overlay_tick = tg_ui
+        pcall(update_debug_overlay)
+    end
+
+    if _G.dft_coarse_nav_on_actor_update then
+        pcall(_G.dft_coarse_nav_on_actor_update)
+    end
+
+    pcall(enforce_transition_combat_lock)
+
+    if dft.is_traveling and emission_started_unexpectedly() then
+        cancel_journey_emission()
+        return
+    end
+
+    -- Safety stat wipe runs EVERY tick (not throttled) so progressive
+    -- damage scripts like grok_progressive_rad_damages can't accumulate.
+    if db.actor then
+        if is_safety_active() then
+            pcall(function()
+                db.actor.radiation = -1.0
+                db.actor.psy_health = 1.0
+                if db.actor.health < 0.8 then
+                    db.actor.health = 0.8
+                end
+                -- Full stamina by default (mid-journey, the abstracted skip shouldn't drain
+                -- it); once an outcome sets dft.target_stamina (ambush/encumbrance), hold that
+                -- value for the rest of the safety window instead of snapping back to full
+                -- every tick.
+                pcall(function() db.actor.power = dft.target_stamina or 1.0 end)
+
+                if not dft._was_sleeping then
+                    if actor_status_sleep and actor_status_sleep.force_sleep then
+                        dft.orig_sleep = actor_status_sleep.force_sleep
+                        actor_status_sleep.force_sleep = function() end
+                    end
+                    if actor_status_thirst and actor_status_thirst.force_sleep then
+                        dft.orig_thirst = actor_status_thirst.force_sleep
+                        actor_status_thirst.force_sleep = function() end
+                    end
+                    dft._was_sleeping = true
+                end
+            end)
+
+            -- Throttle surge checks to once per second to avoid hammering the engine
+            local tg_now = time_global()
+            if not dft._last_surge_check or (tg_now - dft._last_surge_check) > 1000 then
+                dft._last_surge_check = tg_now
+                if not dft.emission_interrupt_ratio then
+                    check_and_skip_surges()
+                end
+            end
+
+        elseif dft._was_sleeping then
+            if actor_status_sleep and dft.orig_sleep then
+                actor_status_sleep.force_sleep = dft.orig_sleep
+                dft.orig_sleep = nil
+            end
+            if actor_status_thirst and dft.orig_thirst then
+                actor_status_thirst.force_sleep = dft.orig_thirst
+                dft.orig_thirst = nil
+            end
+            dft._was_sleeping = false
+        end
+    end
+
+    if not dft.is_traveling then return end
+    if not db.actor or not db.actor:alive() then
+        stop_travel_logic()
+        dft_clear()
+        return
+    end
+
+    -- Ambush already detected, waiting out the brief "you just saw the red dot/heard the
+    -- alarm" delay before the actual teleport - freeze everything else in the meantime.
+    if dft.ambush_pending then return end
+
+    -- Everything below (PDA-open check, emission interrupt, encounter/dot updates) only
+    -- needs to run a handful of times a second, not every render frame - IsShown()/emission
+    -- manager lookups add up over a multi-minute journey at 60-144fps.
+    local tg = time_global()
+    if tg < dft.next_update then return end
+    local dt = (tg - dft.last_update_tg) / 1000
+    dft.last_update_tg = tg
+    dft.next_update    = tg + 100
+
+    if dft.journey_start_health then
+        local loss = dft.journey_start_health - db.actor.health
+        if loss > 0 then
+            local min_loss = (_G.dft_travel and _G.dft_travel.damage_cancel_min_loss) or 0.01
+            if loss >= min_loss then
+                dft_log("Journey interrupted: %.1f%% HP lost since travel start (%.3f -> %.3f).",
+                    loss * 100, dft.journey_start_health, db.actor.health)
+                dft_abort_journey("damage")
+                return
+            end
+        end
+    end
+
+    if (not dft.pda_check_from or tg >= dft.pda_check_from) and not is_pda_map_shown() then
+        dft_log("Journey cancelled - PDA closed.")
+        dft_abort_journey()
+        return
+    end
+
+    if should_emission_interrupt() then
+        trigger_emission_interrupt()
+        return
+    end
+
+    if tg > (dft.last_encounter_check or 0) + 12000 then
+        dft.last_encounter_check = tg
+
+        local cur_ratio = math.min(dft.current_dist / dft.travel_dist, 1.0)
+        -- Reads the same polyline used for the displayed path/dots, so the ambush scan
+        -- point matches where the player actually appears to be walking (not a straight
+        -- line through terrain the path itself detours around).
+        local virtual_pos = dft_get_safe_lvid_pos(cur_ratio)
+        if not virtual_pos then
+            virtual_pos = vector()
+            dft_lerp_pos(dft.start_pos, dft.dest_pos, cur_ratio, virtual_pos)
+        end
+
+        local avoided_before = dft.encounters_avoided or 0
+        if detect_ambush(virtual_pos) then
+            dft.ambush_stop_ratio = cur_ratio
+            dft.current_dist = math.min(dft.current_dist, cur_ratio * dft.travel_dist)
+            dft_mark_dot_outcome(cur_ratio, dft_path.dot_spot_ambush)
+            dft_freeze_dots_beyond_ratio(cur_ratio)
+            play_ambush_alert()
+            -- Give the player a beat to actually see the red dot and hear the alarm before
+            -- the screen fades and the encounter teleport fires.
+            dft.ambush_pending = true
+            dft._last_ambush_range_sync = 0
+            pcall(dft_sync_ambush_range_circle)
+            CreateTimeEvent("dft", "ambush_reveal_delay", 1.0, function()
+                if dft.is_traveling and dft.ambush_pending then
+                    trigger_encounter()
+                end
+                return true
+            end)
+            return
+        elseif (dft.encounters_avoided or 0) > avoided_before then
+            dft_mark_dot_outcome(cur_ratio, dft_path.dot_spot_dodge)
+        end
+    end
+
+    local sneaky = dft.travel_mode == "sneaky"
+    local enc_speed = dft.encumbrance_speed_mult or 1.0
+    local eff_speed = dft_get_effective_pda_speed(sneaky, enc_speed)
+    dft.current_dist = dft.current_dist + eff_speed * dt
+    local ratio = journey_path_ratio()
+
+    if dft.emission_interrupt_ratio and ratio >= dft.emission_interrupt_ratio then
+        trigger_emission_interrupt()
+        return
+    end
+
+    local d_count = dft.dot_count or 0
+    local stop_ratio = dft.ambush_stop_ratio
+    for i = 1, d_count do
+        local threshold = dft.dot_path_ratio[i] or (i / (d_count + 1))
+        if stop_ratio and threshold > stop_ratio then
+            -- Ambush locked the journey here - don't promote dots further along the route.
+        elseif ratio >= threshold then
+            if not dft.dot_ids[i] then
+                dft_ensure_path_dot(i, true)
+            end
+            dft_promote_path_dot(i)
+        elseif not dft.dot_ids[i] and ratio + 0.1 >= threshold then
+            dft_ensure_path_dot(i, true)
+        end
+    end
+
+    if ratio >= 1.0 then
+        complete_travel_sequence()
+    end
+end
+
+complete_travel_sequence = function()
+    if db.actor then
+        -- surge_immuned removed: it causes GAMMA to loop surges via start(true)
+        dft_log("Surge immunity set on complete_travel_sequence.")
+    end
+    -- Full arrival - the player is about to be teleported having covered the whole route, so
+    -- the sneak cooldown (if this was a sneaky journey) starts now at its full duration. Grab
+    -- this before dft_clear() resets dft.travel_mode back to "normal" further down.
+    if dft.travel_mode == "sneaky" then
+        dft_start_sneak_cooldown(1.0)
+    end
+    cleanup_dots()
+
+    -- Close PDA GUI and sheathe the physical device forcefully so the map is put away and engine messages/prompts render correctly!
+    close_pda_for_travel()
+
+    -- v1.8.7 Final Stat Injection
+    apply_final_stats()
+
+    stop_travel_logic()
+
+    -- Skip any active surges before jumping the clock (also (re)activates the safety window).
+    set_safety_active(60.0)
+    pcall(function()
+        if db.actor then
+            db.actor.radiation   = -1.0
+            db.actor.psy_health  = 1.0
+            db.actor.health      = 1.0
+        end
+    end)
+
+    -- TELEPORT BEFORE TIME JUMP to prevent starting location ambushes during simulation
+    local final_pos, final_lvid
+    if dft.is_transition then
+        final_pos, final_lvid = dft_find_ground_pos(dft.dest_raw_pos or dft.dest_pos, dft.dest_lvid, dft.dest_gvid)
+        if final_pos then
+            local alerted = dft_alerted_enemy_within(final_pos, dft_ambush_radius_m(false))
+            dft_set_current_level_changers_locked(alerted)
+            dft._transition_locked = alerted
+            if alerted then
+                dft_log("Transition arrival: alerted enemy nearby - exit locked at (%.1f,%.1f,%.1f).",
+                    final_pos.x, final_pos.y, final_pos.z)
+            end
+        end
+        if final_pos then
+            dft_log("Transition Teleport: pos=(%f, %f, %f)", final_pos.x, final_pos.y, final_pos.z)
+        end
+    else
+        local forced_arrival = 0
+        final_pos, forced_arrival = dft_resolve_arrival_position()
+        final_lvid = dft.dest_lvid
+        dft.arrival_forced_ambushes = forced_arrival
+        local arrival_targets = dft.arrival_ambush_targets
+        if forced_arrival > 0 and dft.dest_pos and final_pos then
+            -- resolve_arrival_position already placed the landing (path / standoff rules).
+            dft.arrival_short_m = math.floor(dft_horizontal_dist(final_pos, dft.dest_pos) or final_pos:distance_to(dft.dest_pos))
+            local pre_nearest = arrival_targets and dft_nearest_hostile_dist_m(final_pos, arrival_targets)
+            dft_log("Arrival pre-teleport: kind=%s short_of_dest=%dm nearest_hostile=%sm pos=(%.1f,%.1f,%.1f)",
+                tostring(dft.ambush_kind), dft.arrival_short_m, pre_nearest and tostring(pre_nearest) or "?",
+                final_pos.x, final_pos.y, final_pos.z)
+        else
+            dft.arrival_short_m = 0
+        end
+        if forced_arrival > 0 then
+            dft_log("Arrival resolved after %d forced offset(s) - stopped %dm short.",
+                forced_arrival, dft.arrival_short_m)
+        end
+    end
+
+    if dft.arrival_forced_ambushes and dft.arrival_forced_ambushes > 0 then
+        final_pos, final_lvid = dft_ambush_ground_snap(final_pos, final_lvid)
+        if dft.dest_pos and final_pos then
+            dft.arrival_short_m = math.floor(dft_horizontal_dist(final_pos, dft.dest_pos) or final_pos:distance_to(dft.dest_pos))
+        end
+    else
+        final_pos, final_lvid = dft_find_ground_pos(final_pos, final_lvid, dft.dest_gvid)
+    end
+    final_lvid = dft_resolve_lvid_for_pos(final_pos, final_lvid, dft.dest_gvid)
+    local lvid = final_lvid
+    if not lvid and final_pos and level and level.vertex_id then
+        local ok, lv = pcall(function() return level.vertex_id(final_pos) end)
+        if ok then lvid = lv end
+    end
+    local gvid = dft.dest_gvid or (db.actor and db.actor:game_vertex_id()) or 0
+    local arrival_targets = dft.arrival_ambush_targets
+    local was_arrival_ambush = arrival_targets ~= nil
+    dft.target_stamina = dft_resolve_arrival_stamina(was_arrival_ambush, dft.travel_mode == "sneaky")
+    pcall(function() if db.actor then db.actor.power = dft.target_stamina end end)
+    if was_arrival_ambush then
+        play_ambush_alert()
+    end
+    if was_arrival_ambush and arrival_targets and final_pos then
+        local post_nearest = dft_nearest_hostile_dist_m(final_pos, arrival_targets)
+        dft_log("Arrival post-snap: short_of_dest=%dm nearest_hostile=%sm pos=(%.1f,%.1f,%.1f)",
+            dft.arrival_short_m or 0, post_nearest and tostring(post_nearest) or "?",
+            final_pos.x, final_pos.y, final_pos.z)
+    end
+
+    local function after_fade_teleport()
+        if was_arrival_ambush and arrival_targets then
+            CreateTimeEvent("dft", "ambush_alert", 0.5, function()
+                if db.actor and arrival_targets then
+                    dft_alert_ambushers(arrival_targets)
+                    dft_log("Arrival ambush: hostiles alerted.")
+                end
+                return true
+            end)
+            if dft_show_ambush_dir_marker then
+                dft_show_ambush_dir_marker(arrival_targets, final_pos)
+            end
+            dft.arrival_ambush_targets = nil
+        end
+        if final_pos then
+            dft_log("Actor teleported to (%f, %f, %f)", final_pos.x, final_pos.y, final_pos.z)
+        end
+
+        dft_advance_travel_time(1.0)
+        set_safety_active(90.0)
+
+        CreateTimeEvent("dft", "safe_arrival", 0.8, function()
+            if not db.actor then return true end
+            set_safety_active(60.0)
+
+            if dft.is_transition then
+                dft_log("Zone exit reached.")
+                dft_clear()
+            else
+                if was_arrival_ambush then
+                    local ambush_opts = {
+                        outcome = "ambushed",
+                        enemy_dist_m = dft_nearest_hostile_dist_m(final_pos, arrival_targets) or dft.arrival_short_m or 0,
+                    }
+                    dft_msg(dft_journey_result_message(ambush_opts), dft_journey_result_style(ambush_opts))
+                    if dft.travel_mode == "sneaky" then
+                        dft_award_sneaking_xp((_G.dft_travel and _G.dft_travel.sneak_xp_ambush) or 10)
+                    end
+                else
+                    local arrive_opts = {
+                        outcome = "arrived",
+                        duration = dft_format_duration(dft.expected_duration or 1),
+                        short_m = dft.arrival_short_m or 0,
+                        encounters_avoided = dft.encounters_avoided or 0,
+                    }
+                    dft_msg(dft_journey_result_message(arrive_opts), dft_journey_result_style(arrive_opts))
+                end
+
+                dft_log("Arrived %.0fm | %s | avoided %d encounter(s) | sneak %d%% (Lv%d)",
+                    dft.travel_dist, dft_format_duration(dft.expected_duration or 1), dft.encounters_avoided or 0,
+                    dft_calc_sneak_chance(dft.travel_mode == "sneaky"), dft_get_sneaking_level())
+
+                dft_clear()
+            end
+
+            CreateTimeEvent("dft", "safety_reset", 15.0, function()
+                if db.actor then
+                    pcall(function() save_var(db.actor, "surge_immuned", false) end)
+                end
+                dft.safety_until = 0
+                dft_log("Surge immunity and safety cleared after arrival stabilization.")
+                return true
+            end)
+
+            return true
+        end)
+    end
+
+    if db.actor and final_pos then
+        play_fade_teleport(final_pos, lvid, gvid, after_fade_teleport)
+    else
+        after_fade_teleport()
+    end
+end
+
+local function process_refund(ratio)
+    if not (db.actor and dft.journey_cost and dft.journey_cost > 0) then return 0 end
+
+    local remaining = 1.0 - ratio
+    if remaining <= 0.05 then return 0 end -- No refund for arrival
+
+    local refund = math.floor(dft.journey_cost * remaining)
+    if refund > 0 then
+        db.actor:give_money(refund)
+        dft_log("Refunded %d RU from aborted journey.", refund)
+    end
+    return refund
+end
+
+-- Short PDA error/alarm blip (not a siren) - a heads-up that something found you,
+-- whether that's a mid-journey ambush or the "unavoidable" one waiting at the destination.
+play_ambush_alert = function()
+    pcall(function()
+        xr_sound.set_sound_play(db.actor:id(), "pda_alarm")
+    end)
+end
+
+detect_ambush = function(virtual_pos)
+    if not (virtual_pos and db.actor) then return false end
+
+    local gg = game_graph()
+    local actor_lid = gg:vertex(db.actor:game_vertex_id()):level_id()
+    local sneaky = dft.travel_mode == "sneaky"
+    local weather_cut = dft_get_weather_visibility_reduction_m()
+    local targets, ambush_radius, kind = dft_scan_ambush_targets(virtual_pos, sneaky, actor_lid)
+    if not targets then
+        return false
+    end
+
+    dft_log("Ambush scan %s radius %.0fm (hr %.1f, weather -%.0fm, mode %s)",
+        tostring(kind), ambush_radius, dft_get_time_hours(), weather_cut, sneaky and "sneak" or "travel")
+    dft_log_ambush_scan("journey-scan-" .. tostring(kind), virtual_pos, ambush_radius, targets)
+    local nearest = dft_nearest_hostile_dist_m(virtual_pos, targets)
+    dft_log("Ambush journey: nearest hostile at %sm along route.", nearest and tostring(nearest) or "?")
+
+    dft.stats_ambushes = (dft.stats_ambushes or 0) + 1
+    dft.ambush_kind = kind
+
+    if not sneaky then
+        dft_log("AMBUSH: travel mode (no dodge).")
+        dft.ambush_targets = targets
+        return true
+    end
+
+    local total_chance = dft_calc_sneak_chance(true)
+    local roll = math.random(1, 100)
+    if roll <= total_chance then
+        dft_log("STEALTH SUCCESS: Dodged encounter! Roll: %d <= Chance: %d", roll, total_chance)
+
+        pcall(function()
+            xr_sound.set_sound_play(db.actor:id(), "pda_tips")
+        end)
+
+        dft_log("Stealth dodge: slipped past threat (%d%% chance).", total_chance)
+
+        dft.encounters_avoided = (dft.encounters_avoided or 0) + 1
+        dft.stats_ambushes = math.max((dft.stats_ambushes or 0) - 1, 0)
+        dft.ambush_kind = nil
+
+        dft_award_sneaking_xp((_G.dft_travel and _G.dft_travel.sneak_xp_dodge) or 20)
+        return false
+    end
+
+    dft_log("STEALTH FAILURE: Failed to dodge encounter. Roll: %d > Chance: %d", roll, total_chance)
+    dft.ambush_targets = targets
+    return true
+end
+apply_final_stats = function(time_ratio)
+    if not db.actor then return end
+    time_ratio = time_ratio or 1.0
+    time_ratio = math.max(0, math.min(time_ratio, 1.0))
+
+    local hours = ((dft.expected_duration or 1) / 60.0) * time_ratio
+    if hours <= 0 then return end
+
+    local drain = dft_travel.resource_rate_per_hr * hours
+
+    if db.actor.change_hunger then db.actor:change_hunger(-drain) end
+    if db.actor.change_thirst then db.actor:change_thirst(-drain) end
+    if db.actor.change_sleepiness then db.actor:change_sleepiness(-drain) end
+
+    dft_log("Survival drain: %.3f/stat over %.2fh (ratio %.2f)", drain, hours, time_ratio)
+end
+
+stop_travel_logic = function()
+    dft.is_traveling = false
+    dft_set_fft_trip_in_progress(false)
+end
+
+cleanup_dots = function()
+    for _, id in pairs(dft.dot_ids) do
+        dft_remove_path_spots(id)
+        pcall(function()
+            if level.map_has_object_spot(id, "primary_object") ~= 0 then
+                level.map_remove_object_spot(id, "primary_object")
+            end
+            if level.map_has_object_spot(id, "green_location") ~= 0 then
+                level.map_remove_object_spot(id, "green_location")
+            end
+        end)
+        local obj = alife_object(id)
+        if obj then pcall(alife_release, obj) end
+    end
+    dft.dot_ids = {}
+    dft.dot_done = {}
+    dft.dot_path_ratio = {}
+end
+
+trigger_encounter = function()
+    -- Stop the journey update loop immediately so no further dots turn green during the
+    -- fade/teleport lead-in (ambush_pending alone only blocks until this fires).
+    stop_travel_logic()
+    local ratio = math.min(dft.current_dist / dft.travel_dist, 1.0)
+
+    -- Ambushed partway through a sneak journey - only charge cooldown for the fraction of the
+    -- route actually covered (20% progress = 20% of the cooldown). Grab dft.travel_mode now,
+    -- before dft_clear() resets it back to "normal" further down.
+    if dft.travel_mode == "sneaky" then
+        dft_start_sneak_cooldown(ratio)
+    end
+
+    -- Skip surges, wipe stats, then jump clock (set_safety_active also skips surges).
+    set_safety_active(60.0)
+    -- Immediately zero dangerous stats before time jump
+    pcall(function()
+        if db.actor then
+            db.actor.radiation   = -1.0
+            db.actor.psy_health  = 1.0
+            db.actor.health      = 1.0
+        end
+    end)
+    dft.target_stamina = dft_resolve_arrival_stamina(true, dft.travel_mode == "sneaky")
+    pcall(function() if db.actor then db.actor.power = dft.target_stamina end end)
+
+    -- Calculate safe encounter position BEFORE jumping time.
+    -- Always land on the journey path point (nav snap only). Do not pull back along the
+    -- route or toward hostiles — that can move you closer than the path already was,
+    -- especially for long-range LOS ambushes.
+    dft_log("!!! ENCOUNTER TRIGGERED at ratio %.2f kind=%s - Start pos: %.1f %.1f %.1f",
+        ratio, tostring(dft.ambush_kind), dft.start_pos.x, dft.start_pos.y, dft.start_pos.z)
+    local encounter_pos = dft_get_safe_lvid_pos(ratio)
+    if not encounter_pos then
+        encounter_pos = vector():set(
+            dft.start_pos.x + (dft.dest_pos.x - dft.start_pos.x) * ratio,
+            dft.start_pos.y + (dft.dest_pos.y - dft.start_pos.y) * ratio,
+            dft.start_pos.z + (dft.dest_pos.z - dft.start_pos.z) * ratio
+        )
+    end
+    local path_prefer = (dft_path and dft_path.land_prefer_node_m) or 10
+    local safe_landing, safe_lvid = dft_find_ground_pos(encounter_pos, nil, dft.dest_gvid, {
+        anchor = encounter_pos,
+        max_drift_m = path_prefer + 5,
+        local_only = true,
+        ray_first = true,
+    })
+    if not safe_landing then
+        safe_landing = encounter_pos
+    end
+
+    local ambush_targets = dft.ambush_targets
+    -- Close-band only: optional standoff, but never closer to hostiles than the path point.
+    if dft.ambush_kind == "close" and ambush_targets
+        and (#(ambush_targets.squads or {}) > 0 or #(ambush_targets.npcs or {}) > 0) then
+        local path_dist = dft_nearest_hostile_dist_m(safe_landing, ambush_targets)
+        local adjusted = dft_finalize_ambush_landing(safe_landing, ambush_targets, dft.start_pos, { snap = true })
+        local out_dist = dft_nearest_hostile_dist_m(adjusted, ambush_targets)
+        if path_dist and out_dist and out_dist < path_dist then
+            dft_log("Ambush landing: standoff would close gap (%dm -> %dm) - keeping path.",
+                path_dist, out_dist)
+        else
+            safe_landing = adjusted
+        end
+    end
+    local enemy_dist_m = ambush_targets and dft_nearest_hostile_dist_m(safe_landing, ambush_targets) or nil
+
+    -- TELEPORT BEFORE TIME JUMP to prevent starting location ambushes during simulation
+    local lvid = safe_lvid or dft_resolve_lvid_for_pos(safe_landing, nil, dft.dest_gvid)
+    if not lvid and safe_landing and level and level.vertex_id then
+        local ok, lv = pcall(function() return level.vertex_id(safe_landing) end)
+        if ok then lvid = lv end
+    end
+    local gvid = db.actor and db.actor:game_vertex_id() or 0
+
+    local function after_ambush_tp()
+        if ambush_targets then
+            dft_alert_ambushers(ambush_targets)
+            if dft_show_ambush_dir_marker then
+                dft_show_ambush_dir_marker(ambush_targets, safe_landing)
+            end
+            dft.ambush_targets = nil
+        end
+
+        dft_advance_travel_time(ratio)
+        set_safety_active(90.0)
+
+        apply_final_stats()
+        process_refund(ratio)
+        local ambush_opts = {
+            outcome = "ambushed",
+            enemy_dist_m = enemy_dist_m or 0,
+        }
+        dft_msg(dft_journey_result_message(ambush_opts), dft_journey_result_style(ambush_opts))
+        if dft.travel_mode == "sneaky" then
+            dft_award_sneaking_xp((_G.dft_travel and _G.dft_travel.sneak_xp_ambush) or 10)
+        end
+
+        cleanup_dots()
+        stop_travel_logic()
+        dft_clear()
+
+        CreateTimeEvent("dft", "safe_encounter", 1.3, function()
+            if not db.actor then return true end
+            set_safety_active(60.0)
+
+            CreateTimeEvent("dft", "encounter_cleanup", 0.5, function()
+                dft.safety_until = 0
+                pcall(function() save_var(db.actor, "surge_immuned", false) end)
+                dft_log("Safety and surge immunity cleared (encounter).")
+                return true
+            end)
+            return true
+        end)
+    end
+
+    if db.actor and safe_landing then
+        play_fade_teleport(safe_landing, lvid, gvid, after_ambush_tp)
+    else
+        after_ambush_tp()
+    end
+end
+
+teleport_companions = function(pos, lvid, gvid)
+    if not (axr_companions and axr_companions.list_actor_squad_by_id) then return end
+
+    local companion_ids = axr_companions.list_actor_squad_by_id()
+    local gg = game_graph()
+
+    for i=1, #companion_ids do
+        local id = companion_ids[i]
+        local obj = alife_object(id)
+        if obj and (obj.alive and obj:alive()) then
+            -- Add randomization to avoid stacking
+            local t_pos = vector():set(pos.x + math.random(-2, 2), pos.y, pos.z + math.random(-2, 2))
+            local t_lvid = level.vertex_id(t_pos)
+            if not (t_lvid and t_lvid ~= 4294967295 and t_lvid ~= -1) then t_lvid = lvid end
+
+            -- Ensure we have a valid GVID for the target level
+            local t_gvid = gvid
+            local ok_vcheck = pcall(function()
+                if not gg:valid_vertex_id(t_gvid) then
+                    if type(gg.nearest_vertex) == "function" then
+                        t_gvid = gg:nearest_vertex(t_pos) or gvid
+                    else
+                        t_gvid = gvid
+                    end
+                end
+            end)
+            if not ok_vcheck then t_gvid = gvid end
+
+            -- AUTHORITATIVE TELEPORT: Handles both online and offline
+            alife():teleport_object(id, t_gvid, t_lvid, t_pos)
+
+            -- If online, force visual update
+            local online_obj = level.object_by_id(id)
+            if online_obj then
+                online_obj:set_npc_position(t_pos)
+            end
+        end
+    end
+end
+
+-- dft_publish_to_global
+do
+    _G.dft_emission_blocks_travel_start = emission_blocks_travel_start
+    _G.dft_advance_travel_time_seconds = advance_travel_time_seconds
+    _G.dft_close_pda_for_travel = close_pda_for_travel
+    _G.dft_start_travel_sequence = start_travel_sequence
+    _G.dft_check_and_skip_surges = check_and_skip_surges
+    _G.dft_set_safety_active = set_safety_active
+    _G.dft_is_safety_active = is_safety_active
+    _G.dft_actor_on_update = actor_on_update
+    _G.dft_process_refund = process_refund
+    _G.dft_stop_travel_logic = stop_travel_logic
+    _G.dft_cleanup_dots = cleanup_dots
+    _G.dft_teleport_companions = teleport_companions
+end

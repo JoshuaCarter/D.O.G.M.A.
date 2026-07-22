@@ -1,0 +1,65 @@
+--[[
+	Fixed-capacity FIFO ring buffer for frame-time sampling.
+
+	API:
+	  buf = dorn_ring_buffer.new(capacity)
+	  buf:push(value)       -- O(1); overwrites oldest when full; value is opaque (FPS counter: time_global ms)
+	  buf:get(i)            -- i = 1..#buf, oldest to newest
+	  buf:shift()           -- O(1); drop oldest; returns removed value or nil
+	  buf:clear()
+	  #buf                  -- sample count (use buf.count; #buf may be 0 in Lua 5.1)
+]]
+
+_G.dorn_ring_buffer = _G.dorn_ring_buffer or {}
+
+local mt = {}
+mt.__index = mt
+
+function mt.__len(self)
+	return self.count
+end
+
+function mt:push(value)
+	local w = self.write
+	self.buf[w] = value
+	self.write = w % self.cap + 1
+	if self.count < self.cap then
+		self.count = self.count + 1
+	else
+		self.head = self.write
+	end
+end
+
+function mt:get(i)
+	if i < 1 or i > self.count then
+		return nil
+	end
+	return self.buf[((self.head + i - 2) % self.cap) + 1]
+end
+
+function mt:shift()
+	if self.count <= 0 then
+		return nil
+	end
+	local v = self.buf[self.head]
+	self.head = self.head % self.cap + 1
+	self.count = self.count - 1
+	return v
+end
+
+function mt:clear()
+	self.count = 0
+	self.head = 1
+	self.write = 1
+end
+
+function _G.dorn_ring_buffer.new(capacity)
+	assert(capacity >= 1, "dorn_ring_buffer.new: capacity must be >= 1")
+	return setmetatable({
+		cap = capacity,
+		buf = {},
+		head = 1,
+		write = 1,
+		count = 0,
+	}, mt)
+end

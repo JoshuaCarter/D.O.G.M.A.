@@ -1,0 +1,97 @@
+-- dorn_mcm_banner:begin (managed by sync-dorn-common.sh)
+local DORN_COMMON_VERSION = "dorn_common"
+local function dorn_mcm()
+	return _G.dorn_mcm
+end
+-- dorn_mcm_banner:end
+
+function on_mcm_load()
+	local MCM = dorn_mcm()
+	return {
+		id = "dorn_prone_fix",
+		text = "ui_mcm_menu_dorn_prone_fix",
+		gr = {
+			{
+				id = "main",
+				sh = true,
+				text = "Main",
+				gr = MCM.with_header({
+					{
+						id = "hide_prone_bones",
+						type = "check",
+						val = 1,
+						def = true,
+						hint = "dorn_prone_fix_hide_prone_bones",
+					},
+					{
+						id = "prone_damage_mult",
+						type = "track",
+						val = 2,
+						min = 1,
+						max = 2,
+						step = 0.05,
+						def = 1.2,
+						hint = "dorn_prone_fix_prone_damage_mult",
+					},
+				}),
+			},
+			{
+				id = "development",
+				sh = true,
+				text = "Development",
+				gr = MCM.with_header({
+					{
+						id = "heights_description",
+						type = "desc",
+						text = "Don't change camera heights unless you know what you're doing",
+					},
+					{
+						id = "cam_height_stand",
+						type = "track",
+						val = 2,
+						min = 0,
+						max = 2,
+						step = 0.01,
+						def = 1.65,
+						hint = "dorn_prone_fix_cam_height_stand",
+					},
+					{
+						id = "cam_height_crouch",
+						type = "track",
+						val = 2,
+						min = 0,
+						max = 2,
+						step = 0.01,
+						def = 1.2,
+						hint = "dorn_prone_fix_cam_height_crouch",
+					},
+					{
+						id = "cam_height_prone",
+						type = "track",
+						val = 2,
+						min = 0,
+						max = 2,
+						step = 0.01,
+						def = 0.45,
+						hint = "dorn_prone_fix_cam_height_prone",
+					},
+					{ id = "line_debug", type = "line" },
+					{
+						id = "debug_overlay",
+						type = "check",
+						val = 1,
+						def = false,
+						hint = "dorn_prone_fix_debug_overlay",
+					},
+					{
+						id = "debug_log",
+						type = "check",
+						val = 1,
+						def = false,
+						hint = "dorn_prone_fix_debug_log",
+					},
+				}),
+			},
+		},
+	}
+end

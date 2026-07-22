@@ -1,0 +1,682 @@
+-- Dorn's Fast Travel: MCM config, callbacks, and PDA map menu wiring.
+-- Module libs load first as 01_*.script … (zzzz_dogma_travel_fast_travel_*)
+
+local MOD_ID = "dorn_fast_travel"
+local DORN_COMMON_VERSION = "dorn_common" -- managed by sync-dorn-common.sh
+_G.dft_config = _G.dft_config or {}
+local dft_config = _G.dft_config
+local dft = _G.dft
+
+-- Forward declarations for this file's private (non-exported) helpers, so they can
+-- reference each other regardless of definition order below. refresh_active_config and
+-- abort_journey are the only two functions here any other DFT script calls, so they
+-- alone stay bare globals (see the publish block at the end of this file). on_game_start
+-- is NOT in this list - X-Ray calls it directly per-file at boot (see
+-- dorn_common_f575cc9b.script's header comment), so it must stay a real bare top-level
+-- function, never a local, even though no other DFT script calls it by name.
+local mcm_option_path, get_config, actor_on_before_hit, on_option_change,
+    on_loading_screen_dismissed, on_loading_screen_key_prompt, actor_on_first_update, menu_item_is_ours,
+    strip_own_menu_items, add_cannot_travel_item, add_guide_menu_item,
+    add_travel_menu_items, on_map_right_click, on_map_spot_menu_add_property_impl,
+    on_map_spot_menu_add_property, on_map_spot_menu_property_clicked, on_key_press
+
+local MCM_SECTION_MAIN = "main"
+local MCM_SECTION_DEV = "development"
+
+local MCM_DEV_KEYS = {
+    debug_overlay       = true,
+    debug_log           = true,
+    path_preview        = true,
+    sneaking_level_up   = true,
+    sneaking_level_down = true,
+    coarse_nav_build    = true,
+    coarse_nav_rebuild_on_load = true,
+}
+
+-- ============================================================
+-- 2. Configuration
+-- ============================================================
+mcm_option_path = function(key)
+    local section = MCM_DEV_KEYS[key] and MCM_SECTION_DEV or MCM_SECTION_MAIN
+    return section .. "/" .. key
+end
+
+local get_config_defaults = {
+    message_duration = 30,
+    debug_overlay    = false,
+    debug_log        = false,
+    path_preview     = false,
+    block_transition_in_combat = true,
+    show_ambush_range        = false,
+    coarse_nav_rebuild_on_load = false,
+}
+
+get_config = function(key)
+    local dft_dorn = _G.dft and _G.dft.dorn
+    if dft_dorn and dft_dorn.mcm then
+        return dft_dorn.mcm.get(MOD_ID, mcm_option_path(key), get_config_defaults[key])
+    end
+    return get_config_defaults[key]
+end
+
+local function load_config()
+    dft_config.debug_overlay = get_config("debug_overlay") == true
+    dft_config.debug_log = get_config("debug_log") == true
+    local pp = get_config("path_preview")
+    dft_config.path_preview = (pp == true or pp == 1)
+    local btic = get_config("block_transition_in_combat")
+    dft_config.block_transition_in_combat = not (btic == false or btic == 0)
+    local sar = get_config("show_ambush_range")
+    dft_config.show_ambush_range = (sar == true or sar == 1)
+    if not dft_config.show_ambush_range and dft_clear_ambush_range_circle then
+        dft_clear_ambush_range_circle()
+    end
+    local dft_dorn = _G.dft and _G.dft.dorn
+    dft_config.sneaking_level_up = dft_dorn and dft_dorn.mcm
+        and dft_dorn.mcm.key(MOD_ID, MCM_SECTION_DEV .. "/sneaking_level_up", nil)
+    dft_config.sneaking_level_down = dft_dorn and dft_dorn.mcm
+        and dft_dorn.mcm.key(MOD_ID, MCM_SECTION_DEV .. "/sneaking_level_down", nil)
+    dft_config.coarse_nav_build = dft_dorn and dft_dorn.mcm
+        and dft_dorn.mcm.key(MOD_ID, MCM_SECTION_DEV .. "/coarse_nav_build", nil)
+    dft_config.coarse_nav_rebuild_on_load = get_config("coarse_nav_rebuild_on_load") == true
+    if dft_dorn and dft_dorn.dbg and dft_dorn.dbg.set_enabled then
+        dft_dorn.dbg.set_enabled(MOD_ID, dft_config.debug_overlay)
+    end
+    if not dft_config.debug_overlay and dft then
+        dft._debug_overlay_msg = nil
+    end
+    if _G.dft_coarse_nav_sync_display then
+        pcall(_G.dft_coarse_nav_sync_display)
+    end
+    if _G.refresh_active_config then
+        _G.refresh_active_config()
+    elseif refresh_active_config then
+        refresh_active_config()
+    end
+    if _G.dft_ensure_sneaking_skill_options then
+        _G.dft_ensure_sneaking_skill_options()
+    end
+end
+
+refresh_active_config = function()
+    local dft_dorn = _G.dft and _G.dft.dorn
+    local msg_dur = 30
+    if dft_dorn and dft_dorn.mcm then
+        msg_dur = dft_dorn.mcm.number(MOD_ID, "main/message_duration", 30)
+    else
+        msg_dur = tonumber(get_config("message_duration")) or 30
+    end
+
+    dft.active_config = {
+        message_duration = msg_dur,
+    }
+    return dft.active_config
+end
+
+-- Damage cancel during travel is handled in dft_actor_on_update (health snapshot vs 1% threshold).
+-- Post-teleport invuln is handled by dft_is_safety_active() below.
+actor_on_before_hit = function(shit, bone_id)
+    if dft_is_safety_active() then
+        dft_log("Damage blocked by travel safety. Original power: %f, type: %d", shit.power, shit.type)
+        shit.power = 0
+    end
+end
+
+on_option_change = function()
+    dft_log("Options changed, refreshing config...")
+    load_config()
+end
+
+local function abort_journey(reason)
+    if not dft.is_traveling then return end
+    if not (db.actor and db.actor:alive()) then return end
+
+    dft_close_pda_for_travel()
+
+    local ratio = 0
+    if dft.travel_dist and dft.travel_dist > 0 then
+        ratio = math.min(dft.current_dist / dft.travel_dist, 1.0)
+    end
+    dft_process_refund(ratio)
+
+    dft_log("Journey cancelled (%.0f%% complete, reason=%s) - actor stays in place.", ratio * 100, tostring(reason or "manual"))
+    dft_cleanup_dots()
+    dft_stop_travel_logic()
+    dft_clear()
+
+    if reason == "damage" then
+        dft_msg(dft_str("dft_msg_journey_cancelled_damage"), "warning")
+    else
+        local cancel_opts = { outcome = "cancelled" }
+        dft_msg(dft_journey_result_message(cancel_opts), dft_journey_result_style(cancel_opts))
+    end
+
+    pcall(function() save_var(db.actor, "surge_immuned", false) end)
+end
+
+function on_game_start()
+    local ok, err = xpcall(function()
+        if not _G.dft then
+            printf("[DFT] FATAL: core module failed to publish _G.dft")
+            return
+        end
+        local common = _G[DORN_COMMON_VERSION]
+        if not (common and common.load) then
+            printf("[DFT] FATAL: %s not loaded (is Dorns_Common enabled?)", DORN_COMMON_VERSION)
+            return
+        end
+        local dft_dorn = common.load(MOD_ID)
+        _G.dft.dorn = dft_dorn
+        load_config()
+        dft_log("Starting on_game_start registration...")
+        dft_build_level_names_registry()
+        dft.right_click_avail = (_G.COnRightClickMap ~= nil)
+        if dft.right_click_avail then
+            RegisterScriptCallback("on_map_right_click", on_map_right_click)
+            dft_log("on_map_right_click registered (modded PDA map clicks).")
+        end
+        RegisterScriptCallback("actor_on_update",                dft_actor_on_update)
+        RegisterScriptCallback("actor_on_first_update",          actor_on_first_update)
+        RegisterScriptCallback("actor_on_before_hit",            actor_on_before_hit)
+        RegisterScriptCallback("on_key_press",                   on_key_press)
+        RegisterScriptCallback("on_loading_screen_dismissed",    on_loading_screen_dismissed)
+        RegisterScriptCallback("on_loading_screen_key_prompt",   on_loading_screen_key_prompt)
+        if dft_on_level_changing then
+            RegisterScriptCallback("on_level_changing", dft_on_level_changing)
+        end
+        if _G.dft_coarse_nav_on_level_change then
+            RegisterScriptCallback("on_level_changing", _G.dft_coarse_nav_on_level_change)
+        end
+        if dft_install_transition_gates then
+            dft_install_transition_gates()
+        end
+        RegisterScriptCallback("map_spot_menu_add_property",     on_map_spot_menu_add_property)
+        RegisterScriptCallback("map_spot_menu_property_clicked", on_map_spot_menu_property_clicked)
+        RegisterScriptCallback("on_option_change",               on_option_change)
+        RegisterScriptCallback("on_before_fast_travel",        dft_block_fft_travel)
+        RegisterScriptCallback("save_state",                 dft_on_save_state)
+        RegisterScriptCallback("load_state",                 dft_on_load_state)
+        RegisterScriptCallback("save_state",                 dft_persist_dots)
+        RegisterScriptCallback("load_state",                 dft_restore_dots)
+        dft_log("Callbacks registered.")
+        dft_log("session start | debug_log=%s", tostring(dft_config.debug_log))
+
+        -- Initial config load
+        on_option_change()
+
+        -- BHS travel/sleep safety integration (pure monkey-patch to prevent BHS limb damage on travel/sleep)
+        if zzz_player_injuries and zzz_player_injuries.actor_on_update then
+            dft_log("Hooking BHS zzz_player_injuries.actor_on_update for travel safety...")
+            local original_bhs_update = zzz_player_injuries.actor_on_update
+            local bhs_idx = nil
+            local last_game_time = nil
+
+            local function get_bhs_myhealth_index()
+                local idx = 1
+                while true do
+                    local name, val = debug.getupvalue(original_bhs_update, idx)
+                    if not name then break end
+                    if name == "myhealth" then
+                        return idx
+                    end
+                    idx = idx + 1
+                end
+                return nil
+            end
+
+            zzz_player_injuries.actor_on_update = function(...)
+                local curr_game_time = game.get_game_time()
+                local time_jump = false
+                if last_game_time then
+                    local time_diff = curr_game_time:diffSec(last_game_time)
+                    if time_diff > 30 then
+                        time_jump = true
+                    end
+                end
+                last_game_time = curr_game_time
+
+                if time_jump or dft_is_safety_active() then
+                    if not bhs_idx then
+                        bhs_idx = get_bhs_myhealth_index()
+                    end
+                    if bhs_idx and db.actor then
+                        debug.setupvalue(original_bhs_update, bhs_idx, db.actor.health)
+                    end
+                end
+                original_bhs_update(...)
+            end
+        end
+        printf("[DFT] main module loaded")
+    end, debug.traceback)
+    if not ok then
+        printf("[DFT] FATAL on_game_start: %s", tostring(err))
+    end
+end
+
+on_loading_screen_dismissed = function()
+    dft.player_ready = true
+end
+
+-- Hard gate: ensure coarse nav cache for this level before play (blocks until sync build if needed).
+on_loading_screen_key_prompt = function()
+    local ok, err = pcall(function()
+        if dft_build_dynamic_map then
+            pcall(dft_build_dynamic_map)
+        end
+        local force = dft_config and dft_config.coarse_nav_rebuild_on_load == true
+        if _G.dft_coarse_nav_ensure_ready then
+            _G.dft_coarse_nav_ensure_ready(force)
+        end
+    end)
+    if not ok then
+        printf("[DFT] on_loading_screen_key_prompt ERROR: %s", tostring(err))
+    end
+end
+
+actor_on_first_update = function()
+    dft_log("actor_on_first_update triggered.")
+    dft_unregister_fft_map_handlers()
+
+    -- Drop any cached PDA-attached sneak-cooldown label - the live PDA dialog object can be
+    -- recreated across a level load, and reusing a stale reference to the old one would crash.
+    dft._sneak_cd_label = nil
+
+    dft_build_dynamic_map()
+
+    -- Coarse nav is gated on on_loading_screen_key_prompt; try_load here is a harmless cache-only fallback.
+    CreateTimeEvent("dft", "warm_graph_cache", 1.5, function()
+        if _G.dft_coarse_nav_try_load and not (_G.dft_coarse_nav_graph_ready and _G.dft_coarse_nav_graph_ready()) then
+            pcall(_G.dft_coarse_nav_try_load)
+        end
+        return true
+    end)
+
+    -- Silent orphan sweep 3s after load to catch dots stuck from previous session.
+    -- include_path_spots=true is required here - our journey/preview dots use the
+    -- dft_path_dot* spot names, not primary_object/green_location, so without this
+    -- the sweep silently never matched the very dots it exists to clean up.
+    CreateTimeEvent("dft", "orphan_sweep", 3.0, function()
+        if not (db.actor and alife() and not dft.is_traveling) then return true end
+        local purged = dft_purge_stuck_dot_pdas(true)
+
+        -- Precise cleanup: release the exact dot IDs snapshotted at whatever save
+        -- produced this load (see dft_persist_dots), regardless of whether the pattern
+        -- scan above would have caught them (e.g. a spot-add that failed silently).
+        if dft.pending_dot_cleanup then
+            for _, obj_id in pairs(dft.pending_dot_cleanup) do
+                pcall(function()
+                    dft_remove_path_spots(obj_id)
+                    if level.map_has_object_spot(obj_id, "primary_object") ~= 0 then
+                        level.map_remove_object_spot(obj_id, "primary_object")
+                    end
+                    if level.map_has_object_spot(obj_id, "green_location") ~= 0 then
+                        level.map_remove_object_spot(obj_id, "green_location")
+                    end
+                    local obj = alife_object(obj_id)
+                    if obj then alife_release(obj) end
+                end)
+                purged = purged + 1
+            end
+            dft.pending_dot_cleanup = nil
+        end
+
+        if purged > 0 then
+            dft_log("Auto orphan sweep: removed %d stuck dot(s)", purged)
+        end
+        return true
+    end)
+
+
+    local pos, _, _, final_gvid = dft_load()
+    if pos and final_gvid then
+        dft.player_ready = false
+        -- Pre-activate safety immediately on first update for the level transition!
+        dft_set_safety_active(60.0)
+        if db.actor then
+            -- surge_immuned removed: it causes GAMMA to loop surges via start(true)
+            dft_log("Surge immunity pre-activated on first update for transition.")
+        end
+    end
+
+    local resume_start_tg = nil
+    CreateTimeEvent("dft", "resume", 1.0, function()
+        if not resume_start_tg then
+            resume_start_tg = time_global()
+            return false
+        end
+        if time_global() - resume_start_tg > 60000 then
+            dft_log("Resume timed out after 60 seconds - clearing stale journey state")
+            dft_clear()
+            return true
+        end
+        if not (db.actor and alife()) then return false end
+        if not dft.player_ready then return false end
+
+        local pos, lvid, gvid, final_gvid, f_pos, f_lvid, ratio = dft_load()
+        if not pos or not final_gvid then
+            dft_log("No pending journey found on load.")
+            return true
+        end
+
+        -- v2.0.7: IMMEDIATELY clear the persistent traveling flag after reading it.
+        -- This prevents infinite loading screen loops: if we crash or the travel
+        -- completes instantly (same-level arrival), the next load won't re-trigger.
+        save_var(db.actor, dft_save_vars.traveling, false)
+
+        -- A journey mid-flight in a loaded save is an interruption like any other (ambush,
+        -- damage, closing the PDA) - it does NOT resume. The PDA is obviously closed right
+        -- after a load anyway, and forcing it back open would defeat the "you have to keep
+        -- it open yourself" rule. The player just has to start a new journey from here.
+        -- Time only ever moves forward when we actually teleport the player somewhere (arrival,
+        -- ambush, emission interrupt) - a cancel is a cancel, so no time is skipped here either,
+        -- same as closing the PDA or taking damage cancels the trip with no time jump.
+        ratio = math.max(0, math.min(ratio or 0, 1.0))
+        dft_log("Journey was mid-flight at save time (%.0f%% complete) - ending it, not resuming.", ratio * 100)
+
+        dft_set_safety_active(60.0)
+
+        -- v1.9.4: Ensure companions are with the actor immediately after level load
+        dft_teleport_companions(db.actor:position(), db.actor:level_vertex_id(), db.actor:game_vertex_id())
+
+        dft_process_refund(ratio)
+
+        pcall(function() if level then level.enable_input() end end)
+
+        dft_msg(dft_journey_result_message({ outcome = "cancelled" }), dft_journey_result_style({ outcome = "cancelled" }))
+        dft_clear()
+        return true
+    end)
+end
+menu_item_is_ours = function(text)
+    if not text or text == "" then return false end
+    local markers = {
+        dft_str("dft_menu_travel_here"),
+        dft_str("dft_menu_sneaky_travel"),
+        dft_str("dft_menu_hire_guide"),
+        dft_str("dft_msg_cross_zone_denied"),
+        dft_str("dft_msg_cannot_travel_here"),
+        dft_str("dft_msg_too_encumbered"),
+    }
+    for i = 1, #markers do
+        if string.find(text, markers[i], 1, true) then return true end
+    end
+    return false
+end
+
+strip_own_menu_items = function(pui)
+    pcall(function()
+        if not (pui and pui.GetItemsCount and pui.GetItemByIndex and pui.RemoveItem) then return end
+        local count = pui:GetItemsCount()
+        for i = count - 1, 0, -1 do
+            local item = pui:GetItemByIndex(i)
+            if item then
+                local text = ""
+                pcall(function()
+                    local tc = item:GetTextItem()
+                    if tc then text = tc:GetText() or "" end
+                end)
+                if menu_item_is_ours(text) then
+                    pui:RemoveItem(item)
+                end
+            end
+        end
+    end)
+end
+
+add_cannot_travel_item = function(pui, id, reason)
+    pui:AddItem(dft_str("dft_msg_cannot_travel_here"))
+    dft_log("menu: cannot travel id=%s reason=%s", tostring(id), tostring(reason or "unknown"))
+    dft_clear_path_preview()
+    return true
+end
+
+add_guide_menu_item = function(pui, id, se_obj)
+    local dist, from_lid, to_lid = dft_guide_distance(nil, se_obj, id)
+    local guide_text = dft_str("dft_menu_hire_guide")
+    local guide_cost = dft_calc_guide_cost(dist, from_lid, to_lid)
+    local dur_str = dft_format_duration(dft_calc_guide_duration_secs(dist) / 60)
+    local cost_str = (guide_cost > 0) and string.format(dft_str("dft_ru_amount"), guide_cost) or dft_str("dft_menu_free")
+    pui:AddItem(string.format(dft_str("dft_menu_guide_format"), guide_text, dur_str, cost_str))
+    dft_log("menu: guide id=%s cost=%d dist=%.0f dur=%s", tostring(id), guide_cost, dist, dur_str)
+end
+
+add_travel_menu_items = function(pui, id, is_lc, include_sneak)
+    if dft_actor_too_encumbered_to_move() then
+        pui:AddItem(dft_str("dft_msg_too_encumbered"))
+        dft_clear_path_preview()
+        dft_log("menu: encumbered - walk/sneak blocked id=%s", tostring(id))
+        return false
+    end
+    local specs = dft_journey_specs_for_object(id, is_lc)
+    if not specs then
+        dft_log("menu: no specs for id=%s (lc=%s)", tostring(id), tostring(is_lc))
+        return false
+    end
+    pui:AddItem(dft_format_travel_menu("dft_menu_travel_here", specs.dist_str, specs.dur_str, specs.sneak_normal))
+    if include_sneak ~= false then
+        local sneak_cd_remaining = dft_sneak_cooldown_remaining_secs and dft_sneak_cooldown_remaining_secs() or 0
+        if sneak_cd_remaining > 0 then
+            local wait_str = dft_format_duration(sneak_cd_remaining / 60)
+            pui:AddItem(string.format(dft_str("dft_menu_sneak_cooldown_format"), dft_str("dft_menu_sneaky_travel"), wait_str))
+        else
+            pui:AddItem(dft_format_travel_menu("dft_menu_sneaky_travel", specs.dist_str, specs.sneaky_dur_str, specs.sneak_sneaky))
+        end
+    end
+    dft_log("menu: added travel items id=%s dist=%.0f dur=%s sneak=%s", tostring(id), specs.dist or 0, specs.dur_str or "?", tostring(include_sneak ~= false))
+    return true
+end
+
+
+on_map_right_click = function(property_ui, map_table)
+    if dft.right_click_avail then
+        dft.menu_open_seq = (dft.menu_open_seq or 0) + 1
+        dft.menu_resolve_cache = nil
+        dft.menu_path_cache = nil
+    end
+    dft_report_map_click(map_table, nil)
+end
+
+on_map_spot_menu_add_property_impl = function(pui, id, ln, hint)
+    local tostr = tostring
+    dft_unregister_fft_map_handlers()
+
+    if not pui then
+        dft_log_error("menu: pui is nil")
+        return false
+    end
+
+    if not dft.right_click_avail then
+        dft.menu_open_seq = (dft.menu_open_seq or 0) + 1
+        dft.menu_resolve_cache = nil
+        dft.menu_path_cache = nil
+        dft_report_map_click({ object_id = id, level_name = ln, pos = dft.last_map_click_pos }, hint)
+    elseif hint then
+        dft_log("map-spot hint=%s id=%s (rclick hook active)", tostr(hint), tostr(id))
+    end
+
+    dft.last_menu_target_id = id
+    strip_own_menu_items(pui)
+
+    local click_pos = dft.last_map_click_pos
+    if dft_resolve_menu_spot_from_click and click_pos then
+        id, ln = dft_resolve_menu_spot_from_click(id, ln, click_pos, alife_object(id))
+    end
+
+    local se_obj = alife_object(id)
+    dft_log_menu_diag(id, se_obj, ln, hint)
+
+    if dft.is_traveling then
+        -- Journey is only cancelled by closing the PDA (or taking damage) now - no menu
+        -- items to add while a trip is already in progress.
+        return false
+    end
+
+    local is_lc = dft_is_pda_transition(id, se_obj)
+            or (dft_is_registry_transition_door and dft_is_registry_transition_door(id))
+    local is_campfire = dft_is_campfire(id, se_obj)
+    local is_base = dft_is_base(id, se_obj)
+    local is_stash = dft_is_player_stash(id, se_obj)
+    local cross_zone = dft_is_cross_zone_destination(se_obj, ln)
+    dft.last_menu_target_ln = ln
+
+    dft_log("menu: #%d id=%s ln=%s hint=%s cur=%s lc=%s base=%s campfire=%s stash=%s cross=%s",
+        dft.menu_open_seq, tostr(id), tostr(ln), tostr(hint or "none"),
+        tostr(level and level.name and level.name()),
+        tostr(is_lc), tostr(is_base), tostr(is_campfire), tostr(is_stash), tostr(cross_zone))
+
+    local can_preview, preview_lc = dft_preview_eligible(id, se_obj, ln)
+
+    local function resolve_base_or_campfire()
+        local target, terr = dft_resolve_travel_target(id, ln, click_pos)
+        if not target then
+            target = dft_fallback_travel_target(id, se_obj, dft_object_on_actor_level(se_obj, ln))
+            if target then
+                dft_log("menu: fallback target id=%s (was %s)", tostring(id), tostring(terr))
+            elseif terr then
+                dft_log("menu: resolve warn id=%s err=%s - showing travel anyway", tostring(id), tostring(terr))
+            end
+        end
+        return target
+    end
+
+    local function maybe_preview(is_lc_flag)
+        pcall(function()
+            if can_preview then
+                dft_build_path_preview(id, is_lc_flag)
+            else
+                dft_clear_path_preview()
+            end
+        end)
+    end
+
+    if is_lc then
+        local target, terr = dft_resolve_travel_target(id, ln, click_pos)
+        if not target then
+            if terr == "lc_wrong_level" or terr == "invalid_id" or terr == "no_object" then
+                dft_log("menu: skip lc id=%s (%s, off-level or unavailable)", tostr(id), tostr(terr))
+                dft_clear_path_preview()
+                return false
+            end
+            return add_cannot_travel_item(pui, id, terr)
+        end
+        dft.last_menu_target_id = id
+        maybe_preview(true)
+        return add_travel_menu_items(pui, id, true)
+    end
+
+    if is_campfire then
+        if cross_zone then
+            dft_clear_path_preview()
+            dft_log("menu: skip campfire (other zone)")
+            return false
+        end
+        resolve_base_or_campfire()
+        dft.last_menu_target_id = id
+        maybe_preview(false)
+        return add_travel_menu_items(pui, id, false)
+    end
+
+    if is_base then
+        if cross_zone then
+            resolve_base_or_campfire()
+            dft.last_menu_target_id = id
+            dft_clear_path_preview()
+            add_guide_menu_item(pui, id, se_obj)
+            return true
+        end
+        resolve_base_or_campfire()
+        dft.last_menu_target_id = id
+        maybe_preview(false)
+        local ok = add_travel_menu_items(pui, id, false)
+        add_guide_menu_item(pui, id, se_obj)
+        return ok
+    end
+
+    if is_stash then
+        resolve_base_or_campfire()
+        dft.last_menu_target_id = id
+        dft_clear_path_preview()
+        dft_strip_backpack_travel_menu_items(pui)
+        add_guide_menu_item(pui, id, se_obj)
+        return true
+    end
+
+    if dft_is_place_like_spot(se_obj) then
+        dft_log("menu: unclassified place-like spot id=%s - showing cannot-travel", tostr(id))
+        return add_cannot_travel_item(pui, id, "not_a_destination")
+    end
+
+    dft_log("menu: skip (not a travel destination)")
+    dft_clear_path_preview()
+    return false
+end
+
+on_map_spot_menu_add_property = function(pui, id, ln, hint)
+    local ok, err = xpcall(function()
+        on_map_spot_menu_add_property_impl(pui, id, ln, hint)
+    end, debug.traceback)
+    if not ok then
+        dft_log_error("map_spot_menu_add_property error (id=%s ln=%s): %s", tostring(id), tostring(ln), tostring(err))
+    end
+end
+
+on_map_spot_menu_property_clicked = function(pui, id, ln, t)
+    local ok, err = xpcall(function()
+        local result = t or (pui and pui.GetResult and pui:GetResult())
+        dft_log("menu click: id=%s ln=%s result=%s", tostring(id), tostring(ln), tostring(result))
+        if not result then return end
+
+        id = dft.last_menu_target_id or id
+        ln = dft.last_menu_target_ln or ln
+        local se_click = alife_object(id)
+        local is_lc = dft_is_pda_transition(id, se_click)
+
+        local target, terr = dft_resolve_travel_target(id, ln, dft.last_map_click_pos)
+        if not target and not is_lc then
+            target = dft_fallback_travel_target(id, se_click, dft_object_on_actor_level(se_click, ln))
+        end
+        if not target then
+            dft_log_error("menu click: no target for id=%s err=%s", tostring(id), tostring(terr))
+            return
+        end
+
+        local pos, lvid, gvid = target.pos, target.lvid, target.gvid
+
+        if string.find(result, dft_str("dft_menu_sneaky_travel"), 1, true) then
+            dft.travel_mode = "sneaky"
+            dft.final_pos  = vector():set(pos.x, pos.y, pos.z)
+            dft.final_lvid = lvid
+            dft.last_menu_target_id = id
+            dft_start_travel_sequence(pos, lvid, gvid, is_lc, gvid)
+        elseif string.find(result, dft_str("dft_menu_travel_here"), 1, true) then
+            dft.travel_mode = "normal"
+            dft.final_pos  = vector():set(pos.x, pos.y, pos.z)
+            dft.final_lvid = lvid
+            dft.last_menu_target_id = id
+            dft_start_travel_sequence(pos, lvid, gvid, is_lc, gvid)
+        elseif string.find(result, dft_str("dft_menu_hire_guide"), 1, true) then
+            dft_log("Hiring guide...")
+            dft_do_guide_travel(id, ln)
+        end
+    end, debug.traceback)
+    if not ok then
+        dft_log_error("map_spot_menu_property_clicked error (id=%s ln=%s): %s", tostring(id), tostring(ln), tostring(err))
+    end
+end
+
+on_key_press = function(key)
+    dft.player_ready = true
+    if _G.dft_handle_dev_keys then _G.dft_handle_dev_keys(key) end
+end
+
+-- dft_publish_to_global - every other 01_*.script module explicitly re-exports its
+-- functions this way because a bare top-level "function foo()" is NOT automatically visible from
+-- another script file here. These two are the only functions in this file any other DFT script
+-- calls (abort_journey from 08_travel.script to cancel a journey when
+-- the PDA closes; refresh_active_config from 01_core.script/08_travel.script
+-- to read the message-duration MCM setting) - everything else here (menu building, event
+-- callbacks) is only ever used within this same file, so it stays a private local function.
+do
+    _G.dft_abort_journey = abort_journey
+    _G.refresh_active_config = refresh_active_config
+end

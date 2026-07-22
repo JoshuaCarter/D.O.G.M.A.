@@ -1,0 +1,238 @@
+--[[
+	Dorn debug helpers (namespace module, no globals).
+
+	Loaded via dorn_common; use DORN.dbg from DORN_COMMON_VERSION.load().
+
+	overlay(source, slot, msg, tag_or_color) — on-screen HUD slots (colored).
+	log(mod_id, msg)                         — plain printf to the game log file only.
+
+	source is the mod id (e.g. "dorn_bleed_fix"). slot is an order number or
+	{ order, color } table. tag is optional and becomes "[tag] " before msg.
+
+	set_enabled(source, state) gates the overlay for that source.
+]]
+
+local HUD_STATIC = "debug_info"
+local ORIGIN_X = 10
+local ORIGIN_Y = 200
+
+local COLORS = {
+	white       = "%c[255,255,255,255]",
+	light_gray  = "%c[255,210,210,210]",
+	gray        = "%c[255,160,160,160]",
+	dark_gray   = "%c[255,96,96,96]",
+	black       = "%c[255,16,16,16]",
+	light_red   = "%c[255,255,140,140]",
+	red         = "%c[255,255,64,64]",
+	dark_red    = "%c[255,170,32,32]",
+	light_green = "%c[255,150,255,150]",
+	green       = "%c[255,96,224,96]",
+	dark_green  = "%c[255,40,150,40]",
+	light_blue  = "%c[255,150,190,255]",
+	blue        = "%c[255,96,160,255]",
+	dark_blue   = "%c[255,48,90,200]",
+	light_yellow= "%c[255,255,240,150]",
+	yellow      = "%c[255,255,224,64]",
+	dark_yellow = "%c[255,200,170,32]",
+	light_cyan  = "%c[255,170,240,255]",
+	cyan        = "%c[255,96,224,255]",
+	dark_cyan   = "%c[255,40,160,180]",
+	light_orange= "%c[255,255,200,130]",
+	orange      = "%c[255,255,160,48]",
+	dark_orange = "%c[255,200,110,24]",
+	light_purple= "%c[255,210,170,255]",
+	purple      = "%c[255,170,96,255]",
+	dark_purple = "%c[255,110,48,170]",
+	light_pink  = "%c[255,255,190,225]",
+	pink        = "%c[255,255,128,200]",
+	dark_pink   = "%c[255,200,72,140]",
+	magenta     = "%c[255,255,64,255]",
+	teal        = "%c[255,32,170,160]",
+	lime        = "%c[255,170,255,64]",
+	brown       = "%c[255,150,100,60]",
+}
+
+local sources = {}
+
+local function resolve_color(color)
+	if color == nil then
+		return COLORS.white
+	end
+	if type(color) == "string" and color:sub(1, 3) == "%c[" then
+		return color
+	end
+	return COLORS[color] or COLORS.white
+end
+
+function color(color)
+	return resolve_color(color)
+end
+
+local function get_source(source)
+	source = source or "default"
+	if not sources[source] then
+		sources[source] = { enabled = false, slots = {} }
+	end
+	return sources[source]
+end
+
+local function format_tag_prefix(tag)
+	if tag and tag ~= "" then
+		return "[" .. tag .. "] "
+	end
+	return ""
+end
+
+local function parse_slot(slot, msg, fourth)
+	local order, slot_color, text
+	if type(slot) == "table" then
+		order = slot.order or 0
+		slot_color = slot.color
+		text = format_tag_prefix(fourth) .. tostring(msg)
+	else
+		order = slot or 0
+		slot_color = fourth
+		text = tostring(msg)
+	end
+	return order, slot_color, text
+end
+
+local function any_overlay_content()
+	for _, s in pairs(sources) do
+		if s.enabled and next(s.slots) then
+			return true
+		end
+	end
+	return false
+end
+
+local function get_static()
+	local hud = get_hud()
+	if not hud then
+		return nil
+	end
+	local cs = hud:GetCustomStatic(HUD_STATIC)
+	if not cs then
+		hud:AddCustomStatic(HUD_STATIC, true)
+		cs = hud:GetCustomStatic(HUD_STATIC)
+	end
+	return cs
+end
+
+local function clear_overlay()
+	local hud = get_hud()
+	if not hud then
+		return
+	end
+	if hud:GetCustomStatic(HUD_STATIC) then
+		hud:RemoveCustomStatic(HUD_STATIC)
+	end
+end
+
+local function render()
+	if not any_overlay_content() then
+		clear_overlay()
+		return
+	end
+
+	local cs = get_static()
+	if not cs then
+		return
+	end
+	local wnd = cs:wnd()
+	if not wnd then
+		return
+	end
+	wnd:SetWndPos(vector2():set(ORIGIN_X, ORIGIN_Y))
+
+	local names = {}
+	for name, s in pairs(sources) do
+		if s.enabled and next(s.slots) then
+			names[#names + 1] = name
+		end
+	end
+	table.sort(names)
+
+	local lines = {}
+	for _, name in ipairs(names) do
+		local slots = sources[name].slots
+
+		if #lines > 0 then
+			lines[#lines + 1] = ""
+		end
+		lines[#lines + 1] = COLORS.white .. "[" .. name .. "]"
+
+		local max_order = -1
+		for order in pairs(slots) do
+			if order > max_order then
+				max_order = order
+			end
+		end
+		for order = 0, max_order do
+			local slot = slots[order]
+			if slot then
+				lines[#lines + 1] = resolve_color(slot.color) .. slot.msg
+			else
+				lines[#lines + 1] = ""
+			end
+		end
+	end
+
+	if #lines == 0 then
+		wnd:TextControl():SetTextST("")
+		return
+	end
+
+	wnd:TextControl():SetTextST(table.concat(lines, "\\n"))
+end
+
+function set_enabled(source, state)
+	local s = get_source(source)
+	local on = state == true
+	if s.enabled == on then
+		return
+	end
+	s.enabled = on
+
+	if on then
+		printf("[DBG] %s enabled", tostring(source))
+	else
+		printf("[DBG] %s disabled", tostring(source))
+		s.slots = {}
+	end
+
+	render()
+end
+
+function overlay(source, slot, msg, tag_or_color)
+	local s = get_source(source)
+	if not s.enabled then
+		return
+	end
+	local order, slot_color, text = parse_slot(slot, msg, tag_or_color)
+	s.slots[order] = { msg = text, color = slot_color }
+	render()
+end
+
+function log(mod_id, msg)
+	printf("[DBG][%s] %s", tostring(mod_id), tostring(msg))
+end
+
+function clear_source(source)
+	if not source then
+		return
+	end
+	local s = sources[source]
+	if not s then
+		return
+	end
+	s.slots = {}
+	render()
+end
+
+function clear()
+	sources = {}
+	clear_overlay()
+end
+
+getfenv().COLORS = COLORS

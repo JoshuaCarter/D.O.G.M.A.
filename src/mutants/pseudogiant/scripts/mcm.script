@@ -1,0 +1,49 @@
+-- dorn_mcm_banner:begin (managed by sync-dorn-common.sh)
+local DORN_COMMON_VERSION = "dorn_common"
+local function dorn_mcm()
+	return _G.dorn_mcm
+end
+-- dorn_mcm_banner:end
+
+function on_mcm_load()
+	local MCM = dorn_mcm()
+	return {
+		id = "dorn_giant_jump",
+		text = "ui_mcm_menu_dorn_giant_jump",
+		gr = {
+			{
+				id = "main",
+				sh = true,
+				text = "Main",
+				gr = MCM.with_header({
+					{
+						id = "main_description",
+						type = "desc",
+						text = "ui_mcm_dorn_giant_jump_main_description",
+					},
+					{
+						id = "enabled",
+						type = "check",
+						val = 1,
+						def = true,
+						hint = "dorn_giant_jump_enabled",
+					},
+				}),
+			},
+			{
+				id = "development",
+				sh = true,
+				text = "ui_mcm_dorn_giant_jump_development_section",
+				gr = MCM.with_header({
+					{
+						id = "debug_log",
+						type = "check",
+						val = 1,
+						def = false,
+						hint = "dorn_giant_jump_debug_log",
+					},
+				}),
+			},
+		},
+	}
+end

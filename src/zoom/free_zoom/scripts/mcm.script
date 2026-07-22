@@ -1,0 +1,340 @@
+-- dorn_mcm_banner:begin (managed by sync-dorn-common.sh)
+local DORN_COMMON_VERSION = "dorn_common"
+local function dorn_mcm()
+	return _G.dorn_mcm
+end
+-- dorn_mcm_banner:end
+
+local function wads_track(id, hint)
+	return {
+		id = id,
+		type = "track",
+		val = 2,
+		min = 0,
+		max = 50,
+		step = 5,
+		def = 0,
+		hint = hint,
+	}
+end
+
+local function category_wads(cat)
+	return {
+		{ id = "line_wads_" .. cat, type = "line" },
+		{
+			id = "wads_" .. cat .. "_title",
+			type = "title",
+			text = "ui_mcm_dorn_free_zoom_wads_" .. cat .. "_title",
+		},
+		wads_track("wads_" .. cat .. "_irons", "dorn_free_zoom_wads_" .. cat .. "_irons"),
+		wads_track("wads_" .. cat .. "_sight", "dorn_free_zoom_wads_" .. cat .. "_sight"),
+		wads_track("wads_" .. cat .. "_scope", "dorn_free_zoom_wads_" .. cat .. "_scope"),
+	}
+end
+
+function on_mcm_load()
+	local MCM = dorn_mcm()
+	local kb_mod = (ui_mcm and ui_mcm.kb_mod_radio) or "radio_h"
+	local ads_gr = {
+		{
+			id = "ads_description",
+			type = "desc",
+			text = "ui_mcm_dorn_free_zoom_ads_description",
+		},
+		{
+			id = "enabled",
+			type = "check",
+			val = 1,
+			def = true,
+			hint = "dorn_free_zoom_ads_enabled",
+		},
+		{ id = "line_ads_world", type = "line" },
+		{
+			id = "ads_world_header",
+			type = "title",
+			text = "ui_mcm_dorn_free_zoom_ads_world_header",
+		},
+		{
+			id = "ads_zoom",
+			type = "track",
+			val = 2,
+			min = 0,
+			max = 50,
+			step = 1,
+			def = 15,
+			hint = "dorn_free_zoom_ads_zoom",
+		},
+		{
+			id = "exit_ads_clears_free",
+			type = "check",
+			val = 1,
+			def = true,
+			hint = "dorn_free_zoom_exit_ads_clears_free",
+		},
+		{
+			id = "reload_clears_free",
+			type = "check",
+			val = 1,
+			def = true,
+			hint = "dorn_free_zoom_reload_clears_free",
+		},
+		{ id = "line_wads_keys", type = "line" },
+		{
+			id = "wads_keys_header",
+			type = "title",
+			text = "ui_mcm_dorn_free_zoom_wads_keys_header",
+		},
+		{
+			id = "wads_inc_key",
+			type = "key_bind",
+			val = 2,
+			def = -1,
+			hint = "dorn_free_zoom_wads_inc_key",
+		},
+		{
+			id = "wads_dec_key",
+			type = "key_bind",
+			val = 2,
+			def = -1,
+			hint = "dorn_free_zoom_wads_dec_key",
+		},
+		{
+			id = "wads_reset_key",
+			type = "key_bind",
+			val = 2,
+			def = -1,
+			hint = "dorn_free_zoom_wads_reset_key",
+		},
+		{
+			id = "wads_key_mode",
+			type = kb_mod,
+			val = 2,
+			def = 0,
+			hint = "dorn_free_zoom_wads_key_mode",
+			content = {
+				{ 0, "dorn_free_zoom_wads_mode_press" },
+				{ 1, "dorn_free_zoom_wads_mode_hold" },
+			},
+		},
+		{
+			id = "wads_key_modifier",
+			type = kb_mod,
+			val = 2,
+			def = 0,
+			hint = "mcm_kb_modifier",
+			content = {
+				{ 0, "mcm_kb_mod_none" },
+				{ 1, "mcm_kb_mod_shift" },
+				{ 2, "mcm_kb_mod_ctrl" },
+				{ 3, "mcm_kb_mod_alt" },
+			},
+		},
+		{ id = "line_wads_defaults", type = "line" },
+		{
+			id = "wads_defaults_header",
+			type = "title",
+			text = "ui_mcm_dorn_free_zoom_wads_defaults_header",
+		},
+		{
+			id = "use_global_wads",
+			type = "check",
+			val = 1,
+			def = false,
+			hint = "dorn_free_zoom_use_global_wads",
+		},
+		wads_track("global_wads", "dorn_free_zoom_global_wads"),
+	}
+	for _, cat in ipairs({ "pistol", "smg", "rifle", "sniper", "shotgun", "explosive" }) do
+		for _, row in ipairs(category_wads(cat)) do
+			ads_gr[#ads_gr + 1] = row
+		end
+	end
+
+	return {
+		id = "dorn_free_zoom",
+		text = "ui_mcm_menu_dorn_free_zoom",
+		gr = {
+			{
+				id = "free_zoom",
+				sh = true,
+				text = "ui_mcm_dorn_free_zoom_free_zoom_section",
+				gr = MCM.with_header({
+					{
+						id = "zoom_description",
+						type = "desc",
+						text = "ui_mcm_dorn_free_zoom_zoom_description",
+					},
+					{
+						id = "enabled",
+						type = "check",
+						val = 1,
+						def = true,
+						hint = "dorn_free_zoom_enabled",
+					},
+					{ id = "line_zoom", type = "line" },
+					{
+						id = "zoom_header",
+						type = "title",
+						text = "ui_mcm_dorn_free_zoom_zoom_header",
+					},
+					{
+						id = "free_zoom",
+						type = "track",
+						val = 2,
+						min = 0,
+						max = 50,
+						step = 1,
+						def = 50,
+						hint = "dorn_free_zoom_free_zoom",
+					},
+					{
+						id = "move_speed",
+						type = "track",
+						val = 2,
+						min = 0,
+						max = 70,
+						step = 1,
+						def = 70,
+						hint = "dorn_free_zoom_move_speed",
+					},
+					{
+						id = "empty_hands_only",
+						type = "check",
+						val = 1,
+						def = false,
+						hint = "dorn_free_zoom_empty_hands_only",
+					},
+					{ id = "line_keybind", type = "line" },
+					{
+						id = "keybind_header",
+						type = "title",
+						text = "ui_mcm_dorn_free_zoom_keybind_header",
+					},
+					{
+						id = "zoom_key",
+						type = "key_bind",
+						val = 2,
+						def = -1,
+						hint = "dorn_free_zoom_zoom_key",
+					},
+					{
+						id = "zoom_key_mode",
+						type = kb_mod,
+						val = 2,
+						def = 0,
+						hint = "dorn_free_zoom_zoom_key_mode",
+						content = {
+							{ 0, "dorn_free_zoom_mode_single" },
+							{ 1, "dorn_free_zoom_mode_double" },
+							{ 2, "dorn_free_zoom_mode_long" },
+							{ 3, "dorn_free_zoom_mode_hold" },
+						},
+					},
+					{
+						id = "zoom_key_modifier",
+						type = kb_mod,
+						val = 2,
+						def = 0,
+						hint = "mcm_kb_modifier",
+						content = {
+							{ 0, "mcm_kb_mod_none" },
+							{ 1, "mcm_kb_mod_shift" },
+							{ 2, "mcm_kb_mod_ctrl" },
+							{ 3, "mcm_kb_mod_alt" },
+						},
+					},
+					{ id = "line_mouse_wheel", type = "line" },
+					{
+						id = "mouse_wheel_header",
+						type = "title",
+						text = "ui_mcm_dorn_free_zoom_mouse_wheel_header",
+					},
+					{
+						id = "rmb_zoom",
+						type = kb_mod,
+						val = 2,
+						def = 0,
+						hint = "dorn_free_zoom_rmb_zoom",
+						content = {
+							{ 0, "dorn_free_zoom_mouse_mode_no" },
+							{ 1, "dorn_free_zoom_mouse_mode_toggle" },
+							{ 2, "dorn_free_zoom_mouse_mode_hold" },
+						},
+					},
+					{
+						id = "mmb_zoom",
+						type = kb_mod,
+						val = 2,
+						def = 0,
+						hint = "dorn_free_zoom_mmb_zoom",
+						content = {
+							{ 0, "dorn_free_zoom_mouse_mode_no" },
+							{ 1, "dorn_free_zoom_mouse_mode_toggle" },
+							{ 2, "dorn_free_zoom_mouse_mode_hold" },
+						},
+					},
+					{
+						id = "scroll_wheel_weapon_warning",
+						type = "desc",
+						text = "ui_mcm_dorn_free_zoom_scroll_wheel_weapon_warning",
+						clr = { 255, 220, 160, 40 },
+					},
+					{
+						id = "scroll_wheel_zoom",
+						type = "check",
+						val = 1,
+						def = false,
+						hint = "dorn_free_zoom_scroll_wheel_zoom",
+					},
+					{
+						id = "scroll_wheel_reverse",
+						type = "check",
+						val = 1,
+						def = false,
+						hint = "dorn_free_zoom_scroll_wheel_reverse",
+					},
+					{
+						id = "scroll_wheel_steps",
+						type = "track",
+						val = 2,
+						min = 1,
+						max = 5,
+						step = 1,
+						def = 1,
+						hint = "dorn_free_zoom_scroll_wheel_steps",
+					},
+					{
+						id = "scroll_wheel_max_gap_ms",
+						type = "track",
+						val = 2,
+						min = 50,
+						max = 500,
+						step = 25,
+						def = 200,
+						hint = "dorn_free_zoom_scroll_wheel_max_gap_ms",
+					},
+				}),
+			},
+			{
+				id = "ads_zoom",
+				sh = true,
+				text = "ui_mcm_dorn_free_zoom_ads_zoom_section",
+				gr = MCM.with_header(ads_gr),
+			},
+			{
+				id = "development",
+				sh = true,
+				text = "ui_mcm_dorn_free_zoom_development_section",
+				gr = MCM.with_header({
+					{
+						id = "debug_log",
+						type = "check",
+						val = 1,
+						def = false,
+						hint = "dorn_free_zoom_debug_log",
+					},
+				}),
+			},
+		},
+	}
+end

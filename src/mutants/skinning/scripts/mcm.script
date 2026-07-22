@@ -1,0 +1,85 @@
+-- dorn_mcm_banner:begin (managed by sync-dorn-common.sh)
+local DORN_COMMON_VERSION = "dorn_common"
+local function dorn_mcm()
+	return _G.dorn_mcm
+end
+-- dorn_mcm_banner:end
+
+function on_mcm_load()
+	local MCM = dorn_mcm()
+	return {
+		id = "dorn_faster_skinning",
+		text = "Dorn's Faster Skinning",
+		gr = {
+			{
+				id = "main",
+				sh = true,
+				text = "Main",
+				gr = MCM.with_header({
+					{
+						id = "enabled",
+						type = "check",
+						val = 1,
+						def = true,
+						hint = "dorn_faster_skinning_enabled",
+					},
+					{
+						id = "skin_speed_multiplier",
+						type = "track",
+						val = 2,
+						min = 1,
+						max = 2,
+						step = 0.1,
+						def = 1.5,
+						hint = "dorn_faster_skinning_skin_speed_multiplier",
+					},
+					{
+						id = "auto_crouch",
+						type = "check",
+						val = 1,
+						def = false,
+						hint = "dorn_faster_skinning_auto_crouch",
+					},
+					{
+						id = "look_at_mutant",
+						type = "check",
+						val = 1,
+						def = false,
+						hint = "dorn_faster_skinning_look_at_mutant",
+					},
+					{
+						id = "look_at_offset",
+						type = "track",
+						val = 2,
+						min = 0,
+						max = 1,
+						step = 0.05,
+						def = 0.6,
+						hint = "dorn_faster_skinning_look_at_offset",
+					},
+					{
+						id = "slash_loot",
+						type = "check",
+						val = 1,
+						def = false,
+						hint = "dorn_faster_skinning_slash_loot",
+					},
+				}),
+			},
+			{
+				id = "development",
+				sh = true,
+				text = "Development",
+				gr = MCM.with_header({
+					{
+						id = "debug_log",
+						type = "check",
+						val = 1,
+						def = false,
+						hint = "dorn_faster_skinning_debug_log",
+					},
+				}),
+			},
+		},
+	}
+end

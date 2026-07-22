@@ -1,0 +1,627 @@
+-- Dorn's Fast Travel: Sneaking skill, encumbrance, ambush math, journey specs, guide travel.
+-- Loaded automatically before main.script (zzzz_dogma_travel_fast_travel_main.script)
+
+-- Shared dft globals (Anomaly isolates zzz_* script environments)
+local dft = _G.dft
+local dft_config = _G.dft_config
+
+-- Forward declarations for this file's private (non-exported) helpers, so they can
+-- reference each other regardless of definition order below.
+local ambush_close_radius_m, ambush_radius_m, ambush_time_reduction_m, apply_sneaking_stat_delta, dev_adjust_sneaking, format_distance, get_actor_max_carry_weight, get_encounter_offset, get_encumbrance_time_mult, get_journey_specs, get_sneaking_travel_speed_mult, get_weather_name, is_night_hour, is_raining, is_twilight_hour, mode_pda_speed_ratio, sneak_cooldown_minutes, sneak_minutes_per_km, time_band
+local function block_fft_travel(trip)
+    if not trip then return end
+    trip.ret_value = false
+    trip.cancel = true
+    dft_log("Blocked Fair Fast Travel trip (use Dorn's Fast Travel instead).")
+end
+
+local function get_sneaking_level()
+    if haru_skills and haru_skills.skills_levels and haru_skills.skills_levels.sneaking then
+        return haru_skills.skills_levels.sneaking.current_level or 0
+    end
+    return 0
+end
+
+get_sneaking_travel_speed_mult = function()
+    local bonus_pct = 0
+    if haru_skills and haru_skills.skills_stats and haru_skills.skills_stats.sneaking then
+        bonus_pct = haru_skills.skills_stats.sneaking.travel_speed_bonus or 0
+    else
+        bonus_pct = get_sneaking_level() * dft_sneaking.travel_speed_per_level
+    end
+    return 1.0 + (bonus_pct / 100.0)
+end
+
+-- Sneak travel cooldown: 1h base, reduced 3min per Sneaking level (20 max level * 3min = 60min,
+-- so it fully disappears at max level). Normal travel and guide travel have no cooldown.
+sneak_cooldown_minutes = function()
+    local level = get_sneaking_level() or 0
+    return math.max(0, dft_sneak_cooldown_base_minutes - level * dft_sneak_cooldown_reduction_per_level)
+end
+
+local function sneak_cooldown_remaining_secs()
+    if not db.actor then return 0 end
+    local minutes = sneak_cooldown_minutes()
+    if minutes <= 0 then return 0 end
+    local ready_at = load_var(db.actor, dft_save_vars.sneak_cd, 0)
+    local remaining = ready_at - dft_time_elapsed()
+    return remaining > 0 and remaining or 0
+end
+
+-- Called whenever a sneak journey actually teleports the player somewhere (arrival, mid-journey
+-- ambush, or an emission cutting it short) - never on a plain cancel (PDA closed, damage taken),
+-- since nothing actually happened to the player in those cases. ratio is how much of the route
+-- was covered (1.0 for a full arrival, less for an ambush/emission partway through) - the
+-- cooldown scales down proportionally, so a journey cut short at 20% only costs 20% of the
+-- cooldown.
+local function start_sneak_cooldown(ratio)
+    if not db.actor then return end
+    local minutes = sneak_cooldown_minutes()
+    if minutes <= 0 then return end
+    ratio = math.max(0, math.min(ratio or 1.0, 1.0))
+    minutes = minutes * ratio
+    if minutes <= 0 then return end
+    save_var(db.actor, dft_save_vars.sneak_cd, dft_time_elapsed() + minutes * 60)
+end
+
+get_encounter_offset = function()
+    local sneaky = dft.travel_mode == "sneaky"
+    local radius = ambush_radius_m(sneaky)
+    local offset = radius
+    if sneaky then
+        offset = offset + dft_ambush.offset_mode_sneak
+    else
+        offset = offset + dft_ambush.offset_mode_travel
+    end
+    offset = offset + get_sneaking_level() * dft_ambush.offset_per_sneak
+    return math.max(dft_ambush.offset_min, math.min(dft_ambush.offset_max, offset))
+end
+
+-- Max carry weight using the same rules as the inventory weight display (ui_inventory).
+get_actor_max_carry_weight = function(actor)
+    actor = actor or db.actor
+    if not actor then return 80 end
+
+    local max_weight = actor:get_actor_max_weight()
+    local outfit = actor:item_in_slot(7)
+    local backpack = actor:item_in_slot(13)
+    max_weight = max_weight + (outfit and outfit:get_additional_max_weight() or 0)
+    max_weight = max_weight + (backpack and backpack:get_additional_max_weight() or 0)
+
+    local ini = system_ini()
+    actor:iterate_inventory(function(npc, itm)
+        if npc:is_on_belt(itm) and itm then
+            local add = (ini and ini:r_float_ex(itm:section(), "additional_inventory_weight")) or 0
+            max_weight = max_weight + add * itm:condition()
+        end
+    end, actor)
+
+    local ok, cond = pcall(function() return actor:cast_Actor():conditions() end)
+    if ok and cond and cond.BoosterForEach then
+        cond:BoosterForEach(function(booster_type, _booster_time, booster_value)
+            if booster_type == 4 then -- eBoostMaxWeight
+                max_weight = max_weight + booster_value
+            end
+        end)
+    end
+    return max_weight
+end
+
+-- Inventory weight colour bands: normal, yellow (near limit), red (over max carry).
+local function get_inventory_weight_band(actor)
+    actor = actor or db.actor
+    if not (actor and actor.get_total_weight) then return "normal" end
+
+    local tot = actor:get_total_weight()
+    local max_weight = get_actor_max_carry_weight(actor)
+    if tot > max_weight then return "red" end
+    if tot + dft_travel.encumbrance_yellow_buffer_kg > max_weight then return "yellow" end
+    return "normal"
+end
+
+-- True when the actor cannot walk (max walk weight - stricter than inventory red).
+local function actor_too_encumbered_to_move()
+    if not db.actor then return false end
+    local actor = db.actor
+    if not (actor.get_total_weight and actor.get_actor_max_walk_weight) then return false end
+
+    local tot = actor:get_total_weight()
+    local max_walk = actor:get_actor_max_walk_weight()
+    local outfit = actor:item_in_slot(7)
+    local backpack = actor:item_in_slot(13)
+    max_walk = max_walk + (outfit and outfit:get_additional_max_weight() or 0)
+    max_walk = max_walk + (backpack and backpack:get_additional_max_weight() or 0)
+    actor:iterate_belt(function(_, obj)
+        local c_arty = obj:cast_Artefact()
+        if c_arty then
+            max_walk = max_walk + (c_arty:AdditionalInventoryWeight() or 0)
+        end
+    end)
+    return tot > max_walk
+end
+
+local function get_encumbrance_speed_mult()
+    local band = get_inventory_weight_band()
+    if band == "red" then return dft_travel.encumbrance_red_speed end
+    if band == "yellow" then return dft_travel.encumbrance_yellow_speed end
+    return 1.0
+end
+
+get_encumbrance_time_mult = function()
+    local speed = get_encumbrance_speed_mult()
+    if speed <= 0 then return 1.0 end
+    return 1.0 / speed
+end
+
+-- End-of-travel stamina: ambush leaves you winded (less so if you were already being careful),
+-- arriving over max carry weight leaves you winded regardless - whichever hits harder wins.
+local function resolve_arrival_stamina(ambushed, sneaky)
+    local target = 1.0
+    if ambushed then
+        target = math.min(target, sneaky and dft_travel.ambush_stamina_sneaky or dft_travel.ambush_stamina_normal)
+    end
+    if get_inventory_weight_band() == "red" then
+        target = math.min(target, dft_travel.encumbrance_red_stamina)
+    end
+    return target
+end
+
+sneak_minutes_per_km = function()
+    local lvl = get_sneaking_level()
+    local per_km = dft_travel.sneak_min_per_km - lvl * dft_travel.sneak_min_per_lvl
+    return math.max(dft_travel.sneak_min_floor, per_km)
+end
+
+-- Sneak PDA bar runs slower relative to normal; game time scales inversely with effective PDA speed.
+mode_pda_speed_ratio = function(sneaky)
+    if not sneaky then return 1.0 end
+    return dft_travel.min_per_km / sneak_minutes_per_km()
+end
+
+local function get_effective_pda_speed(sneaky, enc_speed_mult)
+    enc_speed_mult = enc_speed_mult or 1.0
+    local base = dft_travel.pda_speed or 50
+    local mode = mode_pda_speed_ratio(sneaky)
+    local sneak_skill = sneaky and get_sneaking_travel_speed_mult() or 1.0
+    return base * mode * sneak_skill * enc_speed_mult
+end
+
+local function game_minutes_for_dist(dist_m, sneaky, enc_time_mult)
+    local km = (dist_m or 0) / 1000
+    local enc_speed = 1.0
+    if enc_time_mult and enc_time_mult > 0 then
+        enc_speed = 1.0 / enc_time_mult
+    end
+    local eff_speed = get_effective_pda_speed(sneaky, enc_speed)
+    local ref = dft_travel.pda_speed or 50
+    if eff_speed <= 0 then return 1 end
+    local mins = km * dft_travel.min_per_km * (ref / eff_speed)
+    return math.max(1, math.floor(mins + 0.5))
+end
+
+local function format_duration(mins)
+    mins = math.max(0, math.floor((mins or 0) + 0.5))
+    local h = math.floor(mins / 60)
+    local m = mins % 60
+    if h > 0 then
+        if m > 0 then return string.format("%dh%dm", h, m) end
+        return string.format("%dh", h)
+    end
+    return string.format("%dmin", math.max(1, m))
+end
+
+-- Single end-of-journey notification: one full string per outcome variant.
+local function journey_result_message(opts)
+    opts = opts or {}
+    local outcome = opts.outcome or "arrived"
+
+    if outcome == "cancelled" then
+        return dft_str("dft_msg_journey_cancelled")
+    end
+
+    if outcome == "cancelled_emission" then
+        return dft_str("dft_msg_journey_cancelled_emission")
+    end
+
+    if outcome == "ambushed" then
+        return string.format(dft_str("dft_summary_ambushed"), opts.enemy_dist_m or 0)
+    end
+
+    if outcome == "emission" then
+        return dft_str("dft_summary_emission_interrupt")
+    end
+
+    local dur = opts.duration or "?"
+    local short_m = opts.short_m or 0
+    local avoided = opts.encounters_avoided or 0
+    if short_m > 0 and avoided > 0 then
+        return string.format(dft_str("dft_summary_arrived_short_avoided"), short_m, avoided)
+    elseif short_m > 0 then
+        return string.format(dft_str("dft_summary_arrived_short"), short_m)
+    elseif avoided > 0 then
+        return string.format(dft_str("dft_summary_arrived_avoided"), dur, avoided)
+    end
+    return string.format(dft_str("dft_summary_arrived"), dur)
+end
+
+local function journey_result_style(opts)
+    opts = opts or {}
+    local outcome = opts.outcome or "arrived"
+    -- Red: combat ambush at journey end only.
+    if outcome == "ambushed" then return "danger" end
+    -- Yellow: cancelled, blocked, emission interrupt, stopped short of destination.
+    if outcome == "cancelled" or outcome == "cancelled_emission" then return "warning" end
+    if outcome == "emission" then return "warning" end
+    if (opts.short_m or 0) > 0 then return "warning" end
+    if outcome == "arrived" then return "success" end
+    return nil
+end
+
+format_distance = function(dist_m)
+    if not dist_m or dist_m < 0 then return "?m" end
+    local d = math.floor(dist_m + 0.5)
+    if d >= 1000 then
+        local ok, s = pcall(string.format, "%.1fkm", d / 1000)
+        return ok and s or (tostring(d) .. "m")
+    end
+    return tostring(d) .. "m"
+end
+
+is_raining = function()
+    if not level.rain_factor then return false end
+    local ok_r, r = pcall(level.rain_factor)
+    return ok_r and r and r > 0.1
+end
+
+get_weather_name = function()
+    if not level.get_weather then return nil end
+    local ok, w = pcall(level.get_weather)
+    if ok and w and w ~= "" then
+        return string.lower(w)
+    end
+    return nil
+end
+
+-- Tightest applicable weather visibility reduction (stacking).
+local function get_weather_visibility_reduction_m()
+    local reduction = 0
+    local w = get_weather_name()
+    if w then
+        if string.find(w, "fog", 1, true) then
+            reduction = reduction + dft_ambush.weather_fog_m
+        end
+        if string.find(w, "storm", 1, true) then
+            reduction = reduction + dft_ambush.weather_storm_m
+        elseif string.find(w, "rain", 1, true) then
+            reduction = reduction + dft_ambush.weather_rain_m
+        end
+    end
+    if is_raining() then
+        local has_rain = w and (string.find(w, "rain", 1, true) or string.find(w, "storm", 1, true))
+        if not has_rain then
+            reduction = reduction + dft_ambush.weather_rain_m
+        end
+    end
+    return reduction
+end
+
+local function get_time_hours()
+    local hours = 12
+    if level.get_time_hours then
+        local ok_h, h = pcall(level.get_time_hours)
+        if ok_h and h then hours = h end
+    end
+    return hours
+end
+
+is_night_hour = function(hours)
+    return hours >= dft_time_of_day.night_start or hours < dft_time_of_day.night_end
+end
+
+is_twilight_hour = function(hours)
+    local t = dft_time_of_day
+    return (hours >= t.twilight_dawn_start and hours < t.twilight_dawn_end)
+        or (hours >= t.twilight_dusk_start and hours < t.twilight_dusk_end)
+end
+
+time_band = function(hours)
+    if is_night_hour(hours) then return "night" end
+    if is_twilight_hour(hours) then return "twilight" end
+    return "day"
+end
+
+ambush_time_reduction_m = function()
+    local band = time_band(get_time_hours())
+    if band == "night" then return dft_ambush.time_night_m end
+    if band == "twilight" then return dft_ambush.time_twilight_m end
+    return 0
+end
+
+-- Outer ambush radius (main value): requires direct line of sight.
+-- Time + weather shrink it; normal travel adds travel_detection_m.
+ambush_radius_m = function(sneaky_mode)
+    local radius = dft_ambush.radius_base
+    radius = radius - ambush_time_reduction_m()
+    radius = radius - get_weather_visibility_reduction_m()
+    if not sneaky_mode then
+        radius = radius + dft_ambush.travel_detection_m
+    end
+    local rmin = dft_ambush.radius_min + (sneaky_mode and 0 or dft_ambush.travel_detection_m)
+    local rmax = dft_ambush.radius_max + (sneaky_mode and 0 or dft_ambush.travel_detection_m)
+    return math.max(rmin, math.min(rmax, radius))
+end
+
+-- Inner ambush radius: exactly 50% of outer; no LOS required.
+ambush_close_radius_m = function(sneaky_mode)
+    return ambush_radius_m(sneaky_mode) * (dft_ambush.close_frac or 0.5)
+end
+
+local function calc_sneak_chance(sneaky_mode)
+    if not sneaky_mode then return 0 end
+    local chance = dft_travel.sneak_dodge_base + get_sneaking_level() * dft_travel.sneak_dodge_per_lvl
+    if chance > dft_travel.sneak_dodge_cap then chance = dft_travel.sneak_dodge_cap end
+    return math.floor(chance)
+end
+
+get_journey_specs = function(dist_m)
+    local enc_mult = get_encumbrance_time_mult()
+    local normal_mins = game_minutes_for_dist(dist_m, false, enc_mult)
+    local sneaky_mins = game_minutes_for_dist(dist_m, true, enc_mult)
+    return {
+        dist = dist_m,
+        dist_str = format_distance(dist_m),
+        dur_str = format_duration(normal_mins),
+        sneaky_dur_str = format_duration(sneaky_mins),
+        sneak_normal = 0,
+        sneak_sneaky = calc_sneak_chance(true),
+    }
+end
+
+local function journey_specs_for_object(id, is_lc)
+    if not (db.actor and id) then return nil end
+    local se_obj = alife_object(id)
+    if not se_obj and not dft_is_campfire(id, nil) then
+        dft_log("journey_specs: no alife_object for id=%s", tostring(id))
+        return nil
+    end
+    local dist = dft_distance_to_object(se_obj, id)
+    if not dist or dist < 0 then
+        dft_log("journey_specs: distance failed for id=%s, using 500m fallback", tostring(id))
+        dist = 500
+    end
+    return get_journey_specs(dist)
+end
+
+local function ensure_sneaking_skill_options()
+    if haru_skills and haru_skills.options then
+        haru_skills.options["exp_multiplier_sneaking"] = haru_skills.options["exp_multiplier_sneaking"] or 1
+    end
+end
+
+local function award_sneaking_xp(amount)
+    if not (haru_skills and haru_skills.increase_skill and haru_skills.skills_levels and haru_skills.skills_levels.sneaking) then
+        return
+    end
+    ensure_sneaking_skill_options()
+    pcall(function() haru_skills.increase_skill("sneaking", amount) end)
+end
+
+apply_sneaking_stat_delta = function(delta_levels)
+    if not (haru_skills and haru_skills.skills_stats and haru_skills.skills_stats.sneaking
+        and haru_skills.skills_increments and haru_skills.skills_increments.sneaking) then
+        return false
+    end
+    local stats = haru_skills.skills_stats.sneaking
+    local inc = haru_skills.skills_increments.sneaking
+    local sign = delta_levels > 0 and 1 or -1
+    for _ = 1, math.abs(delta_levels) do
+        for stat, _ in pairs(stats) do
+            if stat ~= "functor" and inc[stat] then
+                stats[stat] = stats[stat] + inc[stat] * sign
+            end
+        end
+    end
+    return true
+end
+
+dev_adjust_sneaking = function(delta)
+    local ok, err = xpcall(function()
+        if not (haru_skills and haru_skills.skills_levels) then
+            dft_log("dev sneaking: haru_skills not loaded")
+            return
+        end
+        if not haru_skills.skills_levels.sneaking then
+            dft_log_error("dev sneaking: skills_levels.sneaking missing")
+            return
+        end
+        local stats = haru_skills.skills_levels.sneaking
+        local max_lvl = stats.max_level or 16
+        local old_lvl = stats.current_level or 0
+        local new_lvl = math.max(0, math.min(max_lvl, old_lvl + delta))
+        if new_lvl == old_lvl then
+            dft_log("dev sneaking: already at boundary (lvl %d)", old_lvl)
+            return
+        end
+        stats.current_level = new_lvl
+        if not apply_sneaking_stat_delta(new_lvl - old_lvl) then
+            dft_log("dev sneaking: stats table missing, level set to %d without stat refresh", new_lvl)
+        end
+        dft_log("dev sneaking level %d -> %d", old_lvl, new_lvl)
+    end, debug.traceback)
+    if not ok then
+        dft_log_error("dev sneaking failed: %s", tostring(err))
+    end
+end
+
+local function handle_dev_keys(key)
+    if not key then return end
+    if _G.dft_coarse_nav_handle_key then
+        _G.dft_coarse_nav_handle_key(key)
+    end
+    local cfg = _G.dft_config
+    if not cfg then return end
+    if cfg.sneaking_level_up and key == cfg.sneaking_level_up then
+        dft_log("dev key: sneaking level up (key=%s)", tostring(key))
+        dev_adjust_sneaking(1)
+    elseif cfg.sneaking_level_down and key == cfg.sneaking_level_down then
+        dft_log("dev key: sneaking level down (key=%s)", tostring(key))
+        dev_adjust_sneaking(-1)
+    end
+end
+
+local function format_travel_menu(label_id, dist_str, dur_str, sneak_pct)
+    local label = dft_str(label_id)
+    local fmt = dft_str("dft_menu_travel_format")
+    local ok, text = pcall(string.format, fmt, label, dist_str or "?m", dur_str or "?", sneak_pct or 0)
+    return ok and text or string.format("%s (%s, %s)", label, dist_str or "?m", dur_str or "?")
+end
+
+-- Average of dft_get_level_danger (01_core) for the origin/destination - backed by our own
+-- guide_danger.ltx, no runtime dependency on Fair Fast Travel or anything else.
+local function guide_route_danger(from_lid, to_lid)
+    local from_d = dft_get_level_danger(dft_resolve_level_name(from_lid))
+    local to_d   = dft_get_level_danger(dft_resolve_level_name(to_lid))
+    return (from_d + to_d) / 2
+end
+
+-- dft_guide_cost_per_km is the rate at danger 1.0; the per-route danger average scales it up/down.
+local function calc_guide_cost(dist, from_lid, to_lid)
+    local danger = guide_route_danger(from_lid, to_lid)
+    return math.floor((dist / 1000) * dft_guide_cost_per_km * danger)
+end
+
+-- Guide travel is no longer instant: 1 game-hour per straight-line PDA km, same distance the
+-- fee is based on. Floored at a minute so a very short hop still ticks the clock forward.
+local function calc_guide_duration_secs(dist)
+    return math.max(60, (dist / 1000) * 3600)
+end
+
+local function guide_distance(dest_pos, dest_obj, id)
+    if dest_obj and not dest_pos then
+        dest_pos = dft_object_position(dest_obj, id)
+    end
+    if not (dest_pos and db.actor) then return 0 end
+
+    local actor_pos = db.actor:position()
+    local actor_lid = dft_actor_level_id()
+    local dest_lid = dft_object_level_id(dest_obj)
+
+    if not dest_lid and id then
+        local target = dft_resolve_travel_target(id, nil, nil)
+        if target then
+            dest_lid = dft_object_level_id(dest_obj, target.gvid)
+        end
+    end
+
+    return dft_pda_distance(actor_pos, actor_lid, dest_pos, dest_lid)
+end
+
+local function do_guide_travel(id, ln)
+    local emission_blocks = _G.dft_emission_blocks_travel_start or dft_emission_blocks_travel_start
+    if emission_blocks and emission_blocks() then
+        dft_msg(dft_str("dft_msg_emission_active"), "warning")
+        return false
+    end
+    local target, err = dft_resolve_travel_target(id, ln, dft.last_map_click_pos)
+    if not (target and target.pos and db.actor) then
+        dft_log("guide travel: unresolved id=%s err=%s", tostring(id), tostring(err))
+        return false
+    end
+    local obj = target.se_obj
+    if not dft_is_base(id, obj) and not dft_is_player_stash(id, obj) then
+        dft_log("guide travel: id=%s is not a guide destination", tostring(id))
+        return false
+    end
+    local pos = target.pos
+    local lvid = target.lvid
+    local gvid = target.gvid
+
+    -- Guide travel: no journey/ambush/survival drain, but the clock still moves - 1hr per
+    -- straight-line PDA km, same distance the fee is based on.
+    local mapchange = dft_is_cross_zone_destination(obj, ln)
+    local dist, from_lid, to_lid = guide_distance(pos, obj, id)
+    local cost = calc_guide_cost(dist, from_lid, to_lid)
+    local duration_secs = calc_guide_duration_secs(dist)
+    if cost > 0 and db.actor:money() < cost then
+        dft_msg(string.format(dft_str("dft_msg_cannot_afford"), tostring(cost)), "warning")
+        return false
+    end
+
+    if cost > 0 then
+        db.actor:give_money(-cost)
+        dft_msg(string.format(dft_str("dft_msg_guide_paid"), cost))
+    end
+
+    local arrival
+    if mapchange then
+        arrival = pos
+    else
+        arrival = dft_get_safe_pos(pos) or pos
+    end
+
+    pcall(function()
+        if ActorMenu and ActorMenu.get_pda_menu then
+            local pda = ActorMenu.get_pda_menu()
+            if pda and pda:IsShown() then pda:HideDialog() end
+        end
+        if db.actor and db.actor:active_slot() == 8 then
+            db.actor:activate_slot(0)
+        end
+    end)
+
+    dft_set_fft_trip_in_progress(true)
+    dft_set_safety_active(60.0)
+    dft_advance_travel_time_seconds(duration_secs)
+
+    if mapchange then
+        ChangeLevel(arrival, lvid, gvid, VEC_Z, true)
+    else
+        db.actor:set_actor_position(arrival)
+        dft_teleport_companions(arrival, lvid, gvid)
+    end
+
+    CreateTimeEvent("dft", "guide_travel_safety", 1.0, function()
+        dft_set_safety_active(30.0)
+        return true
+    end)
+    CreateTimeEvent("dft", "guide_travel_fft_flag", 1.0, function()
+        dft_set_fft_trip_in_progress(false)
+        return true
+    end)
+
+    dft_log("Guide travel complete | dist %.0f | cost %d | duration %ds | mapchange %s",
+        dist, cost, math.floor(duration_secs), tostring(mapchange))
+    return true
+end
+
+-- dft_publish_to_global
+do
+    _G.dft_block_fft_travel = block_fft_travel
+    _G.dft_get_sneaking_level = get_sneaking_level
+    _G.dft_get_encounter_offset = get_encounter_offset
+    _G.dft_get_inventory_weight_band = get_inventory_weight_band
+    _G.dft_actor_too_encumbered_to_move = actor_too_encumbered_to_move
+    _G.dft_get_encumbrance_speed_mult = get_encumbrance_speed_mult
+    _G.dft_resolve_arrival_stamina = resolve_arrival_stamina
+    _G.dft_game_minutes_for_dist = game_minutes_for_dist
+    _G.dft_format_duration = format_duration
+    _G.dft_journey_result_message = journey_result_message
+    _G.dft_journey_result_style = journey_result_style
+    _G.dft_get_weather_visibility_reduction_m = get_weather_visibility_reduction_m
+    _G.dft_get_time_hours = get_time_hours
+    _G.dft_get_effective_pda_speed = get_effective_pda_speed
+    _G.dft_ambush_radius_m = ambush_radius_m
+    _G.dft_ambush_close_radius_m = ambush_close_radius_m
+    _G.dft_calc_sneak_chance = calc_sneak_chance
+    _G.dft_journey_specs_for_object = journey_specs_for_object
+    _G.dft_ensure_sneaking_skill_options = ensure_sneaking_skill_options
+    _G.dft_award_sneaking_xp = award_sneaking_xp
+    _G.dft_handle_dev_keys = handle_dev_keys
+    _G.dft_format_travel_menu = format_travel_menu
+    _G.dft_calc_guide_cost = calc_guide_cost
+    _G.dft_calc_guide_duration_secs = calc_guide_duration_secs
+    _G.dft_guide_distance = guide_distance
+    _G.dft_do_guide_travel = do_guide_travel
+    _G.dft_sneak_cooldown_remaining_secs = sneak_cooldown_remaining_secs
+    _G.dft_start_sneak_cooldown = start_sneak_cooldown
+end

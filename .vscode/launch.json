@@ -1,0 +1,23 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Tail Log",
+            "type": "node-terminal",
+            "request": "launch",
+            "command": "tail -f \"C:\\Anomaly\\appdata\\logs\\xray_khada.log\" | grep --line-buffered -E \"\\[DBG\\]\""
+        },
+        {
+            "type": "lua",
+            "request": "launch",
+            "name": "X-Ray Lua Debug",
+            "cwd": "${workspaceFolder}",
+            "luaFileExtension": "script",
+            "connectionPort": 8818,
+            "stopOnEntry": true,
+            "useCHook": true,
+            "autoPathMode": true,
+            "updateTips": true
+        }
+    ]
+}

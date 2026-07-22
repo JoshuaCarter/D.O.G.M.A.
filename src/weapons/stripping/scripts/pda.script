@@ -1,0 +1,89 @@
+--[[
+	Dorn's Strip Everything - PDA lock inventory icon.
+
+	Shows a red lock overlay on encrypted NPC PDAs in any inventory cell when
+	PDA stash extraction on disassembly is enabled in MCM. Reads live
+	se_load_var data each render so unlock via technician or PDA Hacking
+	removes the icon automatically.
+]]
+
+local MOD_ID = "dorn_strip_everything"
+local DORN_COMMON_VERSION = "dorn_common" -- managed by sync-dorn-common.sh, do not hand-edit
+
+local DORN
+local pda_stash_on_disassemble = true
+
+local icon_xml
+
+local LOCK_TEXTURE = "ui_dorn_fieldstrip_pda_lock"
+local LOCK_DISPLAY_W = 6
+local LOCK_DISPLAY_H = 9
+
+local function show_pda_lock_icon(self, obj, sec)
+	if self.pda_lock_icon then
+		self.pda_lock_icon:Show(false)
+	end
+	if not pda_stash_on_disassemble then
+		return
+	end
+	if not icon_xml then
+		return
+	end
+	if not (obj and sec and item_device and item_device.device_npc_pda and item_device.device_npc_pda[sec]) then
+		return
+	end
+	local info = se_load_var(obj:id(), obj:name(), "info")
+	if not (info and info.state == "encrypted") then
+		return
+	end
+	if not self.cell then
+		return
+	end
+
+	self.pda_lock_icon = self.pda_lock_icon or icon_xml:InitStatic("pda_lock_icon", self.cell)
+	self.pda_lock_icon:InitTexture(LOCK_TEXTURE)
+	self.pda_lock_icon:SetStretchTexture(true)
+	self.pda_lock_icon:SetTextureColor(GetARGB(255, 220, 50, 50))
+	self.pda_lock_icon:SetWndSize(vector2():set(LOCK_DISPLAY_W, LOCK_DISPLAY_H))
+	local cell_w = self.cell:GetWidth()
+	local cell_h = self.cell:GetHeight()
+	self.pda_lock_icon:SetWndPos(vector2():set(cell_w - LOCK_DISPLAY_W, cell_h - LOCK_DISPLAY_H))
+	self.pda_lock_icon:Show(true)
+end
+
+local function on_option_change()
+	if DORN then
+		pda_stash_on_disassemble = DORN.mcm.bool(MOD_ID, "main/pda_stash_on_disassemble", true)
+	end
+end
+
+local orig_add_counter = utils_ui and utils_ui.UICellItem and utils_ui.UICellItem.Add_Counter
+if orig_add_counter then
+	function utils_ui.UICellItem:Add_Counter(xml, obj, sec)
+		orig_add_counter(self, xml, obj, sec)
+		show_pda_lock_icon(self, obj, sec)
+	end
+end
+
+local orig_reset = utils_ui and utils_ui.UICellItem and utils_ui.UICellItem.Reset
+if orig_reset then
+	function utils_ui.UICellItem:Reset()
+		orig_reset(self)
+		if self.pda_lock_icon then
+			self.pda_lock_icon:Show(false)
+		end
+	end
+end
+
+function on_game_start()
+	DORN = _G[DORN_COMMON_VERSION].load(MOD_ID)
+	RegisterScriptCallback("on_option_change", on_option_change)
+	on_option_change()
+
+	if not icon_xml and CScriptXmlInit then
+		icon_xml = CScriptXmlInit()
+		icon_xml:ParseFile("ui_dorn_fieldstrip_all_keybind_icon.xml")
+	elseif not CScriptXmlInit then
+		printf("[dorn_pda_lock] CScriptXmlInit unavailable")
+	end
+end

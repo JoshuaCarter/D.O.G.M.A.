@@ -1,0 +1,1488 @@
+--[[
+	Dorn's Free Zoom — free zoom + ADS Zoom (WADS).
+
+	Three drivers → fov + hud_fov (shrink %: base * (1 - pct/100); world stack cap 50%):
+	  Free only: both channels = free%
+	  ADS irons/sight: fov = free+ADS (cap 50); hud = WADS% only
+	  ADS optical scope: fov left alone; hud = WADS%; free blocked
+	WADS defaults from MCM (global or category×optic); ± keys override gun+scope only.
+	Owns ADS hud_fov — disable Adjustable Scope View.
+]]
+
+local MOD_ID = "dorn_free_zoom"
+local DORN_COMMON_VERSION = "dorn_common" -- managed by sync-dorn-common.sh, do not hand-edit
+
+local DORN
+
+-- zoom_key_mode: 0=single, 1=double, 2=long, 3=hold (in on down, out on up)
+local MODE_SINGLE = 0
+local MODE_DOUBLE = 1
+local MODE_LONG = 2
+local MODE_HOLD = 3
+
+-- Mouse button zoom: 0=no, 1=toggle, 2=hold (RMB/MMB)
+local MOUSE_NONE = 0
+local MOUSE_TOGGLE = 1
+local MOUSE_HOLD = 2
+local DIK_RMB = 338
+local DIK_MMB = 339
+
+-- WADS key mode: 0=press once, 1=hold repeat every 500ms
+local WADS_MODE_PRESS = 0
+local WADS_MODE_HOLD = 1
+local WADS_HOLD_MS = 500
+local WADS_STEP = 5
+
+local KIND_CAT = {
+	w_pistol = "pistol",
+	w_smg = "smg",
+	w_rifle = "rifle",
+	w_sniper = "sniper",
+	w_shotgun = "shotgun",
+	w_explosive = "explosive",
+}
+local CAT_LABEL = {
+	pistol = "Pistol",
+	smg = "SMG",
+	rifle = "Rifle",
+	sniper = "Sniper",
+	shotgun = "Shotgun",
+	explosive = "Explosive",
+}
+local OPTIC_LABEL = {
+	irons = "Irons",
+	sight = "Sight",
+	scope = "Scope",
+}
+
+local CONFIG = {
+	enabled = true,
+	empty_hands_only = false,
+	zoom_key = nil,
+	zoom_key_modifier = 0,
+	zoom_key_mode = MODE_SINGLE,
+	rmb_zoom = MOUSE_NONE,
+	mmb_zoom = MOUSE_NONE,
+	scroll_wheel_zoom = false,
+	scroll_wheel_reverse = false,
+	scroll_wheel_steps = 1,
+	scroll_wheel_max_gap_ms = 200,
+	free_zoom = 50,
+	move_speed = 70,
+	ads_enabled = true,
+	ads_zoom = 15,
+	exit_ads_clears_free = true,
+	reload_clears_free = true,
+	wads_inc_key = nil,
+	wads_dec_key = nil,
+	wads_reset_key = nil,
+	wads_key_mode = WADS_MODE_PRESS,
+	wads_key_modifier = 0,
+	use_global_wads = false,
+	global_wads = 0,
+	wads = {
+		pistol = { irons = 0, sight = 0, scope = 0 },
+		smg = { irons = 0, sight = 0, scope = 0 },
+		rifle = { irons = 0, sight = 0, scope = 0 },
+		sniper = { irons = 0, sight = 0, scope = 0 },
+		shotgun = { irons = 0, sight = 0, scope = 0 },
+		explosive = { irons = 0, sight = 0, scope = 0 },
+	},
+	debug_log = false,
+}
+
+local free_on = false
+local ads_on = false
+-- Hold mode: DIKs currently down (keyboard and/or RMB/MMB).
+local hold_zoom_diks = {}
+
+local CTX = {
+	OK = "ok",
+	DISABLED = "disabled",
+	DEAD = "dead",
+	PDA = "pda",
+	GUI = "gui",
+	RELOAD = "reload",
+	OPTICAL = "optical",
+	SPRINT = "sprint",
+	NO_GUN = "no_gun",
+	HANDS_FULL = "hands_full",
+	LOWERED = "lowered",
+}
+
+local CTX_BLOCK_FREE = {
+	[CTX.DISABLED] = true,
+	[CTX.DEAD] = true,
+	[CTX.PDA] = true,
+	[CTX.GUI] = true,
+	[CTX.RELOAD] = true, -- gated by CONFIG.reload_clears_free in blocks_free()
+	[CTX.OPTICAL] = true,
+	[CTX.SPRINT] = true,
+	[CTX.NO_GUN] = true,
+	[CTX.HANDS_FULL] = true,
+	[CTX.LOWERED] = true,
+}
+
+-- Scroll must pass through (PDA map, inventory UI, optical, sprint, etc.).
+local CTX_SCROLL_PASS = {
+	[CTX.DEAD] = true,
+	[CTX.PDA] = true,
+	[CTX.GUI] = true,
+	[CTX.OPTICAL] = true,
+	[CTX.SPRINT] = true,
+	[CTX.NO_GUN] = true,
+	[CTX.HANDS_FULL] = true,
+	[CTX.LOWERED] = true,
+}
+
+local MENU_BLOCK = {
+	UIInventory = true,
+	Dialog = true,
+	UIWorkshop = true,
+}
+
+local hip_fov = 60
+local hip_sens = 0.5
+local sens_per_fov = 0.5
+local hip_hud = 0.6
+local we_wrote_hud = false
+local we_wrote_fov = false
+
+-- parent|opticKey → WADS % override (persisted via save_state)
+local gun_scope_override = {}
+
+local wpn = nil
+local last_item_sec = nil
+local last_item_id = nil
+local menus_open = {}
+
+local scroll_accum = 0
+local scroll_want_in = false
+local scroll_last_ms = 0
+local last_ctx = nil
+
+-- WADS hold: key → last fire ms (press fires immediately; poll repeats every 500ms)
+local wads_hold_keys = {}
+
+local on_mouse_wheel
+
+local function clamp(n, lo, hi)
+	if n < lo then
+		return lo
+	end
+	if n > hi then
+		return hi
+	end
+	return n
+end
+
+local function log(msg)
+	if not (DORN and DORN.dbg) then
+		return
+	end
+	if CONFIG.debug_log then
+		DORN.dbg.log(MOD_ID, tostring(msg))
+	end
+end
+
+local function logf(fmt, ...)
+	log(string.format(fmt, ...))
+end
+
+local function wpn_label()
+	if not wpn then
+		return "nil"
+	end
+	local ok, sec = pcall(function()
+		return wpn:section()
+	end)
+	return (ok and sec) or "?"
+end
+
+local function mode_label()
+	if ads_on and free_on then
+		return "ads+free"
+	end
+	if ads_on then
+		return "ads"
+	end
+	if free_on then
+		return "free"
+	end
+	return "hip"
+end
+
+local function refresh_config()
+	CONFIG.enabled = DORN.mcm.bool(MOD_ID, "free_zoom/enabled", true)
+	CONFIG.empty_hands_only = DORN.mcm.bool(MOD_ID, "free_zoom/empty_hands_only", false)
+	CONFIG.zoom_key = DORN.mcm.key(MOD_ID, "free_zoom/zoom_key")
+	CONFIG.zoom_key_modifier = DORN.mcm.number(MOD_ID, "free_zoom/zoom_key_modifier", 0)
+	CONFIG.zoom_key_mode = clamp(DORN.mcm.number(MOD_ID, "free_zoom/zoom_key_mode", MODE_SINGLE), MODE_SINGLE, MODE_HOLD)
+	CONFIG.rmb_zoom = clamp(DORN.mcm.number(MOD_ID, "free_zoom/rmb_zoom", MOUSE_NONE), MOUSE_NONE, MOUSE_HOLD)
+	CONFIG.mmb_zoom = clamp(DORN.mcm.number(MOD_ID, "free_zoom/mmb_zoom", MOUSE_NONE), MOUSE_NONE, MOUSE_HOLD)
+	CONFIG.scroll_wheel_zoom = DORN.mcm.bool(MOD_ID, "free_zoom/scroll_wheel_zoom", false)
+	CONFIG.scroll_wheel_reverse = DORN.mcm.bool(MOD_ID, "free_zoom/scroll_wheel_reverse", false)
+	CONFIG.scroll_wheel_steps = clamp(DORN.mcm.number(MOD_ID, "free_zoom/scroll_wheel_steps", 1), 1, 5)
+	CONFIG.scroll_wheel_max_gap_ms = clamp(DORN.mcm.number(MOD_ID, "free_zoom/scroll_wheel_max_gap_ms", 200), 50, 500)
+	CONFIG.free_zoom = clamp(DORN.mcm.number(MOD_ID, "free_zoom/free_zoom", 50), 0, 50)
+	CONFIG.move_speed = clamp(DORN.mcm.number(MOD_ID, "free_zoom/move_speed", 70), 0, 70)
+
+	CONFIG.ads_enabled = DORN.mcm.bool(MOD_ID, "ads_zoom/enabled", true)
+	CONFIG.ads_zoom = clamp(DORN.mcm.number(MOD_ID, "ads_zoom/ads_zoom", 15), 0, 50)
+	CONFIG.exit_ads_clears_free = DORN.mcm.bool(MOD_ID, "ads_zoom/exit_ads_clears_free", true)
+	CONFIG.reload_clears_free = DORN.mcm.bool(MOD_ID, "ads_zoom/reload_clears_free", true)
+	CONFIG.wads_inc_key = DORN.mcm.key(MOD_ID, "ads_zoom/wads_inc_key")
+	CONFIG.wads_dec_key = DORN.mcm.key(MOD_ID, "ads_zoom/wads_dec_key")
+	CONFIG.wads_reset_key = DORN.mcm.key(MOD_ID, "ads_zoom/wads_reset_key")
+	CONFIG.wads_key_mode = clamp(DORN.mcm.number(MOD_ID, "ads_zoom/wads_key_mode", WADS_MODE_PRESS), WADS_MODE_PRESS, WADS_MODE_HOLD)
+	CONFIG.wads_key_modifier = DORN.mcm.number(MOD_ID, "ads_zoom/wads_key_modifier", 0)
+	CONFIG.use_global_wads = DORN.mcm.bool(MOD_ID, "ads_zoom/use_global_wads", false)
+	CONFIG.global_wads = clamp(DORN.mcm.number(MOD_ID, "ads_zoom/global_wads", 0), 0, 50)
+	for _, cat in ipairs({ "pistol", "smg", "rifle", "sniper", "shotgun", "explosive" }) do
+		local row = CONFIG.wads[cat]
+		row.irons = clamp(DORN.mcm.number(MOD_ID, "ads_zoom/wads_" .. cat .. "_irons", 0), 0, 50)
+		row.sight = clamp(DORN.mcm.number(MOD_ID, "ads_zoom/wads_" .. cat .. "_sight", 0), 0, 50)
+		row.scope = clamp(DORN.mcm.number(MOD_ID, "ads_zoom/wads_" .. cat .. "_scope", 0), 0, 50)
+	end
+
+	CONFIG.debug_log = DORN.mcm.bool(MOD_ID, "development/debug_log", false)
+	if DORN.dbg and DORN.dbg.set_enabled then
+		DORN.dbg.set_enabled(MOD_ID, CONFIG.debug_log)
+	end
+end
+
+local function reset_scroll_accum()
+	scroll_accum = 0
+	scroll_last_ms = 0
+end
+
+local function any_menu_open()
+	for _, open in pairs(menus_open) do
+		if open then
+			return true
+		end
+	end
+	return false
+end
+
+-- PDA lifted / fullscreen (info), or PDA / binoculars slot.
+local function pda_blocking()
+	if not (db and db.actor) then
+		return true
+	end
+	if item_device.is_pda_active() then
+		return true
+	end
+	local slot = db.actor:active_slot()
+	return slot == 8 or slot == 14
+end
+
+local function refresh_wpn()
+	if db and db.actor then
+		wpn = db.actor:active_item()
+	else
+		wpn = nil
+	end
+end
+
+local function active_item_id()
+	if not wpn then
+		return nil
+	end
+	local ok, id = pcall(function()
+		return wpn:id()
+	end)
+	if ok then
+		return id
+	end
+	return nil
+end
+
+local function active_item_sec()
+	if not wpn then
+		return nil
+	end
+	local ok, sec = pcall(function()
+		return wpn:section()
+	end)
+	if ok then
+		return sec
+	end
+	return nil
+end
+
+local function weapon_reloading()
+	if not (wpn and wpn:cast_Weapon()) then
+		return false
+	end
+	return wpn:get_state() == 7
+end
+
+-- Medkit / bandage / food / drink / sprint-lower / dialog lower, etc.
+local function weapon_is_lowered()
+	return game and game.actor_weapon_lowered and game.actor_weapon_lowered() or false
+end
+
+-- 3DSS optical ADS: scopes / engine own FOV — we never write console FOV.
+local function is_optical_ads()
+	if not (wpn and wpn:cast_Weapon() and z_3d_scopes) then
+		return false
+	end
+	if IsGrenade(wpn) or IsBolt(wpn) then
+		return false
+	end
+	local gun = wpn:cast_Weapon()
+	return gun:IsScopeAttached() and gun:IsZoomed() and gun:GetZoomType() == 0
+end
+
+local function scope_attached()
+	if not (wpn and wpn:cast_Weapon()) then
+		return false
+	end
+	if IsGrenade(wpn) or IsBolt(wpn) then
+		return false
+	end
+	return wpn:cast_Weapon():IsScopeAttached()
+end
+
+-- Irons / Sight / Scope (Scope = optical magnified path; same gate as is_optical_ads).
+local function optic_class()
+	if not scope_attached() then
+		return "irons"
+	end
+	if is_optical_ads() then
+		return "scope"
+	end
+	return "sight"
+end
+
+local function parent_section()
+	local sec = active_item_sec()
+	if not sec then
+		return nil
+	end
+	if ini_sys and ini_sys.r_string_ex then
+		return ini_sys:r_string_ex(sec, "parent_section") or sec
+	end
+	return sec
+end
+
+local function weapon_category()
+	local parent = parent_section()
+	if not parent or not (ini_sys and ini_sys.r_string_ex) then
+		return "rifle"
+	end
+	local kind = ini_sys:r_string_ex(parent, "kind")
+	return KIND_CAT[kind] or "rifle"
+end
+
+local function attached_scope_sec()
+	if not wpn then
+		return nil
+	end
+	if utils_item and utils_item.get_attached_scope then
+		local ok, scope = pcall(utils_item.get_attached_scope, wpn)
+		if ok and type(scope) == "string" and scope ~= "" then
+			return scope
+		end
+	end
+	return nil
+end
+
+local function optic_key()
+	if not scope_attached() then
+		return "irons"
+	end
+	return attached_scope_sec() or "scope"
+end
+
+local function override_key()
+	local parent = parent_section()
+	if not parent then
+		return nil
+	end
+	return parent .. "|" .. optic_key()
+end
+
+local function mcm_wads_default(cat, optic)
+	if CONFIG.use_global_wads then
+		return CONFIG.global_wads
+	end
+	local row = CONFIG.wads[cat or "rifle"]
+	if not row then
+		return 0
+	end
+	return row[optic or "irons"] or 0
+end
+
+local function resolve_wads()
+	local cat = weapon_category()
+	local optic = optic_class()
+	local def = mcm_wads_default(cat, optic)
+	local okey = override_key()
+	local ov = okey and gun_scope_override[okey] or nil
+	local pct = ov ~= nil and ov or def
+	return pct, cat, optic, def, ov, okey
+end
+
+local function sec_name(sec)
+	if not sec then
+		return "—"
+	end
+	if ui_item and ui_item.get_sec_name then
+		local ok, name = pcall(ui_item.get_sec_name, sec)
+		if ok and name and name ~= "" then
+			return name
+		end
+	end
+	return sec
+end
+
+local function update_wads_overlay()
+	if not (DORN and DORN.dbg and CONFIG.debug_log) then
+		return
+	end
+	if not ads_on then
+		if DORN.dbg.clear_source then
+			DORN.dbg.clear_source(MOD_ID)
+		end
+		return
+	end
+	if not DORN.dbg.overlay then
+		return
+	end
+	refresh_wpn()
+	local _, cat, optic, def, ov = resolve_wads()
+	local gun = sec_name(parent_section())
+	local scope_lab = optic == "irons" and "Irons" or sec_name(attached_scope_sec() or optic_key())
+	DORN.dbg.overlay(MOD_ID, 1, string.format("Category: %s + %s", CAT_LABEL[cat] or cat, OPTIC_LABEL[optic] or optic), "orange")
+	DORN.dbg.overlay(MOD_ID, 2, string.format("Category Zoom: %d%%", def), "orange")
+	DORN.dbg.overlay(MOD_ID, 3, string.format("Gun & Scope: %s + %s", gun, scope_lab), "orange")
+	if ov ~= nil then
+		DORN.dbg.overlay(MOD_ID, 4, string.format("Gun & Scope Zoom: %d%%", ov), "orange")
+	else
+		DORN.dbg.overlay(MOD_ID, 4, "Gun & Scope Zoom: —", "orange")
+	end
+end
+
+local function actor_dead()
+	return not (db and db.actor and db.actor:alive())
+end
+
+local function actor_sprinting()
+	if not (db and db.actor) then
+		return false
+	end
+	return IsMoveState("mcSprint")
+end
+
+-- True empty hands: holstered slot and no detector/scanner in hand.
+local function hands_are_empty()
+	if not (db and db.actor) then
+		return false
+	end
+	if db.actor:active_slot() ~= 0 then
+		return false
+	end
+	if db.actor.active_detector and db.actor:active_detector() then
+		return false
+	end
+	return true
+end
+
+local function get_context()
+	if actor_dead() then
+		return CTX.DEAD
+	end
+	if any_menu_open() then
+		return CTX.GUI
+	end
+	-- F8 debug / options / sleep / any Register_UI — not in MENU_BLOCK whitelist.
+	if actor_menu and actor_menu.is_hud_free and not actor_menu.is_hud_free() then
+		return CTX.GUI
+	end
+	if pda_blocking() then
+		return CTX.PDA
+	end
+	refresh_wpn()
+	-- Consumables (eat/drink/meds) lower the weapon — block free zoom either mode.
+	if weapon_is_lowered() then
+		return CTX.LOWERED
+	end
+	if CONFIG.empty_hands_only then
+		if not hands_are_empty() then
+			return CTX.HANDS_FULL
+		end
+		if actor_sprinting() then
+			return CTX.SPRINT
+		end
+		return CTX.OK
+	end
+	-- Any equipped slot (gun, knife, detector, empty hands). Not firearm-only.
+	if weapon_reloading() then
+		return CTX.RELOAD
+	end
+	if is_optical_ads() then
+		return CTX.OPTICAL
+	end
+	if actor_sprinting() then
+		return CTX.SPRINT
+	end
+	return CTX.OK
+end
+
+-- true = we own world FOV; false = optical owns it (do not write world fov).
+local function we_own_fov()
+	return not (ads_on and CONFIG.ads_enabled and is_optical_ads())
+end
+
+-- World FOV shrink %: free and/or ADS (irons/sight), hard-capped at 50. Not used for ADS hud.
+local function compute_world_pct()
+	local pct = 0
+	if ads_on and CONFIG.ads_enabled and we_own_fov() then
+		pct = pct + CONFIG.ads_zoom
+	end
+	if free_on then
+		local free_pct = CONFIG.free_zoom
+		if ads_on and CONFIG.ads_enabled and we_own_fov() and pct + free_pct > 50 then
+			free_pct = 50 - pct
+		end
+		pct = pct + free_pct
+	end
+	if pct > 50 then
+		pct = 50
+	end
+	return pct
+end
+
+local function compute_fov()
+	if not we_own_fov() then
+		return nil
+	end
+	local pct = compute_world_pct()
+	if pct <= 0 then
+		return hip_fov
+	end
+	return hip_fov * (1 - pct / 100)
+end
+
+local function set_zoom_move_speed(active)
+	-- Prefer shared speed.script on GAMMA; else our vendored Teepo copy.
+	-- (Do not name the local `speed` — that shadows the global on the RHS.)
+	local speed_mod = (speed and speed.add_speed and speed) or zzzz_dogma_zoom_free_zoom_speed
+	-- speed.add_speed needs db.actor; skip during on_game_start / early boot.
+	if not (db and db.actor and speed_mod and speed_mod.add_speed) then
+		return
+	end
+	if active then
+		-- move_speed is % of normal speed while free-zoomed (0-70).
+		local run_mult = CONFIG.move_speed / 100
+		-- Sprint slowdown is 1/8 of the run slowdown.
+		local sprint_mult = 1 - (1 - run_mult) * 0.125
+		speed_mod.add_speed("dorn_freezoom_speed_run", run_mult, false, true)
+		speed_mod.add_speed("dorn_freezoom_speed_sprint", sprint_mult, true, true)
+	else
+		speed_mod.add_speed("dorn_freezoom_speed_run", 1, false, true)
+		speed_mod.add_speed("dorn_freezoom_speed_sprint", 1, true, true)
+	end
+end
+
+local function restore_hip_hud()
+	exec_console_cmd("hud_fov " .. hip_hud)
+	we_wrote_hud = false
+end
+
+-- HUD: free-only uses free%; ADS uses WADS only (never stacks free into hud while ADS).
+local function apply_hud_fov()
+	local pct = 0
+	if ads_on and CONFIG.ads_enabled then
+		pct = resolve_wads()
+	elseif free_on then
+		pct = CONFIG.free_zoom
+	end
+	if pct <= 0 then
+		if we_wrote_hud then
+			restore_hip_hud()
+		end
+		return
+	end
+	exec_console_cmd("hud_fov " .. (hip_hud * (1 - pct / 100)))
+	we_wrote_hud = true
+end
+
+-- World fov + mouse_sens.
+local function apply_console(fov)
+	exec_console_cmd("fov " .. fov)
+	exec_console_cmd("mouse_sens " .. fov * sens_per_fov)
+	we_wrote_fov = true
+end
+
+local function apply_fov()
+	local fov = compute_fov()
+	if fov ~= nil then
+		apply_console(fov)
+	elseif we_wrote_fov then
+		-- Optical ADS: restore hip world FOV so scope starts clean.
+		apply_console(hip_fov)
+		we_wrote_fov = false
+	end
+	apply_hud_fov()
+	update_wads_overlay()
+end
+
+-- Hip baseline from options (not live console, which may already be zoomed).
+local function sync_hip_from_options()
+	local fov = ui_options and ui_options.get("video/basic/fov")
+	local sens = ui_options and ui_options.get("control/general/mouse_sens")
+	local hud = ui_options and ui_options.get("video/basic/hud_fov")
+	hip_fov = fov or get_console_cmd(2, "fov") or 75
+	hip_sens = sens or get_console_cmd(2, "mouse_sens") or 0.5
+	hip_hud = hud or get_console_cmd(2, "hud_fov") or 0.6
+	if hip_fov <= 0 then
+		hip_fov = 75
+	end
+	if not hip_hud or hip_hud <= 0 then
+		hip_hud = 0.6
+	end
+	sens_per_fov = hip_sens / hip_fov
+end
+
+-- Full reset: hip FOV, clear speed.
+local function reset_session(resync_options, reason)
+	local prev = mode_label()
+	local had_hud = we_wrote_hud
+	set_zoom_move_speed(false)
+	free_on = false
+	ads_on = false
+	for k in pairs(hold_zoom_diks) do
+		hold_zoom_diks[k] = nil
+	end
+	for k in pairs(wads_hold_keys) do
+		wads_hold_keys[k] = nil
+	end
+	reset_scroll_accum()
+	if resync_options then
+		sync_hip_from_options()
+	end
+	apply_fov()
+	if had_hud and not we_wrote_hud then
+		restore_hip_hud()
+	end
+	we_wrote_fov = false
+	logf(
+		"reset: reason=%s prev=%s resync=%s fov=%.2f",
+		tostring(reason or "?"),
+		prev,
+		tostring(resync_options and true or false),
+		hip_fov
+	)
+end
+
+local function hold_zoom_active()
+	return next(hold_zoom_diks) ~= nil
+end
+
+-- RELOAD is in CTX_BLOCK_FREE but only when reload_clears_free is on.
+local function blocks_free(ctx)
+	if not CTX_BLOCK_FREE[ctx] then
+		return false
+	end
+	if ctx == CTX.RELOAD then
+		return CONFIG.reload_clears_free
+	end
+	return true
+end
+
+local function clear_free_zoom(reason)
+	if not free_on then
+		return
+	end
+	logf("auto-out: leaving FREE because %s mode=%s", tostring(reason), mode_label())
+	free_on = false
+	reset_scroll_accum()
+	set_zoom_move_speed(false)
+	apply_fov()
+end
+
+local function handle_context(ctx)
+	if last_ctx ~= ctx then
+		logf("ctx: %s -> %s mode=%s wpn=%s", tostring(last_ctx), ctx, mode_label(), wpn_label())
+		last_ctx = ctx
+	end
+
+	if ctx == CTX.DISABLED or ctx == CTX.DEAD then
+		if free_on or ads_on or hold_zoom_active() then
+			reset_session(true, ctx)
+		end
+		return ctx
+	end
+
+	-- No gun / weapon lowered (medkit etc.): drop free + ADS so we don't fight use anims.
+	if (ctx == CTX.NO_GUN or ctx == CTX.LOWERED) and (free_on or ads_on or hold_zoom_active()) then
+		reset_session(false, ctx)
+		return ctx
+	end
+
+	-- Sprint / reload / etc.: drop free zoom; hold DIKs stay so poll re-applies when ok.
+	if free_on and blocks_free(ctx) then
+		clear_free_zoom(ctx)
+	end
+	return ctx
+end
+
+local function set_free_zoom(want_free, source)
+	source = source or "set_free_zoom"
+	if not CONFIG.enabled then
+		return false
+	end
+	want_free = not not want_free
+	local ctx = get_context()
+	handle_context(ctx)
+
+	if want_free then
+		ctx = get_context()
+		if blocks_free(ctx) then
+			logf("free denied: source=%s reason=ctx=%s mode=%s", source, ctx, mode_label())
+			return false
+		end
+		if CONFIG.free_zoom <= 0 then
+			logf("free denied: source=%s reason=free_zoom=0%% mode=%s", source, mode_label())
+			return false
+		end
+		if free_on then
+			return true
+		end
+		free_on = true
+	else
+		if not free_on then
+			return false
+		end
+		free_on = false
+		reset_scroll_accum()
+	end
+
+	set_zoom_move_speed(free_on)
+	apply_fov()
+	local fov = compute_fov()
+	logf(
+		"free: source=%s mode=%s fov=%s free=%d%% ads=%d%% wpn=%s",
+		source,
+		mode_label(),
+		fov and string.format("%.2f", fov) or "optical",
+		CONFIG.free_zoom,
+		CONFIG.ads_zoom,
+		wpn_label()
+	)
+	return true
+end
+
+-- ADS on/off. Keeps free_on; ADS% + free% add up to the 50% hard cap on world FOV.
+local function set_ads_zoom(want_ads, source)
+	source = source or "set_ads_zoom"
+	want_ads = not not want_ads
+
+	if want_ads then
+		if ads_on then
+			return false
+		end
+		if not CONFIG.ads_enabled then
+			logf("ads skipped: source=%s ads_zoom disabled wpn=%s", source, wpn_label())
+			return false
+		end
+		ads_on = true
+		-- Optical: leave world FOV alone (restore hip only if we wrote — via apply_fov).
+		if is_optical_ads() then
+			clear_free_zoom("optical_ads")
+			apply_fov()
+			local wads = resolve_wads()
+			logf(
+				"ads: source=%s mode=%s optical=true wads=%d%% wpn=%s",
+				source,
+				mode_label(),
+				wads,
+				wpn_label()
+			)
+			return true
+		end
+		apply_fov()
+	else
+		if not ads_on then
+			return false
+		end
+		ads_on = false
+		for k in pairs(wads_hold_keys) do
+			wads_hold_keys[k] = nil
+		end
+		if CONFIG.exit_ads_clears_free and free_on then
+			free_on = false
+			reset_scroll_accum()
+			set_zoom_move_speed(false)
+		end
+		apply_fov()
+	end
+
+	local fov = compute_fov()
+	local wads = resolve_wads()
+	logf(
+		"ads: source=%s mode=%s fov=%s ads=%d%% wads=%d%% free_on=%s wpn=%s",
+		source,
+		mode_label(),
+		fov and string.format("%.2f", fov) or "optical",
+		CONFIG.ads_zoom,
+		wads,
+		tostring(free_on),
+		wpn_label()
+	)
+	return true
+end
+
+-- Drop free + ADS and restore hip FOV (weapon lower / item swap).
+local function reset_zoom(reason)
+	if not free_on and not ads_on then
+		reset_scroll_accum()
+		return
+	end
+	logf("zoom reset: reason=%s was=%s", tostring(reason), mode_label())
+	reset_session(false, reason)
+end
+
+local function is_weapon_slot_bind(bind)
+	if not bind or not key_bindings then
+		return false
+	end
+	return bind == key_bindings.kWPN_1
+		or bind == key_bindings.kWPN_2
+		or bind == key_bindings.kWPN_3
+		or bind == key_bindings.kWPN_4
+		or bind == key_bindings.kWPN_5
+		or bind == key_bindings.kWPN_6
+end
+
+-- Fires on the keypress itself — earliest hook for 1/2/3 slot swaps.
+local function on_before_key_press(key, bind, dis, flags)
+	if not CONFIG.enabled and not CONFIG.ads_enabled then
+		return
+	end
+	if not bind then
+		bind = dik_to_bind(key)
+	end
+	if is_weapon_slot_bind(bind) then
+		reset_zoom("slot_key")
+	end
+end
+
+-- Slot change from wheel / scripts / anything that bypasses our key hook.
+-- Engine sometimes fires this during ADS / anims without a real item swap — ignore those.
+local function actor_on_changed_slot(new_slot, new_obj, prev_slot, prev_obj)
+	if not CONFIG.enabled and not CONFIG.ads_enabled then
+		return
+	end
+	if new_slot == prev_slot then
+		return
+	end
+	local function obj_id(obj)
+		if not obj then
+			return nil
+		end
+		local ok, id = pcall(function()
+			return obj:id()
+		end)
+		if ok then
+			return id
+		end
+		return nil
+	end
+	local new_id = obj_id(new_obj)
+	local prev_id = obj_id(prev_obj)
+	if new_id and prev_id and new_id == prev_id then
+		logf(
+			"changed_slot ignored: same item id=%s slot %s->%s",
+			tostring(new_id),
+			tostring(prev_slot),
+			tostring(new_slot)
+		)
+		return
+	end
+	-- Still aiming / free-zoomed with the same tracked item: not a real swap.
+	if (ads_on or free_on) and last_item_id then
+		refresh_wpn()
+		local cur = active_item_id()
+		if cur and cur == last_item_id then
+			logf(
+				"changed_slot ignored: still holding id=%s slot %s->%s",
+				tostring(cur),
+				tostring(prev_slot),
+				tostring(new_slot)
+			)
+			return
+		end
+	end
+	reset_zoom("changed_slot")
+end
+
+local function on_active_item_changed(prev_id, new_id, prev_sec, new_sec)
+	logf(
+		"item change: id %s->%s sec %s->%s",
+		tostring(prev_id),
+		tostring(new_id),
+		tostring(prev_sec),
+		tostring(new_sec)
+	)
+	reset_zoom("item_change")
+end
+
+local function actor_on_weapon_lower(_wpn)
+	if not CONFIG.enabled and not CONFIG.ads_enabled then
+		return
+	end
+	reset_zoom("weapon_lower")
+end
+
+local function on_option_change()
+	if not DORN then
+		return
+	end
+	refresh_config()
+	reset_scroll_accum()
+
+	if not CONFIG.enabled and not CONFIG.ads_enabled then
+		reset_session(true, "disabled")
+		UnregisterScriptCallback("on_mouse_wheel", on_mouse_wheel)
+		log("opts: free+ads disabled; hip FOV restored, scroll callback off")
+		return
+	end
+
+	sync_hip_from_options()
+	-- Leave free/ADS zoom whenever options change (ours or video FOV / sens).
+	reset_session(false, "opts")
+
+	UnregisterScriptCallback("on_mouse_wheel", on_mouse_wheel)
+	if CONFIG.enabled and CONFIG.scroll_wheel_zoom then
+		RegisterScriptCallback("on_mouse_wheel", on_mouse_wheel)
+	end
+
+	logf(
+		"opts: free_en=%s free=%d%% ads_en=%s ads=%d%% speed=%d%% empty_hands=%s scroll=%s reverse=%s steps=%d gap=%dms mode=%s key=%s mod=%d km=%d rmb=%d mmb=%d wads_g=%s",
+		tostring(CONFIG.enabled),
+		CONFIG.free_zoom,
+		tostring(CONFIG.ads_enabled),
+		CONFIG.ads_zoom,
+		CONFIG.move_speed,
+		tostring(CONFIG.empty_hands_only),
+		tostring(CONFIG.scroll_wheel_zoom),
+		tostring(CONFIG.scroll_wheel_reverse),
+		CONFIG.scroll_wheel_steps,
+		CONFIG.scroll_wheel_max_gap_ms,
+		mode_label(),
+		tostring(CONFIG.zoom_key),
+		CONFIG.zoom_key_modifier,
+		CONFIG.zoom_key_mode,
+		CONFIG.rmb_zoom,
+		CONFIG.mmb_zoom,
+		tostring(CONFIG.use_global_wads)
+	)
+end
+
+local function actor_on_first_update()
+	if not DORN.sys.ready(MOD_ID, db, on_option_change) then
+		log("first_update: DORN not ready yet")
+		return
+	end
+	sync_hip_from_options()
+	apply_fov()
+	logf(
+		"first_update: ready fov=%.2f sens=%.3f mode=%s",
+		hip_fov,
+		hip_sens,
+		mode_label()
+	)
+end
+
+local function wads_mod_ok()
+	local modifier = CONFIG.wads_key_modifier
+	if modifier == 0 then
+		return true
+	end
+	if not (ui_mcm and ui_mcm.get_mod_key) then
+		return true
+	end
+	return ui_mcm.get_mod_key(modifier)
+end
+
+local function mutate_wads(delta_or_reset, source)
+	if not (CONFIG.ads_enabled and ads_on) then
+		return false
+	end
+	refresh_wpn()
+	local okey = override_key()
+	if not okey then
+		logf("wads denied: source=%s no weapon", tostring(source))
+		return false
+	end
+	local cur, cat, optic, def, ov = resolve_wads()
+	if delta_or_reset == "reset" then
+		if ov == nil then
+			return false
+		end
+		gun_scope_override[okey] = nil
+		logf("wads reset: key=%s cat=%s optic=%s def=%d%%", okey, cat, optic, def)
+	else
+		local base = ov ~= nil and ov or def
+		local next_pct = clamp(base + delta_or_reset, 0, 50)
+		if next_pct == ov then
+			return false
+		end
+		-- Match MCM default → drop override so category edits still apply.
+		if next_pct == def then
+			gun_scope_override[okey] = nil
+		else
+			gun_scope_override[okey] = next_pct
+		end
+		logf(
+			"wads: source=%s key=%s %d%% -> %s (def=%d%% cat=%s optic=%s)",
+			tostring(source),
+			okey,
+			cur,
+			tostring(gun_scope_override[okey] or def),
+			def,
+			cat,
+			optic
+		)
+	end
+	apply_fov()
+	return true
+end
+
+-- Forward decl (defined with key handlers below).
+local poll_hold_zoom
+local poll_wads_hold
+
+local function actor_on_update()
+	if not DORN or not DORN.sys.ready(MOD_ID, db, on_option_change) then
+		return
+	end
+	if not CONFIG.enabled and not CONFIG.ads_enabled then
+		return
+	end
+
+	refresh_wpn()
+	local id = active_item_id()
+	if id ~= last_item_id then
+		local prev_id = last_item_id
+		local prev_sec = last_item_sec
+		last_item_id = id
+		last_item_sec = active_item_sec()
+		on_active_item_changed(prev_id, id, prev_sec, last_item_sec)
+	end
+
+	if CONFIG.enabled or (CONFIG.ads_enabled and ads_on) then
+		handle_context(get_context())
+	end
+	if CONFIG.enabled then
+		poll_hold_zoom()
+	end
+	poll_wads_hold()
+	update_wads_overlay()
+end
+
+-- zoom_key_mode: 0=single, 1=double, 2=long, 3=hold (in on down, out on up).
+-- modifier 0 = no extra modifier required (not "forbid Shift/Ctrl/Alt").
+-- Otherwise MCM's MOD_NONE fails when the bind itself is a modifier key.
+local function zoom_mod_ok()
+	local modifier = CONFIG.zoom_key_modifier
+	if modifier == 0 then
+		return true
+	end
+	if not (ui_mcm and ui_mcm.get_mod_key) then
+		return true
+	end
+	return ui_mcm.get_mod_key(modifier)
+end
+
+local function keys_blocked_ctx()
+	local ctx = get_context()
+	if ctx == CTX.DISABLED or ctx == CTX.DEAD or ctx == CTX.PDA then
+		return ctx
+	end
+	return nil
+end
+
+local function mouse_zoom_mode(key)
+	if key == DIK_RMB then
+		return CONFIG.rmb_zoom
+	end
+	if key == DIK_MMB then
+		return CONFIG.mmb_zoom
+	end
+	return nil
+end
+
+-- True if this press was handled as a mouse zoom button (mode != No).
+local function try_mouse_zoom_press(key)
+	local mm = mouse_zoom_mode(key)
+	if not mm or mm == MOUSE_NONE then
+		return false
+	end
+	if mm == MOUSE_HOLD then
+		hold_zoom_diks[key] = true
+		set_free_zoom(true, "mouse_hold")
+		return true
+	end
+	local blocked = keys_blocked_ctx()
+	if blocked then
+		logf("mouse ignored: key=%s ctx=%s mode=%s", tostring(key), blocked, mode_label())
+		return true
+	end
+	logf("mouse: toggle key=%s mode=%s", tostring(key), mode_label())
+	set_free_zoom(not free_on, "mouse_toggle")
+	return true
+end
+
+-- While any Hold DIK is down, keep trying free zoom (update already ran handle_context).
+poll_hold_zoom = function()
+	if not hold_zoom_active() or free_on then
+		return
+	end
+	-- Keyboard hold respects modifier; RMB/MMB hold does not.
+	if hold_zoom_diks[CONFIG.zoom_key] and not (hold_zoom_diks[DIK_RMB] or hold_zoom_diks[DIK_MMB]) then
+		if not zoom_mod_ok() then
+			return
+		end
+	end
+	set_free_zoom(true, "hold")
+end
+
+poll_wads_hold = function()
+	if CONFIG.wads_key_mode ~= WADS_MODE_HOLD then
+		return
+	end
+	if not (ads_on and CONFIG.ads_enabled) then
+		return
+	end
+	if not wads_mod_ok() then
+		return
+	end
+	local now = time_global() or 0
+	for key, last_ms in pairs(wads_hold_keys) do
+		if now - last_ms >= WADS_HOLD_MS then
+			wads_hold_keys[key] = now
+			if key == CONFIG.wads_inc_key then
+				mutate_wads(WADS_STEP, "wads_hold_inc")
+			elseif key == CONFIG.wads_dec_key then
+				mutate_wads(-WADS_STEP, "wads_hold_dec")
+			end
+		end
+	end
+end
+
+local function try_wads_key_press(key)
+	if not CONFIG.ads_enabled or not ads_on then
+		return false
+	end
+	local is_inc = CONFIG.wads_inc_key and key == CONFIG.wads_inc_key
+	local is_dec = CONFIG.wads_dec_key and key == CONFIG.wads_dec_key
+	local is_reset = CONFIG.wads_reset_key and key == CONFIG.wads_reset_key
+	if not (is_inc or is_dec or is_reset) then
+		return false
+	end
+	if not wads_mod_ok() then
+		return true
+	end
+	if is_reset then
+		mutate_wads("reset", "wads_reset")
+		return true
+	end
+	if CONFIG.wads_key_mode == WADS_MODE_HOLD then
+		wads_hold_keys[key] = time_global() or 0
+		mutate_wads(is_inc and WADS_STEP or -WADS_STEP, "wads_hold_start")
+		return true
+	end
+	mutate_wads(is_inc and WADS_STEP or -WADS_STEP, "wads_press")
+	return true
+end
+
+local function on_key_press(key)
+	if not DORN or not DORN.sys.ready(MOD_ID, db, on_option_change) then
+		return
+	end
+
+	if try_wads_key_press(key) then
+		return
+	end
+
+	if not CONFIG.enabled then
+		return
+	end
+
+	if try_mouse_zoom_press(key) then
+		return
+	end
+
+	if not CONFIG.zoom_key or key ~= CONFIG.zoom_key then
+		return
+	end
+
+	local km = CONFIG.zoom_key_mode
+	if km == MODE_HOLD then
+		hold_zoom_diks[key] = true
+		if zoom_mod_ok() then
+			set_free_zoom(true, "key_hold")
+		end
+		return
+	end
+
+	local blocked = keys_blocked_ctx()
+	if blocked then
+		logf("key ignored: key=%s ctx=%s mode=%s", tostring(key), blocked, mode_label())
+		return
+	end
+	if not zoom_mod_ok() then
+		return
+	end
+
+	if km == MODE_DOUBLE then
+		if ui_mcm and ui_mcm.double_tap and ui_mcm.double_tap(MOD_ID .. "_zoom", key) then
+			logf("key: double (mode=%s)", mode_label())
+			set_free_zoom(not free_on, "key_double")
+		end
+		return
+	end
+	if km == MODE_LONG then
+		-- Long press is handled in on_key_hold.
+		return
+	end
+	logf("key: single (mode=%s)", mode_label())
+	set_free_zoom(not free_on, "key_single")
+end
+
+local function on_key_hold(key)
+	if not DORN or not DORN.sys.ready(MOD_ID, db, on_option_change) then
+		return
+	end
+	if not CONFIG.enabled then
+		return
+	end
+	if CONFIG.zoom_key_mode ~= MODE_LONG then
+		return
+	end
+	if not CONFIG.zoom_key or key ~= CONFIG.zoom_key then
+		return
+	end
+	if keys_blocked_ctx() then
+		return
+	end
+	if not zoom_mod_ok() then
+		return
+	end
+	if not (ui_mcm and ui_mcm.key_hold and ui_mcm.key_hold(MOD_ID .. "_zoom", key)) then
+		return
+	end
+	logf("key: long (mode=%s)", mode_label())
+	set_free_zoom(not free_on, "key_long")
+end
+
+local function on_key_release(key)
+	if not CONFIG.enabled and not CONFIG.ads_enabled then
+		return
+	end
+	if wads_hold_keys[key] then
+		wads_hold_keys[key] = nil
+	end
+	if not hold_zoom_diks[key] then
+		return
+	end
+	hold_zoom_diks[key] = nil
+	if CONFIG.enabled and not hold_zoom_active() then
+		set_free_zoom(false, "hold_release")
+	end
+end
+
+on_mouse_wheel = function(dir, _flags)
+	if not CONFIG.enabled or not CONFIG.scroll_wheel_zoom then
+		return
+	end
+	if not (db and db.actor) then
+		return
+	end
+
+	local ctx = get_context()
+	if CTX_SCROLL_PASS[ctx] then
+		reset_scroll_accum()
+		return
+	end
+
+	-- Reload: optional zoom-out; do not steal the wheel.
+	if ctx == CTX.RELOAD then
+		if CONFIG.reload_clears_free then
+			reset_scroll_accum()
+			return
+		end
+		-- reload_clears_free off: allow scroll zoom through like normal gameplay below.
+	end
+
+	local want_in = (dir == 1)
+	if CONFIG.scroll_wheel_reverse then
+		want_in = not want_in
+	end
+
+	local now = time_global() or 0
+	if scroll_want_in ~= want_in or (scroll_last_ms > 0 and (now - scroll_last_ms) > CONFIG.scroll_wheel_max_gap_ms) then
+		scroll_accum = 0
+		scroll_want_in = want_in
+	end
+	scroll_accum = scroll_accum + 1
+	scroll_last_ms = now
+
+	if scroll_accum >= CONFIG.scroll_wheel_steps then
+		reset_scroll_accum()
+		logf("scroll: fire want_in=%s steps=%d mode=%s", tostring(want_in), CONFIG.scroll_wheel_steps, mode_label())
+		if want_in then
+			set_free_zoom(true, "scroll")
+		else
+			set_free_zoom(false, "scroll")
+		end
+	end
+end
+
+local function actor_on_weapon_zoom_in()
+	if not CONFIG.ads_enabled then
+		return
+	end
+	if ads_on then
+		return
+	end
+
+	refresh_wpn()
+	if not (wpn and wpn:cast_Weapon()) then
+		logf("ADS in ignored: no weapon (wpn=%s mode=%s)", wpn_label(), mode_label())
+		return
+	end
+
+	logf("ADS in: wpn=%s from_mode=%s", wpn_label(), mode_label())
+	set_ads_zoom(true, "zoom_in")
+end
+
+local function actor_on_weapon_zoom_out()
+	if not ads_on then
+		return
+	end
+	refresh_wpn()
+	logf("ADS out: wpn=%s mode=%s", wpn_label(), mode_label())
+	set_ads_zoom(false, "zoom_out")
+end
+
+-- Optical <-> iron: cancel free on optical; re-assert stacked floor on iron.
+local function actor_on_weapon_zoom_type_changed()
+	if not CONFIG.ads_enabled or not ads_on then
+		return
+	end
+	refresh_wpn()
+	if is_optical_ads() then
+		clear_free_zoom("optical_type")
+		apply_fov()
+		logf("ADS type changed: optical=true wads=%d%% wpn=%s", resolve_wads(), wpn_label())
+		return
+	end
+	apply_fov()
+	local fov = compute_fov()
+	logf(
+		"ADS type changed: optical=false mode=%s fov=%s wads=%d%% wpn=%s",
+		mode_label(),
+		fov and string.format("%.2f", fov) or "?",
+		resolve_wads(),
+		wpn_label()
+	)
+end
+
+local function actor_on_weapon_reload()
+	if not CONFIG.enabled then
+		return
+	end
+	logf("reload: mode=%s wpn=%s", mode_label(), wpn_label())
+	handle_context(CTX.RELOAD)
+end
+
+local function on_actor_menu_open(name)
+	if not MENU_BLOCK[name] then
+		return
+	end
+	menus_open[name] = true
+	reset_scroll_accum()
+	logf("gui open: %s mode=%s", name, mode_label())
+	handle_context(get_context())
+end
+
+local function on_actor_menu_close(name)
+	if not MENU_BLOCK[name] then
+		return
+	end
+	menus_open[name] = false
+	logf("gui close: %s", name)
+end
+
+local function actor_on_before_death()
+	reset_session(true, "before_death")
+end
+
+local function actor_on_net_destroy()
+	reset_session(true, "net_destroy")
+	wpn = nil
+	last_item_sec = nil
+	last_item_id = nil
+	last_ctx = nil
+	menus_open = {}
+end
+
+local function on_save_state(m_data)
+	if not m_data then
+		return
+	end
+	if next(gun_scope_override) then
+		local snap = {}
+		for k, v in pairs(gun_scope_override) do
+			snap[k] = v
+		end
+		m_data.dorn_free_zoom_wads = snap
+	else
+		m_data.dorn_free_zoom_wads = nil
+	end
+end
+
+local function on_load_state(m_data)
+	gun_scope_override = {}
+	if not (m_data and m_data.dorn_free_zoom_wads) then
+		return
+	end
+	for k, v in pairs(m_data.dorn_free_zoom_wads) do
+		if type(k) == "string" and type(v) == "number" then
+			gun_scope_override[k] = clamp(v, 0, 50)
+		end
+	end
+end
+
+function on_game_start()
+	DORN = _G[DORN_COMMON_VERSION].load(MOD_ID)
+
+	RegisterScriptCallback("on_option_change", on_option_change)
+	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+	RegisterScriptCallback("on_before_key_press", on_before_key_press)
+	RegisterScriptCallback("on_key_press", on_key_press)
+	RegisterScriptCallback("on_key_hold", on_key_hold)
+	RegisterScriptCallback("on_key_release", on_key_release)
+	RegisterScriptCallback("actor_on_weapon_zoom_out", actor_on_weapon_zoom_out)
+	RegisterScriptCallback("actor_on_weapon_zoom_in", actor_on_weapon_zoom_in)
+	RegisterScriptCallback("actor_on_weapon_reload", actor_on_weapon_reload)
+	RegisterScriptCallback("actor_on_weapon_zoom_type_changed", actor_on_weapon_zoom_type_changed)
+	RegisterScriptCallback("actor_on_weapon_lower", actor_on_weapon_lower)
+	RegisterScriptCallback("actor_on_changed_slot", actor_on_changed_slot)
+	RegisterScriptCallback("actor_on_update", actor_on_update)
+	RegisterScriptCallback("actor_on_before_death", actor_on_before_death)
+	RegisterScriptCallback("actor_on_net_destroy", actor_on_net_destroy)
+	RegisterScriptCallback("GUI_on_show", on_actor_menu_open)
+	RegisterScriptCallback("GUI_on_hide", on_actor_menu_close)
+	RegisterScriptCallback("save_state", on_save_state)
+	RegisterScriptCallback("load_state", on_load_state)
+
+	on_option_change()
+	log("on_game_start: callbacks registered")
+end

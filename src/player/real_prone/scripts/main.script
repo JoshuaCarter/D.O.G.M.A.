@@ -1,0 +1,266 @@
+--[[
+	Dorn's Prone Fix
+
+	Prone (mcCrouch + mcAccel): play_cycle on a shared OMF motion.
+	Torch: camera-locked via mod_system_dorn_prone_fix.ltx (torch_inertion = false).
+]]
+
+local MOD_ID = "dorn_prone_fix"
+local DORN_COMMON_VERSION = "dorn_common" -- managed by sync-dorn-common.sh, do not hand-edit
+
+local DORN
+
+local POSTURES = {
+	STAND 	= "stand",
+	CROUCH 	= "crouch",
+	PRONE 	= "prone",
+}
+
+local LOG = {
+	LIFECYCLE 		= {order = 0, color = "gray"},
+	HEIGHT 			= {order = 1, color = "cyan"},
+	HEIGHT_POSTURE 	= {order = 2, color = "blue"},
+	INPUT_POSTURE 	= {order = 3, color = "yellow"},
+	CROUCH 			= {order = 7, color = "dark_orange"},
+	ACCEL 			= {order = 8, color = "dark_orange"},
+	ANIM 			= {order = 9, color = "light_pink"},
+}
+
+local CONFIG = {
+	debug_log = false,
+	debug_overlay = false,
+	hide_prone_bones = true,
+	cam_height_stand = 1.65,
+	cam_height_crouch = 1.2,
+	cam_height_prone = 0.45,
+	prone_damage_mult = 1.2,
+}
+
+local is_prone = nil
+local set_prone_bones_visible
+local blend_move_anims = get_console():get_bool("blend_move_anims") or false
+
+-- HUD-only: for values that change every frame (height/posture/crouch/slow/motion).
+local function overlay(log_type, msg)
+	if not DORN.dbg then
+		return
+	end
+	if CONFIG.debug_overlay then
+		local slot = log_type or LOG.LIFECYCLE
+		DORN.dbg.overlay(MOD_ID, slot.order, tostring(msg), slot.color)
+	end
+end
+
+-- File-only: for one-off/lifecycle and state-transition events worth keeping in the log.
+local function log(msg)
+	if not DORN.dbg then
+		return
+	end
+	if CONFIG.debug_log then
+		DORN.dbg.log(MOD_ID, tostring(msg))
+	end
+end
+
+local function on_option_change()
+	CONFIG.debug_log = DORN.mcm.bool(MOD_ID, "development/debug_log", false)
+	CONFIG.debug_overlay = DORN.mcm.bool(MOD_ID, "development/debug_overlay", false)
+	CONFIG.hide_prone_bones = DORN.mcm.bool(MOD_ID, "main/hide_prone_bones", true)
+	CONFIG.cam_height_stand = DORN.mcm.number(MOD_ID, "development/cam_height_stand", 1.65)
+	CONFIG.cam_height_crouch = DORN.mcm.number(MOD_ID, "development/cam_height_crouch", 1.2)
+	CONFIG.cam_height_prone = DORN.mcm.number(MOD_ID, "development/cam_height_prone", 0.45)
+	CONFIG.prone_damage_mult = DORN.mcm.number(MOD_ID, "main/prone_damage_mult", 1.2)
+	DORN.dbg.set_enabled(MOD_ID, CONFIG.debug_overlay)
+
+	local _, actor = DORN.sys.ready(MOD_ID, db)
+	if actor and actor:alive() then
+		if CONFIG.hide_prone_bones then
+			set_prone_bones_visible(actor, not is_prone)
+		else
+			set_prone_bones_visible(actor, true)
+		end
+	end
+end
+
+set_prone_bones_visible = function(actor, visible)
+	if visible then
+		log("bones: shown")
+	else
+		log("bones: hidden")
+	end
+
+	pcall(function()
+		actor:set_bone_visible("bip01_l_thigh", visible, true, false)
+	end)
+	pcall(function()
+		actor:set_bone_visible("bip01_r_thigh", visible, true, false)
+	end)
+	pcall(function()
+		actor:set_bone_visible("bip01_l_upperarm", visible, true, false)
+	end)
+	pcall(function()
+		actor:set_bone_visible("bip01_r_upperarm", visible, true, false)
+	end)
+end
+
+local function play_motion(actor, motion, mix_in)
+	overlay(LOG.ANIM, "Motion: " .. tostring(motion))
+	local ok = pcall(function()
+		actor:play_cycle(motion, mix_in)
+	end)
+	if not ok then
+		log("play_cycle failed: " .. tostring(motion))
+	end
+	return ok
+end
+
+local function on_actor_on_update()
+	local _, actor = DORN.sys.ready(MOD_ID, db, on_option_change)
+	if not actor then
+		return
+	end
+
+	if not actor:alive() then
+		if CONFIG.hide_prone_bones then
+			set_prone_bones_visible(actor, true)
+		end
+		if is_prone then
+			log("state: died, restore bones")
+			is_prone = false
+			if blend_move_anims then
+				get_console():execute("blend_move_anims on")
+			end
+		end
+		return
+	end
+
+	-- nearest posture from camera height (feet to cam)
+	local ok, height = pcall(function()
+		return device().cam_pos.y - actor:position().y
+	end)
+	if not ok or not height then
+		height = CONFIG.cam_height_stand
+	end
+	overlay(LOG.HEIGHT, string.format("cam height: %.2f", height))
+
+	local stand_dist = math.abs(CONFIG.cam_height_stand - height)
+	local crouch_dist = math.abs(CONFIG.cam_height_crouch - height)
+	local prone_dist = math.abs(CONFIG.cam_height_prone - height)
+
+	local camera_posture
+	if stand_dist < crouch_dist and stand_dist < prone_dist then
+		overlay(LOG.HEIGHT_POSTURE, "height posture: " .. tostring(POSTURES.STAND))
+		camera_posture = POSTURES.STAND
+	elseif crouch_dist < stand_dist and crouch_dist < prone_dist then
+		overlay(LOG.HEIGHT_POSTURE, "height posture: " .. tostring(POSTURES.CROUCH))
+		camera_posture = POSTURES.CROUCH
+	else
+		overlay(LOG.HEIGHT_POSTURE, "height posture: " .. tostring(POSTURES.PRONE))
+		camera_posture = POSTURES.PRONE
+	end
+
+	-- input posture from move states
+	local is_slow = IsMoveState("mcAccel")
+	local is_crouching = IsMoveState("mcCrouch")
+	overlay(LOG.CROUCH, "Crouch: " .. tostring(is_crouching))
+	overlay(LOG.ACCEL, "Slow: " .. tostring(is_slow))
+
+	local input_posture
+	if not is_crouching then
+		overlay(LOG.INPUT_POSTURE, "input posture: " .. tostring(POSTURES.STAND))
+		input_posture = POSTURES.STAND
+	elseif not is_slow then
+		overlay(LOG.INPUT_POSTURE, "input posture: " .. tostring(POSTURES.CROUCH))
+		input_posture = POSTURES.CROUCH
+	else
+		overlay(LOG.INPUT_POSTURE, "input posture: " .. tostring(POSTURES.PRONE))
+		input_posture = POSTURES.PRONE
+	end
+
+	-- first update
+	if is_prone == nil then
+		is_prone = camera_posture == POSTURES.PRONE
+		if is_prone then
+			log("state: start prone")
+			if blend_move_anims then
+				get_console():execute("blend_move_anims off")
+			end
+		else
+			log("state: start not prone")
+			if blend_move_anims then
+				get_console():execute("blend_move_anims on")
+			end
+		end
+	end
+
+	-- enter prone
+	if camera_posture == POSTURES.PRONE then
+		-- spam prone motion
+		play_motion(actor, "dorn_prone", false)
+
+		if not is_prone then
+			log("state: enter prone")
+			is_prone = true
+
+			-- hide bones when camera is nearest the prone posture
+			if CONFIG.hide_prone_bones then
+				set_prone_bones_visible(actor, false)
+			end
+
+			-- disable 1st person player blend_move_anims
+			if blend_move_anims then
+				get_console():execute("blend_move_anims off")
+			end
+		end
+	-- leave prone
+	elseif is_prone then
+		is_prone = false
+
+		-- show bones and trigger new idle motion on leaving prone
+		if CONFIG.hide_prone_bones then
+			set_prone_bones_visible(actor, true)
+		end
+		if input_posture == POSTURES.STAND then
+			log("state: standing")
+			play_motion(actor, "norm_idle_0", true)
+			play_motion(actor, "norm_torso_10_aim_0", true)
+		elseif input_posture == POSTURES.CROUCH then
+			log("state: crouching")
+			play_motion(actor, "cr_idle_0", true)
+			play_motion(actor, "cr_torso_10_aim_0", true)
+		else
+			log("state: input prone but cam not prone!")
+			play_motion(actor, "cr_idle_0", false)
+		end
+
+		-- enable 1st person player blend_move_anims
+		if blend_move_anims then
+			get_console():execute("blend_move_anims on")
+		end
+	end
+end
+
+local function on_actor_on_before_hit(shit, bone_id, flags)
+	if not DORN.sys.ready(MOD_ID, db) then
+		return
+	end
+	if not is_prone or not shit or not shit.power or shit.power <= 0 then
+		return
+	end
+	if CONFIG.prone_damage_mult <= 1 then
+		return
+	end
+
+	local before = shit.power
+	shit.power = before * CONFIG.prone_damage_mult
+	log(string.format("damage: x%.2f: %.2f -> %.2f", CONFIG.prone_damage_mult, before, shit.power))
+end
+
+function on_game_start()
+	DORN = _G[DORN_COMMON_VERSION].load(MOD_ID)
+
+	is_prone = nil
+	RegisterScriptCallback("actor_on_update", on_actor_on_update)
+	RegisterScriptCallback("actor_on_before_hit", on_actor_on_before_hit)
+	RegisterScriptCallback("on_option_change", on_option_change)
+	log("loaded")
+end

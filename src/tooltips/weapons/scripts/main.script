@@ -1,0 +1,2898 @@
+--[[
+	Dorn's Weapon Tooltips - per-ammo damage table + enhanced weapon stats.
+
+	Layout/static text: ui_dorn_weapon_tooltip.xml. This script fills cells and
+	wires MCM / utils_ui.stats_table.
+
+	Built as zzzz_dogma_tooltips_weapons_main.script so on_game_start runs after
+	G.A.M.M.A. Accurate Defense Values (ish_item_stats), which rebuilds
+	stats_table["weapon"] and would wipe our rows.
+]]
+
+local MOD_ID = "dorn_weapon_tooltip"
+local DORN_COMMON_VERSION = "dorn_common" -- managed by sync-dorn-common.sh, do not hand-edit
+
+local DORN
+
+local CONFIG = {
+	show_damage_table = true,
+	show_hit_power = true,
+	show_stalker_damage = true,
+	show_mutant_damage = true,
+	show_accuracy = true,
+	show_handling = true,
+	show_fire_rate = true,
+	show_mag_size = true,
+	show_reliability = true,
+	show_recoil = true,
+	show_muzzle_velocity = true,
+	show_dispersion = true,
+	show_spread = true,
+	show_barrel_wear = true,
+	show_burst_control = true,
+	show_bullet_drop = true,
+	stat_row_placement = "inline",
+	column_headers = "names",
+	-- Low end of table color ramps (damage → green, AP → white).
+	color_scale_from = "darkgrey",
+	ammo_order = "default",
+	calc_range_m = 30,
+	pellet_hit_pct = 100,
+	use_condition_table = false,
+	use_condition_stats = false,
+	apply_silencer_table = false,
+	apply_silencer_stats = false,
+	compact_header = true,
+	debug_log = false,
+	debug_overlay = false,
+}
+
+-- Canonical Momopate/vanilla weapon-row indices. Inline companions anchor to
+-- these even when the parent base row is MCM-hidden (drop-in replacement).
+local BASE_INDEX = {
+	accuracy = 1,
+	handling = 2,
+	damage = 3,
+	fire_rate = 4,
+	ammo_mag_size = 5,
+	speed = 101,
+	reliability = 103,
+	recoil = 104,
+}
+
+-- Fallback string ids if zzzz_dogma_tooltips_weapons_stats failed to expose NAME.
+local EXTRA_STAT_NAME = {
+	dispersion = "ui_dorn_wpn_dispersion",
+	spread = "ui_dorn_wpn_spread",
+	barrel_wear = "ui_dorn_wpn_barrel_wear",
+	burst_control = "ui_dorn_wpn_burst_control",
+	bullet_drop = "ui_dorn_wpn_bullet_drop",
+}
+
+-- Hit Power is weapon hit_power x 100 (per pellet, same as other guns), no ammo k_hit.
+local DAMAGE_SCALE = 100
+
+local BUCK_SELF = "ammo_12x70_buck_self"
+
+-- k_ap is the raw armor-piercing coefficient. The ammo's own info card scales it
+-- x1000 (k_ap 0.01 -> "10"), so we match that here. On listed snipers the table
+-- also adds +5 (CQC +0.05 after k_ap x10). Color scale: grey at 0 → white at the
+-- display AP needed to penetrate 0.650 torso bone armor (Max column) at calc_range.
+local AP_SCALE = 1000
+local AP_COLOR_ARMOR = 0.650
+local AP_COLOR_AP_SCALE = 0.7000 -- Max-tier outfit ap_scale average
+local AP_COLOR_REF_AIR = 0.05
+local REF_DIST_M = 30
+
+-- Named NPC bone-armor columns from visual profiles (see npc_visual_armor_reference.md).
+-- Only named floats are shown; rare 1-2 profile cliffs (0.125/0.300/0.350/0.430) are skipped.
+-- hit_frac / ap_scale are averages across profiles that share that exact armor
+-- value (chip is never blended across other tiers). `name` is the short class
+-- label used when MCM column_headers = "names".
+local TORSO_TIERS = {
+	{ armor = 0.011, ap_scale = 0.8889, hit_frac = 0.8500, name = "Min" },
+	{ armor = 0.075, ap_scale = 0.8562, hit_frac = 0.6250, name = "Lgt" },
+	{ armor = 0.100, ap_scale = 0.7955, hit_frac = 0.5000, name = "Lgt+" },
+	{ armor = 0.150, ap_scale = 0.8117, hit_frac = 0.4783, name = "Mid" },
+	{ armor = 0.200, ap_scale = 0.7412, hit_frac = 0.3618, name = "Mid+" },
+	{ armor = 0.250, ap_scale = 0.7400, hit_frac = 0.3050, name = "Hvy" },
+	{ armor = 0.400, ap_scale = 0.7500, hit_frac = 0.2000, name = "Hvy+" },
+	{ armor = 0.550, ap_scale = 0.7000, hit_frac = 0.1500, name = "Exo" },
+	{ armor = 0.650, ap_scale = 0.7000, hit_frac = 0.1500, name = "Max" },
+}
+local HEAD_TIERS = {
+	-- Bare head: no bone armor, always full damage (hit_frac unused / forced pen).
+	{ armor = 0.000, ap_scale = 0.8096, hit_frac = 0,      name = "Min" },
+	{ armor = 0.150, ap_scale = 0.7571, hit_frac = 0.4071, name = "Lgt" },
+	{ armor = 0.200, ap_scale = 0.7861, hit_frac = 0.4389, name = "Mid" },
+	{ armor = 0.300, ap_scale = 0.7621, hit_frac = 0.3431, name = "Hvy" },
+	{ armor = 0.350, ap_scale = 0.7000, hit_frac = 0.1500, name = "Max" },
+}
+local NUM_TORSO_TIERS = #TORSO_TIERS
+local NUM_HEAD_TIERS = #HEAD_TIERS
+
+-- Live combat math follows CQC grok_bo (higher load order than GBOOBS):
+-- combat AP = (ini k_ap x10 + sniper 0.05) x ap_scale x barrel / range_factor
+--   x 0.80 x difficulty x silencer (1.07 when equipped / integrated, if MCM on).
+-- Bone mults from CQC stalker_damage. Difficulty from CQC/GAMMA diff_game type.
+-- Mutant path has no silencer in CQC; species/weak-spot mults are rule-of-thumb only.
+local BONE_DMG_TORSO = 0.9    -- bip01_spine
+local BONE_DMG_HEAD  = 3.65   -- bip01_head
+local BALLISTIC_BONUS = 1.1
+local K_AP_COMBAT_SCALE = 10  -- CQC: ini k_ap * 10 for combat
+local AP_TAIL = 0.80          -- CQC post-grouping AP adjustment
+local SILENCER_BOOST = 1.07
+-- CQC: added to (ini k_ap * 10), not to raw LTX. Display AP column = k_ap*1000 + 5.
+local SNIPER_AP_BONUS = 0.05
+-- CQC: armor chips by combat_ap x 0.60; soft-pen if ap still beats chipped armor.
+local ARMOR_CHIP_FRAC = 0.60
+-- CQC residual (hard fail): 0.0025 x power x hit_frac x random(25,100) / hp_ammo_mult.
+-- Tooltip uses the mid random (62.5).
+local HARD_FAIL_SCALE = 0.0025 * 62.5
+-- CQC hp_rounds table (named hp_ammo_mult here): divisor on hard-fail residual.
+local HP_AMMO_MULT = {
+	["ammo_357_hp_mag"] = 2,
+	["ammo_9x18_pmm"] = 2,
+	["ammo_9x19_pbp"] = 2,
+	["ammo_7.62x25_p"] = 1.75,
+	["ammo_11.43x23_hydro"] = 2.7,
+	["ammo_5.45x39_ep"] = 1.45,
+	["ammo_5.56x45_ss190"] = 1.33,
+	["ammo_12x76_zhekan"] = 3.5,
+	["ammo_12x76_dart"] = 1.5,
+	["ammo_12x70_buck"] = 3,
+	["ammo_23x75_shrapnel"] = 2,
+	["ammo_23x75_barrikada"] = 3.5,
+	["ammo_20x70_buck"] = 2,
+	["ammo_338_federal"] = 10,
+}
+-- CQC integrated_silencer table (parent_section keys).
+local INTEGRATED_SILENCER = {
+	["wpn_dvl10_m1"] = true,
+	["wpn_vssk"] = true,
+	["wpn_val_tac"] = true,
+	["wpn_vintorez"] = true,
+	["wpn_val"] = true,
+	["wpn_val_modern"] = true,
+	["wpn_vintorez_m1"] = true,
+	["wpn_vintorez_m2"] = true,
+	["wpn_vintorez_isg"] = true,
+	["wpn_mp5sd"] = true,
+	["wpn_mp5sd_custom"] = true,
+	["wpn_mp5sd_new"] = true,
+}
+-- CQC snipers table (parent_section keys). +0.05 to raw k_ap before combat scale.
+local SNIPERS = {
+	["wpn_dvl10_m1"] = true,
+	["wpn_dvl10"] = true,
+	["wpn_l96a1"] = true,
+	["wpn_l96a1m"] = true,
+	["wpn_m98b"] = true,
+	["wpn_m24"] = true,
+	["wpn_remington700"] = true,
+	["wpn_remington700_archangel"] = true,
+	["wpn_remington700_lapua700"] = true,
+	["wpn_remington700_magpul_pro"] = true,
+	["wpn_remington700_mod_x_gen3"] = true,
+	["wpn_steyr_scout_big"] = true,
+	["wpn_sv98"] = true,
+	["wpn_sv98_custom"] = true,
+	["wpn_k98_mod"] = true,
+	["wpn_wa2000"] = true,
+	["wpn_trg"] = true,
+	["wpn_mosin"] = true,
+}
+local DIFFICULTY_MULT = {
+	[1] = 1.3,
+	[2] = 1.05,
+	[3] = 0.90,
+	[4] = 0.80,
+}
+-- CQC head AP bonuses apply to eyes/eyelid/jaw/neck, not bip01_head.
+-- Our "vs Head" columns model bip01_head, so no AP boost.
+
+local function clamp(v, lo, hi)
+	if v < lo then
+		return lo
+	end
+	if v > hi then
+		return hi
+	end
+	return v
+end
+
+local function lerp(a, b, t)
+	return a + (b - a) * t
+end
+
+-- Damage cells fade (MCM color_scale_from) to green (most damage). Scaled 1..max
+-- across all rows in a section (torso or head) so identical numbers always
+-- share the same color and higher damage is always brighter than lower.
+-- Head uses its own max (headshots hit much harder than torso).
+-- gamma < 1 brightens the mid-range so the ramp reads as a smooth gradient.
+local DMG_COLOR_GAMMA = 0.75
+local DMG_CLR_MAX = { 64, 255, 64 }
+local COLOR_SCALE_FROM = {
+	white = { 255, 255, 255 },
+	grey = { 175, 175, 175 },
+	darkgrey = { 80, 80, 80 },
+}
+
+local function scale_from_rgb()
+	return COLOR_SCALE_FROM[CONFIG.color_scale_from] or COLOR_SCALE_FROM.darkgrey
+end
+
+local function dmg_value_color(dmg, lo, hi)
+	local span = hi - lo
+	local t = (span > 0) and clamp((dmg - lo) / span, 0, 1) or 1
+	t = t ^ DMG_COLOR_GAMMA
+	local lo_rgb = scale_from_rgb()
+	return GetARGB(255,
+		math.floor(lerp(lo_rgb[1], DMG_CLR_MAX[1], t)),
+		math.floor(lerp(lo_rgb[2], DMG_CLR_MAX[2], t)),
+		math.floor(lerp(lo_rgb[3], DMG_CLR_MAX[3], t)))
+end
+
+local function column_header_text(tier)
+	local mode = CONFIG.column_headers
+	if mode == "raw" then
+		-- Raw bone armor float (same value used in the pen check).
+		local armor = tier.armor
+		if armor == 0 then
+			return "0"
+		end
+		local s = string.format("%.3f", armor)
+		return (s:gsub("0+$", ""):gsub("%.$", ""))
+	end
+	if mode == "raw100" then
+		return string.format("%d", math.floor(tier.armor * 100))
+	end
+	return tier.name
+end
+
+-- Fixed Type-column short names (≤6 chars). Source: ammo_type_label_reference.md.
+-- Unmapped sections (after stripping _bad / _verybad) show "????".
+local AMMO_TYPE_SHORT = {
+	["ammo_11.43x23_fmj"] = "FMJ",
+	["ammo_11.43x23_hydro"] = "HP",
+	["ammo_12.7x55_ap"] = "AP",
+	["ammo_12.7x55_fmj"] = "FMJ",
+	["ammo_12x70_buck"] = "BUCK",
+	["ammo_12x76_bull"] = "BULL",
+	["ammo_12x76_dart"] = "SLAP",
+	["ammo_12x76_zhekan"] = "SLUG",
+	["ammo_20x70_buck"] = "BUCK",
+	["ammo_23_eco"] = "ECO",
+	["ammo_23x75_barrikada"] = "BARR",
+	["ammo_23x75_shrapnel"] = "SHRAP",
+	["ammo_338_federal"] = "FED",
+	["ammo_357_hp_mag"] = "HP",
+	["ammo_4.6x30_fmj"] = "FMJ",
+	["ammo_5.45x39_ap"] = "AP",
+	["ammo_5.45x39_ep"] = "HP",
+	["ammo_5.45x39_fmj"] = "FMJ",
+	["ammo_5.56x45_ap"] = "AP",
+	["ammo_5.56x45_fmj"] = "FMJ",
+	["ammo_5.56x45_ss190"] = "HP",
+	["ammo_5.7x28_ss190"] = "AP",
+	["ammo_5.7x28_ss195"] = "FMJ",
+	["ammo_50_bmg"] = "BMG",
+	["ammo_7.62x25_p"] = "LRNPC",
+	["ammo_7.62x25_ps"] = "PST",
+	["ammo_7.62x39_ap"] = "AP",
+	["ammo_7.62x39_fmj"] = "FMJ",
+	["ammo_7.62x51_ap"] = "AP",
+	["ammo_7.62x51_fmj"] = "FMJ",
+	["ammo_7.62x54_7h1"] = "7N1",
+	["ammo_7.62x54_7h14"] = "7N14",
+	["ammo_7.62x54_ap"] = "AP",
+	["ammo_7.92x33_ap"] = "AP",
+	["ammo_7.92x33_fmj"] = "FMJ",
+	["ammo_9x18_ap"] = "AP",
+	["ammo_9x18_fmj"] = "FMJ",
+	["ammo_9x18_pmm"] = "HP",
+	["ammo_9x19_ap"] = "AP",
+	["ammo_9x19_fmj"] = "FMJ",
+	["ammo_9x19_pbp"] = "HP",
+	["ammo_9x21_sp10"] = "SP10",
+	["ammo_9x39_ap"] = "SP-6",
+	["ammo_9x39_pab9"] = "SP-5",
+	["ammo_gauss"] = "BATT",
+	["ammo_m209"] = "M203",
+	["ammo_magnum_300"] = "MAG",
+	["ammo_og-7b"] = "OG-7V",
+	["ammo_pkm_100"] = "PP",
+	["ammo_vog-25"] = "VOG-25",
+	["ammo_vog-30"] = "VOG-30",
+}
+local AMMO_TYPE_UNKNOWN = "????"
+
+-- Type-column colors by short label (ammo_type_label_reference.md Color column).
+-- Lookup by label; unknown / ???? fall back to grey.
+-- RGB: yellow/orange/blue tuned for table Type column brightness; grey for misc.
+local TYPE_RGB = {
+	yellow = { 255, 255, 0 },
+	orange = { 255, 150, 0 },
+	blue = { 100, 120, 255 },
+	grey = { 170, 170, 170 },
+}
+local TYPE_ARGB = {}
+local TYPE_CODE = {}
+for name, rgb in pairs(TYPE_RGB) do
+	TYPE_ARGB[name] = GetARGB(255, rgb[1], rgb[2], rgb[3])
+	TYPE_CODE[name] = string.format("%%c[255,%d,%d,%d]", rgb[1], rgb[2], rgb[3])
+end
+local TYPE_CODE_DEFAULT = "%c[default]"
+local AMMO_TYPE_COLOR = {
+	-- yellow
+	["FMJ"] = "yellow",
+	["BULL"] = "yellow",
+	["SLUG"] = "yellow",
+	["LRNPC"] = "yellow",
+	["7N1"] = "yellow",
+	["SP10"] = "yellow",
+	["SP-5"] = "yellow",
+	["PP"] = "yellow",
+	-- light blue (d_blue)
+	["HP"] = "blue",
+	["BUCK"] = "blue",
+	["SHRAP"] = "blue",
+	["FED"] = "blue",
+	-- orange
+	["AP"] = "orange",
+	["SLAP"] = "orange",
+	["BARR"] = "orange",
+	["BMG"] = "orange",
+	["PST"] = "orange",
+	["7N14"] = "orange",
+	["SP-6"] = "orange",
+	["MAG"] = "orange",
+	-- grey
+	["ECO"] = "grey",
+	["BATT"] = "grey",
+	["M203"] = "grey",
+	["OG-7V"] = "grey",
+	["VOG-25"] = "grey",
+	["VOG-30"] = "grey",
+}
+
+local function ammo_display_label(sec)
+	local base = sec or ""
+	if base:sub(-8) == "_verybad" then
+		base = base:sub(1, -9)
+	elseif base:sub(-4) == "_bad" then
+		base = base:sub(1, -5)
+	end
+	return AMMO_TYPE_SHORT[base] or AMMO_TYPE_UNKNOWN
+end
+
+local function ammo_type_color(label)
+	local name = AMMO_TYPE_COLOR[label]
+	return (name and TYPE_ARGB[name]) or TYPE_ARGB.grey
+end
+
+-- Color family used for slash compare matching (FMJ↔SLUG, HP↔BUCK, AP↔SLAP, …).
+-- Grey is intentionally excluded: it is a misc bucket (ECO/VOG/????), not a type family.
+local function ammo_color_key(label)
+	local key = AMMO_TYPE_COLOR[label]
+	if key == "yellow" or key == "blue" or key == "orange" then
+		return key
+	end
+	return nil
+end
+
+local function color_ammo_value(label, text)
+	local name = AMMO_TYPE_COLOR[label]
+	return ((name and TYPE_CODE[name]) or TYPE_CODE.grey) .. tostring(text)
+end
+
+local CLR = {
+	white = GetARGB(255, 255, 255, 255),
+	value = GetARGB(255, 175, 175, 175),
+	-- Column header labels (Type / AP / armor tiers).
+	hdr = GetARGB(255, 230, 210, 160),
+	-- Match utils_ui clr_list p1/n1 (stock stat value colors).
+	stat_pos = GetARGB(255, 170, 170, 170),
+	stat_neg = GetARGB(255, 200, 50, 50),
+	-- Match utils_ui clr_list info_p_txt / info_n_txt (compare column).
+	cmp_pos = GetARGB(200, 100, 255, 100),
+	cmp_neg = GetARGB(200, 255, 100, 100),
+}
+
+-- Complex %c often ignores alpha vs SetTextColor(GetARGB(a,...)); bake A into RGB
+-- so multipart compares match stock single-value compare brightness.
+local function cmp_text_code(a, r, g, b)
+	local s = a / 255
+	return string.format("%%c[255,%d,%d,%d]",
+		math.floor(r * s + 0.5),
+		math.floor(g * s + 0.5),
+		math.floor(b * s + 0.5))
+end
+
+local CMP_CODE_POS = cmp_text_code(200, 100, 255, 100)
+local CMP_CODE_NEG = cmp_text_code(200, 255, 100, 100)
+-- Punctuation / placeholders / zero deltas in compare text (not green/red).
+local CMP_CODE_GREY = "%c[255,175,175,175]"
+
+-- Forward-declared here so the display helpers below capture these as upvalues.
+local format_raw_ammo_damage_slash
+local format_stalker_ammo_damage_slash
+local mutant_ammo_damage_items
+local stalker_ammo_damage_items
+
+local ENHANCED_STAT_LABELS = {}
+
+local function refresh_enhanced_stat_labels()
+	ENHANCED_STAT_LABELS = {
+		hit_power = game.translate_string("ui_dorn_wpn_hit_power"),
+		stalker_damage = game.translate_string("ui_dorn_wpn_stalker_damage"),
+		ammo_damage = game.translate_string("ui_dorn_wpn_ammo_torso"),
+		dispersion = game.translate_string("ui_dorn_wpn_dispersion"),
+		spread = game.translate_string("ui_dorn_wpn_spread"),
+		barrel_wear = game.translate_string("ui_dorn_wpn_barrel_wear"),
+		burst_control = game.translate_string("ui_dorn_wpn_burst_control"),
+		bullet_drop = game.translate_string("ui_dorn_wpn_bullet_drop"),
+	}
+end
+
+local function custom_stat_text(cap, obj, sec)
+	if not cap then
+		return nil
+	end
+	if CONFIG.show_stalker_damage and cap == ENHANCED_STAT_LABELS.stalker_damage then
+		return format_stalker_ammo_damage_slash(obj, sec)
+	end
+	if CONFIG.show_mutant_damage and cap == ENHANCED_STAT_LABELS.ammo_damage then
+		return format_raw_ammo_damage_slash(obj, sec)
+	end
+	if not zzzz_dogma_tooltips_weapons_stats or not zzzz_dogma_tooltips_weapons_stats.text_for_name then
+		return nil
+	end
+	local S = zzzz_dogma_tooltips_weapons_stats
+	local N = S.NAME
+	if CONFIG.show_dispersion and cap == ENHANCED_STAT_LABELS.dispersion then
+		return S.text_for_name(N.dispersion, obj, sec)
+	end
+	if CONFIG.show_spread and cap == ENHANCED_STAT_LABELS.spread then
+		return S.text_for_name(N.spread, obj, sec)
+	end
+	if CONFIG.show_barrel_wear and cap == ENHANCED_STAT_LABELS.barrel_wear then
+		return S.text_for_name(N.barrel_wear, obj, sec)
+	end
+	if CONFIG.show_burst_control and cap == ENHANCED_STAT_LABELS.burst_control then
+		return S.text_for_name(N.burst_control, obj, sec)
+	end
+	if CONFIG.show_bullet_drop and cap == ENHANCED_STAT_LABELS.bullet_drop then
+		return S.text_for_name(N.bullet_drop, obj, sec)
+	end
+	return nil
+end
+
+-- Companion stat name_id for a translated caption (nil for slash rows / Hit Power).
+local function companion_name_id_for_cap(cap)
+	if not cap or not zzzz_dogma_tooltips_weapons_stats or not zzzz_dogma_tooltips_weapons_stats.NAME then
+		return nil
+	end
+	local L = ENHANCED_STAT_LABELS
+	local N = zzzz_dogma_tooltips_weapons_stats.NAME
+	if cap == L.dispersion then
+		return N.dispersion
+	end
+	if cap == L.spread then
+		return N.spread
+	end
+	if cap == L.barrel_wear then
+		return N.barrel_wear
+	end
+	if cap == L.burst_control then
+		return N.burst_control
+	end
+	if cap == L.bullet_drop then
+		return N.bullet_drop
+	end
+	return nil
+end
+
+-- Equipped weapon in the same slot (stock UIInfoItem compare target).
+local function slot_compare_weapon(info, obj, sec)
+	if not info or not info.can_compare or not obj or not sec or sec == "" then
+		return nil
+	end
+	if not db or not db.actor then
+		return nil
+	end
+	local slot = (SYS_GetParam(2, sec, "slot", -1) or -1) + 1
+	if slot <= 0 then
+		return nil
+	end
+	local obj_b = db.actor:item_in_slot(slot)
+	if not obj_b then
+		return nil
+	end
+	local ok_a, id_a = pcall(function()
+		return obj:id()
+	end)
+	local ok_b, id_b = pcall(function()
+		return obj_b:id()
+	end)
+	if ok_a and ok_b and id_a == id_b then
+		return nil
+	end
+	return obj_b
+end
+
+local function round_compare(v, decimals)
+	local d = decimals or 2
+	local mult = 10 ^ d
+	return math.floor(v * mult + 0.5) / mult
+end
+
+local function format_signed_diff(diff, decimals)
+	local diff_txt = string.format("%." .. tostring(decimals or 2) .. "f", diff)
+	diff_txt = diff_txt:gsub("(%..-)0+$", "%1"):gsub("%.$", "")
+	if diff > 0 then
+		return "+" .. diff_txt
+	end
+	return diff_txt
+end
+
+-- Inline compare colors for multi-part (+/-) text (same RGB/alpha as CLR.cmp_*).
+-- Only the signed number is tinted; callers wrap punctuation in CMP_CODE_GREY.
+local function colored_signed_diff(diff, decimals, lower_is_better)
+	local body = format_signed_diff(diff, decimals)
+	if diff == 0 then
+		return CMP_CODE_GREY .. body
+	end
+	local better
+	if lower_is_better then
+		better = diff < 0
+	else
+		better = diff > 0
+	end
+	return (better and CMP_CODE_POS or CMP_CODE_NEG) .. body
+end
+
+-- Whitens main value when color_value ~= false (slash rows pass false to keep ammo colors).
+local function maybe_whiten_value(ele, color_value)
+	if color_value ~= false and ele and ele.txt then
+		ele.txt:SetTextColor(CLR.white)
+	end
+end
+
+-- Build "(a / b / …)" or "(a, b)" with grey punctuation; only ±N is green/red.
+-- diffs[i]=false → "-" placeholder (grey).
+local function apply_multipart_compare(ele, diffs, decimals, lower_is_better, color_value, sep)
+	if not ele or not ele.comp or not diffs or #diffs == 0 then
+		return false
+	end
+	sep = sep or ", "
+	local n = 0
+	local any = false
+	local any_placeholder = false
+	for i = 1, #diffs do
+		local d = diffs[i]
+		if d == false then
+			any_placeholder = true
+		else
+			n = n + 1
+			if d ~= 0 then
+				any = true
+			end
+		end
+	end
+	-- Hide only when every slot is a real 0 (no placeholders, nothing differs).
+	if n == 0 and not any_placeholder then
+		ele.comp:Show(false)
+		return false
+	end
+	if n > 0 and not any and not any_placeholder then
+		ele.comp:Show(false)
+		return false
+	end
+
+	local parts = {}
+	for i = 1, #diffs do
+		if diffs[i] == false then
+			parts[i] = CMP_CODE_GREY .. "-"
+		else
+			parts[i] = colored_signed_diff(diffs[i], decimals, lower_is_better)
+		end
+	end
+	ele.comp:SetTextComplexMode(true)
+	ele.comp:SetText(CMP_CODE_GREY .. "("
+		.. table.concat(parts, CMP_CODE_GREY .. sep)
+		.. CMP_CODE_GREY .. ")")
+	ele.comp:Show(true)
+	ele.comp:SetTextColor(CLR.white)
+	maybe_whiten_value(ele, color_value)
+	return true
+end
+
+-- Stock text compare: "(+/-diff)" with default parens; only ±N is green/red.
+-- color_value=false: never paint the main text (slash rows keep ammo colors).
+local function apply_numeric_compare(ele, val_a, val_b, lower_is_better, decimals, color_value)
+	if not ele or not ele.comp or val_a == nil or val_b == nil then
+		return false
+	end
+	local a = round_compare(val_a, decimals)
+	local b = round_compare(val_b, decimals)
+	if a == b then
+		ele.comp:Show(false)
+		return false
+	end
+	local diff = a - b
+	ele.comp:SetTextComplexMode(true)
+	ele.comp:SetText(CMP_CODE_GREY .. "("
+		.. colored_signed_diff(diff, decimals, lower_is_better)
+		.. CMP_CODE_GREY .. ")")
+	ele.comp:Show(true)
+	ele.comp:SetTextColor(CLR.white)
+	maybe_whiten_value(ele, color_value)
+	return true
+end
+
+local function resolve_compare_sec(obj_b)
+	if not obj_b then
+		return nil
+	end
+	local ok, section = pcall(function()
+		return obj_b:section()
+	end)
+	if ok and section then
+		return ini_sys:r_string_ex(section, "parent_section") or section
+	end
+	return nil
+end
+
+-- Spread: per-angle deltas with individual green/red (lower is better).
+local function apply_spread_compare(ele, obj, sec, obj_b, decimals)
+	local S = zzzz_dogma_tooltips_weapons_stats
+	if not ele or not ele.comp or not S or not obj_b then
+		return false
+	end
+	if not S.value_base_spread or not S.value_movement_spread then
+		return false
+	end
+	local sec_b = resolve_compare_sec(obj_b)
+	local lo_a = S.value_base_spread(obj, sec)
+	local hi_a = S.value_movement_spread(obj, sec)
+	local lo_b = S.value_base_spread(obj_b, sec_b)
+	local hi_b = S.value_movement_spread(obj_b, sec_b)
+	if not lo_a or not hi_a or not lo_b or not hi_b then
+		return false
+	end
+	local d_lo = round_compare(lo_a, decimals) - round_compare(lo_b, decimals)
+	local d_hi = round_compare(hi_a, decimals) - round_compare(hi_b, decimals)
+	return apply_multipart_compare(ele, { d_lo, d_hi }, decimals, true, true)
+end
+
+-- Move stock green/red off the main number; recolor compare so only ±N is tinted
+-- (parens / % stay grey). Bar rows already paint (+/-); leave alone when txt hidden.
+local function relocate_stock_compare_colors(ele)
+	if not ele or not ele.comp or not ele.comp:IsShown() then
+		return
+	end
+	if ele.txt and ele.txt:IsShown() then
+		ele.txt:SetTextColor(CLR.white)
+	end
+	local raw = ele.comp:GetText()
+	if not raw or raw == "" then
+		return
+	end
+	-- "(±N)" / "(±N%)" or bare "±N%"
+	local body = raw:match("^%((.+)%)$")
+	local wrapped = body ~= nil
+	if not body then
+		body = raw
+	end
+	local num_part, pct = body:match("^(.*)(%%)$")
+	if not num_part then
+		num_part, pct = body, ""
+	end
+	local n = tonumber(num_part)
+	local code = CMP_CODE_GREY
+	if n then
+		if n > 0 then
+			code = CMP_CODE_POS
+		elseif n < 0 then
+			code = CMP_CODE_NEG
+		end
+	end
+	ele.comp:SetTextComplexMode(true)
+	if wrapped then
+		ele.comp:SetText(CMP_CODE_GREY .. "(" .. code .. num_part .. pct .. CMP_CODE_GREY .. ")")
+	else
+		ele.comp:SetText(code .. num_part .. CMP_CODE_GREY .. pct)
+	end
+	ele.comp:SetTextColor(CLR.white)
+end
+
+local function apply_companion_compare(ele, name_id, obj, sec, obj_b)
+	local S = zzzz_dogma_tooltips_weapons_stats
+	if not S or not S.value_for_name or not obj_b then
+		return false
+	end
+	local lower_better, decimals = false, 2
+	if S.compare_meta_for_name then
+		lower_better, decimals = S.compare_meta_for_name(name_id)
+	end
+	if S.NAME and name_id == S.NAME.spread then
+		return apply_spread_compare(ele, obj, sec, obj_b, decimals)
+	end
+	local val_a = S.value_for_name(name_id, obj, sec)
+	local val_b = S.value_for_name(name_id, obj_b, resolve_compare_sec(obj_b))
+	return apply_numeric_compare(ele, val_a, val_b, lower_better, decimals)
+end
+
+-- True if items list has two+ rounds in the same compare color family.
+local function items_have_duplicate_color(items)
+	if not items then
+		return false
+	end
+	local seen = {}
+	for i = 1, #items do
+		local ck = items[i].label and ammo_color_key(items[i].label)
+		if ck then
+			if seen[ck] then
+				return true
+			end
+			seen[ck] = true
+		end
+	end
+	return false
+end
+
+-- Slash rows: walk current-weapon ammo order. Match by section, else Type label,
+-- else Type color family (yellow/blue/orange only — same map as slash value colors:
+-- FMJ↔SLUG, HP↔BUCK, AP↔SLAP). Missing on B → "-" placeholder so (+/-) lines up
+-- with the left slash (e.g. FMJ/HP/AP vs FMJ/AP → "(+5 / - / -3)").
+-- No shared matches at all → "(- / - / -)" so the column is not left blank.
+-- Skip entirely if either gun has two rounds in the same color family.
+local function apply_slash_damage_compare(ele, items_fn, obj, sec, obj_b)
+	if not items_fn or not obj_b or not ele or not ele.comp then
+		return false
+	end
+	local items_a = items_fn(obj, sec)
+	local items_b = items_fn(obj_b, resolve_compare_sec(obj_b))
+	if not items_a or not items_b or #items_a == 0 or #items_b == 0 then
+		return false
+	end
+	if items_have_duplicate_color(items_a) or items_have_duplicate_color(items_b) then
+		ele.comp:Show(false)
+		return false
+	end
+	local b_by_sec = {}
+	local b_by_label = {}
+	local b_by_color = {}
+	for i = 1, #items_b do
+		local it = items_b[i]
+		if it.sec then
+			b_by_sec[it.sec] = it.dmg
+		end
+		if it.label then
+			b_by_label[it.label] = it.dmg
+			local ck = ammo_color_key(it.label)
+			if ck then
+				b_by_color[ck] = it.dmg
+			end
+		end
+	end
+	local diffs = {}
+	local any_shared = false
+	local any_nonzero = false
+	local any_placeholder = false
+	for i = 1, #items_a do
+		local it = items_a[i]
+		local ck = it.label and ammo_color_key(it.label)
+		local b = (it.sec and b_by_sec[it.sec])
+			or (it.label and b_by_label[it.label])
+			or (ck and b_by_color[ck])
+		if b ~= nil then
+			any_shared = true
+			local d = round_compare(it.dmg, 1) - round_compare(b, 1)
+			diffs[i] = d
+			if d ~= 0 then
+				any_nonzero = true
+			end
+		else
+			diffs[i] = false
+			any_placeholder = true
+		end
+	end
+	-- Identical on every shared type and nothing missing → nothing to show.
+	if any_shared and not any_nonzero and not any_placeholder then
+		ele.comp:Show(false)
+		return false
+	end
+	-- No shared matches: still emit placeholders in current-weapon order.
+	if not any_shared then
+		local parts = {}
+		for i = 1, #diffs do
+			parts[i] = CMP_CODE_GREY .. "-"
+		end
+		ele.comp:SetTextComplexMode(true)
+		ele.comp:SetText(CMP_CODE_GREY .. "("
+			.. table.concat(parts, CMP_CODE_GREY .. " / ")
+			.. CMP_CODE_GREY .. ")")
+		ele.comp:Show(true)
+		ele.comp:SetTextColor(CLR.white)
+		return true
+	end
+	-- " / " matches left slash separators; punctuation grey, ±N tinted.
+	return apply_multipart_compare(ele, diffs, 1, false, false, " / ")
+end
+
+local function apply_custom_stat_display(info, obj, sec)
+	if not info or not info.stats then
+		return
+	end
+	-- Stat slots are reused across items. Complex mode sticks and breaks stock
+	-- strings that contain '%' (Accuracy etc.) — always clear first.
+	for _, ele in pairs(info.stats) do
+		if ele.txt then
+			ele.txt:SetTextComplexMode(false)
+		end
+		if ele.comp then
+			ele.comp:SetTextComplexMode(false)
+		end
+	end
+	if (not sec or sec == "") and obj then
+		local ok, section = pcall(function()
+			return obj:section()
+		end)
+		if ok and section then
+			sec = ini_sys:r_string_ex(section, "parent_section") or section
+		end
+	end
+	-- Match GetType("weapon"): IsWeapon(sec) crashes — it calls :clsid() on the string.
+	if not sec or info:GetType(sec) ~= "weapon" then
+		return
+	end
+
+	local obj_b = slot_compare_weapon(info, obj, sec)
+	local painted = {}
+
+	for _, ele in pairs(info.stats) do
+		if ele.cap and ele.txt then
+			local cap = ele.cap:GetText()
+			if cap then
+				if CONFIG.show_hit_power and cap == ENHANCED_STAT_LABELS.hit_power then
+					ele.cap:SetTextColor(CLR.white)
+					-- Stock Update already fills ele.comp + green/red when values differ.
+					if not (ele.comp and ele.comp:IsShown()) then
+						ele.txt:SetTextColor(CLR.white)
+					end
+				else
+					local custom = custom_stat_text(cap, obj, sec)
+					if custom then
+						ele.cap:SetTextColor(CLR.white)
+						if cap == ENHANCED_STAT_LABELS.stalker_damage
+							or cap == ENHANCED_STAT_LABELS.ammo_damage
+							or cap == ENHANCED_STAT_LABELS.bullet_drop
+							or cap == ENHANCED_STAT_LABELS.dispersion
+							or cap == ENHANCED_STAT_LABELS.spread
+							or cap == ENHANCED_STAT_LABELS.burst_control
+							or cap == ENHANCED_STAT_LABELS.barrel_wear then
+							ele.txt:SetTextComplexMode(true)
+						end
+						ele.txt:SetText(custom)
+						ele.txt:Show(true)
+						ele.txt:SetTextColor(CLR.white)
+
+						local comparing = false
+						if obj_b and ele.comp then
+							if cap == ENHANCED_STAT_LABELS.stalker_damage then
+								comparing = apply_slash_damage_compare(
+									ele, stalker_ammo_damage_items, obj, sec, obj_b)
+							elseif cap == ENHANCED_STAT_LABELS.ammo_damage then
+								comparing = apply_slash_damage_compare(
+									ele, mutant_ammo_damage_items, obj, sec, obj_b)
+							else
+								local name_id = companion_name_id_for_cap(cap)
+								if name_id then
+									comparing = apply_companion_compare(ele, name_id, obj, sec, obj_b)
+								end
+							end
+						end
+						if comparing then
+							painted[ele] = true
+						elseif ele.comp then
+							ele.comp:Show(false)
+						end
+					end
+				end
+			end
+		end
+	end
+
+	-- Vanilla / Hit Power: restyle existing compare colors (no recalc).
+	for _, ele in pairs(info.stats) do
+		if ele.comp and ele.comp:IsShown() and not painted[ele] then
+			relocate_stock_compare_colors(ele)
+		end
+	end
+end
+
+local PANEL_TOP_OFFSET = 0    -- gap below item description, above our damage panel
+local BOTTOM_OFFSET = 2       -- gap between damage panel and stats block
+local SECTION_GAP = 10        -- match vanilla UIInfoItem:Sync_Finale section spacing
+
+-- Generic rows, filled top-down in order. Rows beyond the data are hidden.
+local ROW_XML = {
+	"panel:row_1",
+	"panel:row_2",
+	"panel:row_3",
+	"panel:row_4",
+}
+
+-- Parsed once; layout lives in configs/ui/ui_dorn_weapon_tooltip.xml.
+local DAMAGE_XML = CScriptXmlInit()
+DAMAGE_XML:ParseFile("ui_dorn_weapon_tooltip.xml")
+
+-- Own handle for the vanilla stat-box layout (item_info:stats_box lives in
+-- utils.xml, same file utils_ui.get_stats_xml uses). Used to rebuild our
+-- damage/hit-power stat row in the details sheet with white text.
+local STAT_XML = CScriptXmlInit()
+STAT_XML:ParseFile("utils.xml")
+
+local base_uiinfo_init
+local base_uiinfo_update
+
+local HIT_POWER_STAT = {
+	index = 3,
+	typ = "float",
+	name = "ui_dorn_wpn_hit_power",
+	icon_p = "ui_wp_prop_damage",
+	icon_n = "",
+	track = false,
+	magnitude = 1,
+	unit = "%",
+	compare = false,
+	sign = false,
+	show_always = true,
+	value_functor = {
+		"zzzz_dogma_tooltips_weapons_main", "scale_hit_power_display",
+		"zzzz_dogma_tooltips_weapons_main", "prop_hit_power",
+	},
+}
+
+-- Flesh (mutant) damage per ammo type, table order: hit_power / range x k_hit x
+-- pellets x CQC mutant_mult 0.85 x ammo_mult x difficulty.
+-- No species or weak-spot factors.
+local RAW_AMMO_DAMAGE_STAT = {
+	index = 3.5,
+	typ = "float",
+	name = "ui_dorn_wpn_ammo_torso",
+	icon_p = "ui_wp_prop_damage",
+	icon_n = "",
+	track = false,
+	magnitude = 1,
+	unit = "",
+	compare = false,
+	sign = false,
+	show_always = true,
+	value_functor = { "zzzz_dogma_tooltips_weapons_main", "prop_raw_ammo_damage_slash_flag" },
+}
+
+-- Pre-armor stalker (NPC) torso damage per ammo at calc_range(): CQC power
+-- before AP/armor/chip. Outfit ap_scale omitted (1.0) so this is universal max
+-- before armor math. Same ammo order as the damage table.
+local STALKER_DAMAGE_STAT = {
+	index = 3.25,
+	typ = "float",
+	name = "ui_dorn_wpn_stalker_damage",
+	icon_p = "ui_wp_prop_damage",
+	icon_n = "",
+	track = false,
+	magnitude = 1,
+	unit = "",
+	compare = false,
+	sign = false,
+	show_always = true,
+	value_functor = { "zzzz_dogma_tooltips_weapons_main", "prop_stalker_ammo_damage_slash_flag" },
+}
+
+-- Cached non-Dorn base rows so MCM can hide/restore them.
+local saved_base_stats = {}
+
+local function cache_base_stat(weapon_stats, key)
+	local cur = weapon_stats[key]
+	-- Skip our own ui_dorn_wpn_* rows when caching vanilla base defs.
+	if cur and not (cur.name and string.find(cur.name, "ui_dorn_wpn_", 1, true) == 1) then
+		saved_base_stats[key] = cur
+	end
+end
+
+local function set_base_stat(weapon_stats, key, enabled)
+	cache_base_stat(weapon_stats, key)
+	if enabled then
+		if saved_base_stats[key] then
+			weapon_stats[key] = saved_base_stats[key]
+		end
+	else
+		weapon_stats[key] = nil
+	end
+end
+
+local function make_dorn_row(index, name, icon, prop)
+	return {
+		index = index,
+		typ = "float",
+		name = name,
+		icon_p = icon,
+		icon_n = "",
+		track = false,
+		magnitude = 1,
+		unit = "",
+		compare = false,
+		sign = false,
+		show_always = true,
+		-- Functors must live on this script module (zzzz_dogma_tooltips_weapons_main.*);
+		-- X-Ray resolves _G[file][func], not nested table fields on another script.
+		value_functor = { "zzzz_dogma_tooltips_weapons_main", prop },
+	}
+end
+
+-- Highest sort index among stock/Momopate weapon rows (excludes Dorn keys).
+local function max_non_dorn_weapon_index(weapon_stats)
+	local max_i = 0
+	for key, def in pairs(weapon_stats) do
+		if def and type(def) == "table" and def.index
+			and key ~= "damage"
+			and string.find(key, "dorn_", 1, true) ~= 1
+		then
+			if def.index > max_i then
+				max_i = def.index
+			end
+		end
+	end
+	return max_i
+end
+
+-- Resolve a base row's sort index from the cached stock def (survives MCM hide).
+local function resolved_base_index(key)
+	local saved = saved_base_stats[key]
+	if saved and saved.index then
+		return saved.index
+	end
+	return BASE_INDEX[key] or 0
+end
+
+-- Inline: sit under the parent when it is visible; take its index when hidden
+-- so companions remain drop-in replacements for their related base rows.
+local function inline_companion_index(parent_key, parent_shown)
+	local parent_idx = resolved_base_index(parent_key)
+	if parent_shown then
+		return parent_idx + 0.5
+	end
+	return parent_idx
+end
+
+-- Two companions under one parent (upper first). Spread sits above Dispersion.
+local function inline_companion_pair(parent_key, parent_shown, upper_shown, lower_shown)
+	local parent_idx = resolved_base_index(parent_key)
+	if parent_shown then
+		if upper_shown and lower_shown then
+			return parent_idx + 0.25, parent_idx + 0.5
+		end
+		-- Solo companion: same slot as other single companions (parent + 0.5).
+		return parent_idx + 0.5, parent_idx + 0.5
+	end
+	if upper_shown and lower_shown then
+		return parent_idx, parent_idx + 0.25
+	end
+	return parent_idx, parent_idx
+end
+
+local function placement_indices(weapon_stats)
+	if CONFIG.stat_row_placement == "after" then
+		-- All Dorn rows at end of list (after remaining non-Dorn rows).
+		local base = max_non_dorn_weapon_index(weapon_stats)
+		return {
+			hit_power = base + 1,
+			stalker_damage = base + 2,
+			mutant_damage = base + 3,
+			spread = base + 4,
+			dispersion = base + 5,
+			bullet_drop = base + 6,
+			barrel_wear = base + 7,
+			burst_control = base + 8,
+		}
+	end
+
+	-- Hit Power / Stalker / Mutant have no related base row: always lead.
+	local dmg = {
+		hit_power = 0.1,
+		stalker_damage = 0.2,
+		mutant_damage = 0.3,
+	}
+
+	if CONFIG.stat_row_placement == "start" then
+		-- Companions join the lead block before Accuracy / any non-Dorn rows.
+		return {
+			hit_power = dmg.hit_power,
+			stalker_damage = dmg.stalker_damage,
+			mutant_damage = dmg.mutant_damage,
+			spread = 0.4,
+			dispersion = 0.5,
+			bullet_drop = 0.6,
+			barrel_wear = 0.7,
+			burst_control = 0.8,
+		}
+	end
+
+	-- Inline: companions after related base; damage trio still first.
+	local spread_idx, disp_idx = inline_companion_pair(
+		"accuracy", CONFIG.show_accuracy, CONFIG.show_spread, CONFIG.show_dispersion)
+	return {
+		hit_power = dmg.hit_power,
+		stalker_damage = dmg.stalker_damage,
+		mutant_damage = dmg.mutant_damage,
+		spread = spread_idx,
+		dispersion = disp_idx,
+		bullet_drop = inline_companion_index("speed", CONFIG.show_muzzle_velocity),
+		barrel_wear = inline_companion_index("reliability", CONFIG.show_reliability),
+		burst_control = inline_companion_index("recoil", CONFIG.show_recoil),
+	}
+end
+
+local function apply_enhanced_weapon_stats()
+	if not utils_ui or not utils_ui.stats_table then
+		return
+	end
+
+	local weapon_stats = utils_ui.stats_table["weapon"]
+	if not weapon_stats then
+		return
+	end
+
+	-- Cache every known base row first so inline anchors survive MCM hide.
+	for key, _ in pairs(BASE_INDEX) do
+		cache_base_stat(weapon_stats, key)
+	end
+
+	set_base_stat(weapon_stats, "accuracy", CONFIG.show_accuracy)
+	set_base_stat(weapon_stats, "handling", CONFIG.show_handling)
+	set_base_stat(weapon_stats, "fire_rate", CONFIG.show_fire_rate)
+	set_base_stat(weapon_stats, "ammo_mag_size", CONFIG.show_mag_size)
+	set_base_stat(weapon_stats, "reliability", CONFIG.show_reliability)
+	set_base_stat(weapon_stats, "recoil", CONFIG.show_recoil)
+	set_base_stat(weapon_stats, "speed", CONFIG.show_muzzle_velocity)
+
+	local idx = placement_indices(weapon_stats)
+
+	HIT_POWER_STAT.index = idx.hit_power
+	STALKER_DAMAGE_STAT.index = idx.stalker_damage
+	RAW_AMMO_DAMAGE_STAT.index = idx.mutant_damage
+
+	cache_base_stat(weapon_stats, "damage")
+	if CONFIG.show_hit_power then
+		weapon_stats["damage"] = HIT_POWER_STAT
+	else
+		weapon_stats["damage"] = saved_base_stats["damage"]
+	end
+
+	if CONFIG.show_stalker_damage then
+		weapon_stats["dorn_stalker_damage"] = STALKER_DAMAGE_STAT
+	else
+		weapon_stats["dorn_stalker_damage"] = nil
+	end
+	if CONFIG.show_mutant_damage then
+		weapon_stats["dorn_ammo_damage"] = RAW_AMMO_DAMAGE_STAT
+	else
+		weapon_stats["dorn_ammo_damage"] = nil
+	end
+
+	local N = (zzzz_dogma_tooltips_weapons_stats and zzzz_dogma_tooltips_weapons_stats.NAME) or EXTRA_STAT_NAME
+	weapon_stats["dorn_dispersion"] = CONFIG.show_dispersion
+		and make_dorn_row(idx.dispersion, N.dispersion, "ui_wp_prop_contrast", "prop_dispersion")
+		or nil
+	weapon_stats["dorn_spread"] = CONFIG.show_spread
+		and make_dorn_row(idx.spread, N.spread, "ui_wp_propery_13", "prop_spread")
+		or nil
+	-- Drop legacy dual-spread rows if a previous session registered them.
+	weapon_stats["dorn_base_spread"] = nil
+	weapon_stats["dorn_movement_spread"] = nil
+	weapon_stats["dorn_bullet_drop"] = CONFIG.show_bullet_drop
+		and make_dorn_row(idx.bullet_drop, N.bullet_drop, "ui_wp_prop_nastilnost", "prop_bullet_drop")
+		or nil
+	weapon_stats["dorn_barrel_wear"] = CONFIG.show_barrel_wear
+		and make_dorn_row(idx.barrel_wear, N.barrel_wear, "ui_wp_prop_nadezhnost", "prop_barrel_wear")
+		or nil
+	weapon_stats["dorn_burst_control"] = CONFIG.show_burst_control
+		and make_dorn_row(idx.burst_control, N.burst_control, "ui_wp_prop_otdacha", "prop_burst_control")
+		or nil
+end
+
+-- Legacy single toggle (show_enhanced_weapon_stats) seeds both new keys when absent.
+local function read_legacy_enhanced_default()
+	if not DORN or not DORN.mcm then
+		return true
+	end
+
+	if DORN.mcm.get(MOD_ID, "main/show_enhanced_weapon_stats") ~= nil then
+		return DORN.mcm.bool(MOD_ID, "main/show_enhanced_weapon_stats", true)
+	end
+
+	local mode = DORN.mcm.string(MOD_ID, "main/damage_stat", nil)
+	if mode == "raw_hit_power" then
+		mode = "hit_power"
+	elseif mode == "ammo_torso" then
+		mode = "damage"
+	end
+	if mode == "off" then
+		return false
+	end
+	if mode == "hit_power" or mode == "damage" then
+		return true
+	end
+
+	if DORN.mcm.get(MOD_ID, "main/show_damage_stat") ~= nil then
+		return DORN.mcm.bool(MOD_ID, "main/show_damage_stat", false)
+	end
+
+	return true
+end
+
+local function read_new_stat_flag(key)
+	if not DORN or not DORN.mcm then
+		return true
+	end
+	if DORN.mcm.get(MOD_ID, "main/" .. key) ~= nil then
+		return DORN.mcm.bool(MOD_ID, "main/" .. key, true)
+	end
+	if DORN.mcm.get(MOD_ID, "main/show_new_weapon_stats") ~= nil then
+		return DORN.mcm.bool(MOD_ID, "main/show_new_weapon_stats", true)
+	end
+	return read_legacy_enhanced_default()
+end
+
+-- Legacy master / per-append keys seed the new child-row toggles when absent.
+local function read_extra_stat_default()
+	if not DORN or not DORN.mcm then
+		return true
+	end
+	if DORN.mcm.get(MOD_ID, "main/show_appended_weapon_stats") ~= nil then
+		return DORN.mcm.bool(MOD_ID, "main/show_appended_weapon_stats", true)
+	end
+	return read_legacy_enhanced_default()
+end
+
+local EXTRA_STAT_LEGACY = {
+	show_barrel_wear = "show_append_reliability",
+	show_burst_control = "show_append_recoil",
+	show_bullet_drop = "show_append_muzzle_velocity",
+}
+
+local function read_extra_stat_flag(key)
+	if not DORN or not DORN.mcm then
+		return true
+	end
+	if DORN.mcm.get(MOD_ID, "main/" .. key) ~= nil then
+		return DORN.mcm.bool(MOD_ID, "main/" .. key, true)
+	end
+	local legacy = EXTRA_STAT_LEGACY[key]
+	if legacy and DORN.mcm.get(MOD_ID, "main/" .. legacy) ~= nil then
+		return DORN.mcm.bool(MOD_ID, "main/" .. legacy, true)
+	end
+	return read_extra_stat_default()
+end
+
+-- Combined Spread: new key, else OR of old Base/Move (and their append-legacy keys).
+local function read_spread_flag()
+	if not DORN or not DORN.mcm then
+		return true
+	end
+	if DORN.mcm.get(MOD_ID, "main/show_spread") ~= nil then
+		return DORN.mcm.bool(MOD_ID, "main/show_spread", true)
+	end
+	local has_base = DORN.mcm.get(MOD_ID, "main/show_base_spread") ~= nil
+	local has_move = DORN.mcm.get(MOD_ID, "main/show_movement_spread") ~= nil
+	if has_base or has_move then
+		local base_on = has_base and DORN.mcm.bool(MOD_ID, "main/show_base_spread", true)
+		local move_on = has_move and DORN.mcm.bool(MOD_ID, "main/show_movement_spread", true)
+		return base_on or move_on
+	end
+	local has_acc = DORN.mcm.get(MOD_ID, "main/show_append_accuracy") ~= nil
+	local has_hand = DORN.mcm.get(MOD_ID, "main/show_append_handling") ~= nil
+	if has_acc or has_hand then
+		local acc_on = has_acc and DORN.mcm.bool(MOD_ID, "main/show_append_accuracy", true)
+		local hand_on = has_hand and DORN.mcm.bool(MOD_ID, "main/show_append_handling", true)
+		return acc_on or hand_on
+	end
+	return read_extra_stat_default()
+end
+
+local function read_base_stat_flag(key)
+	if not DORN or not DORN.mcm then
+		return true
+	end
+	if DORN.mcm.get(MOD_ID, "main/" .. key) ~= nil then
+		return DORN.mcm.bool(MOD_ID, "main/" .. key, true)
+	end
+	return true
+end
+
+local logged_once = {}
+-- Keys logged for the current tooltip open (reset when the hovered item changes).
+local tooltip_logged = {}
+
+local OVERLAY = {
+	RANGE = { order = 1, color = "cyan" },
+}
+
+-- HUD-only: for values that change every frame (crosshair range).
+local function overlay(slot, msg)
+	if not (DORN and DORN.dbg) then
+		return
+	end
+	if CONFIG.debug_overlay then
+		local s = slot or OVERLAY.RANGE
+		DORN.dbg.overlay(MOD_ID, s.order, tostring(msg), s.color)
+	end
+end
+
+local function log(msg)
+	if not (DORN and DORN.dbg) then
+		return
+	end
+	if CONFIG.debug_log then
+		DORN.dbg.log(MOD_ID, tostring(msg))
+	end
+end
+
+-- Log each key at most once per session (debug_log only). Global/bootstrap events
+-- use plain keys; per-item paths use log_item_once(reason, sec, msg) instead.
+local function log_once(key, msg)
+	if logged_once[key] then
+		return
+	end
+	if not (DORN and DORN.dbg) or not CONFIG.debug_log then
+		return
+	end
+	logged_once[key] = true
+	log(msg)
+end
+
+-- Per weapon section: dedupe repeated hovers on the same item, not across items.
+local function log_item_once(reason, sec, msg)
+	log_once(reason .. ":" .. tostring(sec), msg)
+end
+
+-- Once per tooltip open (cleared when the hovered item changes).
+local function log_tooltip(key, msg)
+	if not CONFIG.debug_log then
+		return
+	end
+	if tooltip_logged[key] then
+		return
+	end
+	tooltip_logged[key] = true
+	log(msg)
+end
+
+-- UIInfoItem:Update caches by item id/section and early-returns for the same
+-- item, so after an MCM change we must clear that cache or stat rows won't
+-- rebuild until a different item is hovered.
+local tracked_infos = setmetatable({}, { __mode = "k" })
+
+local function on_option_change()
+	-- All MCM/palette work is optional - the per-ammo breakdown must keep working
+	-- even if DORN common failed to load, so nothing here is allowed to hard-fail.
+	local tostr = tostring
+	local prev_debug = CONFIG.debug_log
+	if DORN and DORN.mcm then
+		CONFIG.show_damage_table = DORN.mcm.bool(MOD_ID, "main/show_damage_table", true)
+		CONFIG.show_hit_power = read_new_stat_flag("show_hit_power")
+		CONFIG.show_stalker_damage = read_new_stat_flag("show_stalker_damage")
+		CONFIG.show_mutant_damage = read_new_stat_flag("show_mutant_damage")
+		CONFIG.show_accuracy = read_base_stat_flag("show_accuracy")
+		CONFIG.show_handling = read_base_stat_flag("show_handling")
+		CONFIG.show_fire_rate = read_base_stat_flag("show_fire_rate")
+		CONFIG.show_mag_size = read_base_stat_flag("show_mag_size")
+		CONFIG.show_reliability = read_base_stat_flag("show_reliability")
+		CONFIG.show_recoil = read_base_stat_flag("show_recoil")
+		CONFIG.show_muzzle_velocity = read_base_stat_flag("show_muzzle_velocity")
+		CONFIG.show_dispersion = read_extra_stat_flag("show_dispersion")
+		CONFIG.show_spread = read_spread_flag()
+		CONFIG.show_barrel_wear = read_extra_stat_flag("show_barrel_wear")
+		CONFIG.show_burst_control = read_extra_stat_flag("show_burst_control")
+		CONFIG.show_bullet_drop = read_extra_stat_flag("show_bullet_drop")
+		-- "raw" = bone armor floats; "raw100" = floats x100 floored; "names" = class labels.
+		-- Legacy MCM values: "npc" -> raw, "brc" -> names.
+		local headers = DORN.mcm.string(MOD_ID, "main/column_headers", "names")
+		if headers == "raw" or headers == "npc" then
+			CONFIG.column_headers = "raw"
+		elseif headers == "raw100" then
+			CONFIG.column_headers = "raw100"
+		else
+			CONFIG.column_headers = "names"
+		end
+		local scale_from = DORN.mcm.string(MOD_ID, "main/color_scale_from", "darkgrey")
+		if scale_from == "white" or scale_from == "grey" then
+			CONFIG.color_scale_from = scale_from
+		else
+			CONFIG.color_scale_from = "darkgrey"
+		end
+		local order = DORN.mcm.string(MOD_ID, "main/ammo_order", "default")
+		if order == "ap" then
+			CONFIG.ammo_order = "ap"
+		elseif order == "damage" then
+			CONFIG.ammo_order = "damage"
+		else
+			CONFIG.ammo_order = "default"
+		end
+		local place = DORN.mcm.string(MOD_ID, "main/stat_row_placement", "inline")
+		if place == "after" then
+			CONFIG.stat_row_placement = "after"
+		elseif place == "start" then
+			CONFIG.stat_row_placement = "start"
+		else
+			CONFIG.stat_row_placement = "inline"
+		end
+		CONFIG.compact_header = DORN.mcm.bool(MOD_ID, "main/compact_header", true)
+		CONFIG.calc_range_m = clamp(DORN.mcm.number(MOD_ID, "main/calc_range", 30), 0, 200)
+		CONFIG.pellet_hit_pct = clamp(DORN.mcm.number(MOD_ID, "main/pellet_hit_pct", 100), 1, 100)
+		local drop_range = clamp(DORN.mcm.number(MOD_ID, "main/drop_range", 200), 100, 2000)
+		if zzzz_dogma_tooltips_weapons_stats and zzzz_dogma_tooltips_weapons_stats.set_drop_range then
+			zzzz_dogma_tooltips_weapons_stats.set_drop_range(drop_range)
+		end
+		local burst_threshold = clamp(DORN.mcm.number(MOD_ID, "main/burst_threshold", 3), 1, 10)
+		if zzzz_dogma_tooltips_weapons_stats and zzzz_dogma_tooltips_weapons_stats.set_burst_threshold then
+			zzzz_dogma_tooltips_weapons_stats.set_burst_threshold(burst_threshold)
+		end
+		CONFIG.use_condition_table = DORN.mcm.bool(MOD_ID, "main/use_condition_table", false)
+		CONFIG.use_condition_stats = DORN.mcm.bool(MOD_ID, "main/use_condition_stats", false)
+		-- Split from legacy main/apply_silencer (same default for both when unset).
+		local sil_legacy = false
+		if DORN.mcm.get(MOD_ID, "main/apply_silencer") ~= nil then
+			sil_legacy = DORN.mcm.bool(MOD_ID, "main/apply_silencer", false)
+		end
+		if DORN.mcm.get(MOD_ID, "main/apply_silencer_table") ~= nil then
+			CONFIG.apply_silencer_table = DORN.mcm.bool(MOD_ID, "main/apply_silencer_table", false)
+		else
+			CONFIG.apply_silencer_table = sil_legacy
+		end
+		if DORN.mcm.get(MOD_ID, "main/apply_silencer_stats") ~= nil then
+			CONFIG.apply_silencer_stats = DORN.mcm.bool(MOD_ID, "main/apply_silencer_stats", false)
+		else
+			CONFIG.apply_silencer_stats = sil_legacy
+		end
+		if zzzz_dogma_tooltips_weapons_stats and zzzz_dogma_tooltips_weapons_stats.set_apply_silencer then
+			zzzz_dogma_tooltips_weapons_stats.set_apply_silencer(CONFIG.apply_silencer_stats)
+		end
+		CONFIG.debug_log = DORN.mcm.bool(MOD_ID, "development/debug_log", false)
+		CONFIG.debug_overlay = DORN.mcm.bool(MOD_ID, "development/debug_overlay", false)
+		-- Legacy: early builds used development/rangefinder for this toggle.
+		if not CONFIG.debug_overlay and DORN.mcm.bool(MOD_ID, "development/rangefinder", false) then
+			CONFIG.debug_overlay = true
+		end
+	end
+
+	if CONFIG.debug_log and not prev_debug then
+		logged_once = {}
+		tooltip_logged = {}
+	end
+
+	if zzzz_dogma_tooltips_weapons_stats and zzzz_dogma_tooltips_weapons_stats.set_debug then
+		zzzz_dogma_tooltips_weapons_stats.set_debug(CONFIG.debug_log)
+	end
+
+	if DORN and DORN.dbg then
+		DORN.dbg.set_enabled(MOD_ID, CONFIG.debug_overlay)
+	end
+
+	refresh_enhanced_stat_labels()
+	apply_enhanced_weapon_stats()
+	for info in pairs(tracked_infos) do
+		info.id = nil
+		info.section = nil
+	end
+
+	log_once("config", string.format(
+		"config: table=%s hit=%s stalker=%s mutant=%s base=%s/%s/%s/%s/%s/%s/%s extra=%s/%s/%s/%s/%s place=%s headers=%s order=%s range=%s pellet%%=%s cond=%s/%s sil=%s/%s",
+		tostr(CONFIG.show_damage_table), tostr(CONFIG.show_hit_power),
+		tostr(CONFIG.show_stalker_damage), tostr(CONFIG.show_mutant_damage),
+		tostr(CONFIG.show_accuracy), tostr(CONFIG.show_handling),
+		tostr(CONFIG.show_fire_rate), tostr(CONFIG.show_mag_size),
+		tostr(CONFIG.show_muzzle_velocity),
+		tostr(CONFIG.show_reliability), tostr(CONFIG.show_recoil),
+		tostr(CONFIG.show_dispersion), tostr(CONFIG.show_spread),
+		tostr(CONFIG.show_barrel_wear),
+		tostr(CONFIG.show_burst_control),
+		tostr(CONFIG.show_bullet_drop), tostr(CONFIG.stat_row_placement),
+		tostr(CONFIG.column_headers), tostr(CONFIG.ammo_order),
+		tostr(CONFIG.calc_range_m), tostr(CONFIG.pellet_hit_pct),
+		tostr(CONFIG.use_condition_table),
+		tostr(CONFIG.use_condition_stats),
+		tostr(CONFIG.apply_silencer_table), tostr(CONFIG.apply_silencer_stats)))
+end
+
+local function safe_id(obj)
+	if not obj then
+		return nil
+	end
+	local ok, id = pcall(function()
+		return obj:id()
+	end)
+	if ok then
+		return id
+	end
+	return nil
+end
+
+local function safe_section(obj)
+	if not obj then
+		return nil
+	end
+	local ok, section = pcall(function()
+		return obj:section()
+	end)
+	if ok and section then
+		return section
+	end
+	return nil
+end
+
+-- Weapon hit_power (first float if LTX is a comma list). Avoid get_wpn_param's
+-- false 0 the same way zzzz_dogma_tooltips_weapons_stats.wpn_param does for other floats.
+local function gun_hit_power(obj, sec)
+	-- CQC grok_bo: TOZ-106 family uses fixed hit_power 0.8 (not LTX).
+	if sec and string.find(sec, "wpn_toz106", 1, true) then
+		return 0.8
+	end
+
+	local id = safe_id(obj)
+	local from_param = nil
+
+	if utils_item and utils_item.get_param then
+		local raw_p = utils_item.get_param(sec, id, "hit_power", "float", true)
+		if raw_p ~= nil then
+			local v = tonumber(raw_p)
+			if v ~= nil then
+				if v ~= 0 then
+					return v
+				end
+				from_param = 0
+			end
+		end
+	end
+
+	local raw = sec and ini_sys:r_string_ex(sec, "hit_power") or nil
+	if not raw and sec then
+		raw = SYS_GetParam(0, sec, "hit_power", nil)
+	end
+	if type(raw) == "string" then
+		local n = tonumber(raw:match("[%-%d%.]+"))
+		if n ~= nil then
+			if n ~= 0 then
+				return n
+			end
+			from_param = from_param or 0
+		end
+	elseif type(raw) == "number" then
+		if raw ~= 0 then
+			return raw
+		end
+		from_param = from_param or 0
+	end
+
+	if obj and utils_item and utils_item.get_wpn_param then
+		local raw_w = utils_item.get_wpn_param(obj, sec, "hit_power", nil)
+		if raw_w ~= nil then
+			local v = tonumber(raw_w)
+			if v ~= nil then
+				if v ~= 0 then
+					return v
+				end
+				from_param = from_param or 0
+			end
+		end
+	end
+
+	return from_param or 0
+end
+
+local function is_degraded_ammo(sec)
+	if not sec then
+		return true
+	end
+	return sec:sub(-8) == "_verybad" or sec:sub(-4) == "_bad"
+end
+
+function prop_hit_power(obj, sec)
+	return gun_hit_power(obj, sec)
+end
+
+-- Sentinel so the stat row shows; display text is set in apply_custom_stat_display.
+function prop_raw_ammo_damage_slash_flag(obj, sec)
+	if format_raw_ammo_damage_slash(obj, sec) then
+		return 1
+	end
+end
+
+function prop_stalker_ammo_damage_slash_flag(obj, sec)
+	if format_stalker_ammo_damage_slash(obj, sec) then
+		return 1
+	end
+end
+
+-- Sentinels for appended stat rows (real text applied in apply_custom_stat_display).
+function prop_dispersion(obj, sec)
+	local S = zzzz_dogma_tooltips_weapons_stats
+	if S and S.text_dispersion and S.text_dispersion(obj, sec) then
+		return 1
+	end
+end
+
+function prop_spread(obj, sec)
+	local S = zzzz_dogma_tooltips_weapons_stats
+	if S and S.text_spread and S.text_spread(obj, sec) then
+		return 1
+	end
+end
+
+function prop_barrel_wear(obj, sec)
+	local S = zzzz_dogma_tooltips_weapons_stats
+	if S and S.text_barrel_wear and S.text_barrel_wear(obj, sec) then
+		return 1
+	end
+end
+
+function prop_burst_control(obj, sec)
+	local S = zzzz_dogma_tooltips_weapons_stats
+	if S and S.text_burst_control and S.text_burst_control(obj, sec) then
+		return 1
+	end
+end
+
+function prop_bullet_drop(obj, sec)
+	local S = zzzz_dogma_tooltips_weapons_stats
+	if S and S.text_bullet_drop and S.text_bullet_drop(obj, sec) then
+		return 1
+	end
+end
+
+function scale_hit_power_display(obj, sec, base_file, base_func, param)
+	local base = _G[base_file][base_func](obj, sec, param)
+	return math.floor(base * DAMAGE_SCALE)
+end
+
+local function dist_atten(air_res, dist)
+	return 1 + dist / 200 * air_res * 0.5 / (1 - air_res + 0.1)
+end
+
+local function calc_range()
+	local d = tonumber(CONFIG.calc_range_m)
+	if not d then
+		return REF_DIST_M
+	end
+	return clamp(d, 0, 200)
+end
+
+-- Barrel part condition 0..1. Missing parts data => 1.0.
+local function raw_barrel_condition(obj)
+	if not obj then
+		return 1
+	end
+	local ok, parts = pcall(function()
+		return se_load_var(obj:id(), obj:name(), "parts")
+	end)
+	if not ok or type(parts) ~= "table" then
+		return 1
+	end
+	for k, v in pairs(parts) do
+		if type(k) == "string" and string.find(k, "barrel", 1, true) then
+			local n = tonumber(v)
+			if n then
+				return clamp(n / 100, 0, 1)
+			end
+		end
+	end
+	return 1
+end
+
+-- CQC corrected barrel mult (same curve for stalker and mutant). Cap at 1.
+-- When use_condition is false, always 1.0 (100%).
+local function barrel_mult(obj, use_condition)
+	if not use_condition then
+		return 1
+	end
+	local bc = raw_barrel_condition(obj)
+	local corrected = (130 - (1.12 * bc)) * (bc * 1.12) / 100
+	if corrected > 1 then
+		return 1
+	end
+	return corrected
+end
+
+-- GAMMA character-creation difficulty (1-4). Falls back to engine gd index.
+local function difficulty_mult()
+	local ok, state = pcall(function()
+		return alife_storage_manager.get_state()
+	end)
+	if ok and state and type(state.diff_game) == "table" then
+		local t = tonumber(state.diff_game.type)
+		if t and DIFFICULTY_MULT[t] then
+			return DIFFICULTY_MULT[t]
+		end
+	end
+	if level and level.get_game_difficulty then
+		local gd = level.get_game_difficulty()
+		-- Engine is 0-based; GAMMA diff_game type is 1-based.
+		local t = (tonumber(gd) or 0) + 1
+		if DIFFICULTY_MULT[t] then
+			return DIFFICULTY_MULT[t]
+		end
+	end
+	return 1.0
+end
+
+local function ap_display_color(ap, silencer)
+	-- Display AP (k_ap x 1000) needed for CQC combat_ap to first penetrate 0.650 torso armor.
+	local dist_mult = dist_atten(AP_COLOR_REF_AIR, calc_range())
+	local k_ap_ltx = AP_COLOR_ARMOR * dist_mult
+		/ (K_AP_COMBAT_SCALE * AP_COLOR_AP_SCALE * AP_TAIL * difficulty_mult() * (silencer or 1))
+	local hi = math.max(math.ceil(k_ap_ltx * AP_SCALE), 1)
+	local t = clamp((tonumber(ap) or 0) / hi, 0, 1)
+	-- MCM color_scale_from -> white.
+	local lo_rgb = scale_from_rgb()
+	return GetARGB(255,
+		math.floor(lerp(lo_rgb[1], 255, t)),
+		math.floor(lerp(lo_rgb[2], 255, t)),
+		math.floor(lerp(lo_rgb[3], 255, t)))
+end
+
+-- CQC NPC ammo_mult (only 7.62x25 P is special).
+local function npc_ammo_mult(ammo_sec)
+	if ammo_sec == "ammo_7.62x25_p" then
+		return 1.75
+	end
+	return 1.0
+end
+
+-- CQC silencer_boost: 1.07 if attached silencer or integrated suppressor parent.
+local function silencer_mult(obj, sec, enabled)
+	if not enabled then
+		return 1
+	end
+	if obj then
+		local ok, has = pcall(function()
+			return obj:weapon_is_silencer()
+		end)
+		if ok and has then
+			return SILENCER_BOOST
+		end
+	end
+	local parent = sec and (ini_sys:r_string_ex(sec, "parent_section") or sec) or nil
+	if parent and INTEGRATED_SILENCER[parent] then
+		return SILENCER_BOOST
+	end
+	return 1
+end
+
+-- CQC sniper list: +0.05 on (ini k_ap * 10), before bone ap_scale / range / tail.
+local function sniper_ap_bonus(sec)
+	if not sec then
+		return 0
+	end
+	local parent = ini_sys:r_string_ex(sec, "parent_section") or sec
+	if SNIPERS[parent] then
+		return SNIPER_AP_BONUS
+	end
+	return 0
+end
+
+-- Display AP (ammo-card scale): ini k_ap x1000, plus +5 when sniper bonus applies.
+local function display_ap(k_ap_ltx, sniper_bonus)
+	local bonus = (sniper_bonus or 0) * (AP_SCALE / K_AP_COMBAT_SCALE)
+	return math.floor((k_ap_ltx or 0) * AP_SCALE + bonus + 0.5)
+end
+
+-- CQC: (ini k_ap x10 + sniper) x ap_scale x barrel / range_factor x 0.80 x difficulty x silencer.
+local function combat_ap(k_ap_ltx, air_res, dist, ap_scale, barrel, silencer, sniper_bonus)
+	return (k_ap_ltx * K_AP_COMBAT_SCALE + (sniper_bonus or 0))
+		* ap_scale * (barrel or 1)
+		/ dist_atten(air_res, dist)
+		* AP_TAIL
+		* difficulty_mult()
+		* (silencer or 1)
+end
+
+-- CQC NPC power, plus difficulty, optional barrel, NPC ammo_mult, and silencer.
+local function base_power(hit_power, k_hit, air_res, dist, bone_mult, ap_scale, pellet_mult, barrel, ammo_sec, silencer)
+	return hit_power / dist_atten(air_res, dist)
+		* k_hit * bone_mult * ap_scale * BALLISTIC_BONUS * pellet_mult
+		* difficulty_mult() * (barrel or 1)
+		* npc_ammo_mult(ammo_sec)
+		* (silencer or 1)
+end
+
+local function effective_dmg(hit_power, k_hit, k_ap_ltx, air_res, armor, ap_scale, hit_frac, bone_mult, dist, pellet_mult, barrel, ammo_sec, silencer, sniper_bonus)
+	local ap = combat_ap(k_ap_ltx, air_res, dist, ap_scale, barrel, silencer, sniper_bonus)
+	local power = base_power(hit_power, k_hit, air_res, dist, bone_mult, ap_scale, pellet_mult, barrel, ammo_sec, silencer)
+	local dmg
+	-- Armor 0 (bare head): always full power.
+	if armor <= 0 or ap >= armor then
+		dmg = power
+	else
+		-- Fresh armor chip: new_armor = armor - ap x 0.60. Soft-pen if ap > new_armor
+		-- => ap > armor / (1 + 0.60). Else hard-fail residual (+ HP divisor when listed).
+		local soft_pen_ap = armor / (1 + ARMOR_CHIP_FRAC)
+		if ap > soft_pen_ap then
+			dmg = power * hit_frac
+		else
+			local hp_ammo_mult = HP_AMMO_MULT[ammo_sec] or 1
+			dmg = HARD_FAIL_SCALE * power * hit_frac / hp_ammo_mult
+		end
+	end
+	return {
+		dmg = dmg * DAMAGE_SCALE,
+	}
+end
+
+local function fmt_tier_cells(vals, num_tiers)
+	local out = {}
+	for i = 1, num_tiers do
+		local cell = vals[i]
+		if cell then
+			out[i] = {
+				text = tostring(math.floor(cell.dmg + 0.5)),
+				dmg = cell.dmg,
+			}
+		end
+	end
+	return out
+end
+
+-- Highest damage in a table section across every ammo row (torso or head).
+local function section_dmg_max(rows, section)
+	local hi = 1
+	local n = (section == "head") and NUM_HEAD_TIERS or NUM_TORSO_TIERS
+	for _, row in ipairs(rows) do
+		local cells = section == "torso" and row.torso or row.head
+		for i = 1, n do
+			local c = cells[i]
+			if c and c.dmg > hi then
+				hi = c.dmg
+			end
+		end
+	end
+	return hi
+end
+
+local function calc_tier_damages(hit_power, k_hit, k_ap_ltx, air_res, tiers, headshot, dist, pellet_mult, barrel, ammo_sec, silencer, sniper_bonus)
+	local bone_mult = headshot and BONE_DMG_HEAD or BONE_DMG_TORSO
+	local out = {}
+	for i, tier in ipairs(tiers) do
+		out[i] = effective_dmg(
+			hit_power, k_hit, k_ap_ltx, air_res, tier.armor,
+			tier.ap_scale, tier.hit_frac, bone_mult,
+			dist, pellet_mult, barrel, ammo_sec, silencer, sniper_bonus
+		)
+	end
+	return out
+end
+
+-- Unique ammo rounds for a weapon (same order as the damage table).
+-- ammo_order "damage": dmg desc, then AP asc. "ap": AP desc, then label.
+-- "default": leave utils_item.get_ammo order (matches tooltip ammo icons).
+local function collect_sorted_ammo_rounds(obj, sec, max_count)
+	local ammo_class = SYS_GetParam(0, sec, "ammo_class", "")
+	if not ammo_class or ammo_class == "" then
+		log_item_once("no_ammo_class", sec, string.format("%s: no ammo_class", sec))
+		return nil
+	end
+
+	local ammo_list = utils_item.get_ammo(sec, safe_id(obj))
+	if not ammo_list or not ammo_list[1] then
+		log_item_once("no_ammo_list", sec, string.format("%s: no ammo list (ammo_class=%s)", sec, ammo_class))
+		return nil
+	end
+
+	local sniper_ap = sniper_ap_bonus(sec)
+	local rounds = {}
+	local seen = {}
+
+	for _, ammo_sec in ipairs(ammo_list) do
+		if ammo_sec ~= BUCK_SELF and not seen[ammo_sec] and ini_sys:section_exist(ammo_sec)
+			and not is_degraded_ammo(ammo_sec) then
+			seen[ammo_sec] = true
+
+			local k_hit = ini_sys:r_float_ex(ammo_sec, "k_hit") or 1
+			local k_ap = ini_sys:r_float_ex(ammo_sec, "k_ap") or 0
+			local air_res = ini_sys:r_float_ex(ammo_sec, "k_air_resistance") or 0.05
+			-- Pellet count is per-round: a weapon's ammo_class can mix slugs
+			-- (1 projectile) with buckshot (many), so each row must use its
+			-- own round's pellet count, not the highest one seen across the
+			-- whole ammo_class. MCM pellet_hit_pct scales multi-pellet rounds only.
+			local pellets = ini_sys:r_float_ex(ammo_sec, "buck_shot") or 0
+			pellets = (pellets > 1) and pellets or 1
+			if pellets > 1 then
+				pellets = pellets * ((tonumber(CONFIG.pellet_hit_pct) or 100) / 100)
+				if pellets < 1 then
+					pellets = 1
+				end
+			end
+
+			rounds[#rounds + 1] = {
+				sec = ammo_sec,
+				label = ammo_display_label(ammo_sec),
+				k_hit = k_hit,
+				k_ap = k_ap,
+				air_res = air_res,
+				pellets = pellets,
+				-- Includes sniper +5 when applicable (CQC +0.05 after k_ap x10).
+				ap = display_ap(k_ap, sniper_ap),
+				-- Weapon hit_power is constant per gun; sort by ammo damage contribution.
+				dmg = k_hit * pellets,
+			}
+		end
+	end
+
+	if #rounds == 0 then
+		log_item_once("no_valid_rounds", sec, string.format("%s: no usable ammo rounds (ammo_class=%s)", sec, ammo_class))
+		return nil
+	end
+
+	if CONFIG.ammo_order ~= "default" then
+		table.sort(rounds, function(a, b)
+			if CONFIG.ammo_order == "ap" then
+				if a.ap ~= b.ap then
+					return a.ap > b.ap
+				end
+				return a.label < b.label
+			end
+			if a.dmg ~= b.dmg then
+				return a.dmg > b.dmg
+			end
+			if a.ap ~= b.ap then
+				return a.ap < b.ap
+			end
+			return a.label < b.label
+		end)
+	end
+
+	if max_count and #rounds > max_count then
+		local capped = {}
+		for i = 1, max_count do
+			capped[i] = rounds[i]
+		end
+		return capped
+	end
+
+	return rounds
+end
+
+local function build_ammo_damage_rows(obj, sec)
+	local all = collect_sorted_ammo_rounds(obj, sec, nil)
+	if not all then
+		return nil
+	end
+
+	local max_rows = #ROW_XML
+	local more = 0
+	local rounds = all
+	if #all > max_rows then
+		more = #all - max_rows
+		rounds = {}
+		for i = 1, max_rows do
+			rounds[i] = all[i]
+		end
+	end
+
+	local hit_power = gun_hit_power(obj, sec)
+	if hit_power <= 0 then
+		log_item_once("no_hit_power", sec, string.format("%s: hit_power<=0", sec))
+		return nil
+	end
+
+	local dist = calc_range()
+	local barrel = barrel_mult(obj, CONFIG.use_condition_table)
+	local silencer = silencer_mult(obj, sec, CONFIG.apply_silencer_table)
+	local sniper_ap = sniper_ap_bonus(sec)
+	local rows = {}
+	for _, r in ipairs(rounds) do
+		local torso = fmt_tier_cells(calc_tier_damages(
+			hit_power, r.k_hit, r.k_ap, r.air_res, TORSO_TIERS,
+			false, dist, r.pellets, barrel, r.sec, silencer, sniper_ap
+		), NUM_TORSO_TIERS)
+		local head = fmt_tier_cells(calc_tier_damages(
+			hit_power, r.k_hit, r.k_ap, r.air_res, HEAD_TIERS,
+			true, dist, r.pellets, barrel, r.sec, silencer, sniper_ap
+		), NUM_HEAD_TIERS)
+		rows[#rows + 1] = {
+			label = r.label,
+			ap = r.ap,
+			torso = torso,
+			head = head,
+		}
+	end
+
+	if #rows == 0 then
+		return nil
+	end
+
+	-- Shared color scale per section: 1 (grey) .. max damage (bright green).
+	local torso_hi = section_dmg_max(rows, "torso")
+	local head_hi = section_dmg_max(rows, "head")
+	local ordered = {}
+
+	for _, row in ipairs(rows) do
+		ordered[#ordered + 1] = {
+			type = row.label,
+			ap = tostring(row.ap),
+			ap_val = row.ap,
+			torso = row.torso,
+			head = row.head,
+			torso_lo = 1,
+			torso_hi = torso_hi,
+			head_lo = 1,
+			head_hi = head_hi,
+		}
+	end
+
+	return {
+		rows = ordered,
+		silencer = silencer,
+		more = more,
+	}
+end
+
+-- Mutant ammo_mult (default 0.85). Matches CQC monster hit rules; Pseudogiant-only
+-- overrides are intentionally omitted (this row is generic flesh damage).
+local MUTANT_BASE_MULT = 0.85
+local MUTANT_AMMO_MULT_DEFAULT = 0.85
+local MUTANT_AMMO_MULT = {
+	["ammo_12x70_buck"] = 0.90,
+	["ammo_20x70_buck"] = 0.90,
+	["ammo_23x75_shrapnel"] = 1.00,
+	["ammo_12x76_zhekan"] = 1.00,
+	["ammo_23x75_barrikada"] = 1.00,
+	["ammo_9x19_pbp"] = 1.00,
+	["ammo_9x18_pmm"] = 1.00,
+	["ammo_5.45x39_ep"] = 1.00,
+	["ammo_5.56x45_ss190"] = 1.00,
+	["ammo_7.62x25_ps"] = 1.00,
+	["ammo_7.62x25_p"] = 1.75,
+	["ammo_357_hp_mag"] = 1.00,
+	["ammo_11.43x23_hydro"] = 1.00,
+	["ammo_11.43x23_fmj"] = 1.00,
+}
+
+-- Per-ammo flesh damage vs a generic mutant (species mult 100%, no weak spot).
+-- Same ammo order as the damage table. Returns { {sec=, label=, dmg=}, ... } or nil.
+mutant_ammo_damage_items = function(obj, sec)
+	local rounds = collect_sorted_ammo_rounds(obj, sec, nil)
+	if not rounds then
+		return nil
+	end
+
+	local hit_power = gun_hit_power(obj, sec)
+	if hit_power <= 0 then
+		return nil
+	end
+
+	local dist = calc_range()
+	local barrel = barrel_mult(obj, CONFIG.use_condition_stats)
+	local diff = difficulty_mult()
+	local items = {}
+	for _, r in ipairs(rounds) do
+		local dmg = math.floor(
+			hit_power / dist_atten(r.air_res, dist)
+				* r.k_hit * r.pellets
+				* MUTANT_BASE_MULT * (MUTANT_AMMO_MULT[r.sec] or MUTANT_AMMO_MULT_DEFAULT)
+				* barrel * diff
+				* DAMAGE_SCALE + 0.5
+		)
+		items[#items + 1] = { sec = r.sec, label = r.label, dmg = dmg }
+	end
+	if #items == 0 then
+		return nil
+	end
+	return items
+end
+
+-- Per-ammo pre-armor stalker torso damage at calc_range() (CQC power, no AP/armor).
+stalker_ammo_damage_items = function(obj, sec)
+	local rounds = collect_sorted_ammo_rounds(obj, sec, nil)
+	if not rounds then
+		return nil
+	end
+
+	local hit_power = gun_hit_power(obj, sec)
+	if hit_power <= 0 then
+		return nil
+	end
+
+	local dist = calc_range()
+	local barrel = barrel_mult(obj, CONFIG.use_condition_stats)
+	local silencer = silencer_mult(obj, sec, CONFIG.apply_silencer_stats)
+	local items = {}
+	for _, r in ipairs(rounds) do
+		local dmg = math.floor(
+			base_power(hit_power, r.k_hit, r.air_res, dist, BONE_DMG_TORSO, 1.0, r.pellets, barrel, r.sec, silencer)
+				* DAMAGE_SCALE + 0.5
+		)
+		items[#items + 1] = { sec = r.sec, label = r.label, dmg = dmg }
+	end
+	if #items == 0 then
+		return nil
+	end
+	return items
+end
+
+local function slash_from_damage_items(items)
+	if not items then
+		return nil
+	end
+	local parts = {}
+	for _, it in ipairs(items) do
+		parts[#parts + 1] = color_ammo_value(it.label, it.dmg)
+	end
+	-- Color codes wrap each value; separators stay default (not ammo-colored).
+	return table.concat(parts, TYPE_CODE_DEFAULT .. " / ")
+end
+
+format_raw_ammo_damage_slash = function(obj, sec)
+	return slash_from_damage_items(mutant_ammo_damage_items(obj, sec))
+end
+
+format_stalker_ammo_damage_slash = function(obj, sec)
+	return slash_from_damage_items(stalker_ammo_damage_items(obj, sec))
+end
+
+local function apply_column_headers(fields)
+	if not fields or not fields.col_labels then
+		return
+	end
+
+	if fields.title then
+		fields.title:SetTextColor(CLR.white)
+	end
+	if fields.grp_torso then
+		fields.grp_torso:SetText("vs Torso Armor")
+		fields.grp_torso:SetTextColor(CLR.white)
+	end
+	if fields.grp_head then
+		fields.grp_head:SetText("vs Head Armor")
+		fields.grp_head:SetTextColor(CLR.white)
+	end
+
+	for i, tier in ipairs(TORSO_TIERS) do
+		local wnd = fields.col_labels.torso[i]
+		if wnd then
+			wnd:SetText(column_header_text(tier))
+			wnd:SetTextColor(CLR.hdr)
+		end
+	end
+	for i, tier in ipairs(HEAD_TIERS) do
+		local wnd = fields.col_labels.head[i]
+		if wnd then
+			wnd:SetText(column_header_text(tier))
+			wnd:SetTextColor(CLR.hdr)
+		end
+	end
+end
+
+local function set_damage_cell(wnd, cell, lo, hi)
+	if not wnd then
+		return
+	end
+	if cell then
+		wnd:SetText(cell.text)
+		wnd:SetTextColor(dmg_value_color(cell.dmg, lo, hi))
+	else
+		wnd:SetText("")
+		wnd:SetTextColor(CLR.value)
+	end
+end
+
+local function hide_damage_panel(info)
+	if not info.dorn_wpn_damage then
+		return
+	end
+
+	local fields = info.dorn_wpn_fields
+	if fields then
+		for _, row in ipairs(fields.rows) do
+			row.base:Show(false)
+		end
+	end
+
+	info.dorn_wpn_damage:Show(false)
+end
+
+-- Child fields are attached to their row's own base static, so their XML y is
+-- relative to the row (not the panel). Otherwise every row would draw at the
+-- same y and stack on top of each other. Only the dynamic number cells are kept
+-- as refs; static text lives in the XML and just needs to exist.
+local function init_row_fields(xml, dlg, row_path)
+	local base = xml:InitStatic(row_path, dlg)
+	local row = {
+		base = base,
+		type = xml:InitTextWnd(row_path .. ":type", base),
+		ap = xml:InitTextWnd(row_path .. ":ap", base),
+		torso = {},
+		head = {},
+	}
+	for i = 1, NUM_TORSO_TIERS do
+		row.torso[i] = xml:InitTextWnd(row_path .. ":t" .. i, base)
+	end
+	for i = 1, NUM_HEAD_TIERS do
+		row.head[i] = xml:InitTextWnd(row_path .. ":h" .. i, base)
+	end
+	return row
+end
+
+local COL_HDR_2 = { "type", "ap" }
+for i = 1, NUM_TORSO_TIERS do
+	COL_HDR_2[#COL_HDR_2 + 1] = "t" .. i
+end
+for i = 1, NUM_HEAD_TIERS do
+	COL_HDR_2[#COL_HDR_2 + 1] = "h" .. i
+end
+
+-- Read row pitch from the XML positions set at init (row_1/row_2). Panel height
+-- ends flush with the last visible data row.
+local function read_layout_metrics(fields)
+	local row1 = fields.rows[1].base
+	local row2 = fields.rows[2].base
+
+	local data_top_y = row1:GetWndPos().y
+	local row_step = row2:GetWndPos().y - data_top_y
+	local row_h = row1:GetHeight()
+
+	return {
+		data_top_y = data_top_y,
+		row_step = row_step,
+		row_h = row_h,
+	}
+end
+
+local function create_damage_fields(parent, panel_x)
+	local ok, dlg = pcall(function()
+		return DAMAGE_XML:InitStatic("panel", parent)
+	end)
+	if not ok or not dlg then
+		log_once("panel_xml_fail", "create_damage_fields: ui_dorn_weapon_tooltip.xml init failed")
+		return nil, nil
+	end
+
+	if panel_x ~= nil then
+		local pos = dlg:GetWndPos()
+		dlg:SetWndPos(vector2():set(panel_x, pos.y))
+	end
+
+	local header = DAMAGE_XML:InitStatic("panel:header", dlg)
+	local col_hdr_2 = DAMAGE_XML:InitStatic("panel:col_hdr_2", dlg)
+
+	local title = DAMAGE_XML:InitTextWnd("panel:header:title", header)
+	local grp_torso = DAMAGE_XML:InitTextWnd("panel:header:grp_torso", header)
+	local grp_head = DAMAGE_XML:InitTextWnd("panel:header:grp_head", header)
+
+	local col_labels = { torso = {}, head = {} }
+	for _, name in ipairs(COL_HDR_2) do
+		if name:match("^t%d") then
+			col_labels.torso[tonumber(name:sub(2))] = DAMAGE_XML:InitTextWnd("panel:col_hdr_2:" .. name, col_hdr_2)
+		elseif name:match("^h%d") then
+			col_labels.head[tonumber(name:sub(2))] = DAMAGE_XML:InitTextWnd("panel:col_hdr_2:" .. name, col_hdr_2)
+		else
+			DAMAGE_XML:InitTextWnd("panel:col_hdr_2:" .. name, col_hdr_2)
+		end
+	end
+
+	local fields = {
+		dlg = dlg,
+		header = header,
+		title = title,
+		col_hdr_2 = col_hdr_2,
+		grp_torso = grp_torso,
+		grp_head = grp_head,
+		col_labels = col_labels,
+		rows = {},
+	}
+
+	for i, row_path in ipairs(ROW_XML) do
+		local row = init_row_fields(DAMAGE_XML, dlg, row_path)
+		row.base:Show(false)
+		fields.rows[i] = row
+	end
+
+	fields.layout = read_layout_metrics(fields)
+	apply_column_headers(fields)
+
+	return dlg, fields
+end
+
+-- panel_width: optional fixed width (details scroll); default uses parent/desc width.
+local function populate_damage_fields(fields, data, panel_width)
+	if not fields or not fields.dlg or not data then
+		return false
+	end
+
+	local layout = fields.layout
+	if not layout then
+		return false
+	end
+
+	apply_column_headers(fields)
+
+	if fields.title then
+		local more = tonumber(data.more) or 0
+		if more > 0 then
+			fields.title:SetText(string.format("DAMAGE (+%d)", more))
+		else
+			fields.title:SetText("DAMAGE")
+		end
+	end
+
+	local any_row = false
+	local row_y = layout.data_top_y
+	local last_row_y = layout.data_top_y
+	for i, row in ipairs(fields.rows) do
+		local rd = data.rows[i]
+		if rd then
+			row.type:SetText(rd.type or "")
+			row.type:SetTextColor(ammo_type_color(rd.type))
+			row.ap:SetText(rd.ap or "")
+			row.ap:SetTextColor(ap_display_color(rd.ap_val or 0, data.silencer))
+			for t = 1, NUM_TORSO_TIERS do
+				set_damage_cell(row.torso[t], rd.torso and rd.torso[t], rd.torso_lo, rd.torso_hi)
+			end
+			for h = 1, NUM_HEAD_TIERS do
+				set_damage_cell(row.head[h], rd.head and rd.head[h], rd.head_lo, rd.head_hi)
+			end
+			row.base:SetWndPos(vector2():set(0, row_y))
+			row.base:Show(true)
+			last_row_y = row_y
+			row_y = row_y + layout.row_step
+			any_row = true
+		else
+			row.base:Show(false)
+		end
+	end
+
+	if not any_row then
+		fields.dlg:Show(false)
+		return false
+	end
+
+	local w = panel_width or fields.dlg:GetWidth()
+	local panel_h = last_row_y + layout.row_h
+	fields.dlg:SetWndSize(vector2():set(w, panel_h))
+	fields.dlg:Show(true)
+	return true
+end
+
+local DETAILS_PANEL_WIDTH = 500
+
+local function add_details_damage_section(sheet, obj)
+	if not CONFIG.show_damage_table or not sheet or not sheet.scroll or not sheet.xml then
+		return
+	end
+
+	local sec = safe_section(obj)
+	if not sec then
+		return
+	end
+	sec = ini_sys:r_string_ex(sec, "parent_section") or sec
+	-- IsWeapon(sec) crashes on section strings; use ammo_class like GetType.
+	if not ini_sys:r_string_ex(sec, "ammo_class") or IsItem("fake_ammo_wpn", sec) then
+		return
+	end
+
+	local damage_data = build_ammo_damage_rows(obj, sec)
+	if not damage_data then
+		return
+	end
+
+	local xml = sheet.xml
+	local _st = xml:InitStatic("itm_details:form", nil)
+	local dlg, fields = create_damage_fields(_st, 3)
+	if not dlg or not populate_damage_fields(fields, damage_data, DETAILS_PANEL_WIDTH) then
+		log_item_once("details_fail", sec, string.format("%s: details damage section failed", sec))
+		return
+	end
+
+	log_tooltip("details_ok", string.format("%s: details damage section shown (%d rows)", sec, #damage_data.rows))
+
+	utils_xml.sync_size(dlg, _st, 0, 0)
+	sheet.scroll:AddWindow(_st, true)
+	_st:SetAutoDelete(true)
+end
+
+-- Reposition replacement-parts block (Parts in Tooltip mod) after we shift stats/ammo.
+local function sync_parts_layout(info, tail)
+	if not info.parts or not info.parts:IsShown() then
+		return tail
+	end
+
+	local stats = info.stats_dialog
+	local stats_x = stats and stats:GetWndPos().x or 0
+	local parts_x = info.parts:GetWndPos().x
+	local vertical = stats and parts_x > stats_x + 50
+
+	if vertical then
+		local stats_pos = stats:GetWndPos()
+		local parts_pos = info.parts:GetWndPos()
+		info.parts:SetWndPos(vector2():set(parts_pos.x, stats_pos.y))
+		if info.SyncPartsText then
+			info:SyncPartsText(true)
+		end
+		local parts_bottom = stats_pos.y + info.parts:GetHeight()
+		local tail_bottom = tail:GetWndPos().y + tail:GetHeight()
+		if parts_bottom > tail_bottom then
+			tail = info.parts
+		end
+	else
+		info:Sync_Y(tail, info.parts, SECTION_GAP)
+		tail = info.parts
+		if info.SyncPartsText then
+			info:SyncPartsText()
+		end
+	end
+
+	return tail
+end
+
+local function sync_damage_layout(info)
+	local tail = info.desc
+
+	if CONFIG.show_damage_table and info.dorn_wpn_damage and info.dorn_wpn_damage:IsShown() then
+		info:Sync_Y(info.desc, info.dorn_wpn_damage, PANEL_TOP_OFFSET)
+		tail = info.dorn_wpn_damage
+	end
+
+	if info.stats_dialog:IsShown() then
+		info:Sync_Y(tail, info.stats_dialog, BOTTOM_OFFSET)
+		tail = info.stats_dialog
+	end
+
+	if info.ammo and info.ammo:IsShown() then
+		info:Sync_Y(tail, info.ammo, SECTION_GAP)
+		tail = info.ammo
+	end
+
+	tail = sync_parts_layout(info, tail)
+
+	info:Sync_H(tail, info.frame, SECTION_GAP)
+end
+
+-- Cache stock header Ys once (Sota utils.xml: name 16, weight/cost 34, note 52, desc 70).
+local function cache_header_ys(info)
+	if info.dorn_hdr_ys or not info.name or not info.weight or not info.desc then
+		return
+	end
+	info.dorn_hdr_ys = {
+		name = info.name:GetWndPos().y,
+		weight = info.weight:GetWndPos().y,
+		value = info.value and info.value:GetWndPos().y or info.weight:GetWndPos().y,
+		note = info.note and info.note:GetWndPos().y or info.desc:GetWndPos().y,
+		desc = info.desc:GetWndPos().y,
+	}
+end
+
+local function set_wnd_y(wnd, y)
+	if not wnd then
+		return
+	end
+	local p = wnd:GetWndPos()
+	wnd:SetWndPos(vector2():set(p.x, y))
+end
+
+-- Weight just under the name; STATUS/desc sits 5px closer than a full SECTION_GAP.
+local function apply_compact_header(info)
+	if not info or not info.name or not info.weight or not info.desc then
+		return
+	end
+	cache_header_ys(info)
+	local ys = info.dorn_hdr_ys
+	if not ys then
+		return
+	end
+
+	if CONFIG.compact_header then
+		local weight_y = ys.name + 10
+		set_wnd_y(info.weight, weight_y)
+		set_wnd_y(info.value, weight_y)
+		if info.note and info.note:IsShown() then
+			info:Sync_Y(info.weight, info.note, SECTION_GAP)
+			info:Sync_Y(info.note, info.desc, SECTION_GAP - 5)
+		else
+			info:Sync_Y(info.weight, info.desc, SECTION_GAP - 5)
+		end
+	else
+		set_wnd_y(info.weight, ys.weight)
+		set_wnd_y(info.value, ys.value)
+		set_wnd_y(info.note, ys.note)
+		set_wnd_y(info.desc, ys.desc)
+	end
+end
+
+local function refresh_weapon_damage_panel(info, obj, sec)
+	if not info then
+		return
+	end
+	if not info.dorn_wpn_damage then
+		log_once("no_panel", "tooltip missing damage panel (create_damage_fields failed at init?)")
+		return
+	end
+
+	hide_damage_panel(info)
+
+	if not CONFIG.show_damage_table then
+		log_once("table_disabled", "show_damage_table is off in MCM")
+		sync_damage_layout(info)
+		return
+	end
+
+	if not info:IsShown() then
+		return
+	end
+
+	sec = sec or safe_section(obj)
+	if not sec or info:GetType(sec) ~= "weapon" then
+		return
+	end
+
+	log_once("update_hook", "UIInfoItem Update hook reached for a weapon tooltip")
+
+	local damage_data = build_ammo_damage_rows(obj, sec)
+	if not damage_data then
+		return
+	end
+
+	local fields = info.dorn_wpn_fields
+	if fields then
+		local w = info.desc and info.desc:GetWidth()
+		if not populate_damage_fields(fields, damage_data, w) then
+			log_item_once("populate_fail", sec, string.format("%s: populate_damage_fields failed", sec))
+			info.dorn_wpn_damage:Show(false)
+			return
+		end
+		log_tooltip("panel_ok", string.format("%s: hover damage panel shown (%d rows)", sec, #damage_data.rows))
+	end
+	sync_damage_layout(info)
+end
+
+-- The details/workshop sheets build stats via utils_ui.get_stats_xml, which
+-- paints the value grey (clr_list p1) and never exposes the created text window
+-- for later recolor (unlike the hover tooltip's reused stat boxes). So for our
+-- Dorn rows we rebuild the box ourselves with white text; everything else
+-- falls through to the stock implementation.
+local base_get_stats_xml
+
+local DORN_WHITE_STAT_NAMES = {
+	["ui_dorn_wpn_hit_power"] = true,
+	["ui_dorn_wpn_stalker_damage"] = true,
+	["ui_dorn_wpn_ammo_torso"] = true,
+	["ui_dorn_wpn_dispersion"] = true,
+	["ui_dorn_wpn_spread"] = true,
+	["ui_dorn_wpn_barrel_wear"] = true,
+	["ui_dorn_wpn_burst_control"] = true,
+	["ui_dorn_wpn_bullet_drop"] = true,
+}
+
+local function build_white_stat_xml(handler, obj, sec, gr, stat)
+	local value, nclr
+
+	if gr.name == "ui_dorn_wpn_ammo_torso" then
+		value = format_raw_ammo_damage_slash(obj, sec)
+		nclr = false
+	elseif gr.name == "ui_dorn_wpn_stalker_damage" then
+		value = format_stalker_ammo_damage_slash(obj, sec)
+		nclr = false
+	elseif gr.name == "ui_dorn_wpn_hit_power" then
+		value, nclr = utils_ui.get_stats_string_value(obj, sec, gr, stat)
+	elseif zzzz_dogma_tooltips_weapons_stats and zzzz_dogma_tooltips_weapons_stats.text_for_name then
+		value = zzzz_dogma_tooltips_weapons_stats.text_for_name(gr.name, obj, sec)
+		nclr = false
+	else
+		value, nclr = utils_ui.get_stats_string_value(obj, sec, gr, stat)
+	end
+
+	if not value then
+		return
+	end
+
+	local st = STAT_XML:InitStatic("item_info:stats_box", handler)
+
+	local st_icon = STAT_XML:InitStatic("item_info:stats_box:icon", st)
+	st_icon:InitTexture(gr.icon_p)
+
+	-- Only the label is whitened; the value keeps the stock grey/red like every
+	-- other stat on the sheet.
+	local st_cap = STAT_XML:InitTextWnd("item_info:stats_box:cap", st)
+	st_cap:SetText(game.translate_string(gr.name))
+	st_cap:SetTextColor(CLR.white)
+
+	local st_txt = STAT_XML:InitTextWnd("item_info:stats_box:prog_txt", st)
+	if gr.name == "ui_dorn_wpn_ammo_torso" or gr.name == "ui_dorn_wpn_stalker_damage"
+		or gr.name == "ui_dorn_wpn_bullet_drop" or gr.name == "ui_dorn_wpn_dispersion"
+		or gr.name == "ui_dorn_wpn_spread"
+		or gr.name == "ui_dorn_wpn_burst_control" or gr.name == "ui_dorn_wpn_barrel_wear" then
+		st_txt:SetTextComplexMode(true)
+	end
+	st_txt:SetText(value)
+	st_txt:SetTextColor(nclr and CLR.stat_neg or CLR.stat_pos)
+
+	st:SetAutoDelete(true)
+	return st
+end
+
+local function get_stats_xml_hook(handler, obj, sec, gr, stat)
+	local grp = gr
+	if type(grp) == "string" then
+		grp = utils_ui.stats_table and utils_ui.stats_table[grp]
+	end
+
+	if grp and not grp.track and grp.name and DORN_WHITE_STAT_NAMES[grp.name] then
+		local ok, st = pcall(build_white_stat_xml, handler, obj, sec, grp, stat)
+		if ok and st then
+			return st
+		end
+	end
+
+	return base_get_stats_xml(handler, obj, sec, gr, stat)
+end
+
+local base_itm_details_reset
+local base_itm_details_addtext
+
+local function itm_details_addtext_hook(self, xml, path, offset, txt)
+	local ele = base_itm_details_addtext(self, xml, path, offset, txt)
+
+	-- Vanilla adds the item description as the first text_s_l row (after weight).
+	if self.dorn_details_pending and path == "text_s_l" then
+		local obj = self.dorn_details_pending
+		self.dorn_details_pending = nil
+		add_details_damage_section(self, obj)
+	end
+
+	return ele
+end
+
+local function itm_details_reset_hook(self, obj)
+	if obj and CONFIG.show_damage_table then
+		local sec = safe_section(obj)
+		if sec then
+			sec = ini_sys:r_string_ex(sec, "parent_section") or sec
+			if ini_sys:r_string_ex(sec, "ammo_class") and not IsItem("fake_ammo_wpn", sec) then
+				self.dorn_details_pending = obj
+			end
+		end
+	end
+
+	if base_itm_details_reset then
+		base_itm_details_reset(self, obj)
+	end
+
+	self.dorn_details_pending = nil
+end
+
+local details_hook_ok = false
+
+-- Vanilla/Sota UIInfoItem only pre-creates 16 stat rows. Full Dorn + Momopate
+-- can exceed that (companions + damage rows); expand once at init.
+local STAT_SLOT_TARGET = 24
+
+local function ensure_stat_slots(info)
+	if not info or not info.stats or not info.stats_dialog then
+		return
+	end
+	local n = #info.stats
+	if n >= STAT_SLOT_TARGET then
+		return
+	end
+	for i = n + 1, STAT_SLOT_TARGET do
+		local slot = {}
+		slot.base = STAT_XML:InitStatic("item_info:stats_box", info.stats_dialog)
+		slot.icon = STAT_XML:InitStatic("item_info:stats_box:icon", slot.base)
+		slot.cap = STAT_XML:InitTextWnd("item_info:stats_box:cap", slot.base)
+		slot.bar2 = STAT_XML:InitProgressBar("item_info:stats_box:prog_bar", slot.base)
+		slot.bar1 = STAT_XML:InitProgressBar("item_info:stats_box:prog_bar", slot.base)
+		slot.txt = STAT_XML:InitTextWnd("item_info:stats_box:prog_txt", slot.base)
+		slot.comp = STAT_XML:InitTextWnd("item_info:stats_box:compare", slot.base)
+		slot.base:Show(false)
+		info.stats[i] = slot
+	end
+end
+
+local function install_details_hook()
+	if not ui_itm_details or not ui_itm_details.UIItemSheet then
+		log_once("hooks_details_missing", "details hook skipped: ui_itm_details.UIItemSheet missing")
+		return
+	end
+
+	if not base_itm_details_reset then
+		base_itm_details_reset = ui_itm_details.UIItemSheet.Reset
+		ui_itm_details.UIItemSheet.Reset = itm_details_reset_hook
+	end
+
+	if not base_itm_details_addtext then
+		base_itm_details_addtext = ui_itm_details.UIItemSheet.AddText
+		ui_itm_details.UIItemSheet.AddText = itm_details_addtext_hook
+	end
+
+	if not base_get_stats_xml and utils_ui.get_stats_xml then
+		base_get_stats_xml = utils_ui.get_stats_xml
+		utils_ui.get_stats_xml = get_stats_xml_hook
+	end
+
+	details_hook_ok = true
+end
+
+local function uiinfo_init_hook(self, owner, delay)
+	base_uiinfo_init(self, owner, delay)
+
+	tracked_infos[self] = true
+	ensure_stat_slots(self)
+
+	if self.dorn_wpn_damage then
+		return
+	end
+
+	local dlg, fields = create_damage_fields(self.dialog)
+	if dlg then
+		self.dorn_wpn_damage = dlg
+		self.dorn_wpn_fields = fields
+		dlg:Show(false)
+		log_once("panel_init", "damage panel widgets created on tooltip init")
+	else
+		log_once("panel_init_fail", "damage panel widgets failed to create on tooltip init")
+	end
+end
+
+local function uiinfo_update_hook(self, obj, sec, flags)
+	local oid = safe_id(obj)
+	local same_item = (oid and self.id and oid == self.id)
+		or (not obj and sec and self.section == sec)
+
+	base_uiinfo_update(self, obj, sec, flags)
+
+	if not same_item then
+		-- Reset per-open tooltip debug dedupe.
+		tooltip_logged = {}
+		apply_custom_stat_display(self, obj, sec)
+		apply_compact_header(self)
+		refresh_weapon_damage_panel(self, obj, sec)
+		-- Always re-stack body under desc (weapons already synced inside refresh).
+		sync_damage_layout(self)
+	end
+end
+
+local ui_hooks_ok = false
+
+local function install_ui_hooks()
+	if not utils_ui or not utils_ui.UIInfoItem then
+		log_once("hooks_ui_missing", "UI hook skipped: utils_ui.UIInfoItem missing")
+		return false
+	end
+
+	if not base_uiinfo_init then
+		base_uiinfo_init = utils_ui.UIInfoItem.__init
+		utils_ui.UIInfoItem.__init = uiinfo_init_hook
+	end
+
+	if not base_uiinfo_update then
+		base_uiinfo_update = utils_ui.UIInfoItem.Update
+		utils_ui.UIInfoItem.Update = uiinfo_update_hook
+	end
+
+	ui_hooks_ok = true
+	return true
+end
+
+local function on_console_execute(cmd)
+	if cmd == "g_game_difficulty" then
+		apply_enhanced_weapon_stats()
+		for info in pairs(tracked_infos) do
+			info.id = nil
+			info.section = nil
+		end
+	end
+end
+
+-- ADV/Sota replace utils_ui.stats_table.weapon on difficulty change; re-apply
+-- Dorn rows whenever their override runs so companions/placement survive.
+local function hook_stats_table_override()
+	if not ish_item_stats or not ish_item_stats.override_stats_table then
+		return
+	end
+	if ish_item_stats.dorn_weapon_tooltip_wrapped then
+		return
+	end
+	local prev = ish_item_stats.override_stats_table
+	ish_item_stats.override_stats_table = function()
+		prev()
+		apply_enhanced_weapon_stats()
+		for info in pairs(tracked_infos) do
+			info.id = nil
+			info.section = nil
+		end
+	end
+	ish_item_stats.dorn_weapon_tooltip_wrapped = true
+end
+
+-- Crosshair rangefinder (Development MCM). Casts along camera look; ignores actor.
+-- Flags 3 = static + objects (same as cover-tilt / xcombat rqtBoth).
+local RANGEFINDER_MAX_M = 2000
+local rangefinder_pick = nil
+
+local function crosshair_range_m()
+	local d = device()
+	if not d or not d.cam_pos or not d.cam_dir then
+		return nil
+	end
+	if not rangefinder_pick then
+		rangefinder_pick = ray_pick()
+	end
+	local pick = rangefinder_pick
+	pick:set_flags(3)
+	pick:set_position(vector():set(d.cam_pos))
+	pick:set_direction(vector():set(d.cam_dir))
+	pick:set_range(RANGEFINDER_MAX_M)
+	if db and db.actor then
+		pick:set_ignore_object(db.actor)
+	end
+	if not pick:query() then
+		return nil
+	end
+	local dist = pick:get_distance()
+	if not dist or dist <= 0 then
+		return nil
+	end
+	return dist
+end
+
+local function on_actor_update()
+	if not DORN or not DORN.sys then
+		return
+	end
+	local _, actor = DORN.sys.ready(MOD_ID, db, on_option_change)
+	if not actor then
+		return
+	end
+	if not CONFIG.debug_overlay then
+		return
+	end
+	local dist = crosshair_range_m()
+	local msg
+	if dist then
+		if dist < 10 then
+			msg = string.format("Range  %.1fm", dist)
+		else
+			msg = string.format("Range  %.0fm", dist)
+		end
+	else
+		msg = string.format("Range  >%dm", RANGEFINDER_MAX_M)
+	end
+	overlay(OVERLAY.RANGE, msg)
+end
+
+function on_game_start()
+	local tostr = tostring
+	local loader = _G[DORN_COMMON_VERSION]
+	if loader then
+		DORN = loader.load(MOD_ID)
+	else
+		printf("[DORN][%s] common loader missing (%s)", MOD_ID, DORN_COMMON_VERSION)
+	end
+
+	on_option_change()
+	install_ui_hooks()
+	install_details_hook()
+	hook_stats_table_override()
+
+	RegisterScriptCallback("on_console_execute", on_console_execute)
+	RegisterScriptCallback("on_option_change", on_option_change)
+	RegisterScriptCallback("actor_on_update", on_actor_update)
+
+	log_once("startup", string.format(
+		"loaded: dorn=%s, ui_hooks=%s, details_hook=%s, table=%s, hit=%s, mutant=%s, place=%s, stats_mod=%s",
+		tostr(DORN ~= nil), tostr(ui_hooks_ok), tostr(details_hook_ok),
+		tostr(CONFIG.show_damage_table), tostr(CONFIG.show_hit_power),
+		tostr(CONFIG.show_mutant_damage), tostr(CONFIG.stat_row_placement),
+		tostr(zzzz_dogma_tooltips_weapons_stats and zzzz_dogma_tooltips_weapons_stats.NAME ~= nil)))
+end

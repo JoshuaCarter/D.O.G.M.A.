@@ -1,0 +1,63 @@
+name: Release on version bump
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read version from meta.ini
+        id: meta
+        run: |
+          VERSION=$(grep -E '^version=' meta.ini | head -1 | cut -d'=' -f2 | tr -d '[:space:]')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Derive mod name from repo
+        id: name
+        run: |
+          TITLE="${{ github.event.repository.name }}"
+          TITLE="${TITLE//-/ }"
+          TITLE="${TITLE/GAMMA/Dorns}"
+          FILENAME="${TITLE// /_}"
+          echo "title=$TITLE" >> "$GITHUB_OUTPUT"
+          echo "filename=$FILENAME" >> "$GITHUB_OUTPUT"
+
+      - name: Check if this version was already released
+        id: check
+        run: |
+          if git rev-parse "v${{ steps.meta.outputs.version }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build mod zip
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          bash tools/build.sh
+          ZIP="${{ steps.name.outputs.filename }} ${{ steps.meta.outputs.version }}.zip"
+          # MO2 layout: gamedata/ + meta.ini (+ .mod_id) at zip root
+          (
+            cd build
+            zip -r "../$ZIP" gamedata
+          )
+          zip -r "$ZIP" meta.ini
+          if [ -f .mod_id ]; then zip -r "$ZIP" .mod_id; fi
+
+      - name: Create release and attach zip
+        if: steps.check.outputs.exists == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "v${{ steps.meta.outputs.version }}"
+          name: "${{ steps.name.outputs.title }} v${{ steps.meta.outputs.version }}"
+          files: "${{ steps.name.outputs.filename }} ${{ steps.meta.outputs.version }}.zip"

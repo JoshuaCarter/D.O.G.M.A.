@@ -1,0 +1,444 @@
+-- Dorn's Fast Travel: Level registry, static zone map, dynamic transition scan.
+-- Loaded automatically before main.script (zzzz_dogma_travel_fast_travel_main.script)
+
+-- Shared dft globals (Anomaly isolates zzz_* script environments)
+local dft = _G.dft
+-- Forward declarations for this file's private (non-exported) helpers, so they can
+-- reference each other regardless of definition order below.
+local count_zone_edges, persist_zone_map, scan_transition_object, try_restore_zone_map, zone_map_pack, zone_map_unpack
+local function build_level_names_registry()
+    local sgsub = string.gsub
+    if dft.level_registry_built then
+        return
+    end
+
+    dft.level_names = {}
+    dft.level_ids_by_name = {}
+    dft.level_offsets = {}
+    local game_ini = system_ini()
+    if not (game_ini and game_ini:section_exist("levels")) then
+        game_ini = ini_file("game.ltx")
+    end
+    if not (game_ini and game_ini:section_exist("levels")) then
+        dft_log("ERROR: levels section not found in system_ini or game.ltx")
+        return
+    end
+
+    local ok_count, line_count = pcall(function() return game_ini:line_count("levels") end)
+    if not (ok_count and line_count and line_count > 0) then
+        dft_log("ERROR: line_count on levels failed or empty")
+        return
+    end
+
+    for i = 0, line_count - 1 do
+        local ok_line, ok, section, value = pcall(function() return game_ini:r_line("levels", i, "", "") end)
+        if ok_line and ok and section and game_ini:section_exist(section) then
+            local name = game_ini:line_exist(section, "name") and game_ini:r_string(section, "name")
+            local id_str = game_ini:line_exist(section, "id") and game_ini:r_string(section, "id")
+            local id = tonumber(id_str)
+            if name and id then
+                name = string.lower(name)
+                name = sgsub(name, "dark_valley", "l04_darkvalley")
+                name = sgsub(name, "truck_cemetery", "k02_trucks_cemetery")
+                name = sgsub(name, "army_warehouses", "l07_military")
+                name = sgsub(name, "army_warehouse", "l07_military")
+                name = sgsub(name, "swamp", "k00_marsh")
+                name = sgsub(name, "y04_pole", "meadow")
+                name = sgsub(name, "^pole$", "meadow")
+                name = sgsub(name, "l10_limansk", "limansk")
+
+                local canonical = {
+                    ["garbage"] = "l02_garbage",
+                    ["escape"] = "l01_escape",
+                    ["cordon"] = "l01_escape",
+                    ["agroprom"] = "l03_agroprom",
+                    ["darkvalley"] = "l04_darkvalley",
+                    ["dark_valley"] = "l04_darkvalley",
+                    ["bar"] = "l05_bar",
+                    ["rostok"] = "l06_rostok",
+                    ["wild_territory"] = "l06_rostok",
+                    ["military"] = "l07_military",
+                    ["army_warehouses"] = "l07_military",
+                    ["army_warehouse"] = "l07_military",
+                    ["yantar"] = "l08_yantar",
+                    ["deadcity"] = "l09_deadcity",
+                    ["dead_city"] = "l09_deadcity",
+                    ["radar"] = "l10_radar",
+                    ["redforest"] = "l10_red_forest",
+                    ["red_forest"] = "l10_red_forest",
+                    ["marsh"] = "k00_marsh",
+                    ["swamp"] = "k00_marsh",
+                    ["darkscape"] = "k01_darkscape",
+                    ["trucks_cemetery"] = "k02_trucks_cemetery",
+                    ["truck_cemetery"] = "k02_trucks_cemetery",
+                    ["hospital"] = "l11_hospital",
+                    ["generators"] = "l13_generators",
+                    ["outskirts"] = "pripyat",
+                    ["stancia"] = "l12_stancia",
+                    ["stancia_2"] = "l12_stancia_2",
+                    ["limansk"] = "limansk",
+                    ["jupiter"] = "jupiter",
+                    ["zaton"] = "zaton",
+                }
+                if canonical[name] then name = canonical[name] end
+                dft.level_names[id] = name
+                dft.level_ids_by_name[name] = id
+                if game_ini:line_exist(section, "offset") then
+                    local off_str = game_ini:r_string(section, "offset")
+                    local ox, oy, oz = off_str:match("([%d%.%-]+)%s*,%s*([%d%.%-]+)%s*,%s*([%d%.%-]+)")
+                    if ox then
+                        dft.level_offsets[id] = {
+                            x = tonumber(ox) or 0,
+                            y = tonumber(oy) or 0,
+                            z = tonumber(oz) or 0,
+                        }
+                    end
+                end
+                dft_log("Authoritative Level ID Registry: [%d] = %s", id, name)
+            end
+        end
+    end
+    dft.level_registry_built = true
+end
+
+local function resolve_level_name(level_id)
+    local sgsub = string.gsub
+    if not level_id then return nil end
+    if next(dft.level_names) == nil then
+        build_level_names_registry()
+    end
+    if dft.level_names[level_id] then return dft.level_names[level_id] end
+
+    local name = nil
+
+    -- If it's a number, try to get name from engine or fallback
+    if type(level_id) == "number" then
+        local sim = alife()
+        if not sim then
+            -- Game not initialized, fallback below
+        else
+            local ok, n = pcall(function() return sim:level_name(level_id) end)
+            if ok and n and n ~= "" then
+                name = n
+            end
+        end
+
+        if not name then
+            local fallback = {
+                [1]="k00_marsh", [2]="l01_escape", [3]="l02_garbage", [4]="l03_agroprom",
+                [5]="k01_darkscape", [6]="l04_darkvalley", [7]="l05_bar", [8]="l06_rostok",
+                [9]="l07_military", [10]="l08_yantar", [11]="l09_deadcity", [12]="limansk",
+                [13]="l10_radar", [14]="l10_red_forest", [15]="l11_hospital", [16]="l11_pripyat",
+                [17]="l12_stancia", [18]="l12_stancia_2", [19]="l13_generators",
+                [27]="zaton", [28]="jupiter", [30]="pripyat", [32]="k02_trucks_cemetery",
+                [34]="meadow"
+            }
+            name = fallback[level_id]
+        end
+    else
+        -- If it's already a string, use it as the name
+        name = level_id
+    end
+
+    -- Normalize common GAMMA / Modpack / Akagi variations
+    if name then
+        name = string.lower(name)
+        name = sgsub(name, "dark_valley", "l04_darkvalley")
+        name = sgsub(name, "truck_cemetery", "k02_trucks_cemetery")
+        name = sgsub(name, "army_warehouses", "l07_military")
+        name = sgsub(name, "army_warehouse", "l07_military")
+        name = sgsub(name, "swamp", "k00_marsh")
+        name = sgsub(name, "y04_pole", "meadow")
+        name = sgsub(name, "^pole$", "meadow")
+        name = sgsub(name, "l10_limansk", "limansk")
+
+        -- Map common plain names to canonical IDs
+        local canonical = {
+            ["garbage"] = "l02_garbage",
+            ["escape"] = "l01_escape",
+            ["cordon"] = "l01_escape",
+            ["agroprom"] = "l03_agroprom",
+            ["darkvalley"] = "l04_darkvalley",
+            ["dark_valley"] = "l04_darkvalley",
+            ["bar"] = "l05_bar",
+            ["rostok"] = "l06_rostok",
+            ["wild_territory"] = "l06_rostok",
+            ["military"] = "l07_military",
+            ["army_warehouses"] = "l07_military",
+            ["army_warehouse"] = "l07_military",
+            ["yantar"] = "l08_yantar",
+            ["deadcity"] = "l09_deadcity",
+            ["dead_city"] = "l09_deadcity",
+            ["radar"] = "l10_radar",
+            ["redforest"] = "l10_red_forest",
+            ["red_forest"] = "l10_red_forest",
+            ["marsh"] = "k00_marsh",
+            ["swamp"] = "k00_marsh",
+            ["darkscape"] = "k01_darkscape",
+            ["trucks_cemetery"] = "k02_trucks_cemetery",
+            ["truck_cemetery"] = "k02_trucks_cemetery",
+            ["hospital"] = "l11_hospital",
+            ["generators"] = "l13_generators",
+            ["outskirts"] = "pripyat",
+            ["stancia"] = "l12_stancia",
+            ["stancia_2"] = "l12_stancia_2",
+            ["limansk"] = "limansk",
+            ["jupiter"] = "jupiter",
+            ["zaton"] = "zaton",
+        }
+        if canonical[name] then name = canonical[name] end
+    end
+
+    dft.level_names[level_id] = name
+    return name
+end
+
+-- Zone topology is static for a given mod loadout; scan once per save and persist via alife_storage_manager.
+local zone_map_version = 1
+
+count_zone_edges = function(map)
+    map = map or dft.dynamic_map or {}
+    local n = 0
+    for _, dsts in pairs(map) do
+        for _ in pairs(dsts) do n = n + 1 end
+    end
+    return n
+end
+
+zone_map_pack = function()
+    local edges = {}
+    for src, dsts in pairs(dft.dynamic_map or {}) do
+        for dst, _ in pairs(dsts) do
+            edges[#edges + 1] = { src, dst }
+        end
+    end
+    local doors = {}
+    for src, dsts in pairs(dft.door_registry or {}) do
+        for dst, ids in pairs(dsts) do
+            doors[#doors + 1] = { s = src, d = dst, i = ids }
+        end
+    end
+    return { v = zone_map_version, e = edges, r = doors }
+end
+
+zone_map_unpack = function(blob)
+    if not (blob and blob.v == zone_map_version and blob.e and #blob.e > 0) then
+        return false
+    end
+    dft.dynamic_map = {}
+    dft.door_registry = {}
+    for i = 1, #blob.e do
+        local pair = blob.e[i]
+        local src, dst = pair[1], pair[2]
+        if src and dst then
+            dft.dynamic_map[src] = dft.dynamic_map[src] or {}
+            dft.dynamic_map[src][dst] = true
+        end
+    end
+    if blob.r then
+        for i = 1, #blob.r do
+            local entry = blob.r[i]
+            if entry.s and entry.d and entry.i then
+                dft.door_registry[entry.s] = dft.door_registry[entry.s] or {}
+                dft.door_registry[entry.s][entry.d] = entry.i
+            end
+        end
+    end
+    return next(dft.dynamic_map) ~= nil
+end
+
+persist_zone_map = function(m_data)
+    if m_data and dft.dynamic_map and next(dft.dynamic_map) then
+        m_data.dft_zone_map = zone_map_pack()
+    end
+end
+
+try_restore_zone_map = function()
+    local ok, m_data = pcall(alife_storage_manager.get_state)
+    if ok and m_data and m_data.dft_zone_map and zone_map_unpack(m_data.dft_zone_map) then
+        dft_log("Zone map restored from save (%d transitions).", count_zone_edges())
+        return true
+    end
+    return false
+end
+
+local function on_load_state(m_data)
+    if m_data and m_data.dft_zone_map and not next(dft.dynamic_map or {}) then
+        zone_map_unpack(m_data.dft_zone_map)
+    end
+end
+
+local function on_save_state(m_data)
+    persist_zone_map(m_data)
+end
+
+scan_transition_object = function(obj, sim, gg, total_ref)
+    if not obj then return end
+    local cls = 0
+    pcall(function() cls = obj:clsid() end)
+    local sec = obj:section_name()
+
+    if cls == clsid.level_changer or (clsid.level_changer_s and cls == clsid.level_changer_s) then
+        local ok_src, src_lid = pcall(function() return gg:vertex(obj.m_game_vertex_id):level_id() end)
+        if ok_src then
+            local src_name = resolve_level_name(src_lid)
+            if src_name then
+                local dgv = obj.dest_game_vertex_id or obj.m_dest_game_vertex_id
+                if dgv and dgv < 65535 and gg:valid_vertex_id(dgv) then
+                    local dst_lid = gg:vertex(dgv):level_id()
+                    local dst_name = resolve_level_name(dst_lid)
+                    if dst_name and src_name ~= dst_name then
+                        dft.dynamic_map[src_name] = dft.dynamic_map[src_name] or {}
+                        dft.dynamic_map[src_name][dst_name] = true
+                        dft.door_registry[src_name] = dft.door_registry[src_name] or {}
+                        dft.door_registry[src_name][dst_name] = dft.door_registry[src_name][dst_name] or {}
+                        dft.door_registry[src_name][dst_name][#dft.door_registry[src_name][dst_name]+1] = obj.id
+                        total_ref[1] = total_ref[1] + 1
+                    end
+                end
+            end
+        end
+    elseif cls == clsid.script_restr or cls == clsid.space_restrictor then
+        local has_marker = level.map_has_object_spot(obj.id, "level_changer") ~= 0 or level.map_has_object_spot(obj.id, "level_changer_up") ~= 0
+        local ini = obj:spawn_ini()
+        local is_lc = ini and ini:section_exist("sr_level_changer")
+        local obj_name = string.lower(obj:name())
+        local is_name_match = string.find(obj_name, "_to_", 1, true) ~= nil
+
+        if not dft_is_trader_restrictor(obj_name) and is_lc then
+            local src_name, dst_name
+            local ok_src, src_lid = pcall(function() return gg:vertex(obj.m_game_vertex_id):level_id() end)
+            src_name = ok_src and resolve_level_name(src_lid)
+
+            local dest_lvl = ini:line_exist("sr_level_changer", "dest_level") and ini:r_string("sr_level_changer", "dest_level")
+            local dgv = ini:line_exist("sr_level_changer", "dest_game_vertex") and ini:r_u32("sr_level_changer", "dest_game_vertex")
+            if dest_lvl then
+                dst_name = resolve_level_name(dest_lvl)
+            elseif dgv and gg:valid_vertex_id(dgv) then
+                local ok_dst, dst_lid = pcall(function() return gg:vertex(dgv):level_id() end)
+                if ok_dst then dst_name = resolve_level_name(dst_lid) end
+            end
+
+            if not dst_name and (has_marker or is_name_match) then
+                local dest_part = obj_name
+                local to_idx = string.find(obj_name, "_to_", 1, true)
+                if to_idx then dest_part = string.sub(obj_name, to_idx + 4) end
+                for lvl_key, keywords in pairs(dft_door_keywords) do
+                    for _, kw in ipairs(keywords) do
+                        if string.find(dest_part, kw) and lvl_key ~= src_name then
+                            dst_name = lvl_key
+                            break
+                        end
+                    end
+                    if dst_name then break end
+                end
+            end
+
+            if src_name and dst_name and src_name ~= dst_name then
+                dft.dynamic_map[src_name] = dft.dynamic_map[src_name] or {}
+                dft.dynamic_map[src_name][dst_name] = true
+                dft.door_registry[src_name] = dft.door_registry[src_name] or {}
+                dft.door_registry[src_name][dst_name] = dft.door_registry[src_name][dst_name] or {}
+                table.insert(dft.door_registry[src_name][dst_name], 1, obj.id)
+                total_ref[1] = total_ref[1] + 1
+            end
+        end
+    elseif _G.lc_extra_transitions and _G.lc_extra_transitions.lc_pool and _G.lc_extra_transitions.lc_pool[sec] then
+        local v = _G.lc_extra_transitions.lc_pool[sec]
+        local ok_src, src_lid = pcall(function() return gg:vertex(obj.m_game_vertex_id):level_id() end)
+        if ok_src then
+            local src_name = resolve_level_name(src_lid)
+            local dst_name
+            if v.to_gvid then
+                local dg = tonumber(v.to_gvid)
+                if dg and gg:valid_vertex_id(dg) then
+                    local ok_dst, dst_lid = pcall(function() return gg:vertex(dg):level_id() end)
+                    if ok_dst then dst_name = resolve_level_name(dst_lid) end
+                end
+            elseif v.link and _G.lc_extra_transitions.lc_pool[v.link] then
+                dst_name = resolve_level_name(_G.lc_extra_transitions.lc_pool[v.link].level)
+            end
+            if src_name and dst_name and src_name ~= dst_name then
+                dft.dynamic_map[src_name] = dft.dynamic_map[src_name] or {}
+                dft.dynamic_map[src_name][dst_name] = true
+                dft.door_registry[src_name] = dft.door_registry[src_name] or {}
+                dft.door_registry[src_name][dst_name] = dft.door_registry[src_name][dst_name] or {}
+                dft.door_registry[src_name][dst_name][#dft.door_registry[src_name][dst_name]+1] = obj.id
+                total_ref[1] = total_ref[1] + 1
+            end
+        end
+    end
+end
+
+local function build_dynamic_map()
+    if dft.dynamic_map and next(dft.dynamic_map) then
+        dft_log("Zone map ready (%d transitions, in-memory).", count_zone_edges())
+        return
+    end
+    if try_restore_zone_map() then return end
+    dft_log("Building zone map (first run this save)...")
+    local sim = alife()
+    local gg = game_graph()
+    if not (sim and gg) then
+        dft_log("ERROR: alife() or game_graph() not ready")
+        return
+    end
+
+    dft.dynamic_map = {}
+    dft.door_registry = {}
+    dft.lc_spot_ids = nil
+    local total_ref = { 0 }
+
+    if sim.iterate_objects then
+        sim:iterate_objects(function(obj)
+            scan_transition_object(obj, sim, gg, total_ref)
+        end)
+    else
+        for i = 1, 65534 do
+            scan_transition_object(sim:object(i), sim, gg, total_ref)
+        end
+    end
+    local total = total_ref[1]
+
+    -- Final pool sync (for any entries that don't have spawned objects yet)
+    if _G.lc_extra_transitions and _G.lc_extra_transitions.lc_pool then
+        local pool = _G.lc_extra_transitions.lc_pool
+        for sec, v in pairs(pool) do
+            local src_name, dst_name
+
+            if v.level and v.link and pool[v.link] then
+                src_name = resolve_level_name(v.level)
+                dst_name = resolve_level_name(pool[v.link].level)
+            elseif v.gvid and v.to_gvid then
+                local sg = tonumber(v.gvid)
+                local dg = tonumber(v.to_gvid)
+                if sg and dg and gg:valid_vertex_id(sg) and gg:valid_vertex_id(dg) then
+                    src_name = resolve_level_name(gg:vertex(sg):level_id())
+                    dst_name = resolve_level_name(gg:vertex(dg):level_id())
+                end
+            end
+
+            if src_name and dst_name and src_name ~= dst_name then
+                if not (dft.dynamic_map[src_name] and dft.dynamic_map[src_name][dst_name]) then
+                    dft.dynamic_map[src_name] = dft.dynamic_map[src_name] or {}
+                    dft.dynamic_map[src_name][dst_name] = true
+                    total = total + 1
+                end
+            end
+        end
+    end
+
+    dft_log("Zone map built: %d transitions (saved for this playthrough).", total)
+    pcall(function()
+        persist_zone_map(alife_storage_manager.get_state())
+    end)
+end
+
+-- dft_publish_to_global
+do
+    _G.dft_build_level_names_registry = build_level_names_registry
+    _G.dft_resolve_level_name = resolve_level_name
+    _G.dft_on_load_state = on_load_state
+    _G.dft_on_save_state = on_save_state
+    _G.dft_build_dynamic_map = build_dynamic_map
+end

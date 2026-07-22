@@ -1,0 +1,63 @@
+-- dorn_mcm_banner:begin (managed by sync-dorn-common.sh)
+local DORN_COMMON_VERSION = "dorn_common"
+local function dorn_mcm()
+	return _G.dorn_mcm
+end
+-- dorn_mcm_banner:end
+
+function on_mcm_load()
+	local MCM = dorn_mcm()
+	return {
+		id = "dorn_dont_reequip_pda",
+		text = "ui_mcm_menu_dorn_dont_reequip_pda",
+		gr = {
+			{
+				id = "main",
+				sh = true,
+				text = "ui_mcm_dorn_dont_reequip_pda_main_section",
+				gr = MCM.with_header({
+					{
+						id = "main_description",
+						type = "desc",
+						text = "ui_mcm_dorn_dont_reequip_pda_main_description",
+					},
+					{
+						id = "after_inventory",
+						type = "check",
+						val = 1,
+						def = true,
+						hint = "dorn_dont_reequip_pda_after_inventory",
+					},
+					{
+						id = "after_loot",
+						type = "check",
+						val = 1,
+						def = true,
+						hint = "dorn_dont_reequip_pda_after_loot",
+					},
+					{
+						id = "after_teleport",
+						type = "check",
+						val = 1,
+						def = true,
+						hint = "dorn_dont_reequip_pda_after_teleport",
+					},
+				}),
+			},
+			{
+				id = "development",
+				sh = true,
+				text = "ui_mcm_dorn_dont_reequip_pda_development_section",
+				gr = MCM.with_header({
+					{
+						id = "debug_log",
+						type = "check",
+						val = 1,
+						def = false,
+						hint = "dorn_dont_reequip_pda_debug_log",
+					},
+				}),
+			},
+		},
+	}
+end

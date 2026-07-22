@@ -1,0 +1,11 @@
+-- Dorn's Fast Travel: inject custom PDA path / ambush map spots.
+-- File is an Anomaly #include fragment (multiple top-level elements).
+function on_xml_read()
+	RegisterScriptCallback("on_xml_read", function(xml_file_name, xml_obj)
+		if xml_file_name == [[ui\map_spots.xml]]
+			or xml_file_name == [[ui\map_spots_16.xml]]
+			or xml_file_name == [[ui\map_spots_21.xml]] then
+			xml_obj:insertFromXMLString('#include "ui\\map_spots_dorn_fast_travel.xml"\n')
+		end
+	end)
+end

@@ -1,0 +1,631 @@
+--[[
+	Extra weapon stat rows for Dorn's Weapon Tooltips (Dispersion, Spread,
+	Barrel Wear, Burst Size, Bullet Drop). main.script registers them in
+	utils_ui.stats_table (lookups are call-time; alpha order is main before stats).
+
+	X-Ray binds this file's environment to global zzzz_dogma_tooltips_weapons_stats.
+	Define fields/functions at top level — do not assign
+	zzzz_dogma_tooltips_weapons_stats = {} (that nests a second table and breaks
+	lookups like zzzz_dogma_tooltips_weapons_stats.NAME from other scripts).
+]]
+
+local MOD_ID = "dorn_weapon_tooltip"
+
+-- GAMMA actor.ltx movement dispersion (Actor_Weapon.cpp, VEL_MAX = 10 m/s).
+-- Engine adds actor PDM degrees to weapon base; it does not multiply them.
+local ACTOR_DISP_BASE = 1.5
+local ACTOR_DISP_VEL = 2.5
+local VEL_MAX = 10
+local SPEED_RUN = 5.0
+
+local GRAVITY = 9.81
+-- Shared MCM range for Dispersion (lateral) and Bullet Drop (vertical).
+local DROP_RANGE_M = 200
+-- Tweakable: ADS camera kick angle (degrees) used for Burst Size.
+local RECOIL_KICK_THRESHOLD = 3.0
+
+function set_drop_range(m)
+	local n = tonumber(m)
+	if not n then
+		return
+	end
+	if n < 100 then
+		n = 100
+	elseif n > 2000 then
+		n = 2000
+	end
+	DROP_RANGE_M = n
+end
+
+function set_burst_threshold(deg)
+	local n = tonumber(deg)
+	if not n then
+		return
+	end
+	if n < 1 then
+		n = 1
+	elseif n > 10 then
+		n = 10
+	end
+	RECOIL_KICK_THRESHOLD = n
+end
+
+-- When true, attached silencer LTX *_k modifiers apply to Burst Size and Bullet Drop.
+local APPLY_SILENCER = false
+
+function set_apply_silencer(enabled)
+	APPLY_SILENCER = enabled == true
+end
+
+-- String ids for the new rows (also used by main for white-text display).
+NAME = {
+	dispersion = "ui_dorn_wpn_dispersion",
+	spread = "ui_dorn_wpn_spread",
+	barrel_wear = "ui_dorn_wpn_barrel_wear",
+	burst_control = "ui_dorn_wpn_burst_control",
+	bullet_drop = "ui_dorn_wpn_bullet_drop",
+}
+
+local logged_once = {}
+local DEBUG_ENABLED = false
+
+function set_debug(enabled)
+	DEBUG_ENABLED = enabled == true
+	if DEBUG_ENABLED then
+		logged_once = {}
+	end
+end
+
+local function dbg(msg)
+	if not DEBUG_ENABLED then
+		return
+	end
+	if DORN and DORN.dbg and DORN.dbg.log then
+		DORN.dbg.log(MOD_ID, msg)
+	else
+		printf("[DBG][%s] %s", MOD_ID, tostring(msg))
+	end
+end
+
+local function log_once(key, msg)
+	if not DEBUG_ENABLED then
+		return
+	end
+	if logged_once[key] then
+		return
+	end
+	logged_once[key] = true
+	dbg(msg)
+end
+
+local function safe_id(obj)
+	if not obj then
+		return nil
+	end
+	local ok, id = pcall(function()
+		return obj:id()
+	end)
+	if ok then
+		return id
+	end
+	return nil
+end
+
+-- LTX float with one parent_section hop (r_float_ex does not inherit).
+local function ini_float(sec, key)
+	if not sec then
+		return nil
+	end
+	local v = ini_sys:r_float_ex(sec, key)
+	if v ~= nil then
+		return tonumber(v)
+	end
+	local parent = ini_sys:r_string_ex(sec, "parent_section")
+	if parent and parent ~= sec then
+		v = ini_sys:r_float_ex(parent, key)
+		if v ~= nil then
+			return tonumber(v)
+		end
+	end
+	return nil
+end
+
+-- Prefer get_param + ini. get_wpn_param often returns a false 0 for LTX floats
+-- (bullet_speed, zoom_cam_dispersion, condition_shot_dec, …) and must not win.
+-- get_param may return no value (RPG / exotic weapons); never pass that to tonumber.
+local function wpn_param(obj, sec, key, default)
+	default = default or 0
+	local id = safe_id(obj)
+	local from_param = nil
+
+	if utils_item and utils_item.get_param then
+		local raw = utils_item.get_param(sec, id, key, "float", true)
+		if raw ~= nil then
+			local v = tonumber(raw)
+			if v ~= nil then
+				if v ~= 0 then
+					return v
+				end
+				from_param = 0
+			end
+		end
+	end
+
+	local from_ini = ini_float(sec, key)
+	if from_ini ~= nil and from_ini ~= 0 then
+		return from_ini
+	end
+
+	if from_param ~= nil then
+		return from_param
+	end
+	if from_ini ~= nil then
+		return from_ini
+	end
+
+	if utils_item and utils_item.get_wpn_param then
+		local raw = utils_item.get_wpn_param(obj, sec, key, nil)
+		if raw ~= nil then
+			local v = tonumber(raw)
+			if v ~= nil then
+				return v
+			end
+		end
+	end
+
+	local sys_raw = SYS_GetParam(0, sec, key, tostring(default))
+	if sys_raw ~= nil then
+		return tonumber(sys_raw) or default
+	end
+	return default
+end
+
+-- Attached silencer section when MCM apply_silencer_stats is on; else nil.
+local function attached_silencer_sec(obj)
+	if not APPLY_SILENCER or not obj or not utils_item or not utils_item.get_attached_silencer then
+		return nil
+	end
+	local ok, sil = pcall(function()
+		return utils_item.get_attached_silencer(obj)
+	end)
+	if ok and sil and sil ~= "" then
+		return sil
+	end
+	return nil
+end
+
+local function resolve_sec(obj, sec)
+	if sec and sec ~= "" then
+		return sec
+	end
+	if not obj then
+		return nil
+	end
+	-- Avoid method calls on stale/non-object refs (crashes in IsWeapon via :clsid).
+	local ok, section = pcall(function()
+		return obj:section()
+	end)
+	if not ok or not section then
+		return nil
+	end
+	return ini_sys:r_string_ex(section, "parent_section") or section
+end
+
+-- Section-only check. Matches UIInfoItem:GetType — never call IsWeapon(sec):
+-- IsWeapon expects an object (or nil + clsid) and will crash on :clsid() for strings.
+local function is_weapon_section(sec)
+	if not sec or sec == "" then
+		return false
+	end
+	if IsItem and IsItem("fake_ammo_wpn", sec) then
+		return false
+	end
+	return ini_sys:r_string_ex(sec, "ammo_class") ~= nil
+end
+
+-- Degree is CP1251 0xB0 (string.char(176)). A literal UTF-8 "°" in this
+-- file becomes C2 B0 and shows as "B°" in the Anomaly UI.
+local DEG = string.char(176)
+
+local function fmt_deg(v)
+	return string.format("%.2f%s", v, DEG)
+end
+
+local function fmt_drop_m(v)
+	return string.format("%.2fm %%c[dark_gray]@ %dm%%c[default]", v, DROP_RANGE_M)
+end
+
+-- Numeric getters (for tooltip compare vs equipped). Lower-is-better where noted.
+-- text_* stay the formatted display; props still return sentinels so 0% rows show
+-- (utils_ui.get_stats_value hides exact 0).
+
+-- Lateral miss distance (m) at DROP_RANGE_M. Lower is better.
+function value_dispersion(obj, sec)
+	sec = resolve_sec(obj, sec)
+	if not is_weapon_section(sec) then
+		return nil
+	end
+	local v = wpn_param(obj, sec, "fire_dispersion_base", 0)
+	if v <= 0 then
+		log_once("dispersion_fail:" .. tostring(sec),
+			string.format("dispersion [%s]: fire_dispersion_base=%s", tostring(sec), tostring(v)))
+		return nil
+	end
+	return DROP_RANGE_M * math.tan(math.rad(v))
+end
+
+function text_dispersion(obj, sec)
+	local v = value_dispersion(obj, sec)
+	if not v then
+		return nil
+	end
+	return fmt_drop_m(v)
+end
+
+-- Standing / ADS cone degrees (min). Lower is better.
+function value_base_spread(obj, sec)
+	sec = resolve_sec(obj, sec)
+	if not is_weapon_section(sec) then
+		return nil
+	end
+	local v = wpn_param(obj, sec, "fire_dispersion_base", 0)
+	if v <= 0 then
+		log_once("base_spread_fail:" .. tostring(sec),
+			string.format("base_spread [%s]: fire_dispersion_base=%s", tostring(sec), tostring(v)))
+		return nil
+	end
+	return v
+end
+
+-- Final hip-fire cone at run (degrees, max): min + movement. Lower is better.
+function value_movement_spread(obj, sec)
+	sec = resolve_sec(obj, sec)
+	if not is_weapon_section(sec) then
+		return nil
+	end
+	-- Engine total hip cone = weapon fire_dispersion_base + actor PDM degrees
+	-- (Actor_Weapon.cpp). Uses normal run speed, not sprint.
+	local fire_disp = wpn_param(obj, sec, "fire_dispersion_base", 0)
+	if fire_disp <= 0 then
+		log_once("move_spread_fail:" .. tostring(sec), string.format(
+			"move_spread [%s]: fire_disp=%s",
+			tostring(sec), tostring(fire_disp)))
+		return nil
+	end
+	local pdm_base = wpn_param(obj, sec, "PDM_disp_base", 1)
+	local pdm_vel = wpn_param(obj, sec, "PDM_disp_vel_factor", 1)
+	local actor = ACTOR_DISP_BASE * pdm_base
+		* (1 + (SPEED_RUN / VEL_MAX) * ACTOR_DISP_VEL * pdm_vel)
+	local total = fire_disp + actor
+	log_once("move_spread_ok:" .. tostring(sec), string.format(
+		"move_spread [%s]: base=%.4f + move=%.4f = %.4f",
+		tostring(sec), fire_disp, actor, total))
+	return total
+end
+
+-- Compare uses mean of min/max cone. Lower is better.
+function value_spread(obj, sec)
+	local lo = value_base_spread(obj, sec)
+	local hi = value_movement_spread(obj, sec)
+	if not lo or not hi then
+		return nil
+	end
+	return (lo + hi) * 0.5
+end
+
+-- min - max degrees: standing-ADS cone - hip-run cone.
+function text_spread(obj, sec)
+	local lo = value_base_spread(obj, sec)
+	local hi = value_movement_spread(obj, sec)
+	if not lo or not hi then
+		return nil
+	end
+	return string.format("%s - %s", fmt_deg(lo), fmt_deg(hi))
+end
+
+-- Chance % per shot to lose 1% WPO barrel. Matches GAMMA Unjam Reload
+-- arti_jamming barrel roll: weapon_degradation * condition_shot_dec * 15000
+-- out of 1000 (independent of the separate non-barrel part roll). Lower is better.
+-- Silencer does not affect this.
+function value_barrel_wear(obj, sec)
+	sec = resolve_sec(obj, sec)
+	if not is_weapon_section(sec) then
+		return nil
+	end
+	if obj and arti_jamming and arti_jamming.has_parts and not arti_jamming.has_parts(obj) then
+		return nil
+	end
+	-- Unjam Reload only applies wear rolls while under MCM threshold (default 85).
+	local thr = 85
+	if a_arti_jamming_mcm and a_arti_jamming_mcm.get_config then
+		thr = tonumber(a_arti_jamming_mcm.get_config("threshold")) or 85
+	end
+	if obj and obj.condition then
+		local ok, cond = pcall(function()
+			return obj:condition()
+		end)
+		if ok and cond and (cond * 100) >= thr then
+			return 0
+		end
+	end
+	local dec = wpn_param(obj, sec, "condition_shot_dec", 0)
+	if dec < 0 then
+		dec = 0
+	end
+	local deg = 0.5
+	if game_difficulties and game_difficulties.get_eco_factor then
+		deg = tonumber(game_difficulties.get_eco_factor("weapon_degradation")) or 0.5
+	end
+	if deg < 0 then
+		deg = 0
+	end
+	-- damage_chance / 1000 * 100 = damage_chance / 10
+	return (deg * dec * 15000) / 10
+end
+
+function text_barrel_wear(obj, sec)
+	local chance_pct = value_barrel_wear(obj, sec)
+	if chance_pct == nil then
+		return nil
+	end
+	local chance_txt
+	if chance_pct <= 0 then
+		log_once("barrel_wear_zero:" .. tostring(sec), string.format(
+			"barrel_wear [%s]: 0%%", tostring(sec)))
+		chance_txt = "0.0%"
+	else
+		chance_txt = string.format("%.1f%%", chance_pct)
+	end
+	return string.format("%s %%c[dark_gray]@ -1%%%%c[default]", chance_txt)
+end
+
+-- Fractional ADS shots until cumulative vertical camera climb reaches RECOIL_KICK_THRESHOLD.
+-- Higher is better. Cap at 200 (matches ">200" display).
+local function fmt_burst(shots_txt, thr)
+	local thr_txt
+	if thr == math.floor(thr) then
+		thr_txt = string.format("%.0f%s", thr, DEG)
+	else
+		thr_txt = string.format("%.1f%s", thr, DEG)
+	end
+	return string.format("%s %%c[dark_gray]@ %s%%c[default]", shots_txt, thr_txt)
+end
+
+function value_burst_control(obj, sec)
+	sec = resolve_sec(obj, sec)
+	if not is_weapon_section(sec) then
+		return nil
+	end
+	local zoom_disp = wpn_param(obj, sec, "zoom_cam_dispersion", 0)
+	local hip_disp = wpn_param(obj, sec, "cam_dispersion", 0)
+	local use_zoom = zoom_disp > 0
+	local disp = use_zoom and zoom_disp or hip_disp
+	-- Silencer reduces cam kick via zoom_cam_dispersion_k / cam_dispersion_k.
+	local sil = attached_silencer_sec(obj)
+	if sil then
+		local cam_k = 1
+		if use_zoom then
+			cam_k = ini_float(sil, "zoom_cam_dispersion_k")
+				or ini_float(sil, "cam_dispersion_k")
+				or 1
+		else
+			cam_k = ini_float(sil, "cam_dispersion_k") or 1
+		end
+		if cam_k > 0 then
+			disp = disp * cam_k
+		end
+	end
+	local max_shots = 200
+	if disp <= 0 then
+		log_once("burst_fail:" .. tostring(sec), string.format(
+			"burst_control [%s]: no cam kick (zoom_cam_dispersion=%s cam_dispersion=%s)",
+			tostring(sec), tostring(zoom_disp), tostring(hip_disp)))
+		return max_shots
+	end
+	local inc = wpn_param(obj, sec, "zoom_cam_dispersion_inc", 0)
+	if inc == 0 then
+		inc = wpn_param(obj, sec, "cam_dispersion_inc", 0)
+	end
+	-- Prefer zoom_cam_dispersion_inc_k; fall back to cam_dispersion_inc_k.
+	local inc_k = 1
+	if sil then
+		inc_k = ini_float(sil, "zoom_cam_dispersion_inc_k")
+			or ini_float(sil, "cam_dispersion_inc_k")
+			or 1
+		if inc_k <= 0 then
+			inc_k = 1
+		end
+	end
+	inc = inc * inc_k
+	local thr = RECOIL_KICK_THRESHOLD
+
+	local return_on = true
+	if sec and ini_sys:line_exist(sec, "cam_return") then
+		return_on = wpn_param(obj, sec, "cam_return", 1) ~= 0
+	end
+
+	local relax = 0
+	local dt = 0
+	if return_on then
+		relax = wpn_param(obj, sec, "zoom_cam_relax_speed", 0)
+		if relax <= 0 then
+			relax = wpn_param(obj, sec, "cam_relax_speed", 0)
+		end
+		local rpm = wpn_param(obj, sec, "rpm", 0)
+		if rpm > 0 then
+			dt = 60 / rpm
+		end
+	end
+
+	local angle = 0
+	for n = 1, max_shots do
+		local kick = disp + inc * (n - 1)
+		if kick < 0 then
+			kick = 0
+		end
+		local prev = angle
+		angle = angle + kick
+		if angle >= thr then
+			local shots = n
+			if kick > 0 and prev < thr then
+				shots = (n - 1) + (thr - prev) / kick
+			end
+			if shots < 1 then
+				shots = 1
+			end
+			return shots
+		end
+		if return_on and relax > 0 and dt > 0 then
+			angle = angle - relax * dt
+			if angle < 0 then
+				angle = 0
+			end
+		end
+	end
+	return max_shots
+end
+
+function text_burst_control(obj, sec)
+	local shots = value_burst_control(obj, sec)
+	if shots == nil then
+		return nil
+	end
+	local thr = RECOIL_KICK_THRESHOLD
+	if shots >= 200 then
+		return fmt_burst(string.format(">%d", 200), thr)
+	end
+	return fmt_burst(string.format("%.1f", shots), thr)
+end
+
+-- Drop distance (m) at DROP_RANGE_M. Lower is better.
+function value_bullet_drop(obj, sec)
+	sec = resolve_sec(obj, sec)
+	if not is_weapon_section(sec) then
+		return nil
+	end
+	local bullet_speed = wpn_param(obj, sec, "bullet_speed", 0)
+	local id = safe_id(obj)
+	local ammo_list = utils_item and utils_item.get_ammo(sec, id) or nil
+	local ammo0 = ammo_list and ammo_list[1] or nil
+	local k_speed = 1
+	if ammo0 then
+		k_speed = ini_sys:r_float_ex(ammo0, "k_bullet_speed") or 1
+	end
+
+	local v = bullet_speed * k_speed
+	-- Boomsticks silencers: bullet_speed_k (often ~0.9; some cans lower).
+	local sil = attached_silencer_sec(obj)
+	local speed_k = 1
+	if sil then
+		speed_k = ini_float(sil, "bullet_speed_k") or 1
+		if speed_k > 0 then
+			v = v * speed_k
+		else
+			speed_k = 1
+		end
+	end
+	if v <= 0 then
+		log_once("drop_fail:" .. tostring(sec), string.format(
+			"bullet_drop [%s]: bullet_speed=%s k_speed=%s speed_k=%s ammo=%s sil=%s",
+			tostring(sec), tostring(bullet_speed), tostring(k_speed), tostring(speed_k),
+			tostring(ammo0), tostring(sil)))
+		v = ini_float(sec, "bullet_speed") or 0
+		if v <= 0 then
+			return 999
+		end
+		if sil and speed_k > 0 and speed_k ~= 1 then
+			v = v * speed_k
+		end
+	end
+
+	return GRAVITY * DROP_RANGE_M * DROP_RANGE_M / (2 * v * v)
+end
+
+function text_bullet_drop(obj, sec)
+	local drop = value_bullet_drop(obj, sec)
+	if drop == nil then
+		return nil
+	end
+	return fmt_drop_m(drop)
+end
+
+local TEXT_BY_NAME = {
+	[NAME.dispersion] = text_dispersion,
+	[NAME.spread] = text_spread,
+	[NAME.barrel_wear] = text_barrel_wear,
+	[NAME.burst_control] = text_burst_control,
+	[NAME.bullet_drop] = text_bullet_drop,
+}
+
+local VALUE_BY_NAME = {
+	[NAME.dispersion] = value_dispersion,
+	[NAME.spread] = value_spread,
+	[NAME.barrel_wear] = value_barrel_wear,
+	[NAME.burst_control] = value_burst_control,
+	[NAME.bullet_drop] = value_bullet_drop,
+}
+
+-- true = lower value is better (green when inspected gun is lower than equipped).
+local LOWER_BETTER = {
+	[NAME.dispersion] = true,
+	[NAME.spread] = true,
+	[NAME.barrel_wear] = true,
+	[NAME.burst_control] = false,
+	[NAME.bullet_drop] = true,
+}
+
+-- Round compare deltas to match displayed precision.
+local ROUND_DECIMALS = {
+	[NAME.dispersion] = 2,
+	[NAME.spread] = 2,
+	[NAME.barrel_wear] = 1,
+	[NAME.burst_control] = 1,
+	[NAME.bullet_drop] = 2,
+}
+
+function value_for_name(name_id, obj, sec)
+	local fn = VALUE_BY_NAME[name_id]
+	if not fn then
+		return nil
+	end
+	local ok, result = pcall(fn, obj, sec)
+	if ok then
+		return result
+	end
+	return nil
+end
+
+function compare_meta_for_name(name_id)
+	return LOWER_BETTER[name_id] == true, ROUND_DECIMALS[name_id] or 2
+end
+
+local STAT_SHORT = {
+	[NAME.dispersion] = "dispersion",
+	[NAME.spread] = "spread",
+	[NAME.barrel_wear] = "barrel_wear",
+	[NAME.burst_control] = "burst_control",
+	[NAME.bullet_drop] = "bullet_drop",
+}
+
+function text_for_name(name_id, obj, sec)
+	local fn = TEXT_BY_NAME[name_id]
+	if not fn then
+		log_once("unknown_stat:" .. tostring(name_id),
+			string.format("text_for_name: unknown name_id=%s", tostring(name_id)))
+		return nil
+	end
+	local ok, result = pcall(fn, obj, sec)
+	local short = STAT_SHORT[name_id] or tostring(name_id)
+	local sec_s = tostring(resolve_sec(obj, sec) or sec or "?")
+	if not ok then
+		log_once(short .. "_err:" .. sec_s,
+			string.format("%s [%s]: ERROR %s", short, sec_s, tostring(result)))
+		return nil
+	end
+	-- Success: no log (browsing many guns would spam). Failures above are once/sec.
+	if result == nil then
+		log_once(short .. "_nil:" .. sec_s,
+			string.format("%s [%s]: nil (row may stay empty)", short, sec_s))
+	end
+	return result
+end

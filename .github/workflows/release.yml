@@ -27,8 +27,7 @@ jobs:
         run: |
           TITLE="${{ github.event.repository.name }}"
           TITLE="${TITLE//-/ }"
-          TITLE="${TITLE/GAMMA/Dorns}"
-          FILENAME="${TITLE// /_}"
+          FILENAME="${TITLE}"
           echo "title=$TITLE" >> "$GITHUB_OUTPUT"
           echo "filename=$FILENAME" >> "$GITHUB_OUTPUT"
 
@@ -41,18 +40,16 @@ jobs:
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Build mod zip
+      - name: Build FOMOD zip
         if: steps.check.outputs.exists == 'false'
         run: |
-          bash tools/build.sh
+          bash tools/package-fomod.sh
           ZIP="${{ steps.name.outputs.filename }} ${{ steps.meta.outputs.version }}.zip"
-          # MO2 layout: gamedata/ + meta.ini (+ .mod_id) at zip root
+          # MO2 FOMOD layout: modules + fomod/ + meta.ini at zip root
           (
-            cd build
-            zip -r "../$ZIP" gamedata
+            cd build/fomod
+            zip -r "../../$ZIP" .
           )
-          zip -r "$ZIP" meta.ini
-          if [ -f .mod_id ]; then zip -r "$ZIP" .mod_id; fi
 
       - name: Create release and attach zip
         if: steps.check.outputs.exists == 'false'

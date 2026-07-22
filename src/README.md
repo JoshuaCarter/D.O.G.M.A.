@@ -27,6 +27,20 @@ See `MOVE_MAP.md` for the full map.
 
 Skip: `README*`, `MOVE_MAP*`, `.gitkeep`, `*.alao-bak`, `_` names.
 
+## Installer (FOMOD)
+
+Per feature: `src/<category>/<feature>/installer/`
+
+| File | Purpose |
+|------|---------|
+| `name.txt` | FOMOD plugin title |
+| `description.txt` | FOMOD body text |
+| `default.txt` | `recommended` / `optional` |
+| `image.png` | optional preview |
+| `id.txt` | zip module folder name (defaults to feature dir name) |
+
+Release zip: `bash tools/package-fomod.sh` → `build/fomod/` (common always installed; features SelectAny). Local `Ctrl+Shift+B` still merges everything.
+
 ## Common
 
 Stable globals: `dorn_common`, `dorn_mcm`, `dorn_dbg`, `dorn_sys`, banner `dorn_mcm_banner`.

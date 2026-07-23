@@ -1,5 +1,5 @@
 --[[
-	Dorn's Pose Controls
+	Pose Controls
 
 	Maps movement pose keys directly instead of cycling:
 	- Crouch bind -> crouch only (mcCrouch, never mcAccel)
@@ -15,14 +15,13 @@
 	crouch. We cache the player's real preference so that trick does not yank us
 	into toggle handling, and we pass those scripted pulses straight through.
 
-	Engine move states remain the source of truth so Dorns_Prone_Fix and other
+	Engine move states remain the source of truth so prone_fix and other
 	mods can read pose via IsMoveState("mcCrouch") / IsMoveState("mcAccel").
 ]]
 
-local MOD_ID = "dorn_pose_controls"
-local DORN_COMMON_VERSION = "dorn_common" -- managed by sync-dorn-common.sh, do not hand-edit
+local MOD_ID = "dogma/pose_controls"
 
-local DORN
+local DOGMA
 
 local POSE = {
 	STAND = "stand",
@@ -58,21 +57,21 @@ local mixed_warn_shown = false
 local cached_crouch_toggle = false
 
 local function log(msg)
-	if not DORN.dbg then
+	if not DOGMA.dbg then
 		return
 	end
 	if CONFIG.debug_log then
-		DORN.dbg.log(MOD_ID, tostring(msg))
+		DOGMA.dbg.log(MOD_ID, tostring(msg))
 	end
 end
 
 local function overlay(log_type, msg)
-	if not DORN.dbg then
+	if not DOGMA.dbg then
 		return
 	end
 	if CONFIG.debug_overlay then
 		local slot = log_type or LOG.POSE
-		DORN.dbg.overlay(MOD_ID, slot.order, tostring(msg), slot.color)
+		DOGMA.dbg.overlay(MOD_ID, slot.order, tostring(msg), slot.color)
 	end
 end
 
@@ -145,18 +144,18 @@ local function maybe_warn_mixed_settings()
 	if not (db.actor and db.actor:alive()) then
 		return
 	end
-	local text = game.translate_string("dorn_pose_controls_mixed_toggle_warning")
+	local text = game.translate_string("dogma_pose_controls_mixed_toggle_warning")
 	show_pda_tip(text)
 	log("disabled: mixed g_crouch_toggle / g_walk_toggle")
 	mixed_warn_shown = true
 end
 
 local function on_option_change()
-	CONFIG.enabled = DORN.mcm.bool(MOD_ID, "main/enabled", true)
-	CONFIG.walk_key = DORN.mcm.key(MOD_ID, "main/walk_key")
-	CONFIG.debug_log = DORN.mcm.bool(MOD_ID, "development/debug_log", false)
-	CONFIG.debug_overlay = DORN.mcm.bool(MOD_ID, "development/debug_overlay", false)
-	DORN.dbg.set_enabled(MOD_ID, CONFIG.debug_overlay)
+	CONFIG.enabled = DOGMA.mcm.bool(MOD_ID, "main/enabled", true)
+	CONFIG.walk_key = DOGMA.mcm.key(MOD_ID, "main/walk_key")
+	CONFIG.debug_log = DOGMA.mcm.bool(MOD_ID, "development/debug_log", false)
+	CONFIG.debug_overlay = DOGMA.mcm.bool(MOD_ID, "development/debug_overlay", false)
+	DOGMA.dbg.set_enabled(MOD_ID, CONFIG.debug_overlay)
 	local was_mixed = refresh_game_input_settings()
 	if mixed_game_settings and not was_mixed then
 		maybe_warn_mixed_settings()
@@ -165,7 +164,7 @@ end
 
 -- Keys need a free HUD. Pending pose steps may finish during loot UI.
 local function actor_can_change_pose()
-	if not DORN.sys.ready(MOD_ID, db, on_option_change) then
+	if not DOGMA.sys.ready(MOD_ID, db, on_option_change) then
 		return false
 	end
 	if device():is_paused() then
@@ -401,7 +400,7 @@ local function on_before_key_release(key, bind, _dis, flags)
 end
 
 local function on_actor_on_first_update()
-	if not DORN.sys.ready(MOD_ID, db, on_option_change) then
+	if not DOGMA.sys.ready(MOD_ID, db, on_option_change) then
 		return
 	end
 	refresh_game_input_settings()
@@ -409,7 +408,7 @@ local function on_actor_on_first_update()
 end
 
 local function on_actor_on_update()
-	if not DORN.sys.ready(MOD_ID, db, on_option_change) then
+	if not DOGMA.sys.ready(MOD_ID, db, on_option_change) then
 		return
 	end
 
@@ -426,7 +425,7 @@ local function on_actor_on_update()
 end
 
 function on_game_start()
-	DORN = _G[DORN_COMMON_VERSION].load(MOD_ID)
+	DOGMA = _G.dogma_common.load(MOD_ID)
 
 	RegisterScriptCallback("on_before_key_press", on_before_key_press)
 	RegisterScriptCallback("on_before_key_hold", on_before_key_hold)

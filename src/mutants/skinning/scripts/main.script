@@ -1,5 +1,5 @@
 --[[
-	Dorn's Faster Skinning
+	Faster Skinning
 
 	Applies the vanilla "Well Dressed" skinning speed-up by default, skips FDDA's
 	redundant post-cut pickup anim, and optionally speeds the knife-cut, auto-crouches,
@@ -7,10 +7,9 @@
 	swings or one heavy on a dead mutant takes all parts with no popup/anim.
 ]]
 
-local MOD_ID = "dorn_faster_skinning"
-local DORN_COMMON_VERSION = "dorn_common" -- managed by sync-dorn-common.sh, do not hand-edit
+local MOD_ID = "dogma/faster_skinning"
 
-local DORN
+local DOGMA
 
 local WELL_DRESSED_ID = "well_dressed"
 local ACTION_MUTANT_LOOT = "mutant_loot"
@@ -18,7 +17,7 @@ local ACTION_MUTANT_SKIN = "mutant_skin"
 local MUTANT_LOOT_SOUND = "inv_mutant_loot_animal"
 local SKIN_CUT_SOUND = "interface\\item_usage\\harvest_use"
 local LAM2_CAM_EFFECTOR_ID = 2190 -- lam2.get_template_action_play_animation's cam effector id
-local LAM2_MISSING_LTX_KEY = "__dorn_no_ltx__" -- bogus ini key so lam2 skips cam/snd lookups
+local LAM2_MISSING_LTX_KEY = "__dogma_no_ltx__" -- bogus ini key so lam2 skips cam/snd lookups
 local LOOK_AT_BONE = "bip01_spine1"
 
 -- Knife HUD states (HudItem eLastBaseState=eBore=4; Weapon eFire/eFire2 follow)
@@ -49,11 +48,11 @@ local last_slash_credit_ms = 0
 local slash_progress = nil -- { id, progress, last_hit_ms }
 
 local function log(msg)
-	if not (DORN and DORN.dbg) then
+	if not (DOGMA and DOGMA.dbg) then
 		return
 	end
 	if CONFIG.debug_log then
-		DORN.dbg.log(MOD_ID, tostring(msg))
+		DOGMA.dbg.log(MOD_ID, tostring(msg))
 	end
 end
 
@@ -89,12 +88,12 @@ local function do_crouch(flags, crouch)
 	end
 
 	if crouch then
-		flags.dorn_skin_was_crouching = IsMoveState("mcCrouch")
-		if flags.dorn_skin_was_crouching then
+		flags.dogma_skin_was_crouching = IsMoveState("mcCrouch")
+		if flags.dogma_skin_was_crouching then
 			return
 		end
-		flags.dorn_prev_crouch_toggle = get_console_cmd(1, "g_crouch_toggle") or false
-		if not flags.dorn_prev_crouch_toggle then
+		flags.dogma_prev_crouch_toggle = get_console_cmd(1, "g_crouch_toggle") or false
+		if not flags.dogma_prev_crouch_toggle then
 			exec_console_cmd("g_crouch_toggle 1")
 		end
 		level.press_action(bind_to_dik(key_bindings.kCROUCH))
@@ -103,19 +102,19 @@ local function do_crouch(flags, crouch)
 		return
 	end
 
-	if flags.dorn_skin_was_crouching == nil then
+	if flags.dogma_skin_was_crouching == nil then
 		return
 	end
-	if flags.dorn_skin_was_crouching ~= IsMoveState("mcCrouch") then
+	if flags.dogma_skin_was_crouching ~= IsMoveState("mcCrouch") then
 		level.press_action(bind_to_dik(key_bindings.kCROUCH))
 		level.release_action(bind_to_dik(key_bindings.kCROUCH))
 		log("mutant_skin: auto-crouch restored")
 	end
-	if flags.dorn_prev_crouch_toggle ~= nil then
-		exec_console_cmd(flags.dorn_prev_crouch_toggle and "g_crouch_toggle 1" or "g_crouch_toggle 0")
+	if flags.dogma_prev_crouch_toggle ~= nil then
+		exec_console_cmd(flags.dogma_prev_crouch_toggle and "g_crouch_toggle 1" or "g_crouch_toggle 0")
 	end
-	flags.dorn_skin_was_crouching = nil
-	flags.dorn_prev_crouch_toggle = nil
+	flags.dogma_skin_was_crouching = nil
+	flags.dogma_prev_crouch_toggle = nil
 end
 
 -- Engine look-at has no speed arg (actor_look_at_point(vector) only). Call it
@@ -148,14 +147,14 @@ local pending_skin_deadline = nil
 
 local function start_skin_action(action)
 	-- Full input lock, then queue. Skip re-lock if we already locked this action.
-	if action and action.flags and not action.flags.dorn_input_disabled then
+	if action and action.flags and not action.flags.dogma_input_disabled then
 		level.disable_input()
 		game.only_allow_movekeys(false)
 		if _G.liz_fdda_input_manager then
 			liz_fdda_input_manager.is_input_disabled = true
 		end
 		game.set_actor_allow_ladder(false)
-		action.flags.dorn_input_disabled = true
+		action.flags.dogma_input_disabled = true
 		log("mutant_skin: movement locked")
 	end
 	return original_lam2_add_action(action)
@@ -179,7 +178,7 @@ local function tick_pending_skin_action()
 end
 
 local function release_mutant_skin_movement_lock(action)
-	if not (action.flags and action.flags.dorn_early_movement_lock) then
+	if not (action.flags and action.flags.dogma_early_movement_lock) then
 		return
 	end
 	if pending_skin_action == action then
@@ -195,8 +194,8 @@ local function release_mutant_skin_movement_lock(action)
 		liz_fdda_input_manager.is_input_disabled = false
 	end
 	game.set_actor_allow_ladder(true)
-	action.flags.dorn_early_movement_lock = nil
-	action.flags.dorn_input_disabled = nil
+	action.flags.dogma_early_movement_lock = nil
+	action.flags.dogma_input_disabled = nil
 	log("mutant_skin: movement lock released")
 end
 
@@ -213,10 +212,10 @@ local function patched_add_action(action)
 		action.flags = action.flags or {}
 		do_look_at(action, true)
 		do_crouch(action.flags, true)
-		action.flags.dorn_early_movement_lock = true
+		action.flags.dogma_early_movement_lock = true
 		game.set_actor_allow_ladder(false)
 		-- Wait for crouch before lock + queue so Pose Controls can finish the pose.
-		if CONFIG.auto_crouch and action.flags.dorn_skin_was_crouching == false and not IsMoveState("mcCrouch") then
+		if CONFIG.auto_crouch and action.flags.dogma_skin_was_crouching == false and not IsMoveState("mcCrouch") then
 			pending_skin_action = action
 			pending_skin_deadline = time_global() + CROUCH_BEFORE_SKIN_MS
 			log("mutant_skin: waiting for crouch before knife-cut")
@@ -596,18 +595,18 @@ local function on_slash_key_press(dik)
 end
 
 local function on_option_change()
-	CONFIG.enabled = DORN.mcm.bool(MOD_ID, "main/enabled", true)
-	CONFIG.debug_log = DORN.mcm.bool(MOD_ID, "development/debug_log", false)
-	CONFIG.skin_speed_multiplier = DORN.mcm.number(MOD_ID, "main/skin_speed_multiplier", 1.5)
-	CONFIG.auto_crouch = DORN.mcm.bool(MOD_ID, "main/auto_crouch", false)
-	CONFIG.look_at_mutant = DORN.mcm.bool(MOD_ID, "main/look_at_mutant", false)
-	CONFIG.look_at_offset = DORN.mcm.number(MOD_ID, "main/look_at_offset", 0.5)
-	CONFIG.slash_loot = DORN.mcm.bool(MOD_ID, "main/slash_loot", false)
+	CONFIG.enabled = DOGMA.mcm.bool(MOD_ID, "main/enabled", true)
+	CONFIG.debug_log = DOGMA.mcm.bool(MOD_ID, "development/debug_log", false)
+	CONFIG.skin_speed_multiplier = DOGMA.mcm.number(MOD_ID, "main/skin_speed_multiplier", 1.5)
+	CONFIG.auto_crouch = DOGMA.mcm.bool(MOD_ID, "main/auto_crouch", false)
+	CONFIG.look_at_mutant = DOGMA.mcm.bool(MOD_ID, "main/look_at_mutant", false)
+	CONFIG.look_at_offset = DOGMA.mcm.number(MOD_ID, "main/look_at_offset", 0.5)
+	CONFIG.slash_loot = DOGMA.mcm.bool(MOD_ID, "main/slash_loot", false)
 	log(string.format("options: enabled=%s slash_loot=%s", tostring(CONFIG.enabled), tostring(CONFIG.slash_loot)))
 end
 
 function on_game_start()
-	DORN = _G[DORN_COMMON_VERSION].load(MOD_ID)
+	DOGMA = _G.dogma_common.load(MOD_ID)
 
 	on_option_change()
 
@@ -621,7 +620,7 @@ function on_game_start()
 	skin_cut_sfx = sound_object(SKIN_CUT_SOUND)
 
 	RegisterScriptCallback("actor_on_update", function()
-		DORN.sys.ready(MOD_ID, db, on_option_change)
+		DOGMA.sys.ready(MOD_ID, db, on_option_change)
 		tick_pending_skin_action()
 		if pending_skin_action then
 			do_look_at(pending_skin_action, true)

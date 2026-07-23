@@ -1,13 +1,12 @@
 --[[
-	Dorn's Don't Re-Equip PDA
+	Don't Re-Equip PDA
 
 	When UI holsters the PDA (slot 8), the engine re-equips it ~1-2s after close.
 	Restore the last real weapon/knife/binoc slot instead of bare hands on UI
 	open/close and after teleport position jumps.
 ]]
 
-local MOD_ID = "dorn_dont_reequip_pda"
-local DORN_COMMON_VERSION = "dorn_common" -- managed by sync-dorn-common.sh, do not hand-edit
+local MOD_ID = "dogma/dont_reequip_pda"
 
 local PDA_SLOT = 8
 
@@ -16,7 +15,7 @@ local MODE_TO_KIND = {
 	[4] = "loot",
 }
 
-local DORN
+local DOGMA
 
 local CONFIG = {
 	after_inventory = true,
@@ -26,19 +25,19 @@ local CONFIG = {
 }
 
 local function log(msg)
-	if not (DORN and DORN.dbg) then
+	if not (DOGMA and DOGMA.dbg) then
 		return
 	end
 	if CONFIG.debug_log then
-		DORN.dbg.log(MOD_ID, tostring(msg))
+		DOGMA.dbg.log(MOD_ID, tostring(msg))
 	end
 end
 
 local function on_option_change()
-	CONFIG.after_inventory = DORN.mcm.bool(MOD_ID, "main/after_inventory", true)
-	CONFIG.after_loot = DORN.mcm.bool(MOD_ID, "main/after_loot", true)
-	CONFIG.after_teleport = DORN.mcm.bool(MOD_ID, "main/after_teleport", true)
-	CONFIG.debug_log = DORN.mcm.bool(MOD_ID, "development/debug_log", false)
+	CONFIG.after_inventory = DOGMA.mcm.bool(MOD_ID, "main/after_inventory", true)
+	CONFIG.after_loot = DOGMA.mcm.bool(MOD_ID, "main/after_loot", true)
+	CONFIG.after_teleport = DOGMA.mcm.bool(MOD_ID, "main/after_teleport", true)
+	CONFIG.debug_log = DOGMA.mcm.bool(MOD_ID, "development/debug_log", false)
 	log(string.format(
 		"config: inventory=%s loot=%s teleport=%s debug=%s",
 		tostring(CONFIG.after_inventory), tostring(CONFIG.after_loot),
@@ -232,7 +231,7 @@ local function log_active_slot_transitions()
 end
 
 local function on_actor_on_update()
-	local ctx = DORN.sys.ready(MOD_ID, db, on_option_change)
+	local ctx = DOGMA.sys.ready(MOD_ID, db, on_option_change)
 	if not ctx or not db.actor then
 		return
 	end
@@ -283,12 +282,12 @@ local function on_actor_on_update()
 end
 
 function on_game_start()
-	DORN = _G[DORN_COMMON_VERSION].load(MOD_ID)
+	DOGMA = _G.dogma_common.load(MOD_ID)
 
 	-- Not gated by CONFIG.debug_log: at this point MCM options haven't been
 	-- read yet (that happens later via on_option_change), so the gate would
 	-- always be closed here regardless of the user's actual setting.
-	DORN.dbg.log(MOD_ID, "on_game_start: mod loaded")
+	DOGMA.dbg.log(MOD_ID, "on_game_start: mod loaded")
 
 	on_option_change()
 

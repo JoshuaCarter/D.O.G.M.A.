@@ -9,7 +9,7 @@
 #   src/<category>/<feature>/installer/...  FOMOD metadata (not shipped into gamedata)
 #
 # Scripts (prefix applied at build — src keeps short names like main.script):
-#   common/scripts/*          -> same basename (dorn_common, dorn_mcm, …)
+#   common/scripts/*          -> same basename (dogma_common, dogma_mcm, …)
 #   …/scripts/mcm.script      -> dogma_{path}_mcm.script   (no zzzz_; still *mcm.script)
 #   …/scripts/<other>.script  -> zzzz_dogma_{path}_<other>.script
 #

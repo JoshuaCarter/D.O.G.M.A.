@@ -1,41 +1,40 @@
--- dorn_mcm_banner:begin (managed by sync-dorn-common.sh)
-local DORN_COMMON_VERSION = "dorn_common"
-local function dorn_mcm()
-	return _G.dorn_mcm
+-- dogma_mcm_banner:begin (managed by sync-dogma-common.sh)
+local function dogma_mcm()
+	return _G.dogma_mcm
 end
--- dorn_mcm_banner:end
+-- dogma_mcm_banner:end
 
 function on_mcm_load()
-	local MCM = dorn_mcm()
+	local MCM = dogma_mcm()
 	return {
-		id = "dorn_fps_counter",
-		text = "ui_mcm_menu_dorn_fps_counter",
+		id = "fps_counter",
+		text = "ui_mcm_menu_dogma_fps_counter",
 		gr = {
 			{
 				id = "main",
 				sh = true,
-				text = "ui_mcm_dorn_fps_counter_main_section",
+				text = "ui_mcm_dogma_fps_counter_main_section",
 				gr = MCM.with_header({
 					{
 						id = "enabled_default",
 						type = "check",
 						val = 1,
 						def = true,
-						hint = "dorn_fps_counter_enabled_default",
+						hint = "dogma_fps_counter_enabled_default",
 					},
 					{
 						id = "toggle_key",
 						type = "key_bind",
 						val = 2,
 						def = -1,
-						hint = "dorn_fps_counter_toggle_key",
+						hint = "dogma_fps_counter_toggle_key",
 					},
 					{
 						id = "display",
 						type = "list",
 						val = 2,
 						def = 0,
-						hint = "dorn_fps_counter_display",
+						hint = "dogma_fps_counter_display",
 						content = {
 							{ 0, "simple_small" },
 							{ 1, "simple_large" },
@@ -53,7 +52,7 @@ function on_mcm_load()
 						max = 3,
 						step = 0.1,
 						def = 0.5,
-						hint = "dorn_fps_counter_sample_window",
+						hint = "dogma_fps_counter_sample_window",
 					},
 					{
 						id = "max_fps",
@@ -63,7 +62,7 @@ function on_mcm_load()
 						max = 500,
 						step = 1,
 						def = 144,
-						hint = "dorn_fps_counter_max_fps",
+						hint = "dogma_fps_counter_max_fps",
 					},
 					{
 						id = "minmax_window",
@@ -73,7 +72,7 @@ function on_mcm_load()
 						max = 10,
 						step = 1,
 						def = 5,
-						hint = "dorn_fps_counter_minmax_window",
+						hint = "dogma_fps_counter_minmax_window",
 					},
 					{
 						id = "refresh_rate",
@@ -83,20 +82,20 @@ function on_mcm_load()
 						max = 10,
 						step = 1,
 						def = 3,
-						hint = "dorn_fps_counter_refresh_rate",
+						hint = "dogma_fps_counter_refresh_rate",
 					},
 					{ id = "line_pos", type = "line" },
 					{
 						id = "pos_desc",
 						type = "desc",
-						text = "ui_mcm_dorn_fps_counter_pos_desc",
+						text = "ui_mcm_dogma_fps_counter_pos_desc",
 					},
 					{
 						id = "pos_anchor",
 						type = "list",
 						val = 2,
 						def = 0,
-						hint = "dorn_fps_counter_pos_anchor",
+						hint = "dogma_fps_counter_pos_anchor",
 						content = {
 							{ 0, "top_left" },
 							{ 1, "top_right" },
@@ -112,7 +111,7 @@ function on_mcm_load()
 						max = 1024,
 						step = 1,
 						def = 0,
-						hint = "dorn_fps_counter_pos_x",
+						hint = "dogma_fps_counter_pos_x",
 					},
 					{
 						id = "pos_y",
@@ -122,19 +121,19 @@ function on_mcm_load()
 						max = 768,
 						step = 1,
 						def = 0,
-						hint = "dorn_fps_counter_pos_y",
+						hint = "dogma_fps_counter_pos_y",
 					},
 				}),
 			},
 			{
 				id = "colors",
 				sh = true,
-				text = "ui_mcm_dorn_fps_counter_colors_section",
+				text = "ui_mcm_dogma_fps_counter_colors_section",
 				gr = MCM.with_header({
 					{
 						id = "text_color_desc",
 						type = "desc",
-						text = "ui_mcm_dorn_fps_counter_text_color_desc",
+						text = "ui_mcm_dogma_fps_counter_text_color_desc",
 					},
 					{
 						id = "text_r",
@@ -144,7 +143,7 @@ function on_mcm_load()
 						max = 255,
 						step = 1,
 						def = 255,
-						hint = "dorn_fps_counter_text_r",
+						hint = "dogma_fps_counter_text_r",
 					},
 					{
 						id = "text_g",
@@ -154,7 +153,7 @@ function on_mcm_load()
 						max = 255,
 						step = 1,
 						def = 255,
-						hint = "dorn_fps_counter_text_g",
+						hint = "dogma_fps_counter_text_g",
 					},
 					{
 						id = "text_b",
@@ -164,7 +163,7 @@ function on_mcm_load()
 						max = 255,
 						step = 1,
 						def = 255,
-						hint = "dorn_fps_counter_text_b",
+						hint = "dogma_fps_counter_text_b",
 					},
 					{
 						id = "text_a",
@@ -174,13 +173,13 @@ function on_mcm_load()
 						max = 255,
 						step = 1,
 						def = 200,
-						hint = "dorn_fps_counter_text_a",
+						hint = "dogma_fps_counter_text_a",
 					},
 					{ id = "line_graph_colors", type = "line" },
 					{
 						id = "graph_line_color_desc",
 						type = "desc",
-						text = "ui_mcm_dorn_fps_counter_graph_line_color_desc",
+						text = "ui_mcm_dogma_fps_counter_graph_line_color_desc",
 					},
 					{
 						id = "graph_line_r",
@@ -190,7 +189,7 @@ function on_mcm_load()
 						max = 255,
 						step = 1,
 						def = 255,
-						hint = "dorn_fps_counter_graph_line_r",
+						hint = "dogma_fps_counter_graph_line_r",
 					},
 					{
 						id = "graph_line_g",
@@ -200,7 +199,7 @@ function on_mcm_load()
 						max = 255,
 						step = 1,
 						def = 255,
-						hint = "dorn_fps_counter_graph_line_g",
+						hint = "dogma_fps_counter_graph_line_g",
 					},
 					{
 						id = "graph_line_b",
@@ -210,7 +209,7 @@ function on_mcm_load()
 						max = 255,
 						step = 1,
 						def = 0,
-						hint = "dorn_fps_counter_graph_line_b",
+						hint = "dogma_fps_counter_graph_line_b",
 					},
 					{
 						id = "graph_line_a",
@@ -220,12 +219,12 @@ function on_mcm_load()
 						max = 255,
 						step = 1,
 						def = 150,
-						hint = "dorn_fps_counter_graph_line_a",
+						hint = "dogma_fps_counter_graph_line_a",
 					},
 					{
 						id = "graph_border_color_desc",
 						type = "desc",
-						text = "ui_mcm_dorn_fps_counter_graph_border_color_desc",
+						text = "ui_mcm_dogma_fps_counter_graph_border_color_desc",
 					},
 					{
 						id = "graph_border_r",
@@ -235,7 +234,7 @@ function on_mcm_load()
 						max = 255,
 						step = 1,
 						def = 150,
-						hint = "dorn_fps_counter_graph_border_r",
+						hint = "dogma_fps_counter_graph_border_r",
 					},
 					{
 						id = "graph_border_g",
@@ -245,7 +244,7 @@ function on_mcm_load()
 						max = 255,
 						step = 1,
 						def = 150,
-						hint = "dorn_fps_counter_graph_border_g",
+						hint = "dogma_fps_counter_graph_border_g",
 					},
 					{
 						id = "graph_border_b",
@@ -255,7 +254,7 @@ function on_mcm_load()
 						max = 255,
 						step = 1,
 						def = 150,
-						hint = "dorn_fps_counter_graph_border_b",
+						hint = "dogma_fps_counter_graph_border_b",
 					},
 					{
 						id = "graph_border_a",
@@ -265,26 +264,26 @@ function on_mcm_load()
 						max = 255,
 						step = 1,
 						def = 200,
-						hint = "dorn_fps_counter_graph_border_a",
+						hint = "dogma_fps_counter_graph_border_a",
 					},
 				}),
 			},
 			{
 				id = "development",
 				sh = true,
-				text = "ui_mcm_dorn_fps_counter_development_section",
+				text = "ui_mcm_dogma_fps_counter_development_section",
 				gr = MCM.with_header({
 					{
 						id = "debug_log",
 						type = "check",
 						val = 1,
 						def = false,
-						hint = "dorn_fps_counter_debug_log",
+						hint = "dogma_fps_counter_debug_log",
 					},
 					{
 						id = "long_frame_threshold_desc",
 						type = "desc",
-						text = "ui_mcm_dorn_fps_counter_long_frame_threshold_desc",
+						text = "ui_mcm_dogma_fps_counter_long_frame_threshold_desc",
 					},
 					{
 						id = "long_frame_threshold_ms",
@@ -294,10 +293,10 @@ function on_mcm_load()
 						max = 1000,
 						step = 5,
 						def = 0,
-						hint = "dorn_fps_counter_long_frame_threshold_ms",
+						hint = "dogma_fps_counter_long_frame_threshold_ms",
 					},
 				}),
 			},
 		},
-	}
+	}, "dogma"
 end

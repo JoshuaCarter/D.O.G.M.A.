@@ -1,4 +1,4 @@
--- Dorn's Fast Travel: Shared state, constants, logging, and PDA messages.
+-- Fast Travel: Shared state, constants, logging, and PDA messages.
 -- Loaded automatically before main.script (zzzz_dogma_travel_fast_travel_main.script)
 
 -- Mod semver. Coarse-nav cache files key on major.minor only (patch bumps keep cache).
@@ -125,13 +125,13 @@ _G.dft_guide_danger_mid = 1.3 -- fallback for any level missing from guide_dange
 _G.dft_guide_cost_per_km = 4500 -- RU per km at cost multiplier 1.0
 _G.dft_guide_costs = nil -- lazy-loaded from guide_danger.ltx on first use, see below
 
--- gamedata/configs/scripts/dorn_fast_travel/guide_danger.ltx - values tuned from Fair Fast
+-- gamedata/configs/scripts/dogma_fast_travel/guide_danger.ltx - values tuned from Fair Fast
 -- Travel's own [map_hazard_coefs] table since that's the best available reference for "how
 -- dangerous is this level", but kept as our own standalone ltx (easy to inspect/rebalance)
 -- rather than read from FFT at runtime, so this mod has zero dependency on FFT being installed.
 load_level_danger = function()
     local danger = {}
-    local ini = ini_file("scripts\\dorn_fast_travel\\guide_danger.ltx")
+    local ini = ini_file("scripts\\dogma_fast_travel\\guide_danger.ltx")
     if ini and ini:section_exist("dft_guide_costs") then
         local ok_n, n = pcall(function() return ini:line_count("dft_guide_costs") end)
         if ok_n and n and n > 0 then
@@ -381,9 +381,9 @@ end
 local function log(fmt, ...)
     local cfg = _G.dft_config
     if not (cfg and cfg.debug_log) then return end
-    local dft_dorn = _G.dft and _G.dft.dorn
-    if dft_dorn and dft_dorn.dbg then
-        dft_dorn.dbg.log("dorn_fast_travel", " " .. format_msg(fmt, ...))
+    local dft_dogma = _G.dft and _G.dft.dogma
+    if dft_dogma and dft_dogma.dbg then
+        dft_dogma.dbg.log("dogma/fast_travel", " " .. format_msg(fmt, ...))
     end
 end
 
@@ -396,21 +396,21 @@ end
 
 local function path_road_log(fmt, ...)
     if not path_road_log_enabled() then return end
-    local dft_dorn = _G.dft and _G.dft.dorn
-    if dft_dorn and dft_dorn.dbg then
-        dft_dorn.dbg.log("dorn_fast_travel", "[path-road] " .. format_msg(fmt, ...))
+    local dft_dogma = _G.dft and _G.dft.dogma
+    if dft_dogma and dft_dogma.dbg then
+        dft_dogma.dbg.log("dogma/fast_travel", "[path-road] " .. format_msg(fmt, ...))
     end
 end
 
 local function log_error(fmt, ...)
-    local dft_dorn = _G.dft and _G.dft.dorn
-    if dft_dorn and dft_dorn.dbg then
-        dft_dorn.dbg.log("dorn_fast_travel", "[ERROR] " .. format_msg(fmt, ...))
+    local dft_dogma = _G.dft and _G.dft.dogma
+    if dft_dogma and dft_dogma.dbg then
+        dft_dogma.dbg.log("dogma/fast_travel", "[ERROR] " .. format_msg(fmt, ...))
     end
 end
 
--- Player-facing text: edit gamedata/configs/text/eng/st_dorn_fast_travel.xml
--- Display via msg() / str(); MCM labels stay in ui_mcm_dorn_fast_travel.xml
+-- Player-facing text: edit gamedata/configs/text/eng/st_dogma_fast_travel.xml
+-- Display via msg() / str(); MCM labels stay in ui_mcm_dogma_fast_travel.xml
 local function str(id)
     local s = game.translate_string(id)
     if s and s ~= "" and s ~= id then return s end

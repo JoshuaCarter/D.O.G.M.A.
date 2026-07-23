@@ -1,31 +1,30 @@
 --[[
-	Dorn's Radiation Grain Fix
+	Radiation Grain Fix
 
 	Replaces stock radiation.ppe with a no-op so zone/location radiation postprocesses
 	draw nothing. This script applies our own graded grain PPEs from player body
 	radiation (db.actor.radiation).
 ]]
 
-local MOD_ID = "dorn_grain_fix"
-local DORN_COMMON_VERSION = "dorn_common" -- managed by sync-dorn-common.sh, do not hand-edit
+local MOD_ID = "dogma/grain_fix"
 
-local DORN
+local DOGMA
 
 local PP_GRAIN_ID = 2021
 local PP_BLUR_ID = 2023
 local PP_DUAL_ID = 2024
 
 local GRAIN_PPES = {
-	"dorn_grain_01.ppe",
-	"dorn_grain_02.ppe",
-	"dorn_grain_03.ppe",
-	"dorn_grain_04.ppe",
-	"dorn_grain_05.ppe",
-	"dorn_grain_06.ppe",
-	"dorn_grain_07.ppe",
-	"dorn_grain_08.ppe",
-	"dorn_grain_09.ppe",
-	"dorn_grain_10.ppe",
+	"dogma_grain_01.ppe",
+	"dogma_grain_02.ppe",
+	"dogma_grain_03.ppe",
+	"dogma_grain_04.ppe",
+	"dogma_grain_05.ppe",
+	"dogma_grain_06.ppe",
+	"dogma_grain_07.ppe",
+	"dogma_grain_08.ppe",
+	"dogma_grain_09.ppe",
+	"dogma_grain_10.ppe",
 }
 
 local CONFIG = {}
@@ -45,53 +44,53 @@ local LOG = {
 
 -- HUD-only: for values that change every frame (Rads/MSV/Grain/Blur/Dual).
 local function overlay(log_type, msg)
-	if not DORN.dbg then
+	if not DOGMA.dbg then
 		return
 	end
 	if CONFIG.debug_overlay then
 		local slot = log_type or LOG.LIFECYCLE
-		DORN.dbg.overlay(MOD_ID, slot.order, tostring(msg), slot.color)
+		DOGMA.dbg.overlay(MOD_ID, slot.order, tostring(msg), slot.color)
 	end
 end
 
 -- File-only: for one-off/lifecycle events worth keeping in the log.
 local function log(msg)
-	if not DORN.dbg then
+	if not DOGMA.dbg then
 		return
 	end
 	if CONFIG.debug_log then
-		DORN.dbg.log(MOD_ID, tostring(msg))
+		DOGMA.dbg.log(MOD_ID, tostring(msg))
 	end
 end
 
 local function on_option_change()
-	CONFIG.debug_log = DORN.mcm.bool(MOD_ID, "development/debug_log", false)
-	CONFIG.debug_overlay = DORN.mcm.bool(MOD_ID, "development/debug_overlay", false)
-	CONFIG.grain_enabled = DORN.mcm.bool(MOD_ID, "grain/enable", true)
-	CONFIG.blur_enabled = DORN.mcm.bool(MOD_ID, "desaturation/enable", true)
-	CONFIG.dual_enabled = DORN.mcm.bool(MOD_ID, "duality/enable", true)
+	CONFIG.debug_log = DOGMA.mcm.bool(MOD_ID, "development/debug_log", false)
+	CONFIG.debug_overlay = DOGMA.mcm.bool(MOD_ID, "development/debug_overlay", false)
+	CONFIG.grain_enabled = DOGMA.mcm.bool(MOD_ID, "grain/enable", true)
+	CONFIG.blur_enabled = DOGMA.mcm.bool(MOD_ID, "desaturation/enable", true)
+	CONFIG.dual_enabled = DOGMA.mcm.bool(MOD_ID, "duality/enable", true)
 	CONFIG.level_msv = {}
-	CONFIG.level_msv[1] = DORN.mcm.number(MOD_ID, "grain/level_01_msv", 50)
-	CONFIG.level_msv[2] = DORN.mcm.number(MOD_ID, "grain/level_02_msv", 100)
-	CONFIG.level_msv[3] = DORN.mcm.number(MOD_ID, "grain/level_03_msv", 150)
-	CONFIG.level_msv[4] = DORN.mcm.number(MOD_ID, "grain/level_04_msv", 250)
-	CONFIG.level_msv[5] = DORN.mcm.number(MOD_ID, "grain/level_05_msv", 350)
-	CONFIG.level_msv[6] = DORN.mcm.number(MOD_ID, "grain/level_06_msv", 450)
-	CONFIG.level_msv[7] = DORN.mcm.number(MOD_ID, "grain/level_07_msv", 550)
-	CONFIG.level_msv[8] = DORN.mcm.number(MOD_ID, "grain/level_08_msv", 700)
-	CONFIG.level_msv[9] = DORN.mcm.number(MOD_ID, "grain/level_09_msv", 850)
-	CONFIG.level_msv[10] = DORN.mcm.number(MOD_ID, "grain/level_10_msv", 1000)
-	CONFIG.blur_range = DORN.mcm.range(MOD_ID, "desaturation/blur_min", "desaturation/blur_max", 500, 2000)
-	CONFIG.dual_range = DORN.mcm.range(MOD_ID, "duality/dual_min", "duality/dual_max", 1000, 2000)
-	CONFIG.add_radiation_key = DORN.mcm.key(MOD_ID, "development/add_radiation_key")
-	CONFIG.clear_radiation_key = DORN.mcm.key(MOD_ID, "development/clear_radiation_key")
+	CONFIG.level_msv[1] = DOGMA.mcm.number(MOD_ID, "grain/level_01_msv", 50)
+	CONFIG.level_msv[2] = DOGMA.mcm.number(MOD_ID, "grain/level_02_msv", 100)
+	CONFIG.level_msv[3] = DOGMA.mcm.number(MOD_ID, "grain/level_03_msv", 150)
+	CONFIG.level_msv[4] = DOGMA.mcm.number(MOD_ID, "grain/level_04_msv", 250)
+	CONFIG.level_msv[5] = DOGMA.mcm.number(MOD_ID, "grain/level_05_msv", 350)
+	CONFIG.level_msv[6] = DOGMA.mcm.number(MOD_ID, "grain/level_06_msv", 450)
+	CONFIG.level_msv[7] = DOGMA.mcm.number(MOD_ID, "grain/level_07_msv", 550)
+	CONFIG.level_msv[8] = DOGMA.mcm.number(MOD_ID, "grain/level_08_msv", 700)
+	CONFIG.level_msv[9] = DOGMA.mcm.number(MOD_ID, "grain/level_09_msv", 850)
+	CONFIG.level_msv[10] = DOGMA.mcm.number(MOD_ID, "grain/level_10_msv", 1000)
+	CONFIG.blur_range = DOGMA.mcm.range(MOD_ID, "desaturation/blur_min", "desaturation/blur_max", 500, 2000)
+	CONFIG.dual_range = DOGMA.mcm.range(MOD_ID, "duality/dual_min", "duality/dual_max", 1000, 2000)
+	CONFIG.add_radiation_key = DOGMA.mcm.key(MOD_ID, "development/add_radiation_key")
+	CONFIG.clear_radiation_key = DOGMA.mcm.key(MOD_ID, "development/clear_radiation_key")
 
 	GRAIN_LEVELS = {}
 	for i, ppe in ipairs(GRAIN_PPES) do
 		GRAIN_LEVELS[#GRAIN_LEVELS+1] = { msv = CONFIG.level_msv[i], ppe = ppe }
 	end
 
-	DORN.dbg.set_enabled(MOD_ID, CONFIG.debug_overlay)
+	DOGMA.dbg.set_enabled(MOD_ID, CONFIG.debug_overlay)
 end
 
 local function set_grain(msv)
@@ -161,7 +160,7 @@ local function set_blur(msv)
 	end
 
 	if not blur_active then
-		level.add_pp_effector("dorn_blur.ppe", PP_BLUR_ID, true)
+		level.add_pp_effector("dogma_blur.ppe", PP_BLUR_ID, true)
 		blur_active = true
 	end
 
@@ -190,7 +189,7 @@ local function set_dual(msv)
 	end
 
 	if not dual_active then
-		level.add_pp_effector("dorn_dual.ppe", PP_DUAL_ID, true)
+		level.add_pp_effector("dogma_dual.ppe", PP_DUAL_ID, true)
 		dual_active = true
 	end
 
@@ -198,7 +197,7 @@ local function set_dual(msv)
 end
 
 local function on_actor_on_update()
-	local _, actor = DORN.sys.ready(MOD_ID, db, on_option_change)
+	local _, actor = DOGMA.sys.ready(MOD_ID, db, on_option_change)
 	if not actor then
 		return
 	end
@@ -233,7 +232,7 @@ local function on_key_press(key)
 end
 
 function on_game_start()
-	DORN = _G[DORN_COMMON_VERSION].load(MOD_ID)
+	DOGMA = _G.dogma_common.load(MOD_ID)
 
 	current_ppe = nil
 	blur_active = false

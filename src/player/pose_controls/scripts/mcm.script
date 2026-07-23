@@ -1,63 +1,62 @@
--- dorn_mcm_banner:begin (managed by sync-dorn-common.sh)
-local DORN_COMMON_VERSION = "dorn_common"
-local function dorn_mcm()
-	return _G.dorn_mcm
+-- dogma_mcm_banner:begin (managed by sync-dogma-common.sh)
+local function dogma_mcm()
+	return _G.dogma_mcm
 end
--- dorn_mcm_banner:end
+-- dogma_mcm_banner:end
 
 function on_mcm_load()
-	local MCM = dorn_mcm()
+	local MCM = dogma_mcm()
 	return {
-		id = "dorn_pose_controls",
-		text = "ui_mcm_menu_dorn_pose_controls",
+		id = "pose_controls",
+		text = "ui_mcm_menu_dogma_pose_controls",
 		gr = {
 			{
 				id = "main",
 				sh = true,
-				text = "ui_mcm_dorn_pose_controls_main_section",
+				text = "ui_mcm_dogma_pose_controls_main_section",
 				gr = MCM.with_header({
 					{
 						id = "main_description",
 						type = "desc",
-						text = "ui_mcm_dorn_pose_controls_main_description",
+						text = "ui_mcm_dogma_pose_controls_main_description",
 					},
 					{
 						id = "enabled",
 						type = "check",
 						val = 1,
 						def = true,
-						hint = "dorn_pose_controls_enabled",
+						hint = "dogma_pose_controls_enabled",
 					},
 					{
 						id = "walk_key",
 						type = "key_bind",
 						val = 2,
 						def = -1,
-						hint = "dorn_pose_controls_walk_key",
+						hint = "dogma_pose_controls_walk_key",
 					},
 				}),
 			},
 			{
 				id = "development",
 				sh = true,
-				text = "ui_mcm_dorn_pose_controls_development_section",
+				text = "ui_mcm_dogma_pose_controls_development_section",
 				gr = MCM.with_header({
 					{
 						id = "debug_overlay",
 						type = "check",
 						val = 1,
 						def = false,
-						hint = "dorn_pose_controls_debug_overlay",
+						hint = "dogma_pose_controls_debug_overlay",
 					},
 					{
 						id = "debug_log",
 						type = "check",
 						val = 1,
 						def = false,
-						hint = "dorn_pose_controls_debug_log",
+						hint = "dogma_pose_controls_debug_log",
 					},
 				}),
 			},
 		},
-	}
+	}, "dogma"
 end

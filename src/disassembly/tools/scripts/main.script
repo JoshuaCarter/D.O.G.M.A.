@@ -1,5 +1,5 @@
 --[[
-	Dorn's Optimal Tool Use
+	Optimal Tool Use
 
 	GAMMA (Disassembly Item Tweaks) already picks the worst tool *type* for each
 	item (grooming < swiss < leatherman). We must not change that — only redirect
@@ -9,10 +9,9 @@
 	GAMMA mods installed last.
 ]]
 
-local MOD_ID = "dorn_optimal_tool_use"
-local DORN_COMMON_VERSION = "dorn_common" -- managed by sync-dorn-common.sh, do not hand-edit
+local MOD_ID = "dogma/optimal_tool_use"
 
-local DORN
+local DOGMA
 
 local CONFIG = {
 	enabled = true,
@@ -23,17 +22,17 @@ local orig_get_suitable_dtool = nil
 local orig_func_disassembly = nil
 
 local function log(msg)
-	if not (DORN and DORN.dbg) then
+	if not (DOGMA and DOGMA.dbg) then
 		return
 	end
 	if CONFIG.debug_log then
-		DORN.dbg.log(MOD_ID, tostring(msg))
+		DOGMA.dbg.log(MOD_ID, tostring(msg))
 	end
 end
 
 local function on_option_change()
-	CONFIG.enabled = DORN.mcm.bool(MOD_ID, "main/enabled", true)
-	CONFIG.debug_log = DORN.mcm.bool(MOD_ID, "development/debug_log", false)
+	CONFIG.enabled = DOGMA.mcm.bool(MOD_ID, "main/enabled", true)
+	CONFIG.debug_log = DOGMA.mcm.bool(MOD_ID, "development/debug_log", false)
 end
 
 local function redirect_to_lowest_stack(obj_d, note)
@@ -138,7 +137,7 @@ local function optimal_func_disassembly(obj, obj_d)
 end
 
 function on_game_start()
-	DORN = _G[DORN_COMMON_VERSION].load(MOD_ID)
+	DOGMA = _G.dogma_common.load(MOD_ID)
 
 	on_option_change()
 

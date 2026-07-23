@@ -1,5 +1,5 @@
 --[[
-	Dorn's QoL — live MCM search.
+	QoL — live MCM search.
 
 	Empty search box by default; filters the left mod list as you type;
 	keeps keyboard focus in the box after each rebuild.
@@ -8,8 +8,8 @@
 -- Debounce tree rebuilds while typing (Register_Tree is not free on big lists).
 local SEARCH_DEBOUNCE_MS = 100
 
-local HOOK_STATE = _G.__dorn_qol_mcm_search_hooks or {}
-_G.__dorn_qol_mcm_search_hooks = HOOK_STATE
+local HOOK_STATE = _G.__dogma_qol_mcm_search_hooks or {}
+_G.__dogma_qol_mcm_search_hooks = HOOK_STATE
 
 local function search_text(self)
 	local t = self.mod_search and self.mod_search:GetText() or ""
@@ -39,8 +39,8 @@ local function clear_search_box(self)
 		self.mod_search:SetText("")
 	end
 	self.search_filter = nil
-	self._dorn_qol_want = nil
-	self._dorn_qol_due = nil
+	self._dogma_qol_want = nil
+	self._dogma_qol_due = nil
 end
 
 local function patch_mcm_search()
@@ -68,8 +68,8 @@ local function patch_mcm_search()
 		-- Stock Open_to already cleared the filter and rebuilt; only strip the placeholder.
 		if self.mod_search then
 			self.mod_search:SetText("")
-			self._dorn_qol_want = nil
-			self._dorn_qol_due = nil
+			self._dogma_qol_want = nil
+			self._dogma_qol_due = nil
 		end
 	end
 
@@ -85,13 +85,13 @@ local function patch_mcm_search()
 
 		local t = search_text(self)
 		local want = (t ~= "" and t) or nil
-		if want ~= self._dorn_qol_want then
-			self._dorn_qol_want = want
-			self._dorn_qol_due = time_continual() + SEARCH_DEBOUNCE_MS
+		if want ~= self._dogma_qol_want then
+			self._dogma_qol_want = want
+			self._dogma_qol_due = time_continual() + SEARCH_DEBOUNCE_MS
 		end
 
-		if self._dorn_qol_due and time_continual() >= self._dorn_qol_due then
-			self._dorn_qol_due = nil
+		if self._dogma_qol_due and time_continual() >= self._dogma_qol_due then
+			self._dogma_qol_due = nil
 			apply_search(self, true)
 		end
 	end
@@ -102,6 +102,6 @@ end
 
 function on_game_start()
 	if not patch_mcm_search() then
-		printf("[dorn_qol] ui_mcm.UI_MCM missing — MCM search patch skipped")
+		printf("[dogma_qol] ui_mcm.UI_MCM missing — MCM search patch skipped")
 	end
 end

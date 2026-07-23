@@ -1,15 +1,14 @@
--- dorn_mcm_banner:begin (managed by sync-dorn-common.sh)
-local DORN_COMMON_VERSION = "dorn_common"
-local function dorn_mcm()
-	return _G.dorn_mcm
+-- dogma_mcm_banner:begin (managed by sync-dogma-common.sh)
+local function dogma_mcm()
+	return _G.dogma_mcm
 end
--- dorn_mcm_banner:end
+-- dogma_mcm_banner:end
 
 function on_mcm_load()
-	local MCM = dorn_mcm()
+	local MCM = dogma_mcm()
 	return {
-		id = "dorn_prone_fix",
-		text = "ui_mcm_menu_dorn_prone_fix",
+		id = "prone_fix",
+		text = "ui_mcm_menu_dogma_prone_fix",
 		gr = {
 			{
 				id = "main",
@@ -21,7 +20,7 @@ function on_mcm_load()
 						type = "check",
 						val = 1,
 						def = true,
-						hint = "dorn_prone_fix_hide_prone_bones",
+						hint = "dogma_prone_fix_hide_prone_bones",
 					},
 					{
 						id = "prone_damage_mult",
@@ -31,7 +30,7 @@ function on_mcm_load()
 						max = 2,
 						step = 0.05,
 						def = 1.2,
-						hint = "dorn_prone_fix_prone_damage_mult",
+						hint = "dogma_prone_fix_prone_damage_mult",
 					},
 				}),
 			},
@@ -53,7 +52,7 @@ function on_mcm_load()
 						max = 2,
 						step = 0.01,
 						def = 1.65,
-						hint = "dorn_prone_fix_cam_height_stand",
+						hint = "dogma_prone_fix_cam_height_stand",
 					},
 					{
 						id = "cam_height_crouch",
@@ -63,7 +62,7 @@ function on_mcm_load()
 						max = 2,
 						step = 0.01,
 						def = 1.2,
-						hint = "dorn_prone_fix_cam_height_crouch",
+						hint = "dogma_prone_fix_cam_height_crouch",
 					},
 					{
 						id = "cam_height_prone",
@@ -73,7 +72,7 @@ function on_mcm_load()
 						max = 2,
 						step = 0.01,
 						def = 0.45,
-						hint = "dorn_prone_fix_cam_height_prone",
+						hint = "dogma_prone_fix_cam_height_prone",
 					},
 					{ id = "line_debug", type = "line" },
 					{
@@ -81,17 +80,17 @@ function on_mcm_load()
 						type = "check",
 						val = 1,
 						def = false,
-						hint = "dorn_prone_fix_debug_overlay",
+						hint = "dogma_prone_fix_debug_overlay",
 					},
 					{
 						id = "debug_log",
 						type = "check",
 						val = 1,
 						def = false,
-						hint = "dorn_prone_fix_debug_log",
+						hint = "dogma_prone_fix_debug_log",
 					},
 				}),
 			},
 		},
-	}
+	}, "dogma"
 end

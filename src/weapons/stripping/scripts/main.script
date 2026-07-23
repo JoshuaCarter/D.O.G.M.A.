@@ -1,5 +1,5 @@
 --[[
-	Dorn's Strip Everything
+	Strip Everything
 
 	MCM keybind that field-strips whatever weapon your cursor is over in an
 	inventory list - your own gear or a corpse/crate you're looting. One
@@ -20,10 +20,9 @@
 	Grant PDA stash coords on disassembly of NPC PDAs (locked or unlocked).
 ]]
 
-local MOD_ID = "dorn_strip_everything"
-local DORN_COMMON_VERSION = "dorn_common" -- managed by sync-dorn-common.sh, do not hand-edit
+local MOD_ID = "dogma/strip_everything"
 
-local DORN
+local DOGMA
 
 local CONFIG = {
 	intercept_disassemble = true,
@@ -94,11 +93,11 @@ local companion_pull_frames_left = 0
 local companion_pull_wait_frames = 0
 
 local function log(msg)
-	if not (DORN and DORN.dbg) then
+	if not (DOGMA and DOGMA.dbg) then
 		return
 	end
 	if CONFIG.debug_log then
-		DORN.dbg.log(MOD_ID, tostring(msg))
+		DOGMA.dbg.log(MOD_ID, tostring(msg))
 	end
 end
 
@@ -108,10 +107,10 @@ end
 -- to actually show up once debug logging is on.
 local function on_option_change()
 	local tostr = tostring
-	CONFIG.intercept_disassemble = DORN.mcm.bool(MOD_ID, "main/intercept_disassemble", true)
-	CONFIG.keep_parts_with_weapon = DORN.mcm.bool(MOD_ID, "main/keep_parts_with_weapon", true)
-	CONFIG.pda_stash_on_disassemble = DORN.mcm.bool(MOD_ID, "main/pda_stash_on_disassemble", true)
-	CONFIG.debug_log = DORN.mcm.bool(MOD_ID, "development/debug_log", false)
+	CONFIG.intercept_disassemble = DOGMA.mcm.bool(MOD_ID, "main/intercept_disassemble", true)
+	CONFIG.keep_parts_with_weapon = DOGMA.mcm.bool(MOD_ID, "main/keep_parts_with_weapon", true)
+	CONFIG.pda_stash_on_disassemble = DOGMA.mcm.bool(MOD_ID, "main/pda_stash_on_disassemble", true)
+	CONFIG.debug_log = DOGMA.mcm.bool(MOD_ID, "development/debug_log", false)
 	log(string.format(
 		"on_option_change: intercept_disassemble=%s keep_parts_with_weapon=%s pda_stash_on_disassemble=%s debug_log=%s onupdate_patched=%s cc_update_patched=%s func_disassembly_patched=%s sort_guard_patched=%s",
 		tostr(CONFIG.intercept_disassemble), tostr(CONFIG.keep_parts_with_weapon),
@@ -400,16 +399,16 @@ local function try_reclaim_excess_ammo()
 end
 
 local function strip_internal_cond_move(gui, obj, bag)
-	_G.dorn_strip_internal_move = true
+	_G.dogma_strip_internal_move = true
 	local ok = gui.Cond_Move and gui:Cond_Move(obj, bag)
-	_G.dorn_strip_internal_move = false
+	_G.dogma_strip_internal_move = false
 	return ok
 end
 
 local function strip_internal_action_move(gui, obj, bag)
-	_G.dorn_strip_internal_move = true
+	_G.dogma_strip_internal_move = true
 	gui:Action_Move(obj, bag)
-	_G.dorn_strip_internal_move = false
+	_G.dogma_strip_internal_move = false
 end
 
 local function try_reclaim_move_step()
@@ -1181,7 +1180,7 @@ local function strip_hover(all_stacks, obj, bag, idx, gui)
 	end
 end
 
-_G.dorn_strip = {
+_G.dogma_strip = {
 	strip_hover = strip_hover,
 }
 
@@ -1480,7 +1479,7 @@ if orig_sort_by_kind_factory then
 end
 
 function on_game_start()
-	DORN = _G[DORN_COMMON_VERSION].load(MOD_ID)
+	DOGMA = _G.dogma_common.load(MOD_ID)
 
 	RegisterScriptCallback("on_option_change", on_option_change)
 	RegisterScriptCallback("actor_on_item_take", function(item)

@@ -1,22 +1,21 @@
--- Dorn's Fast Travel MCM
+-- Fast Travel MCM
 
--- dorn_mcm_banner:begin (managed by sync-dorn-common.sh)
-local DORN_COMMON_VERSION = "dorn_common"
-local function dorn_mcm()
-	return _G.dorn_mcm
+-- dogma_mcm_banner:begin (managed by sync-dogma-common.sh)
+local function dogma_mcm()
+	return _G.dogma_mcm
 end
--- dorn_mcm_banner:end
+-- dogma_mcm_banner:end
 
 function on_mcm_load()
-	local MCM = dorn_mcm()
+	local MCM = dogma_mcm()
 	return {
-		id = "dorn_fast_travel",
-		text = "ui_mcm_menu_dorn_fast_travel",
+		id = "fast_travel",
+		text = "ui_mcm_menu_dogma_fast_travel",
 		gr = {
 			{
 				id = "main",
 				sh = true,
-				text = "ui_mcm_dorn_fast_travel_main_section",
+				text = "ui_mcm_dogma_fast_travel_main_section",
 				gr = MCM.with_header({
 					{
 						id = "message_duration",
@@ -26,49 +25,49 @@ function on_mcm_load()
 						max = 60,
 						step = 1,
 						def = 30,
-						hint = "dorn_fast_travel_message_duration",
+						hint = "dogma_fast_travel_message_duration",
 					},
 					{
 						id = "block_transition_in_combat",
 						type = "check",
 						val = 1,
 						def = true,
-						hint = "dorn_fast_travel_block_transition_in_combat",
+						hint = "dogma_fast_travel_block_transition_in_combat",
 					},
 					{
 						id = "show_ambush_range",
 						type = "check",
 						val = 1,
 						def = false,
-						hint = "dorn_fast_travel_show_ambush_range",
+						hint = "dogma_fast_travel_show_ambush_range",
 					},
 				}),
 			},
 			{
 				id = "development",
 				sh = true,
-				text = "ui_mcm_dorn_fast_travel_development_section",
+				text = "ui_mcm_dogma_fast_travel_development_section",
 				gr = MCM.with_header({
 					{
 						id = "debug_overlay",
 						type = "check",
 						val = 1,
 						def = false,
-						hint = "dorn_fast_travel_debug_overlay",
+						hint = "dogma_fast_travel_debug_overlay",
 					},
 					{
 						id = "debug_log",
 						type = "check",
 						val = 1,
 						def = false,
-						hint = "dorn_fast_travel_debug_log",
+						hint = "dogma_fast_travel_debug_log",
 					},
 					{
 						id = "path_preview",
 						type = "check",
 						val = 1,
 						def = false,
-						hint = "dorn_fast_travel_path_preview",
+						hint = "dogma_fast_travel_path_preview",
 					},
 					{ id = "line_dev", type = "line" },
 					{
@@ -76,14 +75,14 @@ function on_mcm_load()
 						type = "key_bind",
 						val = 2,
 						def = -1,
-						hint = "dorn_fast_travel_sneaking_level_up",
+						hint = "dogma_fast_travel_sneaking_level_up",
 					},
 					{
 						id = "sneaking_level_down",
 						type = "key_bind",
 						val = 2,
 						def = -1,
-						hint = "dorn_fast_travel_sneaking_level_down",
+						hint = "dogma_fast_travel_sneaking_level_down",
 					},
 					{ id = "line_coarse_nav", type = "line" },
 					{
@@ -91,17 +90,17 @@ function on_mcm_load()
 						type = "check",
 						val = 1,
 						def = false,
-						hint = "dorn_fast_travel_coarse_nav_rebuild_on_load",
+						hint = "dogma_fast_travel_coarse_nav_rebuild_on_load",
 					},
 					{
 						id = "coarse_nav_build",
 						type = "key_bind",
 						val = 2,
 						def = -1,
-						hint = "dorn_fast_travel_coarse_nav_build",
+						hint = "dogma_fast_travel_coarse_nav_build",
 					},
 				}),
 			},
 		},
-	}
+	}, "dogma"
 end

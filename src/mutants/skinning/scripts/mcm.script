@@ -1,15 +1,14 @@
--- dorn_mcm_banner:begin (managed by sync-dorn-common.sh)
-local DORN_COMMON_VERSION = "dorn_common"
-local function dorn_mcm()
-	return _G.dorn_mcm
+-- dogma_mcm_banner:begin (managed by sync-dogma-common.sh)
+local function dogma_mcm()
+	return _G.dogma_mcm
 end
--- dorn_mcm_banner:end
+-- dogma_mcm_banner:end
 
 function on_mcm_load()
-	local MCM = dorn_mcm()
+	local MCM = dogma_mcm()
 	return {
-		id = "dorn_faster_skinning",
-		text = "Dorn's Faster Skinning",
+		id = "faster_skinning",
+		text = "Faster Skinning",
 		gr = {
 			{
 				id = "main",
@@ -21,7 +20,7 @@ function on_mcm_load()
 						type = "check",
 						val = 1,
 						def = true,
-						hint = "dorn_faster_skinning_enabled",
+						hint = "dogma_faster_skinning_enabled",
 					},
 					{
 						id = "skin_speed_multiplier",
@@ -31,21 +30,21 @@ function on_mcm_load()
 						max = 2,
 						step = 0.1,
 						def = 1.5,
-						hint = "dorn_faster_skinning_skin_speed_multiplier",
+						hint = "dogma_faster_skinning_skin_speed_multiplier",
 					},
 					{
 						id = "auto_crouch",
 						type = "check",
 						val = 1,
 						def = false,
-						hint = "dorn_faster_skinning_auto_crouch",
+						hint = "dogma_faster_skinning_auto_crouch",
 					},
 					{
 						id = "look_at_mutant",
 						type = "check",
 						val = 1,
 						def = false,
-						hint = "dorn_faster_skinning_look_at_mutant",
+						hint = "dogma_faster_skinning_look_at_mutant",
 					},
 					{
 						id = "look_at_offset",
@@ -55,14 +54,14 @@ function on_mcm_load()
 						max = 1,
 						step = 0.05,
 						def = 0.6,
-						hint = "dorn_faster_skinning_look_at_offset",
+						hint = "dogma_faster_skinning_look_at_offset",
 					},
 					{
 						id = "slash_loot",
 						type = "check",
 						val = 1,
 						def = false,
-						hint = "dorn_faster_skinning_slash_loot",
+						hint = "dogma_faster_skinning_slash_loot",
 					},
 				}),
 			},
@@ -76,10 +75,10 @@ function on_mcm_load()
 						type = "check",
 						val = 1,
 						def = false,
-						hint = "dorn_faster_skinning_debug_log",
+						hint = "dogma_faster_skinning_debug_log",
 					},
 				}),
 			},
 		},
-	}
+	}, "dogma"
 end

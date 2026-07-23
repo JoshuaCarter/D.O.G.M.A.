@@ -1,9 +1,8 @@
--- dorn_mcm_banner:begin (managed by sync-dorn-common.sh)
-local DORN_COMMON_VERSION = "dorn_common"
-local function dorn_mcm()
-	return _G.dorn_mcm
+-- dogma_mcm_banner:begin (managed by sync-dogma-common.sh)
+local function dogma_mcm()
+	return _G.dogma_mcm
 end
--- dorn_mcm_banner:end
+-- dogma_mcm_banner:end
 
 local function kb_bind(id, hint)
 	return {
@@ -49,25 +48,25 @@ local function kb_mode(id)
 end
 
 function on_mcm_load()
-	local MCM = dorn_mcm()
+	local MCM = dogma_mcm()
 	return {
-		id = "dorn_strip_everything",
-		text = "ui_mcm_menu_dorn_fieldstrip_all_keybind",
+		id = "strip_everything",
+		text = "ui_mcm_menu_dogma_fieldstrip_all_keybind",
 		gr = {
 			{
 				id = "main",
 				sh = true,
-				text = "ui_mcm_dorn_fieldstrip_all_keybind_main_section",
+				text = "ui_mcm_dogma_fieldstrip_all_keybind_main_section",
 				gr = MCM.with_header({
 					{
 						id = "main_drop_description",
 						type = "desc",
-						text = "ui_mcm_dorn_strip_everything_main_drop_description",
+						text = "ui_mcm_dogma_strip_everything_main_drop_description",
 					},
-					kb_bind("key_drop", "dorn_strip_everything_key_drop"),
+					kb_bind("key_drop", "dogma_strip_everything_key_drop"),
 					kb_modifier("key_drop_modifier"),
 					kb_mode("key_drop_mode"),
-					kb_bind("key_drop_all", "dorn_strip_everything_key_drop_all"),
+					kb_bind("key_drop_all", "dogma_strip_everything_key_drop_all"),
 					kb_modifier("key_drop_all_modifier"),
 					kb_mode("key_drop_all_mode"),
 					{
@@ -75,17 +74,17 @@ function on_mcm_load()
 						type = "check",
 						val = 1,
 						def = true,
-						hint = "dorn_strip_everything_drop_safe_equipped",
+						hint = "dogma_strip_everything_drop_safe_equipped",
 					},
 					{
 						id = "main_disa_description",
 						type = "desc",
-						text = "ui_mcm_dorn_strip_everything_main_disa_description",
+						text = "ui_mcm_dogma_strip_everything_main_disa_description",
 					},
-					kb_bind("key_disa", "dorn_strip_everything_key_disa"),
+					kb_bind("key_disa", "dogma_strip_everything_key_disa"),
 					kb_modifier("key_disa_modifier"),
 					kb_mode("key_disa_mode"),
-					kb_bind("key_disa_all", "dorn_strip_everything_key_disa_all"),
+					kb_bind("key_disa_all", "dogma_strip_everything_key_disa_all"),
 					kb_modifier("key_disa_all_modifier"),
 					kb_mode("key_disa_all_mode"),
 					{
@@ -93,17 +92,17 @@ function on_mcm_load()
 						type = "check",
 						val = 1,
 						def = true,
-						hint = "dorn_strip_everything_disa_safe_equipped",
+						hint = "dogma_strip_everything_disa_safe_equipped",
 					},
 					{
 						id = "main_strip_description",
 						type = "desc",
-						text = "ui_mcm_dorn_fieldstrip_all_keybind_main_description",
+						text = "ui_mcm_dogma_fieldstrip_all_keybind_main_description",
 					},
-					kb_bind("key", "dorn_strip_everything_key"),
+					kb_bind("key", "dogma_strip_everything_key"),
 					kb_modifier("key_modifier"),
 					kb_mode("key_mode"),
-					kb_bind("key_all", "dorn_strip_everything_key_all"),
+					kb_bind("key_all", "dogma_strip_everything_key_all"),
 					kb_modifier("key_all_modifier"),
 					kb_mode("key_all_mode"),
 					{
@@ -111,83 +110,83 @@ function on_mcm_load()
 						type = "check",
 						val = 1,
 						def = true,
-						hint = "dorn_strip_everything_intercept_disassemble",
+						hint = "dogma_strip_everything_intercept_disassemble",
 					},
 					{
 						id = "keep_parts_with_weapon",
 						type = "check",
 						val = 1,
 						def = true,
-						hint = "dorn_strip_everything_keep_parts_with_weapon",
+						hint = "dogma_strip_everything_keep_parts_with_weapon",
 					},
 					{
 						id = "pda_stash_on_disassemble",
 						type = "check",
 						val = 1,
 						def = true,
-						hint = "dorn_strip_everything_pda_stash_on_disassemble",
+						hint = "dogma_strip_everything_pda_stash_on_disassemble",
 					},
 					{
 						id = "companion_loot_description",
 						type = "desc",
-						text = "ui_mcm_dorn_strip_everything_companion_loot_description",
+						text = "ui_mcm_dogma_strip_everything_companion_loot_description",
 					},
 					{
 						id = "block_companion_special_items",
 						type = "check",
 						val = 1,
 						def = true,
-						hint = "dorn_strip_everything_block_companion_special_items",
+						hint = "dogma_strip_everything_block_companion_special_items",
 					},
 				}),
 			},
 			{
 				id = "dis_weap_attach",
 				sh = true,
-				text = "ui_mcm_dorn_strip_everything_attachments_section",
+				text = "ui_mcm_dogma_strip_everything_attachments_section",
 				gr = MCM.with_header({
 					{
 						id = "dis_weap_attach_description",
 						type = "desc",
-						text = "ui_mcm_dorn_strip_everything_attachments_description",
+						text = "ui_mcm_dogma_strip_everything_attachments_description",
 					},
 					{
 						id = "enabled",
 						type = "check",
 						val = 1,
 						def = false,
-						hint = "dorn_strip_everything_attachments_enabled",
+						hint = "dogma_strip_everything_attachments_enabled",
 					},
 				}),
 			},
 			{
 				id = "development",
 				sh = true,
-				text = "ui_mcm_dorn_fieldstrip_all_keybind_development_section",
+				text = "ui_mcm_dogma_fieldstrip_all_keybind_development_section",
 				gr = MCM.with_header({
 					{
 						id = "debug_log",
 						type = "check",
 						val = 1,
 						def = false,
-						hint = "dorn_strip_everything_debug_log",
+						hint = "dogma_strip_everything_debug_log",
 					},
 					{
 						id = "drop_disa_debug_log",
 						type = "check",
 						val = 1,
 						def = false,
-						hint = "dorn_strip_everything_drop_disa_debug_log",
+						hint = "dogma_strip_everything_drop_disa_debug_log",
 					},
 					{
 						id = "dis_weap_attach_debug_log",
 						type = "check",
 						val = 1,
 						def = false,
-						hint = "dorn_strip_everything_dis_weap_attach_debug_log",
+						hint = "dogma_strip_everything_dis_weap_attach_debug_log",
 					},
 				}),
 			},
 		},
-	}
+	}, "dogma"
 end

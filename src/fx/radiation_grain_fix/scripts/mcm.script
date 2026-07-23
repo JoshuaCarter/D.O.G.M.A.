@@ -1,32 +1,31 @@
--- dorn_mcm_banner:begin (managed by sync-dorn-common.sh)
-local DORN_COMMON_VERSION = "dorn_common"
-local function dorn_mcm()
-	return _G.dorn_mcm
+-- dogma_mcm_banner:begin (managed by sync-dogma-common.sh)
+local function dogma_mcm()
+	return _G.dogma_mcm
 end
--- dorn_mcm_banner:end
+-- dogma_mcm_banner:end
 
 function on_mcm_load()
-	local MCM = dorn_mcm()
+	local MCM = dogma_mcm()
 	return {
-		id = "dorn_grain_fix",
-		text = "ui_mcm_menu_dorn_grain_fix",
+		id = "grain_fix",
+		text = "ui_mcm_menu_dogma_grain_fix",
 		gr = {
 			{
 				id = "grain",
 				sh = true,
-				text = "ui_mcm_dorn_grain_fix_grain_section",
+				text = "ui_mcm_dogma_grain_fix_grain_section",
 				gr = MCM.with_header({
 					{
 						id = "enable",
 						type = "check",
 						val = 1,
 						def = true,
-						hint = "dorn_grain_fix_grain_enable",
+						hint = "dogma_grain_fix_grain_enable",
 					},
 					{
 						id = "levels_description",
 						type = "desc",
-						text = "ui_mcm_dorn_grain_fix_levels_description",
+						text = "ui_mcm_dogma_grain_fix_levels_description",
 					},
 					{
 						id = "level_01_msv",
@@ -36,7 +35,7 @@ function on_mcm_load()
 						max = 2000,
 						step = 1,
 						def = 50,
-						hint = "dorn_grain_fix_level_01_msv",
+						hint = "dogma_grain_fix_level_01_msv",
 					},
 					{
 						id = "level_02_msv",
@@ -46,7 +45,7 @@ function on_mcm_load()
 						max = 2000,
 						step = 1,
 						def = 100,
-						hint = "dorn_grain_fix_level_02_msv",
+						hint = "dogma_grain_fix_level_02_msv",
 					},
 					{
 						id = "level_03_msv",
@@ -56,7 +55,7 @@ function on_mcm_load()
 						max = 2000,
 						step = 1,
 						def = 150,
-						hint = "dorn_grain_fix_level_03_msv",
+						hint = "dogma_grain_fix_level_03_msv",
 					},
 					{
 						id = "level_04_msv",
@@ -66,7 +65,7 @@ function on_mcm_load()
 						max = 2000,
 						step = 1,
 						def = 250,
-						hint = "dorn_grain_fix_level_04_msv",
+						hint = "dogma_grain_fix_level_04_msv",
 					},
 					{
 						id = "level_05_msv",
@@ -76,7 +75,7 @@ function on_mcm_load()
 						max = 2000,
 						step = 1,
 						def = 350,
-						hint = "dorn_grain_fix_level_05_msv",
+						hint = "dogma_grain_fix_level_05_msv",
 					},
 					{
 						id = "level_06_msv",
@@ -86,7 +85,7 @@ function on_mcm_load()
 						max = 2000,
 						step = 1,
 						def = 450,
-						hint = "dorn_grain_fix_level_06_msv",
+						hint = "dogma_grain_fix_level_06_msv",
 					},
 					{
 						id = "level_07_msv",
@@ -96,7 +95,7 @@ function on_mcm_load()
 						max = 2000,
 						step = 1,
 						def = 550,
-						hint = "dorn_grain_fix_level_07_msv",
+						hint = "dogma_grain_fix_level_07_msv",
 					},
 					{
 						id = "level_08_msv",
@@ -106,7 +105,7 @@ function on_mcm_load()
 						max = 2000,
 						step = 1,
 						def = 700,
-						hint = "dorn_grain_fix_level_08_msv",
+						hint = "dogma_grain_fix_level_08_msv",
 					},
 					{
 						id = "level_09_msv",
@@ -116,7 +115,7 @@ function on_mcm_load()
 						max = 2000,
 						step = 1,
 						def = 850,
-						hint = "dorn_grain_fix_level_09_msv",
+						hint = "dogma_grain_fix_level_09_msv",
 					},
 					{
 						id = "level_10_msv",
@@ -126,26 +125,26 @@ function on_mcm_load()
 						max = 2000,
 						step = 1,
 						def = 1000,
-						hint = "dorn_grain_fix_level_10_msv",
+						hint = "dogma_grain_fix_level_10_msv",
 					},
 				}),
 			},
 			{
 				id = "desaturation",
 				sh = true,
-				text = "ui_mcm_dorn_grain_fix_desaturation_section",
+				text = "ui_mcm_dogma_grain_fix_desaturation_section",
 				gr = MCM.with_header({
 					{
 						id = "enable",
 						type = "check",
 						val = 1,
 						def = true,
-						hint = "dorn_grain_fix_desaturation_enable",
+						hint = "dogma_grain_fix_desaturation_enable",
 					},
 					{
 						id = "blur_description",
 						type = "desc",
-						text = "ui_mcm_dorn_grain_fix_blur_description",
+						text = "ui_mcm_dogma_grain_fix_blur_description",
 					},
 					{
 						id = "blur_min",
@@ -155,7 +154,7 @@ function on_mcm_load()
 						max = 2000,
 						step = 1,
 						def = 500,
-						hint = "dorn_grain_fix_blur_min",
+						hint = "dogma_grain_fix_blur_min",
 					},
 					{
 						id = "blur_max",
@@ -165,26 +164,26 @@ function on_mcm_load()
 						max = 2000,
 						step = 1,
 						def = 2000,
-						hint = "dorn_grain_fix_blur_max",
+						hint = "dogma_grain_fix_blur_max",
 					},
 				}),
 			},
 			{
 				id = "duality",
 				sh = true,
-				text = "ui_mcm_dorn_grain_fix_duality_section",
+				text = "ui_mcm_dogma_grain_fix_duality_section",
 				gr = MCM.with_header({
 					{
 						id = "enable",
 						type = "check",
 						val = 1,
 						def = true,
-						hint = "dorn_grain_fix_duality_enable",
+						hint = "dogma_grain_fix_duality_enable",
 					},
 					{
 						id = "dual_description",
 						type = "desc",
-						text = "ui_mcm_dorn_grain_fix_dual_description",
+						text = "ui_mcm_dogma_grain_fix_dual_description",
 					},
 					{
 						id = "dual_min",
@@ -194,7 +193,7 @@ function on_mcm_load()
 						max = 2000,
 						step = 1,
 						def = 1000,
-						hint = "dorn_grain_fix_dual_min",
+						hint = "dogma_grain_fix_dual_min",
 					},
 					{
 						id = "dual_max",
@@ -204,7 +203,7 @@ function on_mcm_load()
 						max = 2000,
 						step = 1,
 						def = 2000,
-						hint = "dorn_grain_fix_dual_max",
+						hint = "dogma_grain_fix_dual_max",
 					},
 				}),
 			},
@@ -218,31 +217,31 @@ function on_mcm_load()
 						type = "key_bind",
 						val = 2,
 						def = -1,
-						hint = "dorn_grain_fix_add_radiation_key",
+						hint = "dogma_grain_fix_add_radiation_key",
 					},
 					{
 						id = "clear_radiation_key",
 						type = "key_bind",
 						val = 2,
 						def = -1,
-						hint = "dorn_grain_fix_clear_radiation_key",
+						hint = "dogma_grain_fix_clear_radiation_key",
 					},
 					{
 						id = "debug_overlay",
 						type = "check",
 						val = 1,
 						def = false,
-						hint = "dorn_grain_fix_debug_overlay",
+						hint = "dogma_grain_fix_debug_overlay",
 					},
 					{
 						id = "debug_log",
 						type = "check",
 						val = 1,
 						def = false,
-						hint = "dorn_grain_fix_debug_log",
+						hint = "dogma_grain_fix_debug_log",
 					},
 				}),
 			},
 		},
-	}
+	}, "dogma"
 end

@@ -1,14 +1,13 @@
 --[[
-	Dorn's Prone Fix
+	Prone Fix
 
 	Prone (mcCrouch + mcAccel): play_cycle on a shared OMF motion.
-	Torch: camera-locked via mod_system_dorn_prone_fix.ltx (torch_inertion = false).
+	Torch: camera-locked via mod_system_dogma_prone_fix.ltx (torch_inertion = false).
 ]]
 
-local MOD_ID = "dorn_prone_fix"
-local DORN_COMMON_VERSION = "dorn_common" -- managed by sync-dorn-common.sh, do not hand-edit
+local MOD_ID = "dogma/prone_fix"
 
-local DORN
+local DOGMA
 
 local POSTURES = {
 	STAND 	= "stand",
@@ -42,36 +41,36 @@ local blend_move_anims = get_console():get_bool("blend_move_anims") or false
 
 -- HUD-only: for values that change every frame (height/posture/crouch/slow/motion).
 local function overlay(log_type, msg)
-	if not DORN.dbg then
+	if not DOGMA.dbg then
 		return
 	end
 	if CONFIG.debug_overlay then
 		local slot = log_type or LOG.LIFECYCLE
-		DORN.dbg.overlay(MOD_ID, slot.order, tostring(msg), slot.color)
+		DOGMA.dbg.overlay(MOD_ID, slot.order, tostring(msg), slot.color)
 	end
 end
 
 -- File-only: for one-off/lifecycle and state-transition events worth keeping in the log.
 local function log(msg)
-	if not DORN.dbg then
+	if not DOGMA.dbg then
 		return
 	end
 	if CONFIG.debug_log then
-		DORN.dbg.log(MOD_ID, tostring(msg))
+		DOGMA.dbg.log(MOD_ID, tostring(msg))
 	end
 end
 
 local function on_option_change()
-	CONFIG.debug_log = DORN.mcm.bool(MOD_ID, "development/debug_log", false)
-	CONFIG.debug_overlay = DORN.mcm.bool(MOD_ID, "development/debug_overlay", false)
-	CONFIG.hide_prone_bones = DORN.mcm.bool(MOD_ID, "main/hide_prone_bones", true)
-	CONFIG.cam_height_stand = DORN.mcm.number(MOD_ID, "development/cam_height_stand", 1.65)
-	CONFIG.cam_height_crouch = DORN.mcm.number(MOD_ID, "development/cam_height_crouch", 1.2)
-	CONFIG.cam_height_prone = DORN.mcm.number(MOD_ID, "development/cam_height_prone", 0.45)
-	CONFIG.prone_damage_mult = DORN.mcm.number(MOD_ID, "main/prone_damage_mult", 1.2)
-	DORN.dbg.set_enabled(MOD_ID, CONFIG.debug_overlay)
+	CONFIG.debug_log = DOGMA.mcm.bool(MOD_ID, "development/debug_log", false)
+	CONFIG.debug_overlay = DOGMA.mcm.bool(MOD_ID, "development/debug_overlay", false)
+	CONFIG.hide_prone_bones = DOGMA.mcm.bool(MOD_ID, "main/hide_prone_bones", true)
+	CONFIG.cam_height_stand = DOGMA.mcm.number(MOD_ID, "development/cam_height_stand", 1.65)
+	CONFIG.cam_height_crouch = DOGMA.mcm.number(MOD_ID, "development/cam_height_crouch", 1.2)
+	CONFIG.cam_height_prone = DOGMA.mcm.number(MOD_ID, "development/cam_height_prone", 0.45)
+	CONFIG.prone_damage_mult = DOGMA.mcm.number(MOD_ID, "main/prone_damage_mult", 1.2)
+	DOGMA.dbg.set_enabled(MOD_ID, CONFIG.debug_overlay)
 
-	local _, actor = DORN.sys.ready(MOD_ID, db)
+	local _, actor = DOGMA.sys.ready(MOD_ID, db)
 	if actor and actor:alive() then
 		if CONFIG.hide_prone_bones then
 			set_prone_bones_visible(actor, not is_prone)
@@ -114,7 +113,7 @@ local function play_motion(actor, motion, mix_in)
 end
 
 local function on_actor_on_update()
-	local _, actor = DORN.sys.ready(MOD_ID, db, on_option_change)
+	local _, actor = DOGMA.sys.ready(MOD_ID, db, on_option_change)
 	if not actor then
 		return
 	end
@@ -195,7 +194,7 @@ local function on_actor_on_update()
 	-- enter prone
 	if camera_posture == POSTURES.PRONE then
 		-- spam prone motion
-		play_motion(actor, "dorn_prone", false)
+		play_motion(actor, "dogma_prone", false)
 
 		if not is_prone then
 			log("state: enter prone")
@@ -240,7 +239,7 @@ local function on_actor_on_update()
 end
 
 local function on_actor_on_before_hit(shit, bone_id, flags)
-	if not DORN.sys.ready(MOD_ID, db) then
+	if not DOGMA.sys.ready(MOD_ID, db) then
 		return
 	end
 	if not is_prone or not shit or not shit.power or shit.power <= 0 then
@@ -256,7 +255,7 @@ local function on_actor_on_before_hit(shit, bone_id, flags)
 end
 
 function on_game_start()
-	DORN = _G[DORN_COMMON_VERSION].load(MOD_ID)
+	DOGMA = _G.dogma_common.load(MOD_ID)
 
 	is_prone = nil
 	RegisterScriptCallback("actor_on_update", on_actor_on_update)

@@ -1,5 +1,5 @@
 --[[
-	Dorn's Strip Everything - attachment disassembly.
+	Strip Everything - attachment disassembly.
 
 	Disassemble detached weapon attachments (scopes, silencers, GLs, tac kits)
 	into craft parts. Drop yields live in attach_drops.script (build: zzzz_dogma_weapons_stripping_attach_drops.script).
@@ -8,10 +8,9 @@
 	disassembly_item stay wrapped after sibling scripts (strip, tool_select).
 ]]
 
-local MOD_ID = "dorn_strip_everything"
-local DORN_COMMON_VERSION = "dorn_common" -- managed by sync-dorn-common.sh, do not hand-edit
+local MOD_ID = "dogma/strip_everything"
 
-local DORN
+local DOGMA
 
 local CONFIG = {
 	enabled = false,
@@ -48,7 +47,7 @@ local ELECTRONIC_SECTION = {
 
 local price_ini = nil
 -- Call-time lookup: attach_drops sorts after this file under zzzz_dogma_* names.
--- (Old pack relied on dorn_fieldstrip_attach_drops loading before zzzz_*_attach_disassemble.)
+-- (Old pack relied on dogma_fieldstrip_attach_drops loading before zzzz_*_attach_disassemble.)
 
 local patched_menu_disassembly = false
 local patched_disassembly_item = false
@@ -56,11 +55,11 @@ local menu_disassembly_wrapper = nil
 local disassembly_item_wrapper = nil
 
 local function log(msg)
-	if not (DORN and DORN.dbg) then
+	if not (DOGMA and DOGMA.dbg) then
 		return
 	end
 	if CONFIG.debug_log then
-		DORN.dbg.log(MOD_ID, tostring(msg))
+		DOGMA.dbg.log(MOD_ID, tostring(msg))
 	end
 end
 
@@ -312,7 +311,7 @@ local function lookup_tier_row(cat, tier)
 end
 
 local function lookup_drops(info)
-	local drops = _G.dorn_strip_attach_drops
+	local drops = _G.dogma_strip_attach_drops
 	if not info or not drops then
 		return nil
 	end
@@ -442,7 +441,7 @@ local function perform_attachment_disassembly(obj, obj_d, info, orig_disassembly
 	game_statistics.increment_statistic("items_disassembled")
 	actor_effects.play_item_fx("disassemble_metal_fast")
 
-	CreateTimeEvent(0, "dorn_strip_attach_" .. id, delay, timer_give_parts, npc:id(), parts_tbl, name)
+	CreateTimeEvent(0, "dogma_strip_attach_" .. id, delay, timer_give_parts, npc:id(), parts_tbl, name)
 end
 
 local function make_menu_disassembly_wrapper(orig)
@@ -501,8 +500,8 @@ local function apply_patches()
 end
 
 local function on_option_change()
-	CONFIG.enabled = DORN.mcm.bool(MOD_ID, "dis_weap_attach/enabled", false)
-	CONFIG.debug_log = DORN.mcm.bool(MOD_ID, "development/dis_weap_attach_debug_log", false)
+	CONFIG.enabled = DOGMA.mcm.bool(MOD_ID, "dis_weap_attach/enabled", false)
+	CONFIG.debug_log = DOGMA.mcm.bool(MOD_ID, "development/dis_weap_attach_debug_log", false)
 	log(string.format(
 		"dis_weap_attach: enabled=%s menu_patched=%s item_patched=%s",
 		tostring(CONFIG.enabled),
@@ -512,7 +511,7 @@ local function on_option_change()
 end
 
 function on_game_start()
-	DORN = _G[DORN_COMMON_VERSION].load(MOD_ID)
+	DOGMA = _G.dogma_common.load(MOD_ID)
 	load_price_ini()
 	on_option_change()
 	apply_patches()

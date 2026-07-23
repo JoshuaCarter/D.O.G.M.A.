@@ -1,7 +1,7 @@
 --[[
-	Dorn's Weapon Tooltips - per-ammo damage table + enhanced weapon stats.
+	Weapon Tooltips - per-ammo damage table + enhanced weapon stats.
 
-	Layout/static text: ui_dorn_weapon_tooltip.xml. This script fills cells and
+	Layout/static text: ui_dogma_weapon_tooltip.xml. This script fills cells and
 	wires MCM / utils_ui.stats_table.
 
 	Built as zzzz_dogma_tooltips_weapons_main.script so on_game_start runs after
@@ -9,10 +9,9 @@
 	stats_table["weapon"] and would wipe our rows.
 ]]
 
-local MOD_ID = "dorn_weapon_tooltip"
-local DORN_COMMON_VERSION = "dorn_common" -- managed by sync-dorn-common.sh, do not hand-edit
+local MOD_ID = "dogma/weapon_tooltip"
 
-local DORN
+local DOGMA
 
 local CONFIG = {
 	show_damage_table = true,
@@ -62,11 +61,11 @@ local BASE_INDEX = {
 
 -- Fallback string ids if zzzz_dogma_tooltips_weapons_stats failed to expose NAME.
 local EXTRA_STAT_NAME = {
-	dispersion = "ui_dorn_wpn_dispersion",
-	spread = "ui_dorn_wpn_spread",
-	barrel_wear = "ui_dorn_wpn_barrel_wear",
-	burst_control = "ui_dorn_wpn_burst_control",
-	bullet_drop = "ui_dorn_wpn_bullet_drop",
+	dispersion = "ui_dogma_wpn_dispersion",
+	spread = "ui_dogma_wpn_spread",
+	barrel_wear = "ui_dogma_wpn_barrel_wear",
+	burst_control = "ui_dogma_wpn_burst_control",
+	bullet_drop = "ui_dogma_wpn_bullet_drop",
 }
 
 -- Hit Power is weapon hit_power x 100 (per pellet, same as other guns), no ammo k_hit.
@@ -424,14 +423,14 @@ local ENHANCED_STAT_LABELS = {}
 
 local function refresh_enhanced_stat_labels()
 	ENHANCED_STAT_LABELS = {
-		hit_power = game.translate_string("ui_dorn_wpn_hit_power"),
-		stalker_damage = game.translate_string("ui_dorn_wpn_stalker_damage"),
-		ammo_damage = game.translate_string("ui_dorn_wpn_ammo_torso"),
-		dispersion = game.translate_string("ui_dorn_wpn_dispersion"),
-		spread = game.translate_string("ui_dorn_wpn_spread"),
-		barrel_wear = game.translate_string("ui_dorn_wpn_barrel_wear"),
-		burst_control = game.translate_string("ui_dorn_wpn_burst_control"),
-		bullet_drop = game.translate_string("ui_dorn_wpn_bullet_drop"),
+		hit_power = game.translate_string("ui_dogma_wpn_hit_power"),
+		stalker_damage = game.translate_string("ui_dogma_wpn_stalker_damage"),
+		ammo_damage = game.translate_string("ui_dogma_wpn_ammo_torso"),
+		dispersion = game.translate_string("ui_dogma_wpn_dispersion"),
+		spread = game.translate_string("ui_dogma_wpn_spread"),
+		barrel_wear = game.translate_string("ui_dogma_wpn_barrel_wear"),
+		burst_control = game.translate_string("ui_dogma_wpn_burst_control"),
+		bullet_drop = game.translate_string("ui_dogma_wpn_bullet_drop"),
 	}
 end
 
@@ -925,9 +924,9 @@ local ROW_XML = {
 	"panel:row_4",
 }
 
--- Parsed once; layout lives in configs/ui/ui_dorn_weapon_tooltip.xml.
+-- Parsed once; layout lives in configs/ui/ui_dogma_weapon_tooltip.xml.
 local DAMAGE_XML = CScriptXmlInit()
-DAMAGE_XML:ParseFile("ui_dorn_weapon_tooltip.xml")
+DAMAGE_XML:ParseFile("ui_dogma_weapon_tooltip.xml")
 
 -- Own handle for the vanilla stat-box layout (item_info:stats_box lives in
 -- utils.xml, same file utils_ui.get_stats_xml uses). Used to rebuild our
@@ -941,7 +940,7 @@ local base_uiinfo_update
 local HIT_POWER_STAT = {
 	index = 3,
 	typ = "float",
-	name = "ui_dorn_wpn_hit_power",
+	name = "ui_dogma_wpn_hit_power",
 	icon_p = "ui_wp_prop_damage",
 	icon_n = "",
 	track = false,
@@ -962,7 +961,7 @@ local HIT_POWER_STAT = {
 local RAW_AMMO_DAMAGE_STAT = {
 	index = 3.5,
 	typ = "float",
-	name = "ui_dorn_wpn_ammo_torso",
+	name = "ui_dogma_wpn_ammo_torso",
 	icon_p = "ui_wp_prop_damage",
 	icon_n = "",
 	track = false,
@@ -980,7 +979,7 @@ local RAW_AMMO_DAMAGE_STAT = {
 local STALKER_DAMAGE_STAT = {
 	index = 3.25,
 	typ = "float",
-	name = "ui_dorn_wpn_stalker_damage",
+	name = "ui_dogma_wpn_stalker_damage",
 	icon_p = "ui_wp_prop_damage",
 	icon_n = "",
 	track = false,
@@ -992,13 +991,13 @@ local STALKER_DAMAGE_STAT = {
 	value_functor = { "zzzz_dogma_tooltips_weapons_main", "prop_stalker_ammo_damage_slash_flag" },
 }
 
--- Cached non-Dorn base rows so MCM can hide/restore them.
+-- Cached non-DOGMA base rows so MCM can hide/restore them.
 local saved_base_stats = {}
 
 local function cache_base_stat(weapon_stats, key)
 	local cur = weapon_stats[key]
-	-- Skip our own ui_dorn_wpn_* rows when caching vanilla base defs.
-	if cur and not (cur.name and string.find(cur.name, "ui_dorn_wpn_", 1, true) == 1) then
+	-- Skip our own ui_dogma_wpn_* rows when caching vanilla base defs.
+	if cur and not (cur.name and string.find(cur.name, "ui_dogma_wpn_", 1, true) == 1) then
 		saved_base_stats[key] = cur
 	end
 end
@@ -1014,7 +1013,7 @@ local function set_base_stat(weapon_stats, key, enabled)
 	end
 end
 
-local function make_dorn_row(index, name, icon, prop)
+local function make_dogma_row(index, name, icon, prop)
 	return {
 		index = index,
 		typ = "float",
@@ -1033,13 +1032,13 @@ local function make_dorn_row(index, name, icon, prop)
 	}
 end
 
--- Highest sort index among stock/Momopate weapon rows (excludes Dorn keys).
-local function max_non_dorn_weapon_index(weapon_stats)
+-- Highest sort index among stock/Momopate weapon rows (excludes DOGMA keys).
+local function max_non_dogma_weapon_index(weapon_stats)
 	local max_i = 0
 	for key, def in pairs(weapon_stats) do
 		if def and type(def) == "table" and def.index
 			and key ~= "damage"
-			and string.find(key, "dorn_", 1, true) ~= 1
+			and string.find(key, "dogma_", 1, true) ~= 1
 		then
 			if def.index > max_i then
 				max_i = def.index
@@ -1086,8 +1085,8 @@ end
 
 local function placement_indices(weapon_stats)
 	if CONFIG.stat_row_placement == "after" then
-		-- All Dorn rows at end of list (after remaining non-Dorn rows).
-		local base = max_non_dorn_weapon_index(weapon_stats)
+		-- All DOGMA rows at end of list (after remaining non-DOGMA rows).
+		local base = max_non_dogma_weapon_index(weapon_stats)
 		return {
 			hit_power = base + 1,
 			stalker_damage = base + 2,
@@ -1108,7 +1107,7 @@ local function placement_indices(weapon_stats)
 	}
 
 	if CONFIG.stat_row_placement == "start" then
-		-- Companions join the lead block before Accuracy / any non-Dorn rows.
+		-- Companions join the lead block before Accuracy / any non-DOGMA rows.
 		return {
 			hit_power = dmg.hit_power,
 			stalker_damage = dmg.stalker_damage,
@@ -1173,48 +1172,48 @@ local function apply_enhanced_weapon_stats()
 	end
 
 	if CONFIG.show_stalker_damage then
-		weapon_stats["dorn_stalker_damage"] = STALKER_DAMAGE_STAT
+		weapon_stats["dogma_stalker_damage"] = STALKER_DAMAGE_STAT
 	else
-		weapon_stats["dorn_stalker_damage"] = nil
+		weapon_stats["dogma_stalker_damage"] = nil
 	end
 	if CONFIG.show_mutant_damage then
-		weapon_stats["dorn_ammo_damage"] = RAW_AMMO_DAMAGE_STAT
+		weapon_stats["dogma_ammo_damage"] = RAW_AMMO_DAMAGE_STAT
 	else
-		weapon_stats["dorn_ammo_damage"] = nil
+		weapon_stats["dogma_ammo_damage"] = nil
 	end
 
 	local N = (zzzz_dogma_tooltips_weapons_stats and zzzz_dogma_tooltips_weapons_stats.NAME) or EXTRA_STAT_NAME
-	weapon_stats["dorn_dispersion"] = CONFIG.show_dispersion
-		and make_dorn_row(idx.dispersion, N.dispersion, "ui_wp_prop_contrast", "prop_dispersion")
+	weapon_stats["dogma_dispersion"] = CONFIG.show_dispersion
+		and make_dogma_row(idx.dispersion, N.dispersion, "ui_wp_prop_contrast", "prop_dispersion")
 		or nil
-	weapon_stats["dorn_spread"] = CONFIG.show_spread
-		and make_dorn_row(idx.spread, N.spread, "ui_wp_propery_13", "prop_spread")
+	weapon_stats["dogma_spread"] = CONFIG.show_spread
+		and make_dogma_row(idx.spread, N.spread, "ui_wp_propery_13", "prop_spread")
 		or nil
 	-- Drop legacy dual-spread rows if a previous session registered them.
-	weapon_stats["dorn_base_spread"] = nil
-	weapon_stats["dorn_movement_spread"] = nil
-	weapon_stats["dorn_bullet_drop"] = CONFIG.show_bullet_drop
-		and make_dorn_row(idx.bullet_drop, N.bullet_drop, "ui_wp_prop_nastilnost", "prop_bullet_drop")
+	weapon_stats["dogma_base_spread"] = nil
+	weapon_stats["dogma_movement_spread"] = nil
+	weapon_stats["dogma_bullet_drop"] = CONFIG.show_bullet_drop
+		and make_dogma_row(idx.bullet_drop, N.bullet_drop, "ui_wp_prop_nastilnost", "prop_bullet_drop")
 		or nil
-	weapon_stats["dorn_barrel_wear"] = CONFIG.show_barrel_wear
-		and make_dorn_row(idx.barrel_wear, N.barrel_wear, "ui_wp_prop_nadezhnost", "prop_barrel_wear")
+	weapon_stats["dogma_barrel_wear"] = CONFIG.show_barrel_wear
+		and make_dogma_row(idx.barrel_wear, N.barrel_wear, "ui_wp_prop_nadezhnost", "prop_barrel_wear")
 		or nil
-	weapon_stats["dorn_burst_control"] = CONFIG.show_burst_control
-		and make_dorn_row(idx.burst_control, N.burst_control, "ui_wp_prop_otdacha", "prop_burst_control")
+	weapon_stats["dogma_burst_control"] = CONFIG.show_burst_control
+		and make_dogma_row(idx.burst_control, N.burst_control, "ui_wp_prop_otdacha", "prop_burst_control")
 		or nil
 end
 
 -- Legacy single toggle (show_enhanced_weapon_stats) seeds both new keys when absent.
 local function read_legacy_enhanced_default()
-	if not DORN or not DORN.mcm then
+	if not DOGMA or not DOGMA.mcm then
 		return true
 	end
 
-	if DORN.mcm.get(MOD_ID, "main/show_enhanced_weapon_stats") ~= nil then
-		return DORN.mcm.bool(MOD_ID, "main/show_enhanced_weapon_stats", true)
+	if DOGMA.mcm.get(MOD_ID, "main/show_enhanced_weapon_stats") ~= nil then
+		return DOGMA.mcm.bool(MOD_ID, "main/show_enhanced_weapon_stats", true)
 	end
 
-	local mode = DORN.mcm.string(MOD_ID, "main/damage_stat", nil)
+	local mode = DOGMA.mcm.string(MOD_ID, "main/damage_stat", nil)
 	if mode == "raw_hit_power" then
 		mode = "hit_power"
 	elseif mode == "ammo_torso" then
@@ -1227,33 +1226,33 @@ local function read_legacy_enhanced_default()
 		return true
 	end
 
-	if DORN.mcm.get(MOD_ID, "main/show_damage_stat") ~= nil then
-		return DORN.mcm.bool(MOD_ID, "main/show_damage_stat", false)
+	if DOGMA.mcm.get(MOD_ID, "main/show_damage_stat") ~= nil then
+		return DOGMA.mcm.bool(MOD_ID, "main/show_damage_stat", false)
 	end
 
 	return true
 end
 
 local function read_new_stat_flag(key)
-	if not DORN or not DORN.mcm then
+	if not DOGMA or not DOGMA.mcm then
 		return true
 	end
-	if DORN.mcm.get(MOD_ID, "main/" .. key) ~= nil then
-		return DORN.mcm.bool(MOD_ID, "main/" .. key, true)
+	if DOGMA.mcm.get(MOD_ID, "main/" .. key) ~= nil then
+		return DOGMA.mcm.bool(MOD_ID, "main/" .. key, true)
 	end
-	if DORN.mcm.get(MOD_ID, "main/show_new_weapon_stats") ~= nil then
-		return DORN.mcm.bool(MOD_ID, "main/show_new_weapon_stats", true)
+	if DOGMA.mcm.get(MOD_ID, "main/show_new_weapon_stats") ~= nil then
+		return DOGMA.mcm.bool(MOD_ID, "main/show_new_weapon_stats", true)
 	end
 	return read_legacy_enhanced_default()
 end
 
 -- Legacy master / per-append keys seed the new child-row toggles when absent.
 local function read_extra_stat_default()
-	if not DORN or not DORN.mcm then
+	if not DOGMA or not DOGMA.mcm then
 		return true
 	end
-	if DORN.mcm.get(MOD_ID, "main/show_appended_weapon_stats") ~= nil then
-		return DORN.mcm.bool(MOD_ID, "main/show_appended_weapon_stats", true)
+	if DOGMA.mcm.get(MOD_ID, "main/show_appended_weapon_stats") ~= nil then
+		return DOGMA.mcm.bool(MOD_ID, "main/show_appended_weapon_stats", true)
 	end
 	return read_legacy_enhanced_default()
 end
@@ -1265,50 +1264,50 @@ local EXTRA_STAT_LEGACY = {
 }
 
 local function read_extra_stat_flag(key)
-	if not DORN or not DORN.mcm then
+	if not DOGMA or not DOGMA.mcm then
 		return true
 	end
-	if DORN.mcm.get(MOD_ID, "main/" .. key) ~= nil then
-		return DORN.mcm.bool(MOD_ID, "main/" .. key, true)
+	if DOGMA.mcm.get(MOD_ID, "main/" .. key) ~= nil then
+		return DOGMA.mcm.bool(MOD_ID, "main/" .. key, true)
 	end
 	local legacy = EXTRA_STAT_LEGACY[key]
-	if legacy and DORN.mcm.get(MOD_ID, "main/" .. legacy) ~= nil then
-		return DORN.mcm.bool(MOD_ID, "main/" .. legacy, true)
+	if legacy and DOGMA.mcm.get(MOD_ID, "main/" .. legacy) ~= nil then
+		return DOGMA.mcm.bool(MOD_ID, "main/" .. legacy, true)
 	end
 	return read_extra_stat_default()
 end
 
 -- Combined Spread: new key, else OR of old Base/Move (and their append-legacy keys).
 local function read_spread_flag()
-	if not DORN or not DORN.mcm then
+	if not DOGMA or not DOGMA.mcm then
 		return true
 	end
-	if DORN.mcm.get(MOD_ID, "main/show_spread") ~= nil then
-		return DORN.mcm.bool(MOD_ID, "main/show_spread", true)
+	if DOGMA.mcm.get(MOD_ID, "main/show_spread") ~= nil then
+		return DOGMA.mcm.bool(MOD_ID, "main/show_spread", true)
 	end
-	local has_base = DORN.mcm.get(MOD_ID, "main/show_base_spread") ~= nil
-	local has_move = DORN.mcm.get(MOD_ID, "main/show_movement_spread") ~= nil
+	local has_base = DOGMA.mcm.get(MOD_ID, "main/show_base_spread") ~= nil
+	local has_move = DOGMA.mcm.get(MOD_ID, "main/show_movement_spread") ~= nil
 	if has_base or has_move then
-		local base_on = has_base and DORN.mcm.bool(MOD_ID, "main/show_base_spread", true)
-		local move_on = has_move and DORN.mcm.bool(MOD_ID, "main/show_movement_spread", true)
+		local base_on = has_base and DOGMA.mcm.bool(MOD_ID, "main/show_base_spread", true)
+		local move_on = has_move and DOGMA.mcm.bool(MOD_ID, "main/show_movement_spread", true)
 		return base_on or move_on
 	end
-	local has_acc = DORN.mcm.get(MOD_ID, "main/show_append_accuracy") ~= nil
-	local has_hand = DORN.mcm.get(MOD_ID, "main/show_append_handling") ~= nil
+	local has_acc = DOGMA.mcm.get(MOD_ID, "main/show_append_accuracy") ~= nil
+	local has_hand = DOGMA.mcm.get(MOD_ID, "main/show_append_handling") ~= nil
 	if has_acc or has_hand then
-		local acc_on = has_acc and DORN.mcm.bool(MOD_ID, "main/show_append_accuracy", true)
-		local hand_on = has_hand and DORN.mcm.bool(MOD_ID, "main/show_append_handling", true)
+		local acc_on = has_acc and DOGMA.mcm.bool(MOD_ID, "main/show_append_accuracy", true)
+		local hand_on = has_hand and DOGMA.mcm.bool(MOD_ID, "main/show_append_handling", true)
 		return acc_on or hand_on
 	end
 	return read_extra_stat_default()
 end
 
 local function read_base_stat_flag(key)
-	if not DORN or not DORN.mcm then
+	if not DOGMA or not DOGMA.mcm then
 		return true
 	end
-	if DORN.mcm.get(MOD_ID, "main/" .. key) ~= nil then
-		return DORN.mcm.bool(MOD_ID, "main/" .. key, true)
+	if DOGMA.mcm.get(MOD_ID, "main/" .. key) ~= nil then
+		return DOGMA.mcm.bool(MOD_ID, "main/" .. key, true)
 	end
 	return true
 end
@@ -1323,21 +1322,21 @@ local OVERLAY = {
 
 -- HUD-only: for values that change every frame (crosshair range).
 local function overlay(slot, msg)
-	if not (DORN and DORN.dbg) then
+	if not (DOGMA and DOGMA.dbg) then
 		return
 	end
 	if CONFIG.debug_overlay then
 		local s = slot or OVERLAY.RANGE
-		DORN.dbg.overlay(MOD_ID, s.order, tostring(msg), s.color)
+		DOGMA.dbg.overlay(MOD_ID, s.order, tostring(msg), s.color)
 	end
 end
 
 local function log(msg)
-	if not (DORN and DORN.dbg) then
+	if not (DOGMA and DOGMA.dbg) then
 		return
 	end
 	if CONFIG.debug_log then
-		DORN.dbg.log(MOD_ID, tostring(msg))
+		DOGMA.dbg.log(MOD_ID, tostring(msg))
 	end
 end
 
@@ -1347,7 +1346,7 @@ local function log_once(key, msg)
 	if logged_once[key] then
 		return
 	end
-	if not (DORN and DORN.dbg) or not CONFIG.debug_log then
+	if not (DOGMA and DOGMA.dbg) or not CONFIG.debug_log then
 		return
 	end
 	logged_once[key] = true
@@ -1378,11 +1377,11 @@ local tracked_infos = setmetatable({}, { __mode = "k" })
 
 local function on_option_change()
 	-- All MCM/palette work is optional - the per-ammo breakdown must keep working
-	-- even if DORN common failed to load, so nothing here is allowed to hard-fail.
+	-- even if DOGMA common failed to load, so nothing here is allowed to hard-fail.
 	local tostr = tostring
 	local prev_debug = CONFIG.debug_log
-	if DORN and DORN.mcm then
-		CONFIG.show_damage_table = DORN.mcm.bool(MOD_ID, "main/show_damage_table", true)
+	if DOGMA and DOGMA.mcm then
+		CONFIG.show_damage_table = DOGMA.mcm.bool(MOD_ID, "main/show_damage_table", true)
 		CONFIG.show_hit_power = read_new_stat_flag("show_hit_power")
 		CONFIG.show_stalker_damage = read_new_stat_flag("show_stalker_damage")
 		CONFIG.show_mutant_damage = read_new_stat_flag("show_mutant_damage")
@@ -1400,7 +1399,7 @@ local function on_option_change()
 		CONFIG.show_bullet_drop = read_extra_stat_flag("show_bullet_drop")
 		-- "raw" = bone armor floats; "raw100" = floats x100 floored; "names" = class labels.
 		-- Legacy MCM values: "npc" -> raw, "brc" -> names.
-		local headers = DORN.mcm.string(MOD_ID, "main/column_headers", "names")
+		local headers = DOGMA.mcm.string(MOD_ID, "main/column_headers", "names")
 		if headers == "raw" or headers == "npc" then
 			CONFIG.column_headers = "raw"
 		elseif headers == "raw100" then
@@ -1408,13 +1407,13 @@ local function on_option_change()
 		else
 			CONFIG.column_headers = "names"
 		end
-		local scale_from = DORN.mcm.string(MOD_ID, "main/color_scale_from", "darkgrey")
+		local scale_from = DOGMA.mcm.string(MOD_ID, "main/color_scale_from", "darkgrey")
 		if scale_from == "white" or scale_from == "grey" then
 			CONFIG.color_scale_from = scale_from
 		else
 			CONFIG.color_scale_from = "darkgrey"
 		end
-		local order = DORN.mcm.string(MOD_ID, "main/ammo_order", "default")
+		local order = DOGMA.mcm.string(MOD_ID, "main/ammo_order", "default")
 		if order == "ap" then
 			CONFIG.ammo_order = "ap"
 		elseif order == "damage" then
@@ -1422,7 +1421,7 @@ local function on_option_change()
 		else
 			CONFIG.ammo_order = "default"
 		end
-		local place = DORN.mcm.string(MOD_ID, "main/stat_row_placement", "inline")
+		local place = DOGMA.mcm.string(MOD_ID, "main/stat_row_placement", "inline")
 		if place == "after" then
 			CONFIG.stat_row_placement = "after"
 		elseif place == "start" then
@@ -1430,41 +1429,41 @@ local function on_option_change()
 		else
 			CONFIG.stat_row_placement = "inline"
 		end
-		CONFIG.compact_header = DORN.mcm.bool(MOD_ID, "main/compact_header", true)
-		CONFIG.calc_range_m = clamp(DORN.mcm.number(MOD_ID, "main/calc_range", 30), 0, 200)
-		CONFIG.pellet_hit_pct = clamp(DORN.mcm.number(MOD_ID, "main/pellet_hit_pct", 100), 1, 100)
-		local drop_range = clamp(DORN.mcm.number(MOD_ID, "main/drop_range", 200), 100, 2000)
+		CONFIG.compact_header = DOGMA.mcm.bool(MOD_ID, "main/compact_header", true)
+		CONFIG.calc_range_m = clamp(DOGMA.mcm.number(MOD_ID, "main/calc_range", 30), 0, 200)
+		CONFIG.pellet_hit_pct = clamp(DOGMA.mcm.number(MOD_ID, "main/pellet_hit_pct", 100), 1, 100)
+		local drop_range = clamp(DOGMA.mcm.number(MOD_ID, "main/drop_range", 200), 100, 2000)
 		if zzzz_dogma_tooltips_weapons_stats and zzzz_dogma_tooltips_weapons_stats.set_drop_range then
 			zzzz_dogma_tooltips_weapons_stats.set_drop_range(drop_range)
 		end
-		local burst_threshold = clamp(DORN.mcm.number(MOD_ID, "main/burst_threshold", 3), 1, 10)
+		local burst_threshold = clamp(DOGMA.mcm.number(MOD_ID, "main/burst_threshold", 3), 1, 10)
 		if zzzz_dogma_tooltips_weapons_stats and zzzz_dogma_tooltips_weapons_stats.set_burst_threshold then
 			zzzz_dogma_tooltips_weapons_stats.set_burst_threshold(burst_threshold)
 		end
-		CONFIG.use_condition_table = DORN.mcm.bool(MOD_ID, "main/use_condition_table", false)
-		CONFIG.use_condition_stats = DORN.mcm.bool(MOD_ID, "main/use_condition_stats", false)
+		CONFIG.use_condition_table = DOGMA.mcm.bool(MOD_ID, "main/use_condition_table", false)
+		CONFIG.use_condition_stats = DOGMA.mcm.bool(MOD_ID, "main/use_condition_stats", false)
 		-- Split from legacy main/apply_silencer (same default for both when unset).
 		local sil_legacy = false
-		if DORN.mcm.get(MOD_ID, "main/apply_silencer") ~= nil then
-			sil_legacy = DORN.mcm.bool(MOD_ID, "main/apply_silencer", false)
+		if DOGMA.mcm.get(MOD_ID, "main/apply_silencer") ~= nil then
+			sil_legacy = DOGMA.mcm.bool(MOD_ID, "main/apply_silencer", false)
 		end
-		if DORN.mcm.get(MOD_ID, "main/apply_silencer_table") ~= nil then
-			CONFIG.apply_silencer_table = DORN.mcm.bool(MOD_ID, "main/apply_silencer_table", false)
+		if DOGMA.mcm.get(MOD_ID, "main/apply_silencer_table") ~= nil then
+			CONFIG.apply_silencer_table = DOGMA.mcm.bool(MOD_ID, "main/apply_silencer_table", false)
 		else
 			CONFIG.apply_silencer_table = sil_legacy
 		end
-		if DORN.mcm.get(MOD_ID, "main/apply_silencer_stats") ~= nil then
-			CONFIG.apply_silencer_stats = DORN.mcm.bool(MOD_ID, "main/apply_silencer_stats", false)
+		if DOGMA.mcm.get(MOD_ID, "main/apply_silencer_stats") ~= nil then
+			CONFIG.apply_silencer_stats = DOGMA.mcm.bool(MOD_ID, "main/apply_silencer_stats", false)
 		else
 			CONFIG.apply_silencer_stats = sil_legacy
 		end
 		if zzzz_dogma_tooltips_weapons_stats and zzzz_dogma_tooltips_weapons_stats.set_apply_silencer then
 			zzzz_dogma_tooltips_weapons_stats.set_apply_silencer(CONFIG.apply_silencer_stats)
 		end
-		CONFIG.debug_log = DORN.mcm.bool(MOD_ID, "development/debug_log", false)
-		CONFIG.debug_overlay = DORN.mcm.bool(MOD_ID, "development/debug_overlay", false)
+		CONFIG.debug_log = DOGMA.mcm.bool(MOD_ID, "development/debug_log", false)
+		CONFIG.debug_overlay = DOGMA.mcm.bool(MOD_ID, "development/debug_overlay", false)
 		-- Legacy: early builds used development/rangefinder for this toggle.
-		if not CONFIG.debug_overlay and DORN.mcm.bool(MOD_ID, "development/rangefinder", false) then
+		if not CONFIG.debug_overlay and DOGMA.mcm.bool(MOD_ID, "development/rangefinder", false) then
 			CONFIG.debug_overlay = true
 		end
 	end
@@ -1478,8 +1477,8 @@ local function on_option_change()
 		zzzz_dogma_tooltips_weapons_stats.set_debug(CONFIG.debug_log)
 	end
 
-	if DORN and DORN.dbg then
-		DORN.dbg.set_enabled(MOD_ID, CONFIG.debug_overlay)
+	if DOGMA and DOGMA.dbg then
+		DOGMA.dbg.set_enabled(MOD_ID, CONFIG.debug_overlay)
 	end
 
 	refresh_enhanced_stat_labels()
@@ -2189,18 +2188,18 @@ local function set_damage_cell(wnd, cell, lo, hi)
 end
 
 local function hide_damage_panel(info)
-	if not info.dorn_wpn_damage then
+	if not info.dogma_wpn_damage then
 		return
 	end
 
-	local fields = info.dorn_wpn_fields
+	local fields = info.dogma_wpn_fields
 	if fields then
 		for _, row in ipairs(fields.rows) do
 			row.base:Show(false)
 		end
 	end
 
-	info.dorn_wpn_damage:Show(false)
+	info.dogma_wpn_damage:Show(false)
 end
 
 -- Child fields are attached to their row's own base static, so their XML y is
@@ -2255,7 +2254,7 @@ local function create_damage_fields(parent, panel_x)
 		return DAMAGE_XML:InitStatic("panel", parent)
 	end)
 	if not ok or not dlg then
-		log_once("panel_xml_fail", "create_damage_fields: ui_dorn_weapon_tooltip.xml init failed")
+		log_once("panel_xml_fail", "create_damage_fields: ui_dogma_weapon_tooltip.xml init failed")
 		return nil, nil
 	end
 
@@ -2439,9 +2438,9 @@ end
 local function sync_damage_layout(info)
 	local tail = info.desc
 
-	if CONFIG.show_damage_table and info.dorn_wpn_damage and info.dorn_wpn_damage:IsShown() then
-		info:Sync_Y(info.desc, info.dorn_wpn_damage, PANEL_TOP_OFFSET)
-		tail = info.dorn_wpn_damage
+	if CONFIG.show_damage_table and info.dogma_wpn_damage and info.dogma_wpn_damage:IsShown() then
+		info:Sync_Y(info.desc, info.dogma_wpn_damage, PANEL_TOP_OFFSET)
+		tail = info.dogma_wpn_damage
 	end
 
 	if info.stats_dialog:IsShown() then
@@ -2461,10 +2460,10 @@ end
 
 -- Cache stock header Ys once (Sota utils.xml: name 16, weight/cost 34, note 52, desc 70).
 local function cache_header_ys(info)
-	if info.dorn_hdr_ys or not info.name or not info.weight or not info.desc then
+	if info.dogma_hdr_ys or not info.name or not info.weight or not info.desc then
 		return
 	end
-	info.dorn_hdr_ys = {
+	info.dogma_hdr_ys = {
 		name = info.name:GetWndPos().y,
 		weight = info.weight:GetWndPos().y,
 		value = info.value and info.value:GetWndPos().y or info.weight:GetWndPos().y,
@@ -2487,7 +2486,7 @@ local function apply_compact_header(info)
 		return
 	end
 	cache_header_ys(info)
-	local ys = info.dorn_hdr_ys
+	local ys = info.dogma_hdr_ys
 	if not ys then
 		return
 	end
@@ -2514,7 +2513,7 @@ local function refresh_weapon_damage_panel(info, obj, sec)
 	if not info then
 		return
 	end
-	if not info.dorn_wpn_damage then
+	if not info.dogma_wpn_damage then
 		log_once("no_panel", "tooltip missing damage panel (create_damage_fields failed at init?)")
 		return
 	end
@@ -2543,12 +2542,12 @@ local function refresh_weapon_damage_panel(info, obj, sec)
 		return
 	end
 
-	local fields = info.dorn_wpn_fields
+	local fields = info.dogma_wpn_fields
 	if fields then
 		local w = info.desc and info.desc:GetWidth()
 		if not populate_damage_fields(fields, damage_data, w) then
 			log_item_once("populate_fail", sec, string.format("%s: populate_damage_fields failed", sec))
-			info.dorn_wpn_damage:Show(false)
+			info.dogma_wpn_damage:Show(false)
 			return
 		end
 		log_tooltip("panel_ok", string.format("%s: hover damage panel shown (%d rows)", sec, #damage_data.rows))
@@ -2559,31 +2558,31 @@ end
 -- The details/workshop sheets build stats via utils_ui.get_stats_xml, which
 -- paints the value grey (clr_list p1) and never exposes the created text window
 -- for later recolor (unlike the hover tooltip's reused stat boxes). So for our
--- Dorn rows we rebuild the box ourselves with white text; everything else
+-- DOGMA rows we rebuild the box ourselves with white text; everything else
 -- falls through to the stock implementation.
 local base_get_stats_xml
 
-local DORN_WHITE_STAT_NAMES = {
-	["ui_dorn_wpn_hit_power"] = true,
-	["ui_dorn_wpn_stalker_damage"] = true,
-	["ui_dorn_wpn_ammo_torso"] = true,
-	["ui_dorn_wpn_dispersion"] = true,
-	["ui_dorn_wpn_spread"] = true,
-	["ui_dorn_wpn_barrel_wear"] = true,
-	["ui_dorn_wpn_burst_control"] = true,
-	["ui_dorn_wpn_bullet_drop"] = true,
+local DOGMA_WHITE_STAT_NAMES = {
+	["ui_dogma_wpn_hit_power"] = true,
+	["ui_dogma_wpn_stalker_damage"] = true,
+	["ui_dogma_wpn_ammo_torso"] = true,
+	["ui_dogma_wpn_dispersion"] = true,
+	["ui_dogma_wpn_spread"] = true,
+	["ui_dogma_wpn_barrel_wear"] = true,
+	["ui_dogma_wpn_burst_control"] = true,
+	["ui_dogma_wpn_bullet_drop"] = true,
 }
 
 local function build_white_stat_xml(handler, obj, sec, gr, stat)
 	local value, nclr
 
-	if gr.name == "ui_dorn_wpn_ammo_torso" then
+	if gr.name == "ui_dogma_wpn_ammo_torso" then
 		value = format_raw_ammo_damage_slash(obj, sec)
 		nclr = false
-	elseif gr.name == "ui_dorn_wpn_stalker_damage" then
+	elseif gr.name == "ui_dogma_wpn_stalker_damage" then
 		value = format_stalker_ammo_damage_slash(obj, sec)
 		nclr = false
-	elseif gr.name == "ui_dorn_wpn_hit_power" then
+	elseif gr.name == "ui_dogma_wpn_hit_power" then
 		value, nclr = utils_ui.get_stats_string_value(obj, sec, gr, stat)
 	elseif zzzz_dogma_tooltips_weapons_stats and zzzz_dogma_tooltips_weapons_stats.text_for_name then
 		value = zzzz_dogma_tooltips_weapons_stats.text_for_name(gr.name, obj, sec)
@@ -2608,10 +2607,10 @@ local function build_white_stat_xml(handler, obj, sec, gr, stat)
 	st_cap:SetTextColor(CLR.white)
 
 	local st_txt = STAT_XML:InitTextWnd("item_info:stats_box:prog_txt", st)
-	if gr.name == "ui_dorn_wpn_ammo_torso" or gr.name == "ui_dorn_wpn_stalker_damage"
-		or gr.name == "ui_dorn_wpn_bullet_drop" or gr.name == "ui_dorn_wpn_dispersion"
-		or gr.name == "ui_dorn_wpn_spread"
-		or gr.name == "ui_dorn_wpn_burst_control" or gr.name == "ui_dorn_wpn_barrel_wear" then
+	if gr.name == "ui_dogma_wpn_ammo_torso" or gr.name == "ui_dogma_wpn_stalker_damage"
+		or gr.name == "ui_dogma_wpn_bullet_drop" or gr.name == "ui_dogma_wpn_dispersion"
+		or gr.name == "ui_dogma_wpn_spread"
+		or gr.name == "ui_dogma_wpn_burst_control" or gr.name == "ui_dogma_wpn_barrel_wear" then
 		st_txt:SetTextComplexMode(true)
 	end
 	st_txt:SetText(value)
@@ -2627,7 +2626,7 @@ local function get_stats_xml_hook(handler, obj, sec, gr, stat)
 		grp = utils_ui.stats_table and utils_ui.stats_table[grp]
 	end
 
-	if grp and not grp.track and grp.name and DORN_WHITE_STAT_NAMES[grp.name] then
+	if grp and not grp.track and grp.name and DOGMA_WHITE_STAT_NAMES[grp.name] then
 		local ok, st = pcall(build_white_stat_xml, handler, obj, sec, grp, stat)
 		if ok and st then
 			return st
@@ -2644,9 +2643,9 @@ local function itm_details_addtext_hook(self, xml, path, offset, txt)
 	local ele = base_itm_details_addtext(self, xml, path, offset, txt)
 
 	-- Vanilla adds the item description as the first text_s_l row (after weight).
-	if self.dorn_details_pending and path == "text_s_l" then
-		local obj = self.dorn_details_pending
-		self.dorn_details_pending = nil
+	if self.dogma_details_pending and path == "text_s_l" then
+		local obj = self.dogma_details_pending
+		self.dogma_details_pending = nil
 		add_details_damage_section(self, obj)
 	end
 
@@ -2659,7 +2658,7 @@ local function itm_details_reset_hook(self, obj)
 		if sec then
 			sec = ini_sys:r_string_ex(sec, "parent_section") or sec
 			if ini_sys:r_string_ex(sec, "ammo_class") and not IsItem("fake_ammo_wpn", sec) then
-				self.dorn_details_pending = obj
+				self.dogma_details_pending = obj
 			end
 		end
 	end
@@ -2668,12 +2667,12 @@ local function itm_details_reset_hook(self, obj)
 		base_itm_details_reset(self, obj)
 	end
 
-	self.dorn_details_pending = nil
+	self.dogma_details_pending = nil
 end
 
 local details_hook_ok = false
 
--- Vanilla/Sota UIInfoItem only pre-creates 16 stat rows. Full Dorn + Momopate
+-- Vanilla/Sota UIInfoItem only pre-creates 16 stat rows. Full DOGMA + Momopate
 -- can exceed that (companions + damage rows); expand once at init.
 local STAT_SLOT_TARGET = 24
 
@@ -2729,14 +2728,14 @@ local function uiinfo_init_hook(self, owner, delay)
 	tracked_infos[self] = true
 	ensure_stat_slots(self)
 
-	if self.dorn_wpn_damage then
+	if self.dogma_wpn_damage then
 		return
 	end
 
 	local dlg, fields = create_damage_fields(self.dialog)
 	if dlg then
-		self.dorn_wpn_damage = dlg
-		self.dorn_wpn_fields = fields
+		self.dogma_wpn_damage = dlg
+		self.dogma_wpn_fields = fields
 		dlg:Show(false)
 		log_once("panel_init", "damage panel widgets created on tooltip init")
 	else
@@ -2795,12 +2794,12 @@ local function on_console_execute(cmd)
 end
 
 -- ADV/Sota replace utils_ui.stats_table.weapon on difficulty change; re-apply
--- Dorn rows whenever their override runs so companions/placement survive.
+-- DOGMA rows whenever their override runs so companions/placement survive.
 local function hook_stats_table_override()
 	if not ish_item_stats or not ish_item_stats.override_stats_table then
 		return
 	end
-	if ish_item_stats.dorn_weapon_tooltip_wrapped then
+	if ish_item_stats.dogma_weapon_tooltip_wrapped then
 		return
 	end
 	local prev = ish_item_stats.override_stats_table
@@ -2812,7 +2811,7 @@ local function hook_stats_table_override()
 			info.section = nil
 		end
 	end
-	ish_item_stats.dorn_weapon_tooltip_wrapped = true
+	ish_item_stats.dogma_weapon_tooltip_wrapped = true
 end
 
 -- Crosshair rangefinder (Development MCM). Casts along camera look; ignores actor.
@@ -2847,10 +2846,10 @@ local function crosshair_range_m()
 end
 
 local function on_actor_update()
-	if not DORN or not DORN.sys then
+	if not DOGMA or not DOGMA.sys then
 		return
 	end
-	local _, actor = DORN.sys.ready(MOD_ID, db, on_option_change)
+	local _, actor = DOGMA.sys.ready(MOD_ID, db, on_option_change)
 	if not actor then
 		return
 	end
@@ -2873,11 +2872,11 @@ end
 
 function on_game_start()
 	local tostr = tostring
-	local loader = _G[DORN_COMMON_VERSION]
+	local loader = _G.dogma_common
 	if loader then
-		DORN = loader.load(MOD_ID)
+		DOGMA = loader.load(MOD_ID)
 	else
-		printf("[DORN][%s] common loader missing (%s)", MOD_ID, DORN_COMMON_VERSION)
+		printf("[DOGMA][%s] common loader missing (%s)", MOD_ID, "dogma_common")
 	end
 
 	on_option_change()
@@ -2890,8 +2889,8 @@ function on_game_start()
 	RegisterScriptCallback("actor_on_update", on_actor_update)
 
 	log_once("startup", string.format(
-		"loaded: dorn=%s, ui_hooks=%s, details_hook=%s, table=%s, hit=%s, mutant=%s, place=%s, stats_mod=%s",
-		tostr(DORN ~= nil), tostr(ui_hooks_ok), tostr(details_hook_ok),
+		"loaded: dogma=%s, ui_hooks=%s, details_hook=%s, table=%s, hit=%s, mutant=%s, place=%s, stats_mod=%s",
+		tostr(DOGMA ~= nil), tostr(ui_hooks_ok), tostr(details_hook_ok),
 		tostr(CONFIG.show_damage_table), tostr(CONFIG.show_hit_power),
 		tostr(CONFIG.show_mutant_damage), tostr(CONFIG.stat_row_placement),
 		tostr(zzzz_dogma_tooltips_weapons_stats and zzzz_dogma_tooltips_weapons_stats.NAME ~= nil)))

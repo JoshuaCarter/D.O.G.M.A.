@@ -43,9 +43,9 @@ Release zip: `bash tools/package-fomod.sh` → `build/fomod/` (common always ins
 
 ## Common
 
-Stable globals: `dorn_common`, `dorn_mcm`, `dorn_dbg`, `dorn_sys`, banner `dorn_mcm_banner`.
+Stable globals: `dogma_common`, `dogma_mcm`, `dogma_dbg`, `dogma_sys`, banner `dogma_mcm_banner`.
 
 ```lua
-local DORN_COMMON_VERSION = "dorn_common"
-DORN = _G[DORN_COMMON_VERSION].load(MOD_ID)  -- in on_game_start only
+local DOGMA_COMMON_VERSION = "dogma_common"
+DOGMA = _G[DOGMA_COMMON_VERSION].load(MOD_ID)  -- in on_game_start only
 ```

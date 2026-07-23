@@ -1,4 +1,4 @@
--- Dorn's Fast Travel: Travel sequence, safety/surge, update loop, arrival and ambush.
+-- Fast Travel: Travel sequence, safety/surge, update loop, arrival and ambush.
 -- Loaded automatically before main.script (zzzz_dogma_travel_fast_travel_main.script)
 
 -- ============================================================
@@ -15,7 +15,7 @@ local TELEPORT_INVULN_S = 1.0
 
 play_fade_teleport = function(final_pos, lvid, gvid, on_done)
     pcall(function()
-        level.add_pp_effector("dorn_ft_fade.ppe", PP_FADE_ID, false)
+        level.add_pp_effector("dogma_ft_fade.ppe", PP_FADE_ID, false)
         level.set_pp_effector_factor(PP_FADE_ID, 1.0)
     end)
     CreateTimeEvent("dft", "fade_tp", FADE_TELEPORT_DELAY_S, function()
@@ -261,8 +261,8 @@ update_debug_overlay = function()
     local cfg = _G.dft_config
     if not (cfg and cfg.debug_overlay) then return end
     local ok, err = pcall(function()
-        local dft_dorn = _G.dft and _G.dft.dorn
-        if not (dft_dorn and dft_dorn.dbg and dft_dorn.dbg.overlay) then return end
+        local dft_dogma = _G.dft and _G.dft.dogma
+        if not (dft_dogma and dft_dogma.dbg and dft_dogma.dbg.overlay) then return end
         if not get_hud then return end
 
         local msg
@@ -280,7 +280,7 @@ update_debug_overlay = function()
         end
         if dft._debug_overlay_msg == msg then return end
         dft._debug_overlay_msg = msg
-        dft_dorn.dbg.overlay("dorn_fast_travel", 1, msg, "orange")
+        dft_dogma.dbg.overlay("dogma/fast_travel", 1, msg, "orange")
     end)
     if not ok then
         dft_log("debug overlay error: %s", tostring(err))
@@ -527,7 +527,7 @@ end
 -- the live PDA dialog (not a flat HUD overlay) so it renders as part of the PDA's own UI, moving
 -- correctly with the 3D holographic PDA (g_3d_pda) the same way the vanilla clock/battery readouts
 -- do. Independent of dft.is_traveling - the cooldown can tick down while doing anything else.
-local DFT_SNEAK_CD_XML = "ui_dorn_fast_travel_sneak_cd.xml"
+local DFT_SNEAK_CD_XML = "ui_dogma_fast_travel_sneak_cd.xml"
 local DFT_SNEAK_CD_ID = "dft_sneak_cd_label"
 update_sneak_cooldown_hud = function()
     local remaining = (dft_sneak_cooldown_remaining_secs and dft_sneak_cooldown_remaining_secs()) or 0

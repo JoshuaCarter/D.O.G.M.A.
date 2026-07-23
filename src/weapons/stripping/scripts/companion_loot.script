@@ -1,14 +1,13 @@
 --[[
-	Dorn's Strip Everything - companion loot safety.
+	Strip Everything - companion loot safety.
 
 	Block moving equipped player gear into a companion's inventory during loot.
 	Those transfers use raw transfer_item and can make items vanish.
 ]]
 
-local MOD_ID = "dorn_strip_everything"
-local DORN_COMMON_VERSION = "dorn_common" -- managed by sync-dorn-common.sh, do not hand-edit
+local MOD_ID = "dogma/strip_everything"
 
-local DORN
+local DOGMA
 
 local CONFIG = {
 	block_special_items = true,
@@ -21,16 +20,16 @@ local ACTOR_SOURCE_BAGS = {
 }
 
 local function log(msg)
-	if not (DORN and DORN.dbg) then
+	if not (DOGMA and DOGMA.dbg) then
 		return
 	end
-	if DORN.mcm.bool(MOD_ID, "development/debug_log", false) then
-		DORN.dbg.log(MOD_ID, tostring(msg))
+	if DOGMA.mcm.bool(MOD_ID, "development/debug_log", false) then
+		DOGMA.dbg.log(MOD_ID, tostring(msg))
 	end
 end
 
 local function on_option_change()
-	CONFIG.block_special_items = DORN.mcm.bool(MOD_ID, "main/block_companion_special_items", true)
+	CONFIG.block_special_items = DOGMA.mcm.bool(MOD_ID, "main/block_companion_special_items", true)
 	log(string.format("companion loot: block_special_items=%s", tostring(CONFIG.block_special_items)))
 end
 
@@ -72,7 +71,7 @@ local function is_actor_to_companion_move(mode, bag)
 end
 
 local function on_item_before_move(flags, npc_id, obj, mode, bag)
-	if _G.dorn_strip_internal_move then
+	if _G.dogma_strip_internal_move then
 		return
 	end
 	if not CONFIG.block_special_items then
@@ -105,7 +104,7 @@ local function on_item_before_move(flags, npc_id, obj, mode, bag)
 end
 
 function on_game_start()
-	DORN = _G[DORN_COMMON_VERSION].load(MOD_ID)
+	DOGMA = _G.dogma_common.load(MOD_ID)
 	RegisterScriptCallback("on_option_change", on_option_change)
 	RegisterScriptCallback("ActorMenu_on_item_before_move", on_item_before_move)
 	on_option_change()

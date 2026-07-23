@@ -1,5 +1,5 @@
 --[[
-	Extra weapon stat rows for Dorn's Weapon Tooltips (Dispersion, Spread,
+	Extra weapon stat rows for Weapon Tooltips (Dispersion, Spread,
 	Barrel Wear, Burst Size, Bullet Drop). main.script registers them in
 	utils_ui.stats_table (lookups are call-time; alpha order is main before stats).
 
@@ -9,7 +9,7 @@
 	lookups like zzzz_dogma_tooltips_weapons_stats.NAME from other scripts).
 ]]
 
-local MOD_ID = "dorn_weapon_tooltip"
+local MOD_ID = "dogma/weapon_tooltip"
 
 -- GAMMA actor.ltx movement dispersion (Actor_Weapon.cpp, VEL_MAX = 10 m/s).
 -- Engine adds actor PDM degrees to weapon base; it does not multiply them.
@@ -59,11 +59,11 @@ end
 
 -- String ids for the new rows (also used by main for white-text display).
 NAME = {
-	dispersion = "ui_dorn_wpn_dispersion",
-	spread = "ui_dorn_wpn_spread",
-	barrel_wear = "ui_dorn_wpn_barrel_wear",
-	burst_control = "ui_dorn_wpn_burst_control",
-	bullet_drop = "ui_dorn_wpn_bullet_drop",
+	dispersion = "ui_dogma_wpn_dispersion",
+	spread = "ui_dogma_wpn_spread",
+	barrel_wear = "ui_dogma_wpn_barrel_wear",
+	burst_control = "ui_dogma_wpn_burst_control",
+	bullet_drop = "ui_dogma_wpn_bullet_drop",
 }
 
 local logged_once = {}
@@ -80,8 +80,8 @@ local function dbg(msg)
 	if not DEBUG_ENABLED then
 		return
 	end
-	if DORN and DORN.dbg and DORN.dbg.log then
-		DORN.dbg.log(MOD_ID, msg)
+	if DOGMA and DOGMA.dbg and DOGMA.dbg.log then
+		DOGMA.dbg.log(MOD_ID, msg)
 	else
 		printf("[DBG][%s] %s", MOD_ID, tostring(msg))
 	end

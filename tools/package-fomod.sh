@@ -120,10 +120,10 @@ fi
 cat > "$STAGE/fomod/info.xml" <<EOF
 <fomod>
 	<Name>DOGMA</Name>
-	<Author>Dorn</Author>
+	<Author>DOGMA</Author>
 	<Version>${VERSION}</Version>
 	<Website>https://github.com/JoshuaCarter/DOGMA</Website>
-	<Description>Dorn's Own GAMMA Mods and Alterations — pick the features you want. Core (DORN common) is always installed.</Description>
+	<Description>DOGMA — Dorn's Own GAMMA Mods and Alterations. Pick the features you want. Core (dogma_common) is always installed.</Description>
 	<Groups>
 		<element>Miscellaneous</element>
 	</Groups>

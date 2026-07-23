@@ -1,15 +1,14 @@
 --[[
-	Dorn's Strip Everything - drop / disassemble inventory keybinds.
+	Strip Everything - drop / disassemble inventory keybinds.
 
 	Owns inventory key detection (press / dtap / hold + modifiers), hold-paint
 	On_Hover, and drop/disassemble actions. Strip binds are also driven here;
 	strip burst logic stays in main.script.
 ]]
 
-local MOD_ID = "dorn_strip_everything"
-local DORN_COMMON_VERSION = "dorn_common" -- managed by sync-dorn-common.sh, do not hand-edit
+local MOD_ID = "dogma/strip_everything"
 
-local DORN
+local DOGMA
 
 local MODE_PRESS = 0
 local MODE_DTAP = 1
@@ -50,22 +49,22 @@ local hover_wrapper = nil
 local patched_on_hover = false
 
 local function log(msg)
-	if not (DORN and DORN.dbg) then
+	if not (DOGMA and DOGMA.dbg) then
 		return
 	end
 	if CONFIG.debug_log then
-		DORN.dbg.log(MOD_ID, tostring(msg))
+		DOGMA.dbg.log(MOD_ID, tostring(msg))
 	end
 end
 
 local function read_mode(path)
-	return math.floor(DORN.mcm.number(MOD_ID, path, 0) + 0.5)
+	return math.floor(DOGMA.mcm.number(MOD_ID, path, 0) + 0.5)
 end
 
 local function make_bind(id, key_path, mod_path, mode_path, kind, all_stacks)
 	return {
 		id = id,
-		key = DORN.mcm.key(MOD_ID, key_path),
+		key = DOGMA.mcm.key(MOD_ID, key_path),
 		modifier = read_mode(mod_path),
 		mode = read_mode(mode_path),
 		kind = kind,
@@ -74,9 +73,9 @@ local function make_bind(id, key_path, mod_path, mode_path, kind, all_stacks)
 end
 
 local function on_option_change()
-	CONFIG.drop_safe_equipped = DORN.mcm.bool(MOD_ID, "main/drop_safe_equipped", true)
-	CONFIG.disa_safe_equipped = DORN.mcm.bool(MOD_ID, "main/disa_safe_equipped", true)
-	CONFIG.debug_log = DORN.mcm.bool(MOD_ID, "development/drop_disa_debug_log", false)
+	CONFIG.drop_safe_equipped = DOGMA.mcm.bool(MOD_ID, "main/drop_safe_equipped", true)
+	CONFIG.disa_safe_equipped = DOGMA.mcm.bool(MOD_ID, "main/disa_safe_equipped", true)
+	CONFIG.debug_log = DOGMA.mcm.bool(MOD_ID, "development/drop_disa_debug_log", false)
 
 	BINDS = {
 		make_bind("drop", "main/key_drop", "main/key_drop_modifier", "main/key_drop_mode", "drop", false),
@@ -263,9 +262,9 @@ local function do_disa(gui, obj, bag, all_stacks)
 end
 
 local function do_strip(gui, obj, bag, idx, all_stacks)
-	local api = _G.dorn_strip
+	local api = _G.dogma_strip
 	if not (api and api.strip_hover) then
-		log("strip: dorn_strip API missing")
+		log("strip: dogma_strip API missing")
 		return
 	end
 	api.strip_hover(all_stacks, obj, bag, idx, gui)
@@ -471,7 +470,7 @@ local original_on_keyboard = ui_inventory and ui_inventory.UIInventory and ui_in
 if original_on_keyboard then
 	function ui_inventory.UIInventory:OnKeyboard(dik, keyboard_action)
 		local res = original_on_keyboard(self, dik, keyboard_action)
-		if not (DORN and DORN.sys and DORN.sys.ready(MOD_ID, db, on_option_change)) then
+		if not (DOGMA and DOGMA.sys and DOGMA.sys.ready(MOD_ID, db, on_option_change)) then
 			return res
 		end
 		if not inv_mode_ok(self) then
@@ -490,14 +489,14 @@ local original_on_update = ui_inventory and ui_inventory.UIInventory and ui_inve
 if original_on_update then
 	function ui_inventory.UIInventory:Update()
 		original_on_update(self)
-		if DORN and DORN.sys and DORN.sys.ready(MOD_ID, db, on_option_change) then
+		if DOGMA and DOGMA.sys and DOGMA.sys.ready(MOD_ID, db, on_option_change) then
 			hold_tick(self)
 		end
 	end
 end
 
 function on_game_start()
-	DORN = _G[DORN_COMMON_VERSION].load(MOD_ID)
+	DOGMA = _G.dogma_common.load(MOD_ID)
 	RegisterScriptCallback("on_option_change", on_option_change)
 	RegisterScriptCallback("actor_on_first_update", function()
 		reapply_on_hover_patch()

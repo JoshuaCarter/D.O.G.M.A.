@@ -1,5 +1,5 @@
 --[[
-	Dorn's FPS Counter
+	FPS Counter
 
 	Each frame records time_global (ms). Before each refresh, drop oldest samples past
 	sample_window; FPS = remaining count / sample_window. Min/max and graph history share
@@ -17,10 +17,9 @@
 	which would otherwise look like a slow frame - so those are excluded too.
 ]]
 
-local MOD_ID = "dorn_fps_counter"
-local DORN_COMMON_VERSION = "dorn_common" -- managed by sync-dorn-common.sh, do not hand-edit
+local MOD_ID = "dogma/fps_counter"
 
-local DORN
+local DOGMA
 
 local UI_WIDTH = 1024
 local UI_HEIGHT = 768
@@ -87,11 +86,11 @@ local last_frame_time_ms = nil
 -- FPS samples/refreshes change many times per second and aren't something the
 -- player can usefully watch or time, so this mod only supports file logging.
 local function log(msg)
-	if not (DORN and DORN.dbg) then
+	if not (DOGMA and DOGMA.dbg) then
 		return
 	end
 	if CONFIG.debug_log then
-		DORN.dbg.log(MOD_ID, tostring(msg))
+		DOGMA.dbg.log(MOD_ID, tostring(msg))
 	end
 end
 
@@ -136,43 +135,43 @@ local function mcm_byte(v)
 end
 
 local function on_option_change()
-	CONFIG.enabled_default = DORN.mcm.bool(MOD_ID, "main/enabled_default", true)
-	CONFIG.debug_log = DORN.mcm.bool(MOD_ID, "development/debug_log", false)
-	CONFIG.long_frame_threshold_ms = DORN.mcm.number(MOD_ID, "development/long_frame_threshold_ms", 0)
-	CONFIG.toggle_key = DORN.mcm.key(MOD_ID, "main/toggle_key", 0)
-	CONFIG.display_mode = DORN.mcm.number(MOD_ID, "main/display", DISPLAY.SIMPLE_SMALL)
-	CONFIG.sample_window = DORN.mcm.number(MOD_ID, "main/sample_window", 0.5)
-	CONFIG.max_fps = math.max(60, math.min(500, DORN.mcm.number(MOD_ID, "main/max_fps", 144)))
-	CONFIG.minmax_window = DORN.mcm.number(MOD_ID, "main/minmax_window", 5)
-	CONFIG.refresh_rate = DORN.mcm.number(MOD_ID, "main/refresh_rate", 3)
-	CONFIG.pos_anchor = DORN.mcm.number(MOD_ID, "main/pos_anchor", ANCHOR.TOP_LEFT)
-	CONFIG.pos_x = DORN.mcm.number(MOD_ID, "main/pos_x", 0)
-	CONFIG.pos_y = DORN.mcm.number(MOD_ID, "main/pos_y", 0)
+	CONFIG.enabled_default = DOGMA.mcm.bool(MOD_ID, "main/enabled_default", true)
+	CONFIG.debug_log = DOGMA.mcm.bool(MOD_ID, "development/debug_log", false)
+	CONFIG.long_frame_threshold_ms = DOGMA.mcm.number(MOD_ID, "development/long_frame_threshold_ms", 0)
+	CONFIG.toggle_key = DOGMA.mcm.key(MOD_ID, "main/toggle_key", 0)
+	CONFIG.display_mode = DOGMA.mcm.number(MOD_ID, "main/display", DISPLAY.SIMPLE_SMALL)
+	CONFIG.sample_window = DOGMA.mcm.number(MOD_ID, "main/sample_window", 0.5)
+	CONFIG.max_fps = math.max(60, math.min(500, DOGMA.mcm.number(MOD_ID, "main/max_fps", 144)))
+	CONFIG.minmax_window = DOGMA.mcm.number(MOD_ID, "main/minmax_window", 5)
+	CONFIG.refresh_rate = DOGMA.mcm.number(MOD_ID, "main/refresh_rate", 3)
+	CONFIG.pos_anchor = DOGMA.mcm.number(MOD_ID, "main/pos_anchor", ANCHOR.TOP_LEFT)
+	CONFIG.pos_x = DOGMA.mcm.number(MOD_ID, "main/pos_x", 0)
+	CONFIG.pos_y = DOGMA.mcm.number(MOD_ID, "main/pos_y", 0)
 	CONFIG.font = FONTS[display_font_idx(CONFIG.display_mode)]
-	CONFIG.text_r = mcm_byte(DORN.mcm.number(MOD_ID, "colors/text_r", 255))
-	CONFIG.text_g = mcm_byte(DORN.mcm.number(MOD_ID, "colors/text_g", 255))
-	CONFIG.text_b = mcm_byte(DORN.mcm.number(MOD_ID, "colors/text_b", 255))
-	CONFIG.text_a = mcm_byte(DORN.mcm.number(MOD_ID, "colors/text_a", 200))
-	CONFIG.graph_line_r = mcm_byte(DORN.mcm.number(MOD_ID, "colors/graph_line_r", 255))
-	CONFIG.graph_line_g = mcm_byte(DORN.mcm.number(MOD_ID, "colors/graph_line_g", 255))
-	CONFIG.graph_line_b = mcm_byte(DORN.mcm.number(MOD_ID, "colors/graph_line_b", 255))
-	CONFIG.graph_line_a = mcm_byte(DORN.mcm.number(MOD_ID, "colors/graph_line_a", 255))
-	CONFIG.graph_border_r = mcm_byte(DORN.mcm.number(MOD_ID, "colors/graph_border_r", 96))
-	CONFIG.graph_border_g = mcm_byte(DORN.mcm.number(MOD_ID, "colors/graph_border_g", 96))
-	CONFIG.graph_border_b = mcm_byte(DORN.mcm.number(MOD_ID, "colors/graph_border_b", 96))
-	CONFIG.graph_border_a = mcm_byte(DORN.mcm.number(MOD_ID, "colors/graph_border_a", 128))
+	CONFIG.text_r = mcm_byte(DOGMA.mcm.number(MOD_ID, "colors/text_r", 255))
+	CONFIG.text_g = mcm_byte(DOGMA.mcm.number(MOD_ID, "colors/text_g", 255))
+	CONFIG.text_b = mcm_byte(DOGMA.mcm.number(MOD_ID, "colors/text_b", 255))
+	CONFIG.text_a = mcm_byte(DOGMA.mcm.number(MOD_ID, "colors/text_a", 200))
+	CONFIG.graph_line_r = mcm_byte(DOGMA.mcm.number(MOD_ID, "colors/graph_line_r", 255))
+	CONFIG.graph_line_g = mcm_byte(DOGMA.mcm.number(MOD_ID, "colors/graph_line_g", 255))
+	CONFIG.graph_line_b = mcm_byte(DOGMA.mcm.number(MOD_ID, "colors/graph_line_b", 255))
+	CONFIG.graph_line_a = mcm_byte(DOGMA.mcm.number(MOD_ID, "colors/graph_line_a", 255))
+	CONFIG.graph_border_r = mcm_byte(DOGMA.mcm.number(MOD_ID, "colors/graph_border_r", 96))
+	CONFIG.graph_border_g = mcm_byte(DOGMA.mcm.number(MOD_ID, "colors/graph_border_g", 96))
+	CONFIG.graph_border_b = mcm_byte(DOGMA.mcm.number(MOD_ID, "colors/graph_border_b", 96))
+	CONFIG.graph_border_a = mcm_byte(DOGMA.mcm.number(MOD_ID, "colors/graph_border_a", 128))
 
 	local sample_len = math.max(1, math.ceil(CONFIG.sample_window * CONFIG.max_fps))
 	if not sample_buf or sample_buf.cap ~= sample_len then
-		sample_buf = _G.dorn_ring_buffer.new(sample_len)
+		sample_buf = _G.dogma_ring_buffer.new(sample_len)
 	end
 
 	local hist_cap = history_buf_cap()
 	if not history_buf or history_buf.cap ~= hist_cap then
-		history_buf = _G.dorn_ring_buffer.new(hist_cap)
+		history_buf = _G.dogma_ring_buffer.new(hist_cap)
 	end
 	if not graph_buf or graph_buf.cap ~= hist_cap then
-		graph_buf = _G.dorn_ring_buffer.new(hist_cap)
+		graph_buf = _G.dogma_ring_buffer.new(hist_cap)
 		graph_buf:clear()
 	end
 
@@ -282,7 +281,7 @@ local function on_unique_update()
 		local min_fps, max_fps = get_minmax_fps(current_time_ms)
 		hud:SetGraphValues(fps, min_fps, max_fps)
 		if not graph_buf or graph_buf.cap ~= history_buf_cap() then
-			graph_buf = _G.dorn_ring_buffer.new(history_buf_cap())
+			graph_buf = _G.dogma_ring_buffer.new(history_buf_cap())
 		end
 		graph_buf:push({ fps, current_time_ms })
 		local graph_cutoff = current_time_ms - history_window_sec() * 1000
@@ -301,7 +300,7 @@ local function on_unique_update()
 end
 
 local function on_actor_on_update()
-	local ctx = DORN.sys.ready(MOD_ID, db, on_option_change)
+	local ctx = DOGMA.sys.ready(MOD_ID, db, on_option_change)
 	if not ctx then
 		return
 	end
@@ -313,7 +312,7 @@ local function on_actor_on_update()
 	end
 
 	if visible and not hud then
-		hud = ui_dorn_fps_counter()
+		hud = ui_dogma_fps_counter()
 		hud:ApplyConfig(CONFIG)
 		get_hud():AddDialogToRender(hud)
 		next_display_time = 0
@@ -343,7 +342,7 @@ local function on_actor_first_update()
 end
 
 function on_game_start()
-	DORN = _G[DORN_COMMON_VERSION].load(MOD_ID)
+	DOGMA = _G.dogma_common.load(MOD_ID)
 
 	init = false
 	visible = false
@@ -430,20 +429,20 @@ local function init_text_wnd(text_wnd, align)
 	return text_wnd
 end
 
-class "ui_dorn_fps_counter" (CUIScriptWnd)
+class "ui_dogma_fps_counter" (CUIScriptWnd)
 
-function ui_dorn_fps_counter:__init() super()
+function ui_dogma_fps_counter:__init() super()
 	self.cfg = CONFIG
 	self.display_mode = DISPLAY.SIMPLE_SMALL
 	self:InitControls()
 end
 
-function ui_dorn_fps_counter:InitControls()
+function ui_dogma_fps_counter:InitControls()
 	self:SetWndRect(Frect():set(0, 0, UI_WIDTH, UI_HEIGHT))
 	self:SetAutoDelete(true)
 
 	self.xml = CScriptXmlInit()
-	self.xml:ParseFile("ui_dorn_fps_counter_16.xml")
+	self.xml:ParseFile("ui_dogma_fps_counter_16.xml")
 
 	self.wnd = self.xml:InitStatic("wnd", self)
 	self.fps_simple = init_text_wnd(self.xml:InitTextWnd("wnd:fps_simple", self.wnd))
@@ -475,16 +474,16 @@ function ui_dorn_fps_counter:InitControls()
 	self:SetDisplayMode(DISPLAY.SIMPLE_SMALL)
 end
 
-function ui_dorn_fps_counter:TextColor()
+function ui_dogma_fps_counter:TextColor()
 	return argb_from_bytes(self.cfg.text_a, self.cfg.text_r, self.cfg.text_g, self.cfg.text_b)
 end
 
-function ui_dorn_fps_counter:TextAlign()
+function ui_dogma_fps_counter:TextAlign()
 	return text_align_for_anchor(self.cfg.pos_anchor or ANCHOR.TOP_LEFT)
 end
 
 -- Plain single-color text so SetTextAlignment works (%c[] complex tags break right align).
-function ui_dorn_fps_counter:SetWndText(text_wnd, text)
+function ui_dogma_fps_counter:SetWndText(text_wnd, text)
 	if not text_wnd then
 		return
 	end
@@ -497,7 +496,7 @@ function ui_dorn_fps_counter:SetWndText(text_wnd, text)
 	end)
 end
 
-function ui_dorn_fps_counter:PlaceTextWnd(text_wnd, x, y, w, h)
+function ui_dogma_fps_counter:PlaceTextWnd(text_wnd, x, y, w, h)
 	if not text_wnd then
 		return
 	end
@@ -506,12 +505,12 @@ function ui_dorn_fps_counter:PlaceTextWnd(text_wnd, x, y, w, h)
 	text_wnd:SetWndPos(HUD_LAYOUT_VEC:set(x, y))
 end
 
-function ui_dorn_fps_counter:SetWndPanelSize(w, h)
+function ui_dogma_fps_counter:SetWndPanelSize(w, h)
 	self.wnd_rect:set(0, 0, w, h)
 	self.wnd:SetWndRect(self.wnd_rect)
 end
 
-function ui_dorn_fps_counter:ApplyTextLayout(font_idx, anchor, mode)
+function ui_dogma_fps_counter:ApplyTextLayout(font_idx, anchor, mode)
 	local layout = HUD_LAYOUT.text[font_idx] or HUD_LAYOUT.text[0]
 	local right = anchor_is_right(anchor)
 	local simple_only = mode == DISPLAY.SIMPLE_SMALL or mode == DISPLAY.SIMPLE_LARGE
@@ -555,7 +554,7 @@ function ui_dorn_fps_counter:ApplyTextLayout(font_idx, anchor, mode)
 	self:SetWndPanelSize(panel_w, panel_h)
 end
 
-function ui_dorn_fps_counter:ApplyGraphLayout(graph_idx, anchor)
+function ui_dogma_fps_counter:ApplyGraphLayout(graph_idx, anchor)
 	local layout = HUD_LAYOUT.graph[graph_idx] or HUD_LAYOUT.graph[0]
 	local g = layout.graph
 	local vals = layout.values
@@ -584,7 +583,7 @@ function ui_dorn_fps_counter:ApplyGraphLayout(graph_idx, anchor)
 	self:SetWndPanelSize(layout.wnd_w, layout.wnd_h)
 end
 
-function ui_dorn_fps_counter:InitGraph()
+function ui_dogma_fps_counter:InitGraph()
 	if self.graph_root then
 		return
 	end
@@ -602,11 +601,11 @@ function ui_dorn_fps_counter:InitGraph()
 	self:ApplyGraphColors(self.cfg)
 end
 
-function ui_dorn_fps_counter:ApplyStaticColor(graph_pixel, r, g, b, a)
+function ui_dogma_fps_counter:ApplyStaticColor(graph_pixel, r, g, b, a)
 	if not graph_pixel then
 		return
 	end
-	if not graph_pixel._dorn_graph_tex then
+	if not graph_pixel._dogma_graph_tex then
 		pcall(function()
 			graph_pixel:RemoveColorAnimation()
 		end)
@@ -616,12 +615,12 @@ function ui_dorn_fps_counter:ApplyStaticColor(graph_pixel, r, g, b, a)
 		pcall(function()
 			graph_pixel:SetStretchTexture(true)
 		end)
-		graph_pixel._dorn_graph_tex = true
+		graph_pixel._dogma_graph_tex = true
 	end
 	graph_pixel:SetTextureColor(argb_from_bytes(a, r, g, b))
 end
 
-function ui_dorn_fps_counter:ApplyGraphColors(cfg)
+function ui_dogma_fps_counter:ApplyGraphColors(cfg)
 	if not self.graph_parts then
 		return
 	end
@@ -639,7 +638,7 @@ function ui_dorn_fps_counter:ApplyGraphColors(cfg)
 	end
 end
 
-function ui_dorn_fps_counter:EnsureGraphPart(idx)
+function ui_dogma_fps_counter:EnsureGraphPart(idx)
 	while self.graph_part_count < idx do
 		self.graph_part_count = self.graph_part_count + 1
 		local st = self.xml:InitStatic("wnd:graph_pixel", self.graph_root)
@@ -653,7 +652,7 @@ function ui_dorn_fps_counter:EnsureGraphPart(idx)
 	return self.graph_parts[idx]
 end
 
-function ui_dorn_fps_counter:PlaceGraphPart(idx, x, y, w, h)
+function ui_dogma_fps_counter:PlaceGraphPart(idx, x, y, w, h)
 	local st = self:EnsureGraphPart(idx)
 	local rect = self.part_rect
 	local pw = math.max(1, w)
@@ -675,7 +674,7 @@ function ui_dorn_fps_counter:PlaceGraphPart(idx, x, y, w, h)
 	return idx + 1
 end
 
-function ui_dorn_fps_counter:ClearGraph()
+function ui_dogma_fps_counter:ClearGraph()
 	if not self.graph_parts then
 		return
 	end
@@ -684,7 +683,7 @@ function ui_dorn_fps_counter:ClearGraph()
 	end
 end
 
-function ui_dorn_fps_counter:DrawGraph(buf, cfg)
+function ui_dogma_fps_counter:DrawGraph(buf, cfg)
 	if not display_uses_graph(cfg.display_mode) then
 		self:ClearGraph()
 		return
@@ -771,7 +770,7 @@ function ui_dorn_fps_counter:DrawGraph(buf, cfg)
 	end
 end
 
-function ui_dorn_fps_counter:SetDisplayMode(mode)
+function ui_dogma_fps_counter:SetDisplayMode(mode)
 	self.display_mode = mode
 	local graph = display_uses_graph(mode)
 	local detailed = mode >= DISPLAY.DETAILED_SMALL and not graph
@@ -792,14 +791,14 @@ function ui_dorn_fps_counter:SetDisplayMode(mode)
 	self.graph_min_val:Show(graph)
 end
 
-function ui_dorn_fps_counter:SetSimple(fps)
+function ui_dogma_fps_counter:SetSimple(fps)
 	if self.display_mode ~= DISPLAY.SIMPLE_SMALL and self.display_mode ~= DISPLAY.SIMPLE_LARGE then
 		return
 	end
 	self:SetWndText(self.fps_simple, fps)
 end
 
-function ui_dorn_fps_counter:SetDetailed(fps, min_fps, max_fps)
+function ui_dogma_fps_counter:SetDetailed(fps, min_fps, max_fps)
 	if self.display_mode < DISPLAY.DETAILED_SMALL or display_uses_graph(self.display_mode) then
 		return
 	end
@@ -808,7 +807,7 @@ function ui_dorn_fps_counter:SetDetailed(fps, min_fps, max_fps)
 	self:SetWndText(self.max_val, max_fps)
 end
 
-function ui_dorn_fps_counter:SetGraphValues(fps, min_fps, max_fps)
+function ui_dogma_fps_counter:SetGraphValues(fps, min_fps, max_fps)
 	if not display_uses_graph(self.display_mode) then
 		return
 	end
@@ -817,7 +816,7 @@ function ui_dorn_fps_counter:SetGraphValues(fps, min_fps, max_fps)
 	self:SetWndText(self.graph_min_val, min_fps)
 end
 
-function ui_dorn_fps_counter:ApplyConfig(cfg)
+function ui_dogma_fps_counter:ApplyConfig(cfg)
 	self.cfg = cfg
 	local mode = cfg.display_mode or DISPLAY.SIMPLE_SMALL
 	local font_idx = display_font_idx(mode)

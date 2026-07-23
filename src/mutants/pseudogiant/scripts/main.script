@@ -1,39 +1,38 @@
 --[[
-	Dorn's Giant Jump — dodge pseudogiant ground slams while jumping or falling.
+	Giant Jump — dodge pseudogiant ground slams while jumping or falling.
 
 	GAMMA delivers stomps as hit.strike from the giant draftsman via grok's
 	actor_on_before_hit. We run before grok and zero the hit when airborne.
 ]]
 
-local MOD_ID = "dorn_giant_jump"
-local DORN_COMMON_VERSION = "dorn_common" -- managed by sync-dorn-common.sh, do not hand-edit
+local MOD_ID = "dogma/giant_jump"
 
-local DORN
+local DOGMA
 
 local CONFIG = {
 	enabled = true,
 	debug_log = false,
 }
 
-local HOOK_STATE = _G.__dorn_giant_jump_hooks or {}
-_G.__dorn_giant_jump_hooks = HOOK_STATE
+local HOOK_STATE = _G.__dogma_giant_jump_hooks or {}
+_G.__dogma_giant_jump_hooks = HOOK_STATE
 
 local function log(msg)
-	if not (DORN and DORN.dbg) then
+	if not (DOGMA and DOGMA.dbg) then
 		return
 	end
 	if CONFIG.debug_log then
-		DORN.dbg.log(MOD_ID, tostring(msg))
+		DOGMA.dbg.log(MOD_ID, tostring(msg))
 	end
 end
 
 local function on_option_change()
-	CONFIG.enabled = DORN.mcm.bool(MOD_ID, "main/enabled", true)
-	CONFIG.debug_log = DORN.mcm.bool(MOD_ID, "development/debug_log", false)
+	CONFIG.enabled = DOGMA.mcm.bool(MOD_ID, "main/enabled", true)
+	CONFIG.debug_log = DOGMA.mcm.bool(MOD_ID, "development/debug_log", false)
 end
 
 function on_game_start()
-	DORN = _G[DORN_COMMON_VERSION].load(MOD_ID)
+	DOGMA = _G.dogma_common.load(MOD_ID)
 	on_option_change()
 	RegisterScriptCallback("on_option_change", on_option_change)
 

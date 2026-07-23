@@ -1,5 +1,5 @@
 --[[
-	Dorn's Free Zoom — free zoom + ADS Zoom (WADS).
+	Free Zoom — free zoom + ADS Zoom (WADS).
 
 	Three drivers → fov + hud_fov (shrink %: base * (1 - pct/100); world stack cap 50%):
 	  Free only: both channels = free%
@@ -9,10 +9,9 @@
 	Owns ADS hud_fov — disable Adjustable Scope View.
 ]]
 
-local MOD_ID = "dorn_free_zoom"
-local DORN_COMMON_VERSION = "dorn_common" -- managed by sync-dorn-common.sh, do not hand-edit
+local MOD_ID = "dogma/free_zoom"
 
-local DORN
+local DOGMA
 
 -- zoom_key_mode: 0=single, 1=double, 2=long, 3=hold (in on down, out on up)
 local MODE_SINGLE = 0
@@ -177,11 +176,11 @@ local function clamp(n, lo, hi)
 end
 
 local function log(msg)
-	if not (DORN and DORN.dbg) then
+	if not (DOGMA and DOGMA.dbg) then
 		return
 	end
 	if CONFIG.debug_log then
-		DORN.dbg.log(MOD_ID, tostring(msg))
+		DOGMA.dbg.log(MOD_ID, tostring(msg))
 	end
 end
 
@@ -213,41 +212,41 @@ local function mode_label()
 end
 
 local function refresh_config()
-	CONFIG.enabled = DORN.mcm.bool(MOD_ID, "free_zoom/enabled", true)
-	CONFIG.empty_hands_only = DORN.mcm.bool(MOD_ID, "free_zoom/empty_hands_only", false)
-	CONFIG.zoom_key = DORN.mcm.key(MOD_ID, "free_zoom/zoom_key")
-	CONFIG.zoom_key_modifier = DORN.mcm.number(MOD_ID, "free_zoom/zoom_key_modifier", 0)
-	CONFIG.zoom_key_mode = clamp(DORN.mcm.number(MOD_ID, "free_zoom/zoom_key_mode", MODE_SINGLE), MODE_SINGLE, MODE_HOLD)
-	CONFIG.rmb_zoom = clamp(DORN.mcm.number(MOD_ID, "free_zoom/rmb_zoom", MOUSE_NONE), MOUSE_NONE, MOUSE_HOLD)
-	CONFIG.mmb_zoom = clamp(DORN.mcm.number(MOD_ID, "free_zoom/mmb_zoom", MOUSE_NONE), MOUSE_NONE, MOUSE_HOLD)
-	CONFIG.scroll_wheel_zoom = DORN.mcm.bool(MOD_ID, "free_zoom/scroll_wheel_zoom", false)
-	CONFIG.scroll_wheel_reverse = DORN.mcm.bool(MOD_ID, "free_zoom/scroll_wheel_reverse", false)
-	CONFIG.scroll_wheel_steps = clamp(DORN.mcm.number(MOD_ID, "free_zoom/scroll_wheel_steps", 1), 1, 5)
-	CONFIG.scroll_wheel_max_gap_ms = clamp(DORN.mcm.number(MOD_ID, "free_zoom/scroll_wheel_max_gap_ms", 200), 50, 500)
-	CONFIG.free_zoom = clamp(DORN.mcm.number(MOD_ID, "free_zoom/free_zoom", 50), 0, 50)
-	CONFIG.move_speed = clamp(DORN.mcm.number(MOD_ID, "free_zoom/move_speed", 70), 0, 70)
+	CONFIG.enabled = DOGMA.mcm.bool(MOD_ID, "free_zoom/enabled", true)
+	CONFIG.empty_hands_only = DOGMA.mcm.bool(MOD_ID, "free_zoom/empty_hands_only", false)
+	CONFIG.zoom_key = DOGMA.mcm.key(MOD_ID, "free_zoom/zoom_key")
+	CONFIG.zoom_key_modifier = DOGMA.mcm.number(MOD_ID, "free_zoom/zoom_key_modifier", 0)
+	CONFIG.zoom_key_mode = clamp(DOGMA.mcm.number(MOD_ID, "free_zoom/zoom_key_mode", MODE_SINGLE), MODE_SINGLE, MODE_HOLD)
+	CONFIG.rmb_zoom = clamp(DOGMA.mcm.number(MOD_ID, "free_zoom/rmb_zoom", MOUSE_NONE), MOUSE_NONE, MOUSE_HOLD)
+	CONFIG.mmb_zoom = clamp(DOGMA.mcm.number(MOD_ID, "free_zoom/mmb_zoom", MOUSE_NONE), MOUSE_NONE, MOUSE_HOLD)
+	CONFIG.scroll_wheel_zoom = DOGMA.mcm.bool(MOD_ID, "free_zoom/scroll_wheel_zoom", false)
+	CONFIG.scroll_wheel_reverse = DOGMA.mcm.bool(MOD_ID, "free_zoom/scroll_wheel_reverse", false)
+	CONFIG.scroll_wheel_steps = clamp(DOGMA.mcm.number(MOD_ID, "free_zoom/scroll_wheel_steps", 1), 1, 5)
+	CONFIG.scroll_wheel_max_gap_ms = clamp(DOGMA.mcm.number(MOD_ID, "free_zoom/scroll_wheel_max_gap_ms", 200), 50, 500)
+	CONFIG.free_zoom = clamp(DOGMA.mcm.number(MOD_ID, "free_zoom/free_zoom", 50), 0, 50)
+	CONFIG.move_speed = clamp(DOGMA.mcm.number(MOD_ID, "free_zoom/move_speed", 70), 0, 70)
 
-	CONFIG.ads_enabled = DORN.mcm.bool(MOD_ID, "ads_zoom/enabled", true)
-	CONFIG.ads_zoom = clamp(DORN.mcm.number(MOD_ID, "ads_zoom/ads_zoom", 15), 0, 50)
-	CONFIG.exit_ads_clears_free = DORN.mcm.bool(MOD_ID, "ads_zoom/exit_ads_clears_free", true)
-	CONFIG.reload_clears_free = DORN.mcm.bool(MOD_ID, "ads_zoom/reload_clears_free", true)
-	CONFIG.wads_inc_key = DORN.mcm.key(MOD_ID, "ads_zoom/wads_inc_key")
-	CONFIG.wads_dec_key = DORN.mcm.key(MOD_ID, "ads_zoom/wads_dec_key")
-	CONFIG.wads_reset_key = DORN.mcm.key(MOD_ID, "ads_zoom/wads_reset_key")
-	CONFIG.wads_key_mode = clamp(DORN.mcm.number(MOD_ID, "ads_zoom/wads_key_mode", WADS_MODE_PRESS), WADS_MODE_PRESS, WADS_MODE_HOLD)
-	CONFIG.wads_key_modifier = DORN.mcm.number(MOD_ID, "ads_zoom/wads_key_modifier", 0)
-	CONFIG.use_global_wads = DORN.mcm.bool(MOD_ID, "ads_zoom/use_global_wads", false)
-	CONFIG.global_wads = clamp(DORN.mcm.number(MOD_ID, "ads_zoom/global_wads", 0), 0, 50)
+	CONFIG.ads_enabled = DOGMA.mcm.bool(MOD_ID, "ads_zoom/enabled", true)
+	CONFIG.ads_zoom = clamp(DOGMA.mcm.number(MOD_ID, "ads_zoom/ads_zoom", 15), 0, 50)
+	CONFIG.exit_ads_clears_free = DOGMA.mcm.bool(MOD_ID, "ads_zoom/exit_ads_clears_free", true)
+	CONFIG.reload_clears_free = DOGMA.mcm.bool(MOD_ID, "ads_zoom/reload_clears_free", true)
+	CONFIG.wads_inc_key = DOGMA.mcm.key(MOD_ID, "ads_zoom/wads_inc_key")
+	CONFIG.wads_dec_key = DOGMA.mcm.key(MOD_ID, "ads_zoom/wads_dec_key")
+	CONFIG.wads_reset_key = DOGMA.mcm.key(MOD_ID, "ads_zoom/wads_reset_key")
+	CONFIG.wads_key_mode = clamp(DOGMA.mcm.number(MOD_ID, "ads_zoom/wads_key_mode", WADS_MODE_PRESS), WADS_MODE_PRESS, WADS_MODE_HOLD)
+	CONFIG.wads_key_modifier = DOGMA.mcm.number(MOD_ID, "ads_zoom/wads_key_modifier", 0)
+	CONFIG.use_global_wads = DOGMA.mcm.bool(MOD_ID, "ads_zoom/use_global_wads", false)
+	CONFIG.global_wads = clamp(DOGMA.mcm.number(MOD_ID, "ads_zoom/global_wads", 0), 0, 50)
 	for _, cat in ipairs({ "pistol", "smg", "rifle", "sniper", "shotgun", "explosive" }) do
 		local row = CONFIG.wads[cat]
-		row.irons = clamp(DORN.mcm.number(MOD_ID, "ads_zoom/wads_" .. cat .. "_irons", 0), 0, 50)
-		row.sight = clamp(DORN.mcm.number(MOD_ID, "ads_zoom/wads_" .. cat .. "_sight", 0), 0, 50)
-		row.scope = clamp(DORN.mcm.number(MOD_ID, "ads_zoom/wads_" .. cat .. "_scope", 0), 0, 50)
+		row.irons = clamp(DOGMA.mcm.number(MOD_ID, "ads_zoom/wads_" .. cat .. "_irons", 0), 0, 50)
+		row.sight = clamp(DOGMA.mcm.number(MOD_ID, "ads_zoom/wads_" .. cat .. "_sight", 0), 0, 50)
+		row.scope = clamp(DOGMA.mcm.number(MOD_ID, "ads_zoom/wads_" .. cat .. "_scope", 0), 0, 50)
 	end
 
-	CONFIG.debug_log = DORN.mcm.bool(MOD_ID, "development/debug_log", false)
-	if DORN.dbg and DORN.dbg.set_enabled then
-		DORN.dbg.set_enabled(MOD_ID, CONFIG.debug_log)
+	CONFIG.debug_log = DOGMA.mcm.bool(MOD_ID, "development/debug_log", false)
+	if DOGMA.dbg and DOGMA.dbg.set_enabled then
+		DOGMA.dbg.set_enabled(MOD_ID, CONFIG.debug_log)
 	end
 end
 
@@ -439,29 +438,29 @@ local function sec_name(sec)
 end
 
 local function update_wads_overlay()
-	if not (DORN and DORN.dbg and CONFIG.debug_log) then
+	if not (DOGMA and DOGMA.dbg and CONFIG.debug_log) then
 		return
 	end
 	if not ads_on then
-		if DORN.dbg.clear_source then
-			DORN.dbg.clear_source(MOD_ID)
+		if DOGMA.dbg.clear_source then
+			DOGMA.dbg.clear_source(MOD_ID)
 		end
 		return
 	end
-	if not DORN.dbg.overlay then
+	if not DOGMA.dbg.overlay then
 		return
 	end
 	refresh_wpn()
 	local _, cat, optic, def, ov = resolve_wads()
 	local gun = sec_name(parent_section())
 	local scope_lab = optic == "irons" and "Irons" or sec_name(attached_scope_sec() or optic_key())
-	DORN.dbg.overlay(MOD_ID, 1, string.format("Category: %s + %s", CAT_LABEL[cat] or cat, OPTIC_LABEL[optic] or optic), "orange")
-	DORN.dbg.overlay(MOD_ID, 2, string.format("Category Zoom: %d%%", def), "orange")
-	DORN.dbg.overlay(MOD_ID, 3, string.format("Gun & Scope: %s + %s", gun, scope_lab), "orange")
+	DOGMA.dbg.overlay(MOD_ID, 1, string.format("Category: %s + %s", CAT_LABEL[cat] or cat, OPTIC_LABEL[optic] or optic), "orange")
+	DOGMA.dbg.overlay(MOD_ID, 2, string.format("Category Zoom: %d%%", def), "orange")
+	DOGMA.dbg.overlay(MOD_ID, 3, string.format("Gun & Scope: %s + %s", gun, scope_lab), "orange")
 	if ov ~= nil then
-		DORN.dbg.overlay(MOD_ID, 4, string.format("Gun & Scope Zoom: %d%%", ov), "orange")
+		DOGMA.dbg.overlay(MOD_ID, 4, string.format("Gun & Scope Zoom: %d%%", ov), "orange")
 	else
-		DORN.dbg.overlay(MOD_ID, 4, "Gun & Scope Zoom: —", "orange")
+		DOGMA.dbg.overlay(MOD_ID, 4, "Gun & Scope Zoom: —", "orange")
 	end
 end
 
@@ -579,11 +578,11 @@ local function set_zoom_move_speed(active)
 		local run_mult = CONFIG.move_speed / 100
 		-- Sprint slowdown is 1/8 of the run slowdown.
 		local sprint_mult = 1 - (1 - run_mult) * 0.125
-		speed_mod.add_speed("dorn_freezoom_speed_run", run_mult, false, true)
-		speed_mod.add_speed("dorn_freezoom_speed_sprint", sprint_mult, true, true)
+		speed_mod.add_speed("dogma_freezoom_speed_run", run_mult, false, true)
+		speed_mod.add_speed("dogma_freezoom_speed_sprint", sprint_mult, true, true)
 	else
-		speed_mod.add_speed("dorn_freezoom_speed_run", 1, false, true)
-		speed_mod.add_speed("dorn_freezoom_speed_sprint", 1, true, true)
+		speed_mod.add_speed("dogma_freezoom_speed_run", 1, false, true)
+		speed_mod.add_speed("dogma_freezoom_speed_sprint", 1, true, true)
 	end
 end
 
@@ -939,7 +938,7 @@ local function actor_on_weapon_lower(_wpn)
 end
 
 local function on_option_change()
-	if not DORN then
+	if not DOGMA then
 		return
 	end
 	refresh_config()
@@ -984,8 +983,8 @@ local function on_option_change()
 end
 
 local function actor_on_first_update()
-	if not DORN.sys.ready(MOD_ID, db, on_option_change) then
-		log("first_update: DORN not ready yet")
+	if not DOGMA.sys.ready(MOD_ID, db, on_option_change) then
+		log("first_update: DOGMA not ready yet")
 		return
 	end
 	sync_hip_from_options()
@@ -1058,7 +1057,7 @@ local poll_hold_zoom
 local poll_wads_hold
 
 local function actor_on_update()
-	if not DORN or not DORN.sys.ready(MOD_ID, db, on_option_change) then
+	if not DOGMA or not DOGMA.sys.ready(MOD_ID, db, on_option_change) then
 		return
 	end
 	if not CONFIG.enabled and not CONFIG.ads_enabled then
@@ -1202,7 +1201,7 @@ local function try_wads_key_press(key)
 end
 
 local function on_key_press(key)
-	if not DORN or not DORN.sys.ready(MOD_ID, db, on_option_change) then
+	if not DOGMA or not DOGMA.sys.ready(MOD_ID, db, on_option_change) then
 		return
 	end
 
@@ -1256,7 +1255,7 @@ local function on_key_press(key)
 end
 
 local function on_key_hold(key)
-	if not DORN or not DORN.sys.ready(MOD_ID, db, on_option_change) then
+	if not DOGMA or not DOGMA.sys.ready(MOD_ID, db, on_option_change) then
 		return
 	end
 	if not CONFIG.enabled then
@@ -1442,18 +1441,18 @@ local function on_save_state(m_data)
 		for k, v in pairs(gun_scope_override) do
 			snap[k] = v
 		end
-		m_data.dorn_free_zoom_wads = snap
+		m_data.dogma_free_zoom_wads = snap
 	else
-		m_data.dorn_free_zoom_wads = nil
+		m_data.dogma_free_zoom_wads = nil
 	end
 end
 
 local function on_load_state(m_data)
 	gun_scope_override = {}
-	if not (m_data and m_data.dorn_free_zoom_wads) then
+	if not (m_data and m_data.dogma_free_zoom_wads) then
 		return
 	end
-	for k, v in pairs(m_data.dorn_free_zoom_wads) do
+	for k, v in pairs(m_data.dogma_free_zoom_wads) do
 		if type(k) == "string" and type(v) == "number" then
 			gun_scope_override[k] = clamp(v, 0, 50)
 		end
@@ -1461,7 +1460,7 @@ local function on_load_state(m_data)
 end
 
 function on_game_start()
-	DORN = _G[DORN_COMMON_VERSION].load(MOD_ID)
+	DOGMA = _G.dogma_common.load(MOD_ID)
 
 	RegisterScriptCallback("on_option_change", on_option_change)
 	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)

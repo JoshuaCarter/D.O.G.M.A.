@@ -1,5 +1,5 @@
 --[[
-	Dorn's Strip Everything - PDA lock inventory icon.
+	Strip Everything - PDA lock inventory icon.
 
 	Shows a red lock overlay on encrypted NPC PDAs in any inventory cell when
 	PDA stash extraction on disassembly is enabled in MCM. Reads live
@@ -7,15 +7,14 @@
 	removes the icon automatically.
 ]]
 
-local MOD_ID = "dorn_strip_everything"
-local DORN_COMMON_VERSION = "dorn_common" -- managed by sync-dorn-common.sh, do not hand-edit
+local MOD_ID = "dogma/strip_everything"
 
-local DORN
+local DOGMA
 local pda_stash_on_disassemble = true
 
 local icon_xml
 
-local LOCK_TEXTURE = "ui_dorn_fieldstrip_pda_lock"
+local LOCK_TEXTURE = "ui_dogma_fieldstrip_pda_lock"
 local LOCK_DISPLAY_W = 6
 local LOCK_DISPLAY_H = 9
 
@@ -52,8 +51,8 @@ local function show_pda_lock_icon(self, obj, sec)
 end
 
 local function on_option_change()
-	if DORN then
-		pda_stash_on_disassemble = DORN.mcm.bool(MOD_ID, "main/pda_stash_on_disassemble", true)
+	if DOGMA then
+		pda_stash_on_disassemble = DOGMA.mcm.bool(MOD_ID, "main/pda_stash_on_disassemble", true)
 	end
 end
 
@@ -76,14 +75,14 @@ if orig_reset then
 end
 
 function on_game_start()
-	DORN = _G[DORN_COMMON_VERSION].load(MOD_ID)
+	DOGMA = _G.dogma_common.load(MOD_ID)
 	RegisterScriptCallback("on_option_change", on_option_change)
 	on_option_change()
 
 	if not icon_xml and CScriptXmlInit then
 		icon_xml = CScriptXmlInit()
-		icon_xml:ParseFile("ui_dorn_fieldstrip_all_keybind_icon.xml")
+		icon_xml:ParseFile("ui_dogma_fieldstrip_all_keybind_icon.xml")
 	elseif not CScriptXmlInit then
-		printf("[dorn_pda_lock] CScriptXmlInit unavailable")
+		printf("[dogma_pda_lock] CScriptXmlInit unavailable")
 	end
 end

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Compile src/ into build/gamedata/ for DOGMA.
+# Compile src/ into gamedata for DOGMA.
 #
 # Layout (MCM-aligned):
-#   src/common/<gamedata-rel>/...           -> build/gamedata/<gamedata-rel>/...  (names kept)
-#   src/<category>/<feature>/<gamedata-rel>/... -> build/gamedata/<gamedata-rel>/...  (merged)
+#   src/common/<gamedata-rel>/...           -> <out>/<gamedata-rel>/...  (names kept)
+#   src/<category>/<feature>/<gamedata-rel>/... -> <out>/<gamedata-rel>/...  (merged)
 #
 #   src/<category>/<feature>/assets/...     authoring only (ignored; not shipped)
 #   src/<category>/<feature>/installer/...  FOMOD metadata (not shipped into gamedata)
@@ -14,38 +14,82 @@
 #   …/scripts/_conf.script    -> dogma_{path}_conf.script
 #                               no zzzz_ — before that feature's zzzz_ body scripts
 #   …/scripts/mcm.script      -> dogma_{path}_mcm.script   (*mcm.script glob)
+#                               _conf is prepended so main-menu MCM (which only
+#                               loads *mcm.script) still gets MOD_ID + defaults
 #   …/scripts/<other>.script  -> zzzz_dogma_{path}_<other>.script
 #
 # Env:
-#   DOGMA_OUT=path     output gamedata dir (default: build/gamedata)
 #   DOGMA_ONLY=spec    what to build:
 #                        (empty|all)  → common + every feature
 #                        common       → common only
 #                        cat/feat     → that feature only (e.g. zoom/free_zoom)
-#   DOGMA_DEPLOY=path  after full default build, copy gamedata + meta.ini + .mod_id
+#   DOGMA_DEPLOY=path  local MO2 mod folder: write gamedata straight there (one hop),
+#                      plus meta.ini + .mod_id. Skips files whose mtime is current.
+#   DOGMA_OUT=path     override output gamedata (default: build/gamedata; disables
+#                      the DOGMA_DEPLOY one-hop when set)
 #
-# Conflict (two sources -> same dest) is a hard error.
+# Unchanged files skipped via mtime only (no byte cmp — textures made that slow).
+# One find of src/ — no per-directory find/stat spawns.
+# Stale outputs pruned on full builds.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SRC="$ROOT/src"
-OUT="${DOGMA_OUT:-$ROOT/build/gamedata}"
 ONLY="${DOGMA_ONLY:-all}"
 
+# Local MO2 deploy: one write path. Otherwise default build/gamedata (packaging).
+if [[ -n "${DOGMA_DEPLOY:-}" && ( "$ONLY" == "all" || "$ONLY" == "" ) && -z "${DOGMA_OUT:-}" ]]; then
+	DEPLOY_MOD="${DOGMA_DEPLOY%/}"
+	OUT="$DEPLOY_MOD/gamedata"
+else
+	DEPLOY_MOD=""
+	OUT="${DOGMA_OUT:-$ROOT/build/gamedata}"
+fi
+
 GAMEDATA_ROOTS="scripts configs textures meshes anims sounds spawns"
+
+COPIED=0
+SKIPPED=0
+MANIFEST="$(mktemp)"
+trap 'rm -f "$MANIFEST"' EXIT
 
 if [[ ! -d "$SRC" ]]; then
 	echo "build: missing $SRC" >&2
 	exit 1
 fi
 
+# Dest exists and is not older than src → skip. No size/cmp (spawn-heavy on Win).
+up_to_date() {
+	[[ -f "$2" ]] && ! [[ "$1" -nt "$2" ]]
+}
+
+note_manifest() {
+	local dest="$1"
+	local rel="${dest#"$OUT"/}"
+	printf '%s\n' "${rel#/}" >> "$MANIFEST"
+}
+
+copy_if_changed() {
+	local src="$1"
+	local dest="$2"
+	note_manifest "$dest"
+	if up_to_date "$src" "$dest"; then
+		SKIPPED=$((SKIPPED + 1))
+		return 0
+	fi
+	mkdir -p "${dest%/*}"
+	cp "$src" "$dest"
+	COPIED=$((COPIED + 1))
+	echo "build: copy  ${src#"$ROOT"/} -> ${dest#"$OUT"/}"
+}
+
 should_skip_name() {
 	local base="$1"
 	case "$base" in
 		README | README.* | MOVE_MAP | MOVE_MAP.* | .gitkeep | .DS_Store | Thumbs.db) return 0 ;;
-		assets | installer) return 0 ;; # authoring / FOMOD meta — not gamedata
+		assets | installer) return 0 ;;
 		*.alao-bak) return 0 ;;
-		_conf.script) return 1 ;; # feature conf — shipped (loads before other feature scripts)
+		_conf.script) return 1 ;;
 		_*) return 0 ;;
 		*) return 1 ;;
 	esac
@@ -61,9 +105,6 @@ is_gamedata_root() {
 }
 
 # path_key: category_feature (underscores). Empty = keep basename (common/).
-# Load order: common (dogma_*) → feature conf/mcm (dogma_{path}_*) → feature body (zzzz_…).
-# _conf.script → dogma_{path}_conf.script (early for that feature; unique across mods).
-# mcm.script   → dogma_{path}_mcm.script  (matches MCM's *mcm.script glob).
 script_dest_basename() {
 	local path_key="$1"
 	local src_base="$2"
@@ -72,7 +113,6 @@ script_dest_basename() {
 		return 0
 	fi
 	local stem="${src_base%.script}"
-	# Early feature scripts (no zzzz_): _conf → conf, mcm stays mcm
 	case "$stem" in
 		_conf | mcm)
 			echo "dogma_${path_key}_${stem#_}.script"
@@ -82,167 +122,173 @@ script_dest_basename() {
 	echo "zzzz_dogma_${path_key}_${stem}.script"
 }
 
-if [[ -d "$OUT" ]]; then
-	rm -rf "$OUT"
-fi
-mkdir -p "$OUT"
-
-# Copy tree under src_base into dest_base (preserving relative paths).
-# path_key: if non-empty and bucket is scripts/, rewrite .script basenames.
-process_tree() {
-	local src_base="$1"
-	local dest_base="$2"
-	local src_path="$3"
-	local path_key="${4:-}"
-
-	local rel="${src_path#"$src_base"/}"
+# Map one src file → dest under OUT. Prints nothing / returns 1 if not shipped.
+# Sets globals: _emit_src _emit_dest _emit_path_key (path_key empty for common)
+map_src_file() {
+	local src_path="$1"
+	local rel="${src_path#"$SRC"/}"
 	rel="${rel//\\/\/}"
-	local base
-	base="$(basename "$src_path")"
+	local base="${src_path##*/}"
 
-	if [[ -f "$src_path" ]]; then
-		should_skip_name "$base" && return 0
-		local out_base="$base"
-		local dest_rel="$rel"
-		if [[ -n "$path_key" && "$base" == *.script ]]; then
-			out_base="$(script_dest_basename "$path_key" "$base")"
-			if [[ "$rel" == */* ]]; then
-				dest_rel="$(dirname "$rel")/$out_base"
-			else
-				dest_rel="$out_base"
+	should_skip_name "$base" && return 1
+
+	# Skip any path segment that is authoring-only or private.
+	local part
+	IFS=/ read -r -a parts <<< "$rel"
+	for part in "${parts[@]}"; do
+		case "$part" in
+			assets | installer) return 1 ;;
+		esac
+		# Private dirs (not _conf.script file — that's the basename check above).
+		if [[ "$part" == _* && "$part" != "$base" ]]; then
+			return 1
+		fi
+	done
+
+	local path_key="" bucket_rel=""
+
+	if [[ "$rel" == common/* ]]; then
+		bucket_rel="${rel#common/}"
+		path_key=""
+	else
+		# category/feature/bucket/...  OR  top-level gamedata root under src/
+		local cat="${parts[0]}"
+		if is_gamedata_root "$cat"; then
+			bucket_rel="$rel"
+			path_key=""
+		else
+			# need at least cat/feat/bucket/file
+			(( ${#parts[@]} >= 4 )) || return 1
+			local feat="${parts[1]}"
+			local bucket="${parts[2]}"
+			should_skip_name "$feat" && return 1
+			is_gamedata_root "$bucket" || return 1
+			path_key="${cat}_${feat}"
+			bucket_rel="${rel#"$cat/$feat/"}"
+		fi
+	fi
+
+	local bucket="${bucket_rel%%/*}"
+	is_gamedata_root "$bucket" || return 1
+
+	local dest_rel="$bucket_rel"
+	if [[ -n "$path_key" && "$base" == *.script && "$bucket" == "scripts" ]]; then
+		local out_base
+		out_base="$(script_dest_basename "$path_key" "$base")"
+		if [[ "$bucket_rel" == */* ]]; then
+			dest_rel="${bucket_rel%/*}/$out_base"
+		else
+			dest_rel="$out_base"
+		fi
+	fi
+
+	_emit_src="$src_path"
+	_emit_dest="$OUT/$dest_rel"
+	_emit_path_key="$path_key"
+	_emit_base="$base"
+	return 0
+}
+
+emit_mapped() {
+	local src_path="$_emit_src"
+	local dest="$_emit_dest"
+	local path_key="$_emit_path_key"
+	local base="$_emit_base"
+
+	# Main-menu MCM only loads *mcm.script — prepend sibling _conf so CONF exists.
+	if [[ -n "$path_key" && "$base" == "mcm.script" ]]; then
+		local conf_src
+		conf_src="${src_path%/*}/_conf.script"
+		if [[ -f "$conf_src" ]]; then
+			note_manifest "$dest"
+			if [[ -f "$dest" ]] \
+				&& ! [[ "$conf_src" -nt "$dest" ]] \
+				&& ! [[ "$src_path" -nt "$dest" ]]; then
+				SKIPPED=$((SKIPPED + 1))
+				return 0
 			fi
+			mkdir -p "${dest%/*}"
+			{
+				cat "$conf_src"
+				echo ""
+				echo "-- dogma-build: conf prepended so main-menu MCM (*mcm.script) has defaults"
+				cat "$src_path"
+			} > "$dest"
+			COPIED=$((COPIED + 1))
+			echo "build: copy  ${src_path#"$ROOT"/} (+_conf) -> ${dest#"$OUT"/}"
+			return 0
 		fi
-		local dest="$dest_base/$dest_rel"
-		mkdir -p "$(dirname "$dest")"
-		if [[ -e "$dest" ]]; then
-			echo "build: ERROR naming conflict: $dest (from ${src_path#"$ROOT"/})" >&2
-			exit 1
-		fi
-		cp "$src_path" "$dest"
-		echo "build: copy  ${src_path#"$ROOT"/} -> ${dest#"$ROOT"/}"
-		return 0
 	fi
 
-	if [[ -d "$src_path" ]]; then
-		while IFS= read -r -d '' child; do
-			process_tree "$src_base" "$dest_base" "$child" "$path_key"
-		done < <(find "$src_path" -mindepth 1 -maxdepth 1 -print0 | sort -z)
-	fi
+	copy_if_changed "$src_path" "$dest"
 }
 
-# bucket_src e.g. src/mutants/pseudogiant/scripts
-# path_key e.g. mutants_pseudogiant (empty for common)
-merge_gamedata_bucket() {
-	local bucket_src="$1"
-	local path_key="${2:-}"
-	local bucket_name
-	bucket_name="$(basename "$bucket_src")"
-	local key_for_tree=""
-	if [[ "$bucket_name" == "scripts" ]]; then
-		key_for_tree="$path_key"
-	fi
-	process_tree "$bucket_src" "$OUT/$bucket_name" "$bucket_src" "$key_for_tree"
-}
-
-# path_key from path relative to src, stopping before the gamedata root.
-path_key_for_bucket() {
-	local bucket_src="$1"
-	local rel="${bucket_src#"$SRC"/}"
+src_in_scope() {
+	local rel="${1#"$SRC"/}"
 	rel="${rel//\\/\/}"
-	local parent
-	parent="$(dirname "$rel")"
-	if [[ "$parent" == "." || "$parent" == "common" ]]; then
-		echo ""
-		return 0
-	fi
-	echo "${parent//\//_}"
+	case "$ONLY" in
+		all | "") return 0 ;;
+		common)
+			[[ "$rel" == common/* ]]
+			;;
+		*/*)
+			[[ "$rel" == "$ONLY"/* ]]
+			;;
+		*)
+			return 1
+			;;
+	esac
 }
 
-merge_feature_dir() {
-	local feat_dir="$1"
-	local cat_base feat_base
-	cat_base="$(basename "$(dirname "$feat_dir")")"
-	feat_base="$(basename "$feat_dir")"
-	while IFS= read -r -d '' bucket; do
-		b="$(basename "$bucket")"
-		should_skip_name "$b" && continue
-		if is_gamedata_root "$b"; then
-			pk="$(path_key_for_bucket "$bucket")"
-			merge_gamedata_bucket "$bucket" "$pk"
-		elif [[ -d "$bucket" ]]; then
-			echo "build: skip non-gamedata under ${cat_base}/${feat_base}/: $b" >&2
-		elif [[ -f "$bucket" ]]; then
-			echo "build: skip loose file under ${cat_base}/${feat_base}/: $b (must live under a gamedata root)" >&2
-		fi
-	done < <(find "$feat_dir" -mindepth 1 -maxdepth 1 -print0 | sort -z)
-}
-
-merge_common() {
-	[[ -d "$SRC/common" ]] || return 0
-	while IFS= read -r -d '' child; do
-		base="$(basename "$child")"
-		should_skip_name "$base" && continue
-		if is_gamedata_root "$base"; then
-			merge_gamedata_bucket "$child" ""
-		elif [[ -d "$child" ]]; then
-			echo "build: skip non-gamedata under common/: $base" >&2
-		fi
-	done < <(find "$SRC/common" -mindepth 1 -maxdepth 1 -print0 | sort -z)
-}
-
-merge_all_features() {
-	while IFS= read -r -d '' cat_dir; do
-		[[ -d "$cat_dir" ]] || continue
-		cat_base="$(basename "$cat_dir")"
-		should_skip_name "$cat_base" && continue
-		[[ "$cat_base" == "common" ]] && continue
-		if is_gamedata_root "$cat_base"; then
-			merge_gamedata_bucket "$cat_dir" ""
-			continue
-		fi
-		while IFS= read -r -d '' feat_dir; do
-			[[ -d "$feat_dir" ]] || continue
-			feat_base="$(basename "$feat_dir")"
-			should_skip_name "$feat_base" && continue
-			merge_feature_dir "$feat_dir"
-		done < <(find "$cat_dir" -mindepth 1 -maxdepth 1 -print0 | sort -z)
-	done < <(find "$SRC" -mindepth 1 -maxdepth 1 -print0 | sort -z)
-}
+mkdir -p "$OUT"
+echo "build: out=$OUT"
 
 case "$ONLY" in
-	all | "")
-		merge_common
-		merge_all_features
-		;;
-	common)
-		merge_common
-		;;
-	*/*)
-		feat_path="$SRC/$ONLY"
-		if [[ ! -d "$feat_path" ]]; then
-			echo "build: DOGMA_ONLY=$ONLY not found at $feat_path" >&2
-			exit 1
-		fi
-		merge_feature_dir "$feat_path"
-		;;
+	all | "" | common | */*) ;;
 	*)
 		echo "build: bad DOGMA_ONLY=$ONLY (use all|common|category/feature)" >&2
 		exit 1
 		;;
 esac
 
-count="$(find "$OUT" -type f 2>/dev/null | wc -l | tr -d ' ')"
-echo "build: done ($count files under ${OUT#"$ROOT"/})"
+if [[ "$ONLY" == */* && ! -d "$SRC/$ONLY" ]]; then
+	echo "build: DOGMA_ONLY=$ONLY not found at $SRC/$ONLY" >&2
+	exit 1
+fi
 
-# Deploy only for the default full build into build/gamedata
-if [[ -n "${DOGMA_DEPLOY:-}" && "$ONLY" == "all" && "$OUT" == "$ROOT/build/gamedata" ]]; then
-	dest="${DOGMA_DEPLOY%/}"
-	mkdir -p "$dest"
-	rm -rf "$dest/gamedata"
-	cp -a "$OUT" "$dest/gamedata"
-	cp -a "$ROOT/meta.ini" "$dest/meta.ini"
-	if [[ -f "$ROOT/.mod_id" ]]; then
-		cp -a "$ROOT/.mod_id" "$dest/.mod_id"
+# One walk of src — maps every shippable file. No nested find per directory.
+while IFS= read -r -d '' src_path; do
+	src_in_scope "$src_path" || continue
+	map_src_file "$src_path" || continue
+	emit_mapped
+done < <(find "$SRC" -type f -print0)
+
+# Drop outputs this build did not produce (renames / removed features).
+if [[ "$ONLY" == "all" || "$ONLY" == "" ]]; then
+	sort -u "$MANIFEST" -o "$MANIFEST"
+	local_all="$(mktemp)"
+	(
+		cd "$OUT" && find . -type f | sed 's|^\./||' | sort
+	) > "$local_all"
+	while IFS= read -r rel; do
+		[[ -z "$rel" ]] && continue
+		rm -f "$OUT/$rel"
+		echo "build: prune $rel"
+	done < <(comm -23 "$local_all" "$MANIFEST")
+	rm -f "$local_all"
+fi
+
+count="$(wc -l < "$MANIFEST" | tr -d ' ')"
+echo "build: done ($count files under $OUT; copied=$COPIED skipped=$SKIPPED)"
+
+# When writing straight into MO2, also refresh mod metadata if needed.
+if [[ -n "$DEPLOY_MOD" ]]; then
+	if ! up_to_date "$ROOT/meta.ini" "$DEPLOY_MOD/meta.ini"; then
+		cp "$ROOT/meta.ini" "$DEPLOY_MOD/meta.ini"
+		echo "build: copy  meta.ini"
 	fi
-	echo "build: deployed to $dest (gamedata + meta.ini + .mod_id)"
+	if [[ -f "$ROOT/.mod_id" ]] && ! up_to_date "$ROOT/.mod_id" "$DEPLOY_MOD/.mod_id"; then
+		cp "$ROOT/.mod_id" "$DEPLOY_MOD/.mod_id"
+		echo "build: copy  .mod_id"
+	fi
 fi

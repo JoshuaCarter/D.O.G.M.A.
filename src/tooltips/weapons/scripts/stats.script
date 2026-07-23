@@ -232,7 +232,7 @@ local function fmt_deg(v)
 end
 
 local function fmt_drop_m(v)
-	return string.format("%.2fm %%c[dark_gray]@ %dm%%c[default]", v, DROP_RANGE_M)
+	return string.format("%.2fm %%c[d_grey]@ %dm%%c[default]", v, DROP_RANGE_M)
 end
 
 -- Numeric getters (for tooltip compare vs equipped). Lower-is-better where noted.
@@ -376,7 +376,7 @@ function text_barrel_wear(obj, sec)
 	else
 		chance_txt = string.format("%.1f%%", chance_pct)
 	end
-	return string.format("%s %%c[dark_gray]@ -1%%%%c[default]", chance_txt)
+	return string.format("%s %%c[d_grey]@ -1%%%%c[default]", chance_txt)
 end
 
 -- Fractional ADS shots until cumulative vertical camera climb reaches RECOIL_KICK_THRESHOLD.
@@ -388,7 +388,7 @@ local function fmt_burst(shots_txt, thr)
 	else
 		thr_txt = string.format("%.1f%s", thr, DEG)
 	end
-	return string.format("%s %%c[dark_gray]@ %s%%c[default]", shots_txt, thr_txt)
+	return string.format("%s %%c[d_grey]@ %s%%c[default]", shots_txt, thr_txt)
 end
 
 function value_burst_control(obj, sec)

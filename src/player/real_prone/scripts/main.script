@@ -30,9 +30,9 @@ local CONFIG = {
 	debug_log = true,
 	debug_overlay = false,
 	hide_prone_bones = D["hide_prone_bones"],
-	cam_height_stand = D["cam_height_stand"],
-	cam_height_crouch = D["cam_height_crouch"],
-	cam_height_prone = D["cam_height_prone"],
+	cam_height_stand = 1.65,
+	cam_height_crouch = 1.2,
+	cam_height_prone = 0.45,
 	prone_damage_mult = D["prone_damage_mult"],
 }
 
@@ -65,9 +65,6 @@ local function on_option_change()
 	CONFIG.debug_log = DOGMA.dbg.logging()
 	CONFIG.debug_overlay = DOGMA.dbg.overlay_enabled()
 	CONFIG.hide_prone_bones = DOGMA.mcm.bool(MOD_ID, "hide_prone_bones")
-	CONFIG.cam_height_stand = DOGMA.mcm.number(MOD_ID, "cam_height_stand")
-	CONFIG.cam_height_crouch = DOGMA.mcm.number(MOD_ID, "cam_height_crouch")
-	CONFIG.cam_height_prone = DOGMA.mcm.number(MOD_ID, "cam_height_prone")
 	CONFIG.prone_damage_mult = DOGMA.mcm.number(MOD_ID, "prone_damage_mult")
 	DOGMA.dbg.set_enabled(MOD_ID, DOGMA.dbg.overlay_enabled())
 

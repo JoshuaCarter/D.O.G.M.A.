@@ -1,22 +1,22 @@
 function on_mcm_load(options)
-	local CONF = _G.dogma_fx_radiation_grain_fix_conf
+	local CONF = _G.dogma_fx_radiation_grain_conf
 	local D = CONF.defaults
 dogma_mcm.attach(options, "fx", "ui_mcm_menu_dogma_fx", {
-		id = "radiation_grain_fix",
+		id = "radiation_grain",
 		sh = true,
-		text = "ui_mcm_menu_dogma_fx_radiation_grain_fix",
+		text = "ui_mcm_menu_dogma_fx_radiation_grain",
 		gr = dogma_mcm.with_header({
 					{
 						id = "grain/enable",
 						type = "check",
 						val = 1,
 						def = D["grain/enable"],
-						hint = "dogma_grain_fix_grain_enable",
+						hint = "dogma_radiation_grain_grain_enable",
 					},
 					{
 						id = "levels_description",
 						type = "desc",
-						text = "ui_mcm_dogma_grain_fix_levels_description",
+						text = "ui_mcm_dogma_radiation_grain_levels_description",
 					},
 					{
 						id = "grain/level_01_msv",
@@ -26,7 +26,7 @@ dogma_mcm.attach(options, "fx", "ui_mcm_menu_dogma_fx", {
 						max = 2000,
 						step = 1,
 						def = D["grain/level_01_msv"],
-						hint = "dogma_grain_fix_level_01_msv",
+						hint = "dogma_radiation_grain_level_01_msv",
 					},
 					{
 						id = "grain/level_02_msv",
@@ -36,7 +36,7 @@ dogma_mcm.attach(options, "fx", "ui_mcm_menu_dogma_fx", {
 						max = 2000,
 						step = 1,
 						def = D["grain/level_02_msv"],
-						hint = "dogma_grain_fix_level_02_msv",
+						hint = "dogma_radiation_grain_level_02_msv",
 					},
 					{
 						id = "grain/level_03_msv",
@@ -46,7 +46,7 @@ dogma_mcm.attach(options, "fx", "ui_mcm_menu_dogma_fx", {
 						max = 2000,
 						step = 1,
 						def = D["grain/level_03_msv"],
-						hint = "dogma_grain_fix_level_03_msv",
+						hint = "dogma_radiation_grain_level_03_msv",
 					},
 					{
 						id = "grain/level_04_msv",
@@ -56,7 +56,7 @@ dogma_mcm.attach(options, "fx", "ui_mcm_menu_dogma_fx", {
 						max = 2000,
 						step = 1,
 						def = D["grain/level_04_msv"],
-						hint = "dogma_grain_fix_level_04_msv",
+						hint = "dogma_radiation_grain_level_04_msv",
 					},
 					{
 						id = "grain/level_05_msv",
@@ -66,7 +66,7 @@ dogma_mcm.attach(options, "fx", "ui_mcm_menu_dogma_fx", {
 						max = 2000,
 						step = 1,
 						def = D["grain/level_05_msv"],
-						hint = "dogma_grain_fix_level_05_msv",
+						hint = "dogma_radiation_grain_level_05_msv",
 					},
 					{
 						id = "grain/level_06_msv",
@@ -76,7 +76,7 @@ dogma_mcm.attach(options, "fx", "ui_mcm_menu_dogma_fx", {
 						max = 2000,
 						step = 1,
 						def = D["grain/level_06_msv"],
-						hint = "dogma_grain_fix_level_06_msv",
+						hint = "dogma_radiation_grain_level_06_msv",
 					},
 					{
 						id = "grain/level_07_msv",
@@ -86,7 +86,7 @@ dogma_mcm.attach(options, "fx", "ui_mcm_menu_dogma_fx", {
 						max = 2000,
 						step = 1,
 						def = D["grain/level_07_msv"],
-						hint = "dogma_grain_fix_level_07_msv",
+						hint = "dogma_radiation_grain_level_07_msv",
 					},
 					{
 						id = "grain/level_08_msv",
@@ -96,7 +96,7 @@ dogma_mcm.attach(options, "fx", "ui_mcm_menu_dogma_fx", {
 						max = 2000,
 						step = 1,
 						def = D["grain/level_08_msv"],
-						hint = "dogma_grain_fix_level_08_msv",
+						hint = "dogma_radiation_grain_level_08_msv",
 					},
 					{
 						id = "grain/level_09_msv",
@@ -106,7 +106,7 @@ dogma_mcm.attach(options, "fx", "ui_mcm_menu_dogma_fx", {
 						max = 2000,
 						step = 1,
 						def = D["grain/level_09_msv"],
-						hint = "dogma_grain_fix_level_09_msv",
+						hint = "dogma_radiation_grain_level_09_msv",
 					},
 					{
 						id = "grain/level_10_msv",
@@ -116,26 +116,26 @@ dogma_mcm.attach(options, "fx", "ui_mcm_menu_dogma_fx", {
 						max = 2000,
 						step = 1,
 						def = D["grain/level_10_msv"],
-						hint = "dogma_grain_fix_level_10_msv",
+						hint = "dogma_radiation_grain_level_10_msv",
 					},
 				
 				{ id = "line_desaturation", type = "line" },
 				{
 					id = "hdr_desaturation",
 					type = "desc",
-					text = "ui_mcm_dogma_grain_fix_desaturation_section",
+					text = "ui_mcm_dogma_radiation_grain_desaturation_section",
 				},
 					{
 						id = "desaturation/enable",
 						type = "check",
 						val = 1,
 						def = D["desaturation/enable"],
-						hint = "dogma_grain_fix_desaturation_enable",
+						hint = "dogma_radiation_grain_desaturation_enable",
 					},
 					{
 						id = "blur_description",
 						type = "desc",
-						text = "ui_mcm_dogma_grain_fix_blur_description",
+						text = "ui_mcm_dogma_radiation_grain_blur_description",
 					},
 					{
 						id = "desaturation/blur_min",
@@ -145,7 +145,7 @@ dogma_mcm.attach(options, "fx", "ui_mcm_menu_dogma_fx", {
 						max = 2000,
 						step = 1,
 						def = D["desaturation/blur_min"],
-						hint = "dogma_grain_fix_blur_min",
+						hint = "dogma_radiation_grain_blur_min",
 					},
 					{
 						id = "desaturation/blur_max",
@@ -155,26 +155,26 @@ dogma_mcm.attach(options, "fx", "ui_mcm_menu_dogma_fx", {
 						max = 2000,
 						step = 1,
 						def = D["desaturation/blur_max"],
-						hint = "dogma_grain_fix_blur_max",
+						hint = "dogma_radiation_grain_blur_max",
 					},
 				
 				{ id = "line_duality", type = "line" },
 				{
 					id = "hdr_duality",
 					type = "desc",
-					text = "ui_mcm_dogma_grain_fix_duality_section",
+					text = "ui_mcm_dogma_radiation_grain_duality_section",
 				},
 					{
 						id = "duality/enable",
 						type = "check",
 						val = 1,
 						def = D["duality/enable"],
-						hint = "dogma_grain_fix_duality_enable",
+						hint = "dogma_radiation_grain_duality_enable",
 					},
 					{
 						id = "dual_description",
 						type = "desc",
-						text = "ui_mcm_dogma_grain_fix_dual_description",
+						text = "ui_mcm_dogma_radiation_grain_dual_description",
 					},
 					{
 						id = "duality/dual_min",
@@ -184,7 +184,7 @@ dogma_mcm.attach(options, "fx", "ui_mcm_menu_dogma_fx", {
 						max = 2000,
 						step = 1,
 						def = D["duality/dual_min"],
-						hint = "dogma_grain_fix_dual_min",
+						hint = "dogma_radiation_grain_dual_min",
 					},
 					{
 						id = "duality/dual_max",
@@ -194,7 +194,7 @@ dogma_mcm.attach(options, "fx", "ui_mcm_menu_dogma_fx", {
 						max = 2000,
 						step = 1,
 						def = D["duality/dual_max"],
-						hint = "dogma_grain_fix_dual_max",
+						hint = "dogma_radiation_grain_dual_max",
 					},
 				
 		}),

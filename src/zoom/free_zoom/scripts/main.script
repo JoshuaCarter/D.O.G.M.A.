@@ -11,6 +11,7 @@
 
 local CONF = _G.dogma_zoom_free_zoom_conf
 local MOD_ID = CONF.MOD_ID
+local ADS_MOD = "dogma/zoom/ads_zoom"
 local DOGMA
 
 -- zoom_key_mode: 0=single, 1=double, 2=long, 3=hold (in on down, out on up)
@@ -194,24 +195,24 @@ local function refresh_config()
 	CONFIG.free_zoom = DOGMA.mcm.number(MOD_ID, "free_zoom/free_zoom")
 	CONFIG.move_speed = DOGMA.mcm.number(MOD_ID, "free_zoom/move_speed")
 
-	CONFIG.ads_enabled = DOGMA.mcm.bool(MOD_ID, "ads_zoom/enabled")
-	CONFIG.ads_zoom = DOGMA.mcm.number(MOD_ID, "ads_zoom/ads_zoom")
-	CONFIG.exit_ads_clears_free = DOGMA.mcm.bool(MOD_ID, "ads_zoom/exit_ads_clears_free")
-	CONFIG.reload_clears_free = DOGMA.mcm.bool(MOD_ID, "ads_zoom/reload_clears_free")
-	CONFIG.wads_inc_key = DOGMA.mcm.key(MOD_ID, "ads_zoom/wads_inc_key")
-	CONFIG.wads_dec_key = DOGMA.mcm.key(MOD_ID, "ads_zoom/wads_dec_key")
-	CONFIG.wads_reset_key = DOGMA.mcm.key(MOD_ID, "ads_zoom/wads_reset_key")
-	CONFIG.wads_key_mode = DOGMA.mcm.number(MOD_ID, "ads_zoom/wads_key_mode")
-	CONFIG.wads_key_modifier = DOGMA.mcm.number(MOD_ID, "ads_zoom/wads_key_modifier")
-	CONFIG.use_global_wads = DOGMA.mcm.bool(MOD_ID, "ads_zoom/use_global_wads")
-	CONFIG.global_wads = DOGMA.mcm.number(MOD_ID, "ads_zoom/global_wads")
+	CONFIG.ads_enabled = DOGMA.mcm.bool(ADS_MOD, "enabled")
+	CONFIG.ads_zoom = DOGMA.mcm.number(ADS_MOD, "ads_zoom")
+	CONFIG.exit_ads_clears_free = DOGMA.mcm.bool(ADS_MOD, "exit_ads_clears_free")
+	CONFIG.reload_clears_free = DOGMA.mcm.bool(ADS_MOD, "reload_clears_free")
+	CONFIG.wads_inc_key = DOGMA.mcm.key(ADS_MOD, "wads_inc_key")
+	CONFIG.wads_dec_key = DOGMA.mcm.key(ADS_MOD, "wads_dec_key")
+	CONFIG.wads_reset_key = DOGMA.mcm.key(ADS_MOD, "wads_reset_key")
+	CONFIG.wads_key_mode = DOGMA.mcm.number(ADS_MOD, "wads_key_mode")
+	CONFIG.wads_key_modifier = DOGMA.mcm.number(ADS_MOD, "wads_key_modifier")
+	CONFIG.use_global_wads = DOGMA.mcm.bool(ADS_MOD, "use_global_wads")
+	CONFIG.global_wads = DOGMA.mcm.number(ADS_MOD, "global_wads")
 	CONFIG.wads = CONFIG.wads or {}
 	for _, cat in ipairs({ "pistol", "smg", "rifle", "sniper", "shotgun", "explosive" }) do
 		local row = CONFIG.wads[cat] or {}
 		CONFIG.wads[cat] = row
-		row.irons = DOGMA.mcm.number(MOD_ID, "ads_zoom/wads_" .. cat .. "_irons")
-		row.sight = DOGMA.mcm.number(MOD_ID, "ads_zoom/wads_" .. cat .. "_sight")
-		row.scope = DOGMA.mcm.number(MOD_ID, "ads_zoom/wads_" .. cat .. "_scope")
+		row.irons = DOGMA.mcm.number(ADS_MOD, "wads_" .. cat .. "_irons")
+		row.sight = DOGMA.mcm.number(ADS_MOD, "wads_" .. cat .. "_sight")
+		row.scope = DOGMA.mcm.number(ADS_MOD, "wads_" .. cat .. "_scope")
 	end
 
 	CONFIG.debug_log = DOGMA.dbg.logging()

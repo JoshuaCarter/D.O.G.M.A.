@@ -1,8 +1,9 @@
-name: Release on version bump
+name: Release
 
 on:
   push:
-    branches: [main]
+    branches:
+      - "**"
 
 permissions:
   contents: write
@@ -16,25 +17,58 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Read version from meta.ini
-        id: meta
-        run: |
-          VERSION=$(grep -E '^version=' meta.ini | head -1 | cut -d'=' -f2 | tr -d '[:space:]')
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
       - name: Derive mod name from repo
         id: name
         run: |
           TITLE="${{ github.event.repository.name }}"
           TITLE="${TITLE//-/ }"
-          FILENAME="${TITLE}"
           echo "title=$TITLE" >> "$GITHUB_OUTPUT"
-          echo "filename=$FILENAME" >> "$GITHUB_OUTPUT"
+          echo "filename=$TITLE" >> "$GITHUB_OUTPUT"
 
-      - name: Check if this version was already released
+      - name: Decide release channel
+        id: channel
+        run: |
+          SHORT_SHA="$(echo '${{ github.sha }}' | cut -c1-7)"
+          BRANCH="${{ github.ref_name }}"
+          TITLE="${{ steps.name.outputs.title }}"
+          FILENAME="${{ steps.name.outputs.filename }}"
+
+          echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+
+          if [[ "$BRANCH" == "main" ]]; then
+            VERSION=$(grep -E '^version=' meta.ini | head -1 | cut -d'=' -f2 | tr -d '[:space:]')
+            {
+              echo "kind=stable"
+              echo "version=$VERSION"
+              echo "tag=v${VERSION}"
+              echo "prerelease=false"
+              echo "make_latest=true"
+              echo "release_name=${TITLE} v${VERSION}"
+              echo "zip_name=${FILENAME} ${VERSION}.zip"
+              echo "body="
+            } >> "$GITHUB_OUTPUT"
+          else
+            {
+              echo "kind=experimental"
+              echo "version=exp-${SHORT_SHA}"
+              echo "tag=exp-${SHORT_SHA}"
+              echo "prerelease=true"
+              echo "make_latest=false"
+              echo "release_name=${TITLE} experimental ${SHORT_SHA} (${BRANCH})"
+              echo "zip_name=${FILENAME} exp-${SHORT_SHA}.zip"
+              echo "body<<EOF"
+              echo "**Experimental pre-release** from \`${BRANCH}\` @ \`${SHORT_SHA}\`."
+              echo ""
+              echo "Not a stable/mainline build — for testing only. The repo **Latest** release stays on \`main\`."
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check if this tag was already released
         id: check
         run: |
-          if git rev-parse "v${{ steps.meta.outputs.version }}" >/dev/null 2>&1; then
+          if git rev-parse "${{ steps.channel.outputs.tag }}" >/dev/null 2>&1; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
@@ -44,8 +78,16 @@ jobs:
         if: steps.check.outputs.exists == 'false'
         run: |
           bash tools/package-fomod.sh
-          ZIP="${{ steps.name.outputs.filename }} ${{ steps.meta.outputs.version }}.zip"
-          # MO2 FOMOD layout: modules + fomod/ + meta.ini at zip root
+
+          # Stamp experimental builds so MO2 shows the short sha, not mainline version.
+          if [[ "${{ steps.channel.outputs.kind }}" == "experimental" ]]; then
+            VER="0.0.0-${{ steps.channel.outputs.version }}"
+            sed -i -E "s/^version=.*/version=${VER}/" build/fomod/meta.ini
+            sed -i -E "s/^newestVersion=.*/newestVersion=${VER}/" build/fomod/meta.ini
+            sed -i -E "s#<Version>[^<]*</Version>#<Version>${VER}</Version>#" build/fomod/fomod/info.xml
+          fi
+
+          ZIP="${{ steps.channel.outputs.zip_name }}"
           (
             cd build/fomod
             zip -r "../../$ZIP" .
@@ -55,6 +97,10 @@ jobs:
         if: steps.check.outputs.exists == 'false'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: "v${{ steps.meta.outputs.version }}"
-          name: "${{ steps.name.outputs.title }} v${{ steps.meta.outputs.version }}"
-          files: "${{ steps.name.outputs.filename }} ${{ steps.meta.outputs.version }}.zip"
+          tag_name: ${{ steps.channel.outputs.tag }}
+          name: ${{ steps.channel.outputs.release_name }}
+          prerelease: ${{ steps.channel.outputs.prerelease }}
+          make_latest: ${{ steps.channel.outputs.make_latest }}
+          generate_release_notes: true
+          body: ${{ steps.channel.outputs.body }}
+          files: ${{ steps.channel.outputs.zip_name }}

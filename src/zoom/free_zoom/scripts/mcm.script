@@ -3,320 +3,165 @@ function on_mcm_load(options)
 	local D = CONF.defaults
 	local kb_mod = (ui_mcm and ui_mcm.kb_mod_radio) or "radio_h"
 
-	local function wads_track(id, hint)
-		return {
-			id = "ads_zoom/" .. id,
-			type = "track",
-			val = 2,
-			min = 0,
-			max = 50,
-			step = 5,
-			def = D["ads_zoom/" .. id],
-			hint = hint,
-		}
-	end
-
-	local function category_wads(cat)
-		return {
-			{ id = "line_wads_" .. cat, type = "line" },
-			{
-				id = "wads_" .. cat .. "_title",
-				type = "title",
-				text = "ui_mcm_dogma_free_zoom_wads_" .. cat .. "_title",
-			},
-			wads_track("wads_" .. cat .. "_irons", "dogma_free_zoom_wads_" .. cat .. "_irons"),
-			wads_track("wads_" .. cat .. "_sight", "dogma_free_zoom_wads_" .. cat .. "_sight"),
-			wads_track("wads_" .. cat .. "_scope", "dogma_free_zoom_wads_" .. cat .. "_scope"),
-		}
-	end
-	local ads_gr = {
-		{
-			id = "ads_description",
-			type = "desc",
-			text = "ui_mcm_dogma_free_zoom_ads_description",
-		},
-		{
-			id = "ads_zoom/enabled",
-			type = "check",
-			val = 1,
-			def = D["ads_zoom/enabled"],
-			hint = "dogma_free_zoom_ads_enabled",
-		},
-		{ id = "line_ads_world", type = "line" },
-		{
-			id = "ads_world_header",
-			type = "title",
-			text = "ui_mcm_dogma_free_zoom_ads_world_header",
-		},
-		{
-			id = "ads_zoom/ads_zoom",
-			type = "track",
-			val = 2,
-			min = 0,
-			max = 50,
-			step = 1,
-			def = D["ads_zoom/ads_zoom"],
-			hint = "dogma_free_zoom_ads_zoom",
-		},
-		{
-			id = "ads_zoom/exit_ads_clears_free",
-			type = "check",
-			val = 1,
-			def = D["ads_zoom/exit_ads_clears_free"],
-			hint = "dogma_free_zoom_exit_ads_clears_free",
-		},
-		{
-			id = "ads_zoom/reload_clears_free",
-			type = "check",
-			val = 1,
-			def = D["ads_zoom/reload_clears_free"],
-			hint = "dogma_free_zoom_reload_clears_free",
-		},
-		{ id = "line_wads_keys", type = "line" },
-		{
-			id = "wads_keys_header",
-			type = "title",
-			text = "ui_mcm_dogma_free_zoom_wads_keys_header",
-		},
-		{
-			id = "ads_zoom/wads_inc_key",
-			type = "key_bind",
-			val = 2,
-			def = D["ads_zoom/wads_inc_key"],
-			hint = "dogma_free_zoom_wads_inc_key",
-		},
-		{
-			id = "ads_zoom/wads_dec_key",
-			type = "key_bind",
-			val = 2,
-			def = D["ads_zoom/wads_dec_key"],
-			hint = "dogma_free_zoom_wads_dec_key",
-		},
-		{
-			id = "ads_zoom/wads_reset_key",
-			type = "key_bind",
-			val = 2,
-			def = D["ads_zoom/wads_reset_key"],
-			hint = "dogma_free_zoom_wads_reset_key",
-		},
-		{
-			id = "ads_zoom/wads_key_mode",
-			type = kb_mod,
-			val = 2,
-			def = D["ads_zoom/wads_key_mode"],
-			hint = "dogma_free_zoom_wads_key_mode",
-			content = {
-				{ 0, "dogma_free_zoom_wads_mode_press" },
-				{ 1, "dogma_free_zoom_wads_mode_hold" },
-			},
-		},
-		{
-			id = "ads_zoom/wads_key_modifier",
-			type = kb_mod,
-			val = 2,
-			def = D["ads_zoom/wads_key_modifier"],
-			hint = "mcm_kb_modifier",
-			content = {
-				{ 0, "mcm_kb_mod_none" },
-				{ 1, "mcm_kb_mod_shift" },
-				{ 2, "mcm_kb_mod_ctrl" },
-				{ 3, "mcm_kb_mod_alt" },
-			},
-		},
-		{ id = "line_wads_defaults", type = "line" },
-		{
-			id = "wads_defaults_header",
-			type = "title",
-			text = "ui_mcm_dogma_free_zoom_wads_defaults_header",
-		},
-		{
-			id = "ads_zoom/use_global_wads",
-			type = "check",
-			val = 1,
-			def = D["ads_zoom/use_global_wads"],
-			hint = "dogma_free_zoom_use_global_wads",
-		},
-		wads_track("global_wads", "dogma_free_zoom_global_wads"),
-	}
-	for _, cat in ipairs({ "pistol", "smg", "rifle", "sniper", "shotgun", "explosive" }) do
-		for _, row in ipairs(category_wads(cat)) do
-			ads_gr[#ads_gr + 1] = row
-		end
-	end
-
-
-
-	local items = {
-
-					{
-						id = "zoom_description",
-						type = "desc",
-						text = "ui_mcm_dogma_free_zoom_zoom_description",
-					},
-					{
-						id = "free_zoom/enabled",
-						type = "check",
-						val = 1,
-						def = D["free_zoom/enabled"],
-						hint = "dogma_free_zoom_enabled",
-					},
-					{ id = "line_zoom", type = "line" },
-					{
-						id = "zoom_header",
-						type = "title",
-						text = "ui_mcm_dogma_free_zoom_zoom_header",
-					},
-					{
-						id = "free_zoom/free_zoom",
-						type = "track",
-						val = 2,
-						min = 0,
-						max = 50,
-						step = 1,
-						def = D["free_zoom/free_zoom"],
-						hint = "dogma_free_zoom_free_zoom",
-					},
-					{
-						id = "free_zoom/move_speed",
-						type = "track",
-						val = 2,
-						min = 0,
-						max = 70,
-						step = 1,
-						def = D["free_zoom/move_speed"],
-						hint = "dogma_free_zoom_move_speed",
-					},
-					{
-						id = "free_zoom/empty_hands_only",
-						type = "check",
-						val = 1,
-						def = D["free_zoom/empty_hands_only"],
-						hint = "dogma_free_zoom_empty_hands_only",
-					},
-					{ id = "line_keybind", type = "line" },
-					{
-						id = "keybind_header",
-						type = "title",
-						text = "ui_mcm_dogma_free_zoom_keybind_header",
-					},
-					{
-						id = "free_zoom/zoom_key",
-						type = "key_bind",
-						val = 2,
-						def = D["free_zoom/zoom_key"],
-						hint = "dogma_free_zoom_zoom_key",
-					},
-					{
-						id = "free_zoom/zoom_key_mode",
-						type = kb_mod,
-						val = 2,
-						def = D["free_zoom/zoom_key_mode"],
-						hint = "dogma_free_zoom_zoom_key_mode",
-						content = {
-							{ 0, "dogma_free_zoom_mode_single" },
-							{ 1, "dogma_free_zoom_mode_double" },
-							{ 2, "dogma_free_zoom_mode_long" },
-							{ 3, "dogma_free_zoom_mode_hold" },
-						},
-					},
-					{
-						id = "free_zoom/zoom_key_modifier",
-						type = kb_mod,
-						val = 2,
-						def = D["free_zoom/zoom_key_modifier"],
-						hint = "mcm_kb_modifier",
-						content = {
-							{ 0, "mcm_kb_mod_none" },
-							{ 1, "mcm_kb_mod_shift" },
-							{ 2, "mcm_kb_mod_ctrl" },
-							{ 3, "mcm_kb_mod_alt" },
-						},
-					},
-					{ id = "line_mouse_wheel", type = "line" },
-					{
-						id = "mouse_wheel_header",
-						type = "title",
-						text = "ui_mcm_dogma_free_zoom_mouse_wheel_header",
-					},
-					{
-						id = "free_zoom/rmb_zoom",
-						type = kb_mod,
-						val = 2,
-						def = D["free_zoom/rmb_zoom"],
-						hint = "dogma_free_zoom_rmb_zoom",
-						content = {
-							{ 0, "dogma_free_zoom_mouse_mode_no" },
-							{ 1, "dogma_free_zoom_mouse_mode_toggle" },
-							{ 2, "dogma_free_zoom_mouse_mode_hold" },
-						},
-					},
-					{
-						id = "free_zoom/mmb_zoom",
-						type = kb_mod,
-						val = 2,
-						def = D["free_zoom/mmb_zoom"],
-						hint = "dogma_free_zoom_mmb_zoom",
-						content = {
-							{ 0, "dogma_free_zoom_mouse_mode_no" },
-							{ 1, "dogma_free_zoom_mouse_mode_toggle" },
-							{ 2, "dogma_free_zoom_mouse_mode_hold" },
-						},
-					},
-					{
-						id = "scroll_wheel_weapon_warning",
-						type = "desc",
-						text = "ui_mcm_dogma_free_zoom_scroll_wheel_weapon_warning",
-						clr = { 255, 220, 160, 40 },
-					},
-					{
-						id = "free_zoom/scroll_wheel_zoom",
-						type = "check",
-						val = 1,
-						def = D["free_zoom/scroll_wheel_zoom"],
-						hint = "dogma_free_zoom_scroll_wheel_zoom",
-					},
-					{
-						id = "free_zoom/scroll_wheel_reverse",
-						type = "check",
-						val = 1,
-						def = D["free_zoom/scroll_wheel_reverse"],
-						hint = "dogma_free_zoom_scroll_wheel_reverse",
-					},
-					{
-						id = "free_zoom/scroll_wheel_steps",
-						type = "track",
-						val = 2,
-						min = 1,
-						max = 5,
-						step = 1,
-						def = D["free_zoom/scroll_wheel_steps"],
-						hint = "dogma_free_zoom_scroll_wheel_steps",
-					},
-					{
-						id = "free_zoom/scroll_wheel_max_gap_ms",
-						type = "track",
-						val = 2,
-						min = 50,
-						max = 500,
-						step = 25,
-						def = D["free_zoom/scroll_wheel_max_gap_ms"],
-						hint = "dogma_free_zoom_scroll_wheel_max_gap_ms",
-					},
-		{ id = "line_ads_zoom", type = "line" },
-		{
-			id = "hdr_ads_zoom",
-			type = "desc",
-			text = "ui_mcm_dogma_free_zoom_ads_zoom_section",
-		},
-	}
-	for _, row in ipairs(ads_gr) do
-		items[#items + 1] = row
-	end
-
 	dogma_mcm.attach(options, "zoom", "ui_mcm_menu_dogma_zoom", {
 		id = "free_zoom",
 		sh = true,
 		text = "ui_mcm_menu_dogma_zoom_free_zoom",
-		gr = dogma_mcm.with_header(items),
+		gr = dogma_mcm.with_header({
+			{
+				id = "zoom_description",
+				type = "desc",
+				text = "ui_mcm_dogma_free_zoom_zoom_description",
+			},
+			{
+				id = "free_zoom/enabled",
+				type = "check",
+				val = 1,
+				def = D["free_zoom/enabled"],
+				hint = "dogma_free_zoom_enabled",
+			},
+			{ id = "line_zoom", type = "line" },
+			{
+				id = "zoom_header",
+				type = "title",
+				text = "ui_mcm_dogma_free_zoom_zoom_header",
+			},
+			{
+				id = "free_zoom/free_zoom",
+				type = "track",
+				val = 2,
+				min = 0,
+				max = 50,
+				step = 1,
+				def = D["free_zoom/free_zoom"],
+				hint = "dogma_free_zoom_free_zoom",
+			},
+			{
+				id = "free_zoom/move_speed",
+				type = "track",
+				val = 2,
+				min = 0,
+				max = 70,
+				step = 1,
+				def = D["free_zoom/move_speed"],
+				hint = "dogma_free_zoom_move_speed",
+			},
+			{
+				id = "free_zoom/empty_hands_only",
+				type = "check",
+				val = 1,
+				def = D["free_zoom/empty_hands_only"],
+				hint = "dogma_free_zoom_empty_hands_only",
+			},
+			{ id = "line_keybind", type = "line" },
+			{
+				id = "keybind_header",
+				type = "title",
+				text = "ui_mcm_dogma_free_zoom_keybind_header",
+			},
+			{
+				id = "free_zoom/zoom_key",
+				type = "key_bind",
+				val = 2,
+				def = D["free_zoom/zoom_key"],
+				hint = "dogma_free_zoom_zoom_key",
+			},
+			{
+				id = "free_zoom/zoom_key_mode",
+				type = kb_mod,
+				val = 2,
+				def = D["free_zoom/zoom_key_mode"],
+				hint = "dogma_free_zoom_zoom_key_mode",
+				content = {
+					{ 0, "dogma_free_zoom_mode_single" },
+					{ 1, "dogma_free_zoom_mode_double" },
+					{ 2, "dogma_free_zoom_mode_long" },
+					{ 3, "dogma_free_zoom_mode_hold" },
+				},
+			},
+			{
+				id = "free_zoom/zoom_key_modifier",
+				type = kb_mod,
+				val = 2,
+				def = D["free_zoom/zoom_key_modifier"],
+				hint = "mcm_kb_modifier",
+				content = {
+					{ 0, "mcm_kb_mod_none" },
+					{ 1, "mcm_kb_mod_shift" },
+					{ 2, "mcm_kb_mod_ctrl" },
+					{ 3, "mcm_kb_mod_alt" },
+				},
+			},
+			{ id = "line_mouse_wheel", type = "line" },
+			{
+				id = "mouse_wheel_header",
+				type = "title",
+				text = "ui_mcm_dogma_free_zoom_mouse_wheel_header",
+			},
+			{
+				id = "free_zoom/rmb_zoom",
+				type = kb_mod,
+				val = 2,
+				def = D["free_zoom/rmb_zoom"],
+				hint = "dogma_free_zoom_rmb_zoom",
+				content = {
+					{ 0, "dogma_free_zoom_mouse_mode_no" },
+					{ 1, "dogma_free_zoom_mouse_mode_toggle" },
+					{ 2, "dogma_free_zoom_mouse_mode_hold" },
+				},
+			},
+			{
+				id = "free_zoom/mmb_zoom",
+				type = kb_mod,
+				val = 2,
+				def = D["free_zoom/mmb_zoom"],
+				hint = "dogma_free_zoom_mmb_zoom",
+				content = {
+					{ 0, "dogma_free_zoom_mouse_mode_no" },
+					{ 1, "dogma_free_zoom_mouse_mode_toggle" },
+					{ 2, "dogma_free_zoom_mouse_mode_hold" },
+				},
+			},
+			{
+				id = "scroll_wheel_weapon_warning",
+				type = "desc",
+				text = "ui_mcm_dogma_free_zoom_scroll_wheel_weapon_warning",
+				clr = { 255, 220, 160, 40 },
+			},
+			{
+				id = "free_zoom/scroll_wheel_zoom",
+				type = "check",
+				val = 1,
+				def = D["free_zoom/scroll_wheel_zoom"],
+				hint = "dogma_free_zoom_scroll_wheel_zoom",
+			},
+			{
+				id = "free_zoom/scroll_wheel_reverse",
+				type = "check",
+				val = 1,
+				def = D["free_zoom/scroll_wheel_reverse"],
+				hint = "dogma_free_zoom_scroll_wheel_reverse",
+			},
+			{
+				id = "free_zoom/scroll_wheel_steps",
+				type = "track",
+				val = 2,
+				min = 1,
+				max = 5,
+				step = 1,
+				def = D["free_zoom/scroll_wheel_steps"],
+				hint = "dogma_free_zoom_scroll_wheel_steps",
+			},
+			{
+				id = "free_zoom/scroll_wheel_max_gap_ms",
+				type = "track",
+				val = 2,
+				min = 50,
+				max = 500,
+				step = 25,
+				def = D["free_zoom/scroll_wheel_max_gap_ms"],
+				hint = "dogma_free_zoom_scroll_wheel_max_gap_ms",
+			},
+		}),
 	})
 end

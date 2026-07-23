@@ -10,18 +10,18 @@
 ]]
 
 local BANNER_LINK = "dogma_mcm_banner"
-local MODS_LIST_LINK = "github.com/JoshuaCarter/GAMMA-Mods"
-local MODS_LIST_CLR = nil
+local BANNER_CAPTION = "Dorn's Own GAMMA Mods and Alterations"
+local BANNER_CAPTION_CLR = nil
 
 -- Shared Debug page path (dogma → debug). Features read keys from here.
 DEBUG_MOD = "dogma/debug"
 
 local function mods_list_slide_hook(_anchor, handlers)
-	if not MODS_LIST_CLR then
-		MODS_LIST_CLR = GetARGB(255, 96, 160, 255)
+	if not BANNER_CAPTION_CLR then
+		BANNER_CAPTION_CLR = GetARGB(255, 96, 160, 255)
 	end
-	handlers.txt:SetText(MODS_LIST_LINK)
-	handlers.txt:SetTextColor(MODS_LIST_CLR)
+	handlers.txt:SetText(BANNER_CAPTION)
+	handlers.txt:SetTextColor(BANNER_CAPTION_CLR)
 end
 
 local function path(mod_id, key)
@@ -132,6 +132,26 @@ function with_header(items)
 	return gr
 end
 
+-- Keep Debug as the last entry under DOGMA (categories above it).
+local function pin_debug_last(dogma)
+	local gr = dogma and dogma.gr
+	if not gr then
+		return
+	end
+	local idx
+	for i = 1, #gr do
+		if gr[i].id == "debug" then
+			idx = i
+			break
+		end
+	end
+	if not idx or idx == #gr then
+		return
+	end
+	local dbg = table.remove(gr, idx)
+	table.insert(gr, dbg)
+end
+
 -- Merge a feature page under dogma/<category>. MCM does not deep-merge duplicate
 -- category ids from separate *mcm.script returns — call this instead of returning
 -- a category wrapper.
@@ -162,6 +182,7 @@ function attach(options, cat_id, cat_text, page)
 		table.insert(dogma.gr, cat)
 	end
 	table.insert(cat.gr, page)
+	pin_debug_last(dogma)
 end
 
 -- Shared Debug defaults (also used when MCM has not written a value yet).
@@ -182,9 +203,9 @@ _G.dogma_debug_conf = {
 	},
 }
 
-function on_mcm_load()
+function on_mcm_load(options)
 	local D = _G.dogma_debug_conf.defaults
-	return {
+	local page = {
 		id = "debug",
 		sh = true,
 		text = "ui_mcm_menu_dogma_debug",
@@ -286,5 +307,33 @@ function on_mcm_load()
 				hint = "dogma_debug_fps_long_frame_threshold_ms",
 			},
 		}),
-	}, "dogma"
+	}
+	-- Insert ourselves under dogma, then pin last (features that attach later re-pin).
+	if options then
+		local dogma
+		for i = 1, #options do
+			if options[i].id == "dogma" then
+				dogma = options[i]
+				break
+			end
+		end
+		if not dogma then
+			dogma = { id = "dogma", text = "ui_mcm_menu_dogma", gr = {} }
+			table.insert(options, dogma)
+		end
+		local replaced
+		for i = 1, #(dogma.gr or {}) do
+			if dogma.gr[i].id == "debug" then
+				dogma.gr[i] = page
+				replaced = true
+				break
+			end
+		end
+		if not replaced then
+			table.insert(dogma.gr, page)
+		end
+		pin_debug_last(dogma)
+		return
+	end
+	return page, "dogma"
 end

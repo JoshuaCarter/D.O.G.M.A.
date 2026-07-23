@@ -273,7 +273,9 @@ local function on_unique_update()
 	if use_graph then
 		local min_fps, max_fps = get_minmax_fps(current_time_ms)
 		hud:SetGraphValues(fps, min_fps, max_fps)
-		hud:DrawGraph(history_buf, CONFIG)
+		if history_buf then
+			hud:DrawGraph(history_buf, CONFIG)
+		end
 	elseif use_history then
 		graph_clear()
 		local min_fps, max_fps = get_minmax_fps(current_time_ms)

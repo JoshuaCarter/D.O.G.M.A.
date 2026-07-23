@@ -377,7 +377,7 @@ local function mcm_wads_default(cat, optic)
 	if CONFIG.use_global_wads then
 		return CONFIG.global_wads
 	end
-	local row = CONFIG.wads[cat or "rifle"]
+	local row = CONFIG.wads and CONFIG.wads[cat or "rifle"]
 	if not row then
 		return 0
 	end
@@ -1432,6 +1432,9 @@ end
 function on_game_start()
 	DOGMA = dogma_common.load(MOD_ID)
 
+	-- Fill CONFIG before registering callbacks (empty until refresh_config).
+	on_option_change()
+
 	RegisterScriptCallback("on_option_change", on_option_change)
 	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
 	RegisterScriptCallback("on_before_key_press", on_before_key_press)
@@ -1452,6 +1455,5 @@ function on_game_start()
 	RegisterScriptCallback("save_state", on_save_state)
 	RegisterScriptCallback("load_state", on_load_state)
 
-	on_option_change()
 	log("on_game_start: callbacks registered")
 end

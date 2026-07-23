@@ -383,7 +383,7 @@ local function log(fmt, ...)
     if not (cfg and cfg.debug_log) then return end
     local dft_dogma = _G.dft and _G.dft.dogma
     if dft_dogma and dft_dogma.dbg then
-        dft_dogma.dbg.log("dogma/fast_travel", " " .. format_msg(fmt, ...))
+        dft_dogma.dbg.log("dogma/travel/fast_travel", " " .. format_msg(fmt, ...))
     end
 end
 
@@ -398,14 +398,14 @@ local function path_road_log(fmt, ...)
     if not path_road_log_enabled() then return end
     local dft_dogma = _G.dft and _G.dft.dogma
     if dft_dogma and dft_dogma.dbg then
-        dft_dogma.dbg.log("dogma/fast_travel", "[path-road] " .. format_msg(fmt, ...))
+        dft_dogma.dbg.log("dogma/travel/fast_travel", "[path-road] " .. format_msg(fmt, ...))
     end
 end
 
 local function log_error(fmt, ...)
     local dft_dogma = _G.dft and _G.dft.dogma
     if dft_dogma and dft_dogma.dbg then
-        dft_dogma.dbg.log("dogma/fast_travel", "[ERROR] " .. format_msg(fmt, ...))
+        dft_dogma.dbg.log("dogma/travel/fast_travel", "[ERROR] " .. format_msg(fmt, ...))
     end
 end
 

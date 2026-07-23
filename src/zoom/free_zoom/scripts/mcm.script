@@ -5,7 +5,7 @@ function on_mcm_load(options)
 
 	local function wads_track(id, hint)
 		return {
-			id = id,
+			id = "ads_zoom/" .. id,
 			type = "track",
 			val = 2,
 			min = 0,
@@ -36,7 +36,7 @@ function on_mcm_load(options)
 			text = "ui_mcm_dogma_free_zoom_ads_description",
 		},
 		{
-			id = "enabled",
+			id = "ads_zoom/enabled",
 			type = "check",
 			val = 1,
 			def = D["ads_zoom/enabled"],
@@ -49,7 +49,7 @@ function on_mcm_load(options)
 			text = "ui_mcm_dogma_free_zoom_ads_world_header",
 		},
 		{
-			id = "ads_zoom",
+			id = "ads_zoom/ads_zoom",
 			type = "track",
 			val = 2,
 			min = 0,
@@ -59,14 +59,14 @@ function on_mcm_load(options)
 			hint = "dogma_free_zoom_ads_zoom",
 		},
 		{
-			id = "exit_ads_clears_free",
+			id = "ads_zoom/exit_ads_clears_free",
 			type = "check",
 			val = 1,
 			def = D["ads_zoom/exit_ads_clears_free"],
 			hint = "dogma_free_zoom_exit_ads_clears_free",
 		},
 		{
-			id = "reload_clears_free",
+			id = "ads_zoom/reload_clears_free",
 			type = "check",
 			val = 1,
 			def = D["ads_zoom/reload_clears_free"],
@@ -79,28 +79,28 @@ function on_mcm_load(options)
 			text = "ui_mcm_dogma_free_zoom_wads_keys_header",
 		},
 		{
-			id = "wads_inc_key",
+			id = "ads_zoom/wads_inc_key",
 			type = "key_bind",
 			val = 2,
 			def = D["ads_zoom/wads_inc_key"],
 			hint = "dogma_free_zoom_wads_inc_key",
 		},
 		{
-			id = "wads_dec_key",
+			id = "ads_zoom/wads_dec_key",
 			type = "key_bind",
 			val = 2,
 			def = D["ads_zoom/wads_dec_key"],
 			hint = "dogma_free_zoom_wads_dec_key",
 		},
 		{
-			id = "wads_reset_key",
+			id = "ads_zoom/wads_reset_key",
 			type = "key_bind",
 			val = 2,
 			def = D["ads_zoom/wads_reset_key"],
 			hint = "dogma_free_zoom_wads_reset_key",
 		},
 		{
-			id = "wads_key_mode",
+			id = "ads_zoom/wads_key_mode",
 			type = kb_mod,
 			val = 2,
 			def = D["ads_zoom/wads_key_mode"],
@@ -111,7 +111,7 @@ function on_mcm_load(options)
 			},
 		},
 		{
-			id = "wads_key_modifier",
+			id = "ads_zoom/wads_key_modifier",
 			type = kb_mod,
 			val = 2,
 			def = D["ads_zoom/wads_key_modifier"],
@@ -130,7 +130,7 @@ function on_mcm_load(options)
 			text = "ui_mcm_dogma_free_zoom_wads_defaults_header",
 		},
 		{
-			id = "use_global_wads",
+			id = "ads_zoom/use_global_wads",
 			type = "check",
 			val = 1,
 			def = D["ads_zoom/use_global_wads"],
@@ -145,20 +145,6 @@ function on_mcm_load(options)
 	end
 
 
-	-- Prefix ads option ids so they stay unique on the flat page.
-	local skip_prefix = {
-		ads_description = true, line_ads_world = true, ads_world_header = true,
-		line_wads_keys = true, wads_keys_header = true, line_wads_defaults = true,
-		wads_defaults_header = true,
-	}
-	for _, opt in ipairs(ads_gr) do
-		local id = opt.id
-		if id and not id:find("/") and not id:match("^line_wads_") and not id:match("_title$") and not skip_prefix[id] then
-			opt.id = "ads_zoom/" .. id
-		elseif id == "enabled" then
-			opt.id = "ads_zoom/enabled"
-		end
-	end
 
 	local items = {
 

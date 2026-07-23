@@ -6,8 +6,9 @@
 	radiation (db.actor.radiation).
 ]]
 
-local MOD_ID = "dogma/grain_fix"
-
+local CONF = _G.dogma_grain_fix_conf
+local MOD_ID = CONF.MOD_ID
+local D = CONF.defaults
 local DOGMA
 
 local PP_GRAIN_ID = 2021
@@ -39,8 +40,7 @@ local LOG = {
 	MSV       = {order = 2, color = "yellow"},
 	GRAIN     = {order = 3, color = "orange"},
 	BLUR      = {order = 4, color = "cyan"},
-	DUAL      = {order = 5, color = "purple"},
-}
+	DUAL      = {order = 5, color = "purple"},}
 
 -- HUD-only: for values that change every frame (Rads/MSV/Grain/Blur/Dual).
 local function overlay(log_type, msg)
@@ -64,24 +64,24 @@ local function log(msg)
 end
 
 local function on_option_change()
-	CONFIG.debug_log = DOGMA.mcm.bool(MOD_ID, "development/debug_log", false)
-	CONFIG.debug_overlay = DOGMA.mcm.bool(MOD_ID, "development/debug_overlay", false)
-	CONFIG.grain_enabled = DOGMA.mcm.bool(MOD_ID, "grain/enable", true)
-	CONFIG.blur_enabled = DOGMA.mcm.bool(MOD_ID, "desaturation/enable", true)
-	CONFIG.dual_enabled = DOGMA.mcm.bool(MOD_ID, "duality/enable", true)
+	CONFIG.debug_log = DOGMA.mcm.bool(MOD_ID, "development/debug_log")
+	CONFIG.debug_overlay = DOGMA.mcm.bool(MOD_ID, "development/debug_overlay")
+	CONFIG.grain_enabled = DOGMA.mcm.bool(MOD_ID, "grain/enable")
+	CONFIG.blur_enabled = DOGMA.mcm.bool(MOD_ID, "desaturation/enable")
+	CONFIG.dual_enabled = DOGMA.mcm.bool(MOD_ID, "duality/enable")
 	CONFIG.level_msv = {}
-	CONFIG.level_msv[1] = DOGMA.mcm.number(MOD_ID, "grain/level_01_msv", 50)
-	CONFIG.level_msv[2] = DOGMA.mcm.number(MOD_ID, "grain/level_02_msv", 100)
-	CONFIG.level_msv[3] = DOGMA.mcm.number(MOD_ID, "grain/level_03_msv", 150)
-	CONFIG.level_msv[4] = DOGMA.mcm.number(MOD_ID, "grain/level_04_msv", 250)
-	CONFIG.level_msv[5] = DOGMA.mcm.number(MOD_ID, "grain/level_05_msv", 350)
-	CONFIG.level_msv[6] = DOGMA.mcm.number(MOD_ID, "grain/level_06_msv", 450)
-	CONFIG.level_msv[7] = DOGMA.mcm.number(MOD_ID, "grain/level_07_msv", 550)
-	CONFIG.level_msv[8] = DOGMA.mcm.number(MOD_ID, "grain/level_08_msv", 700)
-	CONFIG.level_msv[9] = DOGMA.mcm.number(MOD_ID, "grain/level_09_msv", 850)
-	CONFIG.level_msv[10] = DOGMA.mcm.number(MOD_ID, "grain/level_10_msv", 1000)
-	CONFIG.blur_range = DOGMA.mcm.range(MOD_ID, "desaturation/blur_min", "desaturation/blur_max", 500, 2000)
-	CONFIG.dual_range = DOGMA.mcm.range(MOD_ID, "duality/dual_min", "duality/dual_max", 1000, 2000)
+	CONFIG.level_msv[1] = DOGMA.mcm.number(MOD_ID, "grain/level_01_msv")
+	CONFIG.level_msv[2] = DOGMA.mcm.number(MOD_ID, "grain/level_02_msv")
+	CONFIG.level_msv[3] = DOGMA.mcm.number(MOD_ID, "grain/level_03_msv")
+	CONFIG.level_msv[4] = DOGMA.mcm.number(MOD_ID, "grain/level_04_msv")
+	CONFIG.level_msv[5] = DOGMA.mcm.number(MOD_ID, "grain/level_05_msv")
+	CONFIG.level_msv[6] = DOGMA.mcm.number(MOD_ID, "grain/level_06_msv")
+	CONFIG.level_msv[7] = DOGMA.mcm.number(MOD_ID, "grain/level_07_msv")
+	CONFIG.level_msv[8] = DOGMA.mcm.number(MOD_ID, "grain/level_08_msv")
+	CONFIG.level_msv[9] = DOGMA.mcm.number(MOD_ID, "grain/level_09_msv")
+	CONFIG.level_msv[10] = DOGMA.mcm.number(MOD_ID, "grain/level_10_msv")
+	CONFIG.blur_range = DOGMA.mcm.range(MOD_ID, "desaturation/blur_min", "desaturation/blur_max")
+	CONFIG.dual_range = DOGMA.mcm.range(MOD_ID, "duality/dual_min", "duality/dual_max")
 	CONFIG.add_radiation_key = DOGMA.mcm.key(MOD_ID, "development/add_radiation_key")
 	CONFIG.clear_radiation_key = DOGMA.mcm.key(MOD_ID, "development/clear_radiation_key")
 
@@ -232,7 +232,7 @@ local function on_key_press(key)
 end
 
 function on_game_start()
-	DOGMA = _G.dogma_common.load(MOD_ID)
+	DOGMA = dogma_common.load(MOD_ID)
 
 	current_ppe = nil
 	blur_active = false

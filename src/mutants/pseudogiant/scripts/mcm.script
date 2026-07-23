@@ -1,11 +1,6 @@
--- dogma_mcm_banner:begin (managed by sync-dogma-common.sh)
-local function dogma_mcm()
-	return _G.dogma_mcm
-end
--- dogma_mcm_banner:end
-
 function on_mcm_load()
-	local MCM = dogma_mcm()
+	local CONF = _G.dogma_giant_jump_conf
+	local D = CONF.defaults
 	return {
 		id = "giant_jump",
 		text = "ui_mcm_menu_dogma_giant_jump",
@@ -14,7 +9,7 @@ function on_mcm_load()
 				id = "main",
 				sh = true,
 				text = "Main",
-				gr = MCM.with_header({
+				gr = dogma_mcm.with_header({
 					{
 						id = "main_description",
 						type = "desc",
@@ -24,7 +19,7 @@ function on_mcm_load()
 						id = "enabled",
 						type = "check",
 						val = 1,
-						def = true,
+						def = D["main/enabled"],
 						hint = "dogma_giant_jump_enabled",
 					},
 				}),
@@ -33,12 +28,12 @@ function on_mcm_load()
 				id = "development",
 				sh = true,
 				text = "ui_mcm_dogma_giant_jump_development_section",
-				gr = MCM.with_header({
+				gr = dogma_mcm.with_header({
 					{
 						id = "debug_log",
 						type = "check",
 						val = 1,
-						def = false,
+						def = D["development/debug_log"],
 						hint = "dogma_giant_jump_debug_log",
 					},
 				}),

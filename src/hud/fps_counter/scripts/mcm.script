@@ -1,11 +1,6 @@
--- dogma_mcm_banner:begin (managed by sync-dogma-common.sh)
-local function dogma_mcm()
-	return _G.dogma_mcm
-end
--- dogma_mcm_banner:end
-
 function on_mcm_load()
-	local MCM = dogma_mcm()
+	local CONF = _G.dogma_fps_counter_conf
+	local D = CONF.defaults
 	return {
 		id = "fps_counter",
 		text = "ui_mcm_menu_dogma_fps_counter",
@@ -14,26 +9,26 @@ function on_mcm_load()
 				id = "main",
 				sh = true,
 				text = "ui_mcm_dogma_fps_counter_main_section",
-				gr = MCM.with_header({
+				gr = dogma_mcm.with_header({
 					{
 						id = "enabled_default",
 						type = "check",
 						val = 1,
-						def = true,
+						def = D["main/enabled_default"],
 						hint = "dogma_fps_counter_enabled_default",
 					},
 					{
 						id = "toggle_key",
 						type = "key_bind",
 						val = 2,
-						def = -1,
+						def = D["main/toggle_key"],
 						hint = "dogma_fps_counter_toggle_key",
 					},
 					{
 						id = "display",
 						type = "list",
 						val = 2,
-						def = 0,
+						def = D["main/display"],
 						hint = "dogma_fps_counter_display",
 						content = {
 							{ 0, "simple_small" },
@@ -51,7 +46,7 @@ function on_mcm_load()
 						min = 0.1,
 						max = 3,
 						step = 0.1,
-						def = 0.5,
+						def = D["main/sample_window"],
 						hint = "dogma_fps_counter_sample_window",
 					},
 					{
@@ -61,7 +56,7 @@ function on_mcm_load()
 						min = 60,
 						max = 500,
 						step = 1,
-						def = 144,
+						def = D["main/max_fps"],
 						hint = "dogma_fps_counter_max_fps",
 					},
 					{
@@ -71,7 +66,7 @@ function on_mcm_load()
 						min = 1,
 						max = 10,
 						step = 1,
-						def = 5,
+						def = D["main/minmax_window"],
 						hint = "dogma_fps_counter_minmax_window",
 					},
 					{
@@ -81,7 +76,7 @@ function on_mcm_load()
 						min = 1,
 						max = 10,
 						step = 1,
-						def = 3,
+						def = D["main/refresh_rate"],
 						hint = "dogma_fps_counter_refresh_rate",
 					},
 					{ id = "line_pos", type = "line" },
@@ -94,7 +89,7 @@ function on_mcm_load()
 						id = "pos_anchor",
 						type = "list",
 						val = 2,
-						def = 0,
+						def = D["main/pos_anchor"],
 						hint = "dogma_fps_counter_pos_anchor",
 						content = {
 							{ 0, "top_left" },
@@ -110,7 +105,7 @@ function on_mcm_load()
 						min = 0,
 						max = 1024,
 						step = 1,
-						def = 0,
+						def = D["main/pos_x"],
 						hint = "dogma_fps_counter_pos_x",
 					},
 					{
@@ -120,7 +115,7 @@ function on_mcm_load()
 						min = 0,
 						max = 768,
 						step = 1,
-						def = 0,
+						def = D["main/pos_y"],
 						hint = "dogma_fps_counter_pos_y",
 					},
 				}),
@@ -129,7 +124,7 @@ function on_mcm_load()
 				id = "colors",
 				sh = true,
 				text = "ui_mcm_dogma_fps_counter_colors_section",
-				gr = MCM.with_header({
+				gr = dogma_mcm.with_header({
 					{
 						id = "text_color_desc",
 						type = "desc",
@@ -142,7 +137,7 @@ function on_mcm_load()
 						min = 0,
 						max = 255,
 						step = 1,
-						def = 255,
+						def = D["colors/text_r"],
 						hint = "dogma_fps_counter_text_r",
 					},
 					{
@@ -152,7 +147,7 @@ function on_mcm_load()
 						min = 0,
 						max = 255,
 						step = 1,
-						def = 255,
+						def = D["colors/text_g"],
 						hint = "dogma_fps_counter_text_g",
 					},
 					{
@@ -162,7 +157,7 @@ function on_mcm_load()
 						min = 0,
 						max = 255,
 						step = 1,
-						def = 255,
+						def = D["colors/text_b"],
 						hint = "dogma_fps_counter_text_b",
 					},
 					{
@@ -172,7 +167,7 @@ function on_mcm_load()
 						min = 0,
 						max = 255,
 						step = 1,
-						def = 200,
+						def = D["colors/text_a"],
 						hint = "dogma_fps_counter_text_a",
 					},
 					{ id = "line_graph_colors", type = "line" },
@@ -188,7 +183,7 @@ function on_mcm_load()
 						min = 0,
 						max = 255,
 						step = 1,
-						def = 255,
+						def = D["colors/graph_line_r"],
 						hint = "dogma_fps_counter_graph_line_r",
 					},
 					{
@@ -198,7 +193,7 @@ function on_mcm_load()
 						min = 0,
 						max = 255,
 						step = 1,
-						def = 255,
+						def = D["colors/graph_line_g"],
 						hint = "dogma_fps_counter_graph_line_g",
 					},
 					{
@@ -208,7 +203,7 @@ function on_mcm_load()
 						min = 0,
 						max = 255,
 						step = 1,
-						def = 0,
+						def = D["colors/graph_line_b"],
 						hint = "dogma_fps_counter_graph_line_b",
 					},
 					{
@@ -218,7 +213,7 @@ function on_mcm_load()
 						min = 0,
 						max = 255,
 						step = 1,
-						def = 150,
+						def = D["colors/graph_line_a"],
 						hint = "dogma_fps_counter_graph_line_a",
 					},
 					{
@@ -233,7 +228,7 @@ function on_mcm_load()
 						min = 0,
 						max = 255,
 						step = 1,
-						def = 150,
+						def = D["colors/graph_border_r"],
 						hint = "dogma_fps_counter_graph_border_r",
 					},
 					{
@@ -243,7 +238,7 @@ function on_mcm_load()
 						min = 0,
 						max = 255,
 						step = 1,
-						def = 150,
+						def = D["colors/graph_border_g"],
 						hint = "dogma_fps_counter_graph_border_g",
 					},
 					{
@@ -253,7 +248,7 @@ function on_mcm_load()
 						min = 0,
 						max = 255,
 						step = 1,
-						def = 150,
+						def = D["colors/graph_border_b"],
 						hint = "dogma_fps_counter_graph_border_b",
 					},
 					{
@@ -263,7 +258,7 @@ function on_mcm_load()
 						min = 0,
 						max = 255,
 						step = 1,
-						def = 200,
+						def = D["colors/graph_border_a"],
 						hint = "dogma_fps_counter_graph_border_a",
 					},
 				}),
@@ -272,12 +267,12 @@ function on_mcm_load()
 				id = "development",
 				sh = true,
 				text = "ui_mcm_dogma_fps_counter_development_section",
-				gr = MCM.with_header({
+				gr = dogma_mcm.with_header({
 					{
 						id = "debug_log",
 						type = "check",
 						val = 1,
-						def = false,
+						def = D["development/debug_log"],
 						hint = "dogma_fps_counter_debug_log",
 					},
 					{
@@ -292,7 +287,7 @@ function on_mcm_load()
 						min = 0,
 						max = 1000,
 						step = 5,
-						def = 0,
+						def = D["development/long_frame_threshold_ms"],
 						hint = "dogma_fps_counter_long_frame_threshold_ms",
 					},
 				}),

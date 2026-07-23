@@ -5,8 +5,9 @@
 	Torch: camera-locked via mod_system_dogma_prone_fix.ltx (torch_inertion = false).
 ]]
 
-local MOD_ID = "dogma/prone_fix"
-
+local CONF = _G.dogma_prone_fix_conf
+local MOD_ID = CONF.MOD_ID
+local D = CONF.defaults
 local DOGMA
 
 local POSTURES = {
@@ -26,13 +27,13 @@ local LOG = {
 }
 
 local CONFIG = {
-	debug_log = false,
-	debug_overlay = false,
-	hide_prone_bones = true,
-	cam_height_stand = 1.65,
-	cam_height_crouch = 1.2,
-	cam_height_prone = 0.45,
-	prone_damage_mult = 1.2,
+	debug_log = D["development/debug_log"],
+	debug_overlay = D["development/debug_overlay"],
+	hide_prone_bones = D["main/hide_prone_bones"],
+	cam_height_stand = D["development/cam_height_stand"],
+	cam_height_crouch = D["development/cam_height_crouch"],
+	cam_height_prone = D["development/cam_height_prone"],
+	prone_damage_mult = D["main/prone_damage_mult"],
 }
 
 local is_prone = nil
@@ -61,13 +62,13 @@ local function log(msg)
 end
 
 local function on_option_change()
-	CONFIG.debug_log = DOGMA.mcm.bool(MOD_ID, "development/debug_log", false)
-	CONFIG.debug_overlay = DOGMA.mcm.bool(MOD_ID, "development/debug_overlay", false)
-	CONFIG.hide_prone_bones = DOGMA.mcm.bool(MOD_ID, "main/hide_prone_bones", true)
-	CONFIG.cam_height_stand = DOGMA.mcm.number(MOD_ID, "development/cam_height_stand", 1.65)
-	CONFIG.cam_height_crouch = DOGMA.mcm.number(MOD_ID, "development/cam_height_crouch", 1.2)
-	CONFIG.cam_height_prone = DOGMA.mcm.number(MOD_ID, "development/cam_height_prone", 0.45)
-	CONFIG.prone_damage_mult = DOGMA.mcm.number(MOD_ID, "main/prone_damage_mult", 1.2)
+	CONFIG.debug_log = DOGMA.mcm.bool(MOD_ID, "development/debug_log")
+	CONFIG.debug_overlay = DOGMA.mcm.bool(MOD_ID, "development/debug_overlay")
+	CONFIG.hide_prone_bones = DOGMA.mcm.bool(MOD_ID, "main/hide_prone_bones")
+	CONFIG.cam_height_stand = DOGMA.mcm.number(MOD_ID, "development/cam_height_stand")
+	CONFIG.cam_height_crouch = DOGMA.mcm.number(MOD_ID, "development/cam_height_crouch")
+	CONFIG.cam_height_prone = DOGMA.mcm.number(MOD_ID, "development/cam_height_prone")
+	CONFIG.prone_damage_mult = DOGMA.mcm.number(MOD_ID, "main/prone_damage_mult")
 	DOGMA.dbg.set_enabled(MOD_ID, CONFIG.debug_overlay)
 
 	local _, actor = DOGMA.sys.ready(MOD_ID, db)
@@ -255,7 +256,7 @@ local function on_actor_on_before_hit(shit, bone_id, flags)
 end
 
 function on_game_start()
-	DOGMA = _G.dogma_common.load(MOD_ID)
+	DOGMA = dogma_common.load(MOD_ID)
 
 	is_prone = nil
 	RegisterScriptCallback("actor_on_update", on_actor_on_update)

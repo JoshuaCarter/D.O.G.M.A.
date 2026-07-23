@@ -21,7 +21,29 @@ local function path(mod_id, key)
 	return tostring(mod_id) .. "/" .. tostring(key)
 end
 
+-- MOD_ID "dogma/<feature>" → _G.dogma_<feature>_conf.defaults[key]
+local function conf_default(mod_id, key)
+	local feature = tostring(mod_id):match("^dogma/(.+)$")
+	if not feature then
+		return nil
+	end
+	local conf = _G["dogma_" .. feature:gsub("/", "_") .. "_conf"]
+	local defaults = conf and conf.defaults
+	if not defaults then
+		return nil
+	end
+	return defaults[key]
+end
+
+local function resolve_default(mod_id, key, explicit)
+	if explicit ~= nil then
+		return explicit
+	end
+	return conf_default(mod_id, key)
+end
+
 function get(mod_id, key, default)
+	default = resolve_default(mod_id, key, default)
 	if ui_mcm then
 		local value = ui_mcm.get(path(mod_id, key))
 		if value ~= nil then
@@ -43,6 +65,7 @@ function bool(mod_id, key, default)
 end
 
 function number(mod_id, key, default)
+	default = resolve_default(mod_id, key, default)
 	local value = get(mod_id, key, default)
 	if type(value) == "number" then
 		return value
@@ -60,7 +83,7 @@ end
 function string(mod_id, key, default)
 	local value = get(mod_id, key, default)
 	if value == nil then
-		return default
+		return resolve_default(mod_id, key, default)
 	end
 	return tostring(value)
 end

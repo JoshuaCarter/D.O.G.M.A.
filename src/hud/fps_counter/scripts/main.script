@@ -17,8 +17,9 @@
 	which would otherwise look like a slow frame - so those are excluded too.
 ]]
 
-local MOD_ID = "dogma/fps_counter"
-
+local CONF = _G.dogma_fps_counter_conf
+local MOD_ID = CONF.MOD_ID
+local D = CONF.defaults
 local DOGMA
 
 local UI_WIDTH = 1024
@@ -46,16 +47,16 @@ local FONTS = {
 }
 
 local CONFIG = {
-	toggle_key = nil,
-	enabled_default = true,
-	display_mode = DISPLAY.SIMPLE_SMALL,
-	minmax_window = 5,
-	sample_window = 0.5,
+	toggle_key = D["main/toggle_key"],
+	enabled_default = D["main/enabled_default"],
+	display_mode = D["main/display"],
+	minmax_window = D["main/minmax_window"],
+	sample_window = D["main/sample_window"],
 	max_fps = 144,
-	refresh_rate = 3,
-	pos_anchor = ANCHOR.TOP_LEFT,
-	pos_x = 0,
-	pos_y = 0,
+	refresh_rate = D["main/refresh_rate"],
+	pos_anchor = D["main/pos_anchor"],
+	pos_x = D["main/pos_x"],
+	pos_y = D["main/pos_y"],
 	font = FONTS[0],
 	text_r = 255,
 	text_g = 255,
@@ -69,8 +70,8 @@ local CONFIG = {
 	graph_border_g = 96,
 	graph_border_b = 96,
 	graph_border_a = 128,
-	debug_log = false,
-	long_frame_threshold_ms = 0,
+	debug_log = D["development/debug_log"],
+	long_frame_threshold_ms = D["development/long_frame_threshold_ms"],
 }
 
 local hud = nil
@@ -135,31 +136,31 @@ local function mcm_byte(v)
 end
 
 local function on_option_change()
-	CONFIG.enabled_default = DOGMA.mcm.bool(MOD_ID, "main/enabled_default", true)
-	CONFIG.debug_log = DOGMA.mcm.bool(MOD_ID, "development/debug_log", false)
-	CONFIG.long_frame_threshold_ms = DOGMA.mcm.number(MOD_ID, "development/long_frame_threshold_ms", 0)
-	CONFIG.toggle_key = DOGMA.mcm.key(MOD_ID, "main/toggle_key", 0)
-	CONFIG.display_mode = DOGMA.mcm.number(MOD_ID, "main/display", DISPLAY.SIMPLE_SMALL)
-	CONFIG.sample_window = DOGMA.mcm.number(MOD_ID, "main/sample_window", 0.5)
-	CONFIG.max_fps = math.max(60, math.min(500, DOGMA.mcm.number(MOD_ID, "main/max_fps", 144)))
-	CONFIG.minmax_window = DOGMA.mcm.number(MOD_ID, "main/minmax_window", 5)
-	CONFIG.refresh_rate = DOGMA.mcm.number(MOD_ID, "main/refresh_rate", 3)
-	CONFIG.pos_anchor = DOGMA.mcm.number(MOD_ID, "main/pos_anchor", ANCHOR.TOP_LEFT)
-	CONFIG.pos_x = DOGMA.mcm.number(MOD_ID, "main/pos_x", 0)
-	CONFIG.pos_y = DOGMA.mcm.number(MOD_ID, "main/pos_y", 0)
+	CONFIG.enabled_default = DOGMA.mcm.bool(MOD_ID, "main/enabled_default")
+	CONFIG.debug_log = DOGMA.mcm.bool(MOD_ID, "development/debug_log")
+	CONFIG.long_frame_threshold_ms = DOGMA.mcm.number(MOD_ID, "development/long_frame_threshold_ms")
+	CONFIG.toggle_key = DOGMA.mcm.key(MOD_ID, "main/toggle_key")
+	CONFIG.display_mode = DOGMA.mcm.number(MOD_ID, "main/display")
+	CONFIG.sample_window = DOGMA.mcm.number(MOD_ID, "main/sample_window")
+	CONFIG.max_fps = math.max(60, math.min(500, DOGMA.mcm.number(MOD_ID, "main/max_fps")))
+	CONFIG.minmax_window = DOGMA.mcm.number(MOD_ID, "main/minmax_window")
+	CONFIG.refresh_rate = DOGMA.mcm.number(MOD_ID, "main/refresh_rate")
+	CONFIG.pos_anchor = DOGMA.mcm.number(MOD_ID, "main/pos_anchor")
+	CONFIG.pos_x = DOGMA.mcm.number(MOD_ID, "main/pos_x")
+	CONFIG.pos_y = DOGMA.mcm.number(MOD_ID, "main/pos_y")
 	CONFIG.font = FONTS[display_font_idx(CONFIG.display_mode)]
-	CONFIG.text_r = mcm_byte(DOGMA.mcm.number(MOD_ID, "colors/text_r", 255))
-	CONFIG.text_g = mcm_byte(DOGMA.mcm.number(MOD_ID, "colors/text_g", 255))
-	CONFIG.text_b = mcm_byte(DOGMA.mcm.number(MOD_ID, "colors/text_b", 255))
-	CONFIG.text_a = mcm_byte(DOGMA.mcm.number(MOD_ID, "colors/text_a", 200))
-	CONFIG.graph_line_r = mcm_byte(DOGMA.mcm.number(MOD_ID, "colors/graph_line_r", 255))
-	CONFIG.graph_line_g = mcm_byte(DOGMA.mcm.number(MOD_ID, "colors/graph_line_g", 255))
-	CONFIG.graph_line_b = mcm_byte(DOGMA.mcm.number(MOD_ID, "colors/graph_line_b", 255))
-	CONFIG.graph_line_a = mcm_byte(DOGMA.mcm.number(MOD_ID, "colors/graph_line_a", 255))
-	CONFIG.graph_border_r = mcm_byte(DOGMA.mcm.number(MOD_ID, "colors/graph_border_r", 96))
-	CONFIG.graph_border_g = mcm_byte(DOGMA.mcm.number(MOD_ID, "colors/graph_border_g", 96))
-	CONFIG.graph_border_b = mcm_byte(DOGMA.mcm.number(MOD_ID, "colors/graph_border_b", 96))
-	CONFIG.graph_border_a = mcm_byte(DOGMA.mcm.number(MOD_ID, "colors/graph_border_a", 128))
+	CONFIG.text_r = mcm_byte(DOGMA.mcm.number(MOD_ID, "colors/text_r"))
+	CONFIG.text_g = mcm_byte(DOGMA.mcm.number(MOD_ID, "colors/text_g"))
+	CONFIG.text_b = mcm_byte(DOGMA.mcm.number(MOD_ID, "colors/text_b"))
+	CONFIG.text_a = mcm_byte(DOGMA.mcm.number(MOD_ID, "colors/text_a"))
+	CONFIG.graph_line_r = mcm_byte(DOGMA.mcm.number(MOD_ID, "colors/graph_line_r"))
+	CONFIG.graph_line_g = mcm_byte(DOGMA.mcm.number(MOD_ID, "colors/graph_line_g"))
+	CONFIG.graph_line_b = mcm_byte(DOGMA.mcm.number(MOD_ID, "colors/graph_line_b"))
+	CONFIG.graph_line_a = mcm_byte(DOGMA.mcm.number(MOD_ID, "colors/graph_line_a"))
+	CONFIG.graph_border_r = mcm_byte(DOGMA.mcm.number(MOD_ID, "colors/graph_border_r"))
+	CONFIG.graph_border_g = mcm_byte(DOGMA.mcm.number(MOD_ID, "colors/graph_border_g"))
+	CONFIG.graph_border_b = mcm_byte(DOGMA.mcm.number(MOD_ID, "colors/graph_border_b"))
+	CONFIG.graph_border_a = mcm_byte(DOGMA.mcm.number(MOD_ID, "colors/graph_border_a"))
 
 	local sample_len = math.max(1, math.ceil(CONFIG.sample_window * CONFIG.max_fps))
 	if not sample_buf or sample_buf.cap ~= sample_len then
@@ -342,7 +343,7 @@ local function on_actor_first_update()
 end
 
 function on_game_start()
-	DOGMA = _G.dogma_common.load(MOD_ID)
+	DOGMA = dogma_common.load(MOD_ID)
 
 	init = false
 	visible = false

@@ -1,25 +1,22 @@
 --[[
-	DOGMA common loader (vendored into DOGMA — stable, no commit hash).
+	DOGMA common loader (vendored — stable, no commit hash).
 
-	Ships alongside dogma_mcm / dogma_dbg / dogma_sys as dogma_common.script.
-	X-Ray auto-loads every .script file in gamedata/scripts at boot, so this
-	and its 3 siblings are already loaded globals by the time any mod's
-	on_game_start() runs — no process_file() call needed.
+	Ships as dogma_common.script (no zzzz_), with dogma_mcm / dogma_dbg / dogma_sys.
+	Feature body scripts are zzzz_*, so these globals exist before any feature
+	on_game_start(). Feature _conf.script builds to dogma_{cat}_{feat}_conf.script
+	(also no zzzz_) and publishes MOD_ID + defaults on _G.dogma_<feature>_conf.
 
-	Usage from a feature main.script:
+	Usage:
 
-		local MOD_ID = "dogma/feature"  -- MCM path under collection "dogma"
-
+		local CONF = _G.dogma_feature_conf
+		local MOD_ID = CONF.MOD_ID
 		local DOGMA
 
 		function on_game_start()
-			DOGMA = _G.dogma_common.load(MOD_ID)
-			-- ...
+			DOGMA = dogma_common.load(MOD_ID)
+			-- defaults come from CONF via DOGMA.mcm.*; MCM trees still use def = CONF.defaults["…"]
+			-- CONFIG.x = DOGMA.mcm.bool(MOD_ID, "main/x")
 		end
-
-	Resolve via _G.dogma_common and call load() inside on_game_start()
-	only — never at the top level of the script, since load order across
-	auto-loaded files isn't guaranteed there.
 ]]
 
 local SUFFIX = ""
@@ -33,6 +30,6 @@ function load(mod_id)
 		sys.reset_mod(mod_id)
 		dbg.clear_source(mod_id)
 	end
-	printf("[DOGMA] %s: common loaded (vendored)", tostring(mod_id))
+	printf("[DOGMA] %s: common loaded", tostring(mod_id))
 	return { mcm = mcm, dbg = dbg, sys = sys }
 end

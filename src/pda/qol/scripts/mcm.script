@@ -1,11 +1,6 @@
--- dogma_mcm_banner:begin (managed by sync-dogma-common.sh)
-local function dogma_mcm()
-	return _G.dogma_mcm
-end
--- dogma_mcm_banner:end
-
 function on_mcm_load()
-	local MCM = dogma_mcm()
+	local CONF = _G.dogma_dont_reequip_pda_conf
+	local D = CONF.defaults
 	return {
 		id = "dont_reequip_pda",
 		text = "ui_mcm_menu_dogma_dont_reequip_pda",
@@ -14,7 +9,7 @@ function on_mcm_load()
 				id = "main",
 				sh = true,
 				text = "ui_mcm_dogma_dont_reequip_pda_main_section",
-				gr = MCM.with_header({
+				gr = dogma_mcm.with_header({
 					{
 						id = "main_description",
 						type = "desc",
@@ -24,21 +19,21 @@ function on_mcm_load()
 						id = "after_inventory",
 						type = "check",
 						val = 1,
-						def = true,
+						def = D["main/after_inventory"],
 						hint = "dogma_dont_reequip_pda_after_inventory",
 					},
 					{
 						id = "after_loot",
 						type = "check",
 						val = 1,
-						def = true,
+						def = D["main/after_loot"],
 						hint = "dogma_dont_reequip_pda_after_loot",
 					},
 					{
 						id = "after_teleport",
 						type = "check",
 						val = 1,
-						def = true,
+						def = D["main/after_teleport"],
 						hint = "dogma_dont_reequip_pda_after_teleport",
 					},
 				}),
@@ -47,12 +42,12 @@ function on_mcm_load()
 				id = "development",
 				sh = true,
 				text = "ui_mcm_dogma_dont_reequip_pda_development_section",
-				gr = MCM.with_header({
+				gr = dogma_mcm.with_header({
 					{
 						id = "debug_log",
 						type = "check",
 						val = 1,
-						def = false,
+						def = D["development/debug_log"],
 						hint = "dogma_dont_reequip_pda_debug_log",
 					},
 				}),

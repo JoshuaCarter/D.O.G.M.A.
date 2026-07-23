@@ -6,9 +6,10 @@
 	strip burst logic stays in main.script.
 ]]
 
-local MOD_ID = "dogma/strip_everything"
-
+local CONF = _G.dogma_strip_everything_conf
+local MOD_ID = CONF.MOD_ID
 local DOGMA
+local CONFIG = CONF.CONFIG
 
 local MODE_PRESS = 0
 local MODE_DTAP = 1
@@ -20,12 +21,6 @@ local ALLOWED_BAGS = {
 	actor_belt = true,
 	npc_bag = true,
 	picker = true,
-}
-
-local CONFIG = {
-	drop_safe_equipped = true,
-	disa_safe_equipped = true,
-	debug_log = false,
 }
 
 -- bind defs filled in on_option_change: { id, key, modifier, mode, kind, all_stacks }
@@ -52,7 +47,7 @@ local function log(msg)
 	if not (DOGMA and DOGMA.dbg) then
 		return
 	end
-	if CONFIG.debug_log then
+	if CONFIG.drop_disa_debug_log then
 		DOGMA.dbg.log(MOD_ID, tostring(msg))
 	end
 end
@@ -73,9 +68,9 @@ local function make_bind(id, key_path, mod_path, mode_path, kind, all_stacks)
 end
 
 local function on_option_change()
-	CONFIG.drop_safe_equipped = DOGMA.mcm.bool(MOD_ID, "main/drop_safe_equipped", true)
-	CONFIG.disa_safe_equipped = DOGMA.mcm.bool(MOD_ID, "main/disa_safe_equipped", true)
-	CONFIG.debug_log = DOGMA.mcm.bool(MOD_ID, "development/drop_disa_debug_log", false)
+	CONFIG.drop_safe_equipped = DOGMA.mcm.bool(MOD_ID, "main/drop_safe_equipped")
+	CONFIG.disa_safe_equipped = DOGMA.mcm.bool(MOD_ID, "main/disa_safe_equipped")
+	CONFIG.drop_disa_debug_log = DOGMA.mcm.bool(MOD_ID, "development/drop_disa_debug_log")
 
 	BINDS = {
 		make_bind("drop", "main/key_drop", "main/key_drop_modifier", "main/key_drop_mode", "drop", false),
@@ -496,7 +491,10 @@ if original_on_update then
 end
 
 function on_game_start()
-	DOGMA = _G.dogma_common.load(MOD_ID)
+	if not CONF.DOGMA then
+		CONF.DOGMA = dogma_common.load(MOD_ID)
+	end
+	DOGMA = CONF.DOGMA
 	RegisterScriptCallback("on_option_change", on_option_change)
 	RegisterScriptCallback("actor_on_first_update", function()
 		reapply_on_hover_patch()

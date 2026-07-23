@@ -1,11 +1,6 @@
--- dogma_mcm_banner:begin (managed by sync-dogma-common.sh)
-local function dogma_mcm()
-	return _G.dogma_mcm
-end
--- dogma_mcm_banner:end
-
 function on_mcm_load()
-	local MCM = dogma_mcm()
+	local CONF = _G.dogma_grain_fix_conf
+	local D = CONF.defaults
 	return {
 		id = "grain_fix",
 		text = "ui_mcm_menu_dogma_grain_fix",
@@ -14,12 +9,12 @@ function on_mcm_load()
 				id = "grain",
 				sh = true,
 				text = "ui_mcm_dogma_grain_fix_grain_section",
-				gr = MCM.with_header({
+				gr = dogma_mcm.with_header({
 					{
 						id = "enable",
 						type = "check",
 						val = 1,
-						def = true,
+						def = D["grain/enable"],
 						hint = "dogma_grain_fix_grain_enable",
 					},
 					{
@@ -34,7 +29,7 @@ function on_mcm_load()
 						min = 1,
 						max = 2000,
 						step = 1,
-						def = 50,
+						def = D["grain/level_01_msv"],
 						hint = "dogma_grain_fix_level_01_msv",
 					},
 					{
@@ -44,7 +39,7 @@ function on_mcm_load()
 						min = 1,
 						max = 2000,
 						step = 1,
-						def = 100,
+						def = D["grain/level_02_msv"],
 						hint = "dogma_grain_fix_level_02_msv",
 					},
 					{
@@ -54,7 +49,7 @@ function on_mcm_load()
 						min = 1,
 						max = 2000,
 						step = 1,
-						def = 150,
+						def = D["grain/level_03_msv"],
 						hint = "dogma_grain_fix_level_03_msv",
 					},
 					{
@@ -64,7 +59,7 @@ function on_mcm_load()
 						min = 1,
 						max = 2000,
 						step = 1,
-						def = 250,
+						def = D["grain/level_04_msv"],
 						hint = "dogma_grain_fix_level_04_msv",
 					},
 					{
@@ -74,7 +69,7 @@ function on_mcm_load()
 						min = 1,
 						max = 2000,
 						step = 1,
-						def = 350,
+						def = D["grain/level_05_msv"],
 						hint = "dogma_grain_fix_level_05_msv",
 					},
 					{
@@ -84,7 +79,7 @@ function on_mcm_load()
 						min = 1,
 						max = 2000,
 						step = 1,
-						def = 450,
+						def = D["grain/level_06_msv"],
 						hint = "dogma_grain_fix_level_06_msv",
 					},
 					{
@@ -94,7 +89,7 @@ function on_mcm_load()
 						min = 1,
 						max = 2000,
 						step = 1,
-						def = 550,
+						def = D["grain/level_07_msv"],
 						hint = "dogma_grain_fix_level_07_msv",
 					},
 					{
@@ -104,7 +99,7 @@ function on_mcm_load()
 						min = 1,
 						max = 2000,
 						step = 1,
-						def = 700,
+						def = D["grain/level_08_msv"],
 						hint = "dogma_grain_fix_level_08_msv",
 					},
 					{
@@ -114,7 +109,7 @@ function on_mcm_load()
 						min = 1,
 						max = 2000,
 						step = 1,
-						def = 850,
+						def = D["grain/level_09_msv"],
 						hint = "dogma_grain_fix_level_09_msv",
 					},
 					{
@@ -124,7 +119,7 @@ function on_mcm_load()
 						min = 1,
 						max = 2000,
 						step = 1,
-						def = 1000,
+						def = D["grain/level_10_msv"],
 						hint = "dogma_grain_fix_level_10_msv",
 					},
 				}),
@@ -133,12 +128,12 @@ function on_mcm_load()
 				id = "desaturation",
 				sh = true,
 				text = "ui_mcm_dogma_grain_fix_desaturation_section",
-				gr = MCM.with_header({
+				gr = dogma_mcm.with_header({
 					{
 						id = "enable",
 						type = "check",
 						val = 1,
-						def = true,
+						def = D["desaturation/enable"],
 						hint = "dogma_grain_fix_desaturation_enable",
 					},
 					{
@@ -153,7 +148,7 @@ function on_mcm_load()
 						min = 1,
 						max = 2000,
 						step = 1,
-						def = 500,
+						def = D["desaturation/blur_min"],
 						hint = "dogma_grain_fix_blur_min",
 					},
 					{
@@ -163,7 +158,7 @@ function on_mcm_load()
 						min = 1,
 						max = 2000,
 						step = 1,
-						def = 2000,
+						def = D["desaturation/blur_max"],
 						hint = "dogma_grain_fix_blur_max",
 					},
 				}),
@@ -172,12 +167,12 @@ function on_mcm_load()
 				id = "duality",
 				sh = true,
 				text = "ui_mcm_dogma_grain_fix_duality_section",
-				gr = MCM.with_header({
+				gr = dogma_mcm.with_header({
 					{
 						id = "enable",
 						type = "check",
 						val = 1,
-						def = true,
+						def = D["duality/enable"],
 						hint = "dogma_grain_fix_duality_enable",
 					},
 					{
@@ -192,7 +187,7 @@ function on_mcm_load()
 						min = 1,
 						max = 2000,
 						step = 1,
-						def = 1000,
+						def = D["duality/dual_min"],
 						hint = "dogma_grain_fix_dual_min",
 					},
 					{
@@ -202,7 +197,7 @@ function on_mcm_load()
 						min = 1,
 						max = 2000,
 						step = 1,
-						def = 2000,
+						def = D["duality/dual_max"],
 						hint = "dogma_grain_fix_dual_max",
 					},
 				}),
@@ -211,33 +206,33 @@ function on_mcm_load()
 				id = "development",
 				sh = true,
 				text = "Development",
-				gr = MCM.with_header({
+				gr = dogma_mcm.with_header({
 					{
 						id = "add_radiation_key",
 						type = "key_bind",
 						val = 2,
-						def = -1,
+						def = D["development/add_radiation_key"],
 						hint = "dogma_grain_fix_add_radiation_key",
 					},
 					{
 						id = "clear_radiation_key",
 						type = "key_bind",
 						val = 2,
-						def = -1,
+						def = D["development/clear_radiation_key"],
 						hint = "dogma_grain_fix_clear_radiation_key",
 					},
 					{
 						id = "debug_overlay",
 						type = "check",
 						val = 1,
-						def = false,
+						def = D["development/debug_overlay"],
 						hint = "dogma_grain_fix_debug_overlay",
 					},
 					{
 						id = "debug_log",
 						type = "check",
 						val = 1,
-						def = false,
+						def = D["development/debug_log"],
 						hint = "dogma_grain_fix_debug_log",
 					},
 				}),

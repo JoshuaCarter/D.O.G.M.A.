@@ -10,7 +10,10 @@
 #
 # Scripts (prefix applied at build — src keeps short names like main.script):
 #   common/scripts/*          -> same basename (dogma_common, dogma_mcm, …)
-#   …/scripts/mcm.script      -> dogma_{path}_mcm.script   (no zzzz_; still *mcm.script)
+#                               no zzzz_ — always before every feature script
+#   …/scripts/_conf.script    -> dogma_{path}_conf.script
+#                               no zzzz_ — before that feature's zzzz_ body scripts
+#   …/scripts/mcm.script      -> dogma_{path}_mcm.script   (*mcm.script glob)
 #   …/scripts/<other>.script  -> zzzz_dogma_{path}_<other>.script
 #
 # Env:
@@ -42,6 +45,7 @@ should_skip_name() {
 		README | README.* | MOVE_MAP | MOVE_MAP.* | .gitkeep | .DS_Store | Thumbs.db) return 0 ;;
 		assets | installer) return 0 ;; # authoring / FOMOD meta — not gamedata
 		*.alao-bak) return 0 ;;
+		_conf.script) return 1 ;; # feature conf — shipped (loads before other feature scripts)
 		_*) return 0 ;;
 		*) return 1 ;;
 	esac
@@ -57,8 +61,9 @@ is_gamedata_root() {
 }
 
 # path_key: category_feature (underscores). Empty = keep basename (common/).
-# mcm.script -> dogma_{path}_mcm.script (no zzzz_; MCM glob is *mcm.script).
-# everything else -> zzzz_dogma_{path}_{stem}.script
+# Load order: common (dogma_*) → feature conf/mcm (dogma_{path}_*) → feature body (zzzz_…).
+# _conf.script → dogma_{path}_conf.script (early for that feature; unique across mods).
+# mcm.script   → dogma_{path}_mcm.script  (matches MCM's *mcm.script glob).
 script_dest_basename() {
 	local path_key="$1"
 	local src_base="$2"
@@ -67,10 +72,13 @@ script_dest_basename() {
 		return 0
 	fi
 	local stem="${src_base%.script}"
-	if [[ "$stem" == "mcm" ]]; then
-		echo "dogma_${path_key}_mcm.script"
-		return 0
-	fi
+	# Early feature scripts (no zzzz_): _conf → conf, mcm stays mcm
+	case "$stem" in
+		_conf | mcm)
+			echo "dogma_${path_key}_${stem#_}.script"
+			return 0
+			;;
+	esac
 	echo "zzzz_dogma_${path_key}_${stem}.script"
 }
 

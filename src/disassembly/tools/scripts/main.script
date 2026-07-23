@@ -9,13 +9,14 @@
 	GAMMA mods installed last.
 ]]
 
-local MOD_ID = "dogma/optimal_tool_use"
-
+local CONF = _G.dogma_optimal_tool_use_conf
+local MOD_ID = CONF.MOD_ID
+local D = CONF.defaults
 local DOGMA
 
 local CONFIG = {
-	enabled = true,
-	debug_log = false,
+	enabled = D["main/enabled"],
+	debug_log = D["development/debug_log"],
 }
 
 local orig_get_suitable_dtool = nil
@@ -31,8 +32,8 @@ local function log(msg)
 end
 
 local function on_option_change()
-	CONFIG.enabled = DOGMA.mcm.bool(MOD_ID, "main/enabled", true)
-	CONFIG.debug_log = DOGMA.mcm.bool(MOD_ID, "development/debug_log", false)
+	CONFIG.enabled = DOGMA.mcm.bool(MOD_ID, "main/enabled")
+	CONFIG.debug_log = DOGMA.mcm.bool(MOD_ID, "development/debug_log")
 end
 
 local function redirect_to_lowest_stack(obj_d, note)
@@ -137,7 +138,7 @@ local function optimal_func_disassembly(obj, obj_d)
 end
 
 function on_game_start()
-	DOGMA = _G.dogma_common.load(MOD_ID)
+	DOGMA = dogma_common.load(MOD_ID)
 
 	on_option_change()
 

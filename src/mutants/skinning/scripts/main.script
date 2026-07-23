@@ -7,8 +7,9 @@
 	swings or one heavy on a dead mutant takes all parts with no popup/anim.
 ]]
 
-local MOD_ID = "dogma/faster_skinning"
-
+local CONF = _G.dogma_faster_skinning_conf
+local MOD_ID = CONF.MOD_ID
+local D = CONF.defaults
 local DOGMA
 
 local WELL_DRESSED_ID = "well_dressed"
@@ -27,13 +28,13 @@ local SLASH_PROGRESS_NEEDED = 2
 local SLASH_PROGRESS_TIMEOUT_MS = 4000
 
 local CONFIG = {
-	enabled = true,
-	debug_log = false,
-	skin_speed_multiplier = 1.5,
-	auto_crouch = false,
-	look_at_mutant = false,
-	look_at_offset = 0.5,
-	slash_loot = false,
+	enabled = D["main/enabled"],
+	debug_log = D["development/debug_log"],
+	skin_speed_multiplier = D["main/skin_speed_multiplier"],
+	auto_crouch = D["main/auto_crouch"],
+	look_at_mutant = D["main/look_at_mutant"],
+	look_at_offset = D["main/look_at_offset"],
+	slash_loot = D["main/slash_loot"],
 }
 
 local original_has_achievement = nil
@@ -595,18 +596,18 @@ local function on_slash_key_press(dik)
 end
 
 local function on_option_change()
-	CONFIG.enabled = DOGMA.mcm.bool(MOD_ID, "main/enabled", true)
-	CONFIG.debug_log = DOGMA.mcm.bool(MOD_ID, "development/debug_log", false)
-	CONFIG.skin_speed_multiplier = DOGMA.mcm.number(MOD_ID, "main/skin_speed_multiplier", 1.5)
-	CONFIG.auto_crouch = DOGMA.mcm.bool(MOD_ID, "main/auto_crouch", false)
-	CONFIG.look_at_mutant = DOGMA.mcm.bool(MOD_ID, "main/look_at_mutant", false)
-	CONFIG.look_at_offset = DOGMA.mcm.number(MOD_ID, "main/look_at_offset", 0.5)
-	CONFIG.slash_loot = DOGMA.mcm.bool(MOD_ID, "main/slash_loot", false)
+	CONFIG.enabled = DOGMA.mcm.bool(MOD_ID, "main/enabled")
+	CONFIG.debug_log = DOGMA.mcm.bool(MOD_ID, "development/debug_log")
+	CONFIG.skin_speed_multiplier = DOGMA.mcm.number(MOD_ID, "main/skin_speed_multiplier")
+	CONFIG.auto_crouch = DOGMA.mcm.bool(MOD_ID, "main/auto_crouch")
+	CONFIG.look_at_mutant = DOGMA.mcm.bool(MOD_ID, "main/look_at_mutant")
+	CONFIG.look_at_offset = DOGMA.mcm.number(MOD_ID, "main/look_at_offset")
+	CONFIG.slash_loot = DOGMA.mcm.bool(MOD_ID, "main/slash_loot")
 	log(string.format("options: enabled=%s slash_loot=%s", tostring(CONFIG.enabled), tostring(CONFIG.slash_loot)))
 end
 
 function on_game_start()
-	DOGMA = _G.dogma_common.load(MOD_ID)
+	DOGMA = dogma_common.load(MOD_ID)
 
 	on_option_change()
 

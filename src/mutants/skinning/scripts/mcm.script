@@ -1,11 +1,6 @@
--- dogma_mcm_banner:begin (managed by sync-dogma-common.sh)
-local function dogma_mcm()
-	return _G.dogma_mcm
-end
--- dogma_mcm_banner:end
-
 function on_mcm_load()
-	local MCM = dogma_mcm()
+	local CONF = _G.dogma_faster_skinning_conf
+	local D = CONF.defaults
 	return {
 		id = "faster_skinning",
 		text = "Faster Skinning",
@@ -14,12 +9,12 @@ function on_mcm_load()
 				id = "main",
 				sh = true,
 				text = "Main",
-				gr = MCM.with_header({
+				gr = dogma_mcm.with_header({
 					{
 						id = "enabled",
 						type = "check",
 						val = 1,
-						def = true,
+						def = D["main/enabled"],
 						hint = "dogma_faster_skinning_enabled",
 					},
 					{
@@ -29,21 +24,21 @@ function on_mcm_load()
 						min = 1,
 						max = 2,
 						step = 0.1,
-						def = 1.5,
+						def = D["main/skin_speed_multiplier"],
 						hint = "dogma_faster_skinning_skin_speed_multiplier",
 					},
 					{
 						id = "auto_crouch",
 						type = "check",
 						val = 1,
-						def = false,
+						def = D["main/auto_crouch"],
 						hint = "dogma_faster_skinning_auto_crouch",
 					},
 					{
 						id = "look_at_mutant",
 						type = "check",
 						val = 1,
-						def = false,
+						def = D["main/look_at_mutant"],
 						hint = "dogma_faster_skinning_look_at_mutant",
 					},
 					{
@@ -53,14 +48,14 @@ function on_mcm_load()
 						min = 0,
 						max = 1,
 						step = 0.05,
-						def = 0.6,
+						def = D["main/look_at_offset"],
 						hint = "dogma_faster_skinning_look_at_offset",
 					},
 					{
 						id = "slash_loot",
 						type = "check",
 						val = 1,
-						def = false,
+						def = D["main/slash_loot"],
 						hint = "dogma_faster_skinning_slash_loot",
 					},
 				}),
@@ -69,12 +64,12 @@ function on_mcm_load()
 				id = "development",
 				sh = true,
 				text = "Development",
-				gr = MCM.with_header({
+				gr = dogma_mcm.with_header({
 					{
 						id = "debug_log",
 						type = "check",
 						val = 1,
-						def = false,
+						def = D["development/debug_log"],
 						hint = "dogma_faster_skinning_debug_log",
 					},
 				}),

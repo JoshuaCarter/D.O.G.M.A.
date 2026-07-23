@@ -1,0 +1,50 @@
+-- strip_everything conf: MOD_ID + defaults (MCM def= and CONFIG share these).
+-- Sibling scripts share CONF.DOGMA (one load) and CONF.CONFIG (one settings table).
+
+local defaults = {
+	["development/debug_log"] = false,
+	["development/dis_weap_attach_debug_log"] = false,
+	["development/drop_disa_debug_log"] = false,
+	["dis_weap_attach/enabled"] = false,
+	["main/block_companion_special_items"] = true,
+	["main/disa_safe_equipped"] = true,
+	["main/drop_safe_equipped"] = true,
+	["main/intercept_disassemble"] = true,
+	["main/keep_parts_with_weapon"] = true,
+	["main/key"] = -1,
+	["main/key_all"] = -1,
+	["main/key_all_mode"] = 0,
+	["main/key_all_modifier"] = 0,
+	["main/key_disa"] = -1,
+	["main/key_disa_all"] = -1,
+	["main/key_disa_all_mode"] = 0,
+	["main/key_disa_all_modifier"] = 0,
+	["main/key_disa_mode"] = 0,
+	["main/key_disa_modifier"] = 0,
+	["main/key_drop"] = -1,
+	["main/key_drop_all"] = -1,
+	["main/key_drop_all_mode"] = 0,
+	["main/key_drop_all_modifier"] = 0,
+	["main/key_drop_mode"] = 0,
+	["main/key_drop_modifier"] = 0,
+	["main/key_mode"] = 0,
+	["main/key_modifier"] = 0,
+	["main/pda_stash_on_disassemble"] = true,
+}
+
+_G.dogma_strip_everything_conf = {
+	MOD_ID = "dogma/strip_everything",
+	defaults = defaults,
+	CONFIG = {
+		intercept_disassemble = defaults["main/intercept_disassemble"],
+		keep_parts_with_weapon = defaults["main/keep_parts_with_weapon"],
+		pda_stash_on_disassemble = defaults["main/pda_stash_on_disassemble"],
+		debug_log = defaults["development/debug_log"],
+		drop_safe_equipped = defaults["main/drop_safe_equipped"],
+		disa_safe_equipped = defaults["main/disa_safe_equipped"],
+		drop_disa_debug_log = defaults["development/drop_disa_debug_log"],
+		attach_enabled = defaults["dis_weap_attach/enabled"],
+		attach_debug_log = defaults["development/dis_weap_attach_debug_log"],
+		block_special_items = defaults["main/block_companion_special_items"],
+	},
+}

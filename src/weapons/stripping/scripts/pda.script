@@ -7,10 +7,10 @@
 	removes the icon automatically.
 ]]
 
-local MOD_ID = "dogma/strip_everything"
-
+local CONF = _G.dogma_strip_everything_conf
+local MOD_ID = CONF.MOD_ID
 local DOGMA
-local pda_stash_on_disassemble = true
+local CONFIG = CONF.CONFIG
 
 local icon_xml
 
@@ -22,7 +22,7 @@ local function show_pda_lock_icon(self, obj, sec)
 	if self.pda_lock_icon then
 		self.pda_lock_icon:Show(false)
 	end
-	if not pda_stash_on_disassemble then
+	if not CONFIG.pda_stash_on_disassemble then
 		return
 	end
 	if not icon_xml then
@@ -52,7 +52,7 @@ end
 
 local function on_option_change()
 	if DOGMA then
-		pda_stash_on_disassemble = DOGMA.mcm.bool(MOD_ID, "main/pda_stash_on_disassemble", true)
+		CONFIG.pda_stash_on_disassemble = DOGMA.mcm.bool(MOD_ID, "main/pda_stash_on_disassemble")
 	end
 end
 
@@ -75,7 +75,10 @@ if orig_reset then
 end
 
 function on_game_start()
-	DOGMA = _G.dogma_common.load(MOD_ID)
+	if not CONF.DOGMA then
+		CONF.DOGMA = dogma_common.load(MOD_ID)
+	end
+	DOGMA = CONF.DOGMA
 	RegisterScriptCallback("on_option_change", on_option_change)
 	on_option_change()
 

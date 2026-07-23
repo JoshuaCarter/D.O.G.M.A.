@@ -5,13 +5,14 @@
 	actor_on_before_hit. We run before grok and zero the hit when airborne.
 ]]
 
-local MOD_ID = "dogma/giant_jump"
-
+local CONF = _G.dogma_giant_jump_conf
+local MOD_ID = CONF.MOD_ID
+local D = CONF.defaults
 local DOGMA
 
 local CONFIG = {
-	enabled = true,
-	debug_log = false,
+	enabled = D["main/enabled"],
+	debug_log = D["development/debug_log"],
 }
 
 local HOOK_STATE = _G.__dogma_giant_jump_hooks or {}
@@ -27,12 +28,12 @@ local function log(msg)
 end
 
 local function on_option_change()
-	CONFIG.enabled = DOGMA.mcm.bool(MOD_ID, "main/enabled", true)
-	CONFIG.debug_log = DOGMA.mcm.bool(MOD_ID, "development/debug_log", false)
+	CONFIG.enabled = DOGMA.mcm.bool(MOD_ID, "main/enabled")
+	CONFIG.debug_log = DOGMA.mcm.bool(MOD_ID, "development/debug_log")
 end
 
 function on_game_start()
-	DOGMA = _G.dogma_common.load(MOD_ID)
+	DOGMA = dogma_common.load(MOD_ID)
 	on_option_change()
 	RegisterScriptCallback("on_option_change", on_option_change)
 

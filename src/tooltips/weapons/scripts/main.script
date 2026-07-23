@@ -9,12 +9,13 @@
 	stats_table["weapon"] and would wipe our rows.
 ]]
 
-local MOD_ID = "dogma/weapon_tooltip"
-
+local CONF = _G.dogma_weapon_tooltip_conf
+local MOD_ID = CONF.MOD_ID
+local D = CONF.defaults
 local DOGMA
 
 local CONFIG = {
-	show_damage_table = true,
+	show_damage_table = D["main/show_damage_table"],
 	show_hit_power = true,
 	show_stalker_damage = true,
 	show_mutant_damage = true,
@@ -35,15 +36,15 @@ local CONFIG = {
 	-- Low end of table color ramps (damage → green, AP → white).
 	color_scale_from = "darkgrey",
 	ammo_order = "default",
-	calc_range_m = 30,
-	pellet_hit_pct = 100,
-	use_condition_table = false,
-	use_condition_stats = false,
-	apply_silencer_table = false,
-	apply_silencer_stats = false,
-	compact_header = true,
-	debug_log = false,
-	debug_overlay = false,
+	calc_range_m = D["main/calc_range"],
+	pellet_hit_pct = D["main/pellet_hit_pct"],
+	use_condition_table = D["main/use_condition_table"],
+	use_condition_stats = D["main/use_condition_stats"],
+	apply_silencer_table = D["main/apply_silencer_table"],
+	apply_silencer_stats = D["main/apply_silencer_stats"],
+	compact_header = D["main/compact_header"],
+	debug_log = D["development/debug_log"],
+	debug_overlay = D["development/debug_overlay"],
 }
 
 -- Canonical Momopate/vanilla weapon-row indices. Inline companions anchor to
@@ -1203,115 +1204,6 @@ local function apply_enhanced_weapon_stats()
 		or nil
 end
 
--- Legacy single toggle (show_enhanced_weapon_stats) seeds both new keys when absent.
-local function read_legacy_enhanced_default()
-	if not DOGMA or not DOGMA.mcm then
-		return true
-	end
-
-	if DOGMA.mcm.get(MOD_ID, "main/show_enhanced_weapon_stats") ~= nil then
-		return DOGMA.mcm.bool(MOD_ID, "main/show_enhanced_weapon_stats", true)
-	end
-
-	local mode = DOGMA.mcm.string(MOD_ID, "main/damage_stat", nil)
-	if mode == "raw_hit_power" then
-		mode = "hit_power"
-	elseif mode == "ammo_torso" then
-		mode = "damage"
-	end
-	if mode == "off" then
-		return false
-	end
-	if mode == "hit_power" or mode == "damage" then
-		return true
-	end
-
-	if DOGMA.mcm.get(MOD_ID, "main/show_damage_stat") ~= nil then
-		return DOGMA.mcm.bool(MOD_ID, "main/show_damage_stat", false)
-	end
-
-	return true
-end
-
-local function read_new_stat_flag(key)
-	if not DOGMA or not DOGMA.mcm then
-		return true
-	end
-	if DOGMA.mcm.get(MOD_ID, "main/" .. key) ~= nil then
-		return DOGMA.mcm.bool(MOD_ID, "main/" .. key, true)
-	end
-	if DOGMA.mcm.get(MOD_ID, "main/show_new_weapon_stats") ~= nil then
-		return DOGMA.mcm.bool(MOD_ID, "main/show_new_weapon_stats", true)
-	end
-	return read_legacy_enhanced_default()
-end
-
--- Legacy master / per-append keys seed the new child-row toggles when absent.
-local function read_extra_stat_default()
-	if not DOGMA or not DOGMA.mcm then
-		return true
-	end
-	if DOGMA.mcm.get(MOD_ID, "main/show_appended_weapon_stats") ~= nil then
-		return DOGMA.mcm.bool(MOD_ID, "main/show_appended_weapon_stats", true)
-	end
-	return read_legacy_enhanced_default()
-end
-
-local EXTRA_STAT_LEGACY = {
-	show_barrel_wear = "show_append_reliability",
-	show_burst_control = "show_append_recoil",
-	show_bullet_drop = "show_append_muzzle_velocity",
-}
-
-local function read_extra_stat_flag(key)
-	if not DOGMA or not DOGMA.mcm then
-		return true
-	end
-	if DOGMA.mcm.get(MOD_ID, "main/" .. key) ~= nil then
-		return DOGMA.mcm.bool(MOD_ID, "main/" .. key, true)
-	end
-	local legacy = EXTRA_STAT_LEGACY[key]
-	if legacy and DOGMA.mcm.get(MOD_ID, "main/" .. legacy) ~= nil then
-		return DOGMA.mcm.bool(MOD_ID, "main/" .. legacy, true)
-	end
-	return read_extra_stat_default()
-end
-
--- Combined Spread: new key, else OR of old Base/Move (and their append-legacy keys).
-local function read_spread_flag()
-	if not DOGMA or not DOGMA.mcm then
-		return true
-	end
-	if DOGMA.mcm.get(MOD_ID, "main/show_spread") ~= nil then
-		return DOGMA.mcm.bool(MOD_ID, "main/show_spread", true)
-	end
-	local has_base = DOGMA.mcm.get(MOD_ID, "main/show_base_spread") ~= nil
-	local has_move = DOGMA.mcm.get(MOD_ID, "main/show_movement_spread") ~= nil
-	if has_base or has_move then
-		local base_on = has_base and DOGMA.mcm.bool(MOD_ID, "main/show_base_spread", true)
-		local move_on = has_move and DOGMA.mcm.bool(MOD_ID, "main/show_movement_spread", true)
-		return base_on or move_on
-	end
-	local has_acc = DOGMA.mcm.get(MOD_ID, "main/show_append_accuracy") ~= nil
-	local has_hand = DOGMA.mcm.get(MOD_ID, "main/show_append_handling") ~= nil
-	if has_acc or has_hand then
-		local acc_on = has_acc and DOGMA.mcm.bool(MOD_ID, "main/show_append_accuracy", true)
-		local hand_on = has_hand and DOGMA.mcm.bool(MOD_ID, "main/show_append_handling", true)
-		return acc_on or hand_on
-	end
-	return read_extra_stat_default()
-end
-
-local function read_base_stat_flag(key)
-	if not DOGMA or not DOGMA.mcm then
-		return true
-	end
-	if DOGMA.mcm.get(MOD_ID, "main/" .. key) ~= nil then
-		return DOGMA.mcm.bool(MOD_ID, "main/" .. key, true)
-	end
-	return true
-end
-
 local logged_once = {}
 -- Keys logged for the current tooltip open (reset when the hovered item changes).
 local tooltip_logged = {}
@@ -1381,91 +1273,67 @@ local function on_option_change()
 	local tostr = tostring
 	local prev_debug = CONFIG.debug_log
 	if DOGMA and DOGMA.mcm then
-		CONFIG.show_damage_table = DOGMA.mcm.bool(MOD_ID, "main/show_damage_table", true)
-		CONFIG.show_hit_power = read_new_stat_flag("show_hit_power")
-		CONFIG.show_stalker_damage = read_new_stat_flag("show_stalker_damage")
-		CONFIG.show_mutant_damage = read_new_stat_flag("show_mutant_damage")
-		CONFIG.show_accuracy = read_base_stat_flag("show_accuracy")
-		CONFIG.show_handling = read_base_stat_flag("show_handling")
-		CONFIG.show_fire_rate = read_base_stat_flag("show_fire_rate")
-		CONFIG.show_mag_size = read_base_stat_flag("show_mag_size")
-		CONFIG.show_reliability = read_base_stat_flag("show_reliability")
-		CONFIG.show_recoil = read_base_stat_flag("show_recoil")
-		CONFIG.show_muzzle_velocity = read_base_stat_flag("show_muzzle_velocity")
-		CONFIG.show_dispersion = read_extra_stat_flag("show_dispersion")
-		CONFIG.show_spread = read_spread_flag()
-		CONFIG.show_barrel_wear = read_extra_stat_flag("show_barrel_wear")
-		CONFIG.show_burst_control = read_extra_stat_flag("show_burst_control")
-		CONFIG.show_bullet_drop = read_extra_stat_flag("show_bullet_drop")
+		CONFIG.show_damage_table = DOGMA.mcm.bool(MOD_ID, "main/show_damage_table")
+		CONFIG.show_hit_power = DOGMA.mcm.bool(MOD_ID, "main/show_hit_power")
+		CONFIG.show_stalker_damage = DOGMA.mcm.bool(MOD_ID, "main/show_stalker_damage")
+		CONFIG.show_mutant_damage = DOGMA.mcm.bool(MOD_ID, "main/show_mutant_damage")
+		CONFIG.show_accuracy = DOGMA.mcm.bool(MOD_ID, "main/show_accuracy")
+		CONFIG.show_handling = DOGMA.mcm.bool(MOD_ID, "main/show_handling")
+		CONFIG.show_fire_rate = DOGMA.mcm.bool(MOD_ID, "main/show_fire_rate")
+		CONFIG.show_mag_size = DOGMA.mcm.bool(MOD_ID, "main/show_mag_size")
+		CONFIG.show_reliability = DOGMA.mcm.bool(MOD_ID, "main/show_reliability")
+		CONFIG.show_recoil = DOGMA.mcm.bool(MOD_ID, "main/show_recoil")
+		CONFIG.show_muzzle_velocity = DOGMA.mcm.bool(MOD_ID, "main/show_muzzle_velocity")
+		CONFIG.show_dispersion = DOGMA.mcm.bool(MOD_ID, "main/show_dispersion")
+		CONFIG.show_spread = DOGMA.mcm.bool(MOD_ID, "main/show_spread")
+		CONFIG.show_barrel_wear = DOGMA.mcm.bool(MOD_ID, "main/show_barrel_wear")
+		CONFIG.show_burst_control = DOGMA.mcm.bool(MOD_ID, "main/show_burst_control")
+		CONFIG.show_bullet_drop = DOGMA.mcm.bool(MOD_ID, "main/show_bullet_drop")
 		-- "raw" = bone armor floats; "raw100" = floats x100 floored; "names" = class labels.
-		-- Legacy MCM values: "npc" -> raw, "brc" -> names.
-		local headers = DOGMA.mcm.string(MOD_ID, "main/column_headers", "names")
-		if headers == "raw" or headers == "npc" then
-			CONFIG.column_headers = "raw"
-		elseif headers == "raw100" then
-			CONFIG.column_headers = "raw100"
+		local headers = DOGMA.mcm.string(MOD_ID, "main/column_headers")
+		if headers == "raw" or headers == "raw100" or headers == "names" then
+			CONFIG.column_headers = headers
 		else
-			CONFIG.column_headers = "names"
+			CONFIG.column_headers = D["main/column_headers"]
 		end
-		local scale_from = DOGMA.mcm.string(MOD_ID, "main/color_scale_from", "darkgrey")
-		if scale_from == "white" or scale_from == "grey" then
+		local scale_from = DOGMA.mcm.string(MOD_ID, "main/color_scale_from")
+		if scale_from == "white" or scale_from == "grey" or scale_from == "darkgrey" then
 			CONFIG.color_scale_from = scale_from
 		else
-			CONFIG.color_scale_from = "darkgrey"
+			CONFIG.color_scale_from = D["main/color_scale_from"]
 		end
-		local order = DOGMA.mcm.string(MOD_ID, "main/ammo_order", "default")
-		if order == "ap" then
-			CONFIG.ammo_order = "ap"
-		elseif order == "damage" then
-			CONFIG.ammo_order = "damage"
+		local order = DOGMA.mcm.string(MOD_ID, "main/ammo_order")
+		if order == "ap" or order == "damage" or order == "default" then
+			CONFIG.ammo_order = order
 		else
-			CONFIG.ammo_order = "default"
+			CONFIG.ammo_order = D["main/ammo_order"]
 		end
-		local place = DOGMA.mcm.string(MOD_ID, "main/stat_row_placement", "inline")
-		if place == "after" then
-			CONFIG.stat_row_placement = "after"
-		elseif place == "start" then
-			CONFIG.stat_row_placement = "start"
+		local place = DOGMA.mcm.string(MOD_ID, "main/stat_row_placement")
+		if place == "after" or place == "start" or place == "inline" then
+			CONFIG.stat_row_placement = place
 		else
-			CONFIG.stat_row_placement = "inline"
+			CONFIG.stat_row_placement = D["main/stat_row_placement"]
 		end
-		CONFIG.compact_header = DOGMA.mcm.bool(MOD_ID, "main/compact_header", true)
-		CONFIG.calc_range_m = clamp(DOGMA.mcm.number(MOD_ID, "main/calc_range", 30), 0, 200)
-		CONFIG.pellet_hit_pct = clamp(DOGMA.mcm.number(MOD_ID, "main/pellet_hit_pct", 100), 1, 100)
-		local drop_range = clamp(DOGMA.mcm.number(MOD_ID, "main/drop_range", 200), 100, 2000)
+		CONFIG.compact_header = DOGMA.mcm.bool(MOD_ID, "main/compact_header")
+		CONFIG.calc_range_m = clamp(DOGMA.mcm.number(MOD_ID, "main/calc_range"), 0, 200)
+		CONFIG.pellet_hit_pct = clamp(DOGMA.mcm.number(MOD_ID, "main/pellet_hit_pct"), 1, 100)
+		local drop_range = clamp(DOGMA.mcm.number(MOD_ID, "main/drop_range"), 100, 2000)
 		if zzzz_dogma_tooltips_weapons_stats and zzzz_dogma_tooltips_weapons_stats.set_drop_range then
 			zzzz_dogma_tooltips_weapons_stats.set_drop_range(drop_range)
 		end
-		local burst_threshold = clamp(DOGMA.mcm.number(MOD_ID, "main/burst_threshold", 3), 1, 10)
+		local burst_threshold = clamp(DOGMA.mcm.number(MOD_ID, "main/burst_threshold"), 1, 10)
 		if zzzz_dogma_tooltips_weapons_stats and zzzz_dogma_tooltips_weapons_stats.set_burst_threshold then
 			zzzz_dogma_tooltips_weapons_stats.set_burst_threshold(burst_threshold)
 		end
-		CONFIG.use_condition_table = DOGMA.mcm.bool(MOD_ID, "main/use_condition_table", false)
-		CONFIG.use_condition_stats = DOGMA.mcm.bool(MOD_ID, "main/use_condition_stats", false)
-		-- Split from legacy main/apply_silencer (same default for both when unset).
-		local sil_legacy = false
-		if DOGMA.mcm.get(MOD_ID, "main/apply_silencer") ~= nil then
-			sil_legacy = DOGMA.mcm.bool(MOD_ID, "main/apply_silencer", false)
-		end
-		if DOGMA.mcm.get(MOD_ID, "main/apply_silencer_table") ~= nil then
-			CONFIG.apply_silencer_table = DOGMA.mcm.bool(MOD_ID, "main/apply_silencer_table", false)
-		else
-			CONFIG.apply_silencer_table = sil_legacy
-		end
-		if DOGMA.mcm.get(MOD_ID, "main/apply_silencer_stats") ~= nil then
-			CONFIG.apply_silencer_stats = DOGMA.mcm.bool(MOD_ID, "main/apply_silencer_stats", false)
-		else
-			CONFIG.apply_silencer_stats = sil_legacy
-		end
+		CONFIG.use_condition_table = DOGMA.mcm.bool(MOD_ID, "main/use_condition_table")
+		CONFIG.use_condition_stats = DOGMA.mcm.bool(MOD_ID, "main/use_condition_stats")
+		CONFIG.apply_silencer_table = DOGMA.mcm.bool(MOD_ID, "main/apply_silencer_table")
+		CONFIG.apply_silencer_stats = DOGMA.mcm.bool(MOD_ID, "main/apply_silencer_stats")
 		if zzzz_dogma_tooltips_weapons_stats and zzzz_dogma_tooltips_weapons_stats.set_apply_silencer then
 			zzzz_dogma_tooltips_weapons_stats.set_apply_silencer(CONFIG.apply_silencer_stats)
 		end
-		CONFIG.debug_log = DOGMA.mcm.bool(MOD_ID, "development/debug_log", false)
-		CONFIG.debug_overlay = DOGMA.mcm.bool(MOD_ID, "development/debug_overlay", false)
-		-- Legacy: early builds used development/rangefinder for this toggle.
-		if not CONFIG.debug_overlay and DOGMA.mcm.bool(MOD_ID, "development/rangefinder", false) then
-			CONFIG.debug_overlay = true
-		end
+		CONFIG.debug_log = DOGMA.mcm.bool(MOD_ID, "development/debug_log")
+		CONFIG.debug_overlay = DOGMA.mcm.bool(MOD_ID, "development/debug_overlay")
 	end
 
 	if CONFIG.debug_log and not prev_debug then
@@ -2872,12 +2740,7 @@ end
 
 function on_game_start()
 	local tostr = tostring
-	local loader = _G.dogma_common
-	if loader then
-		DOGMA = loader.load(MOD_ID)
-	else
-		printf("[DOGMA][%s] common loader missing (%s)", MOD_ID, "dogma_common")
-	end
+	DOGMA = dogma_common.load(MOD_ID)
 
 	on_option_change()
 	install_ui_hooks()

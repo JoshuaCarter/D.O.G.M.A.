@@ -1,7 +1,8 @@
 -- Fast Travel: MCM config, callbacks, and PDA map menu wiring.
 -- Module libs load first as 01_*.script … (zzzz_dogma_travel_fast_travel_*)
 
-local MOD_ID = "dogma/fast_travel"
+local CONF = _G.dogma_fast_travel_conf
+local MOD_ID = CONF.MOD_ID
 _G.dft_config = _G.dft_config or {}
 local dft_config = _G.dft_config
 local dft = _G.dft
@@ -13,73 +14,34 @@ local dft = _G.dft
 -- is NOT in this list - X-Ray calls it directly per-file at boot (see
 -- dogma_common_f575cc9b.script's header comment), so it must stay a real bare top-level
 -- function, never a local, even though no other DFT script calls it by name.
-local mcm_option_path, get_config, actor_on_before_hit, on_option_change,
+local actor_on_before_hit, on_option_change,
     on_loading_screen_dismissed, on_loading_screen_key_prompt, actor_on_first_update, menu_item_is_ours,
     strip_own_menu_items, add_cannot_travel_item, add_guide_menu_item,
     add_travel_menu_items, on_map_right_click, on_map_spot_menu_add_property_impl,
     on_map_spot_menu_add_property, on_map_spot_menu_property_clicked, on_key_press
 
-local MCM_SECTION_MAIN = "main"
-local MCM_SECTION_DEV = "development"
-
-local MCM_DEV_KEYS = {
-    debug_overlay       = true,
-    debug_log           = true,
-    path_preview        = true,
-    sneaking_level_up   = true,
-    sneaking_level_down = true,
-    coarse_nav_build    = true,
-    coarse_nav_rebuild_on_load = true,
-}
-
 -- ============================================================
 -- 2. Configuration
 -- ============================================================
-mcm_option_path = function(key)
-    local section = MCM_DEV_KEYS[key] and MCM_SECTION_DEV or MCM_SECTION_MAIN
-    return section .. "/" .. key
-end
-
-local get_config_defaults = {
-    message_duration = 30,
-    debug_overlay    = false,
-    debug_log        = false,
-    path_preview     = false,
-    block_transition_in_combat = true,
-    show_ambush_range        = false,
-    coarse_nav_rebuild_on_load = false,
-}
-
-get_config = function(key)
-    local dft_dogma = _G.dft and _G.dft.dogma
-    if dft_dogma and dft_dogma.mcm then
-        return dft_dogma.mcm.get(MOD_ID, mcm_option_path(key), get_config_defaults[key])
-    end
-    return get_config_defaults[key]
-end
-
 local function load_config()
-    dft_config.debug_overlay = get_config("debug_overlay") == true
-    dft_config.debug_log = get_config("debug_log") == true
-    local pp = get_config("path_preview")
-    dft_config.path_preview = (pp == true or pp == 1)
-    local btic = get_config("block_transition_in_combat")
-    dft_config.block_transition_in_combat = not (btic == false or btic == 0)
-    local sar = get_config("show_ambush_range")
-    dft_config.show_ambush_range = (sar == true or sar == 1)
+    local mcm = CONF.DOGMA and CONF.DOGMA.mcm
+    if not mcm then
+        return
+    end
+    dft_config.debug_overlay = mcm.bool(MOD_ID, "development/debug_overlay")
+    dft_config.debug_log = mcm.bool(MOD_ID, "development/debug_log")
+    dft_config.path_preview = mcm.bool(MOD_ID, "development/path_preview")
+    dft_config.block_transition_in_combat = mcm.bool(MOD_ID, "main/block_transition_in_combat")
+    dft_config.show_ambush_range = mcm.bool(MOD_ID, "main/show_ambush_range")
     if not dft_config.show_ambush_range and dft_clear_ambush_range_circle then
         dft_clear_ambush_range_circle()
     end
-    local dft_dogma = _G.dft and _G.dft.dogma
-    dft_config.sneaking_level_up = dft_dogma and dft_dogma.mcm
-        and dft_dogma.mcm.key(MOD_ID, MCM_SECTION_DEV .. "/sneaking_level_up", nil)
-    dft_config.sneaking_level_down = dft_dogma and dft_dogma.mcm
-        and dft_dogma.mcm.key(MOD_ID, MCM_SECTION_DEV .. "/sneaking_level_down", nil)
-    dft_config.coarse_nav_build = dft_dogma and dft_dogma.mcm
-        and dft_dogma.mcm.key(MOD_ID, MCM_SECTION_DEV .. "/coarse_nav_build", nil)
-    dft_config.coarse_nav_rebuild_on_load = get_config("coarse_nav_rebuild_on_load") == true
-    if dft_dogma and dft_dogma.dbg and dft_dogma.dbg.set_enabled then
-        dft_dogma.dbg.set_enabled(MOD_ID, dft_config.debug_overlay)
+    dft_config.sneaking_level_up = mcm.key(MOD_ID, "development/sneaking_level_up")
+    dft_config.sneaking_level_down = mcm.key(MOD_ID, "development/sneaking_level_down")
+    dft_config.coarse_nav_build = mcm.key(MOD_ID, "development/coarse_nav_build")
+    dft_config.coarse_nav_rebuild_on_load = mcm.bool(MOD_ID, "development/coarse_nav_rebuild_on_load")
+    if CONF.DOGMA.dbg and CONF.DOGMA.dbg.set_enabled then
+        CONF.DOGMA.dbg.set_enabled(MOD_ID, dft_config.debug_overlay)
     end
     if not dft_config.debug_overlay and dft then
         dft._debug_overlay_msg = nil
@@ -98,12 +60,9 @@ local function load_config()
 end
 
 refresh_active_config = function()
-    local dft_dogma = _G.dft and _G.dft.dogma
     local msg_dur = 30
-    if dft_dogma and dft_dogma.mcm then
-        msg_dur = dft_dogma.mcm.number(MOD_ID, "main/message_duration", 30)
-    else
-        msg_dur = tonumber(get_config("message_duration")) or 30
+    if CONF.DOGMA and CONF.DOGMA.mcm then
+        msg_dur = CONF.DOGMA.mcm.number(MOD_ID, "main/message_duration")
     end
 
     dft.active_config = {
@@ -159,13 +118,8 @@ function on_game_start()
             printf("[DFT] FATAL: core module failed to publish _G.dft")
             return
         end
-        local common = _G.dogma_common
-        if not (common and common.load) then
-            printf("[DFT] FATAL: %s not loaded (is dogma_common loaded?)", "dogma_common")
-            return
-        end
-        local dft_dogma = common.load(MOD_ID)
-        _G.dft.dogma = dft_dogma
+        CONF.DOGMA = dogma_common.load(MOD_ID)
+        _G.dft.dogma = CONF.DOGMA
         load_config()
         dft_log("Starting on_game_start registration...")
         dft_build_level_names_registry()

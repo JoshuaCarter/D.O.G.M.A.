@@ -1,54 +1,50 @@
--- dogma_mcm_banner:begin (managed by sync-dogma-common.sh)
-local function dogma_mcm()
-	return _G.dogma_mcm
-end
--- dogma_mcm_banner:end
-
-local function kb_bind(id, hint)
-	return {
-		id = id,
-		type = "key_bind",
-		val = 2,
-		def = -1,
-		hint = hint,
-	}
-end
-
-local function kb_modifier(id)
-	local kb_mod = (ui_mcm and ui_mcm.kb_mod_radio) or "radio_h"
-	return {
-		id = id,
-		type = kb_mod,
-		val = 2,
-		def = 0,
-		hint = "mcm_kb_modifier",
-		content = {
-			{ 0, "mcm_kb_mod_none" },
-			{ 1, "mcm_kb_mod_shift" },
-			{ 2, "mcm_kb_mod_ctrl" },
-			{ 3, "mcm_kb_mod_alt" },
-		},
-	}
-end
-
-local function kb_mode(id)
-	local kb_mod = (ui_mcm and ui_mcm.kb_mod_radio) or "radio_h"
-	return {
-		id = id,
-		type = kb_mod,
-		val = 2,
-		def = 0,
-		hint = "mcm_kb_mode",
-		content = {
-			{ 0, "mcm_kb_mode_press" },
-			{ 1, "mcm_kb_mode_dtap" },
-			{ 2, "mcm_kb_mode_hold" },
-		},
-	}
-end
-
 function on_mcm_load()
-	local MCM = dogma_mcm()
+	local CONF = _G.dogma_strip_everything_conf
+	local D = CONF.defaults
+
+	local function kb_bind(id, hint)
+		return {
+			id = id,
+			type = "key_bind",
+			val = 2,
+			def = D["main/" .. id],
+			hint = hint,
+		}
+	end
+
+	local function kb_modifier(id)
+		local kb_mod = (ui_mcm and ui_mcm.kb_mod_radio) or "radio_h"
+		return {
+			id = id,
+			type = kb_mod,
+			val = 2,
+			def = D["main/" .. id],
+			hint = "mcm_kb_modifier",
+			content = {
+				{ 0, "mcm_kb_mod_none" },
+				{ 1, "mcm_kb_mod_shift" },
+				{ 2, "mcm_kb_mod_ctrl" },
+				{ 3, "mcm_kb_mod_alt" },
+			},
+		}
+	end
+
+	local function kb_mode(id)
+		local kb_mod = (ui_mcm and ui_mcm.kb_mod_radio) or "radio_h"
+		return {
+			id = id,
+			type = kb_mod,
+			val = 2,
+			def = D["main/" .. id],
+			hint = "mcm_kb_mode",
+			content = {
+				{ 0, "mcm_kb_mode_press" },
+				{ 1, "mcm_kb_mode_dtap" },
+				{ 2, "mcm_kb_mode_hold" },
+			},
+		}
+	end
+
 	return {
 		id = "strip_everything",
 		text = "ui_mcm_menu_dogma_fieldstrip_all_keybind",
@@ -57,7 +53,7 @@ function on_mcm_load()
 				id = "main",
 				sh = true,
 				text = "ui_mcm_dogma_fieldstrip_all_keybind_main_section",
-				gr = MCM.with_header({
+				gr = dogma_mcm.with_header({
 					{
 						id = "main_drop_description",
 						type = "desc",
@@ -73,7 +69,7 @@ function on_mcm_load()
 						id = "drop_safe_equipped",
 						type = "check",
 						val = 1,
-						def = true,
+						def = D["main/drop_safe_equipped"],
 						hint = "dogma_strip_everything_drop_safe_equipped",
 					},
 					{
@@ -91,7 +87,7 @@ function on_mcm_load()
 						id = "disa_safe_equipped",
 						type = "check",
 						val = 1,
-						def = true,
+						def = D["main/disa_safe_equipped"],
 						hint = "dogma_strip_everything_disa_safe_equipped",
 					},
 					{
@@ -109,21 +105,21 @@ function on_mcm_load()
 						id = "intercept_disassemble",
 						type = "check",
 						val = 1,
-						def = true,
+						def = D["main/intercept_disassemble"],
 						hint = "dogma_strip_everything_intercept_disassemble",
 					},
 					{
 						id = "keep_parts_with_weapon",
 						type = "check",
 						val = 1,
-						def = true,
+						def = D["main/keep_parts_with_weapon"],
 						hint = "dogma_strip_everything_keep_parts_with_weapon",
 					},
 					{
 						id = "pda_stash_on_disassemble",
 						type = "check",
 						val = 1,
-						def = true,
+						def = D["main/pda_stash_on_disassemble"],
 						hint = "dogma_strip_everything_pda_stash_on_disassemble",
 					},
 					{
@@ -135,7 +131,7 @@ function on_mcm_load()
 						id = "block_companion_special_items",
 						type = "check",
 						val = 1,
-						def = true,
+						def = D["main/block_companion_special_items"],
 						hint = "dogma_strip_everything_block_companion_special_items",
 					},
 				}),
@@ -144,7 +140,7 @@ function on_mcm_load()
 				id = "dis_weap_attach",
 				sh = true,
 				text = "ui_mcm_dogma_strip_everything_attachments_section",
-				gr = MCM.with_header({
+				gr = dogma_mcm.with_header({
 					{
 						id = "dis_weap_attach_description",
 						type = "desc",
@@ -154,7 +150,7 @@ function on_mcm_load()
 						id = "enabled",
 						type = "check",
 						val = 1,
-						def = false,
+						def = D["dis_weap_attach/enabled"],
 						hint = "dogma_strip_everything_attachments_enabled",
 					},
 				}),
@@ -163,26 +159,26 @@ function on_mcm_load()
 				id = "development",
 				sh = true,
 				text = "ui_mcm_dogma_fieldstrip_all_keybind_development_section",
-				gr = MCM.with_header({
+				gr = dogma_mcm.with_header({
 					{
 						id = "debug_log",
 						type = "check",
 						val = 1,
-						def = false,
+						def = D["development/debug_log"],
 						hint = "dogma_strip_everything_debug_log",
 					},
 					{
 						id = "drop_disa_debug_log",
 						type = "check",
 						val = 1,
-						def = false,
+						def = D["development/drop_disa_debug_log"],
 						hint = "dogma_strip_everything_drop_disa_debug_log",
 					},
 					{
 						id = "dis_weap_attach_debug_log",
 						type = "check",
 						val = 1,
-						def = false,
+						def = D["development/dis_weap_attach_debug_log"],
 						hint = "dogma_strip_everything_dis_weap_attach_debug_log",
 					},
 				}),

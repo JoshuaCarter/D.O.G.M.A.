@@ -8,14 +8,10 @@
 	disassembly_item stay wrapped after sibling scripts (strip, tool_select).
 ]]
 
-local MOD_ID = "dogma/strip_everything"
-
+local CONF = _G.dogma_strip_everything_conf
+local MOD_ID = CONF.MOD_ID
 local DOGMA
-
-local CONFIG = {
-	enabled = false,
-	debug_log = false,
-}
+local CONFIG = CONF.CONFIG
 
 local TIER_MIN = 1
 local TIER_MAX = 5
@@ -58,7 +54,7 @@ local function log(msg)
 	if not (DOGMA and DOGMA.dbg) then
 		return
 	end
-	if CONFIG.debug_log then
+	if CONFIG.attach_debug_log then
 		DOGMA.dbg.log(MOD_ID, tostring(msg))
 	end
 end
@@ -446,7 +442,7 @@ end
 
 local function make_menu_disassembly_wrapper(orig)
 	return function(obj)
-		if CONFIG.enabled then
+		if CONFIG.attach_enabled then
 			if classify_obj(obj) then
 				return game.translate_string("st_awr_disassembly_cloth")
 			end
@@ -457,7 +453,7 @@ end
 
 local function make_disassembly_item_wrapper(orig)
 	return function(obj, obj_d)
-		if CONFIG.enabled then
+		if CONFIG.attach_enabled then
 			local info = classify_obj(obj)
 			if info then
 				perform_attachment_disassembly(obj, obj_d, info, orig)
@@ -500,18 +496,21 @@ local function apply_patches()
 end
 
 local function on_option_change()
-	CONFIG.enabled = DOGMA.mcm.bool(MOD_ID, "dis_weap_attach/enabled", false)
-	CONFIG.debug_log = DOGMA.mcm.bool(MOD_ID, "development/dis_weap_attach_debug_log", false)
+	CONFIG.attach_enabled = DOGMA.mcm.bool(MOD_ID, "dis_weap_attach/enabled")
+	CONFIG.attach_debug_log = DOGMA.mcm.bool(MOD_ID, "development/dis_weap_attach_debug_log")
 	log(string.format(
 		"dis_weap_attach: enabled=%s menu_patched=%s item_patched=%s",
-		tostring(CONFIG.enabled),
+		tostring(CONFIG.attach_enabled),
 		tostring(patched_menu_disassembly),
 		tostring(patched_disassembly_item)
 	))
 end
 
 function on_game_start()
-	DOGMA = _G.dogma_common.load(MOD_ID)
+	if not CONF.DOGMA then
+		CONF.DOGMA = dogma_common.load(MOD_ID)
+	end
+	DOGMA = CONF.DOGMA
 	load_price_ini()
 	on_option_change()
 	apply_patches()

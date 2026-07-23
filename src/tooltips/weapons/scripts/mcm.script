@@ -1,11 +1,6 @@
--- dogma_mcm_banner:begin (managed by sync-dogma-common.sh)
-local function dogma_mcm()
-	return _G.dogma_mcm
-end
--- dogma_mcm_banner:end
-
 function on_mcm_load()
-	local MCM = dogma_mcm()
+	local CONF = _G.dogma_weapon_tooltip_conf
+	local D = CONF.defaults
 	return {
 		id = "weapon_tooltip",
 		text = "ui_mcm_menu_dogma_weapon_tooltip",
@@ -14,7 +9,7 @@ function on_mcm_load()
 				id = "main",
 				sh = true,
 				text = "ui_mcm_dogma_weapon_tooltip_main_section",
-				gr = MCM.with_header({
+				gr = dogma_mcm.with_header({
 					{
 						id = "hdr_general",
 						type = "title",
@@ -24,7 +19,7 @@ function on_mcm_load()
 						id = "ammo_order",
 						type = "list",
 						val = 0,
-						def = "default",
+						def = D["main/ammo_order"],
 						hint = "dogma_weapon_tooltip_ammo_order",
 						content = {
 							{ "default", "default" },
@@ -39,14 +34,14 @@ function on_mcm_load()
 						min = 1,
 						max = 100,
 						step = 1,
-						def = 100,
+						def = D["main/pellet_hit_pct"],
 						hint = "dogma_weapon_tooltip_pellet_hit_pct",
 					},
 					{
 						id = "compact_header",
 						type = "check",
 						val = 1,
-						def = true,
+						def = D["main/compact_header"],
 						hint = "dogma_weapon_tooltip_compact_header",
 					},
 					{ id = "line_general", type = "line" },
@@ -59,14 +54,14 @@ function on_mcm_load()
 						id = "show_damage_table",
 						type = "check",
 						val = 1,
-						def = true,
+						def = D["main/show_damage_table"],
 						hint = "dogma_weapon_tooltip_show_damage_table",
 					},
 					{
 						id = "column_headers",
 						type = "list",
 						val = 0,
-						def = "names",
+						def = D["main/column_headers"],
 						hint = "dogma_weapon_tooltip_column_headers",
 						content = {
 							{ "names", "names" },
@@ -78,7 +73,7 @@ function on_mcm_load()
 						id = "color_scale_from",
 						type = "list",
 						val = 0,
-						def = "darkgrey",
+						def = D["main/color_scale_from"],
 						hint = "dogma_weapon_tooltip_color_scale_from",
 						content = {
 							{ "white", "white" },
@@ -93,21 +88,21 @@ function on_mcm_load()
 						min = 0,
 						max = 200,
 						step = 1,
-						def = 30,
+						def = D["main/calc_range"],
 						hint = "dogma_weapon_tooltip_calc_range",
 					},
 					{
 						id = "use_condition_table",
 						type = "check",
 						val = 1,
-						def = false,
+						def = D["main/use_condition_table"],
 						hint = "dogma_weapon_tooltip_use_condition_table",
 					},
 					{
 						id = "apply_silencer_table",
 						type = "check",
 						val = 1,
-						def = false,
+						def = D["main/apply_silencer_table"],
 						hint = "dogma_weapon_tooltip_apply_silencer_table",
 					},
 					{ id = "line_damage_table", type = "line" },
@@ -120,7 +115,7 @@ function on_mcm_load()
 						id = "stat_row_placement",
 						type = "list",
 						val = 0,
-						def = "inline",
+						def = D["main/stat_row_placement"],
 						hint = "dogma_weapon_tooltip_stat_row_placement",
 						content = {
 							{ "inline", "inline" },
@@ -135,7 +130,7 @@ function on_mcm_load()
 						min = 100,
 						max = 2000,
 						step = 50,
-						def = 200,
+						def = D["main/drop_range"],
 						hint = "dogma_weapon_tooltip_drop_range",
 					},
 					{
@@ -145,126 +140,126 @@ function on_mcm_load()
 						min = 1,
 						max = 10,
 						step = 0.5,
-						def = 3,
+						def = D["main/burst_threshold"],
 						hint = "dogma_weapon_tooltip_burst_threshold",
 					},
 					{
 						id = "use_condition_stats",
 						type = "check",
 						val = 1,
-						def = false,
+						def = D["main/use_condition_stats"],
 						hint = "dogma_weapon_tooltip_use_condition_stats",
 					},
 					{
 						id = "apply_silencer_stats",
 						type = "check",
 						val = 1,
-						def = false,
+						def = D["main/apply_silencer_stats"],
 						hint = "dogma_weapon_tooltip_apply_silencer_stats",
 					},
 					{
 						id = "show_hit_power",
 						type = "check",
 						val = 1,
-						def = true,
+						def = D["main/show_hit_power"],
 						hint = "dogma_weapon_tooltip_show_hit_power",
 					},
 					{
 						id = "show_stalker_damage",
 						type = "check",
 						val = 1,
-						def = true,
+						def = D["main/show_stalker_damage"],
 						hint = "dogma_weapon_tooltip_show_stalker_damage",
 					},
 					{
 						id = "show_mutant_damage",
 						type = "check",
 						val = 1,
-						def = true,
+						def = D["main/show_mutant_damage"],
 						hint = "dogma_weapon_tooltip_show_mutant_damage",
 					},
 					{
 						id = "show_accuracy",
 						type = "check",
 						val = 1,
-						def = true,
+						def = D["main/show_accuracy"],
 						hint = "dogma_weapon_tooltip_show_accuracy",
 					},
 					{
 						id = "show_spread",
 						type = "check",
 						val = 1,
-						def = true,
+						def = D["main/show_spread"],
 						hint = "dogma_weapon_tooltip_show_spread",
 					},
 					{
 						id = "show_dispersion",
 						type = "check",
 						val = 1,
-						def = true,
+						def = D["main/show_dispersion"],
 						hint = "dogma_weapon_tooltip_show_dispersion",
 					},
 					{
 						id = "show_handling",
 						type = "check",
 						val = 1,
-						def = true,
+						def = D["main/show_handling"],
 						hint = "dogma_weapon_tooltip_show_handling",
 					},
 					{
 						id = "show_fire_rate",
 						type = "check",
 						val = 1,
-						def = true,
+						def = D["main/show_fire_rate"],
 						hint = "dogma_weapon_tooltip_show_fire_rate",
 					},
 					{
 						id = "show_mag_size",
 						type = "check",
 						val = 1,
-						def = true,
+						def = D["main/show_mag_size"],
 						hint = "dogma_weapon_tooltip_show_mag_size",
 					},
 					{
 						id = "show_muzzle_velocity",
 						type = "check",
 						val = 1,
-						def = true,
+						def = D["main/show_muzzle_velocity"],
 						hint = "dogma_weapon_tooltip_show_muzzle_velocity",
 					},
 					{
 						id = "show_bullet_drop",
 						type = "check",
 						val = 1,
-						def = true,
+						def = D["main/show_bullet_drop"],
 						hint = "dogma_weapon_tooltip_show_bullet_drop",
 					},
 					{
 						id = "show_reliability",
 						type = "check",
 						val = 1,
-						def = true,
+						def = D["main/show_reliability"],
 						hint = "dogma_weapon_tooltip_show_reliability",
 					},
 					{
 						id = "show_barrel_wear",
 						type = "check",
 						val = 1,
-						def = true,
+						def = D["main/show_barrel_wear"],
 						hint = "dogma_weapon_tooltip_show_barrel_wear",
 					},
 					{
 						id = "show_recoil",
 						type = "check",
 						val = 1,
-						def = true,
+						def = D["main/show_recoil"],
 						hint = "dogma_weapon_tooltip_show_recoil",
 					},
 					{
 						id = "show_burst_control",
 						type = "check",
 						val = 1,
-						def = true,
+						def = D["main/show_burst_control"],
 						hint = "dogma_weapon_tooltip_show_burst_control",
 					},
 				}),
@@ -273,7 +268,7 @@ function on_mcm_load()
 				id = "info",
 				sh = true,
 				text = "ui_mcm_dogma_weapon_tooltip_info_section",
-				gr = MCM.with_header({
+				gr = dogma_mcm.with_header({
 					{
 						id = "hdr_notes",
 						type = "title",
@@ -323,19 +318,19 @@ function on_mcm_load()
 				id = "development",
 				sh = true,
 				text = "ui_mcm_dogma_weapon_tooltip_development_section",
-				gr = MCM.with_header({
+				gr = dogma_mcm.with_header({
 					{
 						id = "debug_log",
 						type = "check",
 						val = 1,
-						def = false,
+						def = D["development/debug_log"],
 						hint = "dogma_weapon_tooltip_debug_log",
 					},
 					{
 						id = "debug_overlay",
 						type = "check",
 						val = 1,
-						def = false,
+						def = D["development/debug_overlay"],
 						hint = "dogma_weapon_tooltip_debug_overlay",
 					},
 				}),

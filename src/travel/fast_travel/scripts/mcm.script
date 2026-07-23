@@ -1,101 +1,35 @@
--- Fast Travel MCM
-
-function on_mcm_load()
-	local CONF = _G.dogma_fast_travel_conf
+function on_mcm_load(options)
+	local CONF = _G.dogma_travel_fast_travel_conf
 	local D = CONF.defaults
-	return {
+	dogma_mcm.attach(options, "travel", "ui_mcm_menu_dogma_travel", {
 		id = "fast_travel",
-		text = "ui_mcm_menu_dogma_fast_travel",
-		gr = {
+		sh = true,
+		text = "ui_mcm_menu_dogma_travel_fast_travel",
+		gr = dogma_mcm.with_header({
 			{
-				id = "main",
-				sh = true,
-				text = "ui_mcm_dogma_fast_travel_main_section",
-				gr = dogma_mcm.with_header({
-					{
-						id = "message_duration",
-						type = "track",
-						val = 2,
-						min = 3,
-						max = 60,
-						step = 1,
-						def = D["main/message_duration"],
-						hint = "dogma_fast_travel_message_duration",
-					},
-					{
-						id = "block_transition_in_combat",
-						type = "check",
-						val = 1,
-						def = D["main/block_transition_in_combat"],
-						hint = "dogma_fast_travel_block_transition_in_combat",
-					},
-					{
-						id = "show_ambush_range",
-						type = "check",
-						val = 1,
-						def = D["main/show_ambush_range"],
-						hint = "dogma_fast_travel_show_ambush_range",
-					},
-				}),
+				id = "message_duration",
+				type = "track",
+				val = 2,
+				min = 3,
+				max = 60,
+				step = 1,
+				def = D["message_duration"],
+				hint = "dogma_fast_travel_message_duration",
 			},
 			{
-				id = "development",
-				sh = true,
-				text = "ui_mcm_dogma_fast_travel_development_section",
-				gr = dogma_mcm.with_header({
-					{
-						id = "debug_overlay",
-						type = "check",
-						val = 1,
-						def = D["development/debug_overlay"],
-						hint = "dogma_fast_travel_debug_overlay",
-					},
-					{
-						id = "debug_log",
-						type = "check",
-						val = 1,
-						def = D["development/debug_log"],
-						hint = "dogma_fast_travel_debug_log",
-					},
-					{
-						id = "path_preview",
-						type = "check",
-						val = 1,
-						def = D["development/path_preview"],
-						hint = "dogma_fast_travel_path_preview",
-					},
-					{ id = "line_dev", type = "line" },
-					{
-						id = "sneaking_level_up",
-						type = "key_bind",
-						val = 2,
-						def = D["development/sneaking_level_up"],
-						hint = "dogma_fast_travel_sneaking_level_up",
-					},
-					{
-						id = "sneaking_level_down",
-						type = "key_bind",
-						val = 2,
-						def = D["development/sneaking_level_down"],
-						hint = "dogma_fast_travel_sneaking_level_down",
-					},
-					{ id = "line_coarse_nav", type = "line" },
-					{
-						id = "coarse_nav_rebuild_on_load",
-						type = "check",
-						val = 1,
-						def = D["development/coarse_nav_rebuild_on_load"],
-						hint = "dogma_fast_travel_coarse_nav_rebuild_on_load",
-					},
-					{
-						id = "coarse_nav_build",
-						type = "key_bind",
-						val = 2,
-						def = D["development/coarse_nav_build"],
-						hint = "dogma_fast_travel_coarse_nav_build",
-					},
-				}),
+				id = "block_transition_in_combat",
+				type = "check",
+				val = 1,
+				def = D["block_transition_in_combat"],
+				hint = "dogma_fast_travel_block_transition_in_combat",
 			},
-		},
-	}, "dogma"
+			{
+				id = "show_ambush_range",
+				type = "check",
+				val = 1,
+				def = D["show_ambush_range"],
+				hint = "dogma_fast_travel_show_ambush_range",
+			},
+		}),
+	})
 end

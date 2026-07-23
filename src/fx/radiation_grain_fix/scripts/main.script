@@ -6,7 +6,7 @@
 	radiation (db.actor.radiation).
 ]]
 
-local CONF = _G.dogma_grain_fix_conf
+local CONF = _G.dogma_fx_radiation_grain_fix_conf
 local MOD_ID = CONF.MOD_ID
 local DOGMA
 
@@ -63,8 +63,8 @@ local function log(msg)
 end
 
 local function on_option_change()
-	CONFIG.debug_log = DOGMA.mcm.bool(MOD_ID, "development/debug_log")
-	CONFIG.debug_overlay = DOGMA.mcm.bool(MOD_ID, "development/debug_overlay")
+	CONFIG.debug_log = DOGMA.dbg.logging()
+	CONFIG.debug_overlay = DOGMA.dbg.overlay_enabled()
 	CONFIG.grain_enabled = DOGMA.mcm.bool(MOD_ID, "grain/enable")
 	CONFIG.blur_enabled = DOGMA.mcm.bool(MOD_ID, "desaturation/enable")
 	CONFIG.dual_enabled = DOGMA.mcm.bool(MOD_ID, "duality/enable")
@@ -74,15 +74,15 @@ local function on_option_change()
 	end
 	CONFIG.blur_range = DOGMA.mcm.range(MOD_ID, "desaturation/blur_min", "desaturation/blur_max")
 	CONFIG.dual_range = DOGMA.mcm.range(MOD_ID, "duality/dual_min", "duality/dual_max")
-	CONFIG.add_radiation_key = DOGMA.mcm.key(MOD_ID, "development/add_radiation_key")
-	CONFIG.clear_radiation_key = DOGMA.mcm.key(MOD_ID, "development/clear_radiation_key")
+	CONFIG.add_radiation_key = DOGMA.mcm.key("dogma/debug", "grain_add_radiation_key")
+	CONFIG.clear_radiation_key = DOGMA.mcm.key("dogma/debug", "grain_clear_radiation_key")
 
 	GRAIN_LEVELS = {}
 	for i, ppe in ipairs(GRAIN_PPES) do
 		GRAIN_LEVELS[#GRAIN_LEVELS + 1] = { msv = CONFIG.level_msv[i], ppe = ppe }
 	end
 
-	DOGMA.dbg.set_enabled(MOD_ID, CONFIG.debug_overlay)
+	DOGMA.dbg.set_enabled(MOD_ID, DOGMA.dbg.overlay_enabled())
 end
 
 local function set_grain(msv)

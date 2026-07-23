@@ -1,43 +1,23 @@
-function on_mcm_load()
-	local CONF = _G.dogma_giant_jump_conf
+function on_mcm_load(options)
+	local CONF = _G.dogma_mutants_pseudogiant_conf
 	local D = CONF.defaults
-	return {
-		id = "giant_jump",
-		text = "ui_mcm_menu_dogma_giant_jump",
-		gr = {
+	dogma_mcm.attach(options, "mutants", "ui_mcm_menu_dogma_mutants", {
+		id = "pseudogiant",
+		sh = true,
+		text = "ui_mcm_menu_dogma_mutants_pseudogiant",
+		gr = dogma_mcm.with_header({
 			{
-				id = "main",
-				sh = true,
-				text = "Main",
-				gr = dogma_mcm.with_header({
-					{
-						id = "main_description",
-						type = "desc",
-						text = "ui_mcm_dogma_giant_jump_main_description",
-					},
-					{
-						id = "enabled",
-						type = "check",
-						val = 1,
-						def = D["main/enabled"],
-						hint = "dogma_giant_jump_enabled",
-					},
-				}),
+				id = "main_description",
+				type = "desc",
+				text = "ui_mcm_dogma_giant_jump_main_description",
 			},
 			{
-				id = "development",
-				sh = true,
-				text = "ui_mcm_dogma_giant_jump_development_section",
-				gr = dogma_mcm.with_header({
-					{
-						id = "debug_log",
-						type = "check",
-						val = 1,
-						def = D["development/debug_log"],
-						hint = "dogma_giant_jump_debug_log",
-					},
-				}),
+				id = "enabled",
+				type = "check",
+				val = 1,
+				def = D["enabled"],
+				hint = "dogma_giant_jump_enabled",
 			},
-		},
-	}, "dogma"
+		}),
+	})
 end

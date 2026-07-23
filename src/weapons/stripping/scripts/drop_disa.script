@@ -6,7 +6,7 @@
 	strip burst logic stays in main.script.
 ]]
 
-local CONF = _G.dogma_strip_everything_conf
+local CONF = _G.dogma_weapons_stripping_conf
 local MOD_ID = CONF.MOD_ID
 local DOGMA
 local CONFIG = CONF.CONFIG
@@ -68,17 +68,17 @@ local function make_bind(id, key_path, mod_path, mode_path, kind, all_stacks)
 end
 
 local function on_option_change()
-	CONFIG.drop_safe_equipped = DOGMA.mcm.bool(MOD_ID, "main/drop_safe_equipped")
-	CONFIG.disa_safe_equipped = DOGMA.mcm.bool(MOD_ID, "main/disa_safe_equipped")
-	CONFIG.drop_disa_debug_log = DOGMA.mcm.bool(MOD_ID, "development/drop_disa_debug_log")
+	CONFIG.drop_safe_equipped = DOGMA.mcm.bool(MOD_ID, "drop_safe_equipped")
+	CONFIG.disa_safe_equipped = DOGMA.mcm.bool(MOD_ID, "disa_safe_equipped")
+	CONFIG.drop_disa_debug_log = DOGMA.dbg.logging()
 
 	BINDS = {
-		make_bind("drop", "main/key_drop", "main/key_drop_modifier", "main/key_drop_mode", "drop", false),
-		make_bind("drop_all", "main/key_drop_all", "main/key_drop_all_modifier", "main/key_drop_all_mode", "drop", true),
-		make_bind("disa", "main/key_disa", "main/key_disa_modifier", "main/key_disa_mode", "disa", false),
-		make_bind("disa_all", "main/key_disa_all", "main/key_disa_all_modifier", "main/key_disa_all_mode", "disa", true),
-		make_bind("strip", "main/key", "main/key_modifier", "main/key_mode", "strip", false),
-		make_bind("strip_all", "main/key_all", "main/key_all_modifier", "main/key_all_mode", "strip", true),
+		make_bind("drop", "key_drop", "key_drop_modifier", "key_drop_mode", "drop", false),
+		make_bind("drop_all", "key_drop_all", "key_drop_all_modifier", "key_drop_all_mode", "drop", true),
+		make_bind("disa", "key_disa", "key_disa_modifier", "key_disa_mode", "disa", false),
+		make_bind("disa_all", "key_disa_all", "key_disa_all_modifier", "key_disa_all_mode", "disa", true),
+		make_bind("strip", "key", "key_modifier", "key_mode", "strip", false),
+		make_bind("strip_all", "key_all", "key_all_modifier", "key_all_mode", "strip", true),
 	}
 
 	log(string.format(

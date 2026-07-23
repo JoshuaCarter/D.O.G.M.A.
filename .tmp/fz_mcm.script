@@ -1,5 +1,5 @@
-function on_mcm_load(options)
-	local CONF = _G.dogma_zoom_free_zoom_conf
+function on_mcm_load()
+	local CONF = _G.dogma_free_zoom_conf
 	local D = CONF.defaults
 	local kb_mod = (ui_mcm and ui_mcm.kb_mod_radio) or "radio_h"
 
@@ -144,31 +144,22 @@ function on_mcm_load(options)
 		end
 	end
 
-
-	-- Prefix ads option ids so they stay unique on the flat page.
-	local skip_prefix = {
-		ads_description = true, line_ads_world = true, ads_world_header = true,
-		line_wads_keys = true, wads_keys_header = true, line_wads_defaults = true,
-		wads_defaults_header = true,
-	}
-	for _, opt in ipairs(ads_gr) do
-		local id = opt.id
-		if id and not id:find("/") and not id:match("^line_wads_") and not id:match("_title$") and not skip_prefix[id] then
-			opt.id = "ads_zoom/" .. id
-		elseif id == "enabled" then
-			opt.id = "ads_zoom/enabled"
-		end
-	end
-
-	local items = {
-
+	return {
+		id = "free_zoom",
+		text = "ui_mcm_menu_dogma_free_zoom",
+		gr = {
+			{
+				id = "free_zoom",
+				sh = true,
+				text = "ui_mcm_dogma_free_zoom_free_zoom_section",
+				gr = dogma_mcm.with_header({
 					{
 						id = "zoom_description",
 						type = "desc",
 						text = "ui_mcm_dogma_free_zoom_zoom_description",
 					},
 					{
-						id = "free_zoom/enabled",
+						id = "enabled",
 						type = "check",
 						val = 1,
 						def = D["free_zoom/enabled"],
@@ -181,7 +172,7 @@ function on_mcm_load(options)
 						text = "ui_mcm_dogma_free_zoom_zoom_header",
 					},
 					{
-						id = "free_zoom/free_zoom",
+						id = "free_zoom",
 						type = "track",
 						val = 2,
 						min = 0,
@@ -191,7 +182,7 @@ function on_mcm_load(options)
 						hint = "dogma_free_zoom_free_zoom",
 					},
 					{
-						id = "free_zoom/move_speed",
+						id = "move_speed",
 						type = "track",
 						val = 2,
 						min = 0,
@@ -201,7 +192,7 @@ function on_mcm_load(options)
 						hint = "dogma_free_zoom_move_speed",
 					},
 					{
-						id = "free_zoom/empty_hands_only",
+						id = "empty_hands_only",
 						type = "check",
 						val = 1,
 						def = D["free_zoom/empty_hands_only"],
@@ -214,14 +205,14 @@ function on_mcm_load(options)
 						text = "ui_mcm_dogma_free_zoom_keybind_header",
 					},
 					{
-						id = "free_zoom/zoom_key",
+						id = "zoom_key",
 						type = "key_bind",
 						val = 2,
 						def = D["free_zoom/zoom_key"],
 						hint = "dogma_free_zoom_zoom_key",
 					},
 					{
-						id = "free_zoom/zoom_key_mode",
+						id = "zoom_key_mode",
 						type = kb_mod,
 						val = 2,
 						def = D["free_zoom/zoom_key_mode"],
@@ -234,7 +225,7 @@ function on_mcm_load(options)
 						},
 					},
 					{
-						id = "free_zoom/zoom_key_modifier",
+						id = "zoom_key_modifier",
 						type = kb_mod,
 						val = 2,
 						def = D["free_zoom/zoom_key_modifier"],
@@ -253,7 +244,7 @@ function on_mcm_load(options)
 						text = "ui_mcm_dogma_free_zoom_mouse_wheel_header",
 					},
 					{
-						id = "free_zoom/rmb_zoom",
+						id = "rmb_zoom",
 						type = kb_mod,
 						val = 2,
 						def = D["free_zoom/rmb_zoom"],
@@ -265,7 +256,7 @@ function on_mcm_load(options)
 						},
 					},
 					{
-						id = "free_zoom/mmb_zoom",
+						id = "mmb_zoom",
 						type = kb_mod,
 						val = 2,
 						def = D["free_zoom/mmb_zoom"],
@@ -283,21 +274,21 @@ function on_mcm_load(options)
 						clr = { 255, 220, 160, 40 },
 					},
 					{
-						id = "free_zoom/scroll_wheel_zoom",
+						id = "scroll_wheel_zoom",
 						type = "check",
 						val = 1,
 						def = D["free_zoom/scroll_wheel_zoom"],
 						hint = "dogma_free_zoom_scroll_wheel_zoom",
 					},
 					{
-						id = "free_zoom/scroll_wheel_reverse",
+						id = "scroll_wheel_reverse",
 						type = "check",
 						val = 1,
 						def = D["free_zoom/scroll_wheel_reverse"],
 						hint = "dogma_free_zoom_scroll_wheel_reverse",
 					},
 					{
-						id = "free_zoom/scroll_wheel_steps",
+						id = "scroll_wheel_steps",
 						type = "track",
 						val = 2,
 						min = 1,
@@ -307,7 +298,7 @@ function on_mcm_load(options)
 						hint = "dogma_free_zoom_scroll_wheel_steps",
 					},
 					{
-						id = "free_zoom/scroll_wheel_max_gap_ms",
+						id = "scroll_wheel_max_gap_ms",
 						type = "track",
 						val = 2,
 						min = 50,
@@ -316,21 +307,28 @@ function on_mcm_load(options)
 						def = D["free_zoom/scroll_wheel_max_gap_ms"],
 						hint = "dogma_free_zoom_scroll_wheel_max_gap_ms",
 					},
-		{ id = "line_ads_zoom", type = "line" },
-		{
-			id = "hdr_ads_zoom",
-			type = "desc",
-			text = "ui_mcm_dogma_free_zoom_ads_zoom_section",
+				}),
+			},
+			{
+				id = "ads_zoom",
+				sh = true,
+				text = "ui_mcm_dogma_free_zoom_ads_zoom_section",
+				gr = dogma_mcm.with_header(ads_gr),
+			},
+			{
+				id = "development",
+				sh = true,
+				text = "ui_mcm_dogma_free_zoom_development_section",
+				gr = dogma_mcm.with_header({
+					{
+						id = "debug_log",
+						type = "check",
+						val = 1,
+						def = D["development/debug_log"],
+						hint = "dogma_free_zoom_debug_log",
+					},
+				}),
+			},
 		},
-	}
-	for _, row in ipairs(ads_gr) do
-		items[#items + 1] = row
-	end
-
-	dogma_mcm.attach(options, "zoom", "ui_mcm_menu_dogma_zoom", {
-		id = "free_zoom",
-		sh = true,
-		text = "ui_mcm_menu_dogma_zoom_free_zoom",
-		gr = dogma_mcm.with_header(items),
-	})
+	}, "dogma"
 end

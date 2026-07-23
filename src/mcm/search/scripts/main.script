@@ -3,9 +3,10 @@
 
 	Empty search box by default; filters the left mod list as you type;
 	keeps keyboard focus in the box after each rebuild.
+
+	Patches at script load (main-menu MCM) and again on_game_start.
 ]]
 
--- Debounce tree rebuilds while typing (Register_Tree is not free on big lists).
 local SEARCH_DEBOUNCE_MS = 100
 
 local HOOK_STATE = _G.__dogma_qol_mcm_search_hooks or {}
@@ -27,7 +28,6 @@ local function apply_search(self, keep_focus)
 		return
 	end
 	self.search_filter = filter
-	-- Addon tree lives on the ui_mcm module (same file as the class).
 	self:Register_Tree(1, "", ui_mcm.options, 1)
 	if keep_focus and self.mod_search then
 		self.mod_search:CaptureFocus(true)
@@ -47,7 +47,6 @@ local function patch_mcm_search()
 	if HOOK_STATE.patched then
 		return true
 	end
-	-- MCM class is ui_mcm.UI_MCM (see ui_main_menu: ui_mcm.UI_MCM()).
 	local cls = ui_mcm and ui_mcm.UI_MCM
 	if not (cls and cls.InitControls and cls.Update and cls.OnSearch and cls.Open_to) then
 		return false
@@ -55,7 +54,6 @@ local function patch_mcm_search()
 
 	local orig_init = cls.InitControls
 	local orig_open = cls.Open_to
-	local orig_search = cls.OnSearch
 	local orig_update = cls.Update
 
 	cls.InitControls = function(self)
@@ -65,7 +63,6 @@ local function patch_mcm_search()
 
 	cls.Open_to = function(self, path)
 		orig_open(self, path)
-		-- Stock Open_to already cleared the filter and rebuilt; only strip the placeholder.
 		if self.mod_search then
 			self.mod_search:SetText("")
 			self._dogma_qol_want = nil
@@ -97,11 +94,15 @@ local function patch_mcm_search()
 	end
 
 	HOOK_STATE.patched = true
+	printf("[dogma_mcm_search] patched ui_mcm.UI_MCM search")
 	return true
 end
 
+-- Main menu loads scripts before on_game_start — patch immediately if MCM exists.
+patch_mcm_search()
+
 function on_game_start()
 	if not patch_mcm_search() then
-		printf("[dogma_qol] ui_mcm.UI_MCM missing — MCM search patch skipped")
+		printf("[dogma_mcm_search] ui_mcm.UI_MCM missing — MCM search patch skipped")
 	end
 end

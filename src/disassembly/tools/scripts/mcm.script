@@ -1,43 +1,23 @@
-function on_mcm_load()
-	local CONF = _G.dogma_optimal_tool_use_conf
+function on_mcm_load(options)
+	local CONF = _G.dogma_disassembly_tools_conf
 	local D = CONF.defaults
-	return {
-		id = "optimal_tool_use",
-		text = "ui_mcm_menu_dogma_optimal_tool_use",
-		gr = {
+	dogma_mcm.attach(options, "disassembly", "ui_mcm_menu_dogma_disassembly", {
+		id = "tools",
+		sh = true,
+		text = "ui_mcm_menu_dogma_disassembly_tools",
+		gr = dogma_mcm.with_header({
 			{
-				id = "main",
-				sh = true,
-				text = "ui_mcm_dogma_optimal_tool_use_main_section",
-				gr = dogma_mcm.with_header({
-					{
-						id = "main_description",
-						type = "desc",
-						text = "ui_mcm_dogma_optimal_tool_use_main_description",
-					},
-					{
-						id = "enabled",
-						type = "check",
-						val = 1,
-						def = D["main/enabled"],
-						hint = "dogma_optimal_tool_use_enabled",
-					},
-				}),
+				id = "main_description",
+				type = "desc",
+				text = "ui_mcm_dogma_optimal_tool_use_main_description",
 			},
 			{
-				id = "development",
-				sh = true,
-				text = "ui_mcm_dogma_optimal_tool_use_development_section",
-				gr = dogma_mcm.with_header({
-					{
-						id = "debug_log",
-						type = "check",
-						val = 1,
-						def = D["development/debug_log"],
-						hint = "dogma_optimal_tool_use_debug_log",
-					},
-				}),
+				id = "enabled",
+				type = "check",
+				val = 1,
+				def = D["enabled"],
+				hint = "dogma_optimal_tool_use_enabled",
 			},
-		},
-	}, "dogma"
+		}),
+	})
 end

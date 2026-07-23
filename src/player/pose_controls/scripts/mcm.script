@@ -1,57 +1,25 @@
-function on_mcm_load()
-	local CONF = _G.dogma_pose_controls_conf
+function on_mcm_load(options)
+	local CONF = _G.dogma_player_pose_controls_conf
 	local D = CONF.defaults
-	return {
+	dogma_mcm.attach(options, "player", "ui_mcm_menu_dogma_player", {
 		id = "pose_controls",
-		text = "ui_mcm_menu_dogma_pose_controls",
-		gr = {
+		sh = true,
+		text = "ui_mcm_menu_dogma_player_pose_controls",
+		gr = dogma_mcm.with_header({
 			{
-				id = "main",
-				sh = true,
-				text = "ui_mcm_dogma_pose_controls_main_section",
-				gr = dogma_mcm.with_header({
-					{
-						id = "main_description",
-						type = "desc",
-						text = "ui_mcm_dogma_pose_controls_main_description",
-					},
-					{
-						id = "enabled",
-						type = "check",
-						val = 1,
-						def = D["main/enabled"],
-						hint = "dogma_pose_controls_enabled",
-					},
-					{
-						id = "walk_key",
-						type = "key_bind",
-						val = 2,
-						def = D["main/walk_key"],
-						hint = "dogma_pose_controls_walk_key",
-					},
-				}),
+				id = "enabled",
+				type = "check",
+				val = 1,
+				def = D["enabled"],
+				hint = "dogma_pose_controls_enabled",
 			},
 			{
-				id = "development",
-				sh = true,
-				text = "ui_mcm_dogma_pose_controls_development_section",
-				gr = dogma_mcm.with_header({
-					{
-						id = "debug_overlay",
-						type = "check",
-						val = 1,
-						def = D["development/debug_overlay"],
-						hint = "dogma_pose_controls_debug_overlay",
-					},
-					{
-						id = "debug_log",
-						type = "check",
-						val = 1,
-						def = D["development/debug_log"],
-						hint = "dogma_pose_controls_debug_log",
-					},
-				}),
+				id = "walk_key",
+				type = "key_bind",
+				val = 2,
+				def = D["walk_key"],
+				hint = "dogma_pose_controls_walk_key",
 			},
-		},
-	}, "dogma"
+		}),
+	})
 end

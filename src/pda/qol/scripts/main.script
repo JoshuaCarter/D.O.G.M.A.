@@ -6,7 +6,7 @@
 	open/close and after teleport position jumps.
 ]]
 
-local CONF = _G.dogma_dont_reequip_pda_conf
+local CONF = _G.dogma_pda_qol_conf
 local MOD_ID = CONF.MOD_ID
 local PDA_SLOT = 8
 
@@ -30,10 +30,10 @@ local function log(msg)
 end
 
 local function on_option_change()
-	CONFIG.after_inventory = DOGMA.mcm.bool(MOD_ID, "main/after_inventory")
-	CONFIG.after_loot = DOGMA.mcm.bool(MOD_ID, "main/after_loot")
-	CONFIG.after_teleport = DOGMA.mcm.bool(MOD_ID, "main/after_teleport")
-	CONFIG.debug_log = DOGMA.mcm.bool(MOD_ID, "development/debug_log")
+	CONFIG.after_inventory = DOGMA.mcm.bool(MOD_ID, "after_inventory")
+	CONFIG.after_loot = DOGMA.mcm.bool(MOD_ID, "after_loot")
+	CONFIG.after_teleport = DOGMA.mcm.bool(MOD_ID, "after_teleport")
+	CONFIG.debug_log = DOGMA.dbg.logging()
 	log(string.format(
 		"config: inventory=%s loot=%s teleport=%s debug=%s",
 		tostring(CONFIG.after_inventory), tostring(CONFIG.after_loot),

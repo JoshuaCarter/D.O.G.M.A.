@@ -7,7 +7,7 @@
 	swings or one heavy on a dead mutant takes all parts with no popup/anim.
 ]]
 
-local CONF = _G.dogma_faster_skinning_conf
+local CONF = _G.dogma_mutants_skinning_conf
 local MOD_ID = CONF.MOD_ID
 local DOGMA
 
@@ -588,13 +588,13 @@ local function on_slash_key_press(dik)
 end
 
 local function on_option_change()
-	CONFIG.enabled = DOGMA.mcm.bool(MOD_ID, "main/enabled")
-	CONFIG.debug_log = DOGMA.mcm.bool(MOD_ID, "development/debug_log")
-	CONFIG.skin_speed_multiplier = DOGMA.mcm.number(MOD_ID, "main/skin_speed_multiplier")
-	CONFIG.auto_crouch = DOGMA.mcm.bool(MOD_ID, "main/auto_crouch")
-	CONFIG.look_at_mutant = DOGMA.mcm.bool(MOD_ID, "main/look_at_mutant")
-	CONFIG.look_at_offset = DOGMA.mcm.number(MOD_ID, "main/look_at_offset")
-	CONFIG.slash_loot = DOGMA.mcm.bool(MOD_ID, "main/slash_loot")
+	CONFIG.enabled = DOGMA.mcm.bool(MOD_ID, "enabled")
+	CONFIG.debug_log = DOGMA.dbg.logging()
+	CONFIG.skin_speed_multiplier = DOGMA.mcm.number(MOD_ID, "skin_speed_multiplier")
+	CONFIG.auto_crouch = DOGMA.mcm.bool(MOD_ID, "auto_crouch")
+	CONFIG.look_at_mutant = DOGMA.mcm.bool(MOD_ID, "look_at_mutant")
+	CONFIG.look_at_offset = DOGMA.mcm.number(MOD_ID, "look_at_offset")
+	CONFIG.slash_loot = DOGMA.mcm.bool(MOD_ID, "slash_loot")
 	log(string.format("options: enabled=%s slash_loot=%s", tostring(CONFIG.enabled), tostring(CONFIG.slash_loot)))
 end
 

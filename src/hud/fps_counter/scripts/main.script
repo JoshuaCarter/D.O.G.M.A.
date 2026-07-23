@@ -17,7 +17,7 @@
 	which would otherwise look like a slow frame - so those are excluded too.
 ]]
 
-local CONF = _G.dogma_fps_counter_conf
+local CONF = _G.dogma_hud_fps_counter_conf
 local MOD_ID = CONF.MOD_ID
 local D = CONF.defaults
 local DOGMA
@@ -47,16 +47,16 @@ local FONTS = {
 }
 
 local CONFIG = {
-	toggle_key = D["main/toggle_key"],
-	enabled_default = D["main/enabled_default"],
-	display_mode = D["main/display"],
-	minmax_window = D["main/minmax_window"],
-	sample_window = D["main/sample_window"],
+	toggle_key = D["toggle_key"],
+	enabled_default = D["enabled_default"],
+	display_mode = D["display"],
+	minmax_window = D["minmax_window"],
+	sample_window = D["sample_window"],
 	max_fps = 144,
-	refresh_rate = D["main/refresh_rate"],
-	pos_anchor = D["main/pos_anchor"],
-	pos_x = D["main/pos_x"],
-	pos_y = D["main/pos_y"],
+	refresh_rate = D["refresh_rate"],
+	pos_anchor = D["pos_anchor"],
+	pos_x = D["pos_x"],
+	pos_y = D["pos_y"],
 	font = FONTS[0],
 	text_r = 255,
 	text_g = 255,
@@ -70,8 +70,8 @@ local CONFIG = {
 	graph_border_g = 96,
 	graph_border_b = 96,
 	graph_border_a = 128,
-	debug_log = D["development/debug_log"],
-	long_frame_threshold_ms = D["development/long_frame_threshold_ms"],
+	debug_log = true,
+	long_frame_threshold_ms = 0,
 }
 
 local hud = nil
@@ -132,18 +132,18 @@ local function mcm_byte(v)
 end
 
 local function on_option_change()
-	CONFIG.enabled_default = DOGMA.mcm.bool(MOD_ID, "main/enabled_default")
-	CONFIG.debug_log = DOGMA.mcm.bool(MOD_ID, "development/debug_log")
-	CONFIG.long_frame_threshold_ms = DOGMA.mcm.number(MOD_ID, "development/long_frame_threshold_ms")
-	CONFIG.toggle_key = DOGMA.mcm.key(MOD_ID, "main/toggle_key")
-	CONFIG.display_mode = DOGMA.mcm.number(MOD_ID, "main/display")
-	CONFIG.sample_window = DOGMA.mcm.number(MOD_ID, "main/sample_window")
-	CONFIG.max_fps = math.max(60, math.min(500, DOGMA.mcm.number(MOD_ID, "main/max_fps")))
-	CONFIG.minmax_window = DOGMA.mcm.number(MOD_ID, "main/minmax_window")
-	CONFIG.refresh_rate = DOGMA.mcm.number(MOD_ID, "main/refresh_rate")
-	CONFIG.pos_anchor = DOGMA.mcm.number(MOD_ID, "main/pos_anchor")
-	CONFIG.pos_x = DOGMA.mcm.number(MOD_ID, "main/pos_x")
-	CONFIG.pos_y = DOGMA.mcm.number(MOD_ID, "main/pos_y")
+	CONFIG.enabled_default = DOGMA.mcm.bool(MOD_ID, "enabled_default")
+	CONFIG.debug_log = DOGMA.dbg.logging()
+	CONFIG.long_frame_threshold_ms = DOGMA.mcm.number("dogma/debug", "fps_long_frame_threshold_ms")
+	CONFIG.toggle_key = DOGMA.mcm.key(MOD_ID, "toggle_key")
+	CONFIG.display_mode = DOGMA.mcm.number(MOD_ID, "display")
+	CONFIG.sample_window = DOGMA.mcm.number(MOD_ID, "sample_window")
+	CONFIG.max_fps = math.max(60, math.min(500, DOGMA.mcm.number(MOD_ID, "max_fps")))
+	CONFIG.minmax_window = DOGMA.mcm.number(MOD_ID, "minmax_window")
+	CONFIG.refresh_rate = DOGMA.mcm.number(MOD_ID, "refresh_rate")
+	CONFIG.pos_anchor = DOGMA.mcm.number(MOD_ID, "pos_anchor")
+	CONFIG.pos_x = DOGMA.mcm.number(MOD_ID, "pos_x")
+	CONFIG.pos_y = DOGMA.mcm.number(MOD_ID, "pos_y")
 	CONFIG.font = FONTS[display_font_idx(CONFIG.display_mode)]
 	CONFIG.text_r = mcm_byte(DOGMA.mcm.number(MOD_ID, "colors/text_r"))
 	CONFIG.text_g = mcm_byte(DOGMA.mcm.number(MOD_ID, "colors/text_g"))

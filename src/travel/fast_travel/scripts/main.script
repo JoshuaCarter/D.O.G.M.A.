@@ -1,7 +1,7 @@
 -- Fast Travel: MCM config, callbacks, and PDA map menu wiring.
 -- Module libs load first as 01_*.script … (zzzz_dogma_travel_fast_travel_*)
 
-local CONF = _G.dogma_fast_travel_conf
+local CONF = _G.dogma_travel_fast_travel_conf
 local MOD_ID = CONF.MOD_ID
 _G.dft_config = _G.dft_config or {}
 local dft_config = _G.dft_config
@@ -29,20 +29,20 @@ local function load_config()
     if not mcm then
         return
     end
-    dft_config.debug_overlay = mcm.bool(MOD_ID, "development/debug_overlay")
-    dft_config.debug_log = mcm.bool(MOD_ID, "development/debug_log")
-    dft_config.path_preview = mcm.bool(MOD_ID, "development/path_preview")
-    dft_config.block_transition_in_combat = mcm.bool(MOD_ID, "main/block_transition_in_combat")
-    dft_config.show_ambush_range = mcm.bool(MOD_ID, "main/show_ambush_range")
+    dft_config.debug_overlay = DOGMA.dbg.overlay_enabled()
+    dft_config.debug_log = DOGMA.dbg.logging()
+    dft_config.path_preview = mcm.bool("dogma/debug", "ft_path_preview")
+    dft_config.block_transition_in_combat = mcm.bool(MOD_ID, "block_transition_in_combat")
+    dft_config.show_ambush_range = mcm.bool(MOD_ID, "show_ambush_range")
     if not dft_config.show_ambush_range and dft_clear_ambush_range_circle then
         dft_clear_ambush_range_circle()
     end
-    dft_config.sneaking_level_up = mcm.key(MOD_ID, "development/sneaking_level_up")
-    dft_config.sneaking_level_down = mcm.key(MOD_ID, "development/sneaking_level_down")
-    dft_config.coarse_nav_build = mcm.key(MOD_ID, "development/coarse_nav_build")
-    dft_config.coarse_nav_rebuild_on_load = mcm.bool(MOD_ID, "development/coarse_nav_rebuild_on_load")
+    dft_config.sneaking_level_up = mcm.key("dogma/debug", "ft_sneaking_level_up")
+    dft_config.sneaking_level_down = mcm.key("dogma/debug", "ft_sneaking_level_down")
+    dft_config.coarse_nav_build = mcm.key("dogma/debug", "ft_coarse_nav_build")
+    dft_config.coarse_nav_rebuild_on_load = mcm.bool("dogma/debug", "ft_coarse_nav_rebuild_on_load")
     if dogma.dbg and dogma.dbg.set_enabled then
-        dogma.dbg.set_enabled(MOD_ID, dft_config.debug_overlay)
+        dogma.dbg.set_enabled(MOD_ID, dogma.dbg.overlay_enabled())
     end
     if not dft_config.debug_overlay and dft then
         dft._debug_overlay_msg = nil
@@ -64,7 +64,7 @@ refresh_active_config = function()
     local msg_dur = 30
     local dogma = dft and dft.dogma
     if dogma and dogma.mcm then
-        msg_dur = dogma.mcm.number(MOD_ID, "main/message_duration")
+        msg_dur = dogma.mcm.number(MOD_ID, "message_duration")
     end
 
     dft.active_config = {

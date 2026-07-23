@@ -5,7 +5,7 @@
 	Those transfers use raw transfer_item and can make items vanish.
 ]]
 
-local CONF = _G.dogma_strip_everything_conf
+local CONF = _G.dogma_weapons_stripping_conf
 local MOD_ID = CONF.MOD_ID
 local DOGMA
 local CONFIG = CONF.CONFIG
@@ -26,7 +26,7 @@ local function log(msg)
 end
 
 local function on_option_change()
-	CONFIG.block_special_items = DOGMA.mcm.bool(MOD_ID, "main/block_companion_special_items")
+	CONFIG.block_special_items = DOGMA.mcm.bool(MOD_ID, "block_companion_special_items")
 	log(string.format("companion loot: block_special_items=%s", tostring(CONFIG.block_special_items)))
 end
 

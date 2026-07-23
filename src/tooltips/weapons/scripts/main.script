@@ -9,7 +9,7 @@
 	stats_table["weapon"] and would wipe our rows.
 ]]
 
-local CONF = _G.dogma_weapon_tooltip_conf
+local CONF = _G.dogma_tooltips_weapons_conf
 local MOD_ID = CONF.MOD_ID
 local D = CONF.defaults
 local DOGMA
@@ -1244,67 +1244,67 @@ local function on_option_change()
 	local tostr = tostring
 	local prev_debug = CONFIG.debug_log
 	if DOGMA and DOGMA.mcm then
-		CONFIG.show_damage_table = DOGMA.mcm.bool(MOD_ID, "main/show_damage_table")
-		CONFIG.show_hit_power = DOGMA.mcm.bool(MOD_ID, "main/show_hit_power")
-		CONFIG.show_stalker_damage = DOGMA.mcm.bool(MOD_ID, "main/show_stalker_damage")
-		CONFIG.show_mutant_damage = DOGMA.mcm.bool(MOD_ID, "main/show_mutant_damage")
-		CONFIG.show_accuracy = DOGMA.mcm.bool(MOD_ID, "main/show_accuracy")
-		CONFIG.show_handling = DOGMA.mcm.bool(MOD_ID, "main/show_handling")
-		CONFIG.show_fire_rate = DOGMA.mcm.bool(MOD_ID, "main/show_fire_rate")
-		CONFIG.show_mag_size = DOGMA.mcm.bool(MOD_ID, "main/show_mag_size")
-		CONFIG.show_reliability = DOGMA.mcm.bool(MOD_ID, "main/show_reliability")
-		CONFIG.show_recoil = DOGMA.mcm.bool(MOD_ID, "main/show_recoil")
-		CONFIG.show_muzzle_velocity = DOGMA.mcm.bool(MOD_ID, "main/show_muzzle_velocity")
-		CONFIG.show_dispersion = DOGMA.mcm.bool(MOD_ID, "main/show_dispersion")
-		CONFIG.show_spread = DOGMA.mcm.bool(MOD_ID, "main/show_spread")
-		CONFIG.show_barrel_wear = DOGMA.mcm.bool(MOD_ID, "main/show_barrel_wear")
-		CONFIG.show_burst_control = DOGMA.mcm.bool(MOD_ID, "main/show_burst_control")
-		CONFIG.show_bullet_drop = DOGMA.mcm.bool(MOD_ID, "main/show_bullet_drop")
+		CONFIG.show_damage_table = DOGMA.mcm.bool(MOD_ID, "show_damage_table")
+		CONFIG.show_hit_power = DOGMA.mcm.bool(MOD_ID, "show_hit_power")
+		CONFIG.show_stalker_damage = DOGMA.mcm.bool(MOD_ID, "show_stalker_damage")
+		CONFIG.show_mutant_damage = DOGMA.mcm.bool(MOD_ID, "show_mutant_damage")
+		CONFIG.show_accuracy = DOGMA.mcm.bool(MOD_ID, "show_accuracy")
+		CONFIG.show_handling = DOGMA.mcm.bool(MOD_ID, "show_handling")
+		CONFIG.show_fire_rate = DOGMA.mcm.bool(MOD_ID, "show_fire_rate")
+		CONFIG.show_mag_size = DOGMA.mcm.bool(MOD_ID, "show_mag_size")
+		CONFIG.show_reliability = DOGMA.mcm.bool(MOD_ID, "show_reliability")
+		CONFIG.show_recoil = DOGMA.mcm.bool(MOD_ID, "show_recoil")
+		CONFIG.show_muzzle_velocity = DOGMA.mcm.bool(MOD_ID, "show_muzzle_velocity")
+		CONFIG.show_dispersion = DOGMA.mcm.bool(MOD_ID, "show_dispersion")
+		CONFIG.show_spread = DOGMA.mcm.bool(MOD_ID, "show_spread")
+		CONFIG.show_barrel_wear = DOGMA.mcm.bool(MOD_ID, "show_barrel_wear")
+		CONFIG.show_burst_control = DOGMA.mcm.bool(MOD_ID, "show_burst_control")
+		CONFIG.show_bullet_drop = DOGMA.mcm.bool(MOD_ID, "show_bullet_drop")
 		-- "raw" = bone armor floats; "raw100" = floats x100 floored; "names" = class labels.
-		local headers = DOGMA.mcm.string(MOD_ID, "main/column_headers")
+		local headers = DOGMA.mcm.string(MOD_ID, "column_headers")
 		if headers == "raw" or headers == "raw100" or headers == "names" then
 			CONFIG.column_headers = headers
 		else
-			CONFIG.column_headers = D["main/column_headers"]
+			CONFIG.column_headers = D["column_headers"]
 		end
-		local scale_from = DOGMA.mcm.string(MOD_ID, "main/color_scale_from")
+		local scale_from = DOGMA.mcm.string(MOD_ID, "color_scale_from")
 		if scale_from == "white" or scale_from == "grey" or scale_from == "darkgrey" then
 			CONFIG.color_scale_from = scale_from
 		else
-			CONFIG.color_scale_from = D["main/color_scale_from"]
+			CONFIG.color_scale_from = D["color_scale_from"]
 		end
-		local order = DOGMA.mcm.string(MOD_ID, "main/ammo_order")
+		local order = DOGMA.mcm.string(MOD_ID, "ammo_order")
 		if order == "ap" or order == "damage" or order == "default" then
 			CONFIG.ammo_order = order
 		else
-			CONFIG.ammo_order = D["main/ammo_order"]
+			CONFIG.ammo_order = D["ammo_order"]
 		end
-		local place = DOGMA.mcm.string(MOD_ID, "main/stat_row_placement")
+		local place = DOGMA.mcm.string(MOD_ID, "stat_row_placement")
 		if place == "after" or place == "start" or place == "inline" then
 			CONFIG.stat_row_placement = place
 		else
-			CONFIG.stat_row_placement = D["main/stat_row_placement"]
+			CONFIG.stat_row_placement = D["stat_row_placement"]
 		end
-		CONFIG.compact_header = DOGMA.mcm.bool(MOD_ID, "main/compact_header")
-		CONFIG.calc_range_m = DOGMA.mcm.number(MOD_ID, "main/calc_range")
-		CONFIG.pellet_hit_pct = DOGMA.mcm.number(MOD_ID, "main/pellet_hit_pct")
-		local drop_range = DOGMA.mcm.number(MOD_ID, "main/drop_range")
+		CONFIG.compact_header = DOGMA.mcm.bool(MOD_ID, "compact_header")
+		CONFIG.calc_range_m = DOGMA.mcm.number(MOD_ID, "calc_range")
+		CONFIG.pellet_hit_pct = DOGMA.mcm.number(MOD_ID, "pellet_hit_pct")
+		local drop_range = DOGMA.mcm.number(MOD_ID, "drop_range")
 		if zzzz_dogma_tooltips_weapons_stats and zzzz_dogma_tooltips_weapons_stats.set_drop_range then
 			zzzz_dogma_tooltips_weapons_stats.set_drop_range(drop_range)
 		end
-		local burst_threshold = DOGMA.mcm.number(MOD_ID, "main/burst_threshold")
+		local burst_threshold = DOGMA.mcm.number(MOD_ID, "burst_threshold")
 		if zzzz_dogma_tooltips_weapons_stats and zzzz_dogma_tooltips_weapons_stats.set_burst_threshold then
 			zzzz_dogma_tooltips_weapons_stats.set_burst_threshold(burst_threshold)
 		end
-		CONFIG.use_condition_table = DOGMA.mcm.bool(MOD_ID, "main/use_condition_table")
-		CONFIG.use_condition_stats = DOGMA.mcm.bool(MOD_ID, "main/use_condition_stats")
-		CONFIG.apply_silencer_table = DOGMA.mcm.bool(MOD_ID, "main/apply_silencer_table")
-		CONFIG.apply_silencer_stats = DOGMA.mcm.bool(MOD_ID, "main/apply_silencer_stats")
+		CONFIG.use_condition_table = DOGMA.mcm.bool(MOD_ID, "use_condition_table")
+		CONFIG.use_condition_stats = DOGMA.mcm.bool(MOD_ID, "use_condition_stats")
+		CONFIG.apply_silencer_table = DOGMA.mcm.bool(MOD_ID, "apply_silencer_table")
+		CONFIG.apply_silencer_stats = DOGMA.mcm.bool(MOD_ID, "apply_silencer_stats")
 		if zzzz_dogma_tooltips_weapons_stats and zzzz_dogma_tooltips_weapons_stats.set_apply_silencer then
 			zzzz_dogma_tooltips_weapons_stats.set_apply_silencer(CONFIG.apply_silencer_stats)
 		end
-		CONFIG.debug_log = DOGMA.mcm.bool(MOD_ID, "development/debug_log")
-		CONFIG.debug_overlay = DOGMA.mcm.bool(MOD_ID, "development/debug_overlay")
+		CONFIG.debug_log = DOGMA.dbg.logging()
+		CONFIG.debug_overlay = DOGMA.dbg.overlay_enabled()
 	end
 
 	if CONFIG.debug_log and not prev_debug then
@@ -1317,7 +1317,7 @@ local function on_option_change()
 	end
 
 	if DOGMA and DOGMA.dbg then
-		DOGMA.dbg.set_enabled(MOD_ID, CONFIG.debug_overlay)
+		DOGMA.dbg.set_enabled(MOD_ID, DOGMA.dbg.overlay_enabled())
 	end
 
 	refresh_enhanced_stat_labels()

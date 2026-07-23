@@ -9,7 +9,7 @@
 	GAMMA mods installed last.
 ]]
 
-local CONF = _G.dogma_optimal_tool_use_conf
+local CONF = _G.dogma_disassembly_tools_conf
 local MOD_ID = CONF.MOD_ID
 local DOGMA
 
@@ -29,8 +29,8 @@ local function log(msg)
 end
 
 local function on_option_change()
-	CONFIG.enabled = DOGMA.mcm.bool(MOD_ID, "main/enabled")
-	CONFIG.debug_log = DOGMA.mcm.bool(MOD_ID, "development/debug_log")
+	CONFIG.enabled = DOGMA.mcm.bool(MOD_ID, "enabled")
+	CONFIG.debug_log = DOGMA.dbg.logging()
 end
 
 local function redirect_to_lowest_stack(obj_d, note)

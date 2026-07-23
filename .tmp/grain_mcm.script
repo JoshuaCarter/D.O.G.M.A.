@@ -1,13 +1,17 @@
-function on_mcm_load(options)
-	local CONF = _G.dogma_fx_radiation_grain_fix_conf
+function on_mcm_load()
+	local CONF = _G.dogma_grain_fix_conf
 	local D = CONF.defaults
-dogma_mcm.attach(options, "fx", "ui_mcm_menu_dogma_fx", {
-		id = "radiation_grain_fix",
-		sh = true,
-		text = "ui_mcm_menu_dogma_fx_radiation_grain_fix",
-		gr = dogma_mcm.with_header({
+	return {
+		id = "grain_fix",
+		text = "ui_mcm_menu_dogma_grain_fix",
+		gr = {
+			{
+				id = "grain",
+				sh = true,
+				text = "ui_mcm_dogma_grain_fix_grain_section",
+				gr = dogma_mcm.with_header({
 					{
-						id = "grain/enable",
+						id = "enable",
 						type = "check",
 						val = 1,
 						def = D["grain/enable"],
@@ -118,15 +122,15 @@ dogma_mcm.attach(options, "fx", "ui_mcm_menu_dogma_fx", {
 						def = D["grain/level_10_msv"],
 						hint = "dogma_grain_fix_level_10_msv",
 					},
-				
-				{ id = "line_desaturation", type = "line" },
-				{
-					id = "hdr_desaturation",
-					type = "desc",
-					text = "ui_mcm_dogma_grain_fix_desaturation_section",
-				},
+				}),
+			},
+			{
+				id = "desaturation",
+				sh = true,
+				text = "ui_mcm_dogma_grain_fix_desaturation_section",
+				gr = dogma_mcm.with_header({
 					{
-						id = "desaturation/enable",
+						id = "enable",
 						type = "check",
 						val = 1,
 						def = D["desaturation/enable"],
@@ -157,15 +161,15 @@ dogma_mcm.attach(options, "fx", "ui_mcm_menu_dogma_fx", {
 						def = D["desaturation/blur_max"],
 						hint = "dogma_grain_fix_blur_max",
 					},
-				
-				{ id = "line_duality", type = "line" },
-				{
-					id = "hdr_duality",
-					type = "desc",
-					text = "ui_mcm_dogma_grain_fix_duality_section",
-				},
+				}),
+			},
+			{
+				id = "duality",
+				sh = true,
+				text = "ui_mcm_dogma_grain_fix_duality_section",
+				gr = dogma_mcm.with_header({
 					{
-						id = "duality/enable",
+						id = "enable",
 						type = "check",
 						val = 1,
 						def = D["duality/enable"],
@@ -196,7 +200,43 @@ dogma_mcm.attach(options, "fx", "ui_mcm_menu_dogma_fx", {
 						def = D["duality/dual_max"],
 						hint = "dogma_grain_fix_dual_max",
 					},
-				
-		}),
-	})
+				}),
+			},
+			{
+				id = "development",
+				sh = true,
+				text = "Development",
+				gr = dogma_mcm.with_header({
+					{
+						id = "add_radiation_key",
+						type = "key_bind",
+						val = 2,
+						def = D["development/add_radiation_key"],
+						hint = "dogma_grain_fix_add_radiation_key",
+					},
+					{
+						id = "clear_radiation_key",
+						type = "key_bind",
+						val = 2,
+						def = D["development/clear_radiation_key"],
+						hint = "dogma_grain_fix_clear_radiation_key",
+					},
+					{
+						id = "debug_overlay",
+						type = "check",
+						val = 1,
+						def = D["development/debug_overlay"],
+						hint = "dogma_grain_fix_debug_overlay",
+					},
+					{
+						id = "debug_log",
+						type = "check",
+						val = 1,
+						def = D["development/debug_log"],
+						hint = "dogma_grain_fix_debug_log",
+					},
+				}),
+			},
+		},
+	}, "dogma"
 end

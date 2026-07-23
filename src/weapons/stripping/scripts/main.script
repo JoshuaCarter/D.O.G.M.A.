@@ -20,7 +20,7 @@
 	Grant PDA stash coords on disassembly of NPC PDAs (locked or unlocked).
 ]]
 
-local CONF = _G.dogma_strip_everything_conf
+local CONF = _G.dogma_weapons_stripping_conf
 local MOD_ID = CONF.MOD_ID
 local DOGMA
 local CONFIG = CONF.CONFIG
@@ -101,10 +101,10 @@ end
 -- to actually show up once debug logging is on.
 local function on_option_change()
 	local tostr = tostring
-	CONFIG.intercept_disassemble = DOGMA.mcm.bool(MOD_ID, "main/intercept_disassemble")
-	CONFIG.keep_parts_with_weapon = DOGMA.mcm.bool(MOD_ID, "main/keep_parts_with_weapon")
-	CONFIG.pda_stash_on_disassemble = DOGMA.mcm.bool(MOD_ID, "main/pda_stash_on_disassemble")
-	CONFIG.debug_log = DOGMA.mcm.bool(MOD_ID, "development/debug_log")
+	CONFIG.intercept_disassemble = DOGMA.mcm.bool(MOD_ID, "intercept_disassemble")
+	CONFIG.keep_parts_with_weapon = DOGMA.mcm.bool(MOD_ID, "keep_parts_with_weapon")
+	CONFIG.pda_stash_on_disassemble = DOGMA.mcm.bool(MOD_ID, "pda_stash_on_disassemble")
+	CONFIG.debug_log = DOGMA.dbg.logging()
 	log(string.format(
 		"on_option_change: intercept_disassemble=%s keep_parts_with_weapon=%s pda_stash_on_disassemble=%s debug_log=%s onupdate_patched=%s cc_update_patched=%s func_disassembly_patched=%s sort_guard_patched=%s",
 		tostr(CONFIG.intercept_disassemble), tostr(CONFIG.keep_parts_with_weapon),

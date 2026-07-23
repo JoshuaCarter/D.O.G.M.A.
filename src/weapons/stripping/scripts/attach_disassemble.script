@@ -8,7 +8,7 @@
 	disassembly_item stay wrapped after sibling scripts (strip, tool_select).
 ]]
 
-local CONF = _G.dogma_strip_everything_conf
+local CONF = _G.dogma_weapons_stripping_conf
 local MOD_ID = CONF.MOD_ID
 local DOGMA
 local CONFIG = CONF.CONFIG
@@ -497,7 +497,7 @@ end
 
 local function on_option_change()
 	CONFIG.attach_enabled = DOGMA.mcm.bool(MOD_ID, "dis_weap_attach/enabled")
-	CONFIG.attach_debug_log = DOGMA.mcm.bool(MOD_ID, "development/dis_weap_attach_debug_log")
+	CONFIG.attach_debug_log = DOGMA.dbg.logging()
 	log(string.format(
 		"dis_weap_attach: enabled=%s menu_patched=%s item_patched=%s",
 		tostring(CONFIG.attach_enabled),

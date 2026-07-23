@@ -19,7 +19,7 @@
 	mods can read pose via IsMoveState("mcCrouch") / IsMoveState("mcAccel").
 ]]
 
-local CONF = _G.dogma_pose_controls_conf
+local CONF = _G.dogma_player_pose_controls_conf
 local MOD_ID = CONF.MOD_ID
 local D = CONF.defaults
 local DOGMA
@@ -43,10 +43,10 @@ local LOG = {
 }
 
 local CONFIG = {
-	enabled = D["main/enabled"],
-	walk_key = D["main/walk_key"],
-	debug_log = D["development/debug_log"],
-	debug_overlay = D["development/debug_overlay"],
+	enabled = D["enabled"],
+	walk_key = D["walk_key"],
+	debug_log = true,
+	debug_overlay = false,
 }
 
 local applying_pose = false
@@ -152,11 +152,11 @@ local function maybe_warn_mixed_settings()
 end
 
 local function on_option_change()
-	CONFIG.enabled = DOGMA.mcm.bool(MOD_ID, "main/enabled")
-	CONFIG.walk_key = DOGMA.mcm.key(MOD_ID, "main/walk_key")
-	CONFIG.debug_log = DOGMA.mcm.bool(MOD_ID, "development/debug_log")
-	CONFIG.debug_overlay = DOGMA.mcm.bool(MOD_ID, "development/debug_overlay")
-	DOGMA.dbg.set_enabled(MOD_ID, CONFIG.debug_overlay)
+	CONFIG.enabled = DOGMA.mcm.bool(MOD_ID, "enabled")
+	CONFIG.walk_key = DOGMA.mcm.key(MOD_ID, "walk_key")
+	CONFIG.debug_log = DOGMA.dbg.logging()
+	CONFIG.debug_overlay = DOGMA.dbg.overlay_enabled()
+	DOGMA.dbg.set_enabled(MOD_ID, DOGMA.dbg.overlay_enabled())
 	local was_mixed = refresh_game_input_settings()
 	if mixed_game_settings and not was_mixed then
 		maybe_warn_mixed_settings()

@@ -1,30 +1,34 @@
-function on_mcm_load(options)
-	local CONF = _G.dogma_hud_fps_counter_conf
+function on_mcm_load()
+	local CONF = _G.dogma_fps_counter_conf
 	local D = CONF.defaults
-dogma_mcm.attach(options, "hud", "ui_mcm_menu_dogma_hud", {
+	return {
 		id = "fps_counter",
-		sh = true,
-		text = "ui_mcm_menu_dogma_hud_fps_counter",
-		gr = dogma_mcm.with_header({
+		text = "ui_mcm_menu_dogma_fps_counter",
+		gr = {
+			{
+				id = "main",
+				sh = true,
+				text = "ui_mcm_dogma_fps_counter_main_section",
+				gr = dogma_mcm.with_header({
 					{
 						id = "enabled_default",
 						type = "check",
 						val = 1,
-						def = D["enabled_default"],
+						def = D["main/enabled_default"],
 						hint = "dogma_fps_counter_enabled_default",
 					},
 					{
 						id = "toggle_key",
 						type = "key_bind",
 						val = 2,
-						def = D["toggle_key"],
+						def = D["main/toggle_key"],
 						hint = "dogma_fps_counter_toggle_key",
 					},
 					{
 						id = "display",
 						type = "list",
 						val = 2,
-						def = D["display"],
+						def = D["main/display"],
 						hint = "dogma_fps_counter_display",
 						content = {
 							{ 0, "simple_small" },
@@ -42,7 +46,7 @@ dogma_mcm.attach(options, "hud", "ui_mcm_menu_dogma_hud", {
 						min = 0.1,
 						max = 3,
 						step = 0.1,
-						def = D["sample_window"],
+						def = D["main/sample_window"],
 						hint = "dogma_fps_counter_sample_window",
 					},
 					{
@@ -52,7 +56,7 @@ dogma_mcm.attach(options, "hud", "ui_mcm_menu_dogma_hud", {
 						min = 60,
 						max = 500,
 						step = 1,
-						def = D["max_fps"],
+						def = D["main/max_fps"],
 						hint = "dogma_fps_counter_max_fps",
 					},
 					{
@@ -62,7 +66,7 @@ dogma_mcm.attach(options, "hud", "ui_mcm_menu_dogma_hud", {
 						min = 1,
 						max = 10,
 						step = 1,
-						def = D["minmax_window"],
+						def = D["main/minmax_window"],
 						hint = "dogma_fps_counter_minmax_window",
 					},
 					{
@@ -72,7 +76,7 @@ dogma_mcm.attach(options, "hud", "ui_mcm_menu_dogma_hud", {
 						min = 1,
 						max = 10,
 						step = 1,
-						def = D["refresh_rate"],
+						def = D["main/refresh_rate"],
 						hint = "dogma_fps_counter_refresh_rate",
 					},
 					{ id = "line_pos", type = "line" },
@@ -85,7 +89,7 @@ dogma_mcm.attach(options, "hud", "ui_mcm_menu_dogma_hud", {
 						id = "pos_anchor",
 						type = "list",
 						val = 2,
-						def = D["pos_anchor"],
+						def = D["main/pos_anchor"],
 						hint = "dogma_fps_counter_pos_anchor",
 						content = {
 							{ 0, "top_left" },
@@ -101,7 +105,7 @@ dogma_mcm.attach(options, "hud", "ui_mcm_menu_dogma_hud", {
 						min = 0,
 						max = 1024,
 						step = 1,
-						def = D["pos_x"],
+						def = D["main/pos_x"],
 						hint = "dogma_fps_counter_pos_x",
 					},
 					{
@@ -111,23 +115,23 @@ dogma_mcm.attach(options, "hud", "ui_mcm_menu_dogma_hud", {
 						min = 0,
 						max = 768,
 						step = 1,
-						def = D["pos_y"],
+						def = D["main/pos_y"],
 						hint = "dogma_fps_counter_pos_y",
 					},
-				
-				{ id = "line_colors", type = "line" },
-				{
-					id = "hdr_colors",
-					type = "desc",
-					text = "ui_mcm_dogma_fps_counter_colors_section",
-				},
+				}),
+			},
+			{
+				id = "colors",
+				sh = true,
+				text = "ui_mcm_dogma_fps_counter_colors_section",
+				gr = dogma_mcm.with_header({
 					{
 						id = "text_color_desc",
 						type = "desc",
 						text = "ui_mcm_dogma_fps_counter_text_color_desc",
 					},
 					{
-						id = "colors/text_r",
+						id = "text_r",
 						type = "track",
 						val = 2,
 						min = 0,
@@ -137,7 +141,7 @@ dogma_mcm.attach(options, "hud", "ui_mcm_menu_dogma_hud", {
 						hint = "dogma_fps_counter_text_r",
 					},
 					{
-						id = "colors/text_g",
+						id = "text_g",
 						type = "track",
 						val = 2,
 						min = 0,
@@ -147,7 +151,7 @@ dogma_mcm.attach(options, "hud", "ui_mcm_menu_dogma_hud", {
 						hint = "dogma_fps_counter_text_g",
 					},
 					{
-						id = "colors/text_b",
+						id = "text_b",
 						type = "track",
 						val = 2,
 						min = 0,
@@ -157,7 +161,7 @@ dogma_mcm.attach(options, "hud", "ui_mcm_menu_dogma_hud", {
 						hint = "dogma_fps_counter_text_b",
 					},
 					{
-						id = "colors/text_a",
+						id = "text_a",
 						type = "track",
 						val = 2,
 						min = 0,
@@ -173,7 +177,7 @@ dogma_mcm.attach(options, "hud", "ui_mcm_menu_dogma_hud", {
 						text = "ui_mcm_dogma_fps_counter_graph_line_color_desc",
 					},
 					{
-						id = "colors/graph_line_r",
+						id = "graph_line_r",
 						type = "track",
 						val = 2,
 						min = 0,
@@ -183,7 +187,7 @@ dogma_mcm.attach(options, "hud", "ui_mcm_menu_dogma_hud", {
 						hint = "dogma_fps_counter_graph_line_r",
 					},
 					{
-						id = "colors/graph_line_g",
+						id = "graph_line_g",
 						type = "track",
 						val = 2,
 						min = 0,
@@ -193,7 +197,7 @@ dogma_mcm.attach(options, "hud", "ui_mcm_menu_dogma_hud", {
 						hint = "dogma_fps_counter_graph_line_g",
 					},
 					{
-						id = "colors/graph_line_b",
+						id = "graph_line_b",
 						type = "track",
 						val = 2,
 						min = 0,
@@ -203,7 +207,7 @@ dogma_mcm.attach(options, "hud", "ui_mcm_menu_dogma_hud", {
 						hint = "dogma_fps_counter_graph_line_b",
 					},
 					{
-						id = "colors/graph_line_a",
+						id = "graph_line_a",
 						type = "track",
 						val = 2,
 						min = 0,
@@ -218,7 +222,7 @@ dogma_mcm.attach(options, "hud", "ui_mcm_menu_dogma_hud", {
 						text = "ui_mcm_dogma_fps_counter_graph_border_color_desc",
 					},
 					{
-						id = "colors/graph_border_r",
+						id = "graph_border_r",
 						type = "track",
 						val = 2,
 						min = 0,
@@ -228,7 +232,7 @@ dogma_mcm.attach(options, "hud", "ui_mcm_menu_dogma_hud", {
 						hint = "dogma_fps_counter_graph_border_r",
 					},
 					{
-						id = "colors/graph_border_g",
+						id = "graph_border_g",
 						type = "track",
 						val = 2,
 						min = 0,
@@ -238,7 +242,7 @@ dogma_mcm.attach(options, "hud", "ui_mcm_menu_dogma_hud", {
 						hint = "dogma_fps_counter_graph_border_g",
 					},
 					{
-						id = "colors/graph_border_b",
+						id = "graph_border_b",
 						type = "track",
 						val = 2,
 						min = 0,
@@ -248,7 +252,7 @@ dogma_mcm.attach(options, "hud", "ui_mcm_menu_dogma_hud", {
 						hint = "dogma_fps_counter_graph_border_b",
 					},
 					{
-						id = "colors/graph_border_a",
+						id = "graph_border_a",
 						type = "track",
 						val = 2,
 						min = 0,
@@ -257,7 +261,37 @@ dogma_mcm.attach(options, "hud", "ui_mcm_menu_dogma_hud", {
 						def = D["colors/graph_border_a"],
 						hint = "dogma_fps_counter_graph_border_a",
 					},
-				
-		}),
-	})
+				}),
+			},
+			{
+				id = "development",
+				sh = true,
+				text = "ui_mcm_dogma_fps_counter_development_section",
+				gr = dogma_mcm.with_header({
+					{
+						id = "debug_log",
+						type = "check",
+						val = 1,
+						def = D["development/debug_log"],
+						hint = "dogma_fps_counter_debug_log",
+					},
+					{
+						id = "long_frame_threshold_desc",
+						type = "desc",
+						text = "ui_mcm_dogma_fps_counter_long_frame_threshold_desc",
+					},
+					{
+						id = "long_frame_threshold_ms",
+						type = "track",
+						val = 2,
+						min = 0,
+						max = 1000,
+						step = 5,
+						def = D["development/long_frame_threshold_ms"],
+						hint = "dogma_fps_counter_long_frame_threshold_ms",
+					},
+				}),
+			},
+		},
+	}, "dogma"
 end

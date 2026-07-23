@@ -1,14 +1,20 @@
 --[[
-	DOGMA MCM — getters over ui_mcm plus shared MCM UI helpers.
+	DOGMA MCM — getters, tree attach, shared Debug page, banner helper.
 
 	Loaded via dogma_common; use DOGMA.mcm from on_game_start().
-	BANNER_LINK is the stable texture name (vendored in DOGMA).
-	Omitted defaults resolve from _G.dogma_<feature>_conf.defaults.
+	Also registered as *mcm.script → on_mcm_load adds DOGMA → Debug.
+
+	Tree shape (MCM max 3 levels under the list root):
+	  dogma / <category> / <feature page> / options
+	Categories are merged across feature scripts via attach().
 ]]
 
 local BANNER_LINK = "dogma_mcm_banner"
 local MODS_LIST_LINK = "github.com/JoshuaCarter/GAMMA-Mods"
 local MODS_LIST_CLR = nil
+
+-- Shared Debug page path (dogma → debug). Features read keys from here.
+DEBUG_MOD = "dogma/debug"
 
 local function mods_list_slide_hook(_anchor, handlers)
 	if not MODS_LIST_CLR then
@@ -22,7 +28,7 @@ local function path(mod_id, key)
 	return tostring(mod_id) .. "/" .. tostring(key)
 end
 
--- MOD_ID "dogma/<feature>" → _G.dogma_<feature>_conf.defaults[key]
+-- MOD_ID "dogma/<cat>/<feat>" → _G.dogma_<cat>_<feat>_conf.defaults[key]
 local function conf_default(mod_id, key)
 	local feature = tostring(mod_id):match("^dogma/(.+)$")
 	if not feature then
@@ -124,4 +130,161 @@ function with_header(items)
 		gr[#gr + 1] = items[i]
 	end
 	return gr
+end
+
+-- Merge a feature page under dogma/<category>. MCM does not deep-merge duplicate
+-- category ids from separate *mcm.script returns — call this instead of returning
+-- a category wrapper.
+function attach(options, cat_id, cat_text, page)
+	if not options then
+		return
+	end
+	local dogma
+	for i = 1, #options do
+		if options[i].id == "dogma" then
+			dogma = options[i]
+			break
+		end
+	end
+	if not dogma then
+		dogma = { id = "dogma", text = "ui_mcm_menu_dogma", gr = {} }
+		table.insert(options, dogma)
+	end
+	local cat
+	for i = 1, #(dogma.gr or {}) do
+		if dogma.gr[i].id == cat_id then
+			cat = dogma.gr[i]
+			break
+		end
+	end
+	if not cat then
+		cat = { id = cat_id, text = cat_text, gr = {} }
+		table.insert(dogma.gr, cat)
+	end
+	table.insert(cat.gr, page)
+end
+
+-- Shared Debug defaults (also used when MCM has not written a value yet).
+_G.dogma_debug_conf = {
+	MOD_ID = DEBUG_MOD,
+	defaults = {
+		["debug_log"] = true,
+		["debug_overlay"] = false,
+		-- Feature-owned debug controls live here; features read via DEBUG_MOD.
+		["grain_add_radiation_key"] = -1,
+		["grain_clear_radiation_key"] = -1,
+		["ft_path_preview"] = false,
+		["ft_sneaking_level_up"] = -1,
+		["ft_sneaking_level_down"] = -1,
+		["ft_coarse_nav_rebuild_on_load"] = false,
+		["ft_coarse_nav_build"] = -1,
+		["fps_long_frame_threshold_ms"] = 0,
+	},
+}
+
+function on_mcm_load()
+	local D = _G.dogma_debug_conf.defaults
+	return {
+		id = "debug",
+		sh = true,
+		text = "ui_mcm_menu_dogma_debug",
+		gr = with_header({
+			{
+				id = "debug_log",
+				type = "check",
+				val = 1,
+				def = D["debug_log"],
+				hint = "dogma_debug_debug_log",
+			},
+			{
+				id = "debug_overlay",
+				type = "check",
+				val = 1,
+				def = D["debug_overlay"],
+				hint = "dogma_debug_debug_overlay",
+			},
+			{ id = "line_grain", type = "line" },
+			{
+				id = "hdr_grain",
+				type = "desc",
+				text = "ui_mcm_dogma_debug_hdr_grain",
+			},
+			{
+				id = "grain_add_radiation_key",
+				type = "key_bind",
+				val = 2,
+				def = D["grain_add_radiation_key"],
+				hint = "dogma_debug_grain_add_radiation_key",
+			},
+			{
+				id = "grain_clear_radiation_key",
+				type = "key_bind",
+				val = 2,
+				def = D["grain_clear_radiation_key"],
+				hint = "dogma_debug_grain_clear_radiation_key",
+			},
+			{ id = "line_ft", type = "line" },
+			{
+				id = "hdr_fast_travel",
+				type = "desc",
+				text = "ui_mcm_dogma_debug_hdr_fast_travel",
+			},
+			{
+				id = "ft_path_preview",
+				type = "check",
+				val = 1,
+				def = D["ft_path_preview"],
+				hint = "dogma_debug_ft_path_preview",
+			},
+			{
+				id = "ft_sneaking_level_up",
+				type = "key_bind",
+				val = 2,
+				def = D["ft_sneaking_level_up"],
+				hint = "dogma_debug_ft_sneaking_level_up",
+			},
+			{
+				id = "ft_sneaking_level_down",
+				type = "key_bind",
+				val = 2,
+				def = D["ft_sneaking_level_down"],
+				hint = "dogma_debug_ft_sneaking_level_down",
+			},
+			{
+				id = "ft_coarse_nav_rebuild_on_load",
+				type = "check",
+				val = 1,
+				def = D["ft_coarse_nav_rebuild_on_load"],
+				hint = "dogma_debug_ft_coarse_nav_rebuild_on_load",
+			},
+			{
+				id = "ft_coarse_nav_build",
+				type = "key_bind",
+				val = 2,
+				def = D["ft_coarse_nav_build"],
+				hint = "dogma_debug_ft_coarse_nav_build",
+			},
+			{ id = "line_fps", type = "line" },
+			{
+				id = "hdr_fps",
+				type = "desc",
+				text = "ui_mcm_dogma_debug_hdr_fps",
+			},
+			{
+				id = "fps_long_frame_threshold_desc",
+				type = "desc",
+				text = "ui_mcm_dogma_debug_fps_long_frame_threshold_desc",
+			},
+			{
+				id = "fps_long_frame_threshold_ms",
+				type = "track",
+				val = 2,
+				min = 0,
+				max = 1000,
+				step = 5,
+				def = D["fps_long_frame_threshold_ms"],
+				hint = "dogma_debug_fps_long_frame_threshold_ms",
+			},
+		}),
+	}, "dogma"
 end

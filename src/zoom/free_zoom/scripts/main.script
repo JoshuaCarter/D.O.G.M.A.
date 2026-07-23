@@ -9,7 +9,7 @@
 	Owns ADS hud_fov — disable Adjustable Scope View.
 ]]
 
-local CONF = _G.dogma_free_zoom_conf
+local CONF = _G.dogma_zoom_free_zoom_conf
 local MOD_ID = CONF.MOD_ID
 local DOGMA
 
@@ -214,7 +214,7 @@ local function refresh_config()
 		row.scope = DOGMA.mcm.number(MOD_ID, "ads_zoom/wads_" .. cat .. "_scope")
 	end
 
-	CONFIG.debug_log = DOGMA.mcm.bool(MOD_ID, "development/debug_log")
+	CONFIG.debug_log = DOGMA.dbg.logging()
 	if DOGMA.dbg and DOGMA.dbg.set_enabled then
 		DOGMA.dbg.set_enabled(MOD_ID, CONFIG.debug_log)
 	end

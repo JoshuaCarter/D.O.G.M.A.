@@ -19,17 +19,14 @@
 		end
 ]]
 
-local SUFFIX = ""
-
 function load(mod_id)
-	local mcm = _G["dogma_mcm" .. SUFFIX]
-	local dbg = _G["dogma_dbg" .. SUFFIX]
-	local sys = _G["dogma_sys" .. SUFFIX]
+	local mcm = _G.dogma_mcm
+	local dbg = _G.dogma_dbg
+	local sys = _G.dogma_sys
 	sys.set_deps(mcm, dbg)
 	if mod_id then
 		sys.reset_mod(mod_id)
 		dbg.clear_source(mod_id)
 	end
-	printf("[DOGMA] %s: common loaded", tostring(mod_id))
 	return { mcm = mcm, dbg = dbg, sys = sys }
 end

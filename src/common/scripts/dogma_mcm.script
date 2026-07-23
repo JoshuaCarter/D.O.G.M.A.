@@ -1,8 +1,9 @@
 --[[
-	DOGMA MCM — getters/setters over ui_mcm plus shared MCM UI helpers.
+	DOGMA MCM — getters over ui_mcm plus shared MCM UI helpers.
 
 	Loaded via dogma_common; use DOGMA.mcm from on_game_start().
 	BANNER_LINK is the stable texture name (vendored in DOGMA).
+	Omitted defaults resolve from _G.dogma_<feature>_conf.defaults.
 ]]
 
 local BANNER_LINK = "dogma_mcm_banner"
@@ -29,21 +30,13 @@ local function conf_default(mod_id, key)
 	end
 	local conf = _G["dogma_" .. feature:gsub("/", "_") .. "_conf"]
 	local defaults = conf and conf.defaults
-	if not defaults then
-		return nil
-	end
-	return defaults[key]
+	return defaults and defaults[key]
 end
 
-local function resolve_default(mod_id, key, explicit)
-	if explicit ~= nil then
-		return explicit
+local function get(mod_id, key, default)
+	if default == nil then
+		default = conf_default(mod_id, key)
 	end
-	return conf_default(mod_id, key)
-end
-
-function get(mod_id, key, default)
-	default = resolve_default(mod_id, key, default)
 	if ui_mcm then
 		local value = ui_mcm.get(path(mod_id, key))
 		if value ~= nil then
@@ -53,19 +46,12 @@ function get(mod_id, key, default)
 	return default
 end
 
-function set(mod_id, key, value)
-	if ui_mcm and ui_mcm.set then
-		ui_mcm.set(path(mod_id, key), value)
-	end
-end
-
 function bool(mod_id, key, default)
 	local value = get(mod_id, key, default)
 	return value == true or value == 1
 end
 
 function number(mod_id, key, default)
-	default = resolve_default(mod_id, key, default)
 	local value = get(mod_id, key, default)
 	if type(value) == "number" then
 		return value
@@ -74,16 +60,13 @@ function number(mod_id, key, default)
 	if n ~= nil then
 		return n
 	end
-	if type(default) == "number" then
-		return default
-	end
 	return 0
 end
 
 function string(mod_id, key, default)
 	local value = get(mod_id, key, default)
 	if value == nil then
-		return resolve_default(mod_id, key, default)
+		return nil
 	end
 	return tostring(value)
 end

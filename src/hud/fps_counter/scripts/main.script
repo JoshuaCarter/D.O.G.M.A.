@@ -79,7 +79,6 @@ local init = false
 local visible = false
 local sample_buf = nil
 local history_buf = nil
-local graph_buf = nil
 local next_display_time = 0
 local wait_until_time = 0
 local last_frame_time_ms = nil
@@ -121,9 +120,6 @@ end
 local function graph_clear()
 	if hud then
 		hud:ClearGraph()
-	end
-	if graph_buf then
-		graph_buf:clear()
 	end
 end
 
@@ -170,10 +166,6 @@ local function on_option_change()
 	local hist_cap = history_buf_cap()
 	if not history_buf or history_buf.cap ~= hist_cap then
 		history_buf = _G.dogma_ring_buffer.new(hist_cap)
-	end
-	if not graph_buf or graph_buf.cap ~= hist_cap then
-		graph_buf = _G.dogma_ring_buffer.new(hist_cap)
-		graph_buf:clear()
 	end
 
 	if hud then
@@ -281,15 +273,7 @@ local function on_unique_update()
 	if use_graph then
 		local min_fps, max_fps = get_minmax_fps(current_time_ms)
 		hud:SetGraphValues(fps, min_fps, max_fps)
-		if not graph_buf or graph_buf.cap ~= history_buf_cap() then
-			graph_buf = _G.dogma_ring_buffer.new(history_buf_cap())
-		end
-		graph_buf:push({ fps, current_time_ms })
-		local graph_cutoff = current_time_ms - history_window_sec() * 1000
-		while graph_buf.count > 0 and graph_buf:get(1)[2] < graph_cutoff do
-			graph_buf:shift()
-		end
-		hud:DrawGraph(graph_buf, CONFIG)
+		hud:DrawGraph(history_buf, CONFIG)
 	elseif use_history then
 		graph_clear()
 		local min_fps, max_fps = get_minmax_fps(current_time_ms)
@@ -301,8 +285,7 @@ local function on_unique_update()
 end
 
 local function on_actor_on_update()
-	local ctx = DOGMA.sys.ready(MOD_ID, db, on_option_change)
-	if not ctx then
+	if not DOGMA.sys.ready(MOD_ID, db, on_option_change) then
 		return
 	end
 
@@ -349,7 +332,6 @@ function on_game_start()
 	visible = false
 	sample_buf = nil
 	history_buf = nil
-	graph_buf = nil
 	next_display_time = 0
 	last_frame_time_ms = nil
 	hud = nil

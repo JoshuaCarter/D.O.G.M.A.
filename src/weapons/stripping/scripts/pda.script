@@ -75,10 +75,7 @@ if orig_reset then
 end
 
 function on_game_start()
-	if not CONF.DOGMA then
-		CONF.DOGMA = dogma_common.load(MOD_ID)
-	end
-	DOGMA = CONF.DOGMA
+	DOGMA = CONF:ensure_dogma()
 	RegisterScriptCallback("on_option_change", on_option_change)
 	on_option_change()
 

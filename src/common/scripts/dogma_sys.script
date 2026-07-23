@@ -1,7 +1,7 @@
 --[[
 	DOGMA runtime — gate feature logic until deps and config are ready.
 
-	Wired by <mod_id>_common via set_deps(mcm, dbg). Use DOGMA.sys from <mod_id>_common.get().
+	Wired by dogma_common via set_deps(mcm, dbg). Use DOGMA.sys from dogma_common.load().
 ]]
 
 local _mcm = nil
@@ -13,34 +13,19 @@ function set_deps(mcm, dbg)
 	_dbg = dbg
 end
 
-local function check_deps(db)
-	return _mcm ~= nil and _dbg ~= nil and db ~= nil and db.actor ~= nil
-end
-
 function ready(mod_id, db, load_fn)
-	if not check_deps(db) then
+	if not (_mcm and _dbg and db and db.actor) then
 		return nil
 	end
 	if load_fn and not loaded_configs[mod_id] then
 		load_fn()
 		loaded_configs[mod_id] = true
 	end
-	local actor = db.actor
-	local ctx = {
-		actor = actor,
-		db = db,
-		mcm = _mcm,
-		dbg = _dbg,
-	}
-	return ctx, actor
+	return db.actor
 end
 
 function reset_mod(mod_id)
 	if mod_id then
 		loaded_configs[mod_id] = nil
 	end
-end
-
-function reset_session()
-	loaded_configs = {}
 end

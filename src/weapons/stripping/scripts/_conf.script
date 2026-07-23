@@ -47,4 +47,10 @@ _G.dogma_strip_everything_conf = {
 		attach_debug_log = defaults["development/dis_weap_attach_debug_log"],
 		block_special_items = defaults["main/block_companion_special_items"],
 	},
+	ensure_dogma = function(self)
+		if not self.DOGMA then
+			self.DOGMA = dogma_common.load(self.MOD_ID)
+		end
+		return self.DOGMA
+	end,
 }

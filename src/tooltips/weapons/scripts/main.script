@@ -14,38 +14,9 @@ local MOD_ID = CONF.MOD_ID
 local D = CONF.defaults
 local DOGMA
 
-local CONFIG = {
-	show_damage_table = D["main/show_damage_table"],
-	show_hit_power = true,
-	show_stalker_damage = true,
-	show_mutant_damage = true,
-	show_accuracy = true,
-	show_handling = true,
-	show_fire_rate = true,
-	show_mag_size = true,
-	show_reliability = true,
-	show_recoil = true,
-	show_muzzle_velocity = true,
-	show_dispersion = true,
-	show_spread = true,
-	show_barrel_wear = true,
-	show_burst_control = true,
-	show_bullet_drop = true,
-	stat_row_placement = "inline",
-	column_headers = "names",
-	-- Low end of table color ramps (damage → green, AP → white).
-	color_scale_from = "darkgrey",
-	ammo_order = "default",
-	calc_range_m = D["main/calc_range"],
-	pellet_hit_pct = D["main/pellet_hit_pct"],
-	use_condition_table = D["main/use_condition_table"],
-	use_condition_stats = D["main/use_condition_stats"],
-	apply_silencer_table = D["main/apply_silencer_table"],
-	apply_silencer_stats = D["main/apply_silencer_stats"],
-	compact_header = D["main/compact_header"],
-	debug_log = D["development/debug_log"],
-	debug_overlay = D["development/debug_overlay"],
-}
+-- Filled by on_option_change (runs at boot before any read). D kept for list-value fallbacks.
+local CONFIG = {}
+
 
 -- Canonical Momopate/vanilla weapon-row indices. Inline companions anchor to
 -- these even when the parent base row is MCM-hidden (drop-in replacement).
@@ -1315,13 +1286,13 @@ local function on_option_change()
 			CONFIG.stat_row_placement = D["main/stat_row_placement"]
 		end
 		CONFIG.compact_header = DOGMA.mcm.bool(MOD_ID, "main/compact_header")
-		CONFIG.calc_range_m = clamp(DOGMA.mcm.number(MOD_ID, "main/calc_range"), 0, 200)
-		CONFIG.pellet_hit_pct = clamp(DOGMA.mcm.number(MOD_ID, "main/pellet_hit_pct"), 1, 100)
-		local drop_range = clamp(DOGMA.mcm.number(MOD_ID, "main/drop_range"), 100, 2000)
+		CONFIG.calc_range_m = DOGMA.mcm.number(MOD_ID, "main/calc_range")
+		CONFIG.pellet_hit_pct = DOGMA.mcm.number(MOD_ID, "main/pellet_hit_pct")
+		local drop_range = DOGMA.mcm.number(MOD_ID, "main/drop_range")
 		if zzzz_dogma_tooltips_weapons_stats and zzzz_dogma_tooltips_weapons_stats.set_drop_range then
 			zzzz_dogma_tooltips_weapons_stats.set_drop_range(drop_range)
 		end
-		local burst_threshold = clamp(DOGMA.mcm.number(MOD_ID, "main/burst_threshold"), 1, 10)
+		local burst_threshold = DOGMA.mcm.number(MOD_ID, "main/burst_threshold")
 		if zzzz_dogma_tooltips_weapons_stats and zzzz_dogma_tooltips_weapons_stats.set_burst_threshold then
 			zzzz_dogma_tooltips_weapons_stats.set_burst_threshold(burst_threshold)
 		end
@@ -1530,11 +1501,7 @@ local function dist_atten(air_res, dist)
 end
 
 local function calc_range()
-	local d = tonumber(CONFIG.calc_range_m)
-	if not d then
-		return REF_DIST_M
-	end
-	return clamp(d, 0, 200)
+	return tonumber(CONFIG.calc_range_m) or REF_DIST_M
 end
 
 -- Barrel part condition 0..1. Missing parts data => 1.0.
@@ -2717,7 +2684,7 @@ local function on_actor_update()
 	if not DOGMA or not DOGMA.sys then
 		return
 	end
-	local _, actor = DOGMA.sys.ready(MOD_ID, db, on_option_change)
+	local actor = DOGMA.sys.ready(MOD_ID, db, on_option_change)
 	if not actor then
 		return
 	end

@@ -87,41 +87,7 @@ if [[ -d "$OUT" ]]; then
 fi
 mkdir -p "$OUT"
 
-smush_dir() {
-	local dir="$1"
-	local dest="$2"
-	local tmp parts=0
-	tmp="$(mktemp)"
-	{
-		echo "-- dogma-build: smushed from ${dir#"$ROOT"/}"
-		while IFS= read -r -d '' part; do
-			base="$(basename "$part")"
-			should_skip_name "$base" && continue
-			[[ -f "$part" ]] || continue
-			parts=$((parts + 1))
-			echo ""
-			echo "-- dogma-build: begin $base"
-			cat "$part"
-			echo ""
-			echo "-- dogma-build: end $base"
-		done < <(find "$dir" -maxdepth 1 -type f -print0 | sort -z)
-	} > "$tmp"
-	if [[ "$parts" -eq 0 ]]; then
-		rm -f "$tmp"
-		echo "build: skip empty smush dir ${dir#"$ROOT"/}" >&2
-		return 0
-	fi
-	mkdir -p "$(dirname "$dest")"
-	if [[ -e "$dest" ]]; then
-		echo "build: ERROR naming conflict: $dest already exists (smush from ${dir#"$ROOT"/})" >&2
-		rm -f "$tmp"
-		exit 1
-	fi
-	mv "$tmp" "$dest"
-	echo "build: smush ${dir#"$ROOT"/} -> ${dest#"$ROOT"/} ($parts parts)"
-}
-
-# Copy/smush tree under src_base into dest_base (preserving relative paths).
+# Copy tree under src_base into dest_base (preserving relative paths).
 # path_key: if non-empty and bucket is scripts/, rewrite .script basenames.
 process_tree() {
 	local src_base="$1"
@@ -158,21 +124,6 @@ process_tree() {
 	fi
 
 	if [[ -d "$src_path" ]]; then
-		if [[ "$base" == *.* ]]; then
-			local out_base="$base"
-			local dest_rel="$rel"
-			if [[ -n "$path_key" && "$base" == *.script ]]; then
-				out_base="$(script_dest_basename "$path_key" "$base")"
-				if [[ "$rel" == */* ]]; then
-					dest_rel="$(dirname "$rel")/$out_base"
-				else
-					dest_rel="$out_base"
-				fi
-			fi
-			local dest="$dest_base/$dest_rel"
-			smush_dir "$src_path" "$dest"
-			return 0
-		fi
 		while IFS= read -r -d '' child; do
 			process_tree "$src_base" "$dest_base" "$child" "$path_key"
 		done < <(find "$src_path" -mindepth 1 -maxdepth 1 -print0 | sort -z)

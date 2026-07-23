@@ -3,11 +3,8 @@
 
 	Loaded via dogma_common; use DOGMA.dbg from dogma_common.load().
 
-	overlay(source, slot, msg, tag_or_color) — on-screen HUD slots (colored).
-	log(mod_id, msg)                         — plain printf to the game log file only.
-
-	source is the mod id (e.g. "dogma_bleed_fix"). slot is an order number or
-	{ order, color } table. tag is optional and becomes "[tag] " before msg.
+	overlay(source, order, msg, color) — on-screen HUD slots (colored).
+	log(mod_id, msg)                   — plain printf to the game log file only.
 
 	set_enabled(source, state) gates the overlay for that source.
 ]]
@@ -64,37 +61,12 @@ local function resolve_color(color)
 	return COLORS[color] or COLORS.white
 end
 
-function color(color)
-	return resolve_color(color)
-end
-
 local function get_source(source)
 	source = source or "default"
 	if not sources[source] then
 		sources[source] = { enabled = false, slots = {} }
 	end
 	return sources[source]
-end
-
-local function format_tag_prefix(tag)
-	if tag and tag ~= "" then
-		return "[" .. tag .. "] "
-	end
-	return ""
-end
-
-local function parse_slot(slot, msg, fourth)
-	local order, slot_color, text
-	if type(slot) == "table" then
-		order = slot.order or 0
-		slot_color = slot.color
-		text = format_tag_prefix(fourth) .. tostring(msg)
-	else
-		order = slot or 0
-		slot_color = fourth
-		text = tostring(msg)
-	end
-	return order, slot_color, text
 end
 
 local function any_overlay_content()
@@ -204,13 +176,12 @@ function set_enabled(source, state)
 	render()
 end
 
-function overlay(source, slot, msg, tag_or_color)
+function overlay(source, order, msg, color)
 	local s = get_source(source)
 	if not s.enabled then
 		return
 	end
-	local order, slot_color, text = parse_slot(slot, msg, tag_or_color)
-	s.slots[order] = { msg = text, color = slot_color }
+	s.slots[order or 0] = { msg = tostring(msg), color = color }
 	render()
 end
 
@@ -229,10 +200,3 @@ function clear_source(source)
 	s.slots = {}
 	render()
 end
-
-function clear()
-	sources = {}
-	clear_overlay()
-end
-
-getfenv().COLORS = COLORS

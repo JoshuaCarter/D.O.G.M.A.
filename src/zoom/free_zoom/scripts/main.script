@@ -11,7 +11,6 @@
 
 local CONF = _G.dogma_free_zoom_conf
 local MOD_ID = CONF.MOD_ID
-local D = CONF.defaults
 local DOGMA
 
 -- zoom_key_mode: 0=single, 1=double, 2=long, 3=hold (in on down, out on up)
@@ -55,65 +54,9 @@ local OPTIC_LABEL = {
 	scope = "Scope",
 }
 
-local CONFIG = {
-	enabled = D["free_zoom/enabled"],
-	empty_hands_only = D["free_zoom/empty_hands_only"],
-	zoom_key = D["free_zoom/zoom_key"],
-	zoom_key_modifier = D["free_zoom/zoom_key_modifier"],
-	zoom_key_mode = D["free_zoom/zoom_key_mode"],
-	rmb_zoom = D["free_zoom/rmb_zoom"],
-	mmb_zoom = D["free_zoom/mmb_zoom"],
-	scroll_wheel_zoom = D["free_zoom/scroll_wheel_zoom"],
-	scroll_wheel_reverse = D["free_zoom/scroll_wheel_reverse"],
-	scroll_wheel_steps = D["free_zoom/scroll_wheel_steps"],
-	scroll_wheel_max_gap_ms = D["free_zoom/scroll_wheel_max_gap_ms"],
-	free_zoom = D["free_zoom/free_zoom"],
-	move_speed = D["free_zoom/move_speed"],
-	ads_enabled = D["ads_zoom/enabled"],
-	ads_zoom = D["ads_zoom/ads_zoom"],
-	exit_ads_clears_free = D["ads_zoom/exit_ads_clears_free"],
-	reload_clears_free = D["ads_zoom/reload_clears_free"],
-	wads_inc_key = D["ads_zoom/wads_inc_key"],
-	wads_dec_key = D["ads_zoom/wads_dec_key"],
-	wads_reset_key = D["ads_zoom/wads_reset_key"],
-	wads_key_mode = D["ads_zoom/wads_key_mode"],
-	wads_key_modifier = D["ads_zoom/wads_key_modifier"],
-	use_global_wads = D["ads_zoom/use_global_wads"],
-	global_wads = D["ads_zoom/global_wads"],
-	wads = {
-		pistol = {
-			irons = D["ads_zoom/wads_pistol_irons"],
-			sight = D["ads_zoom/wads_pistol_sight"],
-			scope = D["ads_zoom/wads_pistol_scope"],
-		},
-		smg = {
-			irons = D["ads_zoom/wads_smg_irons"],
-			sight = D["ads_zoom/wads_smg_sight"],
-			scope = D["ads_zoom/wads_smg_scope"],
-		},
-		rifle = {
-			irons = D["ads_zoom/wads_rifle_irons"],
-			sight = D["ads_zoom/wads_rifle_sight"],
-			scope = D["ads_zoom/wads_rifle_scope"],
-		},
-		sniper = {
-			irons = D["ads_zoom/wads_sniper_irons"],
-			sight = D["ads_zoom/wads_sniper_sight"],
-			scope = D["ads_zoom/wads_sniper_scope"],
-		},
-		shotgun = {
-			irons = D["ads_zoom/wads_shotgun_irons"],
-			sight = D["ads_zoom/wads_shotgun_sight"],
-			scope = D["ads_zoom/wads_shotgun_scope"],
-		},
-		explosive = {
-			irons = D["ads_zoom/wads_explosive_irons"],
-			sight = D["ads_zoom/wads_explosive_sight"],
-			scope = D["ads_zoom/wads_explosive_scope"],
-		},
-	},
-	debug_log = D["development/debug_log"],
-}
+-- Filled by refresh_config (on_option_change runs at boot before any read).
+local CONFIG = {}
+
 
 local free_on = false
 local ads_on = false
@@ -241,32 +184,34 @@ local function refresh_config()
 	CONFIG.empty_hands_only = DOGMA.mcm.bool(MOD_ID, "free_zoom/empty_hands_only")
 	CONFIG.zoom_key = DOGMA.mcm.key(MOD_ID, "free_zoom/zoom_key")
 	CONFIG.zoom_key_modifier = DOGMA.mcm.number(MOD_ID, "free_zoom/zoom_key_modifier")
-	CONFIG.zoom_key_mode = clamp(DOGMA.mcm.number(MOD_ID, "free_zoom/zoom_key_mode"), MODE_SINGLE, MODE_HOLD)
-	CONFIG.rmb_zoom = clamp(DOGMA.mcm.number(MOD_ID, "free_zoom/rmb_zoom"), MOUSE_NONE, MOUSE_HOLD)
-	CONFIG.mmb_zoom = clamp(DOGMA.mcm.number(MOD_ID, "free_zoom/mmb_zoom"), MOUSE_NONE, MOUSE_HOLD)
+	CONFIG.zoom_key_mode = DOGMA.mcm.number(MOD_ID, "free_zoom/zoom_key_mode")
+	CONFIG.rmb_zoom = DOGMA.mcm.number(MOD_ID, "free_zoom/rmb_zoom")
+	CONFIG.mmb_zoom = DOGMA.mcm.number(MOD_ID, "free_zoom/mmb_zoom")
 	CONFIG.scroll_wheel_zoom = DOGMA.mcm.bool(MOD_ID, "free_zoom/scroll_wheel_zoom")
 	CONFIG.scroll_wheel_reverse = DOGMA.mcm.bool(MOD_ID, "free_zoom/scroll_wheel_reverse")
-	CONFIG.scroll_wheel_steps = clamp(DOGMA.mcm.number(MOD_ID, "free_zoom/scroll_wheel_steps"), 1, 5)
-	CONFIG.scroll_wheel_max_gap_ms = clamp(DOGMA.mcm.number(MOD_ID, "free_zoom/scroll_wheel_max_gap_ms"), 50, 500)
-	CONFIG.free_zoom = clamp(DOGMA.mcm.number(MOD_ID, "free_zoom/free_zoom"), 0, 50)
-	CONFIG.move_speed = clamp(DOGMA.mcm.number(MOD_ID, "free_zoom/move_speed"), 0, 70)
+	CONFIG.scroll_wheel_steps = DOGMA.mcm.number(MOD_ID, "free_zoom/scroll_wheel_steps")
+	CONFIG.scroll_wheel_max_gap_ms = DOGMA.mcm.number(MOD_ID, "free_zoom/scroll_wheel_max_gap_ms")
+	CONFIG.free_zoom = DOGMA.mcm.number(MOD_ID, "free_zoom/free_zoom")
+	CONFIG.move_speed = DOGMA.mcm.number(MOD_ID, "free_zoom/move_speed")
 
 	CONFIG.ads_enabled = DOGMA.mcm.bool(MOD_ID, "ads_zoom/enabled")
-	CONFIG.ads_zoom = clamp(DOGMA.mcm.number(MOD_ID, "ads_zoom/ads_zoom"), 0, 50)
+	CONFIG.ads_zoom = DOGMA.mcm.number(MOD_ID, "ads_zoom/ads_zoom")
 	CONFIG.exit_ads_clears_free = DOGMA.mcm.bool(MOD_ID, "ads_zoom/exit_ads_clears_free")
 	CONFIG.reload_clears_free = DOGMA.mcm.bool(MOD_ID, "ads_zoom/reload_clears_free")
 	CONFIG.wads_inc_key = DOGMA.mcm.key(MOD_ID, "ads_zoom/wads_inc_key")
 	CONFIG.wads_dec_key = DOGMA.mcm.key(MOD_ID, "ads_zoom/wads_dec_key")
 	CONFIG.wads_reset_key = DOGMA.mcm.key(MOD_ID, "ads_zoom/wads_reset_key")
-	CONFIG.wads_key_mode = clamp(DOGMA.mcm.number(MOD_ID, "ads_zoom/wads_key_mode"), WADS_MODE_PRESS, WADS_MODE_HOLD)
+	CONFIG.wads_key_mode = DOGMA.mcm.number(MOD_ID, "ads_zoom/wads_key_mode")
 	CONFIG.wads_key_modifier = DOGMA.mcm.number(MOD_ID, "ads_zoom/wads_key_modifier")
 	CONFIG.use_global_wads = DOGMA.mcm.bool(MOD_ID, "ads_zoom/use_global_wads")
-	CONFIG.global_wads = clamp(DOGMA.mcm.number(MOD_ID, "ads_zoom/global_wads"), 0, 50)
+	CONFIG.global_wads = DOGMA.mcm.number(MOD_ID, "ads_zoom/global_wads")
+	CONFIG.wads = CONFIG.wads or {}
 	for _, cat in ipairs({ "pistol", "smg", "rifle", "sniper", "shotgun", "explosive" }) do
-		local row = CONFIG.wads[cat]
-		row.irons = clamp(DOGMA.mcm.number(MOD_ID, "ads_zoom/wads_" .. cat .. "_irons"), 0, 50)
-		row.sight = clamp(DOGMA.mcm.number(MOD_ID, "ads_zoom/wads_" .. cat .. "_sight"), 0, 50)
-		row.scope = clamp(DOGMA.mcm.number(MOD_ID, "ads_zoom/wads_" .. cat .. "_scope"), 0, 50)
+		local row = CONFIG.wads[cat] or {}
+		CONFIG.wads[cat] = row
+		row.irons = DOGMA.mcm.number(MOD_ID, "ads_zoom/wads_" .. cat .. "_irons")
+		row.sight = DOGMA.mcm.number(MOD_ID, "ads_zoom/wads_" .. cat .. "_sight")
+		row.scope = DOGMA.mcm.number(MOD_ID, "ads_zoom/wads_" .. cat .. "_scope")
 	end
 
 	CONFIG.debug_log = DOGMA.mcm.bool(MOD_ID, "development/debug_log")

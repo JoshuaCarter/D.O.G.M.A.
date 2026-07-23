@@ -1473,10 +1473,7 @@ if orig_sort_by_kind_factory then
 end
 
 function on_game_start()
-	if not CONF.DOGMA then
-		CONF.DOGMA = dogma_common.load(MOD_ID)
-	end
-	DOGMA = CONF.DOGMA
+	DOGMA = CONF:ensure_dogma()
 
 	RegisterScriptCallback("on_option_change", on_option_change)
 	RegisterScriptCallback("actor_on_item_take", function(item)

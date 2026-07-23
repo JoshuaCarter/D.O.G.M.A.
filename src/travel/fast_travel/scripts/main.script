@@ -24,7 +24,8 @@ local actor_on_before_hit, on_option_change,
 -- 2. Configuration
 -- ============================================================
 local function load_config()
-    local mcm = CONF.DOGMA and CONF.DOGMA.mcm
+    local dogma = dft and dft.dogma
+    local mcm = dogma and dogma.mcm
     if not mcm then
         return
     end
@@ -40,8 +41,8 @@ local function load_config()
     dft_config.sneaking_level_down = mcm.key(MOD_ID, "development/sneaking_level_down")
     dft_config.coarse_nav_build = mcm.key(MOD_ID, "development/coarse_nav_build")
     dft_config.coarse_nav_rebuild_on_load = mcm.bool(MOD_ID, "development/coarse_nav_rebuild_on_load")
-    if CONF.DOGMA.dbg and CONF.DOGMA.dbg.set_enabled then
-        CONF.DOGMA.dbg.set_enabled(MOD_ID, dft_config.debug_overlay)
+    if dogma.dbg and dogma.dbg.set_enabled then
+        dogma.dbg.set_enabled(MOD_ID, dft_config.debug_overlay)
     end
     if not dft_config.debug_overlay and dft then
         dft._debug_overlay_msg = nil
@@ -61,8 +62,9 @@ end
 
 refresh_active_config = function()
     local msg_dur = 30
-    if CONF.DOGMA and CONF.DOGMA.mcm then
-        msg_dur = CONF.DOGMA.mcm.number(MOD_ID, "main/message_duration")
+    local dogma = dft and dft.dogma
+    if dogma and dogma.mcm then
+        msg_dur = dogma.mcm.number(MOD_ID, "main/message_duration")
     end
 
     dft.active_config = {
@@ -118,8 +120,7 @@ function on_game_start()
             printf("[DFT] FATAL: core module failed to publish _G.dft")
             return
         end
-        CONF.DOGMA = dogma_common.load(MOD_ID)
-        _G.dft.dogma = CONF.DOGMA
+        dft.dogma = dogma_common.load(MOD_ID)
         load_config()
         dft_log("Starting on_game_start registration...")
         dft_build_level_names_registry()

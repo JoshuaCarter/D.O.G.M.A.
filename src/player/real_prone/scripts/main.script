@@ -71,7 +71,7 @@ local function on_option_change()
 	CONFIG.prone_damage_mult = DOGMA.mcm.number(MOD_ID, "main/prone_damage_mult")
 	DOGMA.dbg.set_enabled(MOD_ID, CONFIG.debug_overlay)
 
-	local _, actor = DOGMA.sys.ready(MOD_ID, db)
+	local actor = DOGMA.sys.ready(MOD_ID, db)
 	if actor and actor:alive() then
 		if CONFIG.hide_prone_bones then
 			set_prone_bones_visible(actor, not is_prone)
@@ -114,7 +114,7 @@ local function play_motion(actor, motion, mix_in)
 end
 
 local function on_actor_on_update()
-	local _, actor = DOGMA.sys.ready(MOD_ID, db, on_option_change)
+	local actor = DOGMA.sys.ready(MOD_ID, db, on_option_change)
 	if not actor then
 		return
 	end

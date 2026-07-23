@@ -101,10 +101,7 @@ local function on_item_before_move(flags, npc_id, obj, mode, bag)
 end
 
 function on_game_start()
-	if not CONF.DOGMA then
-		CONF.DOGMA = dogma_common.load(MOD_ID)
-	end
-	DOGMA = CONF.DOGMA
+	DOGMA = CONF:ensure_dogma()
 	RegisterScriptCallback("on_option_change", on_option_change)
 	RegisterScriptCallback("ActorMenu_on_item_before_move", on_item_before_move)
 	on_option_change()

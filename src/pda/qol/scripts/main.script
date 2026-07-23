@@ -8,7 +8,6 @@
 
 local CONF = _G.dogma_dont_reequip_pda_conf
 local MOD_ID = CONF.MOD_ID
-local D = CONF.defaults
 local PDA_SLOT = 8
 
 local MODE_TO_KIND = {
@@ -18,12 +17,8 @@ local MODE_TO_KIND = {
 
 local DOGMA
 
-local CONFIG = {
-	after_inventory = D["main/after_inventory"],
-	after_loot = D["main/after_loot"],
-	after_teleport = D["main/after_teleport"],
-	debug_log = D["development/debug_log"],
-}
+local CONFIG = {}
+
 
 local function log(msg)
 	if not (DOGMA and DOGMA.dbg) then
@@ -232,8 +227,7 @@ local function log_active_slot_transitions()
 end
 
 local function on_actor_on_update()
-	local ctx = DOGMA.sys.ready(MOD_ID, db, on_option_change)
-	if not ctx or not db.actor then
+	if not DOGMA.sys.ready(MOD_ID, db, on_option_change) or not db.actor then
 		return
 	end
 

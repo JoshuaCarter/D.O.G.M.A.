@@ -8,7 +8,6 @@
 
 local CONF = _G.dogma_grain_fix_conf
 local MOD_ID = CONF.MOD_ID
-local D = CONF.defaults
 local DOGMA
 
 local PP_GRAIN_ID = 2021
@@ -70,16 +69,9 @@ local function on_option_change()
 	CONFIG.blur_enabled = DOGMA.mcm.bool(MOD_ID, "desaturation/enable")
 	CONFIG.dual_enabled = DOGMA.mcm.bool(MOD_ID, "duality/enable")
 	CONFIG.level_msv = {}
-	CONFIG.level_msv[1] = DOGMA.mcm.number(MOD_ID, "grain/level_01_msv")
-	CONFIG.level_msv[2] = DOGMA.mcm.number(MOD_ID, "grain/level_02_msv")
-	CONFIG.level_msv[3] = DOGMA.mcm.number(MOD_ID, "grain/level_03_msv")
-	CONFIG.level_msv[4] = DOGMA.mcm.number(MOD_ID, "grain/level_04_msv")
-	CONFIG.level_msv[5] = DOGMA.mcm.number(MOD_ID, "grain/level_05_msv")
-	CONFIG.level_msv[6] = DOGMA.mcm.number(MOD_ID, "grain/level_06_msv")
-	CONFIG.level_msv[7] = DOGMA.mcm.number(MOD_ID, "grain/level_07_msv")
-	CONFIG.level_msv[8] = DOGMA.mcm.number(MOD_ID, "grain/level_08_msv")
-	CONFIG.level_msv[9] = DOGMA.mcm.number(MOD_ID, "grain/level_09_msv")
-	CONFIG.level_msv[10] = DOGMA.mcm.number(MOD_ID, "grain/level_10_msv")
+	for i = 1, #GRAIN_PPES do
+		CONFIG.level_msv[i] = DOGMA.mcm.number(MOD_ID, string.format("grain/level_%02d_msv", i))
+	end
 	CONFIG.blur_range = DOGMA.mcm.range(MOD_ID, "desaturation/blur_min", "desaturation/blur_max")
 	CONFIG.dual_range = DOGMA.mcm.range(MOD_ID, "duality/dual_min", "duality/dual_max")
 	CONFIG.add_radiation_key = DOGMA.mcm.key(MOD_ID, "development/add_radiation_key")
@@ -87,7 +79,7 @@ local function on_option_change()
 
 	GRAIN_LEVELS = {}
 	for i, ppe in ipairs(GRAIN_PPES) do
-		GRAIN_LEVELS[#GRAIN_LEVELS+1] = { msv = CONFIG.level_msv[i], ppe = ppe }
+		GRAIN_LEVELS[#GRAIN_LEVELS + 1] = { msv = CONFIG.level_msv[i], ppe = ppe }
 	end
 
 	DOGMA.dbg.set_enabled(MOD_ID, CONFIG.debug_overlay)
@@ -106,9 +98,9 @@ local function set_grain(msv)
 	local ppe = nil
 	local tier = 0
 	for i = #GRAIN_LEVELS, 1, -1 do
-		local level = GRAIN_LEVELS[i]
-		if msv >= level.msv then
-			ppe = level.ppe
+		local entry = GRAIN_LEVELS[i]
+		if msv >= entry.msv then
+			ppe = entry.ppe
 			tier = i
 			break
 		end
@@ -138,66 +130,49 @@ local function set_grain(msv)
 	end
 end
 
-local function set_blur(msv)
-	if not CONFIG.blur_enabled then
-		if blur_active then
-			level.remove_pp_effector(PP_BLUR_ID)
-			blur_active = false
+-- Blur / dual share the same intensity PPE lifecycle.
+local function set_intensity_ppe(enabled, active, range, pp_id, ppe_name, log_slot, label, msv)
+	if not enabled then
+		if active then
+			level.remove_pp_effector(pp_id)
 		end
-		overlay(LOG.BLUR, "Blur: 0")
-		return
+		overlay(log_slot, label .. ": 0")
+		return false
 	end
 
-	local intensity = CONFIG.blur_range:normalize(msv)
-	overlay(LOG.BLUR, string.format("Blur: %.2f", intensity))
+	local intensity = range:normalize(msv)
+	overlay(log_slot, string.format("%s: %.2f", label, intensity))
 
 	if intensity == 0 then
-		if blur_active then
-			level.remove_pp_effector(PP_BLUR_ID)
-			blur_active = false
+		if active then
+			level.remove_pp_effector(pp_id)
 		end
-		return
+		return false
 	end
 
-	if not blur_active then
-		level.add_pp_effector("dogma_blur.ppe", PP_BLUR_ID, true)
-		blur_active = true
+	if not active then
+		level.add_pp_effector(ppe_name, pp_id, true)
 	end
+	level.set_pp_effector_factor(pp_id, intensity)
+	return true
+end
 
-	level.set_pp_effector_factor(PP_BLUR_ID, intensity)
+local function set_blur(msv)
+	blur_active = set_intensity_ppe(
+		CONFIG.blur_enabled, blur_active, CONFIG.blur_range,
+		PP_BLUR_ID, "dogma_blur.ppe", LOG.BLUR, "Blur", msv
+	)
 end
 
 local function set_dual(msv)
-	if not CONFIG.dual_enabled then
-		if dual_active then
-			level.remove_pp_effector(PP_DUAL_ID)
-			dual_active = false
-		end
-		overlay(LOG.DUAL, "Dual: 0")
-		return
-	end
-
-	local intensity = CONFIG.dual_range:normalize(msv)
-	overlay(LOG.DUAL, string.format("Dual: %.2f", intensity))
-
-	if intensity == 0 then
-		if dual_active then
-			level.remove_pp_effector(PP_DUAL_ID)
-			dual_active = false
-		end
-		return
-	end
-
-	if not dual_active then
-		level.add_pp_effector("dogma_dual.ppe", PP_DUAL_ID, true)
-		dual_active = true
-	end
-
-	level.set_pp_effector_factor(PP_DUAL_ID, intensity)
+	dual_active = set_intensity_ppe(
+		CONFIG.dual_enabled, dual_active, CONFIG.dual_range,
+		PP_DUAL_ID, "dogma_dual.ppe", LOG.DUAL, "Dual", msv
+	)
 end
 
 local function on_actor_on_update()
-	local _, actor = DOGMA.sys.ready(MOD_ID, db, on_option_change)
+	local actor = DOGMA.sys.ready(MOD_ID, db, on_option_change)
 	if not actor then
 		return
 	end

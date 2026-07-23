@@ -9,7 +9,6 @@
 
 local CONF = _G.dogma_faster_skinning_conf
 local MOD_ID = CONF.MOD_ID
-local D = CONF.defaults
 local DOGMA
 
 local WELL_DRESSED_ID = "well_dressed"
@@ -27,15 +26,8 @@ local KNIFE_STATE_FIRE2 = 6
 local SLASH_PROGRESS_NEEDED = 2
 local SLASH_PROGRESS_TIMEOUT_MS = 4000
 
-local CONFIG = {
-	enabled = D["main/enabled"],
-	debug_log = D["development/debug_log"],
-	skin_speed_multiplier = D["main/skin_speed_multiplier"],
-	auto_crouch = D["main/auto_crouch"],
-	look_at_mutant = D["main/look_at_mutant"],
-	look_at_offset = D["main/look_at_offset"],
-	slash_loot = D["main/slash_loot"],
-}
+local CONFIG = {}
+
 
 local original_has_achievement = nil
 local original_lam2_add_action = nil

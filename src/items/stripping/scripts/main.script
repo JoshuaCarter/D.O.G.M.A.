@@ -24,7 +24,7 @@ local MOD_ID = CONF.MOD_ID
 local DOGMA
 local CONFIG = CONF.CONFIG
 
--- Queued strip targets when all-stacks (or paint) asks for more than one burst.
+-- Queued strip targets when paint/hold asks for more than one burst.
 local strip_queue = {}
 
 -- Forward-declared so on_option_change (defined before the patch blocks below)
@@ -1127,46 +1127,19 @@ local function enqueue_strip(obj, bag, idx)
 	strip_queue[#strip_queue + 1] = { id = id, bag = bag, idx = idx }
 end
 
--- Called from dogma_inv_actions inventory keybinds (1-stack or all-stacks on hovered cell).
-local function strip_hover(all_stacks, obj, bag, idx, gui)
-	if not obj then
+-- Called from dogma_inv_actions inventory keybinds (hovered cell).
+local function strip_hover(_all_stacks, obj, bag, idx, gui)
+	if not (obj and IsWeapon(obj)) then
+		if obj then
+			log(string.format("strip_hover: not a weapon (%s)", obj:section()))
+		end
 		return
 	end
 
-	local targets = {}
-	if all_stacks and gui and gui.Cond_Childs and bag then
-		local ok, has = pcall(function()
-			return gui:Cond_Childs(obj, bag)
-		end)
-		if ok and has then
-			local cc = gui.CC and gui.CC[bag]
-			local ci = cc and cc:GetCell_ID(obj:id())
-			if ci and ci.childs then
-				for id, _ in pairs(ci.childs) do
-					local child = level.object_by_id(id)
-					if child and IsWeapon(child) then
-						targets[#targets + 1] = { obj = child, bag = bag, idx = idx }
-					end
-				end
-			end
-		end
-	end
-	if IsWeapon(obj) then
-		targets[#targets + 1] = { obj = obj, bag = bag, idx = idx }
-	end
-
-	if #targets == 0 then
-		log(string.format("strip_hover: no weapons on %s all=%s", obj:section(), tostring(all_stacks)))
-		return
-	end
-
-	for i = 1, #targets do
-		local t = targets[i]
-		if i == 1 and not (burst_active or reclaim_active or companion_strip_active) then
-			start_burst(t.obj, t.bag, t.idx)
-		else
-			enqueue_strip(t.obj, t.bag, t.idx)
-		end
+	if not (burst_active or reclaim_active or companion_strip_active) then
+		start_burst(obj, bag, idx)
+	else
+		enqueue_strip(obj, bag, idx)
 	end
 end
 

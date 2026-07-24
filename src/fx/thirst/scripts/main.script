@@ -7,17 +7,24 @@
 
 local CONF = _G.dogma_fx_thirst_conf
 local MOD_ID = CONF.MOD_ID
+local DOGMA
 
 local PPE = "yantar_underground_psi.ppe"
 local PPE_ID = 39568
+local ORIG
 
-function on_game_start()
+local function apply()
 	local ast = rawget(_G, "actor_status_thirst")
 	if not (ast and type(ast.test_blur) == "function") then
-		printf("[%s] actor_status_thirst.test_blur not found", MOD_ID)
 		return
 	end
-
+	if not ORIG then
+		ORIG = ast.test_blur
+	end
+	if not DOGMA.mcm.bool(MOD_ID, "enabled") then
+		ast.test_blur = ORIG
+		return
+	end
 	function ast.test_blur()
 		level.remove_pp_effector(PPE_ID)
 		local tier = ast.get_water_deprivation(true)
@@ -31,4 +38,15 @@ function on_game_start()
 			level.set_pp_effector_factor(PPE_ID, factor)
 		end
 	end
+end
+
+function on_game_start()
+	DOGMA = dogma_common.load(MOD_ID)
+	if not rawget(_G, "actor_status_thirst") then
+		printf("[%s] actor_status_thirst.test_blur not found", MOD_ID)
+		return
+	end
+	apply()
+	RegisterScriptCallback("on_option_change", apply)
+	RegisterScriptCallback("actor_on_first_update", apply)
 end

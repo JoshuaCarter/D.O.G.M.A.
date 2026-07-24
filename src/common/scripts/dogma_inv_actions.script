@@ -9,7 +9,7 @@
 	MCM paths:
 	  dogma/items/drop         — key_drop*, drop_safe_equipped
 	  dogma/items/disassemble  — key_disa*, disa_safe_equipped
-	  dogma/items/stripping    — key, key_all, key_* strip modifiers/modes
+	  dogma/items/stripping    — key, key_modifier, key_mode
 ]]
 
 local DROP_MOD = "dogma/items/drop"
@@ -100,7 +100,6 @@ local function on_option_change()
 	add(make_bind("disa", DISA_MOD, "key_disa", "key_disa_modifier", "key_disa_mode", "disa", false))
 	add(make_bind("disa_all", DISA_MOD, "key_disa_all", "key_disa_all_modifier", "key_disa_all_mode", "disa", true))
 	add(make_bind("strip", STRIP_MOD, "key", "key_modifier", "key_mode", "strip", false))
-	add(make_bind("strip_all", STRIP_MOD, "key_all", "key_all_modifier", "key_all_mode", "strip", true))
 
 	local function key_of(id)
 		for i = 1, #BINDS do
@@ -111,10 +110,10 @@ local function on_option_change()
 		return "nil"
 	end
 	log(string.format(
-		"on_option_change: drop=%s/%s disa=%s/%s strip=%s/%s",
+		"on_option_change: drop=%s/%s disa=%s/%s strip=%s",
 		key_of("drop"), key_of("drop_all"),
 		key_of("disa"), key_of("disa_all"),
-		key_of("strip"), key_of("strip_all")
+		key_of("strip")
 	))
 end
 

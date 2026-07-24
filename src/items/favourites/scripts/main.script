@@ -4,9 +4,16 @@
 	Requires SortingPlus (GAMMA default).
 ]]
 
+local CONF = _G.dogma_items_favourites_conf
+local MOD_ID = CONF.MOD_ID
+
 local SECTION = "dogma_item_favourites"
 local STATE = _G.__dogma_items_favourites or {}
 _G.__dogma_items_favourites = STATE
+
+local function enabled()
+	return dogma_mcm.bool(MOD_ID, "enabled")
+end
 
 local function cfg()
 	return axr_main and axr_main.config
@@ -78,13 +85,15 @@ local function patch_sortingplus()
 
 	sp.set_favorite = function(sec, state)
 		base_fav(sec, state)
-		profile_set(sec, state and true or false)
+		if enabled() then
+			profile_set(sec, state and true or false)
+		end
 	end
 
 	sp.set_junk = function(sec, state)
 		base_junk(sec, state)
 		-- Junk and favourite are exclusive; junking must drop the profile mark.
-		if state then
+		if enabled() and state then
 			profile_set(sec, false)
 		end
 	end
@@ -101,6 +110,9 @@ function on_game_start()
 
 	-- After SortingPlus load_state: migrate save favs into profile, then apply profile.
 	RegisterScriptCallback("load_state", function(mdata)
+		if not enabled() then
+			return
+		end
 		if mdata and mdata.rax_favorite_itms then
 			local merged = profile_list()
 			local dirty = false
@@ -117,12 +129,17 @@ function on_game_start()
 	end)
 
 	RegisterScriptCallback("save_state", function(mdata)
+		if not enabled() then
+			return
+		end
 		if mdata and mdata.rax_favorite_itms then
 			profile_replace(mdata.rax_favorite_itms)
 		end
 	end)
 
 	RegisterScriptCallback("actor_on_first_update", function()
-		apply_profile()
+		if enabled() then
+			apply_profile()
+		end
 	end)
 end

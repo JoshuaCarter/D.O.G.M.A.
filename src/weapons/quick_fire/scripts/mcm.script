@@ -1,4 +1,6 @@
 function on_mcm_load(options)
+	local CONF = _G.dogma_weapons_quick_fire_conf
+	local D = CONF.defaults
 	dogma_mcm.attach(options, "weapons", "ui_mcm_menu_dogma_weapons", {
 		id = "quick_fire",
 		sh = true,
@@ -8,6 +10,13 @@ function on_mcm_load(options)
 				id = "page_description",
 				type = "desc",
 				text = "ui_mcm_dogma_quick_fire_page_description",
+			},
+			{
+				id = "enabled",
+				type = "check",
+				val = 1,
+				def = D["enabled"],
+				hint = "dogma_quick_fire_enabled",
 			},
 		}),
 	})

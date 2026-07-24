@@ -7,6 +7,7 @@
 
 local CONF = _G.dogma_weapons_ammo_wheel_conf
 local MOD_ID = CONF.MOD_ID
+local DOGMA
 
 local function patch()
 	local cls = rawget(_G, "UIWheelAmmo")
@@ -21,6 +22,9 @@ local function patch()
 	local orig = cls.Reset
 	function cls:Reset(obj)
 		orig(self, obj)
+		if not DOGMA.mcm.bool(MOD_ID, "enabled") then
+			return
+		end
 		if self.grenade_mode or not self.ammo_list then
 			return
 		end
@@ -54,6 +58,7 @@ local function patch()
 end
 
 function on_game_start()
+	DOGMA = dogma_common.load(MOD_ID)
 	patch()
 	RegisterScriptCallback("actor_on_first_update", patch)
 end

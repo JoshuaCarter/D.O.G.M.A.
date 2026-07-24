@@ -1,4 +1,6 @@
 function on_mcm_load(options)
+	local CONF = _G.dogma_fx_thirst_conf
+	local D = CONF.defaults
 	dogma_mcm.attach(options, "fx", "ui_mcm_menu_dogma_fx", {
 		id = "thirst",
 		sh = true,
@@ -8,6 +10,13 @@ function on_mcm_load(options)
 				id = "page_description",
 				type = "desc",
 				text = "ui_mcm_dogma_thirst_page_description",
+			},
+			{
+				id = "enabled",
+				type = "check",
+				val = 1,
+				def = D["enabled"],
+				hint = "dogma_thirst_enabled",
 			},
 		}),
 	})

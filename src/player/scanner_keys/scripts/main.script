@@ -5,7 +5,7 @@
 	detector slot. Search order: any equipped slot, then favourited bag items,
 	then other bag items.
 
-	Always-on slot rules (no toggles):
+	When enabled, also:
 	- Guns cannot stay in the knife/melee slot.
 	- Guns may use the detector slot (inventory drag + auto-fit).
 ]]
@@ -27,6 +27,7 @@ local DET_CLASS = {
 }
 
 local CONFIG = {
+	enabled = true,
 	key_detector = nil,
 	key_dosimeter = nil,
 	key_radio = nil,
@@ -132,6 +133,7 @@ local function force_equip(obj)
 end
 
 local function on_option_change()
+	CONFIG.enabled = DOGMA.mcm.bool(MOD_ID, "enabled")
 	CONFIG.key_detector = DOGMA.mcm.key(MOD_ID, "key_detector", D["key_detector"])
 	CONFIG.key_dosimeter = DOGMA.mcm.key(MOD_ID, "key_dosimeter", D["key_dosimeter"])
 	CONFIG.key_radio = DOGMA.mcm.key(MOD_ID, "key_radio", D["key_radio"])
@@ -139,6 +141,9 @@ end
 
 local function on_key_press(key)
 	if not DOGMA.sys.ready(MOD_ID, db, on_option_change) then
+		return
+	end
+	if not CONFIG.enabled then
 		return
 	end
 	if not can_use_keys() then
@@ -196,12 +201,15 @@ local function apply_slot_rules()
 end
 
 local function on_gui_show(name)
-	if name == "UIInventory" then
+	if name == "UIInventory" and CONFIG.enabled then
 		apply_slot_rules()
 	end
 end
 
 local function on_item_to_slot(obj)
+	if not CONFIG.enabled then
+		return
+	end
 	if not (db.actor and obj and is_gun(obj)) then
 		return
 	end

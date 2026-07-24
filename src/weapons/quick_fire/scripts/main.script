@@ -7,6 +7,7 @@
 
 local CONF = _G.dogma_weapons_quick_fire_conf
 local MOD_ID = CONF.MOD_ID
+local DOGMA
 
 local ALLOW = {
 	[key_bindings.kWPN_FIRE] = true,
@@ -33,6 +34,9 @@ local ready = false
 local ready_id = nil
 
 local function actor_on_hud_animation_play(anm_table, item)
+	if not DOGMA.mcm.bool(MOD_ID, "enabled") then
+		return
+	end
 	if not (item and IsWeapon(item)) then
 		return
 	end
@@ -73,6 +77,9 @@ local function actor_on_hud_animation_play(anm_table, item)
 end
 
 local function on_before_key_press(key, bind)
+	if not DOGMA.mcm.bool(MOD_ID, "enabled") then
+		return
+	end
 	if not (ALLOW[bind] and ready) then
 		return
 	end
@@ -102,6 +109,7 @@ local function on_before_key_press(key, bind)
 end
 
 function on_game_start()
+	DOGMA = dogma_common.load(MOD_ID)
 	RegisterScriptCallback("actor_on_hud_animation_play", actor_on_hud_animation_play)
 	RegisterScriptCallback("on_before_key_press", on_before_key_press)
 end

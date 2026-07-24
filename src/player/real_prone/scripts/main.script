@@ -27,6 +27,7 @@ local LOG = {
 }
 
 local CONFIG = {
+	enabled = D["enabled"],
 	debug_log = true,
 	debug_overlay = false,
 	hide_prone_bones = D["hide_prone_bones"],
@@ -62,6 +63,8 @@ local function log(msg)
 end
 
 local function on_option_change()
+	local was = CONFIG.enabled
+	CONFIG.enabled = DOGMA.mcm.bool(MOD_ID, "enabled")
 	CONFIG.debug_log = DOGMA.dbg.logging()
 	CONFIG.debug_overlay = DOGMA.dbg.overlay_enabled()
 	CONFIG.hide_prone_bones = DOGMA.mcm.bool(MOD_ID, "hide_prone_bones")
@@ -70,11 +73,20 @@ local function on_option_change()
 
 	local actor = DOGMA.sys.ready(MOD_ID, db)
 	if actor and actor:alive() then
-		if CONFIG.hide_prone_bones then
+		if not CONFIG.enabled then
+			set_prone_bones_visible(actor, true)
+			if is_prone and blend_move_anims then
+				get_console():execute("blend_move_anims on")
+			end
+			is_prone = false
+		elseif CONFIG.hide_prone_bones then
 			set_prone_bones_visible(actor, not is_prone)
 		else
 			set_prone_bones_visible(actor, true)
 		end
+	end
+	if was and not CONFIG.enabled then
+		log("disabled")
 	end
 end
 
@@ -113,6 +125,9 @@ end
 local function on_actor_on_update()
 	local actor = DOGMA.sys.ready(MOD_ID, db, on_option_change)
 	if not actor then
+		return
+	end
+	if not CONFIG.enabled then
 		return
 	end
 
@@ -238,6 +253,9 @@ end
 
 local function on_actor_on_before_hit(shit, bone_id, flags)
 	if not DOGMA.sys.ready(MOD_ID, db) then
+		return
+	end
+	if not CONFIG.enabled then
 		return
 	end
 	if not is_prone or not shit or not shit.power or shit.power <= 0 then

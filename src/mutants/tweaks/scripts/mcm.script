@@ -1,0 +1,40 @@
+function on_mcm_load(options)
+	local CONF = _G.dogma_mutants_tweaks_conf
+	local D = CONF.defaults
+	dogma_mcm.attach(options, "mutants", "ui_mcm_menu_dogma_mutants", {
+		id = "tweaks",
+		sh = true,
+		text = "ui_mcm_menu_dogma_mutants_tweaks",
+		gr = dogma_mcm.with_header({
+			{
+				id = "jump_section",
+				type = "desc",
+				text = "ui_mcm_dogma_tweaks_jump_section",
+			},
+			{
+				id = "jump_description",
+				type = "desc",
+				text = "ui_mcm_dogma_tweaks_jump_description",
+			},
+			{
+				id = "enabled",
+				type = "check",
+				val = 1,
+				def = D["enabled"],
+				hint = "dogma_tweaks_jump_enabled",
+			},
+			{
+				id = "controller_section",
+				type = "desc",
+				text = "ui_mcm_dogma_tweaks_controller_section",
+			},
+			{
+				id = "controller_tube_5s",
+				type = "check",
+				val = 1,
+				def = D["controller_tube_5s"],
+				hint = "dogma_tweaks_controller_tube_5s",
+			},
+		}),
+	})
+end

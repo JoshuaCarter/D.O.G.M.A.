@@ -1,0 +1,520 @@
+--[[
+	Items / Disassemble - attachment scrap.
+
+	Disassemble detached weapon attachments (scopes, silencers, GLs, tac kits)
+	into craft parts. Drop yields live in attach_drops.script (build:
+	zzzz_dogma_items_disassemble_attach_drops.script).
+
+	Loads zzzz_ and re-patches on actor_on_first_update so menu_disassembly /
+	disassembly_item stay wrapped after sibling scripts (strip, tools).
+]]
+
+local CONF = _G.dogma_items_disassemble_conf
+local MOD_ID = CONF.MOD_ID
+local DOGMA
+local CONFIG = CONF.CONFIG
+
+local TIER_MIN = 1
+local TIER_MAX = 5
+-- 	  TIER_COST_1 = 0
+local TIER_COST_2 = 5000
+local TIER_COST_3 = 10000
+local TIER_COST_4 = 25000
+local TIER_COST_5 = 50000
+local SIL_DROP_MAX = 3
+local GL_DROP_MIN = 2
+local GL_DROP_MAX = 4
+local RNG_STUB_COST = 10
+local SIZE_AREA_MAX = 12 -- observed addon grid areas 1..12 (scopes are 1-2; kits hit 12)
+
+-- GAMMA Streamlined Upgrades: upgr_w_{1,2,3}_{internal,external,optical}
+local UPGR_W_TYPES = { "internal", "external", "optical" }
+local PART_SECTION = {
+	scrap = "prt_i_scrap",
+	plastic = "prt_i_plastic",
+	fasteners = "prt_i_fasteners",
+	glass = "prt_i_glass",
+	battery = "batteries_dead",
+}
+local ELECTRONIC_SECTION = {
+	"prt_i_capacitors",
+	"prt_i_resistors",
+	"prt_i_transistors",
+}
+
+local price_ini = nil
+-- Call-time lookup: attach_drops sorts after this file under zzzz_dogma_* names.
+-- (Old pack relied on dogma_fieldstrip_attach_drops loading before zzzz_*_attach_disassemble.)
+
+local patched_menu_disassembly = false
+local patched_disassembly_item = false
+local menu_disassembly_wrapper = nil
+local disassembly_item_wrapper = nil
+
+local function log(msg)
+	if not (DOGMA and DOGMA.dbg) then
+		return
+	end
+	if CONFIG.attach_debug_log then
+		DOGMA.dbg.log(MOD_ID, tostring(msg))
+	end
+end
+
+local function clamp_tier(tier)
+	if tier < TIER_MIN then
+		return TIER_MIN
+	end
+	if tier > TIER_MAX then
+		return TIER_MAX
+	end
+	return tier
+end
+
+local function clamp_grid_dim(n)
+	n = math.floor(n or 1)
+	if n < 1 then
+		return 1
+	end
+	if n > 6 then
+		return 6
+	end
+	return n
+end
+
+local function get_grid_metrics(sec)
+	local w = clamp_grid_dim(ini_sys:r_float_ex(sec, "inv_grid_width"))
+	local h = clamp_grid_dim(ini_sys:r_float_ex(sec, "inv_grid_height"))
+	local area = w * h
+	if area < 1 then
+		area = 1
+	end
+	if area > SIZE_AREA_MAX then
+		area = SIZE_AREA_MAX
+	end
+	return w, h, area, math.max(w, h)
+end
+
+local function cost_to_tier(cost)
+	if cost >= TIER_COST_5 then
+		return 5
+	end
+	if cost >= TIER_COST_4 then
+		return 4
+	end
+	if cost >= TIER_COST_3 then
+		return 3
+	end
+	if cost >= TIER_COST_2 then
+		return 2
+	end
+	return 1
+end
+
+-- Scopes: grid area 1 = small, 2 = medium (all GAMMA scopes are area 1 or 2).
+local function scope_size_class(area)
+	if area >= 2 then
+		return "medium"
+	end
+	return "small"
+end
+
+-- Kits: small (1-2), medium (3-4), large (5+). Size sets tier floor and drop profile.
+local function kit_size_class(area)
+	if area > 4 then
+		return "large"
+	end
+	if area >= 3 then
+		return "medium"
+	end
+	return "small"
+end
+
+local function kit_min_tier(size_class)
+	if size_class == "large" then
+		return 4
+	end
+	if size_class == "medium" then
+		return 3
+	end
+	return 2
+end
+
+local function final_tier(kind, cost_tier, size_class)
+	if kind == "kit" then
+		return clamp_tier(math.max(cost_tier, kit_min_tier(size_class)))
+	end
+	return clamp_tier(cost_tier)
+end
+
+local function get_ini_parts()
+	if itms_manager and itms_manager.ini_parts then
+		return itms_manager.ini_parts
+	end
+	return nil
+end
+
+local function is_vanilla_disassemblable(sec)
+	local ini_parts = get_ini_parts()
+	if not ini_parts then
+		return false
+	end
+	return ini_parts:r_string_ex("nor_parts_list", sec)
+		or ini_parts:r_string_ex("con_parts_list", sec)
+end
+
+local function load_price_ini()
+	if price_ini then
+		return
+	end
+	price_ini = ini_file_ex("mod_system_zzzzzzzzzzzzzzzzzzz_GAMMA_items_price.ltx", true)
+end
+
+local function get_effective_cost(sec)
+	local live = ini_sys:r_float_ex(sec, "cost")
+	if live and live > RNG_STUB_COST then
+		return live
+	end
+	load_price_ini()
+	if price_ini then
+		local ref = price_ini:r_float_ex(sec, "cost")
+		if ref and ref > RNG_STUB_COST then
+			return ref
+		end
+	end
+	local w = clamp_grid_dim(ini_sys:r_float_ex(sec, "inv_grid_width"))
+	local h = clamp_grid_dim(ini_sys:r_float_ex(sec, "inv_grid_height"))
+	return math.max(1000, w * h * 2000)
+end
+
+local function is_tac_kit(sec)
+	if string.find(sec, "_kit", 1, true) then
+		return true
+	end
+	if string.find(sec, "_upgr_kit", 1, true) then
+		return true
+	end
+	if string.find(sec, "_up", 1, true) and not IsItem("scope", sec) and not IsItem("sil", sec) and not IsItem("gl", sec) then
+		return true
+	end
+	if string.find(sec, "mod9", 1, true) then
+		return true
+	end
+	local visual = ini_sys:r_string_ex(sec, "visual") or ""
+	if string.find(visual, "wpn_tac_kit", 1, true) then
+		return true
+	end
+	return false
+end
+
+local function scope_optics_subtype(sec)
+	if ini_sys:r_bool_ex(sec, "scope_nightvision") then
+		return "nv"
+	end
+	local img_type = ini_sys:r_float_ex(sec, "s3ds_image_type") or 0
+	img_type = math.floor(img_type)
+	if img_type == 1 then
+		return "nv"
+	end
+	if img_type == 2 or img_type == 3 then
+		return "thermal"
+	end
+	return "normal"
+end
+
+local function classify_attachment(sec)
+	local kind, subtype, size_class
+	local _, _, area = get_grid_metrics(sec)
+
+	if is_tac_kit(sec) then
+		kind = "kit"
+		size_class = kit_size_class(area)
+	elseif IsItem("sil", sec) then
+		kind = "sil"
+	elseif IsItem("gl", sec) then
+		kind = "gl"
+	elseif IsItem("scope", sec) then
+		kind = "scope"
+		subtype = scope_optics_subtype(sec)
+		size_class = scope_size_class(area)
+	else
+		return nil
+	end
+
+	local cost = get_effective_cost(sec)
+	local cost_tier = cost_to_tier(cost)
+	return {
+		kind = kind,
+		subtype = subtype,
+		size_class = size_class,
+		tier = final_tier(kind, cost_tier, size_class),
+		cost = cost,
+		area = area,
+		cost_tier = cost_tier,
+	}
+end
+
+local function classify_obj(obj)
+	if not obj then
+		return nil
+	end
+	if IsWeapon(obj) or IsOutfit(obj) or IsHeadgear(obj) then
+		return nil
+	end
+	local sec = obj:section()
+	if is_vanilla_disassemblable(sec) then
+		return nil
+	end
+	return classify_attachment(sec)
+end
+
+local function drop_tier_for_kind(kind, tier)
+	tier = clamp_tier(tier)
+	if kind == "sil" then
+		if tier > SIL_DROP_MAX then
+			return SIL_DROP_MAX
+		end
+		return tier
+	end
+	if kind == "gl" then
+		if tier < GL_DROP_MIN then
+			return GL_DROP_MIN
+		end
+		if tier > GL_DROP_MAX then
+			return GL_DROP_MAX
+		end
+		return tier
+	end
+	return tier
+end
+
+local function lookup_tier_row(cat, tier)
+	if not cat then
+		return nil
+	end
+	if cat[tier] then
+		return cat[tier]
+	end
+	for t = tier, TIER_MIN, -1 do
+		if cat[t] then
+			return cat[t]
+		end
+	end
+	for t = TIER_MIN, TIER_MAX do
+		if cat[t] then
+			return cat[t]
+		end
+	end
+	return nil
+end
+
+local function lookup_drops(info)
+	local drops = _G.dogma_strip_attach_drops
+	if not info or not drops then
+		return nil
+	end
+	local cat = drops[info.kind]
+	if not cat then
+		return nil
+	end
+	if info.kind == "scope" then
+		local optics = cat[info.subtype] or cat.normal
+		cat = optics[info.size_class] or optics.small
+	elseif info.kind == "kit" then
+		cat = cat[info.size_class] or cat.small
+	end
+	return lookup_tier_row(cat, drop_tier_for_kind(info.kind, info.tier))
+end
+
+local function random_upgr_w_section(upgr_tier)
+	local upgr_type = UPGR_W_TYPES[math.random(#UPGR_W_TYPES)]
+	return "upgr_w_" .. upgr_tier .. "_" .. upgr_type
+end
+
+local function append_section(parts, sec, count)
+	count = math.floor(count or 0)
+	if not sec or count <= 0 then
+		return
+	end
+	for _ = 1, count do
+		parts[#parts + 1] = sec
+	end
+end
+
+local function resolve_drops_to_parts(drops)
+	local parts = {}
+	if not drops then
+		return parts
+	end
+	for key, count in pairs(drops) do
+		count = math.floor(count or 0)
+		if count > 0 then
+			if key == "electronics" then
+				for _ = 1, count do
+					append_section(parts, ELECTRONIC_SECTION[math.random(#ELECTRONIC_SECTION)], 1)
+				end
+			elseif key == "upgr_w_1" or key == "upgr_w_2" or key == "upgr_w_3" then
+				local tier = tonumber(string.sub(key, 8))
+				for _ = 1, count do
+					parts[#parts + 1] = random_upgr_w_section(tier)
+				end
+			elseif PART_SECTION[key] then
+				append_section(parts, PART_SECTION[key], count)
+			end
+		end
+	end
+	return parts
+end
+
+local function timer_give_parts(npc_id, parts_tbl, name)
+	local npc = npc_id and get_object_by_id(npc_id)
+	if not npc then
+		return true
+	end
+
+	local parts_text = item_parts.create_disassemble_list(parts_tbl)
+	actor_menu.set_item_news(
+		"success",
+		"weapon_ammo",
+		"st_dis_text_11",
+		name,
+		game.translate_string("st_dis_text_9"),
+		parts_text
+	)
+
+	for i = 1, #parts_tbl do
+		local part_sec = parts_tbl[i]
+		if ini_sys:section_exist(part_sec) then
+			alife_create_item(part_sec, npc)
+		else
+			log(string.format("disassembly_item: unknown section %s", part_sec))
+		end
+	end
+	return true
+end
+
+local function perform_attachment_disassembly(obj, obj_d, info, orig_disassembly_item)
+	local tostr = tostring
+	local sec = obj:section()
+	local id = obj:id()
+	local delay = actor_effects.is_animations_on() and 3 or 0
+	local name = ui_item.get_sec_name(sec)
+	local npc = obj:parent()
+	if not npc then
+		log(string.format("disassembly_item: no owner for %s id=%s", sec, tostr(id)))
+		return
+	end
+
+	local parts_tbl = resolve_drops_to_parts(lookup_drops(info))
+	if #parts_tbl == 0 then
+		log(string.format("disassembly_item: empty drops for %s (%s/%s/T%s)", sec, info.kind, tostr(info.subtype), tostr(info.tier)))
+		if orig_disassembly_item then
+			orig_disassembly_item(obj, obj_d)
+		end
+		return
+	end
+
+	log(string.format(
+		"disassembly_item: %s id=%s kind=%s subtype=%s size=%s area=%s tier=%s cost=%s cost_t=%s parts=%s tool=%s",
+		sec,
+		tostr(id),
+		info.kind,
+		tostr(info.subtype),
+		tostr(info.size_class),
+		tostr(info.area),
+		tostr(info.tier),
+		tostr(math.floor(info.cost)),
+		tostr(info.cost_tier),
+		tostr(#parts_tbl),
+		obj_d and obj_d:section() or "nil"
+	))
+
+	local itms_disassemble = GetItemList("disassemble")
+	local degr_val = obj_d and itms_disassemble[obj_d:section()]
+	if obj_d and degr_val then
+		utils_item.degrade(obj_d, degr_val)
+	end
+
+	utils_item.discharge(obj)
+	game_statistics.increment_statistic("items_disassembled")
+	actor_effects.play_item_fx("disassemble_metal_fast")
+
+	CreateTimeEvent(0, "dogma_strip_attach_" .. id, delay, timer_give_parts, npc:id(), parts_tbl, name)
+end
+
+local function make_menu_disassembly_wrapper(orig)
+	return function(obj)
+		if CONFIG.attach_enabled then
+			if classify_obj(obj) then
+				return game.translate_string("st_awr_disassembly_cloth")
+			end
+		end
+		return orig(obj)
+	end
+end
+
+local function make_disassembly_item_wrapper(orig)
+	return function(obj, obj_d)
+		if CONFIG.attach_enabled then
+			local info = classify_obj(obj)
+			if info then
+				perform_attachment_disassembly(obj, obj_d, info, orig)
+				return
+			end
+		end
+		return orig(obj, obj_d)
+	end
+end
+
+local function reapply_menu_disassembly_patch()
+	if not (item_parts and item_parts.menu_disassembly) then
+		return
+	end
+	if item_parts.menu_disassembly == menu_disassembly_wrapper then
+		return
+	end
+	menu_disassembly_wrapper = make_menu_disassembly_wrapper(item_parts.menu_disassembly)
+	item_parts.menu_disassembly = menu_disassembly_wrapper
+	patched_menu_disassembly = true
+	log("reapplied menu_disassembly patch")
+end
+
+local function reapply_disassembly_item_patch()
+	if not (item_parts and item_parts.disassembly_item) then
+		return
+	end
+	if item_parts.disassembly_item == disassembly_item_wrapper then
+		return
+	end
+	disassembly_item_wrapper = make_disassembly_item_wrapper(item_parts.disassembly_item)
+	item_parts.disassembly_item = disassembly_item_wrapper
+	patched_disassembly_item = true
+	log("reapplied disassembly_item patch")
+end
+
+local function apply_patches()
+	reapply_menu_disassembly_patch()
+	reapply_disassembly_item_patch()
+end
+
+local function on_option_change()
+	CONFIG.attachments_enabled = DOGMA.mcm.bool(MOD_ID, "attachments_enabled")
+	CONFIG.attach_enabled = CONFIG.attachments_enabled
+	CONFIG.attach_debug_log = DOGMA.dbg.logging()
+	log(string.format(
+		"attachments: enabled=%s menu_patched=%s item_patched=%s",
+		tostring(CONFIG.attach_enabled),
+		tostring(patched_menu_disassembly),
+		tostring(patched_disassembly_item)
+	))
+end
+
+function on_game_start()
+	DOGMA = CONF:ensure_dogma()
+	load_price_ini()
+	on_option_change()
+	apply_patches()
+
+	RegisterScriptCallback("on_option_change", on_option_change)
+	RegisterScriptCallback("actor_on_first_update", apply_patches)
+	log("attachments: loaded")
+end

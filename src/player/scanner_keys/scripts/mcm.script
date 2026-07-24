@@ -1,0 +1,44 @@
+function on_mcm_load(options)
+	local CONF = _G.dogma_player_scanner_keys_conf
+	local D = CONF.defaults
+
+	dogma_mcm.attach(options, "player", "ui_mcm_menu_dogma_player", {
+		id = "scanner_keys",
+		sh = true,
+		text = "ui_mcm_menu_dogma_player_scanner_keys",
+		gr = dogma_mcm.with_header({
+			{
+				id = "page_description",
+				type = "desc",
+				text = "ui_mcm_dogma_scanner_keys_page_description",
+			},
+			{
+				id = "slots_description",
+				type = "desc",
+				text = "ui_mcm_dogma_scanner_keys_slots_description",
+			},
+			{ id = "line_keys", type = "line" },
+			{
+				id = "key_detector",
+				type = "key_bind",
+				val = 2,
+				def = D["key_detector"],
+				hint = "dogma_scanner_keys_key_detector",
+			},
+			{
+				id = "key_dosimeter",
+				type = "key_bind",
+				val = 2,
+				def = D["key_dosimeter"],
+				hint = "dogma_scanner_keys_key_dosimeter",
+			},
+			{
+				id = "key_radio",
+				type = "key_bind",
+				val = 2,
+				def = D["key_radio"],
+				hint = "dogma_scanner_keys_key_radio",
+			},
+		}),
+	})
+end

@@ -1,0 +1,283 @@
+--[[
+	Items / Disassemble - PDA stash coords + lock icon.
+
+	Grant unread stash coords when disassembling NPC PDAs (locked or unlocked).
+	Shows a red lock overlay on encrypted NPC PDAs when the MCM toggle is on.
+	Extra tool wear on successful grant (more if the PDA was encrypted).
+]]
+
+local CONF = _G.dogma_items_disassemble_conf
+local MOD_ID = CONF.MOD_ID
+local DOGMA
+local CONFIG = CONF.CONFIG
+
+local icon_xml
+local pda_stash_wear_extra = 0
+
+local LOCK_TEXTURE = "ui_dogma_fieldstrip_pda_lock"
+local LOCK_DISPLAY_W = 6
+local LOCK_DISPLAY_H = 9
+
+local patched_func_disassembly = false
+local patched_disassembly_item = false
+local disassembly_wrapper = nil
+local disassembly_item_wrapper = nil
+
+local function log(msg)
+	if not (DOGMA and DOGMA.dbg) then
+		return
+	end
+	if CONFIG.debug_log then
+		DOGMA.dbg.log(MOD_ID, tostring(msg))
+	end
+end
+
+local function is_npc_pda_obj(obj)
+	if not obj then
+		return false
+	end
+	local sec = obj:section()
+	return item_device and item_device.device_npc_pda and item_device.device_npc_pda[sec]
+end
+
+local function show_pda_lock_icon(self, obj, sec)
+	if self.pda_lock_icon then
+		self.pda_lock_icon:Show(false)
+	end
+	if not CONFIG.pda_grants_stash_coords then
+		return
+	end
+	if not icon_xml then
+		return
+	end
+	if not (obj and sec and item_device and item_device.device_npc_pda and item_device.device_npc_pda[sec]) then
+		return
+	end
+	local info = se_load_var(obj:id(), obj:name(), "info")
+	if not (info and info.state == "encrypted") then
+		return
+	end
+	if not self.cell then
+		return
+	end
+
+	self.pda_lock_icon = self.pda_lock_icon or icon_xml:InitStatic("pda_lock_icon", self.cell)
+	self.pda_lock_icon:InitTexture(LOCK_TEXTURE)
+	self.pda_lock_icon:SetStretchTexture(true)
+	self.pda_lock_icon:SetTextureColor(GetARGB(255, 220, 50, 50))
+	self.pda_lock_icon:SetWndSize(vector2():set(LOCK_DISPLAY_W, LOCK_DISPLAY_H))
+	local cell_w = self.cell:GetWidth()
+	local cell_h = self.cell:GetHeight()
+	self.pda_lock_icon:SetWndPos(vector2():set(cell_w - LOCK_DISPLAY_W, cell_h - LOCK_DISPLAY_H))
+	self.pda_lock_icon:Show(true)
+end
+
+local function try_grant_pda_stash_on_disassemble(obj)
+	local tostr = tostring
+	if not (CONFIG.pda_grants_stash_coords and obj) then
+		return false
+	end
+	if not is_npc_pda_obj(obj) then
+		return false
+	end
+
+	local sec = obj:section()
+	local id = obj:id()
+	local info = se_load_var(id, obj:name(), "info")
+	if not info then
+		info = se_load_var(id, nil, "info")
+	end
+	if not info then
+		log(string.format("pda disassemble: no info on %s id=%s", sec, tostr(id)))
+		return false, false
+	end
+
+	local encrypted = info.state == "encrypted"
+
+	local msgs = info.msg
+	if not msgs then
+		log(string.format("pda disassemble: no messages on %s id=%s state=%s", sec, tostr(obj:id()), tostr(info.state)))
+		return false, encrypted
+	end
+
+	local granted = false
+	-- Stash data lives on whichever msg entry has msg.stash (not always index 1).
+	for i = 1, #msgs do
+		local msg = msgs[i]
+		local stash_id = msg.stash
+		if stash_id then
+			if msg.stash_read then
+				log(string.format(
+					"pda disassemble: stash id=%s already read on %s id=%s (message %s/%s)",
+					tostr(stash_id), sec, tostr(id), tostr(i), tostr(#msgs)
+				))
+			elseif level.map_has_object_spot(stash_id, "treasure") ~= 0
+				or level.map_has_object_spot(stash_id, "treasure_searched") ~= 0 then
+				log(string.format(
+					"pda disassemble: stash id=%s already on map for %s id=%s (message %s/%s)",
+					tostr(stash_id), sec, tostr(id), tostr(i), tostr(#msgs)
+				))
+			else
+				if treasure_manager and treasure_manager.set_random_stash then
+					treasure_manager.set_random_stash(nil, nil, nil, stash_id)
+				end
+
+				log(string.format(
+					"pda disassemble: granted stash id=%s from %s state=%s (message %s/%s)",
+					tostr(stash_id), sec, tostr(info.state), tostr(i), tostr(#msgs)
+				))
+				granted = true
+			end
+		end
+	end
+	if not granted then
+		log(string.format(
+			"pda disassemble: no new stash coords on %s id=%s state=%s (%s message(s))",
+			sec, tostr(id), tostr(info.state), tostr(#msgs)
+		))
+	end
+	return granted, encrypted
+end
+
+local function make_disassembly_item_wrapper(orig)
+	return function(obj, obj_d)
+		orig(obj, obj_d)
+
+		if pda_stash_wear_extra > 0 and obj_d then
+			local itms_disassemble = GetItemList("disassemble")
+			local base_wear = itms_disassemble and itms_disassemble[obj_d:section()]
+			if base_wear and base_wear > 0 then
+				utils_item.degrade(obj_d, base_wear * pda_stash_wear_extra)
+				log(string.format(
+					"pda disassemble: +%sx tool wear on %s (+%s)",
+					tostring(pda_stash_wear_extra + 1),
+					obj_d:section(),
+					tostring(base_wear * pda_stash_wear_extra)
+				))
+			end
+		end
+	end
+end
+
+local function reapply_disassembly_item_patch()
+	if not (item_parts and item_parts.disassembly_item) then
+		return
+	end
+	if item_parts.disassembly_item == disassembly_item_wrapper then
+		return
+	end
+	disassembly_item_wrapper = make_disassembly_item_wrapper(item_parts.disassembly_item)
+	item_parts.disassembly_item = disassembly_item_wrapper
+	patched_disassembly_item = true
+	log("reapplied disassembly_item patch")
+end
+
+local function make_disassembly_wrapper(orig)
+	return function(obj, obj_d)
+		if CONFIG.pda_grants_stash_coords and is_npc_pda_obj(obj) then
+			log(string.format(
+				"func_disassembly: npc pda %s id=%s, stash extraction enabled",
+				obj:section(), tostring(obj:id())
+			))
+			local granted, encrypted = try_grant_pda_stash_on_disassemble(obj)
+			if granted then
+				pda_stash_wear_extra = encrypted and 2 or 1
+			end
+			-- DIT's disassembly_warning needs a second press unless d_flag is held.
+			-- zzz_dit.d_flag is local in zzz_dit.script, so disassemble NPC PDAs directly.
+			if obj and item_parts and item_parts.disassembly_item then
+				if not obj_d and item_parts.get_suitable_dtool then
+					obj_d = item_parts.get_suitable_dtool(obj)
+				end
+				if obj_d then
+					log(string.format(
+						"func_disassembly: disassembling %s id=%s with %s",
+						obj:section(), tostring(obj:id()), obj_d:section()
+					))
+					item_parts.disassembly_item(obj, obj_d)
+					pda_stash_wear_extra = 0
+					return
+				end
+				pda_stash_wear_extra = 0
+				log(string.format(
+					"func_disassembly: no suitable disassembly tool for %s id=%s",
+					obj:section(), tostring(obj:id())
+				))
+			else
+				pda_stash_wear_extra = 0
+			end
+		end
+
+		return orig(obj, obj_d)
+	end
+end
+
+local function reapply_disassembly_patch()
+	if not (item_parts and item_parts.func_disassembly) then
+		return
+	end
+	if item_parts.func_disassembly == disassembly_wrapper then
+		return
+	end
+	disassembly_wrapper = make_disassembly_wrapper(item_parts.func_disassembly)
+	item_parts.func_disassembly = disassembly_wrapper
+	patched_func_disassembly = true
+	log("reapplied func_disassembly patch")
+end
+
+local function on_option_change()
+	if DOGMA then
+		CONFIG.pda_grants_stash_coords = DOGMA.mcm.bool(MOD_ID, "pda_grants_stash_coords")
+		CONFIG.debug_log = DOGMA.dbg.logging()
+	end
+end
+
+local orig_add_counter = utils_ui and utils_ui.UICellItem and utils_ui.UICellItem.Add_Counter
+if orig_add_counter then
+	function utils_ui.UICellItem:Add_Counter(xml, obj, sec)
+		orig_add_counter(self, xml, obj, sec)
+		show_pda_lock_icon(self, obj, sec)
+	end
+end
+
+local orig_reset = utils_ui and utils_ui.UICellItem and utils_ui.UICellItem.Reset
+if orig_reset then
+	function utils_ui.UICellItem:Reset()
+		orig_reset(self)
+		if self.pda_lock_icon then
+			self.pda_lock_icon:Show(false)
+		end
+	end
+end
+
+if item_parts and item_parts.func_disassembly then
+	reapply_disassembly_patch()
+end
+
+if item_parts and item_parts.disassembly_item then
+	reapply_disassembly_item_patch()
+end
+
+function on_game_start()
+	DOGMA = CONF:ensure_dogma()
+	RegisterScriptCallback("on_option_change", on_option_change)
+	RegisterScriptCallback("actor_on_first_update", function()
+		reapply_disassembly_patch()
+		reapply_disassembly_item_patch()
+	end)
+	on_option_change()
+	reapply_disassembly_patch()
+	reapply_disassembly_item_patch()
+
+	if not icon_xml and CScriptXmlInit then
+		icon_xml = CScriptXmlInit()
+		icon_xml:ParseFile("ui_dogma_fieldstrip_all_keybind_icon.xml")
+	elseif not CScriptXmlInit then
+		printf("[dogma_pda_lock] CScriptXmlInit unavailable")
+	end
+
+	log(string.format(
+		"pda stash: loaded, func_disassembly patched=%s, disassembly_item patched=%s",
+		tostring(patched_func_disassembly), tostring(patched_disassembly_item)
+	))
+end

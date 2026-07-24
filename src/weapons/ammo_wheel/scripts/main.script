@@ -1,0 +1,59 @@
+--[[
+	Ammo Wheel
+
+	Drops worn ammo sections (_bad / _verybad) from the wheel so hotkeys stay
+	1, 2, 3 for good loads. Wraps UIWheelAmmo:Reset; does not replace item_weapon.
+]]
+
+local CONF = _G.dogma_weapons_ammo_wheel_conf
+local MOD_ID = CONF.MOD_ID
+
+local function patch()
+	local cls = rawget(_G, "UIWheelAmmo")
+	if not (cls and type(cls.Reset) == "function") then
+		printf("[%s] UIWheelAmmo.Reset not found", MOD_ID)
+		return
+	end
+	if cls._dogma_ammo_wheel then
+		return
+	end
+
+	local orig = cls.Reset
+	function cls:Reset(obj)
+		orig(self, obj)
+		if self.grenade_mode or not self.ammo_list then
+			return
+		end
+
+		for i = 1, self.ammo_max do
+			local section = self.ammo_list[i]
+			if section and (string.find(section, "_bad", 1, true) or string.find(section, "_verybad", 1, true)) then
+				self.ammo_list[i] = nil
+				self.avail[i] = false
+				self.box[i]:Show(false)
+			end
+		end
+
+		-- Renumber hotkeys for slots still shown after worn ammo was dropped.
+		local cnt = 0
+		empty_table(self.key)
+		for i = 1, self.ammo_max do
+			if self.ammo_list[i] and self.box[i]:IsShown() then
+				cnt = cnt + 1
+				self.key[cnt] = i
+				if self.avail[i] and i <= 9 then
+					self.box_num[i]:SetText(tostring(cnt))
+				else
+					self.box_num[i]:SetText("")
+				end
+			end
+		end
+	end
+
+	cls._dogma_ammo_wheel = true
+end
+
+function on_game_start()
+	patch()
+	RegisterScriptCallback("actor_on_first_update", patch)
+end

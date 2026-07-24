@@ -637,14 +637,23 @@ local function apply_spread_compare(ele, obj, sec, obj_b, decimals)
 	return apply_multipart_compare(ele, { d_lo, d_hi }, decimals, true, true)
 end
 
+-- Stock p1 grey for vanilla rows (not white). Leading "-" → n1 red.
+local function stock_value_color(text)
+	if type(text) == "string" and string.find(text, "^%-") then
+		return CLR.stat_neg
+	end
+	return CLR.stat_pos
+end
+
 -- Move stock green/red off the main number; recolor compare so only ±N is tinted
 -- (parens / % stay grey). Bar rows already paint (+/-); leave alone when txt hidden.
-local function relocate_stock_compare_colors(ele)
+-- value_clr: white for DOGMA rows, stock grey for vanilla GAMMA rows.
+local function relocate_stock_compare_colors(ele, value_clr)
 	if not ele or not ele.comp or not ele.comp:IsShown() then
 		return
 	end
 	if ele.txt and ele.txt:IsShown() then
-		ele.txt:SetTextColor(CLR.white)
+		ele.txt:SetTextColor(value_clr or stock_value_color(ele.txt:GetText()))
 	end
 	local raw = ele.comp:GetText()
 	if not raw or raw == "" then
@@ -870,6 +879,9 @@ local function apply_custom_stat_display(info, obj, sec)
 						elseif ele.comp then
 							ele.comp:Show(false)
 						end
+					elseif ele.txt:IsShown() then
+						-- Vanilla GAMMA rows: stock grey (ADV self-compare paints them white).
+						ele.txt:SetTextColor(stock_value_color(ele.txt:GetText()))
 					end
 				end
 			end
@@ -879,7 +891,9 @@ local function apply_custom_stat_display(info, obj, sec)
 	-- Vanilla / Hit Power: restyle existing compare colors (no recalc).
 	for _, ele in pairs(info.stats) do
 		if ele.comp and ele.comp:IsShown() and not painted[ele] then
-			relocate_stock_compare_colors(ele)
+			local cap = ele.cap and ele.cap:GetText()
+			local hit_power_row = CONFIG.show_hit_power and cap == ENHANCED_STAT_LABELS.hit_power
+			relocate_stock_compare_colors(ele, hit_power_row and CLR.white or nil)
 		end
 	end
 end
@@ -985,7 +999,7 @@ local function set_base_stat(weapon_stats, key, enabled)
 	end
 end
 
-local function make_dogma_row(index, name, icon, prop)
+local function make_stat_row(index, name, icon, prop)
 	return {
 		index = index,
 		typ = "float",
@@ -1156,22 +1170,22 @@ local function apply_enhanced_weapon_stats()
 
 	local N = (zzzz_dogma_tooltips_weapons_stats and zzzz_dogma_tooltips_weapons_stats.NAME) or EXTRA_STAT_NAME
 	weapon_stats["dogma_dispersion"] = CONFIG.show_dispersion
-		and make_dogma_row(idx.dispersion, N.dispersion, "ui_wp_prop_contrast", "prop_dispersion")
+		and make_stat_row(idx.dispersion, N.dispersion, "ui_wp_prop_contrast", "prop_dispersion")
 		or nil
 	weapon_stats["dogma_spread"] = CONFIG.show_spread
-		and make_dogma_row(idx.spread, N.spread, "ui_wp_propery_13", "prop_spread")
+		and make_stat_row(idx.spread, N.spread, "ui_wp_propery_13", "prop_spread")
 		or nil
 	-- Drop legacy dual-spread rows if a previous session registered them.
 	weapon_stats["dogma_base_spread"] = nil
 	weapon_stats["dogma_movement_spread"] = nil
 	weapon_stats["dogma_bullet_drop"] = CONFIG.show_bullet_drop
-		and make_dogma_row(idx.bullet_drop, N.bullet_drop, "ui_wp_prop_nastilnost", "prop_bullet_drop")
+		and make_stat_row(idx.bullet_drop, N.bullet_drop, "ui_wp_prop_nastilnost", "prop_bullet_drop")
 		or nil
 	weapon_stats["dogma_barrel_wear"] = CONFIG.show_barrel_wear
-		and make_dogma_row(idx.barrel_wear, N.barrel_wear, "ui_wp_prop_nadezhnost", "prop_barrel_wear")
+		and make_stat_row(idx.barrel_wear, N.barrel_wear, "ui_wp_prop_nadezhnost", "prop_barrel_wear")
 		or nil
 	weapon_stats["dogma_burst_control"] = CONFIG.show_burst_control
-		and make_dogma_row(idx.burst_control, N.burst_control, "ui_wp_prop_otdacha", "prop_burst_control")
+		and make_stat_row(idx.burst_control, N.burst_control, "ui_wp_prop_otdacha", "prop_burst_control")
 		or nil
 end
 
@@ -1286,6 +1300,14 @@ local function on_option_change()
 			CONFIG.stat_row_placement = D["stat_row_placement"]
 		end
 		CONFIG.compact_header = DOGMA.mcm.bool(MOD_ID, "compact_header")
+		CONFIG.hide_description = DOGMA.mcm.bool(MOD_ID, "hide_description")
+		CONFIG.table_row_pad = DOGMA.mcm.number(MOD_ID, "table_row_pad")
+		for i = 1, NUM_TORSO_TIERS do
+			CONFIG["show_torso_" .. i] = DOGMA.mcm.bool(MOD_ID, "show_torso_" .. i)
+		end
+		for i = 1, NUM_HEAD_TIERS do
+			CONFIG["show_head_" .. i] = DOGMA.mcm.bool(MOD_ID, "show_head_" .. i)
+		end
 		CONFIG.calc_range_m = DOGMA.mcm.number(MOD_ID, "calc_range")
 		CONFIG.pellet_hit_pct = DOGMA.mcm.number(MOD_ID, "pellet_hit_pct")
 		local drop_range = DOGMA.mcm.number(MOD_ID, "drop_range")
@@ -2068,7 +2090,8 @@ for i = 1, NUM_HEAD_TIERS do
 end
 
 -- Read row pitch from the XML positions set at init (row_1/row_2). Panel height
--- ends flush with the last visible data row.
+-- ends flush with the last visible data row. Armor column start/step/gap come
+-- from col_hdr_2 so packing keeps the authored spacing.
 local function read_layout_metrics(fields)
 	local row1 = fields.rows[1].base
 	local row2 = fields.rows[2].base
@@ -2077,11 +2100,155 @@ local function read_layout_metrics(fields)
 	local row_step = row2:GetWndPos().y - data_top_y
 	local row_h = row1:GetHeight()
 
+	local t1 = fields.col_labels.torso[1]
+	local t2 = fields.col_labels.torso[2]
+	local h1 = fields.col_labels.head[1]
+	local torso_start = t1 and t1:GetWndPos().x or 58
+	local col_step = (t1 and t2) and (t2:GetWndPos().x - t1:GetWndPos().x) or 18
+	local head_xml_start = h1 and h1:GetWndPos().x or 230
+	local section_gap = head_xml_start - (torso_start + NUM_TORSO_TIERS * col_step)
+
 	return {
 		data_top_y = data_top_y,
 		row_step = row_step,
 		row_h = row_h,
+		torso_start = torso_start,
+		col_step = col_step,
+		section_gap = section_gap,
 	}
+end
+
+-- Pack visible armor columns left; keep Type/AP fixed. Disabled cols leave extra
+-- empty width on the right (panel width unchanged). Returns xs + which groups show.
+-- ponytail: O(n) scan of fixed tier counts; upgrade only if tiers become dynamic.
+local function pack_armor_columns(torso_on, head_on, torso_start, step, gap)
+	local xs_torso, xs_head = {}, {}
+	local x = torso_start
+	local any_torso, any_head = false, false
+	local torso_first_x, head_first_x
+
+	for i = 1, #torso_on do
+		if torso_on[i] then
+			if not torso_first_x then
+				torso_first_x = x
+			end
+			xs_torso[i] = x
+			x = x + step
+			any_torso = true
+		end
+	end
+	for i = 1, #head_on do
+		if head_on[i] then
+			any_head = true
+			break
+		end
+	end
+	if any_torso and any_head then
+		x = x + gap
+	elseif any_head and not any_torso then
+		x = torso_start
+	end
+	for i = 1, #head_on do
+		if head_on[i] then
+			if not head_first_x then
+				head_first_x = x
+			end
+			xs_head[i] = x
+			x = x + step
+		end
+	end
+
+	return xs_torso, xs_head, any_torso, any_head, torso_first_x, head_first_x
+end
+
+local function set_wnd_x(wnd, x)
+	if not wnd or x == nil then
+		return
+	end
+	local p = wnd:GetWndPos()
+	wnd:SetWndPos(vector2():set(x, p.y))
+end
+
+local function apply_armor_column_layout(fields)
+	if not fields or not fields.layout or not fields.col_labels then
+		return
+	end
+
+	local layout = fields.layout
+	local torso_on, head_on = {}, {}
+	for i = 1, NUM_TORSO_TIERS do
+		torso_on[i] = CONFIG["show_torso_" .. i] ~= false
+	end
+	for i = 1, NUM_HEAD_TIERS do
+		head_on[i] = CONFIG["show_head_" .. i] ~= false
+	end
+
+	local xs_t, xs_h, any_torso, any_head, torso_x, head_x = pack_armor_columns(
+		torso_on, head_on, layout.torso_start, layout.col_step, layout.section_gap)
+
+	if fields.grp_torso then
+		if any_torso then
+			fields.grp_torso:Show(true)
+			fields.grp_torso:SetText("vs Torso Armor")
+			set_wnd_x(fields.grp_torso, torso_x)
+		else
+			fields.grp_torso:Show(false)
+		end
+	end
+	if fields.grp_head then
+		if any_head then
+			fields.grp_head:Show(true)
+			fields.grp_head:SetText("vs Head Armor")
+			set_wnd_x(fields.grp_head, head_x)
+		else
+			fields.grp_head:Show(false)
+		end
+	end
+
+	for i = 1, NUM_TORSO_TIERS do
+		local hdr = fields.col_labels.torso[i]
+		if hdr then
+			if torso_on[i] then
+				set_wnd_x(hdr, xs_t[i])
+				hdr:Show(true)
+			else
+				hdr:Show(false)
+			end
+		end
+		for _, row in ipairs(fields.rows) do
+			local cell = row.torso[i]
+			if cell then
+				if torso_on[i] then
+					set_wnd_x(cell, xs_t[i])
+					cell:Show(true)
+				else
+					cell:Show(false)
+				end
+			end
+		end
+	end
+	for i = 1, NUM_HEAD_TIERS do
+		local hdr = fields.col_labels.head[i]
+		if hdr then
+			if head_on[i] then
+				set_wnd_x(hdr, xs_h[i])
+				hdr:Show(true)
+			else
+				hdr:Show(false)
+			end
+		end
+		for _, row in ipairs(fields.rows) do
+			local cell = row.head[i]
+			if cell then
+				if head_on[i] then
+					set_wnd_x(cell, xs_h[i])
+					cell:Show(true)
+				else
+					cell:Show(false)
+				end
+			end
+		end
+	end
 end
 
 local function create_damage_fields(parent, panel_x)
@@ -2135,6 +2302,7 @@ local function create_damage_fields(parent, panel_x)
 
 	fields.layout = read_layout_metrics(fields)
 	apply_column_headers(fields)
+	apply_armor_column_layout(fields)
 
 	return dlg, fields
 end
@@ -2151,6 +2319,7 @@ local function populate_damage_fields(fields, data, panel_width)
 	end
 
 	apply_column_headers(fields)
+	apply_armor_column_layout(fields)
 
 	if fields.title then
 		local more = tonumber(data.more) or 0
@@ -2161,6 +2330,10 @@ local function populate_damage_fields(fields, data, panel_width)
 		end
 	end
 
+	local row_pad = tonumber(CONFIG.table_row_pad) or 0
+	if row_pad < 0 then
+		row_pad = 0
+	end
 	local any_row = false
 	local row_y = layout.data_top_y
 	local last_row_y = layout.data_top_y
@@ -2180,7 +2353,7 @@ local function populate_damage_fields(fields, data, panel_width)
 			row.base:SetWndPos(vector2():set(0, row_y))
 			row.base:Show(true)
 			last_row_y = row_y
-			row_y = row_y + layout.row_step
+			row_y = row_y + layout.row_step + row_pad
 			any_row = true
 		else
 			row.base:Show(false)
@@ -2270,11 +2443,29 @@ local function sync_parts_layout(info, tail)
 	return tail
 end
 
+local function apply_description_visibility(info)
+	if not info or not info.desc then
+		return
+	end
+	info.desc:Show(not CONFIG.hide_description)
+end
+
 local function sync_damage_layout(info)
-	local tail = info.desc
+	apply_description_visibility(info)
+
+	local tail
+	if CONFIG.hide_description then
+		if info.note and info.note:IsShown() then
+			tail = info.note
+		else
+			tail = info.weight
+		end
+	else
+		tail = info.desc
+	end
 
 	if CONFIG.show_damage_table and info.dogma_wpn_damage and info.dogma_wpn_damage:IsShown() then
-		info:Sync_Y(info.desc, info.dogma_wpn_damage, PANEL_TOP_OFFSET)
+		info:Sync_Y(tail, info.dogma_wpn_damage, PANEL_TOP_OFFSET)
 		tail = info.dogma_wpn_damage
 	end
 
@@ -2332,16 +2523,21 @@ local function apply_compact_header(info)
 		set_wnd_y(info.value, weight_y)
 		if info.note and info.note:IsShown() then
 			info:Sync_Y(info.weight, info.note, SECTION_GAP)
-			info:Sync_Y(info.note, info.desc, SECTION_GAP - 5)
-		else
+			if not CONFIG.hide_description then
+				info:Sync_Y(info.note, info.desc, SECTION_GAP - 5)
+			end
+		elseif not CONFIG.hide_description then
 			info:Sync_Y(info.weight, info.desc, SECTION_GAP - 5)
 		end
 	else
 		set_wnd_y(info.weight, ys.weight)
 		set_wnd_y(info.value, ys.value)
 		set_wnd_y(info.note, ys.note)
-		set_wnd_y(info.desc, ys.desc)
+		if not CONFIG.hide_description then
+			set_wnd_y(info.desc, ys.desc)
+		end
 	end
+	apply_description_visibility(info)
 end
 
 local function refresh_weapon_damage_panel(info, obj, sec)
@@ -2481,6 +2677,12 @@ local function itm_details_addtext_hook(self, xml, path, offset, txt)
 	if self.dogma_details_pending and path == "text_s_l" then
 		local obj = self.dogma_details_pending
 		self.dogma_details_pending = nil
+		if CONFIG.hide_description and ele then
+			ele:Show(false)
+			pcall(function()
+				ele:SetWndSize(vector2():set(ele:GetWidth(), 0))
+			end)
+		end
 		add_details_damage_section(self, obj)
 	end
 
@@ -2705,9 +2907,77 @@ local function on_actor_update()
 	overlay(OVERLAY.RANGE, msg)
 end
 
+-- Seed CONFIG from defaults so New Game loadout can use DOGMA rows before MCM/DOGMA.sys exist.
+local function seed_config_defaults()
+	if CONFIG.show_damage_table ~= nil then
+		return
+	end
+	CONFIG.show_damage_table = D["show_damage_table"]
+	CONFIG.show_hit_power = D["show_hit_power"]
+	CONFIG.show_stalker_damage = D["show_stalker_damage"]
+	CONFIG.show_mutant_damage = D["show_mutant_damage"]
+	CONFIG.show_accuracy = D["show_accuracy"]
+	CONFIG.show_handling = D["show_handling"]
+	CONFIG.show_fire_rate = D["show_fire_rate"]
+	CONFIG.show_mag_size = D["show_mag_size"]
+	CONFIG.show_reliability = D["show_reliability"]
+	CONFIG.show_recoil = D["show_recoil"]
+	CONFIG.show_muzzle_velocity = D["show_muzzle_velocity"]
+	CONFIG.show_dispersion = D["show_dispersion"]
+	CONFIG.show_spread = D["show_spread"]
+	CONFIG.show_barrel_wear = D["show_barrel_wear"]
+	CONFIG.show_burst_control = D["show_burst_control"]
+	CONFIG.show_bullet_drop = D["show_bullet_drop"]
+	CONFIG.column_headers = D["column_headers"]
+	CONFIG.color_scale_from = D["color_scale_from"]
+	CONFIG.ammo_order = D["ammo_order"]
+	CONFIG.stat_row_placement = D["stat_row_placement"]
+	CONFIG.compact_header = D["compact_header"]
+	CONFIG.hide_description = D["hide_description"]
+	CONFIG.table_row_pad = D["table_row_pad"]
+	CONFIG.calc_range_m = D["calc_range"]
+	CONFIG.pellet_hit_pct = D["pellet_hit_pct"]
+	CONFIG.use_condition_table = D["use_condition_table"]
+	CONFIG.use_condition_stats = D["use_condition_stats"]
+	CONFIG.apply_silencer_table = D["apply_silencer_table"]
+	CONFIG.apply_silencer_stats = D["apply_silencer_stats"]
+	CONFIG.debug_log = false
+	CONFIG.debug_overlay = false
+	for i = 1, NUM_TORSO_TIERS do
+		CONFIG["show_torso_" .. i] = D["show_torso_" .. i]
+	end
+	for i = 1, NUM_HEAD_TIERS do
+		CONFIG["show_head_" .. i] = D["show_head_" .. i]
+	end
+end
+
+-- Main menu / New Game loadout: ADV + UI hooks before on_game_start (see tooltips/loadout).
+local function early_menu_install()
+	seed_config_defaults()
+	if ish_item_stats and ish_item_stats.override_stats_table and utils_ui then
+		ish_item_stats.override_stats_table()
+	end
+	install_ui_hooks()
+	apply_enhanced_weapon_stats()
+	hook_stats_table_override()
+end
+
+early_menu_install()
+
 function on_game_start()
 	local tostr = tostring
 	DOGMA = dogma_common.load(MOD_ID)
+
+	-- Packing check: full layout matches XML (head @ 230); head-only packs to torso start.
+	do
+		local all_t = { true, true, true, true, true, true, true, true, true }
+		local all_h = { true, true, true, true, true }
+		local none_t = { false, false, false, false, false, false, false, false, false }
+		local _, _, _, _, _, head_x = pack_armor_columns(all_t, all_h, 58, 18, 10)
+		assert(head_x == 230, "armor pack: full head start")
+		local _, _, any_t, any_h, _, head_only_x = pack_armor_columns(none_t, all_h, 58, 18, 10)
+		assert((not any_t) and any_h and head_only_x == 58, "armor pack: head-only start")
+	end
 
 	on_option_change()
 	install_ui_hooks()

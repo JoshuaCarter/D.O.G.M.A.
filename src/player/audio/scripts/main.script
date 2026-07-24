@@ -1,0 +1,35 @@
+--[[
+	Audio
+
+	Optional mute for Voiced Actor player lines (AGDD_ / agdd_). Default off.
+]]
+
+local CONF = _G.dogma_player_audio_conf
+local MOD_ID = CONF.MOD_ID
+local DOGMA
+
+local ORIG = {}
+
+local function apply()
+	local mute = DOGMA.mcm.bool(MOD_ID, "enabled")
+	for _, name in ipairs({ "AGDD_voiced_actor", "agdd_voiced_actor" }) do
+		local mod = rawget(_G, name)
+		if mod and type(mod.actor_speak) == "function" then
+			if mute then
+				if not ORIG[name] then
+					ORIG[name] = mod.actor_speak
+				end
+				mod.actor_speak = function() end
+			elseif ORIG[name] then
+				mod.actor_speak = ORIG[name]
+			end
+		end
+	end
+end
+
+function on_game_start()
+	DOGMA = dogma_common.load(MOD_ID)
+	apply()
+	RegisterScriptCallback("on_option_change", apply)
+	RegisterScriptCallback("actor_on_first_update", apply)
+end

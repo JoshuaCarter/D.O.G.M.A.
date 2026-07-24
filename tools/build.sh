@@ -16,6 +16,8 @@
 #   …/scripts/mcm.script      -> dogma_{path}_mcm.script   (*mcm.script glob)
 #                               _conf is prepended so main-menu MCM (which only
 #                               loads *mcm.script) still gets MOD_ID + defaults
+#   …/scripts/override/*.script -> scripts/<basename>.script  (exact name — replace
+#                               conflicting mods: ASV, Free Zoom, etc.)
 #   …/scripts/<other>.script  -> zzzz_dogma_{path}_<other>.script
 #
 # Env:
@@ -172,7 +174,11 @@ map_src_file() {
 	is_gamedata_root "$bucket" || return 1
 
 	local dest_rel="$bucket_rel"
-	if [[ -n "$path_key" && "$base" == *.script && "$bucket" == "scripts" ]]; then
+	# Exact-name overrides: scripts/override/foo.script → scripts/foo.script
+	# (replace conflicting mods in MO2; no dogma_ rename).
+	if [[ "$bucket" == "scripts" && "$bucket_rel" == scripts/override/* ]]; then
+		dest_rel="scripts/$base"
+	elif [[ -n "$path_key" && "$base" == *.script && "$bucket" == "scripts" ]]; then
 		local out_base
 		out_base="$(script_dest_basename "$path_key" "$base")"
 		if [[ "$bucket_rel" == */* ]]; then
@@ -290,5 +296,9 @@ if [[ -n "$DEPLOY_MOD" ]]; then
 	if [[ -f "$ROOT/.mod_id" ]] && ! up_to_date "$ROOT/.mod_id" "$DEPLOY_MOD/.mod_id"; then
 		cp "$ROOT/.mod_id" "$DEPLOY_MOD/.mod_id"
 		echo "build: copy  .mod_id"
+	fi
+	if [[ -f "$ROOT/INFO.md" ]] && ! up_to_date "$ROOT/INFO.md" "$DEPLOY_MOD/INFO.md"; then
+		cp "$ROOT/INFO.md" "$DEPLOY_MOD/INFO.md"
+		echo "build: copy  INFO.md"
 	fi
 fi

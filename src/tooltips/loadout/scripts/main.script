@@ -1,0 +1,9 @@
+-- Body script: re-apply after late zzzz mods if needed.
+
+function on_game_start()
+	if _G.dogma_tooltips_loadout_apply then
+		_G.__dogma_tooltips_loadout = _G.__dogma_tooltips_loadout or {}
+		_G.__dogma_tooltips_loadout.stats_ok = false
+		_G.dogma_tooltips_loadout_apply()
+	end
+end

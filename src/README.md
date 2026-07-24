@@ -9,7 +9,7 @@ src/<category>/<feature>/<gamedata-root>/...
 src/common/<gamedata-root>/...     # vendored Common, not in MCM
 ```
 
-Example: `src/mutants/skinning/scripts/...` → MCM `DOGMA → Mutants → Skinning`.
+Example: `src/mutants/skinning/scripts/...` → MCM `D.O.G.M.A. → Mutants → Skinning`.
 
 See `MOVE_MAP.md` for the full map.
 
@@ -33,13 +33,13 @@ Per feature: `src/<category>/<feature>/installer/`
 
 | File | Purpose |
 |------|---------|
-| `name.txt` | FOMOD plugin title |
-| `description.txt` | FOMOD body text |
+| `name.txt` | Checkbox title |
+| `description.txt` | Hover text (short, player-facing) |
 | `default.txt` | `recommended` / `optional` |
-| `image.png` | optional preview |
+| `image.png` | optional hover preview |
 | `id.txt` | zip module folder name (defaults to feature dir name) |
 
-Release zip: `bash tools/package-fomod.sh` → `build/fomod/` (common always installed; features SelectAny). Local `Ctrl+Shift+B` still merges everything.
+Release zip: `bash tools/package-fomod.sh` → `build/fomod/`. Wizard is **one page per category**; each page is SelectAny feature checkboxes. Hover a feature for its description and image; an About row shows "Hover each checkbox to see feature information". Final page lists third-party recommendations from `src/common/installer/recommendations.txt` (info only). Common is always installed. Regenerates root `MANIFEST.txt` into the zip. Local `Ctrl+Shift+B` still merges everything.
 
 ## Common
 

@@ -1,0 +1,107 @@
+--[[
+	Controller tube cooldown.
+
+	Shipped LTX defaults to 5s. Rewrites that file when the MCM toggle differs
+	so the next game start picks it up. Restart after changing.
+]]
+
+local CONF = _G.dogma_mutants_tweaks_conf
+local MOD_ID = CONF.MOD_ID
+local DOGMA
+
+local STOCK_MS = 2000
+local SLOW_MS = 5000
+local REL = "mod_system_dogma_mutants_tweaks.ltx"
+
+local function candidate_paths()
+	local out = {}
+	local function add(path)
+		if path and path ~= "" then
+			out[#out + 1] = path
+		end
+	end
+
+	local src = debug.getinfo(1, "S").source
+	if src:sub(1, 1) == "@" then
+		src = src:sub(2)
+	end
+	if src:find("gamedata") then
+		local scripts = src:match("^(.*)[/\\][^/\\]+$")
+		if scripts then
+			add(scripts:gsub("[/\\]scripts$", "/configs") .. "/" .. REL)
+			add(scripts:gsub("[/\\]scripts$", "\\configs") .. "\\" .. REL)
+		end
+	end
+
+	if getFS and getFS().update_path then
+		local ok, path = pcall(function()
+			return getFS():update_path("$fs_root$", "gamedata\\configs\\" .. REL)
+		end)
+		if ok then
+			add(path)
+		end
+	end
+
+	add("gamedata/configs/" .. REL)
+	add("gamedata\\configs\\" .. REL)
+	return out
+end
+
+local function read_delay(path)
+	local f = io.open(path, "r")
+	if not f then
+		return nil
+	end
+	local body = f:read("*a")
+	f:close()
+	return tonumber(body and body:match("tube_condition_min_delay%s*=%s*(%d+)"))
+end
+
+local function write_delay(path, ms)
+	local f = io.open(path, "w")
+	if not f then
+		return false
+	end
+	f:write("; Controller tube attack cooldown. Stock GAMMA is about 2s.\n")
+	f:write("; Written by DOGMA Mutants / Tweaks. Restart for changes to apply.\n\n")
+	f:write("![m_controller_e]\n")
+	f:write(string.format("tube_condition_min_delay = %d\n", ms))
+	f:close()
+	return true
+end
+
+local function apply()
+	local want = DOGMA.mcm.bool(MOD_ID, "controller_tube_5s") and SLOW_MS or STOCK_MS
+	local paths = candidate_paths()
+	local create_candidates = {}
+	for i = 1, #paths do
+		local path = paths[i]
+		local cur = read_delay(path)
+		if cur == want then
+			return
+		end
+		if cur ~= nil then
+			-- Prefer rewriting an existing mod LTX over creating a stray file.
+			if write_delay(path, want) then
+				printf("[%s] controller tube delay set to %dms (%s); restart to apply", MOD_ID, want, path)
+				return
+			end
+		else
+			create_candidates[#create_candidates + 1] = path
+		end
+	end
+	for i = 1, #create_candidates do
+		local path = create_candidates[i]
+		if write_delay(path, want) then
+			printf("[%s] controller tube delay set to %dms (%s); restart to apply", MOD_ID, want, path)
+			return
+		end
+	end
+	printf("[%s] could not write controller tube delay (%dms); shipped LTX stays in effect until a writable gamedata/configs path is available", MOD_ID, want)
+end
+
+function on_game_start()
+	DOGMA = dogma_common.load(MOD_ID)
+	apply()
+	RegisterScriptCallback("on_option_change", apply)
+end

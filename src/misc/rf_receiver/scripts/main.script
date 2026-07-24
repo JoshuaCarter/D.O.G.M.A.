@@ -1,0 +1,49 @@
+--[[
+	RF Receiver packages (Tweaki_Breeki / Cookbook / GAMMA Economy):
+
+	Stock picks the package map from tb_allmaps[current_level], which is only
+	neighbouring maps — never the map you are standing on. Spot pick itself is
+	already a flat random among tb_package_coords (no far-from-player filter).
+
+	Add the current level into each map's pool (when it has coords) so a package
+	can spawn on your map, including right next to you if the roll lands there.
+]]
+
+local function has_coords(map)
+	local spots = tb_package_coords and tb_package_coords[map]
+	return type(spots) == "table" and #spots > 0
+end
+
+local function list_has(list, map)
+	for i = 1, #list do
+		if list[i] == map then
+			return true
+		end
+	end
+	return false
+end
+
+local function allow_same_map_spawns()
+	if type(tb_allmaps) ~= "table" then
+		return false
+	end
+	for level_id, maps in pairs(tb_allmaps) do
+		if level_id ~= "default" and type(maps) == "table" and has_coords(level_id) then
+			if not list_has(maps, level_id) then
+				maps[#maps + 1] = level_id
+			end
+		end
+	end
+	return true
+end
+
+-- TB_RF_Receiver_Packages.script loads earlier (no zzzz_); patch once here.
+allow_same_map_spawns()
+
+function on_game_start()
+	-- Re-apply in case another mod rebuilt tb_allmaps after our file load.
+	CreateTimeEvent("dogma_rf_receiver", "allow_same_map", 0.1, function()
+		allow_same_map_spawns()
+		return true
+	end)
+end

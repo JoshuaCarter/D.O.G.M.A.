@@ -1,0 +1,220 @@
+--[[
+	Radiation
+
+	Replaces stock radiation.ppe with a no-op so zone/location radiation postprocesses
+	draw nothing. This script applies our own graded grain PPEs from player body
+	radiation (db.actor.radiation).
+]]
+
+local CONF = _G.dogma_fx_radiation_conf
+local MOD_ID = CONF.MOD_ID
+local DOGMA
+
+local PP_GRAIN_ID = 2021
+local PP_BLUR_ID = 2023
+local PP_DUAL_ID = 2024
+
+local GRAIN_PPES = {
+	"dogma_grain_01.ppe",
+	"dogma_grain_02.ppe",
+	"dogma_grain_03.ppe",
+	"dogma_grain_04.ppe",
+	"dogma_grain_05.ppe",
+	"dogma_grain_06.ppe",
+	"dogma_grain_07.ppe",
+	"dogma_grain_08.ppe",
+	"dogma_grain_09.ppe",
+	"dogma_grain_10.ppe",
+}
+
+local CONFIG = {}
+local GRAIN_LEVELS = {}
+local current_ppe = nil
+local blur_active = false
+local dual_active = false
+
+local LOG = {
+	LIFECYCLE = {order = 0, color = "gray"},
+	RADS      = {order = 1, color = "green"},
+	MSV       = {order = 2, color = "yellow"},
+	GRAIN     = {order = 3, color = "orange"},
+	BLUR      = {order = 4, color = "cyan"},
+	DUAL      = {order = 5, color = "purple"},}
+
+-- HUD-only: for values that change every frame (Rads/MSV/Grain/Blur/Dual).
+local function overlay(log_type, msg)
+	if not DOGMA.dbg then
+		return
+	end
+	if CONFIG.debug_overlay then
+		local slot = log_type or LOG.LIFECYCLE
+		DOGMA.dbg.overlay(MOD_ID, slot.order, tostring(msg), slot.color)
+	end
+end
+
+-- File-only: for one-off/lifecycle events worth keeping in the log.
+local function log(msg)
+	if not DOGMA.dbg then
+		return
+	end
+	if CONFIG.debug_log then
+		DOGMA.dbg.log(MOD_ID, tostring(msg))
+	end
+end
+
+local function on_option_change()
+	CONFIG.debug_log = DOGMA.dbg.logging()
+	CONFIG.debug_overlay = DOGMA.dbg.overlay_enabled()
+	CONFIG.grain_enabled = DOGMA.mcm.bool(MOD_ID, "grain/enable")
+	CONFIG.blur_enabled = DOGMA.mcm.bool(MOD_ID, "desaturation/enable")
+	CONFIG.dual_enabled = DOGMA.mcm.bool(MOD_ID, "duality/enable")
+	CONFIG.level_msv = {}
+	for i = 1, #GRAIN_PPES do
+		CONFIG.level_msv[i] = DOGMA.mcm.number(MOD_ID, string.format("grain/level_%02d_msv", i))
+	end
+	CONFIG.blur_range = DOGMA.mcm.range(MOD_ID, "desaturation/blur_min", "desaturation/blur_max")
+	CONFIG.dual_range = DOGMA.mcm.range(MOD_ID, "duality/dual_min", "duality/dual_max")
+	CONFIG.add_radiation_key = DOGMA.mcm.key("dogma/debug", "grain_add_radiation_key")
+	CONFIG.clear_radiation_key = DOGMA.mcm.key("dogma/debug", "grain_clear_radiation_key")
+
+	GRAIN_LEVELS = {}
+	for i, ppe in ipairs(GRAIN_PPES) do
+		GRAIN_LEVELS[#GRAIN_LEVELS + 1] = { msv = CONFIG.level_msv[i], ppe = ppe }
+	end
+
+	DOGMA.dbg.set_enabled(MOD_ID, DOGMA.dbg.overlay_enabled())
+end
+
+local function set_grain(msv)
+	if not CONFIG.grain_enabled then
+		if current_ppe then
+			level.remove_pp_effector(PP_GRAIN_ID)
+			current_ppe = nil
+		end
+		overlay(LOG.GRAIN, "Grain: 0")
+		return
+	end
+
+	local ppe = nil
+	local tier = 0
+	for i = #GRAIN_LEVELS, 1, -1 do
+		local entry = GRAIN_LEVELS[i]
+		if msv >= entry.msv then
+			ppe = entry.ppe
+			tier = i
+			break
+		end
+	end
+
+	overlay(LOG.GRAIN, string.format("Grain: %d", tier))
+
+	-- no change?
+	if ppe == current_ppe then
+		return
+	end
+
+	-- want no grain?
+	if ppe == nil and current_ppe then
+		level.remove_pp_effector(PP_GRAIN_ID)
+		current_ppe = nil
+		return
+	end
+
+	-- replace grain
+	if ppe then
+		if current_ppe then
+			level.remove_pp_effector(PP_GRAIN_ID)
+		end
+		level.add_pp_effector(ppe, PP_GRAIN_ID, true)
+		current_ppe = ppe
+	end
+end
+
+-- Blur / dual share the same intensity PPE lifecycle.
+local function set_intensity_ppe(enabled, active, range, pp_id, ppe_name, log_slot, label, msv)
+	if not enabled then
+		if active then
+			level.remove_pp_effector(pp_id)
+		end
+		overlay(log_slot, label .. ": 0")
+		return false
+	end
+
+	local intensity = range:normalize(msv)
+	overlay(log_slot, string.format("%s: %.2f", label, intensity))
+
+	if intensity == 0 then
+		if active then
+			level.remove_pp_effector(pp_id)
+		end
+		return false
+	end
+
+	if not active then
+		level.add_pp_effector(ppe_name, pp_id, true)
+	end
+	level.set_pp_effector_factor(pp_id, intensity)
+	return true
+end
+
+local function set_blur(msv)
+	blur_active = set_intensity_ppe(
+		CONFIG.blur_enabled, blur_active, CONFIG.blur_range,
+		PP_BLUR_ID, "dogma_blur.ppe", LOG.BLUR, "Blur", msv
+	)
+end
+
+local function set_dual(msv)
+	dual_active = set_intensity_ppe(
+		CONFIG.dual_enabled, dual_active, CONFIG.dual_range,
+		PP_DUAL_ID, "dogma_dual.ppe", LOG.DUAL, "Dual", msv
+	)
+end
+
+local function on_actor_on_update()
+	local actor = DOGMA.sys.ready(MOD_ID, db, on_option_change)
+	if not actor then
+		return
+	end
+
+	if not actor:alive() then
+		level.remove_pp_effector(PP_GRAIN_ID)
+		level.remove_pp_effector(PP_BLUR_ID)
+		level.remove_pp_effector(PP_DUAL_ID)
+		current_ppe = nil
+		blur_active = false
+		dual_active = false
+		return
+	end
+
+	local radiation = actor.radiation or 0
+	local msv = radiation * 10000 * 0.387
+
+	overlay(LOG.RADS, string.format("Rads: %.2f", radiation))
+	overlay(LOG.MSV, string.format("MSV: %d", math.ceil(msv)))
+
+	set_grain(msv)
+	set_blur(msv)
+	set_dual(msv)
+end
+
+local function on_key_press(key)
+	if CONFIG.add_radiation_key and key == CONFIG.add_radiation_key and db.actor then
+		db.actor.radiation = (db.actor.radiation or 0) + 50 / (10000 * 0.387)
+	elseif CONFIG.clear_radiation_key and key == CONFIG.clear_radiation_key and db.actor then
+		db.actor.radiation = 0
+	end
+end
+
+function on_game_start()
+	DOGMA = dogma_common.load(MOD_ID)
+
+	current_ppe = nil
+	blur_active = false
+	dual_active = false
+	on_option_change()
+	RegisterScriptCallback("actor_on_update", on_actor_on_update)
+	RegisterScriptCallback("on_option_change", on_option_change)
+	RegisterScriptCallback("on_key_press", on_key_press)
+	log("loaded")
+end

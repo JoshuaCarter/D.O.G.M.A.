@@ -1,12 +1,11 @@
 --[[
-	Free Zoom — free zoom + ADS Zoom (WADS).
+	Free Zoom — free zoom + ADS Zoom.
 
-	Three drivers → fov + hud_fov (shrink %: base * (1 - pct/100); world stack cap 50%):
-	  Free only: both channels = free%
-	  ADS irons/sight: fov = free+ADS (cap 50); hud = WADS% only
-	  ADS optical scope: fov left alone; hud = WADS%; free blocked
-	WADS defaults from MCM (global or category×optic); ± keys override gun+scope only.
-	Owns ADS hud_fov — disable Adjustable Scope View.
+	Drivers → fov + hud_fov (shrink %: base * (1 - pct/100)):
+	  Free only: both channels = free% (cleared on ADS enter; never while ADS)
+	  ADS irons/sight: both channels = Irons/Sights % (caps 15 / 25)
+	  ADS optical scope: world FOV left to scope; HUD = Scopes % (cap 40)
+	± keys override gun+optic. Owns ADS hud_fov — ships no-op overrides for Adjustable Scope View / rival Free Zooms.
 ]]
 
 local CONF = _G.dogma_zoom_free_zoom_conf
@@ -32,6 +31,11 @@ local WADS_MODE_PRESS = 0
 local WADS_MODE_HOLD = 1
 local WADS_HOLD_MS = 500
 local WADS_STEP = 5
+local ADS_MAX = {
+	irons = 15,
+	sight = 25,
+	scope = 40,
+}
 
 local KIND_CAT = {
 	w_pistol = "pistol",
@@ -51,8 +55,8 @@ local CAT_LABEL = {
 }
 local OPTIC_LABEL = {
 	irons = "Irons",
-	sight = "Sight",
-	scope = "Scope",
+	sight = "Sights",
+	scope = "Scopes",
 }
 
 -- Filled by refresh_config (on_option_change runs at boot before any read).
@@ -83,7 +87,7 @@ local CTX_BLOCK_FREE = {
 	[CTX.DEAD] = true,
 	[CTX.PDA] = true,
 	[CTX.GUI] = true,
-	[CTX.RELOAD] = true, -- gated by CONFIG.reload_clears_free in blocks_free()
+	[CTX.RELOAD] = true,
 	[CTX.OPTICAL] = true,
 	[CTX.SPRINT] = true,
 	[CTX.NO_GUN] = true,
@@ -168,9 +172,6 @@ local function wpn_label()
 end
 
 local function mode_label()
-	if ads_on and free_on then
-		return "ads+free"
-	end
 	if ads_on then
 		return "ads"
 	end
@@ -195,25 +196,17 @@ local function refresh_config()
 	CONFIG.free_zoom = DOGMA.mcm.number(MOD_ID, "free_zoom/free_zoom")
 	CONFIG.move_speed = DOGMA.mcm.number(MOD_ID, "free_zoom/move_speed")
 
-	CONFIG.ads_enabled = DOGMA.mcm.bool(ADS_MOD, "enabled")
-	CONFIG.ads_zoom = DOGMA.mcm.number(ADS_MOD, "ads_zoom")
-	CONFIG.exit_ads_clears_free = DOGMA.mcm.bool(ADS_MOD, "exit_ads_clears_free")
-	CONFIG.reload_clears_free = DOGMA.mcm.bool(ADS_MOD, "reload_clears_free")
+	CONFIG.ads_enabled = true
+	CONFIG.wads = {
+		irons = clamp(DOGMA.mcm.number(ADS_MOD, "wads_irons"), 0, ADS_MAX.irons),
+		sight = clamp(DOGMA.mcm.number(ADS_MOD, "wads_sight"), 0, ADS_MAX.sight),
+		scope = clamp(DOGMA.mcm.number(ADS_MOD, "wads_scope"), 0, ADS_MAX.scope),
+	}
 	CONFIG.wads_inc_key = DOGMA.mcm.key(ADS_MOD, "wads_inc_key")
 	CONFIG.wads_dec_key = DOGMA.mcm.key(ADS_MOD, "wads_dec_key")
 	CONFIG.wads_reset_key = DOGMA.mcm.key(ADS_MOD, "wads_reset_key")
 	CONFIG.wads_key_mode = DOGMA.mcm.number(ADS_MOD, "wads_key_mode")
 	CONFIG.wads_key_modifier = DOGMA.mcm.number(ADS_MOD, "wads_key_modifier")
-	CONFIG.use_global_wads = DOGMA.mcm.bool(ADS_MOD, "use_global_wads")
-	CONFIG.global_wads = DOGMA.mcm.number(ADS_MOD, "global_wads")
-	CONFIG.wads = CONFIG.wads or {}
-	for _, cat in ipairs({ "pistol", "smg", "rifle", "sniper", "shotgun", "explosive" }) do
-		local row = CONFIG.wads[cat] or {}
-		CONFIG.wads[cat] = row
-		row.irons = DOGMA.mcm.number(ADS_MOD, "wads_" .. cat .. "_irons")
-		row.sight = DOGMA.mcm.number(ADS_MOD, "wads_" .. cat .. "_sight")
-		row.scope = DOGMA.mcm.number(ADS_MOD, "wads_" .. cat .. "_scope")
-	end
 
 	CONFIG.debug_log = DOGMA.dbg.logging()
 	if DOGMA.dbg and DOGMA.dbg.set_enabled then
@@ -374,25 +367,19 @@ local function override_key()
 	return parent .. "|" .. optic_key()
 end
 
-local function mcm_wads_default(cat, optic)
-	if CONFIG.use_global_wads then
-		return CONFIG.global_wads
-	end
-	local row = CONFIG.wads and CONFIG.wads[cat or "rifle"]
-	if not row then
-		return 0
-	end
-	return row[optic or "irons"] or 0
+local function ads_cap(optic)
+	return ADS_MAX[optic or "irons"] or ADS_MAX.irons
 end
 
-local function resolve_wads()
+local function resolve_ads()
 	local cat = weapon_category()
 	local optic = optic_class()
-	local def = mcm_wads_default(cat, optic)
+	local max = ads_cap(optic)
+	local def = clamp((CONFIG.wads and CONFIG.wads[optic]) or 0, 0, max)
 	local okey = override_key()
 	local ov = okey and gun_scope_override[okey] or nil
 	local pct = ov ~= nil and ov or def
-	return pct, cat, optic, def, ov, okey
+	return clamp(pct, 0, max), cat, optic, def, ov, okey
 end
 
 local function sec_name(sec)
@@ -422,16 +409,16 @@ local function update_wads_overlay()
 		return
 	end
 	refresh_wpn()
-	local _, cat, optic, def, ov = resolve_wads()
+	local _, cat, optic, def, ov = resolve_ads()
 	local gun = sec_name(parent_section())
 	local scope_lab = optic == "irons" and "Irons" or sec_name(attached_scope_sec() or optic_key())
-	DOGMA.dbg.overlay(MOD_ID, 1, string.format("Category: %s + %s", CAT_LABEL[cat] or cat, OPTIC_LABEL[optic] or optic), "orange")
-	DOGMA.dbg.overlay(MOD_ID, 2, string.format("Category Zoom: %d%%", def), "orange")
+	DOGMA.dbg.overlay(MOD_ID, 1, string.format("Optic: %s (%s)", OPTIC_LABEL[optic] or optic, CAT_LABEL[cat] or cat), "orange")
+	DOGMA.dbg.overlay(MOD_ID, 2, string.format("ADS Zoom: %d%% (def %d%%)", ov ~= nil and ov or def, def), "orange")
 	DOGMA.dbg.overlay(MOD_ID, 3, string.format("Gun & Scope: %s + %s", gun, scope_lab), "orange")
 	if ov ~= nil then
-		DOGMA.dbg.overlay(MOD_ID, 4, string.format("Gun & Scope Zoom: %d%%", ov), "orange")
+		DOGMA.dbg.overlay(MOD_ID, 4, string.format("Override: %d%%", ov), "orange")
 	else
-		DOGMA.dbg.overlay(MOD_ID, 4, "Gun & Scope Zoom: —", "orange")
+		DOGMA.dbg.overlay(MOD_ID, 4, "Override: —", "orange")
 	end
 end
 
@@ -506,18 +493,13 @@ local function we_own_fov()
 	return not (ads_on and CONFIG.ads_enabled and is_optical_ads())
 end
 
--- World FOV shrink %: free and/or ADS (irons/sight), hard-capped at 50. Not used for ADS hud.
+-- World FOV shrink %: ADS% (irons/sight) or free%. Same % also used for HUD while ADS.
 local function compute_world_pct()
 	local pct = 0
 	if ads_on and CONFIG.ads_enabled and we_own_fov() then
-		pct = pct + CONFIG.ads_zoom
-	end
-	if free_on then
-		local free_pct = CONFIG.free_zoom
-		if ads_on and CONFIG.ads_enabled and we_own_fov() and pct + free_pct > 50 then
-			free_pct = 50 - pct
-		end
-		pct = pct + free_pct
+		pct = resolve_ads()
+	elseif free_on then
+		pct = CONFIG.free_zoom
 	end
 	if pct > 50 then
 		pct = 50
@@ -562,11 +544,11 @@ local function restore_hip_hud()
 	we_wrote_hud = false
 end
 
--- HUD: free-only uses free%; ADS uses WADS only (never stacks free into hud while ADS).
+-- HUD: free% while free; ADS uses same Irons/Sights/Scopes % (optical scopes: HUD only).
 local function apply_hud_fov()
 	local pct = 0
 	if ads_on and CONFIG.ads_enabled then
-		pct = resolve_wads()
+		pct = resolve_ads()
 	elseif free_on then
 		pct = CONFIG.free_zoom
 	end
@@ -652,15 +634,9 @@ local function hold_zoom_active()
 	return next(hold_zoom_diks) ~= nil
 end
 
--- RELOAD is in CTX_BLOCK_FREE but only when reload_clears_free is on.
+-- RELOAD always clears free (and ADS via handle_context).
 local function blocks_free(ctx)
-	if not CTX_BLOCK_FREE[ctx] then
-		return false
-	end
-	if ctx == CTX.RELOAD then
-		return CONFIG.reload_clears_free
-	end
-	return true
+	return CTX_BLOCK_FREE[ctx] == true
 end
 
 local function clear_free_zoom(reason)
@@ -693,9 +669,19 @@ local function handle_context(ctx)
 		return ctx
 	end
 
-	-- Sprint / reload / etc.: drop free zoom; hold DIKs stay so poll re-applies when ok.
-	if free_on and blocks_free(ctx) then
-		clear_free_zoom(ctx)
+	-- Reload / leave ADS path: always drop ADS zoom.
+	if ctx == CTX.RELOAD and ads_on then
+		ads_on = false
+		for k in pairs(wads_hold_keys) do
+			wads_hold_keys[k] = nil
+		end
+		logf("ads out: reason=reload wpn=%s", wpn_label())
+		apply_fov()
+	end
+
+	-- Sprint / reload / ADS / etc.: drop free zoom; hold DIKs stay so poll re-applies when ok.
+	if free_on and (ads_on or blocks_free(ctx)) then
+		clear_free_zoom(ads_on and "ads" or ctx)
 	end
 	return ctx
 end
@@ -710,6 +696,10 @@ local function set_free_zoom(want_free, source)
 	handle_context(ctx)
 
 	if want_free then
+		if ads_on then
+			logf("free denied: source=%s reason=ads mode=%s", source, mode_label())
+			return false
+		end
 		ctx = get_context()
 		if blocks_free(ctx) then
 			logf("free denied: source=%s reason=ctx=%s mode=%s", source, ctx, mode_label())
@@ -735,18 +725,17 @@ local function set_free_zoom(want_free, source)
 	apply_fov()
 	local fov = compute_fov()
 	logf(
-		"free: source=%s mode=%s fov=%s free=%d%% ads=%d%% wpn=%s",
+		"free: source=%s mode=%s fov=%s free=%d%% wpn=%s",
 		source,
 		mode_label(),
 		fov and string.format("%.2f", fov) or "optical",
 		CONFIG.free_zoom,
-		CONFIG.ads_zoom,
 		wpn_label()
 	)
 	return true
 end
 
--- ADS on/off. Keeps free_on; ADS% + free% add up to the 50% hard cap on world FOV.
+-- ADS on/off. Free zoom is cleared on ADS enter — ADS Zoom owns FOV while aiming.
 local function set_ads_zoom(want_ads, source)
 	source = source or "set_ads_zoom"
 	want_ads = not not want_ads
@@ -759,12 +748,14 @@ local function set_ads_zoom(want_ads, source)
 			logf("ads skipped: source=%s ads_zoom disabled wpn=%s", source, wpn_label())
 			return false
 		end
+		if free_on then
+			clear_free_zoom("ads_enter")
+		end
 		ads_on = true
 		-- Optical: leave world FOV alone (restore hip only if we wrote — via apply_fov).
 		if is_optical_ads() then
-			clear_free_zoom("optical_ads")
 			apply_fov()
-			local wads = resolve_wads()
+			local wads = resolve_ads()
 			logf(
 				"ads: source=%s mode=%s optical=true wads=%d%% wpn=%s",
 				source,
@@ -783,23 +774,17 @@ local function set_ads_zoom(want_ads, source)
 		for k in pairs(wads_hold_keys) do
 			wads_hold_keys[k] = nil
 		end
-		if CONFIG.exit_ads_clears_free and free_on then
-			free_on = false
-			reset_scroll_accum()
-			set_zoom_move_speed(false)
-		end
 		apply_fov()
 	end
 
 	local fov = compute_fov()
-	local wads = resolve_wads()
+	local ads_pct = resolve_ads()
 	logf(
-		"ads: source=%s mode=%s fov=%s ads=%d%% wads=%d%% free_on=%s wpn=%s",
+		"ads: source=%s mode=%s fov=%s ads=%d%% free_on=%s wpn=%s",
 		source,
 		mode_label(),
 		fov and string.format("%.2f", fov) or "optical",
-		CONFIG.ads_zoom,
-		wads,
+		ads_pct,
 		tostring(free_on),
 		wpn_label()
 	)
@@ -932,11 +917,12 @@ local function on_option_change()
 	end
 
 	logf(
-		"opts: free_en=%s free=%d%% ads_en=%s ads=%d%% speed=%d%% empty_hands=%s scroll=%s reverse=%s steps=%d gap=%dms mode=%s key=%s mod=%d km=%d rmb=%d mmb=%d wads_g=%s",
+		"opts: free_en=%s free=%d%% ads=%d/%d/%d speed=%d%% empty_hands=%s scroll=%s reverse=%s steps=%d gap=%dms mode=%s key=%s mod=%d km=%d rmb=%d mmb=%d",
 		tostring(CONFIG.enabled),
 		CONFIG.free_zoom,
-		tostring(CONFIG.ads_enabled),
-		CONFIG.ads_zoom,
+		CONFIG.wads.irons,
+		CONFIG.wads.sight,
+		CONFIG.wads.scope,
 		CONFIG.move_speed,
 		tostring(CONFIG.empty_hands_only),
 		tostring(CONFIG.scroll_wheel_zoom),
@@ -948,8 +934,7 @@ local function on_option_change()
 		CONFIG.zoom_key_modifier,
 		CONFIG.zoom_key_mode,
 		CONFIG.rmb_zoom,
-		CONFIG.mmb_zoom,
-		tostring(CONFIG.use_global_wads)
+		CONFIG.mmb_zoom
 	)
 end
 
@@ -989,7 +974,7 @@ local function mutate_wads(delta_or_reset, source)
 		logf("wads denied: source=%s no weapon", tostring(source))
 		return false
 	end
-	local cur, cat, optic, def, ov = resolve_wads()
+	local cur, cat, optic, def, ov = resolve_ads()
 	if delta_or_reset == "reset" then
 		if ov == nil then
 			return false
@@ -998,11 +983,11 @@ local function mutate_wads(delta_or_reset, source)
 		logf("wads reset: key=%s cat=%s optic=%s def=%d%%", okey, cat, optic, def)
 	else
 		local base = ov ~= nil and ov or def
-		local next_pct = clamp(base + delta_or_reset, 0, 50)
+		local next_pct = clamp(base + delta_or_reset, 0, ads_cap(optic))
 		if next_pct == ov then
 			return false
 		end
-		-- Match MCM default → drop override so category edits still apply.
+		-- Match MCM default → drop override so slider edits still apply.
 		if next_pct == def then
 			gun_scope_override[okey] = nil
 		else
@@ -1281,13 +1266,10 @@ on_mouse_wheel = function(dir, _flags)
 		return
 	end
 
-	-- Reload: optional zoom-out; do not steal the wheel.
+	-- Reload: always zoom out; do not steal the wheel.
 	if ctx == CTX.RELOAD then
-		if CONFIG.reload_clears_free then
-			reset_scroll_accum()
-			return
-		end
-		-- reload_clears_free off: allow scroll zoom through like normal gameplay below.
+		reset_scroll_accum()
+		return
 	end
 
 	local want_in = (dir == 1)
@@ -1341,25 +1323,23 @@ local function actor_on_weapon_zoom_out()
 	set_ads_zoom(false, "zoom_out")
 end
 
--- Optical <-> iron: cancel free on optical; re-assert stacked floor on iron.
+-- Optical <-> iron: re-assert ADS FOV ownership (free already cleared on ADS enter).
 local function actor_on_weapon_zoom_type_changed()
 	if not CONFIG.ads_enabled or not ads_on then
 		return
 	end
 	refresh_wpn()
+	apply_fov()
 	if is_optical_ads() then
-		clear_free_zoom("optical_type")
-		apply_fov()
-		logf("ADS type changed: optical=true wads=%d%% wpn=%s", resolve_wads(), wpn_label())
+		logf("ADS type changed: optical=true wads=%d%% wpn=%s", resolve_ads(), wpn_label())
 		return
 	end
-	apply_fov()
 	local fov = compute_fov()
 	logf(
 		"ADS type changed: optical=false mode=%s fov=%s wads=%d%% wpn=%s",
 		mode_label(),
 		fov and string.format("%.2f", fov) or "?",
-		resolve_wads(),
+		resolve_ads(),
 		wpn_label()
 	)
 end

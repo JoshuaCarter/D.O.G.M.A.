@@ -1,0 +1,77 @@
+--[[
+	Jump — dodge pseudogiant ground slams while jumping or falling.
+
+	GAMMA delivers stomps as hit.strike from the giant draftsman via grok's
+	actor_on_before_hit. We run before grok and zero the hit when airborne.
+]]
+
+local CONF = _G.dogma_mutants_tweaks_conf
+local MOD_ID = CONF.MOD_ID
+local DOGMA
+
+local CONFIG = {}
+
+
+local HOOK_STATE = _G.__dogma_pseudogiant_jump_hooks or {}
+_G.__dogma_pseudogiant_jump_hooks = HOOK_STATE
+
+local function log(msg)
+	if not (DOGMA and DOGMA.dbg) then
+		return
+	end
+	if CONFIG.debug_log then
+		DOGMA.dbg.log(MOD_ID, tostring(msg))
+	end
+end
+
+local function on_option_change()
+	CONFIG.enabled = DOGMA.mcm.bool(MOD_ID, "enabled")
+	CONFIG.debug_log = DOGMA.dbg.logging()
+end
+
+function on_game_start()
+	DOGMA = dogma_common.load(MOD_ID)
+	on_option_change()
+	RegisterScriptCallback("on_option_change", on_option_change)
+
+	if HOOK_STATE.grok then
+		return
+	end
+
+	local mod = _G.grok_actor_damage_balancer
+	if not mod or type(mod.actor_on_before_hit) ~= "function" then
+		printf("[%s] grok_actor_damage_balancer.actor_on_before_hit not found", MOD_ID)
+		return
+	end
+
+	local grok_orig = mod.actor_on_before_hit
+	UnregisterScriptCallback("actor_on_before_hit", grok_orig)
+
+	HOOK_STATE.grok = function(shit, bone_id, flags)
+		-- identify pseudogiant ground slam
+		local slam = false
+		if shit and shit.draftsman and shit.type == hit.strike then
+			local ok, sec = pcall(function() return shit.draftsman:section() end)
+			slam = ok and sec and string.find(sec, "gigant", 1, true) ~= nil
+		end
+
+		-- dodge only while jumping or falling
+		local airborne = false
+		if level and level.actor_moving_state and IsMoveState then
+			local state = level.actor_moving_state()
+			airborne = IsMoveState("mcJump", state) or IsMoveState("mcFall", state)
+		end
+
+		if CONFIG.enabled and slam and airborne then
+			shit.power = 0
+			if flags then
+				flags.ret_value = false
+			end
+			log("dodged giant slam")
+			return
+		end
+		return grok_orig(shit, bone_id, flags)
+	end
+
+	RegisterScriptCallback("actor_on_before_hit", HOOK_STATE.grok)
+end

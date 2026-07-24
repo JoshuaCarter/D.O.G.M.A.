@@ -1,0 +1,23 @@
+function on_mcm_load(options)
+	local CONF = _G.dogma_player_audio_conf
+	local D = CONF.defaults
+	dogma_mcm.attach(options, "player", "ui_mcm_menu_dogma_player", {
+		id = "audio",
+		sh = true,
+		text = "ui_mcm_menu_dogma_player_audio",
+		gr = dogma_mcm.with_header({
+			{
+				id = "page_description",
+				type = "desc",
+				text = "ui_mcm_dogma_player_audio_page_description",
+			},
+			{
+				id = "enabled",
+				type = "check",
+				val = 1,
+				def = D["enabled"],
+				hint = "dogma_player_audio_enabled",
+			},
+		}),
+	})
+end

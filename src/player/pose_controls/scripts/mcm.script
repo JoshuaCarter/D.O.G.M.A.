@@ -1,17 +1,61 @@
 function on_mcm_load(options)
 	local CONF = _G.dogma_player_pose_controls_conf
 	local D = CONF.defaults
+	local kb_mod = (ui_mcm and ui_mcm.kb_mod_radio) or "radio_h"
 	dogma_mcm.attach(options, "player", "ui_mcm_menu_dogma_player", {
 		id = "pose_controls",
 		sh = true,
 		text = "ui_mcm_menu_dogma_player_pose_controls",
 		gr = dogma_mcm.with_header({
 			{
+				id = "page_description",
+				type = "desc",
+				text = "ui_mcm_dogma_pose_controls_main_description",
+			},
+			{
 				id = "enabled",
 				type = "check",
 				val = 1,
 				def = D["enabled"],
 				hint = "dogma_pose_controls_enabled",
+			},
+			{
+				id = "hold_toggle",
+				type = kb_mod,
+				val = 2,
+				def = D["hold_toggle"],
+				hint = "dogma_pose_controls_hold_toggle",
+				content = {
+					{ 0, "hold" },
+					{ 1, "toggle" },
+				},
+			},
+			{ id = "line_keys", type = "line" },
+			{
+				id = "keys_desc",
+				type = "desc",
+				text = "ui_mcm_dogma_pose_controls_keys_desc",
+			},
+			{
+				id = "crouch_key",
+				type = "key_bind",
+				val = 2,
+				def = D["crouch_key"],
+				hint = "dogma_pose_controls_crouch_key",
+			},
+			{
+				id = "prone_key",
+				type = "key_bind",
+				val = 2,
+				def = D["prone_key"],
+				hint = "dogma_pose_controls_prone_key",
+			},
+			{
+				id = "sprint_key",
+				type = "key_bind",
+				val = 2,
+				def = D["sprint_key"],
+				hint = "dogma_pose_controls_sprint_key",
 			},
 			{
 				id = "walk_key",

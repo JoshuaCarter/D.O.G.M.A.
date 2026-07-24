@@ -17,13 +17,12 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Derive mod name from repo
+      - name: Display / zip names
         id: name
         run: |
-          TITLE="${{ github.event.repository.name }}"
-          TITLE="${TITLE//-/ }"
-          echo "title=$TITLE" >> "$GITHUB_OUTPUT"
-          echo "filename=$TITLE" >> "$GITHUB_OUTPUT"
+          # Player-facing title vs plain zip basename (repo folder stays DOGMA).
+          echo "title=D.O.G.M.A." >> "$GITHUB_OUTPUT"
+          echo "filename=DOGMA" >> "$GITHUB_OUTPUT"
 
       - name: Decide release channel
         id: channel
@@ -103,4 +102,6 @@ jobs:
           make_latest: ${{ steps.channel.outputs.make_latest }}
           generate_release_notes: true
           body: ${{ steps.channel.outputs.body }}
-          files: ${{ steps.channel.outputs.zip_name }}
+          files: |
+            ${{ steps.channel.outputs.zip_name }}
+            MANIFEST.txt

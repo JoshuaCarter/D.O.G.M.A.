@@ -1,0 +1,186 @@
+--[[
+	Remember New Game difficulty + modes across sessions.
+
+	Stock writes one-shot keys under [character_creation] that on_game_load
+	clears. We mirror prefs into [dogma_remember_options] and restore them when
+	UINewGame opens. Faction, spawn, loadout, name, and economy are left alone.
+]]
+
+local SECTION = "dogma_remember_options"
+local STATE = _G.__dogma_misc_remember_options or {}
+_G.__dogma_misc_remember_options = STATE
+
+local function cfg()
+	return axr_main and axr_main.config
+end
+
+local function w_bool(c, key, on)
+	c:w_value(SECTION, key, on and true or false)
+end
+
+local function r_bool(c, key, def)
+	local v = c:r_value(SECTION, key, 1, nil)
+	if v == nil then
+		return def
+	end
+	return v == true
+end
+
+local function save_prefs(self)
+	local c = cfg()
+	if not c then
+		return
+	end
+
+	local diff = 1
+	if self.selected_difficulty then
+		diff = tonumber(tostring(self.selected_difficulty):gsub("st_diff_", "")) or 1
+	end
+	c:w_value(SECTION, "difficulty", diff)
+
+	w_bool(c, "story", self.ck_story and self.ck_story:GetCheck())
+	w_bool(c, "hardcore", self.ck_hardcore and self.ck_hardcore:GetCheck())
+	w_bool(c, "azazel", self.ck_azazel_mode and self.ck_azazel_mode:GetCheck())
+	w_bool(c, "survival", self.ck_survival and self.ck_survival:GetCheck())
+	w_bool(c, "warfare", self.ck_warfare and self.ck_warfare:GetCheck())
+	w_bool(c, "campfire", self.ck_campfire and self.ck_campfire:GetCheck())
+	w_bool(c, "conditions", self.ck_conditions and self.ck_conditions:GetCheck())
+	w_bool(c, "routes", self.ck_routes and self.ck_routes:GetCheck())
+	w_bool(c, "soulslike", self.ck_soulslike_mode and self.ck_soulslike_mode:GetCheck())
+
+	local lives = self.selected_hardcore_lives and self.selected_hardcore_lives[1]
+	c:w_value(SECTION, "hardcore_lives", lives)
+
+	local regen = self.selected_hardcore_regen and self.selected_hardcore_regen[1]
+	c:w_value(SECTION, "hardcore_regen", type(regen) == "number" and regen or nil)
+
+	local timer = self.selected_timer and self.selected_timer[1]
+	c:w_value(SECTION, "timer", type(timer) == "number" and timer or nil)
+
+	c:save()
+end
+
+local function set_difficulty(self, diff)
+	if not (self.list_difficulty and self.table_difficulty) then
+		return
+	end
+	diff = tonumber(diff) or 1
+	local pick = self.table_difficulty[diff] or self.table_difficulty[1]
+	if not pick then
+		return
+	end
+	self.list_difficulty:SetText(game.translate_string(pick))
+	self.selected_difficulty = pick
+end
+
+local function set_combo_pair(self, list_name, table_name, selected_name, match_val)
+	local list = self[list_name]
+	local tbl = self[table_name]
+	if not (list and tbl and #tbl > 0) then
+		return
+	end
+	local pick = tbl[1]
+	if match_val ~= nil then
+		for i = 1, #tbl do
+			if tbl[i][1] == match_val then
+				pick = tbl[i]
+				break
+			end
+		end
+	end
+	local str = pick[1]
+	if type(str) == "number" and list_name == "list_hardcore_regen" then
+		str = tostring(round_idp(str / 24))
+	elseif str == nil then
+		str = ""
+	else
+		str = tostring(str)
+	end
+	list:SetText(str .. " " .. game.translate_string(pick[2]))
+	self[selected_name] = pick
+end
+
+local function set_check(self, member, state_key, on)
+	local ck = self[member]
+	if not ck then
+		return
+	end
+	ck:SetCheck(on and true or false)
+	if self.ck_states and state_key then
+		self.ck_states[state_key] = on and true or false
+	end
+end
+
+local function restore_prefs(self)
+	local c = cfg()
+	if not c or not self.list_difficulty then
+		return
+	end
+	-- No saved prefs yet (first launch).
+	if c:r_value(SECTION, "difficulty", 2, nil) == nil and c:r_value(SECTION, "story", 1, nil) == nil then
+		return
+	end
+
+	set_difficulty(self, c:r_value(SECTION, "difficulty", 2, 1))
+
+	-- Restore checks as saved (stock handlers already enforced exclusivity on last start).
+	set_check(self, "ck_story", "ck_story", r_bool(c, "story", true))
+	set_check(self, "ck_survival", "ck_survival", r_bool(c, "survival", false))
+	set_check(self, "ck_warfare", "ck_warfare", r_bool(c, "warfare", false))
+	set_check(self, "ck_azazel_mode", "ck_azazel_mode", r_bool(c, "azazel", false))
+	set_check(self, "ck_hardcore", "ck_hardcore", r_bool(c, "hardcore", false))
+	set_check(self, "ck_campfire", "ck_campfire", r_bool(c, "campfire", false))
+	set_check(self, "ck_conditions", "ck_conditions", r_bool(c, "conditions", false))
+	set_check(self, "ck_routes", "ck_routes", r_bool(c, "routes", true))
+	set_check(self, "ck_soulslike_mode", "ck_soulslike_mode", r_bool(c, "soulslike", false))
+
+	local lives = c:r_value(SECTION, "hardcore_lives", 2, nil)
+	set_combo_pair(self, "list_hardcore_lives", "table_hardcore_lives", "selected_hardcore_lives", lives)
+
+	local regen = c:r_value(SECTION, "hardcore_regen", 2, nil)
+	set_combo_pair(self, "list_hardcore_regen", "table_hardcore_regen", "selected_hardcore_regen", regen)
+
+	local timer = c:r_value(SECTION, "timer", 2, nil)
+	set_combo_pair(self, "list_timer", "table_timer", "selected_timer", timer)
+
+	-- Refresh spawn list for restored mode; do not keep a remembered map.
+	if self.LoadMap then
+		self:LoadMap(false)
+	end
+end
+
+local function patch_new_game()
+	if STATE.patched then
+		return true
+	end
+	local cls = ui_mm_faction_select and ui_mm_faction_select.UINewGame
+	if not (cls and cls.Main_Controls and cls.OnStartGame) then
+		return false
+	end
+
+	local base_controls = cls.Main_Controls
+	local base_start = cls.OnStartGame
+
+	cls.Main_Controls = function(self, ...)
+		base_controls(self, ...)
+		restore_prefs(self)
+	end
+
+	cls.OnStartGame = function(self, ...)
+		-- Capture UI state before stock start (which may clear one-shot keys).
+		if self.access then
+			save_prefs(self)
+		end
+		return base_start(self, ...)
+	end
+
+	STATE.patched = true
+	return true
+end
+
+-- zzzz_ body loads after Soulslike injector so ck_soulslike_mode exists on restore.
+patch_new_game()
+
+function on_game_start()
+	patch_new_game()
+end

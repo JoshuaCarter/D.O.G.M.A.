@@ -1,0 +1,41 @@
+--[[
+	Stock Afterglow start dialogs need operation_afterglow_info_about_done.
+	Dynamic News only grants that on TickTask (minutes later, PDA charged).
+	Grant it as soon as Mortal Sin ends so faction leaders offer Afterglow immediately.
+]]
+
+local MS_DONE = "mortal_sin_zone_hero"
+local OA_READY = "operation_afterglow_info_about_done"
+
+local function try_unlock_afterglow()
+	if not db.actor then
+		return
+	end
+	if has_alife_info(OA_READY) or not has_alife_info(MS_DONE) then
+		return
+	end
+	if not (IsStoryMode() and IsStoryPlayer()) then
+		return
+	end
+
+	-- Same tip stock TickTask would send; unlock even if tip fails (no leader data).
+	local dn = get_dynamic_news and get_dynamic_news()
+	if dn and dn.GossipTaskOA then
+		dn:GossipTaskOA()
+	end
+	db.actor:give_info_portion(OA_READY)
+end
+
+local function on_info(_actor, info)
+	if info == MS_DONE then
+		try_unlock_afterglow()
+	end
+end
+
+function on_game_start()
+	RegisterScriptCallback("actor_on_info_callback", on_info)
+	-- Mid-wait saves: MS done, OA gate not yet granted.
+	RegisterScriptCallback("actor_on_first_update", function()
+		try_unlock_afterglow()
+	end)
+end

@@ -1,0 +1,128 @@
+--[[
+	SortingPlus favourites are per-save (rax_favorite_itms in .scoc).
+	Mirror section → favourite into axr_options so new games keep your list.
+	Requires SortingPlus (GAMMA default).
+]]
+
+local SECTION = "dogma_item_favourites"
+local STATE = _G.__dogma_items_favourites or {}
+_G.__dogma_items_favourites = STATE
+
+local function cfg()
+	return axr_main and axr_main.config
+end
+
+local function profile_set(sec, on)
+	local c = cfg()
+	if not (c and sec) then
+		return
+	end
+	c:w_value(SECTION, sec, on and "favorites" or nil)
+	c:save()
+end
+
+local function profile_list()
+	local c = cfg()
+	if not c then
+		return {}
+	end
+	local t = c:collect_section(SECTION) or {}
+	local out = {}
+	for sec, val in pairs(t) do
+		if val and val ~= "" then
+			out[sec] = true
+		end
+	end
+	return out
+end
+
+local function profile_replace(favs)
+	local c = cfg()
+	if not c then
+		return
+	end
+	local prev = c:collect_section(SECTION) or {}
+	for sec, _ in pairs(prev) do
+		c:w_value(SECTION, sec, nil)
+	end
+	if favs then
+		for sec, _ in pairs(favs) do
+			c:w_value(SECTION, sec, "favorites")
+		end
+	end
+	c:save()
+end
+
+local function apply_profile()
+	local base = STATE.base_fav
+	if not base then
+		return
+	end
+	for sec, _ in pairs(profile_list()) do
+		base(sec, true)
+	end
+end
+
+local function patch_sortingplus()
+	if STATE.patched then
+		return true
+	end
+	local sp = zzz_rax_sortingplus_mcm
+	if not (sp and sp.set_favorite and sp.set_junk) then
+		return false
+	end
+
+	local base_fav = sp.set_favorite
+	local base_junk = sp.set_junk
+	STATE.base_fav = base_fav
+
+	sp.set_favorite = function(sec, state)
+		base_fav(sec, state)
+		profile_set(sec, state and true or false)
+	end
+
+	sp.set_junk = function(sec, state)
+		base_junk(sec, state)
+		-- Junk and favourite are exclusive; junking must drop the profile mark.
+		if state then
+			profile_set(sec, false)
+		end
+	end
+
+	STATE.patched = true
+	return true
+end
+
+function on_game_start()
+	if not patch_sortingplus() then
+		printf("[dogma_items_favourites] SortingPlus API missing — favourites persistence skipped")
+		return
+	end
+
+	-- After SortingPlus load_state: migrate save favs into profile, then apply profile.
+	RegisterScriptCallback("load_state", function(mdata)
+		if mdata and mdata.rax_favorite_itms then
+			local merged = profile_list()
+			local dirty = false
+			for sec, _ in pairs(mdata.rax_favorite_itms) do
+				if not merged[sec] then
+					merged[sec] = true
+					dirty = true
+				end
+			end
+			if dirty then
+				profile_replace(merged)
+			end
+		end
+	end)
+
+	RegisterScriptCallback("save_state", function(mdata)
+		if mdata and mdata.rax_favorite_itms then
+			profile_replace(mdata.rax_favorite_itms)
+		end
+	end)
+
+	RegisterScriptCallback("actor_on_first_update", function()
+		apply_profile()
+	end)
+end

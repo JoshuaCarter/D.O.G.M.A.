@@ -7,9 +7,9 @@
 	- Sprint bind -> vanilla stand + sprint
 	- MCM walk key -> walk only (mcAccel without mcCrouch)
 
-	Uses game crouch/walk hold or toggle settings (g_crouch_toggle,
-	g_walk_toggle). Both must match; hold uses hold_action on key-hold ticks,
-	toggle uses one engine bind step per update. Mixed settings disable the mod.
+	MCM Hold/Toggle and crouch/prone/sprint keys mirror into Options→Controls
+	(g_*_toggle + bind crouch/accel/sprint_toggle). First load seeds Hold/Toggle
+	from g_crouch_toggle, then forces crouch/walk/sprint modes to match.
 
 	FDDA body search / Faster Skinning briefly flip g_crouch_toggle to pulse
 	crouch. We cache the player's real preference so that trick does not yank us
@@ -45,17 +45,36 @@ local LOG = {
 local CONFIG = {
 	enabled = D["enabled"],
 	walk_key = D["walk_key"],
+	crouch_key = nil,
+	prone_key = nil,
+	sprint_key = nil,
+	-- true = toggle, false = hold (after sync)
+	toggle_mode = false,
 	debug_log = true,
 	debug_overlay = false,
 }
 
 local applying_pose = false
 local pending_goal = nil
-local mixed_game_settings = false
-local mixed_warn_shown = false
--- Player preference from options / first update. Not the live console value —
+-- Player preference from MCM sync. Not the live console value —
 -- other mods temporarily flip g_crouch_toggle for scripted crouch pulses.
 local cached_crouch_toggle = false
+
+-- DIK -> console bind token (kLCONTROL / mouse1). Built once from DIK_keys.
+local dik_token = {}
+local dik_token_ready = false
+
+local ENGINE_BINDS = {
+	crouch = { action = "crouch", bind = function() return key_bindings.kCROUCH end, mcm = "crouch_key" },
+	prone = { action = "accel", bind = function() return key_bindings.kACCEL end, mcm = "prone_key" },
+	sprint = {
+		action = "sprint_toggle",
+		bind = function() return key_bindings.kSPRINT_TOGGLE or key_bindings.kSPRINT end,
+		mcm = "sprint_key",
+	},
+}
+
+local TOGGLE_CMDS = { "g_crouch_toggle", "g_walk_toggle", "g_sprint_toggle" }
 
 local function log(msg)
 	if not DOGMA.dbg then
@@ -94,7 +113,7 @@ local function use_hold_mode()
 end
 
 local function mod_active()
-	return CONFIG.enabled and not mixed_game_settings
+	return CONFIG.enabled
 end
 
 -- Let FDDA / skinning crouch pulses hit the engine instead of our key remap.
@@ -113,42 +132,119 @@ local function passthrough_scripted_pose_pulse()
 	return false
 end
 
-local function show_pda_tip(text)
-	if not (db.actor and db.actor:alive()) then
-		return
-	end
-	if news_manager and news_manager.send_tip then
-		news_manager.send_tip(db.actor, text, nil, nil, 15000)
-	elseif actor_menu and actor_menu.set_msg then
-		actor_menu.set_msg(1, text, 15)
+local function mcm_opt(key)
+	return MOD_ID .. "/" .. key
+end
+
+local function mcm_store(key, value)
+	if ui_mcm and ui_mcm.set then
+		ui_mcm.set(mcm_opt(key), value)
 	end
 end
 
-local function refresh_game_input_settings()
-	local was_mixed = mixed_game_settings
-	local crouch_toggle = get_console_cmd(1, "g_crouch_toggle") or false
-	local walk_toggle = get_console_cmd(1, "g_walk_toggle") or false
-	cached_crouch_toggle = crouch_toggle
-	mixed_game_settings = crouch_toggle ~= walk_toggle
-	if mixed_game_settings then
-		pending_goal = nil
-	else
-		mixed_warn_shown = false
+local function mcm_raw(key)
+	if not ui_mcm or not ui_mcm.get then
+		return nil
 	end
-	return was_mixed
+	return ui_mcm.get(mcm_opt(key))
 end
 
-local function maybe_warn_mixed_settings()
-	if not mixed_game_settings or mixed_warn_shown then
+local function ensure_dik_tokens()
+	if dik_token_ready then
 		return
 	end
-	if not (db.actor and db.actor:alive()) then
+	if not DIK_keys then
 		return
 	end
-	local text = game.translate_string("dogma_pose_controls_mixed_toggle_warning")
-	show_pda_tip(text)
-	log("disabled: mixed g_crouch_toggle / g_walk_toggle")
-	mixed_warn_shown = true
+	for name, code in pairs(DIK_keys) do
+		if type(name) == "string" and type(code) == "number" then
+			if string.sub(name, 1, 4) == "DIK_" then
+				dik_token[code] = "k" .. string.sub(name, 5)
+			elseif string.sub(name, 1, 6) == "MOUSE_" then
+				dik_token[code] = "mouse" .. string.sub(name, 7)
+			end
+		end
+	end
+	dik_token_ready = true
+	-- ponytail: O(n) DIK table scan once; assert pack matches console bind tokens
+	if DIK_keys.DIK_LCONTROL and dik_token[DIK_keys.DIK_LCONTROL] ~= "kLCONTROL" then
+		log("dik token pack failed for DIK_LCONTROL")
+	end
+end
+
+local function dik_to_bind_token(dik)
+	dik = tonumber(dik)
+	if not dik or dik < 0 then
+		return nil
+	end
+	ensure_dik_tokens()
+	return dik_token[dik]
+end
+
+local function engine_bind_dik(kb)
+	local bind = kb.bind()
+	if not bind then
+		return
+	end
+	local dik = bind_to_dik(bind)
+	if dik and dik ~= 0 then
+		return dik
+	end
+end
+
+local function set_engine_bind(action, dik)
+	local token = dik_to_bind_token(dik)
+	if not token then
+		log(string.format("bind skip %s: no token for dik=%s", action, tostring(dik)))
+		return false
+	end
+	exec_console_cmd(string.format("bind %s %s", action, token))
+	log(string.format("bind %s %s", action, token))
+	return true
+end
+
+local function set_engine_toggle(toggle_on)
+	local word = toggle_on and "1" or "0"
+	for _, cmd in ipairs(TOGGLE_CMDS) do
+		exec_console_cmd(cmd .. " " .. word)
+	end
+	log(string.format("toggle modes -> %s", word))
+end
+
+-- Seed MCM from engine when unset; always push MCM -> Controls so they match.
+local function sync_mirrored_controls()
+	local mode = mcm_raw("hold_toggle")
+	if mode == nil or tonumber(mode) == -1 then
+		local crouch_toggle = get_console_cmd(1, "g_crouch_toggle") or false
+		mode = crouch_toggle and 1 or 0
+		mcm_store("hold_toggle", mode)
+		log(string.format("seeded hold_toggle from g_crouch_toggle -> %s", tostring(mode)))
+	end
+	mode = tonumber(mode) or 0
+	if mode ~= 0 and mode ~= 1 then
+		mode = 0
+		mcm_store("hold_toggle", mode)
+	end
+	CONFIG.toggle_mode = (mode == 1)
+	cached_crouch_toggle = CONFIG.toggle_mode
+	set_engine_toggle(CONFIG.toggle_mode)
+
+	for _, kb in pairs(ENGINE_BINDS) do
+		local dik = DOGMA.mcm.key(MOD_ID, kb.mcm)
+		if not dik then
+			dik = engine_bind_dik(kb)
+			if dik then
+				mcm_store(kb.mcm, dik)
+				log(string.format("seeded %s from engine dik=%s", kb.mcm, tostring(dik)))
+			end
+		end
+		if dik then
+			set_engine_bind(kb.action, dik)
+			CONFIG[kb.mcm] = dik
+		else
+			CONFIG[kb.mcm] = nil
+		end
+	end
 end
 
 local function on_option_change()
@@ -157,9 +253,11 @@ local function on_option_change()
 	CONFIG.debug_log = DOGMA.dbg.logging()
 	CONFIG.debug_overlay = DOGMA.dbg.overlay_enabled()
 	DOGMA.dbg.set_enabled(MOD_ID, DOGMA.dbg.overlay_enabled())
-	local was_mixed = refresh_game_input_settings()
-	if mixed_game_settings and not was_mixed then
-		maybe_warn_mixed_settings()
+	-- Only push binds/toggles into the engine while Pose Controls is on.
+	-- on_option_change fires for every MCM page; syncing while disabled
+	-- would clobber Controls whenever any DOGMA option changes.
+	if CONFIG.enabled then
+		sync_mirrored_controls()
 	end
 end
 
@@ -401,11 +499,7 @@ local function on_before_key_release(key, bind, _dis, flags)
 end
 
 local function on_actor_on_first_update()
-	if not DOGMA.sys.ready(MOD_ID, db, on_option_change) then
-		return
-	end
-	refresh_game_input_settings()
-	maybe_warn_mixed_settings()
+	DOGMA.sys.ready(MOD_ID, db, on_option_change)
 end
 
 local function on_actor_on_update()

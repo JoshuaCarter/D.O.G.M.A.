@@ -1,0 +1,221 @@
+--[[
+	Scanner Keys
+
+	Three MCM binds force-equip Detector / Dosimeter / RF Receiver into the
+	detector slot. Search order: any equipped slot, then favourited bag items,
+	then other bag items.
+
+	Always-on slot rules (no toggles):
+	- Guns cannot stay in the knife/melee slot.
+	- Guns may use the detector slot (inventory drag + auto-fit).
+]]
+
+local CONF = _G.dogma_player_scanner_keys_conf
+local MOD_ID = CONF.MOD_ID
+local D = CONF.defaults
+local DOGMA
+
+local DET_SLOT = 9
+local MELEE_SLOT = 1
+local SLOT_MAX = 13
+
+local DET_CLASS = {
+	DET_SIMP = true,
+	DET_ADVA = true,
+	DET_ELIT = true,
+	DET_SCIE = true,
+}
+
+local CONFIG = {
+	key_detector = nil,
+	key_dosimeter = nil,
+	key_radio = nil,
+}
+
+local function geiger_sec()
+	return (item_device and item_device.device_geiger) or "detector_geiger"
+end
+
+local function radio_sec()
+	return "detector_radio"
+end
+
+local function is_artefact_detector(sec)
+	if not sec or sec == geiger_sec() or sec == radio_sec() then
+		return false
+	end
+	local cls = ini_sys and ini_sys:r_string_ex(sec, "class")
+	return cls and DET_CLASS[cls] == true
+end
+
+local function is_fav(sec)
+	local sp = zzz_rax_sortingplus_mcm
+	return sp and sp.is_favorite and sp.is_favorite(sec) or false
+end
+
+local function is_gun(obj)
+	return obj and IsWeapon(obj) and not IsMelee(obj)
+end
+
+local function can_use_keys()
+	local actor = db.actor
+	if not (actor and actor:alive()) then
+		return false
+	end
+	if actor_menu and actor_menu.inventory_opened and actor_menu.inventory_opened() then
+		return false
+	end
+	return true
+end
+
+local function find_match(match)
+	local actor = db.actor
+	if not actor then
+		return nil
+	end
+
+	for s = 1, SLOT_MAX do
+		local o = actor:item_in_slot(s)
+		if o and match(o:section()) then
+			return o
+		end
+	end
+
+	local fav, other
+	local function consider(_, it)
+		if fav or not it then
+			return
+		end
+		local sec = it:section()
+		if not match(sec) then
+			return
+		end
+		if is_fav(sec) then
+			fav = it
+		elseif not other then
+			other = it
+		end
+	end
+
+	if actor.iterate_ruck then
+		actor:iterate_ruck(consider)
+	else
+		actor:iterate_inventory(consider, nil)
+	end
+
+	return fav or other
+end
+
+local function force_equip(obj)
+	local actor = db.actor
+	if not (actor and obj) then
+		return
+	end
+
+	local cur = actor:item_in_slot(DET_SLOT)
+	if cur and cur:id() == obj:id() then
+		if not actor:active_detector() then
+			actor:show_detector()
+		end
+		return
+	end
+
+	-- Abrupt slot swaps while a detector HUD is up can glitch/crash; hide first.
+	if actor:active_detector() then
+		actor:force_hide_detector()
+	end
+	if cur then
+		actor:move_to_ruck(cur)
+	end
+	actor:move_to_slot(obj, DET_SLOT)
+	actor:show_detector()
+end
+
+local function on_option_change()
+	CONFIG.key_detector = DOGMA.mcm.key(MOD_ID, "key_detector", D["key_detector"])
+	CONFIG.key_dosimeter = DOGMA.mcm.key(MOD_ID, "key_dosimeter", D["key_dosimeter"])
+	CONFIG.key_radio = DOGMA.mcm.key(MOD_ID, "key_radio", D["key_radio"])
+end
+
+local function on_key_press(key)
+	if not DOGMA.sys.ready(MOD_ID, db, on_option_change) then
+		return
+	end
+	if not can_use_keys() then
+		return
+	end
+
+	local match
+	if CONFIG.key_detector and key == CONFIG.key_detector then
+		match = is_artefact_detector
+	elseif CONFIG.key_dosimeter and key == CONFIG.key_dosimeter then
+		match = function(sec)
+			return sec == geiger_sec()
+		end
+	elseif CONFIG.key_radio and key == CONFIG.key_radio then
+		match = function(sec)
+			return sec == radio_sec()
+		end
+	else
+		return
+	end
+
+	force_equip(find_match(match))
+end
+
+-- Guns: drop melee (1) as a destination; add detector (9).
+local function apply_slot_rules()
+	local gui = ui_inventory and ui_inventory.GUI
+	local sc = gui and gui.slot_cell
+	if not sc then
+		return
+	end
+
+	local function without(dest, bad)
+		local out = {}
+		for _, s in ipairs(dest or {}) do
+			if s ~= bad then
+				out[#out + 1] = s
+			end
+		end
+		return out
+	end
+
+	local function with_slot(dest, add)
+		for _, s in ipairs(dest) do
+			if s == add then
+				return dest
+			end
+		end
+		dest[#dest + 1] = add
+		return dest
+	end
+
+	sc[2] = with_slot(without(sc[2], MELEE_SLOT), DET_SLOT)
+	sc[3] = with_slot(without(sc[3], MELEE_SLOT), DET_SLOT)
+end
+
+local function on_gui_show(name)
+	if name == "UIInventory" then
+		apply_slot_rules()
+	end
+end
+
+local function on_item_to_slot(obj)
+	if not (db.actor and obj and is_gun(obj)) then
+		return
+	end
+	local melee = db.actor:item_in_slot(MELEE_SLOT)
+	if melee and melee:id() == obj:id() then
+		db.actor:move_to_ruck(obj)
+	end
+end
+
+function on_game_start()
+	DOGMA = dogma_common.load(MOD_ID)
+	on_option_change()
+	RegisterScriptCallback("on_option_change", on_option_change)
+	RegisterScriptCallback("on_key_press", on_key_press)
+	RegisterScriptCallback("GUI_on_show", on_gui_show)
+	RegisterScriptCallback("actor_item_to_slot", on_item_to_slot)
+end

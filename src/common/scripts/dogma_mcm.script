@@ -10,7 +10,7 @@
 ]]
 
 local BANNER_LINK = "dogma_mcm_banner"
-local BANNER_CAPTION = "Dorn's Own GAMMA Mods and Alterations"
+local BANNER_CAPTION = "Dorn's Own G.A.M.M.A. Modification Anthology"
 local BANNER_CAPTION_CLR = nil
 
 -- Shared Debug page path (dogma → debug). Features read keys from here.
@@ -78,7 +78,7 @@ function string(mod_id, key, default)
 end
 
 function key(mod_id, key, default)
-	local value = get(mod_id, key, default)
+	local value = tonumber(get(mod_id, key, default))
 	if value == nil or value == -1 then
 		return nil
 	end
@@ -149,7 +149,7 @@ local function pin_debug_last(dogma)
 		return
 	end
 	local dbg = table.remove(gr, idx)
-	table.insert(gr, dbg)
+	gr[#gr+1] = dbg
 end
 
 -- Merge a feature page under dogma/<category>. MCM does not deep-merge duplicate
@@ -168,7 +168,7 @@ function attach(options, cat_id, cat_text, page)
 	end
 	if not dogma then
 		dogma = { id = "dogma", text = "ui_mcm_menu_dogma", gr = {} }
-		table.insert(options, dogma)
+		options[#options+1] = dogma
 	end
 	local cat
 	for i = 1, #(dogma.gr or {}) do
@@ -179,9 +179,9 @@ function attach(options, cat_id, cat_text, page)
 	end
 	if not cat then
 		cat = { id = cat_id, text = cat_text, gr = {} }
-		table.insert(dogma.gr, cat)
+		dogma.gr[#dogma.gr+1] = cat
 	end
-	table.insert(cat.gr, page)
+	cat.gr[#cat.gr+1] = page
 	pin_debug_last(dogma)
 end
 
@@ -210,6 +210,11 @@ function on_mcm_load(options)
 		sh = true,
 		text = "ui_mcm_menu_dogma_debug",
 		gr = with_header({
+			{
+				id = "page_description",
+				type = "desc",
+				text = "ui_mcm_dogma_debug_page_description",
+			},
 			{
 				id = "debug_log",
 				type = "check",
@@ -319,7 +324,7 @@ function on_mcm_load(options)
 		end
 		if not dogma then
 			dogma = { id = "dogma", text = "ui_mcm_menu_dogma", gr = {} }
-			table.insert(options, dogma)
+			options[#options+1] = dogma
 		end
 		local replaced
 		for i = 1, #(dogma.gr or {}) do
@@ -330,7 +335,7 @@ function on_mcm_load(options)
 			end
 		end
 		if not replaced then
-			table.insert(dogma.gr, page)
+			dogma.gr[#dogma.gr+1] = page
 		end
 		pin_debug_last(dogma)
 		return

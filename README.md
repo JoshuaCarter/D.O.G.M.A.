@@ -2,8 +2,7 @@
 
 **Dorn's Own G.A.M.M.A. Modification Anthology**
 
-This is a mod pack collection of my mods and tweaks. You can opt-in or out of most things at install-time.
-
+This is a mod pack collection of my mods and tweaks (many heavily inspired by the great work of others). You can opt-in or out of most things at install-time.
 
 ## Why do it this way?
 
@@ -13,7 +12,7 @@ I got sick of managing a dozen mods, and I knew it would be 2 dozen in no time. 
 
 I'm not trying to overhaul G.A.M.M.A., and I'm not trying to make it easier or harder. I'm trying to stay *true* to the vision of G.A.M.M.A., while also improving things I think could be better, fixing things that annoy me, reducing tedium, etc.
 
-For example
+For example:
 
 - I think it's stupid that crafting x15 AP ammo takes x30 casings, so I changed it to x15, but I also doubled the powder requirement so that it's not strictly easier to craft.
 - I added real prone, but I made it so you take extra damage when prone.
@@ -22,6 +21,10 @@ For example
 ## Suggestions
 
 Welcome, but if it doesn't appeal to me, it's probably not happening. In particular, I intentionally don't expose many options that I could expose, because they would make things easier in a way I don't like - or tempt me to make things easier, and removing that temptation for me is something I value. So be ready to hear "no".
+
+## Support
+
+My time is very limited (job/wife/kids/etc). Include your xray log unless confident it's not relevant. And sorry but I probably wont care about conflicts/issues with other mods unless I use them myself.
 
 ## Can I copy your homework?
 

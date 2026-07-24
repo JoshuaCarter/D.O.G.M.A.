@@ -21,7 +21,7 @@ local function apply()
 	if not ORIG then
 		ORIG = ast.test_blur
 	end
-	if not DOGMA.mcm.bool(MOD_ID, "enabled") then
+	if not DOGMA or not DOGMA.mcm.bool(MOD_ID, "enabled") then
 		ast.test_blur = ORIG
 		return
 	end

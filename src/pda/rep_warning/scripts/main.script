@@ -1,0 +1,104 @@
+--[[
+	Rep Warning - red PDA taskboard title when a bounty target isn't your enemy.
+
+	Needs PDA Taskboard (update_task_entry). Reads axr_task_manager.bounties_by_id
+	after on_job_descr / setup_bounty_task has run.
+]]
+
+local CONF = _G.dogma_pda_rep_warning_conf
+local MOD_ID = CONF.MOD_ID
+local DOGMA
+
+local function bounty_target_id(task_id)
+	local id = axr_task_manager and axr_task_manager.bounties_by_id and axr_task_manager.bounties_by_id[task_id]
+	if id then
+		return id
+	end
+	if not (db.actor and load_var) then
+		return nil
+	end
+	local tbl = load_var(db.actor, task_id)
+	return type(tbl) == "table" and tbl.target_id or nil
+end
+
+local function target_not_enemy(target_id)
+	local se = alife_object(target_id)
+	if not se then
+		return false
+	end
+	local gid = se.group_id
+	if gid and gid ~= 65535 and game_relations and game_relations.get_squad_goodwill_to_actor_by_id then
+		local rel = game_relations.get_squad_goodwill_to_actor_by_id(gid)
+		if rel then
+			return rel ~= "enemy"
+		end
+	end
+	local tcomm = alife_character_community(se)
+	local acomm = db.actor and character_community(db.actor)
+	if not (tcomm and acomm and game_relations and game_relations.is_factions_enemies) then
+		return false
+	end
+	return not game_relations.is_factions_enemies(acomm, tcomm)
+end
+
+local function paint_title_red(pda_tab, i, task_details)
+	if not (DOGMA and DOGMA.mcm.bool(MOD_ID, "enabled")) then
+		return
+	end
+	if not (task_details and task_details.task_id) then
+		return
+	end
+	local tid = bounty_target_id(task_details.task_id)
+	if not tid or not target_not_enemy(tid) then
+		return
+	end
+
+	local row = pda_tab and pda_tab.rows and pda_tab.rows[i]
+	if not (row and row.task_details_field) then
+		return
+	end
+
+	local red = utils_xml.get_color("red")
+	local white = utils_xml.get_color("white")
+	-- Serious QoL: global get_more_task_details(i, task_id). iTheon: (i) only.
+	local get_more = rawget(_G, "get_more_task_details")
+		or (ui_pda_taskboard_tab and ui_pda_taskboard_tab.get_more_task_details)
+	if get_more then
+		local more = get_more(i, task_details.task_id) or {}
+		if more.faulty then
+			return
+		end
+		local title = more.task_title or ""
+		local body = string.gsub(more.task_details or "", "\\n ", "\\n")
+		row.task_details_field:SetText(red .. title .. "\\n" .. white .. body)
+		return
+	end
+
+	local text = row.task_details_field:GetText()
+	if text and text ~= "" and string.find(text, red, 1, true) ~= 1 then
+		row.task_details_field:SetText(red .. text)
+	end
+end
+
+local function patch_taskboard()
+	if not (ui_pda_taskboard_tab and ui_pda_taskboard_tab.update_task_entry) then
+		return
+	end
+	if ui_pda_taskboard_tab.__dogma_rep_warning then
+		return
+	end
+
+	local orig = ui_pda_taskboard_tab.update_task_entry
+	ui_pda_taskboard_tab.update_task_entry = function(pda_tab, i, task_details)
+		orig(pda_tab, i, task_details)
+		paint_title_red(pda_tab, i, task_details)
+	end
+	ui_pda_taskboard_tab.__dogma_rep_warning = true
+end
+
+function on_game_start()
+	DOGMA = dogma_common.load(MOD_ID)
+	-- After PDA Taskboard / Tasks QoL (same zzzz_ band; name sorts after ui_pda_*).
+	patch_taskboard()
+	RegisterScriptCallback("on_game_load", patch_taskboard)
+end

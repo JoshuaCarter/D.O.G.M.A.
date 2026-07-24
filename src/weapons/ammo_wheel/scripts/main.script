@@ -22,7 +22,7 @@ local function patch()
 	local orig = cls.Reset
 	function cls:Reset(obj)
 		orig(self, obj)
-		if not DOGMA.mcm.bool(MOD_ID, "enabled") then
+		if not (DOGMA and DOGMA.mcm.bool(MOD_ID, "enabled")) then
 			return
 		end
 		if self.grenade_mode or not self.ammo_list then

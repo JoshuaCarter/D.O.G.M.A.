@@ -89,8 +89,11 @@ local function do_crouch(flags, crouch)
 		if not flags.dogma_prev_crouch_toggle then
 			exec_console_cmd("g_crouch_toggle 1")
 		end
-		level.press_action(bind_to_dik(key_bindings.kCROUCH))
-		level.release_action(bind_to_dik(key_bindings.kCROUCH))
+		local dik = bind_to_dik(key_bindings.kCROUCH)
+		if dik and dik ~= 0 then
+			level.press_action(dik)
+			level.release_action(dik)
+		end
 		log("mutant_skin: auto-crouch applied")
 		return
 	end
@@ -99,8 +102,11 @@ local function do_crouch(flags, crouch)
 		return
 	end
 	if flags.dogma_skin_was_crouching ~= IsMoveState("mcCrouch") then
-		level.press_action(bind_to_dik(key_bindings.kCROUCH))
-		level.release_action(bind_to_dik(key_bindings.kCROUCH))
+		local dik = bind_to_dik(key_bindings.kCROUCH)
+		if dik and dik ~= 0 then
+			level.press_action(dik)
+			level.release_action(dik)
+		end
 		log("mutant_skin: auto-crouch restored")
 	end
 	if flags.dogma_prev_crouch_toggle ~= nil then
@@ -121,7 +127,12 @@ local function do_look_at(action, look)
 		if not (target and db.actor) then
 			return
 		end
-		local mp = target:bone_position(LOOK_AT_BONE)
+		local ok, mp = pcall(function()
+			return target:bone_position(LOOK_AT_BONE)
+		end)
+		if not (ok and mp and mp.y) then
+			return
+		end
 		mp.y = mp.y + CONFIG.look_at_offset
 		db.actor:actor_look_at_point(mp)
 		return

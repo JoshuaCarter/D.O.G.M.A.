@@ -1,5 +1,79 @@
+-- Pose Controls MCM
+-- Crouch / prone / sprint keybinds and Hold/Toggle live-read/write Options→Controls
+-- (curr + functor). Walk key is MCM-only.
+
+local CONF = _G.dogma_player_pose_controls_conf
+
+local dik_token = {}
+local dik_token_ready = false
+
+local function ensure_dik_tokens()
+	if dik_token_ready or not DIK_keys then
+		return
+	end
+	for name, code in pairs(DIK_keys) do
+		if type(name) == "string" and type(code) == "number" then
+			if string.sub(name, 1, 4) == "DIK_" then
+				dik_token[code] = "k" .. string.sub(name, 5)
+			elseif string.sub(name, 1, 6) == "MOUSE_" then
+				dik_token[code] = "mouse" .. string.sub(name, 7)
+			end
+		end
+	end
+	dik_token_ready = true
+end
+
+local function engine_dik(bind)
+	if not bind then
+		return -1
+	end
+	local dik = bind_to_dik(bind)
+	if dik and dik ~= 0 then
+		return dik
+	end
+	return -1
+end
+
+local function bind_action(action)
+	return function(dik)
+		dik = tonumber(dik)
+		if not dik or dik < 0 then
+			return
+		end
+		ensure_dik_tokens()
+		local token = dik_token[dik]
+		if not token then
+			return
+		end
+		exec_console_cmd(string.format("bind %s %s", action, token))
+	end
+end
+
+local function curr_crouch()
+	return engine_dik(key_bindings and key_bindings.kCROUCH)
+end
+
+local function curr_prone()
+	return engine_dik(key_bindings and key_bindings.kACCEL)
+end
+
+local function curr_sprint()
+	local bind = key_bindings and (key_bindings.kSPRINT_TOGGLE or key_bindings.kSPRINT)
+	return engine_dik(bind)
+end
+
+local function curr_hold_toggle()
+	return (get_console_cmd(1, "g_crouch_toggle") and 1) or 0
+end
+
+local function set_hold_toggle(mode)
+	local word = (tonumber(mode) == 1) and "1" or "0"
+	exec_console_cmd("g_crouch_toggle " .. word)
+	exec_console_cmd("g_walk_toggle " .. word)
+	exec_console_cmd("g_sprint_toggle " .. word)
+end
+
 function on_mcm_load(options)
-	local CONF = _G.dogma_player_pose_controls_conf
 	local D = CONF.defaults
 	local kb_mod = (ui_mcm and ui_mcm.kb_mod_radio) or "radio_h"
 	dogma_mcm.attach(options, "player", "ui_mcm_menu_dogma_player", {
@@ -23,7 +97,9 @@ function on_mcm_load(options)
 				id = "hold_toggle",
 				type = kb_mod,
 				val = 2,
-				def = D["hold_toggle"],
+				def = 0,
+				curr = { curr_hold_toggle },
+				functor = { set_hold_toggle },
 				hint = "dogma_pose_controls_hold_toggle",
 				content = {
 					{ 0, "hold" },
@@ -37,24 +113,12 @@ function on_mcm_load(options)
 				text = "ui_mcm_dogma_pose_controls_keys_desc",
 			},
 			{
-				id = "crouch_key",
-				type = "key_bind",
-				val = 2,
-				def = D["crouch_key"],
-				hint = "dogma_pose_controls_crouch_key",
-			},
-			{
-				id = "prone_key",
-				type = "key_bind",
-				val = 2,
-				def = D["prone_key"],
-				hint = "dogma_pose_controls_prone_key",
-			},
-			{
 				id = "sprint_key",
 				type = "key_bind",
 				val = 2,
-				def = D["sprint_key"],
+				def = -1,
+				curr = { curr_sprint },
+				functor = { bind_action("sprint_toggle") },
 				hint = "dogma_pose_controls_sprint_key",
 			},
 			{
@@ -63,6 +127,24 @@ function on_mcm_load(options)
 				val = 2,
 				def = D["walk_key"],
 				hint = "dogma_pose_controls_walk_key",
+			},
+			{
+				id = "crouch_key",
+				type = "key_bind",
+				val = 2,
+				def = -1,
+				curr = { curr_crouch },
+				functor = { bind_action("crouch") },
+				hint = "dogma_pose_controls_crouch_key",
+			},
+			{
+				id = "prone_key",
+				type = "key_bind",
+				val = 2,
+				def = -1,
+				curr = { curr_prone },
+				functor = { bind_action("accel") },
+				hint = "dogma_pose_controls_prone_key",
 			},
 		}),
 	})

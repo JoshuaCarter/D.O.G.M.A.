@@ -95,7 +95,8 @@ local function on_before_key_press(key, bind)
 	ready_id = nil
 
 	if bind == key_bindings.kWPN_ZOOM then
-		if get_console():get_bool("wpn_aim_toggle") then
+		local c = get_console and get_console()
+		if c and c.get_bool and c:get_bool("wpn_aim_toggle") then
 			level.press_action(key)
 		else
 			level.hold_action(key)

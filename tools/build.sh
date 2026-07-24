@@ -22,9 +22,9 @@
 #
 # Env:
 #   DOGMA_ONLY=spec    what to build:
-#                        (empty|all)  → common + every feature
+#                        (empty|all)  → common + features with manifest.ini >= 1
 #                        common       → common only
-#                        cat/feat     → that feature only (e.g. zoom/free_zoom)
+#                        cat/feat     → that feature only (e.g. zoom/free_zoom; ignores manifest)
 #   DOGMA_DEPLOY=path  local MO2 mod folder: write gamedata straight there (one hop),
 #                      plus meta.ini + .mod_id. Skips files whose mtime is current.
 #   DOGMA_OUT=path     override output gamedata (default: build/gamedata; disables
@@ -38,6 +38,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SRC="$ROOT/src"
 ONLY="${DOGMA_ONLY:-all}"
+
+# shellcheck source=manifest_lib.sh
+source "$ROOT/tools/manifest_lib.sh"
 
 # Local MO2 deploy: one write path. Otherwise default build/gamedata (packaging).
 if [[ -n "${DOGMA_DEPLOY:-}" && ( "$ONLY" == "all" || "$ONLY" == "" ) && -z "${DOGMA_OUT:-}" ]]; then
@@ -233,7 +236,14 @@ src_in_scope() {
 	local rel="${1#"$SRC"/}"
 	rel="${rel//\\/\/}"
 	case "$ONLY" in
-		all | "") return 0 ;;
+		all | "")
+			[[ "$rel" == common/* ]] && return 0
+			local f
+			for f in "${FEATURES[@]}"; do
+				[[ "$rel" == "$f"/* || "$rel" == "$f" ]] && return 0
+			done
+			return 1
+			;;
 		common)
 			[[ "$rel" == common/* ]]
 			;;
@@ -256,6 +266,11 @@ case "$ONLY" in
 		exit 1
 		;;
 esac
+
+if [[ "$ONLY" == "all" || "$ONLY" == "" ]]; then
+	dogma_load_manifest 1 || exit 1
+	echo "build: manifest.ini local (${#FEATURES[@]} features)"
+fi
 
 if [[ "$ONLY" == */* && ! -d "$SRC/$ONLY" ]]; then
 	echo "build: DOGMA_ONLY=$ONLY not found at $SRC/$ONLY" >&2

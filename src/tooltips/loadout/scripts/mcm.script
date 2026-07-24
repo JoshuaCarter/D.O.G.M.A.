@@ -3,8 +3,9 @@
 	G.A.M.M.A. Accurate Defense Values only swaps stats_table in on_game_start —
 	too late for the main-menu loadout screen, which still shows Anomaly bars.
 
-	Also routes section-only descriptions through build_desc_header + footer so
-	they match inventory tooltips (cost mods, etc.).
+	Also routes section-only descriptions through build_desc_footer so they
+	match inventory tooltips (cost mods, etc.). Header needs a live obj and
+	must not be called from get_sec_desc (section-only / New Game loadout).
 ]]
 
 local STATE = _G.__dogma_tooltips_loadout or {}
@@ -22,15 +23,13 @@ local function apply_gamma_loadout_tooltips()
 	end
 
 	if not STATE.desc_ok and ui_item and ui_item.build_desc_footer then
+		-- Same shape as stock ui_item.get_sec_desc: footer only (header needs obj).
 		ui_item.get_sec_desc = function(sec)
 			if not sec then
 				return ""
 			end
 			local raw = ini_sys:r_string_ex(sec, "description")
 			local str = (raw and game.translate_string(raw)) or ""
-			if ui_item.build_desc_header then
-				str = ui_item.build_desc_header(nil, sec, str)
-			end
 			return ui_item.build_desc_footer(nil, sec, str)
 		end
 		STATE.desc_ok = true

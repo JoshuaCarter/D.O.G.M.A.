@@ -25,6 +25,9 @@ function on_game_start()
 	RegisterScriptCallback("actor_on_first_update",actor_on_first_update)
 end
 local function update_speeds()
+    if not (db and db.actor) then
+        return
+    end
     if not_first_update then
         actor_on_first_update()
     end

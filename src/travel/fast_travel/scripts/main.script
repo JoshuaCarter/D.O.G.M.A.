@@ -29,8 +29,8 @@ local function load_config()
     if not mcm then
         return
     end
-    dft_config.debug_overlay = DOGMA.dbg.overlay_enabled()
-    dft_config.debug_log = DOGMA.dbg.logging()
+    dft_config.debug_overlay = (dogma.dbg and dogma.dbg.overlay_enabled and dogma.dbg.overlay_enabled()) or false
+    dft_config.debug_log = (dogma.dbg and dogma.dbg.logging and dogma.dbg.logging()) or false
     dft_config.path_preview = mcm.bool("dogma/debug", "ft_path_preview")
     dft_config.block_transition_in_combat = mcm.bool(MOD_ID, "block_transition_in_combat")
     dft_config.show_ambush_range = mcm.bool(MOD_ID, "show_ambush_range")

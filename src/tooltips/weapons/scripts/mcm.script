@@ -1,3 +1,61 @@
+-- Vanilla GAMMA rows: dark-grey MCM captions (DOGMA rows stay default).
+-- MCM only honors clr on title/desc; checks need a hook. CacheValue also resets
+-- captions to stock grey/orange on toggle, so re-paint in on_selection too.
+local VANILLA_CAP = {}
+local CLR_VANILLA = GetARGB(255, 80, 80, 80) -- same as color_scale_from darkgrey
+local CLR_PENDING = GetARGB(255, 250, 150, 75) -- MCM pending (clr_o)
+
+local function paint_vanilla_cap(opt, pending)
+	local cap = VANILLA_CAP[opt]
+	if not cap then
+		return
+	end
+	local tc = cap.TextControl and cap:TextControl()
+	if not tc then
+		return
+	end
+	tc:SetTextColor(pending and CLR_PENDING or CLR_VANILLA)
+end
+
+local function vanilla_ui_hook(_anchor, handlers, attrs, flags)
+	if not (flags and flags.etype == "check" and handlers and handlers.cap and attrs) then
+		return
+	end
+	local opt = attrs.id
+	VANILLA_CAP[opt] = handlers.cap
+	local pending = false
+	if handlers.ctrl and handlers.ctrl.GetCheck and flags.path and ui_mcm then
+		local shown = handlers.ctrl:GetCheck()
+		local saved = ui_mcm.get(tostring(flags.path) .. "/" .. tostring(opt))
+		pending = (shown and true or false) ~= (saved and true or false)
+	end
+	paint_vanilla_cap(opt, pending)
+end
+
+local function vanilla_on_select(path, opt, value, _attrs)
+	local saved = ui_mcm and ui_mcm.get(tostring(path) .. "/" .. tostring(opt))
+	local pending = (value and true or false) ~= (saved and true or false)
+	paint_vanilla_cap(opt, pending)
+end
+
+local function vanilla_check(id, def, hint)
+	return {
+		id = id,
+		type = "check",
+		val = 1,
+		def = def,
+		hint = hint,
+		ui_hook_functor = { vanilla_ui_hook },
+		on_selection_functor = { vanilla_on_select },
+	}
+end
+
+-- After Reset pending, MCM paints stock grey; re-apply dark grey.
+RegisterScriptCallback("mcm_option_reset", function()
+	for opt, _ in pairs(VANILLA_CAP) do
+		paint_vanilla_cap(opt, false)
+	end
+end)
 function on_mcm_load(options)
 	local CONF = _G.dogma_tooltips_weapons_conf
 	local D = CONF.defaults
@@ -304,13 +362,7 @@ dogma_mcm.attach(options, "tooltips", "ui_mcm_menu_dogma_tooltips", {
 						def = D["show_mutant_damage"],
 						hint = "dogma_weapon_tooltip_show_mutant_damage",
 					},
-					{
-						id = "show_accuracy",
-						type = "check",
-						val = 1,
-						def = D["show_accuracy"],
-						hint = "dogma_weapon_tooltip_show_accuracy",
-					},
+					vanilla_check("show_accuracy", D["show_accuracy"], "dogma_weapon_tooltip_show_accuracy"),
 					{
 						id = "show_spread",
 						type = "check",
@@ -325,34 +377,10 @@ dogma_mcm.attach(options, "tooltips", "ui_mcm_menu_dogma_tooltips", {
 						def = D["show_dispersion"],
 						hint = "dogma_weapon_tooltip_show_dispersion",
 					},
-					{
-						id = "show_handling",
-						type = "check",
-						val = 1,
-						def = D["show_handling"],
-						hint = "dogma_weapon_tooltip_show_handling",
-					},
-					{
-						id = "show_fire_rate",
-						type = "check",
-						val = 1,
-						def = D["show_fire_rate"],
-						hint = "dogma_weapon_tooltip_show_fire_rate",
-					},
-					{
-						id = "show_mag_size",
-						type = "check",
-						val = 1,
-						def = D["show_mag_size"],
-						hint = "dogma_weapon_tooltip_show_mag_size",
-					},
-					{
-						id = "show_muzzle_velocity",
-						type = "check",
-						val = 1,
-						def = D["show_muzzle_velocity"],
-						hint = "dogma_weapon_tooltip_show_muzzle_velocity",
-					},
+					vanilla_check("show_handling", D["show_handling"], "dogma_weapon_tooltip_show_handling"),
+					vanilla_check("show_fire_rate", D["show_fire_rate"], "dogma_weapon_tooltip_show_fire_rate"),
+					vanilla_check("show_mag_size", D["show_mag_size"], "dogma_weapon_tooltip_show_mag_size"),
+					vanilla_check("show_muzzle_velocity", D["show_muzzle_velocity"], "dogma_weapon_tooltip_show_muzzle_velocity"),
 					{
 						id = "show_bullet_drop",
 						type = "check",
@@ -360,13 +388,7 @@ dogma_mcm.attach(options, "tooltips", "ui_mcm_menu_dogma_tooltips", {
 						def = D["show_bullet_drop"],
 						hint = "dogma_weapon_tooltip_show_bullet_drop",
 					},
-					{
-						id = "show_reliability",
-						type = "check",
-						val = 1,
-						def = D["show_reliability"],
-						hint = "dogma_weapon_tooltip_show_reliability",
-					},
+					vanilla_check("show_reliability", D["show_reliability"], "dogma_weapon_tooltip_show_reliability"),
 					{
 						id = "show_barrel_wear",
 						type = "check",
@@ -374,13 +396,7 @@ dogma_mcm.attach(options, "tooltips", "ui_mcm_menu_dogma_tooltips", {
 						def = D["show_barrel_wear"],
 						hint = "dogma_weapon_tooltip_show_barrel_wear",
 					},
-					{
-						id = "show_recoil",
-						type = "check",
-						val = 1,
-						def = D["show_recoil"],
-						hint = "dogma_weapon_tooltip_show_recoil",
-					},
+					vanilla_check("show_recoil", D["show_recoil"], "dogma_weapon_tooltip_show_recoil"),
 					{
 						id = "show_burst_control",
 						type = "check",

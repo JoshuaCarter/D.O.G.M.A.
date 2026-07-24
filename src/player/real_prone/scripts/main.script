@@ -39,11 +39,24 @@ local CONFIG = {
 
 local is_prone = nil
 local set_prone_bones_visible
-local blend_move_anims = get_console():get_bool("blend_move_anims") or false
+-- Lazy: get_console() can be nil while scripts load.
+local blend_move_anims = false
+
+local function console_bool(key)
+	local c = get_console and get_console()
+	return c and c.get_bool and c:get_bool(key) or false
+end
+
+local function console_exec(cmd)
+	local c = get_console and get_console()
+	if c and c.execute then
+		c:execute(cmd)
+	end
+end
 
 -- HUD-only: for values that change every frame (height/posture/crouch/slow/motion).
 local function overlay(log_type, msg)
-	if not DOGMA.dbg then
+	if not (DOGMA and DOGMA.dbg) then
 		return
 	end
 	if CONFIG.debug_overlay then
@@ -54,7 +67,7 @@ end
 
 -- File-only: for one-off/lifecycle and state-transition events worth keeping in the log.
 local function log(msg)
-	if not DOGMA.dbg then
+	if not (DOGMA and DOGMA.dbg) then
 		return
 	end
 	if CONFIG.debug_log then
@@ -69,6 +82,7 @@ local function on_option_change()
 	CONFIG.debug_overlay = DOGMA.dbg.overlay_enabled()
 	CONFIG.hide_prone_bones = DOGMA.mcm.bool(MOD_ID, "hide_prone_bones")
 	CONFIG.prone_damage_mult = DOGMA.mcm.number(MOD_ID, "prone_damage_mult")
+	blend_move_anims = console_bool("blend_move_anims")
 	DOGMA.dbg.set_enabled(MOD_ID, DOGMA.dbg.overlay_enabled())
 
 	local actor = DOGMA.sys.ready(MOD_ID, db)
@@ -76,7 +90,7 @@ local function on_option_change()
 		if not CONFIG.enabled then
 			set_prone_bones_visible(actor, true)
 			if is_prone and blend_move_anims then
-				get_console():execute("blend_move_anims on")
+				console_exec("blend_move_anims on")
 			end
 			is_prone = false
 		elseif CONFIG.hide_prone_bones then
@@ -139,7 +153,7 @@ local function on_actor_on_update()
 			log("state: died, restore bones")
 			is_prone = false
 			if blend_move_anims then
-				get_console():execute("blend_move_anims on")
+				console_exec("blend_move_anims on")
 			end
 		end
 		return
@@ -194,12 +208,12 @@ local function on_actor_on_update()
 		if is_prone then
 			log("state: start prone")
 			if blend_move_anims then
-				get_console():execute("blend_move_anims off")
+				console_exec("blend_move_anims off")
 			end
 		else
 			log("state: start not prone")
 			if blend_move_anims then
-				get_console():execute("blend_move_anims on")
+				console_exec("blend_move_anims on")
 			end
 		end
 	end
@@ -220,7 +234,7 @@ local function on_actor_on_update()
 
 			-- disable 1st person player blend_move_anims
 			if blend_move_anims then
-				get_console():execute("blend_move_anims off")
+				console_exec("blend_move_anims off")
 			end
 		end
 	-- leave prone
@@ -246,7 +260,7 @@ local function on_actor_on_update()
 
 		-- enable 1st person player blend_move_anims
 		if blend_move_anims then
-			get_console():execute("blend_move_anims on")
+			console_exec("blend_move_anims on")
 		end
 	end
 end
@@ -272,6 +286,7 @@ end
 
 function on_game_start()
 	DOGMA = dogma_common.load(MOD_ID)
+	blend_move_anims = console_bool("blend_move_anims")
 
 	is_prone = nil
 	RegisterScriptCallback("actor_on_update", on_actor_on_update)

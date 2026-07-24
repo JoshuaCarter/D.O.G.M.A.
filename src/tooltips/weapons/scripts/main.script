@@ -2093,8 +2093,11 @@ end
 -- ends flush with the last visible data row. Armor column start/step/gap come
 -- from col_hdr_2 so packing keeps the authored spacing.
 local function read_layout_metrics(fields)
-	local row1 = fields.rows[1].base
-	local row2 = fields.rows[2].base
+	local row1 = fields.rows[1] and fields.rows[1].base
+	local row2 = fields.rows[2] and fields.rows[2].base
+	if not (row1 and row2) then
+		return nil
+	end
 
 	local data_top_y = row1:GetWndPos().y
 	local row_step = row2:GetWndPos().y - data_top_y
@@ -2267,6 +2270,10 @@ local function create_damage_fields(parent, panel_x)
 
 	local header = DAMAGE_XML:InitStatic("panel:header", dlg)
 	local col_hdr_2 = DAMAGE_XML:InitStatic("panel:col_hdr_2", dlg)
+	if not (header and col_hdr_2) then
+		log_once("panel_hdr_fail", "create_damage_fields: header/col_hdr_2 init failed")
+		return nil, nil
+	end
 
 	local title = DAMAGE_XML:InitTextWnd("panel:header:title", header)
 	local grp_torso = DAMAGE_XML:InitTextWnd("panel:header:grp_torso", header)
@@ -2296,11 +2303,19 @@ local function create_damage_fields(parent, panel_x)
 
 	for i, row_path in ipairs(ROW_XML) do
 		local row = init_row_fields(DAMAGE_XML, dlg, row_path)
+		if not row.base then
+			log_once("panel_row_fail", "create_damage_fields: row init failed: " .. tostring(row_path))
+			return nil, nil
+		end
 		row.base:Show(false)
 		fields.rows[i] = row
 	end
 
 	fields.layout = read_layout_metrics(fields)
+	if not fields.layout then
+		log_once("panel_layout_fail", "create_damage_fields: layout metrics missing")
+		return nil, nil
+	end
 	apply_column_headers(fields)
 	apply_armor_column_layout(fields)
 
@@ -2724,6 +2739,10 @@ local function ensure_stat_slots(info)
 	for i = n + 1, STAT_SLOT_TARGET do
 		local slot = {}
 		slot.base = STAT_XML:InitStatic("item_info:stats_box", info.stats_dialog)
+		if not slot.base then
+			log_once("stat_slot_fail", "ensure_stat_slots: InitStatic failed at " .. tostring(i))
+			return
+		end
 		slot.icon = STAT_XML:InitStatic("item_info:stats_box:icon", slot.base)
 		slot.cap = STAT_XML:InitTextWnd("item_info:stats_box:cap", slot.base)
 		slot.bar2 = STAT_XML:InitProgressBar("item_info:stats_box:prog_bar", slot.base)
@@ -2974,9 +2993,16 @@ function on_game_start()
 		local all_h = { true, true, true, true, true }
 		local none_t = { false, false, false, false, false, false, false, false, false }
 		local _, _, _, _, _, head_x = pack_armor_columns(all_t, all_h, 58, 18, 10)
-		assert(head_x == 230, "armor pack: full head start")
+		if head_x ~= 230 then
+			log_once("pack_full", "armor pack: full head start expected 230 got " .. tostring(head_x))
+		end
 		local _, _, any_t, any_h, _, head_only_x = pack_armor_columns(none_t, all_h, 58, 18, 10)
-		assert((not any_t) and any_h and head_only_x == 58, "armor pack: head-only start")
+		if not ((not any_t) and any_h and head_only_x == 58) then
+			log_once("pack_head", string.format(
+				"armor pack: head-only expected start 58 got any_t=%s any_h=%s x=%s",
+				tostring(any_t), tostring(any_h), tostring(head_only_x)
+			))
+		end
 	end
 
 	on_option_change()

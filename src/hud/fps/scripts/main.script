@@ -42,8 +42,8 @@ local ANCHOR = {
 }
 
 local FONTS = {
-	[0] = assert(GetFontLetterica18Russian()),
-	[1] = assert(GetFontLetterica25()),
+	[0] = (GetFontLetterica18Russian and GetFontLetterica18Russian()) or nil,
+	[1] = (GetFontLetterica25 and GetFontLetterica25()) or nil,
 }
 
 local CONFIG = {
@@ -830,7 +830,10 @@ function ui_dogma_fps:ApplyConfig(cfg)
 	local font_idx = display_font_idx(mode)
 	local anchor = cfg.pos_anchor or ANCHOR.TOP_LEFT
 	for _, text_wnd in ipairs(self.text_wnds) do
-		text_wnd:SetFont(FONTS[font_idx])
+		local font = FONTS[font_idx] or FONTS[0]
+		if font then
+			text_wnd:SetFont(font)
+		end
 	end
 
 	self:SetDisplayMode(mode)

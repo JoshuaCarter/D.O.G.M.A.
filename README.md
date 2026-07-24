@@ -26,6 +26,10 @@ Welcome, but if it doesn't appeal to me, it's probably not happening. In particu
 
 My time is very limited (job/wife/kids/etc). Include your xray log unless confident it's not relevant. And sorry but I probably wont care about conflicts/issues with other mods unless I use them myself.
 
+## Contributions
+
+Are welcome, but check first before you do the work. Also you should know what you are doing - I don't have time to mentor first-timers on how to use git, nor will I accept PRs that shit the bed and require me to rewrite so you don't break everything, etc.
+
 ## Can I copy your homework?
 
 I steal. You steal. We all steal. Go for it.

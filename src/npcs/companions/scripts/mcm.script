@@ -1,0 +1,23 @@
+function on_mcm_load(options)
+	local CONF = _G.dogma_npcs_companions_conf
+	local D = CONF.defaults
+	dogma_mcm.attach(options, "npcs", "ui_mcm_menu_dogma_npcs", {
+		id = "companions",
+		sh = true,
+		text = "ui_mcm_menu_dogma_npcs_companions",
+		gr = dogma_mcm.with_header({
+			{
+				id = "page_description",
+				type = "desc",
+				text = "ui_mcm_dogma_npcs_companions_page_description",
+			},
+			{
+				id = "enabled",
+				type = "check",
+				val = 1,
+				def = D["enabled"],
+				hint = "dogma_npcs_companions_enabled",
+			},
+		}),
+	})
+end

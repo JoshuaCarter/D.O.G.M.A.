@@ -1,0 +1,109 @@
+--[[
+	Campfire limb heal (Body Health System).
+
+	Near a lit campfire: each tick fills empty limb HP as temp (green), then
+	converts temp to permanent (blue) once the bar is full.
+	Default tick is 7.5s (4x the common Campfire mod's 30s).
+
+	Disable the separate "Campfire" / limb_healing_campfire mod to avoid double heals.
+]]
+
+local CONF = _G.dogma_player_campfire_conf
+local MOD_ID = CONF.MOD_ID
+local DOGMA
+
+local LIMBS = { "head", "torso", "rightarm", "leftarm", "rightleg", "leftleg" }
+local RANGE_SQR = 10 * 10 -- 10m; stock Campfire compared sqr to 10 (≈3m) by mistake
+
+local next_tick = 0
+
+local function enabled()
+	return DOGMA and DOGMA.mcm.bool(MOD_ID, "enabled")
+end
+
+local function interval_ms()
+	local sec = DOGMA and DOGMA.mcm.number(MOD_ID, "interval", CONF.defaults.interval) or CONF.defaults.interval
+	if sec < 1 then
+		sec = 1
+	end
+	return sec * 1000
+end
+
+local function near_lit_campfire()
+	if not (db.actor and bind_campfire and bind_campfire.campfires_all) then
+		return false
+	end
+	local pos = db.actor:position()
+	for _, binder in pairs(bind_campfire.campfires_all) do
+		if binder and binder.campfire and binder.campfire:is_on() and binder.object then
+			if pos:distance_to_sqr(binder.object:position()) <= RANGE_SQR then
+				return true
+			end
+		end
+	end
+	return false
+end
+
+local function save_limbs(bhs)
+	local actor = db.actor
+	for i = 1, #LIMBS do
+		local k = LIMBS[i]
+		utils_obj.save_var(actor, "health." .. k, bhs.health[k])
+		utils_obj.save_var(actor, "timedhp." .. k, bhs.timedhp[k])
+	end
+end
+
+-- Temp (timedhp) fills empty slots first; once full, peel timedhp off so blue stays.
+local function heal_limb(bhs, key)
+	local hp = bhs.health[key]
+	local max = bhs.maxhp[key]
+	local temp = bhs.timedhp[key]
+	if not (hp and max and temp) then
+		return false
+	end
+	if hp < max then
+		bhs.health[key] = hp + 1
+		bhs.timedhp[key] = temp + 1
+		return true
+	end
+	if temp > 0 then
+		bhs.timedhp[key] = temp - 1
+		return true
+	end
+	return false
+end
+
+local function tick_heal()
+	local bhs = rawget(_G, "zzz_player_injuries")
+	if not (bhs and bhs.health and bhs.timedhp and bhs.maxhp) then
+		return
+	end
+	local changed = false
+	for i = 1, #LIMBS do
+		if heal_limb(bhs, LIMBS[i]) then
+			changed = true
+		end
+	end
+	if changed then
+		save_limbs(bhs)
+	end
+end
+
+local function actor_on_update()
+	if not enabled() or not db.actor then
+		return
+	end
+	local now = time_global()
+	if now < next_tick then
+		return
+	end
+	next_tick = now + interval_ms()
+	if near_lit_campfire() then
+		tick_heal()
+	end
+end
+
+function on_game_start()
+	DOGMA = dogma_common.load(MOD_ID)
+	RegisterScriptCallback("actor_on_update", actor_on_update)
+end

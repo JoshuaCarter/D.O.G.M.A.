@@ -71,6 +71,9 @@ local function write_delay(path, ms)
 end
 
 local function apply()
+	if not (DOGMA and DOGMA.mcm) then
+		return
+	end
 	local want = DOGMA.mcm.bool(MOD_ID, "controller_tube_5s") and SLOW_MS or STOCK_MS
 	local paths = candidate_paths()
 	local create_candidates = {}

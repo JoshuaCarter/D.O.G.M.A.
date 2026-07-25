@@ -8,8 +8,11 @@ local dft = _G.dft
 local function trans_log(fmt, ...)
     local ok, msg = pcall(string.format, fmt, ...)
     if not ok then msg = tostring(fmt) end
-    printf("[DFT-TRANS] " .. msg)
-    if dft_log then dft_log("[trans] %s", msg) end
+    if dft_log then
+        dft_log("[trans] %s", msg)
+    else
+        printf("[dogma_travel_fast_travel] [trans] %s", msg)
+    end
 end
 
 local function format_transition_dest_label(info)

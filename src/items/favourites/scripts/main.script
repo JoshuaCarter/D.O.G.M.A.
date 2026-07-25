@@ -4,15 +4,13 @@
 	Requires SortingPlus (GAMMA default).
 ]]
 
-local CONF = _G.dogma_items_favourites_conf
-local MOD_ID = CONF.MOD_ID
-
+local CONFIG = _G.dogma_items_favourites_conf
 local SECTION = "dogma_item_favourites"
 local STATE = _G.__dogma_items_favourites or {}
 _G.__dogma_items_favourites = STATE
 
 local function enabled()
-	return dogma_mcm.bool(MOD_ID, "enabled")
+	return dogma_mcm.bool(CONFIG.MOD_ID, "enabled")
 end
 
 local function cfg()

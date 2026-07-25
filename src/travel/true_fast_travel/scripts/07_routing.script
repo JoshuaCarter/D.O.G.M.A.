@@ -1,0 +1,135 @@
+-- True Fast Travel: door position snapping, travel time advance.
+-- Loaded automatically before main.script (zzzz_dogma_travel_true_fast_travel_main.script)
+
+-- ============================================================
+-- 3. Routing Engine
+-- ============================================================
+-- Shared dft globals (Anomaly isolates zzz_* script environments)
+local tft = _G.tft
+
+-- Snap a level-changer object's position to a safe navmesh point near its anchor.
+-- Uses small local offsets only; rejects snaps that drift too far (wrong navmesh island).
+snap_door_pos = function(obj, anchor_pos, max_drift_m)
+    if not obj then return nil end
+    max_drift_m = max_drift_m or (_G.tft_path and _G.tft_path.lc_snap_max_drift_m) or 25
+    anchor_pos = anchor_pos or obj.position
+    if not (anchor_pos and anchor_pos.x) then return nil end
+    local base = vector():set(anchor_pos.x, anchor_pos.y, anchor_pos.z)
+
+    local function try_snap_at(test_pos)
+        if not level then return nil end
+        local ok, lvid = pcall(function() return level.vertex_id(test_pos) end)
+        if not ok or not lvid or lvid == 4294967295 or lvid == -1 then return nil end
+        local ok2, snapped = pcall(function() return level.vertex_position(lvid) end)
+        if not (ok2 and snapped and snapped.x) then return nil end
+        local result = vector():set(snapped.x, snapped.y + 0.12, snapped.z)
+        local drift = (_G.tft_pos_drift and _G.tft_pos_drift(result, base))
+            or result:distance_to(base)
+        if drift > max_drift_m then return nil end
+        return result
+    end
+
+    local xz = {
+        {0, 0}, {2, 0}, {-2, 0}, {0, 2}, {0, -2},
+        {3, 0}, {-3, 0}, {0, 3}, {0, -3},
+    }
+    for i = 0, 16 do
+        local y_off = i * 0.3
+        for o = 1, #xz do
+            local test = vector():set(base.x + xz[o][1], base.y + y_off, base.z + xz[o][2])
+            local result = try_snap_at(test)
+            if result then return result end
+        end
+    end
+    return nil
+end
+
+local function advance_travel_time(ratio, opts)
+    opts = opts or {}
+    local allow_surge = opts.allow_surge == true
+    if not (tft.start_game_time and tft.expected_duration and tft.expected_duration > 0) then
+        return
+    end
+    local actual_elapsed = game.get_game_time():diffSec(tft.start_game_time)
+    local target_seconds = math.floor(ratio * tft.expected_duration * 60)
+    local diff_sec = target_seconds - actual_elapsed
+    if diff_sec > 0 and level and level.change_game_time then
+        local days = math.floor(diff_sec / 86400)
+        local hrs  = math.floor((diff_sec % 86400) / 3600)
+        local mins = math.floor((diff_sec % 3600) / 60)
+
+        if not allow_surge then
+            -- Skip any active or imminent surges BEFORE jumping the clock.
+            tft_check_and_skip_surges()
+        end
+
+        local function wipe_dangerous_stats()
+            pcall(function()
+                if db.actor then
+                    if db.actor.radiation and db.actor.radiation > 0 then
+                        db.actor.radiation = -1.0
+                    end
+                    if db.actor.psy_health and db.actor.psy_health < 1.0 then
+                        db.actor.psy_health = 1.0
+                    end
+                    if db.actor.health and db.actor.health < 1.0 then
+                        db.actor.health = 1.0
+                    end
+                    -- Respect an already-decided arrival/ambush stamina outcome (tft.target_stamina)
+                    -- instead of always snapping back to full - this can run after that outcome
+                    -- has been set (e.g. the post-teleport time jump right after an ambush).
+                    pcall(function() db.actor.power = tft.target_stamina or 1.0 end)
+                end
+            end)
+        end
+        if not allow_surge then
+            wipe_dangerous_stats()
+        end
+
+        level.change_game_time(days, hrs, mins)
+
+        if not allow_surge then
+            pcall(function()
+                if surge_manager and surge_manager.get_surge_manager then
+                    local sm = surge_manager.get_surge_manager()
+                    if sm then
+                        sm.started = false
+                        sm.finished = true
+                        sm.last_surge_time = game.get_game_time()
+                        sm._delta = 6 * 3600
+                    end
+                end
+                if psi_storm_manager and psi_storm_manager.get_psi_storm_manager then
+                    local pm = psi_storm_manager.get_psi_storm_manager()
+                    if pm then
+                        pm.started = false
+                        pm.finished = true
+                        pm.last_surge_time = game.get_game_time()
+                        if pm.last_psi_storm_time then
+                            pm.last_psi_storm_time = game.get_game_time()
+                        end
+                        pm._delta = 6 * 3600
+                    end
+                end
+            end)
+            wipe_dangerous_stats()
+        end
+        local secs = diff_sec % 60
+        tft_log("advance_travel_time: jumped %dd %dh %dm %ds (ratio %.2f allow_surge=%s)",
+            days, hrs, mins, secs, ratio, tostring(allow_surge))
+        if not allow_surge then
+            for i = 1, 20 do
+                CreateTimeEvent("tft", "post_jump_wipe_" .. i, i * 0.5, function()
+                    if tft_is_safety_active() then wipe_dangerous_stats() end
+                    return true
+                end)
+            end
+        end
+    end
+end
+
+-- tft_publish_to_global
+do
+    _G.tft_advance_travel_time = advance_travel_time
+    _G.tft_snap_door_pos = snap_door_pos
+end

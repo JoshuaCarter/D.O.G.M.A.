@@ -9,8 +9,7 @@
 	lookups like zzzz_dogma_tooltips_weapons_stats.NAME from other scripts).
 ]]
 
-local CONF = _G.dogma_tooltips_weapons_conf
-local MOD_ID = CONF.MOD_ID
+local CONFIG = _G.dogma_tooltips_weapons_conf
 -- GAMMA actor.ltx movement dispersion (Actor_Weapon.cpp, VEL_MAX = 10 m/s).
 -- Engine adds actor PDM degrees to weapon base; it does not multiply them.
 local ACTOR_DISP_BASE = 1.5
@@ -81,9 +80,9 @@ local function dbg(msg)
 		return
 	end
 	if DOGMA and DOGMA.dbg and DOGMA.dbg.log then
-		DOGMA.dbg.log(MOD_ID, msg)
+		DOGMA.dbg.log(CONFIG.MOD_ID, msg)
 	else
-		printf("[DBG][%s] %s", MOD_ID, tostring(msg))
+		printf("[%s] %s", CONFIG.MOD_ID:gsub("/", "_"), tostring(msg))
 	end
 end
 

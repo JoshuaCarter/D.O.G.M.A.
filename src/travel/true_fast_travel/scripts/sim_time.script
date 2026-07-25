@@ -1,0 +1,99 @@
+-- True Fast Travel: minimal sync time stepper (DOGMA-owned).
+-- Port of Simulated Time Skip advance_sync only — no overlay, catch-all, or bridges.
+--
+-- Built as zzzz_dogma_travel_true_fast_travel_sim_time.script.
+-- Public: _G.dogma_sim_time.advance_sync(total_minutes, step_size)
+
+local DEFAULT_STEP = 3
+local sync_active = false
+
+-- Snapshot at load. If STS travel catch-all already wrapped change_game_time,
+-- advance_sync temporarily sets simulated_time.passthrough so the hook
+-- forwards to vanilla instead of deferring our step loop.
+local _cgt = level.change_game_time
+
+local function save_alife_state()
+	return {
+		opu = ini_sys:r_u32("alife", "objects_per_update"),
+		opt = ini_sys:r_u32("alife", "process_time"),
+	}
+end
+
+local function override_alife()
+	RemoveTimeEvent(0, "obj_per_upd")
+	alife():set_objects_per_update(65534)
+	alife():set_process_time(999999)
+end
+
+local function restore_alife(saved)
+	alife():set_objects_per_update(saved.opu)
+	alife():set_process_time(saved.opt)
+end
+
+local function with_sts_passthrough(fn)
+	local st = rawget(_G, "simulated_time")
+	local prev
+	if st and st.passthrough ~= nil then
+		prev = st.passthrough
+		st.passthrough = true
+	end
+	local ok, err = pcall(fn)
+	if prev ~= nil then
+		st.passthrough = prev
+	end
+	if not ok then
+		error(err, 0)
+	end
+end
+
+--- Run a simulated time skip synchronously (all steps in one frame, no overlay).
+-- @param total_minutes  number   game minutes to advance
+-- @param step_size      number   minutes per step (default 3)
+-- @return true if completed, false if already active / bad args
+local function advance_sync(total_minutes, step_size)
+	total_minutes = tonumber(total_minutes)
+	if not total_minutes or total_minutes <= 0 then
+		return false
+	end
+	if sync_active then
+		return false
+	end
+	step_size = tonumber(step_size) or DEFAULT_STEP
+	if step_size < 1 then
+		step_size = 1
+	end
+	sync_active = true
+
+	local saved = save_alife_state()
+	override_alife()
+
+	local ok, err = pcall(function()
+		with_sts_passthrough(function()
+			local elapsed = 0
+			while elapsed < total_minutes do
+				local s = math.min(step_size, total_minutes - elapsed)
+				_cgt(0, 0, s)
+				alife():force_update()
+				if db and db.actor_binder then
+					SendScriptCallback("actor_on_update", db.actor_binder, 200)
+				end
+				elapsed = elapsed + s
+			end
+		end)
+	end)
+
+	restore_alife(saved)
+	sync_active = false
+	if not ok then
+		printf("[dogma_travel_true_fast_travel] advance_sync failed: %s", tostring(err))
+		return false
+	end
+	return true
+end
+
+_G.dogma_sim_time = {
+	advance_sync = advance_sync,
+	is_active = function()
+		return sync_active
+	end,
+}

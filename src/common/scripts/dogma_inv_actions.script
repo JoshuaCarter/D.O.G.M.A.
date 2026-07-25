@@ -2,9 +2,13 @@
 	DOGMA inventory actions — drop / disassemble / strip keybinds.
 
 	Lives in common so Drop and Disassemble work without Stripping installed.
-	Owns inventory key detection (press / dtap / hold + modifiers), hold-paint
-	On_Hover, and drop/disassemble actions. Strip binds call _G.dogma_strip
+	Owns inventory key detection, drop/disassemble hold-repeat, and strip
+	press/dtap/hold (+ hold paint). Strip binds call _G.dogma_strip
 	(no-op if Stripping is not loaded).
+
+	Drop / disassemble: always hold-repeat while the key (+ optional modifier)
+	is down. First action at 0ms, then 1000 / 1500 / 2000 / 2250, then every
+	250ms. Hovered item id change resets the timer and fires again.
 
 	MCM paths:
 	  dogma/items/drop         — key_drop*, drop_safe_equipped
@@ -35,11 +39,11 @@ local ALLOWED_BAGS = {
 	picker = true,
 }
 
--- bind defs filled in on_option_change: { id, key, modifier, mode, kind, all_stacks }
+-- bind defs filled in on_option_change: { id, key, modifier, mode, kind, all_stacks, repeat_hold }
 local BINDS = {}
 
-local dtap_last = {} -- [bind_id] = time_continual
-local hold_state = {} -- [dik] = { bind, t0, fired }
+local dtap_last = {} -- [bind_id] = time_continual (strip only)
+local hold_state = {} -- [dik] = strip hold { bind, t0, fired } OR repeat { bind, t0, fire_count, last_id }
 local paint = {
 	active = false,
 	dik = nil,
@@ -68,18 +72,20 @@ local function read_mode(mod_id, path)
 	return math.floor(DOGMA.mcm.number(mod_id, path, 0) + 0.5)
 end
 
-local function make_bind(id, mod_id, key_path, mod_path, mode_path, kind, all_stacks)
+local function make_bind(id, mod_id, key_path, mod_path, kind, all_stacks, mode_path)
 	local key = DOGMA.mcm.key(mod_id, key_path)
 	if not key then
 		return nil
 	end
+	local repeat_hold = (kind == "drop" or kind == "disa")
 	return {
 		id = id,
 		key = key,
 		modifier = read_mode(mod_id, mod_path),
-		mode = read_mode(mod_id, mode_path),
+		mode = (not repeat_hold and mode_path) and read_mode(mod_id, mode_path) or 0,
 		kind = kind,
 		all_stacks = all_stacks,
+		repeat_hold = repeat_hold,
 	}
 end
 
@@ -95,11 +101,11 @@ local function on_option_change()
 		end
 	end
 
-	add(make_bind("drop", DROP_MOD, "key_drop", "key_drop_modifier", "key_drop_mode", "drop", false))
-	add(make_bind("drop_all", DROP_MOD, "key_drop_all", "key_drop_all_modifier", "key_drop_all_mode", "drop", true))
-	add(make_bind("disa", DISA_MOD, "key_disa", "key_disa_modifier", "key_disa_mode", "disa", false))
-	add(make_bind("disa_all", DISA_MOD, "key_disa_all", "key_disa_all_modifier", "key_disa_all_mode", "disa", true))
-	add(make_bind("strip", STRIP_MOD, "key", "key_modifier", "key_mode", "strip", false))
+	add(make_bind("drop", DROP_MOD, "key_drop", "key_drop_modifier", "drop", false))
+	add(make_bind("drop_all", DROP_MOD, "key_drop_all", "key_drop_all_modifier", "drop", true))
+	add(make_bind("disa", DISA_MOD, "key_disa", "key_disa_modifier", "disa", false))
+	add(make_bind("disa_all", DISA_MOD, "key_disa_all", "key_disa_all_modifier", "disa", true))
+	add(make_bind("strip", STRIP_MOD, "key", "key_modifier", "strip", false, "key_mode"))
 
 	local function key_of(id)
 		for i = 1, #BINDS do
@@ -138,6 +144,24 @@ local function dtap_window_ms()
 		return 250
 	end
 	return ui_mcm.get("mcm/mcm_kb/mcm_kb_main/dtaptime2") or 250
+end
+
+-- fire_count = actions already done on this target; delay from streak t0 to next fire.
+local function repeat_delay_ms(fire_count)
+	if fire_count <= 0 then
+		return 0
+	end
+	if fire_count == 1 then
+		return 1000
+	end
+	if fire_count == 2 then
+		return 1500
+	end
+	if fire_count == 3 then
+		return 2000
+	end
+	-- 4th+ interval starts at 2250, then +250 each
+	return 2250 + (fire_count - 4) * 250
 end
 
 local function inv_mode_ok(gui)
@@ -328,9 +352,10 @@ local function fire_bind(bind)
 	local obj, bag, idx, gui = get_hover()
 	if not obj then
 		log("fire: no hover for " .. bind.id)
-		return
+		return false
 	end
 	run_action(bind.kind, bind.all_stacks, bag, idx, gui)
+	return true, obj:id()
 end
 
 local function arm_paint(bind)
@@ -349,7 +374,7 @@ local function clear_paint()
 	paint.last_idx = nil
 end
 
-local function fire_and_maybe_paint(bind)
+local function fire_strip_and_maybe_paint(bind)
 	fire_bind(bind)
 	if bind.mode == MODE_HOLD then
 		arm_paint(bind)
@@ -367,6 +392,25 @@ local function find_binds_for_dik(dik)
 	return list
 end
 
+local function start_repeat_hold(bind, dik)
+	local now = time_continual()
+	local hs = {
+		bind = bind,
+		t0 = now,
+		fire_count = 0,
+		last_id = nil,
+		repeat_hold = true,
+	}
+	hold_state[dik] = hs
+	local ok, id = fire_bind(bind)
+	if ok then
+		hs.last_id = id
+		hs.fire_count = 1
+		hs.t0 = now
+	end
+	log("repeat hold armed " .. bind.id)
+end
+
 local function on_key_pressed(dik, gui)
 	if yield_shift_in_loot(gui, dik) then
 		return
@@ -380,6 +424,8 @@ local function on_key_pressed(dik, gui)
 		local bind = matches[i]
 		if not mod_ok(bind.modifier) then
 			log("mod mismatch for " .. bind.id)
+		elseif bind.repeat_hold then
+			start_repeat_hold(bind, dik)
 		elseif bind.mode == MODE_HOLD then
 			hold_state[dik] = { bind = bind, t0 = time_continual(), fired = false }
 			log("hold armed " .. bind.id)
@@ -389,11 +435,10 @@ local function on_key_pressed(dik, gui)
 			dtap_last[bind.id] = now
 			if prev and (now - prev) <= dtap_window_ms() then
 				dtap_last[bind.id] = nil
-				fire_and_maybe_paint(bind)
+				fire_strip_and_maybe_paint(bind)
 			end
 		else
-			-- Simple press: fire on PRESSED
-			fire_and_maybe_paint(bind)
+			fire_strip_and_maybe_paint(bind)
 		end
 	end
 end
@@ -408,27 +453,66 @@ local function on_key_released(dik)
 	end
 end
 
+local function repeat_hold_tick(dik, hs, now)
+	if key_state(dik) == 0 or not mod_ok(hs.bind.modifier) then
+		hold_state[dik] = nil
+		return
+	end
+
+	local obj, bag, idx, gui = get_hover()
+	local id = obj and obj:id() or nil
+	if not id then
+		-- No target: pause streak so the next hover starts fresh at 0ms.
+		hs.last_id = nil
+		hs.fire_count = 0
+		hs.t0 = now
+		return
+	end
+
+	if id ~= hs.last_id then
+		hs.last_id = id
+		hs.fire_count = 0
+		hs.t0 = now
+		run_action(hs.bind.kind, hs.bind.all_stacks, bag, idx, gui)
+		hs.fire_count = 1
+		return
+	end
+
+	if (now - hs.t0) >= repeat_delay_ms(hs.fire_count) then
+		run_action(hs.bind.kind, hs.bind.all_stacks, bag, idx, gui)
+		hs.fire_count = hs.fire_count + 1
+	end
+end
+
+local function strip_hold_tick(dik, hs, now)
+	local threshold = hold_time_ms()
+	if not hs.fired then
+		if key_state(dik) == 0 then
+			hold_state[dik] = nil
+		elseif mod_ok(hs.bind.modifier) and (now - hs.t0) >= threshold then
+			hs.fired = true
+			fire_strip_and_maybe_paint(hs.bind)
+		end
+		return
+	end
+	if key_state(dik) == 0 or not mod_ok(hs.bind.modifier) then
+		hold_state[dik] = nil
+		if paint.active and paint.dik == dik then
+			clear_paint()
+		end
+	end
+end
+
 local function hold_tick(gui)
 	if not inv_mode_ok(gui) then
 		return
 	end
 	local now = time_continual()
-	local threshold = hold_time_ms()
 	for dik, hs in pairs(hold_state) do
-		if hs and not hs.fired then
-			if key_state(dik) == 0 then
-				hold_state[dik] = nil
-			elseif mod_ok(hs.bind.modifier) and (now - hs.t0) >= threshold then
-				hs.fired = true
-				fire_and_maybe_paint(hs.bind)
-			end
-		elseif hs and hs.fired then
-			if key_state(dik) == 0 or not mod_ok(hs.bind.modifier) then
-				hold_state[dik] = nil
-				if paint.active and paint.dik == dik then
-					clear_paint()
-				end
-			end
+		if hs and hs.repeat_hold then
+			repeat_hold_tick(dik, hs, now)
+		elseif hs then
+			strip_hold_tick(dik, hs, now)
 		end
 	end
 end
@@ -439,6 +523,7 @@ local function call_base_hover(self, idx)
 	end
 end
 
+-- Strip hold-paint only (drop/disa no longer paint-sweep).
 local function paint_on_hover(self, idx)
 	if in_action then
 		return call_base_hover(self, idx)

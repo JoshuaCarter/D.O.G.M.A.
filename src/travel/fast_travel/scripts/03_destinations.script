@@ -1,4 +1,4 @@
--- Fast Travel: PDA spot detection, travel target resolution, FFT block.
+-- Fast Travel: PDA spot detection, travel target resolution.
 -- Loaded automatically before main.script (zzzz_dogma_travel_fast_travel_main.script)
 
 -- ============================================================
@@ -429,16 +429,6 @@ has_clear_los = function(from_pos, to_pos, max_dist)
     return hit_dist >= len * 0.92
 end
 
-local function unregister_fft_map_handlers()
-    if not game_fast_travel then return end
-    if game_fast_travel.map_spot_menu_add_property then
-        UnregisterScriptCallback("map_spot_menu_add_property", game_fast_travel.map_spot_menu_add_property)
-    end
-    if game_fast_travel.map_spot_menu_property_clicked then
-        UnregisterScriptCallback("map_spot_menu_property_clicked", game_fast_travel.map_spot_menu_property_clicked)
-    end
-end
-
 local BP_MENU_MARKERS = nil
 
 backpack_menu_markers = function()
@@ -867,7 +857,6 @@ do
     _G.dft_object_level_id = object_level_id
     _G.dft_pda_distance = pda_distance
     _G.dft_hostile_near_pos = hostile_near_pos
-    _G.dft_unregister_fft_map_handlers = unregister_fft_map_handlers
     _G.dft_strip_backpack_travel_menu_items = strip_backpack_travel_menu_items
     _G.dft_pos_drift = pos_drift
     _G.dft_graph_vertex_target = graph_vertex_target

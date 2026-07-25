@@ -5,11 +5,8 @@
 	Those transfers use raw transfer_item and can make items vanish.
 ]]
 
-local CONF = _G.dogma_items_stripping_conf
-local MOD_ID = CONF.MOD_ID
+local CONFIG = _G.dogma_items_stripping_conf
 local DOGMA
-local CONFIG = CONF.CONFIG
-
 local ACTOR_SOURCE_BAGS = {
 	[EDDListType.iActorBag] = true,
 	[EDDListType.iActorSlot] = true,
@@ -20,14 +17,14 @@ local function log(msg)
 	if not (DOGMA and DOGMA.dbg) then
 		return
 	end
-	if CONFIG.debug_log then
-		DOGMA.dbg.log(MOD_ID, tostring(msg))
+	if CONFIG.loaded.debug_log then
+		DOGMA.dbg.log(CONFIG.MOD_ID, tostring(msg))
 	end
 end
 
 local function on_option_change()
-	CONFIG.block_special_items = DOGMA.mcm.bool(MOD_ID, "block_companion_special_items")
-	log(string.format("companion loot: block_special_items=%s", tostring(CONFIG.block_special_items)))
+	CONFIG.loaded.block_special_items = DOGMA.mcm.bool(CONFIG.MOD_ID, "block_companion_special_items")
+	log(string.format("companion loot: block_special_items=%s", tostring(CONFIG.loaded.block_special_items)))
 end
 
 local function is_companion(npc)
@@ -71,7 +68,7 @@ local function on_item_before_move(flags, npc_id, obj, mode, bag)
 	if _G.dogma_strip_internal_move then
 		return
 	end
-	if not CONFIG.block_special_items then
+	if not CONFIG.loaded.block_special_items then
 		return
 	end
 	if not (flags and npc_id and obj) then
@@ -101,7 +98,7 @@ local function on_item_before_move(flags, npc_id, obj, mode, bag)
 end
 
 function on_game_start()
-	DOGMA = CONF:ensure_dogma()
+	DOGMA = CONFIG:ensure_dogma()
 	RegisterScriptCallback("on_option_change", on_option_change)
 	RegisterScriptCallback("ActorMenu_on_item_before_move", on_item_before_move)
 	on_option_change()

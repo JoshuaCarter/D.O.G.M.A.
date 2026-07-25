@@ -6,8 +6,7 @@
 	radiation (db.actor.radiation).
 ]]
 
-local CONF = _G.dogma_fx_radiation_conf
-local MOD_ID = CONF.MOD_ID
+local CONFIG = _G.dogma_fx_radiation_conf
 local DOGMA
 
 local PP_GRAIN_ID = 2021
@@ -27,7 +26,6 @@ local GRAIN_PPES = {
 	"dogma_grain_10.ppe",
 }
 
-local CONFIG = {}
 local GRAIN_LEVELS = {}
 local current_ppe = nil
 local blur_active = false
@@ -46,9 +44,9 @@ local function overlay(log_type, msg)
 	if not DOGMA.dbg then
 		return
 	end
-	if CONFIG.debug_overlay then
+	if CONFIG.loaded.debug_overlay then
 		local slot = log_type or LOG.LIFECYCLE
-		DOGMA.dbg.overlay(MOD_ID, slot.order, tostring(msg), slot.color)
+		DOGMA.dbg.overlay(CONFIG.MOD_ID, slot.order, tostring(msg), slot.color)
 	end
 end
 
@@ -57,36 +55,36 @@ local function log(msg)
 	if not DOGMA.dbg then
 		return
 	end
-	if CONFIG.debug_log then
-		DOGMA.dbg.log(MOD_ID, tostring(msg))
+	if CONFIG.loaded.debug_log then
+		DOGMA.dbg.log(CONFIG.MOD_ID, tostring(msg))
 	end
 end
 
 local function on_option_change()
-	CONFIG.debug_log = DOGMA.dbg.logging()
-	CONFIG.debug_overlay = DOGMA.dbg.overlay_enabled()
-	CONFIG.grain_enabled = DOGMA.mcm.bool(MOD_ID, "grain/enable")
-	CONFIG.blur_enabled = DOGMA.mcm.bool(MOD_ID, "desaturation/enable")
-	CONFIG.dual_enabled = DOGMA.mcm.bool(MOD_ID, "duality/enable")
-	CONFIG.level_msv = {}
+	CONFIG.loaded.debug_log = DOGMA.dbg.logging()
+	CONFIG.loaded.debug_overlay = DOGMA.dbg.overlay_enabled()
+	CONFIG.loaded.grain_enabled = DOGMA.mcm.bool(CONFIG.MOD_ID, "grain/enable")
+	CONFIG.loaded.blur_enabled = DOGMA.mcm.bool(CONFIG.MOD_ID, "desaturation/enable")
+	CONFIG.loaded.dual_enabled = DOGMA.mcm.bool(CONFIG.MOD_ID, "duality/enable")
+	CONFIG.loaded.level_msv = {}
 	for i = 1, #GRAIN_PPES do
-		CONFIG.level_msv[i] = DOGMA.mcm.number(MOD_ID, string.format("grain/level_%02d_msv", i))
+		CONFIG.loaded.level_msv[i] = DOGMA.mcm.number(CONFIG.MOD_ID, string.format("grain/level_%02d_msv", i))
 	end
-	CONFIG.blur_range = DOGMA.mcm.range(MOD_ID, "desaturation/blur_min", "desaturation/blur_max")
-	CONFIG.dual_range = DOGMA.mcm.range(MOD_ID, "duality/dual_min", "duality/dual_max")
-	CONFIG.add_radiation_key = DOGMA.mcm.key("dogma/debug", "grain_add_radiation_key")
-	CONFIG.clear_radiation_key = DOGMA.mcm.key("dogma/debug", "grain_clear_radiation_key")
+	CONFIG.loaded.blur_range = DOGMA.mcm.range(CONFIG.MOD_ID, "desaturation/blur_min", "desaturation/blur_max")
+	CONFIG.loaded.dual_range = DOGMA.mcm.range(CONFIG.MOD_ID, "duality/dual_min", "duality/dual_max")
+	CONFIG.loaded.add_radiation_key = DOGMA.mcm.key("dogma/debug", "grain_add_radiation_key")
+	CONFIG.loaded.clear_radiation_key = DOGMA.mcm.key("dogma/debug", "grain_clear_radiation_key")
 
 	GRAIN_LEVELS = {}
 	for i, ppe in ipairs(GRAIN_PPES) do
-		GRAIN_LEVELS[#GRAIN_LEVELS + 1] = { msv = CONFIG.level_msv[i], ppe = ppe }
+		GRAIN_LEVELS[#GRAIN_LEVELS + 1] = { msv = CONFIG.loaded.level_msv[i], ppe = ppe }
 	end
 
-	DOGMA.dbg.set_enabled(MOD_ID, DOGMA.dbg.overlay_enabled())
+	DOGMA.dbg.set_enabled(CONFIG.MOD_ID, DOGMA.dbg.overlay_enabled())
 end
 
 local function set_grain(msv)
-	if not CONFIG.grain_enabled then
+	if not CONFIG.loaded.grain_enabled then
 		if current_ppe then
 			level.remove_pp_effector(PP_GRAIN_ID)
 			current_ppe = nil
@@ -159,20 +157,20 @@ end
 
 local function set_blur(msv)
 	blur_active = set_intensity_ppe(
-		CONFIG.blur_enabled, blur_active, CONFIG.blur_range,
+		CONFIG.loaded.blur_enabled, blur_active, CONFIG.loaded.blur_range,
 		PP_BLUR_ID, "dogma_blur.ppe", LOG.BLUR, "Blur", msv
 	)
 end
 
 local function set_dual(msv)
 	dual_active = set_intensity_ppe(
-		CONFIG.dual_enabled, dual_active, CONFIG.dual_range,
+		CONFIG.loaded.dual_enabled, dual_active, CONFIG.loaded.dual_range,
 		PP_DUAL_ID, "dogma_dual.ppe", LOG.DUAL, "Dual", msv
 	)
 end
 
 local function on_actor_on_update()
-	local actor = DOGMA.sys.ready(MOD_ID, db, on_option_change)
+	local actor = DOGMA.sys.ready(CONFIG.MOD_ID, db, on_option_change)
 	if not actor then
 		return
 	end
@@ -199,15 +197,15 @@ local function on_actor_on_update()
 end
 
 local function on_key_press(key)
-	if CONFIG.add_radiation_key and key == CONFIG.add_radiation_key and db.actor then
+	if CONFIG.loaded.add_radiation_key and key == CONFIG.loaded.add_radiation_key and db.actor then
 		db.actor.radiation = (db.actor.radiation or 0) + 50 / (10000 * 0.387)
-	elseif CONFIG.clear_radiation_key and key == CONFIG.clear_radiation_key and db.actor then
+	elseif CONFIG.loaded.clear_radiation_key and key == CONFIG.loaded.clear_radiation_key and db.actor then
 		db.actor.radiation = 0
 	end
 end
 
 function on_game_start()
-	DOGMA = dogma_common.load(MOD_ID)
+	DOGMA = dogma_common.load(CONFIG.MOD_ID)
 
 	current_ppe = nil
 	blur_active = false

@@ -1,7 +1,5 @@
 function on_mcm_load(options)
-	local CONF = _G.dogma_player_scanner_keys_conf
-	local D = CONF.defaults
-
+	local CONFIG = _G.dogma_player_scanner_keys_conf
 	dogma_mcm.attach(options, "player", "ui_mcm_menu_dogma_player", {
 		id = "scanner_keys",
 		sh = true,
@@ -16,7 +14,7 @@ function on_mcm_load(options)
 				id = "enabled",
 				type = "check",
 				val = 1,
-				def = D["enabled"],
+				def = CONFIG.DEFAULTS["enabled"],
 				hint = "dogma_scanner_keys_enabled",
 			},
 			{ id = "line_keys", type = "line" },
@@ -24,21 +22,21 @@ function on_mcm_load(options)
 				id = "key_detector",
 				type = "key_bind",
 				val = 2,
-				def = D["key_detector"],
+				def = CONFIG.DEFAULTS["key_detector"],
 				hint = "dogma_scanner_keys_key_detector",
 			},
 			{
 				id = "key_dosimeter",
 				type = "key_bind",
 				val = 2,
-				def = D["key_dosimeter"],
+				def = CONFIG.DEFAULTS["key_dosimeter"],
 				hint = "dogma_scanner_keys_key_dosimeter",
 			},
 			{
 				id = "key_radio",
 				type = "key_bind",
 				val = 2,
-				def = D["key_radio"],
+				def = CONFIG.DEFAULTS["key_radio"],
 				hint = "dogma_scanner_keys_key_radio",
 			},
 		}),

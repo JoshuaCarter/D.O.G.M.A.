@@ -4,15 +4,14 @@
 	Grant it as soon as Mortal Sin ends so faction leaders offer Afterglow immediately.
 ]]
 
-local CONF = _G.dogma_misc_missions_conf
-local MOD_ID = CONF.MOD_ID
+local CONFIG = _G.dogma_misc_missions_conf
 local DOGMA
 
 local MS_DONE = "mortal_sin_zone_hero"
 local OA_READY = "operation_afterglow_info_about_done"
 
 local function try_unlock_afterglow()
-	if not DOGMA.mcm.bool(MOD_ID, "enabled") then
+	if not DOGMA.mcm.bool(CONFIG.MOD_ID, "enabled") then
 		return
 	end
 	if not db.actor then
@@ -40,7 +39,7 @@ local function on_info(_actor, info)
 end
 
 function on_game_start()
-	DOGMA = dogma_common.load(MOD_ID)
+	DOGMA = dogma_common.load(CONFIG.MOD_ID)
 	RegisterScriptCallback("actor_on_info_callback", on_info)
 	-- Mid-wait saves: MS done, OA gate not yet granted.
 	RegisterScriptCallback("actor_on_first_update", function()

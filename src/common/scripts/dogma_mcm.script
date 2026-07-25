@@ -2,7 +2,8 @@
 	DOGMA MCM — getters, tree attach, shared Debug page, banner helper.
 
 	Loaded via dogma_common; use DOGMA.mcm from on_game_start().
-	Also registered as *mcm.script → on_mcm_load adds DOGMA → Debug.
+	Also registered as *mcm.script (API + defaults). Debug page itself is
+	registered only by the local-build feature mcm/debug (manifest =1).
 
 	Tree shape (MCM max 3 levels under the list root):
 	  dogma / <category> / <feature page> / options
@@ -28,14 +29,14 @@ local function path(mod_id, key)
 	return tostring(mod_id) .. "/" .. tostring(key)
 end
 
--- MOD_ID "dogma/<cat>/<feat>" → _G.dogma_<cat>_<feat>_conf.defaults[key]
+-- CONFIG.MOD_ID "dogma/<cat>/<feat>" → _G.dogma_<cat>_<feat>_conf.DEFAULTS[key]
 local function conf_default(mod_id, key)
 	local feature = tostring(mod_id):match("^dogma/(.+)$")
 	if not feature then
 		return nil
 	end
 	local conf = _G["dogma_" .. feature:gsub("/", "_") .. "_conf"]
-	local defaults = conf and conf.defaults
+	local defaults = conf and conf.DEFAULTS
 	return defaults and defaults[key]
 end
 
@@ -187,8 +188,8 @@ end
 
 -- Shared Debug defaults (also used when MCM has not written a value yet).
 _G.dogma_debug_conf = {
-	MOD_ID = DEBUG_MOD,
-	defaults = {
+	CONFIG.MOD_ID = DEBUG_MOD,
+	DEFAULTS = {
 		["debug_log"] = true,
 		["debug_overlay"] = false,
 		-- Feature-owned debug controls live here; features read via DEBUG_MOD.
@@ -199,12 +200,15 @@ _G.dogma_debug_conf = {
 		["ft_sneaking_level_down"] = -1,
 		["ft_coarse_nav_rebuild_on_load"] = false,
 		["ft_coarse_nav_build"] = -1,
+		["ft_show_coarse_mesh"] = false,
 		["fps_long_frame_threshold_ms"] = 0,
 	},
 }
 
-function on_mcm_load(options)
-	local D = _G.dogma_debug_conf.defaults
+-- Shared Debug page under DOGMA (sibling of categories). Called from local-only
+-- mcm/debug — release FOMOD builds omit that feature, so the page never appears.
+function register_debug_page(options)
+	local CONFIG = _G.dogma_debug_conf
 	local page = {
 		id = "debug",
 		sh = true,
@@ -219,14 +223,14 @@ function on_mcm_load(options)
 				id = "debug_log",
 				type = "check",
 				val = 1,
-				def = D["debug_log"],
+				def = CONFIG.DEFAULTS["debug_log"],
 				hint = "dogma_debug_debug_log",
 			},
 			{
 				id = "debug_overlay",
 				type = "check",
 				val = 1,
-				def = D["debug_overlay"],
+				def = CONFIG.DEFAULTS["debug_overlay"],
 				hint = "dogma_debug_debug_overlay",
 			},
 			{ id = "line_grain", type = "line" },
@@ -239,14 +243,14 @@ function on_mcm_load(options)
 				id = "grain_add_radiation_key",
 				type = "key_bind",
 				val = 2,
-				def = D["grain_add_radiation_key"],
+				def = CONFIG.DEFAULTS["grain_add_radiation_key"],
 				hint = "dogma_debug_grain_add_radiation_key",
 			},
 			{
 				id = "grain_clear_radiation_key",
 				type = "key_bind",
 				val = 2,
-				def = D["grain_clear_radiation_key"],
+				def = CONFIG.DEFAULTS["grain_clear_radiation_key"],
 				hint = "dogma_debug_grain_clear_radiation_key",
 			},
 			{ id = "line_ft", type = "line" },
@@ -259,36 +263,43 @@ function on_mcm_load(options)
 				id = "ft_path_preview",
 				type = "check",
 				val = 1,
-				def = D["ft_path_preview"],
+				def = CONFIG.DEFAULTS["ft_path_preview"],
 				hint = "dogma_debug_ft_path_preview",
 			},
 			{
 				id = "ft_sneaking_level_up",
 				type = "key_bind",
 				val = 2,
-				def = D["ft_sneaking_level_up"],
+				def = CONFIG.DEFAULTS["ft_sneaking_level_up"],
 				hint = "dogma_debug_ft_sneaking_level_up",
 			},
 			{
 				id = "ft_sneaking_level_down",
 				type = "key_bind",
 				val = 2,
-				def = D["ft_sneaking_level_down"],
+				def = CONFIG.DEFAULTS["ft_sneaking_level_down"],
 				hint = "dogma_debug_ft_sneaking_level_down",
 			},
 			{
 				id = "ft_coarse_nav_rebuild_on_load",
 				type = "check",
 				val = 1,
-				def = D["ft_coarse_nav_rebuild_on_load"],
+				def = CONFIG.DEFAULTS["ft_coarse_nav_rebuild_on_load"],
 				hint = "dogma_debug_ft_coarse_nav_rebuild_on_load",
 			},
 			{
 				id = "ft_coarse_nav_build",
 				type = "key_bind",
 				val = 2,
-				def = D["ft_coarse_nav_build"],
+				def = CONFIG.DEFAULTS["ft_coarse_nav_build"],
 				hint = "dogma_debug_ft_coarse_nav_build",
+			},
+			{
+				id = "ft_show_coarse_mesh",
+				type = "check",
+				val = 1,
+				def = CONFIG.DEFAULTS["ft_show_coarse_mesh"],
+				hint = "dogma_debug_ft_show_coarse_mesh",
 			},
 			{ id = "line_fps", type = "line" },
 			{
@@ -308,12 +319,12 @@ function on_mcm_load(options)
 				min = 0,
 				max = 1000,
 				step = 5,
-				def = D["fps_long_frame_threshold_ms"],
+				def = CONFIG.DEFAULTS["fps_long_frame_threshold_ms"],
 				hint = "dogma_debug_fps_long_frame_threshold_ms",
 			},
 		}),
 	}
-	-- Insert ourselves under dogma, then pin last (features that attach later re-pin).
+	-- Insert under dogma, then pin last (features that attach later re-pin).
 	if options then
 		local dogma
 		for i = 1, #options do
@@ -341,4 +352,8 @@ function on_mcm_load(options)
 		return
 	end
 	return page, "dogma"
+end
+
+-- *mcm.script entry: defaults live above; Debug page is local-only (mcm/debug).
+function on_mcm_load(_options)
 end

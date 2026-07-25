@@ -19,9 +19,7 @@
 	mods can read pose via IsMoveState("mcCrouch") / IsMoveState("mcAccel").
 ]]
 
-local CONF = _G.dogma_player_pose_controls_conf
-local MOD_ID = CONF.MOD_ID
-local D = CONF.defaults
+local CONFIG = _G.dogma_player_pose_controls_conf
 local DOGMA
 
 local POSE = {
@@ -40,18 +38,6 @@ local BLOCKED_MOVE_STATES = {
 local LOG = {
 	POSE = { order = 1, color = "yellow" },
 	KEY = { order = 2, color = "cyan" },
-}
-
-local CONFIG = {
-	enabled = D["enabled"],
-	walk_key = D["walk_key"],
-	crouch_key = nil,
-	prone_key = nil,
-	sprint_key = nil,
-	-- true = toggle, false = hold (after sync)
-	toggle_mode = false,
-	debug_log = true,
-	debug_overlay = false,
 }
 
 local applying_pose = false
@@ -76,8 +62,8 @@ local function log(msg)
 	if not (DOGMA and DOGMA.dbg) then
 		return
 	end
-	if CONFIG.debug_log then
-		DOGMA.dbg.log(MOD_ID, tostring(msg))
+	if CONFIG.loaded.debug_log then
+		DOGMA.dbg.log(CONFIG.MOD_ID, tostring(msg))
 	end
 end
 
@@ -85,9 +71,9 @@ local function overlay(log_type, msg)
 	if not (DOGMA and DOGMA.dbg) then
 		return
 	end
-	if CONFIG.debug_overlay then
+	if CONFIG.loaded.debug_overlay then
 		local slot = log_type or LOG.POSE
-		DOGMA.dbg.overlay(MOD_ID, slot.order, tostring(msg), slot.color)
+		DOGMA.dbg.overlay(CONFIG.MOD_ID, slot.order, tostring(msg), slot.color)
 	end
 end
 
@@ -109,7 +95,7 @@ local function use_hold_mode()
 end
 
 local function mod_active()
-	return CONFIG.enabled
+	return CONFIG.loaded.enabled
 end
 
 -- Let FDDA / skinning crouch pulses hit the engine instead of our key remap.
@@ -151,42 +137,42 @@ end
 
 -- Mirror Hold/Toggle + crouch/prone/sprint from Options→Controls.
 -- MCM key rows use curr/functor so they always show engine binds; this only
--- refreshes CONFIG and keeps walk/sprint toggle bits matched to crouch.
+-- refreshes CONFIG.loaded and keeps walk/sprint toggle bits matched to crouch.
 local function sync_mirrored_controls()
 	local crouch_toggle = get_console_cmd(1, "g_crouch_toggle") or false
-	CONFIG.toggle_mode = crouch_toggle and true or false
-	cached_crouch_toggle = CONFIG.toggle_mode
+	CONFIG.loaded.toggle_mode = crouch_toggle and true or false
+	cached_crouch_toggle = CONFIG.loaded.toggle_mode
 	-- Keep the three engine toggle cmds matched while the feature is on.
-	set_engine_toggle(CONFIG.toggle_mode)
+	set_engine_toggle(CONFIG.loaded.toggle_mode)
 
 	for _, kb in pairs(ENGINE_BINDS) do
-		CONFIG[kb.mcm] = engine_bind_dik(kb)
+		CONFIG.loaded[kb.mcm] = engine_bind_dik(kb)
 	end
 end
 
 local function on_option_change()
-	CONFIG.enabled = DOGMA.mcm.bool(MOD_ID, "enabled")
-	CONFIG.walk_key = DOGMA.mcm.key(MOD_ID, "walk_key")
-	CONFIG.debug_log = DOGMA.dbg.logging()
-	CONFIG.debug_overlay = DOGMA.dbg.overlay_enabled()
-	DOGMA.dbg.set_enabled(MOD_ID, DOGMA.dbg.overlay_enabled())
-	-- Always refresh mirrored CONFIG from Controls (MCM curr already wrote
+	CONFIG.loaded.enabled = DOGMA.mcm.bool(CONFIG.MOD_ID, "enabled")
+	CONFIG.loaded.walk_key = DOGMA.mcm.key(CONFIG.MOD_ID, "walk_key")
+	CONFIG.loaded.debug_log = DOGMA.dbg.logging()
+	CONFIG.loaded.debug_overlay = DOGMA.dbg.overlay_enabled()
+	DOGMA.dbg.set_enabled(CONFIG.MOD_ID, DOGMA.dbg.overlay_enabled())
+	-- Always refresh mirrored CONFIG.loaded from Controls (MCM curr already wrote
 	-- Accept changes into the engine). Only force toggle-cmd sync when on.
-	if CONFIG.enabled then
+	if CONFIG.loaded.enabled then
 		sync_mirrored_controls()
 	else
 		for _, kb in pairs(ENGINE_BINDS) do
-			CONFIG[kb.mcm] = engine_bind_dik(kb)
+			CONFIG.loaded[kb.mcm] = engine_bind_dik(kb)
 		end
 		local crouch_toggle = get_console_cmd(1, "g_crouch_toggle") or false
-		CONFIG.toggle_mode = crouch_toggle and true or false
-		cached_crouch_toggle = CONFIG.toggle_mode
+		CONFIG.loaded.toggle_mode = crouch_toggle and true or false
+		cached_crouch_toggle = CONFIG.loaded.toggle_mode
 	end
 end
 
 -- Keys need a free HUD. Pending pose steps may finish during loot UI.
 local function actor_can_change_pose()
-	if not DOGMA.sys.ready(MOD_ID, db, on_option_change) then
+	if not DOGMA.sys.ready(CONFIG.MOD_ID, db, on_option_change) then
 		return false
 	end
 	if device():is_paused() then
@@ -205,7 +191,7 @@ local function input_allowed()
 end
 
 local function is_walk_key(key)
-	return CONFIG.walk_key and key == CONFIG.walk_key
+	return CONFIG.loaded.walk_key and key == CONFIG.loaded.walk_key
 end
 
 local function bind_dik(bind)
@@ -422,11 +408,11 @@ local function on_before_key_release(key, bind, _dis, flags)
 end
 
 local function on_actor_on_first_update()
-	DOGMA.sys.ready(MOD_ID, db, on_option_change)
+	DOGMA.sys.ready(CONFIG.MOD_ID, db, on_option_change)
 end
 
 local function on_actor_on_update()
-	if not DOGMA.sys.ready(MOD_ID, db, on_option_change) then
+	if not DOGMA.sys.ready(CONFIG.MOD_ID, db, on_option_change) then
 		return
 	end
 
@@ -443,7 +429,7 @@ local function on_actor_on_update()
 end
 
 function on_game_start()
-	DOGMA = dogma_common.load(MOD_ID)
+	DOGMA = dogma_common.load(CONFIG.MOD_ID)
 
 	RegisterScriptCallback("on_before_key_press", on_before_key_press)
 	RegisterScriptCallback("on_before_key_hold", on_before_key_hold)

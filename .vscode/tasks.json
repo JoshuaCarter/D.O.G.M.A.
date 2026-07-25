@@ -1,20 +1,42 @@
 {
 	"version": "2.0.0",
+	"options": {
+		"cwd": "${workspaceFolder}",
+		"env": {
+			"DOGMA_DEPLOY": "C:/GAMMA/mods/DOGMA"
+		}
+	},
 	"tasks": [
 		{
 			"label": "DOGMA: Build",
 			"type": "shell",
-			"command": "bash tools/build.sh",
-			"options": {
-				"cwd": "${workspaceFolder}",
-				"env": {
-					"DOGMA_DEPLOY": "C:/GAMMA/mods/DOGMA"
-				}
-			},
+			"command": "tools/build.sh",
 			"group": {
 				"kind": "build",
 				"isDefault": true
 			},
+			"presentation": {
+				"reveal": "always",
+				"panel": "shared",
+				"clear": true
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "DOGMA: Run Anomaly",
+			"type": "shell",
+			"command": "tools/run_anomaly.sh",
+			"presentation": {
+				"reveal": "silent",
+				"panel": "shared",
+				"showReuseMessage": false
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "DOGMA: Build and Run",
+			"type": "shell",
+			"command": "tools/build_and_run.sh",
 			"presentation": {
 				"reveal": "always",
 				"panel": "shared",

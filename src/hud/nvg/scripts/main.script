@@ -4,8 +4,7 @@
 	Stash wanted state on level change / save; re-apply on first update after spawn.
 ]]
 
-local CONF = _G.dogma_hud_nvg_conf
-local MOD_ID = CONF.MOD_ID
+local CONFIG = _G.dogma_hud_nvg_conf
 local DOGMA
 
 local want_on = false
@@ -15,14 +14,14 @@ local function nv_is_on()
 end
 
 local function stash()
-	if not DOGMA.mcm.bool(MOD_ID, "enabled") then
+	if not DOGMA.mcm.bool(CONFIG.MOD_ID, "enabled") then
 		return
 	end
 	want_on = nv_is_on()
 end
 
 local function restore()
-	if not DOGMA.mcm.bool(MOD_ID, "enabled") then
+	if not DOGMA.mcm.bool(CONFIG.MOD_ID, "enabled") then
 		return
 	end
 	if not want_on then
@@ -41,12 +40,12 @@ local function restore()
 end
 
 function on_game_start()
-	DOGMA = dogma_common.load(MOD_ID)
+	DOGMA = dogma_common.load(CONFIG.MOD_ID)
 	RegisterScriptCallback("on_level_changing", stash)
 	RegisterScriptCallback("actor_on_first_update", restore)
 	if USE_MARSHAL then
 		RegisterScriptCallback("save_state", function(mdata)
-			if DOGMA.mcm.bool(MOD_ID, "enabled") then
+			if DOGMA.mcm.bool(CONFIG.MOD_ID, "enabled") then
 				mdata.dogma_hud_nvg_on = nv_is_on() or want_on
 			end
 		end)

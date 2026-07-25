@@ -5,8 +5,7 @@
 	fraction of it has played (draw_time_modifier on the weapon section).
 ]]
 
-local CONF = _G.dogma_weapons_quick_fire_conf
-local MOD_ID = CONF.MOD_ID
+local CONFIG = _G.dogma_weapons_quick_fire_conf
 local DOGMA
 
 local ALLOW = {
@@ -34,7 +33,7 @@ local ready = false
 local ready_id = nil
 
 local function actor_on_hud_animation_play(anm_table, item)
-	if not DOGMA.mcm.bool(MOD_ID, "enabled") then
+	if not DOGMA.mcm.bool(CONFIG.MOD_ID, "enabled") then
 		return
 	end
 	if not (item and IsWeapon(item)) then
@@ -60,7 +59,7 @@ local function actor_on_hud_animation_play(anm_table, item)
 		return
 	end
 
-	CreateTimeEvent(MOD_ID, "ready", length / 1000 * mod, function()
+	CreateTimeEvent(CONFIG.MOD_ID, "ready", length / 1000 * mod, function()
 		local active = db.actor:active_item()
 		if active and active:id() == id and active:get_state() == 1 then
 			ready = true
@@ -69,7 +68,7 @@ local function actor_on_hud_animation_play(anm_table, item)
 		return true
 	end, id)
 
-	CreateTimeEvent(MOD_ID, "expire", length / 1000, function()
+	CreateTimeEvent(CONFIG.MOD_ID, "expire", length / 1000, function()
 		ready = false
 		ready_id = nil
 		return true
@@ -77,7 +76,7 @@ local function actor_on_hud_animation_play(anm_table, item)
 end
 
 local function on_before_key_press(key, bind)
-	if not DOGMA.mcm.bool(MOD_ID, "enabled") then
+	if not DOGMA.mcm.bool(CONFIG.MOD_ID, "enabled") then
 		return
 	end
 	if not (ALLOW[bind] and ready) then
@@ -110,7 +109,7 @@ local function on_before_key_press(key, bind)
 end
 
 function on_game_start()
-	DOGMA = dogma_common.load(MOD_ID)
+	DOGMA = dogma_common.load(CONFIG.MOD_ID)
 	RegisterScriptCallback("actor_on_hud_animation_play", actor_on_hud_animation_play)
 	RegisterScriptCallback("on_before_key_press", on_before_key_press)
 end

@@ -1,8 +1,7 @@
 -- Fast Travel: MCM config, callbacks, and PDA map menu wiring.
 -- Module libs load first as 01_*.script … (zzzz_dogma_travel_fast_travel_*)
 
-local CONF = _G.dogma_travel_fast_travel_conf
-local MOD_ID = CONF.MOD_ID
+local CONFIG = _G.dogma_travel_fast_travel_conf
 _G.dft_config = _G.dft_config or {}
 local dft_config = _G.dft_config
 local dft = _G.dft
@@ -32,8 +31,8 @@ local function load_config()
     dft_config.debug_overlay = (dogma.dbg and dogma.dbg.overlay_enabled and dogma.dbg.overlay_enabled()) or false
     dft_config.debug_log = (dogma.dbg and dogma.dbg.logging and dogma.dbg.logging()) or false
     dft_config.path_preview = mcm.bool("dogma/debug", "ft_path_preview")
-    dft_config.block_transition_in_combat = mcm.bool(MOD_ID, "block_transition_in_combat")
-    dft_config.show_ambush_range = mcm.bool(MOD_ID, "show_ambush_range")
+    dft_config.block_transition_in_combat = mcm.bool(CONFIG.MOD_ID, "block_transition_in_combat")
+    dft_config.show_ambush_range = mcm.bool(CONFIG.MOD_ID, "show_ambush_range")
     if not dft_config.show_ambush_range and dft_clear_ambush_range_circle then
         dft_clear_ambush_range_circle()
     end
@@ -42,7 +41,7 @@ local function load_config()
     dft_config.coarse_nav_build = mcm.key("dogma/debug", "ft_coarse_nav_build")
     dft_config.coarse_nav_rebuild_on_load = mcm.bool("dogma/debug", "ft_coarse_nav_rebuild_on_load")
     if dogma.dbg and dogma.dbg.set_enabled then
-        dogma.dbg.set_enabled(MOD_ID, dogma.dbg.overlay_enabled())
+        dogma.dbg.set_enabled(CONFIG.MOD_ID, dogma.dbg.overlay_enabled())
     end
     if not dft_config.debug_overlay and dft then
         dft._debug_overlay_msg = nil
@@ -64,7 +63,7 @@ refresh_active_config = function()
     local msg_dur = 30
     local dogma = dft and dft.dogma
     if dogma and dogma.mcm then
-        msg_dur = dogma.mcm.number(MOD_ID, "message_duration")
+        msg_dur = dogma.mcm.number(CONFIG.MOD_ID, "message_duration")
     end
 
     dft.active_config = {
@@ -117,10 +116,10 @@ end
 function on_game_start()
     local ok, err = xpcall(function()
         if not _G.dft then
-            printf("[DFT] FATAL: core module failed to publish _G.dft")
+            printf("[dogma_travel_fast_travel] FATAL: core module failed to publish _G.dft")
             return
         end
-        dft.dogma = dogma_common.load(MOD_ID)
+        dft.dogma = dogma_common.load(CONFIG.MOD_ID)
         load_config()
         dft_log("Starting on_game_start registration...")
         dft_build_level_names_registry()
@@ -147,7 +146,6 @@ function on_game_start()
         RegisterScriptCallback("map_spot_menu_add_property",     on_map_spot_menu_add_property)
         RegisterScriptCallback("map_spot_menu_property_clicked", on_map_spot_menu_property_clicked)
         RegisterScriptCallback("on_option_change",               on_option_change)
-        RegisterScriptCallback("on_before_fast_travel",        dft_block_fft_travel)
         RegisterScriptCallback("save_state",                 dft_on_save_state)
         RegisterScriptCallback("load_state",                 dft_on_load_state)
         RegisterScriptCallback("save_state",                 dft_persist_dots)
@@ -200,10 +198,10 @@ function on_game_start()
                 original_bhs_update(...)
             end
         end
-        printf("[DFT] main module loaded")
+        printf("[dogma_travel_fast_travel] main module loaded")
     end, debug.traceback)
     if not ok then
-        printf("[DFT] FATAL on_game_start: %s", tostring(err))
+        printf("[dogma_travel_fast_travel] FATAL on_game_start: %s", tostring(err))
     end
 end
 
@@ -223,13 +221,12 @@ on_loading_screen_key_prompt = function()
         end
     end)
     if not ok then
-        printf("[DFT] on_loading_screen_key_prompt ERROR: %s", tostring(err))
+        printf("[dogma_travel_fast_travel] on_loading_screen_key_prompt ERROR: %s", tostring(err))
     end
 end
 
 actor_on_first_update = function()
     dft_log("actor_on_first_update triggered.")
-    dft_unregister_fft_map_handlers()
 
     -- Drop any cached PDA-attached sneak-cooldown label - the live PDA dialog object can be
     -- recreated across a level load, and reusing a stale reference to the old one would crash.
@@ -279,7 +276,6 @@ actor_on_first_update = function()
         end
         return true
     end)
-
 
     local pos, _, _, final_gvid = dft_load()
     if pos and final_gvid then
@@ -420,7 +416,6 @@ add_travel_menu_items = function(pui, id, is_lc, include_sneak)
     return true
 end
 
-
 on_map_right_click = function(property_ui, map_table)
     if dft.right_click_avail then
         dft.menu_open_seq = (dft.menu_open_seq or 0) + 1
@@ -432,7 +427,6 @@ end
 
 on_map_spot_menu_add_property_impl = function(pui, id, ln, hint)
     local tostr = tostring
-    dft_unregister_fft_map_handlers()
 
     if not pui then
         dft_log_error("menu: pui is nil")

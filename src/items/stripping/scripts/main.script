@@ -19,11 +19,8 @@
 	a separate pull -> strip in actor inv -> push track (same Action_Move).
 ]]
 
-local CONF = _G.dogma_items_stripping_conf
-local MOD_ID = CONF.MOD_ID
+local CONFIG = _G.dogma_items_stripping_conf
 local DOGMA
-local CONFIG = CONF.CONFIG
-
 -- Queued strip targets when paint/hold asks for more than one burst.
 local strip_queue = {}
 
@@ -87,24 +84,24 @@ local function log(msg)
 	if not (DOGMA and DOGMA.dbg) then
 		return
 	end
-	if CONFIG.debug_log then
-		DOGMA.dbg.log(MOD_ID, tostring(msg))
+	if CONFIG.loaded.debug_log then
+		DOGMA.dbg.log(CONFIG.MOD_ID, tostring(msg))
 	end
 end
 
--- CONFIG.debug_log is only known-good after this has run at least once (it's
+-- CONFIG.loaded.debug_log is only known-good after this has run at least once (it's
 -- read from the saved profile, which lands after on_game_start), so re-print
 -- boot status here too - this is the first point a gated log is guaranteed
 -- to actually show up once debug logging is on.
 local function on_option_change()
 	local tostr = tostring
-	CONFIG.intercept_disassemble = DOGMA.mcm.bool(MOD_ID, "intercept_disassemble")
-	CONFIG.keep_parts_with_weapon = DOGMA.mcm.bool(MOD_ID, "keep_parts_with_weapon")
-	CONFIG.debug_log = DOGMA.dbg.logging()
+	CONFIG.loaded.intercept_disassemble = DOGMA.mcm.bool(CONFIG.MOD_ID, "intercept_disassemble")
+	CONFIG.loaded.keep_parts_with_weapon = DOGMA.mcm.bool(CONFIG.MOD_ID, "keep_parts_with_weapon")
+	CONFIG.loaded.debug_log = DOGMA.dbg.logging()
 	log(string.format(
 		"on_option_change: intercept_disassemble=%s keep_parts_with_weapon=%s debug_log=%s onupdate_patched=%s cc_update_patched=%s func_disassembly_patched=%s sort_guard_patched=%s",
-		tostr(CONFIG.intercept_disassemble), tostr(CONFIG.keep_parts_with_weapon),
-		tostr(CONFIG.debug_log),
+		tostr(CONFIG.loaded.intercept_disassemble), tostr(CONFIG.loaded.keep_parts_with_weapon),
+		tostr(CONFIG.loaded.debug_log),
 		tostr(patched_on_update), tostr(patched_cc_update), tostr(patched_func_disassembly),
 		tostr(patched_sort_by_kind_guard)
 	))
@@ -222,7 +219,7 @@ local function should_reclaim_to_weapon_owner()
 	if companion_strip_active and burst_weapon_owner_id then
 		return true
 	end
-	if not CONFIG.keep_parts_with_weapon then
+	if not CONFIG.loaded.keep_parts_with_weapon then
 		return false
 	end
 	if not (burst_weapon_owner_id and db.actor) then
@@ -305,7 +302,7 @@ local function build_reclaim_pending_ids()
 		db.actor:iterate_inventory(function(_, item)
 			local id = item:id()
 			if not before[id] then
-				if companion_strip_active and not CONFIG.keep_parts_with_weapon then
+				if companion_strip_active and not CONFIG.loaded.keep_parts_with_weapon then
 					if id == burst_obj_id then
 						pending[#pending + 1] = id
 					end
@@ -342,7 +339,7 @@ local function start_reclaim_after_strip()
 end
 
 local function try_reclaim_excess_ammo()
-	if companion_strip_active and not CONFIG.keep_parts_with_weapon then
+	if companion_strip_active and not CONFIG.loaded.keep_parts_with_weapon then
 		return false
 	end
 	if not (burst_weapon_owner_id and db.actor) then
@@ -477,7 +474,7 @@ local function reclaim_tick()
 
 	if not reclaim_ammo_done then
 		if reclaim_idle_passes >= RECLAIM_RESCAN_PASSES then
-			if companion_strip_active and not reclaim_any_item_moved and CONFIG.keep_parts_with_weapon then
+			if companion_strip_active and not reclaim_any_item_moved and CONFIG.loaded.keep_parts_with_weapon then
 				local pending = build_reclaim_pending_ids()
 				if #pending > 0 then
 					log(string.format(
@@ -1063,7 +1060,7 @@ local function start_burst_normal(obj, bag, idx)
 	burst_mode = gui and gui.mode
 	local owner = obj:parent()
 	burst_weapon_owner_id = owner and owner:id()
-	if CONFIG.keep_parts_with_weapon and not companion_strip_active and burst_mode == "loot" and owner and db.actor and owner:id() ~= db.actor:id() then
+	if CONFIG.loaded.keep_parts_with_weapon and not companion_strip_active and burst_mode == "loot" and owner and db.actor and owner:id() ~= db.actor:id() then
 		snapshot_actor_reclaim_baseline()
 	end
 	log(string.format(
@@ -1231,13 +1228,13 @@ end
 
 -- Catches disassembly (drag a tool onto the item, or a disassemble keybind)
 -- of a weapon that isn't fully stripped yet and redirects it into the same
--- burst instead. Gated by CONFIG.intercept_disassemble, checked at call
+-- burst instead. Gated by CONFIG.loaded.intercept_disassemble, checked at call
 -- time so the MCM toggle takes effect immediately without re-patching.
 local disassembly_wrapper = nil
 
 local function make_disassembly_wrapper(orig)
 	return function(obj, obj_d)
-		if CONFIG.intercept_disassemble and obj and IsWeapon(obj) and not weapon_fully_stripped(obj) then
+		if CONFIG.loaded.intercept_disassemble and obj and IsWeapon(obj) and not weapon_fully_stripped(obj) then
 			log(string.format("%s: disassemble intercepted, field-stripping instead of disassembling", obj:section()))
 			local gui = ui_inventory and ui_inventory.GUI
 			local bag = gui and gui.hover and gui.hover.bag
@@ -1294,7 +1291,7 @@ if orig_sort_by_kind_factory then
 end
 
 function on_game_start()
-	DOGMA = CONF:ensure_dogma()
+	DOGMA = CONFIG:ensure_dogma()
 
 	RegisterScriptCallback("on_option_change", on_option_change)
 	RegisterScriptCallback("actor_on_item_take", function(item)

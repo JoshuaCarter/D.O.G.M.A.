@@ -1,6 +1,5 @@
 function on_mcm_load(options)
-	local CONF = _G.dogma_zoom_free_zoom_conf
-	local D = CONF.defaults
+	local CONFIG = _G.dogma_zoom_free_zoom_conf
 	local kb_mod = (ui_mcm and ui_mcm.kb_mod_radio) or "radio_h"
 
 	dogma_mcm.attach(options, "zoom", "ui_mcm_menu_dogma_zoom", {
@@ -17,7 +16,7 @@ function on_mcm_load(options)
 				id = "free_zoom/enabled",
 				type = "check",
 				val = 1,
-				def = D["free_zoom/enabled"],
+				def = CONFIG.DEFAULTS["free_zoom/enabled"],
 				hint = "dogma_free_zoom_enabled",
 			},
 			{ id = "line_zoom", type = "line" },
@@ -33,7 +32,7 @@ function on_mcm_load(options)
 				min = 0,
 				max = 50,
 				step = 1,
-				def = D["free_zoom/free_zoom"],
+				def = CONFIG.DEFAULTS["free_zoom/free_zoom"],
 				hint = "dogma_free_zoom_free_zoom",
 			},
 			{
@@ -43,14 +42,14 @@ function on_mcm_load(options)
 				min = 0,
 				max = 70,
 				step = 1,
-				def = D["free_zoom/move_speed"],
+				def = CONFIG.DEFAULTS["free_zoom/move_speed"],
 				hint = "dogma_free_zoom_move_speed",
 			},
 			{
 				id = "free_zoom/empty_hands_only",
 				type = "check",
 				val = 1,
-				def = D["free_zoom/empty_hands_only"],
+				def = CONFIG.DEFAULTS["free_zoom/empty_hands_only"],
 				hint = "dogma_free_zoom_empty_hands_only",
 			},
 			{ id = "line_keybind", type = "line" },
@@ -63,14 +62,14 @@ function on_mcm_load(options)
 				id = "free_zoom/zoom_key",
 				type = "key_bind",
 				val = 2,
-				def = D["free_zoom/zoom_key"],
+				def = CONFIG.DEFAULTS["free_zoom/zoom_key"],
 				hint = "dogma_free_zoom_zoom_key",
 			},
 			{
 				id = "free_zoom/zoom_key_mode",
 				type = kb_mod,
 				val = 2,
-				def = D["free_zoom/zoom_key_mode"],
+				def = CONFIG.DEFAULTS["free_zoom/zoom_key_mode"],
 				hint = "dogma_free_zoom_zoom_key_mode",
 				content = {
 					{ 0, "single" },
@@ -83,7 +82,7 @@ function on_mcm_load(options)
 				id = "free_zoom/zoom_key_modifier",
 				type = kb_mod,
 				val = 2,
-				def = D["free_zoom/zoom_key_modifier"],
+				def = CONFIG.DEFAULTS["free_zoom/zoom_key_modifier"],
 				hint = "mcm_kb_modifier",
 				content = {
 					{ 0, "mcm_kb_mod_none" },
@@ -102,7 +101,7 @@ function on_mcm_load(options)
 				id = "free_zoom/rmb_zoom",
 				type = kb_mod,
 				val = 2,
-				def = D["free_zoom/rmb_zoom"],
+				def = CONFIG.DEFAULTS["free_zoom/rmb_zoom"],
 				hint = "dogma_free_zoom_rmb_zoom",
 				content = {
 					{ 0, "no" },
@@ -114,7 +113,7 @@ function on_mcm_load(options)
 				id = "free_zoom/mmb_zoom",
 				type = kb_mod,
 				val = 2,
-				def = D["free_zoom/mmb_zoom"],
+				def = CONFIG.DEFAULTS["free_zoom/mmb_zoom"],
 				hint = "dogma_free_zoom_mmb_zoom",
 				content = {
 					{ 0, "no" },
@@ -126,14 +125,14 @@ function on_mcm_load(options)
 				id = "free_zoom/scroll_wheel_zoom",
 				type = "check",
 				val = 1,
-				def = D["free_zoom/scroll_wheel_zoom"],
+				def = CONFIG.DEFAULTS["free_zoom/scroll_wheel_zoom"],
 				hint = "dogma_free_zoom_scroll_wheel_zoom",
 			},
 			{
 				id = "free_zoom/scroll_wheel_reverse",
 				type = "check",
 				val = 1,
-				def = D["free_zoom/scroll_wheel_reverse"],
+				def = CONFIG.DEFAULTS["free_zoom/scroll_wheel_reverse"],
 				hint = "dogma_free_zoom_scroll_wheel_reverse",
 			},
 			{
@@ -143,7 +142,7 @@ function on_mcm_load(options)
 				min = 1,
 				max = 5,
 				step = 1,
-				def = D["free_zoom/scroll_wheel_steps"],
+				def = CONFIG.DEFAULTS["free_zoom/scroll_wheel_steps"],
 				hint = "dogma_free_zoom_scroll_wheel_steps",
 			},
 			{
@@ -153,7 +152,7 @@ function on_mcm_load(options)
 				min = 50,
 				max = 500,
 				step = 25,
-				def = D["free_zoom/scroll_wheel_max_gap_ms"],
+				def = CONFIG.DEFAULTS["free_zoom/scroll_wheel_max_gap_ms"],
 				hint = "dogma_free_zoom_scroll_wheel_max_gap_ms",
 			},
 		}),

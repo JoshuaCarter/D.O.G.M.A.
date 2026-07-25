@@ -8,8 +8,7 @@
 	± keys override gun+optic. Owns ADS hud_fov — ships no-op overrides for Adjustable Scope View / rival Free Zooms.
 ]]
 
-local CONF = _G.dogma_zoom_free_zoom_conf
-local MOD_ID = CONF.MOD_ID
+local CONFIG = _G.dogma_zoom_free_zoom_conf
 local ADS_MOD = "dogma/zoom/ads_zoom"
 local DOGMA
 
@@ -55,10 +54,6 @@ local OPTIC_LABEL = {
 	sight = "Sights",
 	scope = "Scopes",
 }
-
--- Filled by refresh_config (on_option_change runs at boot before any read).
-local CONFIG = {}
-
 
 local free_on = false
 local ads_on = false
@@ -149,8 +144,8 @@ local function log(msg)
 	if not (DOGMA and DOGMA.dbg) then
 		return
 	end
-	if CONFIG.debug_log then
-		DOGMA.dbg.log(MOD_ID, tostring(msg))
+	if CONFIG.loaded.debug_log then
+		DOGMA.dbg.log(CONFIG.MOD_ID, tostring(msg))
 	end
 end
 
@@ -179,35 +174,35 @@ local function mode_label()
 end
 
 local function refresh_config()
-	CONFIG.enabled = DOGMA.mcm.bool(MOD_ID, "free_zoom/enabled")
-	CONFIG.empty_hands_only = DOGMA.mcm.bool(MOD_ID, "free_zoom/empty_hands_only")
-	CONFIG.zoom_key = DOGMA.mcm.key(MOD_ID, "free_zoom/zoom_key")
-	CONFIG.zoom_key_modifier = DOGMA.mcm.number(MOD_ID, "free_zoom/zoom_key_modifier")
-	CONFIG.zoom_key_mode = DOGMA.mcm.number(MOD_ID, "free_zoom/zoom_key_mode")
-	CONFIG.rmb_zoom = DOGMA.mcm.number(MOD_ID, "free_zoom/rmb_zoom")
-	CONFIG.mmb_zoom = DOGMA.mcm.number(MOD_ID, "free_zoom/mmb_zoom")
-	CONFIG.scroll_wheel_zoom = DOGMA.mcm.bool(MOD_ID, "free_zoom/scroll_wheel_zoom")
-	CONFIG.scroll_wheel_reverse = DOGMA.mcm.bool(MOD_ID, "free_zoom/scroll_wheel_reverse")
-	CONFIG.scroll_wheel_steps = DOGMA.mcm.number(MOD_ID, "free_zoom/scroll_wheel_steps")
-	CONFIG.scroll_wheel_max_gap_ms = DOGMA.mcm.number(MOD_ID, "free_zoom/scroll_wheel_max_gap_ms")
-	CONFIG.free_zoom = DOGMA.mcm.number(MOD_ID, "free_zoom/free_zoom")
-	CONFIG.move_speed = DOGMA.mcm.number(MOD_ID, "free_zoom/move_speed")
+	CONFIG.loaded.enabled = DOGMA.mcm.bool(CONFIG.MOD_ID, "free_zoom/enabled")
+	CONFIG.loaded.empty_hands_only = DOGMA.mcm.bool(CONFIG.MOD_ID, "free_zoom/empty_hands_only")
+	CONFIG.loaded.zoom_key = DOGMA.mcm.key(CONFIG.MOD_ID, "free_zoom/zoom_key")
+	CONFIG.loaded.zoom_key_modifier = DOGMA.mcm.number(CONFIG.MOD_ID, "free_zoom/zoom_key_modifier")
+	CONFIG.loaded.zoom_key_mode = DOGMA.mcm.number(CONFIG.MOD_ID, "free_zoom/zoom_key_mode")
+	CONFIG.loaded.rmb_zoom = DOGMA.mcm.number(CONFIG.MOD_ID, "free_zoom/rmb_zoom")
+	CONFIG.loaded.mmb_zoom = DOGMA.mcm.number(CONFIG.MOD_ID, "free_zoom/mmb_zoom")
+	CONFIG.loaded.scroll_wheel_zoom = DOGMA.mcm.bool(CONFIG.MOD_ID, "free_zoom/scroll_wheel_zoom")
+	CONFIG.loaded.scroll_wheel_reverse = DOGMA.mcm.bool(CONFIG.MOD_ID, "free_zoom/scroll_wheel_reverse")
+	CONFIG.loaded.scroll_wheel_steps = DOGMA.mcm.number(CONFIG.MOD_ID, "free_zoom/scroll_wheel_steps")
+	CONFIG.loaded.scroll_wheel_max_gap_ms = DOGMA.mcm.number(CONFIG.MOD_ID, "free_zoom/scroll_wheel_max_gap_ms")
+	CONFIG.loaded.free_zoom = DOGMA.mcm.number(CONFIG.MOD_ID, "free_zoom/free_zoom")
+	CONFIG.loaded.move_speed = DOGMA.mcm.number(CONFIG.MOD_ID, "free_zoom/move_speed")
 
-	CONFIG.ads_enabled = DOGMA.mcm.bool(ADS_MOD, "enabled")
-	CONFIG.wads = {
+	CONFIG.loaded.ads_enabled = DOGMA.mcm.bool(ADS_MOD, "enabled")
+	CONFIG.loaded.wads = {
 		irons = clamp(DOGMA.mcm.number(ADS_MOD, "wads_irons"), 0, ADS_MAX.irons),
 		sight = clamp(DOGMA.mcm.number(ADS_MOD, "wads_sight"), 0, ADS_MAX.sight),
 		scope = clamp(DOGMA.mcm.number(ADS_MOD, "wads_scope"), 0, ADS_MAX.scope),
 	}
-	CONFIG.wads_inc_key = DOGMA.mcm.key(ADS_MOD, "wads_inc_key")
-	CONFIG.wads_dec_key = DOGMA.mcm.key(ADS_MOD, "wads_dec_key")
-	CONFIG.wads_reset_key = DOGMA.mcm.key(ADS_MOD, "wads_reset_key")
-	CONFIG.wads_key_mode = DOGMA.mcm.number(ADS_MOD, "wads_key_mode")
-	CONFIG.wads_key_modifier = DOGMA.mcm.number(ADS_MOD, "wads_key_modifier")
+	CONFIG.loaded.wads_inc_key = DOGMA.mcm.key(ADS_MOD, "wads_inc_key")
+	CONFIG.loaded.wads_dec_key = DOGMA.mcm.key(ADS_MOD, "wads_dec_key")
+	CONFIG.loaded.wads_reset_key = DOGMA.mcm.key(ADS_MOD, "wads_reset_key")
+	CONFIG.loaded.wads_key_mode = DOGMA.mcm.number(ADS_MOD, "wads_key_mode")
+	CONFIG.loaded.wads_key_modifier = DOGMA.mcm.number(ADS_MOD, "wads_key_modifier")
 
-	CONFIG.debug_log = DOGMA.dbg.logging()
+	CONFIG.loaded.debug_log = DOGMA.dbg.logging()
 	if DOGMA.dbg and DOGMA.dbg.set_enabled then
-		DOGMA.dbg.set_enabled(MOD_ID, CONFIG.debug_log)
+		DOGMA.dbg.set_enabled(CONFIG.MOD_ID, CONFIG.loaded.debug_log)
 	end
 end
 
@@ -372,7 +367,7 @@ local function resolve_ads()
 	local cat = weapon_category()
 	local optic = optic_class()
 	local max = ads_cap(optic)
-	local def = clamp((CONFIG.wads and CONFIG.wads[optic]) or 0, 0, max)
+	local def = clamp((CONFIG.loaded.wads and CONFIG.loaded.wads[optic]) or 0, 0, max)
 	local okey = override_key()
 	local ov = okey and gun_scope_override[okey] or nil
 	local pct = ov ~= nil and ov or def
@@ -393,12 +388,12 @@ local function sec_name(sec)
 end
 
 local function update_wads_overlay()
-	if not (DOGMA and DOGMA.dbg and CONFIG.debug_log) then
+	if not (DOGMA and DOGMA.dbg and CONFIG.loaded.debug_log) then
 		return
 	end
 	if not ads_on then
 		if DOGMA.dbg.clear_source then
-			DOGMA.dbg.clear_source(MOD_ID)
+			DOGMA.dbg.clear_source(CONFIG.MOD_ID)
 		end
 		return
 	end
@@ -409,13 +404,13 @@ local function update_wads_overlay()
 	local _, cat, optic, def, ov = resolve_ads()
 	local gun = sec_name(parent_section())
 	local scope_lab = optic == "irons" and "Irons" or sec_name(attached_scope_sec() or optic_key())
-	DOGMA.dbg.overlay(MOD_ID, 1, string.format("Optic: %s (%s)", OPTIC_LABEL[optic] or optic, CAT_LABEL[cat] or cat), "orange")
-	DOGMA.dbg.overlay(MOD_ID, 2, string.format("ADS Zoom: %d%% (def %d%%)", ov ~= nil and ov or def, def), "orange")
-	DOGMA.dbg.overlay(MOD_ID, 3, string.format("Gun & Scope: %s + %s", gun, scope_lab), "orange")
+	DOGMA.dbg.overlay(CONFIG.MOD_ID, 1, string.format("Optic: %s (%s)", OPTIC_LABEL[optic] or optic, CAT_LABEL[cat] or cat), "orange")
+	DOGMA.dbg.overlay(CONFIG.MOD_ID, 2, string.format("ADS Zoom: %d%% (def %d%%)", ov ~= nil and ov or def, def), "orange")
+	DOGMA.dbg.overlay(CONFIG.MOD_ID, 3, string.format("Gun & Scope: %s + %s", gun, scope_lab), "orange")
 	if ov ~= nil then
-		DOGMA.dbg.overlay(MOD_ID, 4, string.format("Override: %d%%", ov), "orange")
+		DOGMA.dbg.overlay(CONFIG.MOD_ID, 4, string.format("Override: %d%%", ov), "orange")
 	else
-		DOGMA.dbg.overlay(MOD_ID, 4, "Override: —", "orange")
+		DOGMA.dbg.overlay(CONFIG.MOD_ID, 4, "Override: —", "orange")
 	end
 end
 
@@ -463,7 +458,7 @@ local function get_context()
 	if weapon_is_lowered() then
 		return CTX.LOWERED
 	end
-	if CONFIG.empty_hands_only then
+	if CONFIG.loaded.empty_hands_only then
 		if not hands_are_empty() then
 			return CTX.HANDS_FULL
 		end
@@ -487,16 +482,16 @@ end
 
 -- true = we own world FOV; false = optical owns it (do not write world fov).
 local function we_own_fov()
-	return not (ads_on and CONFIG.ads_enabled and is_optical_ads())
+	return not (ads_on and CONFIG.loaded.ads_enabled and is_optical_ads())
 end
 
 -- World FOV shrink %: ADS% (irons/sight) or free%. Same % also used for HUD while ADS.
 local function compute_world_pct()
 	local pct = 0
-	if ads_on and CONFIG.ads_enabled and we_own_fov() then
+	if ads_on and CONFIG.loaded.ads_enabled and we_own_fov() then
 		pct = resolve_ads()
 	elseif free_on then
-		pct = CONFIG.free_zoom
+		pct = CONFIG.loaded.free_zoom
 	end
 	if pct > 50 then
 		pct = 50
@@ -525,7 +520,7 @@ local function set_zoom_move_speed(active)
 	end
 	if active then
 		-- move_speed is % of normal speed while free-zoomed (0-70).
-		local run_mult = CONFIG.move_speed / 100
+		local run_mult = CONFIG.loaded.move_speed / 100
 		-- Sprint slowdown is 1/8 of the run slowdown.
 		local sprint_mult = 1 - (1 - run_mult) * 0.125
 		speed_mod.add_speed("dogma_freezoom_speed_run", run_mult, false, true)
@@ -544,10 +539,10 @@ end
 -- HUD: free% while free; ADS uses same Irons/Sights/Scopes % (optical scopes: HUD only).
 local function apply_hud_fov()
 	local pct = 0
-	if ads_on and CONFIG.ads_enabled then
+	if ads_on and CONFIG.loaded.ads_enabled then
 		pct = resolve_ads()
 	elseif free_on then
-		pct = CONFIG.free_zoom
+		pct = CONFIG.loaded.free_zoom
 	end
 	if pct <= 0 then
 		if we_wrote_hud then
@@ -685,7 +680,7 @@ end
 
 local function set_free_zoom(want_free, source)
 	source = source or "set_free_zoom"
-	if not CONFIG.enabled then
+	if not CONFIG.loaded.enabled then
 		return false
 	end
 	want_free = not not want_free
@@ -702,7 +697,7 @@ local function set_free_zoom(want_free, source)
 			logf("free denied: source=%s reason=ctx=%s mode=%s", source, ctx, mode_label())
 			return false
 		end
-		if CONFIG.free_zoom <= 0 then
+		if CONFIG.loaded.free_zoom <= 0 then
 			logf("free denied: source=%s reason=free_zoom=0%% mode=%s", source, mode_label())
 			return false
 		end
@@ -726,7 +721,7 @@ local function set_free_zoom(want_free, source)
 		source,
 		mode_label(),
 		fov and string.format("%.2f", fov) or "optical",
-		CONFIG.free_zoom,
+		CONFIG.loaded.free_zoom,
 		wpn_label()
 	)
 	return true
@@ -741,7 +736,7 @@ local function set_ads_zoom(want_ads, source)
 		if ads_on then
 			return false
 		end
-		if not CONFIG.ads_enabled then
+		if not CONFIG.loaded.ads_enabled then
 			logf("ads skipped: source=%s ads_zoom disabled wpn=%s", source, wpn_label())
 			return false
 		end
@@ -812,7 +807,7 @@ end
 
 -- Fires on the keypress itself — earliest hook for 1/2/3 slot swaps.
 local function on_before_key_press(key, bind, dis, flags)
-	if not CONFIG.enabled and not CONFIG.ads_enabled then
+	if not CONFIG.loaded.enabled and not CONFIG.loaded.ads_enabled then
 		return
 	end
 	if not bind then
@@ -826,7 +821,7 @@ end
 -- Slot change from wheel / scripts / anything that bypasses our key hook.
 -- Engine sometimes fires this during ADS / anims without a real item swap — ignore those.
 local function actor_on_changed_slot(new_slot, new_obj, prev_slot, prev_obj)
-	if not CONFIG.enabled and not CONFIG.ads_enabled then
+	if not CONFIG.loaded.enabled and not CONFIG.loaded.ads_enabled then
 		return
 	end
 	if new_slot == prev_slot then
@@ -884,7 +879,7 @@ local function on_active_item_changed(prev_id, new_id, prev_sec, new_sec)
 end
 
 local function actor_on_weapon_lower(_wpn)
-	if not CONFIG.enabled and not CONFIG.ads_enabled then
+	if not CONFIG.loaded.enabled and not CONFIG.loaded.ads_enabled then
 		return
 	end
 	reset_zoom("weapon_lower")
@@ -897,7 +892,7 @@ local function on_option_change()
 	refresh_config()
 	reset_scroll_accum()
 
-	if not CONFIG.enabled and not CONFIG.ads_enabled then
+	if not CONFIG.loaded.enabled and not CONFIG.loaded.ads_enabled then
 		reset_session(true, "disabled")
 		UnregisterScriptCallback("on_mouse_wheel", on_mouse_wheel)
 		log("opts: free+ads disabled; hip FOV restored, scroll callback off")
@@ -909,34 +904,34 @@ local function on_option_change()
 	reset_session(false, "opts")
 
 	UnregisterScriptCallback("on_mouse_wheel", on_mouse_wheel)
-	if CONFIG.enabled and CONFIG.scroll_wheel_zoom then
+	if CONFIG.loaded.enabled and CONFIG.loaded.scroll_wheel_zoom then
 		RegisterScriptCallback("on_mouse_wheel", on_mouse_wheel)
 	end
 
 	logf(
 		"opts: free_en=%s free=%d%% ads=%d/%d/%d speed=%d%% empty_hands=%s scroll=%s reverse=%s steps=%d gap=%dms mode=%s key=%s mod=%d km=%d rmb=%d mmb=%d",
-		tostring(CONFIG.enabled),
-		CONFIG.free_zoom,
-		CONFIG.wads.irons,
-		CONFIG.wads.sight,
-		CONFIG.wads.scope,
-		CONFIG.move_speed,
-		tostring(CONFIG.empty_hands_only),
-		tostring(CONFIG.scroll_wheel_zoom),
-		tostring(CONFIG.scroll_wheel_reverse),
-		CONFIG.scroll_wheel_steps,
-		CONFIG.scroll_wheel_max_gap_ms,
+		tostring(CONFIG.loaded.enabled),
+		CONFIG.loaded.free_zoom,
+		CONFIG.loaded.wads.irons,
+		CONFIG.loaded.wads.sight,
+		CONFIG.loaded.wads.scope,
+		CONFIG.loaded.move_speed,
+		tostring(CONFIG.loaded.empty_hands_only),
+		tostring(CONFIG.loaded.scroll_wheel_zoom),
+		tostring(CONFIG.loaded.scroll_wheel_reverse),
+		CONFIG.loaded.scroll_wheel_steps,
+		CONFIG.loaded.scroll_wheel_max_gap_ms,
 		mode_label(),
-		tostring(CONFIG.zoom_key),
-		CONFIG.zoom_key_modifier,
-		CONFIG.zoom_key_mode,
-		CONFIG.rmb_zoom,
-		CONFIG.mmb_zoom
+		tostring(CONFIG.loaded.zoom_key),
+		CONFIG.loaded.zoom_key_modifier,
+		CONFIG.loaded.zoom_key_mode,
+		CONFIG.loaded.rmb_zoom,
+		CONFIG.loaded.mmb_zoom
 	)
 end
 
 local function actor_on_first_update()
-	if not DOGMA.sys.ready(MOD_ID, db, on_option_change) then
+	if not DOGMA.sys.ready(CONFIG.MOD_ID, db, on_option_change) then
 		log("first_update: DOGMA not ready yet")
 		return
 	end
@@ -951,7 +946,7 @@ local function actor_on_first_update()
 end
 
 local function wads_mod_ok()
-	local modifier = CONFIG.wads_key_modifier
+	local modifier = CONFIG.loaded.wads_key_modifier
 	if modifier == 0 then
 		return true
 	end
@@ -962,7 +957,7 @@ local function wads_mod_ok()
 end
 
 local function mutate_wads(delta_or_reset, source)
-	if not (CONFIG.ads_enabled and ads_on) then
+	if not (CONFIG.loaded.ads_enabled and ads_on) then
 		return false
 	end
 	refresh_wpn()
@@ -1010,10 +1005,10 @@ local poll_hold_zoom
 local poll_wads_hold
 
 local function actor_on_update()
-	if not DOGMA or not DOGMA.sys.ready(MOD_ID, db, on_option_change) then
+	if not DOGMA or not DOGMA.sys.ready(CONFIG.MOD_ID, db, on_option_change) then
 		return
 	end
-	if not CONFIG.enabled and not CONFIG.ads_enabled then
+	if not CONFIG.loaded.enabled and not CONFIG.loaded.ads_enabled then
 		return
 	end
 
@@ -1027,10 +1022,10 @@ local function actor_on_update()
 		on_active_item_changed(prev_id, id, prev_sec, last_item_sec)
 	end
 
-	if CONFIG.enabled or (CONFIG.ads_enabled and ads_on) then
+	if CONFIG.loaded.enabled or (CONFIG.loaded.ads_enabled and ads_on) then
 		handle_context(get_context())
 	end
-	if CONFIG.enabled then
+	if CONFIG.loaded.enabled then
 		poll_hold_zoom()
 	end
 	poll_wads_hold()
@@ -1041,7 +1036,7 @@ end
 -- modifier 0 = no extra modifier required (not "forbid Shift/Ctrl/Alt").
 -- Otherwise MCM's MOD_NONE fails when the bind itself is a modifier key.
 local function zoom_mod_ok()
-	local modifier = CONFIG.zoom_key_modifier
+	local modifier = CONFIG.loaded.zoom_key_modifier
 	if modifier == 0 then
 		return true
 	end
@@ -1061,10 +1056,10 @@ end
 
 local function mouse_zoom_mode(key)
 	if key == DIK_RMB then
-		return CONFIG.rmb_zoom
+		return CONFIG.loaded.rmb_zoom
 	end
 	if key == DIK_MMB then
-		return CONFIG.mmb_zoom
+		return CONFIG.loaded.mmb_zoom
 	end
 	return nil
 end
@@ -1096,7 +1091,7 @@ poll_hold_zoom = function()
 		return
 	end
 	-- Keyboard hold respects modifier; RMB/MMB hold does not.
-	if hold_zoom_diks[CONFIG.zoom_key] and not (hold_zoom_diks[DIK_RMB] or hold_zoom_diks[DIK_MMB]) then
+	if hold_zoom_diks[CONFIG.loaded.zoom_key] and not (hold_zoom_diks[DIK_RMB] or hold_zoom_diks[DIK_MMB]) then
 		if not zoom_mod_ok() then
 			return
 		end
@@ -1105,10 +1100,10 @@ poll_hold_zoom = function()
 end
 
 poll_wads_hold = function()
-	if CONFIG.wads_key_mode ~= WADS_MODE_HOLD then
+	if CONFIG.loaded.wads_key_mode ~= WADS_MODE_HOLD then
 		return
 	end
-	if not (ads_on and CONFIG.ads_enabled) then
+	if not (ads_on and CONFIG.loaded.ads_enabled) then
 		return
 	end
 	if not wads_mod_ok() then
@@ -1118,9 +1113,9 @@ poll_wads_hold = function()
 	for key, last_ms in pairs(wads_hold_keys) do
 		if now - last_ms >= WADS_HOLD_MS then
 			wads_hold_keys[key] = now
-			if key == CONFIG.wads_inc_key then
+			if key == CONFIG.loaded.wads_inc_key then
 				mutate_wads(WADS_STEP, "wads_hold_inc")
-			elseif key == CONFIG.wads_dec_key then
+			elseif key == CONFIG.loaded.wads_dec_key then
 				mutate_wads(-WADS_STEP, "wads_hold_dec")
 			end
 		end
@@ -1128,12 +1123,12 @@ poll_wads_hold = function()
 end
 
 local function try_wads_key_press(key)
-	if not CONFIG.ads_enabled or not ads_on then
+	if not CONFIG.loaded.ads_enabled or not ads_on then
 		return false
 	end
-	local is_inc = CONFIG.wads_inc_key and key == CONFIG.wads_inc_key
-	local is_dec = CONFIG.wads_dec_key and key == CONFIG.wads_dec_key
-	local is_reset = CONFIG.wads_reset_key and key == CONFIG.wads_reset_key
+	local is_inc = CONFIG.loaded.wads_inc_key and key == CONFIG.loaded.wads_inc_key
+	local is_dec = CONFIG.loaded.wads_dec_key and key == CONFIG.loaded.wads_dec_key
+	local is_reset = CONFIG.loaded.wads_reset_key and key == CONFIG.loaded.wads_reset_key
 	if not (is_inc or is_dec or is_reset) then
 		return false
 	end
@@ -1144,7 +1139,7 @@ local function try_wads_key_press(key)
 		mutate_wads("reset", "wads_reset")
 		return true
 	end
-	if CONFIG.wads_key_mode == WADS_MODE_HOLD then
+	if CONFIG.loaded.wads_key_mode == WADS_MODE_HOLD then
 		wads_hold_keys[key] = time_global() or 0
 		mutate_wads(is_inc and WADS_STEP or -WADS_STEP, "wads_hold_start")
 		return true
@@ -1154,7 +1149,7 @@ local function try_wads_key_press(key)
 end
 
 local function on_key_press(key)
-	if not DOGMA or not DOGMA.sys.ready(MOD_ID, db, on_option_change) then
+	if not DOGMA or not DOGMA.sys.ready(CONFIG.MOD_ID, db, on_option_change) then
 		return
 	end
 
@@ -1162,7 +1157,7 @@ local function on_key_press(key)
 		return
 	end
 
-	if not CONFIG.enabled then
+	if not CONFIG.loaded.enabled then
 		return
 	end
 
@@ -1170,11 +1165,11 @@ local function on_key_press(key)
 		return
 	end
 
-	if not CONFIG.zoom_key or key ~= CONFIG.zoom_key then
+	if not CONFIG.loaded.zoom_key or key ~= CONFIG.loaded.zoom_key then
 		return
 	end
 
-	local km = CONFIG.zoom_key_mode
+	local km = CONFIG.loaded.zoom_key_mode
 	if km == MODE_HOLD then
 		hold_zoom_diks[key] = true
 		if zoom_mod_ok() then
@@ -1193,7 +1188,7 @@ local function on_key_press(key)
 	end
 
 	if km == MODE_DOUBLE then
-		if ui_mcm and ui_mcm.double_tap and ui_mcm.double_tap(MOD_ID .. "_zoom", key) then
+		if ui_mcm and ui_mcm.double_tap and ui_mcm.double_tap(CONFIG.MOD_ID .. "_zoom", key) then
 			logf("key: double (mode=%s)", mode_label())
 			set_free_zoom(not free_on, "key_double")
 		end
@@ -1208,16 +1203,16 @@ local function on_key_press(key)
 end
 
 local function on_key_hold(key)
-	if not DOGMA or not DOGMA.sys.ready(MOD_ID, db, on_option_change) then
+	if not DOGMA or not DOGMA.sys.ready(CONFIG.MOD_ID, db, on_option_change) then
 		return
 	end
-	if not CONFIG.enabled then
+	if not CONFIG.loaded.enabled then
 		return
 	end
-	if CONFIG.zoom_key_mode ~= MODE_LONG then
+	if CONFIG.loaded.zoom_key_mode ~= MODE_LONG then
 		return
 	end
-	if not CONFIG.zoom_key or key ~= CONFIG.zoom_key then
+	if not CONFIG.loaded.zoom_key or key ~= CONFIG.loaded.zoom_key then
 		return
 	end
 	if keys_blocked_ctx() then
@@ -1226,7 +1221,7 @@ local function on_key_hold(key)
 	if not zoom_mod_ok() then
 		return
 	end
-	if not (ui_mcm and ui_mcm.key_hold and ui_mcm.key_hold(MOD_ID .. "_zoom", key)) then
+	if not (ui_mcm and ui_mcm.key_hold and ui_mcm.key_hold(CONFIG.MOD_ID .. "_zoom", key)) then
 		return
 	end
 	logf("key: long (mode=%s)", mode_label())
@@ -1234,7 +1229,7 @@ local function on_key_hold(key)
 end
 
 local function on_key_release(key)
-	if not CONFIG.enabled and not CONFIG.ads_enabled then
+	if not CONFIG.loaded.enabled and not CONFIG.loaded.ads_enabled then
 		return
 	end
 	if wads_hold_keys[key] then
@@ -1244,13 +1239,13 @@ local function on_key_release(key)
 		return
 	end
 	hold_zoom_diks[key] = nil
-	if CONFIG.enabled and not hold_zoom_active() then
+	if CONFIG.loaded.enabled and not hold_zoom_active() then
 		set_free_zoom(false, "hold_release")
 	end
 end
 
 on_mouse_wheel = function(dir, _flags)
-	if not CONFIG.enabled or not CONFIG.scroll_wheel_zoom then
+	if not CONFIG.loaded.enabled or not CONFIG.loaded.scroll_wheel_zoom then
 		return
 	end
 	if not (db and db.actor) then
@@ -1270,21 +1265,21 @@ on_mouse_wheel = function(dir, _flags)
 	end
 
 	local want_in = (dir == 1)
-	if CONFIG.scroll_wheel_reverse then
+	if CONFIG.loaded.scroll_wheel_reverse then
 		want_in = not want_in
 	end
 
 	local now = time_global() or 0
-	if scroll_want_in ~= want_in or (scroll_last_ms > 0 and (now - scroll_last_ms) > CONFIG.scroll_wheel_max_gap_ms) then
+	if scroll_want_in ~= want_in or (scroll_last_ms > 0 and (now - scroll_last_ms) > CONFIG.loaded.scroll_wheel_max_gap_ms) then
 		scroll_accum = 0
 		scroll_want_in = want_in
 	end
 	scroll_accum = scroll_accum + 1
 	scroll_last_ms = now
 
-	if scroll_accum >= CONFIG.scroll_wheel_steps then
+	if scroll_accum >= CONFIG.loaded.scroll_wheel_steps then
 		reset_scroll_accum()
-		logf("scroll: fire want_in=%s steps=%d mode=%s", tostring(want_in), CONFIG.scroll_wheel_steps, mode_label())
+		logf("scroll: fire want_in=%s steps=%d mode=%s", tostring(want_in), CONFIG.loaded.scroll_wheel_steps, mode_label())
 		if want_in then
 			set_free_zoom(true, "scroll")
 		else
@@ -1294,7 +1289,7 @@ on_mouse_wheel = function(dir, _flags)
 end
 
 local function actor_on_weapon_zoom_in()
-	if not CONFIG.ads_enabled then
+	if not CONFIG.loaded.ads_enabled then
 		return
 	end
 	if ads_on then
@@ -1322,7 +1317,7 @@ end
 
 -- Optical <-> iron: re-assert ADS FOV ownership (free already cleared on ADS enter).
 local function actor_on_weapon_zoom_type_changed()
-	if not CONFIG.ads_enabled or not ads_on then
+	if not CONFIG.loaded.ads_enabled or not ads_on then
 		return
 	end
 	refresh_wpn()
@@ -1342,7 +1337,7 @@ local function actor_on_weapon_zoom_type_changed()
 end
 
 local function actor_on_weapon_reload()
-	if not CONFIG.enabled then
+	if not CONFIG.loaded.enabled then
 		return
 	end
 	logf("reload: mode=%s wpn=%s", mode_label(), wpn_label())
@@ -1408,9 +1403,9 @@ local function on_load_state(m_data)
 end
 
 function on_game_start()
-	DOGMA = dogma_common.load(MOD_ID)
+	DOGMA = dogma_common.load(CONFIG.MOD_ID)
 
-	-- Fill CONFIG before registering callbacks (empty until refresh_config).
+	-- Fill CONFIG.loaded before registering callbacks (empty until refresh_config).
 	on_option_change()
 
 	RegisterScriptCallback("on_option_change", on_option_change)

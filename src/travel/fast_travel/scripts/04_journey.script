@@ -8,13 +8,6 @@ local dft_config = _G.dft_config
 -- Forward declarations for this file's private (non-exported) helpers, so they can
 -- reference each other regardless of definition order below.
 local ambush_close_radius_m, ambush_radius_m, ambush_time_reduction_m, apply_sneaking_stat_delta, dev_adjust_sneaking, format_distance, get_actor_max_carry_weight, get_encounter_offset, get_encumbrance_time_mult, get_journey_specs, get_sneaking_travel_speed_mult, get_weather_name, is_night_hour, is_raining, is_twilight_hour, mode_pda_speed_ratio, sneak_cooldown_minutes, sneak_minutes_per_km, time_band
-local function block_fft_travel(trip)
-    if not trip then return end
-    trip.ret_value = false
-    trip.cancel = true
-    dft_log("Blocked Fair Fast Travel trip (use Fast Travel instead).")
-end
-
 local function get_sneaking_level()
     if haru_skills and haru_skills.skills_levels and haru_skills.skills_levels.sneaking then
         return haru_skills.skills_levels.sneaking.current_level or 0
@@ -596,7 +589,6 @@ end
 
 -- dft_publish_to_global
 do
-    _G.dft_block_fft_travel = block_fft_travel
     _G.dft_get_sneaking_level = get_sneaking_level
     _G.dft_get_encounter_offset = get_encounter_offset
     _G.dft_get_inventory_weight_band = get_inventory_weight_band

@@ -1,6 +1,5 @@
 function on_mcm_load(options)
-	local CONF = _G.dogma_mutants_skinning_conf
-	local D = CONF.defaults
+	local CONFIG = _G.dogma_mutants_skinning_conf
 	dogma_mcm.attach(options, "mutants", "ui_mcm_menu_dogma_mutants", {
 		id = "skinning",
 		sh = true,
@@ -15,7 +14,7 @@ function on_mcm_load(options)
 				id = "enabled",
 				type = "check",
 				val = 1,
-				def = D["enabled"],
+				def = CONFIG.DEFAULTS["enabled"],
 				hint = "dogma_faster_skinning_enabled",
 			},
 			{
@@ -25,21 +24,21 @@ function on_mcm_load(options)
 				min = 1,
 				max = 2,
 				step = 0.1,
-				def = D["skin_speed_multiplier"],
+				def = CONFIG.DEFAULTS["skin_speed_multiplier"],
 				hint = "dogma_faster_skinning_skin_speed_multiplier",
 			},
 			{
 				id = "auto_crouch",
 				type = "check",
 				val = 1,
-				def = D["auto_crouch"],
+				def = CONFIG.DEFAULTS["auto_crouch"],
 				hint = "dogma_faster_skinning_auto_crouch",
 			},
 			{
 				id = "look_at_mutant",
 				type = "check",
 				val = 1,
-				def = D["look_at_mutant"],
+				def = CONFIG.DEFAULTS["look_at_mutant"],
 				hint = "dogma_faster_skinning_look_at_mutant",
 			},
 			{
@@ -49,14 +48,14 @@ function on_mcm_load(options)
 				min = 0,
 				max = 1,
 				step = 0.05,
-				def = D["look_at_offset"],
+				def = CONFIG.DEFAULTS["look_at_offset"],
 				hint = "dogma_faster_skinning_look_at_offset",
 			},
 			{
 				id = "slash_loot",
 				type = "check",
 				val = 1,
-				def = D["slash_loot"],
+				def = CONFIG.DEFAULTS["slash_loot"],
 				hint = "dogma_faster_skinning_slash_loot",
 			},
 		}),

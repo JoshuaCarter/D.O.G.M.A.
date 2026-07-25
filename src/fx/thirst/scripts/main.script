@@ -5,8 +5,7 @@
 	yellow = soft flash, orange/red = intensity tied to deprivation.
 ]]
 
-local CONF = _G.dogma_fx_thirst_conf
-local MOD_ID = CONF.MOD_ID
+local CONFIG = _G.dogma_fx_thirst_conf
 local DOGMA
 
 local PPE = "yantar_underground_psi.ppe"
@@ -21,7 +20,7 @@ local function apply()
 	if not ORIG then
 		ORIG = ast.test_blur
 	end
-	if not DOGMA or not DOGMA.mcm.bool(MOD_ID, "enabled") then
+	if not DOGMA or not DOGMA.mcm.bool(CONFIG.MOD_ID, "enabled") then
 		ast.test_blur = ORIG
 		return
 	end
@@ -41,9 +40,9 @@ local function apply()
 end
 
 function on_game_start()
-	DOGMA = dogma_common.load(MOD_ID)
+	DOGMA = dogma_common.load(CONFIG.MOD_ID)
 	if not rawget(_G, "actor_status_thirst") then
-		printf("[%s] actor_status_thirst.test_blur not found", MOD_ID)
+		printf("[%s] actor_status_thirst.test_blur not found", CONFIG.MOD_ID:gsub("/", "_"))
 		return
 	end
 	apply()

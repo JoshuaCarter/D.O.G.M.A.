@@ -1,16 +1,17 @@
 --[[
 	Campfire heal (Body Health System + main HP).
 
-	Near a lit campfire, every tick picks one random damaged target
-	(a limb below the heal cap, or main health) and heals it.
-	Limbs: temp (green) first, then convert to permanent (blue).
-	Nothing heals above 80%.
+	Each tick (+1 step, both pools capped at 80%):
+	  1. Collect limbs with total HP < 80% (need temp).
+	     If any — roll one and add temp. Done.
+	  2. Else collect limbs with permanent HP < 80% (need perm conversion)
+	     and main HP if below 80%. If any — roll one and heal. Done.
+	  3. Else nothing left to heal.
 
 	Disable other campfire heal mods to avoid stacking.
 ]]
 
-local CONF = _G.dogma_player_campfire_conf
-local MOD_ID = CONF.MOD_ID
+local CONFIG = _G.dogma_player_campfire_conf
 local DOGMA
 
 local LIMBS = { "head", "torso", "rightarm", "leftarm", "rightleg", "leftleg" }
@@ -21,11 +22,11 @@ local MAIN_HEAL = 0.01 -- 1% main HP when that target is picked
 local next_tick = 0
 
 local function enabled()
-	return DOGMA and DOGMA.mcm.bool(MOD_ID, "enabled")
+	return DOGMA and DOGMA.mcm.bool(CONFIG.MOD_ID, "enabled")
 end
 
 local function interval_ms()
-	local sec = DOGMA and DOGMA.mcm.number(MOD_ID, "interval", CONF.defaults.interval) or CONF.defaults.interval
+	local sec = DOGMA and DOGMA.mcm.number(CONFIG.MOD_ID, "interval", CONFIG.DEFAULTS.interval) or CONFIG.DEFAULTS.interval
 	if sec < 1 then
 		sec = 1
 	end
@@ -56,42 +57,60 @@ local function save_limb(bhs, key)
 	utils_obj.save_var(db.actor, "timedhp." .. key, bhs.timedhp[key])
 end
 
--- True if this limb can still take a campfire heal tick under the 80% cap.
 -- Note: hp/temp may be 0 (falsy) — only reject nil.
-local function limb_needs_heal(bhs, key)
+local function limb_needs_temp(bhs, key)
 	local hp = bhs.health[key]
 	local max = bhs.maxhp[key]
 	local temp = bhs.timedhp[key]
 	if hp == nil or max == nil or temp == nil or max <= 0 then
 		return false
 	end
-	local cap = limb_cap(max)
-	if hp < cap then
-		return true
-	end
-	-- At/above cap on total bar: still allow temp→permanent if blue is below cap.
-	return temp > 0 and (hp - temp) < cap
+	return hp < limb_cap(max)
 end
 
--- Temp fills first up to cap; then peel timedhp so blue rises (still capped).
-local function heal_limb(bhs, key)
+local function limb_needs_perm(bhs, key)
 	local hp = bhs.health[key]
 	local max = bhs.maxhp[key]
 	local temp = bhs.timedhp[key]
 	if hp == nil or max == nil or temp == nil or max <= 0 then
 		return false
 	end
-	local cap = limb_cap(max)
-	if hp < cap then
-		bhs.health[key] = hp + 1
-		bhs.timedhp[key] = temp + 1
-		return true
+	local perm = hp - temp
+	return temp > 0 and perm < limb_cap(max)
+end
+
+local function heal_limb_temp(bhs, key)
+	local hp = bhs.health[key]
+	local max = bhs.maxhp[key]
+	local temp = bhs.timedhp[key]
+	if hp == nil or max == nil or temp == nil or max <= 0 then
+		return false
 	end
-	if temp > 0 and (hp - temp) < cap then
-		bhs.timedhp[key] = temp - 1
-		return true
+	if hp >= limb_cap(max) then
+		return false
 	end
-	return false
+	bhs.health[key] = hp + 1
+	bhs.timedhp[key] = temp + 1
+	return true
+end
+
+local function heal_limb_perm(bhs, key)
+	local hp = bhs.health[key]
+	local max = bhs.maxhp[key]
+	local temp = bhs.timedhp[key]
+	if hp == nil or max == nil or temp == nil or max <= 0 then
+		return false
+	end
+	local perm = hp - temp
+	if temp <= 0 or perm >= limb_cap(max) then
+		return false
+	end
+	bhs.timedhp[key] = temp - 1
+	return true
+end
+
+local function main_needs_heal()
+	return db.actor and db.actor.health < HEAL_CAP
 end
 
 local function heal_main()
@@ -107,32 +126,58 @@ local function heal_main()
 	return true
 end
 
-local function tick_heal()
-	local targets = {}
+local function pick(targets)
+	if #targets == 0 then
+		return nil
+	end
+	return targets[math.random(#targets)]
+end
 
+local function tick_heal()
 	local bhs = rawget(_G, "zzz_player_injuries")
-	if bhs and bhs.health and bhs.timedhp and bhs.maxhp then
+	local has_bhs = bhs and bhs.health and bhs.timedhp and bhs.maxhp
+
+	-- Phase 1: limbs with total HP < 80% → roll one, +1 temp.
+	local temp_targets = {}
+	if has_bhs then
 		for i = 1, #LIMBS do
 			local key = LIMBS[i]
-			if limb_needs_heal(bhs, key) then
-				targets[#targets + 1] = { kind = "limb", key = key }
+			if limb_needs_temp(bhs, key) then
+				temp_targets[#temp_targets + 1] = key
 			end
 		end
 	end
-	if db.actor and db.actor.health < HEAL_CAP then
-		targets[#targets + 1] = { kind = "main" }
-	end
-	if #targets == 0 then
+	local temp_pick = pick(temp_targets)
+	if temp_pick then
+		if heal_limb_temp(bhs, temp_pick) then
+			save_limb(bhs, temp_pick)
+		end
 		return
 	end
 
-	local pick = targets[math.random(#targets)]
-	if pick.kind == "main" then
+	-- Phase 2: limbs with perm < 80% (and temp to convert) + main HP < 80%.
+	local perm_targets = {}
+	if has_bhs then
+		for i = 1, #LIMBS do
+			local key = LIMBS[i]
+			if limb_needs_perm(bhs, key) then
+				perm_targets[#perm_targets + 1] = { kind = "limb", key = key }
+			end
+		end
+	end
+	if main_needs_heal() then
+		perm_targets[#perm_targets + 1] = { kind = "main" }
+	end
+	local perm_pick = pick(perm_targets)
+	if not perm_pick then
+		return
+	end
+	if perm_pick.kind == "main" then
 		heal_main()
 		return
 	end
-	if heal_limb(bhs, pick.key) then
-		save_limb(bhs, pick.key)
+	if heal_limb_perm(bhs, perm_pick.key) then
+		save_limb(bhs, perm_pick.key)
 	end
 end
 
@@ -151,6 +196,6 @@ local function actor_on_update()
 end
 
 function on_game_start()
-	DOGMA = dogma_common.load(MOD_ID)
+	DOGMA = dogma_common.load(CONFIG.MOD_ID)
 	RegisterScriptCallback("actor_on_update", actor_on_update)
 end

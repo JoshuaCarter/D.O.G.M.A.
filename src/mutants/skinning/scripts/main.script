@@ -7,8 +7,7 @@
 	swings or one heavy on a dead mutant takes all parts with no popup/anim.
 ]]
 
-local CONF = _G.dogma_mutants_skinning_conf
-local MOD_ID = CONF.MOD_ID
+local CONFIG = _G.dogma_mutants_skinning_conf
 local DOGMA
 
 local WELL_DRESSED_ID = "well_dressed"
@@ -26,9 +25,6 @@ local KNIFE_STATE_FIRE2 = 6
 local SLASH_PROGRESS_NEEDED = 2
 local SLASH_PROGRESS_TIMEOUT_MS = 4000
 
-local CONFIG = {}
-
-
 local original_has_achievement = nil
 local original_lam2_add_action = nil
 local original_get_template_action_mutant_skin = nil
@@ -44,13 +40,13 @@ local function log(msg)
 	if not (DOGMA and DOGMA.dbg) then
 		return
 	end
-	if CONFIG.debug_log then
-		DOGMA.dbg.log(MOD_ID, tostring(msg))
+	if CONFIG.loaded.debug_log then
+		DOGMA.dbg.log(CONFIG.MOD_ID, tostring(msg))
 	end
 end
 
 local function patched_has_achievement(achievement)
-	if CONFIG.enabled and achievement == WELL_DRESSED_ID then
+	if CONFIG.loaded.enabled and achievement == WELL_DRESSED_ID then
 		log("well_dressed queried -> forced true")
 		return true
 	end
@@ -76,7 +72,7 @@ end
 -- toggle, then put their previous setting back. No-ops when the MCM option is
 -- off or pose is already right.
 local function do_crouch(flags, crouch)
-	if not CONFIG.auto_crouch or not flags then
+	if not CONFIG.loaded.auto_crouch or not flags then
 		return
 	end
 
@@ -119,7 +115,7 @@ end
 -- Engine look-at has no speed arg (actor_look_at_point(vector) only). Call it
 -- directly; hold through crouch/stand by re-applying until we stop.
 local function do_look_at(action, look)
-	if not CONFIG.look_at_mutant then
+	if not CONFIG.loaded.look_at_mutant then
 		return
 	end
 	if look then
@@ -133,7 +129,7 @@ local function do_look_at(action, look)
 		if not (ok and mp and mp.y) then
 			return
 		end
-		mp.y = mp.y + CONFIG.look_at_offset
+		mp.y = mp.y + CONFIG.loaded.look_at_offset
 		db.actor:actor_look_at_point(mp)
 		return
 	end
@@ -208,18 +204,18 @@ local function patched_add_action(action)
 		log("slash_loot: dropped " .. tostring(action.name) .. " from queue")
 		return
 	end
-	if CONFIG.enabled and action and action.name == ACTION_MUTANT_LOOT then
+	if CONFIG.loaded.enabled and action and action.name == ACTION_MUTANT_LOOT then
 		log("mutant_loot: dropped from queue (item is already in inventory)")
 		return
 	end
-	if CONFIG.enabled and action and action.name == ACTION_MUTANT_SKIN then
+	if CONFIG.loaded.enabled and action and action.name == ACTION_MUTANT_SKIN then
 		action.flags = action.flags or {}
 		do_look_at(action, true)
 		do_crouch(action.flags, true)
 		action.flags.dogma_early_movement_lock = true
 		game.set_actor_allow_ladder(false)
 		-- Wait for crouch before lock + queue so Pose Controls can finish the pose.
-		if CONFIG.auto_crouch and action.flags.dogma_skin_was_crouching == false and not IsMoveState("mcCrouch") then
+		if CONFIG.loaded.auto_crouch and action.flags.dogma_skin_was_crouching == false and not IsMoveState("mcCrouch") then
 			pending_skin_action = action
 			pending_skin_deadline = time_global() + CROUCH_BEFORE_SKIN_MS
 			log("mutant_skin: waiting for crouch before knife-cut")
@@ -245,7 +241,7 @@ end
 
 local function patched_get_template_action_mutant_skin(obj)
 	local a = original_get_template_action_mutant_skin(obj)
-	if not CONFIG.enabled then
+	if not CONFIG.loaded.enabled then
 		return a
 	end
 
@@ -253,10 +249,10 @@ local function patched_get_template_action_mutant_skin(obj)
 	local fdda_on_exit = a.on_exit
 	local fdda_on_skip = a.on_skip
 	local fdda_on_execute = a.on_execute
-	local speed_up = CONFIG.skin_speed_multiplier > 1
+	local speed_up = CONFIG.loaded.skin_speed_multiplier > 1
 
 	if speed_up then
-		a.speed = a.speed * CONFIG.skin_speed_multiplier
+		a.speed = a.speed * CONFIG.loaded.skin_speed_multiplier
 		-- lam2 enter reads cam/snd from the hud section ltx before on_enter runs; point at a
 		-- missing key so it skips both (we play our own pitched cut sound instead).
 		a.cam = LAM2_MISSING_LTX_KEY
@@ -271,7 +267,7 @@ local function patched_get_template_action_mutant_skin(obj)
 				lam_fov_manager.restore_fov()
 			end
 			if skin_cut_sfx then
-				skin_cut_sfx:play_no_feedback(db.actor, sound_object.s2d, 0, VEC_ZERO, 1.0, CONFIG.skin_speed_multiplier)
+				skin_cut_sfx:play_no_feedback(db.actor, sound_object.s2d, 0, VEC_ZERO, 1.0, CONFIG.loaded.skin_speed_multiplier)
 			end
 		elseif fdda_on_enter then
 			-- Keep FDDA cam effector / other enter work; strip its look-at so only our toggle owns it.
@@ -314,7 +310,7 @@ local function patched_get_template_action_mutant_skin(obj)
 	end
 
 	if speed_up then
-		log(string.format("mutant_skin: speed x%.2f", CONFIG.skin_speed_multiplier))
+		log(string.format("mutant_skin: speed x%.2f", CONFIG.loaded.skin_speed_multiplier))
 	end
 	return a
 end
@@ -335,7 +331,7 @@ end
 local function patched_set_sound_play(actor_id, sound_theme, ...)
 	-- During knife-cut anim, mute Loot's stock sound (synced harvest plays instead).
 	-- Slash loot has no cut anim — keep inv_mutant_loot_animal for PDA/take feedback.
-	if CONFIG.enabled and CONFIG.skin_speed_multiplier > 1 and sound_theme == MUTANT_LOOT_SOUND and not slash_looting then
+	if CONFIG.loaded.enabled and CONFIG.loaded.skin_speed_multiplier > 1 and sound_theme == MUTANT_LOOT_SOUND and not slash_looting then
 		log("inv_mutant_loot_animal: suppressed in favor of the synced cut sound")
 		return
 	end
@@ -528,7 +524,7 @@ local function equipped_knife()
 end
 
 local function try_slash_credit(amount)
-	if not (CONFIG.enabled and CONFIG.slash_loot) then
+	if not (CONFIG.loaded.enabled and CONFIG.loaded.slash_loot) then
 		return
 	end
 	if slash_input_blocked() then
@@ -561,7 +557,7 @@ local function try_slash_credit(amount)
 end
 
 local function tick_slash_loot()
-	if not (CONFIG.enabled and CONFIG.slash_loot) then
+	if not (CONFIG.loaded.enabled and CONFIG.loaded.slash_loot) then
 		last_knife_state = 0
 		return
 	end
@@ -587,7 +583,7 @@ local function tick_slash_loot()
 end
 
 local function on_slash_key_press(dik)
-	if not (CONFIG.enabled and CONFIG.slash_loot) then
+	if not (CONFIG.loaded.enabled and CONFIG.loaded.slash_loot) then
 		return
 	end
 	local bind = dik_to_bind(dik)
@@ -599,18 +595,18 @@ local function on_slash_key_press(dik)
 end
 
 local function on_option_change()
-	CONFIG.enabled = DOGMA.mcm.bool(MOD_ID, "enabled")
-	CONFIG.debug_log = DOGMA.dbg.logging()
-	CONFIG.skin_speed_multiplier = DOGMA.mcm.number(MOD_ID, "skin_speed_multiplier")
-	CONFIG.auto_crouch = DOGMA.mcm.bool(MOD_ID, "auto_crouch")
-	CONFIG.look_at_mutant = DOGMA.mcm.bool(MOD_ID, "look_at_mutant")
-	CONFIG.look_at_offset = DOGMA.mcm.number(MOD_ID, "look_at_offset")
-	CONFIG.slash_loot = DOGMA.mcm.bool(MOD_ID, "slash_loot")
-	log(string.format("options: enabled=%s slash_loot=%s", tostring(CONFIG.enabled), tostring(CONFIG.slash_loot)))
+	CONFIG.loaded.enabled = DOGMA.mcm.bool(CONFIG.MOD_ID, "enabled")
+	CONFIG.loaded.debug_log = DOGMA.dbg.logging()
+	CONFIG.loaded.skin_speed_multiplier = DOGMA.mcm.number(CONFIG.MOD_ID, "skin_speed_multiplier")
+	CONFIG.loaded.auto_crouch = DOGMA.mcm.bool(CONFIG.MOD_ID, "auto_crouch")
+	CONFIG.loaded.look_at_mutant = DOGMA.mcm.bool(CONFIG.MOD_ID, "look_at_mutant")
+	CONFIG.loaded.look_at_offset = DOGMA.mcm.number(CONFIG.MOD_ID, "look_at_offset")
+	CONFIG.loaded.slash_loot = DOGMA.mcm.bool(CONFIG.MOD_ID, "slash_loot")
+	log(string.format("options: enabled=%s slash_loot=%s", tostring(CONFIG.loaded.enabled), tostring(CONFIG.loaded.slash_loot)))
 end
 
 function on_game_start()
-	DOGMA = dogma_common.load(MOD_ID)
+	DOGMA = dogma_common.load(CONFIG.MOD_ID)
 
 	on_option_change()
 
@@ -624,7 +620,7 @@ function on_game_start()
 	skin_cut_sfx = sound_object(SKIN_CUT_SOUND)
 
 	RegisterScriptCallback("actor_on_update", function()
-		DOGMA.sys.ready(MOD_ID, db, on_option_change)
+		DOGMA.sys.ready(CONFIG.MOD_ID, db, on_option_change)
 		tick_pending_skin_action()
 		if pending_skin_action then
 			do_look_at(pending_skin_action, true)

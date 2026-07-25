@@ -17,9 +17,7 @@
 	which would otherwise look like a slow frame - so those are excluded too.
 ]]
 
-local CONF = _G.dogma_hud_fps_conf
-local MOD_ID = CONF.MOD_ID
-local D = CONF.defaults
+local CONFIG = _G.dogma_hud_fps_conf
 local DOGMA
 
 local UI_WIDTH = 1024
@@ -46,34 +44,6 @@ local FONTS = {
 	[1] = (GetFontLetterica25 and GetFontLetterica25()) or nil,
 }
 
-local CONFIG = {
-	toggle_key = D["toggle_key"],
-	enabled_default = D["enabled_default"],
-	display_mode = D["display"],
-	minmax_window = D["minmax_window"],
-	sample_window = D["sample_window"],
-	max_fps = 144,
-	refresh_rate = D["refresh_rate"],
-	pos_anchor = D["pos_anchor"],
-	pos_x = D["pos_x"],
-	pos_y = D["pos_y"],
-	font = FONTS[0],
-	text_r = 255,
-	text_g = 255,
-	text_b = 255,
-	text_a = 200,
-	graph_line_r = 255,
-	graph_line_g = 255,
-	graph_line_b = 255,
-	graph_line_a = 255,
-	graph_border_r = 96,
-	graph_border_g = 96,
-	graph_border_b = 96,
-	graph_border_a = 128,
-	debug_log = true,
-	long_frame_threshold_ms = 0,
-}
-
 local hud = nil
 local init = false
 local visible = false
@@ -89,8 +59,8 @@ local function log(msg)
 	if not (DOGMA and DOGMA.dbg) then
 		return
 	end
-	if CONFIG.debug_log then
-		DOGMA.dbg.log(MOD_ID, tostring(msg))
+	if CONFIG.loaded.debug_log then
+		DOGMA.dbg.log(CONFIG.MOD_ID, tostring(msg))
 	end
 end
 
@@ -107,14 +77,14 @@ local function display_uses_history(mode)
 end
 
 local function history_window_sec()
-	if display_uses_graph(CONFIG.display_mode) then
-		return math.max(1, CONFIG.minmax_window)
+	if display_uses_graph(CONFIG.loaded.display_mode) then
+		return math.max(1, CONFIG.loaded.minmax_window)
 	end
-	return CONFIG.minmax_window
+	return CONFIG.loaded.minmax_window
 end
 
 local function history_buf_cap()
-	return math.max(1, math.floor(history_window_sec() * CONFIG.refresh_rate + 0.5))
+	return math.max(1, math.floor(history_window_sec() * CONFIG.loaded.refresh_rate + 0.5))
 end
 
 local function graph_clear()
@@ -124,7 +94,7 @@ local function graph_clear()
 end
 
 local function update_wait_until_time()
-	wait_until_time = device():time_global() + CONFIG.sample_window * 1000
+	wait_until_time = device():time_global() + CONFIG.loaded.sample_window * 1000
 end
 
 local function mcm_byte(v)
@@ -132,34 +102,34 @@ local function mcm_byte(v)
 end
 
 local function on_option_change()
-	CONFIG.enabled_default = DOGMA.mcm.bool(MOD_ID, "enabled_default")
-	CONFIG.debug_log = DOGMA.dbg.logging()
-	CONFIG.long_frame_threshold_ms = DOGMA.mcm.number("dogma/debug", "fps_long_frame_threshold_ms")
-	CONFIG.toggle_key = DOGMA.mcm.key(MOD_ID, "toggle_key")
-	CONFIG.display_mode = DOGMA.mcm.number(MOD_ID, "display")
-	CONFIG.sample_window = DOGMA.mcm.number(MOD_ID, "sample_window")
-	CONFIG.max_fps = math.max(60, math.min(500, DOGMA.mcm.number(MOD_ID, "max_fps")))
-	CONFIG.minmax_window = DOGMA.mcm.number(MOD_ID, "minmax_window")
-	CONFIG.refresh_rate = DOGMA.mcm.number(MOD_ID, "refresh_rate")
-	CONFIG.vertical_spacing = DOGMA.mcm.number(MOD_ID, "vertical_spacing")
-	CONFIG.pos_anchor = DOGMA.mcm.number(MOD_ID, "pos_anchor")
-	CONFIG.pos_x = DOGMA.mcm.number(MOD_ID, "pos_x")
-	CONFIG.pos_y = DOGMA.mcm.number(MOD_ID, "pos_y")
-	CONFIG.font = FONTS[display_font_idx(CONFIG.display_mode)]
-	CONFIG.text_r = mcm_byte(DOGMA.mcm.number(MOD_ID, "colors/text_r"))
-	CONFIG.text_g = mcm_byte(DOGMA.mcm.number(MOD_ID, "colors/text_g"))
-	CONFIG.text_b = mcm_byte(DOGMA.mcm.number(MOD_ID, "colors/text_b"))
-	CONFIG.text_a = mcm_byte(DOGMA.mcm.number(MOD_ID, "colors/text_a"))
-	CONFIG.graph_line_r = mcm_byte(DOGMA.mcm.number(MOD_ID, "colors/graph_line_r"))
-	CONFIG.graph_line_g = mcm_byte(DOGMA.mcm.number(MOD_ID, "colors/graph_line_g"))
-	CONFIG.graph_line_b = mcm_byte(DOGMA.mcm.number(MOD_ID, "colors/graph_line_b"))
-	CONFIG.graph_line_a = mcm_byte(DOGMA.mcm.number(MOD_ID, "colors/graph_line_a"))
-	CONFIG.graph_border_r = mcm_byte(DOGMA.mcm.number(MOD_ID, "colors/graph_border_r"))
-	CONFIG.graph_border_g = mcm_byte(DOGMA.mcm.number(MOD_ID, "colors/graph_border_g"))
-	CONFIG.graph_border_b = mcm_byte(DOGMA.mcm.number(MOD_ID, "colors/graph_border_b"))
-	CONFIG.graph_border_a = mcm_byte(DOGMA.mcm.number(MOD_ID, "colors/graph_border_a"))
+	CONFIG.loaded.enabled_default = DOGMA.mcm.bool(CONFIG.MOD_ID, "enabled_default")
+	CONFIG.loaded.debug_log = DOGMA.dbg.logging()
+	CONFIG.loaded.long_frame_threshold_ms = DOGMA.mcm.number("dogma/debug", "fps_long_frame_threshold_ms")
+	CONFIG.loaded.toggle_key = DOGMA.mcm.key(CONFIG.MOD_ID, "toggle_key")
+	CONFIG.loaded.display_mode = DOGMA.mcm.number(CONFIG.MOD_ID, "display")
+	CONFIG.loaded.sample_window = DOGMA.mcm.number(CONFIG.MOD_ID, "sample_window")
+	CONFIG.loaded.max_fps = math.max(60, math.min(500, DOGMA.mcm.number(CONFIG.MOD_ID, "max_fps")))
+	CONFIG.loaded.minmax_window = DOGMA.mcm.number(CONFIG.MOD_ID, "minmax_window")
+	CONFIG.loaded.refresh_rate = DOGMA.mcm.number(CONFIG.MOD_ID, "refresh_rate")
+	CONFIG.loaded.vertical_spacing = DOGMA.mcm.number(CONFIG.MOD_ID, "vertical_spacing")
+	CONFIG.loaded.pos_anchor = DOGMA.mcm.number(CONFIG.MOD_ID, "pos_anchor")
+	CONFIG.loaded.pos_x = DOGMA.mcm.number(CONFIG.MOD_ID, "pos_x")
+	CONFIG.loaded.pos_y = DOGMA.mcm.number(CONFIG.MOD_ID, "pos_y")
+	CONFIG.loaded.font = FONTS[display_font_idx(CONFIG.loaded.display_mode)]
+	CONFIG.loaded.text_r = mcm_byte(DOGMA.mcm.number(CONFIG.MOD_ID, "colors/text_r"))
+	CONFIG.loaded.text_g = mcm_byte(DOGMA.mcm.number(CONFIG.MOD_ID, "colors/text_g"))
+	CONFIG.loaded.text_b = mcm_byte(DOGMA.mcm.number(CONFIG.MOD_ID, "colors/text_b"))
+	CONFIG.loaded.text_a = mcm_byte(DOGMA.mcm.number(CONFIG.MOD_ID, "colors/text_a"))
+	CONFIG.loaded.graph_line_r = mcm_byte(DOGMA.mcm.number(CONFIG.MOD_ID, "colors/graph_line_r"))
+	CONFIG.loaded.graph_line_g = mcm_byte(DOGMA.mcm.number(CONFIG.MOD_ID, "colors/graph_line_g"))
+	CONFIG.loaded.graph_line_b = mcm_byte(DOGMA.mcm.number(CONFIG.MOD_ID, "colors/graph_line_b"))
+	CONFIG.loaded.graph_line_a = mcm_byte(DOGMA.mcm.number(CONFIG.MOD_ID, "colors/graph_line_a"))
+	CONFIG.loaded.graph_border_r = mcm_byte(DOGMA.mcm.number(CONFIG.MOD_ID, "colors/graph_border_r"))
+	CONFIG.loaded.graph_border_g = mcm_byte(DOGMA.mcm.number(CONFIG.MOD_ID, "colors/graph_border_g"))
+	CONFIG.loaded.graph_border_b = mcm_byte(DOGMA.mcm.number(CONFIG.MOD_ID, "colors/graph_border_b"))
+	CONFIG.loaded.graph_border_a = mcm_byte(DOGMA.mcm.number(CONFIG.MOD_ID, "colors/graph_border_a"))
 
-	local sample_len = math.max(1, math.ceil(CONFIG.sample_window * CONFIG.max_fps))
+	local sample_len = math.max(1, math.ceil(CONFIG.loaded.sample_window * CONFIG.loaded.max_fps))
 	if not sample_buf or sample_buf.cap ~= sample_len then
 		sample_buf = _G.dogma_ring_buffer.new(sample_len)
 	end
@@ -170,7 +140,7 @@ local function on_option_change()
 	end
 
 	if hud then
-		hud:ApplyConfig(CONFIG)
+		hud:ApplyConfig(CONFIG.loaded)
 	end
 
 	update_wait_until_time()
@@ -219,7 +189,7 @@ local function on_unique_update()
 	else
 		local frame_ms = current_time_ms - last_frame_time_ms
 		last_frame_time_ms = current_time_ms
-		if CONFIG.long_frame_threshold_ms > 0 and frame_ms > CONFIG.long_frame_threshold_ms then
+		if CONFIG.loaded.long_frame_threshold_ms > 0 and frame_ms > CONFIG.loaded.long_frame_threshold_ms then
 			log(string.format(
 				"LONG FRAME WARNING! The last frame took %dms to complete, you may be able to see why from logs previous to this one.",
 				frame_ms
@@ -231,7 +201,7 @@ local function on_unique_update()
 		return
 	end
 
-	local mode = CONFIG.display_mode
+	local mode = CONFIG.loaded.display_mode
 	local use_graph = display_uses_graph(mode)
 	local use_history = display_uses_history(mode)
 
@@ -251,7 +221,7 @@ local function on_unique_update()
 		return
 	end
 
-	local interval = math.floor(1000 / math.max(1, CONFIG.refresh_rate) + 0.5)
+	local interval = math.floor(1000 / math.max(1, CONFIG.loaded.refresh_rate) + 0.5)
 	if current_time_ms < next_display_time then
 		return
 	end
@@ -260,11 +230,11 @@ local function on_unique_update()
 	-- average FPS over sample_window from recent frame timestamps
 	local fps = 0
 	if sample_buf.count > 0 then
-		local cutoff_time_ms = current_time_ms - CONFIG.sample_window * 1000
+		local cutoff_time_ms = current_time_ms - CONFIG.loaded.sample_window * 1000
 		while sample_buf.count > 0 and sample_buf:get(1) < cutoff_time_ms do
 			sample_buf:shift()
 		end
-		fps = math.floor(sample_buf.count / CONFIG.sample_window + 0.5)
+		fps = math.floor(sample_buf.count / CONFIG.loaded.sample_window + 0.5)
 	end
 
 	if use_history and history_window_sec() > 0 then
@@ -275,7 +245,7 @@ local function on_unique_update()
 		local min_fps, max_fps = get_minmax_fps(current_time_ms)
 		hud:SetGraphValues(fps, min_fps, max_fps)
 		if history_buf then
-			hud:DrawGraph(history_buf, CONFIG)
+			hud:DrawGraph(history_buf, CONFIG.loaded)
 		end
 	elseif use_history then
 		graph_clear()
@@ -288,19 +258,19 @@ local function on_unique_update()
 end
 
 local function on_actor_on_update()
-	if not DOGMA.sys.ready(MOD_ID, db, on_option_change) then
+	if not DOGMA.sys.ready(CONFIG.MOD_ID, db, on_option_change) then
 		return
 	end
 
 	if not init then
 		init = true
-		visible = CONFIG.enabled_default
+		visible = CONFIG.loaded.enabled_default
 		return
 	end
 
 	if visible and not hud then
 		hud = ui_dogma_fps()
-		hud:ApplyConfig(CONFIG)
+		hud:ApplyConfig(CONFIG.loaded)
 		get_hud():AddDialogToRender(hud)
 		next_display_time = 0
 		last_frame_time_ms = nil
@@ -315,7 +285,7 @@ local function on_actor_on_update()
 end
 
 local function on_key_press(key)
-	if CONFIG.toggle_key and key == CONFIG.toggle_key then
+	if CONFIG.loaded.toggle_key and key == CONFIG.loaded.toggle_key then
 		visible = not visible
 		update_wait_until_time()
 	end
@@ -329,7 +299,7 @@ local function on_actor_first_update()
 end
 
 function on_game_start()
-	DOGMA = dogma_common.load(MOD_ID)
+	DOGMA = dogma_common.load(CONFIG.MOD_ID)
 
 	init = false
 	visible = false
@@ -418,7 +388,7 @@ end
 class "ui_dogma_fps" (CUIScriptWnd)
 
 function ui_dogma_fps:__init() super()
-	self.cfg = CONFIG
+	self.cfg = CONFIG.loaded
 	self.display_mode = DISPLAY.SIMPLE_SMALL
 	self:InitControls()
 end
@@ -500,7 +470,7 @@ function ui_dogma_fps:ApplyTextLayout(font_idx, anchor, mode)
 	local layout = HUD_LAYOUT.text[font_idx] or HUD_LAYOUT.text[0]
 	local right = anchor_is_right(anchor)
 	local simple_only = mode == DISPLAY.SIMPLE_SMALL or mode == DISPLAY.SIMPLE_LARGE
-	local pad = tonumber(CONFIG.vertical_spacing) or 0
+	local pad = tonumber(CONFIG.loaded.vertical_spacing) or 0
 	if pad < 0 then
 		pad = 0
 	elseif pad > 10 then
@@ -557,7 +527,7 @@ function ui_dogma_fps:ApplyGraphLayout(graph_idx, anchor)
 	local g = layout.graph
 	local vals = layout.values
 	local right = anchor_is_right(anchor)
-	local pad = tonumber(CONFIG.vertical_spacing) or 0
+	local pad = tonumber(CONFIG.loaded.vertical_spacing) or 0
 	if pad < 0 then
 		pad = 0
 	elseif pad > 10 then

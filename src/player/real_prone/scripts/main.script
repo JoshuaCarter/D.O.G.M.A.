@@ -1,13 +1,12 @@
 --[[
 	Prone Fix
 
-	Prone (mcCrouch + mcAccel): play_cycle on a shared OMF motion.
+	Prone (mcCrouch + mcAccel): play_cycle("dorn_prone") from stalker_smart_cover_animation.omf.
+	Engine ID_Cycle FATALS on missing names — pcall does not catch that.
 	Torch: camera-locked via mod_system_dogma_prone_fix.ltx (torch_inertion = false).
 ]]
 
-local CONF = _G.dogma_player_real_prone_conf
-local MOD_ID = CONF.MOD_ID
-local D = CONF.defaults
+local CONFIG = _G.dogma_player_real_prone_conf
 local DOGMA
 
 local POSTURES = {
@@ -24,17 +23,6 @@ local LOG = {
 	CROUCH 			= {order = 7, color = "dark_orange"},
 	ACCEL 			= {order = 8, color = "dark_orange"},
 	ANIM 			= {order = 9, color = "light_pink"},
-}
-
-local CONFIG = {
-	enabled = D["enabled"],
-	debug_log = true,
-	debug_overlay = false,
-	hide_prone_bones = D["hide_prone_bones"],
-	cam_height_stand = 1.65,
-	cam_height_crouch = 1.2,
-	cam_height_prone = 0.45,
-	prone_damage_mult = D["prone_damage_mult"],
 }
 
 local is_prone = nil
@@ -59,9 +47,9 @@ local function overlay(log_type, msg)
 	if not (DOGMA and DOGMA.dbg) then
 		return
 	end
-	if CONFIG.debug_overlay then
+	if CONFIG.loaded.debug_overlay then
 		local slot = log_type or LOG.LIFECYCLE
-		DOGMA.dbg.overlay(MOD_ID, slot.order, tostring(msg), slot.color)
+		DOGMA.dbg.overlay(CONFIG.MOD_ID, slot.order, tostring(msg), slot.color)
 	end
 end
 
@@ -70,36 +58,36 @@ local function log(msg)
 	if not (DOGMA and DOGMA.dbg) then
 		return
 	end
-	if CONFIG.debug_log then
-		DOGMA.dbg.log(MOD_ID, tostring(msg))
+	if CONFIG.loaded.debug_log then
+		DOGMA.dbg.log(CONFIG.MOD_ID, tostring(msg))
 	end
 end
 
 local function on_option_change()
-	local was = CONFIG.enabled
-	CONFIG.enabled = DOGMA.mcm.bool(MOD_ID, "enabled")
-	CONFIG.debug_log = DOGMA.dbg.logging()
-	CONFIG.debug_overlay = DOGMA.dbg.overlay_enabled()
-	CONFIG.hide_prone_bones = DOGMA.mcm.bool(MOD_ID, "hide_prone_bones")
-	CONFIG.prone_damage_mult = DOGMA.mcm.number(MOD_ID, "prone_damage_mult")
+	local was = CONFIG.loaded.enabled
+	CONFIG.loaded.enabled = DOGMA.mcm.bool(CONFIG.MOD_ID, "enabled")
+	CONFIG.loaded.debug_log = DOGMA.dbg.logging()
+	CONFIG.loaded.debug_overlay = DOGMA.dbg.overlay_enabled()
+	CONFIG.loaded.hide_prone_bones = DOGMA.mcm.bool(CONFIG.MOD_ID, "hide_prone_bones")
+	CONFIG.loaded.prone_damage_mult = DOGMA.mcm.number(CONFIG.MOD_ID, "prone_damage_mult")
 	blend_move_anims = console_bool("blend_move_anims")
-	DOGMA.dbg.set_enabled(MOD_ID, DOGMA.dbg.overlay_enabled())
+	DOGMA.dbg.set_enabled(CONFIG.MOD_ID, DOGMA.dbg.overlay_enabled())
 
-	local actor = DOGMA.sys.ready(MOD_ID, db)
+	local actor = DOGMA.sys.ready(CONFIG.MOD_ID, db)
 	if actor and actor:alive() then
-		if not CONFIG.enabled then
+		if not CONFIG.loaded.enabled then
 			set_prone_bones_visible(actor, true)
 			if is_prone and blend_move_anims then
 				console_exec("blend_move_anims on")
 			end
 			is_prone = false
-		elseif CONFIG.hide_prone_bones then
+		elseif CONFIG.loaded.hide_prone_bones then
 			set_prone_bones_visible(actor, not is_prone)
 		else
 			set_prone_bones_visible(actor, true)
 		end
 	end
-	if was and not CONFIG.enabled then
+	if was and not CONFIG.loaded.enabled then
 		log("disabled")
 	end
 end
@@ -137,16 +125,16 @@ local function play_motion(actor, motion, mix_in)
 end
 
 local function on_actor_on_update()
-	local actor = DOGMA.sys.ready(MOD_ID, db, on_option_change)
+	local actor = DOGMA.sys.ready(CONFIG.MOD_ID, db, on_option_change)
 	if not actor then
 		return
 	end
-	if not CONFIG.enabled then
+	if not CONFIG.loaded.enabled then
 		return
 	end
 
 	if not actor:alive() then
-		if CONFIG.hide_prone_bones then
+		if CONFIG.loaded.hide_prone_bones then
 			set_prone_bones_visible(actor, true)
 		end
 		if is_prone then
@@ -164,13 +152,13 @@ local function on_actor_on_update()
 		return device().cam_pos.y - actor:position().y
 	end)
 	if not ok or not height then
-		height = CONFIG.cam_height_stand
+		height = CONFIG.loaded.cam_height_stand
 	end
 	overlay(LOG.HEIGHT, string.format("cam height: %.2f", height))
 
-	local stand_dist = math.abs(CONFIG.cam_height_stand - height)
-	local crouch_dist = math.abs(CONFIG.cam_height_crouch - height)
-	local prone_dist = math.abs(CONFIG.cam_height_prone - height)
+	local stand_dist = math.abs(CONFIG.loaded.cam_height_stand - height)
+	local crouch_dist = math.abs(CONFIG.loaded.cam_height_crouch - height)
+	local prone_dist = math.abs(CONFIG.loaded.cam_height_prone - height)
 
 	local camera_posture
 	if stand_dist < crouch_dist and stand_dist < prone_dist then
@@ -221,14 +209,14 @@ local function on_actor_on_update()
 	-- enter prone
 	if camera_posture == POSTURES.PRONE then
 		-- spam prone motion
-		play_motion(actor, "dogma_prone", false)
+		play_motion(actor, "dorn_prone", false)
 
 		if not is_prone then
 			log("state: enter prone")
 			is_prone = true
 
 			-- hide bones when camera is nearest the prone posture
-			if CONFIG.hide_prone_bones then
+			if CONFIG.loaded.hide_prone_bones then
 				set_prone_bones_visible(actor, false)
 			end
 
@@ -242,7 +230,7 @@ local function on_actor_on_update()
 		is_prone = false
 
 		-- show bones and trigger new idle motion on leaving prone
-		if CONFIG.hide_prone_bones then
+		if CONFIG.loaded.hide_prone_bones then
 			set_prone_bones_visible(actor, true)
 		end
 		if input_posture == POSTURES.STAND then
@@ -266,26 +254,26 @@ local function on_actor_on_update()
 end
 
 local function on_actor_on_before_hit(shit, bone_id, flags)
-	if not DOGMA.sys.ready(MOD_ID, db) then
+	if not DOGMA.sys.ready(CONFIG.MOD_ID, db) then
 		return
 	end
-	if not CONFIG.enabled then
+	if not CONFIG.loaded.enabled then
 		return
 	end
 	if not is_prone or not shit or not shit.power or shit.power <= 0 then
 		return
 	end
-	if CONFIG.prone_damage_mult <= 1 then
+	if CONFIG.loaded.prone_damage_mult <= 1 then
 		return
 	end
 
 	local before = shit.power
-	shit.power = before * CONFIG.prone_damage_mult
-	log(string.format("damage: x%.2f: %.2f -> %.2f", CONFIG.prone_damage_mult, before, shit.power))
+	shit.power = before * CONFIG.loaded.prone_damage_mult
+	log(string.format("damage: x%.2f: %.2f -> %.2f", CONFIG.loaded.prone_damage_mult, before, shit.power))
 end
 
 function on_game_start()
-	DOGMA = dogma_common.load(MOD_ID)
+	DOGMA = dogma_common.load(CONFIG.MOD_ID)
 	blend_move_anims = console_bool("blend_move_anims")
 
 	is_prone = nil

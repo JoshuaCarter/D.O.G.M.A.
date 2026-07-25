@@ -1,6 +1,5 @@
 function on_mcm_load(options)
-	local CONF = _G.dogma_zoom_ads_zoom_conf
-	local D = CONF.defaults
+	local CONFIG = _G.dogma_zoom_ads_zoom_conf
 	local kb_mod = (ui_mcm and ui_mcm.kb_mod_radio) or "radio_h"
 
 	local function ads_track(id, max, hint)
@@ -11,7 +10,7 @@ function on_mcm_load(options)
 			min = 0,
 			max = max,
 			step = 1,
-			def = D[id],
+			def = CONFIG.DEFAULTS[id],
 			hint = hint,
 		}
 	end
@@ -30,7 +29,7 @@ function on_mcm_load(options)
 				id = "enabled",
 				type = "check",
 				val = 1,
-				def = D["enabled"],
+				def = CONFIG.DEFAULTS["enabled"],
 				hint = "dogma_free_zoom_ads_enabled",
 			},
 			{
@@ -51,28 +50,28 @@ function on_mcm_load(options)
 				id = "wads_inc_key",
 				type = "key_bind",
 				val = 2,
-				def = D["wads_inc_key"],
+				def = CONFIG.DEFAULTS["wads_inc_key"],
 				hint = "dogma_free_zoom_wads_inc_key",
 			},
 			{
 				id = "wads_dec_key",
 				type = "key_bind",
 				val = 2,
-				def = D["wads_dec_key"],
+				def = CONFIG.DEFAULTS["wads_dec_key"],
 				hint = "dogma_free_zoom_wads_dec_key",
 			},
 			{
 				id = "wads_reset_key",
 				type = "key_bind",
 				val = 2,
-				def = D["wads_reset_key"],
+				def = CONFIG.DEFAULTS["wads_reset_key"],
 				hint = "dogma_free_zoom_wads_reset_key",
 			},
 			{
 				id = "wads_key_mode",
 				type = kb_mod,
 				val = 2,
-				def = D["wads_key_mode"],
+				def = CONFIG.DEFAULTS["wads_key_mode"],
 				hint = "dogma_free_zoom_wads_key_mode",
 				content = {
 					{ 0, "press" },
@@ -83,7 +82,7 @@ function on_mcm_load(options)
 				id = "wads_key_modifier",
 				type = kb_mod,
 				val = 2,
-				def = D["wads_key_modifier"],
+				def = CONFIG.DEFAULTS["wads_key_modifier"],
 				hint = "mcm_kb_modifier",
 				content = {
 					{ 0, "mcm_kb_mod_none" },

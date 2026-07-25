@@ -1,13 +1,11 @@
 function on_mcm_load(options)
-	local CONF = _G.dogma_items_stripping_conf
-	local D = CONF.defaults
-
+	local CONFIG = _G.dogma_items_stripping_conf
 	local function kb_bind(id, hint)
 		return {
 			id = id,
 			type = "key_bind",
 			val = 2,
-			def = D[id],
+			def = CONFIG.DEFAULTS[id],
 			hint = hint,
 		}
 	end
@@ -18,7 +16,7 @@ function on_mcm_load(options)
 			id = id,
 			type = kb_mod,
 			val = 2,
-			def = D[id],
+			def = CONFIG.DEFAULTS[id],
 			hint = "mcm_kb_modifier",
 			content = {
 				{ 0, "mcm_kb_mod_none" },
@@ -35,7 +33,7 @@ function on_mcm_load(options)
 			id = id,
 			type = kb_mod,
 			val = 2,
-			def = D[id],
+			def = CONFIG.DEFAULTS[id],
 			hint = "mcm_kb_mode",
 			content = {
 				{ 0, "mcm_kb_mode_press" },
@@ -59,7 +57,7 @@ function on_mcm_load(options)
 				id = "intercept_disassemble",
 				type = "check",
 				val = 1,
-				def = D["intercept_disassemble"],
+				def = CONFIG.DEFAULTS["intercept_disassemble"],
 				hint = "dogma_stripping_intercept_disassemble",
 			},
 			kb_bind("key", "dogma_stripping_key"),
@@ -69,14 +67,14 @@ function on_mcm_load(options)
 				id = "keep_parts_with_weapon",
 				type = "check",
 				val = 1,
-				def = D["keep_parts_with_weapon"],
+				def = CONFIG.DEFAULTS["keep_parts_with_weapon"],
 				hint = "dogma_stripping_keep_parts_with_weapon",
 			},
 			{
 				id = "block_companion_special_items",
 				type = "check",
 				val = 1,
-				def = D["block_companion_special_items"],
+				def = CONFIG.DEFAULTS["block_companion_special_items"],
 				hint = "dogma_stripping_block_companion_special_items",
 			},
 		}),

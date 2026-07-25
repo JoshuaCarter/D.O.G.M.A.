@@ -9,14 +9,8 @@
 	stats_table["weapon"] and would wipe our rows.
 ]]
 
-local CONF = _G.dogma_tooltips_weapons_conf
-local MOD_ID = CONF.MOD_ID
-local D = CONF.defaults
+local CONFIG = _G.dogma_tooltips_weapons_conf
 local DOGMA
-
--- Filled by on_option_change (runs at boot before any read). D kept for list-value fallbacks.
-local CONFIG = {}
-
 
 -- Canonical Momopate/vanilla weapon-row indices. Inline companions anchor to
 -- these even when the parent base row is MCM-hidden (drop-in replacement).
@@ -190,7 +184,7 @@ local COLOR_SCALE_FROM = {
 }
 
 local function scale_from_rgb()
-	return COLOR_SCALE_FROM[CONFIG.color_scale_from] or COLOR_SCALE_FROM.darkgrey
+	return COLOR_SCALE_FROM[CONFIG.loaded.color_scale_from] or COLOR_SCALE_FROM.darkgrey
 end
 
 local function dmg_value_color(dmg, lo, hi)
@@ -205,7 +199,7 @@ local function dmg_value_color(dmg, lo, hi)
 end
 
 local function column_header_text(tier)
-	local mode = CONFIG.column_headers
+	local mode = CONFIG.loaded.column_headers
 	if mode == "raw" then
 		-- Raw bone armor float (same value used in the pen check).
 		local armor = tier.armor
@@ -410,10 +404,10 @@ local function custom_stat_text(cap, obj, sec)
 	if not cap then
 		return nil
 	end
-	if CONFIG.show_stalker_damage and cap == ENHANCED_STAT_LABELS.stalker_damage then
+	if CONFIG.loaded.show_stalker_damage and cap == ENHANCED_STAT_LABELS.stalker_damage then
 		return format_stalker_ammo_damage_slash(obj, sec)
 	end
-	if CONFIG.show_mutant_damage and cap == ENHANCED_STAT_LABELS.ammo_damage then
+	if CONFIG.loaded.show_mutant_damage and cap == ENHANCED_STAT_LABELS.ammo_damage then
 		return format_raw_ammo_damage_slash(obj, sec)
 	end
 	if not zzzz_dogma_tooltips_weapons_stats or not zzzz_dogma_tooltips_weapons_stats.text_for_name then
@@ -421,19 +415,19 @@ local function custom_stat_text(cap, obj, sec)
 	end
 	local S = zzzz_dogma_tooltips_weapons_stats
 	local N = S.NAME
-	if CONFIG.show_dispersion and cap == ENHANCED_STAT_LABELS.dispersion then
+	if CONFIG.loaded.show_dispersion and cap == ENHANCED_STAT_LABELS.dispersion then
 		return S.text_for_name(N.dispersion, obj, sec)
 	end
-	if CONFIG.show_spread and cap == ENHANCED_STAT_LABELS.spread then
+	if CONFIG.loaded.show_spread and cap == ENHANCED_STAT_LABELS.spread then
 		return S.text_for_name(N.spread, obj, sec)
 	end
-	if CONFIG.show_barrel_wear and cap == ENHANCED_STAT_LABELS.barrel_wear then
+	if CONFIG.loaded.show_barrel_wear and cap == ENHANCED_STAT_LABELS.barrel_wear then
 		return S.text_for_name(N.barrel_wear, obj, sec)
 	end
-	if CONFIG.show_burst_control and cap == ENHANCED_STAT_LABELS.burst_control then
+	if CONFIG.loaded.show_burst_control and cap == ENHANCED_STAT_LABELS.burst_control then
 		return S.text_for_name(N.burst_control, obj, sec)
 	end
-	if CONFIG.show_bullet_drop and cap == ENHANCED_STAT_LABELS.bullet_drop then
+	if CONFIG.loaded.show_bullet_drop and cap == ENHANCED_STAT_LABELS.bullet_drop then
 		return S.text_for_name(N.bullet_drop, obj, sec)
 	end
 	return nil
@@ -836,7 +830,7 @@ local function apply_custom_stat_display(info, obj, sec)
 		if ele.cap and ele.txt then
 			local cap = ele.cap:GetText()
 			if cap then
-				if CONFIG.show_hit_power and cap == ENHANCED_STAT_LABELS.hit_power then
+				if CONFIG.loaded.show_hit_power and cap == ENHANCED_STAT_LABELS.hit_power then
 					ele.cap:SetTextColor(CLR.white)
 					-- Stock Update already fills ele.comp + green/red when values differ.
 					if not (ele.comp and ele.comp:IsShown()) then
@@ -892,7 +886,7 @@ local function apply_custom_stat_display(info, obj, sec)
 	for _, ele in pairs(info.stats) do
 		if ele.comp and ele.comp:IsShown() and not painted[ele] then
 			local cap = ele.cap and ele.cap:GetText()
-			local hit_power_row = CONFIG.show_hit_power and cap == ENHANCED_STAT_LABELS.hit_power
+			local hit_power_row = CONFIG.loaded.show_hit_power and cap == ENHANCED_STAT_LABELS.hit_power
 			relocate_stock_compare_colors(ele, hit_power_row and CLR.white or nil)
 		end
 	end
@@ -1070,7 +1064,7 @@ local function inline_companion_pair(parent_key, parent_shown, upper_shown, lowe
 end
 
 local function placement_indices(weapon_stats)
-	if CONFIG.stat_row_placement == "after" then
+	if CONFIG.loaded.stat_row_placement == "after" then
 		-- All DOGMA rows at end of list (after remaining non-DOGMA rows).
 		local base = max_non_dogma_weapon_index(weapon_stats)
 		return {
@@ -1092,7 +1086,7 @@ local function placement_indices(weapon_stats)
 		mutant_damage = 0.3,
 	}
 
-	if CONFIG.stat_row_placement == "start" then
+	if CONFIG.loaded.stat_row_placement == "start" then
 		-- Companions join the lead block before Accuracy / any non-DOGMA rows.
 		return {
 			hit_power = dmg.hit_power,
@@ -1108,16 +1102,16 @@ local function placement_indices(weapon_stats)
 
 	-- Inline: companions after related base; damage trio still first.
 	local spread_idx, disp_idx = inline_companion_pair(
-		"accuracy", CONFIG.show_accuracy, CONFIG.show_spread, CONFIG.show_dispersion)
+		"accuracy", CONFIG.loaded.show_accuracy, CONFIG.loaded.show_spread, CONFIG.loaded.show_dispersion)
 	return {
 		hit_power = dmg.hit_power,
 		stalker_damage = dmg.stalker_damage,
 		mutant_damage = dmg.mutant_damage,
 		spread = spread_idx,
 		dispersion = disp_idx,
-		bullet_drop = inline_companion_index("speed", CONFIG.show_muzzle_velocity),
-		barrel_wear = inline_companion_index("reliability", CONFIG.show_reliability),
-		burst_control = inline_companion_index("recoil", CONFIG.show_recoil),
+		bullet_drop = inline_companion_index("speed", CONFIG.loaded.show_muzzle_velocity),
+		barrel_wear = inline_companion_index("reliability", CONFIG.loaded.show_reliability),
+		burst_control = inline_companion_index("recoil", CONFIG.loaded.show_recoil),
 	}
 end
 
@@ -1136,13 +1130,13 @@ local function apply_enhanced_weapon_stats()
 		cache_base_stat(weapon_stats, key)
 	end
 
-	set_base_stat(weapon_stats, "accuracy", CONFIG.show_accuracy)
-	set_base_stat(weapon_stats, "handling", CONFIG.show_handling)
-	set_base_stat(weapon_stats, "fire_rate", CONFIG.show_fire_rate)
-	set_base_stat(weapon_stats, "ammo_mag_size", CONFIG.show_mag_size)
-	set_base_stat(weapon_stats, "reliability", CONFIG.show_reliability)
-	set_base_stat(weapon_stats, "recoil", CONFIG.show_recoil)
-	set_base_stat(weapon_stats, "speed", CONFIG.show_muzzle_velocity)
+	set_base_stat(weapon_stats, "accuracy", CONFIG.loaded.show_accuracy)
+	set_base_stat(weapon_stats, "handling", CONFIG.loaded.show_handling)
+	set_base_stat(weapon_stats, "fire_rate", CONFIG.loaded.show_fire_rate)
+	set_base_stat(weapon_stats, "ammo_mag_size", CONFIG.loaded.show_mag_size)
+	set_base_stat(weapon_stats, "reliability", CONFIG.loaded.show_reliability)
+	set_base_stat(weapon_stats, "recoil", CONFIG.loaded.show_recoil)
+	set_base_stat(weapon_stats, "speed", CONFIG.loaded.show_muzzle_velocity)
 
 	local idx = placement_indices(weapon_stats)
 
@@ -1151,40 +1145,40 @@ local function apply_enhanced_weapon_stats()
 	RAW_AMMO_DAMAGE_STAT.index = idx.mutant_damage
 
 	cache_base_stat(weapon_stats, "damage")
-	if CONFIG.show_hit_power then
+	if CONFIG.loaded.show_hit_power then
 		weapon_stats["damage"] = HIT_POWER_STAT
 	else
 		weapon_stats["damage"] = saved_base_stats["damage"]
 	end
 
-	if CONFIG.show_stalker_damage then
+	if CONFIG.loaded.show_stalker_damage then
 		weapon_stats["dogma_stalker_damage"] = STALKER_DAMAGE_STAT
 	else
 		weapon_stats["dogma_stalker_damage"] = nil
 	end
-	if CONFIG.show_mutant_damage then
+	if CONFIG.loaded.show_mutant_damage then
 		weapon_stats["dogma_ammo_damage"] = RAW_AMMO_DAMAGE_STAT
 	else
 		weapon_stats["dogma_ammo_damage"] = nil
 	end
 
 	local N = (zzzz_dogma_tooltips_weapons_stats and zzzz_dogma_tooltips_weapons_stats.NAME) or EXTRA_STAT_NAME
-	weapon_stats["dogma_dispersion"] = CONFIG.show_dispersion
+	weapon_stats["dogma_dispersion"] = CONFIG.loaded.show_dispersion
 		and make_stat_row(idx.dispersion, N.dispersion, "ui_wp_prop_contrast", "prop_dispersion")
 		or nil
-	weapon_stats["dogma_spread"] = CONFIG.show_spread
+	weapon_stats["dogma_spread"] = CONFIG.loaded.show_spread
 		and make_stat_row(idx.spread, N.spread, "ui_wp_propery_13", "prop_spread")
 		or nil
 	-- Drop legacy dual-spread rows if a previous session registered them.
 	weapon_stats["dogma_base_spread"] = nil
 	weapon_stats["dogma_movement_spread"] = nil
-	weapon_stats["dogma_bullet_drop"] = CONFIG.show_bullet_drop
+	weapon_stats["dogma_bullet_drop"] = CONFIG.loaded.show_bullet_drop
 		and make_stat_row(idx.bullet_drop, N.bullet_drop, "ui_wp_prop_nastilnost", "prop_bullet_drop")
 		or nil
-	weapon_stats["dogma_barrel_wear"] = CONFIG.show_barrel_wear
+	weapon_stats["dogma_barrel_wear"] = CONFIG.loaded.show_barrel_wear
 		and make_stat_row(idx.barrel_wear, N.barrel_wear, "ui_wp_prop_nadezhnost", "prop_barrel_wear")
 		or nil
-	weapon_stats["dogma_burst_control"] = CONFIG.show_burst_control
+	weapon_stats["dogma_burst_control"] = CONFIG.loaded.show_burst_control
 		and make_stat_row(idx.burst_control, N.burst_control, "ui_wp_prop_otdacha", "prop_burst_control")
 		or nil
 end
@@ -1202,9 +1196,9 @@ local function overlay(slot, msg)
 	if not (DOGMA and DOGMA.dbg) then
 		return
 	end
-	if CONFIG.debug_overlay then
+	if CONFIG.loaded.debug_overlay then
 		local s = slot or OVERLAY.RANGE
-		DOGMA.dbg.overlay(MOD_ID, s.order, tostring(msg), s.color)
+		DOGMA.dbg.overlay(CONFIG.MOD_ID, s.order, tostring(msg), s.color)
 	end
 end
 
@@ -1212,8 +1206,8 @@ local function log(msg)
 	if not (DOGMA and DOGMA.dbg) then
 		return
 	end
-	if CONFIG.debug_log then
-		DOGMA.dbg.log(MOD_ID, tostring(msg))
+	if CONFIG.loaded.debug_log then
+		DOGMA.dbg.log(CONFIG.MOD_ID, tostring(msg))
 	end
 end
 
@@ -1223,7 +1217,7 @@ local function log_once(key, msg)
 	if logged_once[key] then
 		return
 	end
-	if not (DOGMA and DOGMA.dbg) or not CONFIG.debug_log then
+	if not (DOGMA and DOGMA.dbg) or not CONFIG.loaded.debug_log then
 		return
 	end
 	logged_once[key] = true
@@ -1237,7 +1231,7 @@ end
 
 -- Once per tooltip open (cleared when the hovered item changes).
 local function log_tooltip(key, msg)
-	if not CONFIG.debug_log then
+	if not CONFIG.loaded.debug_log then
 		return
 	end
 	if tooltip_logged[key] then
@@ -1256,90 +1250,90 @@ local function on_option_change()
 	-- All MCM/palette work is optional - the per-ammo breakdown must keep working
 	-- even if DOGMA common failed to load, so nothing here is allowed to hard-fail.
 	local tostr = tostring
-	local prev_debug = CONFIG.debug_log
+	local prev_debug = CONFIG.loaded.debug_log
 	if DOGMA and DOGMA.mcm then
-		CONFIG.show_damage_table = DOGMA.mcm.bool(MOD_ID, "show_damage_table")
-		CONFIG.show_hit_power = DOGMA.mcm.bool(MOD_ID, "show_hit_power")
-		CONFIG.show_stalker_damage = DOGMA.mcm.bool(MOD_ID, "show_stalker_damage")
-		CONFIG.show_mutant_damage = DOGMA.mcm.bool(MOD_ID, "show_mutant_damage")
-		CONFIG.show_accuracy = DOGMA.mcm.bool(MOD_ID, "show_accuracy")
-		CONFIG.show_handling = DOGMA.mcm.bool(MOD_ID, "show_handling")
-		CONFIG.show_fire_rate = DOGMA.mcm.bool(MOD_ID, "show_fire_rate")
-		CONFIG.show_mag_size = DOGMA.mcm.bool(MOD_ID, "show_mag_size")
-		CONFIG.show_reliability = DOGMA.mcm.bool(MOD_ID, "show_reliability")
-		CONFIG.show_recoil = DOGMA.mcm.bool(MOD_ID, "show_recoil")
-		CONFIG.show_muzzle_velocity = DOGMA.mcm.bool(MOD_ID, "show_muzzle_velocity")
-		CONFIG.show_dispersion = DOGMA.mcm.bool(MOD_ID, "show_dispersion")
-		CONFIG.show_spread = DOGMA.mcm.bool(MOD_ID, "show_spread")
-		CONFIG.show_barrel_wear = DOGMA.mcm.bool(MOD_ID, "show_barrel_wear")
-		CONFIG.show_burst_control = DOGMA.mcm.bool(MOD_ID, "show_burst_control")
-		CONFIG.show_bullet_drop = DOGMA.mcm.bool(MOD_ID, "show_bullet_drop")
+		CONFIG.loaded.show_damage_table = DOGMA.mcm.bool(CONFIG.MOD_ID, "show_damage_table")
+		CONFIG.loaded.show_hit_power = DOGMA.mcm.bool(CONFIG.MOD_ID, "show_hit_power")
+		CONFIG.loaded.show_stalker_damage = DOGMA.mcm.bool(CONFIG.MOD_ID, "show_stalker_damage")
+		CONFIG.loaded.show_mutant_damage = DOGMA.mcm.bool(CONFIG.MOD_ID, "show_mutant_damage")
+		CONFIG.loaded.show_accuracy = DOGMA.mcm.bool(CONFIG.MOD_ID, "show_accuracy")
+		CONFIG.loaded.show_handling = DOGMA.mcm.bool(CONFIG.MOD_ID, "show_handling")
+		CONFIG.loaded.show_fire_rate = DOGMA.mcm.bool(CONFIG.MOD_ID, "show_fire_rate")
+		CONFIG.loaded.show_mag_size = DOGMA.mcm.bool(CONFIG.MOD_ID, "show_mag_size")
+		CONFIG.loaded.show_reliability = DOGMA.mcm.bool(CONFIG.MOD_ID, "show_reliability")
+		CONFIG.loaded.show_recoil = DOGMA.mcm.bool(CONFIG.MOD_ID, "show_recoil")
+		CONFIG.loaded.show_muzzle_velocity = DOGMA.mcm.bool(CONFIG.MOD_ID, "show_muzzle_velocity")
+		CONFIG.loaded.show_dispersion = DOGMA.mcm.bool(CONFIG.MOD_ID, "show_dispersion")
+		CONFIG.loaded.show_spread = DOGMA.mcm.bool(CONFIG.MOD_ID, "show_spread")
+		CONFIG.loaded.show_barrel_wear = DOGMA.mcm.bool(CONFIG.MOD_ID, "show_barrel_wear")
+		CONFIG.loaded.show_burst_control = DOGMA.mcm.bool(CONFIG.MOD_ID, "show_burst_control")
+		CONFIG.loaded.show_bullet_drop = DOGMA.mcm.bool(CONFIG.MOD_ID, "show_bullet_drop")
 		-- "raw" = bone armor floats; "raw100" = floats x100 floored; "names" = class labels.
-		local headers = DOGMA.mcm.string(MOD_ID, "column_headers")
+		local headers = DOGMA.mcm.string(CONFIG.MOD_ID, "column_headers")
 		if headers == "raw" or headers == "raw100" or headers == "names" then
-			CONFIG.column_headers = headers
+			CONFIG.loaded.column_headers = headers
 		else
-			CONFIG.column_headers = D["column_headers"]
+			CONFIG.loaded.column_headers = CONFIG.DEFAULTS["column_headers"]
 		end
-		local scale_from = DOGMA.mcm.string(MOD_ID, "color_scale_from")
+		local scale_from = DOGMA.mcm.string(CONFIG.MOD_ID, "color_scale_from")
 		if scale_from == "white" or scale_from == "grey" or scale_from == "darkgrey" then
-			CONFIG.color_scale_from = scale_from
+			CONFIG.loaded.color_scale_from = scale_from
 		else
-			CONFIG.color_scale_from = D["color_scale_from"]
+			CONFIG.loaded.color_scale_from = CONFIG.DEFAULTS["color_scale_from"]
 		end
-		local order = DOGMA.mcm.string(MOD_ID, "ammo_order")
+		local order = DOGMA.mcm.string(CONFIG.MOD_ID, "ammo_order")
 		if order == "ap" or order == "damage" or order == "default" then
-			CONFIG.ammo_order = order
+			CONFIG.loaded.ammo_order = order
 		else
-			CONFIG.ammo_order = D["ammo_order"]
+			CONFIG.loaded.ammo_order = CONFIG.DEFAULTS["ammo_order"]
 		end
-		local place = DOGMA.mcm.string(MOD_ID, "stat_row_placement")
+		local place = DOGMA.mcm.string(CONFIG.MOD_ID, "stat_row_placement")
 		if place == "after" or place == "start" or place == "inline" then
-			CONFIG.stat_row_placement = place
+			CONFIG.loaded.stat_row_placement = place
 		else
-			CONFIG.stat_row_placement = D["stat_row_placement"]
+			CONFIG.loaded.stat_row_placement = CONFIG.DEFAULTS["stat_row_placement"]
 		end
-		CONFIG.compact_header = DOGMA.mcm.bool(MOD_ID, "compact_header")
-		CONFIG.hide_description = DOGMA.mcm.bool(MOD_ID, "hide_description")
-		CONFIG.table_row_pad = DOGMA.mcm.number(MOD_ID, "table_row_pad")
+		CONFIG.loaded.compact_header = DOGMA.mcm.bool(CONFIG.MOD_ID, "compact_header")
+		CONFIG.loaded.hide_description = DOGMA.mcm.bool(CONFIG.MOD_ID, "hide_description")
+		CONFIG.loaded.table_row_pad = DOGMA.mcm.number(CONFIG.MOD_ID, "table_row_pad")
 		for i = 1, NUM_TORSO_TIERS do
-			CONFIG["show_torso_" .. i] = DOGMA.mcm.bool(MOD_ID, "show_torso_" .. i)
+			CONFIG.loaded["show_torso_" .. i] = DOGMA.mcm.bool(CONFIG.MOD_ID, "show_torso_" .. i)
 		end
 		for i = 1, NUM_HEAD_TIERS do
-			CONFIG["show_head_" .. i] = DOGMA.mcm.bool(MOD_ID, "show_head_" .. i)
+			CONFIG.loaded["show_head_" .. i] = DOGMA.mcm.bool(CONFIG.MOD_ID, "show_head_" .. i)
 		end
-		CONFIG.calc_range_m = DOGMA.mcm.number(MOD_ID, "calc_range")
-		CONFIG.pellet_hit_pct = DOGMA.mcm.number(MOD_ID, "pellet_hit_pct")
-		local drop_range = DOGMA.mcm.number(MOD_ID, "drop_range")
+		CONFIG.loaded.calc_range_m = DOGMA.mcm.number(CONFIG.MOD_ID, "calc_range")
+		CONFIG.loaded.pellet_hit_pct = DOGMA.mcm.number(CONFIG.MOD_ID, "pellet_hit_pct")
+		local drop_range = DOGMA.mcm.number(CONFIG.MOD_ID, "drop_range")
 		if zzzz_dogma_tooltips_weapons_stats and zzzz_dogma_tooltips_weapons_stats.set_drop_range then
 			zzzz_dogma_tooltips_weapons_stats.set_drop_range(drop_range)
 		end
-		local burst_threshold = DOGMA.mcm.number(MOD_ID, "burst_threshold")
+		local burst_threshold = DOGMA.mcm.number(CONFIG.MOD_ID, "burst_threshold")
 		if zzzz_dogma_tooltips_weapons_stats and zzzz_dogma_tooltips_weapons_stats.set_burst_threshold then
 			zzzz_dogma_tooltips_weapons_stats.set_burst_threshold(burst_threshold)
 		end
-		CONFIG.use_condition_table = DOGMA.mcm.bool(MOD_ID, "use_condition_table")
-		CONFIG.use_condition_stats = DOGMA.mcm.bool(MOD_ID, "use_condition_stats")
-		CONFIG.apply_silencer_table = DOGMA.mcm.bool(MOD_ID, "apply_silencer_table")
-		CONFIG.apply_silencer_stats = DOGMA.mcm.bool(MOD_ID, "apply_silencer_stats")
+		CONFIG.loaded.use_condition_table = DOGMA.mcm.bool(CONFIG.MOD_ID, "use_condition_table")
+		CONFIG.loaded.use_condition_stats = DOGMA.mcm.bool(CONFIG.MOD_ID, "use_condition_stats")
+		CONFIG.loaded.apply_silencer_table = DOGMA.mcm.bool(CONFIG.MOD_ID, "apply_silencer_table")
+		CONFIG.loaded.apply_silencer_stats = DOGMA.mcm.bool(CONFIG.MOD_ID, "apply_silencer_stats")
 		if zzzz_dogma_tooltips_weapons_stats and zzzz_dogma_tooltips_weapons_stats.set_apply_silencer then
-			zzzz_dogma_tooltips_weapons_stats.set_apply_silencer(CONFIG.apply_silencer_stats)
+			zzzz_dogma_tooltips_weapons_stats.set_apply_silencer(CONFIG.loaded.apply_silencer_stats)
 		end
-		CONFIG.debug_log = DOGMA.dbg.logging()
-		CONFIG.debug_overlay = DOGMA.dbg.overlay_enabled()
+		CONFIG.loaded.debug_log = DOGMA.dbg.logging()
+		CONFIG.loaded.debug_overlay = DOGMA.dbg.overlay_enabled()
 	end
 
-	if CONFIG.debug_log and not prev_debug then
+	if CONFIG.loaded.debug_log and not prev_debug then
 		logged_once = {}
 		tooltip_logged = {}
 	end
 
 	if zzzz_dogma_tooltips_weapons_stats and zzzz_dogma_tooltips_weapons_stats.set_debug then
-		zzzz_dogma_tooltips_weapons_stats.set_debug(CONFIG.debug_log)
+		zzzz_dogma_tooltips_weapons_stats.set_debug(CONFIG.loaded.debug_log)
 	end
 
 	if DOGMA and DOGMA.dbg then
-		DOGMA.dbg.set_enabled(MOD_ID, DOGMA.dbg.overlay_enabled())
+		DOGMA.dbg.set_enabled(CONFIG.MOD_ID, DOGMA.dbg.overlay_enabled())
 	end
 
 	refresh_enhanced_stat_labels()
@@ -1351,21 +1345,21 @@ local function on_option_change()
 
 	log_once("config", string.format(
 		"config: table=%s hit=%s stalker=%s mutant=%s base=%s/%s/%s/%s/%s/%s/%s extra=%s/%s/%s/%s/%s place=%s headers=%s order=%s range=%s pellet%%=%s cond=%s/%s sil=%s/%s",
-		tostr(CONFIG.show_damage_table), tostr(CONFIG.show_hit_power),
-		tostr(CONFIG.show_stalker_damage), tostr(CONFIG.show_mutant_damage),
-		tostr(CONFIG.show_accuracy), tostr(CONFIG.show_handling),
-		tostr(CONFIG.show_fire_rate), tostr(CONFIG.show_mag_size),
-		tostr(CONFIG.show_muzzle_velocity),
-		tostr(CONFIG.show_reliability), tostr(CONFIG.show_recoil),
-		tostr(CONFIG.show_dispersion), tostr(CONFIG.show_spread),
-		tostr(CONFIG.show_barrel_wear),
-		tostr(CONFIG.show_burst_control),
-		tostr(CONFIG.show_bullet_drop), tostr(CONFIG.stat_row_placement),
-		tostr(CONFIG.column_headers), tostr(CONFIG.ammo_order),
-		tostr(CONFIG.calc_range_m), tostr(CONFIG.pellet_hit_pct),
-		tostr(CONFIG.use_condition_table),
-		tostr(CONFIG.use_condition_stats),
-		tostr(CONFIG.apply_silencer_table), tostr(CONFIG.apply_silencer_stats)))
+		tostr(CONFIG.loaded.show_damage_table), tostr(CONFIG.loaded.show_hit_power),
+		tostr(CONFIG.loaded.show_stalker_damage), tostr(CONFIG.loaded.show_mutant_damage),
+		tostr(CONFIG.loaded.show_accuracy), tostr(CONFIG.loaded.show_handling),
+		tostr(CONFIG.loaded.show_fire_rate), tostr(CONFIG.loaded.show_mag_size),
+		tostr(CONFIG.loaded.show_muzzle_velocity),
+		tostr(CONFIG.loaded.show_reliability), tostr(CONFIG.loaded.show_recoil),
+		tostr(CONFIG.loaded.show_dispersion), tostr(CONFIG.loaded.show_spread),
+		tostr(CONFIG.loaded.show_barrel_wear),
+		tostr(CONFIG.loaded.show_burst_control),
+		tostr(CONFIG.loaded.show_bullet_drop), tostr(CONFIG.loaded.stat_row_placement),
+		tostr(CONFIG.loaded.column_headers), tostr(CONFIG.loaded.ammo_order),
+		tostr(CONFIG.loaded.calc_range_m), tostr(CONFIG.loaded.pellet_hit_pct),
+		tostr(CONFIG.loaded.use_condition_table),
+		tostr(CONFIG.loaded.use_condition_stats),
+		tostr(CONFIG.loaded.apply_silencer_table), tostr(CONFIG.loaded.apply_silencer_stats)))
 end
 
 local function safe_id(obj)
@@ -1523,7 +1517,7 @@ local function dist_atten(air_res, dist)
 end
 
 local function calc_range()
-	return tonumber(CONFIG.calc_range_m) or REF_DIST_M
+	return tonumber(CONFIG.loaded.calc_range_m) or REF_DIST_M
 end
 
 -- Barrel part condition 0..1. Missing parts data => 1.0.
@@ -1765,7 +1759,7 @@ local function collect_sorted_ammo_rounds(obj, sec, max_count)
 			local pellets = ini_sys:r_float_ex(ammo_sec, "buck_shot") or 0
 			pellets = (pellets > 1) and pellets or 1
 			if pellets > 1 then
-				pellets = pellets * ((tonumber(CONFIG.pellet_hit_pct) or 100) / 100)
+				pellets = pellets * ((tonumber(CONFIG.loaded.pellet_hit_pct) or 100) / 100)
 				if pellets < 1 then
 					pellets = 1
 				end
@@ -1791,9 +1785,9 @@ local function collect_sorted_ammo_rounds(obj, sec, max_count)
 		return nil
 	end
 
-	if CONFIG.ammo_order ~= "default" then
+	if CONFIG.loaded.ammo_order ~= "default" then
 		table.sort(rounds, function(a, b)
-			if CONFIG.ammo_order == "ap" then
+			if CONFIG.loaded.ammo_order == "ap" then
 				if a.ap ~= b.ap then
 					return a.ap > b.ap
 				end
@@ -1844,8 +1838,8 @@ local function build_ammo_damage_rows(obj, sec)
 	end
 
 	local dist = calc_range()
-	local barrel = barrel_mult(obj, CONFIG.use_condition_table)
-	local silencer = silencer_mult(obj, sec, CONFIG.apply_silencer_table)
+	local barrel = barrel_mult(obj, CONFIG.loaded.use_condition_table)
+	local silencer = silencer_mult(obj, sec, CONFIG.loaded.apply_silencer_table)
 	local sniper_ap = sniper_ap_bonus(sec)
 	local rows = {}
 	for _, r in ipairs(rounds) do
@@ -1930,7 +1924,7 @@ mutant_ammo_damage_items = function(obj, sec)
 	end
 
 	local dist = calc_range()
-	local barrel = barrel_mult(obj, CONFIG.use_condition_stats)
+	local barrel = barrel_mult(obj, CONFIG.loaded.use_condition_stats)
 	local diff = difficulty_mult()
 	local items = {}
 	for _, r in ipairs(rounds) do
@@ -1962,8 +1956,8 @@ stalker_ammo_damage_items = function(obj, sec)
 	end
 
 	local dist = calc_range()
-	local barrel = barrel_mult(obj, CONFIG.use_condition_stats)
-	local silencer = silencer_mult(obj, sec, CONFIG.apply_silencer_stats)
+	local barrel = barrel_mult(obj, CONFIG.loaded.use_condition_stats)
+	local silencer = silencer_mult(obj, sec, CONFIG.loaded.apply_silencer_stats)
 	local items = {}
 	for _, r in ipairs(rounds) do
 		local dmg = math.floor(
@@ -2180,10 +2174,10 @@ local function apply_armor_column_layout(fields)
 	local layout = fields.layout
 	local torso_on, head_on = {}, {}
 	for i = 1, NUM_TORSO_TIERS do
-		torso_on[i] = CONFIG["show_torso_" .. i] ~= false
+		torso_on[i] = CONFIG.loaded["show_torso_" .. i] ~= false
 	end
 	for i = 1, NUM_HEAD_TIERS do
-		head_on[i] = CONFIG["show_head_" .. i] ~= false
+		head_on[i] = CONFIG.loaded["show_head_" .. i] ~= false
 	end
 
 	local xs_t, xs_h, any_torso, any_head, torso_x, head_x = pack_armor_columns(
@@ -2345,7 +2339,7 @@ local function populate_damage_fields(fields, data, panel_width)
 		end
 	end
 
-	local row_pad = tonumber(CONFIG.table_row_pad) or 0
+	local row_pad = tonumber(CONFIG.loaded.table_row_pad) or 0
 	if row_pad < 0 then
 		row_pad = 0
 	end
@@ -2390,7 +2384,7 @@ end
 local DETAILS_PANEL_WIDTH = 500
 
 local function add_details_damage_section(sheet, obj)
-	if not CONFIG.show_damage_table or not sheet or not sheet.scroll or not sheet.xml then
+	if not CONFIG.loaded.show_damage_table or not sheet or not sheet.scroll or not sheet.xml then
 		return
 	end
 
@@ -2462,14 +2456,14 @@ local function apply_description_visibility(info)
 	if not info or not info.desc then
 		return
 	end
-	info.desc:Show(not CONFIG.hide_description)
+	info.desc:Show(not CONFIG.loaded.hide_description)
 end
 
 local function sync_damage_layout(info)
 	apply_description_visibility(info)
 
 	local tail
-	if CONFIG.hide_description then
+	if CONFIG.loaded.hide_description then
 		if info.note and info.note:IsShown() then
 			tail = info.note
 		else
@@ -2479,7 +2473,7 @@ local function sync_damage_layout(info)
 		tail = info.desc
 	end
 
-	if CONFIG.show_damage_table and info.dogma_wpn_damage and info.dogma_wpn_damage:IsShown() then
+	if CONFIG.loaded.show_damage_table and info.dogma_wpn_damage and info.dogma_wpn_damage:IsShown() then
 		info:Sync_Y(tail, info.dogma_wpn_damage, PANEL_TOP_OFFSET)
 		tail = info.dogma_wpn_damage
 	end
@@ -2532,23 +2526,23 @@ local function apply_compact_header(info)
 		return
 	end
 
-	if CONFIG.compact_header then
+	if CONFIG.loaded.compact_header then
 		local weight_y = ys.name + 10
 		set_wnd_y(info.weight, weight_y)
 		set_wnd_y(info.value, weight_y)
 		if info.note and info.note:IsShown() then
 			info:Sync_Y(info.weight, info.note, SECTION_GAP)
-			if not CONFIG.hide_description then
+			if not CONFIG.loaded.hide_description then
 				info:Sync_Y(info.note, info.desc, SECTION_GAP - 5)
 			end
-		elseif not CONFIG.hide_description then
+		elseif not CONFIG.loaded.hide_description then
 			info:Sync_Y(info.weight, info.desc, SECTION_GAP - 5)
 		end
 	else
 		set_wnd_y(info.weight, ys.weight)
 		set_wnd_y(info.value, ys.value)
 		set_wnd_y(info.note, ys.note)
-		if not CONFIG.hide_description then
+		if not CONFIG.loaded.hide_description then
 			set_wnd_y(info.desc, ys.desc)
 		end
 	end
@@ -2566,7 +2560,7 @@ local function refresh_weapon_damage_panel(info, obj, sec)
 
 	hide_damage_panel(info)
 
-	if not CONFIG.show_damage_table then
+	if not CONFIG.loaded.show_damage_table then
 		log_once("table_disabled", "show_damage_table is off in MCM")
 		sync_damage_layout(info)
 		return
@@ -2692,7 +2686,7 @@ local function itm_details_addtext_hook(self, xml, path, offset, txt)
 	if self.dogma_details_pending and path == "text_s_l" then
 		local obj = self.dogma_details_pending
 		self.dogma_details_pending = nil
-		if CONFIG.hide_description and ele then
+		if CONFIG.loaded.hide_description and ele then
 			ele:Show(false)
 			pcall(function()
 				ele:SetWndSize(vector2():set(ele:GetWidth(), 0))
@@ -2705,7 +2699,7 @@ local function itm_details_addtext_hook(self, xml, path, offset, txt)
 end
 
 local function itm_details_reset_hook(self, obj)
-	if obj and CONFIG.show_damage_table then
+	if obj and CONFIG.loaded.show_damage_table then
 		local sec = safe_section(obj)
 		if sec then
 			sec = ini_sys:r_string_ex(sec, "parent_section") or sec
@@ -2799,25 +2793,110 @@ local function uiinfo_init_hook(self, owner, delay)
 	end
 end
 
-local function uiinfo_update_hook(self, obj, sec, flags)
+-- True stock UIInfoItem.Update (never Ish / never us). ADV+DOGMA wrap order
+-- can form Ish↔ us cycles; calling Ish as "stock" on re-entry hangs inventory.
+local stock_uiinfo_update
+local update_hook_depth = 0
+local uiinfo_update_hook
+
+-- Forward decls: ensure/prepare gate live below; Update hook calls them at runtime.
+local ensure_gamma_stats_table
+local has_anomaly_tracks
+local stats_table_empty
+local prepare_gate_fn
+
+local function is_ish_update(fn)
+	local Ish = ish_item_stats and ish_item_stats.Ish_UIInfoItem_Update
+	return fn and Ish and fn == Ish
+end
+
+local function capture_stock_update()
+	local U = utils_ui.UIInfoItem.Update
+	local Base = ish_item_stats and ish_item_stats.Base_UIInfoItem_Update
+	-- ADV already wrapped: Base is stock, Update is Ish.
+	if is_ish_update(U) and Base and Base ~= uiinfo_update_hook and not is_ish_update(Base) then
+		return Base
+	end
+	if U and U ~= uiinfo_update_hook and not is_ish_update(U) then
+		return U
+	end
+	if Base and Base ~= uiinfo_update_hook and not is_ish_update(Base) then
+		return Base
+	end
+	return stock_uiinfo_update
+end
+
+uiinfo_update_hook = function(self, obj, sec, flags)
 	local oid = safe_id(obj)
 	local same_item = (oid and self.id and oid == self.id)
 		or (not obj and sec and self.section == sec)
 
-	base_uiinfo_update(self, obj, sec, flags)
+	-- Hard stop: never call through Ish/us on re-entry (that was the hang).
+	-- Same-item: keep the tooltip visible without re-entering stock.
+	if update_hook_depth > 0 then
+		if same_item then
+			self:Show(true)
+		end
+		return
+	end
+
+	-- Reclaim prepare + kill Anomaly bars before stock paints this hover.
+	if ish_item_stats and ish_item_stats.override_stats_table
+		and (stats_table_empty() or has_anomaly_tracks()
+			or (prepare_gate_fn and utils_ui.prepare_stats_table ~= prepare_gate_fn))
+	then
+		ensure_gamma_stats_table(true)
+	end
+
+	update_hook_depth = 1
+	local stock = stock_uiinfo_update
+	if not stock or stock == uiinfo_update_hook or is_ish_update(stock) then
+		stock = capture_stock_update()
+		if stock and stock ~= uiinfo_update_hook and not is_ish_update(stock) then
+			stock_uiinfo_update = stock
+		end
+	end
+	-- Always invoke true stock, never Ish (avoids ADV Base ↔ us cycles).
+	if stock and stock ~= uiinfo_update_hook and not is_ish_update(stock) then
+		stock(self, obj, sec, flags)
+	elseif base_uiinfo_update and base_uiinfo_update ~= uiinfo_update_hook and not is_ish_update(base_uiinfo_update) then
+		base_uiinfo_update(self, obj, sec, flags)
+	end
+	update_hook_depth = 0
 
 	if not same_item then
-		-- Reset per-open tooltip debug dedupe.
 		tooltip_logged = {}
 		apply_custom_stat_display(self, obj, sec)
 		apply_compact_header(self)
 		refresh_weapon_damage_panel(self, obj, sec)
-		-- Always re-stack body under desc (weapons already synced inside refresh).
 		sync_damage_layout(self)
 	end
 end
 
 local ui_hooks_ok = false
+
+local function repair_update_chain()
+	if not utils_ui or not utils_ui.UIInfoItem then
+		return
+	end
+	local stock = capture_stock_update()
+	if stock and stock ~= uiinfo_update_hook and not is_ish_update(stock) then
+		stock_uiinfo_update = stock
+	end
+	local Ish = ish_item_stats and ish_item_stats.Ish_UIInfoItem_Update
+	local Base = ish_item_stats and ish_item_stats.Base_UIInfoItem_Update
+	-- Point ADV at stock (not us) so Ish never re-enters our hook.
+	if Ish and stock_uiinfo_update and (Base == uiinfo_update_hook or Base == Ish or not Base) then
+		ish_item_stats.Base_UIInfoItem_Update = stock_uiinfo_update
+	end
+	-- We stay outermost: Update = us → stock.
+	if utils_ui.UIInfoItem.Update ~= uiinfo_update_hook then
+		base_uiinfo_update = stock_uiinfo_update
+		utils_ui.UIInfoItem.Update = uiinfo_update_hook
+	else
+		base_uiinfo_update = stock_uiinfo_update
+	end
+end
 
 local function install_ui_hooks()
 	if not utils_ui or not utils_ui.UIInfoItem then
@@ -2830,10 +2909,11 @@ local function install_ui_hooks()
 		utils_ui.UIInfoItem.__init = uiinfo_init_hook
 	end
 
-	if not base_uiinfo_update then
-		base_uiinfo_update = utils_ui.UIInfoItem.Update
-		utils_ui.UIInfoItem.Update = uiinfo_update_hook
+	if not stock_uiinfo_update or is_ish_update(stock_uiinfo_update) or stock_uiinfo_update == uiinfo_update_hook then
+		stock_uiinfo_update = capture_stock_update()
 	end
+
+	repair_update_chain()
 
 	ui_hooks_ok = true
 	return true
@@ -2849,8 +2929,64 @@ local function on_console_execute(cmd)
 	end
 end
 
--- ADV/Sota replace utils_ui.stats_table.weapon on difficulty change; re-apply
--- DOGMA rows whenever their override runs so companions/placement survive.
+-- ADV categories that must stay track=false (numeric) when ADV is installed.
+local GAMMA_STAT_CATS = { "weapon", "outfit", "artefact", "booster", "backpack" }
+
+stats_table_empty = function()
+	local st = utils_ui and utils_ui.stats_table
+	return not (st and st["weapon"])
+end
+
+-- Any track=true row in ADV-owned categories = Anomaly bar contamination.
+has_anomaly_tracks = function()
+	local st = utils_ui and utils_ui.stats_table
+	if not st then
+		return true
+	end
+	for _, cat in ipairs(GAMMA_STAT_CATS) do
+		local rows = st[cat]
+		if rows then
+			for _, gr in pairs(rows) do
+				if type(gr) == "table" and gr.track == true then
+					return true
+				end
+			end
+		end
+	end
+	return false
+end
+
+-- Last-resort: bars are track=true; force numeric paint even if ADV magnitudes wrong.
+local function scrub_anomaly_tracks()
+	local st = utils_ui and utils_ui.stats_table
+	if not st then
+		return 0
+	end
+	local n = 0
+	for _, cat in ipairs(GAMMA_STAT_CATS) do
+		local rows = st[cat]
+		if rows then
+			for _, gr in pairs(rows) do
+				if type(gr) == "table" and gr.track == true then
+					gr.track = false
+					n = n + 1
+				end
+			end
+		end
+	end
+	return n
+end
+
+local function bust_tooltip_cache()
+	for info in pairs(tracked_infos) do
+		info.id = nil
+		info.section = nil
+	end
+end
+
+-- ADV/Sota replace utils_ui.stats_table on difficulty change; re-apply DOGMA
+-- weapon rows whenever their override runs so companions/placement survive.
+-- Do NOT blind-noop prepare here — install_prepare_gate owns that.
 local function hook_stats_table_override()
 	if not ish_item_stats or not ish_item_stats.override_stats_table then
 		return
@@ -2861,14 +2997,105 @@ local function hook_stats_table_override()
 	local prev = ish_item_stats.override_stats_table
 	ish_item_stats.override_stats_table = function()
 		prev()
+		-- ADV rebuilt the table; drop any Anomaly-bar defs cached before ADV ran.
+		saved_base_stats = {}
 		apply_enhanced_weapon_stats()
-		for info in pairs(tracked_infos) do
-			info.id = nil
-			info.section = nil
-		end
+		bust_tooltip_cache()
 	end
 	ish_item_stats.dogma_weapon_tooltip_wrapped = true
 end
+
+-- Single owner path: ADV numeric tables + DOGMA weapon rows. Exported for loadout.
+local prev_prepare_stats_table
+
+local function install_prepare_gate()
+	if not utils_ui then
+		return
+	end
+	-- Reclaim if Artefacts/Better Stats/etc re-wrapped prepare after us.
+	if prepare_gate_fn and utils_ui.prepare_stats_table == prepare_gate_fn then
+		return
+	end
+	local cur = utils_ui.prepare_stats_table
+	if cur and cur ~= prepare_gate_fn then
+		prev_prepare_stats_table = cur
+	end
+	prepare_gate_fn = function()
+		-- Never run stock Anomaly fill when ADV is present.
+		if ish_item_stats and ish_item_stats.override_stats_table then
+			if stats_table_empty() or has_anomaly_tracks() then
+				ensure_gamma_stats_table(true)
+			end
+			return
+		end
+		if prev_prepare_stats_table then
+			prev_prepare_stats_table()
+		end
+	end
+	utils_ui.prepare_stats_table = prepare_gate_fn
+end
+
+local ensure_busy = false
+ensure_gamma_stats_table = function(force)
+	if not utils_ui then
+		return false
+	end
+	-- prepare gate → ensure → override must not re-enter ensure via prepare.
+	if ensure_busy then
+		return not stats_table_empty() and not has_anomaly_tracks()
+	end
+	ensure_busy = true
+
+	install_prepare_gate()
+	hook_stats_table_override()
+
+	local ok_out = false
+	if not (ish_item_stats and ish_item_stats.override_stats_table) then
+		-- No ADV — leave stock; apply DOGMA rows only if a weapon table exists.
+		if utils_ui.stats_table and utils_ui.stats_table["weapon"] then
+			apply_enhanced_weapon_stats()
+		end
+		ok_out = false
+	elseif not force and not stats_table_empty() and not has_anomaly_tracks() then
+		ok_out = true
+	else
+		local ok, err = pcall(ish_item_stats.override_stats_table)
+		if not ok then
+			if not logged_once["adv_fail"] then
+				logged_once["adv_fail"] = true
+				printf("[dogma_tooltips_weapons] ADV override failed: %s", tostring(err))
+			end
+			-- Don't leave a blank table: allow previous prepare, then kill bars.
+			if stats_table_empty() and prev_prepare_stats_table then
+				pcall(prev_prepare_stats_table)
+			end
+		end
+		local scrubbed = scrub_anomaly_tracks()
+		if scrubbed > 0 then
+			if not logged_once["scrub"] then
+				logged_once["scrub"] = true
+				printf("[dogma_tooltips_weapons] forced track=false on %s Anomaly bar rows", tostring(scrubbed))
+			end
+			bust_tooltip_cache()
+			saved_base_stats = {}
+			apply_enhanced_weapon_stats()
+		elseif ok then
+			-- ADV ok and clean — still make sure DOGMA rows exist (wrap should have).
+			if utils_ui.stats_table and utils_ui.stats_table["weapon"]
+				and not utils_ui.stats_table["weapon"]["dogma_dispersion"]
+				and CONFIG.loaded.show_dispersion
+			then
+				apply_enhanced_weapon_stats()
+			end
+		end
+		ok_out = not stats_table_empty() and not has_anomaly_tracks()
+	end
+
+	ensure_busy = false
+	return ok_out
+end
+
+_G.dogma_ensure_gamma_stats = ensure_gamma_stats_table
 
 -- Crosshair rangefinder (Development MCM). Casts along camera look; ignores actor.
 -- Flags 3 = static + objects (same as cover-tilt / xcombat rqtBoth).
@@ -2905,11 +3132,11 @@ local function on_actor_update()
 	if not DOGMA or not DOGMA.sys then
 		return
 	end
-	local actor = DOGMA.sys.ready(MOD_ID, db, on_option_change)
+	local actor = DOGMA.sys.ready(CONFIG.MOD_ID, db, on_option_change)
 	if not actor then
 		return
 	end
-	if not CONFIG.debug_overlay then
+	if not CONFIG.loaded.debug_overlay then
 		return
 	end
 	local dist = crosshair_range_m()
@@ -2926,66 +3153,76 @@ local function on_actor_update()
 	overlay(OVERLAY.RANGE, msg)
 end
 
--- Seed CONFIG from defaults so New Game loadout can use DOGMA rows before MCM/DOGMA.sys exist.
+-- Seed CONFIG.loaded from defaults so New Game loadout can use DOGMA rows before MCM/DOGMA.sys exist.
 local function seed_config_defaults()
-	if CONFIG.show_damage_table ~= nil then
+	if CONFIG.loaded.show_damage_table ~= nil then
 		return
 	end
-	CONFIG.show_damage_table = D["show_damage_table"]
-	CONFIG.show_hit_power = D["show_hit_power"]
-	CONFIG.show_stalker_damage = D["show_stalker_damage"]
-	CONFIG.show_mutant_damage = D["show_mutant_damage"]
-	CONFIG.show_accuracy = D["show_accuracy"]
-	CONFIG.show_handling = D["show_handling"]
-	CONFIG.show_fire_rate = D["show_fire_rate"]
-	CONFIG.show_mag_size = D["show_mag_size"]
-	CONFIG.show_reliability = D["show_reliability"]
-	CONFIG.show_recoil = D["show_recoil"]
-	CONFIG.show_muzzle_velocity = D["show_muzzle_velocity"]
-	CONFIG.show_dispersion = D["show_dispersion"]
-	CONFIG.show_spread = D["show_spread"]
-	CONFIG.show_barrel_wear = D["show_barrel_wear"]
-	CONFIG.show_burst_control = D["show_burst_control"]
-	CONFIG.show_bullet_drop = D["show_bullet_drop"]
-	CONFIG.column_headers = D["column_headers"]
-	CONFIG.color_scale_from = D["color_scale_from"]
-	CONFIG.ammo_order = D["ammo_order"]
-	CONFIG.stat_row_placement = D["stat_row_placement"]
-	CONFIG.compact_header = D["compact_header"]
-	CONFIG.hide_description = D["hide_description"]
-	CONFIG.table_row_pad = D["table_row_pad"]
-	CONFIG.calc_range_m = D["calc_range"]
-	CONFIG.pellet_hit_pct = D["pellet_hit_pct"]
-	CONFIG.use_condition_table = D["use_condition_table"]
-	CONFIG.use_condition_stats = D["use_condition_stats"]
-	CONFIG.apply_silencer_table = D["apply_silencer_table"]
-	CONFIG.apply_silencer_stats = D["apply_silencer_stats"]
-	CONFIG.debug_log = false
-	CONFIG.debug_overlay = false
+	CONFIG.loaded.show_damage_table = CONFIG.DEFAULTS["show_damage_table"]
+	CONFIG.loaded.show_hit_power = CONFIG.DEFAULTS["show_hit_power"]
+	CONFIG.loaded.show_stalker_damage = CONFIG.DEFAULTS["show_stalker_damage"]
+	CONFIG.loaded.show_mutant_damage = CONFIG.DEFAULTS["show_mutant_damage"]
+	CONFIG.loaded.show_accuracy = CONFIG.DEFAULTS["show_accuracy"]
+	CONFIG.loaded.show_handling = CONFIG.DEFAULTS["show_handling"]
+	CONFIG.loaded.show_fire_rate = CONFIG.DEFAULTS["show_fire_rate"]
+	CONFIG.loaded.show_mag_size = CONFIG.DEFAULTS["show_mag_size"]
+	CONFIG.loaded.show_reliability = CONFIG.DEFAULTS["show_reliability"]
+	CONFIG.loaded.show_recoil = CONFIG.DEFAULTS["show_recoil"]
+	CONFIG.loaded.show_muzzle_velocity = CONFIG.DEFAULTS["show_muzzle_velocity"]
+	CONFIG.loaded.show_dispersion = CONFIG.DEFAULTS["show_dispersion"]
+	CONFIG.loaded.show_spread = CONFIG.DEFAULTS["show_spread"]
+	CONFIG.loaded.show_barrel_wear = CONFIG.DEFAULTS["show_barrel_wear"]
+	CONFIG.loaded.show_burst_control = CONFIG.DEFAULTS["show_burst_control"]
+	CONFIG.loaded.show_bullet_drop = CONFIG.DEFAULTS["show_bullet_drop"]
+	CONFIG.loaded.column_headers = CONFIG.DEFAULTS["column_headers"]
+	CONFIG.loaded.color_scale_from = CONFIG.DEFAULTS["color_scale_from"]
+	CONFIG.loaded.ammo_order = CONFIG.DEFAULTS["ammo_order"]
+	CONFIG.loaded.stat_row_placement = CONFIG.DEFAULTS["stat_row_placement"]
+	CONFIG.loaded.compact_header = CONFIG.DEFAULTS["compact_header"]
+	CONFIG.loaded.hide_description = CONFIG.DEFAULTS["hide_description"]
+	CONFIG.loaded.table_row_pad = CONFIG.DEFAULTS["table_row_pad"]
+	CONFIG.loaded.calc_range_m = CONFIG.DEFAULTS["calc_range"]
+	CONFIG.loaded.pellet_hit_pct = CONFIG.DEFAULTS["pellet_hit_pct"]
+	CONFIG.loaded.use_condition_table = CONFIG.DEFAULTS["use_condition_table"]
+	CONFIG.loaded.use_condition_stats = CONFIG.DEFAULTS["use_condition_stats"]
+	CONFIG.loaded.apply_silencer_table = CONFIG.DEFAULTS["apply_silencer_table"]
+	CONFIG.loaded.apply_silencer_stats = CONFIG.DEFAULTS["apply_silencer_stats"]
+	CONFIG.loaded.debug_log = false
+	CONFIG.loaded.debug_overlay = false
 	for i = 1, NUM_TORSO_TIERS do
-		CONFIG["show_torso_" .. i] = D["show_torso_" .. i]
+		CONFIG.loaded["show_torso_" .. i] = CONFIG.DEFAULTS["show_torso_" .. i]
 	end
 	for i = 1, NUM_HEAD_TIERS do
-		CONFIG["show_head_" .. i] = D["show_head_" .. i]
+		CONFIG.loaded["show_head_" .. i] = CONFIG.DEFAULTS["show_head_" .. i]
 	end
 end
 
--- Main menu / New Game loadout: ADV + UI hooks before on_game_start (see tooltips/loadout).
+-- New Game loadout needs ADV numeric rows before the user can open UINewGame.
+-- Safe here: this is zzzz_* (loads after *mcm.script gather). Never call ADV from
+-- on_mcm_load / early mcm file load — that trips ui_mcm.get() and kills surge_manager.
 local function early_menu_install()
 	seed_config_defaults()
-	if ish_item_stats and ish_item_stats.override_stats_table and utils_ui then
-		ish_item_stats.override_stats_table()
+	-- ADV only wraps Update in on_game_start — capture true stock now.
+	if utils_ui and utils_ui.UIInfoItem and utils_ui.UIInfoItem.Update then
+		local U = utils_ui.UIInfoItem.Update
+		if U ~= uiinfo_update_hook and not is_ish_update(U) then
+			stock_uiinfo_update = U
+		end
 	end
 	install_ui_hooks()
-	apply_enhanced_weapon_stats()
-	hook_stats_table_override()
+	install_prepare_gate()
+	local ok = ensure_gamma_stats_table(true)
+	printf("[dogma_tooltips_weapons] early_menu gamma=%s anomaly_tracks=%s gate=%s",
+		tostring(ok),
+		tostring(has_anomaly_tracks()),
+		tostring(prepare_gate_fn ~= nil and utils_ui.prepare_stats_table == prepare_gate_fn))
 end
 
 early_menu_install()
 
 function on_game_start()
 	local tostr = tostring
-	DOGMA = dogma_common.load(MOD_ID)
+	DOGMA = dogma_common.load(CONFIG.MOD_ID)
 
 	-- Packing check: full layout matches XML (head @ 230); head-only packs to torso start.
 	do
@@ -3005,19 +3242,23 @@ function on_game_start()
 		end
 	end
 
+	-- Re-apply ADV after any earlier on_game_start (ish loads before us alphabetically
+	-- only if its callback already ran; either way we want GAMMA + DOGMA last).
+	ensure_gamma_stats_table(true)
 	on_option_change()
+	-- After ADV's on_game_start may have re-parented Update; repair cycle then wrap.
 	install_ui_hooks()
 	install_details_hook()
-	hook_stats_table_override()
 
 	RegisterScriptCallback("on_console_execute", on_console_execute)
 	RegisterScriptCallback("on_option_change", on_option_change)
 	RegisterScriptCallback("actor_on_update", on_actor_update)
 
 	log_once("startup", string.format(
-		"loaded: dogma=%s, ui_hooks=%s, details_hook=%s, table=%s, hit=%s, mutant=%s, place=%s, stats_mod=%s",
+		"loaded: dogma=%s, ui_hooks=%s, details_hook=%s, table=%s, hit=%s, mutant=%s, place=%s, stats_mod=%s, gamma=%s",
 		tostr(DOGMA ~= nil), tostr(ui_hooks_ok), tostr(details_hook_ok),
-		tostr(CONFIG.show_damage_table), tostr(CONFIG.show_hit_power),
-		tostr(CONFIG.show_mutant_damage), tostr(CONFIG.stat_row_placement),
-		tostr(zzzz_dogma_tooltips_weapons_stats and zzzz_dogma_tooltips_weapons_stats.NAME ~= nil)))
+		tostr(CONFIG.loaded.show_damage_table), tostr(CONFIG.loaded.show_hit_power),
+		tostr(CONFIG.loaded.show_mutant_damage), tostr(CONFIG.loaded.stat_row_placement),
+		tostr(zzzz_dogma_tooltips_weapons_stats and zzzz_dogma_tooltips_weapons_stats.NAME ~= nil),
+		tostr(not has_anomaly_tracks() and not stats_table_empty())))
 end

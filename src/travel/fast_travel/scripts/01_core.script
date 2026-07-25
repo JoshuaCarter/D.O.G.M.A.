@@ -383,7 +383,7 @@ local function log(fmt, ...)
     if not (cfg and cfg.debug_log) then return end
     local dft_dogma = _G.dft and _G.dft.dogma
     if dft_dogma and dft_dogma.dbg then
-        dft_dogma.dbg.log("dogma/travel/fast_travel", " " .. format_msg(fmt, ...))
+        dft_dogma.dbg.log("dogma/travel/fast_travel", format_msg(fmt, ...))
     end
 end
 
@@ -511,5 +511,5 @@ do
     _G.dft_get_level_danger = get_level_danger
     _G.dft_set_fft_trip_in_progress = set_fft_trip_in_progress
     _G.dft_time_elapsed = time_elapsed
-    printf("[DFT] core module loaded")
+    printf("[dogma_travel_fast_travel] core module loaded")
 end

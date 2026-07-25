@@ -9,11 +9,8 @@
 	GAMMA mods installed last.
 ]]
 
-local CONF = _G.dogma_items_disassemble_conf
-local MOD_ID = CONF.MOD_ID
+local CONFIG = _G.dogma_items_disassemble_conf
 local DOGMA
-local CONFIG = CONF.CONFIG
-
 local orig_get_suitable_dtool = nil
 local orig_func_disassembly = nil
 
@@ -21,18 +18,18 @@ local function log(msg)
 	if not (DOGMA and DOGMA.dbg) then
 		return
 	end
-	if CONFIG.debug_log then
-		DOGMA.dbg.log(MOD_ID, tostring(msg))
+	if CONFIG.loaded.debug_log then
+		DOGMA.dbg.log(CONFIG.MOD_ID, tostring(msg))
 	end
 end
 
 local function on_option_change()
-	CONFIG.tools_enabled = DOGMA.mcm.bool(MOD_ID, "tools_enabled")
-	CONFIG.debug_log = DOGMA.dbg.logging()
+	CONFIG.loaded.tools_enabled = DOGMA.mcm.bool(CONFIG.MOD_ID, "tools_enabled")
+	CONFIG.loaded.debug_log = DOGMA.dbg.logging()
 end
 
 local function redirect_to_lowest_stack(obj_d, note)
-	if not (CONFIG.tools_enabled and obj_d and db.actor) then
+	if not (CONFIG.loaded.tools_enabled and obj_d and db.actor) then
 		return obj_d
 	end
 	local diss_tools = GetItemList("disassemble")
@@ -102,7 +99,7 @@ local function redirect_to_lowest_stack(obj_d, note)
 end
 
 local function optimal_get_suitable_dtool(obj)
-	if not CONFIG.tools_enabled then
+	if not CONFIG.loaded.tools_enabled then
 		return orig_get_suitable_dtool(obj)
 	end
 	if not (obj and db.actor) then
@@ -119,7 +116,7 @@ local function optimal_get_suitable_dtool(obj)
 end
 
 local function optimal_func_disassembly(obj, obj_d)
-	if not CONFIG.tools_enabled then
+	if not CONFIG.loaded.tools_enabled then
 		return orig_func_disassembly(obj, obj_d)
 	end
 
@@ -133,7 +130,7 @@ local function optimal_func_disassembly(obj, obj_d)
 end
 
 function on_game_start()
-	DOGMA = CONF:ensure_dogma()
+	DOGMA = CONFIG:ensure_dogma()
 
 	on_option_change()
 

@@ -8,14 +8,13 @@
 
 	Usage:
 
-		local CONF = _G.dogma_feature_conf
-		local MOD_ID = CONF.MOD_ID
+		local CONFIG = _G.dogma_feature_conf
 		local DOGMA
 
 		function on_game_start()
-			DOGMA = dogma_common.load(MOD_ID)
-			-- defaults come from CONF via DOGMA.mcm.*
-			-- CONFIG.x = DOGMA.mcm.bool(MOD_ID, "x")
+			DOGMA = dogma_common.load(CONFIG.MOD_ID)
+			-- CONFIG.DEFAULTS = MCM defs; live values live in CONFIG.loaded
+			-- CONFIG.loaded.x = DOGMA.mcm.bool(CONFIG.MOD_ID, "x")
 			-- debug: DOGMA.dbg.logging() / DOGMA.dbg.overlay_enabled()
 		end
 ]]

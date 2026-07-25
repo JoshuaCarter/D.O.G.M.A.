@@ -5,13 +5,21 @@
 
 	overlay(source, order, msg, color) — on-screen HUD slots (colored).
 	log(mod_id, msg)                   — plain printf to the game log file only.
+	tag(mod_id)                        — "dogma/cat/feat" → "dogma_cat_feat"
 	logging() / overlay_enabled()      — global MCM toggles from DOGMA → Debug.
+
+	Log lines are always prefixed [dogma_{cat}_{feat}] (slashes → underscores).
 
 	set_enabled(source, state) gates a source's overlay slots (still requires
 	global overlay_enabled()).
 ]]
 
 local DEBUG_MOD = "dogma/debug"
+
+-- MOD_ID "dogma/cat/feat" → log/HUD tag "dogma_cat_feat"
+function tag(mod_id)
+	return tostring(mod_id or "dogma"):gsub("/", "_")
+end
 
 local HUD_STATIC = "debug_info"
 local ORIGIN_X = 10
@@ -136,7 +144,7 @@ local function render()
 		if #lines > 0 then
 			lines[#lines + 1] = ""
 		end
-		lines[#lines + 1] = COLORS.white .. "[" .. name .. "]"
+		lines[#lines + 1] = COLORS.white .. "[" .. tag(name) .. "]"
 
 		local max_order = -1
 		for order in pairs(slots) do
@@ -170,7 +178,7 @@ local function mcm_bool(key, default)
 		end
 	end
 	local conf = _G.dogma_debug_conf
-	local defaults = conf and conf.defaults
+	local defaults = conf and conf.DEFAULTS
 	if defaults and defaults[key] ~= nil then
 		return defaults[key] == true or defaults[key] == 1
 	end
@@ -194,9 +202,9 @@ function set_enabled(source, state)
 	s.enabled = on
 
 	if on then
-		printf("[DBG] %s enabled", tostring(source))
+		printf("[%s] overlay enabled", tag(source))
 	else
-		printf("[DBG] %s disabled", tostring(source))
+		printf("[%s] overlay disabled", tag(source))
 		s.slots = {}
 	end
 
@@ -219,7 +227,7 @@ function log(mod_id, msg)
 	if not logging() then
 		return
 	end
-	printf("[DBG][%s] %s", tostring(mod_id), tostring(msg))
+	printf("[%s] %s", tag(mod_id), tostring(msg))
 end
 
 function clear_source(source)

@@ -6,15 +6,14 @@
 	UINewGame opens. Faction, spawn, loadout, name, and economy are left alone.
 ]]
 
-local CONF = _G.dogma_misc_remember_options_conf
-local MOD_ID = CONF.MOD_ID
-
+local CONFIG = _G.dogma_misc_remember_options_conf
 local SECTION = "dogma_remember_options"
 local STATE = _G.__dogma_misc_remember_options or {}
 _G.__dogma_misc_remember_options = STATE
 
 local function enabled()
-	return dogma_mcm.bool(MOD_ID, "enabled")
+	-- Pass default: ui_mcm.get may be nil before MCM is ready on a cold boot.
+	return dogma_mcm.bool(CONFIG.MOD_ID, "enabled", CONFIG.DEFAULTS["enabled"] ~= false)
 end
 
 local function cfg()
@@ -163,23 +162,29 @@ local function restore_prefs(self)
 end
 
 local function patch_new_game()
-	if STATE.patched then
-		return true
-	end
 	local cls = ui_mm_faction_select and ui_mm_faction_select.UINewGame
 	if not (cls and cls.Main_Controls and cls.OnStartGame) then
 		return false
 	end
 
+	-- _G STATE survives script reload; UINewGame methods do not. Only skip when
+	-- our wrappers are still the live methods (otherwise Soulslike/stock win).
+	if STATE.wrap_start and STATE.wrap_controls
+		and cls.OnStartGame == STATE.wrap_start
+		and cls.Main_Controls == STATE.wrap_controls
+	then
+		return true
+	end
+
 	local base_controls = cls.Main_Controls
 	local base_start = cls.OnStartGame
 
-	cls.Main_Controls = function(self, ...)
+	local function wrap_controls(self, ...)
 		base_controls(self, ...)
 		restore_prefs(self)
 	end
 
-	cls.OnStartGame = function(self, ...)
+	local function wrap_start(self, ...)
 		-- Capture UI state before stock start (which may clear one-shot keys).
 		if self.access then
 			save_prefs(self)
@@ -187,7 +192,10 @@ local function patch_new_game()
 		return base_start(self, ...)
 	end
 
-	STATE.patched = true
+	cls.Main_Controls = wrap_controls
+	cls.OnStartGame = wrap_start
+	STATE.wrap_controls = wrap_controls
+	STATE.wrap_start = wrap_start
 	return true
 end
 

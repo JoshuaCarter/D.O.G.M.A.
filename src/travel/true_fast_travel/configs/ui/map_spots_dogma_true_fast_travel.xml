@@ -1,0 +1,91 @@
+<!-- True Fast Travel: path dots on the PDA map (grey = ahead, green = passed,
+     blue = dodged a threat here, red = ambushed here).
+     Anomaly #include fragment: multiple top-level elements are required. -->
+<tft_path_dot>
+	<level_map spot="tft_path_dot_spot"/>
+</tft_path_dot>
+<tft_path_dot_spot x="0" y="0" width="4" height="4" alignment="c" scale="1" scale_min="1" scale_max="1.5" stretch="0">
+	<texture>ui_dogma_path_dot_green</texture>
+</tft_path_dot_spot>
+
+<tft_path_dot_pending>
+	<level_map spot="tft_path_dot_pending_spot"/>
+</tft_path_dot_pending>
+<tft_path_dot_pending_spot x="0" y="0" width="4" height="4" alignment="c" scale="1" scale_min="1" scale_max="1.5" stretch="0">
+	<texture>ui_dogma_path_dot_grey</texture>
+</tft_path_dot_pending_spot>
+
+<tft_path_dot_ambush>
+	<level_map spot="tft_path_dot_ambush_spot"/>
+</tft_path_dot_ambush>
+<tft_path_dot_ambush_spot x="0" y="0" width="4" height="4" alignment="c" scale="1" scale_min="1" scale_max="1.5" stretch="0">
+	<texture>ui_dogma_path_dot_red</texture>
+</tft_path_dot_ambush_spot>
+
+<tft_path_dot_ambush_icon>
+	<level_map spot="tft_path_dot_ambush_icon_spot"/>
+</tft_path_dot_ambush_icon>
+<tft_path_dot_ambush_icon_spot x="0" y="0" width="16" height="16" alignment="c" scale="1" scale_min="1" scale_max="1.5" stretch="0">
+	<!-- ui_frame_error_sign_red @ G.A.M.M.A. UI gamedata/textures/ui/ui_common.dds -->
+	<texture x="800" y="0" width="77" height="77">ui\ui_common</texture>
+</tft_path_dot_ambush_icon_spot>
+
+<tft_path_dot_dodge>
+	<level_map spot="tft_path_dot_dodge_spot"/>
+</tft_path_dot_dodge>
+<tft_path_dot_dodge_spot x="0" y="0" width="4" height="4" alignment="c" scale="1" scale_min="1" scale_max="1.5" stretch="0">
+	<texture>ui_dogma_path_dot_blue</texture>
+</tft_path_dot_dodge_spot>
+
+<!-- Path preview debug: green = snapped navmesh vertex, grey = edge sample -->
+<tft_path_debug_vertex>
+	<level_map spot="tft_path_debug_vertex_spot"/>
+</tft_path_debug_vertex>
+<tft_path_debug_vertex_spot x="0" y="0" width="4" height="4" alignment="c" scale="1" scale_min="1" scale_max="2" stretch="0">
+	<texture>ui_dogma_path_dot_green</texture>
+</tft_path_debug_vertex_spot>
+
+<tft_path_debug_edge>
+	<level_map spot="tft_path_debug_edge_spot"/>
+</tft_path_debug_edge>
+<tft_path_debug_edge_spot x="0" y="0" width="2" height="2" alignment="c" scale="1" scale_min="1" scale_max="1.5" stretch="0">
+	<texture>ui_dogma_path_dot_grey</texture>
+</tft_path_debug_edge_spot>
+
+<!-- Coarse navmesh debug: blue = graph node, grey = sparse chord midpoints, green = anchors -->
+<tft_coarse_node>
+	<level_map spot="tft_coarse_node_spot"/>
+</tft_coarse_node>
+<tft_coarse_node_spot x="0" y="0" width="6" height="6" alignment="c" scale="1" scale_min="1" scale_max="1.5" stretch="0">
+	<texture>ui_dogma_path_dot_blue</texture>
+</tft_coarse_node_spot>
+
+<tft_coarse_endpoint>
+	<level_map spot="tft_coarse_endpoint_spot"/>
+</tft_coarse_endpoint>
+<tft_coarse_endpoint_spot x="0" y="0" width="8" height="8" alignment="c" scale="1" scale_min="1" scale_max="1.5" stretch="0">
+	<texture>ui_dogma_path_dot_green</texture>
+</tft_coarse_endpoint_spot>
+
+<tft_coarse_edge>
+	<level_map spot="tft_coarse_edge_spot"/>
+</tft_coarse_edge>
+<tft_coarse_edge_spot x="0" y="0" width="3" height="3" alignment="c" scale="1" scale_min="1" scale_max="1.5" stretch="0">
+	<texture>ui_dogma_path_dot_grey</texture>
+</tft_coarse_edge_spot>
+
+<!-- Yellow ring segment for ambush detection radius (TLRA-style PDA circle outline) -->
+<tft_ambush_range_ring>
+	<level_map spot="tft_ambush_range_ring_spot"/>
+</tft_ambush_range_ring>
+<tft_ambush_range_ring_spot x="0" y="0" width="6" height="6" alignment="c" stretch="0" scale="1" scale_min="1" scale_max="1.5">
+	<texture a="140" r="255" g="242" b="11" x="633" y="789" width="31" height="31">ui\ui_common</texture>
+</tft_ambush_range_ring_spot>
+
+<!-- Red ring while an ambush is pending / revealed (reverts to yellow after teleport) -->
+<tft_ambush_range_ring_alert>
+	<level_map spot="tft_ambush_range_ring_alert_spot"/>
+</tft_ambush_range_ring_alert>
+<tft_ambush_range_ring_alert_spot x="0" y="0" width="6" height="6" alignment="c" stretch="0" scale="1" scale_min="1" scale_max="1.5">
+	<texture a="180" r="255" g="40" b="40" x="633" y="789" width="31" height="31">ui\ui_common</texture>
+</tft_ambush_range_ring_alert_spot>

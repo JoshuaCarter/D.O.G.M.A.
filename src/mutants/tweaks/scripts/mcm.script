@@ -1,6 +1,5 @@
 function on_mcm_load(options)
-	local CONF = _G.dogma_mutants_tweaks_conf
-	local D = CONF.defaults
+	local CONFIG = _G.dogma_mutants_tweaks_conf
 	dogma_mcm.attach(options, "mutants", "ui_mcm_menu_dogma_mutants", {
 		id = "tweaks",
 		sh = true,
@@ -10,14 +9,14 @@ function on_mcm_load(options)
 				id = "enabled",
 				type = "check",
 				val = 1,
-				def = D["enabled"],
+				def = CONFIG.DEFAULTS["enabled"],
 				hint = "dogma_tweaks_jump_enabled",
 			},
 			{
 				id = "controller_tube_5s",
 				type = "check",
 				val = 1,
-				def = D["controller_tube_5s"],
+				def = CONFIG.DEFAULTS["controller_tube_5s"],
 				hint = "dogma_tweaks_controller_tube_5s",
 			},
 		}),

@@ -26,13 +26,14 @@
 #                        common       → common only
 #                        cat/feat     → that feature only (e.g. zoom/free_zoom; ignores manifest)
 #   DOGMA_DEPLOY=path  local MO2 mod folder: write gamedata straight there (one hop),
-#                      plus meta.ini + .mod_id. Skips files whose mtime is current.
+#                      plus meta.ini + .mod_id. Works with DOGMA_ONLY too (no prune).
 #   DOGMA_OUT=path     override output gamedata (default: build/gamedata; disables
 #                      the DOGMA_DEPLOY one-hop when set)
+#   DOGMA_FORCE=1      rewrite every file (ignore mtime / content skip)
 #
-# Unchanged files skipped via mtime only (no byte cmp — textures made that slow).
-# One find of src/ — no per-directory find/stat spawns.
-# Stale outputs pruned on full builds.
+# Skip logic: mtime first; if src is not newer, byte-cmp for files <= 512KB
+# (Windows same-second edits). Bigger blobs (textures) trust mtime only.
+# Stale outputs pruned on full builds only.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -42,8 +43,8 @@ ONLY="${DOGMA_ONLY:-all}"
 # shellcheck source=manifest_lib.sh
 source "$ROOT/tools/manifest_lib.sh"
 
-# Local MO2 deploy: one write path. Otherwise default build/gamedata (packaging).
-if [[ -n "${DOGMA_DEPLOY:-}" && ( "$ONLY" == "all" || "$ONLY" == "" ) && -z "${DOGMA_OUT:-}" ]]; then
+# Local MO2 deploy: one write path (full or DOGMA_ONLY). DOGMA_OUT wins for packaging.
+if [[ -n "${DOGMA_DEPLOY:-}" && -z "${DOGMA_OUT:-}" ]]; then
 	DEPLOY_MOD="${DOGMA_DEPLOY%/}"
 	OUT="$DEPLOY_MOD/gamedata"
 else
@@ -52,6 +53,8 @@ else
 fi
 
 GAMEDATA_ROOTS="scripts configs textures meshes anims sounds spawns"
+# Byte-cmp above this size is skipped (textures); mtime only.
+CMP_MAX_BYTES=524288
 
 COPIED=0
 SKIPPED=0
@@ -63,9 +66,21 @@ if [[ ! -d "$SRC" ]]; then
 	exit 1
 fi
 
-# Dest exists and is not older than src → skip. No size/cmp (spawn-heavy on Win).
+# Return 0 if dest is current and can be skipped.
 up_to_date() {
-	[[ -f "$2" ]] && ! [[ "$1" -nt "$2" ]]
+	local src="$1"
+	local dest="$2"
+	[[ -n "${DOGMA_FORCE:-}" ]] && return 1
+	[[ -f "$dest" ]] || return 1
+	# Src strictly newer → must copy.
+	[[ "$src" -nt "$dest" ]] && return 1
+	# Dest newer or same second: still verify content for small files (Win mtime).
+	local sz
+	sz=$(wc -c < "$src" | tr -d ' ')
+	if (( sz > CMP_MAX_BYTES )); then
+		return 0
+	fi
+	cmp -s "$src" "$dest"
 }
 
 note_manifest() {
@@ -210,19 +225,21 @@ emit_mapped() {
 		conf_src="${src_path%/*}/_conf.script"
 		if [[ -f "$conf_src" ]]; then
 			note_manifest "$dest"
-			if [[ -f "$dest" ]] \
-				&& ! [[ "$conf_src" -nt "$dest" ]] \
-				&& ! [[ "$src_path" -nt "$dest" ]]; then
-				SKIPPED=$((SKIPPED + 1))
-				return 0
-			fi
-			mkdir -p "${dest%/*}"
+			local tmp
+			tmp="$(mktemp)"
 			{
 				cat "$conf_src"
 				echo ""
 				echo "-- dogma-build: conf prepended so main-menu MCM (*mcm.script) has defaults"
 				cat "$src_path"
-			} > "$dest"
+			} > "$tmp"
+			if [[ -z "${DOGMA_FORCE:-}" && -f "$dest" ]] && cmp -s "$tmp" "$dest"; then
+				rm -f "$tmp"
+				SKIPPED=$((SKIPPED + 1))
+				return 0
+			fi
+			mkdir -p "${dest%/*}"
+			mv "$tmp" "$dest"
 			COPIED=$((COPIED + 1))
 			echo "build: copy  ${src_path#"$ROOT"/} (+_conf) -> ${dest#"$OUT"/}"
 			return 0
@@ -258,6 +275,12 @@ src_in_scope() {
 
 mkdir -p "$OUT"
 echo "build: out=$OUT"
+if [[ -n "${DOGMA_FORCE:-}" ]]; then
+	echo "build: DOGMA_FORCE=1 (rewriting all)"
+fi
+if [[ -n "$DEPLOY_MOD" && "$ONLY" != "all" && "$ONLY" != "" ]]; then
+	echo "build: DOGMA_ONLY=$ONLY → deploy $DEPLOY_MOD (no prune)"
+fi
 
 case "$ONLY" in
 	all | "" | common | */*) ;;

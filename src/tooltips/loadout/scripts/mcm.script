@@ -1,51 +1,50 @@
 --[[
-	New Game loadout (UINewGame) uses the same UIInfoItem as inventory, but
-	G.A.M.M.A. Accurate Defense Values only swaps stats_table in on_game_start —
-	too late for the main-menu loadout screen, which still shows Anomaly bars.
+	New Game loadout (UINewGame) uses the same UIInfoItem as inventory.
+	GAMMA numeric stats are owned by dogma_ensure_gamma_stats (weapons zzzz_*).
 
-	Also routes section-only descriptions through build_desc_footer so they
-	match inventory tooltips (cost mods, etc.). Header needs a live obj and
-	must not be called from get_sec_desc (section-only / New Game loadout).
+	This feature only:
+	- patches get_sec_desc → build_desc_footer (section-only descriptions)
+	- calls ensure from zzzz_dogma_tooltips_loadout_main / UINewGame.Main_Controls
+
+	Do NOT call ish_item_stats.override_stats_table from this *mcm.script file
+	load or on_mcm_load: ui_mcm.get() is forbidden during MCM gather and breaks
+	surge_manager.
 ]]
 
 local STATE = _G.__dogma_tooltips_loadout or {}
 _G.__dogma_tooltips_loadout = STATE
 
-local function apply_gamma_loadout_tooltips()
-	if not STATE.stats_ok then
-		if ish_item_stats and ish_item_stats.override_stats_table and utils_ui then
-			ish_item_stats.override_stats_table()
-			STATE.stats_ok = true
-		elseif utils_ui then
-			-- No ADV in load order; leave stock tables.
-			STATE.stats_ok = true
-		end
+local function patch_sec_desc()
+	if STATE.desc_ok or not (ui_item and ui_item.build_desc_footer) then
+		return
 	end
-
-	if not STATE.desc_ok and ui_item and ui_item.build_desc_footer then
-		-- Same shape as stock ui_item.get_sec_desc: footer only (header needs obj).
-		ui_item.get_sec_desc = function(sec)
-			if not sec then
-				return ""
-			end
-			local raw = ini_sys:r_string_ex(sec, "description")
-			local str = (raw and game.translate_string(raw)) or ""
-			return ui_item.build_desc_footer(nil, sec, str)
+	-- Same shape as stock ui_item.get_sec_desc: footer only (header needs obj).
+	ui_item.get_sec_desc = function(sec)
+		if not sec then
+			return ""
 		end
-		STATE.desc_ok = true
+		local raw = ini_sys:r_string_ex(sec, "description")
+		local str = (raw and game.translate_string(raw)) or ""
+		return ui_item.build_desc_footer(nil, sec, str)
 	end
+	STATE.desc_ok = true
+end
 
-	return STATE.stats_ok == true
+local function apply_gamma_loadout_tooltips(force)
+	patch_sec_desc()
+	if _G.dogma_ensure_gamma_stats then
+		return _G.dogma_ensure_gamma_stats(force == true) == true
+	end
+	return false
 end
 
 _G.dogma_tooltips_loadout_apply = apply_gamma_loadout_tooltips
 
--- Non-zzzz mcm.script loads with the script engine (main menu), before New Game.
-apply_gamma_loadout_tooltips()
+-- Safe at MCM gather time (no ADV / ui_mcm.get).
+patch_sec_desc()
 
 function on_mcm_load(options)
-	apply_gamma_loadout_tooltips()
-
+	-- Tree only — never override_stats_table here.
 	dogma_mcm.attach(options, "tooltips", "ui_mcm_menu_dogma_tooltips", {
 		id = "loadout",
 		sh = true,
@@ -61,7 +60,5 @@ function on_mcm_load(options)
 end
 
 function on_game_start()
-	-- ADV also runs here; re-apply so we stay last if load order flipped.
-	STATE.stats_ok = false
-	apply_gamma_loadout_tooltips()
+	apply_gamma_loadout_tooltips(true)
 end

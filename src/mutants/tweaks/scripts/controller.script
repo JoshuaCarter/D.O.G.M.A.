@@ -5,8 +5,7 @@
 	so the next game start picks it up. Restart after changing.
 ]]
 
-local CONF = _G.dogma_mutants_tweaks_conf
-local MOD_ID = CONF.MOD_ID
+local CONFIG = _G.dogma_mutants_tweaks_conf
 local DOGMA
 
 local STOCK_MS = 2000
@@ -74,7 +73,7 @@ local function apply()
 	if not (DOGMA and DOGMA.mcm) then
 		return
 	end
-	local want = DOGMA.mcm.bool(MOD_ID, "controller_tube_5s") and SLOW_MS or STOCK_MS
+	local want = DOGMA.mcm.bool(CONFIG.MOD_ID, "controller_tube_5s") and SLOW_MS or STOCK_MS
 	local paths = candidate_paths()
 	local create_candidates = {}
 	for i = 1, #paths do
@@ -86,7 +85,7 @@ local function apply()
 		if cur ~= nil then
 			-- Prefer rewriting an existing mod LTX over creating a stray file.
 			if write_delay(path, want) then
-				printf("[%s] controller tube delay set to %dms (%s); restart to apply", MOD_ID, want, path)
+				printf("[%s] controller tube delay set to %dms (%s); restart to apply", CONFIG.MOD_ID:gsub("/", "_"), want, path)
 				return
 			end
 		else
@@ -96,15 +95,15 @@ local function apply()
 	for i = 1, #create_candidates do
 		local path = create_candidates[i]
 		if write_delay(path, want) then
-			printf("[%s] controller tube delay set to %dms (%s); restart to apply", MOD_ID, want, path)
+			printf("[%s] controller tube delay set to %dms (%s); restart to apply", CONFIG.MOD_ID:gsub("/", "_"), want, path)
 			return
 		end
 	end
-	printf("[%s] could not write controller tube delay (%dms); shipped LTX stays in effect until a writable gamedata/configs path is available", MOD_ID, want)
+	printf("[%s] could not write controller tube delay (%dms); shipped LTX stays in effect until a writable gamedata/configs path is available", CONFIG.MOD_ID:gsub("/", "_"), want)
 end
 
 function on_game_start()
-	DOGMA = dogma_common.load(MOD_ID)
+	DOGMA = dogma_common.load(CONFIG.MOD_ID)
 	apply()
 	RegisterScriptCallback("on_option_change", apply)
 end

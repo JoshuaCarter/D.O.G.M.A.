@@ -8,15 +8,14 @@
 	Hostage join and story/special companions are untouched.
 ]]
 
-local CONF = _G.dogma_npcs_companions_conf
-local MOD_ID = CONF.MOD_ID
+local CONFIG = _G.dogma_npcs_companions_conf
 local DOGMA
 
 -- Free (high-rep) hire squad id; paid uses txr_paid_companions.paid_companions.
 local free_hire_squad_id = nil
 
 local function enabled()
-	return DOGMA and DOGMA.mcm.bool(MOD_ID, "enabled")
+	return DOGMA and DOGMA.mcm.bool(CONFIG.MOD_ID, "enabled")
 end
 
 local function is_hostage(actor, npc)
@@ -269,7 +268,7 @@ local function patch_all()
 end
 
 function on_game_start()
-	DOGMA = dogma_common.load(MOD_ID)
+	DOGMA = dogma_common.load(CONFIG.MOD_ID)
 	patch_all()
 	RegisterScriptCallback("on_game_load", patch_all)
 	RegisterScriptCallback("save_state", save_state)

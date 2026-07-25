@@ -1,13 +1,11 @@
 function on_mcm_load(options)
-	local CONF = _G.dogma_items_drop_conf
-	local D = CONF.defaults
-
+	local CONFIG = _G.dogma_items_drop_conf
 	local function kb_bind(id, hint)
 		return {
 			id = id,
 			type = "key_bind",
 			val = 2,
-			def = D[id],
+			def = CONFIG.DEFAULTS[id],
 			hint = hint,
 		}
 	end
@@ -18,29 +16,13 @@ function on_mcm_load(options)
 			id = id,
 			type = kb_mod,
 			val = 2,
-			def = D[id],
+			def = CONFIG.DEFAULTS[id],
 			hint = "mcm_kb_modifier",
 			content = {
 				{ 0, "mcm_kb_mod_none" },
 				{ 1, "mcm_kb_mod_shift" },
 				{ 2, "mcm_kb_mod_ctrl" },
 				{ 3, "mcm_kb_mod_alt" },
-			},
-		}
-	end
-
-	local function kb_mode(id)
-		local kb_mod = (ui_mcm and ui_mcm.kb_mod_radio) or "radio_h"
-		return {
-			id = id,
-			type = kb_mod,
-			val = 2,
-			def = D[id],
-			hint = "mcm_kb_mode",
-			content = {
-				{ 0, "mcm_kb_mode_press" },
-				{ 1, "mcm_kb_mode_dtap" },
-				{ 2, "mcm_kb_mode_hold" },
 			},
 		}
 	end
@@ -57,15 +39,13 @@ function on_mcm_load(options)
 			},
 			kb_bind("key_drop", "dogma_drop_key_drop"),
 			kb_modifier("key_drop_modifier"),
-			kb_mode("key_drop_mode"),
 			kb_bind("key_drop_all", "dogma_drop_key_drop_all"),
 			kb_modifier("key_drop_all_modifier"),
-			kb_mode("key_drop_all_mode"),
 			{
 				id = "drop_safe_equipped",
 				type = "check",
 				val = 1,
-				def = D["drop_safe_equipped"],
+				def = CONFIG.DEFAULTS["drop_safe_equipped"],
 				hint = "dogma_drop_drop_safe_equipped",
 			},
 		}),

@@ -10,9 +10,7 @@
 	- Guns may use the detector slot (inventory drag + auto-fit).
 ]]
 
-local CONF = _G.dogma_player_scanner_keys_conf
-local MOD_ID = CONF.MOD_ID
-local D = CONF.defaults
+local CONFIG = _G.dogma_player_scanner_keys_conf
 local DOGMA
 
 local DET_SLOT = 9
@@ -24,13 +22,6 @@ local DET_CLASS = {
 	DET_ADVA = true,
 	DET_ELIT = true,
 	DET_SCIE = true,
-}
-
-local CONFIG = {
-	enabled = true,
-	key_detector = nil,
-	key_dosimeter = nil,
-	key_radio = nil,
 }
 
 local function geiger_sec()
@@ -133,17 +124,17 @@ local function force_equip(obj)
 end
 
 local function on_option_change()
-	CONFIG.enabled = DOGMA.mcm.bool(MOD_ID, "enabled")
-	CONFIG.key_detector = DOGMA.mcm.key(MOD_ID, "key_detector", D["key_detector"])
-	CONFIG.key_dosimeter = DOGMA.mcm.key(MOD_ID, "key_dosimeter", D["key_dosimeter"])
-	CONFIG.key_radio = DOGMA.mcm.key(MOD_ID, "key_radio", D["key_radio"])
+	CONFIG.loaded.enabled = DOGMA.mcm.bool(CONFIG.MOD_ID, "enabled")
+	CONFIG.loaded.key_detector = DOGMA.mcm.key(CONFIG.MOD_ID, "key_detector", CONFIG.DEFAULTS["key_detector"])
+	CONFIG.loaded.key_dosimeter = DOGMA.mcm.key(CONFIG.MOD_ID, "key_dosimeter", CONFIG.DEFAULTS["key_dosimeter"])
+	CONFIG.loaded.key_radio = DOGMA.mcm.key(CONFIG.MOD_ID, "key_radio", CONFIG.DEFAULTS["key_radio"])
 end
 
 local function on_key_press(key)
-	if not DOGMA.sys.ready(MOD_ID, db, on_option_change) then
+	if not DOGMA.sys.ready(CONFIG.MOD_ID, db, on_option_change) then
 		return
 	end
-	if not CONFIG.enabled then
+	if not CONFIG.loaded.enabled then
 		return
 	end
 	if not can_use_keys() then
@@ -151,13 +142,13 @@ local function on_key_press(key)
 	end
 
 	local match
-	if CONFIG.key_detector and key == CONFIG.key_detector then
+	if CONFIG.loaded.key_detector and key == CONFIG.loaded.key_detector then
 		match = is_artefact_detector
-	elseif CONFIG.key_dosimeter and key == CONFIG.key_dosimeter then
+	elseif CONFIG.loaded.key_dosimeter and key == CONFIG.loaded.key_dosimeter then
 		match = function(sec)
 			return sec == geiger_sec()
 		end
-	elseif CONFIG.key_radio and key == CONFIG.key_radio then
+	elseif CONFIG.loaded.key_radio and key == CONFIG.loaded.key_radio then
 		match = function(sec)
 			return sec == radio_sec()
 		end
@@ -201,13 +192,13 @@ local function apply_slot_rules()
 end
 
 local function on_gui_show(name)
-	if name == "UIInventory" and CONFIG.enabled then
+	if name == "UIInventory" and CONFIG.loaded.enabled then
 		apply_slot_rules()
 	end
 end
 
 local function on_item_to_slot(obj)
-	if not CONFIG.enabled then
+	if not CONFIG.loaded.enabled then
 		return
 	end
 	if not (db.actor and obj and is_gun(obj)) then
@@ -220,7 +211,7 @@ local function on_item_to_slot(obj)
 end
 
 function on_game_start()
-	DOGMA = dogma_common.load(MOD_ID)
+	DOGMA = dogma_common.load(CONFIG.MOD_ID)
 	on_option_change()
 	RegisterScriptCallback("on_option_change", on_option_change)
 	RegisterScriptCallback("on_key_press", on_key_press)

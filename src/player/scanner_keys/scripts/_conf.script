@@ -1,11 +1,19 @@
 -- player/scanner_keys conf
 
+local defaults = {
+	["enabled"] = true,
+	["key_detector"] = -1,
+	["key_dosimeter"] = -1,
+	["key_radio"] = -1,
+}
+
 _G.dogma_player_scanner_keys_conf = {
 	MOD_ID = "dogma/player/scanner_keys",
-	defaults = {
-		["enabled"] = true,
-		["key_detector"] = -1,
-		["key_dosimeter"] = -1,
-		["key_radio"] = -1,
+	DEFAULTS = defaults,
+	loaded = {
+		enabled = defaults["enabled"],
+		key_detector = nil,
+		key_dosimeter = nil,
+		key_radio = nil,
 	},
 }

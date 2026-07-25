@@ -1,0 +1,447 @@
+--[[
+	Stalker ID — centered Faction Identification replacement.
+
+	Look-at targeting, distance identify delay, and faction patches follow
+	G.A.M.M.A. Crook's Identification UI Fix. Layout is screen-centered:
+	name, rank, then icon (or "Zombified" for zombied community).
+]]
+
+local CONFIG = _G.dogma_hud_stalker_id_conf
+local DOGMA
+
+local UI_WIDTH = 1024
+local UI_CENTER_X = UI_WIDTH * 0.5
+local ALIGN_CENTER = 2 -- CGameFont::alCenter
+local TICK_SPEED = 200
+local UPDATE_DELAY = 100
+
+local FACTION_KEYS = {
+	"stalker", "bandit", "csky", "army", "freedom", "dolg", "ecolog",
+	"killer", "monolith", "greh", "renegade", "isg",
+}
+
+local HUD = nil
+local idtable = {}
+local nametable = {}
+local LastHitObject = nil
+local lastTick = 0
+local lastCheckTime = 0
+local trigger = 0
+local grok_delay = 0
+
+local name_unknown
+local zombified_text
+
+local POS_VEC = vector2()
+
+local function mcm_byte(v)
+	return math.floor(math.max(0, math.min(255, tonumber(v) or 0) + 0.5))
+end
+
+local function on_option_change()
+	local m = DOGMA.mcm
+	local id = CONFIG.MOD_ID
+	CONFIG.loaded.dead_id = m.bool(id, "dead_id")
+	CONFIG.loaded.name_id = m.bool(id, "name_id")
+	CONFIG.loaded.time_id = m.bool(id, "time_id")
+	CONFIG.loaded.rank_id = m.bool(id, "rank_id")
+	CONFIG.loaded.speed_id = m.number(id, "speed_id")
+	CONFIG.loaded.targ_l = m.number(id, "targ_l")
+	CONFIG.loaded.name_y = m.number(id, "name_y")
+	CONFIG.loaded.rank_y = m.number(id, "rank_y")
+	CONFIG.loaded.icon_y = m.number(id, "icon_y")
+	CONFIG.loaded.name_r = mcm_byte(m.number(id, "colors/name_r"))
+	CONFIG.loaded.name_g = mcm_byte(m.number(id, "colors/name_g"))
+	CONFIG.loaded.name_b = mcm_byte(m.number(id, "colors/name_b"))
+	CONFIG.loaded.rank_r = mcm_byte(m.number(id, "colors/rank_r"))
+	CONFIG.loaded.rank_g = mcm_byte(m.number(id, "colors/rank_g"))
+	CONFIG.loaded.rank_b = mcm_byte(m.number(id, "colors/rank_b"))
+end
+
+local function hide_all_patches(hud)
+	for i = 1, #FACTION_KEYS do
+		local key = FACTION_KEYS[i]
+		hud.factions[key]:Show(false)
+		hud.factions[key .. "_dead"]:Show(false)
+	end
+	hud.factions["unknown"]:Show(false)
+end
+
+local function clear_text(hud)
+	hud.name:TextControl():SetText("")
+	hud.rank:TextControl():SetText("")
+	hud.zombified:TextControl():SetText("")
+	hud.zombified:Show(false)
+end
+
+class "UIStalkerIDHUD" (CUIScriptWnd)
+
+function UIStalkerIDHUD:__init() super()
+	local xml = CScriptXmlInit()
+	xml:ParseFile("ui_dogma_stalker_id.xml")
+
+	self.factions = {}
+	for i = 1, #FACTION_KEYS do
+		local key = FACTION_KEYS[i]
+		self.factions[key] = xml:InitStatic("patch_" .. key, self)
+		self.factions[key .. "_dead"] = xml:InitStatic("patch_dead_" .. key, self)
+	end
+	self.factions["unknown"] = xml:InitStatic("patch_unknown", self)
+
+	self.name = xml:InitStatic("name", self)
+	self.rank = xml:InitStatic("rank", self)
+	self.zombified = xml:InitStatic("zombified", self)
+
+	pcall(function()
+		self.name:TextControl():SetTextComplexMode(false)
+		self.name:TextControl():SetTextAlignment(ALIGN_CENTER)
+		self.rank:TextControl():SetTextComplexMode(false)
+		self.rank:TextControl():SetTextAlignment(ALIGN_CENTER)
+		self.zombified:TextControl():SetTextComplexMode(false)
+		self.zombified:TextControl():SetTextAlignment(ALIGN_CENTER)
+	end)
+
+	hide_all_patches(self)
+	clear_text(self)
+end
+
+function UIStalkerIDHUD:__finalize()
+end
+
+function UIStalkerIDHUD:Reset()
+	hide_all_patches(self)
+	clear_text(self)
+end
+
+local function activate_hud()
+	RegisterScriptCallback("actor_on_net_destroy", actor_on_net_destroy)
+	if HUD == nil then
+		HUD = UIStalkerIDHUD()
+		get_hud():AddDialogToRender(HUD)
+	end
+end
+
+local function deactivate_hud()
+	if HUD ~= nil then
+		get_hud():RemoveDialogToRender(HUD)
+		HUD = nil
+	end
+	UnregisterScriptCallback("actor_on_net_destroy", actor_on_net_destroy)
+end
+
+function on_screen_resolution_changed()
+	deactivate_hud()
+	activate_hud()
+end
+
+function actor_on_net_destroy()
+	if HUD ~= nil then
+		get_hud():RemoveDialogToRender(HUD)
+		HUD = nil
+	end
+end
+
+function actor_on_first_update()
+	activate_hud()
+end
+
+local function dot_eye(position)
+	local toPoint = vector():set(position):sub(device().cam_pos):normalize()
+	local toEye = device().cam_dir
+	return toPoint:dotproduct(toEye)
+end
+
+local function is_zombied(community)
+	return community == "zombied"
+end
+
+local function is_valid_community(community)
+	if not community then
+		return false
+	end
+	if is_zombied(community) then
+		return true
+	end
+	return HUD and HUD.factions[community] ~= nil
+end
+
+local function identify(obj)
+	local cfg = CONFIG.loaded
+	local cname = obj:character_name()
+
+	if not cfg.time_id then
+		idtable[cname] = 1
+		return true
+	end
+
+	if not idtable[cname] then
+		idtable[cname] = 0
+	end
+
+	if idtable[cname] >= 1 then
+		return true
+	end
+
+	local distance = db.actor:position():distance_to_sqr(obj:position())
+	if distance < 2500 then
+		idtable[cname] = 1
+		return true
+	end
+
+	local power = (100 / ((distance - 2500) * 0.1) / device().fov) * (TICK_SPEED * 0.1)
+	idtable[cname] = idtable[cname] + (power * cfg.speed_id)
+	if idtable[cname] >= 1 then
+		return true
+	end
+	return false
+end
+
+local function clear()
+	if HUD then
+		HUD:Reset()
+	end
+end
+
+local function display(faction, name, rank, zombified)
+	if not HUD then
+		return
+	end
+
+	local cfg = CONFIG.loaded
+	clear()
+
+	HUD.name:TextControl():SetTextColor(GetARGB(255, cfg.name_r, cfg.name_g, cfg.name_b))
+	HUD.rank:TextControl():SetTextColor(GetARGB(255, cfg.rank_r, cfg.rank_g, cfg.rank_b))
+	HUD.zombified:TextControl():SetTextColor(GetARGB(255, cfg.rank_r, cfg.rank_g, cfg.rank_b))
+
+	HUD.name:SetWndPos(POS_VEC:set(0, cfg.name_y))
+	HUD.rank:SetWndPos(POS_VEC:set(0, cfg.rank_y))
+
+	if name then
+		HUD.name:TextControl():SetText(name)
+	end
+	if rank then
+		HUD.rank:TextControl():SetText(rank)
+	end
+
+	if zombified then
+		HUD.zombified:SetWndPos(POS_VEC:set(0, cfg.icon_y))
+		HUD.zombified:TextControl():SetText(zombified_text)
+		HUD.zombified:Show(true)
+		return
+	end
+
+	if faction and HUD.factions[faction] then
+		HUD.factions[faction]:SetWndPos(POS_VEC:set(UI_CENTER_X, cfg.icon_y))
+		HUD.factions[faction]:Show(true)
+	end
+end
+
+local function display_faction(obj)
+	if not obj then
+		return
+	end
+
+	local cfg = CONFIG.loaded
+	local fact = obj:character_community()
+	local name = obj:character_name()
+	local rank = game.translate_string("st_rank_" .. ranks.get_obj_rank_name(obj)) or ""
+
+	if not cfg.rank_id then
+		rank = nil
+	end
+	if not cfg.name_id then
+		name = nil
+	end
+
+	-- Name/rank only when present (zombies may lack either).
+	if name == nil or name == "" then
+		name = nil
+	end
+	if rank == nil or rank == "" then
+		rank = nil
+	end
+
+	if is_zombied(fact) then
+		display(nil, name, rank, true)
+		return
+	end
+
+	if cfg.dead_id and obj.health <= 0 then
+		fact = fact .. "_dead"
+	end
+
+	display(fact, name, rank, false)
+end
+
+local function target_enter(obj)
+	if not obj then
+		return
+	end
+	if identify(obj) then
+		display_faction(obj)
+	else
+		display("unknown", name_unknown, nil, false)
+	end
+end
+
+local function target_exit(obj)
+	if not obj then
+		return
+	end
+	clear()
+end
+
+local function target_tick(obj)
+	if not obj then
+		return
+	end
+	if (time_global() - lastTick) < TICK_SPEED then
+		return
+	end
+	lastTick = time_global()
+
+	local cname = obj:character_name()
+	if not idtable[cname] then
+		return
+	end
+
+	if idtable[cname] < 1 then
+		if identify(obj) then
+			clear()
+			display_faction(obj)
+		end
+	end
+end
+
+function actor_on_update()
+	local tg = time_global()
+	local cfg = CONFIG.loaded
+
+	if trigger == 0 then
+		grok_delay = tg + UPDATE_DELAY
+		trigger = 1
+	end
+
+	if not (trigger == 1 and tg > grok_delay) then
+		return
+	end
+	trigger = 0
+
+	local obj = level.get_target_obj()
+	local valid = HUD
+		and obj
+		and IsStalker(obj)
+		and obj:id() ~= 0
+		and (obj.health > 0 or cfg.dead_id)
+		and is_valid_community(obj:character_community())
+
+	if valid then
+		if LastHitObject then
+			if obj:id() ~= LastHitObject:id() then
+				target_exit(LastHitObject)
+				target_enter(obj)
+			else
+				target_tick(obj)
+			end
+		else
+			target_enter(obj)
+		end
+		LastHitObject = obj
+		return
+	end
+
+	if LastHitObject then
+		if cfg.targ_l >= 1.0 then
+			target_exit(LastHitObject)
+			LastHitObject = nil
+			return
+		end
+
+		if (time_global() - lastCheckTime) > 100 then
+			lastCheckTime = time_global()
+			local pos = utils_obj.safe_bone_pos(LastHitObject, "bip01_spine")
+			if pos then
+				local dot = dot_eye(pos)
+				if dot < cfg.targ_l then
+					target_exit(LastHitObject)
+					LastHitObject = nil
+					return
+				end
+			end
+		end
+
+		target_tick(LastHitObject)
+	end
+end
+
+function npc_on_death_callback(npc, who)
+	if not LastHitObject then
+		return
+	end
+	if npc:id() ~= LastHitObject:id() then
+		return
+	end
+
+	if CONFIG.loaded.dead_id then
+		clear()
+		display_faction(npc)
+	else
+		target_exit(LastHitObject)
+		LastHitObject = nil
+	end
+end
+
+function npc_on_net_destroy(npc)
+	if not LastHitObject then
+		return
+	end
+	if npc:id() == LastHitObject:id() then
+		target_exit(LastHitObject)
+		LastHitObject = nil
+	end
+	clear()
+end
+
+function GUI_on_show(gui, str2)
+	if gui == "Dialog" then
+		local obj = mob_trade.GetTalkingNpc()
+		if obj and LastHitObject and LastHitObject:id() == obj:id() then
+			nametable[obj:character_name()] = true
+			clear()
+			display_faction(obj)
+		end
+		return
+	end
+
+	if gui == "UIInventory" then
+		local obj = level.get_target_obj()
+		if not (obj and IsStalker(obj)) then
+			return
+		end
+		if obj and obj.health <= 0 and LastHitObject and LastHitObject:id() == obj:id() then
+			local mid = utils_obj.safe_bone_pos(LastHitObject, "bip01_spine")
+			local pos = device().cam_pos
+			if mid and pos and pos:distance_to_sqr(mid) < 4.9 then
+				nametable[obj:character_name()] = true
+				clear()
+				display_faction(obj)
+			end
+		end
+	end
+end
+
+function on_game_start()
+	DOGMA = dogma_common.load(CONFIG.MOD_ID)
+	name_unknown = game.translate_string("ui_dogma_stalker_id_unknown")
+	zombified_text = game.translate_string("ui_dogma_stalker_id_zombified")
+	on_option_change()
+
+	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+	RegisterScriptCallback("on_screen_resolution_changed", on_screen_resolution_changed)
+	RegisterScriptCallback("actor_on_update", actor_on_update)
+	RegisterScriptCallback("npc_on_death_callback", npc_on_death_callback)
+	RegisterScriptCallback("npc_on_net_destroy", npc_on_net_destroy)
+	RegisterScriptCallback("GUI_on_show", GUI_on_show)
+	RegisterScriptCallback("on_option_change", on_option_change)
+end

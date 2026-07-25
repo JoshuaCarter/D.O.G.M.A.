@@ -1,0 +1,259 @@
+--[[
+	Inventory drop keybinds (hold-repeat while key held).
+]]
+
+local CONFIG = _G.dogma_items_drop_conf
+local MOD_ID = CONFIG.MOD_ID
+local DOGMA
+
+local ALLOWED_BAGS = {
+	actor_bag = true,
+	actor_equ = true,
+	actor_belt = true,
+	npc_bag = true,
+	picker = true,
+}
+
+local BINDS = {}
+local hold_state = {} -- [dik] = { bind, t0, fire_count, last_id }
+
+local function log(msg)
+	if DOGMA and DOGMA.dbg and DOGMA.dbg.logging() then
+		DOGMA.dbg.log(MOD_ID, tostring(msg))
+	end
+end
+
+local function on_option_change()
+	CONFIG.loaded.drop_safe_equipped = DOGMA.mcm.bool(MOD_ID, "drop_safe_equipped")
+	BINDS = {}
+	local function add(id, key_path, mod_path, all_stacks)
+		local key = DOGMA.mcm.key(MOD_ID, key_path)
+		if not key then
+			return
+		end
+		BINDS[#BINDS + 1] = {
+			id = id,
+			key = key,
+			modifier = math.floor(DOGMA.mcm.number(MOD_ID, mod_path, 0) + 0.5),
+			all_stacks = all_stacks,
+		}
+	end
+	add("drop", "key_drop", "key_drop_modifier", false)
+	add("drop_all", "key_drop_all", "key_drop_all_modifier", true)
+end
+
+local function mod_ok(modifier)
+	if not (ui_mcm and ui_mcm.get_mod_key) then
+		return true
+	end
+	return ui_mcm.get_mod_key(modifier)
+end
+
+local function inv_mode_ok(gui)
+	local mode = gui and gui.mode
+	return mode == "inventory" or mode == "loot"
+end
+
+local function bag_allowed(bag)
+	return bag and ALLOWED_BAGS[bag]
+end
+
+local function get_hover(gui)
+	gui = gui or (ui_inventory and ui_inventory.GUI)
+	if not (gui and gui.hover) then
+		return nil
+	end
+	local bag, idx = gui.hover.bag, gui.hover.idx
+	if not (bag_allowed(bag) and idx) then
+		return nil
+	end
+	local cc = gui.CC and gui.CC[bag]
+	local obj = cc and cc:GetObj(idx)
+	if not obj then
+		return nil
+	end
+	return obj, bag, idx, gui
+end
+
+local function is_equipped(obj)
+	if not (obj and db.actor and _G.SCANNED_SLOTS) then
+		return false
+	end
+	local id = obj:id()
+	local n = 0
+	for _ in pairs(_G.SCANNED_SLOTS) do
+		n = n + 1
+	end
+	for i = 0, n + 1 do
+		local slot_obj = db.actor:item_in_slot(i)
+		if slot_obj and slot_obj:id() == id then
+			return true
+		end
+	end
+	return false
+end
+
+local function is_quest(gui, obj, bag)
+	if not (gui and gui.Cond_NotQuest and obj) then
+		return false
+	end
+	return not gui:Cond_NotQuest(obj, bag)
+end
+
+local function cell_has_childs(gui, obj, bag)
+	if not (gui and gui.Cond_Childs and obj and bag) then
+		return false
+	end
+	local ok, has = pcall(function()
+		return gui:Cond_Childs(obj, bag)
+	end)
+	return ok and has
+end
+
+local function do_drop_one(gui, obj, bag)
+	if CONFIG.loaded.drop_safe_equipped and is_equipped(obj) then
+		return
+	end
+	if is_quest(gui, obj, bag) then
+		return
+	end
+	if gui.Action_Drop then
+		gui:Action_Drop(obj, bag)
+	else
+		db.actor:drop_item(obj)
+	end
+end
+
+local function do_drop(gui, obj, bag, all_stacks)
+	if all_stacks and cell_has_childs(gui, obj, bag) then
+		local cc = gui.CC[bag]
+		local ci = cc and cc:GetCell_ID(obj:id())
+		if ci and ci.childs then
+			for id, _ in pairs(ci.childs) do
+				local child = level.object_by_id(id)
+				if child then
+					do_drop_one(gui, child, bag)
+				end
+			end
+		end
+	end
+	do_drop_one(gui, obj, bag)
+end
+
+local function repeat_delay_ms(fire_count)
+	if fire_count <= 0 then
+		return 0
+	end
+	if fire_count == 1 then
+		return 1000
+	end
+	if fire_count == 2 then
+		return 1500
+	end
+	if fire_count == 3 then
+		return 2000
+	end
+	return 2250 + (fire_count - 4) * 250
+end
+
+local function fire_bind(bind)
+	local obj, bag, idx, gui = get_hover()
+	if not obj then
+		return false
+	end
+	do_drop(gui, obj, bag, bind.all_stacks)
+	return true, obj:id()
+end
+
+local function start_hold(bind, dik)
+	local now = time_continual()
+	local hs = { bind = bind, t0 = now, fire_count = 0, last_id = nil }
+	hold_state[dik] = hs
+	local ok, id = fire_bind(bind)
+	if ok then
+		hs.last_id = id
+		hs.fire_count = 1
+		hs.t0 = now
+	end
+end
+
+local function on_key_pressed(dik, gui)
+	if gui and gui.mode == "loot" and (dik == DIK_keys.DIK_LSHIFT or dik == DIK_keys.DIK_RSHIFT) then
+		return
+	end
+	for i = 1, #BINDS do
+		local bind = BINDS[i]
+		if bind.key == dik and mod_ok(bind.modifier) then
+			start_hold(bind, dik)
+		end
+	end
+end
+
+local function on_key_released(dik)
+	hold_state[dik] = nil
+end
+
+local function hold_tick(gui)
+	if not inv_mode_ok(gui) then
+		return
+	end
+	local now = time_continual()
+	for dik, hs in pairs(hold_state) do
+		if key_state(dik) == 0 or not mod_ok(hs.bind.modifier) then
+			hold_state[dik] = nil
+		else
+			local obj, bag, idx, g = get_hover()
+			local id = obj and obj:id() or nil
+			if not id then
+				hs.last_id = nil
+				hs.fire_count = 0
+				hs.t0 = now
+			elseif id ~= hs.last_id then
+				hs.last_id = id
+				hs.fire_count = 0
+				hs.t0 = now
+				do_drop(g, obj, bag, hs.bind.all_stacks)
+				hs.fire_count = 1
+			elseif (now - hs.t0) >= repeat_delay_ms(hs.fire_count) then
+				do_drop(g, obj, bag, hs.bind.all_stacks)
+				hs.fire_count = hs.fire_count + 1
+			end
+		end
+	end
+end
+
+local original_on_keyboard = ui_inventory and ui_inventory.UIInventory and ui_inventory.UIInventory.OnKeyboard
+if original_on_keyboard then
+	function ui_inventory.UIInventory:OnKeyboard(dik, keyboard_action)
+		local res = original_on_keyboard(self, dik, keyboard_action)
+		if not (DOGMA and DOGMA.sys and DOGMA.sys.ready(MOD_ID, db, on_option_change)) then
+			return res
+		end
+		if not inv_mode_ok(self) then
+			return res
+		end
+		if keyboard_action == ui_events.WINDOW_KEY_PRESSED then
+			on_key_pressed(dik, self)
+		elseif keyboard_action == ui_events.WINDOW_KEY_RELEASED then
+			on_key_released(dik)
+		end
+		return res
+	end
+end
+
+local original_on_update = ui_inventory and ui_inventory.UIInventory and ui_inventory.UIInventory.Update
+if original_on_update then
+	function ui_inventory.UIInventory:Update()
+		original_on_update(self)
+		if DOGMA and DOGMA.sys and DOGMA.sys.ready(MOD_ID, db, on_option_change) then
+			hold_tick(self)
+		end
+	end
+end
+
+function on_game_start()
+	DOGMA = dogma_common.load(MOD_ID)
+	RegisterScriptCallback("on_option_change", on_option_change)
+	on_option_change()
+	log("drop keys ready")
+end

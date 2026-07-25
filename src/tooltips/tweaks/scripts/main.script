@@ -1,0 +1,19 @@
+--[[
+	Tooltips tweaks — MCM options consumed by tooltips/weapons (and peers).
+]]
+
+local CONFIG = _G.dogma_tooltips_tweaks_conf
+local DOGMA
+
+local function on_option_change()
+	if not DOGMA or not DOGMA.mcm then
+		return
+	end
+	CONFIG.loaded.fix_layout = DOGMA.mcm.bool(CONFIG.MOD_ID, "fix_layout")
+end
+
+function on_game_start()
+	DOGMA = dogma_common.load(CONFIG.MOD_ID)
+	on_option_change()
+	RegisterScriptCallback("on_option_change", on_option_change)
+end

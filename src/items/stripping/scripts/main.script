@@ -1124,7 +1124,7 @@ local function enqueue_strip(obj, bag, idx)
 	strip_queue[#strip_queue + 1] = { id = id, bag = bag, idx = idx }
 end
 
--- Called from dogma_inv_actions inventory keybinds (hovered cell).
+-- Called from keys.script inventory keybinds (hovered cell).
 local function strip_hover(_all_stacks, obj, bag, idx, gui)
 	if not (obj and IsWeapon(obj)) then
 		if obj then
@@ -1177,7 +1177,7 @@ local function weapon_fully_stripped(obj)
 	return true
 end
 
--- Inventory strip keybinds live in dogma_inv_actions.script.
+-- Inventory strip keybinds live in keys.script.
 -- Drives the burst state machine, one step per BURST_STEP_FRAMES frames.
 -- Patched at parse time so it chains correctly with any other mod wrapping
 -- the same method, no matter what order on_game_start callbacks run in.

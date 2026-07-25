@@ -1245,6 +1245,8 @@ end
 -- item, so after an MCM change we must clear that cache or stat rows won't
 -- rebuild until a different item is hovered.
 local tracked_infos = setmetatable({}, { __mode = "k" })
+-- One-shot deferred restack after a full rebuild (fix_layout tweak).
+local pending_layout_settle = setmetatable({}, { __mode = "k" })
 
 local function on_option_change()
 	-- All MCM/palette work is optional - the per-ammo breakdown must keep working
@@ -1295,6 +1297,8 @@ local function on_option_change()
 		end
 		CONFIG.loaded.compact_header = DOGMA.mcm.bool(CONFIG.MOD_ID, "compact_header")
 		CONFIG.loaded.hide_description = DOGMA.mcm.bool(CONFIG.MOD_ID, "hide_description")
+		-- Tooltips → Tweaks → Fix tooltips bad layout
+		CONFIG.loaded.fix_layout = DOGMA.mcm.bool("dogma/tooltips/tweaks", "fix_layout")
 		CONFIG.loaded.table_row_pad = DOGMA.mcm.number(CONFIG.MOD_ID, "table_row_pad")
 		for i = 1, NUM_TORSO_TIERS do
 			CONFIG.loaded["show_torso_" .. i] = DOGMA.mcm.bool(CONFIG.MOD_ID, "show_torso_" .. i)
@@ -2456,7 +2460,38 @@ local function apply_description_visibility(info)
 	if not info or not info.desc then
 		return
 	end
-	info.desc:Show(not CONFIG.loaded.hide_description)
+	local hide = CONFIG.loaded.hide_description
+	info.desc:Show(not hide)
+	-- Hide alone leaves stock height; Sync_Y/Sync_H still measure it unless zeroed.
+	if CONFIG.loaded.fix_layout then
+		if hide then
+			pcall(function()
+				info.desc:SetWndSize(vector2():set(info.desc:GetWidth(), 0))
+			end)
+		else
+			pcall(function()
+				info.desc:AdjustHeightToText()
+			end)
+		end
+	end
+end
+
+-- Match vanilla utils_ui: measure text before Sync_Y/Sync_H.
+local function prepare_text_heights(info)
+	if not info or not CONFIG.loaded.fix_layout then
+		return
+	end
+	pcall(function()
+		if info.name then
+			info.name:AdjustHeightToText()
+		end
+		if info.note and info.note:IsShown() then
+			info.note:AdjustHeightToText()
+		end
+		if info.desc and info.desc:IsShown() and not CONFIG.loaded.hide_description then
+			info.desc:AdjustHeightToText()
+		end
+	end)
 end
 
 local function sync_damage_layout(info)
@@ -2489,6 +2524,12 @@ local function sync_damage_layout(info)
 	end
 
 	tail = sync_parts_layout(info, tail)
+
+	-- Craft-in-tooltip (and similar) append after parts; keep them in the stack.
+	if CONFIG.loaded.fix_layout and info.recipes and info.recipes:IsShown() then
+		info:Sync_Y(tail, info.recipes, SECTION_GAP)
+		tail = info.recipes
+	end
 
 	info:Sync_H(tail, info.frame, SECTION_GAP)
 end
@@ -2567,6 +2608,10 @@ local function refresh_weapon_damage_panel(info, obj, sec)
 	end
 
 	if not info:IsShown() then
+		-- First rebuild can run while Pass still hides the dialog; recover on next tick.
+		if CONFIG.loaded.fix_layout then
+			info.dogma_layout_dirty = true
+		end
 		return
 	end
 
@@ -2592,6 +2637,7 @@ local function refresh_weapon_damage_panel(info, obj, sec)
 		end
 		log_tooltip("panel_ok", string.format("%s: hover damage panel shown (%d rows)", sec, #damage_data.rows))
 	end
+	info.dogma_layout_dirty = false
 	sync_damage_layout(info)
 end
 
@@ -2793,110 +2839,33 @@ local function uiinfo_init_hook(self, owner, delay)
 	end
 end
 
--- True stock UIInfoItem.Update (never Ish / never us). ADV+DOGMA wrap order
--- can form Ish↔ us cycles; calling Ish as "stock" on re-entry hangs inventory.
-local stock_uiinfo_update
-local update_hook_depth = 0
-local uiinfo_update_hook
-
--- Forward decls: ensure/prepare gate live below; Update hook calls them at runtime.
-local ensure_gamma_stats_table
-local has_anomaly_tracks
-local stats_table_empty
-local prepare_gate_fn
-
-local function is_ish_update(fn)
-	local Ish = ish_item_stats and ish_item_stats.Ish_UIInfoItem_Update
-	return fn and Ish and fn == Ish
-end
-
-local function capture_stock_update()
-	local U = utils_ui.UIInfoItem.Update
-	local Base = ish_item_stats and ish_item_stats.Base_UIInfoItem_Update
-	-- ADV already wrapped: Base is stock, Update is Ish.
-	if is_ish_update(U) and Base and Base ~= uiinfo_update_hook and not is_ish_update(Base) then
-		return Base
-	end
-	if U and U ~= uiinfo_update_hook and not is_ish_update(U) then
-		return U
-	end
-	if Base and Base ~= uiinfo_update_hook and not is_ish_update(Base) then
-		return Base
-	end
-	return stock_uiinfo_update
-end
-
-uiinfo_update_hook = function(self, obj, sec, flags)
+local function uiinfo_update_hook(self, obj, sec, flags)
 	local oid = safe_id(obj)
 	local same_item = (oid and self.id and oid == self.id)
 		or (not obj and sec and self.section == sec)
+	local dirty = self.dogma_layout_dirty
+	local fix = CONFIG.loaded.fix_layout
 
-	-- Hard stop: never call through Ish/us on re-entry (that was the hang).
-	-- Same-item: keep the tooltip visible without re-entering stock.
-	if update_hook_depth > 0 then
-		if same_item then
-			self:Show(true)
-		end
-		return
-	end
+	base_uiinfo_update(self, obj, sec, flags)
 
-	-- Reclaim prepare + kill Anomaly bars before stock paints this hover.
-	if ish_item_stats and ish_item_stats.override_stats_table
-		and (stats_table_empty() or has_anomaly_tracks()
-			or (prepare_gate_fn and utils_ui.prepare_stats_table ~= prepare_gate_fn))
-	then
-		ensure_gamma_stats_table(true)
-	end
-
-	update_hook_depth = 1
-	local stock = stock_uiinfo_update
-	if not stock or stock == uiinfo_update_hook or is_ish_update(stock) then
-		stock = capture_stock_update()
-		if stock and stock ~= uiinfo_update_hook and not is_ish_update(stock) then
-			stock_uiinfo_update = stock
-		end
-	end
-	-- Always invoke true stock, never Ish (avoids ADV Base ↔ us cycles).
-	if stock and stock ~= uiinfo_update_hook and not is_ish_update(stock) then
-		stock(self, obj, sec, flags)
-	elseif base_uiinfo_update and base_uiinfo_update ~= uiinfo_update_hook and not is_ish_update(base_uiinfo_update) then
-		base_uiinfo_update(self, obj, sec, flags)
-	end
-	update_hook_depth = 0
-
-	if not same_item then
+	-- Rebuild content when the item changes, or when a prior pass left work pending.
+	if not same_item or (fix and dirty) then
+		-- Reset per-open tooltip debug dedupe.
 		tooltip_logged = {}
 		apply_custom_stat_display(self, obj, sec)
 		apply_compact_header(self)
 		refresh_weapon_damage_panel(self, obj, sec)
+		prepare_text_heights(self)
+		-- Always re-stack body under desc (weapons already synced inside refresh).
 		sync_damage_layout(self)
+		if fix and self:IsShown() then
+			-- One more restack next frame after other mods / text measure settle.
+			pending_layout_settle[self] = true
+		end
 	end
 end
 
 local ui_hooks_ok = false
-
-local function repair_update_chain()
-	if not utils_ui or not utils_ui.UIInfoItem then
-		return
-	end
-	local stock = capture_stock_update()
-	if stock and stock ~= uiinfo_update_hook and not is_ish_update(stock) then
-		stock_uiinfo_update = stock
-	end
-	local Ish = ish_item_stats and ish_item_stats.Ish_UIInfoItem_Update
-	local Base = ish_item_stats and ish_item_stats.Base_UIInfoItem_Update
-	-- Point ADV at stock (not us) so Ish never re-enters our hook.
-	if Ish and stock_uiinfo_update and (Base == uiinfo_update_hook or Base == Ish or not Base) then
-		ish_item_stats.Base_UIInfoItem_Update = stock_uiinfo_update
-	end
-	-- We stay outermost: Update = us → stock.
-	if utils_ui.UIInfoItem.Update ~= uiinfo_update_hook then
-		base_uiinfo_update = stock_uiinfo_update
-		utils_ui.UIInfoItem.Update = uiinfo_update_hook
-	else
-		base_uiinfo_update = stock_uiinfo_update
-	end
-end
 
 local function install_ui_hooks()
 	if not utils_ui or not utils_ui.UIInfoItem then
@@ -2904,16 +2873,16 @@ local function install_ui_hooks()
 		return false
 	end
 
+	-- Stay outermost so Parts/Craft/ADV Sync_Finale cannot undo our stack after we return.
+	if utils_ui.UIInfoItem.Update ~= uiinfo_update_hook then
+		base_uiinfo_update = utils_ui.UIInfoItem.Update
+		utils_ui.UIInfoItem.Update = uiinfo_update_hook
+	end
+
 	if not base_uiinfo_init then
 		base_uiinfo_init = utils_ui.UIInfoItem.__init
 		utils_ui.UIInfoItem.__init = uiinfo_init_hook
 	end
-
-	if not stock_uiinfo_update or is_ish_update(stock_uiinfo_update) or stock_uiinfo_update == uiinfo_update_hook then
-		stock_uiinfo_update = capture_stock_update()
-	end
-
-	repair_update_chain()
 
 	ui_hooks_ok = true
 	return true
@@ -2929,64 +2898,8 @@ local function on_console_execute(cmd)
 	end
 end
 
--- ADV categories that must stay track=false (numeric) when ADV is installed.
-local GAMMA_STAT_CATS = { "weapon", "outfit", "artefact", "booster", "backpack" }
-
-stats_table_empty = function()
-	local st = utils_ui and utils_ui.stats_table
-	return not (st and st["weapon"])
-end
-
--- Any track=true row in ADV-owned categories = Anomaly bar contamination.
-has_anomaly_tracks = function()
-	local st = utils_ui and utils_ui.stats_table
-	if not st then
-		return true
-	end
-	for _, cat in ipairs(GAMMA_STAT_CATS) do
-		local rows = st[cat]
-		if rows then
-			for _, gr in pairs(rows) do
-				if type(gr) == "table" and gr.track == true then
-					return true
-				end
-			end
-		end
-	end
-	return false
-end
-
--- Last-resort: bars are track=true; force numeric paint even if ADV magnitudes wrong.
-local function scrub_anomaly_tracks()
-	local st = utils_ui and utils_ui.stats_table
-	if not st then
-		return 0
-	end
-	local n = 0
-	for _, cat in ipairs(GAMMA_STAT_CATS) do
-		local rows = st[cat]
-		if rows then
-			for _, gr in pairs(rows) do
-				if type(gr) == "table" and gr.track == true then
-					gr.track = false
-					n = n + 1
-				end
-			end
-		end
-	end
-	return n
-end
-
-local function bust_tooltip_cache()
-	for info in pairs(tracked_infos) do
-		info.id = nil
-		info.section = nil
-	end
-end
-
--- ADV/Sota replace utils_ui.stats_table on difficulty change; re-apply DOGMA
--- weapon rows whenever their override runs so companions/placement survive.
--- Do NOT blind-noop prepare here — install_prepare_gate owns that.
+-- ADV/Sota replace utils_ui.stats_table.weapon on difficulty change; re-apply
+-- DOGMA rows whenever their override runs so companions/placement survive.
 local function hook_stats_table_override()
 	if not ish_item_stats or not ish_item_stats.override_stats_table then
 		return
@@ -2997,105 +2910,14 @@ local function hook_stats_table_override()
 	local prev = ish_item_stats.override_stats_table
 	ish_item_stats.override_stats_table = function()
 		prev()
-		-- ADV rebuilt the table; drop any Anomaly-bar defs cached before ADV ran.
-		saved_base_stats = {}
 		apply_enhanced_weapon_stats()
-		bust_tooltip_cache()
+		for info in pairs(tracked_infos) do
+			info.id = nil
+			info.section = nil
+		end
 	end
 	ish_item_stats.dogma_weapon_tooltip_wrapped = true
 end
-
--- Single owner path: ADV numeric tables + DOGMA weapon rows. Exported for loadout.
-local prev_prepare_stats_table
-
-local function install_prepare_gate()
-	if not utils_ui then
-		return
-	end
-	-- Reclaim if Artefacts/Better Stats/etc re-wrapped prepare after us.
-	if prepare_gate_fn and utils_ui.prepare_stats_table == prepare_gate_fn then
-		return
-	end
-	local cur = utils_ui.prepare_stats_table
-	if cur and cur ~= prepare_gate_fn then
-		prev_prepare_stats_table = cur
-	end
-	prepare_gate_fn = function()
-		-- Never run stock Anomaly fill when ADV is present.
-		if ish_item_stats and ish_item_stats.override_stats_table then
-			if stats_table_empty() or has_anomaly_tracks() then
-				ensure_gamma_stats_table(true)
-			end
-			return
-		end
-		if prev_prepare_stats_table then
-			prev_prepare_stats_table()
-		end
-	end
-	utils_ui.prepare_stats_table = prepare_gate_fn
-end
-
-local ensure_busy = false
-ensure_gamma_stats_table = function(force)
-	if not utils_ui then
-		return false
-	end
-	-- prepare gate → ensure → override must not re-enter ensure via prepare.
-	if ensure_busy then
-		return not stats_table_empty() and not has_anomaly_tracks()
-	end
-	ensure_busy = true
-
-	install_prepare_gate()
-	hook_stats_table_override()
-
-	local ok_out = false
-	if not (ish_item_stats and ish_item_stats.override_stats_table) then
-		-- No ADV — leave stock; apply DOGMA rows only if a weapon table exists.
-		if utils_ui.stats_table and utils_ui.stats_table["weapon"] then
-			apply_enhanced_weapon_stats()
-		end
-		ok_out = false
-	elseif not force and not stats_table_empty() and not has_anomaly_tracks() then
-		ok_out = true
-	else
-		local ok, err = pcall(ish_item_stats.override_stats_table)
-		if not ok then
-			if not logged_once["adv_fail"] then
-				logged_once["adv_fail"] = true
-				printf("[dogma_tooltips_weapons] ADV override failed: %s", tostring(err))
-			end
-			-- Don't leave a blank table: allow previous prepare, then kill bars.
-			if stats_table_empty() and prev_prepare_stats_table then
-				pcall(prev_prepare_stats_table)
-			end
-		end
-		local scrubbed = scrub_anomaly_tracks()
-		if scrubbed > 0 then
-			if not logged_once["scrub"] then
-				logged_once["scrub"] = true
-				printf("[dogma_tooltips_weapons] forced track=false on %s Anomaly bar rows", tostring(scrubbed))
-			end
-			bust_tooltip_cache()
-			saved_base_stats = {}
-			apply_enhanced_weapon_stats()
-		elseif ok then
-			-- ADV ok and clean — still make sure DOGMA rows exist (wrap should have).
-			if utils_ui.stats_table and utils_ui.stats_table["weapon"]
-				and not utils_ui.stats_table["weapon"]["dogma_dispersion"]
-				and CONFIG.loaded.show_dispersion
-			then
-				apply_enhanced_weapon_stats()
-			end
-		end
-		ok_out = not stats_table_empty() and not has_anomaly_tracks()
-	end
-
-	ensure_busy = false
-	return ok_out
-end
-
-_G.dogma_ensure_gamma_stats = ensure_gamma_stats_table
 
 -- Crosshair rangefinder (Development MCM). Casts along camera look; ignores actor.
 -- Flags 3 = static + objects (same as cover-tilt / xcombat rqtBoth).
@@ -3136,6 +2958,17 @@ local function on_actor_update()
 	if not actor then
 		return
 	end
+
+	if CONFIG.loaded.fix_layout then
+		for info in pairs(pending_layout_settle) do
+			pending_layout_settle[info] = nil
+			if info and info.IsShown and info:IsShown() then
+				prepare_text_heights(info)
+				sync_damage_layout(info)
+			end
+		end
+	end
+
 	if not CONFIG.loaded.debug_overlay then
 		return
 	end
@@ -3152,73 +2985,6 @@ local function on_actor_update()
 	end
 	overlay(OVERLAY.RANGE, msg)
 end
-
--- Seed CONFIG.loaded from defaults so New Game loadout can use DOGMA rows before MCM/DOGMA.sys exist.
-local function seed_config_defaults()
-	if CONFIG.loaded.show_damage_table ~= nil then
-		return
-	end
-	CONFIG.loaded.show_damage_table = CONFIG.DEFAULTS["show_damage_table"]
-	CONFIG.loaded.show_hit_power = CONFIG.DEFAULTS["show_hit_power"]
-	CONFIG.loaded.show_stalker_damage = CONFIG.DEFAULTS["show_stalker_damage"]
-	CONFIG.loaded.show_mutant_damage = CONFIG.DEFAULTS["show_mutant_damage"]
-	CONFIG.loaded.show_accuracy = CONFIG.DEFAULTS["show_accuracy"]
-	CONFIG.loaded.show_handling = CONFIG.DEFAULTS["show_handling"]
-	CONFIG.loaded.show_fire_rate = CONFIG.DEFAULTS["show_fire_rate"]
-	CONFIG.loaded.show_mag_size = CONFIG.DEFAULTS["show_mag_size"]
-	CONFIG.loaded.show_reliability = CONFIG.DEFAULTS["show_reliability"]
-	CONFIG.loaded.show_recoil = CONFIG.DEFAULTS["show_recoil"]
-	CONFIG.loaded.show_muzzle_velocity = CONFIG.DEFAULTS["show_muzzle_velocity"]
-	CONFIG.loaded.show_dispersion = CONFIG.DEFAULTS["show_dispersion"]
-	CONFIG.loaded.show_spread = CONFIG.DEFAULTS["show_spread"]
-	CONFIG.loaded.show_barrel_wear = CONFIG.DEFAULTS["show_barrel_wear"]
-	CONFIG.loaded.show_burst_control = CONFIG.DEFAULTS["show_burst_control"]
-	CONFIG.loaded.show_bullet_drop = CONFIG.DEFAULTS["show_bullet_drop"]
-	CONFIG.loaded.column_headers = CONFIG.DEFAULTS["column_headers"]
-	CONFIG.loaded.color_scale_from = CONFIG.DEFAULTS["color_scale_from"]
-	CONFIG.loaded.ammo_order = CONFIG.DEFAULTS["ammo_order"]
-	CONFIG.loaded.stat_row_placement = CONFIG.DEFAULTS["stat_row_placement"]
-	CONFIG.loaded.compact_header = CONFIG.DEFAULTS["compact_header"]
-	CONFIG.loaded.hide_description = CONFIG.DEFAULTS["hide_description"]
-	CONFIG.loaded.table_row_pad = CONFIG.DEFAULTS["table_row_pad"]
-	CONFIG.loaded.calc_range_m = CONFIG.DEFAULTS["calc_range"]
-	CONFIG.loaded.pellet_hit_pct = CONFIG.DEFAULTS["pellet_hit_pct"]
-	CONFIG.loaded.use_condition_table = CONFIG.DEFAULTS["use_condition_table"]
-	CONFIG.loaded.use_condition_stats = CONFIG.DEFAULTS["use_condition_stats"]
-	CONFIG.loaded.apply_silencer_table = CONFIG.DEFAULTS["apply_silencer_table"]
-	CONFIG.loaded.apply_silencer_stats = CONFIG.DEFAULTS["apply_silencer_stats"]
-	CONFIG.loaded.debug_log = false
-	CONFIG.loaded.debug_overlay = false
-	for i = 1, NUM_TORSO_TIERS do
-		CONFIG.loaded["show_torso_" .. i] = CONFIG.DEFAULTS["show_torso_" .. i]
-	end
-	for i = 1, NUM_HEAD_TIERS do
-		CONFIG.loaded["show_head_" .. i] = CONFIG.DEFAULTS["show_head_" .. i]
-	end
-end
-
--- New Game loadout needs ADV numeric rows before the user can open UINewGame.
--- Safe here: this is zzzz_* (loads after *mcm.script gather). Never call ADV from
--- on_mcm_load / early mcm file load — that trips ui_mcm.get() and kills surge_manager.
-local function early_menu_install()
-	seed_config_defaults()
-	-- ADV only wraps Update in on_game_start — capture true stock now.
-	if utils_ui and utils_ui.UIInfoItem and utils_ui.UIInfoItem.Update then
-		local U = utils_ui.UIInfoItem.Update
-		if U ~= uiinfo_update_hook and not is_ish_update(U) then
-			stock_uiinfo_update = U
-		end
-	end
-	install_ui_hooks()
-	install_prepare_gate()
-	local ok = ensure_gamma_stats_table(true)
-	printf("[dogma_tooltips_weapons] early_menu gamma=%s anomaly_tracks=%s gate=%s",
-		tostring(ok),
-		tostring(has_anomaly_tracks()),
-		tostring(prepare_gate_fn ~= nil and utils_ui.prepare_stats_table == prepare_gate_fn))
-end
-
-early_menu_install()
 
 function on_game_start()
 	local tostr = tostring
@@ -3242,23 +3008,23 @@ function on_game_start()
 		end
 	end
 
-	-- Re-apply ADV after any earlier on_game_start (ish loads before us alphabetically
-	-- only if its callback already ran; either way we want GAMMA + DOGMA last).
-	ensure_gamma_stats_table(true)
 	on_option_change()
-	-- After ADV's on_game_start may have re-parented Update; repair cycle then wrap.
 	install_ui_hooks()
 	install_details_hook()
+	hook_stats_table_override()
 
 	RegisterScriptCallback("on_console_execute", on_console_execute)
 	RegisterScriptCallback("on_option_change", on_option_change)
 	RegisterScriptCallback("actor_on_update", on_actor_update)
+	RegisterScriptCallback("actor_on_first_update", function()
+		install_ui_hooks()
+	end)
 
 	log_once("startup", string.format(
-		"loaded: dogma=%s, ui_hooks=%s, details_hook=%s, table=%s, hit=%s, mutant=%s, place=%s, stats_mod=%s, gamma=%s",
+		"loaded: dogma=%s, ui_hooks=%s, details_hook=%s, table=%s, hit=%s, mutant=%s, place=%s, stats_mod=%s, fix_layout=%s",
 		tostr(DOGMA ~= nil), tostr(ui_hooks_ok), tostr(details_hook_ok),
 		tostr(CONFIG.loaded.show_damage_table), tostr(CONFIG.loaded.show_hit_power),
 		tostr(CONFIG.loaded.show_mutant_damage), tostr(CONFIG.loaded.stat_row_placement),
 		tostr(zzzz_dogma_tooltips_weapons_stats and zzzz_dogma_tooltips_weapons_stats.NAME ~= nil),
-		tostr(not has_anomaly_tracks() and not stats_table_empty())))
+		tostr(CONFIG.loaded.fix_layout)))
 end

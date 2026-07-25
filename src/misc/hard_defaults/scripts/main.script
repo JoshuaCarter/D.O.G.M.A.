@@ -1,0 +1,67 @@
+--[[
+	Hard New Game Defaults
+
+	Stock UINewGame LoadDifficulty / LoadEconomy pick table_*[1] (Easy / Tourist).
+	When enabled, non-random picks use [3] (Veteran / Survivalist). Randomize unchanged.
+]]
+
+local CONFIG = _G.dogma_misc_hard_defaults_conf
+local HARD_INDEX = 3
+local STATE = _G.__dogma_misc_hard_defaults or {}
+_G.__dogma_misc_hard_defaults = STATE
+
+local function enabled()
+	-- Pass default: ui_mcm.get may be nil before MCM is ready on a cold boot.
+	return dogma_mcm.bool(CONFIG.MOD_ID, "enabled", CONFIG.DEFAULTS["enabled"] ~= false)
+end
+
+local function wrap_load(base, table_name, list_name, selected_name)
+	return function(self, rand)
+		base(self, rand)
+		if rand or not enabled() then
+			return
+		end
+		local tbl = self[table_name]
+		local list = self[list_name]
+		if not (tbl and list) then
+			return
+		end
+		local pick = tbl[HARD_INDEX] or tbl[1]
+		if not pick then
+			return
+		end
+		list:SetText(game.translate_string(pick))
+		self[selected_name] = pick
+	end
+end
+
+local function patch_new_game()
+	local cls = ui_mm_faction_select and ui_mm_faction_select.UINewGame
+	if not (cls and cls.LoadDifficulty and cls.LoadEconomy) then
+		return false
+	end
+
+	-- _G STATE survives script reload; UINewGame methods do not.
+	if STATE.wrap_diff and STATE.wrap_eco
+		and cls.LoadDifficulty == STATE.wrap_diff
+		and cls.LoadEconomy == STATE.wrap_eco
+	then
+		return true
+	end
+
+	local wrap_diff = wrap_load(cls.LoadDifficulty, "table_difficulty", "list_difficulty", "selected_difficulty")
+	local wrap_eco = wrap_load(cls.LoadEconomy, "table_economy", "list_economy", "selected_economy")
+
+	cls.LoadDifficulty = wrap_diff
+	cls.LoadEconomy = wrap_eco
+	STATE.wrap_diff = wrap_diff
+	STATE.wrap_eco = wrap_eco
+	return true
+end
+
+-- zzzz_ body loads after ZCP ui_mm_faction_select.
+patch_new_game()
+
+function on_game_start()
+	patch_new_game()
+end

@@ -16,6 +16,9 @@
 #   …/scripts/mcm.script      -> dogma_{path}_mcm.script   (*mcm.script glob)
 #                               _conf is prepended so main-menu MCM (which only
 #                               loads *mcm.script) still gets MOD_ID + defaults
+#   …/scripts/modxml_*.script -> modxml_dogma_{path}_*.script
+#                               keep modxml_ prefix — Modded Exes only gathers
+#                               that glob for DXML on_xml_read injection
 #   …/scripts/override/*.script -> scripts/<basename>.script  (exact name — replace
 #                               conflicting mods: ASV, Free Zoom, etc.)
 #   …/scripts/<other>.script  -> zzzz_dogma_{path}_<other>.script
@@ -29,11 +32,9 @@
 #                      plus meta.ini + .mod_id. Works with DOGMA_ONLY too (no prune).
 #   DOGMA_OUT=path     override output gamedata (default: build/gamedata; disables
 #                      the DOGMA_DEPLOY one-hop when set)
-#   DOGMA_FORCE=1      rewrite every file (ignore mtime / content skip)
 #
-# Skip logic: mtime first; if src is not newer, byte-cmp for files <= 512KB
-# (Windows same-second edits). Bigger blobs (textures) trust mtime only.
-# Stale outputs pruned on full builds only.
+# Always stages every shippable file, then one bulk copy into OUT (no per-file
+# log). Full builds prune stale outputs.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -53,55 +54,15 @@ else
 fi
 
 GAMEDATA_ROOTS="scripts configs textures meshes anims sounds spawns"
-# Byte-cmp above this size is skipped (textures); mtime only.
-CMP_MAX_BYTES=524288
 
-COPIED=0
-SKIPPED=0
+STAGE="$(mktemp -d)"
 MANIFEST="$(mktemp)"
-trap 'rm -f "$MANIFEST"' EXIT
+trap 'rm -rf "$STAGE"; rm -f "$MANIFEST"' EXIT
 
 if [[ ! -d "$SRC" ]]; then
 	echo "build: missing $SRC" >&2
 	exit 1
 fi
-
-# Return 0 if dest is current and can be skipped.
-up_to_date() {
-	local src="$1"
-	local dest="$2"
-	[[ -n "${DOGMA_FORCE:-}" ]] && return 1
-	[[ -f "$dest" ]] || return 1
-	# Src strictly newer → must copy.
-	[[ "$src" -nt "$dest" ]] && return 1
-	# Dest newer or same second: still verify content for small files (Win mtime).
-	local sz
-	sz=$(wc -c < "$src" | tr -d ' ')
-	if (( sz > CMP_MAX_BYTES )); then
-		return 0
-	fi
-	cmp -s "$src" "$dest"
-}
-
-note_manifest() {
-	local dest="$1"
-	local rel="${dest#"$OUT"/}"
-	printf '%s\n' "${rel#/}" >> "$MANIFEST"
-}
-
-copy_if_changed() {
-	local src="$1"
-	local dest="$2"
-	note_manifest "$dest"
-	if up_to_date "$src" "$dest"; then
-		SKIPPED=$((SKIPPED + 1))
-		return 0
-	fi
-	mkdir -p "${dest%/*}"
-	cp "$src" "$dest"
-	COPIED=$((COPIED + 1))
-	echo "build: copy  ${src#"$ROOT"/} -> ${dest#"$OUT"/}"
-}
 
 should_skip_name() {
 	local base="$1"
@@ -138,12 +99,15 @@ script_dest_basename() {
 			echo "dogma_${path_key}_${stem#_}.script"
 			return 0
 			;;
+		modxml_*)
+			echo "modxml_dogma_${path_key}_${stem#modxml_}.script"
+			return 0
+			;;
 	esac
 	echo "zzzz_dogma_${path_key}_${stem}.script"
 }
 
-# Map one src file → dest under OUT. Prints nothing / returns 1 if not shipped.
-# Sets globals: _emit_src _emit_dest _emit_path_key (path_key empty for common)
+# Map one src file → dest_rel under gamedata. Sets: _emit_src _emit_rel _emit_path_key _emit_base
 map_src_file() {
 	local src_path="$1"
 	local rel="${src_path#"$SRC"/}"
@@ -152,14 +116,12 @@ map_src_file() {
 
 	should_skip_name "$base" && return 1
 
-	# Skip any path segment that is authoring-only or private.
 	local part
 	IFS=/ read -r -a parts <<< "$rel"
 	for part in "${parts[@]}"; do
 		case "$part" in
 			assets | installer) return 1 ;;
 		esac
-		# Private dirs (not _conf.script file — that's the basename check above).
 		if [[ "$part" == _* && "$part" != "$base" ]]; then
 			return 1
 		fi
@@ -171,13 +133,11 @@ map_src_file() {
 		bucket_rel="${rel#common/}"
 		path_key=""
 	else
-		# category/feature/bucket/...  OR  top-level gamedata root under src/
 		local cat="${parts[0]}"
 		if is_gamedata_root "$cat"; then
 			bucket_rel="$rel"
 			path_key=""
 		else
-			# need at least cat/feat/bucket/file
 			(( ${#parts[@]} >= 4 )) || return 1
 			local feat="${parts[1]}"
 			local bucket="${parts[2]}"
@@ -192,8 +152,6 @@ map_src_file() {
 	is_gamedata_root "$bucket" || return 1
 
 	local dest_rel="$bucket_rel"
-	# Exact-name overrides: scripts/override/foo.script → scripts/foo.script
-	# (replace conflicting mods in MO2; no dogma_ rename).
 	if [[ "$bucket" == "scripts" && "$bucket_rel" == scripts/override/* ]]; then
 		dest_rel="scripts/$base"
 	elif [[ -n "$path_key" && "$base" == *.script && "$bucket" == "scripts" ]]; then
@@ -207,46 +165,38 @@ map_src_file() {
 	fi
 
 	_emit_src="$src_path"
-	_emit_dest="$OUT/$dest_rel"
+	_emit_rel="$dest_rel"
 	_emit_path_key="$path_key"
 	_emit_base="$base"
 	return 0
 }
 
-emit_mapped() {
-	local src_path="$_emit_src"
-	local dest="$_emit_dest"
-	local path_key="$_emit_path_key"
-	local base="$_emit_base"
+# Write into STAGE (correct layout). Manifest records relative path for prune.
+stage_file() {
+	local src_path="$1"
+	local dest_rel="$2"
+	local path_key="$3"
+	local base="$4"
+	local staged="$STAGE/$dest_rel"
 
-	# Main-menu MCM only loads *mcm.script — prepend sibling _conf so CONF exists.
+	mkdir -p "${staged%/*}"
+
 	if [[ -n "$path_key" && "$base" == "mcm.script" ]]; then
-		local conf_src
-		conf_src="${src_path%/*}/_conf.script"
+		local conf_src="${src_path%/*}/_conf.script"
 		if [[ -f "$conf_src" ]]; then
-			note_manifest "$dest"
-			local tmp
-			tmp="$(mktemp)"
 			{
 				cat "$conf_src"
 				echo ""
 				echo "-- dogma-build: conf prepended so main-menu MCM (*mcm.script) has defaults"
 				cat "$src_path"
-			} > "$tmp"
-			if [[ -z "${DOGMA_FORCE:-}" && -f "$dest" ]] && cmp -s "$tmp" "$dest"; then
-				rm -f "$tmp"
-				SKIPPED=$((SKIPPED + 1))
-				return 0
-			fi
-			mkdir -p "${dest%/*}"
-			mv "$tmp" "$dest"
-			COPIED=$((COPIED + 1))
-			echo "build: copy  ${src_path#"$ROOT"/} (+_conf) -> ${dest#"$OUT"/}"
+			} > "$staged"
+			printf '%s\n' "$dest_rel" >> "$MANIFEST"
 			return 0
 		fi
 	fi
 
-	copy_if_changed "$src_path" "$dest"
+	cp "$src_path" "$staged"
+	printf '%s\n' "$dest_rel" >> "$MANIFEST"
 }
 
 src_in_scope() {
@@ -275,9 +225,6 @@ src_in_scope() {
 
 mkdir -p "$OUT"
 echo "build: out=$OUT"
-if [[ -n "${DOGMA_FORCE:-}" ]]; then
-	echo "build: DOGMA_FORCE=1 (rewriting all)"
-fi
 if [[ -n "$DEPLOY_MOD" && "$ONLY" != "all" && "$ONLY" != "" ]]; then
 	echo "build: DOGMA_ONLY=$ONLY → deploy $DEPLOY_MOD (no prune)"
 fi
@@ -300,16 +247,22 @@ if [[ "$ONLY" == */* && ! -d "$SRC/$ONLY" ]]; then
 	exit 1
 fi
 
-# One walk of src — maps every shippable file. No nested find per directory.
+# Stage every shippable file (quiet).
 while IFS= read -r -d '' src_path; do
 	src_in_scope "$src_path" || continue
 	map_src_file "$src_path" || continue
-	emit_mapped
+	stage_file "$_emit_src" "$_emit_rel" "$_emit_path_key" "$_emit_base"
 done < <(find "$SRC" -type f -print0)
 
-# Drop outputs this build did not produce (renames / removed features).
+sort -u "$MANIFEST" -o "$MANIFEST"
+count="$(wc -l < "$MANIFEST" | tr -d ' ')"
+
+# One bulk copy: stage → OUT.
+cp -a "$STAGE"/. "$OUT"/
+
+# Full build: drop outputs not produced this run.
+PRUNED=0
 if [[ "$ONLY" == "all" || "$ONLY" == "" ]]; then
-	sort -u "$MANIFEST" -o "$MANIFEST"
 	local_all="$(mktemp)"
 	(
 		cd "$OUT" && find . -type f | sed 's|^\./||' | sort
@@ -317,26 +270,28 @@ if [[ "$ONLY" == "all" || "$ONLY" == "" ]]; then
 	while IFS= read -r rel; do
 		[[ -z "$rel" ]] && continue
 		rm -f "$OUT/$rel"
-		echo "build: prune $rel"
+		PRUNED=$((PRUNED + 1))
 	done < <(comm -23 "$local_all" "$MANIFEST")
 	rm -f "$local_all"
 fi
 
-count="$(wc -l < "$MANIFEST" | tr -d ' ')"
-echo "build: done ($count files under $OUT; copied=$COPIED skipped=$SKIPPED)"
+if (( PRUNED > 0 )); then
+	echo "build: done ($count files, pruned $PRUNED)"
+else
+	echo "build: done ($count files)"
+fi
 
-# When writing straight into MO2, also refresh mod metadata if needed.
+# When writing straight into MO2, also refresh mod metadata.
+# Use if/then (not `[[ -f ]] && cp`) so a missing optional file does not make
+# the script exit 1 — that status is what build_and_run sees.
 if [[ -n "$DEPLOY_MOD" ]]; then
-	if ! up_to_date "$ROOT/meta.ini" "$DEPLOY_MOD/meta.ini"; then
-		cp "$ROOT/meta.ini" "$DEPLOY_MOD/meta.ini"
-		echo "build: copy  meta.ini"
-	fi
-	if [[ -f "$ROOT/.mod_id" ]] && ! up_to_date "$ROOT/.mod_id" "$DEPLOY_MOD/.mod_id"; then
+	cp "$ROOT/meta.ini" "$DEPLOY_MOD/meta.ini"
+	if [[ -f "$ROOT/.mod_id" ]]; then
 		cp "$ROOT/.mod_id" "$DEPLOY_MOD/.mod_id"
-		echo "build: copy  .mod_id"
 	fi
-	if [[ -f "$ROOT/INFO.md" ]] && ! up_to_date "$ROOT/INFO.md" "$DEPLOY_MOD/INFO.md"; then
+	if [[ -f "$ROOT/INFO.md" ]]; then
 		cp "$ROOT/INFO.md" "$DEPLOY_MOD/INFO.md"
-		echo "build: copy  INFO.md"
+	else
+		rm -f "$DEPLOY_MOD/INFO.md"
 	fi
 fi

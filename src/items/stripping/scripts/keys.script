@@ -1,0 +1,287 @@
+--[[
+	Inventory strip keybinds (press / dtap / hold + hold-paint On_Hover).
+	Burst work stays in main.script; this only queues via dogma_strip.
+]]
+
+local CONFIG = _G.dogma_items_stripping_conf
+local MOD_ID = CONFIG.MOD_ID
+local DOGMA
+
+local MODE_DTAP = 1
+local MODE_HOLD = 2
+
+local ALLOWED_BAGS = {
+	actor_bag = true,
+	actor_equ = true,
+	actor_belt = true,
+	npc_bag = true,
+	picker = true,
+}
+
+local BINDS = {}
+local dtap_last = {}
+local hold_state = {} -- [dik] = { bind, t0, fired }
+local paint = {
+	active = false,
+	dik = nil,
+	modifier = 0,
+	all_stacks = false,
+	last_bag = nil,
+	last_idx = nil,
+}
+local in_action = false
+local original_on_hover = nil
+local hover_wrapper = nil
+
+local function log(msg)
+	if DOGMA and DOGMA.dbg and DOGMA.dbg.logging() then
+		DOGMA.dbg.log(MOD_ID, tostring(msg))
+	end
+end
+
+local function on_option_change()
+	BINDS = {}
+	local key = DOGMA.mcm.key(MOD_ID, "key")
+	if key then
+		BINDS[1] = {
+			id = "strip",
+			key = key,
+			modifier = math.floor(DOGMA.mcm.number(MOD_ID, "key_modifier", 0) + 0.5),
+			mode = math.floor(DOGMA.mcm.number(MOD_ID, "key_mode", 0) + 0.5),
+			all_stacks = false,
+		}
+	end
+end
+
+local function mod_ok(modifier)
+	if not (ui_mcm and ui_mcm.get_mod_key) then
+		return true
+	end
+	return ui_mcm.get_mod_key(modifier)
+end
+
+local function hold_time_ms()
+	if not ui_mcm then
+		return 400
+	end
+	local dtaptime = ui_mcm.get("mcm/mcm_kb/mcm_kb_main/dtaptime2") or 250
+	local presstime = ui_mcm.get("mcm/mcm_kb/mcm_kb_main/presstime") or 1.5
+	return dtaptime * presstime
+end
+
+local function dtap_window_ms()
+	if not ui_mcm then
+		return 250
+	end
+	return ui_mcm.get("mcm/mcm_kb/mcm_kb_main/dtaptime2") or 250
+end
+
+local function inv_mode_ok(gui)
+	local mode = gui and gui.mode
+	return mode == "inventory" or mode == "loot"
+end
+
+local function bag_allowed(bag)
+	return bag and ALLOWED_BAGS[bag]
+end
+
+local function get_hover(gui)
+	gui = gui or (ui_inventory and ui_inventory.GUI)
+	if not (gui and gui.hover) then
+		return nil
+	end
+	local bag, idx = gui.hover.bag, gui.hover.idx
+	if not (bag_allowed(bag) and idx) then
+		return nil
+	end
+	local cc = gui.CC and gui.CC[bag]
+	local obj = cc and cc:GetObj(idx)
+	if not obj then
+		return nil
+	end
+	return obj, bag, idx, gui
+end
+
+local function run_strip(all_stacks, bag, idx, gui)
+	local api = _G.dogma_strip
+	if not (api and api.strip_hover) then
+		return
+	end
+	local cc = gui and gui.CC and gui.CC[bag]
+	local obj = cc and cc:GetObj(idx)
+	if not obj then
+		return
+	end
+	in_action = true
+	paint.last_bag = bag
+	paint.last_idx = idx
+	api.strip_hover(all_stacks, obj, bag, idx, gui)
+	in_action = false
+end
+
+local function fire_bind(bind)
+	local obj, bag, idx, gui = get_hover()
+	if not obj then
+		return false
+	end
+	run_strip(bind.all_stacks, bag, idx, gui)
+	return true
+end
+
+local function arm_paint(bind)
+	paint.active = true
+	paint.dik = bind.key
+	paint.modifier = bind.modifier
+	paint.all_stacks = bind.all_stacks
+end
+
+local function clear_paint()
+	paint.active = false
+	paint.dik = nil
+	paint.last_bag = nil
+	paint.last_idx = nil
+end
+
+local function fire_and_maybe_paint(bind)
+	fire_bind(bind)
+	if bind.mode == MODE_HOLD then
+		arm_paint(bind)
+	end
+end
+
+local function on_key_pressed(dik, gui)
+	if gui and gui.mode == "loot" and (dik == DIK_keys.DIK_LSHIFT or dik == DIK_keys.DIK_RSHIFT) then
+		return
+	end
+	for i = 1, #BINDS do
+		local bind = BINDS[i]
+		if bind.key ~= dik or not mod_ok(bind.modifier) then
+			-- skip
+		elseif bind.mode == MODE_HOLD then
+			hold_state[dik] = { bind = bind, t0 = time_continual(), fired = false }
+		elseif bind.mode == MODE_DTAP then
+			local now = time_continual()
+			local prev = dtap_last[bind.id]
+			dtap_last[bind.id] = now
+			if prev and (now - prev) <= dtap_window_ms() then
+				dtap_last[bind.id] = nil
+				fire_and_maybe_paint(bind)
+			end
+		else
+			fire_and_maybe_paint(bind)
+		end
+	end
+end
+
+local function on_key_released(dik)
+	hold_state[dik] = nil
+	if paint.active and paint.dik == dik then
+		clear_paint()
+	end
+end
+
+local function hold_tick(gui)
+	if not inv_mode_ok(gui) then
+		return
+	end
+	local now = time_continual()
+	local threshold = hold_time_ms()
+	for dik, hs in pairs(hold_state) do
+		if not hs.fired then
+			if key_state(dik) == 0 then
+				hold_state[dik] = nil
+			elseif mod_ok(hs.bind.modifier) and (now - hs.t0) >= threshold then
+				hs.fired = true
+				fire_and_maybe_paint(hs.bind)
+			end
+		elseif key_state(dik) == 0 or not mod_ok(hs.bind.modifier) then
+			hold_state[dik] = nil
+			if paint.active and paint.dik == dik then
+				clear_paint()
+			end
+		end
+	end
+end
+
+local function call_base_hover(self, idx)
+	if original_on_hover then
+		return original_on_hover(self, idx)
+	end
+end
+
+local function paint_on_hover(self, idx)
+	if in_action or not paint.active or not idx then
+		return call_base_hover(self, idx)
+	end
+	if key_state(paint.dik) == 0 or not mod_ok(paint.modifier) then
+		clear_paint()
+		return call_base_hover(self, idx)
+	end
+	local bag = self.ID
+	if not bag_allowed(bag) then
+		return call_base_hover(self, idx)
+	end
+	if paint.last_bag == bag and paint.last_idx == idx then
+		return call_base_hover(self, idx)
+	end
+	local gui = ui_inventory and ui_inventory.GUI
+	if not inv_mode_ok(gui) then
+		return call_base_hover(self, idx)
+	end
+	run_strip(paint.all_stacks, bag, idx, gui)
+	return call_base_hover(self, idx)
+end
+
+local function reapply_on_hover_patch()
+	local cc_class = utils_ui and utils_ui.UICellContainer
+	if not (cc_class and cc_class.On_Hover) then
+		return
+	end
+	if cc_class.On_Hover == hover_wrapper then
+		return
+	end
+	original_on_hover = cc_class.On_Hover
+	hover_wrapper = function(self, idx)
+		return paint_on_hover(self, idx)
+	end
+	cc_class.On_Hover = hover_wrapper
+	log("On_Hover patched")
+end
+
+local original_on_keyboard = ui_inventory and ui_inventory.UIInventory and ui_inventory.UIInventory.OnKeyboard
+if original_on_keyboard then
+	function ui_inventory.UIInventory:OnKeyboard(dik, keyboard_action)
+		local res = original_on_keyboard(self, dik, keyboard_action)
+		if not (DOGMA and DOGMA.sys and DOGMA.sys.ready(MOD_ID, db, on_option_change)) then
+			return res
+		end
+		if not inv_mode_ok(self) then
+			return res
+		end
+		if keyboard_action == ui_events.WINDOW_KEY_PRESSED then
+			on_key_pressed(dik, self)
+		elseif keyboard_action == ui_events.WINDOW_KEY_RELEASED then
+			on_key_released(dik)
+		end
+		return res
+	end
+end
+
+local original_on_update = ui_inventory and ui_inventory.UIInventory and ui_inventory.UIInventory.Update
+if original_on_update then
+	function ui_inventory.UIInventory:Update()
+		original_on_update(self)
+		if DOGMA and DOGMA.sys and DOGMA.sys.ready(MOD_ID, db, on_option_change) then
+			hold_tick(self)
+		end
+	end
+end
+
+function on_game_start()
+	DOGMA = dogma_common.load(MOD_ID)
+	RegisterScriptCallback("on_option_change", on_option_change)
+	RegisterScriptCallback("actor_on_first_update", reapply_on_hover_patch)
+	on_option_change()
+	reapply_on_hover_patch()
+	log("strip keys ready")
+end

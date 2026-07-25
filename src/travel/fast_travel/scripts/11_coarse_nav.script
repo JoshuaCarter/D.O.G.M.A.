@@ -23,9 +23,11 @@ local CN_PROBE_SPAN_FRAC = 0.40      -- or if core AABB diagonal < this * level 
 local CN_PROBE_INSET_FRAC = 0.10     -- inset from level bounds (fraction of width/depth)
 local CN_PROBE_NEAR_CORE_M = 80      -- skip a probe if within this of an existing core
 local CN_PROBE_SNAP_M = 120          -- nav-snap search radius for probe positions
-local CN_MOD_SCRIPT = "zzzz_dogma_travel_fast_travel_11_coarse_nav.script"
+-- Cache under Anomaly appdata (build never touches this):
+--   <Anomaly>/appdata/dogma_navmesh_cache/<level>_<maj.min>.nav
+local CN_APPDATA_CACHE_SUB = "dogma_navmesh_cache\\"
+-- Legacy VFS path (old installs); read-only fallback, never written.
 local CN_CACHE_VFS_DIR = "dft_coarse_nav\\"
-local CN_SCRIPT_SOURCE = debug.getinfo(1, "S") and debug.getinfo(1, "S").source
 
 local cn_path = {
     nav_step_m = 22,
@@ -1099,14 +1101,34 @@ end
 
 -- ============================================================
 -- File I/O
--- Load: engine VFS ($game_config$/dft_coarse_nav/*.cng) — install/MO2 agnostic.
--- Save: io.open to this script's mod folder (debug.getinfo source path only).
+-- Read/write: <Anomaly>/appdata/dogma_navmesh_cache/*.nav
+-- Plain UTF-8 text graph (no compression). Legacy .cng VFS path is read-only fallback.
 -- ============================================================
 
-local function cn_io_path_exists(path)
-    local f = io.open(path, "r")
-    if f then f:close() return true end
-    return false
+local function cn_ensure_dir(path)
+    if not path or path == "" then return false end
+    path = path:gsub("/", "\\")
+    if path:sub(-1) == "\\" then path = path:sub(1, -2) end
+    pcall(function()
+        os.execute('cmd /c mkdir "' .. path .. '" >nul 2>nul')
+    end)
+    return true
+end
+
+-- Resolve at use-time (getFS is not ready at script parse).
+local CN_CACHE_DIR = nil
+local function cn_appdata_cache_dir()
+    if CN_CACHE_DIR then return CN_CACHE_DIR end
+    if not (getFS and getFS().update_path) then return nil end
+    local ok, path = pcall(function()
+        return getFS():update_path("$app_data_root$", CN_APPDATA_CACHE_SUB)
+    end)
+    if not ok or not path or path == "" then return nil end
+    path = path:gsub("/", "\\")
+    if path:sub(-1) ~= "\\" then path = path .. "\\" end
+    cn_ensure_dir(path)
+    CN_CACHE_DIR = path
+    return path
 end
 
 -- major.minor from _G.dft_version — cache identity / rebuild gate.
@@ -1118,22 +1140,53 @@ local function cn_cache_feature_tag()
 end
 
 local function cn_cache_file_name(level_name)
-    return (level_name or "unknown") .. "_" .. cn_cache_feature_tag() .. ".cng"
+    return (level_name or "unknown") .. "_" .. cn_cache_feature_tag() .. ".nav"
+end
+
+local function cn_cache_disk_path(level_name)
+    local dir = cn_appdata_cache_dir()
+    if not dir then return nil end
+    return dir .. cn_cache_file_name(level_name)
 end
 
 local function cn_cache_vfs_path(level_name)
     return CN_CACHE_VFS_DIR .. cn_cache_file_name(level_name)
 end
 
+local function cn_disk_read_text(path)
+    if not path then return nil end
+    local ok, text = pcall(function()
+        local f = io.open(path, "r")
+        if not f then return nil end
+        local s = f:read("*a")
+        f:close()
+        return (s and s ~= "") and s or nil
+    end)
+    if ok then return text end
+    return nil
+end
+
+-- VFS legacy fallback only. Never byte-append into one string (O(n²) → OOM).
 local function cn_vfs_read_text(vfs_path)
     if not getFS then return nil end
     local ok, text = pcall(function()
         local fr = getFS():r_open("$game_config$", vfs_path)
         if not fr then return nil end
-        local s = ""
+        local chunks = {}
+        local buf = {}
+        local n = 0
         while not fr:r_eof() do
-            s = s .. string.char(fr:r_u8())
+            n = n + 1
+            buf[n] = string.char(fr:r_u8())
+            if n >= 4096 then
+                chunks[#chunks + 1] = table.concat(buf, "", 1, n)
+                n = 0
+            end
         end
+        if n > 0 then
+            chunks[#chunks + 1] = table.concat(buf, "", 1, n)
+        end
+        local s = table.concat(chunks)
         return (s ~= "") and s or nil
     end)
     if not ok then
@@ -1143,34 +1196,12 @@ local function cn_vfs_read_text(vfs_path)
     return text
 end
 
-local function cn_mod_cache_dir_from_source(source)
-    if not source then return nil end
-    source = source:gsub("^@", ""):gsub("/", "\\")
-    if not source:match("^%a:[\\/]") and not source:match("^\\\\") then
-        return nil
-    end
-    local tail = "gamedata\\scripts\\" .. CN_MOD_SCRIPT
-    if not source:lower():find(tail:lower(), 1, true) then return nil end
-    return source:sub(1, #source - #tail) .. "gamedata\\configs\\dft_coarse_nav\\"
-end
-
-local function cn_mod_script_path(cache_dir)
-    return cache_dir:gsub("gamedata\\configs\\dft_coarse_nav\\",
-        "gamedata\\scripts\\") .. CN_MOD_SCRIPT
-end
-
-local CN_MOD_CACHE_DIR = (function()
-    local dir = cn_mod_cache_dir_from_source(CN_SCRIPT_SOURCE)
-    if dir and cn_io_path_exists(cn_mod_script_path(dir)) then
-        pcall(function() os.execute('mkdir "' .. dir:gsub("/", "\\") .. '" 2>nul') end)
-        return dir
-    end
-    return nil
-end)()
-
-local function cn_cache_disk_path(level_name)
-    if not CN_MOD_CACHE_DIR then return nil end
-    return CN_MOD_CACHE_DIR .. cn_cache_file_name(level_name)
+local function cn_read_cache_text(level_name)
+    local disk = cn_disk_read_text(cn_cache_disk_path(level_name))
+    if disk then return disk end
+    local stem = (level_name or "unknown") .. "_" .. cn_cache_feature_tag()
+    return cn_vfs_read_text(CN_CACHE_VFS_DIR .. stem .. ".cng")
+        or cn_vfs_read_text(CN_CACHE_VFS_DIR .. stem .. ".nav")
 end
 
 local function cn_lvid_token(lvid)
@@ -1186,7 +1217,7 @@ local function cn_save_graph(g)
     local tostr = tostring
     local path = cn_cache_disk_path(g.level_name)
     if not path then
-        cn_log("save failed: no mod write path (script source=%s)", tostr(CN_SCRIPT_SOURCE))
+        cn_log("save failed: no appdata cache path ($app_data_root$/%s)", CN_APPDATA_CACHE_SUB)
         return false
     end
     local ok, err = pcall(function()
@@ -1221,10 +1252,9 @@ end
 
 local function cn_load_graph(level_name)
     local expect = cn_cache_feature_tag()
-    local vfs_path = cn_cache_vfs_path(level_name)
-    local text = cn_vfs_read_text(vfs_path)
+    local text = cn_read_cache_text(level_name)
     if not text then
-        cn_log("no cache for %s at feature %s (%s)", tostring(level_name), expect, vfs_path)
+        cn_log("no cache for %s at feature %s", tostring(level_name), expect)
         return nil
     end
     local ok, g_or_err = pcall(function()
@@ -1284,8 +1314,8 @@ local function cn_load_graph(level_name)
         return nil
     end
     if not g_or_err then return nil end
-    cn_log("loaded %d nodes, %d edges (feature %s) from $game_config$/%s",
-        #g_or_err.nodes, #g_or_err.edges, expect, vfs_path)
+    cn_log("loaded %d nodes, %d edges (feature %s)",
+        #g_or_err.nodes, #g_or_err.edges, expect)
     return g_or_err
 end
 
@@ -1314,8 +1344,9 @@ local function cn_build_finish(st)
     cn_finalize_graph(g)
     cn_state().graph = g
     local saved = cn_save_graph(g)
-    cn_log("BUILD DONE: %d nodes, %d edges, %d failed pairs%s",
-        #g.nodes, #g.edges, #(st.failed or {}), saved and "" or " (save failed)")
+    local elapsed = (time_global and time_global() or 0) - (st.t0 or 0)
+    cn_log("BUILD DONE: %d nodes, %d edges, %d failed pairs, %dms%s",
+        #g.nodes, #g.edges, #(st.failed or {}), elapsed, saved and "" or " (save failed)")
     cn_sync_display()
     cn_msg(string.format("Coarse nav ready: %d nodes, %d edges", #g.nodes, #g.edges), "success")
     st.active = false
@@ -1330,8 +1361,6 @@ local function cn_build_step()
         return
     end
     local job = st.queue[st.idx]
-    cn_log("build %d/%d: %s (%s -> %s)", st.idx, #st.queue, job.label, job.from.key, job.to.key)
-    local t0 = time_global and time_global() or 0
     local ok_step, err = pcall(function()
         local chain, ok = cn_build_mesh_path(job.from.pos, job.to.pos)
         if chain and #chain >= 2 then
@@ -1342,19 +1371,14 @@ local function cn_build_step()
             cn_build_direct_dests(st.graph)
         else
             st.failed[#st.failed + 1] = job
-            cn_log("build pair FAILED: %s -> %s", job.from.key, job.to.key)
         end
         cn_state().graph = st.graph
-        local elapsed = (time_global and time_global() or 0) - t0
-        cn_log("build %d/%d done: %d nodes, %d edges (%dms)",
-            st.idx, #st.queue, #st.graph.nodes, #st.graph.edges, elapsed)
         if cn_want_display() and cn_is_pda_map_shown() then
             cn_sync_display()
         end
     end)
     if not ok_step then
         st.failed[#st.failed + 1] = job
-        cn_log("build %d/%d ERROR: %s", st.idx, #st.queue, tostring(err))
     end
 end
 
@@ -1399,6 +1423,7 @@ local function cn_start_build()
         anchor_hash = cn_anchor_hash(anchors),
         anchors = anchors,
         failed = {},
+        t0 = time_global and time_global() or 0,
     }
     for i = 1, #anchors do
         local a = anchors[i]
@@ -1685,7 +1710,8 @@ local function cn_try_load()
     return true
 end
 
--- Load gate: try cache, or sync rebuild. force_rebuild skips try_load success.
+-- Load gate: use cache if valid; otherwise sync-build (and save .nav to appdata).
+-- force_rebuild (MCM rebuild-on-load): ignore cache and rebuild every load.
 local function cn_ensure_ready(force_rebuild)
     if _G.dft_build_dynamic_map then
         pcall(_G.dft_build_dynamic_map)
@@ -1695,15 +1721,16 @@ local function cn_ensure_ready(force_rebuild)
         if cn_graph_ready() then
             return true
         end
+        cn_log("ensure_ready: no usable cache — sync build")
     else
-        cn_state().graph = nil
+        cn_log("ensure_ready: force rebuild (rebuild_on_load)")
     end
+    cn_state().graph = nil
     -- Rebuild invalidates any prior session path polyline.
     if dft then
         dft.path_build_cache = nil
         dft.menu_path_cache = nil
     end
-    cn_log("ensure_ready: sync build (force=%s)", tostring(force_rebuild and true or false))
     local ok = cn_build_sync()
     if not ok then
         cn_log("ensure_ready: sync build failed — travel will fail closed until rebuild")

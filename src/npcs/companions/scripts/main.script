@@ -65,25 +65,34 @@ local function member_online(id)
 	return client and client:alive() and true or false
 end
 
+local function remove_members(squad, ids)
+	for i = 1, #ids do
+		if squad.remove_npc then
+			squad:remove_npc(ids[i], true)
+		end
+	end
+end
+
 -- Move online leftovers into a new squad; scrub any auto-spawned section roster.
+-- Returns false if rehome failed (caller should fall back to remove).
 local function rehome_online(squad, keep_id, online_ids)
 	if #online_ids == 0 then
-		return
+		return true
 	end
 	local section = squad:section_name()
 	if not section then
-		return
+		return false
 	end
 	local speaker = level.object_by_id(keep_id) or (db.storage[keep_id] and db.storage[keep_id].object)
 	if not speaker then
-		return
+		return false
 	end
 	local pos = speaker:position()
 	local lvid = speaker:level_vertex_id()
 	local gvid = speaker:game_vertex_id()
 	local new_squad = alife_create(section, pos, lvid, gvid)
 	if not new_squad then
-		return
+		return false
 	end
 
 	local keep = {}
@@ -98,11 +107,7 @@ local function rehome_online(squad, keep_id, online_ids)
 			spawned[#spawned + 1] = k.id
 		end
 	end
-	for i = 1, #spawned do
-		if new_squad.remove_npc then
-			new_squad:remove_npc(spawned[i], true)
-		end
-	end
+	remove_members(new_squad, spawned)
 
 	for i = 1, #online_ids do
 		local id = online_ids[i]
@@ -125,6 +130,7 @@ local function rehome_online(squad, keep_id, online_ids)
 	if smart and SIMBOARD and SIMBOARD.assign_squad_to_smart then
 		SIMBOARD:assign_squad_to_smart(new_squad, smart.id)
 	end
+	return true
 end
 
 -- Offline mates: remove (prevent pop-in). Online mates: rehome, don't delete.
@@ -145,12 +151,11 @@ local function strip_to_speaker(npc)
 			end
 		end
 	end
-	for i = 1, #offline do
-		if squad.remove_npc then
-			squad:remove_npc(offline[i], true)
-		end
+	remove_members(squad, offline)
+	if not rehome_online(squad, keep_id, online) then
+		-- Solo guarantee: better to despawn online mates than let them join.
+		remove_members(squad, online)
 	end
-	rehome_online(squad, keep_id, online)
 end
 
 local function become_solo_hire_or_guide(actor, npc, orig)

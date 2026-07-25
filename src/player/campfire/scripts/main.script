@@ -1,11 +1,12 @@
 --[[
-	Campfire limb heal (Body Health System).
+	Campfire heal (Body Health System + main HP).
 
-	Near a lit campfire: each tick fills empty limb HP as temp (green), then
-	converts temp to permanent (blue) once the bar is full.
-	Default tick is 7.5s (4x the common Campfire mod's 30s).
+	Near a lit campfire, every tick picks one random damaged target
+	(a limb below the heal cap, or main health) and heals it.
+	Limbs: temp (green) first, then convert to permanent (blue).
+	Nothing heals above 80%.
 
-	Disable the separate "Campfire" / limb_healing_campfire mod to avoid double heals.
+	Disable other campfire heal mods to avoid stacking.
 ]]
 
 local CONF = _G.dogma_player_campfire_conf
@@ -13,7 +14,9 @@ local MOD_ID = CONF.MOD_ID
 local DOGMA
 
 local LIMBS = { "head", "torso", "rightarm", "leftarm", "rightleg", "leftleg" }
-local RANGE_SQR = 10 * 10 -- 10m; stock Campfire compared sqr to 10 (≈3m) by mistake
+local RANGE_SQR = 10 * 10
+local HEAL_CAP = 0.8
+local MAIN_HEAL = 0.01 -- 1% main HP when that target is picked
 
 local next_tick = 0
 
@@ -44,48 +47,92 @@ local function near_lit_campfire()
 	return false
 end
 
-local function save_limbs(bhs)
-	local actor = db.actor
-	for i = 1, #LIMBS do
-		local k = LIMBS[i]
-		utils_obj.save_var(actor, "health." .. k, bhs.health[k])
-		utils_obj.save_var(actor, "timedhp." .. k, bhs.timedhp[k])
-	end
+local function limb_cap(max)
+	return math.floor(max * HEAL_CAP)
 end
 
--- Temp (timedhp) fills empty slots first; once full, peel timedhp off so blue stays.
+local function save_limb(bhs, key)
+	utils_obj.save_var(db.actor, "health." .. key, bhs.health[key])
+	utils_obj.save_var(db.actor, "timedhp." .. key, bhs.timedhp[key])
+end
+
+-- True if this limb can still take a campfire heal tick under the 80% cap.
+-- Note: hp/temp may be 0 (falsy) — only reject nil.
+local function limb_needs_heal(bhs, key)
+	local hp = bhs.health[key]
+	local max = bhs.maxhp[key]
+	local temp = bhs.timedhp[key]
+	if hp == nil or max == nil or temp == nil or max <= 0 then
+		return false
+	end
+	local cap = limb_cap(max)
+	if hp < cap then
+		return true
+	end
+	-- At/above cap on total bar: still allow temp→permanent if blue is below cap.
+	return temp > 0 and (hp - temp) < cap
+end
+
+-- Temp fills first up to cap; then peel timedhp so blue rises (still capped).
 local function heal_limb(bhs, key)
 	local hp = bhs.health[key]
 	local max = bhs.maxhp[key]
 	local temp = bhs.timedhp[key]
-	if not (hp and max and temp) then
+	if hp == nil or max == nil or temp == nil or max <= 0 then
 		return false
 	end
-	if hp < max then
+	local cap = limb_cap(max)
+	if hp < cap then
 		bhs.health[key] = hp + 1
 		bhs.timedhp[key] = temp + 1
 		return true
 	end
-	if temp > 0 then
+	if temp > 0 and (hp - temp) < cap then
 		bhs.timedhp[key] = temp - 1
 		return true
 	end
 	return false
 end
 
-local function tick_heal()
-	local bhs = rawget(_G, "zzz_player_injuries")
-	if not (bhs and bhs.health and bhs.timedhp and bhs.maxhp) then
-		return
+local function heal_main()
+	local actor = db.actor
+	if not actor or actor.health >= HEAL_CAP then
+		return false
 	end
-	local changed = false
-	for i = 1, #LIMBS do
-		if heal_limb(bhs, LIMBS[i]) then
-			changed = true
+	local amt = math.min(MAIN_HEAL, HEAL_CAP - actor.health)
+	if amt <= 0 then
+		return false
+	end
+	actor:change_health(amt)
+	return true
+end
+
+local function tick_heal()
+	local targets = {}
+
+	local bhs = rawget(_G, "zzz_player_injuries")
+	if bhs and bhs.health and bhs.timedhp and bhs.maxhp then
+		for i = 1, #LIMBS do
+			local key = LIMBS[i]
+			if limb_needs_heal(bhs, key) then
+				targets[#targets + 1] = { kind = "limb", key = key }
+			end
 		end
 	end
-	if changed then
-		save_limbs(bhs)
+	if db.actor and db.actor.health < HEAL_CAP then
+		targets[#targets + 1] = { kind = "main" }
+	end
+	if #targets == 0 then
+		return
+	end
+
+	local pick = targets[math.random(#targets)]
+	if pick.kind == "main" then
+		heal_main()
+		return
+	end
+	if heal_limb(bhs, pick.key) then
+		save_limb(bhs, pick.key)
 	end
 end
 

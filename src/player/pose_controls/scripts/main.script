@@ -151,23 +151,14 @@ local function sync_mirrored_controls()
 end
 
 local function on_option_change()
-	CONFIG.loaded.enabled = DOGMA.mcm.bool(CONFIG.MOD_ID, "enabled")
+	CONFIG.loaded.enabled = true
 	CONFIG.loaded.walk_key = DOGMA.mcm.key(CONFIG.MOD_ID, "walk_key")
 	CONFIG.loaded.debug_log = DOGMA.dbg.logging()
 	CONFIG.loaded.debug_overlay = DOGMA.dbg.overlay_enabled()
 	DOGMA.dbg.set_enabled(CONFIG.MOD_ID, DOGMA.dbg.overlay_enabled())
 	-- Always refresh mirrored CONFIG.loaded from Controls (MCM curr already wrote
-	-- Accept changes into the engine). Only force toggle-cmd sync when on.
-	if CONFIG.loaded.enabled then
-		sync_mirrored_controls()
-	else
-		for _, kb in pairs(ENGINE_BINDS) do
-			CONFIG.loaded[kb.mcm] = engine_bind_dik(kb)
-		end
-		local crouch_toggle = get_console_cmd(1, "g_crouch_toggle") or false
-		CONFIG.loaded.toggle_mode = crouch_toggle and true or false
-		cached_crouch_toggle = CONFIG.loaded.toggle_mode
-	end
+	-- Accept changes into the engine).
+	sync_mirrored_controls()
 end
 
 -- Keys need a free HUD. Pending pose steps may finish during loot UI.

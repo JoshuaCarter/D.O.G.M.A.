@@ -634,6 +634,15 @@ local function actor_on_update()
         return
     end
 
+    -- Discover nearby travel points while walking (must run before the is_traveling early-out).
+    if not tft.is_traveling and db.actor and tft_poll_discoveries then
+        local tg = time_global()
+        if tg > (tft._next_visit_poll or 0) then
+            tft._next_visit_poll = tg + 1000
+            tft_poll_discoveries()
+        end
+    end
+
     -- Safety stat wipe runs EVERY tick (not throttled) so progressive
     -- damage scripts like grok_progressive_rad_damages can't accumulate.
     if db.actor then
@@ -696,15 +705,6 @@ local function actor_on_update()
     -- Stepped journey owns progression. Emission/ambush checked after each sim step.
     if tft.stepped_active then
         return
-    end
-
-    -- Discover nearby travel points while walking.
-    if not tft.is_traveling and db.actor and tft_poll_discoveries then
-        local tg = time_global()
-        if tg > (tft._next_visit_poll or 0) then
-            tft._next_visit_poll = tg + 1500
-            tft_poll_discoveries()
-        end
     end
 
     if tft.ambush_pending then return end

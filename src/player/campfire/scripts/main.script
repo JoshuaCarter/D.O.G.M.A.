@@ -21,10 +21,6 @@ local MAIN_HEAL = 0.01 -- 1% main HP when that target is picked
 
 local next_tick = 0
 
-local function enabled()
-	return DOGMA and DOGMA.mcm.bool(CONFIG.MOD_ID, "enabled")
-end
-
 local function interval_ms()
 	local sec = DOGMA and DOGMA.mcm.number(CONFIG.MOD_ID, "interval", CONFIG.DEFAULTS.interval) or CONFIG.DEFAULTS.interval
 	if sec < 1 then
@@ -182,7 +178,7 @@ local function tick_heal()
 end
 
 local function actor_on_update()
-	if not enabled() or not db.actor then
+	if not db.actor then
 		return
 	end
 	local now = time_global()

@@ -838,7 +838,7 @@ local function resolve_travel_target(id, ln, click_pos)
 end
 
 local DISCOVER_BASE_M = 50
-local DISCOVER_CAMPFIRE_M = 10
+local DISCOVER_CAMPFIRE_M = 30
 local DISCOVER_TRANSITION_M = 30
 local function discovery_kind_and_radius(id, se)
     if is_pda_transition(id, se) then
@@ -891,6 +891,108 @@ local function tip_for_discovery(id, se, kind)
     return nil
 end
 
+local function faction_travel_smart_names()
+    local names = {}
+    if not db.actor then return names end
+    local ok, faction = pcall(function()
+        return character_community(db.actor):sub(7)
+    end)
+    if not (ok and faction and faction ~= "") then return names end
+    local pini = ini_file("plugins\\faction_quick_travel.ltx")
+    if not pini then return names end
+    if utils_data and utils_data.collect_section then
+        local t = utils_data.collect_section(pini, faction, true)
+        if t and next(t) then return t end
+    end
+    if not pini.section_exist or not pini:section_exist(faction) then return names end
+    local ok_n, n = pcall(function() return pini:line_count(faction) end)
+    if not (ok_n and n) then return names end
+    for i = 0, n - 1 do
+        local ok_l, result, key = pcall(function() return pini:r_line(faction, i, "", "") end)
+        if ok_l and result and key and key ~= "" then
+            names[key] = true
+        end
+    end
+    return names
+end
+
+local function ensure_campfire_map_spot(id)
+    if not (id and level and level.map_has_object_spot) then return end
+    pcall(function()
+        if level.map_has_object_spot(id, "campfire_lit") ~= 0 then return end
+        if level.map_has_object_spot(id, "campfire_unlit") ~= 0 then return end
+        level.map_add_object_spot(id, "campfire_unlit", "")
+    end)
+end
+
+local function ensure_base_map_spot(id, se)
+    if not (id and se and level and level.map_has_object_spot) then return end
+    pcall(function()
+        if level.map_has_object_spot(id, "fast_travel") ~= 0 then return end
+        local name = game.translate_string(se:name()) or se:name() or ""
+        level.map_add_object_spot(id, "fast_travel", name)
+    end)
+end
+
+-- Always show base / campfire icons. Visit unlock only gates the travel menu ("Not visited yet").
+-- Replaces FFT's update_travel_markers which our game_fast_travel stub otherwise kills.
+local function ensure_destination_map_spots()
+    local sim = alife()
+    if not (sim and level and db.actor) then return end
+
+    local tsmarts = faction_travel_smart_names()
+    local filter = tsmarts and next(tsmarts) ~= nil
+    local base_ids = {}
+    local campfire_ids = {}
+
+    local function visit(obj)
+        if not obj then return end
+        local ok_cls, cls = pcall(function() return obj:clsid() end)
+        if not ok_cls then return end
+        local id = obj.id
+        if cls == clsid.smart_terrain then
+            local name = nil
+            pcall(function() name = obj:name() end)
+            if filter and not (name and tsmarts[name]) then return end
+            base_ids[id] = true
+            ensure_base_map_spot(id, obj)
+        elseif clsid.zone_campfire and cls == clsid.zone_campfire then
+            campfire_ids[id] = true
+            ensure_campfire_map_spot(id)
+        end
+    end
+
+    if sim.iterate_objects then
+        sim:iterate_objects(visit)
+    else
+        for id = 1, 65534 do visit(sim:object(id)) end
+    end
+
+    if bind_campfire and bind_campfire.campfires_all then
+        for id, _ in pairs(bind_campfire.campfires_all) do
+            campfire_ids[id] = true
+            ensure_campfire_map_spot(id)
+        end
+    end
+
+    tft.travel_base_ids = base_ids
+    tft.travel_campfire_ids = campfire_ids
+    local nb, nc = 0, 0
+    for _ in pairs(base_ids) do nb = nb + 1 end
+    for _ in pairs(campfire_ids) do nc = nc + 1 end
+    tft_log("Map spots ensured: bases=%d campfires=%d (faction_filter=%s)", nb, nc, tostring(filter))
+end
+
+-- Lightweight refresh for campfires that come online after the initial alife scan.
+local function refresh_online_campfire_map_spots()
+    if not (bind_campfire and bind_campfire.campfires_all) then return end
+    tft.travel_campfire_ids = tft.travel_campfire_ids or {}
+    for id, _ in pairs(bind_campfire.campfires_all) do
+        tft.travel_campfire_ids[id] = true
+        ensure_campfire_map_spot(id)
+    end
+end
+
 -- silent=true: unlock only (arrival / guide), no tip/sound.
 local function discover_destination(id, silent)
     if not id or is_destination_unlocked(id) then return false end
@@ -902,16 +1004,14 @@ local function discover_destination(id, silent)
     tft.unlocked = tft.unlocked or {}
     tft.unlocked[id] = true
 
+    -- Keep icons visible regardless of unlock; ensure spots exist as a safety net.
     if kind == "base" then
-        local name = game.translate_string(se:name()) or se:name() or ""
-        pcall(function()
-            if level.map_has_object_spot(id, "fast_travel") == 0 then
-                level.map_add_object_spot(id, "fast_travel", name)
-            end
-        end)
+        ensure_base_map_spot(id, se)
+    elseif kind == "campfire" then
+        ensure_campfire_map_spot(id)
     end
 
-    if silent then
+    if silent or kind == "campfire" then
         tft_log("Unlocked travel point id=%s kind=%s (silent)", tostring(id), tostring(kind))
         return true
     end
@@ -923,8 +1023,23 @@ local function discover_destination(id, silent)
 end
 
 local function poll_discoveries()
+    -- Never discover mid-journey (stepped teleports would otherwise trip nearby points).
+    if tft.is_traveling or tft.stepped_active then return end
     if not (db.actor and db.actor:alive()) then return end
     local apos = db.actor:position()
+    local actor_lid = actor_level_id()
+
+    -- First poll (or after a level load wiped cache): place base/campfire icons.
+    if not tft.travel_base_ids then
+        ensure_destination_map_spots()
+    end
+
+    -- Campfires register as you explore; keep their icons visible without a full alife rescan.
+    local tg = time_global()
+    if tg > (tft._next_campfire_spot_refresh or 0) then
+        tft._next_campfire_spot_refresh = tg + 5000
+        refresh_online_campfire_map_spots()
+    end
 
     -- Collect candidates within their own radius, nearest-first.
     local hits = {}
@@ -933,6 +1048,11 @@ local function poll_discoveries()
         if not id or is_destination_unlocked(id) then return end
         local se = alife_object(id)
         if not se then return end
+        -- Local coords collide across levels; only discover what is on the actor's level.
+        if actor_lid then
+            local oid = object_level_id(se)
+            if oid and oid ~= actor_lid then return end
+        end
         local kind, radius = discovery_kind_and_radius(id, se)
         if not kind then return end
         local pos = object_position(se) or se.position
@@ -944,13 +1064,23 @@ local function poll_discoveries()
         end
     end
 
-    if db.storage then
-        for id, _ in pairs(db.storage) do
+    if tft.travel_base_ids then
+        for id, _ in pairs(tft.travel_base_ids) do
+            consider(id)
+        end
+    end
+    if tft.travel_campfire_ids then
+        for id, _ in pairs(tft.travel_campfire_ids) do
             consider(id)
         end
     end
     if bind_campfire and bind_campfire.campfires_all then
         for id, _ in pairs(bind_campfire.campfires_all) do
+            consider(id)
+        end
+    end
+    if db.storage then
+        for id, _ in pairs(db.storage) do
             consider(id)
         end
     end
@@ -993,6 +1123,7 @@ do
     _G.tft_is_destination_unlocked = is_destination_unlocked
     _G.tft_discover_destination = discover_destination
     _G.tft_poll_discoveries = poll_discoveries
+    _G.tft_ensure_destination_map_spots = ensure_destination_map_spots
     _G.tft_strip_backpack_travel_menu_items = strip_backpack_travel_menu_items
     _G.tft_pos_drift = pos_drift
     _G.tft_graph_vertex_target = graph_vertex_target

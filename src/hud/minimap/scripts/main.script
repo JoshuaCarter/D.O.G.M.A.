@@ -2,15 +2,14 @@
 	Minimap
 
 	Keybind show/hide for the HUD minimap (video/hud/show_minimap + UIZoneMap).
-	Single / Double: toggle visibility. Hold: visible only while the key is down.
+	Toggle: flip visibility. Hold: visible only while the key is down.
 	Based on RavenAscendant Mini Map Toggle, with hold-to-show.
 ]]
 
 local CONFIG = _G.dogma_hud_minimap_conf
 local DOGMA
 
-local MODE_SINGLE = 0
-local MODE_DOUBLE = 1
+local MODE_TOGGLE = 0
 local MODE_HOLD = 2
 
 local holding = false
@@ -72,20 +71,39 @@ local function toggle_minimap(source)
 	log(string.format("%s -> %s", source or "toggle", tostring(next_show)))
 end
 
+-- Hold owns visibility: show only while the bind is actually down (press may be missed on load).
+local function sync_hold_visibility(source)
+	if not (CONFIG.loaded.enabled and CONFIG.loaded.mode == MODE_HOLD) then
+		return
+	end
+	local key = CONFIG.loaded.keybind
+	local down = key and key > 0 and key_state and (key_state(key) or 0) ~= 0
+	if down and mod_ok() then
+		holding = true
+		set_minimap(true)
+		log(string.format("hold: show (%s)", source or "sync"))
+	else
+		holding = false
+		set_minimap(false)
+		log(string.format("hold: hide (%s)", source or "sync"))
+	end
+end
+
 local function on_option_change()
 	if not DOGMA then
 		return
 	end
 	local prev_mode = CONFIG.loaded.mode
-	CONFIG.loaded.enabled = DOGMA.mcm.bool(CONFIG.MOD_ID, "enabled")
+	CONFIG.loaded.enabled = true
 	CONFIG.loaded.keybind = DOGMA.mcm.key(CONFIG.MOD_ID, "keybind")
 	CONFIG.loaded.modifier = DOGMA.mcm.number(CONFIG.MOD_ID, "modifier")
 	CONFIG.loaded.mode = DOGMA.mcm.number(CONFIG.MOD_ID, "mode")
+	if CONFIG.loaded.mode ~= MODE_HOLD then
+		CONFIG.loaded.mode = MODE_TOGGLE
+	end
 
-	-- Entering hold mode (or enabling into it): start hidden so the key reveals.
 	if CONFIG.loaded.enabled and CONFIG.loaded.mode == MODE_HOLD then
-		holding = false
-		set_minimap(false)
+		sync_hold_visibility("opts")
 	elseif holding then
 		holding = false
 	end
@@ -125,14 +143,7 @@ local function on_key_press(key)
 		return
 	end
 
-	if km == MODE_DOUBLE then
-		if ui_mcm and ui_mcm.double_tap and ui_mcm.double_tap(CONFIG.MOD_ID, key) then
-			toggle_minimap("double")
-		end
-		return
-	end
-
-	toggle_minimap("single")
+	toggle_minimap("toggle")
 end
 
 local function on_key_release(key)
@@ -156,10 +167,7 @@ local function actor_on_first_update()
 	if not DOGMA or not DOGMA.sys.ready(CONFIG.MOD_ID, db, on_option_change) then
 		return
 	end
-	-- Hold mode owns visibility: start hidden until the key is held.
-	if CONFIG.loaded.enabled and CONFIG.loaded.mode == MODE_HOLD and not holding then
-		set_minimap(false)
-	end
+	sync_hold_visibility("start")
 end
 
 function on_game_start()

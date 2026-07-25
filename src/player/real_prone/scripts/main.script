@@ -64,8 +64,7 @@ local function log(msg)
 end
 
 local function on_option_change()
-	local was = CONFIG.loaded.enabled
-	CONFIG.loaded.enabled = DOGMA.mcm.bool(CONFIG.MOD_ID, "enabled")
+	CONFIG.loaded.enabled = true
 	CONFIG.loaded.debug_log = DOGMA.dbg.logging()
 	CONFIG.loaded.debug_overlay = DOGMA.dbg.overlay_enabled()
 	CONFIG.loaded.hide_prone_bones = DOGMA.mcm.bool(CONFIG.MOD_ID, "hide_prone_bones")
@@ -75,20 +74,11 @@ local function on_option_change()
 
 	local actor = DOGMA.sys.ready(CONFIG.MOD_ID, db)
 	if actor and actor:alive() then
-		if not CONFIG.loaded.enabled then
-			set_prone_bones_visible(actor, true)
-			if is_prone and blend_move_anims then
-				console_exec("blend_move_anims on")
-			end
-			is_prone = false
-		elseif CONFIG.loaded.hide_prone_bones then
+		if CONFIG.loaded.hide_prone_bones then
 			set_prone_bones_visible(actor, not is_prone)
 		else
 			set_prone_bones_visible(actor, true)
 		end
-	end
-	if was and not CONFIG.loaded.enabled then
-		log("disabled")
 	end
 end
 

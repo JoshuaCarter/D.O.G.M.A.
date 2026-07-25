@@ -8,6 +8,7 @@ local tft = _G.tft
 local CN_SCHEMA = 3
 -- Cache filename uses mod major.minor from _G.tft_version (see 01_core).
 -- Patch bumps (0.1.0 → 0.1.5) keep the same file; feature bumps (0.1 → 0.2) force rebuild.
+-- Tag uses underscores (0_3) so filenames stay <level>_<maj>_<min>.nav — no dotted middle segment.
 local CN_SUBSAMPLE_M = 15
 local CN_BUILD_MAX_NODES = 2500
 local CN_SPLICE_MAX_M = 72
@@ -24,7 +25,7 @@ local CN_PROBE_INSET_FRAC = 0.10     -- inset from level bounds (fraction of wid
 local CN_PROBE_NEAR_CORE_M = 80      -- skip a probe if within this of an existing core
 local CN_PROBE_SNAP_M = 120          -- nav-snap search radius for probe positions
 -- Cache under Anomaly appdata (build never touches this):
---   <Anomaly>/appdata/dogma_navmesh_cache/<level>_<maj.min>.nav
+--   <Anomaly>/appdata/dogma_navmesh_cache/<level>_<maj>_<min>.nav
 local CN_APPDATA_CACHE_SUB = "dogma_navmesh_cache\\"
 -- Legacy VFS path (old installs); read-only fallback, never written.
 local CN_CACHE_VFS_DIR = "tft_coarse_nav\\"
@@ -1137,16 +1138,24 @@ local function cn_appdata_cache_dir()
 	return path
 end
 
--- major.minor from _G.tft_version — cache identity / rebuild gate.
+-- major_minor from _G.tft_version — cache identity / rebuild gate.
 local function cn_cache_feature_tag()
 	local ver = tostring(_G.tft_version or "0.0.0")
 	local maj, min = ver:match("^(%d+)%.(%d+)")
-	if not maj then return "0.0" end
-	return maj .. "." .. min
+	if not maj then return "0_0" end
+	return maj .. "_" .. min
 end
 
 local function cn_cache_file_name(level_name)
 	return (level_name or "unknown") .. "_" .. cn_cache_feature_tag() .. ".nav"
+end
+
+-- Also accept the older dotted tag (…_0.3.nav) as a read fallback.
+local function cn_cache_legacy_file_name(level_name)
+	local ver = tostring(_G.tft_version or "0.0.0")
+	local maj, min = ver:match("^(%d+)%.(%d+)")
+	if not maj then return nil end
+	return (level_name or "unknown") .. "_" .. maj .. "." .. min .. ".nav"
 end
 
 local function cn_cache_disk_path(level_name)
@@ -1205,10 +1214,27 @@ end
 local function cn_read_cache_text(level_name)
 	local disk = cn_disk_read_text(cn_cache_disk_path(level_name))
 	if disk then return disk end
+	-- Older builds used a dotted maj.min tag in the filename (…_0.3.nav).
+	local legacy = cn_cache_legacy_file_name(level_name)
+	if legacy then
+		local dir = cn_appdata_cache_dir()
+		if dir then
+			disk = cn_disk_read_text(dir .. legacy)
+			if disk then return disk end
+		end
+	end
 	-- Legacy VFS: old installs used .cng under $game_config$/tft_coarse_nav/
 	local stem = (level_name or "unknown") .. "_" .. cn_cache_feature_tag()
+	local dotted = cn_cache_legacy_file_name(level_name)
 	return cn_vfs_read_text(CN_CACHE_VFS_DIR .. stem .. ".cng")
 		or cn_vfs_read_text(CN_CACHE_VFS_DIR .. stem .. ".nav")
+		or (dotted and cn_vfs_read_text(CN_CACHE_VFS_DIR .. dotted))
+end
+
+local function cn_feature_tags_match(file_tag, expect_tag)
+	if file_tag == expect_tag then return true end
+	if not file_tag or not expect_tag then return false end
+	return (file_tag:gsub("%.", "_") == expect_tag:gsub("%.", "_"))
 end
 
 local function cn_lvid_token(lvid)
@@ -1306,7 +1332,7 @@ local function cn_load_graph(level_name)
                 g.anchor_hash = line:match("^anchor_hash=(.+)$")
             end
         end
-        if file_feature and file_feature ~= expect then
+        if file_feature and not cn_feature_tags_match(file_feature, expect) then
             cn_log("cache feature mismatch: file=%s expect=%s — ignoring",
                 tostring(file_feature), expect)
             return nil
@@ -1584,6 +1610,7 @@ local function cn_clear_display()
     st.display_node_n = 0
     st.display_ep_n = 0
     st.display_edge_n = 0
+    st.display_active = false
 end
 
 -- Copied from 05_path freeze_buried_dot — local to coarse-nav, not shared.
@@ -1690,9 +1717,7 @@ cn_refresh_display = function()
         cn_spawn_dot(st.dot_ids, i, vector():set(n.x, n.y + 0.1, n.z), SPOT_NODE)
     end
     st.display_node_n = #g.nodes
-
-    local edge_n, spacing = cn_spawn_edge_samples(st, g)
-    st.display_edge_n = edge_n
+    st.display_edge_n = 0
 
     local anchors = (st.build and st.build.anchors) or cn_collect_anchors()
     for i = 1, #anchors do
@@ -1700,41 +1725,55 @@ cn_refresh_display = function()
         cn_spawn_dot(st.endpoint_dot_ids, i, vector():set(a.pos.x, a.pos.y + 0.15, a.pos.z), SPOT_ENDPOINT)
     end
     st.display_ep_n = #anchors
-    cn_log("display ON: %d nodes, %d edge midpoints (~%.0fm), %d endpoints",
-        #g.nodes, edge_n, spacing, #anchors)
+    cn_log("display ON: %d nodes, %d endpoints", #g.nodes, #anchors)
 end
 
 cn_sync_display = function()
-    if cn_want_display() and cn_state().graph and cn_is_pda_map_shown() then
+    local st = cn_state()
+    if cn_want_display() and st.graph and cn_is_pda_map_shown() then
         cn_refresh_display()
+        st.display_active = true
     else
         cn_clear_display()
+        st.display_active = false
     end
 end
 
 -- Polled from actor_on_update (same pattern as ambush-range circle): hide dots when PDA closes.
 cn_sync_display_pda = function()
-    if not cn_want_display() or not cn_state().graph then
-        if next(cn_state().dot_ids or {}) or next(cn_state().endpoint_dot_ids or {})
-            or next(cn_state().edge_dot_ids or {}) then
+    local st = cn_state()
+    if not cn_want_display() or not st.graph then
+        if st.display_active
+            or next(st.dot_ids or {}) or next(st.endpoint_dot_ids or {})
+            or next(st.edge_dot_ids or {}) then
             cn_clear_display()
+            st.display_active = false
         end
         return
     end
     if cn_is_pda_map_shown() then
-        local st = cn_state()
+        -- display_node_n stays 0 after clear/orphan sweep; 0==0 used to skip spawn forever.
+        if not st.display_active then
+            cn_refresh_display()
+            st.display_active = true
+            return
+        end
         local node_n, edge_n, ep_n = 0, 0, 0
         for _ in pairs(st.dot_ids or {}) do node_n = node_n + 1 end
         for _ in pairs(st.edge_dot_ids or {}) do edge_n = edge_n + 1 end
         for _ in pairs(st.endpoint_dot_ids or {}) do ep_n = ep_n + 1 end
-        if node_n ~= (st.display_node_n or 0)
+        if node_n < 1
+            or node_n ~= (st.display_node_n or 0)
             or edge_n ~= (st.display_edge_n or 0)
             or ep_n ~= (st.display_ep_n or 0) then
             cn_refresh_display()
+            st.display_active = true
         end
-    elseif next(cn_state().dot_ids or {}) or next(cn_state().endpoint_dot_ids or {})
-        or next(cn_state().edge_dot_ids or {}) then
+    elseif st.display_active
+        or next(st.dot_ids or {}) or next(st.endpoint_dot_ids or {})
+        or next(st.edge_dot_ids or {}) then
         cn_clear_display()
+        st.display_active = false
     end
 end
 

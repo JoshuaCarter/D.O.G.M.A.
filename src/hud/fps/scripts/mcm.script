@@ -25,6 +25,17 @@ dogma_mcm.attach(options, "hud", "ui_mcm_menu_dogma_hud", {
 						hint = "dogma_fps_toggle_key",
 					},
 					{
+						id = "key_mode",
+						type = (ui_mcm and ui_mcm.kb_mod_radio) or "radio_h",
+						val = 2,
+						def = CONFIG.DEFAULTS["key_mode"],
+						hint = "dogma_fps_key_mode",
+						content = {
+							{ 0, "toggle" },
+							{ 1, "hold" },
+						},
+					},
+					{
 						id = "display",
 						type = "list",
 						val = 2,

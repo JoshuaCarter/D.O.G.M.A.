@@ -20,6 +20,9 @@
 local CONFIG = _G.dogma_hud_fps_conf
 local DOGMA
 
+local MODE_TOGGLE = 0
+local MODE_HOLD = 1
+
 local UI_WIDTH = 1024
 local UI_HEIGHT = 768
 
@@ -47,6 +50,7 @@ local FONTS = {
 local hud = nil
 local init = false
 local visible = false
+local holding = false
 local sample_buf = nil
 local history_buf = nil
 local next_display_time = 0
@@ -101,11 +105,17 @@ local function mcm_byte(v)
 	return math.floor(math.max(0, math.min(255, tonumber(v) or 0) + 0.5))
 end
 
+-- Hold owns visibility only when a key can reveal it; unbound = honor On by default.
+local function hold_owns_visibility()
+	return CONFIG.loaded.key_mode == MODE_HOLD and CONFIG.loaded.toggle_key
+end
+
 local function on_option_change()
 	CONFIG.loaded.enabled_default = DOGMA.mcm.bool(CONFIG.MOD_ID, "enabled_default")
 	CONFIG.loaded.debug_log = DOGMA.dbg.logging()
 	CONFIG.loaded.long_frame_threshold_ms = DOGMA.mcm.number("dogma/debug", "fps_long_frame_threshold_ms")
 	CONFIG.loaded.toggle_key = DOGMA.mcm.key(CONFIG.MOD_ID, "toggle_key")
+	CONFIG.loaded.key_mode = DOGMA.mcm.number(CONFIG.MOD_ID, "key_mode")
 	CONFIG.loaded.display_mode = DOGMA.mcm.number(CONFIG.MOD_ID, "display")
 	CONFIG.loaded.sample_window = DOGMA.mcm.number(CONFIG.MOD_ID, "sample_window")
 	CONFIG.loaded.max_fps = math.max(60, math.min(500, DOGMA.mcm.number(CONFIG.MOD_ID, "max_fps")))
@@ -141,6 +151,17 @@ local function on_option_change()
 
 	if hud then
 		hud:ApplyConfig(CONFIG.loaded)
+	end
+
+	-- Hold owns visibility only with a bound key. Unbound hold must not force-hide.
+	if hold_owns_visibility() then
+		holding = false
+		visible = false
+	elseif CONFIG.loaded.key_mode == MODE_HOLD then
+		holding = false
+		visible = CONFIG.loaded.enabled_default
+	elseif holding then
+		holding = false
 	end
 
 	update_wait_until_time()
@@ -264,7 +285,12 @@ local function on_actor_on_update()
 
 	if not init then
 		init = true
-		visible = CONFIG.loaded.enabled_default
+		-- Hold+bound key: start hidden so the key reveals. Else honor On by default.
+		if hold_owns_visibility() then
+			visible = false
+		else
+			visible = CONFIG.loaded.enabled_default
+		end
 		return
 	end
 
@@ -285,9 +311,29 @@ local function on_actor_on_update()
 end
 
 local function on_key_press(key)
-	if CONFIG.loaded.toggle_key and key == CONFIG.loaded.toggle_key then
-		visible = not visible
+	if not CONFIG.loaded.toggle_key or key ~= CONFIG.loaded.toggle_key then
+		return
+	end
+	if CONFIG.loaded.key_mode == MODE_HOLD then
+		holding = true
+		visible = true
 		update_wait_until_time()
+		return
+	end
+	visible = not visible
+	update_wait_until_time()
+end
+
+local function on_key_release(key)
+	if not holding then
+		return
+	end
+	if not CONFIG.loaded.toggle_key or key ~= CONFIG.loaded.toggle_key then
+		return
+	end
+	holding = false
+	if CONFIG.loaded.key_mode == MODE_HOLD then
+		visible = false
 	end
 end
 
@@ -303,6 +349,7 @@ function on_game_start()
 
 	init = false
 	visible = false
+	holding = false
 	sample_buf = nil
 	history_buf = nil
 	next_display_time = 0
@@ -312,6 +359,7 @@ function on_game_start()
 	RegisterScriptCallback("actor_on_update", on_actor_on_update)
 	RegisterScriptCallback("actor_on_first_update", on_actor_first_update)
 	RegisterScriptCallback("on_key_press", on_key_press)
+	RegisterScriptCallback("on_key_release", on_key_release)
 	RegisterScriptCallback("on_option_change", on_option_change)
 end
 

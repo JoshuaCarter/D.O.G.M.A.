@@ -109,6 +109,9 @@ local function on_level_changing()
     tft._transition_post_load = true
     tft._transition_arrival_suppress = nil
     tft._transition_arrival_inside_fn = nil
+    -- Force map-spot re-ensure on the next discovery poll after the new level is up.
+    tft.travel_base_ids = nil
+    tft.travel_campfire_ids = nil
 end
 
 do

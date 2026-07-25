@@ -595,14 +595,14 @@ local function on_slash_key_press(dik)
 end
 
 local function on_option_change()
-	CONFIG.loaded.enabled = DOGMA.mcm.bool(CONFIG.MOD_ID, "enabled")
+	CONFIG.loaded.enabled = true
 	CONFIG.loaded.debug_log = DOGMA.dbg.logging()
 	CONFIG.loaded.skin_speed_multiplier = DOGMA.mcm.number(CONFIG.MOD_ID, "skin_speed_multiplier")
 	CONFIG.loaded.auto_crouch = DOGMA.mcm.bool(CONFIG.MOD_ID, "auto_crouch")
 	CONFIG.loaded.look_at_mutant = DOGMA.mcm.bool(CONFIG.MOD_ID, "look_at_mutant")
 	CONFIG.loaded.look_at_offset = DOGMA.mcm.number(CONFIG.MOD_ID, "look_at_offset")
 	CONFIG.loaded.slash_loot = DOGMA.mcm.bool(CONFIG.MOD_ID, "slash_loot")
-	log(string.format("options: enabled=%s slash_loot=%s", tostring(CONFIG.loaded.enabled), tostring(CONFIG.loaded.slash_loot)))
+	log(string.format("options: slash_loot=%s", tostring(CONFIG.loaded.slash_loot)))
 end
 
 function on_game_start()

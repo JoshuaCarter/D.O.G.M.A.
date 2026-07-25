@@ -19,8 +19,8 @@ local DOGMA
 _G.dogma_fov_tgt_free = nil
 _G.dogma_fov_tgt_ads = nil
 
--- zoom_key_mode: 0=single, 1=double, 2=hold (in on down, out on up)
-local MODE_DOUBLE = 1
+-- zoom_key_mode: 0=toggle, 2=hold (in on down, out on up; 1 was double, removed)
+local MODE_TOGGLE = 0
 local MODE_HOLD = 2
 
 -- Mouse button zoom: 0=no, 1=toggle, 2=hold (RMB/MMB)
@@ -172,14 +172,16 @@ local function mode_label()
 end
 
 local function refresh_config()
-	CONFIG.loaded.enabled = DOGMA.mcm.bool(CONFIG.MOD_ID, "free_zoom/enabled")
+	CONFIG.loaded.enabled = true
 	CONFIG.loaded.empty_hands_only = DOGMA.mcm.bool(CONFIG.MOD_ID, "free_zoom/empty_hands_only")
 	CONFIG.loaded.zoom_key = DOGMA.mcm.key(CONFIG.MOD_ID, "free_zoom/zoom_key")
 	CONFIG.loaded.zoom_key_modifier = DOGMA.mcm.number(CONFIG.MOD_ID, "free_zoom/zoom_key_modifier")
-	-- Legacy MCM: Hold was 3 when Long occupied 2.
-	local zoom_key_mode = DOGMA.mcm.number(CONFIG.MOD_ID, "free_zoom/zoom_key_mode")
-	if zoom_key_mode >= 3 then
+	-- Legacy MCM: Hold was 3 when Long occupied 2. Double (1) maps to toggle.
+	local zoom_key_mode = math.floor((DOGMA.mcm.number(CONFIG.MOD_ID, "free_zoom/zoom_key_mode") or 0) + 0.5)
+	if zoom_key_mode >= 2 then
 		zoom_key_mode = MODE_HOLD
+	else
+		zoom_key_mode = MODE_TOGGLE
 	end
 	CONFIG.loaded.zoom_key_mode = zoom_key_mode
 	CONFIG.loaded.rmb_zoom = DOGMA.mcm.number(CONFIG.MOD_ID, "free_zoom/rmb_zoom")
@@ -1192,7 +1194,7 @@ local function actor_on_update()
 	poll_fov_smooth()
 end
 
--- zoom_key_mode: 0=single, 1=double, 2=hold (in on down, out on up).
+-- zoom_key_mode: 0=toggle, 2=hold (in on down, out on up).
 -- modifier 0 = no extra modifier required (not "forbid Shift/Ctrl/Alt").
 -- Otherwise MCM's MOD_NONE fails when the bind itself is a modifier key.
 local function zoom_mod_ok()
@@ -1319,15 +1321,8 @@ local function on_key_press(key)
 		return
 	end
 
-	if km == MODE_DOUBLE then
-		if ui_mcm and ui_mcm.double_tap and ui_mcm.double_tap(CONFIG.MOD_ID .. "_zoom", key) then
-			logf("key: double (mode=%s)", mode_label())
-			set_free_zoom(not free_on, "key_double")
-		end
-		return
-	end
-	logf("key: single (mode=%s)", mode_label())
-	set_free_zoom(not free_on, "key_single")
+	logf("key: toggle (mode=%s)", mode_label())
+	set_free_zoom(not free_on, "key_toggle")
 end
 
 local function on_key_release(key)

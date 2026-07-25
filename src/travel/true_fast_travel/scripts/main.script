@@ -15,7 +15,7 @@ local tft = _G.tft
 -- function, never a local, even though no other DFT script calls it by name.
 local actor_on_before_hit, on_option_change,
     on_loading_screen_dismissed, on_loading_screen_key_prompt, actor_on_first_update, menu_item_is_ours,
-    strip_own_menu_items, add_cannot_travel_item, add_guide_menu_item,
+    strip_own_menu_items, strip_overlapping_spot_noise, mark_menu_primary, add_cannot_travel_item, add_guide_menu_item,
     add_travel_menu_items, on_map_right_click, on_map_spot_menu_add_property_impl,
     on_map_spot_menu_add_property, on_map_spot_menu_property_clicked, on_key_press
 
@@ -34,7 +34,7 @@ local function load_config()
     tft_config.fade_travel = mcm.bool(CONFIG.MOD_ID, "fade_travel")
     tft_config.block_transition_in_combat = mcm.bool(CONFIG.MOD_ID, "block_transition_in_combat")
     tft_config.show_ambush_range = mcm.bool(CONFIG.MOD_ID, "show_ambush_range")
-    tft_config.visited_radius_m = mcm.number(CONFIG.MOD_ID, "visited_radius_m", CONFIG.DEFAULTS.visited_radius_m) or 30
+    tft_config.visited_radius_m = CONFIG.DEFAULTS["visited_radius_m"] or 30
     -- debug keys still under shared Debug page
     if mcm.bool("dogma/debug", "ft_path_preview") then
         tft_config.path_preview = true
@@ -234,6 +234,9 @@ end
 
 actor_on_first_update = function()
     tft_log("actor_on_first_update triggered.")
+    if tft_ensure_destination_map_spots then
+        tft_ensure_destination_map_spots()
+    end
     if tft_poll_discoveries then
         tft_poll_discoveries()
     end
@@ -358,6 +361,7 @@ menu_item_is_ours = function(text)
         tft_str("tft_menu_travel_here"),
         tft_str("tft_menu_sneaky_travel"),
         tft_str("tft_menu_hire_guide"),
+        tft_str("tft_menu_not_visited"),
         tft_str("tft_msg_cross_zone_denied"),
         tft_str("tft_msg_cannot_travel_here"),
         tft_str("tft_msg_too_encumbered"),
@@ -368,24 +372,83 @@ menu_item_is_ours = function(text)
     return false
 end
 
+local function menu_item_text(item)
+    local text = ""
+    pcall(function()
+        local tc = item and item.GetTextItem and item:GetTextItem()
+        if tc then text = tc:GetText() or "" end
+    end)
+    return text
+end
+
 strip_own_menu_items = function(pui)
     pcall(function()
         if not (pui and pui.GetItemsCount and pui.GetItemByIndex and pui.RemoveItem) then return end
         local count = pui:GetItemsCount()
         for i = count - 1, 0, -1 do
             local item = pui:GetItemByIndex(i)
-            if item then
-                local text = ""
-                pcall(function()
-                    local tc = item:GetTextItem()
-                    if tc then text = tc:GetText() or "" end
-                end)
-                if menu_item_is_ours(text) then
-                    pui:RemoveItem(item)
-                end
+            if item and menu_item_is_ours(menu_item_text(item)) then
+                pui:RemoveItem(item)
             end
         end
     end)
+end
+
+-- PDA stacks one section per overlapping spot (base + companion + sleep marker…).
+-- PAW adds Add Pin / Set Waypoint to every section; we must not re-strip our travel
+-- rows on later callbacks, and we scrub the secondary sections' pin/waypoint tails.
+strip_overlapping_spot_noise = function(pui, hint)
+    pcall(function()
+        if not (pui and pui.GetItemsCount and pui.GetItemByIndex and pui.RemoveItem) then return end
+        local kill = {
+            [game.translate_string("ui_mcm_pawsys_pawmenu_pn_add")] = true,
+            [game.translate_string("ui_mcm_pawsys_pawmenu_wp_set")] = true,
+            [game.translate_string("ui_mcm_pawsys_pawmenu_pn_del")] = true,
+            [game.translate_string("ui_mcm_pawsys_pawmenu_wp_del")] = true,
+            [game.translate_string("ui_mcm_pawsys_pawmenu_wp_mov")] = true,
+            [tft_str("tft_msg_cannot_travel_here")] = true,
+        }
+        local hint_text = nil
+        if hint and hint ~= "" then
+            hint_text = game.translate_string(hint)
+            if not hint_text or hint_text == "" or hint_text == hint then
+                hint_text = hint
+            end
+        end
+        -- Remove trailing noise this overlapping spot just appended.
+        while true do
+            local count = pui:GetItemsCount()
+            if count <= 0 then break end
+            local item = pui:GetItemByIndex(count - 1)
+            local text = menu_item_text(item)
+            if kill[text] or menu_item_is_ours(text) then
+                pui:RemoveItem(item)
+            elseif hint_text and text == hint_text then
+                pui:RemoveItem(item)
+                break
+            else
+                break
+            end
+        end
+    end)
+end
+
+mark_menu_primary = function(pui)
+    tft.menu_primary_seq = tft.menu_open_seq or 0
+    -- Drop "Cannot travel" left by an earlier overlapping place-like spot in this menu.
+    if pui then
+        pcall(function()
+            if not (pui.GetItemsCount and pui.GetItemByIndex and pui.RemoveItem) then return end
+            local cannot = tft_str("tft_msg_cannot_travel_here")
+            local count = pui:GetItemsCount()
+            for i = count - 1, 0, -1 do
+                local item = pui:GetItemByIndex(i)
+                if item and menu_item_text(item) == cannot then
+                    pui:RemoveItem(item)
+                end
+            end
+        end)
+    end
 end
 
 add_cannot_travel_item = function(pui, id, reason)
@@ -442,6 +505,8 @@ on_map_right_click = function(property_ui, map_table)
         tft.menu_open_seq = (tft.menu_open_seq or 0) + 1
         tft.menu_resolve_cache = nil
         tft.menu_path_cache = nil
+        tft.menu_primary_seq = nil
+        tft.menu_strip_seq = nil
     end
     tft_report_map_click(map_table, nil)
 end
@@ -458,13 +523,30 @@ on_map_spot_menu_add_property_impl = function(pui, id, ln, hint)
         tft.menu_open_seq = (tft.menu_open_seq or 0) + 1
         tft.menu_resolve_cache = nil
         tft.menu_path_cache = nil
+        tft.menu_primary_seq = nil
+        tft.menu_strip_seq = nil
         tft_report_map_click({ object_id = id, level_name = ln, pos = tft.last_map_click_pos }, hint)
     elseif hint then
         tft_log("map-spot hint=%s id=%s (rclick hook active)", tostr(hint), tostr(id))
     end
 
+    local seq = tft.menu_open_seq or 0
+
+    -- Overlapping spots (companion / sleep marker / second location) share one list.
+    -- After a real travel destination filled this menu, scrub their pin/waypoint noise.
+    if tft.menu_primary_seq == seq then
+        strip_overlapping_spot_noise(pui, hint)
+        tft_log("menu: skip overlapping id=%s hint=%s", tostr(id), tostr(hint or "none"))
+        return false
+    end
+
+    -- Only strip leftover TFT rows once per menu open — later spots must not erase them.
+    if tft.menu_strip_seq ~= seq then
+        tft.menu_strip_seq = seq
+        strip_own_menu_items(pui)
+    end
+
     tft.last_menu_target_id = id
-    strip_own_menu_items(pui)
 
     local click_pos = tft.last_map_click_pos
     if tft_resolve_menu_spot_from_click and click_pos then
@@ -526,10 +608,12 @@ on_map_spot_menu_add_property_impl = function(pui, id, ln, hint)
                 tft_clear_path_preview()
                 return false
             end
+            mark_menu_primary(pui)
             return add_cannot_travel_item(pui, id, terr)
         end
         tft.last_menu_target_id = id
         maybe_preview(true)
+        mark_menu_primary(pui)
         return add_travel_menu_items(pui, id, true)
     end
 
@@ -542,6 +626,7 @@ on_map_spot_menu_add_property_impl = function(pui, id, ln, hint)
         resolve_base_or_campfire()
         tft.last_menu_target_id = id
         maybe_preview(false)
+        mark_menu_primary(pui)
         return add_travel_menu_items(pui, id, false)
     end
 
@@ -550,12 +635,14 @@ on_map_spot_menu_add_property_impl = function(pui, id, ln, hint)
             resolve_base_or_campfire()
             tft.last_menu_target_id = id
             tft_clear_path_preview()
+            mark_menu_primary(pui)
             add_guide_menu_item(pui, id, se_obj)
             return true
         end
         resolve_base_or_campfire()
         tft.last_menu_target_id = id
         maybe_preview(false)
+        mark_menu_primary(pui)
         local ok = add_travel_menu_items(pui, id, false)
         add_guide_menu_item(pui, id, se_obj)
         return ok
@@ -566,12 +653,14 @@ on_map_spot_menu_add_property_impl = function(pui, id, ln, hint)
         tft.last_menu_target_id = id
         tft_clear_path_preview()
         tft_strip_backpack_travel_menu_items(pui)
+        mark_menu_primary(pui)
         add_guide_menu_item(pui, id, se_obj)
         return true
     end
 
     if tft_is_place_like_spot(se_obj) then
         tft_log("menu: unclassified place-like spot id=%s - showing cannot-travel", tostr(id))
+        -- Do not mark primary: a later overlapping base/campfire must still win.
         return add_cannot_travel_item(pui, id, "not_a_destination")
     end
 

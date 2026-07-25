@@ -1,0 +1,255 @@
+--[[
+	NPC Foliage
+
+	1) materials/*.ltx — bush / bush_sux vis_transparency_factor = 0
+	   (blocks AI LOS rays that actually hit bush collision).
+
+	2) Optional — hostile stalkers whose torso is inside bush collision are
+	   nudged to take proper cover (best_cover vs the actor), instead of
+	   camping with a head-peek through foliage.
+]]
+
+local CONFIG = _G.dogma_npcs_foliage_conf
+local DOGMA
+
+local RQT_STATIC = 2
+local CHECK_RANGE = 80
+local CHECK_INTERVAL_MS = 350
+local PROBE_RANGE = 1.15
+local PUSH_COOLDOWN_MS = 4000
+local MIN_COVER_MOVE = 2.5
+local COVER_RADIUS = 22
+local COVER_MIN_ENEMY = 4
+local COVER_MAX_ENEMY = 90
+
+-- id -> last push time
+local pushed = {}
+
+local last_check = 0
+local ray
+local dirs
+
+local function log(msg)
+	if DOGMA and DOGMA.dbg and DOGMA.dbg.logging and DOGMA.dbg.logging() then
+		DOGMA.dbg.log(CONFIG.MOD_ID, tostring(msg))
+	end
+end
+
+local function on_option_change()
+	CONFIG.loaded.push_to_cover = DOGMA.mcm.bool(CONFIG.MOD_ID, "push_to_cover")
+end
+
+local function ensure_ray()
+	if ray then
+		return
+	end
+	ray = ray_pick()
+	ray:set_flags(RQT_STATIC)
+	ray:set_range(PROBE_RANGE)
+	dirs = {
+		vector():set(0, -1, 0),
+		vector():set(0, 1, 0),
+		vector():set(1, 0, 0),
+		vector():set(-1, 0, 0),
+		vector():set(0, 0, 1),
+		vector():set(0, 0, -1),
+		vector():set(0.707, 0, 0.707),
+		vector():set(-0.707, 0, 0.707),
+		vector():set(0.707, 0, -0.707),
+		vector():set(-0.707, 0, -0.707),
+	}
+end
+
+local function is_bush_material(name)
+	if type(name) ~= "string" then
+		return false
+	end
+	return name:find("bush", 1, true) ~= nil
+end
+
+local function probe_hits_bush(origin, direction, ignore)
+	ray:set_position(origin)
+	ray:set_direction(direction)
+	ray:set_ignore_object(ignore)
+	if not ray:query() then
+		return false
+	end
+	if ray:get_object() then
+		return false
+	end
+	local result = ray:get_result()
+	return result and is_bush_material(result.material_name)
+end
+
+local function in_foliage(npc)
+	ensure_ray()
+	local pos = npc:position()
+	local origin = vector():set(pos.x, pos.y + 0.95, pos.z)
+	for i = 1, #dirs do
+		if probe_hits_bush(origin, dirs[i], npc) then
+			return true
+		end
+	end
+	return false
+end
+
+-- Only nudge stalkers that care about the actor (enemy relation / fighting us).
+local function hostile_to_actor(npc)
+	if not db.actor then
+		return false
+	end
+	local ok_enemy, enemy = pcall(function()
+		return npc:best_enemy() or npc:get_enemy()
+	end)
+	if ok_enemy and enemy and enemy:id() == db.actor:id() then
+		return true
+	end
+	local ok_rel, rel = pcall(function()
+		return npc:relation(db.actor)
+	end)
+	-- game_object.enemy == 0 in Anomaly
+	if ok_rel and rel == 0 then
+		return true
+	end
+	return false
+end
+
+local function pick_cover_vertex(npc, enemy_pos)
+	if not (npc.best_cover and enemy_pos) then
+		return nil
+	end
+	pcall(function()
+		if npc.best_cover_invalidate then
+			npc:best_cover_invalidate()
+		end
+	end)
+
+	local center = npc:position()
+	local cover
+	local ok, result = pcall(function()
+		return npc:best_cover(center, enemy_pos, COVER_RADIUS, COVER_MIN_ENEMY, COVER_MAX_ENEMY)
+	end)
+	if ok then
+		cover = result
+	end
+	if not cover then
+		-- Widen search once.
+		ok, result = pcall(function()
+			return npc:best_cover(center, enemy_pos, COVER_RADIUS + 15, COVER_MIN_ENEMY, COVER_MAX_ENEMY + 30)
+		end)
+		if ok then
+			cover = result
+		end
+	end
+	if not cover then
+		return nil
+	end
+
+	local vid = cover:level_vertex_id()
+	if not vid or vid >= 4294967295 then
+		return nil
+	end
+
+	local accessible = true
+	pcall(function()
+		accessible = npc:accessible(vid)
+	end)
+	if not accessible then
+		local ok_n, nvid = pcall(function()
+			local tmp = vector():set(0, 0, 0)
+			local nearest = npc:accessible_nearest(level.vertex_position(vid), tmp)
+			return nearest
+		end)
+		if not ok_n or not nvid or nvid >= 4294967295 then
+			return nil
+		end
+		vid = nvid
+	end
+
+	local dest = level.vertex_position(vid)
+	if dest:distance_to(npc:position()) < MIN_COVER_MOVE then
+		return nil
+	end
+	return vid
+end
+
+local function send_to_cover(npc, vid)
+	pcall(function()
+		if game_object and game_object.level_path and npc.set_path_type then
+			npc:set_path_type(game_object.level_path)
+		end
+	end)
+	-- Prefer shared helper when present (handles used-vertex bookkeeping).
+	if utils_obj and utils_obj.send_to_nearest_accessible_vertex then
+		pcall(function()
+			utils_obj.send_to_nearest_accessible_vertex(npc, vid, "dogma_foliage")
+		end)
+		return
+	end
+	pcall(function()
+		npc:set_dest_level_vertex_id(vid)
+	end)
+	pcall(function()
+		if state_mgr and state_mgr.set_state then
+			state_mgr.set_state(npc, "assault")
+		end
+	end)
+end
+
+local function push_to_cover(npc, id)
+	local enemy_pos = db.actor:position()
+	local vid = pick_cover_vertex(npc, enemy_pos)
+	if not vid then
+		log("no cover for id=" .. tostring(id))
+		return false
+	end
+	send_to_cover(npc, vid)
+	pushed[id] = time_global and time_global() or 0
+	log("cover push id=" .. tostring(id) .. " vid=" .. tostring(vid))
+	return true
+end
+
+local function tick()
+	if not CONFIG.loaded.push_to_cover then
+		return
+	end
+	if not (db.actor and db.storage and ray_pick) then
+		return
+	end
+
+	local now = time_global and time_global() or 0
+	if now - last_check < CHECK_INTERVAL_MS then
+		return
+	end
+	last_check = now
+
+	local actor_pos = db.actor:position()
+
+	for id, st in pairs(db.storage) do
+		local npc = st and st.object
+		if npc and npc:id() ~= db.actor:id() and IsStalker and IsStalker(npc) and npc:alive() then
+			local npos = npc:position()
+			local dx = npos.x - actor_pos.x
+			local dy = npos.y - actor_pos.y
+			local dz = npos.z - actor_pos.z
+			if (dx * dx + dy * dy + dz * dz) <= (CHECK_RANGE * CHECK_RANGE) then
+				if in_foliage(npc) and hostile_to_actor(npc) then
+					local last = pushed[id] or 0
+					if now - last >= PUSH_COOLDOWN_MS then
+						push_to_cover(npc, id)
+					end
+				else
+					pushed[id] = nil
+				end
+			end
+		end
+	end
+end
+
+function on_game_start()
+	DOGMA = dogma_common.load(CONFIG.MOD_ID)
+	on_option_change()
+	RegisterScriptCallback("on_option_change", on_option_change)
+	RegisterScriptCallback("actor_on_update", tick)
+	log("foliage module started (push-to-cover)")
+end

@@ -1,11 +1,10 @@
 -- hud/minimap conf
--- Single / double / hold keybind for the HUD minimap (RavenAscendant Mini Map Toggle + hold).
+-- Toggle / hold keybind for the HUD minimap (RavenAscendant Mini Map Toggle + hold).
 
 local defaults = {
-	["enabled"] = true,
 	["keybind"] = -1,
 	["modifier"] = 0,
-	-- 0 = single, 1 = double, 2 = hold (show while held)
+	-- 0 = toggle, 2 = hold (show while held; 1 was double, removed)
 	["mode"] = 0,
 }
 
@@ -13,7 +12,7 @@ _G.dogma_hud_minimap_conf = {
 	MOD_ID = "dogma/hud/minimap",
 	DEFAULTS = defaults,
 	loaded = {
-		enabled = defaults["enabled"],
+		enabled = true,
 		keybind = defaults["keybind"],
 		modifier = defaults["modifier"],
 		mode = defaults["mode"],

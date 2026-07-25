@@ -53,7 +53,7 @@ else
 	OUT="${DOGMA_OUT:-$ROOT/build/gamedata}"
 fi
 
-GAMEDATA_ROOTS="scripts configs textures meshes anims sounds spawns"
+GAMEDATA_ROOTS="scripts configs textures meshes anims sounds spawns materials"
 
 STAGE="$(mktemp -d)"
 MANIFEST="$(mktemp)"

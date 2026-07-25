@@ -5,9 +5,6 @@
 	after on_job_descr / setup_bounty_task has run.
 ]]
 
-local CONFIG = _G.dogma_pda_rep_warning_conf
-local DOGMA
-
 local function bounty_target_id(task_id)
 	local id = axr_task_manager and axr_task_manager.bounties_by_id and axr_task_manager.bounties_by_id[task_id]
 	if id then
@@ -41,9 +38,6 @@ local function target_not_enemy(target_id)
 end
 
 local function paint_title_red(pda_tab, i, task_details)
-	if not (DOGMA and DOGMA.mcm.bool(CONFIG.MOD_ID, "enabled")) then
-		return
-	end
 	if not (task_details and task_details.task_id) then
 		return
 	end
@@ -96,7 +90,6 @@ local function patch_taskboard()
 end
 
 function on_game_start()
-	DOGMA = dogma_common.load(CONFIG.MOD_ID)
 	-- After PDA Taskboard / Tasks QoL (same zzzz_ band; name sorts after ui_pda_*).
 	patch_taskboard()
 	RegisterScriptCallback("on_game_load", patch_taskboard)

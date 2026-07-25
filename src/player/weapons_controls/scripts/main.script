@@ -9,12 +9,10 @@
 	  re-press lowers it.
 	- Vision key: swap melee ↔ vision, then equip melee (same wait-if-drawn).
 	  move_to_* is async — placements are sequenced so VSI is not dumped to bag.
-	- Detector / Geiger mirror Options→Controls; we intercept and force-equip
-	  from inventory into slot 9. RF is MCM-only. Scanner swaps wait for the
-	  current device hide anim to finish before rucking (move_to_ruck cuts it).
-	- Optional: activate bolt when an *artefact* detector is shown; lower it
-	  when that detector is put away (not RF / Geiger). Deferred so scanner
-	  swaps do not flick the bolt.
+	- Detector / Geiger / RF force-equip. Scanner↔scanner: full hide_detector
+	  (anm_hide), wait detach like →2H, plus authored hide length before show.
+	- Optional: activate bolt when an *artefact* detector is shown
+	  (not RF / Geiger). Bolt stays drawn when the detector is put away.
 	- Minimal slot_cell patch: pistols may drag into vision (slot 5).
 ]]
 
@@ -44,13 +42,10 @@ local SWAP_EVENT = "holster_swap"
 local SWAP_PLACE_EVENT = "holster_swap_place"
 local SCANNER_SHOW_EVENT = "scanner_show"
 local SCANNER_SWAP_EVENT = "scanner_swap"
+local BOLT_ACTIVATE_EVENT = "activate_bolt_after_det"
 local SWAP_TICK = 0.05
 local SWAP_MAX_TICKS = 100 -- ~5s safety only; wait is state-based
-
-local LOWER_BOLT_EVENT = "lower_bolt_after_det"
-local LOWER_BOLT_DELAY = 0.12
-local det_was_active = false
-local last_active_det_was_artefact = false
+local BOLT_ACTIVATE_DELAY = 0.5 -- seconds after detector shown
 
 local function geiger_sec()
 	return (item_device and item_device.device_geiger) or "detector_geiger"
@@ -123,59 +118,39 @@ local function maybe_activate_bolt()
 	end
 end
 
-local function cancel_lower_bolt()
-	RemoveTimeEvent(CONFIG.MOD_ID, LOWER_BOLT_EVENT)
+local function cancel_activate_bolt()
+	RemoveTimeEvent(CONFIG.MOD_ID, BOLT_ACTIVATE_EVENT)
 end
 
-local function maybe_lower_bolt()
-	if not CONFIG.loaded.lower_bolt_on_detector_unequip then
+-- Defer bolt draw so it does not interrupt detector show / hide handoffs.
+local function schedule_activate_bolt()
+	if not CONFIG.loaded.auto_bolt_on_detector then
 		return
 	end
-	local actor = db.actor
-	if not (actor and actor:alive()) then
-		return
-	end
-	if actor:active_slot() == BOLT_SLOT then
-		actor:activate_slot(0)
-	end
-end
-
--- Wait briefly so hide→show scanner swaps do not holster the bolt mid-equip.
-local function schedule_lower_bolt()
-	if not CONFIG.loaded.lower_bolt_on_detector_unequip then
-		return
-	end
-	cancel_lower_bolt()
-	CreateTimeEvent(CONFIG.MOD_ID, LOWER_BOLT_EVENT, LOWER_BOLT_DELAY, function()
-		local actor = db.actor
-		if not (actor and actor:alive()) then
-			return true
-		end
-		if actor:active_detector() then
-			return true
-		end
-		maybe_lower_bolt()
+	cancel_activate_bolt()
+	CreateTimeEvent(CONFIG.MOD_ID, BOLT_ACTIVATE_EVENT, BOLT_ACTIVATE_DELAY, function()
+		maybe_activate_bolt()
 		return true
 	end)
 end
 
-local function put_away_slot9(force)
+-- style: "full" | "fast" | "force"
+local function put_away_slot9(style)
 	local actor = db.actor
 	if not (actor and actor:active_detector()) then
 		return
 	end
-	if force then
+	if style == "force" then
 		actor:force_hide_detector()
 	elseif actor.hide_detector then
-		-- false = full hide anim (not anm_hide_fast)
-		actor:hide_detector(false)
+		actor:hide_detector(style == "fast")
 	else
 		actor:force_hide_detector()
 	end
 end
 
--- Detector hand clear: active_detector() is nil once state == eHidden.
--- Do not ruck/slot-swap until then — move_to_ruck stops the hide anim.
+-- Same gate as →2H: allow_activation blocks the gun until active_detector is gone
+-- (HideDevice finished → OnAnimationEnd → detach).
 local function detector_hand_clear(lowering_id)
 	local actor = db.actor
 	if not actor then
@@ -187,6 +162,60 @@ local function detector_hand_clear(lowering_id)
 	if lowering_id then
 		local obj = level.object_by_id(lowering_id)
 		if obj and obj.get_state and obj:get_state() ~= STATE_HIDDEN then
+			return false
+		end
+	end
+	return true
+end
+
+-- Authored full-hide length (anm_hide). DAR maps this to the 2H holster.
+-- PlayHUDMotion returns this before m_anim_end trim; get_motion_length is the same.
+local function detector_full_hide_ms(det)
+	if not (det and ini_sys and game and game.get_motion_length) then
+		return 0
+	end
+	local hud = ini_sys:r_string_ex(det:section(), "hud")
+	if not hud then
+		return 0
+	end
+	local st = det.get_state and det:get_state() or 0
+	local names
+	if st >= 5 and st <= 7 then
+		names = { "anm_zoom_hide", "anm_hide" }
+	else
+		names = { "anm_hide" }
+	end
+	for i = 1, #names do
+		local ms = game.get_motion_length(hud, names[i], 1.0)
+		if ms and ms > 0 then
+			return ms
+		end
+	end
+	return 0
+end
+
+-- →2H: HideDevice → wait detach → rifle anm_show fills both hands.
+-- Scanner↔scanner: hide_detector(full) → wait detach AND full hide length
+-- before show (that post-detach window is what we were eating). No force_hide /
+-- play_hud_motion hacks — those snap the mesh off.
+local POST_CLEAR_MS = 350 -- fallback if motion length unknown
+
+local function scanner_hide_ready(lowering_id, hide_started, hide_ms, cleared_at_box)
+	if lowering_id and not detector_hand_clear(lowering_id) then
+		cleared_at_box[1] = nil
+		return false
+	end
+	if not lowering_id then
+		return true
+	end
+	if hide_ms and hide_ms > 0 and hide_started and time_global() < hide_started + hide_ms then
+		return false
+	end
+	if not hide_ms or hide_ms <= 0 then
+		if not cleared_at_box[1] then
+			cleared_at_box[1] = time_global()
+		end
+		if time_global() < cleared_at_box[1] + POST_CLEAR_MS then
 			return false
 		end
 	end
@@ -282,6 +311,7 @@ local function cancel_scanner_swap()
 	scanner_busy = false
 	RemoveTimeEvent(CONFIG.MOD_ID, SCANNER_SWAP_EVENT)
 	cancel_scanner_show()
+	cancel_activate_bolt()
 end
 
 -- move_to_ruck / move_to_slot are async NET events. Same-frame swap dumps the
@@ -498,7 +528,7 @@ local function show_scanner_when_ready(obj_id, with_bolt)
 		if in_slot and in_slot:id() == obj_id then
 			actor:show_detector()
 			if with_bolt then
-				maybe_activate_bolt()
+				schedule_activate_bolt()
 			end
 			scanner_busy = false
 			return true
@@ -534,34 +564,43 @@ local function force_equip_scanner(obj)
 		return
 	end
 
-	-- Bolt auto-draw/lower is artefact-detector only (not RF / Geiger).
+	-- Bolt auto-draw is artefact-detector only (not RF / Geiger).
 	local with_bolt = is_artefact_detector(obj:section())
 
 	local cur = actor:item_in_slot(DET_SLOT)
 	if cur and cur:id() == obj:id() then
 		if actor:active_detector() then
-			put_away_slot9(false)
+			put_away_slot9("full")
 			return
 		end
 		actor:show_detector()
 		if with_bolt then
-			maybe_activate_bolt()
+			schedule_activate_bolt()
 		end
 		return
 	end
 
 	scanner_busy = true
 	cancel_scanner_show()
+	cancel_activate_bolt()
 	RemoveTimeEvent(CONFIG.MOD_ID, SCANNER_SWAP_EVENT)
 
-	-- Animated hide first. force_hide / move_to_ruck mid-anim cuts the put-away.
+	-- Stock path pieces:
+	--   →2H weapon: CheckCompatibility → HideDevice(fast) → wait detach → gun show
+	--   We want the full lower (anm_hide / 2H holster in DAR), same detach gate,
+	--   then wait out the authored hide length before same-hand show_detector.
 	local lowering = actor:active_detector()
 	local lowering_id = lowering and lowering:id() or nil
+	local hide_started = nil
+	local hide_ms = 0
+	local cleared_at_box = { nil }
 	if lowering_id then
-		put_away_slot9(false)
+		hide_ms = detector_full_hide_ms(lowering)
+		hide_started = time_global()
+		put_away_slot9("full")
 	end
 
-	if detector_hand_clear(lowering_id) then
+	if scanner_hide_ready(lowering_id, hide_started, hide_ms, cleared_at_box) then
 		place_scanner(obj, with_bolt)
 		return
 	end
@@ -575,7 +614,7 @@ local function force_equip_scanner(obj)
 			scanner_busy = false
 			return true
 		end
-		if not detector_hand_clear(lowering_id) and ticks < SWAP_MAX_TICKS then
+		if not scanner_hide_ready(lowering_id, hide_started, hide_ms, cleared_at_box) and ticks < SWAP_MAX_TICKS then
 			return false
 		end
 		local o = level.object_by_id(obj_id)
@@ -605,9 +644,8 @@ local function on_gui_show(name)
 end
 
 local function on_option_change()
-	CONFIG.loaded.enabled = DOGMA.mcm.bool(CONFIG.MOD_ID, "enabled")
+	CONFIG.loaded.enabled = true
 	CONFIG.loaded.auto_bolt_on_detector = DOGMA.mcm.bool(CONFIG.MOD_ID, "auto_bolt_on_detector")
-	CONFIG.loaded.lower_bolt_on_detector_unequip = DOGMA.mcm.bool(CONFIG.MOD_ID, "lower_bolt_on_detector_unequip")
 	CONFIG.loaded.tertiary_key = DOGMA.mcm.key(CONFIG.MOD_ID, "tertiary_key", CONFIG.DEFAULTS["tertiary_key"])
 	CONFIG.loaded.key_radio = DOGMA.mcm.key(CONFIG.MOD_ID, "key_radio", CONFIG.DEFAULTS["key_radio"])
 	if key_bindings and bind_to_dik then
@@ -619,34 +657,6 @@ local function on_option_change()
 		CONFIG.loaded.key_detector = nil
 		CONFIG.loaded.key_geiger = nil
 	end
-	if not CONFIG.loaded.enabled then
-		cancel_swap_wait()
-		cancel_scanner_swap()
-		cancel_lower_bolt()
-		det_was_active = false
-		last_active_det_was_artefact = false
-	end
-end
-
-local function on_actor_on_update()
-	if not DOGMA.sys.ready(CONFIG.MOD_ID, db, on_option_change) then
-		return
-	end
-	if not CONFIG.loaded.enabled then
-		det_was_active = false
-		last_active_det_was_artefact = false
-		return
-	end
-	local actor = db.actor
-	local det = actor and actor:active_detector() or nil
-	local active = det and true or false
-	if active then
-		last_active_det_was_artefact = is_artefact_detector(det:section())
-		cancel_lower_bolt()
-	elseif det_was_active and last_active_det_was_artefact then
-		schedule_lower_bolt()
-	end
-	det_was_active = active
 end
 
 local function on_before_key_press(_key, bind, _dis, flags)
@@ -737,6 +747,5 @@ function on_game_start()
 	RegisterScriptCallback("on_option_change", on_option_change)
 	RegisterScriptCallback("on_before_key_press", on_before_key_press)
 	RegisterScriptCallback("on_key_press", on_key_press)
-	RegisterScriptCallback("actor_on_update", on_actor_on_update)
 	RegisterScriptCallback("GUI_on_show", on_gui_show)
 end

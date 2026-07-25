@@ -1,6 +1,6 @@
 --[[
 	Inventory drop keybinds.
-	Press / dtap: one stack. Hold: one stack then step-timed repeats while held;
+	Press: one stack. Hold: one stack then step-timed repeats while held;
 	hovered item id change resets the streak and fires again.
 ]]
 
@@ -8,7 +8,7 @@ local CONFIG = _G.dogma_items_drop_conf
 local MOD_ID = CONFIG.MOD_ID
 local DOGMA
 
-local MODE_DTAP = 1
+local MODE_PRESS = 0
 local MODE_HOLD = 2
 
 local ALLOWED_BAGS = {
@@ -20,7 +20,6 @@ local ALLOWED_BAGS = {
 }
 
 local BINDS = {}
-local dtap_last = {}
 local hold_state = {} -- [dik] = { bind, t0, fire_count, last_id }
 
 local function log(msg)
@@ -34,11 +33,16 @@ local function on_option_change()
 	BINDS = {}
 	local key = DOGMA.mcm.key(MOD_ID, "key_drop")
 	if key then
+		local mode = math.floor(DOGMA.mcm.number(MOD_ID, "key_drop_mode", 0) + 0.5)
+		-- Old dtap (1) acts as press; hold stays 2.
+		if mode ~= MODE_HOLD then
+			mode = MODE_PRESS
+		end
 		BINDS[1] = {
 			id = "drop",
 			key = key,
 			modifier = math.floor(DOGMA.mcm.number(MOD_ID, "key_drop_modifier", 0) + 0.5),
-			mode = math.floor(DOGMA.mcm.number(MOD_ID, "key_drop_mode", 0) + 0.5),
+			mode = mode,
 		}
 	end
 end
@@ -48,13 +52,6 @@ local function mod_ok(modifier)
 		return true
 	end
 	return ui_mcm.get_mod_key(modifier)
-end
-
-local function dtap_window_ms()
-	if not ui_mcm then
-		return 250
-	end
-	return ui_mcm.get("mcm/mcm_kb/mcm_kb_main/dtaptime2") or 250
 end
 
 local function inv_mode_ok(gui)
@@ -169,14 +166,6 @@ local function on_key_pressed(dik, gui)
 			-- skip
 		elseif bind.mode == MODE_HOLD then
 			start_hold(bind, dik)
-		elseif bind.mode == MODE_DTAP then
-			local now = time_continual()
-			local prev = dtap_last[bind.id]
-			dtap_last[bind.id] = now
-			if prev and (now - prev) <= dtap_window_ms() then
-				dtap_last[bind.id] = nil
-				fire_bind()
-			end
 		else
 			fire_bind()
 		end

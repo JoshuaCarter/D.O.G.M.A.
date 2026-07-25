@@ -27,6 +27,22 @@ function on_mcm_load(options)
 		}
 	end
 
+	local function kb_mode(id)
+		local kb_mod = (ui_mcm and ui_mcm.kb_mod_radio) or "radio_h"
+		return {
+			id = id,
+			type = kb_mod,
+			val = 2,
+			def = CONFIG.DEFAULTS[id],
+			hint = "mcm_kb_mode",
+			content = {
+				{ 0, "mcm_kb_mode_press" },
+				{ 1, "mcm_kb_mode_dtap" },
+				{ 2, "mcm_kb_mode_hold" },
+			},
+		}
+	end
+
 	dogma_mcm.attach(options, "items", "ui_mcm_menu_dogma_items", {
 		id = "disassemble",
 		sh = true,
@@ -39,8 +55,7 @@ function on_mcm_load(options)
 			},
 			kb_bind("key_disa", "dogma_disassemble_key_disa"),
 			kb_modifier("key_disa_modifier"),
-			kb_bind("key_disa_all", "dogma_disassemble_key_disa_all"),
-			kb_modifier("key_disa_all_modifier"),
+			kb_mode("key_disa_mode"),
 			{
 				id = "disa_safe_equipped",
 				type = "check",

@@ -1,0 +1,172 @@
+--[[
+	Minimap
+
+	Keybind show/hide for the HUD minimap (video/hud/show_minimap + UIZoneMap).
+	Single / Double: toggle visibility. Hold: visible only while the key is down.
+	Based on RavenAscendant Mini Map Toggle, with hold-to-show.
+]]
+
+local CONFIG = _G.dogma_hud_minimap_conf
+local DOGMA
+
+local MODE_SINGLE = 0
+local MODE_DOUBLE = 1
+local MODE_HOLD = 2
+
+local holding = false
+
+local function log(msg)
+	if not (DOGMA and DOGMA.dbg) then
+		return
+	end
+	if DOGMA.dbg.logging and DOGMA.dbg.logging() then
+		DOGMA.dbg.log(CONFIG.MOD_ID, tostring(msg))
+	end
+end
+
+local function mod_ok()
+	local modifier = CONFIG.loaded.modifier
+	if not modifier or modifier == 0 then
+		return true
+	end
+	if not (ui_mcm and ui_mcm.get_mod_key) then
+		return true
+	end
+	return ui_mcm.get_mod_key(modifier)
+end
+
+local function maingame()
+	return ActorMenu and ActorMenu.get_maingame and ActorMenu.get_maingame()
+end
+
+-- Mirror Mini Map Toggle: options flag + live UIZoneMap / motion icon.
+local function set_minimap(want_show)
+	want_show = not not want_show
+	if ui_options and ui_options.set then
+		ui_options.set("video/hud/show_minimap", want_show)
+	end
+	local ui = maingame()
+	if not (ui and ui.UIZoneMap) then
+		return
+	end
+	ui.UIZoneMap.disabled = not want_show
+	if ui.UIMotionIcon and ui.UIMotionIcon.Show then
+		ui.UIMotionIcon:Show(want_show)
+	end
+end
+
+local function minimap_shown()
+	if ui_options and ui_options.get then
+		return ui_options.get("video/hud/show_minimap") and true or false
+	end
+	local ui = maingame()
+	if ui and ui.UIZoneMap then
+		return not ui.UIZoneMap.disabled
+	end
+	return false
+end
+
+local function toggle_minimap(source)
+	local next_show = not minimap_shown()
+	set_minimap(next_show)
+	log(string.format("%s -> %s", source or "toggle", tostring(next_show)))
+end
+
+local function on_option_change()
+	if not DOGMA then
+		return
+	end
+	local prev_mode = CONFIG.loaded.mode
+	CONFIG.loaded.enabled = DOGMA.mcm.bool(CONFIG.MOD_ID, "enabled")
+	CONFIG.loaded.keybind = DOGMA.mcm.key(CONFIG.MOD_ID, "keybind")
+	CONFIG.loaded.modifier = DOGMA.mcm.number(CONFIG.MOD_ID, "modifier")
+	CONFIG.loaded.mode = DOGMA.mcm.number(CONFIG.MOD_ID, "mode")
+
+	-- Entering hold mode (or enabling into it): start hidden so the key reveals.
+	if CONFIG.loaded.enabled and CONFIG.loaded.mode == MODE_HOLD then
+		holding = false
+		set_minimap(false)
+	elseif holding then
+		holding = false
+	end
+
+	log(string.format(
+		"opts: en=%s key=%s mod=%s mode=%s (was %s)",
+		tostring(CONFIG.loaded.enabled),
+		tostring(CONFIG.loaded.keybind),
+		tostring(CONFIG.loaded.modifier),
+		tostring(CONFIG.loaded.mode),
+		tostring(prev_mode)
+	))
+end
+
+local function on_key_press(key)
+	if not DOGMA or not DOGMA.sys.ready(CONFIG.MOD_ID, db, on_option_change) then
+		return
+	end
+	if not CONFIG.loaded.enabled then
+		return
+	end
+	if not CONFIG.loaded.keybind or key ~= CONFIG.loaded.keybind then
+		return
+	end
+
+	local km = CONFIG.loaded.mode
+	if km == MODE_HOLD then
+		holding = true
+		if mod_ok() then
+			set_minimap(true)
+			log("hold: show")
+		end
+		return
+	end
+
+	if not mod_ok() then
+		return
+	end
+
+	if km == MODE_DOUBLE then
+		if ui_mcm and ui_mcm.double_tap and ui_mcm.double_tap(CONFIG.MOD_ID, key) then
+			toggle_minimap("double")
+		end
+		return
+	end
+
+	toggle_minimap("single")
+end
+
+local function on_key_release(key)
+	if not CONFIG.loaded.enabled then
+		return
+	end
+	if not holding then
+		return
+	end
+	if not CONFIG.loaded.keybind or key ~= CONFIG.loaded.keybind then
+		return
+	end
+	holding = false
+	if CONFIG.loaded.mode == MODE_HOLD then
+		set_minimap(false)
+		log("hold: hide")
+	end
+end
+
+local function actor_on_first_update()
+	if not DOGMA or not DOGMA.sys.ready(CONFIG.MOD_ID, db, on_option_change) then
+		return
+	end
+	-- Hold mode owns visibility: start hidden until the key is held.
+	if CONFIG.loaded.enabled and CONFIG.loaded.mode == MODE_HOLD and not holding then
+		set_minimap(false)
+	end
+end
+
+function on_game_start()
+	DOGMA = dogma_common.load(CONFIG.MOD_ID)
+	RegisterScriptCallback("on_option_change", on_option_change)
+	RegisterScriptCallback("on_key_press", on_key_press)
+	RegisterScriptCallback("on_key_release", on_key_release)
+	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+	log("on_game_start: callbacks registered")
+end

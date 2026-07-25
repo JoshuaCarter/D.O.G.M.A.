@@ -1,5 +1,70 @@
+--[[
+	Hard New Game Defaults — MCM + main-menu patch.
+
+	Must live in *mcm.script: MCM loads those at the main menu.
+	zzzz_* body scripts are not loaded until a game session, so a main.script
+	patch never sees New Game on a cold boot (same pattern as misc/search).
+]]
+
+local HARD_INDEX = 3
+local STATE = _G.__dogma_misc_hard_defaults or {}
+_G.__dogma_misc_hard_defaults = STATE
+
+local function apply_hard_defaults(self)
+	-- Combos only exist when USE_MARSHAL is true.
+	if not (self.list_difficulty and self.table_difficulty) then
+		return
+	end
+
+	local diff = self.table_difficulty[HARD_INDEX] or self.table_difficulty[1]
+	if diff then
+		self.list_difficulty:SetText(game.translate_string(diff))
+		self.selected_difficulty = diff
+	end
+
+	if not (self.list_economy and self.table_economy) then
+		return
+	end
+	local eco = self.table_economy[HARD_INDEX] or self.table_economy[1]
+	if not eco then
+		return
+	end
+	self.list_economy:SetText(game.translate_string(eco))
+	self.selected_economy = eco
+	-- Starting points scale with economy (eco_1 vs eco_3).
+	if self.LoadLoadout then
+		self:LoadLoadout(false)
+	end
+end
+
+local function patch_new_game()
+	local cls = ui_mm_faction_select and ui_mm_faction_select.UINewGame
+	if not (cls and cls.Main_Controls) then
+		return false
+	end
+	if STATE.wrap_controls and cls.Main_Controls == STATE.wrap_controls then
+		return true
+	end
+
+	local base_controls = cls.Main_Controls
+	local function wrap_controls(self, ...)
+		base_controls(self, ...)
+		apply_hard_defaults(self)
+	end
+
+	-- Same style as Soulslike / loadout injectors (*_mcm.script at main menu).
+	cls.Main_Controls = wrap_controls
+	STATE.wrap_controls = wrap_controls
+	return true
+end
+
+-- Top-level: runs when MCM gathers *mcm.script at main menu.
+patch_new_game()
+
 function on_mcm_load(options)
-	local CONFIG = _G.dogma_misc_hard_defaults_conf
+	-- Re-patch in case another injector rewrote Main_Controls after our load.
+	patch_new_game()
+
 	dogma_mcm.attach(options, "misc", "ui_mcm_menu_dogma_misc", {
 		id = "hard_defaults",
 		sh = true,
@@ -9,13 +74,6 @@ function on_mcm_load(options)
 				id = "page_description",
 				type = "desc",
 				text = "ui_mcm_dogma_misc_hard_defaults_page_description",
-			},
-			{
-				id = "enabled",
-				type = "check",
-				val = 1,
-				def = CONFIG.DEFAULTS["enabled"],
-				hint = "dogma_misc_hard_defaults_enabled",
 			},
 		}),
 	})

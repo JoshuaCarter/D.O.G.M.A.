@@ -26,20 +26,14 @@ function on_mcm_load(options)
 				text = "ui_mcm_dogma_free_zoom_ads_description",
 			},
 			{
-				id = "enabled",
-				type = "check",
-				val = 1,
-				def = CONFIG.DEFAULTS["enabled"],
-				hint = "dogma_free_zoom_ads_enabled",
-			},
-			{
 				id = "wads_defaults_header",
 				type = "title",
 				text = "ui_mcm_dogma_free_zoom_wads_defaults_header",
 			},
+			ads_track("fov_zoom", 15, "dogma_free_zoom_fov_zoom"),
 			ads_track("wads_irons", 15, "dogma_free_zoom_wads_irons"),
 			ads_track("wads_sight", 25, "dogma_free_zoom_wads_sight"),
-			ads_track("wads_scope", 40, "dogma_free_zoom_wads_scope"),
+			ads_track("wads_scope", 35, "dogma_free_zoom_wads_scope"),
 			{ id = "line_wads_keys", type = "line" },
 			{
 				id = "wads_keys_header",
@@ -66,17 +60,6 @@ function on_mcm_load(options)
 				val = 2,
 				def = CONFIG.DEFAULTS["wads_reset_key"],
 				hint = "dogma_free_zoom_wads_reset_key",
-			},
-			{
-				id = "wads_key_mode",
-				type = kb_mod,
-				val = 2,
-				def = CONFIG.DEFAULTS["wads_key_mode"],
-				hint = "dogma_free_zoom_wads_key_mode",
-				content = {
-					{ 0, "press" },
-					{ 1, "hold" },
-				},
 			},
 			{
 				id = "wads_key_modifier",

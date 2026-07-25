@@ -1,8 +1,8 @@
 --[[
 	Stalker ID — centered Faction Identification replacement.
 
-	Look-at targeting, distance identify delay, and faction patches follow
-	G.A.M.M.A. Crook's Identification UI Fix. Layout is screen-centered:
+	Instant ID on look-at. Losing the target fades the HUD out over 2s;
+	a new target replaces it immediately. Layout is screen-centered:
 	name, rank, then icon (or "Zombified" for zombied community).
 ]]
 
@@ -12,8 +12,8 @@ local DOGMA
 local UI_WIDTH = 1024
 local UI_CENTER_X = UI_WIDTH * 0.5
 local ALIGN_CENTER = 2 -- CGameFont::alCenter
-local TICK_SPEED = 200
 local UPDATE_DELAY = 100
+local FADE_MS = 2000
 
 local FACTION_KEYS = {
 	"stalker", "bandit", "csky", "army", "freedom", "dolg", "ecolog",
@@ -21,21 +21,31 @@ local FACTION_KEYS = {
 }
 
 local HUD = nil
-local idtable = {}
 local nametable = {}
 local LastHitObject = nil
-local lastTick = 0
-local lastCheckTime = 0
 local trigger = 0
 local grok_delay = 0
 
-local name_unknown
+local fade_active = false
+local fade_start_ms = 0
+local shown_faction = nil -- currently visible patch key (or nil)
+
 local zombified_text
 
 local POS_VEC = vector2()
 
-local function mcm_byte(v)
-	return math.floor(math.max(0, math.min(255, tonumber(v) or 0) + 0.5))
+local function clamp01(v)
+	if v < 0 then
+		return 0
+	end
+	if v > 1 then
+		return 1
+	end
+	return v
+end
+
+local function pct_to_byte(pct, fade_mul)
+	return math.floor(255 * clamp01((tonumber(pct) or 0) / 100) * clamp01(fade_mul) + 0.5)
 end
 
 local function on_option_change()
@@ -43,19 +53,13 @@ local function on_option_change()
 	local id = CONFIG.MOD_ID
 	CONFIG.loaded.dead_id = m.bool(id, "dead_id")
 	CONFIG.loaded.name_id = m.bool(id, "name_id")
-	CONFIG.loaded.time_id = m.bool(id, "time_id")
 	CONFIG.loaded.rank_id = m.bool(id, "rank_id")
-	CONFIG.loaded.speed_id = m.number(id, "speed_id")
-	CONFIG.loaded.targ_l = m.number(id, "targ_l")
 	CONFIG.loaded.name_y = m.number(id, "name_y")
 	CONFIG.loaded.rank_y = m.number(id, "rank_y")
 	CONFIG.loaded.icon_y = m.number(id, "icon_y")
-	CONFIG.loaded.name_r = mcm_byte(m.number(id, "colors/name_r"))
-	CONFIG.loaded.name_g = mcm_byte(m.number(id, "colors/name_g"))
-	CONFIG.loaded.name_b = mcm_byte(m.number(id, "colors/name_b"))
-	CONFIG.loaded.rank_r = mcm_byte(m.number(id, "colors/rank_r"))
-	CONFIG.loaded.rank_g = mcm_byte(m.number(id, "colors/rank_g"))
-	CONFIG.loaded.rank_b = mcm_byte(m.number(id, "colors/rank_b"))
+	CONFIG.loaded.name_a = m.number(id, "name_a")
+	CONFIG.loaded.rank_a = m.number(id, "rank_a")
+	CONFIG.loaded.icon_a = m.number(id, "icon_a")
 end
 
 local function hide_all_patches(hud)
@@ -64,7 +68,6 @@ local function hide_all_patches(hud)
 		hud.factions[key]:Show(false)
 		hud.factions[key .. "_dead"]:Show(false)
 	end
-	hud.factions["unknown"]:Show(false)
 end
 
 local function clear_text(hud)
@@ -72,6 +75,44 @@ local function clear_text(hud)
 	hud.rank:TextControl():SetText("")
 	hud.zombified:TextControl():SetText("")
 	hud.zombified:Show(false)
+end
+
+local function apply_alphas(fade_mul)
+	if not HUD then
+		return
+	end
+	local cfg = CONFIG.loaded
+	local name_a = pct_to_byte(cfg.name_a, fade_mul)
+	local rank_a = pct_to_byte(cfg.rank_a, fade_mul)
+	local icon_a = pct_to_byte(cfg.icon_a, fade_mul)
+
+	HUD.name:TextControl():SetTextColor(GetARGB(name_a, 255, 255, 255))
+	HUD.rank:TextControl():SetTextColor(GetARGB(rank_a, 200, 200, 200))
+	HUD.zombified:TextControl():SetTextColor(GetARGB(icon_a, 255, 255, 255))
+
+	if shown_faction and HUD.factions[shown_faction] then
+		pcall(function()
+			HUD.factions[shown_faction]:SetTextureColor(GetARGB(icon_a, 255, 255, 255))
+		end)
+	end
+end
+
+local function cancel_fade()
+	fade_active = false
+	fade_start_ms = 0
+end
+
+local function start_fade()
+	fade_active = true
+	fade_start_ms = time_global()
+end
+
+local function clear()
+	cancel_fade()
+	shown_faction = nil
+	if HUD then
+		HUD:Reset()
+	end
 end
 
 class "UIStalkerIDHUD" (CUIScriptWnd)
@@ -86,7 +127,6 @@ function UIStalkerIDHUD:__init() super()
 		self.factions[key] = xml:InitStatic("patch_" .. key, self)
 		self.factions[key .. "_dead"] = xml:InitStatic("patch_dead_" .. key, self)
 	end
-	self.factions["unknown"] = xml:InitStatic("patch_unknown", self)
 
 	self.name = xml:InitStatic("name", self)
 	self.rank = xml:InitStatic("rank", self)
@@ -145,12 +185,6 @@ function actor_on_first_update()
 	activate_hud()
 end
 
-local function dot_eye(position)
-	local toPoint = vector():set(position):sub(device().cam_pos):normalize()
-	local toEye = device().cam_dir
-	return toPoint:dotproduct(toEye)
-end
-
 local function is_zombied(community)
 	return community == "zombied"
 end
@@ -165,54 +199,16 @@ local function is_valid_community(community)
 	return HUD and HUD.factions[community] ~= nil
 end
 
-local function identify(obj)
-	local cfg = CONFIG.loaded
-	local cname = obj:character_name()
-
-	if not cfg.time_id then
-		idtable[cname] = 1
-		return true
-	end
-
-	if not idtable[cname] then
-		idtable[cname] = 0
-	end
-
-	if idtable[cname] >= 1 then
-		return true
-	end
-
-	local distance = db.actor:position():distance_to_sqr(obj:position())
-	if distance < 2500 then
-		idtable[cname] = 1
-		return true
-	end
-
-	local power = (100 / ((distance - 2500) * 0.1) / device().fov) * (TICK_SPEED * 0.1)
-	idtable[cname] = idtable[cname] + (power * cfg.speed_id)
-	if idtable[cname] >= 1 then
-		return true
-	end
-	return false
-end
-
-local function clear()
-	if HUD then
-		HUD:Reset()
-	end
-end
-
 local function display(faction, name, rank, zombified)
 	if not HUD then
 		return
 	end
 
 	local cfg = CONFIG.loaded
-	clear()
-
-	HUD.name:TextControl():SetTextColor(GetARGB(255, cfg.name_r, cfg.name_g, cfg.name_b))
-	HUD.rank:TextControl():SetTextColor(GetARGB(255, cfg.rank_r, cfg.rank_g, cfg.rank_b))
-	HUD.zombified:TextControl():SetTextColor(GetARGB(255, cfg.rank_r, cfg.rank_g, cfg.rank_b))
+	cancel_fade()
+	shown_faction = nil
+	hide_all_patches(HUD)
+	clear_text(HUD)
 
 	HUD.name:SetWndPos(POS_VEC:set(0, cfg.name_y))
 	HUD.rank:SetWndPos(POS_VEC:set(0, cfg.rank_y))
@@ -228,13 +224,16 @@ local function display(faction, name, rank, zombified)
 		HUD.zombified:SetWndPos(POS_VEC:set(0, cfg.icon_y))
 		HUD.zombified:TextControl():SetText(zombified_text)
 		HUD.zombified:Show(true)
+		apply_alphas(1)
 		return
 	end
 
 	if faction and HUD.factions[faction] then
+		shown_faction = faction
 		HUD.factions[faction]:SetWndPos(POS_VEC:set(UI_CENTER_X, cfg.icon_y))
 		HUD.factions[faction]:Show(true)
 	end
+	apply_alphas(1)
 end
 
 local function display_faction(obj)
@@ -254,7 +253,6 @@ local function display_faction(obj)
 		name = nil
 	end
 
-	-- Name/rank only when present (zombies may lack either).
 	if name == nil or name == "" then
 		name = nil
 	end
@@ -278,43 +276,34 @@ local function target_enter(obj)
 	if not obj then
 		return
 	end
-	if identify(obj) then
-		display_faction(obj)
-	else
-		display("unknown", name_unknown, nil, false)
-	end
+	display_faction(obj)
 end
 
-local function target_exit(obj)
-	if not obj then
+local function target_lost()
+	-- Keep current HUD content; fade it out over FADE_MS.
+	if not HUD then
 		return
 	end
-	clear()
+	start_fade()
+	apply_alphas(1)
 end
 
-local function target_tick(obj)
-	if not obj then
+local function update_fade()
+	if not fade_active then
 		return
 	end
-	if (time_global() - lastTick) < TICK_SPEED then
+	local elapsed = time_global() - fade_start_ms
+	if elapsed >= FADE_MS then
+		clear()
 		return
 	end
-	lastTick = time_global()
-
-	local cname = obj:character_name()
-	if not idtable[cname] then
-		return
-	end
-
-	if idtable[cname] < 1 then
-		if identify(obj) then
-			clear()
-			display_faction(obj)
-		end
-	end
+	apply_alphas(1 - (elapsed / FADE_MS))
 end
 
 function actor_on_update()
+	-- Fade must tick every frame for smooth alpha.
+	update_fade()
+
 	local tg = time_global()
 	local cfg = CONFIG.loaded
 
@@ -339,10 +328,11 @@ function actor_on_update()
 	if valid then
 		if LastHitObject then
 			if obj:id() ~= LastHitObject:id() then
-				target_exit(LastHitObject)
+				-- New target instantly overrides (cancel any fade).
 				target_enter(obj)
-			else
-				target_tick(obj)
+			elseif fade_active then
+				-- Re-acquired same target during fade: snap back to full.
+				target_enter(obj)
 			end
 		else
 			target_enter(obj)
@@ -352,26 +342,8 @@ function actor_on_update()
 	end
 
 	if LastHitObject then
-		if cfg.targ_l >= 1.0 then
-			target_exit(LastHitObject)
-			LastHitObject = nil
-			return
-		end
-
-		if (time_global() - lastCheckTime) > 100 then
-			lastCheckTime = time_global()
-			local pos = utils_obj.safe_bone_pos(LastHitObject, "bip01_spine")
-			if pos then
-				local dot = dot_eye(pos)
-				if dot < cfg.targ_l then
-					target_exit(LastHitObject)
-					LastHitObject = nil
-					return
-				end
-			end
-		end
-
-		target_tick(LastHitObject)
+		LastHitObject = nil
+		target_lost()
 	end
 end
 
@@ -384,11 +356,11 @@ function npc_on_death_callback(npc, who)
 	end
 
 	if CONFIG.loaded.dead_id then
-		clear()
+		cancel_fade()
 		display_faction(npc)
 	else
-		target_exit(LastHitObject)
 		LastHitObject = nil
+		target_lost()
 	end
 end
 
@@ -397,10 +369,9 @@ function npc_on_net_destroy(npc)
 		return
 	end
 	if npc:id() == LastHitObject:id() then
-		target_exit(LastHitObject)
 		LastHitObject = nil
+		clear()
 	end
-	clear()
 end
 
 function GUI_on_show(gui, str2)
@@ -408,7 +379,6 @@ function GUI_on_show(gui, str2)
 		local obj = mob_trade.GetTalkingNpc()
 		if obj and LastHitObject and LastHitObject:id() == obj:id() then
 			nametable[obj:character_name()] = true
-			clear()
 			display_faction(obj)
 		end
 		return
@@ -424,7 +394,6 @@ function GUI_on_show(gui, str2)
 			local pos = device().cam_pos
 			if mid and pos and pos:distance_to_sqr(mid) < 4.9 then
 				nametable[obj:character_name()] = true
-				clear()
 				display_faction(obj)
 			end
 		end
@@ -433,7 +402,6 @@ end
 
 function on_game_start()
 	DOGMA = dogma_common.load(CONFIG.MOD_ID)
-	name_unknown = game.translate_string("ui_dogma_stalker_id_unknown")
 	zombified_text = game.translate_string("ui_dogma_stalker_id_zombified")
 	on_option_change()
 

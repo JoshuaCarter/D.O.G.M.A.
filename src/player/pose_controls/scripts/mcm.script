@@ -1,90 +1,8 @@
 -- Pose Controls MCM
 -- Crouch / prone / sprint keybinds and Hold/Toggle live-read/write Options→Controls
--- (curr + functor). Walk key is MCM-only.
+-- via dogma_mcm.key_mirror / curr+functor. Walk key is MCM-only.
 
 local CONFIG = _G.dogma_player_pose_controls_conf
-
--- DIK_keys is userdata (not a Lua table) — cannot pairs() it.
--- Console tokens: DIK_LCONTROL -> kLCONTROL, MOUSE_1 -> mouse1.
-local DIK_TOKEN_NAMES = {
-	"DIK_0", "DIK_1", "DIK_2", "DIK_3", "DIK_4", "DIK_5", "DIK_6", "DIK_7", "DIK_8", "DIK_9",
-	"DIK_A", "DIK_ADD", "DIK_APOSTROPHE", "DIK_APPS", "DIK_AT", "DIK_AX", "DIK_B", "DIK_BACK",
-	"DIK_BACKSLASH", "DIK_C", "DIK_CAPITAL", "DIK_CIRCUMFLEX", "DIK_COLON", "DIK_COMMA",
-	"DIK_CONVERT", "DIK_D", "DIK_DECIMAL", "DIK_DELETE", "DIK_DIVIDE", "DIK_DOWN", "DIK_E",
-	"DIK_END", "DIK_EQUALS", "DIK_ESCAPE", "DIK_F", "DIK_F1", "DIK_F10", "DIK_F11", "DIK_F12",
-	"DIK_F13", "DIK_F14", "DIK_F15", "DIK_F2", "DIK_F3", "DIK_F4", "DIK_F5", "DIK_F6", "DIK_F7",
-	"DIK_F8", "DIK_F9", "DIK_G", "DIK_GRAVE", "DIK_H", "DIK_HOME", "DIK_I", "DIK_INSERT",
-	"DIK_J", "DIK_K", "DIK_KANA", "DIK_KANJI", "DIK_L", "DIK_LBRACKET", "DIK_LCONTROL",
-	"DIK_LEFT", "DIK_LMENU", "DIK_LSHIFT", "DIK_LWIN", "DIK_M", "DIK_MINUS", "DIK_MULTIPLY",
-	"DIK_N", "DIK_NEXT", "DIK_NOCONVERT", "DIK_NUMLOCK", "DIK_NUMPAD0", "DIK_NUMPAD1",
-	"DIK_NUMPAD2", "DIK_NUMPAD3", "DIK_NUMPAD4", "DIK_NUMPAD5", "DIK_NUMPAD6", "DIK_NUMPAD7",
-	"DIK_NUMPAD8", "DIK_NUMPAD9", "DIK_NUMPADCOMMA", "DIK_NUMPADENTER", "DIK_NUMPADEQUALS",
-	"DIK_O", "DIK_P", "DIK_PAUSE", "DIK_PERIOD", "DIK_PRIOR", "DIK_Q", "DIK_R", "DIK_RBRACKET",
-	"DIK_RCONTROL", "DIK_RETURN", "DIK_RIGHT", "DIK_RMENU", "DIK_RSHIFT", "DIK_RWIN", "DIK_S",
-	"DIK_SCROLL", "DIK_SEMICOLON", "DIK_SLASH", "DIK_SPACE", "DIK_STOP", "DIK_SUBTRACT",
-	"DIK_SYSRQ", "DIK_T", "DIK_TAB", "DIK_U", "DIK_UNDERLINE", "DIK_UNLABELED", "DIK_UP",
-	"DIK_V", "DIK_W", "DIK_X", "DIK_Y", "DIK_YEN", "DIK_Z",
-	"MOUSE_1", "MOUSE_2", "MOUSE_3", "MOUSE_4", "MOUSE_5", "MOUSE_6", "MOUSE_7", "MOUSE_8",
-}
-
-local dik_token = {}
-local dik_token_ready = false
-
-local function ensure_dik_tokens()
-	if dik_token_ready or not DIK_keys then
-		return
-	end
-	for _, name in ipairs(DIK_TOKEN_NAMES) do
-		local code = DIK_keys[name]
-		if type(code) == "number" then
-			if string.sub(name, 1, 4) == "DIK_" then
-				dik_token[code] = "k" .. string.sub(name, 5)
-			elseif string.sub(name, 1, 6) == "MOUSE_" then
-				dik_token[code] = "mouse" .. string.sub(name, 7)
-			end
-		end
-	end
-	dik_token_ready = true
-end
-
-local function engine_dik(bind)
-	if not bind then
-		return -1
-	end
-	local dik = bind_to_dik(bind)
-	if dik and dik ~= 0 then
-		return dik
-	end
-	return -1
-end
-
-local function bind_action(action)
-	return function(dik)
-		dik = tonumber(dik)
-		if not dik or dik < 0 then
-			return
-		end
-		ensure_dik_tokens()
-		local token = dik_token[dik]
-		if not token then
-			return
-		end
-		exec_console_cmd(string.format("bind %s %s", action, token))
-	end
-end
-
-local function curr_crouch()
-	return engine_dik(key_bindings and key_bindings.kCROUCH)
-end
-
-local function curr_prone()
-	return engine_dik(key_bindings and key_bindings.kACCEL)
-end
-
-local function curr_sprint()
-	local bind = key_bindings and (key_bindings.kSPRINT_TOGGLE or key_bindings.kSPRINT)
-	return engine_dik(bind)
-end
 
 local function curr_hold_toggle()
 	return (get_console_cmd(1, "g_crouch_toggle") and 1) or 0
@@ -95,6 +13,7 @@ local function set_hold_toggle(mode)
 	exec_console_cmd("g_crouch_toggle " .. word)
 	exec_console_cmd("g_walk_toggle " .. word)
 	exec_console_cmd("g_sprint_toggle " .. word)
+	exec_console_cmd("cfg_save")
 end
 
 function on_mcm_load(options)
@@ -108,13 +27,6 @@ function on_mcm_load(options)
 				id = "page_description",
 				type = "desc",
 				text = "ui_mcm_dogma_pose_controls_main_description",
-			},
-			{
-				id = "enabled",
-				type = "check",
-				val = 1,
-				def = CONFIG.DEFAULTS["enabled"],
-				hint = "dogma_pose_controls_enabled",
 			},
 			{
 				id = "hold_toggle",
@@ -135,15 +47,9 @@ function on_mcm_load(options)
 				type = "desc",
 				text = "ui_mcm_dogma_pose_controls_keys_desc",
 			},
-			{
-				id = "sprint_key",
-				type = "key_bind",
-				val = 2,
-				def = -1,
-				curr = { curr_sprint },
-				functor = { bind_action("sprint_toggle") },
-				hint = "dogma_pose_controls_sprint_key",
-			},
+			dogma_mcm.key_mirror("sprint_toggle", function()
+				return key_bindings and (key_bindings.kSPRINT_TOGGLE or key_bindings.kSPRINT)
+			end):option("sprint_key", "dogma_pose_controls_sprint_key"),
 			{
 				id = "walk_key",
 				type = "key_bind",
@@ -151,24 +57,12 @@ function on_mcm_load(options)
 				def = CONFIG.DEFAULTS["walk_key"],
 				hint = "dogma_pose_controls_walk_key",
 			},
-			{
-				id = "crouch_key",
-				type = "key_bind",
-				val = 2,
-				def = -1,
-				curr = { curr_crouch },
-				functor = { bind_action("crouch") },
-				hint = "dogma_pose_controls_crouch_key",
-			},
-			{
-				id = "prone_key",
-				type = "key_bind",
-				val = 2,
-				def = -1,
-				curr = { curr_prone },
-				functor = { bind_action("accel") },
-				hint = "dogma_pose_controls_prone_key",
-			},
+			dogma_mcm.key_mirror("crouch", function()
+				return key_bindings and key_bindings.kCROUCH
+			end):option("crouch_key", "dogma_pose_controls_crouch_key"),
+			dogma_mcm.key_mirror("accel", function()
+				return key_bindings and key_bindings.kACCEL
+			end):option("prone_key", "dogma_pose_controls_prone_key"),
 		}),
 	})
 end

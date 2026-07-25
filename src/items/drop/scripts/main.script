@@ -1,10 +1,15 @@
 --[[
-	Inventory drop keybinds (hold-repeat while key held).
+	Inventory drop keybinds.
+	Press / dtap: one stack. Hold: one stack then step-timed repeats while held;
+	hovered item id change resets the streak and fires again.
 ]]
 
 local CONFIG = _G.dogma_items_drop_conf
 local MOD_ID = CONFIG.MOD_ID
 local DOGMA
+
+local MODE_DTAP = 1
+local MODE_HOLD = 2
 
 local ALLOWED_BAGS = {
 	actor_bag = true,
@@ -15,6 +20,7 @@ local ALLOWED_BAGS = {
 }
 
 local BINDS = {}
+local dtap_last = {}
 local hold_state = {} -- [dik] = { bind, t0, fire_count, last_id }
 
 local function log(msg)
@@ -26,20 +32,15 @@ end
 local function on_option_change()
 	CONFIG.loaded.drop_safe_equipped = DOGMA.mcm.bool(MOD_ID, "drop_safe_equipped")
 	BINDS = {}
-	local function add(id, key_path, mod_path, all_stacks)
-		local key = DOGMA.mcm.key(MOD_ID, key_path)
-		if not key then
-			return
-		end
-		BINDS[#BINDS + 1] = {
-			id = id,
+	local key = DOGMA.mcm.key(MOD_ID, "key_drop")
+	if key then
+		BINDS[1] = {
+			id = "drop",
 			key = key,
-			modifier = math.floor(DOGMA.mcm.number(MOD_ID, mod_path, 0) + 0.5),
-			all_stacks = all_stacks,
+			modifier = math.floor(DOGMA.mcm.number(MOD_ID, "key_drop_modifier", 0) + 0.5),
+			mode = math.floor(DOGMA.mcm.number(MOD_ID, "key_drop_mode", 0) + 0.5),
 		}
 	end
-	add("drop", "key_drop", "key_drop_modifier", false)
-	add("drop_all", "key_drop_all", "key_drop_all_modifier", true)
 end
 
 local function mod_ok(modifier)
@@ -47,6 +48,13 @@ local function mod_ok(modifier)
 		return true
 	end
 	return ui_mcm.get_mod_key(modifier)
+end
+
+local function dtap_window_ms()
+	if not ui_mcm then
+		return 250
+	end
+	return ui_mcm.get("mcm/mcm_kb/mcm_kb_main/dtaptime2") or 250
 end
 
 local function inv_mode_ok(gui)
@@ -100,17 +108,7 @@ local function is_quest(gui, obj, bag)
 	return not gui:Cond_NotQuest(obj, bag)
 end
 
-local function cell_has_childs(gui, obj, bag)
-	if not (gui and gui.Cond_Childs and obj and bag) then
-		return false
-	end
-	local ok, has = pcall(function()
-		return gui:Cond_Childs(obj, bag)
-	end)
-	return ok and has
-end
-
-local function do_drop_one(gui, obj, bag)
+local function do_drop(gui, obj, bag)
 	if CONFIG.loaded.drop_safe_equipped and is_equipped(obj) then
 		return
 	end
@@ -122,22 +120,6 @@ local function do_drop_one(gui, obj, bag)
 	else
 		db.actor:drop_item(obj)
 	end
-end
-
-local function do_drop(gui, obj, bag, all_stacks)
-	if all_stacks and cell_has_childs(gui, obj, bag) then
-		local cc = gui.CC[bag]
-		local ci = cc and cc:GetCell_ID(obj:id())
-		if ci and ci.childs then
-			for id, _ in pairs(ci.childs) do
-				local child = level.object_by_id(id)
-				if child then
-					do_drop_one(gui, child, bag)
-				end
-			end
-		end
-	end
-	do_drop_one(gui, obj, bag)
 end
 
 local function repeat_delay_ms(fire_count)
@@ -156,12 +138,12 @@ local function repeat_delay_ms(fire_count)
 	return 2250 + (fire_count - 4) * 250
 end
 
-local function fire_bind(bind)
+local function fire_bind()
 	local obj, bag, idx, gui = get_hover()
 	if not obj then
 		return false
 	end
-	do_drop(gui, obj, bag, bind.all_stacks)
+	do_drop(gui, obj, bag)
 	return true, obj:id()
 end
 
@@ -169,7 +151,7 @@ local function start_hold(bind, dik)
 	local now = time_continual()
 	local hs = { bind = bind, t0 = now, fire_count = 0, last_id = nil }
 	hold_state[dik] = hs
-	local ok, id = fire_bind(bind)
+	local ok, id = fire_bind()
 	if ok then
 		hs.last_id = id
 		hs.fire_count = 1
@@ -183,8 +165,20 @@ local function on_key_pressed(dik, gui)
 	end
 	for i = 1, #BINDS do
 		local bind = BINDS[i]
-		if bind.key == dik and mod_ok(bind.modifier) then
+		if bind.key ~= dik or not mod_ok(bind.modifier) then
+			-- skip
+		elseif bind.mode == MODE_HOLD then
 			start_hold(bind, dik)
+		elseif bind.mode == MODE_DTAP then
+			local now = time_continual()
+			local prev = dtap_last[bind.id]
+			dtap_last[bind.id] = now
+			if prev and (now - prev) <= dtap_window_ms() then
+				dtap_last[bind.id] = nil
+				fire_bind()
+			end
+		else
+			fire_bind()
 		end
 	end
 end
@@ -212,10 +206,10 @@ local function hold_tick(gui)
 				hs.last_id = id
 				hs.fire_count = 0
 				hs.t0 = now
-				do_drop(g, obj, bag, hs.bind.all_stacks)
+				do_drop(g, obj, bag)
 				hs.fire_count = 1
 			elseif (now - hs.t0) >= repeat_delay_ms(hs.fire_count) then
-				do_drop(g, obj, bag, hs.bind.all_stacks)
+				do_drop(g, obj, bag)
 				hs.fire_count = hs.fire_count + 1
 			end
 		end

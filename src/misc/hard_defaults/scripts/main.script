@@ -1,66 +1,54 @@
 --[[
-	Hard New Game Defaults
+	Hard New Game Defaults — in-session re-patch.
 
-	Stock UINewGame LoadDifficulty / LoadEconomy pick table_*[1] (Easy / Tourist).
-	When enabled, non-random picks use [3] (Veteran / Survivalist). Randomize unchanged.
+	Primary patch is in mcm.script (loaded at main menu). This file only runs
+	after a game session starts; re-apply if Main_Controls was restored.
 ]]
 
-local CONFIG = _G.dogma_misc_hard_defaults_conf
 local HARD_INDEX = 3
 local STATE = _G.__dogma_misc_hard_defaults or {}
 _G.__dogma_misc_hard_defaults = STATE
 
-local function enabled()
-	-- Pass default: ui_mcm.get may be nil before MCM is ready on a cold boot.
-	return dogma_mcm.bool(CONFIG.MOD_ID, "enabled", CONFIG.DEFAULTS["enabled"] ~= false)
-end
-
-local function wrap_load(base, table_name, list_name, selected_name)
-	return function(self, rand)
-		base(self, rand)
-		if rand or not enabled() then
-			return
-		end
-		local tbl = self[table_name]
-		local list = self[list_name]
-		if not (tbl and list) then
-			return
-		end
-		local pick = tbl[HARD_INDEX] or tbl[1]
-		if not pick then
-			return
-		end
-		list:SetText(game.translate_string(pick))
-		self[selected_name] = pick
+local function apply_hard_defaults(self)
+	if not (self.list_difficulty and self.table_difficulty) then
+		return
+	end
+	local diff = self.table_difficulty[HARD_INDEX] or self.table_difficulty[1]
+	if diff then
+		self.list_difficulty:SetText(game.translate_string(diff))
+		self.selected_difficulty = diff
+	end
+	if not (self.list_economy and self.table_economy) then
+		return
+	end
+	local eco = self.table_economy[HARD_INDEX] or self.table_economy[1]
+	if not eco then
+		return
+	end
+	self.list_economy:SetText(game.translate_string(eco))
+	self.selected_economy = eco
+	if self.LoadLoadout then
+		self:LoadLoadout(false)
 	end
 end
 
 local function patch_new_game()
 	local cls = ui_mm_faction_select and ui_mm_faction_select.UINewGame
-	if not (cls and cls.LoadDifficulty and cls.LoadEconomy) then
+	if not (cls and cls.Main_Controls) then
 		return false
 	end
-
-	-- _G STATE survives script reload; UINewGame methods do not.
-	if STATE.wrap_diff and STATE.wrap_eco
-		and cls.LoadDifficulty == STATE.wrap_diff
-		and cls.LoadEconomy == STATE.wrap_eco
-	then
+	if STATE.wrap_controls and cls.Main_Controls == STATE.wrap_controls then
 		return true
 	end
-
-	local wrap_diff = wrap_load(cls.LoadDifficulty, "table_difficulty", "list_difficulty", "selected_difficulty")
-	local wrap_eco = wrap_load(cls.LoadEconomy, "table_economy", "list_economy", "selected_economy")
-
-	cls.LoadDifficulty = wrap_diff
-	cls.LoadEconomy = wrap_eco
-	STATE.wrap_diff = wrap_diff
-	STATE.wrap_eco = wrap_eco
+	local base_controls = cls.Main_Controls
+	local function wrap_controls(self, ...)
+		base_controls(self, ...)
+		apply_hard_defaults(self)
+	end
+	cls.Main_Controls = wrap_controls
+	STATE.wrap_controls = wrap_controls
 	return true
 end
-
--- zzzz_ body loads after ZCP ui_mm_faction_select.
-patch_new_game()
 
 function on_game_start()
 	patch_new_game()

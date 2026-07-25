@@ -114,8 +114,8 @@ local function passthrough_scripted_pose_pulse()
 	return false
 end
 
--- DIK -> console bind token (kLCONTROL / mouse1). Built once from DIK_keys.
--- (Bind writes live in mcm.script functors; main only reads engine binds.)
+-- DIK -> console bind token handled by dogma_mcm.key_mirror (MCM functors).
+-- main only reads engine binds.
 local function engine_bind_dik(kb)
 	local bind = kb.bind()
 	if not bind then

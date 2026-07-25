@@ -1,0 +1,190 @@
+--[[
+	QoL — live MCM search.
+
+	Filters the left mod list as you type. Keeps stock placeholder text when
+	empty (an empty edit box + keyboard focus races MCM OnKeyboard / BusyHands).
+
+	Lives in *mcm.script so it loads when main-menu MCM gathers options
+	(zzzz_* body scripts are not loaded until a game session).
+]]
+
+local SEARCH_DEBOUNCE_MS = 100
+
+local HOOK_STATE = _G.__dogma_misc_search_hooks or {}
+_G.__dogma_misc_search_hooks = HOOK_STATE
+
+local function placeholder()
+	return game.translate_string("ui_mcm_menu_search")
+end
+
+local function search_text(self)
+	local t = self.mod_search and self.mod_search:GetText() or ""
+	if t == "" or t == placeholder() then
+		return ""
+	end
+	return t
+end
+
+local function mcm_options()
+	local opts = ui_mcm and ui_mcm.options
+	if type(opts) == "table" and #opts > 0 then
+		return opts
+	end
+	-- Stock OnSearch uses bare `options` from the ui_mcm chunk env.
+	opts = rawget(_G, "options")
+	if type(opts) == "table" and #opts > 0 then
+		return opts
+	end
+	return nil
+end
+
+local function apply_search(self, keep_focus)
+	if HOOK_STATE.rebuilding or HOOK_STATE.in_keyboard or self.k_binder then
+		return
+	end
+	local t = search_text(self)
+	local filter = (t ~= "" and t) or nil
+	if filter == self.search_filter then
+		return
+	end
+	local opts = mcm_options()
+	if not opts then
+		return
+	end
+
+	self.search_filter = filter
+	HOOK_STATE.rebuilding = true
+	local ok, err = pcall(function()
+		self:Register_Tree(1, "", opts, 1)
+	end)
+	HOOK_STATE.rebuilding = false
+	if not ok then
+		printf("![dogma_misc_search] Register_Tree failed: %s", tostring(err))
+		return
+	end
+
+	-- Only keep focus while actively filtering — never on an empty box.
+	if keep_focus and filter and self.mod_search then
+		self.mod_search:CaptureFocus(true)
+	end
+end
+
+local function reset_search_state(self)
+	self.search_filter = nil
+	self._dogma_qol_want = nil
+	self._dogma_qol_due = nil
+	if self.mod_search then
+		self.mod_search:SetText(placeholder())
+	end
+end
+
+local function patch_mcm_search()
+	if HOOK_STATE.patched then
+		return true
+	end
+	local cls = ui_mcm and ui_mcm.UI_MCM
+	if not (cls and cls.InitControls and cls.Update and cls.OnSearch and cls.Open_to) then
+		return false
+	end
+
+	local orig_init = cls.InitControls
+	local orig_open = cls.Open_to
+	local orig_update = cls.Update
+	local orig_keyboard = cls.OnKeyboard
+
+	cls.InitControls = function(self)
+		orig_init(self)
+		-- Stock already set the placeholder; only clear our debounce state.
+		self.search_filter = nil
+		self._dogma_qol_want = nil
+		self._dogma_qol_due = nil
+	end
+
+	cls.Open_to = function(self, path)
+		orig_open(self, path)
+		reset_search_state(self)
+	end
+
+	cls.OnSearch = function(self)
+		local t = search_text(self)
+		if t == "" and self.mod_search then
+			self.mod_search:SetText(placeholder())
+		end
+		apply_search(self, t ~= "")
+	end
+
+	cls.Update = function(self)
+		orig_update(self)
+		if not self.mod_search or self.k_binder or HOOK_STATE.rebuilding then
+			return
+		end
+
+		local t = search_text(self)
+		local want = (t ~= "" and t) or nil
+		if want ~= self._dogma_qol_want then
+			self._dogma_qol_want = want
+			self._dogma_qol_due = time_continual() + SEARCH_DEBOUNCE_MS
+		end
+
+		if self._dogma_qol_due and time_continual() >= self._dogma_qol_due then
+			self._dogma_qol_due = nil
+			if want == nil and self.mod_search then
+				self.mod_search:SetText(placeholder())
+			end
+			apply_search(self, want ~= nil)
+		end
+	end
+
+	-- Soft-guard: never run search rebuilds from inside OnKeyboard.
+	if orig_keyboard then
+		cls.OnKeyboard = function(self, dik, keyboard_action)
+			HOOK_STATE.in_keyboard = true
+			local ok, res = pcall(orig_keyboard, self, dik, keyboard_action)
+			HOOK_STATE.in_keyboard = false
+			if not ok then
+				printf("![dogma_misc_search] OnKeyboard error: %s", tostring(res))
+				self.k_binder = nil
+				self.k_timer = 0
+				self.key_input = nil
+				return false
+			end
+			return res
+		end
+	end
+
+	HOOK_STATE.patched = true
+	printf("[dogma_misc_search] patched ui_mcm.UI_MCM search")
+	return true
+end
+
+-- MCM gather loads this file at main menu — patch immediately.
+patch_mcm_search()
+
+function on_mcm_load(options)
+	-- Re-try if ui_mcm was not ready during top-level load.
+	patch_mcm_search()
+
+	dogma_mcm.attach(options, "misc", "ui_mcm_menu_dogma_misc", {
+		id = "search",
+		sh = true,
+		text = "ui_mcm_menu_dogma_misc_search",
+		gr = dogma_mcm.with_header({
+			{
+				id = "page_description",
+				type = "desc",
+				text = "ui_mcm_dogma_misc_search_page_description",
+			},
+			{
+				id = "search_info",
+				type = "desc",
+				text = "ui_mcm_dogma_misc_search_info",
+			},
+		}),
+	})
+end
+
+function on_game_start()
+	if not patch_mcm_search() then
+		printf("[dogma_misc_search] ui_mcm.UI_MCM missing — MCM search patch skipped")
+	end
+end

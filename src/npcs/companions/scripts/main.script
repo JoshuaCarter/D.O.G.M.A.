@@ -1,11 +1,17 @@
 --[[
-	Solo guides & hired escorts.
+	Companions
 
+	Solo guides & hired escorts:
 	Guide jobs + friend/paid hire: only the speaker joins.
 	- Offline squad mates are removed (they would pop in on accept).
 	- Online squad mates are moved to a leftover squad (not deleted).
 	Max one active guide (stock guider_start) and one hired escort (paid or free).
 	Hostage join and story/special companions are untouched.
+
+	Teleport keybind:
+	Pulls actor-squad companions to the player (online + offline).
+	Respects companion_cannot_teleport (hostages / rescue locks) and wait orders.
+	Replaces Quick Companion Teleport and Fair Fast Travel's squad_tp_bind.
 ]]
 
 local CONFIG = _G.dogma_npcs_companions_conf
@@ -14,8 +20,20 @@ local DOGMA
 -- Free (high-rep) hire squad id; paid uses txr_paid_companions.paid_companions.
 local free_hire_squad_id = nil
 
+local function log(msg)
+	if DOGMA and DOGMA.dbg and DOGMA.dbg.logging and DOGMA.dbg.logging() then
+		DOGMA.dbg.log(CONFIG.MOD_ID, tostring(msg))
+	end
+end
+
+local function on_option_change()
+	CONFIG.loaded.enabled = DOGMA.mcm.bool(CONFIG.MOD_ID, "enabled")
+	-- nil when unbound (-1 in MCM)
+	CONFIG.loaded.teleport_key = DOGMA.mcm.key(CONFIG.MOD_ID, "teleport_key")
+end
+
 local function enabled()
-	return DOGMA and DOGMA.mcm.bool(CONFIG.MOD_ID, "enabled")
+	return CONFIG.loaded.enabled
 end
 
 local function is_hostage(actor, npc)
@@ -267,10 +285,89 @@ local function patch_all()
 	patch_dismiss()
 end
 
+local function is_waiting(npc)
+	return npc and npc:has_info("npcx_beh_wait")
+end
+
+local function teleport_companions()
+	if not (axr_companions and axr_companions.companion_squads) then
+		return
+	end
+	local actor = db.actor
+	if not actor then
+		return
+	end
+
+	local lvid = actor:level_vertex_id()
+	local gvid = actor:game_vertex_id()
+	local pos = actor:position()
+	local land = level.vertex_position(lvid) or pos
+	local sim = alife()
+	if not sim then
+		return
+	end
+
+	local count = 0
+	for _, squad in pairs(axr_companions.companion_squads) do
+		if squad and squad.commander_id
+			and (not axr_companions.companion_squad_can_teleport
+				or axr_companions.companion_squad_can_teleport(squad))
+		then
+			if squad.online == false and squad.force_change_position then
+				squad:force_change_position(land)
+			end
+
+			for member in squad:squad_members() do
+				local id = member and member.id
+				if id then
+					local npc = db.storage[id] and db.storage[id].object
+					if not is_waiting(npc) then
+						local se = alife_object(id)
+						local alive = (npc and npc:alive())
+							or (se and se.alive and se:alive())
+						if alive then
+							if npc then
+								if sim_squad_scripted and sim_squad_scripted.reset_animation then
+									sim_squad_scripted.reset_animation(npc)
+								end
+								npc:set_npc_position(land)
+							end
+							sim:teleport_object(id, gvid, lvid, land)
+							count = count + 1
+						end
+					end
+				end
+			end
+		end
+	end
+
+	if count > 0 then
+		log(string.format("teleported %s companion(s)", tostring(count)))
+	end
+end
+
+local function on_key_press(dik)
+	if not DOGMA.sys.ready(CONFIG.MOD_ID, db, on_option_change) then
+		return
+	end
+	if not CONFIG.loaded.enabled then
+		return
+	end
+	local key = CONFIG.loaded.teleport_key
+	if not key or dik ~= key then
+		return
+	end
+	teleport_companions()
+end
+
 function on_game_start()
 	DOGMA = dogma_common.load(CONFIG.MOD_ID)
+	on_option_change()
 	patch_all()
 	RegisterScriptCallback("on_game_load", patch_all)
 	RegisterScriptCallback("save_state", save_state)
 	RegisterScriptCallback("load_state", load_state)
+	RegisterScriptCallback("on_key_press", on_key_press)
+	RegisterScriptCallback("on_option_change", on_option_change)
+	log("companions ready")
 end

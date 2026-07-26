@@ -1,200 +1,200 @@
 # DOGMA unified catalog — single source of truth.
 #
 # features:
-#   level: off | dev | release   (quote "off" — bare off is YAML false)
-#     off     — not built
-#     dev     — local builds (Ctrl+Shift+B / tools/build.sh)
+#   stage: omit | local | release
+#     omit    — not built
+#     local   — local builds (Ctrl+Shift+B / tools/build.sh)
 #     release — local + FOMOD / GitHub release
-#   common    — always-on (level ignored)
-#   disable / enable — exact MO2 folder / modlist names (full name).
-#                      opt-in partial: substring:Name  (or contains:Name)
-#   requirements / suggested url: prefer ModDB addon *page* links
-#     (https://www.moddb.com/mods/.../addons/...). Install resolves
-#     filename / updated / downloads/start from the page.
+#   common    — always-on (stage ignored)
+#   disabled / enables — exact MO2 folder / modlist names (full name).
+#                        opt-in partial: substring:Name  (or contains:Name)
+#   downloads — third-party packs to install when this feature is present
+#               (keyed by id; url: prefer ModDB addon *page* links)
+#   defaults  — per-entry MCM; optional target_mod:
 #
 # suggested: — optional third-party packs (Install+ / --tier all|suggested)
-#   keyed by id (same shape as features), not a YAML list
+#   same shape as feature downloads entries (disabled / enables / url / ...)
 
 features:
   common:
-    disable: []
-    enable: []
-    requirements: []
+    disabled: []
+    enables: []
+    downloads: {}
 
   crafting/ammo:
-    level: release
+    stage: release
 
   fx/radiation:
-    level: release
+    stage: release
 
   fx/thirst:
-    level: dev
+    stage: local
 
   hud/fps:
-    level: release
+    stage: release
 
   hud/geiger:
-    level: dev
-    disable:
+    stage: local
+    disabled:
       - G_FLAT's Msv Above Radiation Icon
 
   hud/minimap:
-    level: dev
-    disable:
+    stage: local
+    disabled:
       - 177- Minimap Toggle - RavenAscendant
 
   hud/nvg:
-    level: dev
+    stage: local
 
   hud/quick_action_wheel:
-    level: dev
+    stage: local
 
   hud/stalker_id:
-    level: dev
-    disable:
+    stage: local
+    disabled:
       - 163- Identification UI - CrookR
       - G.A.M.M.A. Crook's Identification UI Fix
 
   items/disassemble:
-    level: dev
-    disable:
+    stage: local
+    disabled:
       - 144- Prefer Best Disassembly Tool - Demonized
 
   items/drop:
-    level: dev
-    disable:
+    stage: local
+    disabled:
       - G.A.M.M.A. Press Key to Drop Item
 
   items/favourites:
-    level: dev
+    stage: local
 
   items/stripping:
-    level: release
+    stage: release
 
   mcm/debug:
-    level: dev
+    stage: local
 
   misc/geiger:
-    level: dev
+    stage: local
 
   misc/hard_defaults:
-    level: dev
+    stage: local
 
   misc/keybinds_fix:
-    level: dev
+    stage: local
 
   misc/missions:
-    level: dev
+    stage: local
 
   misc/rf_receiver:
-    level: dev
+    stage: local
 
   misc/search:
-    level: release
+    stage: release
 
   misc/sound_prefetch:
-    level: dev
+    stage: local
 
   mutants/audio:
-    level: dev
+    stage: local
 
   mutants/skinning:
-    level: release
+    stage: release
 
   mutants/tweaks:
-    level: release
+    stage: release
 
   npcs/companions:
-    level: dev
-    disable:
+    stage: local
+    disabled:
       - 218- Quick Companion Teleport (teleports rescue mission targets) - RazorShultz
       - 329- Fair Fast Travel - Catspaw
       - 329- Fair Fast Travel 2.7+ - Catspaw
 
   npcs/foliage:
-    level: "off"
+    stage: omit
 
   npcs/speed:
-    level: release
+    stage: release
 
   pda/rep_warning:
-    level: dev
+    stage: local
 
   pda/stay_down:
-    level: release
-    disable:
+    stage: release
+    disabled:
       - Dorns_Dont_ReEquip_PDA
       - 136- Previous weapon is automatically pulled after closing PDA - Demonized
 
   player/stfu:
-    level: "off"
-    disable:
+    stage: omit
+    disabled:
       - Silent Protagonist
 
   player/campfire:
-    level: dev
-    disable:
+    stage: local
+    disabled:
       - 115- Campfire slowly regens life - arti
 
   player/exo:
-    level: dev
+    stage: local
 
   player/pose_controls:
-    level: release
+    stage: release
 
   player/true_prone:
-    level: release
-    disable:
+    stage: release
+    disabled:
       - xrMPE
 
   player/equipment_controls:
-    level: dev
+    stage: local
 
   tooltips/tweaks:
-    level: release
+    stage: release
 
   tooltips/weapons:
-    level: release
+    stage: release
 
   travel/fast_travel:
-    level: "off"
-    disable:
+    stage: omit
+    disabled:
       - 329- Fair Fast Travel - Catspaw
       - 329- Fair Fast Travel 2.7+ - Catspaw
-    requirements:
-      - id: tarkov_transitions
+    downloads:
+      tarkov_transitions:
         label: Tarkov-like Level Transitions
         url: https://www.moddb.com/mods/stalker-anomaly/addons/tarkov-like-level-transitions
 
   travel/true_fast_travel:
-    level: dev
-    disable:
+    stage: local
+    disabled:
       - 329- Fair Fast Travel - Catspaw
       - 329- Fair Fast Travel 2.7+ - Catspaw
       - 204- Limited Fast Travel (walking is good for your health) - Demonized
-    requirements:
-      - id: tarkov_transitions
+    downloads:
+      tarkov_transitions:
         label: Tarkov-like Level Transitions
         url: https://www.moddb.com/mods/stalker-anomaly/addons/tarkov-like-level-transitions
 
   weapons/ammo_wheel:
-    level: dev
-    disable:
+    stage: local
+    disabled:
       - Fixed Ammo Wheel Hotkeys
 
   weapons/quick_fire:
-    level: dev
-    disable:
+    stage: local
+    disabled:
       - 65- Fluid Aim - Skieppy
 
   zoom/ads_zoom:
-    level: release
-    disable:
+    stage: release
+    disabled:
       - 72- Adjustable Scope View - sneaky
 
   zoom/free_zoom:
-    level: release
-    disable:
+    stage: release
+    disabled:
       - 178- Free Zoom - SlowVibe
       - G.A.M.M.A. Free Zoom v3
       - Kute's Free Zoom Rewrite
@@ -203,7 +203,7 @@ suggested:
   alifeplus:
     label: Alife Plus
     url: https://www.moddb.com/mods/stalker-anomaly/addons/alifeplus-v1-0-01
-    disable:
+    disabled:
       - G.A.M.M.A. NPC Loot Claim Remade
       - 311- NPC Stop Looting Dead Bodies - DTTheGunslinger
       - 450- Useful Idiots - bellyillish
@@ -222,5 +222,5 @@ suggested:
   interaction_dot_marks:
     label: Interaction Dot Marks
     url: https://www.moddb.com/mods/stalker-anomaly/addons/interaction-dot-marks
-    disable:
+    disabled:
       - 452- Interaction Dot Marks - Catspaw

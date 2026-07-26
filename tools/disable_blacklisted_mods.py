@@ -271,7 +271,7 @@ def main(argv: list[str] | None = None) -> int:
             feat_rules, active, skipped = lib.feature_disable_rules(
                 data, installed=installed
             )
-            req_deps = lib.filter_deps(data, "required", installed=installed)
+            req_deps = lib.filter_deps(data, "downloads", installed=installed)
         else:
             data = None
             installed = None
@@ -281,7 +281,7 @@ def main(argv: list[str] | None = None) -> int:
         if active:
             info(f"  Active features ({len(active)}): {', '.join(active)}")
         if skipped:
-            warn(f"  Skipped (off / not installed) ({len(skipped)}): {', '.join(skipped)}")
+            warn(f"  Skipped (omit / not installed) ({len(skipped)}): {', '.join(skipped)}")
         info(f"  Feature disable rules: {len(feat_rules)}")
 
         if not feat_rules and not req_deps:

@@ -289,63 +289,80 @@ def _settings_from_mapping(
     return out
 
 
-LEVEL_RANK = {"off": 0, "dev": 1, "release": 2}
-LEVEL_ALIASES = {
-    "0": "off",
-    "1": "dev",
+STAGE_RANK = {"omit": 0, "local": 1, "release": 2}
+STAGE_ALIASES = {
+    "0": "omit",
+    "1": "local",
     "2": "release",
-    "off": "off",
-    "dev": "dev",
+    "omit": "omit",
+    "local": "local",
     "release": "release",
-    "local": "dev",
+    # legacy
+    "off": "omit",
+    "dev": "local",
+    "hidden": "omit",
 }
 
 
-def parse_level(raw) -> str:
+def parse_stage(raw) -> str:
     if raw is False:
-        return "off"
+        return "omit"
     if raw is True:
-        raise ValueError("level must be off|dev|release (got boolean true — quote strings in YAML)")
+        raise ValueError(
+            "stage must be omit|local|release (got boolean true — quote strings in YAML)"
+        )
     key = str(raw).strip().lower()
-    if key not in LEVEL_ALIASES:
-        raise ValueError(f"level must be off|dev|release (got {raw!r})")
-    return LEVEL_ALIASES[key]
+    if key not in STAGE_ALIASES:
+        raise ValueError(f"stage must be omit|local|release (got {raw!r})")
+    return STAGE_ALIASES[key]
 
 
-def level_meets(level: str, minimum: str) -> bool:
-    return LEVEL_RANK[parse_level(level)] >= LEVEL_RANK[parse_level(minimum)]
+def stage_meets(stage: str, minimum: str) -> bool:
+    return STAGE_RANK[parse_stage(stage)] >= STAGE_RANK[parse_stage(minimum)]
+
+
+# Compat aliases
+LEVEL_RANK = STAGE_RANK
+LEVEL_ALIASES = STAGE_ALIASES
+parse_level = parse_stage
+level_meets = stage_meets
 
 
 @dataclass
 class Dependency:
     id: str
     label: str
-    tier: str  # required (from a feature) | suggested
+    tier: str  # downloads (from a feature) | suggested
     url: str = ""
     source: str = "auto"  # auto | user
     file: str = ""
     howto: str = ""
-    disable: list[str] = field(default_factory=list)
-    enable: list[str] = field(default_factory=list)
+    disabled: list[str] = field(default_factory=list)
+    enables: list[str] = field(default_factory=list)
     defaults: dict[str, str] = field(default_factory=dict)
     target_mod: str = ""
     after_unpack: str = ""
-    feature: str = ""  # owning feature path when from features.*.requirements
+    feature: str = ""  # owning feature path when from features.*.downloads
 
 
 @dataclass
 class FeatureMeta:
     path: str
-    level: str  # off | dev | release
-    disable: list[str] = field(default_factory=list)
-    enable: list[str] = field(default_factory=list)
+    stage: str  # omit | local | release
+    disabled: list[str] = field(default_factory=list)
+    enables: list[str] = field(default_factory=list)
     defaults: dict[str, str] = field(default_factory=dict)
     target_mod: str = ""
-    requirements: list[Dependency] = field(default_factory=list)
+    downloads: list[Dependency] = field(default_factory=list)
 
     @property
     def always_on(self) -> bool:
         return self.path.lower() == "common"
+
+    @property
+    def level(self) -> str:
+        """Compat alias for stage."""
+        return self.stage
 
 
 def dogma_mod_dir(mo2_root: Path) -> Path:
@@ -408,14 +425,14 @@ def detect_installed_features(
 
 def _feature_is_active(
     meta: FeatureMeta,
-    min_level: str = "dev",
+    min_stage: str = "local",
     *,
     installed: set[str] | None = None,
 ) -> bool:
-    """Active = manifest level OK, and (if given) feature is installed in MO2."""
+    """Active = manifest stage OK, and (if given) feature is installed in MO2."""
     if meta.always_on:
         return True
-    if not level_meets(meta.level, min_level):
+    if not stage_meets(meta.stage, min_stage):
         return False
     if installed is not None:
         # Match by exact path; also accept case-insensitive
@@ -443,23 +460,23 @@ class ManifestData:
     suggested: list[Dependency] = field(default_factory=list)
     defaults: dict[str, list[InitSetting]] = field(default_factory=dict)
 
-    def feature_requirements(
+    def feature_downloads(
         self,
-        min_level: str | int = "dev",
+        min_stage: str | int = "local",
         *,
         installed: set[str] | None = None,
     ) -> list[Dependency]:
-        """Requirements from common + active installed features (dedupe by id)."""
-        min_level = parse_level(min_level)
+        """Downloads from common + active installed features (dedupe by id)."""
+        min_stage = parse_stage(min_stage)
         seen: set[str] = set()
         out: list[Dependency] = []
         for feat in ("common", *sorted(k for k in self.features if k != "common")):
             meta = self.features.get(feat)
             if not meta or not _feature_is_active(
-                meta, min_level, installed=installed
+                meta, min_stage, installed=installed
             ):
                 continue
-            for dep in meta.requirements:
+            for dep in meta.downloads:
                 if dep.id in seen:
                     continue
                 seen.add(dep.id)
@@ -469,22 +486,22 @@ class ManifestData:
     def collect_defaults(
         self,
         *,
-        min_level: str | int = "dev",
+        min_stage: str | int = "local",
         installed: set[str] | None = None,
         include_suggested: bool = True,
     ) -> dict[str, list[InitSetting]]:
         """Defaults for active/installed features (+ optional suggested entries)."""
-        min_level = parse_level(min_level)
+        min_stage = parse_stage(min_stage)
         defaults: dict[str, list[InitSetting]] = {}
         for feat, meta in self.features.items():
-            if not _feature_is_active(meta, min_level, installed=installed):
+            if not _feature_is_active(meta, min_stage, installed=installed):
                 continue
             if meta.defaults:
                 pattern = meta.target_mod or meta.path
                 defaults.setdefault(pattern, []).extend(
                     _settings_from_mapping(pattern, meta.defaults)
                 )
-            for dep in meta.requirements:
+            for dep in meta.downloads:
                 if not dep.defaults:
                     continue
                 pattern = dep.target_mod or dep.label or dep.id
@@ -504,11 +521,11 @@ class ManifestData:
     @property
     def requirements(self) -> list[Dependency]:
         """All feature requirements at dev+ (compat alias)."""
-        return self.feature_requirements("dev")
+        return self.feature_downloads("dev")
 
     @property
     def mods(self) -> list[Dependency]:
-        return self.feature_requirements("dev") + list(self.suggested)
+        return self.feature_downloads("dev") + list(self.suggested)
 
 
 def _dep_from_mapping(
@@ -519,13 +536,15 @@ def _dep_from_mapping(
     section: str,
     feature: str = "",
 ) -> Dependency:
-    disable = item.get("disable") or []
-    enable = item.get("enable") or []
+    disabled = item.get("disabled") if item.get("disabled") is not None else item.get("disable")
+    enables = item.get("enables") if item.get("enables") is not None else item.get("enable")
+    disabled = disabled or []
+    enables = enables or []
     defaults = item.get("defaults") or {}
-    if not isinstance(disable, list):
-        raise ValueError(f"{section}.{dep_id}.disable must be a list")
-    if not isinstance(enable, list):
-        raise ValueError(f"{section}.{dep_id}.enable must be a list")
+    if not isinstance(disabled, list):
+        raise ValueError(f"{section}.{dep_id}.disabled must be a list")
+    if not isinstance(enables, list):
+        raise ValueError(f"{section}.{dep_id}.enables must be a list")
     if defaults and not isinstance(defaults, dict):
         raise ValueError(f"{section}.{dep_id}.defaults must be a mapping")
     return Dependency(
@@ -536,8 +555,8 @@ def _dep_from_mapping(
         source=str(item.get("source") or "auto").strip().lower(),
         file=str(item.get("file") or "").strip(),
         howto=str(item.get("howto") or "").strip(),
-        disable=[str(x) for x in disable],
-        enable=[str(x) for x in enable],
+        disabled=[str(x) for x in disabled],
+        enables=[str(x) for x in enables],
         defaults={str(k): str(v) for k, v in (defaults or {}).items()},
         target_mod=str(item.get("target_mod") or "").strip(),
         after_unpack=str(item.get("after_unpack") or "").strip(),
@@ -552,7 +571,7 @@ def _parse_external_list(
     section: str,
     feature: str = "",
 ) -> list[Dependency]:
-    """Parse a YAML list of {id, ...} maps (used by features.*.requirements)."""
+    """Parse a YAML list of {id, ...} maps (legacy features.*.downloads list form)."""
     out: list[Dependency] = []
     if not raw_list:
         return out
@@ -577,14 +596,17 @@ def _parse_external_map(
     *,
     tier: str,
     section: str,
+    feature: str = "",
 ) -> list[Dependency]:
-    """Parse a YAML mapping keyed by id (suggested: — same shape as features:)."""
+    """Parse a YAML mapping keyed by id (downloads: / suggested:)."""
     out: list[Dependency] = []
     if not raw_map:
         return out
     # Legacy list form: [{id: ...}, ...]
     if isinstance(raw_map, list):
-        return _parse_external_list(raw_map, tier=tier, section=section)
+        return _parse_external_list(
+            raw_map, tier=tier, section=section, feature=feature
+        )
     if not isinstance(raw_map, dict):
         raise ValueError(f"manifest.yml {section}: must be a mapping (keyed by id)")
     for key, meta in raw_map.items():
@@ -601,7 +623,9 @@ def _parse_external_map(
                 f"{section}.{dep_id}: id field {meta.get('id')!r} must match key"
             )
         out.append(
-            _dep_from_mapping(dep_id, meta, tier=tier, section=section)
+            _dep_from_mapping(
+                dep_id, meta, tier=tier, section=section, feature=feature
+            )
         )
     return out
 
@@ -619,13 +643,14 @@ def load_manifest(path: Path) -> ManifestData:
 
     if raw.get("requirements") is not None:
         raise ValueError(
-            "manifest.yml top-level 'requirements:' removed — put required packs under "
-            "features.<name>.requirements (use features.common for always-on)"
+            "manifest.yml top-level 'requirements:' removed — put packs under "
+            "features.<name>.downloads (use features.common for always-on)"
         )
     if raw.get("defaults"):
         raise ValueError(
             "manifest.yml top-level 'defaults:' removed — put defaults under each "
-            "feature / feature.requirements[] / suggested.<id> entry (optional target_mod:)"
+            "feature / features.*.downloads.<id> / suggested.<id> entry "
+            "(optional target_mod:)"
         )
 
     features: dict[str, FeatureMeta] = {}
@@ -637,47 +662,60 @@ def load_manifest(path: Path) -> ManifestData:
         if not fp:
             continue
         is_common = fp.lower() == "common"
-        reqs: list[Dependency] = []
-        # Bare YAML `off` becomes False — treat as level off.
+        dls: list[Dependency] = []
+        # Bare YAML `off`/`false` becomes False — treat as stage omit.
         if meta is False:
-            level = "off"
-            disable, enable, defaults, target_mod = [], [], {}, ""
+            stage = "omit"
+            disabled, enables, defaults, target_mod = [], [], {}, ""
         elif isinstance(meta, (int, str)) and not isinstance(meta, bool):
-            level = parse_level(meta)
-            disable, enable, defaults, target_mod = [], [], {}, ""
+            stage = parse_stage(meta)
+            disabled, enables, defaults, target_mod = [], [], {}, ""
         elif isinstance(meta, dict):
             if is_common:
-                level = parse_level(meta.get("level", "release"))
-            elif "level" not in meta:
-                raise ValueError(f"features.{fp}: missing level (off|dev|release)")
+                stage = parse_stage(meta.get("stage", meta.get("level", "release")))
+            elif "stage" not in meta and "level" not in meta:
+                raise ValueError(f"features.{fp}: missing stage (omit|local|release)")
             else:
-                level = parse_level(meta["level"])
-            disable = meta.get("disable") or []
-            enable = meta.get("enable") or []
+                stage = parse_stage(meta.get("stage", meta.get("level")))
+            disabled = (
+                meta.get("disabled")
+                if meta.get("disabled") is not None
+                else meta.get("disable")
+            ) or []
+            enables = (
+                meta.get("enables")
+                if meta.get("enables") is not None
+                else meta.get("enable")
+            ) or []
             defaults = meta.get("defaults") or {}
             target_mod = str(meta.get("target_mod") or "").strip()
-            if not isinstance(disable, list):
-                raise ValueError(f"features.{fp}.disable must be a list")
-            if not isinstance(enable, list):
-                raise ValueError(f"features.{fp}.enable must be a list")
+            if not isinstance(disabled, list):
+                raise ValueError(f"features.{fp}.disabled must be a list")
+            if not isinstance(enables, list):
+                raise ValueError(f"features.{fp}.enables must be a list")
             if defaults and not isinstance(defaults, dict):
                 raise ValueError(f"features.{fp}.defaults must be a mapping")
-            reqs = _parse_external_list(
-                meta.get("requirements"),
-                tier="required",
-                section=f"features.{fp}.requirements",
+            raw_dls = (
+                meta.get("downloads")
+                if meta.get("downloads") is not None
+                else meta.get("requirements")
+            )
+            dls = _parse_external_map(
+                raw_dls,
+                tier="downloads",
+                section=f"features.{fp}.downloads",
                 feature=fp,
             )
         else:
-            raise ValueError(f"features.{fp}: want level or mapping")
+            raise ValueError(f"features.{fp}: want stage or mapping")
         features[fp] = FeatureMeta(
             path=fp,
-            level=level,
-            disable=[str(x) for x in disable],
-            enable=[str(x) for x in enable],
+            stage=stage,
+            disabled=[str(x) for x in disabled],
+            enables=[str(x) for x in enables],
             defaults={str(k): str(v) for k, v in (defaults or {}).items()},
             target_mod=target_mod,
-            requirements=reqs,
+            downloads=dls,
         )
 
     suggested = _parse_external_map(
@@ -689,9 +727,9 @@ def load_manifest(path: Path) -> ManifestData:
             if not isinstance(item, dict):
                 continue
             tier = str(item.get("tier") or "suggested").strip().lower()
-            if tier == "required":
+            if tier in ("required", "downloads"):
                 raise ValueError(
-                    "legacy mods with tier:required — move under features.*.requirements"
+                    "legacy mods with tier:required — move under features.*.downloads"
                 )
             suggested.extend(
                 _parse_external_list([item], tier="suggested", section="mods")
@@ -704,7 +742,7 @@ def load_manifest(path: Path) -> ManifestData:
             defaults.setdefault(pattern, []).extend(
                 _settings_from_mapping(pattern, feat.defaults)
             )
-        for dep in feat.requirements:
+        for dep in feat.downloads:
             if not dep.defaults:
                 continue
             pattern = dep.target_mod or dep.label or dep.id
@@ -732,7 +770,7 @@ def read_manifest_levels(path: Path) -> dict[str, int]:
     """Feature path → numeric rank (0/1/2). Accepts manifest.yml (or legacy .ini)."""
     if path.suffix.lower() in (".yml", ".yaml") or path.name == "manifest.yml":
         data = load_manifest(path)
-        return {k.lower(): LEVEL_RANK[v.level] for k, v in data.features.items()}
+        return {k.lower(): STAGE_RANK[v.stage] for k, v in data.features.items()}
     if not path.is_file():
         raise FileNotFoundError(f"Manifest not found: {path}")
     levels: dict[str, int] = {}
@@ -751,31 +789,31 @@ def read_manifest_levels(path: Path) -> dict[str, int]:
         val = val.split(";", 1)[0].strip()
         if not key or key == "common":
             continue
-        levels[key.lower()] = LEVEL_RANK[parse_level(val)]
+        levels[key.lower()] = STAGE_RANK[parse_stage(val)]
     return levels
 
 
 def feature_disable_rules(
     data: ManifestData,
     *,
-    min_level: str | int = "dev",
+    min_stage: str | int = "local",
     installed: set[str] | None = None,
 ) -> tuple[list[Rule], list[str], list[str]]:
-    min_level = parse_level(min_level)
+    min_stage = parse_stage(min_stage)
     merged: dict[tuple[str, str], list[str]] = {}
     patterns: dict[tuple[str, str], str] = {}
     active: list[str] = []
     skipped: list[str] = []
 
     for feat, meta in data.features.items():
-        if not _feature_is_active(meta, min_level, installed=installed):
-            if meta.disable:
+        if not _feature_is_active(meta, min_stage, installed=installed):
+            if meta.disabled:
                 skipped.append(feat)
             continue
-        if not meta.disable:
+        if not meta.disabled:
             continue
         active.append(feat)
-        for raw in meta.disable:
+        for raw in meta.disabled:
             parsed = _parse_disable_name(raw)
             if not parsed:
                 continue
@@ -801,22 +839,22 @@ def feature_disable_rules(
 def feature_enable_rules(
     data: ManifestData,
     *,
-    min_level: str | int = "dev",
+    min_stage: str | int = "local",
     installed: set[str] | None = None,
 ) -> tuple[list[Rule], list[str]]:
     """Rules for mods that should be enabled when the feature (or common) is active."""
-    min_level = parse_level(min_level)
+    min_stage = parse_stage(min_stage)
     merged: dict[tuple[str, str], list[str]] = {}
     patterns: dict[tuple[str, str], str] = {}
     active: list[str] = []
 
     for feat, meta in data.features.items():
-        if not _feature_is_active(meta, min_level, installed=installed):
+        if not _feature_is_active(meta, min_stage, installed=installed):
             continue
-        if not meta.enable:
+        if not meta.enables:
             continue
         active.append(feat)
-        for raw in meta.enable:
+        for raw in meta.enables:
             parsed = _parse_disable_name(raw)
             if not parsed:
                 continue
@@ -879,16 +917,16 @@ def read_disable_ini(
     path: Path,
     manifest_path: Path,
     *,
-    min_level: str | int = "dev",
+    min_stage: str | int = "local",
 ) -> tuple[list[Rule], list[str], list[str]]:
     """Legacy name: prefer unified manifest.yml when manifest_path is .yml."""
     if manifest_path.suffix.lower() in (".yml", ".yaml"):
-        return feature_disable_rules(load_manifest(manifest_path), min_level=min_level)
+        return feature_disable_rules(load_manifest(manifest_path), min_stage=min_stage)
     # Fallback: old dual-ini path
     if not path.is_file():
         raise FileNotFoundError(f"disabled.ini not found: {path}")
 
-    min_rank = LEVEL_RANK[parse_level(min_level)]
+    min_rank = LEVEL_RANK[parse_stage(min_stage)]
     levels = read_manifest_levels(manifest_path)
     by_feature: dict[str, list[tuple[str, str]]] = {}
     section: str | None = None
@@ -1279,27 +1317,29 @@ def filter_deps(
     deps: list[Dependency] | ManifestData,
     tier: str,
     *,
-    min_level: str | int = "dev",
+    min_stage: str | int = "local",
     installed: set[str] | None = None,
 ) -> list[Dependency]:
-    """tier: required (feature requirements) | suggested | all."""
+    """tier: downloads (alias: required) | suggested | all."""
+    t = tier.lower()
+    if t == "required":
+        t = "downloads"
     if isinstance(deps, ManifestData):
-        if tier == "required":
-            return deps.feature_requirements(min_level, installed=installed)
-        if tier == "suggested":
+        if t == "downloads":
+            return deps.feature_downloads(min_stage, installed=installed)
+        if t == "suggested":
             return list(deps.suggested)
-        if tier == "all":
-            return deps.feature_requirements(min_level, installed=installed) + list(
+        if t == "all":
+            return deps.feature_downloads(min_stage, installed=installed) + list(
                 deps.suggested
             )
         raise ValueError(f"unknown tier: {tier}")
-    t = tier.lower()
     if t == "all":
-        req = [d for d in deps if d.tier == "required"]
+        req = [d for d in deps if d.tier in ("downloads", "required")]
         sug = [d for d in deps if d.tier == "suggested"]
         return req + sug
-    if t == "required":
-        return [d for d in deps if d.tier == "required"]
+    if t == "downloads":
+        return [d for d in deps if d.tier in ("downloads", "required")]
     if t == "suggested":
         return [d for d in deps if d.tier == "suggested"]
     raise ValueError(f"unknown tier: {tier}")
@@ -1992,14 +2032,14 @@ def gather_dep_disable_rules(
 ) -> list[Rule]:
     rules: list[Rule] = []
     for dep in deps:
-        if not dep.disable:
+        if not dep.disabled:
             continue
         satisfied, _ = dep_is_satisfied(
             mo2_root, dep, modlist, require_enabled=True
         )
         if not satisfied:
             continue
-        rules.extend(rules_from_disable_names(dep.disable, source=f"dep:{dep.id}"))
+        rules.extend(rules_from_disable_names(dep.disabled, source=f"dep:{dep.id}"))
     return rules
 
 
@@ -2008,17 +2048,17 @@ def gather_dep_enable_rules(
     deps: list[Dependency],
     modlist: Path,
 ) -> list[Rule]:
-    """Enable rules from satisfied deps (requirements / suggested)."""
+    """Enable rules from satisfied deps (downloads / suggested)."""
     rules: list[Rule] = []
     for dep in deps:
-        if not dep.enable:
+        if not dep.enables:
             continue
         satisfied, _ = dep_is_satisfied(
             mo2_root, dep, modlist, require_enabled=True
         )
         if not satisfied:
             continue
-        rules.extend(rules_from_disable_names(dep.enable, source=f"dep:{dep.id}"))
+        rules.extend(rules_from_disable_names(dep.enables, source=f"dep:{dep.id}"))
     return rules
 
 
@@ -2030,7 +2070,7 @@ def build_report(
     mo2_root: Path,
     cfg: Path,
     *,
-    tier: str = "required",
+    tier: str = "downloads",
     profile: str = "",
 ) -> Path:
     tools = mo2_tools_dir(mo2_root)
@@ -2138,7 +2178,7 @@ def build_report(
                 W(f'{dep.tier} mod "{dep.id}" is installed but disabled ({folders})')
             else:
                 O(f'mod "{dep.id}" satisfied via {folders}')
-                dep_rules = rules_from_disable_names(dep.disable, source=f"mod:{dep.id}")
+                dep_rules = rules_from_disable_names(dep.disabled, source=f"mod:{dep.id}")
                 for name in sorted(enabled):
                     rule = mod_matches(name, dep_rules)
                     if rule:
@@ -2146,7 +2186,7 @@ def build_report(
                             f'"{name}" is enabled but mod "{dep.id}" '
                             f"lists it as a conflict"
                         )
-                dep_en = rules_from_disable_names(dep.enable, source=f"mod:{dep.id}")
+                dep_en = rules_from_disable_names(dep.enables, source=f"mod:{dep.id}")
                 for name in sorted(disabled_names):
                     rule = mod_matches(name, dep_en)
                     if rule:

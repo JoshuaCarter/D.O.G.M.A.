@@ -71,7 +71,7 @@ def cmd_dependencies(args: argparse.Namespace) -> int:
     deps = lib.filter_deps(data, args.tier, installed=installed)
     modlist = lib.modlist_path(mo2, args.profile)
     tools = lib.mo2_tools_dir(mo2)
-    lib.info(f"Requirements ({args.mode}, tier={args.tier}): {len(deps)} entries")
+    lib.info(f"Downloads ({args.mode}, tier={args.tier}): {len(deps)} entries")
     if installed is not None:
         lib.info(
             f"Installed DOGMA features: "
@@ -103,7 +103,7 @@ def cmd_disable(args: argparse.Namespace) -> int:
     lib.info(f"Feature disables: {len(rules)} rules from {len(active)} features")
     if skipped:
         lib.warn(
-            f"  Skipped features (off or not installed): {', '.join(skipped)}"
+            f"  Skipped features (omit or not installed): {', '.join(skipped)}"
         )
 
     deps = lib.filter_deps(data, args.tier, installed=installed)
@@ -296,17 +296,25 @@ def build_parser() -> argparse.ArgumentParser:
 
     d = sub.add_parser(
         "dependencies",
-        help="Install/ensure feature requirements / suggested mods",
+        help="Install/ensure feature downloads / suggested mods",
         parents=[common],
     )
-    d.add_argument("--tier", choices=("required", "suggested", "all"), default="required")
+    d.add_argument(
+        "--tier",
+        choices=("downloads", "required", "suggested", "all"),
+        default="downloads",
+    )
     d.add_argument("--mode", choices=("reinstall", "ensure"), default="ensure")
     d.set_defaults(func=cmd_dependencies)
 
     z = sub.add_parser(
-        "disable", help="Apply feature/mod disable lists from manifest.yml", parents=[common]
+        "disable", help="Apply feature/mod disabled lists from manifest.yml", parents=[common]
     )
-    z.add_argument("--tier", choices=("required", "suggested", "all"), default="required")
+    z.add_argument(
+        "--tier",
+        choices=("downloads", "required", "suggested", "all"),
+        default="downloads",
+    )
     z.set_defaults(func=cmd_disable)
 
     a = sub.add_parser("defaults", help="Apply MCM defaults from manifest.yml", parents=[common])
@@ -320,7 +328,11 @@ def build_parser() -> argparse.ArgumentParser:
     v = sub.add_parser(
         "validate", help="Write fresh dogma_mo2_report.log", parents=[common]
     )
-    v.add_argument("--tier", choices=("required", "suggested", "all"), default="required")
+    v.add_argument(
+        "--tier",
+        choices=("downloads", "required", "suggested", "all"),
+        default="downloads",
+    )
     v.set_defaults(func=cmd_validate)
 
     r = sub.add_parser(

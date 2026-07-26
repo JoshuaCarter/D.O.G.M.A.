@@ -360,8 +360,13 @@ def main(argv: list[str] | None = None) -> int:
                             if not meta.get("target_mod"):
                                 meta["target_mod"] = section
                             matched.add(section)
-                    # features.*.requirements
-                    entries = meta.get("requirements") or []
+                    # features.*.downloads
+                    entries = meta.get("downloads") or meta.get("requirements") or []
+                    if isinstance(entries, dict):
+                        entries = [
+                            {"id": k, **(v if isinstance(v, dict) else {})}
+                            for k, v in entries.items()
+                        ]
                     if not isinstance(entries, list):
                         continue
                     for entry in entries:

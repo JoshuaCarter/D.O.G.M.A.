@@ -13,7 +13,7 @@
 # A Required "About" row per step shows the default hover text.
 #
 # Local full deploy is still tools/build.sh (all features merged).
-# Release features are gated by ROOT/config/manifest.yml (level: release).
+# Release features are gated by ROOT/config/manifest.yml (stage: release).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -57,11 +57,11 @@ cat_title() {
 	esac
 }
 
-# Load ROOT/config/manifest.yml → FEATURES (level >= release). common is implicit.
+# Load ROOT/config/manifest.yml → FEATURES (stage >= release). common is implicit.
 load_manifest() {
 	dogma_load_manifest 2 || exit 1
 	if [[ "${#FEATURES[@]}" -eq 0 ]]; then
-		echo "package-fomod: config/manifest.yml has no release features (need level: release)" >&2
+		echo "package-fomod: config/manifest.yml has no release features (need stage: release)" >&2
 		exit 1
 	fi
 	echo "package-fomod: config/manifest.yml release (${#FEATURES[@]} features)"

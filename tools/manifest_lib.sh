@@ -1,15 +1,15 @@
 # Shared manifest.yml loader for build.sh / package-fomod.sh.
-# Usage: source this file, then dogma_load_manifest <min_level>
-#   min_level 1|dev     → features with level >= dev
-#   min_level 2|release → features with level >= release
+# Usage: source this file, then dogma_load_manifest <min_stage>
+#   min_stage 1|local|dev → features with stage >= local
+#   min_stage 2|release   → features with stage >= release
 # Sets FEATURES=(...) ; common is never listed (always included by callers).
 
 dogma_load_manifest() {
-	local min_level="${1:?min_level required (1/dev or 2/release)}"
-	case "$min_level" in
-		1 | dev | local) min_level=dev ;;
-		2 | release) min_level=release ;;
-		0 | off) min_level=off ;;
+	local min_stage="${1:?min_stage required (1/local or 2/release)}"
+	case "$min_stage" in
+		1 | local | dev) min_stage=local ;;
+		2 | release) min_stage=release ;;
+		0 | omit | off) min_stage=omit ;;
 	esac
 	local yml="${DOGMA_MANIFEST:-$ROOT/config/manifest.yml}"
 	FEATURES=()
@@ -35,7 +35,7 @@ dogma_load_manifest() {
 	local list_file rc
 	list_file="$(mktemp)"
 	set +e
-	"${py[@]}" "$ROOT/tools/list_manifest_features.py" --manifest "$yml" --min-level "$min_level" >"$list_file"
+	"${py[@]}" "$ROOT/tools/list_manifest_features.py" --manifest "$yml" --min-stage "$min_stage" >"$list_file"
 	rc=$?
 	set -e
 	if (( rc != 0 )); then
@@ -54,7 +54,7 @@ dogma_load_manifest() {
 			return 1
 		fi
 		FEATURES+=("$rel")
-	done < "$list_file"
+	done <"$list_file"
 	rm -f "$list_file"
 	return 0
 }

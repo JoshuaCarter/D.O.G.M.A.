@@ -1,6 +1,6 @@
 @echo off
 setlocal
-REM DOGMA (Install+) — required + suggested
+REM DOGMA (Install+) — downloads + suggested
 call "%~dp0DOGMA (Setup Tools).bat"
 if errorlevel 1 exit /b %ERRORLEVEL%
 call "%~dp0_run_job.bat" dependencies --tier all --mode reinstall %*

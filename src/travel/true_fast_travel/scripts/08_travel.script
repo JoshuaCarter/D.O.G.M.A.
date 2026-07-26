@@ -138,7 +138,17 @@ local function start_travel_sequence(pos, lvid, gvid, is_transition, final_gvid)
 
     local straight_dist = tft_distance_pda(tft.start_pos, tft.dest_pos) or tft.start_pos:distance_to(tft.dest_pos)
     local path_len = straight_dist
+    -- Build to the real exit first; transitions then pull the landing ~10-20m short so the
+    -- last journey step (and arrival teleport) never sit inside the level-changer trigger.
     tft.dot_positions, path_len = tft_build_path_dots(tft.start_pos, tft.dest_pos, dest_key)
+    if tft.is_transition and _G.tft_apply_transition_arrival_short then
+        local short_dots, short_len = _G.tft_apply_transition_arrival_short()
+        if short_dots and short_len then
+            tft.dot_positions = short_dots
+            path_len = short_len
+            straight_dist = tft_distance_pda(tft.start_pos, tft.dest_pos) or tft.start_pos:distance_to(tft.dest_pos)
+        end
+    end
     tft.dot_count = #(tft.dot_positions or {})
     -- Coarse path polyline is authoritative. Densify can yield 0 dots on short paths
     -- (spacing ~20m); those still fail via too_close below — not "no nav path".
@@ -756,7 +766,8 @@ complete_travel_sequence = function()
     -- TELEPORT BEFORE TIME JUMP to prevent starting location ambushes during simulation
     local final_pos, final_lvid
     if tft.is_transition then
-        final_pos, final_lvid = tft_find_ground_pos(tft.dest_raw_pos or tft.dest_pos, tft.dest_lvid, tft.dest_gvid)
+        -- Land on dest_pos (already pulled ~10-20m short of the exit); dest_raw_pos is the changer.
+        final_pos, final_lvid = tft_find_ground_pos(tft.dest_pos, tft.dest_lvid, tft.dest_gvid)
         if final_pos then
             local alerted = tft_alerted_enemy_within(final_pos, tft_ambush_radius_m(false))
             tft_set_current_level_changers_locked(alerted)
@@ -765,9 +776,13 @@ complete_travel_sequence = function()
                 tft_log("Transition arrival: alerted enemy nearby - exit locked at (%.1f,%.1f,%.1f).",
                     final_pos.x, final_pos.y, final_pos.z)
             end
-        end
-        if final_pos then
-            tft_log("Transition Teleport: pos=(%f, %f, %f)", final_pos.x, final_pos.y, final_pos.z)
+            if tft.dest_raw_pos then
+                local short_of = tft_horizontal_dist(final_pos, tft.dest_raw_pos)
+                    or final_pos:distance_to(tft.dest_raw_pos)
+                tft.arrival_short_m = math.floor(short_of or 0)
+            end
+            tft_log("Transition Teleport: pos=(%f, %f, %f) short_of_exit=%dm",
+                final_pos.x, final_pos.y, final_pos.z, tft.arrival_short_m or 0)
         end
     else
         local forced_arrival = 0

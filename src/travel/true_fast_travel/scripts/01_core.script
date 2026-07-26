@@ -273,6 +273,9 @@ _G.tft_path = {
     ground_snap_max_drift_m = 60,
     land_prefer_node_m    = 10,  -- if a coarse path node or fine nav vertex is within this of the
                                  -- journey point, teleport snaps to the nearer of those
+    -- Zone-exit travel: stop this far short of the changer so we don't land inside the trigger.
+    -- Prefers the previous path node when that gap is ~10-20m; otherwise walks back along the path.
+    transition_arrival_short_m = 15,
     graph_nearest_max_m   = 50,  -- tight graph lookup for transitions
     menu_click_redirect_off_m = 60,  -- non-dest spot farther than this from click may redirect
     menu_click_transition_near_m = 120, -- find transition doors within this radius of click

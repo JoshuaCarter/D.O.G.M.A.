@@ -290,6 +290,10 @@ esac
 
 if [[ "$ONLY" == "all" || "$ONLY" == "" ]]; then
 	dogma_load_manifest 1 || exit 1
+	if ((${#FEATURES[@]} == 0)) && [[ -z "${DOGMA_ALLOW_EMPTY:-}" ]]; then
+		echo "build: manifest yielded 0 features — refusing full build/prune (fix YAML or set DOGMA_ALLOW_EMPTY=1)" >&2
+		exit 1
+	fi
 	echo "build: config/manifest.yml local (${#FEATURES[@]} features)"
 fi
 

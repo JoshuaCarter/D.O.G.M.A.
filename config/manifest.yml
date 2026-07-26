@@ -6,7 +6,8 @@
 #     dev     — local builds (Ctrl+Shift+B / tools/build.sh)
 #     release — local + FOMOD / GitHub release
 #   common    — always-on (level ignored)
-#   disable / enable — MO2 folder substrings (prefix exact: for full match)
+#   disable / enable — exact MO2 folder / modlist names (full name).
+#                      opt-in partial: substring:Name  (or contains:Name)
 #   requirements — third-party mods this feature needs (Install when feature active;
 #                  put always-needed packs under common.requirements)
 #   defaults  — per-entry MCM; optional target_mod:
@@ -35,12 +36,12 @@ features:
   hud/geiger:
     level: dev
     disable:
-      - Msv Above Radiation Icon
+      - G_FLAT's Msv Above Radiation Icon
 
   hud/minimap:
     level: dev
     disable:
-      - Minimap Toggle
+      - 177- Minimap Toggle - RavenAscendant
 
   hud/nvg:
     level: dev
@@ -51,18 +52,18 @@ features:
   hud/stalker_id:
     level: dev
     disable:
-      - Identification UI - CrookR
-      - Crook's Identification UI Fix
+      - 163- Identification UI - CrookR
+      - G.A.M.M.A. Crook's Identification UI Fix
 
   items/disassemble:
     level: dev
     disable:
-      - Prefer Best Disassembly Tool
+      - 144- Prefer Best Disassembly Tool - Demonized
 
   items/drop:
     level: dev
     disable:
-      - Press Key to Drop Item
+      - G.A.M.M.A. Press Key to Drop Item
 
   items/favourites:
     level: dev
@@ -91,6 +92,9 @@ features:
   misc/search:
     level: release
 
+  misc/dotmarks_sliders:
+    level: dev
+
   misc/sound_prefetch:
     level: dev
 
@@ -106,8 +110,9 @@ features:
   npcs/companions:
     level: dev
     disable:
-      - Quick Companion Teleport
-      - Fair Fast Travel
+      - 218- Quick Companion Teleport (teleports rescue mission targets) - RazorShultz
+      - 329- Fair Fast Travel - Catspaw
+      - 329- Fair Fast Travel 2.7+ - Catspaw
 
   npcs/foliage:
     level: "off"
@@ -121,8 +126,8 @@ features:
   pda/stay_down:
     level: release
     disable:
-      - Dont ReEquip PDA
-      - Previous weapon is automatically pulled after closing PDA
+      - Dorns_Dont_ReEquip_PDA
+      - 136- Previous weapon is automatically pulled after closing PDA - Demonized
 
   player/stfu:
     level: "off"
@@ -132,7 +137,7 @@ features:
   player/campfire:
     level: dev
     disable:
-      - Campfire slowly regens life
+      - 115- Campfire slowly regens life - arti
 
   player/exo:
     level: dev
@@ -157,7 +162,8 @@ features:
   travel/fast_travel:
     level: "off"
     disable:
-      - Fair Fast Travel
+      - 329- Fair Fast Travel - Catspaw
+      - 329- Fair Fast Travel 2.7+ - Catspaw
     requirements:
       - id: tarkov_transitions
         label: Tarkov-like Level Transitions
@@ -166,8 +172,9 @@ features:
   travel/true_fast_travel:
     level: dev
     disable:
-      - Fair Fast Travel
-      - Limited Fast Travel
+      - 329- Fair Fast Travel - Catspaw
+      - 329- Fair Fast Travel 2.7+ - Catspaw
+      - 204- Limited Fast Travel (walking is good for your health) - Demonized
     requirements:
       - id: tarkov_transitions
         label: Tarkov-like Level Transitions
@@ -181,17 +188,19 @@ features:
   weapons/quick_fire:
     level: dev
     disable:
-      - Fluid Aim
+      - 65- Fluid Aim - Skieppy
 
   zoom/ads_zoom:
     level: release
     disable:
-      - Adjustable Scope View
+      - 72- Adjustable Scope View - sneaky
 
   zoom/free_zoom:
     level: release
     disable:
-      - Free Zoom
+      - 178- Free Zoom - SlowVibe
+      - G.A.M.M.A. Free Zoom v3
+      - Kute's Free Zoom Rewrite
 
 suggested:
   alifeplus:
@@ -212,3 +221,9 @@ suggested:
       - G.A.M.M.A. No NPC Friendly Fire
       - G.A.M.M.A. AI Rework
       - ReDone Combat AI
+
+  interaction_dot_marks:
+    label: Interaction Dot Marks
+    url: https://www.moddb.com/downloads/start/293506
+    disable:
+      - 452- Interaction Dot Marks - Catspaw

@@ -30,15 +30,31 @@ dogma_load_manifest() {
 		return 1
 	fi
 
+	# Do not use process substitution here — its exit status is easy to lose, and a
+	# failed parse must abort the build (otherwise FEATURES=() + prune wipes the mod).
+	local list_file rc
+	list_file="$(mktemp)"
+	set +e
+	"${py[@]}" "$ROOT/tools/list_manifest_features.py" --manifest "$yml" --min-level "$min_level" >"$list_file"
+	rc=$?
+	set -e
+	if (( rc != 0 )); then
+		rm -f "$list_file"
+		echo "manifest: failed to read $yml (exit $rc)" >&2
+		return 1
+	fi
+
 	local rel
 	while IFS= read -r rel || [[ -n "$rel" ]]; do
 		rel="${rel//$'\r'/}"
 		[[ -z "$rel" ]] && continue
 		if [[ ! -d "$SRC/$rel" ]]; then
+			rm -f "$list_file"
 			echo "manifest: entry missing under src/: $rel" >&2
 			return 1
 		fi
 		FEATURES+=("$rel")
-	done < <("${py[@]}" "$ROOT/tools/list_manifest_features.py" --manifest "$yml" --min-level "$min_level")
+	done < "$list_file"
+	rm -f "$list_file"
 	return 0
 }

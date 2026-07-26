@@ -117,6 +117,11 @@ local function patch_mcm_search()
 			return
 		end
 
+		-- Stock Open_to / OnSearch may re-apply the hint; keep the box empty.
+		if self.mod_search:GetText() == placeholder() then
+			clear_hint(self)
+		end
+
 		local t = search_text(self)
 		local want = (t ~= "" and t) or nil
 		if want ~= self._dogma_qol_want then

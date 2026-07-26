@@ -234,7 +234,11 @@ class Rule:
     source: str = ""  # feature path or dep:<id>
 
     def label(self) -> str:
-        base = f"exact:{self.pattern}" if self.kind == "exact" else self.pattern
+        base = (
+            f"substring:{self.pattern}"
+            if self.kind == "substring"
+            else self.pattern
+        )
         tag = self.source or (", ".join(self.features) if self.features else "")
         return f"{base} [{tag}]" if tag else base
 
@@ -251,9 +255,13 @@ def _parse_disable_name(raw: str) -> tuple[str, str] | None:
     key = str(raw).strip()
     if not key or key.startswith("#"):
         return None
-    if key.lower().startswith("exact:"):
+    low = key.lower()
+    # Default: exact MO2 folder / modlist name. Opt-in partial: substring:… / contains:…
+    if low.startswith("substring:") or low.startswith("contains:"):
+        return ("substring", key.split(":", 1)[1].strip())
+    if low.startswith("exact:"):
         return ("exact", key.split(":", 1)[1].strip())
-    return ("substring", key)
+    return ("exact", key)
 
 
 def _settings_from_mapping(
@@ -940,16 +948,14 @@ def read_disable_ini(
     return rules, active, skipped
 
 
-def rules_from_disable_names(names: Iterable[str], source: str) -> list[Rule]:
+def rules_from_disable_names(names: Iterable[str], source: str = "") -> list[Rule]:
     rules: list[Rule] = []
     for raw in names:
-        key = str(raw).strip()
-        if not key or key.startswith("#"):
+        parsed = _parse_disable_name(raw)
+        if not parsed:
             continue
-        if key.lower().startswith("exact:"):
-            rules.append(Rule("exact", key.split(":", 1)[1].strip(), source=source))
-        else:
-            rules.append(Rule("substring", key, source=source))
+        kind, pattern = parsed
+        rules.append(Rule(kind, pattern, source=source))
     return rules
 
 

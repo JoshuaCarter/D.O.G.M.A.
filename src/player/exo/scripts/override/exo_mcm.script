@@ -1,0 +1,96 @@
+--[[
+	DOGMA override: Powered Exos - arti (exo_mcm.script).
+
+	Replaces arti's drain / sprint_drain tracks with idle / run / sprint on the
+	same Powered Exoskeletons MCM page. Values are independent multipliers
+	(not stacked). battery_chance + debug unchanged.
+]]
+
+local defaults = {
+	base_drain = 0,
+	run_drain = 1,
+	sprint_drain = 3,
+	drain = 1, -- legacy alias → run_drain
+	loot_amt = 1.0,
+	battery_chance = 0.7,
+	debug = false,
+}
+
+local ALIAS = {
+	drain = "run_drain",
+}
+
+function get_config(key)
+	key = ALIAS[key] or key
+	if ui_mcm then
+		local value = ui_mcm.get("exo/" .. key)
+		if value ~= nil then
+			return value
+		end
+	end
+	return defaults[key]
+end
+
+function on_mcm_load()
+	return {
+		id = "exo",
+		sh = true,
+		gr = {
+			{
+				id = "title",
+				type = "slide",
+				link = "ui_options_slider_player",
+				text = "ui_mcm_exo_title",
+				size = { 512, 50 },
+				spacing = 20,
+			},
+			{
+				id = "drain_desc",
+				type = "desc",
+				text = "ui_mcm_exo_drain_page_desc",
+			},
+			{
+				id = "base_drain",
+				type = "track",
+				val = 2,
+				min = 0,
+				max = 10,
+				step = 0.1,
+				def = defaults.base_drain,
+			},
+			{
+				id = "run_drain",
+				type = "track",
+				val = 2,
+				min = 1,
+				max = 10,
+				step = 0.1,
+				def = defaults.run_drain,
+			},
+			{
+				id = "sprint_drain",
+				type = "track",
+				val = 2,
+				min = 2,
+				max = 10,
+				step = 0.1,
+				def = defaults.sprint_drain,
+			},
+			{
+				id = "battery_chance",
+				type = "track",
+				val = 2,
+				min = 0.1,
+				max = 1,
+				step = 0.1,
+				def = 0.7,
+			},
+			{
+				id = "debug",
+				type = "check",
+				val = 1,
+				def = false,
+			},
+		},
+	}
+end

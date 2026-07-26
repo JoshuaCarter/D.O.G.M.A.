@@ -17,6 +17,10 @@ See `MOVE_MAP.md` for the full map.
 
 `scripts` `configs` `textures` `meshes` `anims` `sounds` `spawns`
 
+## Exception: `mo2/` (MO2 tools dir)
+
+`src/<category>/<feature>/mo2/...` is **not** packed into gamedata. On deploy it lands at `<mod>/mo2/...` next to `gamedata/` (e.g. `mods/DOGMA/mo2/build_sound_prefetch.bat`). Local `build/mo2/` gets the same layout.
+
 ## Copy vs smush (inside a gamedata root)
 
 | In src | Result |

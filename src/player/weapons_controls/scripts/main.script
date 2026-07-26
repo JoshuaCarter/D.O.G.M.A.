@@ -9,11 +9,9 @@
 	  re-press lowers it.
 	- Vision key: swap melee ↔ vision, then equip melee (same wait-if-drawn).
 	  move_to_* is async — placements are sequenced so VSI is not dumped to bag.
-	- Detector / Geiger / RF force-equip. Scanner swaps mirror Quick Action Wheel
-	  Overhaul: hide → wait prev get_state==Hidden → move_to_slot (no ruck) →
-	  show after 0.1s. Bolt drawn first when auto-bolt is on.
-	- Optional: activate bolt when an *artefact* detector is shown
-	  (not RF / Geiger). Bolt stays drawn when the detector is put away.
+	- Detector / Geiger / RF force-equip — literal Quick Action Wheel Overhaul
+	  detector flow: prep bolt/pistol hand → wait slot → hide_detector(true) →
+	  poll get_state==3 → move_to_slot (no ruck) → 0.1s → show_detector(true).
 	- Minimal slot_cell patch: pistols may drag into vision (slot 5).
 ]]
 
@@ -43,10 +41,8 @@ local SWAP_EVENT = "holster_swap"
 local SWAP_PLACE_EVENT = "holster_swap_place"
 local SCANNER_SHOW_EVENT = "scanner_show"
 local SCANNER_SWAP_EVENT = "scanner_swap"
-local BOLT_ACTIVATE_EVENT = "activate_bolt_after_det"
 local SWAP_TICK = 0.05
 local SWAP_MAX_TICKS = 100 -- ~5s safety only; wait is state-based
-local BOLT_ACTIVATE_DELAY = 0.5 -- seconds after detector shown
 
 local function geiger_sec()
 	return (item_device and item_device.device_geiger) or "detector_geiger"
@@ -103,36 +99,19 @@ local function block(flags)
 	end
 end
 
-local function maybe_activate_bolt()
-	if not CONFIG.loaded.auto_bolt_on_detector then
-		return
-	end
-	local actor = db.actor
-	if not (actor and actor:alive()) then
-		return
-	end
-	if not actor:item_in_slot(BOLT_SLOT) then
-		return
-	end
-	if actor:active_slot() ~= BOLT_SLOT then
-		actor:activate_slot(BOLT_SLOT)
-	end
+local function cancel_scanner_show()
+	RemoveTimeEvent(CONFIG.MOD_ID, SCANNER_SHOW_EVENT)
 end
 
-local function cancel_activate_bolt()
-	RemoveTimeEvent(CONFIG.MOD_ID, BOLT_ACTIVATE_EVENT)
+local function cancel_scanner_hand()
+	RemoveTimeEvent(CONFIG.MOD_ID, "scanner_hand")
 end
 
--- Defer bolt draw so it does not interrupt detector show / hide handoffs.
-local function schedule_activate_bolt()
-	if not CONFIG.loaded.auto_bolt_on_detector then
-		return
-	end
-	cancel_activate_bolt()
-	CreateTimeEvent(CONFIG.MOD_ID, BOLT_ACTIVATE_EVENT, BOLT_ACTIVATE_DELAY, function()
-		maybe_activate_bolt()
-		return true
-	end)
+local function cancel_scanner_swap()
+	scanner_busy = false
+	RemoveTimeEvent(CONFIG.MOD_ID, SCANNER_SWAP_EVENT)
+	cancel_scanner_show()
+	cancel_scanner_hand()
 end
 
 -- style: "full" | "fast" | "force"
@@ -150,10 +129,71 @@ local function put_away_slot9(style)
 	end
 end
 
--- QAW: fast hide/show when a weapon/bolt is already in the weapon hand.
-local function scanner_use_fast_anim()
+-- Literal port of Quick Action Wheel Overhaul detector cycle (haru).
+-- hide_detector(fast) → every frame until prev:get_state()==3 → move_to_slot
+-- (never move_to_ruck) → 0.1s → show_detector(true).
+local function equip_and_show_detector(obj)
 	local actor = db.actor
-	return actor and actor:active_item() ~= nil
+	if not (actor and obj) then
+		scanner_busy = false
+		return
+	end
+	actor:move_to_slot(obj, DET_SLOT)
+	cancel_scanner_show()
+	CreateTimeEvent(CONFIG.MOD_ID, SCANNER_SHOW_EVENT, 0.1, function()
+		if db.actor and db.actor:alive() then
+			db.actor:show_detector(true)
+		end
+		scanner_busy = false
+		return true
+	end)
+end
+
+local function cycle_detector(prev, next_obj, is_fast)
+	if not (prev and next_obj) then
+		scanner_busy = false
+		return
+	end
+	db.actor:hide_detector(is_fast)
+	local next_id = next_obj:id()
+	CreateTimeEvent(CONFIG.MOD_ID, SCANNER_SWAP_EVENT, 0, function()
+		if not (db.actor and db.actor:alive() and scanner_busy) then
+			scanner_busy = false
+			return true
+		end
+		-- QAW: if prev:get_state() == 3 then equip. Keep prev userdata like QAW.
+		if prev:get_state() == STATE_HIDDEN then
+			equip_and_show_detector(level.object_by_id(next_id) or next_obj)
+			return true
+		end
+		return false
+	end)
+end
+
+-- QAW OnClick hand prep: bolt preferred, else pistol, else holster 2H to empty.
+local function qaw_hand_target_slot()
+	local actor = db.actor
+	local current_slot = actor:active_slot()
+
+	local s6 = actor:item_in_slot(BOLT_SLOT)
+	if s6 and IsBolt and IsBolt(s6) then
+		return BOLT_SLOT
+	end
+
+	local s1 = actor:item_in_slot(MELEE_SLOT)
+	local s2 = actor:item_in_slot(2)
+	if s1 and IsPistol and IsPistol(s1) then
+		return MELEE_SLOT
+	end
+	if s2 and IsPistol and IsPistol(s2) then
+		return 2
+	end
+
+	-- 2/3/4/5 block detector anims — holster first (same as QAW).
+	if current_slot == 2 or current_slot == 3 or current_slot == 4 or current_slot == VISION_SLOT then
+		return 0
+	end
+	return current_slot
 end
 
 -- Weapon/bolt in the weapon hand (detector may still be out).
@@ -235,17 +275,6 @@ local function cancel_swap_wait()
 	swap_busy = false
 	RemoveTimeEvent(CONFIG.MOD_ID, SWAP_EVENT)
 	RemoveTimeEvent(CONFIG.MOD_ID, SWAP_PLACE_EVENT)
-end
-
-local function cancel_scanner_show()
-	RemoveTimeEvent(CONFIG.MOD_ID, SCANNER_SHOW_EVENT)
-end
-
-local function cancel_scanner_swap()
-	scanner_busy = false
-	RemoveTimeEvent(CONFIG.MOD_ID, SCANNER_SWAP_EVENT)
-	cancel_scanner_show()
-	cancel_activate_bolt()
 end
 
 -- move_to_ruck / move_to_slot are async NET events. Same-frame swap dumps the
@@ -446,62 +475,8 @@ local function find_scanner(match_sec)
 	return fav or other
 end
 
--- Mirror Quick Action Wheel Overhaul cycle_detector / equip_and_show_detector:
---   hide → poll prev:get_state()==eHidden every frame → move_to_slot(next)
---   (no move_to_ruck — that StopCurrentAnimWithoutCallback cuts the put-away)
---   → 0.1s → show_detector.
-local function equip_and_show_scanner(obj, with_bolt)
-	local actor = db.actor
-	if not (actor and obj) then
-		scanner_busy = false
-		return
-	end
-	actor:move_to_slot(obj, DET_SLOT)
-	cancel_scanner_show()
-	CreateTimeEvent(CONFIG.MOD_ID, SCANNER_SHOW_EVENT, 0.1, function()
-		local a = db.actor
-		if a and a:alive() then
-			a:show_detector(scanner_use_fast_anim())
-			if with_bolt then
-				schedule_activate_bolt()
-			end
-		end
-		scanner_busy = false
-		return true
-	end)
-end
-
-local function cycle_scanner(prev, next_obj, with_bolt)
-	local actor = db.actor
-	if not (actor and prev and next_obj) then
-		scanner_busy = false
-		return
-	end
-	local prev_id = prev:id()
-	local next_id = next_obj:id()
-	actor:hide_detector(scanner_use_fast_anim())
-
-	local ticks = 0
-	CreateTimeEvent(CONFIG.MOD_ID, SCANNER_SWAP_EVENT, 0, function()
-		ticks = ticks + 1
-		local a = db.actor
-		if not (a and a:alive() and scanner_busy) then
-			scanner_busy = false
-			return true
-		end
-		local p = level.object_by_id(prev_id)
-		if not p or (p.get_state and p:get_state() == STATE_HIDDEN) then
-			equip_and_show_scanner(level.object_by_id(next_id), with_bolt)
-			return true
-		end
-		if ticks >= SWAP_MAX_TICKS then
-			equip_and_show_scanner(level.object_by_id(next_id), with_bolt)
-			return true
-		end
-		return false
-	end)
-end
-
+-- Exact QAW detector OnClick flow: prep hand slot → wait until active →
+-- cycle_detector(..., true) or move_to_slot + show(true).
 local function force_equip_scanner(obj)
 	local actor = db.actor
 	if not (actor and obj) then
@@ -511,41 +486,72 @@ local function force_equip_scanner(obj)
 		return
 	end
 
-	-- Bolt auto-draw is artefact-detector only (not RF / Geiger).
-	local with_bolt = is_artefact_detector(obj:section())
-
 	local cur = actor:item_in_slot(DET_SLOT)
 	if cur and cur:id() == obj:id() then
 		if actor:active_detector() then
-			put_away_slot9(scanner_use_fast_anim() and "fast" or "full")
+			put_away_slot9("fast")
 			return
 		end
-		actor:show_detector(scanner_use_fast_anim())
-		if with_bolt then
-			schedule_activate_bolt()
-		end
+		actor:show_detector(true)
 		return
 	end
 
 	scanner_busy = true
 	cancel_scanner_show()
-	cancel_activate_bolt()
+	cancel_scanner_hand()
 	RemoveTimeEvent(CONFIG.MOD_ID, SCANNER_SWAP_EVENT)
 
-	-- QAW activates bolt/pistol before detector cycle so the weapon hand is busy.
-	if with_bolt and CONFIG.loaded.auto_bolt_on_detector and actor:item_in_slot(BOLT_SLOT) then
-		if actor:active_slot() ~= BOLT_SLOT then
-			actor:activate_slot(BOLT_SLOT)
+	local device_id = obj:id()
+	local target_slot = qaw_hand_target_slot()
+	local current_slot = actor:active_slot()
+	if target_slot ~= current_slot then
+		actor:activate_slot(target_slot)
+	end
+
+	local attempts = 0
+	CreateTimeEvent(CONFIG.MOD_ID, "scanner_hand", 0, function()
+		attempts = attempts + 1
+		local a = db.actor
+		if not (a and a:alive() and scanner_busy) then
+			scanner_busy = false
+			return true
 		end
-	end
 
-	local active = actor:active_detector()
-	if active then
-		cycle_scanner(active, obj, with_bolt)
-		return
-	end
+		local curr = a:active_slot()
+		if curr ~= target_slot then
+			if attempts > 20 and attempts % 10 == 0 then
+				a:activate_slot(target_slot)
+			end
+			if attempts > 300 then
+				scanner_busy = false
+				return true
+			end
+			return false
+		end
 
-	equip_and_show_scanner(obj, with_bolt)
+		local device = level.object_by_id(device_id)
+		if not device then
+			scanner_busy = false
+			return true
+		end
+
+		local current_det = a:item_in_slot(DET_SLOT)
+		if current_det and current_det:id() ~= device:id() then
+			-- QAW always passes is_fast = true
+			cycle_detector(current_det, device, true)
+		else
+			a:move_to_slot(device, DET_SLOT)
+			cancel_scanner_show()
+			CreateTimeEvent(CONFIG.MOD_ID, SCANNER_SHOW_EVENT, 0.1, function()
+				if db.actor and db.actor:alive() then
+					db.actor:show_detector(true)
+				end
+				scanner_busy = false
+				return true
+			end)
+		end
+		return true
+	end)
 end
 
 local function ensure_vision_accepts_pistols()

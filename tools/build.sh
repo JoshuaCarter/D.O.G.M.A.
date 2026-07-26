@@ -7,6 +7,8 @@
 #
 #   src/<category>/<feature>/assets/...     authoring only (ignored; not shipped)
 #   src/<category>/<feature>/installer/...  FOMOD metadata (not shipped into gamedata)
+#   src/<category>/<feature>/mo2/...        EXCEPTION: files under <mod>/mo2/
+#                                           (sibling of gamedata/), e.g. mo2/build_sound_prefetch.bat
 #
 # Scripts (prefix applied at build — src keeps short names like main.script):
 #   common/scripts/*          -> same basename (dogma_common, dogma_mcm, …)
@@ -19,9 +21,9 @@
 #   …/scripts/modxml_*.script -> modxml_dogma_{path}_*.script
 #                               keep modxml_ prefix — Modded Exes only gathers
 #                               that glob for DXML on_xml_read injection
-#   …/scripts/override/*.script -> scripts/<basename>.script  (exact name — replace
-#                               conflicting mods: ASV, Free Zoom, etc.)
-#   …/scripts/<other>.script  -> zzzz_dogma_{path}_<other>.script
+#   …/scripts/**/*.script     -> scripts/zzzz_dogma_{path}_<stem>.script
+#                               including scripts/override/ (authoring only; no
+#                               exact-name escape — disable conflicting mods instead)
 #
 # Env:
 #   DOGMA_ONLY=spec    what to build:
@@ -29,7 +31,8 @@
 #                        common       → common only
 #                        cat/feat     → that feature only (e.g. zoom/free_zoom; ignores manifest)
 #   DOGMA_DEPLOY=path  local MO2 mod folder: write gamedata straight there (one hop),
-#                      plus meta.ini + .mod_id. Works with DOGMA_ONLY too (no prune).
+#                      plus meta.ini + .mod_id + mo2/ mod-root files. Works with
+#                      DOGMA_ONLY too (no prune).
 #   DOGMA_OUT=path     override output gamedata (default: build/gamedata; disables
 #                      the DOGMA_DEPLOY one-hop when set)
 #
@@ -48,16 +51,22 @@ source "$ROOT/tools/manifest_lib.sh"
 if [[ -n "${DOGMA_DEPLOY:-}" && -z "${DOGMA_OUT:-}" ]]; then
 	DEPLOY_MOD="${DOGMA_DEPLOY%/}"
 	OUT="$DEPLOY_MOD/gamedata"
+	MODROOT_OUT="$DEPLOY_MOD"
 else
 	DEPLOY_MOD=""
 	OUT="${DOGMA_OUT:-$ROOT/build/gamedata}"
+	MODROOT_OUT="$(cd "$(dirname "$OUT")" && pwd)"
 fi
 
 GAMEDATA_ROOTS="scripts configs textures meshes anims sounds spawns materials"
+# Feature bucket that ships next to gamedata/ (MO2 mod root), not into gamedata.
+MODROOT_BUCKET="mo2"
 
 STAGE="$(mktemp -d)"
+STAGE_MODROOT="$(mktemp -d)"
 MANIFEST="$(mktemp)"
-trap 'rm -rf "$STAGE"; rm -f "$MANIFEST"' EXIT
+MANIFEST_MODROOT="$(mktemp)"
+trap 'rm -rf "$STAGE" "$STAGE_MODROOT"; rm -f "$MANIFEST" "$MANIFEST_MODROOT"' EXIT
 
 if [[ ! -d "$SRC" ]]; then
 	echo "build: missing $SRC" >&2
@@ -94,6 +103,8 @@ script_dest_basename() {
 		return 0
 	fi
 	local stem="${src_base%.script}"
+	# Authoring may keep a legacy zzzz_ prefix; never double-prefix.
+	stem="${stem#zzzz_}"
 	case "$stem" in
 		_conf | mcm)
 			echo "dogma_${path_key}_${stem#_}.script"
@@ -107,7 +118,7 @@ script_dest_basename() {
 	echo "zzzz_dogma_${path_key}_${stem}.script"
 }
 
-# Map one src file → dest_rel under gamedata. Sets: _emit_src _emit_rel _emit_path_key _emit_base
+# Map one src file. Sets: _emit_kind (gamedata|modroot) _emit_src _emit_rel _emit_path_key _emit_base
 map_src_file() {
 	local src_path="$1"
 	local rel="${src_path#"$SRC"/}"
@@ -142,8 +153,21 @@ map_src_file() {
 			local feat="${parts[1]}"
 			local bucket="${parts[2]}"
 			should_skip_name "$feat" && return 1
-			is_gamedata_root "$bucket" || return 1
 			path_key="${cat}_${feat}"
+
+			# EXCEPTION: mo2/ → <MO2 mod>/mo2/ (sibling of gamedata/), paths kept under mo2/.
+			if [[ "$bucket" == "$MODROOT_BUCKET" ]]; then
+				bucket_rel="${rel#"$cat/$feat/$MODROOT_BUCKET/"}"
+				[[ -n "$bucket_rel" ]] || return 1
+				_emit_kind="modroot"
+				_emit_src="$src_path"
+				_emit_rel="$MODROOT_BUCKET/$bucket_rel"
+				_emit_path_key="$path_key"
+				_emit_base="$base"
+				return 0
+			fi
+
+			is_gamedata_root "$bucket" || return 1
 			bucket_rel="${rel#"$cat/$feat/"}"
 		fi
 	fi
@@ -152,18 +176,14 @@ map_src_file() {
 	is_gamedata_root "$bucket" || return 1
 
 	local dest_rel="$bucket_rel"
-	if [[ "$bucket" == "scripts" && "$bucket_rel" == scripts/override/* ]]; then
-		dest_rel="scripts/$base"
-	elif [[ -n "$path_key" && "$base" == *.script && "$bucket" == "scripts" ]]; then
+	if [[ -n "$path_key" && "$base" == *.script && "$bucket" == "scripts" ]]; then
 		local out_base
 		out_base="$(script_dest_basename "$path_key" "$base")"
-		if [[ "$bucket_rel" == */* ]]; then
-			dest_rel="${bucket_rel%/*}/$out_base"
-		else
-			dest_rel="$out_base"
-		fi
+		# Flat under scripts/ — override/ is authoring layout only.
+		dest_rel="scripts/$out_base"
 	fi
 
+	_emit_kind="gamedata"
 	_emit_src="$src_path"
 	_emit_rel="$dest_rel"
 	_emit_path_key="$path_key"
@@ -173,12 +193,22 @@ map_src_file() {
 
 # Write into STAGE (correct layout). Manifest records relative path for prune.
 stage_file() {
-	local src_path="$1"
-	local dest_rel="$2"
-	local path_key="$3"
-	local base="$4"
-	local staged="$STAGE/$dest_rel"
+	local kind="$1"
+	local src_path="$2"
+	local dest_rel="$3"
+	local path_key="$4"
+	local base="$5"
+	local staged
 
+	if [[ "$kind" == "modroot" ]]; then
+		staged="$STAGE_MODROOT/$dest_rel"
+		mkdir -p "${staged%/*}"
+		cp "$src_path" "$staged"
+		printf '%s\n' "$dest_rel" >> "$MANIFEST_MODROOT"
+		return 0
+	fi
+
+	staged="$STAGE/$dest_rel"
 	mkdir -p "${staged%/*}"
 
 	if [[ -n "$path_key" && "$base" == "mcm.script" ]]; then
@@ -224,7 +254,9 @@ src_in_scope() {
 }
 
 mkdir -p "$OUT"
+mkdir -p "$MODROOT_OUT"
 echo "build: out=$OUT"
+echo "build: modroot=$MODROOT_OUT"
 if [[ -n "$DEPLOY_MOD" && "$ONLY" != "all" && "$ONLY" != "" ]]; then
 	echo "build: DOGMA_ONLY=$ONLY → deploy $DEPLOY_MOD (no prune)"
 fi
@@ -248,19 +280,25 @@ if [[ "$ONLY" == */* && ! -d "$SRC/$ONLY" ]]; then
 fi
 
 # Stage every shippable file (quiet).
+_emit_kind=""
 while IFS= read -r -d '' src_path; do
 	src_in_scope "$src_path" || continue
 	map_src_file "$src_path" || continue
-	stage_file "$_emit_src" "$_emit_rel" "$_emit_path_key" "$_emit_base"
+	stage_file "$_emit_kind" "$_emit_src" "$_emit_rel" "$_emit_path_key" "$_emit_base"
 done < <(find "$SRC" -type f -print0)
 
 sort -u "$MANIFEST" -o "$MANIFEST"
+sort -u "$MANIFEST_MODROOT" -o "$MANIFEST_MODROOT"
 count="$(wc -l < "$MANIFEST" | tr -d ' ')"
+count_modroot="$(wc -l < "$MANIFEST_MODROOT" | tr -d ' ')"
 
-# One bulk copy: stage → OUT.
+# One bulk copy: stage → OUT / mod root.
 cp -a "$STAGE"/. "$OUT"/
+if [[ "$count_modroot" != "0" ]]; then
+	cp -a "$STAGE_MODROOT"/. "$MODROOT_OUT"/
+fi
 
-# Full build: drop outputs not produced this run.
+# Full build: drop gamedata outputs not produced this run (keep generated LTX).
 PRUNED=0
 if [[ "$ONLY" == "all" || "$ONLY" == "" ]]; then
 	local_all="$(mktemp)"
@@ -273,12 +311,30 @@ if [[ "$ONLY" == "all" || "$ONLY" == "" ]]; then
 		PRUNED=$((PRUNED + 1))
 	done < <(comm -23 "$local_all" "$MANIFEST")
 	rm -f "$local_all"
+
+	# Mod-root: only remove files we previously shipped that are absent this run.
+	if [[ -d "$MODROOT_OUT" ]]; then
+		while IFS= read -r rel; do
+			[[ -z "$rel" ]] && continue
+			# Only touch known mo2/ outputs (never wipe unrelated mod-root files).
+			case "$rel" in
+				mo2/build_sound_prefetch.bat | mo2/build_sound_prefetch.py) ;;
+				*) continue ;;
+			esac
+			if ! grep -Fxq "$rel" "$MANIFEST_MODROOT"; then
+				rm -f "$MODROOT_OUT/$rel"
+				PRUNED=$((PRUNED + 1))
+			fi
+		done < <(printf '%s\n' mo2/build_sound_prefetch.bat mo2/build_sound_prefetch.py)
+		# Drop flat copies from the earlier layout (pre-mo2/ nesting).
+		rm -f "$MODROOT_OUT/build_sound_prefetch.bat" "$MODROOT_OUT/build_sound_prefetch.py"
+	fi
 fi
 
 if (( PRUNED > 0 )); then
-	echo "build: done ($count files, pruned $PRUNED)"
+	echo "build: done ($count gamedata, $count_modroot modroot, pruned $PRUNED)"
 else
-	echo "build: done ($count files)"
+	echo "build: done ($count gamedata, $count_modroot modroot)"
 fi
 
 # When writing straight into MO2, also refresh mod metadata.
@@ -294,4 +350,11 @@ if [[ -n "$DEPLOY_MOD" ]]; then
 	else
 		rm -f "$DEPLOY_MOD/INFO.md"
 	fi
+	# Drop leftover launcher bits from earlier layouts.
+	rm -rf "$DEPLOY_MOD/sound_prefetch"
+	rm -f "$DEPLOY_MOD/gamedata/scripts/dogma_snd_prefetch.script"
+	rm -f "$DEPLOY_MOD/gamedata/configs/items/items/dogma_snd_prefetch.ltx"
+	rm -f "$DEPLOY_MOD/gamedata/configs/dogma_snd_prefetch.ltx"
+	rm -f "$DEPLOY_MOD/gamedata/configs/dogma_sfx_prefetch.ltx"
+	rm -f "$DEPLOY_MOD/build_sound_prefetch.bat" "$DEPLOY_MOD/build_sound_prefetch.py"
 fi

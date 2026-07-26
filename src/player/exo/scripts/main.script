@@ -1,0 +1,95 @@
+--[[
+	Exo power drain
+
+	Patches Powered Exos (arti) manage_drain so idle / run / sprint MCM values
+	are independent multipliers on suit+PSU base rate — not stacked
+	(arti stock: sprint = drain * sprint_drain). Options live on arti's
+	Powered Exoskeletons page via scripts/override/exo_mcm.script.
+]]
+
+local CONFIG = _G.dogma_player_exo_conf
+
+local suit_drain = {}
+local warn = false
+local THRESHOLD = 25
+local gc = game.translate_string
+
+local function load_suit_drain()
+	local ini = ini_file("items\\settings\\exo_devices.ltx")
+	if not ini or not ini.section_exist or not ini:section_exist("suit_drain") then
+		return
+	end
+	local n = ini:line_count("suit_drain")
+	for i = 0, n - 1 do
+		local _, sec, value = ini:r_line_ex("suit_drain", i, "", "")
+		suit_drain[sec] = tonumber(value)
+	end
+end
+
+local function cfg(key)
+	local def = CONFIG.DEFAULTS[key]
+	if exo_mcm and exo_mcm.get_config then
+		local value = exo_mcm.get_config(key)
+		if value ~= nil then
+			return tonumber(value) or def
+		end
+	end
+	return def
+end
+
+local function mult_for_move()
+	if IsMoveState("mcSprint") then
+		return cfg("sprint_drain")
+	end
+	if IsMoveState("mcAnyMove") then
+		return cfg("run_drain")
+	end
+	return cfg("base_drain")
+end
+
+local function manage_drain()
+	local exosuit = db.actor and db.actor:item_in_slot(7)
+	if not (exosuit and item_exo_device and item_exo_device.is_exo(exosuit)) then
+		return
+	end
+
+	local id = exosuit:id()
+	local data = item_exo_device.get_data(id)
+	if not data then
+		data = item_exo_device.init_data(id)
+	end
+
+	local base = suit_drain[exosuit:section()] or 0.01
+	if data.supply then
+		base = base * (data.supply.drain or 1)
+	end
+
+	local drain = base * mult_for_move()
+	if drain == 0 and data.supply and data.supply.ability == "recharge" then
+		drain = -0.05
+	end
+
+	data.power = clamp(data.power - drain, 0, 400)
+	item_exo_device.set_data(id, data)
+
+	if warn and data.power > THRESHOLD then
+		warn = false
+	end
+	if not warn and data.power < THRESHOLD then
+		warn = true
+		news_manager.send_tip(db.actor, gc("st_low_power"), nil, "swiss_knife", 6000)
+	end
+end
+
+local function apply()
+	if item_exo_device then
+		item_exo_device.manage_drain = manage_drain
+	end
+end
+
+function on_game_start()
+	dogma_common.load(CONFIG.MOD_ID)
+	load_suit_drain()
+	apply()
+	RegisterScriptCallback("actor_on_first_update", apply)
+end

@@ -373,18 +373,23 @@ local function apply_transition_arrival_short()
     local landing = transition_arrival_short_pos(tft.path_chain, exit_pos, short_m)
     if not landing then return nil, nil end
 
-    local safe, slv = find_ground_pos(landing, nil, tft.dest_gvid, {
+    local safe, slv = find_ground_pos(landing, nil, nil, {
         anchor = landing,
-        max_drift_m = 15,
+        max_drift_m = 12,
         local_only = true,
         ray_first = true,
     })
     if safe then
         landing = safe
-        if slv then tft.dest_lvid = slv end
     end
 
     tft.dest_pos = vector():set(landing.x, landing.y or 0, landing.z)
+    -- Drop the exit's lvid so later snaps can't resolve the changer vertex by accident.
+    tft.dest_lvid = slv
+    if not tft.dest_lvid and level and level.vertex_id then
+        local ok, v = pcall(function() return level.vertex_id(landing) end)
+        if ok then tft.dest_lvid = v end
+    end
     local trimmed = trim_path_to_landing(tft.path_chain, landing)
     if not (trimmed and #trimmed >= 2) then return nil, nil end
 

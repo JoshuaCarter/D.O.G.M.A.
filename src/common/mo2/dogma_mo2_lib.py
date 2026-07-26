@@ -21,8 +21,10 @@ SEPARATOR_NAME = "DOGMA DEPENDENCIES_separator"
 ACTION_LOG_NAME = "dogma_mo2.log"
 REPORT_LOG_NAME = "dogma_mo2_report.log"
 FINGERPRINT_NAME = "defaults_fingerprint.json"
+MODDB_CACHE_NAME = "moddb_cache.json"
 USER_URL_PREFIX = "dogma:user:"
 MANAGED_FOLDER_PREFIX = "DOGMA - "
+MODDB_CACHE_MAX_AGE_S = 6 * 3600
 
 
 # ---------------------------------------------------------------------------
@@ -1307,27 +1309,303 @@ def grok_mods_txt(mo2_root: Path) -> Path:
     return mo2_root / ".Grok's Modpack Installer" / "mods.txt"
 
 
+# ---------------------------------------------------------------------------
+# ModDB page → start URL / filename / updated
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ModdbInfo:
+    page_url: str
+    start_url: str = ""
+    file_id: str = ""
+    filename: str = ""
+    md5: str = ""
+    size: str = ""
+    added: str = ""
+    updated: str = ""
+    title: str = ""
+
+    @property
+    def version_hint(self) -> str:
+        """Best-effort version string (often embedded in filename)."""
+        name = self.filename or ""
+        m = re.search(
+            r"(?i)(?:^|[_\s-])v?(\d+(?:\.\d+){1,3})(?:[_\s-]|$)",
+            Path(name).stem if name else "",
+        )
+        if m:
+            return m.group(1)
+        return self.updated or self.added or ""
+
+
+def is_moddb_url(url: str) -> bool:
+    return bool(url) and "moddb.com" in url.lower()
+
+
+def normalize_moddb_url(url: str) -> str:
+    u = (url or "").strip()
+    if not u:
+        return ""
+    u = u.split("#", 1)[0].split("?", 1)[0].rstrip("/")
+    if u.lower().startswith("http://"):
+        u = "https://" + u[7:]
+    if "://moddb.com/" in u.lower():
+        u = re.sub(r"(?i)://moddb\.com/", "://www.moddb.com/", u)
+    m = re.search(r"(?i)/downloads/mirror/(\d+)/", u)
+    if m:
+        return f"https://www.moddb.com/downloads/start/{m.group(1)}"
+    return u
+
+
+def _moddb_file_id_from_url(url: str) -> str:
+    u = normalize_moddb_url(url)
+    m = re.search(r"(?i)/(?:addons|downloads)/start/(\d+)$", u)
+    if m:
+        return m.group(1)
+    m = re.search(r"(?i)/downloads/mirror/(\d+)/", url or "")
+    return m.group(1) if m else ""
+
+
+def _moddb_summary_field(html: str, label: str) -> str:
+    m = re.search(
+        rf"(?is)<h5[^>]*>\s*{re.escape(label)}\s*</h5>\s*"
+        rf'<span[^>]*class="summary"[^>]*>\s*(.*?)\s*</span>',
+        html,
+    )
+    if not m:
+        return ""
+    inner = m.group(1)
+    tm = re.search(r'(?is)<time[^>]*datetime="([^"]*)"[^>]*>([^<]*)', inner)
+    if tm:
+        return (tm.group(1) or tm.group(2) or "").strip()
+    text = re.sub(r"(?is)<[^>]+>", " ", inner)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _parse_moddb_html(page_url: str, html: str) -> ModdbInfo:
+    info = ModdbInfo(page_url=normalize_moddb_url(page_url) or page_url)
+    m = re.search(r"(?is)<title>\s*([^<]+?)\s*</title>", html)
+    if m:
+        title = m.group(1).strip()
+        title = re.sub(r"\s+addon\s+-.*$", "", title, flags=re.I).strip()
+        title = re.sub(r"\s+-\s+ModDB\s*$", "", title, flags=re.I).strip()
+        info.title = title
+
+    start = ""
+    file_id = ""
+    for m in re.finditer(
+        r'href="((?:https://www\.moddb\.com)?/(?:addons|downloads)/start/(\d+))"',
+        html,
+        re.I,
+    ):
+        start = m.group(1)
+        file_id = m.group(2)
+        break
+    if not file_id:
+        m = re.search(r"(?i)siteareaid[=\"']+(\d+)", html)
+        if m:
+            file_id = m.group(1)
+    if file_id:
+        info.file_id = file_id
+        if start.startswith("/"):
+            start = "https://www.moddb.com" + start
+        info.start_url = start or f"https://www.moddb.com/downloads/start/{file_id}"
+
+    info.filename = _moddb_summary_field(html, "Filename")
+    info.md5 = _moddb_summary_field(html, "MD5 Hash")
+    info.size = _moddb_summary_field(html, "Size")
+    info.added = _moddb_summary_field(html, "Added")
+    info.updated = _moddb_summary_field(html, "Updated")
+    return info
+
+
+def _moddb_http_get(url: str) -> str:
+    import urllib.error
+    import urllib.request
+
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "DOGMA-MO2/1.0 (+https://github.com/)",
+            "Accept": "text/html,application/xhtml+xml",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=45) as resp:
+            return resp.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(f"ModDB HTTP {exc.code} for {url}") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"ModDB fetch failed for {url}: {exc.reason}") from exc
+
+
+def _moddb_cache_path(cache_dir: Path | None) -> Path | None:
+    if cache_dir is None:
+        return None
+    return cache_dir / MODDB_CACHE_NAME
+
+
+def _moddb_cache_load(cache_dir: Path | None) -> dict:
+    path = _moddb_cache_path(cache_dir)
+    if not path or not path.is_file():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _moddb_cache_save(cache_dir: Path | None, data: dict) -> None:
+    path = _moddb_cache_path(cache_dir)
+    if not path:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def resolve_moddb(
+    url: str,
+    *,
+    cache_dir: Path | None = None,
+    force: bool = False,
+) -> ModdbInfo:
+    """Resolve a ModDB page / start / mirror URL to start link + file metadata."""
+    raw = (url or "").strip()
+    if not raw or not is_moddb_url(raw):
+        raise ValueError(f"not a ModDB URL: {url!r}")
+
+    norm = normalize_moddb_url(raw)
+    cache = _moddb_cache_load(cache_dir)
+    cached = cache.get(norm.lower()) if not force else None
+    if isinstance(cached, dict) and cached.get("fetched_at"):
+        try:
+            age = datetime.now().timestamp() - float(cached["fetched_at"])
+        except (TypeError, ValueError):
+            age = MODDB_CACHE_MAX_AGE_S + 1
+        if age <= MODDB_CACHE_MAX_AGE_S and cached.get("start_url"):
+            return ModdbInfo(
+                page_url=str(cached.get("page_url") or norm),
+                start_url=str(cached.get("start_url") or ""),
+                file_id=str(cached.get("file_id") or ""),
+                filename=str(cached.get("filename") or ""),
+                md5=str(cached.get("md5") or ""),
+                size=str(cached.get("size") or ""),
+                added=str(cached.get("added") or ""),
+                updated=str(cached.get("updated") or ""),
+                title=str(cached.get("title") or ""),
+            )
+
+    file_id = _moddb_file_id_from_url(norm)
+    fetch_url = norm
+    if file_id and re.search(r"(?i)/(?:addons|downloads)/start/\d+$", norm):
+        fetch_url = f"https://www.moddb.com/downloads/{file_id}"
+
+    html = _moddb_http_get(fetch_url)
+    parsed = _parse_moddb_html(norm if "/mods/" in norm.lower() else fetch_url, html)
+    if not parsed.start_url and file_id:
+        parsed.file_id = file_id
+        parsed.start_url = f"https://www.moddb.com/downloads/start/{file_id}"
+    if not parsed.page_url:
+        parsed.page_url = norm
+    if "/mods/" in norm.lower() and "/addons/" in norm.lower():
+        parsed.page_url = norm
+
+    payload = {
+        "page_url": parsed.page_url,
+        "start_url": parsed.start_url,
+        "file_id": parsed.file_id,
+        "filename": parsed.filename,
+        "md5": parsed.md5,
+        "size": parsed.size,
+        "added": parsed.added,
+        "updated": parsed.updated,
+        "title": parsed.title,
+        "fetched_at": datetime.now().timestamp(),
+    }
+    cache[norm.lower()] = payload
+    if parsed.page_url and parsed.page_url.lower() != norm.lower():
+        cache[parsed.page_url.lower()] = payload
+    _moddb_cache_save(cache_dir, cache)
+    return parsed
+
+
+def dep_url_candidates(dep: Dependency, moddb: ModdbInfo | None = None) -> list[str]:
+    """URLs to match against Grok mods.txt / meta.ini."""
+    out: list[str] = []
+    seen: set[str] = set()
+
+    def add(u: str) -> None:
+        n = normalize_moddb_url(u) if is_moddb_url(u) else (u or "").strip().rstrip("/")
+        if not n:
+            return
+        key = n.lower()
+        if key in seen:
+            return
+        seen.add(key)
+        out.append(n)
+
+    add(dep.url)
+    if moddb:
+        add(moddb.page_url)
+        add(moddb.start_url)
+        if moddb.file_id:
+            add(f"https://www.moddb.com/addons/start/{moddb.file_id}")
+            add(f"https://www.moddb.com/downloads/start/{moddb.file_id}")
+    elif dep.url and is_moddb_url(dep.url):
+        fid = _moddb_file_id_from_url(dep.url)
+        if fid:
+            add(f"https://www.moddb.com/addons/start/{fid}")
+            add(f"https://www.moddb.com/downloads/start/{fid}")
+    return out
+
+
 def catalog_rows_for_url(mo2_root: Path, url: str) -> list[tuple[int, str]]:
     """Return (1-based lineno, folder_name_guess) for mods.txt rows matching url."""
+    return catalog_rows_for_urls(mo2_root, [url] if url else [])
+
+
+def catalog_rows_for_urls(
+    mo2_root: Path, urls: Iterable[str]
+) -> list[tuple[int, str]]:
     path = grok_mods_txt(mo2_root)
-    if not path.is_file() or not url:
+    if not path.is_file():
         return []
-    want = url.strip().lower()
+    want: set[str] = set()
+    for u in urls:
+        if not u or not str(u).strip():
+            continue
+        n = normalize_moddb_url(u) if is_moddb_url(u) else str(u).strip().rstrip("/")
+        if n:
+            want.add(n.lower())
+    if not want:
+        return []
+
+    def field_matches(field: str) -> bool:
+        f = field.strip().lower().rstrip("/")
+        if not f:
+            return False
+        if f in want:
+            return True
+        for w in want:
+            if "moddb.com" in w and "moddb.com" in f:
+                wp = w.split("moddb.com/", 1)[-1]
+                fp = f.split("moddb.com/", 1)[-1]
+                if wp and (wp == fp or f.endswith(wp) or w.endswith(fp)):
+                    return True
+        return False
+
     hits: list[tuple[int, str]] = []
     for i, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
         if not line.strip() or line.startswith(" "):
             continue
         parts = line.split("\t")
-        if not parts:
+        if not any(field_matches(p) for p in parts):
             continue
-        if parts[0].strip().lower() != want:
-            continue
-        # displayName is usually field index 3 (0=url,1=fomod,2=author marker,3=name)
         display = parts[3].strip() if len(parts) > 3 else ""
         author = ""
         if len(parts) > 2:
             author = parts[2].replace(" - ", "").strip(" -")
-        # GAMMA folder: "{lineno}- {displayName} - {Author}"
         if display and author:
             folder = f"{i}- {display} - {author}"
         elif display:
@@ -1340,14 +1618,19 @@ def catalog_rows_for_url(mo2_root: Path, url: str) -> list[tuple[int, str]]:
 
 def find_catalog_folders(mo2_root: Path, url: str) -> list[str]:
     """Existing mods/ folders that match catalog lineno for url."""
+    return find_catalog_folders_for_urls(mo2_root, [url] if url else [])
+
+
+def find_catalog_folders_for_urls(mo2_root: Path, urls: Iterable[str]) -> list[str]:
     mods = mo2_root / "mods"
     found: list[str] = []
-    for lineno, _guess in catalog_rows_for_url(mo2_root, url):
+    for lineno, _guess in catalog_rows_for_urls(mo2_root, urls):
         prefix = f"{lineno}-"
         for d in mods.iterdir() if mods.is_dir() else []:
-            if d.is_dir() and d.name.startswith(prefix):
+            if d.is_dir() and d.name.startswith(prefix) and d.name not in found:
                 found.append(d.name)
     return found
+
 
 
 def read_meta_url(mod_dir: Path) -> str:
@@ -1419,10 +1702,12 @@ def dep_is_satisfied(
     modlist: Path | None = None,
     *,
     require_enabled: bool = False,
+    moddb: ModdbInfo | None = None,
 ) -> tuple[bool, list[str]]:
     folders: list[str] = []
-    if dep.url:
-        folders.extend(find_catalog_folders(mo2_root, dep.url))
+    urls = dep_url_candidates(dep, moddb)
+    if urls:
+        folders.extend(find_catalog_folders_for_urls(mo2_root, urls))
     for name in find_managed_folders(mo2_root, dep):
         if name not in folders:
             folders.append(name)
@@ -1504,11 +1789,22 @@ def downloads_dir(mo2_root: Path) -> Path:
     return d
 
 
-def find_archive_for_dep(mo2_root: Path, dep: Dependency) -> Path | None:
+def find_archive_for_dep(
+    mo2_root: Path,
+    dep: Dependency,
+    *,
+    preferred_filename: str = "",
+) -> Path | None:
     dld = downloads_dir(mo2_root)
+    names = []
+    if preferred_filename:
+        names.append(preferred_filename)
     if dep.file:
-        p = dld / dep.file
-        return p if p.is_file() else None
+        names.append(dep.file)
+    for name in names:
+        p = dld / name
+        if p.is_file():
+            return p
     # Any archive whose name contains dep id
     needle = dep.id.lower()
     for p in sorted(dld.iterdir()) if dld.is_dir() else []:
@@ -1590,8 +1886,27 @@ def process_dependency(
     dry_run: bool,
 ) -> str:
     """mode: reinstall | ensure. Returns status string."""
-    ok_present, folders = dep_is_satisfied(mo2_root, dep)
-    catalog = find_catalog_folders(mo2_root, dep.url) if dep.url else []
+    tools = mo2_tools_dir(mo2_root)
+    moddb: ModdbInfo | None = None
+    download_url = dep.url
+    if dep.url and is_moddb_url(dep.url) and dep.source != "user":
+        try:
+            moddb = resolve_moddb(dep.url, cache_dir=tools)
+            download_url = moddb.start_url or dep.url
+            bits = []
+            if moddb.filename:
+                bits.append(moddb.filename)
+            if moddb.version_hint:
+                bits.append(f"v{moddb.version_hint}")
+            if moddb.updated:
+                bits.append(f"updated {moddb.updated}")
+            if bits:
+                info(f"  [{dep.id}] ModDB: {', '.join(bits)}")
+        except (RuntimeError, ValueError, OSError) as exc:
+            warn(f"  [{dep.id}] ModDB resolve failed ({exc}); using manifest URL")
+
+    ok_present, folders = dep_is_satisfied(mo2_root, dep, moddb=moddb)
+    catalog = find_catalog_folders_for_urls(mo2_root, dep_url_candidates(dep, moddb))
 
     if catalog:
         # Never wipe catalog — enable only
@@ -1619,22 +1934,31 @@ def process_dependency(
         return "present"
 
     # Need install
-    archive = find_archive_for_dep(mo2_root, dep)
+    preferred = (moddb.filename if moddb else "") or dep.file
+    archive = find_archive_for_dep(mo2_root, dep, preferred_filename=preferred)
     if dep.source == "user":
         if not archive:
             howto = dep.howto or f"Place the zip as downloads/DOGMA/{dep.file or (dep.id + '.zip')}"
             raise FileNotFoundError(f"[{dep.id}] user-sourced archive missing. {howto}")
     else:
-        if not archive and dep.url and not dry_run:
-            rc = mo2_download(mo2_root, dep.url)
+        if not archive and download_url and not dry_run:
+            rc = mo2_download(mo2_root, download_url)
             if rc != 0:
                 warn(f"  [{dep.id}] MO2 download exit {rc}; checking downloads…")
-            archive = find_archive_for_dep(mo2_root, dep)
+            archive = find_archive_for_dep(
+                mo2_root, dep, preferred_filename=preferred
+            )
             if not archive:
                 # Also scan top-level downloads/
                 top = mo2_root / "downloads"
+                needles = [dep.id.lower()]
+                if preferred:
+                    needles.append(Path(preferred).stem.lower())
                 for p in top.glob("*") if top.is_dir() else []:
-                    if p.is_file() and dep.id.lower() in p.stem.lower():
+                    if not p.is_file():
+                        continue
+                    stem = p.stem.lower()
+                    if any(n and n in stem for n in needles):
                         dest = downloads_dir(mo2_root) / p.name
                         if not dry_run:
                             shutil.copy2(p, dest)
@@ -1642,7 +1966,7 @@ def process_dependency(
                         break
         if not archive and not dry_run:
             raise FileNotFoundError(
-                f"[{dep.id}] archive not found after download. URL={dep.url}"
+                f"[{dep.id}] archive not found after download. URL={download_url}"
             )
 
     folder_name = f"{MANAGED_FOLDER_PREFIX}{dep.id}"
@@ -1784,10 +2108,23 @@ def build_report(
         lines.append("")
         check = filter_deps(data, tier, installed=installed)
         for dep in check:
+            moddb = None
+            if dep.url and is_moddb_url(dep.url) and dep.source != "user":
+                try:
+                    moddb = resolve_moddb(dep.url, cache_dir=tools)
+                    lines.append(
+                        f'ModDB "{dep.id}": file={moddb.filename or "?"} '
+                        f"updated={moddb.updated or '?'} "
+                        f"start={moddb.start_url or '?'}"
+                    )
+                except (RuntimeError, ValueError, OSError) as exc:
+                    W(f'ModDB resolve failed for "{dep.id}": {exc}')
             sat, folders = dep_is_satisfied(
-                mo2_root, dep, modlist, require_enabled=True
+                mo2_root, dep, modlist, require_enabled=True, moddb=moddb
             )
-            present, _ = dep_is_satisfied(mo2_root, dep, require_enabled=False)
+            present, _ = dep_is_satisfied(
+                mo2_root, dep, require_enabled=False, moddb=moddb
+            )
             if not present:
                 W(f'{dep.tier} mod "{dep.id}" is missing')
                 if dep.source == "user":

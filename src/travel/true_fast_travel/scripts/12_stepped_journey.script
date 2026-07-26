@@ -90,17 +90,33 @@ local function segment_lengths(pts)
 	return lens, total
 end
 
+-- Snap to the waypoint itself. Never pass tft.dest_gvid into find_ground_pos — that
+-- resolves the destination graph vertex and teleports every hop straight to the end.
+local function snap_waypoint(pos)
+	if not pos then return nil, nil end
+	if tft_find_ground_pos then
+		local safe, lvid = tft_find_ground_pos(pos, nil, nil, {
+			anchor = pos,
+			max_drift_m = 20,
+			local_only = true,
+			ray_first = true,
+		})
+		if safe then return safe, lvid end
+	end
+	return pos, nil
+end
+
 local function teleport_to(pos)
 	if not (db.actor and pos) then return end
-	local safe, lvid = pos, nil
-	if tft_find_ground_pos then
-		safe, lvid = tft_find_ground_pos(pos, nil, tft.dest_gvid)
-	end
+	local safe, lvid = snap_waypoint(pos)
 	safe = safe or pos
-	local gvid = tft.dest_gvid or db.actor:game_vertex_id()
 	if not lvid and level and level.vertex_id then
 		local ok, lv = pcall(function() return level.vertex_id(safe) end)
 		if ok then lvid = lv end
+	end
+	local gvid = db.actor:game_vertex_id()
+	if lvid and _G.tft_graph_gvid_from_lvid then
+		gvid = _G.tft_graph_gvid_from_lvid(lvid) or gvid
 	end
 	db.actor:set_actor_position(safe)
 	if tft_teleport_companions then
@@ -224,12 +240,17 @@ run_step = function(step_i)
 	end
 
 	if fade_enabled() and tft_play_fade_teleport then
-		local g = tft.dest_gvid or (db.actor and db.actor:game_vertex_id()) or 0
-		local lv, sp = nil, pos
-		if tft_find_ground_pos then
-			sp, lv = tft_find_ground_pos(pos, nil, tft.dest_gvid)
+		local sp, lv = snap_waypoint(pos)
+		sp = sp or pos
+		if not lv and level and level.vertex_id then
+			local ok, v = pcall(function() return level.vertex_id(sp) end)
+			if ok then lv = v end
 		end
-		tft_play_fade_teleport(sp or pos, lv, g, after_tp)
+		local g = (db.actor and db.actor:game_vertex_id()) or 0
+		if lv and _G.tft_graph_gvid_from_lvid then
+			g = _G.tft_graph_gvid_from_lvid(lv) or g
+		end
+		tft_play_fade_teleport(sp, lv, g, after_tp)
 	else
 		teleport_to(pos)
 		after_tp()

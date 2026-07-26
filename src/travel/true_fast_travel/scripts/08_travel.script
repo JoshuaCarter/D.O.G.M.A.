@@ -766,8 +766,14 @@ complete_travel_sequence = function()
     -- TELEPORT BEFORE TIME JUMP to prevent starting location ambushes during simulation
     local final_pos, final_lvid
     if tft.is_transition then
-        -- Land on dest_pos (already pulled ~10-20m short of the exit); dest_raw_pos is the changer.
-        final_pos, final_lvid = tft_find_ground_pos(tft.dest_pos, tft.dest_lvid, tft.dest_gvid)
+        -- Land on dest_pos (already pulled ~10-20m short of the exit). Do not pass dest_gvid —
+        -- find_ground_pos would resolve the changer vertex and yank the landing onto the trigger.
+        final_pos, final_lvid = tft_find_ground_pos(tft.dest_pos, nil, nil, {
+            anchor = tft.dest_pos,
+            max_drift_m = 12,
+            local_only = true,
+            ray_first = true,
+        })
         if final_pos then
             local alerted = tft_alerted_enemy_within(final_pos, tft_ambush_radius_m(false))
             tft_set_current_level_changers_locked(alerted)
@@ -811,10 +817,15 @@ complete_travel_sequence = function()
         if tft.dest_pos and final_pos then
             tft.arrival_short_m = math.floor(tft_horizontal_dist(final_pos, tft.dest_pos) or final_pos:distance_to(tft.dest_pos))
         end
-    else
+    elseif not tft.is_transition then
         final_pos, final_lvid = tft_find_ground_pos(final_pos, final_lvid, tft.dest_gvid)
     end
-    final_lvid = tft_resolve_lvid_for_pos(final_pos, final_lvid, tft.dest_gvid)
+    -- Transitions: keep the short landing lvid; dest_gvid is the exit and must not override.
+    if tft.is_transition then
+        final_lvid = tft_resolve_lvid_for_pos(final_pos, final_lvid, nil)
+    else
+        final_lvid = tft_resolve_lvid_for_pos(final_pos, final_lvid, tft.dest_gvid)
+    end
     local lvid = final_lvid
     if not lvid and final_pos and level and level.vertex_id then
         local ok, lv = pcall(function() return level.vertex_id(final_pos) end)

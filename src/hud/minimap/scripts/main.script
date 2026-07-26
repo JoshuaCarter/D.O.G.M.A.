@@ -8,6 +8,8 @@
 	Hold polls key_state each frame so a dialog that steals focus (e.g. item
 	wheel) cannot leave the map stuck on/off. HUD hide while the wheel is open
 	is controlled by hud/quick_action_wheel.
+
+	show_delay_ms: wait after wanting show before enabling (hide is immediate).
 ]]
 
 local CONFIG = _G.dogma_hud_minimap_conf
@@ -16,7 +18,12 @@ local DOGMA
 local MODE_TOGGLE = 0
 local MODE_HOLD = 2
 
+-- Hold: key is down (map may still be waiting on show_delay_ms).
 local holding = false
+-- Continual-ms when the current show request started (hold down / toggle-on).
+local show_request_at = nil
+-- Toggle mode: waiting to show after delay.
+local pending_toggle_show = false
 
 local function log(msg)
 	if not (DOGMA and DOGMA.dbg) then
@@ -25,6 +32,10 @@ local function log(msg)
 	if DOGMA.dbg.logging and DOGMA.dbg.logging() then
 		DOGMA.dbg.log(CONFIG.MOD_ID, tostring(msg))
 	end
+end
+
+local function now_ms()
+	return time_continual and time_continual() or 0
 end
 
 local function mod_ok()
@@ -69,10 +80,69 @@ local function minimap_shown()
 	return false
 end
 
+local function delay_ms()
+	local d = CONFIG.loaded.show_delay_ms
+	if type(d) ~= "number" or d < 0 then
+		return 0
+	end
+	return d
+end
+
+local function delay_elapsed()
+	if not show_request_at then
+		return true
+	end
+	local d = delay_ms()
+	if d <= 0 then
+		return true
+	end
+	return (now_ms() - show_request_at) >= d
+end
+
+local function begin_show_request(source)
+	show_request_at = now_ms()
+	if delay_elapsed() then
+		set_minimap(true)
+		log(string.format("show (%s)", source or "now"))
+		return true
+	end
+	log(string.format("show pending %dms (%s)", delay_ms(), source or "delay"))
+	return false
+end
+
+local function cancel_show_request()
+	show_request_at = nil
+	pending_toggle_show = false
+end
+
 local function toggle_minimap(source)
-	local next_show = not minimap_shown()
-	set_minimap(next_show)
-	log(string.format("%s -> %s", source or "toggle", tostring(next_show)))
+	if pending_toggle_show then
+		cancel_show_request()
+		set_minimap(false)
+		log(string.format("%s -> cancel pending", source or "toggle"))
+		return
+	end
+	if minimap_shown() then
+		cancel_show_request()
+		set_minimap(false)
+		log(string.format("%s -> false", source or "toggle"))
+		return
+	end
+	pending_toggle_show = true
+	if begin_show_request(source or "toggle") then
+		pending_toggle_show = false
+	end
+end
+
+local function tick_pending_toggle()
+	if not pending_toggle_show then
+		return
+	end
+	if delay_elapsed() then
+		pending_toggle_show = false
+		set_minimap(true)
+		log("show (toggle delay)")
+	end
 end
 
 -- Hold owns visibility via key_state (press/release can be missed when a
@@ -87,12 +157,17 @@ local function sync_hold_visibility(source)
 	if want then
 		if not holding then
 			holding = true
-			set_minimap(true)
-			log(string.format("hold: show (%s)", source or "sync"))
-		elseif source ~= "tick" then
-			set_minimap(true)
+			begin_show_request(source or "hold")
+		elseif delay_elapsed() then
+			if not minimap_shown() then
+				set_minimap(true)
+				if source ~= "tick" then
+					log(string.format("hold: show (%s)", source or "sync"))
+				end
+			end
 		end
 	else
+		cancel_show_request()
 		if holding then
 			holding = false
 			set_minimap(false)
@@ -112,22 +187,26 @@ local function on_option_change()
 	CONFIG.loaded.keybind = DOGMA.mcm.key(CONFIG.MOD_ID, "keybind")
 	CONFIG.loaded.modifier = DOGMA.mcm.number(CONFIG.MOD_ID, "modifier")
 	CONFIG.loaded.mode = DOGMA.mcm.number(CONFIG.MOD_ID, "mode")
+	CONFIG.loaded.show_delay_ms = DOGMA.mcm.number(CONFIG.MOD_ID, "show_delay_ms")
 	if CONFIG.loaded.mode ~= MODE_HOLD then
 		CONFIG.loaded.mode = MODE_TOGGLE
 	end
 
+	cancel_show_request()
 	if CONFIG.loaded.enabled and CONFIG.loaded.mode == MODE_HOLD then
+		holding = false
 		sync_hold_visibility("opts")
 	elseif holding then
 		holding = false
 	end
 
 	log(string.format(
-		"opts: en=%s key=%s mod=%s mode=%s (was %s)",
+		"opts: en=%s key=%s mod=%s mode=%s delay=%s (was %s)",
 		tostring(CONFIG.loaded.enabled),
 		tostring(CONFIG.loaded.keybind),
 		tostring(CONFIG.loaded.modifier),
 		tostring(CONFIG.loaded.mode),
+		tostring(CONFIG.loaded.show_delay_ms),
 		tostring(prev_mode)
 	))
 end
@@ -181,6 +260,8 @@ local function actor_on_update()
 	end
 	if CONFIG.loaded.mode == MODE_HOLD then
 		sync_hold_visibility("tick")
+	else
+		tick_pending_toggle()
 	end
 end
 

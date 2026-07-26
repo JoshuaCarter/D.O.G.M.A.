@@ -9,9 +9,9 @@
 	  re-press lowers it.
 	- Vision key: swap melee ↔ vision, then equip melee (same wait-if-drawn).
 	  move_to_* is async — placements are sequenced so VSI is not dumped to bag.
-	- Detector / Geiger / RF force-equip — literal Quick Action Wheel Overhaul
-	  detector flow: prep bolt/pistol hand → wait slot → hide_detector(true) →
-	  poll get_state==3 → move_to_slot (no ruck) → 0.1s → show_detector(true).
+	- Detector / Geiger / RF force-equip — QAW detector flow (hand prep → hide
+	  → state Hidden → move_to_slot → show). Bolt hand prep only for artefact
+	  detectors when auto-bolt is on; RF/Geiger keep pistol / do not draw bolt.
 	- Minimal slot_cell patch: pistols may drag into vision (slot 5).
 ]]
 
@@ -170,14 +170,28 @@ local function cycle_detector(prev, next_obj, is_fast)
 	end)
 end
 
--- QAW OnClick hand prep: bolt preferred, else pistol, else holster 2H to empty.
-local function qaw_hand_target_slot()
+-- Hand prep for scanner swap (from QAW), but bolt only when prefer_bolt
+-- (artefact detector + auto-bolt). RF/Geiger must not yank the bolt out.
+local function qaw_hand_target_slot(prefer_bolt)
 	local actor = db.actor
 	local current_slot = actor:active_slot()
 
-	local s6 = actor:item_in_slot(BOLT_SLOT)
-	if s6 and IsBolt and IsBolt(s6) then
-		return BOLT_SLOT
+	if prefer_bolt then
+		local s6 = actor:item_in_slot(BOLT_SLOT)
+		if s6 and IsBolt and IsBolt(s6) then
+			return BOLT_SLOT
+		end
+	end
+
+	-- Already holding a compatible 1H (pistol/knife) — keep it.
+	local held = actor:active_item()
+	if held then
+		if IsPistol and IsPistol(held) then
+			return current_slot
+		end
+		if IsMelee and IsMelee(held) then
+			return current_slot
+		end
 	end
 
 	local s1 = actor:item_in_slot(MELEE_SLOT)
@@ -187,6 +201,11 @@ local function qaw_hand_target_slot()
 	end
 	if s2 and IsPistol and IsPistol(s2) then
 		return 2
+	end
+
+	-- On bolt for RF/Geiger: put it away (don't keep bolt with non-artefact scanners).
+	if current_slot == BOLT_SLOT and not prefer_bolt then
+		return 0
 	end
 
 	-- 2/3/4/5 block detector anims — holster first (same as QAW).
@@ -502,7 +521,8 @@ local function force_equip_scanner(obj)
 	RemoveTimeEvent(CONFIG.MOD_ID, SCANNER_SWAP_EVENT)
 
 	local device_id = obj:id()
-	local target_slot = qaw_hand_target_slot()
+	local prefer_bolt = is_artefact_detector(obj:section()) and CONFIG.loaded.auto_bolt_on_detector
+	local target_slot = qaw_hand_target_slot(prefer_bolt)
 	local current_slot = actor:active_slot()
 	if target_slot ~= current_slot then
 		actor:activate_slot(target_slot)

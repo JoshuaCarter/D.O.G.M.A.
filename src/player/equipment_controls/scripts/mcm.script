@@ -1,0 +1,78 @@
+-- Equipment Controls MCM
+-- Stock keys: dogma_mcm.key_mirror. Owned customs: CONFIG.BINDS + mirror_spec.
+
+local CONFIG = _G.dogma_player_equipment_controls_conf
+local KM = dogma_key_mirror_mcm
+
+-- Claim Controls rows once at script load (before Settings XML patches).
+local MIRROR = {}
+do
+	local order = { "pistol", "rf_scanner", "glowstick" }
+	for i = 1, #order do
+		local name = order[i]
+		local spec = CONFIG.BINDS and CONFIG.BINDS[name]
+		if spec and KM then
+			MIRROR[name] = KM.mirror_spec(spec)
+		end
+	end
+end
+
+function on_mcm_load(options)
+	local gr = {
+		{
+			id = "page_description",
+			type = "desc",
+			text = "ui_mcm_dogma_equipment_controls_page_description",
+		},
+		{
+			id = "auto_bolt_on_detector",
+			type = "check",
+			val = 1,
+			def = CONFIG.DEFAULTS["auto_bolt_on_detector"],
+			hint = "dogma_equipment_controls_auto_bolt_on_detector",
+		},
+		dogma_mcm.key_mirror("wpn_1", function()
+			return key_bindings and key_bindings.kWPN_1
+		end):option("melee_key", "dogma_equipment_controls_melee_key"),
+		dogma_mcm.key_mirror("wpn_3", function()
+			return key_bindings and key_bindings.kWPN_3
+		end):option("primary_key", "dogma_equipment_controls_primary_key"),
+		dogma_mcm.key_mirror("wpn_2", function()
+			return key_bindings and key_bindings.kWPN_2
+		end):option("secondary_key", "dogma_equipment_controls_secondary_key"),
+	}
+	if MIRROR.pistol then
+		gr[#gr + 1] = MIRROR.pistol:option("tertiary_key", "dogma_equipment_controls_tertiary_key")
+	end
+	gr[#gr + 1] = dogma_mcm.key_mirror("wpn_4", function()
+		return key_bindings and key_bindings.kWPN_4
+	end):option("grenade_key", "dogma_equipment_controls_grenade_key")
+	gr[#gr + 1] = dogma_mcm.key_mirror("custom19", function()
+		return key_bindings and key_bindings.kCUSTOM19
+	end):option("grenade_throw_key", "dogma_equipment_controls_grenade_throw_key")
+	gr[#gr + 1] = dogma_mcm.key_mirror("wpn_6", function()
+		return key_bindings and key_bindings.kWPN_6
+	end):option("bolt_key", "dogma_equipment_controls_bolt_key")
+	gr[#gr + 1] = dogma_mcm.key_mirror("wpn_5", function()
+		return key_bindings and key_bindings.kWPN_5
+	end):option("vision_key", "dogma_equipment_controls_vision_key")
+	gr[#gr + 1] = dogma_mcm.key_mirror("show_detector", function()
+		return key_bindings and key_bindings.kDETECTOR
+	end):option("key_detector", "dogma_equipment_controls_key_detector")
+	gr[#gr + 1] = dogma_mcm.key_mirror("custom14", function()
+		return key_bindings and key_bindings.kCUSTOM14
+	end):option("key_geiger", "dogma_equipment_controls_key_geiger")
+	if MIRROR.rf_scanner then
+		gr[#gr + 1] = MIRROR.rf_scanner:option("key_radio", "dogma_equipment_controls_key_radio")
+	end
+	if MIRROR.glowstick then
+		gr[#gr + 1] = MIRROR.glowstick:option("key_glowstick", "dogma_equipment_controls_key_glowstick")
+	end
+
+	dogma_mcm.attach(options, "player", "ui_mcm_menu_dogma_player", {
+		id = "equipment_controls",
+		sh = true,
+		text = "ui_mcm_menu_dogma_player_equipment_controls",
+		gr = dogma_mcm.with_header(gr),
+	})
+end

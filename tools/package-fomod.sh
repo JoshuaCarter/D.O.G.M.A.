@@ -13,7 +13,7 @@
 # A Required "About" row per step shows the default hover text.
 #
 # Local full deploy is still tools/build.sh (all features merged).
-# Release features are gated by ROOT/config/manifest.ini (value 2 = local+release).
+# Release features are gated by ROOT/config/manifest.yml (level: release).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -57,14 +57,14 @@ cat_title() {
 	esac
 }
 
-# Load ROOT/config/manifest.ini → FEATURES (value >= 2). common is implicit.
+# Load ROOT/config/manifest.yml → FEATURES (level >= release). common is implicit.
 load_manifest() {
 	dogma_load_manifest 2 || exit 1
 	if [[ "${#FEATURES[@]}" -eq 0 ]]; then
-		echo "package-fomod: config/manifest.ini has no release features (need =2)" >&2
+		echo "package-fomod: config/manifest.yml has no release features (need level: release)" >&2
 		exit 1
 	fi
-	echo "package-fomod: config/manifest.ini release (${#FEATURES[@]} features)"
+	echo "package-fomod: config/manifest.yml release (${#FEATURES[@]} features)"
 }
 
 manifest_has() {
@@ -284,6 +284,7 @@ cat > "$STAGE/fomod/ModuleConfig.xml" <<EOF
 	<moduleName>D.O.G.M.A.</moduleName>
 	<requiredInstallFiles>
 		<folder source="common\\gamedata" destination="gamedata" />
+		<folder source="common\\mo2" destination="mo2" />
 	</requiredInstallFiles>
 	<installSteps order="Explicit">${steps_xml}
 	</installSteps>
@@ -297,8 +298,8 @@ fi
 if [[ -f "$ROOT/INFO.md" ]]; then
 	cp -a "$ROOT/INFO.md" "$STAGE/INFO.md"
 fi
-if [[ -f "$ROOT/config/manifest.ini" ]]; then
-	cp -a "$ROOT/config/manifest.ini" "$STAGE/manifest.ini"
+if [[ -f "$ROOT/config/manifest.yml" ]]; then
+	cp -a "$ROOT/config/manifest.yml" "$STAGE/manifest.yml"
 fi
 
 echo "package-fomod: done ($feature_count features, $step_count category pages) -> ${STAGE#"$ROOT"/}"

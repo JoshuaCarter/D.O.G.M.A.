@@ -2,9 +2,23 @@
 	Stock item_device turns NV off in device_binder:net_destroy on level change.
 	Torch light restores from the engine flag; NV is script-only and never restored.
 	Stash wanted state on level change / save; re-apply on first update after spawn.
+
+	Beef's NVG keeps gain in a script-local (nvg_gain_current), hardcoded to 1.0.
+	Short-press walks (max-min)/3 — rungs 0..3. default_gain_step on Beef's MCM
+	is that rung index (stock default = 1 → gain 1.0 with stock min/max).
 ]]
 
+local CONFIG = _G.dogma_hud_nvg_conf
+local DOGMA
+
+-- Beef: step_size = (max-min)/3 → rungs 0..3.
+local BEEF_GAIN_DIV = 3
+local BEEF_GAIN_MAX_RUNG = BEEF_GAIN_DIV
+
 local want_on = false
+local beef_brightness = nil
+local beef_gain_idx = nil
+local beef_dir_idx = nil
 
 local function nv_is_on()
 	return item_device and item_device.nv_state == true
@@ -30,9 +44,96 @@ local function restore()
 	item_device.set_nightvision(torch:section(), true)
 end
 
+local function find_upvalue(fn, target)
+	local i = 1
+	while true do
+		local name = debug.getupvalue(fn, i)
+		if not name then
+			return nil
+		end
+		if name == target then
+			return i
+		end
+		i = i + 1
+	end
+end
+
+local function gain_step()
+	local step = CONFIG.DEFAULTS.default_gain_step
+	if z_beefs_nvgs_mcm and z_beefs_nvgs_mcm.get_config then
+		local value = z_beefs_nvgs_mcm.get_config("default_gain_step")
+		if value ~= nil then
+			step = value
+		end
+	end
+	step = math.floor((tonumber(step) or 0) + 0.5)
+	if step < 0 then
+		return 0
+	end
+	if step > BEEF_GAIN_MAX_RUNG then
+		return BEEF_GAIN_MAX_RUNG
+	end
+	return step
+end
+
+local function beef_gain_range()
+	local gmin, gmax = 0.5, 2.0
+	if z_beefs_nvgs_mcm and z_beefs_nvgs_mcm.get_config then
+		gmin = tonumber(z_beefs_nvgs_mcm.get_config("nvg_gain_min_mcm")) or gmin
+		gmax = tonumber(z_beefs_nvgs_mcm.get_config("nvg_gain_max_mcm")) or gmax
+	end
+	if gmax < gmin then
+		gmin, gmax = gmax, gmin
+	end
+	return gmin, gmax
+end
+
+local function bind_beef_gain()
+	if beef_gain_idx then
+		return true
+	end
+	if not (z_beefs_nvgs and z_beefs_nvgs.brightness_adjust) then
+		return false
+	end
+	beef_brightness = z_beefs_nvgs.brightness_adjust
+	beef_gain_idx = find_upvalue(beef_brightness, "nvg_gain_current")
+	beef_dir_idx = find_upvalue(beef_brightness, "gain_directionality")
+	if not beef_gain_idx then
+		beef_brightness = nil
+		return false
+	end
+	return true
+end
+
+local function apply_default_gain()
+	if not bind_beef_gain() then
+		return
+	end
+	local rung = gain_step()
+	local gmin, gmax = beef_gain_range()
+	local gain = gmin + rung * (gmax - gmin) / BEEF_GAIN_DIV
+	debug.setupvalue(beef_brightness, beef_gain_idx, gain)
+	if beef_dir_idx then
+		debug.setupvalue(beef_brightness, beef_dir_idx, gain < gmax)
+	end
+	if nv_is_on() and z_beefs_nvgs.update_nvgs then
+		z_beefs_nvgs.update_nvgs()
+	end
+end
+
+local function on_option_change()
+	apply_default_gain()
+end
+
 function on_game_start()
+	DOGMA = dogma_common.load(CONFIG.MOD_ID)
 	RegisterScriptCallback("on_level_changing", stash)
-	RegisterScriptCallback("actor_on_first_update", restore)
+	RegisterScriptCallback("actor_on_first_update", function()
+		apply_default_gain()
+		restore()
+	end)
+	RegisterScriptCallback("on_option_change", on_option_change)
+	apply_default_gain()
 	if USE_MARSHAL then
 		RegisterScriptCallback("save_state", function(mdata)
 			mdata.dogma_hud_nvg_on = nv_is_on() or want_on

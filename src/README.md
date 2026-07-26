@@ -19,7 +19,7 @@ See `MOVE_MAP.md` for the full map.
 
 ## Exception: `mo2/` (MO2 tools dir)
 
-`src/<category>/<feature>/mo2/...` is **not** packed into gamedata. On deploy it lands at `<mod>/mo2/...` next to `gamedata/` (e.g. `mods/DOGMA/mo2/build_sound_prefetch.bat`). Local `build/mo2/` gets the same layout.
+`src/common/mo2/...` and `src/<category>/<feature>/mo2/...` are **not** packed into gamedata. On deploy they land at `<mod>/mo2/...` next to `gamedata/` (e.g. `mods/DOGMA/mo2/DOGMA.bat`). Local `build/mo2/` gets the same layout. Core always-on tools (pre-launch runner) live under `src/common/mo2/`.
 
 ## Copy vs smush (inside a gamedata root)
 
@@ -43,7 +43,7 @@ Per feature: `src/<category>/<feature>/installer/`
 | `image.png` | optional hover preview |
 | `id.txt` | zip module folder name (defaults to feature dir name) |
 
-Release zip: `bash tools/package-fomod.sh` → `build/fomod/`. Wizard is **one page per category**; each page is SelectAny feature checkboxes. Hover a feature for its description and image; an About row shows "Hover each checkbox to see feature information". Final page lists third-party recommendations from `src/common/installer/recommendations.txt` (info only). Common is always installed. Root `config/manifest.ini` gates features: `0`=off, `1`=local only, `2`=local+release. Local `Ctrl+Shift+B` builds `>=1`; packaging ships `=2`.
+Release zip: `bash tools/package-fomod.sh` → `build/fomod/`. Wizard is **one page per category**; each page is SelectAny feature checkboxes. Hover a feature for its description and image; an About row shows "Hover each checkbox to see feature information". Final page lists third-party recommendations from `src/common/installer/recommendations.txt` (info only). Common is always installed. Root `config/manifest.yml` gates features: `off` / `dev` / `release` (quote `"off"`). Local `Ctrl+Shift+B` builds `>= dev`; packaging ships `>= release`.
 
 ## Common
 

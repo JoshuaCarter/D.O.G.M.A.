@@ -1,8 +1,9 @@
 --[[
 	DOGMA common loader (vendored — stable, no commit hash).
 
-	Ships as dogma_common.script (no zzzz_), with dogma_mcm / dogma_dbg / dogma_sys.
-	Engine key mirrors live on dogma_mcm.key_mirror (usable from *mcm.script at main menu).
+	Ships as dogma_common.script (no zzzz_), with dogma_mcm / dogma_dbg / dogma_sys /
+	dogma_key_mirror_mcm. Key mirrors: dogma_key_mirror_mcm (re-exported on dogma_mcm).
+	Features claim Controls rows via claim_control / mirror_spec; modxml_keybinds injects them.
 	Feature body scripts are zzzz_*, so these globals exist before any feature
 	on_game_start(). Feature _conf.script builds to dogma_{cat}_{feat}_conf.script
 	(also no zzzz_) and publishes MOD_ID + defaults on _G.dogma_<feature>_conf.
@@ -24,10 +25,11 @@ function load(mod_id)
 	local mcm = _G.dogma_mcm
 	local dbg = _G.dogma_dbg
 	local sys = _G.dogma_sys
+	local keys = _G.dogma_key_mirror_mcm
 	sys.set_deps(mcm, dbg)
 	if mod_id then
 		sys.reset_mod(mod_id)
 		dbg.clear_source(mod_id)
 	end
-	return { mcm = mcm, dbg = dbg, sys = sys }
+	return { mcm = mcm, dbg = dbg, sys = sys, keys = keys }
 end

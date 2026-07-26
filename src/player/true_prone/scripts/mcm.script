@@ -1,0 +1,32 @@
+function on_mcm_load(options)
+	local CONFIG = _G.dogma_player_true_prone_conf
+	dogma_mcm.attach(options, "player", "ui_mcm_menu_dogma_player", {
+		id = "true_prone",
+		sh = true,
+		text = "ui_mcm_menu_dogma_player_true_prone",
+		gr = dogma_mcm.with_header({
+			{
+				id = "page_description",
+				type = "desc",
+				text = "ui_mcm_dogma_true_prone_page_description",
+			},
+			{
+				id = "hide_prone_bones",
+				type = "check",
+				val = 1,
+				def = CONFIG.DEFAULTS["hide_prone_bones"],
+				hint = "dogma_true_prone_hide_prone_bones",
+			},
+			{
+				id = "prone_damage_mult",
+				type = "track",
+				val = 2,
+				min = 1.1,
+				max = 1.5,
+				step = 0.05,
+				def = CONFIG.DEFAULTS["prone_damage_mult"],
+				hint = "dogma_true_prone_prone_damage_mult",
+			},
+		}),
+	})
+end

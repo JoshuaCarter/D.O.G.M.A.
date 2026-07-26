@@ -17,7 +17,7 @@ I'm not trying to overhaul G.A.M.M.A., and I'm not trying to make it easier or h
 For example:
 
 - I think it's stupid that crafting x15 AP ammo takes x30 casings, so I changed it to x15, but I also doubled the powder requirement so that it's not strictly easier to craft.
-- I added real prone, but I made it so you take extra damage when prone.
+- I added true prone, but I made it so you take extra damage when prone.
 - I don't like instant fast travel because it trivialises the world. So I made instant travel crazy expensive and added a facy fast travel mod (WIP) that lets you travel fast, but makes it still take time and doesn't remove the danger.
 
 My ultimate desire, which I may never really achieve, is a single mod who's installation process sets you (**me**) up almost completely for a better experience out of the box. This would includes changing/hiding many mods/config.

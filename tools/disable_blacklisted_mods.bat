@@ -1,47 +1,45 @@
 @echo off
-setlocal
+setlocal EnableDelayedExpansion
 REM Cross-platform DOGMA MO2 helper (Python). This .bat is the Windows launcher.
-REM Close Mod Organizer 2 / the game before running.
+REM Close Mod Organizer 2 / the game before running (modlist edits).
 REM
 REM Requires Python 3 (https://www.python.org/downloads/ or `winget install Python.Python.3.12`)
 REM
 REM Defaults look under the repo config\ folder:
-REM   config\disable.ini
-REM   config\initialize.ini
+REM   config\manifest.yml  (features, mods, disables, defaults)
 REM   config\user.ltx
-REM   config\manifest.ini
+REM   (legacy *.ini kept as reference only)
 REM
 REM Usage:
 REM   disable_blacklisted_mods.bat
 REM   disable_blacklisted_mods.bat --dry-run
 REM   disable_blacklisted_mods.bat --disable-only
-REM   disable_blacklisted_mods.bat --initialize-only
-REM   disable_blacklisted_mods.bat --keybinds-only
-REM   disable_blacklisted_mods.bat --user-ltx-only
-REM   disable_blacklisted_mods.bat --mo2-root "D:\Games\GAMMA"
-REM   disable_blacklisted_mods.bat --all-profiles
-REM   disable_blacklisted_mods.bat --profile "GAMMA Custom"
+REM   disable_blacklisted_mods.bat --no-pause
+REM   ( --no-pause for MO2 prelaunch.ini — do not block launch )
 
 cd /d "%~dp0"
+
+set PAUSE_AT_END=1
+echo %*| findstr /i /c:"--no-pause" >nul && set PAUSE_AT_END=0
 
 where py >nul 2>nul
 if %ERRORLEVEL%==0 (
   py -3 "%~dp0disable_blacklisted_mods.py" %*
-  set ERR=%ERRORLEVEL%
+  set ERR=!ERRORLEVEL!
   goto :done
 )
 
 where python >nul 2>nul
 if %ERRORLEVEL%==0 (
   python "%~dp0disable_blacklisted_mods.py" %*
-  set ERR=%ERRORLEVEL%
+  set ERR=!ERRORLEVEL!
   goto :done
 )
 
 where python3 >nul 2>nul
 if %ERRORLEVEL%==0 (
   python3 "%~dp0disable_blacklisted_mods.py" %*
-  set ERR=%ERRORLEVEL%
+  set ERR=!ERRORLEVEL!
   goto :done
 )
 
@@ -50,6 +48,8 @@ echo Or: winget install Python.Python.3.12
 set ERR=1
 
 :done
-echo.
-pause
+if "!PAUSE_AT_END!"=="1" (
+  echo.
+  pause
+)
 exit /b %ERR%

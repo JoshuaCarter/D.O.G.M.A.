@@ -1,0 +1,23 @@
+function on_mcm_load(options)
+	local CONFIG = _G.dogma_hud_quick_action_wheel_conf
+
+	dogma_mcm.attach(options, "hud", "ui_mcm_menu_dogma_hud", {
+		id = "quick_action_wheel",
+		sh = true,
+		text = "ui_mcm_menu_dogma_hud_quick_action_wheel",
+		gr = dogma_mcm.with_header({
+			{
+				id = "page_description",
+				type = "desc",
+				text = "ui_mcm_dogma_hud_quick_action_wheel_page_description",
+			},
+			{
+				id = "hide_hud",
+				type = "check",
+				val = 1,
+				def = CONFIG.DEFAULTS["hide_hud"],
+				hint = "dogma_hud_quick_action_wheel_hide_hud",
+			},
+		}),
+	})
+end

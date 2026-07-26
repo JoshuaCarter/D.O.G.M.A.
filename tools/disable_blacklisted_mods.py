@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Prepare MO2 for DOGMA: disable.ini, initialize.ini, MCM keybinds, user.ltx.
+"""Prepare MO2 for DOGMA: disabled.ini, defaults.ini, MCM keybinds, user.ltx.
 
-Works on Windows / macOS / Linux with Python 3 (stdlib only).
-On Windows, double-click tools/disable_blacklisted_mods.bat or run:
+Disable/defaults logic lives in src/common/mo2/dogma_mo2_lib.py (also used by
+MO2 jobs). This author tool additionally scrubs keybinds and restores user.ltx.
 
   py -3 tools/disable_blacklisted_mods.py
   python3 tools/disable_blacklisted_mods.py --dry-run
@@ -14,111 +14,33 @@ import argparse
 import os
 import re
 import shutil
-import subprocess
 import sys
-from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
-from typing import Iterable, Iterator
 
+_REPO = Path(__file__).resolve().parent.parent
+_MO2_LIB = _REPO / "src" / "common" / "mo2"
+if str(_MO2_LIB) not in sys.path:
+    sys.path.insert(0, str(_MO2_LIB))
 
-# ---------------------------------------------------------------------------
-# console
-# ---------------------------------------------------------------------------
+import dogma_mo2_lib as lib  # noqa: E402
 
-def _use_color() -> bool:
-    if os.environ.get("NO_COLOR"):
-        return False
-    if sys.platform == "win32":
-        try:
-            import ctypes
+info = lib.info
+ok = lib.ok
+warn = lib.warn
+err = lib.err
+mo2_running = lib.mo2_running
+read_mo2_ini_value = lib.read_mo2_ini_value
+read_disable_ini = lib.read_disable_ini
+update_modlist = lib.update_modlist_disable
+apply_initialize = lib.apply_initialize
+read_text_lines = lib.read_text_lines
+write_text_lines = lib.write_text_lines
+stamp_backup = lib.stamp_backup
+iter_files = lib.iter_files
 
-            kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
-            handle = kernel32.GetStdHandle(-11)
-            mode = ctypes.c_uint32()
-            if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
-                kernel32.SetConsoleMode(handle, mode.value | 0x0004)
-        except Exception:
-            return False
-    return sys.stdout.isatty()
-
-
-_COLOR = _use_color()
-
-
-def info(msg: str) -> None:
-    print(msg)
-
-
-def ok(msg: str) -> None:
-    print(f"\033[32m{msg}\033[0m" if _COLOR else msg)
-
-
-def warn(msg: str) -> None:
-    print(f"\033[33m{msg}\033[0m" if _COLOR else msg)
-
-
-def err(msg: str) -> None:
-    print(f"\033[31m{msg}\033[0m" if _COLOR else msg, file=sys.stderr)
-
-
-# ---------------------------------------------------------------------------
-# paths / mo2 helpers
-# ---------------------------------------------------------------------------
 
 def repo_root_from_script() -> Path:
-    return Path(__file__).resolve().parent.parent
-
-
-def mo2_running() -> bool:
-    if sys.platform == "win32":
-        try:
-            out = subprocess.run(
-                ["tasklist", "/FI", "IMAGENAME eq ModOrganizer.exe", "/NH"],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            return "ModOrganizer.exe" in (out.stdout or "")
-        except OSError:
-            return False
-    try:
-        out = subprocess.run(
-            ["pgrep", "-x", "ModOrganizer"],
-            capture_output=True,
-            check=False,
-        )
-        if out.returncode == 0:
-            return True
-    except OSError:
-        pass
-    # fallback: scan /proc names on unix
-    proc = Path("/proc")
-    if proc.is_dir():
-        for cmd in proc.glob("*/comm"):
-            try:
-                if cmd.read_text(encoding="utf-8", errors="ignore").strip() == "ModOrganizer":
-                    return True
-            except OSError:
-                continue
-    return False
-
-
-def read_mo2_ini_value(ini_path: Path, key: str) -> str:
-    if not ini_path.is_file():
-        raise FileNotFoundError(f"ModOrganizer.ini not found: {ini_path}")
-    prefix = re.compile(rf"^\s*{re.escape(key)}\s*=")
-    for raw in ini_path.read_text(encoding="utf-8", errors="replace").splitlines():
-        if not prefix.match(raw):
-            continue
-        m = re.search(r"@ByteArray\((.+)\)\s*$", raw)
-        if m:
-            value = m.group(1)
-        else:
-            value = raw.split("=", 1)[1].strip()
-        # MO2 stores Windows paths with escaped backslashes.
-        return value.replace("\\\\", "\\")
-    raise ValueError(f"{key} not found in {ini_path}")
+    return _REPO
 
 
 def game_user_ltx_path(mo2_root: Path) -> Path:
@@ -134,204 +56,8 @@ def next_bak_path(path: Path) -> Path:
     raise RuntimeError(f"Too many backups for {path} (bak001-bak999 full)")
 
 
-def stamp_backup(path: Path) -> Path:
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    backup = Path(f"{path}.bak.{stamp}")
-    shutil.copy2(path, backup)
-    return backup
-
-
-def read_text_lines(path: Path) -> list[str]:
-    raw = path.read_bytes()
-    # strip UTF-8 BOM if present
-    if raw.startswith(b"\xef\xbb\xbf"):
-        raw = raw[3:]
-    text = raw.decode("utf-8", errors="replace")
-    if text.endswith("\n"):
-        text = text[:-1]
-        if text.endswith("\r"):
-            text = text[:-1]
-    if not text:
-        return []
-    return text.splitlines()
-
-
-def write_text_lines(path: Path, lines: Iterable[str]) -> None:
-    data = "\r\n".join(lines) + "\r\n"
-    path.write_bytes(data.encode("utf-8"))
-
-
 # ---------------------------------------------------------------------------
-# disable.ini / modlist
-# ---------------------------------------------------------------------------
-
-@dataclass(frozen=True)
-class Rule:
-    kind: str  # exact | substring
-    pattern: str
-    features: tuple[str, ...] = ()
-
-    def label(self) -> str:
-        base = f"exact:{self.pattern}" if self.kind == "exact" else self.pattern
-        if not self.features:
-            return base
-        return f"{base} [{', '.join(self.features)}]"
-
-
-def read_manifest_levels(path: Path) -> dict[str, int]:
-    """Parse config/manifest.ini [features] → {feature_path: 0|1|2}."""
-    if not path.is_file():
-        raise FileNotFoundError(f"Manifest not found: {path}")
-    levels: dict[str, int] = {}
-    section: str | None = None
-    for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
-        line = raw.strip()
-        if not line or line.startswith(";") or line.startswith("#"):
-            continue
-        if line.startswith("[") and line.endswith("]"):
-            section = line[1:-1].strip().lower()
-            continue
-        if section != "features" or "=" not in line:
-            continue
-        key, val = line.split("=", 1)
-        key = key.strip()
-        val = val.split(";", 1)[0].strip()
-        if not key or key == "common":
-            continue
-        if val not in ("0", "1", "2"):
-            raise ValueError(f"Manifest value must be 0|1|2 (got {key}={val})")
-        levels[key.lower()] = int(val)
-    return levels
-
-
-def read_disable_ini(
-    path: Path,
-    manifest_path: Path,
-    *,
-    min_level: int = 1,
-) -> tuple[list[Rule], list[str], list[str]]:
-    """Parse per-feature disable.ini.
-
-    Each [feature/path] section lists MO2 mod names (one per line) that feature
-    wants disabled. Only sections whose feature is >= min_level in manifest.ini
-    are applied. The same MO2 mod may appear under several features; rules merge.
-
-    Returns (rules, active_features, skipped_features).
-    """
-    if not path.is_file():
-        raise FileNotFoundError(f"disable.ini not found: {path}")
-
-    levels = read_manifest_levels(manifest_path)
-    # feature -> list of (kind, pattern)
-    by_feature: dict[str, list[tuple[str, str]]] = {}
-    section: str | None = None
-
-    for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
-        line = raw.strip()
-        if not line or line.startswith(";") or line.startswith("#"):
-            continue
-        if line.startswith("[") and line.endswith("]"):
-            section = line[1:-1].strip()
-            if not section:
-                raise ValueError("disable.ini has an empty [section]")
-            by_feature.setdefault(section, [])
-            continue
-        if section is None:
-            raise ValueError(f"disable.ini entry outside a [feature] section: {raw.strip()}")
-        # Allow optional legacy name=1; bare name is the normal form.
-        key = line.split(";", 1)[0].strip()
-        if "=" in key:
-            name, val = key.split("=", 1)
-            name, val = name.strip(), val.strip()
-            if val == "0":
-                continue
-            if val not in ("", "1"):
-                raise ValueError(f"disable.ini entry must be a mod name (got: {raw.strip()})")
-            key = name
-        if not key:
-            continue
-        if key.lower().startswith("exact:"):
-            by_feature[section].append(("exact", key.split(":", 1)[1].strip()))
-        else:
-            by_feature[section].append(("substring", key))
-
-    # Merge identical patterns; keep every requesting feature.
-    merged: dict[tuple[str, str], list[str]] = {}
-    patterns: dict[tuple[str, str], str] = {}
-    active: list[str] = []
-    skipped: list[str] = []
-
-    for feature, entries in by_feature.items():
-        level = levels.get(feature.lower(), 0)
-        if level < min_level:
-            skipped.append(feature)
-            continue
-        active.append(feature)
-        for kind, pattern in entries:
-            key = (kind, pattern.lower())
-            patterns.setdefault(key, pattern)
-            merged.setdefault(key, [])
-            if feature not in merged[key]:
-                merged[key].append(feature)
-
-    rules = [
-        Rule(kind=kind, pattern=patterns[(kind, pat)], features=tuple(feats))
-        for (kind, pat), feats in merged.items()
-    ]
-    return rules, active, skipped
-
-
-def mod_matches(name: str, rules: Iterable[Rule]) -> Rule | None:
-    lower = name.lower()
-    for rule in rules:
-        if rule.kind == "exact":
-            if name.lower() == rule.pattern.lower():
-                return rule
-        elif rule.pattern.lower() in lower:
-            return rule
-    return None
-
-
-@dataclass
-class ModlistResult:
-    disabled: list[str]
-    already: list[str]
-    unmatched: list[str]
-
-
-def update_modlist(modlist_path: Path, rules: list[Rule], dry_run: bool) -> ModlistResult:
-    lines_in = read_text_lines(modlist_path)
-    out: list[str] = []
-    disabled: list[str] = []
-    already: list[str] = []
-    matched: set[str] = set()
-
-    for line in lines_in:
-        m = re.match(r"^([+\-])(.+)$", line)
-        if m:
-            flag, name = m.group(1), m.group(2)
-            rule = mod_matches(name, rules)
-            if rule:
-                matched.add(name)
-                if flag == "+":
-                    disabled.append(name)
-                    out.append(f"-{name}")
-                    continue
-                already.append(name)
-        out.append(line)
-
-    unmatched = [r.label() for r in rules if not any(mod_matches(n, [r]) for n in matched)]
-
-    if disabled and not dry_run:
-        backup = stamp_backup(modlist_path)
-        ok(f"  Backup: {backup}")
-        write_text_lines(modlist_path, out)
-
-    return ModlistResult(disabled=disabled, already=already, unmatched=unmatched)
-
-
-# ---------------------------------------------------------------------------
-# keybinds
+# keybinds (author-tool only; not part of Install+)
 # ---------------------------------------------------------------------------
 
 _LEAF_BAD = re.compile(
@@ -395,18 +121,6 @@ def update_script_keybind_defaults(path: Path, dry_run: bool) -> list[str]:
     return changes
 
 
-def iter_files(root: Path, name: str | None = None, suffix: str | None = None) -> Iterator[Path]:
-    if not root.is_dir():
-        return
-    for dirpath, _dirnames, filenames in os.walk(root):
-        for fn in filenames:
-            if name is not None and fn != name:
-                continue
-            if suffix is not None and not fn.endswith(suffix):
-                continue
-            yield Path(dirpath) / fn
-
-
 def reset_mod_keybinds(mo2_root: Path, dry_run: bool) -> tuple[int, int]:
     scan_roots = [p for p in (mo2_root / "mods", mo2_root / "overwrite") if p.is_dir()]
     if not scan_roots:
@@ -414,7 +128,6 @@ def reset_mod_keybinds(mo2_root: Path, dry_run: bool) -> tuple[int, int]:
 
     file_hits = 0
     value_hits = 0
-
     info("Scanning axr_options.ltx for keybind values...")
     for scan in scan_roots:
         for path in iter_files(scan, name="axr_options.ltx"):
@@ -443,233 +156,8 @@ def reset_mod_keybinds(mo2_root: Path, dry_run: bool) -> tuple[int, int]:
                     info(f"    {c}")
             if len(changes) > 5:
                 info(f"    ... +{len(changes) - 5} more")
-
     return file_hits, value_hits
 
-
-# ---------------------------------------------------------------------------
-# initialize.ini → axr_options.ltx
-# ---------------------------------------------------------------------------
-
-@dataclass(frozen=True)
-class InitSetting:
-    mod_pattern: str
-    axr_section: str
-    key: str
-    value: str
-
-
-def read_initialize_ini(path: Path) -> dict[str, list[InitSetting]]:
-    """Parse initialize.ini → {mod_pattern: [settings...]}."""
-    if not path.is_file():
-        raise FileNotFoundError(f"initialize.ini not found: {path}")
-
-    by_mod: dict[str, list[InitSetting]] = {}
-    section: str | None = None
-
-    for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
-        line = raw.strip()
-        if not line or line.startswith(";") or line.startswith("#"):
-            continue
-        if line.startswith("[") and line.endswith("]"):
-            section = line[1:-1].strip()
-            if not section:
-                raise ValueError("initialize.ini has an empty [section]")
-            by_mod.setdefault(section, [])
-            continue
-        if section is None:
-            raise ValueError(f"initialize.ini entry outside a [mod] section: {raw.strip()}")
-        if "=" not in line:
-            raise ValueError(f"initialize.ini entry must be key = value (got: {raw.strip()})")
-        key, val = line.split("=", 1)
-        key = key.strip()
-        val = val.split(";", 1)[0].strip()
-        if not key:
-            raise ValueError(f"initialize.ini entry missing key: {raw.strip()}")
-        axr_section = "mcm"
-        if key.startswith("@"):
-            rest = key[1:]
-            if "/" not in rest:
-                raise ValueError(
-                    f"initialize.ini @entry must be @Section/key (got: {raw.strip()})"
-                )
-            axr_section, key = rest.split("/", 1)
-            axr_section, key = axr_section.strip(), key.strip()
-            if not axr_section or not key:
-                raise ValueError(f"initialize.ini bad @Section/key: {raw.strip()}")
-        by_mod[section].append(InitSetting(section, axr_section, key, val))
-    return by_mod
-
-
-def list_modlist_names(modlist_path: Path) -> list[str]:
-    names: list[str] = []
-    for line in read_text_lines(modlist_path):
-        m = re.match(r"^[+\-](.+)$", line)
-        if m:
-            names.append(m.group(1))
-    return names
-
-
-def find_present_mod(pattern: str, mod_names: Iterable[str]) -> str | None:
-    """Return first modlist name matching pattern (substring or exact:)."""
-    if pattern.lower().startswith("exact:"):
-        want = pattern.split(":", 1)[1].strip().lower()
-        for name in mod_names:
-            if name.lower() == want:
-                return name
-        return None
-    needle = pattern.lower()
-    for name in mod_names:
-        if needle in name.lower():
-            return name
-    return None
-
-
-_AXR_ASSIGN = re.compile(r"^(\s*)([^\s=]+)\s*=\s*(.*?)\s*$")
-
-
-def format_axr_line(indent: str, key: str, value: str, width: int = 40) -> str:
-    pad = max(width, len(key) + 1)
-    return f"{indent}{key:<{pad}} = {value}"
-
-
-def apply_settings_to_axr_options(
-    path: Path,
-    settings: list[InitSetting],
-    dry_run: bool,
-) -> list[str]:
-    """Apply settings to one axr_options.ltx. Returns human-readable change lines."""
-    if not settings:
-        return []
-
-    lines = read_text_lines(path)
-    changes: list[str] = []
-
-    # Group by axr section
-    by_section: dict[str, list[InitSetting]] = {}
-    for s in settings:
-        by_section.setdefault(s.axr_section, []).append(s)
-
-    for axr_section, sect_settings in by_section.items():
-        header = f"[{axr_section}]"
-        # Find section range [start, end)
-        start = None
-        for i, line in enumerate(lines):
-            if line.strip().lower() == header.lower():
-                start = i
-                break
-        if start is None:
-            # Append new section at end
-            if dry_run:
-                for s in sect_settings:
-                    changes.append(f"[{axr_section}] {s.key} = {s.value} (new section)")
-                continue
-            if lines and lines[-1].strip() != "":
-                lines.append("")
-            lines.append(header)
-            start = len(lines) - 1
-            for s in sect_settings:
-                lines.append(format_axr_line("        ", s.key, s.value))
-                changes.append(f"[{axr_section}] {s.key} = {s.value} (added)")
-            continue
-
-        end = len(lines)
-        for j in range(start + 1, len(lines)):
-            if lines[j].strip().startswith("[") and lines[j].strip().endswith("]"):
-                end = j
-                break
-
-        # Index existing keys in section
-        key_at: dict[str, int] = {}
-        indent = "        "
-        for i in range(start + 1, end):
-            m = _AXR_ASSIGN.match(lines[i])
-            if not m:
-                continue
-            indent = m.group(1) or indent
-            key_at[m.group(2).lower()] = i
-
-        for s in sect_settings:
-            idx = key_at.get(s.key.lower())
-            if idx is None:
-                changes.append(f"[{axr_section}] {s.key} = {s.value} (added)")
-                if not dry_run:
-                    lines.insert(end, format_axr_line(indent, s.key, s.value))
-                    end += 1
-                    # refresh not needed for subsequent inserts at end
-                continue
-            m = _AXR_ASSIGN.match(lines[idx])
-            assert m is not None
-            old = m.group(3)
-            if old == s.value:
-                continue
-            changes.append(f"[{axr_section}] {s.key}: {old} -> {s.value}")
-            if not dry_run:
-                lines[idx] = format_axr_line(m.group(1), m.group(2), s.value)
-
-    if changes and not dry_run:
-        stamp_backup(path)
-        write_text_lines(path, lines)
-    return changes
-
-
-def apply_initialize(
-    mo2_root: Path,
-    initialize_path: Path,
-    modlist_path: Path,
-    dry_run: bool,
-) -> tuple[int, int, list[str]]:
-    """Apply initialize.ini against present mods. Returns (files, values, skipped_mods)."""
-    by_mod = read_initialize_ini(initialize_path)
-    if not by_mod:
-        return 0, 0, []
-
-    mod_names = list_modlist_names(modlist_path)
-    to_apply: list[InitSetting] = []
-    skipped: list[str] = []
-    matched_mods: list[str] = []
-
-    for pattern, settings in by_mod.items():
-        if not settings:
-            continue
-        hit = find_present_mod(pattern, mod_names)
-        if not hit:
-            skipped.append(pattern)
-            continue
-        matched_mods.append(f"{pattern} -> {hit}")
-        to_apply.extend(settings)
-
-    if matched_mods:
-        info(f"  Present mods ({len(matched_mods)}):")
-        for m in matched_mods:
-            info(f"    {m}")
-
-    if not to_apply:
-        return 0, 0, skipped
-
-    file_hits = 0
-    value_hits = 0
-    scan_roots = [p for p in (mo2_root / "mods", mo2_root / "overwrite") if p.is_dir()]
-    for scan in scan_roots:
-        for path in iter_files(scan, name="axr_options.ltx"):
-            changes = apply_settings_to_axr_options(path, to_apply, dry_run)
-            if not changes:
-                continue
-            file_hits += 1
-            value_hits += len(changes)
-            rel = path.relative_to(mo2_root).as_posix()
-            ok(f"  {rel} ({len(changes)})")
-            for c in changes[:12]:
-                info(f"    {c}")
-            if len(changes) > 12:
-                info(f"    ... +{len(changes) - 12} more")
-
-    return file_hits, value_hits, skipped
-
-
-# ---------------------------------------------------------------------------
-# user.ltx
-# ---------------------------------------------------------------------------
 
 def restore_user_ltx(template: Path, dest: Path, dry_run: bool) -> Path | None:
     if not template.is_file():
@@ -696,31 +184,27 @@ def restore_user_ltx(template: Path, dest: Path, dry_run: bool) -> Path | None:
     return backup
 
 
-# ---------------------------------------------------------------------------
-# main
-# ---------------------------------------------------------------------------
-
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="Apply config/disable.ini + initialize.ini, scrub MCM keybinds, restore user.ltx."
+        description="Apply config/disabled.ini + defaults.ini, scrub MCM keybinds, restore user.ltx."
     )
     p.add_argument(
         "--mo2-root",
         default=r"C:\GAMMA" if sys.platform == "win32" else os.environ.get("MO2_ROOT", r"C:\GAMMA"),
         help="MO2 / GAMMA install folder (contains ModOrganizer.exe). Default: C:\\GAMMA",
     )
-    p.add_argument("--disable", default="", help="Path to disable.ini (default: <repo>/config/disable.ini)")
+    p.add_argument("--disable", default="", help="Path to disabled.ini (default: <repo>/config/disabled.ini)")
     p.add_argument(
         "--initialize",
         default="",
-        help="Path to initialize.ini (default: <repo>/config/initialize.ini)",
+        help="Path to defaults.ini (default: <repo>/config/defaults.ini)",
     )
     p.add_argument("--user-ltx", default="", help="Template user.ltx (default: <repo>/config/user.ltx)")
     p.add_argument("--profile", default="", help="MO2 profile name (default: selected_profile)")
     p.add_argument("--all-profiles", action="store_true", help="Apply mod disables to every profile")
     only = p.add_mutually_exclusive_group()
-    only.add_argument("--disable-only", action="store_true", help="Only apply disable.ini")
-    only.add_argument("--initialize-only", action="store_true", help="Only apply initialize.ini")
+    only.add_argument("--disable-only", action="store_true", help="Only apply disabled.ini")
+    only.add_argument("--initialize-only", action="store_true", help="Only apply defaults.ini")
     only.add_argument("--keybinds-only", action="store_true", help="Only scrub MCM keybinds")
     only.add_argument("--user-ltx-only", action="store_true", help="Only restore user.ltx")
     p.add_argument("--dry-run", action="store_true", help="Print changes; write nothing")
@@ -731,27 +215,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     root = repo_root_from_script()
-    disable_path = Path(args.disable) if args.disable else root / "config" / "disable.ini"
+    disable_path = Path(args.disable) if args.disable else root / "config" / "disabled.ini"
     initialize_path = (
-        Path(args.initialize) if args.initialize else root / "config" / "initialize.ini"
+        Path(args.initialize) if args.initialize else root / "config" / "manifest.yml"
     )
     user_ltx = Path(args.user_ltx) if args.user_ltx else root / "config" / "user.ltx"
-    manifest = root / "config" / "manifest.ini"
+    manifest = root / "config" / "manifest.yml"
+    if not manifest.is_file():
+        manifest = root / "config" / "manifest.ini"
     mo2_root = Path(args.mo2_root)
 
-    only = (
-        args.disable_only,
-        args.initialize_only,
-        args.keybinds_only,
-        args.user_ltx_only,
-    )
     do_disable = not (args.initialize_only or args.keybinds_only or args.user_ltx_only)
     do_initialize = not (args.disable_only or args.keybinds_only or args.user_ltx_only)
     do_keybinds = not (args.disable_only or args.initialize_only or args.user_ltx_only)
     do_user_ltx = not (args.disable_only or args.initialize_only or args.keybinds_only)
-    if sum(1 for x in only if x) > 1:
-        # argparse mutually_exclusive_group already prevents this
-        pass
 
     exe = mo2_root / "ModOrganizer.exe"
     if not exe.is_file():
@@ -788,16 +265,22 @@ def main(argv: list[str] | None = None) -> int:
         return [profile]
 
     if do_disable:
-        rules, active, skipped = read_disable_ini(disable_path, manifest)
-        info(f"disable.ini: {disable_path}")
-        info(f"Manifest   : {manifest}")
+        if manifest.suffix.lower() in (".yml", ".yaml"):
+            data = lib.load_manifest(manifest)
+            feat_rules, active, skipped = lib.feature_disable_rules(data)
+            req_deps = lib.filter_deps(data, "required")
+        else:
+            data = None
+            feat_rules, active, skipped = read_disable_ini(disable_path, manifest)
+            req_deps = []
+        info(f"manifest  : {manifest}")
         if active:
             info(f"  Active features ({len(active)}): {', '.join(active)}")
         if skipped:
-            warn(f"  Skipped (manifest off / missing) ({len(skipped)}): {', '.join(skipped)}")
-        info(f"  Disable rules: {len(rules)}")
+            warn(f"  Skipped (manifest off) ({len(skipped)}): {', '.join(skipped)}")
+        info(f"  Feature disable rules: {len(feat_rules)}")
 
-        if not rules:
+        if not feat_rules and not req_deps:
             info("  No disable entries for active features; skipping modlist edits.")
         else:
             for profile in selected_profiles():
@@ -808,6 +291,14 @@ def main(argv: list[str] | None = None) -> int:
                     raise FileNotFoundError(
                         f"modlist.txt not found for profile '{profile}': {modlist}"
                     )
+                rules = list(feat_rules)
+                if data is not None and req_deps:
+                    rules.extend(
+                        lib.gather_dep_disable_rules(mo2_root, req_deps, modlist)
+                    )
+                if not rules:
+                    info("  No disable rules for this profile; skipping.")
+                    continue
                 result = update_modlist(modlist, rules, args.dry_run)
 
                 if result.disabled:
@@ -833,7 +324,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if do_initialize:
         info("")
-        info("initialize.ini: set MCM options for present mods")
+        info("defaults: set MCM options for present mods (from manifest.yml)")
         info(f"  Config: {initialize_path}")
         for profile in selected_profiles():
             info(f"  Profile: {profile}")

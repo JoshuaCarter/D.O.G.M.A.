@@ -5,6 +5,8 @@
 	Also registered as *mcm.script (API + defaults). Debug page itself is
 	registered only by the local-build feature mcm/debug (manifest =1).
 
+	Key mirrors: dogma_key_mirror_mcm (re-exported here as key_mirror / migrate).
+
 	Tree shape (MCM max 3 levels under the list root):
 	  dogma / <category> / <feature page> / options
 	Categories are merged across feature scripts via attach().
@@ -13,10 +15,6 @@
 local BANNER_LINK = "dogma_mcm_banner"
 local BANNER_CAPTION = "Dorn's Own G.A.M.M.A. Modification Anthology"
 local BANNER_CAPTION_CLR = nil
-
--- Capture stdlib up-front — Anomaly mods sometimes clobber globals like `string`.
-local str_format = string.format
-local str_sub = string.sub
 
 -- Shared Debug page path (dogma → debug). Features read keys from here.
 DEBUG_MOD = "dogma/debug"
@@ -128,201 +126,34 @@ function range(mod_id, min_key, max_key, min_default, max_default, min_floor)
 end
 
 --------------------------------------------------------------------------------
--- Engine keybind mirror (Options→Controls ↔ MCM key_bind)
---
--- MCM loads *mcm.script at the main menu; this module lives here so feature
--- MCM pages can use it without waiting for on_game_start / dogma_common.load.
---
--- Foolproof apply path:
---   1) Engine dik_to_keyname(dik, false) for the console token (k6 / mouse1)
---   2) Fallback DIK_keys name map if the export is missing
---   3) unbind on MCM ESC (-1); bind + cfg_save otherwise
---   4) Re-read and retry once if the primary bind did not stick
+-- Engine keybind mirrors — implementation in dogma_key_mirror_mcm.script.
+-- Thin re-exports so features can call dogma_mcm.key_mirror / migrate.
 --------------------------------------------------------------------------------
 
-local DIK_TOKEN_FALLBACK_NAMES = {
-	"DIK_0", "DIK_1", "DIK_2", "DIK_3", "DIK_4", "DIK_5", "DIK_6", "DIK_7", "DIK_8", "DIK_9",
-	"DIK_A", "DIK_ADD", "DIK_APOSTROPHE", "DIK_APPS", "DIK_AT", "DIK_AX", "DIK_B", "DIK_BACK",
-	"DIK_BACKSLASH", "DIK_C", "DIK_CAPITAL", "DIK_CIRCUMFLEX", "DIK_COLON", "DIK_COMMA",
-	"DIK_CONVERT", "DIK_D", "DIK_DECIMAL", "DIK_DELETE", "DIK_DIVIDE", "DIK_DOWN", "DIK_E",
-	"DIK_END", "DIK_EQUALS", "DIK_ESCAPE", "DIK_F", "DIK_F1", "DIK_F10", "DIK_F11", "DIK_F12",
-	"DIK_F13", "DIK_F14", "DIK_F15", "DIK_F2", "DIK_F3", "DIK_F4", "DIK_F5", "DIK_F6", "DIK_F7",
-	"DIK_F8", "DIK_F9", "DIK_G", "DIK_GRAVE", "DIK_H", "DIK_HOME", "DIK_I", "DIK_INSERT",
-	"DIK_J", "DIK_K", "DIK_KANA", "DIK_KANJI", "DIK_L", "DIK_LBRACKET", "DIK_LCONTROL",
-	"DIK_LEFT", "DIK_LMENU", "DIK_LSHIFT", "DIK_LWIN", "DIK_M", "DIK_MINUS", "DIK_MULTIPLY",
-	"DIK_N", "DIK_NEXT", "DIK_NOCONVERT", "DIK_NUMLOCK", "DIK_NUMPAD0", "DIK_NUMPAD1",
-	"DIK_NUMPAD2", "DIK_NUMPAD3", "DIK_NUMPAD4", "DIK_NUMPAD5", "DIK_NUMPAD6", "DIK_NUMPAD7",
-	"DIK_NUMPAD8", "DIK_NUMPAD9", "DIK_NUMPADCOMMA", "DIK_NUMPADENTER", "DIK_NUMPADEQUALS",
-	"DIK_O", "DIK_P", "DIK_PAUSE", "DIK_PERIOD", "DIK_PRIOR", "DIK_Q", "DIK_R", "DIK_RBRACKET",
-	"DIK_RCONTROL", "DIK_RETURN", "DIK_RIGHT", "DIK_RMENU", "DIK_RSHIFT", "DIK_RWIN", "DIK_S",
-	"DIK_SCROLL", "DIK_SEMICOLON", "DIK_SLASH", "DIK_SPACE", "DIK_STOP", "DIK_SUBTRACT",
-	"DIK_SYSRQ", "DIK_T", "DIK_TAB", "DIK_U", "DIK_UNDERLINE", "DIK_UNLABELED", "DIK_UP",
-	"DIK_V", "DIK_W", "DIK_X", "DIK_Y", "DIK_YEN", "DIK_Z",
-	"MOUSE_1", "MOUSE_2", "MOUSE_3", "MOUSE_4", "MOUSE_5", "MOUSE_6", "MOUSE_7", "MOUSE_8",
-}
-
-local dik_token_fallback = nil
-
-local function build_dik_token_fallback()
-	local map = {}
-	if not DIK_keys then
-		return map
-	end
-	for i = 1, #DIK_TOKEN_FALLBACK_NAMES do
-		local name = DIK_TOKEN_FALLBACK_NAMES[i]
-		local code = DIK_keys[name]
-		if type(code) == "number" then
-			if str_sub(name, 1, 4) == "DIK_" then
-				map[code] = "k" .. str_sub(name, 5)
-			elseif str_sub(name, 1, 6) == "MOUSE_" then
-				map[code] = "mouse" .. str_sub(name, 7)
-			end
-		end
-	end
-	return map
+local function keys()
+	return dogma_key_mirror_mcm
 end
 
-local function console_token_for_dik(dik)
-	dik = tonumber(dik)
-	if not dik then
-		return nil
-	end
-	-- Engine keyboard table is the source of truth for bind/unbind tokens.
-	if dik_to_keyname then
-		local ok, name = pcall(dik_to_keyname, dik, false)
-		if (not ok or type(name) ~= "string" or name == "") then
-			ok, name = pcall(dik_to_keyname, dik, 0)
-		end
-		if ok and type(name) == "string" and name ~= "" then
-			return name
-		end
-	end
-	if not dik_token_fallback then
-		dik_token_fallback = build_dik_token_fallback()
-	end
-	return dik_token_fallback[dik]
-end
-
-local function engine_dik_for_bind(bind)
-	if bind == nil or not bind_to_dik then
-		return -1
-	end
-	-- Prefer primary (0), then any (-1 / single-arg), then secondary (1).
-	local attempts = {
-		function() return bind_to_dik(bind, 0) end,
-		function() return bind_to_dik(bind) end,
-		function() return bind_to_dik(bind, 1) end,
-	}
-	for i = 1, #attempts do
-		local ok, dik = pcall(attempts[i])
-		if ok and type(dik) == "number" and dik ~= 0 then
-			return dik
-		end
-	end
-	return -1
-end
-
-local function console_bind(action, token)
-	exec_console_cmd(str_format("bind %s %s", action, token))
-end
-
-local function console_unbind(action)
-	exec_console_cmd("unbind " .. action)
-end
-
-local function console_cfg_save()
-	exec_console_cmd("cfg_save")
-end
-
-local KeyMirror = {}
-KeyMirror.__index = KeyMirror
-
-function KeyMirror.new(action, bind_fn)
-	local self = setmetatable({
-		action = tostring(action or ""),
-		bind_fn = bind_fn,
-	}, KeyMirror)
-	return self
-end
-
-function KeyMirror:dik()
-	if self.action == "" or type(self.bind_fn) ~= "function" then
-		return -1
-	end
-	local ok, bind = pcall(self.bind_fn)
-	if not ok then
-		return -1
-	end
-	return engine_dik_for_bind(bind)
-end
-
-function KeyMirror:apply(dik)
-	if self.action == "" then
-		return false
-	end
-	dik = tonumber(dik)
-	if not dik then
-		return false
-	end
-
-	-- MCM key_bind uses -1 for ESC unbind.
-	if dik < 0 then
-		console_unbind(self.action)
-		console_cfg_save()
-		return self:dik() < 0
-	end
-
-	local token = console_token_for_dik(dik)
-	if not token then
-		printf("![dogma_mcm.key_mirror] no token for dik=%s action=%s", tostring(dik), self.action)
-		return false
-	end
-
-	console_bind(self.action, token)
-	console_cfg_save()
-
-	local now = self:dik()
-	if now ~= dik then
-		-- Primary may have been empty while secondary held the old key, or the
-		-- first bind raced cfg_save; force primary again.
-		console_bind(self.action, token)
-		console_cfg_save()
-		now = self:dik()
-	end
-
-	if now ~= dik then
-		printf("![dogma_mcm.key_mirror] bind failed action=%s token=%s want=%s got=%s",
-			self.action, token, tostring(dik), tostring(now))
-		return false
-	end
-	return true
-end
-
-function KeyMirror:option(id, hint)
-	local mirror = self
-	return {
-		id = id,
-		type = "key_bind",
-		val = 2,
-		def = -1,
-		curr = {
-			function()
-				return mirror:dik()
-			end,
-		},
-		functor = {
-			function(dik)
-				mirror:apply(dik)
-			end,
-		},
-		hint = hint,
-	}
-end
-
--- action: console name ("wpn_6", "crouch", …)
--- bind_fn: returns key_bindings.* id (or nil)
 function key_mirror(action, bind_fn)
-	return KeyMirror.new(action, bind_fn)
+	local m = keys()
+	return m and m.key_mirror(action, bind_fn)
+end
+
+function key_mirror_kb(action, kb)
+	local m = keys()
+	return m and m.key_mirror_kb(action, kb)
+end
+
+function mirror_spec(spec)
+	local m = keys()
+	return m and m.mirror_spec(spec)
+end
+
+function migrate_key_to_mirror(mod_id, mcm_key, mirror, opts)
+	local m = keys()
+	if m then
+		return m.migrate(mod_id, mcm_key, mirror, opts)
+	end
 end
 
 function with_header(items)

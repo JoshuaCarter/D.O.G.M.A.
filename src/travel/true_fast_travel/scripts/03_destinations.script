@@ -1011,7 +1011,7 @@ local function discover_destination(id, silent)
         ensure_campfire_map_spot(id)
     end
 
-    if silent or kind == "campfire" then
+    if silent or kind == "campfire" or kind == "stash" then
         tft_log("Unlocked travel point id=%s kind=%s (silent)", tostring(id), tostring(kind))
         return true
     end

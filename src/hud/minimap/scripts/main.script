@@ -4,6 +4,10 @@
 	Keybind show/hide for the HUD minimap (video/hud/show_minimap + UIZoneMap).
 	Toggle: flip visibility. Hold: visible only while the key is down.
 	Based on RavenAscendant Mini Map Toggle, with hold-to-show.
+
+	Hold polls key_state each frame so a dialog that steals focus (e.g. item
+	wheel) cannot leave the map stuck on/off. HUD hide while the wheel is open
+	is controlled by hud/quick_action_wheel.
 ]]
 
 local CONFIG = _G.dogma_hud_minimap_conf
@@ -71,21 +75,31 @@ local function toggle_minimap(source)
 	log(string.format("%s -> %s", source or "toggle", tostring(next_show)))
 end
 
--- Hold owns visibility: show only while the bind is actually down (press may be missed on load).
+-- Hold owns visibility via key_state (press/release can be missed when a
+-- dialog takes focus).
 local function sync_hold_visibility(source)
 	if not (CONFIG.loaded.enabled and CONFIG.loaded.mode == MODE_HOLD) then
 		return
 	end
 	local key = CONFIG.loaded.keybind
 	local down = key and key > 0 and key_state and (key_state(key) or 0) ~= 0
-	if down and mod_ok() then
-		holding = true
-		set_minimap(true)
-		log(string.format("hold: show (%s)", source or "sync"))
+	local want = down and mod_ok()
+	if want then
+		if not holding then
+			holding = true
+			set_minimap(true)
+			log(string.format("hold: show (%s)", source or "sync"))
+		elseif source ~= "tick" then
+			set_minimap(true)
+		end
 	else
-		holding = false
-		set_minimap(false)
-		log(string.format("hold: hide (%s)", source or "sync"))
+		if holding then
+			holding = false
+			set_minimap(false)
+			log(string.format("hold: hide (%s)", source or "sync"))
+		elseif source ~= "tick" then
+			set_minimap(false)
+		end
 	end
 end
 
@@ -131,11 +145,7 @@ local function on_key_press(key)
 
 	local km = CONFIG.loaded.mode
 	if km == MODE_HOLD then
-		holding = true
-		if mod_ok() then
-			set_minimap(true)
-			log("hold: show")
-		end
+		sync_hold_visibility("press")
 		return
 	end
 
@@ -150,16 +160,11 @@ local function on_key_release(key)
 	if not CONFIG.loaded.enabled then
 		return
 	end
-	if not holding then
-		return
-	end
 	if not CONFIG.loaded.keybind or key ~= CONFIG.loaded.keybind then
 		return
 	end
-	holding = false
 	if CONFIG.loaded.mode == MODE_HOLD then
-		set_minimap(false)
-		log("hold: hide")
+		sync_hold_visibility("release")
 	end
 end
 
@@ -170,11 +175,21 @@ local function actor_on_first_update()
 	sync_hold_visibility("start")
 end
 
+local function actor_on_update()
+	if not DOGMA or not DOGMA.sys.ready(CONFIG.MOD_ID, db, on_option_change) then
+		return
+	end
+	if CONFIG.loaded.mode == MODE_HOLD then
+		sync_hold_visibility("tick")
+	end
+end
+
 function on_game_start()
 	DOGMA = dogma_common.load(CONFIG.MOD_ID)
 	RegisterScriptCallback("on_option_change", on_option_change)
 	RegisterScriptCallback("on_key_press", on_key_press)
 	RegisterScriptCallback("on_key_release", on_key_release)
 	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+	RegisterScriptCallback("actor_on_update", actor_on_update)
 	log("on_game_start: callbacks registered")
 end

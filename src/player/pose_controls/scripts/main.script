@@ -5,17 +5,17 @@
 	- Crouch bind -> crouch only (mcCrouch, never mcAccel)
 	- Walk/Low Crouch bind -> prone only (mcCrouch + mcAccel)
 	- Sprint bind -> vanilla stand + sprint
-	- MCM walk key -> walk only (mcAccel without mcCrouch)
+	- Walk bind (CONFIG.BINDS.walk) -> walk only (mcAccel without mcCrouch)
 
-	MCM Hold/Toggle and crouch/prone/sprint keys mirror Options→Controls
-	(live curr/functor — not axr copies). Walk key is MCM-only.
+	MCM Hold/Toggle and pose keys mirror Options→Controls
+	(live curr/functor — not axr copies).
 	Hold/Toggle forces g_crouch_toggle / g_walk_toggle / g_sprint_toggle to match.
 
 	FDDA body search / Faster Skinning briefly flip g_crouch_toggle to pulse
 	crouch. We cache the player's real preference so that trick does not yank us
 	into toggle handling, and we pass those scripted pulses straight through.
 
-	Engine move states remain the source of truth so prone_fix and other
+	Engine move states remain the source of truth so true_prone and other
 	mods can read pose via IsMoveState("mcCrouch") / IsMoveState("mcAccel").
 ]]
 
@@ -53,6 +53,13 @@ local ENGINE_BINDS = {
 		action = "sprint_toggle",
 		bind = function() return key_bindings.kSPRINT_TOGGLE or key_bindings.kSPRINT end,
 		mcm = "sprint_key",
+	},
+	walk = {
+		action = CONFIG.BINDS.walk.action,
+		bind = function()
+			return dogma_key_mirror_mcm.bind_kb(CONFIG.BINDS.walk.kb)
+		end,
+		mcm = "walk_key",
 	},
 }
 
@@ -114,7 +121,7 @@ local function passthrough_scripted_pose_pulse()
 	return false
 end
 
--- DIK -> console bind token handled by dogma_mcm.key_mirror (MCM functors).
+-- DIK -> console bind token handled by dogma_key_mirror_mcm (via dogma_mcm).
 -- main only reads engine binds.
 local function engine_bind_dik(kb)
 	local bind = kb.bind()
@@ -135,7 +142,7 @@ local function set_engine_toggle(toggle_on)
 	log(string.format("toggle modes -> %s", word))
 end
 
--- Mirror Hold/Toggle + crouch/prone/sprint from Options→Controls.
+-- Mirror Hold/Toggle + crouch/prone/sprint/walk from Options→Controls.
 -- MCM key rows use curr/functor so they always show engine binds; this only
 -- refreshes CONFIG.loaded and keeps walk/sprint toggle bits matched to crouch.
 local function sync_mirrored_controls()
@@ -152,7 +159,8 @@ end
 
 local function on_option_change()
 	CONFIG.loaded.enabled = true
-	CONFIG.loaded.walk_key = DOGMA.mcm.key(CONFIG.MOD_ID, "walk_key")
+	-- Promote legacy MCM-only walk DIK into Controls if unbound.
+	dogma_mcm.migrate_key_to_mirror(CONFIG.MOD_ID, "walk_key", CONFIG.BINDS.walk)
 	CONFIG.loaded.debug_log = DOGMA.dbg.logging()
 	CONFIG.loaded.debug_overlay = DOGMA.dbg.overlay_enabled()
 	DOGMA.dbg.set_enabled(CONFIG.MOD_ID, DOGMA.dbg.overlay_enabled())
@@ -181,8 +189,9 @@ local function input_allowed()
 	return actor_can_change_pose() and actor_menu and actor_menu.is_hud_free and actor_menu.is_hud_free()
 end
 
-local function is_walk_key(key)
-	return CONFIG.loaded.walk_key and key == CONFIG.loaded.walk_key
+local function is_walk_bind(bind)
+	local walk = dogma_key_mirror_mcm.bind_kb(CONFIG.BINDS.walk.kb)
+	return walk and bind == walk
 end
 
 local function bind_dik(bind)
@@ -291,7 +300,7 @@ local function on_before_key_press(key, bind, _dis, flags)
 		return
 	end
 
-	if is_walk_key(key) then
+	if is_walk_bind(bind) then
 		if use_hold_mode() then
 			block(flags)
 		else
@@ -345,7 +354,7 @@ local function on_before_key_hold(key, bind, _dis, flags)
 		return
 	end
 
-	if is_walk_key(key) then
+	if is_walk_bind(bind) then
 		block(flags)
 		with_synthetic_input(function()
 			if IsMoveState("mcCrouch") then
@@ -383,7 +392,7 @@ local function on_before_key_release(key, bind, _dis, flags)
 	end
 
 	if use_hold_mode() then
-		if is_walk_key(key) and get_pose() == POSE.WALK then
+		if is_walk_bind(bind) and get_pose() == POSE.WALK then
 			with_synthetic_input(function()
 				set_bind_down(key_bindings.kACCEL, false)
 			end)

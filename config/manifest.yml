@@ -1,0 +1,206 @@
+# DOGMA unified catalog — single source of truth.
+#
+# features:
+#   level: off | dev | release   (quote "off" — bare off is YAML false)
+#     off     — not built
+#     dev     — local builds (Ctrl+Shift+B / tools/build.sh)
+#     release — local + FOMOD / GitHub release
+#   common    — always-on (level ignored)
+#   disable / enable — MO2 folder substrings (prefix exact: for full match)
+#   requirements — third-party mods this feature needs (Install when feature active;
+#                  put always-needed packs under common.requirements)
+#   defaults  — per-entry MCM; optional target_mod:
+#
+# suggested: — optional third-party packs (Install+ / --tier all|suggested)
+#   keyed by id (same shape as features), not a YAML list
+
+features:
+  common:
+    disable: []
+    enable: []
+    requirements: []
+
+  crafting/ammo:
+    level: release
+
+  fx/radiation:
+    level: release
+
+  fx/thirst:
+    level: dev
+
+  hud/fps:
+    level: release
+
+  hud/geiger:
+    level: dev
+    disable:
+      - Msv Above Radiation Icon
+
+  hud/minimap:
+    level: dev
+    disable:
+      - Minimap Toggle
+
+  hud/nvg:
+    level: dev
+
+  hud/quick_action_wheel:
+    level: dev
+
+  hud/stalker_id:
+    level: dev
+    disable:
+      - Identification UI - CrookR
+      - Crook's Identification UI Fix
+
+  items/disassemble:
+    level: dev
+    disable:
+      - Prefer Best Disassembly Tool
+
+  items/drop:
+    level: dev
+    disable:
+      - Press Key to Drop Item
+
+  items/favourites:
+    level: dev
+
+  items/stripping:
+    level: release
+
+  mcm/debug:
+    level: dev
+
+  misc/geiger:
+    level: dev
+
+  misc/hard_defaults:
+    level: dev
+
+  misc/keybinds_fix:
+    level: dev
+
+  misc/missions:
+    level: dev
+
+  misc/rf_receiver:
+    level: dev
+
+  misc/search:
+    level: release
+
+  misc/sound_prefetch:
+    level: dev
+
+  mutants/audio:
+    level: dev
+
+  mutants/skinning:
+    level: release
+
+  mutants/tweaks:
+    level: release
+
+  npcs/companions:
+    level: dev
+    disable:
+      - Quick Companion Teleport
+      - Fair Fast Travel
+
+  npcs/foliage:
+    level: "off"
+
+  npcs/speed:
+    level: release
+
+  pda/rep_warning:
+    level: dev
+
+  pda/stay_down:
+    level: release
+    disable:
+      - Dont ReEquip PDA
+      - Previous weapon is automatically pulled after closing PDA
+
+  player/stfu:
+    level: "off"
+    disable:
+      - Silent Protagonist
+
+  player/campfire:
+    level: dev
+    disable:
+      - Campfire slowly regens life
+
+  player/exo:
+    level: dev
+
+  player/pose_controls:
+    level: release
+
+  player/true_prone:
+    level: release
+    disable:
+      - xrMPE
+
+  player/equipment_controls:
+    level: dev
+
+  tooltips/tweaks:
+    level: release
+
+  tooltips/weapons:
+    level: release
+
+  travel/fast_travel:
+    level: "off"
+    disable:
+      - Fair Fast Travel
+
+  travel/true_fast_travel:
+    level: dev
+    disable:
+      - Fair Fast Travel
+      - Limited Fast Travel
+
+  weapons/ammo_wheel:
+    level: dev
+    disable:
+      - Fixed Ammo Wheel Hotkeys
+
+  weapons/quick_fire:
+    level: dev
+    disable:
+      - Fluid Aim
+
+  zoom/ads_zoom:
+    level: release
+    disable:
+      - Adjustable Scope View
+
+  zoom/free_zoom:
+    level: release
+    disable:
+      - Free Zoom
+
+suggested:
+  alifeplus:
+    label: Alife Plus
+    url: https://www.moddb.com/addons/start/305743
+    disable:
+      - G.A.M.M.A. NPC Loot Claim Remade
+      - 311- NPC Stop Looting Dead Bodies - DTTheGunslinger
+      - 450- Useful Idiots - bellyillish
+      - 480- Squad Filler - xcvb
+      - G.A.M.M.A. ZCP 1.4 Balanced Spawns
+      - G.A.M.M.A. NPC Spawns
+      - 248- Night Mutants - xcvb
+      - G.A.M.M.A. Dynamic Despawner
+      - xcvb's Guards Spawner
+      - NPC Limping and Healing
+      - NPC Weapon Jamming
+      - G.A.M.M.A. No NPC Friendly Fire
+      - G.A.M.M.A. AI Rework
+      - ReDone Combat AI

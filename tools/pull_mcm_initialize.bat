@@ -1,6 +1,6 @@
 @echo off
 setlocal
-REM Pull non-default MCM options from axr_options.ltx into config\initialize.ini
+REM Pull non-default MCM options from axr_options.ltx into config\defaults.ini
 REM
 REM Requires Python 3.
 REM

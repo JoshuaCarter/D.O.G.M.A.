@@ -1,0 +1,924 @@
+--[[
+	Equipment Controls
+
+	- MCM mirrors Primary/Secondary/Pistol/Melee/Grenade/Throw/Vision/Bolt/RF/
+	  Glowstick into Options→Controls (DIK sync).
+	- Melee key: always draw a knife from melee or vision (swap if needed);
+	  re-press lowers it.
+	- Pistol key: always draw a pistol from melee or vision; re-press lowers it.
+	- Vision key: swap melee ↔ vision, then equip melee (same wait-if-drawn).
+	  move_to_* is async — placements are sequenced so VSI is not dumped to bag.
+	- Detector / Geiger / RF force-equip — QAW detector flow (hand prep → hide
+	  → state Hidden → move_to_slot → show). Artefact detector + auto-bolt:
+	  wait until RH empty (or already bolt), then bolt + detector together.
+	  RF/Geiger never touch the bolt.
+	- Glowstick: wait until RH fully empty (incl. bolt), then slow-equip into
+	  the detector slot (right-hand device).
+	- Minimal slot_cell patch: pistols may drag into vision (slot 5).
+]]
+
+local CONFIG = _G.dogma_player_equipment_controls_conf
+local DOGMA
+
+local MELEE_SLOT = 1
+local VISION_SLOT = 5
+local BOLT_SLOT = 6
+local DET_SLOT = 9
+local SLOT_MAX = 13
+local PISTOL_BASE_SLOT = 2 -- LTX slot 1 → UI key for slot_cell
+
+-- HudItem: eIdle=0 eShowing=1 eHiding=2 eHidden=3
+local STATE_HIDDEN = 3
+
+local DET_CLASS = {
+	DET_SIMP = true,
+	DET_ADVA = true,
+	DET_ELIT = true,
+	DET_SCIE = true,
+}
+
+local swap_busy = false
+local scanner_busy = false
+local SWAP_EVENT = "holster_swap"
+local SWAP_PLACE_EVENT = "holster_swap_place"
+local SCANNER_SHOW_EVENT = "scanner_show"
+local SCANNER_SWAP_EVENT = "scanner_swap"
+local SWAP_TICK = 0.05
+local SWAP_MAX_TICKS = 100 -- ~5s safety only; wait is state-based
+
+local function geiger_sec()
+	return (item_device and item_device.device_geiger) or "detector_geiger"
+end
+
+local function radio_sec()
+	return "detector_radio"
+end
+
+local function is_artefact_detector(sec)
+	if not sec or sec == geiger_sec() or sec == radio_sec() then
+		return false
+	end
+	local cls = ini_sys and ini_sys:r_string_ex(sec, "class")
+	return cls and DET_CLASS[cls] == true
+end
+
+-- HD / Reanimated glowsticks: device_glowstick* (class D_FLALIT), LTX slot 8.
+local function is_glowstick(sec)
+	if not sec or sec == "lights_glowstick" then
+		return false
+	end
+	if string.find(sec, "device_glowstick", 1, true) then
+		return true
+	end
+	local cls = ini_sys and ini_sys:r_string_ex(sec, "class")
+	return cls == "D_FLALIT"
+end
+
+local function is_fav(sec)
+	local sp = zzz_rax_sortingplus_mcm
+	return sp and sp.is_favorite and sp.is_favorite(sec) or false
+end
+
+-- Pistol / small gun: LTX slot 1 (UI 2). Axes are melee.
+local function is_sidearm(obj)
+	if not obj or IsMelee(obj) or not IsWeapon(obj) then
+		return false
+	end
+	local sec = obj:section()
+	if not (sec and ini_sys) then
+		return false
+	end
+	local s = ini_sys:r_float_ex(sec, "slot")
+	return s ~= nil and tonumber(s) == 1
+end
+
+local function is_melee_weapon(obj)
+	return obj and IsMelee(obj)
+end
+
+local function can_use_keys()
+	local actor = db.actor
+	if not (actor and actor:alive()) then
+		return false
+	end
+	if actor_menu and actor_menu.inventory_opened and actor_menu.inventory_opened() then
+		return false
+	end
+	return true
+end
+
+local function block(flags)
+	if flags then
+		flags.ret_value = false
+	end
+end
+
+local function cancel_scanner_show()
+	RemoveTimeEvent(CONFIG.MOD_ID, SCANNER_SHOW_EVENT)
+end
+
+local function cancel_scanner_hand()
+	RemoveTimeEvent(CONFIG.MOD_ID, "scanner_hand")
+end
+
+local function cancel_scanner_swap()
+	scanner_busy = false
+	RemoveTimeEvent(CONFIG.MOD_ID, SCANNER_SWAP_EVENT)
+	cancel_scanner_show()
+	cancel_scanner_hand()
+	RemoveTimeEvent(CONFIG.MOD_ID, "auto_bolt")
+end
+
+-- style: "full" | "fast" | "force"
+local function put_away_slot9(style)
+	local actor = db.actor
+	if not (actor and actor:active_detector()) then
+		return
+	end
+	if style == "force" then
+		actor:force_hide_detector()
+	elseif actor.hide_detector then
+		actor:hide_detector(style == "fast")
+	else
+		actor:force_hide_detector()
+	end
+end
+
+-- Literal port of Quick Action Wheel Overhaul detector cycle (haru).
+-- hide_detector(fast) → every frame until prev:get_state()==3 → move_to_slot
+-- (never move_to_ruck) → 0.1s → show_detector(true).
+local function equip_and_show_detector(obj)
+	local actor = db.actor
+	if not (actor and obj) then
+		scanner_busy = false
+		return
+	end
+	actor:move_to_slot(obj, DET_SLOT)
+	cancel_scanner_show()
+	CreateTimeEvent(CONFIG.MOD_ID, SCANNER_SHOW_EVENT, 0.1, function()
+		if db.actor and db.actor:alive() then
+			db.actor:show_detector(true)
+		end
+		scanner_busy = false
+		return true
+	end)
+end
+
+local function cycle_detector(prev, next_obj, is_fast)
+	if not (prev and next_obj) then
+		scanner_busy = false
+		return
+	end
+	db.actor:hide_detector(is_fast)
+	local next_id = next_obj:id()
+	CreateTimeEvent(CONFIG.MOD_ID, SCANNER_SWAP_EVENT, 0, function()
+		if not (db.actor and db.actor:alive() and scanner_busy) then
+			scanner_busy = false
+			return true
+		end
+		-- QAW: if prev:get_state() == 3 then equip. Keep prev userdata like QAW.
+		if prev:get_state() == STATE_HIDDEN then
+			equip_and_show_detector(level.object_by_id(next_id) or next_obj)
+			return true
+		end
+		return false
+	end)
+end
+
+-- Weapon/bolt in the weapon hand (detector may still be out).
+local function drawn_weapon_id()
+	local actor = db.actor
+	if not actor then
+		return nil
+	end
+	local active = actor:active_item()
+	if active and (IsWeapon(active) or IsMelee(active)) then
+		return active:id()
+	end
+	if actor:active_slot() == BOLT_SLOT then
+		local bolt = actor:item_in_slot(BOLT_SLOT)
+		return bolt and bolt:id() or nil
+	end
+	return nil
+end
+
+-- True when the lowering weapon is no longer active and fully hidden.
+-- Detector in the other hand does not count as "weapon hand busy".
+local function weapon_hand_clear(lowering_id)
+	local actor = db.actor
+	if not actor then
+		return true
+	end
+	if not lowering_id then
+		return drawn_weapon_id() == nil
+	end
+
+	local active = actor:active_item()
+	if active and active:id() == lowering_id then
+		return false
+	end
+	if active and (IsWeapon(active) or IsMelee(active)) then
+		return false
+	end
+
+	local obj = level.object_by_id(lowering_id)
+	if obj and obj.get_state then
+		if obj:get_state() ~= STATE_HIDDEN then
+			return false
+		end
+	else
+		local slot = actor:active_slot()
+		if slot == MELEE_SLOT or slot == VISION_SLOT or slot == BOLT_SLOT then
+			return false
+		end
+	end
+
+	return true
+end
+
+-- Only the two holster slots.
+local function find_in_holsters(is_wanted)
+	local actor = db.actor
+	if not actor then
+		return nil, nil
+	end
+	local m = actor:item_in_slot(MELEE_SLOT)
+	if m and is_wanted(m) then
+		return m, MELEE_SLOT
+	end
+	local v = actor:item_in_slot(VISION_SLOT)
+	if v and is_wanted(v) then
+		return v, VISION_SLOT
+	end
+	return nil, nil
+end
+
+local function equip_melee_slot()
+	local actor = db.actor
+	if actor and actor:item_in_slot(MELEE_SLOT) then
+		actor:activate_slot(MELEE_SLOT)
+	end
+end
+
+local function cancel_swap_wait()
+	swap_busy = false
+	RemoveTimeEvent(CONFIG.MOD_ID, SWAP_EVENT)
+	RemoveTimeEvent(CONFIG.MOD_ID, SWAP_PLACE_EVENT)
+end
+
+-- move_to_ruck / move_to_slot are async NET events. Same-frame swap dumps the
+-- vision item into the bag (MSI→VS succeeds after kicking VSI). Sequence:
+-- ruck both → wait empty → VSI→MS → wait → MSI→VS → done.
+local function swap_melee_vision(on_done)
+	local actor = db.actor
+	if not actor then
+		swap_busy = false
+		if on_done then
+			on_done()
+		end
+		return
+	end
+
+	local a = actor:item_in_slot(MELEE_SLOT)
+	local b = actor:item_in_slot(VISION_SLOT)
+	if not a and not b then
+		swap_busy = false
+		if on_done then
+			on_done()
+		end
+		return
+	end
+
+	local a_id = a and a:id() or nil
+	local b_id = b and b:id() or nil
+
+	if a then
+		actor:move_to_ruck(a)
+	end
+	if b then
+		actor:move_to_ruck(b)
+	end
+
+	local ticks = 0
+	local phase = 1
+	RemoveTimeEvent(CONFIG.MOD_ID, SWAP_PLACE_EVENT)
+	CreateTimeEvent(CONFIG.MOD_ID, SWAP_PLACE_EVENT, SWAP_TICK, function()
+		ticks = ticks + 1
+		local act = db.actor
+		if not (act and act:alive() and swap_busy) then
+			swap_busy = false
+			return true
+		end
+
+		local aa = a_id and level.object_by_id(a_id) or nil
+		local bb = b_id and level.object_by_id(b_id) or nil
+
+		if phase == 1 then
+			local ms = act:item_in_slot(MELEE_SLOT)
+			local vs = act:item_in_slot(VISION_SLOT)
+			if (ms or vs) and ticks < SWAP_MAX_TICKS then
+				return false
+			end
+			if bb then
+				act:move_to_slot(bb, MELEE_SLOT)
+			end
+			phase = 2
+			return false
+		end
+
+		if phase == 2 then
+			if b_id then
+				local in_ms = act:item_in_slot(MELEE_SLOT)
+				if (not in_ms or in_ms:id() ~= b_id) and ticks < SWAP_MAX_TICKS then
+					return false
+				end
+			end
+			if aa then
+				act:move_to_slot(aa, VISION_SLOT)
+			end
+			phase = 3
+			return false
+		end
+
+		if a_id then
+			local in_vs = act:item_in_slot(VISION_SLOT)
+			if (not in_vs or in_vs:id() ~= a_id) and ticks < SWAP_MAX_TICKS then
+				return false
+			end
+		end
+
+		swap_busy = false
+		if on_done then
+			on_done()
+		end
+		return true
+	end)
+end
+
+local function begin_holster_swap(on_done)
+	cancel_swap_wait()
+	swap_busy = true
+
+	local actor = db.actor
+	if not actor then
+		swap_busy = false
+		if on_done then
+			on_done()
+		end
+		return
+	end
+
+	local lowering_id = drawn_weapon_id()
+	if not lowering_id then
+		swap_melee_vision(on_done)
+		return
+	end
+
+	actor:activate_slot(0)
+
+	local ticks = 0
+	CreateTimeEvent(CONFIG.MOD_ID, SWAP_EVENT, SWAP_TICK, function()
+		ticks = ticks + 1
+		local a = db.actor
+		if not (a and a:alive() and swap_busy) then
+			swap_busy = false
+			return true
+		end
+
+		if not weapon_hand_clear(lowering_id) and ticks < SWAP_MAX_TICKS then
+			return false
+		end
+
+		swap_melee_vision(on_done)
+		return true
+	end)
+end
+
+-- Draw wanted type from melee/vision only.
+-- Re-press while holding that type lowers it (stock weapon-slot toggle).
+local function draw_from_holsters(is_wanted)
+	local actor = db.actor
+	if not actor then
+		return
+	end
+
+	local held = actor:item_in_slot(MELEE_SLOT)
+	if actor:active_slot() == MELEE_SLOT and held and is_wanted(held) then
+		actor:activate_slot(0)
+		return
+	end
+
+	local obj, where = find_in_holsters(is_wanted)
+	if not obj then
+		return
+	end
+
+	if where == MELEE_SLOT then
+		equip_melee_slot()
+		return
+	end
+
+	-- Wanted item is in vision — swap into melee, then draw.
+	begin_holster_swap(equip_melee_slot)
+end
+
+local function swap_vision_holsters()
+	begin_holster_swap(equip_melee_slot)
+end
+
+local function find_scanner(match_sec)
+	local actor = db.actor
+	if not actor then
+		return nil
+	end
+
+	for s = 1, SLOT_MAX do
+		local o = actor:item_in_slot(s)
+		if o and match_sec(o:section()) then
+			return o
+		end
+	end
+
+	local fav, other
+	local function consider(_, it)
+		if fav or not it then
+			return
+		end
+		local sec = it:section()
+		if not match_sec(sec) then
+			return
+		end
+		if is_fav(sec) then
+			fav = it
+		elseif not other then
+			other = it
+		end
+	end
+
+	if actor.iterate_ruck then
+		actor:iterate_ruck(consider)
+	else
+		actor:iterate_inventory(consider, nil)
+	end
+
+	return fav or other
+end
+
+-- True when a right-hand item we started lowering is fully put away.
+local function right_hand_lowered(lowering_id)
+	if not lowering_id then
+		return true
+	end
+	local actor = db.actor
+	if not actor then
+		return true
+	end
+	local active = actor:active_item()
+	if active and active:id() == lowering_id then
+		return false
+	end
+	local obj = level.object_by_id(lowering_id)
+	if obj and obj.get_state and obj:get_state() ~= STATE_HIDDEN then
+		return false
+	end
+	return true
+end
+
+-- 2H (etc.) blocks showing a detector; pistol/knife/bolt do not.
+local function rh_blocks_detector(held)
+	if not held then
+		return false
+	end
+	if IsBolt and IsBolt(held) then
+		return false
+	end
+	if (IsPistol and IsPistol(held)) or is_sidearm(held) then
+		return false
+	end
+	if IsMelee and IsMelee(held) then
+		return false
+	end
+	return IsWeapon and IsWeapon(held)
+end
+
+local function has_bolt()
+	local actor = db.actor
+	local bolt = actor and actor:item_in_slot(BOLT_SLOT)
+	return bolt and IsBolt and IsBolt(bolt)
+end
+
+-- Kick bolt draw; do not wait for the anim — detector runs in parallel after.
+local function draw_bolt_now()
+	local actor = db.actor
+	if not (actor and has_bolt()) then
+		return
+	end
+	if actor:active_slot() ~= BOLT_SLOT then
+		actor:activate_slot(BOLT_SLOT)
+	end
+end
+
+local function rh_empty()
+	local actor = db.actor
+	if not actor then
+		return true
+	end
+	-- Already on bolt: fine to start detector (not "empty", but ready).
+	if actor:active_slot() == BOLT_SLOT then
+		return true
+	end
+	if actor:active_item() then
+		return false
+	end
+	return actor:active_slot() == 0
+end
+
+-- Holster RH, wait until empty (or bolt), then run fn.
+local function when_rh_ready(fn)
+	local actor = db.actor
+	if not actor then
+		return
+	end
+	if rh_empty() then
+		fn()
+		return
+	end
+	local held = actor:active_item()
+	local lowering_id = held and held:id() or nil
+	if actor:active_slot() ~= 0 then
+		actor:activate_slot(0)
+	end
+	local attempts = 0
+	CreateTimeEvent(CONFIG.MOD_ID, "scanner_hand", 0, function()
+		attempts = attempts + 1
+		local a = db.actor
+		if not (a and a:alive() and scanner_busy) then
+			scanner_busy = false
+			return true
+		end
+		if lowering_id and not right_hand_lowered(lowering_id) then
+			if attempts > 300 then
+				scanner_busy = false
+				return true
+			end
+			return false
+		end
+		if not rh_empty() and attempts <= 300 then
+			return false
+		end
+		fn()
+		return true
+	end)
+end
+
+-- Holster a blocking 2H weapon, then run fn (RF/Geiger — leave pistol alone).
+local function when_blocking_rh_clear(lowering_id, fn)
+	local actor = db.actor
+	if not actor then
+		return
+	end
+	if actor:active_slot() ~= 0 then
+		actor:activate_slot(0)
+	end
+	local attempts = 0
+	CreateTimeEvent(CONFIG.MOD_ID, "scanner_hand", 0, function()
+		attempts = attempts + 1
+		local a = db.actor
+		if not (a and a:alive() and scanner_busy) then
+			scanner_busy = false
+			return true
+		end
+		if not right_hand_lowered(lowering_id) then
+			if attempts > 300 then
+				scanner_busy = false
+				return true
+			end
+			return false
+		end
+		fn()
+		return true
+	end)
+end
+
+local function start_detector_after_hand(device_id, is_fast)
+	local a = db.actor
+	local device = level.object_by_id(device_id)
+	if not device then
+		scanner_busy = false
+		return
+	end
+	if is_fast == nil then
+		is_fast = true
+	end
+	local current_det = a:item_in_slot(DET_SLOT)
+	if current_det and current_det:id() ~= device:id() then
+		cycle_detector(current_det, device, is_fast)
+	else
+		a:move_to_slot(device, DET_SLOT)
+		cancel_scanner_show()
+		CreateTimeEvent(CONFIG.MOD_ID, SCANNER_SHOW_EVENT, 0.1, function()
+			if db.actor and db.actor:alive() then
+				db.actor:show_detector(true)
+			end
+			scanner_busy = false
+			return true
+		end)
+	end
+end
+
+-- Artefact detector + auto-bolt: wait until RH empty (or already bolt), then
+-- start bolt draw + detector together. RF/Geiger: never touch bolt.
+local function force_equip_scanner(obj)
+	local actor = db.actor
+	if not (actor and obj) then
+		return
+	end
+	if scanner_busy then
+		return
+	end
+
+	local want_bolt = is_artefact_detector(obj:section()) and CONFIG.loaded.auto_bolt_on_detector
+
+	local cur = actor:item_in_slot(DET_SLOT)
+	if cur and cur:id() == obj:id() then
+		if actor:active_detector() then
+			put_away_slot9("fast")
+			return
+		end
+		local function show_only()
+			if want_bolt then
+				draw_bolt_now()
+			end
+			if db.actor and db.actor:alive() then
+				db.actor:show_detector(true)
+			end
+			scanner_busy = false
+		end
+		if want_bolt and not rh_empty() then
+			scanner_busy = true
+			cancel_scanner_hand()
+			when_rh_ready(show_only)
+			return
+		end
+		show_only()
+		return
+	end
+
+	scanner_busy = true
+	cancel_scanner_show()
+	cancel_scanner_hand()
+	RemoveTimeEvent(CONFIG.MOD_ID, "auto_bolt")
+	RemoveTimeEvent(CONFIG.MOD_ID, SCANNER_SWAP_EVENT)
+
+	local device_id = obj:id()
+	local function go()
+		if want_bolt then
+			draw_bolt_now()
+		end
+		start_detector_after_hand(device_id)
+	end
+
+	if want_bolt then
+		when_rh_ready(go)
+		return
+	end
+
+	local held = actor:active_item()
+	if rh_blocks_detector(held) then
+		when_blocking_rh_clear(held:id(), go)
+		return
+	end
+
+	go()
+end
+
+-- Glowstick is a right-hand detector-slot device: holster everything (incl. bolt),
+-- then slow-equip into slot 9. No auto-bolt.
+local function rh_fully_empty()
+	local actor = db.actor
+	if not actor then
+		return true
+	end
+	if actor:active_item() then
+		return false
+	end
+	return actor:active_slot() == 0
+end
+
+local function when_rh_fully_empty(fn)
+	local actor = db.actor
+	if not actor then
+		return
+	end
+	if rh_fully_empty() then
+		fn()
+		return
+	end
+	local held = actor:active_item()
+	local lowering_id = held and held:id() or nil
+	if actor:active_slot() ~= 0 then
+		actor:activate_slot(0)
+	end
+	local attempts = 0
+	CreateTimeEvent(CONFIG.MOD_ID, "scanner_hand", 0, function()
+		attempts = attempts + 1
+		local a = db.actor
+		if not (a and a:alive() and scanner_busy) then
+			scanner_busy = false
+			return true
+		end
+		if lowering_id and not right_hand_lowered(lowering_id) then
+			if attempts > 300 then
+				scanner_busy = false
+				return true
+			end
+			return false
+		end
+		if not rh_fully_empty() and attempts <= 300 then
+			if a:active_slot() ~= 0 then
+				a:activate_slot(0)
+			end
+			return false
+		end
+		fn()
+		return true
+	end)
+end
+
+local function force_equip_glowstick(obj)
+	local actor = db.actor
+	if not (actor and obj) then
+		return
+	end
+	if scanner_busy then
+		return
+	end
+
+	local cur = actor:item_in_slot(DET_SLOT)
+	if cur and cur:id() == obj:id() then
+		if actor:active_detector() then
+			put_away_slot9("full")
+			return
+		end
+		local function show_only()
+			if db.actor and db.actor:alive() then
+				db.actor:show_detector(true)
+			end
+			scanner_busy = false
+		end
+		if not rh_fully_empty() then
+			scanner_busy = true
+			cancel_scanner_hand()
+			when_rh_fully_empty(show_only)
+			return
+		end
+		show_only()
+		return
+	end
+
+	scanner_busy = true
+	cancel_scanner_show()
+	cancel_scanner_hand()
+	RemoveTimeEvent(CONFIG.MOD_ID, SCANNER_SWAP_EVENT)
+
+	local device_id = obj:id()
+	when_rh_fully_empty(function()
+		-- Slow put-away of whatever was in slot 9, then show glowstick.
+		start_detector_after_hand(device_id, false)
+	end)
+end
+
+local function ensure_vision_accepts_pistols()
+	local gui = ui_inventory and ui_inventory.GUI
+	local sc = gui and gui.slot_cell and gui.slot_cell[PISTOL_BASE_SLOT]
+	if not sc then
+		return
+	end
+	for _, s in ipairs(sc) do
+		if s == VISION_SLOT then
+			return
+		end
+	end
+	sc[#sc + 1] = VISION_SLOT
+end
+
+local function on_gui_show(name)
+	if name == "UIInventory" and CONFIG.loaded.enabled then
+		ensure_vision_accepts_pistols()
+	end
+end
+
+local function dik_for(bind)
+	if not (bind and bind_to_dik) then
+		return nil
+	end
+	local dik = bind_to_dik(bind)
+	if dik and dik ~= 0 then
+		return dik
+	end
+end
+
+local function on_option_change()
+	CONFIG.loaded.enabled = true
+	CONFIG.loaded.auto_bolt_on_detector = DOGMA.mcm.bool(CONFIG.MOD_ID, "auto_bolt_on_detector")
+	-- Promote legacy MCM-only pistol/RF DIKs into Controls if unbound.
+	-- Skip DIK_R: old pistol slot shared GAMMA Unjam (custom22).
+	local skip_r = DIK_keys and DIK_keys.DIK_R
+	dogma_mcm.migrate_key_to_mirror(CONFIG.MOD_ID, "tertiary_key", CONFIG.BINDS.pistol, {
+		skip_dik = skip_r,
+	})
+	dogma_mcm.migrate_key_to_mirror(CONFIG.MOD_ID, "key_radio", CONFIG.BINDS.rf_scanner)
+	dogma_mcm.migrate_key_to_mirror(CONFIG.MOD_ID, "key_glowstick", CONFIG.BINDS.glowstick)
+	CONFIG.loaded.tertiary_key = dik_for(dogma_key_mirror_mcm.bind_kb(CONFIG.BINDS.pistol.kb))
+	CONFIG.loaded.key_radio = dik_for(dogma_key_mirror_mcm.bind_kb(CONFIG.BINDS.rf_scanner.kb))
+	CONFIG.loaded.key_glowstick = dik_for(dogma_key_mirror_mcm.bind_kb(CONFIG.BINDS.glowstick.kb))
+	CONFIG.loaded.key_detector = dik_for(key_bindings and key_bindings.kDETECTOR)
+	CONFIG.loaded.key_geiger = dik_for(key_bindings and key_bindings.kCUSTOM14)
+end
+
+local function on_before_key_press(_key, bind, _dis, flags)
+	if not DOGMA.sys.ready(CONFIG.MOD_ID, db, on_option_change) then
+		return
+	end
+	if not CONFIG.loaded.enabled then
+		return
+	end
+	if not can_use_keys() then
+		return
+	end
+	if not key_bindings then
+		return
+	end
+
+	local pistol_bind = dogma_key_mirror_mcm.bind_kb(CONFIG.BINDS.pistol.kb)
+	local rf_bind = dogma_key_mirror_mcm.bind_kb(CONFIG.BINDS.rf_scanner.kb)
+	local glow_bind = dogma_key_mirror_mcm.bind_kb(CONFIG.BINDS.glowstick.kb)
+
+	if swap_busy or scanner_busy then
+		if bind == key_bindings.kWPN_1
+			or bind == key_bindings.kDETECTOR
+			or bind == key_bindings.kWPN_5
+			or bind == key_bindings.kCUSTOM14
+			or (pistol_bind and bind == pistol_bind)
+			or (rf_bind and bind == rf_bind)
+			or (glow_bind and bind == glow_bind)
+		then
+			block(flags)
+		end
+		return
+	end
+
+	if bind == key_bindings.kWPN_1 then
+		block(flags)
+		draw_from_holsters(is_melee_weapon)
+		return
+	end
+
+	if pistol_bind and bind == pistol_bind then
+		block(flags)
+		draw_from_holsters(is_sidearm)
+		return
+	end
+
+	if bind == key_bindings.kDETECTOR then
+		block(flags)
+		force_equip_scanner(find_scanner(is_artefact_detector))
+		return
+	end
+
+	if bind == key_bindings.kWPN_5 then
+		block(flags)
+		swap_vision_holsters()
+		return
+	end
+
+	if bind == key_bindings.kCUSTOM14 then
+		block(flags)
+		force_equip_scanner(find_scanner(function(sec)
+			return sec == geiger_sec()
+		end))
+		return
+	end
+
+	if rf_bind and bind == rf_bind then
+		block(flags)
+		force_equip_scanner(find_scanner(function(sec)
+			return sec == radio_sec()
+		end))
+		return
+	end
+
+	if glow_bind and bind == glow_bind then
+		block(flags)
+		force_equip_glowstick(find_scanner(is_glowstick))
+		return
+	end
+end
+
+function on_game_start()
+	DOGMA = dogma_common.load(CONFIG.MOD_ID)
+	on_option_change()
+	RegisterScriptCallback("on_option_change", on_option_change)
+	RegisterScriptCallback("on_before_key_press", on_before_key_press)
+	RegisterScriptCallback("GUI_on_show", on_gui_show)
+end

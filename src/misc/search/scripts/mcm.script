@@ -1,8 +1,8 @@
 --[[
 	QoL — live MCM search.
 
-	Filters the left mod list as you type. Keeps stock placeholder text when
-	empty (an empty edit box + keyboard focus races MCM OnKeyboard / BusyHands).
+	Stock "Search..." clears on focus (exact match). Hint returns only when
+	focus leaves and the box is empty. Live-filters while typing.
 
 	Lives in *mcm.script so it loads when main-menu MCM gathers options
 	(zzzz_* body scripts are not loaded until a game session).
@@ -23,6 +23,19 @@ local function search_text(self)
 		return ""
 	end
 	return t
+end
+
+local function clear_placeholder_on_focus(self)
+	if self.mod_search and self.mod_search:GetText() == placeholder() then
+		self.mod_search:SetText("")
+	end
+end
+
+-- Hint only when unfocused and empty — not while editing an empty box.
+local function restore_placeholder_on_blur(self)
+	if self.mod_search and self.mod_search:GetText() == "" then
+		self.mod_search:SetText(placeholder())
+	end
 end
 
 local function mcm_options()
@@ -69,13 +82,9 @@ local function apply_search(self, keep_focus)
 	end
 end
 
-local function reset_search_state(self)
-	self.search_filter = nil
+local function clear_debounce(self)
 	self._dogma_qol_want = nil
 	self._dogma_qol_due = nil
-	if self.mod_search then
-		self.mod_search:SetText(placeholder())
-	end
 end
 
 local function patch_mcm_search()
@@ -96,21 +105,17 @@ local function patch_mcm_search()
 		orig_init(self)
 		-- Stock already set the placeholder; only clear our debounce state.
 		self.search_filter = nil
-		self._dogma_qol_want = nil
-		self._dogma_qol_due = nil
+		clear_debounce(self)
 	end
 
 	cls.Open_to = function(self, path)
 		orig_open(self, path)
-		reset_search_state(self)
+		-- Stock Open_to resets filter + placeholder; just sync debounce.
+		clear_debounce(self)
 	end
 
 	cls.OnSearch = function(self)
-		local t = search_text(self)
-		if t == "" and self.mod_search then
-			self.mod_search:SetText(placeholder())
-		end
-		apply_search(self, t ~= "")
+		apply_search(self, search_text(self) ~= "")
 	end
 
 	cls.Update = function(self)
@@ -128,16 +133,23 @@ local function patch_mcm_search()
 
 		if self._dogma_qol_due and time_continual() >= self._dogma_qol_due then
 			self._dogma_qol_due = nil
-			if want == nil and self.mod_search then
-				self.mod_search:SetText(placeholder())
-			end
 			apply_search(self, want ~= nil)
 		end
 	end
 
-	-- Soft-guard: never run search rebuilds from inside OnKeyboard.
 	if orig_keyboard then
 		cls.OnKeyboard = function(self, dik, keyboard_action)
+			if keyboard_action == ui_events.WINDOW_KEY_PRESSED
+				and dik == DIK_keys.MOUSE_1
+				and self.mod_search
+			then
+				if self.mod_search:IsCursorOverWindow() then
+					clear_placeholder_on_focus(self)
+				else
+					restore_placeholder_on_blur(self)
+				end
+			end
+
 			HOOK_STATE.in_keyboard = true
 			local ok, res = pcall(orig_keyboard, self, dik, keyboard_action)
 			HOOK_STATE.in_keyboard = false

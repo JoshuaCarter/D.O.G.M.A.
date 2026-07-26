@@ -7,12 +7,15 @@
 #
 #   src/<category>/<feature>/assets/...     authoring only (ignored; not shipped)
 #   src/<category>/<feature>/installer/...  FOMOD metadata (not shipped into gamedata)
-#   src/<category>/<feature>/mo2/...        EXCEPTION: files under <mod>/mo2/
-#                                           (sibling of gamedata/), e.g. mo2/build_sound_prefetch.bat
+#   src/common/mo2/...                      EXCEPTION: files under <mod>/mo2/
+#   src/<category>/<feature>/mo2/...        (sibling of gamedata/), e.g. mo2/DOGMA.bat
 #
 # Scripts (prefix applied at build — src keeps short names like main.script):
-#   common/scripts/*          -> same basename (dogma_common, dogma_mcm, …)
+#   common/scripts/*          -> same basename (dogma_common, dogma_mcm,
+#                               dogma_key_mirror_mcm, …)
 #                               no zzzz_ — always before every feature script
+#                               *mcm.script also participates in MCM gather
+#                               (key mirrors live in dogma_key_mirror_mcm)
 #   …/scripts/_conf.script    -> dogma_{path}_conf.script
 #                               no zzzz_ — before that feature's zzzz_ body scripts
 #   …/scripts/mcm.script      -> dogma_{path}_mcm.script   (*mcm.script glob)
@@ -21,13 +24,15 @@
 #   …/scripts/modxml_*.script -> modxml_dogma_{path}_*.script
 #                               keep modxml_ prefix — Modded Exes only gathers
 #                               that glob for DXML on_xml_read injection
+#   …/scripts/override/*.script -> scripts/<basename>.script  (exact name — only
+#                               when disabled.ini cannot cover the conflict:
+#                               exo MCM replace, blank vanilla game_fast_travel,
+#                               Blindside/Keybinds scripts we must not disable)
 #   …/scripts/**/*.script     -> scripts/zzzz_dogma_{path}_<stem>.script
-#                               including scripts/override/ (authoring only; no
-#                               exact-name escape — disable conflicting mods instead)
 #
 # Env:
 #   DOGMA_ONLY=spec    what to build:
-#                        (empty|all)  → common + features with config/manifest.ini >= 1
+#                        (empty|all)  → common + features with config/manifest.yml >= dev
 #                        common       → common only
 #                        cat/feat     → that feature only (e.g. zoom/free_zoom; ignores manifest)
 #   DOGMA_DEPLOY=path  local MO2 mod folder: write gamedata straight there (one hop),
@@ -77,8 +82,8 @@ should_skip_name() {
 	local base="$1"
 	case "$base" in
 		README | README.* | MOVE_MAP | MOVE_MAP.* | .gitkeep | .DS_Store | Thumbs.db) return 0 ;;
-		assets | installer) return 0 ;;
-		*.alao-bak) return 0 ;;
+		assets | installer | __pycache__) return 0 ;;
+		*.alao-bak | *.pyc | *.pyo) return 0 ;;
 		_conf.script) return 1 ;;
 		_*) return 0 ;;
 		*) return 1 ;;
@@ -143,6 +148,18 @@ map_src_file() {
 	if [[ "$rel" == common/* ]]; then
 		bucket_rel="${rel#common/}"
 		path_key=""
+		# EXCEPTION: common/mo2/ → <MO2 mod>/mo2/ (always-on core tools).
+		local common_bucket="${bucket_rel%%/*}"
+		if [[ "$common_bucket" == "$MODROOT_BUCKET" ]]; then
+			bucket_rel="${bucket_rel#"$MODROOT_BUCKET"/}"
+			[[ -n "$bucket_rel" && "$bucket_rel" != "$common_bucket" ]] || return 1
+			_emit_kind="modroot"
+			_emit_src="$src_path"
+			_emit_rel="$MODROOT_BUCKET/$bucket_rel"
+			_emit_path_key=""
+			_emit_base="$base"
+			return 0
+		fi
 	else
 		local cat="${parts[0]}"
 		if is_gamedata_root "$cat"; then
@@ -177,10 +194,12 @@ map_src_file() {
 
 	local dest_rel="$bucket_rel"
 	if [[ -n "$path_key" && "$base" == *.script && "$bucket" == "scripts" ]]; then
-		local out_base
-		out_base="$(script_dest_basename "$path_key" "$base")"
-		# Flat under scripts/ — override/ is authoring layout only.
-		dest_rel="scripts/$out_base"
+		# Flat under scripts/. override/ keeps exact basename (replace rival file).
+		if [[ "$bucket_rel" == scripts/override/* ]]; then
+			dest_rel="scripts/$base"
+		else
+			dest_rel="scripts/$(script_dest_basename "$path_key" "$base")"
+		fi
 	fi
 
 	_emit_kind="gamedata"
@@ -271,7 +290,7 @@ esac
 
 if [[ "$ONLY" == "all" || "$ONLY" == "" ]]; then
 	dogma_load_manifest 1 || exit 1
-	echo "build: config/manifest.ini local (${#FEATURES[@]} features)"
+	echo "build: config/manifest.yml local (${#FEATURES[@]} features)"
 fi
 
 if [[ "$ONLY" == */* && ! -d "$SRC/$ONLY" ]]; then
@@ -289,6 +308,19 @@ done < <(find "$SRC" -type f -print0)
 
 sort -u "$MANIFEST" -o "$MANIFEST"
 sort -u "$MANIFEST_MODROOT" -o "$MANIFEST_MODROOT"
+
+# Stage DOGMA MO2 config copies into the modroot stage (reference stays in repo config/).
+# Live catalog is manifest.yml only (legacy *.ini kept in config/ as reference).
+if [[ "$ONLY" == "all" || "$ONLY" == "" || "$ONLY" == "common" ]]; then
+	MO2_CFG_STAGE="$STAGE_MODROOT/mo2/config"
+	mkdir -p "$MO2_CFG_STAGE"
+	if [[ -f "$ROOT/config/manifest.yml" ]]; then
+		cp "$ROOT/config/manifest.yml" "$MO2_CFG_STAGE/manifest.yml"
+		printf '%s\n' "mo2/config/manifest.yml" >> "$MANIFEST_MODROOT"
+	fi
+	sort -u "$MANIFEST_MODROOT" -o "$MANIFEST_MODROOT"
+fi
+
 count="$(wc -l < "$MANIFEST" | tr -d ' ')"
 count_modroot="$(wc -l < "$MANIFEST_MODROOT" | tr -d ' ')"
 
@@ -312,22 +344,24 @@ if [[ "$ONLY" == "all" || "$ONLY" == "" ]]; then
 	done < <(comm -23 "$local_all" "$MANIFEST")
 	rm -f "$local_all"
 
-	# Mod-root: only remove files we previously shipped that are absent this run.
-	if [[ -d "$MODROOT_OUT" ]]; then
+	# Mod-root: prune any mo2/** file on disk that this run did not ship.
+	# Never touch non-mo2/ mod-root files.
+	if [[ -d "$MODROOT_OUT/mo2" ]]; then
+		mo2_all="$(mktemp)"
+		(
+			cd "$MODROOT_OUT" && find mo2 -type f | sed 's|^\./||' | sort
+		) > "$mo2_all"
 		while IFS= read -r rel; do
 			[[ -z "$rel" ]] && continue
-			# Only touch known mo2/ outputs (never wipe unrelated mod-root files).
-			case "$rel" in
-				mo2/build_sound_prefetch.bat | mo2/build_sound_prefetch.py) ;;
-				*) continue ;;
-			esac
 			if ! grep -Fxq "$rel" "$MANIFEST_MODROOT"; then
 				rm -f "$MODROOT_OUT/$rel"
 				PRUNED=$((PRUNED + 1))
 			fi
-		done < <(printf '%s\n' mo2/build_sound_prefetch.bat mo2/build_sound_prefetch.py)
-		# Drop flat copies from the earlier layout (pre-mo2/ nesting).
+		done < <(comm -23 "$mo2_all" "$MANIFEST_MODROOT")
+		rm -f "$mo2_all"
+		# Drop flat copies / old prelaunch.bat name from earlier layouts.
 		rm -f "$MODROOT_OUT/build_sound_prefetch.bat" "$MODROOT_OUT/build_sound_prefetch.py"
+		rm -f "$MODROOT_OUT/mo2/prelaunch.bat"
 	fi
 fi
 
@@ -357,4 +391,5 @@ if [[ -n "$DEPLOY_MOD" ]]; then
 	rm -f "$DEPLOY_MOD/gamedata/configs/dogma_snd_prefetch.ltx"
 	rm -f "$DEPLOY_MOD/gamedata/configs/dogma_sfx_prefetch.ltx"
 	rm -f "$DEPLOY_MOD/build_sound_prefetch.bat" "$DEPLOY_MOD/build_sound_prefetch.py"
+	rm -f "$DEPLOY_MOD/mo2/prelaunch.bat"
 fi

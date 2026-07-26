@@ -1,0 +1,91 @@
+-- player/equipment_controls conf
+-- Mirrored slot / device keys via dogma_key_mirror_mcm.
+-- DOGMA-owned customs — rarest free slots (avoid Unjam 22, Quick Melee 24,
+-- UBGL 21, Geiger 14, Grenade Throw 19, Map 20, Companions 1–5).
+
+local defaults = {
+	["auto_bolt_on_detector"] = true,
+	["tertiary_key"] = -1,
+	["key_radio"] = -1,
+	["key_glowstick"] = -1,
+}
+
+-- Engine actions this feature owns (MCM + Controls UI + gameplay).
+local BINDS = {
+	-- custom25: Scope UI stub only (Toggle Scope uses MCM DIK).
+	pistol = {
+		action = "custom25",
+		kb = "kCUSTOM25",
+		control = {
+			id = "kb_weapon_pistol",
+			label = "Weapon 4 (Pistol)",
+			group = "kb_grp_weapons",
+			after = "kb_weapon3",
+		},
+	},
+	-- custom23: Teleport Companions (DOGMA disables that mod).
+	rf_scanner = {
+		action = "custom23",
+		kb = "kCUSTOM23",
+		control = {
+			id = "kb_rf_scanner",
+			label = "RF Scanner",
+			group = "kb_grp_inventory",
+			after = "kb_geiger",
+		},
+	},
+	-- custom12: Prev Track UI only (no script listeners).
+	glowstick = {
+		action = "custom12",
+		kb = "kCUSTOM12",
+		control = {
+			id = "kb_glowstick",
+			label = "Glowstick",
+			group = "kb_grp_inventory",
+			after = "kb_torch",
+		},
+	},
+}
+
+_G.dogma_player_equipment_controls_conf = {
+	MOD_ID = "dogma/player/equipment_controls",
+	DEFAULTS = defaults,
+	BINDS = BINDS,
+	loaded = {
+		enabled = true,
+		auto_bolt_on_detector = defaults["auto_bolt_on_detector"],
+		tertiary_key = nil,
+		key_radio = nil,
+		key_glowstick = nil,
+		key_detector = nil,
+		key_geiger = nil,
+		primary_key = nil,
+		secondary_key = nil,
+		melee_key = nil,
+		grenade_key = nil,
+		grenade_throw_key = nil,
+		vision_key = nil,
+		bolt_key = nil,
+	},
+}
+
+-- Claim Controls rows from conf (loads before *mcm / string XML races).
+do
+	local KM = dogma_key_mirror_mcm
+	if KM then
+		local order = { "pistol", "rf_scanner", "glowstick" }
+		for i = 1, #order do
+			local spec = BINDS[order[i]]
+			local c = spec and spec.control
+			if c then
+				KM.claim_control({
+					action = spec.action,
+					id = c.id,
+					label = c.label,
+					group = c.group,
+					after = c.after,
+				})
+			end
+		end
+	end
+end

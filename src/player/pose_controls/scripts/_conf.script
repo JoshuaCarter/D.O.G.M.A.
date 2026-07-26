@@ -1,14 +1,28 @@
 -- player/pose_controls conf
--- crouch/prone/sprint + hold_toggle are mirrored from Options→Controls via MCM curr/functor.
--- walk_key stays MCM-only (-1 = unbound).
+-- crouch/prone/sprint/walk + hold_toggle mirrored from Options→Controls.
+-- Walk owns a rare custom (playlist 16 — no script listeners; avoid Quick Melee 24).
 
 local defaults = {
 	["walk_key"] = -1,
 }
 
+local BINDS = {
+	walk = {
+		action = "custom16",
+		kb = "kCUSTOM16",
+		control = {
+			id = "kb_pose_walk",
+			label = "Walk",
+			group = "kb_grp_movement",
+			after = "kb_walk",
+		},
+	},
+}
+
 _G.dogma_player_pose_controls_conf = {
 	MOD_ID = "dogma/player/pose_controls",
 	DEFAULTS = defaults,
+	BINDS = BINDS,
 	loaded = {
 		enabled = true,
 		walk_key = defaults["walk_key"],
@@ -21,3 +35,19 @@ _G.dogma_player_pose_controls_conf = {
 		debug_overlay = false,
 	},
 }
+
+-- Claim Controls rows from conf (loads before *mcm / string XML races).
+do
+	local KM = dogma_key_mirror_mcm
+	local spec = BINDS.walk
+	local c = spec and spec.control
+	if KM and c then
+		KM.claim_control({
+			action = spec.action,
+			id = c.id,
+			label = c.label,
+			group = c.group,
+			after = c.after,
+		})
+	end
+end

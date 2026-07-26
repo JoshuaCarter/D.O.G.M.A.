@@ -8,7 +8,7 @@ REM   Binary   = <MO2>\mods\DOGMA\mo2\build_sound_prefetch.bat
 REM   Start in = <MO2 instance root>  (e.g. C:\GAMMA)
 REM
 REM Separate tool: no arguments
-REM Before every launch: --then-launch AnomalyDX11AVX.exe
+REM Or use mods\DOGMA\mo2\DOGMA.bat --then-launch <exe> to chain tools before play.
 REM
 REM Requires Python 3. No pause - must not block MO2 launch.
 

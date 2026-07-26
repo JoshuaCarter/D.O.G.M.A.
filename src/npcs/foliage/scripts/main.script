@@ -2,32 +2,32 @@
 	NPC Foliage
 
 	1) materials/*.ltx — bush / bush_sux vis_transparency_factor = 0
-	   (blocks AI LOS rays that actually hit bush collision).
 
-	2) Optional — hostile stalkers whose torso is inside bush collision are
-	   nudged to take proper cover (best_cover vs the actor), instead of
-	   camping with a head-peek through foliage.
+	2) Optional nudge — stalkers fighting the actor whose torso is inside
+	   bush collision are sent to solid cover or advance (MCM).
 ]]
 
 local CONFIG = _G.dogma_npcs_foliage_conf
 local DOGMA
 
+local BEHAVIOR_COVER = 0
+local BEHAVIOR_ADVANCE = 1
+
 local RQT_STATIC = 2
 local CHECK_RANGE = 80
-local CHECK_INTERVAL_MS = 350
-local PROBE_RANGE = 1.15
+local CHECK_INTERVAL_MS = 1000
+local PROBE_RANGE = 1.0
 local PUSH_COOLDOWN_MS = 4000
-local MIN_COVER_MOVE = 2.5
+local MIN_MOVE = 2.5
 local COVER_RADIUS = 22
 local COVER_MIN_ENEMY = 4
 local COVER_MAX_ENEMY = 90
+local ADVANCE_DIST_MIN = 6
+local ADVANCE_DIST_MAX = 14
 
--- id -> last push time
-local pushed = {}
-
+local nudged = {}
 local last_check = 0
-local ray
-local dirs
+local dirs -- plain {x,y,z} tables; converted to vectors per probe
 
 local function log(msg)
 	if DOGMA and DOGMA.dbg and DOGMA.dbg.logging and DOGMA.dbg.logging() then
@@ -36,27 +36,28 @@ local function log(msg)
 end
 
 local function on_option_change()
-	CONFIG.loaded.push_to_cover = DOGMA.mcm.bool(CONFIG.MOD_ID, "push_to_cover")
-end
-
-local function ensure_ray()
-	if ray then
+	if not (DOGMA and CONFIG) then
 		return
 	end
-	ray = ray_pick()
-	ray:set_flags(RQT_STATIC)
-	ray:set_range(PROBE_RANGE)
+	CONFIG.loaded.push_to_cover = DOGMA.mcm.bool(CONFIG.MOD_ID, "push_to_cover")
+	CONFIG.loaded.behavior = DOGMA.mcm.number(CONFIG.MOD_ID, "behavior") or BEHAVIOR_COVER
+end
+
+local function ensure_dirs()
+	if dirs then
+		return
+	end
 	dirs = {
-		vector():set(0, -1, 0),
-		vector():set(0, 1, 0),
-		vector():set(1, 0, 0),
-		vector():set(-1, 0, 0),
-		vector():set(0, 0, 1),
-		vector():set(0, 0, -1),
-		vector():set(0.707, 0, 0.707),
-		vector():set(-0.707, 0, 0.707),
-		vector():set(0.707, 0, -0.707),
-		vector():set(-0.707, 0, -0.707),
+		{ 0, -1, 0 },
+		{ 0, 1, 0 },
+		{ 1, 0, 0 },
+		{ -1, 0, 0 },
+		{ 0, 0, 1 },
+		{ 0, 0, -1 },
+		{ 0.707, 0, 0.707 },
+		{ -0.707, 0, 0.707 },
+		{ 0.707, 0, -0.707 },
+		{ -0.707, 0, -0.707 },
 	}
 end
 
@@ -67,189 +68,360 @@ local function is_bush_material(name)
 	return name:find("bush", 1, true) ~= nil
 end
 
-local function probe_hits_bush(origin, direction, ignore)
-	ray:set_position(origin)
-	ray:set_direction(direction)
-	ray:set_ignore_object(ignore)
-	if not ray:query() then
+-- Fresh ray each probe — avoids sticky ignore lists / bad leftover state.
+-- rqtStatic only: engine material fill on object hits is unsafe on some builds.
+local function probe_hits_bush(ox, oy, oz, dx, dy, dz, ignore)
+	if not ray_pick then
 		return false
 	end
-	if ray:get_object() then
-		return false
-	end
-	local result = ray:get_result()
-	return result and is_bush_material(result.material_name)
+	local ok, hit = pcall(function()
+		local ray = ray_pick()
+		ray:set_flags(RQT_STATIC)
+		ray:set_range(PROBE_RANGE)
+		local pos = vector()
+		pos:set(ox, oy, oz)
+		local dir = vector()
+		dir:set(dx, dy, dz)
+		ray:set_position(pos)
+		ray:set_direction(dir)
+		if ignore then
+			ray:set_ignore_object(ignore)
+		end
+		if not ray:query() then
+			return false
+		end
+		if ray:get_object() then
+			return false
+		end
+		local result = ray:get_result()
+		if not result then
+			return false
+		end
+		return is_bush_material(result.material_name)
+	end)
+	return ok and hit == true
 end
 
-local function in_foliage(npc)
-	ensure_ray()
-	local pos = npc:position()
-	local origin = vector():set(pos.x, pos.y + 0.95, pos.z)
+local function position_in_foliage(x, y, z, ignore)
+	ensure_dirs()
+	local oy = y + 0.95
 	for i = 1, #dirs do
-		if probe_hits_bush(origin, dirs[i], npc) then
+		local d = dirs[i]
+		if probe_hits_bush(x, oy, z, d[1], d[2], d[3], ignore) then
 			return true
 		end
 	end
 	return false
 end
 
--- Only nudge stalkers that care about the actor (enemy relation / fighting us).
-local function hostile_to_actor(npc)
+local function in_foliage(npc)
+	local ok, pos = pcall(function()
+		return npc:position()
+	end)
+	if not (ok and pos) then
+		return false
+	end
+	return position_in_foliage(pos.x, pos.y, pos.z, npc)
+end
+
+local function fighting_actor(npc)
 	if not db.actor then
 		return false
 	end
-	local ok_enemy, enemy = pcall(function()
-		return npc:best_enemy() or npc:get_enemy()
+	local ok, enemy = pcall(function()
+		return npc:best_enemy()
 	end)
-	if ok_enemy and enemy and enemy:id() == db.actor:id() then
-		return true
+	if ok and enemy then
+		local ok_id, eid = pcall(function()
+			return enemy:id()
+		end)
+		if ok_id and eid == db.actor:id() then
+			return true
+		end
 	end
-	local ok_rel, rel = pcall(function()
-		return npc:relation(db.actor)
+	ok, enemy = pcall(function()
+		return npc:get_enemy()
 	end)
-	-- game_object.enemy == 0 in Anomaly
-	if ok_rel and rel == 0 then
+	if ok and enemy then
+		local ok_id, eid = pcall(function()
+			return enemy:id()
+		end)
+		if ok_id and eid == db.actor:id() then
+			return true
+		end
+	end
+	return false
+end
+
+local function already_moving(npc)
+	local ok, done = pcall(function()
+		return npc:path_completed()
+	end)
+	if ok and done == false then
 		return true
 	end
 	return false
 end
 
-local function pick_cover_vertex(npc, enemy_pos)
-	if not (npc.best_cover and enemy_pos) then
+local function resolve_accessible(npc, vid)
+	if type(vid) ~= "number" or vid < 0 or vid >= 4294967295 then
 		return nil
 	end
-	pcall(function()
-		if npc.best_cover_invalidate then
-			npc:best_cover_invalidate()
-		end
+	local ok_acc, accessible = pcall(function()
+		return npc:accessible(vid)
 	end)
+	if ok_acc and accessible then
+		return vid
+	end
+	local ok_n, nvid = pcall(function()
+		local tmp = vector()
+		tmp:set(0, 0, 0)
+		local pos = level.vertex_position(vid)
+		return npc:accessible_nearest(pos, tmp)
+	end)
+	if ok_n and type(nvid) == "number" and nvid >= 0 and nvid < 4294967295 then
+		return nvid
+	end
+	return nil
+end
 
-	local center = npc:position()
-	local cover
-	local ok, result = pcall(function()
-		return npc:best_cover(center, enemy_pos, COVER_RADIUS, COVER_MIN_ENEMY, COVER_MAX_ENEMY)
-	end)
-	if ok then
-		cover = result
-	end
-	if not cover then
-		-- Widen search once.
-		ok, result = pcall(function()
-			return npc:best_cover(center, enemy_pos, COVER_RADIUS + 15, COVER_MIN_ENEMY, COVER_MAX_ENEMY + 30)
-		end)
-		if ok then
-			cover = result
-		end
-	end
-	if not cover then
+local function valid_destination(npc, vid)
+	vid = resolve_accessible(npc, vid)
+	if not vid then
 		return nil
 	end
-
-	local vid = cover:level_vertex_id()
-	if not vid or vid >= 4294967295 then
+	local ok, dest = pcall(function()
+		return level.vertex_position(vid)
+	end)
+	if not (ok and dest) then
 		return nil
 	end
-
-	local accessible = true
-	pcall(function()
-		accessible = npc:accessible(vid)
+	local ok_pos, npos = pcall(function()
+		return npc:position()
 	end)
-	if not accessible then
-		local ok_n, nvid = pcall(function()
-			local tmp = vector():set(0, 0, 0)
-			local nearest = npc:accessible_nearest(level.vertex_position(vid), tmp)
-			return nearest
-		end)
-		if not ok_n or not nvid or nvid >= 4294967295 then
-			return nil
-		end
-		vid = nvid
+	if not (ok_pos and npos) then
+		return nil
 	end
-
-	local dest = level.vertex_position(vid)
-	if dest:distance_to(npc:position()) < MIN_COVER_MOVE then
+	if dest:distance_to(npos) < MIN_MOVE then
+		return nil
+	end
+	if position_in_foliage(dest.x, dest.y, dest.z, npc) then
 		return nil
 	end
 	return vid
 end
 
-local function send_to_cover(npc, vid)
+local function try_best_cover(npc, center, enemy_pos, radius)
+	local ok, cover = pcall(function()
+		return npc:best_cover(center, enemy_pos, radius, COVER_MIN_ENEMY, COVER_MAX_ENEMY)
+	end)
+	if not (ok and cover) then
+		return nil
+	end
+	local ok_v, vid = pcall(function()
+		return cover:level_vertex_id()
+	end)
+	if not (ok_v and vid) then
+		return nil
+	end
+	return valid_destination(npc, vid)
+end
+
+local function pick_cover_vertex(npc, enemy_pos)
+	local ok_pos, center = pcall(function()
+		return npc:position()
+	end)
+	if not (ok_pos and center and npc.best_cover) then
+		return nil
+	end
+
+	local vid = try_best_cover(npc, center, enemy_pos, COVER_RADIUS)
+	if vid then
+		return vid
+	end
+	vid = try_best_cover(npc, center, enemy_pos, COVER_RADIUS + 15)
+	if vid then
+		return vid
+	end
+
+	local ax, az = center.x - enemy_pos.x, center.z - enemy_pos.z
+	local mag = math.sqrt(ax * ax + az * az)
+	if mag > 0.1 then
+		ax, az = ax / mag, az / mag
+		local sx, sz = -az, ax
+		local offsets = {
+			{ center.x + ax * 8, center.y, center.z + az * 8 },
+			{ center.x + sx * 8, center.y, center.z + sz * 8 },
+			{ center.x - sx * 8, center.y, center.z - sz * 8 },
+		}
+		for i = 1, #offsets do
+			local o = offsets[i]
+			local c = vector()
+			c:set(o[1], o[2], o[3])
+			vid = try_best_cover(npc, c, enemy_pos, COVER_RADIUS)
+			if vid then
+				return vid
+			end
+		end
+	end
+	return nil
+end
+
+local function pick_advance_vertex(npc, enemy_pos)
+	if not (level and level.vertex_in_direction) then
+		return nil
+	end
+	local ok_from, from = pcall(function()
+		return npc:level_vertex_id()
+	end)
+	local ok_pos, npos = pcall(function()
+		return npc:position()
+	end)
+	if not (ok_from and from and ok_pos and npos) then
+		return nil
+	end
+
+	local dx, dz = enemy_pos.x - npos.x, enemy_pos.z - npos.z
+	local mag = math.sqrt(dx * dx + dz * dz)
+	if mag < 0.5 then
+		return nil
+	end
+	dx, dz = dx / mag, dz / mag
+
+	local dist = mag * 0.45
+	if dist < ADVANCE_DIST_MIN then
+		dist = ADVANCE_DIST_MIN
+	elseif dist > ADVANCE_DIST_MAX then
+		dist = ADVANCE_DIST_MAX
+	end
+	if dist > mag - 3 then
+		dist = math.max(MIN_MOVE, mag - 3)
+	end
+
+	local dir = vector()
+	dir:set(dx, 0, dz)
+	local ok, vid = pcall(function()
+		return level.vertex_in_direction(from, dir, dist)
+	end)
+	if not ok then
+		return nil
+	end
+	return valid_destination(npc, vid)
+end
+
+local function send_to(npc, vid)
+	-- Minimal movement poke — avoid state_mgr / utils_obj (scheme / nil table crashes).
 	pcall(function()
-		if game_object and game_object.level_path and npc.set_path_type then
+		if game_object and game_object.level_path then
 			npc:set_path_type(game_object.level_path)
 		end
 	end)
-	-- Prefer shared helper when present (handles used-vertex bookkeeping).
-	if utils_obj and utils_obj.send_to_nearest_accessible_vertex then
-		pcall(function()
-			utils_obj.send_to_nearest_accessible_vertex(npc, vid, "dogma_foliage")
-		end)
-		return
-	end
 	pcall(function()
 		npc:set_dest_level_vertex_id(vid)
 	end)
-	pcall(function()
-		if state_mgr and state_mgr.set_state then
-			state_mgr.set_state(npc, "assault")
-		end
-	end)
 end
 
-local function push_to_cover(npc, id)
-	local enemy_pos = db.actor:position()
-	local vid = pick_cover_vertex(npc, enemy_pos)
-	if not vid then
-		log("no cover for id=" .. tostring(id))
+local function nudge(npc, id)
+	local ok_pos, enemy_pos = pcall(function()
+		return db.actor:position()
+	end)
+	if not (ok_pos and enemy_pos) then
 		return false
 	end
-	send_to_cover(npc, vid)
-	pushed[id] = time_global and time_global() or 0
-	log("cover push id=" .. tostring(id) .. " vid=" .. tostring(vid))
+
+	local behavior = CONFIG.loaded.behavior or BEHAVIOR_COVER
+	local vid
+	if behavior == BEHAVIOR_ADVANCE then
+		vid = pick_advance_vertex(npc, enemy_pos)
+		if not vid then
+			vid = pick_cover_vertex(npc, enemy_pos)
+		end
+	else
+		vid = pick_cover_vertex(npc, enemy_pos)
+	end
+	if not vid then
+		log("no dest id=" .. tostring(id))
+		return false
+	end
+	send_to(npc, vid)
+	nudged[id] = time_global()
+	log("nudge id=" .. tostring(id) .. " beh=" .. tostring(behavior) .. " vid=" .. tostring(vid))
 	return true
 end
 
-local function tick()
+local function tick_inner()
 	if not CONFIG.loaded.push_to_cover then
 		return
 	end
-	if not (db.actor and db.storage and ray_pick) then
+	if not (db and db.actor and db.storage) then
 		return
 	end
 
-	local now = time_global and time_global() or 0
+	local now = time_global()
 	if now - last_check < CHECK_INTERVAL_MS then
 		return
 	end
 	last_check = now
 
-	local actor_pos = db.actor:position()
+	local ok_ap, actor_pos = pcall(function()
+		return db.actor:position()
+	end)
+	if not (ok_ap and actor_pos) then
+		return
+	end
 
+	local range_sqr = CHECK_RANGE * CHECK_RANGE
 	for id, st in pairs(db.storage) do
 		local npc = st and st.object
-		if npc and npc:id() ~= db.actor:id() and IsStalker and IsStalker(npc) and npc:alive() then
-			local npos = npc:position()
-			local dx = npos.x - actor_pos.x
-			local dy = npos.y - actor_pos.y
-			local dz = npos.z - actor_pos.z
-			if (dx * dx + dy * dy + dz * dz) <= (CHECK_RANGE * CHECK_RANGE) then
-				if in_foliage(npc) and hostile_to_actor(npc) then
-					local last = pushed[id] or 0
-					if now - last >= PUSH_COOLDOWN_MS then
-						push_to_cover(npc, id)
-					end
-				else
-					pushed[id] = nil
+		if npc then
+			local ok_keep = pcall(function()
+				if npc:id() == db.actor:id() then
+					return
 				end
+				if not (IsStalker and IsStalker(npc) and npc:alive()) then
+					return
+				end
+				local npos = npc:position()
+				local dx = npos.x - actor_pos.x
+				local dy = npos.y - actor_pos.y
+				local dz = npos.z - actor_pos.z
+				if (dx * dx + dy * dy + dz * dz) > range_sqr then
+					return
+				end
+				if not fighting_actor(npc) then
+					nudged[id] = nil
+					return
+				end
+				if already_moving(npc) then
+					return
+				end
+				if not in_foliage(npc) then
+					nudged[id] = nil
+					return
+				end
+				local last = nudged[id] or 0
+				if now - last >= PUSH_COOLDOWN_MS then
+					nudge(npc, id)
+				end
+			end)
+			if not ok_keep then
+				-- swallow per-NPC errors; keep ticking others
 			end
 		end
 	end
 end
 
+local function tick()
+	pcall(tick_inner)
+end
+
 function on_game_start()
+	if not CONFIG then
+		return
+	end
 	DOGMA = dogma_common.load(CONFIG.MOD_ID)
 	on_option_change()
 	RegisterScriptCallback("on_option_change", on_option_change)
 	RegisterScriptCallback("actor_on_update", tick)
-	log("foliage module started (push-to-cover)")
+	log("foliage module started")
 end

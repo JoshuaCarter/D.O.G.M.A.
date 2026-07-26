@@ -1,4 +1,5 @@
 function on_mcm_load(options)
+	local CONFIG = _G.dogma_npcs_foliage_conf
 	dogma_mcm.attach(options, "npcs", "ui_mcm_menu_dogma_npcs", {
 		id = "foliage",
 		sh = true,
@@ -14,6 +15,19 @@ function on_mcm_load(options)
 				type = "check",
 				text = "ui_mcm_dogma_npcs_foliage_push_to_cover",
 				desc = "ui_mcm_dogma_npcs_foliage_push_to_cover_desc",
+			},
+			{
+				id = "behavior",
+				type = "list",
+				val = 2,
+				def = CONFIG.DEFAULTS["behavior"],
+				hint = "dogma_npcs_foliage_behavior",
+				text = "ui_mcm_dogma_npcs_foliage_behavior",
+				desc = "ui_mcm_dogma_npcs_foliage_behavior_desc",
+				content = {
+					{ 0, "cover" },
+					{ 1, "advance" },
+				},
 			},
 		}),
 	})

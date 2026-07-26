@@ -25,7 +25,7 @@
 #
 # Env:
 #   DOGMA_ONLY=spec    what to build:
-#                        (empty|all)  → common + features with manifest.ini >= 1
+#                        (empty|all)  → common + features with config/manifest.ini >= 1
 #                        common       → common only
 #                        cat/feat     → that feature only (e.g. zoom/free_zoom; ignores manifest)
 #   DOGMA_DEPLOY=path  local MO2 mod folder: write gamedata straight there (one hop),
@@ -239,7 +239,7 @@ esac
 
 if [[ "$ONLY" == "all" || "$ONLY" == "" ]]; then
 	dogma_load_manifest 1 || exit 1
-	echo "build: manifest.ini local (${#FEATURES[@]} features)"
+	echo "build: config/manifest.ini local (${#FEATURES[@]} features)"
 fi
 
 if [[ "$ONLY" == */* && ! -d "$SRC/$ONLY" ]]; then

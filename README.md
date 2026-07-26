@@ -20,6 +20,8 @@ For example:
 - I added real prone, but I made it so you take extra damage when prone.
 - I don't like instant fast travel because it trivialises the world. So I made instant travel crazy expensive and added a facy fast travel mod (WIP) that lets you travel fast, but makes it still take time and doesn't remove the danger.
 
+My ultimate desire, which I may never really achieve, is a single mod who's installation process sets you (**me**) up almost completely for a better experience out of the box. This would includes changing/hiding many mods/config.
+
 ## Suggestions
 
 Are welcome, but if it doesn't appeal to **me**, it's probably not happening. In particular, I intentionally don't expose many options that I could, because they would make things easier in a way I don't like - or tempt me to make things easier for myself, and removing that temptation for **me** is something I value. So be ready to hear "no".

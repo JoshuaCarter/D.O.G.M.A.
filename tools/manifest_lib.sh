@@ -6,7 +6,7 @@
 
 dogma_load_manifest() {
 	local min_level="${1:?min_level required (1=local, 2=release)}"
-	local ini="${DOGMA_MANIFEST:-$ROOT/manifest.ini}"
+	local ini="${DOGMA_MANIFEST:-$ROOT/config/manifest.ini}"
 	FEATURES=()
 	if [[ ! -f "$ini" ]]; then
 		echo "manifest: missing $ini" >&2

@@ -9,8 +9,9 @@
 	  re-press lowers it.
 	- Vision key: swap melee ↔ vision, then equip melee (same wait-if-drawn).
 	  move_to_* is async — placements are sequenced so VSI is not dumped to bag.
-	- Detector / Geiger / RF force-equip. Scanner↔scanner: full hide_detector
-	  (anm_hide), wait detach like →2H, plus authored hide length before show.
+	- Detector / Geiger / RF force-equip. Scanner swaps mirror Quick Action Wheel
+	  Overhaul: hide → wait prev get_state==Hidden → move_to_slot (no ruck) →
+	  show after 0.1s. Bolt drawn first when auto-bolt is on.
 	- Optional: activate bolt when an *artefact* detector is shown
 	  (not RF / Geiger). Bolt stays drawn when the detector is put away.
 	- Minimal slot_cell patch: pistols may drag into vision (slot 5).
@@ -149,77 +150,10 @@ local function put_away_slot9(style)
 	end
 end
 
--- Same gate as →2H: allow_activation blocks the gun until active_detector is gone
--- (HideDevice finished → OnAnimationEnd → detach).
-local function detector_hand_clear(lowering_id)
+-- QAW: fast hide/show when a weapon/bolt is already in the weapon hand.
+local function scanner_use_fast_anim()
 	local actor = db.actor
-	if not actor then
-		return true
-	end
-	if actor:active_detector() then
-		return false
-	end
-	if lowering_id then
-		local obj = level.object_by_id(lowering_id)
-		if obj and obj.get_state and obj:get_state() ~= STATE_HIDDEN then
-			return false
-		end
-	end
-	return true
-end
-
--- Authored full-hide length (anm_hide). DAR maps this to the 2H holster.
--- PlayHUDMotion returns this before m_anim_end trim; get_motion_length is the same.
-local function detector_full_hide_ms(det)
-	if not (det and ini_sys and game and game.get_motion_length) then
-		return 0
-	end
-	local hud = ini_sys:r_string_ex(det:section(), "hud")
-	if not hud then
-		return 0
-	end
-	local st = det.get_state and det:get_state() or 0
-	local names
-	if st >= 5 and st <= 7 then
-		names = { "anm_zoom_hide", "anm_hide" }
-	else
-		names = { "anm_hide" }
-	end
-	for i = 1, #names do
-		local ms = game.get_motion_length(hud, names[i], 1.0)
-		if ms and ms > 0 then
-			return ms
-		end
-	end
-	return 0
-end
-
--- →2H: HideDevice → wait detach → rifle anm_show fills both hands.
--- Scanner↔scanner: hide_detector(full) → wait detach AND full hide length
--- before show (that post-detach window is what we were eating). No force_hide /
--- play_hud_motion hacks — those snap the mesh off.
-local POST_CLEAR_MS = 350 -- fallback if motion length unknown
-
-local function scanner_hide_ready(lowering_id, hide_started, hide_ms, cleared_at_box)
-	if lowering_id and not detector_hand_clear(lowering_id) then
-		cleared_at_box[1] = nil
-		return false
-	end
-	if not lowering_id then
-		return true
-	end
-	if hide_ms and hide_ms > 0 and hide_started and time_global() < hide_started + hide_ms then
-		return false
-	end
-	if not hide_ms or hide_ms <= 0 then
-		if not cleared_at_box[1] then
-			cleared_at_box[1] = time_global()
-		end
-		if time_global() < cleared_at_box[1] + POST_CLEAR_MS then
-			return false
-		end
-	end
-	return true
+	return actor and actor:active_item() ~= nil
 end
 
 -- Weapon/bolt in the weapon hand (detector may still be out).
@@ -512,47 +446,60 @@ local function find_scanner(match_sec)
 	return fav or other
 end
 
--- move_to_slot is async — show_detector before the item lands in slot 9
--- fails visually on the first press. Wait until it is actually in DET_SLOT.
-local function show_scanner_when_ready(obj_id, with_bolt)
-	cancel_scanner_show()
-	local ticks = 0
-	CreateTimeEvent(CONFIG.MOD_ID, SCANNER_SHOW_EVENT, SWAP_TICK, function()
-		ticks = ticks + 1
-		local actor = db.actor
-		if not (actor and actor:alive()) then
-			scanner_busy = false
-			return true
-		end
-		local in_slot = actor:item_in_slot(DET_SLOT)
-		if in_slot and in_slot:id() == obj_id then
-			actor:show_detector()
-			if with_bolt then
-				schedule_activate_bolt()
-			end
-			scanner_busy = false
-			return true
-		end
-		if ticks >= SWAP_MAX_TICKS then
-			scanner_busy = false
-			return true
-		end
-		return false
-	end)
-end
-
-local function place_scanner(obj, with_bolt)
+-- Mirror Quick Action Wheel Overhaul cycle_detector / equip_and_show_detector:
+--   hide → poll prev:get_state()==eHidden every frame → move_to_slot(next)
+--   (no move_to_ruck — that StopCurrentAnimWithoutCallback cuts the put-away)
+--   → 0.1s → show_detector.
+local function equip_and_show_scanner(obj, with_bolt)
 	local actor = db.actor
 	if not (actor and obj) then
 		scanner_busy = false
 		return
 	end
-	local cur = actor:item_in_slot(DET_SLOT)
-	if cur and cur:id() ~= obj:id() then
-		actor:move_to_ruck(cur)
-	end
 	actor:move_to_slot(obj, DET_SLOT)
-	show_scanner_when_ready(obj:id(), with_bolt)
+	cancel_scanner_show()
+	CreateTimeEvent(CONFIG.MOD_ID, SCANNER_SHOW_EVENT, 0.1, function()
+		local a = db.actor
+		if a and a:alive() then
+			a:show_detector(scanner_use_fast_anim())
+			if with_bolt then
+				schedule_activate_bolt()
+			end
+		end
+		scanner_busy = false
+		return true
+	end)
+end
+
+local function cycle_scanner(prev, next_obj, with_bolt)
+	local actor = db.actor
+	if not (actor and prev and next_obj) then
+		scanner_busy = false
+		return
+	end
+	local prev_id = prev:id()
+	local next_id = next_obj:id()
+	actor:hide_detector(scanner_use_fast_anim())
+
+	local ticks = 0
+	CreateTimeEvent(CONFIG.MOD_ID, SCANNER_SWAP_EVENT, 0, function()
+		ticks = ticks + 1
+		local a = db.actor
+		if not (a and a:alive() and scanner_busy) then
+			scanner_busy = false
+			return true
+		end
+		local p = level.object_by_id(prev_id)
+		if not p or (p.get_state and p:get_state() == STATE_HIDDEN) then
+			equip_and_show_scanner(level.object_by_id(next_id), with_bolt)
+			return true
+		end
+		if ticks >= SWAP_MAX_TICKS then
+			equip_and_show_scanner(level.object_by_id(next_id), with_bolt)
+			return true
+		end
+		return false
+	end)
 end
 
 local function force_equip_scanner(obj)
@@ -570,10 +517,10 @@ local function force_equip_scanner(obj)
 	local cur = actor:item_in_slot(DET_SLOT)
 	if cur and cur:id() == obj:id() then
 		if actor:active_detector() then
-			put_away_slot9("full")
+			put_away_slot9(scanner_use_fast_anim() and "fast" or "full")
 			return
 		end
-		actor:show_detector()
+		actor:show_detector(scanner_use_fast_anim())
 		if with_bolt then
 			schedule_activate_bolt()
 		end
@@ -585,42 +532,20 @@ local function force_equip_scanner(obj)
 	cancel_activate_bolt()
 	RemoveTimeEvent(CONFIG.MOD_ID, SCANNER_SWAP_EVENT)
 
-	-- Stock path pieces:
-	--   →2H weapon: CheckCompatibility → HideDevice(fast) → wait detach → gun show
-	--   We want the full lower (anm_hide / 2H holster in DAR), same detach gate,
-	--   then wait out the authored hide length before same-hand show_detector.
-	local lowering = actor:active_detector()
-	local lowering_id = lowering and lowering:id() or nil
-	local hide_started = nil
-	local hide_ms = 0
-	local cleared_at_box = { nil }
-	if lowering_id then
-		hide_ms = detector_full_hide_ms(lowering)
-		hide_started = time_global()
-		put_away_slot9("full")
+	-- QAW activates bolt/pistol before detector cycle so the weapon hand is busy.
+	if with_bolt and CONFIG.loaded.auto_bolt_on_detector and actor:item_in_slot(BOLT_SLOT) then
+		if actor:active_slot() ~= BOLT_SLOT then
+			actor:activate_slot(BOLT_SLOT)
+		end
 	end
 
-	if scanner_hide_ready(lowering_id, hide_started, hide_ms, cleared_at_box) then
-		place_scanner(obj, with_bolt)
+	local active = actor:active_detector()
+	if active then
+		cycle_scanner(active, obj, with_bolt)
 		return
 	end
 
-	local obj_id = obj:id()
-	local ticks = 0
-	CreateTimeEvent(CONFIG.MOD_ID, SCANNER_SWAP_EVENT, SWAP_TICK, function()
-		ticks = ticks + 1
-		local a = db.actor
-		if not (a and a:alive() and scanner_busy) then
-			scanner_busy = false
-			return true
-		end
-		if not scanner_hide_ready(lowering_id, hide_started, hide_ms, cleared_at_box) and ticks < SWAP_MAX_TICKS then
-			return false
-		end
-		local o = level.object_by_id(obj_id)
-		place_scanner(o, with_bolt)
-		return true
-	end)
+	equip_and_show_scanner(obj, with_bolt)
 end
 
 local function ensure_vision_accepts_pistols()

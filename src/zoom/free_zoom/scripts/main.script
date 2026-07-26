@@ -2,7 +2,7 @@
 	Free Zoom — free zoom + ADS Zoom.
 
 	Drivers → fov + hud_fov (shrink %: base * (1 - pct/100)):
-	  Free: both channels = free% (never while blocked; hold can keep a FOV floor during ADS)
+	  Free: both channels = free% (cleared on ADS enter; never while ADS)
 	  ADS world FOV: FOV zoom % (cap 15; skipped on magnified optical scopes)
 	  ADS HUD: Irons / Sights / Scopes % (caps 15 / 25 / 35)
 	Console fov snaps; we lerp live → target quickly. Free/ADS publish tgt FOVs to
@@ -547,8 +547,8 @@ local function read_fov_tgt(name)
 end
 
 local function publish_fov_targets()
-	local free_wants = free_on or (CONFIG.loaded.enabled and hold_zoom_active())
-	if free_wants and (CONFIG.loaded.free_zoom or 0) > 0 then
+	-- Free never floors FOV while ADS — ADS Zoom owns world FOV; free state is cleared on enter.
+	if free_on and not ads_on and (CONFIG.loaded.free_zoom or 0) > 0 then
 		_G.dogma_fov_tgt_free = pct_to_fov(CONFIG.loaded.free_zoom)
 	else
 		_G.dogma_fov_tgt_free = nil
@@ -661,9 +661,9 @@ local function apply_fov(snap)
 		world_write = true
 		tgt_fov = fov
 	else
-		-- Optical ADS: ease to free floor if held, else hip; then stop writing.
+		-- Optical ADS: ease to hip, then stop writing so the scope owns FOV.
 		world_write = true
-		tgt_fov = read_fov_tgt("dogma_fov_tgt_free") or hip_fov
+		tgt_fov = hip_fov
 	end
 	if snap then
 		local effective = clamp_fov_target(tgt_fov) or tgt_fov
@@ -820,7 +820,7 @@ local function handle_context(ctx)
 	end
 
 	-- Sprint / reload / GUI / etc.: drop free zoom; hold DIKs stay so poll re-applies when ok.
-	-- Do not clear free solely because ads_on — FOV globals keep the floor during ADS.
+	-- ADS enter clears free in set_ads_zoom (state only — ADS Zoom owns FOV).
 	if free_on and blocks_free(ctx) then
 		clear_free_zoom(ctx)
 	end
@@ -876,7 +876,8 @@ local function set_free_zoom(want_free, source)
 	return true
 end
 
--- ADS on/off. Free zoom is not cleared on enter — globals keep the free floor while held.
+-- ADS on/off. Clear free state on enter so we do not resume free zoom after ADS;
+-- FOV/HUD are handed to ADS Zoom (free does not write its own %).
 local function set_ads_zoom(want_ads, source)
 	source = source or "set_ads_zoom"
 	want_ads = not not want_ads
@@ -889,8 +890,10 @@ local function set_ads_zoom(want_ads, source)
 			logf("ads skipped: source=%s ads_zoom disabled wpn=%s", source, wpn_label())
 			return false
 		end
+		-- Drop free state without applying FOV — ADS apply below owns the transition.
+		clear_free_zoom("ads", true)
 		ads_on = true
-		-- Optical: leave world FOV alone (ease to free floor / hip via apply_fov).
+		-- Optical: ease world FOV to hip, then stop writing (scope owns it).
 		if is_optical_ads() then
 			apply_fov()
 			local hud = resolve_ads()

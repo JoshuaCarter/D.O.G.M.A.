@@ -1,13 +1,11 @@
 --[[
 	Quick Action Wheel
 
-	MCM toggle for whether QAW hides the game HUD when opened.
-	Stock HarukaSai / G.A.M.M.A. Balance / Overhaul all call ShowDialog(true),
-	which clears game indicators (minimap, stamina, etc.). When Hide HUD is
-	off, ShowDialog gets false so the HUD stays up behind the wheel.
+	Honors Hide HUD on QAW's own Controls MCM (HarukaSai / Balance / Overhaul).
+	Stock ShowDialog(true) clears game indicators; when Hide HUD is off,
+	ShowDialog gets false so the HUD stays up behind the wheel.
 
-	Patches haru_quick_action_wheel_mcm (whichever MO2 copy wins) via create_GUI
-	+ open_radial_menu, and Overhaul's IED submenu via UI_IED_Menu.__init.
+	Patches create_GUI + open_radial_menu, and Overhaul IED via UI_IED_Menu.__init.
 ]]
 
 local CONFIG = _G.dogma_hud_quick_action_wheel_conf
@@ -22,15 +20,30 @@ local function log(msg)
 	end
 end
 
+local function read_hide_hud()
+	-- Prefer QAW Controls path (where the toggle lives).
+	if ui_mcm and ui_mcm.get and not (ui_mcm.is_gathering and ui_mcm.is_gathering()) then
+		local ok, value = pcall(ui_mcm.get, CONFIG.QAW_HIDE_HUD_PATH)
+		if ok and value ~= nil then
+			return value == true or value == 1
+		end
+		-- Legacy DOGMA-page key from the first build of this feature.
+		ok, value = pcall(ui_mcm.get, CONFIG.MOD_ID .. "/hide_hud")
+		if ok and value ~= nil then
+			return value == true or value == 1
+		end
+	end
+	return CONFIG.loaded.hide_hud
+end
+
 local function on_option_change()
 	if not DOGMA then
 		return
 	end
-	CONFIG.loaded.hide_hud = DOGMA.mcm.bool(CONFIG.MOD_ID, "hide_hud")
+	CONFIG.loaded.hide_hud = read_hide_hud()
 	log(string.format("opts: hide_hud=%s", tostring(CONFIG.loaded.hide_hud)))
 end
 
--- Instance ShowDialog → honor hide_hud. Re-wrap is a no-op via flag.
 local function wrap_show_dialog(wnd, label)
 	if not wnd or wnd._dogma_qaw_show_dialog then
 		return
@@ -40,7 +53,7 @@ local function wrap_show_dialog(wnd, label)
 		return
 	end
 	wnd.ShowDialog = function(self, hide_indicators, ...)
-		if not CONFIG.loaded.hide_hud then
+		if not read_hide_hud() then
 			hide_indicators = false
 		end
 		return orig(self, hide_indicators, ...)
@@ -49,7 +62,6 @@ local function wrap_show_dialog(wnd, label)
 	log(string.format("wrap ShowDialog (%s)", label or "gui"))
 end
 
--- Overhaul IED submenu: wrap ctor so ShowDialog(true) in OnClick is remapped.
 local function wrap_ied_menu()
 	local cls = rawget(_G, "UI_IED_Menu")
 	if not (cls and type(cls.__init) == "function") then

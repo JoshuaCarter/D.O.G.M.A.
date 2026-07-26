@@ -12,8 +12,8 @@
 	  → state Hidden → move_to_slot → show). Artefact detector + auto-bolt:
 	  wait until RH empty (or already bolt), then bolt + detector together.
 	  RF/Geiger never touch the bolt.
-	- Glowstick: wait until RH fully empty (incl. bolt), then slow-equip into
-	  the detector slot (right-hand device).
+	- Glowstick: left-hand detector-slot force-equip (same as RF/Geiger — no
+	  auto-bolt; only holster 2H if it blocks). Slow put-away when swapping.
 	- Minimal slot_cell patch: pistols may drag into vision (slot 5).
 ]]
 
@@ -692,59 +692,8 @@ local function force_equip_scanner(obj)
 	go()
 end
 
--- Glowstick is a right-hand detector-slot device: holster everything (incl. bolt),
--- then slow-equip into slot 9. No auto-bolt.
-local function rh_fully_empty()
-	local actor = db.actor
-	if not actor then
-		return true
-	end
-	if actor:active_item() then
-		return false
-	end
-	return actor:active_slot() == 0
-end
-
-local function when_rh_fully_empty(fn)
-	local actor = db.actor
-	if not actor then
-		return
-	end
-	if rh_fully_empty() then
-		fn()
-		return
-	end
-	local held = actor:active_item()
-	local lowering_id = held and held:id() or nil
-	if actor:active_slot() ~= 0 then
-		actor:activate_slot(0)
-	end
-	local attempts = 0
-	CreateTimeEvent(CONFIG.MOD_ID, "scanner_hand", 0, function()
-		attempts = attempts + 1
-		local a = db.actor
-		if not (a and a:alive() and scanner_busy) then
-			scanner_busy = false
-			return true
-		end
-		if lowering_id and not right_hand_lowered(lowering_id) then
-			if attempts > 300 then
-				scanner_busy = false
-				return true
-			end
-			return false
-		end
-		if not rh_fully_empty() and attempts <= 300 then
-			if a:active_slot() ~= 0 then
-				a:activate_slot(0)
-			end
-			return false
-		end
-		fn()
-		return true
-	end)
-end
-
+-- Glowstick: left hand (detector slot). Same hand rules as RF/Geiger — leave
+-- bolt/pistol alone; only clear 2H. Slow slot swap when replacing slot 9.
 local function force_equip_glowstick(obj)
 	local actor = db.actor
 	if not (actor and obj) then
@@ -760,19 +709,7 @@ local function force_equip_glowstick(obj)
 			put_away_slot9("full")
 			return
 		end
-		local function show_only()
-			if db.actor and db.actor:alive() then
-				db.actor:show_detector(true)
-			end
-			scanner_busy = false
-		end
-		if not rh_fully_empty() then
-			scanner_busy = true
-			cancel_scanner_hand()
-			when_rh_fully_empty(show_only)
-			return
-		end
-		show_only()
+		actor:show_detector(true)
 		return
 	end
 
@@ -782,10 +719,17 @@ local function force_equip_glowstick(obj)
 	RemoveTimeEvent(CONFIG.MOD_ID, SCANNER_SWAP_EVENT)
 
 	local device_id = obj:id()
-	when_rh_fully_empty(function()
-		-- Slow put-away of whatever was in slot 9, then show glowstick.
+	local function go()
 		start_detector_after_hand(device_id, false)
-	end)
+	end
+
+	local held = actor:active_item()
+	if rh_blocks_detector(held) then
+		when_blocking_rh_clear(held:id(), go)
+		return
+	end
+
+	go()
 end
 
 local function ensure_vision_accepts_pistols()

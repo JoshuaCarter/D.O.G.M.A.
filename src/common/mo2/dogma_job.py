@@ -67,10 +67,16 @@ def cmd_dependencies(args: argparse.Namespace) -> int:
     mo2, cfg = cfg_paths(args)
     lib.guard_mo2_closed(force=args.force, dry_run=args.dry_run)
     data = lib.load_manifest(lib.resolve_manifest_path(cfg))
-    deps = lib.filter_deps(data, args.tier)
+    installed = lib.resolve_installed_features(mo2, data)
+    deps = lib.filter_deps(data, args.tier, installed=installed)
     modlist = lib.modlist_path(mo2, args.profile)
     tools = lib.mo2_tools_dir(mo2)
     lib.info(f"Requirements ({args.mode}, tier={args.tier}): {len(deps)} entries")
+    if installed is not None:
+        lib.info(
+            f"Installed DOGMA features: "
+            f"{len([f for f in installed if f.lower() != 'common'])}"
+        )
     lib.ensure_separator(modlist, args.dry_run)
     for dep in deps:
         try:
@@ -92,12 +98,15 @@ def cmd_disable(args: argparse.Namespace) -> int:
     lib.guard_mo2_closed(force=args.force, dry_run=args.dry_run)
     modlist = lib.modlist_path(mo2, args.profile)
     data = lib.load_manifest(lib.resolve_manifest_path(cfg))
-    rules, active, skipped = lib.feature_disable_rules(data)
+    installed = lib.resolve_installed_features(mo2, data)
+    rules, active, skipped = lib.feature_disable_rules(data, installed=installed)
     lib.info(f"Feature disables: {len(rules)} rules from {len(active)} features")
     if skipped:
-        lib.warn(f"  Skipped features (level off): {', '.join(skipped)}")
+        lib.warn(
+            f"  Skipped features (off or not installed): {', '.join(skipped)}"
+        )
 
-    deps = lib.filter_deps(data, args.tier)
+    deps = lib.filter_deps(data, args.tier, installed=installed)
     dep_rules = lib.gather_dep_disable_rules(mo2, deps, modlist)
     lib.info(f"Mod disables: {len(dep_rules)} rules")
     rules = rules + dep_rules
@@ -117,7 +126,7 @@ def cmd_disable(args: argparse.Namespace) -> int:
         for u in result.unmatched:
             lib.warn(f"  - {u}")
 
-    enable_rules, enable_active = lib.feature_enable_rules(data)
+    enable_rules, enable_active = lib.feature_enable_rules(data, installed=installed)
     dep_enable = lib.gather_dep_enable_rules(mo2, deps, modlist)
     if dep_enable:
         enable_rules = enable_rules + dep_enable
@@ -157,6 +166,8 @@ def cmd_defaults(args: argparse.Namespace) -> int:
     modlist = lib.modlist_path(mo2, args.profile)
     init_path = lib.resolve_manifest_path(cfg)
     tools = lib.mo2_tools_dir(mo2)
+    data = lib.load_manifest(init_path)
+    installed = lib.resolve_installed_features(mo2, data)
     only: set[str] | None = None
     if args.fingerprint:
         current = lib.defaults_fingerprint(init_path)
@@ -171,7 +182,12 @@ def cmd_defaults(args: argparse.Namespace) -> int:
             only = None
 
     files, values, skipped = lib.apply_initialize(
-        mo2, init_path, modlist, args.dry_run, only_patterns=only
+        mo2,
+        init_path,
+        modlist,
+        args.dry_run,
+        only_patterns=only,
+        installed=installed,
     )
     if skipped:
         lib.warn(f"Mods not present ({len(skipped)}): {', '.join(skipped)}")

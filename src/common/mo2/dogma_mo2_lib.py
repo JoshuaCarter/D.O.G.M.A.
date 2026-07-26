@@ -338,6 +338,94 @@ class FeatureMeta:
         return self.path.lower() == "common"
 
 
+def dogma_mod_dir(mo2_root: Path) -> Path:
+    return mo2_root / "mods" / "DOGMA"
+
+
+def feature_path_key(feat: str) -> str:
+    """Build script/config stem used by tools/build.sh (category_feature)."""
+    return feat.strip().replace("\\", "/").replace("/", "_").lower()
+
+
+def detect_installed_features(
+    mo2_root: Path,
+    known: Iterable[str],
+) -> set[str]:
+    """Features present under mods/DOGMA (FOMOD may install a subset).
+
+    Detects build output markers: dogma_<cat>_<feat>_*, ui_mcm_dogma_*, etc.
+    ``common`` is always treated as installed when the DOGMA mod folder exists.
+    """
+    known_list = [str(f).strip() for f in known if str(f).strip()]
+    root = dogma_mod_dir(mo2_root)
+    if not root.is_dir():
+        return set()
+
+    names: list[str] = []
+    gamedata = root / "gamedata"
+    if gamedata.is_dir():
+        for p in gamedata.rglob("*"):
+            if p.is_file():
+                names.append(p.name.lower())
+    # Also scan mo2/ for feature-specific tools (e.g. sound_prefetch)
+    mo2_tools = root / "mo2"
+    if mo2_tools.is_dir():
+        for p in mo2_tools.rglob("*"):
+            if p.is_file():
+                names.append(p.name.lower())
+
+    blob = "\n".join(names)
+    installed: set[str] = set()
+    for feat in known_list:
+        if feat.lower() == "common":
+            installed.add(feat)
+            continue
+        key = feature_path_key(feat)
+        markers = (
+            f"dogma_{key}_",
+            f"dogma_{key}.",
+            f"zzzz_dogma_{key}_",
+            f"modxml_dogma_{key}_",
+            f"ui_mcm_dogma_{key}",
+            f"st_dogma_{key}",
+            f"mod_system_dogma_{key}",
+            f"mod_materials_dogma_{key}",
+        )
+        if any(m in blob for m in markers) or f"dogma_{key}" in blob:
+            installed.add(feat)
+    return installed
+
+
+def _feature_is_active(
+    meta: FeatureMeta,
+    min_level: str = "dev",
+    *,
+    installed: set[str] | None = None,
+) -> bool:
+    """Active = manifest level OK, and (if given) feature is installed in MO2."""
+    if meta.always_on:
+        return True
+    if not level_meets(meta.level, min_level):
+        return False
+    if installed is not None:
+        # Match by exact path; also accept case-insensitive
+        if meta.path in installed:
+            return True
+        low = {x.lower() for x in installed}
+        return meta.path.lower() in low
+    return True
+
+
+def resolve_installed_features(
+    mo2_root: Path | None,
+    data: ManifestData,
+) -> set[str] | None:
+    """None = do not gate on install (legacy / no MO2 root). Else detected set."""
+    if mo2_root is None:
+        return None
+    return detect_installed_features(mo2_root, data.features.keys())
+
+
 @dataclass
 class ManifestData:
     path: Path
@@ -345,15 +433,21 @@ class ManifestData:
     suggested: list[Dependency] = field(default_factory=list)
     defaults: dict[str, list[InitSetting]] = field(default_factory=dict)
 
-    def feature_requirements(self, min_level: str | int = "dev") -> list[Dependency]:
-        """Requirements from common + active features (dedupe by id, first wins)."""
+    def feature_requirements(
+        self,
+        min_level: str | int = "dev",
+        *,
+        installed: set[str] | None = None,
+    ) -> list[Dependency]:
+        """Requirements from common + active installed features (dedupe by id)."""
         min_level = parse_level(min_level)
         seen: set[str] = set()
         out: list[Dependency] = []
-        # common first
         for feat in ("common", *sorted(k for k in self.features if k != "common")):
             meta = self.features.get(feat)
-            if not meta or not _feature_is_active(meta, min_level):
+            if not meta or not _feature_is_active(
+                meta, min_level, installed=installed
+            ):
                 continue
             for dep in meta.requirements:
                 if dep.id in seen:
@@ -361,6 +455,41 @@ class ManifestData:
                 seen.add(dep.id)
                 out.append(dep)
         return out
+
+    def collect_defaults(
+        self,
+        *,
+        min_level: str | int = "dev",
+        installed: set[str] | None = None,
+        include_suggested: bool = True,
+    ) -> dict[str, list[InitSetting]]:
+        """Defaults for active/installed features (+ optional suggested entries)."""
+        min_level = parse_level(min_level)
+        defaults: dict[str, list[InitSetting]] = {}
+        for feat, meta in self.features.items():
+            if not _feature_is_active(meta, min_level, installed=installed):
+                continue
+            if meta.defaults:
+                pattern = meta.target_mod or meta.path
+                defaults.setdefault(pattern, []).extend(
+                    _settings_from_mapping(pattern, meta.defaults)
+                )
+            for dep in meta.requirements:
+                if not dep.defaults:
+                    continue
+                pattern = dep.target_mod or dep.label or dep.id
+                defaults.setdefault(pattern, []).extend(
+                    _settings_from_mapping(pattern, dep.defaults)
+                )
+        if include_suggested:
+            for dep in self.suggested:
+                if not dep.defaults:
+                    continue
+                pattern = dep.target_mod or dep.label or dep.id
+                defaults.setdefault(pattern, []).extend(
+                    _settings_from_mapping(pattern, dep.defaults)
+                )
+        return defaults
 
     @property
     def requirements(self) -> list[Dependency]:
@@ -616,16 +745,11 @@ def read_manifest_levels(path: Path) -> dict[str, int]:
     return levels
 
 
-def _feature_is_active(meta: FeatureMeta, min_level: str = "dev") -> bool:
-    if meta.always_on:
-        return True
-    return level_meets(meta.level, min_level)
-
-
 def feature_disable_rules(
     data: ManifestData,
     *,
     min_level: str | int = "dev",
+    installed: set[str] | None = None,
 ) -> tuple[list[Rule], list[str], list[str]]:
     min_level = parse_level(min_level)
     merged: dict[tuple[str, str], list[str]] = {}
@@ -634,7 +758,7 @@ def feature_disable_rules(
     skipped: list[str] = []
 
     for feat, meta in data.features.items():
-        if not _feature_is_active(meta, min_level):
+        if not _feature_is_active(meta, min_level, installed=installed):
             if meta.disable:
                 skipped.append(feat)
             continue
@@ -668,6 +792,7 @@ def feature_enable_rules(
     data: ManifestData,
     *,
     min_level: str | int = "dev",
+    installed: set[str] | None = None,
 ) -> tuple[list[Rule], list[str]]:
     """Rules for mods that should be enabled when the feature (or common) is active."""
     min_level = parse_level(min_level)
@@ -676,7 +801,7 @@ def feature_enable_rules(
     active: list[str] = []
 
     for feat, meta in data.features.items():
-        if not _feature_is_active(meta, min_level):
+        if not _feature_is_active(meta, min_level, installed=installed):
             continue
         if not meta.enable:
             continue
@@ -1066,8 +1191,13 @@ def apply_initialize(
     dry_run: bool,
     *,
     only_patterns: set[str] | None = None,
+    installed: set[str] | None = None,
 ) -> tuple[int, int, list[str]]:
-    by_mod = read_initialize_ini(initialize_path)
+    if initialize_path.suffix.lower() in (".yml", ".yaml") or initialize_path.name == "manifest.yml":
+        data = load_manifest(initialize_path)
+        by_mod = data.collect_defaults(installed=installed)
+    else:
+        by_mod = read_initialize_ini(initialize_path)
     if not by_mod:
         return 0, 0, []
     mod_names = list_modlist_names(modlist)
@@ -1142,15 +1272,18 @@ def filter_deps(
     tier: str,
     *,
     min_level: str | int = "dev",
+    installed: set[str] | None = None,
 ) -> list[Dependency]:
     """tier: required (feature requirements) | suggested | all."""
     if isinstance(deps, ManifestData):
         if tier == "required":
-            return deps.feature_requirements(min_level)
+            return deps.feature_requirements(min_level, installed=installed)
         if tier == "suggested":
             return list(deps.suggested)
         if tier == "all":
-            return deps.feature_requirements(min_level) + list(deps.suggested)
+            return deps.feature_requirements(min_level, installed=installed) + list(
+                deps.suggested
+            )
         raise ValueError(f"unknown tier: {tier}")
     t = tier.lower()
     if t == "all":
@@ -1613,8 +1746,12 @@ def build_report(
     try:
         man_path = resolve_manifest_path(cfg)
         data = load_manifest(man_path)
+        installed = resolve_installed_features(mo2_root, data)
         lines.append(f"Manifest: {man_path}")
-        rules, active, _skipped = feature_disable_rules(data)
+        if installed is not None:
+            feat_n = len([f for f in installed if f.lower() != "common"])
+            lines.append(f"Installed DOGMA features detected: {feat_n}")
+        rules, active, _skipped = feature_disable_rules(data, installed=installed)
         lines.append(f"Active features with disable rules: {', '.join(active) or '(none)'}")
         for name in sorted(enabled):
             rule = mod_matches(name, rules)
@@ -1624,7 +1761,7 @@ def build_report(
         if not any(mod_matches(n, rules) for n in enabled):
             O("No enabled mods conflict with active feature disables")
 
-        enable_rules, enable_active = feature_enable_rules(data)
+        enable_rules, enable_active = feature_enable_rules(data, installed=installed)
         if enable_active:
             lines.append(
                 f"Active features with enable rules: {', '.join(enable_active)}"
@@ -1639,7 +1776,7 @@ def build_report(
             O("No disabled mods missing from active feature enable lists")
 
         lines.append("")
-        check = filter_deps(data, tier)
+        check = filter_deps(data, tier, installed=installed)
         for dep in check:
             sat, folders = dep_is_satisfied(
                 mo2_root, dep, modlist, require_enabled=True

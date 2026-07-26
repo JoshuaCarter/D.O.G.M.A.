@@ -267,17 +267,21 @@ def main(argv: list[str] | None = None) -> int:
     if do_disable:
         if manifest.suffix.lower() in (".yml", ".yaml"):
             data = lib.load_manifest(manifest)
-            feat_rules, active, skipped = lib.feature_disable_rules(data)
-            req_deps = lib.filter_deps(data, "required")
+            installed = lib.resolve_installed_features(mo2_root, data)
+            feat_rules, active, skipped = lib.feature_disable_rules(
+                data, installed=installed
+            )
+            req_deps = lib.filter_deps(data, "required", installed=installed)
         else:
             data = None
+            installed = None
             feat_rules, active, skipped = read_disable_ini(disable_path, manifest)
             req_deps = []
         info(f"manifest  : {manifest}")
         if active:
             info(f"  Active features ({len(active)}): {', '.join(active)}")
         if skipped:
-            warn(f"  Skipped (manifest off) ({len(skipped)}): {', '.join(skipped)}")
+            warn(f"  Skipped (off / not installed) ({len(skipped)}): {', '.join(skipped)}")
         info(f"  Feature disable rules: {len(feat_rules)}")
 
         if not feat_rules and not req_deps:

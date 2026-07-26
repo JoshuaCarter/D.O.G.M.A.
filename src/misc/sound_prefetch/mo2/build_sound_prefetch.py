@@ -25,10 +25,18 @@ from pathlib import Path
 
 DOGMA_MOD_NAME = "DOGMA"
 LEGACY_SEPARATE_MOD = "DOGMA - Sound Prefetch"
-SOUND_EXTS = {".ogg", ".wav", ".flac"}
+# Only .ogg — X-Ray sound attrs live in Vorbis comments (wav/flac are not prefetched).
+SOUND_EXTS = {".ogg"}
 SECTION = "dogma_sfx_list"
 LTX_NAME = "dogma_sfx_prefetch.ltx"
 LTX_REL = Path("gamedata") / "configs" / LTX_NAME
+# Engine accepts comment versions 1, 2, and OGG_COMMENT_VERSION (3). See SoundRender_Source_loader.
+XRAY_OGG_COMMENT_VERSIONS = {1, 2, 3}
+XRAY_OGG_COMMENT_MIN_LEN = {
+    1: 16,  # vers + min + max + gametype
+    2: 20,  # + base volume
+    3: 24,  # + max AI dist
+}
 
 
 def _use_color() -> bool:
@@ -146,34 +154,100 @@ def sound_rel_path(sounds_root: Path, file_path: Path) -> str | None:
     return str(stem).replace("/", "\\")
 
 
-def collect_sound_paths(mo2_root: Path, enabled_mods: list[str]) -> list[str]:
-    found: dict[str, str] = {}
+def _vorbis_user_comments(data: bytes) -> list[bytes] | None:
+    """Return Vorbis user-comment payloads, or None if no comment packet."""
+    idx = 0
+    while True:
+        idx = data.find(b"vorbis", idx)
+        if idx < 0:
+            return None
+        if idx >= 1 and data[idx - 1] == 3:  # packet type 3 = comment header
+            break
+        idx += 6
+    else:
+        return None
+
+    pos = idx + 6
+    if pos + 4 > len(data):
+        return None
+    vend_len = int.from_bytes(data[pos : pos + 4], "little")
+    pos += 4
+    if vend_len < 0 or pos + vend_len + 4 > len(data):
+        return None
+    pos += vend_len
+    n = int.from_bytes(data[pos : pos + 4], "little")
+    pos += 4
+    if n < 0 or n > 256:
+        return None
+    comments: list[bytes] = []
+    for _ in range(n):
+        if pos + 4 > len(data):
+            return None
+        cl = int.from_bytes(data[pos : pos + 4], "little")
+        pos += 4
+        if cl < 0 or pos + cl > len(data):
+            return None
+        comments.append(data[pos : pos + cl])
+        pos += cl
+    return comments
+
+
+def has_valid_xray_ogg_comment(path: Path) -> bool:
+    """True if first Vorbis user-comment is an X-Ray sound-attr blob (vers 1/2/3)."""
+    try:
+        # Comment header is in the first pages; avoid reading multi‑MB ambience whole-file.
+        with path.open("rb") as f:
+            data = f.read(256 * 1024)
+    except OSError:
+        return False
+    comments = _vorbis_user_comments(data)
+    if not comments:
+        return False
+    first = comments[0]
+    if len(first) < 4:
+        return False
+    vers = int.from_bytes(first[0:4], "little")
+    if vers not in XRAY_OGG_COMMENT_VERSIONS:
+        return False
+    return len(first) >= XRAY_OGG_COMMENT_MIN_LEN[vers]
+
+
+def collect_sound_paths(mo2_root: Path, enabled_mods: list[str]) -> tuple[list[str], int, int]:
+    """Return (paths, scanned_files, skipped_invalid_ogg)."""
+    # key -> (rel_path, file_path); later (higher priority) wins
+    found: dict[str, tuple[str, Path]] = {}
     mods_dir = mo2_root / "mods"
     skip = {LEGACY_SEPARATE_MOD.lower()}
+    scanned = 0
+
+    def consider(sounds_root: Path) -> None:
+        nonlocal scanned
+        if not sounds_root.is_dir():
+            return
+        for path in sounds_root.rglob("*.ogg"):
+            if not path.is_file():
+                continue
+            scanned += 1
+            rel = sound_rel_path(sounds_root, path)
+            if not rel or rel.startswith("$"):
+                continue
+            found[rel.lower()] = (rel, path)
 
     for name in reversed(enabled_mods):
         if name.lower() in skip:
             continue
-        sounds = mods_dir / name / "gamedata" / "sounds"
-        if not sounds.is_dir():
-            continue
-        for path in sounds.rglob("*"):
-            if not path.is_file():
-                continue
-            rel = sound_rel_path(sounds, path)
-            if rel and not rel.startswith("$"):
-                found[rel.lower()] = rel
+        consider(mods_dir / name / "gamedata" / "sounds")
+    consider(mo2_root / "overwrite" / "gamedata" / "sounds")
 
-    overwrite = mo2_root / "overwrite" / "gamedata" / "sounds"
-    if overwrite.is_dir():
-        for path in overwrite.rglob("*"):
-            if not path.is_file():
-                continue
-            rel = sound_rel_path(overwrite, path)
-            if rel and not rel.startswith("$"):
-                found[rel.lower()] = rel
-
-    return sorted(found.values(), key=lambda s: s.lower())
+    paths: list[str] = []
+    skipped = 0
+    for rel, path in found.values():
+        if has_valid_xray_ogg_comment(path):
+            paths.append(rel)
+        else:
+            skipped += 1
+    paths.sort(key=lambda s: s.lower())
+    return paths, scanned, skipped
 
 
 def format_ltx(paths: list[str]) -> list[str]:
@@ -287,8 +361,11 @@ def main(argv: list[str] | None = None) -> int:
     if dogma_dir:
         info(f"DOGMA mod: {dogma_dir}")
 
-    paths = collect_sound_paths(mo2_root, enabled)
-    info(f"Unique sound paths: {len(paths)}")
+    paths, scanned, skipped = collect_sound_paths(mo2_root, enabled)
+    info(f"Scanned .ogg files : {scanned}")
+    info(f"Valid X-Ray comment: {len(paths)}")
+    if skipped:
+        warn(f"Skipped (missing/invalid ogg-comment): {skipped}")
     if paths:
         sample = [p for p in paths if p.lower().startswith("weapons\\")]
         show = (sample or paths)[:8]

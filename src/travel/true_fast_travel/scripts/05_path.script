@@ -103,7 +103,7 @@ ray_snap_ground_pos = function(pos, opts)
         local ok, v = pcall(function() return level.vertex_id(result) end)
         if ok and valid_lvid(v) then lvid = v end
     end
-    tft_log("ray snap (%s): ground Y=%.1f at (%.1f, %.1f, %.1f)", ray_tag, ground_y, x, result.y, z)
+    -- Success snaps are extremely noisy during coarse-nav builds — don't log them.
     return result, lvid
 end
 

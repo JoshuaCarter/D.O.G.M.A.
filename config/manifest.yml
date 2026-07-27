@@ -14,11 +14,13 @@
 #   release — FOMOD + wizard everywhere
 #
 # path: local feature under src/<path>; package zip mo2/packages/<path_key>.zip
-# url: ModDB or GitHub (auto-download). url: false = manual archive.
+# url: ModDB or GitHub (auto-download). Omit url: for a manual archive
+#      (user places downloads/DOGMA/<id or archive_name>.zip).
 # buy_url: paid storefront only (never ModDB/GitHub).
 
 Screen Space Shaders:
   stage: release
+  cat: Environment
   options:
     - SSS v23
     - SSS v24
@@ -59,6 +61,7 @@ SSS v23 + v24:
 
 Melancholy Weathers:
   stage: release
+  cat: Environment
   requires:
     - Screen Space Shaders
   buy_url: https://ko-fi.com/pipnik
@@ -96,6 +99,7 @@ Dark Signal Soundscape Overhaul Melancholy Edition:
 
 AlifePlus:
   stage: release
+  cat: Gameplay
   url: https://www.moddb.com/mods/stalker-anomaly/addons/alifeplus-v1-0-01
   depends:
     - xlibs
@@ -157,6 +161,7 @@ AlifeTactics:
 
 Interaction Dot Marks:
   stage: release
+  cat: Interface
   url: https://www.moddb.com/mods/stalker-anomaly/addons/interaction-dot-marks
   disables:
     - 452- Interaction Dot Marks - Catspaw
@@ -166,7 +171,8 @@ Interaction Dot Marks:
 # --------------------------------
 
 Tarkov-like Level Transitions:
-  stage: omit
+  stage: release
+  cat: Interface
   url: https://www.moddb.com/mods/stalker-anomaly/addons/tarkov-like-level-transitions
 
 # --------------------------------
@@ -175,11 +181,13 @@ Tarkov-like Level Transitions:
 
 Demonized DB:
   stage: release
+  cat: System
   url: https://github.com/themrdemonized/xray-monolith/releases/latest
   archive_name: STALKER-Anomaly-modded-exes
 
 C Consciousness Grass and Trees:
   stage: release
+  cat: Environment
   url: https://www.moddb.com/mods/stalker-anomaly/addons/ccon-grass-n-trees
   requires:
     - Screen Space Shaders
@@ -189,13 +197,14 @@ C Consciousness Grass and Trees:
 
 Glossy Puddles:
   stage: release
-  url: false
+  cat: Environment
   archive_name: Glossy Puddles v1.4 - Erandis
   requires:
     - Screen Space Shaders
 
 G2X Tactical Light Presets:
   stage: release
+  cat: Environment
   url: https://www.moddb.com/mods/stalker-anomaly/addons/g2x-tactical-light-preset-600-lm-range-max-100-m-eff-70-m-55006500-k
 
 # --------------------------------
@@ -204,15 +213,17 @@ G2X Tactical Light Presets:
 
 Medik Health Monitor:
   stage: release
-  url: false
+  cat: Gameplay
   archive_name: MedikHealthMonitor
 
 RNG Attach:
   stage: release
+  cat: Gameplay
   url: https://www.moddb.com/mods/stalker-anomaly/addons/rng-attach-kits
 
 Quick Action Wheel Overhaul:
   stage: release
+  cat: Interface
   url: https://www.moddb.com/mods/stalker-anomaly/addons/quick-action-wheels-overhaul-10
   disables:
     - 446- Quick Action Wheel - HarukaSai
@@ -220,6 +231,7 @@ Quick Action Wheel Overhaul:
 
 Ammo Check - Priler:
   stage: release
+  cat: Gameplay
   url: https://github.com/Priler/AmmoCheck
   archive_name: AmmoCheck v3.3 by Priler REWORK
   disables:
@@ -227,49 +239,49 @@ Ammo Check - Priler:
 
 NPC Weapon Position Tweaks:
   stage: release
-  url: false
+  cat: Environment
   archive_name: NPC Weapon Position Tweaks 1.42
   disables:
     - A_triangle's NPC Weapon Position Tweak
 
 Crafting UI Tweaks:
   stage: release
-  url: false
+  cat: Interface
   archive_name: Crafting UI Tweaks 1.1
-
-Svarog Anomalies Icons:
-  stage: release
-  url: false
-  archive_name: Svarog Anomalies Icons - Shpala
 
 Better Upgrade Tooltips:
   stage: release
+  cat: Interface
   url: https://github.com/Verdatim25/Better-Upgrade-Tooltips-For-Stalker-GAMMA
   archive_name: better_upgrade_tooltips_verdatim_v1.1.1
 
 Painter of the Zone:
   stage: release
+  cat: Environment
   url: https://www.moddb.com/mods/stalker-anomaly/addons/painter-of-the-zone
   requires:
     - Screen Space Shaders
+    - Long Range Blood Decals
+
 Long Range Blood Decals:
-  stage: release
-  url: false
+  stage: omit
   archive_name: Long_Range_Blood_Decals
 
 The Anomalous Stash:
   stage: release
+  cat: Gameplay
   url: https://www.moddb.com/mods/stalker-anomaly/addons/the-anomalous-stash-beta-09
 
 Seamless Inventory Sort:
   stage: release
+  cat: Interface
   url: https://www.moddb.com/mods/stalker-anomaly/addons/seamless-inventory-sort
   enables:
     - 110- SortingPlus - RavenAscendant
 
 PDA Taskboard Redesign:
   stage: release
-  url: false
+  cat: Interface
   archive_name: PDA_Taskboard_Redesign_v1.2
   disables:
     - 293- PDA Taskboard - iTheon

@@ -959,7 +959,7 @@ class ManifestData:
     ) -> list[InitSetting]:
         """resets (script def) → mcm → settings for active packs.
 
-        Manual (url: false) packs only contribute when that mod is installed
+        Manual (no url:) packs only contribute when that mod is installed
         and enabled. ``suggested_ids`` limits which suggested packs apply.
         """
         min_stage = parse_stage(min_stage)
@@ -1045,14 +1045,15 @@ class ManifestData:
 def _parse_dep_url(raw, *, field: str) -> tuple[str, bool]:
     """Parse url:/buy_url: → (url_string, manual).
 
-    ``url: false`` / null / empty = manual archive (no auto-download link).
+    Omitted / ``false`` / null / empty = no auto-download link (manual archive
+    when used as ``url:``).
     """
     if raw is False or raw is None:
         return "", True
     if raw is True:
         raise ValueError(
             f"{field}: use a ModDB/GitHub URL (url:), a storefront URL (buy_url:), "
-            f"or false for manual"
+            f"or omit the key for a manual archive"
         )
     s = str(raw).strip()
     if not s or s.lower() in ("false", "null", "none", "manual", "-"):
@@ -1073,7 +1074,7 @@ def _validate_dep_link_roles(
         if not (is_moddb_url(url) or is_github_url(url)):
             raise ValueError(
                 f"{section}.{dep_id}.url: must be a ModDB or GitHub link "
-                f"(got {url!r}); use buy_url: for storefronts or url: false for manual"
+                f"(got {url!r}); use buy_url: for storefronts or omit url: for manual"
             )
     if buy_url:
         if is_moddb_url(buy_url) or is_github_url(buy_url):
@@ -1174,10 +1175,10 @@ def _dep_from_mapping(
         )
     source = str(item.get("source") or "").strip().lower()
     if path:
-        # Local package zip (mo2/packages/<path_key>.zip) — never a manual archive.
-        # Missing url: must not flip source to user (that is for url: false packs).
+        # Local package zip (mo2/packages/<path_key>.zip) — not a downloads/DOGMA manual.
         source = source or "auto"
     elif manual or buy_url:
+        # No url: (or url: false) → user places the archive under downloads/DOGMA/.
         source = "user"
     elif not source:
         source = "auto"
@@ -1466,11 +1467,10 @@ def _parse_features_block(feat_block: dict) -> dict[str, FeatureMeta]:
 
 def pack_needs_purchase(dep: Dependency) -> bool:
     """True when the user must buy/supply an archive (wizard default off)."""
-    if dep.path:
+    if dep.path or dep.url:
         return False
-    return bool(dep.buy_url) or (
-        dep.source == "user" and not dep.url
-    )
+    # No auto-download url: → manual archive (optional buy_url:).
+    return True
 
 
 def option_default_selected(
@@ -3507,7 +3507,7 @@ def apply_initialize(
 ) -> tuple[int, int]:
     """Apply MCM defaults into axr_options.ltx files.
 
-    Keys are written blindly into axr_options once selected. Manual (url: false)
+    Keys are written blindly into axr_options once selected. Manual (no url:)
     packs are omitted unless that mod is installed.
     """
     if initialize_path.suffix.lower() in (".yml", ".yaml") or initialize_path.name in (
@@ -4306,7 +4306,7 @@ def dep_is_satisfied(
         return ("DOGMA" in enabled or any("DOGMA" in n.upper() for n in enabled), folders)
 
     folders: list[str] = []
-    # Manual (url: false): only our managed install counts — never catalog / lookalikes.
+    # Manual (no url:): only our managed install counts — never catalog / lookalikes.
     # Effects (disables / enables / mcm / settings / console) stay off until it exists.
     if dep.source == "user" or not dep.url:
         for name in find_managed_folders(mo2_root, dep):
@@ -5266,7 +5266,7 @@ def process_dependency(
             return "present"
         hint = f"downloads/DOGMA/{dep_zip_stem(dep)}.zip"
         howto = dep.howto or (
-            f"not on ModDB (url: false) — place {hint} or install yourself; "
+            f"no url: (manual) — place {hint} or install yourself; "
             f"disables/enables skipped until then"
         )
         info(f"  [{dep.id}] skip (manual, not installed): {howto}")
@@ -5517,7 +5517,7 @@ def build_report(
             if not present:
                 if dep.source == "user" or not dep.url:
                     O(
-                        f'mod "{dep.id}" manual (url: false) — not installed; '
+                        f'mod "{dep.id}" manual (no url:) — not installed; '
                         f"disables/enables skipped"
                     )
                 else:

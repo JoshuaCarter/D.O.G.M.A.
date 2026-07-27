@@ -367,6 +367,7 @@ def cmd_reset_base(args: argparse.Namespace) -> int:
 
 def cmd_sfx(args: argparse.Namespace) -> int:
     mo2 = lib.resolve_mo2_root(args.mo2_root)
+    tools = lib.mo2_tools_dir(mo2)
     if getattr(args, "if_selected", False):
         sel = lib.load_installer_selection(mo2)
         actions = list(sel.actions) if sel is not None else []
@@ -384,11 +385,27 @@ def cmd_sfx(args: argparse.Namespace) -> int:
     if not py.is_file():
         lib.err("build_sound_prefetch.py not found")
         return 1
-    cmd = [sys.executable, str(py), "--mo2-root", str(mo2)]
+    # -u: unbuffered so scan/write progress shows live in the MO2 console.
+    cmd = [sys.executable, "-u", str(py), "--mo2-root", str(mo2)]
     if args.force:
         cmd.append("--force")
     lib.info(f"SFX prefetch: {py}")
-    return subprocess.run(cmd, check=False).returncode
+    # Tee builder stdout into dogma_sfx_prefetch.log (not dogma_install.log).
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        bufsize=1,
+    )
+    assert proc.stdout is not None
+    for raw in proc.stdout:
+        line = raw.rstrip("\r\n")
+        print(line, flush=True)
+        lib.append_action_log(tools, line)
+    return int(proc.wait())
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -492,6 +509,31 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _console_hwnd() -> int:
+    if sys.platform != "win32":
+        return 0
+    try:
+        import ctypes
+
+        return int(ctypes.windll.kernel32.GetConsoleWindow() or 0)
+    except (AttributeError, OSError, ValueError):
+        return 0
+
+
+def show_console() -> None:
+    """Un-hide the process console (e.g. before pause on failure)."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        hwnd = int(ctypes.windll.kernel32.GetConsoleWindow() or 0)
+        if hwnd:
+            ctypes.windll.user32.ShowWindow(hwnd, 5)  # SW_SHOW
+    except (AttributeError, OSError, ValueError):
+        pass
+
+
 def main(argv: list[str] | None = None) -> int:
     # Setup / Update forwards %* to wizard; ignore job-only flags like --tier.
     argv = list(sys.argv[1:] if argv is None else argv)
@@ -522,6 +564,10 @@ def main(argv: list[str] | None = None) -> int:
     lib.info(f"Log -> {lib.action_log_path(tools)}")
     if lib.report_log_path(tools).is_file():
         lib.info(f"Report -> {lib.report_log_path(tools)}")
+    # Cancel (2): keep console hidden so the window goes away with the process.
+    # Other errors: show console so :fail pause / messages are readable.
+    if code not in (0, 2):
+        show_console()
     return code
 
 

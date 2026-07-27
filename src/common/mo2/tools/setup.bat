@@ -10,6 +10,8 @@ if errorlevel 1 goto :fail
 set "SEL="
 if /I "%DOGMA_NO_WIZARD%"=="1" goto :jobs
 call "%~dp0run_job.bat" wizard %*
+REM 2 = wizard cancelled — exit quietly (console stays hidden / closes)
+if errorlevel 2 if not errorlevel 3 exit /b 2
 if errorlevel 1 goto :fail
 set "SEL=--use-selection"
 

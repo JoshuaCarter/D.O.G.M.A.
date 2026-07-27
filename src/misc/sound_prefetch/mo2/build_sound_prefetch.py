@@ -4,6 +4,9 @@
 Part of feature src/misc/sound_prefetch. Shipped to mods/DOGMA/mo2/ via the
 mo2/ build exception. Runtime script is built normally into gamedata/scripts/.
 
+Skips .ogg files >= 100 KB (music / long ambience) so prefetch stays focused
+on short SFX that hitch on first play.
+
   mods/DOGMA/mo2/build_sound_prefetch.bat   (MO2 Executable; Start in = instance root)
   overwrite/gamedata/configs/dogma_sfx_prefetch.ltx  (generated)
 
@@ -37,6 +40,9 @@ XRAY_OGG_COMMENT_MIN_LEN = {
     2: 20,  # + base volume
     3: 24,  # + max AI dist
 }
+# Skip files at/above this size (music / long ambience). Prefetching those
+# eats RAM and rarely helps short-SFX hitching.
+LARGE_FILE_MIN_BYTES = 100 * 1024
 
 
 def _use_color() -> bool:
@@ -60,19 +66,19 @@ _COLOR = _use_color()
 
 
 def info(msg: str) -> None:
-    print(msg)
+    print(msg, flush=True)
 
 
 def ok(msg: str) -> None:
-    print(f"\033[32m{msg}\033[0m" if _COLOR else msg)
+    print(f"\033[32m{msg}\033[0m" if _COLOR else msg, flush=True)
 
 
 def warn(msg: str) -> None:
-    print(f"\033[33m{msg}\033[0m" if _COLOR else msg)
+    print(f"\033[33m{msg}\033[0m" if _COLOR else msg, flush=True)
 
 
 def err(msg: str) -> None:
-    print(f"\033[31m{msg}\033[0m" if _COLOR else msg, file=sys.stderr)
+    print(f"\033[31m{msg}\033[0m" if _COLOR else msg, file=sys.stderr, flush=True)
 
 
 def read_mo2_ini_value(ini_path: Path, key: str) -> str:
@@ -212,8 +218,32 @@ def has_valid_xray_ogg_comment(path: Path) -> bool:
     return len(first) >= XRAY_OGG_COMMENT_MIN_LEN[vers]
 
 
-def collect_sound_paths(mo2_root: Path, enabled_mods: list[str]) -> tuple[list[str], int, int]:
-    """Return (paths, scanned_files, skipped_invalid_ogg)."""
+def drop_large_files(
+    entries: list[tuple[str, Path]],
+    min_bytes: int = LARGE_FILE_MIN_BYTES,
+) -> tuple[list[tuple[str, int]], list[tuple[str, int]]]:
+    """Keep entries strictly below min_bytes.
+
+    Returns (kept [(rel, size), ...], dropped [(rel, size), ...]).
+    """
+    kept: list[tuple[str, int]] = []
+    dropped: list[tuple[str, int]] = []
+    for rel, path in entries:
+        try:
+            size = path.stat().st_size
+        except OSError:
+            size = 0
+        if size >= min_bytes:
+            dropped.append((rel, size))
+        else:
+            kept.append((rel, size))
+    return kept, dropped
+
+
+def collect_sound_paths(
+    mo2_root: Path, enabled_mods: list[str]
+) -> tuple[list[tuple[str, int]], int, int, list[tuple[str, int]]]:
+    """Return (kept[(rel, bytes)], scanned_files, skipped_invalid_ogg, dropped_large)."""
     # key -> (rel_path, file_path); later (higher priority) wins
     found: dict[str, tuple[str, Path]] = {}
     mods_dir = mo2_root / "mods"
@@ -233,28 +263,39 @@ def collect_sound_paths(mo2_root: Path, enabled_mods: list[str]) -> tuple[list[s
                 continue
             found[rel.lower()] = (rel, path)
 
-    for name in reversed(enabled_mods):
-        if name.lower() in skip:
-            continue
+    to_scan = [n for n in reversed(enabled_mods) if n.lower() not in skip]
+    info(f"Scanning {len(to_scan)} mods for gamedata/sounds/*.ogg ...")
+    for name in to_scan:
         consider(mods_dir / name / "gamedata" / "sounds")
     consider(mo2_root / "overwrite" / "gamedata" / "sounds")
+    info(f"Found {len(found)} unique paths ({scanned} .ogg scanned)")
 
-    paths: list[str] = []
+    info(f"Checking X-Ray ogg-comments on {len(found)} unique paths ...")
+    valid: list[tuple[str, Path]] = []
     skipped = 0
     for rel, path in found.values():
         if has_valid_xray_ogg_comment(path):
-            paths.append(rel)
+            valid.append((rel, path))
         else:
             skipped += 1
-    paths.sort(key=lambda s: s.lower())
-    return paths, scanned, skipped
+    info(f"Valid X-Ray comment: {len(valid)} (skipped invalid: {skipped})")
+
+    min_kb = LARGE_FILE_MIN_BYTES // 1024
+    kept, dropped_large = drop_large_files(valid)
+    if dropped_large:
+        warn(f"Dropping {len(dropped_large)} files >= {min_kb} KB")
+    kept.sort(key=lambda t: t[0].lower())
+    return kept, scanned, skipped, dropped_large
 
 
-def format_ltx(paths: list[str]) -> list[str]:
+def format_ltx(entries: list[tuple[str, int]]) -> tuple[list[str], int]:
+    """Build LTX lines. Returns (lines, total_bytes)."""
     lines = [f"[{SECTION}]"]
-    for i, path in enumerate(paths, start=1):
+    total_bytes = 0
+    for i, (path, size) in enumerate(entries, start=1):
+        total_bytes += size
         lines.append(f"t{i} = {path}")
-    return lines
+    return lines, total_bytes
 
 
 def resolve_launch_exe(mo2_root: Path, then_launch: str) -> Path:
@@ -361,17 +402,8 @@ def main(argv: list[str] | None = None) -> int:
     if dogma_dir:
         info(f"DOGMA mod: {dogma_dir}")
 
-    paths, scanned, skipped = collect_sound_paths(mo2_root, enabled)
-    info(f"Scanned .ogg files : {scanned}")
-    info(f"Valid X-Ray comment: {len(paths)}")
-    if skipped:
-        warn(f"Skipped (missing/invalid ogg-comment): {skipped}")
-    if paths:
-        sample = [p for p in paths if p.lower().startswith("weapons\\")]
-        show = (sample or paths)[:8]
-        info("  Sample:")
-        for s in show:
-            info(f"    {s}")
+    entries, _scanned, _skipped, _dropped = collect_sound_paths(mo2_root, enabled)
+    info(f"Prefetch list: {len(entries)}")
 
     ltx_path = mo2_root / "overwrite" / LTX_REL
     remove_legacy_separate_mod(mo2_root, modlist_path, args.dry_run)
@@ -387,15 +419,17 @@ def main(argv: list[str] | None = None) -> int:
         (dogma_dir / "gamedata" / "configs" / "items" / "items" / LTX_NAME) if dogma_dir else None,
     ]
 
+    lines, total_bytes = format_ltx(entries)
+    total_mb = total_bytes // (1024 * 1024)
     if not args.dry_run:
-        write_text_lines(ltx_path, format_ltx(paths))
-        ok(f"Wrote {ltx_path.relative_to(mo2_root)} ({len(paths)} entries)")
+        write_text_lines(ltx_path, lines)
+        ok(f"Wrote {ltx_path.relative_to(mo2_root)} ({len(entries)} entries, {total_mb} MB)")
         for old in stale:
             if old and old.is_file() and old.resolve() != ltx_path.resolve():
                 old.unlink()
                 warn(f"Removed stale {old.relative_to(mo2_root)}")
     else:
-        info(f"Would write {ltx_path}")
+        info(f"Would write {ltx_path.relative_to(mo2_root)} ({len(entries)} entries, {total_mb} MB)")
 
     if args.then_launch:
         if args.dry_run:

@@ -1,7 +1,6 @@
 # DOGMA unified mod catalog (Setup wizard + FOMOD + depends).
 #
 # Single list for third-party packs and local D.O.G.M.A. path mods.
-# Copies also kept at config/mods.yml and config/features.yml — prefer this file.
 #
 # Each block is ONE of:
 #   A) Wizard/FOMOD mod — stage: release|dev + url:/buy_url: OR path:
@@ -15,8 +14,8 @@
 #   release — FOMOD + wizard everywhere
 #
 # path: local feature under src/<path>; package zip mo2/packages/<path_key>.zip
-# url: / buy_url: — remote archives
-#
+# url: ModDB or GitHub (auto-download). url: false = manual archive.
+# buy_url: paid storefront only (never ModDB/GitHub).
 
 Screen Space Shaders:
   stage: release
@@ -167,7 +166,7 @@ AlifeTactics:
 Interaction Dot Marks:
   stage: release
   url: https://www.moddb.com/mods/stalker-anomaly/addons/interaction-dot-marks
-  desc: Downloads Interaction Dot Marks and disables the G.A.M.M.A. catalog copy.
+  desc: Downloads Interaction Dot Marks from ModDB.
   disables:
     - 452- Interaction Dot Marks - Catspaw
 
@@ -186,7 +185,7 @@ Tarkov-like Level Transitions:
 
 Demonized DB:
   stage: release
-  buy_url: https://github.com/themrdemonized/xray-monolith/releases/latest
+  url: https://github.com/themrdemonized/xray-monolith/releases/latest
   archive_name: STALKER-Anomaly-modded-exes
   desc: >
     Modded-exes gamedata DB (00_modded_exes_gamedata.db0) from Demonized
@@ -241,7 +240,7 @@ Quick Action Wheel Overhaul:
 
 Ammo Check - Priler:
   stage: release
-  buy_url: https://github.com/Priler/AmmoCheck
+  url: https://github.com/Priler/AmmoCheck
   archive_name: AmmoCheck v3.3 by Priler REWORK
   desc: Enhanced ammo-check rework (Priler). Replaces Ishmaeel's Ammo Check.
   disables:
@@ -269,7 +268,7 @@ Svarog Anomalies Icons:
 
 Better Upgrade Tooltips:
   stage: release
-  buy_url: https://github.com/Verdatim25/Better-Upgrade-Tooltips-For-Stalker-GAMMA
+  url: https://github.com/Verdatim25/Better-Upgrade-Tooltips-For-Stalker-GAMMA
   archive_name: better_upgrade_tooltips_verdatim_v1.1.1
   desc: Clearer weapon/armor upgrade effect labels (Verbatim).
 
@@ -347,14 +346,14 @@ On-Screen FPS Counter:
 Hide Geiger Counter HUD Text:
   stage: dev
   path: hud/geiger
-  desc: "Hides the Geiger \"N mSv\" tip and the mSv number over the radiation icon. Disable G_FLAT's Msv Above Radiation Icon."
+  desc: "Hides the Geiger \"N mSv\" tip and the mSv number over the radiation icon."
   disables:
     - G_FLAT's Msv Above Radiation Icon
 
 Minimap Toggle Or Hold:
   stage: dev
   path: hud/minimap
-  desc: Toggle or hold-to-show for the HUD minimap. Disable Minimap Toggle (RavenAscendant).
+  desc: Toggle or hold-to-show for the HUD minimap.
   disables:
     - 177- Minimap Toggle - RavenAscendant
 
@@ -373,7 +372,7 @@ Hide HUD On QAW:
 Centered Stalker ID HUD:
   stage: dev
   path: hud/stalker_id
-  desc: "Centered name, rank, and faction icon when looking at stalkers. Disable Identification UI (CrookR) and Crook's Identification UI Fix."
+  desc: "Centered name, rank, and faction icon when looking at stalkers."
   disables:
     - 163- Identification UI - CrookR
     - G.A.M.M.A. Crook's Identification UI Fix
@@ -388,7 +387,7 @@ Inventory Disassemble Keybinds:
 Inventory Drop Keybinds:
   stage: dev
   path: items/drop
-  desc: Keybinds to drop items from inventory. Disable G.A.M.M.A. Press Key to Drop Item.
+  desc: Keybinds to drop items from inventory.
   disables:
     - G.A.M.M.A. Press Key to Drop Item
 
@@ -447,7 +446,7 @@ MCM Search Box:
 Prefetch Loose Mod Sounds:
   stage: dev
   path: misc/sound_prefetch
-  desc: "Prefetch loose mod sounds (JSRS, etc.) to reduce hitching. Rebuild the list from Setup (SFX checkbox) or DOGMA (SFX Prefetch).bat after changing sound mods."
+  desc: "Prefetch loose mod sounds (JSRS, etc.) to reduce hitching. Rebuild the list from Setup (SFX checkbox) or DOGMA SFX Prefetch.bat after changing sound mods."
 
 Mutant Footsteps Dark Signal:
   stage: dev
@@ -467,7 +466,7 @@ Dodge Pseudogiant Ground Slams:
 Solo Guides And Escorts:
   stage: dev
   path: npcs/companions
-  desc: "Guides and hired escorts join alone (offline extras dropped, online rehomed); max one of each. Optional keybind teleports companions to you (skips waiting / locked hostages). Disable Quick Companion Teleport and Fair Fast Travel."
+  desc: "Guides and hired escorts join alone (offline extras dropped, online rehomed); max one of each. Optional keybind teleports companions to you (skips waiting / locked hostages)."
   disables:
     - 218- Quick Companion Teleport (teleports rescue mission targets) - RazorShultz
     - 329- Fair Fast Travel - Catspaw
@@ -491,7 +490,7 @@ Red PDA Bounty Warnings:
 PDA Stays Put:
   stage: release
   path: pda/stay_down
-  desc: Stops the PDA jumping back into your hands after inventory or teleports. Disable Dont ReEquip PDA / Previous weapon after closing PDA.
+  desc: Stops the PDA jumping back into your hands after inventory or teleports.
   disables:
     - Dorns_Dont_ReEquip_PDA
     - 136- Previous weapon is automatically pulled after closing PDA - Demonized
@@ -499,14 +498,14 @@ PDA Stays Put:
 Mute Player Voice Lines:
   stage: omit
   path: player/stfu
-  desc: "Mutes player voice lines from Voiced Actor. Always on while installed. If you use Silent Protagonist, disable that mod — it has no known MCM script to suppress."
+  desc: "Mutes player voice lines from Voiced Actor. Always on while installed."
   disables:
     - Silent Protagonist
 
 Capped Campfire Healing:
   stage: dev
   path: player/campfire
-  desc: "Campfire heals: temp first then perm/main, all capped at 80%. Interval 1–30s (default 1). Disable Campfire slowly regens life (arti)."
+  desc: "Campfire heals limbs then body (temp→perm). Temp fill 0–75%, 1pt/tick, interval 1–30s. Disables Campfire slowly regens life (arti)."
   disables:
     - 115- Campfire slowly regens life - arti
 
@@ -549,7 +548,7 @@ Detailed Weapon Stat Tooltips:
 PDA Map Path Travel:
   stage: release
   path: travel/fast_travel
-  desc: "Travel from the PDA map with paths, ambushes, and sneak options. Disable Fair Fast Travel."
+  desc: "Travel from the PDA map with paths, ambushes, and sneak options."
   disables:
     - 329- Fair Fast Travel - Catspaw
     - 329- Fair Fast Travel 2.7+ - Catspaw
@@ -559,7 +558,7 @@ PDA Map Path Travel:
 Real Path Time Travel:
   stage: dev
   path: travel/true_fast_travel
-  desc: "Real path travel with stepped teleports and in-mod time simulation, LoS ambushes, walk-to-discover destinations. Disable Fair Fast Travel and Limited Fast Travel. Blanks vanilla game_fast_travel so map FT does not return."
+  desc: "Real path travel with stepped teleports and in-mod time simulation, LoS ambushes, walk-to-discover destinations. Blanks vanilla game_fast_travel so map FT does not return."
   disables:
     - 329- Fair Fast Travel - Catspaw
     - 329- Fair Fast Travel 2.7+ - Catspaw
@@ -570,28 +569,28 @@ Real Path Time Travel:
 Ammo Wheel Skips Worn:
   stage: dev
   path: weapons/ammo_wheel
-  desc: "Ammo wheel hotkeys skip worn ammo so keys stay 1, 2, 3. If you use Fixed Ammo Wheel Hotkeys, disable that mod — no MCM script basename known yet to suppress."
+  desc: "Ammo wheel hotkeys skip worn ammo so keys stay 1, 2, 3."
   disables:
     - Fixed Ammo Wheel Hotkeys
 
 Fire During Draw Animation:
   stage: dev
   path: weapons/quick_fire
-  desc: Fire or reload before the draw animation finishes. Disable Fluid Aim.
+  desc: Fire or reload before the draw animation finishes.
   disables:
     - 65- Fluid Aim - Skieppy
 
 Extra Zoom While Aiming:
   stage: release
   path: zoom/ads_zoom
-  desc: "Extra zoom while aiming, by irons, sights, or scopes. Disable Adjustable Scope View. Blanks Blindside/3DSS scope_fov scripts that cannot be fully disabled."
+  desc: "Extra zoom while aiming, by irons, sights, or scopes. Blanks Blindside/3DSS scope_fov scripts that cannot be fully disabled."
   disables:
     - 72- Adjustable Scope View - sneaky
 
 Zoom Without Aiming:
   stage: release
   path: zoom/free_zoom
-  desc: Zoom your view without aiming. Disable GAMMA / Kute / SlowVibe Free Zoom. Blanks Keybinds Free_ZoomV2 and rival ADS FOV scripts that cannot be fully disabled.
+  desc: Zoom your view without aiming. Blanks Keybinds Free_ZoomV2 and rival ADS FOV scripts that cannot be fully disabled.
   disables:
     - 178- Free Zoom - SlowVibe
     - G.A.M.M.A. Free Zoom v3

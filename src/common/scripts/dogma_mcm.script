@@ -76,6 +76,13 @@ function number(mod_id, key, default)
 	if n ~= nil then
 		return n
 	end
+	if type(default) == "number" then
+		return default
+	end
+	local d = tonumber(default)
+	if d ~= nil then
+		return d
+	end
 	return 0
 end
 

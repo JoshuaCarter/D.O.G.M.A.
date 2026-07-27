@@ -18,11 +18,14 @@ from typing import Iterable, Iterator
 
 SEPARATOR_NAME = "DOGMA DEPENDENCIES_separator"
 ACTION_LOG_NAME = "dogma_install.log"
+SFX_LOG_NAME = "dogma_sfx_prefetch.log"
 REPORT_LOG_NAME = "dogma_report.log"
 MODDB_CACHE_NAME = "moddb_cache.json"
+GITHUB_CACHE_NAME = "github_cache.json"
 USER_URL_PREFIX = "dogma:user:"
 MANAGED_FOLDER_PREFIX = "DOGMA - "
 MODDB_CACHE_MAX_AGE_S = 6 * 3600
+GITHUB_CACHE_MAX_AGE_S = 6 * 3600
 
 
 # ---------------------------------------------------------------------------
@@ -31,6 +34,7 @@ MODDB_CACHE_MAX_AGE_S = 6 * 3600
 
 _COLOR = False  # set in _init_color()
 _log_tools: Path | None = None
+_log_name: str = ACTION_LOG_NAME
 
 
 def _init_color() -> bool:
@@ -53,8 +57,14 @@ def _init_color() -> bool:
 _COLOR = _init_color()
 
 
+def action_log_name_for_job(job: str) -> str:
+    if job == "sfx":
+        return SFX_LOG_NAME
+    return ACTION_LOG_NAME
+
+
 def action_log_path(mo2_dir: Path) -> Path:
-    return mo2_dir / "logs" / ACTION_LOG_NAME
+    return mo2_dir / "logs" / _log_name
 
 
 def report_log_path(mo2_dir: Path) -> Path:
@@ -62,15 +72,25 @@ def report_log_path(mo2_dir: Path) -> Path:
 
 
 def configure_logging(mo2_dir: Path, *, reset: bool = False, job: str = "") -> Path:
-    """Tee console output into mods/DOGMA/mo2/logs/dogma_install.log."""
-    global _log_tools
+    """Tee console output into mods/DOGMA/mo2/logs/<action log>.
+
+    Most jobs share dogma_install.log. The sfx job uses dogma_sfx_prefetch.log
+    (always truncated per run) so prefetch noise never lands in the install log.
+    """
+    global _log_tools, _log_name
     mo2_dir.mkdir(parents=True, exist_ok=True)
     _log_tools = mo2_dir
+    _log_name = action_log_name_for_job(job)
     path = action_log_path(mo2_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
-    if reset or not path.is_file():
+    # Dedicated sfx log: always start fresh so each run is readable.
+    do_reset = reset or _log_name == SFX_LOG_NAME or not path.is_file()
+    if do_reset:
         stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        header = f"=== DOGMA install log - {stamp} ===\n"
+        if _log_name == SFX_LOG_NAME:
+            header = f"=== DOGMA SFX prefetch log - {stamp} ===\n"
+        else:
+            header = f"=== DOGMA install log - {stamp} ===\n"
         if job:
             header += f"job: {job}\n"
         path.write_text(header + "\n", encoding="utf-8")
@@ -593,7 +613,8 @@ WIZARD_ACTIONS: tuple[WizardAction, ...] = (
         desc=(
             "One-off: scan enabled mods for loose sounds and write "
             "overwrite/gamedata/configs/dogma_sfx_prefetch.ltx. "
-            "Use after changing sound mods (or run DOGMA (SFX Prefetch).bat)."
+            "Use after changing sound mods (or run DOGMA SFX Prefetch.bat). "
+            "Log: mo2/logs/dogma_sfx_prefetch.log."
         ),
         default=True,
     ),
@@ -1038,18 +1059,44 @@ class ManifestData:
 
 
 def _parse_dep_url(raw, *, field: str) -> tuple[str, bool]:
-    """Parse url: → (url_string, manual).
+    """Parse url:/buy_url: → (url_string, manual).
 
-    ``url: false`` / null / empty = not on ModDB; user installs manually.
+    ``url: false`` / null / empty = manual archive (no auto-download link).
     """
     if raw is False or raw is None:
         return "", True
     if raw is True:
-        raise ValueError(f"{field}: use a ModDB page URL, or false for manual")
+        raise ValueError(
+            f"{field}: use a ModDB/GitHub URL (url:), a storefront URL (buy_url:), "
+            f"or false for manual"
+        )
     s = str(raw).strip()
     if not s or s.lower() in ("false", "null", "none", "manual", "-"):
         return "", True
     return s, False
+
+
+def _validate_dep_link_roles(
+    *,
+    dep_id: str,
+    section: str,
+    url: str,
+    manual: bool,
+    buy_url: str,
+) -> None:
+    """url: = ModDB/GitHub auto-download; buy_url: = paid storefront (never ModDB/GitHub)."""
+    if url and not manual:
+        if not (is_moddb_url(url) or is_github_url(url)):
+            raise ValueError(
+                f"{section}.{dep_id}.url: must be a ModDB or GitHub link "
+                f"(got {url!r}); use buy_url: for storefronts or url: false for manual"
+            )
+    if buy_url:
+        if is_moddb_url(buy_url) or is_github_url(buy_url):
+            raise ValueError(
+                f"{section}.{dep_id}.buy_url: must be a storefront / purchase page, "
+                f"not ModDB or GitHub (got {buy_url!r}); put those under url:"
+            )
 
 
 def _parse_name_list(raw, *, field: str) -> list[str]:
@@ -1104,6 +1151,13 @@ def _dep_from_mapping(
     )
     buy_url, _buy_manual = _parse_dep_url(
         item.get("buy_url"), field=f"{section}.{dep_id}.buy_url"
+    )
+    _validate_dep_link_roles(
+        dep_id=dep_id,
+        section=section,
+        url=url,
+        manual=manual,
+        buy_url=buy_url,
     )
     path = str(item.get("path") or "").strip().replace("\\", "/")
     # stage: omit|dev|release — FOMOD + wizard gate. Legacy: fomod:, level:, wizard:.
@@ -3046,9 +3100,127 @@ def preview_disables_for_deps(
     return enabled_mods_matching_disables(enabled_names, patterns)
 
 
+def mods_matching_patterns(
+    names: Iterable[str],
+    patterns: Iterable[str],
+) -> list[str]:
+    """Modlist names that match any disable/enable-style pattern."""
+    return enabled_mods_matching_disables(names, patterns)
+
+
 def preview_tweak_packs(deps: Iterable[Dependency]) -> list[str]:
     """Pack ids that apply MCM / settings / resets (config tweaks)."""
     return [d.id for d in deps if d.has_axr_effects()]
+
+
+def format_effect_lists_plain(sections: list[tuple[str, list[str]]]) -> str:
+    """Plain-text effect lists (FOMOD desc / tooltips): blank line between lists."""
+    blocks: list[str] = []
+    for label, items in sections:
+        if not items:
+            continue
+        lines = [f"{label}:"] + [f"  • {item}" for item in items]
+        blocks.append("\n".join(lines))
+    return "\n\n".join(blocks)
+
+
+def preview_expected_changes(
+    mo2_root: Path | None,
+    deps: Iterable[Dependency],
+    *,
+    pack_by_id: dict[str, Dependency] | None = None,
+    enabled_names: Iterable[str] | None = None,
+    disabled_names: Iterable[str] | None = None,
+    feature: FeatureMeta | None = None,
+) -> list[str]:
+    """Live MO2 impact we cannot know from YAML alone (wizard Expected changes)."""
+    by_id = pack_by_id or {}
+    enabled = list(enabled_names or [])
+    disabled = list(disabled_names or [])
+    dep_list = list(deps)
+
+    leaves: list[Dependency] = []
+    seen_leaf: set[str] = set()
+    for dep in dep_list:
+        try:
+            ids = expand_pack_composition(by_id, dep.id) if by_id else [dep.id]
+        except ValueError:
+            ids = [dep.id]
+        for lid in ids:
+            if lid in seen_leaf:
+                continue
+            seen_leaf.add(lid)
+            leaf = by_id.get(lid)
+            if leaf is not None:
+                leaves.append(leaf)
+            elif lid == dep.id:
+                leaves.append(dep)
+
+    lines: list[str] = []
+    seen_line: set[str] = set()
+
+    def _add(line: str) -> None:
+        key = line.lower()
+        if key in seen_line:
+            return
+        seen_line.add(key)
+        lines.append(line)
+
+    if mo2_root is not None:
+        for leaf in leaves:
+            if not (
+                leaf.url
+                or leaf.buy_url
+                or leaf.path
+                or leaf.source == "user"
+            ):
+                continue
+            ok_present, _folders = dep_is_satisfied(mo2_root, leaf)
+            if ok_present:
+                continue
+            if leaf.path:
+                _add(f"ADD: DOGMA [{leaf.path.replace(chr(92), '/')}]")
+            else:
+                _add(f"ADD: {MANAGED_FOLDER_PREFIX}{leaf.id}")
+
+    disable_patterns: list[str] = []
+    enable_patterns: list[str] = []
+    for leaf in leaves:
+        disable_patterns.extend(leaf.disables)
+        enable_patterns.extend(leaf.enables)
+    if feature is not None:
+        disable_patterns.extend(feature.disables)
+        enable_patterns.extend(feature.enables)
+
+    for name in mods_matching_patterns(enabled, disable_patterns):
+        _add(f"DISABLE: {name}")
+    for name in mods_matching_patterns(disabled, enable_patterns):
+        _add(f"ENABLED: {name}")
+
+    if mo2_root is not None:
+        for leaf in leaves:
+            if not leaf.has_axr_effects():
+                continue
+            ok_present, folders = dep_is_satisfied(mo2_root, leaf)
+            if folders:
+                for folder in folders:
+                    _add(f"CONFIGURE: {folder}")
+            elif leaf.path:
+                _add("CONFIGURE: DOGMA")
+            else:
+                _add(f"CONFIGURE: {MANAGED_FOLDER_PREFIX}{leaf.id}")
+        if feature is not None and feature.has_axr_effects():
+            _add("CONFIGURE: DOGMA")
+
+    console_cmds: list[str] = []
+    for leaf in leaves:
+        console_cmds.extend(leaf.console)
+    if feature is not None:
+        console_cmds.extend(feature.console)
+    for cmd in _unique_strs(console_cmds):
+        _add(f"RUN ONCE: {cmd}")
+
+    return lines
 
 
 def mod_matches(name: str, rules: Iterable[Rule]) -> Rule | None:
@@ -3686,6 +3858,291 @@ def resolve_moddb(
     return parsed
 
 
+# ---------------------------------------------------------------------------
+# GitHub page → release asset / tag archive / source archive
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class GithubInfo:
+    page_url: str
+    download_url: str = ""
+    filename: str = ""
+    tag: str = ""
+    kind: str = ""  # release | tag | source
+    updated: str = ""  # ISO or YYYY-MM-DD
+    title: str = ""
+    owner: str = ""
+    repo: str = ""
+
+
+def is_github_url(url: str) -> bool:
+    u = (url or "").lower()
+    return bool(u) and ("github.com/" in u or u.startswith("git@github.com:"))
+
+
+def parse_github_repo(url: str) -> tuple[str, str]:
+    """Return (owner, repo) from a github.com URL or git@github.com: SSH form."""
+    u = (url or "").strip()
+    if not u:
+        raise ValueError("empty GitHub URL")
+    m = re.search(
+        r"(?i)(?:github\.com[:/]|git@github\.com:)(?P<owner>[^/\s]+)/(?P<repo>[^/\s?#]+)",
+        u,
+    )
+    if not m:
+        raise ValueError(f"not a GitHub repo URL: {url!r}")
+    repo = m.group("repo")
+    if repo.lower().endswith(".git"):
+        repo = repo[:-4]
+    return m.group("owner"), repo
+
+
+def normalize_github_repo_url(url: str) -> str:
+    owner, repo = parse_github_repo(url)
+    return f"https://github.com/{owner}/{repo}"
+
+
+def _github_http_json(url: str) -> dict | list:
+    import urllib.error
+    import urllib.request
+
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "DOGMA-MO2/1.0 (+https://github.com/)",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=45) as resp:
+            return json.loads(resp.read().decode("utf-8", errors="replace"))
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return {}
+        raise RuntimeError(f"GitHub HTTP {exc.code} for {url}") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"GitHub fetch failed for {url}: {exc.reason}") from exc
+
+
+def _github_cache_path(cache_dir: Path | None) -> Path | None:
+    if cache_dir is None:
+        return None
+    return cache_dir / GITHUB_CACHE_NAME
+
+
+def _github_cache_load(cache_dir: Path | None) -> dict:
+    path = _github_cache_path(cache_dir)
+    if not path or not path.is_file():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _github_cache_save(cache_dir: Path | None, data: dict) -> None:
+    path = _github_cache_path(cache_dir)
+    if not path:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _git_ls_remote(repo_https: str, *args: str) -> list[tuple[str, str]]:
+    """Return [(sha, ref), ...] from ``git ls-remote``."""
+    cmd = ["git", "ls-remote", *args, repo_https]
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=90,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError(f"git ls-remote failed for {repo_https}: {exc}") from exc
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or "").strip()
+        raise RuntimeError(f"git ls-remote exit {proc.returncode}: {err or repo_https}")
+    rows: list[tuple[str, str]] = []
+    for line in (proc.stdout or "").splitlines():
+        parts = line.split()
+        if len(parts) >= 2:
+            rows.append((parts[0], parts[1]))
+    return rows
+
+
+def _github_tag_sort_key(tag: str) -> tuple:
+    nums = [int(x) for x in re.findall(r"\d+", tag)]
+    return (nums, tag.lower())
+
+
+def _pick_github_release_asset(
+    assets: list[dict],
+    *,
+    archive_name: str = "",
+) -> dict | None:
+    """Prefer archive assets; match archive_name when set; skip pdb dumps."""
+    archives: list[dict] = []
+    for raw in assets:
+        name = str(raw.get("name") or "")
+        if Path(name).suffix.lower() not in ARCHIVE_SUFFIXES:
+            continue
+        archives.append(raw)
+    if not archives:
+        return None
+
+    def _score(asset: dict) -> tuple:
+        name = str(asset.get("name") or "").lower()
+        pdb = 1 if "pdb" in name else 0
+        test = 1 if "mt-test" in name or "test" in name.split("_") else 0
+        return (pdb, test, len(name), name)
+
+    pool = archives
+    needle = (archive_name or "").strip().lower()
+    if needle:
+        matched = [
+            a
+            for a in archives
+            if needle in str(a.get("name") or "").lower()
+            or needle.replace(" ", "") in re.sub(r"[^a-z0-9]+", "", str(a.get("name") or "").lower())
+        ]
+        if matched:
+            pool = matched
+    return sorted(pool, key=_score)[0]
+
+
+def resolve_github(
+    url: str,
+    *,
+    archive_name: str = "",
+    cache_dir: Path | None = None,
+    force: bool = False,
+) -> GithubInfo:
+    """Resolve a GitHub repo/releases URL to a downloadable archive.
+
+    Order: latest release asset (API) → latest git tag archive → default-branch source.
+    """
+    raw = (url or "").strip()
+    if not raw or not is_github_url(raw):
+        raise ValueError(f"not a GitHub URL: {url!r}")
+
+    owner, repo = parse_github_repo(raw)
+    page = normalize_github_repo_url(raw)
+    cache_key = f"{page}|{archive_name}".lower()
+    cache = _github_cache_load(cache_dir)
+    cached = cache.get(cache_key) if not force else None
+    if isinstance(cached, dict) and cached.get("fetched_at") and cached.get("download_url"):
+        try:
+            age = datetime.now().timestamp() - float(cached["fetched_at"])
+        except (TypeError, ValueError):
+            age = GITHUB_CACHE_MAX_AGE_S + 1
+        if age <= GITHUB_CACHE_MAX_AGE_S:
+            return GithubInfo(
+                page_url=str(cached.get("page_url") or page),
+                download_url=str(cached.get("download_url") or ""),
+                filename=str(cached.get("filename") or ""),
+                tag=str(cached.get("tag") or ""),
+                kind=str(cached.get("kind") or ""),
+                updated=str(cached.get("updated") or ""),
+                title=str(cached.get("title") or ""),
+                owner=owner,
+                repo=repo,
+            )
+
+    info = GithubInfo(page_url=page, owner=owner, repo=repo, title=f"{owner}/{repo}")
+    api_latest = f"https://api.github.com/repos/{owner}/{repo}/releases/latest"
+    release = _github_http_json(api_latest)
+    if isinstance(release, dict) and release.get("tag_name"):
+        tag = str(release.get("tag_name") or "").strip()
+        info.tag = tag
+        info.updated = str(
+            release.get("published_at") or release.get("created_at") or ""
+        )
+        assets = release.get("assets") if isinstance(release.get("assets"), list) else []
+        asset = _pick_github_release_asset(
+            [a for a in assets if isinstance(a, dict)],
+            archive_name=archive_name,
+        )
+        if asset and asset.get("browser_download_url"):
+            info.kind = "release"
+            info.download_url = str(asset["browser_download_url"])
+            info.filename = str(asset.get("name") or "")
+        elif tag:
+            info.kind = "release"
+            info.download_url = (
+                f"https://github.com/{owner}/{repo}/archive/refs/tags/{tag}.zip"
+            )
+            info.filename = f"{repo}-{tag}.zip"
+
+    if not info.download_url:
+        # Latest tag via git (no GitHub API needed).
+        repo_git = f"https://github.com/{owner}/{repo}.git"
+        try:
+            rows = _git_ls_remote(repo_git, "--tags", "--refs")
+        except RuntimeError:
+            rows = []
+        tags: list[str] = []
+        for _sha, ref in rows:
+            if ref.startswith("refs/tags/"):
+                tags.append(ref[len("refs/tags/") :])
+        if tags:
+            tag = max(tags, key=_github_tag_sort_key)
+            info.kind = "tag"
+            info.tag = tag
+            info.download_url = (
+                f"https://github.com/{owner}/{repo}/archive/refs/tags/{tag}.zip"
+            )
+            info.filename = f"{repo}-{tag}.zip"
+
+    if not info.download_url:
+        # Default branch / HEAD source archive.
+        branch = "HEAD"
+        repo_git = f"https://github.com/{owner}/{repo}.git"
+        try:
+            rows = _git_ls_remote(repo_git, "--symref", "HEAD")
+            for _sha, ref in rows:
+                if ref.startswith("ref: refs/heads/"):
+                    branch = ref[len("ref: refs/heads/") :]
+                    break
+        except RuntimeError:
+            pass
+        info.kind = "source"
+        info.tag = branch
+        if branch == "HEAD":
+            info.download_url = f"https://github.com/{owner}/{repo}/archive/HEAD.zip"
+            info.filename = f"{repo}-HEAD.zip"
+        else:
+            info.download_url = (
+                f"https://github.com/{owner}/{repo}/archive/refs/heads/{branch}.zip"
+            )
+            info.filename = f"{repo}-{branch}.zip"
+
+    if not info.download_url:
+        raise RuntimeError(f"could not resolve GitHub download for {page}")
+
+    cache[cache_key] = {
+        "fetched_at": datetime.now().timestamp(),
+        "page_url": info.page_url,
+        "download_url": info.download_url,
+        "filename": info.filename,
+        "tag": info.tag,
+        "kind": info.kind,
+        "updated": info.updated,
+        "title": info.title,
+    }
+    _github_cache_save(cache_dir, cache)
+    return info
+
+
+def github_date_stamp(github: GithubInfo | None) -> str:
+    if not github:
+        return ""
+    return iso_to_date_stamp(github.updated) or iso_to_date_stamp(github.tag)
+
+
 def dep_url_candidates(dep: Dependency, moddb: ModdbInfo | None = None) -> list[str]:
     """URLs to match against Grok mods.txt / meta.ini."""
     out: list[str] = []
@@ -3713,6 +4170,11 @@ def dep_url_candidates(dep: Dependency, moddb: ModdbInfo | None = None) -> list[
         if fid:
             add(f"https://www.moddb.com/addons/start/{fid}")
             add(f"https://www.moddb.com/downloads/start/{fid}")
+    elif dep.url and is_github_url(dep.url):
+        try:
+            add(normalize_github_repo_url(dep.url))
+        except ValueError:
+            pass
     return out
 
 
@@ -4234,13 +4696,12 @@ def preview_install_packs(
 
 
 def preview_effect_sections(deps: Iterable[Dependency]) -> list[tuple[str, list[str]]]:
-    """Ordered (label, values) for wizard 'what this will do' lines."""
+    """Ordered (label, values) for wizard/FOMOD catalog effect lists."""
     dep_list = list(deps)
     disables: list[str] = []
     enables: list[str] = []
     deletes: list[str] = []
     resets: list[str] = []
-    console: list[str] = []
     moves: list[str] = []
     mcm: list[str] = []
     settings: list[str] = []
@@ -4249,7 +4710,6 @@ def preview_effect_sections(deps: Iterable[Dependency]) -> list[tuple[str, list[
         enables.extend(d.enables)
         deletes.extend(d.deletes)
         resets.extend(d.resets)
-        console.extend(d.console)
         moves.extend(f"{src} → {dst}" for src, dst in d.moves)
         mcm.extend(f"{k}={v}" for k, v in d.mcm.items())
         settings.extend(f"{k}={v}" for k, v in d.settings.items())
@@ -4266,7 +4726,6 @@ def preview_effect_sections(deps: Iterable[Dependency]) -> list[tuple[str, list[
         ("MCM", uniq(mcm)),
         ("Settings", uniq(settings)),
         ("Moves", uniq(moves)),
-        ("Console", uniq(console)),
     ):
         if items:
             sections.append((label, items))
@@ -4460,13 +4919,17 @@ def ensure_dep_archive(
     download_url: str,
     moddb: ModdbInfo | None,
     dry_run: bool,
+    github: GithubInfo | None = None,
 ) -> tuple[Path | None, str]:
     """Ensure downloads/DOGMA has the right archive; download if missing/stale.
 
     Returns (archive_path, note) where note is pinned|current|downloaded|missing|…
     Undated <id>.* is pinned and never replaced.
     """
-    remote_date = moddb_date_stamp(moddb)
+    remote_date = moddb_date_stamp(moddb) or github_date_stamp(github)
+    remote_filename = (moddb.filename if moddb else "") or (
+        github.filename if github else ""
+    )
     archive, status = resolve_local_archive(mo2_root, dep, remote_date=remote_date)
     if status == "pinned":
         info(f"  [{dep.id}] archive pinned (undated): {archive.name}")
@@ -4474,10 +4937,10 @@ def ensure_dep_archive(
     if status == "current" and archive:
         return archive, "current"
 
-    # stale or missing — need ModDB date for a stable name; fall back to undated id
+    # stale or missing — need remote date for a stable name; fall back to undated id
     target_date = remote_date
     if not target_date and status == "missing":
-        # No ModDB date: claim as undated <id>.*
+        # No remote date: claim as undated <id>.*
         target_date = ""
 
     if dep.source == "user":
@@ -4491,7 +4954,7 @@ def ensure_dep_archive(
     if status == "stale" and remote_date:
         info(
             f"  [{dep.id}] archive stale "
-            f"(have {archive.name if archive else '?'}; ModDB {remote_date})"
+            f"(have {archive.name if archive else '?'}; remote {remote_date})"
         )
     elif status == "missing":
         info(f"  [{dep.id}] archive missing; downloading")
@@ -4500,7 +4963,7 @@ def ensure_dep_archive(
         claimed = claim_download_as_zip(
             mo2_root,
             dep,
-            moddb_filename=(moddb.filename if moddb else ""),
+            moddb_filename=remote_filename,
             date=target_date,
             dry_run=True,
         )
@@ -4512,7 +4975,7 @@ def ensure_dep_archive(
     claimed = claim_download_as_zip(
         mo2_root,
         dep,
-        moddb_filename=(moddb.filename if moddb else ""),
+        moddb_filename=remote_filename,
         date=target_date,
         dry_run=False,
     )
@@ -4583,7 +5046,7 @@ def install_selected_feature_packages(
 def preview_feature_effect_sections(
     meta: FeatureMeta,
 ) -> list[tuple[str, list[str]]]:
-    """Wizard preview rows for a feature's own disables/enables/etc."""
+    """Wizard/FOMOD preview rows for a feature's own disables/enables/etc."""
     sections: list[tuple[str, list[str]]] = []
     if meta.disables:
         sections.append(("Disables", list(meta.disables)))
@@ -4595,10 +5058,8 @@ def preview_feature_effect_sections(
         sections.append(
             ("Moves", [f"{a} → {b}" for a, b in meta.moves])
         )
-    if meta.console:
-        sections.append(("Console", list(meta.console)))
     if meta.resets:
-        sections.append(("MCM resets", list(meta.resets)))
+        sections.append(("Resets MCM", list(meta.resets)))
     if meta.mcm:
         sections.append(("MCM", [f"{k}={v}" for k, v in meta.mcm.items()]))
     if meta.settings:
@@ -4700,6 +5161,7 @@ def process_dependency(
 
     tools = mo2_tools_dir(mo2_root)
     moddb: ModdbInfo | None = None
+    github: GithubInfo | None = None
     download_url = dep.url
     if dep.url and is_moddb_url(dep.url) and dep.source != "user":
         try:
@@ -4717,6 +5179,25 @@ def process_dependency(
                 info(f"  [{dep.id}] ModDB: {', '.join(bits)}")
         except (RuntimeError, ValueError, OSError) as exc:
             warn(f"  [{dep.id}] ModDB resolve failed ({exc}); using manifest URL")
+    elif dep.url and is_github_url(dep.url) and dep.source != "user":
+        try:
+            github = resolve_github(
+                dep.url,
+                archive_name=dep.archive_name,
+                cache_dir=tools,
+            )
+            download_url = github.download_url or dep.url
+            bits = [github.kind or "github"]
+            if github.tag:
+                bits.append(github.tag)
+            if github.filename:
+                bits.append(github.filename)
+            stamp = github_date_stamp(github)
+            if stamp:
+                bits.append(f"date {stamp}")
+            info(f"  [{dep.id}] GitHub: {', '.join(bits)}")
+        except (RuntimeError, ValueError, OSError) as exc:
+            warn(f"  [{dep.id}] GitHub resolve failed ({exc}); using manifest URL")
 
     ok_present, folders = dep_is_satisfied(mo2_root, dep, moddb=moddb)
     catalog = find_catalog_folders_for_urls(mo2_root, dep_url_candidates(dep, moddb))
@@ -4743,9 +5224,10 @@ def process_dependency(
         dep,
         download_url=download_url or "",
         moddb=moddb,
+        github=github,
         dry_run=dry_run,
     )
-    remote_date = moddb_date_stamp(moddb)
+    remote_date = moddb_date_stamp(moddb) or github_date_stamp(github)
 
     def _managed_dir() -> Path | None:
         if not managed:

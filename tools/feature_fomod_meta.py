@@ -8,7 +8,8 @@ Prints shell assignments (eval-safe)::
   FEATURE_ID='fx_thirst'
   FEATURE_DEFAULT='Recommended'
 
-Name = manifest key, desc = desc:, id = path with / → _ (same as package zip key).
+Name = manifest key, desc = desc: plus the same effect lists as Setup tooltips
+(Installs / Disables / Enables / … / Requires). id = path with / → _.
 """
 
 from __future__ import annotations
@@ -27,6 +28,27 @@ import dogma_mo2_lib as lib  # noqa: E402
 def _shell_quote(s: str) -> str:
     """Single-quote for POSIX eval (escape embedded quotes)."""
     return "'" + s.replace("'", "'\"'\"'") + "'"
+
+
+def _fomod_effect_text(data: lib.ManifestData, feat: str, meta: lib.FeatureMeta) -> str:
+    sections: list[tuple[str, list[str]]] = []
+    zname = f"{lib.feature_path_key(feat)}.zip"
+    sections.append(("Installs", [f"local package {zname} ({feat})"]))
+    if meta.depends:
+        sections.append(("Depends", list(meta.depends)))
+    sections.extend(lib.preview_feature_effect_sections(meta))
+    try:
+        deps = data.feature_pack_deps(feat)
+    except Exception:
+        deps = []
+    if deps:
+        pack_by_id = {d.id: d for d in data.mods}
+        installs = lib.preview_install_packs(deps, pack_by_id)
+        if installs:
+            sections.append(("Installs (depends)", installs))
+        for label, items in lib.preview_effect_sections(deps):
+            sections.append((label, items))
+    return lib.format_effect_lists_plain(sections)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -55,6 +77,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     name = meta.display_name
     desc = (dep.desc if dep else "") or f"D.O.G.M.A. feature: {name}"
+    effects = _fomod_effect_text(data, feat, meta)
+    if effects:
+        desc = f"{desc.rstrip()}\n\n{effects}"
     fid = lib.feature_path_key(feat)
     default = "Recommended"
 

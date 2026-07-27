@@ -52,6 +52,7 @@ _THEME = {
     "fg": "#e6e6e6",
     "fg_muted": "#9a9a9a",
     "fg_dim": "#777777",
+    "fg_expected": "#ffd666",
     "border": "#3c3c3c",
     "select_bg": "#3a3a3a",
     "select_fg": "#ffffff",
@@ -59,6 +60,7 @@ _THEME = {
     "accent": "#3ddc84",
     "button_bg": "#333333",
     "button_active": "#404040",
+    "tip_bg": "#2d2d2d",
 }
 
 
@@ -394,6 +396,7 @@ def _pack_link_text(
     dogma_dl: Path,
     wraplength: int = 900,
     padx: tuple[int, int] = (0, 0),
+    pady: tuple[int, int] = (4, 0),
     bold_spans: list[tuple[int, int]] | None = None,
     font_size: int = 10,
     foreground: str | None = None,
@@ -411,7 +414,7 @@ def _pack_link_text(
         width=max(8, wraplength // 8),
         height=1,
         padx=padx[0],
-        pady=padx[1],
+        pady=0,
         borderwidth=0,
         highlightthickness=0,
         background=bg,
@@ -463,7 +466,296 @@ def _pack_link_text(
     box.configure(state="disabled")
     lines = int(box.index("end-1c").split(".")[0])
     box.configure(height=max(1, lines))
-    box.pack(anchor="w", fill="x", pady=(4, 0))
+    box.pack(anchor="w", fill="x", pady=pady)
+
+class _HoverTip:
+    """Delayed hover tooltip with styled effect-list sections."""
+
+    def __init__(
+        self,
+        widget: tk.Misc,
+        sections_fn: Callable[[], list[tuple[str, list[str], str]]],
+        *,
+        delay_ms: int = 450,
+        hosts: list[tk.Misc] | None = None,
+    ) -> None:
+        self.widget = widget
+        self.hosts = list(hosts) if hosts else [widget]
+        self.sections_fn = sections_fn
+        self.delay_ms = delay_ms
+        self._after: str | None = None
+        self._hide_after: str | None = None
+        self._tip: tk.Toplevel | None = None
+        for w in self.hosts:
+            w.bind("<Enter>", self._schedule, add="+")
+            w.bind("<Leave>", self._leave, add="+")
+            w.bind("<ButtonPress>", self._hide, add="+")
+
+    def _schedule(self, _event: tk.Event | None = None) -> None:
+        self._cancel_hide()
+        self._cancel()
+        self._after = self.widget.after(self.delay_ms, self._show)
+
+    def _cancel(self) -> None:
+        if self._after is not None:
+            try:
+                self.widget.after_cancel(self._after)
+            except tk.TclError:
+                pass
+            self._after = None
+
+    def _cancel_hide(self) -> None:
+        if self._hide_after is not None:
+            try:
+                self.widget.after_cancel(self._hide_after)
+            except tk.TclError:
+                pass
+            self._hide_after = None
+
+    def _widget_under_pointer(self) -> tk.Misc | None:
+        try:
+            x = self.widget.winfo_pointerx()
+            y = self.widget.winfo_pointery()
+            return self.widget.winfo_containing(x, y)
+        except tk.TclError:
+            return None
+
+    def _is_under_tip(self, under: tk.Misc | None) -> bool:
+        tip = self._tip
+        if tip is None or under is None:
+            return False
+        cur: tk.Misc | None = under
+        while cur is not None:
+            if cur is tip:
+                return True
+            try:
+                # Stop at any Toplevel — tip is its own window.
+                if cur.winfo_class() == "Toplevel":
+                    break
+                cur = cur.master
+            except tk.TclError:
+                break
+        return False
+
+    def _is_under_host(self, under: tk.Misc | None) -> bool:
+        if under is None:
+            return False
+        cur: tk.Misc | None = under
+        while cur is not None:
+            if cur in self.hosts:
+                return True
+            try:
+                # Tip is Toplevel(root); never walk from another toplevel into hosts.
+                if cur.winfo_class() == "Toplevel":
+                    break
+                cur = cur.master
+            except tk.TclError:
+                break
+        return False
+
+    def _pointer_over_host(self) -> bool:
+        return self._is_under_host(self._widget_under_pointer())
+
+    def _pointer_over_tip(self) -> bool:
+        return self._is_under_tip(self._widget_under_pointer())
+
+    def _leave(self, _event: tk.Event | None = None) -> None:
+        self._cancel()
+        self._cancel_hide()
+        self._hide_after = self.widget.after(60, self._hide_if_left)
+
+    def _hide_if_left(self) -> None:
+        self._hide_after = None
+        # Stay up while over the control or the tip itself; hide once both are left.
+        if self._pointer_over_host() or self._pointer_over_tip():
+            return
+        self._hide()
+
+    def _hide(self, _event: tk.Event | None = None) -> None:
+        self._cancel()
+        self._cancel_hide()
+        if self._tip is not None:
+            try:
+                self._tip.destroy()
+            except tk.TclError:
+                pass
+            self._tip = None
+
+    def _show(self) -> None:
+        self._after = None
+        if not self._pointer_over_host():
+            return
+        sections = [
+            (label, items, kind)
+            for label, items, kind in self.sections_fn()
+            if items
+        ]
+        if not sections:
+            return
+        self._hide()
+        # Parent to the app root — not the host — so tip isn't in the host master chain.
+        tip = tk.Toplevel(self.widget.winfo_toplevel())
+        tip.wm_overrideredirect(True)
+        tip.attributes("-topmost", True)
+        frame = tk.Frame(
+            tip,
+            background=_THEME["tip_bg"],
+            highlightbackground=_THEME["border"],
+            highlightthickness=1,
+            padx=10,
+            pady=8,
+        )
+        frame.pack()
+        box = tk.Text(
+            frame,
+            wrap="word",
+            width=100,
+            height=1,
+            borderwidth=0,
+            highlightthickness=0,
+            background=_THEME["tip_bg"],
+            foreground=_THEME["fg"],
+            font=("Segoe UI", 9),
+            cursor="arrow",
+            relief="flat",
+        )
+        box.tag_configure("normal", foreground=_THEME["fg"])
+        box.tag_configure("expected", foreground=_THEME["fg_expected"])
+        first = True
+        for label, items, kind in sections:
+            tag = "expected" if kind == "expected" else "normal"
+            if not first:
+                box.insert("end", "\n\n", (tag,))
+            first = False
+            box.insert("end", f"{label}:\n", (tag,))
+            for i, item in enumerate(items):
+                if i:
+                    box.insert("end", "\n", (tag,))
+                box.insert("end", f"  • {item}", (tag,))
+        box.configure(state="disabled")
+        lines = int(box.index("end-1c").split(".")[0])
+        box.configure(height=max(1, min(28, lines)))
+        box.pack()
+        # Moving onto the tip cancels hide; leaving tip hides if not back on host.
+        for w in (tip, frame, box):
+            w.bind("<Enter>", lambda _e: self._cancel_hide(), add="+")
+            w.bind("<Leave>", self._leave, add="+")
+        tip.update_idletasks()
+        try:
+            x = self.widget.winfo_rootx() + 18
+            y = self.widget.winfo_rooty() + self.widget.winfo_height() + 4
+        except tk.TclError:
+            tip.destroy()
+            return
+        tip.wm_geometry(f"+{x}+{y}")
+        self._tip = tip
+
+def _attach_hover_tip(
+    widgets: list[tk.Misc],
+    sections_fn: Callable[[], list[tuple[str, list[str], str]]],
+) -> _HoverTip:
+    """Bind one tooltip to several widgets (indicator + label)."""
+    return _HoverTip(widgets[0], sections_fn, hosts=widgets)
+
+
+def _pack_hoverable_choice(
+    parent: tk.Misc,
+    *,
+    kind: str,
+    text: str,
+    variable: tk.Variable,
+    value: object | None = None,
+    command: Callable[[], None] | None = None,
+    sections_fn: Callable[[], list[tuple[str, list[str], str]]],
+) -> ttk.Checkbutton | ttk.Radiobutton:
+    """Checkbox/radio with dotted underline under the label (hover = tooltip)."""
+    row = ttk.Frame(parent)
+    row.pack(anchor="w")
+
+    if kind == "check":
+        btn: ttk.Checkbutton | ttk.Radiobutton = ttk.Checkbutton(
+            row,
+            text="",
+            style="Dogma.TCheckbutton",
+            variable=variable,
+            command=command,
+            width=0,
+        )
+    else:
+        btn = ttk.Radiobutton(
+            row,
+            text="",
+            style="Dogma.TRadiobutton",
+            variable=variable,
+            value="" if value is None else value,
+            command=command,
+            width=0,
+        )
+    btn.pack(side="left", padx=(0, 4))
+
+    text_col = ttk.Frame(row)
+    text_col.pack(side="left", anchor="w")
+    bg = _frame_bg(parent)
+    lbl = tk.Label(
+        text_col,
+        text=text,
+        background=bg,
+        foreground=_THEME["fg"],
+        font=("Segoe UI", 10),
+        cursor="hand2",
+        borderwidth=0,
+        padx=0,
+        pady=0,
+    )
+    lbl.pack(anchor="w")
+
+    underline = tk.Canvas(
+        text_col,
+        height=3,
+        highlightthickness=0,
+        background=bg,
+        borderwidth=0,
+    )
+    underline.pack(anchor="w", fill="x")
+
+    def _redraw_underline(_event: tk.Event | None = None) -> None:
+        underline.delete("all")
+        w = max(int(lbl.winfo_reqwidth()), 8)
+        underline.configure(width=w)
+        # Dotted rule under the label — marks the control as hoverable.
+        underline.create_line(
+            0,
+            1,
+            w,
+            1,
+            fill=_THEME["fg_muted"],
+            dash=(1, 2),
+            width=1,
+        )
+
+    lbl.bind("<Configure>", _redraw_underline, add="+")
+    text_col.after_idle(_redraw_underline)
+
+    def _activate(_event: tk.Event | None = None) -> None:
+        if kind == "check":
+            variable.set(not bool(variable.get()))
+        else:
+            variable.set("" if value is None else value)
+        if command is not None:
+            command()
+
+    for w in (lbl, underline):
+        w.bind("<Button-1>", _activate, add="+")
+
+    _attach_hover_tip([btn, lbl, underline, row], sections_fn)
+    return btn
+
+
+def _desc_spacer(parent: tk.Misc) -> None:
+    """Visible gap after description / instruction text."""
+    gap = tk.Frame(parent, height=10, background=_frame_bg(parent), borderwidth=0)
+    gap.pack_propagate(False)
+    gap.pack(fill="x")
 
 
 def _inline_link(parent: tk.Misc, text: str, command: Callable[[], None]) -> tk.Label:
@@ -503,7 +795,7 @@ def _title_row(
     *,
     url: str = "",
 ) -> None:
-    """Big title; optional URL on the next line (outside the option box)."""
+    """Big title; optional ModDB URL on the next line (outside the option box)."""
     block = ttk.Frame(parent)
     block.pack(fill="x", pady=(10, 2))
     ttk.Label(
@@ -515,6 +807,13 @@ def _title_row(
         _inline_link(block, url, lambda u=url: webbrowser.open(u)).pack(
             anchor="w", pady=(2, 0)
         )
+
+
+def _url_display_link(dep: lib.Dependency | None) -> str:
+    """Inline link under titles/radios: ``url:`` only (never ``buy_url:``)."""
+    if dep is None:
+        return ""
+    return (dep.url or "").strip()
 
 
 def _pack_blurb(dep: lib.Dependency | None) -> str:
@@ -633,7 +932,9 @@ def run_wizard(
         lib.apply_feature_option_defaults(data, installed_feats)
     initial_picks = dict(initial.exclusive_picks)
 
-    # Batch console stays open for post-wizard jobs; hide it during the GUI.
+    # Hide the launching console while the Tk wizard is up. Leave it hidden when
+    # the wizard closes (cancel → process exits; Install → batch jobs keep logging
+    # to the hidden console / log file). Failure paths re-show before pause.
     console_hwnd = _console_hwnd()
     _set_console_visible(console_hwnd, False)
     try:
@@ -649,8 +950,9 @@ def run_wizard(
             initial_picks=initial_picks,
             min_stage=min_stage,
         )
-    finally:
+    except Exception:
         _set_console_visible(console_hwnd, True)
+        raise
 
 
 def _run_wizard_ui(
@@ -784,26 +1086,8 @@ def _run_wizard_ui(
             _expand_desc(desc, mo2_root=mo2_root, dogma_dl=dogma_dl),
             dogma_dl=dogma_dl,
             wraplength=col_wrap,
+            pady=(4, 6),
         )
-
-    def _add_meta_lines(
-        parent: ttk.Frame,
-        sections: list[tuple[str, list[str]]],
-    ) -> None:
-        for label, items in sections:
-            if not items:
-                continue
-            bullets = "\n".join(f"• {item}" for item in items)
-            text = f"{label}:\n{bullets}"
-            text = _expand_desc(text, mo2_root=mo2_root, dogma_dl=dogma_dl)
-            _pack_link_text(
-                parent,
-                text,
-                dogma_dl=dogma_dl,
-                wraplength=col_wrap,
-                font_size=8,
-                foreground=_THEME["fg_dim"],
-            )
 
     def _add_instructions(parent: ttk.Frame, deps: list[lib.Dependency]) -> None:
         text, _bold = _manual_instruction_text(deps, dogma_dl=dogma_dl)
@@ -817,27 +1101,92 @@ def _run_wizard_ui(
             dogma_dl=dogma_dl,
             wraplength=col_wrap,
             bold_spans=bold2,
+            pady=(4, 6),
         )
 
-    def _effect_sections_for(deps: list[lib.Dependency]) -> list[tuple[str, list[str]]]:
+    def _catalog_sections_for(
+        deps: list[lib.Dependency],
+        *,
+        feature: lib.FeatureMeta | None = None,
+        requires: list[str] | None = None,
+        path_pack: lib.Dependency | None = None,
+    ) -> list[tuple[str, list[str], str]]:
+        sections: list[tuple[str, list[str], str]] = []
+        if requires:
+            sections.append(("Requires", list(requires), "normal"))
+        if path_pack is not None and path_pack.path:
+            zname = f"{lib.feature_path_key(path_pack.path)}.zip"
+            sections.append(
+                ("Installs", [f"local package {zname} ({path_pack.path})"], "normal")
+            )
+            if path_pack.depends:
+                sections.append(("Depends", list(path_pack.depends), "normal"))
+            if feature is not None:
+                for label, items in lib.preview_feature_effect_sections(feature):
+                    sections.append((label, items, "normal"))
+            # Depends-only packs (skip the path pack itself — covered by feature rows).
+            depend_deps = [d for d in deps if d.id != path_pack.id]
+            for label, items in _effect_deps_for(depend_deps):
+                if label == "Installs":
+                    sections.append(("Installs (depends)", items, "normal"))
+                else:
+                    sections.append((label, items, "normal"))
+        else:
+            for label, items in _effect_deps_for(deps):
+                sections.append((label, items, "normal"))
+        return sections
+
+    def _effect_deps_for(
+        deps: list[lib.Dependency],
+    ) -> list[tuple[str, list[str]]]:
         installs = lib.preview_install_packs(deps, pack_by_id)
         sections: list[tuple[str, list[str]]] = []
         if installs:
             sections.append(("Installs", installs))
         sections.extend(lib.preview_effect_sections(deps))
-        hit = lib.preview_disables_for_deps(deps, enabled_mods)
-        if hit:
-            sections.append(("Currently enabled (will disable)", hit))
+        return sections
+
+    def _expected_for(
+        deps: list[lib.Dependency],
+        *,
+        feature: lib.FeatureMeta | None = None,
+    ) -> list[str]:
+        return lib.preview_expected_changes(
+            mo2_root,
+            deps,
+            pack_by_id=pack_by_id,
+            enabled_names=enabled_mods,
+            disabled_names=disabled_mods,
+            feature=feature,
+        )
+
+    def _tooltip_sections_for(
+        deps: list[lib.Dependency],
+        *,
+        feature: lib.FeatureMeta | None = None,
+        requires: list[str] | None = None,
+        path_pack: lib.Dependency | None = None,
+    ) -> list[tuple[str, list[str], str]]:
+        sections = _catalog_sections_for(
+            deps, feature=feature, requires=requires, path_pack=path_pack
+        )
+        expected = _expected_for(deps, feature=feature)
+        if expected:
+            sections.append(("Expected changes", expected, "expected"))
         return sections
 
     enabled_mods: list[str] = []
+    disabled_mods: list[str] = []
     try:
         modlist = lib.modlist_path(mo2_root)
-        enabled_mods = [
-            n for f, n in lib.list_modlist_entries(modlist) if f == "+"
-        ]
+        for flag, name in lib.list_modlist_entries(modlist):
+            if flag == "+":
+                enabled_mods.append(name)
+            elif flag == "-":
+                disabled_mods.append(name)
     except (OSError, FileNotFoundError, ValueError):
         enabled_mods = []
+        disabled_mods = []
 
     def _deps_for_option(opt: lib.InstallerOption) -> list[lib.Dependency]:
         if opt.id in data.features:
@@ -853,40 +1202,7 @@ def _run_wizard_ui(
     def _selected_option_ids() -> list[str]:
         return [oid for oid, bv in bool_vars.items() if bv.get()]
 
-    option_meta_frames: dict[str, ttk.Frame] = {}
     opt_by_id = {o.id: o for o in options}
-
-    def _refresh_option_meta(opt_id: str) -> None:
-        frame = option_meta_frames.get(opt_id)
-        if frame is None:
-            return
-        for child in frame.winfo_children():
-            child.destroy()
-        opt = opt_by_id.get(opt_id)
-        if not opt:
-            return
-        sections: list[tuple[str, list[str]]] = []
-        if opt.requires:
-            sections.append(("Requires", list(opt.requires)))
-        pack = pack_by_id.get(opt_id)
-        if pack is not None and pack.path:
-            zname = f"{lib.feature_path_key(pack.path)}.zip"
-            sections.append(("Installs", [f"local package {zname} ({pack.path})"]))
-            if pack.depends:
-                sections.append(("Depends", list(pack.depends)))
-            feat = data.features.get(pack.path)
-            if feat is not None:
-                sections.extend(lib.preview_feature_effect_sections(feat))
-            deps = _deps_for_option(opt)
-            for label, items in _effect_sections_for(deps):
-                if label == "Installs":
-                    sections.append(("Installs (depends)", items))
-                else:
-                    sections.append((label, items))
-        else:
-            deps = _deps_for_option(opt)
-            sections.extend(_effect_sections_for(deps))
-        _add_meta_lines(frame, sections)
 
     def _sync_exclusive_requirements(*_args: object) -> None:
         required = lib.required_exclusive_groups(data, _selected_option_ids())
@@ -900,8 +1216,6 @@ def _run_wizard_ui(
             else:
                 if none_btn is not None:
                     none_btn.state(["!disabled"])
-        for oid in option_meta_frames:
-            _refresh_option_meta(oid)
 
     def _select_all() -> None:
         for oid in page_option_ids:
@@ -925,10 +1239,12 @@ def _run_wizard_ui(
     def _add_option_block(opt: lib.InstallerOption) -> None:
         pack = pack_by_id.get(opt.id)
         feat = data.features.get(opt.id)
+        if pack is not None and pack.path:
+            feat = data.features.get(pack.path) or feat
         title = opt.id
         url = ""
         if pack is not None:
-            url = pack.url or pack.buy_url or ""
+            url = _url_display_link(pack)
             if pack.path and not title:
                 title = pack.id
         elif feat is not None:
@@ -945,34 +1261,45 @@ def _run_wizard_ui(
         bv = tk.BooleanVar(value=checked)
         bool_vars[opt.id] = bv
         page_option_ids.append(opt.id)
-        ttk.Checkbutton(
+
+        def _opt_sections(
+            o: lib.InstallerOption = opt,
+            p: lib.Dependency | None = pack,
+            f: lib.FeatureMeta | None = feat,
+        ) -> list[tuple[str, list[str], str]]:
+            return _tooltip_sections_for(
+                _deps_for_option(o),
+                feature=f if p is not None and p.path else None,
+                requires=list(o.requires),
+                path_pack=p if p is not None and p.path else None,
+            )
+
+        _pack_hoverable_choice(
             frame,
+            kind="check",
             text="Install",
-            style="Dogma.TCheckbutton",
             variable=bv,
             command=_sync_exclusive_requirements,
-        ).pack(anchor="w")
+            sections_fn=_opt_sections,
+        )
         if pack is not None:
             _add_desc(frame, _pack_blurb(pack))
             if pack.path:
                 _add_desc(frame, f"Local path mod: {pack.path}")
             _add_instructions(frame, [pack])
+            _desc_spacer(frame)
         elif feat is not None:
             if opt.desc.strip():
                 _add_desc(frame, opt.desc)
             step_deps = [pack_by_id[m] for m in opt.mods if m in pack_by_id]
             _add_instructions(frame, step_deps)
-        meta = ttk.Frame(frame)
-        meta.pack(anchor="w", fill="x")
-        option_meta_frames[opt.id] = meta
+            _desc_spacer(frame)
 
     def _add_radio_block(group: str) -> None:
         packs = radio_groups[group]
         parent = pack_by_id.get(group)
         title = lib.radio_group_title(group, packs, parent=parent)
-        parent_url = ""
-        if parent is not None:
-            parent_url = parent.url or parent.buy_url or ""
+        parent_url = _url_display_link(parent)
         _title_row(options_col, title, url=parent_url)
         frame = ttk.LabelFrame(options_col, text="", padding=(12, 10))
         frame.pack(fill="x", pady=(0, 4), padx=2)
@@ -981,6 +1308,7 @@ def _run_wizard_ui(
 
         if parent is not None and parent.desc.strip():
             _add_desc(frame, parent.desc)
+            _desc_spacer(frame)
 
         none_btn = ttk.Radiobutton(
             frame,
@@ -994,16 +1322,24 @@ def _run_wizard_ui(
 
         for pack in packs:
             label = pack.choice or pack.id
-            choice_url = pack.url or pack.buy_url or ""
+            choice_url = _url_display_link(pack)
             head = ttk.Frame(frame)
             head.pack(anchor="w", fill="x", pady=(6, 0))
-            ttk.Radiobutton(
+
+            def _radio_sections(
+                g: str = group, p: lib.Dependency = pack
+            ) -> list[tuple[str, list[str], str]]:
+                return _tooltip_sections_for(_preview_deps_for_choice(g, p))
+
+            _pack_hoverable_choice(
                 head,
+                kind="radio",
                 text=label,
-                style="Dogma.TRadiobutton",
                 variable=var,
                 value=pack.id,
-            ).pack(anchor="w")
+                command=_sync_exclusive_requirements,
+                sections_fn=_radio_sections,
+            )
             if choice_url:
                 _inline_link(
                     head, choice_url, lambda u=choice_url: webbrowser.open(u)
@@ -1012,7 +1348,6 @@ def _run_wizard_ui(
             sub = ttk.Frame(frame)
             sub.pack(anchor="w", fill="x", padx=(24, 0))
             _add_desc(sub, _pack_blurb(pack))
-            preview_deps = _preview_deps_for_choice(group, pack)
             step_deps = []
             try:
                 leaf_ids = lib.expand_pack_composition(pack_by_id, pack.id)
@@ -1023,7 +1358,7 @@ def _run_wizard_ui(
                 if leaf is not None:
                     step_deps.append(leaf)
             _add_instructions(sub, step_deps)
-            _add_meta_lines(sub, _effect_sections_for(preview_deps))
+            _desc_spacer(sub)
 
     for kind, sid in lib.wizard_section_order(data, min_stage=min_stage):
         if kind == "radio":
@@ -1058,6 +1393,7 @@ def _run_wizard_ui(
             ).pack(anchor="w")
             if action.desc.strip():
                 _add_desc(frame, action.desc)
+                _desc_spacer(frame)
 
     _sync_exclusive_requirements()
 

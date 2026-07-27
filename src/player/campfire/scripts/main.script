@@ -1,11 +1,15 @@
 --[[
 	Campfire heal (Body Health System + main HP).
 
+	Each tick = exactly 1 point:
+	  - Limb: +1 BHS point (temp or perm convert)
+	  - Body: +0.01 actor health (1%)
+
 	Each tick, one step in order:
 	  1. Random limb: +1 temp until every limb total >= temp_fill% (slider 0–75).
 	  2. Random limb: convert 1 temp→perm (perm up to 100%) until no temp left.
-	  3. Body: +temp main HP until health >= temp_fill%.
-	  4. Body: convert body temp→perm until none left.
+	  3. Body: +0.01 temp main HP until health >= temp_fill%.
+	  4. Body: convert 0.01 body temp→perm until none left.
 
 	temp_fill 0% → skip steps 1 and 3 (no auto temp); still run 2 and 4
 	to convert any existing temp (medkits / leftover body temp).
@@ -18,28 +22,46 @@ local DOGMA
 
 local LIMBS = { "head", "torso", "rightarm", "leftarm", "rightleg", "leftleg" }
 local RANGE_SQR = 10 * 10
-local MAIN_HEAL = 0.01 -- 1% body HP per temp tick
+-- 1 point per tick: BHS limbs use integer HP; actor.health is 0..1 so 1% = 0.01
+local BODY_HEAL_PT = 0.01
 local BODY_TEMP_KEY = "dogma.campfire.body_temp"
 
 local next_tick = 0
+local cached_interval_sec = 1
+local cached_temp_fill_frac = 0.75
 
-local function interval_ms()
-	local sec = DOGMA and DOGMA.mcm.number(CONFIG.MOD_ID, "interval", CONFIG.DEFAULTS.interval) or CONFIG.DEFAULTS.interval
+local function refresh_settings()
+	local sec = 1
+	local pct = 75
+	if DOGMA and DOGMA.mcm then
+		sec = DOGMA.mcm.number(CONFIG.MOD_ID, "interval", CONFIG.DEFAULTS.interval)
+		pct = DOGMA.mcm.number(CONFIG.MOD_ID, "temp_fill", CONFIG.DEFAULTS.temp_fill)
+	elseif CONFIG and CONFIG.DEFAULTS then
+		sec = CONFIG.DEFAULTS.interval or 1
+		pct = CONFIG.DEFAULTS.temp_fill or 75
+	end
+	sec = tonumber(sec) or 1
+	pct = tonumber(pct) or 75
 	if sec < 1 then
 		sec = 1
+	elseif sec > 30 then
+		sec = 30
 	end
-	return sec * 1000
-end
-
--- Fraction 0..0.75. Slider is stored as 0–75 percent.
-local function temp_fill_frac()
-	local pct = DOGMA and DOGMA.mcm.number(CONFIG.MOD_ID, "temp_fill", CONFIG.DEFAULTS.temp_fill) or CONFIG.DEFAULTS.temp_fill
 	if pct < 0 then
 		pct = 0
 	elseif pct > 75 then
 		pct = 75
 	end
-	return pct / 100
+	cached_interval_sec = sec
+	cached_temp_fill_frac = pct / 100
+end
+
+local function interval_ms()
+	return math.floor(cached_interval_sec * 1000)
+end
+
+local function temp_fill_frac()
+	return cached_temp_fill_frac
 end
 
 local function near_lit_campfire()
@@ -166,7 +188,7 @@ local function heal_body_temp(frac)
 	if not actor or frac <= 0 or actor.health >= frac then
 		return false
 	end
-	local amt = math.min(MAIN_HEAL, frac - actor.health)
+	local amt = math.min(BODY_HEAL_PT, frac - actor.health)
 	if amt <= 0 then
 		return false
 	end
@@ -189,7 +211,7 @@ local function heal_body_perm()
 	if body_temp <= 0 then
 		return false
 	end
-	local amt = math.min(MAIN_HEAL, body_temp)
+	local amt = math.min(BODY_HEAL_PT, body_temp)
 	body_temp = body_temp - amt
 	if body_temp < 0 then
 		body_temp = 0
@@ -266,13 +288,20 @@ local function actor_on_update()
 	if now < next_tick then
 		return
 	end
+	-- Arm timer before heal so a slow heal can't double-fire.
 	next_tick = now + interval_ms()
 	if near_lit_campfire() then
 		tick_heal()
 	end
 end
 
+local function on_option_change()
+	refresh_settings()
+end
+
 function on_game_start()
 	DOGMA = dogma_common.load(CONFIG.MOD_ID)
+	refresh_settings()
 	RegisterScriptCallback("actor_on_update", actor_on_update)
+	RegisterScriptCallback("on_option_change", on_option_change)
 end

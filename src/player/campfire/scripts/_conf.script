@@ -1,12 +1,11 @@
 -- player/campfire conf
--- Lit campfire heal: limb temp → limb perm → body temp → body perm.
--- temp_fill (0–75%): auto-applied temp cap; 0 = convert-only (no new temp).
--- Interval max 30s (base GAMMA Campfire); default 1s.
+-- Lit campfire: convert existing limb temp→perm, heal body to full (async rates).
+-- body_sec / limb_sec: seconds for a 20% step (5–30, default 5).
 
 _G.dogma_player_campfire_conf = {
 	MOD_ID = "dogma/player/campfire",
 	DEFAULTS = {
-		["interval"] = 1,
-		["temp_fill"] = 75,
+		["body_sec"] = 5,
+		["limb_sec"] = 5,
 	},
 }

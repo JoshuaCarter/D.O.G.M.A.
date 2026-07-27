@@ -595,33 +595,6 @@ class InstallerOption:
 
 
 @dataclass
-class WizardAction:
-    """One-off Setup checkbox (not a mod install)."""
-
-    id: str
-    title: str
-    desc: str = ""
-    default: bool = True
-
-
-# Built-in wizard actions (not catalog mods).
-WIZARD_ACTION_SFX = "sfx"
-WIZARD_ACTIONS: tuple[WizardAction, ...] = (
-    WizardAction(
-        id=WIZARD_ACTION_SFX,
-        title="Rebuild SFX Prefetch List",
-        desc=(
-            "One-off: scan enabled mods for loose sounds and write "
-            "overwrite/gamedata/configs/dogma_sfx_prefetch.ltx. "
-            "Use after changing sound mods (or run DOGMA SFX Prefetch.bat). "
-            "Log: mo2/logs/dogma_sfx_prefetch.log."
-        ),
-        default=True,
-    ),
-)
-
-
-@dataclass
 class InstallerSelection:
     """Saved wizard result: checkbox options + pack option picks."""
 
@@ -632,8 +605,19 @@ class InstallerSelection:
     # (even if zero features checked). Distinguishes "user cleared features"
     # from legacy selections that predate page 2.
     features_chosen: bool = False
-    # One-off actions from this wizard run (e.g. sfx). Not re-run by Update.
-    actions: list[str] = field(default_factory=list)
+
+
+DOGMA_NAME_PREFIX = "D.O.G.M.A."
+
+
+def with_dogma_prefix(name: str) -> str:
+    """Prefix a D.O.G.M.A. path-mod display name if not already prefixed."""
+    n = (name or "").strip()
+    if not n:
+        return n
+    if n.upper().startswith("D.O.G.M.A."):
+        return n
+    return f"{DOGMA_NAME_PREFIX} {n}"
 
 
 @dataclass
@@ -660,7 +644,7 @@ class FeatureMeta:
 
     @property
     def display_name(self) -> str:
-        return (self.title or self.path).strip() or self.path
+        return with_dogma_prefix((self.title or self.path).strip() or self.path)
 
     @property
     def level(self) -> str:
@@ -2510,19 +2494,16 @@ def save_installer_selection(
         option_ids = list(selection.option_ids)
         picks = dict(selection.exclusive_picks)
         features_chosen = bool(selection.features_chosen)
-        actions = [str(a).strip() for a in selection.actions if str(a).strip()]
     else:
         option_ids = list(selection)
         picks = dict(exclusive_picks or {})
         features_chosen = False
-        actions = []
     path = selection_path(mo2_root)
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "installer_options": option_ids,
         "exclusive": picks,
         "features_chosen": features_chosen,
-        "actions": actions,
     }
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     return path
@@ -2549,18 +2530,10 @@ def load_installer_selection(mo2_root: Path) -> InstallerSelection | None:
         if str(g).strip()
     }
     features_chosen = bool(raw.get("features_chosen"))
-    actions_raw = raw.get("actions") if isinstance(raw.get("actions"), list) else []
-    known_actions = {a.id for a in WIZARD_ACTIONS}
-    actions = [
-        str(x).strip()
-        for x in actions_raw
-        if str(x).strip() and str(x).strip() in known_actions
-    ]
     return InstallerSelection(
         option_ids=option_ids,
         exclusive_picks=picks,
         features_chosen=features_chosen,
-        actions=actions,
     )
 
 
@@ -2593,7 +2566,6 @@ def sanitize_installer_selection(
         option_ids=kept,
         exclusive_picks=dict(selection.exclusive_picks),
         features_chosen=selection.features_chosen,
-        actions=list(selection.actions),
     )
 
 
@@ -4446,6 +4418,37 @@ def game_dir(mo2_root: Path) -> Path:
     return Path(raw)
 
 
+def expand_path_placeholders(text: str, mo2_root: Path | None) -> str:
+    """Replace ``<Anomaly>`` / ``<GAMMA>`` with resolved paths when known."""
+    if not text or mo2_root is None:
+        return text
+    out = text
+    gamma = str(Path(mo2_root).resolve()).replace("/", "\\")
+    out = out.replace("<GAMMA>", gamma).replace("<gamma>", gamma)
+    try:
+        game = str(game_dir(mo2_root)).replace("/", "\\")
+        if game.strip():
+            out = out.replace("<Anomaly>", game).replace("<anomaly>", game)
+    except (OSError, FileNotFoundError, ValueError):
+        pass
+    return out
+
+
+def format_preview_path(mo2_root: Path | None, raw: str) -> str:
+    """Display path for wizard/FOMOD previews (resolved when MO2 root is known)."""
+    s = (raw or "").strip()
+    if not s:
+        return s
+    if mo2_root is not None:
+        try:
+            resolved = resolve_managed_path(mo2_root, s)
+            if resolved is not None:
+                return str(resolved).replace("/", "\\")
+        except (OSError, FileNotFoundError, ValueError):
+            pass
+    return expand_path_placeholders(s, mo2_root)
+
+
 # deletes: path roots — <Anomaly> = gamePath, <GAMMA> = MO2 instance
 _PATH_ROOT_RE = re.compile(
     r"^(?:<(anomaly|gamma)>|(anomaly|gamma|game|mo2):)[/\\]?(.*)$",
@@ -4695,7 +4698,11 @@ def preview_install_packs(
     return out
 
 
-def preview_effect_sections(deps: Iterable[Dependency]) -> list[tuple[str, list[str]]]:
+def preview_effect_sections(
+    deps: Iterable[Dependency],
+    *,
+    mo2_root: Path | None = None,
+) -> list[tuple[str, list[str]]]:
     """Ordered (label, values) for wizard/FOMOD catalog effect lists."""
     dep_list = list(deps)
     disables: list[str] = []
@@ -4708,9 +4715,11 @@ def preview_effect_sections(deps: Iterable[Dependency]) -> list[tuple[str, list[
     for d in dep_list:
         disables.extend(d.disables)
         enables.extend(d.enables)
-        deletes.extend(d.deletes)
+        deletes.extend(format_preview_path(mo2_root, p) for p in d.deletes)
         resets.extend(d.resets)
-        moves.extend(f"{src} → {dst}" for src, dst in d.moves)
+        moves.extend(
+            f"{src} → {format_preview_path(mo2_root, dst)}" for src, dst in d.moves
+        )
         mcm.extend(f"{k}={v}" for k, v in d.mcm.items())
         settings.extend(f"{k}={v}" for k, v in d.settings.items())
 
@@ -5045,6 +5054,8 @@ def install_selected_feature_packages(
 
 def preview_feature_effect_sections(
     meta: FeatureMeta,
+    *,
+    mo2_root: Path | None = None,
 ) -> list[tuple[str, list[str]]]:
     """Wizard/FOMOD preview rows for a feature's own disables/enables/etc."""
     sections: list[tuple[str, list[str]]] = []
@@ -5053,10 +5064,18 @@ def preview_feature_effect_sections(
     if meta.enables:
         sections.append(("Enables", list(meta.enables)))
     if meta.deletes:
-        sections.append(("Deletes", list(meta.deletes)))
+        sections.append(
+            ("Deletes", [format_preview_path(mo2_root, p) for p in meta.deletes])
+        )
     if meta.moves:
         sections.append(
-            ("Moves", [f"{a} → {b}" for a, b in meta.moves])
+            (
+                "Moves",
+                [
+                    f"{a} → {format_preview_path(mo2_root, b)}"
+                    for a, b in meta.moves
+                ],
+            )
         )
     if meta.resets:
         sections.append(("Resets MCM", list(meta.resets)))

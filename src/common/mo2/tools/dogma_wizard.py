@@ -73,19 +73,9 @@ def _expand_desc(text: str, *, mo2_root: Path, dogma_dl: Path) -> str:
     """Replace placeholders; show downloads folder with backslashes only."""
     if not text:
         return text
-    game = ""
-    try:
-        gd = lib.game_dir(mo2_root)
-        if str(gd).strip():
-            game = _win_path(gd)
-    except Exception:
-        game = ""
-    gamma = _win_path(mo2_root)
     folder = _win_path(dogma_dl)
-    out = text.replace("<GAMMA>", gamma).replace("<gamma>", gamma)
+    out = lib.expand_path_placeholders(text, mo2_root)
     out = out.replace("<DOGMA_DOWNLOADS>", folder).replace("<dogma_downloads>", folder)
-    if game:
-        out = out.replace("<Anomaly>", game).replace("<anomaly>", game)
     out = re.sub(
         r"(?i)(?:[A-Za-z]:[/\\](?:[^/\\\s]+[/\\])*?)?downloads[/\\]DOGMA",
         lambda _m: folder,
@@ -627,11 +617,17 @@ class _HoverTip:
             if not first:
                 box.insert("end", "\n\n", (tag,))
             first = False
-            box.insert("end", f"{label}:\n", (tag,))
-            for i, item in enumerate(items):
-                if i:
-                    box.insert("end", "\n", (tag,))
-                box.insert("end", f"  • {item}", (tag,))
+            if label:
+                box.insert("end", f"{label}:\n", (tag,))
+                for i, item in enumerate(items):
+                    if i:
+                        box.insert("end", "\n", (tag,))
+                    box.insert("end", f"  • {item}", (tag,))
+            else:
+                for i, item in enumerate(items):
+                    if i:
+                        box.insert("end", "\n", (tag,))
+                    box.insert("end", item, (tag,))
         box.configure(state="disabled")
         lines = int(box.index("end-1c").split(".")[0])
         box.configure(height=max(1, min(28, lines)))
@@ -658,6 +654,66 @@ def _attach_hover_tip(
     return _HoverTip(widgets[0], sections_fn, hosts=widgets)
 
 
+def _attach_text_tip(widgets: list[tk.Misc], text: str) -> _HoverTip:
+    """Plain one-line hover tip (full URL / path)."""
+    tip_text = text
+
+    def _sections() -> list[tuple[str, list[str], str]]:
+        return [("", [tip_text], "normal")] if tip_text else []
+
+    return _HoverTip(widgets[0], _sections, hosts=widgets, delay_ms=350)
+
+
+def _pack_dotted_link(
+    parent: tk.Misc,
+    *,
+    text: str,
+    tip: str,
+    command: Callable[[], None],
+    font_size: int = 10,
+    bold: bool = False,
+) -> ttk.Frame:
+    """Clickable dotted-underline label with a hover tip showing the full target."""
+    col = ttk.Frame(parent)
+    bg = _frame_bg(parent)
+    font: tuple = ("Segoe UI", font_size, "bold") if bold else ("Segoe UI", font_size)
+    lbl = tk.Label(
+        col,
+        text=text,
+        background=bg,
+        foreground=_THEME["link"],
+        font=font,
+        cursor="hand2",
+        borderwidth=0,
+        padx=0,
+        pady=0,
+    )
+    lbl.pack(anchor="w")
+    underline = tk.Canvas(
+        col,
+        height=3,
+        highlightthickness=0,
+        background=bg,
+        borderwidth=0,
+    )
+    underline.pack(anchor="w", fill="x")
+
+    def _redraw(_event: tk.Event | None = None) -> None:
+        underline.delete("all")
+        w = max(int(lbl.winfo_reqwidth()), 8)
+        underline.configure(width=w)
+        underline.create_line(
+            0, 1, w, 1, fill=_THEME["link"], dash=(1, 2), width=1
+        )
+
+    lbl.bind("<Configure>", _redraw, add="+")
+    col.after_idle(_redraw)
+    for w in (lbl, underline):
+        w.bind("<Button-1>", lambda _e: command(), add="+")
+    _attach_text_tip([lbl, underline, col], tip)
+    return col
+
+
 def _pack_hoverable_choice(
     parent: tk.Misc,
     *,
@@ -667,10 +723,16 @@ def _pack_hoverable_choice(
     value: object | None = None,
     command: Callable[[], None] | None = None,
     sections_fn: Callable[[], list[tuple[str, list[str], str]]],
-) -> ttk.Checkbutton | ttk.Radiobutton:
-    """Checkbox/radio with dotted underline under the label (hover = tooltip)."""
+    link_url: str = "",
+) -> ttk.Frame:
+    """Checkbox/radio with dotted underline under the label (hover = tooltip).
+
+    When ``link_url`` is set, the label is styled as a link: click opens the URL,
+    tip shows the URL then effect lists; the indicator still toggles selection.
+    Returns the horizontal row frame so callers can append inline text.
+    """
     row = ttk.Frame(parent)
-    row.pack(anchor="w")
+    row.pack(anchor="w", fill="x")
 
     if kind == "check":
         btn: ttk.Checkbutton | ttk.Radiobutton = ttk.Checkbutton(
@@ -696,11 +758,12 @@ def _pack_hoverable_choice(
     text_col = ttk.Frame(row)
     text_col.pack(side="left", anchor="w")
     bg = _frame_bg(parent)
+    url = (link_url or "").strip()
     lbl = tk.Label(
         text_col,
         text=text,
         background=bg,
-        foreground=_THEME["fg"],
+        foreground=_THEME["link"] if url else _THEME["fg"],
         font=("Segoe UI", 10),
         cursor="hand2",
         borderwidth=0,
@@ -717,18 +780,18 @@ def _pack_hoverable_choice(
         borderwidth=0,
     )
     underline.pack(anchor="w", fill="x")
+    dash_color = _THEME["link"] if url else _THEME["fg_muted"]
 
     def _redraw_underline(_event: tk.Event | None = None) -> None:
         underline.delete("all")
         w = max(int(lbl.winfo_reqwidth()), 8)
         underline.configure(width=w)
-        # Dotted rule under the label — marks the control as hoverable.
         underline.create_line(
             0,
             1,
             w,
             1,
-            fill=_THEME["fg_muted"],
+            fill=dash_color,
             dash=(1, 2),
             width=1,
         )
@@ -737,6 +800,9 @@ def _pack_hoverable_choice(
     text_col.after_idle(_redraw_underline)
 
     def _activate(_event: tk.Event | None = None) -> None:
+        if url:
+            webbrowser.open(url)
+            return
         if kind == "check":
             variable.set(not bool(variable.get()))
         else:
@@ -747,8 +813,15 @@ def _pack_hoverable_choice(
     for w in (lbl, underline):
         w.bind("<Button-1>", _activate, add="+")
 
-    _attach_hover_tip([btn, lbl, underline, row], sections_fn)
-    return btn
+    def _tip_sections() -> list[tuple[str, list[str], str]]:
+        sections: list[tuple[str, list[str], str]] = []
+        if url:
+            sections.append(("", [url], "normal"))
+        sections.extend(sections_fn())
+        return sections
+
+    _attach_hover_tip([btn, lbl, underline, row], _tip_sections)
+    return row
 
 
 def _desc_spacer(parent: tk.Misc) -> None:
@@ -795,18 +868,24 @@ def _title_row(
     *,
     url: str = "",
 ) -> None:
-    """Big title; optional ModDB URL on the next line (outside the option box)."""
+    """Big title; when ``url:`` is set, the name itself is the dotted link."""
     block = ttk.Frame(parent)
     block.pack(fill="x", pady=(10, 2))
-    ttk.Label(
-        block,
-        text=name,
-        font=("Segoe UI", 14, "bold"),
-    ).pack(anchor="w")
     if url:
-        _inline_link(block, url, lambda u=url: webbrowser.open(u)).pack(
-            anchor="w", pady=(2, 0)
-        )
+        _pack_dotted_link(
+            block,
+            text=name,
+            tip=url,
+            command=lambda u=url: webbrowser.open(u),
+            font_size=14,
+            bold=True,
+        ).pack(anchor="w")
+    else:
+        ttk.Label(
+            block,
+            text=name,
+            font=("Segoe UI", 14, "bold"),
+        ).pack(anchor="w")
 
 
 def _url_display_link(dep: lib.Dependency | None) -> str:
@@ -823,45 +902,25 @@ def _pack_blurb(dep: lib.Dependency | None) -> str:
     return dep.desc.strip()
 
 
-def _manual_instruction_text(
-    deps: list[lib.Dependency], *, dogma_dl: Path
-) -> tuple[str, list[tuple[int, int]]]:
-    """Numbered buy/place/rename steps; returns text + bold spans."""
-    folder = _win_path(dogma_dl)
-    lines: list[str] = []
-    bold: list[tuple[int, int]] = []
-    n = 1
-    seen_buy: set[str] = set()
-    seen_name: set[str] = set()
-    need_place = False
-
+def _manual_instruction_rows(
+    deps: list[lib.Dependency],
+) -> list[tuple[str, str]]:
+    """Manual supply rows as (buy_url_or_empty, archive_stem)."""
+    rows: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
     for dep in deps:
-        if dep.buy_url and dep.buy_url not in seen_buy:
-            seen_buy.add(dep.buy_url)
-            lines.append(f"{n}. Buy here: {dep.buy_url}")
-            n += 1
-            need_place = True
-        if dep.buy_url or dep.source == "user" or dep.archive_name:
-            need_place = True
-
-    if need_place:
-        lines.append(f"{n}. Place archive file in {folder}")
-        n += 1
-        for dep in deps:
-            if not (dep.buy_url or dep.source == "user" or dep.archive_name):
-                continue
-            name = f"{lib.dep_zip_stem(dep)}.zip"
-            if name in seen_name:
-                continue
-            seen_name.add(name)
-            prefix = f"{n}. Rename archive file to "
-            line = prefix + name
-            start = sum(len(x) + 1 for x in lines) + len(prefix)
-            bold.append((start, start + len(name)))
-            lines.append(line)
-            n += 1
-
-    return "\n".join(lines), bold
+        if not (dep.buy_url or dep.source == "user"):
+            continue
+        stem = lib.dep_zip_stem(dep)
+        if not stem:
+            continue
+        buy = (dep.buy_url or "").strip()
+        key = (buy.lower(), stem.lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append((buy, stem))
+    return rows
 
 
 def _expand_deps_unique(
@@ -990,11 +1049,11 @@ def _run_wizard_ui(
     ttk.Label(
         header,
         text="D.O.G.M.A. Setup",
-        font=("Segoe UI", 18, "bold"),
+        font=("Segoe UI", 14, "bold"),
     ).pack(anchor="w")
     ttk.Label(
         header,
-        text="Choose mods to install (third-party and D.O.G.M.A. path mods)",
+        text="Choose mods to install (third-party and D.O.G.M.A. mods)",
         font=("Segoe UI", 11),
         foreground=_THEME["fg_muted"],
         wraplength=win_w - 80,
@@ -1018,7 +1077,7 @@ def _run_wizard_ui(
     toolbar = ttk.Frame(root, padding=(20, 4, 20, 0))
     toolbar.pack(fill="x")
     sel_btns = ttk.Frame(toolbar)
-    sel_btns.pack(side="right")
+    sel_btns.pack(side="left")
 
     body = ttk.Frame(root, padding=(16, 8, 16, 8))
     body.pack(fill="both", expand=True)
@@ -1090,19 +1149,58 @@ def _run_wizard_ui(
         )
 
     def _add_instructions(parent: ttk.Frame, deps: list[lib.Dependency]) -> None:
-        text, _bold = _manual_instruction_text(deps, dogma_dl=dogma_dl)
-        if not text:
+        """Append short place/buy hints in parens after Install / radio label."""
+        folder = _win_path(dogma_dl)
+        rows = _manual_instruction_rows(deps)
+        if not rows:
             return
-        expanded = _expand_desc(text, mo2_root=mo2_root, dogma_dl=dogma_dl)
-        _, bold2 = _manual_instruction_text(deps, dogma_dl=dogma_dl)
-        _pack_link_text(
-            parent,
-            expanded,
-            dogma_dl=dogma_dl,
-            wraplength=col_wrap,
-            bold_spans=bold2,
-            pady=(4, 6),
-        )
+        bg = _frame_bg(parent)
+        for buy_url, stem in rows:
+            chunk = ttk.Frame(parent)
+            chunk.pack(side="left", padx=(4, 0))
+
+            def _muted(text: str, parent_row: ttk.Frame = chunk) -> None:
+                tk.Label(
+                    parent_row,
+                    text=text,
+                    background=bg,
+                    foreground=_THEME["fg_muted"],
+                    font=("Segoe UI", 10),
+                    borderwidth=0,
+                    padx=0,
+                    pady=0,
+                ).pack(side="left")
+
+            _muted("(")
+            if buy_url:
+                _muted("buy ")
+                _pack_dotted_link(
+                    chunk,
+                    text="here",
+                    tip=buy_url,
+                    command=lambda u=buy_url: webbrowser.open(u),
+                ).pack(side="left")
+                _muted(", place zip ")
+            else:
+                _muted("place zip ")
+            _pack_dotted_link(
+                chunk,
+                text="here",
+                tip=folder,
+                command=lambda: _open_in_explorer(dogma_dl),
+            ).pack(side="left")
+            _muted(" and name it ")
+            tk.Label(
+                chunk,
+                text=stem,
+                background=bg,
+                foreground=_THEME["fg"],
+                font=("Segoe UI", 10, "bold"),
+                borderwidth=0,
+                padx=0,
+                pady=0,
+            ).pack(side="left")
+            _muted(")")
 
     def _catalog_sections_for(
         deps: list[lib.Dependency],
@@ -1122,7 +1220,9 @@ def _run_wizard_ui(
             if path_pack.depends:
                 sections.append(("Depends", list(path_pack.depends), "normal"))
             if feature is not None:
-                for label, items in lib.preview_feature_effect_sections(feature):
+                for label, items in lib.preview_feature_effect_sections(
+                    feature, mo2_root=mo2_root
+                ):
                     sections.append((label, items, "normal"))
             # Depends-only packs (skip the path pack itself — covered by feature rows).
             depend_deps = [d for d in deps if d.id != path_pack.id]
@@ -1143,7 +1243,7 @@ def _run_wizard_ui(
         sections: list[tuple[str, list[str]]] = []
         if installs:
             sections.append(("Installs", installs))
-        sections.extend(lib.preview_effect_sections(deps))
+        sections.extend(lib.preview_effect_sections(deps, mo2_root=mo2_root))
         return sections
 
     def _expected_for(
@@ -1229,6 +1329,8 @@ def _run_wizard_ui(
             bv = bool_vars.get(oid)
             if bv is not None:
                 bv.set(False)
+        for var in exclusive_vars.values():
+            var.set("")
         _sync_exclusive_requirements()
 
     ttk.Button(sel_btns, text="Select all", command=_select_all).pack(
@@ -1245,13 +1347,15 @@ def _run_wizard_ui(
         url = ""
         if pack is not None:
             url = _url_display_link(pack)
-            if pack.path and not title:
+            if pack.path:
+                title = lib.with_dogma_prefix(pack.id)
+            elif not title:
                 title = pack.id
         elif feat is not None:
             title = feat.display_name
         _title_row(options_col, title, url=url)
-        frame = ttk.LabelFrame(options_col, text="", padding=(12, 10))
-        frame.pack(fill="x", pady=(0, 4), padx=2)
+        frame = ttk.Frame(options_col, padding=(4, 4))
+        frame.pack(fill="x", pady=(0, 8), padx=2)
         prior = set(initial.option_ids) if initial is not None else set()
         if initial is not None and prior:
             checked = opt.id in prior
@@ -1274,7 +1378,7 @@ def _run_wizard_ui(
                 path_pack=p if p is not None and p.path else None,
             )
 
-        _pack_hoverable_choice(
+        choice_row = _pack_hoverable_choice(
             frame,
             kind="check",
             text="Install",
@@ -1283,17 +1387,16 @@ def _run_wizard_ui(
             sections_fn=_opt_sections,
         )
         if pack is not None:
-            _add_desc(frame, _pack_blurb(pack))
+            _add_instructions(choice_row, [pack])
             if pack.path:
-                _add_desc(frame, f"Local path mod: {pack.path}")
-            _add_instructions(frame, [pack])
-            _desc_spacer(frame)
+                _add_desc(frame, _pack_blurb(pack))
+                _desc_spacer(frame)
         elif feat is not None:
+            step_deps = [pack_by_id[m] for m in opt.mods if m in pack_by_id]
+            _add_instructions(choice_row, step_deps)
             if opt.desc.strip():
                 _add_desc(frame, opt.desc)
-            step_deps = [pack_by_id[m] for m in opt.mods if m in pack_by_id]
-            _add_instructions(frame, step_deps)
-            _desc_spacer(frame)
+                _desc_spacer(frame)
 
     def _add_radio_block(group: str) -> None:
         packs = radio_groups[group]
@@ -1301,8 +1404,8 @@ def _run_wizard_ui(
         title = lib.radio_group_title(group, packs, parent=parent)
         parent_url = _url_display_link(parent)
         _title_row(options_col, title, url=parent_url)
-        frame = ttk.LabelFrame(options_col, text="", padding=(12, 10))
-        frame.pack(fill="x", pady=(0, 4), padx=2)
+        frame = ttk.Frame(options_col, padding=(4, 4))
+        frame.pack(fill="x", pady=(0, 8), padx=2)
         var = exclusive_vars[group]
         var.trace_add("write", lambda *_a: _sync_exclusive_requirements())
 
@@ -1331,7 +1434,7 @@ def _run_wizard_ui(
             ) -> list[tuple[str, list[str], str]]:
                 return _tooltip_sections_for(_preview_deps_for_choice(g, p))
 
-            _pack_hoverable_choice(
+            choice_row = _pack_hoverable_choice(
                 head,
                 kind="radio",
                 text=label,
@@ -1339,15 +1442,9 @@ def _run_wizard_ui(
                 value=pack.id,
                 command=_sync_exclusive_requirements,
                 sections_fn=_radio_sections,
+                link_url=choice_url,
             )
-            if choice_url:
-                _inline_link(
-                    head, choice_url, lambda u=choice_url: webbrowser.open(u)
-                ).pack(anchor="w", padx=(24, 0), pady=(2, 0))
 
-            sub = ttk.Frame(frame)
-            sub.pack(anchor="w", fill="x", padx=(24, 0))
-            _add_desc(sub, _pack_blurb(pack))
             step_deps = []
             try:
                 leaf_ids = lib.expand_pack_composition(pack_by_id, pack.id)
@@ -1357,8 +1454,7 @@ def _run_wizard_ui(
                 leaf = pack_by_id.get(lid)
                 if leaf is not None:
                     step_deps.append(leaf)
-            _add_instructions(sub, step_deps)
-            _desc_spacer(sub)
+            _add_instructions(choice_row, step_deps)
 
     for kind, sid in lib.wizard_section_order(data, min_stage=min_stage):
         if kind == "radio":
@@ -1368,43 +1464,14 @@ def _run_wizard_ui(
             if opt is not None:
                 _add_option_block(opt)
 
-    # One-off actions (not mods) — e.g. rebuild SFX prefetch list.
-    action_vars: dict[str, tk.BooleanVar] = {}
-    prior_actions = set(initial.actions) if initial is not None else set()
-    if lib.WIZARD_ACTIONS:
-        _title_row(options_col, "Actions")
-        for action in lib.WIZARD_ACTIONS:
-            frame = ttk.LabelFrame(options_col, text="", padding=(12, 10))
-            frame.pack(fill="x", pady=(0, 4), padx=2)
-            if initial is not None and prior_actions:
-                checked = action.id in prior_actions
-            elif initial is not None and initial.option_ids:
-                # Returning user: leave one-offs off unless they check them.
-                checked = False
-            else:
-                checked = action.default
-            bv = tk.BooleanVar(value=checked)
-            action_vars[action.id] = bv
-            ttk.Checkbutton(
-                frame,
-                text=action.title,
-                style="Dogma.TCheckbutton",
-                variable=bv,
-            ).pack(anchor="w")
-            if action.desc.strip():
-                _add_desc(frame, action.desc)
-                _desc_spacer(frame)
-
     _sync_exclusive_requirements()
 
     def collect() -> lib.InstallerSelection:
         picks = {g: v.get() for g, v in exclusive_vars.items()}
-        actions = [aid for aid, bv in action_vars.items() if bv.get()]
         return lib.InstallerSelection(
             option_ids=_selected_option_ids(),
             exclusive_picks=picks,
             features_chosen=True,
-            actions=actions,
         )
 
     def _cleanup_binds() -> None:

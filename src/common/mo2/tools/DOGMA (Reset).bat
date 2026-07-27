@@ -13,8 +13,6 @@ call "%~dp0run_job.bat" disable --tier all --use-selection %*
 if errorlevel 1 goto :fail
 call "%~dp0run_job.bat" defaults --use-selection %*
 if errorlevel 1 goto :fail
-call "%~dp0run_job.bat" sfx --if-selected %*
-if errorlevel 1 goto :fail
 call "%~dp0run_job.bat" validate --tier all --use-selection %*
 if errorlevel 1 goto :fail
 echo.

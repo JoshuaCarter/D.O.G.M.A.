@@ -5,7 +5,7 @@ Register mods/DOGMA/mo2/tools/DOGMA.bat in MO2 Executables:
   Start in  = instance root (C:\\GAMMA)
   Arguments = --then-launch AnomalyDX11AVX.exe
 
-Default: no pre-launch steps (SFX prefetch is a Setup wizard one-off).
+Default: no pre-launch steps (run DOGMA SFX Prefetch.bat when you want a sound list rebuild).
 Optional steps file: mo2/prelaunch.steps — one command per line (#/; comments).
 """
 

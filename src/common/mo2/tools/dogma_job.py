@@ -94,8 +94,6 @@ def cmd_wizard(args: argparse.Namespace) -> int:
         installed=installed,
     )
     lib.ok(f"Selected: {', '.join(selected.option_ids)}")
-    if selected.actions:
-        lib.info("Actions: " + ", ".join(selected.actions))
     if selected.exclusive_picks:
         lib.info(
             "Exclusive: "
@@ -368,12 +366,6 @@ def cmd_reset_base(args: argparse.Namespace) -> int:
 def cmd_sfx(args: argparse.Namespace) -> int:
     mo2 = lib.resolve_mo2_root(args.mo2_root)
     tools = lib.mo2_tools_dir(mo2)
-    if getattr(args, "if_selected", False):
-        sel = lib.load_installer_selection(mo2)
-        actions = list(sel.actions) if sel is not None else []
-        if lib.WIZARD_ACTION_SFX not in actions:
-            lib.info("SFX prefetch skipped (not selected in Setup wizard)")
-            return 0
     # Prefer deployed sound_prefetch under mo2/ (sibling of tools/)
     here = Path(__file__).resolve().parent
     bundle = here.parent if here.name.lower() == "tools" else here
@@ -499,11 +491,6 @@ def build_parser() -> argparse.ArgumentParser:
     r.set_defaults(func=cmd_reset_base)
 
     x = sub.add_parser("sfx", help="Run sound prefetch builder", parents=[common])
-    x.add_argument(
-        "--if-selected",
-        action="store_true",
-        help="No-op unless selection.json actions includes sfx (Setup wizard)",
-    )
     x.set_defaults(func=cmd_sfx)
 
     return p

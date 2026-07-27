@@ -19,18 +19,16 @@
 
 Screen Space Shaders:
   stage: release
-  desc: Select the version(s) of Screen Space Shaders you want to install.
   options:
-    - SSS Latest
-    - SSS Preview
-    - SSS Latest & Preview
+    - SSS v23
+    - SSS v24
+    - SSS v23 + v24
   deletes:
     - <Anomaly>/appdata/shaders_cache
 
-SSS Latest:
+SSS v23:
   stage: omit
   url: https://www.moddb.com/mods/stalker-anomaly/addons/screen-space-shaders
-  desc: Downloads and installs the latest Screen Space Shaders 23.x from ModDB.
   disables:
     - 190- Screen Space Shaders 23 - Ascii1457
     - 190- Screen Space Shaders - Ascii1457
@@ -38,11 +36,10 @@ SSS Latest:
     - 190- Screen Space Shaders 7 - Ascii1457
     - 190- Screen Space Shaders latest - Ascii1457
 
-SSS Preview:
+SSS v24:
   stage: omit
   buy_url: https://ko-fi.com/ascii1457
   archive_name: Screen Space Shaders 24
-  desc: Installs the 24.x preview from a user-supplied archive.
   enables:
     - 190- Screen Space Shaders 23 - Ascii1457
   disables:
@@ -51,14 +48,11 @@ SSS Preview:
     - 190- Screen Space Shaders 7 - Ascii1457
     - 190- Screen Space Shaders latest - Ascii1457
 
-SSS Latest & Preview:
+SSS v23 + v24:
   stage: omit
   depends:
-    - SSS Latest
-    - SSS Preview
-  desc: |
-    Downloads Screen Space Shaders 23.x from ModDB and installs preview 24.x.
-
+    - SSS v23
+    - SSS v24
 # --------------------------------
 # Melancholy Weathers
 # --------------------------------
@@ -69,7 +63,6 @@ Melancholy Weathers:
     - Screen Space Shaders
   buy_url: https://ko-fi.com/pipnik
   archive_name: Melancholy Weathers
-  desc: Installs Melancholy Weathers and its related tweaks.
   depends:
     - Enhanced Shader Color Grading
     - Dark Signal Soundscape Overhaul Melancholy Edition
@@ -104,7 +97,6 @@ Dark Signal Soundscape Overhaul Melancholy Edition:
 AlifePlus:
   stage: release
   url: https://www.moddb.com/mods/stalker-anomaly/addons/alifeplus-v1-0-01
-  desc:
   depends:
     - xlibs
     - AlifeBalance
@@ -166,7 +158,6 @@ AlifeTactics:
 Interaction Dot Marks:
   stage: release
   url: https://www.moddb.com/mods/stalker-anomaly/addons/interaction-dot-marks
-  desc: Downloads Interaction Dot Marks from ModDB.
   disables:
     - 452- Interaction Dot Marks - Catspaw
 
@@ -177,7 +168,6 @@ Interaction Dot Marks:
 Tarkov-like Level Transitions:
   stage: omit
   url: https://www.moddb.com/mods/stalker-anomaly/addons/tarkov-like-level-transitions
-  desc: Third-party level transition pack used by D.O.G.M.A. fast-travel features.
 
 # --------------------------------
 # Zone / visuals
@@ -187,17 +177,11 @@ Demonized DB:
   stage: release
   url: https://github.com/themrdemonized/xray-monolith/releases/latest
   archive_name: STALKER-Anomaly-modded-exes
-  desc: >
-    Modded-exes gamedata DB (00_modded_exes_gamedata.db0) from Demonized
-    Anomaly binaries. Supply the modded-exes archive; only the gamedata DB
-    is needed as an MO2 mod.
-
 C Consciousness Grass and Trees:
   stage: release
   url: https://www.moddb.com/mods/stalker-anomaly/addons/ccon-grass-n-trees
   requires:
     - Screen Space Shaders
-  desc: CCon flora overhaul (Seasons). Large FOMOD — pick Seasons for G.A.M.M.A.
   disables:
     - 289- Grass Tweaks (reinstall for different options) - Aydin
     - 388- Aydins Grass Tweaks SSS Terrain LOD Compatibility - aytabag
@@ -208,12 +192,10 @@ Glossy Puddles:
   archive_name: Glossy Puddles v1.4 - Erandis
   requires:
     - Screen Space Shaders
-  desc: Dynamic glossy terrain puddles (Erandis). Needs Screen Space Shaders.
 
 G2X Tactical Light Presets:
   stage: release
   url: https://www.moddb.com/mods/stalker-anomaly/addons/g2x-tactical-light-preset-600-lm-range-max-100-m-eff-70-m-55006500-k
-  desc: Flashlight range and colour presets (~600 lm / ~100 m).
 
 # --------------------------------
 # Gameplay / UI
@@ -223,17 +205,14 @@ Medik Health Monitor:
   stage: release
   url: false
   archive_name: MedikHealthMonitor
-  desc: Handheld Medik device showing HP, limbs, radiation, and psy.
 
 RNG Attach:
   stage: release
   url: https://www.moddb.com/mods/stalker-anomaly/addons/rng-attach-kits
-  desc: Random attachments and kits from stashes/NPCs; strips stock vendor attach.
 
 Quick Action Wheel Overhaul:
   stage: release
   url: https://www.moddb.com/mods/stalker-anomaly/addons/quick-action-wheels-overhaul-10
-  desc: Full QAW replacement (Gwnf5066). Replaces HarukaSai and G.A.M.M.A. Balance.
   disables:
     - 446- Quick Action Wheel - HarukaSai
     - G.A.M.M.A. Quick Action Wheel Balance
@@ -242,7 +221,6 @@ Ammo Check - Priler:
   stage: release
   url: https://github.com/Priler/AmmoCheck
   archive_name: AmmoCheck v3.3 by Priler REWORK
-  desc: Enhanced ammo-check rework (Priler). Replaces Ishmaeel's Ammo Check.
   disables:
     - 261- Ammo Check - Ishmaeel
 
@@ -250,7 +228,6 @@ NPC Weapon Position Tweaks:
   stage: release
   url: false
   archive_name: NPC Weapon Position Tweaks 1.42
-  desc: NPC holstered / carried weapon pose tweaks.
   disables:
     - A_triangle's NPC Weapon Position Tweak
 
@@ -258,44 +235,34 @@ Crafting UI Tweaks:
   stage: release
   url: false
   archive_name: Crafting UI Tweaks 1.1
-  desc: Marks craftable items and equipped ammo in the crafting UI.
 
 Svarog Anomalies Icons:
   stage: release
   url: false
   archive_name: Svarog Anomalies Icons - Shpala
-  desc: Svarog detector anomaly icons (Shpala).
 
 Better Upgrade Tooltips:
   stage: release
   url: https://github.com/Verdatim25/Better-Upgrade-Tooltips-For-Stalker-GAMMA
   archive_name: better_upgrade_tooltips_verdatim_v1.1.1
-  desc: Clearer weapon/armor upgrade effect labels (Verbatim).
 
 Painter of the Zone:
   stage: release
   url: https://www.moddb.com/mods/stalker-anomaly/addons/painter-of-the-zone
   requires:
     - Screen Space Shaders
-  desc: >
-    Combat FX overhaul — wallmarks, hit particles, dismemberment, bullet time,
-    killcam (Painter of the Zone).
-
 Long Range Blood Decals:
   stage: release
   url: false
   archive_name: Long_Range_Blood_Decals
-  desc: Blood wallmarks beyond engine range (~50 m+).
 
 The Anomalous Stash:
   stage: release
   url: https://www.moddb.com/mods/stalker-anomaly/addons/the-anomalous-stash-beta-09
-  desc: Placeable backpack that opens a shared anomalous stash.
 
 Seamless Inventory Sort:
   stage: release
   url: https://www.moddb.com/mods/stalker-anomaly/addons/seamless-inventory-sort
-  desc: Keeps SortingPlus order after attach/trade/loot without flicker.
   enables:
     - 110- SortingPlus - RavenAscendant
 
@@ -303,13 +270,12 @@ PDA Taskboard Redesign:
   stage: release
   url: false
   archive_name: PDA_Taskboard_Redesign_v1.2
-  desc: Full PDA taskboard UI/script redesign. Replaces iTheon taskboard packs.
   disables:
     - 293- PDA Taskboard - iTheon
     - 478- Custom iTheon's PDA Taskboard - lizzardman
 
 # --------------------------------
-# D.O.G.M.A. path mods
+# D.O.G.M.A. Mods
 # --------------------------------
 
 common:
@@ -334,9 +300,6 @@ Thirst Blur At Yellow:
   stage: dev
   path: fx/thirst
   desc: "Thirst blur starts at yellow instead of gray. Replaces Thirst Blur Tweak's blur behaviour (that mod has no MCM)."
-  disables:
-    - Thirst_Blur_Tweak_
-    - Thirst_Blur_Tweak
 
 On-Screen FPS Counter:
   stage: release
@@ -446,7 +409,7 @@ MCM Search Box:
 Prefetch Loose Mod Sounds:
   stage: dev
   path: misc/sound_prefetch
-  desc: "Prefetch loose mod sounds (JSRS, etc.) to reduce hitching. Rebuild the list from Setup (SFX checkbox) or DOGMA SFX Prefetch.bat after changing sound mods."
+  desc: "Prefetch loose mod sounds (JSRS, etc.) to reduce hitching. Rebuild the list with DOGMA SFX Prefetch.bat after changing sound mods."
 
 Mutant Footsteps Dark Signal:
   stage: dev

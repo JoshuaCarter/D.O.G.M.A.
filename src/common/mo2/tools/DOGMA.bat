@@ -11,7 +11,7 @@ REM   Arguments= --then-launch AnomalyDX11AVX.exe
 REM              (use whatever exe you normally run: DX11 / AVX / DX9 / …)
 REM
 REM Runs optional mo2\prelaunch.steps (if present), then starts the game.
-REM SFX prefetch is a Setup wizard one-off — not run on every launch.
+REM SFX prefetch: run DOGMA SFX Prefetch.bat when needed — not on every launch.
 REM
 REM Requires Python 3. No pause.
 REM Do not use %%ERRORLEVEL%% inside ( ) — expands at parse time.

@@ -5,6 +5,8 @@ REM Uses saved selection when present; else default installer_options.
 REM Logs: mods\DOGMA\mo2\logs\dogma_install.log + dogma_report.log
 call "%~dp0DOGMA (Setup Tools).bat" --log-reset %*
 if errorlevel 1 goto :fail
+call "%~dp0run_job.bat" preinstall-backup %*
+if errorlevel 1 goto :fail
 call "%~dp0run_job.bat" reset-base %*
 if errorlevel 1 goto :fail
 call "%~dp0run_job.bat" dependencies --tier all --mode reinstall --use-selection %*

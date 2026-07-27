@@ -7,7 +7,8 @@
 	Two independent rates (MCM, seconds for a 20% step):
 	  Body: 20% / body_sec  → applied as +1% every (body_sec/20) seconds.
 	  Limbs: 20% / limb_sec → every limb_sec, convert 1 BHS point temp→perm
-	         on the lowest-HP limb that still has temp.
+	         on whichever limb currently has the lowest permanent HP and still
+	         has temp (re-picked every tick; never sticky).
 
 	Body and limb timers run asynchronously.
 	Disable other campfire heal mods to avoid stacking.
@@ -23,36 +24,36 @@ local RATE_PCT = 20 -- sliders mean "this % every X seconds"
 
 local next_body_tick = 0
 local next_limb_tick = 0
-local cached_body_sec = 5
-local cached_limb_sec = 5
+local cached_body_sec = 30
+local cached_limb_sec = 20
 
 -- Cached live BHS tables (same refs Medik reads).
 local bhs_health = nil
 local bhs_timedhp = nil
 local bhs_maxhp = nil
 
-local function clamp_rate_sec(sec)
-	sec = tonumber(sec) or 5
-	if sec < 5 then
-		sec = 5
-	elseif sec > 30 then
-		sec = 30
+local function clamp_sec(sec, min_sec, max_sec, fallback)
+	sec = tonumber(sec) or fallback
+	if sec < min_sec then
+		sec = min_sec
+	elseif sec > max_sec then
+		sec = max_sec
 	end
 	return sec
 end
 
 local function refresh_settings()
-	local body_sec = 5
-	local limb_sec = 5
+	local body_sec = 30
+	local limb_sec = 20
 	if DOGMA and DOGMA.mcm then
 		body_sec = DOGMA.mcm.number(CONFIG.MOD_ID, "body_sec", CONFIG.DEFAULTS.body_sec)
 		limb_sec = DOGMA.mcm.number(CONFIG.MOD_ID, "limb_sec", CONFIG.DEFAULTS.limb_sec)
 	elseif CONFIG and CONFIG.DEFAULTS then
-		body_sec = CONFIG.DEFAULTS.body_sec or 5
-		limb_sec = CONFIG.DEFAULTS.limb_sec or 5
+		body_sec = CONFIG.DEFAULTS.body_sec or 30
+		limb_sec = CONFIG.DEFAULTS.limb_sec or 20
 	end
-	cached_body_sec = clamp_rate_sec(body_sec)
-	cached_limb_sec = clamp_rate_sec(limb_sec)
+	cached_body_sec = clamp_sec(body_sec, 30, 100, 30)
+	cached_limb_sec = clamp_sec(limb_sec, 20, 100, 20)
 end
 
 -- 20% every body_sec → 1% every body_sec/20.
@@ -191,17 +192,20 @@ local function heal_limb_perm(health, timedhp, maxhp, key)
 	return true
 end
 
--- Lowest total HP among limbs that still have convertible temp.
+-- Re-scan every limb tick (no sticky target): lowest permanent HP among
+-- limbs that still have convertible temp.
 local function pick_lowest_temp_limb(health, timedhp, maxhp)
 	local best_key = nil
-	local best_hp = nil
+	local best_perm = nil
 	for i = 1, #LIMBS do
 		local key = LIMBS[i]
 		if limb_can_convert(health, timedhp, maxhp, key) then
 			local hp = tonumber(health[key])
-			if best_key == nil or hp < best_hp then
+			local temp = tonumber(timedhp[key])
+			local perm = hp - temp
+			if best_key == nil or perm < best_perm then
 				best_key = key
-				best_hp = hp
+				best_perm = perm
 			end
 		end
 	end

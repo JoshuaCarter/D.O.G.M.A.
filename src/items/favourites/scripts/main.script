@@ -1,12 +1,28 @@
 --[[
-	SortingPlus favourites are per-save (rax_favorite_itms in .scoc).
-	Mirror section → favourite into axr_options so new games keep your list.
-	Requires SortingPlus (GAMMA default).
+	SortingPlus favourite / junk keys + cross-game persistence.
+
+	Replaces SortingPlus's hardcoded K / J with MCM binds (injected into
+	SortingPlus's page). Favourites are mirrored into axr_options so new games
+	keep your list. Context-menu Mark Favorite / Junk still work.
 ]]
 
+local CONFIG = _G.dogma_items_favourites_conf
+local MOD_ID = CONFIG.MOD_ID
 local SECTION = "dogma_item_favourites"
+local DOGMA
+
 local STATE = _G.__dogma_items_favourites or {}
 _G.__dogma_items_favourites = STATE
+
+local function log(msg)
+	if DOGMA and DOGMA.dbg and DOGMA.dbg.logging() then
+		DOGMA.dbg.log(MOD_ID, tostring(msg))
+	end
+end
+
+local function sp()
+	return zzz_rax_sortingplus_mcm
+end
 
 local function cfg()
 	return axr_main and axr_main.config
@@ -53,53 +69,126 @@ local function profile_replace(favs)
 	c:save()
 end
 
-local function apply_profile()
-	local base = STATE.base_fav
-	if not base then
+local function refresh_icons()
+	if rax_icon_layers and rax_icon_layers.refresh then
+		rax_icon_layers.refresh(1)
+	end
+end
+
+local function mcm_dik(path, fallback)
+	local v = ui_mcm and tonumber(ui_mcm.get(path))
+	if v == nil then
+		return fallback
+	end
+	if v == -1 then
+		return nil
+	end
+	return v
+end
+
+local function key_favorite()
+	return mcm_dik("SortingPlus/key_favorite", DIK_keys and DIK_keys.DIK_K or nil)
+end
+
+local function key_junk()
+	return mcm_dik("SortingPlus/key_junk", DIK_keys and DIK_keys.DIK_J or nil)
+end
+
+-- Replace SortingPlus UICellContainer fav/junk keys with MCM binds.
+local function patch_sortingplus_keys()
+	if STATE.keys_patched then
 		return
 	end
-	for sec, _ in pairs(profile_list()) do
-		base(sec, true)
+	local cell = utils_ui and utils_ui.UICellContainer
+	if not (cell and cell.OnKeyboard) then
+		return
 	end
+
+	local tg_wait = 0
+	local m = sp()
+
+	function cell:OnKeyboard(dik, keyboard_action)
+		local fav = key_favorite()
+		local junk = key_junk()
+		local tg = time_global and time_global() or 0
+
+		if (dik == fav or dik == junk) and fav ~= junk and tg > tg_wait and self.hover and self.hover.idx then
+			tg_wait = tg + 500
+			local indx = self.hover.idx
+			if self.cell and self.cell[indx] and self.cell[indx].section then
+				local sec = self.cell[indx].section
+				if dik == fav and m and m.set_favorite and m.is_favorite then
+					m.set_favorite(sec, not m.is_favorite(sec))
+					refresh_icons()
+				elseif dik == junk and m and m.set_junk and m.is_junk then
+					m.set_junk(sec, not m.is_junk(sec))
+					refresh_icons()
+				end
+			end
+		end
+
+		if self.OnKeyboardBase then
+			return self:OnKeyboardBase(dik, keyboard_action)
+		end
+	end
+
+	STATE.keys_patched = true
 end
 
 local function patch_sortingplus()
 	if STATE.patched then
 		return true
 	end
-	local sp = zzz_rax_sortingplus_mcm
-	if not (sp and sp.set_favorite and sp.set_junk) then
+	local m = sp()
+	if not (m and m.set_favorite and m.set_junk and m.is_favorite) then
 		return false
 	end
 
-	local base_fav = sp.set_favorite
-	local base_junk = sp.set_junk
+	local base_fav = m.set_favorite
+	local base_junk = m.set_junk
 	STATE.base_fav = base_fav
 
-	sp.set_favorite = function(sec, state)
+	m.set_favorite = function(sec, state)
 		base_fav(sec, state)
 		profile_set(sec, state and true or false)
 	end
 
-	sp.set_junk = function(sec, state)
+	m.set_junk = function(sec, state)
 		base_junk(sec, state)
-		-- Junk and favourite are exclusive; junking must drop the profile mark.
 		if state then
 			profile_set(sec, false)
 		end
 	end
 
+	patch_sortingplus_keys()
 	STATE.patched = true
 	return true
 end
 
+local function apply_profile()
+	local base = STATE.base_fav
+	if not base then
+		return
+	end
+	local n = 0
+	for sec, _ in pairs(profile_list()) do
+		base(sec, true)
+		n = n + 1
+	end
+	if n > 0 then
+		refresh_icons()
+		log(string.format("applied %d profile favourites", n))
+	end
+end
+
 function on_game_start()
+	DOGMA = dogma_common.load(MOD_ID)
+
 	if not patch_sortingplus() then
-		printf("[dogma_items_favourites] SortingPlus API missing — favourites persistence skipped")
+		printf("[dogma_items_favourites] SortingPlus API missing — fav keys / persistence skipped")
 		return
 	end
 
-	-- After SortingPlus load_state: migrate save favs into profile, then apply profile.
 	RegisterScriptCallback("load_state", function(mdata)
 		if mdata and mdata.rax_favorite_itms then
 			local merged = profile_list()
@@ -125,4 +214,6 @@ function on_game_start()
 	RegisterScriptCallback("actor_on_first_update", function()
 		apply_profile()
 	end)
+
+	log("SortingPlus fav/junk keys + persistence ready")
 end

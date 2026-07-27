@@ -16,6 +16,8 @@ if errorlevel 1 goto :fail
 set "SEL=--use-selection"
 
 :jobs
+call "%~dp0run_job.bat" preinstall-backup %*
+if errorlevel 1 goto :fail
 call "%~dp0run_job.bat" dependencies --tier all --mode reinstall %SEL% %*
 if errorlevel 1 goto :fail
 call "%~dp0run_job.bat" disable --tier all %SEL% %*

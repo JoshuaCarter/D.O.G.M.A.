@@ -325,6 +325,15 @@ def cmd_validate(args: argparse.Namespace) -> int:
     return 1 if "WARN:" in text else 0
 
 
+def cmd_preinstall_backup(args: argparse.Namespace) -> int:
+    """MO2-style modlist Create Backup before Setup/Reset changes the list."""
+    mo2, _cfg = cfg_paths(args)
+    lib.create_preinstall_modlist_backup(
+        mo2, args.profile, dry_run=args.dry_run
+    )
+    return 0
+
+
 def cmd_reset_base(args: argparse.Namespace) -> int:
     mo2, _cfg = cfg_paths(args)
     lib.guard_mo2_closed(force=args.force, dry_run=args.dry_run)
@@ -489,6 +498,13 @@ def build_parser() -> argparse.ArgumentParser:
         "reset-base", help="Restore FRESH_INSTALL modlist + MCM values", parents=[common]
     )
     r.set_defaults(func=cmd_reset_base)
+
+    b = sub.add_parser(
+        "preinstall-backup",
+        help="MO2 Create Backup of modlist (DOGMA Pre Install Backup N)",
+        parents=[common],
+    )
+    b.set_defaults(func=cmd_preinstall_backup)
 
     x = sub.add_parser("sfx", help="Run sound prefetch builder", parents=[common])
     x.set_defaults(func=cmd_sfx)

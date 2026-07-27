@@ -599,19 +599,7 @@ enforce_transition_combat_lock = function()
             alerted and "ENGAGED - border crossings disabled" or "RELEASED - crossings re-enabled",
             alerted and (tostring(enemy_dist) .. "m") or "none within " .. math.floor(radius) .. "m")
     end
-
-    if alerted then
-        local buffer_m = guard.buffer_m or 12
-        local search_pad_m = guard.search_pad_m or 15
-        local _, door_dist = tft_nearest_transition_point(actor_pos, buffer_m + search_pad_m)
-        if door_dist and door_dist <= buffer_m then
-            local msg_cooldown_ms = (guard.msg_cooldown_s or 5) * 1000
-            if not tft._transition_guard_last_msg or (tg - tft._transition_guard_last_msg) > msg_cooldown_ms then
-                tft._transition_guard_last_msg = tg
-                tft_msg(tft_str("tft_msg_transition_combat_blocked"), "danger")
-            end
-        end
-    end
+    -- No PDA tip here: Tarkov Transitions UI already shows the combat block on the countdown.
 end
 
 local function actor_on_update()

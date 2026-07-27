@@ -316,6 +316,50 @@ def stamp_backup(path: Path) -> Path:
     return backup
 
 
+# Shown in MO2 Restore Backup… as the choice label (suffix after modlist.txt.).
+PREINSTALL_BACKUP_PREFIX = "DOGMA Pre Install Backup"
+
+
+def next_preinstall_backup_suffix(modlist: Path) -> str:
+    """Next ``DOGMA Pre Install Backup N`` suffix for MO2 Restore Backup."""
+    pat = re.compile(
+        rf"^{re.escape(modlist.name)}\."
+        rf"{re.escape(PREINSTALL_BACKUP_PREFIX)} (\d+)$",
+        re.IGNORECASE,
+    )
+    n_max = 0
+    for p in modlist.parent.iterdir():
+        if not p.is_file():
+            continue
+        m = pat.match(p.name)
+        if m:
+            n_max = max(n_max, int(m.group(1)))
+    return f"{PREINSTALL_BACKUP_PREFIX} {n_max + 1}"
+
+
+def create_preinstall_modlist_backup(
+    mo2_root: Path,
+    profile: str = "",
+    *,
+    dry_run: bool = False,
+) -> Path:
+    """Copy profile modlist.txt like MO2's Create Backup (left-pane).
+
+    MO2 Restore Backup lists ``modlist.txt.<suffix>``; we use an incrementing
+    ``DOGMA Pre Install Backup N`` suffix so it is easy to pick.
+    """
+    modlist = modlist_path(mo2_root, profile)
+    suffix = next_preinstall_backup_suffix(modlist)
+    dest = modlist.parent / f"{modlist.name}.{suffix}"
+    if dry_run:
+        info(f"Would create MO2 modlist backup: {dest.name}")
+        return dest
+    shutil.copy2(modlist, dest)
+    ok(f"MO2 modlist backup: {dest.name}")
+    info("  Restore via MO2 → Restore Backup… on the mod list")
+    return dest
+
+
 def find_7z() -> Path | None:
     for name in ("7z", "7za", "7z.exe", "7za.exe"):
         found = shutil.which(name)

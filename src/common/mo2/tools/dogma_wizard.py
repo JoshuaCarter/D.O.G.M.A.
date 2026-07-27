@@ -147,6 +147,71 @@ def _frame_bg(widget: tk.Misc) -> str:
         return _THEME["bg"]
 
 
+def _freeze_text(box: tk.Text) -> None:
+    """Leave Text selectable/copyable (Ctrl+C / drag) but block edits."""
+
+    def _on_key(event: tk.Event) -> str | None:
+        # Control / Command shortcuts: copy + select-all only.
+        if (event.state & 0x4) or (event.state & 0x8):
+            if event.keysym.lower() in ("c", "a"):
+                return None
+            return "break"
+        if event.keysym in (
+            "Left",
+            "Right",
+            "Up",
+            "Down",
+            "Home",
+            "End",
+            "Prior",
+            "Next",
+            "Shift_L",
+            "Shift_R",
+            "Control_L",
+            "Control_R",
+        ):
+            return None
+        return "break"
+
+    box.bind("<Key>", _on_key)
+    for seq in ("<<Paste>>", "<<Cut>>", "<<Clear>>"):
+        box.bind(seq, lambda _e: "break")
+
+
+def _selectable_label(
+    parent: tk.Misc,
+    text: str,
+    *,
+    font: tuple = ("Segoe UI", 10),
+    foreground: str | None = None,
+    background: str | None = None,
+) -> tk.Text:
+    """Single-line label lookalike that allows select/copy."""
+    bg = background if background is not None else _frame_bg(parent)
+    fg = foreground if foreground is not None else _THEME["fg"]
+    box = tk.Text(
+        parent,
+        wrap="none",
+        height=1,
+        width=max(1, len(text)),
+        padx=0,
+        pady=0,
+        borderwidth=0,
+        highlightthickness=0,
+        background=bg,
+        foreground=fg,
+        insertbackground=fg,
+        selectbackground=_THEME["select_bg"],
+        selectforeground=_THEME["select_fg"],
+        font=font,
+        cursor="xterm",
+        relief="flat",
+    )
+    box.insert("1.0", text)
+    _freeze_text(box)
+    return box
+
+
 def _put_rect(img: tk.PhotoImage, x0: int, y0: int, x1: int, y1: int, color: str) -> None:
     for y in range(y0, y1 + 1):
         img.put(color, to=(x0, y, x1 + 1, y + 1))
@@ -413,7 +478,7 @@ def _pack_link_text(
         selectbackground=_THEME["select_bg"],
         selectforeground=_THEME["select_fg"],
         font=("Segoe UI", font_size),
-        cursor="arrow",
+        cursor="xterm",
         relief="flat",
     )
     box.tag_configure("link", foreground=_THEME["link"], underline=True)
@@ -423,7 +488,7 @@ def _pack_link_text(
         font=("Segoe UI", font_size, "bold"),
     )
     box.tag_bind("link", "<Enter>", lambda _e: box.configure(cursor="hand2"))
-    box.tag_bind("link", "<Leave>", lambda _e: box.configure(cursor="arrow"))
+    box.tag_bind("link", "<Leave>", lambda _e: box.configure(cursor="xterm"))
 
     spans = _link_spans(body, dogma_dl=dogma_dl)
     bold_spans = bold_spans or []
@@ -445,7 +510,21 @@ def _pack_link_text(
         if kind == "link" and action is not None:
             tag = f"link_{link_idx}"
             box.insert("end", chunk, (tag, "link"))
-            box.tag_bind(tag, "<Button-1>", lambda _e, fn=action: fn())
+            press = {"x": 0, "y": 0}
+
+            def _down(event: tk.Event, p: dict[str, int] = press) -> None:
+                p["x"], p["y"] = int(event.x), int(event.y)
+
+            def _up(
+                event: tk.Event,
+                fn: Callable[[], None] = action,
+                p: dict[str, int] = press,
+            ) -> None:
+                if abs(int(event.x) - p["x"]) <= 3 and abs(int(event.y) - p["y"]) <= 3:
+                    fn()
+
+            box.tag_bind(tag, "<ButtonPress-1>", _down)
+            box.tag_bind(tag, "<ButtonRelease-1>", _up)
             link_idx += 1
         else:
             box.insert("end", chunk, ("bold",))
@@ -453,7 +532,7 @@ def _pack_link_text(
     if pos < len(body):
         box.insert("end", body[pos:])
 
-    box.configure(state="disabled")
+    _freeze_text(box)
     lines = int(box.index("end-1c").split(".")[0])
     box.configure(height=max(1, lines))
     box.pack(anchor="w", fill="x", pady=pady)
@@ -628,7 +707,7 @@ class _HoverTip:
                     if i:
                         box.insert("end", "\n", (tag,))
                     box.insert("end", item, (tag,))
-        box.configure(state="disabled")
+        _freeze_text(box)
         lines = int(box.index("end-1c").split(".")[0])
         box.configure(height=max(1, min(28, lines)))
         box.pack()
@@ -677,17 +756,14 @@ def _pack_dotted_link(
     col = ttk.Frame(parent)
     bg = _frame_bg(parent)
     font: tuple = ("Segoe UI", font_size, "bold") if bold else ("Segoe UI", font_size)
-    lbl = tk.Label(
+    lbl = _selectable_label(
         col,
-        text=text,
-        background=bg,
-        foreground=_THEME["link"],
+        text,
         font=font,
-        cursor="hand2",
-        borderwidth=0,
-        padx=0,
-        pady=0,
+        foreground=_THEME["link"],
+        background=bg,
     )
+    lbl.configure(cursor="hand2")
     lbl.pack(anchor="w")
     underline = tk.Canvas(
         col,
@@ -708,8 +784,18 @@ def _pack_dotted_link(
 
     lbl.bind("<Configure>", _redraw, add="+")
     col.after_idle(_redraw)
+    press = {"x": 0, "y": 0}
+
+    def _down(event: tk.Event) -> None:
+        press["x"], press["y"] = int(event.x), int(event.y)
+
+    def _up(event: tk.Event) -> None:
+        if abs(int(event.x) - press["x"]) <= 3 and abs(int(event.y) - press["y"]) <= 3:
+            command()
+
     for w in (lbl, underline):
-        w.bind("<Button-1>", lambda _e: command(), add="+")
+        w.bind("<ButtonPress-1>", _down, add="+")
+        w.bind("<ButtonRelease-1>", _up, add="+")
     _attach_text_tip([lbl, underline, col], tip)
     return col
 
@@ -759,17 +845,14 @@ def _pack_hoverable_choice(
     text_col.pack(side="left", anchor="w")
     bg = _frame_bg(parent)
     url = (link_url or "").strip()
-    lbl = tk.Label(
+    lbl = _selectable_label(
         text_col,
-        text=text,
-        background=bg,
-        foreground=_THEME["link"] if url else _THEME["fg"],
+        text,
         font=("Segoe UI", 10),
-        cursor="hand2",
-        borderwidth=0,
-        padx=0,
-        pady=0,
+        foreground=_THEME["link"] if url else _THEME["fg"],
+        background=bg,
     )
+    lbl.configure(cursor="hand2")
     lbl.pack(anchor="w")
 
     underline = tk.Canvas(
@@ -799,7 +882,15 @@ def _pack_hoverable_choice(
     lbl.bind("<Configure>", _redraw_underline, add="+")
     text_col.after_idle(_redraw_underline)
 
-    def _activate(_event: tk.Event | None = None) -> None:
+    press = {"x": 0, "y": 0}
+
+    def _down(event: tk.Event) -> None:
+        press["x"], press["y"] = int(event.x), int(event.y)
+
+    def _activate(event: tk.Event | None = None) -> None:
+        if event is not None:
+            if abs(int(event.x) - press["x"]) > 3 or abs(int(event.y) - press["y"]) > 3:
+                return
         if url:
             webbrowser.open(url)
             return
@@ -811,7 +902,8 @@ def _pack_hoverable_choice(
             command()
 
     for w in (lbl, underline):
-        w.bind("<Button-1>", _activate, add="+")
+        w.bind("<ButtonPress-1>", _down, add="+")
+        w.bind("<ButtonRelease-1>", _activate, add="+")
 
     def _tip_sections() -> list[tuple[str, list[str], str]]:
         sections: list[tuple[str, list[str], str]] = []
@@ -853,13 +945,32 @@ def _path_line(
 ) -> None:
     row = ttk.Frame(parent)
     row.pack(fill="x", pady=(2, 0))
-    ttk.Label(
+    _selectable_label(
         row,
-        text=label,
+        label,
         font=("Segoe UI", 10),
         foreground=_THEME["fg_dim"],
     ).pack(side="left")
-    _inline_link(row, _win_path(path), on_open).pack(side="left")
+    path_s = _win_path(path)
+    path_box = _selectable_label(
+        row,
+        path_s,
+        font=("Segoe UI", 9, "underline"),
+        foreground=_THEME["link"],
+    )
+    path_box.configure(cursor="hand2")
+    press = {"x": 0, "y": 0}
+
+    def _down(event: tk.Event) -> None:
+        press["x"], press["y"] = int(event.x), int(event.y)
+
+    def _up(event: tk.Event) -> None:
+        if abs(int(event.x) - press["x"]) <= 3 and abs(int(event.y) - press["y"]) <= 3:
+            on_open()
+
+    path_box.bind("<ButtonPress-1>", _down, add="+")
+    path_box.bind("<ButtonRelease-1>", _up, add="+")
+    path_box.pack(side="left")
 
 
 def _title_row(
@@ -881,10 +992,11 @@ def _title_row(
             bold=True,
         ).pack(anchor="w")
     else:
-        ttk.Label(
+        _selectable_label(
             block,
-            text=name,
+            name,
             font=("Segoe UI", 14, "bold"),
+            foreground=_THEME["fg"],
         ).pack(anchor="w")
 
 
@@ -1046,18 +1158,38 @@ def _run_wizard_ui(
 
     header = ttk.Frame(root, padding=(20, 16, 20, 8))
     header.pack(fill="x")
-    ttk.Label(
+    _selectable_label(
         header,
-        text="D.O.G.M.A. Setup",
+        "D.O.G.M.A. Setup",
         font=("Segoe UI", 14, "bold"),
+        foreground=_THEME["fg"],
     ).pack(anchor="w")
-    ttk.Label(
+    sub = tk.Text(
         header,
-        text="Choose mods to install (third-party and D.O.G.M.A. mods)",
-        font=("Segoe UI", 11),
+        wrap="word",
+        width=max(8, (win_w - 80) // 8),
+        height=1,
+        padx=0,
+        pady=0,
+        borderwidth=0,
+        highlightthickness=0,
+        background=_frame_bg(header),
         foreground=_THEME["fg_muted"],
-        wraplength=win_w - 80,
-    ).pack(anchor="w", pady=(6, 0))
+        insertbackground=_THEME["fg"],
+        selectbackground=_THEME["select_bg"],
+        selectforeground=_THEME["select_fg"],
+        font=("Segoe UI", 11),
+        cursor="xterm",
+        relief="flat",
+    )
+    sub.insert(
+        "1.0",
+        "Choose mods to install (third-party and D.O.G.M.A. mods)",
+    )
+    _freeze_text(sub)
+    lines = int(sub.index("end-1c").split(".")[0])
+    sub.configure(height=max(1, lines))
+    sub.pack(anchor="w", fill="x", pady=(6, 0))
 
     paths = ttk.Frame(header)
     paths.pack(fill="x", pady=(10, 0))
@@ -1160,15 +1292,12 @@ def _run_wizard_ui(
             chunk.pack(side="left", padx=(4, 0))
 
             def _muted(text: str, parent_row: ttk.Frame = chunk) -> None:
-                tk.Label(
+                _selectable_label(
                     parent_row,
-                    text=text,
-                    background=bg,
-                    foreground=_THEME["fg_muted"],
+                    text,
                     font=("Segoe UI", 10),
-                    borderwidth=0,
-                    padx=0,
-                    pady=0,
+                    foreground=_THEME["fg_muted"],
+                    background=bg,
                 ).pack(side="left")
 
             _muted("(")
@@ -1190,15 +1319,12 @@ def _run_wizard_ui(
                 command=lambda: _open_in_explorer(dogma_dl),
             ).pack(side="left")
             _muted(" and name it ")
-            tk.Label(
+            _selectable_label(
                 chunk,
-                text=stem,
-                background=bg,
-                foreground=_THEME["fg"],
+                stem,
                 font=("Segoe UI", 10, "bold"),
-                borderwidth=0,
-                padx=0,
-                pady=0,
+                foreground=_THEME["fg"],
+                background=bg,
             ).pack(side="left")
             _muted(")")
 

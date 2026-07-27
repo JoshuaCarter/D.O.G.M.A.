@@ -8,8 +8,8 @@ import sys
 from pathlib import Path
 
 _REPO = Path(__file__).resolve().parents[1]
-if str(_REPO / "src" / "common" / "mo2") not in sys.path:
-    sys.path.insert(0, str(_REPO / "src" / "common" / "mo2"))
+if str(_REPO / "src" / "common" / "mo2" / "tools") not in sys.path:
+    sys.path.insert(0, str(_REPO / "src" / "common" / "mo2" / "tools"))
 
 import dogma_mo2_lib as lib  # noqa: E402
 
@@ -19,8 +19,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--feature", required=True, help="Feature path e.g. travel/true_fast_travel")
     p.add_argument(
         "--manifest",
-        default=str(_REPO / "config" / "features.yml"),
-        help="features.yml path",
+        default=str(_REPO / "config" / "manifest.yml"),
+        help="manifest.yml path",
     )
     args = p.parse_args(argv)
     data = lib.load_manifest(Path(args.manifest))
@@ -32,7 +32,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     packs = ", ".join(meta.depends)
     print(
-        f"Requires: {packs} - install via DOGMA (Setup) / Dependencies "
+        f"Requires: {packs} - install via DOGMA Setup / Dependencies "
         f"after FOMOD (same ModDB/manual pipeline as other packs)."
     )
     return 0

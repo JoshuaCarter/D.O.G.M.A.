@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Prepare MO2 for DOGMA: disabled.ini, defaults.ini, MCM keybinds, user.ltx.
+"""Prepare MO2 for DOGMA: manifest disables/defaults, MCM keybinds, user.ltx.
 
-Disable/defaults logic lives in src/common/mo2/dogma_mo2_lib.py (also used by
+Disable/defaults logic lives in src/common/mo2/tools/dogma_mo2_lib.py (also used by
 MO2 jobs). This author tool additionally scrubs keybinds and restores user.ltx.
 
   py -3 tools/disable_blacklisted_mods.py
@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 
 _REPO = Path(__file__).resolve().parent.parent
-_MO2_LIB = _REPO / "src" / "common" / "mo2"
+_MO2_LIB = _REPO / "src" / "common" / "mo2" / "tools"
 if str(_MO2_LIB) not in sys.path:
     sys.path.insert(0, str(_MO2_LIB))
 
@@ -186,25 +186,29 @@ def restore_user_ltx(template: Path, dest: Path, dry_run: bool) -> Path | None:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="Apply config/disabled.ini + defaults.ini, scrub MCM keybinds, restore user.ltx."
+        description="Apply manifest disables/defaults, scrub MCM keybinds, restore user.ltx."
     )
     p.add_argument(
         "--mo2-root",
         default=r"C:\GAMMA" if sys.platform == "win32" else os.environ.get("MO2_ROOT", r"C:\GAMMA"),
         help="MO2 / GAMMA install folder (contains ModOrganizer.exe). Default: C:\\GAMMA",
     )
-    p.add_argument("--disable", default="", help="Path to disabled.ini (default: <repo>/config/disabled.ini)")
+    p.add_argument(
+        "--disable",
+        default="",
+        help="Legacy disabled.ini path (only if not using manifest.yml)",
+    )
     p.add_argument(
         "--initialize",
         default="",
-        help="Path to defaults.ini (default: <repo>/config/defaults.ini)",
+        help="Manifest/features path for MCM defaults (default: config/manifest.yml)",
     )
     p.add_argument("--user-ltx", default="", help="Template user.ltx (default: <repo>/config/user.ltx)")
     p.add_argument("--profile", default="", help="MO2 profile name (default: selected_profile)")
     p.add_argument("--all-profiles", action="store_true", help="Apply mod disables to every profile")
     only = p.add_mutually_exclusive_group()
-    only.add_argument("--disable-only", action="store_true", help="Only apply disabled.ini")
-    only.add_argument("--initialize-only", action="store_true", help="Only apply defaults.ini")
+    only.add_argument("--disable-only", action="store_true", help="Only apply disables")
+    only.add_argument("--initialize-only", action="store_true", help="Only apply MCM defaults")
     only.add_argument("--keybinds-only", action="store_true", help="Only scrub MCM keybinds")
     only.add_argument("--user-ltx-only", action="store_true", help="Only restore user.ltx")
     p.add_argument("--dry-run", action="store_true", help="Print changes; write nothing")
@@ -216,13 +220,13 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     root = repo_root_from_script()
     disable_path = Path(args.disable) if args.disable else root / "config" / "disabled.ini"
+    manifest = root / "config" / "manifest.yml"
+    if not manifest.is_file():
+        manifest = root / "config" / "features.yml"
     initialize_path = (
-        Path(args.initialize) if args.initialize else root / "config" / "features.yml"
+        Path(args.initialize) if args.initialize else manifest
     )
     user_ltx = Path(args.user_ltx) if args.user_ltx else root / "config" / "user.ltx"
-    manifest = root / "config" / "features.yml"
-    if not manifest.is_file():
-        manifest = root / "config" / "manifest.yml"
     mo2_root = Path(args.mo2_root)
 
     do_disable = not (args.initialize_only or args.keybinds_only or args.user_ltx_only)
@@ -328,7 +332,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if do_initialize:
         info("")
-        info("defaults: set MCM options from features.yml / mods.yml")
+        info("defaults: set MCM options from manifest.yml")
         info(f"  Config: {initialize_path}")
         for profile in selected_profiles():
             info(f"  Profile: {profile}")

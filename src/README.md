@@ -19,7 +19,7 @@ See `MOVE_MAP.md` for the full map.
 
 ## Exception: `mo2/` (MO2 tools dir)
 
-`src/common/mo2/...` and `src/<category>/<feature>/mo2/...` are **not** packed into gamedata. On deploy they land at `<mod>/mo2/...` next to `gamedata/` (e.g. `mods/DOGMA/mo2/DOGMA.bat`). Local `build/mo2/` gets the same layout. Core always-on tools (pre-launch runner) live under `src/common/mo2/`.
+`src/common/mo2/...` and `src/<category>/<feature>/mo2/...` are **not** packed into gamedata. On deploy they land at `<mod>/mo2/...` next to `gamedata/` (e.g. `mods/DOGMA/mo2/DOGMA Setup.bat`). Local `build/mo2/` gets the same layout. Core always-on tools live under `src/common/mo2/` (`DOGMA Setup.bat` at the mo2 root; internals in `mo2/tools/`).
 
 ## Copy vs smush (inside a gamedata root)
 
@@ -33,17 +33,12 @@ Skip: `README*`, `MOVE_MAP*`, `.gitkeep`, `*.alao-bak`, `_` names.
 
 ## Installer (FOMOD)
 
-Per feature: `src/<category>/<feature>/installer/`
+Path-mod **name**, **description**, and **module id** come from `config/manifest.yml`
+(YAML key, `desc:`, `path:` → `category_feature`). Optional hover preview only:
 
-| File | Purpose |
-|------|---------|
-| `name.txt` | Checkbox title |
-| `description.txt` | Hover text (short, player-facing) |
-| `default.txt` | `recommended` / `optional` |
-| `image.png` | optional hover preview |
-| `id.txt` | zip module folder name (defaults to feature dir name) |
+`src/<category>/<feature>/installer/image.png`
 
-Release zip: `bash tools/package-fomod.sh` → `build/fomod/`. Wizard is **one page per category**; each page is SelectAny feature checkboxes. Hover a feature for its description and image; an About row shows "Hover each checkbox to see feature information". Descriptions append `Requires:` lines from `features.yml` `depends:` when present. Final page lists third-party recommendations from `src/common/installer/recommendations.txt` (info only). Common is always installed. Root `config/features.yml` gates features: `omit` / `local` / `release`. Pack catalog + Setup wizard: `config/mods.yml`. Feature third-party needs use `depends:` → pack ids. Local `Ctrl+Shift+B` builds `>= local`; packaging ships `>= release`. MO2 entry point: `DOGMA (Setup).bat`.
+Release zip: `bash tools/package-fomod.sh` → `build/fomod/`. Wizard is **one page per category**; each page is SelectAny feature checkboxes. Hover a feature for its description and image; an About row shows "Hover each checkbox to see feature information". Descriptions append `Requires:` lines from `depends:` when present. Final page lists third-party recommendations from `src/common/installer/recommendations.txt` (info only). Common is always installed. Root `config/manifest.yml` gates features: `omit` / `dev` / `release`. Pack catalog + Setup wizard: same file / `config/mods.yml`. Feature third-party needs use `depends:` → pack ids. Local `Ctrl+Shift+B` builds `>= dev`; packaging ships `>= release`. MO2 entry point: `DOGMA Setup.bat`.
 
 ## Common
 

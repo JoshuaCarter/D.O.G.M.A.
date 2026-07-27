@@ -5,15 +5,22 @@
 #   build/fomod/
 #     fomod/ModuleConfig.xml  info.xml  images/<id>.png
 #     common/gamedata/...
+#     common/mo2/...          (tools + packages/<path_key>.zip)
 #     <feature_id>/gamedata/...
 #     meta.ini  .mod_id
 #
-# Wizard: one install step per category; each step is SelectAny checkboxes
+# FOMOD: one install step per category; each step is SelectAny checkboxes
 # (one per feature). Hover a feature for its description + optional image.
 # A Required "About" row per step shows the default hover text.
 #
+# Plugin name / description / module id come from config/manifest.yml
+# (YAML key, desc:, path → id). Optional hover image: src/.../installer/image.png.
+#
+# Each release feature is also zipped to common/mo2/packages/<path_key>.zip
+# (path_key = category_feature) so DOGMA Setup can unpack features locally.
+#
 # Local full deploy is still tools/build.sh (all features merged).
-# Release features are gated by ROOT/config/features.yml (stage: release).
+# Release path mods are gated by ROOT/config/manifest.yml (stage: release).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -30,10 +37,17 @@ xml_escape() {
 	sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g'
 }
 
-read_trim() {
-	local f="$1"
-	[[ -f "$f" ]] || { echo ""; return 0; }
-	tr -d '\r' < "$f" | sed -e 's/[[:space:]]*$//' | awk 'NR==1{printf "%s",$0; next}{printf "\n%s",$0}'
+dogma_py() {
+	if command -v py >/dev/null 2>&1; then
+		py -3 "$@"
+	elif command -v python3 >/dev/null 2>&1; then
+		python3 "$@"
+	elif command -v python >/dev/null 2>&1; then
+		python "$@"
+	else
+		echo "package-fomod: Python required" >&2
+		exit 1
+	fi
 }
 
 # Category folder -> installer page title (matches MCM labels).
@@ -57,14 +71,15 @@ cat_title() {
 	esac
 }
 
-# Load ROOT/config/features.yml → FEATURES (stage >= release). common is implicit.
+# Load ROOT/config/manifest.yml → FEATURES (stage >= release).
+# Path mods only; common is implicit.
 load_manifest() {
 	dogma_load_manifest 2 || exit 1
 	if [[ "${#FEATURES[@]}" -eq 0 ]]; then
-		echo "package-fomod: config/features.yml has no release features (need stage: release)" >&2
+		echo "package-fomod: config/manifest.yml has no release path mods (need stage: release)" >&2
 		exit 1
 	fi
-	echo "package-fomod: config/features.yml release (${#FEATURES[@]} features)"
+	echo "package-fomod: release path mods (${#FEATURES[@]} features)"
 }
 
 manifest_has() {
@@ -149,44 +164,38 @@ while IFS= read -r -d '' cat_dir; do
 		manifest_has "$rel" || continue
 
 		inst="$feat_dir/installer"
-		id="$feat_base"
-		if [[ -f "$inst/id.txt" ]]; then
-			id="$(read_trim "$inst/id.txt")"
-		fi
-		name="$feat_base"
-		if [[ -f "$inst/name.txt" ]]; then
-			name="$(read_trim "$inst/name.txt")"
-		fi
-		desc="D.O.G.M.A. feature: $name"
-		if [[ -f "$inst/description.txt" ]]; then
-			desc="$(read_trim "$inst/description.txt")"
-		fi
-		req_blurb=""
-		_py=()
-		if command -v py >/dev/null 2>&1; then
-			_py=(py -3)
-		elif command -v python3 >/dev/null 2>&1; then
-			_py=(python3)
-		elif command -v python >/dev/null 2>&1; then
-			_py=(python)
-		fi
-		if [[ "${#_py[@]}" -gt 0 ]]; then
-			req_blurb="$("${_py[@]}" "$ROOT/tools/feature_fomod_requires.py" --feature "$rel" --manifest "$ROOT/config/features.yml" 2>/dev/null || true)"
-			if [[ -n "$req_blurb" ]]; then
-				desc="${desc}"$'\n\n'"${req_blurb}"
-			fi
-		fi
-		default="Optional"
-		if [[ -f "$inst/default.txt" ]]; then
-			case "$(read_trim "$inst/default.txt" | tr '[:upper:]' '[:lower:]')" in
-				recommended) default="Recommended" ;;
-				required) default="Required" ;;
-				*) default="Optional" ;;
-			esac
+		FEATURE_NAME="" FEATURE_DESC="" FEATURE_ID="" FEATURE_DEFAULT=""
+		eval "$(dogma_py "$ROOT/tools/feature_fomod_meta.py" --feature "$rel" --manifest "$ROOT/config/manifest.yml")"
+		name="$FEATURE_NAME"
+		desc="$FEATURE_DESC"
+		id="$FEATURE_ID"
+		default="$FEATURE_DEFAULT"
+		[[ -n "$id" ]] || { echo "package-fomod: missing meta for $rel" >&2; exit 1; }
+
+		req_blurb="$(dogma_py "$ROOT/tools/feature_fomod_requires.py" --feature "$rel" --manifest "$ROOT/config/manifest.yml" 2>/dev/null || true)"
+		if [[ -n "$req_blurb" ]]; then
+			desc="${desc}"$'\n\n'"${req_blurb}"
 		fi
 
 		echo "package-fomod: $rel -> $id"
 		DOGMA_OUT="$STAGE/$id/gamedata" DOGMA_ONLY="$rel" bash "$BUILD"
+
+		# Path-keyed zip for Setup wizard (always shipped via common/mo2).
+		pkg_dir="$STAGE/common/mo2/packages"
+		mkdir -p "$pkg_dir"
+		pkg_zip="$pkg_dir/${id}.zip"
+		rm -f "$pkg_zip"
+		dogma_py - "$STAGE/$id" "$pkg_zip" <<'PY'
+import sys, zipfile
+from pathlib import Path
+root = Path(sys.argv[1])
+out = Path(sys.argv[2])
+with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+    for p in sorted(root.rglob("*")):
+        if p.is_file():
+            zf.write(p, p.relative_to(root).as_posix())
+print(f"package-fomod: package {out.name}")
+PY
 
 		image_xml=""
 		if [[ -f "$inst/image.png" ]]; then
@@ -294,7 +303,7 @@ cat > "$STAGE/fomod/info.xml" <<EOF
 EOF
 
 cat > "$STAGE/fomod/ModuleConfig.xml" <<EOF
-<!-- Generated by tools/package-fomod.sh — do not hand-edit; change src/*/installer/ instead. -->
+<!-- Generated by tools/package-fomod.sh — do not hand-edit; change config/manifest.yml (and optional installer/image.png). -->
 <config xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://qconsulting.ca/fo3/ModConfig5.0.xsd">
 	<moduleName>D.O.G.M.A.</moduleName>
 	<requiredInstallFiles>
@@ -312,6 +321,9 @@ if [[ -f "$ROOT/.mod_id" ]]; then
 fi
 if [[ -f "$ROOT/INFO.md" ]]; then
 	cp -a "$ROOT/INFO.md" "$STAGE/INFO.md"
+fi
+if [[ -f "$ROOT/config/manifest.yml" ]]; then
+	cp -a "$ROOT/config/manifest.yml" "$STAGE/manifest.yml"
 fi
 if [[ -f "$ROOT/config/features.yml" ]]; then
 	cp -a "$ROOT/config/features.yml" "$STAGE/features.yml"

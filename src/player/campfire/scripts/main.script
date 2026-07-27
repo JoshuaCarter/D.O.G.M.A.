@@ -1,12 +1,14 @@
 --[[
 	Campfire heal (Body Health System + main HP).
 
-	Each tick (+1 step, both pools capped at 80%):
-	  1. Collect limbs with total HP < 80% (need temp).
-	     If any — roll one and add temp. Done.
-	  2. Else collect limbs with permanent HP < 80% (need perm conversion)
-	     and main HP if below 80%. If any — roll one and heal. Done.
-	  3. Else nothing left to heal.
+	Each tick, one step in order:
+	  1. Random limb: +1 temp until every limb total >= temp_fill% (slider 0–75).
+	  2. Random limb: convert 1 temp→perm (perm up to 100%) until no temp left.
+	  3. Body: +temp main HP until health >= temp_fill%.
+	  4. Body: convert body temp→perm until none left.
+
+	temp_fill 0% → skip steps 1 and 3 (no auto temp); still run 2 and 4
+	to convert any existing temp (medkits / leftover body temp).
 
 	Disable other campfire heal mods to avoid stacking.
 ]]
@@ -16,8 +18,8 @@ local DOGMA
 
 local LIMBS = { "head", "torso", "rightarm", "leftarm", "rightleg", "leftleg" }
 local RANGE_SQR = 10 * 10
-local HEAL_CAP = 0.8
-local MAIN_HEAL = 0.01 -- 1% main HP when that target is picked
+local MAIN_HEAL = 0.01 -- 1% body HP per temp tick
+local BODY_TEMP_KEY = "dogma.campfire.body_temp"
 
 local next_tick = 0
 
@@ -27,6 +29,17 @@ local function interval_ms()
 		sec = 1
 	end
 	return sec * 1000
+end
+
+-- Fraction 0..0.75. Slider is stored as 0–75 percent.
+local function temp_fill_frac()
+	local pct = DOGMA and DOGMA.mcm.number(CONFIG.MOD_ID, "temp_fill", CONFIG.DEFAULTS.temp_fill) or CONFIG.DEFAULTS.temp_fill
+	if pct < 0 then
+		pct = 0
+	elseif pct > 75 then
+		pct = 75
+	end
+	return pct / 100
 end
 
 local function near_lit_campfire()
@@ -44,8 +57,12 @@ local function near_lit_campfire()
 	return false
 end
 
-local function limb_cap(max)
-	return math.floor(max * HEAL_CAP)
+-- Integer limb points for auto-temp. 0% → 0 (no auto temp).
+local function limb_temp_cap(max, frac)
+	if frac <= 0 or max == nil or max <= 0 then
+		return 0
+	end
+	return math.floor(max * frac)
 end
 
 local function save_limb(bhs, key)
@@ -53,17 +70,48 @@ local function save_limb(bhs, key)
 	utils_obj.save_var(db.actor, "timedhp." .. key, bhs.timedhp[key])
 end
 
+local function load_body_temp()
+	local v = utils_obj.load_var(db.actor, BODY_TEMP_KEY)
+	if v == nil then
+		return 0
+	end
+	return v
+end
+
+local function save_body_temp(v)
+	utils_obj.save_var(db.actor, BODY_TEMP_KEY, v)
+end
+
+-- Clamp tracked body temp to current health (damage / other heals).
+local function sync_body_temp()
+	local actor = db.actor
+	local body_temp = load_body_temp()
+	local h = actor.health
+	if body_temp > h then
+		body_temp = h
+		save_body_temp(body_temp)
+	elseif body_temp < 0 then
+		body_temp = 0
+		save_body_temp(body_temp)
+	end
+	return body_temp
+end
+
 -- Note: hp/temp may be 0 (falsy) — only reject nil.
-local function limb_needs_temp(bhs, key)
+local function limb_needs_temp(bhs, key, frac)
+	if frac <= 0 then
+		return false
+	end
 	local hp = bhs.health[key]
 	local max = bhs.maxhp[key]
 	local temp = bhs.timedhp[key]
 	if hp == nil or max == nil or temp == nil or max <= 0 then
 		return false
 	end
-	return hp < limb_cap(max)
+	return hp < limb_temp_cap(max, frac)
 end
 
+-- Convert any remaining temp up to full permanent (100%).
 local function limb_needs_perm(bhs, key)
 	local hp = bhs.health[key]
 	local max = bhs.maxhp[key]
@@ -72,17 +120,18 @@ local function limb_needs_perm(bhs, key)
 		return false
 	end
 	local perm = hp - temp
-	return temp > 0 and perm < limb_cap(max)
+	return temp > 0 and perm < max
 end
 
-local function heal_limb_temp(bhs, key)
+local function heal_limb_temp(bhs, key, frac)
 	local hp = bhs.health[key]
 	local max = bhs.maxhp[key]
 	local temp = bhs.timedhp[key]
 	if hp == nil or max == nil or temp == nil or max <= 0 then
 		return false
 	end
-	if hp >= limb_cap(max) then
+	local cap = limb_temp_cap(max, frac)
+	if cap <= 0 or hp >= cap then
 		return false
 	end
 	bhs.health[key] = hp + 1
@@ -98,27 +147,54 @@ local function heal_limb_perm(bhs, key)
 		return false
 	end
 	local perm = hp - temp
-	if temp <= 0 or perm >= limb_cap(max) then
+	if temp <= 0 or perm >= max then
 		return false
 	end
 	bhs.timedhp[key] = temp - 1
 	return true
 end
 
-local function main_needs_heal()
-	return db.actor and db.actor.health < HEAL_CAP
-end
-
-local function heal_main()
-	local actor = db.actor
-	if not actor or actor.health >= HEAL_CAP then
+local function body_needs_temp(frac)
+	if frac <= 0 then
 		return false
 	end
-	local amt = math.min(MAIN_HEAL, HEAL_CAP - actor.health)
+	return db.actor and db.actor.health < frac
+end
+
+local function heal_body_temp(frac)
+	local actor = db.actor
+	if not actor or frac <= 0 or actor.health >= frac then
+		return false
+	end
+	local amt = math.min(MAIN_HEAL, frac - actor.health)
 	if amt <= 0 then
 		return false
 	end
+	local body_temp = sync_body_temp()
 	actor:change_health(amt)
+	body_temp = body_temp + amt
+	if body_temp > actor.health then
+		body_temp = actor.health
+	end
+	save_body_temp(body_temp)
+	return true
+end
+
+local function body_needs_perm()
+	return sync_body_temp() > 0
+end
+
+local function heal_body_perm()
+	local body_temp = sync_body_temp()
+	if body_temp <= 0 then
+		return false
+	end
+	local amt = math.min(MAIN_HEAL, body_temp)
+	body_temp = body_temp - amt
+	if body_temp < 0 then
+		body_temp = 0
+	end
+	save_body_temp(body_temp)
 	return true
 end
 
@@ -130,50 +206,55 @@ local function pick(targets)
 end
 
 local function tick_heal()
+	local frac = temp_fill_frac()
 	local bhs = rawget(_G, "zzz_player_injuries")
 	local has_bhs = bhs and bhs.health and bhs.timedhp and bhs.maxhp
 
-	-- Phase 1: limbs with total HP < 80% → roll one, +1 temp.
-	local temp_targets = {}
-	if has_bhs then
+	-- 1. Random limb temp until all limbs >= temp_fill%.
+	if has_bhs and frac > 0 then
+		local temp_targets = {}
 		for i = 1, #LIMBS do
 			local key = LIMBS[i]
-			if limb_needs_temp(bhs, key) then
+			if limb_needs_temp(bhs, key, frac) then
 				temp_targets[#temp_targets + 1] = key
 			end
 		end
-	end
-	local temp_pick = pick(temp_targets)
-	if temp_pick then
-		if heal_limb_temp(bhs, temp_pick) then
-			save_limb(bhs, temp_pick)
+		local temp_pick = pick(temp_targets)
+		if temp_pick then
+			if heal_limb_temp(bhs, temp_pick, frac) then
+				save_limb(bhs, temp_pick)
+			end
+			return
 		end
-		return
 	end
 
-	-- Phase 2: limbs with perm < 80% (and temp to convert) + main HP < 80%.
-	local perm_targets = {}
+	-- 2. Random limb perm (convert all temp, up to 100% permanent).
 	if has_bhs then
+		local perm_targets = {}
 		for i = 1, #LIMBS do
 			local key = LIMBS[i]
 			if limb_needs_perm(bhs, key) then
-				perm_targets[#perm_targets + 1] = { kind = "limb", key = key }
+				perm_targets[#perm_targets + 1] = key
 			end
 		end
+		local perm_pick = pick(perm_targets)
+		if perm_pick then
+			if heal_limb_perm(bhs, perm_pick) then
+				save_limb(bhs, perm_pick)
+			end
+			return
+		end
 	end
-	if main_needs_heal() then
-		perm_targets[#perm_targets + 1] = { kind = "main" }
-	end
-	local perm_pick = pick(perm_targets)
-	if not perm_pick then
+
+	-- 3. Body temp until health >= temp_fill%.
+	if body_needs_temp(frac) then
+		heal_body_temp(frac)
 		return
 	end
-	if perm_pick.kind == "main" then
-		heal_main()
-		return
-	end
-	if heal_limb_perm(bhs, perm_pick.key) then
-		save_limb(bhs, perm_pick.key)
+
+	-- 4. Body perm: convert tracked body temp until none left.
+	if body_needs_perm() then
+		heal_body_perm()
 	end
 end
 

@@ -22,6 +22,13 @@ Melancholy Weathers:
 - Run `cfg_load melancholy` on first launch
 
 
+## Which install?
+
+1. **FOMOD** — pick individual D.O.G.M.A. path mods (True Prone, Fast Travel, tooltips, …) like a normal mod. Features that need a third-party pack note that in their description.
+2. **DOGMA Setup** in MO2 — one wizard list for third-party packs and D.O.G.M.A. path mods (`stage: release` or `dev` in `config/manifest.yml`). Path mods unpack from `mo2/packages/`; url mods download as before. `stage: omit` is hidden from both FOMOD and Setup; `dev` is local-only.
+
+You can use both: install path mods via FOMOD, then run Setup for packs/disables/defaults (already-present path mods default off but still pull their `depends:`).
+
 ## Why make an "anthology"?
 
 I got sick of managing a dozen mods, and I knew it would be 2 dozen in no time. I also felt like I was drifting too far from my real goal - making G.A.M.M.A. a better experience for **me**, because the target audience for my mods is **me**. It's so much easier to shove every little change I want to make into this mod because I don't have to scaffold a new repo, maintain another discord thread, etc. If I couldn't share any of this, then nothing would change for me really, but my infinite compassion for others compells me to share my work with whoever may share my tastes.

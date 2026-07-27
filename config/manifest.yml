@@ -1,15 +1,317 @@
-# DOGMA path mods (local packages under src/<path>).
+# DOGMA unified mod catalog (Setup wizard + FOMOD + depends).
 #
-# Same shape as third-party packs in mods.yml / manifest.yml, except path: instead of url:.
-# stage: omit | dev | release — single gate for FOMOD + Setup wizard
-# omit — not in FOMOD, not in wizard
-# dev — FOMOD + wizard locally only (not in release builds)
-# release — FOMOD + wizard everywhere
+# Single list for third-party packs and local D.O.G.M.A. path mods.
+# Copies also kept at config/mods.yml and config/features.yml — prefer this file.
 #
-# desc: — Setup wizard + FOMOD hover text (YAML key = display name; path = id).
-# common — always-on core (stage: omit, no wizard checkbox).
-# Full catalog: config/manifest.yml
+# Each block is ONE of:
+#   A) Wizard/FOMOD mod — stage: release|dev + url:/buy_url: OR path:
+#   B) Radio group — stage: release|dev + options: [choices]
+#   C) Composition choice — depends: [mods…]
+#   D) Leaf child — stage: omit + url/buy_url or path effects only
 #
+# stage: omit | dev | release
+#   omit    — not in FOMOD, not in wizard
+#   dev     — FOMOD + wizard locally only (not in release)
+#   release — FOMOD + wizard everywhere
+#
+# path: local feature under src/<path>; package zip mo2/packages/<path_key>.zip
+# url: / buy_url: — remote archives
+#
+
+Screen Space Shaders:
+  stage: release
+  desc: Select the version(s) of Screen Space Shaders you want to install.
+  options:
+    - SSS Latest
+    - SSS Preview
+    - SSS Latest & Preview
+  deletes:
+    - <Anomaly>/appdata/shaders_cache
+
+SSS Latest:
+  stage: omit
+  url: https://www.moddb.com/mods/stalker-anomaly/addons/screen-space-shaders
+  desc: Downloads and installs the latest Screen Space Shaders 23.x from ModDB.
+  disables:
+    - 190- Screen Space Shaders 23 - Ascii1457
+    - 190- Screen Space Shaders - Ascii1457
+    - 190- Screen Space Shaders 15.0 - Ascii1457
+    - 190- Screen Space Shaders 7 - Ascii1457
+    - 190- Screen Space Shaders latest - Ascii1457
+
+SSS Preview:
+  stage: omit
+  buy_url: https://ko-fi.com/ascii1457
+  archive_name: Screen Space Shaders 24
+  desc: Installs the 24.x preview from a user-supplied archive.
+  enables:
+    - 190- Screen Space Shaders 23 - Ascii1457
+  disables:
+    - 190- Screen Space Shaders - Ascii1457
+    - 190- Screen Space Shaders 15.0 - Ascii1457
+    - 190- Screen Space Shaders 7 - Ascii1457
+    - 190- Screen Space Shaders latest - Ascii1457
+
+SSS Latest & Preview:
+  stage: omit
+  depends:
+    - SSS Latest
+    - SSS Preview
+  desc: |
+    Downloads Screen Space Shaders 23.x from ModDB and installs preview 24.x.
+
+# --------------------------------
+# Melancholy Weathers
+# --------------------------------
+
+Melancholy Weathers:
+  stage: release
+  requires:
+    - Screen Space Shaders
+  buy_url: https://ko-fi.com/pipnik
+  archive_name: Melancholy Weathers
+  desc: Installs Melancholy Weathers and its related tweaks.
+  depends:
+    - Enhanced Shader Color Grading
+    - Dark Signal Soundscape Overhaul Melancholy Edition
+  disables:
+    - 290- Atmospherics Shaders Weathers and Reshade Latest - Hippobot
+    - 290- Atmospherics Shaders Weathers and Reshade - Hippobot
+    - 296- Atmospherics Shaders Weathers and Reshade - Hippobot
+  settings:
+    - video/weather/persistent_weather: "false"
+  deletes:
+    - <Anomaly>/appdata/shaders_cache
+  console:
+    - cfg_load melancholy
+    - ssfx_water 1,0.8,1,0.1
+
+Enhanced Shader Color Grading:
+  stage: omit
+  url: https://www.moddb.com/mods/stalker-anomaly/addons/enhanced-shaders-and-color-grading-for-151
+  disables:
+    - R3zy's Detectors Enhanced Shaders Patch
+
+Dark Signal Soundscape Overhaul Melancholy Edition:
+  stage: omit
+  url: https://www.moddb.com/mods/stalker-anomaly/addons/dark-signal-soundscape-overhaul-melancholy-edition
+  disables:
+    - 310- Dark Signal Weather and Ambiance Audio - Shrike
+
+# --------------------------------
+# AlifePlus
+# --------------------------------
+
+AlifePlus:
+  stage: release
+  url: https://www.moddb.com/mods/stalker-anomaly/addons/alifeplus-v1-0-01
+  desc:
+  depends:
+    - xlibs
+    - AlifeBalance
+    - AlifeGuard
+    - AlifeTactics
+  disables:
+    - 483- Alife Plus - damian_sirbu
+    - G.A.M.M.A. NPC Loot Claim Remade
+    - 211- NPC Loot Claim (NPCs will kill you if you loot what they killed) - Vintar0 & Nullblank
+    - 231- More Aggressive NPC Looting (harder game, do not use with NPC Loot Claim) - Demonized
+    - 311- NPC Stop Looting Dead Bodies - DTTheGunslinger
+
+xlibs:
+  stage: omit
+  url: https://www.moddb.com/mods/stalker-anomaly/addons/xlibs-1001
+
+AlifeBalance:
+  stage: omit
+  url: https://www.moddb.com/mods/stalker-anomaly/addons/alifebalance
+  depends:
+    - xlibs
+  disables:
+    - 480- Squad Filler - xcvb
+    - G.A.M.M.A. ZCP 1.4 Balanced Spawns
+    - 257- Zone Customization Project (ZCP) - Diphenhydramine-HCl
+    - ZCP 1.5d
+    - G.A.M.M.A. NPC Spawns
+    - xcvb's Guards Spawner
+
+AlifeGuard:
+  stage: omit
+  url: https://www.moddb.com/mods/stalker-anomaly/addons/alifeguard-1001
+  depends:
+    - xlibs
+  disables:
+    - G.A.M.M.A. Dynamic Despawner
+    - 311- NPC Stop Looting Dead Bodies - DTTheGunslinger
+    - 248- Night Mutants - xcvb
+
+AlifeTactics:
+  stage: omit
+  url: https://www.moddb.com/mods/stalker-anomaly/addons/alifetactics
+  depends:
+    - xlibs
+  mcm:
+    - idiots/options/noNpcLooting: "false"
+  disables:
+    - G.A.M.M.A. No NPC Friendly Fire
+    - G.A.M.M.A. AI Rework
+    - No More Companion Friendly Fire
+    - 133- No more companions friendly fire - RavenAscendant
+    - 45- Stealth Overhaul - xcvb
+    - G.A.M.M.A. NPCs Faster Reactions
+
+# --------------------------------
+# Interaction Dot Marks
+# --------------------------------
+
+Interaction Dot Marks:
+  stage: release
+  url: https://www.moddb.com/mods/stalker-anomaly/addons/interaction-dot-marks
+  desc: Downloads Interaction Dot Marks and disables the G.A.M.M.A. catalog copy.
+  disables:
+    - 452- Interaction Dot Marks - Catspaw
+
+# --------------------------------
+# Tarkov-like Level Transitions
+# --------------------------------
+
+Tarkov-like Level Transitions:
+  stage: omit
+  url: https://www.moddb.com/mods/stalker-anomaly/addons/tarkov-like-level-transitions
+  desc: Third-party level transition pack used by D.O.G.M.A. fast-travel features.
+
+# --------------------------------
+# Zone / visuals
+# --------------------------------
+
+Demonized DB:
+  stage: release
+  buy_url: https://github.com/themrdemonized/xray-monolith/releases/latest
+  archive_name: STALKER-Anomaly-modded-exes
+  desc: >
+    Modded-exes gamedata DB (00_modded_exes_gamedata.db0) from Demonized
+    Anomaly binaries. Supply the modded-exes archive; only the gamedata DB
+    is needed as an MO2 mod.
+
+C Consciousness Grass and Trees:
+  stage: release
+  url: https://www.moddb.com/mods/stalker-anomaly/addons/ccon-grass-n-trees
+  requires:
+    - Screen Space Shaders
+  desc: CCon flora overhaul (Seasons). Large FOMOD — pick Seasons for G.A.M.M.A.
+  disables:
+    - 289- Grass Tweaks (reinstall for different options) - Aydin
+    - 388- Aydins Grass Tweaks SSS Terrain LOD Compatibility - aytabag
+
+Glossy Puddles:
+  stage: release
+  url: false
+  archive_name: Glossy Puddles v1.4 - Erandis
+  requires:
+    - Screen Space Shaders
+  desc: Dynamic glossy terrain puddles (Erandis). Needs Screen Space Shaders.
+
+G2X Tactical Light Presets:
+  stage: release
+  url: https://www.moddb.com/mods/stalker-anomaly/addons/g2x-tactical-light-preset-600-lm-range-max-100-m-eff-70-m-55006500-k
+  desc: Flashlight range and colour presets (~600 lm / ~100 m).
+
+# --------------------------------
+# Gameplay / UI
+# --------------------------------
+
+Medik Health Monitor:
+  stage: release
+  url: false
+  archive_name: MedikHealthMonitor
+  desc: Handheld Medik device showing HP, limbs, radiation, and psy.
+
+RNG Attach:
+  stage: release
+  url: https://www.moddb.com/mods/stalker-anomaly/addons/rng-attach-kits
+  desc: Random attachments and kits from stashes/NPCs; strips stock vendor attach.
+
+Quick Action Wheel Overhaul:
+  stage: release
+  url: https://www.moddb.com/mods/stalker-anomaly/addons/quick-action-wheels-overhaul-10
+  desc: Full QAW replacement (Gwnf5066). Replaces HarukaSai and G.A.M.M.A. Balance.
+  disables:
+    - 446- Quick Action Wheel - HarukaSai
+    - G.A.M.M.A. Quick Action Wheel Balance
+
+Ammo Check - Priler:
+  stage: release
+  buy_url: https://github.com/Priler/AmmoCheck
+  archive_name: AmmoCheck v3.3 by Priler REWORK
+  desc: Enhanced ammo-check rework (Priler). Replaces Ishmaeel's Ammo Check.
+  disables:
+    - 261- Ammo Check - Ishmaeel
+
+NPC Weapon Position Tweaks:
+  stage: release
+  url: false
+  archive_name: NPC Weapon Position Tweaks 1.42
+  desc: NPC holstered / carried weapon pose tweaks.
+  disables:
+    - A_triangle's NPC Weapon Position Tweak
+
+Crafting UI Tweaks:
+  stage: release
+  url: false
+  archive_name: Crafting UI Tweaks 1.1
+  desc: Marks craftable items and equipped ammo in the crafting UI.
+
+Svarog Anomalies Icons:
+  stage: release
+  url: false
+  archive_name: Svarog Anomalies Icons - Shpala
+  desc: Svarog detector anomaly icons (Shpala).
+
+Better Upgrade Tooltips:
+  stage: release
+  buy_url: https://github.com/Verdatim25/Better-Upgrade-Tooltips-For-Stalker-GAMMA
+  archive_name: better_upgrade_tooltips_verdatim_v1.1.1
+  desc: Clearer weapon/armor upgrade effect labels (Verbatim).
+
+Painter of the Zone:
+  stage: release
+  url: https://www.moddb.com/mods/stalker-anomaly/addons/painter-of-the-zone
+  requires:
+    - Screen Space Shaders
+  desc: >
+    Combat FX overhaul — wallmarks, hit particles, dismemberment, bullet time,
+    killcam (Painter of the Zone).
+
+Long Range Blood Decals:
+  stage: release
+  url: false
+  archive_name: Long_Range_Blood_Decals
+  desc: Blood wallmarks beyond engine range (~50 m+).
+
+The Anomalous Stash:
+  stage: release
+  url: https://www.moddb.com/mods/stalker-anomaly/addons/the-anomalous-stash-beta-09
+  desc: Placeable backpack that opens a shared anomalous stash.
+
+Seamless Inventory Sort:
+  stage: release
+  url: https://www.moddb.com/mods/stalker-anomaly/addons/seamless-inventory-sort
+  desc: Keeps SortingPlus order after attach/trade/loot without flicker.
+  enables:
+    - 110- SortingPlus - RavenAscendant
+
+PDA Taskboard Redesign:
+  stage: release
+  url: false
+  archive_name: PDA_Taskboard_Redesign_v1.2
+  desc: Full PDA taskboard UI/script redesign. Replaces iTheon taskboard packs.
+  disables:
+    - 293- PDA Taskboard - iTheon
+    - 478- Custom iTheon's PDA Taskboard - lizzardman
+
+# --------------------------------
+# D.O.G.M.A. path mods
+# --------------------------------
 
 common:
   stage: omit

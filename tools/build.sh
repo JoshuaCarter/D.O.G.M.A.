@@ -6,7 +6,7 @@
 #   src/<category>/<feature>/<gamedata-rel>/... -> <out>/<gamedata-rel>/...  (merged)
 #
 #   src/<category>/<feature>/assets/...     authoring only (ignored; not shipped)
-#   src/<category>/<feature>/installer/...  FOMOD metadata (not shipped into gamedata)
+#   src/<category>/<feature>/installer/image.png  optional FOMOD hover image (not shipped into gamedata)
 #   src/common/mo2/...                      EXCEPTION: files under <mod>/mo2/
 #   src/<category>/<feature>/mo2/...        (sibling of gamedata/), e.g. mo2/DOGMA.bat
 #
@@ -294,7 +294,7 @@ if [[ "$ONLY" == "all" || "$ONLY" == "" ]]; then
 		echo "build: manifest yielded 0 features — refusing full build/prune (fix YAML or set DOGMA_ALLOW_EMPTY=1)" >&2
 		exit 1
 	fi
-	echo "build: config/features.yml local (${#FEATURES[@]} features)"
+	echo "build: config/manifest.yml stage>=dev (${#FEATURES[@]} features)"
 fi
 
 if [[ "$ONLY" == */* && ! -d "$SRC/$ONLY" ]]; then
@@ -318,7 +318,7 @@ sort -u "$MANIFEST_MODROOT" -o "$MANIFEST_MODROOT"
 if [[ "$ONLY" == "all" || "$ONLY" == "" || "$ONLY" == "common" ]]; then
 	MO2_CFG_STAGE="$STAGE_MODROOT/mo2/config"
 	mkdir -p "$MO2_CFG_STAGE"
-	for _cat in features.yml mods.yml suggestions.yml; do
+	for _cat in features.yml mods.yml manifest.yml suggestions.yml; do
 		if [[ -f "$ROOT/config/$_cat" ]]; then
 			cp "$ROOT/config/$_cat" "$MO2_CFG_STAGE/$_cat"
 			printf '%s\n' "mo2/config/$_cat" >> "$MANIFEST_MODROOT"
@@ -359,6 +359,10 @@ if [[ "$ONLY" == "all" || "$ONLY" == "" ]]; then
 		) > "$mo2_all"
 		while IFS= read -r rel; do
 			[[ -z "$rel" ]] && continue
+			# Feature zips from FOMOD packaging — keep across local merge deploys.
+			case "$rel" in
+				mo2/packages/*) continue ;;
+			esac
 			if ! grep -Fxq "$rel" "$MANIFEST_MODROOT"; then
 				rm -f "$MODROOT_OUT/$rel"
 				PRUNED=$((PRUNED + 1))

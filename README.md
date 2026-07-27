@@ -2,9 +2,25 @@
 
 *Dorn's Own G.A.M.M.A. Modification Anthology*
 
-This is a mod pack collection of my mods and tweaks (most are originals by me, but many are heavily inspired by the great work of others, or sometimes outright stolen just because I wanted to tweak something about it).
+D.O.G.M.A. is two things:
 
-You can opt-in or out of most things at install-time.
+1. A `fomod` pick-and-choose collection of my mods, fixes, and tweaks.
+2. An opt-in, highly opinionated setup tool to configure G.A.M.M.A according to my preferences.
+
+If you just want to install my 'True Prone' or 'True Fast Travel' mods, you can. But what D.O.G.M.A. **really** exists to do is take a vanilla G.A.M.M.A. install and automatically set it up to be **better** (according to **me**) - it will add mods, disable mods, change default settings, add/remove config options, move files, delete files/dirs, etc. This *massively* simplifies the setup process for getting **my** kind of G.A.M.M.A. up and running.
+
+For example, the opt-in D.O.G.M.A. Setup tool has the option to install *Melancholy Weathers* which will do the following (not an exaustive list):
+
+Melancholy Weathers:
+
+*Due to being a paid/not-public mod, you will be instructed to supply the mod archive file.*
+
+- Download/install Enhanced Shader Color Grading, Screen Space Shaders, Dark Signal Soundscape Overhaul Melancholy Edition, Melancholy Weathers.
+- Disable the relevant preexisting SSS, DSSO, Atmospherics mods.
+- Disable "persistent weather" in settings
+- Delete shaders_cache
+- Run `cfg_load melancholy` on first launch
+
 
 ## Why make an "anthology"?
 

@@ -1,0 +1,239 @@
+# DOGMA features catalog.
+#
+# Key = display title (wizard / docs). Each feature block needs:
+#   path: category/feature   — src/ tree + build id (required except common)
+# stage: omit | local | release
+#   omit    — not built
+#   local   — local builds (Ctrl+Shift+B / tools/build.sh)
+#   release — local + FOMOD / GitHub release
+# common    — always-on (stage ignored)
+# disables / enables — exact MO2 folder / modlist names (full name).
+#                      List both the generic folder and the G.A.M.M.A. rename when
+#                      either may be present (each line is its own exact match).
+#                      opt-in partial: substring:Name  (or contains:Name)
+# depends: — pack ids from config/mods.yml and/or other feature paths/titles.
+#            Installed via DOGMA (Setup) / Dependencies (same pipeline as packs).
+#            FOMOD only ships feature gamedata; descriptions note required packs.
+# Pack catalog + Setup wizard checkboxes: config/mods.yml
+#
+
+common:
+  disables: []
+  enables: []
+
+Ammo Crafting:
+  path: crafting/ammo
+  stage: release
+
+Radiation:
+  path: fx/radiation
+  stage: release
+
+Thirst:
+  path: fx/thirst
+  stage: local
+
+FPS:
+  path: hud/fps
+  stage: release
+
+Geiger Counter:
+  path: hud/geiger
+  stage: local
+  disables:
+    - G_FLAT's Msv Above Radiation Icon
+
+Minimap:
+  path: hud/minimap
+  stage: local
+  disables:
+    - 177- Minimap Toggle - RavenAscendant
+
+NVG:
+  path: hud/nvg
+  stage: local
+
+Quick Action Wheel:
+  path: hud/quick_action_wheel
+  stage: local
+
+Stalker ID:
+  path: hud/stalker_id
+  stage: local
+  disables:
+    - 163- Identification UI - CrookR
+    - G.A.M.M.A. Crook's Identification UI Fix
+
+Disassemble:
+  path: items/disassemble
+  stage: local
+  disables:
+    - 144- Prefer Best Disassembly Tool - Demonized
+
+Drop:
+  path: items/drop
+  stage: local
+  disables:
+    - G.A.M.M.A. Press Key to Drop Item
+
+Favourites:
+  path: items/favourites
+  stage: local
+
+Stripping:
+  path: items/stripping
+  stage: release
+
+Debug MCM:
+  path: mcm/debug
+  stage: local
+
+Geiger:
+  path: misc/geiger
+  stage: local
+
+Hard New Game Defaults:
+  path: misc/hard_defaults
+  stage: local
+
+Keybinds Fix:
+  path: misc/keybinds_fix
+  stage: local
+
+Missions:
+  path: misc/missions
+  stage: local
+
+RF Receiver:
+  path: misc/rf_receiver
+  stage: local
+
+MCM Search:
+  path: misc/search
+  stage: release
+
+Sound Prefetch:
+  path: misc/sound_prefetch
+  stage: local
+
+Mutant Audio:
+  path: mutants/audio
+  stage: local
+
+Mutant Skinning:
+  path: mutants/skinning
+  stage: release
+
+Mutant Tweaks:
+  path: mutants/tweaks
+  stage: release
+
+Companions:
+  path: npcs/companions
+  stage: local
+  disables:
+    - 218- Quick Companion Teleport (teleports rescue mission targets) - RazorShultz
+    - 329- Fair Fast Travel - Catspaw
+    - 329- Fair Fast Travel 2.7+ - Catspaw
+
+NPC Foliage:
+  path: npcs/foliage
+  stage: omit
+
+NPC Speed:
+  path: npcs/speed
+  stage: release
+
+Rep Warning:
+  path: pda/rep_warning
+  stage: local
+
+Stay Down:
+  path: pda/stay_down
+  stage: release
+  disables:
+    - Dorns_Dont_ReEquip_PDA
+    - 136- Previous weapon is automatically pulled after closing PDA - Demonized
+
+STFU:
+  path: player/stfu
+  stage: omit
+  disables:
+    - Silent Protagonist
+
+Campfire:
+  path: player/campfire
+  stage: local
+  disables:
+    - 115- Campfire slowly regens life - arti
+
+Exo:
+  path: player/exo
+  stage: local
+
+Pose Controls:
+  path: player/pose_controls
+  stage: release
+
+True Prone:
+  path: player/true_prone
+  stage: release
+  disables:
+    - xrMPE
+
+Equipment Controls:
+  path: player/equipment_controls
+  stage: local
+
+Tooltip Tweaks:
+  path: tooltips/tweaks
+  stage: release
+
+Weapon Tooltips:
+  path: tooltips/weapons
+  stage: release
+
+Fast Travel:
+  path: travel/fast_travel
+  stage: omit
+  disables:
+    - 329- Fair Fast Travel - Catspaw
+    - 329- Fair Fast Travel 2.7+ - Catspaw
+  depends:
+    - Tarkov-like Level Transitions
+
+True Fast Travel:
+  path: travel/true_fast_travel
+  stage: local
+  disables:
+    - 329- Fair Fast Travel - Catspaw
+    - 329- Fair Fast Travel 2.7+ - Catspaw
+    - 204- Limited Fast Travel (walking is good for your health) - Demonized
+  depends:
+    - Tarkov-like Level Transitions
+
+Ammo Wheel:
+  path: weapons/ammo_wheel
+  stage: local
+  disables:
+    - Fixed Ammo Wheel Hotkeys
+
+Quick Fire:
+  path: weapons/quick_fire
+  stage: local
+  disables:
+    - 65- Fluid Aim - Skieppy
+
+ADS Zoom:
+  path: zoom/ads_zoom
+  stage: release
+  disables:
+    - 72- Adjustable Scope View - sneaky
+
+Free Zoom:
+  path: zoom/free_zoom
+  stage: release
+  disables:
+    - 178- Free Zoom - SlowVibe
+    - G.A.M.M.A. Free Zoom v3
+    - Kute's Free Zoom Rewrite

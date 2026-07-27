@@ -14,25 +14,26 @@ REM Runs every non-comment line in prelaunch.ini, then starts the game.
 REM Add more pre-launch tools by editing prelaunch.ini (same folder).
 REM
 REM Requires Python 3. No pause.
+REM Do not use %%ERRORLEVEL%% inside ( ) — expands at parse time.
 
 where py >nul 2>nul
-if %ERRORLEVEL%==0 (
-  py -3 "%~dp0prelaunch.py" %*
-  exit /b %ERRORLEVEL%
-)
+if errorlevel 1 goto :try_python
+py -3 "%~dp0prelaunch.py" %*
+exit /b %ERRORLEVEL%
 
+:try_python
 where python >nul 2>nul
-if %ERRORLEVEL%==0 (
-  python "%~dp0prelaunch.py" %*
-  exit /b %ERRORLEVEL%
-)
+if errorlevel 1 goto :try_python3
+python "%~dp0prelaunch.py" %*
+exit /b %ERRORLEVEL%
 
+:try_python3
 where python3 >nul 2>nul
-if %ERRORLEVEL%==0 (
-  python3 "%~dp0prelaunch.py" %*
-  exit /b %ERRORLEVEL%
-)
+if errorlevel 1 goto :no_python
+python3 "%~dp0prelaunch.py" %*
+exit /b %ERRORLEVEL%
 
+:no_python
 echo Python 3 not found. Install from https://www.python.org/downloads/
 echo Or: winget install Python.Python.3.12
 exit /b 1

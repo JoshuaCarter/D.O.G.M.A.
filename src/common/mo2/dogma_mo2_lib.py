@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import re
@@ -11,16 +10,15 @@ import shutil
 import subprocess
 import sys
 import zipfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Iterable, Iterator
 
 
 SEPARATOR_NAME = "DOGMA DEPENDENCIES_separator"
-ACTION_LOG_NAME = "dogma_mo2.log"
-REPORT_LOG_NAME = "dogma_mo2_report.log"
-FINGERPRINT_NAME = "defaults_fingerprint.json"
+ACTION_LOG_NAME = "dogma_install.log"
+REPORT_LOG_NAME = "dogma_report.log"
 MODDB_CACHE_NAME = "moddb_cache.json"
 USER_URL_PREFIX = "dogma:user:"
 MANAGED_FOLDER_PREFIX = "DOGMA - "
@@ -31,7 +29,11 @@ MODDB_CACHE_MAX_AGE_S = 6 * 3600
 # console / log
 # ---------------------------------------------------------------------------
 
-def _use_color() -> bool:
+_COLOR = False  # set in _init_color()
+_log_tools: Path | None = None
+
+
+def _init_color() -> bool:
     if os.environ.get("NO_COLOR"):
         return False
     if sys.platform == "win32":
@@ -48,30 +50,85 @@ def _use_color() -> bool:
     return sys.stdout.isatty()
 
 
-_COLOR = _use_color()
+_COLOR = _init_color()
+
+
+def action_log_path(mo2_dir: Path) -> Path:
+    return mo2_dir / "logs" / ACTION_LOG_NAME
+
+
+def report_log_path(mo2_dir: Path) -> Path:
+    return mo2_dir / "logs" / REPORT_LOG_NAME
+
+
+def configure_logging(mo2_dir: Path, *, reset: bool = False, job: str = "") -> Path:
+    """Tee console output into mods/DOGMA/mo2/logs/dogma_install.log."""
+    global _log_tools
+    mo2_dir.mkdir(parents=True, exist_ok=True)
+    _log_tools = mo2_dir
+    path = action_log_path(mo2_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if reset or not path.is_file():
+        stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        header = f"=== DOGMA install log - {stamp} ===\n"
+        if job:
+            header += f"job: {job}\n"
+        path.write_text(header + "\n", encoding="utf-8")
+    elif job:
+        append_action_log(mo2_dir, f"--- job: {job} ---")
+    return path
+
+
+def append_action_log(mo2_dir: Path | None, line: str) -> None:
+    tools = mo2_dir if mo2_dir is not None else _log_tools
+    if tools is None:
+        return
+    path = action_log_path(tools)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(f"[{stamp}] {line}\n")
+            fh.flush()
+    except OSError as exc:
+        print(f"(log write failed: {exc}) {line}", file=sys.stderr)
+
+
+def _tee(level: str, msg: str) -> None:
+    if _log_tools is not None:
+        append_action_log(_log_tools, f"{level}: {msg}" if level else msg)
 
 
 def info(msg: str) -> None:
     print(msg)
+    _tee("INFO", msg)
 
 
 def ok(msg: str) -> None:
     print(f"\033[32m{msg}\033[0m" if _COLOR else msg)
+    _tee("OK", msg)
 
 
 def warn(msg: str) -> None:
     print(f"\033[33m{msg}\033[0m" if _COLOR else msg)
+    _tee("WARN", msg)
 
 
 def err(msg: str) -> None:
     print(f"\033[31m{msg}\033[0m" if _COLOR else msg, file=sys.stderr)
+    _tee("ERROR", msg)
 
 
-def append_action_log(mo2_dir: Path, line: str) -> None:
-    path = mo2_dir / ACTION_LOG_NAME
-    stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    with path.open("a", encoding="utf-8") as fh:
-        fh.write(f"[{stamp}] {line}\n")
+def log_exception(exc: BaseException, *, where: str = "") -> None:
+    """Log an exception and full traceback (console + install log)."""
+    import traceback
+
+    prefix = f"{where}: " if where else ""
+    err(f"{prefix}{type(exc).__name__}: {exc}")
+    tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    for line in tb.rstrip().splitlines():
+        _tee("TRACE", line)
+        print(line, file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------
@@ -101,24 +158,57 @@ def resolve_mo2_root(explicit: str | Path | None = None) -> Path:
 def resolve_config_dir(mo2_root: Path, override: Path | None = None) -> Path:
     if override and override.is_dir():
         return override
+
+    def _ok(cfg: Path) -> bool:
+        return (cfg / "features.yml").is_file() or (cfg / "manifest.yml").is_file()
+
     staged = script_dir() / "config"
-    if staged.is_dir() and (staged / "manifest.yml").is_file():
+    if staged.is_dir() and _ok(staged):
         return staged
     # Author / repo: src/common/mo2 → ../../../config
     repo_cfg = script_dir().parent.parent.parent / "config"
-    if (repo_cfg / "manifest.yml").is_file():
+    if repo_cfg.is_dir() and _ok(repo_cfg):
         return repo_cfg
     dogma = mo2_root / "mods" / "DOGMA" / "mo2" / "config"
-    if dogma.is_dir() and (dogma / "manifest.yml").is_file():
+    if dogma.is_dir() and _ok(dogma):
         return dogma
     return staged
 
 
 def resolve_manifest_path(cfg_dir: Path) -> Path:
-    yml = cfg_dir / "manifest.yml"
+    """Primary catalog file: features.yml (legacy: manifest.yml)."""
+    yml = cfg_dir / "features.yml"
     if yml.is_file():
         return yml
-    raise FileNotFoundError(f"manifest.yml not found under {cfg_dir}")
+    legacy = cfg_dir / "manifest.yml"
+    if legacy.is_file():
+        return legacy
+    raise FileNotFoundError(f"features.yml not found under {cfg_dir}")
+
+
+def resolve_options_path(cfg_dir: Path) -> Path | None:
+    for name in ("options.yml", "options.yaml", "installer_options.yml"):
+        p = cfg_dir / name
+        if p.is_file():
+            return p
+    return None
+
+
+def resolve_mods_path(cfg_dir: Path) -> Path | None:
+    for name in ("mods.yml", "mods.yaml", "suggested_mods.yml"):
+        p = cfg_dir / name
+        if p.is_file():
+            return p
+    return None
+
+
+def resolve_suggestions_path(cfg_dir: Path) -> Path | None:
+    """Legacy combined suggestions.yml (options + mods in one file)."""
+    for name in ("suggestions.yml", "suggested.yml"):
+        p = cfg_dir / name
+        if p.is_file():
+            return p
+    return None
 
 
 def mo2_tools_dir(mo2_root: Path) -> Path:
@@ -266,26 +356,103 @@ def _parse_disable_name(raw: str) -> tuple[str, str] | None:
     return ("exact", key)
 
 
-def _settings_from_mapping(
-    mod_pattern: str,
-    mapping: dict,
+# axr_options.ltx section for settings: entries
+_SETTINGS_AXR_SECTION = "options"
+
+
+def _parse_kv_entries(raw, *, field: str) -> dict[str, str]:
+    """Parse a list of {path: value} maps, or a flat path: value mapping."""
+    if not raw:
+        return {}
+    if isinstance(raw, dict):
+        if any(isinstance(v, (dict, list)) for v in raw.values()):
+            raise ValueError(f"{field}: want path: value pairs (not nested groups)")
+        return {str(k).strip(): str(v).strip() for k, v in raw.items() if str(k).strip()}
+    if not isinstance(raw, list):
+        raise ValueError(f"{field} must be a list of path: value entries (or a mapping)")
+    out: dict[str, str] = {}
+    for i, item in enumerate(raw):
+        if not isinstance(item, dict) or not item:
+            raise ValueError(f"{field}[{i}] must be a path: value mapping")
+        for key, val in item.items():
+            key_s = str(key).strip()
+            if not key_s:
+                raise ValueError(f"{field}[{i}] empty path")
+            if isinstance(val, (dict, list)):
+                raise ValueError(f"{field}[{i}].{key_s}: value must be a scalar")
+            out[key_s] = str(val).strip()
+    return out
+
+
+def _parse_moves(raw, *, field: str) -> list[tuple[str, str]]:
+    """Parse moves: list of {src_rel: dest} → [(src, dest), ...]."""
+    if not raw:
+        return []
+    if not isinstance(raw, list):
+        raise ValueError(f"{field} must be a list of src: dest mappings")
+    out: list[tuple[str, str]] = []
+    for i, item in enumerate(raw):
+        if not isinstance(item, dict) or not item:
+            raise ValueError(f"{field}[{i}] must be a src: dest mapping")
+        for src, dest in item.items():
+            src_s = str(src).strip().replace("\\", "/")
+            dest_s = str(dest).strip()
+            if not src_s or not dest_s:
+                raise ValueError(f"{field}[{i}] empty src or dest")
+            if isinstance(dest, (dict, list)):
+                raise ValueError(f"{field}[{i}]: dest must be a scalar path")
+            out.append((src_s, dest_s))
+    return out
+
+
+def _parse_str_list(raw, *, field: str) -> list[str]:
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ValueError(f"{field} must be a list")
+    out: list[str] = []
+    for x in raw:
+        s = str(x).strip()
+        if s and not s.startswith("#"):
+            out.append(s)
+    return out
+
+
+def _reject_legacy_defaults(item: dict, *, field: str) -> None:
+    if item.get("defaults") is not None:
+        raise ValueError(
+            f"{field}: defaults: removed — use top-level resets: / mcm: / settings:"
+        )
+    if item.get("target_mod") is not None:
+        raise ValueError(
+            f"{field}: target_mod removed — put keys under mcm: / settings:"
+        )
+
+
+def _pack_effect_fields(item: dict, *, section: str) -> dict:
+    """Parse shared pack effect fields from a YAML map."""
+    _reject_legacy_defaults(item, field=section)
+    return {
+        "resets": _parse_str_list(item.get("resets"), field=f"{section}.resets"),
+        "mcm": _parse_kv_entries(item.get("mcm"), field=f"{section}.mcm"),
+        "settings": _parse_kv_entries(item.get("settings"), field=f"{section}.settings"),
+        "moves": _parse_moves(item.get("moves"), field=f"{section}.moves"),
+        "deletes": _parse_str_list(item.get("deletes"), field=f"{section}.deletes"),
+        "console": _parse_str_list(item.get("console"), field=f"{section}.console"),
+    }
+
+
+def _overrides_to_settings(
+    source: str,
+    *,
+    mcm: dict[str, str],
+    settings: dict[str, str],
 ) -> list[InitSetting]:
     out: list[InitSetting] = []
-    if not isinstance(mapping, dict):
-        return out
-    for key, val in mapping.items():
-        key_s = str(key).strip()
-        val_s = str(val).strip()
-        if not key_s:
-            continue
-        axr_section = "mcm"
-        if key_s.startswith("@"):
-            rest = key_s[1:]
-            if "/" not in rest:
-                raise ValueError(f"defaults @{mod_pattern}: want @Section/key (got {key_s})")
-            axr_section, key_s = rest.split("/", 1)
-            axr_section, key_s = axr_section.strip(), key_s.strip()
-        out.append(InitSetting(mod_pattern, axr_section, key_s, val_s))
+    for key, val in mcm.items():
+        out.append(InitSetting(source, "mcm", key, val))
+    for key, val in settings.items():
+        out.append(InitSetting(source, _SETTINGS_AXR_SECTION, key, val))
     return out
 
 
@@ -331,28 +498,88 @@ level_meets = stage_meets
 @dataclass
 class Dependency:
     id: str
-    label: str
     tier: str  # downloads (from a feature) | suggested
     url: str = ""
+    buy_url: str = ""
+    archive_name: str = ""
     source: str = "auto"  # auto | user
-    file: str = ""
     howto: str = ""
-    disabled: list[str] = field(default_factory=list)
+    desc: str = ""  # wizard blurb for option choices
+    disables: list[str] = field(default_factory=list)
     enables: list[str] = field(default_factory=list)
-    defaults: dict[str, str] = field(default_factory=dict)
-    target_mod: str = ""
+    resets: list[str] = field(default_factory=list)  # MCM roots → script def=
+    mcm: dict[str, str] = field(default_factory=dict)  # → [mcm]
+    settings: dict[str, str] = field(default_factory=dict)  # → [options]
+    moves: list[tuple[str, str]] = field(default_factory=list)  # (src_rel, dest)
+    deletes: list[str] = field(default_factory=list)
+    console: list[str] = field(default_factory=list)  # first-launch console cmds
+    depends: list[str] = field(default_factory=list)  # install these packs first
+    # Wizard radio group (legacy): packs sharing exclusive: appear as one section
+    exclusive: str = ""
+    group: str = ""  # section title override
+    choice: str = ""  # radio label override
+    # Compositional options (preferred):
+    #   installable: true + options: [A, B] → wizard None|A|B
+    #   options: [A, B] on a choice → expand to A+B (merge effects uniquely)
+    installable: bool = False
+    options: list[str] = field(default_factory=list)
     after_unpack: str = ""
-    feature: str = ""  # owning feature path when from features.*.downloads
+    feature: str = ""  # owning feature path when from features.*.depends
+
+    # Wizard checkbox metadata (installable: true on the same block).
+    # Default checked state is derived (not buy_url) — see option_default_selected.
+    wizard_requires: list[str] = field(default_factory=list)  # requires: [radio group ids]
+
+
+    def has_axr_effects(self) -> bool:
+        return bool(self.resets or self.mcm or self.settings)
+
+    def has_install_work(self) -> bool:
+        """True if this pack is a download/install/enable unit (not a pure group)."""
+        return bool(self.url) or self.source == "user" or bool(
+            self.enables or self.disables or self.moves or self.deletes
+            or self.console or self.mcm or self.settings or self.resets
+        )
+
+
+@dataclass
+class InstallerOption:
+    """Wizard checkbox derived from embedded metadata in config/mods.yml."""
+
+    id: str
+    desc: str = ""
+    mods: list[str] = field(default_factory=list)
+    default: bool = False
+    # mods.yml pack ids that expose options: (or legacy exclusive:);
+    # selecting this checkbox requires a non-None pick for each.
+    requires: list[str] = field(default_factory=list)
+
+
+@dataclass
+class InstallerSelection:
+    """Saved wizard result: checkbox options + pack option picks."""
+
+    option_ids: list[str] = field(default_factory=list)
+    # parent pack id → chosen child option id ("" = None)
+    exclusive_picks: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
 class FeatureMeta:
     path: str
     stage: str  # omit | local | release
-    disabled: list[str] = field(default_factory=list)
+    title: str = ""  # display name from features.yml key
+    disables: list[str] = field(default_factory=list)
     enables: list[str] = field(default_factory=list)
-    defaults: dict[str, str] = field(default_factory=dict)
-    target_mod: str = ""
+    resets: list[str] = field(default_factory=list)
+    mcm: dict[str, str] = field(default_factory=dict)
+    settings: dict[str, str] = field(default_factory=dict)
+    moves: list[tuple[str, str]] = field(default_factory=list)
+    deletes: list[str] = field(default_factory=list)
+    console: list[str] = field(default_factory=list)
+    # Pack ids (mods.yml) and/or other feature paths/titles — resolved via mods.yml.
+    depends: list[str] = field(default_factory=list)
+    # Legacy inline downloads (always empty after parse; rejected if non-empty).
     downloads: list[Dependency] = field(default_factory=list)
 
     @property
@@ -360,10 +587,16 @@ class FeatureMeta:
         return self.path.lower() == "common"
 
     @property
+    def display_name(self) -> str:
+        return (self.title or self.path).strip() or self.path
+
+    @property
     def level(self) -> str:
         """Compat alias for stage."""
         return self.stage
 
+    def has_axr_effects(self) -> bool:
+        return bool(self.resets or self.mcm or self.settings)
 
 def dogma_mod_dir(mo2_root: Path) -> Path:
     return mo2_root / "mods" / "DOGMA"
@@ -458,7 +691,144 @@ class ManifestData:
     path: Path
     features: dict[str, FeatureMeta] = field(default_factory=dict)
     suggested: list[Dependency] = field(default_factory=list)
-    defaults: dict[str, list[InitSetting]] = field(default_factory=dict)
+    installer_options: list[InstallerOption] = field(default_factory=list)
+    defaults: list[InitSetting] = field(default_factory=list)
+
+    def suggested_by_id(self) -> dict[str, Dependency]:
+        return {d.id: d for d in self.suggested}
+
+    def resolve_feature_path(self, ref: str) -> str | None:
+        """Map a features.yml path or display title → canonical path."""
+        rid = str(ref or "").strip().replace("\\", "/")
+        if not rid:
+            return None
+        if rid in self.features:
+            return rid
+        low = rid.lower()
+        for path, meta in self.features.items():
+            if path.lower() == low:
+                return path
+            if meta.title and meta.title.lower() == low:
+                return path
+            if meta.display_name.lower() == low:
+                return path
+        return None
+
+    def feature_pack_ids(
+        self,
+        feature_path: str,
+        *,
+        _stack: set[str] | None = None,
+    ) -> list[str]:
+        """Pack ids required by a feature (depends: packs + nested features)."""
+        stack = _stack if _stack is not None else set()
+        fp = self.resolve_feature_path(feature_path)
+        if not fp:
+            raise ValueError(f"unknown feature in depends: {feature_path!r}")
+        if fp in stack:
+            raise ValueError(f"features depends: cycle involving {fp!r}")
+        meta = self.features[fp]
+        pack_by_id = self.suggested_by_id()
+        out: list[str] = []
+        seen: set[str] = set()
+        stack.add(fp)
+        try:
+            for ref in meta.depends:
+                rid = str(ref).strip()
+                if not rid:
+                    continue
+                nested = self.resolve_feature_path(rid)
+                if nested is not None:
+                    for pid in self.feature_pack_ids(nested, _stack=stack):
+                        if pid not in seen:
+                            seen.add(pid)
+                            out.append(pid)
+                    continue
+                if rid not in pack_by_id:
+                    raise ValueError(
+                        f"features.{meta.display_name!r} ({fp}): depends entry "
+                        f"{rid!r} is neither a mods.yml pack nor a feature "
+                        f"path/title"
+                    )
+                if rid not in seen:
+                    seen.add(rid)
+                    out.append(rid)
+        finally:
+            stack.discard(fp)
+        return out
+
+    def feature_pack_deps(
+        self,
+        feature_path: str,
+        *,
+        expand: bool = True,
+    ) -> list[Dependency]:
+        """Resolved mods.yml packs for one feature (deps-first when expand)."""
+        pack_by_id = self.suggested_by_id()
+        seeds = self.feature_pack_ids(feature_path)
+        if not expand:
+            return [
+                replace(pack_by_id[pid], tier="downloads", feature=feature_path)
+                for pid in seeds
+                if pid in pack_by_id
+            ]
+
+        install_ids: list[str] = []
+        visiting: set[str] = set()
+        done: set[str] = set()
+
+        def visit(pid: str) -> None:
+            if pid in done:
+                return
+            if pid in visiting:
+                raise ValueError(f"depends cycle involving {pid!r}")
+            pack = pack_by_id.get(pid)
+            if pack is None:
+                raise ValueError(f"unknown pack: {pid!r}")
+            visiting.add(pid)
+            for dep_id in pack.depends:
+                visit(dep_id)
+            for leaf in expand_pack_composition(pack_by_id, pid):
+                if leaf != pid:
+                    visit(leaf)
+            visiting.discard(pid)
+            done.add(pid)
+            if pid not in install_ids:
+                install_ids.append(pid)
+
+        for seed in seeds:
+            for leaf in expand_pack_composition(pack_by_id, seed):
+                visit(leaf)
+
+        # Drop pure composition nodes (same policy as resolve_install_order)
+        final_ids: list[str] = []
+        for pid in install_ids:
+            pack = pack_by_id[pid]
+            if is_wizard_radio_parent(pack):
+                continue
+            if (
+                pack.depends
+                and not pack.url
+                and not pack.buy_url
+                and not (
+                    pack.disables
+                    or pack.deletes
+                    or pack.moves
+                    or pack.console
+                    or pack.mcm
+                    or pack.settings
+                    or pack.resets
+                    or pack.enables
+                )
+            ):
+                continue
+            final_ids.append(pid)
+
+        return [
+            replace(pack_by_id[pid], tier="downloads", feature=feature_path)
+            for pid in final_ids
+            if pid in pack_by_id
+        ]
 
     def feature_downloads(
         self,
@@ -466,7 +836,7 @@ class ManifestData:
         *,
         installed: set[str] | None = None,
     ) -> list[Dependency]:
-        """Downloads from common + active installed features (dedupe by id)."""
+        """Packs required by common + active installed features (dedupe by id)."""
         min_stage = parse_stage(min_stage)
         seen: set[str] = set()
         out: list[Dependency] = []
@@ -476,7 +846,9 @@ class ManifestData:
                 meta, min_stage, installed=installed
             ):
                 continue
-            for dep in meta.downloads:
+            if not meta.depends:
+                continue
+            for dep in self.feature_pack_deps(feat):
                 if dep.id in seen:
                     continue
                 seen.add(dep.id)
@@ -489,34 +861,84 @@ class ManifestData:
         min_stage: str | int = "local",
         installed: set[str] | None = None,
         include_suggested: bool = True,
-    ) -> dict[str, list[InitSetting]]:
-        """Defaults for active/installed features (+ optional suggested entries)."""
+        mo2_root: Path | None = None,
+        modlist: Path | None = None,
+        suggested_ids: set[str] | None = None,
+    ) -> list[InitSetting]:
+        """resets (script def) → mcm → settings for active packs.
+
+        Manual (url: false) packs only contribute when that mod is installed
+        and enabled. ``suggested_ids`` limits which suggested packs apply.
+        """
         min_stage = parse_stage(min_stage)
-        defaults: dict[str, list[InitSetting]] = {}
+        out: list[InitSetting] = []
+        reset_roots: list[tuple[str, str]] = []  # (source, root)
+
+        def _dep_ok(dep: Dependency) -> bool:
+            if (
+                suggested_ids is not None
+                and dep.tier == "suggested"
+                and dep.id not in suggested_ids
+            ):
+                return False
+            if not (dep.source == "user" or not dep.url):
+                return True
+            if mo2_root is None or modlist is None:
+                return False
+            return dep_effects_active(mo2_root, dep, modlist)
+
         for feat, meta in self.features.items():
             if not _feature_is_active(meta, min_stage, installed=installed):
                 continue
-            if meta.defaults:
-                pattern = meta.target_mod or meta.path
-                defaults.setdefault(pattern, []).extend(
-                    _settings_from_mapping(pattern, meta.defaults)
-                )
-            for dep in meta.downloads:
-                if not dep.defaults:
+            for root in meta.resets:
+                reset_roots.append((feat, root))
+            out.extend(
+                _overrides_to_settings(feat, mcm=meta.mcm, settings=meta.settings)
+            )
+            for dep in self.feature_pack_deps(feat):
+                if not _dep_ok(dep):
                     continue
-                pattern = dep.target_mod or dep.label or dep.id
-                defaults.setdefault(pattern, []).extend(
-                    _settings_from_mapping(pattern, dep.defaults)
+                src = f"downloads:{dep.id}"
+                for root in dep.resets:
+                    reset_roots.append((src, root))
+                out.extend(
+                    _overrides_to_settings(src, mcm=dep.mcm, settings=dep.settings)
                 )
         if include_suggested:
             for dep in self.suggested:
-                if not dep.defaults:
+                if not _dep_ok(dep):
                     continue
-                pattern = dep.target_mod or dep.label or dep.id
-                defaults.setdefault(pattern, []).extend(
-                    _settings_from_mapping(pattern, dep.defaults)
+                src = f"suggested:{dep.id}"
+                for root in dep.resets:
+                    reset_roots.append((src, root))
+                out.extend(
+                    _overrides_to_settings(src, mcm=dep.mcm, settings=dep.settings)
                 )
-        return defaults
+
+        # Prepend reset InitSettings (script def=) so overrides win when applied
+        # in order within apply_settings_to_axr_options (last write per key wins
+        # only if we apply resets first in the list — apply walks list in order
+        # and last change sticks). So: resets first, then overrides.
+        if reset_roots and mo2_root is not None:
+            script_defs = index_mcm_script_defaults(mo2_root)
+            reset_settings: list[InitSetting] = []
+            seen_keys: set[str] = set()
+            for source, root in reset_roots:
+                root_s = root.strip()
+                if not root_s:
+                    continue
+                prefix = root_s.lower() + "/"
+                for key, val in script_defs.items():
+                    kl = key.lower()
+                    if kl == root_s.lower() or kl.startswith(prefix):
+                        if key.lower() in seen_keys:
+                            continue
+                        seen_keys.add(key.lower())
+                        reset_settings.append(
+                            InitSetting(f"reset:{source}", "mcm", key, val)
+                        )
+            out = reset_settings + out
+        return out
 
     @property
     def requirements(self) -> list[Dependency]:
@@ -528,6 +950,48 @@ class ManifestData:
         return self.feature_downloads("dev") + list(self.suggested)
 
 
+def _parse_dep_url(raw, *, field: str) -> tuple[str, bool]:
+    """Parse url: → (url_string, manual).
+
+    ``url: false`` / null / empty = not on ModDB; user installs manually.
+    """
+    if raw is False or raw is None:
+        return "", True
+    if raw is True:
+        raise ValueError(f"{field}: use a ModDB page URL, or false for manual")
+    s = str(raw).strip()
+    if not s or s.lower() in ("false", "null", "none", "manual", "-"):
+        return "", True
+    return s, False
+
+
+def _parse_name_list(raw, *, field: str) -> list[str]:
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ValueError(f"{field} must be a list")
+    return [str(x) for x in raw]
+
+
+def _parse_conflict_list(item: dict, *, section: str) -> list[str]:
+    """disables: preferred; legacy disabled: / disable: accepted."""
+    if item.get("disables") is not None:
+        return _parse_name_list(item.get("disables"), field=f"{section}.disables")
+    if item.get("disabled") is not None:
+        return _parse_name_list(item.get("disabled"), field=f"{section}.disabled")
+    if item.get("disable") is not None:
+        return _parse_name_list(item.get("disable"), field=f"{section}.disable")
+    return []
+
+
+def _parse_enable_list(item: dict, *, section: str) -> list[str]:
+    if item.get("enables") is not None:
+        return _parse_name_list(item.get("enables"), field=f"{section}.enables")
+    if item.get("enable") is not None:
+        return _parse_name_list(item.get("enable"), field=f"{section}.enable")
+    return []
+
+
 def _dep_from_mapping(
     dep_id: str,
     item: dict,
@@ -536,31 +1000,107 @@ def _dep_from_mapping(
     section: str,
     feature: str = "",
 ) -> Dependency:
-    disabled = item.get("disabled") if item.get("disabled") is not None else item.get("disable")
-    enables = item.get("enables") if item.get("enables") is not None else item.get("enable")
-    disabled = disabled or []
-    enables = enables or []
-    defaults = item.get("defaults") or {}
-    if not isinstance(disabled, list):
-        raise ValueError(f"{section}.{dep_id}.disabled must be a list")
-    if not isinstance(enables, list):
-        raise ValueError(f"{section}.{dep_id}.enables must be a list")
-    if defaults and not isinstance(defaults, dict):
-        raise ValueError(f"{section}.{dep_id}.defaults must be a mapping")
+    disables = _parse_conflict_list(item, section=f"{section}.{dep_id}")
+    enables = _parse_enable_list(item, section=f"{section}.{dep_id}")
+    effects = _pack_effect_fields(item, section=f"{section}.{dep_id}")
+    if item.get("zip") is not None or item.get("file") is not None:
+        raise ValueError(
+            f"{section}.{dep_id}: zip:/file: removed — archive stem is the "
+            f"block id (downloads/DOGMA/{dep_id}.zip|.7z|…)"
+        )
+    if item.get("label") is not None:
+        raise ValueError(
+            f"{section}.{dep_id}: label: removed — use the YAML block key as the id"
+        )
+    url, manual = _parse_dep_url(
+        item.get("url"), field=f"{section}.{dep_id}.url"
+    )
+    buy_url, _buy_manual = _parse_dep_url(
+        item.get("buy_url"), field=f"{section}.{dep_id}.buy_url"
+    )
+    source = str(item.get("source") or "").strip().lower()
+    if manual or buy_url:
+        source = "user"
+    elif not source:
+        source = "auto"
+    installable = item.get("installable", False)
+    if not isinstance(installable, bool):
+        installable = str(installable).strip().lower() in ("1", "true", "yes", "on")
+
+    if item.get("selected") is not None:
+        raise ValueError(
+            f"{section}.{dep_id}: selected: removed — wizard defaults are "
+            f"checked unless buy_url: is set (paid / manual purchase)"
+        )
+
+    if item.get("mods") is not None:
+        raise ValueError(
+            f"{section}.{dep_id}: mods: removed — use installable: true "
+            f"for a checkbox, or installable:+options: (no url) for a radio group"
+        )
+
+    # default: [mcm roots…] — wipe/reset those MCM namespaces to script defs.
+    # (legacy resets: still accepted). Boolean default: is rejected.
+    default_raw = item.get("default")
+    if isinstance(default_raw, bool) or (
+        isinstance(default_raw, str)
+        and default_raw.strip().lower()
+        in ("1", "true", "yes", "on", "0", "false", "no", "off")
+    ):
+        raise ValueError(
+            f"{section}.{dep_id}: default: must be a list of MCM roots to "
+            f"wipe/default (e.g. [idiots, video/weather]); wizard checkbox "
+            f"defaults follow buy_url: (paid = off, else on)"
+        )
+    if default_raw is not None:
+        resets = _parse_str_list(
+            default_raw, field=f"{section}.{dep_id}.default"
+        )
+        if effects["resets"]:
+            resets = _unique_strs([*resets, *effects["resets"]])
+    else:
+        resets = effects["resets"]
+
+    wizard_req = _parse_str_list(
+        item.get("requires")
+        if item.get("requires") is not None
+        else item.get("requires_exclusive"),
+        field=f"{section}.{dep_id}.requires",
+    )
     return Dependency(
         id=dep_id,
-        label=str(item.get("label") or dep_id),
         tier=tier,
-        url=str(item.get("url") or "").strip(),
-        source=str(item.get("source") or "auto").strip().lower(),
-        file=str(item.get("file") or "").strip(),
+        url=url,
+        buy_url=buy_url,
+        archive_name=str(
+            item.get("archive_name")
+            or item.get("archive_stem")
+            or item.get("archive")
+            or ""
+        ).strip(),
+        source=source,
         howto=str(item.get("howto") or "").strip(),
-        disabled=[str(x) for x in disabled],
-        enables=[str(x) for x in enables],
-        defaults={str(k): str(v) for k, v in (defaults or {}).items()},
-        target_mod=str(item.get("target_mod") or "").strip(),
+        desc=str(item.get("desc") or item.get("description") or "").strip(),
+        disables=disables,
+        enables=enables,
+        resets=resets,
+        mcm=effects["mcm"],
+        settings=effects["settings"],
+        moves=effects["moves"],
+        deletes=effects["deletes"],
+        console=effects["console"],
+        depends=_parse_str_list(
+            item.get("depends") if item.get("depends") is not None else item.get("dependencies"),
+            field=f"{section}.{dep_id}.depends",
+        ),
+        exclusive=str(item.get("exclusive") or "").strip(),
+        group=str(item.get("group") or "").strip(),
+        choice=str(item.get("choice") or "").strip(),
+        installable=installable,
+        options=_parse_str_list(item.get("options"), field=f"{section}.{dep_id}.options"),
         after_unpack=str(item.get("after_unpack") or "").strip(),
         feature=feature,
+        wizard_requires=wizard_req,
     )
 
 
@@ -630,98 +1170,1225 @@ def _parse_external_map(
     return out
 
 
-def load_manifest(path: Path) -> ManifestData:
+def _yaml_load_mapping(path: Path) -> dict:
     if not path.is_file():
-        raise FileNotFoundError(f"manifest.yml not found: {path}")
+        raise FileNotFoundError(f"catalog not found: {path}")
     if not pyyaml_ok():
         raise RuntimeError("PyYAML not installed. Run DOGMA (Setup Tools).bat first.")
     import yaml
 
     raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     if not isinstance(raw, dict):
-        raise ValueError("manifest.yml root must be a mapping")
+        raise ValueError(f"{path.name} root must be a mapping")
+    return raw
 
-    if raw.get("requirements") is not None:
-        raise ValueError(
-            "manifest.yml top-level 'requirements:' removed — put packs under "
-            "features.<name>.downloads (use features.common for always-on)"
-        )
-    if raw.get("defaults"):
-        raise ValueError(
-            "manifest.yml top-level 'defaults:' removed — put defaults under each "
-            "feature / features.*.downloads.<id> / suggested.<id> entry "
-            "(optional target_mod:)"
-        )
 
-    features: dict[str, FeatureMeta] = {}
-    feat_block = raw.get("features") or {}
+def _parse_features_block(feat_block: dict) -> dict[str, FeatureMeta]:
+    """Parse features.yml → dict keyed by ``path`` (src/ id).
+
+    YAML key is the display title. Each non-common block must set ``path:``.
+    Legacy keys that look like ``category/feature`` (no ``path:``) are still
+    accepted as the path, with the key also used as the title.
+    """
     if not isinstance(feat_block, dict):
-        raise ValueError("manifest.yml features: must be a mapping")
-    for feat_path, meta in feat_block.items():
-        fp = str(feat_path).strip()
-        if not fp:
+        raise ValueError("features: must be a mapping")
+    features: dict[str, FeatureMeta] = {}
+    titles_seen: dict[str, str] = {}  # title.lower → path
+
+    for raw_key, meta in feat_block.items():
+        key = str(raw_key).strip()
+        if not key:
             continue
-        is_common = fp.lower() == "common"
-        dls: list[Dependency] = []
-        # Bare YAML `off`/`false` becomes False — treat as stage omit.
+        is_common = key.lower() == "common"
+        empty_fx = {
+            "resets": [],
+            "mcm": {},
+            "settings": {},
+            "moves": [],
+            "deletes": [],
+            "console": [],
+        }
+        feat_depends: list[str] = []
+        title = key
+        path = ""
+
         if meta is False:
             stage = "omit"
-            disabled, enables, defaults, target_mod = [], [], {}, ""
+            disables, enables, fx = [], [], empty_fx
+            path = "common" if is_common else key.replace("\\", "/")
         elif isinstance(meta, (int, str)) and not isinstance(meta, bool):
             stage = parse_stage(meta)
-            disabled, enables, defaults, target_mod = [], [], {}, ""
+            disables, enables, fx = [], [], empty_fx
+            path = "common" if is_common else key.replace("\\", "/")
         elif isinstance(meta, dict):
+            path_raw = meta.get("path")
+            if path_raw is not None and str(path_raw).strip():
+                path = str(path_raw).strip().replace("\\", "/")
+                title = key
+            elif is_common:
+                path = "common"
+                title = "common"
+            elif "/" in key.replace("\\", "/"):
+                # Legacy: YAML key is the feature path
+                path = key.replace("\\", "/")
+                title = key
+            else:
+                raise ValueError(
+                    f"features.{key!r}: missing path: "
+                    f"(e.g. path: tooltips/weapons)"
+                )
             if is_common:
                 stage = parse_stage(meta.get("stage", meta.get("level", "release")))
             elif "stage" not in meta and "level" not in meta:
-                raise ValueError(f"features.{fp}: missing stage (omit|local|release)")
+                raise ValueError(
+                    f"features.{title!r} ({path}): missing stage (omit|local|release)"
+                )
             else:
                 stage = parse_stage(meta.get("stage", meta.get("level")))
-            disabled = (
-                meta.get("disabled")
-                if meta.get("disabled") is not None
-                else meta.get("disable")
-            ) or []
-            enables = (
-                meta.get("enables")
-                if meta.get("enables") is not None
-                else meta.get("enable")
-            ) or []
-            defaults = meta.get("defaults") or {}
-            target_mod = str(meta.get("target_mod") or "").strip()
-            if not isinstance(disabled, list):
-                raise ValueError(f"features.{fp}.disabled must be a list")
-            if not isinstance(enables, list):
-                raise ValueError(f"features.{fp}.enables must be a list")
-            if defaults and not isinstance(defaults, dict):
-                raise ValueError(f"features.{fp}.defaults must be a mapping")
+            disables = _parse_conflict_list(meta, section=f"features.{path}")
+            enables = _parse_enable_list(meta, section=f"features.{path}")
+            fx = _pack_effect_fields(meta, section=f"features.{path}")
             raw_dls = (
                 meta.get("downloads")
                 if meta.get("downloads") is not None
                 else meta.get("requirements")
             )
-            dls = _parse_external_map(
-                raw_dls,
-                tier="downloads",
-                section=f"features.{fp}.downloads",
-                feature=fp,
+            if raw_dls:
+                nonempty = False
+                if isinstance(raw_dls, dict) and raw_dls:
+                    nonempty = True
+                elif isinstance(raw_dls, list) and raw_dls:
+                    nonempty = True
+                if nonempty:
+                    raise ValueError(
+                        f"features.{title!r} ({path}): downloads:/requirements: "
+                        f"moved to config/mods.yml — use depends: [Pack Id, …]"
+                    )
+            feat_depends = _parse_str_list(
+                meta.get("depends")
+                if meta.get("depends") is not None
+                else meta.get("dependencies"),
+                field=f"features.{path}.depends",
             )
         else:
-            raise ValueError(f"features.{fp}: want stage or mapping")
-        features[fp] = FeatureMeta(
-            path=fp,
+            raise ValueError(f"features.{key!r}: want stage or mapping")
+
+        path = path.strip().replace("\\", "/")
+        if not path:
+            raise ValueError(f"features.{key!r}: empty path")
+        if path in features:
+            raise ValueError(
+                f"features: duplicate path {path!r} "
+                f"({features[path].display_name!r} and {title!r})"
+            )
+        tkey = title.lower()
+        if tkey in titles_seen and titles_seen[tkey] != path:
+            raise ValueError(
+                f"features: duplicate title {title!r} "
+                f"(paths {titles_seen[tkey]!r} and {path!r})"
+            )
+        titles_seen[tkey] = path
+        features[path] = FeatureMeta(
+            path=path,
             stage=stage,
-            disabled=[str(x) for x in disabled],
-            enables=[str(x) for x in enables],
-            defaults={str(k): str(v) for k, v in (defaults or {}).items()},
-            target_mod=target_mod,
-            downloads=dls,
+            title="" if is_common else title,
+            disables=disables,
+            enables=enables,
+            resets=fx["resets"],
+            mcm=fx["mcm"],
+            settings=fx["settings"],
+            moves=fx["moves"],
+            deletes=fx["deletes"],
+            console=fx["console"],
+            depends=feat_depends,
+            downloads=[],
+        )
+    return features
+
+
+def pack_needs_purchase(dep: Dependency) -> bool:
+    """True when the user must buy/supply an archive (wizard default off)."""
+    return bool(dep.buy_url) or (
+        dep.source == "user" and not dep.url
+    )
+
+
+def option_default_selected(
+    opt: InstallerOption, pack_by_id: dict[str, Dependency]
+) -> bool:
+    """Checked by default unless any seed pack needs purchase."""
+    for mid in opt.mods:
+        pack = pack_by_id.get(mid)
+        if pack is None:
+            continue
+        try:
+            leaves = expand_pack_composition(pack_by_id, mid)
+        except ValueError:
+            leaves = [mid]
+        for lid in leaves:
+            leaf = pack_by_id.get(lid, pack if lid == mid else None)
+            if leaf is not None and pack_needs_purchase(leaf):
+                return False
+        if pack_needs_purchase(pack):
+            return False
+    return True
+
+
+def feature_installer_options(
+    features: dict[str, FeatureMeta],
+    suggested: list[Dependency],
+) -> list[InstallerOption]:
+    """Wizard rows for features that declare pack depends: (skip stage omit)."""
+    by_id = {d.id: d for d in suggested}
+    stub = ManifestData(path=Path("."), features=features, suggested=suggested)
+    opts: list[InstallerOption] = []
+    seen_pack_key: set[tuple[str, ...]] = set()
+    for feat, meta in features.items():
+        if meta.always_on or not meta.depends:
+            continue
+        if meta.stage == "omit":
+            continue
+        seeds = stub.feature_pack_ids(feat)
+        if not seeds:
+            continue
+        # One checkbox per unique pack set (avoid duplicate Tarkov rows).
+        key = tuple(sorted(s.lower() for s in seeds))
+        if key in seen_pack_key:
+            continue
+        seen_pack_key.add(key)
+        opt = InstallerOption(
+            id=feat,
+            desc=f"Install packs required by {meta.display_name}",
+            mods=list(seeds),
+            default=False,  # pre-checked in wizard when feature is installed
+            requires=[],
+        )
+        # Still off if purchase required even when installed (wizard refines).
+        if not option_default_selected(opt, by_id):
+            opt.default = False
+        opts.append(opt)
+    return opts
+
+
+def apply_feature_option_defaults(
+    data: ManifestData,
+    installed: set[str] | None,
+) -> None:
+    """Pre-check free feature-depends options when that feature is installed."""
+    if not installed:
+        return
+    by_id = data.suggested_by_id()
+    low = {x.lower() for x in installed}
+    for opt in data.installer_options:
+        if opt.id not in data.features:
+            continue
+        present = opt.id in installed or opt.id.lower() in low
+        opt.default = bool(present and option_default_selected(opt, by_id))
+
+
+def wizard_section_order(
+    data: ManifestData,
+) -> list[tuple[str, str]]:
+    """Dependency-first wizard sections: ('radio'|'option', id).
+
+    Radio groups first (mods.yml order), then installable pack checkboxes,
+    then feature-with-depends rows.
+    """
+    radios = wizard_radio_groups(data)
+    pack_ids = {d.id for d in data.suggested}
+    feat_ids = set(data.features.keys())
+    sections: list[tuple[str, str]] = []
+    seen_opt: set[str] = set()
+
+    for dep in data.suggested:
+        if dep.id in radios:
+            sections.append(("radio", dep.id))
+
+    for dep in data.suggested:
+        if is_wizard_radio_parent(dep):
+            continue
+        if not dep.installable:
+            continue
+        sections.append(("option", dep.id))
+        seen_opt.add(dep.id)
+
+    for opt in data.installer_options:
+        if opt.id in seen_opt:
+            continue
+        if opt.id in feat_ids or opt.id not in pack_ids:
+            sections.append(("option", opt.id))
+            seen_opt.add(opt.id)
+    return sections
+
+
+def _parse_requires(raw, *, section: str) -> list[str]:
+    """Parse requires: list of mods.yml radio-group pack ids."""
+    if not raw:
+        return []
+    if isinstance(raw, dict):
+        raise ValueError(
+            f"{section}: requires: must be a list of mods.yml pack "
+            f"ids (not a mapping) — e.g. [Screen Space Shaders]"
+        )
+    return _parse_str_list(raw, field=f"{section}.requires")
+
+
+def _unique_strs(items: Iterable[str]) -> list[str]:
+    """Order-preserving unique strings (case-insensitive)."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in items:
+        s = str(raw).strip()
+        if not s:
+            continue
+        key = s.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(s)
+    return out
+
+
+def _unique_moves(items: Iterable[tuple[str, str]]) -> list[tuple[str, str]]:
+    out: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for src, dest in items:
+        key = (str(src).strip().lower(), str(dest).strip().lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append((str(src).strip(), str(dest).strip()))
+    return out
+
+
+def _unique_kv(items: Iterable[tuple[str, str]]) -> dict[str, str]:
+    """First key wins (case-insensitive)."""
+    out: dict[str, str] = {}
+    seen: set[str] = set()
+    for key, val in items:
+        k = str(key).strip()
+        if not k:
+            continue
+        kl = k.lower()
+        if kl in seen:
+            continue
+        seen.add(kl)
+        out[k] = str(val)
+    return out
+
+
+def _parse_installer_options(raw, *, section: str = "installer_options") -> list[InstallerOption]:
+    if not raw:
+        return []
+    if not isinstance(raw, dict):
+        raise ValueError(f"{section}: must be a mapping keyed by option name")
+    out: list[InstallerOption] = []
+    for key, meta in raw.items():
+        opt_id = str(key).strip()
+        if not opt_id:
+            continue
+        if meta is None:
+            meta = {}
+        if not isinstance(meta, dict):
+            raise ValueError(f"{section}.{opt_id}: want a mapping")
+        if meta.get("exclusive") is not None:
+            raise ValueError(
+                f"{section}.{opt_id}: exclusive: on options removed — put "
+                f"installable:/options: (or legacy exclusive:) on packs in "
+                f"mods.yml, and use requires: [Pack Id] here"
+            )
+        mods = _parse_str_list(meta.get("mods"), field=f"{section}.{opt_id}.mods")
+        if not mods:
+            raise ValueError(f"{section}.{opt_id}: mods: list is required")
+        default = meta.get("default", False)
+        if not isinstance(default, bool):
+            default = str(default).strip().lower() in ("1", "true", "yes", "on")
+        desc = str(meta.get("desc") or meta.get("description") or "").strip()
+        req = _parse_requires(
+            meta.get("requires")
+            if meta.get("requires") is not None
+            else meta.get("requires_exclusive"),
+            section=f"{section}.{opt_id}",
+        )
+        out.append(
+            InstallerOption(
+                id=opt_id,
+                desc=desc,
+                mods=mods,
+                default=default,
+                requires=req,
+            )
+        )
+    return out
+
+
+def _parse_options_file(raw: dict, *, source: str = "options.yml") -> list[InstallerOption]:
+    """Legacy parser for config/options.yml (no longer primary)."""
+    if not isinstance(raw, dict):
+        raise ValueError(f"{source}: root must be a mapping")
+    if "installer_options" in raw:
+        return _parse_installer_options(
+            raw.get("installer_options"), section="installer_options"
+        )
+    return _parse_installer_options(raw, section=source)
+
+
+def _parse_mods_file(raw: dict, *, source: str = "mods.yml") -> list[Dependency]:
+    """Parse mods.yml: bare pack map or suggested_mods: / legacy wrappers."""
+    if not isinstance(raw, dict):
+        raise ValueError(f"{source}: root must be a mapping")
+    if "suggested_mods" in raw:
+        mods_raw = raw.get("suggested_mods") or {}
+        if not isinstance(mods_raw, dict):
+            raise ValueError(f"{source}: suggested_mods: must be a mapping")
+        return _parse_external_map(
+            mods_raw, tier="suggested", section="suggested_mods"
+        )
+    if set(raw.keys()) <= {"suggested", "suggestions"}:
+        sug_block = raw.get("suggested") or raw.get("suggestions") or {}
+        if not isinstance(sug_block, dict):
+            raise ValueError(f"{source}: suggested packs must be a mapping")
+        return _parse_external_map(
+            sug_block, tier="suggested", section="suggestions"
+        )
+    return _parse_external_map(raw, tier="suggested", section=source)
+
+
+def is_wizard_radio_parent(dep: Dependency) -> bool:
+    """``installable: true`` + ``options:`` with no download URL → radio section."""
+    return bool(dep.installable and dep.options and not dep.url and not dep.buy_url)
+
+
+def installer_seed_ids(
+    dep: Dependency, pack_by_id: dict[str, Dependency]
+) -> list[str]:
+    """Pack ids to install when an ``installable`` wizard checkbox is selected.
+
+    Checkbox packs install themselves; companions come from ``depends:``.
+    """
+    del pack_by_id  # reserved for future expansion; seeds are the pack itself
+    return [dep.id]
+
+
+def _validate_mods_composition(suggested: list[Dependency]) -> None:
+    """Validate installable:/options:/depends: references and shape.
+
+    A pack is either:
+      - installable mod details (url/buy_url; optional depends:), or
+      - an installable radio group (options: + no url/buy_url), or
+      - a composition choice (depends: + no url; listed under a radio group).
+    ``options:`` is only for radio groups.
+    """
+    by_id = {d.id: d for d in suggested}
+    for dep in suggested:
+        if dep.options and not is_wizard_radio_parent(dep):
+            raise ValueError(
+                f"mods.{dep.id}: options: is only for radio groups "
+                f"(installable: true, no url/buy_url) — use depends: for "
+                f"composition (e.g. SSS Latest & Preview)"
+            )
+        if dep.installable and dep.options and (dep.url or dep.buy_url):
+            raise ValueError(
+                f"mods.{dep.id}: installable radio groups must not have url:/buy_url:"
+            )
+        for oid in dep.options:
+            if oid not in by_id:
+                raise ValueError(
+                    f"mods.{dep.id}: options entry {oid!r} missing from mods.yml"
+                )
+            if oid == dep.id:
+                raise ValueError(f"mods.{dep.id}: options: cannot reference itself")
+        for dep_id in dep.depends:
+            if dep_id not in by_id:
+                raise ValueError(
+                    f"mods.{dep.id}: depends entry {dep_id!r} missing from mods.yml"
+                )
+            if dep_id == dep.id:
+                raise ValueError(f"mods.{dep.id}: depends: cannot reference itself")
+
+
+def _validate_options_mods(
+    opts: list[InstallerOption], suggested: list[Dependency]
+) -> None:
+    by_id = {d.id: d for d in suggested}
+    _validate_mods_composition(suggested)
+    for opt in opts:
+        for mid in opt.mods:
+            if mid not in by_id:
+                raise ValueError(
+                    f"options.{opt.id}: mods entry {mid!r} missing from mods.yml"
+                )
+        for pack_id in opt.requires:
+            if pack_id not in by_id:
+                raise ValueError(
+                    f"options.{opt.id}: requires pack {pack_id!r} "
+                    f"missing from mods.yml"
+                )
+            pack = by_id[pack_id]
+            if is_wizard_radio_parent(pack):
+                continue
+            if pack.exclusive:
+                continue
+            raise ValueError(
+                f"options.{opt.id}: requires pack {pack_id!r} "
+                f"needs installable: true + options: (or legacy exclusive:) "
+                f"in mods.yml"
+            )
+
+
+def _parse_suggestions_file(raw: dict) -> tuple[list[InstallerOption], list[Dependency]]:
+    """Parse legacy suggestions.yml: installer_options + suggested_mods (or flat map)."""
+    if not isinstance(raw, dict):
+        raise ValueError("suggestions.yml root must be a mapping")
+
+    if "suggested_mods" in raw or "installer_options" in raw:
+        opts = _parse_installer_options(
+            raw.get("installer_options"), section="installer_options"
+        )
+        mods_raw = raw.get("suggested_mods")
+        if mods_raw is None:
+            mods_raw = {}
+        if not isinstance(mods_raw, dict):
+            raise ValueError("suggested_mods: must be a mapping")
+        suggested = _parse_external_map(
+            mods_raw, tier="suggested", section="suggested_mods"
+        )
+        _validate_options_mods(opts, suggested)
+        return opts, suggested
+
+    # Legacy: bare pack map (or suggested:/suggestions: wrapper)
+    if set(raw.keys()) <= {"suggested", "suggestions"}:
+        sug_block = raw.get("suggested") or raw.get("suggestions") or {}
+    else:
+        sug_block = raw
+    suggested = _parse_external_map(
+        sug_block, tier="suggested", section="suggestions"
+    )
+    _validate_mods_composition(suggested)
+    return [], suggested
+
+
+def _load_options_and_mods(
+    cfg_dir: Path,
+) -> tuple[list[InstallerOption], list[Dependency]]:
+    """Load wizard options + pack catalog from config/mods.yml.
+
+    Wizard checkboxes: ``installable: true`` (not radio-only parents).
+    Radio sections: ``installable: true`` + ``options:`` with no url/buy_url.
+    """
+    mods_path = resolve_mods_path(cfg_dir)
+    if mods_path is not None:
+        mods_raw = _yaml_load_mapping(mods_path)
+        suggested = _parse_mods_file(mods_raw, source=mods_path.name)
+        by_id = {d.id: d for d in suggested}
+        opts: list[InstallerOption] = []
+        for dep in suggested:
+            if not dep.installable or is_wizard_radio_parent(dep):
+                continue
+            opt = InstallerOption(
+                id=dep.id,
+                desc=dep.desc,
+                mods=installer_seed_ids(dep, by_id),
+                default=True,
+                requires=dep.wizard_requires,
+            )
+            opt.default = option_default_selected(opt, by_id)
+            opts.append(opt)
+        _validate_options_mods(opts, suggested)
+        return opts, suggested
+
+    # Legacy: separate options.yml + mods.yml
+    opts_path = resolve_options_path(cfg_dir)
+    if opts_path is not None:
+        # Without mods.yml we can only support legacy suggestions.yml.
+        pass
+
+    # Legacy combined file may hold both; prefer suggestions.yml.
+    sug_path = resolve_suggestions_path(cfg_dir)
+    if sug_path is not None:
+        return _parse_suggestions_file(_yaml_load_mapping(sug_path))
+    return [], []
+
+    # unreachable
+
+
+def exclusive_pack_groups(data: ManifestData) -> dict[str, list[Dependency]]:
+    """Legacy exclusive: group id → packs (stable mods.yml order)."""
+    groups: dict[str, list[Dependency]] = {}
+    for dep in data.suggested:
+        if not dep.exclusive:
+            continue
+        groups.setdefault(dep.exclusive, []).append(dep)
+    return groups
+
+
+def wizard_radio_groups(data: ManifestData) -> dict[str, list[Dependency]]:
+    """Wizard radio sections: group key → choice packs.
+
+    Compositional parents (``installable: true`` + ``options:``) use the parent
+    pack id as the key. Legacy ``exclusive:`` packs use the exclusive tag.
+    """
+    by_id = data.suggested_by_id()
+    groups: dict[str, list[Dependency]] = {}
+    for dep in data.suggested:
+        if not is_wizard_radio_parent(dep):
+            continue
+        choices: list[Dependency] = []
+        for oid in dep.options:
+            child = by_id.get(oid)
+            if child is None:
+                raise ValueError(
+                    f"mods.{dep.id}: options entry {oid!r} missing from mods.yml"
+                )
+            choices.append(child)
+        groups[dep.id] = choices
+    for ex, packs in exclusive_pack_groups(data).items():
+        if ex in groups:
+            raise ValueError(
+                f"exclusive group {ex!r} conflicts with installable pack id {ex!r}"
+            )
+        groups[ex] = packs
+    return groups
+
+
+def radio_group_title(
+    group: str, packs: list[Dependency], *, parent: Dependency | None = None
+) -> str:
+    if parent is not None:
+        if parent.group:
+            return parent.group
+        return parent.id
+    for p in packs:
+        if p.group:
+            return p.group
+    ids = [p.id for p in packs]
+    if len(ids) >= 2:
+        parts = [i.split() for i in ids]
+        common: list[str] = []
+        for words in zip(*parts):
+            if len(set(w.lower() for w in words)) == 1:
+                common.append(words[0])
+            else:
+                break
+        if common:
+            return " ".join(common)
+    return group.replace("_", " ").replace("-", " ").title() or "Options"
+
+
+# Compat alias for older call sites
+exclusive_group_title = radio_group_title
+
+
+def expand_pack_composition(
+    pack_by_id: dict[str, Dependency],
+    pack_id: str,
+    *,
+    _stack: set[str] | None = None,
+) -> list[str]:
+    """Expand a radio choice to leaf install ids (unique, order-preserving).
+
+    Pure composition nodes (no url/buy_url, not a radio parent) expand via
+    ``depends:``. Downloadable packs are leaves (their ``depends:`` are still
+    walked later by the install-order visitor).
+    """
+    stack = _stack if _stack is not None else set()
+    pid = str(pack_id).strip()
+    if not pid:
+        return []
+    if pid in stack:
+        raise ValueError(f"depends: cycle involving {pid!r}")
+    pack = pack_by_id.get(pid)
+    if pack is None:
+        raise ValueError(f"unknown pack: {pid!r}")
+    # Composition-only: depends lists the packs this choice installs
+    if (
+        pack.depends
+        and not pack.url
+        and not pack.buy_url
+        and not is_wizard_radio_parent(pack)
+    ):
+        stack.add(pid)
+        out: list[str] = []
+        seen: set[str] = set()
+        try:
+            for dep_id in pack.depends:
+                for leaf in expand_pack_composition(
+                    pack_by_id, dep_id, _stack=stack
+                ):
+                    if leaf not in seen:
+                        seen.add(leaf)
+                        out.append(leaf)
+        finally:
+            stack.discard(pid)
+        return out
+    return [pid]
+
+
+# Compat alias
+expand_pack_options = expand_pack_composition
+
+
+def _merge_effect_fields(*deps: Dependency) -> dict:
+    """Combine effect lists/maps from deps into unique fields."""
+    disables: list[str] = []
+    enables: list[str] = []
+    deletes: list[str] = []
+    console: list[str] = []
+    resets: list[str] = []
+    mcm_pairs: list[tuple[str, str]] = []
+    settings_pairs: list[tuple[str, str]] = []
+    for d in deps:
+        disables.extend(d.disables)
+        enables.extend(d.enables)
+        deletes.extend(d.deletes)
+        console.extend(d.console)
+        resets.extend(d.resets)
+        mcm_pairs.extend(d.mcm.items())
+        settings_pairs.extend(d.settings.items())
+    return {
+        "disables": _unique_strs(disables),
+        "enables": _unique_strs(enables),
+        "deletes": _unique_strs(deletes),
+        "console": _unique_strs(console),
+        "resets": _unique_strs(resets),
+        "mcm": _unique_kv(mcm_pairs),
+        "settings": _unique_kv(settings_pairs),
+    }
+
+
+def uniquify_dep_effects(deps: list[Dependency]) -> list[Dependency]:
+    """Copy deps with shared effect values unique across the list (first wins)."""
+    seen_disables: set[str] = set()
+    seen_enables: set[str] = set()
+    seen_deletes: set[str] = set()
+    seen_console: set[str] = set()
+    seen_resets: set[str] = set()
+    seen_mcm: set[str] = set()
+    seen_settings: set[str] = set()
+    out: list[Dependency] = []
+    for dep in deps:
+        disables: list[str] = []
+        for x in dep.disables:
+            k = x.lower()
+            if k in seen_disables:
+                continue
+            seen_disables.add(k)
+            disables.append(x)
+        enables: list[str] = []
+        for x in dep.enables:
+            k = x.lower()
+            if k in seen_enables:
+                continue
+            seen_enables.add(k)
+            enables.append(x)
+        deletes: list[str] = []
+        for x in dep.deletes:
+            k = x.lower()
+            if k in seen_deletes:
+                continue
+            seen_deletes.add(k)
+            deletes.append(x)
+        console: list[str] = []
+        for x in dep.console:
+            k = x.lower()
+            if k in seen_console:
+                continue
+            seen_console.add(k)
+            console.append(x)
+        resets: list[str] = []
+        for x in dep.resets:
+            k = x.lower()
+            if k in seen_resets:
+                continue
+            seen_resets.add(k)
+            resets.append(x)
+        mcm: dict[str, str] = {}
+        for k, v in dep.mcm.items():
+            kl = k.lower()
+            if kl in seen_mcm:
+                continue
+            seen_mcm.add(kl)
+            mcm[k] = v
+        settings: dict[str, str] = {}
+        for k, v in dep.settings.items():
+            kl = k.lower()
+            if kl in seen_settings:
+                continue
+            seen_settings.add(kl)
+            settings[k] = v
+        # Important: keep cross-pack move ordering semantics.
+        # Deduping moves globally would prevent later packs from overwriting
+        # the same destination with their own content.
+        moves: list[tuple[str, str]] = _unique_moves(dep.moves)
+        out.append(
+            replace(
+                dep,
+                disables=disables,
+                enables=enables,
+                deletes=deletes,
+                console=console,
+                resets=resets,
+                mcm=mcm,
+                settings=settings,
+                moves=moves,
+            )
+        )
+    return out
+
+
+def required_exclusive_groups(
+    data: ManifestData, option_ids: Iterable[str]
+) -> dict[str, str]:
+    """Radio groups required by selected options → preferred default choice id."""
+    opt_by_id = {o.id: o for o in data.installer_options}
+    pack_by_id = data.suggested_by_id()
+    out: dict[str, str] = {}
+    for oid in option_ids:
+        opt = opt_by_id.get(str(oid).strip())
+        if not opt:
+            continue
+        for pack_id in opt.requires:
+            pack = pack_by_id.get(pack_id)
+            if not pack:
+                continue
+            if is_wizard_radio_parent(pack):
+                # Preferred default = first radio choice
+                preferred = pack.options[0]
+                out.setdefault(pack.id, preferred)
+            elif pack.exclusive:
+                out.setdefault(pack.exclusive, pack_id)
+    return out
+
+
+def default_exclusive_picks(
+    data: ManifestData, option_ids: Iterable[str] | None = None
+) -> dict[str, str]:
+    """Exclusive picks for default/NO_WIZARD installs (required groups only)."""
+    ids = (
+        list(option_ids)
+        if option_ids is not None
+        else default_installer_option_ids(data)
+    )
+    return dict(required_exclusive_groups(data, ids))
+
+
+def resolve_install_order(
+    data: ManifestData,
+    selected_option_ids: Iterable[str],
+    exclusive_picks: dict[str, str] | None = None,
+) -> list[Dependency]:
+    """Expand installer_options + radio picks → deps-first install list.
+
+    ``exclusive_picks`` maps radio group key → chosen pack id (or \"\" for none).
+    Compositional picks expand ``options:`` and merge parent+choice effects uniquely.
+    """
+    opt_by_id = {o.id: o for o in data.installer_options}
+    pack_by_id = data.suggested_by_id()
+    radio_groups = wizard_radio_groups(data)
+    selected = [str(x).strip() for x in selected_option_ids if str(x).strip()]
+    for oid in selected:
+        if oid not in opt_by_id:
+            raise ValueError(f"unknown installer option: {oid!r}")
+
+    picks = {
+        str(g).strip(): str(p or "").strip()
+        for g, p in (exclusive_picks or {}).items()
+        if str(g).strip()
+    }
+
+    required = required_exclusive_groups(data, selected)
+    for group, default_pack in required.items():
+        if not picks.get(group):
+            picks[group] = default_pack
+
+    for group, pack_id in list(picks.items()):
+        if not pack_id:
+            if group in required:
+                choices = radio_groups.get(group, [])
+                raise ValueError(
+                    f"option group {group!r} is required by selected options "
+                    f"— pick one of: {', '.join(p.id for p in choices)}"
+                )
+            continue
+        if group not in radio_groups:
+            raise ValueError(f"unknown option group: {group!r}")
+        allowed = {p.id for p in radio_groups[group]}
+        if pack_id not in allowed:
+            raise ValueError(
+                f"pack {pack_id!r} is not a choice in option group {group!r}"
+            )
+
+    # Seeds from checkbox mods and radio picks (expand depends: composition)
+    seeds: list[str] = []
+    seen_seed: set[str] = set()
+    # Extra effect packs to fold onto the first leaf of each radio pick
+    pick_overlays: dict[str, list[Dependency]] = {}  # first_leaf_id → extras
+
+    def _add_seed(mid: str) -> None:
+        if mid in seen_seed:
+            return
+        seen_seed.add(mid)
+        seeds.append(mid)
+
+    for oid in selected:
+        for mid in opt_by_id[oid].mods:
+            pack = pack_by_id.get(mid)
+            if pack is None:
+                raise ValueError(f"unknown suggested_mods pack: {mid!r}")
+            # Skip pure radio parents listed on mods: by mistake
+            if is_wizard_radio_parent(pack):
+                continue
+            _add_seed(mid)
+
+    for group, choice_id in picks.items():
+        if not choice_id:
+            continue
+        leaf_ids = expand_pack_composition(pack_by_id, choice_id)
+        if not leaf_ids:
+            continue
+        for leaf_id in leaf_ids:
+            _add_seed(leaf_id)
+        extras: list[Dependency] = []
+        parent = pack_by_id.get(group)
+        if parent is not None and is_wizard_radio_parent(parent):
+            extras.append(parent)
+        choice = pack_by_id[choice_id]
+        # Composition node (depends expand away from self) contributes its fields
+        if choice.id not in leaf_ids:
+            extras.append(choice)
+        if extras:
+            pick_overlays.setdefault(leaf_ids[0], []).extend(extras)
+
+    # Collapse legacy exclusive: among seeds sharing a tag
+    preferred_pack = {g: p for g, p in picks.items() if p}
+    by_pack_ex: dict[str, list[str]] = {}
+    for mid in seeds:
+        pack = pack_by_id.get(mid)
+        if not pack or not pack.exclusive:
+            continue
+        by_pack_ex.setdefault(pack.exclusive, []).append(mid)
+    drop: set[str] = set()
+    for ex, mids in by_pack_ex.items():
+        if len(mids) <= 1:
+            continue
+        winner = preferred_pack.get(ex)
+        if winner not in mids:
+            winner = mids[-1]
+        for mid in mids:
+            if mid != winner:
+                drop.add(mid)
+    if drop:
+        seeds = [m for m in seeds if m not in drop]
+
+    visiting: set[str] = set()
+    done: set[str] = set()
+    ordered: list[str] = []
+
+    def visit(mid: str) -> None:
+        if mid in done:
+            return
+        if mid in visiting:
+            raise ValueError(f"depends cycle involving {mid!r}")
+        if mid not in pack_by_id:
+            raise ValueError(f"unknown suggested_mods pack: {mid!r}")
+        visiting.add(mid)
+        for dep_id in pack_by_id[mid].depends:
+            visit(dep_id)
+        visiting.remove(mid)
+        done.add(mid)
+        ordered.append(mid)
+
+    for mid in seeds:
+        visit(mid)
+
+    by_pack_ex2: dict[str, list[str]] = {}
+    for mid in ordered:
+        pack = pack_by_id[mid]
+        if pack.exclusive:
+            by_pack_ex2.setdefault(pack.exclusive, []).append(mid)
+    drop2: set[str] = set()
+    for ex, mids in by_pack_ex2.items():
+        if len(mids) <= 1:
+            continue
+        winner = preferred_pack.get(ex)
+        if winner not in mids:
+            winner = mids[-1]
+        for mid in mids:
+            if mid != winner:
+                drop2.add(mid)
+    if drop2:
+        ordered = [m for m in ordered if m not in drop2]
+
+    # Install units = ordered packs that do work (not pure option parents /
+    # composition-only nodes whose children were already expanded into seeds).
+    install_ids: list[str] = []
+    for mid in ordered:
+        pack = pack_by_id[mid]
+        if is_wizard_radio_parent(pack):
+            continue
+        if pack.options and not pack.url and not pack.enables:
+            if not (
+                pack.disables
+                or pack.deletes
+                or pack.moves
+                or pack.console
+                or pack.mcm
+                or pack.settings
+                or pack.resets
+            ):
+                continue
+        # Pure composition choice already expanded into depends leaves
+        if (
+            pack.depends
+            and not pack.url
+            and not pack.buy_url
+            and not is_wizard_radio_parent(pack)
+            and not (
+                pack.disables
+                or pack.deletes
+                or pack.moves
+                or pack.console
+                or pack.mcm
+                or pack.settings
+                or pack.resets
+            )
+        ):
+            continue
+        install_ids.append(mid)
+
+    # Fold parent/composite effects onto the first leaf of each pick, then
+    # uniquify shared lists across the whole install order.
+    by_id_copies: dict[str, Dependency] = {
+        mid: replace(pack_by_id[mid]) for mid in install_ids
+    }
+    for leaf_id, extras in pick_overlays.items():
+        if leaf_id not in by_id_copies:
+            continue
+        base = by_id_copies[leaf_id]
+        merged = _merge_effect_fields(base, *extras)
+        by_id_copies[leaf_id] = replace(
+            base,
+            disables=merged["disables"],
+            enables=merged["enables"],
+            deletes=merged["deletes"],
+            console=merged["console"],
+            resets=merged["resets"],
+            mcm=merged["mcm"],
+            settings=merged["settings"],
+            # keep this leaf's moves (extras rarely have moves)
+            moves=_unique_moves([*base.moves, *(m for e in extras for m in e.moves)]),
         )
 
+    return uniquify_dep_effects([by_id_copies[mid] for mid in install_ids])
+
+
+def default_installer_option_ids(
+    data: ManifestData,
+    *,
+    installed: set[str] | None = None,
+) -> list[str]:
+    """Options checked by default (packs: no buy_url; features: if installed)."""
+    if installed is not None:
+        apply_feature_option_defaults(data, installed)
+    return [o.id for o in data.installer_options if o.default]
+
+
+def selection_path(mo2_root: Path) -> Path:
+    return mo2_tools_dir(mo2_root) / "config" / "selection.json"
+
+
+def save_installer_selection(
+    mo2_root: Path,
+    selection: InstallerSelection | list[str],
+    exclusive_picks: dict[str, str] | None = None,
+) -> Path:
+    if isinstance(selection, InstallerSelection):
+        option_ids = list(selection.option_ids)
+        picks = dict(selection.exclusive_picks)
+    else:
+        option_ids = list(selection)
+        picks = dict(exclusive_picks or {})
+    path = selection_path(mo2_root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "installer_options": option_ids,
+        "exclusive": picks,
+    }
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def load_installer_selection(mo2_root: Path) -> InstallerSelection | None:
+    path = selection_path(mo2_root)
+    if not path.is_file():
+        return None
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(raw, dict):
+        return None
+    opts = raw.get("installer_options")
+    if not isinstance(opts, list):
+        return None
+    option_ids = [str(x).strip() for x in opts if str(x).strip()]
+    picks_raw = raw.get("exclusive") if isinstance(raw.get("exclusive"), dict) else {}
+    picks = {
+        str(g).strip(): str(p or "").strip()
+        for g, p in picks_raw.items()
+        if str(g).strip()
+    }
+    return InstallerSelection(option_ids=option_ids, exclusive_picks=picks)
+
+
+def _parse_suggestions_block(raw_sug) -> list[Dependency]:
     suggested = _parse_external_map(
-        raw.get("suggested"), tier="suggested", section="suggested"
+        raw_sug, tier="suggested", section="suggestions"
     )
-    # Legacy top-level mods: with tier
+    return suggested
+
+
+def _manifest_from_parts(
+    path: Path,
+    features: dict[str, FeatureMeta],
+    suggested: list[Dependency],
+    installer_options: list[InstallerOption] | None = None,
+) -> ManifestData:
+    # Validate feature depends: resolve early
+    stub = ManifestData(path=path, features=features, suggested=suggested)
+    for feat, meta in features.items():
+        if not meta.depends:
+            continue
+        stub.feature_pack_ids(feat)
+
+    opts = list(installer_options or [])
+    feat_opts = feature_installer_options(features, suggested)
+    seen = {o.id for o in opts}
+    for fo in feat_opts:
+        if fo.id in seen:
+            raise ValueError(
+                f"feature {fo.id!r} conflicts with an installable pack id in mods.yml"
+            )
+        opts.append(fo)
+
+    defaults: list[InitSetting] = []
+    for feat in features.values():
+        defaults.extend(
+            _overrides_to_settings(feat.path, mcm=feat.mcm, settings=feat.settings)
+        )
+        if feat.depends:
+            for dep in stub.feature_pack_deps(feat.path):
+                defaults.extend(
+                    _overrides_to_settings(
+                        f"downloads:{dep.id}", mcm=dep.mcm, settings=dep.settings
+                    )
+                )
+    for dep in suggested:
+        defaults.extend(
+            _overrides_to_settings(
+                f"suggested:{dep.id}", mcm=dep.mcm, settings=dep.settings
+            )
+        )
+    return ManifestData(
+        path=path,
+        features=features,
+        suggested=suggested,
+        installer_options=opts,
+        defaults=defaults,
+    )
+
+
+def _features_map_from_file(raw: dict, *, source: str) -> dict:
+    """Accept bare feature map, or wrapped {features: {...}}."""
+    if raw.get("requirements") is not None:
+        raise ValueError(
+            f"{source}: top-level 'requirements:' removed — put packs in "
+            "config/mods.yml and list them under features.<name>.depends:"
+        )
+    if raw.get("defaults") is not None:
+        raise ValueError(
+            f"{source}: top-level 'defaults:' removed — put resets: / mcm: / "
+            "settings: on each feature / download / suggestion"
+        )
+    if "suggested" in raw or "suggestions" in raw:
+        raise ValueError(
+            f"{source}: put suggested packs in config/mods.yml "
+            "(not inside features.yml)"
+        )
+    if "features" in raw and "common" not in raw:
+        block = raw.get("features") or {}
+        if not isinstance(block, dict):
+            raise ValueError(f"{source}: features: must be a mapping")
+        return block
+    return raw
+
+
+def load_manifest(path: Path) -> ManifestData:
+    """Load catalog from features.yml + mods.yml (or legacy).
+
+    ``path`` may be the config directory, ``features.yml``, or legacy
+    ``manifest.yml``.
+    """
+    if path.is_dir():
+        feat_path = path / "features.yml"
+        if feat_path.is_file():
+            return load_manifest(feat_path)
+        legacy = path / "manifest.yml"
+        if legacy.is_file():
+            return load_manifest(legacy)
+        raise FileNotFoundError(f"features.yml not found under {path}")
+
+    if not path.is_file():
+        raise FileNotFoundError(f"catalog not found: {path}")
+
+    name = path.name.lower()
+    companion = (
+        "suggestions.yml",
+        "suggested.yml",
+        "suggestions.yaml",
+        "suggested.yaml",
+        "options.yml",
+        "options.yaml",
+        "installer_options.yml",
+        "mods.yml",
+        "mods.yaml",
+        "suggested_mods.yml",
+    )
+    if name in companion:
+        feat = path.parent / "features.yml"
+        if not feat.is_file():
+            raise FileNotFoundError(
+                f"features.yml required alongside {path.name} (looked in {path.parent})"
+            )
+        return load_manifest(feat)
+
+    raw = _yaml_load_mapping(path)
+
+    # Split catalog: features.yml (bare map or features: wrapper)
+    if name in ("features.yml", "features.yaml"):
+        feat_block = _features_map_from_file(raw, source=path.name)
+        features = _parse_features_block(feat_block)
+        installer_options, suggested = _load_options_and_mods(path.parent)
+        return _manifest_from_parts(
+            path, features, suggested, installer_options=installer_options
+        )
+
+    # Legacy unified manifest.yml
+    if raw.get("requirements") is not None:
+        raise ValueError(
+            "manifest.yml top-level 'requirements:' removed — put packs in "
+            "config/mods.yml and list them under features.<name>.depends:"
+        )
+    if raw.get("defaults"):
+        raise ValueError(
+            "manifest.yml top-level 'defaults:' removed — put resets: / mcm: / "
+            "settings: under each feature / downloads.<id> / suggestion"
+        )
+    feat_block = raw.get("features") or {}
+    features = _parse_features_block(feat_block)
+    suggested = _parse_suggestions_block(
+        raw.get("suggested") if raw.get("suggested") is not None else raw.get("suggestions")
+    )
     if not suggested and (raw.get("mods") or raw.get("dependencies")):
         for item in raw.get("mods") or raw.get("dependencies") or []:
             if not isinstance(item, dict):
@@ -729,46 +2396,21 @@ def load_manifest(path: Path) -> ManifestData:
             tier = str(item.get("tier") or "suggested").strip().lower()
             if tier in ("required", "downloads"):
                 raise ValueError(
-                    "legacy mods with tier:required — move under features.*.downloads"
+                    "legacy mods with tier:required — put packs in mods.yml "
+                    "and features.<name>.depends:"
                 )
             suggested.extend(
                 _parse_external_list([item], tier="suggested", section="mods")
             )
-
-    defaults: dict[str, list[InitSetting]] = {}
-    for feat in features.values():
-        if feat.defaults:
-            pattern = feat.target_mod or feat.path
-            defaults.setdefault(pattern, []).extend(
-                _settings_from_mapping(pattern, feat.defaults)
-            )
-        for dep in feat.downloads:
-            if not dep.defaults:
-                continue
-            pattern = dep.target_mod or dep.label or dep.id
-            defaults.setdefault(pattern, []).extend(
-                _settings_from_mapping(pattern, dep.defaults)
-            )
-
-    for dep in suggested:
-        if not dep.defaults:
-            continue
-        pattern = dep.target_mod or dep.label or dep.id
-        defaults.setdefault(pattern, []).extend(
-            _settings_from_mapping(pattern, dep.defaults)
-        )
-
-    return ManifestData(
-        path=path,
-        features=features,
-        suggested=suggested,
-        defaults=defaults,
-    )
+    return _manifest_from_parts(path, features, suggested)
 
 
 def read_manifest_levels(path: Path) -> dict[str, int]:
     """Feature path → numeric rank (0/1/2). Accepts manifest.yml (or legacy .ini)."""
-    if path.suffix.lower() in (".yml", ".yaml") or path.name == "manifest.yml":
+    if path.suffix.lower() in (".yml", ".yaml") or path.name in (
+        "manifest.yml",
+        "features.yml",
+    ):
         data = load_manifest(path)
         return {k.lower(): STAGE_RANK[v.stage] for k, v in data.features.items()}
     if not path.is_file():
@@ -807,13 +2449,13 @@ def feature_disable_rules(
 
     for feat, meta in data.features.items():
         if not _feature_is_active(meta, min_stage, installed=installed):
-            if meta.disabled:
+            if meta.disables:
                 skipped.append(feat)
             continue
-        if not meta.disabled:
+        if not meta.disables:
             continue
         active.append(feat)
-        for raw in meta.disabled:
+        for raw in meta.disables:
             parsed = _parse_disable_name(raw)
             if not parsed:
                 continue
@@ -910,6 +2552,7 @@ def update_modlist_enable_by_rules(
     if result.enabled and not dry_run:
         stamp_backup(modlist)
         write_text_lines(modlist, out)
+        info(f"modlist: wrote {modlist} ({len(result.enabled)} newly enabled)")
     return result
 
 
@@ -999,6 +2642,34 @@ def rules_from_disable_names(names: Iterable[str], source: str = "") -> list[Rul
     return rules
 
 
+def enabled_mods_matching_disables(
+    enabled_names: Iterable[str],
+    disable_patterns: Iterable[str],
+) -> list[str]:
+    """Enabled modlist names that match any disable pattern (would be turned off)."""
+    rules = rules_from_disable_names(disable_patterns, source="preview")
+    if not rules:
+        return []
+    hit = [n for n in enabled_names if mod_matches(n, rules)]
+    return sorted(set(hit), key=lambda s: s.lower())
+
+
+def preview_disables_for_deps(
+    deps: Iterable[Dependency],
+    enabled_names: Iterable[str],
+) -> list[str]:
+    """Currently-enabled mods that these packs' disables: would turn off."""
+    patterns: list[str] = []
+    for dep in deps:
+        patterns.extend(dep.disables)
+    return enabled_mods_matching_disables(enabled_names, patterns)
+
+
+def preview_tweak_packs(deps: Iterable[Dependency]) -> list[str]:
+    """Pack ids that apply MCM / settings / resets (config tweaks)."""
+    return [d.id for d in deps if d.has_axr_effects()]
+
+
 def mod_matches(name: str, rules: Iterable[Rule]) -> Rule | None:
     lower = name.lower()
     for rule in rules:
@@ -1062,6 +2733,7 @@ def update_modlist_disable(modlist: Path, rules: list[Rule], dry_run: bool) -> M
     if result.disabled and not dry_run:
         stamp_backup(modlist)
         write_text_lines(modlist, out)
+        info(f"modlist: wrote {modlist} ({len(result.disabled)} newly disabled)")
     return result
 
 
@@ -1082,16 +2754,21 @@ def enable_mods_in_modlist(modlist: Path, names: Iterable[str], dry_run: bool) -
     if enabled and not dry_run:
         stamp_backup(modlist)
         write_text_lines(modlist, out)
+    for name in enabled:
+        ok(f"  enable: {name}" + (" (dry-run)" if dry_run else ""))
     return enabled
 
 
-def read_initialize_ini(path: Path) -> dict[str, list[InitSetting]]:
+def read_initialize_ini(path: Path) -> list[InitSetting]:
     """Load defaults from manifest.yml (or legacy defaults.ini)."""
-    if path.suffix.lower() in (".yml", ".yaml") or path.name == "manifest.yml":
-        return load_manifest(path).defaults
+    if path.suffix.lower() in (".yml", ".yaml") or path.name in (
+        "manifest.yml",
+        "features.yml",
+    ):
+        return list(load_manifest(path).defaults)
     if not path.is_file():
         raise FileNotFoundError(f"defaults not found: {path}")
-    by_mod: dict[str, list[InitSetting]] = {}
+    out: list[InitSetting] = []
     section: str | None = None
     for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
         line = raw.strip()
@@ -1101,7 +2778,6 @@ def read_initialize_ini(path: Path) -> dict[str, list[InitSetting]]:
             section = line[1:-1].strip()
             if not section:
                 raise ValueError("defaults.ini has an empty [section]")
-            by_mod.setdefault(section, [])
             continue
         if section is None:
             raise ValueError(f"defaults.ini entry outside a [mod] section: {raw.strip()}")
@@ -1119,20 +2795,15 @@ def read_initialize_ini(path: Path) -> dict[str, list[InitSetting]]:
                 raise ValueError(f"defaults.ini @entry must be @Section/key (got: {raw.strip()})")
             axr_section, key = rest.split("/", 1)
             axr_section, key = axr_section.strip(), key.strip()
-        by_mod[section].append(InitSetting(section, axr_section, key, val))
-    return by_mod
+        out.append(InitSetting(section, axr_section, key, val))
+    return out
 
 
 def find_present_mod(pattern: str, mod_names: Iterable[str]) -> str | None:
-    if pattern.lower().startswith("exact:"):
-        want = pattern.split(":", 1)[1].strip().lower()
-        for name in mod_names:
-            if name.lower() == want:
-                return name
-        return None
-    needle = pattern.lower()
+    """Return the first modlist name matching ``pattern`` (exact / substring: rules)."""
+    rules = rules_from_disable_names([pattern])
     for name in mod_names:
-        if needle in name.lower():
+        if mod_matches(name, rules):
             return name
     return None
 
@@ -1143,6 +2814,76 @@ _AXR_ASSIGN = re.compile(r"^(\s*)([^\s=]+)\s*=\s*(.*?)\s*$")
 def format_axr_line(indent: str, key: str, value: str, width: int = 40) -> str:
     pad = max(width, len(key) + 1)
     return f"{indent}{key:<{pad}} = {value}"
+
+
+_ID_DEF_LINE = re.compile(
+    r"""(?ix)
+    id\s*=\s*['"]([^'"]+)['"]
+    .*?
+    def\s*=\s*
+    (
+        -?\d+(?:\.\d+)?
+        | true | false
+        | ['"][^'"]*['"]
+    )
+    """
+)
+_ROOT_ID = re.compile(
+    r"""(?ix)
+    (?:function\s+on_mcm_load|return\s*\{)
+    .*?
+    id\s*=\s*['"]([^'"]+)['"]
+    """,
+    re.DOTALL,
+)
+_SIMPLE_ROOT = re.compile(
+    r"""(?ix)
+    ^\s*(?:op\s*=\s*)?\{\s*
+    id\s*=\s*['"]([^'"]+)['"]
+    """,
+    re.MULTILINE,
+)
+
+
+def _normalize_mcm_def(raw: str) -> str:
+    raw = raw.strip()
+    if (raw.startswith("'") and raw.endswith("'")) or (
+        raw.startswith('"') and raw.endswith('"')
+    ):
+        return raw[1:-1]
+    if raw.lower() in ("true", "false"):
+        return raw.lower()
+    return raw
+
+
+def index_mcm_script_defaults(mo2_root: Path) -> dict[str, str]:
+    """Scan mods/**/*mcm*.script for id/def= pairs (and root/id paths)."""
+    defaults: dict[str, str] = {}
+    mods = mo2_root / "mods"
+    if not mods.is_dir():
+        return defaults
+    for script in mods.rglob("*.script"):
+        name = script.name.lower()
+        if "mcm" not in name and not name.endswith("_mcm.script"):
+            continue
+        try:
+            text = script.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        root = None
+        m = _ROOT_ID.search(text)
+        if m:
+            root = m.group(1)
+        else:
+            m2 = _SIMPLE_ROOT.search(text)
+            if m2:
+                root = m2.group(1)
+        for m in _ID_DEF_LINE.finditer(text):
+            opt_id, def_raw = m.group(1), _normalize_mcm_def(m.group(2))
+            defaults[opt_id] = def_raw
+            if root and opt_id != root:
+                defaults[f"{root}/{opt_id}"] = def_raw
+    return defaults
 
 
 def apply_settings_to_axr_options(
@@ -1236,68 +2977,45 @@ def apply_initialize(
     modlist: Path,
     dry_run: bool,
     *,
-    only_patterns: set[str] | None = None,
     installed: set[str] | None = None,
-) -> tuple[int, int, list[str]]:
-    if initialize_path.suffix.lower() in (".yml", ".yaml") or initialize_path.name == "manifest.yml":
-        data = load_manifest(initialize_path)
-        by_mod = data.collect_defaults(installed=installed)
+    suggested_ids: set[str] | None = None,
+) -> tuple[int, int]:
+    """Apply MCM defaults into axr_options.ltx files.
+
+    Keys are written blindly into axr_options once selected. Manual (url: false)
+    packs are omitted unless that mod is installed.
+    """
+    if initialize_path.suffix.lower() in (".yml", ".yaml") or initialize_path.name in (
+        "manifest.yml",
+        "features.yml",
+    ):
+        to_apply = load_manifest(initialize_path).collect_defaults(
+            installed=installed,
+            mo2_root=mo2_root,
+            modlist=modlist,
+            suggested_ids=suggested_ids,
+        )
     else:
-        by_mod = read_initialize_ini(initialize_path)
-    if not by_mod:
-        return 0, 0, []
-    mod_names = list_modlist_names(modlist)
-    to_apply: list[InitSetting] = []
-    skipped: list[str] = []
-    for pattern, settings in by_mod.items():
-        if only_patterns is not None and pattern.lower() not in only_patterns:
-            continue
-        if not settings:
-            continue
-        hit = find_present_mod(pattern, mod_names)
-        if not hit:
-            skipped.append(pattern)
-            continue
-        to_apply.extend(settings)
+        to_apply = read_initialize_ini(initialize_path)
     if not to_apply:
-        return 0, 0, skipped
+        return 0, 0
 
     files = 0
     values = 0
     for scan in (mo2_root / "mods", mo2_root / "overwrite"):
         for path in iter_files(scan, name="axr_options.ltx"):
-            # Only touch axr under a matched mod folder when possible
             changes = apply_settings_to_axr_options(path, to_apply, dry_run)
             if changes:
                 files += 1
                 values += len(changes)
-    return files, values, skipped
-
-
-def defaults_fingerprint(initialize_path: Path) -> dict[str, str]:
-    """Hash each defaults section body for Update filtering."""
-    by_mod = read_initialize_ini(initialize_path)
-    out: dict[str, str] = {}
-    for pattern, settings in by_mod.items():
-        blob = "\n".join(f"{s.axr_section}/{s.key}={s.value}" for s in settings)
-        out[pattern.lower()] = hashlib.sha256(blob.encode("utf-8")).hexdigest()
-    return out
-
-
-def load_fingerprint(mo2_dir: Path) -> dict[str, str]:
-    path = mo2_dir / FINGERPRINT_NAME
-    if not path.is_file():
-        return {}
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        return {str(k).lower(): str(v) for k, v in data.items()}
-    except (OSError, json.JSONDecodeError):
-        return {}
-
-
-def save_fingerprint(mo2_dir: Path, fp: dict[str, str]) -> None:
-    path = mo2_dir / FINGERPRINT_NAME
-    path.write_text(json.dumps(fp, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+                try:
+                    rel = path.relative_to(mo2_root)
+                except ValueError:
+                    rel = path
+                info(f"defaults -> {rel} ({len(changes)} change(s))")
+                for c in changes:
+                    ok(f"  {c}")
+    return files, values
 
 
 def load_dependencies(path: Path) -> list[Dependency]:
@@ -1320,24 +3038,41 @@ def filter_deps(
     min_stage: str | int = "local",
     installed: set[str] | None = None,
 ) -> list[Dependency]:
-    """tier: downloads (alias: required) | suggested | all."""
+    """tier: downloads (alias: required) | suggested | all.
+
+    ``suggested`` / ``all`` on a ManifestData return installable expanded packs
+    only when used via deps_for_args; raw ``all`` here is feature downloads plus
+    suggested packs deduped by id (prefer first occurrence).
+    """
     t = tier.lower()
     if t == "required":
         t = "downloads"
+
+    def _dedupe(items: list[Dependency]) -> list[Dependency]:
+        out: list[Dependency] = []
+        seen: set[str] = set()
+        for d in items:
+            if d.id in seen:
+                continue
+            seen.add(d.id)
+            out.append(d)
+        return out
+
     if isinstance(deps, ManifestData):
         if t == "downloads":
             return deps.feature_downloads(min_stage, installed=installed)
         if t == "suggested":
             return list(deps.suggested)
         if t == "all":
-            return deps.feature_downloads(min_stage, installed=installed) + list(
-                deps.suggested
+            return _dedupe(
+                deps.feature_downloads(min_stage, installed=installed)
+                + list(deps.suggested)
             )
         raise ValueError(f"unknown tier: {tier}")
     if t == "all":
         req = [d for d in deps if d.tier in ("downloads", "required")]
         sug = [d for d in deps if d.tier == "suggested"]
-        return req + sug
+        return _dedupe(req + sug)
     if t == "downloads":
         return [d for d in deps if d.tier in ("downloads", "required")]
     if t == "suggested":
@@ -1745,12 +3480,19 @@ def dep_is_satisfied(
     moddb: ModdbInfo | None = None,
 ) -> tuple[bool, list[str]]:
     folders: list[str] = []
-    urls = dep_url_candidates(dep, moddb)
-    if urls:
-        folders.extend(find_catalog_folders_for_urls(mo2_root, urls))
-    for name in find_managed_folders(mo2_root, dep):
-        if name not in folders:
-            folders.append(name)
+    # Manual (url: false): only our managed install counts — never catalog / lookalikes.
+    # Effects (disables / enables / mcm / settings / console) stay off until it exists.
+    if dep.source == "user" or not dep.url:
+        for name in find_managed_folders(mo2_root, dep):
+            if name not in folders:
+                folders.append(name)
+    else:
+        urls = dep_url_candidates(dep, moddb)
+        if urls:
+            folders.extend(find_catalog_folders_for_urls(mo2_root, urls))
+        for name in find_managed_folders(mo2_root, dep):
+            if name not in folders:
+                folders.append(name)
     if not folders:
         return False, []
     if not require_enabled or modlist is None:
@@ -1758,6 +3500,18 @@ def dep_is_satisfied(
     enabled = {n for f, n in list_modlist_entries(modlist) if f == "+"}
     on = [f for f in folders if f in enabled]
     return (len(on) > 0, folders)
+
+
+def dep_effects_active(
+    mo2_root: Path,
+    dep: Dependency,
+    modlist: Path,
+) -> bool:
+    """True when this pack's disables/enables/mcm/settings/console should run."""
+    satisfied, _ = dep_is_satisfied(
+        mo2_root, dep, modlist, require_enabled=True
+    )
+    return satisfied
 
 
 def ensure_separator(modlist: Path, dry_run: bool) -> None:
@@ -1807,6 +3561,7 @@ def insert_mod_under_separator(modlist: Path, mod_name: str, dry_run: bool) -> N
     if not dry_run:
         stamp_backup(modlist)
         write_text_lines(modlist, out)
+    ok(f"  modlist enable under separator: {mod_name}" + (" (dry-run)" if dry_run else ""))
 
 
 def wipe_managed_mod(mo2_root: Path, modlist: Path, folder_name: str, dry_run: bool) -> None:
@@ -1815,12 +3570,223 @@ def wipe_managed_mod(mo2_root: Path, modlist: Path, folder_name: str, dry_run: b
         warn(f"  Refusing to wipe catalog folder: {folder_name}")
         return
     lines = [l for l in read_text_lines(modlist) if not re.match(rf"^[+\-]{re.escape(folder_name)}$", l)]
+    target = mo2_root / "mods" / folder_name
+    info(
+        f"  wipe managed {'(dry-run) ' if dry_run else ''}"
+        f"{folder_name} (modlist entry + {target})"
+    )
     if not dry_run:
         stamp_backup(modlist)
         write_text_lines(modlist, lines)
-        target = mo2_root / "mods" / folder_name
         if target.is_dir():
             shutil.rmtree(target, ignore_errors=True)
+
+
+ARCHIVE_SUFFIXES = {".zip", ".7z", ".rar", ".7zip"}
+_ARCHIVE_DATE_RE = re.compile(r"^(.+)-(\d{4}-\d{2}-\d{2})$")
+
+
+def game_dir(mo2_root: Path) -> Path:
+    """Game directory from ModOrganizer.ini gamePath (e.g. C:\\Anomaly)."""
+    raw = read_mo2_ini_value(mo2_root / "ModOrganizer.ini", "gamePath")
+    return Path(raw)
+
+
+# deletes: path roots — <Anomaly> = gamePath, <GAMMA> = MO2 instance
+_PATH_ROOT_RE = re.compile(
+    r"^(?:<(anomaly|gamma)>|(anomaly|gamma|game|mo2):)[/\\]?(.*)$",
+    re.IGNORECASE,
+)
+
+
+def resolve_managed_path(mo2_root: Path, raw: str) -> Path | None:
+    """Resolve a path that may be rooted at Anomaly (game) or GAMMA (MO2).
+
+    - ``<Anomaly>/rel`` / ``anomaly:rel`` / ``game:rel`` → ModOrganizer gamePath
+    - ``<GAMMA>/rel`` / ``gamma:rel`` / ``mo2:rel`` → MO2 instance root
+    - Absolute path → as-is
+    - Bare relative path → under Anomaly (game) by default
+    """
+    s = (raw or "").strip().replace("\\", "/")
+    if not s or s.startswith("#"):
+        return None
+    m = _PATH_ROOT_RE.match(s)
+    if m:
+        root_name = (m.group(1) or m.group(2) or "").lower()
+        rel = (m.group(3) or "").lstrip("/\\")
+        if root_name in ("anomaly", "game"):
+            base = game_dir(mo2_root)
+        else:  # gamma | mo2
+            base = mo2_root
+        return (base / rel).resolve() if rel else base.resolve()
+    p = Path(s)
+    if p.is_absolute():
+        return p.resolve()
+    return (game_dir(mo2_root) / s).resolve()
+
+
+# Compat alias
+resolve_delete_path = resolve_managed_path
+
+
+def _path_under(child: Path, parent: Path) -> bool:
+    try:
+        child.resolve().relative_to(parent.resolve())
+        return True
+    except (ValueError, OSError):
+        return False
+
+
+def run_dep_deletes(mo2_root: Path, dep: Dependency, *, dry_run: bool) -> list[str]:
+    """Delete files/dirs listed on the dep (after install). Returns deleted paths."""
+    if not dep.deletes:
+        return []
+    game = game_dir(mo2_root)
+    deleted: list[str] = []
+    for raw in dep.deletes:
+        target = resolve_managed_path(mo2_root, raw)
+        if target is None:
+            continue
+        if not _path_under(target, game) and not _path_under(target, mo2_root):
+            warn(f"  [{dep.id}] deletes skipped (outside <Anomaly>/<GAMMA>): {raw}")
+            continue
+        if not target.exists():
+            info(f"  [{dep.id}] deletes miss (already gone): {target}")
+            continue
+        info(f"  [{dep.id}] deletes {'(dry-run) ' if dry_run else ''}{target}")
+        if dry_run:
+            deleted.append(str(target))
+            continue
+        try:
+            if target.is_dir():
+                shutil.rmtree(target)
+            else:
+                target.unlink()
+            deleted.append(str(target))
+        except OSError as exc:
+            warn(f"  [{dep.id}] deletes failed {target}: {exc}")
+    return deleted
+
+
+def run_dep_moves(
+    mo2_root: Path,
+    dep: Dependency,
+    mod_dir: Path,
+    *,
+    dry_run: bool,
+) -> list[str]:
+    """Copy files from the unpacked managed mod to <Anomaly>/<GAMMA> destinations.
+
+    Uses copy (not move) so Install/Update can re-run safely every time.
+    """
+    if not dep.moves:
+        return []
+    game = game_dir(mo2_root)
+    moved: list[str] = []
+    for src_rel, dest_raw in dep.moves:
+        src = (mod_dir / src_rel.replace("\\", "/")).resolve()
+        dest = resolve_managed_path(mo2_root, dest_raw)
+        if dest is None:
+            continue
+        if not _path_under(dest, game) and not _path_under(dest, mo2_root):
+            warn(f"  [{dep.id}] moves skipped (outside <Anomaly>/<GAMMA>): {dest_raw}")
+            continue
+        if not src.exists():
+            warn(f"  [{dep.id}] moves miss src: {src_rel} (under {mod_dir.name})")
+            continue
+        info(
+            f"  [{dep.id}] moves {'(dry-run) ' if dry_run else ''}"
+            f"{src_rel} -> {dest}"
+        )
+        if dry_run:
+            moved.append(f"{src} -> {dest}")
+            continue
+        try:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            if dest.exists():
+                if dest.is_dir():
+                    shutil.rmtree(dest)
+                else:
+                    dest.unlink()
+            if src.is_dir():
+                shutil.copytree(src, dest)
+            else:
+                shutil.copy2(src, dest)
+            moved.append(f"{src} -> {dest}")
+        except OSError as exc:
+            warn(f"  [{dep.id}] moves failed {src_rel}: {exc}")
+    return moved
+
+
+def dogma_once_root(mo2_root: Path) -> Path:
+    return game_dir(mo2_root) / "appdata" / "dogma_once"
+
+
+def console_pending_dir(mo2_root: Path) -> Path:
+    return dogma_once_root(mo2_root) / "pending"
+
+
+def console_done_dir(mo2_root: Path) -> Path:
+    return dogma_once_root(mo2_root) / "done"
+
+
+def console_once_done(mo2_root: Path, dep_id: str) -> bool:
+    return (console_done_dir(mo2_root) / dep_id).is_file()
+
+
+def queue_console_cmds(mo2_root: Path, dep: Dependency, *, dry_run: bool) -> bool:
+    """Queue console cmds for next game boot (every installer run; clears done stamp)."""
+    if not dep.console:
+        return False
+    pending = console_pending_dir(mo2_root)
+    index = pending / "_index.txt"
+    pack_file = pending / f"{dep.id}.txt"
+    done = console_done_dir(mo2_root) / dep.id
+    info(
+        f"  [{dep.id}] console {'(dry-run) ' if dry_run else ''}"
+        f"{len(dep.console)} cmd(s) -> {pack_file}"
+    )
+    for cmd in dep.console:
+        info(f"    console: {cmd}")
+    if dry_run:
+        return True
+    pending.mkdir(parents=True, exist_ok=True)
+    console_done_dir(mo2_root).mkdir(parents=True, exist_ok=True)
+    if done.is_file():
+        done.unlink()
+    pack_file.write_text(
+        "\n".join(dep.console) + "\n",
+        encoding="utf-8",
+    )
+    existing: list[str] = []
+    if index.is_file():
+        existing = [
+            ln.strip()
+            for ln in index.read_text(encoding="utf-8").splitlines()
+            if ln.strip() and not ln.strip().startswith("#")
+        ]
+    if dep.id not in existing:
+        existing.append(dep.id)
+    index.write_text("\n".join(existing) + "\n", encoding="utf-8")
+    return True
+
+
+# Compat alias
+queue_console_once = queue_console_cmds
+
+
+def run_dep_side_effects(
+    mo2_root: Path,
+    dep: Dependency,
+    mod_dir: Path | None,
+    *,
+    dry_run: bool,
+) -> None:
+    """Re-apply moves/deletes/console every installer run (idempotent)."""
+    if mod_dir is not None and dep.moves:
+        run_dep_moves(mo2_root, dep, mod_dir, dry_run=dry_run)
+    run_dep_deletes(mo2_root, dep, dry_run=dry_run)
+    queue_console_cmds(mo2_root, dep, dry_run=dry_run)
 
 
 def downloads_dir(mo2_root: Path) -> Path:
@@ -1829,48 +3795,351 @@ def downloads_dir(mo2_root: Path) -> Path:
     return d
 
 
+def iso_to_date_stamp(raw: str) -> str:
+    """Trim HTML datetime / ISO value to YYYY-MM-DD (empty if unparseable)."""
+    s = (raw or "").strip()
+    if not s:
+        return ""
+    m = re.match(r"^(\d{4}-\d{2}-\d{2})", s)
+    return m.group(1) if m else ""
+
+
+def moddb_date_stamp(moddb: ModdbInfo | None) -> str:
+    """Prefer Updated, else Added — both usually from <time datetime=\"…\">."""
+    if not moddb:
+        return ""
+    return iso_to_date_stamp(moddb.updated) or iso_to_date_stamp(moddb.added)
+
+
+def dep_zip_stem(dep: Dependency, *, date: str = "") -> str:
+    """Local archive basename: <id> or <id>-YYYY-MM-DD."""
+    base = (dep.archive_name or dep.id or "").strip()
+    stamp = iso_to_date_stamp(date)
+    return f"{base}-{stamp}" if stamp else base
+
+
+def preview_install_packs(
+    deps: Iterable[Dependency],
+    pack_by_id: dict[str, Dependency] | None = None,
+) -> list[str]:
+    """Pack ids that download/install (url, buy_url / user archive, or enables)."""
+    out: list[str] = []
+    seen: set[str] = set()
+    by_id = pack_by_id or {}
+    for dep in deps:
+        try:
+            leaves = expand_pack_composition(by_id, dep.id) if by_id else [dep.id]
+        except ValueError:
+            leaves = [dep.id]
+        for lid in leaves:
+            leaf = by_id.get(lid, dep if lid == dep.id else None)
+            if leaf is None or lid in seen:
+                continue
+            if leaf.url or leaf.buy_url or leaf.source == "user" or leaf.enables:
+                seen.add(lid)
+                out.append(lid)
+    return out
+
+
+def preview_effect_sections(deps: Iterable[Dependency]) -> list[tuple[str, list[str]]]:
+    """Ordered (label, values) for wizard 'what this will do' lines."""
+    dep_list = list(deps)
+    disables: list[str] = []
+    enables: list[str] = []
+    deletes: list[str] = []
+    resets: list[str] = []
+    console: list[str] = []
+    moves: list[str] = []
+    mcm: list[str] = []
+    settings: list[str] = []
+    for d in dep_list:
+        disables.extend(d.disables)
+        enables.extend(d.enables)
+        deletes.extend(d.deletes)
+        resets.extend(d.resets)
+        console.extend(d.console)
+        moves.extend(f"{src} → {dst}" for src, dst in d.moves)
+        mcm.extend(f"{k}={v}" for k, v in d.mcm.items())
+        settings.extend(f"{k}={v}" for k, v in d.settings.items())
+
+    def uniq(items: list[str]) -> list[str]:
+        return _unique_strs(items)
+
+    sections: list[tuple[str, list[str]]] = []
+    for label, items in (
+        ("Disables", uniq(disables)),
+        ("Enables", uniq(enables)),
+        ("Deletes", uniq(deletes)),
+        ("Resets MCM", uniq(resets)),
+        ("MCM", uniq(mcm)),
+        ("Settings", uniq(settings)),
+        ("Moves", uniq(moves)),
+        ("Console", uniq(console)),
+    ):
+        if items:
+            sections.append((label, items))
+    return sections
+
+
+def _archive_ext_rank(path: Path) -> tuple[int, str]:
+    rank = {".zip": 0, ".7z": 1, ".7zip": 2, ".rar": 3}
+    return (rank.get(path.suffix.lower(), 9), path.name.lower())
+
+
+def _prefer_archive(paths: list[Path]) -> Path | None:
+    if not paths:
+        return None
+    return sorted(paths, key=_archive_ext_rank)[0]
+
+
+@dataclass(frozen=True)
+class LocalArchive:
+    path: Path
+    pinned: bool  # undated <id>.* — never auto-replaced
+    date: str  # YYYY-MM-DD when dated; "" if pinned
+
+
+def list_dep_archives(mo2_root: Path, dep: Dependency) -> list[LocalArchive]:
+    """Archives in downloads/DOGMA for this catalog id (pinned + dated)."""
+    dld = downloads_dir(mo2_root)
+    base = (dep.id or "").strip()
+    if not base or not dld.is_dir():
+        return []
+    out: list[LocalArchive] = []
+    for p in dld.iterdir():
+        if not _is_archive_file(p):
+            continue
+        stem = p.stem
+        if stem.lower() == base.lower():
+            out.append(LocalArchive(p, pinned=True, date=""))
+            continue
+        m = _ARCHIVE_DATE_RE.match(stem)
+        if m and m.group(1).lower() == base.lower():
+            out.append(LocalArchive(p, pinned=False, date=m.group(2)))
+    return out
+
+
+def resolve_local_archive(
+    mo2_root: Path,
+    dep: Dependency,
+    *,
+    remote_date: str = "",
+) -> tuple[Path | None, str]:
+    """Pick a local archive and report status vs ModDB date.
+
+    Status:
+      pinned  — undated <id>.*; never download/replace
+      current — dated archive matches remote_date
+      stale   — have dated archive(s) but none match remote (or remote newer)
+      missing — nothing on disk
+    """
+    locals_ = list_dep_archives(mo2_root, dep)
+    pinned = [a for a in locals_ if a.pinned]
+    if pinned:
+        return _prefer_archive([a.path for a in pinned]), "pinned"
+
+    want = iso_to_date_stamp(remote_date)
+    dated = [a for a in locals_ if a.date]
+    if want:
+        match = [a for a in dated if a.date == want]
+        if match:
+            return _prefer_archive([a.path for a in match]), "current"
+        if dated:
+            dated.sort(key=lambda a: a.date, reverse=True)
+            return _prefer_archive([a.path for a in dated if a.date == dated[0].date]), "stale"
+        return None, "missing"
+
+    if dated:
+        dated.sort(key=lambda a: a.date, reverse=True)
+        return _prefer_archive([a.path for a in dated if a.date == dated[0].date]), "current"
+    return None, "missing"
+
+
 def find_archive_for_dep(
     mo2_root: Path,
     dep: Dependency,
     *,
-    preferred_filename: str = "",
+    remote_date: str = "",
 ) -> Path | None:
+    path, _status = resolve_local_archive(mo2_root, dep, remote_date=remote_date)
+    return path
+
+
+def _is_archive_file(path: Path) -> bool:
+    return path.is_file() and path.suffix.lower() in ARCHIVE_SUFFIXES
+
+
+def claim_download_as_zip(
+    mo2_root: Path,
+    dep: Dependency,
+    *,
+    moddb_filename: str = "",
+    date: str = "",
+    dry_run: bool = False,
+) -> Path | None:
+    """Move/rename a fresh MO2 download into downloads/DOGMA/<id>[-date]{ext}."""
+    stem = dep_zip_stem(dep, date=date)
     dld = downloads_dir(mo2_root)
-    names = []
-    if preferred_filename:
-        names.append(preferred_filename)
-    if dep.file:
-        names.append(dep.file)
-    for name in names:
-        p = dld / name
-        if p.is_file():
-            return p
-    # Any archive whose name contains dep id
-    needle = dep.id.lower()
-    for p in sorted(dld.iterdir()) if dld.is_dir() else []:
-        if p.is_file() and needle in p.stem.lower() and p.suffix.lower() in {
-            ".zip", ".7z", ".rar", ".7zip",
-        }:
-            return p
-    return None
+    # Already claimed under the target stem
+    existing = [
+        p
+        for p in (dld.iterdir() if dld.is_dir() else [])
+        if _is_archive_file(p) and p.stem.lower() == stem.lower()
+    ]
+    if existing:
+        return _prefer_archive(existing)
+
+    top = mo2_root / "downloads"
+    needles: list[str] = []
+    if moddb_filename:
+        needles.append(Path(moddb_filename).name.lower())
+        needles.append(Path(moddb_filename).stem.lower())
+    needles.append(dep.id.lower())
+    # Spaced ids also match zips as alphanumeric mush (e.g. "Screen Space Shaders")
+    id_alnum = re.sub(r"[^a-z0-9]+", "", dep.id.lower())
+    if id_alnum and id_alnum != dep.id.lower():
+        needles.append(id_alnum)
+
+    candidates: list[Path] = []
+    for root in (dld, top):
+        if not root.is_dir():
+            continue
+        for p in root.iterdir():
+            if not _is_archive_file(p):
+                continue
+            if p.parent == dld and p.stem.lower() == stem.lower():
+                return p
+            # Skip other DOGMA dated/pinned copies of this id (not the fresh download)
+            if p.parent == dld:
+                la = None
+                for item in list_dep_archives(mo2_root, dep):
+                    if item.path.resolve() == p.resolve():
+                        la = item
+                        break
+                if la is not None:
+                    continue
+            low = p.name.lower()
+            stem_low = p.stem.lower()
+            if any(n and (n == low or n == stem_low or n in stem_low) for n in needles):
+                candidates.append(p)
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    src = candidates[0]
+    dest = dld / f"{stem}{src.suffix.lower()}"
+    if src.resolve() == dest.resolve():
+        return dest
+    info(f"  [{dep.id}] claim download -> downloads/DOGMA/{dest.name}")
+    if dry_run:
+        return dest
+    if dest.exists() and dest.resolve() != src.resolve():
+        dest.unlink()
+    shutil.move(str(src), str(dest))
+    meta = src.with_suffix(src.suffix + ".meta")
+    if not meta.is_file():
+        meta = Path(str(src) + ".meta")
+    if meta.is_file():
+        try:
+            meta.unlink()
+        except OSError:
+            pass
+    return dest
 
 
 def mo2_download(mo2_root: Path, url: str) -> int:
     exe = mo2_root / "ModOrganizer.exe"
     if not exe.is_file():
         raise FileNotFoundError(f"ModOrganizer.exe not found: {exe}")
-    # Download into downloads/; MO2 may not put it under DOGMA/ — we still look both places
     info(f"  MO2 download: {url}")
     proc = subprocess.run([str(exe), "download", url], cwd=str(mo2_root), check=False)
+    if proc.returncode == 0:
+        ok(f"  MO2 download exit 0: {url}")
+    else:
+        warn(f"  MO2 download exit {proc.returncode}: {url}")
     return proc.returncode
 
 
+def ensure_dep_archive(
+    mo2_root: Path,
+    dep: Dependency,
+    *,
+    download_url: str,
+    moddb: ModdbInfo | None,
+    dry_run: bool,
+) -> tuple[Path | None, str]:
+    """Ensure downloads/DOGMA has the right archive; download if missing/stale.
+
+    Returns (archive_path, note) where note is pinned|current|downloaded|missing|…
+    Undated <id>.* is pinned and never replaced.
+    """
+    remote_date = moddb_date_stamp(moddb)
+    archive, status = resolve_local_archive(mo2_root, dep, remote_date=remote_date)
+    if status == "pinned":
+        info(f"  [{dep.id}] archive pinned (undated): {archive.name}")
+        return archive, "pinned"
+    if status == "current" and archive:
+        return archive, "current"
+
+    # stale or missing — need ModDB date for a stable name; fall back to undated id
+    target_date = remote_date
+    if not target_date and status == "missing":
+        # No ModDB date: claim as undated <id>.*
+        target_date = ""
+
+    if dep.source == "user":
+        if not archive:
+            return None, "manual-missing"
+        return archive, "pinned" if status == "pinned" else status
+
+    if not download_url:
+        return archive, status
+
+    if status == "stale" and remote_date:
+        info(
+            f"  [{dep.id}] archive stale "
+            f"(have {archive.name if archive else '?'}; ModDB {remote_date})"
+        )
+    elif status == "missing":
+        info(f"  [{dep.id}] archive missing; downloading")
+
+    if dry_run:
+        claimed = claim_download_as_zip(
+            mo2_root,
+            dep,
+            moddb_filename=(moddb.filename if moddb else ""),
+            date=target_date,
+            dry_run=True,
+        )
+        return claimed or archive, "would-download"
+
+    rc = mo2_download(mo2_root, download_url)
+    if rc != 0:
+        warn(f"  [{dep.id}] MO2 download exit {rc}; checking downloads…")
+    claimed = claim_download_as_zip(
+        mo2_root,
+        dep,
+        moddb_filename=(moddb.filename if moddb else ""),
+        date=target_date,
+        dry_run=False,
+    )
+    if claimed:
+        return claimed, "downloaded"
+    if archive:
+        warn(f"  [{dep.id}] download claim failed; keeping {archive.name}")
+        return archive, status
+    return None, "missing"
+
+
 def extract_archive(archive: Path, dest: Path) -> None:
+    info(f"  extract: {archive.name} -> {dest}")
     dest.mkdir(parents=True, exist_ok=True)
     suffix = archive.suffix.lower()
     if suffix == ".zip":
         with zipfile.ZipFile(archive, "r") as zf:
             zf.extractall(dest)
+        ok(f"  extract OK (zip): {archive.name}")
         return
     seven = find_7z()
     if not seven:
@@ -1882,7 +4151,9 @@ def extract_archive(archive: Path, dest: Path) -> None:
         text=True,
     )
     if proc.returncode != 0:
+        err(f"  7z stderr: {(proc.stderr or proc.stdout or '').strip()}")
         raise RuntimeError(f"7z extract failed for {archive.name}: {proc.stderr or proc.stdout}")
+    ok(f"  extract OK (7z): {archive.name}")
 
 
 def normalize_extracted_mod(dest: Path) -> None:
@@ -1936,10 +4207,11 @@ def process_dependency(
             bits = []
             if moddb.filename:
                 bits.append(moddb.filename)
-            if moddb.version_hint:
-                bits.append(f"v{moddb.version_hint}")
-            if moddb.updated:
-                bits.append(f"updated {moddb.updated}")
+            stamp = moddb_date_stamp(moddb)
+            if stamp:
+                bits.append(f"date {stamp}")
+            elif moddb.updated or moddb.added:
+                bits.append(f"updated {moddb.updated or moddb.added}")
             if bits:
                 info(f"  [{dep.id}] ModDB: {', '.join(bits)}")
         except (RuntimeError, ValueError, OSError) as exc:
@@ -1953,6 +4225,7 @@ def process_dependency(
         enabled = enable_mods_in_modlist(modlist, catalog, dry_run)
         msg = f"catalog enable {catalog}" + (f" (newly: {enabled})" if enabled else " (already on)")
         info(f"  [{dep.id}] {msg}")
+        run_dep_side_effects(mo2_root, dep, None, dry_run=dry_run)
         return "catalog"
 
     managed = find_managed_folders(mo2_root, dep)
@@ -1963,65 +4236,84 @@ def process_dependency(
         managed = []
         ok_present = False
 
-    if managed:
+    # Keep / refresh archive first (pinned undated never replaced; dated may update)
+    archive, arch_note = ensure_dep_archive(
+        mo2_root,
+        dep,
+        download_url=download_url or "",
+        moddb=moddb,
+        dry_run=dry_run,
+    )
+    remote_date = moddb_date_stamp(moddb)
+
+    def _managed_dir() -> Path | None:
+        if not managed:
+            return None
+        return mo2_root / "mods" / managed[0]
+
+    if arch_note == "manual-missing":
+        if managed:
+            enable_mods_in_modlist(modlist, managed, dry_run)
+            info(f"  [{dep.id}] already present (manual): {managed}")
+            run_dep_side_effects(mo2_root, dep, _managed_dir(), dry_run=dry_run)
+            return "present"
+        if ok_present and folders:
+            enable_mods_in_modlist(modlist, folders, dry_run)
+            info(f"  [{dep.id}] already present (manual): {folders}")
+            run_dep_side_effects(mo2_root, dep, None, dry_run=dry_run)
+            return "present"
+        hint = f"downloads/DOGMA/{dep_zip_stem(dep)}.zip"
+        howto = dep.howto or (
+            f"not on ModDB (url: false) — place {hint} or install yourself; "
+            f"disables/enables skipped until then"
+        )
+        info(f"  [{dep.id}] skip (manual, not installed): {howto}")
+        return "manual-missing"
+
+    need_install = mode == "reinstall" or not managed
+    if managed and arch_note in ("downloaded", "would-download"):
+        # Newer dated zip arrived — reinstall managed mod from it
+        info(f"  [{dep.id}] newer archive; reinstalling managed mod")
+        for name in managed:
+            wipe_managed_mod(mo2_root, modlist, name, dry_run)
+        managed = []
+        need_install = True
+
+    if managed and not need_install:
         enable_mods_in_modlist(modlist, managed, dry_run)
         info(f"  [{dep.id}] already present: {managed}")
+        run_dep_side_effects(mo2_root, dep, _managed_dir(), dry_run=dry_run)
         return "present"
 
-    if ok_present and folders:
+    if ok_present and folders and not need_install:
         enable_mods_in_modlist(modlist, folders, dry_run)
         info(f"  [{dep.id}] already present: {folders}")
+        run_dep_side_effects(mo2_root, dep, None, dry_run=dry_run)
         return "present"
 
-    # Need install
-    preferred = (moddb.filename if moddb else "") or dep.file
-    archive = find_archive_for_dep(mo2_root, dep, preferred_filename=preferred)
-    if dep.source == "user":
-        if not archive:
-            howto = dep.howto or f"Place the zip as downloads/DOGMA/{dep.file or (dep.id + '.zip')}"
-            raise FileNotFoundError(f"[{dep.id}] user-sourced archive missing. {howto}")
-    else:
-        if not archive and download_url and not dry_run:
-            rc = mo2_download(mo2_root, download_url)
-            if rc != 0:
-                warn(f"  [{dep.id}] MO2 download exit {rc}; checking downloads…")
-            archive = find_archive_for_dep(
-                mo2_root, dep, preferred_filename=preferred
-            )
-            if not archive:
-                # Also scan top-level downloads/
-                top = mo2_root / "downloads"
-                needles = [dep.id.lower()]
-                if preferred:
-                    needles.append(Path(preferred).stem.lower())
-                for p in top.glob("*") if top.is_dir() else []:
-                    if not p.is_file():
-                        continue
-                    stem = p.stem.lower()
-                    if any(n and n in stem for n in needles):
-                        dest = downloads_dir(mo2_root) / p.name
-                        if not dry_run:
-                            shutil.copy2(p, dest)
-                        archive = dest
-                        break
-        if not archive and not dry_run:
-            raise FileNotFoundError(
-                f"[{dep.id}] archive not found after download. URL={download_url}"
-            )
+    if not archive:
+        raise FileNotFoundError(
+            f"[{dep.id}] archive not found "
+            f"(expected downloads/DOGMA/{dep_zip_stem(dep, date=remote_date)}.zip|.7z|…). "
+            f"URL={download_url}"
+        )
 
     folder_name = f"{MANAGED_FOLDER_PREFIX}{dep.id}"
     dest = mo2_root / "mods" / folder_name
-    info(f"  [{dep.id}] install → {folder_name} from {archive}")
+    info(f"  [{dep.id}] install -> {folder_name} from {archive.name}")
     if dry_run:
+        run_dep_side_effects(mo2_root, dep, dest, dry_run=True)
         return "would-install"
     if dest.exists():
         shutil.rmtree(dest)
-    assert archive is not None
     extract_archive(archive, dest)
     normalize_extracted_mod(dest)
     write_meta_url(dest, managed_stamp_for(dep))
+    info(f"  [{dep.id}] meta stamp written")
     insert_mod_under_separator(modlist, folder_name, dry_run=False)
     run_after_unpack(mo2_root, dep, dest)
+    run_dep_side_effects(mo2_root, dep, dest, dry_run=False)
+    ok(f"  [{dep.id}] installed -> {folder_name}")
     return "installed"
 
 
@@ -2031,15 +4323,20 @@ def gather_dep_disable_rules(
     modlist: Path,
 ) -> list[Rule]:
     rules: list[Rule] = []
+    seen: set[str] = set()
     for dep in deps:
-        if not dep.disabled:
+        if not dep.disables:
             continue
-        satisfied, _ = dep_is_satisfied(
-            mo2_root, dep, modlist, require_enabled=True
-        )
-        if not satisfied:
+        if not dep_effects_active(mo2_root, dep, modlist):
+            if dep.source == "user" or not dep.url:
+                info(f"  skip disables for [{dep.id}] (manual / not installed)")
             continue
-        rules.extend(rules_from_disable_names(dep.disabled, source=f"dep:{dep.id}"))
+        for name in _unique_strs(dep.disables):
+            key = name.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            rules.extend(rules_from_disable_names([name], source=f"dep:{dep.id}"))
     return rules
 
 
@@ -2050,15 +4347,20 @@ def gather_dep_enable_rules(
 ) -> list[Rule]:
     """Enable rules from satisfied deps (downloads / suggested)."""
     rules: list[Rule] = []
+    seen: set[str] = set()
     for dep in deps:
         if not dep.enables:
             continue
-        satisfied, _ = dep_is_satisfied(
-            mo2_root, dep, modlist, require_enabled=True
-        )
-        if not satisfied:
+        if not dep_effects_active(mo2_root, dep, modlist):
+            if dep.source == "user" or not dep.url:
+                info(f"  skip enables for [{dep.id}] (manual / not installed)")
             continue
-        rules.extend(rules_from_disable_names(dep.enables, source=f"dep:{dep.id}"))
+        for name in _unique_strs(dep.enables):
+            key = name.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            rules.extend(rules_from_disable_names([name], source=f"dep:{dep.id}"))
     return rules
 
 
@@ -2072,10 +4374,12 @@ def build_report(
     *,
     tier: str = "downloads",
     profile: str = "",
+    deps: list[Dependency] | None = None,
 ) -> Path:
     tools = mo2_tools_dir(mo2_root)
     tools.mkdir(parents=True, exist_ok=True)
-    report_path = tools / REPORT_LOG_NAME
+    report_path = report_log_path(tools)
+    report_path.parent.mkdir(parents=True, exist_ok=True)
     lines: list[str] = []
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     lines.append(f"DOGMA MO2 report — {now}")
@@ -2112,12 +4416,21 @@ def build_report(
     lines.append(f"Profile : {selected_profile(mo2_root, profile)}")
     lines.append("")
 
-    # Unified manifest.yml
+    # Catalog: features.yml + mods.yml
     try:
         man_path = resolve_manifest_path(cfg)
         data = load_manifest(man_path)
         installed = resolve_installed_features(mo2_root, data)
-        lines.append(f"Manifest: {man_path}")
+        lines.append(f"Catalog : {man_path}")
+        opts = resolve_options_path(cfg)
+        mods = resolve_mods_path(cfg)
+        sug = resolve_suggestions_path(cfg)
+        if opts:
+            lines.append(f"Options : {opts}")
+        if mods:
+            lines.append(f"Mods    : {mods}")
+        if sug and not (opts or mods):
+            lines.append(f"Suggestions: {sug}")
         if installed is not None:
             feat_n = len([f for f in installed if f.lower() != "common"])
             lines.append(f"Installed DOGMA features detected: {feat_n}")
@@ -2146,7 +4459,23 @@ def build_report(
             O("No disabled mods missing from active feature enable lists")
 
         lines.append("")
-        check = filter_deps(data, tier, installed=installed)
+        check = list(deps) if deps is not None else filter_deps(
+            data, tier, installed=installed
+        )
+        # Only validate packs that actually install (url / buy / enables work).
+        check = [
+            d
+            for d in check
+            if d.url or d.buy_url or d.source == "user" or d.enables or d.has_install_work()
+        ]
+        seen_check: set[str] = set()
+        uniq_check: list[Dependency] = []
+        for d in check:
+            if d.id in seen_check:
+                continue
+            seen_check.add(d.id)
+            uniq_check.append(d)
+        check = uniq_check
         for dep in check:
             moddb = None
             if dep.url and is_moddb_url(dep.url) and dep.source != "user":
@@ -2166,19 +4495,31 @@ def build_report(
                 mo2_root, dep, require_enabled=False, moddb=moddb
             )
             if not present:
-                W(f'{dep.tier} mod "{dep.id}" is missing')
-                if dep.source == "user":
-                    arch = find_archive_for_dep(mo2_root, dep)
-                    if not arch:
+                if dep.source == "user" or not dep.url:
+                    O(
+                        f'mod "{dep.id}" manual (url: false) — not installed; '
+                        f"disables/enables skipped"
+                    )
+                else:
+                    stamp = moddb_date_stamp(moddb)
+                    arch, st = resolve_local_archive(
+                        mo2_root, dep, remote_date=stamp
+                    )
+                    if st == "missing":
+                        want = dep_zip_stem(dep, date=stamp) + ".*"
+                        W(f'mod "{dep.id}" archive missing (want downloads/DOGMA/{want})')
+                    elif st == "stale":
                         W(
-                            f'mod "{dep.id}" expected zip missing: '
-                            f'downloads/DOGMA/{dep.file or (dep.id + ".zip")} (user-sourced)'
+                            f'mod "{dep.id}" archive stale: have '
+                            f"{arch.name if arch else '?'}; ModDB date {stamp or '?'}"
                         )
+                    else:
+                        W(f'{dep.tier} mod "{dep.id}" is missing')
             elif not sat:
                 W(f'{dep.tier} mod "{dep.id}" is installed but disabled ({folders})')
             else:
                 O(f'mod "{dep.id}" satisfied via {folders}')
-                dep_rules = rules_from_disable_names(dep.disabled, source=f"mod:{dep.id}")
+                dep_rules = rules_from_disable_names(dep.disables, source=f"mod:{dep.id}")
                 for name in sorted(enabled):
                     rule = mod_matches(name, dep_rules)
                     if rule:
@@ -2195,12 +4536,12 @@ def build_report(
                             f"lists it to enable"
                         )
     except Exception as exc:  # noqa: BLE001
-        W(f"manifest.yml error: {exc}")
+        W(f"catalog error: {exc}")
 
     lines.append("")
     lines.append(f"Summary: {warns} WARN, {oks} OK")
     report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    append_action_log(tools, f"report written → {report_path} ({warns} WARN, {oks} OK)")
+    append_action_log(tools, f"report written -> {report_path} ({warns} WARN, {oks} OK)")
     return report_path
 
 

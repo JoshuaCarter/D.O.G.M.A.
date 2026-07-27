@@ -6,7 +6,7 @@ REM
 REM Requires Python 3 (https://www.python.org/downloads/ or `winget install Python.Python.3.12`)
 REM
 REM Defaults look under the repo config\ folder:
-REM   config\manifest.yml  (features, mods, disables, defaults)
+REM   config\features.yml + mods.yml  (features, packs, disables, mcm)
 REM   config\user.ltx
 REM   (legacy *.ini kept as reference only)
 REM

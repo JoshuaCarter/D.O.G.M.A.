@@ -43,7 +43,7 @@ Per feature: `src/<category>/<feature>/installer/`
 | `image.png` | optional hover preview |
 | `id.txt` | zip module folder name (defaults to feature dir name) |
 
-Release zip: `bash tools/package-fomod.sh` → `build/fomod/`. Wizard is **one page per category**; each page is SelectAny feature checkboxes. Hover a feature for its description and image; an About row shows "Hover each checkbox to see feature information". Final page lists third-party recommendations from `src/common/installer/recommendations.txt` (info only). Common is always installed. Root `config/manifest.yml` gates features: `omit` / `local` / `release`. Local `Ctrl+Shift+B` builds `>= local`; packaging ships `>= release`.
+Release zip: `bash tools/package-fomod.sh` → `build/fomod/`. Wizard is **one page per category**; each page is SelectAny feature checkboxes. Hover a feature for its description and image; an About row shows "Hover each checkbox to see feature information". Descriptions append `Requires:` lines from `features.yml` `depends:` when present. Final page lists third-party recommendations from `src/common/installer/recommendations.txt` (info only). Common is always installed. Root `config/features.yml` gates features: `omit` / `local` / `release`. Pack catalog + Setup wizard: `config/mods.yml`. Feature third-party needs use `depends:` → pack ids. Local `Ctrl+Shift+B` builds `>= local`; packaging ships `>= release`. MO2 entry point: `DOGMA (Setup).bat`.
 
 ## Common
 

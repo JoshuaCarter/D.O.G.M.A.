@@ -57,7 +57,7 @@ def next_bak_path(path: Path) -> Path:
 
 
 # ---------------------------------------------------------------------------
-# keybinds (author-tool only; not part of Install+)
+# keybinds (author-tool only; not part of Setup)
 # ---------------------------------------------------------------------------
 
 _LEAF_BAD = re.compile(
@@ -217,12 +217,12 @@ def main(argv: list[str] | None = None) -> int:
     root = repo_root_from_script()
     disable_path = Path(args.disable) if args.disable else root / "config" / "disabled.ini"
     initialize_path = (
-        Path(args.initialize) if args.initialize else root / "config" / "manifest.yml"
+        Path(args.initialize) if args.initialize else root / "config" / "features.yml"
     )
     user_ltx = Path(args.user_ltx) if args.user_ltx else root / "config" / "user.ltx"
-    manifest = root / "config" / "manifest.yml"
+    manifest = root / "config" / "features.yml"
     if not manifest.is_file():
-        manifest = root / "config" / "manifest.ini"
+        manifest = root / "config" / "manifest.yml"
     mo2_root = Path(args.mo2_root)
 
     do_disable = not (args.initialize_only or args.keybinds_only or args.user_ltx_only)
@@ -328,7 +328,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if do_initialize:
         info("")
-        info("defaults: set MCM options for present mods (from manifest.yml)")
+        info("defaults: set MCM options from features.yml / mods.yml")
         info(f"  Config: {initialize_path}")
         for profile in selected_profiles():
             info(f"  Profile: {profile}")
@@ -337,11 +337,9 @@ def main(argv: list[str] | None = None) -> int:
                 raise FileNotFoundError(
                     f"modlist.txt not found for profile '{profile}': {modlist}"
                 )
-            files, values, skipped_mods = apply_initialize(
+            files, values = apply_initialize(
                 mo2_root, initialize_path, modlist, args.dry_run
             )
-            if skipped_mods:
-                warn(f"  Mods not present ({len(skipped_mods)}): {', '.join(skipped_mods)}")
             if values:
                 any_change = True
                 verb = "Would change" if args.dry_run else "Changed"

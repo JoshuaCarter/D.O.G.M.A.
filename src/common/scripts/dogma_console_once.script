@@ -1,0 +1,142 @@
+--[[
+	DOGMA — run queued console commands after Install/Update.
+
+	Each installer run re-queues cmds and clears done stamps. This script runs
+	pending cmds once per boot (actor_on_first_update), then stamps done so the
+	same queue is not re-executed mid-session.
+
+	Python writes:
+	  $app_data_root$/dogma_once/pending/_index.txt   — pack ids
+	  $app_data_root$/dogma_once/pending/<id>.txt     — one cmd per line
+	After running:
+	  $app_data_root$/dogma_once/done/<id>
+]]
+
+local PENDING_SUB = "dogma_once\\pending"
+local DONE_SUB = "dogma_once\\done"
+
+local function appdata_path(sub)
+	if not (getFS and getFS().update_path) then
+		return nil
+	end
+	local ok, path = pcall(function()
+		return getFS():update_path("$app_data_root$", sub)
+	end)
+	if ok and path and path ~= "" then
+		return path
+	end
+	return nil
+end
+
+local function read_lines(path)
+	local f = io.open(path, "r")
+	if not f then
+		return nil
+	end
+	local lines = {}
+	for line in f:lines() do
+		local s = line:match("^%s*(.-)%s*$")
+		if s and s ~= "" and not s:match("^#") then
+			lines[#lines + 1] = s
+		end
+	end
+	f:close()
+	return lines
+end
+
+local function write_lines(path, lines)
+	local f = io.open(path, "w")
+	if not f then
+		return false
+	end
+	for _, line in ipairs(lines) do
+		f:write(line)
+		f:write("\n")
+	end
+	f:close()
+	return true
+end
+
+local function ensure_dir(path)
+	-- Best-effort: create via writing is handled by Python; mkdir may not exist.
+	if lfs and lfs.mkdir then
+		lfs.mkdir(path)
+	end
+end
+
+local function stamp_done(dep_id)
+	local done_dir = appdata_path(DONE_SUB)
+	if not done_dir then
+		return
+	end
+	ensure_dir(done_dir)
+	local stamp = done_dir .. "\\" .. dep_id
+	local f = io.open(stamp, "w")
+	if f then
+		f:write("ok\n")
+		f:close()
+	end
+end
+
+local function run_pack(dep_id)
+	local pending_dir = appdata_path(PENDING_SUB)
+	if not pending_dir then
+		return false
+	end
+	local cmd_path = pending_dir .. "\\" .. dep_id .. ".txt"
+	local cmds = read_lines(cmd_path)
+	if not cmds or #cmds == 0 then
+		stamp_done(dep_id)
+		return true
+	end
+	printf("[dogma_console_once] %s: %d command(s)", dep_id, #cmds)
+	for _, cmd in ipairs(cmds) do
+		printf("[dogma_console_once] exec: %s", cmd)
+		if exec_console_cmd then
+			exec_console_cmd(cmd)
+		end
+	end
+	stamp_done(dep_id)
+	os.remove(cmd_path)
+	return true
+end
+
+local function process_queue()
+	local pending_dir = appdata_path(PENDING_SUB)
+	if not pending_dir then
+		return
+	end
+	local index_path = pending_dir .. "\\_index.txt"
+	local ids = read_lines(index_path)
+	if not ids or #ids == 0 then
+		return
+	end
+	local remaining = {}
+	for _, dep_id in ipairs(ids) do
+		local done_dir = appdata_path(DONE_SUB)
+		local already = done_dir and io.open(done_dir .. "\\" .. dep_id, "r")
+		if already then
+			already:close()
+			os.remove(pending_dir .. "\\" .. dep_id .. ".txt")
+		else
+			run_pack(dep_id)
+			local still = done_dir and io.open(done_dir .. "\\" .. dep_id, "r")
+			if still then
+				still:close()
+			else
+				remaining[#remaining + 1] = dep_id
+			end
+		end
+	end
+	if #remaining == 0 then
+		os.remove(index_path)
+	else
+		write_lines(index_path, remaining)
+	end
+end
+
+function on_game_start()
+	RegisterScriptCallback("actor_on_first_update", function()
+		process_queue()
+	end)
+end

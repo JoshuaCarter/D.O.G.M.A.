@@ -1,0 +1,173 @@
+# DOGMA suggested pack catalog (Setup wizard + feature depends).
+#
+# Key = pack id. Each block is ONE of:
+#   A) Installable mod — installable: true + url:/buy_url: (+ depends: companions)
+#   B) Radio group — installable: true + options: [choices] (no url/buy_url)
+#   C) Composition choice — depends: [packs…] (no url; listed in a radio options:)
+#   D) Leaf child — url/buy_url (or effects only)
+#
+# Wizard default: checked unless buy_url: (paid / manual purchase).
+# requires: [Radio Group Id] — force a non-None radio pick when this is selected.
+# default: [mcm_root, ...] — wipe/reset those MCM namespaces to script defaults.
+#
+# url: ModDB page when DOGMA downloads automatically.
+# buy_url: page the user visits for manual purchase/download.
+# archive_name: expected archive filename stem under <DOGMA_DOWNLOADS>.
+#
+# Order: dependency packs/groups before dependents.
+
+# --------------------------------
+# Screen Space Shaders
+# --------------------------------
+
+Screen Space Shaders:
+  installable: true
+  desc: Select the version(s) of Screen Space Shaders you want to install.
+  options:
+    - SSS Latest
+    - SSS Preview
+    - SSS Latest & Preview
+  deletes:
+    - <Anomaly>/appdata/shaders_cache
+
+SSS Latest:
+  url: https://www.moddb.com/mods/stalker-anomaly/addons/screen-space-shaders
+  desc: Downloads and installs the latest Screen Space Shaders 23.x from ModDB.
+  disables:
+    - 190- Screen Space Shaders 23 - Ascii1457
+    - 190- Screen Space Shaders - Ascii1457
+    - 190- Screen Space Shaders 15.0 - Ascii1457
+    - 190- Screen Space Shaders 7 - Ascii1457
+    - 190- Screen Space Shaders latest - Ascii1457
+
+SSS Preview:
+  buy_url: https://ko-fi.com/ascii1457
+  archive_name: Screen Space Shaders 24
+  desc: Installs the 24.x preview from a user-supplied archive.
+  enables:
+    - 190- Screen Space Shaders 23 - Ascii1457
+  disables:
+    - 190- Screen Space Shaders - Ascii1457
+    - 190- Screen Space Shaders 15.0 - Ascii1457
+    - 190- Screen Space Shaders 7 - Ascii1457
+    - 190- Screen Space Shaders latest - Ascii1457
+
+SSS Latest & Preview:
+  depends:
+    - SSS Latest
+    - SSS Preview
+  desc: |
+    Downloads Screen Space Shaders 23.x from ModDB and installs preview 24.x.
+
+# --------------------------------
+# Melancholy Weathers
+# --------------------------------
+
+Melancholy Weathers:
+  installable: true
+  requires:
+    - Screen Space Shaders
+  buy_url: https://ko-fi.com/pipnik
+  archive_name: Melancholy Weathers
+  desc: Installs Melancholy Weathers and its related tweaks.
+  depends:
+    - Enhanced Shader Color Grading
+    - Dark Signal Soundscape Overhaul Melancholy Edition
+  disables:
+    - 290- Atmospherics Shaders Weathers and Reshade Latest - Hippobot
+    - 290- Atmospherics Shaders Weathers and Reshade - Hippobot
+    - 296- Atmospherics Shaders Weathers and Reshade - Hippobot
+  settings:
+    - video/weather/persistent_weather: "false"
+  deletes:
+    - <Anomaly>/appdata/shaders_cache
+  console:
+    - cfg_load melancholy
+    - ssfx_water 1,0.8,1,0.1
+
+Enhanced Shader Color Grading:
+  url: https://www.moddb.com/mods/stalker-anomaly/addons/enhanced-shaders-and-color-grading-for-151
+  disables:
+    - R3zy's Detectors Enhanced Shaders Patch
+
+Dark Signal Soundscape Overhaul Melancholy Edition:
+  url: https://www.moddb.com/mods/stalker-anomaly/addons/dark-signal-soundscape-overhaul-melancholy-edition
+  disables:
+    - 310- Dark Signal Weather and Ambiance Audio - Shrike
+
+# --------------------------------
+# AlifePlus
+# --------------------------------
+
+AlifePlus:
+  installable: true
+  url: https://www.moddb.com/mods/stalker-anomaly/addons/alifeplus-v1-0-01
+  desc:
+  depends:
+    - xlibs
+    - AlifeBalance
+    - AlifeGuard
+    - AlifeTactics
+  disables:
+    - 483- Alife Plus - damian_sirbu
+    - G.A.M.M.A. NPC Loot Claim Remade
+    - 211- NPC Loot Claim (NPCs will kill you if you loot what they killed) - Vintar0 & Nullblank
+    - 231- More Aggressive NPC Looting (harder game, do not use with NPC Loot Claim) - Demonized
+    - 311- NPC Stop Looting Dead Bodies - DTTheGunslinger
+
+xlibs:
+  url: https://www.moddb.com/mods/stalker-anomaly/addons/xlibs-1001
+
+AlifeBalance:
+  url: https://www.moddb.com/mods/stalker-anomaly/addons/alifebalance
+  depends:
+    - xlibs
+  disables:
+    - 480- Squad Filler - xcvb
+    - G.A.M.M.A. ZCP 1.4 Balanced Spawns
+    - 257- Zone Customization Project (ZCP) - Diphenhydramine-HCl
+    - ZCP 1.5d
+    - G.A.M.M.A. NPC Spawns
+    - xcvb's Guards Spawner
+
+AlifeGuard:
+  url: https://www.moddb.com/mods/stalker-anomaly/addons/alifeguard-1001
+  depends:
+    - xlibs
+  disables:
+    - G.A.M.M.A. Dynamic Despawner
+    - 311- NPC Stop Looting Dead Bodies - DTTheGunslinger
+    - 248- Night Mutants - xcvb
+
+AlifeTactics:
+  url: https://www.moddb.com/mods/stalker-anomaly/addons/alifetactics
+  depends:
+    - xlibs
+  mcm:
+    - idiots/options/noNpcLooting: "false"
+  disables:
+    - G.A.M.M.A. No NPC Friendly Fire
+    - G.A.M.M.A. AI Rework
+    - No More Companion Friendly Fire
+    - 133- No more companions friendly fire - RavenAscendant
+    - 45- Stealth Overhaul - xcvb
+    - G.A.M.M.A. NPCs Faster Reactions
+
+# --------------------------------
+# Interaction Dot Marks
+# --------------------------------
+
+Interaction Dot Marks:
+  installable: true
+  url: https://www.moddb.com/mods/stalker-anomaly/addons/interaction-dot-marks
+  desc: Downloads Interaction Dot Marks and disables the G.A.M.M.A. catalog copy.
+  disables:
+    - 452- Interaction Dot Marks - Catspaw
+
+# --------------------------------
+# Tarkov-like Level Transitions
+# --------------------------------
+
+Tarkov-like Level Transitions:
+  url: https://www.moddb.com/mods/stalker-anomaly/addons/tarkov-like-level-transitions
+  desc: Third-party level transition pack used by D.O.G.M.A. fast-travel features.

@@ -1,4 +1,4 @@
-# Shared manifest.yml loader for build.sh / package-fomod.sh.
+# Shared features.yml loader for build.sh / package-fomod.sh.
 # Usage: source this file, then dogma_load_manifest <min_stage>
 #   min_stage 1|local|dev → features with stage >= local
 #   min_stage 2|release   → features with stage >= release
@@ -11,7 +11,7 @@ dogma_load_manifest() {
 		2 | release) min_stage=release ;;
 		0 | omit | off) min_stage=omit ;;
 	esac
-	local yml="${DOGMA_MANIFEST:-$ROOT/config/manifest.yml}"
+	local yml="${DOGMA_MANIFEST:-$ROOT/config/features.yml}"
 	FEATURES=()
 	if [[ ! -f "$yml" ]]; then
 		echo "manifest: missing $yml" >&2
@@ -26,7 +26,7 @@ dogma_load_manifest() {
 	elif command -v python >/dev/null 2>&1; then
 		py=(python)
 	else
-		echo "manifest: Python 3 required to read manifest.yml" >&2
+		echo "manifest: Python 3 required to read features.yml" >&2
 		return 1
 	fi
 

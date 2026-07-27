@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Print DOGMA feature paths from config/manifest.yml (one per line).
+"""Print DOGMA feature paths from config/features.yml (one per line).
 
 Used by tools/manifest_lib.sh for build.sh / package-fomod.sh.
 
@@ -22,11 +22,11 @@ import dogma_mo2_lib as lib  # noqa: E402
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(description="List DOGMA features from manifest.yml")
+    p = argparse.ArgumentParser(description="List DOGMA features from features.yml")
     p.add_argument(
         "--manifest",
-        default=str(_REPO / "config" / "manifest.yml"),
-        help="Path to manifest.yml",
+        default=str(_REPO / "config" / "features.yml"),
+        help="Path to features.yml (or config dir / legacy manifest.yml)",
     )
     p.add_argument(
         "--min-stage",

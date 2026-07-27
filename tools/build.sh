@@ -32,7 +32,7 @@
 #
 # Env:
 #   DOGMA_ONLY=spec    what to build:
-#                        (empty|all)  → common + features with config/manifest.yml >= local
+#                        (empty|all)  → common + features with config/features.yml >= local
 #                        common       → common only
 #                        cat/feat     → that feature only (e.g. zoom/free_zoom; ignores manifest)
 #   DOGMA_DEPLOY=path  local MO2 mod folder: write gamedata straight there (one hop),
@@ -294,7 +294,7 @@ if [[ "$ONLY" == "all" || "$ONLY" == "" ]]; then
 		echo "build: manifest yielded 0 features — refusing full build/prune (fix YAML or set DOGMA_ALLOW_EMPTY=1)" >&2
 		exit 1
 	fi
-	echo "build: config/manifest.yml local (${#FEATURES[@]} features)"
+	echo "build: config/features.yml local (${#FEATURES[@]} features)"
 fi
 
 if [[ "$ONLY" == */* && ! -d "$SRC/$ONLY" ]]; then
@@ -314,14 +314,16 @@ sort -u "$MANIFEST" -o "$MANIFEST"
 sort -u "$MANIFEST_MODROOT" -o "$MANIFEST_MODROOT"
 
 # Stage DOGMA MO2 config copies into the modroot stage (reference stays in repo config/).
-# Live catalog is manifest.yml only (legacy *.ini kept in config/ as reference).
+# Live catalog: features.yml + mods.yml.
 if [[ "$ONLY" == "all" || "$ONLY" == "" || "$ONLY" == "common" ]]; then
 	MO2_CFG_STAGE="$STAGE_MODROOT/mo2/config"
 	mkdir -p "$MO2_CFG_STAGE"
-	if [[ -f "$ROOT/config/manifest.yml" ]]; then
-		cp "$ROOT/config/manifest.yml" "$MO2_CFG_STAGE/manifest.yml"
-		printf '%s\n' "mo2/config/manifest.yml" >> "$MANIFEST_MODROOT"
-	fi
+	for _cat in features.yml mods.yml suggestions.yml; do
+		if [[ -f "$ROOT/config/$_cat" ]]; then
+			cp "$ROOT/config/$_cat" "$MO2_CFG_STAGE/$_cat"
+			printf '%s\n' "mo2/config/$_cat" >> "$MANIFEST_MODROOT"
+		fi
+	done
 	sort -u "$MANIFEST_MODROOT" -o "$MANIFEST_MODROOT"
 fi
 

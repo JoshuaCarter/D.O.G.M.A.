@@ -225,7 +225,7 @@ def format_initialize(groups: dict[str, list[tuple[str, str]]]) -> str:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="Pull non-default MCM options into config/manifest.yml defaults:"
+        description="Pull non-default MCM options into config/features.yml + mods.yml"
     )
     p.add_argument(
         "--mo2-root",
@@ -240,7 +240,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument(
         "--output",
         default="",
-        help="Output manifest.yml (default: <repo>/config/manifest.yml)",
+        help="Config dir or features.yml (default: <repo>/config/)",
     )
     p.add_argument(
         "--include-dogma",
@@ -265,7 +265,16 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     root = repo_root_from_script()
     mo2_root = Path(args.mo2_root)
-    out_path = Path(args.output) if args.output else root / "config" / "manifest.yml"
+    if args.output:
+        out_arg = Path(args.output)
+        cfg_dir = out_arg if out_arg.is_dir() else out_arg.parent
+    else:
+        cfg_dir = root / "config"
+    feat_path = cfg_dir / "features.yml"
+    mods_path = cfg_dir / "mods.yml"
+    legacy_sug = cfg_dir / "suggestions.yml"
+    if not mods_path.is_file() and legacy_sug.is_file():
+        mods_path = legacy_sug
 
     if not (mo2_root / "ModOrganizer.exe").is_file():
         warn(f"ModOrganizer.exe not found under: {mo2_root}")
@@ -279,7 +288,8 @@ def main(argv: list[str] | None = None) -> int:
 
     info(f"MO2 root : {mo2_root}")
     info(f"axr_options: {axr}")
-    info(f"Output   : {out_path}")
+    info(f"Features : {feat_path}")
+    info(f"Mods     : {mods_path}")
 
     saved = parse_axr_section(axr, "mcm")
     info(f"Saved [mcm] keys: {len(saved)}")
@@ -331,142 +341,168 @@ def main(argv: list[str] | None = None) -> int:
     try:
         import yaml
     except ImportError:
-        warn("PyYAML required to write manifest.yml — run DOGMA (Setup Tools).bat")
+        warn("PyYAML required to write features.yml — run DOGMA (Setup Tools).bat")
         return 1
 
-    if out_path.suffix.lower() in (".yml", ".yaml") and out_path.is_file():
-        data = yaml.safe_load(out_path.read_text(encoding="utf-8")) or {}
-        if not isinstance(data, dict):
-            data = {}
-        data.pop("defaults", None)  # top-level defaults removed
+    def _load_map(path: Path) -> dict:
+        if not path.is_file():
+            return {}
+        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        return raw if isinstance(raw, dict) else {}
 
-        def _apply_to_externals() -> set[str]:
-            matched: set[str] = set()
-            feats = data.get("features") or {}
-            if isinstance(feats, dict):
-                for fp, meta in feats.items():
-                    if not isinstance(meta, dict):
-                        continue
-                    # Feature-level defaults (DOGMA MCM under that feature)
-                    needles = {
-                        str(fp).lower(),
-                        str(meta.get("target_mod") or "").lower(),
-                    }
-                    needles.discard("")
-                    for section, mapping in defaults_map.items():
-                        slow = section.lower()
-                        if slow in needles or any(slow in n or n in slow for n in needles):
-                            meta["defaults"] = mapping
-                            if not meta.get("target_mod"):
-                                meta["target_mod"] = section
-                            matched.add(section)
-                    # features.*.downloads
-                    entries = meta.get("downloads") or meta.get("requirements") or []
-                    if isinstance(entries, dict):
-                        entries = [
-                            {"id": k, **(v if isinstance(v, dict) else {})}
-                            for k, v in entries.items()
-                        ]
-                    if not isinstance(entries, list):
-                        continue
-                    for entry in entries:
-                        if not isinstance(entry, dict):
-                            continue
-                        needles = {
-                            str(entry.get("id") or "").lower(),
-                            str(entry.get("label") or "").lower(),
-                            str(entry.get("target_mod") or "").lower(),
-                        }
-                        needles.discard("")
-                        for section, mapping in defaults_map.items():
-                            slow = section.lower()
-                            if slow in needles or any(slow in n or n in slow for n in needles):
-                                entry["defaults"] = mapping
-                                if not entry.get("target_mod"):
-                                    entry["target_mod"] = section
-                                matched.add(section)
-            # suggested: mapping keyed by id (legacy list also accepted)
-            sug = data.get("suggested")
-            if isinstance(sug, dict):
-                for dep_id, entry in sug.items():
-                    if not isinstance(entry, dict):
-                        continue
-                    needles = {
-                        str(dep_id).lower(),
-                        str(entry.get("label") or "").lower(),
-                        str(entry.get("target_mod") or "").lower(),
-                    }
-                    needles.discard("")
-                    for section, mapping in defaults_map.items():
-                        slow = section.lower()
-                        if slow in needles or any(slow in n or n in slow for n in needles):
-                            entry["defaults"] = mapping
-                            if not entry.get("target_mod"):
-                                entry["target_mod"] = section
-                            matched.add(section)
-            elif isinstance(sug, list):
-                for entry in sug:
-                    if not isinstance(entry, dict):
-                        continue
-                    needles = {
-                        str(entry.get("id") or "").lower(),
-                        str(entry.get("label") or "").lower(),
-                        str(entry.get("target_mod") or "").lower(),
-                    }
-                    needles.discard("")
-                    for section, mapping in defaults_map.items():
-                        slow = section.lower()
-                        if slow in needles or any(slow in n or n in slow for n in needles):
-                            entry["defaults"] = mapping
-                            if not entry.get("target_mod"):
-                                entry["target_mod"] = section
-                            matched.add(section)
-            return matched
+    def _unwrap_features(raw: dict) -> dict:
+        if "features" in raw and "common" not in raw:
+            block = raw.get("features") or {}
+            return block if isinstance(block, dict) else {}
+        raw = dict(raw)
+        raw.pop("suggested", None)
+        raw.pop("suggestions", None)
+        raw.pop("defaults", None)
+        return raw
 
-        matched = _apply_to_externals()
-        orphans = [s for s in defaults_map if s not in matched]
-        if orphans:
-            sug = data.get("suggested")
-            if not isinstance(sug, dict):
-                # Convert legacy list → map, or start fresh
-                converted: dict = {}
-                if isinstance(sug, list):
-                    for entry in sug:
-                        if isinstance(entry, dict) and entry.get("id"):
-                            eid = str(entry["id"])
-                            converted[eid] = {k: v for k, v in entry.items() if k != "id"}
-                sug = converted
-                data["suggested"] = sug
-            for section in orphans:
-                slug = (
-                    "pulled-"
-                    + "".join(c if c.isalnum() else "-" for c in section.lower()).strip("-")
-                )[:64]
-                sug[slug] = {
-                    "label": section,
-                    "target_mod": section,
-                    "defaults": defaults_map[section],
-                }
-                info(f"  Added suggested stub for defaults: {section}")
+    def _unwrap_options(raw: dict) -> dict:
+        if "installer_options" in raw:
+            opts = raw.get("installer_options")
+            return dict(opts) if isinstance(opts, dict) else {}
+        return dict(raw)
 
-        bak = out_path.with_suffix(out_path.suffix + ".bak")
-        bak.write_bytes(out_path.read_bytes())
-        info(f"Backup   : {bak}")
-        out_path.write_text(
+    def _unwrap_mods(raw: dict) -> dict:
+        """Return suggested pack map from mods.yml or legacy suggestions.yml."""
+        if "suggested_mods" in raw or "installer_options" in raw:
+            mods = raw.get("suggested_mods") if isinstance(raw.get("suggested_mods"), dict) else {}
+            return dict(mods)
+        if set(raw.keys()) <= {"suggested", "suggestions"}:
+            block = raw.get("suggested") or raw.get("suggestions") or {}
+            return block if isinstance(block, dict) else {}
+        return dict(raw)
+
+    features = _unwrap_features(_load_map(feat_path))
+    suggestions = _unwrap_mods(_load_map(mods_path))
+
+    def _needles(*parts) -> set[str]:
+        out: set[str] = set()
+        for p in parts:
+            if p is None or p is False:
+                continue
+            s = str(p).strip().lower()
+            if s:
+                out.add(s)
+        out.discard("")
+        return out
+
+    def _kv_list_to_map(raw) -> dict[str, str]:
+        if not raw:
+            return {}
+        if isinstance(raw, dict):
+            return {str(k): str(v) for k, v in raw.items()}
+        if isinstance(raw, list):
+            out: dict[str, str] = {}
+            for item in raw:
+                if isinstance(item, dict):
+                    out.update({str(k): str(v) for k, v in item.items()})
+            return out
+        return {}
+
+    def _map_to_kv_list(mapping: dict[str, str]) -> list[dict[str, str]]:
+        return [{k: v} for k, v in sorted(mapping.items(), key=lambda kv: kv[0].lower())]
+
+    def _merge_defaults(entry: dict, mapping: dict[str, str]) -> None:
+        mcm = _kv_list_to_map(entry.get("mcm"))
+        legacy = entry.get("defaults")
+        if isinstance(legacy, dict):
+            if "mcm" in legacy or "sys" in legacy or "settings" in legacy:
+                mcm.update(_kv_list_to_map(legacy.get("mcm")))
+                settings = _kv_list_to_map(entry.get("settings"))
+                settings.update(_kv_list_to_map(legacy.get("sys")))
+                settings.update(_kv_list_to_map(legacy.get("settings")))
+                if settings:
+                    entry["settings"] = _map_to_kv_list(settings)
+            elif any(isinstance(v, dict) for v in legacy.values()):
+                for v in legacy.values():
+                    if isinstance(v, dict):
+                        mcm.update({str(k): str(val) for k, val in v.items()})
+            else:
+                mcm.update({str(k): str(v) for k, v in legacy.items()})
+            entry.pop("defaults", None)
+        mcm.update(mapping)
+        if mcm:
+            entry["mcm"] = _map_to_kv_list(mcm)
+        entry.pop("target_mod", None)
+
+    matched: set[str] = set()
+    for fp, meta in features.items():
+        if not isinstance(meta, dict):
+            continue
+        needles = _needles(fp)
+        for section, mapping in defaults_map.items():
+            slow = section.lower()
+            if slow in needles or any(slow in n or n in slow for n in needles):
+                _merge_defaults(meta, mapping)
+                matched.add(section)
+        entries = meta.get("downloads") or meta.get("requirements") or []
+        if isinstance(entries, dict):
+            for dep_id, entry in entries.items():
+                if not isinstance(entry, dict):
+                    continue
+                needles = _needles(dep_id)
+                for section, mapping in defaults_map.items():
+                    slow = section.lower()
+                    if slow in needles or any(slow in n or n in slow for n in needles):
+                        _merge_defaults(entry, mapping)
+                        matched.add(section)
+        elif isinstance(entries, list):
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                needles = _needles(entry.get("id"))
+                for section, mapping in defaults_map.items():
+                    slow = section.lower()
+                    if slow in needles or any(slow in n or n in slow for n in needles):
+                        _merge_defaults(entry, mapping)
+                        matched.add(section)
+
+    for dep_id, entry in suggestions.items():
+        if not isinstance(entry, dict):
+            continue
+        needles = _needles(dep_id)
+        for section, mapping in defaults_map.items():
+            slow = section.lower()
+            if slow in needles or any(slow in n or n in slow for n in needles):
+                _merge_defaults(entry, mapping)
+                matched.add(section)
+
+    orphans = [s for s in defaults_map if s not in matched]
+    for section in orphans:
+        slug = (
+            "pulled-"
+            + "".join(c if c.isalnum() else "-" for c in section.lower()).strip("-")
+        )[:64]
+        suggestions[slug] = {
+            "mcm": [
+                {k: v}
+                for k, v in sorted(
+                    defaults_map[section].items(), key=lambda kv: kv[0].lower()
+                )
+            ],
+        }
+        info(f"  Added suggestions stub for mcm: {section}")
+
+    def _write_yml(path: Path, data: dict) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.is_file():
+            bak = path.with_suffix(path.suffix + ".bak")
+            bak.write_bytes(path.read_bytes())
+            info(f"Backup   : {bak}")
+        path.write_text(
             yaml.safe_dump(data, sort_keys=False, allow_unicode=True),
             encoding="utf-8",
             newline="\n",
         )
-    else:
-        # Legacy ini output if --output points at .ini
-        text = format_initialize(groups)
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        if out_path.is_file():
-            bak = out_path.with_suffix(out_path.suffix + ".bak")
-            bak.write_bytes(out_path.read_bytes())
-            info(f"Backup   : {bak}")
-        out_path.write_text(text, encoding="utf-8", newline="\n")
-    info(f"Wrote {out_path}")
+        info(f"Wrote {path}")
+
+    _write_yml(feat_path, features)
+    write_mods = cfg_dir / "mods.yml"
+    _write_yml(write_mods, suggestions)
     return 0
 
 

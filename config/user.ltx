@@ -55,6 +55,10 @@ allow_silencer_hide_tracer 0
 allow_weapon_control_inertion_factor 0
 apply_pdm_to_ads 0
 default_controls
+bind left kLEFT
+bind right kRIGHT
+bind up kUP
+bind down kDOWN
 bind jump kSPACE
 bind crouch kLCONTROL
 bind accel kLMENU
@@ -65,6 +69,7 @@ bind lstrafe kA
 bind rstrafe kD
 bind llookout kQ
 bind rlookout kE
+bind cam_zoom_out kRBRACKET
 bind torch kZ
 bind night_vision kX
 bind show_detector k5
@@ -79,12 +84,17 @@ bind wpn_zoom mouse2
 bind wpn_zoom_dec kKANJI
 bind wpn_reload kF10
 bind wpn_func mouse4
+bind wpn_firemode_prev k9
+bind wpn_firemode_next k0
 bind pause kINSERT
 bind use kF
 bind quit kESCAPE
 bind console kDELETE
 bind inventory kTAB
 bind active_jobs kT
+bind quick_use_2 kF2
+bind quick_use_3 kF3
+bind quick_use_4 kF4
 bind quick_save kF5
 bind quick_load kF9
 bind custom1 kNUMPAD1
@@ -92,12 +102,17 @@ bind custom2 kNUMPAD2
 bind custom3 kNUMPAD3
 bind custom4 kNUMPAD4
 bind custom5 kNUMPAD5
+bind custom6 kNUMPAD0
+bind custom12 kG
 bind custom14 k7
+bind custom15 kU
 bind custom17 kF12
 bind custom18 kF1
 bind custom21 mouse5
 bind custom22 kR
-bind custom23 kF4
+bind custom23 k6
+bind custom25 k3
+bind editor kF11
 binoculars_dynamic_zoom_check 0
 blend_move_anims off
 cam_inert 0.
@@ -123,7 +138,7 @@ first_person_death_near_plane_offset 0.
 first_person_death_position_offset (0.000000, 0.000000, 0.000000)
 first_person_death_position_smoothing 6
 fix_avelocity_spread 0
-fov 80.
+fov 75.
 freelook_cam_limit 1.5708
 freelook_while_reloading 1
 fun_allowed 0
@@ -210,9 +225,9 @@ g_crosshair_weapon_near_use_shader on
 g_crouch_toggle on
 g_dead_body_collision actor_only
 g_decouple_horz_recoil 0
-g_dispersion_base 2.3
-g_dispersion_factor 3.2
-g_draw_pickup_item_names 0
+g_dispersion_base 1.7
+g_dispersion_factor 1.7
+g_draw_pickup_item_names 1
 g_dynamic_music off
 g_end_modif 0.
 g_enemy_manager_useful_cache_time 200
@@ -221,7 +236,7 @@ g_firedir_third_person off
 g_firepos off
 g_firepos_zoom off
 g_freelook_toggle off
-g_game_difficulty gd_novice
+g_game_difficulty gd_veteran
 g_god off
 g_hit_pwr_modif 1.
 g_important_save on
@@ -280,7 +295,6 @@ ik_calc_dist 100.
 ik_calc_ssa 0.006
 keyboard_buffer_size 128
 keypress_on_start on
-load_last_save afterglow
 log_missing_ini off
 log_timestamps 0
 lua_busy_hands_debug 1
@@ -292,7 +306,7 @@ lua_parallel_gc_debug 0
 lua_parallel_gcstep 75
 lua_use_functor_cache 0
 markswitch_color (0.000000, 0.000000, 0.000000, 0.000000)
-markswitch_count 8
+markswitch_count 1
 markswitch_current 0
 monster_stuck_fix 0
 mouse_buffer_size 1024
@@ -324,7 +338,7 @@ ph_frequency 100.00000
 ph_gravity 19.62
 ph_iterations 18
 poltergeist_spawn_corpse_on_death 1
-power_loss_bias 0.2575
+power_loss_bias 0.4
 power_loss_factor 0.5
 print_bone_warnings 1
 print_dltx_warnings 0
@@ -506,7 +520,7 @@ r__detail_density 0.54
 r__detail_height 0.7
 r__detail_radius 250
 r__dtex_range 50.
-r__enable_grass_shadow on
+r__enable_grass_shadow off
 r__exposure 1.
 r__fakescope 0
 r__fast_details_update off
@@ -585,19 +599,19 @@ shader_param_1 (1.000000, 1.000000, 1.000000, 0.100000)
 shader_param_2 (0.000000, 0.000000, 0.000000, 0.000000)
 shader_param_3 (0.838000, 0.847000, 0.852000, -0.005000)
 shader_param_4 (1.120000, 1.120000, 1.130000, -0.420000)
-shader_param_5 (0.000000, 0.000000, 0.000000, 0.000000)
-shader_param_6 (3.000000, 2.500000, 0.000000, 41.099998)
-shader_param_7 (0.000000, 0.000000, 1.000000, 0.000000)
+shader_param_5 (0.000000, 0.000000, 0.000000, 0.352000)
+shader_param_6 (0.000000, 0.000000, 0.000000, 0.000000)
+shader_param_7 (100.000000, 0.500000, 0.000000, 0.000000)
 shader_param_8 (0.000000, 0.000000, 0.000000, 0.000000)
 show_actor_body 0
 sil_glow_color (1.000000, 0.000000, 0.000000)
 sil_glow_cool_temp_rate 0.01
 sil_glow_max_temp 0.15
 sil_glow_shot_temp 0.004
-slot_0 cigar3
-slot_1 cigarettes_lucky
-slot_2 cigarettes_lucky
-slot_3 cigarettes_lucky
+slot_0 medkit
+slot_1 bandage
+slot_2 medkit_army
+slot_3 stimpack
 smooth_ads_transition 0
 snd_acceleration on
 snd_cache_size 256
@@ -652,12 +666,12 @@ ssfx_floravariation (0.000000, 0.000000, 0.000000, 0.000000)
 ssfx_flowmap_setup (0.000000, 0.000000, 0.000000, 0.000000)
 ssfx_fog (20.000000, 1.000000, 0.300000, 0.000000)
 ssfx_fog_scattering 1.
-ssfx_gloss_factor 0.71103
+ssfx_gloss_factor 0.5088
 ssfx_gloss_method 1
 ssfx_gloss_minmax (0.530000, 0.830000, 0.000000)
 ssfx_grass_interactive (1.000000, 8.000000, 2000.000000, 1.000000)
 ssfx_grass_shadows (0.000000, 0.350000, 30.000000, 0.000000)
-ssfx_hud_drops_1 (486.858215, 1.000000, 30.000000, 0.050000)
+ssfx_hud_drops_1 (0.000000, 0.000000, 30.000000, 0.050000)
 ssfx_hud_drops_2 (0.225000, 1.250000, 0.000000, 2.000000)
 ssfx_hud_hemi 0.
 ssfx_ice (0.100000, 0.350000, 0.400000, 2.500000)
@@ -690,7 +704,7 @@ ssfx_sss_quality (18.000000, 4.000000, 1.000000, 1.000000)
 ssfx_taa (0.000000, 0.300000, 0.200000, 0.000000)
 ssfx_terrain_grass_align 1
 ssfx_terrain_grass_slope 1.
-ssfx_terrain_offset (-0.100000, -0.050000, -0.100000, 0.000000)
+ssfx_terrain_offset (-0.130000, -0.050000, -0.130000, 0.000000)
 ssfx_terrain_pom (24.000000, 20.000000, 0.050000, 0.600000)
 ssfx_terrain_pom_refine 0
 ssfx_terrain_quality (18.000000, 0.000000, 0.000000, 0.000000)
@@ -724,5 +738,5 @@ viewport_near 0.2
 vignette_control (0.000000, 0.000000, 0.000000, 0.000000)
 weapon_sway on
 wpn_aim_toggle off
-wpn_degradation 0.5
+wpn_degradation 1.
 zoom_step_count 3.

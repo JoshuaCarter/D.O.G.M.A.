@@ -1,17 +1,23 @@
 @echo off
 setlocal
-REM DOGMA (Reset) — FRESH_INSTALL + MCM values, then Setup pipeline (no wizard)
-REM Uses saved selection when present; else default installer_options.
+REM DOGMA (Setup) — wizard for packs + feature depends, then install pipeline
+REM Skip GUI: set DOGMA_NO_WIZARD=1  (uses default installer_options)
 REM Logs: mods\DOGMA\mo2\logs\dogma_install.log + dogma_report.log
 call "%~dp0DOGMA (Setup Tools).bat" --log-reset %*
 if errorlevel 1 goto :fail
-call "%~dp0run_job.bat" reset-base %*
+
+set "SEL="
+if /I "%DOGMA_NO_WIZARD%"=="1" goto :jobs
+call "%~dp0run_job.bat" wizard %*
 if errorlevel 1 goto :fail
-call "%~dp0run_job.bat" dependencies --tier all --mode reinstall --use-selection %*
+set "SEL=--use-selection"
+
+:jobs
+call "%~dp0run_job.bat" dependencies --tier all --mode reinstall %SEL% %*
 if errorlevel 1 goto :fail
-call "%~dp0run_job.bat" disable --tier all --use-selection %*
+call "%~dp0run_job.bat" disable --tier all %SEL% %*
 if errorlevel 1 goto :fail
-call "%~dp0run_job.bat" defaults --use-selection %*
+call "%~dp0run_job.bat" defaults %SEL% %*
 if errorlevel 1 goto :fail
 call "%~dp0run_job.bat" sfx %*
 if errorlevel 1 goto :fail
@@ -24,7 +30,8 @@ exit /b 0
 
 :fail
 echo.
-echo *** DOGMA (Reset) failed ***
+echo *** DOGMA (Setup) failed ***
 echo Log: %~dp0logs\dogma_install.log
+echo Report (if any): %~dp0logs\dogma_report.log
 pause
 exit /b 1

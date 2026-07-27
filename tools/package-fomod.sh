@@ -13,7 +13,7 @@
 # A Required "About" row per step shows the default hover text.
 #
 # Local full deploy is still tools/build.sh (all features merged).
-# Release features are gated by ROOT/config/manifest.yml (stage: release).
+# Release features are gated by ROOT/config/features.yml (stage: release).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -57,14 +57,14 @@ cat_title() {
 	esac
 }
 
-# Load ROOT/config/manifest.yml → FEATURES (stage >= release). common is implicit.
+# Load ROOT/config/features.yml → FEATURES (stage >= release). common is implicit.
 load_manifest() {
 	dogma_load_manifest 2 || exit 1
 	if [[ "${#FEATURES[@]}" -eq 0 ]]; then
-		echo "package-fomod: config/manifest.yml has no release features (need stage: release)" >&2
+		echo "package-fomod: config/features.yml has no release features (need stage: release)" >&2
 		exit 1
 	fi
-	echo "package-fomod: config/manifest.yml release (${#FEATURES[@]} features)"
+	echo "package-fomod: config/features.yml release (${#FEATURES[@]} features)"
 }
 
 manifest_has() {
@@ -160,6 +160,21 @@ while IFS= read -r -d '' cat_dir; do
 		desc="D.O.G.M.A. feature: $name"
 		if [[ -f "$inst/description.txt" ]]; then
 			desc="$(read_trim "$inst/description.txt")"
+		fi
+		req_blurb=""
+		_py=()
+		if command -v py >/dev/null 2>&1; then
+			_py=(py -3)
+		elif command -v python3 >/dev/null 2>&1; then
+			_py=(python3)
+		elif command -v python >/dev/null 2>&1; then
+			_py=(python)
+		fi
+		if [[ "${#_py[@]}" -gt 0 ]]; then
+			req_blurb="$("${_py[@]}" "$ROOT/tools/feature_fomod_requires.py" --feature "$rel" --manifest "$ROOT/config/features.yml" 2>/dev/null || true)"
+			if [[ -n "$req_blurb" ]]; then
+				desc="${desc}"$'\n\n'"${req_blurb}"
+			fi
 		fi
 		default="Optional"
 		if [[ -f "$inst/default.txt" ]]; then
@@ -298,8 +313,13 @@ fi
 if [[ -f "$ROOT/INFO.md" ]]; then
 	cp -a "$ROOT/INFO.md" "$STAGE/INFO.md"
 fi
-if [[ -f "$ROOT/config/manifest.yml" ]]; then
-	cp -a "$ROOT/config/manifest.yml" "$STAGE/manifest.yml"
+if [[ -f "$ROOT/config/features.yml" ]]; then
+	cp -a "$ROOT/config/features.yml" "$STAGE/features.yml"
 fi
+for _cat in mods.yml suggestions.yml; do
+	if [[ -f "$ROOT/config/$_cat" ]]; then
+		cp -a "$ROOT/config/$_cat" "$STAGE/$_cat"
+	fi
+done
 
 echo "package-fomod: done ($feature_count features, $step_count category pages) -> ${STAGE#"$ROOT"/}"

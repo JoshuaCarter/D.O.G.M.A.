@@ -227,13 +227,22 @@ local function pick(targets)
 	return targets[math.random(#targets)]
 end
 
+local function get_bhs()
+	-- Anomaly script modules are often on _G via __index, not as raw fields —
+	-- rawget can miss them while a bare global lookup works (see Medik / TFT).
+	local bhs = zzz_player_injuries
+	if not (bhs and bhs.health and bhs.timedhp and bhs.maxhp) then
+		return nil
+	end
+	return bhs
+end
+
 local function tick_heal()
 	local frac = temp_fill_frac()
-	local bhs = rawget(_G, "zzz_player_injuries")
-	local has_bhs = bhs and bhs.health and bhs.timedhp and bhs.maxhp
+	local bhs = get_bhs()
 
 	-- 1. Random limb temp until all limbs >= temp_fill%.
-	if has_bhs and frac > 0 then
+	if bhs and frac > 0 then
 		local temp_targets = {}
 		for i = 1, #LIMBS do
 			local key = LIMBS[i]
@@ -251,7 +260,7 @@ local function tick_heal()
 	end
 
 	-- 2. Random limb perm (convert all temp, up to 100% permanent).
-	if has_bhs then
+	if bhs then
 		local perm_targets = {}
 		for i = 1, #LIMBS do
 			local key = LIMBS[i]

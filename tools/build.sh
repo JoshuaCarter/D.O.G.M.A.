@@ -8,7 +8,7 @@
 #   src/<category>/<feature>/assets/...     authoring only (ignored; not shipped)
 #   src/<category>/<feature>/installer/image.png  optional FOMOD hover image (not shipped into gamedata)
 #   src/common/mo2/...                      EXCEPTION: files under <mod>/mo2/
-#   src/<category>/<feature>/mo2/...        (sibling of gamedata/), e.g. mo2/DOGMA.bat
+#   src/<category>/<feature>/mo2/...        (sibling of gamedata/), e.g. mo2/tools/…
 #
 # Scripts (prefix applied at build — src keeps short names like main.script):
 #   common/scripts/*          -> same basename (dogma_common, dogma_mcm,
@@ -369,9 +369,11 @@ if [[ "$ONLY" == "all" || "$ONLY" == "" ]]; then
 			fi
 		done < <(comm -23 "$mo2_all" "$MANIFEST_MODROOT")
 		rm -f "$mo2_all"
-		# Drop flat copies / old prelaunch.bat name from earlier layouts.
+		# Drop flat copies / old layout leftovers.
 		rm -f "$MODROOT_OUT/build_sound_prefetch.bat" "$MODROOT_OUT/build_sound_prefetch.py"
-		rm -f "$MODROOT_OUT/mo2/prelaunch.bat"
+		rm -f "$MODROOT_OUT/mo2/prelaunch.bat" "$MODROOT_OUT/mo2/tools/prelaunch.py" \
+			"$MODROOT_OUT/mo2/tools/DOGMA.bat" "$MODROOT_OUT/mo2/tools/run_job.bat" \
+			"$MODROOT_OUT/mo2/tools/setup.bat"
 	fi
 fi
 
@@ -383,7 +385,7 @@ fi
 
 # When writing straight into MO2, also refresh mod metadata.
 # Use if/then (not `[[ -f ]] && cp`) so a missing optional file does not make
-# the script exit 1 — that status is what build_and_run sees.
+# the script exit 1 under `set -e`.
 if [[ -n "$DEPLOY_MOD" ]]; then
 	cp "$ROOT/meta.ini" "$DEPLOY_MOD/meta.ini"
 	if [[ -f "$ROOT/.mod_id" ]]; then
@@ -401,5 +403,7 @@ if [[ -n "$DEPLOY_MOD" ]]; then
 	rm -f "$DEPLOY_MOD/gamedata/configs/dogma_snd_prefetch.ltx"
 	rm -f "$DEPLOY_MOD/gamedata/configs/dogma_sfx_prefetch.ltx"
 	rm -f "$DEPLOY_MOD/build_sound_prefetch.bat" "$DEPLOY_MOD/build_sound_prefetch.py"
-	rm -f "$DEPLOY_MOD/mo2/prelaunch.bat"
+	rm -f "$DEPLOY_MOD/mo2/prelaunch.bat" "$DEPLOY_MOD/mo2/tools/prelaunch.py" \
+		"$DEPLOY_MOD/mo2/tools/DOGMA.bat" "$DEPLOY_MOD/mo2/tools/run_job.bat" \
+		"$DEPLOY_MOD/mo2/tools/setup.bat"
 fi

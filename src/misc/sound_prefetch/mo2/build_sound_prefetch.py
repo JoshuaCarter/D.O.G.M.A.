@@ -7,12 +7,11 @@ mo2/ build exception. Runtime script is built normally into gamedata/scripts/.
 Skips .ogg files >= 100 KB (music / long ambience) so prefetch stays focused
 on short SFX that hitch on first play.
 
-  mods/DOGMA/mo2/build_sound_prefetch.bat   (MO2 Executable; Start in = instance root)
+  mods/DOGMA/mo2/tools/DOGMA SFX Prefetch.bat   (MO2 Executable)
   overwrite/gamedata/configs/dogma_sfx_prefetch.ltx  (generated)
 
   py -3 build_sound_prefetch.py
   py -3 build_sound_prefetch.py --dry-run
-  py -3 build_sound_prefetch.py --then-launch AnomalyDX11AVX.exe
 """
 
 from __future__ import annotations

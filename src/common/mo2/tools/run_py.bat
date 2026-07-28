@@ -1,7 +1,7 @@
 @echo off
 setlocal
 REM Shared: find Python and run dogma_job.py with forwarded args.
-REM %* should start with the subcommand (setup|dependencies|…).
+REM %* should start with the subcommand (install|defaults|executables|…).
 REM Do not use %%ERRORLEVEL%% inside ( ) — it expands at parse time and
 REM always reports the prior where.exe success (0).
 REM Name must NOT start with "_" — tools/build.sh skips _* files.
@@ -24,5 +24,5 @@ python3 "%~dp0dogma_job.py" %*
 exit /b %ERRORLEVEL%
 
 :no_python
-echo Python 3 not found. Run "DOGMA (Setup Tools).bat" or install from https://www.python.org/downloads/
+echo Python 3 not found. Run DOGMA Setup once, or install from https://www.python.org/downloads/
 exit /b 1

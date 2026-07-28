@@ -1,0 +1,291 @@
+--[[
+	Medik slot remap — 6 centered slots (2x3) for rad/bleed vitals.
+
+	Drops Medik's rightmost booster column and shifts the remaining grid
+	right by half a column so it stays centered.
+
+	Provider override still works: dogma_hud_medik.set_slot(idx, fn)
+	  fn(slot_idx) -> value, active   (nil provider = built-in stat)
+]]
+
+local CONFIG = _G.dogma_hud_medik_conf
+
+local providers = {}
+local patched = false
+local orig_Update = nil
+
+local scratch_pos = vector2()
+local scratch_size = vector2()
+
+local function clamp_digits(n)
+	n = math.floor(tonumber(n) or 0)
+	if n > 999 then
+		return 999
+	end
+	if n < 0 then
+		return 0
+	end
+	return n
+end
+
+local function scale_val(key, raw)
+	local mag = CONFIG.SCALE and CONFIG.SCALE[key] or 1
+	return clamp_digits((tonumber(raw) or 0) * mag)
+end
+
+local function bind_part(slot, part, tex_id)
+	local cache = part .. "_tex"
+	if slot[cache] == tex_id then
+		return
+	end
+	local wnd = slot[part]
+	if wnd and wnd.InitTextureEx then
+		wnd:InitTextureEx(tex_id, "hud\\p3d")
+		slot[cache] = tex_id
+	end
+end
+
+local function resolve_tex(id)
+	if id:sub(1, 3) == "bo_" and medik_config and medik_config.theme_prefix then
+		local prefix = medik_config.theme_prefix()
+		if prefix and prefix ~= "" then
+			return prefix .. id
+		end
+	end
+	return id
+end
+
+local function tex_base(tex_idx)
+	local list = CONFIG.SLOT_TEX
+	return list and list[tex_idx] or "bo_hp"
+end
+
+local function paint_slot(slot, base, value, active)
+	if not slot then
+		return
+	end
+	slot.tex = base
+	if active then
+		local n = clamp_digits(value)
+		bind_part(slot, "icon", resolve_tex(base .. "_lit"))
+		bind_part(slot, "d1", resolve_tex("dig_" .. math.floor(n / 100)))
+		bind_part(slot, "d2", resolve_tex("dig_" .. (math.floor(n / 10) % 10)))
+		bind_part(slot, "d3", resolve_tex("dig_" .. (n % 10)))
+		slot.active = true
+	else
+		bind_part(slot, "icon", resolve_tex(base .. "_glyph"))
+		bind_part(slot, "d1", resolve_tex("dig_g0"))
+		bind_part(slot, "d2", resolve_tex("dig_g0"))
+		bind_part(slot, "d3", resolve_tex("dig_g0"))
+		slot.active = false
+	end
+end
+
+local function place(wnd, x, y, w, h)
+	if not wnd then
+		return
+	end
+	wnd:SetWndPos(scratch_pos:set(x, y))
+	wnd:SetWndSize(scratch_size:set(w, h))
+	wnd:Show(true)
+end
+
+local function hide_slot(slot)
+	if not slot then
+		return
+	end
+	if slot.icon then
+		slot.icon:Show(false)
+	end
+	if slot.d1 then
+		slot.d1:Show(false)
+	end
+	if slot.d2 then
+		slot.d2:Show(false)
+	end
+	if slot.d3 then
+		slot.d3:Show(false)
+	end
+end
+
+-- 2x3 grid: drop rightmost of Medik's 4 cols, shift +0.5 col to re-center.
+local function apply_layout(ui)
+	if not ui or not ui.bo then
+		return
+	end
+	local L = CONFIG.LAYOUT
+	local slots = CONFIG.SLOTS
+	local n_show = slots and #slots or 0
+	local x0 = L.BO_X0 + L.BO_COLW * 0.5
+	local cols = L.COLS or 3
+
+	for i = 1, n_show do
+		local slot = ui.bo[i]
+		if slot then
+			local row = (i <= cols) and 0 or 1
+			local col = (i - 1) % cols
+			local icon_x = x0 + col * L.BO_COLW + (L.BO_COLW - L.ICON_WH) / 2
+			local icon_y = L.ICON_Y0 + row * L.ROW_PITCH
+			local dig_y = icon_y + L.ICON_WH + L.DIG_GAP
+			local d1x = icon_x + (L.ICON_WH - 3 * L.DIG_W) / 2
+			place(slot.icon, icon_x, icon_y, L.ICON_WH, L.ICON_WH)
+			place(slot.d1, d1x, dig_y, L.DIG_W, L.DIG_H)
+			place(slot.d2, d1x + L.DIG_W, dig_y, L.DIG_W, L.DIG_H)
+			place(slot.d3, d1x + 2 * L.DIG_W, dig_y, L.DIG_W, L.DIG_H)
+		end
+	end
+
+	for i = n_show + 1, 8 do
+		hide_slot(ui.bo[i])
+	end
+end
+
+local function scan_boosters()
+	local out = {}
+	if not (db.actor and db.actor.cast_Actor) then
+		return out
+	end
+	local cond = db.actor:cast_Actor():conditions()
+	if not (cond and cond.BoosterForEach) then
+		return out
+	end
+	cond:BoosterForEach(function(typ, period, value)
+		out[typ] = { period = period, value = value }
+	end)
+	return out
+end
+
+local function dosimeter_rads()
+	if item_device and item_device.dosimeter_env_rads_mode and level and level.get_env_rads then
+		return math.floor(level.get_env_rads() * 2500)
+	end
+	return math.floor((db.actor.radiation or 0) * 10000 * 0.387)
+end
+
+local function builtin_stat(id, boost)
+	if id == "rad_dose" then
+		local n = dosimeter_rads()
+		return n, n > 0
+	elseif id == "rad_restore" then
+		local b = boost[BoosterID.RadiationRestore]
+		if not b then
+			return 0, false
+		end
+		return scale_val("rad_restore", b.value), true
+	elseif id == "rad_protect" then
+		local b = boost[BoosterID.RadiationProtection]
+		if not b then
+			return 0, false
+		end
+		return scale_val("rad_protect", b.value), true
+	elseif id == "bleed" then
+		local bleed = db.actor.bleeding or 0
+		return scale_val("bleed", bleed), bleed > 0
+	elseif id == "bleed_restore" then
+		local b = boost[BoosterID.BleedingRestore]
+		if not b then
+			return 0, false
+		end
+		return scale_val("bleed_restore", b.value), true
+	elseif id == "bleed_protect" then
+		local b = BoosterID.WoundImmunity and boost[BoosterID.WoundImmunity]
+		if not b then
+			return 0, false
+		end
+		return scale_val("bleed_protect", b.value), true
+	end
+	return 0, false
+end
+
+local function apply_slots(ui)
+	if not ui or not ui.bo then
+		return
+	end
+	apply_layout(ui)
+
+	local boost = scan_boosters()
+	local slots = CONFIG.SLOTS
+	local n_show = slots and #slots or 0
+
+	for i = 1, n_show do
+		local def = slots[i]
+		local slot = ui.bo[i]
+		if def and slot then
+			local value, active
+			local fn = providers[i]
+			if fn then
+				value, active = fn(i)
+				active = active and true or false
+			else
+				value, active = builtin_stat(def.id, boost)
+			end
+			paint_slot(slot, tex_base(def.tex), value, active)
+		end
+	end
+
+	for i = n_show + 1, 8 do
+		hide_slot(ui.bo[i])
+	end
+end
+
+local function patched_Update(self, ...)
+	if orig_Update then
+		orig_Update(self, ...)
+	end
+	apply_slots(self)
+end
+
+local function try_patch()
+	if patched then
+		return true
+	end
+	if not (UIMedik and UIMedik.Update) then
+		return false
+	end
+	orig_Update = UIMedik.Update
+	UIMedik.Update = patched_Update
+	patched = true
+	return true
+end
+
+function set_slot(idx, provider)
+	idx = tonumber(idx)
+	local n = CONFIG.SLOTS and #CONFIG.SLOTS or 0
+	if not idx or idx < 1 or idx > n then
+		return
+	end
+	if type(provider) == "function" then
+		providers[idx] = provider
+	else
+		providers[idx] = nil
+	end
+end
+
+function clear_slot(idx)
+	set_slot(idx, nil)
+end
+
+function clear_all()
+	providers = {}
+end
+
+function slot_tex(idx)
+	idx = tonumber(idx)
+	local def = CONFIG.SLOTS and CONFIG.SLOTS[idx]
+	if not def then
+		return nil
+	end
+	return tex_base(def.tex)
+end
+
+function on_game_start()
+	_G.dogma_hud_medik = {
+		set_slot = set_slot,
+		clear_slot = clear_slot,
+		clear_all = clear_all,
+		slot_tex = slot_tex,
+	}
+	if not try_patch() then
+		RegisterScriptCallback("actor_on_first_update", try_patch)
+	end
+end

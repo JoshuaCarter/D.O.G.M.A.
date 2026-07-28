@@ -161,7 +161,7 @@ def script_dir() -> Path:
 
 
 def mo2_bundle_dir() -> Path:
-    """mods/DOGMA/mo2/ — sibling of ``DOGMA Setup.bat`` (packages, config, logs)."""
+    """mods/DOGMA/mo2/ — sibling of ``tools/`` (packages, config, logs)."""
     d = script_dir()
     if d.name.lower() == "tools":
         return d.parent
@@ -1375,7 +1375,7 @@ def _yaml_load_mapping(path: Path) -> dict:
     if not path.is_file():
         raise FileNotFoundError(f"catalog not found: {path}")
     if not pyyaml_ok():
-        raise RuntimeError("PyYAML not installed. Run DOGMA (Setup Tools).bat first.")
+        raise RuntimeError("PyYAML not installed. Run DOGMA Setup once (installs PyYAML).")
     import yaml
 
     raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
@@ -5448,7 +5448,7 @@ def build_report(
         lines.append(f"OK: {msg}")
 
     if not pyyaml_ok():
-        W("PyYAML not importable — run DOGMA (Setup Tools).bat")
+        W("PyYAML not importable — run DOGMA Setup once")
     else:
         O("PyYAML importable")
 
@@ -5615,6 +5615,14 @@ def mo2_refresh(mo2_root: Path) -> None:
         return
     info("Refreshing MO2…")
     subprocess.run([str(exe), "refresh"], cwd=str(mo2_root), check=False)
+
+
+def launch_mo2(mo2_root: Path) -> None:
+    exe = mo2_root / "ModOrganizer.exe"
+    if not exe.is_file():
+        raise FileNotFoundError(f"ModOrganizer.exe not found: {exe}")
+    info(f"Launching {exe}")
+    subprocess.Popen([str(exe)], cwd=str(mo2_root))
 
 
 def guard_mo2_closed(*, force: bool, dry_run: bool) -> None:

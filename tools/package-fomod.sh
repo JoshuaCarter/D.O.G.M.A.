@@ -231,60 +231,6 @@ EOF
 	step_count=$((step_count + 1))
 done < <(find "$SRC" -mindepth 1 -maxdepth 1 -type d -print0 | sort -z)
 
-# Final page: recommended third-party mods (info only; nothing installed).
-recs_file="$SRC/common/installer/recommendations.txt"
-if [[ -f "$recs_file" ]]; then
-	recs_plugins=""
-	recs_about_desc="Not included in D.O.G.M.A. Install these separately if you want them."
-	recs_about_x="$(printf '%s' "$recs_about_desc" | xml_escape)"
-	recs_plugins+="$(cat <<EOF
-
-						<plugin name="About">
-							<description>${recs_about_x}</description>
-							<typeDescriptor>
-								<type name="Required"/>
-							</typeDescriptor>
-						</plugin>
-EOF
-)"
-	rec_count=0
-	while IFS= read -r rec_name || [[ -n "$rec_name" ]]; do
-		rec_name="$(printf '%s' "$rec_name" | tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
-		[[ -n "$rec_name" ]] || continue
-		[[ "$rec_name" == \#* ]] && continue
-		name_x="$(printf '%s' "$rec_name" | xml_escape)"
-		desc_x="$(printf '%s' "Recommended. Install separately (not part of this package)." | xml_escape)"
-		recs_plugins+="$(cat <<EOF
-
-						<plugin name="${name_x}">
-							<description>${desc_x}</description>
-							<typeDescriptor>
-								<type name="Required"/>
-							</typeDescriptor>
-						</plugin>
-EOF
-)"
-		rec_count=$((rec_count + 1))
-	done < "$recs_file"
-
-	if [[ "$rec_count" -gt 0 ]]; then
-		steps_xml+="$(cat <<EOF
-
-		<installStep name="Other mods I recommend">
-			<optionalFileGroups order="Explicit">
-				<group name="Other mods I recommend" type="SelectAny">
-					<plugins order="Explicit">${recs_plugins}
-					</plugins>
-				</group>
-			</optionalFileGroups>
-		</installStep>
-EOF
-)"
-		step_count=$((step_count + 1))
-		echo "package-fomod: recommendations ($rec_count mods)"
-	fi
-fi
-
 if [[ "$feature_count" -eq 0 ]]; then
 	echo "package-fomod: no features found" >&2
 	exit 1

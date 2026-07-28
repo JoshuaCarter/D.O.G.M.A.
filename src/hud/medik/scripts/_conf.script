@@ -1,0 +1,54 @@
+-- hud/medik conf
+-- Remaps Medik's booster icon+digit row to rad/bleed vitals (6 slots, 2x3).
+
+_G.dogma_hud_medik_conf = {
+	MOD_ID = "dogma/hud/medik",
+	DEFAULTS = {},
+
+	-- Medik atlas L→R (1-based): 1 hp, 2 bleed, 3 rad, 4 carry, 5 power, 6 ext_rad, 7 psi, 8 chem
+	SLOT_TEX = {
+		"bo_hp",
+		"bo_bleed",
+		"bo_rad",
+		"bo_carry",
+		"bo_power",
+		"bo_ext_rad",
+		"bo_psi",
+		"bo_chem",
+	},
+
+	-- Visible slots only (2 rows x 3 cols). `tex` = atlas index above.
+	-- Dropped Medik's rightmost column; grid shifted +0.5 col to stay centered.
+	SLOTS = {
+		-- row 1
+		{ id = "rad_dose", tex = 3 }, -- body rad (dosimeter)
+		{ id = "rad_restore", tex = 3 }, -- RadiationRestore rate
+		{ id = "rad_protect", tex = 6 }, -- RadiationProtection
+		-- row 2
+		{ id = "bleed", tex = 2 }, -- current bleed intensity
+		{ id = "bleed_restore", tex = 2 }, -- BleedingRestore rate
+		{ id = "bleed_protect", tex = 2 }, -- WoundImmunity (bleed/wound protection)
+	},
+
+	-- Same units as inventory tooltips (ish_item_stats magnitudes), clamped 0-999.
+	SCALE = {
+		rad_restore = 30000, -- mSv/sec-ish
+		rad_protect = 3300, -- percent-ish
+		bleed = 100, -- 0-1 → 0-100
+		bleed_restore = 150000, -- ml/min-ish
+		bleed_protect = 100, -- 0-1 → 0-100
+	},
+
+	-- Medik layout constants (medik_ui UIMedik:__init)
+	LAYOUT = {
+		BO_X0 = 0.02270,
+		BO_COLW = 0.011185,
+		ICON_WH = 0.009,
+		DIG_W = 0.0022,
+		DIG_H = 0.0032,
+		ICON_Y0 = 0.04438,
+		ROW_PITCH = 0.0130,
+		DIG_GAP = 0.0006,
+		COLS = 3,
+	},
+}

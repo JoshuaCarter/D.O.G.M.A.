@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -409,6 +410,115 @@ def cmd_sfx(args: argparse.Namespace) -> int:
     return int(proc.wait())
 
 
+def _with_selection(args: argparse.Namespace, **overrides: object) -> argparse.Namespace:
+    ns = argparse.Namespace(**vars(args))
+    ns.use_selection = True
+    for key, value in overrides.items():
+        setattr(ns, key, value)
+    return ns
+
+
+def cmd_update(args: argparse.Namespace) -> int:
+    """Ensure deps + disable + defaults + validate (uses saved wizard selection)."""
+    code = cmd_setup(args)
+    if code:
+        return code
+    sel = _with_selection(args, tier="all", mode="ensure")
+    for step in (
+        lambda: cmd_dependencies(sel),
+        lambda: cmd_disable(sel),
+        lambda: cmd_defaults(sel),
+        lambda: cmd_validate(sel),
+    ):
+        code = step()
+        if code:
+            return code
+    lib.ok("update pipeline done")
+    return 0
+
+
+def cmd_reset(args: argparse.Namespace) -> int:
+    """FRESH_INSTALL modlist + MCM, then reinstall pipeline (no wizard)."""
+    code = cmd_setup(args)
+    if code:
+        return code
+    sel = _with_selection(args, tier="all", mode="reinstall")
+    for step in (
+        lambda: cmd_preinstall_backup(args),
+        lambda: cmd_reset_base(args),
+        lambda: cmd_dependencies(sel),
+        lambda: cmd_disable(sel),
+        lambda: cmd_defaults(sel),
+        lambda: cmd_validate(sel),
+    ):
+        code = step()
+        if code:
+            return code
+    lib.ok("reset pipeline done")
+    return 0
+
+
+def cmd_install(args: argparse.Namespace) -> int:
+    """Full Setup pipeline: tools → wizard → backup → deps → disable → defaults → validate."""
+    code = cmd_setup(args)
+    if code:
+        return code
+
+    no_wizard = bool(getattr(args, "no_wizard", False)) or (
+        os.environ.get("DOGMA_NO_WIZARD", "").strip() == "1"
+    )
+    if no_wizard:
+        lib.info("Skipping wizard (DOGMA_NO_WIZARD / --no-wizard)")
+        mid = argparse.Namespace(**vars(args))
+        mid.tier = "all"
+        mid.mode = "reinstall"
+        mid.use_selection = False
+    else:
+        code = cmd_wizard(args)
+        if code:
+            return code
+        mid = _with_selection(args, tier="all", mode="reinstall")
+
+    val = _with_selection(args, tier="all")
+    for step in (
+        lambda: cmd_preinstall_backup(args),
+        lambda: cmd_dependencies(mid),
+        lambda: cmd_disable(mid),
+        lambda: cmd_defaults(mid),
+        lambda: cmd_validate(val),
+    ):
+        code = step()
+        if code:
+            return code
+    lib.ok("install pipeline done")
+    return 0
+
+
+def cmd_executables(args: argparse.Namespace) -> int:
+    import dogma_executables as exes
+
+    mo2 = lib.resolve_mo2_root(args.mo2_root)
+    lib.guard_mo2_closed(force=args.force, dry_run=args.dry_run)
+    result = exes.register_dogma_executables(mo2, dry_run=args.dry_run)
+    if result.missing_bats:
+        lib.warn(
+            f"{len(result.missing_bats)} bat(s) missing under mods/DOGMA/mo2/tools/ "
+            "(deploy DOGMA first)"
+        )
+    lib.ok(
+        f"executables job done: removed={len(result.removed)} "
+        f"added={len(result.added)} missing={len(result.missing_bats)}"
+    )
+    changed = bool(result.removed or result.added)
+    if args.dry_run or args.no_launch or not changed:
+        return 0
+    if not lib.mo2_running():
+        lib.launch_mo2(mo2)
+    else:
+        lib.info("MO2 already running — restart it to see Executables changes.")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument(
@@ -432,6 +542,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("setup", help="Install Python tooling deps (PyYAML)", parents=[common])
     s.set_defaults(func=cmd_setup)
+
+    inst = sub.add_parser(
+        "install",
+        help="Full Setup: tools, wizard, deps, disable, defaults, validate",
+        parents=[common],
+    )
+    inst.add_argument(
+        "--no-wizard",
+        action="store_true",
+        help="Skip GUI wizard (same as DOGMA_NO_WIZARD=1)",
+    )
+    inst.set_defaults(func=cmd_install)
 
     w = sub.add_parser(
         "wizard",
@@ -485,7 +607,7 @@ def build_parser() -> argparse.ArgumentParser:
     a.set_defaults(func=cmd_defaults)
 
     v = sub.add_parser(
-        "validate", help="Write fresh dogma_report.log", parents=[common]
+        "validate", help="Write fresh dogma_report.log", parents=[common, sel]
     )
     v.add_argument(
         "--tier",
@@ -499,6 +621,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     r.set_defaults(func=cmd_reset_base)
 
+    rst = sub.add_parser(
+        "reset",
+        help="FRESH_INSTALL + MCM, then deps/disable/defaults/validate",
+        parents=[common],
+    )
+    rst.set_defaults(func=cmd_reset)
+
+    upd = sub.add_parser(
+        "update",
+        help="Ensure deps + disable + defaults + validate (saved selection)",
+        parents=[common],
+    )
+    upd.set_defaults(func=cmd_update)
+
     b = sub.add_parser(
         "preinstall-backup",
         help="MO2 Create Backup of modlist (DOGMA Pre Install Backup N)",
@@ -508,6 +644,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     x = sub.add_parser("sfx", help="Run sound prefetch builder", parents=[common])
     x.set_defaults(func=cmd_sfx)
+
+    e = sub.add_parser(
+        "executables",
+        help="Replace DOGMA bats in MO2 Executables (ModOrganizer.ini)",
+        parents=[common],
+    )
+    e.add_argument(
+        "--no-launch",
+        action="store_true",
+        help="Do not start ModOrganizer.exe after updating the ini",
+    )
+    e.set_defaults(func=cmd_executables)
 
     return p
 
@@ -538,9 +686,9 @@ def show_console() -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    # Setup / Update forwards %* to wizard; ignore job-only flags like --tier.
+    # Wizard / install may forward extra MO2 args; ignore unknowns on those cmds.
     argv = list(sys.argv[1:] if argv is None else argv)
-    if argv and argv[0] == "wizard":
+    if argv and argv[0] in ("wizard", "install"):
         args, _unknown = build_parser().parse_known_args(argv)
     else:
         args = build_parser().parse_args(argv)

@@ -15,7 +15,6 @@ REM   disable_blacklisted_mods.bat
 REM   disable_blacklisted_mods.bat --dry-run
 REM   disable_blacklisted_mods.bat --disable-only
 REM   disable_blacklisted_mods.bat --no-pause
-REM   ( --no-pause for optional mo2/prelaunch.steps — do not block launch )
 
 cd /d "%~dp0"
 

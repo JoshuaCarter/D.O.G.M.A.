@@ -341,7 +341,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         import yaml
     except ImportError:
-        warn("PyYAML required to write features.yml — run DOGMA (Setup Tools).bat")
+        warn("PyYAML required to write features.yml — run DOGMA Setup once")
         return 1
 
     def _load_map(path: Path) -> dict:

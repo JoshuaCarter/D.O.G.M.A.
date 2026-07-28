@@ -654,12 +654,7 @@ def build_parser() -> argparse.ArgumentParser:
     o.add_argument(
         "--include-base-gamma",
         action="store_true",
-        help="ALAO: include numbered base G.A.M.M.A. mods",
-    )
-    o.add_argument(
-        "--alao-debug",
-        action="store_true",
-        help="ALAO: also --fix-debug (comment out debug prints)",
+        help="ALAO: include base G.A.M.M.A. mods",
     )
     o.set_defaults(func=cmd_optimize)
 

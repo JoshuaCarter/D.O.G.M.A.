@@ -303,7 +303,7 @@ def prompt_gc(mo2_root: Path) -> bool:
     if user_ltx is not None:
         print("You can edit these values later in:")
         print(f"  {user_ltx}")
-        print("A copy will be saved first as:")
+        print("Your user.ltx will be backed up to:")
         print(f"  {user_back_ltx_path(user_ltx)}")
     else:
         print("You can edit these values later in your game’s appdata\\user.ltx.")
@@ -400,6 +400,13 @@ def step_backup(
     lib.info(f"Backing up:\n  {mods}")
     lib.info(f"Save as:\n  {archive}")
 
+    if archive.is_file():
+        print()
+        print(f"A backup already exists:\n  {archive}")
+        if _yn("Skip backup and keep the existing one?", default_yes=True):
+            lib.info(f"Keeping existing {archive.name}.")
+            return 0
+
     seven = lib.find_7z()
     if seven is None:
         lib.err(
@@ -430,16 +437,6 @@ def step_backup(
             f"  Free up space or point Arguments at another drive, then try again."
         )
         return 1
-
-    if archive.is_file():
-        if dry_run:
-            lib.info(f"Would replace the existing backup ({archive.name}).")
-        elif not _yn(
-            f"A backup already exists ({archive.name}). Replace it?",
-            default_yes=True,
-        ):
-            lib.info("Keeping your existing backup.")
-            return 0
 
     if dry_run:
         lib.info("Dry run — would create the backup archive now.")
@@ -486,7 +483,6 @@ def step_alao(
     backup_dir: Path,
     *,
     include_base_gamma: bool | None,
-    alao_debug: bool | None,
     dry_run: bool,
 ) -> int:
     archive = backup_archive_path(backup_dir)
@@ -507,12 +503,7 @@ def step_alao(
 
     if include_base_gamma is None:
         include_base_gamma = _yn(
-            "Also run ALAO on base G.A.M.M.A. mods (the numbered ones)?",
-            default_yes=False,
-        )
-    if alao_debug is None:
-        alao_debug = _yn(
-            "Have ALAO comment out debug print/log spam?",
+            "Also run ALAO on base G.A.M.M.A. mods?",
             default_yes=False,
         )
 
@@ -564,8 +555,6 @@ def step_alao(
         "--report",
         str(report),
     ]
-    if alao_debug:
-        cmd.append("--fix-debug")
 
     lib.info(f"Running ALAO… this can take a long time.\n  {ALAO_URL}")
     try:
@@ -636,6 +625,11 @@ def run(args) -> int:
         print()
         print("Back up all mods (required before ALAO can change any scripts).")
         print(f"  {archive}")
+        print()
+        print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+        print("!!  WARNING: THIS CAN TAKE A LONG TIME          !!")
+        print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+        print()
         do_backup = _yn("Create this backup now?", default_yes=True)
     backup_failed = False
     backup_ok = archive.is_file()
@@ -676,12 +670,10 @@ def run(args) -> int:
 
     if do_alao:
         include: bool | None = True if getattr(args, "include_base_gamma", False) else None
-        debug: bool | None = True if getattr(args, "alao_debug", False) else None
         code = step_alao(
             mo2,
             backup_dir,
             include_base_gamma=include,
-            alao_debug=debug,
             dry_run=dry_run,
         )
         if code:

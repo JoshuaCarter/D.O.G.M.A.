@@ -1676,9 +1676,12 @@ def _run_wizard_ui(
         text="D.O.G.M.A. Setup",
         font=("Segoe UI", 14, "bold"),
     ).pack(anchor="w")
+    subtitle_var = tk.StringVar(
+        value="Choose third-party mods to install"
+    )
     ttk.Label(
         header,
-        text="Choose mods to install (third-party and D.O.G.M.A. mods)",
+        textvariable=subtitle_var,
         font=("Segoe UI", 11),
         foreground=_THEME["fg_muted"],
         wraplength=win_w - 80,
@@ -1704,16 +1707,28 @@ def _run_wizard_ui(
     sel_btns = ttk.Frame(toolbar)
     sel_btns.pack(side="left")
 
+    page_tab_btns: dict[int, ttk.Button] = {}
+
     body = ttk.Frame(root, padding=(16, 8, 16, 8))
     body.pack(fill="both", expand=True)
 
-    canvas = tk.Canvas(
+    scroll_border = tk.Frame(
         body,
+        background=_THEME["bg"],
+        highlightbackground="#000000",
+        highlightcolor="#000000",
+        highlightthickness=1,
+        bd=0,
+    )
+    scroll_border.pack(fill="both", expand=True)
+
+    canvas = tk.Canvas(
+        scroll_border,
         highlightthickness=0,
         background=_THEME["bg"],
         borderwidth=0,
     )
-    scroll = ttk.Scrollbar(body, orient="vertical", command=canvas.yview)
+    scroll = ttk.Scrollbar(scroll_border, orient="vertical", command=canvas.yview)
     inner = ttk.Frame(canvas)
     inner.bind(
         "<Configure>",
@@ -1734,13 +1749,16 @@ def _run_wizard_ui(
 
     root.bind_all("<MouseWheel>", _on_mousewheel)
 
-    options_col = ttk.Frame(inner)
-    options_col.pack(fill="both", expand=True, padx=4, pady=4)
+    page1_col = ttk.Frame(inner)
+    page2_col = ttk.Frame(inner)
+    page1_col.pack(fill="both", expand=True, padx=4, pady=4)
 
     bool_vars: dict[str, tk.BooleanVar] = {}
     exclusive_vars: dict[str, tk.StringVar] = {}
     group_defaults: dict[str, str] = {}
-    page_option_ids: list[str] = []
+    page1_option_ids: list[str] = []
+    page2_option_ids: list[str] = []
+    wizard_page = {"n": 1}
     for group, packs in radio_groups.items():
         # Preferred fallback when a selected option requires this group — not a
         # default selection (radios start empty unless restored / required).
@@ -1953,7 +1971,7 @@ def _run_wizard_ui(
         return [oid for oid, bv in bool_vars.items() if bv.get()]
 
     opt_by_id = {o.id: o for o in options}
-    install_btn_holder: dict[str, ttk.Button] = {}
+    footer_btns: dict[str, ttk.Button] = {}
     depends_warn_var = tk.StringVar(value="")
 
     def _unmet_dependency_leaf_ids() -> set[str]:
@@ -1987,32 +2005,38 @@ def _run_wizard_ui(
             for field in fields:
                 field.set_alert(on)
         blocked = bool(unmet)
-        btn = install_btn_holder.get("btn")
+        btn = footer_btns.get("install")
         if btn is not None:
             try:
                 btn.configure(state=("disabled" if blocked else "normal"))
             except tk.TclError:
                 pass
-        depends_warn_var.set(
-            "You must also install dependencies for selected mods"
-            if blocked
-            else ""
-        )
+        if blocked:
+            msg = "You must also install dependencies for selected mods"
+            if wizard_page["n"] == 2:
+                msg += " (Back to link archives)"
+            depends_warn_var.set(msg)
+        else:
+            depends_warn_var.set("")
+
+    def _current_page_option_ids() -> list[str]:
+        return page1_option_ids if wizard_page["n"] == 1 else page2_option_ids
 
     def _select_all() -> None:
-        for oid in page_option_ids:
+        for oid in _current_page_option_ids():
             bv = bool_vars.get(oid)
             if bv is not None:
                 bv.set(True)
         _on_selection_changed()
 
     def _deselect_all() -> None:
-        for oid in page_option_ids:
+        for oid in _current_page_option_ids():
             bv = bool_vars.get(oid)
             if bv is not None:
                 bv.set(False)
-        for var in exclusive_vars.values():
-            var.set("")
+        if wizard_page["n"] == 1:
+            for var in exclusive_vars.values():
+                var.set("")
         _on_selection_changed()
 
     ttk.Button(sel_btns, text="Select all", command=_select_all).pack(
@@ -2020,7 +2044,11 @@ def _run_wizard_ui(
     )
     ttk.Button(sel_btns, text="Deselect all", command=_deselect_all).pack(side="left")
 
-    def _add_option_block(opt: lib.InstallerOption) -> None:
+    def _add_option_block(
+        opt: lib.InstallerOption,
+        parent: ttk.Frame,
+        id_list: list[str],
+    ) -> None:
         pack = pack_by_id.get(opt.id)
         feat = data.features.get(opt.id)
         if pack is not None and pack.path:
@@ -2036,8 +2064,8 @@ def _run_wizard_ui(
         elif feat is not None:
             title = feat.display_name
 
-        _title_row(options_col, title, url=url)
-        frame = ttk.Frame(options_col, padding=(4, 4))
+        _title_row(parent, title, url=url)
+        frame = ttk.Frame(parent, padding=(4, 4))
         frame.pack(fill="x", pady=(0, 8), padx=2)
         prior = set(initial.option_ids) if initial is not None else set()
         if initial is not None and prior:
@@ -2047,7 +2075,7 @@ def _run_wizard_ui(
 
         bv = tk.BooleanVar(value=checked)
         bool_vars[opt.id] = bv
-        page_option_ids.append(opt.id)
+        id_list.append(opt.id)
 
         _row, files_col, _chk = _pack_mod_select_row(
             frame,
@@ -2113,13 +2141,13 @@ def _run_wizard_ui(
         # Quiet gap between radio choices (no "OR" label).
         ttk.Frame(parent, height=4).pack(fill="x", pady=(2, 2))
 
-    def _add_radio_block(group: str) -> None:
+    def _add_radio_block(group: str, parent_col: ttk.Frame) -> None:
         packs = radio_groups[group]
         parent = pack_by_id.get(group)
         title = lib.radio_group_title(group, packs, parent=parent)
         parent_url = _url_display_link(parent)
-        _title_row(options_col, title, url=parent_url)
-        frame = ttk.Frame(options_col, padding=(4, 4))
+        _title_row(parent_col, title, url=parent_url)
+        frame = ttk.Frame(parent_col, padding=(4, 4))
         frame.pack(fill="x", pady=(0, 8), padx=2)
         var = exclusive_vars[group]
         var.trace_add("write", lambda *_a: _on_selection_changed())
@@ -2185,13 +2213,19 @@ def _run_wizard_ui(
                     )
                     field.pack(anchor="w", pady=(0, 4))
 
-    for kind, sid in lib.wizard_section_order(data, min_stage=min_stage):
+    for kind, sid in lib.wizard_page1_section_order(data, min_stage=min_stage):
         if kind == "radio":
-            _add_radio_block(sid)
+            _add_radio_block(sid, page1_col)
         else:
             opt = opt_by_id.get(sid)
             if opt is not None:
-                _add_option_block(opt)
+                _add_option_block(opt, page1_col, page1_option_ids)
+
+    for kind, sid in lib.wizard_page2_section_order(data, min_stage=min_stage):
+        if kind == "option":
+            opt = opt_by_id.get(sid)
+            if opt is not None:
+                _add_option_block(opt, page2_col, page2_option_ids)
 
     def collect() -> lib.InstallerSelection:
         picks = {g: v.get() for g, v in exclusive_vars.items()}
@@ -2206,6 +2240,45 @@ def _run_wizard_ui(
             root.unbind_all("<MouseWheel>")
         except tk.TclError:
             pass
+
+    def _refresh_page_tabs() -> None:
+        cur = wizard_page["n"]
+        for n, btn in page_tab_btns.items():
+            try:
+                btn.configure(state=("disabled" if n == cur else "normal"))
+            except tk.TclError:
+                pass
+
+    def _show_page(n: int) -> None:
+        wizard_page["n"] = n
+        if n == 1:
+            page2_col.pack_forget()
+            page1_col.pack(fill="both", expand=True, padx=4, pady=4)
+            subtitle_var.set("Choose third-party mods to install")
+            next_btn.pack(side="right")
+            back_btn.pack_forget()
+            install_btn.pack_forget()
+        else:
+            page1_col.pack_forget()
+            page2_col.pack(fill="both", expand=True, padx=4, pady=4)
+            subtitle_var.set("Choose D.O.G.M.A. mods to install")
+            next_btn.pack_forget()
+            install_btn.pack(side="right")
+            back_btn.pack(side="right", padx=(0, 8))
+        _refresh_page_tabs()
+        try:
+            canvas.yview_moveto(0)
+            canvas.update_idletasks()
+            canvas.configure(scrollregion=canvas.bbox("all"))
+        except tk.TclError:
+            pass
+        _on_selection_changed()
+
+    def on_next() -> None:
+        _show_page(2)
+
+    def on_back() -> None:
+        _show_page(1)
 
     def on_install() -> None:
         chosen = collect()
@@ -2256,6 +2329,18 @@ def _run_wizard_ui(
 
     footer = ttk.Frame(root, padding=(20, 10, 20, 16))
     footer.pack(fill="x")
+    page_bar = ttk.Frame(footer)
+    page_bar.pack(side="left")
+    ttk.Label(page_bar, text="Page:").pack(side="left", padx=(0, 4))
+    for n in (1, 2):
+        btn = ttk.Button(
+            page_bar,
+            text=str(n),
+            width=3,
+            command=lambda page=n: _show_page(page),
+        )
+        btn.pack(side="left", padx=(0, 4))
+        page_tab_btns[n] = btn
     ttk.Label(
         footer,
         textvariable=depends_warn_var,
@@ -2263,11 +2348,12 @@ def _run_wizard_ui(
         font=("Segoe UI", 9),
         anchor="w",
         justify="left",
-    ).pack(side="left", fill="x", expand=True, padx=(0, 12))
+    ).pack(side="left", fill="x", expand=True, padx=(12, 12))
+    next_btn = ttk.Button(footer, text="Next", command=on_next)
+    back_btn = ttk.Button(footer, text="Back", command=on_back)
     install_btn = ttk.Button(footer, text="Install", command=on_install)
-    install_btn.pack(side="right")
-    install_btn_holder["btn"] = install_btn
-    _on_selection_changed()
+    footer_btns["install"] = install_btn
+    _show_page(1)
 
     root.protocol("WM_DELETE_WINDOW", on_cancel)
     root.mainloop()

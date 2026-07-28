@@ -1942,11 +1942,23 @@ def wizard_pack_section_order(
     *,
     min_stage: str = "dev",
 ) -> list[tuple[str, str]]:
-    """Radio groups + stage-gated pack/path checkboxes."""
+    """Radio groups + stage-gated pack/path checkboxes (both wizard pages)."""
+    return [
+        *wizard_page1_section_order(data, min_stage=min_stage),
+        *wizard_page2_section_order(data, min_stage=min_stage),
+    ]
+
+
+def wizard_page1_section_order(
+    data: ManifestData,
+    *,
+    min_stage: str = "dev",
+) -> list[tuple[str, str]]:
+    """Page 1: radio groups + third-party (non-path) checkboxes."""
     min_stage = parse_stage(min_stage)
     radios = wizard_radio_groups(data, min_stage=min_stage)
     sections: list[tuple[str, str]] = []
-    seen_opt: set[str] = set()
+    by_id = data.suggested_by_id()
 
     for dep in data.suggested:
         if dep.id in radios:
@@ -1959,8 +1971,47 @@ def wizard_pack_section_order(
             continue
         if not stage_meets(dep.stage, min_stage):
             continue
+        if dep.path:
+            continue
         sections.append(("option", dep.id))
-        seen_opt.add(dep.id)
+
+    # Legacy feature options without a path pack stay on page 1.
+    feat_ids = set(data.features.keys())
+    for opt in data.installer_options:
+        if opt.id in feat_ids:
+            continue
+        if opt.id in by_id:
+            continue
+        sections.append(("option", opt.id))
+    return sections
+
+
+def wizard_page2_section_order(
+    data: ManifestData,
+    *,
+    min_stage: str = "dev",
+) -> list[tuple[str, str]]:
+    """Page 2: D.O.G.M.A. path mods (+ legacy path-keyed feature options)."""
+    min_stage = parse_stage(min_stage)
+    sections: list[tuple[str, str]] = []
+    seen: set[str] = set()
+
+    for dep in data.suggested:
+        if is_wizard_radio_parent(dep):
+            continue
+        if not dep.wizard or not dep.path:
+            continue
+        if not stage_meets(dep.stage, min_stage):
+            continue
+        sections.append(("option", dep.id))
+        seen.add(dep.id)
+
+    feat_ids = set(data.features.keys())
+    for opt in data.installer_options:
+        if opt.id not in feat_ids or opt.id in seen:
+            continue
+        sections.append(("option", opt.id))
+        seen.add(opt.id)
     return sections
 
 
@@ -1981,10 +2032,10 @@ def wizard_section_order(
     *,
     min_stage: str = "dev",
 ) -> list[tuple[str, str]]:
-    """Pack/path sections for the Setup wizard."""
+    """All Setup wizard sections (page 1 then page 2)."""
     return [
-        *wizard_pack_section_order(data, min_stage=min_stage),
-        *wizard_feature_section_order(data),
+        *wizard_page1_section_order(data, min_stage=min_stage),
+        *wizard_page2_section_order(data, min_stage=min_stage),
     ]
 
 

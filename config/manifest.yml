@@ -3,10 +3,10 @@
 # Single list for third-party packs and local D.O.G.M.A. path mods.
 #
 # Each block is ONE of:
-#   A) Wizard/FOMOD mod — stage: RELEASE|DEV + url:/buy_url: OR path:
+#   A) Wizard/FOMOD mod — stage: RELEASE|DEV + url_*: OR path:
 #   B) Radio group — stage: RELEASE|DEV + options: [choices]
-#   C) Composition choice — depends: [mods…]
-#   D) Leaf child — stage: OMIT + url/buy_url or path effects only
+#   C) Composition choice — depends: [mods…]  (or inline under options:)
+#   D) Leaf child — stage: OMIT + url_* or path effects only
 #
 # stage: OMIT | DEV | RELEASE
 #   OMIT    — not in FOMOD, not in wizard
@@ -14,24 +14,36 @@
 #   RELEASE — FOMOD + wizard everywhere
 #
 # path: local feature under src/<path>; package zip mo2/packages/<path_key>.zip
-# url: ModDB or GitHub (auto-download). Omit url: for a manual archive
-#      (user places downloads/DOGMA/<id or archive_name>.zip).
-# buy_url: paid storefront only (never ModDB/GitHub).
+# Links (each independent — own wizard icon; a mod may set all of them):
+#   url_moddb:    ModDB page (opens in browser)
+#   url_github:   GitHub page (opens in browser)
+#   url_discord:  Discord message/channel (opens; link archive with 📁)
+#   url_download: ModDB or GitHub file/release URL (MO2 auto-download)
+#   url_kofi:     Ko-fi page (opens in browser)
+#   url_patreon:  Patreon page (opens in browser)
+#
+# options: radio choices. Each entry is one exclusive pick:
+#   - Pack A
+#   - [Pack A, Pack B]          # install both (inline composition)
+#   -                           # same, nested list form
+#     - Pack A
+#     - Pack B
 
 Screen Space Shaders:
   stage: RELEASE
   cat: VISUALS
   options:
-    - SSS v23
-    - SSS v24
-    - SSS v23 + v24
+    - Screen Space Shaders v23
+    - Screen Space Shaders v24
+    - [Screen Space Shaders v23, Screen Space Shaders v24]
   deletes:
     - <Anomaly>/appdata/shaders_cache
 
-SSS v23:
+Screen Space Shaders v23:
   stage: OMIT
   cat: VISUALS
-  url: https://www.moddb.com/mods/stalker-anomaly/addons/screen-space-shaders
+  url_moddb: https://www.moddb.com/mods/stalker-anomaly/addons/screen-space-shaders
+  url_download: https://www.moddb.com/mods/stalker-anomaly/addons/screen-space-shaders
   disables:
     - 190- Screen Space Shaders 23 - Ascii1457
     - 190- Screen Space Shaders - Ascii1457
@@ -39,10 +51,10 @@ SSS v23:
     - 190- Screen Space Shaders 7 - Ascii1457
     - 190- Screen Space Shaders latest - Ascii1457
 
-SSS v24:
+Screen Space Shaders v24:
   stage: OMIT
   cat: VISUALS
-  buy_url: https://ko-fi.com/ascii1457
+  url_kofi: https://ko-fi.com/ascii1457
   archive_name: Screen Space Shaders 24
   enables:
     - 190- Screen Space Shaders 23 - Ascii1457
@@ -51,13 +63,6 @@ SSS v24:
     - 190- Screen Space Shaders 15.0 - Ascii1457
     - 190- Screen Space Shaders 7 - Ascii1457
     - 190- Screen Space Shaders latest - Ascii1457
-
-SSS v23 + v24:
-  stage: OMIT
-  cat: VISUALS
-  depends:
-    - SSS v23
-    - SSS v24
 
 # --------------------------------
 # Melancholy Weathers
@@ -68,7 +73,7 @@ Melancholy Weathers:
   cat: VISUALS
   requires:
     - Screen Space Shaders
-  buy_url: https://ko-fi.com/pipnik
+  url_kofi: https://ko-fi.com/pipnik
   archive_name: Melancholy Weathers
   depends:
     - Enhanced Shader Color Grading
@@ -88,14 +93,16 @@ Melancholy Weathers:
 Enhanced Shader Color Grading:
   stage: OMIT
   cat: VISUALS
-  url: https://www.moddb.com/mods/stalker-anomaly/addons/enhanced-shaders-and-color-grading-for-151
+  url_moddb: https://www.moddb.com/mods/stalker-anomaly/addons/enhanced-shaders-and-color-grading-for-151
+  url_download: https://www.moddb.com/mods/stalker-anomaly/addons/enhanced-shaders-and-color-grading-for-151
   disables:
     - R3zy's Detectors Enhanced Shaders Patch
 
 Dark Signal Soundscape Overhaul Melancholy Edition:
   stage: OMIT
   cat: AUDIO
-  url: https://www.moddb.com/mods/stalker-anomaly/addons/dark-signal-soundscape-overhaul-melancholy-edition
+  url_moddb: https://www.moddb.com/mods/stalker-anomaly/addons/dark-signal-soundscape-overhaul-melancholy-edition
+  url_download: https://www.moddb.com/mods/stalker-anomaly/addons/dark-signal-soundscape-overhaul-melancholy-edition
   disables:
     - 310- Dark Signal Weather and Ambiance Audio - Shrike
 
@@ -103,15 +110,28 @@ Dark Signal Soundscape Overhaul Melancholy Edition:
 # AlifePlus
 # --------------------------------
 
-AlifePlus:
+Alife Plus:
   stage: RELEASE
   cat: GAMEPLAY
-  url: https://www.moddb.com/mods/stalker-anomaly/addons/alifeplus-v1-0-01
   depends:
     - xlibs
+    - AlifePlus
     - AlifeBalance
     - AlifeGuard
     - AlifeTactics
+
+xlibs:
+  stage: OMIT
+  cat: DEPENDENCIES
+  url_moddb: https://www.moddb.com/mods/stalker-anomaly/addons/xlibs-1001
+  url_download: https://www.moddb.com/mods/stalker-anomaly/addons/xlibs-1001
+AlifePlus:
+  stage: OMIT
+  cat: GAMEPLAY
+  url_moddb: https://www.moddb.com/mods/stalker-anomaly/addons/alifeplus-v1-0-01
+  url_download: https://www.moddb.com/mods/stalker-anomaly/addons/alifeplus-v1-0-01
+  depends:
+    - xlibs
   disables:
     - 483- Alife Plus - damian_sirbu
     - G.A.M.M.A. NPC Loot Claim Remade
@@ -119,15 +139,11 @@ AlifePlus:
     - 231- More Aggressive NPC Looting (harder game, do not use with NPC Loot Claim) - Demonized
     - 311- NPC Stop Looting Dead Bodies - DTTheGunslinger
 
-xlibs:
-  stage: OMIT
-  cat: DEPENDENCIES
-  url: https://www.moddb.com/mods/stalker-anomaly/addons/xlibs-1001
-
 AlifeBalance:
   stage: OMIT
   cat: GAMEPLAY
-  url: https://www.moddb.com/mods/stalker-anomaly/addons/alifebalance
+  url_moddb: https://www.moddb.com/mods/stalker-anomaly/addons/alifebalance
+  url_download: https://www.moddb.com/mods/stalker-anomaly/addons/alifebalance
   depends:
     - xlibs
   disables:
@@ -141,7 +157,8 @@ AlifeBalance:
 AlifeGuard:
   stage: OMIT
   cat: GAMEPLAY
-  url: https://www.moddb.com/mods/stalker-anomaly/addons/alifeguard-1001
+  url_moddb: https://www.moddb.com/mods/stalker-anomaly/addons/alifeguard-1001
+  url_download: https://www.moddb.com/mods/stalker-anomaly/addons/alifeguard-1001
   depends:
     - xlibs
   disables:
@@ -152,7 +169,8 @@ AlifeGuard:
 AlifeTactics:
   stage: OMIT
   cat: GAMEPLAY
-  url: https://www.moddb.com/mods/stalker-anomaly/addons/alifetactics
+  url_moddb: https://www.moddb.com/mods/stalker-anomaly/addons/alifetactics
+  url_download: https://www.moddb.com/mods/stalker-anomaly/addons/alifetactics
   depends:
     - xlibs
   mcm:
@@ -172,7 +190,8 @@ AlifeTactics:
 Interaction Dot Marks:
   stage: RELEASE
   cat: INTERFACE
-  url: https://www.moddb.com/mods/stalker-anomaly/addons/interaction-dot-marks
+  url_moddb: https://www.moddb.com/mods/stalker-anomaly/addons/interaction-dot-marks
+  url_download: https://www.moddb.com/mods/stalker-anomaly/addons/interaction-dot-marks
   disables:
     - 452- Interaction Dot Marks - Catspaw
 
@@ -183,8 +202,8 @@ Interaction Dot Marks:
 Tarkov-like Level Transitions:
   stage: RELEASE
   cat: INTERFACE
-  url: https://www.moddb.com/mods/stalker-anomaly/addons/tarkov-like-level-transitions
-
+  url_moddb: https://www.moddb.com/mods/stalker-anomaly/addons/tarkov-like-level-transitions
+  url_download: https://www.moddb.com/mods/stalker-anomaly/addons/tarkov-like-level-transitions
 # --------------------------------
 # Zone / visuals
 # --------------------------------
@@ -192,13 +211,15 @@ Tarkov-like Level Transitions:
 Demonized DB:
   stage: RELEASE
   cat: DEPENDENCIES
-  url: https://github.com/themrdemonized/xray-monolith/RELEASEs/latest
+  url_github: https://github.com/themrdemonized/xray-monolith/RELEASEs/latest
+  url_download: https://github.com/themrdemonized/xray-monolith/RELEASEs/latest
   archive_name: STALKER-Anomaly-modded-exes
 
 C Consciousness Grass and Trees:
   stage: RELEASE
   cat: VISUALS
-  url: https://www.moddb.com/mods/stalker-anomaly/addons/ccon-grass-n-trees
+  url_moddb: https://www.moddb.com/mods/stalker-anomaly/addons/ccon-grass-n-trees
+  url_download: https://www.moddb.com/mods/stalker-anomaly/addons/ccon-grass-n-trees
   requires:
     - Screen Space Shaders
   disables:
@@ -208,6 +229,7 @@ C Consciousness Grass and Trees:
 Glossy Puddles:
   stage: RELEASE
   cat: VISUALS
+  url_discord: https://discord.com/channels/912320241713958912/1420720303092400230/1420720303092400230
   archive_name: Glossy Puddles v1.4 - Erandis
   requires:
     - Screen Space Shaders
@@ -215,8 +237,8 @@ Glossy Puddles:
 G2X Tactical Light Presets:
   stage: RELEASE
   cat: VISUALS
-  url: https://www.moddb.com/mods/stalker-anomaly/addons/g2x-tactical-light-preset-600-lm-range-max-100-m-eff-70-m-55006500-k
-
+  url_moddb: https://www.moddb.com/mods/stalker-anomaly/addons/g2x-tactical-light-preset-600-lm-range-max-100-m-eff-70-m-55006500-k
+  url_download: https://www.moddb.com/mods/stalker-anomaly/addons/g2x-tactical-light-preset-600-lm-range-max-100-m-eff-70-m-55006500-k
 # --------------------------------
 # Gameplay / UI
 # --------------------------------
@@ -229,12 +251,13 @@ Medik Health Monitor:
 RNG Attach:
   stage: RELEASE
   cat: GAMEPLAY
-  url: https://www.moddb.com/mods/stalker-anomaly/addons/rng-attach-kits
-
+  url_moddb: https://www.moddb.com/mods/stalker-anomaly/addons/rng-attach-kits
+  url_download: https://www.moddb.com/mods/stalker-anomaly/addons/rng-attach-kits
 Quick Action Wheel Overhaul:
   stage: RELEASE
   cat: INTERFACE
-  url: https://www.moddb.com/mods/stalker-anomaly/addons/quick-action-wheels-overhaul-10
+  url_moddb: https://www.moddb.com/mods/stalker-anomaly/addons/quick-action-wheels-overhaul-10
+  url_download: https://www.moddb.com/mods/stalker-anomaly/addons/quick-action-wheels-overhaul-10
   disables:
     - 446- Quick Action Wheel - HarukaSai
     - G.A.M.M.A. Quick Action Wheel Balance
@@ -242,7 +265,8 @@ Quick Action Wheel Overhaul:
 Ammo Check - Priler:
   stage: RELEASE
   cat: GAMEPLAY
-  url: https://github.com/Priler/AmmoCheck
+  url_github: https://github.com/Priler/AmmoCheck
+  url_download: https://github.com/Priler/AmmoCheck
   archive_name: AmmoCheck v3.3 by Priler REWORK
   disables:
     - 261- Ammo Check - Ishmaeel
@@ -262,13 +286,15 @@ Crafting UI Tweaks:
 Better Upgrade Tooltips:
   stage: RELEASE
   cat: INTERFACE
-  url: https://github.com/Verdatim25/Better-Upgrade-Tooltips-For-Stalker-GAMMA
+  url_github: https://github.com/Verdatim25/Better-Upgrade-Tooltips-For-Stalker-GAMMA
+  url_download: https://github.com/Verdatim25/Better-Upgrade-Tooltips-For-Stalker-GAMMA
   archive_name: better_upgrade_tooltips_verdatim_v1.1.1
 
 Painter of the Zone:
   stage: RELEASE
   cat: VISUALS
-  url: https://www.moddb.com/mods/stalker-anomaly/addons/painter-of-the-zone
+  url_moddb: https://www.moddb.com/mods/stalker-anomaly/addons/painter-of-the-zone
+  url_download: https://www.moddb.com/mods/stalker-anomaly/addons/painter-of-the-zone
   requires:
     - Screen Space Shaders
   depends:
@@ -282,12 +308,13 @@ Long Range Blood Decals:
 The Anomalous Stash:
   stage: RELEASE
   cat: GAMEPLAY
-  url: https://www.moddb.com/mods/stalker-anomaly/addons/the-anomalous-stash-beta-09
-
+  url_moddb: https://www.moddb.com/mods/stalker-anomaly/addons/the-anomalous-stash-beta-09
+  url_download: https://www.moddb.com/mods/stalker-anomaly/addons/the-anomalous-stash-beta-09
 Seamless Inventory Sort:
   stage: RELEASE
   cat: INTERFACE
-  url: https://www.moddb.com/mods/stalker-anomaly/addons/seamless-inventory-sort
+  url_moddb: https://www.moddb.com/mods/stalker-anomaly/addons/seamless-inventory-sort
+  url_download: https://www.moddb.com/mods/stalker-anomaly/addons/seamless-inventory-sort
   enables:
     - 110- SortingPlus - RavenAscendant
 
@@ -338,7 +365,7 @@ Hide Geiger Counter HUD Text:
   disables:
     - G_FLAT's Msv Above Radiation Icon
 
-Medik:
+Medik Tweak:
   stage: DEV
   path: hud/medik
   desc: "Centered 2x3 Medik slots for rad/bleed (dose, restore rate, protection). Ships medik_boosters.dds override."

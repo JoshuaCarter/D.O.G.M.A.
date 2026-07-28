@@ -8,11 +8,12 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import tkinter as tk
 import webbrowser
 from collections.abc import Callable
 from pathlib import Path
-from tkinter import messagebox, ttk
+from tkinter import filedialog, messagebox, ttk
 
 import dogma_mo2_lib as lib
 
@@ -49,8 +50,11 @@ def _set_console_visible(hwnd: int, visible: bool) -> None:
 _THEME = {
     "bg": "#1e1e1e",
     "bg_raised": "#2a2a2a",
+    "bg_sunken": "#181818",
     "fg": "#e6e6e6",
     "fg_muted": "#9a9a9a",
+    # Placeholder mod id in the sunken name well (~20% darker than fg_muted).
+    "fg_placeholder": "#7b7b7b",
     "fg_dim": "#777777",
     "fg_expected": "#ffd666",
     "border": "#3c3c3c",
@@ -61,6 +65,8 @@ _THEME = {
     "button_bg": "#333333",
     "button_active": "#404040",
     "tip_bg": "#2d2d2d",
+    "info_fg": "#ffffff",
+    "alert": "#e05555",
 }
 
 
@@ -147,45 +153,18 @@ def _frame_bg(widget: tk.Misc) -> str:
         return _THEME["bg"]
 
 
-def _selectable_stem(
-    parent: tk.Misc,
-    text: str,
-    *,
-    background: str | None = None,
-) -> tk.Entry:
-    """Zip/archive name: looks like bold label, drag/Ctrl+C to copy."""
-    bg = background if background is not None else _frame_bg(parent)
-    entry = tk.Entry(
-        parent,
-        font=("Segoe UI", 10, "bold"),
-        foreground=_THEME["fg"],
-        background=bg,
-        readonlybackground=bg,
-        disabledbackground=bg,
-        insertbackground=_THEME["fg"],
-        selectbackground=_THEME["select_bg"],
-        selectforeground=_THEME["select_fg"],
-        relief="flat",
-        borderwidth=0,
-        highlightthickness=0,
-        width=max(1, len(text)),
-    )
-    entry.insert(0, text)
-    entry.configure(state="readonly")
-    return entry
-
-
 def _put_rect(img: tk.PhotoImage, x0: int, y0: int, x1: int, y1: int, color: str) -> None:
     for y in range(y0, y1 + 1):
         img.put(color, to=(x0, y, x1 + 1, y + 1))
 
 
 def _build_indicator_images(root: tk.Tk) -> dict[str, tk.PhotoImage]:
-    """Small checkbox / radio images with a green selected mark."""
-    s = 16
+    """Checkbox / radio images with a green selected mark (20px)."""
+    s = 20
     border = "#888888"
     fill = _THEME["bg_raised"]
     green = _THEME["accent"]
+    cx = (s - 1) / 2.0
 
     def blank() -> tk.PhotoImage:
         img = tk.PhotoImage(master=root, width=s, height=s)
@@ -193,47 +172,54 @@ def _build_indicator_images(root: tk.Tk) -> dict[str, tk.PhotoImage]:
         return img
 
     check_off = blank()
-    _put_rect(check_off, 1, 1, 14, 14, border)
-    _put_rect(check_off, 2, 2, 13, 13, fill)
+    _put_rect(check_off, 1, 1, s - 2, s - 2, border)
+    _put_rect(check_off, 2, 2, s - 3, s - 3, fill)
 
     check_on = blank()
-    _put_rect(check_on, 1, 1, 14, 14, border)
-    _put_rect(check_on, 2, 2, 13, 13, fill)
-    # Green tick
+    _put_rect(check_on, 1, 1, s - 2, s - 2, border)
+    _put_rect(check_on, 2, 2, s - 3, s - 3, fill)
+    # Thicker green tick (scaled up from the old 16px mark).
     tick = [
-        (4, 8),
-        (5, 9),
-        (6, 10),
-        (7, 11),
-        (8, 10),
-        (9, 9),
-        (10, 8),
-        (11, 7),
-        (12, 6),
+        (4, 10),
+        (5, 11),
+        (6, 12),
+        (7, 13),
+        (8, 14),
+        (9, 13),
+        (10, 12),
+        (11, 11),
+        (12, 10),
+        (13, 9),
+        (14, 8),
+        (15, 7),
     ]
     for x, y in tick:
         _put_rect(check_on, x, y, x + 1, y + 1, green)
 
+    ring_outer = 9.0
+    ring_inner = 6.6
+    dot_r = 4.0
+
     radio_off = blank()
     for y in range(s):
         for x in range(s):
-            dx, dy = x - 7.5, y - 7.5
+            dx, dy = x - cx, y - cx
             r2 = dx * dx + dy * dy
-            if 5.2 * 5.2 <= r2 <= 7.2 * 7.2:
+            if ring_inner * ring_inner <= r2 <= ring_outer * ring_outer:
                 radio_off.put(border, (x, y))
-            elif r2 < 5.2 * 5.2:
+            elif r2 < ring_inner * ring_inner:
                 radio_off.put(fill, (x, y))
 
     radio_on = blank()
     for y in range(s):
         for x in range(s):
-            dx, dy = x - 7.5, y - 7.5
+            dx, dy = x - cx, y - cx
             r2 = dx * dx + dy * dy
-            if 5.2 * 5.2 <= r2 <= 7.2 * 7.2:
+            if ring_inner * ring_inner <= r2 <= ring_outer * ring_outer:
                 radio_on.put(border, (x, y))
-            elif r2 < 5.2 * 5.2:
+            elif r2 < ring_inner * ring_inner:
                 radio_on.put(fill, (x, y))
-            if r2 <= 3.2 * 3.2:
+            if r2 <= dot_r * dot_r:
                 radio_on.put(green, (x, y))
 
     return {
@@ -242,6 +228,27 @@ def _build_indicator_images(root: tk.Tk) -> dict[str, tk.PhotoImage]:
         "radio_off": radio_off,
         "radio_on": radio_on,
     }
+
+
+def _filled_info_image(
+    master: tk.Misc, *, bg: str, fill: str | None = None, letter: str | None = None
+) -> tk.PhotoImage:
+    """Filled blue circle with a white i."""
+    fill = fill or _THEME["link"]
+    letter = letter or _THEME["info_fg"]
+    s = 14
+    img = tk.PhotoImage(master=master, width=s, height=s)
+    _put_rect(img, 0, 0, s - 1, s - 1, bg)
+    cx, cy, r = 6.5, 6.5, 6.2
+    for y in range(s):
+        for x in range(s):
+            if (x - cx) * (x - cx) + (y - cy) * (y - cy) <= r * r:
+                img.put(fill, (x, y))
+    # Dot
+    _put_rect(img, 6, 3, 7, 4, letter)
+    # Stem
+    _put_rect(img, 6, 6, 7, 10, letter)
+    return img
 
 
 def _apply_dark_theme(root: tk.Tk) -> dict[str, tk.PhotoImage]:
@@ -338,6 +345,22 @@ def _apply_dark_theme(root: tk.Tk) -> dict[str, tk.PhotoImage]:
         background=[("active", bg)],
         foreground=[("disabled", muted)],
     )
+    style.layout(
+        "Dogma.Box.TCheckbutton",
+        style.layout("Dogma.TCheckbutton"),
+    )
+    style.configure(
+        "Dogma.Box.TCheckbutton",
+        background=raised,
+        foreground=fg,
+        focuscolor=raised,
+        padding=0,
+    )
+    style.map(
+        "Dogma.Box.TCheckbutton",
+        background=[("active", raised), ("pressed", raised)],
+        foreground=[("disabled", muted)],
+    )
 
     style.element_create(
         "Dogma.Radiobutton.indicator",
@@ -382,6 +405,22 @@ def _apply_dark_theme(root: tk.Tk) -> dict[str, tk.PhotoImage]:
     style.map(
         "Dogma.TRadiobutton",
         background=[("active", bg)],
+        foreground=[("disabled", muted)],
+    )
+    style.layout(
+        "Dogma.Box.TRadiobutton",
+        style.layout("Dogma.TRadiobutton"),
+    )
+    style.configure(
+        "Dogma.Box.TRadiobutton",
+        background=raised,
+        foreground=fg,
+        focuscolor=raised,
+        padding=0,
+    )
+    style.map(
+        "Dogma.Box.TRadiobutton",
+        background=[("active", raised), ("pressed", raised)],
         foreground=[("disabled", muted)],
     )
 
@@ -692,6 +731,29 @@ def _attach_text_tip(widgets: list[tk.Misc], text: str) -> _HoverTip:
     return _HoverTip(widgets[0], _sections, hosts=widgets, delay_ms=350)
 
 
+def _pack_info_icon(
+    parent: tk.Misc,
+    sections_fn: Callable[[], list[tuple[str, list[str], str]]],
+    *,
+    bg: str | None = None,
+) -> tk.Label:
+    """Filled blue ⓘ; hover shows what this mod does."""
+    bg = bg if bg is not None else _frame_bg(parent)
+    img = _filled_info_image(parent.winfo_toplevel(), bg=bg)
+    lbl = tk.Label(
+        parent,
+        image=img,
+        background=bg,
+        borderwidth=0,
+        padx=0,
+        pady=0,
+        cursor="hand2",
+    )
+    lbl._dogma_info_img = img  # type: ignore[attr-defined]
+    _attach_hover_tip([lbl], sections_fn)
+    return lbl
+
+
 def _pack_dotted_link(
     parent: tk.Misc,
     *,
@@ -750,17 +812,14 @@ def _pack_hoverable_choice(
     variable: tk.Variable,
     value: object | None = None,
     command: Callable[[], None] | None = None,
-    sections_fn: Callable[[], list[tuple[str, list[str], str]]],
     link_url: str = "",
 ) -> ttk.Frame:
-    """Checkbox/radio with dotted underline under the label (hover = tooltip).
+    """Checkbox/radio row. URL tip on link labels when ``link_url`` is set.
 
-    When ``link_url`` is set, the label is styled as a link: click opens the URL,
-    tip shows the URL then effect lists; the indicator still toggles selection.
-    Returns the horizontal row frame so callers can append inline text.
+    Returns the horizontal row frame so callers can append archive fields.
     """
     row = ttk.Frame(parent)
-    row.pack(anchor="w")
+    row.pack(anchor="w", fill="x")
 
     if kind == "check":
         btn: ttk.Checkbutton | ttk.Radiobutton = ttk.Checkbutton(
@@ -783,72 +842,73 @@ def _pack_hoverable_choice(
         )
     btn.pack(side="left", padx=(0, 4))
 
-    text_col = ttk.Frame(row)
-    text_col.pack(side="left", anchor="w")
     bg = _frame_bg(parent)
     url = (link_url or "").strip()
-    lbl = tk.Label(
-        text_col,
-        text=text,
-        background=bg,
-        foreground=_THEME["link"] if url else _THEME["fg"],
-        font=("Segoe UI", 10),
-        cursor="hand2",
-        borderwidth=0,
-        padx=0,
-        pady=0,
-    )
-    lbl.pack(anchor="w")
-
-    underline = tk.Canvas(
-        text_col,
-        height=3,
-        highlightthickness=0,
-        background=bg,
-        borderwidth=0,
-    )
-    underline.pack(anchor="w", fill="x")
-    dash_color = _THEME["link"] if url else _THEME["fg_muted"]
-
-    def _redraw_underline(_event: tk.Event | None = None) -> None:
-        underline.delete("all")
-        w = max(int(lbl.winfo_reqwidth()), 8)
-        underline.configure(width=w)
-        underline.create_line(
-            0,
-            1,
-            w,
-            1,
-            fill=dash_color,
-            dash=(1, 2),
-            width=1,
+    if url:
+        text_col = ttk.Frame(row)
+        text_col.pack(side="left", anchor="w")
+        lbl = tk.Label(
+            text_col,
+            text=text,
+            background=bg,
+            foreground=_THEME["link"],
+            font=("Segoe UI", 10),
+            cursor="hand2",
+            borderwidth=0,
+            padx=0,
+            pady=0,
         )
+        lbl.pack(anchor="w")
+        underline = tk.Canvas(
+            text_col,
+            height=3,
+            highlightthickness=0,
+            background=bg,
+            borderwidth=0,
+        )
+        underline.pack(anchor="w", fill="x")
 
-    lbl.bind("<Configure>", _redraw_underline, add="+")
-    text_col.after_idle(_redraw_underline)
+        def _redraw_underline(_event: tk.Event | None = None) -> None:
+            underline.delete("all")
+            w = max(int(lbl.winfo_reqwidth()), 8)
+            underline.configure(width=w)
+            underline.create_line(
+                0, 1, w, 1, fill=_THEME["link"], dash=(1, 2), width=1
+            )
 
-    def _activate(_event: tk.Event | None = None) -> None:
-        if url:
+        lbl.bind("<Configure>", _redraw_underline, add="+")
+        text_col.after_idle(_redraw_underline)
+
+        def _open_url(_event: tk.Event | None = None) -> None:
             webbrowser.open(url)
-            return
-        if kind == "check":
-            variable.set(not bool(variable.get()))
-        else:
-            variable.set("" if value is None else value)
-        if command is not None:
-            command()
 
-    for w in (lbl, underline):
-        w.bind("<Button-1>", _activate, add="+")
+        for w in (lbl, underline):
+            w.bind("<Button-1>", _open_url, add="+")
+        _attach_text_tip([lbl, underline, text_col], url)
+    else:
+        lbl = tk.Label(
+            row,
+            text=text,
+            background=bg,
+            foreground=_THEME["fg"],
+            font=("Segoe UI", 10),
+            cursor="hand2",
+            borderwidth=0,
+            padx=0,
+            pady=0,
+        )
+        lbl.pack(side="left", anchor="w")
 
-    def _tip_sections() -> list[tuple[str, list[str], str]]:
-        sections: list[tuple[str, list[str], str]] = []
-        if url:
-            sections.append(("", [url], "normal"))
-        sections.extend(sections_fn())
-        return sections
+        def _activate(_event: tk.Event | None = None) -> None:
+            if kind == "check":
+                variable.set(not bool(variable.get()))
+            else:
+                variable.set("" if value is None else value)
+            if command is not None:
+                command()
 
-    _attach_hover_tip([btn, lbl, underline, row], _tip_sections)
+        lbl.bind("<Button-1>", _activate, add="+")
+
     return row
 
 
@@ -895,32 +955,71 @@ def _title_row(
     name: str,
     *,
     url: str = "",
-) -> None:
+) -> ttk.Frame:
     """Big title; when ``url:`` is set, the name itself is the dotted link."""
     block = ttk.Frame(parent)
     block.pack(fill="x", pady=(10, 2))
+    row = ttk.Frame(block)
+    row.pack(anchor="w")
     if url:
         _pack_dotted_link(
-            block,
+            row,
             text=name,
             tip=url,
             command=lambda u=url: webbrowser.open(u),
             font_size=14,
             bold=True,
-        ).pack(anchor="w")
+        ).pack(side="left")
     else:
         ttk.Label(
-            block,
+            row,
             text=name,
             font=("Segoe UI", 14, "bold"),
-        ).pack(anchor="w")
+        ).pack(side="left")
+    return block
 
 
 def _url_display_link(dep: lib.Dependency | None) -> str:
-    """Inline link under titles/radios: ``url:`` only (never ``buy_url:``)."""
+    """Inline link under titles: prefer page urls over download/store."""
     if dep is None:
         return ""
-    return (dep.url or "").strip()
+    for candidate in (
+        dep.url_moddb,
+        dep.url_github,
+        dep.url_discord,
+        dep.url_download,
+        dep.url_kofi,
+        dep.url_patreon,
+        dep.url,
+    ):
+        u = (candidate or "").strip()
+        if u:
+            return u
+    return ""
+
+
+def _icons_dir() -> Path:
+    return Path(__file__).resolve().parent / "icons"
+
+
+def _load_link_icons(master: tk.Misc) -> dict[str, tk.PhotoImage]:
+    """Load link PNGs + grey ``*_off`` variants (kept alive on master)."""
+    out: dict[str, tk.PhotoImage] = {}
+    root_dir = _icons_dir()
+    for kind in ("download", "moddb", "github", "discord", "kofi", "patreon"):
+        for key, fname in (
+            (kind, f"{kind}.png"),
+            (f"{kind}_off", f"{kind}_off.png"),
+        ):
+            path = root_dir / fname
+            if not path.is_file():
+                continue
+            try:
+                out[key] = tk.PhotoImage(master=master, file=str(path))
+            except tk.TclError:
+                continue
+    setattr(master, "_dogma_link_icons", out)
+    return out
 
 
 def _pack_blurb(dep: lib.Dependency | None) -> str:
@@ -930,26 +1029,513 @@ def _pack_blurb(dep: lib.Dependency | None) -> str:
     return dep.desc.strip()
 
 
-def _manual_instruction_rows(
-    deps: list[lib.Dependency],
-) -> list[tuple[str, str]]:
-    """Manual supply rows as (buy_url_or_empty, archive_stem)."""
-    rows: list[tuple[str, str]] = []
-    seen: set[tuple[str, str]] = set()
-    for dep in deps:
-        # Auto ModDB/GitHub or local path packages — no place-zip tip.
-        if dep.path or dep.url:
-            continue
-        stem = lib.dep_zip_stem(dep)
-        if not stem:
-            continue
-        buy = (dep.buy_url or "").strip()
-        key = (buy.lower(), stem.lower())
-        if key in seen:
-            continue
-        seen.add(key)
-        rows.append((buy, stem))
-    return rows
+def _try_hook_windnd(widget: tk.Misc, on_files: Callable[[list[str]], None]) -> bool:
+    """Hook Windows file drag-drop if windnd is available."""
+    try:
+        import windnd
+    except ImportError:
+        return False
+
+    def _hook(files: list) -> None:
+        paths: list[str] = []
+        for f in files:
+            if isinstance(f, bytes):
+                paths.append(f.decode(sys.getfilesystemencoding(), errors="replace"))
+            else:
+                paths.append(str(f))
+        if paths:
+            on_files(paths)
+
+    try:
+        windnd.hook_dropfiles(widget, func=_hook)
+        return True
+    except Exception:
+        return False
+
+
+class _ArchiveDropRegistry:
+    """One windnd hook on the wizard root; dispatch to the file box under the cursor."""
+
+    def __init__(self, root: tk.Tk) -> None:
+        self.root = root
+        self.fields: list[_ArchiveField] = []
+        self.ok = _try_hook_windnd(root, self._dispatch)
+
+    def register(self, field: "_ArchiveField") -> None:
+        if field.enable_file:
+            self.fields.append(field)
+
+    def _dispatch(self, files: list[str]) -> None:
+        try:
+            under = self.root.winfo_containing(
+                self.root.winfo_pointerx(), self.root.winfo_pointery()
+            )
+        except tk.TclError:
+            return
+        while under is not None:
+            for field in self.fields:
+                if field.contains_widget(under):
+                    field._on_drop_files(files)
+                    return
+            try:
+                under = under.master  # type: ignore[assignment]
+            except tk.TclError:
+                break
+
+
+def _archive_action_btn(
+    parent: tk.Misc,
+    *,
+    text: str = "",
+    image: tk.PhotoImage | None = None,
+    command: Callable[[], None] | None = None,
+    fg: str | None = None,
+    state: str = "normal",
+    cursor: str = "hand2",
+    font: tuple = ("Segoe UI", 10),
+    cell_w: int = 28,
+    cell_h: int = 26,
+) -> tuple[tk.Frame, tk.Button]:
+    """Fixed-size archive action cell with the icon centered inside."""
+    bg = _THEME["button_bg"]
+    cell = tk.Frame(parent, width=cell_w, height=cell_h, background=bg, bd=0)
+    cell.pack_propagate(False)
+    kwargs: dict[str, object] = {
+        "background": bg,
+        "foreground": fg or _THEME["fg"],
+        "activebackground": _THEME["button_active"],
+        "activeforeground": _THEME["fg"],
+        "disabledforeground": _THEME["fg_dim"],
+        "relief": "flat",
+        "bd": 0,
+        "highlightthickness": 0,
+        "padx": 0,
+        "pady": 0,
+        "command": command,
+        "state": state,
+        "cursor": cursor if state == "normal" else "arrow",
+    }
+    if image is not None:
+        kwargs["image"] = image
+        kwargs["text"] = ""
+    else:
+        kwargs["text"] = text
+        kwargs["font"] = font
+    btn = tk.Button(cell, **kwargs)  # type: ignore[arg-type]
+    btn.place(relx=0.5, rely=0.5, anchor="center")
+    return cell, btn
+
+
+def _pack_mod_select_row(
+    parent: tk.Misc,
+    *,
+    kind: str,
+    variable: tk.Variable,
+    value: object | None = None,
+    command: Callable[[], None] | None = None,
+) -> tuple[ttk.Frame, ttk.Frame, ttk.Checkbutton | ttk.Radiobutton]:
+    """One checkbox/radio left of a column of archive file boxes.
+
+    Returns ``(row, files_col, indicator)``.
+    """
+    row = ttk.Frame(parent)
+    row.pack(anchor="w", fill="x", pady=(0, 2))
+    if kind == "check":
+        btn: ttk.Checkbutton | ttk.Radiobutton = ttk.Checkbutton(
+            row,
+            text="",
+            style="Dogma.TCheckbutton",
+            variable=variable,
+            command=command,
+            width=0,
+        )
+    else:
+        btn = ttk.Radiobutton(
+            row,
+            text="",
+            style="Dogma.TRadiobutton",
+            variable=variable,
+            value="" if value is None else value,
+            command=command,
+            width=0,
+        )
+    # Align with the first file box’s vertical center-ish.
+    btn.pack(side="left", anchor="n", padx=(0, 8), pady=(5, 0))
+    files = ttk.Frame(row)
+    files.pack(side="left", fill="x", expand=True)
+    return row, files, btn
+
+
+def _pack_path_install_label(parent: tk.Misc) -> None:
+    """Path mods ship in the package — no archive/file box, just Install."""
+    ttk.Label(parent, text="Install").pack(anchor="w", pady=(4, 0))
+
+
+class _ArchiveField:
+    """Archive file box: [ⓘ|name|links…|📁|✕] — selection lives outside on the left."""
+
+    # Fixed name column (~40% wider than the old ~400px / 56ch look).
+    _NAME_PX = 560
+
+    def __init__(
+        self,
+        parent: tk.Misc,
+        *,
+        mo2_root: Path,
+        dep: lib.Dependency,
+        on_linked: Callable[[str], None] | None = None,
+        on_cleared: Callable[[str], None] | None = None,
+        enable_file: bool = True,
+        info_sections_fn: Callable[[], list[tuple[str, list[str], str]]]
+        | None = None,
+        drop_registry: _ArchiveDropRegistry | None = None,
+        link_icons: dict[str, tk.PhotoImage] | None = None,
+        width_chars: int | None = None,
+    ) -> None:
+        self.mo2_root = Path(mo2_root)
+        self.dep = dep
+        self.on_linked = on_linked
+        self.on_cleared = on_cleared
+        self.enable_file = enable_file
+        self._busy = False
+        self._spin_job: str | None = None
+        self._spin_i = 0
+        self._has_file = False
+        _ = width_chars  # kept for call-site compat; width is pixel-based now
+
+        raised = _THEME["bg_raised"]
+        sunken = _THEME["bg_sunken"]
+        self.frame = ttk.Frame(parent)
+        self.box = tk.Frame(
+            self.frame,
+            background=raised,
+            highlightbackground=_THEME["border"],
+            highlightthickness=1,
+            bd=0,
+        )
+        self.box.pack(side="left", anchor="w")
+
+        # Tight vertical padding so the outer box hugs the row height.
+        inner = tk.Frame(self.box, background=raised, bd=0)
+        inner.pack(fill="x", padx=3, pady=1)
+
+        self._drop_hosts: list[tk.Misc] = [self.box, inner]
+        self.check: ttk.Checkbutton | None = None
+        self.radio: ttk.Radiobutton | None = None
+        self._alert = False
+
+        if info_sections_fn is not None:
+            info = _pack_info_icon(inner, info_sections_fn, bg=raised)
+            info.pack(side="left", padx=(2, 6))
+            self._drop_hosts.append(info)
+
+        name_wrap = tk.Frame(
+            inner,
+            width=self._NAME_PX,
+            background=sunken,
+            highlightbackground=_THEME["border"],
+            highlightthickness=1,
+            bd=0,
+        )
+        name_wrap.pack(side="left", fill="y", pady=0)
+        name_wrap.pack_propagate(False)
+        self.name_var = tk.StringVar(value="")
+        self.name_lbl = tk.Label(
+            name_wrap,
+            textvariable=self.name_var,
+            background=sunken,
+            foreground=_THEME["fg_placeholder"],
+            font=("Segoe UI", 9),
+            anchor="w",
+            padx=6,
+            pady=1,
+        )
+        self.name_lbl.pack(fill="both", expand=True)
+        self._drop_hosts.extend([name_wrap, self.name_lbl])
+        if enable_file:
+
+            def _browse_click(_event: tk.Event | None = None) -> None:
+                self._browse()
+
+            for host in (name_wrap, self.name_lbl):
+                host.configure(cursor="hand2")
+                host.bind("<Button-1>", _browse_click, add="+")
+
+        btns = tk.Frame(inner, background=raised, bd=0)
+        btns.pack(side="right")
+        self._drop_hosts.append(btns)
+
+        self.dl_btn: tk.Button | None = None
+        self.browse_btn: tk.Button | None = None
+        self.clear_btn: tk.Button | None = None
+        self._link_btns: list[tk.Button] = []
+        self._can_download = False
+        self._action = "none"
+        self._download_url = ""
+        self._dl_image: tk.PhotoImage | None = None
+        icons = link_icons or {}
+
+        if enable_file:
+            by_kind = {
+                kind: (url, mode)
+                for kind, url, mode in lib.dep_wizard_link_actions(dep)
+            }
+            # Custom site icons first, then Windows CLOUDDOWNLOAD, then 📁/✕.
+            for kind in (
+                "moddb",
+                "github",
+                "discord",
+                "kofi",
+                "patreon",
+                "download",
+            ):
+                entry = by_kind.get(kind)
+                active = entry is not None
+                url = entry[0] if entry else ""
+                mode = entry[1] if entry else "open"
+                img = icons.get(kind if active else f"{kind}_off") or icons.get(
+                    kind
+                )
+                fallback = {
+                    "download": "↓",
+                    "moddb": "M",
+                    "github": "G",
+                    "discord": "D",
+                    "kofi": "$",
+                    "patreon": "P",
+                }.get(kind, "↗")
+                # Same button/image path for every link icon (incl. download).
+                if active and mode == "download":
+                    self._can_download = True
+                    self._action = "download"
+                    self._download_url = url
+                    self._dl_image = img
+                    cmd: Callable[[], None] | None = self._start_download
+                    st, cur, fg = "normal", "hand2", None
+                elif active:
+                    cmd = lambda u=url, k=kind: self._open_url(u, k)
+                    st, cur, fg = "normal", "hand2", None
+                else:
+                    cmd = None
+                    st, cur, fg = "disabled", "arrow", _THEME["fg_dim"]
+                cell, btn = _archive_action_btn(
+                    btns,
+                    text=fallback if img is None else "",
+                    image=img,
+                    command=cmd,
+                    state=st,
+                    cursor=cur,
+                    fg=fg,
+                    cell_h=28,
+                )
+                if active and mode == "download":
+                    self.dl_btn = btn
+                cell.pack(side="left", padx=(4, 0))
+                self._link_btns.append(btn)
+                self._drop_hosts.extend([cell, btn])
+
+            browse_cell, self.browse_btn = _archive_action_btn(
+                btns,
+                text="📁",
+                command=self._browse,
+            )
+            browse_cell.pack(side="left", padx=(4, 0))
+            self._drop_hosts.extend([browse_cell, self.browse_btn])
+
+            clear_cell, self.clear_btn = _archive_action_btn(
+                btns,
+                text="✕",
+                command=self._clear,
+                fg=_THEME["fg_muted"],
+            )
+            clear_cell.pack(side="left", padx=(4, 0))
+            self._drop_hosts.extend([clear_cell, self.clear_btn])
+
+        if enable_file and drop_registry is not None:
+            drop_registry.register(self)
+
+        self.refresh()
+
+    def contains_widget(self, widget: tk.Misc | None) -> bool:
+        """True when ``widget`` is this file box or a child of it."""
+        cur: tk.Misc | None = widget
+        while cur is not None:
+            if cur is self.frame:
+                return True
+            try:
+                cur = cur.master  # type: ignore[assignment]
+            except tk.TclError:
+                break
+        return False
+
+    def set_alert(self, on: bool) -> None:
+        """Red border when this box is an unmet dependency target."""
+        self._alert = bool(on)
+        try:
+            self.box.configure(
+                highlightbackground=(
+                    _THEME["alert"] if self._alert else _THEME["border"]
+                ),
+                highlightthickness=1,
+            )
+        except tk.TclError:
+            pass
+
+    def pack(self, **kwargs: object) -> "_ArchiveField":
+        self.frame.pack(**kwargs)  # type: ignore[arg-type]
+        return self
+
+    def refresh(self) -> None:
+        if not self.enable_file:
+            self.name_var.set(self.dep.id)
+            self.name_lbl.configure(foreground=_THEME["fg_placeholder"])
+            self._has_file = False
+            return
+        path, _st = lib.resolve_local_archive(self.mo2_root, self.dep)
+        if path is not None:
+            self.name_var.set(path.name)
+            self.name_lbl.configure(foreground=_THEME["fg"])
+            self._has_file = True
+        else:
+            self.name_var.set(self.dep.id)
+            self.name_lbl.configure(foreground=_THEME["fg_placeholder"])
+            self._has_file = False
+        if self.clear_btn is not None and not self._busy:
+            self.clear_btn.configure(
+                state=("normal" if self._has_file else "disabled"),
+                foreground=(
+                    _THEME["fg_muted"] if self._has_file else _THEME["fg_dim"]
+                ),
+            )
+
+    def _set_busy(self, busy: bool) -> None:
+        self._busy = busy
+        if self.browse_btn is None:
+            return
+        if busy:
+            self.browse_btn.configure(state="disabled")
+            if self.clear_btn is not None:
+                self.clear_btn.configure(state="disabled")
+            for btn in self._link_btns:
+                btn.configure(state="disabled")
+            if self.dl_btn is not None:
+                # Drop image while spinning so the glyph is visible.
+                self.dl_btn.configure(state="disabled", image="", text="⏳")
+            self._spin_i = 0
+            self._tick_spin()
+        else:
+            if self._spin_job is not None:
+                try:
+                    self.frame.after_cancel(self._spin_job)
+                except (tk.TclError, ValueError):
+                    pass
+                self._spin_job = None
+            self.browse_btn.configure(state="normal")
+            for btn in self._link_btns:
+                btn.configure(state="normal")
+            if self.dl_btn is not None:
+                if self._dl_image is not None:
+                    self.dl_btn.configure(
+                        state="normal",
+                        image=self._dl_image,
+                        text="",
+                        cursor="hand2",
+                    )
+                else:
+                    self.dl_btn.configure(
+                        state="normal",
+                        text="↓",
+                        cursor="hand2",
+                    )
+            self.refresh()
+
+    def _tick_spin(self) -> None:
+        if not self._busy or self.dl_btn is None:
+            return
+        frames = ("◐", "◓", "◑", "◒")
+        self.dl_btn.configure(image="", text=frames[self._spin_i % len(frames)])
+        self._spin_i += 1
+        self._spin_job = self.frame.after(120, self._tick_spin)
+
+    def _on_drop_files(self, files: list[str]) -> None:
+        if self._busy or not self.enable_file or not files:
+            return
+        self._associate_path(Path(files[0]))
+
+    def _browse(self) -> None:
+        if self._busy or not self.enable_file:
+            return
+        path = filedialog.askopenfilename(
+            title=f"Archive for {self.dep.id}",
+            filetypes=[
+                ("Archives", "*.zip *.7z *.rar *.7zip"),
+                ("All files", "*.*"),
+            ],
+        )
+        if path:
+            self._associate_path(Path(path))
+
+    def _clear(self) -> None:
+        if self._busy or not self.enable_file or not self._has_file:
+            return
+        try:
+            lib.clear_archive_map_entry(self.mo2_root, self.dep.id)
+            lib.info(f"Wizard: cleared archive link for [{self.dep.id}]")
+        except Exception as exc:
+            lib.log_exception(exc, where=f"wizard.clear[{self.dep.id}]")
+            messagebox.showerror("D.O.G.M.A.", str(exc))
+            return
+        self.refresh()
+        if self.on_cleared is not None:
+            self.on_cleared(self.dep.id)
+
+    def _associate_path(self, src: Path) -> None:
+        try:
+            lib.associate_archive(self.mo2_root, self.dep.id, src)
+        except Exception as exc:
+            lib.log_exception(exc, where=f"wizard.associate[{self.dep.id}]")
+            messagebox.showerror("D.O.G.M.A.", str(exc))
+            return
+        self.refresh()
+        if self.on_linked is not None:
+            self.on_linked(self.dep.id)
+
+    def _open_url(self, url: str, kind: str) -> None:
+        u = (url or "").strip()
+        if not u:
+            return
+        lib.info(f"Wizard: {kind} clicked for [{self.dep.id}] → {u}")
+        webbrowser.open(u)
+
+    def _start_download(self) -> None:
+        if self._busy or not self._can_download:
+            return
+        self._set_busy(True)
+        lib.info(f"Wizard: download clicked for [{self.dep.id}]")
+
+        def _work() -> None:
+            err_msg: str | None = None
+            try:
+                lib.download_and_associate(self.mo2_root, self.dep)
+            except Exception as exc:
+                lib.log_exception(exc, where=f"wizard.download[{self.dep.id}]")
+                err_msg = str(exc)
+
+            def _done() -> None:
+                self._set_busy(False)
+                if err_msg:
+                    messagebox.showerror("D.O.G.M.A.", err_msg)
+                    return
+                self.refresh()
+                if self.on_linked is not None:
+                    self.on_linked(self.dep.id)
+
+            try:
+                self.frame.after(0, _done)
+            except tk.TclError:
+                pass
+
+        threading.Thread(target=_work, daemon=True).start()
 
 
 def _expand_deps_unique(
@@ -1011,9 +1597,11 @@ def run_wizard(
 
     if initial is None:
         lib.apply_feature_option_defaults(data, installed_feats)
+        # Wizard UI starts with no radio picks — re-click clears; requires:
+        # gate Install instead of auto-selecting a choice.
         initial = lib.InstallerSelection(
             option_ids=[o.id for o in options if o.default],
-            exclusive_picks=lib.default_exclusive_picks(data),
+            exclusive_picks={},
         )
     else:
         # Still apply feature defaults for ids not in a prior selection
@@ -1059,13 +1647,21 @@ def _run_wizard_ui(
     root = tk.Tk()
     root.title("D.O.G.M.A. Setup")
     _apply_dark_theme(root)
+    link_icons = _load_link_icons(root)
+    drop_registry = _ArchiveDropRegistry(root)
+    if not drop_registry.ok:
+        lib.warn(
+            "windnd not available — drag-drop onto archive boxes is disabled "
+            "(folder button still works)"
+        )
     root.update_idletasks()
     screen_w = max(800, int(root.winfo_screenwidth()))
     screen_h = max(600, int(root.winfo_screenheight()))
-    # ~half previous full-width wizard; keep tall.
-    win_w = min(960, max(560, (screen_w - 32) // 2))
+    # Wider file boxes need a bit more horizontal room; keep tall.
+    win_w = min(1100, max(640, int((screen_w - 32) * 0.55))) - 100
+    win_w = max(540, win_w)
     win_h = min(1080, screen_h - 64)
-    root.minsize(min(560, win_w), min(700, win_h))
+    root.minsize(min(640, win_w), min(700, win_h))
     pos_x = max(0, (screen_w - win_w) // 2)
     pos_y = max(0, (screen_h - win_h) // 2)
     root.geometry(f"{win_w}x{win_h}+{pos_x}+{pos_y}")
@@ -1143,11 +1739,12 @@ def _run_wizard_ui(
 
     bool_vars: dict[str, tk.BooleanVar] = {}
     exclusive_vars: dict[str, tk.StringVar] = {}
-    none_radios: dict[str, ttk.Radiobutton] = {}
     group_defaults: dict[str, str] = {}
     page_option_ids: list[str] = []
     for group, packs in radio_groups.items():
-        default_pack = ""
+        # Preferred fallback when a selected option requires this group — not a
+        # default selection (radios start empty unless restored / required).
+        default_pack = packs[0].id if packs else ""
         parent = pack_by_id.get(group)
         for opt in options:
             for pack_id in opt.requires:
@@ -1158,14 +1755,14 @@ def _run_wizard_ui(
                 if pack is not None:
                     default_pack = pack_id
                     break
-            if default_pack:
-                break
-        if not default_pack and packs:
-            default_pack = packs[0].id
+            else:
+                continue
+            break
         group_defaults[group] = default_pack
         start = initial_picks.get(group, "")
         if start and start not in {p.id for p in packs}:
             start = ""
+        # Fresh open: never auto-select a radio choice.
         exclusive_vars[group] = tk.StringVar(value=start)
 
     def _add_desc(parent: ttk.Frame, desc: str) -> None:
@@ -1177,50 +1774,83 @@ def _run_wizard_ui(
             pady=(4, 6),
         )
 
-    def _add_instructions(parent: ttk.Frame, deps: list[lib.Dependency]) -> None:
-        """Append short place/buy hints in parens after Install / radio label."""
-        folder = _win_path(dogma_dl)
-        rows = _manual_instruction_rows(deps)
-        if not rows:
-            return
-        bg = _frame_bg(parent)
-        for buy_url, stem in rows:
-            chunk = ttk.Frame(parent)
-            chunk.pack(side="left", padx=(4, 0))
+    # leaf id → all archive boxes (same leaf can appear in multiple radio choices)
+    archive_fields: dict[str, list[_ArchiveField]] = {}
+    # option id → leaf pack ids that need archives
+    option_archive_leaves: dict[str, list[str]] = {}
 
-            def _muted(text: str, parent_row: ttk.Frame = chunk) -> None:
-                tk.Label(
-                    parent_row,
-                    text=text,
-                    background=bg,
-                    foreground=_THEME["fg_muted"],
-                    font=("Segoe UI", 10),
-                    borderwidth=0,
-                    padx=0,
-                    pady=0,
-                ).pack(side="left")
+    def _leaves_linked(leaf_ids: list[str]) -> bool:
+        if not leaf_ids:
+            return True
+        for lid in leaf_ids:
+            leaf = pack_by_id.get(lid)
+            if leaf is None:
+                return False
+            path, _st = lib.resolve_local_archive(mo2_root, leaf)
+            if path is None:
+                return False
+        return True
 
-            _muted("(")
-            if buy_url:
-                _muted("buy ")
-                _pack_dotted_link(
-                    chunk,
-                    text="here",
-                    tip=buy_url,
-                    command=lambda u=buy_url: webbrowser.open(u),
-                ).pack(side="left")
-                _muted(", place zip ")
-            else:
-                _muted("place zip ")
-            _pack_dotted_link(
-                chunk,
-                text="here",
-                tip=folder,
-                command=lambda: _open_in_explorer(dogma_dl),
-            ).pack(side="left")
-            _muted(" and name it ")
-            _selectable_stem(chunk, stem, background=bg).pack(side="left")
-            _muted(")")
+    def _auto_check_for_leaf(leaf_id: str) -> None:
+        for oid, leaves in option_archive_leaves.items():
+            if leaf_id not in leaves:
+                continue
+            if not _leaves_linked(leaves):
+                continue
+            bv = bool_vars.get(oid)
+            if bv is not None:
+                bv.set(True)
+        _on_selection_changed()
+
+    def _leaf_info_sections(
+        leaf: lib.Dependency,
+    ) -> Callable[[], list[tuple[str, list[str], str]]]:
+        feat = data.features.get(leaf.path) if leaf.path else None
+
+        def _sections(
+            L: lib.Dependency = leaf,
+            f: lib.FeatureMeta | None = feat,
+        ) -> list[tuple[str, list[str], str]]:
+            return _tooltip_sections_for(
+                [L],
+                feature=f if L.path else None,
+                path_pack=L if L.path else None,
+            )
+
+        return _sections
+
+    def _add_archive_fields(
+        parent: ttk.Frame,
+        deps: list[lib.Dependency],
+        *,
+        option_id: str | None = None,
+    ) -> list[lib.Dependency]:
+        leaves: list[lib.Dependency] = []
+        seen: set[str] = set()
+        for dep in deps:
+            for leaf in lib.archive_leaves_for_pack(pack_by_id, dep.id):
+                if leaf.id in seen:
+                    continue
+                seen.add(leaf.id)
+                leaves.append(leaf)
+        if option_id is not None:
+            option_archive_leaves[option_id] = [L.id for L in leaves]
+        if not leaves:
+            return []
+
+        for leaf in leaves:
+            field = _ArchiveField(
+                parent,
+                mo2_root=mo2_root,
+                dep=leaf,
+                on_linked=_auto_check_for_leaf,
+                info_sections_fn=_leaf_info_sections(leaf),
+                drop_registry=drop_registry,
+                link_icons=link_icons,
+            )
+            field.pack(anchor="w", pady=(0, 4))
+            archive_fields.setdefault(leaf.id, []).append(field)
+        return leaves
 
     def _catalog_sections_for(
         deps: list[lib.Dependency],
@@ -1323,26 +1953,58 @@ def _run_wizard_ui(
         return [oid for oid, bv in bool_vars.items() if bv.get()]
 
     opt_by_id = {o.id: o for o in options}
+    install_btn_holder: dict[str, ttk.Button] = {}
+    depends_warn_var = tk.StringVar(value="")
 
-    def _sync_exclusive_requirements(*_args: object) -> None:
-        required = lib.required_exclusive_groups(data, _selected_option_ids())
-        for group, var in exclusive_vars.items():
-            none_btn = none_radios.get(group)
-            if group in required:
-                if none_btn is not None:
-                    none_btn.state(["disabled"])
-                if not var.get():
-                    var.set(required[group] or group_defaults.get(group, ""))
-            else:
-                if none_btn is not None:
-                    none_btn.state(["!disabled"])
+    def _unmet_dependency_leaf_ids() -> set[str]:
+        """Depend leaf ids missing archives for selected checkbox mods.
+
+        Empty radios are valid (no red). Red only when a selected mod has
+        ``depends:`` archives that still need linking.
+        """
+        unmet: set[str] = set()
+        for oid in _selected_option_ids():
+            leaves = option_archive_leaves.get(oid) or []
+            if not leaves:
+                continue
+            primary = oid if oid in leaves else leaves[0]
+            for lid in leaves:
+                if lid == primary:
+                    continue
+                leaf = pack_by_id.get(lid)
+                if leaf is None:
+                    unmet.add(lid)
+                    continue
+                path, _st = lib.resolve_local_archive(mo2_root, leaf)
+                if path is None:
+                    unmet.add(lid)
+        return unmet
+
+    def _on_selection_changed(*_args: object) -> None:
+        unmet = _unmet_dependency_leaf_ids()
+        for lid, fields in archive_fields.items():
+            on = lid in unmet
+            for field in fields:
+                field.set_alert(on)
+        blocked = bool(unmet)
+        btn = install_btn_holder.get("btn")
+        if btn is not None:
+            try:
+                btn.configure(state=("disabled" if blocked else "normal"))
+            except tk.TclError:
+                pass
+        depends_warn_var.set(
+            "You must also install dependencies for selected mods"
+            if blocked
+            else ""
+        )
 
     def _select_all() -> None:
         for oid in page_option_ids:
             bv = bool_vars.get(oid)
             if bv is not None:
                 bv.set(True)
-        _sync_exclusive_requirements()
+        _on_selection_changed()
 
     def _deselect_all() -> None:
         for oid in page_option_ids:
@@ -1351,7 +2013,7 @@ def _run_wizard_ui(
                 bv.set(False)
         for var in exclusive_vars.values():
             var.set("")
-        _sync_exclusive_requirements()
+        _on_selection_changed()
 
     ttk.Button(sel_btns, text="Select all", command=_select_all).pack(
         side="left", padx=(0, 6)
@@ -1373,6 +2035,7 @@ def _run_wizard_ui(
                 title = pack.id
         elif feat is not None:
             title = feat.display_name
+
         _title_row(options_col, title, url=url)
         frame = ttk.Frame(options_col, padding=(4, 4))
         frame.pack(fill="x", pady=(0, 8), padx=2)
@@ -1386,37 +2049,69 @@ def _run_wizard_ui(
         bool_vars[opt.id] = bv
         page_option_ids.append(opt.id)
 
-        def _opt_sections(
-            o: lib.InstallerOption = opt,
-            p: lib.Dependency | None = pack,
-            f: lib.FeatureMeta | None = feat,
-        ) -> list[tuple[str, list[str], str]]:
-            return _tooltip_sections_for(
-                _deps_for_option(o),
-                feature=f if p is not None and p.path else None,
-                requires=list(o.requires),
-                path_pack=p if p is not None and p.path else None,
-            )
-
-        choice_row = _pack_hoverable_choice(
+        _row, files_col, _chk = _pack_mod_select_row(
             frame,
             kind="check",
-            text="Install",
             variable=bv,
-            command=_sync_exclusive_requirements,
-            sections_fn=_opt_sections,
+            command=_on_selection_changed,
         )
-        if pack is not None:
-            _add_instructions(choice_row, [pack])
-            if pack.path:
+
+        is_path_mod = (pack is not None and bool(pack.path)) or (
+            pack is None and feat is not None
+        )
+        leaves: list[lib.Dependency] = []
+        if is_path_mod:
+            # Packaged path: mods — no links / file box.
+            _pack_path_install_label(files_col)
+            if pack is not None:
                 _add_desc(frame, _pack_blurb(pack))
                 _desc_spacer(frame)
-        elif feat is not None:
-            step_deps = [pack_by_id[m] for m in opt.mods if m in pack_by_id]
-            _add_instructions(choice_row, step_deps)
-            if opt.desc.strip():
+            elif opt.desc.strip():
                 _add_desc(frame, opt.desc)
                 _desc_spacer(frame)
+        elif pack is not None:
+            leaves = _add_archive_fields(
+                files_col,
+                [pack],
+                option_id=opt.id,
+            )
+
+        # No-archive non-path options: checkbox + name-only box.
+        if not is_path_mod and not leaves:
+            select_dep = pack
+            if select_dep is None:
+                select_dep = lib.Dependency(
+                    id=opt.id, tier="suggested", source="user"
+                )
+            field = _ArchiveField(
+                files_col,
+                mo2_root=mo2_root,
+                dep=select_dep,
+                enable_file=False,
+                info_sections_fn=_leaf_info_sections(select_dep)
+                if pack is not None
+                else (
+                    lambda o=opt, f=feat: _tooltip_sections_for(
+                        _deps_for_option(o),
+                        feature=f,
+                        requires=list(o.requires),
+                    )
+                ),
+            )
+            field.pack(anchor="w", pady=(0, 4))
+
+        # Fresh wizard: auto-check when archives are already linked.
+        linked_leaves = option_archive_leaves.get(opt.id) or []
+        if (
+            linked_leaves
+            and _leaves_linked(linked_leaves)
+            and (initial is None or not prior)
+        ):
+            bv.set(True)
+
+    def _add_or_separator(parent: ttk.Frame) -> None:
+        # Quiet gap between radio choices (no "OR" label).
+        ttk.Frame(parent, height=4).pack(fill="x", pady=(2, 2))
 
     def _add_radio_block(group: str) -> None:
         packs = radio_groups[group]
@@ -1427,45 +2122,39 @@ def _run_wizard_ui(
         frame = ttk.Frame(options_col, padding=(4, 4))
         frame.pack(fill="x", pady=(0, 8), padx=2)
         var = exclusive_vars[group]
-        var.trace_add("write", lambda *_a: _sync_exclusive_requirements())
+        var.trace_add("write", lambda *_a: _on_selection_changed())
 
         if parent is not None and parent.desc.strip():
             _add_desc(frame, parent.desc)
             _desc_spacer(frame)
 
-        none_btn = ttk.Radiobutton(
-            frame,
-            text="None",
-            style="Dogma.TRadiobutton",
-            variable=var,
-            value="",
-        )
-        none_btn.pack(anchor="w")
-        none_radios[group] = none_btn
+        def _bind_radio_reclick(
+            btn: ttk.Radiobutton, pack_id: str
+        ) -> None:
+            """Re-clicking the selected radio clears the pick (none)."""
 
-        for pack in packs:
-            label = pack.choice or pack.id
-            choice_url = _url_display_link(pack)
-            head = ttk.Frame(frame)
-            head.pack(anchor="w", fill="x", pady=(6, 0))
+            def _press(_event: tk.Event | None = None) -> str | None:
+                if var.get() == pack_id:
+                    var.set("")
+                    return "break"
+                return None
 
-            def _radio_sections(
-                g: str = group, p: lib.Dependency = pack
-            ) -> list[tuple[str, list[str], str]]:
-                return _tooltip_sections_for(_preview_deps_for_choice(g, p))
+            btn.bind("<Button-1>", _press, add="+")
 
-            choice_row = _pack_hoverable_choice(
-                head,
+        for i, pack in enumerate(packs):
+            if i > 0:
+                _add_or_separator(frame)
+
+            _row, files_col, radio_btn = _pack_mod_select_row(
+                frame,
                 kind="radio",
-                text=label,
                 variable=var,
                 value=pack.id,
-                command=_sync_exclusive_requirements,
-                sections_fn=_radio_sections,
-                link_url=choice_url,
+                command=_on_selection_changed,
             )
+            _bind_radio_reclick(radio_btn, pack.id)
 
-            step_deps = []
+            step_deps: list[lib.Dependency] = []
             try:
                 leaf_ids = lib.expand_pack_composition(pack_by_id, pack.id)
             except ValueError:
@@ -1474,7 +2163,27 @@ def _run_wizard_ui(
                 leaf = pack_by_id.get(lid)
                 if leaf is not None:
                     step_deps.append(leaf)
-            _add_instructions(choice_row, step_deps)
+
+            # Path choices: no file box. File boxes do not toggle the radio.
+            if pack.path:
+                _pack_path_install_label(files_col)
+            else:
+                leaves = _add_archive_fields(files_col, step_deps)
+                if not leaves:
+                    label = pack.choice or pack.id
+                    pick_dep = lib.Dependency(
+                        id=label, tier="suggested", source="user"
+                    )
+                    field = _ArchiveField(
+                        files_col,
+                        mo2_root=mo2_root,
+                        dep=pick_dep,
+                        enable_file=False,
+                        info_sections_fn=lambda g=group, p=pack: _tooltip_sections_for(
+                            _preview_deps_for_choice(g, p)
+                        ),
+                    )
+                    field.pack(anchor="w", pady=(0, 4))
 
     for kind, sid in lib.wizard_section_order(data, min_stage=min_stage):
         if kind == "radio":
@@ -1483,8 +2192,6 @@ def _run_wizard_ui(
             opt = opt_by_id.get(sid)
             if opt is not None:
                 _add_option_block(opt)
-
-    _sync_exclusive_requirements()
 
     def collect() -> lib.InstallerSelection:
         picks = {g: v.get() for g, v in exclusive_vars.items()}
@@ -1505,7 +2212,27 @@ def _run_wizard_ui(
         if not chosen.option_ids and not any(chosen.exclusive_picks.values()):
             messagebox.showwarning(
                 "D.O.G.M.A.",
-                "Select at least one option, or Cancel.",
+                "Select at least one option.",
+            )
+            return
+        if _unmet_dependency_leaf_ids():
+            messagebox.showwarning(
+                "D.O.G.M.A.",
+                "You must also install dependencies for selected mods.",
+            )
+            _on_selection_changed()
+            return
+        missing = lib.missing_archives_for_selection(mo2_root, data, chosen)
+        if missing:
+            preview = ", ".join(missing[:8])
+            extra = f" (+{len(missing) - 8} more)" if len(missing) > 8 else ""
+            lib.warn(
+                f"Install blocked — missing archives: {', '.join(missing)}"
+            )
+            messagebox.showwarning(
+                "D.O.G.M.A.",
+                "These selected mods still need an archive linked "
+                f"(download, $, or folder):\n\n{preview}{extra}",
             )
             return
         try:
@@ -1529,10 +2256,18 @@ def _run_wizard_ui(
 
     footer = ttk.Frame(root, padding=(20, 10, 20, 16))
     footer.pack(fill="x")
-    ttk.Button(footer, text="Cancel", command=on_cancel).pack(
-        side="right", padx=(8, 0)
-    )
-    ttk.Button(footer, text="Install", command=on_install).pack(side="right")
+    ttk.Label(
+        footer,
+        textvariable=depends_warn_var,
+        foreground=_THEME["alert"],
+        font=("Segoe UI", 9),
+        anchor="w",
+        justify="left",
+    ).pack(side="left", fill="x", expand=True, padx=(0, 12))
+    install_btn = ttk.Button(footer, text="Install", command=on_install)
+    install_btn.pack(side="right")
+    install_btn_holder["btn"] = install_btn
+    _on_selection_changed()
 
     root.protocol("WM_DELETE_WINDOW", on_cancel)
     root.mainloop()

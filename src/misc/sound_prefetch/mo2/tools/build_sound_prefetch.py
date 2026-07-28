@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Build dogma_sfx_prefetch.ltx from enabled MO2 mods' loose sounds.
 
-Part of feature src/misc/sound_prefetch. Shipped to mods/DOGMA/mo2/ via the
-mo2/ build exception. Runtime script is built normally into gamedata/scripts/.
+Part of feature src/misc/sound_prefetch. Shipped to mods/DOGMA/mo2/tools/
+via the mo2/ build exception. Runtime script is built normally into gamedata/scripts/.
 
 Skips .ogg files >= 100 KB (music / long ambience) so prefetch stays focused
 on short SFX that hitch on first play.
 
-  mods/DOGMA/mo2/tools/DOGMA SFX Prefetch.bat   (MO2 Executable)
+  mods/DOGMA/mo2/tools/DOGMA SFX Prefetch.bat   (or D.O.G.M.A. Optimize)
   overwrite/gamedata/configs/dogma_sfx_prefetch.ltx  (generated)
 
   py -3 build_sound_prefetch.py
@@ -349,8 +349,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description=(
             "Scan enabled MO2 mods for loose sounds and write dogma_sfx_prefetch.ltx "
-            "into overwrite/gamedata. Register mods/DOGMA/mo2/build_sound_prefetch.bat "
-            "in MO2 Executables with Start in = instance root."
+            "into overwrite/gamedata. Use DOGMA Optimize / DOGMA SFX Prefetch from "
+            "MO2 Executables (or run this script with --mo2-root)."
         )
     )
     p.add_argument(

@@ -17,27 +17,21 @@ _G.dogma_hud_medik_conf = {
 		"bo_chem",
 	},
 
-	-- Visible slots only (2 rows x 3 cols). `tex` = atlas index above.
-	-- Dropped Medik's rightmost column; grid shifted +0.5 col to stay centered.
+	-- Visible slots (2x3). `tex` = atlas index. `fmt`: int | pct
+	-- `tint`: nil = always white glyph; "rad"/"bleed" = white→green/red by value.
 	SLOTS = {
 		-- row 1
-		{ id = "rad_dose", tex = 3 }, -- body rad (dosimeter)
-		{ id = "rad_restore", tex = 3 }, -- RadiationRestore rate
-		{ id = "rad_protect", tex = 6 }, -- RadiationProtection
+		{ id = "rad_dose", tex = 3, fmt = "int", tint = "rad", tint_max = 999 },
+		{ id = "rad_restore", tex = 3, fmt = "int" },
+		{ id = "rad_protect", tex = 6, fmt = "pct" },
 		-- row 2
-		{ id = "bleed", tex = 2 }, -- current bleed intensity
-		{ id = "bleed_restore", tex = 2 }, -- BleedingRestore rate
-		{ id = "bleed_protect", tex = 2 }, -- WoundImmunity (bleed/wound protection)
+		{ id = "bleed", tex = 2, fmt = "int", tint = "bleed", tint_max = 999 },
+		{ id = "bleed_restore", tex = 2, fmt = "int" },
+		{ id = "bleed_protect", tex = 2, fmt = "pct" },
 	},
 
-	-- Same units as inventory tooltips (ish_item_stats magnitudes), clamped 0-999.
-	SCALE = {
-		rad_restore = 30000, -- mSv/sec-ish
-		rad_protect = 3300, -- percent-ish
-		bleed = 100, -- 0-1 → 0-100
-		bleed_restore = 150000, -- ml/min-ish
-		bleed_protect = 100, -- 0-1 → 0-100
-	},
+	-- HUD rad-icon mSv scale (G_FLAT Msv Above Radiation Icon / item_device tip).
+	MSV_K = 10000 * 0.387,
 
 	-- Medik layout constants (medik_ui UIMedik:__init)
 	LAYOUT = {

@@ -1,7 +1,7 @@
 @echo off
 setlocal
-REM DOGMA Sound Prefetch builder (feature-local; also via DOGMA SFX Prefetch.bat).
-REM Shipped to mods\DOGMA\mo2\ from src\misc\sound_prefetch\mo2\.
+REM DOGMA Sound Prefetch builder (also via DOGMA Optimize / DOGMA SFX Prefetch.bat).
+REM Shipped to mods\DOGMA\mo2\tools\ from src\misc\sound_prefetch\mo2\tools\.
 REM Requires Python 3. No pause.
 
 where py >nul 2>nul

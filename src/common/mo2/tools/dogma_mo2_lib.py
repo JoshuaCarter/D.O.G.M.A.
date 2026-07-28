@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import configparser
 import json
 import os
 import re
@@ -488,6 +489,112 @@ def _parse_str_list(raw, *, field: str) -> list[str]:
     return out
 
 
+def _parse_radio_option_groups(raw, *, field: str) -> list[list[str]]:
+    """Parse radio ``options:`` — each entry is one choice (one pack or several).
+
+    Supported YAML shapes::
+
+        options:
+          - Pack A
+          - Pack B
+          - [Pack A, Pack B]          # flow list → install both
+          -                             # nested list → install both
+            - Pack A
+            - Pack B
+          - |                           # one pack id per line
+            Pack A
+            Pack B
+    """
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ValueError(f"{field} must be a list")
+    groups: list[list[str]] = []
+    for i, item in enumerate(raw):
+        if isinstance(item, list):
+            ids = [str(x).strip() for x in item if str(x).strip()]
+            if not ids:
+                raise ValueError(f"{field}[{i}]: empty choice list")
+            groups.append(ids)
+            continue
+        if isinstance(item, str):
+            lines = [
+                ln.strip()
+                for ln in item.replace("\r\n", "\n").split("\n")
+                if ln.strip() and not ln.strip().startswith("#")
+            ]
+            if not lines:
+                raise ValueError(f"{field}[{i}]: empty choice")
+            groups.append(lines)
+            continue
+        raise ValueError(
+            f"{field}[{i}]: expected a pack id string or a list of pack ids, "
+            f"got {type(item).__name__}"
+        )
+    return groups
+
+
+def _inline_composition_id(pack_ids: list[str]) -> str:
+    """Build a stable id for an inline multi-pack radio choice."""
+    ids = [str(x).strip() for x in pack_ids if str(x).strip()]
+    if not ids:
+        return ""
+    if len(ids) == 1:
+        return ids[0]
+    parts = [i.split() for i in ids]
+    common: list[str] = []
+    for words in zip(*parts):
+        if len(set(w.lower() for w in words)) == 1:
+            common.append(words[0])
+        else:
+            break
+    if common:
+        tails = [" ".join(p[len(common) :]) for p in parts]
+        if all(tails):
+            return f"{' '.join(common)} {' + '.join(tails)}"
+    return " + ".join(ids)
+
+
+def _materialize_inline_radio_compositions(
+    suggested: list[Dependency],
+) -> list[Dependency]:
+    """Turn multi-pack ``options:`` entries into omit composition packs (depends:).
+
+    ``options: [A, B, [A, B]]`` becomes choice ids ``A``, ``B``, and a synthetic
+    composition pack (e.g. ``A + B``) when one is not already defined.
+    """
+    by_id = {d.id: d for d in suggested}
+    extras: list[Dependency] = []
+    for dep in suggested:
+        groups = list(dep.option_groups)
+        if not groups:
+            # Legacy / already flat options: treat each as a single-pack choice.
+            if dep.options and not dep.option_groups:
+                dep.option_groups = [[oid] for oid in dep.options]
+                groups = list(dep.option_groups)
+            else:
+                continue
+        new_options: list[str] = []
+        for group in groups:
+            if len(group) == 1:
+                new_options.append(group[0])
+                continue
+            syn_id = _inline_composition_id(group)
+            if syn_id not in by_id:
+                syn = Dependency(
+                    id=syn_id,
+                    tier="suggested",
+                    stage="omit",
+                    depends=list(group),
+                )
+                extras.append(syn)
+                by_id[syn_id] = syn
+            new_options.append(syn_id)
+        dep.options = new_options
+        dep.option_groups = [list(g) for g in groups]
+    return suggested + extras
+
+
 def _reject_legacy_defaults(item: dict, *, field: str) -> None:
     if item.get("defaults") is not None:
         raise ValueError(
@@ -569,9 +676,18 @@ level_meets = stage_meets
 class Dependency:
     id: str
     tier: str  # downloads (from a feature) | suggested
+    # Canonical auto-download target (filled from url_download:).
     url: str = ""
+    # Compat: first of url_kofi / url_patreon (legacy buy_url: maps here).
     buy_url: str = ""
-    path: str = ""  # local src/<path> feature (package zip); mutually exclusive w/ url
+    # Typed wizard links — each field is independent (own icon).
+    url_moddb: str = ""
+    url_github: str = ""
+    url_discord: str = ""
+    url_download: str = ""  # MO2 auto-fetch (ModDB or GitHub file/release)
+    url_kofi: str = ""
+    url_patreon: str = ""
+    path: str = ""  # local src/<path> feature (package zip); mutually exclusive w/ urls
     # omit|dev|release — FOMOD + wizard gate (empty = leaf / not a wizard entry)
     stage: str = ""
     archive_name: str = ""
@@ -592,9 +708,11 @@ class Dependency:
     group: str = ""  # section title override
     choice: str = ""  # radio label override
     # Compositional options (preferred):
-    #   stage: release + options: [A, B] → wizard None|A|B
-    #   options: [A, B] on a choice → expand to A+B (merge effects uniquely)
+    #   stage: release + options: [A, B] → wizard A|B (exclusive)
+    #   options entry may be a pack id, or a list of pack ids (inline A+B choice)
     options: list[str] = field(default_factory=list)
+    # Raw options: before materialize — each choice is one or more pack ids.
+    option_groups: list[list[str]] = field(default_factory=list)
     after_unpack: str = ""
     feature: str = ""  # owning feature path when from features.*.depends
 
@@ -617,9 +735,21 @@ class Dependency:
     def has_axr_effects(self) -> bool:
         return bool(self.resets or self.mcm or self.settings)
 
+    def has_remote_links(self) -> bool:
+        return bool(
+            self.url
+            or self.buy_url
+            or self.url_moddb
+            or self.url_github
+            or self.url_discord
+            or self.url_download
+            or self.url_kofi
+            or self.url_patreon
+        )
+
     def has_install_work(self) -> bool:
         """True if this pack is a download/install/enable unit (not a pure group)."""
-        return bool(self.url) or bool(self.path) or self.source == "user" or bool(
+        return bool(self.has_remote_links() or self.path or self.source == "user") or bool(
             self.enables or self.disables or self.moves or self.deletes
             or self.console or self.mcm or self.settings or self.resets
         )
@@ -944,8 +1074,7 @@ class ManifestData:
                 continue
             if (
                 pack.depends
-                and not pack.url
-                and not pack.buy_url
+                and not pack.has_remote_links()
                 and not (
                     pack.disables
                     or pack.deletes
@@ -1112,19 +1241,54 @@ def _validate_dep_link_roles(
     url: str,
     manual: bool,
     buy_url: str,
+    url_moddb: str = "",
+    url_github: str = "",
+    url_discord: str = "",
+    url_download: str = "",
+    url_kofi: str = "",
+    url_patreon: str = "",
 ) -> None:
-    """url: = ModDB/GitHub auto-download; buy_url: = paid storefront (never ModDB/GitHub)."""
+    """Validate typed url_* fields (and legacy url:/buy_url: mappings)."""
     if url and not manual:
-        if not (is_moddb_url(url) or is_github_url(url)):
+        if not (
+            is_moddb_url(url) or is_github_url(url) or is_discord_url(url)
+        ):
             raise ValueError(
-                f"{section}.{dep_id}.url: must be a ModDB or GitHub link "
-                f"(got {url!r}); use buy_url: for storefronts or omit url: for manual"
+                f"{section}.{dep_id}.url: removed — use url_moddb:/url_github:/"
+                f"url_discord:/url_download: (got {url!r})"
             )
+    if url_moddb and not is_moddb_url(url_moddb):
+        raise ValueError(
+            f"{section}.{dep_id}.url_moddb: must be a ModDB link (got {url_moddb!r})"
+        )
+    if url_github and not is_github_url(url_github):
+        raise ValueError(
+            f"{section}.{dep_id}.url_github: must be a GitHub link (got {url_github!r})"
+        )
+    if url_discord and not is_discord_url(url_discord):
+        raise ValueError(
+            f"{section}.{dep_id}.url_discord: must be a Discord link "
+            f"(got {url_discord!r})"
+        )
+    if url_download and not is_auto_download_url(url_download):
+        raise ValueError(
+            f"{section}.{dep_id}.url_download: must be a ModDB or GitHub download "
+            f"link (got {url_download!r})"
+        )
+    if url_kofi and not is_kofi_url(url_kofi):
+        raise ValueError(
+            f"{section}.{dep_id}.url_kofi: must be a Ko-fi link (got {url_kofi!r})"
+        )
+    if url_patreon and not is_patreon_url(url_patreon):
+        raise ValueError(
+            f"{section}.{dep_id}.url_patreon: must be a Patreon link "
+            f"(got {url_patreon!r})"
+        )
     if buy_url:
-        if is_moddb_url(buy_url) or is_github_url(buy_url):
+        if is_moddb_url(buy_url) or is_github_url(buy_url) or is_discord_url(buy_url):
             raise ValueError(
-                f"{section}.{dep_id}.buy_url: must be a storefront / purchase page, "
-                f"not ModDB or GitHub (got {buy_url!r}); put those under url:"
+                f"{section}.{dep_id}.buy_url: use url_kofi:/url_patreon: "
+                f"(got {buy_url!r})"
             )
 
 
@@ -1181,12 +1345,60 @@ def _dep_from_mapping(
     buy_url, _buy_manual = _parse_dep_url(
         item.get("buy_url"), field=f"{section}.{dep_id}.buy_url"
     )
+    url_moddb, _ = _parse_dep_url(
+        item.get("url_moddb"), field=f"{section}.{dep_id}.url_moddb"
+    )
+    url_github, _ = _parse_dep_url(
+        item.get("url_github"), field=f"{section}.{dep_id}.url_github"
+    )
+    url_discord, _ = _parse_dep_url(
+        item.get("url_discord"), field=f"{section}.{dep_id}.url_discord"
+    )
+    url_download, _ = _parse_dep_url(
+        item.get("url_download"), field=f"{section}.{dep_id}.url_download"
+    )
+    url_kofi, _ = _parse_dep_url(
+        item.get("url_kofi"), field=f"{section}.{dep_id}.url_kofi"
+    )
+    url_patreon, _ = _parse_dep_url(
+        item.get("url_patreon"), field=f"{section}.{dep_id}.url_patreon"
+    )
+    # Legacy url:/buy_url: → typed fields when omitted.
+    if url and not manual:
+        if is_discord_url(url):
+            url_discord = url_discord or url
+        elif is_moddb_url(url):
+            url_moddb = url_moddb or url
+            url_download = url_download or url
+        elif is_github_url(url):
+            url_github = url_github or url
+            url_download = url_download or url
+        else:
+            url_download = url_download or url
+    if buy_url:
+        if is_kofi_url(buy_url):
+            url_kofi = url_kofi or buy_url
+        elif is_patreon_url(buy_url):
+            url_patreon = url_patreon or buy_url
+        else:
+            # Unknown storefront — keep as Ko-fi slot for open-in-browser.
+            url_kofi = url_kofi or buy_url
+    # Canonical fields for older call sites.
+    url = url_download
+    buy_url = url_kofi or url_patreon
+    manual = not bool(url_download)
     _validate_dep_link_roles(
         dep_id=dep_id,
         section=section,
         url=url,
         manual=manual,
         buy_url=buy_url,
+        url_moddb=url_moddb,
+        url_github=url_github,
+        url_discord=url_discord,
+        url_download=url_download,
+        url_kofi=url_kofi,
+        url_patreon=url_patreon,
     )
     path = str(item.get("path") or "").strip().replace("\\", "/")
     # stage: omit|dev|release — FOMOD + wizard gate. Legacy: fomod:, level:, wizard:.
@@ -1209,20 +1421,26 @@ def _dep_from_mapping(
             stage = "release" if flag else "omit"
     if path and not stage:
         stage = "release"
-    if path and url:
+    has_links = bool(
+        url_moddb
+        or url_github
+        or url_discord
+        or url_download
+        or url_kofi
+        or url_patreon
+        or buy_url
+    )
+    if path and has_links:
         raise ValueError(
-            f"{section}.{dep_id}: use path: OR url:/buy_url:, not both"
-        )
-    if path and buy_url:
-        raise ValueError(
-            f"{section}.{dep_id}: use path: OR buy_url:, not both"
+            f"{section}.{dep_id}: use path: OR url_*: fields, not both"
         )
     source = str(item.get("source") or "").strip().lower()
+    auto_dl = (url_download or "").strip()
     if path:
         # Local package zip (mo2/packages/<path_key>.zip) — not a downloads/DOGMA manual.
         source = source or "auto"
-    elif manual or buy_url:
-        # No url: (or url: false) → user places the archive under downloads/DOGMA/.
+    elif (has_links and not auto_dl) or url_kofi or url_patreon:
+        # Paid / Discord / page-only → user places the archive under downloads/DOGMA/.
         source = "user"
     elif not source:
         source = "auto"
@@ -1270,8 +1488,14 @@ def _dep_from_mapping(
     return Dependency(
         id=dep_id,
         tier=tier,
-        url=url,
+        url=url_download,
         buy_url=buy_url,
+        url_moddb=url_moddb,
+        url_github=url_github,
+        url_discord=url_discord,
+        url_download=url_download,
+        url_kofi=url_kofi,
+        url_patreon=url_patreon,
         path=path,
         stage=stage,
         archive_name=str(
@@ -1298,7 +1522,10 @@ def _dep_from_mapping(
         exclusive=str(item.get("exclusive") or "").strip(),
         group=str(item.get("group") or "").strip(),
         choice=str(item.get("choice") or "").strip(),
-        options=_parse_str_list(item.get("options"), field=f"{section}.{dep_id}.options"),
+        options=[],
+        option_groups=_parse_radio_option_groups(
+            item.get("options"), field=f"{section}.{dep_id}.options"
+        ),
         after_unpack=str(item.get("after_unpack") or "").strip(),
         feature=feature,
         wizard_requires=wizard_req,
@@ -1509,18 +1736,47 @@ def _parse_features_block(feat_block: dict) -> dict[str, FeatureMeta]:
     return features
 
 
+def missing_archives_for_selection(
+    mo2_root: Path,
+    data: ManifestData,
+    selection: InstallerSelection,
+) -> list[str]:
+    """Pack ids that still need an archive for the chosen Install options/radios."""
+    pack_by_id = data.suggested_by_id()
+    missing: list[str] = []
+    seen: set[str] = set()
+
+    def _check(pack_id: str) -> None:
+        for leaf in archive_leaves_for_pack(pack_by_id, pack_id):
+            if leaf.id in seen:
+                continue
+            seen.add(leaf.id)
+            path, _st = resolve_local_archive(mo2_root, leaf)
+            if path is None:
+                missing.append(leaf.id)
+
+    for oid in selection.option_ids:
+        _check(oid)
+    for _group, pick in selection.exclusive_picks.items():
+        if pick:
+            _check(pick)
+    return missing
+
+
 def pack_needs_purchase(dep: Dependency) -> bool:
     """True when the user must buy/supply an archive (wizard default off)."""
-    if dep.path or dep.url:
+    if dep.path or dep_auto_download_url(dep):
         return False
-    # No auto-download url: → manual archive (optional buy_url:).
-    return True
+    return bool(dep.url_kofi or dep.url_patreon or dep.buy_url)
 
 
 def option_default_selected(
     opt: InstallerOption, pack_by_id: dict[str, Dependency]
 ) -> bool:
-    """Checked by default unless any seed pack needs purchase."""
+    """Checked by default only when no archive field is required (path mods).
+
+    Third-party packs default off; the wizard auto-checks when archives are linked.
+    """
     for mid in opt.mods:
         pack = pack_by_id.get(mid)
         if pack is None:
@@ -1531,9 +1787,11 @@ def option_default_selected(
             leaves = [mid]
         for lid in leaves:
             leaf = pack_by_id.get(lid, pack if lid == mid else None)
+            if leaf is not None and pack_needs_archive(leaf):
+                return False
             if leaf is not None and pack_needs_purchase(leaf):
                 return False
-        if pack_needs_purchase(pack):
+        if pack_needs_archive(pack) or pack_needs_purchase(pack):
             return False
     return True
 
@@ -1850,26 +2108,29 @@ def _parse_mods_file(raw: dict, *, source: str = "mods.yml") -> list[Dependency]
         mods_raw = raw.get("suggested_mods") or {}
         if not isinstance(mods_raw, dict):
             raise ValueError(f"{source}: suggested_mods: must be a mapping")
-        return _parse_external_map(
+        deps = _parse_external_map(
             mods_raw, tier="suggested", section="suggested_mods"
         )
+        return _materialize_inline_radio_compositions(deps)
     if set(raw.keys()) <= {"suggested", "suggestions"}:
         sug_block = raw.get("suggested") or raw.get("suggestions") or {}
         if not isinstance(sug_block, dict):
             raise ValueError(f"{source}: suggested packs must be a mapping")
-        return _parse_external_map(
+        deps = _parse_external_map(
             sug_block, tier="suggested", section="suggestions"
         )
-    return _parse_external_map(raw, tier="suggested", section=source)
+        return _materialize_inline_radio_compositions(deps)
+    deps = _parse_external_map(raw, tier="suggested", section=source)
+    return _materialize_inline_radio_compositions(deps)
 
 
 def is_wizard_radio_parent(dep: Dependency) -> bool:
     """``stage`` != omit + ``options:`` with no url/buy_url/path → radio section."""
+    has_options = bool(dep.options or dep.option_groups)
     return bool(
         dep.wizard
-        and dep.options
-        and not dep.url
-        and not dep.buy_url
+        and has_options
+        and not dep.has_remote_links()
         and not dep.path
     )
 
@@ -1892,19 +2153,20 @@ def _validate_mods_composition(suggested: list[Dependency]) -> None:
       - wizard mod details (url/buy_url; optional depends:), or
       - a wizard radio group (options: + no url/buy_url), or
       - a composition choice (depends: + no url; listed under a radio group).
-    ``options:`` is only for radio groups.
+    ``options:`` is only for radio groups. Multi-pack option entries are
+    materialized into omit composition packs before this runs.
     """
     by_id = {d.id: d for d in suggested}
     for dep in suggested:
-        if dep.options and not is_wizard_radio_parent(dep):
+        if (dep.options or dep.option_groups) and not is_wizard_radio_parent(dep):
             raise ValueError(
                 f"mods.{dep.id}: options: is only for radio groups "
                 f"(stage: release|dev, no url/buy_url) — use depends: for "
-                f"composition (e.g. SSS Latest & Preview)"
+                f"composition, or list several packs under one options: entry"
             )
-        if dep.wizard and dep.options and (dep.url or dep.buy_url):
+        if dep.wizard and (dep.options or dep.option_groups) and dep.has_remote_links():
             raise ValueError(
-                f"mods.{dep.id}: wizard radio groups must not have url:/buy_url:"
+                f"mods.{dep.id}: wizard radio groups must not have url_*/buy_url:"
             )
         for oid in dep.options:
             if oid not in by_id:
@@ -1913,6 +2175,16 @@ def _validate_mods_composition(suggested: list[Dependency]) -> None:
                 )
             if oid == dep.id:
                 raise ValueError(f"mods.{dep.id}: options: cannot reference itself")
+        for group in dep.option_groups:
+            for oid in group:
+                if oid not in by_id:
+                    raise ValueError(
+                        f"mods.{dep.id}: options entry {oid!r} missing from mods.yml"
+                    )
+                if oid == dep.id:
+                    raise ValueError(
+                        f"mods.{dep.id}: options: cannot reference itself"
+                    )
         for dep_id in dep.depends:
             if dep_id not in by_id:
                 raise ValueError(
@@ -2112,8 +2384,7 @@ def expand_pack_composition(
     # Composition-only: depends lists the packs this choice installs
     if (
         pack.depends
-        and not pack.url
-        and not pack.buy_url
+        and not pack.has_remote_links()
         and not pack.path
         and not is_wizard_radio_parent(pack)
     ):
@@ -2457,7 +2728,12 @@ def resolve_install_order(
         pack = pack_by_id[mid]
         if is_wizard_radio_parent(pack):
             continue
-        if pack.options and not pack.url and not pack.path and not pack.enables:
+        if (
+            pack.options
+            and not pack.has_remote_links()
+            and not pack.path
+            and not pack.enables
+        ):
             if not (
                 pack.disables
                 or pack.deletes
@@ -2471,8 +2747,7 @@ def resolve_install_order(
         # Pure composition choice already expanded into depends leaves
         if (
             pack.depends
-            and not pack.url
-            and not pack.buy_url
+            and not pack.has_remote_links()
             and not pack.path
             and not is_wizard_radio_parent(pack)
             and not (
@@ -3687,6 +3962,49 @@ def is_moddb_url(url: str) -> bool:
     return bool(url) and "moddb.com" in url.lower()
 
 
+def is_discord_url(url: str) -> bool:
+    """Discord channel/message/invite links — open in browser, manual archive."""
+    u = (url or "").strip().lower()
+    if not u:
+        return False
+    return any(
+        host in u
+        for host in (
+            "discord.com/",
+            "discord.gg/",
+            "discordapp.com/",
+            "discord.com?",
+            "discord.gg?",
+        )
+    ) or u.rstrip("/").endswith("discord.com") or u.rstrip("/").endswith(
+        "discord.gg"
+    )
+
+
+def is_kofi_url(url: str) -> bool:
+    u = (url or "").strip().lower()
+    return bool(u) and ("ko-fi.com" in u or "kofi.com" in u)
+
+
+def is_patreon_url(url: str) -> bool:
+    u = (url or "").strip().lower()
+    return bool(u) and "patreon.com" in u
+
+
+def is_auto_download_url(url: str) -> bool:
+    """True when MO2 can fetch the archive (ModDB / GitHub)."""
+    return is_moddb_url(url) or is_github_url(url)
+
+
+def is_open_page_url(url: str) -> bool:
+    """True when a typed url should open in a browser (not MO2 download)."""
+    return (
+        is_discord_url(url)
+        or is_kofi_url(url)
+        or is_patreon_url(url)
+    )
+
+
 def normalize_moddb_url(url: str) -> str:
     u = (url or "").strip()
     if not u:
@@ -3782,6 +4100,73 @@ def _moddb_http_get(url: str) -> str:
         raise RuntimeError(f"ModDB HTTP {exc.code} for {url}") from exc
     except urllib.error.URLError as exc:
         raise RuntimeError(f"ModDB fetch failed for {url}: {exc.reason}") from exc
+
+
+_MODDB_MIRROR_HREF_RE = re.compile(
+    r'href="((?:https://www\.moddb\.com)?/downloads/mirror/\d+/[^"]+)"',
+    re.I,
+)
+_MODDB_MIRROR_JS_RE = re.compile(
+    r'window\.location\.href\s*=\s*"(https://www\.moddb\.com/downloads/mirror/[^"]+)"',
+    re.I,
+)
+
+
+def resolve_moddb_mirror_url(start_url: str) -> str:
+    """Resolve ModDB ``/start/`` interstitial HTML to a ``/downloads/mirror/...`` URL.
+
+    MO2 ``download`` of a start page saves the countdown HTML (often as a bare
+    file id with no extension). The mirror link redirects to the real CDN zip.
+    """
+    url = (start_url or "").strip()
+    if not url:
+        return ""
+    if re.search(r"(?i)/downloads/mirror/\d+/", url):
+        if url.startswith("/"):
+            return "https://www.moddb.com" + url
+        return url.split("#", 1)[0]
+    # Addon/download start pages (and /start/<id>/all)
+    if not re.search(r"(?i)/(?:addons|downloads)/start/\d+", url):
+        return url
+    html = _moddb_http_get(url)
+    m = _MODDB_MIRROR_HREF_RE.search(html) or _MODDB_MIRROR_JS_RE.search(html)
+    if not m:
+        raise RuntimeError(
+            f"ModDB start page has no mirror link (interstitial only): {url}"
+        )
+    mirror = m.group(1).strip()
+    if mirror.startswith("/"):
+        mirror = "https://www.moddb.com" + mirror
+    return mirror.split("#", 1)[0]
+
+
+def _looks_like_html_file(path: Path) -> bool:
+    try:
+        with path.open("rb") as fh:
+            head = fh.read(96).lstrip().lower()
+    except OSError:
+        return False
+    return head.startswith(b"<!doctype html") or head.startswith(b"<html")
+
+
+def _purge_moddb_start_stubs(mo2_root: Path, *, file_id: str = "") -> None:
+    """Remove bare ModDB start-page leftovers MO2 may have saved as ``<file_id>``."""
+    fid = str(file_id or "").strip()
+    if not fid.isdigit():
+        return
+    top = mo2_root / "downloads"
+    if not top.is_dir():
+        return
+    for name in (fid, f"{fid}.meta"):
+        path = top / name
+        if not path.is_file():
+            continue
+        if name.endswith(".meta") or _looks_like_html_file(path) or not _is_archive_file(path):
+            try:
+                path.unlink()
+                warn(f"  removed ModDB start-page stub: downloads/{name}")
+            except OSError:
+                pass
 
 
 def _moddb_cache_path(cache_dir: Path | None) -> Path | None:
@@ -4696,6 +5081,307 @@ def downloads_dir(mo2_root: Path) -> Path:
     return d
 
 
+ARCHIVES_INI_NAME = "archives.ini"
+ARCHIVES_INI_SECTION = "archives"
+
+
+def archives_ini_path(mo2_root: Path) -> Path:
+    return downloads_dir(mo2_root) / ARCHIVES_INI_NAME
+
+
+def load_archive_map(mo2_root: Path) -> dict[str, str]:
+    """pack id → basename under downloads/DOGMA/ (from archives.ini)."""
+    path = archives_ini_path(mo2_root)
+    if not path.is_file():
+        return {}
+    cfg = configparser.ConfigParser()
+    try:
+        raw = path.read_text(encoding="utf-8")
+        # Allow keys with spaces / punctuation (pack ids).
+        cfg.optionxform = str  # type: ignore[method-assign]
+        cfg.read_string(raw)
+    except (OSError, configparser.Error, UnicodeError):
+        warn(f"could not read archive map: {path}")
+        return {}
+    if not cfg.has_section(ARCHIVES_INI_SECTION):
+        return {}
+    out: dict[str, str] = {}
+    for key, val in cfg.items(ARCHIVES_INI_SECTION):
+        kid = str(key).strip()
+        name = str(val).strip()
+        if kid and name:
+            out[kid] = Path(name).name
+    return out
+
+
+def save_archive_map(mo2_root: Path, mapping: dict[str, str]) -> Path:
+    """Write pack id → basename map to downloads/DOGMA/archives.ini."""
+    path = archives_ini_path(mo2_root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    cfg = configparser.ConfigParser()
+    cfg.optionxform = str  # type: ignore[method-assign]
+    cfg.add_section(ARCHIVES_INI_SECTION)
+    for kid in sorted(mapping.keys(), key=lambda s: s.lower()):
+        name = Path(str(mapping[kid]).strip()).name
+        if not kid.strip() or not name:
+            continue
+        cfg.set(ARCHIVES_INI_SECTION, kid.strip(), name)
+    with path.open("w", encoding="utf-8", newline="\n") as fh:
+        cfg.write(fh)
+    return path
+
+
+def set_archive_map_entry(mo2_root: Path, dep_id: str, basename: str) -> dict[str, str]:
+    """Upsert one pack → basename entry and save."""
+    mapping = load_archive_map(mo2_root)
+    kid = str(dep_id).strip()
+    name = Path(str(basename).strip()).name
+    if not kid or not name:
+        return mapping
+    mapping[kid] = name
+    path = save_archive_map(mo2_root, mapping)
+    info(f"  archives.ini: [{kid}]={name} ({path})")
+    return mapping
+
+
+def clear_archive_map_entry(mo2_root: Path, dep_id: str) -> dict[str, str]:
+    mapping = load_archive_map(mo2_root)
+    kid = str(dep_id).strip()
+    if kid in mapping:
+        del mapping[kid]
+        save_archive_map(mo2_root, mapping)
+    return mapping
+
+
+def mapped_archive_path(mo2_root: Path, dep: Dependency | str) -> Path | None:
+    """Resolved downloads/DOGMA file from archives.ini, if present on disk."""
+    dep_id = dep.id if isinstance(dep, Dependency) else str(dep)
+    name = load_archive_map(mo2_root).get(str(dep_id).strip(), "").strip()
+    if not name:
+        return None
+    path = downloads_dir(mo2_root) / Path(name).name
+    if _is_archive_file(path):
+        return path
+    return None
+
+
+def pack_needs_archive(dep: Dependency) -> bool:
+    """True when Setup should show an archive field (not a path: mod)."""
+    if dep.path:
+        return False
+    if is_wizard_radio_parent(dep):
+        return False
+    # Pure composition (depends only) — leaves get the fields, not this node.
+    if dep.depends and not dep.has_remote_links() and not dep.enables:
+        return False
+    return bool(dep.has_remote_links() or dep.source == "user")
+
+
+def dep_auto_download_url(dep: Dependency) -> str:
+    """URL used for MO2 auto-download (url_download: / legacy url:)."""
+    for candidate in (dep.url_download, dep.url):
+        u = (candidate or "").strip()
+        if u and is_auto_download_url(u):
+            return u
+    return ""
+
+
+def dep_wizard_link_actions(dep: Dependency) -> list[tuple[str, str, str]]:
+    """Wizard file-box link buttons: (kind, url, mode) mode=download|open.
+
+    kind is download|moddb|github|discord|kofi|patreon.
+    """
+    out: list[tuple[str, str, str]] = []
+    dl = dep_auto_download_url(dep)
+    if dl:
+        out.append(("download", dl, "download"))
+    if dep.url_moddb:
+        out.append(("moddb", dep.url_moddb.strip(), "open"))
+    if dep.url_github:
+        out.append(("github", dep.url_github.strip(), "open"))
+    if dep.url_discord:
+        out.append(("discord", dep.url_discord.strip(), "open"))
+    if dep.url_kofi:
+        out.append(("kofi", dep.url_kofi.strip(), "open"))
+    elif dep.buy_url and is_kofi_url(dep.buy_url):
+        out.append(("kofi", dep.buy_url.strip(), "open"))
+    if dep.url_patreon:
+        out.append(("patreon", dep.url_patreon.strip(), "open"))
+    elif dep.buy_url and is_patreon_url(dep.buy_url):
+        out.append(("patreon", dep.buy_url.strip(), "open"))
+    return out
+
+
+def archive_leaves_for_pack(
+    pack_by_id: dict[str, Dependency],
+    pack_id: str,
+    *,
+    _stack: set[str] | None = None,
+) -> list[Dependency]:
+    """Packs that need an archive field when installing this pack/choice.
+
+    Walks ``depends:`` so multi-zip bundles (e.g. AlifePlus + xlibs + …) each
+    get a field. Pure composition nodes (no url) only contribute their depends.
+    """
+    stack = _stack if _stack is not None else set()
+    pid = str(pack_id).strip()
+    if not pid or pid in stack:
+        return []
+    pack = pack_by_id.get(pid)
+    if pack is None:
+        return []
+
+    stack.add(pid)
+    out: list[Dependency] = []
+    seen: set[str] = set()
+    try:
+        # Composition-only radio choice: fields come from depends only.
+        composition = (
+            bool(pack.depends)
+            and not pack.has_remote_links()
+            and not pack.path
+            and not is_wizard_radio_parent(pack)
+        )
+        if not composition and pack_needs_archive(pack):
+            out.append(pack)
+            seen.add(pack.id)
+
+        for dep_id in pack.depends:
+            for leaf in archive_leaves_for_pack(
+                pack_by_id, dep_id, _stack=stack
+            ):
+                if leaf.id in seen:
+                    continue
+                seen.add(leaf.id)
+                out.append(leaf)
+    finally:
+        stack.discard(pid)
+    return out
+
+
+def _unique_download_dest(dld: Path, filename: str) -> Path:
+    """Prefer original basename; on collision append -2, -3, … before suffix."""
+    name = Path(filename).name
+    dest = dld / name
+    if not dest.exists():
+        return dest
+    stem = Path(name).stem
+    suffix = Path(name).suffix
+    n = 2
+    while True:
+        candidate = dld / f"{stem}-{n}{suffix}"
+        if not candidate.exists():
+            return candidate
+        n += 1
+        if n > 9999:
+            raise RuntimeError(f"too many name collisions for {name} in {dld}")
+
+
+def associate_archive(
+    mo2_root: Path,
+    dep_id: str,
+    src_path: Path | str,
+    *,
+    dry_run: bool = False,
+) -> Path:
+    """Copy (if needed) an archive into downloads/DOGMA and map it to dep_id."""
+    src = Path(src_path)
+    info(f"Associate archive: [{dep_id}] <- {src}")
+    if not _is_archive_file(src):
+        raise ValueError(
+            f"not an archive ({', '.join(sorted(ARCHIVE_SUFFIXES))}): {src}"
+        )
+    dld = downloads_dir(mo2_root)
+    src_resolved = src.resolve()
+    dld_resolved = dld.resolve()
+    if src_resolved.parent == dld_resolved:
+        dest = src_resolved
+        info(f"  already in downloads/DOGMA: {dest.name}")
+    else:
+        dest = _unique_download_dest(dld, src.name)
+        if dry_run:
+            info(f"Would copy archive {src.name} -> {dest}")
+        else:
+            shutil.copy2(src, dest)
+            ok(f"  copied archive -> {dest.name}")
+    if not dry_run:
+        set_archive_map_entry(mo2_root, dep_id, dest.name)
+        ok(f"  linked [{dep_id}] -> {dest.name}")
+    return dest
+
+
+def download_and_associate(
+    mo2_root: Path,
+    dep: Dependency,
+    *,
+    dry_run: bool = False,
+) -> Path:
+    """Download (ModDB/GitHub) into downloads/DOGMA and write archives.ini entry."""
+    download_url = dep_auto_download_url(dep)
+    if not download_url:
+        raise ValueError(f"[{dep.id}] has no auto-download url_download:/url:")
+    tools = mo2_tools_dir(mo2_root)
+    info(f"Wizard download: [{dep.id}] {download_url}")
+    moddb: ModdbInfo | None = None
+    github: GithubInfo | None = None
+    if is_moddb_url(download_url):
+        info(f"  [{dep.id}] resolving ModDB…")
+        moddb = resolve_moddb(download_url, cache_dir=tools)
+        download_url = moddb.start_url or download_url
+        bits = []
+        if moddb.filename:
+            bits.append(moddb.filename)
+        stamp = moddb_date_stamp(moddb)
+        if stamp:
+            bits.append(f"date {stamp}")
+        if bits:
+            info(f"  [{dep.id}] ModDB: {', '.join(bits)}")
+        info(f"  [{dep.id}] start URL: {download_url}")
+        try:
+            mirror = resolve_moddb_mirror_url(download_url)
+            if mirror and mirror.rstrip("/") != download_url.rstrip("/"):
+                info(f"  [{dep.id}] ModDB mirror: {mirror}")
+                download_url = mirror
+        except RuntimeError as exc:
+            warn(f"  [{dep.id}] ModDB mirror resolve failed ({exc})")
+    elif is_github_url(download_url):
+        info(f"  [{dep.id}] resolving GitHub…")
+        github = resolve_github(
+            download_url,
+            archive_name=dep.archive_name,
+            cache_dir=tools,
+        )
+        download_url = github.download_url or download_url
+        bits = [github.kind or "github"]
+        if github.tag:
+            bits.append(github.tag)
+        if github.filename:
+            bits.append(github.filename)
+        info(f"  [{dep.id}] GitHub: {', '.join(bits)}")
+        info(f"  [{dep.id}] download URL: {download_url}")
+    else:
+        raise ValueError(f"[{dep.id}] url: must be ModDB or GitHub")
+    archive, note = ensure_dep_archive(
+        mo2_root,
+        dep,
+        download_url=download_url,
+        moddb=moddb,
+        github=github,
+        dry_run=dry_run,
+    )
+    if archive is None or not archive.is_file():
+        if note == "missing-moddb-interstitial":
+            raise RuntimeError(
+                f"[{dep.id}] ModDB returned a countdown page instead of the zip — "
+                "mirror resolve failed; try again or link the archive with 📁"
+            )
+        raise RuntimeError(f"[{dep.id}] download failed ({note})")
+    if not dry_run:
+        set_archive_map_entry(mo2_root, dep.id, archive.name)
+        ok(f"  [{dep.id}] associated -> {archive.name} ({note})")
+    return archive
+
+
 def iso_to_date_stamp(raw: str) -> str:
     """Trim HTML datetime / ISO value to YYYY-MM-DD (empty if unparseable)."""
     s = (raw or "").strip()
@@ -4804,22 +5490,42 @@ class LocalArchive:
 
 
 def list_dep_archives(mo2_root: Path, dep: Dependency) -> list[LocalArchive]:
-    """Archives in downloads/DOGMA for this catalog id (pinned + dated)."""
+    """Archives in downloads/DOGMA for this catalog id (map + stem matches)."""
     dld = downloads_dir(mo2_root)
     base = (dep.id or "").strip()
     if not base or not dld.is_dir():
         return []
     out: list[LocalArchive] = []
+    seen: set[str] = set()
+
+    def _add(path: Path, *, pinned: bool, date: str) -> None:
+        key = str(path.resolve()).lower()
+        if key in seen:
+            return
+        if not _is_archive_file(path):
+            return
+        seen.add(key)
+        out.append(LocalArchive(path, pinned=pinned, date=date))
+
+    mapped = mapped_archive_path(mo2_root, dep)
+    if mapped is not None:
+        _add(mapped, pinned=True, date="")
+
+    stems = {base.lower()}
+    an = (dep.archive_name or "").strip()
+    if an:
+        stems.add(an.lower())
+
     for p in dld.iterdir():
         if not _is_archive_file(p):
             continue
         stem = p.stem
-        if stem.lower() == base.lower():
-            out.append(LocalArchive(p, pinned=True, date=""))
+        if stem.lower() in stems:
+            _add(p, pinned=True, date="")
             continue
         m = _ARCHIVE_DATE_RE.match(stem)
-        if m and m.group(1).lower() == base.lower():
-            out.append(LocalArchive(p, pinned=False, date=m.group(2)))
+        if m and m.group(1).lower() in stems:
+            _add(p, pinned=False, date=m.group(2))
     return out
 
 
@@ -4832,11 +5538,16 @@ def resolve_local_archive(
     """Pick a local archive and report status vs ModDB date.
 
     Status:
-      pinned  — undated <id>.*; never download/replace
+      pinned  — undated / mapped archive; never download/replace
       current — dated archive matches remote_date
       stale   — have dated archive(s) but none match remote (or remote newer)
       missing — nothing on disk
     """
+    # Explicit archives.ini link wins when the file still exists.
+    mapped = mapped_archive_path(mo2_root, dep)
+    if mapped is not None:
+        return mapped, "pinned"
+
     locals_ = list_dep_archives(mo2_root, dep)
     pinned = [a for a in locals_ if a.pinned]
     if pinned:
@@ -4870,7 +5581,28 @@ def find_archive_for_dep(
 
 
 def _is_archive_file(path: Path) -> bool:
-    return path.is_file() and path.suffix.lower() in ARCHIVE_SUFFIXES
+    if not path.is_file():
+        return False
+    if path.suffix.lower() in ARCHIVE_SUFFIXES:
+        return True
+    # MO2 sometimes saves ModDB CDN hits as extensionless hash filenames.
+    return bool(_archive_magic_suffix(path))
+
+
+def _archive_magic_suffix(path: Path) -> str:
+    """Return .zip/.7z/.rar if file magic matches; else \"\"."""
+    try:
+        with path.open("rb") as fh:
+            head = fh.read(8)
+    except OSError:
+        return ""
+    if head.startswith(b"PK"):
+        return ".zip"
+    if head.startswith(b"7z\xbc\xaf\x27\x1c"):
+        return ".7z"
+    if head.startswith(b"Rar!\x1a\x07"):
+        return ".rar"
+    return ""
 
 
 def claim_download_as_zip(
@@ -4880,6 +5612,8 @@ def claim_download_as_zip(
     moddb_filename: str = "",
     date: str = "",
     dry_run: bool = False,
+    file_id: str = "",
+    source_url: str = "",
 ) -> Path | None:
     """Move/rename a fresh MO2 download into downloads/DOGMA/<id>[-date]{ext}."""
     stem = dep_zip_stem(dep, date=date)
@@ -4903,12 +5637,21 @@ def claim_download_as_zip(
     id_alnum = re.sub(r"[^a-z0-9]+", "", dep.id.lower())
     if id_alnum and id_alnum != dep.id.lower():
         needles.append(id_alnum)
+    fid = str(file_id or "").strip()
+    # MO2 often names ModDB CDN hits as the mirror URL's trailing hex hash.
+    src_url = (source_url or "").strip().lower()
+    if src_url:
+        m = re.search(r"/([a-f0-9]{16,40})(?:/|$|\?)", src_url)
+        if m:
+            needles.append(m.group(1))
 
     candidates: list[Path] = []
     for root in (dld, top):
         if not root.is_dir():
             continue
         for p in root.iterdir():
+            if p.name.lower().endswith(".meta"):
+                continue
             if not _is_archive_file(p):
                 continue
             if p.parent == dld and p.stem.lower() == stem.lower():
@@ -4926,13 +5669,66 @@ def claim_download_as_zip(
             stem_low = p.stem.lower()
             if any(n and (n == low or n == stem_low or n in stem_low) for n in needles):
                 candidates.append(p)
+                continue
+            # Extensionless hash name: match via sibling .meta url / file id.
+            meta = Path(str(p) + ".meta")
+            if not meta.is_file():
+                meta = p.with_suffix(p.suffix + ".meta")
+            if meta.is_file():
+                try:
+                    meta_txt = meta.read_text(encoding="utf-8", errors="replace").lower()
+                except OSError:
+                    meta_txt = ""
+                # Bare hash filename equals the mirror URL tail MO2 recorded.
+                if low and low in meta_txt:
+                    candidates.append(p)
+                    continue
+                if fid and fid in meta_txt:
+                    candidates.append(p)
+                    continue
+                if any(n and n in meta_txt for n in needles if len(n) >= 6):
+                    candidates.append(p)
+                    continue
+                if "moddb.com" in meta_txt and any(
+                    n.replace(" ", "") in meta_txt.replace(" ", "")
+                    for n in needles
+                    if len(n) >= 8
+                ):
+                    candidates.append(p)
+
+    # Last resort: newest archive-looking file in downloads/ modified in the last
+    # few minutes (covers MO2 hash filenames right after ``mo2_download``).
+    if not candidates and top.is_dir():
+        import time
+
+        now = time.time()
+        recent: list[Path] = []
+        for p in top.iterdir():
+            if p.is_dir():
+                continue
+            if p.parent.resolve() == dld.resolve():
+                continue
+            if p.name.lower().endswith(".meta"):
+                continue
+            if not _is_archive_file(p):
+                continue
+            try:
+                if now - p.stat().st_mtime <= 180:
+                    recent.append(p)
+            except OSError:
+                continue
+        recent.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        candidates = recent[:1]
 
     if not candidates:
         return None
 
     candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
     src = candidates[0]
-    dest = dld / f"{stem}{src.suffix.lower()}"
+    suffix = src.suffix.lower() if src.suffix else _archive_magic_suffix(src)
+    if not suffix:
+        suffix = ".zip"
+    dest = dld / f"{stem}{suffix}"
     if src.resolve() == dest.resolve():
         return dest
     info(f"  [{dep.id}] claim download -> downloads/DOGMA/{dest.name}")
@@ -4941,9 +5737,9 @@ def claim_download_as_zip(
     if dest.exists() and dest.resolve() != src.resolve():
         dest.unlink()
     shutil.move(str(src), str(dest))
-    meta = src.with_suffix(src.suffix + ".meta")
+    meta = Path(str(src) + ".meta")
     if not meta.is_file():
-        meta = Path(str(src) + ".meta")
+        meta = src.with_suffix(src.suffix + ".meta")
     if meta.is_file():
         try:
             meta.unlink()
@@ -5019,6 +5815,8 @@ def ensure_dep_archive(
             moddb_filename=remote_filename,
             date=target_date,
             dry_run=True,
+            file_id=(moddb.file_id if moddb else ""),
+            source_url=download_url,
         )
         return claimed or archive, "would-download"
 
@@ -5031,12 +5829,20 @@ def ensure_dep_archive(
         moddb_filename=remote_filename,
         date=target_date,
         dry_run=False,
+        file_id=(moddb.file_id if moddb else ""),
+        source_url=download_url,
     )
     if claimed:
+        set_archive_map_entry(mo2_root, dep.id, claimed.name)
         return claimed, "downloaded"
+    # MO2 often saves ModDB /start/ pages as bare <file_id> HTML stubs.
+    if moddb is not None:
+        _purge_moddb_start_stubs(mo2_root, file_id=moddb.file_id)
     if archive:
         warn(f"  [{dep.id}] download claim failed; keeping {archive.name}")
         return archive, status
+    if moddb is not None and re.search(r"(?i)/(?:addons|downloads)/start/\d+", download_url):
+        return None, "missing-moddb-interstitial"
     return None, "missing"
 
 
@@ -5240,6 +6046,13 @@ def process_dependency(
                 bits.append(f"updated {moddb.updated or moddb.added}")
             if bits:
                 info(f"  [{dep.id}] ModDB: {', '.join(bits)}")
+            try:
+                mirror = resolve_moddb_mirror_url(download_url)
+                if mirror and mirror.rstrip("/") != download_url.rstrip("/"):
+                    info(f"  [{dep.id}] ModDB mirror: {mirror}")
+                    download_url = mirror
+            except RuntimeError as exc:
+                warn(f"  [{dep.id}] ModDB mirror resolve failed ({exc})")
         except (RuntimeError, ValueError, OSError) as exc:
             warn(f"  [{dep.id}] ModDB resolve failed ({exc}); using manifest URL")
     elif dep.url and is_github_url(dep.url) and dep.source != "user":
@@ -5615,14 +6428,6 @@ def mo2_refresh(mo2_root: Path) -> None:
         return
     info("Refreshing MO2…")
     subprocess.run([str(exe), "refresh"], cwd=str(mo2_root), check=False)
-
-
-def launch_mo2(mo2_root: Path) -> None:
-    exe = mo2_root / "ModOrganizer.exe"
-    if not exe.is_file():
-        raise FileNotFoundError(f"ModOrganizer.exe not found: {exe}")
-    info(f"Launching {exe}")
-    subprocess.Popen([str(exe)], cwd=str(mo2_root))
 
 
 def guard_mo2_closed(*, force: bool, dry_run: bool) -> None:

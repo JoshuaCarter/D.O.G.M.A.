@@ -80,6 +80,7 @@ def cmd_wizard(args: argparse.Namespace) -> int:
     import dogma_wizard
 
     mo2, cfg = cfg_paths(args)
+    lib.info(f"Opening Setup wizard (MO2={mo2})")
     data = lib.load_manifest(lib.resolve_manifest_path(cfg))
     prev = lib.load_installer_selection(mo2)
     selected = dogma_wizard.run_wizard(data, mo2_root=mo2, initial=prev)
@@ -87,6 +88,10 @@ def cmd_wizard(args: argparse.Namespace) -> int:
         lib.warn("Wizard cancelled")
         return 2
     lib.save_installer_selection(mo2, selected)
+    lib.info(
+        f"Wizard saved selection: {len(selected.option_ids)} options, "
+        f"{sum(1 for v in selected.exclusive_picks.values() if v)} radio picks"
+    )
     installed = lib.resolve_installed_features(mo2, data)
     ordered = lib.resolve_install_order(
         data,
@@ -116,7 +121,7 @@ def cmd_setup(_args: argparse.Namespace) -> int:
     info(f"Python: {py} ({sys.version.split()[0]})")
 
     # Inline deps (no requirements-mo2.txt) — keep this list tiny.
-    required = ("PyYAML>=6.0",)
+    required = ("PyYAML>=6.0", "windnd")
 
     def yaml_ok_fresh() -> bool:
         probe = subprocess.run(
@@ -143,6 +148,13 @@ def cmd_setup(_args: argparse.Namespace) -> int:
         err("PyYAML still not importable after install")
         return 1
     ok("PyYAML OK")
+
+    try:
+        import windnd  # noqa: F401
+
+        ok("windnd OK (drag-drop)")
+    except ImportError:
+        warn("windnd not importable — archive drag-drop disabled until Setup Tools succeeds")
 
     seven = lib.find_7z()
     if seven:
@@ -374,40 +386,16 @@ def cmd_reset_base(args: argparse.Namespace) -> int:
 
 
 def cmd_sfx(args: argparse.Namespace) -> int:
+    import dogma_optimize as optimize
+
     mo2 = lib.resolve_mo2_root(args.mo2_root)
-    tools = lib.mo2_tools_dir(mo2)
-    # Prefer deployed sound_prefetch under mo2/ (sibling of tools/)
-    here = Path(__file__).resolve().parent
-    bundle = here.parent if here.name.lower() == "tools" else here
-    py = bundle / "build_sound_prefetch.py"
-    if not py.is_file():
-        # Feature path when running from repo: …/src/common/mo2/tools → repo
-        repo = Path(__file__).resolve().parents[4]
-        py = repo / "src" / "misc" / "sound_prefetch" / "mo2" / "build_sound_prefetch.py"
-    if not py.is_file():
-        lib.err("build_sound_prefetch.py not found")
-        return 1
-    # -u: unbuffered so scan/write progress shows live in the MO2 console.
-    cmd = [sys.executable, "-u", str(py), "--mo2-root", str(mo2)]
-    if args.force:
-        cmd.append("--force")
-    lib.info(f"SFX prefetch: {py}")
-    # Tee builder stdout into dogma_sfx_prefetch.log (not dogma_install.log).
-    proc = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        bufsize=1,
-    )
-    assert proc.stdout is not None
-    for raw in proc.stdout:
-        line = raw.rstrip("\r\n")
-        print(line, flush=True)
-        lib.append_action_log(tools, line)
-    return int(proc.wait())
+    return optimize.run_sfx_prefetch(mo2, force=bool(args.force))
+
+
+def cmd_optimize(args: argparse.Namespace) -> int:
+    import dogma_optimize as optimize
+
+    return optimize.run(args)
 
 
 def _with_selection(args: argparse.Namespace, **overrides: object) -> argparse.Namespace:
@@ -509,13 +497,6 @@ def cmd_executables(args: argparse.Namespace) -> int:
         f"executables job done: removed={len(result.removed)} "
         f"added={len(result.added)} missing={len(result.missing_bats)}"
     )
-    changed = bool(result.removed or result.added)
-    if args.dry_run or args.no_launch or not changed:
-        return 0
-    if not lib.mo2_running():
-        lib.launch_mo2(mo2)
-    else:
-        lib.info("MO2 already running — restart it to see Executables changes.")
     return 0
 
 
@@ -645,15 +626,47 @@ def build_parser() -> argparse.ArgumentParser:
     x = sub.add_parser("sfx", help="Run sound prefetch builder", parents=[common])
     x.set_defaults(func=cmd_sfx)
 
+    o = sub.add_parser(
+        "optimize",
+        help="GC settings, SFX prefetch, mods backup, ALAO",
+        parents=[common],
+    )
+    o.add_argument(
+        "backup_dir",
+        nargs="?",
+        default="",
+        help="Backup dir for mods.backup.7z (MO2 Arguments; default MO2 root)",
+    )
+    o.add_argument(
+        "--backup-dir",
+        dest="backup_dir_flag",
+        default="",
+        help="Override backup directory (scripting)",
+    )
+    o.add_argument("--gc", dest="do_gc", action="store_true", help="Ensure Lua GC settings")
+    o.add_argument("--no-gc", action="store_true", help="Skip GC step")
+    o.add_argument("--sfx", dest="do_sfx", action="store_true", help="Run SFX prefetch")
+    o.add_argument("--no-sfx", action="store_true", help="Skip SFX prefetch")
+    o.add_argument("--backup", dest="do_backup", action="store_true", help="Create mods.backup.7z")
+    o.add_argument("--no-backup", action="store_true", help="Skip mods backup")
+    o.add_argument("--alao", dest="do_alao", action="store_true", help="Run ALAO")
+    o.add_argument("--no-alao", action="store_true", help="Skip ALAO")
+    o.add_argument(
+        "--include-base-gamma",
+        action="store_true",
+        help="ALAO: include numbered base G.A.M.M.A. mods",
+    )
+    o.add_argument(
+        "--alao-debug",
+        action="store_true",
+        help="ALAO: also --fix-debug (comment out debug prints)",
+    )
+    o.set_defaults(func=cmd_optimize)
+
     e = sub.add_parser(
         "executables",
         help="Replace DOGMA bats in MO2 Executables (ModOrganizer.ini)",
         parents=[common],
-    )
-    e.add_argument(
-        "--no-launch",
-        action="store_true",
-        help="Do not start ModOrganizer.exe after updating the ini",
     )
     e.set_defaults(func=cmd_executables)
 
@@ -698,12 +711,18 @@ def main(argv: list[str] | None = None) -> int:
     reset = bool(getattr(args, "log_reset", False))
     job = str(getattr(args, "cmd", "") or "")
     log_path = lib.configure_logging(tools, reset=reset, job=job)
-    lib.info("Installer launched")
-    lib.info(f"argv: {' '.join(argv)}")
-    lib.info(f"MO2: {mo2}")
-    lib.info(f"Log file: {log_path}")
-    if reset:
-        lib.info("Log reset for this parent run")
+    if job == "optimize":
+        # Quiet start — Optimizer prints its own prompts; keep detail in the log file only.
+        lib.append_action_log(
+            tools, f"optimize start mo2={mo2} log={log_path} argv={' '.join(argv)}"
+        )
+    else:
+        lib.info("Installer launched")
+        lib.info(f"argv: {' '.join(argv)}")
+        lib.info(f"MO2: {mo2}")
+        lib.info(f"Log file: {log_path}")
+        if reset:
+            lib.info("Log reset for this parent run")
 
     code = 1
     try:
@@ -711,10 +730,14 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:
         lib.log_exception(exc, where=job or "job")
         code = 1
-    lib.info(f"exit={code} job={job}")
-    lib.info(f"Log -> {lib.action_log_path(tools)}")
-    if lib.report_log_path(tools).is_file():
-        lib.info(f"Report -> {lib.report_log_path(tools)}")
+    if job == "optimize":
+        if code != 0:
+            lib.info(f"Details saved to:\n  {lib.action_log_path(tools)}")
+    else:
+        lib.info(f"exit={code} job={job}")
+        lib.info(f"Log -> {lib.action_log_path(tools)}")
+        if lib.report_log_path(tools).is_file():
+            lib.info(f"Report -> {lib.report_log_path(tools)}")
     # Cancel (2): keep console hidden so the window goes away with the process.
     # Other errors: show console so :fail pause / messages are readable.
     if code not in (0, 2):

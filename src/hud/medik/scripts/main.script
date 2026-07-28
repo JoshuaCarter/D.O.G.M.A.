@@ -1,11 +1,19 @@
 --[[
 	Medik slot remap — 6 centered slots (2x3) for rad/bleed vitals.
 
-	Drops Medik's rightmost booster column and shifts the remaining grid
-	right by half a column so it stays centered.
+	Values (engine → display):
+	  rad_dose     HUD rad-icon mSv (ceil(rad*10000*0.387)), clamped 0-999
+	  rad_restore  net rad reduction /sec in same mSv units (passive+active)
+	  rad_protect  total Radiation hit mitigation as 0-99%
+	  bleed        max(0, floor(bleeding*1000) - 1) → 0-999
+	  bleed_restore  same scale applied to bleed reduction /sec
+	  bleed_protect  total Wound hit mitigation as 0-99%
 
-	Provider override still works: dogma_hud_medik.set_slot(idx, fn)
-	  fn(slot_idx) -> value, active   (nil provider = built-in stat)
+	Icons always use the white (_glyph) atlas row. rad_dose / bleed tint via
+	SetTextureColor: white→green / white→red over their range.
+
+	Provider override: dogma_hud_medik.set_slot(idx, fn)
+	  fn(slot_idx) -> value, active [, fmt]
 ]]
 
 local CONFIG = _G.dogma_hud_medik_conf
@@ -17,20 +25,56 @@ local orig_Update = nil
 local scratch_pos = vector2()
 local scratch_size = vector2()
 
-local function clamp_digits(n)
+local cached_rad_max = nil
+local cached_wound_max = nil
+local cached_radiation_v = nil
+
+local function clamp_int(n, lo, hi)
 	n = math.floor(tonumber(n) or 0)
-	if n > 999 then
-		return 999
+	if n < lo then
+		return lo
 	end
-	if n < 0 then
-		return 0
+	if n > hi then
+		return hi
 	end
 	return n
 end
 
-local function scale_val(key, raw)
-	local mag = CONFIG.SCALE and CONFIG.SCALE[key] or 1
-	return clamp_digits((tonumber(raw) or 0) * mag)
+local function actor_cond_float(key, fallback)
+	if ini_sys and ini_sys.r_float_ex then
+		local v = ini_sys:r_float_ex("actor_condition", key)
+		if v ~= nil then
+			return v
+		end
+	end
+	return fallback
+end
+
+local function rad_prot_max()
+	if not cached_rad_max then
+		cached_rad_max = actor_cond_float("radio_zone_max_power", 0.055)
+		if cached_rad_max <= 0 then
+			cached_rad_max = 0.055
+		end
+	end
+	return cached_rad_max
+end
+
+local function wound_prot_max()
+	if not cached_wound_max then
+		cached_wound_max = actor_cond_float("max_wound_protection", 2.20)
+		if cached_wound_max <= 0 then
+			cached_wound_max = 2.20
+		end
+	end
+	return cached_wound_max
+end
+
+local function natural_radiation_v()
+	if cached_radiation_v == nil then
+		cached_radiation_v = actor_cond_float("radiation_v", 0.00001)
+	end
+	return cached_radiation_v
 end
 
 local function bind_part(slot, part, tex_id)
@@ -60,24 +104,99 @@ local function tex_base(tex_idx)
 	return list and list[tex_idx] or "bo_hp"
 end
 
-local function paint_slot(slot, base, value, active)
-	if not slot then
+-- Always white (_glyph) row; multiply with SetTextureColor.
+-- rad: white → green; bleed: white → red; else white.
+local function tint_rgb(kind, t)
+	t = tonumber(t) or 0
+	if t < 0 then
+		t = 0
+	elseif t > 1 then
+		t = 1
+	end
+	if kind == "rad" then
+		-- (255,255,255) → (0,255,0)
+		return math.floor(255 * (1 - t) + 0.5), 255, math.floor(255 * (1 - t) + 0.5)
+	elseif kind == "bleed" then
+		-- (255,255,255) → (255,0,0)
+		return 255, math.floor(255 * (1 - t) + 0.5), math.floor(255 * (1 - t) + 0.5)
+	end
+	return 255, 255, 255
+end
+
+local function set_icon_color(slot, r, g, b)
+	if not (slot and slot.icon and slot.icon.SetTextureColor) then
 		return
 	end
+	local key = r * 65536 + g * 256 + b
+	if slot.icon_color == key then
+		return
+	end
+	slot.icon:SetTextureColor(GetARGB(255, r, g, b))
+	slot.icon_color = key
+end
+
+local function apply_icon_tint(slot, tint, value, tint_max)
+	if not tint then
+		set_icon_color(slot, 255, 255, 255)
+		return
+	end
+	local maxv = tonumber(tint_max) or 999
+	if maxv <= 0 then
+		maxv = 999
+	end
+	local t = (tonumber(value) or 0) / maxv
+	local r, g, b = tint_rgb(tint, t)
+	set_icon_color(slot, r, g, b)
+end
+
+-- Icons always use white glyph row (never yellow _lit). Digits still lit/grey by active.
+local function paint_int(slot, base, value, active, tint, tint_max)
 	slot.tex = base
+	bind_part(slot, "icon", resolve_tex(base .. "_glyph"))
 	if active then
-		local n = clamp_digits(value)
-		bind_part(slot, "icon", resolve_tex(base .. "_lit"))
+		local n = clamp_int(value, 0, 999)
 		bind_part(slot, "d1", resolve_tex("dig_" .. math.floor(n / 100)))
 		bind_part(slot, "d2", resolve_tex("dig_" .. (math.floor(n / 10) % 10)))
 		bind_part(slot, "d3", resolve_tex("dig_" .. (n % 10)))
 		slot.active = true
+		apply_icon_tint(slot, tint, n, tint_max)
 	else
-		bind_part(slot, "icon", resolve_tex(base .. "_glyph"))
 		bind_part(slot, "d1", resolve_tex("dig_g0"))
 		bind_part(slot, "d2", resolve_tex("dig_g0"))
 		bind_part(slot, "d3", resolve_tex("dig_g0"))
 		slot.active = false
+		set_icon_color(slot, 255, 255, 255)
+	end
+end
+
+-- Two digits + % (dig_pct; dig_. stub until redrawn).
+local function paint_pct(slot, base, value, active, tint, tint_max)
+	slot.tex = base
+	bind_part(slot, "icon", resolve_tex(base .. "_glyph"))
+	if active then
+		local n = clamp_int(value, 0, 99)
+		bind_part(slot, "d1", resolve_tex("dig_" .. math.floor(n / 10)))
+		bind_part(slot, "d2", resolve_tex("dig_" .. (n % 10)))
+		bind_part(slot, "d3", resolve_tex("dig_pct"))
+		slot.active = true
+		apply_icon_tint(slot, tint, n, tint_max or 99)
+	else
+		bind_part(slot, "d1", resolve_tex("dig_g0"))
+		bind_part(slot, "d2", resolve_tex("dig_g0"))
+		bind_part(slot, "d3", resolve_tex("dig_gpct"))
+		slot.active = false
+		set_icon_color(slot, 255, 255, 255)
+	end
+end
+
+local function paint_slot(slot, base, value, active, fmt, tint, tint_max)
+	if not slot then
+		return
+	end
+	if fmt == "pct" then
+		paint_pct(slot, base, value, active, tint, tint_max)
+	else
+		paint_int(slot, base, value, active, tint, tint_max)
 	end
 end
 
@@ -108,7 +227,6 @@ local function hide_slot(slot)
 	end
 end
 
--- 2x3 grid: drop rightmost of Medik's 4 cols, shift +0.5 col to re-center.
 local function apply_layout(ui)
 	if not ui or not ui.bo then
 		return
@@ -155,45 +273,185 @@ local function scan_boosters()
 	return out
 end
 
-local function dosimeter_rads()
-	if item_device and item_device.dosimeter_env_rads_mode and level and level.get_env_rads then
-		return math.floor(level.get_env_rads() * 2500)
+local function msv_k()
+	return CONFIG.MSV_K or (10000 * 0.387)
+end
+
+-- Same as G_FLAT "Msv Above Radiation Icon" / Geiger tip body mode:
+--   math.ceil(db.actor.radiation * 10000 * 0.387)
+local function hud_rad_msv()
+	return math.ceil((db.actor.radiation or 0) * msv_k())
+end
+
+-- Bleed display units: (bleeding * 1000) - 1 → 0..999
+local function bleed_units(raw)
+	return clamp_int((tonumber(raw) or 0) * 1000 - 1, 0, 999)
+end
+
+local function hit_prot(obj, hit_name)
+	if not obj then
+		return 0
 	end
-	return math.floor((db.actor.radiation or 0) * 10000 * 0.387)
+	local ht = HitTypeID and HitTypeID[hit_name]
+	if not ht then
+		return 0
+	end
+	if obj.GetDefHitTypeProtection then
+		return obj:GetDefHitTypeProtection(ht) or 0
+	end
+	return 0
+end
+
+local function gear_hit_protection(hit_name, immunity_key)
+	local total = 0
+	local actor = db.actor
+	if not actor then
+		return 0
+	end
+
+	local outfit = actor:item_in_slot(7)
+	if outfit and outfit.cast_CustomOutfit then
+		local c = outfit:cast_CustomOutfit()
+		if c then
+			total = total + hit_prot(c, hit_name)
+		end
+	end
+
+	local helm = actor:item_in_slot(12)
+	if helm and helm.cast_Helmet then
+		local c = helm:cast_Helmet()
+		if c then
+			total = total + hit_prot(c, hit_name)
+		end
+	end
+
+	if actor.iterate_belt and ini_sys then
+		actor:iterate_belt(function(_, obj)
+			if not obj then
+				return
+			end
+			local sec = obj:section()
+			local cond = obj:condition() or 1
+			local imm_sec = ini_sys:r_string_ex(sec, "hit_absorbation_sect")
+			if imm_sec and immunity_key then
+				total = total + cond * (ini_sys:r_float_ex(imm_sec, immunity_key) or 0)
+			end
+		end)
+	end
+
+	return total
+end
+
+local function gear_rad_restore_raw()
+	local total = 0
+	local actor = db.actor
+	if not actor then
+		return 0
+	end
+
+	local outfit = actor:item_in_slot(7)
+	if outfit and outfit.cast_CustomOutfit then
+		local c = outfit:cast_CustomOutfit()
+		if c and c.m_fRadiationRestoreSpeed then
+			total = total + (c.m_fRadiationRestoreSpeed or 0)
+		end
+	end
+
+	if actor.iterate_belt and ini_sys then
+		actor:iterate_belt(function(_, obj)
+			if not obj then
+				return
+			end
+			local sec = obj:section()
+			local cond = obj:condition() or 1
+			total = total + cond * (ini_sys:r_float_ex(sec, "radiation_restore_speed") or 0)
+		end)
+	end
+
+	return total
+end
+
+local function gear_bleed_restore_raw()
+	local total = 0
+	local actor = db.actor
+	if not actor then
+		return 0
+	end
+
+	local outfit = actor:item_in_slot(7)
+	if outfit then
+		local c = outfit.cast_CustomOutfit and outfit:cast_CustomOutfit()
+		if c and c.m_fBleedingRestoreSpeed ~= nil then
+			total = total + (c.m_fBleedingRestoreSpeed or 0)
+		elseif ini_sys then
+			local sec = outfit:section()
+			local cond = outfit:condition() or 1
+			total = total + cond * (ini_sys:r_float_ex(sec, "bleeding_restore_speed") or 0)
+		end
+	end
+
+	if actor.iterate_belt and ini_sys then
+		actor:iterate_belt(function(_, obj)
+			if not obj then
+				return
+			end
+			local sec = obj:section()
+			local cond = obj:condition() or 1
+			total = total + cond * (ini_sys:r_float_ex(sec, "bleeding_restore_speed") or 0)
+		end)
+	end
+
+	return total
+end
+
+local function boost_value(boost, id)
+	local b = id and boost[id]
+	return b and b.value or 0
 end
 
 local function builtin_stat(id, boost)
 	if id == "rad_dose" then
-		local n = dosimeter_rads()
+		local n = clamp_int(hud_rad_msv(), 0, 999)
 		return n, n > 0
+
 	elseif id == "rad_restore" then
-		local b = boost[BoosterID.RadiationRestore]
-		if not b then
+		-- Net reduction of body radiation /sec → same mSv scale as HUD icon.
+		local raw = natural_radiation_v()
+			+ gear_rad_restore_raw()
+			+ boost_value(boost, BoosterID.RadiationRestore)
+		if raw <= 0 then
 			return 0, false
 		end
-		return scale_val("rad_restore", b.value), true
+		local msv_s = raw * msv_k()
+		local n = clamp_int(msv_s, 0, 999)
+		return n, n > 0
+
 	elseif id == "rad_protect" then
-		local b = boost[BoosterID.RadiationProtection]
-		if not b then
-			return 0, false
-		end
-		return scale_val("rad_protect", b.value), true
+		local total = gear_hit_protection("Radiation", "radiation_immunity")
+			+ boost_value(boost, BoosterID.RadiationProtection)
+		local pct = clamp_int((total / rad_prot_max()) * 100, 0, 99)
+		return pct, pct > 0
+
 	elseif id == "bleed" then
 		local bleed = db.actor.bleeding or 0
-		return scale_val("bleed", bleed), bleed > 0
+		local n = bleed_units(bleed)
+		return n, bleed > 0
+
 	elseif id == "bleed_restore" then
-		local b = boost[BoosterID.BleedingRestore]
-		if not b then
+		local raw = gear_bleed_restore_raw() + boost_value(boost, BoosterID.BleedingRestore)
+		if raw <= 0 then
 			return 0, false
 		end
-		return scale_val("bleed_restore", b.value), true
+		local n = bleed_units(raw)
+		return n, n > 0
+
 	elseif id == "bleed_protect" then
-		local b = BoosterID.WoundImmunity and boost[BoosterID.WoundImmunity]
-		if not b then
-			return 0, false
-		end
-		return scale_val("bleed_protect", b.value), true
+		local total = gear_hit_protection("Wound", "wound_immunity")
+			+ boost_value(boost, BoosterID.WoundImmunity)
+		local pct = clamp_int((total / wound_prot_max()) * 100, 0, 99)
+		return pct, pct > 0
 	end
+
 	return 0, false
 end
 
@@ -211,15 +469,16 @@ local function apply_slots(ui)
 		local def = slots[i]
 		local slot = ui.bo[i]
 		if def and slot then
-			local value, active
+			local value, active, fmt
 			local fn = providers[i]
 			if fn then
-				value, active = fn(i)
+				value, active, fmt = fn(i)
 				active = active and true or false
 			else
 				value, active = builtin_stat(def.id, boost)
 			end
-			paint_slot(slot, tex_base(def.tex), value, active)
+			fmt = fmt or def.fmt or "int"
+			paint_slot(slot, tex_base(def.tex), value, active, fmt, def.tint, def.tint_max)
 		end
 	end
 

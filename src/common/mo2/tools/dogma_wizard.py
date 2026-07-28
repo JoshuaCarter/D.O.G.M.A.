@@ -12,12 +12,16 @@ import threading
 import tkinter as tk
 import webbrowser
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 import dogma_mo2_lib as lib
 
 _URL_RE = re.compile(r"https?://[^\s\]\)>,;]+")
+
+# Concurrent download jobs (ModDB resolve overlaps; MO2 CLI is locked in lib).
+_DOWNLOAD_WORKERS = 4
 
 # SW_HIDE / SW_SHOW — console is useless while the Tk wizard is up.
 _SW_HIDE = 0
@@ -1083,6 +1087,82 @@ class _ArchiveDropRegistry:
                 break
 
 
+class _DownloadHub:
+    """Worker pool for parallel wizard downloads (one job per pack id)."""
+
+    def __init__(self, root: tk.Tk, *, max_workers: int = _DOWNLOAD_WORKERS) -> None:
+        self._root = root
+        self._max_workers = max(1, max_workers)
+        self._ex = ThreadPoolExecutor(
+            max_workers=self._max_workers,
+            thread_name_prefix="dogma-dl",
+        )
+        self._lock = threading.Lock()
+        self._inflight: set[str] = set()
+        self._fields: list[_ArchiveField] = []
+
+    def register(self, field: "_ArchiveField") -> None:
+        self._fields.append(field)
+
+    def at_capacity(self) -> bool:
+        with self._lock:
+            return len(self._inflight) >= self._max_workers
+
+    def refresh_gates(self) -> None:
+        """Disable idle download buttons when all worker slots are busy."""
+        blocked = self.at_capacity()
+        for field in self._fields:
+            field.apply_download_gate(blocked=blocked)
+
+    def submit(
+        self,
+        dep_id: str,
+        work: Callable[[], None],
+        on_done: Callable[[BaseException | None], None],
+    ) -> bool:
+        """Start ``work`` on a free worker. False if in flight or pool full."""
+        kid = str(dep_id).strip()
+        with self._lock:
+            if not kid or kid in self._inflight:
+                return False
+            if len(self._inflight) >= self._max_workers:
+                return False
+            self._inflight.add(kid)
+
+        def _run() -> None:
+            err: BaseException | None = None
+            try:
+                work()
+            except BaseException as exc:
+                err = exc
+
+            def _ui() -> None:
+                with self._lock:
+                    self._inflight.discard(kid)
+                on_done(err)
+                self.refresh_gates()
+
+            try:
+                self._root.after(0, _ui)
+            except tk.TclError:
+                with self._lock:
+                    self._inflight.discard(kid)
+
+        self._ex.submit(_run)
+        try:
+            self._root.after(0, self.refresh_gates)
+        except tk.TclError:
+            pass
+        return True
+
+    def shutdown(self) -> None:
+        try:
+            self._ex.shutdown(wait=False, cancel_futures=True)
+        except TypeError:
+            # Python < 3.9 has no cancel_futures
+            self._ex.shutdown(wait=False)
+
+
 def _archive_action_btn(
     parent: tk.Misc,
     *,
@@ -1190,6 +1270,7 @@ class _ArchiveField:
         | None = None,
         drop_registry: _ArchiveDropRegistry | None = None,
         link_icons: dict[str, tk.PhotoImage] | None = None,
+        download_hub: _DownloadHub | None = None,
         width_chars: int | None = None,
     ) -> None:
         self.mo2_root = Path(mo2_root)
@@ -1197,6 +1278,7 @@ class _ArchiveField:
         self.on_linked = on_linked
         self.on_cleared = on_cleared
         self.enable_file = enable_file
+        self._download_hub = download_hub
         self._busy = False
         self._spin_job: str | None = None
         self._spin_i = 0
@@ -1353,8 +1435,12 @@ class _ArchiveField:
 
         if enable_file and drop_registry is not None:
             drop_registry.register(self)
+        if download_hub is not None:
+            download_hub.register(self)
 
         self.refresh()
+        if download_hub is not None:
+            self.apply_download_gate(blocked=download_hub.at_capacity())
 
     def contains_widget(self, widget: tk.Misc | None) -> bool:
         """True when ``widget`` is this file box or a child of it."""
@@ -1408,6 +1494,29 @@ class _ArchiveField:
                 ),
             )
 
+    def apply_download_gate(self, *, blocked: bool) -> None:
+        """When the download pool is full, idle cloud buttons stay disabled."""
+        if self.dl_btn is None or not self._can_download or self._busy:
+            return
+        try:
+            if blocked:
+                self.dl_btn.configure(state="disabled", cursor="arrow")
+            elif self._dl_image is not None:
+                self.dl_btn.configure(
+                    state="normal",
+                    image=self._dl_image,
+                    text="",
+                    cursor="hand2",
+                )
+            else:
+                self.dl_btn.configure(
+                    state="normal",
+                    text="↓",
+                    cursor="hand2",
+                )
+        except tk.TclError:
+            pass
+
     def _set_busy(self, busy: bool) -> None:
         self._busy = busy
         if self.browse_btn is None:
@@ -1433,21 +1542,11 @@ class _ArchiveField:
             self.browse_btn.configure(state="normal")
             for btn in self._link_btns:
                 btn.configure(state="normal")
-            if self.dl_btn is not None:
-                if self._dl_image is not None:
-                    self.dl_btn.configure(
-                        state="normal",
-                        image=self._dl_image,
-                        text="",
-                        cursor="hand2",
-                    )
-                else:
-                    self.dl_btn.configure(
-                        state="normal",
-                        text="↓",
-                        cursor="hand2",
-                    )
             self.refresh()
+            hub = self._download_hub
+            self.apply_download_gate(
+                blocked=(hub.at_capacity() if hub is not None else False)
+            )
 
     def _tick_spin(self) -> None:
         if not self._busy or self.dl_btn is None:
@@ -1510,32 +1609,28 @@ class _ArchiveField:
     def _start_download(self) -> None:
         if self._busy or not self._can_download:
             return
-        self._set_busy(True)
+        hub = self._download_hub
+        if hub is None:
+            return
         lib.info(f"Wizard: download clicked for [{self.dep.id}]")
 
         def _work() -> None:
-            err_msg: str | None = None
-            try:
-                lib.download_and_associate(self.mo2_root, self.dep)
-            except Exception as exc:
-                lib.log_exception(exc, where=f"wizard.download[{self.dep.id}]")
-                err_msg = str(exc)
+            lib.download_and_associate(self.mo2_root, self.dep)
 
-            def _done() -> None:
-                self._set_busy(False)
-                if err_msg:
-                    messagebox.showerror("D.O.G.M.A.", err_msg)
-                    return
-                self.refresh()
-                if self.on_linked is not None:
-                    self.on_linked(self.dep.id)
+        def _done(err: BaseException | None) -> None:
+            self._set_busy(False)
+            if err is not None:
+                lib.log_exception(err, where=f"wizard.download[{self.dep.id}]")
+                messagebox.showerror("D.O.G.M.A.", str(err))
+                return
+            self.refresh()
+            if self.on_linked is not None:
+                self.on_linked(self.dep.id)
 
-            try:
-                self.frame.after(0, _done)
-            except tk.TclError:
-                pass
-
-        threading.Thread(target=_work, daemon=True).start()
+        if not hub.submit(self.dep.id, _work, _done):
+            # Already downloading this pack, or all worker slots are busy.
+            return
+        self._set_busy(True)
 
 
 def _expand_deps_unique(
@@ -1649,6 +1744,7 @@ def _run_wizard_ui(
     _apply_dark_theme(root)
     link_icons = _load_link_icons(root)
     drop_registry = _ArchiveDropRegistry(root)
+    download_hub = _DownloadHub(root)
     if not drop_registry.ok:
         lib.warn(
             "windnd not available — drag-drop onto archive boxes is disabled "
@@ -1865,6 +1961,7 @@ def _run_wizard_ui(
                 info_sections_fn=_leaf_info_sections(leaf),
                 drop_registry=drop_registry,
                 link_icons=link_icons,
+                download_hub=download_hub,
             )
             field.pack(anchor="w", pady=(0, 4))
             archive_fields.setdefault(leaf.id, []).append(field)
@@ -2240,6 +2337,7 @@ def _run_wizard_ui(
             root.unbind_all("<MouseWheel>")
         except tk.TclError:
             pass
+        download_hub.shutdown()
 
     def _refresh_page_tabs() -> None:
         cur = wizard_page["n"]

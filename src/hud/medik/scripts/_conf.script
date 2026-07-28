@@ -5,29 +5,17 @@ _G.dogma_hud_medik_conf = {
 	MOD_ID = "dogma/hud/medik",
 	DEFAULTS = {},
 
-	-- Medik atlas L→R (1-based): 1 hp, 2 bleed, 3 rad, 4 carry, 5 power, 6 ext_rad, 7 psi, 8 chem
-	SLOT_TEX = {
-		"bo_hp",
-		"bo_bleed",
-		"bo_rad",
-		"bo_carry",
-		"bo_power",
-		"bo_ext_rad",
-		"bo_psi",
-		"bo_chem",
-	},
-
-	-- Visible slots (2x3). `tex` = atlas index. `fmt`: int | pct
-	-- `tint`: nil = always white glyph; "rad"/"bleed" = white→green/red by value.
+	-- Visible slots (2x3). `icon` = texture id from dogma_medik_slots.dds (32x32 L→R).
+	-- `tint`: nil = white; "rad"/"bleed" = white→green/red by value.
 	SLOTS = {
 		-- row 1
-		{ id = "rad_dose", tex = 3, fmt = "int", tint = "rad", tint_max = 999 },
-		{ id = "rad_restore", tex = 3, fmt = "int" },
-		{ id = "rad_protect", tex = 6, fmt = "pct" },
+		{ id = "rad_dose", icon = "dogma_medik_rad", fmt = "int", tint = "rad", tint_max = 999 },
+		{ id = "rad_restore", icon = "dogma_medik_rad_res", fmt = "int" },
+		{ id = "rad_protect", icon = "dogma_medik_rad_prot", fmt = "pct" },
 		-- row 2
-		{ id = "bleed", tex = 2, fmt = "int", tint = "bleed", tint_max = 999 },
-		{ id = "bleed_restore", tex = 2, fmt = "int" },
-		{ id = "bleed_protect", tex = 2, fmt = "pct" },
+		{ id = "bleed", icon = "dogma_medik_bleed", fmt = "int", tint = "bleed", tint_max = 999 },
+		{ id = "bleed_restore", icon = "dogma_medik_bleed_res", fmt = "int" },
+		{ id = "bleed_protect", icon = "dogma_medik_bleed_prot", fmt = "pct" },
 	},
 
 	-- HUD rad-icon mSv scale (G_FLAT Msv Above Radiation Icon / item_device tip).

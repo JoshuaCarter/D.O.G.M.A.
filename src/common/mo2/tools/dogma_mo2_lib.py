@@ -10,11 +10,18 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import zipfile
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Iterable, Iterator
+
+# Parallel wizard downloads: ModDB/GitHub resolve can overlap; MO2 CLI + claim
+# + archives.ini must not race (MO2 writes into the same downloads/ folder).
+_mo2_download_lock = threading.Lock()
+_downloads_claim_lock = threading.Lock()
+_archive_map_lock = threading.Lock()
 
 
 SEPARATOR_NAME = "DOGMA DEPENDENCIES_separator"
@@ -5184,24 +5191,26 @@ def save_archive_map(mo2_root: Path, mapping: dict[str, str]) -> Path:
 
 def set_archive_map_entry(mo2_root: Path, dep_id: str, basename: str) -> dict[str, str]:
     """Upsert one pack → basename entry and save."""
-    mapping = load_archive_map(mo2_root)
-    kid = str(dep_id).strip()
-    name = Path(str(basename).strip()).name
-    if not kid or not name:
-        return mapping
-    mapping[kid] = name
-    path = save_archive_map(mo2_root, mapping)
+    with _archive_map_lock:
+        mapping = load_archive_map(mo2_root)
+        kid = str(dep_id).strip()
+        name = Path(str(basename).strip()).name
+        if not kid or not name:
+            return mapping
+        mapping[kid] = name
+        path = save_archive_map(mo2_root, mapping)
     info(f"  archives.ini: [{kid}]={name} ({path})")
     return mapping
 
 
 def clear_archive_map_entry(mo2_root: Path, dep_id: str) -> dict[str, str]:
-    mapping = load_archive_map(mo2_root)
-    kid = str(dep_id).strip()
-    if kid in mapping:
-        del mapping[kid]
-        save_archive_map(mo2_root, mapping)
-    return mapping
+    with _archive_map_lock:
+        mapping = load_archive_map(mo2_root)
+        kid = str(dep_id).strip()
+        if kid in mapping:
+            del mapping[kid]
+            save_archive_map(mo2_root, mapping)
+        return mapping
 
 
 def mapped_archive_path(mo2_root: Path, dep: Dependency | str) -> Path | None:
@@ -5634,6 +5643,10 @@ def find_archive_for_dep(
 def _is_archive_file(path: Path) -> bool:
     if not path.is_file():
         return False
+    low = path.name.lower()
+    # MO2 in-progress downloads — never claim these.
+    if low.endswith(".unfinished") or ".unfinished." in low:
+        return False
     if path.suffix.lower() in ARCHIVE_SUFFIXES:
         return True
     # MO2 sometimes saves ModDB CDN hits as extensionless hash filenames.
@@ -5667,6 +5680,28 @@ def claim_download_as_zip(
     source_url: str = "",
 ) -> Path | None:
     """Move/rename a fresh MO2 download into downloads/DOGMA/<id>[-date]{ext}."""
+    with _downloads_claim_lock:
+        return _claim_download_as_zip_unlocked(
+            mo2_root,
+            dep,
+            moddb_filename=moddb_filename,
+            date=date,
+            dry_run=dry_run,
+            file_id=file_id,
+            source_url=source_url,
+        )
+
+
+def _claim_download_as_zip_unlocked(
+    mo2_root: Path,
+    dep: Dependency,
+    *,
+    moddb_filename: str = "",
+    date: str = "",
+    dry_run: bool = False,
+    file_id: str = "",
+    source_url: str = "",
+) -> Path | None:
     stem = dep_zip_stem(dep, date=date)
     dld = downloads_dir(mo2_root)
     # Already claimed under the target stem
@@ -5691,10 +5726,55 @@ def claim_download_as_zip(
     fid = str(file_id or "").strip()
     # MO2 often names ModDB CDN hits as the mirror URL's trailing hex hash.
     src_url = (source_url or "").strip().lower()
+    url_hash = ""
     if src_url:
         m = re.search(r"/([a-f0-9]{16,40})(?:/|$|\?)", src_url)
         if m:
-            needles.append(m.group(1))
+            url_hash = m.group(1)
+            needles.append(url_hash)
+
+    def _meta_text(p: Path) -> str:
+        meta = Path(str(p) + ".meta")
+        if not meta.is_file():
+            meta = p.with_suffix(p.suffix + ".meta")
+        if not meta.is_file():
+            return ""
+        try:
+            return meta.read_text(encoding="utf-8", errors="replace").lower()
+        except OSError:
+            return ""
+
+    def _matches_this_download(p: Path) -> bool:
+        """True when ``p`` is the archive for this dep/url (not another CDN hit)."""
+        low = p.name.lower()
+        stem_low = p.stem.lower()
+        # Prefer exact ModDB CDN hash from the URL we just downloaded.
+        if url_hash:
+            if low == url_hash or stem_low == url_hash:
+                return True
+            if low.startswith(url_hash + ".") or stem_low.startswith(url_hash):
+                return True
+            meta_txt = _meta_text(p)
+            if url_hash in meta_txt or (src_url and src_url in meta_txt):
+                return True
+            # With a known CDN hash, do not fuzzy-match other downloads.
+            return False
+        if any(n and (n == low or n == stem_low or n in stem_low) for n in needles):
+            return True
+        meta_txt = _meta_text(p)
+        if not meta_txt:
+            return False
+        if fid and fid in meta_txt:
+            return True
+        if any(n and n in meta_txt for n in needles if len(n) >= 6):
+            return True
+        if "moddb.com" in meta_txt and any(
+            n.replace(" ", "") in meta_txt.replace(" ", "")
+            for n in needles
+            if len(n) >= 8
+        ):
+            return True
+        return False
 
     candidates: list[Path] = []
     for root in (dld, top):
@@ -5716,40 +5796,11 @@ def claim_download_as_zip(
                         break
                 if la is not None:
                     continue
-            low = p.name.lower()
-            stem_low = p.stem.lower()
-            if any(n and (n == low or n == stem_low or n in stem_low) for n in needles):
+            if _matches_this_download(p):
                 candidates.append(p)
-                continue
-            # Extensionless hash name: match via sibling .meta url / file id.
-            meta = Path(str(p) + ".meta")
-            if not meta.is_file():
-                meta = p.with_suffix(p.suffix + ".meta")
-            if meta.is_file():
-                try:
-                    meta_txt = meta.read_text(encoding="utf-8", errors="replace").lower()
-                except OSError:
-                    meta_txt = ""
-                # Bare hash filename equals the mirror URL tail MO2 recorded.
-                if low and low in meta_txt:
-                    candidates.append(p)
-                    continue
-                if fid and fid in meta_txt:
-                    candidates.append(p)
-                    continue
-                if any(n and n in meta_txt for n in needles if len(n) >= 6):
-                    candidates.append(p)
-                    continue
-                if "moddb.com" in meta_txt and any(
-                    n.replace(" ", "") in meta_txt.replace(" ", "")
-                    for n in needles
-                    if len(n) >= 8
-                ):
-                    candidates.append(p)
 
-    # Last resort: newest archive-looking file in downloads/ modified in the last
-    # few minutes (covers MO2 hash filenames right after ``mo2_download``).
-    if not candidates and top.is_dir():
+    # Last resort (no URL hash): newest archive in downloads/ from the last few minutes.
+    if not candidates and not url_hash and top.is_dir():
         import time
 
         now = time.time()
@@ -5774,10 +5825,21 @@ def claim_download_as_zip(
     if not candidates:
         return None
 
-    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    def _claim_rank(p: Path) -> tuple[int, float]:
+        low = p.name.lower()
+        stem_low = p.stem.lower()
+        # Exact CDN hash name first, then newer mtime.
+        exact = 0 if url_hash and (low == url_hash or stem_low == url_hash) else 1
+        try:
+            mtime = -p.stat().st_mtime
+        except OSError:
+            mtime = 0.0
+        return (exact, mtime)
+
+    candidates.sort(key=_claim_rank)
     src = candidates[0]
     suffix = src.suffix.lower() if src.suffix else _archive_magic_suffix(src)
-    if not suffix:
+    if not suffix or suffix == ".unfinished":
         suffix = ".zip"
     dest = dld / f"{stem}{suffix}"
     if src.resolve() == dest.resolve():
@@ -5787,7 +5849,7 @@ def claim_download_as_zip(
         return dest
     if dest.exists() and dest.resolve() != src.resolve():
         dest.unlink()
-    shutil.move(str(src), str(dest))
+    _move_download_file(src, dest)
     meta = Path(str(src) + ".meta")
     if not meta.is_file():
         meta = src.with_suffix(src.suffix + ".meta")
@@ -5799,12 +5861,39 @@ def claim_download_as_zip(
     return dest
 
 
+def _move_download_file(src: Path, dest: Path) -> None:
+    """``shutil.move`` with short retries for Windows file locks (MO2)."""
+    import time
+
+    last: BaseException | None = None
+    for attempt in range(8):
+        try:
+            shutil.move(str(src), str(dest))
+            return
+        except OSError as exc:
+            last = exc
+            # WinError 32: sharing violation — MO2 may still hold the file.
+            if getattr(exc, "winerror", None) != 32 and exc.errno not in (
+                11,
+                13,
+                16,
+            ):
+                raise
+            time.sleep(0.25 * (attempt + 1))
+    assert last is not None
+    raise last
+
+
 def mo2_download(mo2_root: Path, url: str) -> int:
+    """Run ``ModOrganizer.exe download`` (serialized — MO2 is not multi-safe)."""
     exe = mo2_root / "ModOrganizer.exe"
     if not exe.is_file():
         raise FileNotFoundError(f"ModOrganizer.exe not found: {exe}")
     info(f"  MO2 download: {url}")
-    proc = subprocess.run([str(exe), "download", url], cwd=str(mo2_root), check=False)
+    with _mo2_download_lock:
+        proc = subprocess.run(
+            [str(exe), "download", url], cwd=str(mo2_root), check=False
+        )
     if proc.returncode == 0:
         ok(f"  MO2 download exit 0: {url}")
     else:

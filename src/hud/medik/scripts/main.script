@@ -9,8 +9,8 @@
 	  bleed_restore  same scale applied to bleed reduction /sec
 	  bleed_protect  total Wound hit mitigation as 0-99%
 
-	Icons always use the white (_glyph) atlas row. rad_dose / bleed tint via
-	SetTextureColor: white→green / white→red over their range.
+	Icons from dogma_medik_slots.dds; tint via SetTextureColor
+	(rad_dose white→green, bleed white→red).
 
 	Provider override: dogma_hud_medik.set_slot(idx, fn)
 	  fn(slot_idx) -> value, active [, fmt]
@@ -90,6 +90,7 @@ local function bind_part(slot, part, tex_id)
 end
 
 local function resolve_tex(id)
+	-- Slot icons (dogma_medik_*) stay unthemed; bo_/ic_ still follow Medik themes if used.
 	if id:sub(1, 3) == "bo_" and medik_config and medik_config.theme_prefix then
 		local prefix = medik_config.theme_prefix()
 		if prefix and prefix ~= "" then
@@ -99,12 +100,7 @@ local function resolve_tex(id)
 	return id
 end
 
-local function tex_base(tex_idx)
-	local list = CONFIG.SLOT_TEX
-	return list and list[tex_idx] or "bo_hp"
-end
-
--- Always white (_glyph) row; multiply with SetTextureColor.
+-- Always white atlas art; multiply with SetTextureColor.
 -- rad: white → green; bleed: white → red; else white.
 local function tint_rgb(kind, t)
 	t = tonumber(t) or 0
@@ -149,10 +145,8 @@ local function apply_icon_tint(slot, tint, value, tint_max)
 	set_icon_color(slot, r, g, b)
 end
 
--- Icons always use white glyph row (never yellow _lit). Digits still lit/grey by active.
-local function paint_int(slot, base, value, active, tint, tint_max)
-	slot.tex = base
-	bind_part(slot, "icon", resolve_tex(base .. "_glyph"))
+local function paint_int(slot, icon_id, value, active, tint, tint_max)
+	bind_part(slot, "icon", resolve_tex(icon_id))
 	if active then
 		local n = clamp_int(value, 0, 999)
 		bind_part(slot, "d1", resolve_tex("dig_" .. math.floor(n / 100)))
@@ -170,9 +164,8 @@ local function paint_int(slot, base, value, active, tint, tint_max)
 end
 
 -- Two digits + % (dig_pct; dig_. stub until redrawn).
-local function paint_pct(slot, base, value, active, tint, tint_max)
-	slot.tex = base
-	bind_part(slot, "icon", resolve_tex(base .. "_glyph"))
+local function paint_pct(slot, icon_id, value, active, tint, tint_max)
+	bind_part(slot, "icon", resolve_tex(icon_id))
 	if active then
 		local n = clamp_int(value, 0, 99)
 		bind_part(slot, "d1", resolve_tex("dig_" .. math.floor(n / 10)))
@@ -189,14 +182,14 @@ local function paint_pct(slot, base, value, active, tint, tint_max)
 	end
 end
 
-local function paint_slot(slot, base, value, active, fmt, tint, tint_max)
-	if not slot then
+local function paint_slot(slot, icon_id, value, active, fmt, tint, tint_max)
+	if not slot or not icon_id then
 		return
 	end
 	if fmt == "pct" then
-		paint_pct(slot, base, value, active, tint, tint_max)
+		paint_pct(slot, icon_id, value, active, tint, tint_max)
 	else
-		paint_int(slot, base, value, active, tint, tint_max)
+		paint_int(slot, icon_id, value, active, tint, tint_max)
 	end
 end
 
@@ -478,7 +471,7 @@ local function apply_slots(ui)
 				value, active = builtin_stat(def.id, boost)
 			end
 			fmt = fmt or def.fmt or "int"
-			paint_slot(slot, tex_base(def.tex), value, active, fmt, def.tint, def.tint_max)
+			paint_slot(slot, def.icon, value, active, fmt, def.tint, def.tint_max)
 		end
 	end
 
@@ -534,7 +527,7 @@ function slot_tex(idx)
 	if not def then
 		return nil
 	end
-	return tex_base(def.tex)
+	return def.icon
 end
 
 function on_game_start()

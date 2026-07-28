@@ -5,17 +5,20 @@ _G.dogma_hud_medik_conf = {
 	MOD_ID = "dogma/hud/medik",
 	DEFAULTS = {},
 
-	-- Visible slots (2x3). `icon` = texture id from dogma_medik_slots.dds (32x32 L→R).
+	-- Icons use stock Medik ids from ui\medik_boosters (top-row *_glyph, 32x32).
+	-- Ship textures/ui/medik_boosters.dds override; place art in these cells L→R:
+	--   0 hp | 1 bleed | 2 rad | 3 carry | 4 power | 5 ext_rad  (y=0)
+	-- Bottom row (*_lit, y=32) unused — we always bind glyphs + tint in script.
 	-- `tint`: nil = white; "rad"/"bleed" = white→green/red by value.
 	SLOTS = {
 		-- row 1
-		{ id = "rad_dose", icon = "dogma_medik_rad", fmt = "int", tint = "rad", tint_max = 999 },
-		{ id = "rad_restore", icon = "dogma_medik_rad_res", fmt = "int" },
-		{ id = "rad_protect", icon = "dogma_medik_rad_prot", fmt = "pct" },
+		{ id = "rad_dose", icon = "bo_hp_glyph", fmt = "int", tint = "rad", tint_max = 999 },
+		{ id = "rad_restore", icon = "bo_bleed_glyph", fmt = "int" },
+		{ id = "rad_protect", icon = "bo_rad_glyph", fmt = "pct" },
 		-- row 2
-		{ id = "bleed", icon = "dogma_medik_bleed", fmt = "int", tint = "bleed", tint_max = 999 },
-		{ id = "bleed_restore", icon = "dogma_medik_bleed_res", fmt = "int" },
-		{ id = "bleed_protect", icon = "dogma_medik_bleed_prot", fmt = "pct" },
+		{ id = "bleed", icon = "bo_carry_glyph", fmt = "int", tint = "bleed", tint_max = 999 },
+		{ id = "bleed_restore", icon = "bo_power_glyph", fmt = "int" },
+		{ id = "bleed_protect", icon = "bo_ext_rad_glyph", fmt = "pct" },
 	},
 
 	-- HUD rad-icon mSv scale (G_FLAT Msv Above Radiation Icon / item_device tip).

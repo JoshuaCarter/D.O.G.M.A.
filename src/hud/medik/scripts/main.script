@@ -41,6 +41,13 @@ local function clamp_int(n, lo, hi)
 end
 
 local function actor_cond_float(key, fallback)
+	-- Prefer SYS_GetParam — same source as inventory tip magnitudes.
+	if SYS_GetParam then
+		local v = SYS_GetParam(2, "actor_condition", key)
+		if v ~= nil then
+			return v
+		end
+	end
 	if ini_sys and ini_sys.r_float_ex then
 		local v = ini_sys:r_float_ex("actor_condition", key)
 		if v ~= nil then
@@ -161,13 +168,13 @@ local function paint_int(slot, icon_id, value, active, tint, tint_max)
 	end
 end
 
--- Two digits + trailing glyph. Use dig_. (known Medik id) until a real % is drawn.
+-- Two digits + % (dig_pct on extended medik_digits.dds).
 local function paint_pct(slot, icon_id, value, active, tint, tint_max)
 	bind_part(slot, "icon", resolve_tex(icon_id))
 	local n = clamp_int(value, 0, 99)
 	bind_part(slot, "d1", resolve_tex("dig_" .. math.floor(n / 10)))
 	bind_part(slot, "d2", resolve_tex("dig_" .. (n % 10)))
-	bind_part(slot, "d3", resolve_tex("dig_."))
+	bind_part(slot, "d3", resolve_tex("dig_pct"))
 	slot.active = active and true or false
 	if active then
 		apply_icon_tint(slot, tint, n, tint_max or 99)
@@ -291,6 +298,23 @@ local function hit_prot(obj, hit_name)
 	return 0
 end
 
+-- Inventory tip path (utils_ui.get_stats_value): get_outfit_protection (= GetDefHitTypeProtection,
+-- already condition-scaled by the engine) then multiplies by condition AGAIN when
+-- gr.condition is true. Match that so suit+helm tip % sum equals Medik %.
+local function inv_tip_hit_prot(item, cast_fn_name, hit_name)
+	if not item then
+		return 0
+	end
+	local v = 0
+	if utils_item and utils_item.get_outfit_protection then
+		v = utils_item.get_outfit_protection(item, nil, hit_name, 0) or 0
+	else
+		local cast = item[cast_fn_name] and item[cast_fn_name](item)
+		v = hit_prot(cast, hit_name)
+	end
+	return v * (item:condition() or 1)
+end
+
 local function gear_hit_protection(hit_name, immunity_key)
 	local total = 0
 	local actor = db.actor
@@ -298,21 +322,8 @@ local function gear_hit_protection(hit_name, immunity_key)
 		return 0
 	end
 
-	local outfit = actor:item_in_slot(7)
-	if outfit and outfit.cast_CustomOutfit then
-		local c = outfit:cast_CustomOutfit()
-		if c then
-			total = total + hit_prot(c, hit_name)
-		end
-	end
-
-	local helm = actor:item_in_slot(12)
-	if helm and helm.cast_Helmet then
-		local c = helm:cast_Helmet()
-		if c then
-			total = total + hit_prot(c, hit_name)
-		end
-	end
+	total = total + inv_tip_hit_prot(actor:item_in_slot(7), "cast_CustomOutfit", hit_name)
+	total = total + inv_tip_hit_prot(actor:item_in_slot(12), "cast_Helmet", hit_name)
 
 	if actor.iterate_belt and ini_sys then
 		actor:iterate_belt(function(_, obj)

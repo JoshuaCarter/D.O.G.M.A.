@@ -168,13 +168,16 @@ local function paint_int(slot, icon_id, value, active, tint, tint_max)
 	end
 end
 
--- Two digits + % (dig_pct on extended medik_digits.dds).
+-- Protection: two digits only (00-99), no % glyph.
 local function paint_pct(slot, icon_id, value, active, tint, tint_max)
 	bind_part(slot, "icon", resolve_tex(icon_id))
 	local n = clamp_int(value, 0, 99)
 	bind_part(slot, "d1", resolve_tex("dig_" .. math.floor(n / 10)))
 	bind_part(slot, "d2", resolve_tex("dig_" .. (n % 10)))
-	bind_part(slot, "d3", resolve_tex("dig_pct"))
+	if slot.d3 then
+		slot.d3:Show(false)
+		slot.d3_tex = nil
+	end
 	slot.active = active and true or false
 	if active then
 		apply_icon_tint(slot, tint, n, tint_max or 99)
@@ -235,17 +238,23 @@ local function apply_layout(ui)
 
 	for i = 1, n_show do
 		local slot = ui.bo[i]
+		local def = slots[i]
 		if slot then
 			local row = (i <= cols) and 0 or 1
 			local col = (i - 1) % cols
 			local icon_x = x0 + col * L.BO_COLW + (L.BO_COLW - L.ICON_WH) / 2
 			local icon_y = L.ICON_Y0 + row * L.ROW_PITCH
 			local dig_y = icon_y + L.ICON_WH + L.DIG_GAP
-			local d1x = icon_x + (L.ICON_WH - 3 * L.DIG_W) / 2
+			local dig_n = (def and def.fmt == "pct") and 2 or 3
+			local d1x = icon_x + (L.ICON_WH - dig_n * L.DIG_W) / 2
 			place(slot.icon, icon_x, icon_y, L.ICON_WH, L.ICON_WH)
 			place(slot.d1, d1x, dig_y, L.DIG_W, L.DIG_H)
 			place(slot.d2, d1x + L.DIG_W, dig_y, L.DIG_W, L.DIG_H)
-			place(slot.d3, d1x + 2 * L.DIG_W, dig_y, L.DIG_W, L.DIG_H)
+			if dig_n == 3 then
+				place(slot.d3, d1x + 2 * L.DIG_W, dig_y, L.DIG_W, L.DIG_H)
+			elseif slot.d3 then
+				slot.d3:Show(false)
+			end
 		end
 	end
 

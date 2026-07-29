@@ -87,7 +87,7 @@ def _expand_desc(text: str, *, mo2_root: Path, dogma_dl: Path) -> str:
     out = lib.expand_path_placeholders(text, mo2_root)
     out = out.replace("<DOGMA_DOWNLOADS>", folder).replace("<dogma_downloads>", folder)
     out = re.sub(
-        r"(?i)(?:[A-Za-z]:[/\\](?:[^/\\\s]+[/\\])*?)?downloads[/\\]DOGMA",
+        r"(?i)(?:[A-Za-z]:[/\\](?:[^/\\\s]+[/\\])*?)?(?:downloads[/\\]DOGMA|DOGMA-downloads)",
         lambda _m: folder,
         out,
     )
@@ -291,6 +291,64 @@ def _apply_dark_theme(root: tk.Tk) -> dict[str, tk.PhotoImage]:
         "TButton",
         background=[("active", btn_active), ("pressed", raised)],
         foreground=[("disabled", muted)],
+    )
+    # Toolbar page/select buttons — ~20% shorter than footer TButton.
+    _tb_pad = (12, 4)
+    style.configure(
+        "Toolbar.TButton",
+        background=btn,
+        foreground=fg,
+        bordercolor=border,
+        focuscolor=border,
+        lightcolor=btn,
+        darkcolor=btn,
+        padding=_tb_pad,
+    )
+    style.map(
+        "Toolbar.TButton",
+        background=[("active", btn_active), ("pressed", raised)],
+        foreground=[("disabled", muted)],
+    )
+    # Wizard page tabs: selected = white text + 1px white border; idle = grey text.
+    style.configure(
+        "Page.TButton",
+        background=btn,
+        foreground=muted,
+        bordercolor=border,
+        focuscolor=border,
+        lightcolor=btn,
+        darkcolor=btn,
+        borderwidth=1,
+        relief="solid",
+        padding=_tb_pad,
+    )
+    style.map(
+        "Page.TButton",
+        background=[("active", btn_active), ("pressed", raised)],
+        foreground=[("active", muted), ("pressed", muted)],
+        bordercolor=[("active", border)],
+        lightcolor=[("active", btn), ("pressed", btn)],
+        darkcolor=[("active", btn), ("pressed", btn)],
+    )
+    style.configure(
+        "PageSelected.TButton",
+        background=btn,
+        foreground=fg,
+        bordercolor="#ffffff",
+        focuscolor="#ffffff",
+        lightcolor="#ffffff",
+        darkcolor="#ffffff",
+        borderwidth=1,
+        relief="solid",
+        padding=_tb_pad,
+    )
+    style.map(
+        "PageSelected.TButton",
+        background=[("active", btn_active), ("pressed", raised)],
+        foreground=[("active", fg), ("pressed", fg), ("disabled", fg)],
+        bordercolor=[("active", "#ffffff"), ("pressed", "#ffffff"), ("disabled", "#ffffff")],
+        lightcolor=[("active", "#ffffff"), ("pressed", "#ffffff"), ("disabled", "#ffffff")],
+        darkcolor=[("active", "#ffffff"), ("pressed", "#ffffff"), ("disabled", "#ffffff")],
     )
     style.configure(
         "Vertical.TScrollbar",
@@ -682,9 +740,15 @@ class _HoverTip:
         )
         box.tag_configure("normal", foreground=_THEME["fg"])
         box.tag_configure("expected", foreground=_THEME["fg_expected"])
+        box.tag_configure("alert", foreground=_THEME["alert"])
         first = True
         for label, items, kind in sections:
-            tag = "expected" if kind == "expected" else "normal"
+            if kind == "expected":
+                tag = "expected"
+            elif kind == "alert":
+                tag = "alert"
+            else:
+                tag = "normal"
             if not first:
                 box.insert("end", "\n\n", (tag,))
             first = False
@@ -740,10 +804,11 @@ def _pack_info_icon(
     sections_fn: Callable[[], list[tuple[str, list[str], str]]],
     *,
     bg: str | None = None,
+    image: tk.PhotoImage | None = None,
 ) -> tk.Label:
-    """Filled blue ⓘ; hover shows what this mod does."""
+    """Filled ⓘ; hover shows what this mod does."""
     bg = bg if bg is not None else _frame_bg(parent)
-    img = _filled_info_image(parent.winfo_toplevel(), bg=bg)
+    img = image or _filled_info_image(parent.winfo_toplevel(), bg=bg)
     lbl = tk.Label(
         parent,
         image=img,
@@ -1329,6 +1394,9 @@ class _ArchiveField:
         self._spin_job: str | None = None
         self._spin_i = 0
         self._has_file = False
+        self._progress = 0.0  # 0..1 while downloading; 0 when idle
+        self._prog_pending: tuple[int, int] | None = None
+        self._prog_job: str | None = None
         _ = width_chars  # kept for call-site compat; width is pixel-based now
 
         raised = _THEME["bg_raised"]
@@ -1351,10 +1419,26 @@ class _ArchiveField:
         self.check: ttk.Checkbutton | None = None
         self.radio: ttk.Radiobutton | None = None
         self._alert = False
+        self._info_lbl: tk.Label | None = None
+        self._info_img_normal: tk.PhotoImage | None = None
+        self._info_img_alert: tk.PhotoImage | None = None
 
         if info_sections_fn is not None:
-            info = _pack_info_icon(inner, info_sections_fn, bg=raised)
+            top = self.frame.winfo_toplevel()
+            self._info_img_normal = _filled_info_image(
+                top, bg=raised, fill=_THEME["link"]
+            )
+            self._info_img_alert = _filled_info_image(
+                top, bg=raised, fill=_THEME["alert"]
+            )
+            info = _pack_info_icon(
+                inner,
+                info_sections_fn,
+                bg=raised,
+                image=self._info_img_normal,
+            )
             info.pack(side="left", padx=(2, 6))
+            self._info_lbl = info
             self._drop_hosts.append(info)
 
         name_wrap = tk.Frame(
@@ -1368,24 +1452,38 @@ class _ArchiveField:
         name_wrap.pack(side="left", fill="y", pady=0)
         name_wrap.pack_propagate(False)
         self.name_var = tk.StringVar(value="")
-        self.name_lbl = tk.Label(
+        # Canvas so a blue L→R fill can sit behind the filename text.
+        self.name_canvas = tk.Canvas(
             name_wrap,
-            textvariable=self.name_var,
             background=sunken,
-            foreground=_THEME["fg_placeholder"],
-            font=("Segoe UI", 9),
-            anchor="w",
-            padx=6,
-            pady=1,
+            highlightthickness=0,
+            bd=0,
+            height=22,
         )
-        self.name_lbl.pack(fill="both", expand=True)
-        self._drop_hosts.extend([name_wrap, self.name_lbl])
+        self.name_canvas.pack(fill="both", expand=True)
+        self._prog_rect = self.name_canvas.create_rectangle(
+            0, 0, 0, 22, fill=_THEME["link"], outline="", tags=("prog",)
+        )
+        self._name_text = self.name_canvas.create_text(
+            6,
+            11,
+            text="",
+            anchor="w",
+            fill=_THEME["fg_placeholder"],
+            font=("Segoe UI", 9),
+            tags=("name",),
+        )
+        # Keep Label API used by tip helpers / older call sites as an alias.
+        self.name_lbl = self.name_canvas
+        self._drop_hosts.extend([name_wrap, self.name_canvas])
+        self.name_var.trace_add("write", lambda *_a: self._paint_name())
+        self.name_canvas.bind("<Configure>", lambda _e: self._paint_name(), add="+")
         if enable_file:
 
             def _browse_click(_event: tk.Event | None = None) -> None:
                 self._browse()
 
-            for host in (name_wrap, self.name_lbl):
+            for host in (name_wrap, self.name_canvas):
                 host.configure(cursor="hand2")
                 host.bind("<Button-1>", _browse_click, add="+")
 
@@ -1523,7 +1621,7 @@ class _ArchiveField:
         return False
 
     def set_alert(self, on: bool) -> None:
-        """Red border when this box is an unmet dependency target."""
+        """Red file-box border (+ red ⓘ) when this selected box needs an archive."""
         self._alert = bool(on)
         try:
             self.box.configure(
@@ -1534,16 +1632,85 @@ class _ArchiveField:
             )
         except tk.TclError:
             pass
+        if self._info_lbl is not None:
+            img = (
+                self._info_img_alert
+                if self._alert
+                else self._info_img_normal
+            )
+            if img is not None:
+                try:
+                    self._info_lbl.configure(image=img)
+                    self._info_lbl._dogma_info_img = img  # type: ignore[attr-defined]
+                except tk.TclError:
+                    pass
 
     def pack(self, **kwargs: object) -> "_ArchiveField":
         self.frame.pack(**kwargs)  # type: ignore[arg-type]
         return self
 
+    def _name_fg(self) -> str:
+        if self._busy:
+            return _THEME["fg"]
+        if self._has_file:
+            return _THEME["link"]
+        return _THEME["fg_placeholder"]
+
+    def _paint_name(self) -> None:
+        """Redraw name text + optional blue progress fill behind it."""
+        try:
+            w = max(int(self.name_canvas.winfo_width()), 1)
+            h = max(int(self.name_canvas.winfo_height()), 1)
+        except tk.TclError:
+            return
+        frac = max(0.0, min(1.0, self._progress if self._busy else 0.0))
+        self.name_canvas.coords(self._prog_rect, 0, 0, int(w * frac), h)
+        if frac <= 0:
+            self.name_canvas.itemconfigure(self._prog_rect, state="hidden")
+        else:
+            self.name_canvas.itemconfigure(self._prog_rect, state="normal")
+        self.name_canvas.coords(self._name_text, 6, h // 2)
+        self.name_canvas.itemconfigure(
+            self._name_text,
+            text=self.name_var.get(),
+            fill=self._name_fg(),
+        )
+        self.name_canvas.tag_raise(self._name_text)
+
+    def _progress_fraction(self, done: int, total: int) -> float:
+        if total and total > 0:
+            return max(0.0, min(1.0, done / total))
+        # Unknown size: asymptotic fill that approaches ~92%.
+        if done <= 0:
+            return 0.0
+        return max(0.0, min(0.92, done / (done + 8 * 1024 * 1024)))
+
+    def _queue_progress(self, done: int, total: int) -> None:
+        """Worker-thread entry: coalesce UI updates onto the Tk thread."""
+        self._prog_pending = (int(done), int(total))
+        if self._prog_job is not None:
+            return
+        try:
+            self._prog_job = self.frame.after(33, self._flush_progress)
+        except tk.TclError:
+            self._prog_job = None
+
+    def _flush_progress(self) -> None:
+        self._prog_job = None
+        pending = self._prog_pending
+        if pending is None or not self._busy:
+            return
+        done, total = pending
+        self._progress = self._progress_fraction(done, total)
+        self._paint_name()
+
     def refresh(self) -> None:
         if not self.enable_file:
             self.name_var.set(self.dep.id)
-            self.name_lbl.configure(foreground=_THEME["fg_placeholder"])
             self._has_file = False
+            if not self._busy:
+                self._progress = 0.0
+            self._paint_name()
             return
         path, _status = lib.resolve_local_archive(
             self.mo2_root,
@@ -1552,12 +1719,13 @@ class _ArchiveField:
         )
         if path is not None:
             self.name_var.set(path.name)
-            self.name_lbl.configure(foreground=_THEME["link"])
             self._has_file = True
         else:
             self.name_var.set(self.dep.id)
-            self.name_lbl.configure(foreground=_THEME["fg_placeholder"])
             self._has_file = False
+        if not self._busy:
+            self._progress = 0.0
+        self._paint_name()
         if self._can_download:
             self.set_download_status(
                 lib.download_version_icon_status(
@@ -1640,6 +1808,9 @@ class _ArchiveField:
         if self.browse_btn is None:
             return
         if busy:
+            self._progress = 0.0
+            self._prog_pending = (0, 0)
+            self._paint_name()
             self.browse_btn.configure(state="disabled")
             if self.clear_btn is not None:
                 self.clear_btn.configure(state="disabled")
@@ -1657,6 +1828,14 @@ class _ArchiveField:
                 except (tk.TclError, ValueError):
                     pass
                 self._spin_job = None
+            if self._prog_job is not None:
+                try:
+                    self.frame.after_cancel(self._prog_job)
+                except (tk.TclError, ValueError):
+                    pass
+                self._prog_job = None
+            self._prog_pending = None
+            self._progress = 0.0
             self.browse_btn.configure(state="normal")
             for btn in self._link_btns:
                 btn.configure(state="normal")
@@ -1738,7 +1917,11 @@ class _ArchiveField:
         lib.info(f"Wizard: download clicked for [{self.dep.id}]")
 
         def _work() -> None:
-            lib.download_and_associate(self.mo2_root, self.dep)
+            lib.download_and_associate(
+                self.mo2_root,
+                self.dep,
+                on_progress=self._queue_progress,
+            )
 
         def _done(err: BaseException | None) -> None:
             self._set_busy(False)
@@ -1904,13 +2087,6 @@ def _run_wizard_ui(
     subtitle_var = tk.StringVar(
         value="Choose third-party mods to install"
     )
-    ttk.Label(
-        header,
-        textvariable=subtitle_var,
-        font=("Segoe UI", 11),
-        foreground=_THEME["fg_muted"],
-        wraplength=win_w - 80,
-    ).pack(anchor="w", pady=(6, 0))
 
     paths = ttk.Frame(header)
     paths.pack(fill="x", pady=(10, 0))
@@ -1930,12 +2106,22 @@ def _run_wizard_ui(
     toolbar = ttk.Frame(root, padding=(20, 4, 20, 0))
     toolbar.pack(fill="x")
     sel_btns = ttk.Frame(toolbar)
-    sel_btns.pack(side="left")
+    sel_btns.pack(side="right")
+    page_bar = ttk.Frame(toolbar)
+    page_bar.pack(side="left", fill="x", expand=True)
 
     page_tab_btns: dict[int, ttk.Button] = {}
 
     body = ttk.Frame(root, padding=(16, 8, 16, 8))
     body.pack(fill="both", expand=True)
+
+    ttk.Label(
+        body,
+        textvariable=subtitle_var,
+        font=("Segoe UI", 11),
+        foreground=_THEME["fg_muted"],
+        wraplength=win_w - 80,
+    ).pack(anchor="w", pady=(0, 6))
 
     scroll_border = tk.Frame(
         body,
@@ -1980,7 +2166,9 @@ def _run_wizard_ui(
     page1_col.pack(fill="both", expand=True, padx=4, pady=4)
 
     bool_vars: dict[str, tk.BooleanVar] = {}
+    check_btns: dict[str, ttk.Checkbutton] = {}
     exclusive_vars: dict[str, tk.StringVar] = {}
+    _applying_forced_deps = {"on": False}
     group_defaults: dict[str, str] = {}
     page1_option_ids: list[str] = []
     page2_option_ids: list[str] = []
@@ -2024,28 +2212,95 @@ def _run_wizard_ui(
     # option id → leaf pack ids that need archives
     option_archive_leaves: dict[str, list[str]] = {}
 
-    def _leaves_linked(leaf_ids: list[str]) -> bool:
-        if not leaf_ids:
-            return True
-        for lid in leaf_ids:
-            leaf = pack_by_id.get(lid)
-            if leaf is None:
-                return False
-            path, _st = lib.resolve_local_archive(mo2_root, leaf)
-            if path is None:
-                return False
-        return True
+    # option id → last known "primary archive present" (for edge-triggered select).
+    _primary_linked_state: dict[str, bool] = {}
 
-    def _auto_check_for_leaf(leaf_id: str) -> None:
-        for oid, leaves in option_archive_leaves.items():
-            if leaf_id not in leaves:
-                continue
-            if not _leaves_linked(leaves):
-                continue
-            bv = bool_vars.get(oid)
-            if bv is not None:
-                bv.set(True)
+    def _option_primary_leaf_id(oid: str) -> str | None:
+        leaves = option_archive_leaves.get(oid) or []
+        if not leaves:
+            return None
+        return oid if oid in leaves else leaves[0]
+
+    def _option_primary_linked(oid: str) -> bool:
+        lid = _option_primary_leaf_id(oid)
+        if not lid:
+            return False
+        leaf = pack_by_id.get(lid)
+        if leaf is None:
+            return False
+        path, _st = lib.resolve_local_archive(mo2_root, leaf)
+        return path is not None
+
+    def _sync_third_party_checks_from_files(*, on_load: bool = False) -> None:
+        """Select page-1 mods when their archive appears; clear when it disappears.
+
+        On load / file-added only (not every poll). Unselect on file loss unless
+        the option is a locked dependency of another selected mod.
+        """
+        if _applying_forced_deps["on"]:
+            return
+        # Respect a prior InstallerSelection on first open.
+        if (
+            on_load
+            and initial is not None
+            and initial.option_ids
+        ):
+            for oid in page1_option_ids:
+                _primary_linked_state[oid] = _option_primary_linked(oid)
+            return
+
+        _applying_forced_deps["on"] = True
+        try:
+            for oid in page1_option_ids:
+                linked = _option_primary_linked(oid)
+                was = _primary_linked_state.get(oid)
+                _primary_linked_state[oid] = linked
+                bv = bool_vars.get(oid)
+                if bv is None:
+                    continue
+                if linked and (on_load or was is False):
+                    if not bv.get():
+                        bv.set(True)
+                elif not linked and was is True:
+                    # Defer forced check until after selects; uncheck pass below.
+                    pass
+
+            # Lock/check depends of newly selected parents.
+            forced = _forced_option_ids()
+            for oid in forced:
+                bv = bool_vars.get(oid)
+                if bv is not None and not bv.get():
+                    bv.set(True)
+
+            forced = _forced_option_ids()
+            for oid in page1_option_ids:
+                bv = bool_vars.get(oid)
+                if bv is None or not bv.get():
+                    continue
+                if oid in forced:
+                    continue
+                if not _primary_linked_state.get(oid, False):
+                    bv.set(False)
+
+            forced = _forced_option_ids()
+            for oid, chk in check_btns.items():
+                try:
+                    chk.configure(
+                        state=("disabled" if oid in forced else "normal")
+                    )
+                except tk.TclError:
+                    pass
+        finally:
+            _applying_forced_deps["on"] = False
         _on_selection_changed()
+
+    def _on_archive_linked(leaf_id: str) -> None:
+        _ = leaf_id
+        _sync_third_party_checks_from_files(on_load=False)
+
+    def _on_archive_cleared(leaf_id: str) -> None:
+        _ = leaf_id
+        _sync_third_party_checks_from_files(on_load=False)
 
     def _leaf_info_sections(
         leaf: lib.Dependency,
@@ -2088,7 +2343,8 @@ def _run_wizard_ui(
                 parent,
                 mo2_root=mo2_root,
                 dep=leaf,
-                on_linked=_auto_check_for_leaf,
+                on_linked=_on_archive_linked,
+                on_cleared=_on_archive_cleared,
                 info_sections_fn=_leaf_info_sections(leaf),
                 drop_registry=drop_registry,
                 link_icons=link_icons,
@@ -2097,6 +2353,26 @@ def _run_wizard_ui(
             field.pack(anchor="w", pady=(0, 4))
             archive_fields.setdefault(leaf.id, []).append(field)
         return leaves
+
+    def _depend_relation_sections(
+        dep: lib.Dependency,
+    ) -> list[tuple[str, list[str], str]]:
+        """Parents/children for info tips — red ``alert`` kind."""
+        children = [d for d in dep.depends if d]
+        parents = sorted(
+            {
+                p.id
+                for p in pack_by_id.values()
+                if dep.id in p.depends and p.id != dep.id
+            },
+            key=str.lower,
+        )
+        out: list[tuple[str, list[str], str]] = []
+        if children:
+            out.append(("Depends", children, "alert"))
+        if parents:
+            out.append(("Required by", parents, "alert"))
+        return out
 
     def _catalog_sections_for(
         deps: list[lib.Dependency],
@@ -2113,8 +2389,7 @@ def _run_wizard_ui(
             sections.append(
                 ("Installs", [f"local package {zname} ({path_pack.path})"], "normal")
             )
-            if path_pack.depends:
-                sections.append(("Depends", list(path_pack.depends), "normal"))
+            sections.extend(_depend_relation_sections(path_pack))
             if feature is not None:
                 for label, items in lib.preview_feature_effect_sections(
                     feature, mo2_root=mo2_root
@@ -2130,6 +2405,12 @@ def _run_wizard_ui(
         else:
             for label, items in _effect_deps_for(deps):
                 sections.append((label, items, "normal"))
+            seen_rel: set[str] = set()
+            for d in deps:
+                if d.id in seen_rel:
+                    continue
+                seen_rel.add(d.id)
+                sections.extend(_depend_relation_sections(d))
         return sections
 
     def _effect_deps_for(
@@ -2202,37 +2483,83 @@ def _run_wizard_ui(
     footer_btns: dict[str, ttk.Button] = {}
     depends_warn_var = tk.StringVar(value="")
 
-    def _unmet_dependency_leaf_ids() -> set[str]:
-        """Depend leaf ids missing archives for selected checkbox mods.
+    def _selected_seed_ids() -> list[str]:
+        """Checkbox option ids + radio picks currently selected."""
+        seeds = list(_selected_option_ids())
+        for var in exclusive_vars.values():
+            pick = (var.get() or "").strip()
+            if pick:
+                seeds.append(pick)
+        return seeds
 
-        Empty radios are valid (no red). Red only when a selected mod has
-        ``depends:`` archives that still need linking.
+    def _forced_option_ids() -> set[str]:
+        """Checkbox options required by a currently selected pack's depends."""
+        forced: set[str] = set()
+        for seed in _selected_seed_ids():
+            for leaf in lib.archive_leaves_for_pack(pack_by_id, seed):
+                if leaf.id in bool_vars and leaf.id != seed:
+                    forced.add(leaf.id)
+            opt = opt_by_id.get(seed)
+            if opt is not None:
+                for dep in _deps_for_option(opt):
+                    if dep.id in bool_vars and dep.id != seed:
+                        forced.add(dep.id)
+            pack = pack_by_id.get(seed)
+            if pack is not None:
+                for dep_id in pack.depends:
+                    if dep_id in bool_vars and dep_id != seed:
+                        forced.add(dep_id)
+        return forced
+
+    def _apply_forced_deps() -> None:
+        """Auto-check dependency options and lock their checkboxes."""
+        if _applying_forced_deps["on"]:
+            return
+        _applying_forced_deps["on"] = True
+        try:
+            forced = _forced_option_ids()
+            for oid in forced:
+                bv = bool_vars.get(oid)
+                if bv is not None and not bv.get():
+                    bv.set(True)
+            for oid, chk in check_btns.items():
+                try:
+                    chk.configure(
+                        state=("disabled" if oid in forced else "normal")
+                    )
+                except tk.TclError:
+                    pass
+        finally:
+            _applying_forced_deps["on"] = False
+
+    def _missing_selected_leaf_ids() -> set[str]:
+        """Archive leaf ids for the selection that still need a linked file.
+
+        Unified rule: any selected mod's file box without an archive is alerted
+        (primary and depends alike). Empty radios contribute nothing.
         """
-        unmet: set[str] = set()
-        for oid in _selected_option_ids():
-            leaves = option_archive_leaves.get(oid) or []
-            if not leaves:
-                continue
-            primary = oid if oid in leaves else leaves[0]
-            for lid in leaves:
-                if lid == primary:
+        missing: set[str] = set()
+        seen: set[str] = set()
+        for seed in _selected_seed_ids():
+            for leaf in lib.archive_leaves_for_pack(pack_by_id, seed):
+                if leaf.id in seen:
                     continue
-                leaf = pack_by_id.get(lid)
-                if leaf is None:
-                    unmet.add(lid)
-                    continue
+                seen.add(leaf.id)
                 path, _st = lib.resolve_local_archive(mo2_root, leaf)
                 if path is None:
-                    unmet.add(lid)
-        return unmet
+                    missing.add(leaf.id)
+        return missing
 
     def _on_selection_changed(*_args: object) -> None:
-        unmet = _unmet_dependency_leaf_ids()
+        if _applying_forced_deps["on"]:
+            return
+        _apply_forced_deps()
+        missing = _missing_selected_leaf_ids()
         for lid, fields in archive_fields.items():
-            on = lid in unmet
+            on = lid in missing
             for field in fields:
                 field.set_alert(on)
-        blocked = bool(unmet)
+        blocked = bool(missing)
         btn = footer_btns.get("install")
         if btn is not None:
             try:
@@ -2240,9 +2567,9 @@ def _run_wizard_ui(
             except tk.TclError:
                 pass
         if blocked:
-            msg = "You must also install dependencies for selected mods"
+            msg = "Selected mods still need archives linked"
             if wizard_page["n"] >= 2:
-                msg += " (page 1 to link archives)"
+                msg += " (page 1)"
             depends_warn_var.set(msg)
         else:
             depends_warn_var.set("")
@@ -2260,27 +2587,50 @@ def _run_wizard_ui(
             bv = bool_vars.get(oid)
             if bv is not None:
                 bv.set(True)
+        if wizard_page["n"] == 1:
+            for group, packs in radio_groups.items():
+                if not packs:
+                    continue
+                var = exclusive_vars.get(group)
+                if var is not None:
+                    var.set(packs[0].id)
         _on_selection_changed()
 
     def _deselect_all() -> None:
-        for oid in _current_page_option_ids():
-            bv = bool_vars.get(oid)
-            if bv is not None:
-                bv.set(False)
-        if wizard_page["n"] == 1:
-            for var in exclusive_vars.values():
-                var.set("")
+        # Clear this page without re-locking mid-loop; selection-changed
+        # re-applies forced deps still required by other pages.
+        _applying_forced_deps["on"] = True
+        try:
+            if wizard_page["n"] == 1:
+                for var in exclusive_vars.values():
+                    var.set("")
+            for oid in _current_page_option_ids():
+                bv = bool_vars.get(oid)
+                if bv is not None:
+                    bv.set(False)
+                chk = check_btns.get(oid)
+                if chk is not None:
+                    try:
+                        chk.configure(state="normal")
+                    except tk.TclError:
+                        pass
+        finally:
+            _applying_forced_deps["on"] = False
         _on_selection_changed()
 
-    ttk.Button(sel_btns, text="Select all", command=_select_all).pack(
-        side="left", padx=(0, 6)
-    )
-    ttk.Button(sel_btns, text="Deselect all", command=_deselect_all).pack(side="left")
+    ttk.Button(
+        sel_btns, text="Select all", style="Toolbar.TButton", command=_select_all
+    ).pack(side="left", padx=(0, 6))
+    ttk.Button(
+        sel_btns, text="Deselect all", style="Toolbar.TButton", command=_deselect_all
+    ).pack(side="left")
 
     def _add_option_block(
         opt: lib.InstallerOption,
         parent: ttk.Frame,
         id_list: list[str],
+        *,
+        path_inline_desc: bool = False,
     ) -> None:
         pack = pack_by_id.get(opt.id)
         feat = data.features.get(opt.id)
@@ -2309,26 +2659,45 @@ def _run_wizard_ui(
         bool_vars[opt.id] = bv
         id_list.append(opt.id)
 
-        _row, files_col, _chk = _pack_mod_select_row(
+        _row, files_col, chk = _pack_mod_select_row(
             frame,
             kind="check",
             variable=bv,
             command=_on_selection_changed,
         )
+        if isinstance(chk, ttk.Checkbutton):
+            check_btns[opt.id] = chk
 
         is_path_mod = (pack is not None and bool(pack.path)) or (
             pack is None and feat is not None
         )
         leaves: list[lib.Dependency] = []
         if is_path_mod:
-            # Packaged path: mods — no links / file box.
-            _pack_path_install_label(files_col)
-            if pack is not None:
-                _add_desc(frame, _pack_blurb(pack))
-                _desc_spacer(frame)
-            elif opt.desc.strip():
-                _add_desc(frame, opt.desc)
-                _desc_spacer(frame)
+            # Packaged path mods — no archive box.
+            # D.O.G.M.A. features page: white desc in the old "Install" slot.
+            # Page 1 path rows (if any): keep Install + desc under.
+            if path_inline_desc:
+                blurb = (
+                    _pack_blurb(pack)
+                    if pack is not None
+                    else (opt.desc or "").strip()
+                )
+                ttk.Label(
+                    files_col,
+                    text=blurb or "Install",
+                    font=("Segoe UI", 10),
+                    foreground=_THEME["fg"],
+                    wraplength=max(320, col_wrap - 48),
+                    justify="left",
+                ).pack(anchor="w", pady=(4, 0))
+            else:
+                _pack_path_install_label(files_col)
+                if pack is not None:
+                    _add_desc(frame, _pack_blurb(pack))
+                    _desc_spacer(frame)
+                elif opt.desc.strip():
+                    _add_desc(frame, opt.desc)
+                    _desc_spacer(frame)
         elif pack is not None:
             leaves = _add_archive_fields(
                 files_col,
@@ -2360,28 +2729,40 @@ def _run_wizard_ui(
             )
             field.pack(anchor="w", pady=(0, 4))
 
-        # Fresh wizard: auto-check when archives are already linked.
-        linked_leaves = option_archive_leaves.get(opt.id) or []
-        if (
-            linked_leaves
-            and _leaves_linked(linked_leaves)
-            and (initial is None or not prior)
-        ):
-            bv.set(True)
-
-    def _add_tweak_row(
+    def _add_compact_path_row(
         opt: lib.InstallerOption,
         parent: ttk.Frame,
         id_list: list[str],
+        *,
+        desc_only: bool = False,
     ) -> None:
-        """Compact Tweaks: [✓] Name / one-line desc — small gap, no section headers."""
+        """Compact path-mod row with tight gap: ``[✓] Name`` + desc (no Install).
+
+        ``desc_only`` is unused (kept for call-site compat); both pages show the name.
+        D.O.G.M.A. features use white desc; Tweaks use muted desc.
+        """
+        _ = desc_only
         pack = pack_by_id.get(opt.id)
         feat = data.features.get(opt.id)
         if pack is not None and pack.path:
             feat = data.features.get(pack.path) or feat
-        title = pack.id if pack is not None else (
-            feat.display_name if feat is not None else opt.id
-        )
+        if pack is not None:
+            title = (
+                pack.id
+                if lib.is_wizard_tweak_pack(pack)
+                else lib.with_dogma_prefix(pack.id)
+            )
+            desc_fg = (
+                _THEME["fg_muted"]
+                if lib.is_wizard_tweak_pack(pack)
+                else _THEME["fg"]
+            )
+        elif feat is not None:
+            title = feat.display_name
+            desc_fg = _THEME["fg"]
+        else:
+            title = opt.id
+            desc_fg = _THEME["fg_muted"]
         desc = _pack_blurb(pack) if pack is not None else (opt.desc or "").strip()
 
         prior = set(initial.option_ids) if initial is not None else set()
@@ -2396,13 +2777,15 @@ def _run_wizard_ui(
 
         block = ttk.Frame(parent)
         block.pack(anchor="w", fill="x", pady=(0, 8), padx=2)
-        _row, files_col, _chk = _pack_mod_select_row(
+        _row, files_col, chk = _pack_mod_select_row(
             block,
             kind="check",
             variable=bv,
             command=_on_selection_changed,
         )
-        # Same slot as path-mod "Install", but show the tweak name.
+        if isinstance(chk, ttk.Checkbutton):
+            check_btns[opt.id] = chk
+
         ttk.Label(
             files_col,
             text=title,
@@ -2413,11 +2796,18 @@ def _run_wizard_ui(
             ttk.Label(
                 files_col,
                 text=desc,
-                foreground=_THEME["fg_muted"],
+                foreground=desc_fg,
                 font=("Segoe UI", 9),
                 wraplength=max(320, col_wrap - 48),
                 justify="left",
             ).pack(anchor="w", pady=(1, 0))
+
+    def _add_tweak_row(
+        opt: lib.InstallerOption,
+        parent: ttk.Frame,
+        id_list: list[str],
+    ) -> None:
+        _add_compact_path_row(opt, parent, id_list, desc_only=False)
 
     def _add_or_separator(parent: ttk.Frame) -> None:
         # Quiet gap between radio choices (no "OR" label).
@@ -2501,12 +2891,18 @@ def _run_wizard_ui(
             opt = opt_by_id.get(sid)
             if opt is not None:
                 _add_option_block(opt, page1_col, page1_option_ids)
+    _sync_third_party_checks_from_files(on_load=True)
 
     for kind, sid in lib.wizard_page2_section_order(data, min_stage=min_stage):
         if kind == "option":
             opt = opt_by_id.get(sid)
             if opt is not None:
-                _add_option_block(opt, page2_col, page2_option_ids)
+                _add_option_block(
+                    opt,
+                    page2_col,
+                    page2_option_ids,
+                    path_inline_desc=True,
+                )
 
     for kind, sid in lib.wizard_page3_section_order(data, min_stage=min_stage):
         if kind == "option":
@@ -2575,9 +2971,81 @@ def _run_wizard_ui(
             features_chosen=True,
         )
 
+    archive_poll: dict[str, object] = {
+        "job": None,
+        "focus_job": None,
+        "alive": True,
+    }
+
+    def _sync_archives_from_disk(*_args: object) -> None:
+        """Prune missing archives.ini rows and refresh file boxes from disk."""
+        if not archive_poll["alive"]:
+            return
+        try:
+            removed = lib.sync_archive_links(mo2_root)
+        except Exception as exc:
+            lib.log_exception(exc, where="wizard.sync_archives")
+            removed = []
+        changed = bool(removed)
+        for fields in archive_fields.values():
+            for field in fields:
+                if field._busy:
+                    continue
+                before = field._has_file
+                try:
+                    field.refresh()
+                except tk.TclError:
+                    continue
+                if field._has_file != before:
+                    changed = True
+        if changed:
+            _sync_third_party_checks_from_files(on_load=False)
+
+    def _poll_archives() -> None:
+        if not archive_poll["alive"]:
+            return
+        _sync_archives_from_disk()
+        try:
+            archive_poll["job"] = root.after(1500, _poll_archives)
+        except tk.TclError:
+            archive_poll["job"] = None
+
+    def _schedule_archive_sync_on_focus(event: tk.Event) -> None:
+        if not archive_poll["alive"]:
+            return
+        try:
+            if event.widget.winfo_toplevel() is not root:
+                return
+        except tk.TclError:
+            return
+        if archive_poll["focus_job"] is not None:
+            return
+
+        def _run() -> None:
+            archive_poll["focus_job"] = None
+            _sync_archives_from_disk()
+
+        try:
+            archive_poll["focus_job"] = root.after(100, _run)
+        except tk.TclError:
+            archive_poll["focus_job"] = None
+
     def _cleanup_binds() -> None:
+        archive_poll["alive"] = False
+        for key in ("job", "focus_job"):
+            job = archive_poll.get(key)
+            if job is not None:
+                try:
+                    root.after_cancel(job)  # type: ignore[arg-type]
+                except (tk.TclError, ValueError):
+                    pass
+                archive_poll[key] = None
         try:
             root.unbind_all("<MouseWheel>")
+        except tk.TclError:
+            pass
+        try:
+            root.unbind_all("<FocusIn>")
         except tk.TclError:
             pass
         download_hub.shutdown()
@@ -2586,7 +3054,12 @@ def _run_wizard_ui(
         cur = wizard_page["n"]
         for n, btn in page_tab_btns.items():
             try:
-                btn.configure(state=("disabled" if n == cur else "normal"))
+                btn.configure(
+                    style=(
+                        "PageSelected.TButton" if n == cur else "Page.TButton"
+                    ),
+                    state="normal",
+                )
             except tk.TclError:
                 pass
 
@@ -2641,14 +3114,7 @@ def _run_wizard_ui(
                 "Select at least one option.",
             )
             return
-        if _unmet_dependency_leaf_ids():
-            messagebox.showwarning(
-                "D.O.G.M.A.",
-                "You must also install dependencies for selected mods.",
-            )
-            _on_selection_changed()
-            return
-        missing = lib.missing_archives_for_selection(mo2_root, data, chosen)
+        missing = sorted(_missing_selected_leaf_ids())
         if missing:
             preview = ", ".join(missing[:8])
             extra = f" (+{len(missing) - 8} more)" if len(missing) > 8 else ""
@@ -2660,6 +3126,7 @@ def _run_wizard_ui(
                 "These selected mods still need an archive linked "
                 f"(download, $, or folder):\n\n{preview}{extra}",
             )
+            _on_selection_changed()
             return
         try:
             lib.resolve_install_order(
@@ -2680,23 +3147,23 @@ def _run_wizard_ui(
         _cleanup_binds()
         root.destroy()
 
-    footer = ttk.Frame(root, padding=(20, 10, 20, 16))
-    footer.pack(fill="x")
-    page_bar = ttk.Frame(footer)
-    page_bar.pack(side="left")
     page_labels = {
-        1: "3rd party mods",
-        2: "D.O.G.M.A. mods",
-        3: "D.O.G.M.A. tweaks",
+        1: "#1 Third party mods",
+        2: "#2 D.O.G.M.A. features",
+        3: "#3 D.O.G.M.A. tweaks",
     }
     for n, label in page_labels.items():
         btn = ttk.Button(
             page_bar,
             text=label,
+            style="Page.TButton",
             command=lambda page=n: _show_page(page),
         )
         btn.pack(side="left", padx=(0, 4))
         page_tab_btns[n] = btn
+
+    footer = ttk.Frame(root, padding=(20, 10, 20, 16))
+    footer.pack(fill="x")
     ttk.Label(
         footer,
         textvariable=depends_warn_var,
@@ -2704,12 +3171,19 @@ def _run_wizard_ui(
         font=("Segoe UI", 9),
         anchor="w",
         justify="left",
-    ).pack(side="left", fill="x", expand=True, padx=(12, 12))
+    ).pack(side="left", fill="x", expand=True, padx=(0, 12))
     next_btn = ttk.Button(footer, text="Next", command=on_next)
     back_btn = ttk.Button(footer, text="Back", command=on_back)
     install_btn = ttk.Button(footer, text="Install", command=on_install)
     footer_btns["install"] = install_btn
     _show_page(1)
+
+    # Detect Explorer deletes in downloads/DOGMA while the wizard is open.
+    root.bind_all("<FocusIn>", _schedule_archive_sync_on_focus, add="+")
+    try:
+        archive_poll["job"] = root.after(1500, _poll_archives)
+    except tk.TclError:
+        archive_poll["job"] = None
 
     root.protocol("WM_DELETE_WINDOW", on_cancel)
     root.mainloop()

@@ -15,13 +15,14 @@ import zipfile
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable, Iterator
+from typing import Callable, Iterable, Iterator
 
-# Parallel wizard downloads: ModDB/GitHub resolve can overlap; MO2 CLI + claim
-# + archives.ini must not race (MO2 writes into the same downloads/ folder).
-_mo2_download_lock = threading.Lock()
+# Parallel wizard downloads: ModDB/GitHub resolve can overlap; claim +
+# archives.ini must stay serialized. HTTP downloads themselves may run in parallel.
 _downloads_claim_lock = threading.Lock()
 _archive_map_lock = threading.Lock()
+_legacy_migrate_lock = threading.Lock()
+_legacy_migrated_roots: set[str] = set()
 
 
 SEPARATOR_NAME = "DOGMA DEPENDENCIES_separator"
@@ -201,6 +202,7 @@ def resolve_config_dir(mo2_root: Path, override: Path | None = None) -> Path:
             or (cfg / "manifest.yml").is_file()
             or (cfg / "manifest-third-party.yml").is_file()
             or (cfg / "manifest-remote.yml").is_file()
+            or (cfg / "manifest-dogma-features.yml").is_file()
             or (cfg / "manifest-dogma-mods.yml").is_file()
             or (cfg / "manifest-dogma-tweaks.yml").is_file()
             or (cfg / "manifest-local.yml").is_file()
@@ -222,15 +224,25 @@ def resolve_config_dir(mo2_root: Path, override: Path | None = None) -> Path:
 def split_manifest_paths(cfg_dir: Path) -> list[Path]:
     """Ordered split catalogs when all parts exist.
 
-    Preferred: ``manifest-third-party`` + ``manifest-dogma-mods`` + ``manifest-dogma-tweaks``.
-    Legacy: ``manifest-remote`` (+ optional local) with dogma parts.
+    Preferred: ``manifest-third-party`` + ``manifest-dogma-features`` + ``manifest-dogma-tweaks``.
+    Legacy: ``manifest-dogma-mods`` / ``manifest-remote`` / ``manifest-local``.
     """
     preferred = (
+        "manifest-third-party",
+        "manifest-dogma-features",
+        "manifest-dogma-tweaks",
+    )
+    legacy_mods_name = (
         "manifest-third-party",
         "manifest-dogma-mods",
         "manifest-dogma-tweaks",
     )
     legacy_remote = (
+        "manifest-remote",
+        "manifest-dogma-features",
+        "manifest-dogma-tweaks",
+    )
+    legacy_remote_mods = (
         "manifest-remote",
         "manifest-dogma-mods",
         "manifest-dogma-tweaks",
@@ -251,7 +263,13 @@ def split_manifest_paths(cfg_dir: Path) -> list[Path]:
             out.append(found)
         return out
 
-    for bases in (preferred, legacy_remote, legacy):
+    for bases in (
+        preferred,
+        legacy_mods_name,
+        legacy_remote,
+        legacy_remote_mods,
+        legacy,
+    ):
         parts = _collect(bases)
         if parts:
             return parts
@@ -1895,18 +1913,14 @@ def apply_feature_option_defaults(
     data: ManifestData,
     installed: set[str] | None,
 ) -> None:
-    """Path-mod defaults: on if not installed in DOGMA; off if already present."""
+    """Path-mod defaults: D.O.G.M.A. features/tweaks start selected."""
+    _ = installed  # kept for call-site compat; presence no longer clears defaults
     by_id = data.suggested_by_id()
-    low = {x.lower() for x in (installed or set())}
     for opt in data.installer_options:
         dep = by_id.get(opt.id)
         if dep is None or not dep.path:
             continue
-        present = dep.path in (installed or set()) or dep.path.lower() in low
-        if present:
-            opt.default = False
-        else:
-            opt.default = option_default_selected(opt, by_id)
+        opt.default = True
 
 
 def features_from_deps(suggested: list[Dependency]) -> dict[str, FeatureMeta]:
@@ -2056,7 +2070,7 @@ def wizard_page2_section_order(
     *,
     min_stage: str = "dev",
 ) -> list[tuple[str, str]]:
-    """Page 2: D.O.G.M.A. features (path mods that are not Tweaks)."""
+    """Page 2: D.O.G.M.A. features (non-tweak path mods)."""
     min_stage = parse_stage(min_stage)
     sections: list[tuple[str, str]] = []
     seen: set[str] = set()
@@ -4327,8 +4341,8 @@ _MODDB_MIRROR_JS_RE = re.compile(
 def resolve_moddb_mirror_url(start_url: str) -> str:
     """Resolve ModDB ``/start/`` interstitial HTML to a ``/downloads/mirror/...`` URL.
 
-    MO2 ``download`` of a start page saves the countdown HTML (often as a bare
-    file id with no extension). The mirror link redirects to the real CDN zip.
+    Fetching a start page yields countdown HTML; the mirror link redirects to
+    the real CDN zip that DOGMA downloads directly.
     """
     url = (start_url or "").strip()
     if not url:
@@ -5302,9 +5316,43 @@ def run_dep_side_effects(
     queue_console_cmds(mo2_root, dep, dry_run=dry_run)
 
 
+def _maybe_restore_dogma_downloads_sidecars(mo2_root: Path) -> None:
+    """If archives were briefly moved to ``DOGMA-downloads/``, put them back."""
+    root = Path(mo2_root)
+    key = str(root.resolve()).lower()
+    with _legacy_migrate_lock:
+        if key in _legacy_migrated_roots:
+            return
+        _legacy_migrated_roots.add(key)
+        side = root / "DOGMA-downloads"
+        if not side.is_dir():
+            return
+        dest = root / "downloads" / "DOGMA"
+        dest.mkdir(parents=True, exist_ok=True)
+        moved = 0
+        for p in side.iterdir():
+            if not p.is_file():
+                continue
+            low = p.name.lower()
+            if low.endswith(".partial") or low.endswith(".downloading"):
+                continue
+            target = dest / p.name
+            if target.exists():
+                continue
+            try:
+                _move_download_file(p, target)
+                moved += 1
+            except OSError as exc:
+                warn(f"could not restore {p.name} -> downloads/DOGMA: {exc}")
+        if moved:
+            ok(f"restored {moved} file(s) DOGMA-downloads -> downloads/DOGMA")
+
+
 def downloads_dir(mo2_root: Path) -> Path:
-    d = mo2_root / "downloads" / "DOGMA"
+    """DOGMA archive store: ``<MO2>/downloads/DOGMA`` (direct HTTP, not MO2 CLI)."""
+    d = Path(mo2_root) / "downloads" / "DOGMA"
     d.mkdir(parents=True, exist_ok=True)
+    _maybe_restore_dogma_downloads_sidecars(mo2_root)
     return d
 
 
@@ -5416,6 +5464,16 @@ def prune_missing_archive_map(mo2_root: Path) -> list[str]:
     return removed
 
 
+def sync_archive_links(mo2_root: Path) -> list[str]:
+    """Reconcile archives.ini with downloads/DOGMA on disk.
+
+    Drops map entries whose files are gone. Canonical ``<id>[ date].ext``
+    files remain discoverable via ``list_dep_archives`` / filename scan.
+    Returns pack ids removed from the map.
+    """
+    return prune_missing_archive_map(mo2_root)
+
+
 def pack_needs_archive(dep: Dependency) -> bool:
     """True when Setup should show an archive field (not a path: mod)."""
     if dep.path:
@@ -5429,7 +5487,7 @@ def pack_needs_archive(dep: Dependency) -> bool:
 
 
 def dep_auto_download_url(dep: Dependency) -> str:
-    """URL used for MO2 auto-download (url_download: / legacy url:)."""
+    """URL used for DOGMA auto-download (url_download: / legacy url:)."""
     for candidate in (dep.url_download, dep.url):
         u = (candidate or "").strip()
         if u and is_auto_download_url(u):
@@ -5580,8 +5638,12 @@ def download_and_associate(
     dep: Dependency,
     *,
     dry_run: bool = False,
+    on_progress: Callable[[int, int], None] | None = None,
 ) -> Path:
-    """Download (ModDB/GitHub) into downloads/DOGMA and write archives.ini entry."""
+    """Download (ModDB/GitHub) into downloads/DOGMA and write archives.ini entry.
+
+    ``on_progress(bytes_done, bytes_total)`` — ``bytes_total`` may be 0 when unknown.
+    """
     download_url = dep_auto_download_url(dep)
     if not download_url:
         raise ValueError(f"[{dep.id}] has no auto-download url_download:/url:")
@@ -5633,6 +5695,7 @@ def download_and_associate(
         moddb=moddb,
         github=github,
         dry_run=dry_run,
+        on_progress=on_progress,
     )
     if archive is None or not archive.is_file():
         if note == "missing-moddb-interstitial":
@@ -5966,7 +6029,7 @@ def claim_download_as_zip(
     file_id: str = "",
     source_url: str = "",
 ) -> Path | None:
-    """Move/rename a fresh MO2 download into downloads/DOGMA/<id>[ date]{ext}."""
+    """Move/rename a loose archive into downloads/DOGMA/<id>[ date]{ext}."""
     with _downloads_claim_lock:
         return _claim_download_as_zip_unlocked(
             mo2_root,
@@ -6000,7 +6063,9 @@ def _claim_download_as_zip_unlocked(
     if existing:
         return _prefer_archive(existing)
 
+    # Also scan MO2 downloads/ root (and a leftover DOGMA-downloads/) for loose drops.
     top = mo2_root / "downloads"
+    side = Path(mo2_root) / "DOGMA-downloads"
     needles: list[str] = []
     if moddb_filename:
         needles.append(Path(moddb_filename).name.lower())
@@ -6064,7 +6129,8 @@ def _claim_download_as_zip_unlocked(
         return False
 
     candidates: list[Path] = []
-    for root in (dld, top):
+    scan_roots = (dld, side, top)
+    for root in scan_roots:
         if not root.is_dir():
             continue
         for p in root.iterdir():
@@ -6072,10 +6138,10 @@ def _claim_download_as_zip_unlocked(
                 continue
             if not _is_archive_file(p):
                 continue
-            if p.parent == dld and p.stem.lower() == stem.lower():
+            if p.parent.resolve() == dld.resolve() and p.stem.lower() == stem.lower():
                 return p
             # Skip other DOGMA dated/pinned copies of this id (not the fresh download)
-            if p.parent == dld:
+            if p.parent.resolve() == dld.resolve():
                 la = None
                 for item in list_dep_archives(mo2_root, dep):
                     if item.path.resolve() == p.resolve():
@@ -6149,7 +6215,7 @@ def _claim_download_as_zip_unlocked(
 
 
 def _move_download_file(src: Path, dest: Path) -> None:
-    """``shutil.move`` with short retries for Windows file locks (MO2)."""
+    """``shutil.move`` with short retries for Windows file locks."""
     import time
 
     last: BaseException | None = None
@@ -6159,7 +6225,7 @@ def _move_download_file(src: Path, dest: Path) -> None:
             return
         except OSError as exc:
             last = exc
-            # WinError 32: sharing violation — MO2 may still hold the file.
+            # WinError 32: sharing violation — another process may still hold the file.
             if getattr(exc, "winerror", None) != 32 and exc.errno not in (
                 11,
                 13,
@@ -6171,21 +6237,135 @@ def _move_download_file(src: Path, dest: Path) -> None:
     raise last
 
 
-def mo2_download(mo2_root: Path, url: str) -> int:
-    """Run ``ModOrganizer.exe download`` (serialized — MO2 is not multi-safe)."""
-    exe = mo2_root / "ModOrganizer.exe"
-    if not exe.is_file():
-        raise FileNotFoundError(f"ModOrganizer.exe not found: {exe}")
-    info(f"  MO2 download: {url}")
-    with _mo2_download_lock:
-        proc = subprocess.run(
-            [str(exe), "download", url], cwd=str(mo2_root), check=False
-        )
-    if proc.returncode == 0:
-        ok(f"  MO2 download exit 0: {url}")
-    else:
-        warn(f"  MO2 download exit {proc.returncode}: {url}")
-    return proc.returncode
+def _guess_archive_suffix(
+    *,
+    filename: str = "",
+    url: str = "",
+    path: Path | None = None,
+) -> str:
+    """Pick .zip/.7z/.rar from a name, URL path, or file magic."""
+    from urllib.parse import unquote, urlparse
+
+    for raw in (filename, unquote(Path(urlparse(url).path).name) if url else ""):
+        suf = Path(raw).suffix.lower()
+        if suf in ARCHIVE_SUFFIXES:
+            return suf if suf != ".7zip" else ".7z"
+    if path is not None:
+        magic = _archive_magic_suffix(path)
+        if magic:
+            return magic
+    return ".zip"
+
+
+def _filename_from_content_disposition(header: str) -> str:
+    if not header:
+        return ""
+    from urllib.parse import unquote
+
+    m = re.search(r"filename\*\s*=\s*UTF-8''([^;]+)", header, re.I)
+    if m:
+        return Path(unquote(m.group(1).strip().strip('"'))).name
+    m = re.search(r'filename\s*=\s*"([^"]+)"', header, re.I)
+    if m:
+        return Path(m.group(1)).name
+    m = re.search(r"filename\s*=\s*([^;]+)", header, re.I)
+    if m:
+        return Path(m.group(1).strip().strip('"')).name
+    return ""
+
+
+def http_download_file(
+    url: str,
+    dest: Path,
+    *,
+    referer: str = "",
+    timeout: int = 180,
+    on_progress: Callable[[int, int], None] | None = None,
+) -> str:
+    """Download ``url`` to ``dest`` (via ``.partial``). Returns suggested filename.
+
+    Does not use Mod Organizer. Follows redirects. Rejects HTML bodies.
+    ``on_progress(bytes_done, bytes_total)`` — total is 0 when Content-Length is absent.
+    """
+    import urllib.error
+    import urllib.request
+    from urllib.parse import unquote, urlparse
+
+    dest = Path(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    partial = dest.with_name(dest.name + ".partial")
+    if partial.exists():
+        try:
+            partial.unlink()
+        except OSError:
+            pass
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36 DOGMA/1.0"
+        ),
+        "Accept": "*/*",
+    }
+    if referer:
+        headers["Referer"] = referer
+
+    info(f"  HTTP download: {url}")
+    req = urllib.request.Request(url, headers=headers)
+    suggested = ""
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            suggested = _filename_from_content_disposition(
+                resp.headers.get("Content-Disposition") or ""
+            )
+            if not suggested:
+                suggested = unquote(Path(urlparse(resp.geturl()).path).name)
+            ctype = (resp.headers.get("Content-Type") or "").lower()
+            try:
+                total = int(resp.headers.get("Content-Length") or 0)
+            except (TypeError, ValueError):
+                total = 0
+            done = 0
+            if on_progress is not None:
+                on_progress(0, total)
+            with partial.open("wb") as out:
+                while True:
+                    chunk = resp.read(256 * 1024)
+                    if not chunk:
+                        break
+                    out.write(chunk)
+                    done += len(chunk)
+                    if on_progress is not None:
+                        on_progress(done, total)
+            if "text/html" in ctype or _looks_like_html_file(partial):
+                try:
+                    partial.unlink()
+                except OSError:
+                    pass
+                raise RuntimeError(
+                    f"download returned HTML, not an archive: {url}"
+                )
+            if on_progress is not None:
+                on_progress(done if done else total, total if total else done)
+    except urllib.error.HTTPError as exc:
+        try:
+            partial.unlink()
+        except OSError:
+            pass
+        raise RuntimeError(f"HTTP {exc.code} downloading {url}") from exc
+    except urllib.error.URLError as exc:
+        try:
+            partial.unlink()
+        except OSError:
+            pass
+        raise RuntimeError(f"download failed for {url}: {exc.reason}") from exc
+
+    if dest.exists():
+        dest.unlink()
+    _move_download_file(partial, dest)
+    ok(f"  HTTP download saved: {dest.name}")
+    return Path(suggested).name if suggested else dest.name
 
 
 def ensure_dep_archive(
@@ -6196,6 +6376,7 @@ def ensure_dep_archive(
     moddb: ModdbInfo | None,
     dry_run: bool,
     github: GithubInfo | None = None,
+    on_progress: Callable[[int, int], None] | None = None,
 ) -> tuple[Path | None, str]:
     """Ensure downloads/DOGMA has the right archive; download if missing/stale.
 
@@ -6247,9 +6428,48 @@ def ensure_dep_archive(
         )
         return claimed or archive, "would-download"
 
-    rc = mo2_download(mo2_root, download_url)
-    if rc != 0:
-        warn(f"  [{dep.id}] MO2 download exit {rc}; checking downloads…")
+    dld = downloads_dir(mo2_root)
+    stem = dep_zip_stem(dep, date=target_date)
+    suffix = _guess_archive_suffix(filename=remote_filename, url=download_url)
+    dest = dld / f"{stem}{suffix}"
+    tmp = dld / f".{stem}.downloading"
+    referer = ""
+    if moddb is not None and (moddb.start_url or "").strip():
+        referer = moddb.start_url.strip()
+    elif is_moddb_url(download_url):
+        referer = "https://www.moddb.com/"
+
+    try:
+        suggested = http_download_file(
+            download_url,
+            tmp,
+            referer=referer,
+            on_progress=on_progress,
+        )
+        magic = _archive_magic_suffix(tmp)
+        if magic:
+            suffix = magic
+        else:
+            suffix = _guess_archive_suffix(
+                filename=suggested or remote_filename,
+                url=download_url,
+                path=tmp,
+            )
+        dest = dld / f"{stem}{suffix}"
+        if dest.exists() and dest.resolve() != tmp.resolve():
+            dest.unlink()
+        _move_download_file(tmp, dest)
+        set_archive_map_entry(mo2_root, dep.id, dest.name)
+        return dest, "downloaded"
+    except (RuntimeError, OSError, ValueError) as exc:
+        warn(f"  [{dep.id}] direct download failed ({exc}); scanning for archive…")
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except OSError:
+            pass
+
+    # Fallback: claim a loose file already in downloads/DOGMA or MO2 downloads/.
     claimed = claim_download_as_zip(
         mo2_root,
         dep,
@@ -6262,13 +6482,14 @@ def ensure_dep_archive(
     if claimed:
         set_archive_map_entry(mo2_root, dep.id, claimed.name)
         return claimed, "downloaded"
-    # MO2 often saves ModDB /start/ pages as bare <file_id> HTML stubs.
     if moddb is not None:
         _purge_moddb_start_stubs(mo2_root, file_id=moddb.file_id)
     if archive:
-        warn(f"  [{dep.id}] download claim failed; keeping {archive.name}")
+        warn(f"  [{dep.id}] download failed; keeping {archive.name}")
         return archive, status
-    if moddb is not None and re.search(r"(?i)/(?:addons|downloads)/start/\d+", download_url):
+    if moddb is not None and re.search(
+        r"(?i)/(?:addons|downloads)/start/\d+", download_url
+    ):
         return None, "missing-moddb-interstitial"
     return None, "missing"
 

@@ -1,5 +1,5 @@
 # Shared manifest catalog loader for build.sh / package-fomod.sh.
-# Prefers config/ (manifest-third-party + dogma-mods + dogma-tweaks), then legacy
+# Prefers config/ (manifest-third-party + dogma-features + dogma-tweaks), then legacy
 # manifest.yml / features.yml. Override with DOGMA_MANIFEST=<path>.
 # Usage: source this file, then dogma_load_manifest <min_stage>
 #   min_stage 1|local|dev → path mods with stage >= dev
@@ -15,9 +15,11 @@ dogma_load_manifest() {
 	esac
 	local yml="${DOGMA_MANIFEST:-}"
 	if [[ -z "$yml" ]]; then
-		if [[ -f "$ROOT/config/manifest-third-party.yml" && -f "$ROOT/config/manifest-dogma-mods.yml" && -f "$ROOT/config/manifest-dogma-tweaks.yml" ]]; then
+		if [[ -f "$ROOT/config/manifest-third-party.yml" && -f "$ROOT/config/manifest-dogma-features.yml" && -f "$ROOT/config/manifest-dogma-tweaks.yml" ]]; then
 			yml="$ROOT/config"
-		elif [[ -f "$ROOT/config/manifest-remote.yml" && -f "$ROOT/config/manifest-dogma-mods.yml" && -f "$ROOT/config/manifest-dogma-tweaks.yml" ]]; then
+		elif [[ -f "$ROOT/config/manifest-third-party.yml" && -f "$ROOT/config/manifest-dogma-mods.yml" && -f "$ROOT/config/manifest-dogma-tweaks.yml" ]]; then
+			yml="$ROOT/config"
+		elif [[ -f "$ROOT/config/manifest-remote.yml" && -f "$ROOT/config/manifest-dogma-features.yml" && -f "$ROOT/config/manifest-dogma-tweaks.yml" ]]; then
 			yml="$ROOT/config"
 		elif [[ -f "$ROOT/config/manifest.yml" ]]; then
 			yml="$ROOT/config/manifest.yml"

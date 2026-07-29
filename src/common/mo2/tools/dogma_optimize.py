@@ -42,7 +42,6 @@ GC_USER_LTX_KEYS: dict[str, str] = {
     "lua_parallel_gcstep": "75",
 }
 
-_BASE_GAMMA_RE = re.compile(r"^\d+-")
 # user.ltx console vars are "key value" (space), not key=value.
 _LTX_KEY_RE = re.compile(r"^(\s*)([A-Za-z0-9_]+)\s+(\S.*?)\s*$")
 
@@ -468,16 +467,6 @@ def step_backup(
     return 0
 
 
-def base_gamma_mod_names(mods: Path) -> list[str]:
-    names: list[str] = []
-    if not mods.is_dir():
-        return names
-    for d in sorted(mods.iterdir()):
-        if d.is_dir() and _BASE_GAMMA_RE.match(d.name):
-            names.append(d.name)
-    return names
-
-
 def run_alao(
     target: Path,
     *,
@@ -569,7 +558,6 @@ def step_alao(
     mo2_root: Path,
     backup_dir: Path,
     *,
-    include_base_gamma: bool | None,
     dry_run: bool,
 ) -> int:
     archive = backup_archive_path(backup_dir)
@@ -579,22 +567,8 @@ def step_alao(
         )
         return 0
 
-    if include_base_gamma is None:
-        include_base_gamma = _yn(
-            "Also run ALAO on base G.A.M.M.A. mods?",
-            default_yes=False,
-        )
-
     mods = mo2_root / "mods"
-    exclude_lines = ["VANILLA_SCRIPTS"]
-    if not include_base_gamma:
-        exclude_lines.extend(base_gamma_mod_names(mods))
-        lib.info(
-            f"Skipping {len(exclude_lines) - 1} base G.A.M.M.A. mods "
-            "(ALAO will only touch your add-ons / DOGMA)."
-        )
-    else:
-        lib.info("ALAO will process all mods, including base G.A.M.M.A.")
+    lib.info("ALAO will process all mods (excluding VANILLA_SCRIPTS only).")
 
     logs = lib.mo2_tools_dir(mo2_root) / "logs"
     logs.mkdir(parents=True, exist_ok=True)
@@ -603,7 +577,7 @@ def step_alao(
     return run_alao(
         mods,
         report=report,
-        exclude_lines=exclude_lines,
+        exclude_lines=["VANILLA_SCRIPTS"],
         direct=False,
         dry_run=dry_run,
     )
@@ -706,13 +680,7 @@ def run(args) -> int:
         do_alao = _yn("Run ALAO now?", default_yes=False)
 
     if do_alao:
-        include: bool | None = True if getattr(args, "include_base_gamma", False) else None
-        code = step_alao(
-            mo2,
-            backup_dir,
-            include_base_gamma=include,
-            dry_run=dry_run,
-        )
+        code = step_alao(mo2, backup_dir, dry_run=dry_run)
         if code:
             return code
     elif do_alao is False:

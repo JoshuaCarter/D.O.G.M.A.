@@ -269,7 +269,7 @@ fi
 if [[ -f "$ROOT/INFO.md" ]]; then
 	cp -a "$ROOT/INFO.md" "$STAGE/INFO.md"
 fi
-for _cat in manifest.yml manifest-third-party.yml manifest-dogma-mods.yml manifest-dogma-tweaks.yml features.yml mods.yml suggestions.yml; do
+for _cat in manifest.yml manifest-third-party.yml manifest-dogma-features.yml manifest-dogma-tweaks.yml features.yml mods.yml suggestions.yml; do
 	if [[ -f "$ROOT/config/$_cat" ]]; then
 		cp -a "$ROOT/config/$_cat" "$STAGE/$_cat"
 	fi

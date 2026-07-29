@@ -33,7 +33,7 @@ Skip: `README*`, `MOVE_MAP*`, `.gitkeep`, `*.alao-bak`, `_` names.
 
 ## Installer (FOMOD)
 
-Path-mod **name**, **description**, and **module id** come from `config/manifest-dogma-mods.yml` / `manifest-dogma-tweaks.yml`
+Path-mod **name**, **description**, and **module id** come from `config/manifest-dogma-features.yml` / `manifest-dogma-tweaks.yml`
 (YAML key, `desc:`, `path:` → `category_feature`). Optional hover preview only:
 
 `src/<category>/<feature>/installer/image.png`

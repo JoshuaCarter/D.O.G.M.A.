@@ -222,7 +222,10 @@ def main(argv: list[str] | None = None) -> int:
     disable_path = Path(args.disable) if args.disable else root / "config" / "disabled.ini"
     cfg = root / "config"
     has_dogma = (
-        (cfg / "manifest-dogma-mods.yml").is_file()
+        (
+            (cfg / "manifest-dogma-features.yml").is_file()
+            or (cfg / "manifest-dogma-mods.yml").is_file()
+        )
         and (cfg / "manifest-dogma-tweaks.yml").is_file()
     )
     if (

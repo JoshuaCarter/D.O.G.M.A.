@@ -325,6 +325,7 @@ if [[ "$ONLY" == */* && ! -d "$SRC/$ONLY" ]]; then
 fi
 
 run_alao_local || exit 1
+echo "building..."
 
 # Stage every shippable file (quiet).
 _emit_kind=""
@@ -342,7 +343,7 @@ sort -u "$MANIFEST_MODROOT" -o "$MANIFEST_MODROOT"
 if [[ "$ONLY" == "all" || "$ONLY" == "" || "$ONLY" == "common" ]]; then
 	MO2_CFG_STAGE="$STAGE_MODROOT/mo2/config"
 	mkdir -p "$MO2_CFG_STAGE"
-	for _cat in features.yml mods.yml manifest.yml manifest-third-party.yml manifest-dogma-mods.yml manifest-dogma-tweaks.yml suggestions.yml; do
+	for _cat in features.yml mods.yml manifest.yml manifest-third-party.yml manifest-dogma-features.yml manifest-dogma-tweaks.yml suggestions.yml; do
 		if [[ -f "$ROOT/config/$_cat" ]]; then
 			cp "$ROOT/config/$_cat" "$MO2_CFG_STAGE/$_cat"
 			printf '%s\n' "mo2/config/$_cat" >> "$MANIFEST_MODROOT"

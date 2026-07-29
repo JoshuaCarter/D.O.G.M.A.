@@ -651,11 +651,6 @@ def build_parser() -> argparse.ArgumentParser:
     o.add_argument("--no-backup", action="store_true", help="Skip mods backup")
     o.add_argument("--alao", dest="do_alao", action="store_true", help="Run ALAO")
     o.add_argument("--no-alao", action="store_true", help="Skip ALAO")
-    o.add_argument(
-        "--include-base-gamma",
-        action="store_true",
-        help="ALAO: include base G.A.M.M.A. mods",
-    )
     o.set_defaults(func=cmd_optimize)
 
     e = sub.add_parser(

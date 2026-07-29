@@ -45,8 +45,9 @@ play_fade_teleport = function(final_pos, lvid, gvid, on_done)
 end
 
 local function start_travel_sequence(pos, lvid, gvid, is_transition, final_gvid)
+  local actor = db.actor
     if dft.is_traveling or not pos then return false end
-    if not (db and db.actor) then return false end
+    if not (db and actor) then return false end
 
     -- v2.0.8: Set traveling flag immediately to close double-click race window.
     -- fail_start -> dft_clear will reset it if the travel attempt fails.
@@ -60,10 +61,10 @@ local function start_travel_sequence(pos, lvid, gvid, is_transition, final_gvid)
     end
 
     -- Survival checks: Don't allow travel if bleeding or near death
-    if db.actor.health < 0.2 then
+    if actor.health < 0.2 then
         return fail_start(dft_str("dft_msg_too_wounded"), "warning")
     end
-    if (db.actor.bleeding or 0) > 0.05 then
+    if (actor.bleeding or 0) > 0.05 then
         return fail_start(dft_str("dft_msg_must_stop_bleeding"), "warning")
     end
 
@@ -172,7 +173,7 @@ local function start_travel_sequence(pos, lvid, gvid, is_transition, final_gvid)
     dft.arrival_forced_ambushes = 0
     dft.arrival_short_m = 0
     dft.target_stamina = 1.0
-    dft.journey_start_health = db.actor.health
+    dft.journey_start_health = actor.health
     dft_log("Trip start | %.0fm | sneak %d%%", dft.travel_dist, dft_calc_sneak_chance(dft.travel_mode == "sneaky"))
     dft.expected_duration = dft_game_minutes_for_dist(dft.travel_dist, dft.travel_mode == "sneaky", dft.encumbrance_time_mult)
     plan_emission_interrupt()
@@ -358,17 +359,18 @@ cancel_journey_emission = function()
 end
 
 local function advance_travel_time_seconds(sec, opts)
+    local mfloor = math.floor
     opts = opts or {}
     if not sec or sec <= 0 or not (level and level.change_game_time) then return end
-    local total_sec = math.floor(sec + 0.5)
-    local days = math.floor(total_sec / 86400)
-    local hrs  = math.floor((total_sec % 86400) / 3600)
-    local mins = math.floor((total_sec % 3600) / 60)
+    local total_sec = mfloor(sec + 0.5)
+    local days = mfloor(total_sec / 86400)
+    local hrs  = mfloor((total_sec % 86400) / 3600)
+    local mins = mfloor((total_sec % 3600) / 60)
     local leftover = total_sec % 60
     if leftover > 0 then
         mins = mins + 1
         if mins >= 60 then
-            hrs = hrs + math.floor(mins / 60)
+            hrs = hrs + mfloor(mins / 60)
             mins = mins % 60
         end
     end
@@ -610,6 +612,7 @@ enforce_transition_combat_lock = function()
 end
 
 local function actor_on_update()
+  local actor = db.actor
     local tg_ui = time_global()
     -- Keep the ring tight to the walking path while travelling; idle can stay slower.
     local ring_ms = (dft.is_traveling and 100) or 500
@@ -641,7 +644,7 @@ local function actor_on_update()
 
     -- Safety stat wipe runs EVERY tick (not throttled) so progressive
     -- damage scripts like grok_progressive_rad_damages can't accumulate.
-    if db.actor then
+    if actor then
         if is_safety_active() then
             pcall(function()
                 db.actor.radiation = -1.0
@@ -691,7 +694,7 @@ local function actor_on_update()
     end
 
     if not dft.is_traveling then return end
-    if not db.actor or not db.actor:alive() then
+    if not actor or not db.actor:alive() then
         stop_travel_logic()
         dft_clear()
         return
@@ -711,12 +714,12 @@ local function actor_on_update()
     dft.next_update    = tg + 100
 
     if dft.journey_start_health then
-        local loss = dft.journey_start_health - db.actor.health
+        local loss = dft.journey_start_health - actor.health
         if loss > 0 then
             local min_loss = (_G.dft_travel and _G.dft_travel.damage_cancel_min_loss) or 0.01
             if loss >= min_loss then
                 dft_log("Journey interrupted: %.1f%% HP lost since travel start (%.3f -> %.3f).",
-                    loss * 100, dft.journey_start_health, db.actor.health)
+                    loss * 100, dft.journey_start_health, actor.health)
                 dft_abort_journey("damage")
                 return
             end
@@ -1049,7 +1052,8 @@ detect_ambush = function(virtual_pos)
     return true
 end
 apply_final_stats = function(time_ratio)
-    if not db.actor then return end
+  local actor = db.actor
+    if not actor then return end
     time_ratio = time_ratio or 1.0
     time_ratio = math.max(0, math.min(time_ratio, 1.0))
 
@@ -1058,9 +1062,9 @@ apply_final_stats = function(time_ratio)
 
     local drain = dft_travel.resource_rate_per_hr * hours
 
-    if db.actor.change_hunger then db.actor:change_hunger(-drain) end
-    if db.actor.change_thirst then db.actor:change_thirst(-drain) end
-    if db.actor.change_sleepiness then db.actor:change_sleepiness(-drain) end
+    if actor.change_hunger then db.actor:change_hunger(-drain) end
+    if actor.change_thirst then db.actor:change_thirst(-drain) end
+    if actor.change_sleepiness then db.actor:change_sleepiness(-drain) end
 
     dft_log("Survival drain: %.3f/stat over %.2fh (ratio %.2f)", drain, hours, time_ratio)
 end

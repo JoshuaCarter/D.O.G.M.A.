@@ -196,7 +196,15 @@ def resolve_config_dir(mo2_root: Path, override: Path | None = None) -> Path:
         return override
 
     def _ok(cfg: Path) -> bool:
-        return (cfg / "features.yml").is_file() or (cfg / "manifest.yml").is_file()
+        return (
+            (cfg / "features.yml").is_file()
+            or (cfg / "manifest.yml").is_file()
+            or (cfg / "manifest-third-party.yml").is_file()
+            or (cfg / "manifest-remote.yml").is_file()
+            or (cfg / "manifest-dogma-mods.yml").is_file()
+            or (cfg / "manifest-dogma-tweaks.yml").is_file()
+            or (cfg / "manifest-local.yml").is_file()
+        )
 
     staged = mo2_bundle_dir() / "config"
     if staged.is_dir() and _ok(staged):
@@ -211,13 +219,56 @@ def resolve_config_dir(mo2_root: Path, override: Path | None = None) -> Path:
     return staged
 
 
+def split_manifest_paths(cfg_dir: Path) -> list[Path]:
+    """Ordered split catalogs when all parts exist.
+
+    Preferred: ``manifest-third-party`` + ``manifest-dogma-mods`` + ``manifest-dogma-tweaks``.
+    Legacy: ``manifest-remote`` (+ optional local) with dogma parts.
+    """
+    preferred = (
+        "manifest-third-party",
+        "manifest-dogma-mods",
+        "manifest-dogma-tweaks",
+    )
+    legacy_remote = (
+        "manifest-remote",
+        "manifest-dogma-mods",
+        "manifest-dogma-tweaks",
+    )
+    legacy = ("manifest-remote", "manifest-local")
+
+    def _collect(bases: tuple[str, ...]) -> list[Path]:
+        out: list[Path] = []
+        for base in bases:
+            found: Path | None = None
+            for ext in (".yml", ".yaml"):
+                p = cfg_dir / f"{base}{ext}"
+                if p.is_file():
+                    found = p
+                    break
+            if found is None:
+                return []
+            out.append(found)
+        return out
+
+    for bases in (preferred, legacy_remote, legacy):
+        parts = _collect(bases)
+        if parts:
+            return parts
+    return []
+
+
 def resolve_manifest_path(cfg_dir: Path) -> Path:
-    """Primary catalog: manifest.yml (unified), else features.yml."""
+    """Catalog entry: config dir (split manifests) or unified manifest/features file."""
+    if split_manifest_paths(cfg_dir):
+        return cfg_dir
     for name in ("manifest.yml", "manifest.yaml", "features.yml", "features.yaml"):
         yml = cfg_dir / name
         if yml.is_file():
             return yml
-    raise FileNotFoundError(f"manifest.yml / features.yml not found under {cfg_dir}")
+    raise FileNotFoundError(
+        f"split manifests, manifest.yml, or features.yml not found under {cfg_dir}"
+    )
 
 
 def resolve_options_path(cfg_dir: Path) -> Path | None:
@@ -1944,15 +1995,22 @@ def wizard_options_from_deps(
     return opts
 
 
+def is_wizard_tweak_pack(dep: Dependency) -> bool:
+    """True for catalog Tweaks (``path: tweaks/...``), not e.g. mutants/tweaks."""
+    path = (dep.path or "").replace("\\", "/").strip().lower()
+    return path.startswith("tweaks/")
+
+
 def wizard_pack_section_order(
     data: ManifestData,
     *,
     min_stage: str = "dev",
 ) -> list[tuple[str, str]]:
-    """Radio groups + stage-gated pack/path checkboxes (both wizard pages)."""
+    """Radio groups + stage-gated pack/path checkboxes (all wizard pages)."""
     return [
         *wizard_page1_section_order(data, min_stage=min_stage),
         *wizard_page2_section_order(data, min_stage=min_stage),
+        *wizard_page3_section_order(data, min_stage=min_stage),
     ]
 
 
@@ -1998,15 +2056,18 @@ def wizard_page2_section_order(
     *,
     min_stage: str = "dev",
 ) -> list[tuple[str, str]]:
-    """Page 2: D.O.G.M.A. path mods (+ legacy path-keyed feature options)."""
+    """Page 2: D.O.G.M.A. features (path mods that are not Tweaks)."""
     min_stage = parse_stage(min_stage)
     sections: list[tuple[str, str]] = []
     seen: set[str] = set()
+    by_id = data.suggested_by_id()
 
     for dep in data.suggested:
         if is_wizard_radio_parent(dep):
             continue
         if not dep.wizard or not dep.path:
+            continue
+        if is_wizard_tweak_pack(dep):
             continue
         if not stage_meets(dep.stage, min_stage):
             continue
@@ -2016,6 +2077,49 @@ def wizard_page2_section_order(
     feat_ids = set(data.features.keys())
     for opt in data.installer_options:
         if opt.id not in feat_ids or opt.id in seen:
+            continue
+        # Path-keyed feature options under tweaks/ belong on page 3.
+        feat = data.features.get(opt.id)
+        path = (feat.path if feat is not None else opt.id).replace("\\", "/")
+        if path.lower().startswith("tweaks/"):
+            continue
+        dep = by_id.get(opt.id)
+        if dep is not None and is_wizard_tweak_pack(dep):
+            continue
+        sections.append(("option", opt.id))
+        seen.add(opt.id)
+    return sections
+
+
+def wizard_page3_section_order(
+    data: ManifestData,
+    *,
+    min_stage: str = "dev",
+) -> list[tuple[str, str]]:
+    """Page 3: D.O.G.M.A. Tweaks (``path: tweaks/...``)."""
+    min_stage = parse_stage(min_stage)
+    sections: list[tuple[str, str]] = []
+    seen: set[str] = set()
+
+    for dep in data.suggested:
+        if is_wizard_radio_parent(dep):
+            continue
+        if not dep.wizard or not is_wizard_tweak_pack(dep):
+            continue
+        if not stage_meets(dep.stage, min_stage):
+            continue
+        sections.append(("option", dep.id))
+        seen.add(dep.id)
+
+    feat_ids = set(data.features.keys())
+    for opt in data.installer_options:
+        if opt.id in seen:
+            continue
+        feat = data.features.get(opt.id)
+        if feat is None:
+            continue
+        path = feat.path.replace("\\", "/").lower()
+        if not path.startswith("tweaks/"):
             continue
         sections.append(("option", opt.id))
         seen.add(opt.id)
@@ -2039,10 +2143,11 @@ def wizard_section_order(
     *,
     min_stage: str = "dev",
 ) -> list[tuple[str, str]]:
-    """All Setup wizard sections (page 1 then page 2)."""
+    """All Setup wizard sections (pages 1–3)."""
     return [
         *wizard_page1_section_order(data, min_stage=min_stage),
         *wizard_page2_section_order(data, min_stage=min_stage),
+        *wizard_page3_section_order(data, min_stage=min_stage),
     ]
 
 
@@ -3064,12 +3169,48 @@ def _features_map_from_file(raw: dict, *, source: str) -> dict:
     return raw
 
 
-def load_manifest(path: Path) -> ManifestData:
-    """Load catalog from manifest.yml (unified) or features.yml + mods.yml.
+def _load_split_manifests(cfg_dir: Path, parts: list[Path]) -> ManifestData:
+    """Merge split manifest-*.yml parts into one catalog."""
+    suggested: list[Dependency] = []
+    seen: set[str] = set()
+    for part in parts:
+        raw = _yaml_load_mapping(part)
+        chunk = _parse_mods_file(raw, source=part.name)
+        for dep in chunk:
+            if dep.id in seen:
+                raise ValueError(
+                    f"duplicate pack id {dep.id!r} in {part.name} "
+                    f"(already defined in an earlier split manifest)"
+                )
+            seen.add(dep.id)
+            suggested.append(dep)
+    if not suggested:
+        raise ValueError(
+            f"split manifests under {cfg_dir} contain no packs "
+            f"({', '.join(p.name for p in parts)})"
+        )
+    features = features_from_deps(suggested)
+    opts = wizard_options_from_deps(suggested)
+    packages_dir = resolve_feature_packages_dir(catalog_path=parts[0])
+    return _manifest_from_parts(
+        parts[0],
+        features,
+        suggested,
+        installer_options=opts,
+        packages_dir=packages_dir,
+    )
 
-    ``path`` may be the config directory, ``manifest.yml``, or ``features.yml``.
+
+def load_manifest(path: Path) -> ManifestData:
+    """Load catalog from split/unified manifest or features.yml + mods.yml.
+
+    ``path`` may be the config directory, any ``manifest-*.yml`` split part,
+    ``manifest.yml``, or ``features.yml``.
     """
     if path.is_dir():
+        split = split_manifest_paths(path)
+        if split:
+            return _load_split_manifests(path, split)
         for name in (
             "manifest.yml",
             "manifest.yaml",
@@ -3079,12 +3220,23 @@ def load_manifest(path: Path) -> ManifestData:
             cand = path / name
             if cand.is_file():
                 return load_manifest(cand)
-        raise FileNotFoundError(f"manifest.yml / features.yml not found under {path}")
+        raise FileNotFoundError(
+            f"split manifests, manifest.yml, or features.yml not found under {path}"
+        )
 
     if not path.is_file():
         raise FileNotFoundError(f"catalog not found: {path}")
 
     name = path.name.lower()
+    # Any part of the split catalog → load all parts from the config dir.
+    if name.startswith("manifest-") and name.endswith((".yml", ".yaml")):
+        split = split_manifest_paths(path.parent)
+        if not split:
+            raise FileNotFoundError(
+                f"split manifests not found alongside {path.name} in {path.parent}"
+            )
+        return _load_split_manifests(path.parent, split)
+
     companion = (
         "suggestions.yml",
         "suggested.yml",
@@ -3098,19 +3250,18 @@ def load_manifest(path: Path) -> ManifestData:
         "suggested_mods.yml",
     )
     if name in companion:
-        for n in ("manifest.yml", "manifest.yaml", "features.yml", "features.yaml"):
-            feat = path.parent / n
-            if feat.is_file():
-                return load_manifest(feat)
-        raise FileNotFoundError(
-            f"manifest.yml / features.yml required alongside {path.name} "
-            f"(looked in {path.parent})"
-        )
+        try:
+            return load_manifest(path.parent)
+        except FileNotFoundError as exc:
+            raise FileNotFoundError(
+                f"split manifests, manifest.yml, or features.yml "
+                f"required alongside {path.name} (looked in {path.parent})"
+            ) from exc
 
     raw = _yaml_load_mapping(path)
     packages_dir = resolve_feature_packages_dir(catalog_path=path)
 
-    # Unified catalog (url packs + path mods in one file)
+    # Legacy unified catalog (url packs + path mods in one file)
     if name in ("manifest.yml", "manifest.yaml"):
         suggested = _parse_mods_file(raw, source=path.name)
         features = features_from_deps(suggested)
@@ -3125,7 +3276,10 @@ def load_manifest(path: Path) -> ManifestData:
 
     # features.yml — path mods (+ sibling mods.yml / manifest via _load_options_and_mods)
     if name in ("features.yml", "features.yaml"):
-        # Prefer sibling unified manifest when present
+        # Prefer sibling split/unified manifests when present (avoid recurse).
+        split = split_manifest_paths(path.parent)
+        if split:
+            return _load_split_manifests(path.parent, split)
         for n in ("manifest.yml", "manifest.yaml"):
             man = path.parent / n
             if man.is_file():
@@ -4896,7 +5050,22 @@ def wipe_managed_mod(mo2_root: Path, modlist: Path, folder_name: str, dry_run: b
 
 
 ARCHIVE_SUFFIXES = {".zip", ".7z", ".rar", ".7zip"}
-_ARCHIVE_DATE_RE = re.compile(r"^(.+)-(\d{4}-\d{2}-\d{2})$")
+# Version compare when the stem ends in a date: "… 2025-02-27" / "…-2025-02-27" / "…_2025-02-27".
+_ARCHIVE_DATE_RE = re.compile(r"^(?P<head>.+?)(?:[ _-])(?P<date>\d{4}-\d{2}-\d{2})$")
+
+
+def archive_filename_date(path: Path | str) -> str:
+    """YYYY-MM-DD if the archive stem ends with a date; else \"\"."""
+    stem = Path(path).stem
+    m = _ARCHIVE_DATE_RE.match(stem)
+    return m.group("date") if m else ""
+
+
+def archive_filename_head(path: Path | str) -> str:
+    """Stem with trailing date suffix removed (or full stem if undated)."""
+    stem = Path(path).stem
+    m = _ARCHIVE_DATE_RE.match(stem)
+    return (m.group("head").strip() if m else stem).strip()
 
 
 def game_dir(mo2_root: Path) -> Path:
@@ -5225,6 +5394,28 @@ def mapped_archive_path(mo2_root: Path, dep: Dependency | str) -> Path | None:
     return None
 
 
+def prune_missing_archive_map(mo2_root: Path) -> list[str]:
+    """Drop archives.ini entries whose files are missing; return removed pack ids."""
+    with _archive_map_lock:
+        mapping = load_archive_map(mo2_root)
+        if not mapping:
+            return []
+        dld = downloads_dir(mo2_root)
+        keep: dict[str, str] = {}
+        removed: list[str] = []
+        for kid, name in mapping.items():
+            path = dld / Path(name).name
+            if _is_archive_file(path):
+                keep[kid] = Path(name).name
+            else:
+                removed.append(kid)
+        if removed:
+            save_archive_map(mo2_root, keep)
+    for kid in removed:
+        warn(f"archives.ini: removed missing link [{kid}]")
+    return removed
+
+
 def pack_needs_archive(dep: Dependency) -> bool:
     """True when Setup should show an archive field (not a path: mod)."""
     if dep.path:
@@ -5342,9 +5533,10 @@ def associate_archive(
     dep_id: str,
     src_path: Path | str,
     *,
+    date: str = "",
     dry_run: bool = False,
 ) -> Path:
-    """Copy (if needed) an archive into downloads/DOGMA and map it to dep_id."""
+    """Copy/rename an archive into downloads/DOGMA as ``<id>[ date].ext``."""
     src = Path(src_path)
     info(f"Associate archive: [{dep_id}] <- {src}")
     if not _is_archive_file(src):
@@ -5352,17 +5544,30 @@ def associate_archive(
             f"not an archive ({', '.join(sorted(ARCHIVE_SUFFIXES))}): {src}"
         )
     dld = downloads_dir(mo2_root)
+    dld.mkdir(parents=True, exist_ok=True)
     src_resolved = src.resolve()
     dld_resolved = dld.resolve()
-    if src_resolved.parent == dld_resolved:
-        dest = src_resolved
-        info(f"  already in downloads/DOGMA: {dest.name}")
+
+    stamp = iso_to_date_stamp(date)
+    if not stamp:
+        stamp = archive_filename_date(src)
+    suffix = src.suffix.lower() if src.suffix else _archive_magic_suffix(src)
+    if not suffix:
+        suffix = ".zip"
+    dest = dld / f"{dep_zip_stem(dep_id, date=stamp)}{suffix}"
+
+    if src_resolved == dest.resolve():
+        info(f"  already canonical: {dest.name}")
+    elif dry_run:
+        info(f"Would store archive as {dest.name}")
     else:
-        dest = _unique_download_dest(dld, src.name)
-        if dry_run:
-            info(f"Would copy archive {src.name} -> {dest}")
+        if dest.exists() and dest.resolve() != src_resolved:
+            dest.unlink()
+        if src_resolved.parent == dld_resolved:
+            _move_download_file(src_resolved, dest)
+            ok(f"  renamed archive -> {dest.name}")
         else:
-            shutil.copy2(src, dest)
+            shutil.copy2(src_resolved, dest)
             ok(f"  copied archive -> {dest.name}")
     if not dry_run:
         set_archive_map_entry(mo2_root, dep_id, dest.name)
@@ -5458,11 +5663,26 @@ def moddb_date_stamp(moddb: ModdbInfo | None) -> str:
     return iso_to_date_stamp(moddb.updated) or iso_to_date_stamp(moddb.added)
 
 
-def dep_zip_stem(dep: Dependency, *, date: str = "") -> str:
-    """Local archive basename: <id> or <id>-YYYY-MM-DD."""
-    base = (dep.archive_name or dep.id or "").strip()
+def _safe_archive_stem(name: str) -> str:
+    """Filesystem-safe stem; keeps spaces (catalog ids) but strips reserved chars."""
+    bad = '<>:"/\\|?*'
+    out = "".join("_" if c in bad else c for c in (name or "").strip())
+    out = out.strip(" .")
+    return out or "mod"
+
+
+def dep_zip_stem(dep: Dependency | str, *, date: str = "") -> str:
+    """Local archive basename: catalog ``<id>`` or ``<id> YYYY-MM-DD``.
+
+    Always uses the internal mod id (not ``archive_name:``, which is only for
+    matching upstream zip titles when claiming a download).
+    """
+    if isinstance(dep, Dependency):
+        base = _safe_archive_stem(dep.id)
+    else:
+        base = _safe_archive_stem(str(dep))
     stamp = iso_to_date_stamp(date)
-    return f"{base}-{stamp}" if stamp else base
+    return f"{base} {stamp}" if stamp else base
 
 
 def preview_install_packs(
@@ -5567,9 +5787,11 @@ def list_dep_archives(mo2_root: Path, dep: Dependency) -> list[LocalArchive]:
         seen.add(key)
         out.append(LocalArchive(path, pinned=pinned, date=date))
 
+    # archives.ini may point at any basename; date suffix enables version compare.
     mapped = mapped_archive_path(mo2_root, dep)
     if mapped is not None:
-        _add(mapped, pinned=True, date="")
+        date = archive_filename_date(mapped)
+        _add(mapped, pinned=not bool(date), date=date)
 
     stems = {base.lower()}
     an = (dep.archive_name or "").strip()
@@ -5580,12 +5802,13 @@ def list_dep_archives(mo2_root: Path, dep: Dependency) -> list[LocalArchive]:
         if not _is_archive_file(p):
             continue
         stem = p.stem
+        date = archive_filename_date(p)
+        head = archive_filename_head(p).lower()
         if stem.lower() in stems:
             _add(p, pinned=True, date="")
             continue
-        m = _ARCHIVE_DATE_RE.match(stem)
-        if m and m.group(1).lower() in stems:
-            _add(p, pinned=False, date=m.group(2))
+        if date and head in stems:
+            _add(p, pinned=False, date=date)
     return out
 
 
@@ -5595,25 +5818,19 @@ def resolve_local_archive(
     *,
     remote_date: str = "",
 ) -> tuple[Path | None, str]:
-    """Pick a local archive and report status vs ModDB date.
+    """Pick a local archive and report status vs ModDB/GitHub date.
 
     Status:
-      pinned  — undated / mapped archive; never download/replace
-      current — dated archive matches remote_date
-      stale   — have dated archive(s) but none match remote (or remote newer)
+      pinned  — undated archive; never auto-replaced
+      current — dated archive matches remote_date (or dated with no remote)
+      stale   — have dated archive(s) but none match remote (remote newer)
       missing — nothing on disk
     """
-    # Explicit archives.ini link wins when the file still exists.
-    mapped = mapped_archive_path(mo2_root, dep)
-    if mapped is not None:
-        return mapped, "pinned"
-
     locals_ = list_dep_archives(mo2_root, dep)
-    pinned = [a for a in locals_ if a.pinned]
-    if pinned:
-        return _prefer_archive([a.path for a in pinned]), "pinned"
-
     want = iso_to_date_stamp(remote_date)
+
+    # Undated / user-pinned copies win only when we cannot date-compare.
+    pinned = [a for a in locals_ if a.pinned]
     dated = [a for a in locals_ if a.date]
     if want:
         match = [a for a in dated if a.date == want]
@@ -5621,13 +5838,83 @@ def resolve_local_archive(
             return _prefer_archive([a.path for a in match]), "current"
         if dated:
             dated.sort(key=lambda a: a.date, reverse=True)
-            return _prefer_archive([a.path for a in dated if a.date == dated[0].date]), "stale"
+            return (
+                _prefer_archive([a.path for a in dated if a.date == dated[0].date]),
+                "stale",
+            )
+        if pinned:
+            return _prefer_archive([a.path for a in pinned]), "pinned"
         return None, "missing"
 
+    if pinned:
+        return _prefer_archive([a.path for a in pinned]), "pinned"
     if dated:
         dated.sort(key=lambda a: a.date, reverse=True)
         return _prefer_archive([a.path for a in dated if a.date == dated[0].date]), "current"
     return None, "missing"
+
+
+def probe_dep_remote_date(
+    dep: Dependency,
+    *,
+    cache_dir: Path | None = None,
+) -> str:
+    """Best-effort ModDB/GitHub release date (YYYY-MM-DD); uses on-disk caches."""
+    download_url = dep_auto_download_url(dep)
+    if not download_url:
+        return ""
+    try:
+        if is_moddb_url(download_url):
+            return moddb_date_stamp(resolve_moddb(download_url, cache_dir=cache_dir))
+        if is_github_url(download_url):
+            return github_date_stamp(
+                resolve_github(
+                    download_url,
+                    archive_name=dep.archive_name,
+                    cache_dir=cache_dir,
+                )
+            )
+    except Exception:
+        return ""
+    return ""
+
+
+def local_archive_is_outdated(
+    mo2_root: Path,
+    dep: Dependency,
+    *,
+    remote_date: str,
+) -> bool:
+    """True when a dated local archive exists and remote_date is newer."""
+    _path, status = resolve_local_archive(
+        mo2_root, dep, remote_date=remote_date
+    )
+    return status == "stale"
+
+
+def download_version_icon_status(
+    mo2_root: Path,
+    dep: Dependency,
+    *,
+    remote_date: str = "",
+    probed: bool = False,
+) -> str:
+    """Wizard download-icon state: ``new`` | ``current`` | ``unknown``.
+
+    Caller maps no-auto-download URL to grey (``none``) separately.
+    Version compare only when the local mapped/found filename ends in a date.
+    """
+    if not probed:
+        return "unknown"
+    want = iso_to_date_stamp(remote_date)
+    if not want:
+        return "unknown"
+    _path, status = resolve_local_archive(mo2_root, dep, remote_date=want)
+    if status == "stale":
+        return "new"
+    if status == "current":
+        return "current"
+    return "unknown"
 
 
 def find_archive_for_dep(
@@ -5679,7 +5966,7 @@ def claim_download_as_zip(
     file_id: str = "",
     source_url: str = "",
 ) -> Path | None:
-    """Move/rename a fresh MO2 download into downloads/DOGMA/<id>[-date]{ext}."""
+    """Move/rename a fresh MO2 download into downloads/DOGMA/<id>[ date]{ext}."""
     with _downloads_claim_lock:
         return _claim_download_as_zip_unlocked(
             mo2_root,

@@ -40,6 +40,7 @@
 #                      DOGMA_ONLY too (no prune).
 #   DOGMA_OUT=path     override output gamedata (default: build/gamedata; disables
 #                      the DOGMA_DEPLOY one-hop when set)
+#   DOGMA_NO_ALAO=1    skip ALAO on src/ before staging (same tool/flags as Optimize)
 #
 # Always stages every shippable file, then one bulk copy into OUT (no per-file
 # log). Full builds prune stale outputs.
@@ -77,6 +78,27 @@ if [[ ! -d "$SRC" ]]; then
 	echo "build: missing $SRC" >&2
 	exit 1
 fi
+
+# Same ALAO command as DOGMA Optimize, on local src/ only (--direct).
+run_alao_local() {
+	if [[ -n "${DOGMA_NO_ALAO:-}" ]]; then
+		echo "build: skipping ALAO (DOGMA_NO_ALAO set)"
+		return 0
+	fi
+	local py=()
+	if command -v py >/dev/null 2>&1; then
+		py=(py -3)
+	elif command -v python3 >/dev/null 2>&1; then
+		py=(python3)
+	elif command -v python >/dev/null 2>&1; then
+		py=(python)
+	else
+		echo "build: Python 3 required for ALAO (or set DOGMA_NO_ALAO=1)" >&2
+		return 1
+	fi
+	echo "build: ALAO on src/…"
+	"${py[@]}" "$ROOT/tools/alao_local.py"
+}
 
 should_skip_name() {
 	local base="$1"
@@ -294,13 +316,15 @@ if [[ "$ONLY" == "all" || "$ONLY" == "" ]]; then
 		echo "build: manifest yielded 0 features — refusing full build/prune (fix YAML or set DOGMA_ALLOW_EMPTY=1)" >&2
 		exit 1
 	fi
-	echo "build: config/manifest.yml stage>=dev (${#FEATURES[@]} features)"
+	echo "build: config manifests stage>=dev (${#FEATURES[@]} features)"
 fi
 
 if [[ "$ONLY" == */* && ! -d "$SRC/$ONLY" ]]; then
 	echo "build: DOGMA_ONLY=$ONLY not found at $SRC/$ONLY" >&2
 	exit 1
 fi
+
+run_alao_local || exit 1
 
 # Stage every shippable file (quiet).
 _emit_kind=""
@@ -318,7 +342,7 @@ sort -u "$MANIFEST_MODROOT" -o "$MANIFEST_MODROOT"
 if [[ "$ONLY" == "all" || "$ONLY" == "" || "$ONLY" == "common" ]]; then
 	MO2_CFG_STAGE="$STAGE_MODROOT/mo2/config"
 	mkdir -p "$MO2_CFG_STAGE"
-	for _cat in features.yml mods.yml manifest.yml suggestions.yml; do
+	for _cat in features.yml mods.yml manifest.yml manifest-third-party.yml manifest-dogma-mods.yml manifest-dogma-tweaks.yml suggestions.yml; do
 		if [[ -f "$ROOT/config/$_cat" ]]; then
 			cp "$ROOT/config/$_cat" "$MO2_CFG_STAGE/$_cat"
 			printf '%s\n' "mo2/config/$_cat" >> "$MANIFEST_MODROOT"

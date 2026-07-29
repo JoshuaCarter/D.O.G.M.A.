@@ -115,6 +115,7 @@ local function play_motion(actor, motion, mix_in)
 end
 
 local function on_actor_on_update()
+	local tostr = tostring
 	local actor = DOGMA.sys.ready(CONFIG.MOD_ID, db, on_option_change)
 	if not actor then
 		return
@@ -152,31 +153,31 @@ local function on_actor_on_update()
 
 	local camera_posture
 	if stand_dist < crouch_dist and stand_dist < prone_dist then
-		overlay(LOG.HEIGHT_POSTURE, "height posture: " .. tostring(POSTURES.STAND))
+		overlay(LOG.HEIGHT_POSTURE, "height posture: " .. tostr(POSTURES.STAND))
 		camera_posture = POSTURES.STAND
 	elseif crouch_dist < stand_dist and crouch_dist < prone_dist then
-		overlay(LOG.HEIGHT_POSTURE, "height posture: " .. tostring(POSTURES.CROUCH))
+		overlay(LOG.HEIGHT_POSTURE, "height posture: " .. tostr(POSTURES.CROUCH))
 		camera_posture = POSTURES.CROUCH
 	else
-		overlay(LOG.HEIGHT_POSTURE, "height posture: " .. tostring(POSTURES.PRONE))
+		overlay(LOG.HEIGHT_POSTURE, "height posture: " .. tostr(POSTURES.PRONE))
 		camera_posture = POSTURES.PRONE
 	end
 
 	-- input posture from move states
 	local is_slow = IsMoveState("mcAccel")
 	local is_crouching = IsMoveState("mcCrouch")
-	overlay(LOG.CROUCH, "Crouch: " .. tostring(is_crouching))
-	overlay(LOG.ACCEL, "Slow: " .. tostring(is_slow))
+	overlay(LOG.CROUCH, "Crouch: " .. tostr(is_crouching))
+	overlay(LOG.ACCEL, "Slow: " .. tostr(is_slow))
 
 	local input_posture
 	if not is_crouching then
-		overlay(LOG.INPUT_POSTURE, "input posture: " .. tostring(POSTURES.STAND))
+		overlay(LOG.INPUT_POSTURE, "input posture: " .. tostr(POSTURES.STAND))
 		input_posture = POSTURES.STAND
 	elseif not is_slow then
-		overlay(LOG.INPUT_POSTURE, "input posture: " .. tostring(POSTURES.CROUCH))
+		overlay(LOG.INPUT_POSTURE, "input posture: " .. tostr(POSTURES.CROUCH))
 		input_posture = POSTURES.CROUCH
 	else
-		overlay(LOG.INPUT_POSTURE, "input posture: " .. tostring(POSTURES.PRONE))
+		overlay(LOG.INPUT_POSTURE, "input posture: " .. tostr(POSTURES.PRONE))
 		input_posture = POSTURES.PRONE
 	end
 

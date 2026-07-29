@@ -70,6 +70,7 @@ local function show_pda_lock_icon(self, obj, sec)
 end
 
 local function try_grant_pda_stash_on_disassemble(obj)
+	local sformat = string.format
 	local tostr = tostring
 	if not (CONFIG.loaded.pda_grants_stash_coords and obj) then
 		return false
@@ -85,7 +86,7 @@ local function try_grant_pda_stash_on_disassemble(obj)
 		info = se_load_var(id, nil, "info")
 	end
 	if not info then
-		log(string.format("pda disassemble: no info on %s id=%s", sec, tostr(id)))
+		log(sformat("pda disassemble: no info on %s id=%s", sec, tostr(id)))
 		return false, false
 	end
 
@@ -93,7 +94,7 @@ local function try_grant_pda_stash_on_disassemble(obj)
 
 	local msgs = info.msg
 	if not msgs then
-		log(string.format("pda disassemble: no messages on %s id=%s state=%s", sec, tostr(obj:id()), tostr(info.state)))
+		log(sformat("pda disassemble: no messages on %s id=%s state=%s", sec, tostr(obj:id()), tostr(info.state)))
 		return false, encrypted
 	end
 
@@ -104,13 +105,13 @@ local function try_grant_pda_stash_on_disassemble(obj)
 		local stash_id = msg.stash
 		if stash_id then
 			if msg.stash_read then
-				log(string.format(
+				log(sformat(
 					"pda disassemble: stash id=%s already read on %s id=%s (message %s/%s)",
 					tostr(stash_id), sec, tostr(id), tostr(i), tostr(#msgs)
 				))
 			elseif level.map_has_object_spot(stash_id, "treasure") ~= 0
 				or level.map_has_object_spot(stash_id, "treasure_searched") ~= 0 then
-				log(string.format(
+				log(sformat(
 					"pda disassemble: stash id=%s already on map for %s id=%s (message %s/%s)",
 					tostr(stash_id), sec, tostr(id), tostr(i), tostr(#msgs)
 				))
@@ -119,7 +120,7 @@ local function try_grant_pda_stash_on_disassemble(obj)
 					treasure_manager.set_random_stash(nil, nil, nil, stash_id)
 				end
 
-				log(string.format(
+				log(sformat(
 					"pda disassemble: granted stash id=%s from %s state=%s (message %s/%s)",
 					tostr(stash_id), sec, tostr(info.state), tostr(i), tostr(#msgs)
 				))
@@ -128,7 +129,7 @@ local function try_grant_pda_stash_on_disassemble(obj)
 		end
 	end
 	if not granted then
-		log(string.format(
+		log(sformat(
 			"pda disassemble: no new stash coords on %s id=%s state=%s (%s message(s))",
 			sec, tostr(id), tostr(info.state), tostr(#msgs)
 		))

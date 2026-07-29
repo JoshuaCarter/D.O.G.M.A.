@@ -197,10 +197,11 @@ local function on_actor_on_update()
 end
 
 local function on_key_press(key)
-	if CONFIG.loaded.add_radiation_key and key == CONFIG.loaded.add_radiation_key and db.actor then
-		db.actor.radiation = (db.actor.radiation or 0) + 50 / (10000 * 0.387)
-	elseif CONFIG.loaded.clear_radiation_key and key == CONFIG.loaded.clear_radiation_key and db.actor then
-		db.actor.radiation = 0
+	local actor = db.actor
+	if CONFIG.loaded.add_radiation_key and key == CONFIG.loaded.add_radiation_key and actor then
+		actor.radiation = (actor.radiation or 0) + 50 / (10000 * 0.387)
+	elseif CONFIG.loaded.clear_radiation_key and key == CONFIG.loaded.clear_radiation_key and actor then
+		actor.radiation = 0
 	end
 end
 

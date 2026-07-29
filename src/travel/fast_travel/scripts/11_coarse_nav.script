@@ -1258,6 +1258,7 @@ local function cn_load_graph(level_name)
         return nil
     end
     local ok, g_or_err = pcall(function()
+        local tonum = tonumber
         local g = cn_graph_new()
         g.level_name = level_name
         local file_feature = nil
@@ -1266,17 +1267,17 @@ local function cn_load_graph(level_name)
                 local id, kind, x, y, z, lvid_s, anchor_key = line:match(
                     "^N (%d+) (%S+) ([%-%.%d]+) ([%-%.%d]+) ([%-%.%d]+) (%S+) (.*)$")
                 if id then
-                    id = tonumber(id)
+                    id = tonum(id)
                     local lvid = cn_parse_lvid_token(lvid_s)
                     if anchor_key then
                         anchor_key = anchor_key:match("^%s*(.-)%s*$")
                     end
                     if anchor_key == "nil" or anchor_key == "" then anchor_key = nil end
                     g.nodes[#g.nodes + 1] = {
-                        id = id, kind = kind, x = tonumber(x), y = tonumber(y), z = tonumber(z),
+                        id = id, kind = kind, x = tonum(x), y = tonum(y), z = tonum(z),
                         lvid = lvid, anchor_key = anchor_key,
                     }
-                    g.node_by_key[cn_node_key(tonumber(x), tonumber(z))] = id
+                    g.node_by_key[cn_node_key(tonum(x), tonum(z))] = id
                     if anchor_key and anchor_key ~= "" then
                         g.anchor_by_key[anchor_key] = id
                     end
@@ -1286,7 +1287,7 @@ local function cn_load_graph(level_name)
                 local a, b, cost = line:match("^E (%d+) (%d+) ([%-%.%d]+)$")
                 if a then
                     g.edges[#g.edges + 1] = {
-                        from_id = tonumber(a), to_id = tonumber(b), cost_m = tonumber(cost),
+                        from_id = tonum(a), to_id = tonum(b), cost_m = tonum(cost),
                     }
                 end
             elseif line:match("^feature_version=") then
@@ -1294,7 +1295,7 @@ local function cn_load_graph(level_name)
             elseif line:match("^level_name=") then
                 g.level_name = line:match("^level_name=(.+)$")
             elseif line:match("^level_id=") then
-                g.level_id = tonumber(line:match("^level_id=(.+)$"))
+                g.level_id = tonum(line:match("^level_id=(.+)$"))
             elseif line:match("^anchor_hash=") then
                 g.anchor_hash = line:match("^anchor_hash=(.+)$")
             end
@@ -1528,22 +1529,23 @@ local function cn_build_path(start_pos, dest_pos, dest_anchor_key)
 end
 
 local function cn_dest_anchor_key_for_id(id)
+    local tostr = tostring
     if not id then return nil end
     local g = cn_state().graph
     if g and g.anchor_by_key then
         local kinds = { "base", "transition", "campfire" }
         for i = 1, #kinds do
-            local k = kinds[i] .. ":" .. tostring(id)
+            local k = kinds[i] .. ":" .. tostr(id)
             if g.anchor_by_key[k] then return k end
         end
     end
     if _G.dft_is_campfire and _G.dft_is_campfire(id) then
-        return "campfire:" .. tostring(id)
+        return "campfire:" .. tostr(id)
     end
     if cn_is_base_anchor(id) then
-        return "base:" .. tostring(id)
+        return "base:" .. tostr(id)
     end
-    return "transition:" .. tostring(id)
+    return "transition:" .. tostr(id)
 end
 
 local function cn_graph_ready()
@@ -1661,8 +1663,9 @@ end
 
 -- Polled from actor_on_update (same pattern as ambush-range circle): hide dots when PDA closes.
 cn_sync_display_pda = function()
+    local next_ = next
     if not cn_want_display() or not cn_state().graph then
-        if next(cn_state().dot_ids or {}) or next(cn_state().endpoint_dot_ids or {}) then
+        if next_(cn_state().dot_ids or {}) or next_(cn_state().endpoint_dot_ids or {}) then
             cn_clear_display()
         end
         return
@@ -1676,7 +1679,7 @@ cn_sync_display_pda = function()
         if dot_n ~= (st.display_node_n or 0) or ep_n ~= (st.display_ep_n or 0) then
             cn_refresh_display()
         end
-    elseif next(cn_state().dot_ids or {}) or next(cn_state().endpoint_dot_ids or {}) then
+    elseif next_(cn_state().dot_ids or {}) or next_(cn_state().endpoint_dot_ids or {}) then
         cn_clear_display()
     end
 end

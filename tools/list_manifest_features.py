@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Print DOGMA path-mod paths from config/manifest.yml (one per line).
+"""Print DOGMA path-mod paths from config manifests (one per line).
 
 Used by tools/manifest_lib.sh for build.sh / package-fomod.sh.
 
@@ -23,12 +23,12 @@ import dogma_mo2_lib as lib  # noqa: E402
 
 def main() -> int:
     p = argparse.ArgumentParser(
-        description="List DOGMA path mods (fomod gate) from manifest.yml"
+        description="List DOGMA path mods (fomod gate) from manifest catalog"
     )
     p.add_argument(
         "--manifest",
-        default=str(_REPO / "config" / "manifest.yml"),
-        help="Path to manifest.yml (or config dir / features.yml)",
+        default=str(_REPO / "config"),
+        help="Config dir or manifest-*.yml / manifest.yml / features.yml",
     )
     p.add_argument(
         "--min-stage",

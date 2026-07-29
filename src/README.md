@@ -6,12 +6,12 @@ Author here; `Ctrl+Shift+B` smushes into `build/gamedata/`.
 
 ```
 src/<category>/<feature>/<gamedata-root>/...
+src/tweaks/<feature>/...           # simple always-on / no-options patches
 src/common/<gamedata-root>/...     # vendored Common, not in MCM
 ```
 
-Example: `src/mutants/skinning/scripts/...` → MCM `D.O.G.M.A. → Mutants → Skinning`.
-
-See `MOVE_MAP.md` for the full map.
+Example: `src/mutants/skinning/scripts/...` → MCM `D.O.G.M.A. → Mutants → Skinning`.  
+Tweaks: `src/tweaks/<feature>/...` → MCM `D.O.G.M.A. → Tweaks` (one shared page; each feature appends a description).
 
 ## Build roots merged into gamedata
 
@@ -33,12 +33,12 @@ Skip: `README*`, `MOVE_MAP*`, `.gitkeep`, `*.alao-bak`, `_` names.
 
 ## Installer (FOMOD)
 
-Path-mod **name**, **description**, and **module id** come from `config/manifest.yml`
+Path-mod **name**, **description**, and **module id** come from `config/manifest-dogma-mods.yml` / `manifest-dogma-tweaks.yml`
 (YAML key, `desc:`, `path:` → `category_feature`). Optional hover preview only:
 
 `src/<category>/<feature>/installer/image.png`
 
-Release zip: `bash tools/package-fomod.sh` → `build/fomod/`. Wizard is **one page per category**; each page is SelectAny feature checkboxes. Hover a feature for its description and image; an About row shows "Hover each checkbox to see feature information". Descriptions append `Requires:` lines from `depends:` when present. Common is always installed. Root `config/manifest.yml` gates features: `omit` / `dev` / `release`. Pack catalog + Setup wizard: same file / `config/mods.yml`. Feature third-party needs use `depends:` → pack ids. Local `Ctrl+Shift+B` builds `>= dev`; packaging ships `>= release`. MO2 entry point: `DOGMA Setup.bat`.
+Release zip: `bash tools/package-fomod.sh` → `build/fomod/`. Wizard is **one page per category**; each page is SelectAny feature checkboxes. Hover a feature for its description and image; an About row shows "Hover each checkbox to see feature information". Descriptions append `Requires:` lines from `depends:` when present. Common is always installed. Root `config/manifest-dogma-*.yml` gates features: `omit` / `dev` / `release`. Pack catalog: `config/manifest-third-party.yml`. Feature third-party needs use `depends:` → pack ids. Local `Ctrl+Shift+B` builds `>= dev`; packaging ships `>= release`. MO2 entry point: `DOGMA Setup.bat`.
 
 ## Common
 

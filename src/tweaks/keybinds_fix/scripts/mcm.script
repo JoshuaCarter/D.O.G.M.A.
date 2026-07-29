@@ -1,0 +1,30 @@
+--[[
+	Keybinds Fix — MCM + main-menu ui_options patch.
+
+	Must live in *mcm.script: MCM loads those at the main menu.
+	Do not call ui_mcm.get / repair at top-level or inside on_mcm_load —
+	gather forbids it and a failed load corrupts later MCM Accept.
+]]
+
+local CONFIG = _G.dogma_tweaks_keybinds_fix_conf
+
+local function patch_only()
+	if CONFIG.patch_ui_options then
+		CONFIG.patch_ui_options()
+	end
+end
+
+-- Top-level: patch Options UI only (no MCM getters).
+patch_only()
+
+function on_mcm_load(options)
+	patch_only()
+
+	dogma_mcm.append(options, "tweaks", "ui_mcm_menu_dogma_tweaks", {
+		{
+			id = "keybinds_fix_description",
+			type = "desc",
+			text = "ui_mcm_dogma_tweaks_keybinds_fix_page_description",
+		},
+	})
+end

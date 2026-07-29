@@ -278,6 +278,7 @@ end
 
 -- Final hip-fire cone at run (degrees, max): min + movement. Lower is better.
 function value_movement_spread(obj, sec)
+	local tostr = tostring
 	sec = resolve_sec(obj, sec)
 	if not is_weapon_section(sec) then
 		return nil
@@ -286,9 +287,9 @@ function value_movement_spread(obj, sec)
 	-- (Actor_Weapon.cpp). Uses normal run speed, not sprint.
 	local fire_disp = wpn_param(obj, sec, "fire_dispersion_base", 0)
 	if fire_disp <= 0 then
-		log_once("move_spread_fail:" .. tostring(sec), string.format(
+		log_once("move_spread_fail:" .. tostr(sec), string.format(
 			"move_spread [%s]: fire_disp=%s",
-			tostring(sec), tostring(fire_disp)))
+			tostr(sec), tostr(fire_disp)))
 		return nil
 	end
 	local pdm_base = wpn_param(obj, sec, "PDM_disp_base", 1)
@@ -296,9 +297,9 @@ function value_movement_spread(obj, sec)
 	local actor = ACTOR_DISP_BASE * pdm_base
 		* (1 + (SPEED_RUN / VEL_MAX) * ACTOR_DISP_VEL * pdm_vel)
 	local total = fire_disp + actor
-	log_once("move_spread_ok:" .. tostring(sec), string.format(
+	log_once("move_spread_ok:" .. tostr(sec), string.format(
 		"move_spread [%s]: base=%.4f + move=%.4f = %.4f",
-		tostring(sec), fire_disp, actor, total))
+		tostr(sec), fire_disp, actor, total))
 	return total
 end
 
@@ -391,6 +392,7 @@ local function fmt_burst(shots_txt, thr)
 end
 
 function value_burst_control(obj, sec)
+	local tostr = tostring
 	sec = resolve_sec(obj, sec)
 	if not is_weapon_section(sec) then
 		return nil
@@ -416,9 +418,9 @@ function value_burst_control(obj, sec)
 	end
 	local max_shots = 200
 	if disp <= 0 then
-		log_once("burst_fail:" .. tostring(sec), string.format(
+		log_once("burst_fail:" .. tostr(sec), string.format(
 			"burst_control [%s]: no cam kick (zoom_cam_dispersion=%s cam_dispersion=%s)",
-			tostring(sec), tostring(zoom_disp), tostring(hip_disp)))
+			tostr(sec), tostr(zoom_disp), tostr(hip_disp)))
 		return max_shots
 	end
 	local inc = wpn_param(obj, sec, "zoom_cam_dispersion_inc", 0)
@@ -498,6 +500,7 @@ end
 
 -- Drop distance (m) at DROP_RANGE_M. Lower is better.
 function value_bullet_drop(obj, sec)
+	local tostr = tostring
 	sec = resolve_sec(obj, sec)
 	if not is_weapon_section(sec) then
 		return nil
@@ -524,10 +527,10 @@ function value_bullet_drop(obj, sec)
 		end
 	end
 	if v <= 0 then
-		log_once("drop_fail:" .. tostring(sec), string.format(
+		log_once("drop_fail:" .. tostr(sec), string.format(
 			"bullet_drop [%s]: bullet_speed=%s k_speed=%s speed_k=%s ammo=%s sil=%s",
-			tostring(sec), tostring(bullet_speed), tostring(k_speed), tostring(speed_k),
-			tostring(ammo0), tostring(sil)))
+			tostr(sec), tostr(bullet_speed), tostr(k_speed), tostr(speed_k),
+			tostr(ammo0), tostr(sil)))
 		v = ini_float(sec, "bullet_speed") or 0
 		if v <= 0 then
 			return 999
@@ -607,18 +610,19 @@ local STAT_SHORT = {
 }
 
 function text_for_name(name_id, obj, sec)
+	local tostr = tostring
 	local fn = TEXT_BY_NAME[name_id]
 	if not fn then
-		log_once("unknown_stat:" .. tostring(name_id),
-			string.format("text_for_name: unknown name_id=%s", tostring(name_id)))
+		log_once("unknown_stat:" .. tostr(name_id),
+			string.format("text_for_name: unknown name_id=%s", tostr(name_id)))
 		return nil
 	end
 	local ok, result = pcall(fn, obj, sec)
-	local short = STAT_SHORT[name_id] or tostring(name_id)
-	local sec_s = tostring(resolve_sec(obj, sec) or sec or "?")
+	local short = STAT_SHORT[name_id] or tostr(name_id)
+	local sec_s = tostr(resolve_sec(obj, sec) or sec or "?")
 	if not ok then
 		log_once(short .. "_err:" .. sec_s,
-			string.format("%s [%s]: ERROR %s", short, sec_s, tostring(result)))
+			string.format("%s [%s]: ERROR %s", short, sec_s, tostr(result)))
 		return nil
 	end
 	-- Success: no log (browsing many guns would spam). Failures above are once/sec.

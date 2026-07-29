@@ -277,20 +277,21 @@ end
 
 -- Tightest applicable weather visibility reduction (stacking).
 local function get_weather_visibility_reduction_m()
+    local sfind = string.find
     local reduction = 0
     local w = get_weather_name()
     if w then
-        if string.find(w, "fog", 1, true) then
+        if sfind(w, "fog", 1, true) then
             reduction = reduction + tft_ambush.weather_fog_m
         end
-        if string.find(w, "storm", 1, true) then
+        if sfind(w, "storm", 1, true) then
             reduction = reduction + tft_ambush.weather_storm_m
-        elseif string.find(w, "rain", 1, true) then
+        elseif sfind(w, "rain", 1, true) then
             reduction = reduction + tft_ambush.weather_rain_m
         end
     end
     if is_raining() then
-        local has_rain = w and (string.find(w, "rain", 1, true) or string.find(w, "storm", 1, true))
+        local has_rain = w and (sfind(w, "rain", 1, true) or sfind(w, "storm", 1, true))
         if not has_rain then
             reduction = reduction + tft_ambush.weather_rain_m
         end
@@ -510,6 +511,7 @@ local function guide_distance(dest_pos, dest_obj, id)
 end
 
 local function do_guide_travel(id, ln)
+    local tostr = tostring
     local emission_blocks = _G.tft_emission_blocks_travel_start or tft_emission_blocks_travel_start
     if emission_blocks and emission_blocks() then
         tft_msg(tft_str("tft_msg_emission_active"), "warning")
@@ -517,12 +519,12 @@ local function do_guide_travel(id, ln)
     end
     local target, err = tft_resolve_travel_target(id, ln, tft.last_map_click_pos)
     if not (target and target.pos and db.actor) then
-        tft_log("guide travel: unresolved id=%s err=%s", tostring(id), tostring(err))
+        tft_log("guide travel: unresolved id=%s err=%s", tostr(id), tostr(err))
         return false
     end
     local obj = target.se_obj
     if not tft_is_base(id, obj) and not tft_is_player_stash(id, obj) then
-        tft_log("guide travel: id=%s is not a guide destination", tostring(id))
+        tft_log("guide travel: id=%s is not a guide destination", tostr(id))
         return false
     end
     local pos = target.pos
@@ -536,7 +538,7 @@ local function do_guide_travel(id, ln)
     local cost = calc_guide_cost(dist, from_lid, to_lid)
     local duration_secs = calc_guide_duration_secs(dist)
     if cost > 0 and db.actor:money() < cost then
-        tft_msg(string.format(tft_str("tft_msg_cannot_afford"), tostring(cost)), "warning")
+        tft_msg(string.format(tft_str("tft_msg_cannot_afford"), tostr(cost)), "warning")
         return false
     end
 
@@ -583,7 +585,7 @@ local function do_guide_travel(id, ln)
     end)
 
     tft_log("Guide travel complete | dist %.0f | cost %d | duration %ds | mapchange %s",
-        dist, cost, math.floor(duration_secs), tostring(mapchange))
+        dist, cost, math.floor(duration_secs), tostr(mapchange))
     return true
 end
 

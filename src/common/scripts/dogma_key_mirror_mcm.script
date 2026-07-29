@@ -224,21 +224,22 @@ end
 CONTROLS = {}
 
 function claim_control(spec)
+	local tostr = tostring
 	if not (spec and spec.action and spec.id and spec.group and spec.after) then
 		return
 	end
-	local id = tostring(spec.id)
+	local id = tostr(spec.id)
 	for i = 1, #CONTROLS do
 		if CONTROLS[i].id == id then
 			return
 		end
 	end
 	CONTROLS[#CONTROLS + 1] = {
-		action = tostring(spec.action),
+		action = tostr(spec.action),
 		id = id,
-		label = spec.label and tostring(spec.label) or nil,
-		group = tostring(spec.group),
-		after = tostring(spec.after),
+		label = spec.label and tostr(spec.label) or nil,
+		group = tostr(spec.group),
+		after = tostr(spec.after),
 	}
 end
 

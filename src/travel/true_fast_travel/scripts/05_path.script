@@ -252,23 +252,24 @@ local function get_safe_pos(pos, lvid, gvid)
 end
 
 local function apply_travel_offset(pos, offset_m)
+    local mfloor = math.floor
     if not (pos and offset_m and offset_m > 0 and tft.start_pos and tft.dest_pos) then
         if offset_m and offset_m > 0 then
-            tft_log("Travel offset skipped: missing start/dest (offset=%dm).", math.floor(offset_m + 0.5))
+            tft_log("Travel offset skipped: missing start/dest (offset=%dm).", mfloor(offset_m + 0.5))
         end
         return pos
     end
     local dir = vector():set(tft.dest_pos.x - tft.start_pos.x, 0, tft.dest_pos.z - tft.start_pos.z)
     local dir_len = math.sqrt(dir.x * dir.x + dir.z * dir.z)
     if dir_len < 0.1 then
-        tft_log("Travel offset skipped: start/dest too close (offset=%dm).", math.floor(offset_m + 0.5))
+        tft_log("Travel offset skipped: start/dest too close (offset=%dm).", mfloor(offset_m + 0.5))
         return pos
     end
     dir:normalize()
     local along = (pos.x - tft.start_pos.x) * dir.x + (pos.z - tft.start_pos.z) * dir.z
     local pullback = math.min(offset_m, math.max(along, 0))
     if pullback < 0.1 then
-        tft_log("Travel offset skipped: along-path %.1fm (offset=%dm).", along, math.floor(offset_m + 0.5))
+        tft_log("Travel offset skipped: along-path %.1fm (offset=%dm).", along, mfloor(offset_m + 0.5))
         return pos
     end
     local offset_pos = vector():set(pos.x - dir.x * pullback, pos.y, pos.z - dir.z * pullback)
@@ -281,7 +282,7 @@ local function apply_travel_offset(pos, offset_m)
     local result = snapped or offset_pos
     local short_m = horizontal_dist(result, pos) or result:distance_to(pos)
     tft_log("Travel offset: want=%dm pullback=%.0fm along=%.0fm short_of_dest=%.0fm pos=(%.1f,%.1f,%.1f)",
-        math.floor(offset_m + 0.5), pullback, along, short_m or 0, result.x, result.y, result.z)
+        mfloor(offset_m + 0.5), pullback, along, short_m or 0, result.x, result.y, result.z)
     return result
 end
 
@@ -2660,6 +2661,7 @@ path_stats_for_target = function(id, ln, click_pos)
 end
 
 local function report_map_click(map_table, hint)
+    local tostr = tostring
     if not map_table then return end
     local id = map_table.object_id
     local ln = map_table.level_name
@@ -2686,7 +2688,7 @@ local function report_map_click(map_table, hint)
     if id and id > 0 and id ~= 65535 then
         local parts = {}
         if clicked_spot and clicked_spot ~= "" then
-            parts[#parts + 1] = "icon=" .. tostring(clicked_spot)
+            parts[#parts + 1] = "icon=" .. tostr(clicked_spot)
         end
         if lc_spot then parts[#parts + 1] = "lc=" .. lc_spot end
         if #spots > 0 then parts[#parts + 1] = "spots=[" .. table.concat(spots, ",") .. "]" end
@@ -2701,7 +2703,7 @@ local function report_map_click(map_table, hint)
     local trans_line = ""
     if tinfo then
         if tinfo.dest_level then trans_line = trans_line .. " -> " .. tinfo.dest_level end
-        if tinfo.dest_gvid then trans_line = trans_line .. " gvid=" .. tostring(tinfo.dest_gvid) end
+        if tinfo.dest_gvid then trans_line = trans_line .. " gvid=" .. tostr(tinfo.dest_gvid) end
         if tinfo.dest_pos then trans_line = trans_line .. " trans_pos=" .. tft_vec_str(tinfo.dest_pos) end
     end
 
@@ -2729,7 +2731,7 @@ local function report_map_click(map_table, hint)
             stats = path_stats_for_target(id, ln, click_pos)
         end
         if stats and stats.error then
-            path_line = " | path=unresolved reason=" .. tostring(stats.error)
+            path_line = " | path=unresolved reason=" .. tostr(stats.error)
         elseif stats then
             path_line = string.format(
                 " | travel=%s straight=%.0fm path=%.0fm dots=%d vtx=%d%s",
@@ -2748,7 +2750,7 @@ local function report_map_click(map_table, hint)
 
     tft_log(
         "map-rclick: id=%s ln=%s hint=%s click=%s obj=%s off=%.0fm | %s%s%s",
-        tostring(id), tostring(ln), tostring(hint or "none"),
+        tostr(id), tostr(ln), tostr(hint or "none"),
         tft_vec_str(click_pos), tft_vec_str(obj_pos), click_off or -1,
         kind, trans_line, path_line
     )
@@ -3308,4 +3310,8 @@ do
     _G.tft_graph_gvid_from_lvid = graph_gvid_from_lvid
     _G.tft_clear_path_preview = clear_path_preview
     _G.tft_build_path_preview = build_path_preview
+    _G.tft_build_navmesh_path = build_navmesh_path
+    _G.tft_densify_polyline = densify_polyline
+    _G.tft_polyline_length = polyline_length
+    _G.tft_polyline_pos_at_ratio = polyline_pos_at_ratio
 end

@@ -26,14 +26,15 @@ local function log(msg)
 end
 
 local function on_option_change()
+	local tostr = tostring
 	CONFIG.loaded.after_inventory = DOGMA.mcm.bool(CONFIG.MOD_ID, "after_inventory")
 	CONFIG.loaded.after_loot = DOGMA.mcm.bool(CONFIG.MOD_ID, "after_loot")
 	CONFIG.loaded.after_teleport = DOGMA.mcm.bool(CONFIG.MOD_ID, "after_teleport")
 	CONFIG.loaded.debug_log = DOGMA.dbg.logging()
 	log(string.format(
 		"config: inventory=%s loot=%s teleport=%s debug=%s",
-		tostring(CONFIG.loaded.after_inventory), tostring(CONFIG.loaded.after_loot),
-		tostring(CONFIG.loaded.after_teleport), tostring(CONFIG.loaded.debug_log)
+		tostr(CONFIG.loaded.after_inventory), tostr(CONFIG.loaded.after_loot),
+		tostr(CONFIG.loaded.after_teleport), tostr(CONFIG.loaded.debug_log)
 	))
 end
 
@@ -70,20 +71,22 @@ local function restore_slot_after_pda()
 end
 
 local function holster_pda_for(kind, site, on_close)
+	local sformat = string.format
+	local tostr = tostring
 	if not db.actor then
-		log(string.format("holster_pda_for(%s) from %s: skipped, no db.actor", kind, site))
+		log(sformat("holster_pda_for(%s) from %s: skipped, no db.actor", kind, site))
 		return
 	end
 	if not CONFIG.loaded["after_" .. kind] then
-		log(string.format("holster_pda_for(%s) from %s: skipped, config disabled", kind, site))
+		log(sformat("holster_pda_for(%s) from %s: skipped, config disabled", kind, site))
 		return
 	end
 	local slot = db.actor:active_slot()
 	local target = restore_slot_after_pda()
 	if slot == PDA_SLOT then
-		log(string.format(
+		log(sformat(
 			"holster_pda_for(%s) from %s: active_slot=%s -> activate_slot(%s) (slot_before_pda=%s, last_non_pda_slot=%s)",
-			kind, site, slot, target, tostring(slot_before_pda), tostring(last_non_pda_slot)
+			kind, site, slot, target, tostr(slot_before_pda), tostr(last_non_pda_slot)
 		))
 		db.actor:activate_slot(target)
 		restore_slot_for_ui = target
@@ -91,16 +94,16 @@ local function holster_pda_for(kind, site, on_close)
 		return
 	end
 	if on_close and pda_holstered_for_ui and restore_slot_for_ui and restore_slot_for_ui ~= 0 then
-		log(string.format(
+		log(sformat(
 			"holster_pda_for(%s) from %s: preempt active_slot=%s -> activate_slot(%s) (restore_slot_for_ui)",
-			kind, site, tostring(slot), restore_slot_for_ui
+			kind, site, tostr(slot), restore_slot_for_ui
 		))
 		db.actor:activate_slot(restore_slot_for_ui)
 		pda_holstered_for_ui = false
 		restore_slot_for_ui = nil
 		return
 	end
-	log(string.format("holster_pda_for(%s) from %s: active_slot=%s, nothing to holster", kind, site, tostring(slot)))
+	log(sformat("holster_pda_for(%s) from %s: active_slot=%s, nothing to holster", kind, site, tostr(slot)))
 end
 
 local TELEPORT_DIST_SQR = 12 * 12
@@ -177,6 +180,7 @@ end
 -- pulled out, and remembers real equip slots without letting transient
 -- holster-to-0 states wipe knife/binoc/weapon memory.
 local function log_active_slot_transitions()
+	local tostr = tostring
 	local slot = db.actor:active_slot()
 	if slot == last_seen_slot then
 		return
@@ -195,8 +199,8 @@ local function log_active_slot_transitions()
 
 	log(string.format(
 		"active_slot changed: %s -> %s (tick=%s, actor_menu.last_mode=%s, slot_before_pda=%s, last_non_pda_slot=%s)",
-		tostring(last_seen_slot), tostring(slot), tostring(time_global()),
-		tostring(actor_menu and actor_menu.last_mode), tostring(slot_before_pda), tostring(last_non_pda_slot)
+		tostr(last_seen_slot), tostr(slot), tostr(time_global()),
+		tostr(actor_menu and actor_menu.last_mode), tostr(slot_before_pda), tostr(last_non_pda_slot)
 	))
 	last_seen_slot = slot
 

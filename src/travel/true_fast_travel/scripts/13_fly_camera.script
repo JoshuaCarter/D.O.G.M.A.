@@ -1,0 +1,612 @@
+-- True Fast Travel: real-time spectator fly-through along coarse→fine path.
+-- Loaded automatically before main.script (zzzz_dogma_travel_true_fast_travel_*)
+
+local tft = _G.tft
+local tft_config = _G.tft_config
+
+local begin_fly_camera, cancel_fly_camera, fly_on_actor_update, begin_handoff
+local cam_api_ok, cam_api_checked
+
+local function fly_cfg()
+	return _G.tft_fly or {}
+end
+
+local function log(fmt, ...)
+	if tft_log then tft_log("[fly] " .. fmt, ...) end
+end
+
+local function probe_cam_api()
+	if cam_api_checked then return cam_api_ok end
+	cam_api_checked = true
+	cam_api_ok = level
+		and type(level.set_cam_custom_position_direction) == "function"
+		and type(level.remove_cam_custom_position_direction) == "function"
+	if not cam_api_ok then
+		log("custom cam API missing - fly disabled")
+	end
+	return cam_api_ok
+end
+
+local function set_custom_cam(pos, dir)
+	if not (pos and dir and level and level.set_cam_custom_position_direction) then return end
+	pcall(function()
+		level.set_cam_custom_position_direction(pos, dir)
+	end)
+end
+
+local function clear_custom_cam()
+	if level and level.remove_cam_custom_position_direction then
+		pcall(function() level.remove_cam_custom_position_direction() end)
+	end
+end
+
+local function lock_input()
+	if level and level.disable_input then
+		pcall(function() level.disable_input() end)
+	end
+end
+
+local function unlock_input()
+	if level and level.enable_input then
+		pcall(function() level.enable_input() end)
+	end
+end
+
+local function copy_v(p)
+	if not p then return nil end
+	return vector():set(p.x, p.y or 0, p.z)
+end
+
+local function hdist(a, b)
+	if tft_horizontal_dist then return tft_horizontal_dist(a, b) end
+	if a and b then return a:distance_to(b) end
+	return 0
+end
+
+local function normalize_dir(dx, dy, dz)
+	local len = math.sqrt(dx * dx + dy * dy + dz * dz)
+	if len < 1e-4 then return 0, 0, 1 end
+	return dx / len, dy / len, dz / len
+end
+
+local function lerp(a, b, t)
+	return a + (b - a) * t
+end
+
+local function smoothstep(t)
+	t = math.max(0, math.min(t, 1))
+	return t * t * (3 - 2 * t)
+end
+
+-- Blend unit directions with exponential damp (frame-rate aware via alpha).
+local function damp_dir(cur, tgt, alpha)
+	alpha = math.max(0, math.min(alpha or 0.2, 1))
+	local x = lerp(cur.x, tgt.x, alpha)
+	local y = lerp(cur.y, tgt.y, alpha)
+	local z = lerp(cur.z, tgt.z, alpha)
+	local nx, ny, nz = normalize_dir(x, y, z)
+	return vector():set(nx, ny, nz)
+end
+
+local function ground_eye_pos(world_pos, eye_h)
+	eye_h = eye_h or (fly_cfg().eye_height_m or 1.6)
+	local g = world_pos
+	if tft_find_ground_pos then
+		local snap = tft_find_ground_pos(world_pos, nil, nil, {
+			anchor = world_pos,
+			max_drift_m = 20,
+			local_only = true,
+			ray_first = true,
+		})
+		if snap then g = snap end
+	end
+	return vector():set(g.x, (g.y or 0) + eye_h, g.z), g
+end
+
+local function append_chain(dst, src, skip_first)
+	if not src then return end
+	local start_i = skip_first and 2 or 1
+	for i = start_i, #src do
+		dst[#dst + 1] = copy_v(src[i])
+	end
+end
+
+-- Coarse skeleton → fine refine between nodes → resample + eye height.
+local function build_fly_path(coarse)
+	local cfg = fly_cfg()
+	if not (coarse and #coarse >= 2) then return nil, 0 end
+
+	local refined = { copy_v(coarse[1]) }
+	local nseg = #coarse - 1
+	local max_seg = cfg.refine_max_segments or 48
+	local stride = math.max(1, math.ceil(nseg / max_seg))
+	local min_m = cfg.refine_min_seg_m or 18
+	local i = 1
+	while i <= nseg do
+		local j = math.min(i + stride, nseg + 1)
+		if j == i then j = i + 1 end
+		local a, b = coarse[i], coarse[j]
+		local seg_m = hdist(a, b) or 0
+		local used = false
+		if seg_m >= min_m and _G.tft_build_navmesh_path then
+			local okc, smoothed = xpcall(function()
+				-- First return is the smoothed chain.
+				return _G.tft_build_navmesh_path(a, b, {})
+			end, function(err)
+				log("refine error: %s", tostring(err))
+				return nil
+			end)
+			if okc and smoothed and type(smoothed) == "table" and #smoothed >= 2 then
+				append_chain(refined, smoothed, true)
+				used = true
+			end
+		end
+		if not used then
+			refined[#refined + 1] = copy_v(b)
+		end
+		i = j
+	end
+
+	if #refined < 2 then
+		refined = { copy_v(coarse[1]), copy_v(coarse[#coarse]) }
+	end
+
+	-- Resample including endpoints (densify_polyline omits them).
+	local sample_m = cfg.sample_m or 3
+	local dense = { copy_v(refined[1]) }
+	local walked = 0
+	for i = 2, #refined do
+		local a, b = refined[i - 1], refined[i]
+		local seg = hdist(a, b) or a:distance_to(b) or 0
+		if seg > 0.001 then
+			local along = sample_m - (walked % sample_m)
+			if along <= 0 then along = sample_m end
+			while along < seg do
+				local t = along / seg
+				dense[#dense + 1] = vector():set(
+					a.x + (b.x - a.x) * t,
+					(a.y or 0) + ((b.y or 0) - (a.y or 0)) * t,
+					a.z + (b.z - a.z) * t
+				)
+				along = along + sample_m
+			end
+			walked = walked + seg
+		end
+		dense[#dense + 1] = copy_v(b)
+	end
+	-- Deduplicate near-identical consecutive points.
+	local cleaned = { dense[1] }
+	for i = 2, #dense do
+		local d = hdist(cleaned[#cleaned], dense[i]) or 0
+		if d >= 0.4 then cleaned[#cleaned + 1] = dense[i] end
+	end
+	if #cleaned < 2 then cleaned = { copy_v(refined[1]), copy_v(refined[#refined]) } end
+
+	local eye_h = cfg.eye_height_m or 1.6
+	local fly = {}
+	local cum = { 0 }
+	local total = 0
+	for i = 1, #cleaned do
+		local eye, ground = ground_eye_pos(cleaned[i], eye_h)
+		fly[i] = eye
+		fly[i].ground = ground
+		if i > 1 then
+			local d = hdist(fly[i - 1], fly[i]) or fly[i - 1]:distance_to(fly[i]) or 0
+			total = total + d
+			cum[i] = total
+		end
+	end
+	return fly, total, cum
+end
+
+local function pos_at_arc(fly, cum, total, u)
+	if not (fly and cum and #fly >= 2) then return nil, nil end
+	u = math.max(0, math.min(u or 0, total or 0))
+	if u <= 0 then return copy_v(fly[1]), copy_v(fly[1].ground or fly[1]) end
+	if u >= (total or 0) then
+		local last = fly[#fly]
+		return copy_v(last), copy_v(last.ground or last)
+	end
+	for i = 2, #fly do
+		if cum[i] >= u then
+			local a, b = fly[i - 1], fly[i]
+			local seg = (cum[i] - cum[i - 1])
+			local t = (seg > 1e-4) and ((u - cum[i - 1]) / seg) or 0
+			local pos = vector():set(
+				lerp(a.x, b.x, t),
+				lerp(a.y or 0, b.y or 0, t),
+				lerp(a.z, b.z, t)
+			)
+			local ga = a.ground or a
+			local gb = b.ground or b
+			local ground = vector():set(
+				lerp(ga.x, gb.x, t),
+				lerp(ga.y or 0, gb.y or 0, t),
+				lerp(ga.z, gb.z, t)
+			)
+			return pos, ground
+		end
+	end
+	local last = fly[#fly]
+	return copy_v(last), copy_v(last.ground or last)
+end
+
+local function look_at_arc(fly, cum, total, u, look_ahead)
+	look_ahead = look_ahead or (fly_cfg().look_ahead_m or 12)
+	local here = pos_at_arc(fly, cum, total, u)
+	local ahead = pos_at_arc(fly, cum, total, math.min(u + look_ahead, total))
+	if not (here and ahead) then return vector():set(0, 0, 1) end
+	local dx, dy, dz = ahead.x - here.x, (ahead.y or 0) - (here.y or 0), ahead.z - here.z
+	-- Soften extreme pitch
+	dy = dy * 0.55
+	local nx, ny, nz = normalize_dir(dx, dy, dz)
+	return vector():set(nx, ny, nz)
+end
+
+local function speed_mps()
+	local cfg = fly_cfg()
+	local sprint = cfg.sprint_mps or 6
+	local mult = cfg.speed_mult_normal or 5
+	if tft.travel_mode == "sneaky" then
+		mult = (tft_config and tft_config.fly_speed_mult_sneak) or cfg.speed_mult_sneak or 2
+	else
+		mult = (tft_config and tft_config.fly_speed_mult_normal) or cfg.speed_mult_normal or 5
+	end
+	return sprint * mult
+end
+
+local function park_companions_underground()
+	if not (db.actor and tft_teleport_companions) then return end
+	local cfg = fly_cfg()
+	local bury = cfg.companion_bury_m or 1000
+	local ap = db.actor:position()
+	local buried = vector():set(ap.x, (ap.y or 0) - bury, ap.z)
+	local lvid = db.actor:level_vertex_id()
+	local gvid = db.actor:game_vertex_id()
+	tft.fly_companions_parked = true
+	pcall(tft_teleport_companions, buried, lvid, gvid)
+end
+
+local function teleport_companions_behind(pos, forward, lvid, gvid)
+	if not (pos and tft_teleport_companions) then return end
+	local cfg = fly_cfg()
+	local back = cfg.companion_back_m or 2.2
+	local side = cfg.companion_side_m or 1.1
+	local fx, fy, fz = forward.x, 0, forward.z
+	local fl = math.sqrt(fx * fx + fz * fz)
+	if fl < 1e-3 then fx, fz = 0, 1 else fx, fz = fx / fl, fz / fl end
+	local rx, rz = -fz, fx
+
+	if not (axr_companions and axr_companions.list_actor_squad_by_id) then
+		tft_teleport_companions(pos, lvid, gvid)
+		return
+	end
+	local ids = axr_companions.list_actor_squad_by_id()
+	local gg = game_graph()
+	for i = 1, #ids do
+		local id = ids[i]
+		local obj = alife_object(id)
+		if obj and obj.alive and obj:alive() then
+			local lat = ((i % 2 == 0) and side or -side) * (1 + math.floor((i - 1) / 2) * 0.35)
+			local t_pos = vector():set(
+				pos.x - fx * (back + (i - 1) * 0.4) + rx * lat,
+				pos.y,
+				pos.z - fz * (back + (i - 1) * 0.4) + rz * lat
+			)
+			if tft_find_ground_pos then
+				local snap = tft_find_ground_pos(t_pos, nil, nil, {
+					anchor = t_pos, max_drift_m = 12, local_only = true, ray_first = true,
+				})
+				if snap then t_pos = snap end
+			end
+			local t_lvid = lvid
+			if level and level.vertex_id then
+				local ok, lv = pcall(function() return level.vertex_id(t_pos) end)
+				if ok and lv and lv ~= _G.tft_invalid_lvid then t_lvid = lv end
+			end
+			local t_gvid = gvid
+			pcall(function()
+				alife():teleport_object(id, t_gvid, t_lvid, t_pos)
+				local online = level.object_by_id(id)
+				if online then online:set_npc_position(t_pos) end
+			end)
+		end
+	end
+	tft.fly_companions_parked = false
+end
+
+local function apply_arrival_posture()
+	if not (db.actor and level and key_bindings) then return end
+	local crouch_bind = key_bindings.kCROUCH
+	if not crouch_bind then return end
+	local want_crouch = tft.travel_mode == "sneaky"
+	local is_crouch = false
+	pcall(function()
+		if db.actor.is_crouching then is_crouch = db.actor:is_crouching() end
+	end)
+	if want_crouch and not is_crouch then
+		pcall(function() level.press_action(crouch_bind) end)
+	elseif (not want_crouch) and is_crouch then
+		pcall(function() level.press_action(crouch_bind) end)
+	end
+end
+
+local function face_direction(dir)
+	if not (db.actor and dir) then return end
+	local ap = db.actor:position()
+	local look = vector():set(ap.x + dir.x * 8, (ap.y or 0) + 1.4 + dir.y * 8, ap.z + dir.z * 8)
+	pcall(function() db.actor:actor_look_at_point(look) end)
+end
+
+local function promote_dots_for_ratio(ratio)
+	ratio = math.max(0, math.min(ratio or 0, 1))
+	local d_count = tft.dot_count or 0
+	for i = 1, d_count do
+		local threshold = tft.dot_path_ratio and tft.dot_path_ratio[i] or (i / (d_count + 1))
+		if ratio >= threshold then
+			if tft_ensure_path_dot then tft_ensure_path_dot(i, true) end
+			if tft_promote_path_dot then tft_promote_path_dot(i) end
+		end
+	end
+end
+
+local function reset_fly_state()
+	tft.fly_active = false
+	tft.fly_phase = nil
+	tft.fly_path = nil
+	tft.fly_cum = nil
+	tft.fly_total = 0
+	tft.fly_u = 0
+	tft.fly_dir = nil
+	tft.fly_last_tg = nil
+	tft.fly_handoff = nil
+	tft.fly_no_time = nil
+end
+
+cancel_fly_camera = function()
+	if not (tft.fly_active or tft.fly_phase) then return end
+	clear_custom_cam()
+	unlock_input()
+	pcall(function()
+		if db.actor and db.actor.actor_stop_look_at_point then
+			db.actor:actor_stop_look_at_point()
+		end
+	end)
+	if tft.fly_companions_parked and db.actor and tft_teleport_companions then
+		tft_teleport_companions(db.actor:position(), db.actor:level_vertex_id(), db.actor:game_vertex_id())
+		tft.fly_companions_parked = false
+	end
+	reset_fly_state()
+	log("cancelled")
+end
+
+local function finish_handoff()
+	local ho = tft.fly_handoff
+	clear_custom_cam()
+	unlock_input()
+	apply_arrival_posture()
+	pcall(function()
+		if db.actor and db.actor.actor_stop_look_at_point then
+			db.actor:actor_stop_look_at_point()
+		end
+	end)
+	local on_done = ho and ho.on_done
+	local targets = ho and ho.targets
+	local was_ambush = ho and ho.was_ambush
+	local final_pos = ho and ho.pos
+	reset_fly_state()
+	-- Agro only after control is restored.
+	if was_ambush and targets and tft_alert_ambushers then
+		pcall(tft_alert_ambushers, targets)
+		log("ambush agro after control restored")
+		if tft_show_ambush_dir_marker and final_pos then
+			pcall(tft_show_ambush_dir_marker, targets, final_pos)
+		end
+	end
+	if on_done then pcall(on_done) end
+end
+
+begin_handoff = function(opts)
+	opts = opts or {}
+	if not (opts.pos and db.actor) then
+		if opts.on_done then pcall(opts.on_done) end
+		return false
+	end
+	local cfg = fly_cfg()
+	local eye_h = cfg.eye_height_m or 1.6
+	local pos = opts.pos
+	local lvid = opts.lvid
+	local gvid = opts.gvid or tft.dest_gvid or db.actor:game_vertex_id()
+
+	-- Final fly pose as handoff start.
+	local start_pos = tft.fly_dir and pos_at_arc(tft.fly_path, tft.fly_cum, tft.fly_total, tft.fly_u)
+	local start_dir = tft.fly_dir or vector():set(0, 0, 1)
+	if not start_pos then
+		start_pos = vector():set(pos.x, (pos.y or 0) + eye_h, pos.z)
+	end
+
+	db.actor:set_actor_position(pos)
+	local fwd = start_dir
+	if opts.look_dir then fwd = opts.look_dir end
+	face_direction(fwd)
+	teleport_companions_behind(pos, fwd, lvid, gvid)
+	apply_arrival_posture()
+
+	local end_eye = vector():set(pos.x, (pos.y or 0) + eye_h, pos.z)
+	-- Prefer live cam if available after place.
+	pcall(function()
+		if device and device().cam_pos then
+			local cp = device().cam_pos
+			end_eye = vector():set(cp.x, cp.y, cp.z)
+		end
+	end)
+	local end_dir = copy_v(fwd)
+	pcall(function()
+		if device and device().cam_dir then
+			local cd = device().cam_dir
+			end_dir = vector():set(cd.x, cd.y, cd.z)
+		end
+	end)
+
+	tft.fly_phase = "handoff"
+	tft.fly_active = true
+	tft.fly_handoff = {
+		t0 = time_global(),
+		dur_ms = math.floor((cfg.handoff_s or 0.35) * 1000),
+		start_pos = start_pos,
+		start_dir = start_dir,
+		end_pos = end_eye,
+		end_dir = end_dir,
+		pos = pos,
+		lvid = lvid,
+		gvid = gvid,
+		was_ambush = opts.was_ambush,
+		targets = opts.targets,
+		on_done = opts.on_done,
+		agro_done_in_handoff = true,
+	}
+	lock_input()
+	if tft_set_safety_active then tft_set_safety_active(math.max(cfg.handoff_s or 0.35, 2)) end
+	log("handoff begin (%.2fs)", cfg.handoff_s or 0.35)
+	return true
+end
+
+local function update_handoff()
+	local ho = tft.fly_handoff
+	if not ho then
+		finish_handoff()
+		return
+	end
+	local elapsed = time_global() - (ho.t0 or time_global())
+	local t = (ho.dur_ms > 0) and (elapsed / ho.dur_ms) or 1
+	if t >= 1 then
+		set_custom_cam(ho.end_pos, ho.end_dir)
+		finish_handoff()
+		return
+	end
+	t = smoothstep(t)
+	local p = vector():set(
+		lerp(ho.start_pos.x, ho.end_pos.x, t),
+		lerp(ho.start_pos.y, ho.end_pos.y, t),
+		lerp(ho.start_pos.z, ho.end_pos.z, t)
+	)
+	local dx = lerp(ho.start_dir.x, ho.end_dir.x, t)
+	local dy = lerp(ho.start_dir.y, ho.end_dir.y, t)
+	local dz = lerp(ho.start_dir.z, ho.end_dir.z, t)
+	local nx, ny, nz = normalize_dir(dx, dy, dz)
+	set_custom_cam(p, vector():set(nx, ny, nz))
+end
+
+local function update_fly(dt)
+	if tft.fly_phase ~= "fly" then return end
+	local fly = tft.fly_path
+	local cum = tft.fly_cum
+	local total = tft.fly_total or 0
+	if not (fly and cum and total > 0) then
+		cancel_fly_camera()
+		if tft_complete_travel_sequence then tft_complete_travel_sequence() end
+		return
+	end
+
+	tft.fly_u = math.min((tft.fly_u or 0) + speed_mps() * dt, total)
+	local u = tft.fly_u
+	local ratio = total > 0 and (u / total) or 1
+	tft.current_dist = (tft.travel_dist or total) * ratio
+	promote_dots_for_ratio(ratio)
+
+	local pos, ground = pos_at_arc(fly, cum, total, u)
+	local tgt_dir = look_at_arc(fly, cum, total, u, fly_cfg().look_ahead_m)
+	local smooth = fly_cfg().turn_smooth or 0.18
+	-- Convert "smooth" to per-frame alpha from dt (at 60fps, ~smooth)
+	local alpha = 1 - math.exp(-smooth * 60 * dt)
+	if not tft.fly_dir then tft.fly_dir = tgt_dir end
+	tft.fly_dir = damp_dir(tft.fly_dir, tgt_dir, alpha)
+
+	set_custom_cam(pos, tft.fly_dir)
+
+	-- Streaming proxy: keep actor under the camera on ground.
+	if db.actor and ground then
+		pcall(function() db.actor:set_actor_position(ground) end)
+	end
+
+	if u >= total - 0.05 then
+		tft.fly_phase = "arriving"
+		tft.fly_no_time = true
+		if tft_complete_travel_sequence then
+			tft_complete_travel_sequence({ fly_handoff = true })
+		else
+			cancel_fly_camera()
+		end
+	end
+end
+
+fly_on_actor_update = function()
+	if not (tft.fly_active or tft.fly_phase) then return end
+	if not db.actor then
+		cancel_fly_camera()
+		return
+	end
+	local tg = time_global()
+	local last = tft.fly_last_tg or tg
+	tft.fly_last_tg = tg
+	local dt = math.max(0.001, math.min((tg - last) / 1000, 0.1))
+
+	if tft.fly_phase == "handoff" then
+		update_handoff()
+		return
+	end
+	if tft.fly_phase == "fly" then
+		update_fly(dt)
+	end
+end
+
+begin_fly_camera = function()
+	if not probe_cam_api() then return false end
+	if not (tft.path_chain and #tft.path_chain >= 2) then
+		log("no path_chain")
+		return false
+	end
+	if tft.fly_active then return false end
+
+	local fly, total, cum = build_fly_path(tft.path_chain)
+	if not (fly and #fly >= 2 and total and total > 1) then
+		log("fly path build failed")
+		return false
+	end
+
+	tft.fly_path = fly
+	tft.fly_cum = cum
+	tft.fly_total = total
+	tft.fly_u = 0
+	tft.fly_dir = look_at_arc(fly, cum, total, 0, fly_cfg().look_ahead_m)
+	tft.fly_last_tg = time_global()
+	tft.fly_phase = "fly"
+	tft.fly_active = true
+	tft.fly_no_time = true
+
+	if tft_close_pda_for_travel then tft_close_pda_for_travel() end
+	lock_input()
+	park_companions_underground()
+	if tft_set_safety_active then tft_set_safety_active(120) end
+
+	local p0 = pos_at_arc(fly, cum, total, 0)
+	if p0 then set_custom_cam(p0, tft.fly_dir) end
+	if db.actor and fly[1] and fly[1].ground then
+		pcall(function() db.actor:set_actor_position(fly[1].ground) end)
+	end
+
+	log("start: %d pts, %.0fm, %.1f m/s (%s)", #fly, total, speed_mps(), tostring(tft.travel_mode))
+	return true
+end
+
+_G.tft_fly_camera_available = function()
+	if tft_config and tft_config.fly_camera == false then return false end
+	return probe_cam_api()
+end
+_G.tft_begin_fly_camera = begin_fly_camera
+_G.tft_cancel_fly_camera = cancel_fly_camera
+_G.tft_fly_on_actor_update = fly_on_actor_update
+_G.tft_fly_begin_handoff = begin_handoff
+_G.tft_fly_active = function()
+	return tft.fly_active == true
+end

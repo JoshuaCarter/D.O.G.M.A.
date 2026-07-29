@@ -1,0 +1,197 @@
+# DOGMA path-mod catalog (common + features with MCM / major systems).
+#
+# Loaded with manifest-third-party.yml + manifest-dogma-tweaks.yml by dogma_mo2_lib.load_manifest.
+#
+# path: feature under src/<path>; package zip mo2/packages/<path_key>.zip
+# stage: OMIT | DEV | RELEASE
+#
+
+common:
+  stage: OMIT
+  disables: []
+  enables: []
+
+Dose-Linked Radiation FX:
+  stage: RELEASE
+  path: fx/radiation
+  desc: Radiation grain and colour effects track your actual dose. Replaces the stock radiation screen effect.
+
+On-Screen FPS Counter:
+  stage: RELEASE
+  path: hud/fps
+  desc: On-screen FPS counter with optional graph.
+
+Minimap Toggle Or Hold:
+  stage: DEV
+  path: hud/minimap
+  desc: Toggle or hold-to-show for the HUD minimap.
+  disables:
+    - 177- Minimap Toggle - RavenAscendant
+
+NVG Remembers Across Maps:
+  stage: DEV
+  path: hud/nvg
+  desc: "Night vision remembers on or off across map changes. Adds a default gain step (0-3) slider to Beef's NVG MCM."
+  enables:
+    - 189- Beef's NVG - theRealBeef
+
+Hide HUD On QAW:
+  stage: DEV
+  path: hud/quick_action_wheel
+  desc: "MCM Hide HUD on Quick Action Wheel → Controls. Works with HarukaSai QAW, G.A.M.M.A. Balance, and QAW Overhaul."
+
+Centered Stalker ID HUD:
+  stage: DEV
+  path: hud/stalker_id
+  desc: "Centered name, rank, and faction icon when looking at stalkers."
+  disables:
+    - 163- Identification UI - CrookR
+    - G.A.M.M.A. Crook's Identification UI Fix
+
+Inventory Disassemble Keybinds:
+  stage: DEV
+  path: items/disassemble
+  desc: Keybinds to disassemble items from inventory.
+  disables:
+    - 144- Prefer Best Disassembly Tool - Demonized
+
+Inventory Drop Keybinds:
+  stage: DEV
+  path: items/drop
+  desc: Keybinds to drop items from inventory.
+  disables:
+    - G.A.M.M.A. Press Key to Drop Item
+
+SortingPlus Fav Keybinds:
+  stage: DEV
+  path: items/favourites
+  desc: "Exposes SortingPlus favourite (K) and junk (J) as MCM keybinds, and keeps favourites across new games. Requires SortingPlus (GAMMA default — keep it enabled)."
+  enables:
+    - 110- SortingPlus - RavenAscendant
+
+Field-Strip Weapon Keybinds:
+  stage: RELEASE
+  path: items/stripping
+  desc: Keybinds to field-strip weapons in inventory and loot.
+
+Developer Debug MCM Page:
+  stage: DEV
+  path: mcm/debug
+  desc: "Developer Debug page under D.O.G.M.A. (logging, overlay, test keys, reset-all button). Local builds only — not included in RELEASE packages."
+
+Faster Mutant Skinning:
+  stage: RELEASE
+  path: mutants/skinning
+  desc: "Faster mutant skinning. Optional look-at replaces FDDA's mutant-skin camera when enabled."
+
+Dodge Pseudogiant Ground Slams:
+  stage: RELEASE
+  path: mutants/tweaks
+  desc: "Jump to dodge pseudogiant ground slams. Optional 5s controller tube cooldown (LTX). If you use a separate Increased Controller LTX mod, keep DOGMA below it or disable that mod so the cooldown does not fight."
+
+Solo Guides And Escorts:
+  stage: DEV
+  path: npcs/companions
+  desc: "Guides and hired escorts join alone (offline extras dropped, online rehomed); max one of each. Optional keybind teleports companions to you (skips waiting / locked hostages)."
+  disables:
+    - 218- Quick Companion Teleport (teleports rescue mission targets) - RazorShultz
+    - 329- Fair Fast Travel - Catspaw
+    - 329- Fair Fast Travel 2.7+ - Catspaw
+
+Foliage Blocks NPC Vision:
+  stage: OMIT
+  path: npcs/foliage
+  desc: "Bush materials block AI vision completely. Optional: stalkers fighting you in foliage are nudged to solid cover or to advance (MCM), once per second; skips if already moving."
+
+PDA Stays Put:
+  stage: RELEASE
+  path: pda/stay_down
+  desc: Stops the PDA jumping back into your hands after inventory or teleports.
+  disables:
+    - Dorns_Dont_ReEquip_PDA
+    - 136- Previous weapon is automatically pulled after closing PDA - Demonized
+
+Campfire Healing:
+  stage: DEV
+  path: player/campfire
+  desc: "Near lit campfires: body and limbs heal async (body 20%/30–100s def 30; limbs 20%/20–100s def 20). Body as +1% steps; limbs convert temp→perm 1pt on lowest limb. No temp apply. Disables Campfire slowly regens life (arti)."
+  disables:
+    - 115- Campfire slowly regens life - arti
+
+Exo Drain Multipliers MCM:
+  stage: DEV
+  path: player/exo
+  desc: "Replaces Powered Exos (arti) drain MCM with idle / run / sprint multipliers (0-10 / 1-10 / 2-10, defaults 0 / 1 / 3) on that mod's page. Drain rates are independent, not stacked. Keep DOGMA below Powered Exos in MO2."
+  enables:
+    - 47- Powered Exos - arti
+
+Crouch Walk And Prone:
+  stage: RELEASE
+  path: player/pose_controls
+  desc: "Crouch crouches, a walk key walks, and low-crouch goes prone."
+
+Actual Player Prone Pose:
+  stage: RELEASE
+  path: player/true_prone
+  desc: Makes the player actually go prone rather than just low crouch.
+  disables:
+    - xrMPE
+
+Death Spectator:
+  stage: DEV
+  path: player/death_spectator
+  desc: "After death, press Tab to free-fly spectate from above your corpse looking at your killer, with a recent-hit summary."
+
+Holster And Detector Equip:
+  stage: DEV
+  path: player/equipment_controls
+  desc: "Melee/pistol from holsters. Detector, Geiger, RF, and Glowstick force-equip into the detector slot."
+
+Fix Stacking Hover Tooltips:
+  stage: RELEASE
+  path: tooltips/tweaks
+  desc: Fixes hover tooltips that stack wrong until you leave and re-hover the item.
+
+Detailed Weapon Stat Tooltips:
+  stage: RELEASE
+  path: tooltips/weapons
+  desc: Adds detailed weapon performance stats to weapon tooltips. Works with Advanced Item Stats.
+  enables:
+    - G.A.M.M.A. Accurate Defense Values
+
+PDA Map Path Travel:
+  stage: RELEASE
+  path: travel/fast_travel
+  desc: "Travel from the PDA map with paths, ambushes, and sneak options."
+  disables:
+    - 329- Fair Fast Travel - Catspaw
+    - 329- Fair Fast Travel 2.7+ - Catspaw
+  depends:
+    - Tarkov-like Level Transitions
+
+Real Path Time Travel:
+  stage: DEV
+  path: travel/true_fast_travel
+  desc: "Real path travel with stepped teleports and in-mod time simulation, LoS ambushes, walk-to-discover destinations. Blanks vanilla game_fast_travel so map FT does not return."
+  disables:
+    - 329- Fair Fast Travel - Catspaw
+    - 329- Fair Fast Travel 2.7+ - Catspaw
+    - 204- Limited Fast Travel (walking is good for your health) - Demonized
+  depends:
+    - Tarkov-like Level Transitions
+
+ADS Zoom:
+  stage: RELEASE
+  path: zoom/ads_zoom
+  desc: "Brings weapon model closer to camera when ADS. Adjust on a per gun+sight basis, with sight-type defaults forirons/sights/scopes"
+  disables:
+    - 72- Adjustable Scope View - sneaky
+
+Zoom Without Aiming:
+  stage: RELEASE
+  path: zoom/free_zoom
+  desc: Zoom your view without aiming. Blanks Keybinds Free_ZoomV2 and rival ADS FOV scripts that cannot be fully disabled.
+  disables:
+    - 178- Free Zoom - SlowVibe
+    - G.A.M.M.A. Free Zoom v3
+    - Kute's Free Zoom Rewrite

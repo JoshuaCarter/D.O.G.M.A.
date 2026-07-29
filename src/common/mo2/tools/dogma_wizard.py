@@ -983,31 +983,57 @@ def _title_row(
     return block
 
 
-def _url_display_link(dep: lib.Dependency | None) -> str:
-    """Inline link under titles: prefer page urls over download/store."""
-    if dep is None:
-        return ""
-    for candidate in (
-        dep.url_moddb,
-        dep.url_github,
-        dep.url_discord,
-        dep.url_download,
-        dep.url_kofi,
-        dep.url_patreon,
-        dep.url,
-    ):
-        u = (candidate or "").strip()
-        if u:
-            return u
-    return ""
-
-
 def _icons_dir() -> Path:
     return Path(__file__).resolve().parent / "icons"
 
 
+def _tint_png_photo(
+    master: tk.Misc,
+    path: Path,
+    rgb: tuple[int, int, int],
+) -> tk.PhotoImage | None:
+    """Recolor light icon strokes to ``rgb`` (update-available download mark)."""
+    try:
+        from PIL import Image
+    except ImportError:
+        return None
+    try:
+        im = Image.open(path).convert("RGBA")
+    except OSError:
+        return None
+    px = im.load()
+    w, h = im.size
+    tr, tg, tb = rgb
+    for y in range(h):
+        for x in range(w):
+            r, g, b, a = px[x, y]
+            if a and max(r, g, b) > 40:
+                px[x, y] = (tr, tg, tb, a)
+    import base64
+    import io
+
+    buf = io.BytesIO()
+    im.save(buf, format="PNG")
+    try:
+        return tk.PhotoImage(
+            master=master, data=base64.b64encode(buf.getvalue())
+        )
+    except tk.TclError:
+        return None
+
+
+def _hex_rgb(color: str) -> tuple[int, int, int] | None:
+    raw = (color or "").lstrip("#")
+    if len(raw) != 6:
+        return None
+    try:
+        return (int(raw[0:2], 16), int(raw[2:4], 16), int(raw[4:6], 16))
+    except ValueError:
+        return None
+
+
 def _load_link_icons(master: tk.Misc) -> dict[str, tk.PhotoImage]:
-    """Load link PNGs + grey ``*_off`` variants (kept alive on master)."""
+    """Load link PNGs + download colour states (white/green/blue/grey)."""
     out: dict[str, tk.PhotoImage] = {}
     root_dir = _icons_dir()
     for kind in ("download", "moddb", "github", "discord", "kofi", "patreon"):
@@ -1022,6 +1048,26 @@ def _load_link_icons(master: tk.Misc) -> dict[str, tk.PhotoImage]:
                 out[key] = tk.PhotoImage(master=master, file=str(path))
             except tk.TclError:
                 continue
+    dl_path = root_dir / "download.png"
+    if dl_path.is_file():
+        # white = up to date (download.png); green = newer; blue = unknown
+        for key, hex_color in (
+            ("download_new", _THEME["accent"]),
+            ("download_unknown", _THEME["link"]),
+        ):
+            rgb = _hex_rgb(hex_color)
+            if rgb is None:
+                continue
+            tinted = _tint_png_photo(master, dl_path, rgb)
+            if tinted is not None:
+                out[key] = tinted
+        # grey "no url" reuses download_off when present; else tint fg_dim
+        if "download_off" not in out:
+            rgb = _hex_rgb(_THEME["fg_dim"])
+            if rgb is not None:
+                tinted = _tint_png_photo(master, dl_path, rgb)
+                if tinted is not None:
+                    out["download_off"] = tinted
     setattr(master, "_dogma_link_icons", out)
     return out
 
@@ -1355,6 +1401,11 @@ class _ArchiveField:
         self._action = "none"
         self._download_url = ""
         self._dl_image: tk.PhotoImage | None = None
+        self._dl_images: dict[str, tk.PhotoImage | None] = {}
+        # new | current | unknown | none — see set_download_status
+        self._dl_status = "none"
+        self._remote_date = ""
+        self._remote_probed = False
         icons = link_icons or {}
 
         if enable_file:
@@ -1387,13 +1438,30 @@ class _ArchiveField:
                     "patreon": "P",
                 }.get(kind, "↗")
                 # Same button/image path for every link icon (incl. download).
-                if active and mode == "download":
-                    self._can_download = True
-                    self._action = "download"
-                    self._download_url = url
-                    self._dl_image = img
-                    cmd: Callable[[], None] | None = self._start_download
-                    st, cur, fg = "normal", "hand2", None
+                if kind == "download":
+                    self._dl_images = {
+                        "new": icons.get("download_new"),
+                        "current": icons.get("download"),
+                        "unknown": icons.get("download_unknown")
+                        or icons.get("download"),
+                        "none": icons.get("download_off") or icons.get("download"),
+                    }
+                    if active and mode == "download":
+                        self._can_download = True
+                        self._action = "download"
+                        self._download_url = url
+                        self._dl_status = "unknown"
+                        self._dl_image = self._dl_images.get("unknown")
+                        img = self._dl_image or img
+                        cmd: Callable[[], None] | None = self._start_download
+                        st, cur, fg = "normal", "hand2", None
+                    else:
+                        # No auto-download URL — darker grey, disabled.
+                        self._dl_status = "none"
+                        self._dl_image = self._dl_images.get("none")
+                        img = self._dl_image or img
+                        cmd = None
+                        st, cur, fg = "disabled", "arrow", _THEME["fg_dim"]
                 elif active:
                     cmd = lambda u=url, k=kind: self._open_url(u, k)
                     st, cur, fg = "normal", "hand2", None
@@ -1410,7 +1478,7 @@ class _ArchiveField:
                     fg=fg,
                     cell_h=28,
                 )
-                if active and mode == "download":
+                if kind == "download":
                     self.dl_btn = btn
                 cell.pack(side="left", padx=(4, 0))
                 self._link_btns.append(btn)
@@ -1477,15 +1545,28 @@ class _ArchiveField:
             self.name_lbl.configure(foreground=_THEME["fg_placeholder"])
             self._has_file = False
             return
-        path, _st = lib.resolve_local_archive(self.mo2_root, self.dep)
+        path, _status = lib.resolve_local_archive(
+            self.mo2_root,
+            self.dep,
+            remote_date=self._remote_date,
+        )
         if path is not None:
             self.name_var.set(path.name)
-            self.name_lbl.configure(foreground=_THEME["fg"])
+            self.name_lbl.configure(foreground=_THEME["link"])
             self._has_file = True
         else:
             self.name_var.set(self.dep.id)
             self.name_lbl.configure(foreground=_THEME["fg_placeholder"])
             self._has_file = False
+        if self._can_download:
+            self.set_download_status(
+                lib.download_version_icon_status(
+                    self.mo2_root,
+                    self.dep,
+                    remote_date=self._remote_date,
+                    probed=self._remote_probed,
+                )
+            )
         if self.clear_btn is not None and not self._busy:
             self.clear_btn.configure(
                 state=("normal" if self._has_file else "disabled"),
@@ -1493,6 +1574,36 @@ class _ArchiveField:
                     _THEME["fg_muted"] if self._has_file else _THEME["fg_dim"]
                 ),
             )
+
+    def set_download_status(self, status: str) -> None:
+        """Colour download icon: new=green, current=white, unknown=blue, none=grey."""
+        key = status if status in ("new", "current", "unknown", "none") else "unknown"
+        self._dl_status = key
+        self._dl_image = self._dl_images.get(key) or self._dl_images.get("unknown")
+        if self.dl_btn is None or self._busy:
+            return
+        if key == "none":
+            try:
+                if self._dl_image is not None:
+                    self.dl_btn.configure(
+                        state="disabled",
+                        image=self._dl_image,
+                        text="",
+                        cursor="arrow",
+                    )
+                else:
+                    self.dl_btn.configure(
+                        state="disabled",
+                        text="↓",
+                        cursor="arrow",
+                        foreground=_THEME["fg_dim"],
+                    )
+            except tk.TclError:
+                pass
+            return
+        hub = self._download_hub
+        blocked = hub.at_capacity() if hub is not None else False
+        self.apply_download_gate(blocked=blocked)
 
     def apply_download_gate(self, *, blocked: bool) -> None:
         """When the download pool is full, idle cloud buttons stay disabled."""
@@ -1509,10 +1620,17 @@ class _ArchiveField:
                     cursor="hand2",
                 )
             else:
+                fg = {
+                    "new": _THEME["accent"],
+                    "current": _THEME["fg"],
+                    "unknown": _THEME["link"],
+                    "none": _THEME["fg_dim"],
+                }.get(self._dl_status, _THEME["link"])
                 self.dl_btn.configure(
                     state="normal",
                     text="↓",
                     cursor="hand2",
+                    foreground=fg,
                 )
         except tk.TclError:
             pass
@@ -1590,7 +1708,12 @@ class _ArchiveField:
 
     def _associate_path(self, src: Path) -> None:
         try:
-            lib.associate_archive(self.mo2_root, self.dep.id, src)
+            lib.associate_archive(
+                self.mo2_root,
+                self.dep.id,
+                src,
+                date=self._remote_date,
+            )
         except Exception as exc:
             lib.log_exception(exc, where=f"wizard.associate[{self.dep.id}]")
             messagebox.showerror("D.O.G.M.A.", str(exc))
@@ -1682,13 +1805,19 @@ def run_wizard(
     options = list(data.installer_options)
     if not options and not lib.wizard_radio_groups(data, min_stage=min_stage):
         raise ValueError(
-            "config/manifest.yml has no stage:dev|release mods — add stage: "
+            "config manifests have no stage:dev|release mods — add stage: "
             "before running the wizard"
         )
 
     radio_groups = lib.wizard_radio_groups(data, min_stage=min_stage)
     pack_by_id = data.suggested_by_id()
     installed_feats = lib.resolve_installed_features(mo2_root, data)
+    pruned = lib.prune_missing_archive_map(mo2_root)
+    if pruned:
+        lib.info(
+            f"Cleared {len(pruned)} missing archive map "
+            f"entr{'y' if len(pruned) == 1 else 'ies'}"
+        )
 
     if initial is None:
         lib.apply_feature_option_defaults(data, installed_feats)
@@ -1847,6 +1976,7 @@ def _run_wizard_ui(
 
     page1_col = ttk.Frame(inner)
     page2_col = ttk.Frame(inner)
+    page3_col = ttk.Frame(inner)
     page1_col.pack(fill="both", expand=True, padx=4, pady=4)
 
     bool_vars: dict[str, tk.BooleanVar] = {}
@@ -1854,6 +1984,7 @@ def _run_wizard_ui(
     group_defaults: dict[str, str] = {}
     page1_option_ids: list[str] = []
     page2_option_ids: list[str] = []
+    page3_option_ids: list[str] = []
     wizard_page = {"n": 1}
     for group, packs in radio_groups.items():
         # Preferred fallback when a selected option requires this group — not a
@@ -2110,14 +2241,19 @@ def _run_wizard_ui(
                 pass
         if blocked:
             msg = "You must also install dependencies for selected mods"
-            if wizard_page["n"] == 2:
-                msg += " (Back to link archives)"
+            if wizard_page["n"] >= 2:
+                msg += " (page 1 to link archives)"
             depends_warn_var.set(msg)
         else:
             depends_warn_var.set("")
 
     def _current_page_option_ids() -> list[str]:
-        return page1_option_ids if wizard_page["n"] == 1 else page2_option_ids
+        n = wizard_page["n"]
+        if n == 1:
+            return page1_option_ids
+        if n == 2:
+            return page2_option_ids
+        return page3_option_ids
 
     def _select_all() -> None:
         for oid in _current_page_option_ids():
@@ -2151,9 +2287,7 @@ def _run_wizard_ui(
         if pack is not None and pack.path:
             feat = data.features.get(pack.path) or feat
         title = opt.id
-        url = ""
         if pack is not None:
-            url = _url_display_link(pack)
             if pack.path:
                 title = lib.with_dogma_prefix(pack.id)
             elif not title:
@@ -2161,7 +2295,8 @@ def _run_wizard_ui(
         elif feat is not None:
             title = feat.display_name
 
-        _title_row(parent, title, url=url)
+        # Plain title — site/download buttons on the file row cover links.
+        _title_row(parent, title)
         frame = ttk.Frame(parent, padding=(4, 4))
         frame.pack(fill="x", pady=(0, 8), padx=2)
         prior = set(initial.option_ids) if initial is not None else set()
@@ -2234,6 +2369,56 @@ def _run_wizard_ui(
         ):
             bv.set(True)
 
+    def _add_tweak_row(
+        opt: lib.InstallerOption,
+        parent: ttk.Frame,
+        id_list: list[str],
+    ) -> None:
+        """Compact Tweaks: [✓] Name / one-line desc — small gap, no section headers."""
+        pack = pack_by_id.get(opt.id)
+        feat = data.features.get(opt.id)
+        if pack is not None and pack.path:
+            feat = data.features.get(pack.path) or feat
+        title = pack.id if pack is not None else (
+            feat.display_name if feat is not None else opt.id
+        )
+        desc = _pack_blurb(pack) if pack is not None else (opt.desc or "").strip()
+
+        prior = set(initial.option_ids) if initial is not None else set()
+        if initial is not None and prior:
+            checked = opt.id in prior
+        else:
+            checked = opt.default
+
+        bv = tk.BooleanVar(value=checked)
+        bool_vars[opt.id] = bv
+        id_list.append(opt.id)
+
+        block = ttk.Frame(parent)
+        block.pack(anchor="w", fill="x", pady=(0, 8), padx=2)
+        _row, files_col, _chk = _pack_mod_select_row(
+            block,
+            kind="check",
+            variable=bv,
+            command=_on_selection_changed,
+        )
+        # Same slot as path-mod "Install", but show the tweak name.
+        ttk.Label(
+            files_col,
+            text=title,
+            font=("Segoe UI", 10),
+            foreground=_THEME["fg"],
+        ).pack(anchor="w", pady=(4, 0))
+        if desc:
+            ttk.Label(
+                files_col,
+                text=desc,
+                foreground=_THEME["fg_muted"],
+                font=("Segoe UI", 9),
+                wraplength=max(320, col_wrap - 48),
+                justify="left",
+            ).pack(anchor="w", pady=(1, 0))
+
     def _add_or_separator(parent: ttk.Frame) -> None:
         # Quiet gap between radio choices (no "OR" label).
         ttk.Frame(parent, height=4).pack(fill="x", pady=(2, 2))
@@ -2242,8 +2427,7 @@ def _run_wizard_ui(
         packs = radio_groups[group]
         parent = pack_by_id.get(group)
         title = lib.radio_group_title(group, packs, parent=parent)
-        parent_url = _url_display_link(parent)
-        _title_row(parent_col, title, url=parent_url)
+        _title_row(parent_col, title)
         frame = ttk.Frame(parent_col, padding=(4, 4))
         frame.pack(fill="x", pady=(0, 8), padx=2)
         var = exclusive_vars[group]
@@ -2324,6 +2508,65 @@ def _run_wizard_ui(
             if opt is not None:
                 _add_option_block(opt, page2_col, page2_option_ids)
 
+    for kind, sid in lib.wizard_page3_section_order(data, min_stage=min_stage):
+        if kind == "option":
+            opt = opt_by_id.get(sid)
+            if opt is not None:
+                _add_tweak_row(opt, page3_col, page3_option_ids)
+
+    def _probe_download_updates() -> None:
+        """Background: colour cloud icons from ModDB/GitHub dates vs local date suffix."""
+        fields = [f for f in drop_registry.fields if f._can_download]
+        if not fields:
+            return
+        tools = lib.mo2_tools_dir(mo2_root)
+
+        def _work() -> None:
+            for field in fields:
+                remote = ""
+                try:
+                    remote = lib.probe_dep_remote_date(field.dep, cache_dir=tools)
+                except Exception:
+                    remote = ""
+                status = lib.download_version_icon_status(
+                    mo2_root,
+                    field.dep,
+                    remote_date=remote,
+                    probed=True,
+                )
+
+                def _apply(
+                    f: _ArchiveField = field,
+                    date: str = remote,
+                    st: str = status,
+                ) -> None:
+                    f._remote_date = date
+                    f._remote_probed = True
+                    f.set_download_status(st)
+                    if f.dl_btn is None:
+                        return
+                    tip = {
+                        "new": f"Update available ({date})" if date else "Update available",
+                        "current": f"Up to date ({date})" if date else "Up to date",
+                        "unknown": "Version unknown",
+                    }.get(st, "")
+                    if tip:
+                        try:
+                            _attach_text_tip([f.dl_btn], tip)
+                        except tk.TclError:
+                            pass
+
+                try:
+                    root.after(0, _apply)
+                except tk.TclError:
+                    return
+
+        threading.Thread(
+            target=_work, daemon=True, name="dogma-update-probe"
+        ).start()
+
+    root.after(200, _probe_download_updates)
+
     def collect() -> lib.InstallerSelection:
         picks = {g: v.get() for g, v in exclusive_vars.items()}
         return lib.InstallerSelection(
@@ -2349,20 +2592,28 @@ def _run_wizard_ui(
 
     def _show_page(n: int) -> None:
         wizard_page["n"] = n
+        page1_col.pack_forget()
+        page2_col.pack_forget()
+        page3_col.pack_forget()
+        next_btn.pack_forget()
+        back_btn.pack_forget()
+        install_btn.pack_forget()
+
         if n == 1:
-            page2_col.pack_forget()
             page1_col.pack(fill="both", expand=True, padx=4, pady=4)
             subtitle_var.set("Choose third-party mods to install")
             next_btn.pack(side="right")
-            back_btn.pack_forget()
-            install_btn.pack_forget()
-        else:
-            page1_col.pack_forget()
+        elif n == 2:
             page2_col.pack(fill="both", expand=True, padx=4, pady=4)
-            subtitle_var.set("Choose D.O.G.M.A. mods to install")
-            next_btn.pack_forget()
+            subtitle_var.set("Choose D.O.G.M.A. features to install")
+            next_btn.pack(side="right")
+            back_btn.pack(side="right", padx=(0, 8))
+        else:
+            page3_col.pack(fill="both", expand=True, padx=4, pady=4)
+            subtitle_var.set("Choose D.O.G.M.A. tweaks to install")
             install_btn.pack(side="right")
             back_btn.pack(side="right", padx=(0, 8))
+
         _refresh_page_tabs()
         try:
             canvas.yview_moveto(0)
@@ -2373,10 +2624,14 @@ def _run_wizard_ui(
         _on_selection_changed()
 
     def on_next() -> None:
-        _show_page(2)
+        n = wizard_page["n"]
+        if n < 3:
+            _show_page(n + 1)
 
     def on_back() -> None:
-        _show_page(1)
+        n = wizard_page["n"]
+        if n > 1:
+            _show_page(n - 1)
 
     def on_install() -> None:
         chosen = collect()
@@ -2429,12 +2684,15 @@ def _run_wizard_ui(
     footer.pack(fill="x")
     page_bar = ttk.Frame(footer)
     page_bar.pack(side="left")
-    ttk.Label(page_bar, text="Page:").pack(side="left", padx=(0, 4))
-    for n in (1, 2):
+    page_labels = {
+        1: "3rd party mods",
+        2: "D.O.G.M.A. mods",
+        3: "D.O.G.M.A. tweaks",
+    }
+    for n, label in page_labels.items():
         btn = ttk.Button(
             page_bar,
-            text=str(n),
-            width=3,
+            text=label,
             command=lambda page=n: _show_page(page),
         )
         btn.pack(side="left", padx=(0, 4))

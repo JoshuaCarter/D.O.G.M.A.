@@ -995,6 +995,7 @@ end
 
 -- silent=true: unlock only (arrival / guide), no tip/sound.
 local function discover_destination(id, silent)
+    local tostr = tostring
     if not id or is_destination_unlocked(id) then return false end
     local se = alife_object(id)
     if not se then return false end
@@ -1012,18 +1013,19 @@ local function discover_destination(id, silent)
     end
 
     if silent or kind == "campfire" or kind == "stash" then
-        tft_log("Unlocked travel point id=%s kind=%s (silent)", tostring(id), tostring(kind))
+        tft_log("Unlocked travel point id=%s kind=%s (silent)", tostr(id), tostr(kind))
         return true
     end
 
     local tip = tip_for_discovery(id, se, kind)
     show_discover_tip(tip)
-    tft_log("Discovered travel point id=%s kind=%s", tostring(id), tostring(kind))
+    tft_log("Discovered travel point id=%s kind=%s", tostr(id), tostr(kind))
     return true
 end
 
 local function poll_discoveries()
     -- Never discover mid-journey (stepped teleports would otherwise trip nearby points).
+    local pairs_ = pairs
     if tft.is_traveling or tft.stepped_active then return end
     if not (db.actor and db.actor:alive()) then return end
     local apos = db.actor:position()
@@ -1065,29 +1067,29 @@ local function poll_discoveries()
     end
 
     if tft.travel_base_ids then
-        for id, _ in pairs(tft.travel_base_ids) do
+        for id, _ in pairs_(tft.travel_base_ids) do
             consider(id)
         end
     end
     if tft.travel_campfire_ids then
-        for id, _ in pairs(tft.travel_campfire_ids) do
+        for id, _ in pairs_(tft.travel_campfire_ids) do
             consider(id)
         end
     end
     if bind_campfire and bind_campfire.campfires_all then
-        for id, _ in pairs(bind_campfire.campfires_all) do
+        for id, _ in pairs_(bind_campfire.campfires_all) do
             consider(id)
         end
     end
     if db.storage then
-        for id, _ in pairs(db.storage) do
+        for id, _ in pairs_(db.storage) do
             consider(id)
         end
     end
     local lvl = level and level.name and level.name()
     local dsts = tft.door_registry and lvl and tft.door_registry[lvl]
     if dsts then
-        for _, ids in pairs(dsts) do
+        for _, ids in pairs_(dsts) do
             for i = 1, #ids do
                 consider(ids[i])
             end

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Emit FOMOD plugin metadata for a path mod from config/manifest.yml.
+"""Emit FOMOD plugin metadata for a path mod from config manifests.
 
 Prints shell assignments (eval-safe)::
 
@@ -56,8 +56,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--feature", required=True, help="Feature path e.g. fx/thirst")
     p.add_argument(
         "--manifest",
-        default=str(_REPO / "config" / "manifest.yml"),
-        help="manifest.yml path",
+        default=str(_REPO / "config"),
+        help="Config dir or manifest catalog path",
     )
     args = p.parse_args(argv)
 

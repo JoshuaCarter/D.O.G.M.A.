@@ -1,0 +1,30 @@
+-- DOGMA SFX Prefetch - cache loose mod sounds on first actor update.
+-- List is generated into MO2 overwrite: gamedata/configs/dogma_sfx_prefetch.ltx
+-- Builds to zzzz_dogma_tweaks_sound_prefetch_main.script
+-- Proof it ran: xray log line [dogma_sfx_prefetch] prefetched N sounds
+
+function on_game_start()
+	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+end
+
+function actor_on_first_update()
+	local ini = ini_file("dogma_sfx_prefetch.ltx")
+	if not ini then
+		printf("[dogma_sfx_prefetch] no dogma_sfx_prefetch.ltx (run DOGMA Optimize / SFX Prefetch)")
+		return
+	end
+	local lines = ini:line_count("dogma_sfx_list")
+	if not lines or lines < 1 then
+		printf("[dogma_sfx_prefetch] empty list")
+		return
+	end
+	local n = 0
+	for i = 0, lines - 1 do
+		local _, _, value = ini:r_line("dogma_sfx_list", i, "", "")
+		if value and value ~= "" then
+			level.prefetch_sound(value)
+			n = n + 1
+		end
+	end
+	printf("[dogma_sfx_prefetch] prefetched %s sounds", tostring(n))
+end

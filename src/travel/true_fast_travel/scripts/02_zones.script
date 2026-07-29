@@ -7,6 +7,7 @@ local tft = _G.tft
 -- reference each other regardless of definition order below.
 local count_zone_edges, persist_zone_map, scan_transition_object, try_restore_zone_map, zone_map_pack, zone_map_unpack
 local function build_level_names_registry()
+    local tonum = tonumber
     local sgsub = string.gsub
     if tft.level_registry_built then
         return
@@ -35,7 +36,7 @@ local function build_level_names_registry()
         if ok_line and ok and section and game_ini:section_exist(section) then
             local name = game_ini:line_exist(section, "name") and game_ini:r_string(section, "name")
             local id_str = game_ini:line_exist(section, "id") and game_ini:r_string(section, "id")
-            local id = tonumber(id_str)
+            local id = tonum(id_str)
             if name and id then
                 name = string.lower(name)
                 name = sgsub(name, "dark_valley", "l04_darkvalley")
@@ -88,9 +89,9 @@ local function build_level_names_registry()
                     local ox, oy, oz = off_str:match("([%d%.%-]+)%s*,%s*([%d%.%-]+)%s*,%s*([%d%.%-]+)")
                     if ox then
                         tft.level_offsets[id] = {
-                            x = tonumber(ox) or 0,
-                            y = tonumber(oy) or 0,
-                            z = tonumber(oz) or 0,
+                            x = tonum(ox) or 0,
+                            y = tonum(oy) or 0,
+                            z = tonum(oz) or 0,
                         }
                     end
                 end
@@ -206,15 +207,16 @@ count_zone_edges = function(map)
 end
 
 zone_map_pack = function()
+    local pairs_ = pairs
     local edges = {}
-    for src, dsts in pairs(tft.dynamic_map or {}) do
-        for dst, _ in pairs(dsts) do
+    for src, dsts in pairs_(tft.dynamic_map or {}) do
+        for dst, _ in pairs_(dsts) do
             edges[#edges + 1] = { src, dst }
         end
     end
     local doors = {}
-    for src, dsts in pairs(tft.door_registry or {}) do
-        for dst, ids in pairs(dsts) do
+    for src, dsts in pairs_(tft.door_registry or {}) do
+        for dst, ids in pairs_(dsts) do
             doors[#doors + 1] = { s = src, d = dst, i = ids }
         end
     end

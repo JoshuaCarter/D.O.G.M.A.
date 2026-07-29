@@ -196,12 +196,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument(
         "--disable",
         default="",
-        help="Legacy disabled.ini path (only if not using manifest.yml)",
+        help="Legacy disabled.ini path (only if not using manifest catalog)",
     )
     p.add_argument(
         "--initialize",
         default="",
-        help="Manifest/features path for MCM defaults (default: config/manifest.yml)",
+        help="Manifest/features path for MCM defaults (default: config/)",
     )
     p.add_argument("--user-ltx", default="", help="Template user.ltx (default: <repo>/config/user.ltx)")
     p.add_argument("--profile", default="", help="MO2 profile name (default: selected_profile)")
@@ -220,9 +220,23 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     root = repo_root_from_script()
     disable_path = Path(args.disable) if args.disable else root / "config" / "disabled.ini"
-    manifest = root / "config" / "manifest.yml"
-    if not manifest.is_file():
-        manifest = root / "config" / "features.yml"
+    cfg = root / "config"
+    has_dogma = (
+        (cfg / "manifest-dogma-mods.yml").is_file()
+        and (cfg / "manifest-dogma-tweaks.yml").is_file()
+    )
+    if (
+        has_dogma
+        and (
+            (cfg / "manifest-third-party.yml").is_file()
+            or (cfg / "manifest-remote.yml").is_file()
+        )
+    ):
+        manifest = cfg
+    elif (cfg / "manifest.yml").is_file():
+        manifest = cfg / "manifest.yml"
+    else:
+        manifest = cfg / "features.yml"
     initialize_path = (
         Path(args.initialize) if args.initialize else manifest
     )

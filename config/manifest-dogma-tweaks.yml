@@ -1,0 +1,122 @@
+# DOGMA tweaks catalog (path: tweaks/… — always-on / no MCM options).
+#
+# Loaded with manifest-third-party.yml + manifest-dogma-mods.yml by dogma_mo2_lib.load_manifest.
+#
+# path: feature under src/<path>; package zip mo2/packages/<path_key>.zip
+# stage: OMIT | DEV | RELEASE
+#
+
+Quieter Bush Sounds:
+  stage: RELEASE
+  path: tweaks/quiet_bush
+  desc: "Quieter player bush-brush / foliage collide SFX. Overrides material/human/step bushes*.ogg and bush0*.ogg. Always on while installed."
+
+One Casing Per Box:
+  stage: RELEASE
+  path: tweaks/ammo
+  desc: Ammo crafting always uses one casing and one bullet per box. Overrides Ammo Maker recipes.
+  enables:
+    - 145- Ammo Maker - arti
+    - 146- Ammo Maker BAS Patch - arti
+
+Thirst Blur At Yellow:
+  stage: DEV
+  path: tweaks/thirst
+  desc: "Thirst blur starts at yellow instead of gray. Replaces Thirst Blur Tweak's blur behaviour (that mod has no MCM)."
+
+Hide Geiger Counter HUD Text:
+  stage: DEV
+  path: tweaks/geiger_hud
+  desc: "Hides the Geiger \"N mSv\" tip and the mSv number over the radiation icon."
+  disables:
+    - G_FLAT's Msv Above Radiation Icon
+
+Medik Tweak:
+  stage: DEV
+  path: tweaks/medik
+  desc: "Centered 2x3 Medik slots for rad/bleed (dose, restore rate, protection). Overrides medik_ui.script + medik_boosters.dds."
+  depends:
+    - Medik Health Monitor
+
+Damage Location Fix:
+  stage: DEV
+  path: tweaks/damage_location_fix
+  desc: "Limb damage sticks to the hit bone. Falls split both legs; unknown bones split arms+legs; rad/toxic (65535) skips limbs. ADB last-hit-was-head redirect goes to torso only. Medik heal/UI unchanged."
+  depends:
+    - Medik Health Monitor
+
+Equippable Dynamic Radiation Geiger:
+  stage: DEV
+  path: tweaks/geiger
+  desc: "Equippable geiger reads Dynamic Radiation Patch levels (env mode). Registers GAMMA's extra rad zone sections with the HUD detector."
+  enables:
+    - G.A.M.M.A. Radiation Dynamic Areas
+
+Veteran Survivalist New Game:
+  stage: DEV
+  path: tweaks/hard_defaults
+  desc: New Game starts with Veteran difficulty and Survivalist economy selected.
+
+Escape Clears Control Binds:
+  stage: DEV
+  path: tweaks/keybinds_fix
+  desc: "Escape clears binds in Options→Controls, Exit stays on Escape, and stock key defaults are disabled so unbound keys stay unbound after restart."
+
+Unlock Afterglow After Mortal Sin:
+  stage: DEV
+  path: tweaks/missions
+  desc: Unlocks Afterglow as soon as Mortal Sin is done.
+
+Local Map RF Spawns:
+  stage: DEV
+  path: tweaks/rf_receiver
+  desc: RF packages can spawn on the map you are on. Needs Tweaki_Breeki / Cookbook RF packages.
+  enables:
+    - 154- RF Receiver Tasks - Tweaki_Breeki
+    - 332- QoL Patch to Tweak_Breeki's RF Receiver Hidden Packages - Cookbook
+
+MCM Search Box:
+  stage: RELEASE
+  path: tweaks/search
+  desc: Search box for the Mod Configuration Menu.
+
+Prefetch Loose Mod Sounds:
+  stage: DEV
+  path: tweaks/sound_prefetch
+  desc: "Prefetch loose mod sounds (JSRS, etc.) to reduce hitching. Rebuild the list with DOGMA SFX Prefetch.bat after changing sound mods."
+
+Mutant Footsteps Dark Signal:
+  stage: DEV
+  path: tweaks/mutant_audio
+  desc: Routes mutant footsteps onto Dark Signal step banks (paws / hoof / giant / human). Compatible with Improved Mutant Footsteps sound files.
+
+Slower NPC Combat Speed:
+  stage: RELEASE
+  path: tweaks/npc_speed
+  desc: "Reduces NPC combat move speed by 20% (including ISG)."
+
+Red PDA Bounty Warnings:
+  stage: DEV
+  path: tweaks/rep_warning
+  desc: "Marks bounty missions red on the PDA taskboard when the target isn't your enemy."
+
+Mute Player Voice Lines:
+  stage: OMIT
+  path: tweaks/stfu
+  desc: "Mutes player voice lines from Voiced Actor. Always on while installed."
+  disables:
+    - Silent Protagonist
+
+Ammo Wheel Skips Worn:
+  stage: DEV
+  path: tweaks/ammo_wheel
+  desc: "Ammo wheel hotkeys skip worn ammo so keys stay 1, 2, 3."
+  disables:
+    - Fixed Ammo Wheel Hotkeys
+
+Fire During Draw Animation:
+  stage: DEV
+  path: tweaks/quick_fire
+  desc: Fire or reload before the draw animation finishes.
+  disables:
+    - 65- Fluid Aim - Skieppy

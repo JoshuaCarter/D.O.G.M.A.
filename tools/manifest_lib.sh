@@ -1,4 +1,6 @@
-# Shared manifest.yml loader for build.sh / package-fomod.sh.
+# Shared manifest catalog loader for build.sh / package-fomod.sh.
+# Prefers config/ (manifest-third-party + dogma-mods + dogma-tweaks), then legacy
+# manifest.yml / features.yml. Override with DOGMA_MANIFEST=<path>.
 # Usage: source this file, then dogma_load_manifest <min_stage>
 #   min_stage 1|local|dev → path mods with stage >= dev
 #   min_stage 2|release   → path mods with stage >= release
@@ -13,14 +15,20 @@ dogma_load_manifest() {
 	esac
 	local yml="${DOGMA_MANIFEST:-}"
 	if [[ -z "$yml" ]]; then
-		if [[ -f "$ROOT/config/manifest.yml" ]]; then
+		if [[ -f "$ROOT/config/manifest-third-party.yml" && -f "$ROOT/config/manifest-dogma-mods.yml" && -f "$ROOT/config/manifest-dogma-tweaks.yml" ]]; then
+			yml="$ROOT/config"
+		elif [[ -f "$ROOT/config/manifest-remote.yml" && -f "$ROOT/config/manifest-dogma-mods.yml" && -f "$ROOT/config/manifest-dogma-tweaks.yml" ]]; then
+			yml="$ROOT/config"
+		elif [[ -f "$ROOT/config/manifest.yml" ]]; then
 			yml="$ROOT/config/manifest.yml"
-		else
+		elif [[ -f "$ROOT/config/features.yml" ]]; then
 			yml="$ROOT/config/features.yml"
+		else
+			yml="$ROOT/config"
 		fi
 	fi
 	FEATURES=()
-	if [[ ! -f "$yml" ]]; then
+	if [[ ! -e "$yml" ]]; then
 		echo "manifest: missing $yml" >&2
 		return 1
 	fi
@@ -33,7 +41,7 @@ dogma_load_manifest() {
 	elif command -v python >/dev/null 2>&1; then
 		py=(python)
 	else
-		echo "manifest: Python 3 required to read manifest.yml" >&2
+		echo "manifest: Python 3 required to read manifest catalog" >&2
 		return 1
 	fi
 

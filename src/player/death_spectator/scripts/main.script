@@ -1,0 +1,738 @@
+--[[
+	Death Spectator
+
+	Tracks recent hits while alive. After death fade-to-black: hit summary
+	(bottom-left) + "Press TAB to spectate". Tab starts demo_record free-fly
+	2m above the corpse looking at the killer. Space continue stays until
+	spectating (demo_record eats Space); Esc exits.
+]]
+
+local CONFIG = _G.dogma_player_death_spectator_conf
+local DOGMA
+
+local HIT_WINDOW_MS = 30000
+local HIT_CAP = 10
+local ARM_DELAY_S = 2.5
+local CAM_HEIGHT = 2.0
+local UI_W = 1024
+local UI_H = 768
+local LINE_H = 18
+local MARGIN_X = 12
+local MARGIN_BOTTOM = 20
+
+local HIT_STATIC = "dogma_death_hit_summary"
+local TAB_STATIC = "dogma_death_tab_prompt"
+local SPACE_COVER_STATIC = "dogma_death_space_cover"
+
+-- Faithful bone → limb (same ids as damage_location_fix / ADB).
+local HITBOX = {
+	[14] = "head", [15] = "head", [16] = "head", [17] = "head",
+	[18] = "head", [19] = "head",
+	[2] = "torso", [11] = "torso", [12] = "torso", [13] = "torso",
+	[20] = "left arm", [21] = "left arm", [22] = "left arm", [23] = "left arm",
+	[24] = "left arm", [25] = "left arm", [26] = "left arm", [27] = "left arm",
+	[28] = "left arm", [29] = "left arm", [30] = "left arm", [31] = "left arm",
+	[32] = "left arm",
+	[33] = "right arm", [34] = "right arm", [35] = "right arm", [36] = "right arm",
+	[3] = "left leg", [4] = "left leg", [5] = "left leg", [6] = "left leg",
+	[7] = "right leg", [8] = "right leg", [9] = "right leg", [10] = "right leg",
+}
+
+-- ADB body-part multipliers (used only when estimating via get_protection).
+local HITBOX_MULT = {
+	["head"] = 0.8,
+	["torso"] = 0.9,
+	["left arm"] = 0.85,
+	["right arm"] = 0.85,
+	["left leg"] = 0.85,
+	["right leg"] = 0.85,
+}
+
+-- Engine hit.type → armor mitigation / player-facing label.
+local MITIGATION_LABEL = {}
+
+local hits = {} -- newest at index 1
+local last_attacker_id = nil
+local last_attacker_pos = nil
+local last_hit_dir = nil
+
+local death_pending = false
+local awaiting_spectate = false
+local spectating = false
+local corpse_pos = nil
+local killer_id = nil
+local frozen_lines = nil
+local adb_wrapped = false
+
+-- BHS limb keys → summary labels (Body is actor.health, not torso).
+local DIED_LIMBS = {
+	{ key = "head", label = "Head" },
+	{ key = "leftarm", label = "Arm L" },
+	{ key = "rightarm", label = "Arm R" },
+	{ key = "leftleg", label = "Leg L" },
+	{ key = "rightleg", label = "Leg R" },
+}
+
+local function log(msg)
+	if DOGMA and DOGMA.dbg and CONFIG.loaded.debug_log then
+		DOGMA.dbg.log(CONFIG.MOD_ID, tostring(msg))
+	end
+end
+
+local function init_mitigation_labels()
+	if next(MITIGATION_LABEL) then
+		return
+	end
+	if not hit then
+		return
+	end
+	MITIGATION_LABEL[hit.fire_wound] = "bullet"
+	MITIGATION_LABEL[hit.wound] = "rupture"
+	if hit.wound_2 then
+		MITIGATION_LABEL[hit.wound_2] = "rupture"
+	end
+	MITIGATION_LABEL[hit.strike] = "strike"
+	MITIGATION_LABEL[hit.explosion] = "explosion"
+	MITIGATION_LABEL[hit.burn] = "burn"
+	if hit.light_burn then
+		MITIGATION_LABEL[hit.light_burn] = "burn"
+	end
+	MITIGATION_LABEL[hit.shock] = "shock"
+	MITIGATION_LABEL[hit.chemical_burn] = "chemical"
+	MITIGATION_LABEL[hit.radiation] = "radiation"
+	MITIGATION_LABEL[hit.telepatic] = "psy"
+end
+
+local function mitigation_label(hit_type)
+	init_mitigation_labels()
+	return MITIGATION_LABEL[hit_type] or "unknown"
+end
+
+local function limb_label(bone_id)
+	if bone_id == 65535 then
+		return "body"
+	end
+	if bone_id == 0 then
+		return "legs"
+	end
+	return HITBOX[bone_id] or "body"
+end
+
+local function limb_key_for_mult(bone_id)
+	local label = HITBOX[bone_id]
+	if not label then
+		return "torso"
+	end
+	return label
+end
+
+local function first_name(full)
+	if not full or full == "" then
+		return nil
+	end
+	return full:match("^(%S+)") or full
+end
+
+local function source_label(draftsman, hit_type)
+	if draftsman then
+		local ok_stalker, is_stalker = pcall(function()
+			return IsStalker and IsStalker(draftsman)
+		end)
+		if ok_stalker and is_stalker then
+			local ok, name = pcall(function()
+				return draftsman:character_name()
+			end)
+			if ok and name and name ~= "" then
+				return first_name(name) or name
+			end
+		end
+
+		local ok_mon, is_mon = pcall(function()
+			return IsMonster and IsMonster(draftsman)
+		end)
+		if ok_mon and is_mon then
+			local ok, name = pcall(function()
+				return draftsman:character_name()
+			end)
+			if ok and name and name ~= "" then
+				return name
+			end
+			local ok2, sec = pcall(function()
+				return draftsman:section()
+			end)
+			if ok2 and sec then
+				local tr = game.translate_string and game.translate_string(sec)
+				if tr and tr ~= "" and tr ~= sec then
+					return tr
+				end
+				return sec
+			end
+		end
+
+		local ok3, sec = pcall(function()
+			return draftsman:section()
+		end)
+		if ok3 and sec then
+			local tr = game.translate_string and game.translate_string(sec)
+			if tr and tr ~= "" and tr ~= sec then
+				return tr
+			end
+			return sec
+		end
+	end
+
+	if hit and hit_type == hit.radiation then
+		return "radiation"
+	end
+	if hit and hit_type == hit.strike then
+		return "fall"
+	end
+	if hit and (hit_type == hit.wound or hit_type == hit.wound_2) then
+		return "bleed"
+	end
+	return mitigation_label(hit_type)
+end
+
+local function prune_hits(now)
+	now = now or time_global()
+	local kept = {}
+	for i = 1, #hits do
+		local e = hits[i]
+		if e and (now - e.t) <= HIT_WINDOW_MS then
+			kept[#kept + 1] = e
+			if #kept >= HIT_CAP then
+				break
+			end
+		end
+	end
+	hits = kept
+end
+
+local function format_hit_line(e)
+	local dmg_pct = math.floor((e.damage * 100) + 0.5)
+	local mit_pct = math.floor((e.mitigated * 100) + 0.5)
+	return string.format(
+		"- %s hit %s for %d%% (%s damage, %d%% mitigated).",
+		e.source,
+		e.limb,
+		dmg_pct,
+		e.type_label,
+		mit_pct
+	)
+end
+
+local function push_hit(entry)
+	prune_hits(entry.t)
+	table.insert(hits, 1, entry)
+	while #hits > HIT_CAP do
+		table.remove(hits)
+	end
+end
+
+local function record_hit(shit, bone_id, damage, mitigated_frac)
+	if not shit or not damage or damage <= 0 then
+		return
+	end
+	local now = time_global()
+	local draftsman = shit.draftsman
+	local hit_type = shit.type
+	local entry = {
+		t = now,
+		source = source_label(draftsman, hit_type),
+		limb = limb_label(bone_id),
+		damage = damage,
+		mitigated = math.max(0, math.min(1, mitigated_frac or 0)),
+		type_label = mitigation_label(hit_type),
+	}
+	push_hit(entry)
+
+	if draftsman then
+		local ok, id = pcall(function()
+			return draftsman:id()
+		end)
+		if ok and id then
+			last_attacker_id = id
+		end
+		local okp, pos = pcall(function()
+			return draftsman:position()
+		end)
+		if okp and pos then
+			last_attacker_pos = vector():set(pos.x, pos.y, pos.z)
+		end
+	end
+
+	if shit.direction then
+		local d = shit.direction
+		last_hit_dir = vector():set(d.x or 0, d.y or 0, d.z or 0)
+	end
+end
+
+-- Match ADB shit_booster printf numbers from the same inputs.
+local function estimate_adb_damage(shit, bone_id, k_ap)
+	local power = shit.power or 0
+	local player_protection = 0
+	local premitigation = 0
+
+	local adb = rawget(_G, "grok_actor_damage_balancer")
+	if adb and type(adb.get_protection) == "function" then
+		local ok, pp, _lim, _ap, _hp, _abv, _hbv, pre = pcall(function()
+			return adb.get_protection(shit, bone_id, k_ap or 0)
+		end)
+		if ok then
+			player_protection = tonumber(pp) or 0
+			premitigation = tonumber(pre) or 0
+		end
+	end
+
+	if not (hit and shit.type == hit.fire_wound) then
+		premitigation = 0
+	end
+
+	if hit and shit.type == hit.fire_wound then
+		power = power * 0.8
+	elseif hit and shit.type == hit.wound then
+		power = power * 0.65
+	end
+
+	local key = limb_key_for_mult(bone_id)
+	power = power * (HITBOX_MULT[key] or 1.0)
+
+	local remain = (1 - premitigation) * (1 - player_protection)
+	local damage = power * remain
+	local mitigated = 1 - remain
+	return damage, mitigated
+end
+
+local function wrap_adb_shit_booster()
+	local adb = rawget(_G, "grok_actor_damage_balancer")
+	if not (adb and type(adb.shit_booster) == "function") then
+		return false
+	end
+	if adb.__dogma_death_spectator then
+		adb_wrapped = true
+		return true
+	end
+
+	local orig = adb.shit_booster
+	adb.shit_booster = function(shit, bone_id, k_ap)
+		if CONFIG.loaded.enabled and shit and (shit.power or 0) > 0 then
+			local damage, mitigated = estimate_adb_damage(shit, bone_id, k_ap)
+			record_hit(shit, bone_id, damage, mitigated)
+		end
+		return orig(shit, bone_id, k_ap)
+	end
+	adb.__dogma_death_spectator = true
+	adb_wrapped = true
+	log("wrapped grok_actor_damage_balancer.shit_booster")
+	return true
+end
+
+local function remove_static(name)
+	local hud = get_hud and get_hud()
+	if not hud then
+		return
+	end
+	if hud:GetCustomStatic(name) then
+		hud:RemoveCustomStatic(name)
+	end
+end
+
+local function set_static_text(name, text, x, y)
+	local hud = get_hud and get_hud()
+	if not hud then
+		return
+	end
+	local cs = hud:GetCustomStatic(name)
+	if not cs then
+		hud:AddCustomStatic(name, true)
+		cs = hud:GetCustomStatic(name)
+	end
+	if not cs then
+		return
+	end
+	local wnd = cs:wnd()
+	if not wnd then
+		return
+	end
+	wnd:SetWndPos(vector2():set(x, y))
+	local tc = wnd:TextControl()
+	if tc then
+		tc:SetTextST(text or "")
+	end
+end
+
+local function clear_death_ui()
+	remove_static(HIT_STATIC)
+	remove_static(TAB_STATIC)
+	remove_static(SPACE_COVER_STATIC)
+end
+
+local function show_hit_summary()
+	local lines = frozen_lines
+	if not lines or #lines == 0 then
+		remove_static(HIT_STATIC)
+		return
+	end
+	local n = #lines
+	local y = UI_H - MARGIN_BOTTOM - (n * LINE_H)
+	if y < 40 then
+		y = 40
+	end
+	local text = table.concat(lines, "\\n")
+	set_static_text(HIT_STATIC, "%c[255,220,220,220]" .. text, MARGIN_X, y)
+end
+
+local function show_tab_prompt()
+	local msg = game.translate_string("ui_dogma_death_spectator_prompt")
+	if not msg or msg == "" or msg == "ui_dogma_death_spectator_prompt" then
+		msg = "Press TAB to spectate"
+	end
+	-- Centered, above typical "Press Space to continue" (near bottom).
+	set_static_text(TAB_STATIC, "%c[255,255,255,255]" .. msg, 380, 680)
+end
+
+local function hide_tab_prompt()
+	remove_static(TAB_STATIC)
+end
+
+local function hide_space_continue()
+	-- demo_record captures Space (Append Key). Cover the stock continue line
+	-- and point at Esc instead.
+	set_static_text(
+		SPACE_COVER_STATIC,
+		"%c[255,200,200,200]Press ESC for menu",
+		380,
+		710
+	)
+end
+
+local function pct_of_max(cur, maxv)
+	cur = tonumber(cur)
+	maxv = tonumber(maxv)
+	if not cur then
+		return 0
+	end
+	if not maxv or maxv <= 0 then
+		-- Already 0-1 (body HP) or raw percent-ish.
+		if cur <= 1 then
+			return math.floor(cur * 100 + 0.5)
+		end
+		return math.floor(cur + 0.5)
+	end
+	return math.floor((cur / maxv) * 100 + 0.5)
+end
+
+local function resolve_bhs_health()
+	local mod = rawget(_G, "zzz_player_injuries")
+	if type(mod) == "table" and type(mod.health) == "table" and mod.health.head ~= nil then
+		return mod.health, mod.maxhp
+	end
+	return nil, nil
+end
+
+local function format_died_with_line()
+	local body_pct = 0
+	if db.actor then
+		body_pct = pct_of_max(db.actor.health, 1)
+	end
+
+	local parts = {
+		string.format("Body %d%%", body_pct),
+	}
+
+	local health, maxhp = resolve_bhs_health()
+	for i = 1, #DIED_LIMBS do
+		local spec = DIED_LIMBS[i]
+		local pct = 0
+		if health then
+			local maxv = maxhp and maxhp[spec.key] or nil
+			pct = pct_of_max(health[spec.key], maxv)
+		end
+		parts[#parts + 1] = string.format("%s %d%%", spec.label, pct)
+	end
+
+	return "Died with: " .. table.concat(parts, ", ")
+end
+
+local function freeze_hit_lines()
+	prune_hits()
+	frozen_lines = {}
+	for i = 1, #hits do
+		frozen_lines[#frozen_lines + 1] = format_hit_line(hits[i])
+	end
+	-- Final line: totals at death (newest hits above; this stays at the bottom).
+	frozen_lines[#frozen_lines + 1] = format_died_with_line()
+end
+
+local function copy_vec(v)
+	if not v then
+		return nil
+	end
+	return vector():set(v.x, v.y, v.z)
+end
+
+local function arm_death_ui()
+	if not CONFIG.loaded.enabled then
+		return
+	end
+	if awaiting_spectate or spectating then
+		return
+	end
+	awaiting_spectate = true
+	death_pending = false
+	show_hit_summary()
+	show_tab_prompt()
+	log("death UI armed")
+end
+
+local function schedule_arm()
+	RemoveTimeEvent(CONFIG.MOD_ID, "arm_ui")
+	CreateTimeEvent(CONFIG.MOD_ID, "arm_ui", ARM_DELAY_S, function()
+		if death_pending then
+			arm_death_ui()
+		end
+		return true
+	end)
+end
+
+local function dir_to_hpb(dir)
+	local len = math.sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z)
+	if len < 0.001 then
+		return vector():set(0, 0, 0)
+	end
+	local nx, ny, nz = dir.x / len, dir.y / len, dir.z / len
+	local h = -math.atan2(nx, nz)
+	local p = math.asin(math.max(-1, math.min(1, ny)))
+	return vector():set(h, p, 0)
+end
+
+local function resolve_killer_pos()
+	if killer_id then
+		local obj = level.object_by_id(killer_id)
+		if obj then
+			local ok, mp = pcall(function()
+				return obj:bone_position("bip01_spine1")
+			end)
+			if ok and mp and mp.y then
+				return vector():set(mp.x, mp.y, mp.z)
+			end
+			local ok2, pos = pcall(function()
+				return obj:position()
+			end)
+			if ok2 and pos then
+				return vector():set(pos.x, pos.y + 1.2, pos.z)
+			end
+		end
+	end
+	if last_attacker_pos then
+		return copy_vec(last_attacker_pos)
+	end
+	return nil
+end
+
+local function start_spectator()
+	if not awaiting_spectate or spectating then
+		return
+	end
+	if not corpse_pos then
+		return
+	end
+
+	local cam_pos = vector():set(corpse_pos.x, corpse_pos.y + CAM_HEIGHT, corpse_pos.z)
+	local look_at = resolve_killer_pos()
+	local dir
+	if look_at then
+		dir = vector():set(look_at.x - cam_pos.x, look_at.y - cam_pos.y, look_at.z - cam_pos.z)
+	elseif last_hit_dir then
+		-- Face toward the incoming hit direction (attacker is opposite of hit dir).
+		dir = vector():set(-(last_hit_dir.x or 0), 0, -(last_hit_dir.z or 0))
+	else
+		dir = vector():set(0, 0, 1)
+	end
+	local hpb = dir_to_hpb(dir)
+
+	awaiting_spectate = false
+	spectating = true
+	hide_tab_prompt()
+	hide_space_continue()
+	show_hit_summary()
+
+	if level.set_cam_custom_position_direction then
+		pcall(function()
+			level.set_cam_custom_position_direction(cam_pos, hpb, 0, false, false)
+		end)
+	end
+
+	if exec_console_cmd then
+		exec_console_cmd("demo_record dogma_death_spectator")
+	end
+
+	-- Free-fly takes over; drop custom cam override if it blocks movement.
+	CreateTimeEvent(CONFIG.MOD_ID, "clear_custom_cam", 0.05, function()
+		if level.remove_cam_custom_position_direction then
+			pcall(function()
+				level.remove_cam_custom_position_direction()
+			end)
+		end
+		return true
+	end)
+
+	log(string.format(
+		"spectate started at %.1f,%.1f,%.1f killer=%s",
+		cam_pos.x,
+		cam_pos.y,
+		cam_pos.z,
+		tostring(killer_id)
+	))
+end
+
+local function reset_state()
+	hits = {}
+	last_attacker_id = nil
+	last_attacker_pos = nil
+	last_hit_dir = nil
+	death_pending = false
+	awaiting_spectate = false
+	spectating = false
+	corpse_pos = nil
+	killer_id = nil
+	frozen_lines = nil
+	RemoveTimeEvent(CONFIG.MOD_ID, "arm_ui")
+	RemoveTimeEvent(CONFIG.MOD_ID, "clear_custom_cam")
+	clear_death_ui()
+	if exec_console_cmd then
+		pcall(function()
+			exec_console_cmd("demo_record_stop")
+		end)
+	end
+	if level and level.remove_cam_custom_position_direction then
+		pcall(function()
+			level.remove_cam_custom_position_direction()
+		end)
+	end
+end
+
+local function on_option_change()
+	CONFIG.loaded.enabled = DOGMA.mcm.bool(CONFIG.MOD_ID, "enabled")
+	CONFIG.loaded.debug_log = DOGMA.dbg.logging()
+	if not CONFIG.loaded.enabled then
+		clear_death_ui()
+		awaiting_spectate = false
+		death_pending = false
+	end
+end
+
+local function actor_on_before_hit(shit, bone_id, flags)
+	if not CONFIG.loaded.enabled then
+		return
+	end
+	if not shit or (shit.power or 0) <= 0 then
+		return
+	end
+
+	-- When ADB is wrapped, physical hits are recorded in shit_booster.
+	-- Still record radiation / other paths that skip shit_booster.
+	if adb_wrapped then
+		if hit and shit.type == hit.radiation then
+			record_hit(shit, bone_id, shit.power, 0)
+		end
+		-- Keep attacker tracking even when ADB owns damage numbers.
+		if shit.draftsman then
+			local ok, id = pcall(function()
+				return shit.draftsman:id()
+			end)
+			if ok and id then
+				last_attacker_id = id
+			end
+			local okp, pos = pcall(function()
+				return shit.draftsman:position()
+			end)
+			if okp and pos then
+				last_attacker_pos = vector():set(pos.x, pos.y, pos.z)
+			end
+		end
+		return
+	end
+
+	record_hit(shit, bone_id, shit.power, 0)
+end
+
+local function actor_on_before_death(whoID, flags)
+	if not CONFIG.loaded.enabled then
+		return
+	end
+
+	local actor = db.actor
+	if actor then
+		local ok, pos = pcall(function()
+			return actor:position()
+		end)
+		if ok and pos then
+			corpse_pos = vector():set(pos.x, pos.y, pos.z)
+		end
+	end
+
+	killer_id = last_attacker_id
+	if (not killer_id) and whoID and whoID ~= 0 then
+		killer_id = whoID
+	end
+
+	freeze_hit_lines()
+	death_pending = true
+	awaiting_spectate = false
+	spectating = false
+	schedule_arm()
+	log(string.format(
+		"before_death killer=%s hits=%d",
+		tostring(killer_id),
+		frozen_lines and #frozen_lines or 0
+	))
+end
+
+local function on_key_press(dik)
+	if not awaiting_spectate or spectating then
+		return
+	end
+	if not CONFIG.loaded.enabled then
+		return
+	end
+	if dik == DIK_TAB then
+		start_spectator()
+	end
+end
+
+local function GUI_on_show(gui, str2)
+	if not CONFIG.loaded.enabled or not death_pending then
+		return
+	end
+	local name = tostring(gui or "") .. " " .. tostring(str2 or "")
+	if name:find("game_over", 1, true) or name:find("GameOver", 1, true) then
+		arm_death_ui()
+	end
+end
+
+local function on_game_load()
+	reset_state()
+	wrap_adb_shit_booster()
+end
+
+local function actor_on_first_update()
+	wrap_adb_shit_booster()
+	on_option_change()
+end
+
+function on_game_start()
+	DOGMA = dogma_common.load(CONFIG.MOD_ID)
+	init_mitigation_labels()
+	wrap_adb_shit_booster()
+	on_option_change()
+
+	RegisterScriptCallback("actor_on_before_hit", actor_on_before_hit)
+	RegisterScriptCallback("actor_on_before_death", actor_on_before_death)
+	RegisterScriptCallback("on_key_press", on_key_press)
+	RegisterScriptCallback("GUI_on_show", GUI_on_show)
+	RegisterScriptCallback("on_game_load", on_game_load)
+	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+	RegisterScriptCallback("on_option_change", on_option_change)
+	log("loaded")
+end

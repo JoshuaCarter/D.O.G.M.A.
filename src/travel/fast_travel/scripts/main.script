@@ -391,15 +391,16 @@ add_guide_menu_item = function(pui, id, se_obj)
 end
 
 add_travel_menu_items = function(pui, id, is_lc, include_sneak)
+    local tostr = tostring
     if dft_actor_too_encumbered_to_move() then
         pui:AddItem(dft_str("dft_msg_too_encumbered"))
         dft_clear_path_preview()
-        dft_log("menu: encumbered - walk/sneak blocked id=%s", tostring(id))
+        dft_log("menu: encumbered - walk/sneak blocked id=%s", tostr(id))
         return false
     end
     local specs = dft_journey_specs_for_object(id, is_lc)
     if not specs then
-        dft_log("menu: no specs for id=%s (lc=%s)", tostring(id), tostring(is_lc))
+        dft_log("menu: no specs for id=%s (lc=%s)", tostr(id), tostr(is_lc))
         return false
     end
     pui:AddItem(dft_format_travel_menu("dft_menu_travel_here", specs.dist_str, specs.dur_str, specs.sneak_normal))
@@ -412,7 +413,7 @@ add_travel_menu_items = function(pui, id, is_lc, include_sneak)
             pui:AddItem(dft_format_travel_menu("dft_menu_sneaky_travel", specs.dist_str, specs.sneaky_dur_str, specs.sneak_sneaky))
         end
     end
-    dft_log("menu: added travel items id=%s dist=%.0f dur=%s sneak=%s", tostring(id), specs.dist or 0, specs.dur_str or "?", tostring(include_sneak ~= false))
+    dft_log("menu: added travel items id=%s dist=%.0f dur=%s sneak=%s", tostr(id), specs.dist or 0, specs.dur_str or "?", tostr(include_sneak ~= false))
     return true
 end
 
@@ -570,8 +571,9 @@ end
 
 on_map_spot_menu_property_clicked = function(pui, id, ln, t)
     local ok, err = xpcall(function()
+        local tostr = tostring
         local result = t or (pui and pui.GetResult and pui:GetResult())
-        dft_log("menu click: id=%s ln=%s result=%s", tostring(id), tostring(ln), tostring(result))
+        dft_log("menu click: id=%s ln=%s result=%s", tostr(id), tostr(ln), tostr(result))
         if not result then return end
 
         id = dft.last_menu_target_id or id
@@ -584,7 +586,7 @@ on_map_spot_menu_property_clicked = function(pui, id, ln, t)
             target = dft_fallback_travel_target(id, se_click, dft_object_on_actor_level(se_click, ln))
         end
         if not target then
-            dft_log_error("menu click: no target for id=%s err=%s", tostring(id), tostring(terr))
+            dft_log_error("menu click: no target for id=%s err=%s", tostr(id), tostr(terr))
             return
         end
 

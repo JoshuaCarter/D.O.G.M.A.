@@ -179,6 +179,7 @@ local function sync_hold_visibility(source)
 end
 
 local function on_option_change()
+	local tostr = tostring
 	if not DOGMA then
 		return
 	end
@@ -202,12 +203,12 @@ local function on_option_change()
 
 	log(string.format(
 		"opts: en=%s key=%s mod=%s mode=%s delay=%s (was %s)",
-		tostring(CONFIG.loaded.enabled),
-		tostring(CONFIG.loaded.keybind),
-		tostring(CONFIG.loaded.modifier),
-		tostring(CONFIG.loaded.mode),
-		tostring(CONFIG.loaded.show_delay_ms),
-		tostring(prev_mode)
+		tostr(CONFIG.loaded.enabled),
+		tostr(CONFIG.loaded.keybind),
+		tostr(CONFIG.loaded.modifier),
+		tostr(CONFIG.loaded.mode),
+		tostr(CONFIG.loaded.show_delay_ms),
+		tostr(prev_mode)
 	))
 end
 

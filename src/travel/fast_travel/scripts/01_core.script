@@ -447,14 +447,15 @@ local function is_cross_zone_destination(se_obj, ln)
 end
 
 local function is_trader_restrictor(name)
+    local sfind = string.find
     if not name then return false end
     local low_name = string.lower(name)
-    return string.find(low_name, "trader", 1, true) ~= nil
-        or string.find(low_name, "merchant", 1, true) ~= nil
-        or string.find(low_name, "barman", 1, true) ~= nil
-        or string.find(low_name, "sidorovich", 1, true) ~= nil
-        or string.find(low_name, "saharov", 1, true) ~= nil
-        or string.find(low_name, "forester", 1, true) ~= nil
+    return sfind(low_name, "trader", 1, true) ~= nil
+        or sfind(low_name, "merchant", 1, true) ~= nil
+        or sfind(low_name, "barman", 1, true) ~= nil
+        or sfind(low_name, "sidorovich", 1, true) ~= nil
+        or sfind(low_name, "saharov", 1, true) ~= nil
+        or sfind(low_name, "forester", 1, true) ~= nil
 end
 
 -- %c[] prefixes work reliably in news_manager.send_tip.

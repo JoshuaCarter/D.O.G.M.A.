@@ -478,6 +478,93 @@ def base_gamma_mod_names(mods: Path) -> list[str]:
     return names
 
 
+def run_alao(
+    target: Path,
+    *,
+    report: Path | None = None,
+    exclude_lines: list[str] | None = None,
+    direct: bool = False,
+    dry_run: bool = False,
+) -> int:
+    """Run ALAO with the same fix flags Optimize uses.
+
+    Flags: ``--fix --fix-nil --remove-dead-code --no-first-time-auto-backup``
+    plus optional ``--direct`` (authoring trees without gamedata/scripts).
+    """
+    alao = resolve_alao_root()
+    if alao is None:
+        lib.err(
+            "Could not find ALAO (Anomaly Lua Auto Optimizer).\n"
+            f"Download: {ALAO_URL}\n"
+            "Or set the ALAO_PATH environment variable to your ALAO folder."
+        )
+        return 1
+
+    target = target.resolve()
+    if not target.exists():
+        lib.err(f"ALAO target does not exist:\n  {target}")
+        return 1
+
+    if report is not None:
+        report.parent.mkdir(parents=True, exist_ok=True)
+
+    if dry_run:
+        mode = "direct" if direct else "mods"
+        lib.info(f"Dry run — would run ALAO ({mode}) on:\n  {target}")
+        return 0
+
+    code = ensure_alao_deps(alao)
+    if code:
+        return code
+
+    lint = alao / "stalker_lua_lint.py"
+    exclude_path: Path | None = None
+    cmd = [
+        sys.executable,
+        str(lint),
+        str(target),
+        "--fix",
+        "--fix-nil",
+        "--remove-dead-code",
+        "--no-first-time-auto-backup",
+    ]
+    if direct:
+        cmd.append("--direct")
+    if exclude_lines:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            suffix=".txt",
+            prefix="dogma_alao_exclude_",
+            delete=False,
+        ) as tf:
+            for line in exclude_lines:
+                tf.write(line + "\n")
+            exclude_path = Path(tf.name)
+        cmd.extend(["--exclude", str(exclude_path)])
+    if report is not None:
+        cmd.extend(["--report", str(report)])
+
+    lib.info(f"Running ALAO… this can take a long time.\n  {ALAO_URL}")
+    try:
+        code = subprocess.call(cmd, cwd=str(alao))
+    finally:
+        if exclude_path is not None:
+            try:
+                exclude_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    if code:
+        lib.err("ALAO failed. See the console output above for details.")
+        return int(code)
+    if report is not None:
+        lib.ok(f"ALAO finished. Report:\n  {report}")
+    else:
+        lib.ok("ALAO finished.")
+    return 0
+
+
 def step_alao(
     mo2_root: Path,
     backup_dir: Path,
@@ -491,15 +578,6 @@ def step_alao(
             f"ALAO needs a mods backup first ({archive.name} was not found)."
         )
         return 0
-
-    alao = resolve_alao_root()
-    if alao is None:
-        lib.err(
-            "Could not find ALAO (Anomaly Lua Auto Optimizer).\n"
-            f"Download: {ALAO_URL}\n"
-            "Or set the ALAO_PATH environment variable to your ALAO folder."
-        )
-        return 1
 
     if include_base_gamma is None:
         include_base_gamma = _yn(
@@ -521,55 +599,14 @@ def step_alao(
     logs = lib.mo2_tools_dir(mo2_root) / "logs"
     logs.mkdir(parents=True, exist_ok=True)
     report = logs / "alao_report.html"
-    lint = alao / "stalker_lua_lint.py"
 
-    if dry_run:
-        lib.info(f"Dry run — would run ALAO on:\n  {mods}")
-        return 0
-
-    code = ensure_alao_deps(alao)
-    if code:
-        return code
-
-    with tempfile.NamedTemporaryFile(
-        mode="w",
-        encoding="utf-8",
-        suffix=".txt",
-        prefix="dogma_alao_exclude_",
-        delete=False,
-    ) as tf:
-        for line in exclude_lines:
-            tf.write(line + "\n")
-        exclude_path = Path(tf.name)
-
-    cmd = [
-        sys.executable,
-        str(lint),
-        str(mods),
-        "--fix",
-        "--fix-nil",
-        "--remove-dead-code",
-        "--no-first-time-auto-backup",
-        "--exclude",
-        str(exclude_path),
-        "--report",
-        str(report),
-    ]
-
-    lib.info(f"Running ALAO… this can take a long time.\n  {ALAO_URL}")
-    try:
-        code = subprocess.call(cmd, cwd=str(alao))
-    finally:
-        try:
-            exclude_path.unlink(missing_ok=True)
-        except OSError:
-            pass
-
-    if code:
-        lib.err("ALAO failed. See the console output above for details.")
-        return int(code)
-    lib.ok(f"ALAO finished. Report:\n  {report}")
-    return 0
+    return run_alao(
+        mods,
+        report=report,
+        exclude_lines=exclude_lines,
+        direct=False,
+        dry_run=dry_run,
+    )
 
 
 def _flag_tri(args, yes_attr: str, no_attr: str) -> bool | None:

@@ -678,6 +678,7 @@ local function apply_fov(snap)
 end
 
 local function poll_fov_smooth()
+	local mabs = math.abs
 	publish_fov_targets()
 	if tgt_fov == nil and tgt_hud == nil then
 		return
@@ -699,10 +700,10 @@ local function poll_fov_smooth()
 	if world_write and tgt_fov ~= nil and live_fov ~= nil then
 		local effective = clamp_fov_target(tgt_fov) or tgt_fov
 		local next_fov = live_fov + (effective - live_fov) * k
-		if math.abs(effective - next_fov) < 0.04 then
+		if mabs(effective - next_fov) < 0.04 then
 			next_fov = effective
 		end
-		if math.abs(next_fov - live_fov) >= 0.001 then
+		if mabs(next_fov - live_fov) >= 0.001 then
 			write_world_fov(next_fov)
 		elseif next_fov == effective then
 			live_fov = next_fov
@@ -715,14 +716,14 @@ local function poll_fov_smooth()
 
 	if tgt_hud ~= nil and live_hud ~= nil then
 		local next_hud = live_hud + (tgt_hud - live_hud) * k
-		if math.abs(tgt_hud - next_hud) < 0.0008 then
+		if mabs(tgt_hud - next_hud) < 0.0008 then
 			next_hud = tgt_hud
 		end
-		if math.abs(next_hud - live_hud) >= 0.00005 then
+		if mabs(next_hud - live_hud) >= 0.00005 then
 			write_hud_fov(next_hud)
 		else
 			live_hud = next_hud
-			we_wrote_hud = math.abs(live_hud - hip_hud) > 0.0005
+			we_wrote_hud = mabs(live_hud - hip_hud) > 0.0005
 		end
 	end
 end
@@ -968,6 +969,7 @@ end
 -- Slot change from wheel / scripts / anything that bypasses our key hook.
 -- Engine sometimes fires this during ADS / anims without a real item swap — ignore those.
 local function actor_on_changed_slot(new_slot, new_obj, prev_slot, prev_obj)
+	local tostr = tostring
 	if not CONFIG.loaded.enabled and not CONFIG.loaded.ads_enabled then
 		return
 	end
@@ -991,9 +993,9 @@ local function actor_on_changed_slot(new_slot, new_obj, prev_slot, prev_obj)
 	if new_id and prev_id and new_id == prev_id then
 		logf(
 			"changed_slot ignored: same item id=%s slot %s->%s",
-			tostring(new_id),
-			tostring(prev_slot),
-			tostring(new_slot)
+			tostr(new_id),
+			tostr(prev_slot),
+			tostr(new_slot)
 		)
 		return
 	end
@@ -1004,9 +1006,9 @@ local function actor_on_changed_slot(new_slot, new_obj, prev_slot, prev_obj)
 		if cur and cur == last_item_id then
 			logf(
 				"changed_slot ignored: still holding id=%s slot %s->%s",
-				tostring(cur),
-				tostring(prev_slot),
-				tostring(new_slot)
+				tostr(cur),
+				tostr(prev_slot),
+				tostr(new_slot)
 			)
 			return
 		end
@@ -1015,12 +1017,13 @@ local function actor_on_changed_slot(new_slot, new_obj, prev_slot, prev_obj)
 end
 
 local function on_active_item_changed(prev_id, new_id, prev_sec, new_sec)
+	local tostr = tostring
 	logf(
 		"item change: id %s->%s sec %s->%s",
-		tostring(prev_id),
-		tostring(new_id),
-		tostring(prev_sec),
-		tostring(new_sec)
+		tostr(prev_id),
+		tostr(new_id),
+		tostr(prev_sec),
+		tostr(new_sec)
 	)
 	reset_zoom("item_change")
 end
@@ -1033,6 +1036,7 @@ local function actor_on_weapon_lower(_wpn)
 end
 
 local function on_option_change()
+	local tostr = tostring
 	if not DOGMA then
 		return
 	end
@@ -1057,20 +1061,20 @@ local function on_option_change()
 
 	logf(
 		"opts: free_en=%s free=%d%% ads_fov=%d%% hud=%d/%d/%d speed=%d%% empty_hands=%s scroll=%s reverse=%s steps=%d gap=%dms mode=%s key=%s mod=%d km=%d rmb=%d mmb=%d",
-		tostring(CONFIG.loaded.enabled),
+		tostr(CONFIG.loaded.enabled),
 		CONFIG.loaded.free_zoom,
 		CONFIG.loaded.fov_zoom,
 		CONFIG.loaded.wads.irons,
 		CONFIG.loaded.wads.sight,
 		CONFIG.loaded.wads.scope,
 		CONFIG.loaded.move_speed,
-		tostring(CONFIG.loaded.empty_hands_only),
-		tostring(CONFIG.loaded.scroll_wheel_zoom),
-		tostring(CONFIG.loaded.scroll_wheel_reverse),
+		tostr(CONFIG.loaded.empty_hands_only),
+		tostr(CONFIG.loaded.scroll_wheel_zoom),
+		tostr(CONFIG.loaded.scroll_wheel_reverse),
 		CONFIG.loaded.scroll_wheel_steps,
 		CONFIG.loaded.scroll_wheel_max_gap_ms,
 		mode_label(),
-		tostring(CONFIG.loaded.zoom_key),
+		tostr(CONFIG.loaded.zoom_key),
 		CONFIG.loaded.zoom_key_modifier,
 		CONFIG.loaded.zoom_key_mode,
 		CONFIG.loaded.rmb_zoom,

@@ -9,7 +9,9 @@
 
 	Tree shape (MCM max 3 levels under the list root):
 	  dogma / <category> / <feature page> / options
+	  dogma / <shared page> / options   -- append() (e.g. Tweaks)
 	Categories are merged across feature scripts via attach().
+	Info-only tweaks share one leaf page via append().
 ]]
 
 local BANNER_LINK = "dogma_mcm_banner"
@@ -200,13 +202,7 @@ local function pin_debug_last(dogma)
 	gr[#gr+1] = dbg
 end
 
--- Merge a feature page under dogma/<category>. MCM does not deep-merge duplicate
--- category ids from separate *mcm.script returns — call this instead of returning
--- a category wrapper.
-function attach(options, cat_id, cat_text, page)
-	if not options then
-		return
-	end
+local function ensure_dogma_root(options)
 	local dogma
 	for i = 1, #options do
 		if options[i].id == "dogma" then
@@ -216,8 +212,19 @@ function attach(options, cat_id, cat_text, page)
 	end
 	if not dogma then
 		dogma = { id = "dogma", text = "ui_mcm_menu_dogma", gr = {} }
-		options[#options+1] = dogma
+		options[#options + 1] = dogma
 	end
+	return dogma
+end
+
+-- Merge a feature page under dogma/<category>. MCM does not deep-merge duplicate
+-- category ids from separate *mcm.script returns — call this instead of returning
+-- a category wrapper.
+function attach(options, cat_id, cat_text, page)
+	if not options then
+		return
+	end
+	local dogma = ensure_dogma_root(options)
 	local cat
 	for i = 1, #(dogma.gr or {}) do
 		if dogma.gr[i].id == cat_id then
@@ -227,9 +234,40 @@ function attach(options, cat_id, cat_text, page)
 	end
 	if not cat then
 		cat = { id = cat_id, text = cat_text, gr = {} }
-		dogma.gr[#dogma.gr+1] = cat
+		dogma.gr[#dogma.gr + 1] = cat
 	end
-	cat.gr[#cat.gr+1] = page
+	cat.gr[#cat.gr + 1] = page
+	pin_debug_last(dogma)
+end
+
+-- Append option rows to a shared leaf page under DOGMA (sibling of categories).
+-- First caller creates the page (banner via with_header); later callers append.
+-- Use for info-only features that share one page (e.g. Tweaks).
+function append(options, page_id, page_text, items)
+	if not options then
+		return
+	end
+	local dogma = ensure_dogma_root(options)
+	local page
+	for i = 1, #(dogma.gr or {}) do
+		if dogma.gr[i].id == page_id then
+			page = dogma.gr[i]
+			break
+		end
+	end
+	if not page then
+		page = {
+			id = page_id,
+			sh = true,
+			text = page_text,
+			gr = with_header({}),
+		}
+		dogma.gr[#dogma.gr + 1] = page
+	end
+	local gr = page.gr
+	for i = 1, #(items or {}) do
+		gr[#gr + 1] = items[i]
+	end
 	pin_debug_last(dogma)
 end
 

@@ -197,7 +197,9 @@ local function drawn_weapon_id()
 	end
 	if actor:active_slot() == BOLT_SLOT then
 		local bolt = actor:item_in_slot(BOLT_SLOT)
-		return bolt and bolt:id() or nil
+		if bolt then
+		    return bolt and bolt:id() or nil
+		end
 	end
 	return nil
 end

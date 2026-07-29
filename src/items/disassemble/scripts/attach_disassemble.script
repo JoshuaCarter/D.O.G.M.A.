@@ -184,20 +184,21 @@ local function get_effective_cost(sec)
 end
 
 local function is_tac_kit(sec)
-	if string.find(sec, "_kit", 1, true) then
+	local sfind = string.find
+	if sfind(sec, "_kit", 1, true) then
 		return true
 	end
-	if string.find(sec, "_upgr_kit", 1, true) then
+	if sfind(sec, "_upgr_kit", 1, true) then
 		return true
 	end
-	if string.find(sec, "_up", 1, true) and not IsItem("scope", sec) and not IsItem("sil", sec) and not IsItem("gl", sec) then
+	if sfind(sec, "_up", 1, true) and not IsItem("scope", sec) and not IsItem("sil", sec) and not IsItem("gl", sec) then
 		return true
 	end
-	if string.find(sec, "mod9", 1, true) then
+	if sfind(sec, "mod9", 1, true) then
 		return true
 	end
 	local visual = ini_sys:r_string_ex(sec, "visual") or ""
-	if string.find(visual, "wpn_tac_kit", 1, true) then
+	if sfind(visual, "wpn_tac_kit", 1, true) then
 		return true
 	end
 	return false

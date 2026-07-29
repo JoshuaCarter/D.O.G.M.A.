@@ -1,0 +1,211 @@
+--[[
+	Damage Location Fix
+
+	Body Health System (Medik / Medications Balance / Voiced Actor) remaps hit
+	bones — notably a 25% chance that leg hits (including falls) jump to
+	torso/arms. Actor Damage Balancer also steals consecutive headshots.
+
+	This replaces only the hit→limb resolver (+ a thin recieved_damage wrap for
+	fall / unknown / whole-body special cases). Medik heal, HUD, and penalties
+	are untouched.
+]]
+
+-- Faithful bone → BHS limb. IDs from engine BoneID / stalker skeleton.
+local HITBOX = {
+	-- head
+	[14] = "head", -- bip01_neck
+	[15] = "head", -- bip01_head
+	[16] = "head", -- eye_left
+	[17] = "head", -- eye_right
+	[18] = "head", -- eyelid_1
+	[19] = "head", -- jaw_1
+	-- torso
+	[2] = "torso", -- bip01_pelvis
+	[11] = "torso", -- bip01_spine
+	[12] = "torso", -- bip01_spine1
+	[13] = "torso", -- bip01_spine2
+	-- left arm (+ typical finger ids)
+	[20] = "leftarm", -- bip01_l_clavicle
+	[21] = "leftarm", -- bip01_l_upperarm
+	[22] = "leftarm", -- bip01_l_forearm
+	[23] = "leftarm", -- bip01_l_hand
+	[24] = "leftarm",
+	[25] = "leftarm",
+	[26] = "leftarm",
+	[27] = "leftarm",
+	[28] = "leftarm",
+	[29] = "leftarm",
+	[30] = "leftarm",
+	[31] = "leftarm",
+	[32] = "leftarm",
+	-- right arm
+	[33] = "rightarm", -- bip01_r_clavicle
+	[34] = "rightarm", -- bip01_r_upperarm
+	[35] = "rightarm", -- bip01_r_forearm
+	[36] = "rightarm", -- bip01_r_hand
+	-- left leg / foot / toe
+	[3] = "leftleg", -- bip01_l_thigh
+	[4] = "leftleg", -- bip01_l_calf
+	[5] = "leftleg", -- bip01_l_foot
+	[6] = "leftleg", -- bip01_l_toe0
+	-- right leg / foot / toe
+	[7] = "rightleg", -- bip01_r_thigh
+	[8] = "rightleg", -- bip01_r_calf
+	[9] = "rightleg", -- bip01_r_foot
+	[10] = "rightleg", -- bip01_r_toe0
+}
+
+-- Representative bones used when we intentionally re-call BHS for a limb.
+local BONE_LEFT_LEG = 3
+local BONE_RIGHT_LEG = 7
+local BONES_ARMS_LEGS = { 20, 33, 3, 7 } -- LA, RA, LL, RL
+
+local function resolve_hitbox(bone_id)
+	return HITBOX[bone_id]
+end
+
+local function find_upvalue(fn, name)
+	if type(fn) ~= "function" or not debug or not debug.getupvalue then
+		return nil, nil
+	end
+	local i = 1
+	while true do
+		local n, v = debug.getupvalue(fn, i)
+		if not n then
+			return nil, nil
+		end
+		if n == name then
+			return i, v
+		end
+		i = i + 1
+	end
+end
+
+-- Same point formula BHS uses for non-head limbs.
+local function estimate_limb_points(amount, damagescale)
+	return math.ceil((amount * 100) / 11 * damagescale)
+end
+
+local function patch_bhs()
+	local bhs = rawget(_G, "zzz_player_injuries")
+	if not (bhs and type(bhs.recieved_damage) == "function") then
+		return false
+	end
+	if bhs.__dogma_damage_location_fix then
+		return true
+	end
+	if not (debug and debug.setupvalue) then
+		return false
+	end
+
+	local orig_rd = bhs.recieved_damage
+	local upvalue_owner = orig_rd
+	local last_idx = select(1, find_upvalue(upvalue_owner, "last_damaged_hitbox"))
+	if not last_idx and type(bhs.actor_on_hit_callback) == "function" then
+		upvalue_owner = bhs.actor_on_hit_callback
+		last_idx = select(1, find_upvalue(upvalue_owner, "last_damaged_hitbox"))
+	end
+	if not last_idx then
+		return false
+	end
+
+	local _, damagescale = find_upvalue(orig_rd, "damagescale")
+	if type(damagescale) ~= "number" then
+		damagescale = 0.85
+	end
+
+	-- Faithful bone → limb for normal hits.
+	bhs.actor_on_hit_callback = function(bone_id)
+		local part = resolve_hitbox(bone_id)
+		if part then
+			debug.setupvalue(upvalue_owner, last_idx, part)
+		end
+	end
+
+	bhs.recieved_damage = function(amount, bone_id)
+		-- Whole-body sentinel (rad / toxic anomalies). Never apply to limbs.
+		-- Pure hit.radiation also never reaches here via Actor Damage Balancer;
+		-- this covers bone_id 65535 if anything still forwards it.
+		if bone_id == 65535 then
+			return
+		end
+
+		-- Fall / bottom-of-model: both legs, even split. 1 BHS point → one random leg.
+		if bone_id == 0 then
+			local pts = estimate_limb_points(amount, damagescale)
+			if pts <= 1 then
+				local leg = (math.random(1, 2) == 1) and BONE_LEFT_LEG or BONE_RIGHT_LEG
+				return orig_rd(amount, leg)
+			end
+			local half = amount * 0.5
+			orig_rd(half, BONE_LEFT_LEG)
+			orig_rd(half, BONE_RIGHT_LEG)
+			return
+		end
+
+		-- Unknown bone: arms + legs only. Split evenly when there are enough
+		-- points for all four; otherwise one random limb from that pool.
+		if not HITBOX[bone_id] then
+			local pts = estimate_limb_points(amount, damagescale)
+			if pts < #BONES_ARMS_LEGS then
+				return orig_rd(amount, BONES_ARMS_LEGS[math.random(1, #BONES_ARMS_LEGS)])
+			end
+			local share = amount / #BONES_ARMS_LEGS
+			for i = 1, #BONES_ARMS_LEGS do
+				orig_rd(share, BONES_ARMS_LEGS[i])
+			end
+			return
+		end
+
+		return orig_rd(amount, bone_id)
+	end
+
+	bhs.__dogma_damage_location_fix = true
+	return true
+end
+
+local BONE_TORSO = 12 -- bip01_spine1
+
+local function patch_adb()
+	local adb = rawget(_G, "grok_actor_damage_balancer")
+	if not (adb and type(adb.shit_booster) == "function") then
+		return false
+	end
+	if adb.__dogma_damage_location_fix then
+		return true
+	end
+
+	local orig = adb.shit_booster
+	local _, adb_hitboxes = find_upvalue(orig, "hitboxes")
+
+	adb.shit_booster = function(shit, bone_id, k_ap)
+		-- Stock ADB: no time window — just "was the previous processed hit a
+		-- head bone?" If yes, remap this hit (50% torso / 25% LA / 25% RA).
+		-- We keep that trigger; destination is always torso.
+		local prev = adb.previous_hitbox
+		if prev == nil then
+			prev = rawget(_G, "previous_hitbox")
+		end
+		if prev and adb_hitboxes and adb_hitboxes[prev] == "head" then
+			bone_id = BONE_TORSO
+		end
+		-- Clear so stock's own redirect does not also fire this call.
+		adb.previous_hitbox = nil
+		if rawget(_G, "previous_hitbox") ~= nil then
+			_G.previous_hitbox = nil
+		end
+		return orig(shit, bone_id, k_ap)
+	end
+	adb.__dogma_damage_location_fix = true
+	return true
+end
+
+local function apply()
+	patch_bhs()
+	patch_adb()
+end
+
+function on_game_start()
+	apply()
+	RegisterScriptCallback("actor_on_first_update", apply)
+end

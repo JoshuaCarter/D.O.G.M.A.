@@ -19,8 +19,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--feature", required=True, help="Feature path e.g. travel/true_fast_travel")
     p.add_argument(
         "--manifest",
-        default=str(_REPO / "config" / "manifest.yml"),
-        help="manifest.yml path",
+        default=str(_REPO / "config"),
+        help="Config dir or manifest catalog path",
     )
     args = p.parse_args(argv)
     data = lib.load_manifest(Path(args.manifest))

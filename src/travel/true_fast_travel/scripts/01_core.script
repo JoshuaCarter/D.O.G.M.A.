@@ -247,6 +247,25 @@ _G.tft_transition_guard = {
     scan_interval_ms   = 150, -- combat lock poll interval
 }
 
+-- Real-time spectator fly-through (13_fly_camera.script).
+_G.tft_fly = {
+    enabled_default       = true,
+    sprint_mps            = 6.0,  -- baseline "sprint" used for MCM multipliers
+    speed_mult_normal     = 5.0,  -- default: 5x sprint
+    speed_mult_sneak      = 2.0,  -- default: 2x sprint
+    eye_height_m          = 1.6,
+    sample_m              = 3.0,  -- resample spacing along refined path
+    look_ahead_m          = 12.0,
+    turn_smooth           = 0.18, -- exponential blend toward look target (higher = snappier)
+    handoff_s             = 0.35,
+    companion_back_m      = 2.2,
+    companion_side_m      = 1.1,
+    companion_bury_m      = 1000, -- park companions underground during flight
+    refine_max_segments   = 48,   -- cap fine-nav refine legs per journey
+    refine_min_seg_m      = 18,   -- chords shorter than this stay as chords
+    proxy_underground_m   = 0,    -- actor stays on ground under cam for streaming
+}
+
 _G.tft_path = {
     dot_spot              = "tft_path_dot",
     dot_spot_pending      = "tft_path_dot_pending",
@@ -451,14 +470,15 @@ local function is_cross_zone_destination(se_obj, ln)
 end
 
 local function is_trader_restrictor(name)
+    local sfind = string.find
     if not name then return false end
     local low_name = string.lower(name)
-    return string.find(low_name, "trader", 1, true) ~= nil
-        or string.find(low_name, "merchant", 1, true) ~= nil
-        or string.find(low_name, "barman", 1, true) ~= nil
-        or string.find(low_name, "sidorovich", 1, true) ~= nil
-        or string.find(low_name, "saharov", 1, true) ~= nil
-        or string.find(low_name, "forester", 1, true) ~= nil
+    return sfind(low_name, "trader", 1, true) ~= nil
+        or sfind(low_name, "merchant", 1, true) ~= nil
+        or sfind(low_name, "barman", 1, true) ~= nil
+        or sfind(low_name, "sidorovich", 1, true) ~= nil
+        or sfind(low_name, "saharov", 1, true) ~= nil
+        or sfind(low_name, "forester", 1, true) ~= nil
 end
 
 -- %c[] prefixes work reliably in news_manager.send_tip.

@@ -45,8 +45,9 @@ play_fade_teleport = function(final_pos, lvid, gvid, on_done)
 end
 
 local function start_travel_sequence(pos, lvid, gvid, is_transition, final_gvid)
+  local actor = db.actor
     if tft.is_traveling or not pos then return false end
-    if not (db and db.actor) then return false end
+    if not (db and actor) then return false end
 
     -- v2.0.8: Set traveling flag immediately to close double-click race window.
     -- fail_start -> tft_clear will reset it if the travel attempt fails.
@@ -60,10 +61,10 @@ local function start_travel_sequence(pos, lvid, gvid, is_transition, final_gvid)
     end
 
     -- Survival checks: Don't allow travel if bleeding or near death
-    if db.actor.health < 0.2 then
+    if actor.health < 0.2 then
         return fail_start(tft_str("tft_msg_too_wounded"), "warning")
     end
-    if (db.actor.bleeding or 0) > 0.05 then
+    if (actor.bleeding or 0) > 0.05 then
         return fail_start(tft_str("tft_msg_must_stop_bleeding"), "warning")
     end
 
@@ -182,7 +183,7 @@ local function start_travel_sequence(pos, lvid, gvid, is_transition, final_gvid)
     tft.arrival_forced_ambushes = 0
     tft.arrival_short_m = 0
     tft.target_stamina = 1.0
-    tft.journey_start_health = db.actor.health
+    tft.journey_start_health = actor.health
     tft_log("Trip start | %.0fm | sneak %d%%", tft.travel_dist, tft_calc_sneak_chance(tft.travel_mode == "sneaky"))
     tft.expected_duration = tft_game_minutes_for_dist(tft.travel_dist, tft.travel_mode == "sneaky", tft.encumbrance_time_mult)
     tft_log("Journey duration: %d game minutes (dist %.1f, mode %s, encumbrance %s speed x%.2f time x%.2f)",
@@ -201,7 +202,13 @@ local function start_travel_sequence(pos, lvid, gvid, is_transition, final_gvid)
         tft.travel_dist,
         tft_format_duration(tft.expected_duration or 1))
 
-    -- Real travel: stepped teleports along the path (no PDA realtime walk, no cancel).
+    -- Real travel: spectator fly-through when available; else stepped teleports.
+    if _G.tft_fly_camera_available and _G.tft_fly_camera_available() and _G.tft_begin_fly_camera then
+        if _G.tft_begin_fly_camera() then
+            return true
+        end
+        tft_log("Fly camera failed to start - falling back to stepped journey.")
+    end
     if tft_begin_stepped_journey then
         tft_begin_stepped_journey()
     end
@@ -363,17 +370,18 @@ cancel_journey_emission = function()
 end
 
 local function advance_travel_time_seconds(sec, opts)
+    local mfloor = math.floor
     opts = opts or {}
     if not sec or sec <= 0 or not (level and level.change_game_time) then return end
-    local total_sec = math.floor(sec + 0.5)
-    local days = math.floor(total_sec / 86400)
-    local hrs  = math.floor((total_sec % 86400) / 3600)
-    local mins = math.floor((total_sec % 3600) / 60)
+    local total_sec = mfloor(sec + 0.5)
+    local days = mfloor(total_sec / 86400)
+    local hrs  = mfloor((total_sec % 86400) / 3600)
+    local mins = mfloor((total_sec % 3600) / 60)
     local leftover = total_sec % 60
     if leftover > 0 then
         mins = mins + 1
         if mins >= 60 then
-            hrs = hrs + math.floor(mins / 60)
+            hrs = hrs + mfloor(mins / 60)
             mins = mins % 60
         end
     end
@@ -603,6 +611,7 @@ enforce_transition_combat_lock = function()
 end
 
 local function actor_on_update()
+  local actor = db.actor
     local tg_ui = time_global()
     -- Keep the ring tight to the walking path while travelling; idle can stay slower.
     local ring_ms = (tft.is_traveling and 100) or 500
@@ -633,7 +642,7 @@ local function actor_on_update()
     end
 
     -- Discover nearby travel points while walking (must run before the is_traveling early-out).
-    if not tft.is_traveling and db.actor and tft_poll_discoveries then
+    if not tft.is_traveling and actor and tft_poll_discoveries then
         local tg = time_global()
         if tg > (tft._next_visit_poll or 0) then
             tft._next_visit_poll = tg + 1000
@@ -643,7 +652,7 @@ local function actor_on_update()
 
     -- Safety stat wipe runs EVERY tick (not throttled) so progressive
     -- damage scripts like grok_progressive_rad_damages can't accumulate.
-    if db.actor then
+    if actor then
         if is_safety_active() then
             pcall(function()
                 db.actor.radiation = -1.0
@@ -692,16 +701,21 @@ local function actor_on_update()
         end
     end
 
+    if _G.tft_fly_on_actor_update then
+        pcall(_G.tft_fly_on_actor_update)
+    end
+
     if not tft.is_traveling then return end
-    if not db.actor or not db.actor:alive() then
+    if not actor or not db.actor:alive() then
+        if _G.tft_cancel_fly_camera then _G.tft_cancel_fly_camera() end
         if tft_cancel_stepped_journey then tft_cancel_stepped_journey() end
         stop_travel_logic()
         tft_clear()
         return
     end
 
-    -- Stepped journey owns progression. Emission/ambush checked after each sim step.
-    if tft.stepped_active then
+    -- Fly / stepped journey owns progression.
+    if tft.fly_active or tft.stepped_active then
         return
     end
 
@@ -718,7 +732,10 @@ local function actor_on_update()
     end
 end
 
-complete_travel_sequence = function()
+complete_travel_sequence = function(opts)
+    opts = opts or {}
+    local fly_handoff = opts.fly_handoff == true
+
     if db.actor then
         tft_log("Surge immunity set on complete_travel_sequence.")
         if tft.last_menu_target_id and tft_discover_destination then
@@ -834,25 +851,41 @@ complete_travel_sequence = function()
             final_pos.x, final_pos.y, final_pos.z)
     end
 
-    local function after_fade_teleport()
-        if was_arrival_ambush and arrival_targets then
-            CreateTimeEvent("tft", "ambush_alert", 0.5, function()
+    local look_dir = nil
+    if tft.fly_dir then
+        look_dir = vector():set(tft.fly_dir.x, tft.fly_dir.y, tft.fly_dir.z)
+    end
+
+    -- do_agro: nil/true = schedule or run agro here; false = already handled (fly handoff).
+    local function after_control_restored(do_agro)
+        if do_agro ~= false and was_arrival_ambush and arrival_targets then
+            local function do_agro_fn()
                 if db.actor and arrival_targets then
                     tft_alert_ambushers(arrival_targets)
                     tft_log("Arrival ambush: hostiles alerted.")
                 end
                 return true
-            end)
+            end
+            if do_agro == "immediate" then
+                do_agro_fn()
+            else
+                CreateTimeEvent("tft", "ambush_alert", 0.5, do_agro_fn)
+            end
             if tft_show_ambush_dir_marker then
                 tft_show_ambush_dir_marker(arrival_targets, final_pos)
             end
+            tft.arrival_ambush_targets = nil
+        elseif fly_handoff then
             tft.arrival_ambush_targets = nil
         end
         if final_pos then
             tft_log("Actor teleported to (%f, %f, %f)", final_pos.x, final_pos.y, final_pos.z)
         end
 
-        tft_advance_travel_time(1.0)
+        -- Fly-through is real-time; skip game-time jump for that path.
+        if not (fly_handoff or tft.fly_no_time) then
+            tft_advance_travel_time(1.0)
+        end
         set_safety_active(90.0)
 
         CreateTimeEvent("tft", "safe_arrival", 0.8, function()
@@ -902,10 +935,30 @@ complete_travel_sequence = function()
         end)
     end
 
+    if fly_handoff and _G.tft_fly_begin_handoff and final_pos then
+        -- Handoff alerts ambushers after unlock; messages/time follow via on_done (no second agro).
+        local ok_ho = _G.tft_fly_begin_handoff({
+            pos = final_pos,
+            lvid = lvid,
+            gvid = gvid,
+            was_ambush = was_arrival_ambush,
+            targets = arrival_targets,
+            look_dir = look_dir,
+            on_done = function()
+                after_control_restored(false)
+            end,
+        })
+        if ok_ho then return end
+        tft_log("Fly handoff failed - falling back to fade teleport.")
+        if _G.tft_cancel_fly_camera then _G.tft_cancel_fly_camera() end
+    end
+
     if db.actor and final_pos then
-        play_fade_teleport(final_pos, lvid, gvid, after_fade_teleport)
+        play_fade_teleport(final_pos, lvid, gvid, function()
+            after_control_restored(true)
+        end)
     else
-        after_fade_teleport()
+        after_control_restored(true)
     end
 end
 
@@ -953,7 +1006,8 @@ detect_ambush = function(virtual_pos)
     return true
 end
 apply_final_stats = function(time_ratio)
-    if not db.actor then return end
+  local actor = db.actor
+    if not actor then return end
     time_ratio = time_ratio or 1.0
     time_ratio = math.max(0, math.min(time_ratio, 1.0))
 
@@ -962,9 +1016,9 @@ apply_final_stats = function(time_ratio)
 
     local drain = tft_travel.resource_rate_per_hr * hours
 
-    if db.actor.change_hunger then db.actor:change_hunger(-drain) end
-    if db.actor.change_thirst then db.actor:change_thirst(-drain) end
-    if db.actor.change_sleepiness then db.actor:change_sleepiness(-drain) end
+    if actor.change_hunger then db.actor:change_hunger(-drain) end
+    if actor.change_thirst then db.actor:change_thirst(-drain) end
+    if actor.change_sleepiness then db.actor:change_sleepiness(-drain) end
 
     tft_log("Survival drain: %.3f/stat over %.2fh (ratio %.2f)", drain, hours, time_ratio)
 end

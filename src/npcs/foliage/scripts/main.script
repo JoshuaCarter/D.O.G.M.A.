@@ -322,6 +322,7 @@ local function send_to(npc, vid)
 end
 
 local function nudge(npc, id)
+	local tostr = tostring
 	local ok_pos, enemy_pos = pcall(function()
 		return db.actor:position()
 	end)
@@ -340,12 +341,12 @@ local function nudge(npc, id)
 		vid = pick_cover_vertex(npc, enemy_pos)
 	end
 	if not vid then
-		log("no dest id=" .. tostring(id))
+		log("no dest id=" .. tostr(id))
 		return false
 	end
 	send_to(npc, vid)
 	nudged[id] = time_global()
-	log("nudge id=" .. tostring(id) .. " beh=" .. tostring(behavior) .. " vid=" .. tostring(vid))
+	log("nudge id=" .. tostr(id) .. " beh=" .. tostr(behavior) .. " vid=" .. tostr(vid))
 	return true
 end
 

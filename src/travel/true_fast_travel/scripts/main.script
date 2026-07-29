@@ -34,7 +34,18 @@ local function load_config()
     tft_config.fade_travel = mcm.bool(CONFIG.MOD_ID, "fade_travel")
     tft_config.block_transition_in_combat = mcm.bool(CONFIG.MOD_ID, "block_transition_in_combat")
     tft_config.show_ambush_range = mcm.bool(CONFIG.MOD_ID, "show_ambush_range")
+    tft_config.fly_camera = mcm.bool(CONFIG.MOD_ID, "fly_camera", CONFIG.DEFAULTS["fly_camera"] ~= false)
+    tft_config.fly_speed_mult_normal = mcm.number(CONFIG.MOD_ID, "fly_speed_mult_normal", CONFIG.DEFAULTS["fly_speed_mult_normal"] or 5)
+    tft_config.fly_speed_mult_sneak = mcm.number(CONFIG.MOD_ID, "fly_speed_mult_sneak", CONFIG.DEFAULTS["fly_speed_mult_sneak"] or 2)
     tft_config.visited_radius_m = CONFIG.DEFAULTS["visited_radius_m"] or 30
+    if _G.tft_fly then
+        if tft_config.fly_speed_mult_normal then
+            _G.tft_fly.speed_mult_normal = tft_config.fly_speed_mult_normal
+        end
+        if tft_config.fly_speed_mult_sneak then
+            _G.tft_fly.speed_mult_sneak = tft_config.fly_speed_mult_sneak
+        end
+    end
     -- debug keys still under shared Debug page
     if mcm.bool("dogma/debug", "ft_path_preview") then
         tft_config.path_preview = true
@@ -94,7 +105,7 @@ on_option_change = function()
 end
 
 local function abort_journey(reason)
-    if not tft.is_traveling then return end
+    if not tft.is_traveling and not tft.fly_active then return end
     if not (db.actor and db.actor:alive()) then return end
 
     tft_close_pda_for_travel()
@@ -106,6 +117,8 @@ local function abort_journey(reason)
     tft_process_refund(ratio)
 
     tft_log("Journey cancelled (%.0f%% complete, reason=%s) - actor stays in place.", ratio * 100, tostring(reason or "manual"))
+    if _G.tft_cancel_fly_camera then _G.tft_cancel_fly_camera() end
+    if _G.tft_cancel_stepped_journey then _G.tft_cancel_stepped_journey() end
     tft_cleanup_dots()
     tft_stop_travel_logic()
     tft_clear()
@@ -469,21 +482,22 @@ add_guide_menu_item = function(pui, id, se_obj)
 end
 
 add_travel_menu_items = function(pui, id, is_lc, include_sneak)
+    local tostr = tostring
     if tft_is_destination_unlocked and not tft_is_destination_unlocked(id) then
         pui:AddItem(tft_str("tft_menu_not_visited"))
         tft_clear_path_preview()
-        tft_log("menu: blocked unvisited id=%s", tostring(id))
+        tft_log("menu: blocked unvisited id=%s", tostr(id))
         return false
     end
     if tft_actor_too_encumbered_to_move() then
         pui:AddItem(tft_str("tft_msg_too_encumbered"))
         tft_clear_path_preview()
-        tft_log("menu: encumbered - walk/sneak blocked id=%s", tostring(id))
+        tft_log("menu: encumbered - walk/sneak blocked id=%s", tostr(id))
         return false
     end
     local specs = tft_journey_specs_for_object(id, is_lc)
     if not specs then
-        tft_log("menu: no specs for id=%s (lc=%s)", tostring(id), tostring(is_lc))
+        tft_log("menu: no specs for id=%s (lc=%s)", tostr(id), tostr(is_lc))
         return false
     end
     pui:AddItem(tft_format_travel_menu("tft_menu_travel_here", specs.dist_str, specs.dur_str, specs.sneak_normal))
@@ -496,7 +510,7 @@ add_travel_menu_items = function(pui, id, is_lc, include_sneak)
             pui:AddItem(tft_format_travel_menu("tft_menu_sneaky_travel", specs.dist_str, specs.sneaky_dur_str, specs.sneak_sneaky))
         end
     end
-    tft_log("menu: added travel items id=%s dist=%.0f dur=%s sneak=%s", tostring(id), specs.dist or 0, specs.dur_str or "?", tostring(include_sneak ~= false))
+    tft_log("menu: added travel items id=%s dist=%.0f dur=%s sneak=%s", tostr(id), specs.dist or 0, specs.dur_str or "?", tostr(include_sneak ~= false))
     return true
 end
 
@@ -680,8 +694,9 @@ end
 
 on_map_spot_menu_property_clicked = function(pui, id, ln, t)
     local ok, err = xpcall(function()
+        local tostr = tostring
         local result = t or (pui and pui.GetResult and pui:GetResult())
-        tft_log("menu click: id=%s ln=%s result=%s", tostring(id), tostring(ln), tostring(result))
+        tft_log("menu click: id=%s ln=%s result=%s", tostr(id), tostr(ln), tostr(result))
         if not result then return end
 
         id = tft.last_menu_target_id or id
@@ -694,7 +709,7 @@ on_map_spot_menu_property_clicked = function(pui, id, ln, t)
             target = tft_fallback_travel_target(id, se_click, tft_object_on_actor_level(se_click, ln))
         end
         if not target then
-            tft_log_error("menu click: no target for id=%s err=%s", tostring(id), tostring(terr))
+            tft_log_error("menu click: no target for id=%s err=%s", tostr(id), tostr(terr))
             return
         end
 

@@ -1,0 +1,132 @@
+--[[
+	Quick Action Wheel
+
+	Honors Hide HUD on QAW's own Controls MCM (HarukaSai / Balance / Overhaul).
+	Stock ShowDialog(true) clears game indicators; when Hide HUD is off,
+	ShowDialog gets false so the HUD stays up behind the wheel.
+
+	Patches create_GUI + open_radial_menu, and Overhaul IED via UI_IED_Menu.__init.
+]]
+
+local CONFIG = _G.dogma_tweaks_quick_action_wheel_conf
+local DOGMA
+
+local function log(msg)
+	if not (DOGMA and DOGMA.dbg) then
+		return
+	end
+	if DOGMA.dbg.logging and DOGMA.dbg.logging() then
+		DOGMA.dbg.log(CONFIG.MOD_ID, tostring(msg))
+	end
+end
+
+local function read_hide_hud()
+	-- Prefer QAW Controls path (where the toggle lives).
+	if ui_mcm and ui_mcm.get and not (ui_mcm.is_gathering and ui_mcm.is_gathering()) then
+		local ok, value = pcall(ui_mcm.get, CONFIG.QAW_HIDE_HUD_PATH)
+		if ok and value ~= nil then
+			return value == true or value == 1
+		end
+		-- Legacy DOGMA-page keys (pre-QAW-Controls inject, and pre-tweaks/ path move).
+		for _, path in ipairs({
+			CONFIG.MOD_ID .. "/hide_hud",
+			"dogma/hud/quick_action_wheel/hide_hud",
+		}) do
+			ok, value = pcall(ui_mcm.get, path)
+			if ok and value ~= nil then
+				return value == true or value == 1
+			end
+		end
+	end
+	return CONFIG.loaded.hide_hud
+end
+
+local function on_option_change()
+	if not DOGMA then
+		return
+	end
+	CONFIG.loaded.hide_hud = read_hide_hud()
+	log(string.format("opts: hide_hud=%s", tostring(CONFIG.loaded.hide_hud)))
+end
+
+local function wrap_show_dialog(wnd, label)
+	if not wnd or wnd._dogma_qaw_show_dialog then
+		return
+	end
+	local orig = wnd.ShowDialog
+	if type(orig) ~= "function" then
+		return
+	end
+	wnd.ShowDialog = function(self, hide_indicators, ...)
+		if not read_hide_hud() then
+			hide_indicators = false
+		end
+		return orig(self, hide_indicators, ...)
+	end
+	wnd._dogma_qaw_show_dialog = true
+	log(string.format("wrap ShowDialog (%s)", label or "gui"))
+end
+
+local function wrap_ied_menu()
+	local cls = rawget(_G, "UI_IED_Menu")
+	if not (cls and type(cls.__init) == "function") then
+		return
+	end
+	if cls._dogma_qaw_ied then
+		return
+	end
+	local orig_init = cls.__init
+	function cls:__init(...)
+		orig_init(self, ...)
+		wrap_show_dialog(self, "ied")
+	end
+	cls._dogma_qaw_ied = true
+	log("wrap UI_IED_Menu.__init")
+end
+
+local function patch()
+	if not DOGMA or not DOGMA.sys.ready(CONFIG.MOD_ID, db, on_option_change) then
+		return
+	end
+
+	local qaw = rawget(_G, "haru_quick_action_wheel_mcm")
+	if not qaw then
+		return
+	end
+
+	if not qaw._dogma_qaw_create_gui and type(qaw.create_GUI) == "function" then
+		local orig_create = qaw.create_GUI
+		qaw.create_GUI = function(...)
+			orig_create(...)
+			wrap_show_dialog(qaw.GUI, "create_GUI")
+		end
+		qaw._dogma_qaw_create_gui = true
+		log("wrap create_GUI")
+	end
+
+	if not qaw._dogma_qaw_open and type(qaw.open_radial_menu) == "function" then
+		local orig_open = qaw.open_radial_menu
+		qaw.open_radial_menu = function(temp_tab)
+			if qaw.GUI then
+				wrap_show_dialog(qaw.GUI, "pre_open")
+			end
+			return orig_open(temp_tab)
+		end
+		qaw._dogma_qaw_open = true
+		log("wrap open_radial_menu")
+	end
+
+	if qaw.GUI then
+		wrap_show_dialog(qaw.GUI, "existing")
+	end
+
+	wrap_ied_menu()
+end
+
+function on_game_start()
+	DOGMA = dogma_common.load(CONFIG.MOD_ID)
+	RegisterScriptCallback("on_option_change", on_option_change)
+	RegisterScriptCallback("actor_on_first_update", patch)
+	patch()
+	log("on_game_start")
+end

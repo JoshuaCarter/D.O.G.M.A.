@@ -1,16 +1,11 @@
 -- True Fast Travel: stepped path teleports + DOGMA sync time-sim + settle.
 
 local tft = _G.tft
-local tft_config = _G.tft_config
 
 local SETTLE_S = 0.1 -- ~10fps settle after each sim tick
 local MIN_STEP_M = 50 -- path nodes at least this far apart
 
 local begin_stepped_journey, cancel_stepped_journey, run_step
-
-local function fade_enabled()
-	return tft_config and tft_config.fade_travel == true
-end
 
 local function sim_minutes(mins)
 	mins = math.max(1, math.floor(mins + 0.5))
@@ -239,22 +234,8 @@ run_step = function(step_i)
 		return
 	end
 
-	if fade_enabled() and tft_play_fade_teleport then
-		local sp, lv = snap_waypoint(pos)
-		sp = sp or pos
-		if not lv and level and level.vertex_id then
-			local ok, v = pcall(function() return level.vertex_id(sp) end)
-			if ok then lv = v end
-		end
-		local g = (db.actor and db.actor:game_vertex_id()) or 0
-		if lv and _G.tft_graph_gvid_from_lvid then
-			g = _G.tft_graph_gvid_from_lvid(lv) or g
-		end
-		tft_play_fade_teleport(sp, lv, g, after_tp)
-	else
-		teleport_to(pos)
-		after_tp()
-	end
+	teleport_to(pos)
+	after_tp()
 end
 
 begin_stepped_journey = function()
@@ -275,8 +256,8 @@ begin_stepped_journey = function()
 	tft.pda_check_from = nil
 	tft.journey_start_health = nil
 	close_pda_and_draw()
-	tft_log("Stepped journey: %d waypoints @%dm, %.0fm, ~%d game min, fade=%s",
-		#pts, MIN_STEP_M, total, tft.expected_duration or 0, tostring(fade_enabled()))
+	tft_log("Stepped journey: %d waypoints @%dm, %.0fm, ~%d game min",
+		#pts, MIN_STEP_M, total, tft.expected_duration or 0)
 	run_step(1)
 	return true
 end

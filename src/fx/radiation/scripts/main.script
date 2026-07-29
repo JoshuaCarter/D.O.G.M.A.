@@ -72,8 +72,6 @@ local function on_option_change()
 	end
 	CONFIG.loaded.blur_range = DOGMA.mcm.range(CONFIG.MOD_ID, "desaturation/blur_min", "desaturation/blur_max")
 	CONFIG.loaded.dual_range = DOGMA.mcm.range(CONFIG.MOD_ID, "duality/dual_min", "duality/dual_max")
-	CONFIG.loaded.add_radiation_key = DOGMA.mcm.key("dogma/debug", "grain_add_radiation_key")
-	CONFIG.loaded.clear_radiation_key = DOGMA.mcm.key("dogma/debug", "grain_clear_radiation_key")
 
 	GRAIN_LEVELS = {}
 	for i, ppe in ipairs(GRAIN_PPES) do
@@ -196,15 +194,6 @@ local function on_actor_on_update()
 	set_dual(msv)
 end
 
-local function on_key_press(key)
-	local actor = db.actor
-	if CONFIG.loaded.add_radiation_key and key == CONFIG.loaded.add_radiation_key and actor then
-		actor.radiation = (actor.radiation or 0) + 50 / (10000 * 0.387)
-	elseif CONFIG.loaded.clear_radiation_key and key == CONFIG.loaded.clear_radiation_key and actor then
-		actor.radiation = 0
-	end
-end
-
 function on_game_start()
 	DOGMA = dogma_common.load(CONFIG.MOD_ID)
 
@@ -214,6 +203,5 @@ function on_game_start()
 	on_option_change()
 	RegisterScriptCallback("actor_on_update", on_actor_on_update)
 	RegisterScriptCallback("on_option_change", on_option_change)
-	RegisterScriptCallback("on_key_press", on_key_press)
 	log("loaded")
 end

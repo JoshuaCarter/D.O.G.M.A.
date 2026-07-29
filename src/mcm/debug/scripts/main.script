@@ -1,0 +1,279 @@
+--[[
+	Debug MCM vitals keys (local-build mcm/debug only).
+
+	Hold (smooth climb): radiation, bleed, main HP.
+	Press (+/-1 BHS): each limb.
+]]
+
+local DEBUG_MOD = "dogma/debug"
+local DOGMA
+
+-- Hardcoded climb rates for the useful 0-1 (or mSv) scales.
+local RAD_MSV_PER_SEC = 200
+local RAD_UNIT_PER_SEC = RAD_MSV_PER_SEC / (10000 * 0.387)
+local BLEED_PER_SEC = 0.25
+local HP_PER_SEC = 0.25
+local MAX_DT = 0.05
+
+local LIMBS = { "head", "torso", "leftarm", "rightarm", "leftleg", "rightleg" }
+
+local keys = {
+	inc_radiation = nil,
+	dec_radiation = nil,
+	inc_bleed = nil,
+	dec_bleed = nil,
+	inc_health = nil,
+	dec_health = nil,
+	limb_inc = {},
+	limb_dec = {},
+}
+
+local last_tg = nil
+local bhs_health, bhs_timedhp, bhs_maxhp
+
+local function clamp(v, lo, hi)
+	if v < lo then
+		return lo
+	end
+	if v > hi then
+		return hi
+	end
+	return v
+end
+
+local function key_down(dik)
+	return dik and dik > 0 and key_state and (key_state(dik) or 0) ~= 0
+end
+
+local function hold_signed(inc_dik, dec_dik, rate, dt)
+	local d = 0
+	if key_down(inc_dik) then
+		d = d + rate * dt
+	end
+	if key_down(dec_dik) then
+		d = d - rate * dt
+	end
+	return d
+end
+
+local function tables_are_bhs(health, timedhp, maxhp)
+	return type(health) == "table"
+		and type(timedhp) == "table"
+		and type(maxhp) == "table"
+		and health.head ~= nil
+		and timedhp.head ~= nil
+		and maxhp.head ~= nil
+		and tonumber(maxhp.head) ~= nil
+end
+
+local function dig_bhs_from_fn(fn, depth)
+	if depth > 5 or type(fn) ~= "function" then
+		return nil
+	end
+	if debug.getfenv then
+		local env = debug.getfenv(fn)
+		if tables_are_bhs(env.health, env.timedhp, env.maxhp) then
+			return env.health, env.timedhp, env.maxhp
+		end
+	end
+	local i = 1
+	while true do
+		local name, val = debug.getupvalue(fn, i)
+		if not name then
+			break
+		end
+		if type(val) == "function" then
+			local h, t, m = dig_bhs_from_fn(val, depth + 1)
+			if h then
+				return h, t, m
+			end
+		elseif name == "health" and type(val) == "table" and val.head ~= nil then
+			local timedhp, maxhp
+			local j = 1
+			while true do
+				local n2, v2 = debug.getupvalue(fn, j)
+				if not n2 then
+					break
+				end
+				if n2 == "timedhp" then
+					timedhp = v2
+				elseif n2 == "maxhp" then
+					maxhp = v2
+				end
+				j = j + 1
+			end
+			if tables_are_bhs(val, timedhp, maxhp) then
+				return val, timedhp, maxhp
+			end
+		end
+		i = i + 1
+	end
+	return nil
+end
+
+local function resolve_bhs_tables()
+	if tables_are_bhs(bhs_health, bhs_timedhp, bhs_maxhp) then
+		return bhs_health, bhs_timedhp, bhs_maxhp
+	end
+	local mod = rawget(_G, "zzz_player_injuries") or zzz_player_injuries
+	if type(mod) == "table" then
+		if tables_are_bhs(mod.health, mod.timedhp, mod.maxhp) then
+			bhs_health, bhs_timedhp, bhs_maxhp = mod.health, mod.timedhp, mod.maxhp
+			return bhs_health, bhs_timedhp, bhs_maxhp
+		end
+		if type(mod.actor_on_update) == "function" then
+			local h, t, m = dig_bhs_from_fn(mod.actor_on_update, 0)
+			if h then
+				bhs_health, bhs_timedhp, bhs_maxhp = h, t, m
+				mod.health = h
+				mod.timedhp = t
+				mod.maxhp = m
+				return h, t, m
+			end
+		end
+	end
+	return nil
+end
+
+local function save_limb(limb, health, timedhp)
+	if not (utils_obj and utils_obj.save_var and db.actor) then
+		return
+	end
+	utils_obj.save_var(db.actor, "health." .. limb, health[limb])
+	utils_obj.save_var(db.actor, "timedhp." .. limb, timedhp[limb])
+end
+
+local function adjust_limb(limb, delta)
+	local health, timedhp, maxhp = resolve_bhs_tables()
+	if not health then
+		return
+	end
+	local hp = tonumber(health[limb])
+	local max = tonumber(maxhp[limb])
+	local temp = tonumber(timedhp[limb]) or 0
+	if hp == nil or max == nil or max <= 0 then
+		return
+	end
+	local new_hp = clamp(hp + delta, 0, max)
+	if new_hp == hp then
+		return
+	end
+	if new_hp < temp then
+		timedhp[limb] = new_hp
+	end
+	health[limb] = new_hp
+	save_limb(limb, health, timedhp)
+end
+
+-- Prefer new MCM id; fall back to a legacy stored bind (old grain_* rad keys).
+local function read_key(mcm, id, legacy_id)
+	local dik = mcm.key(DEBUG_MOD, id)
+	if dik then
+		return dik
+	end
+	if not legacy_id or not (ui_mcm and ui_mcm.get) then
+		return nil
+	end
+	local ok, value = pcall(ui_mcm.get, DEBUG_MOD .. "/" .. legacy_id)
+	if not ok then
+		return nil
+	end
+	value = tonumber(value)
+	if value == nil or value == -1 then
+		return nil
+	end
+	return value
+end
+
+local function refresh_keys()
+	local mcm = DOGMA and DOGMA.mcm
+	if not mcm then
+		return
+	end
+	keys.inc_radiation = read_key(mcm, "inc_radiation_key", "grain_add_radiation_key")
+	keys.dec_radiation = read_key(mcm, "dec_radiation_key", "grain_clear_radiation_key")
+	keys.inc_bleed = read_key(mcm, "inc_bleed_key")
+	keys.dec_bleed = read_key(mcm, "dec_bleed_key")
+	keys.inc_health = read_key(mcm, "inc_health_key")
+	keys.dec_health = read_key(mcm, "dec_health_key")
+	for i = 1, #LIMBS do
+		local limb = LIMBS[i]
+		keys.limb_inc[limb] = read_key(mcm, "inc_limb_" .. limb .. "_key")
+		keys.limb_dec[limb] = read_key(mcm, "dec_limb_" .. limb .. "_key")
+	end
+end
+
+local function on_option_change()
+	refresh_keys()
+end
+
+local function on_key_press(dik)
+	local actor = db.actor
+	if not (actor and actor:alive()) then
+		return
+	end
+	for i = 1, #LIMBS do
+		local limb = LIMBS[i]
+		if keys.limb_inc[limb] and dik == keys.limb_inc[limb] then
+			adjust_limb(limb, 1)
+			return
+		end
+		if keys.limb_dec[limb] and dik == keys.limb_dec[limb] then
+			adjust_limb(limb, -1)
+			return
+		end
+	end
+end
+
+local function actor_on_update()
+	local actor = db.actor
+	if not (actor and actor:alive()) then
+		last_tg = nil
+		return
+	end
+
+	local now = time_global()
+	local dt = 0
+	if last_tg then
+		dt = (now - last_tg) / 1000
+		if dt > MAX_DT then
+			dt = MAX_DT
+		end
+	end
+	last_tg = now
+	if dt <= 0 then
+		return
+	end
+
+	local d_rad = hold_signed(keys.inc_radiation, keys.dec_radiation, RAD_UNIT_PER_SEC, dt)
+	if d_rad ~= 0 then
+		actor.radiation = clamp((actor.radiation or 0) + d_rad, 0, 1)
+	end
+
+	local d_bleed = hold_signed(keys.inc_bleed, keys.dec_bleed, BLEED_PER_SEC, dt)
+	if d_bleed ~= 0 then
+		actor.bleeding = clamp((actor.bleeding or 0) + d_bleed, 0, 1)
+	end
+
+	local d_hp = hold_signed(keys.inc_health, keys.dec_health, HP_PER_SEC, dt)
+	if d_hp ~= 0 then
+		local cur = actor.health or 0
+		local target = clamp(cur + d_hp, 0, 1)
+		local delta = target - cur
+		if delta ~= 0 then
+			if actor.change_health then
+				actor:change_health(delta)
+			else
+				actor.health = target
+			end
+		end
+	end
+end
+
+function on_game_start()
+	DOGMA = dogma_common.load(DEBUG_MOD)
+	refresh_keys()
+	RegisterScriptCallback("on_option_change", on_option_change)
+	RegisterScriptCallback("on_key_press", on_key_press)
+	RegisterScriptCallback("actor_on_update", actor_on_update)
+end

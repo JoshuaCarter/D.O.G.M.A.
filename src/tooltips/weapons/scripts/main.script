@@ -1297,8 +1297,8 @@ local function on_option_change()
 		end
 		CONFIG.loaded.compact_header = DOGMA.mcm.bool(CONFIG.MOD_ID, "compact_header")
 		CONFIG.loaded.hide_description = DOGMA.mcm.bool(CONFIG.MOD_ID, "hide_description")
-		-- Always on while tooltips/tweaks is installed (no MCM toggle).
-		CONFIG.loaded.fix_layout = rawget(_G, "dogma_tooltips_tweaks_conf") ~= nil
+		-- Always on while tweaks/tooltips is installed (no MCM toggle).
+		CONFIG.loaded.fix_layout = rawget(_G, "dogma_tweaks_tooltips_conf") ~= nil
 		CONFIG.loaded.table_row_pad = DOGMA.mcm.number(CONFIG.MOD_ID, "table_row_pad")
 		for i = 1, NUM_TORSO_TIERS do
 			CONFIG.loaded["show_torso_" .. i] = DOGMA.mcm.bool(CONFIG.MOD_ID, "show_torso_" .. i)

@@ -202,13 +202,11 @@ local function start_travel_sequence(pos, lvid, gvid, is_transition, final_gvid)
         tft.travel_dist,
         tft_format_duration(tft.expected_duration or 1))
 
-    -- Real travel: spectator fly-through when available; else stepped teleports.
-    if _G.tft_fly_camera_available and _G.tft_fly_camera_available() and _G.tft_begin_fly_camera then
-        if _G.tft_begin_fly_camera() then
-            return true
-        end
-        tft_log("Fly camera failed to start - falling back to stepped journey.")
+    -- Spectator fly-through; stepped teleports only if the camera API is missing / fails.
+    if _G.tft_begin_fly_camera and _G.tft_begin_fly_camera() then
+        return true
     end
+    tft_log("Fly camera unavailable - falling back to stepped journey.")
     if tft_begin_stepped_journey then
         tft_begin_stepped_journey()
     end
@@ -1226,7 +1224,6 @@ do
     _G.tft_teleport_companions = teleport_companions
     _G.tft_detect_ambush = detect_ambush
     _G.tft_play_ambush_alert = play_ambush_alert
-    _G.tft_play_fade_teleport = play_fade_teleport
     _G.tft_complete_travel_sequence = complete_travel_sequence
     _G.tft_trigger_encounter = trigger_encounter
     _G.tft_trigger_emission_interrupt = trigger_emission_interrupt

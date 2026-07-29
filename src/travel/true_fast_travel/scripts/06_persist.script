@@ -106,6 +106,9 @@ local function clear()
     tft.dot_count = 0
     pcall(tft_cleanup_dots)  -- prevent alife dot leaks
     if _G.tft_cancel_fly_camera then pcall(_G.tft_cancel_fly_camera) end
+    if _G.tft_cancel_stepped_journey then pcall(_G.tft_cancel_stepped_journey) end
+    tft.stepped_active = false
+    tft.step_waypoints = nil
     tft.path_chain = nil
     tft.path_chain_is_vertex = nil
     tft.path_chain_meta = nil

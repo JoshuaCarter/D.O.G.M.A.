@@ -12,6 +12,7 @@
 	  dogma / <shared page> / options   -- append() (e.g. Tweaks)
 	Categories are merged across feature scripts via attach().
 	Info-only tweaks share one leaf page via append().
+	Tail order under DOGMA: … categories …, Tweaks, Debug.
 ]]
 
 local BANNER_LINK = "dogma_mcm_banner"
@@ -182,24 +183,28 @@ function with_header(items)
 	return gr
 end
 
--- Keep Debug as the last entry under DOGMA (categories above it).
-local function pin_debug_last(dogma)
+-- Keep Tweaks second-to-last and Debug last under DOGMA (categories above both).
+local function pin_tail_pages(dogma)
 	local gr = dogma and dogma.gr
 	if not gr then
 		return
 	end
-	local idx
-	for i = 1, #gr do
-		if gr[i].id == "debug" then
-			idx = i
-			break
+	local function take(id)
+		for i = 1, #gr do
+			if gr[i].id == id then
+				return table.remove(gr, i)
+			end
 		end
+		return nil
 	end
-	if not idx or idx == #gr then
-		return
+	local tweaks = take("tweaks")
+	local dbg = take("debug")
+	if tweaks then
+		gr[#gr + 1] = tweaks
 	end
-	local dbg = table.remove(gr, idx)
-	gr[#gr+1] = dbg
+	if dbg then
+		gr[#gr + 1] = dbg
+	end
 end
 
 local function ensure_dogma_root(options)
@@ -237,7 +242,7 @@ function attach(options, cat_id, cat_text, page)
 		dogma.gr[#dogma.gr + 1] = cat
 	end
 	cat.gr[#cat.gr + 1] = page
-	pin_debug_last(dogma)
+	pin_tail_pages(dogma)
 end
 
 -- Append option rows to a shared leaf page under DOGMA (sibling of categories).
@@ -268,7 +273,7 @@ function append(options, page_id, page_text, items)
 	for i = 1, #(items or {}) do
 		gr[#gr + 1] = items[i]
 	end
-	pin_debug_last(dogma)
+	pin_tail_pages(dogma)
 end
 
 -- Shared Debug defaults (also used when MCM has not written a value yet).
@@ -278,8 +283,24 @@ _G.dogma_debug_conf = {
 		["debug_log"] = true,
 		["debug_overlay"] = false,
 		-- Feature-owned debug controls live here; features read via DEBUG_MOD.
-		["grain_add_radiation_key"] = -1,
-		["grain_clear_radiation_key"] = -1,
+		["inc_radiation_key"] = -1,
+		["dec_radiation_key"] = -1,
+		["inc_bleed_key"] = -1,
+		["dec_bleed_key"] = -1,
+		["inc_health_key"] = -1,
+		["dec_health_key"] = -1,
+		["inc_limb_head_key"] = -1,
+		["dec_limb_head_key"] = -1,
+		["inc_limb_torso_key"] = -1,
+		["dec_limb_torso_key"] = -1,
+		["inc_limb_leftarm_key"] = -1,
+		["dec_limb_leftarm_key"] = -1,
+		["inc_limb_rightarm_key"] = -1,
+		["dec_limb_rightarm_key"] = -1,
+		["inc_limb_leftleg_key"] = -1,
+		["dec_limb_leftleg_key"] = -1,
+		["inc_limb_rightleg_key"] = -1,
+		["dec_limb_rightleg_key"] = -1,
 		["ft_path_preview"] = false,
 		["ft_sneaking_level_up"] = -1,
 		["ft_sneaking_level_down"] = -1,
@@ -429,25 +450,143 @@ function register_debug_page(options)
 				def = CONFIG.DEFAULTS["debug_overlay"],
 				hint = "dogma_debug_debug_overlay",
 			},
-			{ id = "line_grain", type = "line" },
+			{ id = "line_vitals", type = "line" },
 			{
-				id = "hdr_grain",
+				id = "hdr_vitals",
 				type = "desc",
-				text = "ui_mcm_dogma_debug_hdr_grain",
+				text = "ui_mcm_dogma_debug_hdr_vitals",
 			},
 			{
-				id = "grain_add_radiation_key",
+				id = "inc_radiation_key",
 				type = "key_bind",
 				val = 2,
-				def = CONFIG.DEFAULTS["grain_add_radiation_key"],
-				hint = "dogma_debug_grain_add_radiation_key",
+				def = CONFIG.DEFAULTS["inc_radiation_key"],
+				hint = "dogma_debug_inc_radiation_key",
 			},
 			{
-				id = "grain_clear_radiation_key",
+				id = "dec_radiation_key",
 				type = "key_bind",
 				val = 2,
-				def = CONFIG.DEFAULTS["grain_clear_radiation_key"],
-				hint = "dogma_debug_grain_clear_radiation_key",
+				def = CONFIG.DEFAULTS["dec_radiation_key"],
+				hint = "dogma_debug_dec_radiation_key",
+			},
+			{
+				id = "inc_bleed_key",
+				type = "key_bind",
+				val = 2,
+				def = CONFIG.DEFAULTS["inc_bleed_key"],
+				hint = "dogma_debug_inc_bleed_key",
+			},
+			{
+				id = "dec_bleed_key",
+				type = "key_bind",
+				val = 2,
+				def = CONFIG.DEFAULTS["dec_bleed_key"],
+				hint = "dogma_debug_dec_bleed_key",
+			},
+			{
+				id = "inc_health_key",
+				type = "key_bind",
+				val = 2,
+				def = CONFIG.DEFAULTS["inc_health_key"],
+				hint = "dogma_debug_inc_health_key",
+			},
+			{
+				id = "dec_health_key",
+				type = "key_bind",
+				val = 2,
+				def = CONFIG.DEFAULTS["dec_health_key"],
+				hint = "dogma_debug_dec_health_key",
+			},
+			{ id = "line_limbs", type = "line" },
+			{
+				id = "hdr_limbs",
+				type = "desc",
+				text = "ui_mcm_dogma_debug_hdr_limbs",
+			},
+			{
+				id = "inc_limb_head_key",
+				type = "key_bind",
+				val = 2,
+				def = CONFIG.DEFAULTS["inc_limb_head_key"],
+				hint = "dogma_debug_inc_limb_head_key",
+			},
+			{
+				id = "dec_limb_head_key",
+				type = "key_bind",
+				val = 2,
+				def = CONFIG.DEFAULTS["dec_limb_head_key"],
+				hint = "dogma_debug_dec_limb_head_key",
+			},
+			{
+				id = "inc_limb_torso_key",
+				type = "key_bind",
+				val = 2,
+				def = CONFIG.DEFAULTS["inc_limb_torso_key"],
+				hint = "dogma_debug_inc_limb_torso_key",
+			},
+			{
+				id = "dec_limb_torso_key",
+				type = "key_bind",
+				val = 2,
+				def = CONFIG.DEFAULTS["dec_limb_torso_key"],
+				hint = "dogma_debug_dec_limb_torso_key",
+			},
+			{
+				id = "inc_limb_leftarm_key",
+				type = "key_bind",
+				val = 2,
+				def = CONFIG.DEFAULTS["inc_limb_leftarm_key"],
+				hint = "dogma_debug_inc_limb_leftarm_key",
+			},
+			{
+				id = "dec_limb_leftarm_key",
+				type = "key_bind",
+				val = 2,
+				def = CONFIG.DEFAULTS["dec_limb_leftarm_key"],
+				hint = "dogma_debug_dec_limb_leftarm_key",
+			},
+			{
+				id = "inc_limb_rightarm_key",
+				type = "key_bind",
+				val = 2,
+				def = CONFIG.DEFAULTS["inc_limb_rightarm_key"],
+				hint = "dogma_debug_inc_limb_rightarm_key",
+			},
+			{
+				id = "dec_limb_rightarm_key",
+				type = "key_bind",
+				val = 2,
+				def = CONFIG.DEFAULTS["dec_limb_rightarm_key"],
+				hint = "dogma_debug_dec_limb_rightarm_key",
+			},
+			{
+				id = "inc_limb_leftleg_key",
+				type = "key_bind",
+				val = 2,
+				def = CONFIG.DEFAULTS["inc_limb_leftleg_key"],
+				hint = "dogma_debug_inc_limb_leftleg_key",
+			},
+			{
+				id = "dec_limb_leftleg_key",
+				type = "key_bind",
+				val = 2,
+				def = CONFIG.DEFAULTS["dec_limb_leftleg_key"],
+				hint = "dogma_debug_dec_limb_leftleg_key",
+			},
+			{
+				id = "inc_limb_rightleg_key",
+				type = "key_bind",
+				val = 2,
+				def = CONFIG.DEFAULTS["inc_limb_rightleg_key"],
+				hint = "dogma_debug_inc_limb_rightleg_key",
+			},
+			{
+				id = "dec_limb_rightleg_key",
+				type = "key_bind",
+				val = 2,
+				def = CONFIG.DEFAULTS["dec_limb_rightleg_key"],
+				hint = "dogma_debug_dec_limb_rightleg_key",
 			},
 			{ id = "line_ft", type = "line" },
 			{
@@ -544,7 +683,7 @@ function register_debug_page(options)
 		if not replaced then
 			dogma.gr[#dogma.gr+1] = page
 		end
-		pin_debug_last(dogma)
+		pin_tail_pages(dogma)
 		return
 	end
 	return page, "dogma"

@@ -397,6 +397,7 @@ if [[ "$ONLY" == "all" || "$ONLY" == "" ]]; then
 		# Drop flat copies / old layout leftovers.
 		rm -f "$MODROOT_OUT/build_sound_prefetch.bat" "$MODROOT_OUT/build_sound_prefetch.py"
 		rm -f "$MODROOT_OUT/mo2/build_sound_prefetch.bat" "$MODROOT_OUT/mo2/build_sound_prefetch.py"
+		rm -f "$MODROOT_OUT/dogma_sfx_prefetch.py" "$MODROOT_OUT/mo2/dogma_sfx_prefetch.py"
 		rm -f "$MODROOT_OUT/mo2/prelaunch.bat" "$MODROOT_OUT/mo2/tools/prelaunch.py" \
 			"$MODROOT_OUT/mo2/tools/DOGMA.bat" "$MODROOT_OUT/mo2/tools/run_job.bat" \
 			"$MODROOT_OUT/mo2/tools/setup.bat"
@@ -430,6 +431,7 @@ if [[ -n "$DEPLOY_MOD" ]]; then
 	rm -f "$DEPLOY_MOD/gamedata/configs/dogma_sfx_prefetch.ltx"
 	rm -f "$DEPLOY_MOD/build_sound_prefetch.bat" "$DEPLOY_MOD/build_sound_prefetch.py"
 	rm -f "$DEPLOY_MOD/mo2/build_sound_prefetch.bat" "$DEPLOY_MOD/mo2/build_sound_prefetch.py"
+	rm -f "$DEPLOY_MOD/dogma_sfx_prefetch.py" "$DEPLOY_MOD/mo2/dogma_sfx_prefetch.py"
 	rm -f "$DEPLOY_MOD/mo2/prelaunch.bat" "$DEPLOY_MOD/mo2/tools/prelaunch.py" \
 		"$DEPLOY_MOD/mo2/tools/DOGMA.bat" "$DEPLOY_MOD/mo2/tools/run_job.bat" \
 		"$DEPLOY_MOD/mo2/tools/setup.bat"

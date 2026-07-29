@@ -12,29 +12,33 @@ import dogma_mo2_lib as lib
 # MO2 Executables titles we own (no parentheses). Legacy aliases are stripped on re-run.
 DOGMA_EXECUTABLE_TITLES: tuple[str, ...] = (
     "D.O.G.M.A. Setup",
-    "D.O.G.M.A. Apply Defaults",
+    "D.O.G.M.A. Backup",
+    "D.O.G.M.A. Restore",
     "D.O.G.M.A. Optimize",
 )
 _DOGMA_EXECUTABLE_BATS: tuple[str, ...] = (
     "DOGMA Setup.bat",
-    "DOGMA Apply Defaults.bat",
+    "DOGMA Backup.bat",
+    "DOGMA Restore.bat",
     "DOGMA Optimize.bat",
 )
-# Optimize: prefill MO2 Arguments = backup dir (MO2 root).
-_DOGMA_EXECUTABLE_ARGUMENTS: dict[str, str] = {
-    "DOGMA Optimize.bat": "__MO2_ROOT__",
-}
+_DOGMA_EXECUTABLE_ARGUMENTS: dict[str, str] = {}
 _DOGMA_EXECUTABLE_TITLE_ALIASES: frozenset[str] = frozenset(
     t.lower()
     for t in (
         *DOGMA_EXECUTABLE_TITLES,
         "DOGMA Setup",
         "DOGMA (Setup)",
-        "DOGMA Apply Defaults",
-        "DOGMA (Apply Defaults)",
+        "DOGMA Backup",
+        "DOGMA (Backup)",
+        "DOGMA Restore",
+        "DOGMA (Restore)",
         "DOGMA Optimize",
         "DOGMA (Optimize)",
-        # Legacy: stripped on re-run after SFX merged into Optimize
+        # Legacy: stripped on re-run (Apply Defaults → Setup/Update; SFX → Optimize)
+        "D.O.G.M.A. Apply Defaults",
+        "DOGMA Apply Defaults",
+        "DOGMA (Apply Defaults)",
         "D.O.G.M.A. SFX Prefetch",
         "DOGMA SFX Prefetch",
         "DOGMA (SFX Prefetch)",
@@ -45,8 +49,8 @@ _DOGMA_EXECUTABLE_TITLE_ALIASES: frozenset[str] = frozenset(
 def _mo2_arguments_for_bat(bat_name: str, mo2_root: Path) -> str:
     raw = _DOGMA_EXECUTABLE_ARGUMENTS.get(bat_name, "")
     if raw == "__MO2_ROOT__":
-        # Qt ini: \ is an escape — write C:\\GAMMA so MO2 stores/passes C:\GAMMA
-        # (same as workingDirectory). Bare C:\GAMMA becomes C:AMMA.
+        # Qt ini: \ is an escape — write C:\\Instance so MO2 stores/passes C:\Instance
+        # (same as workingDirectory). Bare C:\Instance becomes C:nstance.
         path = str(mo2_root.resolve()).replace("\\", "\\\\")
         return f'"{path}"' if " " in path else path
     return raw

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""DOGMA Optimize — GC settings, SFX prefetch, mods backup, ALAO."""
+"""DOGMA Optimize — GC settings, SFX prefetch, full backup, ALAO."""
 
 from __future__ import annotations
 
@@ -11,9 +11,9 @@ import sys
 import tempfile
 from pathlib import Path
 
+import dogma_backup as backup
 import dogma_mo2_lib as lib
 
-BACKUP_NAME = "mods.backup.7z"
 ALAO_URL = (
     "https://www.moddb.com/mods/stalker-anomaly/addons/"
     "alao-anomaly-lua-auto-optimizer-tool"
@@ -55,57 +55,6 @@ def _yn(prompt: str, default_yes: bool = True) -> bool:
     if not raw:
         return default_yes
     return raw in ("y", "yes")
-
-
-def _fmt_bytes(n: int) -> str:
-    x = float(n)
-    for unit in ("B", "KB", "MB", "GB", "TB"):
-        if x < 1024.0 or unit == "TB":
-            return f"{x:.1f} {unit}" if unit != "B" else f"{int(x)} B"
-        x /= 1024.0
-    return f"{n} B"
-
-
-def _looks_like_mo2_backslash_mangle(raw: str) -> bool:
-    """True for drive-relative junk like ``C:AMMA`` (MO2 ate ``\\G`` from ``C:\\GAMMA``)."""
-    s = (raw or "").strip().strip('"')
-    if len(s) < 3 or s[1] != ":":
-        return False
-    # Real paths are C:\... or C:/... — mangled keeps letter after colon with no slash.
-    return s[2] not in ("\\", "/")
-
-
-def resolve_backup_dir(mo2_root: Path, args) -> Path:
-    """Backup directory from MO2 Arguments / ``--backup-dir``, else MO2 root.
-
-    Prefill uses forward slashes (``C:/GAMMA``). Mangled ``C:AMMA`` falls back
-    to ``mo2_root``.
-    """
-    explicit = (getattr(args, "backup_dir_flag", None) or "").strip()
-    positional = (getattr(args, "backup_dir", None) or "").strip()
-    raw = explicit or positional
-    if raw:
-        if _looks_like_mo2_backslash_mangle(raw):
-            return mo2_root.resolve()
-        return Path(raw.strip('"')).expanduser().resolve()
-    return mo2_root.resolve()
-
-
-def backup_archive_path(backup_dir: Path) -> Path:
-    return backup_dir / BACKUP_NAME
-
-
-def dir_tree_size(root: Path) -> int:
-    total = 0
-    if not root.is_dir():
-        return 0
-    for dirpath, _dirnames, filenames in os.walk(root):
-        for name in filenames:
-            try:
-                total += (Path(dirpath) / name).stat().st_size
-            except OSError:
-                pass
-    return total
 
 
 def resolve_alao_root() -> Path | None:
@@ -335,16 +284,21 @@ def step_gc(mo2_root: Path, *, dry_run: bool) -> int:
 
 def resolve_sfx_builder() -> Path | None:
     here = Path(__file__).resolve().parent
-    # Deployed / common: mods/DOGMA/mo2/tools/build_sound_prefetch.py (next to this file)
-    candidates: list[Path] = [here / "build_sound_prefetch.py"]
+    # Deployed / common: mods/DOGMA/mo2/tools/dogma_sfx_prefetch.py (next to this file)
+    candidates: list[Path] = [
+        here / "dogma_sfx_prefetch.py",
+        # Legacy name
+        here / "build_sound_prefetch.py",
+    ]
     # Legacy flat path from older builds
     if here.name.lower() == "tools":
+        candidates.append(here.parent / "dogma_sfx_prefetch.py")
         candidates.append(here.parent / "build_sound_prefetch.py")
     try:
         repo = Path(__file__).resolve().parents[4]
-        candidates.append(
-            repo / "src" / "common" / "mo2" / "tools" / "build_sound_prefetch.py"
-        )
+        tools = repo / "src" / "common" / "mo2" / "tools"
+        candidates.append(tools / "dogma_sfx_prefetch.py")
+        candidates.append(tools / "build_sound_prefetch.py")
     except IndexError:
         pass
     for py in candidates:
@@ -355,7 +309,6 @@ def resolve_sfx_builder() -> Path | None:
 
 def run_sfx_prefetch(mo2_root: Path, *, force: bool = False) -> int:
     """Run sound prefetch builder; tee to action log. Shared with cmd_sfx."""
-    tools = lib.mo2_tools_dir(mo2_root)
     py = resolve_sfx_builder()
     if py is None:
         lib.err("Sound prefetch tool is missing from this DOGMA install.")
@@ -377,91 +330,16 @@ def run_sfx_prefetch(mo2_root: Path, *, force: bool = False) -> int:
     for raw in proc.stdout:
         line = raw.rstrip("\r\n")
         print(line, flush=True)
-        lib.append_action_log(tools, line)
+        lib.append_action_log(mo2_root, line)
     return int(proc.wait())
 
 
-def step_backup(
-    mo2_root: Path,
-    backup_dir: Path,
-    *,
-    dry_run: bool,
-) -> int:
-    mods = mo2_root / "mods"
-    if not mods.is_dir():
-        lib.err(f"Could not find your mods folder:\n  {mods}")
-        return 1
-
-    archive = backup_archive_path(backup_dir)
-    lib.info(f"Backing up:\n  {mods}")
-    lib.info(f"Save as:\n  {archive}")
-
-    if archive.is_file():
-        print()
-        print(f"A backup already exists:\n  {archive}")
-        if _yn("Skip backup and keep the existing one?", default_yes=True):
-            lib.info(f"Keeping existing {archive.name}.")
-            return 0
-
-    seven = lib.find_7z()
-    if seven is None:
-        lib.err(
-            "7-Zip is required for backup, but was not found.\n"
-            "Install 7-Zip, or use the copy that ships with G.A.M.M.A. "
-            r"(…\.Grok's Modpack Installer\7zip\7z.exe)."
-        )
-        return 1
-
-    lib.info("Checking how large your mods folder is…")
-    mods_size = dir_tree_size(mods)
-    need = mods_size // 2
-    try:
-        free = shutil.disk_usage(str(backup_dir if backup_dir.exists() else backup_dir.parent)).free
-    except OSError as exc:
-        lib.err(f"Could not check free disk space ({exc}).")
-        return 1
-
-    lib.info(
-        f"Mods folder: {_fmt_bytes(mods_size)}  ·  "
-        f"space needed (≈50%): {_fmt_bytes(need)}  ·  "
-        f"free: {_fmt_bytes(free)}"
-    )
-    if free < need:
-        lib.err(
-            f"Not enough free disk space to back up safely.\n"
-            f"  Need about {_fmt_bytes(need)}, but only {_fmt_bytes(free)} is free.\n"
-            f"  Free up space or point Arguments at another drive, then try again."
-        )
-        return 1
-
-    if dry_run:
-        lib.info("Dry run — would create the backup archive now.")
-        return 0
-
-    backup_dir.mkdir(parents=True, exist_ok=True)
-    # Remove stale archive so 7z creates fresh (7z a updates otherwise)
-    if archive.is_file():
-        archive.unlink()
-
-    lib.info(
-        "Creating backup… this can take a while and use a lot of disk. "
-        "Please leave this window open."
-    )
-    cmd = [
-        str(seven),
-        "a",
-        "-t7z",
-        "-mx=5",
-        "-mmt=on",
-        str(archive),
-        str(mods),
-    ]
-    code = subprocess.call(cmd)
-    if code:
-        lib.err("Backup failed. Check that 7-Zip can write to the destination folder.")
-        return int(code)
-    lib.ok(f"Backup saved:\n  {archive}")
-    return 0
+def _latest_mods_archive(mo2_root: Path) -> Path | None:
+    for b in backup.list_backups(mo2_root):
+        archive = b / backup.MODS_ARCHIVE_NAME
+        if archive.is_file():
+            return archive
+    return None
 
 
 def run_alao(
@@ -553,23 +431,22 @@ def run_alao(
 
 def step_alao(
     mo2_root: Path,
-    backup_dir: Path,
     *,
     dry_run: bool,
 ) -> int:
-    archive = backup_archive_path(backup_dir)
-    if not archive.is_file():
+    archive = _latest_mods_archive(mo2_root)
+    if archive is None:
         lib.warn(
-            f"ALAO needs a mods backup first ({archive.name} was not found)."
+            f"ALAO needs a mods backup first "
+            f"({backup.MODS_ARCHIVE_NAME} under DOGMA\\backups)."
         )
         return 0
 
     mods = mo2_root / "mods"
+    lib.info(f"Mods backup on disk:\n  {archive}")
     lib.info("ALAO will process all mods (excluding VANILLA_SCRIPTS only).")
 
-    logs = lib.mo2_tools_dir(mo2_root) / "logs"
-    logs.mkdir(parents=True, exist_ok=True)
-    report = logs / "alao_report.html"
+    report = lib.logs_dir(mo2_root) / "alao_report.html"
 
     return run_alao(
         mods,
@@ -592,7 +469,6 @@ def _flag_tri(args, yes_attr: str, no_attr: str) -> bool | None:
 def run(args) -> int:
     mo2 = lib.resolve_mo2_root(getattr(args, "mo2_root", None) or None)
     dry_run = bool(getattr(args, "dry_run", False))
-    backup_dir = resolve_backup_dir(mo2, args)
 
     print()
     print("D.O.G.M.A. Optimizer")
@@ -626,42 +502,46 @@ def run(args) -> int:
     else:
         lib.info("Skipped.")
 
-    # --- 3. Backup (ends here — ALAO is a separate step below) ---
-    archive = backup_archive_path(backup_dir)
+    # --- 3. Full DOGMA Backup (required before ALAO) ---
     do_backup = _flag_tri(args, "do_backup", "no_backup")
+    backup_root = backup.backup_root(mo2)
     if do_backup is None:
         print()
-        print("Back up all mods (required before ALAO can change any scripts).")
-        print(f"  {archive}")
+        print("Create a full DOGMA Backup (MCM, user.ltx, modlist, mods archive).")
+        print(f"  {backup_root}\\<timestamp>\\")
         print()
         print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-        print("!!  WARNING: THIS CAN TAKE A LONG TIME          !!")
+        print("!!  WARNING: MODS ARCHIVE CAN TAKE A LONG TIME  !!")
         print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
         print()
         do_backup = _yn("Create this backup now?", default_yes=True)
     backup_failed = False
-    backup_ok = archive.is_file()
+    mods_archive = _latest_mods_archive(mo2)
     if do_backup:
-        code = step_backup(mo2, backup_dir, dry_run=dry_run)
+        code, dest = backup.run_backup(
+            mo2,
+            backup.BackupComponents.all(),
+            profile=getattr(args, "profile", "") or "",
+            dry_run=dry_run,
+        )
         if code:
             backup_failed = True
-            backup_ok = backup_archive_path(backup_dir).is_file()
             lib.warn("Backup did not finish.")
         else:
-            backup_ok = backup_archive_path(backup_dir).is_file()
-            if backup_ok:
+            mods_archive = _latest_mods_archive(mo2)
+            if dest is not None:
                 print()
-                lib.ok("Backup step finished.")
+                lib.ok(f"Backup step finished:\n  {dest}")
     else:
         lib.info("Skipped backup.")
 
     # --- 4. ALAO (only after an explicit second confirmation) ---
-    archive = backup_archive_path(backup_dir)
     do_alao = _flag_tri(args, "do_alao", "no_alao")
-    if not backup_ok and not archive.is_file():
+    if mods_archive is None:
         print()
         lib.warn(
-            f"No mods backup found ({BACKUP_NAME}). Skipping ALAO for safety."
+            f"No mods archive found ({backup.MODS_ARCHIVE_NAME}). "
+            "Skipping ALAO for safety."
         )
         if do_alao is True:
             lib.err("ALAO was requested, but there is no mods backup.")
@@ -672,12 +552,12 @@ def run(args) -> int:
         print("—————")
         print("Next step (optional): ALAO — optimize Lua scripts in your mods.")
         print(f"  {ALAO_URL}")
-        print(f"This only runs if you say yes. Backup on disk: {archive.name}")
+        print(f"This only runs if you say yes. Backup on disk:\n  {mods_archive}")
         # Default N so finishing backup does not chain into ALAO on Enter.
         do_alao = _yn("Run ALAO now?", default_yes=False)
 
     if do_alao:
-        code = step_alao(mo2, backup_dir, dry_run=dry_run)
+        code = step_alao(mo2, dry_run=dry_run)
         if code:
             return code
     elif do_alao is False:
@@ -685,7 +565,7 @@ def run(args) -> int:
 
     print()
     if backup_failed:
-        lib.err("Finished, but the mods backup failed.")
+        lib.err("Finished, but the backup failed.")
         return 1
     lib.ok("All done.")
     return 0

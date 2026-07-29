@@ -10,8 +10,8 @@ on short SFX that hitch on first play.
   mods/DOGMA/mo2/tools/DOGMA SFX Prefetch.bat   (or D.O.G.M.A. Optimize)
   overwrite/gamedata/configs/dogma_sfx_prefetch.ltx  (generated)
 
-  py -3 build_sound_prefetch.py
-  py -3 build_sound_prefetch.py --dry-run
+  py -3 dogma_sfx_prefetch.py
+  py -3 dogma_sfx_prefetch.py --dry-run
 """
 
 from __future__ import annotations
@@ -119,10 +119,16 @@ def write_text_lines(path: Path, lines: list[str]) -> None:
 def resolve_mo2_root(explicit: str | None) -> Path:
     if explicit:
         return Path(explicit)
+    env = (os.environ.get("MO2_ROOT") or "").strip()
+    if env:
+        return Path(env).expanduser()
     cwd = Path.cwd()
-    if (cwd / "ModOrganizer.ini").is_file():
+    if (cwd / "ModOrganizer.ini").is_file() or (cwd / "ModOrganizer.exe").is_file():
         return cwd
-    return Path(r"C:\GAMMA") if sys.platform == "win32" else Path(os.environ.get("MO2_ROOT", r"C:\GAMMA"))
+    raise FileNotFoundError(
+        "Could not find the MO2 instance root. Run from that folder, "
+        "pass --mo2-root, or set the MO2_ROOT environment variable."
+    )
 
 
 def list_enabled_mod_names(modlist_path: Path) -> list[str]:
@@ -356,7 +362,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument(
         "--mo2-root",
         default="",
-        help="MO2 instance folder. Default: cwd if ModOrganizer.ini present, else C:\\GAMMA",
+        help="MO2 instance folder (cwd, MO2_ROOT, or --mo2-root)",
     )
     p.add_argument("--profile", default="", help="MO2 profile (default: selected_profile)")
     p.add_argument("--dry-run", action="store_true", help="Scan and report; write nothing")

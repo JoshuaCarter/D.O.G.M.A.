@@ -10,6 +10,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import zipfile
 from dataclasses import dataclass, field, replace
@@ -18,7 +19,7 @@ from pathlib import Path
 from typing import Callable, Iterable, Iterator
 
 # Parallel wizard downloads: ModDB/GitHub resolve can overlap; claim +
-# archives.ini must stay serialized. HTTP downloads themselves may run in parallel.
+# mod_archive_map.ini must stay serialized. HTTP downloads themselves may run in parallel.
 _downloads_claim_lock = threading.Lock()
 _archive_map_lock = threading.Lock()
 _legacy_migrate_lock = threading.Lock()
@@ -52,8 +53,9 @@ def managed_mod_folder_name(dep: "Dependency | str") -> str:
 # ---------------------------------------------------------------------------
 
 _COLOR = False  # set in _init_color()
-_log_tools: Path | None = None
+_log_dir: Path | None = None
 _log_name: str = ACTION_LOG_NAME
+_logs_migrated_roots: set[str] = set()
 
 
 def _init_color() -> bool:
@@ -76,32 +78,69 @@ def _init_color() -> bool:
 _COLOR = _init_color()
 
 
+def dogma_data_dir(mo2_root: Path) -> Path:
+    """``<MO2>/DOGMA`` — downloads, backups, logs, mod_archive_map.ini."""
+    d = Path(mo2_root) / "DOGMA"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def logs_dir(mo2_root: Path) -> Path:
+    """``<MO2>/DOGMA/logs`` (migrates legacy ``mods/DOGMA/mo2/logs``)."""
+    dest = dogma_data_dir(mo2_root) / "logs"
+    dest.mkdir(parents=True, exist_ok=True)
+    key = str(Path(mo2_root).resolve()).lower()
+    if key not in _logs_migrated_roots:
+        _logs_migrated_roots.add(key)
+        legacy = Path(mo2_root) / "mods" / "DOGMA" / "mo2" / "logs"
+        if legacy.is_dir() and legacy.resolve() != dest.resolve():
+            moved = 0
+            for p in legacy.iterdir():
+                if not p.is_file():
+                    continue
+                target = dest / p.name
+                if target.exists():
+                    continue
+                try:
+                    shutil.move(str(p), str(target))
+                    moved += 1
+                except OSError:
+                    pass
+            if moved:
+                ok(f"migrated {moved} log file(s) -> DOGMA/logs")
+    return dest
+
+
 def action_log_name_for_job(job: str) -> str:
     if job == "sfx":
         return SFX_LOG_NAME
     return ACTION_LOG_NAME
 
 
-def action_log_path(mo2_dir: Path) -> Path:
-    return mo2_dir / "logs" / _log_name
+def action_log_path(mo2_root: Path | None = None) -> Path:
+    base = logs_dir(mo2_root) if mo2_root is not None else _log_dir
+    if base is None:
+        raise RuntimeError("logging not configured (call configure_logging first)")
+    return base / _log_name
 
 
-def report_log_path(mo2_dir: Path) -> Path:
-    return mo2_dir / "logs" / REPORT_LOG_NAME
+def report_log_path(mo2_root: Path | None = None) -> Path:
+    base = logs_dir(mo2_root) if mo2_root is not None else _log_dir
+    if base is None:
+        raise RuntimeError("logging not configured (call configure_logging first)")
+    return base / REPORT_LOG_NAME
 
 
-def configure_logging(mo2_dir: Path, *, reset: bool = False, job: str = "") -> Path:
-    """Tee console output into mods/DOGMA/mo2/logs/<action log>.
+def configure_logging(mo2_root: Path, *, reset: bool = False, job: str = "") -> Path:
+    """Tee console output into ``<MO2>/DOGMA/logs/<action log>``.
 
     Most jobs share dogma_install.log. The sfx job uses dogma_sfx_prefetch.log
     (always truncated per run) so prefetch noise never lands in the install log.
     """
-    global _log_tools, _log_name
-    mo2_dir.mkdir(parents=True, exist_ok=True)
-    _log_tools = mo2_dir
+    global _log_dir, _log_name
+    _log_dir = logs_dir(mo2_root)
     _log_name = action_log_name_for_job(job)
-    path = action_log_path(mo2_dir)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path = action_log_path(mo2_root)
     # Dedicated sfx log: always start fresh so each run is readable.
     do_reset = reset or _log_name == SFX_LOG_NAME or not path.is_file()
     if do_reset:
@@ -114,15 +153,15 @@ def configure_logging(mo2_dir: Path, *, reset: bool = False, job: str = "") -> P
             header += f"job: {job}\n"
         path.write_text(header + "\n", encoding="utf-8")
     elif job:
-        append_action_log(mo2_dir, f"--- job: {job} ---")
+        append_action_log(mo2_root, f"--- job: {job} ---")
     return path
 
 
-def append_action_log(mo2_dir: Path | None, line: str) -> None:
-    tools = mo2_dir if mo2_dir is not None else _log_tools
-    if tools is None:
+def append_action_log(mo2_root: Path | None, line: str) -> None:
+    try:
+        path = action_log_path(mo2_root)
+    except RuntimeError:
         return
-    path = action_log_path(tools)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -134,8 +173,8 @@ def append_action_log(mo2_dir: Path | None, line: str) -> None:
 
 
 def _tee(level: str, msg: str) -> None:
-    if _log_tools is not None:
-        append_action_log(_log_tools, f"{level}: {msg}" if level else msg)
+    if _log_dir is not None:
+        append_action_log(None, f"{level}: {msg}" if level else msg)
 
 
 def info(msg: str) -> None:
@@ -190,16 +229,23 @@ def mo2_bundle_dir() -> Path:
 def resolve_mo2_root(explicit: str | Path | None = None) -> Path:
     if explicit:
         return Path(explicit)
+    env = (os.environ.get("MO2_ROOT") or "").strip()
+    if env:
+        return Path(env).expanduser()
     # When registered as MO2 executable, cwd is instance root.
     cwd = Path.cwd()
-    if (cwd / "ModOrganizer.exe").is_file():
+    if (cwd / "ModOrganizer.exe").is_file() or (cwd / "ModOrganizer.ini").is_file():
         return cwd
     # Deployed under mods/DOGMA/mo2[/tools]/ mo2 → DOGMA → mods → MO2 root
     candidate = mo2_bundle_dir().parent.parent.parent
-    if (candidate / "ModOrganizer.exe").is_file():
+    if (candidate / "ModOrganizer.exe").is_file() or (
+        candidate / "ModOrganizer.ini"
+    ).is_file():
         return candidate
-    default = Path(r"C:\GAMMA") if sys.platform == "win32" else Path(os.environ.get("MO2_ROOT", r"C:\GAMMA"))
-    return default
+    raise FileNotFoundError(
+        "Could not find the MO2 instance root. Run from that folder, "
+        "pass --mo2-root, or set the MO2_ROOT environment variable."
+    )
 
 
 def resolve_config_dir(mo2_root: Path, override: Path | None = None) -> Path:
@@ -447,16 +493,26 @@ def create_preinstall_modlist_backup(
     return dest
 
 
-def find_7z() -> Path | None:
+def find_7z(mo2_root: Path | None = None) -> Path | None:
     for name in ("7z", "7za", "7z.exe", "7za.exe"):
         found = shutil.which(name)
         if found:
             return Path(found)
-    for candidate in (
+    candidates: list[Path] = [
         Path(r"C:\Program Files\7-Zip\7z.exe"),
         Path(r"C:\Program Files (x86)\7-Zip\7z.exe"),
-        Path(r"C:\GAMMA\.Grok's Modpack Installer\7zip\7z.exe"),
-    ):
+    ]
+    roots: list[Path] = []
+    if mo2_root is not None:
+        roots.append(Path(mo2_root))
+    else:
+        try:
+            roots.append(resolve_mo2_root())
+        except FileNotFoundError:
+            pass
+    for root in roots:
+        candidates.append(root / ".Grok's Modpack Installer" / "7zip" / "7z.exe")
+    for candidate in candidates:
         if candidate.is_file():
             return candidate
     return None
@@ -549,6 +605,42 @@ def _parse_moves(raw, *, field: str) -> list[tuple[str, str]]:
         raise ValueError(f"{field} must be a list of src: dest mappings")
     out: list[tuple[str, str]] = []
     for i, item in enumerate(raw):
+        if not isinstance(item, dict) or not item:
+            raise ValueError(f"{field}[{i}] must be a src: dest mapping")
+        for src, dest in item.items():
+            src_s = str(src).strip().replace("\\", "/")
+            dest_s = str(dest).strip()
+            if not src_s or not dest_s:
+                raise ValueError(f"{field}[{i}] empty src or dest")
+            if isinstance(dest, (dict, list)):
+                raise ValueError(f"{field}[{i}]: dest must be a scalar path")
+            out.append((src_s, dest_s))
+    return out
+
+
+def _parse_overwrite(raw, *, field: str) -> list[tuple[str, str]]:
+    """Parse overwrite: map or list of {src_rel: dest} → [(src, dest), ...].
+
+    YAML shapes::
+
+        overwrite:
+          bin: <Anomaly>
+          db: <Anomaly>
+
+        overwrite:
+          - bin: <Anomaly>
+          - <Mod>: <Anomaly>
+    """
+    if not raw:
+        return []
+    if isinstance(raw, dict):
+        items = [raw]
+    elif isinstance(raw, list):
+        items = raw
+    else:
+        raise ValueError(f"{field} must be a map or list of src: dest mappings")
+    out: list[tuple[str, str]] = []
+    for i, item in enumerate(items):
         if not isinstance(item, dict) or not item:
             raise ValueError(f"{field}[{i}] must be a src: dest mapping")
         for src, dest in item.items():
@@ -684,20 +776,32 @@ def _materialize_inline_radio_compositions(
 def _reject_legacy_defaults(item: dict, *, field: str) -> None:
     if item.get("defaults") is not None:
         raise ValueError(
-            f"{field}: defaults: removed — use top-level resets: / mcm: / settings:"
+            f"{field}: defaults: removed — use top-level mcm_reset: / mcm_set: / settings:"
         )
     if item.get("target_mod") is not None:
         raise ValueError(
-            f"{field}: target_mod removed — put keys under mcm: / settings:"
+            f"{field}: target_mod removed — put keys under mcm_set: / settings:"
         )
 
 
 def _pack_effect_fields(item: dict, *, section: str) -> dict:
     """Parse shared pack effect fields from a YAML map."""
     _reject_legacy_defaults(item, field=section)
+    if item.get("resets") is not None:
+        raise ValueError(
+            f"{section}: resets: renamed — use mcm_reset: (MCM key roots)"
+        )
+    if item.get("mcm") is not None:
+        raise ValueError(
+            f"{section}: mcm: renamed — use mcm_set: (key: value overrides)"
+        )
     return {
-        "resets": _parse_str_list(item.get("resets"), field=f"{section}.resets"),
-        "mcm": _parse_kv_entries(item.get("mcm"), field=f"{section}.mcm"),
+        "mcm_reset": _parse_str_list(
+            item.get("mcm_reset"), field=f"{section}.mcm_reset"
+        ),
+        "mcm_set": _parse_kv_entries(
+            item.get("mcm_set"), field=f"{section}.mcm_set"
+        ),
         "settings": _parse_kv_entries(item.get("settings"), field=f"{section}.settings"),
         "moves": _parse_moves(item.get("moves"), field=f"{section}.moves"),
         "deletes": _parse_str_list(item.get("deletes"), field=f"{section}.deletes"),
@@ -781,13 +885,20 @@ class Dependency:
     desc: str = ""  # wizard blurb for option choices
     disables: list[str] = field(default_factory=list)
     enables: list[str] = field(default_factory=list)
-    resets: list[str] = field(default_factory=list)  # MCM roots → script def=
-    mcm: dict[str, str] = field(default_factory=dict)  # → [mcm]
+    mcm_reset: list[str] = field(default_factory=list)  # MCM roots → script def=
+    mcm_set: dict[str, str] = field(default_factory=dict)  # → [mcm]
     settings: dict[str, str] = field(default_factory=dict)  # → [options]
     moves: list[tuple[str, str]] = field(default_factory=list)  # (src_rel, dest)
+    # Merge-copy src into dest (file-level overwrite; like Windows "Replace files").
+    overwrite: list[tuple[str, str]] = field(default_factory=list)
+    # Zip live paths into newest DOGMA/backups/<stamp>/misc/ before overwrite/deletes.
+    backup: list[str] = field(default_factory=list)
     deletes: list[str] = field(default_factory=list)
     console: list[str] = field(default_factory=list)  # first-launch console cmds
     requires: list[str] = field(default_factory=list)  # install these packs first
+    # Parent → required pack select overlays (merged onto targets at resolve time).
+    # YAML: requires: [{Pack Id: {select: […]}}, OtherPack, …]
+    requires_select: dict[str, list[str]] = field(default_factory=dict)
     # Wizard radio group (legacy): packs sharing exclusive: appear as one section
     exclusive: str = ""
     group: str = ""  # section title override
@@ -799,7 +910,16 @@ class Dependency:
     # Raw options: before materialize — each choice is one or more pack ids.
     option_groups: list[list[str]] = field(default_factory=list)
     after_unpack: str = ""
+    # BAIN/FOMOD-style: top-level package folder names whose contents are
+    # merged into the mod root (list order; later wins on conflicts).
+    select: list[str] = field(default_factory=list)
+    # When True, process_dependency always reinstalls (required deps / select).
+    force_reinstall: bool = False
     feature: str = ""  # owning feature path when from features.*.requires
+    # GitHub release asset filter (matched against asset filename).
+    file_regex: str = ""
+    # Download/apply without creating an MO2 mods/ folder or modlist entry.
+    skip_mo2: bool = False
 
     # Wizard checkbox metadata (stage != omit on the same block).
     # Default checked state is derived (not buy_url) — see option_default_selected.
@@ -818,7 +938,7 @@ class Dependency:
         return self.stage or "omit"
 
     def has_axr_effects(self) -> bool:
-        return bool(self.resets or self.mcm or self.settings)
+        return bool(self.mcm_reset or self.mcm_set or self.settings)
 
     def has_remote_links(self) -> bool:
         return bool(
@@ -835,8 +955,9 @@ class Dependency:
     def has_install_work(self) -> bool:
         """True if this pack is a download/install/enable unit (not a pure group)."""
         return bool(self.has_remote_links() or self.path or self.source == "user") or bool(
-            self.enables or self.disables or self.moves or self.deletes
-            or self.console or self.mcm or self.settings or self.resets
+            self.enables or self.disables or self.moves or self.overwrite
+            or self.deletes or self.console or self.mcm_set or self.settings
+            or self.mcm_reset or self.select or self.backup
         )
 
 
@@ -886,8 +1007,8 @@ class FeatureMeta:
     title: str = ""  # display name from features.yml key
     disables: list[str] = field(default_factory=list)
     enables: list[str] = field(default_factory=list)
-    resets: list[str] = field(default_factory=list)
-    mcm: dict[str, str] = field(default_factory=dict)
+    mcm_reset: list[str] = field(default_factory=list)
+    mcm_set: dict[str, str] = field(default_factory=dict)
     settings: dict[str, str] = field(default_factory=dict)
     moves: list[tuple[str, str]] = field(default_factory=list)
     deletes: list[str] = field(default_factory=list)
@@ -911,7 +1032,7 @@ class FeatureMeta:
         return self.stage
 
     def has_axr_effects(self) -> bool:
-        return bool(self.resets or self.mcm or self.settings)
+        return bool(self.mcm_reset or self.mcm_set or self.settings)
 
 def dogma_mod_dir(mo2_root: Path) -> Path:
     return mo2_root / "mods" / "DOGMA"
@@ -1204,7 +1325,7 @@ class ManifestData:
         modlist: Path | None = None,
         suggested_ids: set[str] | None = None,
     ) -> list[InitSetting]:
-        """resets (script def) → mcm → settings for active packs.
+        """mcm_reset (script def) → mcm_set → settings for active packs.
 
         Manual (no url:) packs only contribute when that mod is installed
         and enabled. ``suggested_ids`` limits which suggested packs apply.
@@ -1229,35 +1350,35 @@ class ManifestData:
         for feat, meta in self.features.items():
             if not _feature_is_active(meta, min_stage, installed=installed):
                 continue
-            for root in meta.resets:
+            for root in meta.mcm_reset:
                 reset_roots.append((feat, root))
             out.extend(
-                _overrides_to_settings(feat, mcm=meta.mcm, settings=meta.settings)
+                _overrides_to_settings(feat, mcm=meta.mcm_set, settings=meta.settings)
             )
             for dep in self.feature_pack_deps(feat):
                 if not _dep_ok(dep):
                     continue
                 src = f"downloads:{dep.id}"
-                for root in dep.resets:
+                for root in dep.mcm_reset:
                     reset_roots.append((src, root))
                 out.extend(
-                    _overrides_to_settings(src, mcm=dep.mcm, settings=dep.settings)
+                    _overrides_to_settings(src, mcm=dep.mcm_set, settings=dep.settings)
                 )
         if include_suggested:
             for dep in self.suggested:
                 if not _dep_ok(dep):
                     continue
                 src = f"suggested:{dep.id}"
-                for root in dep.resets:
+                for root in dep.mcm_reset:
                     reset_roots.append((src, root))
                 out.extend(
-                    _overrides_to_settings(src, mcm=dep.mcm, settings=dep.settings)
+                    _overrides_to_settings(src, mcm=dep.mcm_set, settings=dep.settings)
                 )
 
         # Prepend reset InitSettings (script def=) so overrides win when applied
         # in order within apply_settings_to_axr_options (last write per key wins
-        # only if we apply resets first in the list — apply walks list in order
-        # and last change sticks). So: resets first, then overrides.
+        # only if we apply mcm_reset first in the list — apply walks list in order
+        # and last change sticks). So: mcm_reset first, then overrides.
         if reset_roots and mo2_root is not None:
             script_defs = index_mcm_script_defaults(mo2_root)
             reset_settings: list[InitSetting] = []
@@ -1407,7 +1528,7 @@ def _dep_from_mapping(
     if item.get("zip") is not None or item.get("file") is not None:
         raise ValueError(
             f"{section}.{dep_id}: zip:/file: removed — archive stem is the "
-            f"block id (downloads/DOGMA/{dep_id}.zip|.7z|…)"
+            f"block id (DOGMA/downloads/{dep_id}.zip|.7z|…)"
         )
     if item.get("label") is not None:
         raise ValueError(
@@ -1511,10 +1632,10 @@ def _dep_from_mapping(
     source = str(item.get("source") or "").strip().lower()
     auto_dl = (url_download or "").strip()
     if path:
-        # Local package zip (mo2/packages/<path_key>.zip) — not a downloads/DOGMA manual.
+        # Local package zip (mo2/packages/<path_key>.zip) — not a DOGMA/downloads manual.
         source = source or "auto"
     elif (has_links and not auto_dl) or url_kofi or url_patreon:
-        # Paid / Discord / page-only → user places the archive under downloads/DOGMA/.
+        # Paid / Discord / page-only → user places the archive under DOGMA/downloads/.
         source = "user"
     elif not source:
         source = "auto"
@@ -1531,8 +1652,8 @@ def _dep_from_mapping(
             f"for a checkbox, or stage:+options: (no url) for a radio group"
         )
 
-    # default: [mcm roots…] — wipe/reset those MCM namespaces to script defs.
-    # (legacy resets: still accepted). Boolean default: is rejected.
+    # default: [mcm roots…] — wipe/reset those MCM namespaces to script defs
+    # (alias for mcm_reset:). Boolean default: is rejected.
     default_raw = item.get("default")
     if isinstance(default_raw, bool) or (
         isinstance(default_raw, str)
@@ -1548,24 +1669,79 @@ def _dep_from_mapping(
         resets = _parse_str_list(
             default_raw, field=f"{section}.{dep_id}.default"
         )
-        if effects["resets"]:
-            resets = _unique_strs([*resets, *effects["resets"]])
+        if effects["mcm_reset"]:
+            resets = _unique_strs([*resets, *effects["mcm_reset"]])
     else:
-        resets = effects["resets"]
+        resets = effects["mcm_reset"]
+    if item.get("wipes") is not None:
+        raise ValueError(
+            f"{section}.{dep_id}: wipes: removed — use mcm_reset: with MCM "
+            f"key roots (e.g. [ssfx_module]), not mod names"
+        )
+    if item.get("resets") is not None:
+        raise ValueError(
+            f"{section}.{dep_id}: resets: renamed — use mcm_reset:"
+        )
+    if item.get("mcm") is not None:
+        raise ValueError(
+            f"{section}.{dep_id}: mcm: renamed — use mcm_set:"
+        )
 
     # Unified requires: (legacy depends/dependencies still accepted).
     # Radio parents in the list become wizard_requires after materialize.
+    # Entries may be pack ids or {Pack Id: {select: […]}} overlays.
     req_parts: list[str] = []
+    requires_select: dict[str, list[str]] = {}
     for req_key in ("requires", "requires_exclusive", "depends", "dependencies"):
         if item.get(req_key) is None:
             continue
-        req_parts.extend(
-            _parse_str_list(
-                item.get(req_key),
-                field=f"{section}.{dep_id}.{req_key}",
-            )
+        ids, overlays = _parse_requires_entries(
+            item.get(req_key),
+            section=f"{section}.{dep_id}.{req_key}",
         )
+        req_parts.extend(ids)
+        for pack_id, names in overlays.items():
+            if pack_id in requires_select:
+                requires_select[pack_id] = _unique_strs(
+                    [*requires_select[pack_id], *names]
+                )
+            else:
+                requires_select[pack_id] = list(names)
     requires_list = _unique_strs(req_parts)
+    file_regex = str(
+        item.get("file_regex") or item.get("asset_regex") or ""
+    ).strip()
+    if file_regex:
+        try:
+            _compile_file_regex(file_regex)
+        except ValueError as exc:
+            raise ValueError(f"{section}.{dep_id}.file_regex: {exc}") from exc
+    skip_raw = item.get("skip_mo2")
+    if skip_raw is None:
+        skip_mo2 = False
+    elif isinstance(skip_raw, bool):
+        skip_mo2 = skip_raw
+    else:
+        skip_mo2 = str(skip_raw).strip().lower() in ("1", "true", "yes", "on")
+    if skip_mo2 and path:
+        raise ValueError(
+            f"{section}.{dep_id}: skip_mo2: cannot be used with path: "
+            f"(path mods already install into DOGMA)"
+        )
+    overwrite = _parse_overwrite(
+        item.get("overwrite"), field=f"{section}.{dep_id}.overwrite"
+    )
+    if item.get("strip") is not None:
+        raise ValueError(
+            f"{section}.{dep_id}: strip: removed — use deletes: with <Mod>/… "
+            f"after overwrite: (e.g. deletes: [<Mod>/bin])"
+        )
+    backup = _parse_str_list(
+        item.get("backup"), field=f"{section}.{dep_id}.backup"
+    )
+    select = _parse_str_list(
+        item.get("select"), field=f"{section}.{dep_id}.select"
+    )
     return Dependency(
         id=dep_id,
         tier=tier,
@@ -1584,13 +1760,16 @@ def _dep_from_mapping(
         desc=str(item.get("desc") or item.get("description") or "").strip(),
         disables=disables,
         enables=enables,
-        resets=resets,
-        mcm=effects["mcm"],
+        mcm_reset=resets,
+        mcm_set=effects["mcm_set"],
         settings=effects["settings"],
         moves=effects["moves"],
+        overwrite=overwrite,
+        backup=backup,
         deletes=effects["deletes"],
         console=effects["console"],
         requires=requires_list,
+        requires_select=requires_select,
         exclusive=str(item.get("exclusive") or "").strip(),
         group=str(item.get("group") or "").strip(),
         choice=str(item.get("choice") or "").strip(),
@@ -1599,7 +1778,10 @@ def _dep_from_mapping(
             item.get("options"), field=f"{section}.{dep_id}.options"
         ),
         after_unpack=str(item.get("after_unpack") or "").strip(),
+        select=select,
         feature=feature,
+        file_regex=file_regex,
+        skip_mo2=skip_mo2,
         wizard_requires=[],
     )
 
@@ -1701,8 +1883,8 @@ def _parse_features_block(feat_block: dict) -> dict[str, FeatureMeta]:
             continue
         is_common = key.lower() == "common"
         empty_fx = {
-            "resets": [],
-            "mcm": {},
+            "mcm_reset": [],
+            "mcm_set": {},
             "settings": {},
             "moves": [],
             "deletes": [],
@@ -1801,8 +1983,8 @@ def _parse_features_block(feat_block: dict) -> dict[str, FeatureMeta]:
             title="" if is_common else title,
             disables=disables,
             enables=enables,
-            resets=fx["resets"],
-            mcm=fx["mcm"],
+            mcm_reset=fx["mcm_reset"],
+            mcm_set=fx["mcm_set"],
             settings=fx["settings"],
             moves=fx["moves"],
             deletes=fx["deletes"],
@@ -1935,8 +2117,8 @@ def features_from_deps(suggested: list[Dependency]) -> dict[str, FeatureMeta]:
                 title=dep.id,
                 disables=list(dep.disables),
                 enables=list(dep.enables),
-                resets=list(dep.resets),
-                mcm=dict(dep.mcm),
+                mcm_reset=list(dep.mcm_reset),
+                mcm_set=dict(dep.mcm_set),
                 settings=dict(dep.settings),
                 moves=list(dep.moves),
                 deletes=list(dep.deletes),
@@ -1954,8 +2136,8 @@ def features_from_deps(suggested: list[Dependency]) -> dict[str, FeatureMeta]:
             title=dep.id,
             disables=list(dep.disables),
             enables=list(dep.enables),
-            resets=list(dep.resets),
-            mcm=dict(dep.mcm),
+            mcm_reset=list(dep.mcm_reset),
+            mcm_set=dict(dep.mcm_set),
             settings=dict(dep.settings),
             moves=list(dep.moves),
             deletes=list(dep.deletes),
@@ -2183,15 +2365,173 @@ def wizard_section_order(
 
 
 def _parse_requires(raw, *, section: str) -> list[str]:
-    """Parse requires: list of mods.yml radio-group pack ids."""
-    if not raw:
+    """Parse requires: list of pack ids (strings only; no select overlays)."""
+    ids, overlays = _parse_requires_entries(raw, section=section)
+    if overlays:
+        raise ValueError(
+            f"{section}: requires: select: overlays are not allowed on "
+            f"installer_options requires: — put them on catalog pack requires:"
+        )
+    return ids
+
+
+def require_target_leaves(
+    pack_by_id: dict[str, Dependency],
+    req_id: str,
+    *,
+    exclusive_picks: dict[str, str] | None = None,
+    preview_fallback_all_options: bool = False,
+) -> list[str]:
+    """Resolve a requires: id to concrete install leaves (radio → pick)."""
+    pack = pack_by_id.get(str(req_id).strip())
+    if pack is None:
         return []
+    picks = exclusive_picks or {}
+    if is_wizard_radio_parent(pack):
+        choice = str(picks.get(pack.id) or "").strip()
+        if choice:
+            return expand_pack_composition(pack_by_id, choice)
+        if preview_fallback_all_options:
+            out: list[str] = [pack.id]
+            for opt_id in pack.options:
+                out.extend(expand_pack_composition(pack_by_id, opt_id))
+            return _unique_strs(out)
+        return []
+    return expand_pack_composition(pack_by_id, pack.id)
+
+
+def merge_requires_select_overlays(
+    by_id: dict[str, Dependency],
+    *,
+    parents: Iterable[Dependency],
+    pack_by_id: dict[str, Dependency],
+    exclusive_picks: dict[str, str] | None = None,
+    preview_fallback_all_options: bool = False,
+) -> dict[str, Dependency]:
+    """Merge parent ``requires: {Pack: {select: […]}}`` onto target deps (additive)."""
+    select_from_parents: dict[str, list[str]] = {}
+    for parent in parents:
+        if not parent.requires_select:
+            continue
+        for req_id, names in parent.requires_select.items():
+            if not names:
+                continue
+            targets = require_target_leaves(
+                pack_by_id,
+                req_id,
+                exclusive_picks=exclusive_picks,
+                preview_fallback_all_options=preview_fallback_all_options,
+            )
+            for leaf in targets:
+                select_from_parents.setdefault(leaf, []).extend(names)
+
+    out = dict(by_id)
+    for leaf_id, extra in select_from_parents.items():
+        if leaf_id not in out:
+            # Preview may want select on a radio parent not in the install list.
+            src = pack_by_id.get(leaf_id)
+            if src is None:
+                continue
+            out[leaf_id] = replace(src, select=_unique_strs([*src.select, *extra]))
+            continue
+        copy = out[leaf_id]
+        merged = _unique_strs([*copy.select, *extra])
+        if merged != copy.select:
+            out[leaf_id] = replace(copy, select=merged)
+    return out
+
+
+def apply_requires_select_for_preview(
+    deps: list[Dependency],
+    pack_by_id: dict[str, Dependency],
+    *,
+    exclusive_picks: dict[str, str] | None = None,
+) -> list[Dependency]:
+    """Copy deps with parent requires_select overlays applied (wizard tips)."""
+    by_id = {d.id: replace(d) for d in deps}
+    # Parents include every dep in the preview graph (and catalog originals).
+    parents = list(deps)
+    for d in deps:
+        src = pack_by_id.get(d.id)
+        if src is not None and src is not d:
+            parents.append(src)
+    merged = merge_requires_select_overlays(
+        by_id,
+        parents=parents,
+        pack_by_id=pack_by_id,
+        exclusive_picks=exclusive_picks,
+        preview_fallback_all_options=True,
+    )
+    return [merged.get(d.id, d) for d in deps]
+
+
+def _parse_requires_entries(
+    raw, *, section: str
+) -> tuple[list[str], dict[str, list[str]]]:
+    """Parse ``requires:`` as pack ids, optionally with per-dep ``select:``.
+
+    Supported shapes::
+
+        requires:
+          - Pack A
+          - Pack B:
+              select:
+                - 00 - MAIN FILE
+                - 01 - AO
+    """
+    if raw is None:
+        return [], {}
     if isinstance(raw, dict):
         raise ValueError(
-            f"{section}: requires: must be a list of mods.yml pack "
-            f"ids (not a mapping) — e.g. [Screen Space Shaders]"
+            f"{section}: requires: must be a list of pack ids "
+            f"(optionally mapping id → {{select: […]}}), not a bare mapping"
         )
-    return _parse_str_list(raw, field=f"{section}.requires")
+    if not isinstance(raw, list):
+        raise ValueError(f"{section}: requires: must be a list")
+
+    ids: list[str] = []
+    selects: dict[str, list[str]] = {}
+    for i, item in enumerate(raw):
+        field = f"{section}[{i}]"
+        if isinstance(item, str):
+            s = item.strip()
+            if s and not s.startswith("#"):
+                ids.append(s)
+            continue
+        if not isinstance(item, dict):
+            raise ValueError(
+                f"{field}: expected pack id string or "
+                f"{{Pack Id: {{select: […]}}}}"
+            )
+        if len(item) != 1:
+            raise ValueError(
+                f"{field}: mapping entry must have exactly one pack id key"
+            )
+        (pack_key, meta), = item.items()
+        pack_id = str(pack_key).strip()
+        if not pack_id:
+            raise ValueError(f"{field}: empty pack id")
+        ids.append(pack_id)
+        if meta is None:
+            continue
+        if not isinstance(meta, dict):
+            raise ValueError(
+                f"{field}.{pack_id}: must be a mapping with select: (or null)"
+            )
+        unknown = sorted(str(k) for k in meta if str(k) != "select")
+        if unknown:
+            raise ValueError(
+                f"{field}.{pack_id}: unknown keys {unknown} — only select: "
+                f"is allowed under a requires: entry"
+            )
+        if "select" not in meta:
+            continue
+        names = _parse_str_list(meta.get("select"), field=f"{field}.{pack_id}.select")
+        if pack_id in selects:
+            selects[pack_id] = _unique_strs([*selects[pack_id], *names])
+        else:
+            selects[pack_id] = names
+    return _unique_strs(ids), selects
 
 
 def _unique_strs(items: Iterable[str]) -> list[str]:
@@ -2341,16 +2681,22 @@ def is_pure_composition_pack(dep: Dependency) -> bool:
             or dep.deletes
             or dep.moves
             or dep.console
-            or dep.mcm
+            or dep.mcm_set
             or dep.settings
-            or dep.resets
+            or dep.mcm_reset
             or dep.enables
+            or dep.select
+            or dep.overwrite
+            or dep.backup
+            or dep.requires_select
         )
     )
 
 
 def pack_receives_mo2_folder(dep: Dependency) -> bool:
     """True when this pack may be extracted to ``mods/<manifest name>``."""
+    if dep.skip_mo2:
+        return False
     if is_wizard_radio_parent(dep) or is_pure_composition_pack(dep):
         return False
     return bool(dep.has_remote_links() or dep.path or dep.source == "user")
@@ -2644,16 +2990,16 @@ def _merge_effect_fields(*deps: Dependency) -> dict:
         enables.extend(d.enables)
         deletes.extend(d.deletes)
         console.extend(d.console)
-        resets.extend(d.resets)
-        mcm_pairs.extend(d.mcm.items())
+        resets.extend(d.mcm_reset)
+        mcm_pairs.extend(d.mcm_set.items())
         settings_pairs.extend(d.settings.items())
     return {
         "disables": _unique_strs(disables),
         "enables": _unique_strs(enables),
         "deletes": _unique_strs(deletes),
         "console": _unique_strs(console),
-        "resets": _unique_strs(resets),
-        "mcm": _unique_kv(mcm_pairs),
+        "mcm_reset": _unique_strs(resets),
+        "mcm_set": _unique_kv(mcm_pairs),
         "settings": _unique_kv(settings_pairs),
     }
 
@@ -2698,14 +3044,14 @@ def uniquify_dep_effects(deps: list[Dependency]) -> list[Dependency]:
             seen_console.add(k)
             console.append(x)
         resets: list[str] = []
-        for x in dep.resets:
+        for x in dep.mcm_reset:
             k = x.lower()
             if k in seen_resets:
                 continue
             seen_resets.add(k)
             resets.append(x)
         mcm: dict[str, str] = {}
-        for k, v in dep.mcm.items():
+        for k, v in dep.mcm_set.items():
             kl = k.lower()
             if kl in seen_mcm:
                 continue
@@ -2722,6 +3068,7 @@ def uniquify_dep_effects(deps: list[Dependency]) -> list[Dependency]:
         # Deduping moves globally would prevent later packs from overwriting
         # the same destination with their own content.
         moves: list[tuple[str, str]] = _unique_moves(dep.moves)
+        overwrite: list[tuple[str, str]] = _unique_moves(dep.overwrite)
         out.append(
             replace(
                 dep,
@@ -2729,36 +3076,92 @@ def uniquify_dep_effects(deps: list[Dependency]) -> list[Dependency]:
                 enables=enables,
                 deletes=deletes,
                 console=console,
-                resets=resets,
-                mcm=mcm,
+                mcm_reset=resets,
+                mcm_set=mcm,
                 settings=settings,
                 moves=moves,
+                overwrite=overwrite,
             )
         )
     return out
 
 
 def required_exclusive_groups(
-    data: ManifestData, option_ids: Iterable[str]
+    data: ManifestData,
+    option_ids: Iterable[str],
+    *,
+    exclusive_picks: dict[str, str] | None = None,
 ) -> dict[str, str]:
-    """Radio groups required by selected options → preferred default choice id."""
+    """Radio groups required by selected options / radio picks → default choice ids.
+
+    Walks checkbox ``requires:`` and transitively walks ``requires:`` of current
+    radio picks (and their composition leaves), so e.g. Melancholy Weathers
+    forces a Screen Space Shaders pick.
+    """
     opt_by_id = {o.id: o for o in data.installer_options}
     pack_by_id = data.suggested_by_id()
     out: dict[str, str] = {}
+
+    def _note_require(pack_id: str) -> None:
+        pack = pack_by_id.get(str(pack_id).strip())
+        if not pack:
+            return
+        if is_wizard_radio_parent(pack):
+            preferred = pack.options[0] if pack.options else ""
+            if preferred:
+                out.setdefault(pack.id, preferred)
+        elif pack.exclusive:
+            out.setdefault(pack.exclusive, pack.id)
+
     for oid in option_ids:
         opt = opt_by_id.get(str(oid).strip())
         if not opt:
             continue
         for pack_id in opt.requires:
-            pack = pack_by_id.get(pack_id)
-            if not pack:
+            _note_require(pack_id)
+        for mid in opt.mods:
+            pack = pack_by_id.get(mid)
+            if pack is None:
                 continue
-            if is_wizard_radio_parent(pack):
-                # Preferred default = first radio choice
-                preferred = pack.options[0]
-                out.setdefault(pack.id, preferred)
-            elif pack.exclusive:
-                out.setdefault(pack.exclusive, pack_id)
+            for rid in pack.requires:
+                _note_require(rid)
+
+    # Transitively collect radio groups required by current / defaulted picks.
+    picks = {
+        str(g).strip(): str(p or "").strip()
+        for g, p in (exclusive_picks or {}).items()
+        if str(g).strip()
+    }
+    seen_choices: set[str] = set()
+    changed = True
+    while changed:
+        changed = False
+        working = dict(picks)
+        for group, default_pack in out.items():
+            if not working.get(group):
+                working[group] = default_pack
+        for _group, choice_id in list(working.items()):
+            if not choice_id or choice_id in seen_choices:
+                continue
+            seen_choices.add(choice_id)
+            choice = pack_by_id.get(choice_id)
+            if choice is None:
+                continue
+            before = len(out)
+            for rid in choice.requires:
+                _note_require(rid)
+            try:
+                leaf_ids = expand_pack_composition(pack_by_id, choice_id)
+            except ValueError:
+                leaf_ids = [choice_id]
+            for leaf_id in leaf_ids:
+                leaf = pack_by_id.get(leaf_id)
+                if leaf is None:
+                    continue
+                for rid in leaf.requires:
+                    _note_require(rid)
+            if len(out) > before:
+                changed = True
     return out
 
 
@@ -2803,7 +3206,18 @@ def resolve_install_order(
         if str(g).strip()
     }
 
-    required = required_exclusive_groups(data, selected)
+    # Fill required radio picks from checkboxes + transitive pack requires
+    # (e.g. Melancholy Weathers → Screen Space Shaders).
+    required = required_exclusive_groups(
+        data, selected, exclusive_picks=picks
+    )
+    for group, default_pack in required.items():
+        if not picks.get(group):
+            picks[group] = default_pack
+    # Recompute once picks grew (nested radio requires).
+    required = required_exclusive_groups(
+        data, selected, exclusive_picks=picks
+    )
     for group, default_pack in required.items():
         if not picks.get(group):
             picks[group] = default_pack
@@ -2880,7 +3294,9 @@ def resolve_install_order(
         if choice.id not in leaf_ids:
             extras.append(choice)
         if extras:
-            pick_overlays.setdefault(leaf_ids[0], []).extend(extras)
+            # Fold onto every leaf (v23+v24 composition must get parent deletes/etc.)
+            for leaf_id in leaf_ids:
+                pick_overlays.setdefault(leaf_id, []).extend(extras)
 
     # Collapse legacy exclusive: among seeds sharing a tag
     preferred_pack = {g: p for g, p in picks.items() if p}
@@ -2969,9 +3385,9 @@ def resolve_install_order(
                 or pack.deletes
                 or pack.moves
                 or pack.console
-                or pack.mcm
+                or pack.mcm_set
                 or pack.settings
-                or pack.resets
+                or pack.mcm_reset
             ):
                 continue
         install_ids.append(mid)
@@ -2992,12 +3408,44 @@ def resolve_install_order(
             enables=merged["enables"],
             deletes=merged["deletes"],
             console=merged["console"],
-            resets=merged["resets"],
-            mcm=merged["mcm"],
+            mcm_reset=merged["mcm_reset"],
+            mcm_set=merged["mcm_set"],
             settings=merged["settings"],
-            # keep this leaf's moves (extras rarely have moves)
+            # keep this leaf's moves/overwrite (extras rarely have them)
             moves=_unique_moves([*base.moves, *(m for e in extras for m in e.moves)]),
+            overwrite=_unique_moves(
+                [*base.overwrite, *(m for e in extras for m in e.overwrite)]
+            ),
+            select=_unique_strs(
+                [*base.select, *(n for e in extras for n in e.select)]
+            ),
         )
+
+    # Parent requires: {Pack: {select: […]}} → merge onto required leaves
+    # (additive across all parents in the install set).
+    by_id_copies = merge_requires_select_overlays(
+        by_id_copies,
+        parents=[pack_by_id[mid] for mid in ordered if mid in pack_by_id],
+        pack_by_id=pack_by_id,
+        exclusive_picks=picks,
+    )
+
+    # Dependencies of packs in this install always reinstall (select overlays,
+    # and so parent-driven package choices are never skipped as "already present").
+    required_by_someone: set[str] = set()
+    for mid in install_ids:
+        pack = pack_by_id[mid]
+        for rid in pack.requires:
+            for leaf in require_target_leaves(
+                pack_by_id, rid, exclusive_picks=picks
+            ):
+                if leaf in by_id_copies:
+                    required_by_someone.add(leaf)
+
+    for leaf_id, copy in list(by_id_copies.items()):
+        force = leaf_id in required_by_someone or bool(copy.select)
+        if force != copy.force_reinstall:
+            by_id_copies[leaf_id] = replace(copy, force_reinstall=force)
 
     return uniquify_dep_effects([by_id_copies[mid] for mid in install_ids])
 
@@ -3170,19 +3618,19 @@ def _manifest_from_parts(
     defaults: list[InitSetting] = []
     for feat in features.values():
         defaults.extend(
-            _overrides_to_settings(feat.path, mcm=feat.mcm, settings=feat.settings)
+            _overrides_to_settings(feat.path, mcm=feat.mcm_set, settings=feat.settings)
         )
         if feat.requires:
             for dep in stub.feature_pack_deps(feat.path):
                 defaults.extend(
                     _overrides_to_settings(
-                        f"downloads:{dep.id}", mcm=dep.mcm, settings=dep.settings
+                        f"downloads:{dep.id}", mcm=dep.mcm_set, settings=dep.settings
                     )
                 )
     for dep in suggested:
         defaults.extend(
             _overrides_to_settings(
-                f"suggested:{dep.id}", mcm=dep.mcm, settings=dep.settings
+                f"suggested:{dep.id}", mcm=dep.mcm_set, settings=dep.settings
             )
         )
     return ManifestData(
@@ -3203,7 +3651,7 @@ def _features_map_from_file(raw: dict, *, source: str) -> dict:
         )
     if raw.get("defaults") is not None:
         raise ValueError(
-            f"{source}: top-level 'defaults:' removed — put resets: / mcm: / "
+            f"{source}: top-level 'defaults:' removed — put mcm_reset: / mcm_set: / "
             "settings: on each feature / download / suggestion"
         )
     if "suggested" in raw or "suggestions" in raw:
@@ -3369,7 +3817,7 @@ def load_manifest(path: Path) -> ManifestData:
         )
     if raw.get("defaults"):
         raise ValueError(
-            "manifest.yml top-level 'defaults:' removed — put resets: / mcm: / "
+            "manifest.yml top-level 'defaults:' removed — put mcm_reset: / mcm_set: / "
             "settings: under each feature / downloads.<id> / suggestion"
         )
     feat_block = raw.get("features") or {}
@@ -3662,7 +4110,7 @@ def mods_matching_patterns(
 
 
 def preview_tweak_packs(deps: Iterable[Dependency]) -> list[str]:
-    """Pack ids that apply MCM / settings / resets (config tweaks)."""
+    """Pack ids that apply MCM / settings / mcm_reset (config tweaks)."""
     return [d.id for d in deps if d.has_axr_effects()]
 
 
@@ -4642,8 +5090,23 @@ def _github_tag_sort_key(tag: str) -> tuple:
     return (nums, tag.lower())
 
 
-def _pick_github_release_asset(assets: list[dict]) -> dict | None:
-    """Prefer archive assets; skip pdb dumps."""
+def _compile_file_regex(pattern: str) -> re.Pattern[str]:
+    """Compile a manifest ``file_regex:`` (case-insensitive)."""
+    raw = (pattern or "").strip()
+    if not raw:
+        raise ValueError("empty file_regex")
+    try:
+        return re.compile(raw, re.IGNORECASE)
+    except re.error as exc:
+        raise ValueError(f"invalid file_regex {raw!r}: {exc}") from exc
+
+
+def _pick_github_release_asset(
+    assets: list[dict],
+    *,
+    file_regex: str = "",
+) -> dict | None:
+    """Prefer archive assets; skip pdb dumps. Optional ``file_regex`` filters by name."""
     archives: list[dict] = []
     for raw in assets:
         name = str(raw.get("name") or "")
@@ -4653,9 +5116,22 @@ def _pick_github_release_asset(assets: list[dict]) -> dict | None:
     if not archives:
         return None
 
+    if file_regex:
+        rx = _compile_file_regex(file_regex)
+        matched = [a for a in archives if rx.search(str(a.get("name") or ""))]
+        if not matched:
+            names = ", ".join(str(a.get("name") or "") for a in archives[:12])
+            more = "" if len(archives) <= 12 else f" (+{len(archives) - 12} more)"
+            raise ValueError(
+                f"no GitHub release asset matches file_regex {file_regex!r}; "
+                f"candidates: {names}{more}"
+            )
+        archives = matched
+
     def _score(asset: dict) -> tuple:
         name = str(asset.get("name") or "").lower()
         pdb = 1 if "pdb" in name else 0
+        # Without an explicit file_regex, prefer the non-TEST release zip.
         test = 1 if "mt-test" in name or "test" in name.split("_") else 0
         return (pdb, test, len(name), name)
 
@@ -4667,10 +5143,12 @@ def resolve_github(
     *,
     cache_dir: Path | None = None,
     force: bool = False,
+    file_regex: str = "",
 ) -> GithubInfo:
     """Resolve a GitHub repo/releases URL to a downloadable archive.
 
     Order: latest release asset (API) → latest git tag archive → default-branch source.
+    When ``file_regex`` is set, the release asset name must match (search, ignore case).
     """
     raw = (url or "").strip()
     if not raw or not is_github_url(raw):
@@ -4678,7 +5156,8 @@ def resolve_github(
 
     owner, repo = parse_github_repo(raw)
     page = normalize_github_repo_url(raw)
-    cache_key = page.lower()
+    regex = (file_regex or "").strip()
+    cache_key = f"{page.lower()}|{regex.lower()}" if regex else page.lower()
     cache = _github_cache_load(cache_dir)
     cached = cache.get(cache_key) if not force else None
     if isinstance(cached, dict) and cached.get("fetched_at") and cached.get("download_url"):
@@ -4711,12 +5190,18 @@ def resolve_github(
         assets = release.get("assets") if isinstance(release.get("assets"), list) else []
         asset = _pick_github_release_asset(
             [a for a in assets if isinstance(a, dict)],
+            file_regex=regex,
         )
         if asset and asset.get("browser_download_url"):
             info.kind = "release"
             info.download_url = str(asset["browser_download_url"])
             info.filename = str(asset.get("name") or "")
         elif tag:
+            if regex:
+                raise ValueError(
+                    f"GitHub release {tag!r} has no assets matching "
+                    f"file_regex {regex!r}"
+                )
             info.kind = "release"
             info.download_url = (
                 f"https://github.com/{owner}/{repo}/archive/refs/tags/{tag}.zip"
@@ -4985,6 +5470,12 @@ def dep_is_satisfied(
         enabled = {n for f, n in list_modlist_entries(modlist) if f == "+"}
         return ("DOGMA" in enabled or any("DOGMA" in n.upper() for n in enabled), folders)
 
+    # Engine / direct-to-game installs (no MO2 mod folder).
+    if dep.skip_mo2:
+        if not skip_mo2_is_applied(mo2_root, dep):
+            return False, []
+        return True, []
+
     folders: list[str] = []
     # Manual (no url:): only our managed install counts — never catalog / lookalikes.
     # Effects (disables / enables / mcm / settings / console) stay off until it exists.
@@ -5144,18 +5635,24 @@ def format_preview_path(mo2_root: Path | None, raw: str) -> str:
     return expand_path_placeholders(s, mo2_root)
 
 
-# deletes: path roots — <Anomaly> = gamePath, <GAMMA> = MO2 instance
+# deletes / path roots — <Anomaly>, <GAMMA>, <Mod> (installed pack folder)
 _PATH_ROOT_RE = re.compile(
-    r"^(?:<(anomaly|gamma)>|(anomaly|gamma|game|mo2):)[/\\]?(.*)$",
+    r"^(?:<(anomaly|gamma|mod)>|(anomaly|gamma|game|mo2|mod):)[/\\]?(.*)$",
     re.IGNORECASE,
 )
 
 
-def resolve_managed_path(mo2_root: Path, raw: str) -> Path | None:
-    """Resolve a path that may be rooted at Anomaly (game) or GAMMA (MO2).
+def resolve_managed_path(
+    mo2_root: Path,
+    raw: str,
+    *,
+    mod_dir: Path | None = None,
+) -> Path | None:
+    """Resolve a path that may be rooted at Anomaly, GAMMA, or the installed mod.
 
     - ``<Anomaly>/rel`` / ``anomaly:rel`` / ``game:rel`` → ModOrganizer gamePath
     - ``<GAMMA>/rel`` / ``gamma:rel`` / ``mo2:rel`` → MO2 instance root
+    - ``<Mod>/rel`` / ``mod:rel`` → current pack's installed folder (needs mod_dir)
     - Absolute path → as-is
     - Bare relative path → under Anomaly (game) by default
     """
@@ -5168,6 +5665,10 @@ def resolve_managed_path(mo2_root: Path, raw: str) -> Path | None:
         rel = (m.group(3) or "").lstrip("/\\")
         if root_name in ("anomaly", "game"):
             base = game_dir(mo2_root)
+        elif root_name == "mod":
+            if mod_dir is None:
+                return None
+            base = Path(mod_dir)
         else:  # gamma | mo2
             base = mo2_root
         return (base / rel).resolve() if rel else base.resolve()
@@ -5189,19 +5690,41 @@ def _path_under(child: Path, parent: Path) -> bool:
         return False
 
 
-def run_dep_deletes(mo2_root: Path, dep: Dependency, *, dry_run: bool) -> list[str]:
-    """Delete files/dirs listed on the dep (after install). Returns deleted paths."""
+def run_dep_deletes(
+    mo2_root: Path,
+    dep: Dependency,
+    *,
+    dry_run: bool,
+    mod_dir: Path | None = None,
+) -> list[str]:
+    """Delete files/dirs listed on the dep (after overwrite/moves). Returns paths."""
     if not dep.deletes:
         return []
     game = game_dir(mo2_root)
     deleted: list[str] = []
     for raw in dep.deletes:
-        target = resolve_managed_path(mo2_root, raw)
+        target = resolve_managed_path(mo2_root, raw, mod_dir=mod_dir)
         if target is None:
+            m = _PATH_ROOT_RE.match((raw or "").strip().replace("\\", "/"))
+            if m and (m.group(1) or m.group(2) or "").lower() == "mod":
+                warn(f"  [{dep.id}] deletes skipped (<Mod> unknown): {raw}")
             continue
-        if not _path_under(target, game) and not _path_under(target, mo2_root):
-            warn(f"  [{dep.id}] deletes skipped (outside <Anomaly>/<GAMMA>): {raw}")
+        allowed = _path_under(target, game) or _path_under(target, mo2_root)
+        if mod_dir is not None:
+            allowed = allowed or _path_under(target, Path(mod_dir))
+        if not allowed:
+            warn(
+                f"  [{dep.id}] deletes skipped "
+                f"(outside <Anomaly>/<GAMMA>/<Mod>): {raw}"
+            )
             continue
+        if target.name.lower() == "meta.ini" and mod_dir is not None:
+            try:
+                if target.resolve() == (Path(mod_dir) / "meta.ini").resolve():
+                    warn(f"  [{dep.id}] deletes refused mod meta.ini")
+                    continue
+            except OSError:
+                pass
         if not target.exists():
             info(f"  [{dep.id}] deletes miss (already gone): {target}")
             continue
@@ -5270,6 +5793,180 @@ def run_dep_moves(
     return moved
 
 
+def merge_overwrite_copy(src: Path, dest_dir: Path) -> list[str]:
+    """Merge ``src`` into ``dest_dir`` like dragging onto a folder in Explorer.
+
+    Destination folder of the same name is merged; conflicting files are replaced
+    one-by-one (no wiping the whole destination tree). Returns copied file paths.
+    """
+    copied: list[str] = []
+    src = Path(src)
+    dest_dir = Path(dest_dir)
+    if not src.exists():
+        raise FileNotFoundError(str(src))
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    target = dest_dir / src.name
+    if src.is_file():
+        if target.exists() and target.is_dir():
+            raise IsADirectoryError(
+                f"cannot overwrite directory with file: {target}"
+            )
+        shutil.copy2(src, target)
+        copied.append(str(target))
+        return copied
+    if not src.is_dir():
+        return copied
+    target.mkdir(parents=True, exist_ok=True)
+    for child in src.iterdir():
+        copied.extend(merge_overwrite_copy(child, target))
+    return copied
+
+
+def _overwrite_src_paths(mod_dir: Path, src_rel: str) -> tuple[str, list[Path]]:
+    """Resolve an overwrite source key to concrete paths under ``mod_dir``.
+
+    Supports:
+      - ``bin`` / ``foo.dll`` — exact relative file or directory
+      - ``*.dll`` / ``MT/*.dll`` / ``**/*.dll`` — glob (relative to mod root)
+      - ``.`` / ``<Mod>`` — every top-level entry (except meta.ini)
+    """
+    rel = (src_rel or "").replace("\\", "/").strip()
+    base = Path(mod_dir)
+    if rel.lower() in (".", "<mod>"):
+        roots = [p for p in base.iterdir() if p.name.lower() != "meta.ini"]
+        return "<Mod>", roots
+    if any(ch in rel for ch in "*?["):
+        # Path.glob is relative to base; keep matches under the mod tree only.
+        roots = []
+        seen: set[str] = set()
+        for p in sorted(base.glob(rel)):
+            try:
+                p = p.resolve()
+                p.relative_to(base.resolve())
+            except (ValueError, OSError):
+                continue
+            key = str(p).lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            roots.append(p)
+        return rel, roots
+    return rel, [(base / rel).resolve()]
+
+
+def run_dep_overwrites(
+    mo2_root: Path,
+    dep: Dependency,
+    mod_dir: Path,
+    *,
+    dry_run: bool,
+) -> list[str]:
+    """Merge-copy archive paths into <Anomaly>/<GAMMA> (file-level overwrite).
+
+    ``bin: <Anomaly>`` ≈ drag ``bin`` onto the Anomaly folder (merges into
+    ``Anomaly/bin``). ``foo.dll: <Anomaly>`` copies that file into Anomaly.
+    ``\"*.dll\": <Anomaly>`` / ``\"MT/*.dll\": <Anomaly>`` glob-match files and
+    copy each the same way. ``<Mod>: <Anomaly>`` merges each top-level entry.
+    """
+    if not dep.overwrite:
+        return []
+    game = game_dir(mo2_root)
+    done: list[str] = []
+    for src_rel, dest_raw in dep.overwrite:
+        dest = resolve_managed_path(mo2_root, dest_raw)
+        if dest is None:
+            continue
+        if not _path_under(dest, game) and not _path_under(dest, mo2_root):
+            warn(
+                f"  [{dep.id}] overwrite skipped (outside <Anomaly>/<GAMMA>): "
+                f"{dest_raw}"
+            )
+            continue
+        label, roots = _overwrite_src_paths(mod_dir, src_rel)
+        roots = [p for p in roots if p.exists()]
+        if not roots:
+            # Expected when deletes: [<Mod>/…] removed the source after a prior apply.
+            rel_l = src_rel.replace("\\", "/").strip().lower()
+            deleted_from_mod = any(
+                d.replace("\\", "/").strip().lower()
+                in (f"<mod>/{rel_l}", f"mod:{rel_l}", f"<mod>/{label.lower()}")
+                or d.replace("\\", "/").strip().lower().endswith("/" + rel_l)
+                for d in dep.deletes
+            )
+            if deleted_from_mod:
+                info(
+                    f"  [{dep.id}] overwrite skip (removed by deletes): {label}"
+                )
+            else:
+                warn(
+                    f"  [{dep.id}] overwrite miss src: {label} (under {mod_dir})"
+                )
+            continue
+        info(
+            f"  [{dep.id}] overwrite {'(dry-run) ' if dry_run else ''}"
+            f"{label} -> {dest} ({len(roots)} item(s), merge/replace files)"
+        )
+        if dry_run:
+            for src in roots:
+                done.append(f"{src.name} -> {dest}")
+            continue
+        try:
+            dest.mkdir(parents=True, exist_ok=True)
+            for src in roots:
+                if not src.exists():
+                    continue
+                copied = merge_overwrite_copy(src, dest)
+                done.extend(copied)
+                info(f"    merged {src.name}: {len(copied)} file(s)")
+        except OSError as exc:
+            warn(f"  [{dep.id}] overwrite failed {label}: {exc}")
+    return done
+
+
+def skip_mo2_stamp_path(mo2_root: Path, dep: Dependency | str) -> Path:
+    dep_id = dep.id if isinstance(dep, Dependency) else str(dep)
+    safe = _safe_archive_stem(dep_id)
+    return dogma_once_root(mo2_root) / "skip_mo2" / safe
+
+
+def skip_mo2_is_applied(mo2_root: Path, dep: Dependency) -> bool:
+    return skip_mo2_stamp_path(mo2_root, dep).is_file()
+
+
+def write_skip_mo2_stamp(
+    mo2_root: Path,
+    dep: Dependency,
+    *,
+    archive: Path | None = None,
+    dry_run: bool = False,
+) -> None:
+    path = skip_mo2_stamp_path(mo2_root, dep)
+    info(f"  [{dep.id}] skip_mo2 stamp {'(dry-run) ' if dry_run else ''}{path}")
+    if dry_run:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [
+        f"id={dep.id}",
+        f"url={dep.url}",
+    ]
+    if archive is not None:
+        lines.append(f"archive={archive.name}")
+        stamp = archive_filename_date(archive)
+        if stamp:
+            lines.append(f"date={stamp}")
+    write_text_lines(path, lines)
+
+
+def read_skip_mo2_stamp_date(mo2_root: Path, dep: Dependency) -> str:
+    path = skip_mo2_stamp_path(mo2_root, dep)
+    if not path.is_file():
+        return ""
+    for line in read_text_lines(path):
+        if line.lower().startswith("date="):
+            return line.split("=", 1)[1].strip()
+    return ""
+
+
 def dogma_once_root(mo2_root: Path) -> Path:
     return game_dir(mo2_root) / "appdata" / "dogma_once"
 
@@ -5327,6 +6024,123 @@ def queue_console_cmds(mo2_root: Path, dep: Dependency, *, dry_run: bool) -> boo
 queue_console_once = queue_console_cmds
 
 
+def newest_backup_dir(mo2_root: Path) -> Path | None:
+    """Newest ``<MO2>/DOGMA/backups/<stamp>`` (lexicographic stamp, newest first)."""
+    root = dogma_data_dir(mo2_root) / "backups"
+    if not root.is_dir():
+        return None
+    dirs = [p for p in root.iterdir() if p.is_dir()]
+    if not dirs:
+        return None
+    return sorted(dirs, key=lambda p: p.name, reverse=True)[0]
+
+
+def _backup_misc_stem(mo2_root: Path, src: Path) -> str:
+    """Stable archive stem for a backup path (used to dedupe in misc/)."""
+    src = src.resolve()
+    try:
+        rel = src.relative_to(game_dir(mo2_root).resolve())
+        prefix = "anomaly"
+    except ValueError:
+        try:
+            rel = src.relative_to(Path(mo2_root).resolve())
+            prefix = "gamma"
+        except ValueError:
+            return "other__" + _safe_archive_stem(src.name)
+    parts = [prefix, *[ _safe_archive_stem(p) for p in rel.parts ]]
+    return "__".join(p for p in parts if p)
+
+
+def _archive_path_with_7z_or_zip(
+    mo2_root: Path,
+    src: Path,
+    dest_stem: Path,
+) -> Path:
+    """Create ``dest_stem.7z`` (or ``.zip``) containing ``src``. Returns archive path."""
+    seven = find_7z(mo2_root)
+    if seven:
+        dest = dest_stem.with_suffix(".7z")
+        if dest.exists():
+            dest.unlink()
+        proc = subprocess.run(
+            [str(seven), "a", "-y", "-t7z", str(dest), str(src)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if proc.returncode != 0 or not dest.is_file():
+            err = (proc.stderr or proc.stdout or "").strip()
+            raise RuntimeError(f"7z archive failed for {src}: {err}")
+        return dest
+
+    dest = dest_stem.with_suffix(".zip")
+    if dest.exists():
+        dest.unlink()
+    src = src.resolve()
+    with zipfile.ZipFile(dest, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        if src.is_file():
+            zf.write(src, arcname=src.name)
+        else:
+            for dirpath, _dirnames, filenames in os.walk(src):
+                for name in filenames:
+                    fp = Path(dirpath) / name
+                    zf.write(fp, arcname=str(fp.relative_to(src.parent)).replace("\\", "/"))
+    return dest
+
+
+def run_dep_backups(
+    mo2_root: Path,
+    dep: Dependency,
+    mod_dir: Path | None,
+    *,
+    dry_run: bool,
+) -> list[str]:
+    """Zip ``backup:`` paths into newest DOGMA/backups/<stamp>/misc/ (skip if present)."""
+    if not dep.backup:
+        return []
+    newest = newest_backup_dir(mo2_root)
+    if newest is None:
+        warn(
+            f"  [{dep.id}] backup skipped — no folder under "
+            f"{dogma_data_dir(mo2_root) / 'backups'}"
+        )
+        return []
+    misc = newest / "misc"
+    done: list[str] = []
+    for raw in dep.backup:
+        src = resolve_managed_path(mo2_root, raw, mod_dir=mod_dir)
+        if src is None or not src.exists():
+            warn(f"  [{dep.id}] backup miss: {raw}")
+            continue
+        stem = _backup_misc_stem(mo2_root, src)
+        existing = None
+        for ext in (".7z", ".zip"):
+            cand = misc / f"{stem}{ext}"
+            if cand.is_file():
+                existing = cand
+                break
+        if existing is not None:
+            info(f"  [{dep.id}] backup skip (already in misc): {existing.name}")
+            done.append(str(existing))
+            continue
+        dest_stem = misc / stem
+        info(
+            f"  [{dep.id}] backup {'(dry-run) ' if dry_run else ''}"
+            f"{raw} -> {newest.name}/misc/{stem}.7z|.zip"
+        )
+        if dry_run:
+            done.append(str(dest_stem) + ".*")
+            continue
+        try:
+            misc.mkdir(parents=True, exist_ok=True)
+            archive = _archive_path_with_7z_or_zip(mo2_root, src, dest_stem)
+            ok(f"  [{dep.id}] backup saved: {archive.relative_to(newest)}")
+            done.append(str(archive))
+        except (OSError, RuntimeError) as exc:
+            warn(f"  [{dep.id}] backup failed {raw}: {exc}")
+    return done
+
+
 def run_dep_side_effects(
     mo2_root: Path,
     dep: Dependency,
@@ -5334,63 +6148,102 @@ def run_dep_side_effects(
     *,
     dry_run: bool,
 ) -> None:
-    """Re-apply moves/deletes/console every installer run (idempotent)."""
+    """Apply backup → moves → overwrite → deletes → console.
+
+    ``backup:`` zips into newest DOGMA/backups/<stamp>/misc/ first (skip if
+    already archived). ``deletes: [<Mod>/bin]`` runs after overwrite.
+    """
+    if dep.backup:
+        run_dep_backups(mo2_root, dep, mod_dir, dry_run=dry_run)
     if mod_dir is not None and dep.moves:
         run_dep_moves(mo2_root, dep, mod_dir, dry_run=dry_run)
-    run_dep_deletes(mo2_root, dep, dry_run=dry_run)
+    if mod_dir is not None and dep.overwrite:
+        run_dep_overwrites(mo2_root, dep, mod_dir, dry_run=dry_run)
+    run_dep_deletes(mo2_root, dep, dry_run=dry_run, mod_dir=mod_dir)
     queue_console_cmds(mo2_root, dep, dry_run=dry_run)
 
 
-def _maybe_restore_dogma_downloads_sidecars(mo2_root: Path) -> None:
-    """If archives were briefly moved to ``DOGMA-downloads/``, put them back."""
+def _migrate_file_into_downloads(src: Path, dest_dir: Path) -> bool:
+    """Move one archive/meta into ``dest_dir`` if missing. Returns True if moved."""
+    if not src.is_file():
+        return False
+    low = src.name.lower()
+    if low.endswith(".partial") or low.endswith(".downloading"):
+        return False
+    if low in ("archives.ini", ARCHIVES_INI_NAME.lower()):
+        return False
+    target = dest_dir / src.name
+    if target.exists():
+        return False
+    try:
+        _move_download_file(src, target)
+        return True
+    except OSError as exc:
+        warn(f"could not migrate {src.name} -> DOGMA/downloads: {exc}")
+        return False
+
+
+def _maybe_migrate_dogma_downloads(mo2_root: Path, dest: Path) -> None:
+    """Pull archives from legacy ``downloads/DOGMA`` and ``DOGMA-downloads``."""
     root = Path(mo2_root)
     key = str(root.resolve()).lower()
     with _legacy_migrate_lock:
         if key in _legacy_migrated_roots:
             return
         _legacy_migrated_roots.add(key)
-        side = root / "DOGMA-downloads"
-        if not side.is_dir():
-            return
-        dest = root / "downloads" / "DOGMA"
-        dest.mkdir(parents=True, exist_ok=True)
+        legacy_dirs = (
+            root / "downloads" / "DOGMA",
+            root / "DOGMA-downloads",
+        )
         moved = 0
-        for p in side.iterdir():
-            if not p.is_file():
+        for side in legacy_dirs:
+            if not side.is_dir() or side.resolve() == dest.resolve():
                 continue
-            low = p.name.lower()
-            if low.endswith(".partial") or low.endswith(".downloading"):
-                continue
-            target = dest / p.name
-            if target.exists():
-                continue
-            try:
-                _move_download_file(p, target)
-                moved += 1
-            except OSError as exc:
-                warn(f"could not restore {p.name} -> downloads/DOGMA: {exc}")
+            for p in side.iterdir():
+                if _migrate_file_into_downloads(p, dest):
+                    moved += 1
         if moved:
-            ok(f"restored {moved} file(s) DOGMA-downloads -> downloads/DOGMA")
+            ok(f"migrated {moved} file(s) -> DOGMA/downloads")
 
 
 def downloads_dir(mo2_root: Path) -> Path:
-    """DOGMA archive store: ``<MO2>/downloads/DOGMA`` (direct HTTP, not MO2 CLI)."""
-    d = Path(mo2_root) / "downloads" / "DOGMA"
+    """DOGMA archive store: ``<MO2>/DOGMA/downloads`` (direct HTTP, not MO2 CLI)."""
+    d = dogma_data_dir(mo2_root) / "downloads"
     d.mkdir(parents=True, exist_ok=True)
-    _maybe_restore_dogma_downloads_sidecars(mo2_root)
+    _maybe_migrate_dogma_downloads(mo2_root, d)
     return d
 
 
-ARCHIVES_INI_NAME = "archives.ini"
+ARCHIVES_INI_NAME = "mod_archive_map.ini"
 ARCHIVES_INI_SECTION = "archives"
 
 
 def archives_ini_path(mo2_root: Path) -> Path:
-    return downloads_dir(mo2_root) / ARCHIVES_INI_NAME
+    """``<MO2>/DOGMA/mod_archive_map.ini`` (migrates legacy ``archives.ini``)."""
+    dest = dogma_data_dir(mo2_root) / ARCHIVES_INI_NAME
+    if dest.is_file():
+        return dest
+    # Older names/locations: downloads/archives.ini, downloads/DOGMA/, DOGMA-downloads/.
+    candidates = (
+        dogma_data_dir(mo2_root) / "downloads" / "archives.ini",
+        Path(mo2_root) / "downloads" / "DOGMA" / "archives.ini",
+        Path(mo2_root) / "DOGMA-downloads" / "archives.ini",
+    )
+    for legacy in candidates:
+        if not legacy.is_file():
+            continue
+        try:
+            legacy.replace(dest)
+            ok(f"migrated archive map -> DOGMA/{ARCHIVES_INI_NAME}")
+            return dest
+        except OSError as exc:
+            warn(f"could not migrate {legacy} -> {dest}: {exc}")
+            return legacy
+    return dest
 
 
 def load_archive_map(mo2_root: Path) -> dict[str, str]:
-    """pack id → basename under downloads/DOGMA/ (from archives.ini)."""
+    """pack id → basename under DOGMA/downloads/ (from mod_archive_map.ini)."""
     path = archives_ini_path(mo2_root)
     if not path.is_file():
         return {}
@@ -5415,7 +6268,7 @@ def load_archive_map(mo2_root: Path) -> dict[str, str]:
 
 
 def save_archive_map(mo2_root: Path, mapping: dict[str, str]) -> Path:
-    """Write pack id → basename map to downloads/DOGMA/archives.ini."""
+    """Write pack id → basename map to DOGMA/mod_archive_map.ini."""
     path = archives_ini_path(mo2_root)
     path.parent.mkdir(parents=True, exist_ok=True)
     cfg = configparser.ConfigParser()
@@ -5441,7 +6294,7 @@ def set_archive_map_entry(mo2_root: Path, dep_id: str, basename: str) -> dict[st
             return mapping
         mapping[kid] = name
         path = save_archive_map(mo2_root, mapping)
-    info(f"  archives.ini: [{kid}]={name} ({path})")
+    info(f"  mod_archive_map.ini: [{kid}]={name} ({path})")
     return mapping
 
 
@@ -5456,7 +6309,7 @@ def clear_archive_map_entry(mo2_root: Path, dep_id: str) -> dict[str, str]:
 
 
 def mapped_archive_path(mo2_root: Path, dep: Dependency | str) -> Path | None:
-    """Resolved downloads/DOGMA file from archives.ini, if present on disk."""
+    """Resolved DOGMA/downloads file from mod_archive_map.ini, if present on disk."""
     dep_id = dep.id if isinstance(dep, Dependency) else str(dep)
     name = load_archive_map(mo2_root).get(str(dep_id).strip(), "").strip()
     if not name:
@@ -5468,7 +6321,7 @@ def mapped_archive_path(mo2_root: Path, dep: Dependency | str) -> Path | None:
 
 
 def prune_missing_archive_map(mo2_root: Path) -> list[str]:
-    """Drop archives.ini entries whose files are missing; return removed pack ids."""
+    """Drop mod_archive_map.ini entries whose files are missing; return removed pack ids."""
     with _archive_map_lock:
         mapping = load_archive_map(mo2_root)
         if not mapping:
@@ -5485,12 +6338,12 @@ def prune_missing_archive_map(mo2_root: Path) -> list[str]:
         if removed:
             save_archive_map(mo2_root, keep)
     for kid in removed:
-        warn(f"archives.ini: removed missing link [{kid}]")
+        warn(f"mod_archive_map.ini: removed missing link [{kid}]")
     return removed
 
 
 def sync_archive_links(mo2_root: Path) -> list[str]:
-    """Reconcile archives.ini with downloads/DOGMA on disk.
+    """Reconcile mod_archive_map.ini with DOGMA/downloads on disk.
 
     Drops map entries whose files are gone. Canonical ``<id>[ date].ext``
     files remain discoverable via ``list_dep_archives`` / filename scan.
@@ -5550,12 +6403,14 @@ def archive_leaves_for_pack(
     pack_by_id: dict[str, Dependency],
     pack_id: str,
     *,
+    exclusive_picks: dict[str, str] | None = None,
     _stack: set[str] | None = None,
 ) -> list[Dependency]:
     """Packs that need an archive field when installing this pack/choice.
 
     Walks ``requires:`` so multi-zip bundles (e.g. AlifePlus + xlibs + …) each
     get a field. Pure composition nodes (no url) only contribute their requires.
+    Radio parents expand to the current pick when given, otherwise every option.
     """
     stack = _stack if _stack is not None else set()
     pid = str(pack_id).strip()
@@ -5568,7 +6423,34 @@ def archive_leaves_for_pack(
     stack.add(pid)
     out: list[Dependency] = []
     seen: set[str] = set()
+    picks = exclusive_picks or {}
+
+    def _add_leaf(leaf: Dependency) -> None:
+        if leaf.id in seen:
+            return
+        seen.add(leaf.id)
+        out.append(leaf)
+
     try:
+        if is_wizard_radio_parent(pack):
+            choice = str(picks.get(pack.id) or "").strip()
+            option_ids = (
+                [choice]
+                if choice
+                else list(pack.options)
+            )
+            for opt_id in option_ids:
+                if not opt_id:
+                    continue
+                for leaf in archive_leaves_for_pack(
+                    pack_by_id,
+                    opt_id,
+                    exclusive_picks=picks,
+                    _stack=stack,
+                ):
+                    _add_leaf(leaf)
+            return out
+
         # Composition-only radio choice: fields come from requires only.
         composition = (
             bool(pack.requires)
@@ -5577,17 +6459,16 @@ def archive_leaves_for_pack(
             and not is_wizard_radio_parent(pack)
         )
         if not composition and pack_needs_archive(pack):
-            out.append(pack)
-            seen.add(pack.id)
+            _add_leaf(pack)
 
         for dep_id in pack.requires:
             for leaf in archive_leaves_for_pack(
-                pack_by_id, dep_id, _stack=stack
+                pack_by_id,
+                dep_id,
+                exclusive_picks=picks,
+                _stack=stack,
             ):
-                if leaf.id in seen:
-                    continue
-                seen.add(leaf.id)
-                out.append(leaf)
+                _add_leaf(leaf)
     finally:
         stack.discard(pid)
     return out
@@ -5619,7 +6500,7 @@ def associate_archive(
     date: str = "",
     dry_run: bool = False,
 ) -> Path:
-    """Copy/rename an archive into downloads/DOGMA as ``<id>[ date].ext``."""
+    """Copy/rename an archive into DOGMA/downloads as ``<id>[ date].ext``."""
     src = Path(src_path)
     info(f"Associate archive: [{dep_id}] <- {src}")
     if not _is_archive_file(src):
@@ -5665,7 +6546,7 @@ def download_and_associate(
     dry_run: bool = False,
     on_progress: Callable[[int, int], None] | None = None,
 ) -> Path:
-    """Download (ModDB/GitHub) into downloads/DOGMA and write archives.ini entry.
+    """Download (ModDB/GitHub) into DOGMA/downloads and write mod_archive_map.ini entry.
 
     ``on_progress(bytes_done, bytes_total)`` — ``bytes_total`` may be 0 when unknown.
     """
@@ -5701,6 +6582,7 @@ def download_and_associate(
         github = resolve_github(
             download_url,
             cache_dir=tools,
+            file_regex=dep.file_regex,
         )
         download_url = github.download_url or download_url
         bits = [github.kind or "github"]
@@ -5803,17 +6685,26 @@ def preview_effect_sections(
     deletes: list[str] = []
     resets: list[str] = []
     moves: list[str] = []
+    overwrites: list[str] = []
+    backups: list[str] = []
+    select: list[str] = []
     mcm: list[str] = []
     settings: list[str] = []
     for d in dep_list:
         disables.extend(d.disables)
         enables.extend(d.enables)
         deletes.extend(format_preview_path(mo2_root, p) for p in d.deletes)
-        resets.extend(d.resets)
+        resets.extend(d.mcm_reset)
         moves.extend(
             f"{src} → {format_preview_path(mo2_root, dst)}" for src, dst in d.moves
         )
-        mcm.extend(f"{k}={v}" for k, v in d.mcm.items())
+        overwrites.extend(
+            f"{src} → {format_preview_path(mo2_root, dst)} (merge)"
+            for src, dst in d.overwrite
+        )
+        backups.extend(format_preview_path(mo2_root, p) for p in d.backup)
+        select.extend(d.select)
+        mcm.extend(f"{k}={v}" for k, v in d.mcm_set.items())
         settings.extend(f"{k}={v}" for k, v in d.settings.items())
 
     def uniq(items: list[str]) -> list[str]:
@@ -5824,10 +6715,13 @@ def preview_effect_sections(
         ("Disables", uniq(disables)),
         ("Enables", uniq(enables)),
         ("Deletes", uniq(deletes)),
-        ("Resets MCM", uniq(resets)),
+        ("Select", uniq(select)),
+        ("MCM reset", uniq(resets)),
         ("MCM", uniq(mcm)),
         ("Settings", uniq(settings)),
         ("Moves", uniq(moves)),
+        ("Overwrite", uniq(overwrites)),
+        ("Backup", uniq(backups)),
     ):
         if items:
             sections.append((label, items))
@@ -5853,7 +6747,7 @@ class LocalArchive:
 
 
 def list_dep_archives(mo2_root: Path, dep: Dependency) -> list[LocalArchive]:
-    """Archives in downloads/DOGMA for this catalog id (map + stem matches)."""
+    """Archives in DOGMA/downloads for this catalog id (map + stem matches)."""
     dld = downloads_dir(mo2_root)
     base = (dep.id or "").strip()
     if not base or not dld.is_dir():
@@ -5870,7 +6764,7 @@ def list_dep_archives(mo2_root: Path, dep: Dependency) -> list[LocalArchive]:
         seen.add(key)
         out.append(LocalArchive(path, pinned=pinned, date=date))
 
-    # archives.ini may point at any basename; date suffix enables version compare.
+    # mod_archive_map.ini may point at any basename; date suffix enables version compare.
     mapped = mapped_archive_path(mo2_root, dep)
     if mapped is not None:
         date = archive_filename_date(mapped)
@@ -5951,6 +6845,7 @@ def probe_dep_remote_date(
                 resolve_github(
                     download_url,
                     cache_dir=cache_dir,
+                    file_regex=dep.file_regex,
                 )
             )
     except Exception:
@@ -6045,7 +6940,7 @@ def claim_download_as_zip(
     file_id: str = "",
     source_url: str = "",
 ) -> Path | None:
-    """Move/rename a loose archive into downloads/DOGMA/<id>[ date]{ext}."""
+    """Move/rename a loose archive into DOGMA/downloads/<id>[ date]{ext}."""
     with _downloads_claim_lock:
         return _claim_download_as_zip_unlocked(
             mo2_root,
@@ -6213,7 +7108,7 @@ def _claim_download_as_zip_unlocked(
     dest = dld / f"{stem}{suffix}"
     if src.resolve() == dest.resolve():
         return dest
-    info(f"  [{dep.id}] claim download -> downloads/DOGMA/{dest.name}")
+    info(f"  [{dep.id}] claim download -> DOGMA/downloads/{dest.name}")
     if dry_run:
         return dest
     if dest.exists() and dest.resolve() != src.resolve():
@@ -6394,7 +7289,7 @@ def ensure_dep_archive(
     github: GithubInfo | None = None,
     on_progress: Callable[[int, int], None] | None = None,
 ) -> tuple[Path | None, str]:
-    """Ensure downloads/DOGMA has the right archive; download if missing/stale.
+    """Ensure DOGMA/downloads has the right archive; download if missing/stale.
 
     Returns (archive_path, note) where note is pinned|current|downloaded|missing|…
     Undated <id>.* is pinned and never replaced.
@@ -6485,7 +7380,7 @@ def ensure_dep_archive(
         except OSError:
             pass
 
-    # Fallback: claim a loose file already in downloads/DOGMA or MO2 downloads/.
+    # Fallback: claim a loose file already in DOGMA/downloads or MO2 downloads/.
     claimed = claim_download_as_zip(
         mo2_root,
         dep,
@@ -6591,10 +7486,10 @@ def preview_feature_effect_sections(
                 ],
             )
         )
-    if meta.resets:
-        sections.append(("Resets MCM", list(meta.resets)))
-    if meta.mcm:
-        sections.append(("MCM", [f"{k}={v}" for k, v in meta.mcm.items()]))
+    if meta.mcm_reset:
+        sections.append(("MCM reset", list(meta.mcm_reset)))
+    if meta.mcm_set:
+        sections.append(("MCM set", [f"{k}={v}" for k, v in meta.mcm_set.items()]))
     if meta.settings:
         sections.append(
             ("Settings", [f"{k}={v}" for k, v in meta.settings.items()])
@@ -6602,20 +7497,116 @@ def preview_feature_effect_sections(
     return sections
 
 
-def normalize_extracted_mod(dest: Path) -> None:
-    """If archive had a single top-level folder, hoist its contents."""
+def normalize_extracted_mod(
+    dest: Path, *, select: list[str] | None = None
+) -> None:
+    """If archive had a single top-level folder, hoist its contents.
+
+    When ``select`` is set, do not hoist a folder that is itself a selected
+    package name (BAIN/FOMOD). Do hoist a wrapper whose children include
+    selected package folders.
+    """
     kids = [p for p in dest.iterdir() if p.name not in ("meta.ini",)]
-    if len(kids) == 1 and kids[0].is_dir():
-        inner = kids[0]
-        for item in inner.iterdir():
-            target = dest / item.name
-            if target.exists():
-                if target.is_dir():
-                    shutil.rmtree(target)
-                else:
-                    target.unlink()
-            shutil.move(str(item), str(target))
-        inner.rmdir()
+    if not (len(kids) == 1 and kids[0].is_dir()):
+        return
+    inner = kids[0]
+    if select:
+        sel = {s.lower() for s in select if str(s).strip()}
+        if inner.name.lower() in sel:
+            return
+        inner_dirs = {p.name.lower() for p in inner.iterdir() if p.is_dir()}
+        if sel and not (sel & inner_dirs):
+            # Select packages not under the wrapper — leave layout alone.
+            return
+    for item in inner.iterdir():
+        target = dest / item.name
+        if target.exists():
+            if target.is_dir():
+                shutil.rmtree(target)
+            else:
+                target.unlink()
+        shutil.move(str(item), str(target))
+    inner.rmdir()
+
+
+def _resolve_select_package(mod_dir: Path, name: str) -> Path | None:
+    """Match a top-level package folder by exact name, then case-insensitive."""
+    want = (name or "").strip()
+    if not want:
+        return None
+    exact = mod_dir / want
+    if exact.is_dir():
+        return exact
+    low = want.lower()
+    for child in mod_dir.iterdir():
+        if child.name == "meta.ini":
+            continue
+        if child.is_dir() and child.name.lower() == low:
+            return child
+    return None
+
+
+def apply_select_packages(mod_dir: Path, names: list[str], *, pack_id: str = "") -> None:
+    """BAIN/FOMOD mimic: merge contents of listed top-level folders into mod root.
+
+    Unlisted packages (and loose top-level files like package.txt / fomod/) are
+    discarded. Later entries overwrite earlier ones on path conflicts.
+    """
+    if not names:
+        return
+    mod_dir = Path(mod_dir)
+    if not mod_dir.is_dir():
+        raise FileNotFoundError(f"select: mod dir missing: {mod_dir}")
+
+    available = sorted(
+        p.name
+        for p in mod_dir.iterdir()
+        if p.is_dir() and p.name not in ("meta.ini",)
+    )
+    resolved: list[Path] = []
+    missing: list[str] = []
+    for name in names:
+        hit = _resolve_select_package(mod_dir, name)
+        if hit is None:
+            missing.append(name)
+        else:
+            resolved.append(hit)
+    if missing:
+        label = f"[{pack_id}] " if pack_id else ""
+        raise ValueError(
+            f"{label}select: package(s) not found: {missing}; "
+            f"available top-level dirs: {available}"
+        )
+
+    staging = Path(tempfile.mkdtemp(prefix="dogma_select_"))
+    try:
+        for src in resolved:
+            for child in src.iterdir():
+                merge_overwrite_copy(child, staging)
+        # Preserve meta.ini if already stamped; replace everything else.
+        keep_meta = mod_dir / "meta.ini"
+        meta_tmp: Path | None = None
+        if keep_meta.is_file():
+            meta_tmp = staging / "meta.ini"
+            shutil.copy2(keep_meta, meta_tmp)
+        for child in list(mod_dir.iterdir()):
+            if child.is_dir():
+                shutil.rmtree(child)
+            else:
+                child.unlink()
+        for child in staging.iterdir():
+            shutil.move(str(child), str(mod_dir / child.name))
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
+
+def run_select_packages(dep: Dependency, mod_dir: Path) -> None:
+    if not dep.select:
+        return
+    info(f"  [{dep.id}] select: {len(dep.select)} package(s)")
+    for name in dep.select:
+        info(f"    + {name}")
+    apply_select_packages(mod_dir, dep.select, pack_id=dep.id)
 
 
 def run_after_unpack(mo2_root: Path, dep: Dependency, mod_dir: Path) -> None:
@@ -6673,8 +7664,97 @@ def _process_path_dependency(
 
     info(f"  [{dep.id}] path package: {zpath.name} -> DOGMA")
     extract_archive(zpath, dest)
+    normalize_extracted_mod(dest, select=dep.select)
+    run_select_packages(dep, dest)
+    run_after_unpack(mo2_root, dep, dest)
     run_dep_side_effects(mo2_root, dep, dest, dry_run=False)
     ok(f"  [{dep.id}] path mod installed into DOGMA")
+    return "installed"
+
+
+def _process_skip_mo2_dependency(
+    mo2_root: Path,
+    modlist: Path,
+    dep: Dependency,
+    *,
+    mode: str,
+    dry_run: bool,
+    download_url: str,
+    moddb: ModdbInfo | None,
+    github: GithubInfo | None,
+) -> str:
+    """Download + merge into game dir; never create an MO2 mods/ entry."""
+    # Drop accidental prior MO2 installs of this pack.
+    for name in find_managed_folders(mo2_root, dep):
+        info(f"  [{dep.id}] skip_mo2: wipe leftover MO2 folder {name}")
+        wipe_managed_mod(mo2_root, modlist, name, dry_run)
+
+    archive, arch_note = ensure_dep_archive(
+        mo2_root,
+        dep,
+        download_url=download_url,
+        moddb=moddb,
+        github=github,
+        dry_run=dry_run,
+    )
+    remote_date = moddb_date_stamp(moddb) or github_date_stamp(github)
+    applied = skip_mo2_is_applied(mo2_root, dep)
+    applied_date = read_skip_mo2_stamp_date(mo2_root, dep)
+    newer = bool(
+        arch_note in ("downloaded", "would-download")
+        or (
+            remote_date
+            and applied_date
+            and remote_date > applied_date
+        )
+        or (remote_date and applied and not applied_date)
+    )
+    need = mode == "reinstall" or not applied or newer
+
+    if arch_note == "manual-missing":
+        if applied:
+            info(f"  [{dep.id}] skip_mo2 already applied (manual archive missing)")
+            return "present"
+        hint = f"DOGMA/downloads/{dep_zip_stem(dep)}.zip"
+        info(f"  [{dep.id}] skip (manual, not installed): place {hint}")
+        return "manual-missing"
+
+    if not need:
+        info(f"  [{dep.id}] skip_mo2 already applied")
+        return "present"
+
+    if not archive:
+        raise FileNotFoundError(
+            f"[{dep.id}] archive not found "
+            f"(expected DOGMA/downloads/{dep_zip_stem(dep, date=remote_date)}.zip|.7z|…). "
+            f"URL={download_url}"
+        )
+
+    info(
+        f"  [{dep.id}] skip_mo2 apply -> game merge from {archive.name} "
+        f"(no MO2 mod folder)"
+    )
+    if dry_run:
+        if dep.select:
+            info(f"  [{dep.id}] would select {len(dep.select)} package(s)")
+            for name in dep.select:
+                info(f"    + {name}")
+        # Same order as a real apply: backup → overwrite → deletes → console.
+        run_dep_side_effects(mo2_root, dep, None, dry_run=True)
+        write_skip_mo2_stamp(mo2_root, dep, archive=archive, dry_run=True)
+        return "would-install"
+
+    tmp = Path(tempfile.mkdtemp(prefix="dogma_skip_mo2_"))
+    try:
+        extract_archive(archive, tmp)
+        normalize_extracted_mod(tmp, select=dep.select)
+        run_select_packages(dep, tmp)
+        run_after_unpack(mo2_root, dep, tmp)
+        run_dep_side_effects(mo2_root, dep, tmp, dry_run=False)
+        write_skip_mo2_stamp(mo2_root, dep, archive=archive, dry_run=False)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    ok(f"  [{dep.id}] skip_mo2 applied (merged into game dir)")
     return "installed"
 
 
@@ -6687,6 +7767,9 @@ def process_dependency(
     dry_run: bool,
 ) -> str:
     """mode: reinstall | ensure. Returns status string."""
+    if dep.force_reinstall and mode != "reinstall":
+        info(f"  [{dep.id}] force reinstall (required dependency / select)")
+        mode = "reinstall"
     # Radio parents (options:) and composition nodes never own an MO2 folder —
     # only their concrete option leaves (e.g. Screen Space Shaders v23) install.
     if is_wizard_radio_parent(dep):
@@ -6736,6 +7819,7 @@ def process_dependency(
             github = resolve_github(
                 dep.url,
                 cache_dir=tools,
+                file_regex=dep.file_regex,
             )
             download_url = github.download_url or dep.url
             bits = [github.kind or "github"]
@@ -6750,27 +7834,41 @@ def process_dependency(
         except (RuntimeError, ValueError, OSError) as exc:
             warn(f"  [{dep.id}] GitHub resolve failed ({exc}); using manifest URL")
 
+    if dep.skip_mo2:
+        return _process_skip_mo2_dependency(
+            mo2_root,
+            modlist,
+            dep,
+            mode=mode,
+            dry_run=dry_run,
+            download_url=download_url or "",
+            moddb=moddb,
+            github=github,
+        )
+
     ok_present, folders = dep_is_satisfied(mo2_root, dep, moddb=moddb)
     catalog = find_catalog_folders_for_urls(mo2_root, dep_url_candidates(dep, moddb))
 
-    if catalog:
+    # Catalog short-circuit cannot apply select / force_reinstall (e.g. Melancholy
+    # package picks for Screen Space Shaders). Install a managed folder instead.
+    if catalog and not (dep.select or dep.force_reinstall):
         # Never wipe catalog — enable only
         enabled = enable_mods_in_modlist(modlist, catalog, dry_run)
         msg = f"catalog enable {catalog}" + (f" (newly: {enabled})" if enabled else " (already on)")
         info(f"  [{dep.id}] {msg}")
         run_dep_side_effects(mo2_root, dep, None, dry_run=dry_run)
         return "catalog"
+    if catalog and (dep.select or dep.force_reinstall):
+        info(
+            f"  [{dep.id}] catalog match {catalog} — installing managed "
+            f"(select/force_reinstall)"
+        )
 
     managed = find_managed_folders(mo2_root, dep)
     canonical = managed_mod_folder_name(dep)
-    if mode == "reinstall":
-        for name in managed:
-            info(f"  [{dep.id}] wipe managed: {name}")
-            wipe_managed_mod(mo2_root, modlist, name, dry_run)
-        managed = []
-        ok_present = False
 
-    # Keep / refresh archive first (pinned undated never replaced; dated may update)
+    # Resolve archive before any wipe so force_reinstall cannot destroy a mod
+    # when the archive is still missing (manual / Ko-fi).
     archive, arch_note = ensure_dep_archive(
         mo2_root,
         dep,
@@ -6810,13 +7908,21 @@ def process_dependency(
             info(f"  [{dep.id}] already present (manual): {folders}")
             run_dep_side_effects(mo2_root, dep, None, dry_run=dry_run)
             return "present"
-        hint = f"downloads/DOGMA/{dep_zip_stem(dep)}.zip"
+        hint = f"DOGMA/downloads/{dep_zip_stem(dep)}.zip"
         howto = dep.howto or (
             f"no url: (manual) — place {hint} or install yourself; "
             f"disables/enables skipped until then"
         )
         info(f"  [{dep.id}] skip (manual, not installed): {howto}")
         return "manual-missing"
+
+    # Wipe only once we know an archive is available.
+    if mode == "reinstall":
+        for name in managed:
+            info(f"  [{dep.id}] wipe managed: {name}")
+            wipe_managed_mod(mo2_root, modlist, name, dry_run)
+        managed = []
+        ok_present = False
 
     has_canonical = any(n.lower() == canonical.lower() for n in managed)
     need_install = mode == "reinstall" or not managed or not has_canonical
@@ -6844,7 +7950,7 @@ def process_dependency(
     if not archive:
         raise FileNotFoundError(
             f"[{dep.id}] archive not found "
-            f"(expected downloads/DOGMA/{dep_zip_stem(dep, date=remote_date)}.zip|.7z|…). "
+            f"(expected DOGMA/downloads/{dep_zip_stem(dep, date=remote_date)}.zip|.7z|…). "
             f"URL={download_url}"
         )
 
@@ -6858,12 +7964,17 @@ def process_dependency(
         _wipe_managed("replace before install")
     info(f"  [{dep.id}] install -> {folder_name} from {archive.name}")
     if dry_run:
+        if dep.select:
+            info(f"  [{dep.id}] would select {len(dep.select)} package(s)")
+            for name in dep.select:
+                info(f"    + {name}")
         run_dep_side_effects(mo2_root, dep, dest, dry_run=True)
         return "would-install"
     if dest.exists():
         shutil.rmtree(dest)
     extract_archive(archive, dest)
-    normalize_extracted_mod(dest)
+    normalize_extracted_mod(dest, select=dep.select)
+    run_select_packages(dep, dest)
     write_meta_url(dest, managed_stamp_for(dep))
     info(f"  [{dep.id}] meta stamp written")
     insert_mod_under_separator(modlist, folder_name, dry_run=False)
@@ -6932,9 +8043,7 @@ def build_report(
     profile: str = "",
     deps: list[Dependency] | None = None,
 ) -> Path:
-    tools = mo2_tools_dir(mo2_root)
-    tools.mkdir(parents=True, exist_ok=True)
-    report_path = report_log_path(tools)
+    report_path = report_log_path(mo2_root)
     report_path.parent.mkdir(parents=True, exist_ok=True)
     lines: list[str] = []
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -7081,7 +8190,7 @@ def build_report(
                     )
                     if st == "missing":
                         want = dep_zip_stem(dep, date=stamp) + ".*"
-                        W(f'mod "{dep.id}" archive missing (want downloads/DOGMA/{want})')
+                        W(f'mod "{dep.id}" archive missing (want DOGMA/downloads/{want})')
                     elif st == "stale":
                         W(
                             f'mod "{dep.id}" archive stale: have '
@@ -7115,7 +8224,7 @@ def build_report(
     lines.append("")
     lines.append(f"Summary: {warns} WARN, {oks} OK")
     report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    append_action_log(tools, f"report written -> {report_path} ({warns} WARN, {oks} OK)")
+    append_action_log(mo2_root, f"report written -> {report_path} ({warns} WARN, {oks} OK)")
     return report_path
 
 

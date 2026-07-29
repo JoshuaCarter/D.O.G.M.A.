@@ -339,12 +339,32 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
 
 def cmd_preinstall_backup(args: argparse.Namespace) -> int:
-    """MO2-style modlist Create Backup before Setup/Reset changes the list."""
+    """Config backup (MCM + user.ltx + modlist) before Setup/Reset changes."""
+    import dogma_backup as bak
+
     mo2, _cfg = cfg_paths(args)
-    lib.create_preinstall_modlist_backup(
-        mo2, args.profile, dry_run=args.dry_run
+    code, dest = bak.run_backup(
+        mo2,
+        bak.BackupComponents.config_only(),
+        profile=args.profile,
+        dry_run=args.dry_run,
     )
-    return 0
+    if code == 0 and dest is not None:
+        # Stash path for install/reset failure rollback.
+        setattr(args, "_dogma_safety_backup", dest)
+    return code
+
+
+def cmd_backup(args: argparse.Namespace) -> int:
+    import dogma_backup as bak
+
+    return bak.run_backup_cli(args)
+
+
+def cmd_restore(args: argparse.Namespace) -> int:
+    import dogma_backup as bak
+
+    return bak.run_restore_cli(args)
 
 
 def cmd_reset_base(args: argparse.Namespace) -> int:
@@ -381,7 +401,7 @@ def cmd_reset_base(args: argparse.Namespace) -> int:
     else:
         lib.warn("G.A.M.M.A. MCM values mod not found — skipped axr restore")
 
-    lib.append_action_log(lib.mo2_tools_dir(mo2), "reset-base complete")
+    lib.append_action_log(mo2, "reset-base complete")
     return 0
 
 
@@ -425,6 +445,27 @@ def cmd_update(args: argparse.Namespace) -> int:
     return 0
 
 
+def _rollback_safety_backup(args: argparse.Namespace) -> None:
+    """On Setup/Reset failure, restore MCM + user.ltx + modlist from safety backup."""
+    import dogma_backup as bak
+
+    dest = getattr(args, "_dogma_safety_backup", None)
+    if dest is None:
+        return
+    lib.warn(f"Install failed — restoring config from safety backup:\n  {dest}")
+    code = bak.run_restore(
+        lib.resolve_mo2_root(args.mo2_root),
+        Path(dest),
+        bak.BackupComponents.config_only(),
+        profile=args.profile,
+        dry_run=bool(args.dry_run),
+    )
+    if code:
+        lib.err("Automatic restore of safety backup failed — restore manually via DOGMA Restore.")
+    else:
+        lib.ok("Safety backup restored (MCM, user.ltx, modlist).")
+
+
 def cmd_reset(args: argparse.Namespace) -> int:
     """FRESH_INSTALL modlist + MCM, then reinstall pipeline (no wizard)."""
     code = cmd_setup(args)
@@ -441,6 +482,7 @@ def cmd_reset(args: argparse.Namespace) -> int:
     ):
         code = step()
         if code:
+            _rollback_safety_backup(args)
             return code
     lib.ok("reset pipeline done")
     return 0
@@ -477,6 +519,7 @@ def cmd_install(args: argparse.Namespace) -> int:
     ):
         code = step()
         if code:
+            _rollback_safety_backup(args)
             return code
     lib.ok("install pipeline done")
     return 0
@@ -505,7 +548,7 @@ def build_parser() -> argparse.ArgumentParser:
     common.add_argument(
         "--mo2-root",
         default="",
-        help="MO2 instance root (default: cwd / C:\\GAMMA)",
+        help="MO2 instance root (default: cwd, MO2_ROOT, or detect from install)",
     )
     common.add_argument("--config-dir", default="", help="Override config dir")
     common.add_argument("--profile", default="", help="MO2 profile name")
@@ -618,37 +661,83 @@ def build_parser() -> argparse.ArgumentParser:
 
     b = sub.add_parser(
         "preinstall-backup",
-        help="MO2 Create Backup of modlist (DOGMA Pre Install Backup N)",
+        help="Config backup before Setup/Reset (MCM, user.ltx, modlist)",
         parents=[common],
     )
     b.set_defaults(func=cmd_preinstall_backup)
+
+    bak_p = sub.add_parser(
+        "backup",
+        help="DOGMA Backup → <MO2>\\DOGMA\\backups\\<timestamp>",
+        parents=[common],
+    )
+    bak_p.add_argument(
+        "--all",
+        action="store_true",
+        help="Include MCM, user.ltx, modlist, and mods archive",
+    )
+    bak_p.add_argument("--mcm", action="store_true", help="Include MCM diff")
+    bak_p.add_argument("--no-mcm", action="store_true")
+    bak_p.add_argument("--user-ltx", dest="user_ltx", action="store_true")
+    bak_p.add_argument("--no-user-ltx", dest="no_user_ltx", action="store_true")
+    bak_p.add_argument("--modlist", action="store_true")
+    bak_p.add_argument("--no-modlist", action="store_true")
+    bak_p.add_argument("--mods", action="store_true", help="Include mods/ 7z archive")
+    bak_p.add_argument("--no-mods", action="store_true")
+    bak_p.set_defaults(func=cmd_backup)
+
+    rst_p = sub.add_parser(
+        "restore",
+        help="DOGMA Restore from backups",
+        parents=[common],
+    )
+    rst_p.add_argument(
+        "--backup",
+        default="",
+        help="Backup folder name or full path under backups",
+    )
+    rst_p.add_argument("--all", action="store_true", help="Restore every component present")
+    rst_p.add_argument("--mcm", action="store_true")
+    rst_p.add_argument("--no-mcm", action="store_true")
+    rst_p.add_argument("--user-ltx", dest="user_ltx", action="store_true")
+    rst_p.add_argument("--no-user-ltx", dest="no_user_ltx", action="store_true")
+    rst_p.add_argument("--modlist", action="store_true")
+    rst_p.add_argument("--no-modlist", action="store_true")
+    rst_p.add_argument("--mods", action="store_true")
+    rst_p.add_argument("--no-mods", action="store_true")
+    rst_p.set_defaults(func=cmd_restore)
 
     x = sub.add_parser("sfx", help="Run sound prefetch builder", parents=[common])
     x.set_defaults(func=cmd_sfx)
 
     o = sub.add_parser(
         "optimize",
-        help="GC settings, SFX prefetch, mods backup, ALAO",
+        help="GC settings, SFX prefetch, full DOGMA Backup, ALAO",
         parents=[common],
     )
     o.add_argument(
         "backup_dir",
         nargs="?",
         default="",
-        help="Backup dir for mods.backup.7z (MO2 Arguments; default MO2 root)",
+        help="Ignored (legacy MO2 Arguments); backups use DOGMA\\backups",
     )
     o.add_argument(
         "--backup-dir",
         dest="backup_dir_flag",
         default="",
-        help="Override backup directory (scripting)",
+        help="Ignored (legacy)",
     )
     o.add_argument("--gc", dest="do_gc", action="store_true", help="Ensure Lua GC settings")
     o.add_argument("--no-gc", action="store_true", help="Skip GC step")
     o.add_argument("--sfx", dest="do_sfx", action="store_true", help="Run SFX prefetch")
     o.add_argument("--no-sfx", action="store_true", help="Skip SFX prefetch")
-    o.add_argument("--backup", dest="do_backup", action="store_true", help="Create mods.backup.7z")
-    o.add_argument("--no-backup", action="store_true", help="Skip mods backup")
+    o.add_argument(
+        "--backup",
+        dest="do_backup",
+        action="store_true",
+        help="Run full DOGMA Backup (all components)",
+    )
+    o.add_argument("--no-backup", action="store_true", help="Skip backup")
     o.add_argument("--alao", dest="do_alao", action="store_true", help="Run ALAO")
     o.add_argument("--no-alao", action="store_true", help="Skip ALAO")
     o.set_defaults(func=cmd_optimize)
@@ -697,14 +786,14 @@ def main(argv: list[str] | None = None) -> int:
         args = build_parser().parse_args(argv)
 
     mo2 = lib.resolve_mo2_root(getattr(args, "mo2_root", None) or None)
-    tools = lib.mo2_tools_dir(mo2)
     reset = bool(getattr(args, "log_reset", False))
     job = str(getattr(args, "cmd", "") or "")
-    log_path = lib.configure_logging(tools, reset=reset, job=job)
-    if job == "optimize":
-        # Quiet start — Optimizer prints its own prompts; keep detail in the log file only.
+    log_path = lib.configure_logging(mo2, reset=reset, job=job)
+    quiet_jobs = ("optimize", "backup", "restore")
+    if job in quiet_jobs:
+        # User-facing tools print their own prompts; keep detail in the log file.
         lib.append_action_log(
-            tools, f"optimize start mo2={mo2} log={log_path} argv={' '.join(argv)}"
+            mo2, f"{job} start mo2={mo2} log={log_path} argv={' '.join(argv)}"
         )
     else:
         lib.info("Installer launched")
@@ -720,14 +809,14 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:
         lib.log_exception(exc, where=job or "job")
         code = 1
-    if job == "optimize":
+    if job in quiet_jobs:
         if code != 0:
-            lib.info(f"Details saved to:\n  {lib.action_log_path(tools)}")
+            lib.info(f"Details saved to:\n  {lib.action_log_path(mo2)}")
     else:
         lib.info(f"exit={code} job={job}")
-        lib.info(f"Log -> {lib.action_log_path(tools)}")
-        if lib.report_log_path(tools).is_file():
-            lib.info(f"Report -> {lib.report_log_path(tools)}")
+        lib.info(f"Log -> {lib.action_log_path(mo2)}")
+        if lib.report_log_path(mo2).is_file():
+            lib.info(f"Report -> {lib.report_log_path(mo2)}")
     # Cancel (2): keep console hidden so the window goes away with the process.
     # Other errors: show console so :fail pause / messages are readable.
     if code not in (0, 2):

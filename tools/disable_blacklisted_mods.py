@@ -190,8 +190,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     p.add_argument(
         "--mo2-root",
-        default=r"C:\GAMMA" if sys.platform == "win32" else os.environ.get("MO2_ROOT", r"C:\GAMMA"),
-        help="MO2 / GAMMA install folder (contains ModOrganizer.exe). Default: C:\\GAMMA",
+        default=os.environ.get("MO2_ROOT", ""),
+        help="MO2 instance folder (or set MO2_ROOT). Default: CWD if ModOrganizer.exe present",
     )
     p.add_argument(
         "--disable",
@@ -244,7 +244,11 @@ def main(argv: list[str] | None = None) -> int:
         Path(args.initialize) if args.initialize else manifest
     )
     user_ltx = Path(args.user_ltx) if args.user_ltx else root / "config" / "user.ltx"
-    mo2_root = Path(args.mo2_root)
+    if args.mo2_root:
+        mo2_root = Path(args.mo2_root)
+    else:
+        cwd = Path.cwd()
+        mo2_root = cwd
 
     do_disable = not (args.initialize_only or args.keybinds_only or args.user_ltx_only)
     do_initialize = not (args.disable_only or args.keybinds_only or args.user_ltx_only)

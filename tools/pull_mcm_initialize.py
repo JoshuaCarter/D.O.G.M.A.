@@ -229,8 +229,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     p.add_argument(
         "--mo2-root",
-        default=r"C:\GAMMA" if sys.platform == "win32" else os.environ.get("MO2_ROOT", r"C:\GAMMA"),
-        help="MO2 / GAMMA install folder. Default: C:\\GAMMA",
+        default=os.environ.get("MO2_ROOT", ""),
+        help="MO2 instance folder (or set MO2_ROOT). Default: CWD if ModOrganizer.exe present",
     )
     p.add_argument(
         "--axr-options",
@@ -264,7 +264,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     root = repo_root_from_script()
-    mo2_root = Path(args.mo2_root)
+    if args.mo2_root:
+        mo2_root = Path(args.mo2_root)
+    else:
+        cwd = Path.cwd()
+        mo2_root = cwd if (cwd / "ModOrganizer.exe").is_file() else cwd
     if args.output:
         out_arg = Path(args.output)
         cfg_dir = out_arg if out_arg.is_dir() else out_arg.parent
@@ -407,7 +411,9 @@ def main(argv: list[str] | None = None) -> int:
         return [{k: v} for k, v in sorted(mapping.items(), key=lambda kv: kv[0].lower())]
 
     def _merge_defaults(entry: dict, mapping: dict[str, str]) -> None:
-        mcm = _kv_list_to_map(entry.get("mcm"))
+        mcm = _kv_list_to_map(entry.get("mcm_set"))
+        # Migrate legacy mcm: key if present.
+        mcm.update(_kv_list_to_map(entry.pop("mcm", None)))
         legacy = entry.get("defaults")
         if isinstance(legacy, dict):
             if "mcm" in legacy or "sys" in legacy or "settings" in legacy:
@@ -426,7 +432,7 @@ def main(argv: list[str] | None = None) -> int:
             entry.pop("defaults", None)
         mcm.update(mapping)
         if mcm:
-            entry["mcm"] = _map_to_kv_list(mcm)
+            entry["mcm_set"] = _map_to_kv_list(mcm)
         entry.pop("target_mod", None)
 
     matched: set[str] = set()
@@ -478,14 +484,14 @@ def main(argv: list[str] | None = None) -> int:
             + "".join(c if c.isalnum() else "-" for c in section.lower()).strip("-")
         )[:64]
         suggestions[slug] = {
-            "mcm": [
+            "mcm_set": [
                 {k: v}
                 for k, v in sorted(
                     defaults_map[section].items(), key=lambda kv: kv[0].lower()
                 )
             ],
         }
-        info(f"  Added suggestions stub for mcm: {section}")
+        info(f"  Added suggestions stub for mcm_set: {section}")
 
     def _write_yml(path: Path, data: dict) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)

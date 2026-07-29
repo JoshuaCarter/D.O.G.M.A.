@@ -87,7 +87,8 @@ def _expand_desc(text: str, *, mo2_root: Path, dogma_dl: Path) -> str:
     out = lib.expand_path_placeholders(text, mo2_root)
     out = out.replace("<DOGMA_DOWNLOADS>", folder).replace("<dogma_downloads>", folder)
     out = re.sub(
-        r"(?i)(?:[A-Za-z]:[/\\](?:[^/\\\s]+[/\\])*?)?(?:downloads[/\\]DOGMA|DOGMA-downloads)",
+        r"(?i)(?:[A-Za-z]:[/\\](?:[^/\\\s]+[/\\])*?)?"
+        r"(?:DOGMA[/\\]downloads|downloads[/\\]DOGMA|DOGMA-downloads)",
         lambda _m: folder,
         out,
     )
@@ -535,7 +536,7 @@ def _pack_link_text(
     font_size: int = 10,
     foreground: str | None = None,
 ) -> None:
-    """Read-only wrapped text; http(s) and downloads/DOGMA paths are clickable."""
+    """Read-only wrapped text; http(s) and DOGMA/downloads paths are clickable."""
     body = text.strip()
     if not body:
         return
@@ -1957,6 +1958,8 @@ class _ArchiveField:
 def _expand_deps_unique(
     roots: list[str],
     pack_by_id: dict[str, lib.Dependency],
+    *,
+    exclusive_picks: dict[str, str] | None = None,
 ) -> list[lib.Dependency]:
     out: list[lib.Dependency] = []
     seen: set[str] = set()
@@ -1982,7 +1985,9 @@ def _expand_deps_unique(
 
     for mid in roots:
         _add(mid)
-    return out
+    return lib.apply_requires_select_for_preview(
+        out, pack_by_id, exclusive_picks=exclusive_picks
+    )
 
 
 def run_wizard(
@@ -2521,16 +2526,28 @@ def _run_wizard_ui(
         enabled_mods = []
         disabled_mods = []
 
+    def _current_exclusive_picks() -> dict[str, str]:
+        return {g: (v.get() or "").strip() for g, v in exclusive_vars.items()}
+
     def _deps_for_option(opt: lib.InstallerOption) -> list[lib.Dependency]:
         if opt.id in data.features:
             return data.feature_pack_deps(opt.id)
-        return _expand_deps_unique(list(opt.mods), pack_by_id)
+        return _expand_deps_unique(
+            list(opt.mods),
+            pack_by_id,
+            exclusive_picks=_current_exclusive_picks(),
+        )
 
     def _preview_deps_for_choice(
         group: str, choice: lib.Dependency
     ) -> list[lib.Dependency]:
         roots = [group, choice.id] if group in pack_by_id else [choice.id]
-        return _expand_deps_unique(roots, pack_by_id)
+        picks = dict(_current_exclusive_picks())
+        if group and choice.id:
+            picks[group] = choice.id
+        return _expand_deps_unique(
+            roots, pack_by_id, exclusive_picks=picks
+        )
 
     def _selected_option_ids() -> list[str]:
         return [oid for oid, bv in bool_vars.items() if bv.get()]
@@ -2551,8 +2568,11 @@ def _run_wizard_ui(
     def _forced_option_ids() -> set[str]:
         """Checkbox options required by a currently selected pack's requires."""
         forced: set[str] = set()
+        picks = _current_exclusive_picks()
         for seed in _selected_seed_ids():
-            for leaf in lib.archive_leaves_for_pack(pack_by_id, seed):
+            for leaf in lib.archive_leaves_for_pack(
+                pack_by_id, seed, exclusive_picks=picks
+            ):
                 if leaf.id in bool_vars and leaf.id != seed:
                     forced.add(leaf.id)
             opt = opt_by_id.get(seed)
@@ -2568,11 +2588,31 @@ def _run_wizard_ui(
         return forced
 
     def _apply_forced_deps() -> None:
-        """Auto-check dependency options and lock their checkboxes."""
+        """Auto-check dependency options, fill required radios, lock checkboxes."""
         if _applying_forced_deps["on"]:
             return
         _applying_forced_deps["on"] = True
         try:
+            picks = _current_exclusive_picks()
+            required = lib.required_exclusive_groups(
+                data,
+                _selected_option_ids(),
+                exclusive_picks=picks,
+            )
+            # Also walk current radio picks (Weather → Melancholy → SSS).
+            required.update(
+                lib.required_exclusive_groups(
+                    data,
+                    [],
+                    exclusive_picks=picks,
+                )
+            )
+            for group, default_pack in required.items():
+                var = exclusive_vars.get(group)
+                if var is None:
+                    continue
+                if not (var.get() or "").strip():
+                    var.set(default_pack)
             forced = _forced_option_ids()
             for oid in forced:
                 bv = bool_vars.get(oid)
@@ -2596,8 +2636,11 @@ def _run_wizard_ui(
         """
         missing: set[str] = set()
         seen: set[str] = set()
+        picks = _current_exclusive_picks()
         for seed in _selected_seed_ids():
-            for leaf in lib.archive_leaves_for_pack(pack_by_id, seed):
+            for leaf in lib.archive_leaves_for_pack(
+                pack_by_id, seed, exclusive_picks=picks
+            ):
                 if leaf.id in seen:
                     continue
                 seen.add(leaf.id)
@@ -2615,11 +2658,14 @@ def _run_wizard_ui(
             on = lid in missing
             for field in fields:
                 field.set_alert(on)
+        picks = _current_exclusive_picks()
         for oid, lbl in path_info_icons.items():
             on = False
             bv = bool_vars.get(oid)
             if bv is not None and bv.get():
-                for leaf in lib.archive_leaves_for_pack(pack_by_id, oid):
+                for leaf in lib.archive_leaves_for_pack(
+                    pack_by_id, oid, exclusive_picks=picks
+                ):
                     if leaf.id in missing:
                         on = True
                         break
@@ -3070,7 +3116,7 @@ def _run_wizard_ui(
     }
 
     def _sync_archives_from_disk(*_args: object) -> None:
-        """Prune missing archives.ini rows and refresh file boxes from disk."""
+        """Prune missing mod_archive_map.ini rows and refresh file boxes from disk."""
         if not archive_poll["alive"]:
             return
         try:
@@ -3270,7 +3316,7 @@ def _run_wizard_ui(
     footer_btns["install"] = install_btn
     _show_page(1)
 
-    # Detect Explorer deletes in downloads/DOGMA while the wizard is open.
+    # Detect Explorer deletes in DOGMA/downloads while the wizard is open.
     root.bind_all("<FocusIn>", _schedule_archive_sync_on_focus, add="+")
     try:
         archive_poll["job"] = root.after(1500, _poll_archives)

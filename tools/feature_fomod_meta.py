@@ -34,8 +34,8 @@ def _fomod_effect_text(data: lib.ManifestData, feat: str, meta: lib.FeatureMeta)
     sections: list[tuple[str, list[str]]] = []
     zname = f"{lib.feature_path_key(feat)}.zip"
     sections.append(("Installs", [f"local package {zname} ({feat})"]))
-    if meta.depends:
-        sections.append(("Depends", list(meta.depends)))
+    if meta.requires:
+        sections.append(("Requires", list(meta.requires)))
     sections.extend(lib.preview_feature_effect_sections(meta))
     try:
         deps = data.feature_pack_deps(feat)
@@ -45,7 +45,7 @@ def _fomod_effect_text(data: lib.ManifestData, feat: str, meta: lib.FeatureMeta)
         pack_by_id = {d.id: d for d in data.mods}
         installs = lib.preview_install_packs(deps, pack_by_id)
         if installs:
-            sections.append(("Installs (depends)", installs))
+            sections.append(("Installs (requires)", installs))
         for label, items in lib.preview_effect_sections(deps):
             sections.append((label, items))
     return lib.format_effect_lists_plain(sections)

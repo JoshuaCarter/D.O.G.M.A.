@@ -173,8 +173,8 @@ while IFS= read -r -d '' cat_dir; do
 		[[ -n "$id" ]] || { echo "package-fomod: missing meta for $rel" >&2; exit 1; }
 
 		req_blurb="$(dogma_py "$ROOT/tools/feature_fomod_requires.py" --feature "$rel" --manifest "$ROOT/config" 2>/dev/null || true)"
-		# Effect lists (Depends / Disables / …) are already appended by feature_fomod_meta.
-		if [[ -n "$req_blurb" ]] && [[ "$desc" != *"Depends:"* ]] && [[ "$desc" != *"Requires:"* ]]; then
+		# Effect lists (Requires / Disables / …) are already appended by feature_fomod_meta.
+		if [[ -n "$req_blurb" ]] && [[ "$desc" != *"Requires:"* ]]; then
 			desc="${desc}"$'\n\n'"${req_blurb}"
 		fi
 

@@ -634,7 +634,7 @@ def _inline_composition_id(pack_ids: list[str]) -> str:
 def _materialize_inline_radio_compositions(
     suggested: list[Dependency],
 ) -> list[Dependency]:
-    """Turn multi-pack ``options:`` entries into omit composition packs (depends:).
+    """Turn multi-pack ``options:`` entries into omit composition packs (requires:).
 
     ``options: [A, B, [A, B]]`` becomes choice ids ``A``, ``B``, and a synthetic
     composition pack (e.g. ``A + B``) when one is not already defined.
@@ -661,7 +661,7 @@ def _materialize_inline_radio_compositions(
                     id=syn_id,
                     tier="suggested",
                     stage="omit",
-                    depends=list(group),
+                    requires=list(group),
                 )
                 extras.append(syn)
                 by_id[syn_id] = syn
@@ -778,7 +778,7 @@ class Dependency:
     moves: list[tuple[str, str]] = field(default_factory=list)  # (src_rel, dest)
     deletes: list[str] = field(default_factory=list)
     console: list[str] = field(default_factory=list)  # first-launch console cmds
-    depends: list[str] = field(default_factory=list)  # install these packs first
+    requires: list[str] = field(default_factory=list)  # install these packs first
     # Wizard radio group (legacy): packs sharing exclusive: appear as one section
     exclusive: str = ""
     group: str = ""  # section title override
@@ -790,11 +790,11 @@ class Dependency:
     # Raw options: before materialize — each choice is one or more pack ids.
     option_groups: list[list[str]] = field(default_factory=list)
     after_unpack: str = ""
-    feature: str = ""  # owning feature path when from features.*.depends
+    feature: str = ""  # owning feature path when from features.*.requires
 
     # Wizard checkbox metadata (stage != omit on the same block).
     # Default checked state is derived (not buy_url) — see option_default_selected.
-    wizard_requires: list[str] = field(default_factory=list)  # requires: [radio group ids]
+    wizard_requires: list[str] = field(default_factory=list)  # radio parents from requires:
 
     @property
     def wizard(self) -> bool:
@@ -883,8 +883,8 @@ class FeatureMeta:
     moves: list[tuple[str, str]] = field(default_factory=list)
     deletes: list[str] = field(default_factory=list)
     console: list[str] = field(default_factory=list)
-    # Pack ids (mods.yml) and/or other feature paths/titles — resolved via mods.yml.
-    depends: list[str] = field(default_factory=list)
+    # Pack ids and/or other feature paths/titles — resolved via catalog.
+    requires: list[str] = field(default_factory=list)
     # Legacy inline downloads (always empty after parse; rejected if non-empty).
     downloads: list[Dependency] = field(default_factory=list)
 
@@ -1062,20 +1062,20 @@ class ManifestData:
         *,
         _stack: set[str] | None = None,
     ) -> list[str]:
-        """Pack ids required by a feature (depends: packs + nested features)."""
+        """Pack ids required by a feature (requires: packs + nested features)."""
         stack = _stack if _stack is not None else set()
         fp = self.resolve_feature_path(feature_path)
         if not fp:
-            raise ValueError(f"unknown feature in depends: {feature_path!r}")
+            raise ValueError(f"unknown feature in requires: {feature_path!r}")
         if fp in stack:
-            raise ValueError(f"features depends: cycle involving {fp!r}")
+            raise ValueError(f"features requires: cycle involving {fp!r}")
         meta = self.features[fp]
         pack_by_id = self.suggested_by_id()
         out: list[str] = []
         seen: set[str] = set()
         stack.add(fp)
         try:
-            for ref in meta.depends:
+            for ref in meta.requires:
                 rid = str(ref).strip()
                 if not rid:
                     continue
@@ -1088,7 +1088,7 @@ class ManifestData:
                     continue
                 if rid not in pack_by_id:
                     raise ValueError(
-                        f"features.{meta.display_name!r} ({fp}): depends entry "
+                        f"features.{meta.display_name!r} ({fp}): requires entry "
                         f"{rid!r} is neither a mods.yml pack nor a feature "
                         f"path/title"
                     )
@@ -1123,12 +1123,12 @@ class ManifestData:
             if pid in done:
                 return
             if pid in visiting:
-                raise ValueError(f"depends cycle involving {pid!r}")
+                raise ValueError(f"requires cycle involving {pid!r}")
             pack = pack_by_id.get(pid)
             if pack is None:
                 raise ValueError(f"unknown pack: {pid!r}")
             visiting.add(pid)
-            for dep_id in pack.depends:
+            for dep_id in pack.requires:
                 visit(dep_id)
             for leaf in expand_pack_composition(pack_by_id, pid):
                 if leaf != pid:
@@ -1149,7 +1149,7 @@ class ManifestData:
             if is_wizard_radio_parent(pack):
                 continue
             if (
-                pack.depends
+                pack.requires
                 and not pack.has_remote_links()
                 and not (
                     pack.disables
@@ -1187,7 +1187,7 @@ class ManifestData:
                 meta, min_stage, installed=installed
             ):
                 continue
-            if not meta.depends:
+            if not meta.requires:
                 continue
             for dep in self.feature_pack_deps(feat):
                 if dep.id in seen:
@@ -1555,12 +1555,19 @@ def _dep_from_mapping(
     else:
         resets = effects["resets"]
 
-    wizard_req = _parse_str_list(
-        item.get("requires")
-        if item.get("requires") is not None
-        else item.get("requires_exclusive"),
-        field=f"{section}.{dep_id}.requires",
-    )
+    # Unified requires: (legacy depends/dependencies still accepted).
+    # Radio parents in the list become wizard_requires after materialize.
+    req_parts: list[str] = []
+    for req_key in ("requires", "requires_exclusive", "depends", "dependencies"):
+        if item.get(req_key) is None:
+            continue
+        req_parts.extend(
+            _parse_str_list(
+                item.get(req_key),
+                field=f"{section}.{dep_id}.{req_key}",
+            )
+        )
+    requires_list = _unique_strs(req_parts)
     return Dependency(
         id=dep_id,
         tier=tier,
@@ -1591,10 +1598,7 @@ def _dep_from_mapping(
         moves=effects["moves"],
         deletes=effects["deletes"],
         console=effects["console"],
-        depends=_parse_str_list(
-            item.get("depends") if item.get("depends") is not None else item.get("dependencies"),
-            field=f"{section}.{dep_id}.depends",
-        ),
+        requires=requires_list,
         exclusive=str(item.get("exclusive") or "").strip(),
         group=str(item.get("group") or "").strip(),
         choice=str(item.get("choice") or "").strip(),
@@ -1604,7 +1608,7 @@ def _dep_from_mapping(
         ),
         after_unpack=str(item.get("after_unpack") or "").strip(),
         feature=feature,
-        wizard_requires=wizard_req,
+        wizard_requires=[],
     )
 
 
@@ -1712,7 +1716,7 @@ def _parse_features_block(feat_block: dict) -> dict[str, FeatureMeta]:
             "deletes": [],
             "console": [],
         }
-        feat_depends: list[str] = []
+        feat_requires: list[str] = []
         title = key
         path = ""
 
@@ -1768,14 +1772,19 @@ def _parse_features_block(feat_block: dict) -> dict[str, FeatureMeta]:
                 if nonempty:
                     raise ValueError(
                         f"features.{title!r} ({path}): downloads:/requirements: "
-                        f"moved to config/mods.yml — use depends: [Pack Id, …]"
+                        f"moved to config/mods.yml — use requires: [Pack Id, …]"
                     )
-            feat_depends = _parse_str_list(
-                meta.get("depends")
-                if meta.get("depends") is not None
-                else meta.get("dependencies"),
-                field=f"features.{path}.depends",
-            )
+            feat_req_parts: list[str] = []
+            for req_key in ("requires", "depends", "dependencies"):
+                if meta.get(req_key) is None:
+                    continue
+                feat_req_parts.extend(
+                    _parse_str_list(
+                        meta.get(req_key),
+                        field=f"features.{path}.{req_key}",
+                    )
+                )
+            feat_requires = _unique_strs(feat_req_parts)
         else:
             raise ValueError(f"features.{key!r}: want stage or mapping")
 
@@ -1806,7 +1815,7 @@ def _parse_features_block(feat_block: dict) -> dict[str, FeatureMeta]:
             moves=fx["moves"],
             deletes=fx["deletes"],
             console=fx["console"],
-            depends=feat_depends,
+            requires=feat_requires,
             downloads=[],
         )
     return features
@@ -1890,7 +1899,7 @@ def feature_installer_options(
         zpath = packages_dir / f"{feature_path_key(feat)}.zip"
         if not zpath.is_file():
             continue
-        seeds = stub.feature_pack_ids(feat) if meta.depends else []
+        seeds = stub.feature_pack_ids(feat) if meta.requires else []
         for sid in seeds:
             if sid not in by_id:
                 raise ValueError(
@@ -1940,7 +1949,7 @@ def features_from_deps(suggested: list[Dependency]) -> dict[str, FeatureMeta]:
                 moves=list(dep.moves),
                 deletes=list(dep.deletes),
                 console=list(dep.console),
-                depends=list(dep.depends),
+                requires=list(dep.requires),
             )
             continue
         if not dep.path:
@@ -1959,7 +1968,7 @@ def features_from_deps(suggested: list[Dependency]) -> dict[str, FeatureMeta]:
             moves=list(dep.moves),
             deletes=list(dep.deletes),
             console=list(dep.console),
-            depends=list(dep.depends),
+            requires=list(dep.requires),
         )
     return features
 
@@ -1982,12 +1991,28 @@ def catalog_wizard_min_stage(mo2_root: Path | None = None) -> str:
     return "dev"
 
 
+
+def _apply_wizard_requires_from_requires(suggested: list[Dependency]) -> None:
+    """Fill wizard_requires with radio-parent / exclusive entries from requires:."""
+    by_id = {d.id: d for d in suggested}
+    for dep in suggested:
+        wiz: list[str] = []
+        for rid in dep.requires:
+            other = by_id.get(rid)
+            if other is None:
+                continue
+            if is_wizard_radio_parent(other) or other.exclusive:
+                wiz.append(rid)
+        dep.wizard_requires = wiz
+
+
 def wizard_options_from_deps(
     suggested: list[Dependency],
     *,
     min_stage: str = "dev",
 ) -> list[InstallerOption]:
     """Wizard checkboxes: every ``stage`` != omit pack/path mod (not radio parents)."""
+    _apply_wizard_requires_from_requires(suggested)
     min_stage = parse_stage(min_stage)
     by_id = {d.id: d for d in suggested}
     opts: list[InstallerOption] = []
@@ -2317,19 +2342,19 @@ def installer_seed_ids(
 ) -> list[str]:
     """Pack ids to install when a stage-gated wizard checkbox is selected.
 
-    Checkbox packs install themselves; companions come from ``depends:``.
+    Checkbox packs install themselves; companions come from ``requires:``.
     """
     del pack_by_id  # reserved for future expansion; seeds are the pack itself
     return [dep.id]
 
 
 def _validate_mods_composition(suggested: list[Dependency]) -> None:
-    """Validate wizard:/options:/depends: references and shape.
+    """Validate wizard:/options:/requires: references and shape.
 
     A pack is either:
-      - wizard mod details (url/buy_url; optional depends:), or
+      - wizard mod details (url/buy_url; optional requires:), or
       - a wizard radio group (options: + no url/buy_url), or
-      - a composition choice (depends: + no url; listed under a radio group).
+      - a composition choice (requires: + no url; listed under a radio group).
     ``options:`` is only for radio groups. Multi-pack option entries are
     materialized into omit composition packs before this runs.
     """
@@ -2338,7 +2363,7 @@ def _validate_mods_composition(suggested: list[Dependency]) -> None:
         if (dep.options or dep.option_groups) and not is_wizard_radio_parent(dep):
             raise ValueError(
                 f"mods.{dep.id}: options: is only for radio groups "
-                f"(stage: release|dev, no url/buy_url) — use depends: for "
+                f"(stage: release|dev, no url/buy_url) — use requires: for "
                 f"composition, or list several packs under one options: entry"
             )
         if dep.wizard and (dep.options or dep.option_groups) and dep.has_remote_links():
@@ -2362,13 +2387,13 @@ def _validate_mods_composition(suggested: list[Dependency]) -> None:
                     raise ValueError(
                         f"mods.{dep.id}: options: cannot reference itself"
                     )
-        for dep_id in dep.depends:
+        for dep_id in dep.requires:
             if dep_id not in by_id:
                 raise ValueError(
-                    f"mods.{dep.id}: depends entry {dep_id!r} missing from mods.yml"
+                    f"mods.{dep.id}: requires entry {dep_id!r} missing from mods.yml"
                 )
             if dep_id == dep.id:
-                raise ValueError(f"mods.{dep.id}: depends: cannot reference itself")
+                raise ValueError(f"mods.{dep.id}: requires: cannot reference itself")
 
 
 def _validate_options_mods(
@@ -2546,7 +2571,7 @@ def expand_pack_composition(
     """Expand a radio choice to leaf install ids (unique, order-preserving).
 
     Pure composition nodes (no url/buy_url/path, not a radio parent) expand via
-    ``depends:``. Downloadable / path packs are leaves (their ``depends:`` are
+    ``requires:``. Downloadable / path packs are leaves (their ``requires:`` are
     still walked later by the install-order visitor).
     """
     stack = _stack if _stack is not None else set()
@@ -2554,13 +2579,13 @@ def expand_pack_composition(
     if not pid:
         return []
     if pid in stack:
-        raise ValueError(f"depends: cycle involving {pid!r}")
+        raise ValueError(f"requires: cycle involving {pid!r}")
     pack = pack_by_id.get(pid)
     if pack is None:
         raise ValueError(f"unknown pack: {pid!r}")
-    # Composition-only: depends lists the packs this choice installs
+    # Composition-only: requires lists the packs this choice installs
     if (
-        pack.depends
+        pack.requires
         and not pack.has_remote_links()
         and not pack.path
         and not is_wizard_radio_parent(pack)
@@ -2569,7 +2594,7 @@ def expand_pack_composition(
         out: list[str] = []
         seen: set[str] = set()
         try:
-            for dep_id in pack.depends:
+            for dep_id in pack.requires:
                 for leaf in expand_pack_composition(
                     pack_by_id, dep_id, _stack=stack
                 ):
@@ -2742,7 +2767,7 @@ def resolve_install_order(
     ``exclusive_picks`` maps radio group key → chosen pack id (or \"\" for none).
     Compositional picks expand ``options:`` and merge parent+choice effects uniquely.
 
-    ``installed``: also seed pack depends for DOGMA features already in the mod
+    ``installed``: also seed pack requires for DOGMA features already in the mod
     (e.g. FOMOD-installed Fast Travel still pulls Tarkov when unchecked on page 2).
     """
     opt_by_id = {o.id: o for o in data.installer_options}
@@ -2781,7 +2806,7 @@ def resolve_install_order(
                 f"pack {pack_id!r} is not a choice in option group {group!r}"
             )
 
-    # Seeds from checkbox mods and radio picks (expand depends: composition)
+    # Seeds from checkbox mods and radio picks (expand requires: composition)
     seeds: list[str] = []
     seen_seed: set[str] = set()
     # Extra effect packs to fold onto the first leaf of each radio pick
@@ -2803,7 +2828,7 @@ def resolve_install_order(
                 continue
             _add_seed(mid)
 
-    # Pack depends for features already merged (FOMOD) even if page-2 unchecked.
+    # Pack requires for features already merged (FOMOD) even if page-2 unchecked.
     if installed:
         low_inst = {x.lower() for x in installed}
         for feat, meta in data.features.items():
@@ -2811,7 +2836,7 @@ def resolve_install_order(
                 continue
             if feat not in installed and feat.lower() not in low_inst:
                 continue
-            if not meta.depends:
+            if not meta.requires:
                 continue
             for mid in data.feature_pack_ids(feat):
                 pack = pack_by_id.get(mid)
@@ -2832,7 +2857,7 @@ def resolve_install_order(
         if parent is not None and is_wizard_radio_parent(parent):
             extras.append(parent)
         choice = pack_by_id[choice_id]
-        # Composition node (depends expand away from self) contributes its fields
+        # Composition node (requires expand away from self) contributes its fields
         if choice.id not in leaf_ids:
             extras.append(choice)
         if extras:
@@ -2867,11 +2892,11 @@ def resolve_install_order(
         if mid in done:
             return
         if mid in visiting:
-            raise ValueError(f"depends cycle involving {mid!r}")
+            raise ValueError(f"requires cycle involving {mid!r}")
         if mid not in pack_by_id:
             raise ValueError(f"unknown suggested_mods pack: {mid!r}")
         visiting.add(mid)
-        for dep_id in pack_by_id[mid].depends:
+        for dep_id in pack_by_id[mid].requires:
             visit(dep_id)
         visiting.remove(mid)
         done.add(mid)
@@ -2921,9 +2946,9 @@ def resolve_install_order(
                 or pack.resets
             ):
                 continue
-        # Pure composition choice already expanded into depends leaves
+        # Pure composition choice already expanded into requires leaves
         if (
-            pack.depends
+            pack.requires
             and not pack.has_remote_links()
             and not pack.path
             and not is_wizard_radio_parent(pack)
@@ -3069,7 +3094,7 @@ def expand_feature_package_selection(
     data: ManifestData,
     selected_option_ids: Iterable[str],
 ) -> list[str]:
-    """Selected features plus nested feature depends (for package unpack)."""
+    """Selected features plus nested feature requires (for package unpack)."""
     out: list[str] = []
     seen: set[str] = set()
 
@@ -3082,7 +3107,7 @@ def expand_feature_package_selection(
             return
         seen.add(fp)
         out.append(fp)
-        for dep in meta.depends:
+        for dep in meta.requires:
             nested = data.resolve_feature_path(dep)
             if nested is not None:
                 visit(nested)
@@ -3108,10 +3133,10 @@ def _manifest_from_parts(
     *,
     packages_dir: Path | None = None,
 ) -> ManifestData:
-    # Validate feature depends: resolve early
+    # Validate feature requires: resolve early
     stub = ManifestData(path=path, features=features, suggested=suggested)
     for feat, meta in features.items():
-        if not meta.depends:
+        if not meta.requires:
             continue
         stub.feature_pack_ids(feat)
 
@@ -3136,7 +3161,7 @@ def _manifest_from_parts(
         defaults.extend(
             _overrides_to_settings(feat.path, mcm=feat.mcm, settings=feat.settings)
         )
-        if feat.depends:
+        if feat.requires:
             for dep in stub.feature_pack_deps(feat.path):
                 defaults.extend(
                     _overrides_to_settings(
@@ -3163,7 +3188,7 @@ def _features_map_from_file(raw: dict, *, source: str) -> dict:
     if raw.get("requirements") is not None:
         raise ValueError(
             f"{source}: top-level 'requirements:' removed — put packs in "
-            "config/mods.yml and list them under features.<name>.depends:"
+            "config/mods.yml and list them under features.<name>.requires:"
         )
     if raw.get("defaults") is not None:
         raise ValueError(
@@ -3329,7 +3354,7 @@ def load_manifest(path: Path) -> ManifestData:
     if raw.get("requirements") is not None:
         raise ValueError(
             "manifest.yml top-level 'requirements:' removed — put packs in "
-            "config/mods.yml and list them under features.<name>.depends:"
+            "config/mods.yml and list them under features.<name>.requires:"
         )
     if raw.get("defaults"):
         raise ValueError(
@@ -3349,7 +3374,7 @@ def load_manifest(path: Path) -> ManifestData:
             if tier in ("required", "downloads"):
                 raise ValueError(
                     "legacy mods with tier:required — put packs in mods.yml "
-                    "and features.<name>.depends:"
+                    "and features.<name>.requires:"
                 )
             suggested.extend(
                 _parse_external_list([item], tier="suggested", section="mods")
@@ -5480,8 +5505,8 @@ def pack_needs_archive(dep: Dependency) -> bool:
         return False
     if is_wizard_radio_parent(dep):
         return False
-    # Pure composition (depends only) — leaves get the fields, not this node.
-    if dep.depends and not dep.has_remote_links() and not dep.enables:
+    # Pure composition (requires only) — leaves get the fields, not this node.
+    if dep.requires and not dep.has_remote_links() and not dep.enables:
         return False
     return bool(dep.has_remote_links() or dep.source == "user")
 
@@ -5529,8 +5554,8 @@ def archive_leaves_for_pack(
 ) -> list[Dependency]:
     """Packs that need an archive field when installing this pack/choice.
 
-    Walks ``depends:`` so multi-zip bundles (e.g. AlifePlus + xlibs + …) each
-    get a field. Pure composition nodes (no url) only contribute their depends.
+    Walks ``requires:`` so multi-zip bundles (e.g. AlifePlus + xlibs + …) each
+    get a field. Pure composition nodes (no url) only contribute their requires.
     """
     stack = _stack if _stack is not None else set()
     pid = str(pack_id).strip()
@@ -5544,9 +5569,9 @@ def archive_leaves_for_pack(
     out: list[Dependency] = []
     seen: set[str] = set()
     try:
-        # Composition-only radio choice: fields come from depends only.
+        # Composition-only radio choice: fields come from requires only.
         composition = (
-            bool(pack.depends)
+            bool(pack.requires)
             and not pack.has_remote_links()
             and not pack.path
             and not is_wizard_radio_parent(pack)
@@ -5555,7 +5580,7 @@ def archive_leaves_for_pack(
             out.append(pack)
             seen.add(pack.id)
 
-        for dep_id in pack.depends:
+        for dep_id in pack.requires:
             for leaf in archive_leaves_for_pack(
                 pack_by_id, dep_id, _stack=stack
             ):
@@ -6527,7 +6552,7 @@ def install_selected_feature_packages(
 ) -> list[str]:
     """Extract selected feature package zips into mods/DOGMA.
 
-    Also unpacks nested feature depends. Returns feature paths unpacked.
+    Also unpacks nested feature requires. Returns feature paths unpacked.
     """
     dest = dogma_mod_dir(mo2_root)
     packages = feature_packages_dir(mo2_root)

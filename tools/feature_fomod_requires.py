@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Print FOMOD 'Requires:' blurb for a feature path (from features.yml depends)."""
+"""Print FOMOD 'Requires:' blurb for a feature path (from feature requires)."""
 
 from __future__ import annotations
 
@@ -28,9 +28,9 @@ def main(argv: list[str] | None = None) -> int:
     if not feat:
         return 0
     meta = data.features[feat]
-    if not meta.depends:
+    if not meta.requires:
         return 0
-    packs = ", ".join(meta.depends)
+    packs = ", ".join(meta.requires)
     print(
         f"Requires: {packs} - install via DOGMA Setup / Dependencies "
         f"after FOMOD (same ModDB/manual pipeline as other packs)."

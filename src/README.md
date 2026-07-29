@@ -38,7 +38,7 @@ Path-mod **name**, **description**, and **module id** come from `config/manifest
 
 `src/<category>/<feature>/installer/image.png`
 
-Release zip: `bash tools/package-fomod.sh` → `build/fomod/`. Wizard is **one page per category**; each page is SelectAny feature checkboxes. Hover a feature for its description and image; an About row shows "Hover each checkbox to see feature information". Descriptions append `Requires:` lines from `depends:` when present. Common is always installed. Root `config/manifest-dogma-*.yml` gates features: `omit` / `dev` / `release`. Pack catalog: `config/manifest-third-party.yml`. Feature third-party needs use `depends:` → pack ids. Local `Ctrl+Shift+B` builds `>= dev`; packaging ships `>= release`. MO2 entry point: `DOGMA Setup.bat`.
+Release zip: `bash tools/package-fomod.sh` → `build/fomod/`. Wizard is **one page per category**; each page is SelectAny feature checkboxes. Hover a feature for its description and image; an About row shows "Hover each checkbox to see feature information". Descriptions append `Requires:` lines from `requires:` when present. Common is always installed. Root `config/manifest-dogma-*.yml` gates features: `omit` / `dev` / `release`. Pack catalog: `config/manifest-third-party.yml`. Feature third-party needs use `requires:` → pack ids. Local `Ctrl+Shift+B` builds `>= dev`; packaging ships `>= release`. MO2 entry point: `DOGMA Setup.bat`.
 
 ## Common
 

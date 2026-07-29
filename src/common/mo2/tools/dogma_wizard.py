@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""DOGMA Setup wizard — pick options from config/mods.yml + feature depends."""
+"""DOGMA Setup wizard — pick options from config/mods.yml + feature requires."""
 
 from __future__ import annotations
 
@@ -1962,7 +1962,7 @@ def _expand_deps_unique(
             if lid == mid:
                 continue
             _add(lid)
-        for dep_id in dep.depends:
+        for dep_id in dep.requires:
             _add(dep_id)
 
     for mid in roots:
@@ -2167,6 +2167,8 @@ def _run_wizard_ui(
 
     bool_vars: dict[str, tk.BooleanVar] = {}
     check_btns: dict[str, ttk.Checkbutton] = {}
+    # Path-mod ⓘ next to checkbox (features/tweaks): label → alert images.
+    path_info_icons: dict[str, tk.Label] = {}
     exclusive_vars: dict[str, tk.StringVar] = {}
     _applying_forced_deps = {"on": False}
     group_defaults: dict[str, str] = {}
@@ -2265,7 +2267,7 @@ def _run_wizard_ui(
                     # Defer forced check until after selects; uncheck pass below.
                     pass
 
-            # Lock/check depends of newly selected parents.
+            # Lock/check requires of newly selected parents.
             forced = _forced_option_ids()
             for oid in forced:
                 bv = bool_vars.get(oid)
@@ -2319,6 +2321,43 @@ def _run_wizard_ui(
 
         return _sections
 
+    def _set_path_info_alert(lbl: tk.Label, on: bool) -> None:
+        img = (
+            getattr(lbl, "_dogma_info_img_alert", None)
+            if on
+            else getattr(lbl, "_dogma_info_img_normal", None)
+        )
+        if img is None:
+            return
+        try:
+            lbl.configure(image=img)
+            lbl._dogma_info_img = img  # type: ignore[attr-defined]
+        except tk.TclError:
+            pass
+
+    def _pack_path_info_icon(
+        row: ttk.Frame,
+        files_col: ttk.Frame,
+        option_id: str,
+        sections_fn: Callable[[], list[tuple[str, list[str], str]]],
+    ) -> None:
+        """Blue/red ⓘ between checkbox and path-mod content."""
+        top = row.winfo_toplevel()
+        bg = _frame_bg(row)
+        img_n = _filled_info_image(top, bg=bg)
+        img_a = _filled_info_image(top, bg=bg, fill=_THEME["alert"])
+        lbl = _pack_info_icon(row, sections_fn, bg=bg, image=img_n)
+        lbl._dogma_info_img_normal = img_n  # type: ignore[attr-defined]
+        lbl._dogma_info_img_alert = img_a  # type: ignore[attr-defined]
+        lbl.pack(
+            side="left",
+            anchor="n",
+            padx=(0, 6),
+            pady=(5, 0),
+            before=files_col,
+        )
+        path_info_icons[option_id] = lbl
+
     def _add_archive_fields(
         parent: ttk.Frame,
         deps: list[lib.Dependency],
@@ -2354,22 +2393,22 @@ def _run_wizard_ui(
             archive_fields.setdefault(leaf.id, []).append(field)
         return leaves
 
-    def _depend_relation_sections(
+    def _require_relation_sections(
         dep: lib.Dependency,
     ) -> list[tuple[str, list[str], str]]:
         """Parents/children for info tips — red ``alert`` kind."""
-        children = [d for d in dep.depends if d]
+        children = [d for d in dep.requires if d]
         parents = sorted(
             {
                 p.id
                 for p in pack_by_id.values()
-                if dep.id in p.depends and p.id != dep.id
+                if dep.id in p.requires and p.id != dep.id
             },
             key=str.lower,
         )
         out: list[tuple[str, list[str], str]] = []
         if children:
-            out.append(("Depends", children, "alert"))
+            out.append(("Requires", children, "alert"))
         if parents:
             out.append(("Required by", parents, "alert"))
         return out
@@ -2389,17 +2428,17 @@ def _run_wizard_ui(
             sections.append(
                 ("Installs", [f"local package {zname} ({path_pack.path})"], "normal")
             )
-            sections.extend(_depend_relation_sections(path_pack))
+            sections.extend(_require_relation_sections(path_pack))
             if feature is not None:
                 for label, items in lib.preview_feature_effect_sections(
                     feature, mo2_root=mo2_root
                 ):
                     sections.append((label, items, "normal"))
-            # Depends-only packs (skip the path pack itself — covered by feature rows).
-            depend_deps = [d for d in deps if d.id != path_pack.id]
-            for label, items in _effect_deps_for(depend_deps):
+            # Require-only packs (skip the path pack itself — covered by feature rows).
+            require_deps = [d for d in deps if d.id != path_pack.id]
+            for label, items in _effect_deps_for(require_deps):
                 if label == "Installs":
-                    sections.append(("Installs (depends)", items, "normal"))
+                    sections.append(("Installs (requires)", items, "normal"))
                 else:
                     sections.append((label, items, "normal"))
         else:
@@ -2410,7 +2449,7 @@ def _run_wizard_ui(
                 if d.id in seen_rel:
                     continue
                 seen_rel.add(d.id)
-                sections.extend(_depend_relation_sections(d))
+                sections.extend(_require_relation_sections(d))
         return sections
 
     def _effect_deps_for(
@@ -2481,7 +2520,7 @@ def _run_wizard_ui(
 
     opt_by_id = {o.id: o for o in options}
     footer_btns: dict[str, ttk.Button] = {}
-    depends_warn_var = tk.StringVar(value="")
+    requires_warn_var = tk.StringVar(value="")
 
     def _selected_seed_ids() -> list[str]:
         """Checkbox option ids + radio picks currently selected."""
@@ -2493,7 +2532,7 @@ def _run_wizard_ui(
         return seeds
 
     def _forced_option_ids() -> set[str]:
-        """Checkbox options required by a currently selected pack's depends."""
+        """Checkbox options required by a currently selected pack's requires."""
         forced: set[str] = set()
         for seed in _selected_seed_ids():
             for leaf in lib.archive_leaves_for_pack(pack_by_id, seed):
@@ -2506,7 +2545,7 @@ def _run_wizard_ui(
                         forced.add(dep.id)
             pack = pack_by_id.get(seed)
             if pack is not None:
-                for dep_id in pack.depends:
+                for dep_id in pack.requires:
                     if dep_id in bool_vars and dep_id != seed:
                         forced.add(dep_id)
         return forced
@@ -2536,7 +2575,7 @@ def _run_wizard_ui(
         """Archive leaf ids for the selection that still need a linked file.
 
         Unified rule: any selected mod's file box without an archive is alerted
-        (primary and depends alike). Empty radios contribute nothing.
+        (primary and requires alike). Empty radios contribute nothing.
         """
         missing: set[str] = set()
         seen: set[str] = set()
@@ -2559,6 +2598,15 @@ def _run_wizard_ui(
             on = lid in missing
             for field in fields:
                 field.set_alert(on)
+        for oid, lbl in path_info_icons.items():
+            on = False
+            bv = bool_vars.get(oid)
+            if bv is not None and bv.get():
+                for leaf in lib.archive_leaves_for_pack(pack_by_id, oid):
+                    if leaf.id in missing:
+                        on = True
+                        break
+            _set_path_info_alert(lbl, on)
         blocked = bool(missing)
         btn = footer_btns.get("install")
         if btn is not None:
@@ -2570,9 +2618,9 @@ def _run_wizard_ui(
             msg = "Selected mods still need archives linked"
             if wizard_page["n"] >= 2:
                 msg += " (page 1)"
-            depends_warn_var.set(msg)
+            requires_warn_var.set(msg)
         else:
-            depends_warn_var.set("")
+            requires_warn_var.set("")
 
     def _current_page_option_ids() -> list[str]:
         n = wizard_page["n"]
@@ -2659,7 +2707,7 @@ def _run_wizard_ui(
         bool_vars[opt.id] = bv
         id_list.append(opt.id)
 
-        _row, files_col, chk = _pack_mod_select_row(
+        row, files_col, chk = _pack_mod_select_row(
             frame,
             kind="check",
             variable=bv,
@@ -2673,6 +2721,22 @@ def _run_wizard_ui(
         )
         leaves: list[lib.Dependency] = []
         if is_path_mod:
+            if pack is not None:
+                _pack_path_info_icon(
+                    row, files_col, opt.id, _leaf_info_sections(pack)
+                )
+            elif feat is not None:
+                _pack_path_info_icon(
+                    row,
+                    files_col,
+                    opt.id,
+                    lambda o=opt, f=feat: _tooltip_sections_for(
+                        _deps_for_option(o),
+                        feature=f,
+                        requires=list(f.requires),
+                        path_pack=None,
+                    ),
+                )
             # Packaged path mods — no archive box.
             # D.O.G.M.A. features page: white desc in the old "Install" slot.
             # Page 1 path rows (if any): keep Install + desc under.
@@ -2777,7 +2841,7 @@ def _run_wizard_ui(
 
         block = ttk.Frame(parent)
         block.pack(anchor="w", fill="x", pady=(0, 8), padx=2)
-        _row, files_col, chk = _pack_mod_select_row(
+        row, files_col, chk = _pack_mod_select_row(
             block,
             kind="check",
             variable=bv,
@@ -2785,6 +2849,23 @@ def _run_wizard_ui(
         )
         if isinstance(chk, ttk.Checkbutton):
             check_btns[opt.id] = chk
+
+        if pack is not None:
+            _pack_path_info_icon(
+                row, files_col, opt.id, _leaf_info_sections(pack)
+            )
+        elif feat is not None:
+            _pack_path_info_icon(
+                row,
+                files_col,
+                opt.id,
+                lambda o=opt, f=feat: _tooltip_sections_for(
+                    _deps_for_option(o),
+                    feature=f,
+                    requires=list(f.requires),
+                    path_pack=None,
+                ),
+            )
 
         ttk.Label(
             files_col,
@@ -3166,7 +3247,7 @@ def _run_wizard_ui(
     footer.pack(fill="x")
     ttk.Label(
         footer,
-        textvariable=depends_warn_var,
+        textvariable=requires_warn_var,
         foreground=_THEME["alert"],
         font=("Segoe UI", 9),
         anchor="w",

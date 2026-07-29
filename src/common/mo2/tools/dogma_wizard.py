@@ -2335,28 +2335,29 @@ def _run_wizard_ui(
         except tk.TclError:
             pass
 
-    def _pack_path_info_icon(
-        row: ttk.Frame,
+    def _pack_path_info_line(
         files_col: ttk.Frame,
         option_id: str,
         sections_fn: Callable[[], list[tuple[str, list[str], str]]],
-    ) -> None:
-        """Blue/red ⓘ between checkbox and path-mod content."""
-        top = row.winfo_toplevel()
-        bg = _frame_bg(row)
+    ) -> ttk.Frame:
+        """``[ⓘ | content]`` on one line so the icon sits inline with the text.
+
+        Returns the content frame — pack title/desc into it.
+        """
+        line = ttk.Frame(files_col)
+        line.pack(anchor="w", fill="x", pady=(4, 0))
+        top = line.winfo_toplevel()
+        bg = _frame_bg(line)
         img_n = _filled_info_image(top, bg=bg)
         img_a = _filled_info_image(top, bg=bg, fill=_THEME["alert"])
-        lbl = _pack_info_icon(row, sections_fn, bg=bg, image=img_n)
+        lbl = _pack_info_icon(line, sections_fn, bg=bg, image=img_n)
         lbl._dogma_info_img_normal = img_n  # type: ignore[attr-defined]
         lbl._dogma_info_img_alert = img_a  # type: ignore[attr-defined]
-        lbl.pack(
-            side="left",
-            anchor="n",
-            padx=(0, 6),
-            pady=(5, 0),
-            before=files_col,
-        )
+        lbl.pack(side="left", anchor="center", padx=(0, 6))
         path_info_icons[option_id] = lbl
+        content = ttk.Frame(line)
+        content.pack(side="left", fill="x", expand=True)
+        return content
 
     def _add_archive_fields(
         parent: ttk.Frame,
@@ -2707,7 +2708,7 @@ def _run_wizard_ui(
         bool_vars[opt.id] = bv
         id_list.append(opt.id)
 
-        row, files_col, chk = _pack_mod_select_row(
+        _row, files_col, chk = _pack_mod_select_row(
             frame,
             kind="check",
             variable=bv,
@@ -2722,21 +2723,18 @@ def _run_wizard_ui(
         leaves: list[lib.Dependency] = []
         if is_path_mod:
             if pack is not None:
-                _pack_path_info_icon(
-                    row, files_col, opt.id, _leaf_info_sections(pack)
+                info_fn: Callable[[], list[tuple[str, list[str], str]]] = (
+                    _leaf_info_sections(pack)
                 )
             elif feat is not None:
-                _pack_path_info_icon(
-                    row,
-                    files_col,
-                    opt.id,
-                    lambda o=opt, f=feat: _tooltip_sections_for(
-                        _deps_for_option(o),
-                        feature=f,
-                        requires=list(f.requires),
-                        path_pack=None,
-                    ),
+                info_fn = lambda o=opt, f=feat: _tooltip_sections_for(
+                    _deps_for_option(o),
+                    feature=f,
+                    requires=list(f.requires),
+                    path_pack=None,
                 )
+            else:
+                info_fn = lambda: []
             # Packaged path mods — no archive box.
             # D.O.G.M.A. features page: white desc in the old "Install" slot.
             # Page 1 path rows (if any): keep Install + desc under.
@@ -2746,16 +2744,18 @@ def _run_wizard_ui(
                     if pack is not None
                     else (opt.desc or "").strip()
                 )
+                content = _pack_path_info_line(files_col, opt.id, info_fn)
                 ttk.Label(
-                    files_col,
+                    content,
                     text=blurb or "Install",
                     font=("Segoe UI", 10),
                     foreground=_THEME["fg"],
                     wraplength=max(320, col_wrap - 48),
                     justify="left",
-                ).pack(anchor="w", pady=(4, 0))
+                ).pack(anchor="w")
             else:
-                _pack_path_install_label(files_col)
+                content = _pack_path_info_line(files_col, opt.id, info_fn)
+                _pack_path_install_label(content)
                 if pack is not None:
                     _add_desc(frame, _pack_blurb(pack))
                     _desc_spacer(frame)
@@ -2841,7 +2841,7 @@ def _run_wizard_ui(
 
         block = ttk.Frame(parent)
         block.pack(anchor="w", fill="x", pady=(0, 8), padx=2)
-        row, files_col, chk = _pack_mod_select_row(
+        _row, files_col, chk = _pack_mod_select_row(
             block,
             kind="check",
             variable=bv,
@@ -2851,29 +2851,26 @@ def _run_wizard_ui(
             check_btns[opt.id] = chk
 
         if pack is not None:
-            _pack_path_info_icon(
-                row, files_col, opt.id, _leaf_info_sections(pack)
-            )
+            info_fn = _leaf_info_sections(pack)
         elif feat is not None:
-            _pack_path_info_icon(
-                row,
-                files_col,
-                opt.id,
-                lambda o=opt, f=feat: _tooltip_sections_for(
-                    _deps_for_option(o),
-                    feature=f,
-                    requires=list(f.requires),
-                    path_pack=None,
-                ),
+            info_fn = lambda o=opt, f=feat: _tooltip_sections_for(
+                _deps_for_option(o),
+                feature=f,
+                requires=list(f.requires),
+                path_pack=None,
             )
+        else:
+            info_fn = lambda: []
+        content = _pack_path_info_line(files_col, opt.id, info_fn)
 
         ttk.Label(
-            files_col,
+            content,
             text=title,
             font=("Segoe UI", 10),
             foreground=_THEME["fg"],
-        ).pack(anchor="w", pady=(4, 0))
+        ).pack(anchor="w")
         if desc:
+            # Below the ⓘ+title line so the icon stays inline with the name.
             ttk.Label(
                 files_col,
                 text=desc,

@@ -1,0 +1,24 @@
+-- fx/health conf
+--
+-- Intensity rises as actor.health falls (0..1). Two overlapping PPEs:
+--   PPE A starts at half health → full near death
+--   PPE B starts later (critical) → full near death
+
+_G.dogma_fx_health_conf = {
+	MOD_ID = "dogma/fx/health",
+	-- Hardcoded (no MCM). Values are actor.health; intensity uses (1 - health)
+	-- mapped through start_hp → end_hp (higher start_hp = earlier onset).
+	PPE_A = {
+		name = "dogma_health_a.ppe",
+		id = 2040,
+		start_hp = 0.50,
+		end_hp = 0.05,
+	},
+	PPE_B = {
+		name = "dogma_health_b.ppe",
+		id = 2041,
+		start_hp = 0.25,
+		end_hp = 0.05,
+	},
+	loaded = {},
+}

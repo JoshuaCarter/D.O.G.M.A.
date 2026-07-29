@@ -27,11 +27,57 @@ local function probe_cam_api()
 	return cam_api_ok
 end
 
-local function set_custom_cam(pos, dir)
-	if not (pos and dir and level and level.set_cam_custom_position_direction) then return end
-	pcall(function()
-		level.set_cam_custom_position_direction(pos, dir)
+-- Monolith's set_cam_custom_position_direction takes HPB angles in the
+-- "direction" Fvector (m_FPCam->m_HPB.set), NOT a world look vector.
+-- Passing a look vector made Z into bank/roll (slant) and scrambled facing.
+local function look_dir_to_hpb(dir)
+	if not dir then return vector():set(0, 0, 0) end
+	local h, p = 0, 0
+	if dir.getH and dir.getP then
+		local okh, hv = pcall(function() return dir:getH() end)
+		local okp, pv = pcall(function() return dir:getP() end)
+		if okh and okp and hv and pv then
+			return vector():set(hv, pv, 0)
+		end
+	end
+	-- Match xrCore/_vector3d.h getH / getP
+	local x, y, z = dir.x or 0, dir.y or 0, dir.z or 0
+	local ax, az = math.abs(x), math.abs(z)
+	if ax < 1e-6 and az < 1e-6 then
+		h = 0
+		if y > 1e-6 then p = math.pi * 0.5
+		elseif y < -1e-6 then p = -math.pi * 0.5
+		else p = 0 end
+	else
+		if az < 1e-6 then
+			h = (x > 0) and (-math.pi * 0.5) or (math.pi * 0.5)
+		elseif z < 0 then
+			h = -(math.atan(x / z) - math.pi)
+		else
+			h = -math.atan(x / z)
+		end
+		local hyp = math.sqrt(x * x + z * z)
+		if hyp < 1e-6 then
+			p = (y > 0) and (math.pi * 0.5) or (-math.pi * 0.5)
+		else
+			p = math.atan(y / hyp)
+		end
+	end
+	return vector():set(h, p, 0) -- bank always 0 — no dutch-angle slant
+end
+
+local function set_custom_cam(pos, look_dir)
+	if not (pos and look_dir and level and level.set_cam_custom_position_direction) then return end
+	local hpb = look_dir_to_hpb(look_dir)
+	-- Prefer explicit overloads; fall back to 2-arg (same as smoothing=1, hud off).
+	local ok = pcall(function()
+		level.set_cam_custom_position_direction(pos, hpb, 1, false, false)
 	end)
+	if not ok then
+		pcall(function()
+			level.set_cam_custom_position_direction(pos, hpb)
+		end)
+	end
 end
 
 local function clear_custom_cam()
@@ -234,11 +280,28 @@ end
 local function look_at_arc(fly, cum, total, u, look_ahead)
 	look_ahead = look_ahead or (fly_cfg().look_ahead_m or 12)
 	local here = pos_at_arc(fly, cum, total, u)
-	local ahead = pos_at_arc(fly, cum, total, math.min(u + look_ahead, total))
+	local ahead_u = math.min((u or 0) + look_ahead, total or 0)
+	-- Near the end, keep looking along the last travel tangent (don't zero out).
+	if ahead_u <= (u or 0) + 0.05 and cum and #cum >= 2 then
+		ahead_u = math.max(0, (u or 0) - 0.5)
+		local back = pos_at_arc(fly, cum, total, ahead_u)
+		if here and back then
+			local dx = here.x - back.x
+			local dy = ((here.y or 0) - (back.y or 0)) * 0.35
+			local dz = here.z - back.z
+			local nx, ny, nz = normalize_dir(dx, dy, dz)
+			return vector():set(nx, ny, nz)
+		end
+	end
+	local ahead = pos_at_arc(fly, cum, total, ahead_u)
 	if not (here and ahead) then return vector():set(0, 0, 1) end
-	local dx, dy, dz = ahead.x - here.x, (ahead.y or 0) - (here.y or 0), ahead.z - here.z
-	-- Soften extreme pitch
-	dy = dy * 0.55
+	local dx = ahead.x - here.x
+	local dy = ((ahead.y or 0) - (here.y or 0)) * 0.35 -- mild pitch only
+	local dz = ahead.z - here.z
+	-- Prefer horizontal facing if the chord is nearly vertical/degenerate.
+	if (dx * dx + dz * dz) < 0.01 then
+		dx, dy, dz = 0, 0, 1
+	end
 	local nx, ny, nz = normalize_dir(dx, dy, dz)
 	return vector():set(nx, ny, nz)
 end

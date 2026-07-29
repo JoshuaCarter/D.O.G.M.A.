@@ -252,7 +252,8 @@ local function actor_on_update()
 
 	local d_bleed = hold_signed(keys.inc_bleed, keys.dec_bleed, BLEED_PER_SEC, dt)
 	if d_bleed ~= 0 then
-		actor.bleeding = clamp((actor.bleeding or 0) + d_bleed, 0, 1)
+		-- GAMMA bleed icon red tier is >= 1.5; allow past 1 for FX testing.
+		actor.bleeding = clamp((actor.bleeding or 0) + d_bleed, 0, 2)
 	end
 
 	local d_hp = hold_signed(keys.inc_health, keys.dec_health, HP_PER_SEC, dt)

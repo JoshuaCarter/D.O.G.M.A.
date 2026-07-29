@@ -1,0 +1,119 @@
+--[[
+	Health FX
+
+	Two overlapping PPEs whose intensity scales with low actor.health.
+	Disable stock Low health blur under Settings > Visual > Player so they
+	don't stack with the engine effect.
+]]
+
+local CONFIG = _G.dogma_fx_health_conf
+local DOGMA
+
+local a_active = false
+local b_active = false
+
+local LOG = {
+	LIFECYCLE = {order = 0, color = "gray"},
+	HEALTH    = {order = 1, color = "green"},
+	PPE_A     = {order = 2, color = "orange"},
+	PPE_B     = {order = 3, color = "yellow"},
+}
+
+local function overlay(log_type, msg)
+	if not DOGMA.dbg then
+		return
+	end
+	if CONFIG.loaded.debug_overlay then
+		local slot = log_type or LOG.LIFECYCLE
+		DOGMA.dbg.overlay(CONFIG.MOD_ID, slot.order, tostring(msg), slot.color)
+	end
+end
+
+local function log(msg)
+	if not DOGMA.dbg then
+		return
+	end
+	if CONFIG.loaded.debug_log then
+		DOGMA.dbg.log(CONFIG.MOD_ID, tostring(msg))
+	end
+end
+
+-- Intensity 0 at/above start_hp, 1 at/below end_hp.
+local function health_intensity(health, start_hp, end_hp)
+	if start_hp <= end_hp then
+		return 0
+	end
+	if health >= start_hp then
+		return 0
+	end
+	if health <= end_hp then
+		return 1
+	end
+	return (start_hp - health) / (start_hp - end_hp)
+end
+
+local function set_ppe(spec, active, intensity, log_slot, label)
+	overlay(log_slot, string.format("%s: %.2f", label, intensity))
+
+	if intensity <= 0 then
+		if active then
+			level.remove_pp_effector(spec.id)
+		end
+		return false
+	end
+
+	if not active then
+		level.add_pp_effector(spec.name, spec.id, true)
+	end
+	level.set_pp_effector_factor(spec.id, intensity)
+	return true
+end
+
+local function clear_all()
+	level.remove_pp_effector(CONFIG.PPE_A.id)
+	level.remove_pp_effector(CONFIG.PPE_B.id)
+	a_active = false
+	b_active = false
+end
+
+local function on_option_change()
+	CONFIG.loaded.debug_log = DOGMA.dbg.logging()
+	CONFIG.loaded.debug_overlay = DOGMA.dbg.overlay_enabled()
+	DOGMA.dbg.set_enabled(CONFIG.MOD_ID, DOGMA.dbg.overlay_enabled())
+end
+
+local function on_actor_on_update()
+	local actor = DOGMA.sys.ready(CONFIG.MOD_ID, db, on_option_change)
+	if not actor then
+		return
+	end
+
+	if not actor:alive() then
+		clear_all()
+		return
+	end
+
+	local health = actor.health or 0
+	overlay(LOG.HEALTH, string.format("HP: %.2f", health))
+
+	a_active = set_ppe(
+		CONFIG.PPE_A, a_active,
+		health_intensity(health, CONFIG.PPE_A.start_hp, CONFIG.PPE_A.end_hp),
+		LOG.PPE_A, "A"
+	)
+	b_active = set_ppe(
+		CONFIG.PPE_B, b_active,
+		health_intensity(health, CONFIG.PPE_B.start_hp, CONFIG.PPE_B.end_hp),
+		LOG.PPE_B, "B"
+	)
+end
+
+function on_game_start()
+	DOGMA = dogma_common.load(CONFIG.MOD_ID)
+	a_active = false
+	b_active = false
+	on_option_change()
+	RegisterScriptCallback("actor_on_update", on_actor_on_update)
+	RegisterScriptCallback("on_option_change", on_option_change)
+	log("loaded")
+end

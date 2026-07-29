@@ -1,0 +1,155 @@
+--[[
+	Bleed FX
+
+	Two overlapping PPEs. Intensity is a tier target from actor.bleeding
+	(white 0.33 / yellow 0.66 / orange+red 1.0) that lerps over 1s up and down.
+	Disable stock Bleeding Effect under Settings > Visual > Player so they
+	don't stack with bloody.ppe / snd_shock.ppe.
+]]
+
+local CONFIG = _G.dogma_fx_bleed_conf
+local DOGMA
+
+local a_active = false
+local b_active = false
+
+-- Smooth intensity toward tier target.
+local intensity = 0
+local lerp_from = 0
+local lerp_to = 0
+local lerp_t0 = nil
+
+local LOG = {
+	LIFECYCLE = {order = 0, color = "gray"},
+	BLEED     = {order = 1, color = "red"},
+	TARGET    = {order = 2, color = "orange"},
+	INTENSITY = {order = 3, color = "yellow"},
+}
+
+local function overlay(log_type, msg)
+	if not DOGMA.dbg then
+		return
+	end
+	if CONFIG.loaded.debug_overlay then
+		local slot = log_type or LOG.LIFECYCLE
+		DOGMA.dbg.overlay(CONFIG.MOD_ID, slot.order, tostring(msg), slot.color)
+	end
+end
+
+local function log(msg)
+	if not DOGMA.dbg then
+		return
+	end
+	if CONFIG.loaded.debug_log then
+		DOGMA.dbg.log(CONFIG.MOD_ID, tostring(msg))
+	end
+end
+
+local function tier_target(bleed)
+	for _, tier in ipairs(CONFIG.TIERS) do
+		if bleed >= tier.min then
+			return tier.intensity
+		end
+	end
+	return 0
+end
+
+local function reset_lerp()
+	intensity = 0
+	lerp_from = 0
+	lerp_to = 0
+	lerp_t0 = nil
+end
+
+-- Retarget starts a fresh 1s lerp from the current intensity.
+local function update_intensity(target)
+	local now = time_global()
+	local dur_ms = (CONFIG.LERP_SEC or 1) * 1000
+
+	if target ~= lerp_to then
+		lerp_from = intensity
+		lerp_to = target
+		lerp_t0 = now
+	end
+
+	if not lerp_t0 or dur_ms <= 0 then
+		intensity = target
+		return intensity
+	end
+
+	local t = (now - lerp_t0) / dur_ms
+	if t >= 1 then
+		intensity = lerp_to
+		return intensity
+	end
+	if t <= 0 then
+		intensity = lerp_from
+		return intensity
+	end
+
+	intensity = lerp_from + (lerp_to - lerp_from) * t
+	return intensity
+end
+
+local function set_ppe(spec, active, factor)
+	if factor <= 0 then
+		if active then
+			level.remove_pp_effector(spec.id)
+		end
+		return false
+	end
+
+	if not active then
+		level.add_pp_effector(spec.name, spec.id, true)
+	end
+	level.set_pp_effector_factor(spec.id, factor)
+	return true
+end
+
+local function clear_all()
+	level.remove_pp_effector(CONFIG.PPE_A.id)
+	level.remove_pp_effector(CONFIG.PPE_B.id)
+	a_active = false
+	b_active = false
+	reset_lerp()
+end
+
+local function on_option_change()
+	CONFIG.loaded.debug_log = DOGMA.dbg.logging()
+	CONFIG.loaded.debug_overlay = DOGMA.dbg.overlay_enabled()
+	DOGMA.dbg.set_enabled(CONFIG.MOD_ID, DOGMA.dbg.overlay_enabled())
+end
+
+local function on_actor_on_update()
+	local actor = DOGMA.sys.ready(CONFIG.MOD_ID, db, on_option_change)
+	if not actor then
+		return
+	end
+
+	if not actor:alive() then
+		clear_all()
+		return
+	end
+
+	local bleed = actor.bleeding or 0
+	local target = tier_target(bleed)
+	local factor = update_intensity(target)
+
+	overlay(LOG.BLEED, string.format("Bleed: %.3f", bleed))
+	overlay(LOG.TARGET, string.format("Target: %.2f", target))
+	overlay(LOG.INTENSITY, string.format("FX: %.2f", factor))
+
+	a_active = set_ppe(CONFIG.PPE_A, a_active, factor)
+	b_active = set_ppe(CONFIG.PPE_B, b_active, factor)
+end
+
+function on_game_start()
+	DOGMA = dogma_common.load(CONFIG.MOD_ID)
+	a_active = false
+	b_active = false
+	reset_lerp()
+	on_option_change()
+	RegisterScriptCallback("actor_on_update", on_actor_on_update)
+	RegisterScriptCallback("on_option_change", on_option_change)
+	log("loaded")
+end

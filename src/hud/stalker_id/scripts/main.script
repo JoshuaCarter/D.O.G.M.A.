@@ -4,6 +4,9 @@
 	Instant ID on look-at. Losing the target fades the HUD out over 2s;
 	a new target replaces it immediately. Layout is screen-centered:
 	name, rank, then icon (or "Zombified" for zombied community).
+
+	Look pick pierces bush materials so solid-bush tweaks don't block ID;
+	other statics (walls, etc.) still occlude.
 ]]
 
 local CONFIG = _G.dogma_hud_stalker_id_conf
@@ -14,6 +17,16 @@ local UI_CENTER_X = UI_WIDTH * 0.5
 local ALIGN_CENTER = 2 -- CGameFont::alCenter
 local UPDATE_DELAY = 100
 local FADE_MS = 2000
+
+-- Look-at pick: pierce solid bushes (vis_transparency_factor=0) so ID still works
+-- through foliage. Walls / other statics still block. Flags 3 = rqtObject|rqtStatic.
+local LOOK_RANGE = 100
+local LOOK_FLAGS = 3 -- rqtObject | rqtStatic
+local LOOK_MAX_PIERCE = 16
+local LOOK_BUSH_STEP = 0.2
+local look_pick = nil
+local LOOK_POS = vector()
+local LOOK_DIR = vector()
 
 local FACTION_KEYS = {
 	"stalker", "bandit", "csky", "army", "freedom", "dolg", "ecolog",
@@ -272,6 +285,71 @@ local function display_faction(obj)
 	display(fact, name, rank, false)
 end
 
+local function is_bush_material(name)
+	if type(name) ~= "string" then
+		return false
+	end
+	return name:find("bush", 1, true) ~= nil
+end
+
+-- Camera look ray that skips bush/bush_sux static hits (solid-bush tweak).
+-- Falls back to level.get_target_obj if ray_pick is unavailable.
+local function get_look_target()
+	local d = device()
+	if not (ray_pick and d and d.cam_pos and d.cam_dir) then
+		return level.get_target_obj and level.get_target_obj()
+	end
+
+	if not look_pick then
+		look_pick = ray_pick()
+	end
+	local pick = look_pick
+	pick:set_flags(LOOK_FLAGS)
+
+	local ox, oy, oz = d.cam_pos.x, d.cam_pos.y, d.cam_pos.z
+	local dx, dy, dz = d.cam_dir.x, d.cam_dir.y, d.cam_dir.z
+	local remaining = LOOK_RANGE
+	local pierces = 0
+	LOOK_DIR:set(dx, dy, dz)
+
+	while remaining > LOOK_BUSH_STEP and pierces <= LOOK_MAX_PIERCE do
+		LOOK_POS:set(ox, oy, oz)
+		pick:set_position(LOOK_POS)
+		pick:set_direction(LOOK_DIR)
+		pick:set_range(remaining)
+		if db and db.actor then
+			pick:set_ignore_object(db.actor)
+		end
+
+		local ok, hit = pcall(function()
+			return pick:query()
+		end)
+		if not (ok and hit) then
+			return nil
+		end
+
+		local obj = pick:get_object()
+		if obj then
+			return obj
+		end
+
+		local result = pick:get_result()
+		local hit_dist = pick:get_distance()
+		if not (result and hit_dist and hit_dist > 0 and is_bush_material(result.material_name)) then
+			return nil
+		end
+
+		local step = hit_dist + LOOK_BUSH_STEP
+		ox = ox + dx * step
+		oy = oy + dy * step
+		oz = oz + dz * step
+		remaining = remaining - step
+		pierces = pierces + 1
+	end
+
+	return nil
+end
+
 local function target_enter(obj)
 	if not obj then
 		return
@@ -317,7 +395,7 @@ function actor_on_update()
 	end
 	trigger = 0
 
-	local obj = level.get_target_obj()
+	local obj = get_look_target()
 	local valid = HUD
 		and obj
 		and IsStalker(obj)
@@ -385,7 +463,7 @@ function GUI_on_show(gui, str2)
 	end
 
 	if gui == "UIInventory" then
-		local obj = level.get_target_obj()
+		local obj = get_look_target()
 		if not (obj and IsStalker(obj)) then
 			return
 		end

@@ -32,9 +32,19 @@ REPORT_LOG_NAME = "dogma_report.log"
 MODDB_CACHE_NAME = "moddb_cache.json"
 GITHUB_CACHE_NAME = "github_cache.json"
 USER_URL_PREFIX = "dogma:user:"
+# Legacy install prefix (pre static manifest-name folders). Still recognized for wipe/migrate.
 MANAGED_FOLDER_PREFIX = "DOGMA - "
 MODDB_CACHE_MAX_AGE_S = 6 * 3600
 GITHUB_CACHE_MAX_AGE_S = 6 * 3600
+
+
+def managed_mod_folder_name(dep: "Dependency | str") -> str:
+    """MO2 mods/ folder for an auto-installed leaf pack: exact manifest block name.
+
+    Must be a concrete install unit (url/path/archive), never a radio ``options:``
+    parent (e.g. ``Screen Space Shaders``) or a pure composition node.
+    """
+    return dep.id if isinstance(dep, Dependency) else str(dep)
 
 
 # ---------------------------------------------------------------------------
@@ -1126,6 +1136,10 @@ class ManifestData:
             pack = pack_by_id.get(pid)
             if pack is None:
                 raise ValueError(f"unknown pack: {pid!r}")
+            # Radio parents are not install units — option leaves come from picks.
+            if is_wizard_radio_parent(pack):
+                done.add(pid)
+                return
             visiting.add(pid)
             for dep_id in pack.requires:
                 visit(dep_id)
@@ -1141,26 +1155,11 @@ class ManifestData:
             for leaf in expand_pack_composition(pack_by_id, seed):
                 visit(leaf)
 
-        # Drop pure composition nodes (same policy as resolve_install_order)
+        # Drop radio parents / pure composition nodes (same as resolve_install_order)
         final_ids: list[str] = []
         for pid in install_ids:
             pack = pack_by_id[pid]
-            if is_wizard_radio_parent(pack):
-                continue
-            if (
-                pack.requires
-                and not pack.has_remote_links()
-                and not (
-                    pack.disables
-                    or pack.deletes
-                    or pack.moves
-                    or pack.console
-                    or pack.mcm
-                    or pack.settings
-                    or pack.resets
-                    or pack.enables
-                )
-            ):
+            if is_wizard_radio_parent(pack) or is_pure_composition_pack(pack):
                 continue
             final_ids.append(pid)
 
@@ -2330,6 +2329,33 @@ def is_wizard_radio_parent(dep: Dependency) -> bool:
     )
 
 
+def is_pure_composition_pack(dep: Dependency) -> bool:
+    """True for requires-only nodes (e.g. ``A + B``) that expand to other packs."""
+    return bool(
+        dep.requires
+        and not dep.has_remote_links()
+        and not dep.path
+        and not is_wizard_radio_parent(dep)
+        and not (
+            dep.disables
+            or dep.deletes
+            or dep.moves
+            or dep.console
+            or dep.mcm
+            or dep.settings
+            or dep.resets
+            or dep.enables
+        )
+    )
+
+
+def pack_receives_mo2_folder(dep: Dependency) -> bool:
+    """True when this pack may be extracted to ``mods/<manifest name>``."""
+    if is_wizard_radio_parent(dep) or is_pure_composition_pack(dep):
+        return False
+    return bool(dep.has_remote_links() or dep.path or dep.source == "user")
+
+
 def installer_seed_ids(
     dep: Dependency, pack_by_id: dict[str, Dependency]
 ) -> list[str]:
@@ -2888,8 +2914,18 @@ def resolve_install_order(
             raise ValueError(f"requires cycle involving {mid!r}")
         if mid not in pack_by_id:
             raise ValueError(f"unknown suggested_mods pack: {mid!r}")
+        pack = pack_by_id[mid]
+        # Radio parents are never install units — walk the chosen option leaf/leaves
+        # so dependents (requires: Screen Space Shaders) stay deps-first.
+        if is_wizard_radio_parent(pack):
+            choice = picks.get(pack.id, "")
+            if choice:
+                for leaf_id in expand_pack_composition(pack_by_id, choice):
+                    visit(leaf_id)
+            done.add(mid)
+            return
         visiting.add(mid)
-        for dep_id in pack_by_id[mid].requires:
+        for dep_id in pack.requires:
             visit(dep_id)
         visiting.remove(mid)
         done.add(mid)
@@ -2916,12 +2952,11 @@ def resolve_install_order(
     if drop2:
         ordered = [m for m in ordered if m not in drop2]
 
-    # Install units = ordered packs that do work (not pure option parents /
-    # composition-only nodes whose children were already expanded into seeds).
+    # Install units = concrete packs only (never radio parents / compositions).
     install_ids: list[str] = []
     for mid in ordered:
         pack = pack_by_id[mid]
-        if is_wizard_radio_parent(pack):
+        if is_wizard_radio_parent(pack) or is_pure_composition_pack(pack):
             continue
         if (
             pack.options
@@ -2939,23 +2974,6 @@ def resolve_install_order(
                 or pack.resets
             ):
                 continue
-        # Pure composition choice already expanded into requires leaves
-        if (
-            pack.requires
-            and not pack.has_remote_links()
-            and not pack.path
-            and not is_wizard_radio_parent(pack)
-            and not (
-                pack.disables
-                or pack.deletes
-                or pack.moves
-                or pack.console
-                or pack.mcm
-                or pack.settings
-                or pack.resets
-            )
-        ):
-            continue
         install_ids.append(mid)
 
     # Fold parent/composite effects onto the first leaf of each pick, then
@@ -3716,7 +3734,7 @@ def preview_expected_changes(
             if leaf.path:
                 _add(f"ADD: DOGMA [{leaf.path.replace(chr(92), '/')}]")
             else:
-                _add(f"ADD: {MANAGED_FOLDER_PREFIX}{leaf.id}")
+                _add(f"ADD: {managed_mod_folder_name(leaf)}")
 
     disable_patterns: list[str] = []
     enable_patterns: list[str] = []
@@ -3743,7 +3761,7 @@ def preview_expected_changes(
             elif leaf.path:
                 _add("CONFIGURE: DOGMA")
             else:
-                _add(f"CONFIGURE: {MANAGED_FOLDER_PREFIX}{leaf.id}")
+                _add(f"CONFIGURE: {managed_mod_folder_name(leaf)}")
         if feature is not None and feature.has_axr_effects():
             _add("CONFIGURE: DOGMA")
 
@@ -4925,16 +4943,22 @@ def managed_stamp_for(dep: Dependency) -> str:
 
 
 def find_managed_folders(mo2_root: Path, dep: Dependency) -> list[str]:
+    """Folders DOGMA owns for this dep: static manifest name, legacy prefix, or meta URL stamp."""
     stamp = managed_stamp_for(dep).lower()
+    canonical = managed_mod_folder_name(dep).lower()
+    legacy = f"{MANAGED_FOLDER_PREFIX}{dep.id}".lower()
     mods = mo2_root / "mods"
     found: list[str] = []
-    if not mods.is_dir() or not stamp:
+    if not mods.is_dir():
         return found
     for d in mods.iterdir():
         if not d.is_dir():
             continue
-        if d.name.lower() == f"{MANAGED_FOLDER_PREFIX}{dep.id}".lower():
+        name_l = d.name.lower()
+        if name_l == canonical or name_l == legacy:
             found.append(d.name)
+            continue
+        if not stamp:
             continue
         url = read_meta_url(d).lower()
         if url and url == stamp:
@@ -6663,6 +6687,18 @@ def process_dependency(
     dry_run: bool,
 ) -> str:
     """mode: reinstall | ensure. Returns status string."""
+    # Radio parents (options:) and composition nodes never own an MO2 folder —
+    # only their concrete option leaves (e.g. Screen Space Shaders v23) install.
+    if is_wizard_radio_parent(dep):
+        info(
+            f"  [{dep.id}] skip (radio group parent — install option leaves, "
+            f"not '{dep.id}')"
+        )
+        return "skipped-radio-parent"
+    if is_pure_composition_pack(dep):
+        info(f"  [{dep.id}] skip (composition — install required leaves)")
+        return "skipped-composition"
+
     if dep.path:
         return _process_path_dependency(
             mo2_root, modlist, dep, mode=mode, dry_run=dry_run
@@ -6726,6 +6762,7 @@ def process_dependency(
         return "catalog"
 
     managed = find_managed_folders(mo2_root, dep)
+    canonical = managed_mod_folder_name(dep)
     if mode == "reinstall":
         for name in managed:
             info(f"  [{dep.id}] wipe managed: {name}")
@@ -6747,7 +6784,20 @@ def process_dependency(
     def _managed_dir() -> Path | None:
         if not managed:
             return None
+        # Prefer the static manifest-name folder when several matches exist.
+        for name in managed:
+            if name.lower() == canonical.lower():
+                return mo2_root / "mods" / name
         return mo2_root / "mods" / managed[0]
+
+    def _wipe_managed(reason: str) -> None:
+        nonlocal managed
+        if not managed:
+            return
+        info(f"  [{dep.id}] {reason}: {managed}")
+        for name in list(managed):
+            wipe_managed_mod(mo2_root, modlist, name, dry_run)
+        managed = []
 
     if arch_note == "manual-missing":
         if managed:
@@ -6768,13 +6818,15 @@ def process_dependency(
         info(f"  [{dep.id}] skip (manual, not installed): {howto}")
         return "manual-missing"
 
-    need_install = mode == "reinstall" or not managed
+    has_canonical = any(n.lower() == canonical.lower() for n in managed)
+    need_install = mode == "reinstall" or not managed or not has_canonical
     if managed and arch_note in ("downloaded", "would-download"):
         # Newer dated zip arrived — reinstall managed mod from it
-        info(f"  [{dep.id}] newer archive; reinstalling managed mod")
-        for name in managed:
-            wipe_managed_mod(mo2_root, modlist, name, dry_run)
-        managed = []
+        _wipe_managed("newer archive; reinstalling managed mod")
+        need_install = True
+    elif managed and not has_canonical:
+        # Legacy / archive-named folder → migrate to static manifest name
+        _wipe_managed(f"migrate install to static name '{canonical}'")
         need_install = True
 
     if managed and not need_install:
@@ -6796,8 +6848,14 @@ def process_dependency(
             f"URL={download_url}"
         )
 
-    folder_name = f"{MANAGED_FOLDER_PREFIX}{dep.id}"
+    # Always install under the leaf manifest name so reinstalls replace the same folder.
+    if not pack_receives_mo2_folder(dep):
+        info(f"  [{dep.id}] skip (not an installable leaf pack)")
+        return "skipped-non-leaf"
+    folder_name = canonical
     dest = mo2_root / "mods" / folder_name
+    if managed:
+        _wipe_managed("replace before install")
     info(f"  [{dep.id}] install -> {folder_name} from {archive.name}")
     if dry_run:
         run_dep_side_effects(mo2_root, dep, dest, dry_run=True)

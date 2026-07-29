@@ -60,11 +60,29 @@ Screen Space Shaders Editor:
     - Screen Space Shaders
 
 # --------------------------------
-# ENVIRONMENT / Melancholy Weathers
+# ENVIRONMENT / Weather
 # --------------------------------
 
-Melancholy Weathers:
+Weather (Atmospherics or Melancholy):
   stage: RELEASE
+  options:
+    - Atmospherics
+    - Melancholy Weathers
+
+Atmospherics:
+  stage: OMIT
+  requires:
+    - Screen Space Shaders
+  url_download: https://www.moddb.com/mods/stalker-anomaly/addons/hippos-shaders-and-atmospherics
+  url_moddb: https://www.moddb.com/mods/stalker-anomaly/addons/hippos-shaders-and-atmospherics
+  url_discord: https://discord.com/channels/912320241713958912/1036172060969410590
+  disables:
+    - Melancholy Weathers
+  deletes:
+    - <Anomaly>/appdata/shaders_cache
+
+Melancholy Weathers:
+  stage: OMIT
   requires:
     - Screen Space Shaders
     - Enhanced Shader Color Grading
@@ -72,6 +90,7 @@ Melancholy Weathers:
   url_kofi: https://ko-fi.com/pipnik
   url_discord: https://discord.com/channels/1398347444701499565/1398347445414527019
   disables:
+    - Atmospherics
     - 290- Atmospherics Shaders Weathers and Reshade Latest - Hippobot
     - 290- Atmospherics Shaders Weathers and Reshade - Hippobot
     - 296- Atmospherics Shaders Weathers and Reshade - Hippobot
@@ -82,6 +101,9 @@ Melancholy Weathers:
   console:
     - cfg_load melancholy
     - ssfx_water 1,0.8,1,0.1
+  mcm:
+    - melancholy/melansurge/stormtype: "3"
+    - melancholy/melansurge/surgetype: "1"
 
 Enhanced Shader Color Grading:
   stage: OMIT
@@ -138,6 +160,11 @@ Painter of the Zone:
   url_discord: https://discord.com/channels/912320241713958912/1290829430020898826
   requires:
     - Screen Space Shaders
+  mcm:
+    - blood/bullettime/enable: "false"
+    - blood/dismemberment/enable: "false"
+    - blood/killcam/enable: "false"
+    - blood/particles/fingers_size_min: "3"
 
 # --------------------------------
 # GAMEPLAY / AlifePlus
@@ -210,8 +237,6 @@ AlifeTactics:
   url_discord: https://discord.com/channels/912320241713958912/1481332358832455731
   requires:
     - xlibs
-  mcm:
-    - idiots/options/noNpcLooting: "false"
   disables:
     - G.A.M.M.A. No NPC Friendly Fire
     - G.A.M.M.A. AI Rework
@@ -219,6 +244,8 @@ AlifeTactics:
     - 133- No more companions friendly fire - RavenAscendant
     - 45- Stealth Overhaul - xcvb
     - G.A.M.M.A. NPCs Faster Reactions
+  mcm:
+    - idiots/options/noNpcLooting: "false"
 
 # --------------------------------
 # GAMEPLAY
@@ -244,13 +271,13 @@ The Anomalous Stash:
   dirs:
     - 02 The Anomalous Stash - Fetch task QoL
 
-R.N.G. - Randomizer for New Game:
+Randomizer for New Game:
   stage: RELEASE
   url_discord: https://discord.com/channels/912320241713958912/1526626683262730250
   requires:
     - R.N.G.L.O.
 
-R.N.G.L.O.:
+Revolver's New Game Loadout Overhaul:
   stage: RELEASE
   url_discord: https://discord.com/channels/912320241713958912/1509766944344117449
 
@@ -270,6 +297,9 @@ Interaction Dot Marks:
 Medik Health Monitor:
   stage: RELEASE
   url_discord: https://discord.com/channels/912320241713958912/1513868339158581318
+  mcm:
+    - medik/activation: "hold"
+    - medik/gui_mod: "none"
 
 Quick Action Wheels Overhaul:
   stage: RELEASE
@@ -288,6 +318,11 @@ Ammo Check Enhanced:
   url_discord: https://discord.com/channels/912320241713958912/1511043338583806003
   disables:
     - 261- Ammo Check - Ishmaeel
+  mcm:
+    - rax_ammo_check/display/minimalist_bar: "true"
+    - rax_ammo_check/firemode/doubletap_ms: "50"
+    - rax_ammo_check/firemode/enable: "true"
+    - rax_ammo_check/hud_behavior/auto_check_reload: "true"
 
 Crafting UI Tweaks:
   stage: RELEASE
@@ -306,6 +341,9 @@ Seamless Inventory Sort:
   url_discord: https://discord.com/channels/912320241713958912/1520580529273962567
   enables:
     - 110- SortingPlus - RavenAscendant
+  mcm:
+    - seamless_sort/siss_gaps/keep_gaps: "true"
+    - seamless_sort/siss_hl/hl_new_a: "20"
 
 Compact PDA Taskboard:
   stage: OMIT

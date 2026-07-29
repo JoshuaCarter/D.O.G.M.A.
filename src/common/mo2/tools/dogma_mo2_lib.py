@@ -766,7 +766,6 @@ class Dependency:
     path: str = ""  # local src/<path> feature (package zip); mutually exclusive w/ urls
     # omit|dev|release — FOMOD + wizard gate (empty = leaf / not a wizard entry)
     stage: str = ""
-    archive_name: str = ""
     source: str = "auto"  # auto | user
     howto: str = ""
     desc: str = ""  # wizard blurb for option choices
@@ -1581,12 +1580,6 @@ def _dep_from_mapping(
         url_patreon=url_patreon,
         path=path,
         stage=stage,
-        archive_name=str(
-            item.get("archive_name")
-            or item.get("archive_stem")
-            or item.get("archive")
-            or ""
-        ).strip(),
         source=source,
         howto=str(item.get("howto") or "").strip(),
         desc=str(item.get("desc") or item.get("description") or "").strip(),
@@ -4631,12 +4624,8 @@ def _github_tag_sort_key(tag: str) -> tuple:
     return (nums, tag.lower())
 
 
-def _pick_github_release_asset(
-    assets: list[dict],
-    *,
-    archive_name: str = "",
-) -> dict | None:
-    """Prefer archive assets; match archive_name when set; skip pdb dumps."""
+def _pick_github_release_asset(assets: list[dict]) -> dict | None:
+    """Prefer archive assets; skip pdb dumps."""
     archives: list[dict] = []
     for raw in assets:
         name = str(raw.get("name") or "")
@@ -4652,24 +4641,12 @@ def _pick_github_release_asset(
         test = 1 if "mt-test" in name or "test" in name.split("_") else 0
         return (pdb, test, len(name), name)
 
-    pool = archives
-    needle = (archive_name or "").strip().lower()
-    if needle:
-        matched = [
-            a
-            for a in archives
-            if needle in str(a.get("name") or "").lower()
-            or needle.replace(" ", "") in re.sub(r"[^a-z0-9]+", "", str(a.get("name") or "").lower())
-        ]
-        if matched:
-            pool = matched
-    return sorted(pool, key=_score)[0]
+    return sorted(archives, key=_score)[0]
 
 
 def resolve_github(
     url: str,
     *,
-    archive_name: str = "",
     cache_dir: Path | None = None,
     force: bool = False,
 ) -> GithubInfo:
@@ -4683,7 +4660,7 @@ def resolve_github(
 
     owner, repo = parse_github_repo(raw)
     page = normalize_github_repo_url(raw)
-    cache_key = f"{page}|{archive_name}".lower()
+    cache_key = page.lower()
     cache = _github_cache_load(cache_dir)
     cached = cache.get(cache_key) if not force else None
     if isinstance(cached, dict) and cached.get("fetched_at") and cached.get("download_url"):
@@ -4716,7 +4693,6 @@ def resolve_github(
         assets = release.get("assets") if isinstance(release.get("assets"), list) else []
         asset = _pick_github_release_asset(
             [a for a in assets if isinstance(a, dict)],
-            archive_name=archive_name,
         )
         if asset and asset.get("browser_download_url"):
             info.kind = "release"
@@ -5700,7 +5676,6 @@ def download_and_associate(
         info(f"  [{dep.id}] resolving GitHub…")
         github = resolve_github(
             download_url,
-            archive_name=dep.archive_name,
             cache_dir=tools,
         )
         download_url = github.download_url or download_url
@@ -5760,11 +5735,7 @@ def _safe_archive_stem(name: str) -> str:
 
 
 def dep_zip_stem(dep: Dependency | str, *, date: str = "") -> str:
-    """Local archive basename: catalog ``<id>`` or ``<id> YYYY-MM-DD``.
-
-    Always uses the internal mod id (not ``archive_name:``, which is only for
-    matching upstream zip titles when claiming a download).
-    """
+    """Local archive basename: catalog ``<id>`` or ``<id> YYYY-MM-DD``."""
     if isinstance(dep, Dependency):
         base = _safe_archive_stem(dep.id)
     else:
@@ -5881,10 +5852,7 @@ def list_dep_archives(mo2_root: Path, dep: Dependency) -> list[LocalArchive]:
         date = archive_filename_date(mapped)
         _add(mapped, pinned=not bool(date), date=date)
 
-    stems = {base.lower()}
-    an = (dep.archive_name or "").strip()
-    if an:
-        stems.add(an.lower())
+    stem_key = base.lower()
 
     for p in dld.iterdir():
         if not _is_archive_file(p):
@@ -5892,10 +5860,10 @@ def list_dep_archives(mo2_root: Path, dep: Dependency) -> list[LocalArchive]:
         stem = p.stem
         date = archive_filename_date(p)
         head = archive_filename_head(p).lower()
-        if stem.lower() in stems:
+        if stem.lower() == stem_key:
             _add(p, pinned=True, date="")
             continue
-        if date and head in stems:
+        if date and head == stem_key:
             _add(p, pinned=False, date=date)
     return out
 
@@ -5958,7 +5926,6 @@ def probe_dep_remote_date(
             return github_date_stamp(
                 resolve_github(
                     download_url,
-                    archive_name=dep.archive_name,
                     cache_dir=cache_dir,
                 )
             )
@@ -6732,7 +6699,6 @@ def process_dependency(
         try:
             github = resolve_github(
                 dep.url,
-                archive_name=dep.archive_name,
                 cache_dir=tools,
             )
             download_url = github.download_url or dep.url

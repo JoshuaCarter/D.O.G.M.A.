@@ -1,11 +1,8 @@
 --[[
-	Favourites — MCM
+	Better Favourites and Junk — MCM
 
-	Injects Favourite / Junk keybinds into SortingPlus's own MCM page
-	(stock hardcoded K / J). Keeps a short D.O.G.M.A. info page for persistence.
+	Injects keybinds + remember toggles into SortingPlus's page.
 ]]
-
-local CONFIG = _G.dogma_items_favourites_conf
 
 local function dik_or(fallback)
 	return (DIK_keys and DIK_keys[fallback]) or -1
@@ -23,7 +20,7 @@ local function find_gr_child(gr, id)
 	return nil
 end
 
-local function inject_keybinds(tree)
+local function inject_sortingplus(tree)
 	if not tree or tree.id ~= "SortingPlus" or type(tree.gr) ~= "table" then
 		return
 	end
@@ -51,6 +48,18 @@ local function inject_keybinds(tree)
 		val = 2,
 		def = dik_or("DIK_J"),
 	})
+	table.insert(tree.gr, at + 3, {
+		id = "persist_favorites",
+		type = "check",
+		val = 1,
+		def = true,
+	})
+	table.insert(tree.gr, at + 4, {
+		id = "persist_junk",
+		type = "check",
+		val = 1,
+		def = true,
+	})
 end
 
 local function inject_into_options(options)
@@ -59,7 +68,7 @@ local function inject_into_options(options)
 	end
 	for i = 1, #options do
 		if options[i].id == "SortingPlus" then
-			inject_keybinds(options[i])
+			inject_sortingplus(options[i])
 		end
 	end
 end
@@ -69,37 +78,31 @@ local function wrap_sortingplus_on_mcm_load()
 	if not (sp and type(sp.on_mcm_load) == "function") then
 		return
 	end
-	if sp._dogma_fav_keys_mcm then
+	if sp._dogma_fav_mcm then
 		return
 	end
 	local orig = sp.on_mcm_load
 	sp.on_mcm_load = function(...)
 		local tree, name = orig(...)
 		if tree then
-			inject_keybinds(tree)
+			inject_sortingplus(tree)
 		end
 		return tree, name
 	end
-	sp._dogma_fav_keys_mcm = true
+	sp._dogma_fav_mcm = true
 end
 
--- Top-level: all *mcm.script modules exist before any on_mcm_load runs.
 wrap_sortingplus_on_mcm_load()
 
 function on_mcm_load(options)
 	wrap_sortingplus_on_mcm_load()
 	inject_into_options(options)
 
-	dogma_mcm.attach(options, "items", "ui_mcm_menu_dogma_items", {
-		id = "favourites",
-		sh = true,
-		text = "ui_mcm_menu_dogma_items_favourites",
-		gr = dogma_mcm.with_header({
-			{
-				id = "page_description",
-				type = "desc",
-				text = "ui_mcm_dogma_items_favourites_page_description",
-			},
-		}),
+	dogma_mcm.append(options, "tweaks", "ui_mcm_menu_dogma_tweaks", {
+		{
+			id = "favourites_description",
+			type = "desc",
+			text = "ui_mcm_dogma_tweaks_favourites_page_description",
+		},
 	})
 end

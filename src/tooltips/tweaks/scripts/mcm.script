@@ -1,22 +1,9 @@
 function on_mcm_load(options)
-	local CONFIG = _G.dogma_tooltips_tweaks_conf
-	dogma_mcm.attach(options, "tooltips", "ui_mcm_menu_dogma_tooltips", {
-		id = "tweaks",
-		sh = true,
-		text = "ui_mcm_menu_dogma_tooltips_tweaks",
-		gr = dogma_mcm.with_header({
-			{
-				id = "page_description",
-				type = "desc",
-				text = "ui_mcm_dogma_tooltips_tweaks_page_description",
-			},
-			{
-				id = "fix_layout",
-				type = "check",
-				val = 1,
-				def = CONFIG.DEFAULTS["fix_layout"],
-				hint = "dogma_tooltips_tweaks_fix_layout",
-			},
-		}),
+	dogma_mcm.append(options, "tweaks", "ui_mcm_menu_dogma_tweaks", {
+		{
+			id = "tooltips_tweaks_description",
+			type = "desc",
+			text = "ui_mcm_dogma_tooltips_tweaks_page_description",
+		},
 	})
 end

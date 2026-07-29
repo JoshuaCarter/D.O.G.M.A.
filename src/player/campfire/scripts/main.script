@@ -1,6 +1,7 @@
 --[[
 	Campfire heal (Body Health System + main HP).
 
+	Only heals out of combat (no stalker/monster with actor as best_enemy).
 	Does NOT apply temporary limb HP (medkits etc. still do).
 	No heal caps.
 
@@ -10,7 +11,7 @@
 	         on whichever limb currently has the lowest permanent HP and still
 	         has temp (re-picked every tick; never sticky).
 
-	Body and limb timers run asynchronously.
+	Body and limb timers run asynchronously; both pause while in combat.
 	Disable other campfire heal mods to avoid stacking.
 ]]
 
@@ -75,6 +76,45 @@ local function near_lit_campfire()
 		if binder and binder.campfire and binder.campfire:is_on() and binder.object then
 			if pos:distance_to_sqr(binder.object:position()) <= RANGE_SQR then
 				return true
+			end
+		end
+	end
+	return false
+end
+
+-- True when any online stalker/monster has the actor as best_enemy (actively engaging).
+local function in_combat()
+	local actor = db.actor
+	if not (actor and db.storage) then
+		return false
+	end
+	local actor_id = actor:id()
+	for id, _ in pairs(db.storage) do
+		if id ~= actor_id then
+			local npc = level.object_by_id(id)
+			if npc then
+				local is_creature = false
+				pcall(function()
+					is_creature = IsStalker(npc) or IsMonster(npc)
+				end)
+				if is_creature then
+					local ok_alive, alive = pcall(function()
+						return npc:alive()
+					end)
+					if ok_alive and alive then
+						local ok_e, enemy = pcall(function()
+							return npc:best_enemy()
+						end)
+						if ok_e and enemy then
+							local ok_id, eid = pcall(function()
+								return enemy:id()
+							end)
+							if ok_id and eid == actor_id then
+								return true
+							end
+						end
+					end
+				end
 			end
 		end
 	end
@@ -248,6 +288,10 @@ local function actor_on_update()
 		return
 	end
 	if not near_lit_campfire() then
+		return
+	end
+	-- Pause heal timers while engaged; resume from the same ticks when clear.
+	if in_combat() then
 		return
 	end
 

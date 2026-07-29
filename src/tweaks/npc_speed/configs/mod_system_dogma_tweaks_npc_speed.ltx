@@ -1,54 +1,106 @@
-; NPC Speed
-; Combat (danger) move speeds only - free / panic unchanged.
-; 20% slower (x0.80) than stock stalker / GAMMA ISG danger speeds.
+; NPC Move Speed
+; Source of truth: Anomaly 1.5.3 stalker_movement_speeds
+;   (C:\Anomaly\tools\_unpacked\configs\creatures\m_stalker.ltx)
+; free / panic = Anomaly defaults
+; danger (combat) = Anomaly x1.20
+; ISG danger = Anomaly x1.50 (wired via isg_movement_speeds)
+;
+; Other mods that touch these tables (overridden by this DLTX when DOGMA is later):
+;   - G.A.M.M.A. NPCs Faster Reactions (also disabled in manifest)
+;   - 45- Stealth Overhaul - xcvb (same boosted danger table; not disabled — too broad)
+;   - 209- Death Animations (ships stock Anomaly speeds in its m_stalker.ltx copy)
 
 ![stalker_movement_speeds]
-	; danger - 80% of stock
+	; danger — Anomaly x1.20
 	;; crouch
 	;;; walk
-	danger_crouch_walk_forward 	= 1.52 ; 1.9
-	danger_crouch_walk_backward	= 1.20 ; 1.5
-	danger_crouch_walk_left		= 1.52 ; 1.9
-	danger_crouch_walk_right 	= 1.52 ; 1.9
+	danger_crouch_walk_forward 	= 1.56 ; 1.3
+	danger_crouch_walk_backward	= 1.20 ; 1.0
+	danger_crouch_walk_left		= 1.44 ; 1.2
+	danger_crouch_walk_right 	= 1.44 ; 1.2
 	;;; run
-	danger_crouch_run_forward   = 3.04 ; 3.8
-	danger_crouch_run_backward	= 2.00 ; 2.5
-	danger_crouch_run_left		= 2.40 ; 3.0
-	danger_crouch_run_right		= 2.40 ; 3.0
+	danger_crouch_run_forward   = 3.00 ; 2.5
+	danger_crouch_run_backward	= 2.04 ; 1.7
+	danger_crouch_run_left		= 2.40 ; 2.0
+	danger_crouch_run_right		= 2.40 ; 2.0
 	;; stand
 	;;; walk
-	danger_stand_walk_forward	= 3.04 ; 3.8
-	danger_stand_walk_backward	= 2.00 ; 2.5
-	danger_stand_walk_left		= 2.40 ; 3.0
-	danger_stand_walk_right		= 2.40 ; 3.0
+	danger_stand_walk_forward	= 3.00 ; 2.5
+	danger_stand_walk_backward	= 2.04 ; 1.7
+	danger_stand_walk_left		= 2.40 ; 2.0
+	danger_stand_walk_right		= 2.40 ; 2.0
 	;;; run
-	danger_stand_run_forward	= 4.16 ; 5.2
-	danger_stand_run_backward	= 2.00 ; 2.5
-	danger_stand_run_left		= 2.80 ; 3.5
-	danger_stand_run_right		= 2.80 ; 3.5
+	danger_stand_run_forward	= 5.40 ; 4.5
+	danger_stand_run_backward	= 2.40 ; 2.0
+	danger_stand_run_left		= 2.40 ; 2.0
+	danger_stand_run_right		= 2.40 ; 2.0
+	; free — Anomaly
+	free_stand_walk_forward		= 1.1
+	free_stand_run_forward		= 3.0
+	; panic — Anomaly
+	panic_stand_run_forward		= 6.0
 
-; ISG - 80% of G.A.M.M.A. NPCs Faster Reactions isg_movement_speeds
-![isg_movement_speeds]
-	; danger
+; ISG: Anomaly has no separate bank (they use stalker_movement_speeds).
+; Create one so combat can be +50% while free/panic stay Anomaly.
+[isg_movement_speeds]
+	; danger — Anomaly x1.50
 	;; crouch
 	;;; walk
-	danger_crouch_walk_forward 	= 1.98 ; 2.47
-	danger_crouch_walk_backward	= 1.56 ; 1.95
-	danger_crouch_walk_left		= 1.98 ; 2.47
-	danger_crouch_walk_right 	= 1.98 ; 2.47
+	danger_crouch_walk_forward 	= 1.95 ; 1.3
+	danger_crouch_walk_backward	= 1.50 ; 1.0
+	danger_crouch_walk_left		= 1.80 ; 1.2
+	danger_crouch_walk_right 	= 1.80 ; 1.2
 	;;; run
-	danger_crouch_run_forward   = 3.95 ; 4.94
-	danger_crouch_run_backward	= 2.60 ; 3.25
-	danger_crouch_run_left		= 3.28 ; 4.1
-	danger_crouch_run_right		= 3.28 ; 4.1
+	danger_crouch_run_forward   = 3.75 ; 2.5
+	danger_crouch_run_backward	= 2.55 ; 1.7
+	danger_crouch_run_left		= 3.00 ; 2.0
+	danger_crouch_run_right		= 3.00 ; 2.0
 	;; stand
 	;;; walk
-	danger_stand_walk_forward	= 3.95 ; 4.94
-	danger_stand_walk_backward	= 2.60 ; 3.25
-	danger_stand_walk_left		= 3.28 ; 4.1
-	danger_stand_walk_right		= 3.28 ; 4.1
+	danger_stand_walk_forward	= 3.75 ; 2.5
+	danger_stand_walk_backward	= 2.55 ; 1.7
+	danger_stand_walk_left		= 3.00 ; 2.0
+	danger_stand_walk_right		= 3.00 ; 2.0
 	;;; run
-	danger_stand_run_forward	= 5.41 ; 6.76
-	danger_stand_run_backward	= 2.60 ; 3.25
-	danger_stand_run_left		= 3.64 ; 4.55
-	danger_stand_run_right		= 3.64 ; 4.55
+	danger_stand_run_forward	= 6.75 ; 4.5
+	danger_stand_run_backward	= 3.00 ; 2.0
+	danger_stand_run_left		= 3.00 ; 2.0
+	danger_stand_run_right		= 3.00 ; 2.0
+	; free — Anomaly
+	free_stand_walk_forward		= 1.1
+	free_stand_run_forward		= 3.0
+	; panic — Anomaly
+	panic_stand_run_forward		= 6.0
+
+![sim_default_isg_0]
+movement_speeds					= isg_movement_speeds
+
+![sim_default_isg_1]
+movement_speeds					= isg_movement_speeds
+
+![sim_default_isg_2]
+movement_speeds					= isg_movement_speeds
+
+![sim_default_isg_3]
+movement_speeds					= isg_movement_speeds
+
+![sim_default_isg_4]
+movement_speeds					= isg_movement_speeds
+
+![sim_default_isg_5]
+movement_speeds					= isg_movement_speeds
+
+![sim_default_isg_dead]
+movement_speeds					= isg_movement_speeds
+
+![sim_default_isg_trader]
+movement_speeds					= isg_movement_speeds
+
+![sim_default_isg_mechanic]
+movement_speeds					= isg_movement_speeds
+
+![sim_default_isg_medic]
+movement_speeds					= isg_movement_speeds
+
+![sim_default_isg_barman]
+movement_speeds					= isg_movement_speeds

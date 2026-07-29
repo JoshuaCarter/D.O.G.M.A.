@@ -6,12 +6,12 @@
 # stage: OMIT | DEV | RELEASE
 #
 
-Quiet Bush:
+Quiet Rustle SFX:
   stage: RELEASE
   path: tweaks/quiet_bush
   desc: "Quieter player bush-brush / foliage collide SFX. Overrides material/human/step bushes*.ogg and bush0*.ogg. Always on while installed."
 
-Ammo:
+Ammo Crafting Tweak:
   stage: RELEASE
   path: tweaks/ammo
   desc: Ammo crafting always uses one casing and one bullet per box. Overrides Ammo Maker recipes.
@@ -19,55 +19,65 @@ Ammo:
     - 145- Ammo Maker - arti
     - 146- Ammo Maker BAS Patch - arti
 
-Thirst:
+NVG Tweaks:
+  stage: DEV
+  path: hud/nvg
+  desc: "Remember NVG state across map changes. Adds an MCM slider to Beef's NVG for gain level on NVG use."
+  enables:
+    - 189- Beef's NVG - theRealBeef
+
+QAW HUD Hide Toggle:
+  stage: DEV
+  path: hud/quick_action_wheel
+  desc: "Add MCM toggle for whether to hide the HUD, or not, for Quick Action Wheel (works with QAW Overhaul)."
+
+Thirst FX Delay:
   stage: DEV
   path: tweaks/thirst
-  desc: "Thirst blur starts at yellow instead of gray. Replaces Thirst Blur Tweak's blur behaviour (that mod has no MCM)."
+  desc: "Thirst blur starts at yellow instead of gray."
 
-Geiger HUD:
+Hide mSv HUD:
   stage: DEV
   path: tweaks/geiger_hud
-  desc: "Hides the Geiger \"N mSv\" tip and the mSv number over the radiation icon."
+  desc: "Hides the \"mSv\" screen text when first equipping the Geiger Counter."
   disables:
     - G_FLAT's Msv Above Radiation Icon
 
-Medik:
+Medik Tweaks:
   stage: DEV
   path: tweaks/medik
-  desc: "Centered 2x3 Medik slots for rad/bleed (dose, restore rate, protection). Overrides medik_ui.script + medik_boosters.dds."
+  desc: "Changes Medik to show icons/counts for rad/bleed (current level, restore rate, protection level)."
   requires:
     - Medik Health Monitor
 
 Damage Location Fix:
   stage: DEV
   path: tweaks/damage_location_fix
-  desc: "Limb damage sticks to the hit bone. Falls split both legs; unknown bones split arms+legs; rad/toxic (65535) skips limbs. ADB last-hit-was-head redirect goes to torso only. Medik heal/UI unchanged."
-  requires:
-    - Medik Health Monitor
+  desc: "Fixes damage from being applied to the wrong limb - whatever bone is hit will take the damage (with limited sensible exception)."
 
-Geiger:
+Geiger Counter Fix:
   stage: DEV
   path: tweaks/geiger
-  desc: "Equippable geiger reads Dynamic Radiation Patch levels (env mode). Registers GAMMA's extra rad zone sections with the HUD detector."
+  desc: "Geiger Counter reads Dynamic Radiation Patch levels (env mode)."
   enables:
     - G.A.M.M.A. Radiation Dynamic Areas
 
-Hard Defaults:
+Hard By Default:
   stage: DEV
   path: tweaks/hard_defaults
-  desc: New Game starts with Veteran difficulty and Survivalist economy selected.
+  desc: New game defaults to Veteran difficulty and Survivalist economy (you can still change it).
 
-Keybinds Fix:
+Unsticky Keybinds Fix:
   stage: DEV
   path: tweaks/keybinds_fix
-  desc: "Escape clears binds in Options→Controls, Exit stays on Escape, and stock key defaults are disabled so unbound keys stay unbound after restart."
+  desc: "No more resetting system keybinds to default values after restart."
 
-Missions:
+Unlock Afterglow Immediately:
   stage: DEV
   path: tweaks/missions
-  desc: Unlocks Afterglow as soon as Mortal Sin is done.
+  desc: Unlocks Afterglow as soon as Mortal Sin is completed.
 
-RF Receiver:
+Local RF Missions:
   stage: DEV
   path: tweaks/rf_receiver
   desc: RF packages can spawn on the map you are on. Needs Tweaki_Breeki / Cookbook RF packages.
@@ -75,39 +85,43 @@ RF Receiver:
     - 154- RF Receiver Tasks - Tweaki_Breeki
     - 332- QoL Patch to Tweak_Breeki's RF Receiver Hidden Packages - Cookbook
 
-Search:
+MCM Search:
   stage: RELEASE
   path: tweaks/search
-  desc: Search box for the Mod Configuration Menu.
+  desc: Removes pre-filled text from MCM search box.
 
-Sound Prefetch:
-  stage: DEV
-  path: tweaks/sound_prefetch
-  desc: "Prefetch loose mod sounds (JSRS, etc.) to reduce hitching. Rebuild the list with DOGMA SFX Prefetch.bat after changing sound mods."
-
-Mutant Audio:
+Dark Signals Mutant Steps Fix:
   stage: DEV
   path: tweaks/mutant_audio
-  desc: Routes mutant footsteps onto Dark Signal step banks (paws / hoof / giant / human). Compatible with Improved Mutant Footsteps sound files.
+  desc: Routes mutant footsteps onto Dark Signal step banks (paws / hoof / giant / human).
+  requires:
+    - Dark Signal Soundscape Overhaul Melancholy Edition
 
-NPC Speed:
+Sane NPC Move Speeds:
   stage: RELEASE
   path: tweaks/npc_speed
-  desc: "Reduces NPC combat move speed by 20% (including ISG)."
+  desc: "Resets non-combat NPC speeds to Anomaly defaults. Combat speeds are +20% faster (+50% for ISG)."
+  disables:
+    - G.A.M.M.A. NPCs Faster Reactions
+
+Solo Guides & Escorts:
+  stage: DEV
+  path: tweaks/solo_companions
+  desc: "Guides and hired escorts join alone."
 
 Rep Warning:
   stage: DEV
   path: tweaks/rep_warning
-  desc: "Marks bounty missions red on the PDA taskboard when the target isn't your enemy."
+  desc: "Marks bounty missions red for same-faction/friendly targets and orange for neutral on the PDA taskboard."
 
-STFU:
+Player STFU:
   stage: OMIT
   path: tweaks/stfu
-  desc: "Mutes player voice lines from Voiced Actor. Always on while installed."
+  desc: "Mutes player voice lines from Voiced Actor."
   disables:
     - Silent Protagonist
 
-Ammo Wheel:
+Ammo Wheel Hotkey Fix:
   stage: DEV
   path: tweaks/ammo_wheel
   desc: "Ammo wheel hotkeys skip worn ammo so keys stay 1, 2, 3."
@@ -117,6 +131,28 @@ Ammo Wheel:
 Quick Fire:
   stage: DEV
   path: tweaks/quick_fire
-  desc: Fire or reload before the draw animation finishes.
+  desc: Can fire weapon before draw animation fully completes.
   disables:
     - 65- Fluid Aim - Skieppy
+
+Better Favourites and Junk:
+  stage: DEV
+  path: items/favourites
+  desc: "SortingPlus favourite/junk MCM keybinds (K/J) and remember lists across new games."
+  enables:
+    - 110- SortingPlus - RavenAscendant
+
+Better Pseudogiant Slam Dodge:
+  stage: RELEASE
+  path: tweaks/pseudogiant_slam
+  desc: "If your are airborne when a slam happens, you don't take damage (instead of a 200ms window before the slam which is dumb)."
+
+Longer Controller Tube Attack Cooldown:
+  stage: RELEASE
+  path: tweaks/controller_tube
+  desc: "Controller tube attack cooldown is 5s instead of 2s."
+
+Tooltips Layout Fix:
+  stage: RELEASE
+  path: tooltips/tweaks
+  desc: Fixes item tooltips layout issues.

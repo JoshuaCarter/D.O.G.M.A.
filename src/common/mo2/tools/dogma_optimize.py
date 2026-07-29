@@ -335,7 +335,7 @@ def step_gc(mo2_root: Path, *, dry_run: bool) -> int:
 
 def resolve_sfx_builder() -> Path | None:
     here = Path(__file__).resolve().parent
-    # Deployed: mods/DOGMA/mo2/tools/build_sound_prefetch.py (next to this file)
+    # Deployed / common: mods/DOGMA/mo2/tools/build_sound_prefetch.py (next to this file)
     candidates: list[Path] = [here / "build_sound_prefetch.py"]
     # Legacy flat path from older builds
     if here.name.lower() == "tools":
@@ -343,10 +343,7 @@ def resolve_sfx_builder() -> Path | None:
     try:
         repo = Path(__file__).resolve().parents[4]
         candidates.append(
-            repo / "src" / "misc" / "sound_prefetch" / "mo2" / "tools" / "build_sound_prefetch.py"
-        )
-        candidates.append(
-            repo / "src" / "misc" / "sound_prefetch" / "mo2" / "build_sound_prefetch.py"
+            repo / "src" / "common" / "mo2" / "tools" / "build_sound_prefetch.py"
         )
     except IndexError:
         pass

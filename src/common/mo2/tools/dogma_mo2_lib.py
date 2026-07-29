@@ -969,7 +969,7 @@ def detect_installed_features(
         for p in gamedata.rglob("*"):
             if p.is_file():
                 names.append(p.name.lower())
-    # Also scan mo2/ for feature-specific tools (e.g. sound_prefetch)
+    # Also scan mo2/ for common / feature tools
     mo2_tools = root / "mo2"
     if mo2_tools.is_dir():
         for p in mo2_tools.rglob("*"):
@@ -2035,7 +2035,7 @@ def wizard_options_from_deps(
 
 
 def is_wizard_tweak_pack(dep: Dependency) -> bool:
-    """True for catalog Tweaks (``path: tweaks/...``), not e.g. mutants/tweaks."""
+    """True for catalog Tweaks (``path: tweaks/...``)."""
     path = (dep.path or "").replace("\\", "/").strip().lower()
     return path.startswith("tweaks/")
 

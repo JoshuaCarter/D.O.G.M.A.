@@ -182,8 +182,9 @@ def _build_indicator_images(root: tk.Tk) -> dict[str, tk.PhotoImage]:
     check_on = blank()
     _put_rect(check_on, 1, 1, s - 2, s - 2, border)
     _put_rect(check_on, 2, 2, s - 3, s - 3, fill)
-    # Thicker green tick (scaled up from the old 16px mark).
-    tick = [
+    # Green tick: 50% larger than the base path, scaled from the bottom tip
+    # so the tip stays put and growth goes up/out (may poke past the box).
+    tick_base = [
         (4, 10),
         (5, 11),
         (6, 12),
@@ -197,8 +198,22 @@ def _build_indicator_images(root: tk.Tk) -> dict[str, tk.PhotoImage]:
         (14, 8),
         (15, 7),
     ]
-    for x, y in tick:
-        _put_rect(check_on, x, y, x + 1, y + 1, green)
+    ax, ay = 8.0, 14.0
+    tick_scale = 1.5
+    scaled = [
+        (ax + (x - ax) * tick_scale, ay + (y - ay) * tick_scale)
+        for x, y in tick_base
+    ]
+    for i in range(len(scaled) - 1):
+        x0, y0 = scaled[i]
+        x1, y1 = scaled[i + 1]
+        steps = max(int(abs(x1 - x0) + abs(y1 - y0)) * 2, 1)
+        for t in range(steps + 1):
+            u = t / steps
+            x = int(round(x0 + (x1 - x0) * u))
+            y = int(round(y0 + (y1 - y0) * u))
+            if 0 <= x < s - 1 and 0 <= y < s - 1:
+                _put_rect(check_on, x, y, x + 1, y + 1, green)
 
     ring_outer = 9.0
     ring_inner = 6.6
@@ -2335,29 +2350,30 @@ def _run_wizard_ui(
         except tk.TclError:
             pass
 
-    def _pack_path_info_line(
+    def _pack_path_info_icon(
+        row: ttk.Frame,
         files_col: ttk.Frame,
         option_id: str,
         sections_fn: Callable[[], list[tuple[str, list[str], str]]],
-    ) -> ttk.Frame:
-        """``[ⓘ | content]`` on one line so the icon sits inline with the text.
-
-        Returns the content frame — pack title/desc into it.
-        """
-        line = ttk.Frame(files_col)
-        line.pack(anchor="w", fill="x", pady=(4, 0))
-        top = line.winfo_toplevel()
-        bg = _frame_bg(line)
+    ) -> None:
+        """Blue/red ⓘ grouped with the checkbox (same vertical pad, right of it)."""
+        top = row.winfo_toplevel()
+        bg = _frame_bg(row)
         img_n = _filled_info_image(top, bg=bg)
         img_a = _filled_info_image(top, bg=bg, fill=_THEME["alert"])
-        lbl = _pack_info_icon(line, sections_fn, bg=bg, image=img_n)
+        lbl = _pack_info_icon(row, sections_fn, bg=bg, image=img_n)
         lbl._dogma_info_img_normal = img_n  # type: ignore[attr-defined]
         lbl._dogma_info_img_alert = img_a  # type: ignore[attr-defined]
-        lbl.pack(side="left", anchor="center", padx=(0, 6))
+        # Checkbox: 20px indicator + style padding 2, pack pady 5 → center ~17px
+        # from row top. ⓘ is 14px → pady 10 centers it with the checkbox.
+        lbl.pack(
+            side="left",
+            anchor="n",
+            padx=(0, 6),
+            pady=(10, 0),
+            before=files_col,
+        )
         path_info_icons[option_id] = lbl
-        content = ttk.Frame(line)
-        content.pack(side="left", fill="x", expand=True)
-        return content
 
     def _add_archive_fields(
         parent: ttk.Frame,
@@ -2708,7 +2724,7 @@ def _run_wizard_ui(
         bool_vars[opt.id] = bv
         id_list.append(opt.id)
 
-        _row, files_col, chk = _pack_mod_select_row(
+        row, files_col, chk = _pack_mod_select_row(
             frame,
             kind="check",
             variable=bv,
@@ -2735,6 +2751,7 @@ def _run_wizard_ui(
                 )
             else:
                 info_fn = lambda: []
+            _pack_path_info_icon(row, files_col, opt.id, info_fn)
             # Packaged path mods — no archive box.
             # D.O.G.M.A. features page: white desc in the old "Install" slot.
             # Page 1 path rows (if any): keep Install + desc under.
@@ -2744,18 +2761,16 @@ def _run_wizard_ui(
                     if pack is not None
                     else (opt.desc or "").strip()
                 )
-                content = _pack_path_info_line(files_col, opt.id, info_fn)
                 ttk.Label(
-                    content,
+                    files_col,
                     text=blurb or "Install",
                     font=("Segoe UI", 10),
                     foreground=_THEME["fg"],
                     wraplength=max(320, col_wrap - 48),
                     justify="left",
-                ).pack(anchor="w")
+                ).pack(anchor="w", pady=(4, 0))
             else:
-                content = _pack_path_info_line(files_col, opt.id, info_fn)
-                _pack_path_install_label(content)
+                _pack_path_install_label(files_col)
                 if pack is not None:
                     _add_desc(frame, _pack_blurb(pack))
                     _desc_spacer(frame)
@@ -2841,7 +2856,7 @@ def _run_wizard_ui(
 
         block = ttk.Frame(parent)
         block.pack(anchor="w", fill="x", pady=(0, 8), padx=2)
-        _row, files_col, chk = _pack_mod_select_row(
+        row, files_col, chk = _pack_mod_select_row(
             block,
             kind="check",
             variable=bv,
@@ -2861,16 +2876,15 @@ def _run_wizard_ui(
             )
         else:
             info_fn = lambda: []
-        content = _pack_path_info_line(files_col, opt.id, info_fn)
+        _pack_path_info_icon(row, files_col, opt.id, info_fn)
 
         ttk.Label(
-            content,
+            files_col,
             text=title,
             font=("Segoe UI", 10),
             foreground=_THEME["fg"],
-        ).pack(anchor="w")
+        ).pack(anchor="w", pady=(4, 0))
         if desc:
-            # Below the ⓘ+title line so the icon stays inline with the name.
             ttk.Label(
                 files_col,
                 text=desc,

@@ -1,5 +1,8 @@
 --[[
-	Rep Warning - red PDA taskboard title when a bounty target isn't your enemy.
+	Rep Warning - PDA taskboard title color by bounty target relation:
+	  red    = same faction or friend
+	  orange = neutral
+	Enemies get no warning.
 
 	Needs PDA Taskboard (update_task_entry). Reads axr_task_manager.bounties_by_id
 	after on_job_descr / setup_bounty_task has run.
@@ -17,32 +20,76 @@ local function bounty_target_id(task_id)
 	return type(tbl) == "table" and tbl.target_id or nil
 end
 
-local function target_not_enemy(target_id)
-	local se = alife_object(target_id)
-	if not se then
-		return false
+-- actor_army / army → army (disguise-aware true faction when available)
+local function faction_key(comm)
+	if type(comm) ~= "string" or comm == "" or comm == "none" then
+		return nil
 	end
-	local gid = se.group_id
-	if gid and gid ~= 65535 and game_relations and game_relations.get_squad_goodwill_to_actor_by_id then
-		local rel = game_relations.get_squad_goodwill_to_actor_by_id(gid)
-		if rel then
-			return rel ~= "enemy"
-		end
+	if string.sub(comm, 1, 6) == "actor_" then
+		return string.sub(comm, 7)
 	end
-	local tcomm = alife_character_community(se)
-	local acomm = db.actor and character_community(db.actor)
-	if not (tcomm and acomm and game_relations and game_relations.is_factions_enemies) then
-		return false
-	end
-	return not game_relations.is_factions_enemies(acomm, tcomm)
+	return comm
 end
 
-local function paint_title_red(pda_tab, i, task_details)
+local function actor_faction()
+	if rawget(_G, "get_actor_true_community") then
+		return get_actor_true_community()
+	end
+	return db.actor and faction_key(character_community(db.actor)) or nil
+end
+
+local function squad_rel(se)
+	local gid = se and se.group_id
+	if gid and gid ~= 65535 and game_relations and game_relations.get_squad_goodwill_to_actor_by_id then
+		return game_relations.get_squad_goodwill_to_actor_by_id(gid)
+	end
+	return nil
+end
+
+-- returns color name or nil
+local function warn_color(target_id)
+	local se = alife_object(target_id)
+	if not se then
+		return nil
+	end
+
+	local tcomm = faction_key(alife_character_community(se))
+	local acomm = actor_faction()
+
+	-- Same faction always red (army vs army is only ~neutral in the matrix).
+	if tcomm and acomm and tcomm == acomm then
+		return "red"
+	end
+
+	if tcomm and acomm and game_relations then
+		if game_relations.is_factions_friends and game_relations.is_factions_friends(acomm, tcomm) then
+			return "red"
+		end
+		if game_relations.is_factions_enemies and game_relations.is_factions_enemies(acomm, tcomm) then
+			return nil
+		end
+		-- Not friend, not enemy → neutral
+		return "orange"
+	end
+
+	local rel = squad_rel(se)
+	if rel == "friend" then
+		return "red"
+	end
+	if rel == "neutral" then
+		return "orange"
+	end
+
+	return nil
+end
+
+local function paint_title(pda_tab, i, task_details)
 	if not (task_details and task_details.task_id) then
 		return
 	end
 	local tid = bounty_target_id(task_details.task_id)
-	if not tid or not target_not_enemy(tid) then
+	local color_name = tid and warn_color(tid)
+	if not color_name then
 		return
 	end
 
@@ -51,7 +98,7 @@ local function paint_title_red(pda_tab, i, task_details)
 		return
 	end
 
-	local red = utils_xml.get_color("red")
+	local tint = utils_xml.get_color(color_name)
 	local white = utils_xml.get_color("white")
 	-- Serious QoL: global get_more_task_details(i, task_id). iTheon: (i) only.
 	local get_more = rawget(_G, "get_more_task_details")
@@ -63,13 +110,13 @@ local function paint_title_red(pda_tab, i, task_details)
 		end
 		local title = more.task_title or ""
 		local body = string.gsub(more.task_details or "", "\\n ", "\\n")
-		row.task_details_field:SetText(red .. title .. "\\n" .. white .. body)
+		row.task_details_field:SetText(tint .. title .. "\\n" .. white .. body)
 		return
 	end
 
 	local text = row.task_details_field:GetText()
-	if text and text ~= "" and string.find(text, red, 1, true) ~= 1 then
-		row.task_details_field:SetText(red .. text)
+	if text and text ~= "" and string.find(text, tint, 1, true) ~= 1 then
+		row.task_details_field:SetText(tint .. text)
 	end
 end
 
@@ -84,7 +131,7 @@ local function patch_taskboard()
 	local orig = ui_pda_taskboard_tab.update_task_entry
 	ui_pda_taskboard_tab.update_task_entry = function(pda_tab, i, task_details)
 		orig(pda_tab, i, task_details)
-		paint_title_red(pda_tab, i, task_details)
+		paint_title(pda_tab, i, task_details)
 	end
 	ui_pda_taskboard_tab.__dogma_rep_warning = true
 end

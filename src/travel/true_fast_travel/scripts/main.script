@@ -37,6 +37,8 @@ local function load_config()
     tft_config.fly_camera = mcm.bool(CONFIG.MOD_ID, "fly_camera", CONFIG.DEFAULTS["fly_camera"] ~= false)
     tft_config.fly_speed_mult_normal = mcm.number(CONFIG.MOD_ID, "fly_speed_mult_normal", CONFIG.DEFAULTS["fly_speed_mult_normal"] or 5)
     tft_config.fly_speed_mult_sneak = mcm.number(CONFIG.MOD_ID, "fly_speed_mult_sneak", CONFIG.DEFAULTS["fly_speed_mult_sneak"] or 2)
+    -- nil when unbound (-1 in MCM)
+    tft_config.companion_teleport_key = mcm.key(CONFIG.MOD_ID, "companion_teleport_key")
     tft_config.visited_radius_m = CONFIG.DEFAULTS["visited_radius_m"] or 30
     if _G.tft_fly then
         if tft_config.fly_speed_mult_normal then
@@ -737,9 +739,77 @@ on_map_spot_menu_property_clicked = function(pui, id, ln, t)
     end
 end
 
+-- Manual pull (MCM key). Skips waiting companions and locked hostages / rescue targets.
+-- Journey teleports use tft_teleport_companions instead.
+local function companion_is_waiting(npc)
+    return npc and npc:has_info("npcx_beh_wait")
+end
+
+local function pull_companions_to_actor()
+    if not (axr_companions and axr_companions.companion_squads) then
+        return
+    end
+    local actor = db.actor
+    if not actor then
+        return
+    end
+
+    local lvid = actor:level_vertex_id()
+    local gvid = actor:game_vertex_id()
+    local pos = actor:position()
+    local land = level.vertex_position(lvid) or pos
+    local sim = alife()
+    if not sim then
+        return
+    end
+
+    local count = 0
+    for _, squad in pairs(axr_companions.companion_squads) do
+        if squad and squad.commander_id
+            and (not axr_companions.companion_squad_can_teleport
+                or axr_companions.companion_squad_can_teleport(squad))
+        then
+            if squad.online == false and squad.force_change_position then
+                squad:force_change_position(land)
+            end
+
+            for member in squad:squad_members() do
+                local id = member and member.id
+                if id then
+                    local npc = db.storage[id] and db.storage[id].object
+                    if not companion_is_waiting(npc) then
+                        local se = alife_object(id)
+                        local alive = (npc and npc:alive())
+                            or (se and se.alive and se:alive())
+                        if alive then
+                            if npc then
+                                if sim_squad_scripted and sim_squad_scripted.reset_animation then
+                                    sim_squad_scripted.reset_animation(npc)
+                                end
+                                npc:set_npc_position(land)
+                            end
+                            sim:teleport_object(id, gvid, lvid, land)
+                            count = count + 1
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    if count > 0 then
+        tft_log("pulled %s companion(s) to actor", tostring(count))
+    end
+end
+
 on_key_press = function(key)
     tft.player_ready = true
     if _G.tft_handle_dev_keys then _G.tft_handle_dev_keys(key) end
+
+    local tp_key = tft_config and tft_config.companion_teleport_key
+    if tp_key and key == tp_key then
+        pull_companions_to_actor()
+    end
 end
 
 -- tft_publish_to_global - every other 01_*.script module explicitly re-exports its

@@ -1,17 +1,15 @@
 --[[
-	NPC Foliage
+	NPC Foliage (tweak)
 
 	1) materials/*.ltx — bush / bush_sux vis_transparency_factor = 0
 
-	2) Optional nudge — stalkers fighting the actor whose torso is inside
-	   bush collision are sent to solid cover or advance (MCM).
+	2) Always-on nudge — stalkers fighting the actor whose torso is inside
+	   bush collision are sent to solid cover, or advance toward the actor
+	   if no cover is found.
 ]]
 
-local CONFIG = _G.dogma_npcs_foliage_conf
+local CONFIG = _G.dogma_tweaks_foliage_conf
 local DOGMA
-
-local BEHAVIOR_COVER = 0
-local BEHAVIOR_ADVANCE = 1
 
 local RQT_STATIC = 2
 local CHECK_RANGE = 80
@@ -33,14 +31,6 @@ local function log(msg)
 	if DOGMA and DOGMA.dbg and DOGMA.dbg.logging and DOGMA.dbg.logging() then
 		DOGMA.dbg.log(CONFIG.MOD_ID, tostring(msg))
 	end
-end
-
-local function on_option_change()
-	if not (DOGMA and CONFIG) then
-		return
-	end
-	CONFIG.loaded.push_to_cover = DOGMA.mcm.bool(CONFIG.MOD_ID, "push_to_cover")
-	CONFIG.loaded.behavior = DOGMA.mcm.number(CONFIG.MOD_ID, "behavior") or BEHAVIOR_COVER
 end
 
 local function ensure_dirs()
@@ -330,15 +320,11 @@ local function nudge(npc, id)
 		return false
 	end
 
-	local behavior = CONFIG.loaded.behavior or BEHAVIOR_COVER
-	local vid
-	if behavior == BEHAVIOR_ADVANCE then
+	local mode = "cover"
+	local vid = pick_cover_vertex(npc, enemy_pos)
+	if not vid then
+		mode = "advance"
 		vid = pick_advance_vertex(npc, enemy_pos)
-		if not vid then
-			vid = pick_cover_vertex(npc, enemy_pos)
-		end
-	else
-		vid = pick_cover_vertex(npc, enemy_pos)
 	end
 	if not vid then
 		log("no dest id=" .. tostr(id))
@@ -346,14 +332,11 @@ local function nudge(npc, id)
 	end
 	send_to(npc, vid)
 	nudged[id] = time_global()
-	log("nudge id=" .. tostr(id) .. " beh=" .. tostr(behavior) .. " vid=" .. tostr(vid))
+	log("nudge id=" .. tostr(id) .. " mode=" .. mode .. " vid=" .. tostr(vid))
 	return true
 end
 
 local function tick_inner()
-	if not CONFIG.loaded.push_to_cover then
-		return
-	end
 	if not (db and db.actor and db.storage) then
 		return
 	end
@@ -421,8 +404,6 @@ function on_game_start()
 		return
 	end
 	DOGMA = dogma_common.load(CONFIG.MOD_ID)
-	on_option_change()
-	RegisterScriptCallback("on_option_change", on_option_change)
 	RegisterScriptCallback("actor_on_update", tick)
-	log("foliage module started")
+	log("foliage tweak started")
 end

@@ -1,0 +1,156 @@
+--[[
+	Detector Subtle SFX
+
+	Every 2000ms, if the actor has an artefact detector that is not shown,
+	scan within that scanner's af_radius for world artefacts. If any are
+	found, play that scanner's af_sound_1_ at half volume.
+]]
+
+local SLOT_MAX = 13
+local SCAN_MS = 2000
+local BEEP_VOLUME = 0.5
+local FALLBACK_SOUND = "detectors\\art_beep1"
+local FALLBACK_RADIUS = 30
+
+local DET_CLASS = {
+	DET_SIMP = true,
+	DET_ADVA = true,
+	DET_ELIT = true,
+	DET_SCIE = true,
+}
+
+local next_scan = 0
+local snd_cache = {} -- path -> sound_object
+
+local function geiger_sec()
+	return (item_device and item_device.device_geiger) or "detector_geiger"
+end
+
+local function is_artefact_detector(sec)
+	if sec == geiger_sec() or sec == "detector_radio" then
+		return false
+	end
+	local cls = ini_sys:r_string_ex(sec, "class")
+	return DET_CLASS[cls] == true
+end
+
+local function is_fav(sec)
+	local sp = zzz_rax_sortingplus_mcm
+	return sp and sp.is_favorite and sp.is_favorite(sec) or false
+end
+
+-- Slot → favourite ruck → first other match (same priority as equipment_controls).
+local function find_scanner(actor)
+	for s = 1, SLOT_MAX do
+		local o = actor:item_in_slot(s)
+		if o and is_artefact_detector(o:section()) then
+			return o
+		end
+	end
+
+	local fav, other
+	local function consider(_, it)
+		if fav or not it then
+			return
+		end
+		local sec = it:section()
+		if not is_artefact_detector(sec) then
+			return
+		end
+		if is_fav(sec) then
+			fav = it
+		elseif not other then
+			other = it
+		end
+	end
+
+	if actor.iterate_ruck then
+		actor:iterate_ruck(consider)
+	else
+		actor:iterate_inventory(consider, nil)
+	end
+
+	return fav or other
+end
+
+local function scanner_radius(sec)
+	local r = ini_sys:r_float_ex(sec, "af_radius")
+	if not r or r <= 0 then
+		return FALLBACK_RADIUS
+	end
+	return r
+end
+
+local function scanner_sound_path(sec)
+	local path = ini_sys:r_string_ex(sec, "af_sound_1_")
+	if path and path ~= "" then
+		return path
+	end
+	return FALLBACK_SOUND
+end
+
+local function get_sound(path)
+	local snd = snd_cache[path]
+	if snd then
+		return snd
+	end
+	snd = sound_object(path)
+	snd_cache[path] = snd
+	level.prefetch_sound(path)
+	return snd
+end
+
+local function artefact_nearby(actor, radius)
+	local found = false
+	local actor_id = actor:id()
+	level.iterate_nearest(actor:position(), radius, function(obj)
+		if found or not IsArtefact(obj) then
+			return
+		end
+		-- Skip belt / inventory artefacts on the actor if they appear in the query.
+		local parent = obj:parent()
+		if parent and parent:id() == actor_id then
+			return
+		end
+		found = true
+	end)
+	return found
+end
+
+local function play_beep(actor, path)
+	local snd = get_sound(path)
+	snd.volume = BEEP_VOLUME
+	snd:play(actor, 0, sound_object.s2d)
+end
+
+local function on_update()
+	local now = time_global()
+	if now < next_scan then
+		return
+	end
+	next_scan = now + SCAN_MS
+
+	local actor = db.actor
+	if not actor then
+		return
+	end
+	if actor:active_detector() then
+		return
+	end
+
+	local scanner = find_scanner(actor)
+	if not scanner then
+		return
+	end
+
+	local sec = scanner:section()
+	if not artefact_nearby(actor, scanner_radius(sec)) then
+		return
+	end
+
+	play_beep(actor, scanner_sound_path(sec))
+end
+
+function on_game_start()
+	RegisterScriptCallback("actor_on_update", on_update)
+end

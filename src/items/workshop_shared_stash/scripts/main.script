@@ -1,0 +1,289 @@
+--[[
+	Workshop Shared Stash — place limit (1 per level) + dynamic carry weight.
+
+	Shared stash open/pickup logic lives in scripts/override/
+	(ui_furniture_workshop.script, bind_workshop_furniture.script).
+]]
+
+local CONFIG = _G.dogma_items_workshop_shared_stash_conf
+local MOD_ID = CONFIG.MOD_ID
+local DOGMA
+
+local BASE_WEIGHT = CONFIG.BASE_WEIGHT
+local WORKSHOP_SECTION = CONFIG.WORKSHOP_SECTION
+local WORKSHOP_ITEM = CONFIG.WORKSHOP_ITEM
+
+local orig_start_placing
+local orig_create_object
+local hooked_place = false
+
+local last_applied_weight = nil
+local cached_contents_weight = 0
+local weight_tick = 0
+local WEIGHT_INTERVAL_MS = 500
+
+local function log(msg)
+	if DOGMA and DOGMA.dbg and DOGMA.dbg.logging() then
+		DOGMA.dbg.log(MOD_ID, tostring(msg))
+	end
+end
+
+local function m_state()
+	return alife_storage_manager.get_state()
+end
+
+local function ensure_level_map(m_data)
+	if not m_data.dogma_workshop_by_level then
+		m_data.dogma_workshop_by_level = {}
+	end
+	return m_data.dogma_workshop_by_level
+end
+
+local function se_is_workshop(se)
+	if not se then
+		return false
+	end
+	local ok, sec = pcall(function()
+		return se:section_name()
+	end)
+	return ok and sec == WORKSHOP_SECTION
+end
+
+local function level_has_workshop()
+	if not (db and db.actor and level) then
+		return false
+	end
+	local m_data = m_state()
+	if not m_data then
+		return false
+	end
+	local map = ensure_level_map(m_data)
+	local lvl = level.name()
+	local id = map[lvl]
+	if id then
+		local se = alife_object(id)
+		if se_is_workshop(se) then
+			return true
+		end
+		map[lvl] = nil
+	end
+
+	-- Fallback: online scan (mid-save installs / stale map)
+	for obj in game_objects_iter() do
+		if obj and obj:section() == WORKSHOP_SECTION then
+			map[lvl] = obj:id()
+			return true
+		end
+	end
+	return false
+end
+
+local function register_workshop(id)
+	if not id or not level then
+		return
+	end
+	local m_data = m_state()
+	if not m_data then
+		return
+	end
+	local se = alife_object(id)
+	if not se_is_workshop(se) then
+		return
+	end
+	ensure_level_map(m_data)[level.name()] = id
+	log("registered workshop " .. tostring(id) .. " on " .. tostring(level.name()))
+end
+
+local function unregister_workshop(id)
+	if not id then
+		return
+	end
+	local m_data = m_state()
+	if not (m_data and m_data.dogma_workshop_by_level) then
+		return
+	end
+	for lvl, wid in pairs(m_data.dogma_workshop_by_level) do
+		if wid == id then
+			m_data.dogma_workshop_by_level[lvl] = nil
+			log("unregistered workshop " .. tostring(id) .. " from " .. tostring(lvl))
+			return
+		end
+	end
+end
+
+local function block_message()
+	local text = game.translate_string("st_dogma_workshop_one_per_level")
+	if actor_menu and actor_menu.set_msg then
+		actor_menu.set_msg(1, text, 3, GetARGB(255, 255, 255, 255))
+	elseif news_manager and news_manager.send_tip and db and db.actor then
+		news_manager.send_tip(db.actor, text)
+	end
+end
+
+local function is_workshop_placeable(section)
+	if not section then
+		return false
+	end
+	if section == WORKSHOP_SECTION then
+		return true
+	end
+	local ptype = ini_sys:r_string_ex(section, "placeable_type")
+	return ptype == "workshop"
+end
+
+local function patched_start_placing_item(section)
+	if is_workshop_placeable(section) and level_has_workshop() then
+		block_message()
+		return
+	end
+	return orig_start_placing(section)
+end
+
+local function patched_create_object(placeable_section, location, rotation, lvid, gvid)
+	if is_workshop_placeable(placeable_section) and level_has_workshop() then
+		block_message()
+		return nil
+	end
+	return orig_create_object(placeable_section, location, rotation, lvid, gvid)
+end
+
+local function try_hook_place()
+	if hooked_place then
+		return
+	end
+	if not placeable_furniture then
+		return
+	end
+	if type(placeable_furniture.start_placing_item) ~= "function" then
+		return
+	end
+	orig_start_placing = placeable_furniture.start_placing_item
+	placeable_furniture.start_placing_item = patched_start_placing_item
+	if type(placeable_furniture.create_object) == "function" then
+		orig_create_object = placeable_furniture.create_object
+		placeable_furniture.create_object = patched_create_object
+	end
+	hooked_place = true
+	log("hooked placeable_furniture place guards")
+end
+
+local function sum_shared_contents_weight(shared_id)
+	local box = shared_id and level.object_by_id(shared_id)
+	if not box then
+		return nil
+	end
+	local total = 0
+	pcall(function()
+		box:iterate_inventory_box(function(_, item)
+			total = total + (item:weight() or 0)
+		end, box)
+	end)
+	return total
+end
+
+local function persist_contents_weight(m_data, w)
+	m_data.dogma_workshop_shared_weight = w
+	cached_contents_weight = w
+end
+
+local function contents_weight_for_carry(m_data)
+	local shared_id = m_data.workshop_shared_stash
+	local live = sum_shared_contents_weight(shared_id)
+	if live ~= nil then
+		persist_contents_weight(m_data, live)
+		return live
+	end
+	if m_data.dogma_workshop_shared_weight ~= nil then
+		cached_contents_weight = m_data.dogma_workshop_shared_weight
+	end
+	return cached_contents_weight
+end
+
+local function update_carry_weight()
+	if not (db and db.actor) then
+		return
+	end
+	local item = db.actor:object(WORKSHOP_ITEM)
+	if not item then
+		if last_applied_weight ~= nil then
+			last_applied_weight = nil
+		end
+		return
+	end
+
+	local m_data = m_state()
+	if not m_data then
+		return
+	end
+
+	local contents = contents_weight_for_carry(m_data)
+	local target = BASE_WEIGHT + (contents or 0)
+	if last_applied_weight == target then
+		return
+	end
+	pcall(function()
+		item:set_weight(target)
+	end)
+	last_applied_weight = target
+	log(string.format("workshop_item weight -> %.2f (base %.0f + contents %.2f)", target, BASE_WEIGHT, contents or 0))
+end
+
+local function on_actor_update()
+	if not (DOGMA and DOGMA.sys and DOGMA.sys.ready(MOD_ID, db)) then
+		return
+	end
+	try_hook_place()
+
+	local now = device().time_global()
+	if now < weight_tick then
+		return
+	end
+	weight_tick = now + WEIGHT_INTERVAL_MS
+	update_carry_weight()
+end
+
+local function hf_on_furniture_place(id)
+	register_workshop(id)
+end
+
+local function hf_on_before_furniture_release(id)
+	unregister_workshop(id)
+end
+
+local function on_game_load()
+	try_hook_place()
+	-- Rebuild level map from online workshops
+	if level and db and db.actor then
+		local m_data = m_state()
+		if m_data then
+			local map = ensure_level_map(m_data)
+			for obj in game_objects_iter() do
+				if obj and obj:section() == WORKSHOP_SECTION then
+					map[level.name()] = obj:id()
+					break
+				end
+			end
+			if m_data.dogma_workshop_shared_weight ~= nil then
+				cached_contents_weight = m_data.dogma_workshop_shared_weight
+			end
+			-- Keep PDA taskboard able to see the shared box
+			if m_data.workshop_shared_stash then
+				if not m_data.workshop_stashes then
+					m_data.workshop_stashes = {}
+				end
+				m_data.workshop_stashes[CONFIG.PDA_STASH_KEY] = m_data.workshop_shared_stash
+			end
+		end
+	end
+	update_carry_weight()
+end
+
+function on_game_start()
+	DOGMA = dogma_common.load(MOD_ID)
+	RegisterScriptCallback("actor_on_update", on_actor_update)
+	RegisterScriptCallback("on_game_load", on_game_load)
+	RegisterScriptCallback("hf_on_furniture_place", hf_on_furniture_place)
+	RegisterScriptCallback("hf_on_before_furniture_release", hf_on_before_furniture_release)
+	try_hook_place()
+	log("workshop_shared_stash ready")
+end

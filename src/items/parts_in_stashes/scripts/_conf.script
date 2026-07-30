@@ -1,0 +1,22 @@
+-- items/parts_in_stashes conf — shared loaded options.
+
+local defaults = {
+	["parts_chance"] = 50,
+	["max_parts"] = 3,
+}
+
+_G.dogma_items_parts_in_stashes_conf = {
+	MOD_ID = "dogma/items/parts_in_stashes",
+	DEFAULTS = defaults,
+	loaded = {
+		parts_chance = defaults["parts_chance"],
+		max_parts = defaults["max_parts"],
+	},
+}
+
+function _G.dogma_items_parts_in_stashes_conf:ensure_dogma()
+	if not self.DOGMA then
+		self.DOGMA = dogma_common.load(self.MOD_ID)
+	end
+	return self.DOGMA
+end

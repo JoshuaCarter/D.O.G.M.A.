@@ -8,7 +8,7 @@
 local tft = _G.tft
 -- Forward declarations for this file's private (non-exported) helpers, so they can
 -- reference each other regardless of definition order below.
-local anomalous_stash_mod_loaded, backpack_menu_markers, has_clear_los, hostile_can_spot_pos, is_anomalous_stash, is_campfire_spot, is_scripted_lc_restrictor, is_viewed_level, level_id_from_gvid, level_offset, levels_match, map_has_any_spot, normalize_level_key, pos_copy
+local backpack_menu_markers, has_clear_los, hostile_can_spot_pos, is_campfire_spot, is_scripted_lc_restrictor, is_viewed_level, level_id_from_gvid, level_offset, levels_match, map_has_any_spot, normalize_level_key, pos_copy
 local spots = {
     -- Engine assigns one directional green-arrow spot per transition (8 horizontals + up/down).
     level_changer = {
@@ -203,7 +203,7 @@ local function collect_object_spots(id)
     local names = {}
     for i = 1, #spots.level_changer do names[#names + 1] = spots.level_changer[i] end
     for i = 1, #spots.campfire do names[#names + 1] = spots.campfire[i] end
-    local extra = { "fast_travel", "primary_object", "green_location", "treasure", "anombp" }
+    local extra = { "fast_travel", "primary_object", "green_location", "treasure" }
     for i = 1, #extra do names[#names + 1] = extra[i] end
     for i = 1, #names do
         if level.map_has_object_spot(id, names[i]) ~= 0 then
@@ -238,39 +238,13 @@ local function is_campfire(id, se_obj)
     return false
 end
 
--- Optional integration: The Anomalous Stash mod (anomalous_stash.script). Not required for tft.
-anomalous_stash_mod_loaded = function()
-    return rawget(_G, "anomalous_stash") ~= nil
-end
-
-is_anomalous_stash = function(id, se_obj)
-    if not id or id <= 0 or not anomalous_stash_mod_loaded() then return false end
-    local ok, owned = pcall(function()
-        local mod = rawget(_G, "anomalous_stash")
-        if mod and mod.anom_stashes and mod.anom_stashes[id] then
-            return true
-        end
-        local m_data = alife_storage_manager.get_state()
-        return m_data and m_data.anomalous_stashes and m_data.anomalous_stashes[id] ~= nil
-    end)
-    if ok and owned then return true end
-    if se_obj then
-        local ok_sec, sec = pcall(function() return se_obj:section_name() end)
-        if ok_sec and sec == "anom_inv_stash" then
-            return level and level.map_has_object_spot and level.map_has_object_spot(id, "anombp") ~= 0
-        end
-    end
-    return false
-end
-
-local function is_player_stash(id, se_obj)
+local function is_player_stash(id)
     if not id or id <= 0 then return false end
     local ok, owned = pcall(function()
         local m_data = alife_storage_manager.get_state()
         return m_data and m_data.player_created_stashes and m_data.player_created_stashes[id] ~= nil
     end)
-    if ok and owned == true then return true end
-    return is_anomalous_stash(id, se_obj)
+    return ok and owned == true
 end
 
 local function is_travel_destination(id)
@@ -278,7 +252,7 @@ local function is_travel_destination(id)
     if is_pda_transition(id) then return true end
     local se_obj = alife_object(id)
     if is_campfire(id, se_obj) then return true end
-    if is_player_stash(id, se_obj) then return true end
+    if is_player_stash(id) then return true end
     if not se_obj then return false end
     if level.map_has_object_spot(id, "fast_travel") ~= 0 then return true end
     local ok_cls, obj_cls = pcall(function() return se_obj:clsid() end)
@@ -319,7 +293,7 @@ local function log_menu_diag(id, se_obj, ln, hint)
         tostr(is_pda_transition(id, se_obj)),
         tostr(is_campfire(id, se_obj)),
         tostr(is_base(id, se_obj)),
-        tostr(is_player_stash(id, se_obj))
+        tostr(is_player_stash(id))
     )
 end
 
@@ -852,7 +826,7 @@ local function discovery_kind_and_radius(id, se)
     if ok_cls and obj_cls == clsid.smart_terrain then
         return "base", DISCOVER_BASE_M
     end
-    if is_player_stash(id, se) then
+    if is_player_stash(id) then
         return "stash", DISCOVER_TRANSITION_M
     end
     return nil, nil

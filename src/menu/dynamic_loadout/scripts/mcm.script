@@ -1,0 +1,994 @@
+--[[
+	Dynamic Loadout — main-menu scan/score/pick + UINewGame patch.
+
+	Must live in *mcm.script so it loads at the New Game screen.
+	_conf.script is prepended by the build.
+]]
+
+local CONFIG = _G.dogma_menu_dynamic_loadout_conf
+local MOD_ID = CONFIG.MOD_ID
+local STATE = _G.__dogma_menu_dynamic_loadout or {}
+_G.__dogma_menu_dynamic_loadout = STATE
+
+-- Pending optic attach for in-game main.script
+STATE.pending_weapon = nil
+STATE.pending_sight = nil
+
+--------------------------------------------------------------------------
+-- Helpers
+--------------------------------------------------------------------------
+
+local function cfg(key)
+	local def = CONFIG.DEFAULTS[key]
+	if ui_mcm then
+		local ok, value = pcall(ui_mcm.get, MOD_ID .. "/" .. key)
+		if ok and value ~= nil then
+			return value
+		end
+	end
+	return def
+end
+
+local function cfg_bool(key)
+	local v = cfg(key)
+	return v == true or v == 1
+end
+
+local function cfg_num(key)
+	return tonumber(cfg(key)) or tonumber(CONFIG.DEFAULTS[key]) or 0
+end
+
+local function dlog(msg)
+	if not cfg_bool("log_scores") then
+		return
+	end
+	printf("[dogma_menu_dynamic_loadout] %s", tostring(msg))
+end
+
+local function explode_csv(s)
+	local out = {}
+	if not s or s == "" then
+		return out
+	end
+	for part in string.gmatch(s, "([^,]+)") do
+		local t = part:match("^%s*(.-)%s*$")
+		if t and t ~= "" then
+			out[#out + 1] = t
+		end
+	end
+	return out
+end
+
+local function ini_float(sec, key, default)
+	local v = ini_sys:r_float_ex(sec, key)
+	if v == nil then
+		return default
+	end
+	return v
+end
+
+local function ini_str(sec, key, default)
+	return ini_sys:r_string_ex(sec, key) or default
+end
+
+local function pick_random(list)
+	if not list or #list == 0 then
+		return nil
+	end
+	return list[math.random(1, #list)]
+end
+
+--------------------------------------------------------------------------
+-- Kit / special exclusions
+--------------------------------------------------------------------------
+
+local KIT_SET = {}
+for _, id in ipairs(CONFIG.KIT_IDS) do
+	KIT_SET[id] = true
+end
+
+local function is_kit_result(sec)
+	for kit, _ in pairs(KIT_SET) do
+		if sec ~= kit and string.find(sec, "_" .. kit, 1, true) then
+			return true
+		end
+	end
+	return false
+end
+
+-- Scope-mounted child sections (wpn_ak74_acog): parent differs from self.
+local function is_scope_child(sec)
+	local parent = ini_str(sec, "parent_section", sec)
+	return parent ~= sec
+end
+
+local function is_special_sight(sec)
+	local sfind = string.find
+	local visual = string.lower(ini_str(sec, "visual", ""))
+	local name = string.lower(sec)
+	if sfind(visual, "nvg", 1, true) or sfind(name, "nvg", 1, true) then
+		return true
+	end
+	if sfind(visual, "thermal", 1, true) or sfind(name, "thermal", 1, true) then
+		return true
+	end
+	if sfind(name, "pnv", 1, true) or sfind(name, "night", 1, true) then
+		return true
+	end
+	-- Dual / secondary reflex style names
+	if sfind(name, "dual", 1, true) or sfind(name, "2nd", 1, true) then
+		return true
+	end
+	if ini_float(sec, "scope_nightvision", 0) > 0 then
+		return true
+	end
+	return false
+end
+
+--------------------------------------------------------------------------
+-- Ammo bloc (NATO / WP)
+--------------------------------------------------------------------------
+
+local function ammo_bloc(ammo_sec)
+	local sfind = string.find
+	if not ammo_sec then
+		return "unknown"
+	end
+	local s = string.lower(ammo_sec)
+	if sfind(s, "5.56", 1, true) or sfind(s, "7.62x51", 1, true)
+		or sfind(s, "9x19", 1, true) or sfind(s, "5.7", 1, true)
+		or sfind(s, "11.43", 1, true) or sfind(s, "338", 1, true)
+		or sfind(s, "7.92", 1, true) or sfind(s, "357", 1, true)
+		or sfind(s, "nato", 1, true) then
+		return "nato"
+	end
+	if sfind(s, "5.45", 1, true) or sfind(s, "7.62x39", 1, true)
+		or sfind(s, "7.62x54", 1, true) or sfind(s, "9x39", 1, true)
+		or sfind(s, "9x18", 1, true) or sfind(s, "7.62x25", 1, true)
+		or sfind(s, "23x75", 1, true) or sfind(s, "12.7", 1, true)
+		or sfind(s, "9x21", 1, true) then
+		return "wp"
+	end
+	-- Shotgun / shared
+	if sfind(s, "12x70", 1, true) or sfind(s, "12x76", 1, true)
+		or sfind(s, "20x70", 1, true) then
+		return "both"
+	end
+	return "unknown"
+end
+
+local function weapon_bloc(sec)
+	local ammo_class = ini_str(sec, "ammo_class", "")
+	local ammos = explode_csv(ammo_class)
+	local seen = {}
+	for _, a in ipairs(ammos) do
+		local b = ammo_bloc(a)
+		if b ~= "unknown" then
+			seen[b] = true
+		end
+	end
+	if seen.nato and seen.wp then
+		return "both"
+	end
+	if seen.nato then
+		return "nato"
+	end
+	if seen.wp then
+		return "wp"
+	end
+	if seen.both then
+		return "both"
+	end
+	return "unknown"
+end
+
+local function bloc_ok(item_bloc, faction_bloc)
+	if faction_bloc == "both" or item_bloc == "both" or item_bloc == "unknown" then
+		return true
+	end
+	return item_bloc == faction_bloc
+end
+
+--------------------------------------------------------------------------
+-- Simplified combat score (mirrors tooltip CQC math, no Tooltips dependency)
+--------------------------------------------------------------------------
+
+local TORSO_SCORE_TIERS = {
+	{ armor = 0.011, ap_scale = 0.8889, hit_frac = 0.8500 }, -- Min
+	{ armor = 0.150, ap_scale = 0.8117, hit_frac = 0.4783 }, -- Mid
+	{ armor = 0.400, ap_scale = 0.7500, hit_frac = 0.2000 }, -- Hvy+
+}
+
+local function dist_atten(air_res, dist)
+	local k = air_res or 0.05
+	return 1 + (dist / 200) * k * 0.5 / (1 - k + 0.1)
+end
+
+local function approx_effective_dmg(hit_power, k_hit, k_ap, air_res, armor, ap_scale, hit_frac, dist)
+	local range_f = dist_atten(air_res, dist)
+	local ap = (k_ap * 10) * ap_scale / range_f * 0.80
+	local power = (hit_power / range_f) * k_hit * 0.9 * ap_scale * 1.1
+	if armor <= 0 or ap >= armor then
+		return power * 100
+	end
+	local soft = armor / 1.6
+	if ap > soft then
+		return power * hit_frac * 100
+	end
+	return 0.0025 * 62.5 * power * hit_frac
+end
+
+--------------------------------------------------------------------------
+-- Scan
+--------------------------------------------------------------------------
+
+local function is_weapon_sec(sec)
+	local ammo = ini_str(sec, "ammo_class", nil)
+	if not ammo or ammo == "" then
+		return false
+	end
+	if IsItem and IsItem("fake_ammo_wpn", sec) then
+		return false
+	end
+	local kind = ini_str(sec, "kind", "")
+	if kind == "w_misc" then
+		return false
+	end
+	-- Knives / binocs often lack meaningful ammo or use dummy
+	if sec == "wpn_knife" or string.find(sec, "binoc", 1, true) then
+		return false
+	end
+	if is_kit_result(sec) then
+		return false
+	end
+	if is_scope_child(sec) then
+		return false
+	end
+	return true
+end
+
+local function scan_all()
+	local pairs_ = pairs
+	local weapons, armors, helmets, ammos, sights = {}, {}, {}, {}, {}
+
+	local function push_weapon(sec)
+		weapons[#weapons + 1] = sec
+	end
+	local function push_armor(sec)
+		armors[#armors + 1] = sec
+	end
+	local function push_helm(sec)
+		helmets[#helmets + 1] = sec
+	end
+	local function push_ammo(sec)
+		ammos[#ammos + 1] = sec
+	end
+	local function push_sight(sec)
+		if not is_special_sight(sec) then
+			sights[#sights + 1] = sec
+		end
+	end
+
+	if GetItemList then
+		local list = GetItemList("ammo")
+		if list then
+			for sec, _ in pairs_(list) do
+				push_ammo(sec)
+			end
+		end
+		list = GetItemList("outfit")
+		if list then
+			for sec, _ in pairs_(list) do
+				push_armor(sec)
+			end
+		end
+		list = GetItemList("helmet")
+		if list then
+			for sec, _ in pairs_(list) do
+				push_helm(sec)
+			end
+		end
+		list = GetItemList("scope")
+		if list then
+			for sec, _ in pairs_(list) do
+				push_sight(sec)
+			end
+		end
+	end
+
+	ini_sys:section_for_each(function(sec)
+		if is_weapon_sec(sec) then
+			push_weapon(sec)
+		elseif not GetItemList then
+			local cls = ini_str(sec, "class", "")
+			local kind = ini_str(sec, "kind", "")
+			if cls == "AMMO" or (IsItem and IsItem("ammo", sec)) then
+				push_ammo(sec)
+			elseif kind == "o_light" or kind == "o_medium" or kind == "o_heavy"
+				or (IsItem and IsItem("outfit", sec)) then
+				push_armor(sec)
+			elseif IsItem and IsItem("helmet", sec) then
+				push_helm(sec)
+			elseif cls == "WP_SCOPE" or (IsItem and IsItem("scope", sec)) then
+				push_sight(sec)
+			end
+		end
+		return false
+	end)
+
+	dlog(string.format(
+		"scan: weapons=%d armors=%d helmets=%d ammos=%d sights=%d",
+		#weapons, #armors, #helmets, #ammos, #sights
+	))
+
+	return {
+		weapons = weapons,
+		armors = armors,
+		helmets = helmets,
+		ammos = ammos,
+		sights = sights,
+	}
+end
+
+--------------------------------------------------------------------------
+-- Score
+--------------------------------------------------------------------------
+
+local function score_ammo(sec)
+	local k_hit = ini_float(sec, "k_hit", 1)
+	local k_ap = ini_float(sec, "k_ap", 0.001)
+	if k_ap <= 0 then
+		k_ap = 0.001
+	end
+	local raw = (k_hit / k_ap) * cfg_num("ammo_dmg_ap")
+	return raw, string.format("hit=%.3f ap=%.4f ratio=%.3f", k_hit, k_ap, k_hit / k_ap)
+end
+
+local function score_armor(sec)
+	local prot = 0
+	local parts = {}
+	for key, w in pairs(CONFIG.PROT_WEIGHTS) do
+		local v = ini_float(sec, key, 0)
+		if v > 0 then
+			prot = prot + v * w
+			parts[#parts + 1] = string.format("%s=%.3f", key, v)
+		end
+	end
+	local weight = ini_float(sec, "inv_weight", 0)
+	local raw = prot * cfg_num("a_prot") - weight * cfg_num("a_weight")
+	return raw, string.format("prot=%.3f weight=%.2f %s", prot, weight, table.concat(parts, ","))
+end
+
+local function score_sight(sec)
+	local zoom = ini_float(sec, "scope_zoom_factor", 1)
+	if zoom < 1 then
+		zoom = 1
+	end
+	local raw = zoom * cfg_num("sight_zoom")
+	return raw, string.format("zoom=%.2f", zoom)
+end
+
+local function score_weapon(sec)
+	local hit_power = ini_float(sec, "hit_power", 0.5)
+	-- Some weapons store hit_power as comma list
+	if hit_power == 0.5 then
+		local hp_s = ini_str(sec, "hit_power", nil)
+		if hp_s then
+			local first = explode_csv(hp_s)[1]
+			hit_power = tonumber(first) or 0.5
+		end
+	end
+
+	local ammos = explode_csv(ini_str(sec, "ammo_class", ""))
+	local dmg_sum, ap_sum, n = 0, 0, 0
+	local dist = 30
+	for i = 1, math.min(3, #ammos) do
+		local ammo = ammos[i]
+		if ini_sys:section_exist(ammo) then
+			local k_hit = ini_float(ammo, "k_hit", 1)
+			local k_ap = ini_float(ammo, "k_ap", 0)
+			local air = ini_float(ammo, "k_air_resistance", 0.05)
+			local tier_dmg = 0
+			for _, tier in ipairs(TORSO_SCORE_TIERS) do
+				tier_dmg = tier_dmg + approx_effective_dmg(
+					hit_power, k_hit, k_ap, air, tier.armor, tier.ap_scale, tier.hit_frac, dist
+				)
+			end
+			dmg_sum = dmg_sum + (tier_dmg / #TORSO_SCORE_TIERS)
+			ap_sum = ap_sum + k_ap
+			n = n + 1
+		end
+	end
+	local avg_dmg = (n > 0) and (dmg_sum / n) or 0
+	local avg_ap = (n > 0) and (ap_sum / n) or 0
+
+	local spread = ini_float(sec, "fire_dispersion_base", 0.5)
+	local weight = ini_float(sec, "inv_weight", 3)
+	local scope_status = ini_float(sec, "scope_status", 0)
+	local sil_status = ini_float(sec, "silencer_status", 0)
+
+	local raw = avg_dmg * cfg_num("w_dmg")
+		+ avg_ap * 1000 * cfg_num("w_ap")
+		- spread * 100 * cfg_num("w_spread")
+		- weight * cfg_num("w_weight")
+	if scope_status and scope_status > 0 then
+		raw = raw + cfg_num("w_cap_scope") * 10
+	end
+	if sil_status and sil_status > 0 then
+		raw = raw + cfg_num("w_cap_sil") * 10
+	end
+
+	local detail = string.format(
+		"hp=%.3f dmg=%.2f ap=%.4f spread=%.4f wt=%.2f scope=%s sil=%s",
+		hit_power, avg_dmg, avg_ap, spread, weight,
+		tostring(scope_status), tostring(sil_status)
+	)
+	return raw, detail
+end
+
+local function score_to_points(raw, scale)
+	scale = scale or cfg_num("score_scale")
+	local pts = math.floor(raw * scale + 0.5)
+	if pts < 1 then
+		pts = 1
+	end
+	return pts
+end
+
+local function build_scored(pool, kind)
+	local scored = {}
+	local scorer = score_weapon
+	if kind == "armor" or kind == "helmet" then
+		scorer = score_armor
+	elseif kind == "ammo" then
+		scorer = score_ammo
+	elseif kind == "sight" then
+		scorer = score_sight
+	end
+	local quiet = STATE.logged_scores == true
+
+	for _, sec in ipairs(pool) do
+		local raw, detail
+		local ok, err = pcall(function()
+			raw, detail = scorer(sec)
+		end)
+		if ok and type(raw) == "number" then
+			local pts = score_to_points(raw)
+			local bloc = nil
+			if kind == "weapon" then
+				bloc = weapon_bloc(sec)
+			elseif kind == "ammo" then
+				bloc = ammo_bloc(sec)
+			end
+			scored[#scored + 1] = {
+				sec = sec,
+				score = raw,
+				pts = pts,
+				detail = detail or "",
+				bloc = bloc,
+				community = (kind == "armor") and ini_str(sec, "community", "") or nil,
+			}
+			if not quiet then
+				dlog(string.format(
+					"%s %s score=%.3f pts=%d %s",
+					kind, sec, raw, pts, detail or ""
+				))
+			end
+		else
+			if not quiet then
+				dlog(string.format("%s %s SCORE_FAIL %s", kind, sec, tostring(err or raw)))
+			end
+		end
+	end
+
+	table.sort(scored, function(a, b)
+		return a.score > b.score
+	end)
+	return scored
+end
+
+--------------------------------------------------------------------------
+-- Basics from merged loadouts LTX
+--------------------------------------------------------------------------
+
+local function parse_loadout_line(value)
+	-- "false,1,0" or "true,1,50" or "true,1,50,1"
+	local parts = explode_csv(value)
+	local pickable = parts[1] == "true"
+	local qty = tonumber(parts[2]) or 1
+	local pts = tonumber(parts[3]) or 0
+	return pickable, qty, pts
+end
+
+local function read_basics(faction)
+	local items = {}
+	local ini = ini_file("items\\settings\\new_game_loadouts.ltx")
+	if not ini then
+		dlog("WARN: could not open new_game_loadouts.ltx — using fallback basics")
+		return {
+			"cash", "device_pda_1", "bandage", "bandage", "bandage",
+			"jgut", "batteries_dead", "batteries_dead", "flask", "vodka",
+			"tushonka", "box_matches", "swiss_knife", "grooming",
+			"itm_actor_backpack", "itm_backpack", "detector_simple",
+			"detector_radio", "wpn_knife", "bolts_pack", "bolts_pack",
+			"picture_woman", "bolt",
+		}
+	end
+
+	local function collect_false(section)
+		if not ini:section_exist(section) then
+			return
+		end
+		local n = ini:line_count(section)
+		for i = 0, n - 1 do
+			local _, key, value = ini:r_line(section, i, "", "")
+			if key and key ~= "" and value and value ~= "" then
+				local pickable, qty = parse_loadout_line(value)
+				if not pickable then
+					for _ = 1, qty do
+						items[#items + 1] = key
+					end
+				end
+			end
+		end
+	end
+
+	-- shared inherits custom; faction inherits shared — read both to catch overrides
+	collect_false("shared")
+	if faction and faction ~= "" then
+		collect_false(faction .. "_loadout")
+	end
+
+	dlog(string.format("basics(%s): %d tokens", tostring(faction), #items))
+	return items
+end
+
+--------------------------------------------------------------------------
+-- Compatible sights for a weapon
+--------------------------------------------------------------------------
+
+local function weapon_compatible_sights(wpn_sec, sight_scored)
+	local out = {}
+	local scopes_sect = ini_str(wpn_sec, "scopes_sect", nil)
+	local allowed = {}
+	if scopes_sect and ini_sys:section_exist(scopes_sect) then
+		local n = ini_sys:line_count(scopes_sect)
+		for i = 0, n - 1 do
+			local _, key, value = ini_sys:r_line(scopes_sect, i, "", "")
+			-- lines often: scope_name = wpn_addon_...
+			local addon = value
+			if key == "scope_name" or string.find(key or "", "scope", 1, true) then
+				if addon and addon ~= "" then
+					allowed[addon] = true
+				end
+			elseif value and string.find(value, "wpn_addon", 1, true) then
+				allowed[value] = true
+			end
+			if key and string.find(key, "wpn_addon", 1, true) then
+				allowed[key] = true
+			end
+		end
+	end
+	-- Also scopes = csv of kit/scope ids on some weapons
+	local scopes_csv = ini_str(wpn_sec, "scopes", "")
+	for _, tok in ipairs(explode_csv(scopes_csv)) do
+		if not KIT_SET[tok] then
+			allowed[tok] = true
+		end
+	end
+
+	local scope_status = ini_float(wpn_sec, "scope_status", 0)
+	if not scope_status or scope_status <= 0 then
+		return out
+	end
+
+	if next(allowed) == nil then
+		return out
+	end
+	for _, entry in ipairs(sight_scored) do
+		if allowed[entry.sec] then
+			out[#out + 1] = entry
+		end
+	end
+	return out
+end
+
+local function weapon_compatible_ammo(wpn_sec, ammo_scored)
+	local allowed = {}
+	for _, a in ipairs(explode_csv(ini_str(wpn_sec, "ammo_class", ""))) do
+		allowed[a] = true
+	end
+	local out = {}
+	for _, entry in ipairs(ammo_scored) do
+		if allowed[entry.sec] then
+			out[#out + 1] = entry
+		end
+	end
+	return out
+end
+
+--------------------------------------------------------------------------
+-- Pick
+--------------------------------------------------------------------------
+
+local function filter_by_pts(scored, max_pts)
+	local out = {}
+	for _, e in ipairs(scored) do
+		if e.pts <= max_pts then
+			out[#out + 1] = e
+		end
+	end
+	return out
+end
+
+local function filter_weapons(scored, faction, max_pts)
+	local bloc = CONFIG.FACTION_BLOC[faction] or "both"
+	local out = {}
+	for _, e in ipairs(scored) do
+		if e.pts <= max_pts and bloc_ok(e.bloc, bloc) then
+			out[#out + 1] = e
+		end
+	end
+	return out
+end
+
+local function filter_armors(scored, faction, max_pts)
+	local want = CONFIG.FACTION_COMMUNITY[faction] or faction
+	local allow_univ = cfg_bool("include_universal_armor")
+	local out = {}
+	for _, e in ipairs(scored) do
+		if e.pts <= max_pts then
+			local c = e.community or ""
+			if c == want then
+				out[#out + 1] = e
+			elseif allow_univ and (c == "" or c == "actor") then
+				out[#out + 1] = e
+			end
+		end
+	end
+	if #out == 0 then
+		return filter_by_pts(scored, max_pts)
+	end
+	return out
+end
+
+local function get_pools()
+	if STATE.pools then
+		return STATE.pools
+	end
+	STATE.pools = scan_all()
+	return STATE.pools
+end
+
+local function build_loadout(faction)
+	local sformat = string.format
+	dlog("=== dynamic loadout build faction=" .. tostring(faction) .. " ===")
+	local pools = get_pools()
+	-- Re-score every roll so MCM weight/cap tweaks apply without menu restart.
+	local scored = {
+		weapons = build_scored(pools.weapons, "weapon"),
+		armors = build_scored(pools.armors, "armor"),
+		helmets = build_scored(pools.helmets, "helmet"),
+		ammos = build_scored(pools.ammos, "ammo"),
+		sights = build_scored(pools.sights, "sight"),
+	}
+	STATE.logged_scores = true
+
+	local w_pool = filter_weapons(scored.weapons, faction, cfg_num("max_pts_weapon"))
+	local a_pool = filter_armors(scored.armors, faction, cfg_num("max_pts_armor"))
+	local h_pool = filter_by_pts(scored.helmets, cfg_num("max_pts_helmet"))
+
+	local wpn = pick_random(w_pool)
+	local armor = pick_random(a_pool)
+	local helm = pick_random(h_pool)
+
+	local items = read_basics(faction)
+	if armor then
+		items[#items + 1] = armor.sec
+		dlog(sformat("PICK armor %s pts=%d", armor.sec, armor.pts))
+	end
+	if helm then
+		items[#items + 1] = helm.sec
+		dlog(sformat("PICK helmet %s pts=%d", helm.sec, helm.pts))
+	end
+
+	local sight_sec = nil
+	if wpn then
+		items[#items + 1] = wpn.sec
+		dlog(sformat("PICK weapon %s pts=%d bloc=%s", wpn.sec, wpn.pts, tostring(wpn.bloc)))
+
+		local ammo_pool = filter_by_pts(
+			weapon_compatible_ammo(wpn.sec, scored.ammos), cfg_num("max_pts_ammo")
+		)
+		local ammo = pick_random(ammo_pool)
+		if ammo then
+			items[#items + 1] = ammo.sec
+			dlog(sformat("PICK ammo %s pts=%d", ammo.sec, ammo.pts))
+		end
+
+		if math.random(1, 100) <= cfg_num("sight_chance") then
+			local s_pool = filter_by_pts(
+				weapon_compatible_sights(wpn.sec, scored.sights), cfg_num("max_pts_sight")
+			)
+			local sight = pick_random(s_pool)
+			if sight then
+				items[#items + 1] = sight.sec
+				sight_sec = sight.sec
+				dlog(sformat("PICK sight %s pts=%d", sight.sec, sight.pts))
+			end
+		end
+	else
+		dlog("PICK weapon NONE (empty pool)")
+	end
+
+	STATE.pending_weapon = wpn and wpn.sec or nil
+	STATE.pending_sight = sight_sec
+
+	dlog("loadout string tokens=" .. tostring(#items))
+	return table.concat(items, ",")
+end
+
+--------------------------------------------------------------------------
+-- UINewGame patch
+--------------------------------------------------------------------------
+
+local function wrap_on_start_game(cls)
+	if STATE.wrap_start and cls.OnStartGame == STATE.wrap_start then
+		return
+	end
+	local base = cls.OnStartGame
+	if not base then
+		return
+	end
+
+	local function wrapped(self)
+		if not self._dogma_dl_forced then
+			return base(self)
+		end
+
+		if not self.access then
+			return
+		end
+		if not (axr_main and axr_main.config) then
+			self.owner:StartGame()
+			return
+		end
+
+		local character_name = self.character_name:GetText()
+		if character_name == "" then
+			character_name = "Stalker"
+			self.character_name:SetText(character_name)
+		end
+
+		if (self.selected_map == nil or self.selected_map == "" or self.selected_map == "random_location"
+			or (self.list_map and self.list_map:CurrentID() < 0)) then
+			if self.table_map and #self.table_map >= 2 then
+				local index = math.random(2, #self.table_map)
+				self.selected_map = self.table_map[index]
+			end
+		end
+
+		local diff = (self.selected_difficulty or "st_diff_3"):gsub("st_diff_", "")
+		diff = tonumber(diff) or 3
+		local econ = (self.selected_economy or "st_econ_3"):gsub("st_econ_", "")
+		econ = tonumber(econ) or 3
+
+		local cfg_w = axr_main.config.w_value
+		cfg_w(axr_main.config, "character_creation", "new_game_difficulty", diff)
+		cfg_w(axr_main.config, "character_creation", "new_game_economy", econ)
+		cfg_w(axr_main.config, "character_creation", "new_game_economy_treasure", econ)
+		cfg_w(axr_main.config, "character_creation", "new_game_hardcore_mode",
+			self.ck_hardcore and self.ck_hardcore:GetCheck() and true or nil)
+		cfg_w(axr_main.config, "character_creation", "new_game_hardcore_mode_lives",
+			self.selected_hardcore_lives and self.selected_hardcore_lives[1] or 1)
+		cfg_w(axr_main.config, "character_creation", "new_game_hardcore_mode_regenerate",
+			self.selected_hardcore_regen and self.selected_hardcore_regen[1] or nil)
+		cfg_w(axr_main.config, "character_creation", "new_game_story_mode",
+			self.ck_story and self.ck_story:GetCheck() and true or nil)
+		cfg_w(axr_main.config, "character_creation", "new_game_azazel_mode",
+			self.ck_azazel_mode and self.ck_azazel_mode:GetCheck() and true or nil)
+		cfg_w(axr_main.config, "character_creation", "new_game_survival_mode",
+			self.ck_survival and self.ck_survival:GetCheck() and true or nil)
+		cfg_w(axr_main.config, "character_creation", "new_game_campfire_mode",
+			self.ck_campfire and self.ck_campfire:GetCheck() and true or nil)
+		cfg_w(axr_main.config, "character_creation", "new_game_conditions_mode",
+			self.ck_conditions and self.ck_conditions:GetCheck() and true or nil)
+		cfg_w(axr_main.config, "character_creation", "new_game_opened_routes",
+			self.ck_routes and self.ck_routes:GetCheck() and true or nil)
+		cfg_w(axr_main.config, "character_creation", "new_game_warfare",
+			self.ck_warfare and self.ck_warfare:GetCheck() and true or nil)
+
+		local name_for_config = character_name:gsub(" ", "_")
+		cfg_w(axr_main.config, "character_creation", "new_game_character_name", name_for_config)
+		cfg_w(axr_main.config, "character_creation", "new_game_faction", self.selected_faction or nil)
+		cfg_w(axr_main.config, "character_creation", "new_game_icon", self.selected_icon or nil)
+		cfg_w(axr_main.config, "character_creation", "new_game_loadout", self._dogma_dl_forced)
+		cfg_w(axr_main.config, "character_creation", "new_game_map", self.selected_map or nil)
+		cfg_w(axr_main.config, "character_creation", "new_game_money", self.selected_money or nil)
+
+		-- Persist optic attach hints for in-game main.script
+		cfg_w(axr_main.config, "character_creation", "dogma_dl_weapon", STATE.pending_weapon or "")
+		cfg_w(axr_main.config, "character_creation", "dogma_dl_sight", STATE.pending_sight or "")
+
+		axr_main.config:save()
+		self._dogma_dl_forced = nil
+		self.owner:StartGame()
+	end
+
+	cls.OnStartGame = wrapped
+	STATE.wrap_start = wrapped
+	STATE.base_start = base
+end
+
+local function wrap_on_randomize(cls)
+	if STATE.wrap_rand and cls.OnRandomize == STATE.wrap_rand then
+		return
+	end
+	local base = cls.OnRandomize
+	if not base then
+		return
+	end
+
+	local function wrapped(self)
+		if not cfg_bool("enabled") then
+			return base(self)
+		end
+		if not self.access then
+			return base(self)
+		end
+
+		-- Keep faction/map/name behavior from stock randomize first
+		base(self)
+
+		local faction = self.selected_faction or "stalker"
+		local loadout
+		local ok, err = pcall(function()
+			loadout = build_loadout(faction)
+		end)
+
+		if not ok then
+			dlog("build_loadout FAILED: " .. tostring(err))
+			-- Fall back to stock start (no forced loadout)
+			self:OnStartGame()
+			return
+		end
+
+		self._dogma_dl_forced = loadout
+		dlog("forced loadout set, starting game")
+		self:OnStartGame()
+	end
+
+	cls.OnRandomize = wrapped
+	STATE.wrap_rand = wrapped
+end
+
+local function patch_new_game()
+	local cls = ui_mm_faction_select and ui_mm_faction_select.UINewGame
+	if not cls then
+		return false
+	end
+	wrap_on_start_game(cls)
+	wrap_on_randomize(cls)
+	return true
+end
+
+-- Top-level: runs when MCM gathers *mcm.script at main menu.
+patch_new_game()
+
+--------------------------------------------------------------------------
+-- MCM (temporary tuning knobs)
+--------------------------------------------------------------------------
+
+function on_mcm_load(options)
+	patch_new_game()
+
+	dogma_mcm.attach(options, "menu", "ui_mcm_menu_dogma_menu", {
+		id = "dynamic_loadout",
+		sh = true,
+		text = "ui_mcm_menu_dogma_menu_dynamic_loadout",
+		gr = dogma_mcm.with_header({
+			{
+				id = "page_description",
+				type = "desc",
+				text = "ui_mcm_dogma_menu_dynamic_loadout_page_description",
+			},
+			{
+				id = "enabled",
+				type = "check",
+				val = 1,
+				def = CONFIG.DEFAULTS.enabled,
+				hint = "dogma_menu_dynamic_loadout_enabled",
+			},
+			{
+				id = "log_scores",
+				type = "check",
+				val = 1,
+				def = CONFIG.DEFAULTS.log_scores,
+				hint = "dogma_menu_dynamic_loadout_log_scores",
+			},
+			{
+				id = "include_universal_armor",
+				type = "check",
+				val = 1,
+				def = CONFIG.DEFAULTS.include_universal_armor,
+				hint = "dogma_menu_dynamic_loadout_include_universal_armor",
+			},
+			{
+				id = "sight_chance",
+				type = "track",
+				val = 2,
+				min = 0,
+				max = 100,
+				step = 5,
+				def = CONFIG.DEFAULTS.sight_chance,
+				hint = "dogma_menu_dynamic_loadout_sight_chance",
+			},
+			{ id = "line_caps", type = "line" },
+			{
+				id = "hdr_caps",
+				type = "desc",
+				text = "ui_mcm_dogma_menu_dynamic_loadout_caps_section",
+			},
+			{
+				id = "max_pts_weapon",
+				type = "track",
+				val = 2,
+				min = 100,
+				max = 2000,
+				step = 25,
+				def = CONFIG.DEFAULTS.max_pts_weapon,
+				hint = "dogma_menu_dynamic_loadout_max_pts_weapon",
+			},
+			{
+				id = "max_pts_armor",
+				type = "track",
+				val = 2,
+				min = 50,
+				max = 1200,
+				step = 25,
+				def = CONFIG.DEFAULTS.max_pts_armor,
+				hint = "dogma_menu_dynamic_loadout_max_pts_armor",
+			},
+			{
+				id = "max_pts_helmet",
+				type = "track",
+				val = 2,
+				min = 25,
+				max = 600,
+				step = 25,
+				def = CONFIG.DEFAULTS.max_pts_helmet,
+				hint = "dogma_menu_dynamic_loadout_max_pts_helmet",
+			},
+			{
+				id = "max_pts_ammo",
+				type = "track",
+				val = 2,
+				min = 10,
+				max = 200,
+				step = 5,
+				def = CONFIG.DEFAULTS.max_pts_ammo,
+				hint = "dogma_menu_dynamic_loadout_max_pts_ammo",
+			},
+			{
+				id = "max_pts_sight",
+				type = "track",
+				val = 2,
+				min = 25,
+				max = 500,
+				step = 25,
+				def = CONFIG.DEFAULTS.max_pts_sight,
+				hint = "dogma_menu_dynamic_loadout_max_pts_sight",
+			},
+			{
+				id = "score_scale",
+				type = "track",
+				val = 2,
+				min = 10,
+				max = 500,
+				step = 10,
+				def = CONFIG.DEFAULTS.score_scale,
+				hint = "dogma_menu_dynamic_loadout_score_scale",
+			},
+		}),
+	})
+end

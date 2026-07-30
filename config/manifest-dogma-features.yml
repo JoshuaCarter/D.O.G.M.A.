@@ -74,6 +74,20 @@ Weapon Stripper:
   path: items/stripping
   desc: Keybind to strip all attachments/parts from a weapon in one go.
 
+Parts in Stashes:
+  stage: DEV
+  path: items/parts_in_stashes
+  desc: "Weapon parts in white stashes (RNG Attach tier/condition bands). Optional mechanic destock."
+  requires:
+    - RNG Attach
+
+Workshop Shared Stash:
+  stage: DEV
+  path: items/workshop_shared_stash
+  desc: "One shared stash for all portable workshops; 1 workshop per level; carry weight = table + contents."
+  requires:
+    - Hideout Furniture
+
 Faster Skinning:
   stage: OMIT
   path: mutants/skinning
@@ -131,22 +145,25 @@ Better Equipable Controls:
   path: player/equipment_controls
   desc: "Dedicated keys for equipping Melee, Pistol, Detector, Geiger Counter, RF Receiver, and Glowsticks."
 
+Dynamic Loadout:
+  stage: DEV
+  path: menu/dynamic_loadout
+  desc: "At New Game Randomize, scan and score weapons/armor/helmets/ammo/sights, filter by faction and point caps, force the starting loadout. Disables R.N.G. and RNGLO."
+  disables:
+    - Randomizer for New Game
+    - Revolver's New Game Loadout Overhaul
+
+Loadout Layout:
+  stage: DEV
+  path: menu/loadout_layout
+  desc: "Wider/taller New Game Loadout (purchases) panel via ui_mm_faction_select_16.xml override. Edit that XML to tweak; .stock.xml is the untouched 16:9 baseline. Loads after DART's #include."
+
 Weapon Tooltips:
   stage: RELEASE
   path: tooltips/weapons
   desc: Adds detailed weapon performance stats to weapon tooltips.
   enables:
     - G.A.M.M.A. Accurate Defense Values
-
-Fast Travel:
-  stage: OMIT
-  path: travel/fast_travel
-  desc: "Travel from the PDA map with paths, ambushes, and sneak options."
-  disables:
-    - 329- Fair Fast Travel - Catspaw
-    - 329- Fair Fast Travel 2.7+ - Catspaw
-  requires:
-    - Tarkov-like Level Transitions
 
 True Fast Travel:
   stage: DEV

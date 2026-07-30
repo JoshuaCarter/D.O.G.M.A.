@@ -1,0 +1,95 @@
+-- menu/dynamic_loadout conf (prepended into *mcm.script for main-menu load)
+
+local defaults = {
+	["enabled"] = true,
+	["log_scores"] = true,
+	["include_universal_armor"] = true,
+	["sight_chance"] = 50,
+	["max_pts_weapon"] = 900,
+	["max_pts_armor"] = 550,
+	["max_pts_helmet"] = 250,
+	["max_pts_ammo"] = 80,
+	["max_pts_sight"] = 200,
+	["score_scale"] = 100,
+	-- weapon score weights (temporary tuning)
+	["w_dmg"] = 1.0,
+	["w_ap"] = 0.4,
+	["w_spread"] = 0.35,
+	["w_weight"] = 0.15,
+	["w_cap_scope"] = 0.15,
+	["w_cap_sil"] = 0.10,
+	-- armor / helmet
+	["a_prot"] = 1.0,
+	["a_weight"] = 0.35,
+	-- ammo
+	["ammo_dmg_ap"] = 1.0,
+	-- sight
+	["sight_zoom"] = 1.0,
+}
+
+-- Kit addon ids (weapon rename suffix). Kit results = base .. "_" .. id.
+local KIT_IDS = {
+	"mod9", "pm_upgr_kit", "sr1upgr1", "226sig_kit", "pb_upgr_kit", "u2p2g0r",
+	"pl15_scolaz", "lazup_pl15", "upg220", "silen98", "vitup", "kurtz", "gurza_up",
+	"ots2_upgr_kit", "23_up", "kab_up", "spectre_tactical_kit", "sr2_upkit", "5c_tik",
+	"admin", "mauser_kit", "sup", "infiltrator_tactical_kit", "bd", "vorkuta",
+	"archangel", "magpul_pro", "mod_x_gen3", "shakal", "swamp", "kit_aus_tri",
+	"kit_sa5x_spec", "kit_fal_leup", "cut_kit", "mono_kit", "m9_upgr_kit",
+	"tt_upgr_kit", "tt_upgr",
+}
+
+-- UI faction id -> ammo bloc
+local FACTION_BLOC = {
+	stalker = "wp",
+	bandit = "wp",
+	dolg = "wp",
+	army = "wp",
+	renegade = "wp",
+	ecolog = "wp",
+	freedom = "nato",
+	killer = "nato",
+	isg = "nato",
+	csky = "both",
+	monolith = "both",
+	greh = "both",
+	zombied = "wp",
+}
+
+-- UI faction -> outfit community field
+local FACTION_COMMUNITY = {
+	stalker = "stalker",
+	bandit = "bandit",
+	dolg = "dolg",
+	freedom = "freedom",
+	killer = "killer",
+	army = "army",
+	ecolog = "ecolog",
+	monolith = "monolith",
+	csky = "csky",
+	renegade = "renegade",
+	greh = "greh",
+	isg = "isg",
+	zombied = "stalker",
+}
+
+-- Armor protection keys and relative value weights
+local PROT_WEIGHTS = {
+	fire_wound_protection = 1.20,
+	strike_protection = 1.00,
+	wound_protection = 0.90,
+	explosion_protection = 0.70,
+	shock_protection = 0.50,
+	burn_protection = 0.40,
+	chemical_burn_protection = 0.40,
+	radiation_protection = 0.35,
+	telepathy_protection = 0.30,
+}
+
+_G.dogma_menu_dynamic_loadout_conf = {
+	MOD_ID = "dogma/menu/dynamic_loadout",
+	DEFAULTS = defaults,
+	KIT_IDS = KIT_IDS,
+	FACTION_BLOC = FACTION_BLOC,
+	FACTION_COMMUNITY = FACTION_COMMUNITY,
+	PROT_WEIGHTS = PROT_WEIGHTS,
+}

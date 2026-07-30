@@ -1,0 +1,66 @@
+-- DOGMA override: Hideout Furniture / Serious Workshop bind_workshop_furniture.
+-- Pickup must not dump or destroy the shared workshop stash.
+
+function init(obj)
+	obj:bind_object(hf_workshop_wrapper(obj).binder)
+end
+
+class "hf_workshop_wrapper" (bind_hf_base.hf_binder_wrapper)
+
+function hf_workshop_wrapper:__init(obj) super(obj)
+end
+
+function hf_workshop_wrapper:pickup()
+	local m_data = alife_storage_manager.get_state()
+	if not m_data then
+		bind_hf_base.hf_binder_wrapper.pickup(self)
+		return
+	end
+	local shared_id = m_data.workshop_shared_stash
+	local workshop_id = self.object:id()
+
+	-- Only clean up old per-workshop private boxes. Never touch the shared stash.
+	if m_data.workshop_stashes then
+		local old_id = m_data.workshop_stashes[workshop_id]
+		if old_id and old_id ~= shared_id then
+			local old_box = level.object_by_id(old_id)
+			local shared_box = shared_id and level.object_by_id(shared_id)
+			if old_box then
+				local has_content = false
+				old_box:iterate_inventory_box(function(temp, obj)
+					has_content = true
+					return true
+				end, old_box)
+				if has_content and shared_box then
+					old_box:iterate_inventory_box(function(temp, obj)
+						old_box:transfer_item(obj, shared_box)
+					end, old_box)
+				end
+				local still_has = false
+				old_box:iterate_inventory_box(function(temp, obj)
+					still_has = true
+					return true
+				end, old_box)
+				if not still_has then
+					alife_release_id(old_id)
+					m_data.workshop_stashes[workshop_id] = nil
+				end
+			end
+			-- Offline / failed migration: leave private box alone.
+		elseif old_id == shared_id then
+			m_data.workshop_stashes[workshop_id] = nil
+		end
+	end
+
+	-- Clear 1-per-level registry for this bench
+	if m_data.dogma_workshop_by_level then
+		for lvl, wid in pairs(m_data.dogma_workshop_by_level) do
+			if wid == workshop_id then
+				m_data.dogma_workshop_by_level[lvl] = nil
+				break
+			end
+		end
+	end
+
+	bind_hf_base.hf_binder_wrapper.pickup(self)
+end

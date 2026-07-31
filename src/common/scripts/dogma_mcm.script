@@ -1,5 +1,5 @@
 --[[
-	DOGMA MCM — getters, tree attach, shared Debug page, banner helper.
+	DOGMA MCM - getters, tree attach, shared Debug page, banner helper.
 
 	Loaded via dogma_common; use DOGMA.mcm from on_game_start().
 	Also registered as *mcm.script (API + defaults). Debug page itself is
@@ -49,7 +49,7 @@ local function get(mod_id, key, default)
 	if default == nil then
 		default = conf_default(mod_id, key)
 	end
-	-- Illegal during *mcm.script load / on_mcm_load gather — fall back to def.
+	-- Illegal during *mcm.script load / on_mcm_load gather - fall back to def.
 	if ui_mcm and ui_mcm.is_gathering and ui_mcm.is_gathering() then
 		return default
 	end
@@ -136,7 +136,7 @@ function range(mod_id, min_key, max_key, min_default, max_default, min_floor)
 end
 
 --------------------------------------------------------------------------------
--- Engine keybind mirrors — implementation in dogma_key_mirror_mcm.script.
+-- Engine keybind mirrors - implementation in dogma_key_mirror_mcm.script.
 -- Thin re-exports so features can call dogma_mcm.key_mirror / migrate.
 --------------------------------------------------------------------------------
 
@@ -223,7 +223,7 @@ local function ensure_dogma_root(options)
 end
 
 -- Merge a feature page under dogma/<category>. MCM does not deep-merge duplicate
--- category ids from separate *mcm.script returns — call this instead of returning
+-- category ids from separate *mcm.script returns - call this instead of returning
 -- a category wrapper.
 function attach(options, cat_id, cat_text, page)
 	if not options then
@@ -399,7 +399,7 @@ local function defer_page_refresh(gui)
 	end
 end
 
--- Pending-only: mirrors MCM Default / CacheValue — Accept applies, Reset discards.
+-- Pending-only: mirrors MCM Default / CacheValue - Accept applies, Reset discards.
 -- functor_ui passes the open UI_MCM as the trailing arg.
 function reset_all_dogma_pending(gui)
 	local dogma = find_dogma_root()
@@ -416,7 +416,7 @@ function reset_all_dogma_pending(gui)
 end
 
 -- Shared Debug page under DOGMA (sibling of categories). Called from local-only
--- mcm/debug — release FOMOD builds omit that feature, so the page never appears.
+-- mcm/debug - release FOMOD builds omit that feature, so the page never appears.
 function register_debug_page(options)
 	local CONFIG = _G.dogma_debug_conf
 	local page = {

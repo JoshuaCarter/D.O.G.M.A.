@@ -1,7 +1,7 @@
 --[[
 	DOGMA engine keybind mirrors (Options→Controls ↔ MCM key_bind).
 
-	Generic only — features name their actions, labels, and Control-row
+	Generic only - features name their actions, labels, and Control-row
 	placement. Ships as *mcm.script so mirrors work at the main menu.
 
 	Foolproof apply path:
@@ -269,7 +269,7 @@ end
 local migrated = {}
 
 -- mirror: KeyMirror, or spec { action, kb }
--- opts.skip_dik: number or { numbers } — do not promote these (e.g. old Unjam R)
+-- opts.skip_dik: number or { numbers } - do not promote these (e.g. old Unjam R)
 function migrate(mod_id, mcm_key, mirror, opts)
 	if type(mirror) == "table" and mirror.action and not mirror.dik then
 		mirror = key_mirror_kb(mirror.action, mirror.kb)

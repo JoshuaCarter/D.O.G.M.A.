@@ -10,21 +10,21 @@
 #   src/common/mo2/...                      EXCEPTION: files under <mod>/mo2/
 #   src/<category>/<feature>/mo2/...        (sibling of gamedata/), e.g. mo2/tools/…
 #
-# Scripts (prefix applied at build — src keeps short names like main.script):
+# Scripts (prefix applied at build - src keeps short names like main.script):
 #   common/scripts/*          -> same basename (dogma_common, dogma_mcm,
 #                               dogma_key_mirror_mcm, …)
-#                               no zzzz_ — always before every feature script
+#                               no zzzz_ - always before every feature script
 #                               *mcm.script also participates in MCM gather
 #                               (key mirrors live in dogma_key_mirror_mcm)
 #   …/scripts/_conf.script    -> dogma_{path}_conf.script
-#                               no zzzz_ — before that feature's zzzz_ body scripts
+#                               no zzzz_ - before that feature's zzzz_ body scripts
 #   …/scripts/mcm.script      -> dogma_{path}_mcm.script   (*mcm.script glob)
 #                               _conf is prepended so main-menu MCM (which only
 #                               loads *mcm.script) still gets MOD_ID + defaults
 #   …/scripts/modxml_*.script -> modxml_dogma_{path}_*.script
-#                               keep modxml_ prefix — Modded Exes only gathers
+#                               keep modxml_ prefix - Modded Exes only gathers
 #                               that glob for DXML on_xml_read injection
-#   …/scripts/override/*.script -> scripts/<basename>.script  (exact name — only
+#   …/scripts/override/*.script -> scripts/<basename>.script  (exact name - only
 #                               when disabled.ini cannot cover the conflict:
 #                               exo MCM replace, blank vanilla game_fast_travel,
 #                               Blindside/Keybinds scripts we must not disable)
@@ -313,7 +313,7 @@ esac
 if [[ "$ONLY" == "all" || "$ONLY" == "" ]]; then
 	dogma_load_manifest 1 || exit 1
 	if ((${#FEATURES[@]} == 0)) && [[ -z "${DOGMA_ALLOW_EMPTY:-}" ]]; then
-		echo "build: manifest yielded 0 features — refusing full build/prune (fix YAML or set DOGMA_ALLOW_EMPTY=1)" >&2
+		echo "build: manifest yielded 0 features - refusing full build/prune (fix YAML or set DOGMA_ALLOW_EMPTY=1)" >&2
 		exit 1
 	fi
 	echo "build: config manifests stage>=dev (${#FEATURES[@]} features)"
@@ -384,7 +384,7 @@ if [[ "$ONLY" == "all" || "$ONLY" == "" ]]; then
 		) > "$mo2_all"
 		while IFS= read -r rel; do
 			[[ -z "$rel" ]] && continue
-			# Feature zips from FOMOD packaging — keep across local merge deploys.
+			# Feature zips from FOMOD packaging - keep across local merge deploys.
 			case "$rel" in
 				mo2/packages/*) continue ;;
 			esac

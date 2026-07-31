@@ -1,5 +1,5 @@
 --[[
-	Free Zoom — free zoom + ADS Zoom.
+	Free Zoom - free zoom + ADS Zoom.
 
 	Drivers → fov + hud_fov (shrink %: base * (1 - pct/100)):
 	  Free: both channels = free% (cleared on ADS enter; never while ADS)
@@ -8,7 +8,7 @@
 	Console fov snaps; we lerp live → target quickly. Free/ADS publish tgt FOVs to
 	_G.dogma_fov_tgt_free / _G.dogma_fov_tgt_ads; lerp clamps so zoom-out never
 	passes the other system's more-zoomed floor.
-	± keys override gun+optic HUD %. Owns ADS hud_fov — blanks Blindside/Keybinds ADS FOV / Free_ZoomV2 via scripts/override/; disable Free Zoom packages via config/disabled.ini.
+	± keys override gun+optic HUD %. Owns ADS hud_fov - blanks Blindside/Keybinds ADS FOV / Free_ZoomV2 via scripts/override/; disable Free Zoom packages via config/disabled.ini.
 ]]
 
 local CONFIG = _G.dogma_zoom_free_zoom_conf
@@ -286,7 +286,7 @@ local function weapon_is_lowered()
 	return game and game.actor_weapon_lowered and game.actor_weapon_lowered() or false
 end
 
--- Any equipped optic (sight or scope) — not irons. Engine IsScopeAttached misses
+-- Any equipped optic (sight or scope) - not irons. Engine IsScopeAttached misses
 -- some section-baked / DXR optics that utils_item still reports.
 local function scope_attached()
 	if not wpn then
@@ -321,7 +321,7 @@ local function scope_attached()
 	return false
 end
 
--- 3DSS optical ADS: scopes / engine own FOV — we never write console FOV.
+-- 3DSS optical ADS: scopes / engine own FOV - we never write console FOV.
 local function is_optical_ads()
 	if not (wpn and wpn.cast_Weapon and z_3d_scopes) then
 		return false
@@ -461,7 +461,7 @@ local function get_context()
 	if any_menu_open() then
 		return CTX.GUI
 	end
-	-- F8 debug / options / sleep / any Register_UI — not in MENU_BLOCK whitelist.
+	-- F8 debug / options / sleep / any Register_UI - not in MENU_BLOCK whitelist.
 	if actor_menu and actor_menu.is_hud_free and not actor_menu.is_hud_free() then
 		return CTX.GUI
 	end
@@ -469,7 +469,7 @@ local function get_context()
 		return CTX.PDA
 	end
 	refresh_wpn()
-	-- Consumables (eat/drink/meds) lower the weapon — block free zoom either mode.
+	-- Consumables (eat/drink/meds) lower the weapon - block free zoom either mode.
 	if weapon_is_lowered() then
 		return CTX.LOWERED
 	end
@@ -537,7 +537,7 @@ local function compute_fov()
 end
 
 -- Publish each system's target FOV; clear when inactive so the other is not stuck.
--- Only numbers count as floors — missing / non-numeric globals = no effect (other mod absent).
+-- Only numbers count as floors - missing / non-numeric globals = no effect (other mod absent).
 local function read_fov_tgt(name)
 	local v = rawget(_G, name)
 	if type(v) == "number" and v > 0 then
@@ -547,7 +547,7 @@ local function read_fov_tgt(name)
 end
 
 local function publish_fov_targets()
-	-- Free never floors FOV while ADS — ADS Zoom owns world FOV; free state is cleared on enter.
+	-- Free never floors FOV while ADS - ADS Zoom owns world FOV; free state is cleared on enter.
 	if free_on and not ads_on and (CONFIG.loaded.free_zoom or 0) > 0 then
 		_G.dogma_fov_tgt_free = pct_to_fov(CONFIG.loaded.free_zoom)
 	else
@@ -589,7 +589,7 @@ end
 
 local function set_zoom_move_speed(active)
 	-- Prefer shared speed.script on GAMMA; else our vendored Teepo copy.
-	-- (Do not name the local `speed` — that shadows the global on the RHS.)
+	-- (Do not name the local `speed` - that shadows the global on the RHS.)
 	local speed_mod = (speed and speed.add_speed and speed) or zzzz_dogma_zoom_free_zoom_speed
 	-- speed.add_speed needs db.actor; skip during on_game_start / early boot.
 	if not (db and db.actor and speed_mod and speed_mod.add_speed) then
@@ -821,7 +821,7 @@ local function handle_context(ctx)
 	end
 
 	-- Sprint / reload / GUI / etc.: drop free zoom; hold DIKs stay so poll re-applies when ok.
-	-- ADS enter clears free in set_ads_zoom (state only — ADS Zoom owns FOV).
+	-- ADS enter clears free in set_ads_zoom (state only - ADS Zoom owns FOV).
 	if free_on and blocks_free(ctx) then
 		clear_free_zoom(ctx)
 	end
@@ -891,7 +891,7 @@ local function set_ads_zoom(want_ads, source)
 			logf("ads skipped: source=%s ads_zoom disabled wpn=%s", source, wpn_label())
 			return false
 		end
-		-- Drop free state without applying FOV — ADS apply below owns the transition.
+		-- Drop free state without applying FOV - ADS apply below owns the transition.
 		clear_free_zoom("ads", true)
 		ads_on = true
 		-- Optical: ease world FOV to hip, then stop writing (scope owns it).
@@ -953,7 +953,7 @@ local function is_weapon_slot_bind(bind)
 		or bind == key_bindings.kWPN_6
 end
 
--- Fires on the keypress itself — earliest hook for 1/2/3 slot swaps.
+-- Fires on the keypress itself - earliest hook for 1/2/3 slot swaps.
 local function on_before_key_press(key, bind, dis, flags)
 	if not CONFIG.loaded.enabled and not CONFIG.loaded.ads_enabled then
 		return
@@ -967,7 +967,7 @@ local function on_before_key_press(key, bind, dis, flags)
 end
 
 -- Slot change from wheel / scripts / anything that bypasses our key hook.
--- Engine sometimes fires this during ADS / anims without a real item swap — ignore those.
+-- Engine sometimes fires this during ADS / anims without a real item swap - ignore those.
 local function actor_on_changed_slot(new_slot, new_obj, prev_slot, prev_obj)
 	local tostr = tostring
 	if not CONFIG.loaded.enabled and not CONFIG.loaded.ads_enabled then

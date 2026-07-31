@@ -1,6 +1,6 @@
 @echo off
 setlocal
-REM D.O.G.M.A. Backup — MCM diff, user.ltx, modlist, mods archive
+REM D.O.G.M.A. Backup - MCM diff, user.ltx, modlist, mods archive
 REM Saves under <MO2>\DOGMA\backups\<timestamp>\
 REM Logs: <MO2>\DOGMA\logs\
 call "%~dp0run_py.bat" backup %*

@@ -291,7 +291,7 @@ local function patched_get_template_action_mutant_skin(obj)
 			level.remove_cam_effector(LAM2_CAM_EFFECTOR_ID)
 		end
 		if fdda_on_exit then
-			-- Knife degrade etc.; also stops look-at — re-apply so stand-up keeps it.
+			-- Knife degrade etc.; also stops look-at - re-apply so stand-up keeps it.
 			fdda_on_exit(self)
 		end
 		do_look_at(self, true)
@@ -330,7 +330,7 @@ end
 
 local function patched_set_sound_play(actor_id, sound_theme, ...)
 	-- During knife-cut anim, mute Loot's stock sound (synced harvest plays instead).
-	-- Slash loot has no cut anim — keep inv_mutant_loot_animal for PDA/take feedback.
+	-- Slash loot has no cut anim - keep inv_mutant_loot_animal for PDA/take feedback.
 	if CONFIG.loaded.enabled and CONFIG.loaded.skin_speed_multiplier > 1 and sound_theme == MUTANT_LOOT_SOUND and not slash_looting then
 		log("inv_mutant_loot_animal: suppressed in favor of the synced cut sound")
 		return
@@ -364,7 +364,7 @@ local function slash_input_blocked()
 	return false
 end
 
--- Use-target already means looking at them within interact range — no ray/cone checks.
+-- Use-target already means looking at them within interact range - no ray/cone checks.
 local function use_target_dead_mutant()
 	local target = level.get_target_obj and level.get_target_obj()
 	if target and IsMonster(target) and not target:alive() then

@@ -1,6 +1,6 @@
 @echo off
 setlocal
-REM D.O.G.M.A. Optimize — GC, SFX prefetch, full DOGMA Backup, ALAO
+REM D.O.G.M.A. Optimize - GC, SFX prefetch, full DOGMA Backup, ALAO
 REM Backup lands in <MO2>\DOGMA\backups\<timestamp>\
 REM Log: <MO2>\DOGMA\logs\
 call "%~dp0run_py.bat" optimize %*

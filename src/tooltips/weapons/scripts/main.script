@@ -8,12 +8,12 @@
 	G.A.M.M.A. Accurate Defense Values (ish_item_stats), which rebuilds
 	stats_table["weapon"] and would wipe our rows.
 
-	early_init() (below) does the actual hook install / stat setup — it touches
+	early_init() (below) does the actual hook install / stat setup - it touches
 	no db.actor / game state, only global tables (utils_ui, ish_item_stats,
 	ui_itm_details) and MCM reads. on_game_start() calls it (real new game /
 	save load). The Tooltips Fix tweak (tweaks/tooltips_fix), when installed, also
 	calls it on "main_menu_on_init" so the New Game character-creation Loadout
-	screen — which renders *before* any on_game_start fires — already has our
+	screen - which renders *before* any on_game_start fires - already has our
 	hooks and the GAMMA-rebalanced stats_table the first time it shows a
 	tooltip. Both callers are safe: every hook install below is guarded so
 	repeat calls just refresh CONFIG.loaded + re-apply the stat rows, and
@@ -729,7 +729,7 @@ local function items_have_duplicate_color(items)
 end
 
 -- Slash rows: walk current-weapon ammo order. Match by section, else Type label,
--- else Type color family (yellow/blue/orange only — same map as slash value colors:
+-- else Type color family (yellow/blue/orange only - same map as slash value colors:
 -- FMJ↔SLUG, HP↔BUCK, AP↔SLAP). Missing on B → "-" placeholder so (+/-) lines up
 -- with the left slash (e.g. FMJ/HP/AP vs FMJ/AP → "(+5 / - / -3)").
 -- No shared matches at all → "(- / - / -)" so the column is not left blank.
@@ -813,7 +813,7 @@ local function apply_custom_stat_display(info, obj, sec)
 		return
 	end
 	-- Stat slots are reused across items. Complex mode sticks and breaks stock
-	-- strings that contain '%' (Accuracy etc.) — always clear first.
+	-- strings that contain '%' (Accuracy etc.) - always clear first.
 	for _, ele in pairs(info.stats) do
 		if ele.txt then
 			ele.txt:SetTextComplexMode(false)
@@ -830,7 +830,7 @@ local function apply_custom_stat_display(info, obj, sec)
 			sec = ini_sys:r_string_ex(section, "parent_section") or section
 		end
 	end
-	-- Match GetType("weapon"): IsWeapon(sec) crashes — it calls :clsid() on the string.
+	-- Match GetType("weapon"): IsWeapon(sec) crashes - it calls :clsid() on the string.
 	if not sec or info:GetType(sec) ~= "weapon" then
 		return
 	end
@@ -1777,7 +1777,7 @@ local function collect_sorted_ammo_rounds(obj, sec, max_count, class_only)
 	local ammo_list = nil
 	if not class_only and utils_item and utils_item.get_ammo then
 		-- Live inventory ammo when available; New Game / nil-obj often returns
-		-- only the first round — prefer the full ammo_class list whenever longer.
+		-- only the first round - prefer the full ammo_class list whenever longer.
 		ammo_list = utils_item.get_ammo(sec, safe_id(obj))
 	end
 	if not ammo_list or not ammo_list[1] then
@@ -2026,7 +2026,7 @@ end
 --------------------------------------------------------------------------
 -- Dynamic-loadout scoring API (section-only, neutral barrel/silencer).
 -- Same ammo typing (AMMO_TYPE_SHORT / color families) + CQC tier math as the
--- damage table — callers should not re-classify HP/FMJ/AP classification.
+-- damage table - callers should not re-classify HP/FMJ/AP classification.
 --------------------------------------------------------------------------
 -- Dynamic-loadout armor columns (TT torso Min → Mid+): max across ammos per col.
 local SCORE_ARMOR_COLS = 5
@@ -2048,7 +2048,7 @@ local function weapon_score_table_stats(wpn_sec, dist)
 		return nil
 	end
 	dist = dist or REF_DIST_M
-	-- Full ammo_class — never the live get_ammo subset (broken at New Game).
+	-- Full ammo_class - never the live get_ammo subset (broken at New Game).
 	local rounds = collect_score_ammo_rounds(wpn_sec)
 	if not rounds then
 		return nil
@@ -2083,6 +2083,27 @@ local function weapon_score_table_stats(wpn_sec, dist)
 				col_src[i] = { sec = r.sec, label = r.label }
 			end
 		end
+	end
+
+	-- If tooltip mutant-row damage exceeds armor-col-1 (mut_dmg), use that instead.
+	-- Neutral barrel/diff (menu scoring) - same formula as mutant_ammo_damage_items.
+	local mut_max = 0
+	local mut_src = nil
+	for _, r in ipairs(rounds) do
+		local dmg = math.floor(
+			hit_power / dist_atten(r.air_res, dist)
+				* r.k_hit * r.pellets
+				* MUTANT_BASE_MULT * (MUTANT_AMMO_MULT[r.sec] or MUTANT_AMMO_MULT_DEFAULT)
+				* DAMAGE_SCALE + 0.5
+		)
+		if dmg > mut_max then
+			mut_max = dmg
+			mut_src = { sec = r.sec, label = r.label, kind = "mutant_row" }
+		end
+	end
+	if mut_max > (col_max[1] or 0) then
+		col_max[1] = mut_max
+		col_src[1] = mut_src
 	end
 
 	local fmj_r = pick_round_by_color(rounds, "yellow")
@@ -3112,7 +3133,7 @@ local callbacks_registered = false
 -- Everything a fresh session needs before the first tooltip can render: MCM
 -- values, the UIInfoItem/details-sheet hooks, and the ADV re-apply wrapper.
 -- No db.actor / level dependency, so this is safe to call from main_menu_on_init
--- (main menu boot, no game loaded yet) as well as on_game_start(). Idempotent —
+-- (main menu boot, no game loaded yet) as well as on_game_start(). Idempotent -
 -- every install_* below no-ops if already installed; on_option_change() /
 -- apply_enhanced_weapon_stats() are cheap to re-run and always safe to repeat.
 -- Callback registration is guarded separately so calling this twice (menu boot,
@@ -3128,7 +3149,7 @@ function early_init()
 		callbacks_registered = true
 		RegisterScriptCallback("on_console_execute", on_console_execute)
 		RegisterScriptCallback("on_option_change", on_option_change)
-		-- MCM's apply only sends on_option_change when level.present() — at the
+		-- MCM's apply only sends on_option_change when level.present() - at the
 		-- main menu (e.g. tweaking stats before the New Game Loadout screen) it
 		-- skips it and only sends mcm_option_change (dispatched unconditionally,
 		-- registered at ui_mcm top level). Listen to both; in-game both fire and

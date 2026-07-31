@@ -103,7 +103,7 @@ local function patch_start_hooks()
 	end
 
 	-- QAW saves the pre-wrap vanilla starter as _start_ammo_wheel and calls it
-	-- when override_ammo_wheel is off — patch that path too.
+	-- when override_ammo_wheel is off - patch that path too.
 	local qaw = rawget(_G, "haru_quick_action_wheel_mcm")
 	if qaw and type(qaw._start_ammo_wheel) == "function" and not qaw._dogma_ammo_wheel_start then
 		qaw._start_ammo_wheel = wrap_start(qaw._start_ammo_wheel)

@@ -1,6 +1,6 @@
 @echo off
 setlocal
-REM D.O.G.M.A. Setup — user-facing entry (pipeline in dogma_job.py install)
+REM D.O.G.M.A. Setup - user-facing entry (pipeline in dogma_job.py install)
 REM Skip GUI: set DOGMA_NO_WIZARD=1  or pass --no-wizard
 REM Logs: <MO2>\DOGMA\logs\
 call "%~dp0run_py.bat" install --log-reset %*

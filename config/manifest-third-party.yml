@@ -4,9 +4,9 @@
 #
 # Fields below are listed in apply order (later steps see earlier results).
 #
-# 1. stage: OMIT | DEV | RELEASE — wizard / FOMOD gate
-# 2. options: radio choices (pack id, or [A, B] composition) — parent only
-# 3. requires: / disables: / enables: — install graph + modlist toggles
+# 1. stage: OMIT | DEV | RELEASE - wizard / FOMOD gate
+# 2. options: radio choices (pack id, or [A, B] composition) - parent only
+# 3. requires: / disables: / enables: - install graph + modlist toggles
 #       requires entries may be a pack id, or {Pack: {select: […]}} to push
 #       BAIN/FOMOD package picks onto that dependency (merged additively if
 #       several parents define select for the same dep). Required deps always
@@ -16,18 +16,18 @@
 # 5. file_regex: pick GitHub release asset by filename (Python regex, ignore case)
 # 6. skip_mo2: download/apply without an MO2 mods/ folder (engine drops, etc.)
 # 7. extract archive → mods/<manifest name>  (or temp if skip_mo2)
-# 8. select: BAIN/FOMOD packages — merge listed top-level folder contents
+# 8. select: BAIN/FOMOD packages - merge listed top-level folder contents
 #       into the mod root (list order; later wins). Unlisted packages dropped.
 #       Also settable under a parent's requires: entry (see #3).
 # 9. after_unpack: optional post-extract script
 # 10. backup: zip listed paths into newest DOGMA/backups/<stamp>/misc/
 #       (skip if already archived; always before moves/overwrite/deletes)
 # 11. moves: copy src → dest (replace whole dest tree)
-# 12. overwrite: { src: <Anomaly>|<GAMMA> } — merge like Explorer
+# 12. overwrite: { src: <Anomaly>|<GAMMA> } - merge like Explorer
 #       "Replace the files in the destination" (file-level; dirs merge)
 #       src may be a dir (bin), file (foo.dll), or glob ("*.dll", "MT/*.dll")
 # 13. deletes: <Anomaly>/<GAMMA>/<Mod> paths (zip untouched; after overwrite)
-# 14. console: / mcm_reset: / mcm_set: / settings: — game/MCM side effects
+# 14. console: / mcm_reset: / mcm_set: / settings: - game/MCM side effects
 #       mcm_reset: MCM key roots (e.g. ssfx_module) → script def= before mcm_set:
 #
 

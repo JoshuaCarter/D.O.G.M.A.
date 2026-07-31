@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""DOGMA Optimize — GC settings, SFX prefetch, full backup, ALAO."""
+"""DOGMA Optimize - GC settings, SFX prefetch, full backup, ALAO."""
 
 from __future__ import annotations
 
@@ -20,13 +20,13 @@ ALAO_URL = (
 )
 GC_SCRIPT_NAME = "zzzz_dogma_lua_gc.script"
 GC_SCRIPT_BODY = """--[[
-	DOGMA — Lua GC policy (LuaJIT / Lua 5.1).
+	DOGMA - Lua GC policy (LuaJIT / Lua 5.1).
 
 	Engine already steps via lua_gcstep + parallel GC (user.ltx).
 	Here we only tune collector policy:
-	  setpause 200  — default; start next cycle at 2x post-GC heap
-	  setstepmul 300 — slightly more aggressive than default 200
-	Invalid / rejected: collectgarbage("setstep", ...) — not a LuaJIT option.
+	  setpause 200  - default; start next cycle at 2x post-GC heap
+	  setstepmul 300 - slightly more aggressive than default 200
+	Invalid / rejected: collectgarbage("setstep", ...) - not a LuaJIT option.
 ]]
 
 function on_game_start()
@@ -262,7 +262,7 @@ def prompt_gc(mo2_root: Path) -> bool:
 def step_gc(mo2_root: Path, *, dry_run: bool) -> int:
     user_ltx = _gc_user_ltx_display(mo2_root)
     if user_ltx is None:
-        lib.warn("Could not find the game’s user.ltx — skipping that file.")
+        lib.warn("Could not find the game’s user.ltx - skipping that file.")
     else:
         # Back up first (user.back.ltx); offer to keep an existing backup.
         if backup_user_ltx(user_ltx, dry_run=dry_run, skip_if_exists=None):
@@ -374,7 +374,7 @@ def run_alao(
 
     if dry_run:
         mode = "direct" if direct else "mods"
-        lib.info(f"Dry run — would run ALAO ({mode}) on:\n  {target}")
+        lib.info(f"Dry run - would run ALAO ({mode}) on:\n  {target}")
         return 0
 
     code = ensure_alao_deps(alao)
@@ -494,7 +494,7 @@ def run(args) -> int:
         )
     if do_sfx:
         if dry_run:
-            lib.info("Dry run — would build sound prefetch.")
+            lib.info("Dry run - would build sound prefetch.")
         else:
             code = run_sfx_prefetch(mo2, force=bool(getattr(args, "force", False)))
             if code:
@@ -549,8 +549,8 @@ def run(args) -> int:
         do_alao = False
     elif do_alao is None:
         print()
-        print("—————")
-        print("Next step (optional): ALAO — optimize Lua scripts in your mods.")
+        print("-----")
+        print("Next step (optional): ALAO - optimize Lua scripts in your mods.")
         print(f"  {ALAO_URL}")
         print(f"This only runs if you say yes. Backup on disk:\n  {mods_archive}")
         # Default N so finishing backup does not chain into ALAO on Enter.

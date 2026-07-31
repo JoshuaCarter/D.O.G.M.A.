@@ -1,0 +1,36 @@
+--[[
+	Fix Double Mutant Hits
+
+	If any mutant hits the actor twice within 500ms, the second hit is ignored.
+	Stops animation-skip / slope double-hits from applying twice.
+
+	Always on while installed. Broadened from Eroktics' chimera/lurker/snork fix
+	to all mutant attackers.
+]]
+
+local last_hit_times = {}
+local DELAY_MS = 500
+
+local function actor_on_before_hit(s_hit, bone_id, flags)
+	local draftsman = s_hit.draftsman
+	if not draftsman then
+		return
+	end
+	if not IsMonster or not IsMonster(draftsman) then
+		return
+	end
+
+	local m_id = draftsman:id()
+	local now = time_global()
+	local last = last_hit_times[m_id]
+	if last and (now - last) < DELAY_MS then
+		flags.ret_value = false
+		s_hit.power = 0.0
+		return
+	end
+	last_hit_times[m_id] = now
+end
+
+function on_game_start()
+	RegisterScriptCallback("actor_on_before_hit", actor_on_before_hit)
+end

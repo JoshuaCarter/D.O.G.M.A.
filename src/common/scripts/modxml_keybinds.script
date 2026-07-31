@@ -17,7 +17,7 @@ local function ensure_string(xml_obj, id, text)
 	if set_string_text(xml_obj, id, text) then
 		return
 	end
-	-- String shell without <text> — do not bail; replace with a full node.
+	-- String shell without <text> - do not bail; replace with a full node.
 	local existing = xml_obj:query(fmt("string[id=%s]", id))
 	if is_not_empty(existing) then
 		xml_obj:insertFromXMLString(fmt(

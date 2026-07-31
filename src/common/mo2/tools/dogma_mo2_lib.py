@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""DOGMA MO2 shared library — deps, disable, defaults, validate report, paths."""
+"""DOGMA MO2 shared library - deps, disable, defaults, validate report, paths."""
 
 from __future__ import annotations
 
@@ -79,7 +79,7 @@ _COLOR = _init_color()
 
 
 def dogma_data_dir(mo2_root: Path) -> Path:
-    """``<MO2>/DOGMA`` — downloads, backups, logs, mod_archive_map.ini."""
+    """``<MO2>/DOGMA`` - downloads, backups, logs, mod_archive_map.ini."""
     d = Path(mo2_root) / "DOGMA"
     d.mkdir(parents=True, exist_ok=True)
     return d
@@ -219,7 +219,7 @@ def script_dir() -> Path:
 
 
 def mo2_bundle_dir() -> Path:
-    """mods/DOGMA/mo2/ — sibling of ``tools/`` (packages, config, logs)."""
+    """mods/DOGMA/mo2/ - sibling of ``tools/`` (packages, config, logs)."""
     d = script_dir()
     if d.name.lower() == "tools":
         return d.parent
@@ -668,7 +668,7 @@ def _parse_str_list(raw, *, field: str) -> list[str]:
 
 
 def _parse_radio_option_groups(raw, *, field: str) -> list[list[str]]:
-    """Parse radio ``options:`` — each entry is one choice (one pack or several).
+    """Parse radio ``options:`` - each entry is one choice (one pack or several).
 
     Supported YAML shapes::
 
@@ -776,11 +776,11 @@ def _materialize_inline_radio_compositions(
 def _reject_legacy_defaults(item: dict, *, field: str) -> None:
     if item.get("defaults") is not None:
         raise ValueError(
-            f"{field}: defaults: removed — use top-level mcm_reset: / mcm_set: / settings:"
+            f"{field}: defaults: removed - use top-level mcm_reset: / mcm_set: / settings:"
         )
     if item.get("target_mod") is not None:
         raise ValueError(
-            f"{field}: target_mod removed — put keys under mcm_set: / settings:"
+            f"{field}: target_mod removed - put keys under mcm_set: / settings:"
         )
 
 
@@ -789,11 +789,11 @@ def _pack_effect_fields(item: dict, *, section: str) -> dict:
     _reject_legacy_defaults(item, field=section)
     if item.get("resets") is not None:
         raise ValueError(
-            f"{section}: resets: renamed — use mcm_reset: (MCM key roots)"
+            f"{section}: resets: renamed - use mcm_reset: (MCM key roots)"
         )
     if item.get("mcm") is not None:
         raise ValueError(
-            f"{section}: mcm: renamed — use mcm_set: (key: value overrides)"
+            f"{section}: mcm: renamed - use mcm_set: (key: value overrides)"
         )
     return {
         "mcm_reset": _parse_str_list(
@@ -843,7 +843,7 @@ def parse_stage(raw) -> str:
         return "omit"
     if raw is True:
         raise ValueError(
-            "stage must be omit|dev|release (got boolean true — quote strings in YAML)"
+            "stage must be omit|dev|release (got boolean true - quote strings in YAML)"
         )
     key = str(raw).strip().lower()
     if key not in STAGE_ALIASES:
@@ -870,7 +870,7 @@ class Dependency:
     url: str = ""
     # Compat: first of url_kofi / url_patreon (legacy buy_url: maps here).
     buy_url: str = ""
-    # Typed wizard links — each field is independent (own icon).
+    # Typed wizard links - each field is independent (own icon).
     url_moddb: str = ""
     url_github: str = ""
     url_discord: str = ""
@@ -878,7 +878,7 @@ class Dependency:
     url_kofi: str = ""
     url_patreon: str = ""
     path: str = ""  # local src/<path> feature (package zip); mutually exclusive w/ urls
-    # omit|dev|release — FOMOD + wizard gate (empty = leaf / not a wizard entry)
+    # omit|dev|release - FOMOD + wizard gate (empty = leaf / not a wizard entry)
     stage: str = ""
     source: str = "auto"  # auto | user
     howto: str = ""
@@ -907,7 +907,7 @@ class Dependency:
     #   stage: release + options: [A, B] → wizard A|B (exclusive)
     #   options entry may be a pack id, or a list of pack ids (inline A+B choice)
     options: list[str] = field(default_factory=list)
-    # Raw options: before materialize — each choice is one or more pack ids.
+    # Raw options: before materialize - each choice is one or more pack ids.
     option_groups: list[list[str]] = field(default_factory=list)
     after_unpack: str = ""
     # BAIN/FOMOD-style: top-level package folder names whose contents are
@@ -922,7 +922,7 @@ class Dependency:
     skip_mo2: bool = False
 
     # Wizard checkbox metadata (stage != omit on the same block).
-    # Default checked state is derived (not buy_url) — see option_default_selected.
+    # Default checked state is derived (not buy_url) - see option_default_selected.
     wizard_requires: list[str] = field(default_factory=list)  # radio parents from requires:
 
     @property
@@ -1013,7 +1013,7 @@ class FeatureMeta:
     moves: list[tuple[str, str]] = field(default_factory=list)
     deletes: list[str] = field(default_factory=list)
     console: list[str] = field(default_factory=list)
-    # Pack ids and/or other feature paths/titles — resolved via catalog.
+    # Pack ids and/or other feature paths/titles - resolved via catalog.
     requires: list[str] = field(default_factory=list)
     # Legacy inline downloads (always empty after parse; rejected if non-empty).
     downloads: list[Dependency] = field(default_factory=list)
@@ -1257,7 +1257,7 @@ class ManifestData:
             pack = pack_by_id.get(pid)
             if pack is None:
                 raise ValueError(f"unknown pack: {pid!r}")
-            # Radio parents are not install units — option leaves come from picks.
+            # Radio parents are not install units - option leaves come from picks.
             if is_wizard_radio_parent(pack):
                 done.add(pid)
                 return
@@ -1377,7 +1377,7 @@ class ManifestData:
 
         # Prepend reset InitSettings (script def=) so overrides win when applied
         # in order within apply_settings_to_axr_options (last write per key wins
-        # only if we apply mcm_reset first in the list — apply walks list in order
+        # only if we apply mcm_reset first in the list - apply walks list in order
         # and last change sticks). So: mcm_reset first, then overrides.
         if reset_roots and mo2_root is not None:
             script_defs = index_mcm_script_defaults(mo2_root)
@@ -1449,7 +1449,7 @@ def _validate_dep_link_roles(
             is_moddb_url(url) or is_github_url(url) or is_discord_url(url)
         ):
             raise ValueError(
-                f"{section}.{dep_id}.url: removed — use url_moddb:/url_github:/"
+                f"{section}.{dep_id}.url: removed - use url_moddb:/url_github:/"
                 f"url_discord:/url_download: (got {url!r})"
             )
     if url_moddb and not is_moddb_url(url_moddb):
@@ -1527,12 +1527,12 @@ def _dep_from_mapping(
     effects = _pack_effect_fields(item, section=f"{section}.{dep_id}")
     if item.get("zip") is not None or item.get("file") is not None:
         raise ValueError(
-            f"{section}.{dep_id}: zip:/file: removed — archive stem is the "
+            f"{section}.{dep_id}: zip:/file: removed - archive stem is the "
             f"block id (DOGMA/downloads/{dep_id}.zip|.7z|…)"
         )
     if item.get("label") is not None:
         raise ValueError(
-            f"{section}.{dep_id}: label: removed — use the YAML block key as the id"
+            f"{section}.{dep_id}: label: removed - use the YAML block key as the id"
         )
     url, manual = _parse_dep_url(
         item.get("url"), field=f"{section}.{dep_id}.url"
@@ -1576,7 +1576,7 @@ def _dep_from_mapping(
         elif is_patreon_url(buy_url):
             url_patreon = url_patreon or buy_url
         else:
-            # Unknown storefront — keep as Ko-fi slot for open-in-browser.
+            # Unknown storefront - keep as Ko-fi slot for open-in-browser.
             url_kofi = url_kofi or buy_url
     # Canonical fields for older call sites.
     url = url_download
@@ -1596,7 +1596,7 @@ def _dep_from_mapping(
         url_patreon=url_patreon,
     )
     path = str(item.get("path") or "").strip().replace("\\", "/")
-    # stage: omit|dev|release — FOMOD + wizard gate. Legacy: fomod:, level:, wizard:.
+    # stage: omit|dev|release - FOMOD + wizard gate. Legacy: fomod:, level:, wizard:.
     stage_raw = item.get("stage")
     if stage_raw is None:
         stage_raw = item.get("fomod")
@@ -1632,7 +1632,7 @@ def _dep_from_mapping(
     source = str(item.get("source") or "").strip().lower()
     auto_dl = (url_download or "").strip()
     if path:
-        # Local package zip (mo2/packages/<path_key>.zip) — not a DOGMA/downloads manual.
+        # Local package zip (mo2/packages/<path_key>.zip) - not a DOGMA/downloads manual.
         source = source or "auto"
     elif (has_links and not auto_dl) or url_kofi or url_patreon:
         # Paid / Discord / page-only → user places the archive under DOGMA/downloads/.
@@ -1642,17 +1642,17 @@ def _dep_from_mapping(
 
     if item.get("selected") is not None:
         raise ValueError(
-            f"{section}.{dep_id}: selected: removed — wizard defaults are "
+            f"{section}.{dep_id}: selected: removed - wizard defaults are "
             f"checked unless buy_url: is set (paid / manual purchase)"
         )
 
     if item.get("mods") is not None:
         raise ValueError(
-            f"{section}.{dep_id}: mods: removed — use stage: release|dev "
+            f"{section}.{dep_id}: mods: removed - use stage: release|dev "
             f"for a checkbox, or stage:+options: (no url) for a radio group"
         )
 
-    # default: [mcm roots…] — wipe/reset those MCM namespaces to script defs
+    # default: [mcm roots…] - wipe/reset those MCM namespaces to script defs
     # (alias for mcm_reset:). Boolean default: is rejected.
     default_raw = item.get("default")
     if isinstance(default_raw, bool) or (
@@ -1675,16 +1675,16 @@ def _dep_from_mapping(
         resets = effects["mcm_reset"]
     if item.get("wipes") is not None:
         raise ValueError(
-            f"{section}.{dep_id}: wipes: removed — use mcm_reset: with MCM "
+            f"{section}.{dep_id}: wipes: removed - use mcm_reset: with MCM "
             f"key roots (e.g. [ssfx_module]), not mod names"
         )
     if item.get("resets") is not None:
         raise ValueError(
-            f"{section}.{dep_id}: resets: renamed — use mcm_reset:"
+            f"{section}.{dep_id}: resets: renamed - use mcm_reset:"
         )
     if item.get("mcm") is not None:
         raise ValueError(
-            f"{section}.{dep_id}: mcm: renamed — use mcm_set:"
+            f"{section}.{dep_id}: mcm: renamed - use mcm_set:"
         )
 
     # Unified requires: (legacy depends/dependencies still accepted).
@@ -1733,7 +1733,7 @@ def _dep_from_mapping(
     )
     if item.get("strip") is not None:
         raise ValueError(
-            f"{section}.{dep_id}: strip: removed — use deletes: with <Mod>/… "
+            f"{section}.{dep_id}: strip: removed - use deletes: with <Mod>/… "
             f"after overwrite: (e.g. deletes: [<Mod>/bin])"
         )
     backup = _parse_str_list(
@@ -1946,7 +1946,7 @@ def _parse_features_block(feat_block: dict) -> dict[str, FeatureMeta]:
                 if nonempty:
                     raise ValueError(
                         f"features.{title!r} ({path}): downloads:/requirements: "
-                        f"moved to config/mods.yml — use requires: [Pack Id, …]"
+                        f"moved to config/mods.yml - use requires: [Pack Id, …]"
                     )
             feat_req_parts: list[str] = []
             for req_key in ("requires", "depends", "dependencies"):
@@ -2370,7 +2370,7 @@ def _parse_requires(raw, *, section: str) -> list[str]:
     if overlays:
         raise ValueError(
             f"{section}: requires: select: overlays are not allowed on "
-            f"installer_options requires: — put them on catalog pack requires:"
+            f"installer_options requires: - put them on catalog pack requires:"
         )
     return ids
 
@@ -2521,7 +2521,7 @@ def _parse_requires_entries(
         unknown = sorted(str(k) for k in meta if str(k) != "select")
         if unknown:
             raise ValueError(
-                f"{field}.{pack_id}: unknown keys {unknown} — only select: "
+                f"{field}.{pack_id}: unknown keys {unknown} - only select: "
                 f"is allowed under a requires: entry"
             )
         if "select" not in meta:
@@ -2594,7 +2594,7 @@ def _parse_installer_options(raw, *, section: str = "installer_options") -> list
             raise ValueError(f"{section}.{opt_id}: want a mapping")
         if meta.get("exclusive") is not None:
             raise ValueError(
-                f"{section}.{opt_id}: exclusive: on options removed — put "
+                f"{section}.{opt_id}: exclusive: on options removed - put "
                 f"wizard:/options: (or legacy exclusive:) on packs in "
                 f"mods.yml, and use requires: [Pack Id] here"
             )
@@ -2728,7 +2728,7 @@ def _validate_mods_composition(suggested: list[Dependency]) -> None:
         if (dep.options or dep.option_groups) and not is_wizard_radio_parent(dep):
             raise ValueError(
                 f"mods.{dep.id}: options: is only for radio groups "
-                f"(stage: release|dev, no url/buy_url) — use requires: for "
+                f"(stage: release|dev, no url/buy_url) - use requires: for "
                 f"composition, or list several packs under one options: entry"
             )
         if dep.wizard and (dep.options or dep.option_groups) and dep.has_remote_links():
@@ -3228,7 +3228,7 @@ def resolve_install_order(
                 choices = radio_groups.get(group, [])
                 raise ValueError(
                     f"option group {group!r} is required by selected options "
-                    f"— pick one of: {', '.join(p.id for p in choices)}"
+                    f"- pick one of: {', '.join(p.id for p in choices)}"
                 )
             continue
         if group not in radio_groups:
@@ -3331,7 +3331,7 @@ def resolve_install_order(
         if mid not in pack_by_id:
             raise ValueError(f"unknown suggested_mods pack: {mid!r}")
         pack = pack_by_id[mid]
-        # Radio parents are never install units — walk the chosen option leaf/leaves
+        # Radio parents are never install units - walk the chosen option leaf/leaves
         # so dependents (requires: Screen Space Shaders) stay deps-first.
         if is_wizard_radio_parent(pack):
             choice = picks.get(pack.id, "")
@@ -3646,12 +3646,12 @@ def _features_map_from_file(raw: dict, *, source: str) -> dict:
     """Accept bare feature map, or wrapped {features: {...}}."""
     if raw.get("requirements") is not None:
         raise ValueError(
-            f"{source}: top-level 'requirements:' removed — put packs in "
+            f"{source}: top-level 'requirements:' removed - put packs in "
             "config/mods.yml and list them under features.<name>.requires:"
         )
     if raw.get("defaults") is not None:
         raise ValueError(
-            f"{source}: top-level 'defaults:' removed — put mcm_reset: / mcm_set: / "
+            f"{source}: top-level 'defaults:' removed - put mcm_reset: / mcm_set: / "
             "settings: on each feature / download / suggestion"
         )
     if "suggested" in raw or "suggestions" in raw:
@@ -3772,7 +3772,7 @@ def load_manifest(path: Path) -> ManifestData:
             packages_dir=packages_dir,
         )
 
-    # features.yml — path mods (+ sibling mods.yml / manifest via _load_options_and_mods)
+    # features.yml - path mods (+ sibling mods.yml / manifest via _load_options_and_mods)
     if name in ("features.yml", "features.yaml"):
         # Prefer sibling split/unified manifests when present (avoid recurse).
         split = split_manifest_paths(path.parent)
@@ -3783,7 +3783,7 @@ def load_manifest(path: Path) -> ManifestData:
             if man.is_file():
                 return load_manifest(man)
         feat_block = _features_map_from_file(raw, source=path.name)
-        # New shape: same as mods (path/fomod/wizard) — parse as deps then derive
+        # New shape: same as mods (path/fomod/wizard) - parse as deps then derive
         try:
             path_deps = _parse_mods_file(raw, source=path.name)
             features = features_from_deps(path_deps)
@@ -3812,12 +3812,12 @@ def load_manifest(path: Path) -> ManifestData:
     # Legacy unified manifest.yml with features:/suggested: wrappers
     if raw.get("requirements") is not None:
         raise ValueError(
-            "manifest.yml top-level 'requirements:' removed — put packs in "
+            "manifest.yml top-level 'requirements:' removed - put packs in "
             "config/mods.yml and list them under features.<name>.requires:"
         )
     if raw.get("defaults"):
         raise ValueError(
-            "manifest.yml top-level 'defaults:' removed — put mcm_reset: / mcm_set: / "
+            "manifest.yml top-level 'defaults:' removed - put mcm_reset: / mcm_set: / "
             "settings: under each feature / downloads.<id> / suggestion"
         )
     feat_block = raw.get("features") or {}
@@ -3832,7 +3832,7 @@ def load_manifest(path: Path) -> ManifestData:
             tier = str(item.get("tier") or "suggested").strip().lower()
             if tier in ("required", "downloads"):
                 raise ValueError(
-                    "legacy mods with tier:required — put packs in mods.yml "
+                    "legacy mods with tier:required - put packs in mods.yml "
                     "and features.<name>.requires:"
                 )
             suggested.extend(
@@ -4575,7 +4575,7 @@ def apply_initialize(
 def load_dependencies(path: Path) -> list[Dependency]:
     """Load external mods from manifest.yml (accepts legacy dependencies.yml)."""
     if path.name in ("dependencies.yml", "dependencies.yaml"):
-        # Legacy file shape: {dependencies: [...]} — load_manifest also accepts that key
+        # Legacy file shape: {dependencies: [...]} - load_manifest also accepts that key
         return load_manifest(path).mods
     return load_manifest(path).mods
 
@@ -4673,7 +4673,7 @@ def is_moddb_url(url: str) -> bool:
 
 
 def is_discord_url(url: str) -> bool:
-    """Discord channel/message/invite links — open in browser, manual archive."""
+    """Discord channel/message/invite links - open in browser, manual archive."""
     u = (url or "").strip().lower()
     if not u:
         return False
@@ -5477,7 +5477,7 @@ def dep_is_satisfied(
         return True, []
 
     folders: list[str] = []
-    # Manual (no url:): only our managed install counts — never catalog / lookalikes.
+    # Manual (no url:): only our managed install counts - never catalog / lookalikes.
     # Effects (disables / enables / mcm / settings / console) stay off until it exists.
     if dep.source == "user" or not dep.url:
         for name in find_managed_folders(mo2_root, dep):
@@ -5635,7 +5635,7 @@ def format_preview_path(mo2_root: Path | None, raw: str) -> str:
     return expand_path_placeholders(s, mo2_root)
 
 
-# deletes / path roots — <Anomaly>, <GAMMA>, <Mod> (installed pack folder)
+# deletes / path roots - <Anomaly>, <GAMMA>, <Mod> (installed pack folder)
 _PATH_ROOT_RE = re.compile(
     r"^(?:<(anomaly|gamma|mod)>|(anomaly|gamma|game|mo2|mod):)[/\\]?(.*)$",
     re.IGNORECASE,
@@ -5826,9 +5826,9 @@ def _overwrite_src_paths(mod_dir: Path, src_rel: str) -> tuple[str, list[Path]]:
     """Resolve an overwrite source key to concrete paths under ``mod_dir``.
 
     Supports:
-      - ``bin`` / ``foo.dll`` — exact relative file or directory
-      - ``*.dll`` / ``MT/*.dll`` / ``**/*.dll`` — glob (relative to mod root)
-      - ``.`` / ``<Mod>`` — every top-level entry (except meta.ini)
+      - ``bin`` / ``foo.dll`` - exact relative file or directory
+      - ``*.dll`` / ``MT/*.dll`` / ``**/*.dll`` - glob (relative to mod root)
+      - ``.`` / ``<Mod>`` - every top-level entry (except meta.ini)
     """
     rel = (src_rel or "").replace("\\", "/").strip()
     base = Path(mod_dir)
@@ -6101,7 +6101,7 @@ def run_dep_backups(
     newest = newest_backup_dir(mo2_root)
     if newest is None:
         warn(
-            f"  [{dep.id}] backup skipped — no folder under "
+            f"  [{dep.id}] backup skipped - no folder under "
             f"{dogma_data_dir(mo2_root) / 'backups'}"
         )
         return []
@@ -6358,7 +6358,7 @@ def pack_needs_archive(dep: Dependency) -> bool:
         return False
     if is_wizard_radio_parent(dep):
         return False
-    # Pure composition (requires only) — leaves get the fields, not this node.
+    # Pure composition (requires only) - leaves get the fields, not this node.
     if dep.requires and not dep.has_remote_links() and not dep.enables:
         return False
     return bool(dep.has_remote_links() or dep.source == "user")
@@ -6548,7 +6548,7 @@ def download_and_associate(
 ) -> Path:
     """Download (ModDB/GitHub) into DOGMA/downloads and write mod_archive_map.ini entry.
 
-    ``on_progress(bytes_done, bytes_total)`` — ``bytes_total`` may be 0 when unknown.
+    ``on_progress(bytes_done, bytes_total)`` - ``bytes_total`` may be 0 when unknown.
     """
     download_url = dep_auto_download_url(dep)
     if not download_url:
@@ -6606,7 +6606,7 @@ def download_and_associate(
     if archive is None or not archive.is_file():
         if note == "missing-moddb-interstitial":
             raise RuntimeError(
-                f"[{dep.id}] ModDB returned a countdown page instead of the zip — "
+                f"[{dep.id}] ModDB returned a countdown page instead of the zip - "
                 "mirror resolve failed; try again or link the archive with 📁"
             )
         raise RuntimeError(f"[{dep.id}] download failed ({note})")
@@ -6626,7 +6626,7 @@ def iso_to_date_stamp(raw: str) -> str:
 
 
 def moddb_date_stamp(moddb: ModdbInfo | None) -> str:
-    """Prefer Updated, else Added — both usually from <time datetime=\"…\">."""
+    """Prefer Updated, else Added - both usually from <time datetime=\"…\">."""
     if not moddb:
         return ""
     return iso_to_date_stamp(moddb.updated) or iso_to_date_stamp(moddb.added)
@@ -6742,7 +6742,7 @@ def _prefer_archive(paths: list[Path]) -> Path | None:
 @dataclass(frozen=True)
 class LocalArchive:
     path: Path
-    pinned: bool  # undated <id>.* — never auto-replaced
+    pinned: bool  # undated <id>.* - never auto-replaced
     date: str  # YYYY-MM-DD when dated; "" if pinned
 
 
@@ -6795,10 +6795,10 @@ def resolve_local_archive(
     """Pick a local archive and report status vs ModDB/GitHub date.
 
     Status:
-      pinned  — undated archive; never auto-replaced
-      current — dated archive matches remote_date (or dated with no remote)
-      stale   — have dated archive(s) but none match remote (remote newer)
-      missing — nothing on disk
+      pinned  - undated archive; never auto-replaced
+      current - dated archive matches remote_date (or dated with no remote)
+      stale   - have dated archive(s) but none match remote (remote newer)
+      missing - nothing on disk
     """
     locals_ = list_dep_archives(mo2_root, dep)
     want = iso_to_date_stamp(remote_date)
@@ -6905,7 +6905,7 @@ def _is_archive_file(path: Path) -> bool:
     if not path.is_file():
         return False
     low = path.name.lower()
-    # MO2 in-progress downloads — never claim these.
+    # MO2 in-progress downloads - never claim these.
     if low.endswith(".unfinished") or ".unfinished." in low:
         return False
     if path.suffix.lower() in ARCHIVE_SUFFIXES:
@@ -7136,7 +7136,7 @@ def _move_download_file(src: Path, dest: Path) -> None:
             return
         except OSError as exc:
             last = exc
-            # WinError 32: sharing violation — another process may still hold the file.
+            # WinError 32: sharing violation - another process may still hold the file.
             if getattr(exc, "winerror", None) != 32 and exc.errno not in (
                 11,
                 13,
@@ -7196,7 +7196,7 @@ def http_download_file(
     """Download ``url`` to ``dest`` (via ``.partial``). Returns suggested filename.
 
     Does not use Mod Organizer. Follows redirects. Rejects HTML bodies.
-    ``on_progress(bytes_done, bytes_total)`` — total is 0 when Content-Length is absent.
+    ``on_progress(bytes_done, bytes_total)`` - total is 0 when Content-Length is absent.
     """
     import urllib.error
     import urllib.request
@@ -7305,7 +7305,7 @@ def ensure_dep_archive(
     if status == "current" and archive:
         return archive, "current"
 
-    # stale or missing — need remote date for a stable name; fall back to undated id
+    # stale or missing - need remote date for a stable name; fall back to undated id
     target_date = remote_date
     if not target_date and status == "missing":
         # No remote date: claim as undated <id>.*
@@ -7516,7 +7516,7 @@ def normalize_extracted_mod(
             return
         inner_dirs = {p.name.lower() for p in inner.iterdir() if p.is_dir()}
         if sel and not (sel & inner_dirs):
-            # Select packages not under the wrapper — leave layout alone.
+            # Select packages not under the wrapper - leave layout alone.
             return
     for item in inner.iterdir():
         target = dest / item.name
@@ -7770,16 +7770,16 @@ def process_dependency(
     if dep.force_reinstall and mode != "reinstall":
         info(f"  [{dep.id}] force reinstall (required dependency / select)")
         mode = "reinstall"
-    # Radio parents (options:) and composition nodes never own an MO2 folder —
+    # Radio parents (options:) and composition nodes never own an MO2 folder -
     # only their concrete option leaves (e.g. Screen Space Shaders v23) install.
     if is_wizard_radio_parent(dep):
         info(
-            f"  [{dep.id}] skip (radio group parent — install option leaves, "
+            f"  [{dep.id}] skip (radio group parent - install option leaves, "
             f"not '{dep.id}')"
         )
         return "skipped-radio-parent"
     if is_pure_composition_pack(dep):
-        info(f"  [{dep.id}] skip (composition — install required leaves)")
+        info(f"  [{dep.id}] skip (composition - install required leaves)")
         return "skipped-composition"
 
     if dep.path:
@@ -7852,7 +7852,7 @@ def process_dependency(
     # Catalog short-circuit cannot apply select / force_reinstall (e.g. Melancholy
     # package picks for Screen Space Shaders). Install a managed folder instead.
     if catalog and not (dep.select or dep.force_reinstall):
-        # Never wipe catalog — enable only
+        # Never wipe catalog - enable only
         enabled = enable_mods_in_modlist(modlist, catalog, dry_run)
         msg = f"catalog enable {catalog}" + (f" (newly: {enabled})" if enabled else " (already on)")
         info(f"  [{dep.id}] {msg}")
@@ -7860,7 +7860,7 @@ def process_dependency(
         return "catalog"
     if catalog and (dep.select or dep.force_reinstall):
         info(
-            f"  [{dep.id}] catalog match {catalog} — installing managed "
+            f"  [{dep.id}] catalog match {catalog} - installing managed "
             f"(select/force_reinstall)"
         )
 
@@ -7910,7 +7910,7 @@ def process_dependency(
             return "present"
         hint = f"DOGMA/downloads/{dep_zip_stem(dep)}.zip"
         howto = dep.howto or (
-            f"no url: (manual) — place {hint} or install yourself; "
+            f"no url: (manual) - place {hint} or install yourself; "
             f"disables/enables skipped until then"
         )
         info(f"  [{dep.id}] skip (manual, not installed): {howto}")
@@ -7927,7 +7927,7 @@ def process_dependency(
     has_canonical = any(n.lower() == canonical.lower() for n in managed)
     need_install = mode == "reinstall" or not managed or not has_canonical
     if managed and arch_note in ("downloaded", "would-download"):
-        # Newer dated zip arrived — reinstall managed mod from it
+        # Newer dated zip arrived - reinstall managed mod from it
         _wipe_managed("newer archive; reinstalling managed mod")
         need_install = True
     elif managed and not has_canonical:
@@ -8047,7 +8047,7 @@ def build_report(
     report_path.parent.mkdir(parents=True, exist_ok=True)
     lines: list[str] = []
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    lines.append(f"DOGMA MO2 report — {now}")
+    lines.append(f"DOGMA MO2 report - {now}")
     lines.append(f"MO2 root: {mo2_root}")
     lines.append(f"Config  : {cfg}")
     lines.append(f"Tier    : {tier}")
@@ -8067,7 +8067,7 @@ def build_report(
         lines.append(f"OK: {msg}")
 
     if not pyyaml_ok():
-        W("PyYAML not importable — run DOGMA Setup once")
+        W("PyYAML not importable - run DOGMA Setup once")
     else:
         O("PyYAML importable")
 
@@ -8180,7 +8180,7 @@ def build_report(
             if not present:
                 if dep.source == "user" or not dep.url:
                     O(
-                        f'mod "{dep.id}" manual (no url:) — not installed; '
+                        f'mod "{dep.id}" manual (no url:) - not installed; '
                         f"disables/enables skipped"
                     )
                 else:

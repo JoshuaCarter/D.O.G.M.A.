@@ -152,7 +152,7 @@ local function start_travel_sequence(pos, lvid, gvid, is_transition, final_gvid)
     end
     tft.dot_count = #(tft.dot_positions or {})
     -- Coarse path polyline is authoritative. Densify can yield 0 dots on short paths
-    -- (spacing ~20m); those still fail via too_close below — not "no nav path".
+    -- (spacing ~20m); those still fail via too_close below - not "no nav path".
     if not (tft.path_chain and #tft.path_chain >= 2) then
         return fail_start(tft_str("tft_msg_no_nav_path"), "warning")
     end
@@ -769,7 +769,7 @@ complete_travel_sequence = function(opts)
     -- TELEPORT BEFORE TIME JUMP to prevent starting location ambushes during simulation
     local final_pos, final_lvid
     if tft.is_transition then
-        -- Land on dest_pos (already pulled ~10-20m short of the exit). Do not pass dest_gvid —
+        -- Land on dest_pos (already pulled ~10-20m short of the exit). Do not pass dest_gvid -
         -- find_ground_pos would resolve the changer vertex and yank the landing onto the trigger.
         final_pos, final_lvid = tft_find_ground_pos(tft.dest_pos, nil, nil, {
             anchor = tft.dest_pos,
@@ -1073,7 +1073,7 @@ trigger_encounter = function()
 
     -- Calculate safe encounter position BEFORE jumping time.
     -- Always land on the journey path point (nav snap only). Do not pull back along the
-    -- route or toward hostiles — that can move you closer than the path already was,
+    -- route or toward hostiles - that can move you closer than the path already was,
     -- especially for long-range LOS ambushes.
     tft_log("!!! ENCOUNTER TRIGGERED at ratio %.2f kind=%s - Start pos: %.1f %.1f %.1f",
         ratio, tostring(tft.ambush_kind), tft.start_pos.x, tft.start_pos.y, tft.start_pos.z)

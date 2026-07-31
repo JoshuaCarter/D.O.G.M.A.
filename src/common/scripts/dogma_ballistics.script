@@ -110,7 +110,7 @@ local function torso_dmg(hit_power, k_hit, k_ap, air_res, tier, dist, ammo_sec)
 	return r.dmg
 end
 
--- Bare (0 armor) torso-equivalent power — used for HP soft-target scoring.
+-- Bare (0 armor) torso-equivalent power - used for HP soft-target scoring.
 local function bare_dmg(hit_power, k_hit, k_ap, air_res, dist, ammo_sec)
 	local r = effective_dmg(
 		hit_power, k_hit, k_ap, air_res,
@@ -128,7 +128,7 @@ local function classify_ammo(sec)
 	if sfind(s, "_ap", 1, true) then
 		return "ap"
 	end
-	-- Explicit soft-target / HP mult table (tooltip truth — includes PMM, EP, etc.)
+	-- Explicit soft-target / HP mult table (tooltip truth - includes PMM, EP, etc.)
 	if HP_AMMO_MULT[sec] or HP_AMMO_MULT[base] then
 		return "hp"
 	end
@@ -181,7 +181,7 @@ local function pick_ammo_of_class(ammo_list, class_id)
 end
 
 -- Prefer Weapon Tooltips scoring API (AMMO_TYPE_SHORT color families + CQC math).
--- No local ammo classify fallback — tip owns typing (buck/slug/slap/fmj/…).
+-- No local ammo classify fallback - tip owns typing (buck/slug/slap/fmj/…).
 local function weapon_table_damage_stats(wpn_sec, dist)
 	dist = dist or DEFAULT_DIST
 	local tip = _G.dogma_tooltips_weapons

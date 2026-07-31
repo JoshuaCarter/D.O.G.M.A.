@@ -47,7 +47,7 @@ dogma_load_manifest() {
 		return 1
 	fi
 
-	# Do not use process substitution here — its exit status is easy to lose, and a
+	# Do not use process substitution here - its exit status is easy to lose, and a
 	# failed parse must abort the build (otherwise FEATURES=() + prune wipes the mod).
 	local list_file rc
 	list_file="$(mktemp)"

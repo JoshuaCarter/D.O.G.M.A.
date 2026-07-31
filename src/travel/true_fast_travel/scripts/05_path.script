@@ -103,7 +103,7 @@ ray_snap_ground_pos = function(pos, opts)
         local ok, v = pcall(function() return level.vertex_id(result) end)
         if ok and valid_lvid(v) then lvid = v end
     end
-    -- Success snaps are extremely noisy during coarse-nav builds — don't log them.
+    -- Success snaps are extremely noisy during coarse-nav builds - don't log them.
     return result, lvid
 end
 
@@ -1413,7 +1413,7 @@ local function mesh_step_ok(moved, use_step, min_move_fr, min_move_abs)
 end
 
 -- Move dist_m from from_pos (at lvid) in direction (dir_x,dir_z), staying on navmesh.
--- Returns next_lvid, next_pos, actual_moved_m — or nil if blocked/invalid/inaccessible.
+-- Returns next_lvid, next_pos, actual_moved_m - or nil if blocked/invalid/inaccessible.
 mesh_step = function(lvid, from_pos, dir_x, dir_z, dist_m)
     if not (level and level.vertex_in_direction and valid_lvid(lvid) and from_pos and dist_m and dist_m > 0) then
         return nil
@@ -2386,7 +2386,7 @@ local function store_line_snap_path_cache(start_pos, dest_pos, chain, is_vertex,
 end
 
 -- Primary (and only) path builder for preview, journey dots, and mid-journey teleports.
--- Coarse nav graph only — no fine navmesh A*, no straight-line fallback.
+-- Coarse nav graph only - no fine navmesh A*, no straight-line fallback.
 -- Optional 3rd arg: dest_anchor_key ("base:id" / "transition:id" / "campfire:id").
 build_line_snap_path = function(start_pos, dest_pos, dest_anchor_key)
     if not (start_pos and dest_pos) then return {}, {}, 0, {}, nil end
@@ -2578,7 +2578,7 @@ local function get_safe_lvid_pos(ratio)
         return best_pos, best_lvid
     end
 
-    -- Nothing within prefer_m — ground/ray snap near the intended point.
+    -- Nothing within prefer_m - ground/ray snap near the intended point.
     local scan_m = 28
     local snapped, snap_lvid = find_ground_pos(intended, nil, tft.dest_gvid, {
         anchor = intended,

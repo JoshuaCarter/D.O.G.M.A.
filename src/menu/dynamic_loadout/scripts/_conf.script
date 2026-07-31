@@ -19,7 +19,8 @@ local defaults = {
 	-- Weapon score weights (0-1). Final: avg(n01×w) / Σw, then × cost_mult_<cat>.
 	-- DOGMA tooltip stats + table dmg. Base-GAMMA bars: mag + fire rate.
 	-- Max TT torso dmg across all ammo_class rounds (cols Min→Mid+).
-	["w_mut_dmg"] = 0.5, -- col 1 Min
+	-- mut_dmg: max(col 1 Min, tip mutant-row) if mutant-row is higher.
+	["w_mut_dmg"] = 0.5, -- col 1 Min (or mutant-row override)
 	["w_lgt_dmg"] = 0.5, -- col 2 Lgt
 	["w_mid_dmg"] = 0.5, -- col 3 Lgt+
 	["w_hvy_dmg"] = 0.5, -- col 4 Mid
@@ -34,8 +35,8 @@ local defaults = {
 	["w_spread_hip"] = 0.5,
 	["w_scope"] = 0.5,
 	["w_silencer"] = 0.5,
-	["w_affordable"] = 0.5, -- gun: 1 at cost 0, 0 at MAX_COST.weapon
-	-- armor / helmet — one weight per protection type
+	["w_price"] = 0.5, -- gun: 1 at cost 0, 0 at MAX_COST.weapon
+	-- armor / helmet - one weight per protection type
 	["a_fire_wound"] = 0.5, -- ballistic / BR
 	["a_strike"] = 0.5,
 	["a_wound"] = 0.5,
@@ -45,13 +46,13 @@ local defaults = {
 	["a_chem"] = 0.5,
 	["a_rad"] = 0.5,
 	["a_psy"] = 0.5,
-	["a_affordable"] = 0.5, -- outfit/helm: 1 at 0, 0 at MAX_COST
+	["a_price"] = 0.5, -- outfit/helm: 1 at 0, 0 at MAX_COST
 	-- ammo
 	["ammo_dmg_ap"] = 0.5,
-	["ammo_affordable"] = 0.5, -- 1 at 0, 0 at MAX_COST.ammo
+	["ammo_price"] = 0.5, -- 1 at 0, 0 at MAX_COST.ammo
 	-- sight
 	["sight_zoom"] = 0.5,
-	["sight_affordable"] = 0.5, -- 1 at 0, 0 at MAX_COST.sight
+	["sight_price"] = 0.5, -- 1 at 0, 0 at MAX_COST.sight
 }
 
 -- Ordered MCM weight tracks (must match defaults keys used by scoring).
@@ -60,12 +61,12 @@ local WEIGHT_KEYS = {
 	"w_rpm", "w_mag", "w_burst", "w_use_mag",
 	"w_spread_ads", "w_spread_hip",
 	"w_scope", "w_silencer",
-	"w_affordable",
+	"w_price",
 	"a_fire_wound", "a_strike", "a_wound", "a_explosion",
 	"a_shock", "a_burn", "a_chem", "a_rad", "a_psy",
-	"a_affordable",
-	"ammo_dmg_ap", "ammo_affordable",
-	"sight_zoom", "sight_affordable",
+	"a_price",
+	"ammo_dmg_ap", "ammo_price",
+	"sight_zoom", "sight_price",
 }
 
 -- Force every weight default to 0.5 (MCM reset + cfg fallback).

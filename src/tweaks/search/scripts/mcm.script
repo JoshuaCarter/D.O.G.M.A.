@@ -1,5 +1,5 @@
 --[[
-	QoL — live MCM search.
+	QoL - live MCM search.
 
 	Keeps the search box empty (no "Search..." hint) and live-filters while
 	typing. Does not touch OnKeyboard / keybind handling.
@@ -140,7 +140,7 @@ local function patch_mcm_search()
 	return true
 end
 
--- MCM gather loads this file at main menu — patch immediately.
+-- MCM gather loads this file at main menu - patch immediately.
 patch_mcm_search()
 
 function on_mcm_load(options)
@@ -163,6 +163,6 @@ end
 
 function on_game_start()
 	if not patch_mcm_search() then
-		printf("[dogma_tweaks_search] ui_mcm.UI_MCM missing — MCM search patch skipped")
+		printf("[dogma_tweaks_search] ui_mcm.UI_MCM missing - MCM search patch skipped")
 	end
 end

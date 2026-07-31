@@ -1,11 +1,11 @@
 --[[
-	DOGMA — Lua GC policy (LuaJIT / Lua 5.1).
+	DOGMA - Lua GC policy (LuaJIT / Lua 5.1).
 
 	Engine already steps via lua_gcstep + parallel GC (user.ltx).
 	Here we only tune collector policy:
-	  setpause 200  — default; start next cycle at 2x post-GC heap
-	  setstepmul 300 — slightly more aggressive than default 200
-	Invalid / rejected: collectgarbage("setstep", ...) — not a LuaJIT option.
+	  setpause 200  - default; start next cycle at 2x post-GC heap
+	  setstepmul 300 - slightly more aggressive than default 200
+	Invalid / rejected: collectgarbage("setstep", ...) - not a LuaJIT option.
 ]]
 
 function on_game_start()

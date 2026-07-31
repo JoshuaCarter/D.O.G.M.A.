@@ -49,7 +49,7 @@ _DOGMA_EXECUTABLE_TITLE_ALIASES: frozenset[str] = frozenset(
 def _mo2_arguments_for_bat(bat_name: str, mo2_root: Path) -> str:
     raw = _DOGMA_EXECUTABLE_ARGUMENTS.get(bat_name, "")
     if raw == "__MO2_ROOT__":
-        # Qt ini: \ is an escape — write C:\\Instance so MO2 stores/passes C:\Instance
+        # Qt ini: \ is an escape - write C:\\Instance so MO2 stores/passes C:\Instance
         # (same as workingDirectory). Bare C:\Instance becomes C:nstance.
         path = str(mo2_root.resolve()).replace("\\", "\\\\")
         return f'"{path}"' if " " in path else path

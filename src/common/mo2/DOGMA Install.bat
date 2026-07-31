@@ -1,6 +1,6 @@
 @echo off
 setlocal
-REM DOGMA Install — register DOGMA bats in MO2 Executables:
+REM DOGMA Install - register DOGMA bats in MO2 Executables:
 REM   Setup / Backup / Restore / Optimize
 REM Close MO2 first (ini is overwritten on MO2 exit).
 REM Re-run safe: removes old DOGMA exe rows, then adds current tools.

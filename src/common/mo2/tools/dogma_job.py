@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""DOGMA MO2 job CLI — dependencies, disable, defaults, validate, reset, setup."""
+"""DOGMA MO2 job CLI - dependencies, disable, defaults, validate, reset, setup."""
 
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ def resolve_selection(
             return None
         if not sel.option_ids and not any(sel.exclusive_picks.values()):
             raise ValueError(
-                "selection.json is empty — re-run DOGMA Setup or pass "
+                "selection.json is empty - re-run DOGMA Setup or pass "
                 "--options OptA,OptB"
             )
         return sel
@@ -56,7 +56,7 @@ def deps_for_args(
 ) -> list[lib.Dependency]:
     sel = resolve_selection(args, mo2, data)
     tier = getattr(args, "tier", "downloads")
-    # Never install the raw full suggested_mods catalog — expand via options.
+    # Never install the raw full suggested_mods catalog - expand via options.
     if sel is None and data.installer_options and tier in ("suggested", "all"):
         option_ids = lib.default_installer_option_ids(data, installed=installed)
         sel = lib.InstallerSelection(
@@ -120,7 +120,7 @@ def cmd_setup(_args: argparse.Namespace) -> int:
     py = sys.executable
     info(f"Python: {py} ({sys.version.split()[0]})")
 
-    # Inline deps (no requirements-mo2.txt) — keep this list tiny.
+    # Inline deps (no requirements-mo2.txt) - keep this list tiny.
     required = ("PyYAML>=6.0", "windnd")
 
     def yaml_ok_fresh() -> bool:
@@ -154,13 +154,13 @@ def cmd_setup(_args: argparse.Namespace) -> int:
 
         ok("windnd OK (drag-drop)")
     except ImportError:
-        warn("windnd not importable — archive drag-drop disabled until Setup Tools succeeds")
+        warn("windnd not importable - archive drag-drop disabled until Setup Tools succeeds")
 
     seven = lib.find_7z()
     if seven:
         ok(f"7-Zip OK: {seven}")
     else:
-        warn("7-Zip not found — .7z/.rar dependency archives will fail until installed")
+        warn("7-Zip not found - .7z/.rar dependency archives will fail until installed")
 
     return 0
 
@@ -399,7 +399,7 @@ def cmd_reset_base(args: argparse.Namespace) -> int:
         else:
             lib.warn(f"No axr_options.ltx in {mcm_mod}")
     else:
-        lib.warn("G.A.M.M.A. MCM values mod not found — skipped axr restore")
+        lib.warn("G.A.M.M.A. MCM values mod not found - skipped axr restore")
 
     lib.append_action_log(mo2, "reset-base complete")
     return 0
@@ -452,7 +452,7 @@ def _rollback_safety_backup(args: argparse.Namespace) -> None:
     dest = getattr(args, "_dogma_safety_backup", None)
     if dest is None:
         return
-    lib.warn(f"Install failed — restoring config from safety backup:\n  {dest}")
+    lib.warn(f"Install failed - restoring config from safety backup:\n  {dest}")
     code = bak.run_restore(
         lib.resolve_mo2_root(args.mo2_root),
         Path(dest),
@@ -461,7 +461,7 @@ def _rollback_safety_backup(args: argparse.Namespace) -> None:
         dry_run=bool(args.dry_run),
     )
     if code:
-        lib.err("Automatic restore of safety backup failed — restore manually via DOGMA Restore.")
+        lib.err("Automatic restore of safety backup failed - restore manually via DOGMA Restore.")
     else:
         lib.ok("Safety backup restored (MCM, user.ltx, modlist).")
 

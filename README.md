@@ -24,8 +24,8 @@ Melancholy Weathers:
 
 ## Which install?
 
-1. **FOMOD** — pick individual D.O.G.M.A. path mods (True Prone, True Fast Travel, tooltips, …) like a normal mod. Features that need a third-party pack note that in their description.
-2. **DOGMA Setup** in MO2 — wizard pages for third-party packs (`config/manifest-third-party.yml`), D.O.G.M.A. features (`config/manifest-dogma-features.yml`), and tweaks (`config/manifest-dogma-tweaks.yml`; `stage: release` or `dev`). Path mods unpack from `mo2/packages/`; url mods download as before. `stage: omit` is hidden from both FOMOD and Setup; `dev` is local-only.
+1. **FOMOD** - pick individual D.O.G.M.A. path mods (True Prone, True Fast Travel, tooltips, …) like a normal mod. Features that need a third-party pack note that in their description.
+2. **DOGMA Setup** in MO2 - wizard pages for third-party packs (`config/manifest-third-party.yml`), D.O.G.M.A. features (`config/manifest-dogma-features.yml`), and tweaks (`config/manifest-dogma-tweaks.yml`; `stage: release` or `dev`). Path mods unpack from `mo2/packages/`; url mods download as before. `stage: omit` is hidden from both FOMOD and Setup; `dev` is local-only.
 
 You can use both: install path mods via FOMOD, then run Setup for packs/disables/defaults (already-present path mods default off but still pull their `requires:`).
 

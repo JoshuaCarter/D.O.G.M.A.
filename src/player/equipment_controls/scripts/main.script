@@ -7,12 +7,12 @@
 	  re-press lowers it.
 	- Pistol key: always draw a pistol from melee or vision; re-press lowers it.
 	- Vision key: swap melee ↔ vision, then equip melee (same wait-if-drawn).
-	  move_to_* is async — placements are sequenced so VSI is not dumped to bag.
-	- Detector / Geiger / RF force-equip — QAW detector flow (hand prep → hide
+	  move_to_* is async - placements are sequenced so VSI is not dumped to bag.
+	- Detector / Geiger / RF force-equip - QAW detector flow (hand prep → hide
 	  → state Hidden → move_to_slot → show). Artefact detector + auto-bolt:
 	  wait until RH empty (or already bolt), then bolt + detector together.
 	  RF/Geiger never touch the bolt.
-	- Glowstick: left-hand detector-slot force-equip (same as RF/Geiger — no
+	- Glowstick: left-hand detector-slot force-equip (same as RF/Geiger - no
 	  auto-bolt; only holster 2H if it blocks). Slow put-away when swapping.
 	- Minimal slot_cell patch: pistols may drag into vision (slot 5).
 ]]
@@ -420,7 +420,7 @@ local function draw_from_holsters(is_wanted)
 		return
 	end
 
-	-- Wanted item is in vision — swap into melee, then draw.
+	-- Wanted item is in vision - swap into melee, then draw.
 	begin_holster_swap(equip_melee_slot)
 end
 
@@ -509,7 +509,7 @@ local function has_bolt()
 	return bolt and IsBolt and IsBolt(bolt)
 end
 
--- Kick bolt draw; do not wait for the anim — detector runs in parallel after.
+-- Kick bolt draw; do not wait for the anim - detector runs in parallel after.
 local function draw_bolt_now()
 	local actor = db.actor
 	if not (actor and has_bolt()) then
@@ -573,7 +573,7 @@ local function when_rh_ready(fn)
 	end)
 end
 
--- Holster a blocking 2H weapon, then run fn (RF/Geiger — leave pistol alone).
+-- Holster a blocking 2H weapon, then run fn (RF/Geiger - leave pistol alone).
 local function when_blocking_rh_clear(lowering_id, fn)
 	local actor = db.actor
 	if not actor then
@@ -694,7 +694,7 @@ local function force_equip_scanner(obj)
 	go()
 end
 
--- Glowstick: left hand (detector slot). Same hand rules as RF/Geiger — leave
+-- Glowstick: left hand (detector slot). Same hand rules as RF/Geiger - leave
 -- bolt/pistol alone; only clear 2H. Slow slot swap when replacing slot 9.
 local function force_equip_glowstick(obj)
 	local actor = db.actor

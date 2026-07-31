@@ -4,7 +4,7 @@
 	utils_ui.stats_table (lookups are call-time; alpha order is main before stats).
 
 	X-Ray binds this file's environment to global zzzz_dogma_tooltips_weapons_stats.
-	Define fields/functions at top level — do not assign
+	Define fields/functions at top level - do not assign
 	zzzz_dogma_tooltips_weapons_stats = {} (that nests a second table and breaks
 	lookups like zzzz_dogma_tooltips_weapons_stats.NAME from other scripts).
 ]]
@@ -210,7 +210,7 @@ local function resolve_sec(obj, sec)
 	return ini_sys:r_string_ex(section, "parent_section") or section
 end
 
--- Section-only check. Matches UIInfoItem:GetType — never call IsWeapon(sec):
+-- Section-only check. Matches UIInfoItem:GetType - never call IsWeapon(sec):
 -- IsWeapon expects an object (or nil + clsid) and will crash on :clsid() for strings.
 local function is_weapon_section(sec)
 	if not sec or sec == "" then
@@ -640,7 +640,7 @@ function weapon_use_mag(wpn_sec)
 		return 0
 	end
 
-	-- Revolvers (cylinder / speedloader — not a magazine).
+	-- Revolvers (cylinder / speedloader - not a magazine).
 	if class == "WP_REVOLVER" then
 		return 0
 	end

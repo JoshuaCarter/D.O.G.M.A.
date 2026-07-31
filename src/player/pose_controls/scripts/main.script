@@ -8,7 +8,7 @@
 	- Walk bind (CONFIG.BINDS.walk) -> walk only (mcAccel without mcCrouch)
 
 	MCM Hold/Toggle and pose keys mirror Options→Controls
-	(live curr/functor — not axr copies).
+	(live curr/functor - not axr copies).
 	Hold/Toggle forces g_crouch_toggle / g_walk_toggle / g_sprint_toggle to match.
 
 	FDDA body search / Faster Skinning briefly flip g_crouch_toggle to pulse
@@ -42,7 +42,7 @@ local LOG = {
 
 local applying_pose = false
 local pending_goal = nil
--- Player preference from MCM sync. Not the live console value —
+-- Player preference from MCM sync. Not the live console value -
 -- other mods temporarily flip g_crouch_toggle for scripted crouch pulses.
 local cached_crouch_toggle = false
 
@@ -315,7 +315,7 @@ local function on_before_key_press(key, bind, _dis, flags)
 		return
 	end
 
-	-- Scripted crouch pulses (FDDA body search, Faster Skinning) — leave alone.
+	-- Scripted crouch pulses (FDDA body search, Faster Skinning) - leave alone.
 	if passthrough_scripted_pose_pulse() then
 		return
 	end

@@ -2,7 +2,7 @@
 	Damage Location Fix
 
 	Body Health System (Medik / Medications Balance / Voiced Actor) remaps hit
-	bones — notably a 25% chance that leg hits (including falls) jump to
+	bones - notably a 25% chance that leg hits (including falls) jump to
 	torso/arms. Actor Damage Balancer also steals consecutive headshots.
 
 	This replaces only the hit→limb resolver (+ a thin recieved_damage wrap for
@@ -179,7 +179,7 @@ local function patch_adb()
 	local _, adb_hitboxes = find_upvalue(orig, "hitboxes")
 
 	adb.shit_booster = function(shit, bone_id, k_ap)
-		-- Stock ADB: no time window — just "was the previous processed hit a
+		-- Stock ADB: no time window - just "was the previous processed hit a
 		-- head bone?" If yes, remap this hit (50% torso / 25% LA / 25% RA).
 		-- We keep that trigger; destination is always torso.
 		local prev = adb.previous_hitbox

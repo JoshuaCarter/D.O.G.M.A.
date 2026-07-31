@@ -1,5 +1,5 @@
 --[[
-	Medik slot remap — 6 centered slots (2x3) for rad/bleed vitals.
+	Medik slot remap - 6 centered slots (2x3) for rad/bleed vitals.
 
 	Values (engine → display):
 	  rad_dose     HUD rad-icon mSv (ceil(rad*10000*0.387)), clamped 0-999
@@ -41,7 +41,7 @@ local function clamp_int(n, lo, hi)
 end
 
 local function actor_cond_float(key, fallback)
-	-- Prefer SYS_GetParam — same source as inventory tip magnitudes.
+	-- Prefer SYS_GetParam - same source as inventory tip magnitudes.
 	if SYS_GetParam then
 		local v = SYS_GetParam(2, "actor_condition", key)
 		if v ~= nil then
@@ -529,7 +529,7 @@ local function class_from_instance(obj)
 end
 
 -- Must run AFTER Medik's Update. actor_on_update is too early (attachment UI
--- ticks later and greys digits back to dig_g0) — that was the stuck-000 bug.
+-- ticks later and greys digits back to dig_g0) - that was the stuck-000 bug.
 local function patch_update_on(cls)
 	if not cls or type(cls.Update) ~= "function" or cls._dogma_medik_update then
 		return false
@@ -592,7 +592,7 @@ local function try_patch()
 
 	if update_patched and not logged_patch then
 		logged_patch = true
-		printf("~ [DOGMA medik] Update hooked — slot values paint after Medik")
+		printf("~ [DOGMA medik] Update hooked - slot values paint after Medik")
 	end
 
 	return update_patched or (medik_ui and medik_ui._dogma_get_wrapped)

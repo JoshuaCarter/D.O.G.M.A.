@@ -27,7 +27,7 @@ from pathlib import Path
 
 DOGMA_MOD_NAME = "DOGMA"
 LEGACY_SEPARATE_MOD = "DOGMA - Sound Prefetch"
-# Only .ogg — X-Ray sound attrs live in Vorbis comments (wav/flac are not prefetched).
+# Only .ogg - X-Ray sound attrs live in Vorbis comments (wav/flac are not prefetched).
 SOUND_EXTS = {".ogg"}
 SECTION = "dogma_sfx_list"
 LTX_NAME = "dogma_sfx_prefetch.ltx"

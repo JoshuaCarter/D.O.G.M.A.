@@ -1,6 +1,6 @@
 @echo off
 setlocal
-REM D.O.G.M.A. Restore — pick a backup, restore MCM / user.ltx / modlist / mods
+REM D.O.G.M.A. Restore - pick a backup, restore MCM / user.ltx / modlist / mods
 REM Backups: <MO2>\DOGMA\backups\
 REM Close MO2 first when restoring modlist or mods.
 REM Logs: <MO2>\DOGMA\logs\

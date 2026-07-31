@@ -232,11 +232,11 @@ function on_game_start()
 	DOGMA = dogma_common.load(MOD_ID)
 
 	if not patch_sortingplus() then
-		printf("[dogma_tweaks_favourites] SortingPlus API missing — skipped")
+		printf("[dogma_tweaks_favourites] SortingPlus API missing - skipped")
 		return
 	end
 
-	-- Additions only — never wipe profile from an empty new-game save.
+	-- Additions only - never wipe profile from an empty new-game save.
 	RegisterScriptCallback("load_state", merge_save_into_profile)
 	RegisterScriptCallback("actor_on_first_update", apply_profile)
 	RegisterScriptCallback("on_option_change", apply_profile)

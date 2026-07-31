@@ -14,11 +14,17 @@ local MOD_ID = CONFIG.MOD_ID
 local STATE = _G.__dogma_menu_dynamic_loadout or {}
 _G.__dogma_menu_dynamic_loadout = STATE
 
+-- While MCM preview is open: live track-bar values (pending, not axr save).
+local LIVE_CFG = nil
+
 --------------------------------------------------------------------------
 -- Helpers
 --------------------------------------------------------------------------
 
 local function cfg(key)
+	if LIVE_CFG and LIVE_CFG[key] ~= nil then
+		return LIVE_CFG[key]
+	end
 	local def = CONFIG.DEFAULTS[key]
 	if ui_mcm then
 		local ok, value = pcall(ui_mcm.get, MOD_ID .. "/" .. key)
@@ -52,11 +58,6 @@ local function is_debug_score_sec(sec)
 	end
 	local map = CONFIG.DEBUG_SCORE_SECS
 	return map and map[sec] == true
-end
-
--- Log one weighted term: raw_stat * weight = contrib
-local function term_line(label, stat, weight, contrib)
-	return string.format("  %s: %.4f * w=%.2f => %+.4f", label, stat, weight, contrib)
 end
 
 local function explode_csv(s)
@@ -514,7 +515,7 @@ end
 -- Score
 --------------------------------------------------------------------------
 
--- Ammo cost range scan removed: affordable uses hardcoded MAX_COST.ammo only.
+-- Ammo cost range scan removed: price uses hardcoded MAX_COST.ammo only.
 local function item_cost(sec)
 	return ini_float(sec, "cost", 0)
 end
@@ -625,8 +626,8 @@ local function avg_add(st, label, raw_stat, n01, wkey, debug)
 	if not w or w <= 0 then
 		if debug then
 			st.lines[#st.lines + 1] = string.format(
-				"  %s: raw %.4f =>base %.4f * mul 0 (skip)",
-				label, raw_stat or 0, n01 or 0
+				"  %s: %.4g * 0 = skip",
+				label, raw_stat or 0
 			)
 		end
 		return
@@ -637,9 +638,10 @@ local function avg_add(st, label, raw_stat, n01, wkey, debug)
 	st.sum_w = st.sum_w + w
 	st.n = st.n + 1
 	if debug then
+		-- raw * weight = contribution (n01*w). No intermediate "base" step.
 		st.lines[#st.lines + 1] = string.format(
-			"  %s: raw %.4f =>base %.4f * mul %.2f = final %.4f",
-			label, raw_stat or 0, n, w, final
+			"  %s: %.4g * %.2f = %.4f",
+			label, raw_stat or 0, w, final
 		)
 	end
 end
@@ -694,63 +696,40 @@ local function score_ammo(sec)
 	local ratio = k_hit / k_ap
 	local cost = item_cost(sec)
 	local ratio_n = norm01(ratio, NORM.ammo_ratio)
-	local affordable = inv_norm01(cost, MAX_COST.ammo)
-	local debug = is_debug_score_sec(sec)
+	local price_n = inv_norm01(cost, MAX_COST.ammo)
 	local st = avg_state_new()
-	avg_add(st, "dmg/ap_ratio", ratio, ratio_n, "ammo_dmg_ap", debug)
-	avg_add(st, "affordable", cost, affordable, "ammo_affordable", debug)
+	avg_add(st, "dmg/ap_ratio", ratio, ratio_n, "ammo_dmg_ap", false)
+	avg_add(st, "price", cost, price_n, "ammo_price", false)
 	local avg = avg_finish(st)
 	local detail = string.format(
-		"hit=%.3f ap=%.4f ratio=%.3f->%.3f cost=%.0f affordable=%.3f",
-		k_hit, k_ap, ratio, ratio_n, cost, affordable
+		"hit=%.3f ap=%.4f ratio=%.3f->%.3f cost=%.0f price=%.3f",
+		k_hit, k_ap, ratio, ratio_n, cost, price_n
 	)
-	if debug then
-		dlog("=== CALC ammo " .. sec)
-		for i = 1, #st.lines do
-			dlog(st.lines[i])
-		end
-		dlog(string.format(
-			"  AVG=%.4f  pts=%d  (pts=floor(avg*%.0f+0.5), min 1)",
-			avg, score_to_points(avg, "ammo"), cost_mult_for("ammo")
-		))
-	end
 	return avg, detail
 end
 
 local function score_armor(sec)
 	local parts = {}
-	local debug = is_debug_score_sec(sec)
 	local st = avg_state_new()
 	local keys = CONFIG.PROT_KEYS or {}
 	for i = 1, #keys do
 		local entry = keys[i]
 		local v = ini_float(sec, entry.key, 0)
 		local n = clamp01(v) -- protections are already ~0..1
-		avg_add(st, entry.cfg, v, n, entry.cfg, debug)
+		avg_add(st, entry.cfg, v, n, entry.cfg, false)
 		if v > 0 then
 			parts[#parts + 1] = string.format("%s=%.3f->%.3f", entry.cfg, v, n)
 		end
 	end
-	-- Affordable: 1 at cost 0, 0 at MAX_COST (armor/helm).
+	-- Price: 1 at cost 0, 0 at MAX_COST (armor/helm).
 	local cost = item_cost(sec) or 0
 	local is_helm = (IsItem and IsItem("helmet", sec))
 		or (string.find(sec, "helm", 1, true) ~= nil)
 	local soft = is_helm and MAX_COST.helmet or MAX_COST.armor
 	local cost_n = inv_norm01(cost, soft)
-	avg_add(st, "affordable", cost, cost_n, "a_affordable", debug)
-	parts[#parts + 1] = string.format("affordable=%.0f->%.3f", cost, cost_n)
+	avg_add(st, "price", cost, cost_n, "a_price", false)
+	parts[#parts + 1] = string.format("price=%.0f->%.3f", cost, cost_n)
 	local avg = avg_finish(st)
-	local kind = is_helm and "helmet" or "armor"
-	if debug then
-		dlog("=== CALC armor/helm " .. sec)
-		for i = 1, #st.lines do
-			dlog(st.lines[i])
-		end
-		dlog(string.format(
-			"  AVG=%.4f  pts=%d  (pts=floor(avg*%.0f+0.5), min 1)",
-			avg, score_to_points(avg, kind), cost_mult_for(kind)
-		))
-	end
 	return avg, table.concat(parts, ",")
 end
 
@@ -763,9 +742,9 @@ local function score_sight(sec)
 	local st = avg_state_new()
 	avg_add(st, "zoom", zoom, zoom_n, "sight_zoom", false)
 	local cost = item_cost(sec) or 0
-	local affordable = inv_norm01(cost, MAX_COST.sight)
-	avg_add(st, "affordable", cost, affordable, "sight_affordable", false)
-	return avg_finish(st), string.format("zoom=%.2f->%.3f cost=%.0f affordable=%.3f", zoom, zoom_n, cost or 0, affordable)
+	local price_n = inv_norm01(cost, MAX_COST.sight)
+	avg_add(st, "price", cost, price_n, "sight_price", false)
+	return avg_finish(st), string.format("zoom=%.2f->%.3f cost=%.0f price=%.3f", zoom, zoom_n, cost or 0, price_n)
 end
 
 local function score_weapon(sec)
@@ -795,6 +774,17 @@ local function score_weapon(sec)
 		{ key = "max_dmg", w = "w_max_dmg", v = 0, src = nil },
 	}
 	local rounds_n = 0
+	local ammo_str = ini_str(sec, "ammo_class", "-") or "-"
+	-- Shorten header: drop ammo_ prefix on each class token.
+	do
+		local parts = explode_csv(ammo_str)
+		for i = 1, #parts do
+			parts[i] = string.gsub(parts[i], "^ammo_", "")
+		end
+		if #parts > 0 then
+			ammo_str = table.concat(parts, "/")
+		end
+	end
 
 	if B and B.weapon_table_damage_stats then
 		local st_dmg = B.weapon_table_damage_stats(sec, B.DEFAULT_DIST or 30)
@@ -803,15 +793,6 @@ local function score_weapon(sec)
 			local c = col_dmg[i]
 			c.v = st_dmg[c.key] or ((st_dmg.col_max and st_dmg.col_max[i]) or 0)
 			c.src = st_dmg.col_src and st_dmg.col_src[i] or nil
-		end
-		if debug then
-			dlog(string.format(
-				"  tip cols: n_ammo=%d yellow=%s orange=%s blue=%s",
-				rounds_n,
-				tostring(st_dmg.fmj_label or "?"),
-				tostring(st_dmg.ap_label or "?"),
-				tostring(st_dmg.hp_label or "?")
-			))
 		end
 	else
 		dlog("WARN: dogma_ballistics missing - weapon " .. tostring(sec) .. " scored without table dmg")
@@ -823,12 +804,7 @@ local function score_weapon(sec)
 	-- Five armor-column maxes (highest dmg across all TT-table ammos).
 	for i = 1, #col_dmg do
 		local c = col_dmg[i]
-		local src = c.src
-		local label = c.key
-		if src and (src.label or src.sec) then
-			label = string.format("%s(%s)", c.key, tostring(src.label or src.sec))
-		end
-		avg_add(st, label, c.v, norm01(c.v, NORM.dmg), c.w, debug)
+		avg_add(st, c.key, c.v, norm01(c.v, NORM.dmg), c.w, debug)
 	end
 	avg_add(st, "rpm", rpm, norm01(rpm, NORM.rpm), "w_rpm", debug)
 	avg_add(st, "mag", mag, norm01(mag, NORM.mag), "w_mag", debug)
@@ -862,43 +838,27 @@ local function score_weapon(sec)
 	avg_add(st, "scope", scope_ok, scope_ok, "w_scope", debug)
 	avg_add(st, "silencer", sil_ok, sil_ok, "w_silencer", debug)
 
-	-- Affordable: 1 at cost 0, 0 at MAX_COST.weapon.
+	-- Price: 1 at cost 0, 0 at MAX_COST.weapon.
 	local cost = item_cost(sec) or 0
-	local affordable = inv_norm01(cost, MAX_COST.weapon)
-	avg_add(st, "affordable", cost, affordable, "w_affordable", debug)
+	local price_n = inv_norm01(cost, MAX_COST.weapon)
+	avg_add(st, "price", cost, price_n, "w_price", debug)
 
 	local avg = avg_finish(st)
+	local pts = score_to_points(avg, "weapon")
 
 	if debug then
-		dlog("=== CALC weapon " .. sec)
-		dlog(string.format(
-			"  spread pair raw: ads=%.3f hip=%.3f => n01=%.4f / %.4f (ceil 1 deg / 10 deg)",
-			spread_ads, spread_hip, ads_n, hip_n
-		))
-		for i = 1, #col_dmg do
-			local c = col_dmg[i]
-			local src = c.src
-			dlog(string.format(
-				"  %s max=%.1f from %s (%s)",
-				c.key, c.v,
-				tostring(src and src.label or "?"),
-				tostring(src and src.sec or "?")
-			))
-		end
+		-- Weapons only, compact: header + term lines (raw * weight = contribution).
+		dlog(string.format("%s (%d, %.0f, %s):", sec, pts, cost, ammo_str))
 		for i = 1, #st.lines do
 			dlog(st.lines[i])
 		end
-		dlog(string.format(
-			"  AVG=%.4f (n=%d sum_w=%.2f)  pts=%d  (pts=floor(avg*%.0f+0.5), min 1)",
-			avg, st.n, st.sum_w, score_to_points(avg, "weapon"), cost_mult_for("weapon")
-		))
 	end
 
 	local detail = string.format(
-		"mut/lgt/mid/hvy/max=%.0f/%.0f/%.0f/%.0f/%.0f ammoN=%d rpm=%.0f mag=%.0f burst=%.1f ads=%.3f->%.2f hip=%.3f->%.2f use_mag=%d cost=%.0f affordable=%.2f",
+		"mut/lgt/mid/hvy/max=%.0f/%.0f/%.0f/%.0f/%.0f ammoN=%d rpm=%.0f mag=%.0f burst=%.1f ads=%.3f->%.2f hip=%.3f->%.2f use_mag=%d cost=%.0f price=%.2f",
 		col_dmg[1].v, col_dmg[2].v, col_dmg[3].v, col_dmg[4].v, col_dmg[5].v,
 		rounds_n, rpm, mag, burst, spread_ads, ads_n, spread_hip, hip_n,
-		use_mag, cost or 0, affordable
+		use_mag, cost or 0, price_n
 	)
 	return avg, detail
 end
@@ -1845,4 +1805,207 @@ function on_mcm_load(options)
 		text = "ui_mcm_menu_dogma_menu_dynamic_loadout",
 		gr = dogma_mcm.with_header(gr),
 	})
+
+	patch_score_preview()
 end
+
+--------------------------------------------------------------------------
+-- Trivial MCM score preview (hardcoded gun snapshots, top-left text)
+--------------------------------------------------------------------------
+
+-- Frozen raw stats (not live ini). Enough to see weight / cost_mult slider effect.
+-- mut = armor col 1; mutant = tip mutant-row max (preview uses max(mut, mutant) as mut_dmg).
+local PREVIEW_GUNS = {
+	{
+		name = "PM", ammo = "9x18",
+		mut = 42, mutant = 38, lgt = 38, mid = 28, hvy = 18, max = 10,
+		rpm = 180, mag = 8, burst = 4,
+		ads = 0.35, hip = 2.8, use_mag = 1, scope = 0, sil = 1, cost = 1500,
+	},
+	{
+		name = "Kiparis", ammo = "9x18",
+		mut = 48, mutant = 44, lgt = 44, mid = 34, hvy = 22, max = 12,
+		rpm = 850, mag = 30, burst = 6,
+		ads = 0.45, hip = 3.5, use_mag = 1, scope = 0, sil = 1, cost = 6500,
+	},
+	{
+		name = "AK-74", ammo = "5.45",
+		mut = 72, mutant = 65, lgt = 68, mid = 55, hvy = 40, max = 28,
+		rpm = 650, mag = 30, burst = 5,
+		ads = 0.25, hip = 2.2, use_mag = 1, scope = 1, sil = 1, cost = 14000,
+	},
+	{
+		name = "PPSh-41", ammo = "7.62x25",
+		mut = 55, mutant = 70, lgt = 50, mid = 38, hvy = 24, max = 14,
+		rpm = 900, mag = 71, burst = 7,
+		ads = 0.55, hip = 4.0, use_mag = 1, scope = 0, sil = 0, cost = 9000,
+	},
+	{
+		name = "TOZ-66", ammo = "12x70",
+		mut = 40, mutant = 120, lgt = 55, mid = 35, hvy = 20, max = 10,
+		rpm = 120, mag = 2, burst = 1,
+		ads = 0.80, hip = 5.0, use_mag = 0, scope = 0, sil = 0, cost = 4000,
+	},
+}
+
+local PREVIEW_XML = "ui_dogma_menu_dynamic_loadout_preview.xml"
+local PREVIEW_ID = "dl_score_preview"
+local PREVIEW_HOOK = _G.__dogma_dl_score_preview or {}
+_G.__dogma_dl_score_preview = PREVIEW_HOOK
+
+local function preview_score_gun(g)
+	local st = avg_state_new()
+	-- Same rule as live scoring: mut_dmg = max(armor col 1, tip mutant-row).
+	local mut = g.mut or 0
+	if (g.mutant or 0) > mut then
+		mut = g.mutant
+	end
+	avg_add(st, "mut_dmg", mut, norm01(mut, NORM.dmg), "w_mut_dmg", true)
+	avg_add(st, "lgt_dmg", g.lgt, norm01(g.lgt, NORM.dmg), "w_lgt_dmg", true)
+	avg_add(st, "mid_dmg", g.mid, norm01(g.mid, NORM.dmg), "w_mid_dmg", true)
+	avg_add(st, "hvy_dmg", g.hvy, norm01(g.hvy, NORM.dmg), "w_hvy_dmg", true)
+	avg_add(st, "max_dmg", g.max, norm01(g.max, NORM.dmg), "w_max_dmg", true)
+	avg_add(st, "rpm", g.rpm, norm01(g.rpm, NORM.rpm), "w_rpm", true)
+	avg_add(st, "mag", g.mag, norm01(g.mag, NORM.mag), "w_mag", true)
+	avg_add(st, "burst", g.burst, norm01(g.burst, NORM.burst), "w_burst", true)
+	avg_add(st, "spread_ads", g.ads, inv_norm01(g.ads, NORM.spread_ads), "w_spread_ads", true)
+	avg_add(st, "spread_hip", g.hip, inv_norm01(g.hip, NORM.spread_hip), "w_spread_hip", true)
+	avg_add(st, "use_mag", g.use_mag, g.use_mag, "w_use_mag", true)
+	avg_add(st, "scope", g.scope, g.scope, "w_scope", true)
+	avg_add(st, "silencer", g.sil, g.sil, "w_silencer", true)
+	avg_add(st, "price", g.cost, inv_norm01(g.cost, MAX_COST.weapon), "w_price", true)
+	local avg = avg_finish(st)
+	local pts = score_to_points(avg, "weapon")
+	return pts, st.lines
+end
+
+local function preview_fingerprint()
+	local keys = CONFIG.WEIGHT_KEYS or {}
+	local parts = { tostring(cost_mult_for("weapon")) }
+	for i = 1, #keys do
+		local id = keys[i]
+		if string.sub(id, 1, 2) == "w_" then
+			parts[#parts + 1] = id .. "=" .. tostring(cfg_num(id))
+		end
+	end
+	return table.concat(parts, "|")
+end
+
+local function preview_build_text()
+	local lines = {}
+	for i = 1, #PREVIEW_GUNS do
+		local g = PREVIEW_GUNS[i]
+		local pts, terms = preview_score_gun(g)
+		if #lines > 0 then
+			-- Space (not "") so the UI actually keeps a blank row between guns.
+			lines[#lines + 1] = " "
+		end
+		lines[#lines + 1] = string.format(
+			"%s (%d, %d, %s):",
+			g.name, pts, g.cost or 0, g.ammo or "-"
+		)
+		for j = 1, #terms do
+			lines[#lines + 1] = terms[j]
+		end
+	end
+	return table.concat(lines, "\\n")
+end
+
+local function preview_collect_live(mcm)
+	-- Read current track-bar positions from the open MCM page (not saved axr values).
+	local live = {}
+	local prefix = MOD_ID .. "/"
+	local tracks = mcm and mcm._Track
+	if not tracks then
+		return live
+	end
+	for id, e in pairs(tracks) do
+		if type(id) == "string" and string.sub(id, 1, #prefix) == prefix and e then
+			local key = string.sub(id, #prefix + 1)
+			local val = nil
+			if e.ctrl and e.ctrl.GetFValue then
+				local ok, v = pcall(function()
+					return e.ctrl:GetFValue()
+				end)
+				if ok then
+					val = v
+				end
+			end
+			if val == nil then
+				val = e.value
+			end
+			if val ~= nil then
+				live[key] = val
+			end
+		end
+	end
+	return live
+end
+
+local function preview_on_dl_page(mcm)
+	local path = tostring(mcm.last_path or mcm.path or "")
+	return string.find(path, "dynamic_loadout", 1, true) ~= nil
+end
+
+local function preview_hide(mcm)
+	LIVE_CFG = nil
+	if PREVIEW_HOOK.label then
+		pcall(function()
+			PREVIEW_HOOK.label:Show(false)
+		end)
+	end
+	PREVIEW_HOOK.fp = nil
+	if mcm then
+		mcm._dogma_dl_preview = nil
+	end
+end
+
+local function preview_tick(mcm)
+	if not preview_on_dl_page(mcm) then
+		preview_hide(mcm)
+		return
+	end
+
+	LIVE_CFG = preview_collect_live(mcm)
+	local fp = preview_fingerprint()
+	if PREVIEW_HOOK.fp == fp and PREVIEW_HOOK.label then
+		PREVIEW_HOOK.label:Show(true)
+		return
+	end
+	PREVIEW_HOOK.fp = fp
+
+	local ok = pcall(function()
+		if not PREVIEW_HOOK.label or mcm._dogma_dl_preview ~= PREVIEW_HOOK.label then
+			local xml = CScriptXmlInit()
+			xml:ParseFile(PREVIEW_XML)
+			PREVIEW_HOOK.label = xml:InitTextWnd(PREVIEW_ID, mcm)
+			mcm._dogma_dl_preview = PREVIEW_HOOK.label
+		end
+		PREVIEW_HOOK.label:SetText(preview_build_text())
+		PREVIEW_HOOK.label:Show(true)
+	end)
+	if not ok then
+		PREVIEW_HOOK.label = nil
+		LIVE_CFG = nil
+	end
+end
+
+function patch_score_preview()
+	if PREVIEW_HOOK.patched then
+		return true
+	end
+	local cls = ui_mcm and ui_mcm.UI_MCM
+	if not (cls and cls.Update) then
+		return false
+	end
+	local orig = cls.Update
+	cls.Update = function(self)
+		orig(self)
+		preview_tick(self)
+	end
+	PREVIEW_HOOK.patched = true
+	printf("[dogma_menu_dynamic_loadout] MCM score preview hooked")
+	return true
+end
+
+patch_score_preview()

@@ -1,9 +1,9 @@
 --[[
 	NPC Foliage (tweak)
 
-	1) materials/*.ltx — bush / bush_sux vis_transparency_factor = 0
+	1) materials/*.ltx - bush / bush_sux vis_transparency_factor = 0
 
-	2) Always-on nudge — stalkers fighting the actor whose torso is inside
+	2) Always-on nudge - stalkers fighting the actor whose torso is inside
 	   bush collision are sent to solid cover, or advance toward the actor
 	   if no cover is found.
 ]]
@@ -58,7 +58,7 @@ local function is_bush_material(name)
 	return name:find("bush", 1, true) ~= nil
 end
 
--- Fresh ray each probe — avoids sticky ignore lists / bad leftover state.
+-- Fresh ray each probe - avoids sticky ignore lists / bad leftover state.
 -- rqtStatic only: engine material fill on object hits is unsafe on some builds.
 local function probe_hits_bush(ox, oy, oz, dx, dy, dz, ignore)
 	if not ray_pick then
@@ -300,7 +300,7 @@ local function pick_advance_vertex(npc, enemy_pos)
 end
 
 local function send_to(npc, vid)
-	-- Minimal movement poke — avoid state_mgr / utils_obj (scheme / nil table crashes).
+	-- Minimal movement poke - avoid state_mgr / utils_obj (scheme / nil table crashes).
 	pcall(function()
 		if game_object and game_object.level_path then
 			npc:set_path_type(game_object.level_path)

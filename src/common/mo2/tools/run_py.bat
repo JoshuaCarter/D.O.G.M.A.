@@ -2,9 +2,9 @@
 setlocal
 REM Shared: find Python and run dogma_job.py with forwarded args.
 REM %* should start with the subcommand (install|defaults|executables|…).
-REM Do not use %%ERRORLEVEL%% inside ( ) — it expands at parse time and
+REM Do not use %%ERRORLEVEL%% inside ( ) - it expands at parse time and
 REM always reports the prior where.exe success (0).
-REM Name must NOT start with "_" — tools/build.sh skips _* files.
+REM Name must NOT start with "_" - tools/build.sh skips _* files.
 
 where py >nul 2>nul
 if errorlevel 1 goto :try_python

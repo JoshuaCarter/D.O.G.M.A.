@@ -1,14 +1,14 @@
 -- True Fast Travel: coarse navmesh graph (dev build / load / PDA display).
 -- Anchors: bases + transitions (full clique) + campfires >50m from nearest core (spoke to each core).
 -- Sparse maps: boundary probes from level bounds (probe clique + spokes to cores).
--- Standalone from 05_path — mesh helpers copied here for offline cache builds.
+-- Standalone from 05_path - mesh helpers copied here for offline cache builds.
 
 local tft = _G.tft
 -- File-format schema (header DFT_COARSE_V…). Independent of mod semver.
 local CN_SCHEMA = 3
 -- Cache filename uses mod major.minor from _G.tft_version (see 01_core).
 -- Patch bumps (0.1.0 → 0.1.5) keep the same file; feature bumps (0.1 → 0.2) force rebuild.
--- Tag uses underscores (0_3) so filenames stay <level>_<maj>_<min>.nav — no dotted middle segment.
+-- Tag uses underscores (0_3) so filenames stay <level>_<maj>_<min>.nav - no dotted middle segment.
 local CN_SUBSAMPLE_M = 15
 local CN_BUILD_MAX_NODES = 2500
 local CN_SPLICE_MAX_M = 72
@@ -74,7 +74,7 @@ local function cn_state()
 end
 
 -- ============================================================
--- Mesh helpers (copied from 05_path, trimmed — no road graph)
+-- Mesh helpers (copied from 05_path, trimmed - no road graph)
 -- ============================================================
 
 local function cn_valid_lvid(lvid)
@@ -1138,7 +1138,7 @@ local function cn_appdata_cache_dir()
 	return path
 end
 
--- major_minor from _G.tft_version — cache identity / rebuild gate.
+-- major_minor from _G.tft_version - cache identity / rebuild gate.
 local function cn_cache_feature_tag()
 	local ver = tostring(_G.tft_version or "0.0.0")
 	local maj, min = ver:match("^(%d+)%.(%d+)")
@@ -1334,7 +1334,7 @@ local function cn_load_graph(level_name)
             end
         end
         if file_feature and not cn_feature_tags_match(file_feature, expect) then
-            cn_log("cache feature mismatch: file=%s expect=%s — ignoring",
+            cn_log("cache feature mismatch: file=%s expect=%s - ignoring",
                 tostring(file_feature), expect)
             return nil
         end
@@ -1354,7 +1354,7 @@ local function cn_load_graph(level_name)
 end
 
 -- ============================================================
--- Build queue (sync drain via cn_build_sync — load gate / MCM key)
+-- Build queue (sync drain via cn_build_sync - load gate / MCM key)
 -- ============================================================
 
 -- Forward decls: cn_build_step / cn_build_finish call these before their assignments below.
@@ -1497,7 +1497,7 @@ local function cn_build_sync()
 end
 
 local function cn_on_actor_update()
-    -- Display only — builds are sync (load gate / MCM key), never job-stepped here.
+    -- Display only - builds are sync (load gate / MCM key), never job-stepped here.
     cn_sync_display_pda()
 end
 
@@ -1587,7 +1587,7 @@ local function cn_graph_ready()
 end
 
 -- ============================================================
--- PDA display — big nodes + sparse smaller dots on straight chords
+-- PDA display - big nodes + sparse smaller dots on straight chords
 -- ============================================================
 
 local function cn_clear_display()
@@ -1615,7 +1615,7 @@ local function cn_clear_display()
     st.display_active = false
 end
 
--- Copied from 05_path freeze_buried_dot — local to coarse-nav, not shared.
+-- Copied from 05_path freeze_buried_dot - local to coarse-nav, not shared.
 local function cn_freeze_buried_dot(obj_id, attempts_left)
     attempts_left = attempts_left or 8
     local obj = level.object_by_id(obj_id)
@@ -1636,7 +1636,7 @@ local function cn_freeze_buried_dot(obj_id, attempts_left)
     end)
 end
 
--- Copied from 05_path ensure_path_dot — one buried device_pda per map spot.
+-- Copied from 05_path ensure_path_dot - one buried device_pda per map spot.
 local function cn_spawn_dot(ids, index, pos, spot)
     if not ids then return end
     if ids[index] then return end
@@ -1663,7 +1663,7 @@ local function cn_node_lookup(g)
     return by_id
 end
 
--- Few midpoints on the straight chord A→B (not the real walk path — we don't store that).
+-- Few midpoints on the straight chord A→B (not the real walk path - we don't store that).
 local function cn_spawn_edge_samples(st, g)
     st.edge_dot_ids = st.edge_dot_ids or {}
     local by_id = cn_node_lookup(g)
@@ -1796,14 +1796,14 @@ local function cn_try_load()
         return false
     end
     if g.anchor_hash ~= hash then
-        cn_log("cache stale (anchor hash mismatch) — rebuild required")
+        cn_log("cache stale (anchor hash mismatch) - rebuild required")
         cn_state().graph = nil
         cn_sync_display()
         return false
     end
     cn_state().graph = g
     local comps = cn_union_find_components(g)
-    cn_log("ready: %s feature %s — %d nodes, %d edges, %d component(s)",
+    cn_log("ready: %s feature %s - %d nodes, %d edges, %d component(s)",
         ln, cn_cache_feature_tag(), #g.nodes, #g.edges, #comps)
     cn_sync_display()
     return true
@@ -1820,7 +1820,7 @@ local function cn_ensure_ready(force_rebuild)
 		if cn_graph_ready() then
 			return true
 		end
-		cn_log("ensure_ready: no usable cache — sync build")
+		cn_log("ensure_ready: no usable cache - sync build")
 	else
 		cn_log("ensure_ready: force rebuild (rebuild_on_load)")
 	end
@@ -1832,7 +1832,7 @@ local function cn_ensure_ready(force_rebuild)
 	end
 	local ok = cn_build_sync()
 	if not ok then
-		cn_log("ensure_ready: sync build failed — travel will fail closed until rebuild")
+		cn_log("ensure_ready: sync build failed - travel will fail closed until rebuild")
 	end
 	return ok
 end

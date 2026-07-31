@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""DOGMA Setup wizard — pick options from config/mods.yml + feature requires."""
+"""DOGMA Setup wizard - pick options from config/mods.yml + feature requires."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ _URL_RE = re.compile(r"https?://[^\s\]\)>,;]+")
 # Concurrent download jobs (ModDB resolve overlaps; MO2 CLI is locked in lib).
 _DOWNLOAD_WORKERS = 4
 
-# SW_HIDE / SW_SHOW — console is useless while the Tk wizard is up.
+# SW_HIDE / SW_SHOW - console is useless while the Tk wizard is up.
 _SW_HIDE = 0
 _SW_SHOW = 5
 
@@ -308,7 +308,7 @@ def _apply_dark_theme(root: tk.Tk) -> dict[str, tk.PhotoImage]:
         background=[("active", btn_active), ("pressed", raised)],
         foreground=[("disabled", muted)],
     )
-    # Toolbar page/select buttons — ~20% shorter than footer TButton.
+    # Toolbar page/select buttons - ~20% shorter than footer TButton.
     _tb_pad = (12, 4)
     style.configure(
         "Toolbar.TButton",
@@ -664,7 +664,7 @@ class _HoverTip:
             if cur is tip:
                 return True
             try:
-                # Stop at any Toplevel — tip is its own window.
+                # Stop at any Toplevel - tip is its own window.
                 if cur.winfo_class() == "Toplevel":
                     break
                 cur = cur.master
@@ -728,7 +728,7 @@ class _HoverTip:
         if not sections:
             return
         self._hide()
-        # Parent to the app root — not the host — so tip isn't in the host master chain.
+        # Parent to the app root - not the host - so tip isn't in the host master chain.
         tip = tk.Toplevel(self.widget.winfo_toplevel())
         tip.wm_overrideredirect(True)
         tip.attributes("-topmost", True)
@@ -1374,12 +1374,12 @@ def _pack_mod_select_row(
 
 
 def _pack_path_install_label(parent: tk.Misc) -> None:
-    """Path mods ship in the package — no archive/file box, just Install."""
+    """Path mods ship in the package - no archive/file box, just Install."""
     ttk.Label(parent, text="Install").pack(anchor="w", pady=(4, 0))
 
 
 class _ArchiveField:
-    """Archive file box: [ⓘ|name|links…|📁|✕] — selection lives outside on the left."""
+    """Archive file box: [ⓘ|name|links…|📁|✕] - selection lives outside on the left."""
 
     # Fixed name column (~40% wider than the old ~400px / 56ch look).
     _NAME_PX = 560
@@ -1516,7 +1516,7 @@ class _ArchiveField:
         self._download_url = ""
         self._dl_image: tk.PhotoImage | None = None
         self._dl_images: dict[str, tk.PhotoImage | None] = {}
-        # new | current | unknown | none — see set_download_status
+        # new | current | unknown | none - see set_download_status
         self._dl_status = "none"
         self._remote_date = ""
         self._remote_probed = False
@@ -1570,7 +1570,7 @@ class _ArchiveField:
                         cmd: Callable[[], None] | None = self._start_download
                         st, cur, fg = "normal", "hand2", None
                     else:
-                        # No auto-download URL — darker grey, disabled.
+                        # No auto-download URL - darker grey, disabled.
                         self._dl_status = "none"
                         self._dl_image = self._dl_images.get("none")
                         img = self._dl_image or img
@@ -2008,7 +2008,7 @@ def run_wizard(
     options = list(data.installer_options)
     if not options and not lib.wizard_radio_groups(data, min_stage=min_stage):
         raise ValueError(
-            "config manifests have no stage:dev|release mods — add stage: "
+            "config manifests have no stage:dev|release mods - add stage: "
             "before running the wizard"
         )
 
@@ -2024,7 +2024,7 @@ def run_wizard(
 
     if initial is None:
         lib.apply_feature_option_defaults(data, installed_feats)
-        # Wizard UI starts with no radio picks — re-click clears; requires:
+        # Wizard UI starts with no radio picks - re-click clears; requires:
         # gate Install instead of auto-selecting a choice.
         initial = lib.InstallerSelection(
             option_ids=[o.id for o in options if o.default],
@@ -2079,7 +2079,7 @@ def _run_wizard_ui(
     download_hub = _DownloadHub(root)
     if not drop_registry.ok:
         lib.warn(
-            "windnd not available — drag-drop onto archive boxes is disabled "
+            "windnd not available - drag-drop onto archive boxes is disabled "
             "(folder button still works)"
         )
     root.update_idletasks()
@@ -2197,7 +2197,7 @@ def _run_wizard_ui(
     page3_option_ids: list[str] = []
     wizard_page = {"n": 1}
     for group, packs in radio_groups.items():
-        # Preferred fallback when a selected option requires this group — not a
+        # Preferred fallback when a selected option requires this group - not a
         # default selection (radios start empty unless restored / required).
         default_pack = packs[0].id if packs else ""
         parent = pack_by_id.get(group)
@@ -2418,7 +2418,7 @@ def _run_wizard_ui(
     def _require_relation_sections(
         dep: lib.Dependency,
     ) -> list[tuple[str, list[str], str]]:
-        """Parents/children for info tips — red ``alert`` kind."""
+        """Parents/children for info tips - red ``alert`` kind."""
         children = [d for d in dep.requires if d]
         parents = sorted(
             {
@@ -2456,7 +2456,7 @@ def _run_wizard_ui(
                     feature, mo2_root=mo2_root
                 ):
                     sections.append((label, items, "normal"))
-            # Require-only packs (skip the path pack itself — covered by feature rows).
+            # Require-only packs (skip the path pack itself - covered by feature rows).
             require_deps = [d for d in deps if d.id != path_pack.id]
             for label, items in _effect_deps_for(require_deps):
                 if label == "Installs":
@@ -2756,7 +2756,7 @@ def _run_wizard_ui(
         elif feat is not None:
             title = feat.display_name
 
-        # Plain title — site/download buttons on the file row cover links.
+        # Plain title - site/download buttons on the file row cover links.
         _title_row(parent, title)
         frame = ttk.Frame(parent, padding=(4, 4))
         frame.pack(fill="x", pady=(0, 8), padx=2)
@@ -2798,7 +2798,7 @@ def _run_wizard_ui(
             else:
                 info_fn = lambda: []
             _pack_path_info_icon(row, files_col, opt.id, info_fn)
-            # Packaged path mods — no archive box.
+            # Packaged path mods - no archive box.
             # D.O.G.M.A. features page: white desc in the old "Install" slot.
             # Page 1 path rows (if any): keep Install + desc under.
             if path_inline_desc:
@@ -3257,7 +3257,7 @@ def _run_wizard_ui(
             preview = ", ".join(missing[:8])
             extra = f" (+{len(missing) - 8} more)" if len(missing) > 8 else ""
             lib.warn(
-                f"Install blocked — missing archives: {', '.join(missing)}"
+                f"Install blocked - missing archives: {', '.join(missing)}"
             )
             messagebox.showwarning(
                 "D.O.G.M.A.",

@@ -154,7 +154,7 @@ local function patch_module(mod)
 	if orig_become then
 		mod.become_actor_companion = function(actor, npc)
 			-- Story squads usually use add_special_squad; if they hit this path,
-			-- is_non_story is false when the squad has a story id — leave intact.
+			-- is_non_story is false when the squad has a story id - leave intact.
 			if not is_hire_or_guide(mod, actor, npc) then
 				return orig_become(actor, npc)
 			end

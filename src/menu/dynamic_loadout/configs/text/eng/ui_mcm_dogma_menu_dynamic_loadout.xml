@@ -75,11 +75,38 @@
 	<string id="ui_mcm_dogma_menu_dynamic_loadout_max_pts_sight_desc">
 		<text>Supply compatible plain sights with pts strictly below this.</text>
 	</string>
-	<string id="ui_mcm_dogma_menu_dynamic_loadout_cost_mult">
-		<text>Cost multiplier</text>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_cost_mult_section">
+		<text>--- Cost multipliers (pts = avg x mult) ---</text>
 	</string>
-	<string id="ui_mcm_dogma_menu_dynamic_loadout_cost_mult_desc">
-		<text>Shop pts = weighted average of 0-1 stats x this multiplier (1-100000). Basics and medicine are not scaled.</text>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_cost_mult_weapon">
+		<text>Weapon cost mult</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_cost_mult_weapon_desc">
+		<text>Shop pts for weapons = weighted avg of 0-1 stats x this (1-100000).</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_cost_mult_armor">
+		<text>Armor cost mult</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_cost_mult_armor_desc">
+		<text>Shop pts for outfits = weighted avg of 0-1 stats x this (1-100000).</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_cost_mult_helmet">
+		<text>Helmet cost mult</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_cost_mult_helmet_desc">
+		<text>Shop pts for helmets = weighted avg of 0-1 stats x this (1-100000).</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_cost_mult_ammo">
+		<text>Ammo cost mult</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_cost_mult_ammo_desc">
+		<text>Shop pts for ammo = weighted avg of 0-1 stats x this (1-100000).</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_cost_mult_sight">
+		<text>Sight cost mult</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_cost_mult_sight_desc">
+		<text>Shop pts for sights = weighted avg of 0-1 stats x this (1-100000).</text>
 	</string>
 	<string id="ui_mcm_dogma_menu_dynamic_loadout_w_mut_dmg">
 		<text>Weapon: mut_dmg (armor col 1)</text>
@@ -110,12 +137,6 @@
 	</string>
 	<string id="ui_mcm_dogma_menu_dynamic_loadout_w_max_dmg_desc">
 		<text>Highest TT table damage vs Mid+ armor across all ammo_class rounds.</text>
-	</string>
-	<string id="ui_mcm_dogma_menu_dynamic_loadout_w_hit_power">
-		<text>Weapon: Hit Power</text>
-	</string>
-	<string id="ui_mcm_dogma_menu_dynamic_loadout_w_hit_power_desc">
-		<text>DOGMA Hit Power (hit_power x 100).</text>
 	</string>
 	<string id="ui_mcm_dogma_menu_dynamic_loadout_w_rpm">
 		<text>Weapon: fire rate</text>
@@ -165,17 +186,11 @@
 	<string id="ui_mcm_dogma_menu_dynamic_loadout_w_silencer_desc">
 		<text>0/1 from silencer_status &gt; 0 (can mount a suppressor). Always included in the average.</text>
 	</string>
-	<string id="ui_mcm_dogma_menu_dynamic_loadout_w_ammo_cost">
-		<text>Weapon: expensive ammo</text>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_w_affordable">
+		<text>Weapon: affordable</text>
 	</string>
-	<string id="ui_mcm_dogma_menu_dynamic_loadout_w_ammo_cost_desc">
-		<text>Positive 0-1 from FMJ/HP ammo cost vs scanned ammo (most expensive=1, cheapest=0).</text>
-	</string>
-	<string id="ui_mcm_dogma_menu_dynamic_loadout_w_cost">
-		<text>Weapon: cheapness</text>
-	</string>
-	<string id="ui_mcm_dogma_menu_dynamic_loadout_w_cost_desc">
-		<text>Gun cost inverted: cheap->1, at max weapon cost (30k)->0.</text>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_w_affordable_desc">
+		<text>Gun cost: 1 at 0 ru, 0 at hardcoded max weapon cost (30k).</text>
 	</string>
 	<string id="ui_mcm_dogma_menu_dynamic_loadout_a_fire_wound">
 		<text>Armor: ballistic (BR)</text>
@@ -231,11 +246,11 @@
 	<string id="ui_mcm_dogma_menu_dynamic_loadout_a_psy_desc">
 		<text>Weight for telepathy_protection.</text>
 	</string>
-	<string id="ui_mcm_dogma_menu_dynamic_loadout_a_cost">
-		<text>Armor/helm: cheapness</text>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_a_affordable">
+		<text>Armor/helm: affordable</text>
 	</string>
-	<string id="ui_mcm_dogma_menu_dynamic_loadout_a_cost_desc">
-		<text>Item cost inverted: 0 ru->1, at hardcoded max (armor 100k / helm 20k)->0.</text>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_a_affordable_desc">
+		<text>Item cost: 1 at 0 ru, 0 at hardcoded max (armor 100k / helm 20k).</text>
 	</string>
 	<string id="ui_mcm_dogma_menu_dynamic_loadout_ammo_dmg_ap">
 		<text>Ammo: dmg/ap ratio</text>
@@ -243,17 +258,11 @@
 	<string id="ui_mcm_dogma_menu_dynamic_loadout_ammo_dmg_ap_desc">
 		<text>Weight for k_hit/k_ap ammo score.</text>
 	</string>
-	<string id="ui_mcm_dogma_menu_dynamic_loadout_ammo_cost">
-		<text>Ammo: cheapness</text>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_ammo_affordable">
+		<text>Ammo: affordable</text>
 	</string>
-	<string id="ui_mcm_dogma_menu_dynamic_loadout_ammo_cost_desc">
-		<text>Positive 0-1 vs scanned ammo costs (cheapest=1, most expensive=0).</text>
-	</string>
-	<string id="ui_mcm_dogma_menu_dynamic_loadout_ammo_price">
-		<text>Ammo: cheap (absolute)</text>
-	</string>
-	<string id="ui_mcm_dogma_menu_dynamic_loadout_ammo_price_desc">
-		<text>Absolute cost inverted: 0->1, at hardcoded max ammo cost (10k)->0. Similar to cheapness; turn one down if redundant.</text>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_ammo_affordable_desc">
+		<text>Ammo cost: 1 at 0 ru, 0 at hardcoded max ammo cost (10k).</text>
 	</string>
 	<string id="ui_mcm_dogma_menu_dynamic_loadout_sight_zoom">
 		<text>Sight: magnification</text>
@@ -261,10 +270,10 @@
 	<string id="ui_mcm_dogma_menu_dynamic_loadout_sight_zoom_desc">
 		<text>Weight for scope_zoom_factor.</text>
 	</string>
-	<string id="ui_mcm_dogma_menu_dynamic_loadout_sight_cost">
-		<text>Sight: cheapness</text>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_sight_affordable">
+		<text>Sight: affordable</text>
 	</string>
-	<string id="ui_mcm_dogma_menu_dynamic_loadout_sight_cost_desc">
-		<text>Item cost inverted: cheap->1, soft ceiling 3000->0.</text>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_sight_affordable_desc">
+		<text>Sight cost: 1 at 0 ru, 0 at hardcoded max sight cost (7k).</text>
 	</string>
 </string_table>

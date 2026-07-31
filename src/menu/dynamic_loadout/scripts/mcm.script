@@ -1,5 +1,5 @@
 --[[
-	Dynamic Loadout — main-menu scan/score + New Game LoadLoadout fill.
+	Dynamic Loadout - main-menu scan/score + New Game LoadLoadout fill.
 
 	Must live in *mcm.script so it loads at the New Game screen.
 	_conf.script is prepended by the build.
@@ -89,7 +89,7 @@ local function is_ap_ammo(sec)
 	return false
 end
 
--- Conditioned / degraded boxes (…_bad, …_verybad).
+-- Conditioned / degraded boxes (..._bad, ..._verybad).
 local function is_bad_ammo(sec)
 	local s = string.lower(sec or "")
 	if string.find(s, "_verybad", 1, true) then
@@ -123,7 +123,7 @@ local function is_excluded_misc(sec)
 	return false
 end
 
--- Multiplayer / sim / world props — same icons as real wpn_* and should never be shop gear.
+-- Multiplayer / sim / world props - same icons as real wpn_* and should never be shop gear.
 local function is_junk_gear_sec(sec)
 	local s = string.lower(sec or "")
 	if string.sub(s, 1, 3) == "mp_" then
@@ -497,7 +497,7 @@ local function item_cost(sec)
 	return ini_float(sec, "cost", 0)
 end
 
--- Ammo cost → positive 0..1 factor: cheapest in scan = 1, most expensive = 0.
+-- Ammo cost -> positive 0..1 factor: cheapest in scan = 1, most expensive = 0.
 local function refresh_ammo_cost_range(ammo_pool)
 	local lo, hi = nil, nil
 	for _, sec in ipairs(ammo_pool or {}) do
@@ -511,7 +511,7 @@ local function refresh_ammo_cost_range(ammo_pool)
 	end
 	STATE.ammo_cost_lo = lo or 0
 	STATE.ammo_cost_hi = hi or 0
-	dlog(string.format("ammo cost range: lo=%.0f hi=%.0f (cheap→1, expensive→0)",
+	dlog(string.format("ammo cost range: lo=%.0f hi=%.0f (cheap->1, expensive->0)",
 		STATE.ammo_cost_lo, STATE.ammo_cost_hi))
 end
 
@@ -612,7 +612,7 @@ local function score_to_points(avg01, scale)
 	return pts
 end
 
--- Weighted average of 0..1 stats: Σ(n01×w) / Σw (weights ≤0 skipped).
+-- Weighted average of 0..1 stats: sum(n01*w) / sum_w (weights <=0 skipped).
 local function avg_state_new()
 	return { sum_nw = 0, sum_w = 0, n = 0, lines = {} }
 end
@@ -622,20 +622,21 @@ local function avg_add(st, label, raw_stat, n01, wkey, debug)
 	if not w or w <= 0 then
 		if debug then
 			st.lines[#st.lines + 1] = string.format(
-				"  %s: raw=%.4f => n01=%.4f * w=0 (skip)",
+				"  %s: raw %.4f =>base %.4f * mul 0 (skip)",
 				label, raw_stat or 0, n01 or 0
 			)
 		end
 		return
 	end
 	local n = clamp01(n01 or 0)
-	st.sum_nw = st.sum_nw + n * w
+	local final = n * w
+	st.sum_nw = st.sum_nw + final
 	st.sum_w = st.sum_w + w
 	st.n = st.n + 1
 	if debug then
 		st.lines[#st.lines + 1] = string.format(
-			"  %s: raw=%.4f => n01=%.4f * w=%.2f",
-			label, raw_stat or 0, n, w
+			"  %s: raw %.4f =>base %.4f * mul %.2f = final %.4f",
+			label, raw_stat or 0, n, w, final
 		)
 	end
 end
@@ -647,7 +648,7 @@ local function avg_finish(st)
 	return st.sum_nw / st.sum_w
 end
 
--- Flat linear map raw → 0..1 using a soft ceiling (outliers clamp to 1).
+-- Flat linear map raw -> 0..1 using a soft ceiling (outliers clamp to 1).
 local function norm01(raw, max_v)
 	if not raw or raw ~= raw then
 		return 0
@@ -660,19 +661,19 @@ end
 
 -- Soft ceilings for weapon stats (ignore gauss-tier outliers).
 local NORM = {
-	dmg = 150,       -- fmj/ap/hp/mutant table damage (display scale)
-	hit_power = 100, -- hit_power × 100
+	dmg = 150,       -- soft ceiling for each armor-column max (mut/lgt/mid/hvy/max)
+	hit_power = 100, -- hit_power x 100
 	rpm = 1200,
-	mag = 50,        -- ammo_mag_size (1–50 → 0–1)
-	burst = 10,      -- shots to ~3° climb (0–10 → 0–1)
-	spread_ads = 1,  -- ADS/base ° (lower better → inv scale)
-	spread_hip = 10, -- hip-run ° (lower better → inv scale)
+	mag = 50,        -- ammo_mag_size (1-50 -> 0-1)
+	burst = 10,      -- shots to ~3 deg climb (0-10 -> 0-1)
+	spread_ads = 1,  -- ADS/base  deg (lower better -> inv scale)
+	spread_hip = 10, -- hip-run  deg (lower better -> inv scale)
 	zoom = 10,       -- scope_zoom_factor
 	ammo_ratio = 200, -- k_hit / k_ap
 	cost_sight = 3000,   -- plain sight soft ceiling (unused if inverted below)
 }
 
--- Lower-is-better linear map: 0 → 1, max_v → 0.
+-- Lower-is-better linear map: 0 -> 1, max_v -> 0.
 local function inv_norm01(raw, max_v)
 	if not raw or raw ~= raw then
 		return 1
@@ -697,12 +698,12 @@ local function score_ammo(sec)
 	local st = avg_state_new()
 	avg_add(st, "dmg/ap_ratio", ratio, ratio_n, "ammo_dmg_ap", debug)
 	avg_add(st, "cheapness", cost, cheap, "ammo_cost", debug)
-	-- Absolute price: high cost → 0, low → 1 (soft = MAX_COST.ammo).
+	-- Absolute price: high cost -> 0, low -> 1 (soft = MAX_COST.ammo).
 	local price_n = inv_norm01(cost, MAX_COST.ammo)
 	avg_add(st, "price", cost, price_n, "ammo_price", debug)
 	local avg = avg_finish(st)
 	local detail = string.format(
-		"hit=%.3f ap=%.4f ratio=%.3f→%.3f cost=%.0f cheap=%.3f price=%.3f",
+		"hit=%.3f ap=%.4f ratio=%.3f->%.3f cost=%.0f cheap=%.3f price=%.3f",
 		k_hit, k_ap, ratio, ratio_n, cost, cheap, price_n
 	)
 	if debug then
@@ -729,17 +730,17 @@ local function score_armor(sec)
 		local n = clamp01(v) -- protections are already ~0..1
 		avg_add(st, entry.cfg, v, n, entry.cfg, debug)
 		if v > 0 then
-			parts[#parts + 1] = string.format("%s=%.3f→%.3f", entry.cfg, v, n)
+			parts[#parts + 1] = string.format("%s=%.3f->%.3f", entry.cfg, v, n)
 		end
 	end
-	-- Cost: cheaper → higher n01 (high cost → 0). Soft = MAX_COST filter.
+	-- Cost: cheaper -> higher n01 (high cost -> 0). Soft = MAX_COST filter.
 	local cost = item_cost(sec) or 0
 	local is_helm = (IsItem and IsItem("helmet", sec))
 		or (string.find(sec, "helm", 1, true) ~= nil)
 	local soft = is_helm and MAX_COST.helmet or MAX_COST.armor
 	local cost_n = inv_norm01(cost, soft)
 	avg_add(st, "cost", cost, cost_n, "a_cost", debug)
-	parts[#parts + 1] = string.format("cost=%.0f→%.3f", cost, cost_n)
+	parts[#parts + 1] = string.format("cost=%.0f->%.3f", cost, cost_n)
 	local avg = avg_finish(st)
 	if debug then
 		dlog("=== CALC armor/helm " .. sec)
@@ -764,7 +765,7 @@ local function score_sight(sec)
 	avg_add(st, "zoom", zoom, zoom_n, "sight_zoom", false)
 	local cost = item_cost(sec) or 0
 	avg_add(st, "cost", cost, inv_norm01(cost, NORM.cost_sight), "sight_cost", false)
-	return avg_finish(st), string.format("zoom=%.2f→%.3f cost=%.0f", zoom, zoom_n, cost or 0)
+	return avg_finish(st), string.format("zoom=%.2f->%.3f cost=%.0f", zoom, zoom_n, cost or 0)
 end
 
 local function score_weapon(sec)
@@ -786,64 +787,68 @@ local function score_weapon(sec)
 	local ads_n = inv_norm01(spread_ads, NORM.spread_ads)
 	local hip_n = inv_norm01(spread_hip, NORM.spread_hip)
 
-	local fmj_sum, ap_sum, hp_bare = 0, 0, 0
-	local fmj_tiers, ap_tiers = {}, {}
-	local hit_power_pct, mutant_avg = 0, 0
+	local hit_power_pct = 0
 	local fmj_sec, ap_sec, hp_sec = nil, nil, nil
+	local col_dmg = {
+		{ key = "mut_dmg", w = "w_mut_dmg", v = 0, src = nil },
+		{ key = "lgt_dmg", w = "w_lgt_dmg", v = 0, src = nil },
+		{ key = "mid_dmg", w = "w_mid_dmg", v = 0, src = nil },
+		{ key = "hvy_dmg", w = "w_hvy_dmg", v = 0, src = nil },
+		{ key = "max_dmg", w = "w_max_dmg", v = 0, src = nil },
+	}
+	local rounds_n = 0
+	local best_ammo_sec = nil
 
 	if B and B.weapon_table_damage_stats then
 		local st_dmg = B.weapon_table_damage_stats(sec, B.DEFAULT_DIST or 30)
-		fmj_sum = st_dmg.fmj_sum or 0
-		ap_sum = st_dmg.ap_sum or 0
-		hp_bare = st_dmg.hp_bare or 0
-		fmj_tiers = st_dmg.fmj_tiers or {}
-		ap_tiers = st_dmg.ap_tiers or {}
 		hit_power_pct = st_dmg.hit_power_pct or ((st_dmg.hit_power or 0) * 100)
-		mutant_avg = st_dmg.mutant_avg or 0
 		fmj_sec = st_dmg.fmj_sec
 		ap_sec = st_dmg.ap_sec
 		hp_sec = st_dmg.hp_sec
+		rounds_n = st_dmg.rounds_n or 0
+		for i = 1, #col_dmg do
+			local c = col_dmg[i]
+			c.v = st_dmg[c.key] or ((st_dmg.col_max and st_dmg.col_max[i]) or 0)
+			local src = st_dmg.col_src and st_dmg.col_src[i] or nil
+			c.src = src
+			if (not best_ammo_sec) and src and src.sec then
+				best_ammo_sec = src.sec
+			end
+		end
 		if debug then
 			dlog(string.format(
-				"  tip ammo families: yellow=%s (%s) orange=%s (%s) blue=%s (%s) rounds_n=%s",
-				tostring(st_dmg.fmj_label or "?"), tostring(fmj_sec or "nil"),
-				tostring(st_dmg.ap_label or "?"), tostring(ap_sec or "nil"),
-				tostring(st_dmg.hp_label or "?"), tostring(hp_sec or "nil"),
-				tostring(st_dmg.rounds_n or "?")
+				"  tip cols: n_ammo=%d yellow=%s orange=%s blue=%s",
+				rounds_n,
+				tostring(st_dmg.fmj_label or "?"),
+				tostring(st_dmg.ap_label or "?"),
+				tostring(st_dmg.hp_label or "?")
 			))
 		end
 	else
-		dlog("WARN: dogma_ballistics missing — weapon " .. tostring(sec) .. " scored without table dmg")
+		dlog("WARN: dogma_ballistics missing - weapon " .. tostring(sec) .. " scored without table dmg")
 	end
 
 	local st = avg_state_new()
 
-	-- Normalize → 0..1, then weighted average across included terms.
-	-- Missing ammo family (tip has no yellow/orange/blue round) → exclude from avg.
-	if fmj_sec then
-		avg_add(st, "fmj_avg", fmj_sum, norm01(fmj_sum, NORM.dmg), "w_dmg_fmj", debug)
-	elseif debug then
-		dlog("  fmj_avg: unavailable (no yellow family) — exclude")
-	end
-	if ap_sec then
-		avg_add(st, "ap_avg", ap_sum, norm01(ap_sum, NORM.dmg), "w_dmg_ap", debug)
-	elseif debug then
-		dlog("  ap_avg: unavailable (no orange family) — exclude")
-	end
-	if hp_sec then
-		avg_add(st, "hp_bare", hp_bare, norm01(hp_bare, NORM.dmg), "w_dmg_hp", debug)
-	elseif debug then
-		dlog("  hp_bare: unavailable (no blue family) — exclude")
+	-- Normalize -> 0..1, then weighted average across included terms.
+	-- Five armor-column maxes (highest dmg across all TT-table ammos).
+	for i = 1, #col_dmg do
+		local c = col_dmg[i]
+		local src = c.src
+		local label = c.key
+		if src and (src.label or src.sec) then
+			label = string.format("%s(%s)", c.key, tostring(src.label or src.sec))
+		end
+		avg_add(st, label, c.v, norm01(c.v, NORM.dmg), c.w, debug)
 	end
 	avg_add(st, "hit_power%", hit_power_pct, norm01(hit_power_pct, NORM.hit_power), "w_hit_power", debug)
-	avg_add(st, "mutant_avg", mutant_avg, norm01(mutant_avg, NORM.dmg), "w_mutant_dmg", debug)
 	avg_add(st, "rpm", rpm, norm01(rpm, NORM.rpm), "w_rpm", debug)
 	avg_add(st, "mag", mag, norm01(mag, NORM.mag), "w_mag", debug)
 	avg_add(st, "burst", burst, norm01(burst, NORM.burst), "w_burst", debug)
 	avg_add(st, "spread_ads", spread_ads, ads_n, "w_spread_ads", debug)
 	avg_add(st, "spread_hip", spread_hip, hip_n, "w_spread_hip", debug)
 
-	-- Magazine vs rounds-reload (tip). Always 0 or 1 — no anim length needed.
+	-- Magazine vs rounds-reload (tip). Always 0 or 1 - no anim length needed.
 	local use_mag = nil
 	local tip = _G.dogma_tooltips_weapons
 	if tip and tip.weapon_use_mag then
@@ -869,17 +874,18 @@ local function score_weapon(sec)
 	avg_add(st, "scope", scope_ok, scope_ok, "w_scope", debug)
 	avg_add(st, "silencer", sil_ok, sil_ok, "w_silencer", debug)
 
-	-- Item cost: cheaper → higher n01 (soft = MAX_COST.weapon).
+	-- Item cost: cheaper -> higher n01 (soft = MAX_COST.weapon).
 	local cost = item_cost(sec) or 0
 	avg_add(st, "cost", cost, inv_norm01(cost, MAX_COST.weapon), "w_cost", debug)
 
-	local ammo_for_cost = fmj_sec or hp_sec
+	local ammo_for_cost = fmj_sec or hp_sec or ap_sec or best_ammo_sec
 	local ammo_c = 0
-	local ammo_cheap = 0
+	local ammo_exp = 0
 	if ammo_for_cost then
 		ammo_c = item_cost(ammo_for_cost)
-		ammo_cheap = ammo_cheapness(ammo_c)
-		avg_add(st, "ammo_cheap(" .. tostring(ammo_for_cost) .. ")", ammo_c, ammo_cheap, "w_ammo_cost", debug)
+		-- Expensive -> 1, cheapest -> 0 (inverse of scanned cheapness).
+		ammo_exp = 1 - ammo_cheapness(ammo_c)
+		avg_add(st, "ammo_exp(" .. tostring(ammo_for_cost) .. ")", ammo_c, ammo_exp, "w_ammo_cost", debug)
 	end
 
 	local avg = avg_finish(st)
@@ -887,39 +893,40 @@ local function score_weapon(sec)
 	if debug then
 		dlog("=== CALC weapon " .. sec)
 		dlog(string.format(
-			"  spread pair raw: ads=%.3f hip=%.3f => n01=%.4f / %.4f (ceil 1° / 10°)",
+			"  spread pair raw: ads=%.3f hip=%.3f => n01=%.4f / %.4f (ceil 1 deg / 10 deg)",
 			spread_ads, spread_hip, ads_n, hip_n
 		))
-		dlog(string.format(
-			"  fmj tiers[1-4]: %.1f / %.1f / %.1f / %.1f  => avg=%.1f  (%s)",
-			fmj_tiers[1] or 0, fmj_tiers[2] or 0, fmj_tiers[3] or 0, fmj_tiers[4] or 0,
-			fmj_sum, tostring(fmj_sec or "nil")
-		))
-		dlog(string.format(
-			"  ap  tiers[1-4]: %.1f / %.1f / %.1f / %.1f  => avg=%.1f  (%s)",
-			ap_tiers[1] or 0, ap_tiers[2] or 0, ap_tiers[3] or 0, ap_tiers[4] or 0,
-			ap_sum, tostring(ap_sec or "nil")
-		))
+		for i = 1, #col_dmg do
+			local c = col_dmg[i]
+			local src = c.src
+			dlog(string.format(
+				"  %s max=%.1f from %s (%s)",
+				c.key, c.v,
+				tostring(src and src.label or "?"),
+				tostring(src and src.sec or "?")
+			))
+		end
 		if ammo_for_cost then
 			dlog(string.format(
-				"  ammo cost raw=%.0f => cheapness=%.3f (lo=%.0f hi=%.0f)",
-				ammo_c, ammo_cheap, STATE.ammo_cost_lo or 0, STATE.ammo_cost_hi or 0
+				"  ammo cost raw=%.0f => expensive=%.3f (lo=%.0f hi=%.0f)",
+				ammo_c, ammo_exp, STATE.ammo_cost_lo or 0, STATE.ammo_cost_hi or 0
 			))
 		end
 		for i = 1, #st.lines do
 			dlog(st.lines[i])
 		end
 		dlog(string.format(
-			"  AVG=%.4f (n=%d Σw=%.2f)  pts=%d  (pts=floor(avg*%.0f+0.5), min 1)  hp_ammo=%s",
-			avg, st.n, st.sum_w, score_to_points(avg), cfg_num("cost_mult"), tostring(hp_sec or "nil")
+			"  AVG=%.4f (n=%d sum_w=%.2f)  pts=%d  (pts=floor(avg*%.0f+0.5), min 1)",
+			avg, st.n, st.sum_w, score_to_points(avg), cfg_num("cost_mult")
 		))
 	end
 
 	local detail = string.format(
-		"hitP=%.0f mut=%.1f fmjAvg=%.1f apAvg=%.1f hp0=%.1f rpm=%.0f mag=%.0f burst=%.1f ads=%.3f→%.2f hip=%.3f→%.2f use_mag=%d cost=%.0f ammoCheap=%.2f",
-		hit_power_pct, mutant_avg, fmj_sum, ap_sum, hp_bare,
-		rpm, mag, burst, spread_ads, ads_n, spread_hip, hip_n,
-		use_mag, cost or 0, ammo_cheap
+		"hitP=%.0f mut/lgt/mid/hvy/max=%.0f/%.0f/%.0f/%.0f/%.0f ammoN=%d rpm=%.0f mag=%.0f burst=%.1f ads=%.3f->%.2f hip=%.3f->%.2f use_mag=%d cost=%.0f ammoExp=%.2f",
+		hit_power_pct,
+		col_dmg[1].v, col_dmg[2].v, col_dmg[3].v, col_dmg[4].v, col_dmg[5].v,
+		rounds_n, rpm, mag, burst, spread_ads, ads_n, spread_hip, hip_n,
+		use_mag, cost or 0, ammo_exp
 	)
 	return avg, detail
 end
@@ -945,7 +952,7 @@ local function build_scored(pool, kind)
 	for _, sec in ipairs(pool) do
 		-- Belt-and-braces: never score over-cost items (scan should already drop them).
 		if max_cost and max_cost > 0 and ini_float(sec, "cost", 0) > max_cost then
-			-- skip — no tip/ballistics/avg work
+			-- skip - no tip/ballistics/avg work
 		else
 			local raw, detail
 			local ok, err = pcall(function()
@@ -996,7 +1003,7 @@ local function read_basics(faction)
 	local items = {}
 	local ini = ini_file("items\\settings\\new_game_loadouts.ltx")
 	if not ini then
-		dlog("WARN: could not open new_game_loadouts.ltx — using fallback basics")
+		dlog("WARN: could not open new_game_loadouts.ltx - using fallback basics")
 		return {
 			"cash", "device_pda_1", "bandage", "bandage", "bandage",
 			"jgut", "batteries_dead", "batteries_dead", "flask", "vodka",
@@ -1025,7 +1032,7 @@ local function read_basics(faction)
 		end
 	end
 
-	-- shared inherits custom; faction inherits shared — read both to catch overrides
+	-- shared inherits custom; faction inherits shared - read both to catch overrides
 	collect_false("shared")
 	if faction and faction ~= "" then
 		collect_false(faction .. "_loadout")
@@ -1084,7 +1091,7 @@ local function weapon_compatible_sights(wpn_sec, sight_scored)
 end
 
 --------------------------------------------------------------------------
--- Supply (all eligible items — no chance rolls)
+-- Supply (all eligible items - no chance rolls)
 --------------------------------------------------------------------------
 
 -- Strictly pts < max (not <=).
@@ -1256,7 +1263,7 @@ local function build_shop_entries(faction)
 		add_entry(ammo, pts_by_ammo[ammo] or 1, "ammo")
 	end
 
-	-- Shop ammo list only — do NOT use for post-spawn trim (that uses purchased weapons).
+	-- Shop ammo list only - do NOT use for post-spawn trim (that uses purchased weapons).
 	STATE.ammo_secs = nil
 
 	dlog(sformat(
@@ -1276,7 +1283,7 @@ local function refresh_cell_values(cc)
 	end
 end
 
--- Draw pts on the icon (G.A.M.M.A. UI utils_ui UICellItem:Add_CustomText —
+-- Draw pts on the icon (G.A.M.M.A. UI utils_ui UICellItem:Add_CustomText -
 -- same hook workshop/parts-in-tooltip use for condition text). Font: GetFontSmall.
 local function paint_pts_on_cells(cc)
 	if not (cc and cc.cell) then
@@ -1387,7 +1394,7 @@ local function apply_shop_to_ui(self, shop_entries)
 end
 
 --------------------------------------------------------------------------
--- UINewGame patch — LoadLoadout only (never touches OnRandomize)
+-- UINewGame patch - LoadLoadout only (never touches OnRandomize)
 --------------------------------------------------------------------------
 
 local function slog(msg)
@@ -1457,7 +1464,7 @@ end
 
 -- Persist ammo-trim list when Start writes character_creation.
 -- Keep-list = non-AP ammo for weapons actually in the inventory panel
--- (purchased), NOT the full shop supply. Empty purchase → trim all, keep none.
+-- (purchased), NOT the full shop supply. Empty purchase -> trim all, keep none.
 local function inventory_weapon_secs(self)
 	local out = {}
 	local cc = self.CC and self.CC["inventory"]
@@ -1544,7 +1551,7 @@ local function wrap_on_quit(cls)
 end
 
 -- Wrap main_menu.ShowFactionUI on the live owner instance (class wrap often unavailable
--- at *mcm load time — log showed ShowFactionUI=false).
+-- at *mcm load time - log showed ShowFactionUI=false).
 local function wrap_owner_show_faction(owner)
 	if not owner or not owner.ShowFactionUI then
 		return false
@@ -1566,7 +1573,7 @@ local function wrap_owner_show_faction(owner)
 				wrap_load_loadout(uicls)
 				wrap_on_cc_mouse1(uicls)
 			end
-			slog("ShowFactionUI: re-open — rescanning shop")
+			slog("ShowFactionUI: re-open - rescanning shop")
 			dlg:LoadLoadout(false)
 		end
 	end
@@ -1625,7 +1632,7 @@ local function wrap_show_faction_ui()
 				wrap_load_loadout(uicls)
 				wrap_on_cc_mouse1(uicls)
 			end
-			slog("ShowFactionUI(class): re-open — rescanning shop")
+			slog("ShowFactionUI(class): re-open - rescanning shop")
 			dlg:LoadLoadout(false)
 		end
 	end
@@ -1715,8 +1722,8 @@ function on_mcm_load(options)
 			type = "track",
 			val = 2,
 			min = 1,
-			max = 100000,
-			step = 100,
+			max = 1000,
+			step = 1,
 			def = CONFIG.DEFAULTS.max_pts_weapon,
 			hint = "dogma_menu_dynamic_loadout_max_pts_weapon",
 		},
@@ -1725,8 +1732,8 @@ function on_mcm_load(options)
 			type = "track",
 			val = 2,
 			min = 1,
-			max = 100000,
-			step = 100,
+			max = 1000,
+			step = 1,
 			def = CONFIG.DEFAULTS.max_pts_armor,
 			hint = "dogma_menu_dynamic_loadout_max_pts_armor",
 		},
@@ -1735,8 +1742,8 @@ function on_mcm_load(options)
 			type = "track",
 			val = 2,
 			min = 1,
-			max = 100000,
-			step = 100,
+			max = 1000,
+			step = 1,
 			def = CONFIG.DEFAULTS.max_pts_helmet,
 			hint = "dogma_menu_dynamic_loadout_max_pts_helmet",
 		},
@@ -1745,8 +1752,8 @@ function on_mcm_load(options)
 			type = "track",
 			val = 2,
 			min = 1,
-			max = 100000,
-			step = 100,
+			max = 1000,
+			step = 1,
 			def = CONFIG.DEFAULTS.max_pts_ammo,
 			hint = "dogma_menu_dynamic_loadout_max_pts_ammo",
 		},
@@ -1755,8 +1762,8 @@ function on_mcm_load(options)
 			type = "track",
 			val = 2,
 			min = 1,
-			max = 100000,
-			step = 100,
+			max = 1000,
+			step = 1,
 			def = CONFIG.DEFAULTS.max_pts_sight,
 			hint = "dogma_menu_dynamic_loadout_max_pts_sight",
 		},
@@ -1778,12 +1785,12 @@ function on_mcm_load(options)
 		},
 	}
 
-	-- Every scoring weight gets a 0–1 track (driven from CONFIG.WEIGHT_KEYS).
+	-- Every scoring weight gets a 0-1 track (driven from CONFIG.WEIGHT_KEYS).
 	-- Def is always 1 (ignore stale/mismatched DEFAULTS for MCM reset).
 	local keys = CONFIG.WEIGHT_KEYS or {}
 	for i = 1, #keys do
 		local id = keys[i]
-		if id == "w_dmg_fmj" then
+		if id == "w_mut_dmg" then
 			gr[#gr + 1] = {
 				id = "hdr_w_weapon",
 				type = "desc",

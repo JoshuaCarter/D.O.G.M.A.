@@ -14,11 +14,13 @@ local defaults = {
 	["cost_mult"] = 1000,
 	-- Weapon score weights (0-1). Final: avg(n01×w) / Σw, then × cost_mult.
 	-- DOGMA tooltip stats + table dmg. Base-GAMMA bars: mag + fire rate.
-	["w_dmg_fmj"] = 0.5,
-	["w_dmg_ap"] = 0.5,
-	["w_dmg_hp"] = 0.5,
+	-- Max TT torso dmg across all ammo_class rounds (cols Min→Mid+).
+	["w_mut_dmg"] = 0.5, -- col 1 Min
+	["w_lgt_dmg"] = 0.5, -- col 2 Lgt
+	["w_mid_dmg"] = 0.5, -- col 3 Lgt+
+	["w_hvy_dmg"] = 0.5, -- col 4 Mid
+	["w_max_dmg"] = 0.5, -- col 5 Mid+
 	["w_hit_power"] = 0.5,
-	["w_mutant_dmg"] = 0.5,
 	["w_rpm"] = 0.5,
 	["w_mag"] = 0.5,
 	["w_burst"] = 0.5,
@@ -29,7 +31,7 @@ local defaults = {
 	["w_spread_hip"] = 0.5,
 	["w_scope"] = 0.5,
 	["w_silencer"] = 0.5,
-	["w_ammo_cost"] = 0.5,
+	["w_ammo_cost"] = 0.5, -- ammo price: expensive → higher n01
 	["w_cost"] = 0.5, -- gun cost: cheaper → higher n01 (vs MAX_COST.weapon)
 	-- armor / helmet — one weight per protection type
 	["a_fire_wound"] = 0.5, -- ballistic / BR
@@ -53,7 +55,8 @@ local defaults = {
 
 -- Ordered MCM weight tracks (must match defaults keys used by scoring).
 local WEIGHT_KEYS = {
-	"w_dmg_fmj", "w_dmg_ap", "w_dmg_hp", "w_hit_power", "w_mutant_dmg",
+	"w_mut_dmg", "w_lgt_dmg", "w_mid_dmg", "w_hvy_dmg", "w_max_dmg",
+	"w_hit_power",
 	"w_rpm", "w_mag", "w_burst", "w_use_mag",
 	"w_spread_ads", "w_spread_hip",
 	"w_scope", "w_silencer",

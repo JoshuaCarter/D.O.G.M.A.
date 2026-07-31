@@ -36,14 +36,14 @@ from .undo import GeoEdit, GeoState, UndoStack
 
 # Scene z bands (back → front):
 #   textures → labels → diamonds →
-#   idle → hover border → select chrome → select label → hover label (front)
+#   idle → hover border → select chrome → hover label → select label (front)
 _LABEL_Z = 1_000_000.0
 _DIAMOND_Z = 2_000_000.0
 _IDLE_CHROME_Z = 10_000_000.0
 _HOVER_CHROME_Z = 10_000_001.0
 _SELECT_CHROME_Z = 10_000_002.0
-_SELECT_LABEL_Z = 10_000_003.0
-_HOVER_LABEL_Z = 10_000_004.0
+_HOVER_LABEL_Z = 10_000_003.0
+_SELECT_LABEL_Z = 10_000_004.0
 
 
 HANDLE = 10.0  # Invisible corner / edge hit thickness (px, item space)

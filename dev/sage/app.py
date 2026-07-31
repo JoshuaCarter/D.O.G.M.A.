@@ -29,6 +29,7 @@ from PyQt6.QtWidgets import (
     QDialogButtonBox,
     QFileDialog,
     QFormLayout,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -38,6 +39,7 @@ from PyQt6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPlainTextEdit,
+    QPushButton,
     QScrollArea,
     QSizePolicy,
     QSpinBox,
@@ -334,6 +336,218 @@ def _path_rich_text(path: str) -> str:
         f'<span style="color:#888888;">{escape(parent)}{escape(sep)}</span>'
         f"{escape(name)}"
     )
+
+
+class _StartupLinkLabel(QLabel):
+    """Left-aligned filename that looks like a link (blue; underline on hover)."""
+
+    clicked = pyqtSignal()
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__("", parent)
+        self.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self.setFixedHeight(18)
+        self._path: Path | None = None
+        self._active = False
+        self._apply_style(hovered=False)
+
+    def set_target(self, path: Path | None, *, missing: bool = False) -> None:
+        self._path = path if path is not None and not missing else None
+        self._active = self._path is not None
+        if path is None:
+            self.setText("")
+            self.setToolTip("")
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+            self.setEnabled(True)
+        elif missing:
+            self.setText(path.name or str(path))
+            self.setToolTip(str(path))
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+            self.setEnabled(False)
+        else:
+            self.setText(path.name or str(path))
+            self.setToolTip(str(path))
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.setEnabled(True)
+        self._apply_style(hovered=False)
+
+    def _apply_style(self, *, hovered: bool) -> None:
+        if not self.isEnabled():
+            color = "#5A5A62"
+            underline = False
+        elif not self._active:
+            color = "#4A9EFF"
+            underline = False
+        else:
+            color = "#7AB8FF" if hovered else "#4A9EFF"
+            underline = hovered
+        self.setStyleSheet(
+            f"QLabel {{ color: {color}; background: transparent; border: none; }}"
+        )
+        font = self.font()
+        font.setUnderline(underline)
+        self.setFont(font)
+
+    def enterEvent(self, event) -> None:  # noqa: N802
+        if self._active:
+            self._apply_style(hovered=True)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:  # noqa: N802
+        self._apply_style(hovered=False)
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        if self._active and event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+
+class StartupChooserOverlay(QWidget):
+    """Dimmed full-window gate: Open… centered, Recents listed under it."""
+
+    path_chosen = pyqtSignal(object)  # Path
+    dismissed = pyqtSignal()
+
+    _RECENT_SLOTS = 5
+    _ROW_H = 18
+    _COL_W = 360
+
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self._start_dir = ""
+
+        open_btn = QPushButton("Open…")
+        open_btn.setObjectName("startupOpenBtn")
+        open_btn.setFixedHeight(28)
+        open_btn.setFixedWidth(self._COL_W)
+        open_btn.setStyleSheet(
+            "QPushButton#startupOpenBtn {"
+            "  background-color: #25252A; color: #FFFFFF;"
+            "  border: 1px solid #4A4A52; padding: 4px 12px;"
+            "}"
+            "QPushButton#startupOpenBtn:hover {"
+            "  background-color: #35353C; color: #FFFFFF;"
+            "}"
+            "QPushButton#startupOpenBtn:pressed {"
+            "  background-color: #264F78; color: #FFFFFF;"
+            "}"
+        )
+        open_btn.clicked.connect(self._pick_open)
+
+        self._recents_label = QLabel("Recents")
+        self._recents_label.setFixedWidth(self._COL_W)
+        self._recents_label.setFixedHeight(self._ROW_H)
+        self._recents_label.setStyleSheet(
+            "color: #8A8A92; font-weight: 400; background: transparent;"
+        )
+
+        self._recent_host = QWidget()
+        self._recent_host.setFixedWidth(self._COL_W)
+        self._recent_host.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self._recent_layout = QVBoxLayout(self._recent_host)
+        self._recent_layout.setContentsMargins(0, 0, 0, 0)
+        self._recent_layout.setSpacing(6)
+        self._recent_slots: list[_StartupLinkLabel] = []
+        for _ in range(self._RECENT_SLOTS):
+            slot = _StartupLinkLabel()
+            slot.clicked.connect(self._on_slot_clicked)
+            self._recent_layout.addWidget(slot)
+            self._recent_slots.append(slot)
+        host_h = (
+            self._RECENT_SLOTS * self._ROW_H
+            + (self._RECENT_SLOTS - 1) * self._recent_layout.spacing()
+        )
+        self._recent_host.setFixedHeight(host_h)
+
+        gap = self._ROW_H  # one line between button and Recents
+        below_btn = gap + self._ROW_H + host_h  # Recents label + list (+ gap)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        outer.addStretch(1)
+        # Mirror the block under the button so Open… sits on the window center.
+        outer.addSpacing(below_btn)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch(1)
+        btn_row.addWidget(open_btn)
+        btn_row.addStretch(1)
+        outer.addLayout(btn_row)
+
+        outer.addSpacing(gap)
+
+        recents_col = QVBoxLayout()
+        recents_col.setContentsMargins(0, 0, 0, 0)
+        recents_col.setSpacing(0)
+        recents_col.addWidget(self._recents_label)
+        recents_col.addWidget(self._recent_host)
+        recents_row = QHBoxLayout()
+        recents_row.addStretch(1)
+        recents_row.addLayout(recents_col)
+        recents_row.addStretch(1)
+        outer.addLayout(recents_row)
+
+        outer.addStretch(1)
+        self.hide()
+
+    def configure(self, recent: list[str], *, start_dir: str) -> None:
+        self._start_dir = start_dir
+        recent_paths = list(recent)[: self._RECENT_SLOTS]
+        for i, slot in enumerate(self._recent_slots):
+            if i >= len(recent_paths):
+                slot.set_target(None)
+                continue
+            path = Path(recent_paths[i])
+            slot.set_target(path, missing=not path.is_file())
+
+    def _on_slot_clicked(self) -> None:
+        slot = self.sender()
+        if isinstance(slot, _StartupLinkLabel) and slot._path is not None:
+            self._emit_path(slot._path)
+
+    def start(self) -> None:
+        parent = self.parentWidget()
+        if parent is not None:
+            self.setGeometry(parent.rect())
+        self.raise_()
+        self.show()
+        self.setFocus(Qt.FocusReason.ActiveWindowFocusReason)
+
+    def stop(self) -> None:
+        self.hide()
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), QColor(12, 12, 14, 220))
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        event.accept()
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802
+        if event.key() == Qt.Key.Key_Escape:
+            self.dismissed.emit()
+            event.accept()
+            return
+        event.accept()
+
+    def _pick_open(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open UI XML",
+            self._start_dir,
+            "UI XML (*.xml);;All (*.*)",
+        )
+        if path:
+            self._emit_path(Path(path))
+
+    def _emit_path(self, path: Path) -> None:
+        self.path_chosen.emit(path)
 
 
 class SettingsDialog(QDialog):
@@ -739,6 +953,14 @@ class MainWindow(QMainWindow):
         self.split.setStretchFactor(2, 0)
         self.split.setSizes([350, 700, 350])
         self.setCentralWidget(self.split)
+        # Keep workspace hidden until a file is chosen and loaded.
+        self._workspace_revealed = False
+        self.split.hide()
+        self.menuBar().hide()
+        self.statusBar().hide()
+        self._startup = StartupChooserOverlay(self)
+        self._startup.path_chosen.connect(self._on_startup_path_chosen)
+        self._startup.dismissed.connect(self._on_startup_dismissed)
         self._busy = BusyOverlay(self)
         self._busy_open = False
         QTimer.singleShot(0, self._sync_sidebar_tab_offset)
@@ -760,18 +982,12 @@ class MainWindow(QMainWindow):
             "1024×768 HUD · wheel zoom · Alt/MMB pan · drag/resize · Ctrl+Z undo · Ctrl+Y redo"
         )
 
-        # Open after the window is shown (real layout / viewport size).
+        # CLI path opens after show; otherwise the startup chooser runs.
         self._startup_path: Path | None = None
         if initial is not None:
             path = Path(initial)
             if path.is_file():
                 self._startup_path = path
-        else:
-            for recent in self.settings.get("recent_files") or []:
-                path = Path(str(recent))
-                if path.is_file():
-                    self._startup_path = path
-                    break
 
     def _sidebar_section_height(self) -> int:
         """Props/Options height: ~16% of window (was 30%) so Tree/Layers gain ~20%."""
@@ -801,6 +1017,8 @@ class MainWindow(QMainWindow):
         self._sync_sidebar_tab_offset()
         if hasattr(self, "_busy") and self._busy.isVisible():
             self._busy.setGeometry(self.rect())
+        if hasattr(self, "_startup") and self._startup.isVisible():
+            self._startup.setGeometry(self.rect())
 
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
@@ -808,6 +1026,8 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, self._sync_sidebar_tab_offset)
         if hasattr(self, "_busy"):
             self._busy.setGeometry(self.rect())
+        if hasattr(self, "_startup") and self._startup.isVisible():
+            self._startup.setGeometry(self.rect())
 
     def _show_busy(self, message: str) -> None:
         self._busy.setGeometry(self.rect())
@@ -817,16 +1037,42 @@ class MainWindow(QMainWindow):
     def _hide_busy(self) -> None:
         self._busy.stop()
 
-    def _open_startup_file(self) -> None:
-        # Fit empty stage to the real viewport before any file load / busy overlay.
+    def _reveal_workspace(self) -> None:
+        if self._workspace_revealed:
+            return
+        self._workspace_revealed = True
+        self._startup.stop()
+        self.menuBar().show()
+        self.statusBar().show()
+        self.split.show()
         self._sync_sidebar_tab_offset()
         self.canvas.fit_stage()
         QApplication.processEvents()
+
+    def _open_startup_file(self) -> None:
         path = self._startup_path
         self._startup_path = None
-        if path is None or not path.is_file():
+        if path is not None and path.is_file():
+            self.open_path(path)
             return
+        self._show_startup_chooser()
+
+    def _show_startup_chooser(self) -> None:
+        """Dark window only: centered Open / recent box until a file loads."""
+        recent = list(self.settings.get("recent_files") or [])[:5]
+        self._startup.configure(recent, start_dir=self._file_dialog_start())
+        self._startup.start()
+
+    def _on_startup_path_chosen(self, path: object) -> None:
+        if not isinstance(path, Path):
+            path = Path(str(path))
+        self._startup.stop()
         self.open_path(path)
+
+    def _on_startup_dismissed(self) -> None:
+        app = QApplication.instance()
+        if app is not None:
+            app.quit()
 
     def _make_resolver(self) -> TextureResolver:
         s = self.settings
@@ -1021,6 +1267,7 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, lambda p=path: self._open_path_finish(p))
 
     def _open_path_finish(self, path: Path) -> None:
+        ok = False
         try:
             try:
                 doc = self.doc.load(path)
@@ -1034,6 +1281,7 @@ class MainWindow(QMainWindow):
             self._raw_dirty = False
             self._preview_needs_raw_sync = False
             self._apply_preview_doc(doc)
+            self._reveal_workspace()
             self._restore_view_or_fit()
             self.setWindowTitle(f"DOGMA UI Editor - {path.name}")
             widgets = len(doc.iter_drawables())
@@ -1054,9 +1302,12 @@ class MainWindow(QMainWindow):
                 f"{len(self.resolver._atlas)} atlas · {len(self.resolver._dds_index)} dds · "
                 f"{self.strings.count} strings"
             )
+            ok = True
         finally:
             self._hide_busy()
             self._busy_open = False
+            if not ok and not self._workspace_revealed:
+                QTimer.singleShot(0, self._show_startup_chooser)
 
     def _apply_preview_doc(self, doc: LayoutNode) -> None:
         self._restoring_meta = True
@@ -2213,6 +2464,6 @@ def main(argv: list[str] | None = None) -> int:
     win.show()
     _apply_windows_dark_titlebar(win)
     app.processEvents()
-    # Fit empty canvas first, then load the startup file (with busy overlay).
+    # Dark shell first; chooser (or CLI path) then Loading… then workspace.
     QTimer.singleShot(0, win._open_startup_file)
     return app.exec()

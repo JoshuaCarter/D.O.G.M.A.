@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QEvent, QPointF, QRectF, Qt, pyqtSignal
+from PyQt6.QtCore import QEvent, QPoint, QPointF, QRectF, QTimer, Qt, pyqtSignal
 from PyQt6.QtGui import (
     QBrush,
     QColor,
     QFont,
     QFontMetricsF,
     QImage,
-    QMouseEvent,
     QPainter,
     QPainterPath,
     QPen,
@@ -19,20 +18,26 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtWidgets import (
     QGraphicsItem,
+    QGraphicsLineItem,
     QGraphicsPixmapItem,
     QGraphicsRectItem,
     QGraphicsScene,
     QGraphicsSimpleTextItem,
     QGraphicsView,
+    QGridLayout,
+    QSizePolicy,
     QStyle,
     QStyleOptionGraphicsItem,
     QWidget,
 )
 
+from .diaglog import get_logger
 from .model import LayoutNode
 from .settings import LABEL_FONT_MIN, UI_HEIGHT, UI_WIDTH
 from .textures import TextureResolver, gamma_relative_path
 from .undo import GeoEdit, GeoState, UndoStack
+
+_log = get_logger("canvas")
 
 # Scene z bands (back → front):
 #   textures → labels → diamonds →
@@ -44,10 +49,19 @@ _HOVER_CHROME_Z = 10_000_001.0
 _SELECT_CHROME_Z = 10_000_002.0
 _HOVER_LABEL_Z = 10_000_003.0
 _SELECT_LABEL_Z = 10_000_004.0
+_MARQUEE_Z = 10_000_010.0
+_GUIDE_Z = 10_000_009.0
+
+RULER_THICKNESS = 15
+RULER_MINOR = 8  # scene px between short notches
+RULER_MAJOR = 64  # scene px between longer notches
+# Right-click on a ruler removes a guide within this many viewport pixels.
+RULER_GUIDE_HIT_PX = 6
 
 
 HANDLE = 10.0  # Invisible corner / edge hit thickness (px, item space)
 MIN_SIZE = 4.0
+DRAG_THRESHOLD = 5.0  # view px before click becomes marquee / drag
 
 # Selected = normal blue; hovered border = white
 SEL_BLUE = QColor(40, 130, 255)
@@ -58,6 +72,10 @@ IDLE_YELLOW = QColor(150, 140, 40, 220)
 FOCUS_LABEL_BG = QColor(0, 0, 0)
 SELECT_LABEL_TEXT = SEL_BLUE
 HOVER_LABEL_TEXT = QColor(255, 255, 255)
+GUIDE_LINE = QColor(220, 220, 230, 128)  # 1px, ~50% alpha
+RULER_BG = QColor(30, 30, 34)
+RULER_TICK = QColor(120, 120, 128)
+RULER_TICK_MAJOR = QColor(170, 170, 178)
 
 
 def _path_under_section(node_path: str, section_path: str) -> bool:
@@ -67,6 +85,35 @@ def _path_under_section(node_path: str, section_path: str) -> bool:
     if node_path == section_path:
         return True
     return node_path.startswith(section_path + "/")
+
+
+class GuideLine(QGraphicsLineItem):
+    """1px semi-transparent horizontal or vertical guide across the stage."""
+
+    _SPAN = 50_000.0
+
+    def __init__(self, *, vertical: bool, value: float) -> None:
+        super().__init__()
+        self.vertical = vertical
+        self.value = 0.0
+        pen = QPen(GUIDE_LINE)
+        pen.setWidth(1)
+        pen.setCosmetic(True)
+        self.setPen(pen)
+        self.setZValue(_GUIDE_Z)
+        self.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, False)
+        self.set_value(value)
+
+    def set_value(self, value: float) -> None:
+        v = float(round(value))
+        self.value = v
+        span = self._SPAN
+        if self.vertical:
+            self.setLine(v, -span, v, span)
+        else:
+            self.setLine(-span, v, span, v)
 
 
 class FocusChrome(QGraphicsItem):
@@ -100,7 +147,7 @@ class FocusChrome(QGraphicsItem):
         self._meta = bool(item.node.from_meta)
         # Select fill is toggle-gated; hover never fills.
         self._show_fill = bool(show_fill) if kind == "select" else False
-        self.setPos(item.node.abs_x, item.node.abs_y)
+        self.setPos(item.pos())
         self._rect = QRectF(0, 0, max(item.node.width, 1), max(item.node.height, 1))
         if self._meta:
             self._poly = QPolygonF(item._meta_diamond_poly())
@@ -191,7 +238,7 @@ class FocusLabelOverlay(QGraphicsItem):
             br = item_br
             lx = 0.0 - br.x()
             ly = -gap - br.height() - br.y()
-        ox, oy = item.node.abs_x, item.node.abs_y
+        ox, oy = item.pos().x(), item.pos().y()
         self.setPos(ox + lx, oy + ly)
         top = mapped.top() - pad
         bottom = mapped.bottom() + pad
@@ -199,7 +246,7 @@ class FocusLabelOverlay(QGraphicsItem):
         if item.node.from_meta:
             left = mapped.left() - pad
         else:
-            left = item.node.abs_x - (ox + lx)
+            left = -lx  # box-relative: label sits above the item origin
         self._bg.setRect(QRectF(left, top, max(right - left, 1.0), bottom - top))
         self.show()
 
@@ -218,8 +265,8 @@ class WidgetItem(QGraphicsRectItem):
         node: LayoutNode,
         resolver: TextureResolver,
         *,
-        label_font_size: int = 8,
-        show_element_labels: bool = True,
+        label_font_size: int = 5,
+        show_element_labels: bool = False,
         show_box_border: bool = False,
         show_box_fill: bool = False,
     ) -> None:
@@ -310,6 +357,7 @@ class WidgetItem(QGraphicsRectItem):
         super().hoverEnterEvent(event)
 
     def hoverLeaveEvent(self, event) -> None:  # noqa: N802
+        self.unsetCursor()
         scene = self.scene()
         if isinstance(scene, UiScene) and scene.hover_path() == self.node.path:
             scene.set_hover_path(None)
@@ -387,7 +435,7 @@ class WidgetItem(QGraphicsRectItem):
         pen.setCosmetic(True)
         self._idle_border.setPen(pen)
         self._idle_border.setBrush(QBrush(Qt.BrushStyle.NoBrush))
-        self._idle_border.setPos(self.node.abs_x, self.node.abs_y)
+        self._idle_border.setPos(self.pos())
         self._idle_border.setRect(0, 0, max(self.node.width, 1), max(self.node.height, 1))
         self._idle_border.show()
 
@@ -486,17 +534,39 @@ class WidgetItem(QGraphicsRectItem):
             gap = 2.0
             lx = 0.0 - br.x()
             ly = -gap - br.height() - br.y()
-        # Scene coords: labels are not parented (above textures, below chrome).
-        ox, oy = self.node.abs_x, self.node.abs_y
+        # Scene coords: labels follow the item's visual position (pos), not stale abs_*.
+        ox, oy = self.pos().x(), self.pos().y()
         self._label_shadow.setPos(ox + lx + 1, oy + ly + 1)
         self._label_item.setPos(ox + lx, oy + ly)
 
+    def follow_overlays_to_pos(self) -> None:
+        """Reposition scene overlays to match current item.pos() (no texture work)."""
+        if self._label_item.isVisible():
+            self._apply_label()
+        elif self._idle_border.isVisible():
+            self._sync_idle_border(
+                selected=self.isSelected(), hovered=self.is_hovered()
+            )
+        elif self.show_box_border and not self.isSelected() and not self.is_hovered():
+            self._sync_idle_border(
+                selected=self.isSelected(), hovered=self.is_hovered()
+            )
+
+    def _write_geometry_from_pos(self) -> None:
+        """Write local x/y/w/h from item.pos/rect without recompute_absolute."""
+        ox, oy = self.node.coord_origin()
+        self.node.set_geometry(
+            x=round(self.pos().x() - ox),
+            y=round(self.pos().y() - oy),
+            width=round(self.rect().width()),
+            height=round(self.rect().height()),
+        )
+
     def itemChange(self, change: QGraphicsItem.GraphicsItemChange, value):  # noqa: N802
         if change == QGraphicsItem.GraphicsItemChange.ItemSelectedHasChanged:
-            # Repaint diamond/box colors on select (yellow → blue).
-            if not self._updating:
-                self.update()
-                self.refresh_look()
+            # Intentionally empty: any work here (even update()) can crash Qt when
+            # combined with ItemHasNoContents / flag churn. Chrome is scene-owned.
+            return super().itemChange(change, value)
         if (
             change == QGraphicsItem.GraphicsItemChange.ItemPositionChange
             and not self._updating
@@ -533,18 +603,21 @@ class WidgetItem(QGraphicsRectItem):
             root = root.parent
         root.recompute_absolute(0.0, 0.0)
 
-    def _handle_at(self, pos: QPointF) -> str | None:
-        """Invisible resize zones: 10×10 corners, full mid-edge strips between them."""
+    def _handle_at(self, pos: QPointF, *, hit: float | None = None) -> str | None:
+        """Invisible resize zones: corner squares + mid-edge strips.
+
+        ``hit`` is the half-thickness in item space (default ``HANDLE``).
+        """
         if self.node.from_meta:
             return None  # diamond markers are move-only
         r = self.rect()
         x, y = pos.x(), pos.y()
         left, right, top, bottom = r.left(), r.right(), r.top(), r.bottom()
-        hit = HANDLE
-        near_l = abs(x - left) <= hit
-        near_r = abs(x - right) <= hit
-        near_t = abs(y - top) <= hit
-        near_b = abs(y - bottom) <= hit
+        h = HANDLE if hit is None else float(hit)
+        near_l = abs(x - left) <= h
+        near_r = abs(x - right) <= h
+        near_t = abs(y - top) <= h
+        near_b = abs(y - bottom) <= h
         # Corners win at the intersections.
         if near_l and near_t:
             return "tl"
@@ -555,32 +628,69 @@ class WidgetItem(QGraphicsRectItem):
         if near_r and near_b:
             return "br"
         # Edge strips: whole side minus the corner squares.
-        if near_t and left + hit < x < right - hit:
+        if near_t and left + h < x < right - h:
             return "t"
-        if near_b and left + hit < x < right - hit:
+        if near_b and left + h < x < right - h:
             return "b"
-        if near_l and top + hit < y < bottom - hit:
+        if near_l and top + h < y < bottom - h:
             return "l"
-        if near_r and top + hit < y < bottom - hit:
+        if near_r and top + h < y < bottom - h:
             return "r"
         return None
 
+    def begin_resize(self, corner: str, scene_pos: QPointF) -> None:
+        """Start a canvas-driven resize (do not rely on Qt item mouse delivery)."""
+        self._geo_before = self._snapshot_geo()
+        self._resizing = True
+        self._resize_corner = corner
+        self._resize_start = QPointF(scene_pos)
+        self._start_rect = QRectF(self.rect())
+        self._start_pos = QPointF(self.pos())
+
+    def apply_resize(self, scene_pos: QPointF) -> None:
+        if not self._resizing or not self._resize_corner:
+            return
+        delta = scene_pos - self._resize_start
+        r = QRectF(self._start_rect)
+        pos = QPointF(self._start_pos)
+        c = self._resize_corner
+        if "r" in c:
+            r.setWidth(max(MIN_SIZE, r.width() + delta.x()))
+        if "l" in c:
+            new_w = max(MIN_SIZE, r.width() - delta.x())
+            pos.setX(self._start_pos.x() + (r.width() - new_w))
+            r.setWidth(new_w)
+        if "b" in c:
+            r.setHeight(max(MIN_SIZE, r.height() + delta.y()))
+        if "t" in c:
+            new_h = max(MIN_SIZE, r.height() - delta.y())
+            pos.setY(self._start_pos.y() + (r.height() - new_h))
+            r.setHeight(new_h)
+        self._updating = True
+        self.setRect(0, 0, round(r.width()), round(r.height()))
+        self.setPos(round(pos.x()), round(pos.y()))
+        self._updating = False
+        self._sync_node_from_item()
+        self._apply_texture()
+        self._apply_label()
+        scene = self.scene()
+        if isinstance(scene, UiScene):
+            scene.geometry_changed.emit(self.node)
+
+    def end_resize(self) -> None:
+        if not self._resizing:
+            return
+        self._resizing = False
+        self._resize_corner = None
+        scene = self.scene()
+        if isinstance(scene, UiScene):
+            scene.refresh_item_positions()
+            scene.geometry_changed.emit(self.node)
+        self._commit_geo_edit()
+
     def hoverMoveEvent(self, event) -> None:  # noqa: N802
-        handle = self._handle_at(event.pos())
-        cursors = {
-            "br": Qt.CursorShape.SizeFDiagCursor,
-            "tl": Qt.CursorShape.SizeFDiagCursor,
-            "tr": Qt.CursorShape.SizeBDiagCursor,
-            "bl": Qt.CursorShape.SizeBDiagCursor,
-            "t": Qt.CursorShape.SizeVerCursor,
-            "b": Qt.CursorShape.SizeVerCursor,
-            "l": Qt.CursorShape.SizeHorCursor,
-            "r": Qt.CursorShape.SizeHorCursor,
-        }
-        if handle:
-            self.setCursor(cursors[handle])
-        else:
-            self.setCursor(Qt.CursorShape.SizeAllCursor)
+        # Cursor is owned by UiCanvas._update_edit_cursor (selected edge/move only).
+        self.unsetCursor()
         super().hoverMoveEvent(event)
 
     def _snapshot_geo(self) -> GeoState:
@@ -596,7 +706,7 @@ class WidgetItem(QGraphicsRectItem):
         if self._geo_before is None:
             return
         after = self._snapshot_geo()
-        edit = GeoEdit(before=self._geo_before, after=after)
+        edit = GeoEdit.single(self._geo_before, after)
         self._geo_before = None
         if not edit.changed():
             return
@@ -605,60 +715,21 @@ class WidgetItem(QGraphicsRectItem):
             scene.push_geo_edit(edit)
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
+        # Resize is started by UiCanvas.begin_resize — never via item delivery.
         if event.button() == Qt.MouseButton.LeftButton:
             self._geo_before = self._snapshot_geo()
-            corner = self._handle_at(event.pos())
-            if corner:
-                self._resizing = True
-                self._resize_corner = corner
-                self._resize_start = event.scenePos()
-                self._start_rect = QRectF(self.rect())
-                self._start_pos = QPointF(self.pos())
-                event.accept()
-                return
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event) -> None:  # noqa: N802
         if self._resizing and self._resize_corner:
-            delta = event.scenePos() - self._resize_start
-            r = QRectF(self._start_rect)
-            pos = QPointF(self._start_pos)
-            c = self._resize_corner
-            if "r" in c:
-                r.setWidth(max(MIN_SIZE, r.width() + delta.x()))
-            if "l" in c:
-                new_w = max(MIN_SIZE, r.width() - delta.x())
-                pos.setX(self._start_pos.x() + (r.width() - new_w))
-                r.setWidth(new_w)
-            if "b" in c:
-                r.setHeight(max(MIN_SIZE, r.height() + delta.y()))
-            if "t" in c:
-                new_h = max(MIN_SIZE, r.height() - delta.y())
-                pos.setY(self._start_pos.y() + (r.height() - new_h))
-                r.setHeight(new_h)
-            self._updating = True
-            self.setRect(0, 0, round(r.width()), round(r.height()))
-            self.setPos(round(pos.x()), round(pos.y()))
-            self._updating = False
-            self._sync_node_from_item()
-            self._apply_texture()
-            self._apply_label()
-            scene = self.scene()
-            if isinstance(scene, UiScene):
-                scene.geometry_changed.emit(self.node)
+            self.apply_resize(event.scenePos())
             event.accept()
             return
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802
         if self._resizing:
-            self._resizing = False
-            self._resize_corner = None
-            scene = self.scene()
-            if isinstance(scene, UiScene):
-                scene.refresh_item_positions()
-                scene.geometry_changed.emit(self.node)
-            self._commit_geo_edit()
+            self.end_resize()
             event.accept()
             return
         super().mouseReleaseEvent(event)
@@ -688,8 +759,8 @@ class UiScene(QGraphicsScene):
         self,
         resolver: TextureResolver,
         *,
-        label_font_size: int = 8,
-        show_element_labels: bool = True,
+        label_font_size: int = 5,
+        show_element_labels: bool = False,
         show_box_border: bool = False,
         show_box_fill: bool = False,
     ) -> None:
@@ -711,19 +782,34 @@ class UiScene(QGraphicsScene):
         self._stage.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
         self._stage.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, False)
         self.addItem(self._stage)
-        self._hover_chrome = FocusChrome()
-        self._hover_chrome.setZValue(_HOVER_CHROME_Z)
-        self.addItem(self._hover_chrome)
-        self._select_chrome = FocusChrome()
-        self._select_chrome.setZValue(_SELECT_CHROME_Z)
-        self.addItem(self._select_chrome)
+        self._hover_chromes: list[FocusChrome] = []
+        self._select_chromes: list[FocusChrome] = []
         self._select_label = FocusLabelOverlay()
         self._select_label.setZValue(_SELECT_LABEL_Z)
         self.addItem(self._select_label)
         self._hover_label = FocusLabelOverlay()
         self._hover_label.setZValue(_HOVER_LABEL_Z)
         self.addItem(self._hover_label)
+        self._guides: list[GuideLine] = []
+        # Marquee drag: paths that currently have white hover preview (None = idle).
+        self._marquee_preview: list[WidgetItem] | None = None
         self.selectionChanged.connect(self._on_selection_changed)
+
+    def add_guide(self, *, vertical: bool, value: float) -> GuideLine:
+        guide = GuideLine(vertical=vertical, value=value)
+        self.addItem(guide)
+        self._guides.append(guide)
+        return guide
+
+    def remove_guide(self, guide: GuideLine) -> None:
+        if guide in self._guides:
+            self._guides.remove(guide)
+        if guide.scene() is self:
+            self.removeItem(guide)
+
+    def clear_guides(self) -> None:
+        for guide in list(self._guides):
+            self.remove_guide(guide)
 
     def push_geo_edit(self, edit: GeoEdit) -> None:
         self.undo_stack.push(edit)
@@ -748,6 +834,149 @@ class UiScene(QGraphicsScene):
         self.doc.recompute_absolute(0.0, 0.0)
         self.refresh_item_positions()
         return node
+
+    def apply_geo_edit(self, edit: GeoEdit, *, use_after: bool) -> LayoutNode | None:
+        """Apply every part of a (possibly multi) geometry edit. Returns last node."""
+        if self.doc is None:
+            return None
+        last: LayoutNode | None = None
+        for before, after in edit.parts:
+            state = after if use_after else before
+            node = self.doc.find_by_path(state.path)
+            if node is None:
+                continue
+            node.set_geometry(
+                x=state.x,
+                y=state.y,
+                width=state.width,
+                height=state.height,
+            )
+            last = node
+        self.doc.recompute_absolute(0.0, 0.0)
+        self.refresh_item_positions()
+        return last
+
+    def selected_widgets(self) -> list[WidgetItem]:
+        return [
+            i
+            for i in self.selectedItems()
+            if isinstance(i, WidgetItem) and i.node.visible and i.isVisible()
+        ]
+
+    @staticmethod
+    def move_roots(items: list[WidgetItem]) -> list[WidgetItem]:
+        """Selected items whose ancestors are not also selected (avoid double-move)."""
+        paths = {i.node.path for i in items}
+        roots: list[WidgetItem] = []
+        for item in items:
+            parent = item.node.parent
+            under = False
+            while parent is not None:
+                if parent.path in paths:
+                    under = True
+                    break
+                parent = parent.parent
+            if not under:
+                roots.append(item)
+        return roots
+
+    def items_in_subtree(self, root: WidgetItem) -> list[WidgetItem]:
+        """Root plus every widget item under its layout-node subtree."""
+        found: list[WidgetItem] = [root]
+        for node in root.node.iter_all():
+            if node is root.node or not node.path:
+                continue
+            item = self._items.get(node.path)
+            if item is not None:
+                found.append(item)
+        return found
+
+    def _ensure_select_chromes(self, count: int) -> None:
+        while len(self._select_chromes) < count:
+            chrome = FocusChrome()
+            chrome.setZValue(_SELECT_CHROME_Z)
+            self.addItem(chrome)
+            self._select_chromes.append(chrome)
+
+    def _ensure_hover_chromes(self, count: int) -> None:
+        while len(self._hover_chromes) < count:
+            chrome = FocusChrome()
+            chrome.setZValue(_HOVER_CHROME_Z)
+            self.addItem(chrome)
+            self._hover_chromes.append(chrome)
+
+    def set_marquee_preview(self, items: list[WidgetItem] | None) -> None:
+        """White hover borders for fully-enclosed marquee candidates (or clear)."""
+        self._marquee_preview = None if items is None else list(items)
+        self._sync_focus_chrome()
+
+    def _sync_focus_chrome(self) -> None:
+        """Borders/fills always above every texture, label, and diamond."""
+        if self._hover_path:
+            h = self._items.get(self._hover_path)
+            if h is None or not h.node.visible or not h.isVisible():
+                self._hover_path = None
+
+        selected = self.selected_widgets()
+        selected_set = set(selected)
+        primary = selected[-1] if selected else None
+
+        # Labels stay in the label band — never above borders/fills.
+        for item in self._items.values():
+            base = getattr(item, "_label_z_base", _LABEL_Z)
+            item._label_shadow.setZValue(base)
+            item._label_item.setZValue(base + 0.01)
+            item._idle_border.setZValue(_IDLE_CHROME_Z)
+
+        self._ensure_select_chromes(len(selected))
+        self._select_label.setZValue(_SELECT_LABEL_Z)
+        self._hover_label.setZValue(_HOVER_LABEL_Z)
+        show_fill = bool(self.show_box_fill)
+        for i, chrome in enumerate(self._select_chromes):
+            chrome.setZValue(_SELECT_CHROME_Z)
+            if i < len(selected):
+                chrome.bind(selected[i], kind="select", show_fill=show_fill)
+            else:
+                chrome.bind(None, kind="select", show_fill=False)
+
+        # Marquee preview: white border on every fully enclosed eligible widget.
+        if self._marquee_preview is not None:
+            preview = [
+                i
+                for i in self._marquee_preview
+                if i.node.visible
+                and i.isVisible()
+                and not i.node.from_meta
+                and i.node.path in self._items
+            ]
+            self._ensure_hover_chromes(max(len(preview), 1))
+            for i, chrome in enumerate(self._hover_chromes):
+                chrome.setZValue(_HOVER_CHROME_Z)
+                if i < len(preview):
+                    chrome.bind(preview[i], kind="hover", show_fill=False)
+                else:
+                    chrome.bind(None, kind="hover", show_fill=False)
+            self._hover_label.bind(None, text_color=HOVER_LABEL_TEXT)
+        else:
+            hover = self._items.get(self._hover_path) if self._hover_path else None
+            if hover is not None and (
+                not hover.node.visible
+                or not hover.isVisible()
+                or hover in selected_set
+                or hover.node.from_meta
+            ):
+                hover = None
+            self._ensure_hover_chromes(1)
+            for i, chrome in enumerate(self._hover_chromes):
+                chrome.setZValue(_HOVER_CHROME_Z)
+                if i == 0:
+                    chrome.bind(hover, kind="hover", show_fill=False)
+                else:
+                    chrome.bind(None, kind="hover", show_fill=False)
+            self._hover_label.bind(hover, text_color=HOVER_LABEL_TEXT)
+
+        # Caption only for the primary (last) selection.
+        self._select_label.bind(primary, text_color=SELECT_LABEL_TEXT)
 
     def set_label_font_size(self, size: int) -> None:
         self.label_font_size = max(LABEL_FONT_MIN, int(size))
@@ -778,62 +1007,6 @@ class UiScene(QGraphicsScene):
             )
         self._sync_focus_chrome()
 
-    def _sync_focus_chrome(self) -> None:
-        """Borders/fills always above every texture, label, and diamond."""
-        # Drop illegal selection/hover on disabled-layer widgets.
-        for item in list(self.selectedItems()):
-            if isinstance(item, WidgetItem) and (
-                not item.node.visible or not item.isVisible()
-            ):
-                item.setSelected(False)
-        if self._hover_path:
-            h = self._items.get(self._hover_path)
-            if h is None or not h.node.visible or not h.isVisible():
-                self._hover_path = None
-
-        selected = [
-            i
-            for i in self.selectedItems()
-            if isinstance(i, WidgetItem) and i.node.visible and i.isVisible()
-        ]
-        # Max one selected.
-        if len(selected) > 1:
-            keep = selected[-1]
-            self.blockSignals(True)
-            try:
-                for item in selected:
-                    if item is not keep:
-                        item.setSelected(False)
-            finally:
-                self.blockSignals(False)
-            selected = [keep]
-        sel = selected[0] if selected else None
-
-        hover = self._items.get(self._hover_path) if self._hover_path else None
-        if hover is not None and (
-            not hover.node.visible or not hover.isVisible() or hover is sel
-        ):
-            hover = None  # no hover chrome on the selected element
-
-        # Labels stay in the label band — never above borders/fills.
-        for item in self._items.values():
-            base = getattr(item, "_label_z_base", _LABEL_Z)
-            item._label_shadow.setZValue(base)
-            item._label_item.setZValue(base + 0.01)
-            item._idle_border.setZValue(_IDLE_CHROME_Z)
-
-        # Select fill whenever the toggle is on (including untextured).
-        self._select_chrome.setZValue(_SELECT_CHROME_Z)
-        self._hover_chrome.setZValue(_HOVER_CHROME_Z)
-        self._select_label.setZValue(_SELECT_LABEL_Z)
-        self._hover_label.setZValue(_HOVER_LABEL_Z)
-        self._select_chrome.bind(
-            sel, kind="select", show_fill=bool(self.show_box_fill)
-        )
-        self._hover_chrome.bind(hover, kind="hover", show_fill=False)
-        self._select_label.bind(sel, text_color=SELECT_LABEL_TEXT)
-        self._hover_label.bind(hover, text_color=HOVER_LABEL_TEXT)
-
     def set_document(self, doc: LayoutNode | None) -> None:
         for item in list(self._items.values()):
             item.detach_overlays(self)
@@ -842,6 +1015,8 @@ class UiScene(QGraphicsScene):
         self.clear_undo()
         self._layer_visible = {}
         self._hover_path = None
+        self._marquee_preview = None
+        self.clear_guides()
         self.doc = doc
         if doc is None:
             self._sync_focus_chrome()
@@ -879,6 +1054,16 @@ class UiScene(QGraphicsScene):
         # Visibility applied after caller sets layer toggles via set_layer_states.
 
     def refresh_item_positions(self) -> None:
+        """Sync item.pos / overlays from node.abs_* (no texture re-resolve)."""
+        for item in self._items.values():
+            item._updating = True
+            item.setRect(0, 0, max(item.node.width, 1), max(item.node.height, 1))
+            item.setPos(item.node.abs_x, item.node.abs_y)
+            item._updating = False
+            item.follow_overlays_to_pos()
+        self._sync_focus_chrome()
+
+    def refresh_all_looks(self) -> None:
         for item in self._items.values():
             item.refresh_look()
         self._sync_focus_chrome()
@@ -903,7 +1088,7 @@ class UiScene(QGraphicsScene):
             if not node.path:
                 continue
             node.visible = self._effective_layer_visible(node.path)
-        self.refresh_item_positions()
+        self.refresh_all_looks()
         # Drop selection / hover on anything now hidden.
         hover = self._hover_path
         if hover and hover in self._items and not self._items[hover].node.visible:
@@ -912,9 +1097,9 @@ class UiScene(QGraphicsScene):
             if isinstance(item, WidgetItem) and not item.node.visible:
                 item.setSelected(False)
         for view in self.views():
-            refresh = getattr(view, "_refresh_stack_peers", None)
-            if callable(refresh):
-                refresh(None)
+            clear = getattr(view, "_clear_stack_peers", None)
+            if callable(clear):
+                clear()
 
     def _effective_layer_visible(self, node_path: str) -> bool:
         """Visible iff the deepest matching layer toggle is on.
@@ -990,33 +1175,32 @@ class UiScene(QGraphicsScene):
         return n
 
     def _on_selection_changed(self) -> None:
-        # Enforce max-one selection and reject disabled-layer widgets.
-        selected = [
-            i
-            for i in self.selectedItems()
-            if isinstance(i, WidgetItem) and i.node.visible and i.isVisible()
-        ]
-        for item in list(self.selectedItems()):
-            if isinstance(item, WidgetItem) and item not in selected:
-                item.setSelected(False)
-        if len(selected) > 1:
-            keep = selected[-1]
-            self.blockSignals(True)
-            try:
-                for item in selected:
-                    if item is not keep:
-                        item.setSelected(False)
-            finally:
-                self.blockSignals(False)
-            selected = [keep]
+        # Avoid mutating item flags / nested setSelected during Qt's selection notify.
+        selected = self.selected_widgets()
+        paths = [i.node.path for i in selected]
+        _log.debug("selection_changed count=%s paths=%s", len(selected), paths)
         if selected:
-            self.selection_node_changed.emit(selected[0].node)
+            self.selection_node_changed.emit(selected[-1].node)
         else:
             self.selection_node_changed.emit(None)
-        # Selected/idle borders live on the widgets — refresh all looks.
+        self._sync_focus_chrome()
+        QTimer.singleShot(0, self._after_selection_changed)
+
+    def _after_selection_changed(self) -> None:
+        _log.debug("after_selection_changed begin")
+        for item in list(self.selectedItems()):
+            if isinstance(item, WidgetItem) and (
+                not item.node.visible or not item.isVisible()
+            ):
+                _log.debug("deselect invisible %s", item.node.path)
+                item.setSelected(False)
         for item in self._items.values():
             item.refresh_look()
         self._sync_focus_chrome()
+        _log.debug(
+            "after_selection_changed done selected=%s",
+            [i.node.path for i in self.selected_widgets()],
+        )
 
     def render_to_image(self, scale: float = 1.0) -> QImage:
         w = int(UI_WIDTH * scale)
@@ -1033,6 +1217,7 @@ class UiScene(QGraphicsScene):
 
 class UiCanvas(QGraphicsView):
     stack_peers_changed = pyqtSignal(object)  # frozenset[str] peer paths
+    view_changed = pyqtSignal()  # zoom / pan / resize — rulers refresh
 
     def __init__(self, scene: UiScene) -> None:
         super().__init__(scene)
@@ -1044,30 +1229,37 @@ class UiCanvas(QGraphicsView):
         self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
         self.setBackgroundBrush(QBrush(QColor(18, 18, 20)))
         self._panning = False
+        self._pan_button: Qt.MouseButton | None = None
         self._pan_start = QPointF()
-        self.scroll_select = False
         self._stack_peer_paths: frozenset[str] = frozenset()
-        # Ordered scroll-select targets under the cursor (deepest first); wheel cycles these.
+        # Last Ctrl+click cycle stack under the cursor (deepest/smallest first).
         self._scroll_stack: list[WidgetItem] = []
         self._last_stack_view_pos: QPointF | None = None
         # While pressed: only the pick accepts mouse / is selectable.
         self._press_mouse_restore: (
             list[tuple[WidgetItem, Qt.MouseButton, bool]] | None
         ) = None
+        # Left-button gesture: None | "click_or_marquee" | "marquee" | "move" | "resize"
+        self._gesture: str | None = None
+        self._press_view_pos = QPointF()
+        self._press_scene_pos = QPointF()
+        self._press_pick: WidgetItem | None = None
+        self._move_roots: list[WidgetItem] = []
+        self._move_origins: dict[WidgetItem, QPointF] = {}
+        self._move_befores: dict[WidgetItem, GeoState] = {}
+        self._move_did_drag = False
+        self._marquee_origin = QPointF()
+        self._marquee_item: QGraphicsRectItem | None = None
+        self._last_cursor_view_pos = QPointF()
         self.setMouseTracking(True)
         self.scene().selectionChanged.connect(self._on_selection_changed_stack)
         self.fit_stage()
 
-    def set_scroll_select(self, enabled: bool) -> None:
-        self.scroll_select = bool(enabled)
-        if not self.scroll_select:
-            self._scroll_stack = []
-            self._last_stack_view_pos = None
-            self._set_stack_peers(set())
-
     def _on_selection_changed_stack(self) -> None:
-        # Keep peers tied to the last cursor stack — never rebuild from selection center.
-        self._refresh_stack_peers(self._last_stack_view_pos)
+        # Drop transient Ctrl+click peer greys; keep cursor in sync.
+        if self._stack_peer_paths:
+            self._set_stack_peers(set())
+        self._update_edit_cursor(self._last_cursor_view_pos)
 
     def _set_stack_peers(self, peers: set[WidgetItem]) -> None:
         """Notify Tree of overlapping stack peers (no WYSIWYG grey chrome)."""
@@ -1081,25 +1273,11 @@ class UiCanvas(QGraphicsView):
         self._stack_peer_paths = paths
         self.stack_peers_changed.emit(paths)
 
-    def _refresh_stack_peers(self, view_pos: QPointF | None = None) -> None:
-        """Grey-highlight scroll-targets under the cursor; store ordered stack for wheel."""
-        if not self.scroll_select:
-            self._scroll_stack = []
-            if self._stack_peer_paths:
-                self._set_stack_peers(set())
-            return
-        if view_pos is not None:
-            self._last_stack_view_pos = QPointF(view_pos)
-        pos = self._last_stack_view_pos
-        stack: list[WidgetItem] = self._widget_items_at(pos) if pos is not None else []
-        stack = [i for i in stack if i.node.visible and i.isVisible()]
-        self._scroll_stack = stack
-        if len(stack) < 2:
+    def _clear_stack_peers(self) -> None:
+        self._scroll_stack = []
+        self._last_stack_view_pos = None
+        if self._stack_peer_paths:
             self._set_stack_peers(set())
-            return
-        # Tree greys every target except the current selection (selection has its own style).
-        peers = {item for item in stack if not item.isSelected()}
-        self._set_stack_peers(peers)
 
     def _update_pan_limits(self) -> None:
         """Allow panning until each stage edge reaches the opposite viewport edge."""
@@ -1108,6 +1286,7 @@ class UiCanvas(QGraphicsView):
         mh = max(float(vis.height()), 1.0)
         # One viewport of overscroll past each side of the 1024×768 stage.
         self.setSceneRect(-mw, -mh, UI_WIDTH + 2.0 * mw, UI_HEIGHT + 2.0 * mh)
+        self.view_changed.emit()
 
     def fit_stage(self) -> None:
         self.fitInView(QRectF(0, 0, UI_WIDTH, UI_HEIGHT), Qt.AspectRatioMode.KeepAspectRatio)
@@ -1222,9 +1401,223 @@ class UiCanvas(QGraphicsView):
         if not pick.isSelected():
             pick.setSelected(True)
 
-    def wheelEvent(self, event: QWheelEvent) -> None:  # noqa: N802
-        # MMB / Alt-drag pan: ignore wheel (no zoom mid-pan).
+    def _select_items(self, items: list[WidgetItem]) -> None:
+        scene = self.scene()
+        if scene is None:
+            return
+        scene.clearSelection()
+        for item in items:
+            item.setSelected(True)
+
+    def _marquee_scene_rect(self, a: QPointF, b: QPointF) -> QRectF:
+        return QRectF(a, b).normalized()
+
+    def _ensure_marquee_item(self) -> QGraphicsRectItem:
+        scene = self.scene()
+        assert isinstance(scene, UiScene)
+        if self._marquee_item is None:
+            item = QGraphicsRectItem()
+            pen = QPen(SEL_BLUE)
+            pen.setWidth(1)
+            pen.setCosmetic(True)
+            pen.setStyle(Qt.PenStyle.DashLine)
+            item.setPen(pen)
+            item.setBrush(QBrush(QColor(40, 130, 255, 40)))
+            item.setZValue(_MARQUEE_Z)
+            item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+            scene.addItem(item)
+            self._marquee_item = item
+        return self._marquee_item
+
+    def _clear_marquee(self) -> None:
+        if self._marquee_item is not None:
+            sc = self._marquee_item.scene()
+            if sc is not None:
+                sc.removeItem(self._marquee_item)
+            self._marquee_item = None
+        scene = self.scene()
+        if isinstance(scene, UiScene):
+            scene.set_marquee_preview(None)
+
+    def _update_marquee(self, scene_pos: QPointF) -> None:
+        rect = self._marquee_scene_rect(self._marquee_origin, scene_pos)
+        item = self._ensure_marquee_item()
+        item.setRect(rect)
+        scene = self.scene()
+        if isinstance(scene, UiScene):
+            scene.set_marquee_preview(self._widgets_fully_in_rect(rect))
+
+    def _widgets_fully_in_rect(self, rect: QRectF) -> list[WidgetItem]:
+        """Fully enclosed widgets eligible for marquee select / preview."""
+        scene = self.scene()
+        if not isinstance(scene, UiScene):
+            return []
+        out: list[WidgetItem] = []
+        for item in scene._items.values():
+            # Disabled layers: node.visible is False; also skip hidden graphics items.
+            if not item.isVisible() or not item.node.visible:
+                continue
+            if item.node.from_meta:
+                continue  # root diamonds are never marquee-selected
+            br = QRectF(
+                item.node.abs_x,
+                item.node.abs_y,
+                max(item.node.width, 1.0),
+                max(item.node.height, 1.0),
+            )
+            if rect.contains(br):
+                out.append(item)
+        out.sort(key=lambda i: max(i.node.width, 1.0) * max(i.node.height, 1.0))
+        return out
+
+    def _begin_group_move(self, selected: list[WidgetItem]) -> None:
+        scene = self.scene()
+        if not isinstance(scene, UiScene):
+            return
+        roots = scene.move_roots(selected)
+        self._move_roots = roots
+        # Visual followers: roots + layout descendants (same delta while dragging).
+        moving: dict[int, WidgetItem] = {}
+        for root in roots:
+            for item in scene.items_in_subtree(root):
+                moving[id(item)] = item
+        self._move_origins = {i: QPointF(i.pos()) for i in moving.values()}
+        self._move_befores = {i: i._snapshot_geo() for i in roots}
+        self._move_did_drag = False
+
+    def _apply_group_move(self, scene_pos: QPointF) -> None:
+        """Visual-only drag: setPos + overlays. No tree recompute / props / textures."""
+        delta = scene_pos - self._press_scene_pos
+        if abs(delta.x()) >= 0.5 or abs(delta.y()) >= 0.5:
+            self._move_did_drag = True
+        dx = round(delta.x())
+        dy = round(delta.y())
+        for item, origin in self._move_origins.items():
+            item._updating = True
+            item.setPos(origin.x() + dx, origin.y() + dy)
+            item._updating = False
+            item.follow_overlays_to_pos()
+        scene = self.scene()
+        if isinstance(scene, UiScene):
+            scene._sync_focus_chrome()
+
+    def _end_group_move(self) -> None:
+        if not self._move_did_drag:
+            self._move_roots = []
+            self._move_origins = {}
+            self._move_befores = {}
+            return
+        pairs: list[tuple[GeoState, GeoState]] = []
+        scene = self.scene()
+        for item, before in self._move_befores.items():
+            item._write_geometry_from_pos()
+            after = item._snapshot_geo()
+            if before != after:
+                pairs.append((before, after))
+        if isinstance(scene, UiScene) and scene.doc is not None:
+            scene.doc.recompute_absolute(0.0, 0.0)
+            if pairs:
+                scene.push_geo_edit(GeoEdit.multi(pairs))
+            # One props/dirty notify — handler refreshes positions once.
+            if self._move_roots:
+                scene.geometry_changed.emit(self._move_roots[-1].node)
+        self._move_roots = []
+        self._move_origins = {}
+        self._move_befores = {}
+        self._move_did_drag = False
+
+    def _view_drag_distance(self, pos: QPointF) -> float:
+        d = pos - self._press_view_pos
+        return abs(d.x()) + abs(d.y())
+
+    _RESIZE_CURSORS = {
+        "br": Qt.CursorShape.SizeFDiagCursor,
+        "tl": Qt.CursorShape.SizeFDiagCursor,
+        "tr": Qt.CursorShape.SizeBDiagCursor,
+        "bl": Qt.CursorShape.SizeBDiagCursor,
+        "t": Qt.CursorShape.SizeVerCursor,
+        "b": Qt.CursorShape.SizeVerCursor,
+        "l": Qt.CursorShape.SizeHorCursor,
+        "r": Qt.CursorShape.SizeHorCursor,
+    }
+
+    def _scene_pos_from_view(self, view_pos: QPointF) -> QPointF:
+        """Float-accurate view → scene map (mapToScene only accepts QPoint)."""
+        inverted, ok = self.viewportTransform().inverted()
+        if ok:
+            return inverted.map(QPointF(view_pos))
+        return self.mapToScene(view_pos.toPoint())
+
+    def _resize_hit_at(self, view_pos: QPointF) -> tuple[WidgetItem, str] | None:
+        """Single selected widget's resize handle under the cursor, if any.
+
+        Checked before pick/marquee so a resize cursor cannot fall through to
+        selecting a smaller stacked child. Hit thickness is ~HANDLE viewport px
+        so the grab zone matches the cursor at any zoom.
+        """
+        scene = self.scene()
+        if not isinstance(scene, UiScene):
+            return None
+        selected = scene.selected_widgets()
+        if len(selected) != 1:
+            return None
+        item = selected[0]
+        if (
+            not item.isVisible()
+            or not item.node.visible
+            or item.node.from_meta
+            or item.scene() is not scene
+        ):
+            return None
+        scene_pos = self._scene_pos_from_view(view_pos)
+        local = item.mapFromScene(scene_pos)
+        scale = abs(self.transform().m11())
+        hit = HANDLE / max(scale, 1e-6)
+        corner = item._handle_at(local, hit=hit)
+        if corner is None:
+            return None
+        return item, corner
+
+    def _update_edit_cursor(self, view_pos: QPointF) -> None:
+        """Selected edge → resize; selected body → move; else arrow."""
         if self._panning:
+            return
+        if self._gesture == "move":
+            self.viewport().setCursor(Qt.CursorShape.SizeAllCursor)
+            return
+        if self._gesture == "resize":
+            return  # keep press-time resize cursor
+        if self._gesture is not None:
+            self.viewport().setCursor(Qt.CursorShape.ArrowCursor)
+            return
+
+        scene = self.scene()
+        if not isinstance(scene, UiScene):
+            self.viewport().setCursor(Qt.CursorShape.ArrowCursor)
+            return
+
+        hit = self._resize_hit_at(view_pos)
+        if hit is not None:
+            self.viewport().setCursor(self._RESIZE_CURSORS[hit[1]])
+            return
+
+        scene_pos = self._scene_pos_from_view(view_pos)
+        selected = scene.selected_widgets()
+        under: list[WidgetItem] = []
+        for item in selected:
+            local = item.mapFromScene(scene_pos)
+            if item.shape().contains(local):
+                under.append(item)
+        if not under:
+            self.viewport().setCursor(Qt.CursorShape.ArrowCursor)
+            return
+
+        self.viewport().setCursor(Qt.CursorShape.SizeAllCursor)
+
+    def wheelEvent(self, event: QWheelEvent) -> None:  # noqa: N802
+        # Never zoom while panning, or while MMB is held (Windows autoscroll
+        # synthesizes wheel deltas from MMB+move / MMB+LMB chords).
+        if self._panning or event.buttons() & Qt.MouseButton.MiddleButton:
             event.accept()
             return
 
@@ -1237,7 +1630,7 @@ class UiCanvas(QGraphicsView):
             dy = int(pixel.y())
             dx = int(pixel.x())
 
-        # Ctrl+scroll → zoom (overrides scroll-select)
+        # Ctrl+scroll → zoom
         if mods & Qt.KeyboardModifier.ControlModifier:
             step = dy if dy != 0 else dx
             if step != 0:
@@ -1247,7 +1640,7 @@ class UiCanvas(QGraphicsView):
             event.accept()
             return
 
-        # Shift+scroll → pan left/right (overrides scroll-select)
+        # Shift+scroll → pan left/right
         if mods & Qt.KeyboardModifier.ShiftModifier:
             step = dx if dx != 0 else dy
             if step != 0:
@@ -1256,7 +1649,7 @@ class UiCanvas(QGraphicsView):
             event.accept()
             return
 
-        # Alt+scroll → pan up/down (overrides scroll-select)
+        # Alt+scroll → pan up/down
         if mods & Qt.KeyboardModifier.AltModifier:
             step = dy if dy != 0 else dx
             if step != 0:
@@ -1265,11 +1658,7 @@ class UiCanvas(QGraphicsView):
             event.accept()
             return
 
-        # Plain wheel: scroll-select when enabled, otherwise zoom
-        if self.scroll_select and self._scroll_select_wheel(event):
-            event.accept()
-            return
-
+        # Plain wheel → zoom
         step = dy if dy != 0 else dx
         if step != 0:
             factor = 1.15 if step > 0 else 1 / 1.15
@@ -1285,97 +1674,145 @@ class UiCanvas(QGraphicsView):
         super().showEvent(event)
         self._update_pan_limits()
 
-    def _scroll_select_wheel(self, event: QWheelEvent) -> bool:
-        """Cycle selection one-by-one through the highlighted scroll-target stack."""
-        delta = event.angleDelta().y()
-        if delta == 0:
-            delta = event.pixelDelta().y()
-        if delta == 0:
-            return False
-        pos = event.position()
-        # Same stack the tree is highlighting under the cursor.
-        self._refresh_stack_peers(pos)
+    def _ctrl_click_cycle(self, view_pos: QPointF) -> bool:
+        """Ctrl+click cycles stacked widgets toward smaller; wraps to largest."""
         stack = [
             i
-            for i in self._scroll_stack
+            for i in self._widget_items_at(view_pos)
             if i.node.visible and i.isVisible() and i.scene() is self.scene()
         ]
-        if len(stack) < 2:
+        if not stack:
             return False
         current = -1
         for i, item in enumerate(stack):
             if item.isSelected():
                 current = i
                 break
-        if delta > 0:
-            # Wheel up → next larger target
-            nxt = current + 1
-            if nxt >= len(stack):
-                return True  # already at largest — no wrap
+        if len(stack) == 1:
+            nxt = 0
+        elif current < 0:
+            # Nothing in stack selected → land on largest, then each click goes smaller.
+            nxt = len(stack) - 1
         else:
-            # Wheel down → smaller target
-            if current < 0:
-                nxt = 0
-            else:
-                nxt = current - 1
-                if nxt < 0:
-                    return True  # already at smallest — no wrap
+            nxt = current - 1
+            if nxt < 0:
+                nxt = len(stack) - 1  # wrap to largest
+        _log.debug(
+            "ctrl_click_cycle current=%s nxt=%s path=%s stack=%s",
+            current,
+            nxt,
+            stack[nxt].node.path,
+            [i.node.path for i in stack[:8]],
+        )
         scene = self.scene()
+        if scene is None:
+            return False
         scene.clearSelection()
         stack[nxt].setSelected(True)
-        # Peers stay on this same cursor stack (selectionChanged must not rebuild elsewhere).
         peers = {item for item in stack if item is not stack[nxt]}
         self._set_stack_peers(peers)
+        self._last_stack_view_pos = QPointF(view_pos)
+        self._scroll_stack = stack
         return True
 
     def _handle_left_canvas_press(self, event) -> None:
-        """Select smallest scroll-target, or clear if empty canvas. Used for click and dblclick."""
+        """Start click / marquee / move / resize. Selection applies on release (except move)."""
+        # Ctrl+click cycles stacked widgets (smaller, wrap to largest).
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            # Resize cursor wins over ctrl-cycle — same rule as plain left click.
+            if self._resize_hit_at(event.position()) is None:
+                if self._ctrl_click_cycle(event.position()):
+                    self._gesture = None
+                    self._press_pick = None
+                    event.accept()
+                    self._update_edit_cursor(event.position())
+                    return
         self._restore_press_mouse()
-        stack = self._widget_items_at(event.position())
+        self._clear_marquee()
         scene = self.scene()
-        if stack:
-            # Always keep/select the smallest scroll-target — never toggle off.
-            pick = self._pick_click_target(stack) or stack[0]
-            self._force_select(pick)
-            # Arm after force_select: selection refresh resets ItemIsSelectable.
-            self._arm_press_pick(pick)
-            # DblClick must be delivered as a Press so grab/drag/resize work.
-            deliver: QMouseEvent = event
-            if event.type() == QEvent.Type.MouseButtonDblClick:
-                deliver = QMouseEvent(
-                    QEvent.Type.MouseButtonPress,
-                    event.position(),
-                    event.globalPosition(),
-                    event.button(),
-                    event.buttons() | Qt.MouseButton.LeftButton,
-                    event.modifiers(),
-                )
-            super().mousePressEvent(deliver)
-            self._force_select(pick)
-            self._arm_press_pick(pick)
-            self._refresh_stack_peers(event.position())
+        self._press_view_pos = QPointF(event.position())
+        self._press_scene_pos = self.mapToScene(event.position().toPoint())
+        self._gesture = None
+        self._move_did_drag = False
+        self._press_pick = None
+
+        # If the resize cursor would show, left click can ONLY start a resize
+        # (never select / marquee / move a stacked child under the edge).
+        resize_hit = self._resize_hit_at(event.position())
+        if resize_hit is not None:
+            pick, corner = resize_hit
+            self._press_pick = pick
+            self._gesture = "resize"
+            self._press_scene_pos = self._scene_pos_from_view(event.position())
+            _log.debug(
+                "gesture=resize corner=%s path=%s (canvas-driven)",
+                corner,
+                pick.node.path,
+            )
+            # Drive resize ourselves — Qt item delivery often misses edge hits
+            # (outside shape / child on top) even when the cursor says resize.
+            pick.begin_resize(corner, self._press_scene_pos)
+            self.viewport().setCursor(self._RESIZE_CURSORS[corner])
+            event.accept()
             return
-        # Click off all widgets (empty canvas) — only then deselect.
-        if scene is not None:
-            scene.clearSelection()
+
+        stack = self._widget_items_at(event.position())
+        pick = self._pick_click_target(stack)
+        self._press_pick = pick
+        _log.debug(
+            "press pick=%s selected=%s stack=%s scene=%s",
+            pick.node.path if pick is not None else None,
+            pick.isSelected() if pick is not None else False,
+            [i.node.path for i in stack[:8]],
+            self._press_scene_pos,
+        )
+
+        if pick is not None and pick.isSelected():
+            # Selected body hit: group-move — never marquee / never resize here
+            # (resize already handled above).
+            self._gesture = "move"
+            selected = (
+                scene.selected_widgets()
+                if isinstance(scene, UiScene)
+                else [pick]
+            )
+            _log.debug("gesture=move count=%s", len(selected))
+            self._begin_group_move(selected)
+            event.accept()
+            return
+
+        # Empty canvas or unselected widget: click-select or marquee (decide on move).
+        self._gesture = "click_or_marquee"
+        _log.debug("gesture=click_or_marquee")
         event.accept()
-        self._refresh_stack_peers(event.position())
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
+        # Already panning: ignore extra buttons (esp. LMB) so chords can't zoom/select.
+        if self._panning:
+            event.accept()
+            return
         if event.button() == Qt.MouseButton.MiddleButton or (
             event.button() == Qt.MouseButton.LeftButton
             and event.modifiers() & Qt.KeyboardModifier.AltModifier
         ):
             self._panning = True
+            self._pan_button = event.button()
             self._pan_start = event.position()
-            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+            self.viewport().setCursor(Qt.CursorShape.ClosedHandCursor)
             event.accept()
+            return
+        if event.button() == Qt.MouseButton.RightButton:
+            scene = self.scene()
+            if scene is not None:
+                scene.clearSelection()
+            event.accept()
+            self._clear_stack_peers()
+            self._update_edit_cursor(event.position())
             return
         if event.button() == Qt.MouseButton.LeftButton:
             self._handle_left_canvas_press(event)
             return
         super().mousePressEvent(event)
-        self._refresh_stack_peers(event.position())
 
     def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802
         # Qt sends DblClick instead of a second Press — treat it as another left press.
@@ -1385,6 +1822,7 @@ class UiCanvas(QGraphicsView):
         super().mouseDoubleClickEvent(event)
 
     def mouseMoveEvent(self, event) -> None:  # noqa: N802
+        self._last_cursor_view_pos = QPointF(event.position())
         if self._panning:
             delta = event.position() - self._pan_start
             self._pan_start = event.position()
@@ -1396,43 +1834,377 @@ class UiCanvas(QGraphicsView):
             )
             event.accept()
             return
+
+        if self._gesture == "click_or_marquee":
+            if self._view_drag_distance(event.position()) >= DRAG_THRESHOLD:
+                self._gesture = "marquee"
+                self._marquee_origin = QPointF(self._press_scene_pos)
+                # Marquee replaces selection — drop the current box as soon as the box starts.
+                scene = self.scene()
+                if scene is not None and scene.selectedItems():
+                    scene.clearSelection()
+                _log.debug("gesture=marquee (cleared selection)")
+                self._update_marquee(self.mapToScene(event.position().toPoint()))
+            self._update_edit_cursor(event.position())
+            event.accept()
+            return
+
+        if self._gesture == "marquee":
+            self._update_marquee(self.mapToScene(event.position().toPoint()))
+            self._update_edit_cursor(event.position())
+            event.accept()
+            return
+
+        if self._gesture == "move":
+            self._apply_group_move(self.mapToScene(event.position().toPoint()))
+            self._update_edit_cursor(event.position())
+            event.accept()
+            return
+
+        if self._gesture == "resize":
+            pick = self._press_pick
+            if isinstance(pick, WidgetItem):
+                pick.apply_resize(self._scene_pos_from_view(event.position()))
+            self._update_edit_cursor(event.position())
+            event.accept()
+            return
+
         super().mouseMoveEvent(event)
-        # Don't retarget hover while dragging a widget.
-        if self._press_mouse_restore is not None:
+        self._update_edit_cursor(event.position())
+        # Don't retarget hover while a press gesture is active.
+        if self._gesture is not None or self._press_mouse_restore is not None:
             return
         stack = self._widget_items_at(event.position())
         scene = self.scene()
         if isinstance(scene, UiScene):
             pick = self._pick_click_target(stack)
             scene.set_hover_path(pick.node.path if pick is not None else None)
-        if self.scroll_select:
-            self._refresh_stack_peers(event.position())
-        elif self._stack_peer_paths:
+        if self._stack_peer_paths:
             self._set_stack_peers(set())
 
     def leaveEvent(self, event) -> None:  # noqa: N802
         scene = self.scene()
         if isinstance(scene, UiScene):
             scene.set_hover_path(None)
-        self._last_stack_view_pos = None
-        self._scroll_stack = []
-        self._set_stack_peers(set())
+        self._clear_stack_peers()
+        self.viewport().setCursor(Qt.CursorShape.ArrowCursor)
         super().leaveEvent(event)
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802
-        if self._panning and event.button() in (
-            Qt.MouseButton.MiddleButton,
-            Qt.MouseButton.LeftButton,
-        ):
+        # End pan only when the button that started it is released (not LMB during MMB pan).
+        if self._panning and event.button() == self._pan_button:
             self._panning = False
-            self.setCursor(Qt.CursorShape.ArrowCursor)
+            self._pan_button = None
+            self.viewport().setCursor(Qt.CursorShape.ArrowCursor)
+            self._update_edit_cursor(event.position())
             event.accept()
             return
+        if self._panning:
+            event.accept()
+            return
+
+        if event.button() == Qt.MouseButton.LeftButton and self._gesture is not None:
+            gesture = self._gesture
+            pick = self._press_pick
+            self._gesture = None
+            _log.debug(
+                "release gesture=%s pick=%s",
+                gesture,
+                pick.node.path if pick is not None else None,
+            )
+
+            if gesture == "marquee":
+                rect = self._marquee_scene_rect(
+                    self._marquee_origin,
+                    self.mapToScene(event.position().toPoint()),
+                )
+                self._clear_marquee()
+                contained = self._widgets_fully_in_rect(rect)
+                _log.debug(
+                    "marquee select count=%s rect=%s",
+                    len(contained),
+                    rect,
+                )
+                self._select_items(contained)
+                event.accept()
+            elif gesture == "click_or_marquee":
+                # Click without drag: select under cursor, or clear on empty.
+                if pick is not None:
+                    _log.debug("click select %s", pick.node.path)
+                    self._force_select(pick)
+                else:
+                    _log.debug("click clear selection")
+                    scene = self.scene()
+                    if scene is not None:
+                        scene.clearSelection()
+                event.accept()
+            elif gesture == "move":
+                moved = self._move_did_drag
+                self._end_group_move()
+                # Click (no drag) on a selected item → select only that item.
+                if not moved and pick is not None:
+                    _log.debug("move-click → single select %s", pick.node.path)
+                    self._force_select(pick)
+                else:
+                    _log.debug("move end dragged=%s", moved)
+                event.accept()
+            elif gesture == "resize":
+                if isinstance(pick, WidgetItem):
+                    pick.end_resize()
+                event.accept()
+            else:
+                super().mouseReleaseEvent(event)
+
+            self._restore_press_mouse()
+            self._press_pick = None
+            self._update_edit_cursor(event.position())
+            stack = self._widget_items_at(event.position())
+            scene = self.scene()
+            if isinstance(scene, UiScene):
+                hover = self._pick_click_target(stack)
+                scene.set_hover_path(hover.node.path if hover is not None else None)
+            return
+
         super().mouseReleaseEvent(event)
         self._restore_press_mouse()
-        self._refresh_stack_peers(event.position())
+        self._update_edit_cursor(event.position())
         stack = self._widget_items_at(event.position())
         scene = self.scene()
         if isinstance(scene, UiScene):
             pick = self._pick_click_target(stack)
             scene.set_hover_path(pick.node.path if pick is not None else None)
+
+
+class RulerBar(QWidget):
+    """Thin top/left ruler with notches aligned to the 1024×768 stage."""
+
+    pressed = pyqtSignal(object)  # QMouseEvent
+    moved = pyqtSignal(object)
+    released = pyqtSignal(object)
+
+    def __init__(self, orientation: Qt.Orientation, canvas: UiCanvas) -> None:
+        super().__init__()
+        self.orientation = orientation
+        self.canvas = canvas
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        if orientation == Qt.Orientation.Horizontal:
+            self.setFixedHeight(RULER_THICKNESS)
+            self.setMinimumWidth(0)
+            self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            self.setCursor(Qt.CursorShape.SplitHCursor)
+        else:
+            self.setFixedWidth(RULER_THICKNESS)
+            self.setMinimumHeight(0)
+            self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
+            self.setCursor(Qt.CursorShape.SplitVCursor)
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        self.pressed.emit(event)
+
+    def mouseMoveEvent(self, event) -> None:  # noqa: N802
+        self.moved.emit(event)
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802
+        self.released.emit(event)
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        # Exceptions here abort the Qt process (no traceback) — catch + log.
+        try:
+            self._paint_ruler(event)
+        except Exception:  # noqa: BLE001
+            _log.exception(
+                "RulerBar.paintEvent failed orientation=%s size=%sx%s",
+                self.orientation,
+                self.width(),
+                self.height(),
+            )
+
+    def _paint_ruler(self, event) -> None:  # noqa: ARG002
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), RULER_BG)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        vp = self.canvas.viewport()
+        thick = RULER_THICKNESS
+        # mapFrom(viewport, …) is unreliable with QGraphicsView's viewport.
+        # Map scene → viewport via viewportTransform, then viewport → ruler via global.
+        vt = self.canvas.viewportTransform()
+        vp_origin = self.mapFromGlobal(vp.mapToGlobal(QPoint(0, 0)))
+        if self.orientation == Qt.Orientation.Horizontal:
+            for sx in range(0, UI_WIDTH + 1, RULER_MINOR):
+                pt = vt.map(QPointF(float(sx), 0.0))
+                x = int(round(vp_origin.x() + pt.x()))
+                if x < -2 or x > self.width() + 2:
+                    continue
+                major = sx % RULER_MAJOR == 0
+                tick_h = 10 if major else 5
+                painter.setPen(QPen(RULER_TICK_MAJOR if major else RULER_TICK, 1))
+                painter.drawLine(x, thick - 1, x, thick - 1 - tick_h)
+            painter.setPen(QPen(QColor(60, 60, 68), 1))
+            painter.drawLine(0, thick - 1, self.width(), thick - 1)
+        else:
+            for sy in range(0, UI_HEIGHT + 1, RULER_MINOR):
+                pt = vt.map(QPointF(0.0, float(sy)))
+                y = int(round(vp_origin.y() + pt.y()))
+                if y < -2 or y > self.height() + 2:
+                    continue
+                major = sy % RULER_MAJOR == 0
+                tick_w = 10 if major else 5
+                painter.setPen(QPen(RULER_TICK_MAJOR if major else RULER_TICK, 1))
+                painter.drawLine(thick - 1, y, thick - 1 - tick_w, y)
+            painter.setPen(QPen(QColor(60, 60, 68), 1))
+            painter.drawLine(thick - 1, 0, thick - 1, self.height())
+
+
+class CanvasBoard(QWidget):
+    """UiCanvas with top/left ruler bars that spawn horizontal/vertical guides."""
+
+    def __init__(self, scene: UiScene) -> None:
+        super().__init__()
+        self.canvas = UiCanvas(scene)
+        self._top = RulerBar(Qt.Orientation.Horizontal, self.canvas)
+        self._left = RulerBar(Qt.Orientation.Vertical, self.canvas)
+        corner = QWidget()
+        corner.setFixedSize(RULER_THICKNESS, RULER_THICKNESS)
+        corner.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        corner.setStyleSheet(
+            f"background-color: rgb({RULER_BG.red()},{RULER_BG.green()},{RULER_BG.blue()});"
+        )
+
+        grid = QGridLayout(self)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setSpacing(0)
+        grid.addWidget(corner, 0, 0)
+        grid.addWidget(self._top, 0, 1)
+        grid.addWidget(self._left, 1, 0)
+        grid.addWidget(self.canvas, 1, 1)
+        grid.setRowStretch(1, 1)
+        grid.setColumnStretch(1, 1)
+
+        self._drag_guide: GuideLine | None = None
+        self._drag_vertical = False  # True = vertical guide (from top bar)
+        self._grabber: RulerBar | None = None
+
+        # Top bar → vertical guides (X). Left bar → horizontal guides (Y).
+        self._top.pressed.connect(lambda e: self._ruler_press(e, vertical=True))
+        self._top.moved.connect(self._ruler_move)
+        self._top.released.connect(self._ruler_release)
+        self._left.pressed.connect(lambda e: self._ruler_press(e, vertical=False))
+        self._left.moved.connect(self._ruler_move)
+        self._left.released.connect(self._ruler_release)
+
+        self.canvas.view_changed.connect(self._refresh_rulers)
+        self.canvas.horizontalScrollBar().valueChanged.connect(self._refresh_rulers)
+        self.canvas.verticalScrollBar().valueChanged.connect(self._refresh_rulers)
+
+    def _refresh_rulers(self, *_args) -> None:
+        self._top.update()
+        self._left.update()
+
+    def _scene_pos_from_global(self, global_pos) -> QPointF:
+        vp = self.canvas.viewport()
+        local = vp.mapFromGlobal(global_pos)
+        return self.canvas.mapToScene(local)
+
+    def _ruler_press(self, event, *, vertical: bool) -> None:
+        if event.button() == Qt.MouseButton.RightButton:
+            self._ruler_remove_near(event, vertical=vertical)
+            return
+        if event.button() != Qt.MouseButton.LeftButton:
+            event.ignore()
+            return
+        scene = self.canvas.scene()
+        if not isinstance(scene, UiScene):
+            event.ignore()
+            return
+        sp = self._scene_pos_from_global(event.globalPosition().toPoint())
+        value = sp.x() if vertical else sp.y()
+        _log.debug("ruler_press vertical=%s value=%.1f", vertical, value)
+        self._drag_vertical = vertical
+        self._drag_guide = scene.add_guide(vertical=vertical, value=value)
+        self._grabber = self._top if vertical else self._left
+        self._grabber.grabMouse()
+        event.accept()
+
+    def _ruler_remove_near(self, event, *, vertical: bool) -> None:
+        """Right-click on a ruler bar: delete the nearest matching guide."""
+        scene = self.canvas.scene()
+        if not isinstance(scene, UiScene):
+            event.ignore()
+            return
+        sp = self._scene_pos_from_global(event.globalPosition().toPoint())
+        click = sp.x() if vertical else sp.y()
+        vt = self.canvas.viewportTransform()
+        scale = abs(vt.m11() if vertical else vt.m22())
+        thresh = RULER_GUIDE_HIT_PX / max(scale, 1e-6)
+        best: GuideLine | None = None
+        best_d = thresh
+        for guide in scene._guides:
+            if guide.vertical != vertical:
+                continue
+            d = abs(guide.value - click)
+            if d <= best_d:
+                best_d = d
+                best = guide
+        if best is None:
+            _log.debug(
+                "ruler_rightclick miss vertical=%s click=%.1f thresh=%.2f",
+                vertical,
+                click,
+                thresh,
+            )
+            event.accept()
+            return
+        _log.info(
+            "ruler_rightclick remove vertical=%s value=%.1f d=%.2f",
+            vertical,
+            best.value,
+            best_d,
+        )
+        scene.remove_guide(best)
+        event.accept()
+
+    def _ruler_move(self, event) -> None:
+        if self._drag_guide is None:
+            event.ignore()
+            return
+        sp = self._scene_pos_from_global(event.globalPosition().toPoint())
+        value = sp.x() if self._drag_vertical else sp.y()
+        self._drag_guide.set_value(value)
+        event.accept()
+
+    def _over_place_zone(self, global_pos) -> bool:
+        """Canvas viewport or either ruler bar — release here keeps the guide."""
+        if self.canvas.viewport().rect().contains(
+            self.canvas.viewport().mapFromGlobal(global_pos)
+        ):
+            return True
+        if self._top.rect().contains(self._top.mapFromGlobal(global_pos)):
+            return True
+        if self._left.rect().contains(self._left.mapFromGlobal(global_pos)):
+            return True
+        return False
+
+    def _ruler_release(self, event) -> None:
+        if self._grabber is not None:
+            self._grabber.releaseMouse()
+            self._grabber = None
+        guide = self._drag_guide
+        self._drag_guide = None
+        scene = self.canvas.scene()
+        if guide is None or not isinstance(scene, UiScene):
+            event.accept()
+            return
+        gpos = event.globalPosition().toPoint()
+        if self._over_place_zone(gpos):
+            sp = self._scene_pos_from_global(gpos)
+            value = sp.x() if self._drag_vertical else sp.y()
+            guide.set_value(value)
+            _log.debug(
+                "ruler_release keep vertical=%s value=%.1f",
+                self._drag_vertical,
+                value,
+            )
+        else:
+            _log.debug("ruler_release discard guide")
+            scene.remove_guide(guide)
+        event.accept()

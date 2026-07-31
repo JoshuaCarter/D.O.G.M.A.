@@ -16,6 +16,8 @@ Double-click (no console):
 dev\SAGE.pyw
 ```
 
+Diagnostics: `dev/sage/sage.log` (DEBUG, append-only; includes faulthandler). Check it after crashes — Qt often exits with no console traceback.
+
 App icon art: `dev/sage/assets/sage.png` (64×64).
 
 Or from a terminal:
@@ -42,7 +44,9 @@ py -3 dev/sage/render_preview.py
 - Texture preview: path+UV and atlas IDs (`ui_inGame2_button` → `_e` state)
 - String-table resolve for `<text>` ids via `configs/text/eng` (shown in Properties)
 - **Log** tab - append-only editor log (opens, saves, audits, texture/string errors)
-- Auto-detects local G.A.M.M.A. UI textures + Anomaly/`_db_unpacked` textures_descr + text tables
+- Auto-resolves textures / textures_descr / text from the Anomaly + GAMMA roots you set
+- If `{Anomaly}/tools/_unpacked` is missing UI descr/text/textures, SAGE unpacks
+  `configs.db0` + `textures_ui.db0` there after you confirm in setup/settings
 - Zoom (wheel), pan (MMB or Alt+drag), Fit stage (`F`)
 - Undo/Redo move, resize, and property geometry (`Ctrl+Z` / `Ctrl+Y`)
 - Meta handles for elements without XML `x/y/width/height` (runtime-positioned). Drag them to preview script placement - **children move with the meta origin**; positions save to `file.xml.meta` (not into the XML). `.xml.meta` also stores layer toggles, undo/redo history, selection, and view zoom/pan. ~10×10 diamond markers (move-only); tag caption is display-only.
@@ -50,15 +54,24 @@ py -3 dev/sage/render_preview.py
 
 ## Texture roots
 
-**Edit → Settings…** or edit `dev/sage/settings.json`.
+On first launch (or if roots are missing/invalid), a **SAGE Setup** window asks for
+**Anomaly** and **GAMMA** install folders before the editor opens:
 
-Defaults scan repo `src/` plus common installs:
+- Anomaly must contain `tools\db_unpacker.bat`
+- GAMMA must contain `mods\G.A.M.M.A. UI\gamedata\textures`
 
-- `C:/GAMMA/mods/G.A.M.M.A. UI/gamedata/textures`
-- `C:/gamma_dev/_db_unpacked/configs/ui/textures_descr`
-- `C:/Anomaly/tools/_unpacked/configs/ui/textures_descr`
+You can also add optional **extra scan roots** (any mod/pack folders). SAGE scans them
+for textures, `textures_descr`, text, and future asset types — not required to open
+the editor.
 
-Also set **Element label size** (2–40 pt) and toggles for **element labels**, box **border** / **fill**
+If `Anomaly\tools\_unpacked` is missing (or incomplete), Continue / Ok warns that
+SAGE will unpack `configs.db0` + `textures_ui.db0` (may take a minute), runs the
+unpack while the setup/settings window is still open, then opens the editor.
+
+**Edit → Settings…** can change all of this later. SAGE derives asset paths from
+Anomaly / GAMMA / extras (and always scans DOGMA `src/`).
+
+Also set **Element label size** (2–40 pt, default **5**) and toggles for **element labels**, box **border** / **fill**
 (`label_font_size`, `show_element_labels`, `show_box_border`, `show_box_fill`). Borders are always 1px (cosmetic).
-Toggles default **off** for borders/fill; labels default **on**. The hovered hit-target still shows border/fill when those are off.
-Quick toggles under **View** and the right **Options** panel (also a **Label size** spin box 2–40). Settings dialog has the same options.
+Toggles default **off**. The hovered hit-target still shows border/fill when those are off.
+Quick toggles under **View** and the right **Options** panel (also a **Label size** spin box 2–40).

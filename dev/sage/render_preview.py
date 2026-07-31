@@ -56,8 +56,8 @@ def main(argv: list[str] | None = None) -> int:
     doc = UiXmlDocument().load(xml_path)
     scene = UiScene(
         resolver,
-        label_font_size=int(settings.get("label_font_size", 8)),
-        show_element_labels=bool(settings.get("show_element_labels", True)),
+        label_font_size=int(settings.get("label_font_size", 5)),
+        show_element_labels=bool(settings.get("show_element_labels", False)),
         show_box_border=bool(settings.get("show_box_border", False)),
         show_box_fill=bool(settings.get("show_box_fill", False)),
     )

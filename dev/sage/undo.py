@@ -36,20 +36,74 @@ class GeoState:
 
 @dataclass(frozen=True)
 class GeoEdit:
-    before: GeoState
-    after: GeoState
+    """One or more geometry changes applied / undone together."""
+
+    parts: tuple[tuple[GeoState, GeoState], ...]
+
+    @classmethod
+    def single(cls, before: GeoState, after: GeoState) -> GeoEdit:
+        return cls(parts=((before, after),))
+
+    @classmethod
+    def multi(cls, pairs: list[tuple[GeoState, GeoState]]) -> GeoEdit:
+        return cls(parts=tuple(pairs))
+
+    @property
+    def before(self) -> GeoState:
+        return self.parts[0][0]
+
+    @property
+    def after(self) -> GeoState:
+        return self.parts[0][1]
 
     def changed(self) -> bool:
-        return self.before != self.after
+        return any(b != a for b, a in self.parts)
+
+    def describe(self) -> str:
+        """Short label for the undo history list."""
+        if len(self.parts) > 1:
+            return f"Move {len(self.parts)} widgets"
+        before, after = self.parts[0]
+        name = before.path.rsplit("/", 1)[-1] if before.path else "?"
+        size_changed = (before.width, before.height) != (after.width, after.height)
+        pos_changed = (before.x, before.y) != (after.x, after.y)
+        if size_changed and pos_changed:
+            kind = "Edit"
+        elif size_changed:
+            kind = "Resize"
+        elif pos_changed:
+            kind = "Move"
+        else:
+            kind = "Edit"
+        return f"{kind} {name}"
 
     def to_dict(self) -> dict[str, Any]:
-        return {"before": self.before.to_dict(), "after": self.after.to_dict()}
+        if len(self.parts) == 1:
+            before, after = self.parts[0]
+            return {"before": before.to_dict(), "after": after.to_dict()}
+        return {
+            "parts": [
+                {"before": b.to_dict(), "after": a.to_dict()} for b, a in self.parts
+            ]
+        }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> GeoEdit:
-        return cls(
-            before=GeoState.from_dict(data["before"]),
-            after=GeoState.from_dict(data["after"]),
+        if "parts" in data:
+            pairs: list[tuple[GeoState, GeoState]] = []
+            for raw in data["parts"]:
+                pairs.append(
+                    (
+                        GeoState.from_dict(raw["before"]),
+                        GeoState.from_dict(raw["after"]),
+                    )
+                )
+            if not pairs:
+                raise ValueError("empty GeoEdit parts")
+            return cls(parts=tuple(pairs))
+        return cls.single(
+            GeoState.from_dict(data["before"]),
+            GeoState.from_dict(data["after"]),
         )
 
 
@@ -76,6 +130,12 @@ class UndoStack:
 
     def can_redo(self) -> bool:
         return bool(self._redo)
+
+    def recent_undo(self, n: int = 10) -> list[GeoEdit]:
+        """Newest-first slice of the undo stack (what Ctrl+Z will hit first)."""
+        if n <= 0:
+            return []
+        return list(reversed(self._undo[-n:]))
 
     def undo(self) -> GeoEdit | None:
         if not self._undo:

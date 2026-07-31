@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import codecs
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -13,6 +14,54 @@ from .model import TextureRef
 
 # Init3tButton / checkbox / radio: XML names the stem; engine appends state.
 _STATE_SUFFIXES = ("_e", "_h", "_t", "_d", "_s", "_u")
+
+
+def _register_stalker_codecs() -> None:
+    """Map engine encodings (e.g. st_windows-1251) onto cp1251."""
+
+    def _search(name: str):  # noqa: ANN202
+        key = name.lower().replace("-", "_")
+        if key in ("st_windows_1251", "windows_1251"):
+            return codecs.lookup("cp1251")
+        return None
+
+    codecs.register(_search)
+
+
+_register_stalker_codecs()
+
+
+def _parse_xml_root(path: Path) -> ET.Element | None:
+    """Parse descr XML; tolerate Stalker encodings / broken declarations."""
+    try:
+        return ET.parse(path).getroot()
+    except ET.ParseError:
+        return None
+    except LookupError:
+        pass
+    except OSError:
+        return None
+    # Fallback: decode as cp1251 and strip a bad encoding= declaration.
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return None
+    try:
+        text = raw.decode("cp1251")
+    except UnicodeDecodeError:
+        try:
+            text = raw.decode("utf-8", errors="replace")
+        except Exception:  # noqa: BLE001
+            return None
+    # ElementTree still honors encoding= in the declaration — neutralize it.
+    if text.lstrip().startswith("<?xml"):
+        end = text.find("?>")
+        if end > 0:
+            text = '<?xml version="1.0"?>' + text[end + 2 :]
+    try:
+        return ET.fromstring(text)
+    except ET.ParseError:
+        return None
 
 
 @dataclass
@@ -93,9 +142,8 @@ class TextureResolver:
             if root.is_dir():
                 descr_files.extend(root.rglob("*.xml"))
         for path in descr_files:
-            try:
-                root = ET.parse(path).getroot()
-            except ET.ParseError:
+            root = _parse_xml_root(path)
+            if root is None:
                 continue
             for file_el in root.iter("file"):
                 file_name = (file_el.get("name") or "").strip()
@@ -138,9 +186,8 @@ class TextureResolver:
             self._parse_descr(path)
 
     def _parse_descr(self, path: Path) -> None:
-        try:
-            root = ET.parse(path).getroot()
-        except ET.ParseError:
+        root = _parse_xml_root(path)
+        if root is None:
             return
         for file_el in root.iter("file"):
             file_name = (file_el.get("name") or "").strip()

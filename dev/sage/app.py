@@ -2,16 +2,22 @@
 
 from __future__ import annotations
 
+import logging
 import sys
 from datetime import datetime
 from html import escape
 from math import isfinite
 from pathlib import Path
 
+from sage.diaglog import get_logger, setup_logging
+
+_log_file = get_logger("app")
+
 from PyQt6.QtCore import QEvent, QPoint, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import (
     QAction,
     QColor,
+    QCursor,
     QFont,
     QIcon,
     QKeySequence,
@@ -56,16 +62,23 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from .canvas import UiCanvas, UiScene
+from .canvas import CanvasBoard, UiScene
 from .model import PATH_SEP, LayoutNode, default_layer_visible, layer_sections
+from .db_unpack import check_anomaly_unpack_needed, ensure_anomaly_db_unpacked
 from .settings import (
     LABEL_FONT_MAX,
     LABEL_FONT_MIN,
     REPO_ROOT,
     clamp_label_font_size,
+    ensure_db_unpacked_and_roots,
+    installs_configured,
     load_settings,
+    normalize_custom_roots,
     push_recent_file,
     save_settings,
+    summarize_custom_root,
+    validate_anomaly_root,
+    validate_gamma_root,
 )
 from .strings import StringResolver
 from .textures import TextureResolver
@@ -550,84 +563,286 @@ class StartupChooserOverlay(QWidget):
         self.path_chosen.emit(path)
 
 
-class SettingsDialog(QDialog):
-    def __init__(self, settings: dict, parent: QWidget | None = None) -> None:
+class InstallRootsDialog(QDialog):
+    """Collect / edit Anomaly + GAMMA roots with marker validation."""
+
+    def __init__(
+        self,
+        settings: dict,
+        parent: QWidget | None = None,
+        *,
+        setup_mode: bool = False,
+    ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Settings")
+        self._setup_mode = setup_mode
         self.settings = dict(settings)
+        self.setWindowTitle("SAGE Setup" if setup_mode else "Settings")
+        self.setModal(True)
+        self.setMinimumWidth(560)
         layout = QVBoxLayout(self)
+        if setup_mode:
+            layout.addWidget(
+                QLabel(
+                    "<b>SAGE needs your game installs before the editor can open.</b><br/>"
+                    "Anomaly must contain <code>tools\\db_unpacker.bat</code>.<br/>"
+                    "GAMMA must contain <code>mods\\G.A.M.M.A. UI\\gamedata\\textures</code>."
+                )
+            )
+        else:
+            layout.addWidget(
+                QLabel(
+                    "Anomaly / GAMMA roots — asset paths are derived automatically "
+                    "(plus DOGMA src). Anomaly DB packs unpack when needed."
+                )
+            )
+
+        form = QFormLayout()
+        self.anomaly_edit = QLineEdit(str(self.settings.get("anomaly_root") or ""))
+        self.gamma_edit = QLineEdit(str(self.settings.get("gamma_root") or ""))
+        self.anomaly_status = QLabel("")
+        self.gamma_status = QLabel("")
+        form.addRow("Anomaly root", self._path_row(self.anomaly_edit))
+        form.addRow("", self.anomaly_status)
+        form.addRow("GAMMA root", self._path_row(self.gamma_edit))
+        form.addRow("", self.gamma_status)
+        layout.addLayout(form)
+
+        # Optional extra folders — scanned for textures / descr / text / future assets.
         layout.addWidget(
             QLabel(
-                "Paths: one per line (or ;-separated).\n"
-                "texture_roots / descr_roots / text_roots: scanned for assets.\n"
-                "gamedata_* : direct folders (textures, textures_descr, text/eng)."
+                "<b>Extra scan roots</b> (optional)<br/>"
+                "Any extra mod / pack folders to scan for textures, textures_descr, "
+                "text, and future asset types. Not required to use the editor."
             )
         )
-        self.edits: dict[str, QLineEdit] = {}
-        form = QFormLayout()
-        for key, label in (
-            ("texture_roots", "Texture scan roots"),
-            ("gamedata_texture_roots", "Gamedata textures dirs"),
-            ("textures_descr_roots", "Descr scan roots"),
-            ("gamedata_descr_roots", "Gamedata textures_descr dirs"),
-            ("text_roots", "Text scan roots"),
-            ("gamedata_text_roots", "Gamedata text/eng dirs"),
-        ):
-            edit = QLineEdit("; ".join(str(x) for x in self.settings.get(key, [])))
-            self.edits[key] = edit
-            form.addRow(label, edit)
+        self.custom_list = QListWidget()
+        self.custom_list.setMinimumHeight(90)
+        for path in normalize_custom_roots(self.settings.get("custom_roots")):
+            self.custom_list.addItem(path)
+        layout.addWidget(self.custom_list)
+        custom_btns = QHBoxLayout()
+        add_btn = QPushButton("Add…")
+        add_btn.clicked.connect(self._add_custom_root)
+        remove_btn = QPushButton("Remove")
+        remove_btn.clicked.connect(self._remove_custom_root)
+        custom_btns.addWidget(add_btn)
+        custom_btns.addWidget(remove_btn)
+        custom_btns.addStretch(1)
+        layout.addLayout(custom_btns)
+        self.custom_status = QLabel("")
+        self.custom_status.setStyleSheet("color: #9a9a9a;")
+        layout.addWidget(self.custom_status)
 
-        self.font_size = QSpinBox()
-        self.font_size.setRange(LABEL_FONT_MIN, LABEL_FONT_MAX)
-        self.font_size.setSingleStep(1)
-        self.font_size.setValue(clamp_label_font_size(self.settings.get("label_font_size")))
-        self.font_size.setSuffix(" pt")
-        form.addRow("Element label size", self.font_size)
+        self.unpack_status = QLabel("")
+        self.unpack_status.setWordWrap(True)
+        self.unpack_status.setStyleSheet("color: #cca700;")
+        layout.addWidget(self.unpack_status)
 
-        self.show_labels = QCheckBox("Show labels")
-        self.show_labels.setChecked(bool(self.settings.get("show_element_labels", True)))
-        form.addRow("", self.show_labels)
+        self.anomaly_edit.textChanged.connect(self._revalidate)
+        self.gamma_edit.textChanged.connect(self._revalidate)
+        self.custom_list.model().rowsInserted.connect(lambda *_: self._refresh_custom_status())
+        self.custom_list.model().rowsRemoved.connect(lambda *_: self._refresh_custom_status())
 
-        self.show_border = QCheckBox("Box border for unselected")
-        self.show_border.setChecked(bool(self.settings.get("show_box_border", False)))
-        form.addRow("", self.show_border)
-
-        self.show_fill = QCheckBox("Box fill selected")
-        self.show_fill.setChecked(bool(self.settings.get("show_box_fill", False)))
-        form.addRow("", self.show_fill)
-
-        self.scroll_select = QCheckBox("Scroll select (wheel cycles stacked widgets)")
-        self.scroll_select.setChecked(bool(self.settings.get("scroll_select", False)))
-        form.addRow("", self.scroll_select)
-
-        layout.addLayout(form)
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
+        buttons = QDialogButtonBox()
+        if setup_mode:
+            self._continue = buttons.addButton(
+                "Continue", QDialogButtonBox.ButtonRole.AcceptRole
+            )
+            self._continue.clicked.connect(self._try_accept)
+        else:
+            buttons.addButton(QDialogButtonBox.StandardButton.Ok)
+            buttons.addButton(QDialogButtonBox.StandardButton.Cancel)
+            buttons.accepted.connect(self._try_accept)
+            buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+        self._buttons = buttons
+        self._revalidate()
+        self._refresh_custom_status()
+
+    def _path_row(self, edit: QLineEdit) -> QWidget:
+        row = QWidget()
+        hl = QHBoxLayout(row)
+        hl.setContentsMargins(0, 0, 0, 0)
+        hl.addWidget(edit, stretch=1)
+        browse = QPushButton("Browse…")
+        browse.clicked.connect(lambda: self._browse_into(edit))
+        hl.addWidget(browse)
+        return row
+
+    def _browse_into(self, edit: QLineEdit) -> None:
+        start = edit.text().strip() or str(Path.home())
+        path = QFileDialog.getExistingDirectory(self, "Select folder", start)
+        if path:
+            edit.setText(path)
+
+    def _custom_paths(self) -> list[str]:
+        return [
+            self.custom_list.item(i).text().strip()
+            for i in range(self.custom_list.count())
+            if self.custom_list.item(i) is not None
+        ]
+
+    def _add_custom_root(self) -> None:
+        start = str(Path.home())
+        existing = self._custom_paths()
+        if existing:
+            start = existing[-1]
+        path = QFileDialog.getExistingDirectory(
+            self, "Select extra folder to scan", start
+        )
+        if not path:
+            return
+        try:
+            key = str(Path(path).expanduser().resolve())
+        except OSError:
+            key = path
+        low = key.lower()
+        for i in range(self.custom_list.count()):
+            item = self.custom_list.item(i)
+            if item is not None and item.text().strip().lower() == low:
+                self.custom_list.setCurrentRow(i)
+                self._refresh_custom_status()
+                return
+        self.custom_list.addItem(key)
+        self._refresh_custom_status()
+
+    def _remove_custom_root(self) -> None:
+        row = self.custom_list.currentRow()
+        if row >= 0:
+            self.custom_list.takeItem(row)
+            self._refresh_custom_status()
+
+    def _refresh_custom_status(self) -> None:
+        paths = normalize_custom_roots(self._custom_paths())
+        if not paths:
+            self.custom_status.setText("None — editor works with Anomaly + GAMMA only.")
+            return
+        notes = [f"{Path(p).name}: {summarize_custom_root(p)}" for p in paths]
+        self.custom_status.setText(f"{len(paths)} extra root(s) — " + "; ".join(notes))
+
+    def _set_status(self, label: QLabel, ok: bool, detail: str) -> None:
+        if ok:
+            label.setText(f"OK — {detail}")
+            label.setStyleSheet("color: #6a9955;")
+        else:
+            label.setText(detail)
+            label.setStyleSheet("color: #f44747;")
+
+    def _revalidate(self) -> None:
+        a_ok, a_msg = validate_anomaly_root(self.anomaly_edit.text())
+        g_ok, g_msg = validate_gamma_root(self.gamma_edit.text())
+        self._set_status(self.anomaly_status, a_ok, a_msg)
+        self._set_status(self.gamma_status, g_ok, g_msg)
+        if a_ok:
+            need = check_anomaly_unpack_needed(self.anomaly_edit.text())
+            if need.needed:
+                dest = need.out_root or Path("tools/_unpacked")
+                self.unpack_status.setText(
+                    f"Anomaly data will unpack into {dest} when you continue "
+                    f"(missing: {', '.join(need.missing)}). This may take a minute."
+                )
+                self.unpack_status.setStyleSheet("color: #cca700;")
+            else:
+                where = need.present_root or need.out_root
+                self.unpack_status.setText(
+                    f"Anomaly unpack OK — using {where}" if where else ""
+                )
+                self.unpack_status.setStyleSheet("color: #6a9955;")
+        else:
+            self.unpack_status.setText("")
+        ready = a_ok and g_ok
+        if self._setup_mode:
+            self._continue.setEnabled(ready)
+        else:
+            ok_btn = self._buttons.button(QDialogButtonBox.StandardButton.Ok)
+            if ok_btn is not None:
+                ok_btn.setEnabled(ready)
+
+    def _set_busy(self, busy: bool, message: str = "") -> None:
+        self.setEnabled(not busy)
+        if busy:
+            QApplication.setOverrideCursor(QCursor(Qt.CursorShape.WaitCursor))
+            if message:
+                self.unpack_status.setText(message)
+                self.unpack_status.setStyleSheet("color: #cca700;")
+        else:
+            QApplication.restoreOverrideCursor()
+        QApplication.processEvents()
+
+    def _confirm_and_unpack(self, anomaly_root: str) -> bool:
+        """Warn if unpack is needed, then unpack while this dialog stays open."""
+        need = check_anomaly_unpack_needed(anomaly_root)
+        if not need.needed:
+            return True
+        dest = need.out_root or Path("tools/_unpacked")
+        miss = ", ".join(need.missing) if need.missing else "UI assets"
+        reply = QMessageBox.warning(
+            self,
+            "Unpack Anomaly data",
+            "Anomaly UI data isn’t unpacked yet.\n\n"
+            f"Target:\n{dest}\n\n"
+            f"Missing: {miss}\n\n"
+            "SAGE will unpack configs.db0 and textures_ui.db0 now. "
+            "This may take a minute.\n\n"
+            "Continue?",
+            QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Ok,
+        )
+        if reply != QMessageBox.StandardButton.Ok:
+            return False
+
+        self._set_busy(True, f"Unpacking Anomaly data into {dest}…")
+        try:
+            result = ensure_anomaly_db_unpacked(anomaly_root=anomaly_root)
+        finally:
+            self._set_busy(False)
+
+        if result.errors:
+            QMessageBox.critical(
+                self,
+                "Unpack failed",
+                "Could not unpack Anomaly data:\n\n" + "\n".join(result.errors),
+            )
+            self._revalidate()
+            return False
+
+        unpacked = ", ".join(result.unpacked) if result.unpacked else "done"
+        self.unpack_status.setText(f"Unpacked OK — {unpacked}")
+        self.unpack_status.setStyleSheet("color: #6a9955;")
+        QApplication.processEvents()
+        return True
+
+    def _try_accept(self) -> None:
+        a_ok, a_msg = validate_anomaly_root(self.anomaly_edit.text())
+        g_ok, g_msg = validate_gamma_root(self.gamma_edit.text())
+        if not a_ok or not g_ok:
+            QMessageBox.warning(
+                self,
+                "Invalid installs",
+                "Both roots must validate before continuing:\n\n"
+                f"Anomaly: {a_msg}\nGAMMA: {g_msg}",
+            )
+            return
+        if not self._confirm_and_unpack(self.anomaly_edit.text().strip()):
+            return
+        self.accept()
 
     def result_settings(self) -> dict:
         out = dict(self.settings)
-        for key, edit in self.edits.items():
-            parts = [p.strip() for p in edit.text().replace(";", "\n").splitlines() if p.strip()]
-            flat: list[str] = []
-            for p in parts:
-                flat.extend(x.strip() for x in p.split(";") if x.strip())
-            out[key] = flat
-        out["label_font_size"] = clamp_label_font_size(self.font_size.value())
-        out["show_element_labels"] = self.show_labels.isChecked()
-        out["show_box_border"] = self.show_border.isChecked()
-        out["show_box_fill"] = self.show_fill.isChecked()
-        out["scroll_select"] = self.scroll_select.isChecked()
+        out["anomaly_root"] = self.anomaly_edit.text().strip()
+        out["gamma_root"] = self.gamma_edit.text().strip()
+        out["custom_roots"] = normalize_custom_roots(self._custom_paths())
         return out
+
+
+# Back-compat alias used by Edit → Settings…
+SettingsDialog = InstallRootsDialog
 
 
 class MainWindow(QMainWindow):
     def __init__(self, initial: Path | None = None) -> None:
         super().__init__()
-        self.setWindowTitle("DOGMA UI Editor")
+        self.setWindowTitle("D.O.G.M.A. Stalker Anomaly Gui Editor")
         self.setAutoFillBackground(True)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setPalette(_dark_palette())
@@ -639,12 +854,12 @@ class MainWindow(QMainWindow):
         self.scene = UiScene(
             self.resolver,
             label_font_size=clamp_label_font_size(self.settings.get("label_font_size")),
-            show_element_labels=bool(self.settings.get("show_element_labels", True)),
+            show_element_labels=bool(self.settings.get("show_element_labels", False)),
             show_box_border=bool(self.settings.get("show_box_border", False)),
             show_box_fill=bool(self.settings.get("show_box_fill", False)),
         )
-        self.canvas = UiCanvas(self.scene)
-        self.canvas.set_scroll_select(bool(self.settings.get("scroll_select", False)))
+        self.canvas_board = CanvasBoard(self.scene)
+        self.canvas = self.canvas_board.canvas
         self._tree_items_by_path: dict[str, QTreeWidgetItem] = {}
         self._tree_peer_paths: set[str] = set()
         self.raw_editor = QPlainTextEdit()
@@ -762,7 +977,7 @@ class MainWindow(QMainWindow):
         self._log("info", "SAGE ready")
 
         self.editor_tabs = QTabWidget()
-        self.editor_tabs.addTab(self.canvas, "WYSIWYG")
+        self.editor_tabs.addTab(self.canvas_board, "WYSIWYG")
         self.editor_tabs.addTab(self.xml_page, "XML")
         self.editor_tabs.addTab(self.log_view, "Log")
         self.editor_tabs.currentChanged.connect(self._on_editor_tab_changed)
@@ -906,13 +1121,7 @@ class MainWindow(QMainWindow):
         self.tool_fill = QCheckBox("Box fill selected")
         self.tool_fill.setChecked(bool(self.settings.get("show_box_fill", False)))
         self.tool_labels = QCheckBox("Show labels")
-        self.tool_labels.setChecked(bool(self.settings.get("show_element_labels", True)))
-        self.tool_scroll_select = QCheckBox("Scroll select")
-        self.tool_scroll_select.setToolTip(
-            "Wheel cycles widgets under the cursor (no wrap). "
-            "Ctrl+wheel zooms · Shift+wheel pans horizontally · Alt+wheel pans vertically."
-        )
-        self.tool_scroll_select.setChecked(bool(self.settings.get("scroll_select", False)))
+        self.tool_labels.setChecked(bool(self.settings.get("show_element_labels", False)))
         font_row = QHBoxLayout()
         font_row.addWidget(QLabel("Label size"))
         self.tool_font = QSpinBox()
@@ -925,7 +1134,6 @@ class MainWindow(QMainWindow):
         tools_l.addWidget(self.tool_border)
         tools_l.addWidget(self.tool_fill)
         tools_l.addWidget(self.tool_labels)
-        tools_l.addWidget(self.tool_scroll_select)
         tools_l.addLayout(font_row)
         tools_l.addStretch(1)
         self.tools_scroll = QScrollArea()
@@ -938,6 +1146,22 @@ class MainWindow(QMainWindow):
         right_body_l.addWidget(QLabel("Layers"))
         self.layers.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         right_body_l.addWidget(self.layers, stretch=1)
+
+        right_body_l.addWidget(QLabel("Undo"))
+        self.undo_list = QListWidget()
+        self.undo_list.setObjectName("undoHistoryList")
+        self.undo_list.setToolTip(
+            "Recent geometry edits (newest first). Stack keeps up to 100; list shows ~10."
+        )
+        self.undo_list.setSelectionMode(QListWidget.SelectionMode.NoSelection)
+        self.undo_list.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.undo_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # ~10 compact rows; layers keep the remaining stretch.
+        self.undo_list.setFixedHeight(9 * 18 + 8)
+        self.undo_list.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
+        right_body_l.addWidget(self.undo_list)
         right_l.addWidget(right_body, stretch=1)
 
         self._apply_sidebar_section_heights()
@@ -976,10 +1200,9 @@ class MainWindow(QMainWindow):
         self.tool_border.toggled.connect(self._on_toggle_border)
         self.tool_fill.toggled.connect(self._on_toggle_fill)
         self.tool_labels.toggled.connect(self._on_toggle_labels)
-        self.tool_scroll_select.toggled.connect(self._on_toggle_scroll_select)
         self.tool_font.valueChanged.connect(self._on_tool_font_size)
         self.statusBar().showMessage(
-            "1024×768 HUD · wheel zoom · Alt/MMB pan · drag/resize · Ctrl+Z undo · Ctrl+Y redo"
+            "1024×768 HUD · wheel zoom · Alt/MMB pan · drag/resize · Ctrl+click cycle · Ctrl+Z undo"
         )
 
         # CLI path opens after show; otherwise the startup chooser runs.
@@ -1131,18 +1354,9 @@ class MainWindow(QMainWindow):
         view_menu.addAction(self.fill_a)
         self.labels_a = QAction("&Show labels", self)
         self.labels_a.setCheckable(True)
-        self.labels_a.setChecked(bool(self.settings.get("show_element_labels", True)))
+        self.labels_a.setChecked(bool(self.settings.get("show_element_labels", False)))
         self.labels_a.toggled.connect(self._on_toggle_labels)
         view_menu.addAction(self.labels_a)
-        self.scroll_select_a = QAction("&Scroll select", self)
-        self.scroll_select_a.setCheckable(True)
-        self.scroll_select_a.setChecked(bool(self.settings.get("scroll_select", False)))
-        self.scroll_select_a.setToolTip(
-            "Wheel cycles widgets under the cursor (no wrap). "
-            "Ctrl+wheel zooms · Shift+wheel pans horizontally · Alt+wheel pans vertically."
-        )
-        self.scroll_select_a.toggled.connect(self._on_toggle_scroll_select)
-        view_menu.addAction(self.scroll_select_a)
         view_menu.addSeparator()
         self.reload_tex_a = QAction("Reload &textures / strings", self)
         self.reload_tex_a.triggered.connect(self._reload_textures)
@@ -1176,6 +1390,40 @@ class MainWindow(QMainWindow):
         self.settings_a = QAction("&Settings…", self)
         self.settings_a.triggered.connect(self.edit_settings)
         edit_menu.addAction(self.settings_a)
+
+        help_menu = self.menuBar().addMenu("&Help")
+        about_a = QAction("&About SAGE…", self)
+        about_a.triggered.connect(self._show_about)
+        help_menu.addAction(about_a)
+
+    def _show_about(self) -> None:
+        from sage import __version__
+
+        QMessageBox.about(
+            self,
+            "About SAGE",
+            "<h3>D.O.G.M.A. Stalker Anomaly Gui Editor</h3>"
+            f"<p>SAGE {__version__} — visual layout editor for Anomaly UI XML "
+            "(1024×768 HUD space).</p>"
+            "<p><b>Controls</b></p>"
+            "<ul>"
+            "<li><b>Wheel</b> — zoom</li>"
+            "<li><b>Ctrl+Wheel</b> — zoom</li>"
+            "<li><b>Shift+Wheel</b> — pan horizontally</li>"
+            "<li><b>Alt+Wheel</b> — pan vertically</li>"
+            "<li><b>Middle-drag</b> or <b>Alt+Left-drag</b> — pan</li>"
+            "<li><b>F</b> — fit stage</li>"
+            "<li><b>Click</b> — select smallest widget under cursor</li>"
+            "<li><b>Ctrl+Click</b> — cycle stacked widgets (toward smaller; "
+            "wraps to largest)</li>"
+            "<li><b>Drag empty / unselected</b> — marquee (fully enclosed)</li>"
+            "<li><b>Drag selected</b> — move (multi-move when several selected)</li>"
+            "<li><b>Edge / corner</b> — resize (single selection)</li>"
+            "<li><b>Right-click</b> — clear selection</li>"
+            "<li><b>Rulers</b> — drag guide; right-click near guide to remove</li>"
+            "<li><b>Ctrl+Z / Ctrl+Y</b> — undo / redo geometry</li>"
+            "</ul>",
+        )
 
     def _rebuild_recents_menu(self) -> None:
         self.recents_menu.clear()
@@ -1260,7 +1508,9 @@ class MainWindow(QMainWindow):
 
     def open_path(self, path: Path) -> None:
         if self._busy_open:
+            _log_file.warning("open_path ignored (busy): %s", path)
             return
+        _log_file.info("open_path begin: %s", path)
         self._busy_open = True
         self._show_busy(f"Loading {path.name}…")
         # Let the overlay paint / spin once before the blocking load work.
@@ -1268,10 +1518,12 @@ class MainWindow(QMainWindow):
 
     def _open_path_finish(self, path: Path) -> None:
         ok = False
+        _log_file.debug("_open_path_finish: %s", path)
         try:
             try:
                 doc = self.doc.load(path)
             except Exception as exc:  # noqa: BLE001
+                _log_file.exception("Open failed: %s", path)
                 self._log("error", f"Open failed: {path} - {exc}")
                 QMessageBox.critical(self, "Open failed", str(exc))
                 return
@@ -1283,7 +1535,7 @@ class MainWindow(QMainWindow):
             self._apply_preview_doc(doc)
             self._reveal_workspace()
             self._restore_view_or_fit()
-            self.setWindowTitle(f"DOGMA UI Editor - {path.name}")
+            self.setWindowTitle(f"D.O.G.M.A. Stalker Anomaly Gui Editor - {path.name}")
             widgets = len(doc.iter_drawables())
             meta_n = sum(1 for n in doc.iter_drawables() if n.from_meta)
             self._log(
@@ -1303,9 +1555,18 @@ class MainWindow(QMainWindow):
                 f"{self.strings.count} strings"
             )
             ok = True
+            _log_file.info(
+                "open complete: %s widgets=%s meta=%s textured=%s missing_tex=%s",
+                path,
+                widgets,
+                meta_n,
+                textured,
+                missing,
+            )
         finally:
             self._hide_busy()
             self._busy_open = False
+            _log_file.debug("open_path finish ok=%s busy cleared", ok)
             if not ok and not self._workspace_revealed:
                 QTimer.singleShot(0, self._show_startup_chooser)
 
@@ -1318,6 +1579,7 @@ class MainWindow(QMainWindow):
             undo, redo = self.doc.undo_snapshot()
             self.scene.undo_stack.restore(undo=undo, redo=redo)
             self._update_undo_actions()
+            self._refresh_undo_list()
             if self.doc.selection:
                 self.scene.select_path(self.doc.selection)
             else:
@@ -1350,10 +1612,34 @@ class MainWindow(QMainWindow):
 
     def _on_undo_stack_changed(self) -> None:
         self._update_undo_actions()
+        self._refresh_undo_list()
         if self._restoring_meta:
             return
         # Keep session snapshot current; geo edits already mark xml/meta dirty.
         self._capture_session_meta()
+
+    def _refresh_undo_list(self) -> None:
+        """Show newest ~10 undo entries under Layers (updates on push / undo / redo)."""
+        view = getattr(self, "undo_list", None)
+        if view is None:
+            return
+        edits = self.scene.undo_stack.recent_undo(10)
+        view.blockSignals(True)
+        view.clear()
+        for edit in edits:
+            item = QListWidgetItem(edit.describe())
+            tip_parts = []
+            for before, after in edit.parts[:6]:
+                tip_parts.append(
+                    f"{before.path}: "
+                    f"({before.x:g},{before.y:g} {before.width:g}×{before.height:g}) → "
+                    f"({after.x:g},{after.y:g} {after.width:g}×{after.height:g})"
+                )
+            if len(edit.parts) > 6:
+                tip_parts.append(f"… +{len(edit.parts) - 6} more")
+            item.setToolTip("\n".join(tip_parts) if tip_parts else edit.describe())
+            view.addItem(item)
+        view.blockSignals(False)
 
     def _has_unsaved_changes(self) -> bool:
         return bool(self.doc.dirty or self.doc.meta_dirty or self._raw_dirty)
@@ -1634,7 +1920,7 @@ class MainWindow(QMainWindow):
         saved = Path(path)
         self._remember_file_dir(saved)
         self._remember_recent_file(saved)
-        self.setWindowTitle(f"DOGMA UI Editor - {saved.name}")
+        self.setWindowTitle(f"D.O.G.M.A. Stalker Anomaly Gui Editor - {saved.name}")
         meta = self.doc.meta_path
         extra = f" + {meta.name}" if meta and meta.is_file() else ""
         self._log("info", f"Saved {saved}{extra}")
@@ -1642,26 +1928,18 @@ class MainWindow(QMainWindow):
         return True
 
     def edit_settings(self) -> None:
-        dlg = SettingsDialog(self.settings, self)
+        dlg = InstallRootsDialog(self.settings, self, setup_mode=False)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         self.settings = dlg.result_settings()
         save_settings(self.settings)
-        self.scene.set_label_font_size(clamp_label_font_size(self.settings.get("label_font_size")))
-        self.scene.set_show_element_labels(bool(self.settings.get("show_element_labels", True)))
-        self.canvas.set_scroll_select(bool(self.settings.get("scroll_select", False)))
-        self._sync_tool_controls()
-        self.scene.set_box_style(
-            show_border=bool(self.settings.get("show_box_border", False)),
-            show_fill=bool(self.settings.get("show_box_fill", False)),
-        )
+        # Roots changed → unpack if needed + rebuild resolvers.
         self._reload_textures()
 
     def _sync_tool_controls(self) -> None:
         border = bool(self.settings.get("show_box_border", False))
         fill = bool(self.settings.get("show_box_fill", False))
-        labels = bool(self.settings.get("show_element_labels", True))
-        scroll_select = bool(self.settings.get("scroll_select", False))
+        labels = bool(self.settings.get("show_element_labels", False))
         font = clamp_label_font_size(self.settings.get("label_font_size"))
         for w in (self.border_a, self.tool_border):
             w.blockSignals(True)
@@ -1674,10 +1952,6 @@ class MainWindow(QMainWindow):
         for w in (self.labels_a, self.tool_labels):
             w.blockSignals(True)
             w.setChecked(labels)
-            w.blockSignals(False)
-        for w in (self.scroll_select_a, self.tool_scroll_select):
-            w.blockSignals(True)
-            w.setChecked(scroll_select)
             w.blockSignals(False)
         self.tool_font.blockSignals(True)
         self.tool_font.setValue(font)
@@ -1701,12 +1975,6 @@ class MainWindow(QMainWindow):
         self.scene.set_show_element_labels(checked)
         self._sync_tool_controls()
 
-    def _on_toggle_scroll_select(self, checked: bool) -> None:
-        self.settings["scroll_select"] = checked
-        save_settings(self.settings)
-        self.canvas.set_scroll_select(checked)
-        self._sync_tool_controls()
-
     def _on_tool_font_size(self, size: int) -> None:
         size = clamp_label_font_size(size)
         self.settings["label_font_size"] = size
@@ -1714,6 +1982,21 @@ class MainWindow(QMainWindow):
         self.scene.set_label_font_size(size)
 
     def _reload_textures(self) -> None:
+        # Ensure Anomaly _db_unpacked exists before rescanning roots.
+        before = (
+            list(self.settings.get("gamedata_texture_roots") or []),
+            list(self.settings.get("gamedata_descr_roots") or []),
+            list(self.settings.get("gamedata_text_roots") or []),
+        )
+        ensure_db_unpacked_and_roots(self.settings)
+        after = (
+            list(self.settings.get("gamedata_texture_roots") or []),
+            list(self.settings.get("gamedata_descr_roots") or []),
+            list(self.settings.get("gamedata_text_roots") or []),
+        )
+        if after != before:
+            save_settings(self.settings)
+            self._log("info", "Asset roots updated after Anomaly DB unpack check")
         self.resolver = self._make_resolver()
         self.strings = self._make_string_resolver()
         self.scene.rebind_resolver(self.resolver)
@@ -1736,9 +2019,18 @@ class MainWindow(QMainWindow):
         )
 
     def _log(self, level: str, message: str) -> None:
-        """Append a line to the Log tab (info / warn / error)."""
+        """Append a line to the Log tab (info / warn / error) and sage.log."""
         stamp = datetime.now().strftime("%H:%M:%S")
         line = f"[{stamp}] {level.upper():<5} {message}"
+        lvl = {
+            "debug": logging.DEBUG,
+            "info": logging.INFO,
+            "warn": logging.WARNING,
+            "warning": logging.WARNING,
+            "error": logging.ERROR,
+            "critical": logging.CRITICAL,
+        }.get(level.lower(), logging.INFO)
+        _log_file.log(lvl, "%s", message)
         view = getattr(self, "log_view", None)
         if view is None:
             return
@@ -1935,9 +2227,9 @@ class MainWindow(QMainWindow):
         if edited is None:
             return
         self.scene.push_geo_edit(
-            GeoEdit(
-                before=before,
-                after=GeoState(
+            GeoEdit.single(
+                before,
+                GeoState(
                     path=edited.path,
                     x=edited.x,
                     y=edited.y,
@@ -1953,8 +2245,11 @@ class MainWindow(QMainWindow):
         else:
             self._mark_xml_dirty()
         self._show_props(node)
-        # Update absolute positions of related items (e.g. children after parent move)
-        self.scene.refresh_item_positions()
+        # Child abs positions: callers that change parent geo should refresh;
+        # group-move / resize already refresh before emitting.
+        if self.scene.doc is not None:
+            # Cheap pos sync only (textures unchanged on move/resize of others).
+            self.scene.refresh_item_positions()
 
     def _pin_splitter_sizes(self) -> None:
         """Keep sidebar widths stable; only manual splitter drag should change them."""
@@ -2124,12 +2419,12 @@ class MainWindow(QMainWindow):
         edit = self.scene.undo_stack.undo()
         if edit is None:
             return
-        node = self.scene.apply_geo_state(edit.before)
+        node = self.scene.apply_geo_edit(edit, use_after=False)
         if node is not None and node.from_meta:
             self.doc.mark_meta_dirty()
         else:
             self._mark_xml_dirty()
-        self._update_undo_actions()
+        self._on_undo_stack_changed()
         if node is not None:
             self.scene.select_path(node.path)
             self._show_props(node)
@@ -2146,12 +2441,12 @@ class MainWindow(QMainWindow):
         edit = self.scene.undo_stack.redo()
         if edit is None:
             return
-        node = self.scene.apply_geo_state(edit.after)
+        node = self.scene.apply_geo_edit(edit, use_after=True)
         if node is not None and node.from_meta:
             self.doc.mark_meta_dirty()
         else:
             self._mark_xml_dirty()
-        self._update_undo_actions()
+        self._on_undo_stack_changed()
         if node is not None:
             self.scene.select_path(node.path)
             self._show_props(node)
@@ -2444,16 +2739,54 @@ def _apply_dark_theme(app: QApplication) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    setup_logging()
     argv = list(sys.argv if argv is None else argv)
+    _log_file.info("main() argv=%s", argv)
     # Before the first widget exists so the HWND isn't created light.
     QApplication.setStyle("Fusion")
     app = QApplication(argv)
     _apply_dark_theme(app)
-    app.setApplicationName("DOGMA UI Editor")
+    app.setApplicationName("D.O.G.M.A. Stalker Anomaly Gui Editor")
     icon = _app_icon()
     if not icon.isNull():
         app.setWindowIcon(icon)
+
+    # Setup until Anomaly + GAMMA roots validate (detect only prefills the dialog).
+    settings = load_settings()
+    ran_setup = False
+    if not installs_configured(settings):
+        _log_file.info("install roots missing/invalid — showing SAGE Setup")
+        setup = InstallRootsDialog(settings, None, setup_mode=True)
+        if not icon.isNull():
+            setup.setWindowIcon(icon)
+        if setup.exec() != QDialog.DialogCode.Accepted:
+            _log_file.info("setup cancelled — exit")
+            return 1
+        settings = setup.result_settings()
+        save_settings(settings)
+        ran_setup = True
+        _log_file.info(
+            "setup saved anomaly=%s gamma=%s",
+            settings.get("anomaly_root"),
+            settings.get("gamma_root"),
+        )
+
+    # Roots already saved but unpack still missing (setup was skipped).
+    if not ran_setup:
+        need = check_anomaly_unpack_needed(settings.get("anomaly_root"))
+        if need.needed:
+            _log_file.info("Anomaly unpack needed — showing setup for confirm")
+            setup = InstallRootsDialog(settings, None, setup_mode=True)
+            if not icon.isNull():
+                setup.setWindowIcon(icon)
+            if setup.exec() != QDialog.DialogCode.Accepted:
+                _log_file.info("unpack setup cancelled — exit")
+                return 1
+            settings = setup.result_settings()
+            save_settings(settings)
+
     initial = Path(argv[1]) if len(argv) > 1 else None
+    _log_file.info("creating MainWindow initial=%s", initial)
     win = MainWindow(initial)
     if not icon.isNull():
         win.setWindowIcon(icon)
@@ -2466,4 +2799,7 @@ def main(argv: list[str] | None = None) -> int:
     app.processEvents()
     # Dark shell first; chooser (or CLI path) then Loading… then workspace.
     QTimer.singleShot(0, win._open_startup_file)
-    return app.exec()
+    _log_file.info("entering app.exec()")
+    code = app.exec()
+    _log_file.info("app.exec() returned %s", code)
+    return code

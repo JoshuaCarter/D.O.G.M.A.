@@ -321,6 +321,7 @@ class TextureResolver:
         return roots
 
     def find_dds(self, logical: str) -> Path | None:
+        """Resolve logical texture path → DDS. Later roots override (mod load order)."""
         key = logical.strip().replace("/", "\\").lower()
         if key.endswith(".dds"):
             key = key[:-4]
@@ -330,11 +331,14 @@ class TextureResolver:
             return None
 
         rel = Path(*key.split("\\")).with_suffix(".dds")
+        hit: Path | None = None
         for root in self._iter_dds_search_roots():
             candidate = root / rel
             if candidate.is_file():
-                self._dds_index[key] = candidate
-                return candidate
+                hit = candidate
+        if hit is not None:
+            self._dds_index[key] = hit
+            return hit
         self._dds_missing.add(key)
         return None
 

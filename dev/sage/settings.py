@@ -16,6 +16,8 @@ LABEL_FONT_MIN = 2
 LABEL_FONT_MAX = 40
 LABEL_FONT_DEFAULT = 5
 RECENT_FILES_MAX = 10
+# Bump when derived root ordering / discovery rules change (forces one rescan).
+ASSET_ROOTS_VERSION = 4
 
 
 def clamp_label_font_size(value: object) -> int:
@@ -171,36 +173,93 @@ def _existing_dirs(paths: list[Path]) -> list[str]:
     return out
 
 
-def _gamma_ui_mod_bases(gamma: Path) -> list[Path]:
-    """G.A.M.M.A. UI install locations under a GAMMA root."""
-    return [
-        gamma / "mods" / "G.A.M.M.A. UI",
-        gamma
-        / ".Grok's Modpack Installer"
-        / "G.A.M.M.A"
-        / "modpack_addons"
-        / "G.A.M.M.A. UI",
-    ]
+def _mo2_modlist_path(gamma: Path) -> Path | None:
+    """Active MO2 profile modlist under a GAMMA (or MO2 instance) root."""
+    for candidate in (
+        gamma / "profiles" / "G.A.M.M.A" / "modlist.txt",
+        gamma / "profiles" / "Default" / "modlist.txt",
+    ):
+        if candidate.is_file():
+            return candidate
+    profiles = gamma / "profiles"
+    if not profiles.is_dir():
+        return None
+    try:
+        children = sorted(profiles.iterdir(), key=lambda p: p.name.lower())
+    except OSError:
+        return None
+    for child in children:
+        ml = child / "modlist.txt"
+        if ml.is_file():
+            return ml
+    return None
+
+
+def _parse_mo2_enabled_mods(modlist: Path) -> list[str]:
+    """Enabled mod folder names, highest priority first (MO2 file order)."""
+    try:
+        lines = modlist.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+    names: list[str] = []
+    for raw in lines:
+        line = raw.strip()
+        if not line or line.startswith("#") or not line.startswith("+"):
+            continue
+        name = line[1:].strip()
+        if not name or name.lower().endswith("_separator"):
+            continue
+        if "separator" in name.lower() and name.endswith("separator"):
+            continue
+        names.append(name)
+    return names
+
+
+def _pack_sort_key(name: str) -> tuple[int, str]:
+    """Numeric GAMMA prefix first (109- …), then casefold name."""
+    m = re.match(r"^(\d+)", name)
+    if m:
+        return (int(m.group(1)), name.casefold())
+    return (10**9, name.casefold())
 
 
 def _iter_gamma_pack_dirs(gamma: Path) -> list[Path]:
-    """Immediate children of mods/ and Grok modpack_addons/ (no deep walk)."""
+    """Installed packs in override order: lowest priority → highest (last wins).
+
+    Prefers MO2 ``profiles/.../modlist.txt`` (top of list = highest priority).
+    Falls back to ``mods/`` sorted by numeric prefix — does not append Grok
+    installer copies after live mods.
+    """
+    mods_dir = gamma / "mods"
     out: list[Path] = []
-    for parent in (
-        gamma / "mods",
-        gamma
-        / ".Grok's Modpack Installer"
-        / "G.A.M.M.A"
-        / "modpack_addons",
-    ):
-        if not parent.is_dir():
-            continue
+    seen: set[str] = set()
+
+    def _add(pack: Path) -> None:
+        if not pack.is_dir():
+            return
         try:
-            for child in parent.iterdir():
-                if child.is_dir():
-                    out.append(child)
+            key = str(pack.resolve()).lower()
         except OSError:
-            continue
+            key = str(pack).lower()
+        if key in seen:
+            return
+        seen.add(key)
+        out.append(pack)
+
+    ml = _mo2_modlist_path(gamma)
+    if ml is not None and mods_dir.is_dir():
+        # MO2: first lines = highest priority → process reversed for last-wins.
+        for name in reversed(_parse_mo2_enabled_mods(ml)):
+            _add(mods_dir / name)
+        return out
+
+    if mods_dir.is_dir():
+        try:
+            children = [c for c in mods_dir.iterdir() if c.is_dir()]
+        except OSError:
+            children = []
+        for pack in sorted(children, key=lambda p: _pack_sort_key(p.name)):
+            _add(pack)
     return out
 
 
@@ -248,48 +307,40 @@ def derived_asset_roots(
     gamma_root: str = "",
     custom_roots: list[str] | None = None,
 ) -> dict[str, list[str]]:
-    """Build texture / descr / text root lists from user install roots + DOGMA src.
+    """Build texture / descr / text root lists from installs + user custom dirs.
 
-    GAMMA packs are discovered one level under ``mods/`` and Grok ``modpack_addons/``
-    (known ``gamedata/...`` paths only) — not by recursively scanning the whole tree.
+    Resolution order (last wins): Anomaly → GAMMA (MO2 modlist) → user
+    ``custom_roots`` (always last). No repo paths are implied — add DOGMA
+    ``src`` (or anything else) via custom roots in Setup/Settings.
     """
-    dogma_src = REPO_ROOT / "src"
     tex: list[Path] = []
     descr: list[Path] = []
     text: list[Path] = []
-    # Recursive scan only for the DOGMA repo (and optional custom roots) — small trees.
-    scan_tex = [dogma_src]
-    scan_descr = [dogma_src]
-    scan_text = [dogma_src]
+    scan_tex: list[Path] = []
+    scan_descr: list[Path] = []
+    scan_text: list[Path] = []
 
     anomaly = Path(anomaly_root) if anomaly_root.strip() else None
     gamma = Path(gamma_root) if gamma_root.strip() else None
 
     if anomaly is not None:
-        tex.append(anomaly / "gamedata" / "textures")
+        # DB extract first; loose Anomaly gamedata overrides it (last wins).
         tex.append(anomaly / "tools" / "_unpacked" / "textures")
+        tex.append(anomaly / "gamedata" / "textures")
         descr.append(anomaly / "tools" / "_unpacked" / "configs" / "ui" / "textures_descr")
         descr.append(anomaly / "gamedata" / "configs" / "ui" / "textures_descr")
         text.append(anomaly / "tools" / "_unpacked" / "configs" / "text" / "eng")
         text.append(anomaly / "gamedata" / "configs" / "text" / "eng")
 
     if gamma is not None:
-        # Explicit UI packs first, then every installed mod/addon with known layouts.
-        for base in _gamma_ui_mod_bases(gamma):
-            p_tex, p_descr, p_text = _pack_asset_paths(base)
-            tex.extend(p_tex)
-            descr.extend(p_descr)
-            text.extend(p_text)
+        # Packs already ordered low→high priority (MO2 modlist / numeric fallback).
         for pack in _iter_gamma_pack_dirs(gamma):
             p_tex, p_descr, p_text = _pack_asset_paths(pack)
             descr_dir = pack / "gamedata" / "configs" / "ui" / "textures_descr"
             name_l = pack.name.lower()
-            # Atlas descr whenever present; DDS for packs that ship atlases.
             descr.extend(p_descr)
             if descr_dir.is_dir():
                 tex.extend(p_tex)
-            # String tables: text overhaul + packs whose name has a standalone "UI"
-            # (not substrings like "Quick"). G.A.M.M.A. UI is also in _gamma_ui_mod_bases.
             is_text_pack = "text" in name_l and (
                 "overhaul" in name_l or "massive" in name_l
             )
@@ -299,6 +350,7 @@ def derived_asset_roots(
             if is_text_pack or is_named_ui:
                 text.extend(p_text)
 
+    # User-supplied dirs only — always last in resolution order.
     for raw in custom_roots or []:
         if not str(raw).strip():
             continue
@@ -308,15 +360,11 @@ def derived_asset_roots(
         scan_tex.append(custom)
         scan_descr.append(custom)
         scan_text.append(custom)
-        c_tex, c_descr, c_text = _known_asset_paths_under(custom)
-        tex.extend(c_tex)
-        descr.extend(c_descr)
-        text.extend(c_text)
 
     return {
-        "texture_roots": _existing_dirs(scan_tex) or [str(dogma_src)],
-        "textures_descr_roots": _existing_dirs(scan_descr) or [str(dogma_src)],
-        "text_roots": _existing_dirs(scan_text) or [str(dogma_src)],
+        "texture_roots": _existing_dirs(scan_tex),
+        "textures_descr_roots": _existing_dirs(scan_descr),
+        "text_roots": _existing_dirs(scan_text),
         "gamedata_texture_roots": _existing_dirs(tex),
         "gamedata_descr_roots": _existing_dirs(descr),
         "gamedata_text_roots": _existing_dirs(text),
@@ -334,11 +382,10 @@ _ASSET_ROOT_KEYS = (
 
 
 def _empty_asset_roots() -> dict[str, list[str]]:
-    dogma = str(REPO_ROOT / "src")
     return {
-        "texture_roots": [dogma],
-        "textures_descr_roots": [dogma],
-        "text_roots": [dogma],
+        "texture_roots": [],
+        "textures_descr_roots": [],
+        "text_roots": [],
         "gamedata_texture_roots": [],
         "gamedata_descr_roots": [],
         "gamedata_text_roots": [],
@@ -359,6 +406,7 @@ def rescan_asset_roots(settings: dict) -> dict:
         custom_roots=list(settings.get("custom_roots") or []),
     )
     settings.update(derived)
+    settings["asset_roots_version"] = ASSET_ROOTS_VERSION
     return settings
 
 
@@ -421,7 +469,7 @@ def default_settings() -> dict:
         "show_element_labels": False,
         "show_box_border": False,
         "show_box_fill": False,
-        "last_file_dir": str(REPO_ROOT / "src"),
+        "last_file_dir": "",
         "recent_files": [],
         "window": {
             "x": None,
@@ -521,15 +569,16 @@ def migrate_legacy_scan_roots(settings: dict) -> bool:
     text_n = len(settings.get("gamedata_text_roots") or [])
     if installs_configured(settings) and text_n > 25:
         rescan_asset_roots(settings)
+        settings["asset_roots_version"] = ASSET_ROOTS_VERSION
+        return True
+    # Discovery / override order changed (MO2 modlist, Anomaly base order).
+    if installs_configured(settings) and int(
+        settings.get("asset_roots_version") or 0
+    ) < ASSET_ROOTS_VERSION:
+        rescan_asset_roots(settings)
+        settings["asset_roots_version"] = ASSET_ROOTS_VERSION
         return True
 
-    dogma = str(REPO_ROOT / "src")
-    dogma_k = _path_key(dogma)
-    for key in ("texture_roots", "textures_descr_roots", "text_roots"):
-        cur = list(settings.get(key) or [])
-        if not any(_path_key(p) == dogma_k for p in cur):
-            settings[key] = [dogma] + cur
-            changed = True
     return changed
 
 

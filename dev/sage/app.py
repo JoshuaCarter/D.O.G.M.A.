@@ -69,7 +69,6 @@ from .db_unpack import check_anomaly_unpack_needed, ensure_anomaly_db_unpacked
 from .settings import (
     LABEL_FONT_MAX,
     LABEL_FONT_MIN,
-    REPO_ROOT,
     clamp_label_font_size,
     ensure_db_unpacked_and_roots,
     installs_configured,
@@ -613,8 +612,9 @@ class InstallRootsDialog(QDialog):
         layout.addWidget(
             QLabel(
                 "<b>Extra scan roots</b> (optional)<br/>"
-                "Any extra mod / pack folders to scan for textures, textures_descr, "
-                "text, and future asset types. Not required to use the editor."
+                "Folders to scan for textures, textures_descr, text, etc. "
+                "Resolved last (override Anomaly / GAMMA). Add your DOGMA "
+                "<code>src</code> here if you want repo assets to win."
             )
         )
         self.custom_list = QListWidget()
@@ -1562,8 +1562,7 @@ class MainWindow(QMainWindow):
         saved = Path(str(self.settings.get("last_file_dir") or ""))
         if saved.is_dir():
             return str(saved)
-        fallback = REPO_ROOT / "src"
-        return str(fallback if fallback.is_dir() else REPO_ROOT)
+        return str(Path.cwd())
 
     def _remember_file_dir(self, path: Path) -> None:
         directory = path if path.is_dir() else path.parent

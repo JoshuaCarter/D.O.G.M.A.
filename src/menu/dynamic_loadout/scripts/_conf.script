@@ -17,18 +17,15 @@ local defaults = {
 	["cost_mult_ammo"] = 1000,
 	["cost_mult_sight"] = 1000,
 	-- Weapon score weights (0-1). Final: avg(n01×w) / Σw, then × cost_mult_<cat>.
-	-- DOGMA tooltip stats + table dmg. Base-GAMMA bars: mag + fire rate.
-	-- Max TT torso dmg across all ammo_class rounds (cols Min→Mid+).
-	-- mut_dmg: max(col 1 Min, tip mutant-row) if mutant-row is higher.
-	["w_mut_dmg"] = 0.5, -- col 1 Min (or mutant-row override)
-	["w_lgt_dmg"] = 0.5, -- col 2 Lgt
-	["w_mid_dmg"] = 0.5, -- col 3 Lgt+
-	["w_hvy_dmg"] = 0.5, -- col 4 Mid
-	["w_max_dmg"] = 0.5, -- col 5 Mid+
-	["w_rpm"] = 0.5,
-	["w_mag"] = 0.5,
+	-- Sustained DPS per TT armor col: (dmg × mag) / (mag×60/rpm + reload_s).
+	-- dmg = max TT torso across ammo_class; mut also max(col1, tip mutant-row).
+	-- reload_s from tip weapon_reload_seconds (empty→full), with fallback.
+	["w_mut_dps"] = 0.5, -- col 1 Min (or mutant-row override)
+	["w_lgt_dps"] = 0.5, -- col 2 Lgt
+	["w_mid_dps"] = 0.5, -- col 3 Lgt+
+	["w_hvy_dps"] = 0.5, -- col 4 Mid
+	["w_max_dps"] = 0.5, -- col 5 Mid+
 	["w_burst"] = 0.5,
-	["w_use_mag"] = 0.5, -- 1 mag-fed, 0 rounds-reload (tip)
 	-- Spread ADS / hip (lower ° = better). Soft ceilings 1° and 10°.
 	-- scope / silencer: always 0/1 mount capability.
 	["w_spread_ads"] = 0.5,
@@ -57,8 +54,8 @@ local defaults = {
 
 -- Ordered MCM weight tracks (must match defaults keys used by scoring).
 local WEIGHT_KEYS = {
-	"w_mut_dmg", "w_lgt_dmg", "w_mid_dmg", "w_hvy_dmg", "w_max_dmg",
-	"w_rpm", "w_mag", "w_burst", "w_use_mag",
+	"w_mut_dps", "w_lgt_dps", "w_mid_dps", "w_hvy_dps", "w_max_dps",
+	"w_burst",
 	"w_spread_ads", "w_spread_hip",
 	"w_scope", "w_silencer",
 	"w_price",

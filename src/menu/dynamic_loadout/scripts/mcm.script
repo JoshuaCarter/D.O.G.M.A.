@@ -666,15 +666,55 @@ end
 
 -- Soft ceilings for weapon stats (ignore gauss-tier outliers).
 local NORM = {
-	dmg = 150,       -- soft ceiling for each armor-column max (mut/lgt/mid/hvy/max)
-	rpm = 1200,
-	mag = 50,        -- ammo_mag_size (1-50 -> 0-1)
+	dps = 800,       -- sustained dps soft ceiling per armor column
 	burst = 10,      -- shots to ~3 deg climb (0-10 -> 0-1)
 	spread_ads = 1,  -- ADS/base  deg (lower better -> inv scale)
 	spread_hip = 10, -- hip-run  deg (lower better -> inv scale)
 	zoom = 10,       -- scope_zoom_factor
 	ammo_ratio = 200, -- k_hit / k_ap
 }
+
+-- Dump-mag sustained DPS: all hits, max RoF, full mag, then empty→full reload.
+-- dps = (dmg × mag) / (mag×60/rpm + reload_s)
+local function sustained_dps(dmg, rpm, mag, reload_s)
+	dmg = dmg or 0
+	rpm = rpm or 0
+	mag = mag or 0
+	reload_s = reload_s or 0
+	if dmg <= 0 or mag <= 0 or rpm <= 0 then
+		return 0
+	end
+	local fire_s = mag * 60 / rpm
+	local cycle = fire_s + math.max(0, reload_s)
+	if cycle <= 0 then
+		return 0
+	end
+	return dmg * mag / cycle
+end
+
+-- Tip motion-length reload; fallback if nil (main-menu / missing anims).
+local function reload_seconds_for(sec, mag, use_mag)
+	local tip = _G.dogma_tooltips_weapons
+	if tip and tip.weapon_reload_seconds then
+		local ok, t = pcall(tip.weapon_reload_seconds, sec)
+		if ok and type(t) == "number" and t > 0 then
+			return t
+		end
+	end
+	local S = rawget(_G, "zzzz_dogma_tooltips_weapons_stats")
+	if S and S.weapon_reload_seconds then
+		local ok, t = pcall(S.weapon_reload_seconds, sec)
+		if ok and type(t) == "number" and t > 0 then
+			return t
+		end
+	end
+	mag = mag or 1
+	if use_mag == 0 then
+		-- Rough tube/break empty→full: open/close + per-round.
+		return 1.2 + 0.7 * math.max(mag, 1)
+	end
+	return 2.5
+end
 
 -- Lower-is-better linear map: 0 -> 1, max_v -> 0.
 local function inv_norm01(raw, max_v)
@@ -767,11 +807,11 @@ local function score_weapon(sec)
 	local hip_n = inv_norm01(spread_hip, NORM.spread_hip)
 
 	local col_dmg = {
-		{ key = "mut_dmg", w = "w_mut_dmg", v = 0, src = nil },
-		{ key = "lgt_dmg", w = "w_lgt_dmg", v = 0, src = nil },
-		{ key = "mid_dmg", w = "w_mid_dmg", v = 0, src = nil },
-		{ key = "hvy_dmg", w = "w_hvy_dmg", v = 0, src = nil },
-		{ key = "max_dmg", w = "w_max_dmg", v = 0, src = nil },
+		{ key = "mut_dps", w = "w_mut_dps", v = 0, src = nil },
+		{ key = "lgt_dps", w = "w_lgt_dps", v = 0, src = nil },
+		{ key = "mid_dps", w = "w_mid_dps", v = 0, src = nil },
+		{ key = "hvy_dps", w = "w_hvy_dps", v = 0, src = nil },
+		{ key = "max_dps", w = "w_max_dps", v = 0, src = nil },
 	}
 	local rounds_n = 0
 	local ammo_str = ini_str(sec, "ammo_class", "-") or "-"
@@ -789,30 +829,19 @@ local function score_weapon(sec)
 	if B and B.weapon_table_damage_stats then
 		local st_dmg = B.weapon_table_damage_stats(sec, B.DEFAULT_DIST or 30)
 		rounds_n = st_dmg.rounds_n or 0
+		-- Table returns mut_dmg/lgt_dmg/...; map into DPS column slots.
+		local dmg_keys = { "mut_dmg", "lgt_dmg", "mid_dmg", "hvy_dmg", "max_dmg" }
 		for i = 1, #col_dmg do
 			local c = col_dmg[i]
-			c.v = st_dmg[c.key] or ((st_dmg.col_max and st_dmg.col_max[i]) or 0)
+			local dk = dmg_keys[i]
+			c.v = st_dmg[dk] or ((st_dmg.col_max and st_dmg.col_max[i]) or 0)
 			c.src = st_dmg.col_src and st_dmg.col_src[i] or nil
 		end
 	else
 		dlog("WARN: dogma_ballistics missing - weapon " .. tostring(sec) .. " scored without table dmg")
 	end
 
-	local st = avg_state_new()
-
-	-- Normalize -> 0..1, then weighted average across included terms.
-	-- Five armor-column maxes (highest dmg across all TT-table ammos).
-	for i = 1, #col_dmg do
-		local c = col_dmg[i]
-		avg_add(st, c.key, c.v, norm01(c.v, NORM.dmg), c.w, debug)
-	end
-	avg_add(st, "rpm", rpm, norm01(rpm, NORM.rpm), "w_rpm", debug)
-	avg_add(st, "mag", mag, norm01(mag, NORM.mag), "w_mag", debug)
-	avg_add(st, "burst", burst, norm01(burst, NORM.burst), "w_burst", debug)
-	avg_add(st, "spread_ads", spread_ads, ads_n, "w_spread_ads", debug)
-	avg_add(st, "spread_hip", spread_hip, hip_n, "w_spread_hip", debug)
-
-	-- Magazine vs rounds-reload (tip). Always 0 or 1 - no anim length needed.
+	-- Magazine vs rounds-reload (for reload fallback only; not a score term).
 	local use_mag = nil
 	local tip = _G.dogma_tooltips_weapons
 	if tip and tip.weapon_use_mag then
@@ -830,7 +859,24 @@ local function score_weapon(sec)
 	if use_mag == nil then
 		use_mag = 1
 	end
-	avg_add(st, "use_mag", use_mag, use_mag, "w_use_mag", debug)
+
+	local reload_s = reload_seconds_for(sec, mag, use_mag)
+	local fire_s = 0
+	if rpm > 0 and mag > 0 then
+		fire_s = mag * 60 / rpm
+	end
+
+	local st = avg_state_new()
+
+	-- Sustained DPS per armor column (dmg folded with rpm/mag/reload).
+	for i = 1, #col_dmg do
+		local c = col_dmg[i]
+		c.dps = sustained_dps(c.v, rpm, mag, reload_s)
+		avg_add(st, c.key, c.dps, norm01(c.dps, NORM.dps), c.w, debug)
+	end
+	avg_add(st, "burst", burst, norm01(burst, NORM.burst), "w_burst", debug)
+	avg_add(st, "spread_ads", spread_ads, ads_n, "w_spread_ads", debug)
+	avg_add(st, "spread_hip", spread_hip, hip_n, "w_spread_hip", debug)
 
 	-- Mount capability: always 0 or 1 (scope_status / silencer_status > 0).
 	local scope_ok = (scope_status and scope_status > 0) and 1 or 0
@@ -848,17 +894,21 @@ local function score_weapon(sec)
 
 	if debug then
 		-- Weapons only, compact: header + term lines (raw * weight = contribution).
-		dlog(string.format("%s (%d, %.0f, %s):", sec, pts, cost, ammo_str))
+		dlog(string.format(
+			"%s (%d, %.0f, %s) rpm=%.0f mag=%.0f fire=%.2fs reload=%.2fs use_mag=%d:",
+			sec, pts, cost, ammo_str, rpm, mag, fire_s, reload_s, use_mag
+		))
 		for i = 1, #st.lines do
 			dlog(st.lines[i])
 		end
 	end
 
 	local detail = string.format(
-		"mut/lgt/mid/hvy/max=%.0f/%.0f/%.0f/%.0f/%.0f ammoN=%d rpm=%.0f mag=%.0f burst=%.1f ads=%.3f->%.2f hip=%.3f->%.2f use_mag=%d cost=%.0f price=%.2f",
-		col_dmg[1].v, col_dmg[2].v, col_dmg[3].v, col_dmg[4].v, col_dmg[5].v,
-		rounds_n, rpm, mag, burst, spread_ads, ads_n, spread_hip, hip_n,
-		use_mag, cost or 0, price_n
+		"mut/lgt/mid/hvy/max_dps=%.0f/%.0f/%.0f/%.0f/%.0f ammoN=%d rpm=%.0f mag=%.0f reload=%.2f burst=%.1f ads=%.3f->%.2f hip=%.3f->%.2f cost=%.0f price=%.2f",
+		col_dmg[1].dps or 0, col_dmg[2].dps or 0, col_dmg[3].dps or 0,
+		col_dmg[4].dps or 0, col_dmg[5].dps or 0,
+		rounds_n, rpm, mag, reload_s, burst, spread_ads, ads_n, spread_hip, hip_n,
+		cost or 0, price_n
 	)
 	return avg, detail
 end
@@ -1771,7 +1821,7 @@ function on_mcm_load(options)
 	local keys = CONFIG.WEIGHT_KEYS or {}
 	for i = 1, #keys do
 		local id = keys[i]
-		if id == "w_mut_dmg" then
+		if id == "w_mut_dps" then
 			gr[#gr + 1] = {
 				id = "hdr_w_weapon",
 				type = "desc",
@@ -1814,37 +1864,38 @@ end
 --------------------------------------------------------------------------
 
 -- Frozen raw stats (not live ini). Enough to see weight / cost_mult slider effect.
--- mut = armor col 1; mutant = tip mutant-row max (preview uses max(mut, mutant) as mut_dmg).
+-- mut = armor col 1; mutant = tip mutant-row max (preview uses max(mut, mutant) as mut dmg).
+-- reload = empty→full seconds (approx; live scoring uses tip motion lengths).
 local PREVIEW_GUNS = {
 	{
 		name = "PM", ammo = "9x18",
 		mut = 42, mutant = 38, lgt = 38, mid = 28, hvy = 18, max = 10,
-		rpm = 180, mag = 8, burst = 4,
-		ads = 0.35, hip = 2.8, use_mag = 1, scope = 0, sil = 1, cost = 1500,
+		rpm = 180, mag = 8, reload = 2.4, burst = 4,
+		ads = 0.35, hip = 2.8, scope = 0, sil = 1, cost = 1500,
 	},
 	{
 		name = "Kiparis", ammo = "9x18",
 		mut = 48, mutant = 44, lgt = 44, mid = 34, hvy = 22, max = 12,
-		rpm = 850, mag = 30, burst = 6,
-		ads = 0.45, hip = 3.5, use_mag = 1, scope = 0, sil = 1, cost = 6500,
+		rpm = 850, mag = 30, reload = 2.5, burst = 6,
+		ads = 0.45, hip = 3.5, scope = 0, sil = 1, cost = 6500,
 	},
 	{
 		name = "AK-74", ammo = "5.45",
 		mut = 72, mutant = 65, lgt = 68, mid = 55, hvy = 40, max = 28,
-		rpm = 650, mag = 30, burst = 5,
-		ads = 0.25, hip = 2.2, use_mag = 1, scope = 1, sil = 1, cost = 14000,
+		rpm = 650, mag = 30, reload = 2.8, burst = 5,
+		ads = 0.25, hip = 2.2, scope = 1, sil = 1, cost = 14000,
 	},
 	{
 		name = "PPSh-41", ammo = "7.62x25",
 		mut = 55, mutant = 70, lgt = 50, mid = 38, hvy = 24, max = 14,
-		rpm = 900, mag = 71, burst = 7,
-		ads = 0.55, hip = 4.0, use_mag = 1, scope = 0, sil = 0, cost = 9000,
+		rpm = 900, mag = 71, reload = 3.2, burst = 7,
+		ads = 0.55, hip = 4.0, scope = 0, sil = 0, cost = 9000,
 	},
 	{
 		name = "TOZ-66", ammo = "12x70",
 		mut = 40, mutant = 120, lgt = 55, mid = 35, hvy = 20, max = 10,
-		rpm = 120, mag = 2, burst = 1,
-		ads = 0.80, hip = 5.0, use_mag = 0, scope = 0, sil = 0, cost = 4000,
+		rpm = 120, mag = 2, reload = 4.0, burst = 1,
+		ads = 0.80, hip = 5.0, scope = 0, sil = 0, cost = 4000,
 	},
 }
 
@@ -1855,22 +1906,29 @@ _G.__dogma_dl_score_preview = PREVIEW_HOOK
 
 local function preview_score_gun(g)
 	local st = avg_state_new()
-	-- Same rule as live scoring: mut_dmg = max(armor col 1, tip mutant-row).
+	-- Same rule as live scoring: mut dmg = max(armor col 1, tip mutant-row).
 	local mut = g.mut or 0
 	if (g.mutant or 0) > mut then
 		mut = g.mutant
 	end
-	avg_add(st, "mut_dmg", mut, norm01(mut, NORM.dmg), "w_mut_dmg", true)
-	avg_add(st, "lgt_dmg", g.lgt, norm01(g.lgt, NORM.dmg), "w_lgt_dmg", true)
-	avg_add(st, "mid_dmg", g.mid, norm01(g.mid, NORM.dmg), "w_mid_dmg", true)
-	avg_add(st, "hvy_dmg", g.hvy, norm01(g.hvy, NORM.dmg), "w_hvy_dmg", true)
-	avg_add(st, "max_dmg", g.max, norm01(g.max, NORM.dmg), "w_max_dmg", true)
-	avg_add(st, "rpm", g.rpm, norm01(g.rpm, NORM.rpm), "w_rpm", true)
-	avg_add(st, "mag", g.mag, norm01(g.mag, NORM.mag), "w_mag", true)
+	local rpm = g.rpm or 0
+	local mag = g.mag or 0
+	local reload_s = g.reload or 2.5
+	local cols = {
+		{ key = "mut_dps", w = "w_mut_dps", dmg = mut },
+		{ key = "lgt_dps", w = "w_lgt_dps", dmg = g.lgt },
+		{ key = "mid_dps", w = "w_mid_dps", dmg = g.mid },
+		{ key = "hvy_dps", w = "w_hvy_dps", dmg = g.hvy },
+		{ key = "max_dps", w = "w_max_dps", dmg = g.max },
+	}
+	for i = 1, #cols do
+		local c = cols[i]
+		local dps = sustained_dps(c.dmg, rpm, mag, reload_s)
+		avg_add(st, c.key, dps, norm01(dps, NORM.dps), c.w, true)
+	end
 	avg_add(st, "burst", g.burst, norm01(g.burst, NORM.burst), "w_burst", true)
 	avg_add(st, "spread_ads", g.ads, inv_norm01(g.ads, NORM.spread_ads), "w_spread_ads", true)
 	avg_add(st, "spread_hip", g.hip, inv_norm01(g.hip, NORM.spread_hip), "w_spread_hip", true)
-	avg_add(st, "use_mag", g.use_mag, g.use_mag, "w_use_mag", true)
 	avg_add(st, "scope", g.scope, g.scope, "w_scope", true)
 	avg_add(st, "silencer", g.sil, g.sil, "w_silencer", true)
 	avg_add(st, "price", g.cost, inv_norm01(g.cost, MAX_COST.weapon), "w_price", true)

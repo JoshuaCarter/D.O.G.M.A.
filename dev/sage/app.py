@@ -1326,10 +1326,9 @@ class MainWindow(QMainWindow):
         self._restore_view_or_fit()
         return True
 
-    def save(self) -> None:
+    def save(self) -> bool:
         if self.doc.path is None:
-            self.save_as()
-            return
+            return self.save_as()
         try:
             self._capture_session_meta()
             if self.editor_tabs.currentIndex() == TAB_XML or self._raw_dirty:
@@ -1348,19 +1347,20 @@ class MainWindow(QMainWindow):
         except Exception as exc:  # noqa: BLE001
             self._log("error", f"Save failed: {exc}")
             QMessageBox.critical(self, "Save failed", str(exc))
-            return
+            return False
         meta = self.doc.meta_path
         extra = f" + {meta.name}" if meta and meta.is_file() else ""
         self._log("info", f"Saved {self.doc.path}{extra}")
         self.statusBar().showMessage(f"Saved {self.doc.path}{extra}")
+        return True
 
-    def save_as(self) -> None:
+    def save_as(self) -> bool:
         start = self._file_dialog_start(self.doc.path)
         path, _ = QFileDialog.getSaveFileName(
             self, "Save UI XML", start, "UI XML (*.xml);;All (*.*)"
         )
         if not path:
-            return
+            return False
         try:
             self._capture_session_meta()
             if self.editor_tabs.currentIndex() == TAB_XML or self._raw_dirty:
@@ -1379,7 +1379,7 @@ class MainWindow(QMainWindow):
         except Exception as exc:  # noqa: BLE001
             self._log("error", f"Save As failed: {exc}")
             QMessageBox.critical(self, "Save failed", str(exc))
-            return
+            return False
         saved = Path(path)
         self._remember_file_dir(saved)
         self._remember_recent_file(saved)
@@ -1388,6 +1388,7 @@ class MainWindow(QMainWindow):
         extra = f" + {meta.name}" if meta and meta.is_file() else ""
         self._log("info", f"Saved {saved}{extra}")
         self.statusBar().showMessage(f"Saved {saved}{extra}")
+        return True
 
     def edit_settings(self) -> None:
         dlg = SettingsDialog(self.settings, self)
@@ -2069,8 +2070,9 @@ class MainWindow(QMainWindow):
             if r == QMessageBox.StandardButton.Cancel:
                 event.ignore()
                 return
-            if r == QMessageBox.StandardButton.Save:
-                self.save()
+            if r == QMessageBox.StandardButton.Save and not self.save():
+                event.ignore()
+                return
         self._save_window_geometry()
         event.accept()
 

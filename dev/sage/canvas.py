@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QPointF, QRectF, Qt, pyqtSignal
+from PyQt6.QtCore import QEvent, QPointF, QRectF, Qt, pyqtSignal
 from PyQt6.QtGui import (
     QBrush,
     QColor,
     QFont,
     QFontMetricsF,
     QImage,
+    QMouseEvent,
     QPainter,
     QPainterPath,
     QPen,
@@ -35,25 +36,28 @@ from .undo import GeoEdit, GeoState, UndoStack
 
 # Scene z bands (back → front):
 #   textures → labels → diamonds →
-#   ALL borders/fills (idle → hover → select) → selected label (above chrome)
+#   idle → hover border → select chrome → select label → hover label (front)
 _LABEL_Z = 1_000_000.0
 _DIAMOND_Z = 2_000_000.0
 _IDLE_CHROME_Z = 10_000_000.0
 _HOVER_CHROME_Z = 10_000_001.0
 _SELECT_CHROME_Z = 10_000_002.0
 _SELECT_LABEL_Z = 10_000_003.0
+_HOVER_LABEL_Z = 10_000_004.0
 
 
 HANDLE = 10.0  # Invisible corner / edge hit thickness (px, item space)
 MIN_SIZE = 4.0
 
-# Selected = normal blue; hovered = light blue (border only)
+# Selected = normal blue; hovered border = white
 SEL_BLUE = QColor(40, 130, 255)
 SEL_BLUE_FILL = QColor(40, 130, 255, 13)  # ~5% alpha
-HOVER_BLUE = QColor(130, 185, 255)
+HOVER_BORDER = QColor(255, 255, 255)
 LABEL_GREY = QColor(160, 160, 165)
 IDLE_YELLOW = QColor(150, 140, 40, 220)
-SELECT_LABEL_BG = QColor(0, 0, 0)
+FOCUS_LABEL_BG = QColor(0, 0, 0)
+SELECT_LABEL_TEXT = SEL_BLUE
+HOVER_LABEL_TEXT = QColor(255, 255, 255)
 
 
 def _path_under_section(node_path: str, section_path: str) -> bool:
@@ -115,7 +119,7 @@ class FocusChrome(QGraphicsItem):
             fill = SEL_BLUE_FILL if self._show_fill else QColor(0, 0, 0, 0)
             width = 2
         else:
-            color = HOVER_BLUE
+            color = HOVER_BORDER
             fill = QColor(0, 0, 0, 0)
             width = 1
         pen = QPen(color)
@@ -130,8 +134,8 @@ class FocusChrome(QGraphicsItem):
             painter.drawRect(self._rect)
 
 
-class SelectLabelOverlay(QGraphicsItem):
-    """Selected tag in front of chrome: same SimpleTextItem paint as normal labels + black bg."""
+class FocusLabelOverlay(QGraphicsItem):
+    """Focus tag in front of chrome: SimpleTextItem + black bg (select/hover)."""
 
     _PAD = 1.0
 
@@ -139,11 +143,11 @@ class SelectLabelOverlay(QGraphicsItem):
         super().__init__()
         self._bg = QGraphicsRectItem(self)
         self._bg.setPen(QPen(Qt.PenStyle.NoPen))
-        self._bg.setBrush(QBrush(SELECT_LABEL_BG))
+        self._bg.setBrush(QBrush(FOCUS_LABEL_BG))
         self._bg.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
         self._bg.setZValue(0)
         self._text = QGraphicsSimpleTextItem(self)
-        self._text.setBrush(QBrush(QColor(255, 255, 255)))
+        self._text.setBrush(QBrush(SELECT_LABEL_TEXT))
         self._text.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
         self._text.setZValue(1)
         self.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
@@ -153,7 +157,7 @@ class SelectLabelOverlay(QGraphicsItem):
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemHasNoContents, True)
         self.hide()
 
-    def bind(self, item: WidgetItem | None) -> None:
+    def bind(self, item: WidgetItem | None, *, text_color: QColor) -> None:
         if item is None or not item.node.visible or not item.isVisible():
             self.hide()
             return
@@ -161,11 +165,12 @@ class SelectLabelOverlay(QGraphicsItem):
         if not tag:
             self.hide()
             return
+        self.prepareGeometryChange()
         lab = item._label_item
-        # Always show for selection (even when "show labels" is off).
+        # Always show for focus (even when "show labels" is off).
         item._apply_label_font()
         self._text.setFont(lab.font())
-        self._text.setBrush(QBrush(QColor(255, 255, 255)))
+        self._text.setBrush(QBrush(text_color))
         self._text.setText(tag)
         self._text.setPos(0, 0)
         # Layout uses the same anchor rules as _apply_label (may be hidden when toggle off).
@@ -188,11 +193,14 @@ class SelectLabelOverlay(QGraphicsItem):
             ly = -gap - br.height() - br.y()
         ox, oy = item.node.abs_x, item.node.abs_y
         self.setPos(ox + lx, oy + ly)
-        box_left = item.node.abs_x - (ox + lx)
         top = mapped.top() - pad
         bottom = mapped.bottom() + pad
         right = mapped.right() + pad
-        self._bg.setRect(QRectF(box_left, top, max(right - box_left, 1.0), bottom - top))
+        if item.node.from_meta:
+            left = mapped.left() - pad
+        else:
+            left = item.node.abs_x - (ox + lx)
+        self._bg.setRect(QRectF(left, top, max(right - left, 1.0), bottom - top))
         self.show()
 
     def boundingRect(self) -> QRectF:  # noqa: N802
@@ -444,7 +452,14 @@ class WidgetItem(QGraphicsRectItem):
     def _apply_label(self) -> None:
         """Draw full element/tag name; caption is display-only (not hit-tested)."""
         tag = self.node.tag or self.node.path or ""
-        visible = bool(tag) and self.show_element_labels and self.node.visible
+        # Focus captions are owned by FocusLabelOverlay (select/hover, always on top).
+        focused = self.isSelected() or self.is_hovered()
+        visible = (
+            bool(tag)
+            and self.show_element_labels
+            and self.node.visible
+            and not focused
+        )
         if not visible:
             self._label_item.setText("")
             self._label_item.setVisible(False)
@@ -702,9 +717,12 @@ class UiScene(QGraphicsScene):
         self._select_chrome = FocusChrome()
         self._select_chrome.setZValue(_SELECT_CHROME_Z)
         self.addItem(self._select_chrome)
-        self._select_label = SelectLabelOverlay()
+        self._select_label = FocusLabelOverlay()
         self._select_label.setZValue(_SELECT_LABEL_Z)
         self.addItem(self._select_label)
+        self._hover_label = FocusLabelOverlay()
+        self._hover_label.setZValue(_HOVER_LABEL_Z)
+        self.addItem(self._hover_label)
         self.selectionChanged.connect(self._on_selection_changed)
 
     def push_geo_edit(self, edit: GeoEdit) -> None:
@@ -735,6 +753,7 @@ class UiScene(QGraphicsScene):
         self.label_font_size = max(LABEL_FONT_MIN, int(size))
         for item in self._items.values():
             item.set_label_font_size(self.label_font_size)
+        self._sync_focus_chrome()
 
     def set_show_element_labels(self, show: bool) -> None:
         self.show_element_labels = bool(show)
@@ -807,14 +826,13 @@ class UiScene(QGraphicsScene):
         self._select_chrome.setZValue(_SELECT_CHROME_Z)
         self._hover_chrome.setZValue(_HOVER_CHROME_Z)
         self._select_label.setZValue(_SELECT_LABEL_Z)
+        self._hover_label.setZValue(_HOVER_LABEL_Z)
         self._select_chrome.bind(
             sel, kind="select", show_fill=bool(self.show_box_fill)
         )
         self._hover_chrome.bind(hover, kind="hover", show_fill=False)
-        # Selected tag above all chrome (black bg). Ensure base label pos is current.
-        if sel is not None:
-            sel._apply_label()
-        self._select_label.bind(sel)
+        self._select_label.bind(sel, text_color=SELECT_LABEL_TEXT)
+        self._hover_label.bind(hover, text_color=HOVER_LABEL_TEXT)
 
     def set_document(self, doc: LayoutNode | None) -> None:
         for item in list(self._items.values()):
@@ -1042,6 +1060,10 @@ class UiCanvas(QGraphicsView):
 
     def set_scroll_select(self, enabled: bool) -> None:
         self.scroll_select = bool(enabled)
+        if not self.scroll_select:
+            self._scroll_stack = []
+            self._last_stack_view_pos = None
+            self._set_stack_peers(set())
 
     def _on_selection_changed_stack(self) -> None:
         # Keep peers tied to the last cursor stack — never rebuild from selection center.
@@ -1061,6 +1083,11 @@ class UiCanvas(QGraphicsView):
 
     def _refresh_stack_peers(self, view_pos: QPointF | None = None) -> None:
         """Grey-highlight scroll-targets under the cursor; store ordered stack for wheel."""
+        if not self.scroll_select:
+            self._scroll_stack = []
+            if self._stack_peer_paths:
+                self._set_stack_peers(set())
+            return
         if view_pos is not None:
             self._last_stack_view_pos = QPointF(view_pos)
         pos = self._last_stack_view_pos
@@ -1239,8 +1266,7 @@ class UiCanvas(QGraphicsView):
             return
 
         # Plain wheel: scroll-select when enabled, otherwise zoom
-        if self.scroll_select:
-            self._scroll_select_wheel(event)
+        if self.scroll_select and self._scroll_select_wheel(event):
             event.accept()
             return
 
@@ -1310,11 +1336,23 @@ class UiCanvas(QGraphicsView):
         if stack:
             # Always keep/select the smallest scroll-target — never toggle off.
             pick = self._pick_click_target(stack) or stack[0]
+            self._force_select(pick)
+            # Arm after force_select: selection refresh resets ItemIsSelectable.
             self._arm_press_pick(pick)
+            # DblClick must be delivered as a Press so grab/drag/resize work.
+            deliver: QMouseEvent = event
+            if event.type() == QEvent.Type.MouseButtonDblClick:
+                deliver = QMouseEvent(
+                    QEvent.Type.MouseButtonPress,
+                    event.position(),
+                    event.globalPosition(),
+                    event.button(),
+                    event.buttons() | Qt.MouseButton.LeftButton,
+                    event.modifiers(),
+                )
+            super().mousePressEvent(deliver)
             self._force_select(pick)
-            # Deliver as a normal press so move/resize still work (dblclick == second click).
-            super().mousePressEvent(event)
-            self._force_select(pick)
+            self._arm_press_pick(pick)
             self._refresh_stack_peers(event.position())
             return
         # Click off all widgets (empty canvas) — only then deselect.
@@ -1367,14 +1405,18 @@ class UiCanvas(QGraphicsView):
         if isinstance(scene, UiScene):
             pick = self._pick_click_target(stack)
             scene.set_hover_path(pick.node.path if pick is not None else None)
-        self._refresh_stack_peers(event.position())
+        if self.scroll_select:
+            self._refresh_stack_peers(event.position())
+        elif self._stack_peer_paths:
+            self._set_stack_peers(set())
 
     def leaveEvent(self, event) -> None:  # noqa: N802
         scene = self.scene()
         if isinstance(scene, UiScene):
             scene.set_hover_path(None)
-        # Fall back to selected-item stack so peers don't vanish on leave.
-        self._refresh_stack_peers(None)
+        self._last_stack_view_pos = None
+        self._scroll_stack = []
+        self._set_stack_peers(set())
         super().leaveEvent(event)
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802

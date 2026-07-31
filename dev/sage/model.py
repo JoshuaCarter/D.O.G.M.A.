@@ -40,6 +40,28 @@ def has_geometry(el: Element) -> bool:
     return any(el.get(a) is not None for a in GEO_ATTRS)
 
 
+def default_meta_xy(node: LayoutNode) -> tuple[float, float]:
+    """Guess a runtime placement origin when .xml.meta has no entry.
+
+    Engine ``InitWindow`` auto-attaches ``auto_static`` children at their XML
+    x/y (missing attrs → 0 via ReadAttribFlt). Script-built containers with no
+    XML geometry (``options``, ``popup_*``, …) need a SAGE meta handle instead.
+
+    Prefer a sibling ``scroll_<tag>`` / ``templ_<tag>`` that scripts parent into
+    (e.g. ``options`` → ``scroll_options`` at the scroll view's x/y).
+    """
+    parent = node.parent
+    if parent is None:
+        return 0.0, 0.0
+    for want in (f"scroll_{node.tag}", f"templ_{node.tag}"):
+        for sib in parent.children:
+            if sib is node or sib.tag != want:
+                continue
+            if has_geometry(sib.element):
+                return sib.x, sib.y
+    return 0.0, 0.0
+
+
 @dataclass
 class TextureRef:
     """Resolved or unresolved texture reference from a <texture> child."""
@@ -350,8 +372,8 @@ def apply_meta_positions(
 ) -> None:
     """Attach editor handles for nodes without XML geometry.
 
-    Positions come from the sidecar meta map when present; otherwise a default
-    top-left handle (0,0 × diamond size) is created so they can be dragged.
+    Positions come from the sidecar meta map when present; otherwise
+    ``default_meta_xy`` (sibling scroll_/templ_, else 0,0) is used.
     Size is always the fixed diamond marker (width/height in meta are ignored).
     """
     from .meta import DEFAULT_HANDLE_SIZE
@@ -371,8 +393,8 @@ def apply_meta_positions(
                 height=size,
             )
         else:
-            # Default handle at top-left so runtime-only nodes are editable
-            node.apply_meta_geometry(x=0.0, y=0.0, width=size, height=size)
+            dx, dy = default_meta_xy(node)
+            node.apply_meta_geometry(x=dx, y=dy, width=size, height=size)
     doc.recompute_absolute(0.0, 0.0)
 
 

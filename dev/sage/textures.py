@@ -33,6 +33,24 @@ class ResolvedTexture:
     atlas_id: str = ""
 
 
+def gamma_relative_path(path: Path) -> str:
+    """Path under GAMMA (or gamedata/…); never the full drive path."""
+    try:
+        resolved = path.resolve()
+    except OSError:
+        resolved = path
+    text = str(resolved).replace("\\", "/")
+    lower = text.lower()
+    marker = "/gamma/"
+    idx = lower.find(marker)
+    if idx >= 0:
+        return text[idx + len(marker) :]
+    gidx = lower.find("/gamedata/")
+    if gidx >= 0:
+        return text[gidx + 1 :]
+    return path.name
+
+
 class TextureResolver:
     def __init__(
         self,

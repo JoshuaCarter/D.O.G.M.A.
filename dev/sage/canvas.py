@@ -29,23 +29,29 @@ from PyQt6.QtWidgets import (
 
 from .model import LayoutNode
 from .settings import LABEL_FONT_MIN, UI_HEIGHT, UI_WIDTH
-from .textures import TextureResolver
+from .textures import TextureResolver, gamma_relative_path
 from .undo import GeoEdit, GeoState, UndoStack
 
+# Scene z bands (back → front):
+#   body/diamond → default labels → hover chrome → select chrome → focus label
+_LABEL_Z = 1_000_000.0
+_DIAMOND_Z = 2_000_000.0
+_HOVER_CHROME_Z = 3_000_000.0
+_HOVER_LABEL_Z = 3_000_000.5  # hovered element's label above its chrome
+_SELECT_CHROME_Z = 3_000_001.0
+_SELECT_LABEL_Z = 3_000_001.5  # selected element's label above select chrome
 
-HANDLE = 8.0
+
+HANDLE = 10.0  # Invisible corner / edge hit thickness (px, item space)
 MIN_SIZE = 4.0
 
-# Selection / hover (shared with elements tree chrome)
-SEL_CYAN = QColor(0, 220, 230)
-SEL_CYAN_FILL = QColor(0, 200, 210, 70)
-SEL_CYAN_HANDLE_EDGE = QColor(0, 140, 150)
-HOVER_BLUE = QColor(50, 130, 255)
-HOVER_BLUE_FILL = QColor(50, 130, 255, 90)
-STACK_GREY = QColor(210, 210, 215, 220)
-STACK_GREY_FILL = QColor(180, 180, 190, 70)
-STACK_HANDLE = QColor(255, 255, 255, 220)
-STACK_HANDLE_EDGE = QColor(255, 255, 255, 180)
+# Selected = light blue; hovered = normal blue
+SEL_BLUE = QColor(130, 185, 255)
+SEL_BLUE_FILL = QColor(130, 185, 255, 45)
+HOVER_BLUE = QColor(40, 130, 255)
+HOVER_BLUE_FILL = QColor(40, 130, 255, 55)
+LABEL_GREY = QColor(160, 160, 165)
+IDLE_YELLOW = QColor(200, 200, 80, 200)
 
 
 def _path_under_section(node_path: str, section_path: str) -> bool:
@@ -55,6 +61,74 @@ def _path_under_section(node_path: str, section_path: str) -> bool:
     if node_path == section_path:
         return True
     return node_path.startswith(section_path + "/")
+
+
+class FocusChrome(QGraphicsItem):
+    """Selection / hover outline+fill drawn above all widget content."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._kind = "hover"  # "hover" | "select"
+        self._meta = False
+        self._show_fill = False
+        self._rect = QRectF()
+        self._poly = QPolygonF()
+        self.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        self.setAcceptHoverEvents(False)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, False)
+        self.hide()
+
+    def bind(
+        self,
+        item: WidgetItem | None,
+        *,
+        kind: str,
+        show_fill: bool,
+    ) -> None:
+        if item is None or not item.node.visible or not item.isVisible():
+            self.hide()
+            return
+        self.prepareGeometryChange()
+        self._kind = kind
+        self._meta = bool(item.node.from_meta)
+        # Select fill is toggle-gated; hover always draws fill.
+        if kind == "select":
+            self._show_fill = bool(show_fill)
+        else:
+            self._show_fill = True
+        self.setPos(item.node.abs_x, item.node.abs_y)
+        self._rect = QRectF(0, 0, max(item.node.width, 1), max(item.node.height, 1))
+        if self._meta:
+            self._poly = QPolygonF(item._meta_diamond_poly())
+        else:
+            self._poly = QPolygonF()
+        self.show()
+        self.update()
+
+    def boundingRect(self) -> QRectF:  # noqa: N802
+        pad = 3.0
+        return self._rect.adjusted(-pad, -pad, pad, pad)
+
+    def paint(self, painter: QPainter, option: QStyleOptionGraphicsItem, widget: QWidget | None = None) -> None:
+        if self._kind == "select":
+            color = SEL_BLUE
+            fill = SEL_BLUE_FILL if self._show_fill else QColor(0, 0, 0, 0)
+            width = 2
+        else:
+            color = HOVER_BLUE
+            fill = HOVER_BLUE_FILL if self._show_fill else QColor(0, 0, 0, 0)
+            width = 1
+        pen = QPen(color)
+        pen.setWidth(width)
+        pen.setCosmetic(True)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(pen)
+        painter.setBrush(QBrush(fill))
+        if self._meta and not self._poly.isEmpty():
+            painter.drawPolygon(self._poly)
+        else:
+            painter.drawRect(self._rect)
 
 
 class WidgetItem(QGraphicsRectItem):
@@ -67,7 +141,6 @@ class WidgetItem(QGraphicsRectItem):
         *,
         label_font_size: int = 8,
         show_element_labels: bool = True,
-        center_element_labels: bool = False,
         show_box_border: bool = False,
         show_box_fill: bool = False,
     ) -> None:
@@ -76,10 +149,8 @@ class WidgetItem(QGraphicsRectItem):
         self.resolver = resolver
         self.label_font_size = max(LABEL_FONT_MIN, int(label_font_size))
         self.show_element_labels = show_element_labels
-        self.center_element_labels = center_element_labels
         self.show_box_border = show_box_border
         self.show_box_fill = show_box_fill
-        self._hovered = False
         self.setPos(node.abs_x, node.abs_y)
         flags = (
             QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
@@ -91,17 +162,21 @@ class WidgetItem(QGraphicsRectItem):
         self.setAcceptHoverEvents(True)
         self._pixmap_item = QGraphicsPixmapItem(self)
         self._pixmap_item.setZValue(-2)
+        # Texture under the box fill/border so selection & hover tints sit on top.
+        self._pixmap_item.setFlag(
+            QGraphicsItem.GraphicsItemFlag.ItemStacksBehindParent, True
+        )
         self._pixmap_item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
-        self._label_item = QGraphicsSimpleTextItem(self)
-        self._label_item.setZValue(1)
-        self._label_item.setBrush(QBrush(QColor(245, 245, 245)))
+        # Labels are scene-level (not children) so they stack above all textures/fills.
+        self._label_item = QGraphicsSimpleTextItem()
+        self._label_item.setBrush(QBrush(LABEL_GREY))
         self._label_item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        self._label_item.setAcceptHoverEvents(False)
         self._label_item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
-        # Shadow for readability on dark chrome
-        self._label_shadow = QGraphicsSimpleTextItem(self)
-        self._label_shadow.setZValue(0.5)
+        self._label_shadow = QGraphicsSimpleTextItem()
         self._label_shadow.setBrush(QBrush(QColor(0, 0, 0, 220)))
         self._label_shadow.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        self._label_shadow.setAcceptHoverEvents(False)
         self._label_shadow.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
         self._apply_label_font()
         self._missing = False
@@ -112,8 +187,12 @@ class WidgetItem(QGraphicsRectItem):
         self._start_pos = QPointF()
         self._updating = False
         self._geo_before: GeoState | None = None
-        self._stack_peer = False  # overlapping alt under cursor (old grey selection)
         self.refresh_look()
+
+    def detach_overlays(self, scene: QGraphicsScene) -> None:
+        for lab in (self._label_item, self._label_shadow):
+            if lab.scene() is scene:
+                scene.removeItem(lab)
 
     def set_label_font_size(self, size: int) -> None:
         self.label_font_size = max(LABEL_FONT_MIN, int(size))
@@ -122,10 +201,6 @@ class WidgetItem(QGraphicsRectItem):
 
     def set_show_element_labels(self, show: bool) -> None:
         self.show_element_labels = bool(show)
-        self._apply_label()
-
-    def set_center_element_labels(self, center: bool) -> None:
-        self.center_element_labels = bool(center)
         self._apply_label()
 
     def _apply_label_font(self) -> None:
@@ -141,66 +216,52 @@ class WidgetItem(QGraphicsRectItem):
         self.refresh_look()
 
     def hoverEnterEvent(self, event) -> None:  # noqa: N802
-        self._hovered = True
-        self.refresh_look()
+        scene = self.scene()
+        if isinstance(scene, UiScene):
+            scene.set_hover_path(self.node.path)
         super().hoverEnterEvent(event)
 
     def hoverLeaveEvent(self, event) -> None:  # noqa: N802
-        self._hovered = False
-        self.refresh_look()
+        scene = self.scene()
+        if isinstance(scene, UiScene) and scene.hover_path() == self.node.path:
+            scene.set_hover_path(None)
         super().hoverLeaveEvent(event)
+
+    def is_hovered(self) -> bool:
+        scene = self.scene()
+        return isinstance(scene, UiScene) and scene.hover_path() == self.node.path
 
     def refresh_look(self) -> None:
         self._updating = True
         self.setRect(0, 0, max(self.node.width, 1), max(self.node.height, 1))
         self.setPos(self.node.abs_x, self.node.abs_y)
-        self.setVisible(self.node.visible)
+        visible = bool(self.node.visible)
+        self.setVisible(visible)
+        # Disabled layers: never selectable / never a scroll-select hit target.
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, visible)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, visible)
+        self.setAcceptHoverEvents(visible)
+        if not visible and self.isSelected():
+            self.setSelected(False)
         self._apply_texture()
         self._apply_label()
+        if not visible:
+            self._updating = False
+            return
         selected = self.isSelected()
-        peer = self._stack_peer and not selected
-        # Toggles show all; when off, still preview the single hover hit-target
-        draw_border = self.show_box_border or self._hovered or selected or peer
-        draw_fill = self.show_box_fill
+        hovered = self.is_hovered() and not selected
+        # Idle yellow border only on non-selected, non-hovered (toggle).
         if self.node.from_meta:
-            # Diamond is painted in paint(); keep the rect itself invisible.
             self.setPen(QPen(Qt.PenStyle.NoPen))
             self.setBrush(QBrush(Qt.BrushStyle.NoBrush))
-        elif draw_border:
-            if selected:
-                color = SEL_CYAN
-            elif peer:
-                color = STACK_GREY
-            elif self._missing:
-                color = QColor(220, 60, 60) if self._hovered else QColor(200, 80, 80, 220)
-            elif self._hovered:
-                color = HOVER_BLUE
-            elif not self._pixmap_item.pixmap().isNull():
-                color = QColor(220, 220, 100, 90)
-            else:
-                color = QColor(200, 200, 80, 180)
-            pen = QPen(color)
-            pen.setWidth(2 if selected else 1)
+        elif not selected and not hovered and self.show_box_border:
+            pen = QPen(IDLE_YELLOW)
+            pen.setWidth(1)
             pen.setCosmetic(True)
             self.setPen(pen)
         else:
             self.setPen(QPen(Qt.PenStyle.NoPen))
-
-        if self.node.from_meta:
-            pass
-        elif selected and self._pixmap_item.pixmap().isNull():
-            self.setBrush(QBrush(SEL_CYAN_FILL))
-        elif peer and self._pixmap_item.pixmap().isNull():
-            self.setBrush(QBrush(QColor(180, 180, 190, 40)))
-        elif self._hovered and self._pixmap_item.pixmap().isNull():
-            self.setBrush(QBrush(HOVER_BLUE_FILL))
-        elif draw_fill and self._pixmap_item.pixmap().isNull():
-            if self._missing:
-                self.setBrush(QBrush(QColor(120, 30, 30, 90), Qt.BrushStyle.BDiagPattern))
-            else:
-                self.setBrush(QBrush(QColor(40, 60, 90, 50)))
-        else:
-            self.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+        self.setBrush(QBrush(Qt.BrushStyle.NoBrush))
         tip = self.node.path or self.node.tag
         if self.node.from_meta:
             tip += "\n[meta handle - not in XML]"
@@ -214,7 +275,7 @@ class WidgetItem(QGraphicsRectItem):
             if resolved.error:
                 tip += f"\n⚠ {resolved.error}"
             elif resolved.path:
-                tip += f"\n✓ {resolved.path}"
+                tip += f"\n{gamma_relative_path(resolved.path)}"
         if self.node.text and self.node.text.content:
             tip += f"\ntext: {self.node.text.content}"
             # String resolution is owned by the app Log/Properties (StringResolver).
@@ -223,6 +284,7 @@ class WidgetItem(QGraphicsRectItem):
 
     def _apply_texture(self) -> None:
         self._pixmap_item.setPixmap(QPixmap())
+        self._pixmap_item.setVisible(False)
         self._missing = False
         if not self.node.texture:
             return
@@ -236,24 +298,20 @@ class WidgetItem(QGraphicsRectItem):
         pix = QPixmap.fromImage(qimg)
         target_w = max(int(self.node.width), 1)
         target_h = max(int(self.node.height), 1)
-        if self.node.stretch or True:
-            # Preview: always fit texture into widget (stretch is the common case)
-            pix = pix.scaled(
-                target_w,
-                target_h,
-                Qt.AspectRatioMode.IgnoreAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
+        # Preview: always fit texture into the widget box.
+        pix = pix.scaled(
+            target_w,
+            target_h,
+            Qt.AspectRatioMode.IgnoreAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
         self._pixmap_item.setPixmap(pix)
         self._pixmap_item.setPos(0, 0)
+        self._pixmap_item.setVisible(True)
 
     def boundingRect(self) -> QRectF:  # noqa: N802
-        r = super().boundingRect()
-        if not self._label_item.isVisible():
-            return r
-        lr = self._label_item.mapRectToParent(self._label_item.boundingRect())
-        sr = self._label_shadow.mapRectToParent(self._label_shadow.boundingRect())
-        return r.united(lr).united(sr).adjusted(-1, -1, 2, 2)
+        # Labels are scene-level overlays (not children) - do not unite their rects here.
+        return super().boundingRect()
 
     def shape(self):  # noqa: N802
         # Hit-test / select only the widget box (or meta diamond) - never the tag caption.
@@ -281,9 +339,9 @@ class WidgetItem(QGraphicsRectItem):
 
     def _apply_label(self) -> None:
         """Draw full element/tag name; caption is display-only (not hit-tested)."""
-        self.prepareGeometryChange()
         tag = self.node.tag or self.node.path or ""
-        if not tag or not self.show_element_labels:
+        visible = bool(tag) and self.show_element_labels and self.node.visible
+        if not visible:
             self._label_item.setText("")
             self._label_item.setVisible(False)
             self._label_shadow.setText("")
@@ -295,44 +353,29 @@ class WidgetItem(QGraphicsRectItem):
         self._label_shadow.setText(tag)
         self._label_shadow.setVisible(True)
         if self.node.from_meta:
-            if self.isSelected():
-                brush = SEL_CYAN
-            elif self._stack_peer:
-                brush = STACK_GREY
-            elif self._hovered:
-                brush = HOVER_BLUE
-            else:
-                brush = QColor(220, 220, 120)
-            self._label_item.setBrush(QBrush(brush))
+            self._label_item.setBrush(QBrush(LABEL_GREY))
             br = self._label_item.boundingRect()
-            if self.center_element_labels:
-                r = self.rect()
-                x = r.center().x() - (br.x() + br.width() / 2.0)
-                y = r.center().y() - (br.y() + br.height() / 2.0)
-            else:
-                # Sit to the right of the diamond tip (not at the diamond's top-left).
-                tip = self._meta_diamond_poly().at(1)  # right tip
-                gap = 6.0
-                x = tip.x() + gap - br.x()
-                y = tip.y() - (br.y() + br.height() / 2.0)
+            # Sit to the right of the diamond tip.
+            tip = self._meta_diamond_poly().at(1)  # right tip
+            gap = 6.0
+            lx = tip.x() + gap - br.x()
+            ly = tip.y() - (br.y() + br.height() / 2.0)
         else:
-            self._label_item.setBrush(QBrush(QColor(245, 245, 245)))
+            self._label_item.setBrush(QBrush(LABEL_GREY))
             br = self._label_item.boundingRect()
-            r = self.rect()
-            if self.center_element_labels:
-                x = r.center().x() - (br.x() + br.width() / 2.0)
-                y = r.center().y() - (br.y() + br.height() / 2.0)
-            else:
-                x = 2.0 - br.x()
-                y = 1.0 - br.y()
-        self._label_shadow.setPos(x + 1, y + 1)
-        self._label_item.setPos(x, y)
+            lx = 2.0 - br.x()
+            ly = 1.0 - br.y()
+        # Scene coords: labels are not parented (so they stack above all fills/textures).
+        ox, oy = self.node.abs_x, self.node.abs_y
+        self._label_shadow.setPos(ox + lx + 1, oy + ly + 1)
+        self._label_item.setPos(ox + lx, oy + ly)
 
     def itemChange(self, change: QGraphicsItem.GraphicsItemChange, value):  # noqa: N802
         if change == QGraphicsItem.GraphicsItemChange.ItemSelectedHasChanged:
             # Repaint diamond/box colors on select (yellow → blue).
-            self.update()
-            self.refresh_look()
+            if not self._updating:
+                self.update()
+                self.refresh_look()
         if (
             change == QGraphicsItem.GraphicsItemChange.ItemPositionChange
             and not self._updating
@@ -348,6 +391,7 @@ class WidgetItem(QGraphicsRectItem):
             and not self._resizing
         ):
             self._sync_node_from_item()
+            self._apply_label()
             scene = self.scene()
             if isinstance(scene, UiScene):
                 scene.geometry_changed.emit(self.node)
@@ -369,23 +413,35 @@ class WidgetItem(QGraphicsRectItem):
         root.recompute_absolute(0.0, 0.0)
 
     def _handle_at(self, pos: QPointF) -> str | None:
+        """Invisible resize zones: 10×10 corners, full mid-edge strips between them."""
         if self.node.from_meta:
             return None  # diamond markers are move-only
         r = self.rect()
-        # Corners first so they win near the intersections.
-        handles = {
-            "br": QPointF(r.right(), r.bottom()),
-            "bl": QPointF(r.left(), r.bottom()),
-            "tr": QPointF(r.right(), r.top()),
-            "tl": QPointF(r.left(), r.top()),
-            "t": QPointF(r.center().x(), r.top()),
-            "b": QPointF(r.center().x(), r.bottom()),
-            "l": QPointF(r.left(), r.center().y()),
-            "r": QPointF(r.right(), r.center().y()),
-        }
-        for name, pt in handles.items():
-            if abs(pos.x() - pt.x()) <= HANDLE and abs(pos.y() - pt.y()) <= HANDLE:
-                return name
+        x, y = pos.x(), pos.y()
+        left, right, top, bottom = r.left(), r.right(), r.top(), r.bottom()
+        hit = HANDLE
+        near_l = abs(x - left) <= hit
+        near_r = abs(x - right) <= hit
+        near_t = abs(y - top) <= hit
+        near_b = abs(y - bottom) <= hit
+        # Corners win at the intersections.
+        if near_l and near_t:
+            return "tl"
+        if near_r and near_t:
+            return "tr"
+        if near_l and near_b:
+            return "bl"
+        if near_r and near_b:
+            return "br"
+        # Edge strips: whole side minus the corner squares.
+        if near_t and left + hit < x < right - hit:
+            return "t"
+        if near_b and left + hit < x < right - hit:
+            return "b"
+        if near_l and top + hit < y < bottom - hit:
+            return "l"
+        if near_r and top + hit < y < bottom - hit:
+            return "r"
         return None
 
     def hoverMoveEvent(self, event) -> None:  # noqa: N802
@@ -465,6 +521,7 @@ class WidgetItem(QGraphicsRectItem):
             self._updating = False
             self._sync_node_from_item()
             self._apply_texture()
+            self._apply_label()
             scene = self.scene()
             if isinstance(scene, UiScene):
                 scene.geometry_changed.emit(self.node)
@@ -488,71 +545,24 @@ class WidgetItem(QGraphicsRectItem):
 
     def paint(self, painter: QPainter, option: QStyleOptionGraphicsItem, widget: QWidget | None = None) -> None:
         if self.node.from_meta:
-            # Cyan = selected; blue = hover; grey = stack peer; yellow = idle.
-            if self.isSelected():
-                color = SEL_CYAN
-                fill = SEL_CYAN_FILL
-                width = 2
-            elif self._stack_peer:
-                color = STACK_GREY
-                fill = STACK_GREY_FILL
-                width = 1
-            elif self._hovered:
-                color = HOVER_BLUE
-                fill = HOVER_BLUE_FILL
-                width = 1
-            else:
-                color = QColor(200, 200, 80, 220)
-                fill = QColor(200, 200, 80, 70)
-                width = 1
+            # Base yellow diamond; selected/hover outline is FocusChrome (above content).
+            color = QColor(200, 200, 80, 220)
+            fill = QColor(200, 200, 80, 70)
             pen = QPen(color)
-            pen.setWidth(width)
+            pen.setWidth(1)
             pen.setCosmetic(True)
             painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
             painter.setPen(pen)
             painter.setBrush(QBrush(fill))
             painter.drawPolygon(self._meta_diamond_poly())
             return
-        opt = QStyleOptionGraphicsItem(option)
-        opt.state &= ~QStyle.StateFlag.State_Selected
-        super().paint(painter, opt, widget)
-        if self.isSelected():
-            ring = QPen(SEL_CYAN, 2)
-            ring.setCosmetic(True)
-            painter.setPen(ring)
+        # No body fill — texture (if any) is the pixmap child; select/hover fill is FocusChrome.
+        # Untextured widgets stay fully transparent aside from an optional idle outline.
+        pen = self.pen()
+        if pen.style() != Qt.PenStyle.NoPen:
+            painter.setPen(pen)
             painter.setBrush(QBrush(Qt.BrushStyle.NoBrush))
             painter.drawRect(self.rect())
-            painter.setPen(QPen(SEL_CYAN_HANDLE_EDGE, 1))
-            painter.setBrush(QBrush(SEL_CYAN))
-            self._draw_handles(painter)
-        elif self._stack_peer:
-            # Outline only - no white handles (those sat behind the selected cyan corners).
-            ring = QPen(STACK_HANDLE_EDGE, 1)
-            ring.setCosmetic(True)
-            painter.setPen(ring)
-            painter.setBrush(QBrush(Qt.BrushStyle.NoBrush))
-            painter.drawRect(self.rect())
-        elif self._hovered:
-            ring = QPen(HOVER_BLUE, 1)
-            ring.setCosmetic(True)
-            painter.setPen(ring)
-            painter.setBrush(QBrush(Qt.BrushStyle.NoBrush))
-            painter.drawRect(self.rect())
-
-    def _draw_handles(self, painter: QPainter) -> None:
-        r = self.rect()
-        hs = HANDLE / 2
-        for pt in (
-            QPointF(r.left(), r.top()),
-            QPointF(r.right(), r.top()),
-            QPointF(r.left(), r.bottom()),
-            QPointF(r.right(), r.bottom()),
-            QPointF(r.center().x(), r.top()),
-            QPointF(r.center().x(), r.bottom()),
-            QPointF(r.left(), r.center().y()),
-            QPointF(r.right(), r.center().y()),
-        ):
-            painter.drawRect(QRectF(pt.x() - hs, pt.y() - hs, HANDLE, HANDLE))
 
 
 class UiScene(QGraphicsScene):
@@ -566,7 +576,6 @@ class UiScene(QGraphicsScene):
         *,
         label_font_size: int = 8,
         show_element_labels: bool = True,
-        center_element_labels: bool = False,
         show_box_border: bool = False,
         show_box_fill: bool = False,
     ) -> None:
@@ -574,12 +583,12 @@ class UiScene(QGraphicsScene):
         self.resolver = resolver
         self.label_font_size = max(LABEL_FONT_MIN, int(label_font_size))
         self.show_element_labels = show_element_labels
-        self.center_element_labels = center_element_labels
         self.show_box_border = show_box_border
         self.show_box_fill = show_box_fill
         self.doc: LayoutNode | None = None
         self._items: dict[str, WidgetItem] = {}
         self._layer_visible: dict[str, bool] = {}
+        self._hover_path: str | None = None
         self.undo_stack = UndoStack()
         self._stage = QGraphicsRectItem(0, 0, UI_WIDTH, UI_HEIGHT)
         self._stage.setBrush(QBrush(QColor(28, 28, 32)))
@@ -588,6 +597,12 @@ class UiScene(QGraphicsScene):
         self._stage.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
         self._stage.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, False)
         self.addItem(self._stage)
+        self._hover_chrome = FocusChrome()
+        self._hover_chrome.setZValue(_HOVER_CHROME_Z)
+        self.addItem(self._hover_chrome)
+        self._select_chrome = FocusChrome()
+        self._select_chrome.setZValue(_SELECT_CHROME_Z)
+        self.addItem(self._select_chrome)
         self.selectionChanged.connect(self._on_selection_changed)
 
     def push_geo_edit(self, edit: GeoEdit) -> None:
@@ -624,11 +639,6 @@ class UiScene(QGraphicsScene):
         for item in self._items.values():
             item.set_show_element_labels(self.show_element_labels)
 
-    def set_center_element_labels(self, center: bool) -> None:
-        self.center_element_labels = bool(center)
-        for item in self._items.values():
-            item.set_center_element_labels(self.center_element_labels)
-
     def set_box_style(
         self,
         *,
@@ -644,15 +654,72 @@ class UiScene(QGraphicsScene):
                 show_border=self.show_box_border,
                 show_fill=self.show_box_fill,
             )
+        self._sync_focus_chrome()
+
+    def _sync_focus_chrome(self) -> None:
+        """Selection/hover chrome above content; that element's label above its chrome."""
+        # Drop illegal selection/hover on disabled-layer widgets.
+        for item in list(self.selectedItems()):
+            if isinstance(item, WidgetItem) and (
+                not item.node.visible or not item.isVisible()
+            ):
+                item.setSelected(False)
+        if self._hover_path:
+            h = self._items.get(self._hover_path)
+            if h is None or not h.node.visible or not h.isVisible():
+                self._hover_path = None
+
+        selected = [
+            i
+            for i in self.selectedItems()
+            if isinstance(i, WidgetItem) and i.node.visible and i.isVisible()
+        ]
+        # Max one selected.
+        if len(selected) > 1:
+            keep = selected[-1]
+            self.blockSignals(True)
+            try:
+                for item in selected:
+                    if item is not keep:
+                        item.setSelected(False)
+            finally:
+                self.blockSignals(False)
+            selected = [keep]
+        sel = selected[0] if selected else None
+
+        hover = self._items.get(self._hover_path) if self._hover_path else None
+        if hover is not None and (
+            not hover.node.visible or not hover.isVisible() or hover is sel
+        ):
+            hover = None  # no hover chrome on the selected element
+
+        # Reset labels to default band (under chrome), then raise focus labels.
+        for item in self._items.values():
+            base = getattr(item, "_label_z_base", _LABEL_Z)
+            item._label_shadow.setZValue(base)
+            item._label_item.setZValue(base + 0.01)
+
+        self._select_chrome.bind(sel, kind="select", show_fill=self.show_box_fill)
+        self._hover_chrome.bind(hover, kind="hover", show_fill=True)
+
+        if hover is not None:
+            hover._label_shadow.setZValue(_HOVER_LABEL_Z)
+            hover._label_item.setZValue(_HOVER_LABEL_Z + 0.01)
+        if sel is not None:
+            sel._label_shadow.setZValue(_SELECT_LABEL_Z)
+            sel._label_item.setZValue(_SELECT_LABEL_Z + 0.01)
 
     def set_document(self, doc: LayoutNode | None) -> None:
         for item in list(self._items.values()):
+            item.detach_overlays(self)
             self.removeItem(item)
         self._items.clear()
         self.clear_undo()
         self._layer_visible = {}
+        self._hover_path = None
         self.doc = doc
         if doc is None:
+            self._sync_focus_chrome()
             return
         drawables = doc.iter_drawables()
         # Depth primary (deeper above ancestors), document order as tie-break.
@@ -666,18 +733,29 @@ class UiScene(QGraphicsScene):
                 self.resolver,
                 label_font_size=self.label_font_size,
                 show_element_labels=self.show_element_labels,
-                center_element_labels=self.center_element_labels,
                 show_box_border=self.show_box_border,
                 show_box_fill=self.show_box_fill,
             )
-            item.setZValue(float(z))
+            # texture/fill < label < diamond
+            if node.from_meta:
+                item.setZValue(_DIAMOND_Z + float(z))
+            else:
+                item.setZValue(float(z))
             self.addItem(item)
+            item._label_z_base = _LABEL_Z + float(z)
+            item._label_shadow.setZValue(item._label_z_base)
+            item._label_item.setZValue(item._label_z_base + 0.01)
+            self.addItem(item._label_shadow)
+            self.addItem(item._label_item)
+            item._apply_label()
             self._items[node.path] = item
+        self._sync_focus_chrome()
         # Visibility applied after caller sets layer toggles via set_layer_states.
 
     def refresh_item_positions(self) -> None:
         for item in self._items.values():
             item.refresh_look()
+        self._sync_focus_chrome()
 
     def set_layer_states(self, states: dict[str, bool]) -> None:
         """Replace layer toggle map and hard-apply visibility to all nodes."""
@@ -700,24 +778,77 @@ class UiScene(QGraphicsScene):
                 continue
             node.visible = self._effective_layer_visible(node.path)
         self.refresh_item_positions()
+        # Drop selection / hover on anything now hidden.
+        hover = self._hover_path
+        if hover and hover in self._items and not self._items[hover].node.visible:
+            self.set_hover_path(None)
+        for item in list(self.selectedItems()):
+            if isinstance(item, WidgetItem) and not item.node.visible:
+                item.setSelected(False)
+        for view in self.views():
+            refresh = getattr(view, "_refresh_stack_peers", None)
+            if callable(refresh):
+                refresh(None)
 
     def _effective_layer_visible(self, node_path: str) -> bool:
+        """Visible iff the deepest matching layer toggle is on.
+
+        Nested layer roots (e.g. popup_*) are independent of their parent
+        layer checkbox — only the most specific layer that contains the node
+        decides visibility.
+        """
         if not self._layer_visible:
             return True
+        best_path = ""
+        best_on = True
         for layer_path, enabled in self._layer_visible.items():
             if not _path_under_section(node_path, layer_path):
                 continue
-            if not enabled:
-                return False
-        return True
+            if len(layer_path) >= len(best_path):
+                best_path = layer_path
+                best_on = bool(enabled)
+        return best_on
 
     def select_path(self, path: str) -> None:
         item = self._items.get(path)
         self.clearSelection()
-        if item:
-            item.setSelected(True)
-            for v in self.views():
-                v.centerOn(item)
+        if item is None or not item.node.visible:
+            self.set_hover_path(None)
+            return
+        item.setSelected(True)
+        # Do not pan/zoom the canvas — only the user moves the view.
+
+    def rebind_resolver(self, resolver: TextureResolver) -> None:
+        """Swap texture resolver and redraw without rebuilding the scene."""
+        self.resolver = resolver
+        for item in self._items.values():
+            item.resolver = resolver
+            item.refresh_look()
+
+    def hover_path(self) -> str | None:
+        return self._hover_path
+
+    def set_hover_path(self, path: str | None) -> None:
+        """Exactly one widget may show hover style (canvas or Tree driven)."""
+        path = path or None
+        if path is not None:
+            item = self._items.get(path)
+            if item is None or not item.node.visible or not item.isVisible():
+                path = None
+        if self._hover_path == path:
+            self._sync_focus_chrome()
+            return
+        prev = self._hover_path
+        self._hover_path = path
+        if prev and prev in self._items:
+            self._items[prev].refresh_look()
+        if path and path in self._items:
+            self._items[path].refresh_look()
+        self._sync_focus_chrome()
+
+    def set_tree_hover_path(self, path: str | None) -> None:
+        """Mirror Tree row hover onto the matching canvas widget."""
+        self.set_hover_path(path)
 
     def item_for_node(self, node: LayoutNode) -> WidgetItem | None:
         return self._items.get(node.path)
@@ -733,11 +864,35 @@ class UiScene(QGraphicsScene):
         return n
 
     def _on_selection_changed(self) -> None:
-        selected = [i for i in self.selectedItems() if isinstance(i, WidgetItem)]
+        # Enforce max-one selection and reject disabled-layer widgets.
+        selected = [
+            i
+            for i in self.selectedItems()
+            if isinstance(i, WidgetItem) and i.node.visible and i.isVisible()
+        ]
+        for item in list(self.selectedItems()):
+            if isinstance(item, WidgetItem) and item not in selected:
+                item.setSelected(False)
+        if len(selected) > 1:
+            keep = selected[-1]
+            self.blockSignals(True)
+            try:
+                for item in selected:
+                    if item is not keep:
+                        item.setSelected(False)
+            finally:
+                self.blockSignals(False)
+            selected = [keep]
         if selected:
             self.selection_node_changed.emit(selected[0].node)
         else:
             self.selection_node_changed.emit(None)
+        # Refresh idle yellow borders on previous/current hover+select targets.
+        if self._hover_path and self._hover_path in self._items:
+            self._items[self._hover_path].refresh_look()
+        for item in selected:
+            item.refresh_look()
+        self._sync_focus_chrome()
 
     def render_to_image(self, scale: float = 1.0) -> QImage:
         w = int(UI_WIDTH * scale)
@@ -753,6 +908,8 @@ class UiScene(QGraphicsScene):
 
 
 class UiCanvas(QGraphicsView):
+    stack_peers_changed = pyqtSignal(object)  # frozenset[str] peer paths
+
     def __init__(self, scene: UiScene) -> None:
         super().__init__(scene)
         self.setRenderHints(
@@ -765,7 +922,7 @@ class UiCanvas(QGraphicsView):
         self._panning = False
         self._pan_start = QPointF()
         self.scroll_select = False
-        self._stack_peer_items: set[WidgetItem] = set()
+        self._stack_peer_paths: frozenset[str] = frozenset()
         self.setMouseTracking(True)
         self.scene().selectionChanged.connect(self._on_selection_changed_stack)
         self.fit_stage()
@@ -777,16 +934,16 @@ class UiCanvas(QGraphicsView):
         self._refresh_stack_peers()
 
     def _set_stack_peers(self, peers: set[WidgetItem]) -> None:
-        old = self._stack_peer_items
-        if old == peers:
+        """Notify Tree of overlapping stack peers (no WYSIWYG grey chrome)."""
+        paths = frozenset(
+            i.node.path
+            for i in peers
+            if i.node.path and i.node.visible and i.isVisible()
+        )
+        if paths == self._stack_peer_paths:
             return
-        for item in old - peers:
-            item._stack_peer = False
-            item.refresh_look()
-        for item in peers - old:
-            item._stack_peer = True
-            item.refresh_look()
-        self._stack_peer_items = peers
+        self._stack_peer_paths = paths
+        self.stack_peers_changed.emit(paths)
 
     def _refresh_stack_peers(self, view_pos: QPointF | None = None) -> None:
         """Grey-highlight overlapping widgets under the cursor (scroll-select stack)."""
@@ -794,10 +951,15 @@ class UiCanvas(QGraphicsView):
         if view_pos is not None:
             stack = self._widget_items_at(view_pos)
         if len(stack) < 2:
-            selected = [i for i in self.scene().selectedItems() if isinstance(i, WidgetItem)]
+            selected = [
+                i
+                for i in self.scene().selectedItems()
+                if isinstance(i, WidgetItem) and i.node.visible and i.isVisible()
+            ]
             if selected:
                 center = selected[0].mapToScene(selected[0].rect().center())
                 stack = self._widget_items_at(QPointF(self.mapFromScene(center)))
+        stack = [i for i in stack if i.node.visible and i.isVisible()]
         if len(stack) < 2:
             self._set_stack_peers(set())
             return
@@ -850,7 +1012,11 @@ class UiCanvas(QGraphicsView):
         pt = view_pos.toPoint()
         out: list[WidgetItem] = []
         for item in self.items(pt):
-            if isinstance(item, WidgetItem) and item.isVisible():
+            if (
+                isinstance(item, WidgetItem)
+                and item.isVisible()
+                and item.node.visible
+            ):
                 out.append(item)
         return out
 

@@ -58,7 +58,6 @@ def main(argv: list[str] | None = None) -> int:
         resolver,
         label_font_size=int(settings.get("label_font_size", 8)),
         show_element_labels=bool(settings.get("show_element_labels", True)),
-        center_element_labels=bool(settings.get("center_element_labels", False)),
         show_box_border=bool(settings.get("show_box_border", False)),
         show_box_fill=bool(settings.get("show_box_fill", False)),
     )

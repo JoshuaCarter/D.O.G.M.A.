@@ -75,6 +75,20 @@ def main() -> int:
     assert btn_tex.image is not None, btn_tex.error
     assert btn_tex.atlas_id == "ui_inGame2_button_e"
 
+    # Unsaved meta: options should inherit scroll_options x/y (script AddWindow target)
+    from sage.model import apply_meta_positions, build_tree
+    import xml.etree.ElementTree as ET
+
+    bare = build_tree(ET.fromstring(faction.read_text(encoding="utf-8")))
+    apply_meta_positions(bare, {})
+    opts = bare.find_by_path("main_dialog/options")
+    scroll = bare.find_by_path("main_dialog/scroll_options")
+    assert opts is not None and opts.from_meta
+    assert scroll is not None
+    assert (opts.x, opts.y) == (scroll.x, scroll.y), ((opts.x, opts.y), (scroll.x, scroll.y))
+    popup = bare.find_by_path("main_dialog/popup_faction")
+    assert popup is not None and popup.from_meta and (popup.x, popup.y) == (0.0, 0.0)
+
     tip = doc.load(tooltip)
     panel = tip.find_by_path("panel")
     assert panel is not None

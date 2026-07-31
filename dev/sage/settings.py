@@ -115,7 +115,6 @@ def default_settings() -> dict:
         "grid_step": 16,
         "label_font_size": LABEL_FONT_DEFAULT,
         "show_element_labels": True,
-        "center_element_labels": False,
         "show_box_border": False,
         "show_box_fill": False,
         "scroll_select": False,
@@ -156,7 +155,6 @@ def load_settings() -> dict:
             pass
     data["label_font_size"] = clamp_label_font_size(data.get("label_font_size"))
     data["show_element_labels"] = bool(data.get("show_element_labels", True))
-    data["center_element_labels"] = bool(data.get("center_element_labels", False))
     data["recent_files"] = normalize_recent_files(data.get("recent_files"))
     # Re-merge auto-detect if still empty (fresh install / cleared settings)
     if not data.get("gamedata_texture_roots"):

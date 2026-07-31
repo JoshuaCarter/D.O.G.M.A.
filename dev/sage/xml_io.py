@@ -75,7 +75,7 @@ class UiXmlDocument:
         if self._selection == path:
             return
         self._selection = path
-        self.meta_dirty = True
+        # Selection is session chrome (written on save) — not an unsaved "change".
 
     def set_view_state(self, view: dict[str, float] | None) -> None:
         self._view = dict(view) if view else None

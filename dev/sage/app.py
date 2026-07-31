@@ -77,16 +77,26 @@ TAB_LOG = 2
 
 # Tree: mark overlapping canvas stack peers (stylesheet blocks setBackground).
 _TREE_PEER_ROLE = int(Qt.ItemDataRole.UserRole) + 1
+_TREE_LAYER_OFF_ROLE = int(Qt.ItemDataRole.UserRole) + 2
 
 
 class _TreePeerDelegate(QStyledItemDelegate):
-    """Paint grey rows for stack peers under the canvas cursor."""
+    """Paint grey rows for stack peers / disabled-layer items."""
 
     def paint(self, painter, option, index) -> None:  # noqa: N802
         opt = QStyleOptionViewItem(option)
         self.initStyleOption(opt, index)
         selected = bool(opt.state & QStyle.StateFlag.State_Selected)
-        if index.data(_TREE_PEER_ROLE) and not selected:
+        layer_off = bool(index.data(_TREE_LAYER_OFF_ROLE))
+        if layer_off:
+            # Deselected layer: muted grey; ignore hover/selection styles.
+            opt.state &= ~QStyle.StateFlag.State_MouseOver
+            opt.state &= ~QStyle.StateFlag.State_Selected
+            opt.palette.setColor(QPalette.ColorRole.Text, QColor(96, 96, 104))
+            opt.palette.setColor(QPalette.ColorRole.HighlightedText, QColor(96, 96, 104))
+            if selected:
+                painter.fillRect(opt.rect, QColor(40, 40, 46))
+        elif index.data(_TREE_PEER_ROLE) and not selected:
             painter.fillRect(opt.rect, QColor(58, 58, 64))
             opt.palette.setColor(QPalette.ColorRole.Text, QColor(200, 200, 210))
             opt.palette.setColor(QPalette.ColorRole.HighlightedText, QColor(200, 200, 210))
@@ -1091,8 +1101,11 @@ class MainWindow(QMainWindow):
         self._update_undo_actions()
         if self._restoring_meta:
             return
+        # Keep session snapshot current; geo edits already mark xml/meta dirty.
         self._capture_session_meta()
-        self.doc.mark_meta_dirty()
+
+    def _has_unsaved_changes(self) -> bool:
+        return bool(self.doc.dirty or self.doc.meta_dirty or self._raw_dirty)
 
     def _set_raw_text(self, text: str) -> None:
         self.raw_editor.blockSignals(True)
@@ -1587,6 +1600,15 @@ class MainWindow(QMainWindow):
         self.doc.replace_layer_states(states)
         # Deepest matching layer toggle wins (nested layers are independent).
         self.scene.set_layer_states(states)
+        self._sync_tree_layer_visibility()
+
+    def _sync_tree_layer_visibility(self) -> None:
+        """Grey Tree rows whose nodes are hidden by a deselected layer."""
+        doc = self.scene.doc
+        for path, item in self._tree_items_by_path.items():
+            node = doc.find_by_path(path) if doc is not None else None
+            item.setData(0, _TREE_LAYER_OFF_ROLE, node is None or not node.visible)
+        self.tree.viewport().update()
 
     def _on_layer_toggled(self, item: QListWidgetItem) -> None:
         path = item.data(Qt.ItemDataRole.UserRole)
@@ -1595,6 +1617,7 @@ class MainWindow(QMainWindow):
         visible = item.checkState() == Qt.CheckState.Checked
         self.scene.set_section_visibility(path, visible)
         self.doc.set_layer_state(path, visible)
+        self._sync_tree_layer_visibility()
 
     def _on_layer_label_clicked(self, item: QListWidgetItem) -> None:
         path = item.data(Qt.ItemDataRole.UserRole)
@@ -2034,7 +2057,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:  # noqa: N802
         self._capture_session_meta()
-        if self.doc.dirty or self.doc.meta_dirty or self._raw_dirty:
+        if self._has_unsaved_changes():
             r = QMessageBox.question(
                 self,
                 "Unsaved changes",

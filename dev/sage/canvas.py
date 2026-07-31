@@ -33,25 +33,24 @@ from .textures import TextureResolver, gamma_relative_path
 from .undo import GeoEdit, GeoState, UndoStack
 
 # Scene z bands (back → front):
-#   body/diamond → default labels → hover chrome → select chrome → focus label
+#   textures → labels → diamonds →
+#   ALL borders/fills (idle → hover → select) — always above everything else.
 _LABEL_Z = 1_000_000.0
 _DIAMOND_Z = 2_000_000.0
-_HOVER_CHROME_Z = 3_000_000.0
-_HOVER_LABEL_Z = 3_000_000.5  # hovered element's label above its chrome
-_SELECT_CHROME_Z = 3_000_001.0
-_SELECT_LABEL_Z = 3_000_001.5  # selected element's label above select chrome
+_IDLE_CHROME_Z = 10_000_000.0
+_HOVER_CHROME_Z = 10_000_001.0
+_SELECT_CHROME_Z = 10_000_002.0
 
 
 HANDLE = 10.0  # Invisible corner / edge hit thickness (px, item space)
 MIN_SIZE = 4.0
 
-# Selected = light blue; hovered = normal blue
-SEL_BLUE = QColor(130, 185, 255)
-SEL_BLUE_FILL = QColor(130, 185, 255, 45)
-HOVER_BLUE = QColor(40, 130, 255)
-HOVER_BLUE_FILL = QColor(40, 130, 255, 55)
+# Selected = normal blue; hovered = light blue (border only)
+SEL_BLUE = QColor(40, 130, 255)
+SEL_BLUE_FILL = QColor(40, 130, 255, 13)  # ~5% alpha
+HOVER_BLUE = QColor(130, 185, 255)
 LABEL_GREY = QColor(160, 160, 165)
-IDLE_YELLOW = QColor(200, 200, 80, 200)
+IDLE_YELLOW = QColor(150, 140, 40, 220)
 
 
 def _path_under_section(node_path: str, section_path: str) -> bool:
@@ -64,7 +63,7 @@ def _path_under_section(node_path: str, section_path: str) -> bool:
 
 
 class FocusChrome(QGraphicsItem):
-    """Selection / hover outline+fill drawn above all widget content."""
+    """Select/hover border+fill. Always painted above every other scene item."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -84,7 +83,7 @@ class FocusChrome(QGraphicsItem):
         item: WidgetItem | None,
         *,
         kind: str,
-        show_fill: bool,
+        show_fill: bool = False,
     ) -> None:
         if item is None or not item.node.visible or not item.isVisible():
             self.hide()
@@ -92,11 +91,8 @@ class FocusChrome(QGraphicsItem):
         self.prepareGeometryChange()
         self._kind = kind
         self._meta = bool(item.node.from_meta)
-        # Select fill is toggle-gated; hover always draws fill.
-        if kind == "select":
-            self._show_fill = bool(show_fill)
-        else:
-            self._show_fill = True
+        # Select fill is toggle-gated; hover never fills.
+        self._show_fill = bool(show_fill) if kind == "select" else False
         self.setPos(item.node.abs_x, item.node.abs_y)
         self._rect = QRectF(0, 0, max(item.node.width, 1), max(item.node.height, 1))
         if self._meta:
@@ -117,7 +113,7 @@ class FocusChrome(QGraphicsItem):
             width = 2
         else:
             color = HOVER_BLUE
-            fill = HOVER_BLUE_FILL if self._show_fill else QColor(0, 0, 0, 0)
+            fill = QColor(0, 0, 0, 0)
             width = 1
         pen = QPen(color)
         pen.setWidth(width)
@@ -167,7 +163,8 @@ class WidgetItem(QGraphicsRectItem):
             QGraphicsItem.GraphicsItemFlag.ItemStacksBehindParent, True
         )
         self._pixmap_item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
-        # Labels are scene-level (not children) so they stack above all textures/fills.
+        # Labels are scene-level (not children) so they stack above textures,
+        # but always below border/fill chrome.
         self._label_item = QGraphicsSimpleTextItem()
         self._label_item.setBrush(QBrush(LABEL_GREY))
         self._label_item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
@@ -178,6 +175,14 @@ class WidgetItem(QGraphicsRectItem):
         self._label_shadow.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
         self._label_shadow.setAcceptHoverEvents(False)
         self._label_shadow.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
+        # Idle yellow border is scene-level so it sits above nested content.
+        self._idle_border = QGraphicsRectItem()
+        self._idle_border.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        self._idle_border.setAcceptHoverEvents(False)
+        self._idle_border.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
+        self._idle_border.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, False)
+        self._idle_border.setZValue(_IDLE_CHROME_Z)
+        self._idle_border.hide()
         self._apply_label_font()
         self._missing = False
         self._resizing = False
@@ -190,7 +195,7 @@ class WidgetItem(QGraphicsRectItem):
         self.refresh_look()
 
     def detach_overlays(self, scene: QGraphicsScene) -> None:
-        for lab in (self._label_item, self._label_shadow):
+        for lab in (self._label_item, self._label_shadow, self._idle_border):
             if lab.scene() is scene:
                 scene.removeItem(lab)
 
@@ -246,22 +251,21 @@ class WidgetItem(QGraphicsRectItem):
         self._apply_texture()
         self._apply_label()
         if not visible:
+            self._idle_border.hide()
+            self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemHasNoContents, True)
             self._updating = False
             return
         selected = self.isSelected()
         hovered = self.is_hovered() and not selected
-        # Idle yellow border only on non-selected, non-hovered (toggle).
-        if self.node.from_meta:
-            self.setPen(QPen(Qt.PenStyle.NoPen))
-            self.setBrush(QBrush(Qt.BrushStyle.NoBrush))
-        elif not selected and not hovered and self.show_box_border:
-            pen = QPen(IDLE_YELLOW)
-            pen.setWidth(1)
-            pen.setCosmetic(True)
-            self.setPen(pen)
-        else:
-            self.setPen(QPen(Qt.PenStyle.NoPen))
+        # Body never paints chrome: select/hover/idle borders+fill are scene overlays.
+        # Untextured widgets stay fully empty (texture child only when present).
+        self.setPen(QPen(Qt.PenStyle.NoPen))
         self.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+        if self.node.from_meta:
+            self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemHasNoContents, False)
+        else:
+            self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemHasNoContents, True)
+        self._sync_idle_border(selected=selected, hovered=hovered)
         tip = self.node.path or self.node.tag
         if self.node.from_meta:
             tip += "\n[meta handle - not in XML]"
@@ -281,6 +285,31 @@ class WidgetItem(QGraphicsRectItem):
             # String resolution is owned by the app Log/Properties (StringResolver).
         self.setToolTip(tip)
         self._updating = False
+
+    def _sync_idle_border(self, *, selected: bool, hovered: bool) -> None:
+        """Yellow outline above content for idle (non-selected, non-hovered) boxes."""
+        show = (
+            bool(self.node.visible)
+            and self.isVisible()
+            and not self.node.from_meta
+            and not selected
+            and not hovered
+            and self.show_box_border
+        )
+        if not show:
+            self._idle_border.hide()
+            return
+        pen = QPen(IDLE_YELLOW)
+        pen.setWidth(1)
+        pen.setCosmetic(True)
+        self._idle_border.setPen(pen)
+        self._idle_border.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+        self._idle_border.setPos(self.node.abs_x, self.node.abs_y)
+        self._idle_border.setRect(0, 0, max(self.node.width, 1), max(self.node.height, 1))
+        self._idle_border.show()
+
+    def has_visible_texture(self) -> bool:
+        return not self._pixmap_item.pixmap().isNull()
 
     def _apply_texture(self) -> None:
         self._pixmap_item.setPixmap(QPixmap())
@@ -365,7 +394,7 @@ class WidgetItem(QGraphicsRectItem):
             br = self._label_item.boundingRect()
             lx = 2.0 - br.x()
             ly = 1.0 - br.y()
-        # Scene coords: labels are not parented (so they stack above all fills/textures).
+        # Scene coords: labels are not parented (above textures, below chrome).
         ox, oy = self.node.abs_x, self.node.abs_y
         self._label_shadow.setPos(ox + lx + 1, oy + ly + 1)
         self._label_item.setPos(ox + lx, oy + ly)
@@ -544,25 +573,18 @@ class WidgetItem(QGraphicsRectItem):
         self._commit_geo_edit()
 
     def paint(self, painter: QPainter, option: QStyleOptionGraphicsItem, widget: QWidget | None = None) -> None:
-        if self.node.from_meta:
-            # Base yellow diamond; selected/hover outline is FocusChrome (above content).
-            color = QColor(200, 200, 80, 220)
-            fill = QColor(200, 200, 80, 70)
-            pen = QPen(color)
-            pen.setWidth(1)
-            pen.setCosmetic(True)
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-            painter.setPen(pen)
-            painter.setBrush(QBrush(fill))
-            painter.drawPolygon(self._meta_diamond_poly())
+        if not self.node.from_meta:
             return
-        # No body fill — texture (if any) is the pixmap child; select/hover fill is FocusChrome.
-        # Untextured widgets stay fully transparent aside from an optional idle outline.
-        pen = self.pen()
-        if pen.style() != Qt.PenStyle.NoPen:
-            painter.setPen(pen)
-            painter.setBrush(QBrush(Qt.BrushStyle.NoBrush))
-            painter.drawRect(self.rect())
+        # Small meta handle only — select/hover chrome is FocusChrome.
+        color = QColor(200, 200, 80, 220)
+        fill = QColor(200, 200, 80, 70)
+        pen = QPen(color)
+        pen.setWidth(1)
+        pen.setCosmetic(True)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(pen)
+        painter.setBrush(QBrush(fill))
+        painter.drawPolygon(self._meta_diamond_poly())
 
 
 class UiScene(QGraphicsScene):
@@ -657,7 +679,7 @@ class UiScene(QGraphicsScene):
         self._sync_focus_chrome()
 
     def _sync_focus_chrome(self) -> None:
-        """Selection/hover chrome above content; that element's label above its chrome."""
+        """Borders/fills always above every texture, label, and diamond."""
         # Drop illegal selection/hover on disabled-layer widgets.
         for item in list(self.selectedItems()):
             if isinstance(item, WidgetItem) and (
@@ -693,21 +715,20 @@ class UiScene(QGraphicsScene):
         ):
             hover = None  # no hover chrome on the selected element
 
-        # Reset labels to default band (under chrome), then raise focus labels.
+        # Labels stay in the label band — never above borders/fills.
         for item in self._items.values():
             base = getattr(item, "_label_z_base", _LABEL_Z)
             item._label_shadow.setZValue(base)
             item._label_item.setZValue(base + 0.01)
+            item._idle_border.setZValue(_IDLE_CHROME_Z)
 
-        self._select_chrome.bind(sel, kind="select", show_fill=self.show_box_fill)
-        self._hover_chrome.bind(hover, kind="hover", show_fill=True)
-
-        if hover is not None:
-            hover._label_shadow.setZValue(_HOVER_LABEL_Z)
-            hover._label_item.setZValue(_HOVER_LABEL_Z + 0.01)
-        if sel is not None:
-            sel._label_shadow.setZValue(_SELECT_LABEL_Z)
-            sel._label_item.setZValue(_SELECT_LABEL_Z + 0.01)
+        # Select fill whenever the toggle is on (including untextured).
+        self._select_chrome.setZValue(_SELECT_CHROME_Z)
+        self._hover_chrome.setZValue(_HOVER_CHROME_Z)
+        self._select_chrome.bind(
+            sel, kind="select", show_fill=bool(self.show_box_fill)
+        )
+        self._hover_chrome.bind(hover, kind="hover", show_fill=False)
 
     def set_document(self, doc: LayoutNode | None) -> None:
         for item in list(self._items.values()):
@@ -747,6 +768,7 @@ class UiScene(QGraphicsScene):
             item._label_item.setZValue(item._label_z_base + 0.01)
             self.addItem(item._label_shadow)
             self.addItem(item._label_item)
+            self.addItem(item._idle_border)
             item._apply_label()
             self._items[node.path] = item
         self._sync_focus_chrome()
@@ -887,10 +909,8 @@ class UiScene(QGraphicsScene):
             self.selection_node_changed.emit(selected[0].node)
         else:
             self.selection_node_changed.emit(None)
-        # Refresh idle yellow borders on previous/current hover+select targets.
-        if self._hover_path and self._hover_path in self._items:
-            self._items[self._hover_path].refresh_look()
-        for item in selected:
+        # Selected/idle borders live on the widgets — refresh all looks.
+        for item in self._items.values():
             item.refresh_look()
         self._sync_focus_chrome()
 
@@ -915,7 +935,7 @@ class UiCanvas(QGraphicsView):
         self.setRenderHints(
             QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform
         )
-        self.setDragMode(QGraphicsView.DragMode.RubberBandDrag)
+        self.setDragMode(QGraphicsView.DragMode.NoDrag)
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
         self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
         self.setBackgroundBrush(QBrush(QColor(18, 18, 20)))
@@ -923,6 +943,13 @@ class UiCanvas(QGraphicsView):
         self._pan_start = QPointF()
         self.scroll_select = False
         self._stack_peer_paths: frozenset[str] = frozenset()
+        # Ordered scroll-select targets under the cursor (deepest first); wheel cycles these.
+        self._scroll_stack: list[WidgetItem] = []
+        self._last_stack_view_pos: QPointF | None = None
+        # While pressed: only the pick accepts mouse / is selectable.
+        self._press_mouse_restore: (
+            list[tuple[WidgetItem, Qt.MouseButton, bool]] | None
+        ) = None
         self.setMouseTracking(True)
         self.scene().selectionChanged.connect(self._on_selection_changed_stack)
         self.fit_stage()
@@ -931,7 +958,8 @@ class UiCanvas(QGraphicsView):
         self.scroll_select = bool(enabled)
 
     def _on_selection_changed_stack(self) -> None:
-        self._refresh_stack_peers()
+        # Keep peers tied to the last cursor stack — never rebuild from selection center.
+        self._refresh_stack_peers(self._last_stack_view_pos)
 
     def _set_stack_peers(self, peers: set[WidgetItem]) -> None:
         """Notify Tree of overlapping stack peers (no WYSIWYG grey chrome)."""
@@ -946,23 +974,17 @@ class UiCanvas(QGraphicsView):
         self.stack_peers_changed.emit(paths)
 
     def _refresh_stack_peers(self, view_pos: QPointF | None = None) -> None:
-        """Grey-highlight overlapping widgets under the cursor (scroll-select stack)."""
-        stack: list[WidgetItem] = []
+        """Grey-highlight scroll-targets under the cursor; store ordered stack for wheel."""
         if view_pos is not None:
-            stack = self._widget_items_at(view_pos)
-        if len(stack) < 2:
-            selected = [
-                i
-                for i in self.scene().selectedItems()
-                if isinstance(i, WidgetItem) and i.node.visible and i.isVisible()
-            ]
-            if selected:
-                center = selected[0].mapToScene(selected[0].rect().center())
-                stack = self._widget_items_at(QPointF(self.mapFromScene(center)))
+            self._last_stack_view_pos = QPointF(view_pos)
+        pos = self._last_stack_view_pos
+        stack: list[WidgetItem] = self._widget_items_at(pos) if pos is not None else []
         stack = [i for i in stack if i.node.visible and i.isVisible()]
+        self._scroll_stack = stack
         if len(stack) < 2:
             self._set_stack_peers(set())
             return
+        # Tree greys every target except the current selection (selection has its own style).
         peers = {item for item in stack if not item.isSelected()}
         self._set_stack_peers(peers)
 
@@ -1008,17 +1030,84 @@ class UiCanvas(QGraphicsView):
         self._update_pan_limits()
 
     def _widget_items_at(self, view_pos: QPointF) -> list[WidgetItem]:
-        """Visible widget items under the cursor, topmost first."""
-        pt = view_pos.toPoint()
+        """Visible widgets under the cursor (scroll-targets), smallest box first."""
+        scene = self.scene()
+        if scene is None:
+            return []
+        scene_pos = self.mapToScene(view_pos.toPoint())
         out: list[WidgetItem] = []
-        for item in self.items(pt):
-            if (
-                isinstance(item, WidgetItem)
-                and item.isVisible()
-                and item.node.visible
-            ):
-                out.append(item)
+        seen: set[int] = set()
+        for raw in scene.items(scene_pos):
+            item = raw
+            if not isinstance(item, WidgetItem):
+                parent = raw.parentItem()
+                if isinstance(parent, WidgetItem):
+                    item = parent
+                else:
+                    continue
+            if id(item) in seen:
+                continue
+            if not item.isVisible() or not item.node.visible:
+                continue
+            local = item.mapFromScene(scene_pos)
+            if not item.shape().contains(local):
+                continue
+            seen.add(id(item))
+            out.append(item)
+        out.sort(key=lambda i: max(i.node.width, 1.0) * max(i.node.height, 1.0))
         return out
+
+    @staticmethod
+    def _pick_click_target(stack: list[WidgetItem]) -> WidgetItem | None:
+        """Smallest scroll-target under the cursor."""
+        return stack[0] if stack else None
+
+    def _arm_press_pick(self, pick: WidgetItem) -> None:
+        """Only `pick` can be hit/selected until release (keeps smallest target)."""
+        self._restore_press_mouse()
+        scene = self.scene()
+        if not isinstance(scene, UiScene):
+            return
+        restore: list[tuple[WidgetItem, Qt.MouseButton, bool]] = []
+        for item in scene._items.values():
+            buttons = item.acceptedMouseButtons()
+            selectable = bool(
+                item.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
+            )
+            restore.append((item, buttons, selectable))
+            if item is pick:
+                item.setAcceptedMouseButtons(
+                    Qt.MouseButton.LeftButton
+                    | Qt.MouseButton.RightButton
+                    | Qt.MouseButton.MiddleButton
+                )
+                item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
+            else:
+                item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+                item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
+        self._press_mouse_restore = restore
+
+    def _restore_press_mouse(self) -> None:
+        if self._press_mouse_restore is None:
+            return
+        for item, buttons, selectable in self._press_mouse_restore:
+            if item.scene() is self.scene():
+                item.setAcceptedMouseButtons(buttons)
+                item.setFlag(
+                    QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, selectable
+                )
+        self._press_mouse_restore = None
+
+    def _force_select(self, pick: WidgetItem) -> None:
+        """Ensure `pick` is the only selected item (never toggle it off)."""
+        scene = self.scene()
+        if scene is None:
+            return
+        for item in list(scene.selectedItems()):
+            if item is not pick:
+                item.setSelected(False)
+        if not pick.isSelected():
+            pick.setSelected(True)
 
     def wheelEvent(self, event: QWheelEvent) -> None:  # noqa: N802
         # MMB / Alt-drag pan: ignore wheel (no zoom mid-pan).
@@ -1085,14 +1174,21 @@ class UiCanvas(QGraphicsView):
         self._update_pan_limits()
 
     def _scroll_select_wheel(self, event: QWheelEvent) -> bool:
-        """Cycle selection through stacked widgets under the cursor. No wrapping."""
+        """Cycle selection one-by-one through the highlighted scroll-target stack."""
         delta = event.angleDelta().y()
         if delta == 0:
             delta = event.pixelDelta().y()
         if delta == 0:
             return False
-        stack = self._widget_items_at(event.position())
-        if not stack:
+        pos = event.position()
+        # Same stack the tree is highlighting under the cursor.
+        self._refresh_stack_peers(pos)
+        stack = [
+            i
+            for i in self._scroll_stack
+            if i.node.visible and i.isVisible() and i.scene() is self.scene()
+        ]
+        if len(stack) < 2:
             return False
         current = -1
         for i, item in enumerate(stack):
@@ -1100,19 +1196,46 @@ class UiCanvas(QGraphicsView):
                 current = i
                 break
         if delta > 0:
-            # Wheel up → next (deeper in the stack)
+            # Wheel up → next larger target
             nxt = current + 1
             if nxt >= len(stack):
-                return True  # already at bottom - no wrap
+                return True  # already at largest — no wrap
         else:
-            # Wheel down → previous (toward top)
-            nxt = current - 1
-            if nxt < 0:
-                return True  # already at top / none - no wrap
-        self.scene().clearSelection()
+            # Wheel down → smaller target
+            if current < 0:
+                nxt = 0
+            else:
+                nxt = current - 1
+                if nxt < 0:
+                    return True  # already at smallest — no wrap
+        scene = self.scene()
+        scene.clearSelection()
         stack[nxt].setSelected(True)
-        self._refresh_stack_peers(event.position())
+        # Peers stay on this same cursor stack (selectionChanged must not rebuild elsewhere).
+        peers = {item for item in stack if item is not stack[nxt]}
+        self._set_stack_peers(peers)
         return True
+
+    def _handle_left_canvas_press(self, event) -> None:
+        """Select smallest scroll-target, or clear if empty canvas. Used for click and dblclick."""
+        self._restore_press_mouse()
+        stack = self._widget_items_at(event.position())
+        scene = self.scene()
+        if stack:
+            # Always keep/select the smallest scroll-target — never toggle off.
+            pick = self._pick_click_target(stack) or stack[0]
+            self._arm_press_pick(pick)
+            self._force_select(pick)
+            # Deliver as a normal press so move/resize still work (dblclick == second click).
+            super().mousePressEvent(event)
+            self._force_select(pick)
+            self._refresh_stack_peers(event.position())
+            return
+        # Click off all widgets (empty canvas) — only then deselect.
+        if scene is not None:
+            scene.clearSelection()
+        event.accept()
+        self._refresh_stack_peers(event.position())
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
         if event.button() == Qt.MouseButton.MiddleButton or (
@@ -1124,8 +1247,18 @@ class UiCanvas(QGraphicsView):
             self.setCursor(Qt.CursorShape.ClosedHandCursor)
             event.accept()
             return
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._handle_left_canvas_press(event)
+            return
         super().mousePressEvent(event)
         self._refresh_stack_peers(event.position())
+
+    def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802
+        # Qt sends DblClick instead of a second Press — treat it as another left press.
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._handle_left_canvas_press(event)
+            return
+        super().mouseDoubleClickEvent(event)
 
     def mouseMoveEvent(self, event) -> None:  # noqa: N802
         if self._panning:
@@ -1140,9 +1273,20 @@ class UiCanvas(QGraphicsView):
             event.accept()
             return
         super().mouseMoveEvent(event)
+        # Don't retarget hover while dragging a widget.
+        if self._press_mouse_restore is not None:
+            return
+        stack = self._widget_items_at(event.position())
+        scene = self.scene()
+        if isinstance(scene, UiScene):
+            pick = self._pick_click_target(stack)
+            scene.set_hover_path(pick.node.path if pick is not None else None)
         self._refresh_stack_peers(event.position())
 
     def leaveEvent(self, event) -> None:  # noqa: N802
+        scene = self.scene()
+        if isinstance(scene, UiScene):
+            scene.set_hover_path(None)
         # Fall back to selected-item stack so peers don't vanish on leave.
         self._refresh_stack_peers(None)
         super().leaveEvent(event)
@@ -1157,4 +1301,10 @@ class UiCanvas(QGraphicsView):
             event.accept()
             return
         super().mouseReleaseEvent(event)
+        self._restore_press_mouse()
         self._refresh_stack_peers(event.position())
+        stack = self._widget_items_at(event.position())
+        scene = self.scene()
+        if isinstance(scene, UiScene):
+            pick = self._pick_click_target(stack)
+            scene.set_hover_path(pick.node.path if pick is not None else None)

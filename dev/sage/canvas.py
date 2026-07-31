@@ -7,6 +7,7 @@ from PyQt6.QtGui import (
     QBrush,
     QColor,
     QFont,
+    QFontMetricsF,
     QImage,
     QPainter,
     QPainterPath,
@@ -34,12 +35,13 @@ from .undo import GeoEdit, GeoState, UndoStack
 
 # Scene z bands (back → front):
 #   textures → labels → diamonds →
-#   ALL borders/fills (idle → hover → select) — always above everything else.
+#   ALL borders/fills (idle → hover → select) → selected label (above chrome)
 _LABEL_Z = 1_000_000.0
 _DIAMOND_Z = 2_000_000.0
 _IDLE_CHROME_Z = 10_000_000.0
 _HOVER_CHROME_Z = 10_000_001.0
 _SELECT_CHROME_Z = 10_000_002.0
+_SELECT_LABEL_Z = 10_000_003.0
 
 
 HANDLE = 10.0  # Invisible corner / edge hit thickness (px, item space)
@@ -51,6 +53,7 @@ SEL_BLUE_FILL = QColor(40, 130, 255, 13)  # ~5% alpha
 HOVER_BLUE = QColor(130, 185, 255)
 LABEL_GREY = QColor(160, 160, 165)
 IDLE_YELLOW = QColor(150, 140, 40, 220)
+SELECT_LABEL_BG = QColor(0, 0, 0)
 
 
 def _path_under_section(node_path: str, section_path: str) -> bool:
@@ -125,6 +128,78 @@ class FocusChrome(QGraphicsItem):
             painter.drawPolygon(self._poly)
         else:
             painter.drawRect(self._rect)
+
+
+class SelectLabelOverlay(QGraphicsItem):
+    """Selected tag in front of chrome: same SimpleTextItem paint as normal labels + black bg."""
+
+    _PAD = 1.0
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._bg = QGraphicsRectItem(self)
+        self._bg.setPen(QPen(Qt.PenStyle.NoPen))
+        self._bg.setBrush(QBrush(SELECT_LABEL_BG))
+        self._bg.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        self._bg.setZValue(0)
+        self._text = QGraphicsSimpleTextItem(self)
+        self._text.setBrush(QBrush(QColor(255, 255, 255)))
+        self._text.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        self._text.setZValue(1)
+        self.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        self.setAcceptHoverEvents(False)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, False)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemHasNoContents, True)
+        self.hide()
+
+    def bind(self, item: WidgetItem | None) -> None:
+        if item is None or not item.node.visible or not item.isVisible():
+            self.hide()
+            return
+        tag = item.node.tag or item.node.path or ""
+        if not tag:
+            self.hide()
+            return
+        lab = item._label_item
+        # Always show for selection (even when "show labels" is off).
+        item._apply_label_font()
+        self._text.setFont(lab.font())
+        self._text.setBrush(QBrush(QColor(255, 255, 255)))
+        self._text.setText(tag)
+        self._text.setPos(0, 0)
+        # Layout uses the same anchor rules as _apply_label (may be hidden when toggle off).
+        fm = QFontMetricsF(self._text.font())
+        loose = fm.boundingRect(tag)
+        tight = fm.tightBoundingRect(tag)
+        item_br = self._text.boundingRect()
+        mapped = tight.translated(item_br.x() - loose.x(), item_br.y() - loose.y())
+        pad = self._PAD
+        if item.node.from_meta:
+            tip = item._meta_diamond_poly().at(1)
+            gap = 6.0
+            br = item_br
+            lx = tip.x() + gap - br.x()
+            ly = tip.y() - (br.y() + br.height() / 2.0)
+        else:
+            gap = 2.0
+            br = item_br
+            lx = 0.0 - br.x()
+            ly = -gap - br.height() - br.y()
+        ox, oy = item.node.abs_x, item.node.abs_y
+        self.setPos(ox + lx, oy + ly)
+        box_left = item.node.abs_x - (ox + lx)
+        top = mapped.top() - pad
+        bottom = mapped.bottom() + pad
+        right = mapped.right() + pad
+        self._bg.setRect(QRectF(box_left, top, max(right - box_left, 1.0), bottom - top))
+        self.show()
+
+    def boundingRect(self) -> QRectF:  # noqa: N802
+        return self._bg.rect()
+
+    def paint(self, painter: QPainter, option: QStyleOptionGraphicsItem, widget: QWidget | None = None) -> None:
+        return
 
 
 class WidgetItem(QGraphicsRectItem):
@@ -392,8 +467,10 @@ class WidgetItem(QGraphicsRectItem):
         else:
             self._label_item.setBrush(QBrush(LABEL_GREY))
             br = self._label_item.boundingRect()
-            lx = 2.0 - br.x()
-            ly = 1.0 - br.y()
+            # Outside above the box; bottom-left anchored so size grows up/right.
+            gap = 2.0
+            lx = 0.0 - br.x()
+            ly = -gap - br.height() - br.y()
         # Scene coords: labels are not parented (above textures, below chrome).
         ox, oy = self.node.abs_x, self.node.abs_y
         self._label_shadow.setPos(ox + lx + 1, oy + ly + 1)
@@ -625,6 +702,9 @@ class UiScene(QGraphicsScene):
         self._select_chrome = FocusChrome()
         self._select_chrome.setZValue(_SELECT_CHROME_Z)
         self.addItem(self._select_chrome)
+        self._select_label = SelectLabelOverlay()
+        self._select_label.setZValue(_SELECT_LABEL_Z)
+        self.addItem(self._select_label)
         self.selectionChanged.connect(self._on_selection_changed)
 
     def push_geo_edit(self, edit: GeoEdit) -> None:
@@ -660,6 +740,7 @@ class UiScene(QGraphicsScene):
         self.show_element_labels = bool(show)
         for item in self._items.values():
             item.set_show_element_labels(self.show_element_labels)
+        self._sync_focus_chrome()
 
     def set_box_style(
         self,
@@ -725,10 +806,15 @@ class UiScene(QGraphicsScene):
         # Select fill whenever the toggle is on (including untextured).
         self._select_chrome.setZValue(_SELECT_CHROME_Z)
         self._hover_chrome.setZValue(_HOVER_CHROME_Z)
+        self._select_label.setZValue(_SELECT_LABEL_Z)
         self._select_chrome.bind(
             sel, kind="select", show_fill=bool(self.show_box_fill)
         )
         self._hover_chrome.bind(hover, kind="hover", show_fill=False)
+        # Selected tag above all chrome (black bg). Ensure base label pos is current.
+        if sel is not None:
+            sel._apply_label()
+        self._select_label.bind(sel)
 
     def set_document(self, doc: LayoutNode | None) -> None:
         for item in list(self._items.values()):

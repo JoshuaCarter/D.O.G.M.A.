@@ -6,8 +6,12 @@
 
 _G.dogma_fx_health_conf = {
 	MOD_ID = "dogma/fx/health",
-	-- Hardcoded (no MCM). Values are actor.health; intensity uses (1 - health)
-	-- mapped through start_hp → end_hp (higher start_hp = earlier onset).
+	DEFAULTS = {
+		["enable"] = true,
+		["intensity"] = 1.0,
+	},
+	-- Values are actor.health; intensity uses (1 - health) mapped through
+	-- start_hp → end_hp (higher start_hp = earlier onset), then MCM multiplier.
 	PPE_A = {
 		name = "dogma_health_a.ppe",
 		id = 2040,
@@ -20,5 +24,6 @@ _G.dogma_fx_health_conf = {
 		start_hp = 0.25,
 		end_hp = 0.05,
 	},
+	-- Filled by on_option_change (runs at boot before any read).
 	loaded = {},
 }

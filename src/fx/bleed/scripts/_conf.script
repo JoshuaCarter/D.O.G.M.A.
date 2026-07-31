@@ -10,6 +10,10 @@
 
 _G.dogma_fx_bleed_conf = {
 	MOD_ID = "dogma/fx/bleed",
+	DEFAULTS = {
+		["enable"] = true,
+		["intensity"] = 1.0,
+	},
 	LERP_SEC = 1.0,
 	-- Highest matching threshold wins. bleed >= min → intensity.
 	TIERS = {
@@ -26,5 +30,6 @@ _G.dogma_fx_bleed_conf = {
 		name = "dogma_bleed_b.ppe",
 		id = 2031,
 	},
+	-- Filled by on_option_change (runs at boot before any read).
 	loaded = {},
 }

@@ -1,14 +1,18 @@
 --[[
-	Dynamic Loadout — in-game post-spawn optic attach.
+	Dynamic Loadout — in-game ammo trim.
 
-	Menu writes character_creation/dogma_dl_weapon + dogma_dl_sight.
-	Stock on_game_load already spawns sections from new_game_loadout.
+	Stock on_game_load often grants ammo for starting weapons. We strip all
+	ammo once, then give 2 stacks of each non-AP ammo type used by weapons
+	the player actually purchased (character_creation/dogma_dl_ammo).
+
+	dogma_dl_active=1 is required so an empty keep-list still means
+	"trim everything, add nothing" (selected no guns).
 ]]
 
 local CONFIG = _G.dogma_menu_dynamic_loadout_conf
 local MOD_ID = CONFIG and CONFIG.MOD_ID or "dogma/menu/dynamic_loadout"
 local DOGMA
-local attached_once = false
+local trimmed_once = false
 
 local function dlog(msg)
 	if DOGMA and DOGMA.dbg then
@@ -18,53 +22,92 @@ local function dlog(msg)
 	end
 end
 
-local function try_attach_sight()
-	if attached_once then
-		return
+local function explode_csv(s)
+	local out = {}
+	if not s or s == "" then
+		return out
 	end
-	if not (axr_main and axr_main.config) then
-		return
-	end
-
-	local wpn_sec = axr_main.config:r_value("character_creation", "dogma_dl_weapon", 3)
-	local sight_sec = axr_main.config:r_value("character_creation", "dogma_dl_sight", 3)
-	axr_main.config:w_value("character_creation", "dogma_dl_weapon", "")
-	axr_main.config:w_value("character_creation", "dogma_dl_sight", "")
-
-	if not wpn_sec or wpn_sec == "" or not sight_sec or sight_sec == "" then
-		attached_once = true
-		return
-	end
-
-	if not db.actor then
-		return
-	end
-
-	local wpn = db.actor:object(wpn_sec)
-	local sight = db.actor:object(sight_sec)
-	if not (wpn and sight) then
-		dlog(string.format("attach skip: missing objects wpn=%s sight=%s",
-			tostring(wpn ~= nil), tostring(sight ~= nil)))
-		attached_once = true
-		return
-	end
-
-	if utils_item and utils_item.can_attach_scope and utils_item.attach_addon then
-		if utils_item.can_attach_scope(wpn, sight) then
-			utils_item.attach_addon(wpn, sight, "scope", true)
-			dlog(string.format("attached %s -> %s", sight_sec, wpn_sec))
-		else
-			dlog(string.format("can_attach_scope false for %s on %s", sight_sec, wpn_sec))
+	for part in string.gmatch(s, "([^,]+)") do
+		local t = part:match("^%s*(.-)%s*$")
+		if t and t ~= "" then
+			out[#out + 1] = t
 		end
-	else
-		dlog("utils_item attach API missing")
+	end
+	return out
+end
+
+local function is_ammo_obj(obj)
+	if not obj then
+		return false
+	end
+	local sec = obj:section()
+	if IsItem and IsItem("ammo", sec) then
+		return true
+	end
+	if (ini_sys:r_string_ex(sec, "class") or "") == "AMMO" then
+		return true
+	end
+	if obj.ammo_get_count and (obj:ammo_get_count() or 0) > 0 then
+		if string.find(sec, "ammo_", 1, true) then
+			return true
+		end
+	end
+	return false
+end
+
+local function trim_ammo()
+	if trimmed_once then
+		return
+	end
+	if not (axr_main and axr_main.config and db.actor) then
+		return
 	end
 
-	attached_once = true
+	local active = axr_main.config:r_value("character_creation", "dogma_dl_active", 3)
+	axr_main.config:w_value("character_creation", "dogma_dl_active", "")
+	if active ~= "1" and active ~= 1 then
+		trimmed_once = true
+		return
+	end
+
+	local raw = axr_main.config:r_value("character_creation", "dogma_dl_ammo", 3)
+	axr_main.config:w_value("character_creation", "dogma_dl_ammo", "")
+	local keep = explode_csv(raw)
+
+	local ids = {}
+	local ok = pcall(function()
+		db.actor:iterate_inventory(function(_, obj)
+			if is_ammo_obj(obj) then
+				ids[#ids + 1] = obj:id()
+			end
+		end)
+	end)
+	if not ok then
+		dlog("ammo trim: iterate_inventory failed")
+		trimmed_once = true
+		return
+	end
+
+	for _, id in ipairs(ids) do
+		pcall(alife_release_id, id)
+	end
+
+	for _, sec in ipairs(keep) do
+		if ini_sys:section_exist(sec) then
+			local box = ini_sys:r_float_ex(sec, "box_size") or 30
+			for _ = 1, 2 do
+				alife_create_item(sec, db.actor, { ammo = box })
+			end
+			dlog(string.format("ammo trim keep %s x2 (box=%s)", sec, tostring(box)))
+		end
+	end
+
+	dlog(string.format("ammo trim done: removed=%d kept_types=%d", #ids, #keep))
+	trimmed_once = true
 end
 
 function on_game_start()
 	DOGMA = dogma_common.load(MOD_ID)
-	attached_once = false
-	RegisterScriptCallback("actor_on_first_update", try_attach_sight)
+	trimmed_once = false
+	RegisterScriptCallback("actor_on_first_update", trim_ammo)
 end

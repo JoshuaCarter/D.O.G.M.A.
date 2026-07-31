@@ -7,16 +7,31 @@
 		<text>Dynamic Loadout</text>
 	</string>
 	<string id="ui_mcm_dogma_menu_dynamic_loadout_page_description">
-		<text>Scores weapons/armor/helmets/ammo/sights at New Game Randomize, filters by faction and point caps, then forces the starting loadout. Temporary MCM knobs for tuning — check the game log for score dumps.</text>
+		<text>When Enabled, New Game strips stock weapons/ammo/outfits/helmets from the panels, then adds scored options into the loadout (purchase) list. Other stock items stay. Weights 0-1 step 0.01.</text>
 	</string>
 	<string id="ui_mcm_dogma_menu_dynamic_loadout_caps_section">
-		<text>Point caps (tuning)</text>
+		<text>Per-category pts caps</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_weights_section">
+		<text>Score weights (0-1)</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_weights_weapon">
+		<text>— Weapons —</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_weights_armor">
+		<text>— Armor / helmet —</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_weights_ammo">
+		<text>— Ammo —</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_weights_sight">
+		<text>— Sights —</text>
 	</string>
 	<string id="ui_mcm_dogma_menu_dynamic_loadout_enabled">
 		<text>Enabled</text>
 	</string>
 	<string id="ui_mcm_dogma_menu_dynamic_loadout_enabled_desc">
-		<text>When on, Randomize builds a scored loadout and starts the game.</text>
+		<text>When on, opening New Game rebuilds the loadout (shop) options from scored weapons/ammo/outfits/helmets. Inventory keeps non-gear basics.</text>
 	</string>
 	<string id="ui_mcm_dogma_menu_dynamic_loadout_log_scores">
 		<text>Log scores</text>
@@ -30,46 +45,220 @@
 	<string id="ui_mcm_dogma_menu_dynamic_loadout_include_universal_armor_desc">
 		<text>Also allow outfits with empty/actor community alongside faction suits.</text>
 	</string>
-	<string id="ui_mcm_dogma_menu_dynamic_loadout_sight_chance">
-		<text>Sight chance %</text>
-	</string>
-	<string id="ui_mcm_dogma_menu_dynamic_loadout_sight_chance_desc">
-		<text>Chance to add a compatible plain optic (no NVG/thermal).</text>
-	</string>
 	<string id="ui_mcm_dogma_menu_dynamic_loadout_max_pts_weapon">
 		<text>Max weapon pts</text>
 	</string>
 	<string id="ui_mcm_dogma_menu_dynamic_loadout_max_pts_weapon_desc">
-		<text>Only weapons with score-derived points at or below this are eligible.</text>
+		<text>Supply all weapons with pts strictly below this.</text>
 	</string>
 	<string id="ui_mcm_dogma_menu_dynamic_loadout_max_pts_armor">
 		<text>Max armor pts</text>
 	</string>
 	<string id="ui_mcm_dogma_menu_dynamic_loadout_max_pts_armor_desc">
-		<text>Only outfits at or below this point cost are eligible.</text>
+		<text>Supply all outfits with pts strictly below this.</text>
 	</string>
 	<string id="ui_mcm_dogma_menu_dynamic_loadout_max_pts_helmet">
 		<text>Max helmet pts</text>
 	</string>
 	<string id="ui_mcm_dogma_menu_dynamic_loadout_max_pts_helmet_desc">
-		<text>Only helmets at or below this point cost are eligible.</text>
+		<text>Supply all helmets with pts strictly below this.</text>
 	</string>
 	<string id="ui_mcm_dogma_menu_dynamic_loadout_max_pts_ammo">
 		<text>Max ammo pts</text>
 	</string>
 	<string id="ui_mcm_dogma_menu_dynamic_loadout_max_pts_ammo_desc">
-		<text>Only ammo types at or below this point cost are eligible.</text>
+		<text>Among non-AP ammo used by supplied guns, only types under this pts get 2 stacks.</text>
 	</string>
 	<string id="ui_mcm_dogma_menu_dynamic_loadout_max_pts_sight">
 		<text>Max sight pts</text>
 	</string>
 	<string id="ui_mcm_dogma_menu_dynamic_loadout_max_pts_sight_desc">
-		<text>Only sights at or below this point cost are eligible.</text>
+		<text>Supply compatible plain sights with pts strictly below this.</text>
 	</string>
-	<string id="ui_mcm_dogma_menu_dynamic_loadout_score_scale">
-		<text>Score → pts scale</text>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_cost_mult">
+		<text>Cost multiplier</text>
 	</string>
-	<string id="ui_mcm_dogma_menu_dynamic_loadout_score_scale_desc">
-		<text>Multiplies raw score into point cost (pts = floor(score * scale)).</text>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_cost_mult_desc">
+		<text>Shop pts = weighted average of 0–1 stats × this multiplier (1–100000). Basics and medicine are not scaled.</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_w_dmg_fmj">
+		<text>Weapon: FMJ avg (tiers 1-4)</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_w_dmg_fmj_desc">
+		<text>Weight for average FMJ damage vs first 4 torso armor tiers (Min→Mid).</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_w_dmg_ap">
+		<text>Weapon: AP avg (tiers 1-4)</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_w_dmg_ap_desc">
+		<text>Weight for average AP damage vs first 4 torso armor tiers (Min→Mid).</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_w_dmg_hp">
+		<text>Weapon: HP vs 0 armor</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_w_dmg_hp_desc">
+		<text>Weight for HP/hydro/buck damage vs bare (0 armor) target.</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_w_hit_power">
+		<text>Weapon: Hit Power</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_w_hit_power_desc">
+		<text>DOGMA Hit Power (hit_power x 100).</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_w_mutant_dmg">
+		<text>Weapon: Dmg vs Mutants</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_w_mutant_dmg_desc">
+		<text>DOGMA mutant damage (avg across ammo).</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_w_rpm">
+		<text>Weapon: fire rate</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_w_rpm_desc">
+		<text>Base-GAMMA rpm (allowed with mag size).</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_w_mag">
+		<text>Weapon: mag size</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_w_mag_desc">
+		<text>ammo_mag_size normalized 0–1 with soft ceiling 50 (50+ clamps to 1).</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_w_burst">
+		<text>Weapon: Burst Size</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_w_burst_desc">
+		<text>DOGMA Burst Size (shots to ~3 deg cam climb), normalized /10 (10+ = 1).</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_w_use_mag">
+		<text>Weapon: use mag</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_w_use_mag_desc">
+		<text>0/1 from Weapon Tooltips: magazine cycle = 1; rounds-reload (tube, break-action, revolver) = 0. Always included.</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_w_spread_ads">
+		<text>Weapon: Spread ADS</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_w_spread_ads_desc">
+		<text>ADS/base cone (°). Lower better: 0°→1, soft ceiling 1°→0.</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_w_spread_hip">
+		<text>Weapon: Spread hip</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_w_spread_hip_desc">
+		<text>Hip-run cone (°). Lower better: 0°→1, soft ceiling 10°→0.</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_w_scope">
+		<text>Weapon: scope</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_w_scope_desc">
+		<text>0/1 from scope_status &gt; 0 (can mount a sight). Always included in the average.</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_w_silencer">
+		<text>Weapon: silencer</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_w_silencer_desc">
+		<text>0/1 from silencer_status &gt; 0 (can mount a suppressor). Always included in the average.</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_w_ammo_cost">
+		<text>Weapon: cheap ammo</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_w_ammo_cost_desc">
+		<text>Positive 0–1 from FMJ/HP ammo cost vs scanned ammo (cheapest=1, most expensive=0).</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_w_cost">
+		<text>Weapon: cheapness</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_w_cost_desc">
+		<text>Gun cost inverted: cheap→1, at max weapon cost (30k)→0.</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_a_fire_wound">
+		<text>Armor: ballistic (BR)</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_a_fire_wound_desc">
+		<text>Weight for fire_wound_protection.</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_a_strike">
+		<text>Armor: strike</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_a_strike_desc">
+		<text>Weight for strike_protection.</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_a_wound">
+		<text>Armor: wound</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_a_wound_desc">
+		<text>Weight for wound_protection.</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_a_explosion">
+		<text>Armor: explosion</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_a_explosion_desc">
+		<text>Weight for explosion_protection.</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_a_shock">
+		<text>Armor: shock</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_a_shock_desc">
+		<text>Weight for shock_protection.</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_a_burn">
+		<text>Armor: burn</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_a_burn_desc">
+		<text>Weight for burn_protection.</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_a_chem">
+		<text>Armor: chemical</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_a_chem_desc">
+		<text>Weight for chemical_burn_protection.</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_a_rad">
+		<text>Armor: radiation</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_a_rad_desc">
+		<text>Weight for radiation_protection.</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_a_psy">
+		<text>Armor: psy</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_a_psy_desc">
+		<text>Weight for telepathy_protection.</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_a_cost">
+		<text>Armor/helm: cheapness</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_a_cost_desc">
+		<text>Item cost inverted: 0 ru→1, at hardcoded max (armor 100k / helm 20k)→0.</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_ammo_dmg_ap">
+		<text>Ammo: dmg/ap ratio</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_ammo_dmg_ap_desc">
+		<text>Weight for k_hit/k_ap ammo score.</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_ammo_cost">
+		<text>Ammo: cheapness</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_ammo_cost_desc">
+		<text>Positive 0–1 vs scanned ammo costs (cheapest=1, most expensive=0).</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_ammo_price">
+		<text>Ammo: cheap (absolute)</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_ammo_price_desc">
+		<text>Absolute cost inverted: 0→1, at hardcoded max ammo cost (10k)→0. Similar to cheapness; turn one down if redundant.</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_sight_zoom">
+		<text>Sight: magnification</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_sight_zoom_desc">
+		<text>Weight for scope_zoom_factor.</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_sight_cost">
+		<text>Sight: cheapness</text>
+	</string>
+	<string id="ui_mcm_dogma_menu_dynamic_loadout_sight_cost_desc">
+		<text>Item cost inverted: cheap→1, soft ceiling 3000→0.</text>
 	</string>
 </string_table>

@@ -79,7 +79,12 @@ end
 local function on_option_change()
 	CONFIG.loaded.debug_log = DOGMA.dbg.logging()
 	CONFIG.loaded.debug_overlay = DOGMA.dbg.overlay_enabled()
+	CONFIG.loaded.enabled = DOGMA.mcm.bool(CONFIG.MOD_ID, "enable")
+	CONFIG.loaded.intensity = DOGMA.mcm.number(CONFIG.MOD_ID, "intensity")
 	DOGMA.dbg.set_enabled(CONFIG.MOD_ID, DOGMA.dbg.overlay_enabled())
+	if not CONFIG.loaded.enabled then
+		clear_all()
+	end
 end
 
 local function on_actor_on_update()
@@ -88,25 +93,27 @@ local function on_actor_on_update()
 		return
 	end
 
-	if not actor:alive() then
+	if not CONFIG.loaded.enabled or not actor:alive() then
 		clear_all()
 		return
 	end
 
 	local health = actor.health or 0
+	local mult = CONFIG.loaded.intensity or 1
 	overlay(LOG.HEALTH, string.format("HP: %.2f", health))
 
 	a_active = set_ppe(
 		CONFIG.PPE_A, a_active,
-		health_intensity(health, CONFIG.PPE_A.start_hp, CONFIG.PPE_A.end_hp),
+		health_intensity(health, CONFIG.PPE_A.start_hp, CONFIG.PPE_A.end_hp) * mult,
 		LOG.PPE_A, "A"
 	)
 	b_active = set_ppe(
 		CONFIG.PPE_B, b_active,
-		health_intensity(health, CONFIG.PPE_B.start_hp, CONFIG.PPE_B.end_hp),
+		health_intensity(health, CONFIG.PPE_B.start_hp, CONFIG.PPE_B.end_hp) * mult,
 		LOG.PPE_B, "B"
 	)
 end
+
 
 function on_game_start()
 	DOGMA = dogma_common.load(CONFIG.MOD_ID)

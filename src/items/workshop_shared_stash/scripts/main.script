@@ -234,7 +234,7 @@ local function on_actor_update()
 	end
 	try_hook_place()
 
-	local now = device().time_global()
+	local now = time_global()
 	if now < weight_tick then
 		return
 	end
@@ -251,6 +251,8 @@ local function hf_on_before_furniture_release(id)
 end
 
 local function on_game_load()
+	last_applied_weight = nil
+	weight_tick = 0
 	try_hook_place()
 	-- Rebuild level map from online workshops
 	if level and db and db.actor then

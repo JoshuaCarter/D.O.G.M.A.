@@ -1,0 +1,342 @@
+--[[
+	Tooltips Fix - always-on tooltip fixes for ALL item types.
+
+	Three independent fixes live here:
+
+	1. LAYOUT: item tooltips (utils_ui.UIInfoItem) often end up with
+	   overlapping / clipped sections after other mods append widgets (Parts
+	   in Tooltip, Crafting Info, Weapon Tooltips' damage panel, etc.). Stock
+	   Sync_Finale only knows about the vanilla chain (desc -> stats -> ammo ->
+	   frame); anything else either overlaps or is left outside the frame.
+	   Text heights also sometimes skip AdjustHeightToText before
+	   Sync_Y/Sync_H, so gaps are wrong until a later hover. fix() re-measures
+	   and restacks the full body as the outermost UIInfoItem.Update hook.
+
+	2. LOADOUT ARMING: the New Game Loadout screen renders tooltips before any
+	   on_game_start has fired, so the stats_table builders have not run yet:
+	   utils_ui only populates its stock table lazily, ish_item_stats
+	   (G.A.M.M.A. Accurate Defense Values) only rebuilds the GAMMA-rebalanced
+	   rows from its own on_game_start, and DOGMA's Weapon Tooltips hooks are
+	   likewise on_game_start-gated. Without this, the first Loadout screen of
+	   a session shows raw stock-Anomaly tooltips; they only turn correct
+	   after a game has been started once. run_early_inits() (bottom) runs all
+	   of that on every main_menu_on_init.
+
+	3. USES LINE: ui_item.get_obj_desc() builds a description header (uses /
+	   power / condition lines) via build_desc_header, which needs a live game
+	   object. The section-only path, get_sec_desc(), skips the header
+	   entirely - so multi-use items (food, meds, drink) never show their uses
+	   anywhere tooltips render from a bare section: the New Game Loadout
+	   screen, craft/repair previews, etc. We wrap get_sec_desc to prepend the
+	   uses line from the section's max_uses (what a fresh item has).
+
+	Load timing (empirically established, xray log 2026-07-31): the engine
+	loads .script modules LAZILY, on first reference of their global
+	namespace. axr_main's load-every-script loop only runs from
+	on_game_start(), so in a fresh-launch menu VM this file would never load
+	(and the main_menu_on_init registration below would never execute) on its
+	own (zzzz_dogma_tweaks_tooltips_fix_main). It is instead force-loaded by
+	this mod's own mcm.script: MCM's gather_options() loads all *mcm.script
+	files from main_menu:__init(),
+	strictly before main_menu_on_init is sent. Also note main_menu_on_init
+	fires on EVERY main-menu construction (including in-game ESC menus and
+	after quitting a game), and the whole Lua VM is torn down and rebuilt
+	during new-game creation - so everything here must be idempotent per-call
+	and re-armed per-VM.
+]]
+
+local SECTION_GAP = 10 -- match vanilla UIInfoItem:Sync_Finale section spacing
+-- Weapon Tooltips' damage panel sits flush under desc, then stats with a
+-- tighter gap than the stock 10px.
+local PANEL_TOP_OFFSET = 0
+local STATS_AFTER_PANEL = 2
+
+local pending_settle = setmetatable({}, { __mode = "k" })
+local base_uiinfo_update
+local base_get_sec_desc
+local hooks_ok = false
+
+------------------------------------------------------------------------------
+-- Fix 1: layout restacking
+------------------------------------------------------------------------------
+
+local function prepare_text_heights(info)
+	if not info then
+		return
+	end
+	pcall(function()
+		if info.name then
+			info.name:AdjustHeightToText()
+		end
+		if info.note and info.note:IsShown() then
+			info.note:AdjustHeightToText()
+		end
+		if info.desc and info.desc:IsShown() then
+			info.desc:AdjustHeightToText()
+		end
+	end)
+end
+
+-- Parts in Tooltip may sit beside stats (vertical) or under ammo (horizontal).
+local function sync_parts(info, tail)
+	if not info.parts or not info.parts:IsShown() then
+		return tail
+	end
+
+	local stats = info.stats_dialog
+	local stats_x = stats and stats:GetWndPos().x or 0
+	local parts_x = info.parts:GetWndPos().x
+	local vertical = stats and parts_x > stats_x + 50
+
+	if vertical then
+		local stats_pos = stats:GetWndPos()
+		local parts_pos = info.parts:GetWndPos()
+		info.parts:SetWndPos(vector2():set(parts_pos.x, stats_pos.y))
+		if info.SyncPartsText then
+			info:SyncPartsText(true)
+		end
+		local parts_bottom = stats_pos.y + info.parts:GetHeight()
+		local tail_bottom = tail:GetWndPos().y + tail:GetHeight()
+		if parts_bottom > tail_bottom then
+			tail = info.parts
+		end
+	else
+		info:Sync_Y(tail, info.parts, SECTION_GAP)
+		tail = info.parts
+		if info.SyncPartsText then
+			info:SyncPartsText()
+		end
+	end
+
+	return tail
+end
+
+local function pick_header_tail(info)
+	-- Prefer desc when visible and non-zero height (Weapon Tooltips zeros height
+	-- when hide_description is on; Show(false) alone still leaves stock height).
+	if info.desc and info.desc:IsShown() then
+		local h = 0
+		pcall(function()
+			h = info.desc:GetHeight()
+		end)
+		if h > 0 then
+			return info.desc
+		end
+	end
+	if info.note and info.note:IsShown() then
+		return info.note
+	end
+	return info.weight
+end
+
+-- Public: re-measure + restack one tooltip. Idempotent.
+function fix(info)
+	if not info or not info.frame or not info.Sync_Y or not info.Sync_H then
+		return
+	end
+
+	prepare_text_heights(info)
+
+	local tail = pick_header_tail(info)
+	if not tail then
+		return
+	end
+
+	local after_panel = false
+	if info.dogma_wpn_damage and info.dogma_wpn_damage:IsShown() then
+		info:Sync_Y(tail, info.dogma_wpn_damage, PANEL_TOP_OFFSET)
+		tail = info.dogma_wpn_damage
+		after_panel = true
+	end
+
+	if info.stats_dialog and info.stats_dialog:IsShown() then
+		info:Sync_Y(tail, info.stats_dialog, after_panel and STATS_AFTER_PANEL or SECTION_GAP)
+		tail = info.stats_dialog
+	end
+
+	if info.ammo and info.ammo:IsShown() then
+		info:Sync_Y(tail, info.ammo, SECTION_GAP)
+		tail = info.ammo
+	end
+
+	tail = sync_parts(info, tail)
+
+	if info.recipes and info.recipes:IsShown() then
+		info:Sync_Y(tail, info.recipes, SECTION_GAP)
+		tail = info.recipes
+	end
+
+	if info.cooking and info.cooking:IsShown() then
+		info:Sync_Y(tail, info.cooking, SECTION_GAP)
+		tail = info.cooking
+	end
+
+	info:Sync_H(tail, info.frame, SECTION_GAP)
+end
+
+function schedule_settle(info)
+	if info then
+		pending_settle[info] = true
+	end
+end
+
+local function safe_id(obj)
+	if not obj then
+		return nil
+	end
+	local ok, id = pcall(function()
+		return obj:id()
+	end)
+	if ok then
+		return id
+	end
+	return nil
+end
+
+local function uiinfo_update_hook(self, obj, sec, flags)
+	local oid = safe_id(obj)
+	local same_item = (oid and self.id and oid == self.id)
+		or (not obj and sec and self.section == sec)
+	local dirty = self.dogma_layout_dirty
+
+	if base_uiinfo_update then
+		base_uiinfo_update(self, obj, sec, flags)
+	end
+
+	-- Rebuild when the item changes, or when a prior pass left work pending
+	-- (first Update can run while Pass still hides the dialog).
+	if not same_item or dirty then
+		if self.IsShown and self:IsShown() then
+			self.dogma_layout_dirty = false
+			fix(self)
+			schedule_settle(self)
+		else
+			self.dogma_layout_dirty = true
+		end
+	end
+end
+
+------------------------------------------------------------------------------
+-- Fix 3: uses line for section-only descriptions (no live object)
+------------------------------------------------------------------------------
+
+local function sec_desc_hook(sec)
+	local str = base_get_sec_desc and base_get_sec_desc(sec) or ""
+
+	-- Mirror build_desc_header's uses line; a bare section describes a fresh
+	-- item, so its uses count is the section's max_uses (which IsItem's
+	-- "multiuse" lookup already holds).
+	local uses = sec and str ~= "" and IsItem("multiuse", sec)
+	if uses and type(uses) == "number" then
+		local clr_g = utils_xml.get_color("d_green")
+		local clr_2 = utils_xml.get_color("ui_gray_1")
+		local label = game.translate_string("st_ui_number_of_uses")
+		str = clr_g .. "  " .. clr_2 .. label .. ": " .. clr_g
+			.. string.format("%d", uses) .. "\\n \\n" .. clr_2 .. str
+	end
+
+	return str
+end
+
+------------------------------------------------------------------------------
+-- Hook install / arming
+------------------------------------------------------------------------------
+
+local function install_hooks()
+	if not utils_ui or not utils_ui.UIInfoItem then
+		return false
+	end
+
+	-- Always reclaim outermost so Parts/Craft/Weapon Tooltips' Sync_Finale
+	-- cannot leave the stack wrong after we return.
+	if utils_ui.UIInfoItem.Update ~= uiinfo_update_hook then
+		-- Capture the underlying Update exactly once per Lua VM. Re-capturing
+		-- on a reclaim can grab a wrapper that itself chains back to this hook
+		-- (e.g. Weapon Tooltips'), creating L->W->L infinite recursion =
+		-- engine stack-overflow crash on the first tooltip.
+		if not base_uiinfo_update then
+			base_uiinfo_update = utils_ui.UIInfoItem.Update
+		end
+		utils_ui.UIInfoItem.Update = uiinfo_update_hook
+	end
+
+	if ui_item and ui_item.get_sec_desc and ui_item.get_sec_desc ~= sec_desc_hook then
+		if not base_get_sec_desc then
+			base_get_sec_desc = ui_item.get_sec_desc
+		end
+		ui_item.get_sec_desc = sec_desc_hook
+	end
+
+	hooks_ok = true
+	return true
+end
+
+local function on_actor_update()
+	-- Reclaim if another mod re-wrapped Update after us.
+	if hooks_ok and utils_ui and utils_ui.UIInfoItem
+		and utils_ui.UIInfoItem.Update ~= uiinfo_update_hook
+	then
+		install_hooks()
+	end
+
+	for info in pairs(pending_settle) do
+		pending_settle[info] = nil
+		if info and info.IsShown and info:IsShown() then
+			fix(info)
+		end
+	end
+end
+
+local callbacks_registered = false
+
+-- Idempotent. Safe from main_menu_on_init (no game loaded yet).
+function early_init()
+	install_hooks()
+
+	if not callbacks_registered then
+		callbacks_registered = true
+		RegisterScriptCallback("actor_on_update", on_actor_update)
+		RegisterScriptCallback("actor_on_first_update", install_hooks)
+	end
+end
+
+------------------------------------------------------------------------------
+-- Fix 2: menu-time arming so the first Loadout screen is already correct
+------------------------------------------------------------------------------
+
+--[[
+	On every main_menu_on_init: populate the stock stats table, arm this
+	module and Weapon Tooltips (if installed), then force ish_item_stats'
+	GAMMA rebuild (Weapon Tooltips wraps override_stats_table in its
+	early_init, so its rows are re-applied on top). All steps are idempotent
+	full rebuilds or internally guarded, and they re-run safely when the real
+	on_game_start eventually fires.
+
+	Deliberately NOT forced early: ish_item_stats.on_game_start() itself - its
+	UIInfoItem.Update tweak needs db.actor paths the Loadout screen never
+	takes, and calling it would double-register its on_console_execute
+	callback once the real on_game_start fires.
+]]
+local function run_early_inits()
+	if utils_ui and utils_ui.prepare_stats_table then
+		utils_ui.prepare_stats_table()
+	end
+
+	-- Direct global reference on purpose: it triggers the engine's lazy script
+	-- loader, pulling Weapon Tooltips into the menu VM (nil if not installed).
+	if zzzz_dogma_tooltips_weapons_main and zzzz_dogma_tooltips_weapons_main.early_init then
+		zzzz_dogma_tooltips_weapons_main.early_init()
+	end
+
+	early_init()
+
+	if ish_item_stats and ish_item_stats.override_stats_table then
+		ish_item_stats.override_stats_table()
+	end
+end
+
+RegisterScriptCallback("main_menu_on_init", run_early_inits)
+
+function on_game_start()
+	early_init()
+end

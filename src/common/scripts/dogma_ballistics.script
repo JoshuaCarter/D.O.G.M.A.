@@ -1,0 +1,269 @@
+--[[
+	Shared CQC-style ballistics for tooltips scoring / dynamic loadout.
+
+	Loads as dogma_ballistics.script (common, non-zzzz) so New Game menu can use it.
+	Menu scoring uses neutral difficulty/barrel/silencer (1.0) for stable comparisons.
+]]
+
+local TORSO_TIERS = {
+	{ armor = 0.011, ap_scale = 0.8889, hit_frac = 0.8500, name = "Min" },
+	{ armor = 0.075, ap_scale = 0.8562, hit_frac = 0.6250, name = "Lgt" },
+	{ armor = 0.100, ap_scale = 0.7955, hit_frac = 0.5000, name = "Lgt+" },
+	{ armor = 0.150, ap_scale = 0.8117, hit_frac = 0.4783, name = "Mid" },
+	{ armor = 0.200, ap_scale = 0.7412, hit_frac = 0.3618, name = "Mid+" },
+	{ armor = 0.250, ap_scale = 0.7400, hit_frac = 0.3050, name = "Hvy" },
+	{ armor = 0.400, ap_scale = 0.7500, hit_frac = 0.2000, name = "Hvy+" },
+	{ armor = 0.550, ap_scale = 0.7000, hit_frac = 0.1500, name = "Exo" },
+	{ armor = 0.650, ap_scale = 0.7000, hit_frac = 0.1500, name = "Max" },
+}
+
+local BONE_DMG_TORSO = 0.9
+local BALLISTIC_BONUS = 1.1
+local K_AP_COMBAT_SCALE = 10
+local AP_TAIL = 0.80
+local ARMOR_CHIP_FRAC = 0.60
+local HARD_FAIL_SCALE = 0.0025 * 62.5
+local DAMAGE_SCALE = 100
+local DEFAULT_DIST = 30
+
+local HP_AMMO_MULT = {
+	["ammo_357_hp_mag"] = 2,
+	["ammo_9x18_pmm"] = 2,
+	["ammo_9x19_pbp"] = 2,
+	["ammo_7.62x25_p"] = 1.75,
+	["ammo_11.43x23_hydro"] = 2.7,
+	["ammo_5.45x39_ep"] = 1.45,
+	["ammo_5.56x45_ss190"] = 1.33,
+	["ammo_12x76_zhekan"] = 3.5,
+	["ammo_12x76_dart"] = 1.5,
+	["ammo_12x70_buck"] = 3,
+	["ammo_23x75_shrapnel"] = 2,
+	["ammo_23x75_barrikada"] = 3.5,
+	["ammo_20x70_buck"] = 2,
+	["ammo_338_federal"] = 10,
+}
+
+-- Matches tooltips mutant row (neutral barrel/diff = 1.0 for menu scoring).
+local MUTANT_BASE_MULT = 0.85
+local MUTANT_AMMO_MULT_DEFAULT = 0.85
+local MUTANT_AMMO_MULT = {
+	["ammo_12x70_buck"] = 0.90,
+	["ammo_20x70_buck"] = 0.90,
+	["ammo_23x75_shrapnel"] = 1.00,
+	["ammo_12x76_zhekan"] = 1.00,
+	["ammo_23x75_barrikada"] = 1.00,
+	["ammo_9x19_pbp"] = 1.00,
+	["ammo_9x18_pmm"] = 1.00,
+	["ammo_5.45x39_ep"] = 1.00,
+	["ammo_5.56x45_ss190"] = 1.00,
+	["ammo_7.62x25_ps"] = 1.00,
+	["ammo_7.62x25_p"] = 1.75,
+	["ammo_357_hp_mag"] = 1.00,
+	["ammo_11.43x23_hydro"] = 1.00,
+	["ammo_11.43x23_fmj"] = 1.00,
+}
+
+local function dist_atten(air_res, dist)
+	local k = air_res or 0.05
+	return 1 + ((dist or DEFAULT_DIST) / 200) * k * 0.5 / (1 - k + 0.1)
+end
+
+local function combat_ap(k_ap_ltx, air_res, dist, ap_scale, barrel, silencer, sniper_bonus)
+	return ((k_ap_ltx or 0) * K_AP_COMBAT_SCALE + (sniper_bonus or 0))
+		* (ap_scale or 1) * (barrel or 1)
+		/ dist_atten(air_res, dist)
+		* AP_TAIL
+		* (silencer or 1)
+end
+
+local function base_power(hit_power, k_hit, air_res, dist, bone_mult, ap_scale, pellet_mult, barrel, silencer)
+	return (hit_power or 0.5) / dist_atten(air_res, dist)
+		* (k_hit or 1) * (bone_mult or BONE_DMG_TORSO) * (ap_scale or 1) * BALLISTIC_BONUS
+		* (pellet_mult or 1) * (barrel or 1) * (silencer or 1)
+end
+
+-- Returns { dmg = <display-scale damage> } matching tooltip table cells.
+local function effective_dmg(hit_power, k_hit, k_ap_ltx, air_res, armor, ap_scale, hit_frac, bone_mult, dist, pellet_mult, barrel, ammo_sec, silencer, sniper_bonus)
+	local ap = combat_ap(k_ap_ltx, air_res, dist, ap_scale, barrel, silencer, sniper_bonus)
+	local power = base_power(hit_power, k_hit, air_res, dist, bone_mult, ap_scale, pellet_mult, barrel, silencer)
+	local dmg
+	if (armor or 0) <= 0 or ap >= armor then
+		dmg = power
+	else
+		local soft_pen_ap = armor / (1 + ARMOR_CHIP_FRAC)
+		if ap > soft_pen_ap then
+			dmg = power * (hit_frac or 1)
+		else
+			local hp_mult = HP_AMMO_MULT[ammo_sec] or 1
+			dmg = HARD_FAIL_SCALE * power * (hit_frac or 1) / hp_mult
+		end
+	end
+	return { dmg = dmg * DAMAGE_SCALE }
+end
+
+local function torso_dmg(hit_power, k_hit, k_ap, air_res, tier, dist, ammo_sec)
+	local r = effective_dmg(
+		hit_power, k_hit, k_ap, air_res,
+		tier.armor, tier.ap_scale, tier.hit_frac, BONE_DMG_TORSO,
+		dist or DEFAULT_DIST, 1, 1, ammo_sec, 1, 0
+	)
+	return r.dmg
+end
+
+-- Bare (0 armor) torso-equivalent power — used for HP soft-target scoring.
+local function bare_dmg(hit_power, k_hit, k_ap, air_res, dist, ammo_sec)
+	local r = effective_dmg(
+		hit_power, k_hit, k_ap, air_res,
+		0, 1, 1, BONE_DMG_TORSO,
+		dist or DEFAULT_DIST, 1, 1, ammo_sec, 1, 0
+	)
+	return r.dmg
+end
+
+local function classify_ammo(sec)
+	local sfind = string.find
+	local s = string.lower(sec or "")
+	-- Conditioned boxes share the parent type (ammo_9x18_pmm_bad → pmm).
+	local base = s:gsub("_verybad$", ""):gsub("_bad$", "")
+	if sfind(s, "_ap", 1, true) then
+		return "ap"
+	end
+	-- Explicit soft-target / HP mult table (tooltip truth — includes PMM, EP, etc.)
+	if HP_AMMO_MULT[sec] or HP_AMMO_MULT[base] then
+		return "hp"
+	end
+	if sfind(s, "_hp", 1, true) or sfind(s, "hydro", 1, true)
+		or sfind(s, "_buck", 1, true) or sfind(s, "pbp", 1, true)
+		or sfind(s, "pmm", 1, true) then
+		return "hp"
+	end
+	if sfind(s, "_fmj", 1, true) then
+		return "fmj"
+	end
+	-- Default ball ammo treated as FMJ for table scoring.
+	return "fmj"
+end
+
+local function explode_csv(s)
+	local out = {}
+	if not s or s == "" then
+		return out
+	end
+	for part in string.gmatch(s, "([^,]+)") do
+		local t = part:match("^%s*(.-)%s*$")
+		if t and t ~= "" then
+			out[#out + 1] = t
+		end
+	end
+	return out
+end
+
+local function read_hit_power(wpn_sec)
+	local hp = ini_sys:r_float_ex(wpn_sec, "hit_power")
+	if hp ~= nil then
+		return hp
+	end
+	local hp_s = ini_sys:r_string_ex(wpn_sec, "hit_power")
+	if hp_s then
+		local first = explode_csv(hp_s)[1]
+		return tonumber(first) or 0.5
+	end
+	return 0.5
+end
+
+local function pick_ammo_of_class(ammo_list, class_id)
+	for _, sec in ipairs(ammo_list) do
+		if ini_sys:section_exist(sec) and classify_ammo(sec) == class_id then
+			return sec
+		end
+	end
+	return nil
+end
+
+-- Prefer Weapon Tooltips scoring API (AMMO_TYPE_SHORT color families + CQC math).
+-- No local ammo classify fallback — tip owns typing (buck/slug/slap/fmj/…).
+local function weapon_table_damage_stats(wpn_sec, dist)
+	dist = dist or DEFAULT_DIST
+	local tip = _G.dogma_tooltips_weapons
+	if tip and tip.weapon_score_table_stats then
+		local ok, st = pcall(tip.weapon_score_table_stats, wpn_sec, dist)
+		if ok and st then
+			return st
+		end
+	end
+	-- Tip not loaded yet (rare boot race): empty stats, never invent ammo types.
+	local hp = read_hit_power(wpn_sec) or 0
+	return {
+		hit_power = hp,
+		hit_power_pct = hp * 100,
+		fmj_sec = nil,
+		ap_sec = nil,
+		hp_sec = nil,
+		fmj_sum = 0,
+		ap_sum = 0,
+		fmj_avg = 0,
+		ap_avg = 0,
+		fmj_tiers = {},
+		ap_tiers = {},
+		hp_bare = 0,
+		mutant_avg = 0,
+		score_tiers = 4,
+		rounds_n = 0,
+	}
+end
+
+-- DOGMA Spread: ADS min + hip-run max (degrees). Same actor PDM as tooltips/stats.
+local ACTOR_DISP_BASE = 1.5
+local ACTOR_DISP_VEL = 2.5
+local VEL_MAX = 10
+local SPEED_RUN = 5.0
+
+local function weapon_spread_pair(wpn_sec)
+	local fire_disp = ini_sys:r_float_ex(wpn_sec, "fire_dispersion_base") or 0
+	if fire_disp <= 0 then
+		return 0, 0
+	end
+	local pdm_base = ini_sys:r_float_ex(wpn_sec, "PDM_disp_base") or 1
+	local pdm_vel = ini_sys:r_float_ex(wpn_sec, "PDM_disp_vel_factor") or 1
+	local actor = ACTOR_DISP_BASE * pdm_base
+		* (1 + (SPEED_RUN / VEL_MAX) * ACTOR_DISP_VEL * pdm_vel)
+	return fire_disp, fire_disp + actor
+end
+
+-- Prefer Weapon Tooltips: 1 = magazine, 0 = rounds-reload.
+local function weapon_use_mag(wpn_sec)
+	local tip = _G.dogma_tooltips_weapons
+	if tip and tip.weapon_use_mag then
+		local ok, t = pcall(tip.weapon_use_mag, wpn_sec)
+		if ok and (t == 0 or t == 1) then
+			return t
+		end
+	end
+	local S = rawget(_G, "zzzz_dogma_tooltips_weapons_stats")
+	if S and S.weapon_use_mag then
+		local ok, t = pcall(S.weapon_use_mag, wpn_sec)
+		if ok and (t == 0 or t == 1) then
+			return t
+		end
+	end
+	return nil
+end
+
+_G.dogma_ballistics = {
+	TORSO_TIERS = TORSO_TIERS,
+	DEFAULT_DIST = DEFAULT_DIST,
+	dist_atten = dist_atten,
+	combat_ap = combat_ap,
+	base_power = base_power,
+	effective_dmg = effective_dmg,
+	torso_dmg = torso_dmg,
+	bare_dmg = bare_dmg,
+	classify_ammo = classify_ammo,
+	weapon_table_damage_stats = weapon_table_damage_stats,
+	weapon_spread_pair = weapon_spread_pair,
+	weapon_use_mag = weapon_use_mag,
+	read_hit_power = read_hit_power,
+}
+
+-- Alias for callers that look under the tooltips namespace.
+_G.dogma_tooltips_weapons_ballistics = _G.dogma_ballistics

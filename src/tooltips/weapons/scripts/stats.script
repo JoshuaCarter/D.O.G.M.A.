@@ -551,6 +551,165 @@ function text_bullet_drop(obj, sec)
 	return fmt_drop_m(drop)
 end
 
+--------------------------------------------------------------------------
+-- Full reload duration (seconds). Empty → full, hip, no GL/ADS.
+-- Used by Dynamic Loadout scoring; not shown as a tooltip row yet.
+-- Mag: anm_reload_empty (else anm_reload)
+-- Tri-state tube: open_empty + add_empty + (N-1)×add + close
+-- Break-action (WP_BM16): anm_reload_2 (else anm_reload_1)
+--------------------------------------------------------------------------
+
+local function trim(s)
+	if not s then
+		return s
+	end
+	return (string.gsub(s, "^%s*(.-)%s*$", "%1"))
+end
+
+local function anm_play_speed(hud, key)
+	local raw = ini_sys:r_string_ex(hud, key)
+	if not raw or raw == "" then
+		return 1
+	end
+	local parts = {}
+	for part in string.gmatch(raw, "([^,]+)") do
+		parts[#parts + 1] = trim(part)
+	end
+	if #parts >= 3 then
+		local s = tonumber(parts[3])
+		if s and s > 0 then
+			return s
+		end
+	end
+	return 1
+end
+
+local function motion_seconds(hud, key)
+	if not hud or not key or key == "" then
+		return nil
+	end
+	if not ini_sys:line_exist(hud, key) then
+		return nil
+	end
+	if not (game and game.get_motion_length) then
+		return nil
+	end
+	local speed = anm_play_speed(hud, key)
+	local ok, ms = pcall(game.get_motion_length, hud, key, speed)
+	if not ok or not ms or ms <= 0 then
+		return nil
+	end
+	return ms / 1000.0
+end
+
+local function first_motion_seconds(hud, keys)
+	for i = 1, #keys do
+		local t = motion_seconds(hud, keys[i])
+		if t then
+			return t, keys[i]
+		end
+	end
+	return nil, nil
+end
+
+-- Reload style for scoring: 1 = detachable/magazine cycle, 0 = rounds-reload
+-- (tube / break-action / revolver / bolt stripper). No motion lengths needed.
+function weapon_use_mag(wpn_sec)
+	local sec = resolve_sec(nil, wpn_sec)
+	if not is_weapon_section(sec) then
+		return nil
+	end
+	local class = ini_sys:r_string_ex(sec, "class") or ""
+	local tri = ini_sys:r_string_ex(sec, "tri_state_reload")
+	local hud = ini_sys:r_string_ex(sec, "hud")
+
+	-- Break-action (TOZ / BM16).
+	if class == "WP_BM16" then
+		return 0
+	end
+	if hud and hud ~= "" then
+		local has_r2 = ini_sys:line_exist(hud, "anm_reload_2")
+		local has_r = ini_sys:line_exist(hud, "anm_reload")
+		if has_r2 and not has_r then
+			return 0
+		end
+	end
+
+	-- Tube / shell-by-shell / some bolt strippers.
+	if tri == "on" then
+		return 0
+	end
+
+	-- Revolvers (cylinder / speedloader — not a magazine).
+	if class == "WP_REVOLVER" then
+		return 0
+	end
+
+	return 1
+end
+
+-- Returns seconds for empty→full reload, or nil if unknown / incomplete.
+function weapon_reload_seconds(wpn_sec)
+	local sec = resolve_sec(nil, wpn_sec)
+	if not is_weapon_section(sec) then
+		return nil
+	end
+	local hud = ini_sys:r_string_ex(sec, "hud")
+	if not hud or hud == "" then
+		return nil
+	end
+
+	local class = ini_sys:r_string_ex(sec, "class") or ""
+	local tri = ini_sys:r_string_ex(sec, "tri_state_reload")
+	local mag = ini_sys:r_float_ex(sec, "ammo_mag_size") or 0
+	local n = math.floor(mag + 0.5)
+	if n < 1 then
+		n = 1
+	end
+
+	-- Break-action (TOZ / BM16): full cycle is anm_reload_2.
+	local has_r2 = ini_sys:line_exist(hud, "anm_reload_2")
+	local has_r = ini_sys:line_exist(hud, "anm_reload")
+	if class == "WP_BM16" or (has_r2 and not has_r) then
+		local t = motion_seconds(hud, "anm_reload_2")
+		if not t then
+			t = motion_seconds(hud, "anm_reload_1")
+		end
+		return t
+	end
+
+	-- Tube / shell-by-shell (and some bolt strippers).
+	if tri == "on" then
+		local open_t = first_motion_seconds(hud, { "anm_open_empty", "anm_open" })
+		local add_empty_t = first_motion_seconds(hud, { "anm_add_cartridge_empty", "anm_add_cartridge" })
+		local add_t = motion_seconds(hud, "anm_add_cartridge") or add_empty_t
+		local close_t = first_motion_seconds(hud, { "anm_close", "anm_close_empty" })
+		if not (open_t and add_empty_t and add_t and close_t) then
+			return nil
+		end
+		if n <= 1 then
+			return open_t + add_empty_t + close_t
+		end
+		return open_t + add_empty_t + (n - 1) * add_t + close_t
+	end
+
+	-- Magazine / single-cycle (incl. mag-fed Saiga).
+	return first_motion_seconds(hud, { "anm_reload_empty", "anm_reload" })
+end
+
+function value_reload_time(obj, sec)
+	sec = resolve_sec(obj, sec)
+	return weapon_reload_seconds(sec)
+end
+
+function text_reload_time(obj, sec)
+	local t = value_reload_time(obj, sec)
+	if not t then
+		return nil
+	end
+	return string.format("%.2fs", t)
+end
+
 local TEXT_BY_NAME = {
 	[NAME.dispersion] = text_dispersion,
 	[NAME.spread] = text_spread,
@@ -632,3 +791,8 @@ function text_for_name(name_id, obj, sec)
 	end
 	return result
 end
+
+-- Scoring / loadout API (also mirrored under _G.dogma_tooltips_weapons).
+_G.dogma_tooltips_weapons = _G.dogma_tooltips_weapons or {}
+_G.dogma_tooltips_weapons.weapon_use_mag = weapon_use_mag
+_G.dogma_tooltips_weapons.weapon_reload_seconds = weapon_reload_seconds

@@ -4,29 +4,71 @@ local defaults = {
 	["enabled"] = true,
 	["log_scores"] = true,
 	["include_universal_armor"] = true,
-	["sight_chance"] = 50,
+	-- Per-category: supply items with pts < cap
 	["max_pts_weapon"] = 900,
 	["max_pts_armor"] = 550,
 	["max_pts_helmet"] = 250,
 	["max_pts_ammo"] = 80,
 	["max_pts_sight"] = 200,
-	["score_scale"] = 100,
-	-- weapon score weights (temporary tuning)
-	["w_dmg"] = 1.0,
-	["w_ap"] = 0.4,
-	["w_spread"] = 0.35,
-	["w_weight"] = 0.15,
-	["w_cap_scope"] = 0.15,
-	["w_cap_sil"] = 0.10,
-	-- armor / helmet
-	["a_prot"] = 1.0,
-	["a_weight"] = 0.35,
+	-- Multiplier on weighted-average score (0..1) → shop pts.
+	["cost_mult"] = 1000,
+	-- Weapon score weights (0-1). Final: avg(n01×w) / Σw, then × cost_mult.
+	-- DOGMA tooltip stats + table dmg. Base-GAMMA bars: mag + fire rate.
+	["w_dmg_fmj"] = 0.5,
+	["w_dmg_ap"] = 0.5,
+	["w_dmg_hp"] = 0.5,
+	["w_hit_power"] = 0.5,
+	["w_mutant_dmg"] = 0.5,
+	["w_rpm"] = 0.5,
+	["w_mag"] = 0.5,
+	["w_burst"] = 0.5,
+	["w_use_mag"] = 0.5, -- 1 mag-fed, 0 rounds-reload (tip)
+	-- Spread ADS / hip (lower ° = better). Soft ceilings 1° and 10°.
+	-- scope / silencer: always 0/1 mount capability.
+	["w_spread_ads"] = 0.5,
+	["w_spread_hip"] = 0.5,
+	["w_scope"] = 0.5,
+	["w_silencer"] = 0.5,
+	["w_ammo_cost"] = 0.5,
+	["w_cost"] = 0.5, -- gun cost: cheaper → higher n01 (vs MAX_COST.weapon)
+	-- armor / helmet — one weight per protection type
+	["a_fire_wound"] = 0.5, -- ballistic / BR
+	["a_strike"] = 0.5,
+	["a_wound"] = 0.5,
+	["a_explosion"] = 0.5,
+	["a_shock"] = 0.5,
+	["a_burn"] = 0.5,
+	["a_chem"] = 0.5,
+	["a_rad"] = 0.5,
+	["a_psy"] = 0.5,
+	["a_cost"] = 0.5, -- outfit/helmet: cheaper → higher n01
 	-- ammo
-	["ammo_dmg_ap"] = 1.0,
+	["ammo_dmg_ap"] = 0.5,
+	["ammo_cost"] = 0.5, -- cheaper → higher n01 (vs scanned range)
+	["ammo_price"] = 0.5, -- cheaper → higher n01 (absolute vs MAX_COST.ammo)
 	-- sight
-	["sight_zoom"] = 1.0,
+	["sight_zoom"] = 0.5,
+	["sight_cost"] = 0.5,
 }
 
+-- Ordered MCM weight tracks (must match defaults keys used by scoring).
+local WEIGHT_KEYS = {
+	"w_dmg_fmj", "w_dmg_ap", "w_dmg_hp", "w_hit_power", "w_mutant_dmg",
+	"w_rpm", "w_mag", "w_burst", "w_use_mag",
+	"w_spread_ads", "w_spread_hip",
+	"w_scope", "w_silencer",
+	"w_ammo_cost", "w_cost",
+	"a_fire_wound", "a_strike", "a_wound", "a_explosion",
+	"a_shock", "a_burn", "a_chem", "a_rad", "a_psy",
+	"a_cost",
+	"ammo_dmg_ap", "ammo_cost", "ammo_price",
+	"sight_zoom", "sight_cost",
+}
+
+-- Force every weight default to 0.5 (MCM reset + cfg fallback).
+for i = 1, #WEIGHT_KEYS do
+	defaults[WEIGHT_KEYS[i]] = 0.5
+end
 -- Kit addon ids (weapon rename suffix). Kit results = base .. "_" .. id.
 local KIT_IDS = {
 	"mod9", "pm_upgr_kit", "sr1upgr1", "226sig_kit", "pb_upgr_kit", "u2p2g0r",
@@ -72,24 +114,45 @@ local FACTION_COMMUNITY = {
 	zombied = "stalker",
 }
 
--- Armor protection keys and relative value weights
-local PROT_WEIGHTS = {
-	fire_wound_protection = 1.20,
-	strike_protection = 1.00,
-	wound_protection = 0.90,
-	explosion_protection = 0.70,
-	shock_protection = 0.50,
-	burn_protection = 0.40,
-	chemical_burn_protection = 0.40,
-	radiation_protection = 0.35,
-	telepathy_protection = 0.30,
+-- Armor/helmet ini keys -> MCM weight id (order for scoring/logs)
+local PROT_KEYS = {
+	{ key = "fire_wound_protection", cfg = "a_fire_wound" },
+	{ key = "strike_protection", cfg = "a_strike" },
+	{ key = "wound_protection", cfg = "a_wound" },
+	{ key = "explosion_protection", cfg = "a_explosion" },
+	{ key = "shock_protection", cfg = "a_shock" },
+	{ key = "burn_protection", cfg = "a_burn" },
+	{ key = "chemical_burn_protection", cfg = "a_chem" },
+	{ key = "radiation_protection", cfg = "a_rad" },
+	{ key = "telepathy_protection", cfg = "a_psy" },
+}
+
+-- When log_scores is on: only these sections get full term-by-term calc dumps
+-- (avoids flooding the log with every weapon at pts=1).
+local DEBUG_SCORE_SECS = {
+	["wpn_pm"] = true,
+	["wpn_kiparis"] = true,
+	["wpn_ak74"] = true,
+	["wpn_ak"] = true,       -- AK-47
+	["wpn_ak47"] = true,     -- alias if present
+	["wpn_ppsh41"] = true,   -- PPSh-41
+	["wpn_bm16"] = true,     -- TOZ-66 sawn-off
+	["wpn_bm16_full"] = true, -- TOZ-66
+	["ammo_9x18_fmj"] = true,
+	["ammo_9x18_pmm"] = true,
+	["ammo_5.45x39_fmj"] = true,
+	["ammo_5.45x39_ep"] = true,
+	["novice_outfit"] = true,
+	["helm_respirator"] = true,
 }
 
 _G.dogma_menu_dynamic_loadout_conf = {
 	MOD_ID = "dogma/menu/dynamic_loadout",
 	DEFAULTS = defaults,
+	WEIGHT_KEYS = WEIGHT_KEYS,
 	KIT_IDS = KIT_IDS,
 	FACTION_BLOC = FACTION_BLOC,
 	FACTION_COMMUNITY = FACTION_COMMUNITY,
-	PROT_WEIGHTS = PROT_WEIGHTS,
+	PROT_KEYS = PROT_KEYS,
+	DEBUG_SCORE_SECS = DEBUG_SCORE_SECS,
 }

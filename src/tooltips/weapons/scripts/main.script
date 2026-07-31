@@ -7,6 +7,18 @@
 	Built as zzzz_dogma_tooltips_weapons_main.script so on_game_start runs after
 	G.A.M.M.A. Accurate Defense Values (ish_item_stats), which rebuilds
 	stats_table["weapon"] and would wipe our rows.
+
+	early_init() (below) does the actual hook install / stat setup — it touches
+	no db.actor / game state, only global tables (utils_ui, ish_item_stats,
+	ui_itm_details) and MCM reads. on_game_start() calls it (real new game /
+	save load). The Tooltips Fix tweak (tweaks/tooltips_fix), when installed, also
+	calls it on "main_menu_on_init" so the New Game character-creation Loadout
+	screen — which renders *before* any on_game_start fires — already has our
+	hooks and the GAMMA-rebalanced stats_table the first time it shows a
+	tooltip. Both callers are safe: every hook install below is guarded so
+	repeat calls just refresh CONFIG.loaded + re-apply the stat rows, and
+	everything must stay idempotent per-call and re-armed per-VM anyway (the
+	Lua VM is torn down and rebuilt during new-game creation).
 ]]
 
 local CONFIG = _G.dogma_tooltips_weapons_conf
@@ -896,6 +908,13 @@ local PANEL_TOP_OFFSET = 0    -- gap below item description, above our damage pa
 local BOTTOM_OFFSET = 2       -- gap between damage panel and stats block
 local SECTION_GAP = 10        -- match vanilla UIInfoItem:Sync_Finale section spacing
 
+-- True when the Tooltips Fix tweak's layout module will restack after our
+-- Update returns. rawget on purpose: render-time check, never force a load.
+local function layout_tweak_active()
+	local m = rawget(_G, "zzzz_dogma_tweaks_tooltips_fix_main")
+	return m and m.fix ~= nil
+end
+
 -- Generic rows, filled top-down in order. Rows beyond the data are hidden.
 local ROW_XML = {
 	"panel:row_1",
@@ -1120,6 +1139,17 @@ local function apply_enhanced_weapon_stats()
 		return
 	end
 
+	-- utils_ui.stats_table["weapon"] is normally only built lazily, the first
+	-- time any item tooltip/details sheet is shown (utils_ui.get_stats_table ->
+	-- prepare_stats_table). Called this early (main_menu_on_init, before the
+	-- player has ever hovered an item), it would still be empty and we would
+	-- have nothing to add our rows to. prepare_stats_table() itself no-ops once
+	-- stats_table is populated (by us here, by the stock game, or by ADV), so
+	-- forcing it early is always safe and never clobbers a later rebuild.
+	if utils_ui.prepare_stats_table then
+		utils_ui.prepare_stats_table()
+	end
+
 	local weapon_stats = utils_ui.stats_table["weapon"]
 	if not weapon_stats then
 		return
@@ -1245,8 +1275,6 @@ end
 -- item, so after an MCM change we must clear that cache or stat rows won't
 -- rebuild until a different item is hovered.
 local tracked_infos = setmetatable({}, { __mode = "k" })
--- One-shot deferred restack after a full rebuild (fix_layout tweak).
-local pending_layout_settle = setmetatable({}, { __mode = "k" })
 
 local function on_option_change()
 	-- All MCM/palette work is optional - the per-ammo breakdown must keep working
@@ -1297,8 +1325,6 @@ local function on_option_change()
 		end
 		CONFIG.loaded.compact_header = DOGMA.mcm.bool(CONFIG.MOD_ID, "compact_header")
 		CONFIG.loaded.hide_description = DOGMA.mcm.bool(CONFIG.MOD_ID, "hide_description")
-		-- Always on while tweaks/tooltips is installed (no MCM toggle).
-		CONFIG.loaded.fix_layout = rawget(_G, "dogma_tweaks_tooltips_conf") ~= nil
 		CONFIG.loaded.table_row_pad = DOGMA.mcm.number(CONFIG.MOD_ID, "table_row_pad")
 		for i = 1, NUM_TORSO_TIERS do
 			CONFIG.loaded["show_torso_" .. i] = DOGMA.mcm.bool(CONFIG.MOD_ID, "show_torso_" .. i)
@@ -1731,17 +1757,33 @@ end
 -- Unique ammo rounds for a weapon (same order as the damage table).
 -- ammo_order "damage": dmg desc, then AP asc. "ap": AP desc, then label.
 -- "default": leave utils_item.get_ammo order (matches tooltip ammo icons).
-local function collect_sorted_ammo_rounds(obj, sec, max_count)
+-- class_only=true: always parse ammo_class (scoring / New Game). Live get_ammo
+-- with nil obj often returns only the first round and must not drive scores.
+local function collect_sorted_ammo_rounds(obj, sec, max_count, class_only)
 	local ammo_class = SYS_GetParam(0, sec, "ammo_class", "")
 	if not ammo_class or ammo_class == "" then
 		log_item_once("no_ammo_class", sec, string.format("%s: no ammo_class", sec))
 		return nil
 	end
 
-	local ammo_list = utils_item.get_ammo(sec, safe_id(obj))
+	local from_class = {}
+	for part in string.gmatch(ammo_class, "([^,]+)") do
+		local t = part:match("^%s*(.-)%s*$")
+		if t and t ~= "" then
+			from_class[#from_class + 1] = t
+		end
+	end
+
+	local ammo_list = nil
+	if not class_only and utils_item and utils_item.get_ammo then
+		-- Live inventory ammo when available; New Game / nil-obj often returns
+		-- only the first round — prefer the full ammo_class list whenever longer.
+		ammo_list = utils_item.get_ammo(sec, safe_id(obj))
+	end
 	if not ammo_list or not ammo_list[1] then
-		log_item_once("no_ammo_list", sec, string.format("%s: no ammo list (ammo_class=%s)", sec, ammo_class))
-		return nil
+		ammo_list = from_class
+	elseif #from_class > #ammo_list then
+		ammo_list = from_class
 	end
 
 	local sniper_ap = sniper_ap_bonus(sec)
@@ -1816,6 +1858,11 @@ local function collect_sorted_ammo_rounds(obj, sec, max_count)
 	end
 
 	return rounds
+end
+
+-- Dynamic-loadout scoring: always full ammo_class (ignore live get_ammo subset).
+local function collect_score_ammo_rounds(wpn_sec)
+	return collect_sorted_ammo_rounds(nil, wpn_sec, nil, true)
 end
 
 local function build_ammo_damage_rows(obj, sec)
@@ -1974,6 +2021,140 @@ stalker_ammo_damage_items = function(obj, sec)
 		return nil
 	end
 	return items
+end
+
+--------------------------------------------------------------------------
+-- Dynamic-loadout scoring API (section-only, neutral barrel/silencer).
+-- Same ammo typing (AMMO_TYPE_SHORT / color families) + CQC tier math as the
+-- damage table — callers should not re-classify HP/FMJ/AP classification.
+--------------------------------------------------------------------------
+local SCORE_TORSO_TIERS = 4
+
+local function pick_round_by_color(rounds, color)
+	for _, r in ipairs(rounds or {}) do
+		if ammo_color_key(r.label) == color then
+			return r
+		end
+	end
+	return nil
+end
+
+local function avg_first_tiers(hit_power, r, dist, sniper_ap, n)
+	local tiers = {}
+	local vals = {}
+	if not r then
+		return 0, vals
+	end
+	n = n or SCORE_TORSO_TIERS
+	for i = 1, n do
+		tiers[i] = TORSO_TIERS[i]
+	end
+	local cells = calc_tier_damages(
+		hit_power, r.k_hit, r.k_ap, r.air_res, tiers,
+		false, dist, r.pellets, 1, r.sec, 1, sniper_ap
+	)
+	local sum = 0
+	for i = 1, n do
+		local dmg = (cells[i] and cells[i].dmg) or 0
+		vals[i] = dmg
+		sum = sum + dmg
+	end
+	return (n > 0) and (sum / n) or 0, vals
+end
+
+-- Returns scoring fields for one weapon section. Safe with obj=nil (menu).
+-- Ammo typing is AMMO_TYPE_SHORT color families only (yellow/orange/blue =
+-- FMJ·SLUG / AP·SLAP / HP·BUCK). Callers pass the weapon section; do not
+-- re-classify ammo selection.
+local function weapon_score_table_stats(wpn_sec, dist)
+	if not wpn_sec or wpn_sec == "" then
+		return nil
+	end
+	dist = dist or REF_DIST_M
+	-- Full ammo_class — never the live get_ammo subset (broken at New Game).
+	local rounds = collect_score_ammo_rounds(wpn_sec)
+	if not rounds then
+		return nil
+	end
+	local hit_power = gun_hit_power(nil, wpn_sec)
+	if not hit_power or hit_power <= 0 then
+		return nil
+	end
+	local sniper_ap = sniper_ap_bonus(wpn_sec)
+
+	local fmj_r = pick_round_by_color(rounds, "yellow")
+	local ap_r = pick_round_by_color(rounds, "orange")
+	local hp_r = pick_round_by_color(rounds, "blue")
+
+	local fmj_avg, fmj_tiers = avg_first_tiers(hit_power, fmj_r, dist, sniper_ap, SCORE_TORSO_TIERS)
+	local ap_avg, ap_tiers = avg_first_tiers(hit_power, ap_r, dist, sniper_ap, SCORE_TORSO_TIERS)
+
+	local hp_bare = 0
+	if hp_r then
+		local cell = effective_dmg(
+			hit_power, hp_r.k_hit, hp_r.k_ap, hp_r.air_res,
+			0, 1, 1, BONE_DMG_TORSO,
+			dist, hp_r.pellets, 1, hp_r.sec, 1, sniper_ap
+		)
+		hp_bare = cell.dmg or 0
+	end
+
+	local mutant_sum, ammo_n = 0, 0
+	-- Neutral barrel/difficulty so New Game scores don't depend on MCM/diff.
+	for _, r in ipairs(rounds) do
+		local dmg = hit_power / dist_atten(r.air_res, dist)
+			* r.k_hit * r.pellets
+			* MUTANT_BASE_MULT * (MUTANT_AMMO_MULT[r.sec] or MUTANT_AMMO_MULT_DEFAULT)
+			* DAMAGE_SCALE
+		mutant_sum = mutant_sum + dmg
+		ammo_n = ammo_n + 1
+	end
+
+	return {
+		hit_power = hit_power,
+		hit_power_pct = hit_power * 100,
+		fmj_sec = fmj_r and fmj_r.sec or nil,
+		ap_sec = ap_r and ap_r.sec or nil,
+		hp_sec = hp_r and hp_r.sec or nil,
+		fmj_label = fmj_r and fmj_r.label or nil,
+		ap_label = ap_r and ap_r.label or nil,
+		hp_label = hp_r and hp_r.label or nil,
+		-- fmj_sum / ap_sum = average of first 4 torso tiers (scoring field names).
+		-- Color families: yellow (FMJ/SLUG), orange (AP/SLAP), blue (HP/BUCK).
+		fmj_sum = fmj_avg,
+		ap_sum = ap_avg,
+		fmj_avg = fmj_avg,
+		ap_avg = ap_avg,
+		fmj_tiers = fmj_tiers,
+		ap_tiers = ap_tiers,
+		hp_bare = hp_bare,
+		mutant_avg = (ammo_n > 0) and (mutant_sum / ammo_n) or 0,
+		score_tiers = SCORE_TORSO_TIERS,
+		rounds_n = #rounds,
+	}
+end
+
+_G.dogma_tooltips_weapons = _G.dogma_tooltips_weapons or {}
+_G.dogma_tooltips_weapons.weapon_score_table_stats = weapon_score_table_stats
+_G.dogma_tooltips_weapons.ammo_display_label = ammo_display_label
+-- Prefer stats.script implementation when present (same function name).
+if not _G.dogma_tooltips_weapons.weapon_use_mag then
+	_G.dogma_tooltips_weapons.weapon_use_mag = function(wpn_sec)
+		local S = zzzz_dogma_tooltips_weapons_stats
+		if S and S.weapon_use_mag then
+			return S.weapon_use_mag(wpn_sec)
+		end
+		return nil
+	end
+end
+if not _G.dogma_tooltips_weapons.weapon_reload_seconds then
+	_G.dogma_tooltips_weapons.weapon_reload_seconds = function(wpn_sec)
+		local S = zzzz_dogma_tooltips_weapons_stats
+		if S and S.weapon_reload_seconds then
+			return S.weapon_reload_seconds(wpn_sec)
+		end
+		return nil
+	end
 end
 
 local function slash_from_damage_items(items)
@@ -2422,7 +2603,10 @@ local function add_details_damage_section(sheet, obj)
 	_st:SetAutoDelete(true)
 end
 
--- Reposition replacement-parts block (Parts in Tooltip mod) after we shift stats/ammo.
+-- Fallback restack when the Tooltips Fix tweak (tweaks/tooltips_fix) is not
+-- installed/armed. When it is, its outermost Update hook owns the full body
+-- stack (incl. parts / recipes / cooking); we only need
+-- apply_description_visibility beforehand.
 local function sync_parts_layout(info, tail)
 	if not info.parts or not info.parts:IsShown() then
 		return tail
@@ -2463,39 +2647,24 @@ local function apply_description_visibility(info)
 	local hide = CONFIG.loaded.hide_description
 	info.desc:Show(not hide)
 	-- Hide alone leaves stock height; Sync_Y/Sync_H still measure it unless zeroed.
-	if CONFIG.loaded.fix_layout then
-		if hide then
-			pcall(function()
-				info.desc:SetWndSize(vector2():set(info.desc:GetWidth(), 0))
-			end)
-		else
-			pcall(function()
-				info.desc:AdjustHeightToText()
-			end)
-		end
-	end
-end
-
--- Match vanilla utils_ui: measure text before Sync_Y/Sync_H.
-local function prepare_text_heights(info)
-	if not info or not CONFIG.loaded.fix_layout then
-		return
-	end
-	pcall(function()
-		if info.name then
-			info.name:AdjustHeightToText()
-		end
-		if info.note and info.note:IsShown() then
-			info.note:AdjustHeightToText()
-		end
-		if info.desc and info.desc:IsShown() and not CONFIG.loaded.hide_description then
+	if hide then
+		pcall(function()
+			info.desc:SetWndSize(vector2():set(info.desc:GetWidth(), 0))
+		end)
+	else
+		pcall(function()
 			info.desc:AdjustHeightToText()
-		end
-	end)
+		end)
+	end
 end
 
 local function sync_damage_layout(info)
 	apply_description_visibility(info)
+
+	-- Layout tweak restacks after we return (incl. dogma_wpn_damage if shown).
+	if layout_tweak_active() then
+		return
+	end
 
 	local tail
 	if CONFIG.loaded.hide_description then
@@ -2524,12 +2693,6 @@ local function sync_damage_layout(info)
 	end
 
 	tail = sync_parts_layout(info, tail)
-
-	-- Craft-in-tooltip (and similar) append after parts; keep them in the stack.
-	if CONFIG.loaded.fix_layout and info.recipes and info.recipes:IsShown() then
-		info:Sync_Y(tail, info.recipes, SECTION_GAP)
-		tail = info.recipes
-	end
 
 	info:Sync_H(tail, info.frame, SECTION_GAP)
 end
@@ -2603,15 +2766,12 @@ local function refresh_weapon_damage_panel(info, obj, sec)
 
 	if not CONFIG.loaded.show_damage_table then
 		log_once("table_disabled", "show_damage_table is off in MCM")
-		sync_damage_layout(info)
 		return
 	end
 
 	if not info:IsShown() then
 		-- First rebuild can run while Pass still hides the dialog; recover on next tick.
-		if CONFIG.loaded.fix_layout then
-			info.dogma_layout_dirty = true
-		end
+		info.dogma_layout_dirty = true
 		return
 	end
 
@@ -2638,7 +2798,6 @@ local function refresh_weapon_damage_panel(info, obj, sec)
 		log_tooltip("panel_ok", string.format("%s: hover damage panel shown (%d rows)", sec, #damage_data.rows))
 	end
 	info.dogma_layout_dirty = false
-	sync_damage_layout(info)
 end
 
 -- The details/workshop sheets build stats via utils_ui.get_stats_xml, which
@@ -2844,24 +3003,16 @@ local function uiinfo_update_hook(self, obj, sec, flags)
 	local same_item = (oid and self.id and oid == self.id)
 		or (not obj and sec and self.section == sec)
 	local dirty = self.dogma_layout_dirty
-	local fix = CONFIG.loaded.fix_layout
 
 	base_uiinfo_update(self, obj, sec, flags)
 
-	-- Rebuild content when the item changes, or when a prior pass left work pending.
-	if not same_item or (fix and dirty) then
-		-- Reset per-open tooltip debug dedupe.
+	-- Rebuild when the item changes, or when a prior pass left work pending.
+	if not same_item or dirty then
 		tooltip_logged = {}
 		apply_custom_stat_display(self, obj, sec)
 		apply_compact_header(self)
 		refresh_weapon_damage_panel(self, obj, sec)
-		prepare_text_heights(self)
-		-- Always re-stack body under desc (weapons already synced inside refresh).
 		sync_damage_layout(self)
-		if fix and self:IsShown() then
-			-- One more restack next frame after other mods / text measure settle.
-			pending_layout_settle[self] = true
-		end
 	end
 end
 
@@ -2873,9 +3024,14 @@ local function install_ui_hooks()
 		return false
 	end
 
-	-- Stay outermost so Parts/Craft/ADV Sync_Finale cannot undo our stack after we return.
 	if utils_ui.UIInfoItem.Update ~= uiinfo_update_hook then
-		base_uiinfo_update = utils_ui.UIInfoItem.Update
+		-- Capture the underlying Update exactly once per Lua VM. Re-capturing
+		-- on a later re-install can grab a wrapper that itself chains back to
+		-- this hook (e.g. the Tooltips Fix tweak's), creating W->T->W infinite
+		-- recursion = engine stack-overflow crash on the first tooltip.
+		if not base_uiinfo_update then
+			base_uiinfo_update = utils_ui.UIInfoItem.Update
+		end
 		utils_ui.UIInfoItem.Update = uiinfo_update_hook
 	end
 
@@ -2959,16 +3115,6 @@ local function on_actor_update()
 		return
 	end
 
-	if CONFIG.loaded.fix_layout then
-		for info in pairs(pending_layout_settle) do
-			pending_layout_settle[info] = nil
-			if info and info.IsShown and info:IsShown() then
-				prepare_text_heights(info)
-				sync_damage_layout(info)
-			end
-		end
-	end
-
 	if not CONFIG.loaded.debug_overlay then
 		return
 	end
@@ -2986,9 +3132,36 @@ local function on_actor_update()
 	overlay(OVERLAY.RANGE, msg)
 end
 
+local callbacks_registered = false
+
+-- Everything a fresh session needs before the first tooltip can render: MCM
+-- values, the UIInfoItem/details-sheet hooks, and the ADV re-apply wrapper.
+-- No db.actor / level dependency, so this is safe to call from main_menu_on_init
+-- (main menu boot, no game loaded yet) as well as on_game_start(). Idempotent —
+-- every install_* below no-ops if already installed; on_option_change() /
+-- apply_enhanced_weapon_stats() are cheap to re-run and always safe to repeat.
+-- Callback registration is guarded separately so calling this twice (menu boot,
+-- then real on_game_start) never double-registers a callback.
+function early_init()
+	DOGMA = dogma_common.load(CONFIG.MOD_ID)
+	on_option_change()
+	install_ui_hooks()
+	install_details_hook()
+	hook_stats_table_override()
+
+	if not callbacks_registered then
+		callbacks_registered = true
+		RegisterScriptCallback("on_console_execute", on_console_execute)
+		RegisterScriptCallback("on_option_change", on_option_change)
+		RegisterScriptCallback("actor_on_update", on_actor_update)
+		RegisterScriptCallback("actor_on_first_update", function()
+			install_ui_hooks()
+		end)
+	end
+end
+
 function on_game_start()
 	local tostr = tostring
-	DOGMA = dogma_common.load(CONFIG.MOD_ID)
 
 	-- Packing check: full layout matches XML (head @ 230); head-only packs to torso start.
 	do
@@ -3008,23 +3181,12 @@ function on_game_start()
 		end
 	end
 
-	on_option_change()
-	install_ui_hooks()
-	install_details_hook()
-	hook_stats_table_override()
-
-	RegisterScriptCallback("on_console_execute", on_console_execute)
-	RegisterScriptCallback("on_option_change", on_option_change)
-	RegisterScriptCallback("actor_on_update", on_actor_update)
-	RegisterScriptCallback("actor_on_first_update", function()
-		install_ui_hooks()
-	end)
+	early_init()
 
 	log_once("startup", string.format(
-		"loaded: dogma=%s, ui_hooks=%s, details_hook=%s, table=%s, hit=%s, mutant=%s, place=%s, stats_mod=%s, fix_layout=%s",
+		"loaded: dogma=%s, ui_hooks=%s, details_hook=%s, table=%s, hit=%s, mutant=%s, place=%s, stats_mod=%s",
 		tostr(DOGMA ~= nil), tostr(ui_hooks_ok), tostr(details_hook_ok),
 		tostr(CONFIG.loaded.show_damage_table), tostr(CONFIG.loaded.show_hit_power),
 		tostr(CONFIG.loaded.show_mutant_damage), tostr(CONFIG.loaded.stat_row_placement),
-		tostr(zzzz_dogma_tooltips_weapons_stats and zzzz_dogma_tooltips_weapons_stats.NAME ~= nil),
-		tostr(CONFIG.loaded.fix_layout)))
+		tostr(zzzz_dogma_tooltips_weapons_stats and zzzz_dogma_tooltips_weapons_stats.NAME ~= nil)))
 end

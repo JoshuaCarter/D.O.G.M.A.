@@ -117,7 +117,12 @@ end
 local function on_option_change()
 	CONFIG.loaded.debug_log = DOGMA.dbg.logging()
 	CONFIG.loaded.debug_overlay = DOGMA.dbg.overlay_enabled()
+	CONFIG.loaded.enabled = DOGMA.mcm.bool(CONFIG.MOD_ID, "enable")
+	CONFIG.loaded.intensity = DOGMA.mcm.number(CONFIG.MOD_ID, "intensity")
 	DOGMA.dbg.set_enabled(CONFIG.MOD_ID, DOGMA.dbg.overlay_enabled())
+	if not CONFIG.loaded.enabled then
+		clear_all()
+	end
 end
 
 local function on_actor_on_update()
@@ -126,14 +131,14 @@ local function on_actor_on_update()
 		return
 	end
 
-	if not actor:alive() then
+	if not CONFIG.loaded.enabled or not actor:alive() then
 		clear_all()
 		return
 	end
 
 	local bleed = actor.bleeding or 0
 	local target = tier_target(bleed)
-	local factor = update_intensity(target)
+	local factor = update_intensity(target) * (CONFIG.loaded.intensity or 1)
 
 	overlay(LOG.BLEED, string.format("Bleed: %.3f", bleed))
 	overlay(LOG.TARGET, string.format("Target: %.2f", target))

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import time
 from datetime import datetime
 from html import escape
 from math import isfinite
@@ -75,6 +76,7 @@ from .settings import (
     load_settings,
     normalize_custom_roots,
     push_recent_file,
+    rescan_asset_roots,
     save_settings,
     summarize_custom_root,
     validate_anomaly_root,
@@ -823,11 +825,31 @@ class InstallRootsDialog(QDialog):
                 f"Anomaly: {a_msg}\nGAMMA: {g_msg}",
             )
             return
-        if not self._confirm_and_unpack(self.anomaly_edit.text().strip()):
+        out = dict(self.settings)
+        out["anomaly_root"] = self.anomaly_edit.text().strip()
+        out["gamma_root"] = self.gamma_edit.text().strip()
+        out["custom_roots"] = normalize_custom_roots(self._custom_paths())
+        if not self._confirm_and_unpack(out["anomaly_root"]):
             return
+        self._set_busy(True, "Scanning asset folders under Anomaly / GAMMA…")
+        try:
+            rescan_asset_roots(out)
+        finally:
+            self._set_busy(False)
+        n_tex = len(out.get("gamedata_texture_roots") or [])
+        n_descr = len(out.get("gamedata_descr_roots") or [])
+        n_text = len(out.get("gamedata_text_roots") or [])
+        self.unpack_status.setText(
+            f"Scan done — {n_tex} texture, {n_descr} descr, {n_text} text folders"
+        )
+        self.unpack_status.setStyleSheet("color: #6a9955;")
+        QApplication.processEvents()
+        self._result = out
         self.accept()
 
     def result_settings(self) -> dict:
+        if getattr(self, "_result", None) is not None:
+            return dict(self._result)
         out = dict(self.settings)
         out["anomaly_root"] = self.anomaly_edit.text().strip()
         out["gamma_root"] = self.gamma_edit.text().strip()
@@ -849,8 +871,10 @@ class MainWindow(QMainWindow):
         self.settings = load_settings()
         self._restore_window_geometry()
         self.doc = UiXmlDocument()
+        # Roots from settings only — no full-tree scan at launch.
         self.resolver = self._make_resolver()
         self.strings = self._make_string_resolver()
+        self._resources_ready = True
         self.scene = UiScene(
             self.resolver,
             label_font_size=clamp_label_font_size(self.settings.get("label_font_size")),
@@ -1273,12 +1297,55 @@ class MainWindow(QMainWindow):
         QApplication.processEvents()
 
     def _open_startup_file(self) -> None:
+        self._bind_resource_roots()
         path = self._startup_path
         self._startup_path = None
         if path is not None and path.is_file():
             self.open_path(path)
             return
         self._show_startup_chooser()
+
+    def _bind_resource_roots(self) -> None:
+        """Attach saved directory lists — no full asset scan."""
+        if getattr(self, "_resources_ready", False):
+            return
+        self.resolver = self._make_resolver()
+        self.strings = self._make_string_resolver()
+        self.scene.rebind_resolver(self.resolver)
+        self._resources_ready = True
+        n_tex = len(self.settings.get("gamedata_texture_roots") or [])
+        n_descr = len(self.settings.get("gamedata_descr_roots") or [])
+        n_text = len(self.settings.get("gamedata_text_roots") or [])
+        _log_file.info(
+            "resource roots bound texture=%s descr=%s text=%s",
+            n_tex,
+            n_descr,
+            n_text,
+        )
+        self.statusBar().showMessage(
+            f"Ready · {n_tex} texture dirs · {n_descr} descr dirs · {n_text} text dirs"
+        )
+
+    def _ensure_resources_indexed(self) -> None:
+        """Back-compat alias — roots only; assets resolve on file load."""
+        self._bind_resource_roots()
+
+    def _warm_resources_for_doc(self, doc: LayoutNode) -> None:
+        """Resolve only atlas / DDS / string ids this document references."""
+        self._bind_resource_roots()
+        t0 = time.perf_counter()
+        self.resolver.clear_cache()
+        self.strings.clear_cache()
+        self.resolver.warm_for_document(doc)
+        self.strings.warm_for_document(doc)
+        elapsed = time.perf_counter() - t0
+        _log_file.info(
+            "doc resources warmed in %.2fs atlas=%s dds=%s strings=%s",
+            elapsed,
+            self.resolver.atlas_count,
+            self.resolver.dds_count,
+            self.strings.count,
+        )
 
     def _show_startup_chooser(self) -> None:
         """Dark window only: centered Open / recent box until a file loads."""
@@ -1369,7 +1436,12 @@ class MainWindow(QMainWindow):
         self.undo_a.setEnabled(False)
         edit_menu.addAction(self.undo_a)
         self.redo_a = QAction("&Redo", self)
-        self.redo_a.setShortcut(QKeySequence.StandardKey.Redo)
+        self.redo_a.setShortcuts(
+            [
+                QKeySequence.StandardKey.Redo,
+                QKeySequence("Ctrl+Shift+Z"),
+            ]
+        )
         self.redo_a.triggered.connect(self.redo)
         self.redo_a.setEnabled(False)
         edit_menu.addAction(self.redo_a)
@@ -1390,6 +1462,13 @@ class MainWindow(QMainWindow):
         self.settings_a = QAction("&Settings…", self)
         self.settings_a.triggered.connect(self.edit_settings)
         edit_menu.addAction(self.settings_a)
+        self.rescan_a = QAction("Rescan &asset roots", self)
+        self.rescan_a.setToolTip(
+            "Re-discover texture / textures_descr / text folders under Anomaly, "
+            "GAMMA, and extra roots (directory lists only)."
+        )
+        self.rescan_a.triggered.connect(self.rescan_asset_paths)
+        edit_menu.addAction(self.rescan_a)
 
         help_menu = self.menuBar().addMenu("&Help")
         about_a = QAction("&About SAGE…", self)
@@ -1421,7 +1500,7 @@ class MainWindow(QMainWindow):
             "<li><b>Edge / corner</b> — resize (single selection)</li>"
             "<li><b>Right-click</b> — clear selection</li>"
             "<li><b>Rulers</b> — drag guide; right-click near guide to remove</li>"
-            "<li><b>Ctrl+Z / Ctrl+Y</b> — undo / redo geometry</li>"
+            "<li><b>Ctrl+Z / Ctrl+Y</b> (or <b>Ctrl+Shift+Z</b>) — undo / redo geometry</li>"
             "</ul>",
         )
 
@@ -1510,6 +1589,7 @@ class MainWindow(QMainWindow):
         if self._busy_open:
             _log_file.warning("open_path ignored (busy): %s", path)
             return
+        self._bind_resource_roots()
         _log_file.info("open_path begin: %s", path)
         self._busy_open = True
         self._show_busy(f"Loading {path.name}…")
@@ -1541,7 +1621,7 @@ class MainWindow(QMainWindow):
             self._log(
                 "info",
                 f"Opened {path} | {widgets} widgets | {meta_n} meta | "
-                f"atlas {len(self.resolver._atlas)} | dds {len(self.resolver._dds_index)} | "
+                f"atlas {self.resolver.atlas_count} | dds {self.resolver.dds_count} | "
                 f"strings {self.strings.count}",
             )
             self._audit_resources("open")
@@ -1551,7 +1631,7 @@ class MainWindow(QMainWindow):
                 f"Loaded {path.name} · {widgets} widgets · "
                 f"{textured} textured · {missing} missing tex · "
                 f"{meta_n} meta · "
-                f"{len(self.resolver._atlas)} atlas · {len(self.resolver._dds_index)} dds · "
+                f"{self.resolver.atlas_count} atlas · {self.resolver.dds_count} dds · "
                 f"{self.strings.count} strings"
             )
             ok = True
@@ -1571,6 +1651,7 @@ class MainWindow(QMainWindow):
                 QTimer.singleShot(0, self._show_startup_chooser)
 
     def _apply_preview_doc(self, doc: LayoutNode) -> None:
+        self._warm_resources_for_doc(doc)
         self._restoring_meta = True
         try:
             self.scene.set_document(doc)
@@ -1932,8 +2013,32 @@ class MainWindow(QMainWindow):
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         self.settings = dlg.result_settings()
+        # Dialog already rescanned on OK.
         save_settings(self.settings)
-        # Roots changed → unpack if needed + rebuild resolvers.
+        self._reload_textures()
+
+    def rescan_asset_paths(self) -> None:
+        """Menu: rediscover asset folders from current install roots and reload."""
+        if not installs_configured(self.settings):
+            QMessageBox.warning(
+                self,
+                "Rescan asset roots",
+                "Set valid Anomaly and GAMMA roots in Edit → Settings first.",
+            )
+            return
+        QApplication.setOverrideCursor(QCursor(Qt.CursorShape.WaitCursor))
+        try:
+            rescan_asset_roots(self.settings)
+            save_settings(self.settings)
+        finally:
+            QApplication.restoreOverrideCursor()
+        n_tex = len(self.settings.get("gamedata_texture_roots") or [])
+        n_descr = len(self.settings.get("gamedata_descr_roots") or [])
+        n_text = len(self.settings.get("gamedata_text_roots") or [])
+        self._log(
+            "info",
+            f"Asset roots rescanned — {n_tex} texture, {n_descr} descr, {n_text} text folders",
+        )
         self._reload_textures()
 
     def _sync_tool_controls(self) -> None:
@@ -1982,7 +2087,7 @@ class MainWindow(QMainWindow):
         self.scene.set_label_font_size(size)
 
     def _reload_textures(self) -> None:
-        # Ensure Anomaly _db_unpacked exists before rescanning roots.
+        # Unpack if needed; keep saved path lists (use Edit → Rescan to rediscover).
         before = (
             list(self.settings.get("gamedata_texture_roots") or []),
             list(self.settings.get("gamedata_descr_roots") or []),
@@ -1997,14 +2102,17 @@ class MainWindow(QMainWindow):
         if after != before:
             save_settings(self.settings)
             self._log("info", "Asset roots updated after Anomaly DB unpack check")
-        self.resolver = self._make_resolver()
-        self.strings = self._make_string_resolver()
-        self.scene.rebind_resolver(self.resolver)
+        self._resources_ready = False
+        self._bind_resource_roots()
+        if self.doc.doc:
+            self._warm_resources_for_doc(self.doc.doc)
+            self.scene.rebind_resolver(self.resolver)
+            self.scene.set_document(self.doc.doc)
         self._on_stack_peers_changed(frozenset())
         self._log(
             "info",
-            f"Resources reloaded | atlas {len(self.resolver._atlas)} | "
-            f"dds {len(self.resolver._dds_index)} | strings {self.strings.count}",
+            f"Resources rebound | atlas {self.resolver.atlas_count} | "
+            f"dds {self.resolver.dds_count} | strings {self.strings.count}",
         )
         if self.doc.doc:
             self._audit_resources("reload")
@@ -2014,8 +2122,8 @@ class MainWindow(QMainWindow):
             if selected:
                 self._show_props(selected[0].node)
         self.statusBar().showMessage(
-            f"Resources reloaded · {len(self.resolver._atlas)} atlas · "
-            f"{len(self.resolver._dds_index)} dds · {self.strings.count} strings"
+            f"Resources reloaded · {self.resolver.atlas_count} atlas · "
+            f"{self.resolver.dds_count} dds · {self.strings.count} strings"
         )
 
     def _log(self, level: str, message: str) -> None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -182,21 +183,43 @@ def _gamma_ui_mod_bases(gamma: Path) -> list[Path]:
     ]
 
 
+def _iter_gamma_pack_dirs(gamma: Path) -> list[Path]:
+    """Immediate children of mods/ and Grok modpack_addons/ (no deep walk)."""
+    out: list[Path] = []
+    for parent in (
+        gamma / "mods",
+        gamma
+        / ".Grok's Modpack Installer"
+        / "G.A.M.M.A"
+        / "modpack_addons",
+    ):
+        if not parent.is_dir():
+            continue
+        try:
+            for child in parent.iterdir():
+                if child.is_dir():
+                    out.append(child)
+        except OSError:
+            continue
+    return out
+
+
+def _pack_asset_paths(pack: Path) -> tuple[list[Path], list[Path], list[Path]]:
+    """Well-known asset folders under one mod/addon pack."""
+    return (
+        [pack / "gamedata" / "textures"],
+        [pack / "gamedata" / "configs" / "ui" / "textures_descr"],
+        [pack / "gamedata" / "configs" / "text" / "eng"],
+    )
+
+
 def _gamma_text_overhaul_roots(gamma: Path) -> list[Path]:
     """Mods that ship configs/text/eng (e.g. Massive Text Overhaul)."""
-    mods = gamma / "mods"
     found: list[Path] = []
-    if not mods.is_dir():
-        return found
-    try:
-        for child in mods.iterdir():
-            if not child.is_dir():
-                continue
-            name = child.name.lower()
-            if "text" in name and ("overhaul" in name or "massive" in name):
-                found.append(child / "gamedata" / "configs" / "text" / "eng")
-    except OSError:
-        pass
+    for pack in _iter_gamma_pack_dirs(gamma):
+        name = pack.name.lower()
+        if "text" in name and ("overhaul" in name or "massive" in name):
+            found.append(pack / "gamedata" / "configs" / "text" / "eng")
     return found
 
 
@@ -227,27 +250,14 @@ def derived_asset_roots(
 ) -> dict[str, list[str]]:
     """Build texture / descr / text root lists from user install roots + DOGMA src.
 
-    Canonical lookups given Anomaly + GAMMA roots (only existing dirs kept):
-
-    textures
-      {GAMMA}/mods/G.A.M.M.A. UI/gamedata/textures
-      {GAMMA}/.Grok's Modpack Installer/G.A.M.M.A/modpack_addons/G.A.M.M.A. UI/gamedata/textures
-      {Anomaly}/gamedata/textures
-      {Anomaly}/tools/_unpacked/textures
-
-    textures_descr
-      {Anomaly}/tools/_unpacked/configs/ui/textures_descr
-      {GAMMA}/mods/G.A.M.M.A. UI/gamedata/configs/ui/textures_descr
-
-    text (eng)
-      {Anomaly}/tools/_unpacked/configs/text/eng
-      {Anomaly}/gamedata/configs/text/eng
-      {GAMMA}/mods/<Massive Text Overhaul…>/gamedata/configs/text/eng
+    GAMMA packs are discovered one level under ``mods/`` and Grok ``modpack_addons/``
+    (known ``gamedata/...`` paths only) — not by recursively scanning the whole tree.
     """
     dogma_src = REPO_ROOT / "src"
     tex: list[Path] = []
     descr: list[Path] = []
     text: list[Path] = []
+    # Recursive scan only for the DOGMA repo (and optional custom roots) — small trees.
     scan_tex = [dogma_src]
     scan_descr = [dogma_src]
     scan_text = [dogma_src]
@@ -255,45 +265,39 @@ def derived_asset_roots(
     anomaly = Path(anomaly_root) if anomaly_root.strip() else None
     gamma = Path(gamma_root) if gamma_root.strip() else None
 
-    # --- textures (base → override: Anomaly, then GAMMA UI packs) ---
     if anomaly is not None:
         tex.append(anomaly / "gamedata" / "textures")
         tex.append(anomaly / "tools" / "_unpacked" / "textures")
-    if gamma is not None:
-        for base in _gamma_ui_mod_bases(gamma):
-            tex.append(base / "gamedata" / "textures")
-
-    # --- textures_descr ---
-    if anomaly is not None:
         descr.append(anomaly / "tools" / "_unpacked" / "configs" / "ui" / "textures_descr")
         descr.append(anomaly / "gamedata" / "configs" / "ui" / "textures_descr")
-    if gamma is not None:
-        for base in _gamma_ui_mod_bases(gamma):
-            descr.append(base / "gamedata" / "configs" / "ui" / "textures_descr")
-
-    # --- text / eng ---
-    if anomaly is not None:
         text.append(anomaly / "tools" / "_unpacked" / "configs" / "text" / "eng")
         text.append(anomaly / "gamedata" / "configs" / "text" / "eng")
-    if gamma is not None:
-        text.extend(_gamma_text_overhaul_roots(gamma))
-        for base in _gamma_ui_mod_bases(gamma):
-            text.append(base / "gamedata" / "configs" / "text" / "eng")
 
-    # Recursive scan under DOGMA src + GAMMA mods + Grok installer addons
     if gamma is not None:
-        scan_tex.append(gamma / "mods")
-        scan_descr.append(gamma / "mods")
-        scan_text.append(gamma / "mods")
-        grok_addons = (
-            gamma
-            / ".Grok's Modpack Installer"
-            / "G.A.M.M.A"
-            / "modpack_addons"
-        )
-        scan_tex.append(grok_addons)
-        scan_descr.append(grok_addons)
-        scan_text.append(grok_addons)
+        # Explicit UI packs first, then every installed mod/addon with known layouts.
+        for base in _gamma_ui_mod_bases(gamma):
+            p_tex, p_descr, p_text = _pack_asset_paths(base)
+            tex.extend(p_tex)
+            descr.extend(p_descr)
+            text.extend(p_text)
+        for pack in _iter_gamma_pack_dirs(gamma):
+            p_tex, p_descr, p_text = _pack_asset_paths(pack)
+            descr_dir = pack / "gamedata" / "configs" / "ui" / "textures_descr"
+            name_l = pack.name.lower()
+            # Atlas descr whenever present; DDS for packs that ship atlases.
+            descr.extend(p_descr)
+            if descr_dir.is_dir():
+                tex.extend(p_tex)
+            # String tables: text overhaul + packs whose name has a standalone "UI"
+            # (not substrings like "Quick"). G.A.M.M.A. UI is also in _gamma_ui_mod_bases.
+            is_text_pack = "text" in name_l and (
+                "overhaul" in name_l or "massive" in name_l
+            )
+            is_named_ui = bool(
+                re.search(r"(^|[^a-z0-9])ui([^a-z0-9]|$)", name_l)
+            )
+            if is_text_pack or is_named_ui:
+                text.extend(p_text)
 
     for raw in custom_roots or []:
         if not str(raw).strip():
@@ -319,8 +323,33 @@ def derived_asset_roots(
     }
 
 
-def apply_install_roots(settings: dict) -> dict:
-    """Fill derived asset path lists from install + optional custom roots."""
+_ASSET_ROOT_KEYS = (
+    "texture_roots",
+    "textures_descr_roots",
+    "text_roots",
+    "gamedata_texture_roots",
+    "gamedata_descr_roots",
+    "gamedata_text_roots",
+)
+
+
+def _empty_asset_roots() -> dict[str, list[str]]:
+    dogma = str(REPO_ROOT / "src")
+    return {
+        "texture_roots": [dogma],
+        "textures_descr_roots": [dogma],
+        "text_roots": [dogma],
+        "gamedata_texture_roots": [],
+        "gamedata_descr_roots": [],
+        "gamedata_text_roots": [],
+    }
+
+
+def rescan_asset_roots(settings: dict) -> dict:
+    """Discover asset folders from Anomaly / GAMMA / custom roots and store path lists.
+
+    Call from Setup / Settings / Rescan menu — not on every settings save or launch.
+    """
     settings["anomaly_root"] = _norm_root(settings.get("anomaly_root", ""))
     settings["gamma_root"] = _norm_root(settings.get("gamma_root", ""))
     settings["custom_roots"] = normalize_custom_roots(settings.get("custom_roots"))
@@ -332,19 +361,56 @@ def apply_install_roots(settings: dict) -> dict:
     settings.update(derived)
     return settings
 
+
+# Back-compat alias
+apply_install_roots = rescan_asset_roots
+
+
 def ensure_db_unpacked_and_roots(settings: dict | None = None) -> dict:
-    """Unpack Anomaly DBs if needed, then refresh derived roots from install dirs."""
+    """Unpack Anomaly DBs if needed; does not rediscover GAMMA/Anomaly pack lists."""
     from .db_unpack import ensure_anomaly_db_unpacked
 
     data = settings if settings is not None else default_settings()
     anomaly = str(data.get("anomaly_root") or "").strip()
     ensure_anomaly_db_unpacked(anomaly_root=anomaly or None)
-    return apply_install_roots(data)
+    _merge_anomaly_unpack_paths(data)
+    return data
+
+
+def _merge_anomaly_unpack_paths(settings: dict) -> None:
+    """If tools/_unpacked appeared after unpack, append those dirs without a full rescan."""
+    anomaly = _norm_root(settings.get("anomaly_root", ""))
+    if not anomaly:
+        return
+    root = Path(anomaly)
+    extras = {
+        "gamedata_texture_roots": [root / "tools" / "_unpacked" / "textures"],
+        "gamedata_descr_roots": [
+            root / "tools" / "_unpacked" / "configs" / "ui" / "textures_descr"
+        ],
+        "gamedata_text_roots": [
+            root / "tools" / "_unpacked" / "configs" / "text" / "eng"
+        ],
+    }
+    for key, paths in extras.items():
+        cur = list(settings.get(key) or [])
+        seen = {str(Path(p)).lower() for p in cur}
+        for p in paths:
+            if not p.is_dir():
+                continue
+            try:
+                key_path = str(p.resolve())
+            except OSError:
+                key_path = str(p)
+            if key_path.lower() in seen:
+                continue
+            cur.append(key_path)
+            seen.add(key_path.lower())
+        settings[key] = cur
 
 
 def default_settings() -> dict:
-    # Roots stay empty until the user sets them (setup / settings). Detect is
-    # only used to prefill the setup dialog, not to skip it.
+    # Roots stay empty until the user sets them (setup / settings).
     data = {
         "anomaly_root": "",
         "gamma_root": "",
@@ -365,7 +431,7 @@ def default_settings() -> dict:
             "maximized": False,
         },
     }
-    apply_install_roots(data)
+    data.update(_empty_asset_roots())
     return data
 
 
@@ -387,6 +453,86 @@ def _infer_root_from_paths(paths: object, needle: str) -> str:
     return ""
 
 
+def _has_scanned_asset_roots(settings: dict) -> bool:
+    for key in (
+        "gamedata_texture_roots",
+        "gamedata_descr_roots",
+        "gamedata_text_roots",
+    ):
+        val = settings.get(key)
+        if isinstance(val, list) and any(str(x).strip() for x in val):
+            return True
+    return False
+
+
+def _path_key(path: object) -> str:
+    try:
+        return str(Path(str(path)).expanduser().resolve()).lower()
+    except OSError:
+        return str(path).strip().lower().replace("/", "\\")
+
+
+def _legacy_whole_tree_scan_keys(settings: dict) -> set[str]:
+    """Paths that must never be recursive scan roots (whole GAMMA trees)."""
+    gamma = _norm_root(settings.get("gamma_root", ""))
+    if not gamma:
+        return set()
+    root = Path(gamma)
+    return {
+        _path_key(root / "mods"),
+        _path_key(
+            root / ".Grok's Modpack Installer" / "G.A.M.M.A" / "modpack_addons"
+        ),
+    }
+
+
+def uses_legacy_whole_tree_scans(settings: dict) -> bool:
+    """True if texture/text scan roots still point at entire GAMMA mods trees."""
+    banned = _legacy_whole_tree_scan_keys(settings)
+    if not banned:
+        return False
+    for key in ("texture_roots", "textures_descr_roots", "text_roots"):
+        for raw in settings.get(key) or []:
+            if _path_key(raw) in banned:
+                return True
+    return False
+
+
+def migrate_legacy_scan_roots(settings: dict) -> bool:
+    """Strip whole-tree GAMMA scans and rediscover pack folders once. Returns if changed."""
+    had_legacy = uses_legacy_whole_tree_scans(settings)
+    banned = _legacy_whole_tree_scan_keys(settings)
+    changed = False
+    if banned:
+        for key in ("texture_roots", "textures_descr_roots", "text_roots"):
+            old = list(settings.get(key) or [])
+            new = [p for p in old if _path_key(p) not in banned]
+            if new != old:
+                settings[key] = new
+                changed = True
+
+    if had_legacy and installs_configured(settings):
+        rescan_asset_roots(settings)
+        return True
+    if installs_configured(settings) and not _has_scanned_asset_roots(settings):
+        rescan_asset_roots(settings)
+        return True
+    # Older rescans saved every mod's text/eng (hundreds of folders). Keep UI + text packs.
+    text_n = len(settings.get("gamedata_text_roots") or [])
+    if installs_configured(settings) and text_n > 25:
+        rescan_asset_roots(settings)
+        return True
+
+    dogma = str(REPO_ROOT / "src")
+    dogma_k = _path_key(dogma)
+    for key in ("texture_roots", "textures_descr_roots", "text_roots"):
+        cur = list(settings.get(key) or [])
+        if not any(_path_key(p) == dogma_k for p in cur):
+            settings[key] = [dogma] + cur
+            changed = True
+    return changed
+
+
 def load_settings() -> dict:
     data = default_settings()
     if SETTINGS_PATH.is_file():
@@ -394,16 +540,6 @@ def load_settings() -> dict:
             loaded = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
             if isinstance(loaded, dict):
                 for key, value in loaded.items():
-                    # Derived path lists are always recomputed from install roots.
-                    if key in (
-                        "texture_roots",
-                        "textures_descr_roots",
-                        "text_roots",
-                        "gamedata_texture_roots",
-                        "gamedata_descr_roots",
-                        "gamedata_text_roots",
-                    ):
-                        continue
                     data[key] = value
         except (OSError, json.JSONDecodeError):
             pass
@@ -426,13 +562,25 @@ def load_settings() -> dict:
     data["show_element_labels"] = bool(data.get("show_element_labels", False))
     data["recent_files"] = normalize_recent_files(data.get("recent_files"))
     data["custom_roots"] = normalize_custom_roots(data.get("custom_roots"))
-    # Derive paths only — unpack is prompted from Setup / Settings / Reload.
-    apply_install_roots(data)
+    data["anomaly_root"] = _norm_root(data.get("anomaly_root", ""))
+    data["gamma_root"] = _norm_root(data.get("gamma_root", ""))
+
+    # Drop legacy whole-tree GAMMA scans (was making every launch ~8s+).
+    if migrate_legacy_scan_roots(data):
+        try:
+            save_settings(data)
+        except OSError:
+            pass
+    elif not any(data.get(k) for k in _ASSET_ROOT_KEYS):
+        data.update(_empty_asset_roots())
     return data
 
 
 def save_settings(data: dict) -> None:
-    apply_install_roots(data)
+    """Persist settings as-is (does not rediscover asset roots)."""
+    data["anomaly_root"] = _norm_root(data.get("anomaly_root", ""))
+    data["gamma_root"] = _norm_root(data.get("gamma_root", ""))
+    data["custom_roots"] = normalize_custom_roots(data.get("custom_roots"))
     SETTINGS_PATH.write_text(
         json.dumps(data, indent=2) + "\n",
         encoding="utf-8",

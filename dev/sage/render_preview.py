@@ -51,9 +51,11 @@ def main(argv: list[str] | None = None) -> int:
     resolver = _make_resolver()
     print("texture roots:", resolver.gamedata_texture_roots)
     print("descr roots:", resolver.gamedata_descr_roots)
-    print(f"atlas={len(resolver._atlas)} dds={len(resolver._dds_index)}")
 
     doc = UiXmlDocument().load(xml_path)
+    resolver.warm_for_document(doc)
+    print(f"atlas={resolver.atlas_count} dds={resolver.dds_count}")
+
     scene = UiScene(
         resolver,
         label_font_size=int(settings.get("label_font_size", 5)),

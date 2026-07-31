@@ -38,15 +38,20 @@ def main() -> int:
     )
 
     resolver = _resolver()
-    print(f"atlas ids: {len(resolver._atlas)}")
-    print(f"dds files: {len(resolver._dds_index)}")
+    # Resolve only the atlas ids / DDS this smoke check needs (no full index).
+    resolver._ingest_descr_for_ids(
+        {"ui_dogma_path_dot_green", "ui_inGame2_button", "ui_new_game_main"}
+    )
+    print(f"atlas ids: {resolver.atlas_count}")
     assert "ui_dogma_path_dot_green" in resolver._atlas
     assert resolver.find_dds("ui\\dots") is not None
     assert resolver.lookup_atlas("ui_inGame2_button") is not None
     assert resolver.lookup_atlas("ui_new_game_main") is not None
+    print(f"dds files: {resolver.dds_count}")
 
     doc = UiXmlDocument()
     root = doc.load(faction)
+    resolver.warm_for_document(root)
     drawables = root.iter_drawables()
     print(f"faction_select drawables: {len(drawables)}")
     assert len(drawables) > 20

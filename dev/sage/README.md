@@ -48,7 +48,7 @@ py -3 dev/sage/render_preview.py
 - If `{Anomaly}/tools/_unpacked` is missing UI descr/text/textures, SAGE unpacks
   `configs.db0` + `textures_ui.db0` there after you confirm in setup/settings
 - Zoom (wheel), pan (MMB or Alt+drag), Fit stage (`F`)
-- Undo/Redo move, resize, and property geometry (`Ctrl+Z` / `Ctrl+Y`)
+- Undo/Redo move, resize, and property geometry (`Ctrl+Z` / `Ctrl+Y` or `Ctrl+Shift+Z`)
 - Meta handles for elements without XML `x/y/width/height` (runtime-positioned). Drag them to preview script placement - **children move with the meta origin**; positions save to `file.xml.meta` (not into the XML). `.xml.meta` also stores layer toggles, undo/redo history, selection, and view zoom/pan. ~10×10 diamond markers (move-only); tag caption is display-only.
 - Save / Save As (comments/whitespace may change; meta written alongside)
 
@@ -60,16 +60,14 @@ On first launch (or if roots are missing/invalid), a **SAGE Setup** window asks 
 - Anomaly must contain `tools\db_unpacker.bat`
 - GAMMA must contain `mods\G.A.M.M.A. UI\gamedata\textures`
 
-You can also add optional **extra scan roots** (any mod/pack folders). SAGE scans them
-for textures, `textures_descr`, text, and future asset types — not required to open
-the editor.
+Optional **extra scan roots** can be added there too. On Continue / Settings Ok, SAGE
+**scans once** for textures / `textures_descr` / text folders and **saves those paths**
+into `settings.json` (plus DOGMA `src/`). Later launches reuse the saved lists — no
+rescan until you change roots or use **Edit → Rescan asset roots**.
 
 If `Anomaly\tools\_unpacked` is missing (or incomplete), Continue / Ok warns that
 SAGE will unpack `configs.db0` + `textures_ui.db0` (may take a minute), runs the
-unpack while the setup/settings window is still open, then opens the editor.
-
-**Edit → Settings…** can change all of this later. SAGE derives asset paths from
-Anomaly / GAMMA / extras (and always scans DOGMA `src/`).
+unpack while the setup/settings window is still open, then scans and opens the editor.
 
 Also set **Element label size** (2–40 pt, default **5**) and toggles for **element labels**, box **border** / **fill**
 (`label_font_size`, `show_element_labels`, `show_box_border`, `show_box_fill`). Borders are always 1px (cosmetic).

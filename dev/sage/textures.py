@@ -1,4 +1,8 @@
-"""Resolve Stalker UI texture IDs / paths to DDS crops."""
+"""Resolve Stalker UI texture IDs / paths to DDS crops.
+
+Directory lists come from Setup / Rescan (saved in settings). Full-tree indexes are
+not built at launch — atlas/DDS lookups run for the IDs a loaded document needs.
+"""
 
 from __future__ import annotations
 
@@ -10,7 +14,7 @@ from xml.etree import ElementTree as ET
 
 from PIL import Image
 
-from .model import TextureRef
+from .model import LayoutNode, TextureRef
 
 # Init3tButton / checkbox / radio: XML names the stem; engine appends state.
 _STATE_SUFFIXES = ("_e", "_h", "_t", "_d", "_s", "_u")
@@ -41,7 +45,6 @@ def _parse_xml_root(path: Path) -> ET.Element | None:
         pass
     except OSError:
         return None
-    # Fallback: decode as cp1251 and strip a bad encoding= declaration.
     try:
         raw = path.read_bytes()
     except OSError:
@@ -53,7 +56,6 @@ def _parse_xml_root(path: Path) -> ET.Element | None:
             text = raw.decode("utf-8", errors="replace")
         except Exception:  # noqa: BLE001
             return None
-    # ElementTree still honors encoding= in the declaration — neutralize it.
     if text.lstrip().startswith("<?xml"):
         end = text.find("?>")
         if end > 0:
@@ -100,6 +102,21 @@ def gamma_relative_path(path: Path) -> str:
     return path.name
 
 
+def collect_doc_texture_ids(doc: LayoutNode) -> tuple[set[str], set[str]]:
+    """Atlas ids and direct texture paths referenced by a layout tree."""
+    atlas: set[str] = set()
+    paths: set[str] = set()
+    for node in doc.iter_all():
+        ref = node.texture
+        if ref is None or not ref.name:
+            continue
+        if ref.is_path:
+            paths.add(ref.name)
+        else:
+            atlas.add(ref.name)
+    return atlas, paths
+
+
 class TextureResolver:
     def __init__(
         self,
@@ -113,45 +130,126 @@ class TextureResolver:
         self.gamedata_texture_roots = gamedata_texture_roots
         self.descr_scan_roots = descr_scan_roots
         self.gamedata_descr_roots = gamedata_descr_roots
+        # Lazy caches — filled by warm_* / first lookup, not by scanning everything.
         self._atlas: dict[str, AtlasEntry] = {}
+        self._atlas_missing: set[str] = set()
         self._dds_index: dict[str, Path] = {}
-        self.rebuild_indexes()
+        self._dds_missing: set[str] = set()
+        self._descr_files: list[Path] | None = None
+        self._dds_search_roots: list[Path] | None = None
 
-    def rebuild_indexes(self) -> None:
+    def clear_cache(self) -> None:
         self._atlas.clear()
+        self._atlas_missing.clear()
         self._dds_index.clear()
-        self._load_atlas_index()
-        self._load_dds_index()
-        self._prefer_resolvable_atlas()
+        self._dds_missing.clear()
+        self._descr_files = None
+        self._dds_search_roots = None
         self._open_dds.cache_clear()
         self._resolve_cached.cache_clear()
 
-    def _prefer_resolvable_atlas(self) -> None:
-        """If an atlas id points at a missing DDS, try alternate file names from duplicates.
+    def rebuild_indexes(self) -> None:
+        """Compatibility no-op — indexes are demand-driven now."""
+        self.clear_cache()
 
-        Vanilla ui_new_game.xml maps some checkbox UVs onto ui_actor_multiplayer_game_menu;
-        that file exists in GAMMA UI so it's fine. This pass only fixes true orphans by
-        scanning all descr again for the same id with a resolvable file.
-        """
-        orphans = [tid for tid, e in self._atlas.items() if self.find_dds(e.file_name) is None]
-        if not orphans:
+    @property
+    def atlas_count(self) -> int:
+        return len(self._atlas)
+
+    @property
+    def dds_count(self) -> int:
+        return len(self._dds_index)
+
+    def _iter_descr_files(self) -> list[Path]:
+        if self._descr_files is not None:
+            return self._descr_files
+        files: list[Path] = []
+        seen: set[Path] = set()
+        for root in self.gamedata_descr_roots:
+            if not root.is_dir():
+                continue
+            try:
+                batch = sorted(root.glob("*.xml"))
+            except OSError:
+                continue
+            for path in batch:
+                try:
+                    key = path.resolve()
+                except OSError:
+                    continue
+                if key in seen:
+                    continue
+                seen.add(key)
+                files.append(path)
+        for root in self.descr_scan_roots:
+            if not root.is_dir():
+                continue
+            try:
+                batch = sorted(root.rglob("**/textures_descr/*.xml"))
+            except OSError:
+                continue
+            for path in batch:
+                try:
+                    key = path.resolve()
+                except OSError:
+                    continue
+                if key in seen:
+                    continue
+                seen.add(key)
+                files.append(path)
+        self._descr_files = files
+        return files
+
+    def _ingest_descr_for_ids(self, wanted: set[str]) -> None:
+        """Scan descr XMLs for ``wanted`` atlas ids (later roots override)."""
+        pending = {
+            tid
+            for tid in wanted
+            if tid not in self._atlas and tid not in self._atlas_missing
+        }
+        if not pending:
             return
-        orphan_set = set(orphans)
-        descr_files: list[Path] = []
-        for root in list(self.gamedata_descr_roots) + list(self.descr_scan_roots):
-            if root.is_dir():
-                descr_files.extend(root.rglob("*.xml"))
-        for path in descr_files:
+        # Also accept state-suffixed matches for bare stems.
+        search = set(pending)
+        for tid in list(pending):
+            if any(tid.endswith(s) for s in _STATE_SUFFIXES):
+                continue
+            for suf in _STATE_SUFFIXES:
+                search.add(tid + suf)
+
+        for path in self._iter_descr_files():
+            try:
+                blob = path.read_bytes()
+            except OSError:
+                continue
+            if not any(
+                f'id="{tid}"'.encode("ascii", "ignore") in blob
+                or f"id='{tid}'".encode("ascii", "ignore") in blob
+                for tid in search
+            ):
+                continue
             root = _parse_xml_root(path)
             if root is None:
-                continue
+                # Prefer parse from bytes we already have when ET.parse fails encodings.
+                try:
+                    text = blob.decode("cp1251")
+                except UnicodeDecodeError:
+                    text = blob.decode("utf-8", errors="replace")
+                if text.lstrip().startswith("<?xml"):
+                    end = text.find("?>")
+                    if end > 0:
+                        text = '<?xml version="1.0"?>' + text[end + 2 :]
+                try:
+                    root = ET.fromstring(text)
+                except ET.ParseError:
+                    continue
             for file_el in root.iter("file"):
                 file_name = (file_el.get("name") or "").strip()
-                if not file_name or self.find_dds(file_name) is None:
+                if not file_name:
                     continue
                 for tex in file_el.findall("texture"):
                     tid = (tex.get("id") or "").strip()
-                    if tid not in orphan_set:
+                    if not tid or tid not in search:
                         continue
                     try:
                         x = float(tex.get("x", "0"))
@@ -160,90 +258,104 @@ class TextureResolver:
                         h = float(tex.get("height", "0"))
                     except ValueError:
                         continue
-                    self._atlas[tid] = AtlasEntry(file_name, x, y, w, h, resolved_id=tid)
-                    orphan_set.discard(tid)
+                    # Last matching descr wins (DOGMA / later roots override).
+                    self._atlas[tid] = AtlasEntry(
+                        file_name, x, y, w, h, resolved_id=tid
+                    )
+        for tid in pending:
+            if tid not in self._atlas:
+                self._atlas_missing.add(tid)
 
-    def _load_atlas_index(self) -> None:
-        descr_files: list[Path] = []
-        # Base game / unpacked first, then DOGMA scan (later overrides)
-        for root in self.gamedata_descr_roots:
-            if root.is_dir():
-                descr_files.extend(sorted(root.rglob("*.xml")))
-        for root in self.descr_scan_roots:
-            if not root.is_dir():
+    def warm_for_document(self, doc: LayoutNode) -> None:
+        """Resolve only atlas ids / DDS paths referenced by ``doc``."""
+        atlas_ids, path_names = collect_doc_texture_ids(doc)
+        self._ingest_descr_for_ids(set(atlas_ids))
+        # Ensure state-suffix variants used by lookup_atlas are covered.
+        expanded = set(atlas_ids)
+        for tid in atlas_ids:
+            if any(tid.endswith(s) for s in _STATE_SUFFIXES):
                 continue
-            descr_files.extend(sorted(root.rglob("**/textures_descr/**/*.xml")))
-            descr_files.extend(sorted(root.rglob("textures_descr/*.xml")))
-        seen: set[Path] = set()
-        for path in descr_files:
+            for suf in _STATE_SUFFIXES:
+                expanded.add(tid + suf)
+        self._ingest_descr_for_ids(expanded)
+        needed_files: set[str] = set(path_names)
+        for tid in atlas_ids:
+            entry = self.lookup_atlas(tid)
+            if entry is not None:
+                needed_files.add(entry.file_name)
+        for logical in needed_files:
+            self.find_dds(logical)
+
+    def _iter_dds_search_roots(self) -> list[Path]:
+        """Saved texture dirs (+ textures/ under scan roots). Built once per cache."""
+        if self._dds_search_roots is not None:
+            return self._dds_search_roots
+        roots: list[Path] = []
+        seen: set[str] = set()
+
+        def _add(path: Path) -> None:
+            if not path.is_dir():
+                return
             try:
-                resolved = path.resolve()
+                key = str(path.resolve()).lower()
+            except OSError:
+                key = str(path).lower()
+            if key in seen:
+                return
+            seen.add(key)
+            roots.append(path)
+
+        for root in self.gamedata_texture_roots:
+            _add(root)
+        for scan in self.texture_scan_roots:
+            if not scan.is_dir():
+                continue
+            _add(scan)
+            try:
+                for tex_dir in scan.rglob("textures"):
+                    if tex_dir.is_dir() and tex_dir.name.lower() == "textures":
+                        _add(tex_dir)
             except OSError:
                 continue
-            if resolved in seen:
-                continue
-            seen.add(resolved)
-            self._parse_descr(path)
-
-    def _parse_descr(self, path: Path) -> None:
-        root = _parse_xml_root(path)
-        if root is None:
-            return
-        for file_el in root.iter("file"):
-            file_name = (file_el.get("name") or "").strip()
-            if not file_name:
-                continue
-            for tex in file_el.findall("texture"):
-                tid = (tex.get("id") or "").strip()
-                if not tid:
-                    continue
-                try:
-                    x = float(tex.get("x", "0"))
-                    y = float(tex.get("y", "0"))
-                    w = float(tex.get("width", "0"))
-                    h = float(tex.get("height", "0"))
-                except ValueError:
-                    continue
-                self._atlas[tid] = AtlasEntry(file_name, x, y, w, h, resolved_id=tid)
-
-    def _load_dds_index(self) -> None:
-        # Base packs first; DOGMA src last so it overrides
-        for root in self.gamedata_texture_roots:
-            if root.is_dir():
-                self._index_dds_tree(root)
-        for root in self.texture_scan_roots:
-            if not root.is_dir():
-                continue
-            for tex_dir in sorted(root.rglob("textures")):
-                if tex_dir.is_dir() and tex_dir.name.lower() == "textures":
-                    self._index_dds_tree(tex_dir)
-
-    def _index_dds_tree(self, root: Path) -> None:
-        for dds in root.rglob("*.dds"):
-            try:
-                rel = dds.relative_to(root).with_suffix("")
-            except ValueError:
-                continue
-            key = str(rel).replace("/", "\\").lower()
-            self._dds_index[key] = dds
+        self._dds_search_roots = roots
+        return roots
 
     def find_dds(self, logical: str) -> Path | None:
         key = logical.strip().replace("/", "\\").lower()
         if key.endswith(".dds"):
             key = key[:-4]
-        return self._dds_index.get(key)
+        if key in self._dds_index:
+            return self._dds_index[key]
+        if key in self._dds_missing:
+            return None
+
+        rel = Path(*key.split("\\")).with_suffix(".dds")
+        for root in self._iter_dds_search_roots():
+            candidate = root / rel
+            if candidate.is_file():
+                self._dds_index[key] = candidate
+                return candidate
+        self._dds_missing.add(key)
+        return None
 
     def lookup_atlas(self, name: str) -> AtlasEntry | None:
         """Resolve atlas id, including button/checkbox stem → _e/_h/_t/_d."""
+        if name in self._atlas:
+            return self._atlas[name]
+        if name not in self._atlas_missing:
+            self._ingest_descr_for_ids({name})
         entry = self._atlas.get(name)
         if entry is not None:
             return entry
-        # Already has a state suffix?
         for suf in _STATE_SUFFIXES:
             if name.endswith(suf):
+                self._atlas_missing.add(name)
                 return None
         for suf in _STATE_SUFFIXES:
-            entry = self._atlas.get(name + suf)
+            alt = name + suf
+            if alt not in self._atlas and alt not in self._atlas_missing:
+                self._ingest_descr_for_ids({alt})
+            entry = self._atlas.get(alt)
             if entry is not None:
                 return AtlasEntry(
                     entry.file_name,
@@ -251,8 +363,9 @@ class TextureResolver:
                     entry.y,
                     entry.width,
                     entry.height,
-                    resolved_id=name + suf,
+                    resolved_id=alt,
                 )
+        self._atlas_missing.add(name)
         return None
 
     @lru_cache(maxsize=96)
@@ -281,7 +394,6 @@ class TextureResolver:
             ref.tint_a,
         )
 
-    # Back-compat alias
     def resolve(self, ref: TextureRef | None) -> ResolvedTexture:
         return self.resolve_ref(ref)
 

@@ -113,6 +113,22 @@ def _parse_edit_list(raw: object) -> list[dict[str, Any]]:
 def _parse_edit(raw: object) -> dict[str, Any] | None:
     if not isinstance(raw, dict):
         return None
+    # Multi-widget edit: {"parts": [{"before":…, "after":…}, …]}
+    if "parts" in raw:
+        if not isinstance(raw["parts"], list):
+            return None
+        parts: list[dict[str, Any]] = []
+        for item in raw["parts"]:
+            if not isinstance(item, dict):
+                continue
+            before = _parse_geo(item.get("before"))
+            after = _parse_geo(item.get("after"))
+            if before is None or after is None:
+                continue
+            parts.append({"before": before, "after": after})
+        if not parts:
+            return None
+        return {"parts": parts}
     before = _parse_geo(raw.get("before"))
     after = _parse_geo(raw.get("after"))
     if before is None or after is None:
@@ -206,6 +222,21 @@ def save_meta_document(xml_path: Path, meta: MetaDocument) -> Path:
 
 
 def _serialize_edit(edit: dict[str, Any]) -> dict[str, Any]:
+    # Multi-widget GeoEdit.to_dict() → {"parts": [...]}
+    if "parts" in edit and isinstance(edit["parts"], list):
+        parts_out: list[dict[str, Any]] = []
+        for item in edit["parts"]:
+            if not isinstance(item, dict):
+                continue
+            parts_out.append(
+                {
+                    "before": _serialize_geo(item["before"]),
+                    "after": _serialize_geo(item["after"]),
+                }
+            )
+        if not parts_out:
+            raise ValueError("empty GeoEdit parts")
+        return {"parts": parts_out}
     return {
         "before": _serialize_geo(edit["before"]),
         "after": _serialize_geo(edit["after"]),

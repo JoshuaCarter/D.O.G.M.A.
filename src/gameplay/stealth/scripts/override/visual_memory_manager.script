@@ -1,0 +1,134 @@
+--[[
+	DOGMA gameplay/stealth — replaces stock visual_memory_manager.get_visible_value.
+
+	Actor-only: scale stock vis, pose cutoff → 0, optional smooth remap.
+	NPC↔NPC / non-actor: stock timed formula (underground lumin bump kept).
+]]
+
+local CONFIG = _G.dogma_gameplay_stealth_conf
+
+-- Last actor-facing values for gem / debug (not per-NPC shared state for gating).
+local last_vis = 0
+local last_cutoff = 0
+local last_out = 0
+
+local function clamp01(x)
+	if x < 0 then
+		return 0
+	end
+	if x > 1 then
+		return 1
+	end
+	return x
+end
+
+local function loaded_num(key, fallback)
+	local loaded = CONFIG and CONFIG.loaded
+	if loaded and loaded[key] ~= nil then
+		local n = tonumber(loaded[key])
+		if n ~= nil then
+			return n
+		end
+	end
+	local d = CONFIG and CONFIG.DEFAULTS
+	if d and d[key] ~= nil then
+		local n = tonumber(d[key])
+		if n ~= nil then
+			return n
+		end
+	end
+	return fallback
+end
+
+local function loaded_bool(key, fallback)
+	local loaded = CONFIG and CONFIG.loaded
+	if loaded and loaded[key] ~= nil then
+		return loaded[key] == true or loaded[key] == 1
+	end
+	local d = CONFIG and CONFIG.DEFAULTS
+	if d and d[key] ~= nil then
+		return d[key] == true or d[key] == 1
+	end
+	return fallback
+end
+
+local function pose_cutoff()
+	if IsMoveState("mcCrouch") then
+		if IsMoveState("mcAccel") then
+			return loaded_num("cutoff_prone", 0.30)
+		end
+		return loaded_num("cutoff_crouch", 0.20)
+	end
+	return loaded_num("cutoff_stand", 0.10)
+end
+
+local function stock_vis(luminocity, velocity_factor, velocity, distance, object_distance)
+	return luminocity * (1 + velocity_factor * velocity) * (distance - object_distance) / distance
+end
+
+local function is_actor(who)
+	local actor = db and db.actor
+	if not (actor and who and who.id) then
+		return false
+	end
+	local ok, aid = pcall(function()
+		return actor:id()
+	end)
+	local ok2, wid = pcall(function()
+		return who:id()
+	end)
+	return ok and ok2 and aid == wid
+end
+
+-- called from engine
+-- warning npc and who can be nil sometimes
+function get_visible_value(npc, who, time_delta, time_quant, luminocity, velocity_factor, velocity, distance, object_distance, always_visible_distance)
+	distance = distance <= 0 and 0.00001 or distance
+	luminocity = luminocity <= 0 and 0.0001 or luminocity
+
+	if level_weathers and level_weathers.bLevelUnderground then
+		luminocity = luminocity + 0.35
+	end
+
+	local vis_stock = stock_vis(luminocity, velocity_factor, velocity, distance, object_distance)
+
+	if not is_actor(who) then
+		return time_delta / time_quant * vis_stock
+	end
+
+	local scale = loaded_num("scale", 1.0)
+	local vis = clamp01(vis_stock * scale)
+	local cutoff = pose_cutoff()
+	last_vis = vis
+	last_cutoff = cutoff
+
+	if vis < cutoff then
+		last_out = 0
+		return 0
+	end
+
+	local vis_out = vis
+	if loaded_bool("smooth", false) then
+		if cutoff >= 1 then
+			vis_out = 0
+		else
+			vis_out = (vis - cutoff) / (1 - cutoff)
+		end
+	end
+
+	last_out = vis_out
+	return time_delta / time_quant * vis_out
+end
+
+-- Gem / debug: last scaled actor vis from a recent get_visible_value call.
+function icon_vis()
+	return last_vis
+end
+
+function icon_cutoff()
+	return last_cutoff
+end
+
+function icon_out()
+	return last_out
+end

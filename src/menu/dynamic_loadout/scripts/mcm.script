@@ -1400,23 +1400,52 @@ local function wrap_load_loadout(cls)
 			return base(self, rand)
 		end
 
-		-- Stock LoadLoadout first, then strip gear and inject scored shop options.
+		-- Stock LoadLoadout first (fast). Heavy scan/score is deferred so New Game
+		-- can ShowDialog — otherwise the ctor blocks and the click looks dead.
 		base(self, false)
 
 		local faction = self.selected_faction or "stalker"
-		slog("LoadLoadout: building shop for faction=" .. tostring(faction))
+		local eco = tostring(self.selected_economy or "")
+		local cache_key = faction .. "|" .. eco
 
-		local entries
-		local ok, err = pcall(function()
-			entries = build_shop_entries(faction)
-		end)
-		if not ok then
-			slog("build_shop_entries FAILED: " .. tostring(err))
+		local function apply_entries(entries)
+			if not (self and self.CC and self.CC["loadout"]) then
+				slog("LoadLoadout: dialog gone before shop apply")
+				return
+			end
+			local ok_apply, err_apply = pcall(function()
+				apply_shop_to_ui(self, entries or {})
+			end)
+			if not ok_apply then
+				slog("apply_shop_to_ui FAILED: " .. tostring(err_apply))
+				return
+			end
+			slog(string.format("LoadLoadout: shop entries=%d", entries and #entries or 0))
+		end
+
+		local cached = STATE.shop_cache and STATE.shop_cache[cache_key]
+		if cached then
+			slog("LoadLoadout: cached shop for " .. cache_key)
+			apply_entries(cached)
 			return
 		end
 
-		apply_shop_to_ui(self, entries or {})
-		slog(string.format("LoadLoadout: shop entries=%d", entries and #entries or 0))
+		slog("LoadLoadout: scheduling shop build for faction=" .. tostring(faction))
+		local token = "dogma_dyn_shop_" .. tostring(math.random(100000, 999999))
+		CreateTimeEvent(0, token, 0, function()
+			local entries
+			local ok, err = pcall(function()
+				entries = build_shop_entries(faction)
+			end)
+			if not ok then
+				slog("build_shop_entries FAILED: " .. tostring(err))
+				return true
+			end
+			STATE.shop_cache = STATE.shop_cache or {}
+			STATE.shop_cache[cache_key] = entries or {}
+			apply_entries(entries)
+			return true
+		end)
 	end
 
 	cls.LoadLoadout = wrapped

@@ -53,20 +53,18 @@ dogma_py() {
 # Category folder -> installer page title (matches MCM labels).
 cat_title() {
 	case "$1" in
+		controls) echo "Controls" ;;
 		crafting) echo "Crafting" ;;
 		fx) echo "FX" ;;
+		gameplay) echo "Gameplay" ;;
+		gui) echo "GUI" ;;
 		hud) echo "HUD" ;;
 		items) echo "Items" ;;
 		mcm) echo "MCM" ;;
+		menu) echo "Menu" ;;
 		misc) echo "Misc" ;;
-		mutants) echo "Mutants" ;;
 		npcs) echo "NPCs" ;;
-		pda) echo "PDA" ;;
-		player) echo "Player" ;;
-		tooltips) echo "Tooltips" ;;
-		travel) echo "Travel" ;;
 		weapons) echo "Weapons" ;;
-		zoom) echo "Zoom" ;;
 		*) printf '%s' "$1" | awk '{print toupper(substr($0,1,1)) substr($0,2)}' ;;
 	esac
 }

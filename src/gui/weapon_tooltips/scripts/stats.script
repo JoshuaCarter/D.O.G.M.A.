@@ -3,13 +3,13 @@
 	Barrel Wear, Burst Size, Bullet Drop). main.script registers them in
 	utils_ui.stats_table (lookups are call-time; alpha order is main before stats).
 
-	X-Ray binds this file's environment to global zzzz_dogma_tooltips_weapons_stats.
+	X-Ray binds this file's environment to global zzzz_dogma_gui_weapon_tooltips_stats.
 	Define fields/functions at top level - do not assign
-	zzzz_dogma_tooltips_weapons_stats = {} (that nests a second table and breaks
-	lookups like zzzz_dogma_tooltips_weapons_stats.NAME from other scripts).
+	zzzz_dogma_gui_weapon_tooltips_stats = {} (that nests a second table and breaks
+	lookups like zzzz_dogma_gui_weapon_tooltips_stats.NAME from other scripts).
 ]]
 
-local CONFIG = _G.dogma_tooltips_weapons_conf
+local CONFIG = _G.dogma_gui_weapon_tooltips_conf
 -- GAMMA actor.ltx movement dispersion (Actor_Weapon.cpp, VEL_MAX = 10 m/s).
 -- Engine adds actor PDM degrees to weapon base; it does not multiply them.
 local ACTOR_DISP_BASE = 1.5
@@ -792,7 +792,7 @@ function text_for_name(name_id, obj, sec)
 	return result
 end
 
--- Scoring / loadout API (also mirrored under _G.dogma_tooltips_weapons).
-_G.dogma_tooltips_weapons = _G.dogma_tooltips_weapons or {}
-_G.dogma_tooltips_weapons.weapon_use_mag = weapon_use_mag
-_G.dogma_tooltips_weapons.weapon_reload_seconds = weapon_reload_seconds
+-- Scoring / loadout API (also mirrored under _G.dogma_gui_weapon_tooltips).
+_G.dogma_gui_weapon_tooltips = _G.dogma_gui_weapon_tooltips or {}
+_G.dogma_gui_weapon_tooltips.weapon_use_mag = weapon_use_mag
+_G.dogma_gui_weapon_tooltips.weapon_reload_seconds = weapon_reload_seconds

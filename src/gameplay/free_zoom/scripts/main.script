@@ -11,8 +11,8 @@
 	± keys override gun+optic HUD %. Owns ADS hud_fov - blanks Blindside/Keybinds ADS FOV / Free_ZoomV2 via scripts/override/; disable Free Zoom packages via config/disabled.ini.
 ]]
 
-local CONFIG = _G.dogma_zoom_free_zoom_conf
-local ADS_MOD = "dogma/zoom/ads_zoom"
+local CONFIG = _G.dogma_gameplay_free_zoom_conf
+local ADS_MOD = "dogma/gameplay/ads_zoom"
 local DOGMA
 
 -- Lower FOV number = more zoom. nil = not requesting (other systems may read these).
@@ -190,10 +190,10 @@ local function refresh_config()
 	CONFIG.loaded.scroll_wheel_reverse = DOGMA.mcm.bool(CONFIG.MOD_ID, "free_zoom/scroll_wheel_reverse")
 	CONFIG.loaded.scroll_wheel_steps = DOGMA.mcm.number(CONFIG.MOD_ID, "free_zoom/scroll_wheel_steps")
 	CONFIG.loaded.scroll_wheel_max_gap_ms = DOGMA.mcm.number(CONFIG.MOD_ID, "free_zoom/scroll_wheel_max_gap_ms")
-	CONFIG.loaded.free_zoom = DOGMA.mcm.number(CONFIG.MOD_ID, "free_zoom/free_zoom")
+	CONFIG.loaded.free_zoom = DOGMA.mcm.number(CONFIG.MOD_ID, "free_gameplay/free_zoom")
 	CONFIG.loaded.move_speed = DOGMA.mcm.number(CONFIG.MOD_ID, "free_zoom/move_speed")
 
-	CONFIG.loaded.ads_enabled = (_G.dogma_zoom_ads_zoom_conf ~= nil)
+	CONFIG.loaded.ads_enabled = (_G.dogma_gameplay_ads_zoom_conf ~= nil)
 	CONFIG.loaded.fov_zoom = clamp(DOGMA.mcm.number(ADS_MOD, "fov_zoom"), 0, ADS_FOV_MAX)
 	CONFIG.loaded.wads = {
 		irons = clamp(DOGMA.mcm.number(ADS_MOD, "wads_irons"), 0, ADS_MAX.irons),
@@ -590,7 +590,7 @@ end
 local function set_zoom_move_speed(active)
 	-- Prefer shared speed.script on GAMMA; else our vendored Teepo copy.
 	-- (Do not name the local `speed` - that shadows the global on the RHS.)
-	local speed_mod = (speed and speed.add_speed and speed) or zzzz_dogma_zoom_free_zoom_speed
+	local speed_mod = (speed and speed.add_speed and speed) or zzzz_dogma_gameplay_free_zoom_speed
 	-- speed.add_speed needs db.actor; skip during on_game_start / early boot.
 	if not (db and db.actor and speed_mod and speed_mod.add_speed) then
 		return

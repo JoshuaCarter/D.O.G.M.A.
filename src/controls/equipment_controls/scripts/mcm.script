@@ -1,7 +1,7 @@
 -- Equipment Controls MCM
 -- Stock keys: dogma_mcm.key_mirror. Owned customs: CONFIG.BINDS + mirror_spec.
 
-local CONFIG = _G.dogma_player_equipment_controls_conf
+local CONFIG = _G.dogma_controls_equipment_controls_conf
 local KM = dogma_key_mirror_mcm
 
 -- Claim Controls rows once at script load (before Settings XML patches).
@@ -69,10 +69,10 @@ function on_mcm_load(options)
 		gr[#gr + 1] = MIRROR.glowstick:option("key_glowstick", "dogma_equipment_controls_key_glowstick")
 	end
 
-	dogma_mcm.attach(options, "player", "ui_mcm_menu_dogma_player", {
+	dogma_mcm.attach(options, "controls", "ui_mcm_menu_dogma_controls", {
 		id = "equipment_controls",
 		sh = true,
-		text = "ui_mcm_menu_dogma_player_equipment_controls",
+		text = "ui_mcm_menu_dogma_controls_equipment_controls",
 		gr = dogma_mcm.with_header(gr),
 	})
 end

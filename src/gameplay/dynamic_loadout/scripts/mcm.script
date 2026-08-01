@@ -9,10 +9,10 @@
 	re-opening New Game rescans. Does not touch OnRandomize.
 ]]
 
-local CONFIG = _G.dogma_menu_dynamic_loadout_conf
+local CONFIG = _G.dogma_gameplay_dynamic_loadout_conf
 local MOD_ID = CONFIG.MOD_ID
-local STATE = _G.__dogma_menu_dynamic_loadout or {}
-_G.__dogma_menu_dynamic_loadout = STATE
+local STATE = _G.__dogma_gameplay_dynamic_loadout or {}
+_G.__dogma_gameplay_dynamic_loadout = STATE
 
 -- While MCM preview is open: live track-bar values (pending, not axr save).
 local LIVE_CFG = nil
@@ -48,7 +48,7 @@ local function dlog(msg)
 	if not cfg_bool("log_scores") then
 		return
 	end
-	printf("[dogma_menu_dynamic_loadout] %s", tostring(msg))
+	printf("[dogma_gameplay_dynamic_loadout] %s", tostring(msg))
 end
 
 -- Full term-by-term CALC dumps: weapons only for now (ammo/armor/helm later).
@@ -311,7 +311,7 @@ end
 --------------------------------------------------------------------------
 
 local function ballistics()
-	return _G.dogma_ballistics or _G.dogma_tooltips_weapons_ballistics
+	return _G.dogma_ballistics or _G.dogma_gui_weapon_tooltips_ballistics
 end
 
 --------------------------------------------------------------------------
@@ -694,14 +694,14 @@ end
 
 -- Tip motion-length reload; fallback if nil (main-menu / missing anims).
 local function reload_seconds_for(sec, mag, use_mag)
-	local tip = _G.dogma_tooltips_weapons
+	local tip = _G.dogma_gui_weapon_tooltips
 	if tip and tip.weapon_reload_seconds then
 		local ok, t = pcall(tip.weapon_reload_seconds, sec)
 		if ok and type(t) == "number" and t > 0 then
 			return t
 		end
 	end
-	local S = rawget(_G, "zzzz_dogma_tooltips_weapons_stats")
+	local S = rawget(_G, "zzzz_dogma_gui_weapon_tooltips_stats")
 	if S and S.weapon_reload_seconds then
 		local ok, t = pcall(S.weapon_reload_seconds, sec)
 		if ok and type(t) == "number" and t > 0 then
@@ -843,7 +843,7 @@ local function score_weapon(sec)
 
 	-- Magazine vs rounds-reload (for reload fallback only; not a score term).
 	local use_mag = nil
-	local tip = _G.dogma_tooltips_weapons
+	local tip = _G.dogma_gui_weapon_tooltips
 	if tip and tip.weapon_use_mag then
 		local ok_m, t = pcall(tip.weapon_use_mag, sec)
 		if ok_m and (t == 0 or t == 1) then
@@ -1383,7 +1383,7 @@ end
 --------------------------------------------------------------------------
 
 local function slog(msg)
-	printf("[dogma_menu_dynamic_loadout] %s", tostring(msg))
+	printf("[dogma_gameplay_dynamic_loadout] %s", tostring(msg))
 end
 
 local function wrap_load_loadout(cls)
@@ -1694,7 +1694,7 @@ function on_mcm_load(options)
 			max = 1,
 			step = 0.01,
 			def = def or 0.5,
-			hint = "dogma_menu_dynamic_loadout_" .. id,
+			hint = "dogma_gameplay_dynamic_loadout_" .. id,
 		}
 	end
 
@@ -1702,34 +1702,34 @@ function on_mcm_load(options)
 		{
 			id = "page_description",
 			type = "desc",
-			text = "ui_mcm_dogma_menu_dynamic_loadout_page_description",
+			text = "ui_mcm_dogma_gameplay_dynamic_loadout_page_description",
 		},
 		{
 			id = "enabled",
 			type = "check",
 			val = 1,
 			def = CONFIG.DEFAULTS.enabled,
-			hint = "dogma_menu_dynamic_loadout_enabled",
+			hint = "dogma_gameplay_dynamic_loadout_enabled",
 		},
 		{
 			id = "log_scores",
 			type = "check",
 			val = 1,
 			def = CONFIG.DEFAULTS.log_scores,
-			hint = "dogma_menu_dynamic_loadout_log_scores",
+			hint = "dogma_gameplay_dynamic_loadout_log_scores",
 		},
 		{
 			id = "include_universal_armor",
 			type = "check",
 			val = 1,
 			def = CONFIG.DEFAULTS.include_universal_armor,
-			hint = "dogma_menu_dynamic_loadout_include_universal_armor",
+			hint = "dogma_gameplay_dynamic_loadout_include_universal_armor",
 		},
 		{ id = "line_caps", type = "line" },
 		{
 			id = "hdr_caps",
 			type = "desc",
-			text = "ui_mcm_dogma_menu_dynamic_loadout_caps_section",
+			text = "ui_mcm_dogma_gameplay_dynamic_loadout_caps_section",
 		},
 		{
 			id = "max_pts_weapon",
@@ -1739,7 +1739,7 @@ function on_mcm_load(options)
 			max = 1000,
 			step = 1,
 			def = CONFIG.DEFAULTS.max_pts_weapon,
-			hint = "dogma_menu_dynamic_loadout_max_pts_weapon",
+			hint = "dogma_gameplay_dynamic_loadout_max_pts_weapon",
 		},
 		{
 			id = "max_pts_armor",
@@ -1749,7 +1749,7 @@ function on_mcm_load(options)
 			max = 1000,
 			step = 1,
 			def = CONFIG.DEFAULTS.max_pts_armor,
-			hint = "dogma_menu_dynamic_loadout_max_pts_armor",
+			hint = "dogma_gameplay_dynamic_loadout_max_pts_armor",
 		},
 		{
 			id = "max_pts_helmet",
@@ -1759,7 +1759,7 @@ function on_mcm_load(options)
 			max = 1000,
 			step = 1,
 			def = CONFIG.DEFAULTS.max_pts_helmet,
-			hint = "dogma_menu_dynamic_loadout_max_pts_helmet",
+			hint = "dogma_gameplay_dynamic_loadout_max_pts_helmet",
 		},
 		{
 			id = "max_pts_ammo",
@@ -1769,7 +1769,7 @@ function on_mcm_load(options)
 			max = 1000,
 			step = 1,
 			def = CONFIG.DEFAULTS.max_pts_ammo,
-			hint = "dogma_menu_dynamic_loadout_max_pts_ammo",
+			hint = "dogma_gameplay_dynamic_loadout_max_pts_ammo",
 		},
 		{
 			id = "max_pts_sight",
@@ -1779,13 +1779,13 @@ function on_mcm_load(options)
 			max = 1000,
 			step = 1,
 			def = CONFIG.DEFAULTS.max_pts_sight,
-			hint = "dogma_menu_dynamic_loadout_max_pts_sight",
+			hint = "dogma_gameplay_dynamic_loadout_max_pts_sight",
 		},
 		{ id = "line_cost_mult", type = "line" },
 		{
 			id = "hdr_cost_mult",
 			type = "desc",
-			text = "ui_mcm_dogma_menu_dynamic_loadout_cost_mult_section",
+			text = "ui_mcm_dogma_gameplay_dynamic_loadout_cost_mult_section",
 		},
 		{
 			id = "cost_mult_weapon",
@@ -1795,7 +1795,7 @@ function on_mcm_load(options)
 			max = 100000,
 			step = 1,
 			def = CONFIG.DEFAULTS.cost_mult_weapon,
-			hint = "dogma_menu_dynamic_loadout_cost_mult_weapon",
+			hint = "dogma_gameplay_dynamic_loadout_cost_mult_weapon",
 		},
 		{
 			id = "cost_mult_armor",
@@ -1805,7 +1805,7 @@ function on_mcm_load(options)
 			max = 100000,
 			step = 1,
 			def = CONFIG.DEFAULTS.cost_mult_armor,
-			hint = "dogma_menu_dynamic_loadout_cost_mult_armor",
+			hint = "dogma_gameplay_dynamic_loadout_cost_mult_armor",
 		},
 		{
 			id = "cost_mult_helmet",
@@ -1815,7 +1815,7 @@ function on_mcm_load(options)
 			max = 100000,
 			step = 1,
 			def = CONFIG.DEFAULTS.cost_mult_helmet,
-			hint = "dogma_menu_dynamic_loadout_cost_mult_helmet",
+			hint = "dogma_gameplay_dynamic_loadout_cost_mult_helmet",
 		},
 		{
 			id = "cost_mult_ammo",
@@ -1825,7 +1825,7 @@ function on_mcm_load(options)
 			max = 100000,
 			step = 1,
 			def = CONFIG.DEFAULTS.cost_mult_ammo,
-			hint = "dogma_menu_dynamic_loadout_cost_mult_ammo",
+			hint = "dogma_gameplay_dynamic_loadout_cost_mult_ammo",
 		},
 		{
 			id = "cost_mult_sight",
@@ -1835,13 +1835,13 @@ function on_mcm_load(options)
 			max = 100000,
 			step = 1,
 			def = CONFIG.DEFAULTS.cost_mult_sight,
-			hint = "dogma_menu_dynamic_loadout_cost_mult_sight",
+			hint = "dogma_gameplay_dynamic_loadout_cost_mult_sight",
 		},
 		{ id = "line_weights", type = "line" },
 		{
 			id = "hdr_weights",
 			type = "desc",
-			text = "ui_mcm_dogma_menu_dynamic_loadout_weights_section",
+			text = "ui_mcm_dogma_gameplay_dynamic_loadout_weights_section",
 		},
 	}
 
@@ -1854,34 +1854,34 @@ function on_mcm_load(options)
 			gr[#gr + 1] = {
 				id = "hdr_w_weapon",
 				type = "desc",
-				text = "ui_mcm_dogma_menu_dynamic_loadout_weights_weapon",
+				text = "ui_mcm_dogma_gameplay_dynamic_loadout_weights_weapon",
 			}
 		elseif id == "a_fire_wound" then
 			gr[#gr + 1] = {
 				id = "hdr_w_armor",
 				type = "desc",
-				text = "ui_mcm_dogma_menu_dynamic_loadout_weights_armor",
+				text = "ui_mcm_dogma_gameplay_dynamic_loadout_weights_armor",
 			}
 		elseif id == "ammo_dmg_ap" then
 			gr[#gr + 1] = {
 				id = "hdr_w_ammo",
 				type = "desc",
-				text = "ui_mcm_dogma_menu_dynamic_loadout_weights_ammo",
+				text = "ui_mcm_dogma_gameplay_dynamic_loadout_weights_ammo",
 			}
 		elseif id == "sight_zoom" then
 			gr[#gr + 1] = {
 				id = "hdr_w_sight",
 				type = "desc",
-				text = "ui_mcm_dogma_menu_dynamic_loadout_weights_sight",
+				text = "ui_mcm_dogma_gameplay_dynamic_loadout_weights_sight",
 			}
 		end
 		gr[#gr + 1] = wtrack(id, 0.5)
 	end
 
-	dogma_mcm.attach(options, "menu", "ui_mcm_menu_dogma_menu", {
+	dogma_mcm.attach(options, "gameplay", "ui_mcm_menu_dogma_gameplay", {
 		id = "dynamic_loadout",
 		sh = true,
-		text = "ui_mcm_menu_dogma_menu_dynamic_loadout",
+		text = "ui_mcm_menu_dogma_gameplay_dynamic_loadout",
 		gr = dogma_mcm.with_header(gr),
 	})
 
@@ -1928,7 +1928,7 @@ local PREVIEW_GUNS = {
 	},
 }
 
-local PREVIEW_XML = "ui_dogma_menu_dynamic_loadout_preview.xml"
+local PREVIEW_XML = "ui_dogma_gameplay_dynamic_loadout_preview.xml"
 local PREVIEW_ID = "dl_score_preview"
 local PREVIEW_HOOK = _G.__dogma_dl_score_preview or {}
 _G.__dogma_dl_score_preview = PREVIEW_HOOK
@@ -2091,7 +2091,7 @@ function patch_score_preview()
 		preview_tick(self)
 	end
 	PREVIEW_HOOK.patched = true
-	printf("[dogma_menu_dynamic_loadout] MCM score preview hooked")
+	printf("[dogma_gameplay_dynamic_loadout] MCM score preview hooked")
 	return true
 end
 

@@ -10,7 +10,7 @@ src/tweaks/<feature>/...           # simple always-on / no-options patches
 src/common/<gamedata-root>/...     # vendored Common, not in MCM
 ```
 
-Example: `src/mutants/skinning/scripts/...` → MCM `D.O.G.M.A. → Mutants → Skinning`.  
+Example: `src/gameplay/faster_skinning/scripts/...` → MCM `D.O.G.M.A. → Gameplay → Faster Skinning`.  
 Tweaks: `src/tweaks/<feature>/...` → MCM `D.O.G.M.A. → Tweaks` (one shared page; each feature appends a description).
 
 ## Build roots merged into gamedata

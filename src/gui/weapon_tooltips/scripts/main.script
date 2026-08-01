@@ -4,7 +4,7 @@
 	Layout/static text: ui_dogma_weapon_tooltip.xml. This script fills cells and
 	wires MCM / utils_ui.stats_table.
 
-	Built as zzzz_dogma_tooltips_weapons_main.script so on_game_start runs after
+	Built as zzzz_dogma_gui_weapon_tooltips_main.script so on_game_start runs after
 	G.A.M.M.A. Accurate Defense Values (ish_item_stats), which rebuilds
 	stats_table["weapon"] and would wipe our rows.
 
@@ -21,7 +21,7 @@
 	Lua VM is torn down and rebuilt during new-game creation).
 ]]
 
-local CONFIG = _G.dogma_tooltips_weapons_conf
+local CONFIG = _G.dogma_gui_weapon_tooltips_conf
 local DOGMA
 
 -- Canonical Momopate/vanilla weapon-row indices. Inline companions anchor to
@@ -37,7 +37,7 @@ local BASE_INDEX = {
 	recoil = 104,
 }
 
--- Fallback string ids if zzzz_dogma_tooltips_weapons_stats failed to expose NAME.
+-- Fallback string ids if zzzz_dogma_gui_weapon_tooltips_stats failed to expose NAME.
 local EXTRA_STAT_NAME = {
 	dispersion = "ui_dogma_wpn_dispersion",
 	spread = "ui_dogma_wpn_spread",
@@ -422,10 +422,10 @@ local function custom_stat_text(cap, obj, sec)
 	if CONFIG.loaded.show_mutant_damage and cap == ENHANCED_STAT_LABELS.ammo_damage then
 		return format_raw_ammo_damage_slash(obj, sec)
 	end
-	if not zzzz_dogma_tooltips_weapons_stats or not zzzz_dogma_tooltips_weapons_stats.text_for_name then
+	if not zzzz_dogma_gui_weapon_tooltips_stats or not zzzz_dogma_gui_weapon_tooltips_stats.text_for_name then
 		return nil
 	end
-	local S = zzzz_dogma_tooltips_weapons_stats
+	local S = zzzz_dogma_gui_weapon_tooltips_stats
 	local N = S.NAME
 	if CONFIG.loaded.show_dispersion and cap == ENHANCED_STAT_LABELS.dispersion then
 		return S.text_for_name(N.dispersion, obj, sec)
@@ -447,11 +447,11 @@ end
 
 -- Companion stat name_id for a translated caption (nil for slash rows / Hit Power).
 local function companion_name_id_for_cap(cap)
-	if not cap or not zzzz_dogma_tooltips_weapons_stats or not zzzz_dogma_tooltips_weapons_stats.NAME then
+	if not cap or not zzzz_dogma_gui_weapon_tooltips_stats or not zzzz_dogma_gui_weapon_tooltips_stats.NAME then
 		return nil
 	end
 	local L = ENHANCED_STAT_LABELS
-	local N = zzzz_dogma_tooltips_weapons_stats.NAME
+	local N = zzzz_dogma_gui_weapon_tooltips_stats.NAME
 	if cap == L.dispersion then
 		return N.dispersion
 	end
@@ -623,7 +623,7 @@ end
 
 -- Spread: per-angle deltas with individual green/red (lower is better).
 local function apply_spread_compare(ele, obj, sec, obj_b, decimals)
-	local S = zzzz_dogma_tooltips_weapons_stats
+	local S = zzzz_dogma_gui_weapon_tooltips_stats
 	if not ele or not ele.comp or not S or not obj_b then
 		return false
 	end
@@ -694,7 +694,7 @@ local function relocate_stock_compare_colors(ele, value_clr)
 end
 
 local function apply_companion_compare(ele, name_id, obj, sec, obj_b)
-	local S = zzzz_dogma_tooltips_weapons_stats
+	local S = zzzz_dogma_gui_weapon_tooltips_stats
 	if not S or not S.value_for_name or not obj_b then
 		return false
 	end
@@ -949,8 +949,8 @@ local HIT_POWER_STAT = {
 	sign = false,
 	show_always = true,
 	value_functor = {
-		"zzzz_dogma_tooltips_weapons_main", "scale_hit_power_display",
-		"zzzz_dogma_tooltips_weapons_main", "prop_hit_power",
+		"zzzz_dogma_gui_weapon_tooltips_main", "scale_hit_power_display",
+		"zzzz_dogma_gui_weapon_tooltips_main", "prop_hit_power",
 	},
 }
 
@@ -969,7 +969,7 @@ local RAW_AMMO_DAMAGE_STAT = {
 	compare = false,
 	sign = false,
 	show_always = true,
-	value_functor = { "zzzz_dogma_tooltips_weapons_main", "prop_raw_ammo_damage_slash_flag" },
+	value_functor = { "zzzz_dogma_gui_weapon_tooltips_main", "prop_raw_ammo_damage_slash_flag" },
 }
 
 -- Pre-armor stalker (NPC) torso damage per ammo at calc_range(): CQC power
@@ -987,7 +987,7 @@ local STALKER_DAMAGE_STAT = {
 	compare = false,
 	sign = false,
 	show_always = true,
-	value_functor = { "zzzz_dogma_tooltips_weapons_main", "prop_stalker_ammo_damage_slash_flag" },
+	value_functor = { "zzzz_dogma_gui_weapon_tooltips_main", "prop_stalker_ammo_damage_slash_flag" },
 }
 
 -- Cached non-DOGMA base rows so MCM can hide/restore them.
@@ -1025,9 +1025,9 @@ local function make_stat_row(index, name, icon, prop)
 		compare = false,
 		sign = false,
 		show_always = true,
-		-- Functors must live on this script module (zzzz_dogma_tooltips_weapons_main.*);
+		-- Functors must live on this script module (zzzz_dogma_gui_weapon_tooltips_main.*);
 		-- X-Ray resolves _G[file][func], not nested table fields on another script.
-		value_functor = { "zzzz_dogma_tooltips_weapons_main", prop },
+		value_functor = { "zzzz_dogma_gui_weapon_tooltips_main", prop },
 	}
 end
 
@@ -1192,7 +1192,7 @@ local function apply_enhanced_weapon_stats()
 		weapon_stats["dogma_ammo_damage"] = nil
 	end
 
-	local N = (zzzz_dogma_tooltips_weapons_stats and zzzz_dogma_tooltips_weapons_stats.NAME) or EXTRA_STAT_NAME
+	local N = (zzzz_dogma_gui_weapon_tooltips_stats and zzzz_dogma_gui_weapon_tooltips_stats.NAME) or EXTRA_STAT_NAME
 	weapon_stats["dogma_dispersion"] = CONFIG.loaded.show_dispersion
 		and make_stat_row(idx.dispersion, N.dispersion, "ui_wp_prop_contrast", "prop_dispersion")
 		or nil
@@ -1335,19 +1335,19 @@ local function on_option_change()
 		CONFIG.loaded.calc_range_m = DOGMA.mcm.number(CONFIG.MOD_ID, "calc_range")
 		CONFIG.loaded.pellet_hit_pct = DOGMA.mcm.number(CONFIG.MOD_ID, "pellet_hit_pct")
 		local drop_range = DOGMA.mcm.number(CONFIG.MOD_ID, "drop_range")
-		if zzzz_dogma_tooltips_weapons_stats and zzzz_dogma_tooltips_weapons_stats.set_drop_range then
-			zzzz_dogma_tooltips_weapons_stats.set_drop_range(drop_range)
+		if zzzz_dogma_gui_weapon_tooltips_stats and zzzz_dogma_gui_weapon_tooltips_stats.set_drop_range then
+			zzzz_dogma_gui_weapon_tooltips_stats.set_drop_range(drop_range)
 		end
 		local burst_threshold = DOGMA.mcm.number(CONFIG.MOD_ID, "burst_threshold")
-		if zzzz_dogma_tooltips_weapons_stats and zzzz_dogma_tooltips_weapons_stats.set_burst_threshold then
-			zzzz_dogma_tooltips_weapons_stats.set_burst_threshold(burst_threshold)
+		if zzzz_dogma_gui_weapon_tooltips_stats and zzzz_dogma_gui_weapon_tooltips_stats.set_burst_threshold then
+			zzzz_dogma_gui_weapon_tooltips_stats.set_burst_threshold(burst_threshold)
 		end
 		CONFIG.loaded.use_condition_table = DOGMA.mcm.bool(CONFIG.MOD_ID, "use_condition_table")
 		CONFIG.loaded.use_condition_stats = DOGMA.mcm.bool(CONFIG.MOD_ID, "use_condition_stats")
 		CONFIG.loaded.apply_silencer_table = DOGMA.mcm.bool(CONFIG.MOD_ID, "apply_silencer_table")
 		CONFIG.loaded.apply_silencer_stats = DOGMA.mcm.bool(CONFIG.MOD_ID, "apply_silencer_stats")
-		if zzzz_dogma_tooltips_weapons_stats and zzzz_dogma_tooltips_weapons_stats.set_apply_silencer then
-			zzzz_dogma_tooltips_weapons_stats.set_apply_silencer(CONFIG.loaded.apply_silencer_stats)
+		if zzzz_dogma_gui_weapon_tooltips_stats and zzzz_dogma_gui_weapon_tooltips_stats.set_apply_silencer then
+			zzzz_dogma_gui_weapon_tooltips_stats.set_apply_silencer(CONFIG.loaded.apply_silencer_stats)
 		end
 		CONFIG.loaded.debug_log = DOGMA.dbg.logging()
 		CONFIG.loaded.debug_overlay = DOGMA.dbg.overlay_enabled()
@@ -1358,8 +1358,8 @@ local function on_option_change()
 		tooltip_logged = {}
 	end
 
-	if zzzz_dogma_tooltips_weapons_stats and zzzz_dogma_tooltips_weapons_stats.set_debug then
-		zzzz_dogma_tooltips_weapons_stats.set_debug(CONFIG.loaded.debug_log)
+	if zzzz_dogma_gui_weapon_tooltips_stats and zzzz_dogma_gui_weapon_tooltips_stats.set_debug then
+		zzzz_dogma_gui_weapon_tooltips_stats.set_debug(CONFIG.loaded.debug_log)
 	end
 
 	if DOGMA and DOGMA.dbg then
@@ -1419,7 +1419,7 @@ local function safe_section(obj)
 end
 
 -- Weapon hit_power (first float if LTX is a comma list). Avoid get_wpn_param's
--- false 0 the same way zzzz_dogma_tooltips_weapons_stats.wpn_param does for other floats.
+-- false 0 the same way zzzz_dogma_gui_weapon_tooltips_stats.wpn_param does for other floats.
 local function gun_hit_power(obj, sec)
 	-- CQC grok_bo: TOZ-106 family uses fixed hit_power 0.8 (not LTX).
 	if sec and string.find(sec, "wpn_toz106", 1, true) then
@@ -1503,35 +1503,35 @@ end
 
 -- Sentinels for appended stat rows (real text applied in apply_custom_stat_display).
 function prop_dispersion(obj, sec)
-	local S = zzzz_dogma_tooltips_weapons_stats
+	local S = zzzz_dogma_gui_weapon_tooltips_stats
 	if S and S.text_dispersion and S.text_dispersion(obj, sec) then
 		return 1
 	end
 end
 
 function prop_spread(obj, sec)
-	local S = zzzz_dogma_tooltips_weapons_stats
+	local S = zzzz_dogma_gui_weapon_tooltips_stats
 	if S and S.text_spread and S.text_spread(obj, sec) then
 		return 1
 	end
 end
 
 function prop_barrel_wear(obj, sec)
-	local S = zzzz_dogma_tooltips_weapons_stats
+	local S = zzzz_dogma_gui_weapon_tooltips_stats
 	if S and S.text_barrel_wear and S.text_barrel_wear(obj, sec) then
 		return 1
 	end
 end
 
 function prop_burst_control(obj, sec)
-	local S = zzzz_dogma_tooltips_weapons_stats
+	local S = zzzz_dogma_gui_weapon_tooltips_stats
 	if S and S.text_burst_control and S.text_burst_control(obj, sec) then
 		return 1
 	end
 end
 
 function prop_bullet_drop(obj, sec)
-	local S = zzzz_dogma_tooltips_weapons_stats
+	local S = zzzz_dogma_gui_weapon_tooltips_stats
 	if S and S.text_bullet_drop and S.text_bullet_drop(obj, sec) then
 		return 1
 	end
@@ -2130,22 +2130,22 @@ local function weapon_score_table_stats(wpn_sec, dist)
 	return out
 end
 
-_G.dogma_tooltips_weapons = _G.dogma_tooltips_weapons or {}
-_G.dogma_tooltips_weapons.weapon_score_table_stats = weapon_score_table_stats
-_G.dogma_tooltips_weapons.ammo_display_label = ammo_display_label
+_G.dogma_gui_weapon_tooltips = _G.dogma_gui_weapon_tooltips or {}
+_G.dogma_gui_weapon_tooltips.weapon_score_table_stats = weapon_score_table_stats
+_G.dogma_gui_weapon_tooltips.ammo_display_label = ammo_display_label
 -- Prefer stats.script implementation when present (same function name).
-if not _G.dogma_tooltips_weapons.weapon_use_mag then
-	_G.dogma_tooltips_weapons.weapon_use_mag = function(wpn_sec)
-		local S = zzzz_dogma_tooltips_weapons_stats
+if not _G.dogma_gui_weapon_tooltips.weapon_use_mag then
+	_G.dogma_gui_weapon_tooltips.weapon_use_mag = function(wpn_sec)
+		local S = zzzz_dogma_gui_weapon_tooltips_stats
 		if S and S.weapon_use_mag then
 			return S.weapon_use_mag(wpn_sec)
 		end
 		return nil
 	end
 end
-if not _G.dogma_tooltips_weapons.weapon_reload_seconds then
-	_G.dogma_tooltips_weapons.weapon_reload_seconds = function(wpn_sec)
-		local S = zzzz_dogma_tooltips_weapons_stats
+if not _G.dogma_gui_weapon_tooltips.weapon_reload_seconds then
+	_G.dogma_gui_weapon_tooltips.weapon_reload_seconds = function(wpn_sec)
+		local S = zzzz_dogma_gui_weapon_tooltips_stats
 		if S and S.weapon_reload_seconds then
 			return S.weapon_reload_seconds(wpn_sec)
 		end
@@ -2825,8 +2825,8 @@ local function build_white_stat_xml(handler, obj, sec, gr, stat)
 		nclr = false
 	elseif gr.name == "ui_dogma_wpn_hit_power" then
 		value, nclr = utils_ui.get_stats_string_value(obj, sec, gr, stat)
-	elseif zzzz_dogma_tooltips_weapons_stats and zzzz_dogma_tooltips_weapons_stats.text_for_name then
-		value = zzzz_dogma_tooltips_weapons_stats.text_for_name(gr.name, obj, sec)
+	elseif zzzz_dogma_gui_weapon_tooltips_stats and zzzz_dogma_gui_weapon_tooltips_stats.text_for_name then
+		value = zzzz_dogma_gui_weapon_tooltips_stats.text_for_name(gr.name, obj, sec)
 		nclr = false
 	else
 		value, nclr = utils_ui.get_stats_string_value(obj, sec, gr, stat)
@@ -3190,5 +3190,5 @@ function on_game_start()
 		tostr(DOGMA ~= nil), tostr(ui_hooks_ok), tostr(details_hook_ok),
 		tostr(CONFIG.loaded.show_damage_table), tostr(CONFIG.loaded.show_hit_power),
 		tostr(CONFIG.loaded.show_mutant_damage), tostr(CONFIG.loaded.stat_row_placement),
-		tostr(zzzz_dogma_tooltips_weapons_stats and zzzz_dogma_tooltips_weapons_stats.NAME ~= nil)))
+		tostr(zzzz_dogma_gui_weapon_tooltips_stats and zzzz_dogma_gui_weapon_tooltips_stats.NAME ~= nil)))
 end

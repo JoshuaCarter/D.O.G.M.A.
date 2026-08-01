@@ -30,11 +30,11 @@ def main() -> int:
         / "src/menu/loadout_layout/configs/ui/ui_mm_faction_select_16.xml"
     )
     tooltip = (
-        REPO_ROOT / "src/tooltips/weapons/configs/ui/ui_dogma_weapon_tooltip.xml"
+        REPO_ROOT / "src/gui/weapon_tooltips/configs/ui/ui_dogma_weapon_tooltip.xml"
     )
     dots_xml = (
         REPO_ROOT
-        / "src/travel/true_fast_travel/configs/ui/map_spots_dogma_true_fast_travel.xml"
+        / "src/gameplay/true_fast_travel/configs/ui/map_spots_dogma_true_fast_travel.xml"
     )
 
     resolver = _resolver()

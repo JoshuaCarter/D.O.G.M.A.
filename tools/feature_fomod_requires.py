@@ -16,7 +16,7 @@ import dogma_mo2_lib as lib  # noqa: E402
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--feature", required=True, help="Feature path e.g. travel/true_fast_travel")
+    p.add_argument("--feature", required=True, help="Feature path e.g. gameplay/true_fast_travel")
     p.add_argument(
         "--manifest",
         default=str(_REPO / "config"),

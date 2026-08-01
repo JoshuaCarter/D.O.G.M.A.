@@ -1,7 +1,7 @@
 -- True Fast Travel: minimal sync time stepper (DOGMA-owned).
 -- Port of Simulated Time Skip advance_sync only - no overlay, catch-all, or bridges.
 --
--- Built as zzzz_dogma_travel_true_fast_travel_sim_time.script.
+-- Built as zzzz_dogma_gameplay_true_fast_travel_sim_time.script.
 -- Public: _G.dogma_sim_time.advance_sync(total_minutes, step_size)
 
 local DEFAULT_STEP = 3
@@ -85,7 +85,7 @@ local function advance_sync(total_minutes, step_size)
 	restore_alife(saved)
 	sync_active = false
 	if not ok then
-		printf("[dogma_travel_true_fast_travel] advance_sync failed: %s", tostring(err))
+		printf("[dogma_gameplay_true_fast_travel] advance_sync failed: %s", tostring(err))
 		return false
 	end
 	return true

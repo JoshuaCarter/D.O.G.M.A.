@@ -184,7 +184,7 @@ end
 -- No local ammo classify fallback - tip owns typing (buck/slug/slap/fmj/…).
 local function weapon_table_damage_stats(wpn_sec, dist)
 	dist = dist or DEFAULT_DIST
-	local tip = _G.dogma_tooltips_weapons
+	local tip = _G.dogma_gui_weapon_tooltips
 	if tip and tip.weapon_score_table_stats then
 		local ok, st = pcall(tip.weapon_score_table_stats, wpn_sec, dist)
 		if ok and st then
@@ -231,14 +231,14 @@ end
 
 -- Prefer Weapon Tooltips: 1 = magazine, 0 = rounds-reload.
 local function weapon_use_mag(wpn_sec)
-	local tip = _G.dogma_tooltips_weapons
+	local tip = _G.dogma_gui_weapon_tooltips
 	if tip and tip.weapon_use_mag then
 		local ok, t = pcall(tip.weapon_use_mag, wpn_sec)
 		if ok and (t == 0 or t == 1) then
 			return t
 		end
 	end
-	local S = rawget(_G, "zzzz_dogma_tooltips_weapons_stats")
+	local S = rawget(_G, "zzzz_dogma_gui_weapon_tooltips_stats")
 	if S and S.weapon_use_mag then
 		local ok, t = pcall(S.weapon_use_mag, wpn_sec)
 		if ok and (t == 0 or t == 1) then
@@ -265,4 +265,4 @@ _G.dogma_ballistics = {
 }
 
 -- Alias for callers that look under the tooltips namespace.
-_G.dogma_tooltips_weapons_ballistics = _G.dogma_ballistics
+_G.dogma_gui_weapon_tooltips_ballistics = _G.dogma_ballistics

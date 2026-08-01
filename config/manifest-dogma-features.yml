@@ -76,26 +76,26 @@ Weapon Stripper:
 
 Parts in Stashes:
   stage: DEV
-  path: items/parts_in_stashes
+  path: gameplay/parts_in_stashes
   desc: "Weapon parts in white stashes (RNG Attach tier/condition bands). Optional mechanic destock."
   requires:
     - RNG Attach
 
 Workshop Shared Stash:
   stage: DEV
-  path: items/workshop_shared_stash
+  path: gameplay/shared_stash
   desc: "One shared stash for all portable workshops; 1 workshop per level; carry weight = table + contents."
   requires:
     - Hideout Furniture
 
 Faster Skinning:
   stage: OMIT
-  path: mutants/skinning
+  path: gameplay/faster_skinning
   desc: "Faster mutant skinning."
 
 Melee Skinning:
   stage: DEV
-  path: mutants/melee_skinning
+  path: gameplay/melee_skinning
   desc: "Heavy knife stab to skin a mutant."
   mcm_set:
     - fddar/skinning/enable: "false"
@@ -103,7 +103,7 @@ Melee Skinning:
 
 PDA Go Away:
   stage: RELEASE
-  path: pda/stay_down
+  path: controls/pda_go_away
   desc: Stops the PDA reequipping after closing inventory or teleporting.
   disables:
     - Dorns_Dont_ReEquip_PDA
@@ -111,43 +111,43 @@ PDA Go Away:
 
 Campfire Healing:
   stage: RELEASE
-  path: player/campfire
+  path: gameplay/campfire_healing
   desc: "Heal near campfires when not in combat. Faster than current system and heals limbs if they have temporary health."
   disables:
     - 115- Campfire slowly regens life - arti
 
 Better Exo Power Drain:
   stage: DEV
-  path: player/exo
+  path: gameplay/exo_power
   desc: "Replaces Exosuit drain system. No drain when not moving and more drain when moving (compared to base G.A.M.M.A.)."
   enables:
     - 47- Powered Exos - arti
 
 Pose Controls:
   stage: RELEASE
-  path: player/pose_controls
+  path: controls/pose_controls
   desc: "Dedicated keys for sprint, crouch, walk, and prone which always set your pose accordingly."
 
 True Prone:
   stage: RELEASE
-  path: player/true_prone
+  path: controls/true_prone
   desc: Makes the player model actually go prone rather than just low crouch.
   disables:
     - xrMPE
 
 What the Fuck:
   stage: DEV
-  path: player/death_spectator
+  path: gameplay/death_spectator
   desc: "After death, press Tab to see what killed you and read a summary of recent damage sources."
 
 Better Equipable Controls:
   stage: DEV
-  path: player/equipment_controls
+  path: controls/equipment_controls
   desc: "Dedicated keys for equipping Melee, Pistol, Detector, Geiger Counter, RF Receiver, and Glowsticks."
 
 Dynamic Loadout:
   stage: DEV
-  path: menu/dynamic_loadout
+  path: gameplay/dynamic_loadout
   desc: "On New Game LoadLoadout, replace stock weapon/ammo/outfit/helmet shop options with scored ones under point caps; leave other loadout items alone. Disables R.N.G. and RNGLO."
   disables:
     - Randomizer for New Game
@@ -163,7 +163,7 @@ Loadout Layout:
 
 Weapon Tooltips:
   stage: RELEASE
-  path: tooltips/weapons
+  path: gui/weapon_tooltips
   desc: Adds detailed weapon performance stats to weapon tooltips.
   enables:
     - G.A.M.M.A. Accurate Defense Values
@@ -175,7 +175,7 @@ Stealth:
 
 True Fast Travel:
   stage: DEV
-  path: travel/true_fast_travel
+  path: gameplay/true_fast_travel
   desc: "Real path travel with spectator camera along the route, in-mod time simulation, LoS ambushes, walk-to-discover destinations. Blanks vanilla game_fast_travel so map FT does not return. Optional keybind teleports companions to you."
   disables:
     - 329- Fair Fast Travel - Catspaw
@@ -187,14 +187,14 @@ True Fast Travel:
 
 ADS Zoom:
   stage: RELEASE
-  path: zoom/ads_zoom
+  path: gameplay/ads_zoom
   desc: "Brings weapon model closer to camera when ADS (can adjust per gun+sight combo), with defaults for irons/sights/scopes"
   disables:
     - 72- Adjustable Scope View - sneaky
 
 Free Zoom:
   stage: RELEASE
-  path: zoom/free_zoom
+  path: gameplay/free_zoom
   desc: Freely zoom when not ADS or sprinting. Better input support than base G.A.M.M.A. (e.g. scroll wheel).
   disables:
     - 178- Free Zoom - SlowVibe

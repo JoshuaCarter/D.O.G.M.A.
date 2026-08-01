@@ -1917,7 +1917,7 @@ def _parse_features_block(feat_block: dict) -> dict[str, FeatureMeta]:
             else:
                 raise ValueError(
                     f"features.{key!r}: missing path: "
-                    f"(e.g. path: tooltips/weapons)"
+                    f"(e.g. path: gui/weapon_tooltips)"
                 )
             if is_common:
                 stage = parse_stage(meta.get("fomod", meta.get("stage", meta.get("level", "omit"))))

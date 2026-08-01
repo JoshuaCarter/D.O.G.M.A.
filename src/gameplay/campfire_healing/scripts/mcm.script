@@ -1,14 +1,14 @@
 function on_mcm_load(options)
-	local CONFIG = _G.dogma_player_campfire_conf
-	dogma_mcm.attach(options, "player", "ui_mcm_menu_dogma_player", {
-		id = "campfire",
+	local CONFIG = _G.dogma_gameplay_campfire_healing_conf
+	dogma_mcm.attach(options, "gameplay", "ui_mcm_menu_dogma_gameplay", {
+		id = "campfire_healing",
 		sh = true,
-		text = "ui_mcm_menu_dogma_player_campfire",
+		text = "ui_mcm_menu_dogma_gameplay_campfire_healing",
 		gr = dogma_mcm.with_header({
 			{
 				id = "page_description",
 				type = "desc",
-				text = "ui_mcm_dogma_player_campfire_page_description",
+				text = "ui_mcm_dogma_gameplay_campfire_healing_page_description",
 			},
 			{
 				id = "body_sec",
@@ -18,7 +18,7 @@ function on_mcm_load(options)
 				max = 100,
 				step = 1,
 				def = CONFIG.DEFAULTS["body_sec"],
-				hint = "dogma_player_campfire_body_sec",
+				hint = "dogma_gameplay_campfire_healing_body_sec",
 			},
 			{
 				id = "limb_sec",
@@ -28,7 +28,7 @@ function on_mcm_load(options)
 				max = 100,
 				step = 1,
 				def = CONFIG.DEFAULTS["limb_sec"],
-				hint = "dogma_player_campfire_limb_sec",
+				hint = "dogma_gameplay_campfire_healing_limb_sec",
 			},
 		}),
 	})

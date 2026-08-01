@@ -1,7 +1,7 @@
 -- Pose Controls MCM
 -- Crouch / prone / sprint / walk + Hold/Toggle live-read/write Options→Controls.
 
-local CONFIG = _G.dogma_player_pose_controls_conf
+local CONFIG = _G.dogma_controls_pose_controls_conf
 local KM = dogma_key_mirror_mcm
 
 local WALK_MIRROR = nil
@@ -65,10 +65,10 @@ function on_mcm_load(options)
 		return key_bindings and key_bindings.kACCEL
 	end):option("prone_key", "dogma_pose_controls_prone_key")
 
-	dogma_mcm.attach(options, "player", "ui_mcm_menu_dogma_player", {
+	dogma_mcm.attach(options, "controls", "ui_mcm_menu_dogma_controls", {
 		id = "pose_controls",
 		sh = true,
-		text = "ui_mcm_menu_dogma_player_pose_controls",
+		text = "ui_mcm_menu_dogma_controls_pose_controls",
 		gr = dogma_mcm.with_header(gr),
 	})
 end

@@ -1,9 +1,9 @@
--- items/workshop_shared_stash conf
+-- gameplay/shared_stash conf
 
 local defaults = {}
 
-_G.dogma_items_workshop_shared_stash_conf = {
-	MOD_ID = "dogma/items/workshop_shared_stash",
+_G.dogma_gameplay_shared_stash_conf = {
+	MOD_ID = "dogma/gameplay/shared_stash",
 	DEFAULTS = defaults,
 	loaded = {},
 	-- Base inv_weight of workshop_item (Hideout Furniture)
@@ -14,7 +14,7 @@ _G.dogma_items_workshop_shared_stash_conf = {
 	SHARED_SECTION = "workshop_shared_stash",
 }
 
-function _G.dogma_items_workshop_shared_stash_conf:ensure_dogma()
+function _G.dogma_gameplay_shared_stash_conf:ensure_dogma()
 	if not self.DOGMA then
 		self.DOGMA = dogma_common.load(self.MOD_ID)
 	end

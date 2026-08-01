@@ -94,7 +94,7 @@ local function is_ap_ammo(sec)
 	return false
 end
 
--- GL / RPG rounds (VOG, M209, OG-7B, …). Flag is set on the ammo section.
+-- GL / RPG rounds (VOG, M209, OG-7B, ...). Flag is set on the ammo section.
 local function is_explosive_ammo(sec)
 	if not sec or sec == "" then
 		return false
@@ -674,8 +674,8 @@ local NORM = {
 	ammo_ratio = 200, -- k_hit / k_ap
 }
 
--- Dump-mag sustained DPS: all hits, max RoF, full mag, then empty→full reload.
--- dps = (dmg × mag) / (mag×60/rpm + reload_s)
+-- Dump-mag sustained DPS: all hits, max RoF, full mag, then empty->full reload.
+-- dps = (dmg x mag) / (magx60/rpm + reload_s)
 local function sustained_dps(dmg, rpm, mag, reload_s)
 	dmg = dmg or 0
 	rpm = rpm or 0
@@ -710,7 +710,7 @@ local function reload_seconds_for(sec, mag, use_mag)
 	end
 	mag = mag or 1
 	if use_mag == 0 then
-		-- Rough tube/break empty→full: open/close + per-round.
+		-- Rough tube/break empty->full: open/close + per-round.
 		return 1.2 + 0.7 * math.max(mag, 1)
 	end
 	return 2.5
@@ -1401,7 +1401,7 @@ local function wrap_load_loadout(cls)
 		end
 
 		-- Stock LoadLoadout first (fast). Heavy scan/score is deferred so New Game
-		-- can ShowDialog — otherwise the ctor blocks and the click looks dead.
+		-- can ShowDialog - otherwise the ctor blocks and the click looks dead.
 		base(self, false)
 
 		local faction = self.selected_faction or "stalker"
@@ -1894,7 +1894,7 @@ end
 
 -- Frozen raw stats (not live ini). Enough to see weight / cost_mult slider effect.
 -- mut = armor col 1; mutant = tip mutant-row max (preview uses max(mut, mutant) as mut dmg).
--- reload = empty→full seconds (approx; live scoring uses tip motion lengths).
+-- reload = empty->full seconds (approx; live scoring uses tip motion lengths).
 local PREVIEW_GUNS = {
 	{
 		name = "PM", ammo = "9x18",

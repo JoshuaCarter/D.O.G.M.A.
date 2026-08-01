@@ -323,6 +323,10 @@ stage_file() {
 	printf '%s\n' "$dest_rel" >> "$MANIFEST"
 }
 
+# Precomputed once (src_in_scope is hot on Windows — avoid per-file $(subshell)s).
+FEATURE_SRC_DIRS=()
+ONLY_SRC_DIR=""
+
 src_in_scope() {
 	local rel="${1#"$SRC"/}"
 	rel="${rel//\\/\/}"
@@ -330,9 +334,7 @@ src_in_scope() {
 	case "$ONLY" in
 		all | "")
 			[[ "$rel" == _common/* ]] && return 0
-			local f
-			for f in "${FEATURES[@]}"; do
-				sdir="$(src_feature_dir "$f")"
+			for sdir in "${FEATURE_SRC_DIRS[@]}"; do
 				[[ "$rel" == "$sdir"/* || "$rel" == "$sdir" ]] && return 0
 			done
 			return 1
@@ -341,8 +343,7 @@ src_in_scope() {
 			[[ "$rel" == _common/* ]]
 			;;
 		*)
-			sdir="$(src_feature_dir "$ONLY")"
-			[[ "$rel" == "$sdir"/* || "$rel" == "$sdir" ]]
+			[[ "$rel" == "$ONLY_SRC_DIR"/* || "$rel" == "$ONLY_SRC_DIR" ]]
 			;;
 	esac
 }
@@ -350,9 +351,9 @@ src_in_scope() {
 case "$ONLY" in
 	all | "" | common) ;;
 	*)
-		sdir="$(src_feature_dir "$ONLY")"
-		[[ -d "$SRC/$sdir" ]] || {
-			echo "build: DOGMA_ONLY=$ONLY not found at $SRC/$sdir" >&2
+		ONLY_SRC_DIR="$(src_feature_dir "$ONLY")"
+		[[ -d "$SRC/$ONLY_SRC_DIR" ]] || {
+			echo "build: DOGMA_ONLY=$ONLY not found at $SRC/$ONLY_SRC_DIR" >&2
 			exit 1
 		}
 		;;
@@ -370,6 +371,10 @@ if [[ "$ONLY" == "all" || "$ONLY" == "" ]]; then
 		exit 1
 	fi
 	echo "build: config manifests stage>=dev (${#FEATURES[@]} features)"
+	FEATURE_SRC_DIRS=()
+	for f in "${FEATURES[@]}"; do
+		FEATURE_SRC_DIRS+=("$(src_feature_dir "$f")")
+	done
 fi
 
 # Fresh build/: clear everything first so ALAO report + outputs land in an empty tree.
@@ -394,12 +399,15 @@ run_alao_local || exit 1
 echo "building..."
 
 # Stage every shippable file (quiet).
+# Prune authoring trees early - assets/ can hold multi-GB .blend/.mp4 that must
+# never ship (map_src_file also rejects them; skipping the walk avoids Windows
+# AV + bash path work on those files).
 _emit_kind=""
 while IFS= read -r -d '' src_path; do
 	src_in_scope "$src_path" || continue
 	map_src_file "$src_path" || continue
 	stage_file "$_emit_kind" "$_emit_src" "$_emit_rel" "$_emit_path_key" "$_emit_base"
-done < <(find "$SRC" -type f -print0)
+done < <(find "$SRC" \( -name assets -o -name installer -o -name __pycache__ \) -prune -o -type f -print0)
 
 sort -u "$MANIFEST" -o "$MANIFEST"
 sort -u "$MANIFEST_MODROOT" -o "$MANIFEST_MODROOT"

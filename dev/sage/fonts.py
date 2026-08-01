@@ -326,7 +326,12 @@ class FontResolver:
                 out.paste(tinted, (int(round(x)), y), tinted)
                 x += g.width + atlas.width_correction
             y += atlas.height
-        return _pil_to_qpixmap(out)
+        # Soften like engine bilinear UI upscale (up then down keeps layout size).
+        w, h = out.size
+        soft = out.resize(
+            (max(1, w * 2), max(1, h * 2)), Image.Resampling.BILINEAR
+        ).resize((w, h), Image.Resampling.BILINEAR)
+        return _pil_to_qpixmap(soft)
 
     def render_fallback(
         self, text: str, *, point_size: int, color: QColor, max_width: int

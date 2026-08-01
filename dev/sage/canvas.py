@@ -255,6 +255,10 @@ class WidgetItem(QGraphicsRectItem):
             QGraphicsItem.GraphicsItemFlag.ItemStacksBehindParent, True
         )
         self._text_item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        # Engine upscales 1024 UI with bilinear filtering; avoid nearest crunch.
+        self._text_item.setTransformationMode(
+            Qt.TransformationMode.SmoothTransformation
+        )
         self._text_item.hide()
         # Scene-level outside labels + idle border (shared with atlas editor).
         self._caption = OutsideLabelChrome()

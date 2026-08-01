@@ -8,6 +8,8 @@ Virtual **1024×768** HUD pixels (engine scales to the display). Child `x`/`y` a
 
 **Script parenting:** Anomaly often parents `main_dialog` siblings to `frame_back` even when they are XML siblings (see `ui_mm_faction_select.script`). The editor applies that heuristic so the preview matches in-game placement.
 
+**Widescreen `_16`:** On 16:9 (and similar), the engine opens `foo_16.xml` when scripts call `ParseFile("foo.xml")`. Editing only the non-`_16` file will show correctly in SAGE but not in-game. Keep both in sync (or re-enable DART, which `#include`s the `_16` from the base name).
+
 ## Run
 
 Double-click (no console):

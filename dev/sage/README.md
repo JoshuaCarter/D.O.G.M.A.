@@ -74,6 +74,17 @@ optional XML `x/y/width/height` crop). The texture picker defaults to atlas ids
 Neither writes drive paths — deploy flattens `src/…/textures/` into
 `gamedata/textures/` the same way.
 
+**Canvas text:** WYSIWYG paints `<text>` bodies after string-table resolve
+(`st_cap_check_story` → “Story mode”) using Anomaly **bitmap fonts**
+(`letterica16` → `ui_font_letter_16_1024` DDS + `.ini` glyphs), with XML
+`font` / `align` / `vert_align` / `r,g,b,a`. Missing atlas falls back to a
+plain QFont stand-in so captions are never blank.
+
+**Local cache (`dev/sage/cache/`):** shader-cache style — path indexes (DDS /
+descr / text file lists) and decoded font atlases. Missing entries are built on
+demand and appended; **delete the folder** to force a full regen. Rescan asset
+roots clears the path index. Not shipped / gitignored.
+
 **Atlas editor:** Open a `textures_descr` XML (path or `<w>/<file name>/<texture id>`
 shape) to edit UV boxes on the DDS sheet — same WYSIWYG / XML / Log tabs plus
 sidebars (region list, id + x/y/w/h, Options border/fill/labels, Undo). Labels /

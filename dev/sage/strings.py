@@ -11,6 +11,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
 
+from .cache_store import KIND_TEXT_FILES, PathIndex, roots_fingerprint
 from .model import LayoutNode
 
 # Engine color / format codes in string bodies, e.g. %c[0,255,255,255]
@@ -62,10 +63,12 @@ class StringResolver:
         text_scan_roots: list[Path],
         gamedata_text_roots: list[Path],
         lang: str = "eng",
+        path_index: PathIndex | None = None,
     ) -> None:
         self.text_scan_roots = text_scan_roots
         self.gamedata_text_roots = gamedata_text_roots
         self.lang = lang
+        self.path_index = path_index
         self._strings: dict[str, tuple[str, Path]] = {}
         self._missing: set[str] = set()
         self._text_files: list[Path] | None = None
@@ -86,6 +89,14 @@ class StringResolver:
     def _iter_text_files(self) -> list[Path]:
         if self._text_files is not None:
             return self._text_files
+        fp = roots_fingerprint(
+            list(self.gamedata_text_roots) + list(self.text_scan_roots)
+        ) + f"|lang={self.lang.lower()}"
+        if self.path_index is not None:
+            cached = self.path_index.get_file_list(KIND_TEXT_FILES, fp)
+            if cached is not None:
+                self._text_files = cached
+                return cached
         files: list[Path] = []
         seen: set[Path] = set()
 
@@ -130,6 +141,8 @@ class StringResolver:
                 continue
 
         self._text_files = files
+        if self.path_index is not None:
+            self.path_index.put_file_list(KIND_TEXT_FILES, fp, files)
         return files
 
     def warm_ids(self, ids: set[str]) -> None:

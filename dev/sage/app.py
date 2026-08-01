@@ -84,6 +84,8 @@ from .settings import (
     validate_anomaly_root,
     validate_gamma_root,
 )
+from .cache_store import PathIndex
+from .fonts import FontResolver
 from .strings import StringResolver
 from .string_picker import StringPickerDialog
 from .texture_picker import TexturePickerDialog
@@ -917,11 +919,15 @@ class MainWindow(QMainWindow):
         self.descr_doc = DescrDocument()
         self._doc_mode = DOC_MODE_UI
         # Roots from settings only — no full-tree scan at launch.
+        self.path_index = PathIndex.load()
         self.resolver = self._make_resolver()
         self.strings = self._make_string_resolver()
+        self.fonts = self._make_font_resolver()
         self._resources_ready = True
         self.scene = UiScene(
             self.resolver,
+            strings=self.strings,
+            fonts=self.fonts,
             label_font_size=clamp_label_font_size(self.settings.get("label_font_size")),
             show_element_labels=bool(self.settings.get("show_element_labels", False)),
             show_box_border=bool(self.settings.get("show_box_border", False)),
@@ -1555,9 +1561,12 @@ class MainWindow(QMainWindow):
         """Attach saved directory lists — no full asset scan."""
         if getattr(self, "_resources_ready", False):
             return
+        self.path_index = PathIndex.load()
         self.resolver = self._make_resolver()
         self.strings = self._make_string_resolver()
+        self.fonts = self._make_font_resolver()
         self.scene.rebind_resolver(self.resolver)
+        self.scene.rebind_text_resources(strings=self.strings, fonts=self.fonts)
         self.descr_board.resolver = self.resolver
         self.descr_board.scene.resolver = self.resolver
         self._resources_ready = True
@@ -1579,20 +1588,23 @@ class MainWindow(QMainWindow):
         self._bind_resource_roots()
 
     def _warm_resources_for_doc(self, doc: LayoutNode) -> None:
-        """Resolve only atlas / DDS / string ids this document references."""
+        """Resolve only atlas / DDS / string / font ids this document references."""
         self._bind_resource_roots()
         t0 = time.perf_counter()
         self.resolver.clear_cache()
         self.strings.clear_cache()
+        self.fonts.clear_cache()
         self.resolver.warm_for_document(doc)
         self.strings.warm_for_document(doc)
+        self.fonts.warm_for_document(doc)
         elapsed = time.perf_counter() - t0
         _log_file.info(
-            "doc resources warmed in %.2fs atlas=%s dds=%s strings=%s",
+            "doc resources warmed in %.2fs atlas=%s dds=%s strings=%s fonts=%s",
             elapsed,
             self.resolver.atlas_count,
             self.resolver.dds_count,
             self.strings.count,
+            self.fonts.count,
         )
 
     def _show_startup_chooser(self) -> None:
@@ -1620,6 +1632,7 @@ class MainWindow(QMainWindow):
             gamedata_texture_roots=_paths(s.get("gamedata_texture_roots", [])),
             descr_scan_roots=_paths(s.get("textures_descr_roots", [])),
             gamedata_descr_roots=_paths(s.get("gamedata_descr_roots", [])),
+            path_index=self.path_index,
         )
 
     def _make_string_resolver(self) -> StringResolver:
@@ -1627,7 +1640,11 @@ class MainWindow(QMainWindow):
         return StringResolver(
             text_scan_roots=_paths(s.get("text_roots", [])),
             gamedata_text_roots=_paths(s.get("gamedata_text_roots", [])),
+            path_index=self.path_index,
         )
+
+    def _make_font_resolver(self) -> FontResolver:
+        return FontResolver(self.resolver, path_index=self.path_index)
 
     def _build_menu(self) -> None:
         file_menu = self.menuBar().addMenu("&File")
@@ -2544,6 +2561,9 @@ class MainWindow(QMainWindow):
         try:
             rescan_asset_roots(self.settings)
             save_settings(self.settings)
+            # Drop path index so next warm rediscovers under new roots.
+            if getattr(self, "path_index", None) is not None:
+                self.path_index.invalidate()
         finally:
             QApplication.restoreOverrideCursor()
         n_tex = len(self.settings.get("gamedata_texture_roots") or [])
@@ -2628,6 +2648,7 @@ class MainWindow(QMainWindow):
         elif self.doc.doc:
             self._warm_resources_for_doc(self.doc.doc)
             self.scene.rebind_resolver(self.resolver)
+            self.scene.rebind_text_resources(strings=self.strings, fonts=self.fonts)
             self.scene.set_document(self.doc.doc)
         self._on_stack_peers_changed(frozenset())
         self._log(

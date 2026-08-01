@@ -43,8 +43,10 @@ from .box_chrome import (
     FocusCaptionOverlay,
 )
 from .diaglog import get_logger
+from .fonts import FontResolver
 from .model import LayoutNode
 from .settings import LABEL_FONT_MIN, UI_HEIGHT, UI_WIDTH
+from .strings import StringResolver
 from .textures import TextureResolver, gamma_relative_path
 from .undo import GeoEdit, GeoState, UndoStack
 
@@ -214,6 +216,8 @@ class WidgetItem(QGraphicsRectItem):
         node: LayoutNode,
         resolver: TextureResolver,
         *,
+        strings: StringResolver | None = None,
+        fonts: FontResolver | None = None,
         label_font_size: int = 5,
         show_element_labels: bool = False,
         show_box_border: bool = False,
@@ -222,6 +226,8 @@ class WidgetItem(QGraphicsRectItem):
         super().__init__(0, 0, max(node.width, 1), max(node.height, 1))
         self.node = node
         self.resolver = resolver
+        self.strings = strings
+        self.fonts = fonts
         self.label_font_size = max(LABEL_FONT_MIN, int(label_font_size))
         self.show_element_labels = show_element_labels
         self.show_box_border = show_box_border
@@ -242,6 +248,14 @@ class WidgetItem(QGraphicsRectItem):
             QGraphicsItem.GraphicsItemFlag.ItemStacksBehindParent, True
         )
         self._pixmap_item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        # UI string text (engine font) above texture, under chrome.
+        self._text_item = QGraphicsPixmapItem(self)
+        self._text_item.setZValue(-1)
+        self._text_item.setFlag(
+            QGraphicsItem.GraphicsItemFlag.ItemStacksBehindParent, True
+        )
+        self._text_item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        self._text_item.hide()
         # Scene-level outside labels + idle border (shared with atlas editor).
         self._caption = OutsideLabelChrome()
         self._idle_chrome = IdleBorderChrome()
@@ -311,9 +325,11 @@ class WidgetItem(QGraphicsRectItem):
         if not visible and self.isSelected():
             self.setSelected(False)
         self._apply_texture()
+        self._apply_text()
         self._apply_label()
         if not visible:
             self._idle_border.hide()
+            self._text_item.hide()
             self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemHasNoContents, True)
             self._updating = False
             return
@@ -344,7 +360,10 @@ class WidgetItem(QGraphicsRectItem):
                 tip += f"\n{gamma_relative_path(resolved.path)}"
         if self.node.text and self.node.text.content:
             tip += f"\ntext: {self.node.text.content}"
-            # String resolution is owned by the app Log/Properties (StringResolver).
+            if self.strings is not None:
+                s = self.strings.resolve(self.node.text.content)
+                if s.text and not s.error:
+                    tip += f"\n→ {s.text}"
         self.setToolTip(tip)
         self._updating = False
 
@@ -394,6 +413,69 @@ class WidgetItem(QGraphicsRectItem):
         self._pixmap_item.setPixmap(pix)
         self._pixmap_item.setPos(0, 0)
         self._pixmap_item.setVisible(True)
+
+    def _apply_text(self) -> None:
+        """Paint resolved string-table text with engine bitmap fonts."""
+        self._text_item.setPixmap(QPixmap())
+        self._text_item.hide()
+        ref = self.node.text
+        if ref is None or not (ref.content or "").strip():
+            return
+        content = ref.content.strip()
+        body = content
+        if self.strings is not None:
+            resolved = self.strings.resolve(content)
+            if resolved.error and not resolved.is_literal:
+                body = content
+            else:
+                body = resolved.text or content
+        if not body.strip():
+            return
+        color = QColor(
+            ref.r if ref.r is not None else 255,
+            ref.g if ref.g is not None else 255,
+            ref.b if ref.b is not None else 255,
+            ref.a if ref.a is not None else 255,
+        )
+        font_name = (ref.font or "").strip() or "letterica16"
+        pix = QPixmap()
+        if self.fonts is not None:
+            atlas = self.fonts.resolve_font(font_name)
+            if atlas is not None:
+                pix = self.fonts.render_text(atlas, body, color)
+            else:
+                # Approx point size from font name digits (letterica16 → 16).
+                digits = "".join(ch for ch in font_name if ch.isdigit())
+                pt = int(digits) if digits else 16
+                pix = self.fonts.render_fallback(
+                    body,
+                    point_size=pt,
+                    color=color,
+                    max_width=max(int(self.node.width), 1),
+                )
+        if pix.isNull():
+            return
+        box_w = max(float(self.node.width), 1.0)
+        box_h = max(float(self.node.height), 1.0)
+        tw = float(pix.width())
+        th = float(pix.height())
+        align = (ref.align or "l").lower()
+        valign = (ref.vert_align or "c").lower()
+        if align in ("c", "center"):
+            x = (box_w - tw) / 2.0
+        elif align in ("r", "right"):
+            x = box_w - tw
+        else:
+            x = 0.0
+        if valign in ("t", "top"):
+            y = 0.0
+        elif valign in ("b", "bottom"):
+            y = box_h - th
+        else:
+            y = (box_h - th) / 2.0
+        self._text_item.setPixmap(pix)
+        self._text_item.setPos(x, y)
+        self._text_item.show()
 
     def boundingRect(self) -> QRectF:  # noqa: N802
         # Labels are scene-level overlays (not children) - do not unite their rects here.
@@ -659,6 +741,8 @@ class UiScene(QGraphicsScene):
         self,
         resolver: TextureResolver,
         *,
+        strings: StringResolver | None = None,
+        fonts: FontResolver | None = None,
         label_font_size: int = 5,
         show_element_labels: bool = False,
         show_box_border: bool = False,
@@ -666,6 +750,8 @@ class UiScene(QGraphicsScene):
     ) -> None:
         super().__init__(0, 0, UI_WIDTH, UI_HEIGHT)
         self.resolver = resolver
+        self.strings = strings
+        self.fonts = fonts
         self.label_font_size = max(LABEL_FONT_MIN, int(label_font_size))
         self.show_element_labels = show_element_labels
         self.show_box_border = show_box_border
@@ -931,6 +1017,8 @@ class UiScene(QGraphicsScene):
             item = WidgetItem(
                 node,
                 self.resolver,
+                strings=self.strings,
+                fonts=self.fonts,
                 label_font_size=self.label_font_size,
                 show_element_labels=self.show_element_labels,
                 show_box_border=self.show_box_border,
@@ -1031,6 +1119,23 @@ class UiScene(QGraphicsScene):
         self.resolver = resolver
         for item in self._items.values():
             item.resolver = resolver
+            item.refresh_look()
+
+    def rebind_text_resources(
+        self,
+        *,
+        strings: StringResolver | None = None,
+        fonts: FontResolver | None = None,
+    ) -> None:
+        if strings is not None:
+            self.strings = strings
+        if fonts is not None:
+            self.fonts = fonts
+        for item in self._items.values():
+            if strings is not None:
+                item.strings = strings
+            if fonts is not None:
+                item.fonts = fonts
             item.refresh_look()
 
     def hover_path(self) -> str | None:

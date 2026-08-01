@@ -1,0 +1,100 @@
+--[[
+	No Sell Guns / Attachs / Parts
+
+	Blocks the player from selling guns, weapon parts (prt_w*), and
+	attachments (scopes / silencers / GLs / BaS kits via IsItem).
+
+	Never touches: knives, ammo boxes, magazines, grenades, crafting scrap
+	(prt_i*), repair/sewing kits, tools, outfits, etc.
+	Buying from traders is unchanged (mode 1 = player selling only).
+]]
+
+local original_get_trade_status
+local hooked = false
+
+-- Categories that must always remain sellable (checked first).
+local function is_never_blocked(obj, sec)
+	if not sec then
+		return true
+	end
+	-- Ammo boxes / grenade ammo / fake ammo markers
+	if IsItem then
+		if IsItem("ammo", sec) or IsItem("grenade_ammo", sec) or IsItem("fake_ammo", sec) then
+			return true
+		end
+	end
+	if IsAmmo and IsAmmo(obj) then
+		return true
+	end
+	-- Magazines Redux (kind w_ammo, class II_ATTCH — not IsItem("ammo"))
+	local kind = ini_sys and ini_sys:r_string_ex(sec, "kind")
+	if kind == "w_ammo" then
+		return true
+	end
+	-- Thrown grenades (not underbarrel GL attachments)
+	if IsGrenade and IsGrenade(obj) then
+		return true
+	end
+	-- Knives / melee stay sellable
+	if IsMelee and IsMelee(obj) then
+		return true
+	end
+	return false
+end
+
+-- Weapon parts only — prefix match so prt_i* scrap never hits.
+local function is_weapon_part(sec)
+	return sec and string.sub(sec, 1, 5) == "prt_w"
+end
+
+-- Scopes, silencers, GLs; BaS/GIMP kits use repair_type=scope → IsItem("scope").
+local function is_attachment(sec)
+	if not (sec and IsItem) then
+		return false
+	end
+	return IsItem("scope", sec) or IsItem("sil", sec) or IsItem("gl", sec)
+end
+
+-- Guns only (IsWeapon minus anything already allowed above).
+local function is_sell_blocked_gun(obj)
+	return obj and IsWeapon and IsWeapon(obj)
+end
+
+local function should_block_player_sell(obj)
+	if not obj then
+		return false
+	end
+	local sec = obj:section()
+	if is_never_blocked(obj, sec) then
+		return false
+	end
+	if is_weapon_part(sec) or is_attachment(sec) then
+		return true
+	end
+	return is_sell_blocked_gun(obj)
+end
+
+-- Status 2 = st_no_trade_tip_2 (unsellable). mode 1 = NPC buying from player.
+local function patched_get_trade_status(obj, profile)
+	if profile and profile.mode == 1 and should_block_player_sell(obj) then
+		return 2
+	end
+	return original_get_trade_status(obj, profile)
+end
+
+local function try_hook()
+	if hooked then
+		return
+	end
+	if not (utils_item and utils_item.get_item_trade_status) then
+		return
+	end
+	original_get_trade_status = utils_item.get_item_trade_status
+	utils_item.get_item_trade_status = patched_get_trade_status
+	hooked = true
+end
+
+function on_game_start()
+	try_hook()
+	RegisterScriptCallback("actor_on_first_update", try_hook)
+end

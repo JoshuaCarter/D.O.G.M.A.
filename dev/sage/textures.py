@@ -7,6 +7,7 @@ not built at launch — atlas/DDS lookups run for the IDs a loaded document need
 from __future__ import annotations
 
 import codecs
+import struct
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -14,7 +15,48 @@ from xml.etree import ElementTree as ET
 
 from PIL import Image
 
+from .cache_store import KIND_DESCR_FILES, PathIndex, roots_fingerprint
 from .model import LayoutNode, TextureRef
+
+
+def open_dds_image(path: Path | str) -> Image.Image | None:
+    """Open a DDS as RGBA. Falls back for Stalker A8 font atlases PIL rejects."""
+    path_str = str(path)
+    try:
+        img = Image.open(path_str)
+        img.load()
+        return img.convert("RGBA")
+    except (OSError, NotImplementedError, ValueError):
+        pass
+    try:
+        raw = Path(path_str).read_bytes()
+    except OSError:
+        return None
+    if len(raw) < 128 or raw[:4] != b"DDS ":
+        return None
+    # Standard DDS_HEADER: height @ +12, width @ +16 (after magic).
+    try:
+        height, width = struct.unpack_from("<2I", raw, 12)
+    except struct.error:
+        return None
+    if width <= 0 or height <= 0 or width > 8192 or height > 8192:
+        return None
+    payload = raw[128:]
+    need = width * height
+    if len(payload) < need:
+        return None
+    # A8 / L8 font sheets: 1 byte/pixel → white RGB + alpha.
+    if len(payload) == need or len(payload) >= need:
+        alpha = payload[:need]
+        rgba = bytearray(need * 4)
+        for i, a in enumerate(alpha):
+            o = i * 4
+            rgba[o] = 255
+            rgba[o + 1] = 255
+            rgba[o + 2] = 255
+            rgba[o + 3] = a
+        return Image.frombytes("RGBA", (width, height), bytes(rgba))
+    return None
 
 # Init3tButton / checkbox / radio: XML names the stem; engine appends state.
 _STATE_SUFFIXES = ("_e", "_h", "_t", "_d", "_s", "_u")
@@ -267,11 +309,13 @@ class TextureResolver:
         gamedata_texture_roots: list[Path],
         descr_scan_roots: list[Path],
         gamedata_descr_roots: list[Path],
+        path_index: PathIndex | None = None,
     ) -> None:
         self.texture_scan_roots = texture_scan_roots
         self.gamedata_texture_roots = gamedata_texture_roots
         self.descr_scan_roots = descr_scan_roots
         self.gamedata_descr_roots = gamedata_descr_roots
+        self.path_index = path_index
         # Lazy caches — filled by warm_* / first lookup, not by scanning everything.
         self._atlas: dict[str, AtlasEntry] = {}
         self._atlas_missing: set[str] = set()
@@ -291,8 +335,10 @@ class TextureResolver:
         self._resolve_cached.cache_clear()
 
     def rebuild_indexes(self) -> None:
-        """Compatibility no-op — indexes are demand-driven now."""
+        """Clear memory + disk path index (fonts revalidate via mtime)."""
         self.clear_cache()
+        if self.path_index is not None:
+            self.path_index.invalidate()
 
     @property
     def atlas_count(self) -> int:
@@ -305,6 +351,14 @@ class TextureResolver:
     def _iter_descr_files(self) -> list[Path]:
         if self._descr_files is not None:
             return self._descr_files
+        fp = roots_fingerprint(
+            list(self.gamedata_descr_roots) + list(self.descr_scan_roots)
+        )
+        if self.path_index is not None:
+            cached = self.path_index.get_file_list(KIND_DESCR_FILES, fp)
+            if cached is not None:
+                self._descr_files = cached
+                return cached
         files: list[Path] = []
         seen: set[Path] = set()
         for root in self.gamedata_descr_roots:
@@ -340,6 +394,8 @@ class TextureResolver:
                 seen.add(key)
                 files.append(path)
         self._descr_files = files
+        if self.path_index is not None:
+            self.path_index.put_file_list(KIND_DESCR_FILES, fp, files)
         return files
 
     def _ingest_descr_for_ids(self, wanted: set[str]) -> None:
@@ -454,6 +510,8 @@ class TextureResolver:
             self._dds_index[key] = path.resolve()
         except OSError:
             self._dds_index[key] = path
+        if self.path_index is not None:
+            self.path_index.put_dds(key, path)
         self._resolve_cached.cache_clear()
 
     def remember_atlas(self, entry: AtlasCatalogEntry) -> None:
@@ -547,6 +605,12 @@ class TextureResolver:
         if key in self._dds_missing:
             return None
 
+        if self.path_index is not None:
+            cached = self.path_index.get_dds(key)
+            if cached is not None:
+                self._dds_index[key] = cached
+                return cached
+
         rel = Path(*key.split("\\")).with_suffix(".dds")
         hit: Path | None = None
         for root in self._iter_dds_search_roots():
@@ -555,6 +619,8 @@ class TextureResolver:
                 hit = candidate
         if hit is not None:
             self._dds_index[key] = hit
+            if self.path_index is not None:
+                self.path_index.put_dds(key, hit)
             return hit
         self._dds_missing.add(key)
         return None
@@ -591,12 +657,7 @@ class TextureResolver:
 
     @lru_cache(maxsize=96)
     def _open_dds(self, path_str: str) -> Image.Image | None:
-        try:
-            img = Image.open(path_str)
-            img.load()
-            return img.convert("RGBA")
-        except OSError:
-            return None
+        return open_dds_image(path_str)
 
     def resolve_ref(self, ref: TextureRef | None) -> ResolvedTexture:
         if ref is None or not ref.name:

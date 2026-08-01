@@ -3,7 +3,7 @@
 
 	Requires RNG Attach. Chains after its set_random_stash wrap, then rolls
 	weapon parts into the box when RNG added loot. Mechanics always stripped
-	of prt_w*.
+	of prt_w*. (Sell block for parts lives in tweaks/no_sell_guns_attachs_parts.)
 
 	Edit roll_parts() below - that is the single place for spawn math.
 ]]
@@ -49,6 +49,10 @@ local original_set_random_stash
 local original_trader_update
 local hooked_stash = false
 local hooked_trader = false
+
+local function is_weapon_part(sec)
+	return sec and string.find(sec, "prt_w", 1, true) ~= nil
+end
 
 local function log(msg)
 	if DOGMA and DOGMA.dbg and DOGMA.dbg.logging() then
@@ -237,7 +241,7 @@ local function patched_trader_update(npc)
 	end
 	if trader_autoinject.get_trader_type(npc) == trader_autoinject.MECHANIC then
 		npc:iterate_inventory(function(_temp, item)
-			if item and string.find(item:section(), "prt_w", 1, true) then
+			if item and is_weapon_part(item:section()) then
 				alife_release_id(item:id())
 			end
 		end)

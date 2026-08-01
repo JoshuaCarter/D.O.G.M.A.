@@ -3,11 +3,11 @@
 
 	Patches Powered Exos (arti) manage_drain so idle / run / sprint MCM values
 	are independent multipliers on suit+PSU base rate - not stacked
-	(arti stock: sprint = drain * sprint_drain). Options live on arti's
-	Powered Exoskeletons page via scripts/override/exo_mcm.script.
+	(arti stock: sprint = drain * sprint_drain). Options: DOGMA → Gameplay → Exo Power.
 ]]
 
 local CONFIG = _G.dogma_gameplay_exo_power_conf
+local DOGMA
 
 local suit_drain = {}
 local warn = false
@@ -26,25 +26,40 @@ local function load_suit_drain()
 	end
 end
 
-local function cfg(key)
-	local def = CONFIG.DEFAULTS[key]
-	if exo_mcm and exo_mcm.get_config then
-		local value = exo_mcm.get_config(key)
-		if value ~= nil then
-			return tonumber(value) or def
-		end
+local function clamp_mult(key, value)
+	local def = CONFIG.DEFAULTS[key] or 0
+	local lo = def
+	local hi = (def > 0) and (def * 2) or 0
+	value = tonumber(value)
+	if value == nil then
+		return def
 	end
-	return def
+	if value < lo then
+		return lo
+	end
+	if value > hi then
+		return hi
+	end
+	return value
+end
+
+local function on_option_change()
+	if not (DOGMA and DOGMA.mcm) then
+		return
+	end
+	CONFIG.loaded.base_drain = clamp_mult("base_drain", DOGMA.mcm.number(CONFIG.MOD_ID, "base_drain", CONFIG.DEFAULTS.base_drain))
+	CONFIG.loaded.run_drain = clamp_mult("run_drain", DOGMA.mcm.number(CONFIG.MOD_ID, "run_drain", CONFIG.DEFAULTS.run_drain))
+	CONFIG.loaded.sprint_drain = clamp_mult("sprint_drain", DOGMA.mcm.number(CONFIG.MOD_ID, "sprint_drain", CONFIG.DEFAULTS.sprint_drain))
 end
 
 local function mult_for_move()
 	if IsMoveState("mcSprint") then
-		return cfg("sprint_drain")
+		return CONFIG.loaded.sprint_drain
 	end
 	if IsMoveState("mcAnyMove") then
-		return cfg("run_drain")
+		return CONFIG.loaded.run_drain
 	end
-	return cfg("base_drain")
+	return CONFIG.loaded.base_drain
 end
 
 local function manage_drain()
@@ -88,8 +103,10 @@ local function apply()
 end
 
 function on_game_start()
-	dogma_common.load(CONFIG.MOD_ID)
+	DOGMA = dogma_common.load(CONFIG.MOD_ID)
+	on_option_change()
 	load_suit_drain()
 	apply()
 	RegisterScriptCallback("actor_on_first_update", apply)
+	RegisterScriptCallback("on_option_change", on_option_change)
 end

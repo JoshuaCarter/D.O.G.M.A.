@@ -1,0 +1,176 @@
+--[[
+	No Hostile PDA Chatter
+
+	Hides ambient Dynamic News broadcast radio from hostile factions:
+	  - Faction nets (SOS, loot, artifact, trade, nearby combat, …)
+	  - Open "general" channel when speaker/subject is hostile
+
+	Enemies would not SOS/loot-announce to you; story/quest tips and other
+	direct give_game_news / xpda.send paths are untouched.
+
+	Hooks DynamicNewsManager:PushToChannel only - same inject point as
+	dEmergence's DNM patch, after their wrap (zzzz_ load order).
+]]
+
+local CONFIG = _G.dogma_tweaks_hide_hostile_pda_chatter_conf
+local DOGMA
+
+local FACTIONS = {
+	stalker = true,
+	monolith = true,
+	csky = true,
+	army = true,
+	killer = true,
+	ecolog = true,
+	dolg = true,
+	freedom = true,
+	bandit = true,
+	greh = true,
+	isg = true,
+	renegade = true,
+}
+
+local function log(msg)
+	if DOGMA and DOGMA.dbg and DOGMA.dbg.logging and DOGMA.dbg.logging() then
+		DOGMA.dbg.log(CONFIG.MOD_ID, tostring(msg))
+	end
+end
+
+local function dnm_class()
+	if DynamicNewsManager and type(DynamicNewsManager.PushToChannel) == "function" then
+		return DynamicNewsManager
+	end
+	local mod = rawget(_G, "dynamic_news_manager")
+	if mod and mod.DynamicNewsManager and type(mod.DynamicNewsManager.PushToChannel) == "function" then
+		return mod.DynamicNewsManager
+	end
+	return nil
+end
+
+local function normalize_faction(comm)
+	if type(comm) ~= "string" or comm == "" or comm == "none" then
+		return nil
+	end
+	if string.sub(comm, 1, 6) == "actor_" then
+		comm = string.sub(comm, 7)
+	end
+	local base = string.match(comm, "^(.+)_npc$") or comm
+	if not FACTIONS[base] then
+		return nil
+	end
+	return base
+end
+
+local function is_hostile_faction(faction)
+	if not faction then
+		return false
+	end
+	local actor_comm = get_actor_true_community and get_actor_true_community() or nil
+	if not actor_comm or actor_comm == faction then
+		return false
+	end
+	local gr = game_relations
+	if not (gr and gr.is_factions_enemies) then
+		return false
+	end
+	return gr.is_factions_enemies(actor_comm, faction)
+end
+
+-- Channel name → faction (bandit, army_npc → army). nil for general / unknown.
+local function channel_faction(name)
+	if type(name) ~= "string" or name == "" or name == "general" then
+		return nil
+	end
+	return normalize_faction(name)
+end
+
+local function community_of_id(id)
+	if type(id) == "number" then
+		local se = alife_object(id)
+		if se and IsStalker(nil, se:clsid()) then
+			return normalize_faction(se:community())
+		end
+		local obj = level and level.object_by_id and level.object_by_id(id)
+		if obj and obj.character_community then
+			return normalize_faction(character_community(obj))
+		end
+		return nil
+	end
+	if type(id) == "userdata" then
+		local ok, comm = pcall(function()
+			if id.character_community then
+				return character_community(id)
+			end
+			if id.community then
+				return id:community()
+			end
+			if id.id then
+				local n = type(id.id) == "function" and id:id() or id.id
+				return community_of_id(n)
+			end
+			return nil
+		end)
+		if ok then
+			return normalize_faction(comm)
+		end
+	end
+	return nil
+end
+
+-- Best-effort speaker/subject faction on a general-channel payload.
+local function payload_faction(t)
+	if type(t) ~= "table" then
+		return nil
+	end
+	local from_id = community_of_id(t.Id)
+	if from_id then
+		return from_id
+	end
+	if t.It == "gr" then
+		return normalize_faction(t.Ic)
+	end
+	return nil
+end
+
+local function should_drop(name, t)
+	-- Hostile faction net (SOS / loot / artifact / trade / combat chatter, …)
+	if is_hostile_faction(channel_faction(name)) then
+		return true, name
+	end
+	-- Open net about/from a hostile
+	if name == "general" and is_hostile_faction(payload_faction(t)) then
+		return true, "general/" .. tostring(payload_faction(t))
+	end
+	return false, nil
+end
+
+local function patch()
+	local cls = dnm_class()
+	if not cls or cls.__dogma_no_hostile_pda then
+		return cls and cls.__dogma_no_hostile_pda or false
+	end
+
+	local orig = cls.PushToChannel
+	if type(orig) ~= "function" then
+		return false
+	end
+
+	cls.PushToChannel = function(self, name, t, fifo)
+		local drop, reason = should_drop(name, t)
+		if drop then
+			log("drop " .. tostring(reason))
+			return false
+		end
+		return orig(self, name, t, fifo)
+	end
+	cls.__dogma_no_hostile_pda = true
+	log("PushToChannel hooked")
+	return true
+end
+
+function on_game_start()
+	DOGMA = dogma_common.load(CONFIG.MOD_ID)
+	patch()
+	RegisterScriptCallback("actor_on_first_update", patch)
+	RegisterScriptCallback("on_game_load", patch)
+end

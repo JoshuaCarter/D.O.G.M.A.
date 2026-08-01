@@ -1,0 +1,652 @@
+--[[
+	Medik slot remap - 6 centered slots (2x3) for rad/bleed vitals.
+
+	Values (engine → display):
+	  rad_dose     HUD rad-icon mSv (ceil(rad*10000*0.387)), clamped 0-999
+	  rad_restore  net rad reduction /sec in same mSv units (passive+active)
+	  rad_protect  total Radiation hit mitigation as 0-99%
+	  bleed        max(0, floor(bleeding*1000) - 1) → 0-999
+	  bleed_restore  same scale applied to bleed reduction /sec
+	  bleed_protect  total Wound hit mitigation as 0-99%
+
+	Icons from overridden ui\medik_boosters (*_glyph); tint via SetTextureColor
+	(rad_dose white→green, bleed white→red).
+
+	Provider override: dogma_tweaks_medik_tracks_bleed_and_rads.set_slot(idx, fn)
+	  fn(slot_idx) -> value, active [, fmt]
+]]
+
+local CONFIG = _G.dogma_tweaks_medik_tracks_bleed_and_rads_conf
+
+local providers = {}
+local update_patched = false
+local logged_patch = false
+
+local scratch_pos = vector2()
+local scratch_size = vector2()
+
+local cached_rad_max = nil
+local cached_wound_max = nil
+local cached_radiation_v = nil
+
+local function clamp_int(n, lo, hi)
+	n = math.floor(tonumber(n) or 0)
+	if n < lo then
+		return lo
+	end
+	if n > hi then
+		return hi
+	end
+	return n
+end
+
+local function actor_cond_float(key, fallback)
+	-- Prefer SYS_GetParam - same source as inventory tip magnitudes.
+	if SYS_GetParam then
+		local v = SYS_GetParam(2, "actor_condition", key)
+		if v ~= nil then
+			return v
+		end
+	end
+	if ini_sys and ini_sys.r_float_ex then
+		local v = ini_sys:r_float_ex("actor_condition", key)
+		if v ~= nil then
+			return v
+		end
+	end
+	return fallback
+end
+
+local function rad_prot_max()
+	if not cached_rad_max then
+		cached_rad_max = actor_cond_float("radio_zone_max_power", 0.055)
+		if cached_rad_max <= 0 then
+			cached_rad_max = 0.055
+		end
+	end
+	return cached_rad_max
+end
+
+local function wound_prot_max()
+	if not cached_wound_max then
+		cached_wound_max = actor_cond_float("max_wound_protection", 2.20)
+		if cached_wound_max <= 0 then
+			cached_wound_max = 2.20
+		end
+	end
+	return cached_wound_max
+end
+
+local function natural_radiation_v()
+	if cached_radiation_v == nil then
+		cached_radiation_v = actor_cond_float("radiation_v", 0.00001)
+	end
+	return cached_radiation_v
+end
+
+local function bind_part(slot, part, tex_id)
+	local cache = part .. "_tex"
+	if slot[cache] == tex_id then
+		return
+	end
+	local wnd = slot[part]
+	if wnd and wnd.InitTextureEx then
+		wnd:InitTextureEx(tex_id, "hud\\p3d")
+		slot[cache] = tex_id
+	end
+end
+
+local function clear_slot_tex_cache(slot)
+	if not slot then
+		return
+	end
+	slot.icon_tex, slot.d1_tex, slot.d2_tex, slot.d3_tex = nil, nil, nil, nil
+end
+
+local function resolve_tex(id)
+	-- Never theme: our medik_boosters.dds override is the default atlas only.
+	return id
+end
+
+-- Always white atlas art; multiply with SetTextureColor.
+-- rad: white → green; bleed: white → red; else white.
+local function tint_rgb(kind, t)
+	t = tonumber(t) or 0
+	if t < 0 then
+		t = 0
+	elseif t > 1 then
+		t = 1
+	end
+	if kind == "rad" then
+		-- (255,255,255) → (0,255,0)
+		return math.floor(255 * (1 - t) + 0.5), 255, math.floor(255 * (1 - t) + 0.5)
+	elseif kind == "bleed" then
+		-- (255,255,255) → (255,0,0)
+		return 255, math.floor(255 * (1 - t) + 0.5), math.floor(255 * (1 - t) + 0.5)
+	end
+	return 255, 255, 255
+end
+
+local function set_icon_color(slot, r, g, b)
+	if not (slot and slot.icon and slot.icon.SetTextureColor) then
+		return
+	end
+	local key = r * 65536 + g * 256 + b
+	if slot.icon_color == key then
+		return
+	end
+	slot.icon:SetTextureColor(GetARGB(255, r, g, b))
+	slot.icon_color = key
+end
+
+local function apply_icon_tint(slot, tint, value, tint_max)
+	if not tint then
+		set_icon_color(slot, 255, 255, 255)
+		return
+	end
+	local maxv = tonumber(tint_max) or 999
+	if maxv <= 0 then
+		maxv = 999
+	end
+	local t = (tonumber(value) or 0) / maxv
+	local r, g, b = tint_rgb(tint, t)
+	set_icon_color(slot, r, g, b)
+end
+
+-- Always paint lit digits (Medik greys inactive slots to dig_g0 every Update first).
+local function paint_int(slot, icon_id, value, active, tint, tint_max)
+	bind_part(slot, "icon", resolve_tex(icon_id))
+	local n = clamp_int(value, 0, 999)
+	bind_part(slot, "d1", resolve_tex("dig_" .. math.floor(n / 100)))
+	bind_part(slot, "d2", resolve_tex("dig_" .. (math.floor(n / 10) % 10)))
+	bind_part(slot, "d3", resolve_tex("dig_" .. (n % 10)))
+	slot.active = active and true or false
+	if active then
+		apply_icon_tint(slot, tint, n, tint_max)
+	else
+		set_icon_color(slot, 255, 255, 255)
+	end
+end
+
+-- Protection: two digits only (00-99), no % glyph.
+local function paint_pct(slot, icon_id, value, active, tint, tint_max)
+	bind_part(slot, "icon", resolve_tex(icon_id))
+	local n = clamp_int(value, 0, 99)
+	bind_part(slot, "d1", resolve_tex("dig_" .. math.floor(n / 10)))
+	bind_part(slot, "d2", resolve_tex("dig_" .. (n % 10)))
+	if slot.d3 then
+		slot.d3:Show(false)
+		slot.d3_tex = nil
+	end
+	slot.active = active and true or false
+	if active then
+		apply_icon_tint(slot, tint, n, tint_max or 99)
+	else
+		set_icon_color(slot, 255, 255, 255)
+	end
+end
+
+local function paint_slot(slot, icon_id, value, active, fmt, tint, tint_max)
+	if not slot or not icon_id then
+		return
+	end
+	-- Medik's Update may have just written dig_g0 into the cache; force rebind.
+	clear_slot_tex_cache(slot)
+	if fmt == "pct" then
+		paint_pct(slot, icon_id, value, active, tint, tint_max)
+	else
+		paint_int(slot, icon_id, value, active, tint, tint_max)
+	end
+end
+
+local function place(wnd, x, y, w, h)
+	if not wnd then
+		return
+	end
+	wnd:SetWndPos(scratch_pos:set(x, y))
+	wnd:SetWndSize(scratch_size:set(w, h))
+	wnd:Show(true)
+end
+
+local function hide_slot(slot)
+	if not slot then
+		return
+	end
+	if slot.icon then
+		slot.icon:Show(false)
+	end
+	if slot.d1 then
+		slot.d1:Show(false)
+	end
+	if slot.d2 then
+		slot.d2:Show(false)
+	end
+	if slot.d3 then
+		slot.d3:Show(false)
+	end
+end
+
+local function apply_layout(ui)
+	if not ui or not ui.bo then
+		return
+	end
+	local L = CONFIG.LAYOUT
+	local slots = CONFIG.SLOTS
+	local n_show = slots and #slots or 0
+	local x0 = L.BO_X0 + L.BO_COLW * 0.5
+	local cols = L.COLS or 3
+
+	for i = 1, n_show do
+		local slot = ui.bo[i]
+		local def = slots[i]
+		if slot then
+			local row = (i <= cols) and 0 or 1
+			local col = (i - 1) % cols
+			local icon_x = x0 + col * L.BO_COLW + (L.BO_COLW - L.ICON_WH) / 2
+			local icon_y = L.ICON_Y0 + row * L.ROW_PITCH
+			local dig_y = icon_y + L.ICON_WH + L.DIG_GAP
+			local dig_n = (def and def.fmt == "pct") and 2 or 3
+			local d1x = icon_x + (L.ICON_WH - dig_n * L.DIG_W) / 2
+			place(slot.icon, icon_x, icon_y, L.ICON_WH, L.ICON_WH)
+			place(slot.d1, d1x, dig_y, L.DIG_W, L.DIG_H)
+			place(slot.d2, d1x + L.DIG_W, dig_y, L.DIG_W, L.DIG_H)
+			if dig_n == 3 then
+				place(slot.d3, d1x + 2 * L.DIG_W, dig_y, L.DIG_W, L.DIG_H)
+			elseif slot.d3 then
+				slot.d3:Show(false)
+			end
+		end
+	end
+
+	for i = n_show + 1, 8 do
+		hide_slot(ui.bo[i])
+	end
+end
+
+local function scan_boosters()
+	local out = {}
+	if not (db.actor and db.actor.cast_Actor) then
+		return out
+	end
+	local cond = db.actor:cast_Actor():conditions()
+	if not (cond and cond.BoosterForEach) then
+		return out
+	end
+	cond:BoosterForEach(function(typ, period, value)
+		out[typ] = { period = period, value = value }
+	end)
+	return out
+end
+
+local function msv_k()
+	return CONFIG.MSV_K or (10000 * 0.387)
+end
+
+-- Same as G_FLAT "Msv Above Radiation Icon" / Geiger tip body mode:
+--   math.ceil(db.actor.radiation * 10000 * 0.387)
+local function hud_rad_msv()
+	return math.ceil((db.actor.radiation or 0) * msv_k())
+end
+
+-- Bleed display units: (bleeding * 1000) - 1 → 0..999
+local function bleed_units(raw)
+	return clamp_int((tonumber(raw) or 0) * 1000 - 1, 0, 999)
+end
+
+local function hit_prot(obj, hit_name)
+	if not obj then
+		return 0
+	end
+	local ht = HitTypeID and HitTypeID[hit_name]
+	if not ht then
+		return 0
+	end
+	if obj.GetDefHitTypeProtection then
+		return obj:GetDefHitTypeProtection(ht) or 0
+	end
+	return 0
+end
+
+-- Inventory tip path (utils_ui.get_stats_value): get_outfit_protection (= GetDefHitTypeProtection,
+-- already condition-scaled by the engine) then multiplies by condition AGAIN when
+-- gr.condition is true. Match that so suit+helm tip % sum equals Medik %.
+local function inv_tip_hit_prot(item, cast_fn_name, hit_name)
+	if not item then
+		return 0
+	end
+	local v = 0
+	if utils_item and utils_item.get_outfit_protection then
+		v = utils_item.get_outfit_protection(item, nil, hit_name, 0) or 0
+	else
+		local cast = item[cast_fn_name] and item[cast_fn_name](item)
+		v = hit_prot(cast, hit_name)
+	end
+	return v * (item:condition() or 1)
+end
+
+local function gear_hit_protection(hit_name, immunity_key)
+	local total = 0
+	local actor = db.actor
+	if not actor then
+		return 0
+	end
+
+	total = total + inv_tip_hit_prot(actor:item_in_slot(7), "cast_CustomOutfit", hit_name)
+	total = total + inv_tip_hit_prot(actor:item_in_slot(12), "cast_Helmet", hit_name)
+
+	if actor.iterate_belt and ini_sys then
+		actor:iterate_belt(function(_, obj)
+			if not obj then
+				return
+			end
+			local sec = obj:section()
+			local cond = obj:condition() or 1
+			local imm_sec = ini_sys:r_string_ex(sec, "hit_absorbation_sect")
+			if imm_sec and immunity_key then
+				total = total + cond * (ini_sys:r_float_ex(imm_sec, immunity_key) or 0)
+			end
+		end)
+	end
+
+	return total
+end
+
+local function gear_rad_restore_raw()
+	local total = 0
+	local actor = db.actor
+	if not actor then
+		return 0
+	end
+
+	local outfit = actor:item_in_slot(7)
+	if outfit and outfit.cast_CustomOutfit then
+		local c = outfit:cast_CustomOutfit()
+		if c and c.m_fRadiationRestoreSpeed then
+			total = total + (c.m_fRadiationRestoreSpeed or 0)
+		end
+	end
+
+	if actor.iterate_belt and ini_sys then
+		actor:iterate_belt(function(_, obj)
+			if not obj then
+				return
+			end
+			local sec = obj:section()
+			local cond = obj:condition() or 1
+			total = total + cond * (ini_sys:r_float_ex(sec, "radiation_restore_speed") or 0)
+		end)
+	end
+
+	return total
+end
+
+local function gear_bleed_restore_raw()
+	local total = 0
+	local actor = db.actor
+	if not actor then
+		return 0
+	end
+
+	local outfit = actor:item_in_slot(7)
+	if outfit then
+		local c = outfit.cast_CustomOutfit and outfit:cast_CustomOutfit()
+		if c and c.m_fBleedingRestoreSpeed ~= nil then
+			total = total + (c.m_fBleedingRestoreSpeed or 0)
+		elseif ini_sys then
+			local sec = outfit:section()
+			local cond = outfit:condition() or 1
+			total = total + cond * (ini_sys:r_float_ex(sec, "bleeding_restore_speed") or 0)
+		end
+	end
+
+	if actor.iterate_belt and ini_sys then
+		actor:iterate_belt(function(_, obj)
+			if not obj then
+				return
+			end
+			local sec = obj:section()
+			local cond = obj:condition() or 1
+			total = total + cond * (ini_sys:r_float_ex(sec, "bleeding_restore_speed") or 0)
+		end)
+	end
+
+	return total
+end
+
+local function boost_value(boost, key)
+	local bid = BoosterID and key and BoosterID[key]
+	if not bid then
+		return 0
+	end
+	local b = boost[bid]
+	return b and b.value or 0
+end
+
+local function builtin_stat(id, boost)
+	if id == "rad_dose" then
+		local n = clamp_int(hud_rad_msv(), 0, 999)
+		return n, n > 0
+
+	elseif id == "rad_restore" then
+		-- Net reduction of body radiation /sec → same mSv scale as HUD icon.
+		local raw = natural_radiation_v()
+			+ gear_rad_restore_raw()
+			+ boost_value(boost, "RadiationRestore")
+		if raw <= 0 then
+			return 0, false
+		end
+		-- ceil so slow passive restore still shows as 1 when non-zero in mSv scale
+		local n = clamp_int(math.ceil(raw * msv_k() - 1e-9), 0, 999)
+		return n, n > 0
+
+	elseif id == "rad_protect" then
+		local total = gear_hit_protection("Radiation", "radiation_immunity")
+			+ boost_value(boost, "RadiationProtection")
+		local pct = clamp_int((total / rad_prot_max()) * 100, 0, 99)
+		return pct, pct > 0
+
+	elseif id == "bleed" then
+		local bleed = db.actor.bleeding or 0
+		local n = bleed_units(bleed)
+		return n, bleed > 0
+
+	elseif id == "bleed_restore" then
+		local raw = gear_bleed_restore_raw() + boost_value(boost, "BleedingRestore")
+		if raw <= 0 then
+			return 0, false
+		end
+		local n = bleed_units(raw)
+		return n, n > 0
+
+	elseif id == "bleed_protect" then
+		local total = gear_hit_protection("Wound", "wound_immunity")
+			+ boost_value(boost, "WoundImmunity")
+		local pct = clamp_int((total / wound_prot_max()) * 100, 0, 99)
+		return pct, pct > 0
+	end
+
+	return 0, false
+end
+
+local function apply_one_slot(def, slot, boost, idx)
+	local value, active, fmt
+	local fn = providers[idx]
+	if fn then
+		value, active, fmt = fn(idx)
+		active = active and true or false
+	else
+		value, active = builtin_stat(def.id, boost)
+	end
+	fmt = fmt or def.fmt or "int"
+	paint_slot(slot, def.icon, value, active, fmt, def.tint, def.tint_max)
+end
+
+local function apply_slots(ui)
+	if not ui or not ui.bo then
+		return
+	end
+	apply_layout(ui)
+
+	local boost = scan_boosters()
+	local slots = CONFIG.SLOTS
+	local n_show = slots and #slots or 0
+
+	for i = 1, n_show do
+		local def = slots[i]
+		local slot = ui.bo[i]
+		if def and slot then
+			local ok, err = pcall(apply_one_slot, def, slot, boost, i)
+			if not ok then
+				printf("! [DOGMA medik] slot %s: %s", tostring(def.id), tostring(err))
+			end
+		end
+	end
+
+	for i = n_show + 1, 8 do
+		hide_slot(ui.bo[i])
+	end
+end
+
+local function apply_slots_safe(ui)
+	local ok, err = pcall(apply_slots, ui)
+	if not ok then
+		printf("! [DOGMA medik] %s", tostring(err))
+	end
+end
+
+local function class_from_instance(obj)
+	if not obj then
+		return nil
+	end
+	local mt = getmetatable(obj)
+	if type(mt) ~= "table" then
+		return nil
+	end
+	if type(mt.__index) == "table" then
+		return mt.__index
+	end
+	return mt
+end
+
+-- Must run AFTER Medik's Update. actor_on_update is too early (attachment UI
+-- ticks later and greys digits back to dig_g0) - that was the stuck-000 bug.
+local function patch_update_on(cls)
+	if not cls or type(cls.Update) ~= "function" or cls._dogma_medik_update then
+		return false
+	end
+	local orig = cls.Update
+	cls.Update = function(self, ...)
+		orig(self, ...)
+		apply_slots_safe(self)
+	end
+	cls._dogma_medik_update = true
+	-- Stop Medik writing booster timers into our slots (digits still greyed in Update;
+	-- we overwrite those immediately after).
+	if type(cls._apply_booster) == "function" and not cls._dogma_medik_booster then
+		cls._apply_booster = function() end
+		cls._dogma_medik_booster = true
+	end
+	return true
+end
+
+local function wrap_ui(ui)
+	if not ui then
+		return ui
+	end
+	patch_update_on(class_from_instance(ui))
+	if not ui._dogma_medik_wrap then
+		local orig = ui.Update
+		if type(orig) == "function" then
+			ui.Update = function(self, ...)
+				orig(self, ...)
+				apply_slots_safe(self)
+			end
+		end
+		ui._dogma_medik_wrap = true
+	end
+	return ui
+end
+
+local function try_patch()
+	if medik_ui and medik_ui.get_UI and not medik_ui._dogma_get_wrapped then
+		local orig_get = medik_ui.get_UI
+		medik_ui.get_UI = function()
+			return wrap_ui(orig_get())
+		end
+		medik_ui._dogma_get_wrapped = true
+	end
+
+	if patch_update_on(rawget(_G, "UIMedik")) or patch_update_on(_G.UIMedik) then
+		update_patched = true
+	end
+
+	if medik_ui and medik_ui.get_UI then
+		local ok, ui = pcall(medik_ui.get_UI)
+		if ok and ui then
+			wrap_ui(ui)
+			if patch_update_on(class_from_instance(ui)) then
+				update_patched = true
+			end
+		end
+	end
+
+	if update_patched and not logged_patch then
+		logged_patch = true
+		printf("~ [DOGMA medik] Update hooked - slot values paint after Medik")
+	end
+
+	return update_patched or (medik_ui and medik_ui._dogma_get_wrapped)
+end
+
+local function actor_on_update()
+	-- Only ensure hooks are installed. Do NOT paint here: Medik's attachment
+	-- UI Update runs later in the frame and would wipe digits back to 000.
+	if not update_patched then
+		try_patch()
+	end
+end
+
+function set_slot(idx, provider)
+	idx = tonumber(idx)
+	local n = CONFIG.SLOTS and #CONFIG.SLOTS or 0
+	if not idx or idx < 1 or idx > n then
+		return
+	end
+	if type(provider) == "function" then
+		providers[idx] = provider
+	else
+		providers[idx] = nil
+	end
+end
+
+function clear_slot(idx)
+	set_slot(idx, nil)
+end
+
+function clear_all()
+	providers = {}
+end
+
+function slot_tex(idx)
+	idx = tonumber(idx)
+	local def = CONFIG.SLOTS and CONFIG.SLOTS[idx]
+	if not def then
+		return nil
+	end
+	return def.icon
+end
+
+function on_game_start()
+	-- Called from override/medik_ui.script at end of UIMedik:Update (authoritative).
+	_G.dogma_tweaks_medik_tracks_bleed_and_rads_apply = apply_slots_safe
+	_G.dogma_tweaks_medik_tracks_bleed_and_rads = {
+		set_slot = set_slot,
+		clear_slot = clear_slot,
+		clear_all = clear_all,
+		slot_tex = slot_tex,
+		apply = apply_slots_safe,
+	}
+	try_patch()
+	RegisterScriptCallback("actor_on_first_update", try_patch)
+	RegisterScriptCallback("actor_on_update", actor_on_update)
+end

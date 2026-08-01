@@ -1,0 +1,38 @@
+--[[
+
+	Keybinds Fix - in-session re-apply + ui_options patch.
+
+]]
+
+
+
+local CONFIG = _G.dogma_tweaks_fix_system_keybinds_not_sticking_conf
+
+
+
+local function repair()
+
+	if CONFIG.patch_ui_options then
+
+		CONFIG.patch_ui_options()
+
+	end
+
+	if CONFIG.repair_keybinds then
+
+		CONFIG.repair_keybinds()
+
+	end
+
+end
+
+
+
+function on_game_start()
+
+	repair()
+
+	RegisterScriptCallback("on_option_change", repair)
+
+end
+

@@ -1169,7 +1169,8 @@ class MainWindow(QMainWindow):
         self.props_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.props_scroll.setWidget(props)
         left_body_l.addWidget(self.props_scroll)
-        left_body_l.addWidget(QLabel("Tree"))
+        self._list_section_label = QLabel("Tree")
+        left_body_l.addWidget(self._list_section_label)
         self.tree.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.tree.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         left_body_l.addWidget(self.tree, stretch=1)
@@ -1187,12 +1188,17 @@ class MainWindow(QMainWindow):
         right_l.addWidget(self._right_tab_spacer)
         right_body = QWidget()
         right_body_l = QVBoxLayout(right_body)
+        self._right_body_l = right_body_l
         right_body_l.setContentsMargins(9, 0, 9, 9)
+        right_body_l.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         right_body_l.addWidget(QLabel("Options"))
         tools = QWidget()
+        tools.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         tools_l = QVBoxLayout(tools)
         tools_l.setContentsMargins(0, 0, 0, 0)
+        tools_l.setSpacing(4)
+        tools_l.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.tool_border = QCheckBox("Box border for unselected")
         self.tool_border.setChecked(bool(self.settings.get("show_box_border", False)))
         self.tool_fill = QCheckBox("Box fill selected")
@@ -1200,6 +1206,7 @@ class MainWindow(QMainWindow):
         self.tool_labels = QCheckBox("Show labels")
         self.tool_labels.setChecked(bool(self.settings.get("show_element_labels", False)))
         font_row = QHBoxLayout()
+        font_row.setContentsMargins(0, 0, 0, 0)
         font_row.addWidget(QLabel("Label size"))
         self.tool_font = QSpinBox()
         self.tool_font.setRange(LABEL_FONT_MIN, LABEL_FONT_MAX)
@@ -1212,19 +1219,23 @@ class MainWindow(QMainWindow):
         tools_l.addWidget(self.tool_fill)
         tools_l.addWidget(self.tool_labels)
         tools_l.addLayout(font_row)
-        tools_l.addStretch(1)
         self.tools_scroll = QScrollArea()
         self.tools_scroll.setWidgetResizable(True)
         self.tools_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         self.tools_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.tools_scroll.setAlignment(
+            Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft
+        )
         self.tools_scroll.setWidget(tools)
         right_body_l.addWidget(self.tools_scroll)
 
-        right_body_l.addWidget(QLabel("Layers"))
+        self._layers_section_label = QLabel("Layers")
+        right_body_l.addWidget(self._layers_section_label)
         self.layers.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         right_body_l.addWidget(self.layers, stretch=1)
 
-        right_body_l.addWidget(QLabel("Undo"))
+        self._undo_section_label = QLabel("Undo")
+        right_body_l.addWidget(self._undo_section_label)
         self.undo_list = QListWidget()
         self.undo_list.setObjectName("undoHistoryList")
         self.undo_list.setToolTip(
@@ -1233,8 +1244,9 @@ class MainWindow(QMainWindow):
         self.undo_list.setSelectionMode(QListWidget.SelectionMode.NoSelection)
         self.undo_list.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.undo_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        # ~10 compact rows; layers keep the remaining stretch.
-        self.undo_list.setFixedHeight(9 * 18 + 8)
+        # UI mode: compact under Layers. Atlas mode: expands (Layers hidden).
+        self._undo_list_compact_h = 9 * 18 + 8
+        self.undo_list.setFixedHeight(self._undo_list_compact_h)
         self.undo_list.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
         )
@@ -1274,6 +1286,9 @@ class MainWindow(QMainWindow):
         self.descr_board.undo_stack_changed.connect(self._on_descr_undo_changed)
         self.descr_board.status_message.connect(self.statusBar().showMessage)
         self.descr_board.selection_changed.connect(self._on_descr_selection)
+        self.descr_board.geometry_changed.connect(self._on_descr_geometry)
+        self.descr_board.sheet_changed.connect(self._on_descr_sheet_changed)
+        self.descr_board.regions_changed.connect(self._fill_region_list)
         self._restoring_meta = False
         self.edit_stretch.toggled.connect(self._on_stretch_toggled)
 
@@ -1364,8 +1379,8 @@ class MainWindow(QMainWindow):
         self._doc_mode = mode
         atlas = mode == DOC_MODE_ATLAS
         self.wysiwyg_stack.setCurrentIndex(1 if atlas else 0)
-        self._left_sidebar.setVisible(not atlas)
-        self._right_sidebar.setVisible(not atlas)
+        self._left_sidebar.setVisible(True)
+        self._right_sidebar.setVisible(True)
         for act in (
             self.descr_rename_a,
             self.descr_dup_a,
@@ -1374,16 +1389,60 @@ class MainWindow(QMainWindow):
         ):
             act.setEnabled(atlas)
             act.setVisible(atlas)
-        # UI-layout view toggles are irrelevant for atlas
         for act in (self.border_a, self.fill_a, self.labels_a):
-            act.setEnabled(not atlas)
+            act.setEnabled(True)
+        # Atlas: id + x/y/w/h + region list + Options/Undo. Hide UI-only rows/Layers.
+        self.prop_label_path.setText("Id" if atlas else "Path")
+        self._list_section_label.setText("Regions" if atlas else "Tree")
+        for w in (
+            self.prop_meta_note,
+            self.prop_label_texture,
+            self.prop_texture,
+            self.edit_stretch,
+            self.prop_label_text,
+            self.prop_text,
+            self.prop_text_font,
+            self.prop_text_resolved,
+        ):
+            w.setVisible(not atlas)
+        self._layers_section_label.setVisible(not atlas)
+        self.layers.setVisible(not atlas)
+        # Mirror left sidebar: fixed Options on top, expanding list below.
+        # Atlas has no Layers — Undo takes that stretch so Options stays packed top.
         if atlas:
-            self.split.setSizes([0, 1400, 0])
+            self.undo_list.setMinimumHeight(self._undo_list_compact_h)
+            self.undo_list.setMaximumHeight(16777215)
+            self.undo_list.setSizePolicy(
+                QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+            )
+            self._right_body_l.setStretchFactor(self.layers, 0)
+            self._right_body_l.setStretchFactor(self.undo_list, 1)
+            self._apply_descr_view_settings()
         else:
-            sizes = self.split.sizes()
-            if sizes[0] < 80 or sizes[2] < 80:
-                self.split.setSizes([350, 700, 350])
+            self.undo_list.setFixedHeight(self._undo_list_compact_h)
+            self.undo_list.setSizePolicy(
+                QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+            )
+            self._right_body_l.setStretchFactor(self.layers, 1)
+            self._right_body_l.setStretchFactor(self.undo_list, 0)
+        sizes = self.split.sizes()
+        if sizes[0] < 80 or sizes[2] < 80:
+            self.split.setSizes([350, 700, 350])
         self._update_undo_actions()
+        self._refresh_undo_list()
+
+    def _apply_descr_view_settings(self) -> None:
+        scene = self.descr_board.scene
+        scene.set_box_style(
+            show_border=bool(self.settings.get("show_box_border", False)),
+            show_fill=bool(self.settings.get("show_box_fill", False)),
+        )
+        scene.set_show_element_labels(
+            bool(self.settings.get("show_element_labels", False))
+        )
+        scene.set_label_font_size(
+            clamp_label_font_size(self.settings.get("label_font_size"))
+        )
 
     def _on_descr_dirty(self) -> None:
         self.descr_doc.mark_dirty()
@@ -1391,8 +1450,70 @@ class MainWindow(QMainWindow):
 
     def _on_descr_undo_changed(self) -> None:
         self._update_undo_actions()
+        self._refresh_undo_list()
+
+    def _on_descr_sheet_changed(self) -> None:
+        self._fill_region_list()
+        self._show_descr_props(self.descr_board.scene.selected_region())
+
+    def _fill_region_list(self) -> None:
+        if self._doc_mode != DOC_MODE_ATLAS:
+            return
+        sheet = self.descr_board.current_sheet()
+        selected = self.descr_board.scene.selected_region()
+        sel_id = selected.atlas_id if selected is not None else None
+        self.tree.blockSignals(True)
+        self.tree.clear()
+        if sheet is not None:
+            for reg in sorted(sheet.regions, key=lambda r: r.atlas_id.lower()):
+                item = QTreeWidgetItem([reg.atlas_id])
+                item.setData(0, Qt.ItemDataRole.UserRole, reg.atlas_id)
+                self.tree.addTopLevelItem(item)
+                if reg.atlas_id == sel_id:
+                    self.tree.setCurrentItem(item)
+        self.tree.blockSignals(False)
+
+    def _show_descr_props(self, region) -> None:
+        self._updating_props = True
+        self._set_meta_prop_labels(False)
+        if region is None:
+            self._set_path_label("-")
+            for ed in (self.edit_x, self.edit_y, self.edit_w, self.edit_h):
+                ed.clear()
+                ed.setEnabled(False)
+            self._set_geo_field_styles(True)
+            self._updating_props = False
+            return
+        self._set_path_label(region.atlas_id)
+        for ed in (self.edit_x, self.edit_y, self.edit_w, self.edit_h):
+            ed.setEnabled(True)
+        self.edit_x.setText(_num(region.x))
+        self.edit_y.setText(_num(region.y))
+        self.edit_w.setText(_num(region.width))
+        self.edit_h.setText(_num(region.height))
+        self._set_geo_field_styles(True)
+        self._updating_props = False
+        # Sync region list selection
+        matches = self.tree.findItems(
+            region.atlas_id, Qt.MatchFlag.MatchExactly | Qt.MatchFlag.MatchRecursive
+        )
+        for it in matches:
+            if it.data(0, Qt.ItemDataRole.UserRole) == region.atlas_id:
+                self.tree.blockSignals(True)
+                self.tree.setCurrentItem(it)
+                self.tree.blockSignals(False)
+                break
+
+    def _on_descr_geometry(self, region) -> None:
+        if self._doc_mode != DOC_MODE_ATLAS:
+            return
+        self._show_descr_props(region)
 
     def _on_descr_selection(self, region) -> None:
+        if self._doc_mode != DOC_MODE_ATLAS:
+            return
+        self._commit_props_geo_undo()
+        self._show_descr_props(region)
         if region is None:
             return
         self.statusBar().showMessage(
@@ -1477,6 +1598,7 @@ class MainWindow(QMainWindow):
     def _show_startup_chooser(self) -> None:
         """Dark window only: centered Open / recent box until a file loads."""
         recent = list(self.settings.get("recent_files") or [])[:5]
+        # Startup browse uses same default as File→Open (custom root).
         self._startup.configure(recent, start_dir=self._file_dialog_start())
         self._startup.start()
 
@@ -1698,17 +1820,39 @@ class MainWindow(QMainWindow):
         save_settings(self.settings)
         self._rebuild_recents_menu()
 
+    def _first_custom_root(self) -> Path | None:
+        for raw in normalize_custom_roots(self.settings.get("custom_roots")):
+            p = Path(raw).expanduser()
+            if p.is_dir():
+                return p
+        return None
+
     def _file_dialog_start(self, preferred: Path | None = None) -> str:
         if preferred is not None:
             p = preferred if preferred.is_dir() else preferred.parent
             if p.is_dir():
                 return str(p)
+        # Default: first Settings custom root (project / stock packs), not Anomaly/cwd.
+        custom = self._first_custom_root()
+        if custom is not None:
+            return str(custom)
         saved = Path(str(self.settings.get("last_file_dir") or ""))
         if saved.is_dir():
             return str(saved)
         return str(Path.cwd())
 
     def _atlas_dialog_start(self) -> str:
+        custom = self._first_custom_root()
+        if custom is not None:
+            for rel in (
+                Path("configs") / "ui" / "textures_descr",
+                Path("gamedata") / "configs" / "ui" / "textures_descr",
+                Path("textures_descr"),
+            ):
+                d = custom / rel
+                if d.is_dir():
+                    return str(d)
+            return str(custom)
         saved = Path(str(self.settings.get("last_texture_dir") or ""))
         if saved.is_dir():
             return str(saved)
@@ -1789,7 +1933,7 @@ class MainWindow(QMainWindow):
         self._log("info", f"texture {node.path}: {pick.name} ({pick.kind})")
 
     def open_dialog(self) -> None:
-        # Default start: last file dir; atlas filter users still get path detection.
+        # Default start: first Settings custom root.
         path, _selected_filter = QFileDialog.getOpenFileName(
             self,
             "Open XML",
@@ -1898,6 +2042,9 @@ class MainWindow(QMainWindow):
         self._raw_dirty = False
         self._preview_needs_raw_sync = False
         self.descr_board.set_document(self.descr_doc)
+        self._apply_descr_view_settings()
+        self._fill_region_list()
+        self._show_descr_props(None)
         self._reveal_workspace()
         self.descr_board.fit_stage()
         self.setWindowTitle(
@@ -1968,7 +2115,12 @@ class MainWindow(QMainWindow):
         view = getattr(self, "undo_list", None)
         if view is None:
             return
-        edits = self.scene.undo_stack.recent_undo(10)
+        stack = (
+            self.descr_board.scene.undo_stack
+            if self._doc_mode == DOC_MODE_ATLAS
+            else self.scene.undo_stack
+        )
+        edits = stack.recent_undo(10)
         view.blockSignals(True)
         view.clear()
         for edit in edits:
@@ -2428,18 +2580,21 @@ class MainWindow(QMainWindow):
         self.settings["show_box_border"] = checked
         save_settings(self.settings)
         self.scene.set_box_style(show_border=checked)
+        self.descr_board.scene.set_box_style(show_border=checked)
         self._sync_tool_controls()
 
     def _on_toggle_fill(self, checked: bool) -> None:
         self.settings["show_box_fill"] = checked
         save_settings(self.settings)
         self.scene.set_box_style(show_fill=checked)
+        self.descr_board.scene.set_box_style(show_fill=checked)
         self._sync_tool_controls()
 
     def _on_toggle_labels(self, checked: bool) -> None:
         self.settings["show_element_labels"] = checked
         save_settings(self.settings)
         self.scene.set_show_element_labels(checked)
+        self.descr_board.scene.set_show_element_labels(checked)
         self._sync_tool_controls()
 
     def _on_tool_font_size(self, size: int) -> None:
@@ -2447,6 +2602,7 @@ class MainWindow(QMainWindow):
         self.settings["label_font_size"] = size
         save_settings(self.settings)
         self.scene.set_label_font_size(size)
+        self.descr_board.scene.set_label_font_size(size)
 
     def _reload_textures(self) -> None:
         # Unpack if needed; keep saved path lists (use Edit → Rescan to rediscover).
@@ -2646,15 +2802,26 @@ class MainWindow(QMainWindow):
         self.scene.select_path(path)
 
     def _on_tree_clicked(self, item: QTreeWidgetItem, _col: int) -> None:
-        path = item.data(0, Qt.ItemDataRole.UserRole)
-        if not path:
+        key = item.data(0, Qt.ItemDataRole.UserRole)
+        if not key:
             return
-        node = self.scene.doc.find_by_path(path) if self.scene.doc else None
+        if self._doc_mode == DOC_MODE_ATLAS:
+            sheet = self.descr_board.current_sheet()
+            if sheet is None:
+                return
+            for reg in sheet.regions:
+                if reg.atlas_id == key:
+                    self.descr_board.scene.select_region(reg)
+                    return
+            return
+        node = self.scene.doc.find_by_path(key) if self.scene.doc else None
         if node is None or not node.visible:
             return
-        self.scene.select_path(path)
+        self.scene.select_path(key)
 
     def _on_tree_item_entered(self, item: QTreeWidgetItem, _col: int) -> None:
+        if self._doc_mode == DOC_MODE_ATLAS:
+            return
         path = item.data(0, Qt.ItemDataRole.UserRole)
         if not isinstance(path, str) or path not in self.scene._items:
             # Structural / non-drawable rows: leave current canvas hover alone.
@@ -2667,6 +2834,8 @@ class MainWindow(QMainWindow):
 
     def eventFilter(self, obj, event) -> bool:  # noqa: N802
         if obj is self.tree.viewport():
+            if self._doc_mode == DOC_MODE_ATLAS:
+                return super().eventFilter(obj, event)
             et = event.type()
             if et == QEvent.Type.Leave:
                 self.scene.set_tree_hover_path(None)
@@ -2694,7 +2863,26 @@ class MainWindow(QMainWindow):
     def _commit_props_geo_undo(self) -> None:
         before = self._props_geo_before
         self._props_geo_before = None
-        if before is None or self.doc.doc is None:
+        if before is None:
+            return
+        if self._doc_mode == DOC_MODE_ATLAS:
+            edited = self.descr_doc.find_region(before.path)
+            if edited is None:
+                return
+            self.descr_board.scene.push_geo_edit(
+                GeoEdit.single(
+                    before,
+                    GeoState(
+                        path=edited.atlas_id,
+                        x=edited.x,
+                        y=edited.y,
+                        width=edited.width,
+                        height=edited.height,
+                    ),
+                )
+            )
+            return
+        if self.doc.doc is None:
             return
         edited = self.doc.doc.find_by_path(before.path)
         if edited is None:
@@ -2930,8 +3118,10 @@ class MainWindow(QMainWindow):
             self.descr_doc.mark_dirty()
             self._preview_needs_raw_sync = True
             self._update_undo_actions()
+            self._refresh_undo_list()
             if reg is not None:
                 self.descr_board.scene.select_region(reg)
+                self._show_descr_props(reg)
                 self.statusBar().showMessage(f"Undo {reg.atlas_id}")
             return
         edit = self.scene.undo_stack.undo()
@@ -2964,8 +3154,10 @@ class MainWindow(QMainWindow):
             self.descr_doc.mark_dirty()
             self._preview_needs_raw_sync = True
             self._update_undo_actions()
+            self._refresh_undo_list()
             if reg is not None:
                 self.descr_board.scene.select_region(reg)
+                self._show_descr_props(reg)
                 self.statusBar().showMessage(f"Redo {reg.atlas_id}")
             return
         edit = self.scene.undo_stack.redo()
@@ -3004,6 +3196,35 @@ class MainWindow(QMainWindow):
 
     def _on_props_changed(self) -> None:
         if self._updating_props:
+            return
+        if self._doc_mode == DOC_MODE_ATLAS:
+            region = self.descr_board.scene.selected_region()
+            if region is None:
+                return
+            parsed = self._parse_geometry_fields()
+            self._set_geo_field_styles(parsed is not None)
+            if parsed is None:
+                return
+            x, y, w, h = parsed
+            if self._props_geo_before is None:
+                self._props_geo_before = GeoState(
+                    path=region.atlas_id,
+                    x=region.x,
+                    y=region.y,
+                    width=region.width,
+                    height=region.height,
+                )
+            if (
+                region.x == x
+                and region.y == y
+                and region.width == w
+                and region.height == h
+            ):
+                return
+            region.set_geometry(x=x, y=y, width=w, height=h)
+            self.descr_doc.mark_dirty()
+            self._preview_needs_raw_sync = True
+            self.descr_board.scene.refresh_item(region)
             return
         selected = [i for i in self.scene.selectedItems() if hasattr(i, "node")]
         if not selected:
@@ -3047,6 +3268,18 @@ class MainWindow(QMainWindow):
         if self._updating_props:
             return
         # Revert field text to last good values if still invalid
+        if self._doc_mode == DOC_MODE_ATLAS:
+            region = self.descr_board.scene.selected_region()
+            if region is not None and self._parse_geometry_fields() is None:
+                self._updating_props = True
+                self.edit_x.setText(_num(region.x))
+                self.edit_y.setText(_num(region.y))
+                self.edit_w.setText(_num(region.width))
+                self.edit_h.setText(_num(region.height))
+                self._updating_props = False
+                self._set_geo_field_styles(True)
+            self._commit_props_geo_undo()
+            return
         selected = [i for i in self.scene.selectedItems() if hasattr(i, "node")]
         if selected and self._parse_geometry_fields() is None:
             node: LayoutNode = selected[0].node

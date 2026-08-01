@@ -58,11 +58,11 @@ end
 
 -- String ids for the new rows (also used by main for white-text display).
 NAME = {
-	dispersion = "ui_dogma_wpn_dispersion",
-	spread = "ui_dogma_wpn_spread",
-	barrel_wear = "ui_dogma_wpn_barrel_wear",
-	burst_control = "ui_dogma_wpn_burst_control",
-	bullet_drop = "ui_dogma_wpn_bullet_drop",
+	dispersion = "ui_dogma_gui_weapon_tooltips_dispersion",
+	spread = "ui_dogma_gui_weapon_tooltips_spread",
+	barrel_wear = "ui_dogma_gui_weapon_tooltips_barrel_wear",
+	burst_control = "ui_dogma_gui_weapon_tooltips_burst_control",
+	bullet_drop = "ui_dogma_gui_weapon_tooltips_bullet_drop",
 }
 
 local logged_once = {}
@@ -230,8 +230,13 @@ local function fmt_deg(v)
 	return string.format("%.2f%s", v, DEG)
 end
 
+-- Explicit RGB (same as main CMP_CODE_GREY). Named %c[d_grey] can wash out
+-- after SetTextColor(white) on the value window.
+local CODE_GREY = "%c[255,175,175,175]"
+local CODE_DEFAULT = "%c[default]"
+
 local function fmt_drop_m(v)
-	return string.format("%.2fm %%c[d_grey]@ %dm%%c[default]", v, DROP_RANGE_M)
+	return string.format("%.2fm %s@ %dm%s", v, CODE_GREY, DROP_RANGE_M, CODE_DEFAULT)
 end
 
 -- Numeric getters (for tooltip compare vs equipped). Lower-is-better where noted.
@@ -376,7 +381,7 @@ function text_barrel_wear(obj, sec)
 	else
 		chance_txt = string.format("%.1f%%", chance_pct)
 	end
-	return string.format("%s %%c[d_grey]@ -1%%%%c[default]", chance_txt)
+	return string.format("%s %s@ -1%%%s", chance_txt, CODE_GREY, CODE_DEFAULT)
 end
 
 -- Fractional ADS shots until cumulative vertical camera climb reaches RECOIL_KICK_THRESHOLD.
@@ -388,7 +393,7 @@ local function fmt_burst(shots_txt, thr)
 	else
 		thr_txt = string.format("%.1f%s", thr, DEG)
 	end
-	return string.format("%s %%c[d_grey]@ %s%%c[default]", shots_txt, thr_txt)
+	return string.format("%s %s@ %s%s", shots_txt, CODE_GREY, thr_txt, CODE_DEFAULT)
 end
 
 function value_burst_control(obj, sec)

@@ -27,10 +27,10 @@ def _resolver() -> TextureResolver:
 def main() -> int:
     faction = (
         REPO_ROOT
-        / "src/menu/loadout_layout/configs/ui/ui_mm_faction_select_16.xml"
+        / "src/tweaks/bigger_new_game_loadout_panel/configs/ui/ui_mm_faction_select.xml"
     )
     tooltip = (
-        REPO_ROOT / "src/gui/weapon_tooltips/configs/ui/ui_dogma_weapon_tooltip.xml"
+        REPO_ROOT / "src/gui/weapon_tooltips/configs/ui/ui_dogma_gui_weapon_tooltips.xml"
     )
     dots_xml = (
         REPO_ROOT

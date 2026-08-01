@@ -1,27 +1,33 @@
 --[[
 	DOGMA override: Powered Exos - arti (exo_mcm.script).
 
-	Replaces arti's drain / sprint_drain tracks with idle / run / sprint on the
-	same Powered Exoskeletons MCM page. Values are independent multipliers
-	(not stacked). battery_chance + debug unchanged.
+	Drain multipliers live on DOGMA → Gameplay → Exo Power.
+	This keeps arti's battery_chance + debug on the Powered Exoskeletons page.
 ]]
 
 local defaults = {
-	base_drain = 0,
-	run_drain = 1,
-	sprint_drain = 3,
-	drain = 1, -- legacy alias → run_drain
 	loot_amt = 1.0,
 	battery_chance = 0.7,
 	debug = false,
 }
 
-local ALIAS = {
-	drain = "run_drain",
-}
-
 function get_config(key)
-	key = ALIAS[key] or key
+	-- Drain keys: DOGMA gameplay/exo_power (arti page no longer owns them).
+	if key == "base_drain" or key == "run_drain" or key == "sprint_drain" or key == "drain" then
+		local conf = _G.dogma_gameplay_exo_power_conf
+		if conf and conf.loaded then
+			if key == "drain" then
+				return conf.loaded.run_drain
+			end
+			return conf.loaded[key]
+		end
+		if conf and conf.DEFAULTS then
+			if key == "drain" then
+				return conf.DEFAULTS.run_drain
+			end
+			return conf.DEFAULTS[key]
+		end
+	end
 	if ui_mcm then
 		local value = ui_mcm.get("exo/" .. key)
 		if value ~= nil then
@@ -47,34 +53,7 @@ function on_mcm_load()
 			{
 				id = "drain_desc",
 				type = "desc",
-				text = "ui_mcm_exo_drain_page_desc",
-			},
-			{
-				id = "base_drain",
-				type = "track",
-				val = 2,
-				min = 0,
-				max = 10,
-				step = 0.1,
-				def = defaults.base_drain,
-			},
-			{
-				id = "run_drain",
-				type = "track",
-				val = 2,
-				min = 1,
-				max = 10,
-				step = 0.1,
-				def = defaults.run_drain,
-			},
-			{
-				id = "sprint_drain",
-				type = "track",
-				val = 2,
-				min = 2,
-				max = 10,
-				step = 0.1,
-				def = defaults.sprint_drain,
+				text = "ui_mcm_dogma_gameplay_exo_power_arti_redirect",
 			},
 			{
 				id = "battery_chance",

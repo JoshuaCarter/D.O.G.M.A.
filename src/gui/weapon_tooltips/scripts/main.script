@@ -1,7 +1,7 @@
 --[[
 	Weapon Tooltips - per-ammo damage table + enhanced weapon stats.
 
-	Layout/static text: ui_dogma_weapon_tooltip.xml. This script fills cells and
+	Layout/static text: ui_dogma_gui_weapon_tooltips.xml. This script fills cells and
 	wires MCM / utils_ui.stats_table.
 
 	Built as zzzz_dogma_gui_weapon_tooltips_main.script so on_game_start runs after
@@ -11,7 +11,7 @@
 	early_init() (below) does the actual hook install / stat setup - it touches
 	no db.actor / game state, only global tables (utils_ui, ish_item_stats,
 	ui_itm_details) and MCM reads. on_game_start() calls it (real new game /
-	save load). The Tooltips Fix tweak (tweaks/tooltips_fix), when installed, also
+	save load). The Tooltips Fix tweak (tweaks/fix_new_game_loadout_tooltips), when installed, also
 	calls it on "main_menu_on_init" so the New Game character-creation Loadout
 	screen - which renders *before* any on_game_start fires - already has our
 	hooks and the GAMMA-rebalanced stats_table the first time it shows a
@@ -39,11 +39,11 @@ local BASE_INDEX = {
 
 -- Fallback string ids if zzzz_dogma_gui_weapon_tooltips_stats failed to expose NAME.
 local EXTRA_STAT_NAME = {
-	dispersion = "ui_dogma_wpn_dispersion",
-	spread = "ui_dogma_wpn_spread",
-	barrel_wear = "ui_dogma_wpn_barrel_wear",
-	burst_control = "ui_dogma_wpn_burst_control",
-	bullet_drop = "ui_dogma_wpn_bullet_drop",
+	dispersion = "ui_dogma_gui_weapon_tooltips_dispersion",
+	spread = "ui_dogma_gui_weapon_tooltips_spread",
+	barrel_wear = "ui_dogma_gui_weapon_tooltips_barrel_wear",
+	burst_control = "ui_dogma_gui_weapon_tooltips_burst_control",
+	bullet_drop = "ui_dogma_gui_weapon_tooltips_bullet_drop",
 }
 
 -- Hit Power is weapon hit_power x 100 (per pellet, same as other guns), no ammo k_hit.
@@ -401,14 +401,14 @@ local ENHANCED_STAT_LABELS = {}
 
 local function refresh_enhanced_stat_labels()
 	ENHANCED_STAT_LABELS = {
-		hit_power = game.translate_string("ui_dogma_wpn_hit_power"),
-		stalker_damage = game.translate_string("ui_dogma_wpn_stalker_damage"),
-		ammo_damage = game.translate_string("ui_dogma_wpn_ammo_torso"),
-		dispersion = game.translate_string("ui_dogma_wpn_dispersion"),
-		spread = game.translate_string("ui_dogma_wpn_spread"),
-		barrel_wear = game.translate_string("ui_dogma_wpn_barrel_wear"),
-		burst_control = game.translate_string("ui_dogma_wpn_burst_control"),
-		bullet_drop = game.translate_string("ui_dogma_wpn_bullet_drop"),
+		hit_power = game.translate_string("ui_dogma_gui_weapon_tooltips_hit_power"),
+		stalker_damage = game.translate_string("ui_dogma_gui_weapon_tooltips_stalker_damage"),
+		ammo_damage = game.translate_string("ui_dogma_gui_weapon_tooltips_ammo_torso"),
+		dispersion = game.translate_string("ui_dogma_gui_weapon_tooltips_dispersion"),
+		spread = game.translate_string("ui_dogma_gui_weapon_tooltips_spread"),
+		barrel_wear = game.translate_string("ui_dogma_gui_weapon_tooltips_barrel_wear"),
+		burst_control = game.translate_string("ui_dogma_gui_weapon_tooltips_burst_control"),
+		bullet_drop = game.translate_string("ui_dogma_gui_weapon_tooltips_bullet_drop"),
 	}
 end
 
@@ -911,7 +911,7 @@ local SECTION_GAP = 10        -- match vanilla UIInfoItem:Sync_Finale section sp
 -- True when the Tooltips Fix tweak's layout module will restack after our
 -- Update returns. rawget on purpose: render-time check, never force a load.
 local function layout_tweak_active()
-	local m = rawget(_G, "zzzz_dogma_tweaks_tooltips_fix_main")
+	local m = rawget(_G, "zzzz_dogma_tweaks_fix_new_game_loadout_tooltips_main")
 	return m and m.fix ~= nil
 end
 
@@ -923,9 +923,9 @@ local ROW_XML = {
 	"panel:row_4",
 }
 
--- Parsed once; layout lives in configs/ui/ui_dogma_weapon_tooltip.xml.
+-- Parsed once; layout lives in configs/ui/ui_dogma_gui_weapon_tooltips.xml.
 local DAMAGE_XML = CScriptXmlInit()
-DAMAGE_XML:ParseFile("ui_dogma_weapon_tooltip.xml")
+DAMAGE_XML:ParseFile("ui_dogma_gui_weapon_tooltips.xml")
 
 -- Own handle for the vanilla stat-box layout (item_info:stats_box lives in
 -- utils.xml, same file utils_ui.get_stats_xml uses). Used to rebuild our
@@ -939,7 +939,7 @@ local base_uiinfo_update
 local HIT_POWER_STAT = {
 	index = 3,
 	typ = "float",
-	name = "ui_dogma_wpn_hit_power",
+	name = "ui_dogma_gui_weapon_tooltips_hit_power",
 	icon_p = "ui_wp_prop_damage",
 	icon_n = "",
 	track = false,
@@ -960,7 +960,7 @@ local HIT_POWER_STAT = {
 local RAW_AMMO_DAMAGE_STAT = {
 	index = 3.5,
 	typ = "float",
-	name = "ui_dogma_wpn_ammo_torso",
+	name = "ui_dogma_gui_weapon_tooltips_ammo_torso",
 	icon_p = "ui_wp_prop_damage",
 	icon_n = "",
 	track = false,
@@ -978,7 +978,7 @@ local RAW_AMMO_DAMAGE_STAT = {
 local STALKER_DAMAGE_STAT = {
 	index = 3.25,
 	typ = "float",
-	name = "ui_dogma_wpn_stalker_damage",
+	name = "ui_dogma_gui_weapon_tooltips_stalker_damage",
 	icon_p = "ui_wp_prop_damage",
 	icon_n = "",
 	track = false,
@@ -995,8 +995,8 @@ local saved_base_stats = {}
 
 local function cache_base_stat(weapon_stats, key)
 	local cur = weapon_stats[key]
-	-- Skip our own ui_dogma_wpn_* rows when caching vanilla base defs.
-	if cur and not (cur.name and string.find(cur.name, "ui_dogma_wpn_", 1, true) == 1) then
+	-- Skip our own ui_dogma_gui_weapon_tooltips_* rows when caching vanilla base defs.
+	if cur and not (cur.name and string.find(cur.name, "ui_dogma_gui_weapon_tooltips_", 1, true) == 1) then
 		saved_base_stats[key] = cur
 	end
 end
@@ -2434,7 +2434,7 @@ local function create_damage_fields(parent, panel_x)
 		return DAMAGE_XML:InitStatic("panel", parent)
 	end)
 	if not ok or not dlg then
-		log_once("panel_xml_fail", "create_damage_fields: ui_dogma_weapon_tooltip.xml init failed")
+		log_once("panel_xml_fail", "create_damage_fields: ui_dogma_gui_weapon_tooltips.xml init failed")
 		return nil, nil
 	end
 
@@ -2599,7 +2599,7 @@ local function add_details_damage_section(sheet, obj)
 	_st:SetAutoDelete(true)
 end
 
--- Fallback restack when the Tooltips Fix tweak (tweaks/tooltips_fix) is not
+-- Fallback restack when the Tooltips Fix tweak (tweaks/fix_new_game_loadout_tooltips) is not
 -- installed/armed. When it is, its outermost Update hook owns the full body
 -- stack (incl. parts / recipes / cooking); we only need
 -- apply_description_visibility beforehand.
@@ -2804,26 +2804,26 @@ end
 local base_get_stats_xml
 
 local DOGMA_WHITE_STAT_NAMES = {
-	["ui_dogma_wpn_hit_power"] = true,
-	["ui_dogma_wpn_stalker_damage"] = true,
-	["ui_dogma_wpn_ammo_torso"] = true,
-	["ui_dogma_wpn_dispersion"] = true,
-	["ui_dogma_wpn_spread"] = true,
-	["ui_dogma_wpn_barrel_wear"] = true,
-	["ui_dogma_wpn_burst_control"] = true,
-	["ui_dogma_wpn_bullet_drop"] = true,
+	["ui_dogma_gui_weapon_tooltips_hit_power"] = true,
+	["ui_dogma_gui_weapon_tooltips_stalker_damage"] = true,
+	["ui_dogma_gui_weapon_tooltips_ammo_torso"] = true,
+	["ui_dogma_gui_weapon_tooltips_dispersion"] = true,
+	["ui_dogma_gui_weapon_tooltips_spread"] = true,
+	["ui_dogma_gui_weapon_tooltips_barrel_wear"] = true,
+	["ui_dogma_gui_weapon_tooltips_burst_control"] = true,
+	["ui_dogma_gui_weapon_tooltips_bullet_drop"] = true,
 }
 
 local function build_white_stat_xml(handler, obj, sec, gr, stat)
 	local value, nclr
 
-	if gr.name == "ui_dogma_wpn_ammo_torso" then
+	if gr.name == "ui_dogma_gui_weapon_tooltips_ammo_torso" then
 		value = format_raw_ammo_damage_slash(obj, sec)
 		nclr = false
-	elseif gr.name == "ui_dogma_wpn_stalker_damage" then
+	elseif gr.name == "ui_dogma_gui_weapon_tooltips_stalker_damage" then
 		value = format_stalker_ammo_damage_slash(obj, sec)
 		nclr = false
-	elseif gr.name == "ui_dogma_wpn_hit_power" then
+	elseif gr.name == "ui_dogma_gui_weapon_tooltips_hit_power" then
 		value, nclr = utils_ui.get_stats_string_value(obj, sec, gr, stat)
 	elseif zzzz_dogma_gui_weapon_tooltips_stats and zzzz_dogma_gui_weapon_tooltips_stats.text_for_name then
 		value = zzzz_dogma_gui_weapon_tooltips_stats.text_for_name(gr.name, obj, sec)
@@ -2848,10 +2848,10 @@ local function build_white_stat_xml(handler, obj, sec, gr, stat)
 	st_cap:SetTextColor(CLR.white)
 
 	local st_txt = STAT_XML:InitTextWnd("item_info:stats_box:prog_txt", st)
-	if gr.name == "ui_dogma_wpn_ammo_torso" or gr.name == "ui_dogma_wpn_stalker_damage"
-		or gr.name == "ui_dogma_wpn_bullet_drop" or gr.name == "ui_dogma_wpn_dispersion"
-		or gr.name == "ui_dogma_wpn_spread"
-		or gr.name == "ui_dogma_wpn_burst_control" or gr.name == "ui_dogma_wpn_barrel_wear" then
+	if gr.name == "ui_dogma_gui_weapon_tooltips_ammo_torso" or gr.name == "ui_dogma_gui_weapon_tooltips_stalker_damage"
+		or gr.name == "ui_dogma_gui_weapon_tooltips_bullet_drop" or gr.name == "ui_dogma_gui_weapon_tooltips_dispersion"
+		or gr.name == "ui_dogma_gui_weapon_tooltips_spread"
+		or gr.name == "ui_dogma_gui_weapon_tooltips_burst_control" or gr.name == "ui_dogma_gui_weapon_tooltips_barrel_wear" then
 		st_txt:SetTextComplexMode(true)
 	end
 	st_txt:SetText(value)

@@ -7,7 +7,6 @@ from PyQt6.QtGui import (
     QBrush,
     QColor,
     QFont,
-    QFontMetricsF,
     QImage,
     QPainter,
     QPainterPath,
@@ -31,6 +30,18 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from .box_chrome import (
+    FOCUS_LABEL_Z,
+    HOVER_LABEL_TEXT,
+    IDLE_CHROME_Z,
+    IdleBorderChrome,
+    LABEL_Z,
+    OutsideLabelChrome,
+    SEL_BLUE,
+    SEL_BLUE_FILL,
+    SELECT_LABEL_TEXT,
+    FocusCaptionOverlay,
+)
 from .diaglog import get_logger
 from .model import LayoutNode
 from .settings import LABEL_FONT_MIN, UI_HEIGHT, UI_WIDTH
@@ -42,13 +53,13 @@ _log = get_logger("canvas")
 # Scene z bands (back → front):
 #   textures → labels → diamonds →
 #   idle → hover border → select chrome → hover label → select label (front)
-_LABEL_Z = 1_000_000.0
+_LABEL_Z = LABEL_Z
 _DIAMOND_Z = 2_000_000.0
-_IDLE_CHROME_Z = 10_000_000.0
+_IDLE_CHROME_Z = IDLE_CHROME_Z
 _HOVER_CHROME_Z = 10_000_001.0
 _SELECT_CHROME_Z = 10_000_002.0
 _HOVER_LABEL_Z = 10_000_003.0
-_SELECT_LABEL_Z = 10_000_004.0
+_SELECT_LABEL_Z = FOCUS_LABEL_Z
 _MARQUEE_Z = 10_000_010.0
 _GUIDE_Z = 10_000_009.0
 
@@ -64,14 +75,7 @@ MIN_SIZE = 4.0
 DRAG_THRESHOLD = 5.0  # view px before click becomes marquee / drag
 
 # Selected = normal blue; hovered border = white
-SEL_BLUE = QColor(40, 130, 255)
-SEL_BLUE_FILL = QColor(40, 130, 255, 13)  # ~5% alpha
 HOVER_BORDER = QColor(255, 255, 255)
-LABEL_GREY = QColor(160, 160, 165)
-IDLE_YELLOW = QColor(150, 140, 40, 220)
-FOCUS_LABEL_BG = QColor(0, 0, 0)
-SELECT_LABEL_TEXT = SEL_BLUE
-HOVER_LABEL_TEXT = QColor(255, 255, 255)
 GUIDE_LINE = QColor(220, 220, 230, 128)  # 1px, ~50% alpha
 RULER_BG = QColor(30, 30, 34)
 RULER_TICK = QColor(120, 120, 128)
@@ -181,80 +185,25 @@ class FocusChrome(QGraphicsItem):
             painter.drawRect(self._rect)
 
 
-class FocusLabelOverlay(QGraphicsItem):
-    """Focus tag in front of chrome: SimpleTextItem + black bg (select/hover)."""
-
-    _PAD = 1.0
-
-    def __init__(self) -> None:
-        super().__init__()
-        self._bg = QGraphicsRectItem(self)
-        self._bg.setPen(QPen(Qt.PenStyle.NoPen))
-        self._bg.setBrush(QBrush(FOCUS_LABEL_BG))
-        self._bg.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
-        self._bg.setZValue(0)
-        self._text = QGraphicsSimpleTextItem(self)
-        self._text.setBrush(QBrush(SELECT_LABEL_TEXT))
-        self._text.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
-        self._text.setZValue(1)
-        self.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
-        self.setAcceptHoverEvents(False)
-        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
-        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, False)
-        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemHasNoContents, True)
-        self.hide()
+class FocusLabelOverlay(FocusCaptionOverlay):
+    """UI-layout focus caption — thin wrapper over shared FocusCaptionOverlay."""
 
     def bind(self, item: WidgetItem | None, *, text_color: QColor) -> None:
         if item is None or not item.node.visible or not item.isVisible():
-            self.hide()
+            self.clear()
             return
         tag = item.node.tag or item.node.path or ""
         if not tag:
-            self.hide()
+            self.clear()
             return
-        self.prepareGeometryChange()
-        lab = item._label_item
-        # Always show for focus (even when "show labels" is off).
-        item._apply_label_font()
-        self._text.setFont(lab.font())
-        self._text.setBrush(QBrush(text_color))
-        self._text.setText(tag)
-        self._text.setPos(0, 0)
-        # Layout uses the same anchor rules as _apply_label (may be hidden when toggle off).
-        fm = QFontMetricsF(self._text.font())
-        loose = fm.boundingRect(tag)
-        tight = fm.tightBoundingRect(tag)
-        item_br = self._text.boundingRect()
-        mapped = tight.translated(item_br.x() - loose.x(), item_br.y() - loose.y())
-        pad = self._PAD
-        if item.node.from_meta:
-            tip = item._meta_diamond_poly().at(1)
-            gap = 6.0
-            br = item_br
-            lx = tip.x() + gap - br.x()
-            ly = tip.y() - (br.y() + br.height() / 2.0)
-        else:
-            gap = 2.0
-            br = item_br
-            lx = 0.0 - br.x()
-            ly = -gap - br.height() - br.y()
-        ox, oy = item.pos().x(), item.pos().y()
-        self.setPos(ox + lx, oy + ly)
-        top = mapped.top() - pad
-        bottom = mapped.bottom() + pad
-        right = mapped.right() + pad
-        if item.node.from_meta:
-            left = mapped.left() - pad
-        else:
-            left = -lx  # box-relative: label sits above the item origin
-        self._bg.setRect(QRectF(left, top, max(right - left, 1.0), bottom - top))
-        self.show()
-
-    def boundingRect(self) -> QRectF:  # noqa: N802
-        return self._bg.rect()
-
-    def paint(self, painter: QPainter, option: QStyleOptionGraphicsItem, widget: QWidget | None = None) -> None:
-        return
+        tip = item._meta_diamond_poly().at(1) if item.node.from_meta else None
+        self.bind_above(
+            item_pos=item.pos(),
+            text=tag,
+            font_size=item.label_font_size,
+            text_color=text_color,
+            tip=tip,
+        )
 
 
 class WidgetItem(QGraphicsRectItem):
@@ -293,27 +242,13 @@ class WidgetItem(QGraphicsRectItem):
             QGraphicsItem.GraphicsItemFlag.ItemStacksBehindParent, True
         )
         self._pixmap_item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
-        # Labels are scene-level (not children) so they stack above textures,
-        # but always below border/fill chrome.
-        self._label_item = QGraphicsSimpleTextItem()
-        self._label_item.setBrush(QBrush(LABEL_GREY))
-        self._label_item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
-        self._label_item.setAcceptHoverEvents(False)
-        self._label_item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
-        self._label_shadow = QGraphicsSimpleTextItem()
-        self._label_shadow.setBrush(QBrush(QColor(0, 0, 0, 220)))
-        self._label_shadow.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
-        self._label_shadow.setAcceptHoverEvents(False)
-        self._label_shadow.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
-        # Idle yellow border is scene-level so it sits above nested content.
-        self._idle_border = QGraphicsRectItem()
-        self._idle_border.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
-        self._idle_border.setAcceptHoverEvents(False)
-        self._idle_border.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
-        self._idle_border.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, False)
-        self._idle_border.setZValue(_IDLE_CHROME_Z)
-        self._idle_border.hide()
-        self._apply_label_font()
+        # Scene-level outside labels + idle border (shared with atlas editor).
+        self._caption = OutsideLabelChrome()
+        self._idle_chrome = IdleBorderChrome()
+        # Compat aliases used by focus overlay / z stacking.
+        self._label_item = self._caption.text
+        self._label_shadow = self._caption.shadow
+        self._idle_border = self._idle_chrome.rect
         self._missing = False
         self._resizing = False
         self._resize_corner: str | None = None
@@ -325,13 +260,11 @@ class WidgetItem(QGraphicsRectItem):
         self.refresh_look()
 
     def detach_overlays(self, scene: QGraphicsScene) -> None:
-        for lab in (self._label_item, self._label_shadow, self._idle_border):
-            if lab.scene() is scene:
-                scene.removeItem(lab)
+        self._caption.detach(scene)
+        self._idle_chrome.detach(scene)
 
     def set_label_font_size(self, size: int) -> None:
         self.label_font_size = max(LABEL_FONT_MIN, int(size))
-        self._apply_label_font()
         self._apply_label()
 
     def set_show_element_labels(self, show: bool) -> None:
@@ -339,9 +272,7 @@ class WidgetItem(QGraphicsRectItem):
         self._apply_label()
 
     def _apply_label_font(self) -> None:
-        font = QFont("Segoe UI", max(LABEL_FONT_MIN, self.label_font_size))
-        self._label_item.setFont(font)
-        self._label_shadow.setFont(font)
+        self._caption.set_font_size(self.label_font_size)
 
     def set_box_style(self, *, show_border: bool | None = None, show_fill: bool | None = None) -> None:
         if show_border is not None:
@@ -427,17 +358,12 @@ class WidgetItem(QGraphicsRectItem):
             and not hovered
             and self.show_box_border
         )
-        if not show:
-            self._idle_border.hide()
-            return
-        pen = QPen(IDLE_YELLOW)
-        pen.setWidth(1)
-        pen.setCosmetic(True)
-        self._idle_border.setPen(pen)
-        self._idle_border.setBrush(QBrush(Qt.BrushStyle.NoBrush))
-        self._idle_border.setPos(self.pos())
-        self._idle_border.setRect(0, 0, max(self.node.width, 1), max(self.node.height, 1))
-        self._idle_border.show()
+        self._idle_chrome.sync(
+            item_pos=self.pos(),
+            width=self.node.width,
+            height=self.node.height,
+            show=show,
+        )
 
     def has_visible_texture(self) -> bool:
         return not self._pixmap_item.pixmap().isNull()
@@ -502,42 +428,16 @@ class WidgetItem(QGraphicsRectItem):
         tag = self.node.tag or self.node.path or ""
         # Focus captions are owned by FocusLabelOverlay (select/hover, always on top).
         focused = self.isSelected() or self.is_hovered()
-        visible = (
-            bool(tag)
-            and self.show_element_labels
-            and self.node.visible
-            and not focused
+        tip = self._meta_diamond_poly().at(1) if self.node.from_meta else None
+        self._caption.apply(
+            text=tag,
+            item_pos=self.pos(),
+            visible=bool(
+                tag and self.show_element_labels and self.node.visible and not focused
+            ),
+            font_size=self.label_font_size,
+            tip=tip,
         )
-        if not visible:
-            self._label_item.setText("")
-            self._label_item.setVisible(False)
-            self._label_shadow.setText("")
-            self._label_shadow.setVisible(False)
-            return
-        self._apply_label_font()
-        self._label_item.setText(tag)
-        self._label_item.setVisible(True)
-        self._label_shadow.setText(tag)
-        self._label_shadow.setVisible(True)
-        if self.node.from_meta:
-            self._label_item.setBrush(QBrush(LABEL_GREY))
-            br = self._label_item.boundingRect()
-            # Sit to the right of the diamond tip.
-            tip = self._meta_diamond_poly().at(1)  # right tip
-            gap = 6.0
-            lx = tip.x() + gap - br.x()
-            ly = tip.y() - (br.y() + br.height() / 2.0)
-        else:
-            self._label_item.setBrush(QBrush(LABEL_GREY))
-            br = self._label_item.boundingRect()
-            # Outside above the box; bottom-left anchored so size grows up/right.
-            gap = 2.0
-            lx = 0.0 - br.x()
-            ly = -gap - br.height() - br.y()
-        # Scene coords: labels follow the item's visual position (pos), not stale abs_*.
-        ox, oy = self.pos().x(), self.pos().y()
-        self._label_shadow.setPos(ox + lx + 1, oy + ly + 1)
-        self._label_item.setPos(ox + lx, oy + ly)
 
     def follow_overlays_to_pos(self) -> None:
         """Reposition scene overlays to match current item.pos() (no texture work)."""
@@ -1043,11 +943,8 @@ class UiScene(QGraphicsScene):
                 item.setZValue(float(z))
             self.addItem(item)
             item._label_z_base = _LABEL_Z + float(z)
-            item._label_shadow.setZValue(item._label_z_base)
-            item._label_item.setZValue(item._label_z_base + 0.01)
-            self.addItem(item._label_shadow)
-            self.addItem(item._label_item)
-            self.addItem(item._idle_border)
+            item._caption.attach(self, z_base=item._label_z_base)
+            item._idle_chrome.attach(self)
             item._apply_label()
             self._items[node.path] = item
         self._sync_focus_chrome()

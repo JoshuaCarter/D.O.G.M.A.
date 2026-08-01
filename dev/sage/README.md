@@ -75,9 +75,11 @@ Neither writes drive paths — deploy flattens `src/…/textures/` into
 `gamedata/textures/` the same way.
 
 **Atlas editor:** Open a `textures_descr` XML (path or `<w>/<file name>/<texture id>`
-shape) to edit UV boxes on the DDS sheet — same WYSIWYG / XML / Log tabs, no
-layout sidebars. Sheet linked by `file name="ui\…"`, not by the descr folder.
-F2 rename id · Ctrl+D duplicate · Del delete · Ctrl+N new region. No `.xml.meta`.
+shape) to edit UV boxes on the DDS sheet — same WYSIWYG / XML / Log tabs plus
+sidebars (region list, id + x/y/w/h, Options border/fill/labels, Undo). Labels /
+idle borders use shared `box_chrome` (outside the box, same as the UI editor).
+Sheet linked by `file name="ui\…"`, not by the descr folder. F2 rename id ·
+Ctrl+D duplicate · Del delete · Ctrl+N new region. No `.xml.meta`.
 
 If `Anomaly\tools\_unpacked` is missing (or incomplete), Continue / Ok warns that
 SAGE will unpack `configs.db0` + `textures_ui.db0` (may take a minute), runs the

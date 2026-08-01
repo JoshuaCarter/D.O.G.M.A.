@@ -1,0 +1,49 @@
+--[[
+	Stock item_device turns NV off in device_binder:net_destroy on level change.
+	Torch light restores from the engine flag; NV is script-only and never restored.
+	Stash wanted state on level change / save; re-apply on first update after spawn.
+]]
+
+local CONFIG = _G.dogma_tweaks_nvg_sticks_after_load_conf
+local DOGMA
+
+local want_on = false
+
+local function nv_is_on()
+	return item_device and item_device.nv_state == true
+end
+
+local function stash()
+	want_on = nv_is_on()
+end
+
+local function restore()
+	if not want_on then
+		return
+	end
+	want_on = false
+	if not (db.actor and item_device and item_device.set_nightvision) then
+		return
+	end
+	local torch = db.actor:item_in_slot(10)
+	if not torch then
+		return
+	end
+	-- FDDA only animates when play_animation was set by the keybind path.
+	item_device.set_nightvision(torch:section(), true)
+end
+
+function on_game_start()
+	DOGMA = dogma_common.load(CONFIG.MOD_ID)
+	RegisterScriptCallback("on_level_changing", stash)
+	RegisterScriptCallback("actor_on_first_update", restore)
+	if USE_MARSHAL then
+		RegisterScriptCallback("save_state", function(mdata)
+			mdata.dogma_tweaks_nvg_sticks_after_load_on = nv_is_on() or want_on
+		end)
+		RegisterScriptCallback("load_state", function(mdata)
+			want_on = mdata.dogma_tweaks_nvg_sticks_after_load_on == true
+				or mdata.dogma_hud_nvg_on == true
+		end)
+	end
+end

@@ -22,7 +22,6 @@ from PyQt6.QtWidgets import (
     QGraphicsPixmapItem,
     QGraphicsRectItem,
     QGraphicsScene,
-    QGraphicsSimpleTextItem,
     QGraphicsView,
     QHBoxLayout,
     QInputDialog,
@@ -32,16 +31,22 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from .box_chrome import (
+    FOCUS_LABEL_Z,
+    IdleBorderChrome,
+    OutsideLabelChrome,
+    SEL_BLUE,
+    SEL_FILL_ATLAS,
+    SELECT_LABEL_TEXT,
+    FocusCaptionOverlay,
+)
 from .descr_model import DescrDocument, DescrRegion, DescrSheet
+from .settings import clamp_label_font_size
 from .textures import TextureResolver
 from .undo import GeoEdit, GeoState, UndoStack
 
 HANDLE = 8.0
 MIN_SIZE = 2.0
-SEL_BLUE = QColor(40, 130, 255)
-SEL_FILL = QColor(40, 130, 255, 40)
-IDLE_PEN = QColor(220, 200, 60, 200)
-HOVER_PEN = QColor(255, 255, 255)
 
 
 def _pil_to_pixmap(img: Image.Image) -> QPixmap:
@@ -56,9 +61,21 @@ def _pil_to_pixmap(img: Image.Image) -> QPixmap:
 class RegionItem(QGraphicsRectItem):
     """Editable UV box on the atlas sheet."""
 
-    def __init__(self, region: DescrRegion) -> None:
+    def __init__(
+        self,
+        region: DescrRegion,
+        *,
+        show_box_border: bool = False,
+        show_box_fill: bool = False,
+        show_element_labels: bool = False,
+        label_font_size: int = 5,
+    ) -> None:
         super().__init__(0, 0, max(region.width, 1), max(region.height, 1))
         self.region = region
+        self.show_box_border = bool(show_box_border)
+        self.show_box_fill = bool(show_box_fill)
+        self.show_element_labels = bool(show_element_labels)
+        self.label_font_size = clamp_label_font_size(label_font_size)
         self.setPos(region.x, region.y)
         self.setFlags(
             QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
@@ -66,13 +83,11 @@ class RegionItem(QGraphicsRectItem):
             | QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges
         )
         self.setAcceptHoverEvents(True)
-        self.setPen(QPen(IDLE_PEN, 1.0))
-        self.setBrush(QBrush(QColor(0, 0, 0, 0)))
-        self._label = QGraphicsSimpleTextItem(region.atlas_id, self)
-        self._label.setBrush(QBrush(QColor(240, 240, 245)))
-        self._label.setFont(QFont("Segoe UI", 8))
-        self._label.setPos(2, 2)
-        self._label.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        self.setPen(QPen(Qt.PenStyle.NoPen))
+        self.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+        # Scene-level chrome (same as UI editor) — never parented inside the box.
+        self._caption = OutsideLabelChrome()
+        self._idle_border = IdleBorderChrome()
         self._resizing = False
         self._resize_corner: str | None = None
         self._resize_start = QPointF()
@@ -82,24 +97,72 @@ class RegionItem(QGraphicsRectItem):
         self._updating = False
         self.refresh()
 
+    def attach_overlays(self, scene: QGraphicsScene) -> None:
+        self._caption.attach(scene)
+        self._idle_border.attach(scene)
+        self.refresh()
+
+    def detach_overlays(self, scene: QGraphicsScene) -> None:
+        self._caption.detach(scene)
+        self._idle_border.detach(scene)
+
+    def set_box_style(
+        self, *, show_border: bool | None = None, show_fill: bool | None = None
+    ) -> None:
+        if show_border is not None:
+            self.show_box_border = bool(show_border)
+        if show_fill is not None:
+            self.show_box_fill = bool(show_fill)
+        self.refresh()
+
+    def set_show_element_labels(self, show: bool) -> None:
+        self.show_element_labels = bool(show)
+        self.refresh()
+
+    def set_label_font_size(self, size: int) -> None:
+        self.label_font_size = clamp_label_font_size(size)
+        self.refresh()
+
     def refresh(self) -> None:
         self._updating = True
         self.setRect(0, 0, max(self.region.width, 1), max(self.region.height, 1))
         self.setPos(self.region.x, self.region.y)
-        self._label.setText(self.region.atlas_id)
         selected = self.isSelected()
         if selected:
-            self.setPen(QPen(SEL_BLUE, 2.0))
-            self.setBrush(QBrush(SEL_FILL))
+            pen = QPen(SEL_BLUE, 2.0)
+            pen.setCosmetic(True)
+            self.setPen(pen)
+            self.setBrush(
+                QBrush(SEL_FILL_ATLAS)
+                if self.show_box_fill
+                else QBrush(Qt.BrushStyle.NoBrush)
+            )
         else:
-            self.setPen(QPen(IDLE_PEN, 1.0))
+            self.setPen(QPen(Qt.PenStyle.NoPen))
             self.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+        # Idle yellow border is scene-level (above sheet content), like UI editor.
+        self._idle_border.sync(
+            item_pos=self.pos(),
+            width=self.region.width,
+            height=self.region.height,
+            show=bool(self.show_box_border and not selected),
+        )
+        # Grey captions hide while selected — focus caption is scene-owned.
+        self._caption.apply(
+            text=self.region.atlas_id,
+            item_pos=self.pos(),
+            visible=bool(self.show_element_labels and not selected),
+            font_size=self.label_font_size,
+        )
         self.setToolTip(
             f"{self.region.atlas_id}\n"
             f"{int(self.region.x)},{int(self.region.y)} "
             f"{int(self.region.width)}×{int(self.region.height)}"
         )
         self._updating = False
+        scene = self.scene()
+        if isinstance(scene, DescrScene):
+            scene.sync_focus_caption()
 
     def _hit_handle(self, pos: QPointF) -> str | None:
         r = self.rect()
@@ -231,6 +294,20 @@ class RegionItem(QGraphicsRectItem):
                 self._updating = False
             if isinstance(scene, DescrScene):
                 scene.geometry_changed.emit(self.region)
+            self._caption.apply(
+                text=self.region.atlas_id,
+                item_pos=self.pos(),
+                visible=bool(self.show_element_labels and not self.isSelected()),
+                font_size=self.label_font_size,
+            )
+            self._idle_border.sync(
+                item_pos=self.pos(),
+                width=self.region.width,
+                height=self.region.height,
+                show=bool(self.show_box_border and not self.isSelected()),
+            )
+            if isinstance(scene, DescrScene):
+                scene.sync_focus_caption()
         if change == QGraphicsItem.GraphicsItemChange.ItemSelectedHasChanged:
             self.refresh()
         return super().itemChange(change, value)
@@ -281,6 +358,10 @@ class DescrScene(QGraphicsScene):
         self.dds_path: Path | None = None
         self.undo_stack = UndoStack()
         self._items: dict[str, RegionItem] = {}
+        self.show_box_border = False
+        self.show_box_fill = False
+        self.show_element_labels = False
+        self.label_font_size = 5
         self._bg = QGraphicsPixmapItem()
         self._bg.setZValue(-100)
         self._bg.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
@@ -291,7 +372,67 @@ class DescrScene(QGraphicsScene):
         self._frame.setZValue(-200)
         self._frame.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
         self.addItem(self._frame)
+        self._focus_caption = FocusCaptionOverlay()
+        self._focus_caption.setZValue(FOCUS_LABEL_Z)
+        self.addItem(self._focus_caption)
         self.selectionChanged.connect(self._on_sel)
+
+    def _make_item(self, region: DescrRegion) -> RegionItem:
+        return RegionItem(
+            region,
+            show_box_border=self.show_box_border,
+            show_box_fill=self.show_box_fill,
+            show_element_labels=self.show_element_labels,
+            label_font_size=self.label_font_size,
+        )
+
+    def _add_item(self, region: DescrRegion) -> RegionItem:
+        item = self._make_item(region)
+        self.addItem(item)
+        item.attach_overlays(self)
+        self._items[region.atlas_id] = item
+        return item
+
+    def _remove_item(self, item: RegionItem) -> None:
+        item.detach_overlays(self)
+        self.removeItem(item)
+
+    def sync_focus_caption(self) -> None:
+        reg = self.selected_region()
+        if reg is None:
+            self._focus_caption.clear()
+            return
+        item = self._items.get(reg.atlas_id)
+        if item is None:
+            self._focus_caption.clear()
+            return
+        self._focus_caption.bind_above(
+            item_pos=item.pos(),
+            text=reg.atlas_id,
+            font_size=self.label_font_size,
+            text_color=SELECT_LABEL_TEXT,
+        )
+
+    def set_box_style(
+        self, *, show_border: bool | None = None, show_fill: bool | None = None
+    ) -> None:
+        if show_border is not None:
+            self.show_box_border = bool(show_border)
+        if show_fill is not None:
+            self.show_box_fill = bool(show_fill)
+        for item in self._items.values():
+            item.set_box_style(show_border=show_border, show_fill=show_fill)
+
+    def set_show_element_labels(self, show: bool) -> None:
+        self.show_element_labels = bool(show)
+        for item in self._items.values():
+            item.set_show_element_labels(show)
+
+    def set_label_font_size(self, size: int) -> None:
+        self.label_font_size = clamp_label_font_size(size)
+        for item in self._items.values():
+            item.set_label_font_size(self.label_font_size)
+        self.sync_focus_caption()
 
     def push_geo_edit(self, edit: GeoEdit) -> None:
         self.undo_stack.push(edit)
@@ -304,8 +445,16 @@ class DescrScene(QGraphicsScene):
     def _on_sel(self) -> None:
         for item in self.selectedItems():
             if isinstance(item, RegionItem):
+                item.refresh()
+                for other in self._items.values():
+                    if other is not item:
+                        other.refresh()
+                self.sync_focus_caption()
                 self.selection_changed_region.emit(item.region)
                 return
+        for item in self._items.values():
+            item.refresh()
+        self.sync_focus_caption()
         self.selection_changed_region.emit(None)
 
     def selected_region(self) -> DescrRegion | None:
@@ -318,9 +467,10 @@ class DescrScene(QGraphicsScene):
         self.doc = doc
         self.sheet = sheet
         for item in list(self._items.values()):
-            self.removeItem(item)
+            self._remove_item(item)
         self._items.clear()
         self.clear_undo()
+        self._focus_caption.clear()
 
         if sheet is None:
             self.sheet_w, self.sheet_h = 256.0, 256.0
@@ -354,9 +504,8 @@ class DescrScene(QGraphicsScene):
         self.setSceneRect(-64, -64, self.sheet_w + 128, self.sheet_h + 128)
 
         for reg in sheet.regions:
-            item = RegionItem(reg)
-            self.addItem(item)
-            self._items[reg.atlas_id] = item
+            self._add_item(reg)
+        self.sync_focus_caption()
 
     def refresh_item(self, region: DescrRegion) -> None:
         item: RegionItem | None = None
@@ -375,6 +524,7 @@ class DescrScene(QGraphicsScene):
                     break
         if item is not None:
             item.refresh()
+            self.sync_focus_caption()
 
     def apply_geo_edit(self, edit: GeoEdit, *, use_after: bool) -> DescrRegion | None:
         last: DescrRegion | None = None
@@ -422,9 +572,7 @@ class DescrScene(QGraphicsScene):
         reg = self.doc.add_region(
             self.sheet, atlas_id=atlas_id, x=x, y=y, width=w, height=h
         )
-        item = RegionItem(reg)
-        self.addItem(item)
-        self._items[reg.atlas_id] = item
+        item = self._add_item(reg)
         self.clearSelection()
         item.setSelected(True)
         return reg
@@ -437,8 +585,9 @@ class DescrScene(QGraphicsScene):
             return False
         item = self._items.pop(reg.atlas_id, None)
         if item is not None:
-            self.removeItem(item)
+            self._remove_item(item)
         self.doc.remove_region(self.sheet, reg)
+        self.sync_focus_caption()
         return True
 
     def duplicate_selected(self) -> DescrRegion | None:
@@ -448,9 +597,7 @@ class DescrScene(QGraphicsScene):
         if reg is None:
             return None
         new_reg = self.doc.duplicate_region(self.sheet, reg)
-        item = RegionItem(new_reg)
-        self.addItem(item)
-        self._items[new_reg.atlas_id] = item
+        item = self._add_item(new_reg)
         self.clearSelection()
         item.setSelected(True)
         return new_reg
@@ -525,6 +672,8 @@ class DescrBoard(QWidget):
     document_dirty = pyqtSignal()
     undo_stack_changed = pyqtSignal()
     status_message = pyqtSignal(str)
+    sheet_changed = pyqtSignal()
+    regions_changed = pyqtSignal()
 
     def __init__(self, resolver: TextureResolver, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -533,19 +682,36 @@ class DescrBoard(QWidget):
         self.scene = DescrScene(resolver)
         self.view = DescrView(self.scene)
 
-        top = QHBoxLayout()
-        top.addWidget(QLabel("Sheet"))
-        self.sheet_combo = QComboBox()
-        self.sheet_combo.currentIndexChanged.connect(self._on_sheet_combo)
-        top.addWidget(self.sheet_combo, stretch=1)
         self.sheet_label = QLabel("")
-        self.sheet_label.setStyleSheet("color: #9a9a9a;")
-        top.addWidget(self.sheet_label)
+        self.sheet_label.setStyleSheet("color: #9a9a9a; margin-left: 5px;")
+
+        sheet_row = QHBoxLayout()
+        sheet_row.setContentsMargins(5, 0, 0, 0)
+        sheet_row.setSpacing(8)
+        sheet_title = QLabel("Sheet")
+        sheet_title.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+        self.sheet_combo = QComboBox()
+        self.sheet_combo.setMaximumWidth(300)
+        self.sheet_combo.setMinimumWidth(160)
+        self.sheet_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        self.sheet_combo.setMinimumContentsLength(12)
+        self.sheet_combo.currentIndexChanged.connect(self._on_sheet_combo)
+        sheet_row.addWidget(sheet_title)
+        sheet_row.addWidget(self.sheet_combo, stretch=0)
+        sheet_row.addStretch(1)
+
+        header = QVBoxLayout()
+        header.setContentsMargins(0, 2, 0, 2)
+        header.setSpacing(2)
+        header.addWidget(self.sheet_label)
+        header.addLayout(sheet_row)
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(4)
-        lay.addLayout(top)
+        lay.addLayout(header)
         lay.addWidget(self.view, stretch=1)
 
         self.scene.geometry_changed.connect(self._on_geo)
@@ -580,6 +746,7 @@ class DescrBoard(QWidget):
         else:
             self.scene.set_sheet(doc, None)
             self.sheet_label.setText("(no sheets)")
+            self.sheet_changed.emit()
 
     def _on_sheet_combo(self, index: int) -> None:
         if self._block_combo or index < 0:
@@ -598,6 +765,7 @@ class DescrBoard(QWidget):
         else:
             self.sheet_label.setText(f"missing · {sheet.file_name}")
         self.view.fit_stage()
+        self.sheet_changed.emit()
 
     def current_sheet(self) -> DescrSheet | None:
         return self.scene.sheet
@@ -626,6 +794,8 @@ class DescrBoard(QWidget):
             item.refresh()
         self.doc.mark_dirty()
         self.document_dirty.emit()
+        self.regions_changed.emit()
+        self.selection_changed.emit(region)
         self.status_message.emit(f"Renamed {old} → {new_id}")
 
     def rename_selected(self) -> None:
@@ -636,10 +806,13 @@ class DescrBoard(QWidget):
     def delete_selected(self) -> None:
         if self.scene.remove_selected():
             self.document_dirty.emit()
+            self.regions_changed.emit()
+            self.selection_changed.emit(None)
 
     def duplicate_selected(self) -> None:
         if self.scene.duplicate_selected():
             self.document_dirty.emit()
+            self.regions_changed.emit()
 
     def add_region(self) -> None:
         # Center of view
@@ -648,3 +821,4 @@ class DescrBoard(QWidget):
         y = max(0.0, center.y() - 16)
         if self.scene.add_region_at(x, y):
             self.document_dirty.emit()
+            self.regions_changed.emit()

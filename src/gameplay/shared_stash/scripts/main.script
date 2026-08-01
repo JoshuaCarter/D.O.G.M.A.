@@ -28,6 +28,13 @@ local function log(msg)
 	end
 end
 
+local function on_option_change()
+	if not (DOGMA and DOGMA.mcm) then
+		return
+	end
+	CONFIG.loaded.one_per_level = DOGMA.mcm.bool(MOD_ID, "one_per_level")
+end
+
 local function m_state()
 	return alife_storage_manager.get_state()
 end
@@ -132,7 +139,7 @@ local function is_workshop_placeable(section)
 end
 
 local function patched_start_placing_item(section)
-	if is_workshop_placeable(section) and level_has_workshop() then
+	if CONFIG.loaded.one_per_level and is_workshop_placeable(section) and level_has_workshop() then
 		block_message()
 		return
 	end
@@ -140,7 +147,7 @@ local function patched_start_placing_item(section)
 end
 
 local function patched_create_object(placeable_section, location, rotation, lvid, gvid)
-	if is_workshop_placeable(placeable_section) and level_has_workshop() then
+	if CONFIG.loaded.one_per_level and is_workshop_placeable(placeable_section) and level_has_workshop() then
 		block_message()
 		return nil
 	end
@@ -282,8 +289,10 @@ end
 
 function on_game_start()
 	DOGMA = dogma_common.load(MOD_ID)
+	on_option_change()
 	RegisterScriptCallback("actor_on_update", on_actor_update)
 	RegisterScriptCallback("on_game_load", on_game_load)
+	RegisterScriptCallback("on_option_change", on_option_change)
 	RegisterScriptCallback("hf_on_furniture_place", hf_on_furniture_place)
 	RegisterScriptCallback("hf_on_before_furniture_release", hf_on_before_furniture_release)
 	try_hook_place()

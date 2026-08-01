@@ -35,33 +35,39 @@
 #                        (empty|all)  → common + features with config/features.yml >= local
 #                        common       → common only
 #                        cat/feat     → that feature only (e.g. zoom/free_zoom; ignores manifest)
-#   DOGMA_DEPLOY=path  local MO2 mod folder: write gamedata straight there (one hop),
-#                      plus meta.ini + .mod_id + mo2/ mod-root files. Works with
-#                      DOGMA_ONLY too (no prune).
-#   DOGMA_OUT=path     override output gamedata (default: build/gamedata; disables
-#                      the DOGMA_DEPLOY one-hop when set)
+#   DOGMA_DEPLOY=path  after a fresh build/, full-replace this MO2 mod folder
+#                      (gamedata + mo2 + meta). Full builds only (not DOGMA_ONLY).
+#   DOGMA_OUT=path     override output gamedata (default: build/gamedata). Set by
+#                      package-fomod; skips wiping build/ and skips DOGMA_DEPLOY.
 #   DOGMA_NO_ALAO=1    skip ALAO on src/ before staging (same tool/flags as Optimize)
 #
-# Always stages every shippable file, then one bulk copy into OUT (no per-file
-# log). Full builds prune stale outputs.
+# Default (no DOGMA_OUT): wipe build/, stage → build/, then optional full-replace
+# deploy. package-fomod sets DOGMA_OUT and merges into its own stage dirs.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SRC="$ROOT/src"
 ONLY="${DOGMA_ONLY:-all}"
+BUILD_ROOT="$ROOT/build"
 
 # shellcheck source=manifest_lib.sh
 source "$ROOT/tools/manifest_lib.sh"
 
-# Local MO2 deploy: one write path (full or DOGMA_ONLY). DOGMA_OUT wins for packaging.
-if [[ -n "${DOGMA_DEPLOY:-}" && -z "${DOGMA_OUT:-}" ]]; then
-	DEPLOY_MOD="${DOGMA_DEPLOY%/}"
-	OUT="$DEPLOY_MOD/gamedata"
-	MODROOT_OUT="$DEPLOY_MOD"
+# DOGMA_OUT = packaging / override. Otherwise always build into build/.
+DEPLOY_MOD=""
+FRESH_BUILD=0
+if [[ -n "${DOGMA_OUT:-}" ]]; then
+	OUT="$DOGMA_OUT"
+	MODROOT_OUT="$(dirname "$OUT")"
+	mkdir -p "$MODROOT_OUT"
+	MODROOT_OUT="$(cd "$MODROOT_OUT" && pwd)"
 else
-	DEPLOY_MOD=""
-	OUT="${DOGMA_OUT:-$ROOT/build/gamedata}"
-	MODROOT_OUT="$(cd "$(dirname "$OUT")" && pwd)"
+	OUT="$BUILD_ROOT/gamedata"
+	MODROOT_OUT="$BUILD_ROOT"
+	FRESH_BUILD=1
+	if [[ -n "${DOGMA_DEPLOY:-}" ]]; then
+		DEPLOY_MOD="${DOGMA_DEPLOY%/}"
+	fi
 fi
 
 GAMEDATA_ROOTS="scripts configs textures meshes anims sounds spawns materials"
@@ -294,14 +300,6 @@ src_in_scope() {
 	esac
 }
 
-mkdir -p "$OUT"
-mkdir -p "$MODROOT_OUT"
-echo "build: out=$OUT"
-echo "build: modroot=$MODROOT_OUT"
-if [[ -n "$DEPLOY_MOD" && "$ONLY" != "all" && "$ONLY" != "" ]]; then
-	echo "build: DOGMA_ONLY=$ONLY → deploy $DEPLOY_MOD (no prune)"
-fi
-
 case "$ONLY" in
 	all | "" | common | */*) ;;
 	*)
@@ -310,10 +308,15 @@ case "$ONLY" in
 		;;
 esac
 
+if [[ -n "$DEPLOY_MOD" && "$ONLY" != "all" && "$ONLY" != "" ]]; then
+	echo "build: DOGMA_DEPLOY requires full build (DOGMA_ONLY=$ONLY would replace the whole mod)" >&2
+	exit 1
+fi
+
 if [[ "$ONLY" == "all" || "$ONLY" == "" ]]; then
 	dogma_load_manifest 1 || exit 1
 	if ((${#FEATURES[@]} == 0)) && [[ -z "${DOGMA_ALLOW_EMPTY:-}" ]]; then
-		echo "build: manifest yielded 0 features - refusing full build/prune (fix YAML or set DOGMA_ALLOW_EMPTY=1)" >&2
+		echo "build: manifest yielded 0 features - refusing full build (fix YAML or set DOGMA_ALLOW_EMPTY=1)" >&2
 		exit 1
 	fi
 	echo "build: config manifests stage>=dev (${#FEATURES[@]} features)"
@@ -322,6 +325,24 @@ fi
 if [[ "$ONLY" == */* && ! -d "$SRC/$ONLY" ]]; then
 	echo "build: DOGMA_ONLY=$ONLY not found at $SRC/$ONLY" >&2
 	exit 1
+fi
+
+# Fresh build/: clear everything first so ALAO report + outputs land in an empty tree.
+wipe_dir_contents() {
+	local root="$1"
+	mkdir -p "$root"
+	find "$root" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+}
+
+if (( FRESH_BUILD )); then
+	echo "build: wiping $BUILD_ROOT"
+	wipe_dir_contents "$BUILD_ROOT"
+fi
+
+echo "build: out=$OUT"
+echo "build: modroot=$MODROOT_OUT"
+if [[ -n "$DEPLOY_MOD" ]]; then
+	echo "build: deploy=$DEPLOY_MOD (full replace after build)"
 fi
 
 run_alao_local || exit 1
@@ -355,84 +376,43 @@ fi
 count="$(wc -l < "$MANIFEST" | tr -d ' ')"
 count_modroot="$(wc -l < "$MANIFEST_MODROOT" | tr -d ' ')"
 
-# One bulk copy: stage → OUT / mod root.
+# Fresh build already wiped; packaging paths just ensure dirs exist.
+mkdir -p "$OUT"
+mkdir -p "$MODROOT_OUT"
 cp -a "$STAGE"/. "$OUT"/
 if [[ "$count_modroot" != "0" ]]; then
 	cp -a "$STAGE_MODROOT"/. "$MODROOT_OUT"/
 fi
 
-# Full build: drop gamedata outputs not produced this run (keep generated LTX).
-PRUNED=0
-if [[ "$ONLY" == "all" || "$ONLY" == "" ]]; then
-	local_all="$(mktemp)"
-	(
-		cd "$OUT" && find . -type f | sed 's|^\./||' | sort
-	) > "$local_all"
-	while IFS= read -r rel; do
-		[[ -z "$rel" ]] && continue
-		rm -f "$OUT/$rel"
-		PRUNED=$((PRUNED + 1))
-	done < <(comm -23 "$local_all" "$MANIFEST")
-	rm -f "$local_all"
-
-	# Mod-root: prune any mo2/** file on disk that this run did not ship.
-	# Never touch non-mo2/ mod-root files.
-	if [[ -d "$MODROOT_OUT/mo2" ]]; then
-		mo2_all="$(mktemp)"
-		(
-			cd "$MODROOT_OUT" && find mo2 -type f | sed 's|^\./||' | sort
-		) > "$mo2_all"
-		while IFS= read -r rel; do
-			[[ -z "$rel" ]] && continue
-			# Feature zips from FOMOD packaging - keep across local merge deploys.
-			case "$rel" in
-				mo2/packages/*) continue ;;
-			esac
-			if ! grep -Fxq "$rel" "$MANIFEST_MODROOT"; then
-				rm -f "$MODROOT_OUT/$rel"
-				PRUNED=$((PRUNED + 1))
-			fi
-		done < <(comm -23 "$mo2_all" "$MANIFEST_MODROOT")
-		rm -f "$mo2_all"
-		# Drop flat copies / old layout leftovers.
-		rm -f "$MODROOT_OUT/build_sound_prefetch.bat" "$MODROOT_OUT/build_sound_prefetch.py"
-		rm -f "$MODROOT_OUT/mo2/build_sound_prefetch.bat" "$MODROOT_OUT/mo2/build_sound_prefetch.py"
-		rm -f "$MODROOT_OUT/dogma_sfx_prefetch.py" "$MODROOT_OUT/mo2/dogma_sfx_prefetch.py"
-		rm -f "$MODROOT_OUT/mo2/prelaunch.bat" "$MODROOT_OUT/mo2/tools/prelaunch.py" \
-			"$MODROOT_OUT/mo2/tools/DOGMA.bat" "$MODROOT_OUT/mo2/tools/run_job.bat" \
-			"$MODROOT_OUT/mo2/tools/setup.bat"
-	fi
-fi
-
-if (( PRUNED > 0 )); then
-	echo "build: done ($count gamedata, $count_modroot modroot, pruned $PRUNED)"
-else
-	echo "build: done ($count gamedata, $count_modroot modroot)"
-fi
-
-# When writing straight into MO2, also refresh mod metadata.
-# Use if/then (not `[[ -f ]] && cp`) so a missing optional file does not make
-# the script exit 1 under `set -e`.
-if [[ -n "$DEPLOY_MOD" ]]; then
-	cp "$ROOT/meta.ini" "$DEPLOY_MOD/meta.ini"
+write_mod_meta() {
+	local dest="$1"
+	cp "$ROOT/meta.ini" "$dest/meta.ini"
 	if [[ -f "$ROOT/.mod_id" ]]; then
-		cp "$ROOT/.mod_id" "$DEPLOY_MOD/.mod_id"
+		cp "$ROOT/.mod_id" "$dest/.mod_id"
+	else
+		rm -f "$dest/.mod_id"
 	fi
 	if [[ -f "$ROOT/INFO.md" ]]; then
-		cp "$ROOT/INFO.md" "$DEPLOY_MOD/INFO.md"
+		cp "$ROOT/INFO.md" "$dest/INFO.md"
 	else
-		rm -f "$DEPLOY_MOD/INFO.md"
+		rm -f "$dest/INFO.md"
 	fi
-	# Drop leftover launcher bits from earlier layouts.
-	rm -rf "$DEPLOY_MOD/sound_prefetch"
-	rm -f "$DEPLOY_MOD/gamedata/scripts/dogma_snd_prefetch.script"
-	rm -f "$DEPLOY_MOD/gamedata/configs/items/items/dogma_snd_prefetch.ltx"
-	rm -f "$DEPLOY_MOD/gamedata/configs/dogma_snd_prefetch.ltx"
-	rm -f "$DEPLOY_MOD/gamedata/configs/dogma_sfx_prefetch.ltx"
-	rm -f "$DEPLOY_MOD/build_sound_prefetch.bat" "$DEPLOY_MOD/build_sound_prefetch.py"
-	rm -f "$DEPLOY_MOD/mo2/build_sound_prefetch.bat" "$DEPLOY_MOD/mo2/build_sound_prefetch.py"
-	rm -f "$DEPLOY_MOD/dogma_sfx_prefetch.py" "$DEPLOY_MOD/mo2/dogma_sfx_prefetch.py"
-	rm -f "$DEPLOY_MOD/mo2/prelaunch.bat" "$DEPLOY_MOD/mo2/tools/prelaunch.py" \
-		"$DEPLOY_MOD/mo2/tools/DOGMA.bat" "$DEPLOY_MOD/mo2/tools/run_job.bat" \
-		"$DEPLOY_MOD/mo2/tools/setup.bat"
+}
+
+# Local build/ is a complete mod tree (meta included).
+if (( FRESH_BUILD )); then
+	write_mod_meta "$MODROOT_OUT"
 fi
+
+# Full-replace MO2 mod from build/ (mod files only — not alao_report.html).
+if [[ -n "$DEPLOY_MOD" ]]; then
+	echo "build: replacing $DEPLOY_MOD"
+	wipe_dir_contents "$DEPLOY_MOD"
+	cp -a "$BUILD_ROOT/gamedata" "$DEPLOY_MOD/gamedata"
+	if [[ -d "$BUILD_ROOT/mo2" ]]; then
+		cp -a "$BUILD_ROOT/mo2" "$DEPLOY_MOD/mo2"
+	fi
+	write_mod_meta "$DEPLOY_MOD"
+fi
+
+echo "build: done ($count gamedata, $count_modroot modroot)"

@@ -1,4 +1,4 @@
--- True Fast Travel: inject custom PDA path / ambush map spots.
+-- True Fast Travel: inject custom PDA path / ambush map spots + HUD prompt static.
 -- File is an Anomaly #include fragment (multiple top-level elements).
 function on_xml_read()
 	RegisterScriptCallback("on_xml_read", function(xml_file_name, xml_obj)
@@ -6,6 +6,13 @@ function on_xml_read()
 			or xml_file_name == [[ui\map_spots_16.xml]]
 			or xml_file_name == [[ui\map_spots_21.xml]] then
 			xml_obj:insertFromXMLString('#include "ui\\map_spots_dogma_true_fast_travel.xml"\n')
+		elseif xml_file_name == [[ui\ui_custom_msgs.xml]] then
+			-- Inline (not #include): MsgConfig loads this file once; keep the static in-tree.
+			xml_obj:insertFromXMLString([[
+	<tft_ambush_pause_prompt x="112" y="100" width="800" height="28" complex_mode="1">
+		<text font="graffiti22" r="255" g="200" b="80" a="255" align="c"/>
+	</tft_ambush_pause_prompt>
+]])
 		end
 	end)
 end

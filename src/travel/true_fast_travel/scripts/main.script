@@ -17,7 +17,7 @@ local actor_on_before_hit, on_option_change,
     on_loading_screen_dismissed, on_loading_screen_key_prompt, actor_on_first_update, menu_item_is_ours,
     strip_own_menu_items, strip_overlapping_spot_noise, mark_menu_primary, add_cannot_travel_item, add_guide_menu_item,
     add_travel_menu_items, on_map_right_click, on_map_spot_menu_add_property_impl,
-    on_map_spot_menu_add_property, on_map_spot_menu_property_clicked, on_key_press
+    on_map_spot_menu_add_property, on_map_spot_menu_property_clicked, on_key_press, on_before_key_press
 
 -- ============================================================
 -- 2. Configuration
@@ -33,6 +33,7 @@ local function load_config()
     tft_config.path_preview = mcm.bool(CONFIG.MOD_ID, "path_preview")
     tft_config.block_transition_in_combat = mcm.bool(CONFIG.MOD_ID, "block_transition_in_combat")
     tft_config.show_ambush_range = mcm.bool(CONFIG.MOD_ID, "show_ambush_range")
+    tft_config.pause_on_ambush = mcm.bool(CONFIG.MOD_ID, "pause_on_ambush")
     tft_config.fly_speed_mult_normal = mcm.number(CONFIG.MOD_ID, "fly_speed_mult_normal", CONFIG.DEFAULTS["fly_speed_mult_normal"] or 5)
     tft_config.fly_speed_mult_sneak = mcm.number(CONFIG.MOD_ID, "fly_speed_mult_sneak", CONFIG.DEFAULTS["fly_speed_mult_sneak"] or 2)
     -- nil when unbound (-1 in MCM)
@@ -152,6 +153,7 @@ function on_game_start()
         RegisterScriptCallback("actor_on_first_update",          actor_on_first_update)
         RegisterScriptCallback("actor_on_before_hit",            actor_on_before_hit)
         RegisterScriptCallback("on_key_press",                   on_key_press)
+        RegisterScriptCallback("on_before_key_press",            on_before_key_press)
         RegisterScriptCallback("on_loading_screen_dismissed",    on_loading_screen_dismissed)
         RegisterScriptCallback("on_loading_screen_key_prompt",   on_loading_screen_key_prompt)
         if tft_on_level_changing then
@@ -807,6 +809,14 @@ on_key_press = function(key)
     local tp_key = tft_config and tft_config.companion_teleport_key
     if tp_key and key == tp_key then
         pull_companions_to_actor()
+    end
+end
+
+-- Fires from level_input before the engine's "ignore keys while paused" gate, so WASD
+-- can resume our ambush pause. bind is key_bindings.kFWD / kBACK / kL_STRAFE / kR_STRAFE.
+on_before_key_press = function(dik, bind, dis, flags)
+    if _G.tft_try_resume_ambush_pause then
+        _G.tft_try_resume_ambush_pause(dik, bind)
     end
 end
 

@@ -13,12 +13,14 @@ import dogma_mo2_lib as lib
 DOGMA_EXECUTABLE_TITLES: tuple[str, ...] = (
     "D.O.G.M.A. Setup",
     "D.O.G.M.A. Backup",
+    "D.O.G.M.A. Dump",
     "D.O.G.M.A. Restore",
     "D.O.G.M.A. Optimize",
 )
 _DOGMA_EXECUTABLE_BATS: tuple[str, ...] = (
     "DOGMA Setup.bat",
     "DOGMA Backup.bat",
+    "DOGMA Dump.bat",
     "DOGMA Restore.bat",
     "DOGMA Optimize.bat",
 )
@@ -31,6 +33,8 @@ _DOGMA_EXECUTABLE_TITLE_ALIASES: frozenset[str] = frozenset(
         "DOGMA (Setup)",
         "DOGMA Backup",
         "DOGMA (Backup)",
+        "DOGMA Dump",
+        "DOGMA (Dump)",
         "DOGMA Restore",
         "DOGMA (Restore)",
         "DOGMA Optimize",

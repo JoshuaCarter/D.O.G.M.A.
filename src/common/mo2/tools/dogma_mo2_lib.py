@@ -79,7 +79,7 @@ _COLOR = _init_color()
 
 
 def dogma_data_dir(mo2_root: Path) -> Path:
-    """``<MO2>/DOGMA`` - downloads, backups, logs, mod_archive_map.ini."""
+    """``<MO2>/DOGMA`` - downloads, backups, dumps, logs, mod_archive_map.ini."""
     d = Path(mo2_root) / "DOGMA"
     d.mkdir(parents=True, exist_ok=True)
     return d

@@ -361,6 +361,12 @@ def cmd_backup(args: argparse.Namespace) -> int:
     return bak.run_backup_cli(args)
 
 
+def cmd_dump(args: argparse.Namespace) -> int:
+    import dogma_dump as dump
+
+    return dump.run_dump_cli(args)
+
+
 def cmd_restore(args: argparse.Namespace) -> int:
     import dogma_backup as bak
 
@@ -686,6 +692,13 @@ def build_parser() -> argparse.ArgumentParser:
     bak_p.add_argument("--no-mods", action="store_true")
     bak_p.set_defaults(func=cmd_backup)
 
+    dump_p = sub.add_parser(
+        "dump",
+        help="DOGMA Dump → <MO2>\\DOGMA\\dumps\\dogma_dump_<YYYY-MM-DD_HH-MM-SS>.zip",
+        parents=[common],
+    )
+    dump_p.set_defaults(func=cmd_dump)
+
     rst_p = sub.add_parser(
         "restore",
         help="DOGMA Restore from backups",
@@ -789,7 +802,7 @@ def main(argv: list[str] | None = None) -> int:
     reset = bool(getattr(args, "log_reset", False))
     job = str(getattr(args, "cmd", "") or "")
     log_path = lib.configure_logging(mo2, reset=reset, job=job)
-    quiet_jobs = ("optimize", "backup", "restore")
+    quiet_jobs = ("optimize", "backup", "restore", "dump")
     if job in quiet_jobs:
         # User-facing tools print their own prompts; keep detail in the log file.
         lib.append_action_log(

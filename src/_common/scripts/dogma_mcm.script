@@ -3,7 +3,7 @@
 
 	Loaded via dogma_common; use DOGMA.mcm from on_game_start().
 	Also registered as *mcm.script (API + defaults). Debug page itself is
-	registered only by the local-build feature mcm/debug (manifest =1).
+	registered only by the local-build feature debug (manifest stage: DEV).
 
 	Key mirrors: dogma_key_mirror_mcm (re-exported here as key_mirror / migrate).
 
@@ -416,7 +416,7 @@ function reset_all_dogma_pending(gui)
 end
 
 -- Shared Debug page under DOGMA (sibling of categories). Called from local-only
--- mcm/debug - release FOMOD builds omit that feature, so the page never appears.
+-- debug - release FOMOD builds omit that feature (stage: DEV), so the page never appears.
 function register_debug_page(options)
 	local CONFIG = _G.dogma_debug_conf
 	local page = {
@@ -689,6 +689,6 @@ function register_debug_page(options)
 	return page, "dogma"
 end
 
--- *mcm.script entry: defaults live above; Debug page is local-only (mcm/debug).
+-- *mcm.script entry: defaults live above; Debug page is local-only (debug).
 function on_mcm_load(_options)
 end

@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 _REPO = Path(__file__).resolve().parent.parent
-_MO2 = _REPO / "src" / "common" / "mo2" / "tools"
+_MO2 = _REPO / "src" / "_common" / "mo2" / "tools"
 if str(_MO2) not in sys.path:
     sys.path.insert(0, str(_MO2))
 

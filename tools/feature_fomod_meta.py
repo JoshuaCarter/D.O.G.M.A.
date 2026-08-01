@@ -19,8 +19,8 @@ import sys
 from pathlib import Path
 
 _REPO = Path(__file__).resolve().parents[1]
-if str(_REPO / "src" / "common" / "mo2" / "tools") not in sys.path:
-    sys.path.insert(0, str(_REPO / "src" / "common" / "mo2" / "tools"))
+if str(_REPO / "src" / "_common" / "mo2" / "tools") not in sys.path:
+    sys.path.insert(0, str(_REPO / "src" / "_common" / "mo2" / "tools"))
 
 import dogma_mo2_lib as lib  # noqa: E402
 

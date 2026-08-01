@@ -63,7 +63,7 @@ def resolve_alao_root() -> Path | None:
     if env:
         candidates.append(Path(env))
     candidates.append(Path(r"c:\gamma_dev\ALAO"))
-    # …/DOGMA/src/common/mo2/tools → parents[4] = repo root → sibling ALAO
+    # …/DOGMA/src/_common/mo2/tools → parents[4] = repo root → sibling ALAO
     try:
         repo = Path(__file__).resolve().parents[4]
         candidates.append(repo.parent / "ALAO")
@@ -296,7 +296,7 @@ def resolve_sfx_builder() -> Path | None:
         candidates.append(here.parent / "build_sound_prefetch.py")
     try:
         repo = Path(__file__).resolve().parents[4]
-        tools = repo / "src" / "common" / "mo2" / "tools"
+        tools = repo / "src" / "_common" / "mo2" / "tools"
         candidates.append(tools / "dogma_sfx_prefetch.py")
         candidates.append(tools / "build_sound_prefetch.py")
     except IndexError:

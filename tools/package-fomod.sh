@@ -17,7 +17,8 @@
 # (YAML key, desc:, path → id). Optional hover image: src/.../installer/image.png.
 #
 # Each release feature is also zipped to common/mo2/packages/<path_key>.zip
-# (path_key = category_feature) so DOGMA Setup can unpack features locally.
+# (path_key = category_feature, or feature for top-level paths) so DOGMA Setup
+# can unpack features locally.
 #
 # Local full deploy is still tools/build.sh (all features merged).
 # Release path mods are gated by ROOT/config/manifest-dogma-*.yml (stage: release).
@@ -60,7 +61,7 @@ cat_title() {
 		gui) echo "GUI" ;;
 		hud) echo "HUD" ;;
 		items) echo "Items" ;;
-		mcm) echo "MCM" ;;
+		debug) echo "Debug" ;;
 		menu) echo "Menu" ;;
 		misc) echo "Misc" ;;
 		npcs) echo "NPCs" ;;
@@ -134,57 +135,58 @@ load_manifest
 echo "package-fomod: common"
 DOGMA_OUT="$STAGE/common/gamedata" DOGMA_ONLY=common bash "$BUILD"
 
-steps_xml=""
-feature_count=0
-step_count=0
-
-while IFS= read -r -d '' cat_dir; do
-	[[ -d "$cat_dir" ]] || continue
-	cat_base="$(basename "$cat_dir")"
-	[[ "$cat_base" == "common" ]] && continue
-	case "$cat_base" in
-		scripts | configs | textures | meshes | anims | sounds | spawns) continue ;;
+# Manifest path → folder under src/ (_common / _debug on disk only).
+src_feature_dir() {
+	case "$1" in
+		common) echo "_common" ;;
+		debug) echo "_debug" ;;
+		*) echo "$1" ;;
 	esac
+}
 
-	plugins_xml=""
-	cat_feat_count=0
-	title="$(cat_title "$cat_base")"
-	title_x="$(printf '%s' "$title" | xml_escape)"
+src_dir_to_feature() {
+	case "$1" in
+		_common) echo "common" ;;
+		_debug) echo "debug" ;;
+		*) echo "$1" ;;
+	esac
+}
 
-	while IFS= read -r -d '' feat_dir; do
-		[[ -d "$feat_dir" ]] || continue
-		feat_base="$(basename "$feat_dir")"
-		case "$feat_base" in
-			assets | installer) continue ;;
-		esac
-		rel="${feat_dir#"$SRC"/}"
-		rel="${rel//\\/\/}"
-		manifest_has "$rel" || continue
+# Append one path-mod plugin into plugins_xml; bumps cat_feat_count / feature_count.
+# Sets: plugins_xml (caller-owned), cat_feat_count, feature_count
+package_one_feature() {
+	local rel="$1"
+	local feat_dir="$SRC/$(src_feature_dir "$rel")"
+	[[ -d "$feat_dir" ]] || {
+		echo "package-fomod: missing feature dir $feat_dir" >&2
+		exit 1
+	}
 
-		inst="$feat_dir/installer"
-		FEATURE_NAME="" FEATURE_DESC="" FEATURE_ID="" FEATURE_DEFAULT=""
-		eval "$(dogma_py "$ROOT/tools/feature_fomod_meta.py" --feature "$rel" --manifest "$ROOT/config")"
-		name="$FEATURE_NAME"
-		desc="$FEATURE_DESC"
-		id="$FEATURE_ID"
-		default="$FEATURE_DEFAULT"
-		[[ -n "$id" ]] || { echo "package-fomod: missing meta for $rel" >&2; exit 1; }
+	local inst="$feat_dir/installer"
+	FEATURE_NAME="" FEATURE_DESC="" FEATURE_ID="" FEATURE_DEFAULT=""
+	eval "$(dogma_py "$ROOT/tools/feature_fomod_meta.py" --feature "$rel" --manifest "$ROOT/config")"
+	local name="$FEATURE_NAME"
+	local desc="$FEATURE_DESC"
+	local id="$FEATURE_ID"
+	local default="$FEATURE_DEFAULT"
+	[[ -n "$id" ]] || { echo "package-fomod: missing meta for $rel" >&2; exit 1; }
 
-		req_blurb="$(dogma_py "$ROOT/tools/feature_fomod_requires.py" --feature "$rel" --manifest "$ROOT/config" 2>/dev/null || true)"
-		# Effect lists (Requires / Disables / …) are already appended by feature_fomod_meta.
-		if [[ -n "$req_blurb" ]] && [[ "$desc" != *"Requires:"* ]]; then
-			desc="${desc}"$'\n\n'"${req_blurb}"
-		fi
+	local req_blurb
+	req_blurb="$(dogma_py "$ROOT/tools/feature_fomod_requires.py" --feature "$rel" --manifest "$ROOT/config" 2>/dev/null || true)"
+	# Effect lists (Requires / Disables / …) are already appended by feature_fomod_meta.
+	if [[ -n "$req_blurb" ]] && [[ "$desc" != *"Requires:"* ]]; then
+		desc="${desc}"$'\n\n'"${req_blurb}"
+	fi
 
-		echo "package-fomod: $rel -> $id"
-		DOGMA_OUT="$STAGE/$id/gamedata" DOGMA_ONLY="$rel" bash "$BUILD"
+	echo "package-fomod: $rel -> $id"
+	DOGMA_OUT="$STAGE/$id/gamedata" DOGMA_ONLY="$rel" bash "$BUILD"
 
-		# Path-keyed zip for Setup wizard (always shipped via common/mo2).
-		pkg_dir="$STAGE/common/mo2/packages"
-		mkdir -p "$pkg_dir"
-		pkg_zip="$pkg_dir/${id}.zip"
-		rm -f "$pkg_zip"
-		dogma_py - "$STAGE/$id" "$pkg_zip" <<'PY'
+	# Path-keyed zip for Setup wizard (always shipped via common/mo2).
+	local pkg_dir="$STAGE/common/mo2/packages"
+	mkdir -p "$pkg_dir"
+	local pkg_zip="$pkg_dir/${id}.zip"
+	rm -f "$pkg_zip"
+	dogma_py - "$STAGE/$id" "$pkg_zip" <<'PY'
 import sys, zipfile
 from pathlib import Path
 root = Path(sys.argv[1])
@@ -196,18 +198,55 @@ with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_DEFLATED) as zf:
 print(f"package-fomod: package {out.name}")
 PY
 
-		image_xml=""
-		if [[ -f "$inst/image.png" ]]; then
-			cp -a "$inst/image.png" "$STAGE/fomod/images/${id}.png"
-			image_xml=$'\n\t\t\t\t\t\t\t'"<image path=\"fomod\\images\\${id}.png\" />"
-		fi
+	local image_xml=""
+	if [[ -f "$inst/image.png" ]]; then
+		cp -a "$inst/image.png" "$STAGE/fomod/images/${id}.png"
+		image_xml=$'\n\t\t\t\t\t\t\t'"<image path=\"fomod\\images\\${id}.png\" />"
+	fi
 
-		name_x="$(printf '%s' "$name" | xml_escape)"
-		desc_x="$(printf '%s' "$desc" | xml_escape)"
-		plugins_xml+="$(plugin_xml "$name_x" "$desc_x" "$image_xml" "$id" "$default")"
-		cat_feat_count=$((cat_feat_count + 1))
-		feature_count=$((feature_count + 1))
-	done < <(find "$cat_dir" -mindepth 1 -maxdepth 1 -type d -print0 | sort -z)
+	local name_x desc_x
+	name_x="$(printf '%s' "$name" | xml_escape)"
+	desc_x="$(printf '%s' "$desc" | xml_escape)"
+	plugins_xml+="$(plugin_xml "$name_x" "$desc_x" "$image_xml" "$id" "$default")"
+	cat_feat_count=$((cat_feat_count + 1))
+	feature_count=$((feature_count + 1))
+}
+
+steps_xml=""
+feature_count=0
+step_count=0
+
+while IFS= read -r -d '' cat_dir; do
+	[[ -d "$cat_dir" ]] || continue
+	cat_base="$(basename "$cat_dir")"
+	[[ "$cat_base" == "_common" ]] && continue
+	case "$cat_base" in
+		scripts | configs | textures | meshes | anims | sounds | spawns) continue ;;
+	esac
+
+	plugins_xml=""
+	cat_feat_count=0
+	# Page title uses logical name (debug, not _debug).
+	local_feat="$(src_dir_to_feature "$cat_base")"
+	title="$(cat_title "$local_feat")"
+	title_x="$(printf '%s' "$title" | xml_escape)"
+
+	# Top-level feature: src/<_feat|feat>/{scripts,configs,...} (manifest path has no slash).
+	if manifest_has "$local_feat"; then
+		package_one_feature "$local_feat"
+	else
+		while IFS= read -r -d '' feat_dir; do
+			[[ -d "$feat_dir" ]] || continue
+			feat_base="$(basename "$feat_dir")"
+			case "$feat_base" in
+				assets | installer) continue ;;
+			esac
+			rel="${feat_dir#"$SRC"/}"
+			rel="${rel//\\/\/}"
+			manifest_has "$rel" || continue
+			package_one_feature "$rel"
+		done < <(find "$cat_dir" -mindepth 1 -maxdepth 1 -type d -print0 | sort -z)
+	fi
 
 	[[ "$cat_feat_count" -gt 0 ]] || continue
 

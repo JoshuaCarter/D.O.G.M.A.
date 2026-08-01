@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Prepare MO2 for DOGMA: manifest disables/defaults, MCM keybinds, user.ltx.
 
-Disable/defaults logic lives in src/common/mo2/tools/dogma_mo2_lib.py (also used by
+Disable/defaults logic lives in _common/mo2/tools/dogma_mo2_lib.py (also used by
 MO2 jobs). This author tool additionally scrubs keybinds and restores user.ltx.
 
   py -3 tools/disable_blacklisted_mods.py
@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 
 _REPO = Path(__file__).resolve().parent.parent
-_MO2_LIB = _REPO / "src" / "common" / "mo2" / "tools"
+_MO2_LIB = _REPO / "src" / "_common" / "mo2" / "tools"
 if str(_MO2_LIB) not in sys.path:
     sys.path.insert(0, str(_MO2_LIB))
 

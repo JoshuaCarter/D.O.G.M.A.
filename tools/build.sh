@@ -2,16 +2,21 @@
 # Compile src/ into gamedata for DOGMA.
 #
 # Layout (MCM-aligned):
-#   src/common/<gamedata-rel>/...           -> <out>/<gamedata-rel>/...  (names kept)
+#   src/_common/<gamedata-rel>/...          -> <out>/<gamedata-rel>/...  (names kept)
 #   src/<category>/<feature>/<gamedata-rel>/... -> <out>/<gamedata-rel>/...  (merged)
+#   src/_debug/<gamedata-rel>/...           -> top-level feature; path_key = debug
+#   src/<feature>/<gamedata-rel>/...        -> same (top-level; path_key = feature)
 #
-#   src/<category>/<feature>/assets/...     authoring only (ignored; not shipped)
-#   src/<category>/<feature>/installer/image.png  optional FOMOD hover image (not shipped into gamedata)
-#   src/common/mo2/...                      EXCEPTION: files under <mod>/mo2/
+#   Reserved dirs _common / _debug use a leading underscore on disk only.
+#   Manifest paths, path_keys, and MCM ids stay unprefixed (common, debug).
+#
+#   src/.../assets/...                      authoring only (ignored; not shipped)
+#   src/.../installer/image.png             optional FOMOD hover image (not shipped into gamedata)
+#   src/_common/mo2/...                     EXCEPTION: files under <mod>/mo2/
 #   src/<category>/<feature>/mo2/...        (sibling of gamedata/), e.g. mo2/tools/…
 #
 # Scripts (prefix applied at build - src keeps short names like main.script):
-#   common/scripts/*          -> same basename (dogma_common, dogma_mcm,
+#   _common/scripts/*         -> same basename (dogma_common, dogma_mcm,
 #                               dogma_key_mirror_mcm, …)
 #                               no zzzz_ - always before every feature script
 #                               *mcm.script also participates in MCM gather
@@ -35,6 +40,7 @@
 #                        (empty|all)  → common + features with config/features.yml >= local
 #                        common       → common only
 #                        cat/feat     → that feature only (e.g. gameplay/free_zoom; ignores manifest)
+#                        feat         → top-level feature only (e.g. debug)
 #   DOGMA_DEPLOY=path  after a fresh build/, full-replace this MO2 mod folder
 #                      (gamedata + mo2 + meta). Full builds only (not DOGMA_ONLY).
 #   DOGMA_OUT=path     override output gamedata (default: build/gamedata). Set by
@@ -112,7 +118,7 @@ should_skip_name() {
 		README | README.* | MOVE_MAP | MOVE_MAP.* | .gitkeep | .DS_Store | Thumbs.db) return 0 ;;
 		assets | installer | __pycache__) return 0 ;;
 		*.alao-bak | *.pyc | *.pyo) return 0 ;;
-		_conf.script) return 1 ;;
+		_conf.script | _common | _debug) return 1 ;;
 		_*) return 0 ;;
 		*) return 1 ;;
 	esac
@@ -127,7 +133,25 @@ is_gamedata_root() {
 	return 1
 }
 
-# path_key: category_feature (underscores). Empty = keep basename (common/).
+# Manifest / DOGMA_ONLY path → folder under src/ (_common / _debug on disk only).
+src_feature_dir() {
+	case "$1" in
+		common) echo "_common" ;;
+		debug) echo "_debug" ;;
+		*) echo "$1" ;;
+	esac
+}
+
+# Folder under src/ → logical feature path (inverse of src_feature_dir for top-level).
+src_dir_to_feature() {
+	case "$1" in
+		_common) echo "common" ;;
+		_debug) echo "debug" ;;
+		*) echo "$1" ;;
+	esac
+}
+
+# path_key: category_feature or top-level feature. Empty = keep basename (_common/).
 script_dest_basename() {
 	local path_key="$1"
 	local src_base="$2"
@@ -165,18 +189,19 @@ map_src_file() {
 	for part in "${parts[@]}"; do
 		case "$part" in
 			assets | installer) return 1 ;;
+			_common | _debug) ;; # reserved shippable src roots
+			_*)
+				[[ "$part" == "$base" ]] || return 1
+				;;
 		esac
-		if [[ "$part" == _* && "$part" != "$base" ]]; then
-			return 1
-		fi
 	done
 
 	local path_key="" bucket_rel=""
 
-	if [[ "$rel" == common/* ]]; then
-		bucket_rel="${rel#common/}"
+	if [[ "$rel" == _common/* ]]; then
+		bucket_rel="${rel#_common/}"
 		path_key=""
-		# EXCEPTION: common/mo2/ → <MO2 mod>/mo2/ (always-on core tools).
+		# EXCEPTION: _common/mo2/ → <MO2 mod>/mo2/ (always-on core tools).
 		local common_bucket="${bucket_rel%%/*}"
 		if [[ "$common_bucket" == "$MODROOT_BUCKET" ]]; then
 			bucket_rel="${bucket_rel#"$MODROOT_BUCKET"/}"
@@ -193,6 +218,28 @@ map_src_file() {
 		if is_gamedata_root "$cat"; then
 			bucket_rel="$rel"
 			path_key=""
+		elif (( ${#parts[@]} >= 3 )) && is_gamedata_root "${parts[1]}"; then
+			# Top-level feature: src/<feat|/ _debug>/<gamedata-root|/mo2>/...
+			local feat_dir="$cat"
+			local feat
+			feat="$(src_dir_to_feature "$feat_dir")"
+			local bucket="${parts[1]}"
+			should_skip_name "$feat_dir" && return 1
+			path_key="$feat"
+
+			if [[ "$bucket" == "$MODROOT_BUCKET" ]]; then
+				bucket_rel="${rel#"$feat_dir/$MODROOT_BUCKET/"}"
+				[[ -n "$bucket_rel" ]] || return 1
+				_emit_kind="modroot"
+				_emit_src="$src_path"
+				_emit_rel="$MODROOT_BUCKET/$bucket_rel"
+				_emit_path_key="$path_key"
+				_emit_base="$base"
+				return 0
+			fi
+
+			is_gamedata_root "$bucket" || return 1
+			bucket_rel="${rel#"$feat_dir/"}"
 		else
 			(( ${#parts[@]} >= 4 )) || return 1
 			local feat="${parts[1]}"
@@ -279,32 +326,35 @@ stage_file() {
 src_in_scope() {
 	local rel="${1#"$SRC"/}"
 	rel="${rel//\\/\/}"
+	local sdir
 	case "$ONLY" in
 		all | "")
-			[[ "$rel" == common/* ]] && return 0
+			[[ "$rel" == _common/* ]] && return 0
 			local f
 			for f in "${FEATURES[@]}"; do
-				[[ "$rel" == "$f"/* || "$rel" == "$f" ]] && return 0
+				sdir="$(src_feature_dir "$f")"
+				[[ "$rel" == "$sdir"/* || "$rel" == "$sdir" ]] && return 0
 			done
 			return 1
 			;;
 		common)
-			[[ "$rel" == common/* ]]
-			;;
-		*/*)
-			[[ "$rel" == "$ONLY"/* ]]
+			[[ "$rel" == _common/* ]]
 			;;
 		*)
-			return 1
+			sdir="$(src_feature_dir "$ONLY")"
+			[[ "$rel" == "$sdir"/* || "$rel" == "$sdir" ]]
 			;;
 	esac
 }
 
 case "$ONLY" in
-	all | "" | common | */*) ;;
+	all | "" | common) ;;
 	*)
-		echo "build: bad DOGMA_ONLY=$ONLY (use all|common|category/feature)" >&2
-		exit 1
+		sdir="$(src_feature_dir "$ONLY")"
+		[[ -d "$SRC/$sdir" ]] || {
+			echo "build: DOGMA_ONLY=$ONLY not found at $SRC/$sdir" >&2
+			exit 1
+		}
 		;;
 esac
 
@@ -320,11 +370,6 @@ if [[ "$ONLY" == "all" || "$ONLY" == "" ]]; then
 		exit 1
 	fi
 	echo "build: config manifests stage>=dev (${#FEATURES[@]} features)"
-fi
-
-if [[ "$ONLY" == */* && ! -d "$SRC/$ONLY" ]]; then
-	echo "build: DOGMA_ONLY=$ONLY not found at $SRC/$ONLY" >&2
-	exit 1
 fi
 
 # Fresh build/: clear everything first so ALAO report + outputs land in an empty tree.

@@ -267,7 +267,7 @@ def resolve_config_dir(mo2_root: Path, override: Path | None = None) -> Path:
     staged = mo2_bundle_dir() / "config"
     if staged.is_dir() and _ok(staged):
         return staged
-    # Author / repo: src/common/mo2 → ../../../config
+    # Author / repo: src/_common/mo2 → ../../../config
     repo_cfg = mo2_bundle_dir().parent.parent.parent / "config"
     if repo_cfg.is_dir() and _ok(repo_cfg):
         return repo_cfg
@@ -1075,8 +1075,21 @@ def feature_package_zip(
 
 
 def feature_path_key(feat: str) -> str:
-    """Build script/config stem used by tools/build.sh (category_feature)."""
+    """Build script/config stem used by tools/build.sh (category_feature or top-level)."""
     return feat.strip().replace("\\", "/").replace("/", "_").lower()
+
+
+def src_feature_dir(feat: str) -> str:
+    """Filesystem folder under src/ for a manifest feature path.
+
+    Reserved top-level dirs use a leading underscore on disk only
+    (``common`` → ``_common``, ``debug`` → ``_debug``). Logical path keys
+    and MCM ids stay unprefixed.
+    """
+    f = feat.strip().replace("\\", "/").strip("/")
+    if f in ("common", "debug"):
+        return f"_{f}"
+    return f
 
 
 def detect_installed_features(

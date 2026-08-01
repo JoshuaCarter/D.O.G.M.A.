@@ -6,11 +6,15 @@ Author here; `Ctrl+Shift+B` smushes into `build/gamedata/`.
 
 ```
 src/<category>/<feature>/<gamedata-root>/...
+src/_debug/<gamedata-root>/...     # top-level; manifest path / path_key = debug
 src/tweaks/<feature>/...           # simple always-on / no-options patches
-src/common/<gamedata-root>/...     # vendored Common, not in MCM
+src/_common/<gamedata-root>/...    # vendored Common, not in MCM
 ```
 
+`_common` / `_debug` are underscore-prefixed **on disk only** (sort first / mark reserved). Manifest paths, package ids, and MCM keys stay `common` / `debug`.
+
 Example: `src/gameplay/faster_skinning/scripts/...` → MCM `D.O.G.M.A. → Gameplay → Faster Skinning`.  
+Top-level: `src/_debug/...` → MCM `D.O.G.M.A. → Debug` (DEV-only; not a category page).  
 Tweaks: `src/tweaks/<feature>/...` → MCM `D.O.G.M.A. → Tweaks` (one shared page; each feature appends a description).
 
 ## Build roots merged into gamedata
@@ -19,7 +23,7 @@ Tweaks: `src/tweaks/<feature>/...` → MCM `D.O.G.M.A. → Tweaks` (one shared p
 
 ## Exception: `mo2/` (MO2 tools dir)
 
-`src/common/mo2/...` and `src/<category>/<feature>/mo2/...` are **not** packed into gamedata. On deploy they land at `<mod>/mo2/...` next to `gamedata/` (e.g. `mods/DOGMA/mo2/DOGMA Setup.bat`). Local `build/mo2/` gets the same layout. Core always-on tools live under `src/common/mo2/` (`DOGMA Setup.bat` at the mo2 root; internals in `mo2/tools/`).
+`src/_common/mo2/...` and `src/<category>/<feature>/mo2/...` are **not** packed into gamedata. On deploy they land at `<mod>/mo2/...` next to `gamedata/` (e.g. `mods/DOGMA/mo2/DOGMA Setup.bat`). Local `build/mo2/` gets the same layout. Core always-on tools live under `src/_common/mo2/` (`DOGMA Setup.bat` at the mo2 root; internals in `mo2/tools/`).
 
 ## Copy vs smush (inside a gamedata root)
 

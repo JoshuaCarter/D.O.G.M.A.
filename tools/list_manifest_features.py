@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 _REPO = Path(__file__).resolve().parent.parent
-_MO2 = _REPO / "src" / "common" / "mo2" / "tools"
+_MO2 = _REPO / "src" / "_common" / "mo2" / "tools"
 if str(_MO2) not in sys.path:
     sys.path.insert(0, str(_MO2))
 
@@ -54,8 +54,11 @@ def main() -> int:
             continue
         if not lib.stage_meets(meta.stage, min_stage):
             continue
-        if args.check_src and not (src / feat).is_dir():
-            print(f"manifest: entry missing under src/: {feat}", file=sys.stderr)
+        if args.check_src and not (src / lib.src_feature_dir(feat)).is_dir():
+            print(
+                f"manifest: entry missing under src/: {lib.src_feature_dir(feat)} ({feat})",
+                file=sys.stderr,
+            )
             return 1
         print(feat)
     return 0

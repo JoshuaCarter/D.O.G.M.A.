@@ -3,8 +3,8 @@
 -- All portable workshops open ONE shared hidden box.
 
 local CONFIG = _G.dogma_gameplay_shared_stash_conf
-local SHARED_SECTION = (CONFIG and CONFIG.SHARED_SECTION) or "workshop_shared_stash"
-local PDA_STASH_KEY = (CONFIG and CONFIG.PDA_STASH_KEY) or "dogma_workshop_shared"
+local SHARED_SECTION = (CONFIG and CONFIG.SHARED_SECTION) or "dogma_gameplay_shared_stash"
+local PDA_STASH_KEY = (CONFIG and CONFIG.PDA_STASH_KEY) or "dogma_gameplay_shared_stash"
 local is_teleporting = false
 
 local function pr(...)
@@ -81,7 +81,7 @@ local function ensure_shared_near_workshop(workshop_id)
 	if not m_data then
 		return nil
 	end
-	local shared_id = m_data.workshop_shared_stash
+	local shared_id = m_data.dogma_gameplay_shared_stash
 	local se = shared_id and alife_object(shared_id)
 
 	if not (se and IsInvbox(nil, se:clsid())) then
@@ -91,7 +91,7 @@ local function ensure_shared_near_workshop(workshop_id)
 		if not se then
 			return nil
 		end
-		m_data.workshop_shared_stash = se.id
+		m_data.dogma_gameplay_shared_stash = se.id
 		shared_id = se.id
 		pr("created shared stash %s", tostring(shared_id))
 	end

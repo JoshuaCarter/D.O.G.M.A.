@@ -26,6 +26,15 @@ class ResolvedString:
     is_literal: bool = False
 
 
+@dataclass(frozen=True)
+class StringCatalogEntry:
+    """One pickable string-table id + winning body / source file."""
+
+    string_id: str
+    text: str
+    source: Path
+
+
 def looks_like_string_id(content: str) -> bool:
     return bool(content) and bool(_STRING_ID.fullmatch(content))
 
@@ -126,7 +135,7 @@ class StringResolver:
     def warm_ids(self, ids: set[str]) -> None:
         if not ids:
             return
-        # Last file wins so DOGMA src / later roots override base game.
+        # Last file wins so later roots override base game.
         wanted = set(ids)
         needles = [f'id="{sid}"'.encode("ascii", "ignore") for sid in wanted]
         needles += [f"id='{sid}'".encode("ascii", "ignore") for sid in wanted]
@@ -171,6 +180,47 @@ class StringResolver:
 
     def warm_for_document(self, doc: LayoutNode) -> None:
         self.warm_ids(collect_doc_string_ids(doc))
+
+    def scan_catalog(self) -> list[StringCatalogEntry]:
+        """Load every string id under text roots. Later files override."""
+        by_id: dict[str, StringCatalogEntry] = {}
+        for path in self._iter_text_files():
+            try:
+                blob = path.read_bytes()
+            except OSError:
+                continue
+            raw = None
+            for enc in ("utf-8-sig", "windows-1251", "cp1251", "latin-1"):
+                try:
+                    raw = blob.decode(enc)
+                    break
+                except UnicodeDecodeError:
+                    continue
+            if raw is None:
+                continue
+            try:
+                root = ET.fromstring(raw)
+            except ET.ParseError:
+                continue
+            for el in root.iter("string"):
+                sid = (el.get("id") or "").strip()
+                if not sid:
+                    continue
+                text_el = el.find("text")
+                if text_el is None:
+                    body = (el.text or "").strip()
+                else:
+                    body = (text_el.text or "").strip()
+                by_id[sid] = StringCatalogEntry(
+                    string_id=sid, text=body, source=path
+                )
+                self._strings[sid] = (body, path)
+                self._missing.discard(sid)
+        return sorted(by_id.values(), key=lambda e: e.string_id.lower())
+
+    def remember_string(self, entry: StringCatalogEntry) -> None:
+        self._strings[entry.string_id] = (entry.text, entry.source)
+        self._missing.discard(entry.string_id)
 
     def resolve(self, content: str | None) -> ResolvedString:
         if not content:

@@ -33,10 +33,10 @@ local function m_state()
 end
 
 local function ensure_level_map(m_data)
-	if not m_data.dogma_workshop_by_level then
-		m_data.dogma_workshop_by_level = {}
+	if not m_data.dogma_gameplay_shared_stash_by_level then
+		m_data.dogma_gameplay_shared_stash_by_level = {}
 	end
-	return m_data.dogma_workshop_by_level
+	return m_data.dogma_gameplay_shared_stash_by_level
 end
 
 local function se_is_workshop(se)
@@ -99,12 +99,12 @@ local function unregister_workshop(id)
 		return
 	end
 	local m_data = m_state()
-	if not (m_data and m_data.dogma_workshop_by_level) then
+	if not (m_data and m_data.dogma_gameplay_shared_stash_by_level) then
 		return
 	end
-	for lvl, wid in pairs(m_data.dogma_workshop_by_level) do
+	for lvl, wid in pairs(m_data.dogma_gameplay_shared_stash_by_level) do
 		if wid == id then
-			m_data.dogma_workshop_by_level[lvl] = nil
+			m_data.dogma_gameplay_shared_stash_by_level[lvl] = nil
 			log("unregistered workshop " .. tostring(id) .. " from " .. tostring(lvl))
 			return
 		end
@@ -112,7 +112,7 @@ local function unregister_workshop(id)
 end
 
 local function block_message()
-	local text = game.translate_string("st_dogma_workshop_one_per_level")
+	local text = game.translate_string("st_dogma_gameplay_shared_stash_one_per_level")
 	if actor_menu and actor_menu.set_msg then
 		actor_menu.set_msg(1, text, 3, GetARGB(255, 255, 255, 255))
 	elseif news_manager and news_manager.send_tip and db and db.actor then
@@ -182,19 +182,19 @@ local function sum_shared_contents_weight(shared_id)
 end
 
 local function persist_contents_weight(m_data, w)
-	m_data.dogma_workshop_shared_weight = w
+	m_data.dogma_gameplay_shared_stash_weight = w
 	cached_contents_weight = w
 end
 
 local function contents_weight_for_carry(m_data)
-	local shared_id = m_data.workshop_shared_stash
+	local shared_id = m_data.dogma_gameplay_shared_stash
 	local live = sum_shared_contents_weight(shared_id)
 	if live ~= nil then
 		persist_contents_weight(m_data, live)
 		return live
 	end
-	if m_data.dogma_workshop_shared_weight ~= nil then
-		cached_contents_weight = m_data.dogma_workshop_shared_weight
+	if m_data.dogma_gameplay_shared_stash_weight ~= nil then
+		cached_contents_weight = m_data.dogma_gameplay_shared_stash_weight
 	end
 	return cached_contents_weight
 end
@@ -265,15 +265,15 @@ local function on_game_load()
 					break
 				end
 			end
-			if m_data.dogma_workshop_shared_weight ~= nil then
-				cached_contents_weight = m_data.dogma_workshop_shared_weight
+			if m_data.dogma_gameplay_shared_stash_weight ~= nil then
+				cached_contents_weight = m_data.dogma_gameplay_shared_stash_weight
 			end
 			-- Keep PDA taskboard able to see the shared box
-			if m_data.workshop_shared_stash then
+			if m_data.dogma_gameplay_shared_stash then
 				if not m_data.workshop_stashes then
 					m_data.workshop_stashes = {}
 				end
-				m_data.workshop_stashes[CONFIG.PDA_STASH_KEY] = m_data.workshop_shared_stash
+				m_data.workshop_stashes[CONFIG.PDA_STASH_KEY] = m_data.dogma_gameplay_shared_stash
 			end
 		end
 	end
@@ -287,5 +287,5 @@ function on_game_start()
 	RegisterScriptCallback("hf_on_furniture_place", hf_on_furniture_place)
 	RegisterScriptCallback("hf_on_before_furniture_release", hf_on_before_furniture_release)
 	try_hook_place()
-	log("workshop_shared_stash ready")
+	log("gameplay/shared_stash ready")
 end

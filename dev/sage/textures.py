@@ -76,6 +76,31 @@ class AtlasEntry:
     resolved_id: str = ""  # actual atlas id used (may be stem+_e)
 
 
+@dataclass(frozen=True)
+class AtlasCatalogEntry:
+    """One textures_descr atlas id (or button stem) for picking."""
+
+    atlas_id: str
+    file_name: str
+    x: float
+    y: float
+    width: float
+    height: float
+    source: Path
+    # When XML uses a stem (ui_inGame2_button) but descr only has _e/_h/…
+    is_stem: bool = False
+    state_id: str = ""  # e.g. ui_inGame2_button_e used for preview
+
+
+@dataclass(frozen=True)
+class TexturePick:
+    """What to write into UI XML <texture> — Anomaly atlas id or DDS path."""
+
+    name: str
+    kind: str  # "atlas" | "path"
+    dds_path: Path | None = None
+
+
 @dataclass
 class ResolvedTexture:
     path: Path | None
@@ -100,6 +125,123 @@ def gamma_relative_path(path: Path) -> str:
     if gidx >= 0:
         return text[gidx + 1 :]
     return path.name
+
+
+def iter_texture_dir_roots(
+    *,
+    gamedata_texture_roots: list[Path],
+    texture_scan_roots: list[Path],
+) -> list[Path]:
+    """Concrete ``textures`` dirs (and scan roots) used for DDS lookup / picking."""
+    roots: list[Path] = []
+    seen: set[str] = set()
+
+    def _add(path: Path) -> None:
+        if not path.is_dir():
+            return
+        try:
+            key = str(path.resolve()).lower()
+        except OSError:
+            key = str(path).lower()
+        if key in seen:
+            return
+        seen.add(key)
+        roots.append(path)
+
+    for root in gamedata_texture_roots:
+        _add(root)
+    for scan in texture_scan_roots:
+        if not scan.is_dir():
+            continue
+        _add(scan)
+        try:
+            for tex_dir in scan.rglob("textures"):
+                if tex_dir.is_dir() and tex_dir.name.lower() == "textures":
+                    _add(tex_dir)
+        except OSError:
+            continue
+    return roots
+
+
+def logical_dds_name(dds_path: Path, texture_roots: list[Path]) -> str | None:
+    """Map a DDS under a texture root → game logical name (``ui\\foo``, no .dds)."""
+    best: tuple[int, str] | None = None
+    for root in texture_roots:
+        logical = _logical_under_root(dds_path, root)
+        if not logical:
+            continue
+        try:
+            depth = len(root.resolve().parts)
+        except OSError:
+            depth = len(root.parts)
+        if best is None or depth > best[0]:
+            best = (depth, logical)
+    return best[1] if best else None
+
+
+def path_is_under_roots(path: Path, roots: list[Path]) -> bool:
+    try:
+        resolved = path.resolve()
+    except OSError:
+        return False
+    for root in roots:
+        try:
+            resolved.relative_to(root.resolve())
+            return True
+        except (OSError, ValueError):
+            continue
+    return False
+
+
+@dataclass(frozen=True)
+class DdsCatalogEntry:
+    """One pickable DDS: game logical name + winning file on disk."""
+
+    logical: str
+    path: Path
+
+
+def _logical_under_root(dds: Path, root: Path) -> str | None:
+    """Logical name relative to a search root (strip a nested ``textures\\`` if needed)."""
+    try:
+        resolved = dds.resolve()
+        root_r = root.resolve()
+        rel = resolved.relative_to(root_r)
+    except (OSError, ValueError):
+        return None
+    if resolved.suffix.lower() != ".dds":
+        return None
+    parts = list(rel.parts)
+    if root_r.name.lower() != "textures":
+        lower = [p.lower() for p in parts]
+        if "textures" in lower:
+            parts = parts[lower.index("textures") + 1 :]
+    if not parts:
+        return None
+    return str(Path(*parts).with_suffix("")).replace("/", "\\")
+
+
+def scan_dds_catalog(roots: list[Path]) -> list[DdsCatalogEntry]:
+    """Enumerate ``*.dds`` under roots. Later roots win on the same logical name."""
+    by_key: dict[str, DdsCatalogEntry] = {}
+    for root in roots:
+        if not root.is_dir():
+            continue
+        try:
+            batch = root.rglob("*.dds")
+        except OSError:
+            continue
+        for dds in batch:
+            try:
+                if not dds.is_file():
+                    continue
+            except OSError:
+                continue
+            logical = _logical_under_root(dds, root)
+            if not logical:
+                continue
+            by_key[logical.lower()] = DdsCatalogEntry(logical=logical, path=dds)
+    return sorted(by_key.values(), key=lambda e: e.logical.lower())
 
 
 def collect_doc_texture_ids(doc: LayoutNode) -> tuple[set[str], set[str]]:
@@ -258,7 +400,7 @@ class TextureResolver:
                         h = float(tex.get("height", "0"))
                     except ValueError:
                         continue
-                    # Last matching descr wins (DOGMA / later roots override).
+                    # Last matching descr wins (later roots override).
                     self._atlas[tid] = AtlasEntry(
                         file_name, x, y, w, h, resolved_id=tid
                     )
@@ -290,35 +432,110 @@ class TextureResolver:
         """Saved texture dirs (+ textures/ under scan roots). Built once per cache."""
         if self._dds_search_roots is not None:
             return self._dds_search_roots
-        roots: list[Path] = []
-        seen: set[str] = set()
+        self._dds_search_roots = iter_texture_dir_roots(
+            gamedata_texture_roots=self.gamedata_texture_roots,
+            texture_scan_roots=self.texture_scan_roots,
+        )
+        return self._dds_search_roots
 
-        def _add(path: Path) -> None:
-            if not path.is_dir():
-                return
-            try:
-                key = str(path.resolve()).lower()
-            except OSError:
-                key = str(path).lower()
-            if key in seen:
-                return
-            seen.add(key)
-            roots.append(path)
+    def dds_search_roots(self) -> list[Path]:
+        """Concrete dirs a DDS may be picked from (scanned / gamedata texture roots)."""
+        return list(self._iter_dds_search_roots())
 
-        for root in self.gamedata_texture_roots:
-            _add(root)
-        for scan in self.texture_scan_roots:
-            if not scan.is_dir():
+    def remember_dds(self, logical: str, path: Path) -> None:
+        """Seed the DDS index after a successful file pick."""
+        key = logical.strip().replace("/", "\\").lower()
+        if key.endswith(".dds"):
+            key = key[:-4]
+        if not key:
+            return
+        self._dds_missing.discard(key)
+        try:
+            self._dds_index[key] = path.resolve()
+        except OSError:
+            self._dds_index[key] = path
+        self._resolve_cached.cache_clear()
+
+    def remember_atlas(self, entry: AtlasCatalogEntry) -> None:
+        """Seed atlas + DDS caches after an atlas pick."""
+        self._atlas_missing.discard(entry.atlas_id)
+        self._atlas[entry.atlas_id] = AtlasEntry(
+            entry.file_name,
+            entry.x,
+            entry.y,
+            entry.width,
+            entry.height,
+            resolved_id=entry.state_id or entry.atlas_id,
+        )
+        dds = self.find_dds(entry.file_name)
+        if dds is not None:
+            self.remember_dds(entry.file_name, dds)
+        self._resolve_cached.cache_clear()
+
+    def scan_atlas_catalog(self) -> list[AtlasCatalogEntry]:
+        """Load every textures_descr id. Later files override. Add button stems from _e."""
+        by_id: dict[str, AtlasCatalogEntry] = {}
+        for path in self._iter_descr_files():
+            root = _parse_xml_root(path)
+            if root is None:
                 continue
-            _add(scan)
-            try:
-                for tex_dir in scan.rglob("textures"):
-                    if tex_dir.is_dir() and tex_dir.name.lower() == "textures":
-                        _add(tex_dir)
-            except OSError:
+            for file_el in root.iter("file"):
+                file_name = (file_el.get("name") or "").strip()
+                if not file_name:
+                    continue
+                for tex in file_el.findall("texture"):
+                    tid = (tex.get("id") or "").strip()
+                    if not tid:
+                        continue
+                    try:
+                        x = float(tex.get("x", "0"))
+                        y = float(tex.get("y", "0"))
+                        w = float(tex.get("width", "0"))
+                        h = float(tex.get("height", "0"))
+                    except ValueError:
+                        continue
+                    by_id[tid] = AtlasCatalogEntry(
+                        atlas_id=tid,
+                        file_name=file_name,
+                        x=x,
+                        y=y,
+                        width=w,
+                        height=h,
+                        source=path,
+                    )
+                    self._atlas[tid] = AtlasEntry(
+                        file_name, x, y, w, h, resolved_id=tid
+                    )
+                    self._atlas_missing.discard(tid)
+
+        # XML often names the stem; engine appends _e/_h/_t/_d. Expose stems too.
+        for tid, entry in list(by_id.items()):
+            if not tid.endswith("_e"):
                 continue
-        self._dds_search_roots = roots
-        return roots
+            stem = tid[:-2]
+            if not stem or stem in by_id:
+                continue
+            by_id[stem] = AtlasCatalogEntry(
+                atlas_id=stem,
+                file_name=entry.file_name,
+                x=entry.x,
+                y=entry.y,
+                width=entry.width,
+                height=entry.height,
+                source=entry.source,
+                is_stem=True,
+                state_id=tid,
+            )
+            self._atlas[stem] = AtlasEntry(
+                entry.file_name,
+                entry.x,
+                entry.y,
+                entry.width,
+                entry.height,
+                resolved_id=tid,
+            )
+
+        return sorted(by_id.values(), key=lambda e: e.atlas_id.lower())
 
     def find_dds(self, logical: str) -> Path | None:
         """Resolve logical texture path → DDS. Later roots override (mod load order)."""

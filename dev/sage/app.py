@@ -51,6 +51,7 @@ from PyQt6.QtWidgets import (
     QSizePolicy,
     QSpinBox,
     QSplitter,
+    QStackedWidget,
     QStyle,
     QStyledItemDelegate,
     QStyleOptionViewItem,
@@ -64,6 +65,8 @@ from PyQt6.QtWidgets import (
 )
 
 from .canvas import CanvasBoard, UiScene
+from .descr_canvas import DescrBoard
+from .descr_model import DescrDocument, looks_like_textures_descr
 from .model import PATH_SEP, LayoutNode, default_layer_visible, layer_sections
 from .db_unpack import check_anomaly_unpack_needed, ensure_anomaly_db_unpacked
 from .settings import (
@@ -82,10 +85,15 @@ from .settings import (
     validate_gamma_root,
 )
 from .strings import StringResolver
+from .string_picker import StringPickerDialog
+from .texture_picker import TexturePickerDialog
 from .textures import TextureResolver
 from .undo import GeoEdit, GeoState
 from .xml_highlight import XmlHighlighter
 from .xml_io import UiXmlDocument
+
+DOC_MODE_UI = "ui"
+DOC_MODE_ATLAS = "atlas"
 
 TAB_WYSIWYG = 0
 TAB_XML = 1
@@ -307,6 +315,36 @@ class FilePathRow(QWidget):
         if not self._explorer_path:
             return
         QApplication.clipboard().setText(self._explorer_path)
+
+
+class BrowseValueRow(FilePathRow):
+    """FilePathRow plus a … button to find/change the value via a picker."""
+
+    browse_clicked = pyqtSignal()
+
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        browse_tip: str = "Find and change…",
+    ) -> None:
+        super().__init__(parent)
+        self.browse_btn = QToolButton()
+        self.browse_btn.setText("…")
+        self.browse_btn.setToolTip(browse_tip)
+        self.browse_btn.setAutoRaise(True)
+        self.browse_btn.setFixedSize(22, 22)
+        self.browse_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.browse_btn.clicked.connect(self.browse_clicked.emit)
+        self.layout().addWidget(self.browse_btn, stretch=0)
+        self.set_browse_enabled(False)
+
+    def set_browse_enabled(self, enabled: bool) -> None:
+        self.browse_btn.setVisible(enabled)
+        self.browse_btn.setEnabled(enabled)
+
+
+TexturePathRow = BrowseValueRow  # back-compat alias
 
 
 class LayerListWidget(QListWidget):
@@ -592,8 +630,8 @@ class InstallRootsDialog(QDialog):
         else:
             layout.addWidget(
                 QLabel(
-                    "Anomaly / GAMMA roots — asset paths are derived automatically "
-                    "(plus DOGMA src). Anomaly DB packs unpack when needed."
+                    "Anomaly / GAMMA roots — asset paths are derived automatically. "
+                    "Anomaly DB packs unpack when needed."
                 )
             )
 
@@ -613,8 +651,13 @@ class InstallRootsDialog(QDialog):
             QLabel(
                 "<b>Extra scan roots</b> (optional)<br/>"
                 "Folders to scan for textures, textures_descr, text, etc. "
-                "Resolved last (override Anomaly / GAMMA). Add your DOGMA "
-                "<code>src</code> here if you want repo assets to win."
+                "Resolved last (override Anomaly / GAMMA).<br/>"
+                "Add the <b>project folder</b> or its <code>src</code> to edit before "
+                "deploy, and/or the <b>deployed mod</b> "
+                "(<code>GAMMA\\mods\\…</code>) so resolve matches the game. "
+                "Add the folder itself — not a nested <code>textures\\ui</code> "
+                "subfolder (that breaks game paths). Among extras, later entries "
+                "win — put the deployed mod last if you use both."
             )
         )
         self.custom_list = QListWidget()
@@ -871,6 +914,8 @@ class MainWindow(QMainWindow):
         self.settings = load_settings()
         self._restore_window_geometry()
         self.doc = UiXmlDocument()
+        self.descr_doc = DescrDocument()
+        self._doc_mode = DOC_MODE_UI
         # Roots from settings only — no full-tree scan at launch.
         self.resolver = self._make_resolver()
         self.strings = self._make_string_resolver()
@@ -884,10 +929,14 @@ class MainWindow(QMainWindow):
         )
         self.canvas_board = CanvasBoard(self.scene)
         self.canvas = self.canvas_board.canvas
+        self.descr_board = DescrBoard(self.resolver)
+        self.wysiwyg_stack = QStackedWidget()
+        self.wysiwyg_stack.addWidget(self.canvas_board)  # index 0 = UI
+        self.wysiwyg_stack.addWidget(self.descr_board)  # index 1 = atlas
         self._tree_items_by_path: dict[str, QTreeWidgetItem] = {}
         self._tree_peer_paths: set[str] = set()
         self.raw_editor = QPlainTextEdit()
-        self.raw_editor.setPlaceholderText("Open a UI XML file to edit…")
+        self.raw_editor.setPlaceholderText("Open a UI or textures_descr XML…")
         mono = QFont("Consolas")
         mono.setStyleHint(QFont.StyleHint.Monospace)
         mono.setPointSize(10)
@@ -1001,7 +1050,7 @@ class MainWindow(QMainWindow):
         self._log("info", "SAGE ready")
 
         self.editor_tabs = QTabWidget()
-        self.editor_tabs.addTab(self.canvas_board, "WYSIWYG")
+        self.editor_tabs.addTab(self.wysiwyg_stack, "WYSIWYG")
         self.editor_tabs.addTab(self.xml_page, "XML")
         self.editor_tabs.addTab(self.log_view, "Log")
         self.editor_tabs.currentChanged.connect(self._on_editor_tab_changed)
@@ -1052,10 +1101,12 @@ class MainWindow(QMainWindow):
         self.edit_w = QLineEdit()
         self.edit_h = QLineEdit()
         self.edit_stretch = QCheckBox("stretch")
-        self.prop_texture = FilePathRow()
-        self.edit_text = QLineEdit()
-        self.edit_text.setPlaceholderText("string id or literal")
-        self.edit_text.textChanged.connect(self._on_text_commit)
+        self.prop_texture = BrowseValueRow(
+            browse_tip="Find and change texture (atlas / DDS)…"
+        )
+        self.prop_texture.browse_clicked.connect(self._browse_texture)
+        self.prop_text = BrowseValueRow(browse_tip="Find and change text…")
+        self.prop_text.browse_clicked.connect(self._browse_text)
         self.prop_text_font = FitWidthLabel("")
         self.prop_text_font.setStyleSheet("color: gray;")
         self.prop_text_font.hide()
@@ -1091,13 +1142,14 @@ class MainWindow(QMainWindow):
         pf.addRow(self.prop_label_size, _xy_row("w", self.edit_w, "h", self.edit_h))
         pf.addRow(self.prop_label_texture, self.prop_texture)
         pf.addRow("", self.edit_stretch)
-        pf.addRow(self.prop_label_text, self.edit_text)
+        pf.addRow(self.prop_label_text, self.prop_text)
         pf.addRow("", self.prop_text_font)
         self.prop_text_resolved = FilePathRow()
         self.prop_text_resolved.hide()
         pf.addRow("", self.prop_text_resolved)
 
         left = QWidget()
+        self._left_sidebar = left
         left.setMinimumWidth(160)
         left.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
         left_l = QVBoxLayout(left)
@@ -1124,6 +1176,7 @@ class MainWindow(QMainWindow):
         left_l.addWidget(left_body, stretch=1)
 
         right = QWidget()
+        self._right_sidebar = right
         right.setMinimumWidth(140)
         right.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
         right_l = QVBoxLayout(right)
@@ -1217,10 +1270,15 @@ class MainWindow(QMainWindow):
         self.scene.geometry_changed.connect(self._on_geometry_changed)
         self.scene.undo_stack_changed.connect(self._on_undo_stack_changed)
         self.canvas.stack_peers_changed.connect(self._on_stack_peers_changed)
+        self.descr_board.document_dirty.connect(self._on_descr_dirty)
+        self.descr_board.undo_stack_changed.connect(self._on_descr_undo_changed)
+        self.descr_board.status_message.connect(self.statusBar().showMessage)
+        self.descr_board.selection_changed.connect(self._on_descr_selection)
         self._restoring_meta = False
         self.edit_stretch.toggled.connect(self._on_stretch_toggled)
 
         self._build_menu()
+        self._set_doc_mode(DOC_MODE_UI)
         self.tool_border.toggled.connect(self._on_toggle_border)
         self.tool_fill.toggled.connect(self._on_toggle_fill)
         self.tool_labels.toggled.connect(self._on_toggle_labels)
@@ -1293,8 +1351,75 @@ class MainWindow(QMainWindow):
         self.statusBar().show()
         self.split.show()
         self._sync_sidebar_tab_offset()
-        self.canvas.fit_stage()
+        self._fit_stage()
         QApplication.processEvents()
+
+    def _fit_stage(self) -> None:
+        if self._doc_mode == DOC_MODE_ATLAS:
+            self.descr_board.fit_stage()
+        else:
+            self.canvas.fit_stage()
+
+    def _set_doc_mode(self, mode: str) -> None:
+        self._doc_mode = mode
+        atlas = mode == DOC_MODE_ATLAS
+        self.wysiwyg_stack.setCurrentIndex(1 if atlas else 0)
+        self._left_sidebar.setVisible(not atlas)
+        self._right_sidebar.setVisible(not atlas)
+        for act in (
+            self.descr_rename_a,
+            self.descr_dup_a,
+            self.descr_new_a,
+            self.descr_del_a,
+        ):
+            act.setEnabled(atlas)
+            act.setVisible(atlas)
+        # UI-layout view toggles are irrelevant for atlas
+        for act in (self.border_a, self.fill_a, self.labels_a):
+            act.setEnabled(not atlas)
+        if atlas:
+            self.split.setSizes([0, 1400, 0])
+        else:
+            sizes = self.split.sizes()
+            if sizes[0] < 80 or sizes[2] < 80:
+                self.split.setSizes([350, 700, 350])
+        self._update_undo_actions()
+
+    def _on_descr_dirty(self) -> None:
+        self.descr_doc.mark_dirty()
+        self._preview_needs_raw_sync = True
+
+    def _on_descr_undo_changed(self) -> None:
+        self._update_undo_actions()
+
+    def _on_descr_selection(self, region) -> None:
+        if region is None:
+            return
+        self.statusBar().showMessage(
+            f"{region.atlas_id} · {int(region.x)},{int(region.y)} "
+            f"{int(region.width)}×{int(region.height)}"
+        )
+
+    def _descr_rename(self) -> None:
+        if self._doc_mode == DOC_MODE_ATLAS:
+            self.descr_board.rename_selected()
+
+    def _descr_duplicate(self) -> None:
+        if self._doc_mode == DOC_MODE_ATLAS:
+            self.descr_board.duplicate_selected()
+
+    def _descr_add_region(self) -> None:
+        if self._doc_mode == DOC_MODE_ATLAS:
+            self.descr_board.add_region()
+
+    def _descr_delete(self) -> None:
+        if self._doc_mode == DOC_MODE_ATLAS:
+            self.descr_board.delete_selected()
+
+    def _active_path(self) -> Path | None:
+        if self._doc_mode == DOC_MODE_ATLAS:
+            return self.descr_doc.path
+        return self.doc.path
 
     def _open_startup_file(self) -> None:
         self._bind_resource_roots()
@@ -1312,6 +1437,8 @@ class MainWindow(QMainWindow):
         self.resolver = self._make_resolver()
         self.strings = self._make_string_resolver()
         self.scene.rebind_resolver(self.resolver)
+        self.descr_board.resolver = self.resolver
+        self.descr_board.scene.resolver = self.resolver
         self._resources_ready = True
         n_tex = len(self.settings.get("gamedata_texture_roots") or [])
         n_descr = len(self.settings.get("gamedata_descr_roots") or [])
@@ -1406,7 +1533,7 @@ class MainWindow(QMainWindow):
         view_menu = self.menuBar().addMenu("&View")
         self.fit_a = QAction("&Fit stage", self)
         self.fit_a.setShortcut("F")
-        self.fit_a.triggered.connect(self.canvas.fit_stage)
+        self.fit_a.triggered.connect(self._fit_stage)
         view_menu.addAction(self.fit_a)
         view_menu.addSeparator()
         self.border_a = QAction("Box border for &unselected", self)
@@ -1445,6 +1572,23 @@ class MainWindow(QMainWindow):
         self.redo_a.triggered.connect(self.redo)
         self.redo_a.setEnabled(False)
         edit_menu.addAction(self.redo_a)
+        edit_menu.addSeparator()
+        self.descr_rename_a = QAction("Rename atlas &id…", self)
+        self.descr_rename_a.setShortcut("F2")
+        self.descr_rename_a.triggered.connect(self._descr_rename)
+        edit_menu.addAction(self.descr_rename_a)
+        self.descr_dup_a = QAction("Du&plicate region", self)
+        self.descr_dup_a.setShortcut("Ctrl+D")
+        self.descr_dup_a.triggered.connect(self._descr_duplicate)
+        edit_menu.addAction(self.descr_dup_a)
+        self.descr_new_a = QAction("&New region", self)
+        self.descr_new_a.setShortcut("Ctrl+N")
+        self.descr_new_a.triggered.connect(self._descr_add_region)
+        edit_menu.addAction(self.descr_new_a)
+        self.descr_del_a = QAction("&Delete region", self)
+        self.descr_del_a.setShortcut(QKeySequence.StandardKey.Delete)
+        self.descr_del_a.triggered.connect(self._descr_delete)
+        edit_menu.addAction(self.descr_del_a)
         edit_menu.addSeparator()
         self.find_a = QAction("&Find…", self)
         self.find_a.setShortcut(QKeySequence.StandardKey.Find)
@@ -1564,6 +1708,17 @@ class MainWindow(QMainWindow):
             return str(saved)
         return str(Path.cwd())
 
+    def _atlas_dialog_start(self) -> str:
+        saved = Path(str(self.settings.get("last_texture_dir") or ""))
+        if saved.is_dir():
+            return str(saved)
+        for key in ("gamedata_descr_roots", "textures_descr_roots"):
+            for raw in self.settings.get(key) or []:
+                p = Path(str(raw))
+                if p.is_dir():
+                    return str(p)
+        return self._file_dialog_start()
+
     def _remember_file_dir(self, path: Path) -> None:
         directory = path if path.is_dir() else path.parent
         if not directory.is_dir():
@@ -1574,12 +1729,72 @@ class MainWindow(QMainWindow):
         self.settings["last_file_dir"] = key
         save_settings(self.settings)
 
-    def open_dialog(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(
+    def _remember_texture_dir(self, path: Path) -> None:
+        directory = path if path.is_dir() else path.parent
+        if not directory.is_dir():
+            return
+        try:
+            key = str(directory.resolve())
+        except OSError:
+            key = str(directory)
+        if self.settings.get("last_texture_dir") == key:
+            return
+        self.settings["last_texture_dir"] = key
+        save_settings(self.settings)
+
+    def _browse_texture(self) -> None:
+        if self._updating_props:
+            return
+        selected = [i for i in self.scene.selectedItems() if hasattr(i, "node")]
+        if not selected:
+            return
+        node: LayoutNode = selected[0].node
+        if node.from_meta or not node.is_drawable:
+            return
+        current = ""
+        prefer_path = False
+        if node.texture and node.texture.name:
+            current = node.texture.name
+            prefer_path = node.texture.is_path
+        dlg = TexturePickerDialog(
+            self.resolver,
             self,
-            "Open UI XML",
+            current_name=current,
+            prefer_path=prefer_path,
+        )
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        pick = dlg.selected_pick()
+        if pick is None:
+            return
+        # Atlas: write id, clear XML UV (engine uses textures_descr).
+        # Path: write ui\file, clear UV (full DDS). Path+UV crops are edited in XML.
+        if not node.set_texture_name(pick.name, clear_uv=True):
+            return
+        if pick.dds_path is not None:
+            # Warm DDS index; atlas UV already ingested while the picker scanned descr.
+            if pick.kind == "path":
+                self.resolver.remember_dds(pick.name, pick.dds_path)
+                self._remember_texture_dir(pick.dds_path)
+            else:
+                atlas = self.resolver.lookup_atlas(pick.name)
+                if atlas is not None:
+                    self.resolver.remember_dds(atlas.file_name, pick.dds_path)
+        self._mark_xml_dirty()
+        self._show_props(node)
+        item = self.scene.item_for_node(node)
+        if item:
+            item.refresh_look()
+        self.statusBar().showMessage(f"Texture → {pick.name}")
+        self._log("info", f"texture {node.path}: {pick.name} ({pick.kind})")
+
+    def open_dialog(self) -> None:
+        # Default start: last file dir; atlas filter users still get path detection.
+        path, _selected_filter = QFileDialog.getOpenFileName(
+            self,
+            "Open XML",
             self._file_dialog_start(),
-            "UI XML (*.xml);;All (*.*)",
+            "UI XML (*.xml);;Texture atlas XML (*.xml);;All (*.*)",
         )
         if path:
             self.open_path(Path(path))
@@ -1600,54 +1815,104 @@ class MainWindow(QMainWindow):
         _log_file.debug("_open_path_finish: %s", path)
         try:
             try:
-                doc = self.doc.load(path)
-            except Exception as exc:  # noqa: BLE001
-                _log_file.exception("Open failed: %s", path)
+                text = path.read_text(encoding="utf-8-sig")
+            except OSError as exc:
                 self._log("error", f"Open failed: {path} - {exc}")
                 QMessageBox.critical(self, "Open failed", str(exc))
                 return
-            self._remember_file_dir(path)
-            self._remember_recent_file(path)
-            self._set_raw_text(self.doc.source_text)
-            self._raw_dirty = False
-            self._preview_needs_raw_sync = False
-            self._apply_preview_doc(doc)
-            self._reveal_workspace()
-            self._restore_view_or_fit()
-            self.setWindowTitle(f"D.O.G.M.A. Stalker Anomaly Gui Editor - {path.name}")
-            widgets = len(doc.iter_drawables())
-            meta_n = sum(1 for n in doc.iter_drawables() if n.from_meta)
-            self._log(
-                "info",
-                f"Opened {path} | {widgets} widgets | {meta_n} meta | "
-                f"atlas {self.resolver.atlas_count} | dds {self.resolver.dds_count} | "
-                f"strings {self.strings.count}",
-            )
-            self._audit_resources("open")
-            missing = self.scene.missing_texture_count()
-            textured = self.scene.textured_count()
-            self.statusBar().showMessage(
-                f"Loaded {path.name} · {widgets} widgets · "
-                f"{textured} textured · {missing} missing tex · "
-                f"{meta_n} meta · "
-                f"{self.resolver.atlas_count} atlas · {self.resolver.dds_count} dds · "
-                f"{self.strings.count} strings"
-            )
-            ok = True
-            _log_file.info(
-                "open complete: %s widgets=%s meta=%s textured=%s missing_tex=%s",
-                path,
-                widgets,
-                meta_n,
-                textured,
-                missing,
-            )
+            is_atlas = looks_like_textures_descr(path=path, text=text)
+            if is_atlas:
+                ok = self._open_atlas_finish(path, text)
+            else:
+                ok = self._open_ui_finish(path, text)
         finally:
             self._hide_busy()
             self._busy_open = False
             _log_file.debug("open_path finish ok=%s busy cleared", ok)
             if not ok and not self._workspace_revealed:
                 QTimer.singleShot(0, self._show_startup_chooser)
+
+    def _open_ui_finish(self, path: Path, text: str) -> bool:
+        try:
+            doc = self.doc.load_text(text, path=path)
+        except Exception as exc:  # noqa: BLE001
+            _log_file.exception("Open failed: %s", path)
+            self._log("error", f"Open failed: {path} - {exc}")
+            QMessageBox.critical(self, "Open failed", str(exc))
+            return False
+        self.descr_doc.clear()
+        self._set_doc_mode(DOC_MODE_UI)
+        self._remember_file_dir(path)
+        self._remember_recent_file(path)
+        self._set_raw_text(self.doc.source_text)
+        self._raw_dirty = False
+        self._preview_needs_raw_sync = False
+        self._apply_preview_doc(doc)
+        self._reveal_workspace()
+        self._restore_view_or_fit()
+        self.setWindowTitle(f"D.O.G.M.A. Stalker Anomaly Gui Editor - {path.name}")
+        widgets = len(doc.iter_drawables())
+        meta_n = sum(1 for n in doc.iter_drawables() if n.from_meta)
+        self._log(
+            "info",
+            f"Opened {path} | {widgets} widgets | {meta_n} meta | "
+            f"atlas {self.resolver.atlas_count} | dds {self.resolver.dds_count} | "
+            f"strings {self.strings.count}",
+        )
+        self._audit_resources("open")
+        missing = self.scene.missing_texture_count()
+        textured = self.scene.textured_count()
+        self.statusBar().showMessage(
+            f"Loaded {path.name} · {widgets} widgets · "
+            f"{textured} textured · {missing} missing tex · "
+            f"{meta_n} meta · "
+            f"{self.resolver.atlas_count} atlas · {self.resolver.dds_count} dds · "
+            f"{self.strings.count} strings"
+        )
+        _log_file.info(
+            "open complete: %s widgets=%s meta=%s textured=%s missing_tex=%s",
+            path,
+            widgets,
+            meta_n,
+            textured,
+            missing,
+        )
+        return True
+
+    def _open_atlas_finish(self, path: Path, text: str) -> bool:
+        try:
+            sheets = self.descr_doc.load_text(text, path=path)
+        except Exception as exc:  # noqa: BLE001
+            _log_file.exception("Open atlas failed: %s", path)
+            self._log("error", f"Open failed: {path} - {exc}")
+            QMessageBox.critical(self, "Open failed", str(exc))
+            return False
+        self._bind_resource_roots()
+        self.resolver.clear_cache()
+        self._set_doc_mode(DOC_MODE_ATLAS)
+        self._remember_file_dir(path)
+        self._remember_recent_file(path)
+        if "textures_descr" in [p.lower() for p in path.parts]:
+            self._remember_texture_dir(path.parent)
+        self._set_raw_text(self.descr_doc.source_text)
+        self._raw_dirty = False
+        self._preview_needs_raw_sync = False
+        self.descr_board.set_document(self.descr_doc)
+        self._reveal_workspace()
+        self.descr_board.fit_stage()
+        self.setWindowTitle(
+            f"D.O.G.M.A. Stalker Anomaly Gui Editor - {path.name} [atlas]"
+        )
+        n_reg = sum(len(s.regions) for s in sheets)
+        self._log(
+            "info",
+            f"Opened atlas {path} | {len(sheets)} sheet(s) | {n_reg} regions",
+        )
+        sheet0 = sheets[0].file_name if sheets else "?"
+        self.statusBar().showMessage(
+            f"Atlas {path.name} · {len(sheets)} sheet(s) · {n_reg} regions · {sheet0}"
+        )
+        return True
 
     def _apply_preview_doc(self, doc: LayoutNode) -> None:
         self._warm_resources_for_doc(doc)
@@ -1722,6 +1987,8 @@ class MainWindow(QMainWindow):
         view.blockSignals(False)
 
     def _has_unsaved_changes(self) -> bool:
+        if self._doc_mode == DOC_MODE_ATLAS:
+            return bool(self.descr_doc.dirty or self._raw_dirty)
         return bool(self.doc.dirty or self.doc.meta_dirty or self._raw_dirty)
 
     def _set_raw_text(self, text: str) -> None:
@@ -1901,6 +2168,23 @@ class MainWindow(QMainWindow):
 
     def _sync_raw_from_preview(self) -> None:
         """Push WYSIWYG geometry into the XML editor when preview changed."""
+        if self._doc_mode == DOC_MODE_ATLAS:
+            if self.descr_doc.root is None:
+                return
+            if self._raw_dirty:
+                return
+            if not (self.descr_doc.dirty or self._preview_needs_raw_sync):
+                if not self.raw_editor.toPlainText() and self.descr_doc.source_text:
+                    self._set_raw_text(self.descr_doc.source_text)
+                return
+            try:
+                text = self.descr_doc.serialize()
+            except Exception as exc:  # noqa: BLE001
+                QMessageBox.warning(self, "XML sync failed", str(exc))
+                return
+            self._set_raw_text(text)
+            self._preview_needs_raw_sync = False
+            return
         if self.doc.doc is None:
             return
         if self._raw_dirty:
@@ -1919,6 +2203,26 @@ class MainWindow(QMainWindow):
 
     def _apply_raw_to_preview(self) -> bool:
         """Parse XML text into the WYSIWYG view. Returns False on parse failure."""
+        if self._doc_mode == DOC_MODE_ATLAS:
+            if self.descr_doc.path is None and not self.raw_editor.toPlainText().strip():
+                return True
+            if not self._raw_dirty and self.descr_doc.root is not None:
+                return True
+            text = self.raw_editor.toPlainText()
+            was_dirty = self._raw_dirty
+            try:
+                self.descr_doc.load_text(text, path=self.descr_doc.path)
+            except Exception as exc:  # noqa: BLE001
+                self._log("error", f"Invalid XML: {exc}")
+                QMessageBox.critical(self, "Invalid XML", str(exc))
+                return False
+            if was_dirty:
+                self.descr_doc.mark_dirty()
+            self._raw_dirty = False
+            self._preview_needs_raw_sync = False
+            self.descr_board.set_document(self.descr_doc)
+            self.descr_board.fit_stage()
+            return True
         if self.doc.path is None and not self.raw_editor.toPlainText().strip():
             return True
         if not self._raw_dirty and self.doc.doc is not None:
@@ -1944,6 +2248,8 @@ class MainWindow(QMainWindow):
         return True
 
     def save(self) -> bool:
+        if self._doc_mode == DOC_MODE_ATLAS:
+            return self._save_atlas()
         if self.doc.path is None:
             return self.save_as()
         try:
@@ -1971,7 +2277,64 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Saved {self.doc.path}{extra}")
         return True
 
+    def _save_atlas(self) -> bool:
+        if self.descr_doc.path is None:
+            return self.save_as()
+        try:
+            if self.editor_tabs.currentIndex() == TAB_XML or self._raw_dirty:
+                self.descr_doc.save_raw(
+                    self.raw_editor.toPlainText(), self.descr_doc.path
+                )
+                self._set_raw_text(self.descr_doc.source_text)
+                self._raw_dirty = False
+                self._preview_needs_raw_sync = False
+                self.descr_board.set_document(self.descr_doc)
+            else:
+                self.descr_doc.save()
+                self._set_raw_text(self.descr_doc.source_text)
+                self._preview_needs_raw_sync = False
+            self.resolver.clear_cache()
+        except Exception as exc:  # noqa: BLE001
+            self._log("error", f"Save failed: {exc}")
+            QMessageBox.critical(self, "Save failed", str(exc))
+            return False
+        self._log("info", f"Saved atlas {self.descr_doc.path}")
+        self.statusBar().showMessage(f"Saved {self.descr_doc.path}")
+        return True
+
     def save_as(self) -> bool:
+        if self._doc_mode == DOC_MODE_ATLAS:
+            start = self._file_dialog_start(self.descr_doc.path)
+            path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Save texture atlas XML",
+                start,
+                "Texture atlas XML (*.xml);;All (*.*)",
+            )
+            if not path:
+                return False
+            try:
+                if self.editor_tabs.currentIndex() == TAB_XML or self._raw_dirty:
+                    self.descr_doc.save_raw(self.raw_editor.toPlainText(), Path(path))
+                else:
+                    self.descr_doc.save(Path(path))
+                self._set_raw_text(self.descr_doc.source_text)
+                self._raw_dirty = False
+                self._preview_needs_raw_sync = False
+                self.descr_board.set_document(self.descr_doc)
+                self.resolver.clear_cache()
+                self._remember_file_dir(Path(path))
+                self._remember_recent_file(Path(path))
+                self.setWindowTitle(
+                    f"D.O.G.M.A. Stalker Anomaly Gui Editor - {Path(path).name} [atlas]"
+                )
+            except Exception as exc:  # noqa: BLE001
+                self._log("error", f"Save failed: {exc}")
+                QMessageBox.critical(self, "Save failed", str(exc))
+                return False
+            self._log("info", f"Saved atlas {path}")
+            self.statusBar().showMessage(f"Saved {path}")
+            return True
         start = self._file_dialog_start(self.doc.path)
         path, _ = QFileDialog.getSaveFileName(
             self, "Save UI XML", start, "UI XML (*.xml);;All (*.*)"
@@ -2103,7 +2466,10 @@ class MainWindow(QMainWindow):
             self._log("info", "Asset roots updated after Anomaly DB unpack check")
         self._resources_ready = False
         self._bind_resource_roots()
-        if self.doc.doc:
+        if self._doc_mode == DOC_MODE_ATLAS and self.descr_doc.root is not None:
+            self.resolver.clear_cache()
+            self.descr_board.set_document(self.descr_doc)
+        elif self.doc.doc:
             self._warm_resources_for_doc(self.doc.doc)
             self.scene.rebind_resolver(self.resolver)
             self.scene.set_document(self.doc.doc)
@@ -2113,7 +2479,7 @@ class MainWindow(QMainWindow):
             f"Resources rebound | atlas {self.resolver.atlas_count} | "
             f"dds {self.resolver.dds_count} | strings {self.strings.count}",
         )
-        if self.doc.doc:
+        if self._doc_mode == DOC_MODE_UI and self.doc.doc:
             self._audit_resources("reload")
             selected = [
                 i for i in self.scene.selectedItems() if hasattr(i, "node")
@@ -2426,8 +2792,9 @@ class MainWindow(QMainWindow):
                 ed.setEnabled(bool(node and node.is_drawable))
             self.edit_stretch.setChecked(False)
             self.prop_texture.clear("-")
-            self.edit_text.setText("")
-            self.edit_text.setEnabled(False)
+            self.prop_texture.set_browse_enabled(False)
+            self.prop_text.clear("-")
+            self.prop_text.set_browse_enabled(False)
             self._set_optional_prop_label(self.prop_text_font, "")
             self.prop_text_resolved.clear("")
             self._updating_props = False
@@ -2452,16 +2819,23 @@ class MainWindow(QMainWindow):
         self.edit_h.setText(_num(node.height))
         self.edit_stretch.setChecked(node.stretch)
         self.edit_stretch.setEnabled(not node.from_meta)
-        if node.texture and not node.from_meta:
+        self.prop_texture.set_browse_enabled(not node.from_meta)
+        if node.from_meta:
+            self.prop_texture.clear("(meta)")
+        elif node.texture:
             resolved = self.resolver.resolve(node.texture)
             tip_bits: list[str] = []
-            if node.texture.name:
-                tip_bits.append(node.texture.name)
+            name = node.texture.name or ""
+            if name:
+                kind = "path" if node.texture.is_path else "atlas"
+                tip_bits.append(f"{name} ({kind})")
             if node.texture.has_uv:
                 tip_bits.append(
-                    f"UV {int(node.texture.uv_x)},{int(node.texture.uv_y)} "
+                    f"XML UV {int(node.texture.uv_x)},{int(node.texture.uv_y)} "
                     f"{int(node.texture.uv_w)}×{int(node.texture.uv_h)}"
                 )
+            elif not node.texture.is_path and resolved.atlas_id:
+                tip_bits.append("UV from textures_descr")
             if resolved.error:
                 display = f"⚠ {resolved.error}"
                 tip_bits.append(resolved.error)
@@ -2469,38 +2843,59 @@ class MainWindow(QMainWindow):
                     display=display,
                     tip_extra="\n".join(tip_bits),
                 )
-            elif resolved.path:
-                explorer = windows_explorer_path(resolved.path)
-                self.prop_texture.set_file(
-                    display=resolved.path.name,
-                    explorer_path=explorer,
-                    tip_extra="\n".join(tip_bits),
-                )
             else:
+                # Prefer showing the XML name (atlas id or path), not only DDS filename.
+                display = name or (resolved.path.name if resolved.path else "(none)")
+                explorer = (
+                    windows_explorer_path(resolved.path) if resolved.path else ""
+                )
+                if resolved.path and not node.texture.is_path:
+                    tip_bits.append(f"sheet: {resolved.path.name}")
                 self.prop_texture.set_file(
-                    display=node.texture.name or "(none)",
+                    display=display,
+                    explorer_path=explorer,
                     tip_extra="\n".join(tip_bits),
                 )
         else:
             self.prop_texture.clear("(none)")
-        self.edit_text.setEnabled(not node.from_meta)
+        self.prop_text.set_browse_enabled(not node.from_meta)
         if node.from_meta:
-            self.edit_text.setText("")
+            self.prop_text.clear("(meta)")
             self._set_optional_prop_label(self.prop_text_font, "")
             self.prop_text_resolved.clear("")
-        elif node.text:
-            self.edit_text.setText(node.text.content)
+        elif node.text and node.text.content:
+            content = node.text.content
+            resolved = self.strings.resolve(content)
+            tip_bits = [content]
+            if resolved.text:
+                tip_bits.append(resolved.text)
+            if resolved.error:
+                self.prop_text.set_file(
+                    display=f"⚠ {resolved.error}",
+                    tip_extra="\n".join(tip_bits),
+                )
+            else:
+                explorer = (
+                    windows_explorer_path(resolved.source)
+                    if resolved.source is not None
+                    else ""
+                )
+                self.prop_text.set_file(
+                    display=content,
+                    explorer_path=explorer,
+                    tip_extra="\n".join(tip_bits),
+                )
             bits = []
             if node.text.font:
                 bits.append(node.text.font)
             if node.text.align:
                 bits.append(f"align={node.text.align}")
             self._set_optional_prop_label(self.prop_text_font, " · ".join(bits))
-            self._set_text_resolved_row(self.strings.resolve(node.text.content))
+            self._set_text_resolved_row(resolved)
         else:
-            self.edit_text.setText("")
+            self.prop_text.clear("(none)")
             self._set_optional_prop_label(
-                self.prop_text_font, "(no <text> - type to create)"
+                self.prop_text_font, "(no <text> — browse to set)"
             )
             self.prop_text_resolved.clear("")
         self._updating_props = False
@@ -2511,6 +2906,10 @@ class MainWindow(QMainWindow):
             doc = self.raw_editor.document()
             self.undo_a.setEnabled(doc.isUndoAvailable())
             self.redo_a.setEnabled(doc.isRedoAvailable())
+        elif self._doc_mode == DOC_MODE_ATLAS:
+            stack = self.descr_board.scene.undo_stack
+            self.undo_a.setEnabled(stack.can_undo())
+            self.redo_a.setEnabled(stack.can_redo())
         else:
             self.undo_a.setEnabled(self.scene.undo_stack.can_undo())
             self.redo_a.setEnabled(self.scene.undo_stack.can_redo())
@@ -2522,6 +2921,18 @@ class MainWindow(QMainWindow):
             self.raw_editor.undo()
             self._update_undo_actions()
             self.statusBar().showMessage("Undo XML text")
+            return
+        if self._doc_mode == DOC_MODE_ATLAS:
+            edit = self.descr_board.scene.undo_stack.undo()
+            if edit is None:
+                return
+            reg = self.descr_board.scene.apply_geo_edit(edit, use_after=False)
+            self.descr_doc.mark_dirty()
+            self._preview_needs_raw_sync = True
+            self._update_undo_actions()
+            if reg is not None:
+                self.descr_board.scene.select_region(reg)
+                self.statusBar().showMessage(f"Undo {reg.atlas_id}")
             return
         edit = self.scene.undo_stack.undo()
         if edit is None:
@@ -2539,11 +2950,23 @@ class MainWindow(QMainWindow):
 
     def redo(self) -> None:
         if self.editor_tabs.currentIndex() == TAB_XML:
-            if not self.raw_editor.document().isRedoAvailable():
+            if not self.raw_editor.document().isUndoAvailable():
                 return
             self.raw_editor.redo()
             self._update_undo_actions()
             self.statusBar().showMessage("Redo XML text")
+            return
+        if self._doc_mode == DOC_MODE_ATLAS:
+            edit = self.descr_board.scene.undo_stack.redo()
+            if edit is None:
+                return
+            reg = self.descr_board.scene.apply_geo_edit(edit, use_after=True)
+            self.descr_doc.mark_dirty()
+            self._preview_needs_raw_sync = True
+            self._update_undo_actions()
+            if reg is not None:
+                self.descr_board.scene.select_region(reg)
+                self.statusBar().showMessage(f"Redo {reg.atlas_id}")
             return
         edit = self.scene.undo_stack.redo()
         if edit is None:
@@ -2636,38 +3059,34 @@ class MainWindow(QMainWindow):
             self._set_geo_field_styles(True)
         self._commit_props_geo_undo()
 
-    def _on_text_commit(self) -> None:
+    def _browse_text(self) -> None:
         if self._updating_props:
             return
         selected = [i for i in self.scene.selectedItems() if hasattr(i, "node")]
         if not selected:
             return
-        self._apply_text_from_props(selected[0].node)
-
-    def _apply_text_from_props(self, node: LayoutNode) -> None:
-        if node.from_meta or not self.edit_text.isEnabled():
+        node: LayoutNode = selected[0].node
+        if node.from_meta or not node.is_drawable:
             return
-        if not node.set_text_content(self.edit_text.text()):
-            return
-        self._mark_xml_dirty()
-        bits = []
-        if node.text and node.text.font:
-            bits.append(node.text.font)
-        if node.text and node.text.align:
-            bits.append(f"align={node.text.align}")
-        self._set_optional_prop_label(
-            self.prop_text_font, " · ".join(bits) if bits else ""
-        )
+        current = ""
         if node.text and node.text.content:
-            resolved = self.strings.resolve(node.text.content)
-            self._set_text_resolved_row(resolved)
-            if resolved.error:
-                self._log("warn", f"text {node.path}: {node.text.content} → {resolved.error}")
-        else:
-            self.prop_text_resolved.clear("")
+            current = node.text.content.strip()
+        dlg = StringPickerDialog(self.strings, self, current_id=current)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        entry = dlg.selected_entry()
+        if entry is None:
+            return
+        if not node.set_text_content(entry.string_id):
+            return
+        self.strings.remember_string(entry)
+        self._mark_xml_dirty()
+        self._show_props(node)
         item = self.scene.item_for_node(node)
         if item:
             item.refresh_look()
+        self.statusBar().showMessage(f"Text → {entry.string_id}")
+        self._log("info", f"text {node.path}: {entry.string_id}")
 
     def _on_stretch_toggled(self, checked: bool) -> None:
         if self._updating_props:

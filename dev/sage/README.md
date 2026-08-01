@@ -60,10 +60,24 @@ On first launch (or if roots are missing/invalid), a **SAGE Setup** window asks 
 - Anomaly must contain `tools\db_unpacker.bat`
 - GAMMA must contain `mods\G.A.M.M.A. UI\gamedata\textures`
 
-Optional **extra scan roots** can be added there too. On Continue / Settings Ok, SAGE
-**scans once** for textures / `textures_descr` / text folders and **saves those paths**
-into `settings.json` (plus DOGMA `src/`). Later launches reuse the saved lists — no
-rescan until you change roots or use **Edit → Rescan asset roots**.
+Optional **extra scan roots** can be added there too (project / `src` and/or deployed
+mod under `GAMMA\mods\…` — nothing is auto-added; add the folder itself, not
+`textures\ui`). On Continue / Settings Ok, SAGE **scans once** for textures /
+`textures_descr` / text folders and **saves those paths** into `settings.json`.
+Later launches reuse the saved lists — no rescan until you change roots or use
+**Edit → Rescan asset roots**.
+
+**Textures (Anomaly rules):** UI XML `<texture>` is either an **atlas id** (no
+`\`, UV from `configs/ui/textures_descr/*.xml`) or a **DDS path** (`ui\foo`,
+optional XML `x/y/width/height` crop). The texture picker defaults to atlas ids
+(with cropped preview); DDS-path mode is for full-file backgrounds/icons.
+Neither writes drive paths — deploy flattens `src/…/textures/` into
+`gamedata/textures/` the same way.
+
+**Atlas editor:** Open a `textures_descr` XML (path or `<w>/<file name>/<texture id>`
+shape) to edit UV boxes on the DDS sheet — same WYSIWYG / XML / Log tabs, no
+layout sidebars. Sheet linked by `file name="ui\…"`, not by the descr folder.
+F2 rename id · Ctrl+D duplicate · Del delete · Ctrl+N new region. No `.xml.meta`.
 
 If `Anomaly\tools\_unpacked` is missing (or incomplete), Continue / Ok warns that
 SAGE will unpack `configs.db0` + `textures_ui.db0` (may take a minute), runs the

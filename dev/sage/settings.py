@@ -17,7 +17,7 @@ LABEL_FONT_MAX = 40
 LABEL_FONT_DEFAULT = 5
 RECENT_FILES_MAX = 10
 # Bump when derived root ordering / discovery rules change (forces one rescan).
-ASSET_ROOTS_VERSION = 4
+ASSET_ROOTS_VERSION = 5
 
 
 def clamp_label_font_size(value: object) -> int:
@@ -310,8 +310,8 @@ def derived_asset_roots(
     """Build texture / descr / text root lists from installs + user custom dirs.
 
     Resolution order (last wins): Anomaly → GAMMA (MO2 modlist) → user
-    ``custom_roots`` (always last). No repo paths are implied — add DOGMA
-    ``src`` (or anything else) via custom roots in Setup/Settings.
+    ``custom_roots`` (always last). No project paths are implied — add source
+    and/or deployed mod folders via custom roots in Setup/Settings.
     """
     tex: list[Path] = []
     descr: list[Path] = []
@@ -337,17 +337,21 @@ def derived_asset_roots(
         for pack in _iter_gamma_pack_dirs(gamma):
             p_tex, p_descr, p_text = _pack_asset_paths(pack)
             descr_dir = pack / "gamedata" / "configs" / "ui" / "textures_descr"
+            ui_cfg = pack / "gamedata" / "configs" / "ui"
             name_l = pack.name.lower()
+            # Textures: any pack that ships them (do not require textures_descr).
+            tex.extend(p_tex)
             descr.extend(p_descr)
-            if descr_dir.is_dir():
-                tex.extend(p_tex)
+            # Text: UI / text-overhaul packs, or anything that ships UI configs
+            # alongside string tables (covers deployed project mods like DOGMA).
             is_text_pack = "text" in name_l and (
                 "overhaul" in name_l or "massive" in name_l
             )
             is_named_ui = bool(
                 re.search(r"(^|[^a-z0-9])ui([^a-z0-9]|$)", name_l)
             )
-            if is_text_pack or is_named_ui:
+            has_ui_assets = descr_dir.is_dir() or ui_cfg.is_dir()
+            if is_text_pack or is_named_ui or has_ui_assets:
                 text.extend(p_text)
 
     # User-supplied dirs only — always last in resolution order.
@@ -426,7 +430,7 @@ def ensure_db_unpacked_and_roots(settings: dict | None = None) -> dict:
 
 
 def _merge_anomaly_unpack_paths(settings: dict) -> None:
-    """If tools/_unpacked appeared after unpack, append those dirs without a full rescan."""
+    """If tools/_unpacked appeared after unpack, prepend those dirs (lowest priority)."""
     anomaly = _norm_root(settings.get("anomaly_root", ""))
     if not anomaly:
         return
@@ -443,6 +447,7 @@ def _merge_anomaly_unpack_paths(settings: dict) -> None:
     for key, paths in extras.items():
         cur = list(settings.get(key) or [])
         seen = {str(Path(p)).lower() for p in cur}
+        prepend: list[str] = []
         for p in paths:
             if not p.is_dir():
                 continue
@@ -452,9 +457,11 @@ def _merge_anomaly_unpack_paths(settings: dict) -> None:
                 key_path = str(p)
             if key_path.lower() in seen:
                 continue
-            cur.append(key_path)
+            prepend.append(key_path)
             seen.add(key_path.lower())
-        settings[key] = cur
+        if prepend:
+            # Unpacked Anomaly is base layer — must stay before GAMMA / custom.
+            settings[key] = prepend + cur
 
 
 def default_settings() -> dict:
@@ -470,6 +477,7 @@ def default_settings() -> dict:
         "show_box_border": False,
         "show_box_fill": False,
         "last_file_dir": "",
+        "last_texture_dir": "",
         "recent_files": [],
         "window": {
             "x": None,

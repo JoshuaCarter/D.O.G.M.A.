@@ -16,7 +16,7 @@ function hf_workshop_wrapper:pickup()
 		bind_hf_base.hf_binder_wrapper.pickup(self)
 		return
 	end
-	local shared_id = m_data.workshop_shared_stash
+	local shared_id = m_data.dogma_gameplay_shared_stash
 	local workshop_id = self.object:id()
 
 	-- Only clean up old per-workshop private boxes. Never touch the shared stash.
@@ -53,10 +53,10 @@ function hf_workshop_wrapper:pickup()
 	end
 
 	-- Clear 1-per-level registry for this bench
-	if m_data.dogma_workshop_by_level then
-		for lvl, wid in pairs(m_data.dogma_workshop_by_level) do
+	if m_data.dogma_gameplay_shared_stash_by_level then
+		for lvl, wid in pairs(m_data.dogma_gameplay_shared_stash_by_level) do
 			if wid == workshop_id then
-				m_data.dogma_workshop_by_level[lvl] = nil
+				m_data.dogma_gameplay_shared_stash_by_level[lvl] = nil
 				break
 			end
 		end

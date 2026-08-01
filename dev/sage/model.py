@@ -216,6 +216,30 @@ class LayoutNode:
         self.text = _read_text(self.element)
         return True
 
+    def set_texture_name(self, name: str, *, clear_uv: bool = True) -> bool:
+        """Set <texture> body (atlas id or ui\\path). Creates element when needed."""
+        if self.from_meta:
+            return False
+        name = (name or "").strip()
+        tex = self.element.find("texture")
+        if tex is None:
+            if not name:
+                return False
+            tex = Element("texture")
+            self.element.insert(0, tex)
+        old = (tex.text or "").strip()
+        uv_changed = False
+        if clear_uv:
+            for attr in ("x", "y", "width", "height"):
+                if attr in tex.attrib:
+                    del tex.attrib[attr]
+                    uv_changed = True
+        if old == name and not uv_changed:
+            return False
+        tex.text = name
+        self.texture = _read_texture(self.element)
+        return True
+
     def set_geometry(
         self,
         *,

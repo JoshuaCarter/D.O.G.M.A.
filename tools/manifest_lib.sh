@@ -49,27 +49,28 @@ dogma_load_manifest() {
 
 	# Do not use process substitution here - its exit status is easy to lose, and a
 	# failed parse must abort the build (otherwise FEATURES=() + prune wipes the mod).
+	# --check-src maps reserved dirs (common→_common, debug→_debug) via dogma_mo2_lib.
 	local list_file rc
 	list_file="$(mktemp)"
 	set +e
-	"${py[@]}" "$ROOT/tools/list_manifest_features.py" --manifest "$yml" --min-stage "$min_stage" >"$list_file"
+	"${py[@]}" "$ROOT/tools/list_manifest_features.py" --manifest "$yml" --min-stage "$min_stage" --check-src >"$list_file" 2>"$list_file.err"
 	rc=$?
 	set -e
 	if (( rc != 0 )); then
-		rm -f "$list_file"
-		echo "manifest: failed to read $yml (exit $rc)" >&2
+		if [[ -s "$list_file.err" ]]; then
+			cat "$list_file.err" >&2
+		else
+			echo "manifest: failed to read $yml (exit $rc)" >&2
+		fi
+		rm -f "$list_file" "$list_file.err"
 		return 1
 	fi
+	rm -f "$list_file.err"
 
 	local rel
 	while IFS= read -r rel || [[ -n "$rel" ]]; do
 		rel="${rel//$'\r'/}"
 		[[ -z "$rel" ]] && continue
-		if [[ ! -d "$SRC/$rel" ]]; then
-			rm -f "$list_file"
-			echo "manifest: entry missing under src/: $rel" >&2
-			return 1
-		fi
 		FEATURES+=("$rel")
 	done <"$list_file"
 	rm -f "$list_file"

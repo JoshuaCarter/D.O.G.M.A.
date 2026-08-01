@@ -73,10 +73,12 @@ from .settings import (
     LABEL_FONT_MAX,
     LABEL_FONT_MIN,
     clamp_label_font_size,
+    resolve_font_device_height,
     ensure_db_unpacked_and_roots,
     installs_configured,
     load_settings,
     normalize_custom_roots,
+    normalize_splitter_sizes,
     push_recent_file,
     rescan_asset_roots,
     save_settings,
@@ -1107,6 +1109,10 @@ class MainWindow(QMainWindow):
         self.edit_w = QLineEdit()
         self.edit_h = QLineEdit()
         self.edit_stretch = QCheckBox("stretch")
+        self.edit_show_texture = QCheckBox("Render texture")
+        self.edit_show_texture.setToolTip(
+            "Preview only — hide this box’s texture on the canvas (not saved)."
+        )
         self.prop_texture = BrowseValueRow(
             browse_tip="Find and change texture (atlas / DDS)…"
         )
@@ -1147,7 +1153,14 @@ class MainWindow(QMainWindow):
         pf.addRow(self.prop_label_pos, _xy_row("x", self.edit_x, "y", self.edit_y))
         pf.addRow(self.prop_label_size, _xy_row("w", self.edit_w, "h", self.edit_h))
         pf.addRow(self.prop_label_texture, self.prop_texture)
-        pf.addRow("", self.edit_stretch)
+        self._tex_opts_row = QWidget()
+        tex_opts_l = QHBoxLayout(self._tex_opts_row)
+        tex_opts_l.setContentsMargins(0, 0, 0, 0)
+        tex_opts_l.setSpacing(12)
+        tex_opts_l.addWidget(self.edit_stretch)
+        tex_opts_l.addWidget(self.edit_show_texture)
+        tex_opts_l.addStretch(1)
+        pf.addRow("", self._tex_opts_row)
         pf.addRow(self.prop_label_text, self.prop_text)
         pf.addRow("", self.prop_text_font)
         self.prop_text_resolved = FilePathRow()
@@ -1270,7 +1283,12 @@ class MainWindow(QMainWindow):
         self.split.setStretchFactor(0, 0)
         self.split.setStretchFactor(1, 1)
         self.split.setStretchFactor(2, 0)
-        self.split.setSizes([350, 700, 350])
+        self._splitter_save_timer = QTimer(self)
+        self._splitter_save_timer.setSingleShot(True)
+        self._splitter_save_timer.setInterval(200)
+        self._splitter_save_timer.timeout.connect(self._save_splitter_sizes)
+        self.split.splitterMoved.connect(self._on_splitter_moved)
+        self._apply_splitter_sizes()
         self.setCentralWidget(self.split)
         # Keep workspace hidden until a file is chosen and loaded.
         self._workspace_revealed = False
@@ -1297,6 +1315,7 @@ class MainWindow(QMainWindow):
         self.descr_board.regions_changed.connect(self._fill_region_list)
         self._restoring_meta = False
         self.edit_stretch.toggled.connect(self._on_stretch_toggled)
+        self.edit_show_texture.toggled.connect(self._on_show_texture_toggled)
 
         self._build_menu()
         self._set_doc_mode(DOC_MODE_UI)
@@ -1404,7 +1423,7 @@ class MainWindow(QMainWindow):
             self.prop_meta_note,
             self.prop_label_texture,
             self.prop_texture,
-            self.edit_stretch,
+            self._tex_opts_row,
             self.prop_label_text,
             self.prop_text,
             self.prop_text_font,
@@ -1433,7 +1452,7 @@ class MainWindow(QMainWindow):
             self._right_body_l.setStretchFactor(self.undo_list, 0)
         sizes = self.split.sizes()
         if sizes[0] < 80 or sizes[2] < 80:
-            self.split.setSizes([350, 700, 350])
+            self._apply_splitter_sizes()
         self._update_undo_actions()
         self._refresh_undo_list()
 
@@ -1565,6 +1584,12 @@ class MainWindow(QMainWindow):
         self.resolver = self._make_resolver()
         self.strings = self._make_string_resolver()
         self.fonts = self._make_font_resolver()
+        # Load or build file indexes once so document open is O(1) path lookups.
+        t0 = time.perf_counter()
+        tex_stats = self.resolver.ensure_indexes()
+        str_stats = self.strings.ensure_indexes()
+        self.path_index.save()
+        index_s = time.perf_counter() - t0
         self.scene.rebind_resolver(self.resolver)
         self.scene.rebind_text_resources(strings=self.strings, fonts=self.fonts)
         self.descr_board.resolver = self.resolver
@@ -1574,13 +1599,20 @@ class MainWindow(QMainWindow):
         n_descr = len(self.settings.get("gamedata_descr_roots") or [])
         n_text = len(self.settings.get("gamedata_text_roots") or [])
         _log_file.info(
-            "resource roots bound texture=%s descr=%s text=%s",
+            "resource roots bound texture=%s descr=%s text=%s | "
+            "index dds=%s descr_xml=%s text_xml=%s in %.2fs",
             n_tex,
             n_descr,
             n_text,
+            tex_stats.get("dds", 0),
+            tex_stats.get("descr_files", 0),
+            str_stats.get("text_files", 0),
+            index_s,
         )
         self.statusBar().showMessage(
-            f"Ready · {n_tex} texture dirs · {n_descr} descr dirs · {n_text} text dirs"
+            f"Ready · {tex_stats.get('dds', 0)} dds · "
+            f"{tex_stats.get('descr_files', 0)} descr · "
+            f"{str_stats.get('text_files', 0)} text · indexed in {index_s:.1f}s"
         )
 
     def _ensure_resources_indexed(self) -> None:
@@ -1594,17 +1626,24 @@ class MainWindow(QMainWindow):
         self.resolver.clear_cache()
         self.strings.clear_cache()
         self.fonts.clear_cache()
+        # Keep disk indexes; only clear in-memory atlas/string parse caches.
+        self.resolver.ensure_indexes()
+        self.strings.ensure_indexes()
         self.resolver.warm_for_document(doc)
         self.strings.warm_for_document(doc)
         self.fonts.warm_for_document(doc)
+        if self.path_index is not None:
+            self.path_index.save()
         elapsed = time.perf_counter() - t0
+        font_h = getattr(self.fonts, "device_height", 0)
         _log_file.info(
-            "doc resources warmed in %.2fs atlas=%s dds=%s strings=%s fonts=%s",
+            "doc resources warmed in %.2fs atlas=%s dds=%s strings=%s fonts=%s device_h=%s",
             elapsed,
             self.resolver.atlas_count,
             self.resolver.dds_count,
             self.strings.count,
             self.fonts.count,
+            font_h,
         )
 
     def _show_startup_chooser(self) -> None:
@@ -1644,7 +1683,12 @@ class MainWindow(QMainWindow):
         )
 
     def _make_font_resolver(self) -> FontResolver:
-        return FontResolver(self.resolver, path_index=self.path_index)
+        # Match engine Device.dwHeight (atlas bucket + 768/h HUD scale).
+        return FontResolver(
+            self.resolver,
+            path_index=self.path_index,
+            device_height=resolve_font_device_height(self.settings),
+        )
 
     def _build_menu(self) -> None:
         file_menu = self.menuBar().addMenu("&File")
@@ -1745,10 +1789,11 @@ class MainWindow(QMainWindow):
         self.settings_a = QAction("&Settings…", self)
         self.settings_a.triggered.connect(self.edit_settings)
         edit_menu.addAction(self.settings_a)
-        self.rescan_a = QAction("Rescan &asset roots", self)
+        self.rescan_a = QAction("Rescan &asset cache", self)
+        self.rescan_a.setShortcut("Ctrl+Shift+R")
         self.rescan_a.setToolTip(
-            "Re-discover texture / textures_descr / text folders under Anomaly, "
-            "GAMMA, and extra roots (directory lists only)."
+            "Re-discover asset folders under Anomaly / GAMMA / extras, then rebuild "
+            "the DDS + descr + text file index cache (needed after adding mods)."
         )
         self.rescan_a.triggered.connect(self.rescan_asset_paths)
         edit_menu.addAction(self.rescan_a)
@@ -2549,11 +2594,11 @@ class MainWindow(QMainWindow):
         self._reload_textures()
 
     def rescan_asset_paths(self) -> None:
-        """Menu: rediscover asset folders from current install roots and reload."""
+        """Menu: rediscover folders, rebuild file indexes, reload open document."""
         if not installs_configured(self.settings):
             QMessageBox.warning(
                 self,
-                "Rescan asset roots",
+                "Rescan asset cache",
                 "Set valid Anomaly and GAMMA roots in Edit → Settings first.",
             )
             return
@@ -2561,19 +2606,38 @@ class MainWindow(QMainWindow):
         try:
             rescan_asset_roots(self.settings)
             save_settings(self.settings)
-            # Drop path index so next warm rediscovers under new roots.
+            # Drop path + DDS indexes; bind rebuilds them from the new roots.
             if getattr(self, "path_index", None) is not None:
                 self.path_index.invalidate()
+            self._resources_ready = False
+            self._bind_resource_roots()
         finally:
             QApplication.restoreOverrideCursor()
         n_tex = len(self.settings.get("gamedata_texture_roots") or [])
         n_descr = len(self.settings.get("gamedata_descr_roots") or [])
         n_text = len(self.settings.get("gamedata_text_roots") or [])
+        n_dds = self.resolver.dds_count if getattr(self, "resolver", None) else 0
         self._log(
             "info",
-            f"Asset roots rescanned — {n_tex} texture, {n_descr} descr, {n_text} text folders",
+            f"Asset cache rescanned — {n_tex} texture dirs, {n_descr} descr, "
+            f"{n_text} text, {n_dds} dds indexed",
         )
-        self._reload_textures()
+        # Rebind already ran ensure_indexes; refresh open document textures.
+        if self._doc_mode == DOC_MODE_ATLAS and self.descr_doc.root is not None:
+            self.resolver.clear_cache()
+            self.resolver.ensure_indexes()
+            self.descr_board.set_document(self.descr_doc)
+        elif self.doc.doc:
+            self._warm_resources_for_doc(self.doc.doc)
+            self.scene.rebind_resolver(self.resolver)
+            self.scene.rebind_text_resources(strings=self.strings, fonts=self.fonts)
+            self.scene.set_document(self.doc.doc)
+        self._on_stack_peers_changed(frozenset())
+        if self._doc_mode == DOC_MODE_UI and self.doc.doc:
+            self._audit_resources("rescan")
+        self.statusBar().showMessage(
+            f"Asset cache ready · {n_dds} dds · {n_tex} texture dirs"
+        )
 
     def _sync_tool_controls(self) -> None:
         border = bool(self.settings.get("show_box_border", False))
@@ -2939,6 +3003,23 @@ class MainWindow(QMainWindow):
         if len(sizes) == 3 and sizes[0] > 0 and sizes[2] > 0:
             self.split.setSizes(sizes)
 
+    def _on_splitter_moved(self, *_args) -> None:
+        self._splitter_save_timer.start()
+
+    def _apply_splitter_sizes(self) -> None:
+        sizes = normalize_splitter_sizes(self.settings.get("splitter_sizes"))
+        self.split.setSizes(sizes)
+
+    def _save_splitter_sizes(self) -> None:
+        sizes = self.split.sizes()
+        if len(sizes) != 3 or sizes[0] < 80 or sizes[2] < 80:
+            return
+        normalized = normalize_splitter_sizes(sizes)
+        if normalized == normalize_splitter_sizes(self.settings.get("splitter_sizes")):
+            return
+        self.settings["splitter_sizes"] = normalized
+        save_settings(self.settings)
+
     def _set_path_label(self, path: str) -> None:
         self.prop_path.setText(_path_rich_text(path or "-"))
 
@@ -3000,6 +3081,8 @@ class MainWindow(QMainWindow):
                 ed.setText("")
                 ed.setEnabled(bool(node and node.is_drawable))
             self.edit_stretch.setChecked(False)
+            self.edit_show_texture.setChecked(True)
+            self.edit_show_texture.setEnabled(False)
             self.prop_texture.clear("-")
             self.prop_texture.set_browse_enabled(False)
             self.prop_text.clear("-")
@@ -3028,6 +3111,11 @@ class MainWindow(QMainWindow):
         self.edit_h.setText(_num(node.height))
         self.edit_stretch.setChecked(node.stretch)
         self.edit_stretch.setEnabled(not node.from_meta)
+        item = self.scene.item_for_node(node)
+        self.edit_show_texture.setChecked(
+            True if item is None else bool(item.show_texture)
+        )
+        self.edit_show_texture.setEnabled(True)
         self.prop_texture.set_browse_enabled(not node.from_meta)
         if node.from_meta:
             self.prop_texture.clear("(meta)")
@@ -3356,6 +3444,16 @@ class MainWindow(QMainWindow):
         if item:
             item.refresh_look()
 
+    def _on_show_texture_toggled(self, checked: bool) -> None:
+        if self._updating_props:
+            return
+        selected = [i for i in self.scene.selectedItems() if hasattr(i, "node")]
+        if not selected:
+            return
+        item = selected[0]
+        if hasattr(item, "set_show_texture"):
+            item.set_show_texture(checked)
+
     def _restore_window_geometry(self) -> None:
         geo = self.settings.get("window")
         if not isinstance(geo, dict):
@@ -3399,6 +3497,7 @@ class MainWindow(QMainWindow):
             if r == QMessageBox.StandardButton.Save and not self.save():
                 event.ignore()
                 return
+        self._save_splitter_sizes()
         self._save_window_geometry()
         event.accept()
 

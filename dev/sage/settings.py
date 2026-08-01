@@ -12,12 +12,72 @@ SETTINGS_PATH = Path(__file__).resolve().parent / "settings.json"
 UI_WIDTH = 1024
 UI_HEIGHT = 768
 
+# Font preview: engine picks atlas + scales by Device.dwHeight (see fonts.py).
+DEFAULT_FONT_DEVICE_HEIGHT = 1080
+# 0 / missing → auto from Anomaly appdata/user.ltx vid_mode.
+
 LABEL_FONT_MIN = 2
 LABEL_FONT_MAX = 40
 LABEL_FONT_DEFAULT = 5
 RECENT_FILES_MAX = 10
 # Bump when derived root ordering / discovery rules change (forces one rescan).
 ASSET_ROOTS_VERSION = 5
+
+
+def clamp_font_device_height(value: object) -> int:
+    """Positive device height for font preview; 0 means auto-detect."""
+    try:
+        h = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0
+    if h <= 0:
+        return 0
+    return max(480, min(8700, h))
+
+
+def read_vid_mode_height(anomaly_root: object) -> int | None:
+    """Parse ``vid_mode WxH`` from ``<anomaly>/appdata/user.ltx``."""
+    root = str(anomaly_root or "").strip()
+    if not root:
+        return None
+    path = Path(root) / "appdata" / "user.ltx"
+    if not path.is_file():
+        return None
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        s = line.strip()
+        if not s or s.startswith(";") or s.startswith("//"):
+            continue
+        # vid_mode 3840x2160
+        if not s.lower().startswith("vid_mode"):
+            continue
+        rest = s.split(None, 1)
+        if len(rest) < 2:
+            continue
+        mode = rest[1].strip().split()[0]
+        if "x" not in mode.lower():
+            continue
+        _w, _, h_s = mode.lower().partition("x")
+        try:
+            h = int(float(h_s))
+        except ValueError:
+            return None
+        return clamp_font_device_height(h) or None
+    return None
+
+
+def resolve_font_device_height(settings: dict) -> int:
+    """Effective Device.dwHeight for SAGE font preview (override or user.ltx)."""
+    override = clamp_font_device_height(settings.get("font_device_height", 0))
+    if override > 0:
+        return override
+    detected = read_vid_mode_height(settings.get("anomaly_root"))
+    if detected is not None and detected > 0:
+        return detected
+    return DEFAULT_FONT_DEVICE_HEIGHT
 
 
 def clamp_label_font_size(value: object) -> int:
@@ -464,6 +524,26 @@ def _merge_anomaly_unpack_paths(settings: dict) -> None:
             settings[key] = prepend + cur
 
 
+# Main-window splitter: left sidebar, editor, right sidebar (was 350; +50%).
+DEFAULT_SIDEBAR_WIDTH = 525
+DEFAULT_SPLITTER_SIZES = [
+    DEFAULT_SIDEBAR_WIDTH,
+    700,
+    DEFAULT_SIDEBAR_WIDTH,
+]
+
+
+def normalize_splitter_sizes(raw: object) -> list[int]:
+    """Return [left, mid, right] px; fall back to defaults if invalid."""
+    if isinstance(raw, (list, tuple)) and len(raw) == 3:
+        try:
+            left, mid, right = (int(x) for x in raw)
+            return [max(80, left), max(100, mid), max(80, right)]
+        except (TypeError, ValueError):
+            pass
+    return list(DEFAULT_SPLITTER_SIZES)
+
+
 def default_settings() -> dict:
     # Roots stay empty until the user sets them (setup / settings).
     data = {
@@ -479,6 +559,9 @@ def default_settings() -> dict:
         "last_file_dir": "",
         "last_texture_dir": "",
         "recent_files": [],
+        "splitter_sizes": list(DEFAULT_SPLITTER_SIZES),
+        # 0 = auto from Anomaly appdata/user.ltx vid_mode (else 1080).
+        "font_device_height": 0,
         "window": {
             "x": None,
             "y": None,
@@ -616,11 +699,15 @@ def load_settings() -> dict:
             data["gamma_root"] = inferred
 
     data["label_font_size"] = clamp_label_font_size(data.get("label_font_size"))
+    data["font_device_height"] = clamp_font_device_height(
+        data.get("font_device_height", 0)
+    )
     data["show_element_labels"] = bool(data.get("show_element_labels", False))
     data["recent_files"] = normalize_recent_files(data.get("recent_files"))
     data["custom_roots"] = normalize_custom_roots(data.get("custom_roots"))
     data["anomaly_root"] = _norm_root(data.get("anomaly_root", ""))
     data["gamma_root"] = _norm_root(data.get("gamma_root", ""))
+    data["splitter_sizes"] = normalize_splitter_sizes(data.get("splitter_sizes"))
 
     # Drop legacy whole-tree GAMMA scans (was making every launch ~8s+).
     if migrate_legacy_scan_roots(data):

@@ -1,9 +1,21 @@
-"""Anomaly bitmap UI fonts (DDS glyph atlas + .ini) for SAGE canvas text."""
+"""Anomaly bitmap UI fonts (DDS glyph atlas + .ini) for SAGE canvas text.
+
+Matches xray-monolith ``CGameFont`` / ``CUILines``:
+
+- Resolve XML ``font=`` via ``fonts.ltx`` sections.
+- Pick atlas by **device height** thresholds (``texture800`` / ``texture`` /
+  ``texture1600`` / ``texture2160``), walking down if a key is missing.
+- Draw height in 1024×768 HUD space = ``ini_height * 768 / device_height``
+  (engine draws ``ini_height`` screen pixels; UI scale is ``device/768``).
+- ``width_correction`` in the INI is ignored (commented out in GameFont.cpp).
+- Letterica sections have no ``size`` / ``interval`` in fonts.ltx.
+"""
 
 from __future__ import annotations
 
 import configparser
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
@@ -11,21 +23,43 @@ from PyQt6.QtGui import QColor, QImage, QPixmap
 
 from .cache_store import PathIndex, load_font_cache, save_font_cache
 from .model import LayoutNode
+from .settings import UI_HEIGHT
 from .textures import TextureResolver, open_dds_image
 
-# XML font= → logical DDS under textures/ (1024 variants).
-FONT_NAME_MAP: dict[str, str] = {
-    "letterica16": r"ui\ui_font_letter_16_1024",
-    "letterica18": r"ui\ui_font_letter_18_1024",
-    "letterica25": r"ui\ui_font_letter_25_1024",
-    "graffiti19": r"ui\ui_font_graff_19_1024",
-    "graffiti22": r"ui\ui_font_graff_22_1024",
-    "graffiti32": r"ui\ui_font_graff_32_1024",
-    "graffiti40": r"ui\ui_font_graff_40_1024",
-    "graffiti50": r"ui\ui_font_graff_50_1024",
-    "arial14": r"ui\ui_font_arial_14_1024",
-    "arial21": r"ui\ui_font_arial_21_1024",
+# XML font= → fonts.ltx section (engine names).
+FONT_SECTION_MAP: dict[str, str] = {
+    "letterica16": "ui_font_letterica16_russian",
+    "letterica18": "ui_font_letterica18_russian",
+    "letterica25": "ui_font_letter_25",
+    "graffiti19": "ui_font_graffiti19_russian",
+    "graffiti22": "ui_font_graffiti22_russian",
+    "graffiti32": "ui_font_graff_32",
+    "graffiti40": "ui_font_graff_40",
+    "graffiti50": "ui_font_graff_50",
+    "arial14": "ui_font_arial_14",
+    "arial21": "ui_font_arial_21",
 }
+
+# GameFont.cpp FindTextureName order (index by Device.dwHeight).
+_TEXTURE_VARIANT_BY_IDX = ("texture800", "texture", "texture1600", "texture2160")
+
+
+def variant_index_for_height(device_height: int) -> int:
+    """Match GameFont.cpp: h<=600→800, h<1024→1024, h<1440→1600, else→2160."""
+    h = int(device_height)
+    if h <= 600:
+        return 0
+    if h < 1024:
+        return 1
+    if h < 1440:
+        return 2
+    return 3
+
+
+def ui_scale_for_device(device_height: int) -> float:
+    """Screen→HUD: engine draws ini_height screen px; widgets use ×(h/768)."""
+    h = max(1, int(device_height))
+    return float(UI_HEIGHT) / float(h)
 
 
 @dataclass
@@ -48,12 +82,29 @@ class GlyphRect:
 class FontAtlas:
     name: str
     logical: str
-    height: int
-    width_correction: float
+    height: int  # atlas line height in texture pixels (symbol_coords height)
+    width_correction: float  # stored from INI; not applied (engine ignores)
     glyphs: dict[int, GlyphRect]
     sheet: Image.Image
     dds_path: Path | None = None
     ini_path: Path | None = None
+    variant_key: str = "texture"
+    device_height: int = 1080
+    # HUD scale: height_ui = height * ui_scale
+    ui_scale: float = 1.0
+
+    @property
+    def ui_height(self) -> float:
+        return float(self.height) * self.ui_scale
+
+
+@dataclass
+class _FontLtxEntry:
+    section: str
+    variants: dict[str, str] = field(default_factory=dict)
+    # Optional; letterica has neither. Applied if present (stat_font interval).
+    size: float | None = None
+    interval: tuple[float, float] | None = None
 
 
 def collect_doc_fonts(doc: LayoutNode) -> set[str]:
@@ -82,13 +133,11 @@ def _char_code(ch: str) -> int | None:
 
 def _parse_font_ini(path: Path) -> tuple[int, float, dict[int, GlyphRect]]:
     raw = path.read_text(encoding="utf-8", errors="replace")
-    # configparser needs section headers; file already has them.
     parser = configparser.ConfigParser()
     parser.optionxform = str  # keep case
     try:
         parser.read_string(raw)
     except configparser.Error:
-        # Some inis use tabs; retry stripped
         parser = configparser.ConfigParser()
         parser.optionxform = str
         parser.read_string(raw.replace("\t", " "))
@@ -123,23 +172,83 @@ def _parse_font_ini(path: Path) -> tuple[int, float, dict[int, GlyphRect]]:
     return height, width_correction, glyphs
 
 
+def _parse_fonts_ltx(path: Path) -> dict[str, _FontLtxEntry]:
+    """Parse fonts.ltx sections → texture variants (+ optional size/interval)."""
+    try:
+        raw = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return {}
+    out: dict[str, _FontLtxEntry] = {}
+    section = ""
+    for line in raw.splitlines():
+        s = line.strip()
+        if not s or s.startswith(";") or s.startswith("//"):
+            continue
+        if s.startswith("[") and s.endswith("]"):
+            body = s[1:-1].split(":", 1)[0].strip()
+            section = body
+            if section and section not in out:
+                out[section] = _FontLtxEntry(section=section)
+            continue
+        if not section or "=" not in s:
+            continue
+        key, _, val = s.partition("=")
+        key = key.strip().lower()
+        val = val.split(";")[0].strip()
+        entry = out[section]
+        if key.startswith("texture") and val:
+            entry.variants[key] = val.replace("/", "\\")
+        elif key == "size" and val:
+            try:
+                entry.size = float(val.split(",")[0].strip())
+            except ValueError:
+                pass
+        elif key == "interval" and val:
+            parts = [p.strip() for p in val.split(",")]
+            if len(parts) >= 2:
+                try:
+                    entry.interval = (float(parts[0]), float(parts[1]))
+                except ValueError:
+                    pass
+    return out
+
+
 def _pil_to_qpixmap(img: Image.Image) -> QPixmap:
+    """1:1 RGBA → QPixmap (no rescale, no devicePixelRatio bump)."""
     img = img.convert("RGBA")
     data = img.tobytes("raw", "RGBA")
     qimg = QImage(
         data, img.width, img.height, img.width * 4, QImage.Format.Format_RGBA8888
     ).copy()
-    return QPixmap.fromImage(qimg)
+    pix = QPixmap.fromImage(qimg)
+    pix.setDevicePixelRatio(1.0)
+    return pix
 
 
 def _tint_glyph(glyph: Image.Image, color: QColor) -> Image.Image:
-    """Multiply glyph RGB by color; keep glyph alpha."""
+    """Solid-color glyph using atlas alpha (A8 fonts are white RGB + alpha)."""
     g = glyph.convert("RGBA")
-    r, gch, b, a = g.split()
-    # Use alpha as mask; fill with solid color
+    _r, _g, _b, a = g.split()
     solid = Image.new("RGBA", g.size, (color.red(), color.green(), color.blue(), 255))
     solid.putalpha(a)
     return solid
+
+
+def _glyphs_from_meta(meta: dict) -> dict[int, GlyphRect]:
+    glyphs: dict[int, GlyphRect] = {}
+    raw_glyphs = meta.get("glyphs") or {}
+    if not isinstance(raw_glyphs, dict):
+        return glyphs
+    for k, v in raw_glyphs.items():
+        try:
+            code = int(k)
+            if isinstance(v, list) and len(v) >= 4:
+                glyphs[code] = GlyphRect(
+                    int(v[0]), int(v[1]), int(v[2]), int(v[3])
+                )
+        except (TypeError, ValueError):
+            continue
+    return glyphs
 
 
 class FontResolver:
@@ -147,15 +256,27 @@ class FontResolver:
         self,
         textures: TextureResolver,
         path_index: PathIndex | None = None,
+        *,
+        device_height: int = 1080,
     ) -> None:
         self.textures = textures
         self.path_index = path_index
+        self.device_height = max(1, int(device_height))
         self._atlases: dict[str, FontAtlas] = {}
         self._missing: set[str] = set()
+        self._ltx_sections: dict[str, _FontLtxEntry] | None = None
 
     def clear_cache(self) -> None:
         self._atlases.clear()
         self._missing.clear()
+        self._ltx_sections = None
+
+    def set_device_height(self, height: int) -> None:
+        h = max(1, int(height))
+        if h == self.device_height:
+            return
+        self.device_height = h
+        self.clear_cache()
 
     @property
     def count(self) -> int:
@@ -165,6 +286,118 @@ class FontResolver:
         for name in collect_doc_fonts(doc):
             self.resolve_font(name)
 
+    def _iter_fonts_ltx_paths(self) -> list[Path]:
+        """Discover fonts.ltx beside texture roots (Anomaly + GAMMA packs)."""
+        found: list[Path] = []
+        seen: set[str] = set()
+
+        def add(path: Path) -> None:
+            try:
+                key = str(path.resolve()).lower()
+            except OSError:
+                key = str(path).lower()
+            if key in seen or not path.is_file():
+                return
+            seen.add(key)
+            found.append(path)
+
+        for root in self.textures.gamedata_texture_roots:
+            # …/gamedata/textures → …/gamedata/configs/fonts.ltx
+            # …/tools/_unpacked/textures → …/tools/_unpacked/configs/fonts.ltx
+            add(root.parent / "configs" / "fonts.ltx")
+        for root in self.textures.texture_scan_roots:
+            add(root / "gamedata" / "configs" / "fonts.ltx")
+            add(root / "configs" / "fonts.ltx")
+        return found
+
+    def _load_fonts_ltx(self) -> dict[str, _FontLtxEntry]:
+        if self._ltx_sections is not None:
+            return self._ltx_sections
+        merged: dict[str, _FontLtxEntry] = {}
+        # Later files override (MO2 priority — same as texture roots).
+        for path in self._iter_fonts_ltx_paths():
+            for name, entry in _parse_fonts_ltx(path).items():
+                prev = merged.get(name)
+                if prev is None:
+                    merged[name] = entry
+                else:
+                    variants = dict(prev.variants)
+                    variants.update(entry.variants)
+                    merged[name] = _FontLtxEntry(
+                        section=name,
+                        variants=variants,
+                        size=entry.size if entry.size is not None else prev.size,
+                        interval=(
+                            entry.interval
+                            if entry.interval is not None
+                            else prev.interval
+                        ),
+                    )
+        self._ltx_sections = merged
+        return merged
+
+    def _pick_variant(
+        self, entry: _FontLtxEntry
+    ) -> tuple[str | None, str]:
+        """Engine FindTextureName: start at height bucket, walk down."""
+        idx = variant_index_for_height(self.device_height)
+        while idx >= 0:
+            vkey = _TEXTURE_VARIANT_BY_IDX[idx]
+            logical = entry.variants.get(vkey)
+            if logical and self.textures.find_dds(logical) is not None:
+                return logical, vkey
+            idx -= 1
+        # Declared but missing — return base texture for error path.
+        for vkey in ("texture", "texture1600", "texture800", "texture2160"):
+            logical = entry.variants.get(vkey)
+            if logical:
+                return logical, vkey
+        return None, "texture"
+
+    def _resolve_logical_dds(self, font_name: str) -> tuple[str | None, str]:
+        """Pick texture path from fonts.ltx using engine height rules."""
+        key = font_name.strip().lower()
+        section_name = FONT_SECTION_MAP.get(key, "")
+        sections = self._load_fonts_ltx()
+        entry = sections.get(section_name) if section_name else None
+        if entry is None:
+            for name, ent in sections.items():
+                if key in name.lower():
+                    entry = ent
+                    break
+        if entry is not None:
+            return self._pick_variant(entry)
+
+        legacy = {
+            "letterica16": r"ui\ui_font_letter_16_1024",
+            "letterica18": r"ui\ui_font_letter_18_1024",
+            "letterica25": r"ui\ui_font_letter_25_1024",
+            "graffiti19": r"ui\ui_font_graff_19_1024",
+            "graffiti22": r"ui\ui_font_graff_22_1024",
+            "graffiti32": r"ui\ui_font_graff_32_1024",
+            "graffiti40": r"ui\ui_font_graff_40_1024",
+            "graffiti50": r"ui\ui_font_graff_50_1024",
+            "arial14": r"ui\ui_font_arial_14_1024",
+            "arial21": r"ui\ui_font_arial_21_1024",
+        }.get(key)
+        if legacy is None:
+            return None, "texture"
+
+        # Emulate variant walk without fonts.ltx.
+        idx = variant_index_for_height(self.device_height)
+        suffix_by_idx = ("_800", "_1024", "_1600", "_2160")
+        while idx >= 0:
+            cand = re.sub(r"_1024$", suffix_by_idx[idx], legacy)
+            if self.textures.find_dds(cand) is not None:
+                return cand, _TEXTURE_VARIANT_BY_IDX[idx]
+            idx -= 1
+        if self.textures.find_dds(legacy) is not None:
+            return legacy, "texture"
+        hi = re.sub(r"_1024$", "_1600", legacy)
+        if hi != legacy and self.textures.find_dds(hi) is not None:
+            return hi, "texture1600"
+        return legacy, "texture"
+
     def resolve_font(self, name: str) -> FontAtlas | None:
         key = (name or "").strip()
         if not key:
@@ -173,15 +406,15 @@ class FontResolver:
             return self._atlases[key]
         if key in self._missing:
             return None
-        logical = FONT_NAME_MAP.get(key.lower(), "")
+        logical, variant_key = self._resolve_logical_dds(key)
         if not logical:
-            # Allow raw logical path
             if "\\" in key or key.startswith("ui"):
                 logical = key
+                variant_key = "texture"
             else:
                 self._missing.add(key)
                 return None
-        atlas = self._load_atlas(key, logical)
+        atlas = self._load_atlas(key, logical, variant_key)
         if atlas is None:
             self._missing.add(key)
             return None
@@ -203,75 +436,75 @@ class FontResolver:
             return dds, None
         return dds, ini
 
-    def _load_atlas(self, name: str, logical: str) -> FontAtlas | None:
+    def _load_atlas(
+        self, name: str, logical: str, variant_key: str
+    ) -> FontAtlas | None:
         stem = Path(logical.replace("\\", "/")).name
-        cached = load_font_cache(stem)
-        if cached is not None:
-            meta, atlas_png = cached
-            try:
-                sheet = Image.open(atlas_png)
-                sheet.load()
-                sheet = sheet.convert("RGBA")
-            except OSError:
-                sheet = None
-            if sheet is not None:
-                glyphs: dict[int, GlyphRect] = {}
-                raw_glyphs = meta.get("glyphs") or {}
-                if isinstance(raw_glyphs, dict):
-                    for k, v in raw_glyphs.items():
-                        try:
-                            code = int(k)
-                            if isinstance(v, list) and len(v) >= 4:
-                                glyphs[code] = GlyphRect(
-                                    int(v[0]), int(v[1]), int(v[2]), int(v[3])
-                                )
-                        except (TypeError, ValueError):
-                            continue
-                return FontAtlas(
-                    name=name,
-                    logical=logical,
-                    height=int(meta.get("height") or 16),
-                    width_correction=float(meta.get("width_correction") or 0),
-                    glyphs=glyphs,
-                    sheet=sheet,
-                    dds_path=Path(str(meta.get("dds_path") or "")) or None,
-                    ini_path=Path(str(meta.get("ini_path") or "")) or None,
-                )
+        meta = load_font_cache(stem)
+        dds: Path | None = None
+        ini: Path | None = None
+        height = 16
+        width_correction = 0.0
+        glyphs: dict[int, GlyphRect] = {}
 
-        dds, ini = self._find_dds_ini(logical)
+        if meta is not None:
+            dds_s = str(meta.get("dds_path") or "")
+            ini_s = str(meta.get("ini_path") or "")
+            dds = Path(dds_s) if dds_s else None
+            ini = Path(ini_s) if ini_s else None
+            height = int(meta.get("height") or 16)
+            width_correction = float(meta.get("width_correction") or 0)
+            glyphs = _glyphs_from_meta(meta)
+
+        if dds is None or not dds.is_file() or ini is None or not ini.is_file():
+            dds, ini = self._find_dds_ini(logical)
         if dds is None or ini is None:
             return None
-        try:
-            height, width_correction, glyphs = _parse_font_ini(ini)
-        except OSError:
-            return None
+
+        if not glyphs:
+            try:
+                height, width_correction, glyphs = _parse_font_ini(ini)
+            except OSError:
+                return None
+            try:
+                dds_mtime = dds.stat().st_mtime
+                ini_mtime = ini.stat().st_mtime
+            except OSError:
+                dds_mtime = 0.0
+                ini_mtime = 0.0
+            save_font_cache(
+                stem,
+                meta={
+                    "name": name,
+                    "logical": logical,
+                    "height": height,
+                    "width_correction": width_correction,
+                    "dds_path": str(dds.resolve()) if dds else "",
+                    "ini_path": str(ini.resolve()) if ini else "",
+                    "dds_path_mtime": dds_mtime,
+                    "ini_path_mtime": ini_mtime,
+                    "glyphs": {
+                        str(code): [g.x0, g.y0, g.x1, g.y1]
+                        for code, g in glyphs.items()
+                    },
+                },
+            )
+
         sheet = open_dds_image(dds)
         if sheet is None:
-            # Prefer TextureResolver cache path (same A8 fallback).
             sheet = self.textures._open_dds(str(dds))
         if sheet is None:
             return None
 
-        try:
-            dds_mtime = dds.stat().st_mtime
-            ini_mtime = ini.stat().st_mtime
-        except OSError:
-            dds_mtime = 0.0
-            ini_mtime = 0.0
-        meta = {
-            "name": name,
-            "logical": logical,
-            "height": height,
-            "width_correction": width_correction,
-            "dds_path": str(dds.resolve()) if dds else "",
-            "ini_path": str(ini.resolve()) if ini else "",
-            "dds_path_mtime": dds_mtime,
-            "ini_path_mtime": ini_mtime,
-            "glyphs": {
-                str(code): [g.x0, g.y0, g.x1, g.y1] for code, g in glyphs.items()
-            },
-        }
-        save_font_cache(stem, meta=meta, atlas_image=sheet)
+        # Engine: fCurrentHeight = symbol_coords height; fonts.ltx `size` can
+        # override (letterica has none). Screen px → HUD: × 768/device_height.
+        scale = ui_scale_for_device(self.device_height)
+        section_name = FONT_SECTION_MAP.get(name.strip().lower(), "")
+        entry = self._load_fonts_ltx().get(section_name) if section_name else None
+        if entry is not None and entry.size is not None and entry.size > 0:
+            # size replaces fCurrentHeight; still sample full glyph cells.
+            scale *= float(entry.size) / float(height) if height > 0 else 1.0
+
         return FontAtlas(
             name=name,
             logical=logical,
@@ -281,11 +514,15 @@ class FontResolver:
             sheet=sheet,
             dds_path=dds,
             ini_path=ini,
+            variant_key=variant_key,
+            device_height=self.device_height,
+            ui_scale=scale,
         )
 
     def measure(self, atlas: FontAtlas, text: str) -> tuple[int, int]:
+        """Size in virtual HUD pixels (after ui_scale)."""
         if not text:
-            return 0, atlas.height
+            return 0, max(1, int(round(atlas.ui_height)))
         width = 0.0
         for ch in text:
             if ch == "\n":
@@ -296,17 +533,32 @@ class FontResolver:
             g = atlas.glyphs.get(code)
             if g is None or g.width <= 0:
                 continue
-            width += g.width + atlas.width_correction
-        return max(1, int(round(width))), atlas.height
+            # Engine: TCMap.z = x1 - x0 (width_correction disabled).
+            width += g.width
+        native_w = max(1, int(round(width)))
+        lines = 1 + text.count("\n")
+        return (
+            max(1, int(round(native_w * atlas.ui_scale))),
+            max(1, int(round(atlas.height * lines * atlas.ui_scale))),
+        )
 
     def render_text(self, atlas: FontAtlas, text: str, color: QColor) -> QPixmap:
-        # Single-line for now; expand \n to space for preview.
+        """Compose at native atlas pixels (caller applies atlas.ui_scale)."""
         text = text.replace("\r\n", "\n").replace("\r", "\n")
         lines = text.split("\n") if "\n" in text else [text]
         line_metrics: list[tuple[str, int]] = []
         max_w = 1
         for line in lines:
-            w, _ = self.measure(atlas, line)
+            width = 0.0
+            for ch in line:
+                code = _char_code(ch)
+                if code is None:
+                    continue
+                g = atlas.glyphs.get(code)
+                if g is None or g.width <= 0:
+                    continue
+                width += g.width
+            w = max(1, int(round(width)))
             line_metrics.append((line, w))
             max_w = max(max_w, w)
         total_h = max(1, atlas.height * len(lines))
@@ -323,15 +575,10 @@ class FontResolver:
                     continue
                 crop = atlas.sheet.crop((g.x0, g.y0, g.x1, g.y1))
                 tinted = _tint_glyph(crop, color)
-                out.paste(tinted, (int(round(x)), y), tinted)
-                x += g.width + atlas.width_correction
+                out.paste(tinted, (int(x), y), tinted)
+                x += g.width
             y += atlas.height
-        # Soften like engine bilinear UI upscale (up then down keeps layout size).
-        w, h = out.size
-        soft = out.resize(
-            (max(1, w * 2), max(1, h * 2)), Image.Resampling.BILINEAR
-        ).resize((w, h), Image.Resampling.BILINEAR)
-        return _pil_to_qpixmap(soft)
+        return _pil_to_qpixmap(out)
 
     def render_fallback(
         self, text: str, *, point_size: int, color: QColor, max_width: int
@@ -342,7 +589,6 @@ class FontResolver:
             font = ImageFont.truetype("segoeui.ttf", point_size)
         except OSError:
             font = ImageFont.load_default()
-        # Measure
         dummy = Image.new("RGBA", (1, 1))
         draw = ImageDraw.Draw(dummy)
         bbox = draw.textbbox((0, 0), text or " ", font=font)

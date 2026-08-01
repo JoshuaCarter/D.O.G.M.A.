@@ -53,7 +53,7 @@ from .undo import GeoEdit, GeoState, UndoStack
 _log = get_logger("canvas")
 
 # Scene z bands (back → front):
-#   textures → labels → diamonds →
+#   widgets (texture+text, document order) → labels → diamonds →
 #   idle → hover border → select chrome → hover label → select label (front)
 _LABEL_Z = LABEL_Z
 _DIAMOND_Z = 2_000_000.0
@@ -241,23 +241,18 @@ class WidgetItem(QGraphicsRectItem):
         # Tag captions may extend past the box; never clip them.
         self.setFlags(flags)
         self.setAcceptHoverEvents(True)
+        # Texture then text as normal children (not ItemStacksBehindParent) so both
+        # follow the parent WidgetItem's document-order z across overlapping boxes.
+        # Child z: texture under text; scene chrome overlays sit far above.
         self._pixmap_item = QGraphicsPixmapItem(self)
-        self._pixmap_item.setZValue(-2)
-        # Texture under the box fill/border so selection & hover tints sit on top.
-        self._pixmap_item.setFlag(
-            QGraphicsItem.GraphicsItemFlag.ItemStacksBehindParent, True
-        )
+        self._pixmap_item.setZValue(0)
         self._pixmap_item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
-        # UI string text (engine font) above texture, under chrome.
         self._text_item = QGraphicsPixmapItem(self)
-        self._text_item.setZValue(-1)
-        self._text_item.setFlag(
-            QGraphicsItem.GraphicsItemFlag.ItemStacksBehindParent, True
-        )
+        self._text_item.setZValue(1)
         self._text_item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
-        # Engine upscales 1024 UI with bilinear filtering; avoid nearest crunch.
+        # Native atlas pixels; nearest-neighbor under view zoom (no bilinear mush).
         self._text_item.setTransformationMode(
-            Qt.TransformationMode.SmoothTransformation
+            Qt.TransformationMode.FastTransformation
         )
         self._text_item.hide()
         # Scene-level outside labels + idle border (shared with atlas editor).
@@ -268,6 +263,8 @@ class WidgetItem(QGraphicsRectItem):
         self._label_shadow = self._caption.shadow
         self._idle_border = self._idle_chrome.rect
         self._missing = False
+        # Session-only: Properties checkbox; not written to XML/settings.
+        self.show_texture = True
         self._resizing = False
         self._resize_corner: str | None = None
         self._resize_start = QPointF()
@@ -389,13 +386,20 @@ class WidgetItem(QGraphicsRectItem):
         )
 
     def has_visible_texture(self) -> bool:
-        return not self._pixmap_item.pixmap().isNull()
+        return self.show_texture and not self._pixmap_item.pixmap().isNull()
+
+    def set_show_texture(self, show: bool) -> None:
+        show = bool(show)
+        if self.show_texture == show:
+            return
+        self.show_texture = show
+        self._apply_texture()
 
     def _apply_texture(self) -> None:
         self._pixmap_item.setPixmap(QPixmap())
         self._pixmap_item.setVisible(False)
         self._missing = False
-        if not self.node.texture:
+        if not self.show_texture or not self.node.texture:
             return
         resolved = self.resolver.resolve_ref(self.node.texture)
         if resolved.image is None:
@@ -443,12 +447,13 @@ class WidgetItem(QGraphicsRectItem):
         )
         font_name = (ref.font or "").strip() or "letterica16"
         pix = QPixmap()
+        ui_scale = 1.0
         if self.fonts is not None:
             atlas = self.fonts.resolve_font(font_name)
             if atlas is not None:
                 pix = self.fonts.render_text(atlas, body, color)
+                ui_scale = float(atlas.ui_scale) or 1.0
             else:
-                # Approx point size from font name digits (letterica16 → 16).
                 digits = "".join(ch for ch in font_name if ch.isdigit())
                 pt = int(digits) if digits else 16
                 pix = self.fonts.render_fallback(
@@ -461,23 +466,29 @@ class WidgetItem(QGraphicsRectItem):
             return
         box_w = max(float(self.node.width), 1.0)
         box_h = max(float(self.node.height), 1.0)
-        tw = float(pix.width())
-        th = float(pix.height())
+        # Native atlas px × (768 / device_height) → HUD space (engine parity).
+        tw = float(pix.width()) * ui_scale
+        th = float(pix.height()) * ui_scale
+        # Engine default is top-left unless XML sets align / vert_align.
         align = (ref.align or "l").lower()
-        valign = (ref.vert_align or "c").lower()
+        valign = (ref.vert_align or "t").lower()
         if align in ("c", "center"):
             x = (box_w - tw) / 2.0
         elif align in ("r", "right"):
             x = box_w - tw
         else:
             x = 0.0
-        if valign in ("t", "top"):
-            y = 0.0
+        if valign in ("c", "center"):
+            y = (box_h - th) / 2.0
         elif valign in ("b", "bottom"):
             y = box_h - th
         else:
-            y = (box_h - th) / 2.0
+            y = 0.0
         self._text_item.setPixmap(pix)
+        self._text_item.setTransformationMode(
+            Qt.TransformationMode.FastTransformation
+        )
+        self._text_item.setScale(ui_scale)
         self._text_item.setPos(x, y)
         self._text_item.show()
 
@@ -1011,13 +1022,10 @@ class UiScene(QGraphicsScene):
         if doc is None:
             self._sync_focus_chrome()
             return
+        # Document order (preorder DFS): later siblings above earlier branches;
+        # children above parents. Texture + UI text share this widget z.
         drawables = doc.iter_drawables()
-        # Depth primary (deeper above ancestors), document order as tie-break.
-        ordered = sorted(
-            enumerate(drawables),
-            key=lambda pair: (pair[1].hierarchy_depth(), pair[0]),
-        )
-        for z, (_doc_index, node) in enumerate(ordered):
+        for z, node in enumerate(drawables):
             item = WidgetItem(
                 node,
                 self.resolver,
@@ -1028,7 +1036,7 @@ class UiScene(QGraphicsScene):
                 show_box_border=self.show_box_border,
                 show_box_fill=self.show_box_fill,
             )
-            # texture/fill < label < diamond
+            # widget (texture+text) < labels < diamonds < chrome
             if node.from_meta:
                 item.setZValue(_DIAMOND_Z + float(z))
             else:
@@ -1176,7 +1184,7 @@ class UiScene(QGraphicsScene):
     def textured_count(self) -> int:
         n = 0
         for i in self._items.values():
-            if i.isVisible() and i.node.texture and not i._missing and not i._pixmap_item.pixmap().isNull():
+            if i.isVisible() and i.has_visible_texture():
                 n += 1
         return n
 

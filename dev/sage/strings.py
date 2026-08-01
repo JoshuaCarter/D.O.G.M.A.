@@ -143,7 +143,14 @@ class StringResolver:
         self._text_files = files
         if self.path_index is not None:
             self.path_index.put_file_list(KIND_TEXT_FILES, fp, files)
+            self.path_index.save()
         return files
+
+    def ensure_indexes(self, *, force: bool = False) -> dict[str, int]:
+        """Load or build the text XML file list cache."""
+        if force:
+            self._text_files = None
+        return {"text_files": len(self._iter_text_files())}
 
     def warm_ids(self, ids: set[str]) -> None:
         if not ids:

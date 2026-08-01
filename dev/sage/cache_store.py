@@ -1,6 +1,8 @@
 """Persistent on-disk cache under ``dev/sage/cache/`` (shader-cache style).
 
 Wipe = delete the folder. Missing keys are filled on demand and appended.
+DDS logical→path maps live in ``dds_index.json`` (large); other path lists in
+``paths.json``.
 """
 
 from __future__ import annotations
@@ -44,9 +46,13 @@ def _read_json(path: Path) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
-def _write_json(path: Path, data: dict[str, Any]) -> None:
+def _write_json(path: Path, data: dict[str, Any], *, compact: bool = False) -> None:
     _ensure_dir(path.parent)
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    if compact:
+        text = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+    else:
+        text = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+    path.write_text(text, encoding="utf-8")
 
 
 def ensure_manifest() -> dict[str, Any]:
@@ -70,15 +76,19 @@ def roots_fingerprint(roots: list[Path]) -> str:
 
 
 class PathIndex:
-    """Logical asset name / file-list cache in ``cache/paths.json``."""
+    """Logical asset name / file-list cache under ``cache/``."""
 
     def __init__(self, data: dict[str, Any] | None = None) -> None:
         ensure_manifest()
         self._path = cache_dir() / "paths.json"
+        self._dds_path = cache_dir() / "dds_index.json"
         self._data: dict[str, Any] = data if data is not None else {"cache_format": CACHE_FORMAT}
         if int(self._data.get("cache_format", 0) or 0) != CACHE_FORMAT:
             self._data = {"cache_format": CACHE_FORMAT}
         self._dirty = False
+        self._dds_map: dict[str, str] | None = None
+        self._dds_fp: str = ""
+        self._dds_dirty = False
 
     @classmethod
     def load(cls) -> PathIndex:
@@ -90,23 +100,35 @@ class PathIndex:
         return cls(data)
 
     def save(self) -> None:
-        if not self._dirty:
-            return
-        self._data["cache_format"] = CACHE_FORMAT
-        _write_json(self._path, self._data)
-        self._dirty = False
+        if self._dirty:
+            self._data["cache_format"] = CACHE_FORMAT
+            _write_json(self._path, self._data)
+            self._dirty = False
+        if self._dds_dirty and self._dds_map is not None:
+            _write_json(
+                self._dds_path,
+                {
+                    "cache_format": CACHE_FORMAT,
+                    "fingerprint": self._dds_fp,
+                    "files": self._dds_map,
+                },
+                compact=True,
+            )
+            self._dds_dirty = False
 
     def invalidate(self) -> None:
-        """Drop path index (fonts blobs kept; they revalidate via mtime)."""
+        """Drop path + DDS indexes (font glyph meta kept; revalidates via mtime)."""
         self._data = {"cache_format": CACHE_FORMAT}
-        self._dirty = True
-        self.save()
-        if self._path.is_file():
-            try:
-                self._path.unlink()
-            except OSError:
-                pass
         self._dirty = False
+        self._dds_map = None
+        self._dds_fp = ""
+        self._dds_dirty = False
+        for path in (self._path, self._dds_path):
+            if path.is_file():
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
 
     def _bucket(self, kind: str) -> dict[str, Any]:
         bucket = self._data.get(kind)
@@ -117,9 +139,18 @@ class PathIndex:
         return bucket
 
     def get_dds(self, logical: str) -> Path | None:
+        """Legacy single-key cache (prefer ``get_dds_map`` for bulk lookups)."""
         key = logical.strip().replace("/", "\\").lower()
         if key.endswith(".dds"):
             key = key[:-4]
+        # Prefer the full scan map when loaded for this session.
+        if self._dds_map is not None and key in self._dds_map:
+            path = Path(self._dds_map[key])
+            if path.is_file():
+                return path
+            self._dds_map.pop(key, None)
+            self._dds_dirty = True
+            return None
         entry = self._bucket(KIND_DDS).get(key)
         if not isinstance(entry, dict):
             return None
@@ -130,7 +161,6 @@ class PathIndex:
         if not path.is_file():
             self._bucket(KIND_DDS).pop(key, None)
             self._dirty = True
-            self.save()
             return None
         try:
             mtime = path.stat().st_mtime
@@ -140,9 +170,21 @@ class PathIndex:
         if cached_mtime is not None and abs(float(cached_mtime) - mtime) > 0.5:
             self._bucket(KIND_DDS).pop(key, None)
             self._dirty = True
-            self.save()
             return None
         return path
+
+    def drop_dds(self, logical: str) -> None:
+        """Remove a stale logical→DDS mapping from memory + pending disk write."""
+        key = logical.strip().replace("/", "\\").lower()
+        if key.endswith(".dds"):
+            key = key[:-4]
+        if not key:
+            return
+        if self._bucket(KIND_DDS).pop(key, None) is not None:
+            self._dirty = True
+        if self._dds_map is not None and key in self._dds_map:
+            self._dds_map.pop(key, None)
+            self._dds_dirty = True
 
     def put_dds(self, logical: str, path: Path) -> None:
         key = logical.strip().replace("/", "\\").lower()
@@ -158,7 +200,41 @@ class PathIndex:
             mtime = 0.0
         self._bucket(KIND_DDS)[key] = {"path": str(resolved), "mtime": mtime}
         self._dirty = True
-        self.save()
+        if self._dds_map is not None:
+            self._dds_map[key] = str(resolved)
+            self._dds_dirty = True
+
+    def get_dds_map(self, fingerprint: str) -> dict[str, Path] | None:
+        """Full logical→DDS map for ``fingerprint`` (None = miss / rebuild)."""
+        if self._dds_map is not None and self._dds_fp == fingerprint:
+            return {k: Path(v) for k, v in self._dds_map.items()}
+        data = _read_json(self._dds_path)
+        if data is None or int(data.get("cache_format", 0) or 0) != CACHE_FORMAT:
+            return None
+        if str(data.get("fingerprint") or "") != fingerprint:
+            return None
+        raw = data.get("files")
+        if not isinstance(raw, dict) or not raw:
+            return None
+        self._dds_fp = fingerprint
+        self._dds_map = {str(k).lower(): str(v) for k, v in raw.items() if k and v}
+        return {k: Path(v) for k, v in self._dds_map.items()}
+
+    def put_dds_map(self, fingerprint: str, files: dict[str, Path]) -> None:
+        mapping: dict[str, str] = {}
+        for logical, path in files.items():
+            key = str(logical).strip().replace("/", "\\").lower()
+            if key.endswith(".dds"):
+                key = key[:-4]
+            if not key:
+                continue
+            try:
+                mapping[key] = str(path.resolve())
+            except OSError:
+                mapping[key] = str(path)
+        self._dds_fp = fingerprint
+        self._dds_map = mapping
+        self._dds_dirty = True
 
     def get_file_list(self, kind: str, fingerprint: str) -> list[Path] | None:
         entry = self._bucket(kind).get(fingerprint)
@@ -186,7 +262,6 @@ class PathIndex:
                 paths.append(str(f))
         self._bucket(kind)[fingerprint] = {"files": paths}
         self._dirty = True
-        self.save()
 
 
 def font_cache_dir(atlas_stem: str) -> Path:
@@ -194,14 +269,12 @@ def font_cache_dir(atlas_stem: str) -> Path:
     return cache_dir() / "fonts" / safe
 
 
-def load_font_cache(atlas_stem: str) -> tuple[dict[str, Any], Path] | None:
-    """Return (meta, atlas.png path) if cache entry is valid vs source mtimes."""
+def load_font_cache(atlas_stem: str) -> dict[str, Any] | None:
+    """Return glyph meta if valid vs source DDS/INI mtimes (atlas always from DDS)."""
     ensure_manifest()
     folder = font_cache_dir(atlas_stem)
-    meta_path = folder / "meta.json"
-    atlas_path = folder / "atlas.png"
-    meta = _read_json(meta_path)
-    if meta is None or not atlas_path.is_file():
+    meta = _read_json(folder / "meta.json")
+    if meta is None:
         return None
     if int(meta.get("cache_format", 0) or 0) != CACHE_FORMAT:
         return None
@@ -216,22 +289,20 @@ def load_font_cache(atlas_stem: str) -> tuple[dict[str, Any], Path] | None:
         cached = meta.get(f"{key}_mtime")
         if cached is None or abs(float(cached) - mtime) > 0.5:
             return None
-    return meta, atlas_path
+    return meta
 
 
-def save_font_cache(
-    atlas_stem: str,
-    *,
-    meta: dict[str, Any],
-    atlas_image,  # PIL.Image.Image
-) -> None:
+def save_font_cache(atlas_stem: str, *, meta: dict[str, Any]) -> None:
+    """Persist parsed glyph coords only — never a re-encoded atlas image."""
     ensure_manifest()
     folder = _ensure_dir(font_cache_dir(atlas_stem))
     meta = dict(meta)
     meta["cache_format"] = CACHE_FORMAT
-    atlas_path = folder / "atlas.png"
-    try:
-        atlas_image.save(atlas_path, format="PNG")
-    except OSError:
-        return
     _write_json(folder / "meta.json", meta)
+    # Drop legacy blurred PNG atlases from older SAGE builds.
+    legacy_png = folder / "atlas.png"
+    if legacy_png.is_file():
+        try:
+            legacy_png.unlink()
+        except OSError:
+            pass

@@ -316,13 +316,14 @@ class TextureResolver:
         self.descr_scan_roots = descr_scan_roots
         self.gamedata_descr_roots = gamedata_descr_roots
         self.path_index = path_index
-        # Lazy caches — filled by warm_* / first lookup, not by scanning everything.
+        # Lazy caches — filled by warm_* / ensure_indexes / first lookup.
         self._atlas: dict[str, AtlasEntry] = {}
         self._atlas_missing: set[str] = set()
         self._dds_index: dict[str, Path] = {}
         self._dds_missing: set[str] = set()
         self._descr_files: list[Path] | None = None
         self._dds_search_roots: list[Path] | None = None
+        self._dds_map_ready = False
 
     def clear_cache(self) -> None:
         self._atlas.clear()
@@ -331,6 +332,7 @@ class TextureResolver:
         self._dds_missing.clear()
         self._descr_files = None
         self._dds_search_roots = None
+        self._dds_map_ready = False
         self._open_dds.cache_clear()
         self._resolve_cached.cache_clear()
 
@@ -339,6 +341,56 @@ class TextureResolver:
         self.clear_cache()
         if self.path_index is not None:
             self.path_index.invalidate()
+
+    def ensure_indexes(self, *, force: bool = False) -> dict[str, int]:
+        """Load or build descr file list + full DDS map (fast loads after first scan)."""
+        if force:
+            self._descr_files = None
+            self._dds_map_ready = False
+            self._dds_index.clear()
+            self._dds_missing.clear()
+            self._dds_search_roots = None
+        n_descr = len(self._iter_descr_files())
+        n_dds = self._ensure_dds_map(force=force)
+        if self.path_index is not None:
+            self.path_index.save()
+        return {"descr_files": n_descr, "dds": n_dds}
+
+    def _ensure_dds_map(self, *, force: bool = False) -> int:
+        if self._dds_map_ready and not force:
+            return len(self._dds_index)
+        roots = self._iter_dds_search_roots()
+        fp = roots_fingerprint(roots)
+        if not force and self.path_index is not None:
+            cached = self.path_index.get_dds_map(fp)
+            if cached is not None:
+                self._dds_index = dict(cached)
+                self._dds_map_ready = True
+                return len(self._dds_index)
+        mapping: dict[str, Path] = {}
+        for root in roots:
+            if not root.is_dir():
+                continue
+            try:
+                for path in root.rglob("*.dds"):
+                    if not path.is_file():
+                        continue
+                    try:
+                        rel = path.relative_to(root)
+                    except ValueError:
+                        continue
+                    logical = str(rel.with_suffix("")).replace("/", "\\").lower()
+                    if not logical:
+                        continue
+                    # Later roots override (mod load order).
+                    mapping[logical] = path
+            except OSError:
+                continue
+        self._dds_index = mapping
+        self._dds_map_ready = True
+        if self.path_index is not None:
+            self.path_index.put_dds_map(fp, mapping)
+        return len(mapping)
 
     @property
     def atlas_count(self) -> int:
@@ -396,6 +448,7 @@ class TextureResolver:
         self._descr_files = files
         if self.path_index is not None:
             self.path_index.put_file_list(KIND_DESCR_FILES, fp, files)
+            self.path_index.save()
         return files
 
     def _ingest_descr_for_ids(self, wanted: set[str]) -> None:
@@ -466,6 +519,7 @@ class TextureResolver:
 
     def warm_for_document(self, doc: LayoutNode) -> None:
         """Resolve only atlas ids / DDS paths referenced by ``doc``."""
+        self._ensure_dds_map()
         atlas_ids, path_names = collect_doc_texture_ids(doc)
         self._ingest_descr_for_ids(set(atlas_ids))
         # Ensure state-suffix variants used by lookup_atlas are covered.
@@ -483,6 +537,8 @@ class TextureResolver:
                 needed_files.add(entry.file_name)
         for logical in needed_files:
             self.find_dds(logical)
+        if self.path_index is not None:
+            self.path_index.save()
 
     def _iter_dds_search_roots(self) -> list[Path]:
         """Saved texture dirs (+ textures/ under scan roots). Built once per cache."""
@@ -600,28 +656,33 @@ class TextureResolver:
         key = logical.strip().replace("/", "\\").lower()
         if key.endswith(".dds"):
             key = key[:-4]
-        if key in self._dds_index:
-            return self._dds_index[key]
+        if not key:
+            return None
         if key in self._dds_missing:
             return None
 
-        if self.path_index is not None:
-            cached = self.path_index.get_dds(key)
-            if cached is not None:
-                self._dds_index[key] = cached
-                return cached
+        # Prefer full scan map (O(1)); build/load once per roots fingerprint.
+        self._ensure_dds_map()
+        hit = self._dds_index.get(key)
+        if hit is not None:
+            if hit.is_file():
+                return hit
+            self._dds_index.pop(key, None)
+            if self.path_index is not None:
+                self.path_index.drop_dds(key)
 
+        # Fallback probe (map miss / stale) — still respects later-root wins.
         rel = Path(*key.split("\\")).with_suffix(".dds")
-        hit: Path | None = None
+        probed: Path | None = None
         for root in self._iter_dds_search_roots():
             candidate = root / rel
             if candidate.is_file():
-                hit = candidate
-        if hit is not None:
-            self._dds_index[key] = hit
+                probed = candidate
+        if probed is not None:
+            self.remember_dds(key, probed)
             if self.path_index is not None:
-                self.path_index.put_dds(key, hit)
-            return hit
+                self.path_index.save()
+            return probed
         self._dds_missing.add(key)
         return None
 

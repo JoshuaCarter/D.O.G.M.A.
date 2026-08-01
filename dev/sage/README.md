@@ -67,7 +67,7 @@ mod under `GAMMA\mods\…` — nothing is auto-added; add the folder itself, not
 `textures\ui`). On Continue / Settings Ok, SAGE **scans once** for textures /
 `textures_descr` / text folders and **saves those paths** into `settings.json`.
 Later launches reuse the saved lists — no rescan until you change roots or use
-**Edit → Rescan asset roots**.
+**Edit → Rescan asset cache** (Ctrl+Shift+R).
 
 **Textures (Anomaly rules):** UI XML `<texture>` is either an **atlas id** (no
 `\`, UV from `configs/ui/textures_descr/*.xml`) or a **DDS path** (`ui\foo`,
@@ -77,15 +77,21 @@ Neither writes drive paths — deploy flattens `src/…/textures/` into
 `gamedata/textures/` the same way.
 
 **Canvas text:** WYSIWYG paints `<text>` bodies after string-table resolve
-(`st_cap_check_story` → “Story mode”) using Anomaly **bitmap fonts**
-(`letterica16` → `ui_font_letter_16_1024` DDS + `.ini` glyphs), with XML
-`font` / `align` / `vert_align` / `r,g,b,a`. Missing atlas falls back to a
-plain QFont stand-in so captions are never blank.
+(`st_cap_check_story` → “Story mode”) using Anomaly **bitmap fonts** via
+`fonts.ltx` (same as the engine). Atlas variant follows **device height**
+buckets (`texture800` / `texture` / `texture1600` / `texture2160`); height
+is read from Anomaly `appdata/user.ltx` `vid_mode` (override with
+`font_device_height` in settings). Glyphs blit 1:1 from the DDS, then scale
+by `768/device_height` into HUD space — not by the digits in `letterica16`.
+`width_correction` is ignored (engine has it commented out). Default
+placement is **top-left** unless XML sets `align` / `vert_align`. Missing
+atlas falls back to a plain QFont stand-in.
 
-**Local cache (`dev/sage/cache/`):** shader-cache style — path indexes (DDS /
-descr / text file lists) and decoded font atlases. Missing entries are built on
-demand and appended; **delete the folder** to force a full regen. Rescan asset
-roots clears the path index. Not shipped / gitignored.
+**Local cache (`dev/sage/cache/`):** shader-cache style — full DDS logical→path
+map (`dds_index.json`), descr/text file lists (`paths.json`), and font glyph
+meta. First bind (or **Edit → Rescan asset cache**) scans once; later launches
+and document opens reuse the indexes. **Delete the folder** or Rescan after
+adding/removing mods. Not shipped / gitignored.
 
 **Atlas editor:** Open a `textures_descr` XML (path or `<w>/<file name>/<texture id>`
 shape) to edit UV boxes on the DDS sheet — same WYSIWYG / XML / Log tabs plus

@@ -1,10 +1,12 @@
 -- gameplay/stealth conf
--- Actor-only vision gate: scale stock vis, pose cutoffs, optional smooth remap.
+-- Actor-only vision gate: scale stock vis, bush coverage bonus, pose cutoffs, optional smooth remap.
 
 _G.dogma_gameplay_stealth_conf = {
 	MOD_ID = "dogma/gameplay/stealth",
 	DEFAULTS = {
 		["scale"] = 1.0,
+		-- Max visibility multiply-down when all 8 bush probes hit (0.5 => half vis in thick foliage).
+		["bush_bonus"] = 0.50,
 		["cutoff_stand"] = 0.10,
 		["cutoff_crouch"] = 0.20,
 		["cutoff_prone"] = 0.30,
@@ -14,6 +16,7 @@ _G.dogma_gameplay_stealth_conf = {
 	},
 	loaded = {
 		scale = 1.0,
+		bush_bonus = 0.50,
 		cutoff_stand = 0.10,
 		cutoff_crouch = 0.20,
 		cutoff_prone = 0.30,

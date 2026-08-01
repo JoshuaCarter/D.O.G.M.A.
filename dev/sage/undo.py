@@ -1,8 +1,8 @@
-"""Simple undo/redo for widget geometry edits."""
+"""Undo/redo for widget geometry and property-panel edits."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any
 
 
@@ -107,17 +107,163 @@ class GeoEdit:
         )
 
 
+@dataclass(frozen=True)
+class PropState:
+    """Snapshot of props-panel–editable widget / text / texture state."""
+
+    path: str
+    # Widget attrs (None = attribute absent from XML).
+    stretch: str | None
+    always_show_scroll: str | None
+    left_ident: str | None
+    right_ident: str | None
+    top_indent: str | None
+    bottom_indent: str | None
+    vert_interval: str | None
+    # <text> (has_text=False → no child element).
+    has_text: bool
+    text_content: str
+    font: str | None
+    align: str | None
+    vert_align: str | None
+    complex_mode: str | None
+    r: str | None
+    g: str | None
+    b: str | None
+    a: str | None
+    text_x: str | None
+    text_y: str | None
+    # <texture>
+    has_texture: bool
+    texture_name: str
+    tex_x: str | None
+    tex_y: str | None
+    tex_w: str | None
+    tex_h: str | None
+    tex_r: str | None
+    tex_g: str | None
+    tex_b: str | None
+    tex_a: str | None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> PropState:
+        def _s(key: str) -> str | None:
+            val = data.get(key)
+            if val is None:
+                return None
+            return str(val)
+
+        return cls(
+            path=str(data["path"]),
+            stretch=_s("stretch"),
+            always_show_scroll=_s("always_show_scroll"),
+            left_ident=_s("left_ident"),
+            right_ident=_s("right_ident"),
+            top_indent=_s("top_indent"),
+            bottom_indent=_s("bottom_indent"),
+            vert_interval=_s("vert_interval"),
+            has_text=bool(data.get("has_text")),
+            text_content=str(data.get("text_content") or ""),
+            font=_s("font"),
+            align=_s("align"),
+            vert_align=_s("vert_align"),
+            complex_mode=_s("complex_mode"),
+            r=_s("r"),
+            g=_s("g"),
+            b=_s("b"),
+            a=_s("a"),
+            text_x=_s("text_x"),
+            text_y=_s("text_y"),
+            has_texture=bool(data.get("has_texture")),
+            texture_name=str(data.get("texture_name") or ""),
+            tex_x=_s("tex_x"),
+            tex_y=_s("tex_y"),
+            tex_w=_s("tex_w"),
+            tex_h=_s("tex_h"),
+            tex_r=_s("tex_r"),
+            tex_g=_s("tex_g"),
+            tex_b=_s("tex_b"),
+            tex_a=_s("tex_a"),
+        )
+
+
+@dataclass(frozen=True)
+class PropEdit:
+    """One property-panel change (text / stretch / scroll / texture)."""
+
+    before: PropState
+    after: PropState
+
+    def changed(self) -> bool:
+        return self.before != self.after
+
+    def describe(self) -> str:
+        name = self.before.path.rsplit("/", 1)[-1] if self.before.path else "?"
+        b, a = self.before, self.after
+        if b.texture_name != a.texture_name or b.has_texture != a.has_texture:
+            return f"Texture {name}"
+        if b.text_content != a.text_content or b.has_text != a.has_text:
+            return f"Text {name}"
+        if b.stretch != a.stretch:
+            return f"Stretch {name}"
+        if (
+            b.font != a.font
+            or b.align != a.align
+            or b.vert_align != a.vert_align
+            or b.complex_mode != a.complex_mode
+            or (b.r, b.g, b.b, b.a) != (a.r, a.g, a.b, a.a)
+            or (b.text_x, b.text_y) != (a.text_x, a.text_y)
+        ):
+            return f"Text style {name}"
+        if (
+            b.always_show_scroll != a.always_show_scroll
+            or b.left_ident != a.left_ident
+            or b.right_ident != a.right_ident
+            or b.top_indent != a.top_indent
+            or b.bottom_indent != a.bottom_indent
+            or b.vert_interval != a.vert_interval
+        ):
+            return f"Scroll {name}"
+        return f"Props {name}"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "kind": "props",
+            "before": self.before.to_dict(),
+            "after": self.after.to_dict(),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> PropEdit:
+        return cls(
+            before=PropState.from_dict(data["before"]),
+            after=PropState.from_dict(data["after"]),
+        )
+
+
+Edit = GeoEdit | PropEdit
+
+
+def edit_from_dict(data: dict[str, Any]) -> Edit:
+    if data.get("kind") == "props":
+        return PropEdit.from_dict(data)
+    return GeoEdit.from_dict(data)
+
+
 class UndoStack:
     def __init__(self, *, limit: int = 100) -> None:
         self._limit = limit
-        self._undo: list[GeoEdit] = []
-        self._redo: list[GeoEdit] = []
+        self._undo: list[Edit] = []
+        self._redo: list[Edit] = []
 
     def clear(self) -> None:
         self._undo.clear()
         self._redo.clear()
 
-    def push(self, edit: GeoEdit) -> None:
+    def push(self, edit: Edit) -> None:
         if not edit.changed():
             return
         self._undo.append(edit)
@@ -131,20 +277,20 @@ class UndoStack:
     def can_redo(self) -> bool:
         return bool(self._redo)
 
-    def recent_undo(self, n: int = 10) -> list[GeoEdit]:
+    def recent_undo(self, n: int = 10) -> list[Edit]:
         """Newest-first slice of the undo stack (what Ctrl+Z will hit first)."""
         if n <= 0:
             return []
         return list(reversed(self._undo[-n:]))
 
-    def undo(self) -> GeoEdit | None:
+    def undo(self) -> Edit | None:
         if not self._undo:
             return None
         edit = self._undo.pop()
         self._redo.append(edit)
         return edit
 
-    def redo(self) -> GeoEdit | None:
+    def redo(self) -> Edit | None:
         if not self._redo:
             return None
         edit = self._redo.pop()
@@ -166,12 +312,12 @@ class UndoStack:
         self.clear()
         for raw in undo or []:
             try:
-                self._undo.append(GeoEdit.from_dict(raw))
+                self._undo.append(edit_from_dict(raw))
             except (KeyError, TypeError, ValueError):
                 continue
         for raw in redo or []:
             try:
-                self._redo.append(GeoEdit.from_dict(raw))
+                self._redo.append(edit_from_dict(raw))
             except (KeyError, TypeError, ValueError):
                 continue
         if len(self._undo) > self._limit:

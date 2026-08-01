@@ -113,6 +113,21 @@ def _parse_edit_list(raw: object) -> list[dict[str, Any]]:
 def _parse_edit(raw: object) -> dict[str, Any] | None:
     if not isinstance(raw, dict):
         return None
+    # Property-panel edit: {"kind": "props", "before":…, "after":…}
+    if raw.get("kind") == "props":
+        before = raw.get("before")
+        after = raw.get("after")
+        if not isinstance(before, dict) or not isinstance(after, dict):
+            return None
+        if not isinstance(before.get("path"), str) or not before.get("path"):
+            return None
+        if not isinstance(after.get("path"), str) or not after.get("path"):
+            return None
+        return {
+            "kind": "props",
+            "before": dict(before),
+            "after": dict(after),
+        }
     # Multi-widget edit: {"parts": [{"before":…, "after":…}, …]}
     if "parts" in raw:
         if not isinstance(raw["parts"], list):
@@ -222,6 +237,12 @@ def save_meta_document(xml_path: Path, meta: MetaDocument) -> Path:
 
 
 def _serialize_edit(edit: dict[str, Any]) -> dict[str, Any]:
+    if edit.get("kind") == "props":
+        return {
+            "kind": "props",
+            "before": dict(edit["before"]),
+            "after": dict(edit["after"]),
+        }
     # Multi-widget GeoEdit.to_dict() → {"parts": [...]}
     if "parts" in edit and isinstance(edit["parts"], list):
         parts_out: list[dict[str, Any]] = []

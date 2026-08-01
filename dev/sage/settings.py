@@ -474,6 +474,20 @@ def rescan_asset_roots(settings: dict) -> dict:
     return settings
 
 
+def rescan_custom_asset_roots(settings: dict) -> dict:
+    """Refresh only custom scan roots; leave Anomaly / GAMMA path lists untouched."""
+    settings["custom_roots"] = normalize_custom_roots(settings.get("custom_roots"))
+    derived = derived_asset_roots(
+        anomaly_root="",
+        gamma_root="",
+        custom_roots=list(settings.get("custom_roots") or []),
+    )
+    settings["texture_roots"] = derived["texture_roots"]
+    settings["textures_descr_roots"] = derived["textures_descr_roots"]
+    settings["text_roots"] = derived["text_roots"]
+    return settings
+
+
 # Back-compat alias
 apply_install_roots = rescan_asset_roots
 
@@ -524,8 +538,12 @@ def _merge_anomaly_unpack_paths(settings: dict) -> None:
             settings[key] = prepend + cur
 
 
-# Main-window splitter: left sidebar, editor, right sidebar (was 350; +50%).
-DEFAULT_SIDEBAR_WIDTH = 525
+# Main-window splitter: left sidebar, editor, right sidebar.
+DEFAULT_SIDEBAR_WIDTH = 300
+# Absolute minimum sidebar width (widget + splitter + persisted sizes).
+SIDEBAR_MIN_WIDTH = 200
+# Prior shipped defaults — migrate equal pairs to the current default.
+_LEGACY_SIDEBAR_WIDTHS = (350, 525)
 DEFAULT_SPLITTER_SIZES = [
     DEFAULT_SIDEBAR_WIDTH,
     700,
@@ -534,13 +552,20 @@ DEFAULT_SPLITTER_SIZES = [
 
 
 def normalize_splitter_sizes(raw: object) -> list[int]:
-    """Return [left, mid, right] px; fall back to defaults if invalid."""
+    """Return [left, mid, right] px; repair invalid / crushed / legacy defaults."""
     if isinstance(raw, (list, tuple)) and len(raw) == 3:
         try:
             left, mid, right = (int(x) for x in raw)
-            return [max(80, left), max(100, mid), max(80, right)]
         except (TypeError, ValueError):
-            pass
+            return list(DEFAULT_SPLITTER_SIZES)
+        mid = max(100, mid)
+        # Old equal-sidebar defaults → current default (keep mid).
+        if left == right and left in _LEGACY_SIDEBAR_WIDTHS:
+            return [DEFAULT_SIDEBAR_WIDTH, mid, DEFAULT_SIDEBAR_WIDTH]
+        # Below absolute minimum — restore sidebar defaults.
+        if left < SIDEBAR_MIN_WIDTH or right < SIDEBAR_MIN_WIDTH:
+            return [DEFAULT_SIDEBAR_WIDTH, mid, DEFAULT_SIDEBAR_WIDTH]
+        return [max(SIDEBAR_MIN_WIDTH, left), mid, max(SIDEBAR_MIN_WIDTH, right)]
     return list(DEFAULT_SPLITTER_SIZES)
 
 
@@ -707,10 +732,12 @@ def load_settings() -> dict:
     data["custom_roots"] = normalize_custom_roots(data.get("custom_roots"))
     data["anomaly_root"] = _norm_root(data.get("anomaly_root", ""))
     data["gamma_root"] = _norm_root(data.get("gamma_root", ""))
-    data["splitter_sizes"] = normalize_splitter_sizes(data.get("splitter_sizes"))
+    prev_split = data.get("splitter_sizes")
+    data["splitter_sizes"] = normalize_splitter_sizes(prev_split)
+    split_repaired = data["splitter_sizes"] != prev_split
 
     # Drop legacy whole-tree GAMMA scans (was making every launch ~8s+).
-    if migrate_legacy_scan_roots(data):
+    if migrate_legacy_scan_roots(data) or split_repaired:
         try:
             save_settings(data)
         except OSError:

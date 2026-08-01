@@ -159,6 +159,8 @@ class UiXmlDocument:
             return self._source_text
         for node in self.doc.iter_drawables():
             node.apply_geometry_to_element()
+        if sanitize_ui_xml_tree(self.root):
+            _resync_nodes_from_elements(self.doc)
         if self._synthetic_wrapper:
             parts: list[str] = []
             for child in list(self.root):
@@ -183,10 +185,11 @@ class UiXmlDocument:
         return target
 
     def save_raw(self, text: str, path: Path | None = None) -> Path:
-        """Write editor text as-is, then reparse so the model matches."""
+        """Write editor text (sanitized), then reparse so the model matches."""
         target = path or self.path
         if target is None:
             raise RuntimeError("No save path")
+        text, _removed = sanitize_ui_xml_text(text)
         if not text.endswith("\n") and text != "":
             text = text + "\n"
         target.write_text(text, encoding="utf-8")
@@ -235,6 +238,74 @@ class UiXmlDocument:
         self._redo = list(meta.redo)
         self._selection = meta.selection or ""
         self._view = dict(meta.view) if meta.view else None
+
+
+def _is_junk_chrome(el: ET.Element) -> bool:
+    """True for empty / engine-invalid leaf chrome (InitText font, bare texture, …)."""
+    tag = el.tag
+    if not isinstance(tag, str):
+        return False
+    body = (el.text or "").strip()
+    if tag == "text":
+        # CUIXmlInit::InitText asserts pTmpFont — fontless <text> crashes.
+        return not (el.get("font") or "").strip()
+    if tag == "texture":
+        return not body
+    if tag == "list_font":
+        return not (el.get("font") or "").strip()
+    if tag == "window_name":
+        return not body
+    return False
+
+
+def sanitize_ui_xml_tree(root: ET.Element) -> int:
+    """Remove invalid empty chrome nodes in-place. Returns how many were dropped."""
+    removed = 0
+    for parent in list(root.iter()):
+        for child in list(parent):
+            if _is_junk_chrome(child):
+                parent.remove(child)
+                removed += 1
+    return removed
+
+
+def sanitize_ui_xml_text(text: str) -> tuple[str, int]:
+    """Sanitize UI XML source. Rewrites (pretty-printed) only when something was removed."""
+    if not (text or "").strip():
+        return text, 0
+    synthetic = False
+    try:
+        root = ET.fromstring(text)
+    except ET.ParseError:
+        try:
+            root = ET.fromstring(f"<w>\n{text}\n</w>")
+        except ET.ParseError:
+            return text, 0
+        synthetic = True
+    removed = sanitize_ui_xml_tree(root)
+    if not removed:
+        return text, 0
+    if synthetic:
+        parts: list[str] = []
+        for child in list(root):
+            _indent(child, 0)
+            parts.append(ET.tostring(child, encoding="unicode"))
+        out = "\n".join(parts) + ("\n" if parts else "")
+    else:
+        _indent(root)
+        out = ET.tostring(root, encoding="unicode") + "\n"
+    return out, removed
+
+
+def _resync_nodes_from_elements(doc: LayoutNode) -> None:
+    """Refresh LayoutNode text/texture caches after tree sanitize."""
+
+    def walk(node: LayoutNode) -> None:
+        node.sync_from_element()
+        for child in node.children:
+            walk(child)
+
+    walk(doc)
 
 
 def _indent(elem: ET.Element, level: int = 0) -> None:

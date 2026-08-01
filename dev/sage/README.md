@@ -67,7 +67,9 @@ mod under `GAMMA\mods\…` — nothing is auto-added; add the folder itself, not
 `textures\ui`). On Continue / Settings Ok, SAGE **scans once** for textures /
 `textures_descr` / text folders and **saves those paths** into `settings.json`.
 Later launches reuse the saved lists — no rescan until you change roots or use
-**Edit → Rescan asset cache** (Ctrl+Shift+R).
+**Edit → Rescan asset cache…** (Ctrl+Shift+R). The dialog lets you pick which
+roots to refresh (custom checked by default); only those cache shards are
+dropped and regenerated.
 
 **Textures (Anomaly rules):** UI XML `<texture>` is either an **atlas id** (no
 `\`, UV from `configs/ui/textures_descr/*.xml`) or a **DDS path** (`ui\foo`,
@@ -87,11 +89,16 @@ by `768/device_height` into HUD space — not by the digits in `letterica16`.
 placement is **top-left** unless XML sets `align` / `vert_align`. Missing
 atlas falls back to a plain QFont stand-in.
 
-**Local cache (`dev/sage/cache/`):** shader-cache style — full DDS logical→path
-map (`dds_index.json`), descr/text file lists (`paths.json`), and font glyph
-meta. First bind (or **Edit → Rescan asset cache**) scans once; later launches
-and document opens reuse the indexes. **Delete the folder** or Rescan after
-adding/removing mods. Not shipped / gitignored.
+**Local cache (`dev/sage/cache/`):** install indexes under `dds/`, `descr/`,
+`text/` — **one JSON per install name** (`anomaly.json`, `gamma.json`,
+`custom.json`; text adds `_{lang}`), each holding the winning path map for that
+install. Plus font glyph meta, decoded DDS PNGs (`dds_rgba/`), and low-res sheet
+proxies (`thumbs/` — one PNG per **atlas sheet** named in `textures_descr`).
+First bind scans missing installs and builds those proxies (fixed 1/4
+downscale); the picker crops scaled UVs into 192px fit previews. Path-mode
+DDS proxies build on demand.
+**Rescan** drops the selected install file(s) and regenerates them. Delete the
+whole `cache/` folder for a nuclear wipe. Not shipped / gitignored.
 
 **Atlas editor:** Open a `textures_descr` XML (path or `<w>/<file name>/<texture id>`
 shape) to edit UV boxes on the DDS sheet — same WYSIWYG / XML / Log tabs plus

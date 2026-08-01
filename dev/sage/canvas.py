@@ -48,13 +48,16 @@ from .model import LayoutNode
 from .settings import LABEL_FONT_MIN, UI_HEIGHT, UI_WIDTH
 from .strings import StringResolver
 from .textures import TextureResolver, gamma_relative_path
-from .undo import GeoEdit, GeoState, UndoStack
+from .undo import Edit, GeoEdit, GeoState, PropEdit, UndoStack
 
 _log = get_logger("canvas")
 
-# Scene z bands (back → front):
-#   widgets (texture+text, document order) → labels → diamonds →
-#   idle → hover border → select chrome → hover label → select label (front)
+# Rendering model:
+#   Content (texture, text, select fill) lives on WidgetItem and follows
+#   document hierarchy z (iter_drawables order).
+#   Editor decorations sit in overlay bands above all content:
+#   labels → meta diamonds → idle/hover/select borders → focus captions →
+#   guides → marquee.
 _LABEL_Z = LABEL_Z
 _DIAMOND_Z = 2_000_000.0
 _IDLE_CHROME_Z = IDLE_CHROME_Z
@@ -64,6 +67,11 @@ _HOVER_LABEL_Z = 10_000_003.0
 _SELECT_LABEL_Z = FOCUS_LABEL_Z
 _MARQUEE_Z = 10_000_010.0
 _GUIDE_Z = 10_000_009.0
+
+
+def _decor_z(band: float, doc_z: float) -> float:
+    """Keep decorations in their band, but stack by document order within it."""
+    return band + float(doc_z) * 0.001
 
 RULER_THICKNESS = 15
 RULER_MINOR = 8  # scene px between short notches
@@ -123,13 +131,12 @@ class GuideLine(QGraphicsLineItem):
 
 
 class FocusChrome(QGraphicsItem):
-    """Select/hover border+fill. Always painted above every other scene item."""
+    """Select/hover border outline — editor decoration above all content."""
 
     def __init__(self) -> None:
         super().__init__()
         self._kind = "hover"  # "hover" | "select"
         self._meta = False
-        self._show_fill = False
         self._rect = QRectF()
         self._poly = QPolygonF()
         self.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
@@ -138,21 +145,13 @@ class FocusChrome(QGraphicsItem):
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, False)
         self.hide()
 
-    def bind(
-        self,
-        item: WidgetItem | None,
-        *,
-        kind: str,
-        show_fill: bool = False,
-    ) -> None:
+    def bind(self, item: WidgetItem | None, *, kind: str) -> None:
         if item is None or not item.node.visible or not item.isVisible():
             self.hide()
             return
         self.prepareGeometryChange()
         self._kind = kind
         self._meta = bool(item.node.from_meta)
-        # Select fill is toggle-gated; hover never fills.
-        self._show_fill = bool(show_fill) if kind == "select" else False
         self.setPos(item.pos())
         self._rect = QRectF(0, 0, max(item.node.width, 1), max(item.node.height, 1))
         if self._meta:
@@ -169,18 +168,16 @@ class FocusChrome(QGraphicsItem):
     def paint(self, painter: QPainter, option: QStyleOptionGraphicsItem, widget: QWidget | None = None) -> None:
         if self._kind == "select":
             color = SEL_BLUE
-            fill = SEL_BLUE_FILL if self._show_fill else QColor(0, 0, 0, 0)
             width = 2
         else:
             color = HOVER_BORDER
-            fill = QColor(0, 0, 0, 0)
             width = 1
         pen = QPen(color)
         pen.setWidth(width)
         pen.setCosmetic(True)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         painter.setPen(pen)
-        painter.setBrush(QBrush(fill))
+        painter.setBrush(QBrush(Qt.BrushStyle.NoBrush))
         if self._meta and not self._poly.isEmpty():
             painter.drawPolygon(self._poly)
         else:
@@ -232,6 +229,8 @@ class WidgetItem(QGraphicsRectItem):
         self.show_element_labels = show_element_labels
         self.show_box_border = show_box_border
         self.show_box_fill = show_box_fill
+        # Document-order index for content z and decoration stacking within bands.
+        self._doc_z = 0.0
         self.setPos(node.abs_x, node.abs_y)
         flags = (
             QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
@@ -243,7 +242,7 @@ class WidgetItem(QGraphicsRectItem):
         self.setAcceptHoverEvents(True)
         # Texture then text as normal children (not ItemStacksBehindParent) so both
         # follow the parent WidgetItem's document-order z across overlapping boxes.
-        # Child z: texture under text; scene chrome overlays sit far above.
+        # Child z: texture < text < select fill; scene border chrome sits far above.
         self._pixmap_item = QGraphicsPixmapItem(self)
         self._pixmap_item.setZValue(0)
         self._pixmap_item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
@@ -255,6 +254,13 @@ class WidgetItem(QGraphicsRectItem):
             Qt.TransformationMode.FastTransformation
         )
         self._text_item.hide()
+        # Select fill follows the box in hierarchy (above this box's text).
+        self._select_fill = QGraphicsRectItem(self)
+        self._select_fill.setZValue(2)
+        self._select_fill.setPen(QPen(Qt.PenStyle.NoPen))
+        self._select_fill.setBrush(QBrush(SEL_BLUE_FILL))
+        self._select_fill.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        self._select_fill.hide()
         # Scene-level outside labels + idle border (shared with atlas editor).
         self._caption = OutsideLabelChrome()
         self._idle_chrome = IdleBorderChrome()
@@ -330,13 +336,15 @@ class WidgetItem(QGraphicsRectItem):
         self._apply_label()
         if not visible:
             self._idle_border.hide()
+            self._select_fill.hide()
             self._text_item.hide()
             self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemHasNoContents, True)
             self._updating = False
             return
         selected = self.isSelected()
         hovered = self.is_hovered() and not selected
-        # Body never paints chrome: select/hover/idle borders+fill are scene overlays.
+        # Content only on the item (texture/text/select-fill children).
+        # Borders + labels are scene decorations in overlay bands.
         # Untextured widgets stay fully empty (texture child only when present).
         self.setPen(QPen(Qt.PenStyle.NoPen))
         self.setBrush(QBrush(Qt.BrushStyle.NoBrush))
@@ -344,6 +352,7 @@ class WidgetItem(QGraphicsRectItem):
             self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemHasNoContents, False)
         else:
             self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemHasNoContents, True)
+        self._sync_select_fill(selected=selected)
         self._sync_idle_border(selected=selected, hovered=hovered)
         tip = self.node.path or self.node.tag
         if self.node.from_meta:
@@ -367,6 +376,24 @@ class WidgetItem(QGraphicsRectItem):
                     tip += f"\n→ {s.text}"
         self.setToolTip(tip)
         self._updating = False
+
+    def _sync_select_fill(self, *, selected: bool) -> None:
+        """Blue fill on the box, above its own text, in document stack order."""
+        show = (
+            bool(selected)
+            and bool(self.show_box_fill)
+            and bool(self.node.visible)
+            and self.isVisible()
+            and not self.node.from_meta
+        )
+        if show:
+            self._select_fill.setRect(
+                0, 0, max(self.node.width, 1), max(self.node.height, 1)
+            )
+            self._select_fill.setBrush(QBrush(SEL_BLUE_FILL))
+            self._select_fill.show()
+        else:
+            self._select_fill.hide()
 
     def _sync_idle_border(self, *, selected: bool, hovered: bool) -> None:
         """Yellow outline above content for idle (non-selected, non-hovered) boxes."""
@@ -478,17 +505,30 @@ class WidgetItem(QGraphicsRectItem):
             x = box_w - tw
         else:
             x = 0.0
+        # Vertical: non-complex CUILines::Draw computes indent in UI space, then
+        # adds it to *screen* Y after ClientToScreenScaled — so the effective HUD
+        # offset is indent_ui * (768/device_h). Complex mode applies indent in UI
+        # space correctly. Top stays 0 either way.
         if valign in ("c", "center"):
-            y = (box_h - th) / 2.0
+            indent_ui = (box_h - th) / 2.0
         elif valign in ("b", "bottom"):
-            y = box_h - th
+            indent_ui = box_h - th
         else:
-            y = 0.0
+            indent_ui = 0.0
+        if ref.complex_mode or ui_scale >= 0.999:
+            y = indent_ui
+        else:
+            y = indent_ui * ui_scale
+        # <text x="" y=""> → CUILines::m_TextOffset (UI units).
+        x += float(ref.x or 0.0)
+        y += float(ref.y or 0.0)
         self._text_item.setPixmap(pix)
         self._text_item.setTransformationMode(
             Qt.TransformationMode.FastTransformation
         )
         self._text_item.setScale(ui_scale)
+        self._text_item.setTransformOriginPoint(0.0, 0.0)
+        self._text_item.setOffset(0.0, 0.0)
         self._text_item.setPos(x, y)
         self._text_item.show()
 
@@ -670,6 +710,7 @@ class WidgetItem(QGraphicsRectItem):
         self._sync_node_from_item()
         self._apply_texture()
         self._apply_label()
+        self._sync_select_fill(selected=self.isSelected())
         scene = self.scene()
         if isinstance(scene, UiScene):
             scene.geometry_changed.emit(self.node)
@@ -813,6 +854,9 @@ class UiScene(QGraphicsScene):
             self.remove_guide(guide)
 
     def push_geo_edit(self, edit: GeoEdit) -> None:
+        self.push_edit(edit)
+
+    def push_edit(self, edit: Edit) -> None:
         self.undo_stack.push(edit)
         self.undo_stack_changed.emit()
 
@@ -835,6 +879,24 @@ class UiScene(QGraphicsScene):
         self.doc.recompute_absolute(0.0, 0.0)
         self.refresh_item_positions()
         return node
+
+    def apply_prop_edit(self, edit: PropEdit, *, use_after: bool) -> LayoutNode | None:
+        if self.doc is None:
+            return None
+        state = edit.after if use_after else edit.before
+        node = self.doc.find_by_path(state.path)
+        if node is None:
+            return None
+        node.apply_prop_state(state)
+        item = self.item_for_node(node)
+        if item is not None:
+            item.refresh_look()
+        return node
+
+    def apply_edit(self, edit: Edit, *, use_after: bool) -> LayoutNode | None:
+        if isinstance(edit, PropEdit):
+            return self.apply_prop_edit(edit, use_after=use_after)
+        return self.apply_geo_edit(edit, use_after=use_after)
 
     def apply_geo_edit(self, edit: GeoEdit, *, use_after: bool) -> LayoutNode | None:
         """Apply every part of a (possibly multi) geometry edit. Returns last node."""
@@ -912,7 +974,7 @@ class UiScene(QGraphicsScene):
         self._sync_focus_chrome()
 
     def _sync_focus_chrome(self) -> None:
-        """Borders/fills always above every texture, label, and diamond."""
+        """Sync editor decorations (borders + focus captions) above content."""
         if self._hover_path:
             h = self._items.get(self._hover_path)
             if h is None or not h.node.visible or not h.isVisible():
@@ -922,23 +984,26 @@ class UiScene(QGraphicsScene):
         selected_set = set(selected)
         primary = selected[-1] if selected else None
 
-        # Labels stay in the label band — never above borders/fills.
+        # Decoration bands stack by document order within each band.
         for item in self._items.values():
+            doc_z = float(getattr(item, "_doc_z", 0.0))
             base = getattr(item, "_label_z_base", _LABEL_Z)
             item._label_shadow.setZValue(base)
             item._label_item.setZValue(base + 0.01)
-            item._idle_border.setZValue(_IDLE_CHROME_Z)
+            item._idle_border.setZValue(_decor_z(_IDLE_CHROME_Z, doc_z))
 
         self._ensure_select_chromes(len(selected))
         self._select_label.setZValue(_SELECT_LABEL_Z)
         self._hover_label.setZValue(_HOVER_LABEL_Z)
-        show_fill = bool(self.show_box_fill)
         for i, chrome in enumerate(self._select_chromes):
-            chrome.setZValue(_SELECT_CHROME_Z)
             if i < len(selected):
-                chrome.bind(selected[i], kind="select", show_fill=show_fill)
+                chrome.setZValue(
+                    _decor_z(_SELECT_CHROME_Z, getattr(selected[i], "_doc_z", 0.0))
+                )
+                chrome.bind(selected[i], kind="select")
             else:
-                chrome.bind(None, kind="select", show_fill=False)
+                chrome.setZValue(_SELECT_CHROME_Z)
+                chrome.bind(None, kind="select")
 
         # Marquee preview: white border on every fully enclosed eligible widget.
         if self._marquee_preview is not None:
@@ -952,11 +1017,14 @@ class UiScene(QGraphicsScene):
             ]
             self._ensure_hover_chromes(max(len(preview), 1))
             for i, chrome in enumerate(self._hover_chromes):
-                chrome.setZValue(_HOVER_CHROME_Z)
                 if i < len(preview):
-                    chrome.bind(preview[i], kind="hover", show_fill=False)
+                    chrome.setZValue(
+                        _decor_z(_HOVER_CHROME_Z, getattr(preview[i], "_doc_z", 0.0))
+                    )
+                    chrome.bind(preview[i], kind="hover")
                 else:
-                    chrome.bind(None, kind="hover", show_fill=False)
+                    chrome.setZValue(_HOVER_CHROME_Z)
+                    chrome.bind(None, kind="hover")
             self._hover_label.bind(None, text_color=HOVER_LABEL_TEXT)
         else:
             hover = self._items.get(self._hover_path) if self._hover_path else None
@@ -969,11 +1037,14 @@ class UiScene(QGraphicsScene):
                 hover = None
             self._ensure_hover_chromes(1)
             for i, chrome in enumerate(self._hover_chromes):
-                chrome.setZValue(_HOVER_CHROME_Z)
-                if i == 0:
-                    chrome.bind(hover, kind="hover", show_fill=False)
+                if i == 0 and hover is not None:
+                    chrome.setZValue(
+                        _decor_z(_HOVER_CHROME_Z, getattr(hover, "_doc_z", 0.0))
+                    )
+                    chrome.bind(hover, kind="hover")
                 else:
-                    chrome.bind(None, kind="hover", show_fill=False)
+                    chrome.setZValue(_HOVER_CHROME_Z)
+                    chrome.bind(None, kind="hover")
             self._hover_label.bind(hover, text_color=HOVER_LABEL_TEXT)
 
         # Caption only for the primary (last) selection.
@@ -1036,15 +1107,17 @@ class UiScene(QGraphicsScene):
                 show_box_border=self.show_box_border,
                 show_box_fill=self.show_box_fill,
             )
-            # widget (texture+text) < labels < diamonds < chrome
+            # Content z = document order; decorations use overlay bands (+ doc_z).
+            item._doc_z = float(z)
             if node.from_meta:
-                item.setZValue(_DIAMOND_Z + float(z))
+                item.setZValue(_decor_z(_DIAMOND_Z, item._doc_z))
             else:
-                item.setZValue(float(z))
+                item.setZValue(item._doc_z)
             self.addItem(item)
-            item._label_z_base = _LABEL_Z + float(z)
+            item._label_z_base = _decor_z(_LABEL_Z, item._doc_z)
             item._caption.attach(self, z_base=item._label_z_base)
             item._idle_chrome.attach(self)
+            item._idle_border.setZValue(_decor_z(_IDLE_CHROME_Z, item._doc_z))
             item._apply_label()
             self._items[node.path] = item
         self._sync_focus_chrome()
@@ -1057,6 +1130,7 @@ class UiScene(QGraphicsScene):
             item.setRect(0, 0, max(item.node.width, 1), max(item.node.height, 1))
             item.setPos(item.node.abs_x, item.node.abs_y)
             item._updating = False
+            item._sync_select_fill(selected=item.isSelected())
             item.follow_overlays_to_pos()
         self._sync_focus_chrome()
 

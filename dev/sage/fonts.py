@@ -36,9 +36,26 @@ FONT_SECTION_MAP: dict[str, str] = {
     "graffiti32": "ui_font_graff_32",
     "graffiti40": "ui_font_graff_40",
     "graffiti50": "ui_font_graff_50",
+    # Engine InitFont uses arial_14; arial14 accepted as alias.
+    "arial_14": "ui_font_arial_14",
     "arial14": "ui_font_arial_14",
     "arial21": "ui_font_arial_21",
 }
+
+# CUIXmlInit::InitFont hard-coded XML names (UIXmlInit.cpp).
+ENGINE_FONT_NAMES: tuple[str, ...] = (
+    "letterica16",
+    "letterica18",
+    "letterica25",
+    "graffiti19",
+    "graffiti22",
+    "graffiti32",
+    "graffiti50",
+    "arial_14",
+    "medium",
+    "small",
+    "di",
+)
 
 # GameFont.cpp FindTextureName order (index by Device.dwHeight).
 _TEXTURE_VARIANT_BY_IDX = ("texture800", "texture", "texture1600", "texture2160")
@@ -271,6 +288,33 @@ class FontResolver:
         self._missing.clear()
         self._ltx_sections = None
 
+    def known_font_names(self) -> list[str]:
+        """XML ``font=`` values: engine InitFont list + fonts.ltx reverse map."""
+        names: set[str] = set(ENGINE_FONT_NAMES)
+        names.update(FONT_SECTION_MAP.keys())
+        rev = {section: xml for xml, section in FONT_SECTION_MAP.items()}
+        for section in self._load_fonts_ltx():
+            xml = rev.get(section)
+            if xml:
+                names.add(xml)
+            # Prefer engine-facing arial_14 over arial14 alias in the list.
+            if section == "ui_font_arial_14":
+                names.add("arial_14")
+        if self.path_index is not None:
+            cached = self.path_index.get_fonts()
+            if cached:
+                names.update(cached)
+        # Prefer canonical engine spellings in the dropdown.
+        names.discard("arial14")
+        return sorted(names, key=str.lower)
+
+    def ensure_font_index(self) -> list[str]:
+        """Scan fonts.ltx, persist name list to path cache (last wins via ltx merge)."""
+        names = self.known_font_names()
+        if self.path_index is not None:
+            self.path_index.put_fonts(names)
+        return names
+
     def set_device_height(self, height: int) -> None:
         h = max(1, int(height))
         if h == self.device_height:
@@ -357,7 +401,11 @@ class FontResolver:
     def _resolve_logical_dds(self, font_name: str) -> tuple[str | None, str]:
         """Pick texture path from fonts.ltx using engine height rules."""
         key = font_name.strip().lower()
-        section_name = FONT_SECTION_MAP.get(key, "")
+        if key == "arial_14":
+            key = "arial14"
+        section_name = FONT_SECTION_MAP.get(key, "") or FONT_SECTION_MAP.get(
+            font_name.strip().lower(), ""
+        )
         sections = self._load_fonts_ltx()
         entry = sections.get(section_name) if section_name else None
         if entry is None:
@@ -378,6 +426,7 @@ class FontResolver:
             "graffiti40": r"ui\ui_font_graff_40_1024",
             "graffiti50": r"ui\ui_font_graff_50_1024",
             "arial14": r"ui\ui_font_arial_14_1024",
+            "arial_14": r"ui\ui_font_arial_14_1024",
             "arial21": r"ui\ui_font_arial_21_1024",
         }.get(key)
         if legacy is None:

@@ -8,6 +8,17 @@ from xml.etree.ElementTree import Element
 GEO_ATTRS = ("x", "y", "width", "height")
 # XPath-style path between tags (also keys in .xml.meta)
 PATH_SEP = "/"
+# Engine CUILines / InitText (UIXmlInit.cpp) — single-letter enums.
+TEXT_ALIGN_VALUES = ("l", "c", "r")
+TEXT_VERT_ALIGN_VALUES = ("t", "c", "b")
+# ScrollView padding — note engine typo ``left_ident`` / ``right_ident``.
+SCROLL_FLOAT_ATTRS = (
+    "left_ident",
+    "right_ident",
+    "top_indent",
+    "bottom_indent",
+    "vert_interval",
+)
 # Child tags that are never drawable widgets themselves
 SKIP_AS_WIDGET = frozenset(
     {
@@ -89,6 +100,10 @@ class TextRef:
     font: str = ""
     align: str = ""
     vert_align: str = ""
+    # Engine CUILines::m_TextOffset from <text x="" y="">.
+    x: float = 0.0
+    y: float = 0.0
+    complex_mode: bool = False
     r: int | None = None
     g: int | None = None
     b: int | None = None
@@ -193,6 +208,23 @@ class LayoutNode:
         elif self.element.get("stretch") is not None:
             self.element.set("stretch", "0")
 
+    def ensure_text_element(self) -> Element | None:
+        """Return <text>, creating an empty one after <texture> when needed."""
+        if self.from_meta:
+            return None
+        t = self.element.find("text")
+        if t is not None:
+            return t
+        t = Element("text")
+        tex = self.element.find("texture")
+        if tex is not None:
+            idx = list(self.element).index(tex) + 1
+            self.element.insert(idx, t)
+        else:
+            self.element.append(t)
+        self.text = _read_text(self.element)
+        return t
+
     def set_text_content(self, content: str) -> bool:
         """Set the <text> element body. Creates <text> when needed. Returns True if changed."""
         if self.from_meta:
@@ -201,20 +233,183 @@ class LayoutNode:
         if t is None:
             if content == "":
                 return False
-            t = Element("text")
-            # Keep texture-first order when present
-            tex = self.element.find("texture")
-            if tex is not None:
-                idx = list(self.element).index(tex) + 1
-                self.element.insert(idx, t)
-            else:
-                self.element.append(t)
+            t = self.ensure_text_element()
+            if t is None:
+                return False
         old = t.text or ""
         if old == content:
             return False
         t.text = content
         self.text = _read_text(self.element)
         return True
+
+    def prune_invalid_text(self) -> bool:
+        """Drop fontless ``<text>`` (engine InitText crash). Returns True if removed."""
+        if self.from_meta:
+            return False
+        t = self.element.find("text")
+        if t is None:
+            return False
+        if (t.get("font") or "").strip():
+            return False
+        self.element.remove(t)
+        self.text = None
+        return True
+
+    def apply_text_props(
+        self,
+        *,
+        font: str | None | object = ...,
+        align: str | None | object = ...,
+        vert_align: str | None | object = ...,
+        complex_mode: bool | object = ...,
+        r: int | None | object = ...,
+        g: int | None | object = ...,
+        b: int | None | object = ...,
+        a: int | None | object = ...,
+        x: float | None | object = ...,
+        y: float | None | object = ...,
+    ) -> bool:
+        """Update <text> attrs. ``...`` = leave; ``None`` = remove attr."""
+        if self.from_meta:
+            return False
+        touched = any(
+            v is not ...
+            for v in (font, align, vert_align, complex_mode, r, g, b, a, x, y)
+        )
+        if not touched:
+            return False
+        t = self.element.find("text")
+        if t is None:
+            t = self.ensure_text_element()
+            if t is None:
+                return False
+        changed = False
+        if font is not ...:
+            changed |= _set_attr(t, "font", (font or "").strip() or None)
+        if align is not ...:
+            val = (align or "").strip().lower() or None
+            if val is not None and val not in TEXT_ALIGN_VALUES:
+                val = align.strip() if isinstance(align, str) else None
+            changed |= _set_attr(t, "align", val)
+        if vert_align is not ...:
+            val = (vert_align or "").strip().lower() or None
+            if val is not None and val not in TEXT_VERT_ALIGN_VALUES:
+                val = vert_align.strip() if isinstance(vert_align, str) else None
+            changed |= _set_attr(t, "vert_align", val)
+        if complex_mode is not ...:
+            changed |= _set_bool_attr(t, "complex_mode", bool(complex_mode))
+        for ch, val in (("r", r), ("g", g), ("b", b), ("a", a)):
+            if val is ...:
+                continue
+            if val is None:
+                changed |= _set_attr(t, ch, None)
+            else:
+                changed |= _set_attr(t, ch, str(int(val)))
+        for attr, val in (("x", x), ("y", y)):
+            if val is ...:
+                continue
+            if val is None:
+                changed |= _set_attr(t, attr, None)
+            else:
+                changed |= _set_attr(t, attr, _fmt(float(val)))
+        if self.prune_invalid_text():
+            return True
+        if changed:
+            self.text = _read_text(self.element)
+        return changed
+
+    def widget_float_attr(self, name: str) -> float | None:
+        raw = self.element.get(name)
+        if raw is None or raw == "":
+            return None
+        try:
+            return float(raw)
+        except ValueError:
+            return None
+
+    def widget_bool_attr(self, name: str, *, default: bool = False) -> bool:
+        raw = self.element.get(name)
+        if raw is None:
+            return default
+        return raw.strip().lower() in ("1", "true")
+
+    def is_scroll_view(self) -> bool:
+        """Heuristic for InitScrollView paths (almost always ``scroll_*``)."""
+        return (self.tag or "").lower().startswith("scroll")
+
+    def is_frame_line(self) -> bool:
+        """Heuristic for InitFrameLine (engine asserts ``stretch`` is false)."""
+        tag = (self.tag or "").lower()
+        return "frame_line" in tag or tag.startswith("frameline")
+
+    def allows_texture_props(self) -> bool:
+        """ScrollView is InitWindow-only — no InitTexture unless XML already has one."""
+        if self.is_scroll_view() and self.texture is None:
+            return False
+        return True
+
+    def allows_stretch(self) -> bool:
+        """FrameLine asserts stretch==0; ScrollView has no SetStretchTexture."""
+        if self.is_frame_line() or self.is_scroll_view():
+            return False
+        return self.allows_texture_props()
+
+    def allows_text_props(self) -> bool:
+        """ScrollView ``<text>`` children are list items, not widget TextItemControl."""
+        return not self.is_scroll_view()
+
+    def allows_scroll_props(self) -> bool:
+        if self.is_scroll_view():
+            return True
+        if any(self.element.get(a) is not None for a in SCROLL_FLOAT_ATTRS):
+            return True
+        return self.element.get("always_show_scroll") is not None
+
+    def has_scroll_attrs(self) -> bool:
+        """Back-compat alias — scroll padding / always_show_scroll apply here."""
+        return self.allows_scroll_props()
+
+    def apply_widget_props(
+        self,
+        *,
+        stretch: bool | object = ...,
+        always_show_scroll: bool | object = ...,
+        left_ident: float | None | object = ...,
+        right_ident: float | None | object = ...,
+        top_indent: float | None | object = ...,
+        bottom_indent: float | None | object = ...,
+        vert_interval: float | None | object = ...,
+    ) -> bool:
+        """Update widget-level attrs (stretch, scroll padding)."""
+        if self.from_meta:
+            return False
+        changed = False
+        if stretch is not ...:
+            self.stretch = bool(stretch)
+            # Match apply_geometry_to_element: only write "0" if attr already present.
+            if self.stretch:
+                changed |= _set_attr(self.element, "stretch", "1")
+            elif self.element.get("stretch") is not None:
+                changed |= _set_attr(self.element, "stretch", "0")
+        if always_show_scroll is not ...:
+            changed |= _set_bool_attr(
+                self.element, "always_show_scroll", bool(always_show_scroll)
+            )
+        for name, val in (
+            ("left_ident", left_ident),
+            ("right_ident", right_ident),
+            ("top_indent", top_indent),
+            ("bottom_indent", bottom_indent),
+            ("vert_interval", vert_interval),
+        ):
+            if val is ...:
+                continue
+            if val is None:
+                changed |= _set_attr(self.element, name, None)
+            else:
+                changed |= _set_attr(self.element, name, _fmt(float(val)))
+        return changed
 
     def set_texture_name(self, name: str, *, clear_uv: bool = True) -> bool:
         """Set <texture> body (atlas id or ui\\path). Creates element when needed."""
@@ -227,6 +422,10 @@ class LayoutNode:
                 return False
             tex = Element("texture")
             self.element.insert(0, tex)
+        elif not name:
+            self.element.remove(tex)
+            self.texture = None
+            return True
         old = (tex.text or "").strip()
         uv_changed = False
         if clear_uv:
@@ -239,6 +438,113 @@ class LayoutNode:
         tex.text = name
         self.texture = _read_texture(self.element)
         return True
+
+    def capture_prop_state(self):
+        """Snapshot props-panel state for undo (imported PropState to avoid cycles)."""
+        from .undo import PropState
+
+        el = self.element
+        text_el = el.find("text")
+        tex_el = el.find("texture")
+        return PropState(
+            path=self.path,
+            stretch=el.get("stretch"),
+            always_show_scroll=el.get("always_show_scroll"),
+            left_ident=el.get("left_ident"),
+            right_ident=el.get("right_ident"),
+            top_indent=el.get("top_indent"),
+            bottom_indent=el.get("bottom_indent"),
+            vert_interval=el.get("vert_interval"),
+            has_text=text_el is not None,
+            text_content=(text_el.text or "").strip() if text_el is not None else "",
+            font=text_el.get("font") if text_el is not None else None,
+            align=text_el.get("align") if text_el is not None else None,
+            vert_align=text_el.get("vert_align") if text_el is not None else None,
+            complex_mode=text_el.get("complex_mode") if text_el is not None else None,
+            r=text_el.get("r") if text_el is not None else None,
+            g=text_el.get("g") if text_el is not None else None,
+            b=text_el.get("b") if text_el is not None else None,
+            a=text_el.get("a") if text_el is not None else None,
+            text_x=text_el.get("x") if text_el is not None else None,
+            text_y=text_el.get("y") if text_el is not None else None,
+            has_texture=tex_el is not None,
+            texture_name=(tex_el.text or "").strip() if tex_el is not None else "",
+            tex_x=tex_el.get("x") if tex_el is not None else None,
+            tex_y=tex_el.get("y") if tex_el is not None else None,
+            tex_w=tex_el.get("width") if tex_el is not None else None,
+            tex_h=tex_el.get("height") if tex_el is not None else None,
+            tex_r=tex_el.get("r") if tex_el is not None else None,
+            tex_g=tex_el.get("g") if tex_el is not None else None,
+            tex_b=tex_el.get("b") if tex_el is not None else None,
+            tex_a=tex_el.get("a") if tex_el is not None else None,
+        )
+
+    def apply_prop_state(self, state) -> None:
+        """Restore a ``PropState`` snapshot onto this node / XML element."""
+        from .undo import PropState
+
+        if not isinstance(state, PropState) or self.from_meta:
+            return
+        el = self.element
+        for name in (
+            "stretch",
+            "always_show_scroll",
+            "left_ident",
+            "right_ident",
+            "top_indent",
+            "bottom_indent",
+            "vert_interval",
+        ):
+            _set_attr(el, name, getattr(state, name))
+        self.stretch = (el.get("stretch") or "0") in ("1", "true", "True")
+
+        text_el = el.find("text")
+        if not state.has_text:
+            if text_el is not None:
+                el.remove(text_el)
+            self.text = None
+        else:
+            if text_el is None:
+                text_el = self.ensure_text_element()
+            if text_el is not None:
+                text_el.text = state.text_content
+                for attr, key in (
+                    ("font", "font"),
+                    ("align", "align"),
+                    ("vert_align", "vert_align"),
+                    ("complex_mode", "complex_mode"),
+                    ("r", "r"),
+                    ("g", "g"),
+                    ("b", "b"),
+                    ("a", "a"),
+                    ("x", "text_x"),
+                    ("y", "text_y"),
+                ):
+                    _set_attr(text_el, attr, getattr(state, key))
+            self.text = _read_text(el)
+
+        tex_el = el.find("texture")
+        if not state.has_texture:
+            if tex_el is not None:
+                el.remove(tex_el)
+            self.texture = None
+            return
+        if tex_el is None:
+            tex_el = Element("texture")
+            el.insert(0, tex_el)
+        tex_el.text = state.texture_name
+        for attr, key in (
+            ("x", "tex_x"),
+            ("y", "tex_y"),
+            ("width", "tex_w"),
+            ("height", "tex_h"),
+            ("r", "tex_r"),
+            ("g", "tex_g"),
+            ("b", "tex_b"),
+            ("a", "tex_a"),
+        ):
+            _set_attr(tex_el, attr, getattr(state, key))
+        self.texture = _read_texture(el)
 
     def set_geometry(
         self,
@@ -313,6 +619,28 @@ def _fmt(v: float) -> str:
     return f"{v:g}"
 
 
+def _set_attr(el: Element, name: str, value: str | None) -> bool:
+    """Set attr, or delete when ``value`` is None/"". Returns True if changed."""
+    old = el.get(name)
+    if value is None or value == "":
+        if old is None:
+            return False
+        del el.attrib[name]
+        return True
+    if old == value:
+        return False
+    el.set(name, value)
+    return True
+
+
+def _set_bool_attr(el: Element, name: str, value: bool, *, write_zero: bool = True) -> bool:
+    if value:
+        return _set_attr(el, name, "1")
+    if write_zero or el.get(name) is not None:
+        return _set_attr(el, name, "0")
+    return False
+
+
 def _read_texture(el: Element) -> TextureRef | None:
     tex = el.find("texture")
     if tex is None:
@@ -339,7 +667,19 @@ def _read_text(el: Element) -> TextRef | None:
     t = el.find("text")
     if t is None:
         return None
-    ref = TextRef(content=(t.text or "").strip(), font=t.get("font", ""), align=t.get("align", ""), vert_align=t.get("vert_align", ""))
+    try:
+        complex_mode = int(t.get("complex_mode", "0") or "0") != 0
+    except ValueError:
+        complex_mode = False
+    ref = TextRef(
+        content=(t.text or "").strip(),
+        font=t.get("font", "") or "",
+        align=t.get("align", "") or "",
+        vert_align=t.get("vert_align", "") or "",
+        x=_f(t, "x"),
+        y=_f(t, "y"),
+        complex_mode=complex_mode,
+    )
     for ch, attr in (("r", "r"), ("g", "g"), ("b", "b"), ("a", "a")):
         raw = t.get(ch)
         if raw is not None:

@@ -1,7 +1,7 @@
 --[[
 	DOGMA gameplay/stealth — replaces stock visual_memory_manager.get_visible_value.
 
-	Actor-only: scale stock vis, pose cutoff → 0, optional smooth remap.
+	Actor-only: scale stock vis, bush coverage reduction, pose cutoff → 0, optional smooth remap.
 	NPC↔NPC / non-actor: stock timed formula (underground lumin bump kept).
 ]]
 
@@ -11,6 +11,10 @@ local CONFIG = _G.dogma_gameplay_stealth_conf
 local last_vis = 0
 local last_cutoff = 0
 local last_out = 0
+local last_bush = 0
+
+-- Cached 0..1 foliage surround from main.script probes (not raycast here).
+local bush_coverage = 0
 
 local function clamp01(x)
 	if x < 0 then
@@ -80,6 +84,14 @@ local function is_actor(who)
 	return ok and ok2 and aid == wid
 end
 
+function set_bush_coverage(coverage)
+	bush_coverage = clamp01(tonumber(coverage) or 0)
+end
+
+function get_bush_coverage()
+	return bush_coverage
+end
+
 -- called from engine
 -- warning npc and who can be nil sometimes
 function get_visible_value(npc, who, time_delta, time_quant, luminocity, velocity_factor, velocity, distance, object_distance, always_visible_distance)
@@ -98,6 +110,15 @@ function get_visible_value(npc, who, time_delta, time_quant, luminocity, velocit
 
 	local scale = loaded_num("scale", 1.0)
 	local vis = clamp01(vis_stock * scale)
+
+	-- Foliage surround: each of 8 probes contributes up to bush_bonus/8.
+	local bonus = loaded_num("bush_bonus", 0.50)
+	local bush = bush_coverage
+	if bonus > 0 and bush > 0 then
+		vis = clamp01(vis * (1 - bush * bonus))
+	end
+	last_bush = bush
+
 	local cutoff = pose_cutoff()
 	last_vis = vis
 	last_cutoff = cutoff
@@ -131,4 +152,8 @@ end
 
 function icon_out()
 	return last_out
+end
+
+function icon_bush()
+	return last_bush
 end

@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import QRect, Qt, QTimer
+from PyQt6.QtGui import QColor, QFontMetrics, QPainter
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QHBoxLayout,
@@ -15,15 +17,114 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QStyledItemDelegate,
+    QStyle,
+    QStyleOptionViewItem,
     QVBoxLayout,
     QWidget,
 )
 
-from .strings import StringCatalogEntry, StringResolver, strip_engine_markup
+from .strings import (
+    StringCatalogEntry,
+    StringRootGroup,
+    StringResolver,
+    build_string_picker_root_groups,
+    strip_engine_markup,
+)
 
 _ROLE_ID = int(Qt.ItemDataRole.UserRole)
 _ROLE_TEXT = int(Qt.ItemDataRole.UserRole) + 1
 _ROLE_PATH = int(Qt.ItemDataRole.UserRole) + 2
+_HIGHLIGHT_MAX = 1000
+_MATCH_BG = QColor("#5A4A20")
+_MATCH_FG = QColor("#FFE08A")
+
+
+class _MatchHighlightDelegate(QStyledItemDelegate):
+    """Draw list rows with case-insensitive substring highlights."""
+
+    def __init__(self, owner: StringPickerDialog) -> None:
+        super().__init__(owner)
+        self._owner = owner
+
+    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index) -> None:  # noqa: N802
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        text = opt.text or ""
+        needle = self._owner._highlight_needle
+        opt.text = ""
+        widget = opt.widget
+        style = widget.style() if widget is not None else QApplication.style()
+        assert style is not None
+        style.drawControl(
+            QStyle.ControlElement.CE_ItemViewItem, opt, painter, widget
+        )
+        text_rect = style.subElementRect(
+            QStyle.SubElement.SE_ItemViewItemText, opt, widget
+        )
+        if not text_rect.isValid():
+            text_rect = opt.rect.adjusted(4, 0, -4, 0)
+        if opt.state & QStyle.StateFlag.State_Selected:
+            color = opt.palette.highlightedText().color()
+        else:
+            color = opt.palette.text().color()
+        painter.save()
+        painter.setFont(opt.font)
+        _draw_highlighted_text(
+            painter,
+            text_rect,
+            text,
+            needle,
+            color=color,
+            match_bg=_MATCH_BG,
+            match_fg=_MATCH_FG,
+        )
+        painter.restore()
+
+
+def _draw_highlighted_text(
+    painter: QPainter,
+    rect: QRect,
+    text: str,
+    needle: str,
+    *,
+    color: QColor,
+    match_bg: QColor,
+    match_fg: QColor,
+) -> None:
+    fm = QFontMetrics(painter.font())
+    flags = int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+    if not needle:
+        painter.setPen(color)
+        painter.drawText(rect, flags, text)
+        return
+    lower = text.lower()
+    n = needle.lower()
+    x = rect.x()
+    y = rect.y()
+    h = rect.height()
+    max_x = rect.right()
+    pos = 0
+    while pos < len(text) and x <= max_x:
+        idx = lower.find(n, pos)
+        if idx < 0:
+            chunk = text[pos:]
+            painter.setPen(color)
+            painter.drawText(QRect(x, y, max_x - x + 1, h), flags, chunk)
+            break
+        if idx > pos:
+            chunk = text[pos:idx]
+            w = fm.horizontalAdvance(chunk)
+            painter.setPen(color)
+            painter.drawText(QRect(x, y, w, h), flags, chunk)
+            x += w
+        match = text[idx : idx + len(needle)]
+        w = fm.horizontalAdvance(match)
+        painter.fillRect(QRect(x, y + 1, w, h - 2), match_bg)
+        painter.setPen(match_fg)
+        painter.drawText(QRect(x, y, w, h), flags, match)
+        x += w
+        pos = idx + len(needle)
 
 
 class StringPickerDialog(QDialog):
@@ -36,6 +137,9 @@ class StringPickerDialog(QDialog):
         *,
         current_id: str = "",
         start_filter: str = "",
+        anomaly_root: str = "",
+        gamma_root: str = "",
+        root_groups: list[StringRootGroup] | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Select text")
@@ -44,9 +148,27 @@ class StringPickerDialog(QDialog):
         self._resolver = resolver
         self._entries: list[StringCatalogEntry] = []
         self._current_id = (current_id or "").strip()
+        self._highlight_needle = ""
+        self._root_groups = root_groups or build_string_picker_root_groups(
+            resolver,
+            anomaly_root=anomaly_root,
+            gamma_root=gamma_root,
+        )
 
         lay = QVBoxLayout(self)
         top = QHBoxLayout()
+        top.addWidget(QLabel("Root"))
+        self.root_combo = QComboBox()
+        for g in self._root_groups:
+            self.root_combo.addItem(f"{g.label}  ({len(g.text_roots)} dir)", g)
+        self.root_combo.setToolTip(
+            "Limit the list to one install / custom root. Custom is default."
+        )
+        top.addWidget(self.root_combo, stretch=1)
+        lay.addLayout(top)
+        self.root_combo.currentIndexChanged.connect(self._on_root_changed)
+
+        filt = QHBoxLayout()
         self.filter_edit = QLineEdit()
         self.filter_edit.setPlaceholderText(
             "Filter by id or text (e.g. st_new_game, Start)…"
@@ -54,8 +176,8 @@ class StringPickerDialog(QDialog):
         if start_filter:
             self.filter_edit.setText(start_filter)
         self.filter_edit.textChanged.connect(self._apply_filter)
-        top.addWidget(self.filter_edit, stretch=1)
-        lay.addLayout(top)
+        filt.addWidget(self.filter_edit, stretch=1)
+        lay.addLayout(filt)
 
         self.status = QLabel("Scanning strings…")
         self.status.setStyleSheet("color: #9a9a9a;")
@@ -75,6 +197,7 @@ class StringPickerDialog(QDialog):
         self.list = QListWidget()
         self.list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.list.setUniformItemSizes(True)
+        self.list.setItemDelegate(_MatchHighlightDelegate(self))
         self.list.itemDoubleClicked.connect(self.accept)
         self.list.itemSelectionChanged.connect(self._on_selection_changed)
         lay.addWidget(self.list, stretch=1)
@@ -107,10 +230,25 @@ class StringPickerDialog(QDialog):
             source=Path(str(path)),
         )
 
+    def _selected_root_group(self) -> StringRootGroup:
+        data = self.root_combo.currentData()
+        if isinstance(data, StringRootGroup):
+            return data
+        return self._root_groups[0]
+
+    def _on_root_changed(self, _index: int = 0) -> None:
+        self._scan_and_populate()
+
     def _scan_and_populate(self) -> None:
+        group = self._selected_root_group()
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
-            self._entries = self._resolver.scan_catalog()
+            if group.label == "All":
+                self._entries = self._resolver.scan_catalog(source_roots=None)
+            else:
+                self._entries = self._resolver.scan_catalog(
+                    source_roots=list(group.text_roots)
+                )
         finally:
             QApplication.restoreOverrideCursor()
         self.list.clear()
@@ -152,10 +290,13 @@ class StringPickerDialog(QDialog):
             if show:
                 visible += 1
         total = len(self._entries)
+        # Highlight match spans only when the filtered set is small enough.
+        self._highlight_needle = needle if needle and visible < _HIGHLIGHT_MAX else ""
         if needle:
             self.status.setText(f"{visible} / {total} strings")
         else:
             self.status.setText(f"{total} strings")
+        self.list.viewport().update()
 
     def _on_selection_changed(self) -> None:
         entry = self.selected_entry()

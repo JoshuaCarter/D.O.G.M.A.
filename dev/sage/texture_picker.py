@@ -7,21 +7,24 @@ Engine model (CUITextureMaster):
 
 from __future__ import annotations
 
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 
 from PIL import Image
-from PyQt6.QtCore import QSize, Qt, QTimer
-from PyQt6.QtGui import QColor, QIcon, QImage, QPainter, QPixmap
+from PyQt6.QtCore import QObject, QSize, Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QColor, QIcon, QImage, QPainter, QPixmap, QWheelEvent
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QButtonGroup,
     QCheckBox,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListView,
     QListWidget,
     QListWidgetItem,
     QRadioButton,
@@ -32,9 +35,11 @@ from PyQt6.QtWidgets import (
 from .textures import (
     AtlasCatalogEntry,
     DdsCatalogEntry,
+    PICKER_THUMB_SIZE,
+    PickerRootGroup,
     TexturePick,
     TextureResolver,
-    scan_dds_catalog,
+    build_picker_thumb_image,
 )
 
 _ROLE_KIND = int(Qt.ItemDataRole.UserRole)
@@ -42,8 +47,35 @@ _ROLE_NAME = int(Qt.ItemDataRole.UserRole) + 1
 _ROLE_PATH = int(Qt.ItemDataRole.UserRole) + 2
 _ROLE_FILE = int(Qt.ItemDataRole.UserRole) + 3
 _ROLE_UV = int(Qt.ItemDataRole.UserRole) + 4  # "x,y,w,h" or ""
-_THUMB = 96
-_BATCH = 10
+_ROLE_SHORT = int(Qt.ItemDataRole.UserRole) + 5  # icon-grid caption
+_THUMB = PICKER_THUMB_SIZE
+_SCROLL_SETTLE_MS = 80
+_MAX_WORKERS = 8
+# Wheel: fixed pixels per 120° notch (not a fraction of content height).
+_WHEEL_STEP_PX = 120
+
+
+class _FixedWheelList(QListWidget):
+    """List whose wheel scroll distance is independent of document length."""
+
+    def wheelEvent(self, event: QWheelEvent) -> None:  # noqa: N802
+        pd = event.pixelDelta()
+        ad = event.angleDelta()
+        if not pd.isNull() and (pd.x() != 0 or pd.y() != 0):
+            dx, dy = int(pd.x()), int(pd.y())
+        elif ad.x() != 0 or ad.y() != 0:
+            dx = int(ad.x() / 120.0 * _WHEEL_STEP_PX)
+            dy = int(ad.y() / 120.0 * _WHEEL_STEP_PX)
+        else:
+            super().wheelEvent(event)
+            return
+        if dy:
+            bar = self.verticalScrollBar()
+            bar.setValue(bar.value() - dy)
+        if dx:
+            bar = self.horizontalScrollBar()
+            bar.setValue(bar.value() - dx)
+        event.accept()
 
 
 def _placeholder_icon(size: int = _THUMB) -> QIcon:
@@ -62,40 +94,35 @@ def _fail_icon(size: int = _THUMB) -> QIcon:
     return QIcon(fail)
 
 
-def _pil_to_icon(img: Image.Image, size: int = _THUMB) -> QIcon:
+def _pil_to_qimage(img: Image.Image, size: int = _THUMB) -> QImage:
+    """Convert an already-sized RGBA thumb (or any PIL image) to QImage."""
     img = img.convert("RGBA")
-    img.thumbnail((size, size), Image.Resampling.LANCZOS)
-    bg = Image.new("RGBA", (size, size), (42, 42, 48, 255))
-    ox = (size - img.width) // 2
-    oy = (size - img.height) // 2
-    bg.paste(img, (ox, oy), img)
-    data = bg.tobytes("raw", "RGBA")
-    qimg = QImage(data, size, size, size * 4, QImage.Format.Format_RGBA8888).copy()
-    return QIcon(QPixmap.fromImage(qimg))
+    if img.size != (size, size):
+        # Letterbox path for unexpected sizes; normal cache hits are size×size.
+        from .textures import letterbox_thumb
+
+        img = letterbox_thumb(img, size)
+    data = img.tobytes("raw", "RGBA")
+    return QImage(data, size, size, size * 4, QImage.Format.Format_RGBA8888).copy()
 
 
-def _thumb_from_dds(
+def _thumb_qimage_from_dds(
     path: Path,
     *,
     uv: tuple[float, float, float, float] | None = None,
     size: int = _THUMB,
-) -> QIcon | None:
-    try:
-        img = Image.open(path)
-        img.load()
-        img = img.convert("RGBA")
-    except OSError:
+) -> QImage | None:
+    """Decode off the UI thread (disk thumb cache → DDS RGBA cache)."""
+    img = build_picker_thumb_image(path, uv=uv, size=size)
+    if img is None:
         return None
-    if uv is not None:
-        x, y, w, h = uv
-        if w > 0 and h > 0:
-            left = max(0, int(x))
-            top = max(0, int(y))
-            right = min(img.width, int(x + w))
-            bottom = min(img.height, int(y + h))
-            if right > left and bottom > top:
-                img = img.crop((left, top, right, bottom))
-    return _pil_to_icon(img, size)
+    return _pil_to_qimage(img, size)
+
+
+class _ThumbBridge(QObject):
+    """Marshal worker results back to the UI thread."""
+
+    ready = pyqtSignal(str, object)  # cache key, QImage | None
 
 
 class TexturePickerDialog(QDialog):
@@ -108,20 +135,36 @@ class TexturePickerDialog(QDialog):
         *,
         current_name: str = "",
         prefer_path: bool = False,
+        root_groups: list[PickerRootGroup] | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Select texture")
         self.setModal(True)
         self.resize(820, 580)
         self._resolver = resolver
-        self._atlas: list[AtlasCatalogEntry] = []
-        self._dds: list[DdsCatalogEntry] = []
+        self._root_groups = list(root_groups or [])
+        if not self._root_groups:
+            roots = tuple(resolver.dds_search_roots())
+            descr = tuple(
+                list(resolver.gamedata_descr_roots) + list(resolver.descr_scan_roots)
+            )
+            self._root_groups = [PickerRootGroup("All", roots, descr)]
+        # None = not loaded for current root (avoid building DDS catalog in atlas mode).
+        self._atlas: list[AtlasCatalogEntry] | None = None
+        self._dds: list[DdsCatalogEntry] | None = None
         self._placeholder = _placeholder_icon()
         self._fail = _fail_icon()
         self._thumb_cache: dict[str, QIcon] = {}
-        self._thumb_queue: list[QListWidgetItem] = []
+        # Visible items waiting for a decode (key → item).
+        self._pending: dict[str, QListWidgetItem] = {}
+        # In-flight worker futures (key → Future).
+        self._inflight: dict[str, Future] = {}
+        self._wanted: set[str] = set()
         self._current = (current_name or "").strip()
         self._mode = "path" if prefer_path else "atlas"
+        self._pool = ThreadPoolExecutor(max_workers=_MAX_WORKERS)
+        self._bridge = _ThumbBridge()
+        self._bridge.ready.connect(self._on_thumb_ready)
 
         lay = QVBoxLayout(self)
 
@@ -153,6 +196,20 @@ class TexturePickerDialog(QDialog):
         mode_row.addWidget(self.preview_check)
         lay.addLayout(mode_row)
 
+        root_row = QHBoxLayout()
+        root_row.addWidget(QLabel("Root"))
+        self.root_combo = QComboBox()
+        for g in self._root_groups:
+            n_tex = len(g.texture_roots)
+            n_descr = len(g.descr_roots)
+            self.root_combo.addItem(f"{g.label}  ({n_tex} tex · {n_descr} descr)", g)
+        self.root_combo.setToolTip(
+            "Limit the list to one install / custom root. Custom is default (small)."
+        )
+        root_row.addWidget(self.root_combo, stretch=1)
+        lay.addLayout(root_row)
+        self.root_combo.currentIndexChanged.connect(self._on_root_changed)
+
         self.filter_edit = QLineEdit()
         self.filter_edit.setPlaceholderText("Filter…")
         self.filter_edit.textChanged.connect(self._apply_filter)
@@ -170,15 +227,22 @@ class TexturePickerDialog(QDialog):
         self.detail.setMinimumHeight(48)
         lay.addWidget(self.detail)
 
-        self.list = QListWidget()
+        self.list = _FixedWheelList()
         self.list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.list.setResizeMode(QListWidget.ResizeMode.Adjust)
         self.list.setMovement(QListWidget.Movement.Static)
         self.list.setWordWrap(True)
         self.list.setUniformItemSizes(True)
+        self.list.setLayoutMode(QListView.LayoutMode.Batched)
+        self.list.setBatchSize(64)
+        self.list.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.list.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.list.verticalScrollBar().setSingleStep(_WHEEL_STEP_PX // 3)
+        self.list.horizontalScrollBar().setSingleStep(_WHEEL_STEP_PX // 3)
         self.list.itemDoubleClicked.connect(self.accept)
         self.list.itemSelectionChanged.connect(self._on_selection_changed)
         self.list.verticalScrollBar().valueChanged.connect(self._on_scroll)
+        self.list.horizontalScrollBar().valueChanged.connect(self._on_scroll)
         lay.addWidget(self.list, stretch=1)
 
         buttons = QDialogButtonBox(
@@ -192,12 +256,19 @@ class TexturePickerDialog(QDialog):
             self._ok.setEnabled(False)
         lay.addWidget(buttons)
 
-        self._thumb_timer = QTimer(self)
-        self._thumb_timer.setInterval(0)
-        self._thumb_timer.timeout.connect(self._load_thumb_batch)
+        # Debounce: rebuild visible thumb work after scroll settles.
+        self._scroll_timer = QTimer(self)
+        self._scroll_timer.setSingleShot(True)
+        self._scroll_timer.setInterval(_SCROLL_SETTLE_MS)
+        self._scroll_timer.timeout.connect(self._sync_visible_thumbs)
 
         self._set_icon_mode(True)
         QTimer.singleShot(0, self._scan_and_populate)
+
+    def closeEvent(self, event) -> None:  # noqa: N802
+        self._cancel_all_thumbs()
+        self._pool.shutdown(wait=False, cancel_futures=True)
+        super().closeEvent(event)
 
     def selected_pick(self) -> TexturePick | None:
         item = self.list.currentItem()
@@ -214,7 +285,6 @@ class TexturePickerDialog(QDialog):
             dds_path=Path(path_s) if path_s else None,
         )
 
-    # Back-compat for older callers
     def selected_entry(self) -> DdsCatalogEntry | None:
         pick = self.selected_pick()
         if pick is None or pick.kind != "path" or pick.dds_path is None:
@@ -223,7 +293,51 @@ class TexturePickerDialog(QDialog):
 
     def _on_mode_changed(self, _checked: bool = False) -> None:
         self._mode = "atlas" if self.mode_atlas.isChecked() else "path"
+        self._ensure_mode_catalog()
         self._populate_list()
+
+    def _on_root_changed(self, _index: int = 0) -> None:
+        self._atlas = None
+        self._dds = None
+        self._scan_and_populate()
+
+    def _selected_root_group(self) -> PickerRootGroup:
+        data = self.root_combo.currentData()
+        if isinstance(data, PickerRootGroup):
+            return data
+        return self._root_groups[0]
+
+    def _ensure_mode_catalog(self) -> None:
+        """Load only the catalog needed for the current mode + root."""
+        group = self._selected_root_group()
+        if self._mode == "atlas":
+            if self._atlas is not None:
+                return
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            try:
+                if group.label == "All":
+                    self._atlas = self._resolver.scan_atlas_catalog(
+                        source_roots=None
+                    )
+                else:
+                    self._atlas = self._resolver.scan_atlas_catalog(
+                        source_roots=list(group.descr_roots)
+                    )
+            finally:
+                QApplication.restoreOverrideCursor()
+            return
+        if self._dds is not None:
+            return
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            if group.label == "All":
+                self._dds = self._resolver.dds_catalog_for_roots(None)
+            else:
+                self._dds = self._resolver.dds_catalog_for_roots(
+                    list(group.texture_roots)
+                )
+        finally:
+            QApplication.restoreOverrideCursor()
 
     def _set_icon_mode(self, on: bool) -> None:
         if on:
@@ -234,107 +348,134 @@ class TexturePickerDialog(QDialog):
             hint = QSize(_THUMB + 48, _THUMB + 56)
         else:
             self.list.setViewMode(QListWidget.ViewMode.ListMode)
-            self.list.setIconSize(QSize(28, 28))
+            self.list.setIconSize(QSize(0, 0))
             self.list.setGridSize(QSize())
-            self.list.setSpacing(2)
-            hint = QSize(240, 32)
+            self.list.setSpacing(0)
+            hint = QSize(240, 22)
         for i in range(self.list.count()):
             item = self.list.item(i)
             if item is not None:
                 item.setSizeHint(hint)
+                if on:
+                    item.setIcon(self._placeholder)
+                else:
+                    item.setIcon(QIcon())
+                item.setText(self._item_label(item, preview=on))
+
+    def _item_label(self, item: QListWidgetItem, *, preview: bool) -> str:
+        short = str(item.data(_ROLE_SHORT) or item.data(_ROLE_NAME) or "")
+        if preview:
+            return short
+        kind = str(item.data(_ROLE_KIND) or "")
+        file_name = str(item.data(_ROLE_FILE) or "")
+        if kind == "atlas" and file_name:
+            return f"{short}  ·  {file_name}"
+        return short
 
     def _on_preview_toggled(self, checked: bool) -> None:
         self._set_icon_mode(checked)
         if checked:
-            self._queue_visible_thumbs()
-            if not self._thumb_timer.isActive():
-                self._thumb_timer.start()
+            self._sync_visible_thumbs()
+        else:
+            self._cancel_all_thumbs()
 
-    def _on_scroll(self, _value: int) -> None:
+    def _on_scroll(self, _value: int = 0) -> None:
         if not self.preview_check.isChecked():
             return
-        self._queue_visible_thumbs()
-        if not self._thumb_timer.isActive():
-            self._thumb_timer.start()
+        # Drop work for cells that left the viewport immediately; load after settle.
+        self._prune_pending_to_visible()
+        self._scroll_timer.start()
 
     def _scan_and_populate(self) -> None:
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        try:
-            self._atlas = self._resolver.scan_atlas_catalog()
-            self._dds = scan_dds_catalog(self._resolver.dds_search_roots())
-        finally:
-            QApplication.restoreOverrideCursor()
+        self._ensure_mode_catalog()
         self._populate_list()
 
     def _populate_list(self) -> None:
+        self._cancel_all_thumbs()
+        self.list.setUpdatesEnabled(False)
         self.list.clear()
-        self._thumb_queue.clear()
         select_row = -1
         cur = self._current.lower().replace("/", "\\")
+        preview = self.preview_check.isChecked()
         hint = (
-            QSize(_THUMB + 48, _THUMB + 56)
-            if self.preview_check.isChecked()
-            else QSize(240, 32)
+            QSize(_THUMB + 48, _THUMB + 56) if preview else QSize(240, 22)
         )
+        atlas = self._atlas or []
+        dds_list = self._dds or []
 
-        if self._mode == "atlas":
-            self.filter_edit.setPlaceholderText(
-                "Filter atlas id or sheet (e.g. ui_inGame2_button, ui\\dots)…"
-            )
-            for i, entry in enumerate(self._atlas):
-                label = entry.atlas_id
-                if entry.is_stem:
-                    label = f"{entry.atlas_id}  (stem)"
-                item = QListWidgetItem(self._placeholder, label)
-                item.setData(_ROLE_KIND, "atlas")
-                item.setData(_ROLE_NAME, entry.atlas_id)
-                dds = self._resolver.find_dds(entry.file_name)
-                item.setData(_ROLE_PATH, str(dds) if dds else "")
-                item.setData(_ROLE_FILE, entry.file_name)
-                item.setData(
-                    _ROLE_UV,
-                    f"{entry.x},{entry.y},{entry.width},{entry.height}",
+        try:
+            if self._mode == "atlas":
+                self.filter_edit.setPlaceholderText(
+                    "Filter atlas id or sheet (e.g. ui_inGame2_button, ui\\dots)…"
                 )
-                tip = (
-                    f"{entry.atlas_id}\n"
-                    f"sheet: {entry.file_name}\n"
-                    f"UV {int(entry.x)},{int(entry.y)} "
-                    f"{int(entry.width)}×{int(entry.height)}"
+                # One find_dds per unique sheet — GAMMA has thousands of ids, few sheets.
+                dds_by_file: dict[str, str] = {}
+                for entry in atlas:
+                    fn = entry.file_name
+                    if fn in dds_by_file:
+                        continue
+                    dds = self._resolver.find_dds(fn)
+                    dds_by_file[fn] = str(dds) if dds else ""
+                for i, entry in enumerate(atlas):
+                    short = entry.atlas_id
+                    if entry.is_stem:
+                        short = f"{entry.atlas_id}  (stem)"
+                    item = QListWidgetItem()
+                    item.setData(_ROLE_KIND, "atlas")
+                    item.setData(_ROLE_NAME, entry.atlas_id)
+                    item.setData(_ROLE_SHORT, short)
+                    item.setData(_ROLE_PATH, dds_by_file.get(entry.file_name, ""))
+                    item.setData(_ROLE_FILE, entry.file_name)
+                    item.setData(
+                        _ROLE_UV,
+                        f"{entry.x},{entry.y},{entry.width},{entry.height}",
+                    )
+                    tip = (
+                        f"{entry.atlas_id}\n"
+                        f"sheet: {entry.file_name}\n"
+                        f"UV {int(entry.x)},{int(entry.y)} "
+                        f"{int(entry.width)}×{int(entry.height)}"
+                    )
+                    if entry.is_stem:
+                        tip += f"\n(button stem → {entry.state_id})"
+                    tip += f"\n{entry.source}"
+                    item.setToolTip(tip)
+                    item.setText(self._item_label(item, preview=preview))
+                    item.setIcon(self._placeholder if preview else QIcon())
+                    item.setSizeHint(hint)
+                    self.list.addItem(item)
+                    if cur and entry.atlas_id.lower() == cur:
+                        select_row = i
+                self.status.setText(f"{len(atlas)} atlas ids")
+            else:
+                self.filter_edit.setPlaceholderText(
+                    "Filter DDS path (e.g. ui\\, lightgem)…"
                 )
-                if entry.is_stem:
-                    tip += f"\n(button stem → {entry.state_id})"
-                tip += f"\n{entry.source}"
-                item.setToolTip(tip)
-                item.setSizeHint(hint)
-                self.list.addItem(item)
-                if cur and entry.atlas_id.lower() == cur:
-                    select_row = i
-            self.status.setText(f"{len(self._atlas)} atlas ids")
-        else:
-            self.filter_edit.setPlaceholderText(
-                "Filter DDS path (e.g. ui\\, lightgem)…"
-            )
-            for i, entry in enumerate(self._dds):
-                item = QListWidgetItem(self._placeholder, entry.logical)
-                item.setData(_ROLE_KIND, "path")
-                item.setData(_ROLE_NAME, entry.logical)
-                item.setData(_ROLE_PATH, str(entry.path))
-                item.setData(_ROLE_FILE, entry.logical)
-                item.setData(_ROLE_UV, "")
-                item.setToolTip(f"{entry.logical}\n{entry.path}")
-                item.setSizeHint(hint)
-                self.list.addItem(item)
-                if cur and entry.logical.lower() == cur:
-                    select_row = i
-            self.status.setText(f"{len(self._dds)} DDS paths")
+                for i, entry in enumerate(dds_list):
+                    item = QListWidgetItem()
+                    item.setData(_ROLE_KIND, "path")
+                    item.setData(_ROLE_NAME, entry.logical)
+                    item.setData(_ROLE_SHORT, entry.logical)
+                    item.setData(_ROLE_PATH, str(entry.path))
+                    item.setData(_ROLE_FILE, entry.logical)
+                    item.setData(_ROLE_UV, "")
+                    item.setToolTip(f"{entry.logical}\n{entry.path}")
+                    item.setText(self._item_label(item, preview=preview))
+                    item.setIcon(self._placeholder if preview else QIcon())
+                    item.setSizeHint(hint)
+                    self.list.addItem(item)
+                    if cur and entry.logical.lower() == cur:
+                        select_row = i
+                self.status.setText(f"{len(dds_list)} DDS paths")
 
-        self._apply_filter(self.filter_edit.text())
-        if select_row >= 0:
-            self.list.setCurrentRow(select_row)
-            self.list.scrollToItem(self.list.item(select_row))
+            self._apply_filter(self.filter_edit.text())
+            if select_row >= 0:
+                self.list.setCurrentRow(select_row)
+                self.list.scrollToItem(self.list.item(select_row))
+        finally:
+            self.list.setUpdatesEnabled(True)
         if self.preview_check.isChecked():
-            self._queue_visible_thumbs()
-            self._thumb_timer.start()
+            self._sync_visible_thumbs()
         self._on_selection_changed()
 
     def _apply_filter(self, text: str) -> None:
@@ -357,9 +498,7 @@ class TexturePickerDialog(QDialog):
         else:
             self.status.setText(f"{total} {kind}")
         if self.preview_check.isChecked():
-            self._queue_visible_thumbs()
-            if not self._thumb_timer.isActive():
-                self._thumb_timer.start()
+            self._sync_visible_thumbs()
 
     def _on_selection_changed(self) -> None:
         pick = self.selected_pick()
@@ -390,71 +529,129 @@ class TexturePickerDialog(QDialog):
         uv = str(item.data(_ROLE_UV) or "")
         return f"{path}|{uv}"
 
-    def _queue_visible_thumbs(self) -> None:
-        self._thumb_queue.clear()
+    def _iter_visible_items(self) -> list[QListWidgetItem]:
+        """Items whose cells intersect the viewport (not merely unfiltered)."""
         rect = self.list.viewport().rect()
-        queued: set[int] = set()
+        # Slight pad so near-edge cells start loading before fully on screen.
+        rect = rect.adjusted(-8, -8, 8, 8)
+        out: list[QListWidgetItem] = []
         for i in range(self.list.count()):
             item = self.list.item(i)
             if item is None or item.isHidden():
-                continue
-            key = self._cache_key(item)
-            if key in self._thumb_cache:
-                item.setIcon(self._thumb_cache[key])
                 continue
             idx = self.list.indexFromItem(item)
-            if idx.isValid() and self.list.visualRect(idx).intersects(rect):
-                self._thumb_queue.append(item)
-                queued.add(i)
-        for i in range(self.list.count()):
-            if i in queued:
+            if not idx.isValid():
                 continue
-            item = self.list.item(i)
-            if item is None or item.isHidden():
-                continue
-            key = self._cache_key(item)
-            if key in self._thumb_cache:
-                item.setIcon(self._thumb_cache[key])
-                continue
-            self._thumb_queue.append(item)
+            if self.list.visualRect(idx).intersects(rect):
+                out.append(item)
+        return out
 
-    def _load_thumb_batch(self) -> None:
+    def _prune_pending_to_visible(self) -> None:
+        """Cancel queued/in-flight work for cells that left the viewport."""
+        visible_keys = {self._cache_key(it) for it in self._iter_visible_items()}
+        self._wanted = visible_keys
+        for key in list(self._pending):
+            if key not in visible_keys:
+                self._pending.pop(key, None)
+        for key, fut in list(self._inflight.items()):
+            if key in visible_keys:
+                continue
+            fut.cancel()
+            self._inflight.pop(key, None)
+
+    def _cancel_all_thumbs(self) -> None:
+        self._scroll_timer.stop()
+        self._wanted.clear()
+        self._pending.clear()
+        for fut in self._inflight.values():
+            fut.cancel()
+        self._inflight.clear()
+
+    def _sync_visible_thumbs(self) -> None:
+        """Apply cached icons + start async decode only for visible cells."""
         if not self.preview_check.isChecked():
-            self._thumb_timer.stop()
             return
-        n = 0
-        while self._thumb_queue and n < _BATCH:
-            item = self._thumb_queue.pop(0)
-            n += 1
-            if item is None or item.isHidden():
+        visible = self._iter_visible_items()
+        wanted = {self._cache_key(it) for it in visible}
+        self._wanted = wanted
+
+        # Drop pending for off-screen cells.
+        for key in list(self._pending):
+            if key not in wanted:
+                self._pending.pop(key, None)
+        for key, fut in list(self._inflight.items()):
+            if key in wanted:
                 continue
+            fut.cancel()
+            self._inflight.pop(key, None)
+
+        for item in visible:
             key = self._cache_key(item)
-            if key in self._thumb_cache:
-                item.setIcon(self._thumb_cache[key])
+            cached = self._thumb_cache.get(key)
+            if cached is not None:
+                item.setIcon(cached)
                 continue
-            path_s = str(item.data(_ROLE_PATH) or "")
-            uv_s = str(item.data(_ROLE_UV) or "")
-            icon: QIcon | None = None
-            if path_s:
+            if key in self._inflight or key in self._pending:
+                continue
+            self._pending[key] = item
+            self._submit_thumb(key, item)
+
+    def _submit_thumb(self, key: str, item: QListWidgetItem) -> None:
+        path_s = str(item.data(_ROLE_PATH) or "")
+        uv_s = str(item.data(_ROLE_UV) or "")
+        if not path_s:
+            self._thumb_cache[key] = self._fail
+            item.setIcon(self._fail)
+            self._pending.pop(key, None)
+            return
+        uv: tuple[float, float, float, float] | None = None
+        if uv_s:
+            try:
+                parts = [float(x) for x in uv_s.split(",")]
+                if len(parts) == 4:
+                    uv = (parts[0], parts[1], parts[2], parts[3])
+            except ValueError:
                 uv = None
-                if uv_s:
-                    try:
-                        parts = [float(x) for x in uv_s.split(",")]
-                        if len(parts) == 4:
-                            uv = (parts[0], parts[1], parts[2], parts[3])
-                    except ValueError:
-                        uv = None
-                icon = _thumb_from_dds(Path(path_s), uv=uv)
-            if icon is None:
-                icon = self._fail
-            self._thumb_cache[key] = icon
+        path = Path(path_s)
+
+        def work() -> tuple[str, QImage | None]:
+            return key, _thumb_qimage_from_dds(path, uv=uv, size=_THUMB)
+
+        fut = self._pool.submit(work)
+        self._inflight[key] = fut
+
+        def _done(f: Future) -> None:
+            try:
+                if f.cancelled():
+                    return
+                result = f.result()
+            except Exception:
+                result = (key, None)
+            self._bridge.ready.emit(result[0], result[1])
+
+        fut.add_done_callback(_done)
+
+    def _on_thumb_ready(self, key: str, image: object) -> None:
+        self._inflight.pop(key, None)
+        item = self._pending.pop(key, None)
+        if isinstance(image, QImage):
+            icon = QIcon(QPixmap.fromImage(image))
+        else:
+            icon = self._fail
+        self._thumb_cache[key] = icon
+        # Only paint if preview on and still wanted (visible); cache kept for later.
+        if not self.preview_check.isChecked() or key not in self._wanted:
+            return
+        if item is None:
+            # Find by key among visible if pending was pruned.
+            for it in self._iter_visible_items():
+                if self._cache_key(it) == key:
+                    item = it
+                    break
+        if item is not None:
             item.setIcon(icon)
-        if not self._thumb_queue:
-            self._thumb_timer.stop()
 
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
         if self.preview_check.isChecked():
-            self._queue_visible_thumbs()
-            if not self._thumb_timer.isActive():
-                self._thumb_timer.start()
+            self._scroll_timer.start()

@@ -38,10 +38,14 @@ def looks_like_textures_descr(
     return False
 
 
-def _fmt_num(v: float) -> str:
-    if abs(v - round(v)) < 1e-6:
-        return str(int(round(v)))
-    return f"{v:g}"
+def _fmt_uv(v: float) -> str:
+    """textures_descr UV is pixel coords — always whole numbers."""
+    return str(int(round(float(v))))
+
+
+def _uv_i(v: float) -> float:
+    """Store UV as integer-valued float for QGraphics / math APIs."""
+    return float(int(round(float(v))))
 
 
 def _indent(elem: ET.Element, level: int = 0) -> None:
@@ -75,10 +79,10 @@ class DescrRegion:
     def sync_from_element(self) -> None:
         self.atlas_id = (self.element.get("id") or "").strip()
         try:
-            self.x = float(self.element.get("x", "0") or 0)
-            self.y = float(self.element.get("y", "0") or 0)
-            self.width = float(self.element.get("width", "0") or 0)
-            self.height = float(self.element.get("height", "0") or 0)
+            self.x = _uv_i(float(self.element.get("x", "0") or 0))
+            self.y = _uv_i(float(self.element.get("y", "0") or 0))
+            self.width = _uv_i(float(self.element.get("width", "0") or 0))
+            self.height = _uv_i(float(self.element.get("height", "0") or 0))
         except ValueError:
             pass
         self.width = max(1.0, self.width)
@@ -86,10 +90,10 @@ class DescrRegion:
 
     def apply_to_element(self) -> None:
         self.element.set("id", self.atlas_id)
-        self.element.set("x", _fmt_num(self.x))
-        self.element.set("y", _fmt_num(self.y))
-        self.element.set("width", _fmt_num(self.width))
-        self.element.set("height", _fmt_num(self.height))
+        self.element.set("x", _fmt_uv(self.x))
+        self.element.set("y", _fmt_uv(self.y))
+        self.element.set("width", _fmt_uv(self.width))
+        self.element.set("height", _fmt_uv(self.height))
 
     def set_geometry(
         self,
@@ -100,13 +104,13 @@ class DescrRegion:
         height: float | None = None,
     ) -> None:
         if x is not None:
-            self.x = float(x)
+            self.x = _uv_i(x)
         if y is not None:
-            self.y = float(y)
+            self.y = _uv_i(y)
         if width is not None:
-            self.width = max(1.0, float(width))
+            self.width = max(1.0, _uv_i(width))
         if height is not None:
-            self.height = max(1.0, float(height))
+            self.height = max(1.0, _uv_i(height))
         self.apply_to_element()
 
     def set_id(self, atlas_id: str) -> bool:

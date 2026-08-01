@@ -1,13 +1,20 @@
 """Resolve Stalker UI texture IDs / paths to DDS crops.
 
-Directory lists come from Setup / Rescan (saved in settings). Full-tree indexes are
-not built at launch — atlas/DDS lookups run for the IDs a loaded document needs.
+Directory lists come from Setup / Rescan (saved in settings). Path indexes build
+on first bind (per-root shards); picker thumbnails are generated then too.
+Document open warms only the atlas/DDS/string/font ids that file references.
 """
 
 from __future__ import annotations
 
 import codecs
+import os
 import struct
+import threading
+import time
+from collections import OrderedDict
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -15,12 +22,29 @@ from xml.etree import ElementTree as ET
 
 from PIL import Image
 
-from .cache_store import KIND_DESCR_FILES, PathIndex, roots_fingerprint
+from .cache_store import (
+    INSTALL_ORDER,
+    KIND_DESCR,
+    PathIndex,
+    load_dds_rgba_cache,
+    load_sheet_proxy,
+    save_dds_rgba_cache,
+    save_sheet_proxy,
+    sheet_proxy_cache_path,
+    sheet_proxy_divisor,
+)
 from .model import LayoutNode, TextureRef
 
+# Texture picker icon size (fit from low-res sheet proxy).
+PICKER_THUMB_SIZE = 192
+# In-memory sheet proxies so many atlas UVs sharing one DDS don't re-read PNG/DDS.
+_PROXY_MEM_MAX = 96
+_proxy_mem: OrderedDict[str, tuple[Image.Image, int, int]] = OrderedDict()
+_proxy_mem_lock = threading.Lock()
 
-def open_dds_image(path: Path | str) -> Image.Image | None:
-    """Open a DDS as RGBA. Falls back for Stalker A8 font atlases PIL rejects."""
+
+def _decode_dds_raw(path: Path) -> Image.Image | None:
+    """Decode DDS bytes without consulting the RGBA disk cache."""
     path_str = str(path)
     try:
         img = Image.open(path_str)
@@ -29,7 +53,7 @@ def open_dds_image(path: Path | str) -> Image.Image | None:
     except (OSError, NotImplementedError, ValueError):
         pass
     try:
-        raw = Path(path_str).read_bytes()
+        raw = path.read_bytes()
     except OSError:
         return None
     if len(raw) < 128 or raw[:4] != b"DDS ":
@@ -46,17 +70,133 @@ def open_dds_image(path: Path | str) -> Image.Image | None:
     if len(payload) < need:
         return None
     # A8 / L8 font sheets: 1 byte/pixel → white RGB + alpha.
-    if len(payload) == need or len(payload) >= need:
-        alpha = payload[:need]
-        rgba = bytearray(need * 4)
-        for i, a in enumerate(alpha):
-            o = i * 4
-            rgba[o] = 255
-            rgba[o + 1] = 255
-            rgba[o + 2] = 255
-            rgba[o + 3] = a
-        return Image.frombytes("RGBA", (width, height), bytes(rgba))
-    return None
+    alpha = payload[:need]
+    rgba = bytearray(need * 4)
+    for i, a in enumerate(alpha):
+        o = i * 4
+        rgba[o] = 255
+        rgba[o + 1] = 255
+        rgba[o + 2] = 255
+        rgba[o + 3] = a
+    return Image.frombytes("RGBA", (width, height), bytes(rgba))
+
+
+def open_dds_image(
+    path: Path | str, *, persist: bool = True
+) -> Image.Image | None:
+    """Open a DDS as RGBA. When ``persist``, write the decoded sheet to disk cache."""
+    p = Path(path)
+    cached = load_dds_rgba_cache(p)
+    if cached is not None:
+        return cached
+    img = _decode_dds_raw(p)
+    if img is not None and persist:
+        save_dds_rgba_cache(p, img)
+    return img
+
+
+def _crop_uv(
+    img: Image.Image, uv: tuple[float, float, float, float]
+) -> Image.Image:
+    x, y, w, h = uv
+    if w <= 0 or h <= 0:
+        return img
+    left = max(0, int(x))
+    top = max(0, int(y))
+    right = min(img.width, int(x + w))
+    bottom = min(img.height, int(y + h))
+    if right <= left or bottom <= top:
+        return img
+    return img.crop((left, top, right, bottom))
+
+
+def letterbox_thumb(
+    img: Image.Image, size: int = PICKER_THUMB_SIZE
+) -> Image.Image:
+    """Fit ``img`` inside a square picker swatch (scale up/down, no crop)."""
+    img = img.convert("RGBA")
+    w, h = img.size
+    if w <= 0 or h <= 0:
+        return Image.new("RGBA", (size, size), (42, 42, 48, 255))
+    # Contain: largest size that still fits; letterbox leftover with panel grey.
+    scale = min(size / float(w), size / float(h))
+    nw = max(1, int(round(w * scale)))
+    nh = max(1, int(round(h * scale)))
+    if (nw, nh) != (w, h):
+        resample = (
+            Image.Resampling.BOX if scale <= 1.0 else Image.Resampling.BILINEAR
+        )
+        img = img.resize((nw, nh), resample)
+    bg = Image.new("RGBA", (size, size), (42, 42, 48, 255))
+    bg.paste(img, ((size - nw) // 2, (size - nh) // 2), img)
+    return bg
+
+
+def make_sheet_proxy(sheet: Image.Image) -> tuple[Image.Image, int, int]:
+    """Quarter-res sheet proxy; returns (proxy, orig_w, orig_h)."""
+    sheet = sheet.convert("RGBA")
+    ow, oh = sheet.size
+    div = sheet_proxy_divisor()
+    nw = max(1, ow // div)
+    nh = max(1, oh // div)
+    proxy = sheet.resize((nw, nh), Image.Resampling.BOX)
+    return proxy, ow, oh
+
+
+def _proxy_mem_key(path: Path) -> str:
+    try:
+        resolved = path.resolve()
+        return f"{resolved}|{resolved.stat().st_mtime_ns}"
+    except OSError:
+        return str(path)
+
+
+def ensure_sheet_proxy(dds_path: Path | str) -> tuple[Image.Image, int, int] | None:
+    """Load or build the low-res sheet proxy for ``dds_path`` (process LRU)."""
+    path = Path(dds_path)
+    key = _proxy_mem_key(path)
+    with _proxy_mem_lock:
+        hit = _proxy_mem.get(key)
+        if hit is not None:
+            _proxy_mem.move_to_end(key)
+            return hit
+    disk = load_sheet_proxy(path)
+    if disk is not None:
+        proxy, ow, oh = disk
+    else:
+        sheet = open_dds_image(path, persist=False)
+        if sheet is None:
+            return None
+        proxy, ow, oh = make_sheet_proxy(sheet)
+        save_sheet_proxy(path, proxy, orig_w=ow, orig_h=oh)
+    with _proxy_mem_lock:
+        _proxy_mem[key] = (proxy, ow, oh)
+        _proxy_mem.move_to_end(key)
+        while len(_proxy_mem) > _PROXY_MEM_MAX:
+            _proxy_mem.popitem(last=False)
+    return proxy, ow, oh
+
+
+def build_picker_thumb_image(
+    dds_path: Path | str,
+    *,
+    uv: tuple[float, float, float, float] | None = None,
+    size: int = PICKER_THUMB_SIZE,
+) -> Image.Image | None:
+    """Picker thumb from the sheet proxy (scaled UV crop, fill preview box)."""
+    loaded = ensure_sheet_proxy(dds_path)
+    if loaded is None:
+        return None
+    proxy, ow, oh = loaded
+    if uv is None:
+        src = proxy
+    else:
+        sx = proxy.width / float(ow)
+        sy = proxy.height / float(oh)
+        x, y, w, h = uv
+        src = _crop_uv(proxy, (x * sx, y * sy, w * sx, h * sy))
+    return letterbox_thumb(src, size)
+
 
 # Init3tButton / checkbox / radio: XML names the stem; engine appends state.
 _STATE_SUFFIXES = ("_e", "_h", "_t", "_d", "_s", "_u")
@@ -205,6 +345,27 @@ def iter_texture_dir_roots(
     return roots
 
 
+def _scan_dds_under_roots(roots: list[Path], mapping: dict[str, Path]) -> None:
+    """Rglob ``*.dds`` into ``mapping`` (later roots override)."""
+    for root in roots:
+        if not root.is_dir():
+            continue
+        try:
+            for path in root.rglob("*.dds"):
+                if not path.is_file():
+                    continue
+                try:
+                    rel = path.relative_to(root)
+                except ValueError:
+                    continue
+                logical = str(rel.with_suffix("")).replace("/", "\\").lower()
+                if not logical:
+                    continue
+                mapping[logical] = path
+        except OSError:
+            continue
+
+
 def logical_dds_name(dds_path: Path, texture_roots: list[Path]) -> str | None:
     """Map a DDS under a texture root → game logical name (``ui\\foo``, no .dds)."""
     best: tuple[int, str] | None = None
@@ -221,18 +382,32 @@ def logical_dds_name(dds_path: Path, texture_roots: list[Path]) -> str | None:
     return best[1] if best else None
 
 
-def path_is_under_roots(path: Path, roots: list[Path]) -> bool:
+def _norm_dir_prefix(root: Path) -> str:
+    """Normalized directory prefix for fast ``startswith`` root checks."""
     try:
-        resolved = path.resolve()
+        s = os.path.normcase(str(root.resolve()))
+    except OSError:
+        s = os.path.normcase(str(root))
+    if s and s[-1] not in "\\/":
+        s += os.sep
+    return s
+
+
+def root_dir_prefixes(roots: list[Path]) -> list[str]:
+    """Precompute normalized root prefixes (call once per catalog filter)."""
+    return [_norm_dir_prefix(r) for r in roots]
+
+
+def path_is_under_prefixes(path: Path, prefixes: list[str]) -> bool:
+    try:
+        s = os.path.normcase(str(path.resolve()))
     except OSError:
         return False
-    for root in roots:
-        try:
-            resolved.relative_to(root.resolve())
-            return True
-        except (OSError, ValueError):
-            continue
-    return False
+    return any(s.startswith(p) for p in prefixes)
+
+
+def path_is_under_roots(path: Path, roots: list[Path]) -> bool:
+    return path_is_under_prefixes(path, root_dir_prefixes(roots))
 
 
 @dataclass(frozen=True)
@@ -286,6 +461,67 @@ def scan_dds_catalog(roots: list[Path]) -> list[DdsCatalogEntry]:
     return sorted(by_key.values(), key=lambda e: e.logical.lower())
 
 
+@dataclass(frozen=True)
+class PickerRootGroup:
+    """One texture-picker scope: label + texture dirs + descr dirs."""
+
+    label: str
+    texture_roots: tuple[Path, ...]
+    descr_roots: tuple[Path, ...]
+
+
+def build_picker_root_groups(
+    resolver: TextureResolver,
+    *,
+    anomaly_root: str | Path = "",
+    gamma_root: str | Path = "",
+) -> list[PickerRootGroup]:
+    """Custom first (default), then Anomaly / GAMMA / All."""
+    custom_tex = tuple(p for p in resolver.texture_scan_roots if p.is_dir())
+    custom_descr = tuple(p for p in resolver.descr_scan_roots if p.is_dir())
+    anom = Path(str(anomaly_root).strip()).expanduser() if str(anomaly_root).strip() else None
+    gam = Path(str(gamma_root).strip()).expanduser() if str(gamma_root).strip() else None
+
+    def _under(paths: list[Path], root: Path | None) -> tuple[Path, ...]:
+        if root is None or not root.is_dir():
+            return ()
+        try:
+            root_r = root.resolve()
+        except OSError:
+            root_r = root
+        out: list[Path] = []
+        for p in paths:
+            try:
+                p.resolve().relative_to(root_r)
+            except (OSError, ValueError):
+                continue
+            out.append(p)
+        return tuple(out)
+
+    all_tex = tuple(resolver.dds_search_roots())
+    all_descr = tuple(
+        p
+        for p in list(resolver.gamedata_descr_roots) + list(resolver.descr_scan_roots)
+        if p.is_dir()
+    )
+    anom_tex = _under(list(resolver.gamedata_texture_roots), anom)
+    anom_descr = _under(list(resolver.gamedata_descr_roots), anom)
+    gam_tex = _under(list(resolver.gamedata_texture_roots), gam)
+    gam_descr = _under(list(resolver.gamedata_descr_roots), gam)
+
+    groups: list[PickerRootGroup] = []
+    if custom_tex or custom_descr:
+        groups.append(
+            PickerRootGroup("Custom", custom_tex, custom_descr)
+        )
+    if anom_tex or anom_descr:
+        groups.append(PickerRootGroup("Anomaly", anom_tex, anom_descr))
+    if gam_tex or gam_descr:
+        groups.append(PickerRootGroup("GAMMA", gam_tex, gam_descr))
+    groups.append(PickerRootGroup("All", all_tex, all_descr))
+    return groups
+
+
 def collect_doc_texture_ids(doc: LayoutNode) -> tuple[set[str], set[str]]:
     """Atlas ids and direct texture paths referenced by a layout tree."""
     atlas: set[str] = set()
@@ -324,8 +560,23 @@ class TextureResolver:
         self._descr_files: list[Path] | None = None
         self._dds_search_roots: list[Path] | None = None
         self._dds_map_ready = False
+        self._thumb_abort = False
+        self._thumb_pool: ThreadPoolExecutor | None = None
+        self._atlas_catalog_cache: dict[tuple[str, ...], list[AtlasCatalogEntry]] = {}
+        self._dds_catalog_cache: dict[tuple[str, ...], list[DdsCatalogEntry]] = {}
+
+    def abort_picker_thumbs(self) -> None:
+        """Cancel in-flight thumb warm (close / quit). Releases file locks ASAP."""
+        self._thumb_abort = True
+        pool = self._thumb_pool
+        if pool is not None:
+            try:
+                pool.shutdown(wait=False, cancel_futures=True)
+            except Exception:
+                pass
 
     def clear_cache(self) -> None:
+        """Full memory clear (rescan / rebind). Drops decoded DDS images too."""
         self._atlas.clear()
         self._atlas_missing.clear()
         self._dds_index.clear()
@@ -333,7 +584,18 @@ class TextureResolver:
         self._descr_files = None
         self._dds_search_roots = None
         self._dds_map_ready = False
+        self._atlas_catalog_cache.clear()
+        self._dds_catalog_cache.clear()
         self._open_dds.cache_clear()
+        self._resolve_cached.cache_clear()
+        with _proxy_mem_lock:
+            _proxy_mem.clear()
+
+    def clear_document_cache(self) -> None:
+        """Drop per-document atlas/UV resolve state; keep DDS map + decoded images."""
+        self._atlas.clear()
+        self._atlas_missing.clear()
+        self._dds_missing.clear()
         self._resolve_cached.cache_clear()
 
     def rebuild_indexes(self) -> None:
@@ -350,7 +612,7 @@ class TextureResolver:
             self._dds_index.clear()
             self._dds_missing.clear()
             self._dds_search_roots = None
-        n_descr = len(self._iter_descr_files())
+        n_descr = len(self._iter_descr_files(force=force))
         n_dds = self._ensure_dds_map(force=force)
         if self.path_index is not None:
             self.path_index.save()
@@ -360,36 +622,37 @@ class TextureResolver:
         if self._dds_map_ready and not force:
             return len(self._dds_index)
         roots = self._iter_dds_search_roots()
-        fp = roots_fingerprint(roots)
         if not force and self.path_index is not None:
-            cached = self.path_index.get_dds_map(fp)
+            cached = self.path_index.get_dds_map(roots)
             if cached is not None:
                 self._dds_index = dict(cached)
                 self._dds_map_ready = True
+                self._dds_catalog_cache.clear()
                 return len(self._dds_index)
         mapping: dict[str, Path] = {}
-        for root in roots:
-            if not root.is_dir():
+        groups = (
+            self.path_index.group_roots(roots)
+            if self.path_index is not None
+            else {INSTALL_ORDER[-1]: roots}
+        )
+        for install in INSTALL_ORDER:
+            ir = groups.get(install) or []
+            if not ir:
                 continue
-            try:
-                for path in root.rglob("*.dds"):
-                    if not path.is_file():
-                        continue
-                    try:
-                        rel = path.relative_to(root)
-                    except ValueError:
-                        continue
-                    logical = str(rel.with_suffix("")).replace("/", "\\").lower()
-                    if not logical:
-                        continue
-                    # Later roots override (mod load order).
-                    mapping[logical] = path
-            except OSError:
-                continue
+            shard: dict[str, Path] | None = None
+            if not force and self.path_index is not None:
+                shard = self.path_index.get_install_dds(install, ir)
+            if shard is None:
+                shard = {}
+                _scan_dds_under_roots(ir, shard)
+                if self.path_index is not None:
+                    self.path_index.put_install_dds(install, ir, shard)
+            mapping.update(shard)
         self._dds_index = mapping
         self._dds_map_ready = True
+        self._dds_catalog_cache.clear()
         if self.path_index is not None:
-            self.path_index.put_dds_map(fp, mapping)
+            self.path_index.get_dds_map(roots)
         return len(mapping)
 
     @property
@@ -400,56 +663,73 @@ class TextureResolver:
     def dds_count(self) -> int:
         return len(self._dds_index)
 
-    def _iter_descr_files(self) -> list[Path]:
-        if self._descr_files is not None:
+    def _descr_roots(self) -> list[Path]:
+        return list(self.gamedata_descr_roots) + list(self.descr_scan_roots)
+
+    def _scan_descr_root(self, root: Path, *, deep: bool) -> dict[str, Path]:
+        by_name: dict[str, Path] = {}
+        if not root.is_dir():
+            return by_name
+        try:
+            batch = (
+                sorted(root.rglob("**/textures_descr/*.xml"))
+                if deep
+                else sorted(root.glob("*.xml"))
+            )
+        except OSError:
+            return by_name
+        for path in batch:
+            by_name[path.name.lower()] = path
+        return by_name
+
+    def _iter_descr_files(self, *, force: bool = False) -> list[Path]:
+        if self._descr_files is not None and not force:
             return self._descr_files
-        fp = roots_fingerprint(
-            list(self.gamedata_descr_roots) + list(self.descr_scan_roots)
-        )
-        if self.path_index is not None:
-            cached = self.path_index.get_file_list(KIND_DESCR_FILES, fp)
+        roots = self._descr_roots()
+        scan_keys: set[str] = set()
+        for p in self.descr_scan_roots:
+            try:
+                scan_keys.add(str(p.resolve()).lower())
+            except OSError:
+                scan_keys.add(str(p).lower())
+
+        if not force and self.path_index is not None:
+            cached = self.path_index.merge_name_shards(KIND_DESCR, roots)
             if cached is not None:
-                self._descr_files = cached
-                return cached
-        files: list[Path] = []
-        seen: set[Path] = set()
-        for root in self.gamedata_descr_roots:
-            if not root.is_dir():
+                self._descr_files = [cached[k] for k in sorted(cached)]
+                return self._descr_files
+
+        by_name: dict[str, Path] = {}
+        groups = (
+            self.path_index.group_roots(roots)
+            if self.path_index is not None
+            else {INSTALL_ORDER[-1]: roots}
+        )
+        for install in INSTALL_ORDER:
+            ir = groups.get(install) or []
+            if not ir:
                 continue
-            try:
-                batch = sorted(root.glob("*.xml"))
-            except OSError:
-                continue
-            for path in batch:
-                try:
-                    key = path.resolve()
-                except OSError:
-                    continue
-                if key in seen:
-                    continue
-                seen.add(key)
-                files.append(path)
-        for root in self.descr_scan_roots:
-            if not root.is_dir():
-                continue
-            try:
-                batch = sorted(root.rglob("**/textures_descr/*.xml"))
-            except OSError:
-                continue
-            for path in batch:
-                try:
-                    key = path.resolve()
-                except OSError:
-                    continue
-                if key in seen:
-                    continue
-                seen.add(key)
-                files.append(path)
-        self._descr_files = files
+            shard: dict[str, Path] | None = None
+            if not force and self.path_index is not None:
+                shard = self.path_index.get_install_names(KIND_DESCR, install, ir)
+            if shard is None:
+                shard = {}
+                for root in ir:
+                    try:
+                        key = str(root.resolve()).lower()
+                    except OSError:
+                        key = str(root).lower()
+                    deep = key in scan_keys
+                    shard.update(self._scan_descr_root(root, deep=deep))
+                if self.path_index is not None:
+                    self.path_index.put_install_names(
+                        KIND_DESCR, install, ir, shard
+                    )
+            by_name.update(shard)
+        self._descr_files = [by_name[k] for k in sorted(by_name)]
         if self.path_index is not None:
-            self.path_index.put_file_list(KIND_DESCR_FILES, fp, files)
             self.path_index.save()
-        return files
+        return self._descr_files
 
     def _ingest_descr_for_ids(self, wanted: set[str]) -> None:
         """Scan descr XMLs for ``wanted`` atlas ids (later roots override)."""
@@ -535,10 +815,144 @@ class TextureResolver:
             entry = self.lookup_atlas(tid)
             if entry is not None:
                 needed_files.add(entry.file_name)
+        dds_paths: list[Path] = []
+        seen_dds: set[str] = set()
         for logical in needed_files:
-            self.find_dds(logical)
+            dds = self.find_dds(logical)
+            if dds is None:
+                continue
+            try:
+                key = str(dds.resolve())
+            except OSError:
+                key = str(dds)
+            if key in seen_dds:
+                continue
+            seen_dds.add(key)
+            dds_paths.append(dds)
+        # Prefetch unique sheets (disk RGBA cache + in-memory LRU).
+        self._prefetch_dds(dds_paths)
         if self.path_index is not None:
             self.path_index.save()
+
+    def _prefetch_dds(self, paths: list[Path]) -> None:
+        if not paths:
+            return
+
+        def _load(path: Path) -> str:
+            open_dds_image(path)
+            return str(path)
+
+        workers = min(4, len(paths))
+        if workers == 1:
+            for path in paths:
+                self._open_dds(str(path))
+            return
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            list(pool.map(_load, paths))
+        for path in paths:
+            self._open_dds(str(path))
+
+    def warm_picker_thumbs(
+        self,
+        *,
+        progress: Callable[[int, int, int], None] | None = None,
+    ) -> dict[str, int]:
+        """Build one low-res sheet proxy per textures_descr atlas sheet.
+
+        Not every DDS under the texture roots (~10k+) — only sheets named by
+        atlas XML (a few hundred). Path-mode / other DDS build on demand via
+        ``ensure_sheet_proxy``. ``progress(done, total, written)`` is optional.
+        """
+        self.ensure_indexes()
+        # Unique DDS paths referenced by atlas file names only.
+        by_key: dict[str, Path] = {}
+        for entry in self.scan_atlas_catalog():
+            dds = self.find_dds(entry.file_name)
+            if dds is None:
+                continue
+            try:
+                key = str(dds.resolve())
+            except OSError:
+                key = str(dds)
+            by_key.setdefault(key, dds)
+
+        todo: list[Path] = []
+        skipped = 0
+        for path in by_key.values():
+            dest = sheet_proxy_cache_path(path)
+            if dest is not None and dest.is_file():
+                skipped += 1
+                continue
+            todo.append(path)
+
+        total = len(todo)
+        written = 0
+        failed = 0
+        if total == 0:
+            return {
+                "sheets": 0,
+                "written": 0,
+                "skipped": skipped,
+                "failed": 0,
+            }
+
+        def _warm_one(path: Path) -> tuple[int, int]:
+            if self._thumb_abort:
+                return 0, 0
+            if ensure_sheet_proxy(path) is None:
+                return 0, 1
+            return 1, 0
+
+        cpu = os.cpu_count() or 4
+        workers = min(32, max(8, cpu * 2), total)
+        done = 0
+        last_ui = 0.0
+        aborted = False
+        self._thumb_abort = False
+        pool = ThreadPoolExecutor(max_workers=workers)
+        self._thumb_pool = pool
+        try:
+            futures = [pool.submit(_warm_one, path) for path in todo]
+            for fut in as_completed(futures):
+                if self._thumb_abort:
+                    aborted = True
+                    for pending in futures:
+                        pending.cancel()
+                    break
+                try:
+                    if fut.cancelled():
+                        continue
+                    w, f = fut.result()
+                except Exception:
+                    w, f = 0, 1
+                written += w
+                failed += f
+                done += 1
+                if progress is not None:
+                    now = time.perf_counter()
+                    if done == total or now - last_ui >= 0.25:
+                        last_ui = now
+                        progress(done, total, written)
+                        if self._thumb_abort:
+                            aborted = True
+                            for pending in futures:
+                                pending.cancel()
+                            break
+        finally:
+            try:
+                pool.shutdown(wait=False, cancel_futures=True)
+            except Exception:
+                pass
+            self._thumb_pool = None
+
+        return {
+            "sheets": total,
+            "written": written,
+            "skipped": skipped,
+            "failed": failed,
+            "workers": workers,
+            "aborted": int(aborted),
+        }
 
     def _iter_dds_search_roots(self) -> list[Path]:
         """Saved texture dirs (+ textures/ under scan roots). Built once per cache."""
@@ -586,10 +1000,63 @@ class TextureResolver:
             self.remember_dds(entry.file_name, dds)
         self._resolve_cached.cache_clear()
 
-    def scan_atlas_catalog(self) -> list[AtlasCatalogEntry]:
-        """Load every textures_descr id. Later files override. Add button stems from _e."""
+    def dds_catalog_for_roots(self, roots: list[Path] | None = None) -> list[DdsCatalogEntry]:
+        """DDS entries from the indexed map.
+
+        ``roots is None`` → all indexed. ``roots == []`` → empty. Otherwise filter.
+        """
+        self._ensure_dds_map()
+        if roots is None:
+            cache_key = ("__all__",)
+        elif not roots:
+            return []
+        else:
+            cache_key = tuple(
+                sorted(
+                    str(p.resolve()) if p.exists() else str(p) for p in roots
+                )
+            )
+        cached = self._dds_catalog_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        if roots is None:
+            out = [
+                DdsCatalogEntry(logical=k, path=p)
+                for k, p in sorted(self._dds_index.items(), key=lambda kv: kv[0])
+            ]
+        else:
+            prefixes = root_dir_prefixes(list(roots))
+            out = [
+                DdsCatalogEntry(logical=k, path=p)
+                for k, p in self._dds_index.items()
+                if path_is_under_prefixes(p, prefixes)
+            ]
+            out.sort(key=lambda e: e.logical.lower())
+        self._dds_catalog_cache[cache_key] = out
+        return out
+
+    def scan_atlas_catalog(
+        self, *, source_roots: list[Path] | None = None
+    ) -> list[AtlasCatalogEntry]:
+        """Load textures_descr ids. Optional ``source_roots`` limits which XMLs are parsed."""
+        if source_roots is None:
+            cache_key = ("__all__",)
+        else:
+            cache_key = tuple(
+                sorted(
+                    str(p.resolve()) if p.exists() else str(p) for p in source_roots
+                )
+            )
+        cached = self._atlas_catalog_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         by_id: dict[str, AtlasCatalogEntry] = {}
-        for path in self._iter_descr_files():
+        files = self._iter_descr_files()
+        if source_roots:
+            prefixes = root_dir_prefixes(list(source_roots))
+            files = [p for p in files if path_is_under_prefixes(p, prefixes)]
+        for path in files:
             root = _parse_xml_root(path)
             if root is None:
                 continue
@@ -649,7 +1116,9 @@ class TextureResolver:
                 resolved_id=tid,
             )
 
-        return sorted(by_id.values(), key=lambda e: e.atlas_id.lower())
+        out = sorted(by_id.values(), key=lambda e: e.atlas_id.lower())
+        self._atlas_catalog_cache[cache_key] = out
+        return out
 
     def find_dds(self, logical: str) -> Path | None:
         """Resolve logical texture path → DDS. Later roots override (mod load order)."""
@@ -661,7 +1130,7 @@ class TextureResolver:
         if key in self._dds_missing:
             return None
 
-        # Prefer full scan map (O(1)); build/load once per roots fingerprint.
+        # Prefer full scan map (O(1)); build/load once per texture roots.
         self._ensure_dds_map()
         hit = self._dds_index.get(key)
         if hit is not None:
@@ -716,9 +1185,25 @@ class TextureResolver:
         self._atlas_missing.add(name)
         return None
 
-    @lru_cache(maxsize=96)
+    @lru_cache(maxsize=128)
     def _open_dds(self, path_str: str) -> Image.Image | None:
         return open_dds_image(path_str)
+
+    def probe_ref(self, ref: TextureRef | None) -> tuple[bool, str]:
+        """Check atlas/DDS presence without decoding or cropping the image."""
+        if ref is None or not ref.name:
+            return False, "no texture"
+        name = ref.name
+        file_name = name
+        if not ref.is_path:
+            entry = self.lookup_atlas(name)
+            if entry is None:
+                return False, f"unknown atlas id: {name}"
+            file_name = entry.file_name
+        dds = self.find_dds(file_name)
+        if dds is None:
+            return False, f"missing dds: {file_name}"
+        return True, ""
 
     def resolve_ref(self, ref: TextureRef | None) -> ResolvedTexture:
         if ref is None or not ref.name:

@@ -7,13 +7,19 @@
 		<text>Stealth</text>
 	</string>
 	<string id="ui_mcm_dogma_gameplay_stealth_page_description">
-		<text>Player-only visual detection. Scales stock visibility, then zeros acquisition below a pose cutoff. Optional smooth remap starts accumulation at 0 just above the cutoff. Does not change NPC-vs-NPC vision, sound, or AlifeTactics. Tip: turn off AlifeTactics Disclosure "Turn on the shooter" so wounds do not fake seen-class.</text>
+		<text>Player-only visual detection. Scales stock visibility, then applies a foliage surround bonus (8 short torso rays; each bush hit is 1/8 of the slider), then zeros acquisition below a pose cutoff. Optional smooth remap starts accumulation at 0 just above the cutoff. Does not change NPC-vs-NPC vision, sound, or AlifeTactics. Tip: turn off AlifeTactics Disclosure "Turn on the shooter" so wounds do not fake seen-class.</text>
 	</string>
 	<string id="ui_mcm_dogma_gameplay_stealth_scale">
 		<text>Visibility scale</text>
 	</string>
 	<string id="ui_mcm_dogma_gameplay_stealth_scale_desc">
-		<text>Multiply stock visibility (light x velocity x range falloff) before cutoffs. 0-1.</text>
+		<text>Multiply stock visibility (light x velocity x range falloff) before foliage bonus and cutoffs. 0-1.</text>
+	</string>
+	<string id="ui_mcm_dogma_gameplay_stealth_bush_bonus">
+		<text>Bush cover bonus</text>
+	</string>
+	<string id="ui_mcm_dogma_gameplay_stealth_bush_bonus_desc">
+		<text>Max visibility reduction when foliage surrounds you (all 8 short rays hit bush). Applied after scale, before cutoffs. One side brush = 1/8 of this. 0 = off. Default 0.50 halves visibility in thick bushes.</text>
 	</string>
 	<string id="ui_mcm_dogma_gameplay_stealth_cutoff_stand">
 		<text>Cutoff: stand / walk / run / sprint</text>
@@ -43,12 +49,12 @@
 		<text>Visibility gem</text>
 	</string>
 	<string id="ui_mcm_dogma_gameplay_stealth_icon_desc">
-		<text>Small bottom-center gem showing your scaled visibility (brighter = more visible).</text>
+		<text>Small bottom-center gem showing your scaled visibility after foliage bonus (brighter = more visible).</text>
 	</string>
 	<string id="ui_mcm_dogma_gameplay_stealth_debug">
 		<text>Debug overlay</text>
 	</string>
 	<string id="ui_mcm_dogma_gameplay_stealth_debug_desc">
-		<text>Show last scaled vis, active cutoff, and output on the actor message line.</text>
+		<text>Show last scaled vis, bush coverage, active cutoff, and output on the actor message line.</text>
 	</string>
 </string_table>

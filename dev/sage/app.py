@@ -25,6 +25,7 @@ from PyQt6.QtGui import (
     QPainter,
     QPalette,
     QPen,
+    QPixmap,
     QShortcut,
     QTextCharFormat,
     QTextCursor,
@@ -32,11 +33,13 @@ from PyQt6.QtGui import (
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
     QFormLayout,
     QFrame,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -72,6 +75,7 @@ from .db_unpack import check_anomaly_unpack_needed, ensure_anomaly_db_unpacked
 from .settings import (
     LABEL_FONT_MAX,
     LABEL_FONT_MIN,
+    SIDEBAR_MIN_WIDTH,
     clamp_label_font_size,
     resolve_font_device_height,
     ensure_db_unpacked_and_roots,
@@ -86,13 +90,19 @@ from .settings import (
     validate_anomaly_root,
     validate_gamma_root,
 )
-from .cache_store import PathIndex
+from .cache_store import PathIndex, asset_index_scan_needed, cache_dir
 from .fonts import FontResolver
+from .xml_locate import find_atlas_id_span, find_layout_path_span
+from .rescan import (
+    RescanDialog,
+    apply_rescan_selection,
+    collect_invalidate_roots,
+)
 from .strings import StringResolver
 from .string_picker import StringPickerDialog
 from .texture_picker import TexturePickerDialog
-from .textures import TextureResolver
-from .undo import GeoEdit, GeoState
+from .textures import TextureResolver, build_picker_root_groups
+from .undo import GeoEdit, GeoState, PropEdit
 from .xml_highlight import XmlHighlighter
 from .xml_io import UiXmlDocument
 
@@ -106,6 +116,10 @@ TAB_LOG = 2
 # Tree: mark overlapping canvas stack peers (stylesheet blocks setBackground).
 _TREE_PEER_ROLE = int(Qt.ItemDataRole.UserRole) + 1
 _TREE_LAYER_OFF_ROLE = int(Qt.ItemDataRole.UserRole) + 2
+
+# Prop chrome greys: secondary text vs disabled / unassigned fields.
+_GREY_DEFAULT = "#888888"
+_GREY_INAPPLICABLE = "#555555"
 
 
 class _TreePeerDelegate(QStyledItemDelegate):
@@ -141,18 +155,24 @@ class BusyOverlay(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._face = 0
-        self._message = "Loading…"
+        self._message = "Loading"
+        self._detail = ""
         self._timer = QTimer(self)
         self._timer.setInterval(500)
         self._timer.timeout.connect(self._tick)
         self.hide()
 
-    def set_message(self, text: str) -> None:
-        self._message = text or "Loading…"
+    def set_message(self, text: str, detail: str = "") -> None:
+        self._message = text or "Loading"
+        self._detail = detail or ""
         self.update()
 
-    def start(self, message: str = "Loading…") -> None:
-        self.set_message(message)
+    @property
+    def message(self) -> str:
+        return self._message
+
+    def start(self, message: str = "Loading", detail: str = "") -> None:
+        self.set_message(message, detail)
         self._face = 0
         parent = self.parentWidget()
         if parent is not None:
@@ -168,6 +188,7 @@ class BusyOverlay(QWidget):
         self._timer.stop()
         self.releaseKeyboard()
         self.hide()
+        self._detail = ""
 
     def _tick(self) -> None:
         self._face = 1 - self._face
@@ -191,11 +212,27 @@ class BusyOverlay(QWidget):
         text_font = QFont("Segoe UI", 11)
         painter.setFont(text_font)
         text_rect = self.rect().adjusted(0, int(cy) + 36, 0, 0)
+        # Title on its own line; detail (filename / status) below.
+        title = self._message
         painter.drawText(
             text_rect,
             int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop),
-            self._message,
+            title,
         )
+        if self._detail:
+            painter.setPen(QPen(QColor(154, 154, 160)))
+            detail_font = QFont("Segoe UI", 10)
+            painter.setFont(detail_font)
+            detail_rect = self.rect().adjusted(24, int(cy) + 58, -24, 0)
+            painter.drawText(
+                detail_rect,
+                int(
+                    Qt.AlignmentFlag.AlignHCenter
+                    | Qt.AlignmentFlag.AlignTop
+                    | Qt.TextFlag.TextWordWrap
+                ),
+                self._detail,
+            )
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
         event.accept()
@@ -230,12 +267,46 @@ class FitWidthLabel(QLabel):
         return QSize(40, 0)
 
 
+class FitContentScrollArea(QScrollArea):
+    """Scroll area that prefers its content height; shrinks (and scrolls) if squeezed."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWidgetResizable(True)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        self.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+
+    def sizeHint(self) -> QSize:  # noqa: N802
+        w = self.widget()
+        if w is None:
+            return super().sizeHint()
+        # Prefer content sizeHint — never current height (that sticks after a squeeze).
+        lay = w.layout()
+        h = w.sizeHint().height()
+        if lay is not None:
+            h = max(h, lay.sizeHint().height(), lay.minimumSize().height())
+        return QSize(super().sizeHint().width(), h + 2 * self.frameWidth())
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802
+        return QSize(80, 60)
+
+
 class ElidedLabel(QLabel):
-    """Single-line label that elides with … when the pane is narrow."""
+    """Single-line label that elides with … when the pane is narrow.
+
+    Prefixed mode: ``{grey xml truncated}::{key}`` — xml elides first; key stays.
+    """
+
+    _PREFIX_COLOR = _GREY_DEFAULT
 
     def __init__(self, text: str = "", parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._full = text
+        self._prefix = ""
+        self._key = ""
         self.setWordWrap(False)
         self.setMinimumWidth(0)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
@@ -243,7 +314,20 @@ class ElidedLabel(QLabel):
         self._apply_elide()
 
     def set_full_text(self, text: str) -> None:
+        self._prefix = ""
+        self._key = ""
         self._full = text or ""
+        # Leave stylesheet alone — FilePathRow owns placeholder / error colors.
+        self._apply_elide()
+
+    def set_xml_key(self, xml_name: str, key: str) -> None:
+        """Show grey elided xml filename + ``::`` + text key."""
+        self._prefix = (xml_name or "").strip()
+        self._key = key or ""
+        self._full = (
+            f"{self._prefix}::{self._key}" if self._prefix else self._key
+        )
+        self.setStyleSheet("")
         self._apply_elide()
 
     def full_text(self) -> str:
@@ -255,9 +339,30 @@ class ElidedLabel(QLabel):
 
     def _apply_elide(self) -> None:
         w = max(1, self.width())
-        elided = self.fontMetrics().elidedText(
-            self._full, Qt.TextElideMode.ElideRight, w
-        )
+        fm = self.fontMetrics()
+        if self._prefix:
+            sep = "::"
+            key = self._key
+            reserved = fm.horizontalAdvance(sep + key) + 2
+            prefix_w = max(24, w - reserved)
+            elided_prefix = fm.elidedText(
+                self._prefix, Qt.TextElideMode.ElideRight, prefix_w
+            )
+            # If key alone still overflows, elide key after a short prefix budget.
+            used = fm.horizontalAdvance(elided_prefix + sep)
+            if used + fm.horizontalAdvance(key) > w:
+                key = fm.elidedText(
+                    key, Qt.TextElideMode.ElideRight, max(24, w - used)
+                )
+            self.setTextFormat(Qt.TextFormat.RichText)
+            super().setText(
+                f'<span style="color:{self._PREFIX_COLOR};">'
+                f"{escape(elided_prefix)}{escape(sep)}</span>"
+                f"{escape(key)}"
+            )
+            return
+        self.setTextFormat(Qt.TextFormat.PlainText)
+        elided = fm.elidedText(self._full, Qt.TextElideMode.ElideRight, w)
         super().setText(elided)
 
 
@@ -293,8 +398,9 @@ class FilePathRow(QWidget):
 
     def clear(self, text: str = "-") -> None:
         self._explorer_path = ""
-        self.name.setStyleSheet("")
         self.name.set_full_text(text)
+        # Placeholders: <none>, (none), -, (empty …), (meta)
+        self.name.setStyleSheet(f"color: {_GREY_INAPPLICABLE};")
         self.name.setToolTip("")
         self.copy_btn.hide()
         self.setVisible(bool((text or "").strip()))
@@ -308,12 +414,29 @@ class FilePathRow(QWidget):
         color: str = "",
     ) -> None:
         self._explorer_path = explorer_path
-        self.name.setStyleSheet(f"color: {color};" if color else "")
         self.name.set_full_text(display)
+        self.name.setStyleSheet(f"color: {color};" if color else "")
         tip_parts = [p for p in (explorer_path, tip_extra) if p]
         self.name.setToolTip("\n".join(tip_parts))
         self.copy_btn.setVisible(bool(explorer_path))
         self.setVisible(bool((display or "").strip()))
+
+    def set_xml_key(
+        self,
+        *,
+        xml_name: str,
+        key: str,
+        explorer_path: str = "",
+        tip_extra: str = "",
+    ) -> None:
+        """One-line text ref: ``{xml grey}::{key}`` + copy/browse."""
+        self._explorer_path = explorer_path
+        self.name.setStyleSheet("")
+        self.name.set_xml_key(xml_name, key)
+        tip_parts = [p for p in (explorer_path, tip_extra) if p]
+        self.name.setToolTip("\n".join(tip_parts))
+        self.copy_btn.setVisible(bool(explorer_path))
+        self.setVisible(bool((key or xml_name or "").strip()))
 
     def _copy_path(self) -> None:
         if not self._explorer_path:
@@ -322,7 +445,7 @@ class FilePathRow(QWidget):
 
 
 class BrowseValueRow(FilePathRow):
-    """FilePathRow plus a … button to find/change the value via a picker."""
+    """FilePathRow plus a folder-button to find/change the value via a picker."""
 
     browse_clicked = pyqtSignal()
 
@@ -334,11 +457,14 @@ class BrowseValueRow(FilePathRow):
     ) -> None:
         super().__init__(parent)
         self.browse_btn = QToolButton()
-        self.browse_btn.setText("…")
         self.browse_btn.setToolTip(browse_tip)
         self.browse_btn.setAutoRaise(True)
         self.browse_btn.setFixedSize(22, 22)
         self.browse_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.browse_btn.setIcon(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon)
+        )
+        self.browse_btn.setIconSize(QSize(16, 16))
         self.browse_btn.clicked.connect(self.browse_clicked.emit)
         self.layout().addWidget(self.browse_btn, stretch=0)
         self.set_browse_enabled(False)
@@ -348,6 +474,60 @@ class BrowseValueRow(FilePathRow):
         self.browse_btn.setEnabled(enabled)
 
 
+class TextureValueRow(BrowseValueRow):
+    """Texture: <none> 📁   or   Texture: [☑] path 📋 📁."""
+
+    def __init__(
+        self,
+        show_cb: QCheckBox,
+        parent: QWidget | None = None,
+        *,
+        browse_tip: str = "Find and change texture (atlas / DDS)…",
+    ) -> None:
+        super().__init__(parent, browse_tip=browse_tip)
+        self._show_cb = show_cb
+        self._has_texture = False
+        show_cb.setText("")
+        show_cb.setToolTip(
+            "Preview only — hide this box’s texture on the canvas (not saved)."
+        )
+        lay = self.layout()
+        assert lay is not None
+        lay.insertWidget(0, show_cb, stretch=0)
+        self.set_has_texture(False)
+
+    def has_texture(self) -> bool:
+        return self._has_texture
+
+    def set_has_texture(self, has: bool) -> None:
+        """Show the preview checkbox only when a texture is assigned."""
+        self._has_texture = bool(has)
+        self._show_cb.setVisible(self._has_texture)
+
+    def clear(self, text: str = "<none>") -> None:
+        super().clear(text)
+        self.set_has_texture(False)
+        # Keep the row itself visible while Texture props are shown.
+        self.setVisible(True)
+
+    def set_file(
+        self,
+        *,
+        display: str,
+        explorer_path: str = "",
+        tip_extra: str = "",
+        color: str = "",
+    ) -> None:
+        super().set_file(
+            display=display,
+            explorer_path=explorer_path,
+            tip_extra=tip_extra,
+            color=color,
+        )
+        self.set_has_texture(True)
+        self.setVisible(True)
+
+
 TexturePathRow = BrowseValueRow  # back-compat alias
 
 
@@ -355,6 +535,21 @@ class LayerListWidget(QListWidget):
     """Layers list: label click selects the section; checkbox only toggles visibility."""
 
     label_clicked = pyqtSignal(object)  # QListWidgetItem
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+
+    def sizeHint(self) -> QSize:  # noqa: N802
+        if self.count() <= 0:
+            h = 40
+        else:
+            h = sum(self.sizeHintForRow(i) for i in range(self.count()))
+        h += 2 * self.frameWidth() + 4
+        return QSize(super().sizeHint().width(), h)
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802
+        return QSize(50, 40)
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
         item = self.itemAt(event.position().toPoint())
@@ -385,11 +580,13 @@ def _paths(values: list) -> list[Path]:
 def _path_rich_text(path: str) -> str:
     """Grey ancestor segments; keep the final path name at normal color."""
     path = path or "-"
+    if path == "-":
+        return f'<span style="color:{_GREY_DEFAULT};">{escape(path)}</span>'
     if PATH_SEP not in path:
         return escape(path)
     parent, sep, name = path.rpartition(PATH_SEP)
     return (
-        f'<span style="color:#888888;">{escape(parent)}{escape(sep)}</span>'
+        f'<span style="color:{_GREY_DEFAULT};">{escape(parent)}{escape(sep)}</span>'
         f"{escape(name)}"
     )
 
@@ -920,12 +1117,17 @@ class MainWindow(QMainWindow):
         self.doc = UiXmlDocument()
         self.descr_doc = DescrDocument()
         self._doc_mode = DOC_MODE_UI
-        # Roots from settings only — no full-tree scan at launch.
+        # Roots from settings; path shards (+ thumbs) build on first bind.
         self.path_index = PathIndex.load()
+        self.path_index.configure_installs(
+            self.settings.get("anomaly_root") or "",
+            self.settings.get("gamma_root") or "",
+        )
         self.resolver = self._make_resolver()
         self.strings = self._make_string_resolver()
         self.fonts = self._make_font_resolver()
-        self._resources_ready = True
+        self._resources_ready = False
+        self._closing = False
         self.scene = UiScene(
             self.resolver,
             strings=self.strings,
@@ -945,12 +1147,10 @@ class MainWindow(QMainWindow):
         self._tree_peer_paths: set[str] = set()
         self.raw_editor = QPlainTextEdit()
         self.raw_editor.setPlaceholderText("Open a UI or textures_descr XML…")
-        mono = QFont("Consolas")
-        mono.setStyleHint(QFont.StyleHint.Monospace)
-        mono.setPointSize(10)
-        self.raw_editor.setFont(mono)
         self.raw_editor.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        self.raw_editor.setTabStopDistance(self.raw_editor.fontMetrics().horizontalAdvance(" ") * 4)
+        self.raw_editor.setTabStopDistance(
+            self.raw_editor.fontMetrics().horizontalAdvance(" ") * 4
+        )
         # Dark+ editor chrome (matches VS Code XML highlighting)
         self.raw_editor.setStyleSheet(
             "QPlainTextEdit {"
@@ -970,6 +1170,8 @@ class MainWindow(QMainWindow):
         self._preview_needs_raw_sync = False
         self._find_matches: list[int] = []
         self._find_index = -1
+        self._xml_sel_path: str = ""
+        self._xml_sel_atlas: str = ""
 
         self.xml_page = QWidget()
         xml_layout = QVBoxLayout(self.xml_page)
@@ -1045,7 +1247,6 @@ class MainWindow(QMainWindow):
         self.log_view = QPlainTextEdit()
         self.log_view.setReadOnly(True)
         self.log_view.setPlaceholderText("Editor log…")
-        self.log_view.setFont(mono)
         self.log_view.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
         self.log_view.setStyleSheet(
             "QPlainTextEdit {"
@@ -1109,151 +1310,330 @@ class MainWindow(QMainWindow):
         self.edit_w = QLineEdit()
         self.edit_h = QLineEdit()
         self.edit_stretch = QCheckBox("stretch")
-        self.edit_show_texture = QCheckBox("Render texture")
-        self.edit_show_texture.setToolTip(
-            "Preview only — hide this box’s texture on the canvas (not saved)."
-        )
-        self.prop_texture = BrowseValueRow(
-            browse_tip="Find and change texture (atlas / DDS)…"
-        )
+        self.edit_show_texture = QCheckBox()
+        self.prop_texture = TextureValueRow(self.edit_show_texture)
         self.prop_texture.browse_clicked.connect(self._browse_texture)
         self.prop_text = BrowseValueRow(browse_tip="Find and change text…")
         self.prop_text.browse_clicked.connect(self._browse_text)
-        self.prop_text_font = FitWidthLabel("")
-        self.prop_text_font.setStyleSheet("color: gray;")
-        self.prop_text_font.hide()
+
+        def _combo(items: list[tuple[str, str]], *, editable: bool = False) -> QComboBox:
+            cb = QComboBox()
+            cb.setEditable(editable)
+            if editable:
+                cb.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+            for value, label in items:
+                cb.addItem(label, value)
+            return cb
+
+        # Engine defaults when XML omits the attr (CUIXmlInit / CUILines).
+        self.edit_font = _combo([("", "default (letterica16)")], editable=True)
+        self.edit_font.setMinimumWidth(self.edit_font.sizeHint().width() + 10)
+        self.edit_align = _combo(
+            [
+                ("", "default (left)"),
+                ("l", "Left (l)"),
+                ("c", "Center (c)"),
+                ("r", "Right (r)"),
+            ]
+        )
+        self.edit_vert_align = _combo(
+            [
+                ("", "default (top)"),
+                ("t", "Top (t)"),
+                ("c", "Center (c)"),
+                ("b", "Bottom (b)"),
+            ]
+        )
+        self.edit_complex_mode = QCheckBox("complex_mode")
+        self.edit_complex_mode.setToolTip(
+            "Engine flComplexMode — wrap / %c[…] color codes (0/1)."
+        )
+        self.edit_text_r = QLineEdit()
+        self.edit_text_g = QLineEdit()
+        self.edit_text_b = QLineEdit()
+        self.edit_text_a = QLineEdit()
+        for ed, tip in (
+            (self.edit_text_r, "r 0–255 (blank = omit)"),
+            (self.edit_text_g, "g 0–255 (blank = omit)"),
+            (self.edit_text_b, "b 0–255 (blank = omit)"),
+            (self.edit_text_a, "a 0–255 (blank = omit; engine default 255)"),
+        ):
+            ed.setPlaceholderText("—")
+            ed.setToolTip(tip)
+            ed.setMaximumWidth(48)
+        self.edit_text_x = QLineEdit()
+        self.edit_text_y = QLineEdit()
+        for ed, tip in (
+            (self.edit_text_x, "Text offset x on <text> (CUILines m_TextOffset)"),
+            (self.edit_text_y, "Text offset y on <text>"),
+        ):
+            ed.setPlaceholderText("0")
+            ed.setToolTip(tip)
+            ed.setMaximumWidth(56)
+        self.edit_left_ident = QLineEdit()
+        self.edit_right_ident = QLineEdit()
+        self.edit_top_indent = QLineEdit()
+        self.edit_bottom_indent = QLineEdit()
+        self.edit_vert_interval = QLineEdit()
+        for ed, tip in (
+            (self.edit_left_ident, "left_ident (engine spelling)"),
+            (self.edit_right_ident, "right_ident (engine spelling)"),
+            (self.edit_top_indent, "top_indent"),
+            (self.edit_bottom_indent, "bottom_indent"),
+            (self.edit_vert_interval, "vert_interval"),
+        ):
+            ed.setPlaceholderText("—")
+            ed.setToolTip(tip)
+        self.edit_always_show_scroll = QCheckBox("always_show_scroll")
+        self.edit_always_show_scroll.setToolTip(
+            "ScrollView flag (engine default 1; UI XML usually 0)."
+        )
+
         self._props_geo_before: GeoState | None = None
         for ed in (self.edit_x, self.edit_y, self.edit_w, self.edit_h):
             ed.textChanged.connect(self._on_props_changed)
             ed.editingFinished.connect(self._on_props_editing_finished)
 
-        def _xy_row(a_label: str, a: QLineEdit, b_label: str, b: QLineEdit) -> QWidget:
+        def _compact_fields(
+            *parts: tuple[str, QWidget],
+            field_width: int = 40,
+            group_gap: int = 8,
+        ) -> QWidget:
+            """Packed ``x{2px}{input}{gap}y{2px}{input}…`` (no stretch between label/input)."""
             row = QWidget()
             lay = QHBoxLayout(row)
             lay.setContentsMargins(0, 0, 0, 0)
-            lay.addWidget(QLabel(a_label))
-            lay.addWidget(a, stretch=1)
-            lay.addWidget(QLabel(b_label))
-            lay.addWidget(b, stretch=1)
+            lay.setSpacing(0)
+            for i, (label, widget) in enumerate(parts):
+                if i:
+                    lay.addSpacing(group_gap)
+                if label:
+                    lab = QLabel(label)
+                    lab.setSizePolicy(
+                        QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred
+                    )
+                    lay.addWidget(lab, 0)
+                    lay.addSpacing(2)
+                if isinstance(widget, QLineEdit):
+                    widget.setFixedWidth(field_width)
+                widget.setSizePolicy(
+                    QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed
+                )
+                lay.addWidget(widget, 0)
+            lay.addStretch(1)
             return row
 
-        # Own the form labels so meta can tint Pos / Texture (not Path).
-        self.prop_label_path = QLabel("Path")
-        self.prop_label_pos = QLabel("Pos")
-        self.prop_label_size = QLabel("Size")
-        self.prop_label_texture = QLabel("Texture")
-        self.prop_label_text = QLabel("Text")
+        def _xy_row(a_label: str, a: QLineEdit, b_label: str, b: QLineEdit) -> QWidget:
+            return _compact_fields((a_label, a), (b_label, b), field_width=48)
+
+        def _multi_row(*parts: tuple[str, QWidget]) -> QWidget:
+            return _compact_fields(*parts, field_width=40)
+
+        # Own the form labels so meta can tint Pos / Size (Texture box title separately).
+        self.prop_label_path = QLabel("Path:")
+        self.prop_label_pos = QLabel("Pos:")
+        self.prop_label_size = QLabel("Size:")
+        self.prop_label_texture = QLabel("Path:")
+        self.prop_label_text = QLabel("Path:")
+        self.prop_label_font = QLabel("Font:")
+        self.prop_label_align = QLabel("Align:")
+        self.prop_label_color = QLabel("Color:")
+        self.prop_label_text_off = QLabel("Pos:")
+        self.prop_label_scroll = QLabel("Pad:")
         self._meta_prop_style = "color: #E67E22;"
 
+        def _form() -> QFormLayout:
+            lay = QFormLayout()
+            lay.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+            lay.setContentsMargins(0, 0, 0, 0)
+            lay.setHorizontalSpacing(8)
+            lay.setVerticalSpacing(10)
+            return lay
+
         props = QWidget()
-        pf = QFormLayout(props)
-        pf.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+        self._props_widget = props
+        props.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        props_l = QVBoxLayout(props)
+        props_l.setContentsMargins(0, 0, 0, 0)
+        props_l.setSpacing(8)
+
+        # Path / Pos / Size — unboxed.
+        core = QWidget()
+        pf = _form()
+        core.setLayout(pf)
         pf.addRow(self.prop_label_path, self.prop_path)
         pf.addRow("", self.prop_meta_note)
-        pf.addRow(self.prop_label_pos, _xy_row("x", self.edit_x, "y", self.edit_y))
-        pf.addRow(self.prop_label_size, _xy_row("w", self.edit_w, "h", self.edit_h))
-        pf.addRow(self.prop_label_texture, self.prop_texture)
-        self._tex_opts_row = QWidget()
-        tex_opts_l = QHBoxLayout(self._tex_opts_row)
-        tex_opts_l.setContentsMargins(0, 0, 0, 0)
-        tex_opts_l.setSpacing(12)
-        tex_opts_l.addWidget(self.edit_stretch)
-        tex_opts_l.addWidget(self.edit_show_texture)
-        tex_opts_l.addStretch(1)
-        pf.addRow("", self._tex_opts_row)
-        pf.addRow(self.prop_label_text, self.prop_text)
-        pf.addRow("", self.prop_text_font)
-        self.prop_text_resolved = FilePathRow()
-        self.prop_text_resolved.hide()
-        pf.addRow("", self.prop_text_resolved)
+        pf.addRow(self.prop_label_pos, _xy_row("X", self.edit_x, "Y", self.edit_y))
+        pf.addRow(self.prop_label_size, _xy_row("W", self.edit_w, "H", self.edit_h))
+        props_l.addWidget(core)
 
-        left = QWidget()
-        self._left_sidebar = left
-        left.setMinimumWidth(160)
-        left.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
-        left_l = QVBoxLayout(left)
-        left_l.setContentsMargins(0, 0, 0, 0)
-        left_l.setSpacing(6)
-        # Push sidebar content down to align with tab page (canvas), not the tab bar.
-        self._left_tab_spacer = QWidget()
-        self._left_tab_spacer.setFixedHeight(0)
-        left_l.addWidget(self._left_tab_spacer)
-        left_body = QWidget()
-        left_body_l = QVBoxLayout(left_body)
-        left_body_l.setContentsMargins(9, 0, 9, 9)
-        left_body_l.addWidget(QLabel("Properties"))
-        self.props_scroll = QScrollArea()
-        self.props_scroll.setWidgetResizable(True)
-        self.props_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
-        self.props_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.props_scroll.setWidget(props)
-        left_body_l.addWidget(self.props_scroll)
-        self._list_section_label = QLabel("Tree")
-        left_body_l.addWidget(self._list_section_label)
-        self.tree.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self.tree.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        left_body_l.addWidget(self.tree, stretch=1)
-        left_l.addWidget(left_body, stretch=1)
+        # Texture box: Path (+ UV under it), stretch — always shown; disable when N/A.
+        self._texture_group = QGroupBox("Texture")
+        tf = _form()
+        self._texture_group.setLayout(tf)
+        self.prop_texture_uv = QLabel("<none>")
+        self.prop_texture_uv.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        self.prop_texture_uv.setStyleSheet(f"color: {_GREY_DEFAULT};")
+        self._texture_path_stack = QWidget()
+        tex_path_l = QVBoxLayout(self._texture_path_stack)
+        tex_path_l.setContentsMargins(0, 0, 0, 0)
+        tex_path_l.setSpacing(1)
+        tex_path_l.addWidget(self.prop_texture)
+        tex_path_l.addWidget(self.prop_texture_uv)
+        tf.addRow(self.prop_label_texture, self._texture_path_stack)
+        tf.addRow("", self.edit_stretch)
+        props_l.addWidget(self._texture_group)
 
-        right = QWidget()
-        self._right_sidebar = right
-        right.setMinimumWidth(140)
-        right.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
-        right_l = QVBoxLayout(right)
-        right_l.setContentsMargins(0, 0, 0, 0)
-        right_l.setSpacing(6)
-        self._right_tab_spacer = QWidget()
-        self._right_tab_spacer.setFixedHeight(0)
-        right_l.addWidget(self._right_tab_spacer)
-        right_body = QWidget()
-        right_body_l = QVBoxLayout(right_body)
-        self._right_body_l = right_body_l
-        right_body_l.setContentsMargins(9, 0, 9, 9)
-        right_body_l.setAlignment(Qt.AlignmentFlag.AlignTop)
+        # Text box: Path, Font, Pos, Align HV, Color.
+        self._text_group = QGroupBox("Text")
+        xf = _form()
+        self._text_group.setLayout(xf)
+        xf.addRow(self.prop_label_text, self.prop_text)
+        xf.addRow(self.prop_label_font, self.edit_font)
+        self._text_xy_widget = _xy_row("X", self.edit_text_x, "Y", self.edit_text_y)
+        xf.addRow(self.prop_label_text_off, self._text_xy_widget)
+        self._align_row = QWidget()
+        align_l = QHBoxLayout(self._align_row)
+        align_l.setContentsMargins(0, 0, 0, 0)
+        align_l.setSpacing(4)
+        align_l.addWidget(QLabel("H"))
+        align_l.addWidget(self.edit_align, stretch=1)
+        align_l.addSpacing(8)
+        align_l.addWidget(QLabel("V"))
+        align_l.addWidget(self.edit_vert_align, stretch=1)
+        xf.addRow(self.prop_label_align, self._align_row)
+        self._color_row = _multi_row(
+            ("R", self.edit_text_r),
+            ("G", self.edit_text_g),
+            ("B", self.edit_text_b),
+            ("A", self.edit_text_a),
+        )
+        xf.addRow(self.prop_label_color, self._color_row)
+        self._text_flags_row = QWidget()
+        text_flags_l = QHBoxLayout(self._text_flags_row)
+        text_flags_l.setContentsMargins(0, 0, 0, 0)
+        text_flags_l.addWidget(self.edit_complex_mode)
+        text_flags_l.addStretch(1)
+        xf.addRow("", self._text_flags_row)
+        props_l.addWidget(self._text_group)
 
-        right_body_l.addWidget(QLabel("Options"))
-        tools = QWidget()
-        tools.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
-        tools_l = QVBoxLayout(tools)
-        tools_l.setContentsMargins(0, 0, 0, 0)
-        tools_l.setSpacing(4)
-        tools_l.setAlignment(Qt.AlignmentFlag.AlignTop)
+        # Scroll box (only for scroll-capable widgets).
+        self._scroll_group = QGroupBox("Scroll")
+        sf = _form()
+        self._scroll_group.setLayout(sf)
+        self._scroll_pad_row = _multi_row(
+            ("L", self.edit_left_ident),
+            ("R", self.edit_right_ident),
+        )
+        self._scroll_indent_row = _multi_row(
+            ("T", self.edit_top_indent),
+            ("B", self.edit_bottom_indent),
+        )
+        self._scroll_misc_row = _multi_row(
+            ("vert", self.edit_vert_interval),
+            ("", self.edit_always_show_scroll),
+        )
+        sf.addRow(self.prop_label_scroll, self._scroll_pad_row)
+        sf.addRow("", self._scroll_indent_row)
+        sf.addRow("", self._scroll_misc_row)
+        props_l.addWidget(self._scroll_group)
+
+        self._texture_prop_widgets: list[QWidget] = [self._texture_group]
+        self._text_prop_widgets: list[QWidget] = [self._text_group]
+        self._scroll_prop_widgets: list[QWidget] = [self._scroll_group]
+        self._ui_only_prop_widgets: list[QWidget] = [
+            self.prop_meta_note,
+            *self._texture_prop_widgets,
+            *self._text_prop_widgets,
+            *self._scroll_prop_widgets,
+        ]
+
+        def _section_header(text: str) -> QLabel:
+            lab = QLabel(text)
+            font = lab.font()
+            font.setBold(True)
+            # Body UI is 9pt; headers one step up (10px was smaller than 9pt).
+            font.setPointSize(10)
+            lab.setFont(font)
+            lab.setContentsMargins(0, 10, 0, 0)
+            return lab
+
+        # Options: full-width strip under the menu bar (content centered).
+        self.options_bar = QWidget()
+        self.options_bar.setObjectName("optionsBar")
+        self.options_bar.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum
+        )
+        options_l = QHBoxLayout(self.options_bar)
+        # ~50% taller than the old 4px pad; keep controls vertically centered.
+        options_l.setContentsMargins(9, 12, 9, 12)
+        options_l.setSpacing(16)
+        options_l.setAlignment(Qt.AlignmentFlag.AlignVCenter)
         self.tool_border = QCheckBox("Box border for unselected")
         self.tool_border.setChecked(bool(self.settings.get("show_box_border", False)))
         self.tool_fill = QCheckBox("Box fill selected")
         self.tool_fill.setChecked(bool(self.settings.get("show_box_fill", False)))
         self.tool_labels = QCheckBox("Show labels")
         self.tool_labels.setChecked(bool(self.settings.get("show_element_labels", False)))
-        font_row = QHBoxLayout()
-        font_row.setContentsMargins(0, 0, 0, 0)
-        font_row.addWidget(QLabel("Label size"))
         self.tool_font = QSpinBox()
         self.tool_font.setRange(LABEL_FONT_MIN, LABEL_FONT_MAX)
         self.tool_font.setSingleStep(1)
         self.tool_font.setValue(clamp_label_font_size(self.settings.get("label_font_size")))
         self.tool_font.setSuffix(" pt")
-        font_row.addWidget(self.tool_font)
-        font_row.addStretch(1)
-        tools_l.addWidget(self.tool_border)
-        tools_l.addWidget(self.tool_fill)
-        tools_l.addWidget(self.tool_labels)
-        tools_l.addLayout(font_row)
-        self.tools_scroll = QScrollArea()
-        self.tools_scroll.setWidgetResizable(True)
-        self.tools_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
-        self.tools_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.tools_scroll.setAlignment(
-            Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft
-        )
-        self.tools_scroll.setWidget(tools)
-        right_body_l.addWidget(self.tools_scroll)
+        options_l.addStretch(1)
+        for w in (
+            self.tool_border,
+            self.tool_fill,
+            self.tool_labels,
+            QLabel("Label size"),
+            self.tool_font,
+        ):
+            options_l.addWidget(w, 0, Qt.AlignmentFlag.AlignVCenter)
+        options_l.addStretch(1)
 
-        self._layers_section_label = QLabel("Layers")
-        right_body_l.addWidget(self._layers_section_label)
-        self.layers.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        right_body_l.addWidget(self.layers, stretch=1)
+        # Left: Layers (fit) + Tree (fill). Right: Properties (fit) + Undo (fill).
+        left = QWidget()
+        self._left_sidebar = left
+        left.setMinimumWidth(SIDEBAR_MIN_WIDTH)
+        left.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+        left_l = QVBoxLayout(left)
+        left_l.setContentsMargins(0, 0, 0, 0)
+        left_l.setSpacing(6)
+        left_body = QWidget()
+        left_body_l = QVBoxLayout(left_body)
+        self._left_body_l = left_body_l
+        left_body_l.setContentsMargins(9, 0, 9, 9)
+        self._layers_section_label = _section_header("Layers")
+        left_body_l.addWidget(self._layers_section_label)
+        left_body_l.addWidget(self.layers, stretch=0)
+        self._list_section_label = _section_header("Tree")
+        left_body_l.addWidget(self._list_section_label)
+        self.tree.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.tree.setMinimumHeight(120)
+        self.tree.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        left_body_l.addWidget(self.tree, stretch=1)
+        left_l.addWidget(left_body, stretch=1)
 
-        self._undo_section_label = QLabel("Undo")
+        right = QWidget()
+        self._right_sidebar = right
+        right.setMinimumWidth(SIDEBAR_MIN_WIDTH)
+        right.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+        right_l = QVBoxLayout(right)
+        right_l.setContentsMargins(0, 0, 0, 0)
+        right_l.setSpacing(6)
+        right_body = QWidget()
+        right_body_l = QVBoxLayout(right_body)
+        self._right_body_l = right_body_l
+        right_body_l.setContentsMargins(9, 0, 9, 9)
+        right_body_l.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self._props_section_label = _section_header("Properties")
+        right_body_l.addWidget(self._props_section_label)
+        self.props_scroll = FitContentScrollArea()
+        self.props_scroll.setWidget(props)
+        right_body_l.addWidget(self.props_scroll, stretch=0)
+        self._undo_section_label = _section_header("Undo")
         right_body_l.addWidget(self._undo_section_label)
         self.undo_list = QListWidget()
         self.undo_list.setObjectName("undoHistoryList")
@@ -1263,16 +1643,12 @@ class MainWindow(QMainWindow):
         self.undo_list.setSelectionMode(QListWidget.SelectionMode.NoSelection)
         self.undo_list.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.undo_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        # UI mode: compact under Layers. Atlas mode: expands (Layers hidden).
-        self._undo_list_compact_h = 9 * 18 + 8
-        self.undo_list.setFixedHeight(self._undo_list_compact_h)
+        self.undo_list.setMinimumHeight(80)
         self.undo_list.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
-        right_body_l.addWidget(self.undo_list)
+        right_body_l.addWidget(self.undo_list, stretch=1)
         right_l.addWidget(right_body, stretch=1)
-
-        self._apply_sidebar_section_heights()
 
         self.split = QSplitter()
         self.split.addWidget(left)
@@ -1280,6 +1656,7 @@ class MainWindow(QMainWindow):
         self.split.addWidget(right)
         # Fixed-width sidebars; only the editor stretches with the window.
         # Content must not change sidebar widths - only manual splitter drag.
+        self.split.setChildrenCollapsible(False)
         self.split.setStretchFactor(0, 0)
         self.split.setStretchFactor(1, 1)
         self.split.setStretchFactor(2, 0)
@@ -1288,11 +1665,19 @@ class MainWindow(QMainWindow):
         self._splitter_save_timer.setInterval(200)
         self._splitter_save_timer.timeout.connect(self._save_splitter_sizes)
         self.split.splitterMoved.connect(self._on_splitter_moved)
+        # Sizes applied again when workspace is revealed (hidden splitters ignore setSizes).
         self._apply_splitter_sizes()
-        self.setCentralWidget(self.split)
+
+        self._workspace = QWidget()
+        workspace_l = QVBoxLayout(self._workspace)
+        workspace_l.setContentsMargins(0, 0, 0, 0)
+        workspace_l.setSpacing(0)
+        workspace_l.addWidget(self.options_bar, stretch=0)
+        workspace_l.addWidget(self.split, stretch=1)
+        self.setCentralWidget(self._workspace)
         # Keep workspace hidden until a file is chosen and loaded.
         self._workspace_revealed = False
-        self.split.hide()
+        self._workspace.hide()
         self.menuBar().hide()
         self.statusBar().hide()
         self._startup = StartupChooserOverlay(self)
@@ -1300,7 +1685,6 @@ class MainWindow(QMainWindow):
         self._startup.dismissed.connect(self._on_startup_dismissed)
         self._busy = BusyOverlay(self)
         self._busy_open = False
-        QTimer.singleShot(0, self._sync_sidebar_tab_offset)
 
         self.scene.selection_node_changed.connect(self._on_canvas_selection)
         self.scene.geometry_changed.connect(self._on_geometry_changed)
@@ -1316,6 +1700,27 @@ class MainWindow(QMainWindow):
         self._restoring_meta = False
         self.edit_stretch.toggled.connect(self._on_stretch_toggled)
         self.edit_show_texture.toggled.connect(self._on_show_texture_toggled)
+        self.edit_font.currentIndexChanged.connect(self._on_text_enum_changed)
+        self.edit_font.lineEdit().editingFinished.connect(self._on_text_font_edited)
+        self.edit_align.currentIndexChanged.connect(self._on_text_enum_changed)
+        self.edit_vert_align.currentIndexChanged.connect(self._on_text_enum_changed)
+        self.edit_complex_mode.toggled.connect(self._on_text_flag_toggled)
+        self.edit_always_show_scroll.toggled.connect(self._on_scroll_flag_toggled)
+        for ed in (
+            self.edit_text_r,
+            self.edit_text_g,
+            self.edit_text_b,
+            self.edit_text_a,
+            self.edit_text_x,
+            self.edit_text_y,
+            self.edit_left_ident,
+            self.edit_right_ident,
+            self.edit_top_indent,
+            self.edit_bottom_indent,
+            self.edit_vert_interval,
+        ):
+            ed.editingFinished.connect(self._on_extra_props_editing_finished)
+        self._refresh_font_combo()
 
         self._build_menu()
         self._set_doc_mode(DOC_MODE_UI)
@@ -1334,32 +1739,30 @@ class MainWindow(QMainWindow):
             if path.is_file():
                 self._startup_path = path
 
-    def _sidebar_section_height(self) -> int:
-        """Props/Options height: ~16% of window (was 30%) so Tree/Layers gain ~20%."""
-        snapped = int(round(self.height() * 0.16 / 50.0) * 50)
-        return max(150, snapped)
-
-    def _apply_sidebar_section_heights(self) -> None:
-        h = self._sidebar_section_height()
-        self.props_scroll.setFixedHeight(h)
-        self.tools_scroll.setFixedHeight(h)
-
-    def _sync_sidebar_tab_offset(self) -> None:
-        """Align sidebar tops with the tab page (canvas), not the tab bar."""
-        page = self.editor_tabs.currentWidget()
-        if page is not None and page.isVisible():
-            h = int(page.mapTo(self.editor_tabs, QPoint(0, 0)).y())
-        else:
-            h = 0
-        if h <= 0:
-            h = max(1, self.editor_tabs.tabBar().sizeHint().height())
-        self._left_tab_spacer.setFixedHeight(h)
-        self._right_tab_spacer.setFixedHeight(h)
+    def _relayout_sidebar_fit(self) -> None:
+        """Layers/Properties size to content; Tree/Undo keep leftover stretch."""
+        props = getattr(self, "_props_widget", None)
+        if props is not None:
+            lay = props.layout()
+            if lay is not None:
+                lay.activate()
+            props.updateGeometry()
+        for w in (
+            getattr(self, "props_scroll", None),
+            getattr(self, "layers", None),
+        ):
+            if w is not None:
+                w.updateGeometry()
+        left = getattr(self, "_left_body_l", None)
+        right = getattr(self, "_right_body_l", None)
+        if left is not None:
+            left.activate()
+        if right is not None:
+            right.activate()
 
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
-        self._apply_sidebar_section_heights()
-        self._sync_sidebar_tab_offset()
+        self._relayout_sidebar_fit()
         if hasattr(self, "_busy") and self._busy.isVisible():
             self._busy.setGeometry(self.rect())
         if hasattr(self, "_startup") and self._startup.isVisible():
@@ -1367,20 +1770,42 @@ class MainWindow(QMainWindow):
 
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
-        self._sync_sidebar_tab_offset()
-        QTimer.singleShot(0, self._sync_sidebar_tab_offset)
         if hasattr(self, "_busy"):
             self._busy.setGeometry(self.rect())
         if hasattr(self, "_startup") and self._startup.isVisible():
             self._startup.setGeometry(self.rect())
 
-    def _show_busy(self, message: str) -> None:
+    def _show_busy(self, message: str, detail: str = "") -> None:
         self._busy.setGeometry(self.rect())
-        self._busy.start(message)
+        self._busy.start(message, detail=detail)
         QApplication.processEvents()
 
     def _hide_busy(self) -> None:
         self._busy.stop()
+
+    def _paths_need_asset_scan(self) -> bool:
+        """True when any configured root is missing a path/DDS cache shard."""
+        s = self.settings
+
+        def _paths(raw: object) -> list[Path]:
+            return [Path(str(p)) for p in (raw or []) if p]
+
+        return asset_index_scan_needed(
+            texture_scan_roots=_paths(s.get("texture_roots")),
+            gamedata_texture_roots=_paths(s.get("gamedata_texture_roots")),
+            descr_scan_roots=_paths(s.get("textures_descr_roots")),
+            gamedata_descr_roots=_paths(s.get("gamedata_descr_roots")),
+            text_scan_roots=_paths(s.get("text_roots")),
+            gamedata_text_roots=_paths(s.get("gamedata_text_roots")),
+            anomaly_root=str(s.get("anomaly_root") or ""),
+            gamma_root=str(s.get("gamma_root") or ""),
+        )
+
+    def _asset_index_scan_needed(self) -> bool:
+        """True when bind will have to (re)build path/DDS cache shards."""
+        if getattr(self, "_resources_ready", False):
+            return False
+        return self._paths_need_asset_scan()
 
     def _reveal_workspace(self) -> None:
         if self._workspace_revealed:
@@ -1389,10 +1814,13 @@ class MainWindow(QMainWindow):
         self._startup.stop()
         self.menuBar().show()
         self.statusBar().show()
-        self.split.show()
-        self._sync_sidebar_tab_offset()
+        self._workspace.show()
+        # Hidden QSplitter ignores setSizes — restore after show.
+        self._apply_splitter_sizes()
         self._fit_stage()
         QApplication.processEvents()
+        self._apply_splitter_sizes()
+        QTimer.singleShot(0, self._apply_splitter_sizes)
 
     def _fit_stage(self) -> None:
         if self._doc_mode == DOC_MODE_ATLAS:
@@ -1417,44 +1845,25 @@ class MainWindow(QMainWindow):
         for act in (self.border_a, self.fill_a, self.labels_a):
             act.setEnabled(True)
         # Atlas: id + x/y/w/h + region list + Options/Undo. Hide UI-only rows/Layers.
-        self.prop_label_path.setText("Id" if atlas else "Path")
+        self.prop_label_path.setText("Id:" if atlas else "Path:")
         self._list_section_label.setText("Regions" if atlas else "Tree")
-        for w in (
-            self.prop_meta_note,
-            self.prop_label_texture,
-            self.prop_texture,
-            self._tex_opts_row,
-            self.prop_label_text,
-            self.prop_text,
-            self.prop_text_font,
-            self.prop_text_resolved,
-        ):
+        for w in self._ui_only_prop_widgets:
             w.setVisible(not atlas)
         self._layers_section_label.setVisible(not atlas)
         self.layers.setVisible(not atlas)
-        # Mirror left sidebar: fixed Options on top, expanding list below.
-        # Atlas has no Layers — Undo takes that stretch so Options stays packed top.
+        # Layers/Properties fit content; Tree/Undo fill leftover to the bottom.
+        self._left_body_l.setStretchFactor(self.layers, 0)
+        self._left_body_l.setStretchFactor(self.tree, 1)
+        self._right_body_l.setStretchFactor(self.props_scroll, 0)
+        self._right_body_l.setStretchFactor(self.undo_list, 1)
         if atlas:
-            self.undo_list.setMinimumHeight(self._undo_list_compact_h)
-            self.undo_list.setMaximumHeight(16777215)
-            self.undo_list.setSizePolicy(
-                QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
-            )
-            self._right_body_l.setStretchFactor(self.layers, 0)
-            self._right_body_l.setStretchFactor(self.undo_list, 1)
             self._apply_descr_view_settings()
-        else:
-            self.undo_list.setFixedHeight(self._undo_list_compact_h)
-            self.undo_list.setSizePolicy(
-                QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
-            )
-            self._right_body_l.setStretchFactor(self.layers, 1)
-            self._right_body_l.setStretchFactor(self.undo_list, 0)
-        sizes = self.split.sizes()
-        if sizes[0] < 80 or sizes[2] < 80:
-            self._apply_splitter_sizes()
+        # Mode switches can collapse panes; restore remembered widths.
+        self._apply_splitter_sizes()
         self._update_undo_actions()
         self._refresh_undo_list()
+        self._relayout_sidebar_fit()
+        QTimer.singleShot(0, self._relayout_sidebar_fit)
 
     def _apply_descr_view_settings(self) -> None:
         scene = self.descr_board.scene
@@ -1512,10 +1921,11 @@ class MainWindow(QMainWindow):
         self._set_path_label(region.atlas_id)
         for ed in (self.edit_x, self.edit_y, self.edit_w, self.edit_h):
             ed.setEnabled(True)
-        self.edit_x.setText(_num(region.x))
-        self.edit_y.setText(_num(region.y))
-        self.edit_w.setText(_num(region.width))
-        self.edit_h.setText(_num(region.height))
+        # UV crops are pixel ints — never show decimals.
+        self.edit_x.setText(str(int(round(region.x))))
+        self.edit_y.setText(str(int(round(region.y))))
+        self.edit_w.setText(str(int(round(region.width))))
+        self.edit_h.setText(str(int(round(region.height))))
         self._set_geo_field_styles(True)
         self._updating_props = False
         # Sync region list selection
@@ -1539,6 +1949,8 @@ class MainWindow(QMainWindow):
             return
         self._commit_props_geo_undo()
         self._show_descr_props(region)
+        self._xml_sel_atlas = region.atlas_id if region is not None else ""
+        self._apply_xml_selection_highlight()
         if region is None:
             return
         self.statusBar().showMessage(
@@ -1568,7 +1980,22 @@ class MainWindow(QMainWindow):
         return self.doc.path
 
     def _open_startup_file(self) -> None:
-        self._bind_resource_roots()
+        scanning = self._asset_index_scan_needed()
+        thumbs_dir = cache_dir() / "thumbs"
+        thumbs_empty = (not thumbs_dir.is_dir()) or not any(thumbs_dir.glob("*.png"))
+        show_busy = scanning or thumbs_empty
+        if show_busy:
+            detail = (
+                "Rescanning root paths for assets"
+                if scanning
+                else "Generating texture sheet previews…"
+            )
+            self._show_busy("Loading", detail=detail)
+        try:
+            self._bind_resource_roots()
+        finally:
+            if show_busy:
+                self._hide_busy()
         path = self._startup_path
         self._startup_path = None
         if path is not None and path.is_file():
@@ -1576,11 +2003,23 @@ class MainWindow(QMainWindow):
             return
         self._show_startup_chooser()
 
-    def _bind_resource_roots(self) -> None:
-        """Attach saved directory lists — no full asset scan."""
+    def _bind_resource_roots(self, *, warm_thumbs: bool | None = None) -> None:
+        """Attach saved directory lists; build missing shards (+ thumbs on scan)."""
         if getattr(self, "_resources_ready", False):
             return
+        scanning = self._paths_need_asset_scan()
+        if warm_thumbs is None:
+            # Cold/partial path scan, or first run after thumbs support landed.
+            thumbs_dir = cache_dir() / "thumbs"
+            thumbs_empty = (not thumbs_dir.is_dir()) or not any(
+                thumbs_dir.glob("*.png")
+            )
+            warm_thumbs = scanning or thumbs_empty
         self.path_index = PathIndex.load()
+        self.path_index.configure_installs(
+            self.settings.get("anomaly_root") or "",
+            self.settings.get("gamma_root") or "",
+        )
         self.resolver = self._make_resolver()
         self.strings = self._make_string_resolver()
         self.fonts = self._make_font_resolver()
@@ -1590,6 +2029,36 @@ class MainWindow(QMainWindow):
         str_stats = self.strings.ensure_indexes()
         self.path_index.save()
         index_s = time.perf_counter() - t0
+        thumb_stats: dict[str, int] = {}
+        thumb_s = 0.0
+        if warm_thumbs:
+            if self._busy.isVisible():
+                self._busy.set_message(
+                    self._busy.message,
+                    detail="Generating texture sheet previews…",
+                )
+                QApplication.processEvents()
+
+            def _thumb_progress(done: int, total: int, written: int) -> None:
+                if getattr(self, "_closing", False):
+                    self.resolver.abort_picker_thumbs()
+                    return
+                if not self._busy.isVisible():
+                    return
+                self._busy.set_message(
+                    self._busy.message,
+                    detail=f"Generating texture sheet previews… {done}/{total}",
+                )
+                # Allow Quit during warm — closeEvent aborts the thumb pool.
+                QApplication.processEvents()
+                if getattr(self, "_closing", False):
+                    self.resolver.abort_picker_thumbs()
+
+            t1 = time.perf_counter()
+            thumb_stats = self.resolver.warm_picker_thumbs(progress=_thumb_progress)
+            thumb_s = time.perf_counter() - t1
+            if getattr(self, "_closing", False):
+                return
         self.scene.rebind_resolver(self.resolver)
         self.scene.rebind_text_resources(strings=self.strings, fonts=self.fonts)
         self.descr_board.resolver = self.resolver
@@ -1600,7 +2069,8 @@ class MainWindow(QMainWindow):
         n_text = len(self.settings.get("gamedata_text_roots") or [])
         _log_file.info(
             "resource roots bound texture=%s descr=%s text=%s | "
-            "index dds=%s descr_xml=%s text_xml=%s in %.2fs",
+            "index dds=%s descr_xml=%s text_xml=%s in %.2fs | "
+            "thumbs written=%s skipped=%s sheets=%s workers=%s in %.2fs",
             n_tex,
             n_descr,
             n_text,
@@ -1608,12 +2078,22 @@ class MainWindow(QMainWindow):
             tex_stats.get("descr_files", 0),
             str_stats.get("text_files", 0),
             index_s,
+            thumb_stats.get("written", 0),
+            thumb_stats.get("skipped", 0),
+            thumb_stats.get("sheets", 0),
+            thumb_stats.get("workers", 0),
+            thumb_s,
         )
-        self.statusBar().showMessage(
+        msg = (
             f"Ready · {tex_stats.get('dds', 0)} dds · "
             f"{tex_stats.get('descr_files', 0)} descr · "
             f"{str_stats.get('text_files', 0)} text · indexed in {index_s:.1f}s"
         )
+        if thumb_stats:
+            msg += (
+                f" · {thumb_stats.get('written', 0)} sheet previews in {thumb_s:.1f}s"
+            )
+        self.statusBar().showMessage(msg)
 
     def _ensure_resources_indexed(self) -> None:
         """Back-compat alias — roots only; assets resolve on file load."""
@@ -1623,17 +2103,17 @@ class MainWindow(QMainWindow):
         """Resolve only atlas / DDS / string / font ids this document references."""
         self._bind_resource_roots()
         t0 = time.perf_counter()
-        self.resolver.clear_cache()
-        self.strings.clear_cache()
-        self.fonts.clear_cache()
-        # Keep disk indexes; only clear in-memory atlas/string parse caches.
+        # Keep DDS map, decoded sheets, strings, and fonts across opens.
+        self.resolver.clear_document_cache()
         self.resolver.ensure_indexes()
         self.strings.ensure_indexes()
+        self.fonts.ensure_font_index()
         self.resolver.warm_for_document(doc)
         self.strings.warm_for_document(doc)
         self.fonts.warm_for_document(doc)
         if self.path_index is not None:
             self.path_index.save()
+        self._refresh_font_combo()
         elapsed = time.perf_counter() - t0
         font_h = getattr(self.fonts, "device_height", 0)
         _log_file.info(
@@ -1789,11 +2269,11 @@ class MainWindow(QMainWindow):
         self.settings_a = QAction("&Settings…", self)
         self.settings_a.triggered.connect(self.edit_settings)
         edit_menu.addAction(self.settings_a)
-        self.rescan_a = QAction("Rescan &asset cache", self)
+        self.rescan_a = QAction("Rescan &asset cache…", self)
         self.rescan_a.setShortcut("Ctrl+Shift+R")
         self.rescan_a.setToolTip(
-            "Re-discover asset folders under Anomaly / GAMMA / extras, then rebuild "
-            "the DDS + descr + text file index cache (needed after adding mods)."
+            "Choose which roots to rescan. Drops only those cache shards and "
+            "regenerates them (default: custom roots)."
         )
         self.rescan_a.triggered.connect(self.rescan_asset_paths)
         edit_menu.addAction(self.rescan_a)
@@ -1967,12 +2447,18 @@ class MainWindow(QMainWindow):
             self,
             current_name=current,
             prefer_path=prefer_path,
+            root_groups=build_picker_root_groups(
+                self.resolver,
+                anomaly_root=str(self.settings.get("anomaly_root") or ""),
+                gamma_root=str(self.settings.get("gamma_root") or ""),
+            ),
         )
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         pick = dlg.selected_pick()
         if pick is None:
             return
+        before = node.capture_prop_state()
         # Atlas: write id, clear XML UV (engine uses textures_descr).
         # Path: write ui\file, clear UV (full DDS). Path+UV crops are edited in XML.
         if not node.set_texture_name(pick.name, clear_uv=True):
@@ -1986,6 +2472,7 @@ class MainWindow(QMainWindow):
                 atlas = self.resolver.lookup_atlas(pick.name)
                 if atlas is not None:
                     self.resolver.remember_dds(atlas.file_name, pick.dds_path)
+        self._push_prop_edit(before, node.capture_prop_state())
         self._mark_xml_dirty()
         self._show_props(node)
         item = self.scene.item_for_node(node)
@@ -2009,10 +2496,20 @@ class MainWindow(QMainWindow):
         if self._busy_open:
             _log_file.warning("open_path ignored (busy): %s", path)
             return
-        self._bind_resource_roots()
         _log_file.info("open_path begin: %s", path)
         self._busy_open = True
-        self._show_busy(f"Loading {path.name}…")
+        scanning = self._asset_index_scan_needed()
+        thumbs_dir = cache_dir() / "thumbs"
+        thumbs_empty = (
+            not getattr(self, "_resources_ready", False)
+            and ((not thumbs_dir.is_dir()) or not any(thumbs_dir.glob("*.png")))
+        )
+        detail_parts = [path.name]
+        if scanning:
+            detail_parts.append("Rescanning root paths for assets")
+        elif thumbs_empty:
+            detail_parts.append("Generating texture sheet previews…")
+        self._show_busy("Loading", detail="\n".join(detail_parts))
         # Let the overlay paint / spin once before the blocking load work.
         QTimer.singleShot(0, lambda p=path: self._open_path_finish(p))
 
@@ -2020,6 +2517,7 @@ class MainWindow(QMainWindow):
         ok = False
         _log_file.debug("_open_path_finish: %s", path)
         try:
+            self._bind_resource_roots()
             try:
                 text = path.read_text(encoding="utf-8-sig")
             except OSError as exc:
@@ -2173,7 +2671,7 @@ class MainWindow(QMainWindow):
         self._capture_session_meta()
 
     def _refresh_undo_list(self) -> None:
-        """Show newest ~10 undo entries under Layers (updates on push / undo / redo)."""
+        """Show newest ~10 undo entries (updates on push / undo / redo)."""
         view = getattr(self, "undo_list", None)
         if view is None:
             return
@@ -2187,16 +2685,19 @@ class MainWindow(QMainWindow):
         view.clear()
         for edit in edits:
             item = QListWidgetItem(edit.describe())
-            tip_parts = []
-            for before, after in edit.parts[:6]:
-                tip_parts.append(
-                    f"{before.path}: "
-                    f"({before.x:g},{before.y:g} {before.width:g}×{before.height:g}) → "
-                    f"({after.x:g},{after.y:g} {after.width:g}×{after.height:g})"
-                )
-            if len(edit.parts) > 6:
-                tip_parts.append(f"… +{len(edit.parts) - 6} more")
-            item.setToolTip("\n".join(tip_parts) if tip_parts else edit.describe())
+            if isinstance(edit, PropEdit):
+                item.setToolTip(f"{edit.before.path}\n{edit.describe()}")
+            else:
+                tip_parts = []
+                for before, after in edit.parts[:6]:
+                    tip_parts.append(
+                        f"{before.path}: "
+                        f"({before.x:g},{before.y:g} {before.width:g}×{before.height:g}) → "
+                        f"({after.x:g},{after.y:g} {after.width:g}×{after.height:g})"
+                    )
+                if len(edit.parts) > 6:
+                    tip_parts.append(f"… +{len(edit.parts) - 6} more")
+                item.setToolTip("\n".join(tip_parts) if tip_parts else edit.describe())
             view.addItem(item)
         view.blockSignals(False)
 
@@ -2238,6 +2739,7 @@ class MainWindow(QMainWindow):
         self._find_index = -1
         self.find_count.setText("")
         self.raw_editor.setExtraSelections([])
+        self._apply_xml_selection_highlight(scroll=False)
         self.raw_editor.setFocus()
 
     def _on_find_text_changed(self, _text: str) -> None:
@@ -2312,6 +2814,40 @@ class MainWindow(QMainWindow):
             extras.append(sel)
         self.raw_editor.setExtraSelections(extras)
 
+    def _apply_xml_selection_highlight(self, *, scroll: bool = True) -> None:
+        """Highlight the selected tree/canvas node in the XML editor (no tab switch)."""
+        if not self.find_bar.isHidden():
+            return
+        text = self.raw_editor.toPlainText()
+        span: tuple[int, int] | None = None
+        if self._doc_mode == DOC_MODE_ATLAS:
+            key = self._xml_sel_atlas
+            if key:
+                span = find_atlas_id_span(text, key)
+        else:
+            key = self._xml_sel_path
+            if key:
+                span = find_layout_path_span(text, key)
+        extras: list[QTextEdit.ExtraSelection] = []
+        if span is not None:
+            sel = QTextEdit.ExtraSelection()
+            cursor = self.raw_editor.textCursor()
+            cursor.setPosition(span[0])
+            cursor.setPosition(span[1], QTextCursor.MoveMode.KeepAnchor)
+            sel.cursor = cursor
+            fmt = QTextCharFormat()
+            fmt.setBackground(QColor("#264F78"))
+            sel.format = fmt
+            extras.append(sel)
+            if scroll:
+                # Move caret without a real selection (ExtraSelection paints the range).
+                nav = self.raw_editor.textCursor()
+                nav.clearSelection()
+                nav.setPosition(span[0])
+                self.raw_editor.setTextCursor(nav)
+                self.raw_editor.centerCursor()
+        self.raw_editor.setExtraSelections(extras)
+
     def _jump_to_find_index(self, index: int) -> None:
         if not self._find_matches:
             self._update_find_chrome()
@@ -2363,7 +2899,6 @@ class MainWindow(QMainWindow):
     def _on_editor_tab_changed(self, index: int) -> None:
         if self._tab_guard:
             return
-        QTimer.singleShot(0, self._sync_sidebar_tab_offset)
         if index == TAB_XML:
             self._sync_raw_from_preview()
             self._update_undo_actions()
@@ -2594,36 +3129,53 @@ class MainWindow(QMainWindow):
         self._reload_textures()
 
     def rescan_asset_paths(self) -> None:
-        """Menu: rediscover folders, rebuild file indexes, reload open document."""
-        if not installs_configured(self.settings):
-            QMessageBox.warning(
-                self,
-                "Rescan asset cache",
-                "Set valid Anomaly and GAMMA roots in Edit → Settings first.",
-            )
+        """Menu: dialog to pick roots; drop only those cache shards and regen."""
+        dlg = RescanDialog(self.settings, self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
             return
+        selected = dlg.selected_targets()
+        if not selected:
+            return
+        labels = ", ".join(t.label for t in selected)
+        drop_roots: list[Path] = []
+        self._show_busy(
+            "Rescanning…",
+            detail="Refreshing selected root caches",
+        )
         QApplication.setOverrideCursor(QCursor(Qt.CursorShape.WaitCursor))
         try:
-            rescan_asset_roots(self.settings)
+            apply_rescan_selection(self.settings, selected)
             save_settings(self.settings)
-            # Drop path + DDS indexes; bind rebuilds them from the new roots.
-            if getattr(self, "path_index", None) is not None:
-                self.path_index.invalidate()
+            drop_roots = collect_invalidate_roots(self.settings, selected)
+            if getattr(self, "path_index", None) is None:
+                self.path_index = PathIndex.load()
+            self.path_index.configure_installs(
+                self.settings.get("anomaly_root") or "",
+                self.settings.get("gamma_root") or "",
+            )
+            self.path_index.invalidate_roots(drop_roots)
+            # Memory caches must drop so ensure_indexes reloads/merges shards.
             self._resources_ready = False
-            self._bind_resource_roots()
+            self._bind_resource_roots(warm_thumbs=True)
         finally:
             QApplication.restoreOverrideCursor()
-        n_tex = len(self.settings.get("gamedata_texture_roots") or [])
-        n_descr = len(self.settings.get("gamedata_descr_roots") or [])
-        n_text = len(self.settings.get("gamedata_text_roots") or [])
+            self._hide_busy()
         n_dds = self.resolver.dds_count if getattr(self, "resolver", None) else 0
+        n_drop = len(drop_roots)
         self._log(
             "info",
-            f"Asset cache rescanned — {n_tex} texture dirs, {n_descr} descr, "
-            f"{n_text} text, {n_dds} dds indexed",
+            f"Asset cache rescanned ({labels}) — {n_drop} root shard(s), "
+            f"{n_dds} dds indexed",
         )
-        # Rebind already ran ensure_indexes; refresh open document textures.
+        self._refresh_open_doc_after_rescan("rescan")
+        self.statusBar().showMessage(
+            f"Rescan done · {n_drop} root(s) · {n_dds} dds"
+        )
+
+    def _refresh_open_doc_after_rescan(self, audit_tag: str) -> None:
+        """Rebind / warm the open document after an asset-cache rescan."""
         if self._doc_mode == DOC_MODE_ATLAS and self.descr_doc.root is not None:
+            # Keep disk shards; only clear in-memory atlas/DDS decode state.
             self.resolver.clear_cache()
             self.resolver.ensure_indexes()
             self.descr_board.set_document(self.descr_doc)
@@ -2634,10 +3186,7 @@ class MainWindow(QMainWindow):
             self.scene.set_document(self.doc.doc)
         self._on_stack_peers_changed(frozenset())
         if self._doc_mode == DOC_MODE_UI and self.doc.doc:
-            self._audit_resources("rescan")
-        self.statusBar().showMessage(
-            f"Asset cache ready · {n_dds} dds · {n_tex} texture dirs"
-        )
+            self._audit_resources(audit_tag)
 
     def _sync_tool_controls(self) -> None:
         border = bool(self.settings.get("show_box_border", False))
@@ -2764,9 +3313,9 @@ class MainWindow(QMainWindow):
                 continue
             path = node.path or node.tag
             if node.texture and node.texture.name:
-                resolved = self.resolver.resolve_ref(node.texture)
-                if resolved.error or resolved.image is None:
-                    err = resolved.error or "failed to load"
+                # Probe atlas/DDS presence only — decoding is done during warm/paint.
+                ok, err = self.resolver.probe_ref(node.texture)
+                if not ok:
                     self._log("error", f"texture {path}: {node.texture.name} → {err}")
                     tex_fail += 1
                 else:
@@ -2859,6 +3408,8 @@ class MainWindow(QMainWindow):
         # Deepest matching layer toggle wins (nested layers are independent).
         self.scene.set_layer_states(states)
         self._sync_tree_layer_visibility()
+        self.layers.updateGeometry()
+        self._relayout_sidebar_fit()
 
     def _sync_tree_layer_visibility(self) -> None:
         """Grey Tree rows whose nodes are hidden by a deselected layer."""
@@ -2935,6 +3486,8 @@ class MainWindow(QMainWindow):
         self._show_props(node)
         if not self._restoring_meta:
             self.doc.set_selection(node.path if node and node.path else "")
+        self._xml_sel_path = node.path if node and node.path else ""
+        self._apply_xml_selection_highlight()
         if node and node.path:
             # Sync tree selection
             matches = self.tree.findItems(
@@ -3000,19 +3553,30 @@ class MainWindow(QMainWindow):
     def _pin_splitter_sizes(self) -> None:
         """Keep sidebar widths stable; only manual splitter drag should change them."""
         sizes = self.split.sizes()
-        if len(sizes) == 3 and sizes[0] > 0 and sizes[2] > 0:
+        if (
+            len(sizes) == 3
+            and sizes[0] >= SIDEBAR_MIN_WIDTH
+            and sizes[2] >= SIDEBAR_MIN_WIDTH
+        ):
             self.split.setSizes(sizes)
+            return
+        # Layout thrash crushed a pane — restore from settings/defaults.
+        self._apply_splitter_sizes()
 
     def _on_splitter_moved(self, *_args) -> None:
         self._splitter_save_timer.start()
 
     def _apply_splitter_sizes(self) -> None:
         sizes = normalize_splitter_sizes(self.settings.get("splitter_sizes"))
+        self.settings["splitter_sizes"] = sizes
         self.split.setSizes(sizes)
 
     def _save_splitter_sizes(self) -> None:
         sizes = self.split.sizes()
-        if len(sizes) != 3 or sizes[0] < 80 or sizes[2] < 80:
+        if len(sizes) != 3:
+            return
+        # Never persist crushed panes — keeps next launch at least min width.
+        if sizes[0] < SIDEBAR_MIN_WIDTH or sizes[2] < SIDEBAR_MIN_WIDTH:
             return
         normalized = normalize_splitter_sizes(sizes)
         if normalized == normalize_splitter_sizes(self.settings.get("splitter_sizes")):
@@ -3024,51 +3588,269 @@ class MainWindow(QMainWindow):
         self.prop_path.setText(_path_rich_text(path or "-"))
 
     def _set_meta_prop_labels(self, from_meta: bool) -> None:
-        """Orange Pos / Size / Texture labels for layer-root meta handles."""
+        """Orange Pos / Size / Texture heading for layer-root meta handles."""
         style = self._meta_prop_style if from_meta else ""
         self.prop_label_pos.setStyleSheet(style)
         self.prop_label_size.setStyleSheet(style)
-        self.prop_label_texture.setStyleSheet(style)
         self.prop_label_path.setStyleSheet("")
         self.prop_path.setStyleSheet("")
+        tex = getattr(self, "_texture_group", None)
+        if tex is not None:
+            tex.setStyleSheet(
+                "QGroupBox::title { color: #E67E22; font-weight: bold; }"
+                if from_meta
+                else ""
+            )
 
     def _set_optional_prop_label(self, label: QLabel, text: str) -> None:
         text = text or ""
         label.setText(text)
         label.setVisible(bool(text.strip()))
 
-    def _set_text_resolved_row(self, resolved) -> None:
-        """Show string-table filename (elided) + copy; full path / preview in tooltip."""
-        if resolved.error:
-            self.prop_text_resolved.set_file(
-                display=f"⚠ {resolved.error}",
-                tip_extra=resolved.error,
-                color="#c62828",
-            )
+    def _set_combo_data(self, combo: QComboBox, value: str) -> None:
+        value = (value or "").strip()
+        idx = combo.findData(value)
+        if idx < 0 and combo.isEditable():
+            # Preserve unknown / custom font names in the editable field.
+            combo.setCurrentIndex(-1)
+            combo.setEditText(value)
             return
-        if resolved.is_literal:
-            preview = resolved.text.replace("\n", " · ")
-            self.prop_text_resolved.set_file(
-                display=f"literal: {preview}",
-                tip_extra=resolved.text,
-                color="#888888",
-            )
+        combo.setCurrentIndex(max(0, idx))
+
+    def _combo_data(self, combo: QComboBox) -> str:
+        if combo.isEditable() and combo.currentIndex() < 0:
+            return combo.currentText().strip()
+        data = combo.currentData()
+        if data is None:
+            return combo.currentText().strip()
+        return str(data)
+
+    def _refresh_font_combo(self) -> None:
+        if not hasattr(self, "edit_font"):
             return
-        preview = resolved.text.replace("\n", " · ")
-        if resolved.source is not None:
-            explorer = windows_explorer_path(resolved.source)
-            self.prop_text_resolved.set_file(
-                display=resolved.source.name,
-                explorer_path=explorer,
-                tip_extra=preview,
-                color="#888888",
-            )
+        from .fonts import ENGINE_FONT_NAMES
+
+        current = self._combo_data(self.edit_font)
+        self.edit_font.blockSignals(True)
+        self.edit_font.clear()
+        self.edit_font.addItem("default (letterica16)", "")
+        names = self.fonts.known_font_names() if hasattr(self, "fonts") else []
+        if not names:
+            names = list(ENGINE_FONT_NAMES)
+        for name in names:
+            self.edit_font.addItem(name, name)
+        self._set_combo_data(self.edit_font, current)
+        self.edit_font.blockSignals(False)
+
+    def _parse_optional_int(self, text: str) -> int | None | object:
+        """Blank → None (omit attr); invalid → ``...`` (leave unchanged)."""
+        raw = text.strip()
+        if raw == "" or raw == "—":
+            return None
+        try:
+            return int(raw)
+        except ValueError:
+            return ...
+
+    def _parse_optional_float(self, text: str) -> float | None | object:
+        raw = text.strip()
+        if raw == "" or raw == "—":
+            return None
+        try:
+            return float(raw)
+        except ValueError:
+            return ...
+
+    def _selected_prop_node(self) -> LayoutNode | None:
+        selected = [i for i in self.scene.selectedItems() if hasattr(i, "node")]
+        if not selected:
+            return None
+        node: LayoutNode = selected[0].node
+        if not node.is_drawable or node.from_meta:
+            return None
+        return node
+
+    def _refresh_selected_item(self, node: LayoutNode) -> None:
+        item = self.scene.item_for_node(node)
+        if item:
+            item.refresh_look()
+
+    def _fill_text_prop_fields(self, node: LayoutNode) -> None:
+        enabled = not node.from_meta
+        for w in (
+            self.edit_font,
+            self.edit_align,
+            self.edit_vert_align,
+            self.edit_complex_mode,
+            self.edit_text_r,
+            self.edit_text_g,
+            self.edit_text_b,
+            self.edit_text_a,
+            self.edit_text_x,
+            self.edit_text_y,
+        ):
+            w.setEnabled(enabled)
+        ref = node.text
+        self._set_combo_data(self.edit_font, ref.font if ref else "")
+        self._set_combo_data(self.edit_align, ref.align if ref else "")
+        self._set_combo_data(self.edit_vert_align, ref.vert_align if ref else "")
+        self.edit_complex_mode.setChecked(bool(ref and ref.complex_mode))
+        self.edit_text_r.setText("" if not ref or ref.r is None else str(ref.r))
+        self.edit_text_g.setText("" if not ref or ref.g is None else str(ref.g))
+        self.edit_text_b.setText("" if not ref or ref.b is None else str(ref.b))
+        self.edit_text_a.setText("" if not ref or ref.a is None else str(ref.a))
+        # Offset attrs are optional; blank means omit from XML (engine 0).
+        text_el = node.element.find("text")
+        if not ref or text_el is None:
+            self.edit_text_x.setText("")
+            self.edit_text_y.setText("")
         else:
-            self.prop_text_resolved.set_file(
-                display=preview or "(resolved)",
-                tip_extra=preview,
-                color="#888888",
+            self.edit_text_x.setText(
+                _num(ref.x) if text_el.get("x") is not None else ""
             )
+            self.edit_text_y.setText(
+                _num(ref.y) if text_el.get("y") is not None else ""
+            )
+
+    def _fill_scroll_prop_fields(self, node: LayoutNode) -> None:
+        if not node.allows_scroll_props():
+            return
+        for ed, name in (
+            (self.edit_left_ident, "left_ident"),
+            (self.edit_right_ident, "right_ident"),
+            (self.edit_top_indent, "top_indent"),
+            (self.edit_bottom_indent, "bottom_indent"),
+            (self.edit_vert_interval, "vert_interval"),
+        ):
+            ed.setEnabled(not node.from_meta)
+            val = node.widget_float_attr(name)
+            ed.setText("" if val is None else _num(val))
+        self.edit_always_show_scroll.setEnabled(not node.from_meta)
+        self.edit_always_show_scroll.setChecked(
+            node.widget_bool_attr("always_show_scroll", default=False)
+        )
+
+    def _apply_prop_visibility(self, node: LayoutNode | None) -> None:
+        """Show prop groups for this widget kind; disable inapplicable fields."""
+        if self._doc_mode == DOC_MODE_ATLAS:
+            return
+        ui = node is not None and node.is_drawable
+        show_tex = bool(ui and node.allows_texture_props())
+        show_text = bool(ui and node.allows_text_props())
+        show_scroll = bool(ui and not node.from_meta and node.allows_scroll_props())
+        for w in self._texture_prop_widgets:
+            w.setVisible(show_tex)
+        self.edit_stretch.setVisible(True)
+        for w in self._text_prop_widgets:
+            w.setVisible(show_text)
+        for w in self._scroll_prop_widgets:
+            w.setVisible(show_scroll)
+        self._sync_asset_prop_assignment(node)
+
+    def _sync_asset_prop_assignment(self, node: LayoutNode | None) -> None:
+        """Grey texture/text names+values when unassigned; folder browse stays live."""
+        has_tex = bool(
+            node
+            and not node.from_meta
+            and self.prop_texture.has_texture()
+        )
+        has_text = bool(node and not node.from_meta and node.text)
+        can_edit = bool(node and not node.from_meta)
+
+        self.prop_label_texture.setEnabled(has_tex)
+        if not has_tex:
+            self.prop_texture.name.setStyleSheet(f"color: {_GREY_INAPPLICABLE};")
+        # UV sits under Path; always secondary grey (never a separate prop row).
+        self.prop_texture_uv.setStyleSheet(f"color: {_GREY_DEFAULT};")
+        # Never disable the path row (would grey out the browse folder button).
+        self.edit_stretch.setEnabled(
+            bool(
+                has_tex
+                and can_edit
+                and node is not None
+                and node.allows_stretch()
+            )
+        )
+
+        for lab in (
+            self.prop_label_text,
+            self.prop_label_text_off,
+            self.prop_label_align,
+            self.prop_label_font,
+            self.prop_label_color,
+        ):
+            lab.setEnabled(has_text)
+        if not has_text:
+            self.prop_text.name.setStyleSheet(f"color: {_GREY_INAPPLICABLE};")
+        text_on = bool(has_text and can_edit)
+        for w in (
+            self._text_xy_widget,
+            self._align_row,
+            self.edit_font,
+            self._color_row,
+            self._text_flags_row,
+            self.edit_text_x,
+            self.edit_text_y,
+            self.edit_align,
+            self.edit_vert_align,
+            self.edit_text_r,
+            self.edit_text_g,
+            self.edit_text_b,
+            self.edit_text_a,
+            self.edit_complex_mode,
+        ):
+            w.setEnabled(text_on)
+
+    def _clear_extra_prop_fields(self) -> None:
+        self._set_combo_data(self.edit_font, "")
+        self._set_combo_data(self.edit_align, "")
+        self._set_combo_data(self.edit_vert_align, "")
+        self.edit_complex_mode.setChecked(False)
+        for ed in (
+            self.edit_text_r,
+            self.edit_text_g,
+            self.edit_text_b,
+            self.edit_text_a,
+            self.edit_text_x,
+            self.edit_text_y,
+            self.edit_left_ident,
+            self.edit_right_ident,
+            self.edit_top_indent,
+            self.edit_bottom_indent,
+            self.edit_vert_interval,
+        ):
+            ed.setText("")
+            ed.setEnabled(False)
+        self.edit_font.setEnabled(False)
+        self.edit_align.setEnabled(False)
+        self.edit_vert_align.setEnabled(False)
+        self.edit_complex_mode.setEnabled(False)
+        self.edit_always_show_scroll.setChecked(False)
+        self.edit_always_show_scroll.setEnabled(False)
+        self._scroll_group.setVisible(False)
+
+    def _set_texture_uv_row(self, node: LayoutNode | None) -> None:
+        """Readonly UV under Texture path: ``X N  Y N  W N  H N`` (pixel ints)."""
+        uv: tuple[float, float, float, float] | None = None
+        tip = ""
+        if node is not None and node.texture and not node.from_meta:
+            tex = node.texture
+            if tex.has_uv:
+                uv = (tex.uv_x, tex.uv_y, tex.uv_w, tex.uv_h)
+                tip = "UV from XML <texture> attrs"
+            elif not tex.is_path and tex.name:
+                entry = self.resolver.lookup_atlas(tex.name)
+                if entry is not None:
+                    uv = (entry.x, entry.y, entry.width, entry.height)
+                    tip = "UV from textures_descr"
+        self.prop_texture_uv.setStyleSheet(f"color: {_GREY_DEFAULT};")
+        if uv is None:
+            self.prop_texture_uv.setText("<none>")
+            self.prop_texture_uv.setToolTip("")
+            return
+        x, y, w, h = (int(round(v)) for v in uv)
+        self.prop_texture_uv.setText(f"X {x}  Y {y}  W {w}  H {h}")
+        self.prop_texture_uv.setToolTip(tip)
 
     def _show_props(self, node: LayoutNode | None) -> None:
         self._updating_props = True
@@ -3083,14 +3865,17 @@ class MainWindow(QMainWindow):
             self.edit_stretch.setChecked(False)
             self.edit_show_texture.setChecked(True)
             self.edit_show_texture.setEnabled(False)
-            self.prop_texture.clear("-")
+            self.prop_texture.clear("<none>")
             self.prop_texture.set_browse_enabled(False)
+            self._set_texture_uv_row(None)
             self.prop_text.clear("-")
             self.prop_text.set_browse_enabled(False)
-            self._set_optional_prop_label(self.prop_text_font, "")
-            self.prop_text_resolved.clear("")
+            self._clear_extra_prop_fields()
+            self._apply_prop_visibility(None)
             self._updating_props = False
             self._pin_splitter_sizes()
+            self._relayout_sidebar_fit()
+            QTimer.singleShot(0, self._relayout_sidebar_fit)
             return
         self._set_path_label(node.path or "-")
         self._set_meta_prop_labels(node.from_meta)
@@ -3110,15 +3895,16 @@ class MainWindow(QMainWindow):
         self.edit_w.setText(_num(node.width))
         self.edit_h.setText(_num(node.height))
         self.edit_stretch.setChecked(node.stretch)
-        self.edit_stretch.setEnabled(not node.from_meta)
         item = self.scene.item_for_node(node)
         self.edit_show_texture.setChecked(
             True if item is None else bool(item.show_texture)
         )
-        self.edit_show_texture.setEnabled(True)
-        self.prop_texture.set_browse_enabled(not node.from_meta)
+        self.prop_texture.set_browse_enabled(
+            (not node.from_meta) and node.allows_texture_props()
+        )
         if node.from_meta:
             self.prop_texture.clear("(meta)")
+            self._set_texture_uv_row(None)
         elif node.texture:
             resolved = self.resolver.resolve(node.texture)
             tip_bits: list[str] = []
@@ -3142,24 +3928,33 @@ class MainWindow(QMainWindow):
                 )
             else:
                 # Prefer showing the XML name (atlas id or path), not only DDS filename.
-                display = name or (resolved.path.name if resolved.path else "(none)")
-                explorer = (
-                    windows_explorer_path(resolved.path) if resolved.path else ""
+                display = name or (
+                    resolved.path.name if resolved.path else "<none>"
                 )
-                if resolved.path and not node.texture.is_path:
-                    tip_bits.append(f"sheet: {resolved.path.name}")
-                self.prop_texture.set_file(
-                    display=display,
-                    explorer_path=explorer,
-                    tip_extra="\n".join(tip_bits),
-                )
+                if display == "<none>":
+                    self.prop_texture.clear("<none>")
+                else:
+                    explorer = (
+                        windows_explorer_path(resolved.path)
+                        if resolved.path
+                        else ""
+                    )
+                    if resolved.path and not node.texture.is_path:
+                        tip_bits.append(f"sheet: {resolved.path.name}")
+                    self.prop_texture.set_file(
+                        display=display,
+                        explorer_path=explorer,
+                        tip_extra="\n".join(tip_bits),
+                    )
+            self._set_texture_uv_row(node)
         else:
-            self.prop_texture.clear("(none)")
-        self.prop_text.set_browse_enabled(not node.from_meta)
+            self.prop_texture.clear("<none>")
+            self._set_texture_uv_row(None)
+        self.prop_text.set_browse_enabled(
+            (not node.from_meta) and node.allows_text_props()
+        )
         if node.from_meta:
             self.prop_text.clear("(meta)")
-            self._set_optional_prop_label(self.prop_text_font, "")
-            self.prop_text_resolved.clear("")
         elif node.text and node.text.content:
             content = node.text.content
             resolved = self.strings.resolve(content)
@@ -3170,33 +3965,37 @@ class MainWindow(QMainWindow):
                 self.prop_text.set_file(
                     display=f"⚠ {resolved.error}",
                     tip_extra="\n".join(tip_bits),
+                    color="#c62828",
                 )
-            else:
-                explorer = (
-                    windows_explorer_path(resolved.source)
-                    if resolved.source is not None
-                    else ""
-                )
+            elif resolved.is_literal:
+                preview = resolved.text.replace("\n", " · ")
                 self.prop_text.set_file(
-                    display=content,
-                    explorer_path=explorer,
+                    display=preview or content,
+                    tip_extra="\n".join(tip_bits),
+                    color=_GREY_DEFAULT,
+                )
+            elif resolved.source is not None:
+                self.prop_text.set_xml_key(
+                    xml_name=resolved.source.name,
+                    key=content,
+                    explorer_path=windows_explorer_path(resolved.source),
                     tip_extra="\n".join(tip_bits),
                 )
-            bits = []
-            if node.text.font:
-                bits.append(node.text.font)
-            if node.text.align:
-                bits.append(f"align={node.text.align}")
-            self._set_optional_prop_label(self.prop_text_font, " · ".join(bits))
-            self._set_text_resolved_row(resolved)
+            else:
+                self.prop_text.set_file(
+                    display=content,
+                    tip_extra="\n".join(tip_bits),
+                )
         else:
-            self.prop_text.clear("(none)")
-            self._set_optional_prop_label(
-                self.prop_text_font, "(no <text> — browse to set)"
-            )
-            self.prop_text_resolved.clear("")
+            self.prop_text.clear("(none)" if not node.text else "(empty <text>)")
+        self._fill_text_prop_fields(node)
+        self._fill_scroll_prop_fields(node)
+        self._apply_prop_visibility(node)
+        self.edit_show_texture.setEnabled(node.allows_texture_props())
         self._updating_props = False
         self._pin_splitter_sizes()
+        self._relayout_sidebar_fit()
+        QTimer.singleShot(0, self._relayout_sidebar_fit)
 
     def _update_undo_actions(self) -> None:
         if self.editor_tabs.currentIndex() == TAB_XML:
@@ -3221,7 +4020,7 @@ class MainWindow(QMainWindow):
             return
         if self._doc_mode == DOC_MODE_ATLAS:
             edit = self.descr_board.scene.undo_stack.undo()
-            if edit is None:
+            if edit is None or isinstance(edit, PropEdit):
                 return
             reg = self.descr_board.scene.apply_geo_edit(edit, use_after=False)
             self.descr_doc.mark_dirty()
@@ -3236,7 +4035,7 @@ class MainWindow(QMainWindow):
         edit = self.scene.undo_stack.undo()
         if edit is None:
             return
-        node = self.scene.apply_geo_edit(edit, use_after=False)
+        node = self.scene.apply_edit(edit, use_after=False)
         if node is not None and node.from_meta:
             self.doc.mark_meta_dirty()
         else:
@@ -3245,7 +4044,7 @@ class MainWindow(QMainWindow):
         if node is not None:
             self.scene.select_path(node.path)
             self._show_props(node)
-            self.statusBar().showMessage(f"Undo {node.path}")
+            self.statusBar().showMessage(f"Undo {edit.describe()}")
 
     def redo(self) -> None:
         if self.editor_tabs.currentIndex() == TAB_XML:
@@ -3257,7 +4056,7 @@ class MainWindow(QMainWindow):
             return
         if self._doc_mode == DOC_MODE_ATLAS:
             edit = self.descr_board.scene.undo_stack.redo()
-            if edit is None:
+            if edit is None or isinstance(edit, PropEdit):
                 return
             reg = self.descr_board.scene.apply_geo_edit(edit, use_after=True)
             self.descr_doc.mark_dirty()
@@ -3272,7 +4071,7 @@ class MainWindow(QMainWindow):
         edit = self.scene.undo_stack.redo()
         if edit is None:
             return
-        node = self.scene.apply_geo_edit(edit, use_after=True)
+        node = self.scene.apply_edit(edit, use_after=True)
         if node is not None and node.from_meta:
             self.doc.mark_meta_dirty()
         else:
@@ -3281,7 +4080,15 @@ class MainWindow(QMainWindow):
         if node is not None:
             self.scene.select_path(node.path)
             self._show_props(node)
-            self.statusBar().showMessage(f"Redo {node.path}")
+            self.statusBar().showMessage(f"Redo {edit.describe()}")
+
+    def _push_prop_edit(self, before, after) -> bool:
+        """Push a props undo entry when state actually changed."""
+        edit = PropEdit(before=before, after=after)
+        if not edit.changed():
+            return False
+        self.scene.push_edit(edit)
+        return True
 
     def _parse_geometry_fields(self) -> tuple[float, float, float, float] | None:
         """Return (x,y,w,h) if all fields are valid numbers; else None."""
@@ -3413,15 +4220,23 @@ class MainWindow(QMainWindow):
         current = ""
         if node.text and node.text.content:
             current = node.text.content.strip()
-        dlg = StringPickerDialog(self.strings, self, current_id=current)
+        dlg = StringPickerDialog(
+            self.strings,
+            self,
+            current_id=current,
+            anomaly_root=str(self.settings.get("anomaly_root") or ""),
+            gamma_root=str(self.settings.get("gamma_root") or ""),
+        )
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         entry = dlg.selected_entry()
         if entry is None:
             return
+        before = node.capture_prop_state()
         if not node.set_text_content(entry.string_id):
             return
         self.strings.remember_string(entry)
+        self._push_prop_edit(before, node.capture_prop_state())
         self._mark_xml_dirty()
         self._show_props(node)
         item = self.scene.item_for_node(node)
@@ -3433,16 +4248,116 @@ class MainWindow(QMainWindow):
     def _on_stretch_toggled(self, checked: bool) -> None:
         if self._updating_props:
             return
-        selected = [i for i in self.scene.selectedItems() if hasattr(i, "node")]
-        if not selected:
+        node = self._selected_prop_node()
+        if node is None:
             return
-        node: LayoutNode = selected[0].node
-        node.stretch = checked
-        node.apply_geometry_to_element()
+        before = node.capture_prop_state()
+        if not node.apply_widget_props(stretch=checked):
+            return
+        self._push_prop_edit(before, node.capture_prop_state())
         self._mark_xml_dirty()
-        item = self.scene.item_for_node(node)
-        if item:
-            item.refresh_look()
+        self._refresh_selected_item(node)
+
+    def _on_text_enum_changed(self, *_args) -> None:
+        if self._updating_props:
+            return
+        node = self._selected_prop_node()
+        if node is None:
+            return
+        font = self._combo_data(self.edit_font)
+        align = self._combo_data(self.edit_align)
+        vert = self._combo_data(self.edit_vert_align)
+        before = node.capture_prop_state()
+        if not node.apply_text_props(font=font, align=align, vert_align=vert):
+            return
+        if font:
+            self.fonts.resolve_font(font)
+        self._push_prop_edit(before, node.capture_prop_state())
+        self._mark_xml_dirty()
+        self._refresh_selected_item(node)
+
+    def _on_text_font_edited(self) -> None:
+        if self._updating_props:
+            return
+        # Sync editable text into a matching item when possible.
+        typed = self.edit_font.currentText().strip()
+        idx = self.edit_font.findData(typed)
+        if idx >= 0:
+            self.edit_font.setCurrentIndex(idx)
+        else:
+            self._on_text_enum_changed()
+
+    def _on_text_flag_toggled(self, checked: bool) -> None:
+        if self._updating_props:
+            return
+        node = self._selected_prop_node()
+        if node is None:
+            return
+        before = node.capture_prop_state()
+        if not node.apply_text_props(complex_mode=checked):
+            return
+        self._push_prop_edit(before, node.capture_prop_state())
+        self._mark_xml_dirty()
+        self._refresh_selected_item(node)
+
+    def _on_scroll_flag_toggled(self, checked: bool) -> None:
+        if self._updating_props:
+            return
+        node = self._selected_prop_node()
+        if node is None:
+            return
+        before = node.capture_prop_state()
+        if not node.apply_widget_props(always_show_scroll=checked):
+            return
+        self._push_prop_edit(before, node.capture_prop_state())
+        self._mark_xml_dirty()
+
+    def _on_extra_props_editing_finished(self) -> None:
+        if self._updating_props:
+            return
+        node = self._selected_prop_node()
+        if node is None:
+            return
+        before = node.capture_prop_state()
+        changed = False
+        color_kwargs: dict = {}
+        for key, ed in (
+            ("r", self.edit_text_r),
+            ("g", self.edit_text_g),
+            ("b", self.edit_text_b),
+            ("a", self.edit_text_a),
+        ):
+            parsed = self._parse_optional_int(ed.text())
+            if parsed is ...:
+                continue
+            color_kwargs[key] = parsed
+        off_kwargs: dict = {}
+        for key, ed in (("x", self.edit_text_x), ("y", self.edit_text_y)):
+            parsed = self._parse_optional_float(ed.text())
+            if parsed is ...:
+                continue
+            off_kwargs[key] = parsed
+        if color_kwargs or off_kwargs:
+            changed |= node.apply_text_props(**color_kwargs, **off_kwargs)
+        scroll_kwargs: dict = {}
+        for key, ed in (
+            ("left_ident", self.edit_left_ident),
+            ("right_ident", self.edit_right_ident),
+            ("top_indent", self.edit_top_indent),
+            ("bottom_indent", self.edit_bottom_indent),
+            ("vert_interval", self.edit_vert_interval),
+        ):
+            parsed = self._parse_optional_float(ed.text())
+            if parsed is ...:
+                continue
+            scroll_kwargs[key] = parsed
+        if scroll_kwargs:
+            changed |= node.apply_widget_props(**scroll_kwargs)
+        if not changed:
+            return
+        self._push_prop_edit(before, node.capture_prop_state())
+        self._mark_xml_dirty()
+        self._refresh_selected_item(node)
 
     def _on_show_texture_toggled(self, checked: bool) -> None:
         if self._updating_props:
@@ -3481,6 +4396,10 @@ class MainWindow(QMainWindow):
         save_settings(self.settings)
 
     def closeEvent(self, event) -> None:  # noqa: N802
+        self._closing = True
+        # Drop thumb workers so cache/ files aren't locked after quit.
+        if getattr(self, "resolver", None) is not None:
+            self.resolver.abort_picker_thumbs()
         self._capture_session_meta()
         if self._has_unsaved_changes():
             r = QMessageBox.question(
@@ -3492,9 +4411,11 @@ class MainWindow(QMainWindow):
                 | QMessageBox.StandardButton.Cancel,
             )
             if r == QMessageBox.StandardButton.Cancel:
+                self._closing = False
                 event.ignore()
                 return
             if r == QMessageBox.StandardButton.Save and not self.save():
+                self._closing = False
                 event.ignore()
                 return
         self._save_splitter_sizes()
@@ -3571,6 +4492,38 @@ def _apply_windows_dark_titlebar(widget: QWidget) -> None:
         pass
 
 
+def _ui_font() -> QFont:
+    """App-wide UI typeface: Consolas with monospace fallbacks."""
+    font = QFont("Consolas")
+    font.setFamilies(["Consolas", "Cascadia Mono", "Courier New"])
+    font.setStyleHint(QFont.StyleHint.Monospace)
+    font.setPointSize(9)
+    return font
+
+
+def _checkbox_check_image_url() -> str:
+    """Dark-green tick PNG for checked indicators (stylesheet ``image:``)."""
+    from .cache_store import cache_dir
+
+    dest = cache_dir() / "ui" / "checkbox_check.png"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    pix = QPixmap(14, 14)
+    pix.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pix)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    pen = QPen(QColor("#2D6A4F"))
+    pen.setWidthF(2.2)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    painter.setPen(pen)
+    painter.drawLine(3, 7, 6, 10)
+    painter.drawLine(6, 10, 11, 3)
+    painter.end()
+    pix.save(str(dest), "PNG")
+    # Qt stylesheets want forward slashes.
+    return dest.resolve().as_posix()
+
+
 def _apply_dark_theme(app: QApplication) -> None:
     """Force dark chrome before the first paint (Windows otherwise flashes white)."""
     app.setStyle("Fusion")
@@ -3580,9 +4533,14 @@ def _apply_dark_theme(app: QApplication) -> None:
         pass
     pal = _dark_palette()
     app.setPalette(pal)
+    app.setFont(_ui_font())
+    check_img = _checkbox_check_image_url()
     # Broad stylesheet so child widgets don't stay on the system light look.
     app.setStyleSheet(
-        "* { color: #D4D4D4; }"
+        "* {"
+        "  color: #D4D4D4;"
+        "  font-family: Consolas, 'Cascadia Mono', 'Courier New', monospace;"
+        "}"
         "QMainWindow, QDialog, QWidget, QSplitter, QScrollArea, QFrame, QTabWidget {"
         "  background-color: #121214; color: #D4D4D4;"
         "}"
@@ -3592,17 +4550,76 @@ def _apply_dark_theme(app: QApplication) -> None:
         "QMenu { background-color: #1E1E22; color: #D4D4D4; }"
         "QMenu::item:selected { background-color: #264F78; }"
         "QStatusBar { background-color: #121214; color: #D4D4D4; }"
+        "QWidget#optionsBar {"
+        "  background-color: #161618;"
+        "  border-bottom: 1px solid #3A3A40;"
+        "}"
         "QTabWidget::pane { border: 1px solid #3A3A40; top: -1px; background: #121214; }"
-        "QTabBar::tab { background: #1E1E22; color: #D4D4D4; padding: 6px 12px; }"
+        "QTabBar::tab {"
+        "  background: #1E1E22; color: #D4D4D4; padding: 6px 12px;"
+        "  font-size: 10pt; font-weight: bold;"
+        "}"
         "QTabBar::tab:selected { background: #2A2A30; }"
         "QHeaderView::section { background-color: #1E1E22; color: #D4D4D4; "
         "  padding: 4px; border: 1px solid #3A3A40; }"
         "QSplitter::handle { background-color: #2A2A30; }"
-        "QLineEdit, QSpinBox, QPlainTextEdit, QTextEdit, QListWidget {"
+        "QLineEdit, QSpinBox, QPlainTextEdit, QTextEdit, QListWidget, QComboBox {"
         "  background-color: #1E1E22; color: #D4D4D4; border: 1px solid #3A3A40; "
         "  selection-background-color: #264F78;"
         "}"
+        # GroupBox fill matches panel QWidget so padded prop rows aren't stripes.
+        "QGroupBox {"
+        "  background-color: #121214;"
+        "  border: 1px solid #3A3A40;"
+        "  border-radius: 4px;"
+        "  margin-top: 10px;"
+        "  padding-top: 8px;"
+        "  padding-left: 5px;"
+        "  padding-right: 5px;"
+        "  padding-bottom: 5px;"
+        "  color: #D4D4D4;"
+        "}"
+        "QGroupBox::title {"
+        "  subcontrol-origin: margin;"
+        "  subcontrol-position: top left;"
+        "  left: 8px;"
+        "  padding: 0 4px;"
+        "  color: #D4D4D4;"
+        "  font-weight: bold;"
+        "}"
         "QCheckBox, QLabel { background: transparent; color: #D4D4D4; }"
+        f"QCheckBox:disabled, QLabel:disabled {{ color: {_GREY_INAPPLICABLE}; }}"
+        "QLineEdit:disabled, QComboBox:disabled, QComboBox:disabled QAbstractItemView {"
+        f"  color: {_GREY_INAPPLICABLE};"
+        "}"
+        "QCheckBox::indicator, QListWidget::indicator, QTreeWidget::indicator {"
+        "  width: 14px; height: 14px;"
+        "  border: 1px solid #3A3A40;"
+        "  border-radius: 2px;"
+        "  background-color: #0E0E10;"
+        "}"
+        "QCheckBox::indicator:hover, QListWidget::indicator:hover,"
+        "QTreeWidget::indicator:hover {"
+        "  background-color: #161618; border-color: #55555C;"
+        "}"
+        "QCheckBox::indicator:disabled {"
+        "  background-color: #0A0A0C; border-color: #2A2A30;"
+        "}"
+        "QCheckBox::indicator:checked, QListWidget::indicator:checked,"
+        "QTreeWidget::indicator:checked {"
+        "  background-color: #0E0E10;"
+        "  border-color: #3A3A40;"
+        f"  image: url({check_img});"
+        "}"
+        "QCheckBox::indicator:checked:hover, QListWidget::indicator:checked:hover,"
+        "QTreeWidget::indicator:checked:hover {"
+        "  background-color: #161618; border-color: #55555C;"
+        f"  image: url({check_img});"
+        "}"
+        "QCheckBox::indicator:checked:disabled {"
+        "  background-color: #0A0A0C; border-color: #2A2A30;"
+        "  image: none;"
+        "}"
         "QScrollBar:vertical { background: #121214; width: 12px; }"
         "QScrollBar:horizontal { background: #121214; height: 12px; }"
         "QScrollBar::handle { background: #3A3A40; border-radius: 4px; min-height: 24px; }"
@@ -3676,7 +4693,7 @@ def main(argv: list[str] | None = None) -> int:
     win.show()
     _apply_windows_dark_titlebar(win)
     app.processEvents()
-    # Dark shell first; chooser (or CLI path) then Loading… then workspace.
+    # Dark shell first; chooser (or CLI path) then Loading then workspace.
     QTimer.singleShot(0, win._open_startup_file)
     _log_file.info("entering app.exec()")
     code = app.exec()

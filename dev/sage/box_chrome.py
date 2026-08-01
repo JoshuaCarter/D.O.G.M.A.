@@ -26,14 +26,15 @@ from PyQt6.QtWidgets import (
 
 from .settings import LABEL_FONT_MIN, clamp_label_font_size
 
-# Scene z bands (back → front): labels under idle chrome under focus captions
+# Editor-decoration overlay bands (above all document content).
+# Within a band, callers may add a tiny doc-order epsilon.
 LABEL_Z = 1_000_000.0
 IDLE_CHROME_Z = 10_000_000.0
 FOCUS_LABEL_Z = 10_000_004.0
 
 SEL_BLUE = QColor(40, 130, 255)
-SEL_BLUE_FILL = QColor(40, 130, 255, 13)  # ~5% alpha (UI editor)
-SEL_FILL_ATLAS = QColor(40, 130, 255, 40)
+SEL_BLUE_FILL = QColor(40, 130, 255, 38)  # 15% alpha
+SEL_FILL_ATLAS = QColor(40, 130, 255, 38)  # 15% alpha
 LABEL_GREY = QColor(160, 160, 165)
 IDLE_YELLOW = QColor(150, 140, 40, 220)
 FOCUS_LABEL_BG = QColor(0, 0, 0)

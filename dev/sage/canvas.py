@@ -748,6 +748,7 @@ class WidgetItem(QGraphicsRectItem):
         self._updating = False
         self._sync_node_from_item()
         self._apply_texture()
+        self._apply_text()
         self._apply_label()
         self._sync_select_fill(selected=self.isSelected())
         scene = self.scene()

@@ -1281,7 +1281,10 @@ local function paint_pts_on_cells(cc)
 	for _, ci in pairs(cc.cell) do
 		if ci:IsShown() and ci.Add_CustomText then
 			local pts = ci.flags.info or ci.flags.value or 0
-			ci:Add_CustomText(tostring(pts), align_l, align_top, clr, fnt)
+			-- Free (0 pts) items: no number on the icon.
+			if pts and pts > 0 then
+				ci:Add_CustomText(tostring(pts), align_l, align_top, clr, fnt)
+			end
 		end
 	end
 end

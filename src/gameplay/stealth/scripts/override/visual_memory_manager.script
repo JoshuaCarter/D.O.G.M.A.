@@ -1,20 +1,16 @@
 --[[
 	DOGMA gameplay/stealth — replaces stock visual_memory_manager.get_visible_value.
 
-	Actor-only: scale stock vis, bush coverage reduction, pose cutoff → 0, optional smooth remap.
+	Actor-only: scale stock vis, then multiply by pose factor (stand / crouch / prone).
 	NPC↔NPC / non-actor: stock timed formula (underground lumin bump kept).
 ]]
 
 local CONFIG = _G.dogma_gameplay_stealth_conf
 
--- Last actor-facing values for gem / debug (not per-NPC shared state for gating).
+-- Last actor-facing values for gem / debug.
 local last_vis = 0
-local last_cutoff = 0
+local last_mult = 1
 local last_out = 0
-local last_bush = 0
-
--- Cached 0..1 foliage surround from main.script probes (not raycast here).
-local bush_coverage = 0
 
 local function clamp01(x)
 	if x < 0 then
@@ -44,26 +40,14 @@ local function loaded_num(key, fallback)
 	return fallback
 end
 
-local function loaded_bool(key, fallback)
-	local loaded = CONFIG and CONFIG.loaded
-	if loaded and loaded[key] ~= nil then
-		return loaded[key] == true or loaded[key] == 1
-	end
-	local d = CONFIG and CONFIG.DEFAULTS
-	if d and d[key] ~= nil then
-		return d[key] == true or d[key] == 1
-	end
-	return fallback
-end
-
-local function pose_cutoff()
+local function pose_mult()
 	if IsMoveState("mcCrouch") then
 		if IsMoveState("mcAccel") then
-			return loaded_num("cutoff_prone", 0.30)
+			return loaded_num("mult_prone", 0.30)
 		end
-		return loaded_num("cutoff_crouch", 0.20)
+		return loaded_num("mult_crouch", 0.70)
 	end
-	return loaded_num("cutoff_stand", 0.10)
+	return loaded_num("mult_stand", 1.0)
 end
 
 local function stock_vis(luminocity, velocity_factor, velocity, distance, object_distance)
@@ -84,14 +68,6 @@ local function is_actor(who)
 	return ok and ok2 and aid == wid
 end
 
-function set_bush_coverage(coverage)
-	bush_coverage = clamp01(tonumber(coverage) or 0)
-end
-
-function get_bush_coverage()
-	return bush_coverage
-end
-
 -- called from engine
 -- warning npc and who can be nil sometimes
 function get_visible_value(npc, who, time_delta, time_quant, luminocity, velocity_factor, velocity, distance, object_distance, always_visible_distance)
@@ -109,51 +85,24 @@ function get_visible_value(npc, who, time_delta, time_quant, luminocity, velocit
 	end
 
 	local scale = loaded_num("scale", 1.0)
+	local mult = pose_mult()
 	local vis = clamp01(vis_stock * scale)
+	local vis_out = clamp01(vis * mult)
 
-	-- Foliage surround: each of 8 probes contributes up to bush_bonus/8.
-	local bonus = loaded_num("bush_bonus", 0.50)
-	local bush = bush_coverage
-	if bonus > 0 and bush > 0 then
-		vis = clamp01(vis * (1 - bush * bonus))
-	end
-	last_bush = bush
-
-	local cutoff = pose_cutoff()
 	last_vis = vis
-	last_cutoff = cutoff
-
-	if vis < cutoff then
-		last_out = 0
-		return 0
-	end
-
-	local vis_out = vis
-	if loaded_bool("smooth", false) then
-		if cutoff >= 1 then
-			vis_out = 0
-		else
-			vis_out = (vis - cutoff) / (1 - cutoff)
-		end
-	end
-
+	last_mult = mult
 	last_out = vis_out
 	return time_delta / time_quant * vis_out
 end
 
--- Gem / debug: last scaled actor vis from a recent get_visible_value call.
 function icon_vis()
 	return last_vis
 end
 
-function icon_cutoff()
-	return last_cutoff
+function icon_mult()
+	return last_mult
 end
 
 function icon_out()
 	return last_out
-end
-
-function icon_bush()
-	return last_bush
 end

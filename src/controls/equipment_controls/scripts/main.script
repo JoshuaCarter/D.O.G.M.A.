@@ -1,17 +1,21 @@
 --[[
 	Equipment Controls
 
-	- MCM mirrors Primary/Secondary/Pistol/Melee/Grenade/Throw/Vision/Bolt/RF/
-	  Glowstick into Options→Controls (DIK sync).
+	- MCM mirrors Primary/Secondary/Pistol/Melee/Grenade/Throw/Vision/Bolt/Torch/
+	  RF/Glowstick into Options→Controls (DIK sync).
 	- Melee key: always draw a knife from melee or vision (swap if needed);
-	  re-press lowers it.
+	  re-press lowers it. No knife → block stock, do nothing.
 	- Pistol key: always draw a pistol from melee or vision; re-press lowers it.
-	- Vision key: swap melee ↔ vision, then equip melee (same wait-if-drawn).
+	  No pistol → block stock, do nothing.
+	- Vision key: if binoculars are in melee or vision, swap those holsters then
+	  draw melee. No binoculars → block stock, do nothing (no last-weapon).
 	  move_to_* is async - placements are sequenced so VSI is not dumped to bag.
 	- Detector / Geiger / RF force-equip - QAW detector flow (hand prep → hide
 	  → state Hidden → move_to_slot → show). Artefact detector + auto-bolt:
 	  wait until RH empty (or already bolt), then bolt + detector together.
-	  RF/Geiger never touch the bolt.
+	  RF/Geiger never touch the bolt. Missing device → block stock, do nothing.
+	- Torch: with headlamp in slot 10, leave stock toggle alone. Without it,
+	  find a handheld flashlight and force-equip like RF/Geiger.
 	- Glowstick: left-hand detector-slot force-equip (same as RF/Geiger - no
 	  auto-bolt; only holster 2H if it blocks). Slow put-away when swapping.
 	- Minimal slot_cell patch: pistols may drag into vision (slot 5).
@@ -62,9 +66,21 @@ local function is_artefact_detector(sec)
 	return cls and DET_CLASS[cls] == true
 end
 
+-- Handheld flashlight (detector-slot D_FLALIT), not headlamp TORCH_S.
+local function is_handheld_flashlight(sec)
+	if not sec then
+		return false
+	end
+	if string.find(sec, "device_flashlight", 1, true) then
+		return true
+	end
+	return false
+end
+
 -- HD / Reanimated glowsticks: device_glowstick* (class D_FLALIT), LTX slot 8.
+-- Exclude flashlight - same class, different key.
 local function is_glowstick(sec)
-	if not sec or sec == "lights_glowstick" then
+	if not sec or sec == "lights_glowstick" or is_handheld_flashlight(sec) then
 		return false
 	end
 	if string.find(sec, "device_glowstick", 1, true) then
@@ -72,6 +88,26 @@ local function is_glowstick(sec)
 	end
 	local cls = ini_sys and ini_sys:r_string_ex(sec, "class")
 	return cls == "D_FLALIT"
+end
+
+local function is_binoculars(obj)
+	if not obj then
+		return false
+	end
+	local sec = obj:section()
+	if not sec then
+		return false
+	end
+	if string.find(sec, "binoc", 1, true) then
+		return true
+	end
+	local cls = ini_sys and ini_sys:r_string_ex(sec, "class")
+	return cls == "WP_BINOC"
+end
+
+local function has_headlamp()
+	local actor = db.actor
+	return actor and actor:item_in_slot(10) ~= nil
 end
 
 local function is_fav(sec)
@@ -424,7 +460,17 @@ local function draw_from_holsters(is_wanted)
 	begin_holster_swap(equip_melee_slot)
 end
 
+-- Binoculars key: swap melee ↔ vision only when a binoc is in either holster.
 local function swap_vision_holsters()
+	local actor = db.actor
+	if not actor then
+		return
+	end
+	local m = actor:item_in_slot(MELEE_SLOT)
+	local v = actor:item_in_slot(VISION_SLOT)
+	if not is_binoculars(m) and not is_binoculars(v) then
+		return
+	end
 	begin_holster_swap(equip_melee_slot)
 end
 
@@ -780,6 +826,7 @@ local function on_option_change()
 	CONFIG.loaded.key_glowstick = dik_for(dogma_key_mirror_mcm.bind_kb(CONFIG.BINDS.glowstick.kb))
 	CONFIG.loaded.key_detector = dik_for(key_bindings and key_bindings.kDETECTOR)
 	CONFIG.loaded.key_geiger = dik_for(key_bindings and key_bindings.kCUSTOM14)
+	CONFIG.loaded.key_torch = dik_for(key_bindings and key_bindings.kTORCH)
 end
 
 local function on_before_key_press(_key, bind, _dis, flags)
@@ -800,11 +847,17 @@ local function on_before_key_press(_key, bind, _dis, flags)
 	local rf_bind = dogma_key_mirror_mcm.bind_kb(CONFIG.BINDS.rf_scanner.kb)
 	local glow_bind = dogma_key_mirror_mcm.bind_kb(CONFIG.BINDS.glowstick.kb)
 
+	-- Headlamp present: never steal Torch from stock, even while busy.
+	if bind == key_bindings.kTORCH and has_headlamp() then
+		return
+	end
+
 	if swap_busy or scanner_busy then
 		if bind == key_bindings.kWPN_1
 			or bind == key_bindings.kDETECTOR
 			or bind == key_bindings.kWPN_5
 			or bind == key_bindings.kCUSTOM14
+			or bind == key_bindings.kTORCH
 			or (pistol_bind and bind == pistol_bind)
 			or (rf_bind and bind == rf_bind)
 			or (glow_bind and bind == glow_bind)
@@ -857,6 +910,13 @@ local function on_before_key_press(_key, bind, _dis, flags)
 	if glow_bind and bind == glow_bind then
 		block(flags)
 		force_equip_glowstick(find_scanner(is_glowstick))
+		return
+	end
+
+	-- No headlamp: handheld flashlight into detector slot (same as RF/Geiger).
+	if bind == key_bindings.kTORCH then
+		block(flags)
+		force_equip_scanner(find_scanner(is_handheld_flashlight))
 		return
 	end
 end

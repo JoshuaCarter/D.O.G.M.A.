@@ -65,6 +65,9 @@ function on_mcm_load(options)
 	if MIRROR.rf_scanner then
 		gr[#gr + 1] = MIRROR.rf_scanner:option("key_radio", "dogma_controls_equipment_controls_key_radio")
 	end
+	gr[#gr + 1] = dogma_mcm.key_mirror("torch", function()
+		return key_bindings and key_bindings.kTORCH
+	end):option("key_torch", "dogma_controls_equipment_controls_key_torch")
 	if MIRROR.glowstick then
 		gr[#gr + 1] = MIRROR.glowstick:option("key_glowstick", "dogma_controls_equipment_controls_key_glowstick")
 	end

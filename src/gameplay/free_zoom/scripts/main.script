@@ -173,6 +173,7 @@ end
 
 local function refresh_config()
 	CONFIG.loaded.enabled = true
+	CONFIG.loaded.allow_during_sprint = DOGMA.mcm.bool(CONFIG.MOD_ID, "free_zoom/allow_during_sprint")
 	CONFIG.loaded.empty_hands_only = DOGMA.mcm.bool(CONFIG.MOD_ID, "free_zoom/empty_hands_only")
 	CONFIG.loaded.zoom_key = DOGMA.mcm.key(CONFIG.MOD_ID, "free_zoom/zoom_key")
 	CONFIG.loaded.zoom_key_modifier = DOGMA.mcm.number(CONFIG.MOD_ID, "free_zoom/zoom_key_modifier")
@@ -190,7 +191,7 @@ local function refresh_config()
 	CONFIG.loaded.scroll_wheel_reverse = DOGMA.mcm.bool(CONFIG.MOD_ID, "free_zoom/scroll_wheel_reverse")
 	CONFIG.loaded.scroll_wheel_steps = DOGMA.mcm.number(CONFIG.MOD_ID, "free_zoom/scroll_wheel_steps")
 	CONFIG.loaded.scroll_wheel_max_gap_ms = DOGMA.mcm.number(CONFIG.MOD_ID, "free_zoom/scroll_wheel_max_gap_ms")
-	CONFIG.loaded.free_zoom = DOGMA.mcm.number(CONFIG.MOD_ID, "free_zoom/free_zoom")
+	CONFIG.loaded.free_zoom = clamp(DOGMA.mcm.number(CONFIG.MOD_ID, "free_zoom/free_zoom"), 0, 40)
 	CONFIG.loaded.move_speed = DOGMA.mcm.number(CONFIG.MOD_ID, "free_zoom/move_speed")
 
 	CONFIG.loaded.ads_enabled = (_G.dogma_gameplay_ads_zoom_conf ~= nil)
@@ -477,7 +478,7 @@ local function get_context()
 		if not hands_are_empty() then
 			return CTX.HANDS_FULL
 		end
-		if actor_sprinting() then
+		if not CONFIG.loaded.allow_during_sprint and actor_sprinting() then
 			return CTX.SPRINT
 		end
 		return CTX.OK
@@ -489,7 +490,7 @@ local function get_context()
 	if is_optical_ads() then
 		return CTX.OPTICAL
 	end
-	if actor_sprinting() then
+	if not CONFIG.loaded.allow_during_sprint and actor_sprinting() then
 		return CTX.SPRINT
 	end
 	return CTX.OK
@@ -506,8 +507,8 @@ end
 
 local function pct_to_fov(pct)
 	pct = pct or 0
-	if pct > 50 then
-		pct = 50
+	if pct > 40 then
+		pct = 40
 	end
 	if pct <= 0 then
 		return hip_fov
@@ -523,8 +524,8 @@ local function compute_world_pct()
 	elseif free_on then
 		pct = CONFIG.loaded.free_zoom
 	end
-	if pct > 50 then
-		pct = 50
+	if pct > 40 then
+		pct = 40
 	end
 	return pct
 end
@@ -1060,7 +1061,7 @@ local function on_option_change()
 	end
 
 	logf(
-		"opts: free_en=%s free=%d%% ads_fov=%d%% hud=%d/%d/%d speed=%d%% empty_hands=%s scroll=%s reverse=%s steps=%d gap=%dms mode=%s key=%s mod=%d km=%d rmb=%d mmb=%d",
+		"opts: free_en=%s free=%d%% ads_fov=%d%% hud=%d/%d/%d speed=%d%% sprint=%s empty_hands=%s scroll=%s reverse=%s steps=%d gap=%dms mode=%s key=%s mod=%d km=%d rmb=%d mmb=%d",
 		tostr(CONFIG.loaded.enabled),
 		CONFIG.loaded.free_zoom,
 		CONFIG.loaded.fov_zoom,
@@ -1068,6 +1069,7 @@ local function on_option_change()
 		CONFIG.loaded.wads.sight,
 		CONFIG.loaded.wads.scope,
 		CONFIG.loaded.move_speed,
+		tostr(CONFIG.loaded.allow_during_sprint),
 		tostr(CONFIG.loaded.empty_hands_only),
 		tostr(CONFIG.loaded.scroll_wheel_zoom),
 		tostr(CONFIG.loaded.scroll_wheel_reverse),

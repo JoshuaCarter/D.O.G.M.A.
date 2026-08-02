@@ -19,12 +19,24 @@ from sage.diaglog import (
 
 log = get_logger("app")
 
-from PyQt6.QtCore import QEvent, QObject, QPoint, QSize, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import (
+    QEvent,
+    QItemSelectionModel,
+    QMimeData,
+    QObject,
+    QPoint,
+    QRect,
+    QSize,
+    Qt,
+    QTimer,
+    pyqtSignal,
+)
 from PyQt6.QtGui import (
     QAction,
     QBrush,
     QColor,
     QCursor,
+    QDrag,
     QFont,
     QIcon,
     QKeySequence,
@@ -37,6 +49,7 @@ from PyQt6.QtGui import (
     QTextCursor,
 )
 from PyQt6.QtWidgets import (
+    QAbstractItemView,
     QAbstractSlider,
     QAbstractSpinBox,
     QApplication,
@@ -49,6 +62,7 @@ from PyQt6.QtWidgets import (
     QFrame,
     QGroupBox,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -119,7 +133,7 @@ from .strings import StringResolver
 from .string_picker import StringPickerDialog
 from .texture_picker import TexturePickerDialog
 from .textures import TextureResolver, build_picker_root_groups
-from .undo import GeoEdit, GeoState, PropEdit
+from .undo import GeoEdit, GeoState, PropEdit, StructureEdit
 from .xml_highlight import XmlHighlighter
 from .xml_io import UiXmlDocument, sanitize_ui_xml_text
 
@@ -133,6 +147,7 @@ TAB_LOG = 2
 # Tree: mark overlapping canvas stack peers (stylesheet blocks setBackground).
 _TREE_PEER_ROLE = int(Qt.ItemDataRole.UserRole) + 1
 _TREE_LAYER_OFF_ROLE = int(Qt.ItemDataRole.UserRole) + 2
+_TREE_DROP_TARGET_ROLE = int(Qt.ItemDataRole.UserRole) + 3
 
 # Prop chrome greys: secondary text vs disabled / unassigned fields.
 _GREY_DEFAULT = "#888888"
@@ -140,7 +155,7 @@ _GREY_INAPPLICABLE = "#555555"
 
 
 class _TreePeerDelegate(QStyledItemDelegate):
-    """Paint grey rows for stack peers / disabled-layer items."""
+    """Paint grey rows for stack peers / disabled-layer items / drop target."""
 
     def paint(self, painter, option, index) -> None:  # noqa: N802
         opt = QStyleOptionViewItem(option)
@@ -160,6 +175,13 @@ class _TreePeerDelegate(QStyledItemDelegate):
             opt.palette.setColor(QPalette.ColorRole.Text, QColor(200, 200, 210))
             opt.palette.setColor(QPalette.ColorRole.HighlightedText, QColor(200, 200, 210))
         super().paint(painter, opt, index)
+        if index.data(_TREE_DROP_TARGET_ROLE):
+            painter.save()
+            pen = QPen(QColor(150, 150, 155), 1, Qt.PenStyle.DashLine)
+            painter.setPen(pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRect(opt.rect.adjusted(1, 1, -2, -2))
+            painter.restore()
 
 
 class BusyOverlay(QWidget):
@@ -629,6 +651,368 @@ class TextureValueRow(BrowseValueRow):
 TexturePathRow = BrowseValueRow  # back-compat alias
 
 
+class _LayerCheckDelegate(QStyledItemDelegate):
+    """Paint layer row checkboxes with a visible tick (QSS images are flaky on lists)."""
+
+    _BOX = 14
+    _GAP = 6
+
+    def paint(self, painter, option, index) -> None:  # noqa: N802
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        check = index.data(Qt.ItemDataRole.CheckStateRole)
+        checked = check in (Qt.CheckState.Checked, 2)
+        # Clear HasCheckIndicator so Fusion/QSS does not draw an empty box over ours.
+        opt.features &= ~QStyleOptionViewItem.ViewItemFeature.HasCheckIndicator
+        inset = self._BOX + self._GAP + 2
+        text_rect = QRect(opt.rect)
+        text_rect.setLeft(text_rect.left() + inset)
+        opt.rect = text_rect
+
+        style = opt.widget.style() if opt.widget is not None else QApplication.style()
+        style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt, painter, opt.widget)
+
+        box = QRect(
+            option.rect.left() + 4,
+            option.rect.center().y() - self._BOX // 2,
+            self._BOX,
+            self._BOX,
+        )
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QPen(QColor("#3A3A40")))
+        painter.setBrush(QColor("#0E0E10"))
+        painter.drawRoundedRect(box, 2, 2)
+        if checked:
+            pen = QPen(QColor("#6EE7A8"))
+            pen.setWidthF(2.0)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            painter.setPen(pen)
+            painter.drawLine(box.left() + 3, box.center().y(), box.left() + 6, box.bottom() - 3)
+            painter.drawLine(box.left() + 6, box.bottom() - 3, box.right() - 2, box.top() + 3)
+        painter.restore()
+
+
+_TREE_DRAG_MIME = "application/x-sage-ui-paths"
+_TREE_DRAG_THRESHOLD = 5.0
+
+
+class ElementTreeWidget(QTreeWidget):
+    """Tree: select on still click-release; reparent by dragging rows.
+
+    Left-button input is owned here so Qt never drag-selects. Expander clicks
+    are left to Qt. Dragging an unselected row selects it first, then drags.
+    """
+
+    reparent_drop = pyqtSignal(list, str)  # source paths, target path
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        # NoSelection: Qt never changes selection itself (no press/drag-select).
+        # We setSelected() only from our click-release / canvas sync handlers.
+        self.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.setDragDropMode(QAbstractItemView.DragDropMode.DropOnly)
+        self.setDragEnabled(False)
+        self.setAcceptDrops(True)
+        self.viewport().setAcceptDrops(True)
+        self.setDropIndicatorShown(False)
+        self.setDefaultDropAction(Qt.DropAction.MoveAction)
+        self.setMouseTracking(True)
+        # Own viewport input (MainWindow also filters for hover — we eat LMB).
+        self.viewport().installEventFilter(self)
+        self._press_item: QTreeWidgetItem | None = None
+        self._press_mods = Qt.KeyboardModifier.NoModifier
+        self._press_pos = QPoint()
+        self._press_was_selected = False
+        self._suppress_click = False
+        self._armed = False
+        self._sel_anchor: QTreeWidgetItem | None = None
+        self._reparent_enabled = True
+        self._drop_hover: QTreeWidgetItem | None = None
+
+    def set_reparent_enabled(self, enabled: bool) -> None:
+        self._reparent_enabled = bool(enabled)
+
+    def set_sel_anchor(self, item: QTreeWidgetItem | None) -> None:
+        self._sel_anchor = item
+
+    def _iter_items(self) -> list[QTreeWidgetItem]:
+        out: list[QTreeWidgetItem] = []
+
+        def walk(item: QTreeWidgetItem) -> None:
+            out.append(item)
+            for i in range(item.childCount()):
+                walk(item.child(i))
+
+        for i in range(self.topLevelItemCount()):
+            walk(self.topLevelItem(i))
+        return out
+
+    def _item_key(self, item: QTreeWidgetItem | None) -> str:
+        if item is None:
+            return ""
+        key = item.data(0, Qt.ItemDataRole.UserRole)
+        return key if isinstance(key, str) else ""
+
+    def _is_expander_at(self, pos: QPoint) -> bool:
+        """True when ``pos`` hits a disclosure triangle (expand/collapse).
+
+        Styled trees often report SE_TreeViewDisclosureItem as the full row, so
+        hit-test the indent gutter to the left of the item label instead.
+        """
+        index = self.indexAt(pos)
+        if not index.isValid():
+            return False
+        item = self.itemFromIndex(index)
+        if item is None or item.childCount() == 0:
+            return False
+        item_rect = self.visualItemRect(item)
+        if item_rect.left() <= 0:
+            return False
+        indent = max(self.indentation(), 12)
+        gutter_left = max(0, item_rect.left() - indent)
+        gutter = QRect(
+            gutter_left,
+            item_rect.top(),
+            item_rect.left() - gutter_left,
+            item_rect.height(),
+        )
+        return gutter.contains(pos)
+
+    def _apply_click_selection(
+        self, item: QTreeWidgetItem | None, mods: Qt.KeyboardModifier
+    ) -> None:
+        self.blockSignals(True)
+        try:
+            if item is None:
+                self.clearSelection()
+                self._sel_anchor = None
+                return
+            ctrl = bool(mods & Qt.KeyboardModifier.ControlModifier)
+            shift = bool(mods & Qt.KeyboardModifier.ShiftModifier)
+            if ctrl:
+                item.setSelected(not item.isSelected())
+                self.setCurrentItem(item, 0, QItemSelectionModel.SelectionFlag.NoUpdate)
+                if self._sel_anchor is None:
+                    self._sel_anchor = item
+                return
+            if shift:
+                anchor = self._sel_anchor or self.currentItem() or item
+                ordered = self._iter_items()
+                try:
+                    a = ordered.index(anchor)
+                    b = ordered.index(item)
+                except ValueError:
+                    self.clearSelection()
+                    item.setSelected(True)
+                    self.setCurrentItem(
+                        item, 0, QItemSelectionModel.SelectionFlag.NoUpdate
+                    )
+                    self._sel_anchor = item
+                    return
+                lo, hi = (a, b) if a <= b else (b, a)
+                self.clearSelection()
+                for it in ordered[lo : hi + 1]:
+                    it.setSelected(True)
+                self.setCurrentItem(
+                    item, 0, QItemSelectionModel.SelectionFlag.NoUpdate
+                )
+                return
+            self.clearSelection()
+            item.setSelected(True)
+            self.setCurrentItem(item, 0, QItemSelectionModel.SelectionFlag.NoUpdate)
+            self._sel_anchor = item
+        finally:
+            self.blockSignals(False)
+            # One notification after the batch.
+            self.itemSelectionChanged.emit()
+
+    def _drop_target_at(self, pos: QPoint) -> QTreeWidgetItem | None:
+        target = self.itemAt(pos)
+        if target is None or target.isSelected():
+            return None
+        if not self._item_key(target):
+            return None
+        return target
+
+    def _set_drop_hover(self, item: QTreeWidgetItem | None) -> None:
+        if self._drop_hover is item:
+            return
+        if self._drop_hover is not None:
+            self._drop_hover.setData(0, _TREE_DROP_TARGET_ROLE, False)
+        self._drop_hover = item
+        if item is not None:
+            item.setData(0, _TREE_DROP_TARGET_ROLE, True)
+        self.viewport().update()
+
+    @staticmethod
+    def _drag_plus_cursor() -> QPixmap:
+        """Move-action badge: ~3× the usual 16px OS plus."""
+        s = 48
+        pm = QPixmap(s, s)
+        pm.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pm)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        # Soft disc so it reads over any tree row.
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(40, 40, 46, 210))
+        painter.drawEllipse(1, 1, s - 2, s - 2)
+        pen = QPen(QColor(210, 210, 215), 5, Qt.PenStyle.SolidLine)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        m = 12
+        mid = s // 2
+        painter.drawLine(mid, m, mid, s - m)
+        painter.drawLine(m, mid, s - m, mid)
+        painter.end()
+        return pm
+
+    def _start_drag(self) -> None:
+        paths = [
+            self._item_key(it)
+            for it in self.selectedItems()
+            if self._item_key(it)
+        ]
+        if not paths:
+            return
+        mime = QMimeData()
+        mime.setData(_TREE_DRAG_MIME, "\n".join(paths).encode("utf-8"))
+        drag = QDrag(self)
+        drag.setMimeData(mime)
+        plus = self._drag_plus_cursor()
+        drag.setPixmap(plus)
+        drag.setHotSpot(QPoint(plus.width() // 2, plus.height() // 2))
+        drag.setDragCursor(plus, Qt.DropAction.MoveAction)
+        drag.setDragCursor(plus, Qt.DropAction.CopyAction)
+        drag.exec(Qt.DropAction.MoveAction)
+        self._set_drop_hover(None)
+
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802
+        if obj is not self.viewport():
+            return super().eventFilter(obj, event)
+        et = event.type()
+
+        # --- left-button select / reparent (never let Qt drag-select) ---
+        if et == QEvent.Type.MouseButtonPress:
+            if event.button() == Qt.MouseButton.LeftButton:
+                pos = event.position().toPoint()
+                # Let Qt own expand/collapse disclosure hits.
+                if self._is_expander_at(pos):
+                    self._armed = False
+                    self._press_item = None
+                    return False
+                self.setFocus(Qt.FocusReason.MouseFocusReason)
+                item = self.itemAt(pos)
+                self._press_item = item
+                self._press_mods = event.modifiers()
+                self._press_pos = pos
+                self._press_was_selected = bool(
+                    item is not None and item.isSelected()
+                )
+                self._suppress_click = False
+                self._armed = True
+                return True
+            return False
+        if et == QEvent.Type.MouseMove:
+            if (
+                self._armed
+                and self._press_item is not None
+                and event.buttons() & Qt.MouseButton.LeftButton
+            ):
+                d = event.position().toPoint() - self._press_pos
+                if (
+                    not self._suppress_click
+                    and abs(d.x()) + abs(d.y()) >= _TREE_DRAG_THRESHOLD
+                ):
+                    self._suppress_click = True
+                    if self._reparent_enabled:
+                        # Unselected row: select (plain / ctrl / shift) then drag.
+                        if not self._press_was_selected:
+                            self._apply_click_selection(
+                                self._press_item, self._press_mods
+                            )
+                        self._start_drag()
+                        self._press_item = None
+                        self._armed = False
+                return True
+            return False
+        if et == QEvent.Type.MouseButtonRelease:
+            if event.button() == Qt.MouseButton.LeftButton:
+                if not self._armed:
+                    return False
+                if not self._suppress_click:
+                    self._apply_click_selection(self._press_item, self._press_mods)
+                self._press_item = None
+                self._suppress_click = False
+                self._armed = False
+                return True
+            return False
+        if et == QEvent.Type.MouseButtonDblClick:
+            if event.button() == Qt.MouseButton.LeftButton:
+                pos = event.position().toPoint()
+                if self._is_expander_at(pos):
+                    return False
+                item = self.itemAt(pos)
+                if item is not None:
+                    if not item.isSelected():
+                        self._apply_click_selection(
+                            item, Qt.KeyboardModifier.NoModifier
+                        )
+                    self.itemDoubleClicked.emit(item, 0)
+                return True
+            return False
+
+        # --- reparent drop ---
+        if self._reparent_enabled:
+            if et == QEvent.Type.DragEnter:
+                if event.mimeData().hasFormat(_TREE_DRAG_MIME):
+                    event.acceptProposedAction()
+                else:
+                    event.ignore()
+                return True
+            if et == QEvent.Type.DragMove:
+                target = (
+                    self._drop_target_at(event.position().toPoint())
+                    if event.mimeData().hasFormat(_TREE_DRAG_MIME)
+                    else None
+                )
+                self._set_drop_hover(target)
+                if target is not None:
+                    event.acceptProposedAction()
+                else:
+                    event.ignore()
+                return True
+            if et == QEvent.Type.DragLeave:
+                self._set_drop_hover(None)
+                return True
+            if et == QEvent.Type.Drop:
+                target = (
+                    self._drop_target_at(event.position().toPoint())
+                    if event.mimeData().hasFormat(_TREE_DRAG_MIME)
+                    else None
+                )
+                self._set_drop_hover(None)
+                if target is None:
+                    event.ignore()
+                    return True
+                raw = bytes(event.mimeData().data(_TREE_DRAG_MIME)).decode("utf-8")
+                paths = [p for p in raw.split("\n") if p]
+                if not paths:
+                    event.ignore()
+                    return True
+                event.acceptProposedAction()
+                tkey = self._item_key(target)
+                # Defer past Qt's drop teardown.
+                QTimer.singleShot(
+                    0, lambda p=paths, t=tkey: self.reparent_drop.emit(p, t)
+                )
+                return True
+
+        return super().eventFilter(obj, event)
+
+
 class LayerListWidget(QListWidget):
     """Layers list: label click selects the section; checkbox only toggles visibility."""
 
@@ -637,6 +1021,7 @@ class LayerListWidget(QListWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        self.setItemDelegate(_LayerCheckDelegate(self))
 
     def sizeHint(self) -> QSize:  # noqa: N802
         if self.count() <= 0:
@@ -1413,7 +1798,7 @@ class MainWindow(QMainWindow):
 
         self._updating_props = False
 
-        self.tree = QTreeWidget()
+        self.tree = ElementTreeWidget()
         self.tree.setHeaderHidden(True)
         self.tree.setMouseTracking(True)
         self.tree.setItemDelegate(_TreePeerDelegate(self.tree))
@@ -1438,8 +1823,13 @@ class MainWindow(QMainWindow):
             " color: #B0CFFF;"
             "}"
         )
-        self.tree.itemClicked.connect(self._on_tree_clicked)
+        self._updating_tree_sel = False
+        self._syncing_from_tree = False
+        self.tree.itemSelectionChanged.connect(self._on_tree_selection_changed)
+        self.tree.itemDoubleClicked.connect(self._on_tree_double_clicked)
         self.tree.itemEntered.connect(self._on_tree_item_entered)
+        self.tree.reparent_drop.connect(self._on_tree_reparent_drop)
+        # Hover only — ElementTreeWidget already owns press/move/release/DnD.
         self.tree.viewport().installEventFilter(self)
 
         self.layers = LayerListWidget()
@@ -2180,6 +2570,10 @@ class MainWindow(QMainWindow):
         ):
             act.setEnabled(atlas)
             act.setVisible(atlas)
+        for act in (self.copy_ele_a, self.paste_ele_a, self.delete_ele_a):
+            act.setEnabled(not atlas)
+            act.setVisible(not atlas)
+        self.tree.set_reparent_enabled(not atlas)
         for act in (self.border_a, self.fill_a, self.labels_a):
             act.setEnabled(True)
         # Atlas: id + x/y/w/h + region list + Options/Undo. Hide UI-only rows/Layers.
@@ -2238,16 +2632,23 @@ class MainWindow(QMainWindow):
         sheet = self.descr_board.current_sheet()
         selected = self.descr_board.scene.selected_region()
         sel_id = selected.atlas_id if selected is not None else None
+        self._updating_tree_sel = True
         self.tree.blockSignals(True)
         self.tree.clear()
+        self._tree_items_by_path.clear()
         if sheet is not None:
             for reg in sorted(sheet.regions, key=lambda r: r.atlas_id.lower()):
                 item = QTreeWidgetItem([reg.atlas_id])
                 item.setData(0, Qt.ItemDataRole.UserRole, reg.atlas_id)
                 self.tree.addTopLevelItem(item)
+                self._tree_items_by_path[reg.atlas_id] = item
                 if reg.atlas_id == sel_id:
-                    self.tree.setCurrentItem(item)
+                    item.setSelected(True)
+                    self.tree.setCurrentItem(
+                        item, 0, QItemSelectionModel.SelectionFlag.NoUpdate
+                    )
         self.tree.blockSignals(False)
+        self._updating_tree_sel = False
 
     def _show_descr_props(self, region) -> None:
         self._updating_props = True
@@ -2270,16 +2671,6 @@ class MainWindow(QMainWindow):
         self.edit_h.setText(str(int(round(region.height))))
         self._set_geo_field_styles(True)
         self._updating_props = False
-        # Sync region list selection
-        matches = self.tree.findItems(
-            region.atlas_id, Qt.MatchFlag.MatchExactly | Qt.MatchFlag.MatchRecursive
-        )
-        for it in matches:
-            if it.data(0, Qt.ItemDataRole.UserRole) == region.atlas_id:
-                self.tree.blockSignals(True)
-                self.tree.setCurrentItem(it)
-                self.tree.blockSignals(False)
-                break
 
     def _on_descr_geometry(self, region) -> None:
         if self._doc_mode != DOC_MODE_ATLAS:
@@ -2290,6 +2681,13 @@ class MainWindow(QMainWindow):
         if self._doc_mode != DOC_MODE_ATLAS:
             return
         self._commit_props_geo_undo()
+        regs = self.descr_board.scene.selected_regions()
+        self._set_tree_selection([r.atlas_id for r in regs])
+        if len(regs) > 1:
+            self._show_props_multi()
+            self._xml_sel_atlas = ""
+            self._apply_xml_selection_highlight()
+            return
         self._show_descr_props(region)
         self._xml_sel_atlas = region.atlas_id if region is not None else ""
         self._apply_xml_selection_highlight()
@@ -2623,6 +3021,26 @@ class MainWindow(QMainWindow):
         self.redo_a.triggered.connect(self.redo)
         self.redo_a.setEnabled(False)
         edit_menu.addAction(self.redo_a)
+        edit_menu.addSeparator()
+        self.copy_ele_a = QAction("&Copy", self)
+        self.copy_ele_a.setShortcut(QKeySequence.StandardKey.Copy)
+        self.copy_ele_a.setToolTip(
+            "Copy the selected UI element (and children) to the clipboard."
+        )
+        self.copy_ele_a.triggered.connect(self._copy_selected_ele)
+        edit_menu.addAction(self.copy_ele_a)
+        self.paste_ele_a = QAction("&Paste", self)
+        self.paste_ele_a.setShortcut(QKeySequence.StandardKey.Paste)
+        self.paste_ele_a.setToolTip(
+            "Paste clipboard element as the next sibling of the selection."
+        )
+        self.paste_ele_a.triggered.connect(self._paste_ele)
+        edit_menu.addAction(self.paste_ele_a)
+        self.delete_ele_a = QAction("&Delete", self)
+        self.delete_ele_a.setShortcut(QKeySequence.StandardKey.Delete)
+        self.delete_ele_a.setToolTip("Remove the selected UI element from the XML.")
+        self.delete_ele_a.triggered.connect(self._delete_selected_ele)
+        edit_menu.addAction(self.delete_ele_a)
         edit_menu.addSeparator()
         self.descr_rename_a = QAction("Rename atlas &id…", self)
         self.descr_rename_a.setShortcut("F2")
@@ -3112,6 +3530,14 @@ class MainWindow(QMainWindow):
         item.setData(Qt.ItemDataRole.UserRole, side)
         if isinstance(edit, PropEdit):
             item.setToolTip(f"{side}: {edit.before.path}\n{label}")
+        elif isinstance(edit, StructureEdit):
+            paths = edit.select_after if side == "redo" else edit.select_before
+            tip = f"{side}: {label}"
+            if paths:
+                tip += "\n" + "\n".join(paths[:8])
+                if len(paths) > 8:
+                    tip += f"\n… +{len(paths) - 8} more"
+            item.setToolTip(tip)
         else:
             tip_parts = [f"{side}:"]
             for before, after in edit.parts[:6]:
@@ -3314,11 +3740,32 @@ class MainWindow(QMainWindow):
         self._jump_to_find_index(self._find_index - 1)
 
     def keyPressEvent(self, event) -> None:  # noqa: N802
-        if event.key() == Qt.Key.Key_Escape and not self.find_bar.isHidden():
-            self._hide_find_bar()
-            event.accept()
-            return
+        if event.key() == Qt.Key.Key_Escape:
+            if not self.find_bar.isHidden():
+                self._hide_find_bar()
+                event.accept()
+                return
+            if self._deselect_on_escape():
+                event.accept()
+                return
         super().keyPressEvent(event)
+
+    def _deselect_on_escape(self) -> bool:
+        """Clear WYSIWYG selection (same as right-click). Skip when typing in fields."""
+        if not getattr(self, "_workspace_revealed", False):
+            return False
+        if self.editor_tabs.currentIndex() != TAB_WYSIWYG:
+            return False
+        if not self._nudge_focus_ok():
+            return False
+        if self._doc_mode == DOC_MODE_ATLAS:
+            scene = self.descr_board.view.scene()
+            if scene is None:
+                return False
+            scene.clearSelection()
+            return True
+        self.canvas.clear_selection()
+        return True
 
     def _on_log_filter_changed(self, text: str) -> None:
         set_log_filter(self.log_view, text)
@@ -3964,6 +4411,8 @@ class MainWindow(QMainWindow):
     def _fill_tree(self, doc: LayoutNode) -> None:
         self.scene.set_tree_hover_path(None)
         self._on_stack_peers_changed(frozenset())
+        self._updating_tree_sel = True
+        self.tree.blockSignals(True)
         self.tree.clear()
         self._tree_items_by_path.clear()
 
@@ -3985,6 +4434,8 @@ class MainWindow(QMainWindow):
         for child in doc.children:
             add(child, None)
         self.tree.expandToDepth(1)
+        self.tree.blockSignals(False)
+        self._updating_tree_sel = False
 
     def _on_stack_peers_changed(self, paths: object) -> None:
         """Grey-highlight Tree rows for overlapping canvas stack peers."""
@@ -4062,7 +4513,129 @@ class MainWindow(QMainWindow):
             item.setCheckState(Qt.CheckState.Checked)
         self.scene.select_path(path)
 
-    def _on_tree_clicked(self, item: QTreeWidgetItem, _col: int) -> None:
+    def _on_tree_selection_changed(self) -> None:
+        """Plain / Shift-range / Ctrl-add tree selection → canvas."""
+        if self._updating_tree_sel:
+            return
+        keys: list[str] = []
+        for it in self.tree.selectedItems():
+            key = it.data(0, Qt.ItemDataRole.UserRole)
+            if isinstance(key, str) and key:
+                keys.append(key)
+        # Hold through canvas's deferred selectionChanged cleanup so it cannot
+        # overwrite a richer tree selection (hidden / non-drawable rows).
+        self._syncing_from_tree = True
+        if self._doc_mode == DOC_MODE_ATLAS:
+            sheet = self.descr_board.current_sheet()
+            if sheet is None:
+                QTimer.singleShot(0, self._end_syncing_from_tree)
+                return
+            by_id = {r.atlas_id: r for r in sheet.regions}
+            regs = [by_id[k] for k in keys if k in by_id]
+            self.descr_board.scene.select_regions(regs)
+            QTimer.singleShot(0, self._end_syncing_from_tree)
+            return
+        # Canvas only shows visible drawables; do not let that wipe the tree.
+        paths: list[str] = []
+        doc = self.scene.doc
+        for key in keys:
+            if key not in self.scene._items:
+                continue
+            node = doc.find_by_path(key) if doc is not None else None
+            if node is None or not node.visible:
+                continue
+            paths.append(key)
+        self.scene.select_paths(paths)
+        QTimer.singleShot(0, self._end_syncing_from_tree)
+
+    def _end_syncing_from_tree(self) -> None:
+        self._syncing_from_tree = False
+
+    def _set_tree_selection(self, keys: list[str]) -> None:
+        """Select tree rows for ``keys`` without re-entering canvas sync."""
+        self._updating_tree_sel = True
+        self.tree.blockSignals(True)
+        try:
+            self.tree.clearSelection()
+            current: QTreeWidgetItem | None = None
+            for key in keys:
+                it = self._tree_items_by_path.get(key)
+                if it is None:
+                    # Atlas region list stores id in UserRole; fall back to scan.
+                    matches = self.tree.findItems(
+                        key, Qt.MatchFlag.MatchExactly | Qt.MatchFlag.MatchRecursive
+                    )
+                    for cand in matches:
+                        if cand.data(0, Qt.ItemDataRole.UserRole) == key:
+                            it = cand
+                            break
+                if it is None:
+                    continue
+                it.setSelected(True)
+                current = it
+            if current is not None:
+                self.tree.setCurrentItem(
+                    current, 0, QItemSelectionModel.SelectionFlag.NoUpdate
+                )
+                self.tree.scrollToItem(current)
+            self.tree.set_sel_anchor(current)
+        finally:
+            self.tree.blockSignals(False)
+            self._updating_tree_sel = False
+
+    def _on_tree_reparent_drop(self, paths: list, target_path: str) -> None:
+        """Append dragged elements as children of the drop target (undoable)."""
+        if self._doc_mode != DOC_MODE_UI or self.doc.doc is None:
+            return
+        doc = self.doc.doc
+        target = doc.find_by_path(target_path)
+        if target is None:
+            return
+        nodes: list[LayoutNode] = []
+        for path in paths:
+            n = doc.find_by_path(path)
+            if n is not None:
+                nodes.append(n)
+        if not nodes:
+            return
+        before_xml, before_meta, before_layers = self.doc.structure_snapshot()
+        select_before = tuple(n.path for n in nodes if n.path)
+        new_paths = self.doc.reparent_as_children(nodes, target)
+        if not new_paths:
+            self.statusBar().showMessage("Cannot reparent onto that target")
+            return
+        after_xml, after_meta, after_layers = self.doc.structure_snapshot()
+        n = len(new_paths)
+        tname = target_path.rsplit("/", 1)[-1]
+        if n == 1:
+            summary = f"Reparent {new_paths[0].rsplit('/', 1)[-1]} → {tname}"
+        else:
+            summary = f"Reparent {n} → {tname}"
+        edit = StructureEdit(
+            before_xml=before_xml,
+            after_xml=after_xml,
+            before_meta=before_meta,
+            after_meta=after_meta,
+            before_layers=before_layers,
+            after_layers=after_layers,
+            summary=summary,
+            select_before=select_before,
+            select_after=tuple(new_paths),
+        )
+        self._rebuild_ui_after_structure(
+            select_path=new_paths[-1], clear_undo=False
+        )
+        # Structure invalidates path-based geo undos; keep only this edit.
+        self.scene.clear_undo()
+        self.scene.push_edit(edit)
+        self.scene.select_paths(new_paths)
+        self._set_tree_selection(new_paths)
+        self.statusBar().showMessage(
+            f"Reparented {len(new_paths)} → {target_path}"
+        )
+
+    def _on_tree_double_clicked(self, item: QTreeWidgetItem, _col: int) -> None:
+        """Double-click renames atlas id or UI element tag."""
         key = item.data(0, Qt.ItemDataRole.UserRole)
         if not key:
             return
@@ -4073,12 +4646,36 @@ class MainWindow(QMainWindow):
             for reg in sheet.regions:
                 if reg.atlas_id == key:
                     self.descr_board.scene.select_region(reg)
+                    self.descr_board.rename_selected()
                     return
             return
-        node = self.scene.doc.find_by_path(key) if self.scene.doc else None
-        if node is None or not node.visible:
+        self._rename_ui_tree_item(key)
+
+    def _rename_ui_tree_item(self, path: str) -> None:
+        if self.doc.doc is None:
             return
-        self.scene.select_path(key)
+        node = self.doc.doc.find_by_path(path)
+        if node is None or not node.path:
+            return
+        new_tag, ok = QInputDialog.getText(
+            self, "Rename element", "XML tag:", text=node.tag
+        )
+        if not ok:
+            return
+        new_tag = new_tag.strip()
+        if not new_tag or new_tag == node.tag:
+            return
+        old = node.path
+        new_path = self.doc.rename_tag(node, new_tag)
+        if new_path is None:
+            QMessageBox.warning(
+                self,
+                "Invalid tag",
+                f"Cannot rename to: {new_tag}",
+            )
+            return
+        self._rebuild_ui_after_structure(select_path=new_path)
+        self.statusBar().showMessage(f"Renamed {old} → {new_path}")
 
     def _on_tree_item_entered(self, item: QTreeWidgetItem, _col: int) -> None:
         if self._doc_mode == DOC_MODE_ATLAS:
@@ -4098,6 +4695,16 @@ class MainWindow(QMainWindow):
         if et in (QEvent.Type.KeyPress, QEvent.Type.KeyRelease):
             if self._filter_nudge_key(event):
                 return True
+        if (
+            et == QEvent.Type.KeyPress
+            and event.key() == Qt.Key.Key_Escape
+            and (
+                not hasattr(self, "find_bar")
+                or self.find_bar.isHidden()
+            )
+            and self._deselect_on_escape()
+        ):
+            return True
         if obj is self.tree.viewport():
             if self._doc_mode == DOC_MODE_ATLAS:
                 return super().eventFilter(obj, event)
@@ -4117,18 +4724,118 @@ class MainWindow(QMainWindow):
 
     def _on_canvas_selection(self, node: LayoutNode | None) -> None:
         self._commit_props_geo_undo()
+        selected = self.scene.selected_widgets()
+        # Tree→canvas already owns the tree highlight; don't clobber it.
+        if not self._syncing_from_tree:
+            self._set_tree_selection(
+                [i.node.path for i in selected if i.node.path]
+            )
+        if len(selected) > 1:
+            self._show_props_multi()
+            self._xml_sel_path = ""
+            self._apply_xml_selection_highlight()
+            return
         self._show_props(node)
         self._xml_sel_path = node.path if node and node.path else ""
         self._apply_xml_selection_highlight()
-        if node and node.path:
-            # Sync tree selection
-            matches = self.tree.findItems(
-                node.tag, Qt.MatchFlag.MatchContains | Qt.MatchFlag.MatchRecursive
-            )
-            for it in matches:
-                if it.data(0, Qt.ItemDataRole.UserRole) == node.path:
-                    self.tree.setCurrentItem(it)
-                    break
+
+    def _structure_edit_ok(self) -> bool:
+        """True when Copy/Paste/Delete should act on the WYSIWYG UI document."""
+        if self._doc_mode != DOC_MODE_UI:
+            return False
+        if self.editor_tabs.currentIndex() != TAB_WYSIWYG:
+            return False
+        if not self._nudge_focus_ok():
+            return False
+        if self.doc.doc is None or self.doc.root is None:
+            return False
+        return True
+
+    def _single_selected_ele(self) -> LayoutNode | None:
+        """Exactly one selected drawable with a parent (not the document root)."""
+        selected = self.scene.selected_widgets()
+        if len(selected) != 1:
+            return None
+        node = selected[0].node
+        if not node.is_drawable or not node.path or node.parent is None:
+            return None
+        return node
+
+    def _copy_selected_ele(self) -> None:
+        if not self._structure_edit_ok():
+            return
+        node = self._single_selected_ele()
+        if node is None:
+            return
+        xml = self.doc.subtree_xml(node)
+        QApplication.clipboard().setText(xml)
+        self.statusBar().showMessage(f"Copied {node.path}")
+
+    def _paste_ele(self) -> None:
+        if not self._structure_edit_ok():
+            return
+        target = self._single_selected_ele()
+        if target is None:
+            return
+        text = (QApplication.clipboard().text() or "").strip()
+        if not text:
+            return
+        pasted = self.doc.paste_sibling_after(target, text)
+        if pasted is None:
+            self.statusBar().showMessage("Paste failed — clipboard is not a UI element")
+            return
+        self._rebuild_ui_after_structure(select_path=pasted.path)
+        self.statusBar().showMessage(f"Pasted {pasted.path}")
+
+    def _delete_selected_ele(self) -> None:
+        if not self._structure_edit_ok():
+            return
+        node = self._single_selected_ele()
+        if node is None:
+            return
+        path = node.path
+        parent_path = node.parent.path if node.parent is not None else ""
+        if not self.doc.remove_subtree(node):
+            return
+        # Prefer selecting the parent after delete; fall back to clear.
+        select = parent_path if parent_path else None
+        self._rebuild_ui_after_structure(select_path=select)
+        self.statusBar().showMessage(f"Deleted {path}")
+
+    def _rebuild_ui_after_structure(
+        self, *, select_path: str | None, clear_undo: bool = True
+    ) -> None:
+        """Refresh tree/scene after ElementTree insert/remove."""
+        doc = self.doc.doc
+        if doc is None:
+            return
+        self._preview_needs_raw_sync = True
+        self.scene.set_document(doc, clear_undo=clear_undo)
+        self._fill_tree(doc)
+        self._fill_layers(doc)
+        self._update_undo_actions()
+        self._refresh_undo_list()
+        if select_path:
+            self.scene.select_path(select_path)
+            found = doc.find_by_path(select_path)
+            self._show_props(found)
+        else:
+            self._show_props(None)
+
+    def _apply_structure_edit(
+        self, edit: StructureEdit, *, use_after: bool
+    ) -> None:
+        """Restore a structure snapshot and refresh the UI (undo stack untouched)."""
+        xml = edit.after_xml if use_after else edit.before_xml
+        meta = edit.after_meta if use_after else edit.before_meta
+        layers = edit.after_layers if use_after else edit.before_layers
+        paths = edit.select_after if use_after else edit.select_before
+        self.doc.restore_structure_snapshot(xml, meta, layers)
+        select = paths[-1] if paths else None
+        self._rebuild_ui_after_structure(select_path=select, clear_undo=False)
+        if paths:
+            self.scene.select_paths(list(paths))
+            self._set_tree_selection(list(paths))
 
     def _commit_props_geo_undo(self) -> None:
         before = self._props_geo_before
@@ -4305,8 +5012,8 @@ class MainWindow(QMainWindow):
             return ...
 
     def _selected_prop_node(self) -> LayoutNode | None:
-        selected = [i for i in self.scene.selectedItems() if hasattr(i, "node")]
-        if not selected:
+        selected = self.scene.selected_widgets()
+        if len(selected) != 1:
             return None
         node: LayoutNode = selected[0].node
         if not node.is_drawable or node.from_meta:
@@ -4495,6 +5202,75 @@ class MainWindow(QMainWindow):
         self.prop_texture_uv.setText(f"X {x}  Y {y}  W {w}  H {h}")
         self.prop_texture_uv.setToolTip(tip)
 
+    def _show_props_multi(self) -> None:
+        """Multi-select: props are read-only placeholders (no edits)."""
+        self._updating_props = True
+        self._set_geo_field_styles(True)
+        self._set_path_label("-")
+        self._set_meta_prop_labels(False)
+        self._set_optional_prop_label(self.prop_meta_note, "(multiple selection)")
+        for ed in (self.edit_x, self.edit_y, self.edit_w, self.edit_h):
+            ed.setText("-")
+            ed.setEnabled(False)
+        self.edit_stretch.setChecked(False)
+        self.edit_stretch.setEnabled(False)
+        self.edit_show_texture.setChecked(False)
+        self.edit_show_texture.setEnabled(False)
+        self.prop_texture.clear("-")
+        self.prop_texture.set_browse_enabled(False)
+        self._set_texture_uv_row(None)
+        self.prop_texture_uv.setText("-")
+        self.prop_text.clear("-")
+        self.prop_text.set_browse_enabled(False)
+        self._clear_extra_prop_fields()
+        for ed in (
+            self.edit_text_r,
+            self.edit_text_g,
+            self.edit_text_b,
+            self.edit_text_a,
+            self.edit_text_x,
+            self.edit_text_y,
+            self.edit_left_ident,
+            self.edit_right_ident,
+            self.edit_top_indent,
+            self.edit_bottom_indent,
+            self.edit_vert_interval,
+        ):
+            ed.setText("-")
+            ed.setEnabled(False)
+        self._set_combo_data(self.edit_font, "")
+        self._set_combo_data(self.edit_align, "")
+        self._set_combo_data(self.edit_vert_align, "")
+        if self.edit_font.isEditable():
+            self.edit_font.setEditText("-")
+        self.edit_font.setEnabled(False)
+        self.edit_align.setEnabled(False)
+        self.edit_vert_align.setEnabled(False)
+        self.edit_complex_mode.setEnabled(False)
+        self.edit_always_show_scroll.setEnabled(False)
+        # Keep groups visible so the panel doesn't jump; all controls disabled.
+        for w in self._texture_prop_widgets:
+            w.setVisible(True)
+        for w in self._text_prop_widgets:
+            w.setVisible(True)
+        for w in self._scroll_prop_widgets:
+            w.setVisible(True)
+        self.prop_label_texture.setEnabled(False)
+        self.prop_label_text.setEnabled(False)
+        for lab in (
+            self.prop_label_text_off,
+            self.prop_label_align,
+            self.prop_label_font,
+            self.prop_label_color,
+        ):
+            lab.setEnabled(False)
+        self.prop_texture.name.setStyleSheet(f"color: {_GREY_INAPPLICABLE};")
+        self.prop_text.name.setStyleSheet(f"color: {_GREY_INAPPLICABLE};")
+        self._updating_props = False
+        self._pin_splitter_sizes()
+        self._relayout_sidebar_fit()
+        QTimer.singleShot(0, self._relayout_sidebar_fit)
+
     def _show_props(self, node: LayoutNode | None) -> None:
         self._updating_props = True
         self._set_geo_field_styles(True)
@@ -4682,6 +5458,11 @@ class MainWindow(QMainWindow):
         edit = self.scene.undo_stack.undo()
         if edit is None:
             return
+        if isinstance(edit, StructureEdit):
+            self._apply_structure_edit(edit, use_after=False)
+            self._on_undo_stack_changed()
+            self.statusBar().showMessage(f"Undo {edit.describe()}")
+            return
         node = self.scene.apply_edit(edit, use_after=False)
         if node is not None and node.from_meta:
             self.doc.mark_meta_dirty()
@@ -4717,6 +5498,11 @@ class MainWindow(QMainWindow):
             return
         edit = self.scene.undo_stack.redo()
         if edit is None:
+            return
+        if isinstance(edit, StructureEdit):
+            self._apply_structure_edit(edit, use_after=True)
+            self._on_undo_stack_changed()
+            self.statusBar().showMessage(f"Redo {edit.describe()}")
             return
         node = self.scene.apply_edit(edit, use_after=True)
         if node is not None and node.from_meta:
@@ -5216,7 +6002,7 @@ def _checkbox_check_image_url() -> str:
     painter.drawLine(6, 10, 11, 3)
     painter.end()
     pix.save(str(dest), "PNG")
-    # Qt stylesheets want forward slashes.
+    # Forward-slash path for QCheckBox QSS (list ticks are painted by delegate).
     return dest.resolve().as_posix()
 
 
@@ -5314,7 +6100,7 @@ def _apply_dark_theme(app: QApplication) -> None:
         "}"
         "QCheckBox::indicator:checked:disabled {"
         "  background-color: #0A0A0C; border-color: #2A2A30;"
-        "  image: none;"
+        f"  image: url({check_img});"
         "}"
         "QScrollBar:vertical { background: #121214; width: 12px; }"
         "QScrollBar:horizontal { background: #121214; height: 12px; }"

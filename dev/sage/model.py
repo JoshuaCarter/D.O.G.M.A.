@@ -51,28 +51,6 @@ def has_geometry(el: Element) -> bool:
     return any(el.get(a) is not None for a in GEO_ATTRS)
 
 
-def default_meta_xy(node: LayoutNode) -> tuple[float, float]:
-    """Guess a runtime placement origin when .xml.meta has no entry.
-
-    Engine ``InitWindow`` auto-attaches ``auto_static`` children at their XML
-    x/y (missing attrs → 0 via ReadAttribFlt). Script-built containers with no
-    XML geometry (``options``, ``popup_*``, …) need a SAGE meta handle instead.
-
-    Prefer a sibling ``scroll_<tag>`` / ``templ_<tag>`` that scripts parent into
-    (e.g. ``options`` → ``scroll_options`` at the scroll view's x/y).
-    """
-    parent = node.parent
-    if parent is None:
-        return 0.0, 0.0
-    for want in (f"scroll_{node.tag}", f"templ_{node.tag}"):
-        for sib in parent.children:
-            if sib is node or sib.tag != want:
-                continue
-            if has_geometry(sib.element):
-                return sib.x, sib.y
-    return 0.0, 0.0
-
-
 @dataclass
 class TextureRef:
     """Resolved or unresolved texture reference from a <texture> child."""
@@ -134,56 +112,27 @@ class LayoutNode:
     abs_y: float = 0.0
 
     def recompute_absolute(self, ox: float = 0.0, oy: float = 0.0) -> None:
+        """Absolute canvas pos from XML parent chain only (no script re-parenting)."""
         if self.is_drawable:
             self.abs_x = ox + self.x
             self.abs_y = oy + self.y
-            # Meta handles are runtime placement origins (script-parented roots with
-            # no XML x/y). Children preview relative to them; XML is unchanged.
+            # Meta handles: editor origin for nodes with no XML geo; children nest under them.
             next_ox, next_oy = self.abs_x, self.abs_y
         else:
             self.abs_x = ox
             self.abs_y = oy
             next_ox, next_oy = ox, oy
-
-        # Script Init* parent often differs from XML nesting (Anomaly new-game dialog):
-        # - main_dialog siblings → parented to frame_back
-        # - popup_* content (not frame/frame_black) → parented to popup frame
-        anchor_back = next((c for c in self.children if c.tag == "frame_back"), None)
-        anchor_frame = next((c for c in self.children if c.tag == "frame"), None)
-
         for child in self.children:
-            if anchor_back is not None and child is not anchor_back:
-                child.recompute_absolute(next_ox + anchor_back.x, next_oy + anchor_back.y)
-            elif (
-                anchor_frame is not None
-                and child is not anchor_frame
-                and child.tag not in ("frame", "frame_black")
-            ):
-                child.recompute_absolute(next_ox + anchor_frame.x, next_oy + anchor_frame.y)
-            else:
-                child.recompute_absolute(next_ox, next_oy)
+            child.recompute_absolute(next_ox, next_oy)
 
     def coord_origin(self) -> tuple[float, float]:
-        """Canvas origin that this node's local x/y are relative to."""
+        """Canvas origin that this node's local x/y are relative to (XML parent)."""
         parent = self.parent
         if parent is None:
             return 0.0, 0.0
-        # Drawable parents (including meta roots) contribute their absolute position.
         if parent.is_drawable:
-            base_x, base_y = parent.abs_x, parent.abs_y
-        else:
-            base_x, base_y = parent.coord_origin()
-        anchor_back = next((c for c in parent.children if c.tag == "frame_back"), None)
-        if anchor_back is not None and self is not anchor_back:
-            return base_x + anchor_back.x, base_y + anchor_back.y
-        anchor_frame = next((c for c in parent.children if c.tag == "frame"), None)
-        if (
-            anchor_frame is not None
-            and self is not anchor_frame
-            and self.tag not in ("frame", "frame_black")
-        ):
-            return base_x + anchor_frame.x, base_y + anchor_frame.y
-        return base_x, base_y
+            return parent.abs_x, parent.abs_y
+        return parent.coord_origin()
 
     def sync_from_element(self) -> None:
         self.x = _f(self.element, "x")
@@ -367,28 +316,27 @@ class LayoutNode:
         return raw.strip().lower() in ("1", "true")
 
     def is_scroll_view(self) -> bool:
-        """Heuristic for InitScrollView paths (almost always ``scroll_*``)."""
+        """Tag name looks like a scroll view (``scroll_*``) — props UI only."""
         return (self.tag or "").lower().startswith("scroll")
 
     def is_frame_line(self) -> bool:
-        """Heuristic for InitFrameLine (engine asserts ``stretch`` is false)."""
+        """Tag name looks like a frame line — props UI only."""
         tag = (self.tag or "").lower()
         return "frame_line" in tag or tag.startswith("frameline")
 
     def allows_texture_props(self) -> bool:
-        """ScrollView is InitWindow-only — no InitTexture unless XML already has one."""
+        """Hide texture props on empty scroll_* tags (common Anomaly pattern)."""
         if self.is_scroll_view() and self.texture is None:
             return False
         return True
 
     def allows_stretch(self) -> bool:
-        """FrameLine asserts stretch==0; ScrollView has no SetStretchTexture."""
         if self.is_frame_line() or self.is_scroll_view():
             return False
         return self.allows_texture_props()
 
     def allows_text_props(self) -> bool:
-        """ScrollView ``<text>`` children are list items, not widget TextItemControl."""
+        """scroll_* ``<text>`` children are usually list chrome, not a caption."""
         return not self.is_scroll_view()
 
     def allows_scroll_props(self) -> bool:
@@ -644,6 +592,16 @@ class LayoutNode:
                 return found
         return None
 
+    def find_by_element(self, el: Element) -> LayoutNode | None:
+        """Locate the LayoutNode wrapping this Element instance."""
+        if self.element is el:
+            return self
+        for child in self.children:
+            found = child.find_by_element(el)
+            if found is not None:
+                return found
+        return None
+
 
 def _fmt(v: float) -> str:
     if abs(v - round(v)) < 1e-6:
@@ -768,8 +726,7 @@ def apply_meta_positions(
 ) -> None:
     """Attach editor handles for nodes without XML geometry.
 
-    Positions come from the sidecar meta map when present; otherwise
-    ``default_meta_xy`` (sibling scroll_/templ_, else 0,0) is used.
+    Positions come from the sidecar meta map when present; otherwise 0,0.
     Size is always the fixed diamond marker (width/height in meta are ignored).
     """
     from .meta import DEFAULT_HANDLE_SIZE
@@ -789,8 +746,7 @@ def apply_meta_positions(
                 height=size,
             )
         else:
-            dx, dy = default_meta_xy(node)
-            node.apply_meta_geometry(x=dx, y=dy, width=size, height=size)
+            node.apply_meta_geometry(x=0.0, y=0.0, width=size, height=size)
     doc.recompute_absolute(0.0, 0.0)
 
 

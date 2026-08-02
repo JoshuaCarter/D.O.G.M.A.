@@ -270,12 +270,81 @@ class PropEdit:
         )
 
 
-Edit = GeoEdit | PropEdit
+@dataclass(frozen=True)
+class StructureEdit:
+    """XML tree structure change (reparent / paste / delete) via full snapshots."""
+
+    before_xml: str
+    after_xml: str
+    before_meta: dict[str, dict[str, float]]
+    after_meta: dict[str, dict[str, float]]
+    before_layers: dict[str, bool]
+    after_layers: dict[str, bool]
+    summary: str
+    select_before: tuple[str, ...] = ()
+    select_after: tuple[str, ...] = ()
+
+    def changed(self) -> bool:
+        return self.before_xml != self.after_xml
+
+    def action_tone(self) -> str:
+        return "move"
+
+    def describe(self) -> str:
+        return self.summary
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "kind": "structure",
+            "before_xml": self.before_xml,
+            "after_xml": self.after_xml,
+            "before_meta": self.before_meta,
+            "after_meta": self.after_meta,
+            "before_layers": self.before_layers,
+            "after_layers": self.after_layers,
+            "summary": self.summary,
+            "select_before": list(self.select_before),
+            "select_after": list(self.select_after),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> StructureEdit:
+        def _meta(raw: Any) -> dict[str, dict[str, float]]:
+            out: dict[str, dict[str, float]] = {}
+            if not isinstance(raw, dict):
+                return out
+            for k, v in raw.items():
+                if isinstance(v, dict):
+                    out[str(k)] = {str(ak): float(av) for ak, av in v.items()}
+            return out
+
+        def _layers(raw: Any) -> dict[str, bool]:
+            if not isinstance(raw, dict):
+                return {}
+            return {str(k): bool(v) for k, v in raw.items()}
+
+        return cls(
+            before_xml=str(data.get("before_xml") or ""),
+            after_xml=str(data.get("after_xml") or ""),
+            before_meta=_meta(data.get("before_meta")),
+            after_meta=_meta(data.get("after_meta")),
+            before_layers=_layers(data.get("before_layers")),
+            after_layers=_layers(data.get("after_layers")),
+            summary=str(data.get("summary") or "Structure edit"),
+            select_before=tuple(str(p) for p in (data.get("select_before") or [])),
+            select_after=tuple(str(p) for p in (data.get("select_after") or [])),
+        )
+
+
+Edit = GeoEdit | PropEdit | StructureEdit
 
 
 def edit_from_dict(data: dict[str, Any]) -> Edit:
-    if data.get("kind") == "props":
+    kind = data.get("kind")
+    if kind == "props":
         return PropEdit.from_dict(data)
+    if kind == "structure":
+        return StructureEdit.from_dict(data)
     return GeoEdit.from_dict(data)
 
 

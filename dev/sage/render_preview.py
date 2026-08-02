@@ -37,7 +37,7 @@ def main(argv: list[str] | None = None) -> int:
         argv[0]
         if argv
         else REPO_ROOT
-        / "src/tweaks/bigger_new_game_loadout_panel/configs/ui/ui_mm_faction_select.xml"
+        / "src/tweaks/bigger_new_game_loadout_panel/configs/ui/ui_mm_faction_select_16.xml"
     )
     out_path = Path(
         argv[1]

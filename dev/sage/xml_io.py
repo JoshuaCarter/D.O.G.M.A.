@@ -2,12 +2,30 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree as ET
 
 from .meta import MetaDocument, load_meta_document, meta_path_for, save_meta_document
-from .model import LayoutNode, apply_meta_positions, build_tree, collect_meta_positions
+from .model import (
+    PATH_SEP,
+    SKIP_AS_WIDGET,
+    LayoutNode,
+    apply_meta_positions,
+    build_tree,
+    collect_meta_positions,
+)
+
+# XML Name / Stalker UI tag (no namespaces, no spaces).
+_TAG_RE = re.compile(r"^[A-Za-z_][\w.-]*$")
+
+
+def _sync_drawable_geometry(node: LayoutNode) -> None:
+    """Push preview geometry for ``node`` and drawable descendants into Elements."""
+    for n in node.iter_all():
+        if n.is_drawable:
+            n.apply_geometry_to_element()
 
 
 class UiXmlDocument:
@@ -118,6 +136,171 @@ class UiXmlDocument:
         apply_meta_positions(self.doc, self._meta)
         return self.doc
 
+    def refresh_model(self) -> LayoutNode:
+        """Rebuild LayoutNode tree from the live ElementTree; keep meta/layers."""
+        if self.root is None:
+            raise RuntimeError("No document loaded")
+        self.doc = build_tree(self.root)
+        apply_meta_positions(self.doc, self._meta)
+        return self.doc
+
+    def subtree_xml(self, node: LayoutNode) -> str:
+        """Serialize ``node``'s Element subtree (geometry synced from preview)."""
+        _sync_drawable_geometry(node)
+        return ET.tostring(node.element, encoding="unicode")
+
+    def paste_sibling_after(
+        self, target: LayoutNode, xml: str
+    ) -> LayoutNode | None:
+        """Insert parsed XML as the next sibling of ``target``; return new node."""
+        if self.root is None or self.doc is None:
+            return None
+        parent = target.parent
+        if parent is None or target.element is self.root:
+            return None
+        try:
+            clone = ET.fromstring(xml)
+        except ET.ParseError:
+            return None
+        if not isinstance(clone.tag, str) or not clone.tag:
+            return None
+        parent_el = parent.element
+        try:
+            idx = list(parent_el).index(target.element)
+        except ValueError:
+            return None
+        parent_el.insert(idx + 1, clone)
+        self.refresh_model()
+        self.mark_dirty()
+        assert self.doc is not None
+        return self.doc.find_by_element(clone)
+
+    def remove_subtree(self, node: LayoutNode) -> bool:
+        """Remove ``node``'s Element from its parent and refresh the model."""
+        if self.root is None or self.doc is None:
+            return False
+        parent = node.parent
+        if parent is None or not node.path or node.element is self.root:
+            return False
+        try:
+            parent.element.remove(node.element)
+        except ValueError:
+            return False
+        # Drop meta handle entry for this path if present.
+        if node.path in self._meta:
+            del self._meta[node.path]
+            self.meta_dirty = True
+        if node.path in self._layers:
+            del self._layers[node.path]
+            self.meta_dirty = True
+        self.refresh_model()
+        self.mark_dirty()
+        return True
+
+    def rename_tag(self, node: LayoutNode, new_tag: str) -> str | None:
+        """Rename ``node``'s XML tag; remap meta/layer paths. Returns new path."""
+        if self.root is None or self.doc is None:
+            return None
+        if node.element is self.root or not node.path:
+            return None
+        new_tag = (new_tag or "").strip()
+        if not new_tag or new_tag == node.tag:
+            return node.path
+        if not _TAG_RE.fullmatch(new_tag) or new_tag in SKIP_AS_WIDGET:
+            return None
+        el = node.element
+        old_by_el = {id(n.element): n.path for n in self.doc.iter_all() if n.path}
+        el.tag = new_tag
+        self.refresh_model()
+        assert self.doc is not None
+        self._remap_meta_paths(old_by_el)
+        self.mark_dirty()
+        found = self.doc.find_by_element(el)
+        return found.path if found is not None else None
+
+    def reparent_as_children(
+        self, nodes: list[LayoutNode], new_parent: LayoutNode
+    ) -> list[str] | None:
+        """Move ``nodes`` (roots only) to become last children of ``new_parent``.
+
+        Returns new paths of moved roots, or None if the move is illegal.
+        """
+        if self.root is None or self.doc is None:
+            return None
+        if new_parent.element is None:
+            return None
+        # Only move roots among the selection (skip nodes under another selected).
+        path_set = {n.path for n in nodes if n.path}
+        roots: list[LayoutNode] = []
+        for n in nodes:
+            if not n.path or n.element is self.root:
+                continue
+            if n.parent is None:
+                continue
+            p = n.parent
+            under = False
+            while p is not None:
+                if p.path in path_set:
+                    under = True
+                    break
+                p = p.parent
+            if not under:
+                roots.append(n)
+        if not roots:
+            return None
+        # Reject drop onto a dragged node or any of its descendants.
+        for root in roots:
+            if new_parent is root:
+                return None
+            if new_parent.path and root.path:
+                if (
+                    new_parent.path == root.path
+                    or new_parent.path.startswith(root.path + PATH_SEP)
+                ):
+                    return None
+        old_by_el = {id(n.element): n.path for n in self.doc.iter_all() if n.path}
+        moved_els: list[ET.Element] = []
+        for root in roots:
+            parent = root.parent
+            if parent is None:
+                continue
+            try:
+                parent.element.remove(root.element)
+            except ValueError:
+                continue
+            new_parent.element.append(root.element)
+            moved_els.append(root.element)
+        if not moved_els:
+            return None
+        self.refresh_model()
+        assert self.doc is not None
+        self._remap_meta_paths(old_by_el)
+        self.mark_dirty()
+        out: list[str] = []
+        for el in moved_els:
+            found = self.doc.find_by_element(el)
+            if found is not None and found.path:
+                out.append(found.path)
+        return out
+
+    def _remap_meta_paths(self, old_by_el: dict[int, str]) -> None:
+        """Rewrite meta/layer keys after structure edits (element identity stable)."""
+        if self.doc is None:
+            return
+        path_map: dict[str, str] = {}
+        for n in self.doc.iter_all():
+            if not n.path:
+                continue
+            old = old_by_el.get(id(n.element))
+            if old and old != n.path:
+                path_map[old] = n.path
+        if not path_map:
+            return
+        self._meta = {path_map.get(k, k): v for k, v in self._meta.items()}
+        self._layers = {path_map.get(k, k): v for k, v in self._layers.items()}
+        self.meta_dirty = True
+        apply_meta_positions(self.doc, self._meta)
+
     def mark_dirty(self) -> None:
         self.dirty = True
 
@@ -128,6 +311,39 @@ class UiXmlDocument:
         if self.doc is None:
             return
         self._meta = collect_meta_positions(self.doc)
+
+    def structure_snapshot(
+        self,
+    ) -> tuple[str, dict[str, dict[str, float]], dict[str, bool]]:
+        """XML + meta/layers for undoable structure edits."""
+        self.sync_meta_from_doc()
+        meta = {k: dict(v) for k, v in self._meta.items()}
+        layers = dict(self._layers)
+        return self.serialize(), meta, layers
+
+    def restore_structure_snapshot(
+        self,
+        xml: str,
+        meta: dict[str, dict[str, float]],
+        layers: dict[str, bool],
+    ) -> LayoutNode:
+        """Replace the live tree from a structure snapshot; mark dirty."""
+        try:
+            self.root = ET.fromstring(xml)
+            self._synthetic_wrapper = False
+        except ET.ParseError:
+            self.root = ET.fromstring(f"<w>\n{xml}\n</w>")
+            self._synthetic_wrapper = True
+        self.tree = ET.ElementTree(self.root)
+        self.doc = build_tree(self.root)
+        self._meta = {str(k): dict(v) for k, v in meta.items()}
+        self._layers = {str(k): bool(v) for k, v in layers.items()}
+        apply_meta_positions(self.doc, self._meta)
+        text = xml if xml.endswith("\n") or xml == "" else xml + "\n"
+        self._source_text = text
+        self.dirty = True
+        self.meta_dirty = True
+        return self.doc
 
     def serialize(self) -> str:
         """Current tree as XML text (applies preview geometry first)."""

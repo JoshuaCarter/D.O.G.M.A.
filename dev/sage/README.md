@@ -4,9 +4,7 @@ Stalker Anomaly GUI Editor - visual layout editor for S.T.A.L.K.E.R. / Anomaly U
 
 ## Coordinate space
 
-Virtual **1024×768** HUD pixels (engine scales to the display). Child `x`/`y` are parent-relative.
-
-**Script parenting:** Anomaly often parents `main_dialog` siblings to `frame_back` even when they are XML siblings (see `ui_mm_faction_select.script`). The editor applies that heuristic so the preview matches in-game placement.
+Virtual **1024×768** HUD pixels (engine scales to the display). Child `x`/`y` follow **XML nesting only** (parent-relative). SAGE does not invent script re-parenting (e.g. Init* onto `frame_back`).
 
 **Widescreen `_16`:** On 16:9 (and similar), the engine opens `foo_16.xml` when scripts call `ParseFile("foo.xml")`. Editing only the non-`_16` file will show correctly in SAGE but not in-game. Keep both in sync (or re-enable DART, which `#include`s the `_16` from the base name).
 
@@ -51,7 +49,7 @@ py -3 dev/sage/render_preview.py
   `configs.db0` + `textures_ui.db0` there after you confirm in setup/settings
 - Zoom (wheel), pan (MMB or Alt+drag), Fit stage (`F`)
 - Undo/Redo move, resize, and property geometry (`Ctrl+Z` / `Ctrl+Y` or `Ctrl+Shift+Z`)
-- Meta handles for elements without XML `x/y/width/height` (runtime-positioned). Drag them to preview script placement - **children move with the meta origin**; positions save to `file.xml.meta` (not into the XML). `.xml.meta` stores version, element handles, layer toggles, and undo/redo only — editor options and view live in `settings.json` / the session. Diamond markers (move-only); tag caption is display-only.
+- Meta handles for elements without XML `x/y/width/height`. Drag them as an editor origin — **XML children nest under that origin**; positions save to `file.xml.meta` (not into the XML). `.xml.meta` stores version, element handles, layer toggles, and undo/redo only — editor options and view live in `settings.json` / the session. Diamond markers (move-only); tag caption is display-only.
 - Save / Save As (comments/whitespace may change; meta written alongside)
 
 ## Texture roots

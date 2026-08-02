@@ -27,7 +27,7 @@ def _resolver() -> TextureResolver:
 def main() -> int:
     faction = (
         REPO_ROOT
-        / "src/tweaks/bigger_new_game_loadout_panel/configs/ui/ui_mm_faction_select.xml"
+        / "src/tweaks/bigger_new_game_loadout_panel/configs/ui/ui_mm_faction_select_16.xml"
     )
     tooltip = (
         REPO_ROOT / "src/gui/weapon_tooltips/configs/ui/ui_dogma_gui_weapon_tooltips.xml"
@@ -67,30 +67,31 @@ def main() -> int:
     bg_tex = resolver.resolve_ref(auto.texture)
     assert bg_tex.image is not None, bg_tex.error
 
-    # Script parents siblings to frame_back
+    # Abs = XML parent chain only (no script re-parenting).
+    main = root.find_by_path("main_dialog")
     front = root.find_by_path("main_dialog/frame_front")
-    assert front is not None
-    assert front.abs_x == 150 and front.abs_y == 72
+    assert main is not None and front is not None
+    assert front.abs_x == main.abs_x + front.x
+    assert front.abs_y == main.abs_y + front.y
 
     btn = root.find_by_path("main_dialog/btn_back")
     assert btn is not None
-    assert btn.abs_x == 339 and btn.abs_y == 663
+    assert btn.abs_x == main.abs_x + btn.x
+    assert btn.abs_y == main.abs_y + btn.y
     assert btn.texture is not None
     btn_tex = resolver.resolve_ref(btn.texture)
     assert btn_tex.image is not None, btn_tex.error
     assert btn_tex.atlas_id == "ui_inGame2_button_e"
 
-    # Unsaved meta: options should inherit scroll_options x/y (script AddWindow target)
+    # Unsaved meta: no-geometry nodes default to 0,0 (not sibling scroll_/templ_ guesses).
     from sage.model import apply_meta_positions, build_tree
     import xml.etree.ElementTree as ET
 
     bare = build_tree(ET.fromstring(faction.read_text(encoding="utf-8")))
     apply_meta_positions(bare, {})
     opts = bare.find_by_path("main_dialog/options")
-    scroll = bare.find_by_path("main_dialog/scroll_options")
     assert opts is not None and opts.from_meta
-    assert scroll is not None
-    assert (opts.x, opts.y) == (scroll.x, scroll.y), ((opts.x, opts.y), (scroll.x, scroll.y))
+    assert (opts.x, opts.y) == (0.0, 0.0)
     popup = bare.find_by_path("main_dialog/popup_faction")
     assert popup is not None and popup.from_meta and (popup.x, popup.y) == (0.0, 0.0)
 

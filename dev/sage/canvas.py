@@ -1015,6 +1015,9 @@ class UiScene(QGraphicsScene):
     def apply_edit(self, edit: Edit, *, use_after: bool) -> LayoutNode | None:
         if isinstance(edit, PropEdit):
             return self.apply_prop_edit(edit, use_after=use_after)
+        # StructureEdit is applied by MainWindow (full document restore).
+        if not isinstance(edit, GeoEdit):
+            return None
         return self.apply_geo_edit(edit, use_after=use_after)
 
     def apply_geo_edit(self, edit: GeoEdit, *, use_after: bool) -> LayoutNode | None:
@@ -1197,12 +1200,15 @@ class UiScene(QGraphicsScene):
             )
         self._sync_focus_chrome()
 
-    def set_document(self, doc: LayoutNode | None) -> None:
+    def set_document(
+        self, doc: LayoutNode | None, *, clear_undo: bool = True
+    ) -> None:
         for item in list(self._items.values()):
             item.detach_overlays(self)
             self.removeItem(item)
         self._items.clear()
-        self.clear_undo()
+        if clear_undo:
+            self.clear_undo()
         self._layer_visible = {}
         self._hover_path = None
         self._marquee_preview = None
@@ -1311,12 +1317,19 @@ class UiScene(QGraphicsScene):
         return best_on
 
     def select_path(self, path: str) -> None:
-        item = self._items.get(path)
+        self.select_paths([path] if path else [])
+
+    def select_paths(self, paths: list[str]) -> None:
+        """Replace canvas selection with the given layout paths (visible only)."""
         self.clearSelection()
-        if item is None or not item.node.visible:
+        if not paths:
             self.set_hover_path(None)
             return
-        item.setSelected(True)
+        for path in paths:
+            item = self._items.get(path)
+            if item is None or not item.node.visible:
+                continue
+            item.setSelected(True)
         # Do not pan/zoom the canvas — only the user moves the view.
 
     def rebind_resolver(self, resolver: TextureResolver) -> None:
@@ -1455,11 +1468,15 @@ class UiCanvas(QGraphicsView):
         self._press_mouse_restore: (
             list[tuple[WidgetItem, Qt.MouseButton, bool]] | None
         ) = None
-        # Left-button gesture: None | "click_or_marquee" | "marquee" | "move" | "resize"
+        # Left-button gesture. Selection only ever applies on release of a
+        # click (distance < DRAG_THRESHOLD) — never on press, never after a drag.
+        # None | "click_or_marquee" | "marquee" | "pending_move" | "move" |
+        # "resize" | "ctrl_cycle" | "ignore"
         self._gesture: str | None = None
         self._press_view_pos = QPointF()
         self._press_scene_pos = QPointF()
         self._press_pick: WidgetItem | None = None
+        self._ctrl_cycle_peers: set[WidgetItem] = set()
         self._move_roots: list[WidgetItem] = []
         self._move_origins: dict[WidgetItem, QPointF] = {}
         self._move_befores: dict[WidgetItem, GeoState] = {}
@@ -1589,6 +1606,14 @@ class UiCanvas(QGraphicsView):
             return
         self._stack_peer_paths = paths
         self.stack_peers_changed.emit(paths)
+
+    def clear_selection(self) -> None:
+        """Deselect all widgets (Escape / right-click)."""
+        scene = self.scene()
+        if scene is not None:
+            scene.clearSelection()
+        self._clear_stack_peers()
+        self._update_edit_cursor(self._last_cursor_view_pos)
 
     def _clear_stack_peers(self) -> None:
         self._scroll_stack = []
@@ -1855,7 +1880,7 @@ class UiCanvas(QGraphicsView):
             return
         roots = scene.move_roots(selected)
         self._move_roots = roots
-        # Visual followers: roots + layout descendants (same delta while dragging).
+        # Visual followers: roots + XML descendants (same delta while dragging).
         moving: dict[int, WidgetItem] = {}
         for root in roots:
             for item in scene.items_in_subtree(root):
@@ -2053,15 +2078,17 @@ class UiCanvas(QGraphicsView):
         super().showEvent(event)
         self._update_pan_limits()
 
-    def _ctrl_click_cycle(self, view_pos: QPointF) -> bool:
-        """Ctrl+click cycles stacked widgets toward smaller; wraps to largest."""
+    def _ctrl_cycle_target(
+        self, view_pos: QPointF
+    ) -> tuple[WidgetItem, set[WidgetItem], list[WidgetItem]] | None:
+        """Next stack target for Ctrl+click (no selection change)."""
         stack = [
             i
             for i in self._widget_items_at(view_pos)
             if i.node.visible and i.isVisible() and i.scene() is self.scene()
         ]
         if not stack:
-            return False
+            return None
         current = -1
         for i, item in enumerate(stack):
             if item.isSelected():
@@ -2076,36 +2103,19 @@ class UiCanvas(QGraphicsView):
             nxt = current - 1
             if nxt < 0:
                 nxt = len(stack) - 1  # wrap to largest
+        pick = stack[nxt]
+        peers = {item for item in stack if item is not pick}
         _log.debug(
-            "ctrl_click_cycle current=%s nxt=%s path=%s stack=%s",
+            "ctrl_cycle_target current=%s nxt=%s path=%s stack=%s",
             current,
             nxt,
-            stack[nxt].node.path,
+            pick.node.path,
             [i.node.path for i in stack[:8]],
         )
-        scene = self.scene()
-        if scene is None:
-            return False
-        scene.clearSelection()
-        stack[nxt].setSelected(True)
-        peers = {item for item in stack if item is not stack[nxt]}
-        self._set_stack_peers(peers)
-        self._last_stack_view_pos = QPointF(view_pos)
-        self._scroll_stack = stack
-        return True
+        return pick, peers, stack
 
     def _handle_left_canvas_press(self, event) -> None:
-        """Start click / marquee / move / resize. Selection applies on release (except move)."""
-        # Ctrl+click cycles stacked widgets (smaller, wrap to largest).
-        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
-            # Resize cursor wins over ctrl-cycle — same rule as plain left click.
-            if self._resize_hit_at(event.position()) is None:
-                if self._ctrl_click_cycle(event.position()):
-                    self._gesture = None
-                    self._press_pick = None
-                    event.accept()
-                    self._update_edit_cursor(event.position())
-                    return
+        """Arm a gesture. Selection applies only on release of a non-drag click."""
         self._restore_press_mouse()
         self._clear_marquee()
         scene = self.scene()
@@ -2114,6 +2124,7 @@ class UiCanvas(QGraphicsView):
         self._gesture = None
         self._move_did_drag = False
         self._press_pick = None
+        self._ctrl_cycle_peers = set()
 
         # If the resize cursor would show, left click can ONLY start a resize
         # (never select / marquee / move a stacked child under the edge).
@@ -2135,28 +2146,45 @@ class UiCanvas(QGraphicsView):
             event.accept()
             return
 
+        # Ctrl+click cycles stacked widgets — select on release if no drag.
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            cycled = self._ctrl_cycle_target(event.position())
+            if cycled is not None:
+                pick, peers, stack = cycled
+                self._press_pick = pick
+                self._ctrl_cycle_peers = peers
+                self._scroll_stack = stack
+                self._last_stack_view_pos = QPointF(event.position())
+                self._gesture = "ctrl_cycle"
+                _log.debug("gesture=ctrl_cycle (select on release)")
+                event.accept()
+                return
+
         stack = self._widget_items_at(event.position())
         pick = self._pick_click_target(stack)
         self._press_pick = pick
+        selected = (
+            scene.selected_widgets() if isinstance(scene, UiScene) else []
+        )
+        # Match SizeAll cursor: press inside any selected box can start a move
+        # once dragged, even when a smaller unselected child is on top.
+        under_selected = [
+            item
+            for item in selected
+            if item.shape().contains(item.mapFromScene(self._press_scene_pos))
+        ]
         _log.debug(
-            "press pick=%s selected=%s stack=%s scene=%s",
+            "press pick=%s under_sel=%s stack=%s scene=%s",
             pick.node.path if pick is not None else None,
-            pick.isSelected() if pick is not None else False,
+            [i.node.path for i in under_selected[:8]],
             [i.node.path for i in stack[:8]],
             self._press_scene_pos,
         )
 
-        if pick is not None and pick.isSelected():
-            # Selected body hit: group-move — never marquee / never resize here
-            # (resize already handled above).
-            self._gesture = "move"
-            selected = (
-                scene.selected_widgets()
-                if isinstance(scene, UiScene)
-                else [pick]
-            )
-            _log.debug("gesture=move count=%s", len(selected))
-            self._begin_group_move(selected)
+        if under_selected:
+            # Do not move or select until we know click vs drag.
+            self._gesture = "pending_move"
+            _log.debug("gesture=pending_move count=%s", len(selected))
             event.accept()
             return
 
@@ -2181,12 +2209,8 @@ class UiCanvas(QGraphicsView):
             event.accept()
             return
         if event.button() == Qt.MouseButton.RightButton:
-            scene = self.scene()
-            if scene is not None:
-                scene.clearSelection()
+            self.clear_selection()
             event.accept()
-            self._clear_stack_peers()
-            self._update_edit_cursor(event.position())
             return
         if event.button() == Qt.MouseButton.LeftButton:
             self._handle_left_canvas_press(event)
@@ -2213,6 +2237,36 @@ class UiCanvas(QGraphicsView):
             self.verticalScrollBar().setValue(
                 self.verticalScrollBar().value() - int(delta.y())
             )
+            event.accept()
+            return
+
+        if self._gesture == "ctrl_cycle":
+            # Drag cancels cycle — selection stays put (never select mid-gesture).
+            if self._view_drag_distance(event.position()) >= DRAG_THRESHOLD:
+                _log.debug("ctrl_cycle cancelled by drag")
+                self._gesture = "ignore"
+                self._press_pick = None
+                self._ctrl_cycle_peers = set()
+            self._update_edit_cursor(event.position())
+            event.accept()
+            return
+
+        if self._gesture == "ignore":
+            self._update_edit_cursor(event.position())
+            event.accept()
+            return
+
+        if self._gesture == "pending_move":
+            if self._view_drag_distance(event.position()) >= DRAG_THRESHOLD:
+                scene = self.scene()
+                selected = (
+                    scene.selected_widgets() if isinstance(scene, UiScene) else []
+                )
+                self._gesture = "move"
+                _log.debug("gesture=move (from pending) count=%s", len(selected))
+                self._begin_group_move(selected)
+                self._apply_group_move(self.mapToScene(event.position().toPoint()))
+            self._update_edit_cursor(event.position())
             event.accept()
             return
 
@@ -2319,25 +2373,35 @@ class UiCanvas(QGraphicsView):
                     if scene is not None:
                         scene.clearSelection()
                 event.accept()
-            elif gesture == "move":
-                moved = self._move_did_drag
-                self._end_group_move()
-                # Click (no drag) on a selected item → select only that item.
-                if not moved and pick is not None:
-                    _log.debug("move-click -> single select %s", pick.node.path)
+            elif gesture == "pending_move":
+                # Click (no drag) inside a selected box → select the leaf under cursor.
+                if pick is not None:
+                    _log.debug("pending_move click -> select %s", pick.node.path)
                     self._force_select(pick)
-                else:
-                    _log.debug("move end dragged=%s", moved)
+                event.accept()
+            elif gesture == "ctrl_cycle":
+                if pick is not None:
+                    _log.debug("ctrl_cycle select %s", pick.node.path)
+                    self._force_select(pick)
+                    self._set_stack_peers(self._ctrl_cycle_peers)
+                event.accept()
+            elif gesture == "move":
+                # Drag ended — keep current selection; never re-pick under cursor.
+                self._end_group_move()
+                _log.debug("move end (selection unchanged)")
                 event.accept()
             elif gesture == "resize":
                 if isinstance(pick, WidgetItem):
                     pick.end_resize()
+                event.accept()
+            elif gesture == "ignore":
                 event.accept()
             else:
                 super().mouseReleaseEvent(event)
 
             self._restore_press_mouse()
             self._press_pick = None
+            self._ctrl_cycle_peers = set()
             self._update_edit_cursor(event.position())
             stack = self._widget_items_at(event.position())
             scene = self.scene()

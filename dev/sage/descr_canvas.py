@@ -484,10 +484,15 @@ class DescrScene(QGraphicsScene):
         self.selection_changed_region.emit(None)
 
     def selected_region(self) -> DescrRegion | None:
+        regs = self.selected_regions()
+        return regs[-1] if regs else None
+
+    def selected_regions(self) -> list[DescrRegion]:
+        out: list[DescrRegion] = []
         for item in self.selectedItems():
             if isinstance(item, RegionItem):
-                return item.region
-        return None
+                out.append(item.region)
+        return out
 
     def set_sheet(self, doc: DescrDocument, sheet: DescrSheet | None) -> None:
         self.doc = doc
@@ -578,13 +583,15 @@ class DescrScene(QGraphicsScene):
         return last
 
     def select_region(self, region: DescrRegion | None) -> None:
+        self.select_regions([] if region is None else [region])
+
+    def select_regions(self, regions: list) -> None:
+        """Replace selection with the given atlas regions."""
         self.clearSelection()
-        if region is None:
-            return
+        want = {id(r) for r in regions}
         for item in self._items.values():
-            if item.region is region:
+            if id(item.region) in want:
                 item.setSelected(True)
-                break
 
     def add_region_at(self, x: float, y: float, w: float = 32.0, h: float = 32.0) -> DescrRegion | None:
         if self.doc is None or self.sheet is None:

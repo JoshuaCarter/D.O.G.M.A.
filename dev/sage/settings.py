@@ -528,13 +528,20 @@ def derived_asset_roots(
             if is_text_pack or is_named_ui or has_ui_assets:
                 text.extend(p_text)
 
-    # User-supplied dirs only — always last in resolution order.
+    # User-supplied dirs — always last. Prefer game-shaped subfolders
+    # (textures/, configs/ui/textures_descr/, configs/text/eng/); keep the
+    # root as a scan seed so nested tweak trees under e.g. DOGMA/src are found.
+    # Flat ``assets/`` dumps are ignored by the texture/descr scanners.
     for raw in custom_roots or []:
         if not str(raw).strip():
             continue
         custom = Path(str(raw).strip()).expanduser()
         if not custom.is_dir():
             continue
+        known_tex, known_descr, known_text = _known_asset_paths_under(custom)
+        tex.extend(known_tex)
+        descr.extend(known_descr)
+        text.extend(known_text)
         scan_tex.append(custom)
         scan_descr.append(custom)
         scan_text.append(custom)

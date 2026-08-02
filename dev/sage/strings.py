@@ -12,11 +12,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .cache_store import INSTALL_ORDER, KIND_TEXT, PathIndex
+from .diaglog import get_logger
 from .model import LayoutNode
+from .textures import abs_log_path
 
 # Engine color / format codes in string bodies, e.g. %c[0,255,255,255]
 _ENGINE_MARKUP = re.compile(r"%c\[[^\]]*\]")
 _STRING_ID = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_log = get_logger("strings")
 
 
 @dataclass
@@ -94,6 +97,14 @@ class StringResolver:
     def clear_document_cache(self) -> None:
         """No-op for strings — resolved ids stay warm across file opens."""
         return
+
+    def invalidate_for_document(self, doc: LayoutNode) -> None:
+        """Forget resolved string ids so warm_for_document re-reads text XML."""
+        ids = collect_doc_string_ids(doc)
+        for sid in ids:
+            self._strings.pop(sid, None)
+            self._missing.discard(sid)
+        _log.info("invalidate strings: dropped %d id(s)", len(ids))
 
     def rebuild(self) -> None:
         """Compatibility — clears caches; no full-tree index."""
@@ -205,7 +216,13 @@ class StringResolver:
             if sid not in self._strings and sid not in self._missing
         }
         if not wanted:
+            _log.debug("warm strings: all %d id(s) already cached", len(ids))
             return
+        _log.info(
+            "warm strings: resolving %d id(s) (%d already cached)",
+            len(wanted),
+            len(ids) - len(wanted),
+        )
         # Last file wins so later roots override base game.
         needles = [f'id="{sid}"'.encode("ascii", "ignore") for sid in wanted]
         needles += [f"id='{sid}'".encode("ascii", "ignore") for sid in wanted]
@@ -217,9 +234,18 @@ class StringResolver:
             if not any(n in blob for n in needles):
                 continue
             self._parse_bytes_allow_override(blob, path, wanted)
-        for sid in wanted:
-            if sid not in self._strings:
+        for sid in sorted(wanted):
+            hit = self._strings.get(sid)
+            if hit is None:
                 self._missing.add(sid)
+                _log.warning("string missing: %s", sid)
+                continue
+            body, src = hit
+            preview = body.replace("\n", "\\n")
+            if len(preview) > 80:
+                preview = preview[:77] + "..."
+            src_s = abs_log_path(src) if src else "?"
+            _log.info("string %s <- %s (%s)", sid, src_s, preview)
 
     def _parse_bytes_allow_override(
         self, blob: bytes, path: Path, wanted: set[str]

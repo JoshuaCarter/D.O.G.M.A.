@@ -259,6 +259,12 @@ def _files_to_str_map(files: dict[str, Path], *, logical: bool) -> dict[str, str
 
 
 def _files_from_raw(raw: Any, *, logical: bool) -> dict[str, Path] | None:
+    """Load a shard map. Missing files → ``None`` so the install is rescanned.
+
+    Skipping missing paths while keeping the rest lets an older install win
+    (e.g. Anomaly ``ui_common`` after a deleted DOGMA override), even when a
+    later install still has a valid copy (G.A.M.M.A. UI).
+    """
     if not isinstance(raw, dict) or not raw:
         return None
     out: dict[str, Path] = {}
@@ -267,9 +273,10 @@ def _files_from_raw(raw: Any, *, logical: bool) -> dict[str, Path] | None:
         if not key:
             continue
         p = Path(str(path_s))
-        if p.is_file():
-            out[key] = p
-    if not out and raw:
+        if not p.is_file():
+            return None
+        out[key] = p
+    if not out:
         return None
     return out
 

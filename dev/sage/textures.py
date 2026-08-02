@@ -33,7 +33,10 @@ from .cache_store import (
     sheet_proxy_cache_path,
     sheet_proxy_divisor,
 )
+from .diaglog import get_logger
 from .model import LayoutNode, TextureRef
+
+_log = get_logger("textures")
 
 # Texture picker icon size (fit from low-res sheet proxy).
 PICKER_THUMB_SIZE = 192
@@ -88,9 +91,22 @@ def open_dds_image(
     p = Path(path)
     cached = load_dds_rgba_cache(p)
     if cached is not None:
+        _log.debug(
+            "dds cache-hit %s (%sx%s)", abs_log_path(p), cached.width, cached.height
+        )
         return cached
     img = _decode_dds_raw(p)
-    if img is not None and persist:
+    if img is None:
+        _log.warning("dds decode failed %s", abs_log_path(p))
+        return None
+    _log.info(
+        "dds decoded %s (%sx%s) persist=%s",
+        abs_log_path(p),
+        img.width,
+        img.height,
+        persist,
+    )
+    if persist:
         save_dds_rgba_cache(p, img)
     return img
 
@@ -256,6 +272,7 @@ class AtlasEntry:
     width: float
     height: float
     resolved_id: str = ""  # actual atlas id used (may be stem+_e)
+    source: Path | None = None  # textures_descr XML that defined this id
 
 
 @dataclass(frozen=True)
@@ -291,8 +308,19 @@ class ResolvedTexture:
     atlas_id: str = ""
 
 
+def abs_log_path(path: Path | str | None) -> str:
+    """Full filesystem path for load/diagnostic logs (resolved when possible)."""
+    if path is None:
+        return "?"
+    p = Path(path)
+    try:
+        return str(p.resolve())
+    except OSError:
+        return str(p)
+
+
 def gamma_relative_path(path: Path) -> str:
-    """Path under GAMMA (or gamedata/…); never the full drive path."""
+    """Short path under GAMMA (or gamedata/…) for UI chrome — not for load logs."""
     try:
         resolved = path.resolve()
     except OSError:
@@ -309,17 +337,30 @@ def gamma_relative_path(path: Path) -> str:
     return path.name
 
 
+def _path_has_part(path: Path, name: str) -> bool:
+    needle = name.lower()
+    return any(part.lower() == needle for part in path.parts)
+
+
 def iter_texture_dir_roots(
     *,
     gamedata_texture_roots: list[Path],
     texture_scan_roots: list[Path],
 ) -> list[Path]:
-    """Concrete ``textures`` dirs (and scan roots) used for DDS lookup / picking."""
+    """Concrete ``textures`` dirs used for DDS lookup / picking.
+
+    Custom/project scan roots are not scanned as a flat dump — only directories
+    named ``textures`` underneath them (e.g. ``…/gamedata/textures``,
+    ``…/tweaks/foo/textures``). That keeps ``assets/`` reference dumps out of
+    the index.
+    """
     roots: list[Path] = []
     seen: set[str] = set()
 
     def _add(path: Path) -> None:
         if not path.is_dir():
+            return
+        if _path_has_part(path, "assets"):
             return
         try:
             key = str(path.resolve()).lower()
@@ -335,7 +376,11 @@ def iter_texture_dir_roots(
     for scan in texture_scan_roots:
         if not scan.is_dir():
             continue
-        _add(scan)
+        # If the custom root *is* a textures folder, use it; never treat a
+        # project root (e.g. DOGMA/src) as one giant DDS root.
+        if scan.name.lower() == "textures":
+            _add(scan)
+            continue
         try:
             for tex_dir in scan.rglob("textures"):
                 if tex_dir.is_dir() and tex_dir.name.lower() == "textures":
@@ -353,6 +398,8 @@ def _scan_dds_under_roots(roots: list[Path], mapping: dict[str, Path]) -> None:
         try:
             for path in root.rglob("*.dds"):
                 if not path.is_file():
+                    continue
+                if _path_has_part(path, "assets"):
                     continue
                 try:
                     rel = path.relative_to(root)
@@ -598,6 +645,36 @@ class TextureResolver:
         self._dds_missing.clear()
         self._resolve_cached.cache_clear()
 
+    def invalidate_for_document(self, doc: LayoutNode) -> None:
+        """Drop decoded sheets / atlas UV for ids this document uses (re-read on warm)."""
+        atlas_ids, path_names = collect_doc_texture_ids(doc)
+        drop_ids = set(atlas_ids)
+        for tid in atlas_ids:
+            if any(tid.endswith(s) for s in _STATE_SUFFIXES):
+                continue
+            for suf in _STATE_SUFFIXES:
+                drop_ids.add(tid + suf)
+        for tid in drop_ids:
+            self._atlas.pop(tid, None)
+            self._atlas_missing.discard(tid)
+        # Decoded PIL sheets are path-keyed without mtime — must clear to pick up edits.
+        self._open_dds.cache_clear()
+        self._resolve_cached.cache_clear()
+        with _proxy_mem_lock:
+            _proxy_mem.clear()
+        # Forget missing flags for path textures so find_dds retries.
+        for name in path_names:
+            key = name.strip().replace("/", "\\").lower()
+            if key.endswith(".dds"):
+                key = key[:-4]
+            self._dds_missing.discard(key)
+        _log.info(
+            "invalidate textures: dropped %d atlas id(s), %d path name(s); "
+            "cleared decoded DDS + resolve caches",
+            len(drop_ids),
+            len(path_names),
+        )
+
     def rebuild_indexes(self) -> None:
         """Clear memory + disk path index (fonts revalidate via mtime)."""
         self.clear_cache()
@@ -679,6 +756,8 @@ class TextureResolver:
         except OSError:
             return by_name
         for path in batch:
+            if _path_has_part(path, "assets"):
+                continue
             by_name[path.name.lower()] = path
         return by_name
 
@@ -791,16 +870,28 @@ class TextureResolver:
                         continue
                     # Last matching descr wins (later roots override).
                     self._atlas[tid] = AtlasEntry(
-                        file_name, x, y, w, h, resolved_id=tid
+                        file_name,
+                        x,
+                        y,
+                        w,
+                        h,
+                        resolved_id=tid,
+                        source=path,
                     )
         for tid in pending:
             if tid not in self._atlas:
                 self._atlas_missing.add(tid)
+                _log.debug("atlas missing after descr scan: %s", tid)
 
     def warm_for_document(self, doc: LayoutNode) -> None:
         """Resolve only atlas ids / DDS paths referenced by ``doc``."""
         self._ensure_dds_map()
         atlas_ids, path_names = collect_doc_texture_ids(doc)
+        _log.info(
+            "warm textures: %d atlas id(s), %d path texture(s)",
+            len(atlas_ids),
+            len(path_names),
+        )
         self._ingest_descr_for_ids(set(atlas_ids))
         # Ensure state-suffix variants used by lookup_atlas are covered.
         expanded = set(atlas_ids)
@@ -811,10 +902,33 @@ class TextureResolver:
                 expanded.add(tid + suf)
         self._ingest_descr_for_ids(expanded)
         needed_files: set[str] = set(path_names)
-        for tid in atlas_ids:
+        for tid in sorted(atlas_ids):
             entry = self.lookup_atlas(tid)
-            if entry is not None:
-                needed_files.add(entry.file_name)
+            if entry is None:
+                _log.warning("texture atlas unresolved: %s", tid)
+                continue
+            needed_files.add(entry.file_name)
+            dds = self.find_dds(entry.file_name)
+            descr = abs_log_path(entry.source) if entry.source else "(no descr path)"
+            dds_s = abs_log_path(dds) if dds else "MISSING"
+            resolved = entry.resolved_id or tid
+            _log.info(
+                "texture atlas %s -> %s UV %.0f,%.0f %.0fx%.0f | descr %s | dds %s",
+                tid if tid == resolved else f"{tid}->{resolved}",
+                entry.file_name,
+                entry.x,
+                entry.y,
+                entry.width,
+                entry.height,
+                descr,
+                dds_s,
+            )
+        for name in sorted(path_names):
+            dds = self.find_dds(name)
+            if dds is None:
+                _log.warning("texture path unresolved: %s", name)
+            else:
+                _log.info("texture path %s -> dds %s", name, abs_log_path(dds))
         dds_paths: list[Path] = []
         seen_dds: set[str] = set()
         for logical in needed_files:
@@ -830,6 +944,7 @@ class TextureResolver:
             seen_dds.add(key)
             dds_paths.append(dds)
         # Prefetch unique sheets (disk RGBA cache + in-memory LRU).
+        _log.info("prefetch %d unique DDS sheet(s)", len(dds_paths))
         self._prefetch_dds(dds_paths)
         if self.path_index is not None:
             self.path_index.save()
@@ -994,6 +1109,7 @@ class TextureResolver:
             entry.width,
             entry.height,
             resolved_id=entry.state_id or entry.atlas_id,
+            source=entry.source,
         )
         dds = self.find_dds(entry.file_name)
         if dds is not None:
@@ -1085,7 +1201,13 @@ class TextureResolver:
                         source=path,
                     )
                     self._atlas[tid] = AtlasEntry(
-                        file_name, x, y, w, h, resolved_id=tid
+                        file_name,
+                        x,
+                        y,
+                        w,
+                        h,
+                        resolved_id=tid,
+                        source=path,
                     )
                     self._atlas_missing.discard(tid)
 
@@ -1114,6 +1236,7 @@ class TextureResolver:
                 entry.width,
                 entry.height,
                 resolved_id=tid,
+                source=entry.source,
             )
 
         out = sorted(by_id.values(), key=lambda e: e.atlas_id.lower())
@@ -1181,6 +1304,7 @@ class TextureResolver:
                     entry.width,
                     entry.height,
                     resolved_id=alt,
+                    source=entry.source,
                 )
         self._atlas_missing.add(name)
         return None

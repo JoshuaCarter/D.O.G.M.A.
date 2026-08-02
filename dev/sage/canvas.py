@@ -1324,6 +1324,7 @@ class UiScene(QGraphicsScene):
         self.resolver = resolver
         for item in self._items.values():
             item.resolver = resolver
+            item._clear_texture_pixmap()
             item.refresh_look()
 
     def rebind_text_resources(
@@ -1342,6 +1343,11 @@ class UiScene(QGraphicsScene):
             if fonts is not None:
                 item.fonts = fonts
             item.refresh_look()
+
+    def invalidate_item_texture_caches(self) -> None:
+        """Forget cached native DDS crops so the next look re-resolves from disk."""
+        for item in self._items.values():
+            item._clear_texture_pixmap()
 
     def hover_path(self) -> str | None:
         return self._hover_path
@@ -2318,7 +2324,7 @@ class UiCanvas(QGraphicsView):
                 self._end_group_move()
                 # Click (no drag) on a selected item → select only that item.
                 if not moved and pick is not None:
-                    _log.debug("move-click → single select %s", pick.node.path)
+                    _log.debug("move-click -> single select %s", pick.node.path)
                     self._force_select(pick)
                 else:
                     _log.debug("move end dragged=%s", moved)

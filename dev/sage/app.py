@@ -5,14 +5,19 @@ from __future__ import annotations
 import logging
 import sys
 import time
-from datetime import datetime
 from html import escape
 from math import isfinite
 from pathlib import Path
 
-from sage.diaglog import get_logger, setup_logging
+from sage.diaglog import (
+    LogTextEdit,
+    attach_log_view,
+    get_logger,
+    set_log_filter,
+    setup_logging,
+)
 
-_log_file = get_logger("app")
+log = get_logger("app")
 
 from PyQt6.QtCore import QEvent, QObject, QPoint, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import (
@@ -1350,7 +1355,41 @@ class MainWindow(QMainWindow):
         self._find_esc.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
         self._find_esc.activated.connect(self._hide_find_bar)
 
-        self.log_view = QPlainTextEdit()
+        self.log_page = QWidget()
+        self.log_page.setObjectName("logPage")
+        log_layout = QVBoxLayout(self.log_page)
+        log_layout.setContentsMargins(0, 0, 0, 0)
+        log_layout.setSpacing(0)
+
+        self.log_filter_bar = QWidget()
+        self.log_filter_bar.setObjectName("logFilterBar")
+        self.log_filter_bar.setStyleSheet(
+            "#logFilterBar {"
+            " background-color: #252526;"
+            " border-bottom: 1px solid #3C3C3C;"
+            "}"
+            "#logFilterBar QLineEdit {"
+            " background-color: #3C3C3C;"
+            " color: #CCCCCC;"
+            " border: 1px solid #3C3C3C;"
+            " border-radius: 2px;"
+            " padding: 2px 6px;"
+            " selection-background-color: #264F78;"
+            "}"
+            "#logFilterBar QLabel { color: #CCCCCC; }"
+        )
+        log_filter_row = QHBoxLayout(self.log_filter_bar)
+        log_filter_row.setContentsMargins(8, 4, 8, 4)
+        log_filter_row.setSpacing(6)
+        log_filter_row.addWidget(QLabel("Filter"))
+        self.log_filter_edit = QLineEdit()
+        self.log_filter_edit.setPlaceholderText("Filter log…")
+        self.log_filter_edit.setClearButtonEnabled(True)
+        self.log_filter_edit.textChanged.connect(self._on_log_filter_changed)
+        log_filter_row.addWidget(self.log_filter_edit, stretch=1)
+        log_layout.addWidget(self.log_filter_bar)
+
+        self.log_view = LogTextEdit()
         self.log_view.setReadOnly(True)
         self.log_view.setPlaceholderText("Editor log…")
         self.log_view.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
@@ -1362,12 +1401,14 @@ class MainWindow(QMainWindow):
             " border: none;"
             "}"
         )
+        log_layout.addWidget(self.log_view, stretch=1)
+        attach_log_view(self.log_view)
         self._log("info", "SAGE ready")
 
         self.editor_tabs = QTabWidget()
         self.editor_tabs.addTab(self.wysiwyg_stack, "WYSIWYG")
         self.editor_tabs.addTab(self.xml_page, "XML")
-        self.editor_tabs.addTab(self.log_view, "Log")
+        self.editor_tabs.addTab(self.log_page, "Log")
         self.editor_tabs.currentChanged.connect(self._on_editor_tab_changed)
 
         self._updating_props = False
@@ -2325,6 +2366,12 @@ class MainWindow(QMainWindow):
         self.strings = self._make_string_resolver()
         self.fonts = self._make_font_resolver()
         # Load or build file indexes once so document open is O(1) path lookups.
+        if self._busy.isVisible():
+            self._busy.set_message(
+                self._busy.message,
+                detail="Indexing texture / descr / text paths…",
+            )
+            QApplication.processEvents()
         t0 = time.perf_counter()
         tex_stats = self.resolver.ensure_indexes()
         str_stats = self.strings.ensure_indexes()
@@ -2368,7 +2415,7 @@ class MainWindow(QMainWindow):
         n_tex = len(self.settings.get("gamedata_texture_roots") or [])
         n_descr = len(self.settings.get("gamedata_descr_roots") or [])
         n_text = len(self.settings.get("gamedata_text_roots") or [])
-        _log_file.info(
+        log.info(
             "resource roots bound texture=%s descr=%s text=%s | "
             "index dds=%s descr_xml=%s text_xml=%s in %.2fs | "
             "thumbs written=%s skipped=%s sheets=%s workers=%s in %.2fs",
@@ -2409,6 +2456,22 @@ class MainWindow(QMainWindow):
         self.resolver.ensure_indexes()
         self.strings.ensure_indexes()
         self.fonts.ensure_font_index()
+        log.info(
+            "warm doc begin path=%s tex_roots=%d descr_roots=%d text_roots=%d",
+            self.doc.path,
+            len(self.settings.get("gamedata_texture_roots") or []),
+            len(self.settings.get("gamedata_descr_roots") or []),
+            len(self.settings.get("gamedata_text_roots") or []),
+        )
+        from sage.textures import abs_log_path
+
+        for label, roots in (
+            ("texture", self.settings.get("gamedata_texture_roots") or []),
+            ("descr", self.settings.get("gamedata_descr_roots") or []),
+            ("text", self.settings.get("gamedata_text_roots") or []),
+        ):
+            for root in roots:
+                log.info("  %s root: %s", label, abs_log_path(root))
         self.resolver.warm_for_document(doc)
         self.strings.warm_for_document(doc)
         self.fonts.warm_for_document(doc)
@@ -2417,7 +2480,7 @@ class MainWindow(QMainWindow):
         self._refresh_font_combo()
         elapsed = time.perf_counter() - t0
         font_h = getattr(self.fonts, "device_height", 0)
-        _log_file.info(
+        log.info(
             "doc resources warmed in %.2fs atlas=%s dds=%s strings=%s fonts=%s device_h=%s",
             elapsed,
             self.resolver.atlas_count,
@@ -2540,12 +2603,11 @@ class MainWindow(QMainWindow):
         self.grid_a.setChecked(bool(self.settings.get("show_grid", False)))
         self.grid_a.toggled.connect(self._on_toggle_grid)
         view_menu.addAction(self.grid_a)
-        view_menu.addSeparator()
-        self.reload_tex_a = QAction("Reload &textures / strings", self)
-        self.reload_tex_a.triggered.connect(self._reload_textures)
-        view_menu.addAction(self.reload_tex_a)
-
         edit_menu = self.menuBar().addMenu("&Edit")
+        self.settings_a = QAction("&Settings…", self)
+        self.settings_a.triggered.connect(self.edit_settings)
+        edit_menu.addAction(self.settings_a)
+        edit_menu.addSeparator()
         self.undo_a = QAction("&Undo", self)
         self.undo_a.setShortcut(QKeySequence.StandardKey.Undo)
         self.undo_a.triggered.connect(self.undo)
@@ -2592,9 +2654,14 @@ class MainWindow(QMainWindow):
         self.find_prev_a.triggered.connect(self._find_prev)
         edit_menu.addAction(self.find_prev_a)
         edit_menu.addSeparator()
-        self.settings_a = QAction("&Settings…", self)
-        self.settings_a.triggered.connect(self.edit_settings)
-        edit_menu.addAction(self.settings_a)
+        self.reload_tex_a = QAction("Reload &textures / text", self)
+        self.reload_tex_a.setShortcut("Ctrl+R")
+        self.reload_tex_a.setToolTip(
+            "Re-read DDS sheets and string-table entries used by the open XML "
+            "(picks up on-disk edits without a full rescan)."
+        )
+        self.reload_tex_a.triggered.connect(self._reload_textures)
+        edit_menu.addAction(self.reload_tex_a)
         self.rescan_a = QAction("Rescan &asset cache…", self)
         self.rescan_a.setShortcut("Ctrl+Shift+R")
         self.rescan_a.setToolTip(
@@ -2640,6 +2707,7 @@ class MainWindow(QMainWindow):
             "text stays unstretched)</li>"
             "<li><b>Pixel grid</b> — options-bar toggle + step (every N px)</li>"
             "<li><b>Ctrl+D</b> / <b>Ctrl+Shift+D</b> — Deploy / Deploy As</li>"
+            "<li><b>Ctrl+R</b> — reload textures / text used by the open XML</li>"
             "<li><b>Ctrl+Z / Ctrl+Y</b> (or <b>Ctrl+Shift+Z</b>) — undo / redo</li>"
             "</ul>",
         )
@@ -2839,9 +2907,9 @@ class MainWindow(QMainWindow):
 
     def open_path(self, path: Path) -> None:
         if self._busy_open:
-            _log_file.warning("open_path ignored (busy): %s", path)
+            log.warning("open_path ignored (busy): %s", path)
             return
-        _log_file.info("open_path begin: %s", path)
+        log.info("open_path begin: %s", path)
         self._busy_open = True
         scanning = self._asset_index_scan_needed()
         thumbs_dir = cache_dir() / "thumbs"
@@ -2860,7 +2928,7 @@ class MainWindow(QMainWindow):
 
     def _open_path_finish(self, path: Path) -> None:
         ok = False
-        _log_file.debug("_open_path_finish: %s", path)
+        log.debug("_open_path_finish: %s", path)
         try:
             self._bind_resource_roots()
             try:
@@ -2877,7 +2945,7 @@ class MainWindow(QMainWindow):
         finally:
             self._hide_busy()
             self._busy_open = False
-            _log_file.debug("open_path finish ok=%s busy cleared", ok)
+            log.debug("open_path finish ok=%s busy cleared", ok)
             if not ok and not self._workspace_revealed:
                 QTimer.singleShot(0, self._show_startup_chooser)
 
@@ -2885,8 +2953,7 @@ class MainWindow(QMainWindow):
         try:
             doc = self.doc.load_text(text, path=path)
         except Exception as exc:  # noqa: BLE001
-            _log_file.exception("Open failed: %s", path)
-            self._log("error", f"Open failed: {path} - {exc}")
+            log.exception("Open failed: %s", path)
             QMessageBox.critical(self, "Open failed", str(exc))
             return False
         self.descr_doc.clear()
@@ -2918,7 +2985,7 @@ class MainWindow(QMainWindow):
             f"{self.resolver.atlas_count} atlas · {self.resolver.dds_count} dds · "
             f"{self.strings.count} strings"
         )
-        _log_file.info(
+        log.info(
             "open complete: %s widgets=%s meta=%s textured=%s missing_tex=%s",
             path,
             widgets,
@@ -2932,8 +2999,7 @@ class MainWindow(QMainWindow):
         try:
             sheets = self.descr_doc.load_text(text, path=path)
         except Exception as exc:  # noqa: BLE001
-            _log_file.exception("Open atlas failed: %s", path)
-            self._log("error", f"Open failed: {path} - {exc}")
+            log.exception("Open atlas failed: %s", path)
             QMessageBox.critical(self, "Open failed", str(exc))
             return False
         self._bind_resource_roots()
@@ -2960,6 +3026,18 @@ class MainWindow(QMainWindow):
             "info",
             f"Opened atlas {path} | {len(sheets)} sheet(s) | {n_reg} regions",
         )
+        from sage.textures import abs_log_path
+
+        for sheet in sheets:
+            dds = self.resolver.find_dds(sheet.file_name)
+            if dds is None:
+                self._log("error", f"sheet {sheet.file_name} -> missing DDS")
+            else:
+                self._log(
+                    "info",
+                    f"sheet {sheet.file_name} -> {abs_log_path(dds)} "
+                    f"({len(sheet.regions)} regions)",
+                )
         sheet0 = sheets[0].file_name if sheets else "?"
         self.statusBar().showMessage(
             f"Atlas {path.name} · {len(sheets)} sheet(s) · {n_reg} regions · {sheet0}"
@@ -3242,6 +3320,9 @@ class MainWindow(QMainWindow):
             return
         super().keyPressEvent(event)
 
+    def _on_log_filter_changed(self, text: str) -> None:
+        set_log_filter(self.log_view, text)
+
     def _on_editor_tab_changed(self, index: int) -> None:
         if self._tab_guard:
             return
@@ -3255,7 +3336,7 @@ class MainWindow(QMainWindow):
                 self.editor_tabs.setCurrentIndex(TAB_XML)
                 self._tab_guard = False
             else:
-                self._audit_resources("xml → wysiwyg")
+                self._audit_resources("xml -> wysiwyg")
             self._update_undo_actions()
             return
         # Log: leave XML/WYSIWYG as-is
@@ -3417,7 +3498,7 @@ class MainWindow(QMainWindow):
                 except OSError:
                     self.settings["last_deploy_dir"] = str(parent)
                 save_settings(self.settings)
-        self._log("info", f"Deployed → {target}")
+        self._log("info", f"Deployed -> {target}")
         self.statusBar().showMessage(f"Deployed → {target}")
         return True
 
@@ -3549,9 +3630,27 @@ class MainWindow(QMainWindow):
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         self.settings = dlg.result_settings()
-        # Dialog already rescanned on OK.
+        # Dialog already folder-scanned on OK; main window still rebuilds indexes.
         save_settings(self.settings)
-        self._reload_textures()
+        self._show_busy(
+            "Loading…",
+            detail="Rebuilding asset indexes after settings change",
+        )
+        QApplication.setOverrideCursor(QCursor(Qt.CursorShape.WaitCursor))
+        QApplication.processEvents()
+        try:
+            self._resources_ready = False
+            self._bind_resource_roots(warm_thumbs=True)
+            self._refresh_open_doc_after_rescan("settings")
+        finally:
+            QApplication.restoreOverrideCursor()
+            self._hide_busy()
+        n_dds = self.resolver.dds_count if getattr(self, "resolver", None) else 0
+        self._log(
+            "info",
+            f"Settings applied - asset indexes rebuilt, {n_dds} dds indexed",
+        )
+        self.statusBar().showMessage(f"Settings applied · {n_dds} dds indexed")
 
     def rescan_asset_paths(self) -> None:
         """Menu: dialog to pick roots; drop only those cache shards and regen."""
@@ -3568,6 +3667,7 @@ class MainWindow(QMainWindow):
             detail="Refreshing selected root caches",
         )
         QApplication.setOverrideCursor(QCursor(Qt.CursorShape.WaitCursor))
+        QApplication.processEvents()
         try:
             apply_rescan_selection(self.settings, selected)
             save_settings(self.settings)
@@ -3581,7 +3681,14 @@ class MainWindow(QMainWindow):
             self.path_index.invalidate_roots(drop_roots)
             # Memory caches must drop so ensure_indexes reloads/merges shards.
             self._resources_ready = False
+            if self._busy.isVisible():
+                self._busy.set_message(
+                    "Rescanning…",
+                    detail="Rebuilding asset indexes…",
+                )
+                QApplication.processEvents()
             self._bind_resource_roots(warm_thumbs=True)
+            self._refresh_open_doc_after_rescan("rescan")
         finally:
             QApplication.restoreOverrideCursor()
             self._hide_busy()
@@ -3589,16 +3696,21 @@ class MainWindow(QMainWindow):
         n_drop = len(drop_roots)
         self._log(
             "info",
-            f"Asset cache rescanned ({labels}) — {n_drop} root shard(s), "
+            f"Asset cache rescanned ({labels}) - {n_drop} root shard(s), "
             f"{n_dds} dds indexed",
         )
-        self._refresh_open_doc_after_rescan("rescan")
         self.statusBar().showMessage(
             f"Rescan done · {n_drop} root(s) · {n_dds} dds"
         )
 
     def _refresh_open_doc_after_rescan(self, audit_tag: str) -> None:
         """Rebind / warm the open document after an asset-cache rescan."""
+        if getattr(self, "_busy", None) is not None and self._busy.isVisible():
+            self._busy.set_message(
+                self._busy.message,
+                detail="Reloading open document resources…",
+            )
+            QApplication.processEvents()
         if self._doc_mode == DOC_MODE_ATLAS and self.descr_doc.root is not None:
             # Keep disk shards; only clear in-memory atlas/DDS decode state.
             self.resolver.clear_cache()
@@ -3721,53 +3833,51 @@ class MainWindow(QMainWindow):
         self.descr_board.scene.set_label_font_size(size)
 
     def _reload_textures(self) -> None:
-        # Unpack if needed; keep saved path lists (use Edit → Rescan to rediscover).
-        before = (
-            list(self.settings.get("gamedata_texture_roots") or []),
-            list(self.settings.get("gamedata_descr_roots") or []),
-            list(self.settings.get("gamedata_text_roots") or []),
-        )
-        ensure_db_unpacked_and_roots(self.settings)
-        after = (
-            list(self.settings.get("gamedata_texture_roots") or []),
-            list(self.settings.get("gamedata_descr_roots") or []),
-            list(self.settings.get("gamedata_text_roots") or []),
-        )
-        if after != before:
-            save_settings(self.settings)
-            self._log("info", "Asset roots updated after Anomaly DB unpack check")
-        self._resources_ready = False
-        self._bind_resource_roots()
+        """Re-read DDS / strings / fonts referenced by the open XML (Ctrl+R)."""
         if self._doc_mode == DOC_MODE_ATLAS and self.descr_doc.root is not None:
+            # Atlas editor: drop decoded sheets and rebuild the stage background.
+            log.info("reload atlas begin path=%s", self.descr_doc.path)
             self.resolver.clear_cache()
+            self.resolver.ensure_indexes()
             self.descr_board.set_document(self.descr_doc)
-        elif self.doc.doc:
-            self._warm_resources_for_doc(self.doc.doc)
-            self.scene.rebind_resolver(self.resolver)
-            self.scene.rebind_text_resources(strings=self.strings, fonts=self.fonts)
-            self.scene.set_document(self.doc.doc)
+            log.info("Atlas sheet reloaded from disk")
+            self.statusBar().showMessage("Atlas textures reloaded")
+            return
+        doc = self.doc.doc
+        if doc is None:
+            self.statusBar().showMessage("Nothing to reload — open a UI XML first")
+            return
+        log.info("reload doc begin path=%s", self.doc.path)
+        t0 = time.perf_counter()
+        self.resolver.invalidate_for_document(doc)
+        self.strings.invalidate_for_document(doc)
+        self.fonts.invalidate_for_document(doc)
+        self.resolver.warm_for_document(doc)
+        self.strings.warm_for_document(doc)
+        self.fonts.warm_for_document(doc)
+        # rebind clears per-item DDS crops and redraws texture + text.
+        self.scene.rebind_resolver(self.resolver)
+        self.scene.rebind_text_resources(strings=self.strings, fonts=self.fonts)
         self._on_stack_peers_changed(frozenset())
-        self._log(
-            "info",
-            f"Resources rebound | atlas {self.resolver.atlas_count} | "
-            f"dds {self.resolver.dds_count} | strings {self.strings.count}",
+        selected = [i for i in self.scene.selectedItems() if hasattr(i, "node")]
+        if selected:
+            self._show_props(selected[0].node)
+        self._audit_resources("reload")
+        elapsed = time.perf_counter() - t0
+        log.info(
+            "Doc textures/text reloaded in %.2fs | atlas %s | dds %s | strings %s",
+            elapsed,
+            self.resolver.atlas_count,
+            self.resolver.dds_count,
+            self.strings.count,
         )
-        if self._doc_mode == DOC_MODE_UI and self.doc.doc:
-            self._audit_resources("reload")
-            selected = [
-                i for i in self.scene.selectedItems() if hasattr(i, "node")
-            ]
-            if selected:
-                self._show_props(selected[0].node)
         self.statusBar().showMessage(
-            f"Resources reloaded · {self.resolver.atlas_count} atlas · "
-            f"{self.resolver.dds_count} dds · {self.strings.count} strings"
+            f"Reloaded textures / text for open XML · "
+            f"{self.resolver.atlas_count} atlas · {self.strings.count} strings"
         )
 
     def _log(self, level: str, message: str) -> None:
-        """Append a line to the Log tab (info / warn / error) and sage.log."""
-        stamp = datetime.now().strftime("%H:%M:%S")
-        line = f"[{stamp}] {level.upper():<5} {message}"
+        """Log via sage logger (file + Log tab)."""
         lvl = {
             "debug": logging.DEBUG,
             "info": logging.INFO,
@@ -3776,43 +3886,75 @@ class MainWindow(QMainWindow):
             "error": logging.ERROR,
             "critical": logging.CRITICAL,
         }.get(level.lower(), logging.INFO)
-        _log_file.log(lvl, "%s", message)
-        view = getattr(self, "log_view", None)
-        if view is None:
-            return
-        view.appendPlainText(line)
-        view.moveCursor(QTextCursor.MoveOperation.End)
+        log.log(lvl, "%s", message)
 
     def _audit_resources(self, reason: str = "") -> None:
-        """Resolve all textures/strings; log summary plus each failure."""
+        """Resolve all textures/strings; log unique sources."""
+        from sage.textures import abs_log_path
+
         doc = self.doc.doc
         if doc is None:
             self._log("warn", f"Audit skipped ({reason or 'no document'})")
             return
         tex_ok = tex_fail = 0
         text_ok = text_fail = text_lit = 0
+        tex_lines: dict[str, str] = {}
+        text_lines: dict[str, str] = {}
+        label = f"Audit ({reason})" if reason else "Audit"
+        self._log(
+            "info",
+            f"{label}: resolving textures / text for {self.doc.path}",
+        )
         for node in doc.iter_drawables():
             if node.from_meta:
                 continue
             path = node.path or node.tag
             if node.texture and node.texture.name:
-                # Probe atlas/DDS presence only — decoding is done during warm/paint.
-                ok, err = self.resolver.probe_ref(node.texture)
-                if not ok:
-                    self._log("error", f"texture {path}: {node.texture.name} → {err}")
+                ref = node.texture
+                kind = "path" if ref.is_path else "atlas"
+                resolved = self.resolver.resolve_ref(ref)
+                if resolved.error or resolved.path is None:
+                    err = resolved.error or "missing"
+                    self._log(
+                        "error",
+                        f"texture {path}: {ref.name} ({kind}) -> {err}",
+                    )
                     tex_fail += 1
                 else:
                     tex_ok += 1
+                    dds_s = abs_log_path(resolved.path)
+                    atlas = f" -> {resolved.atlas_id}" if resolved.atlas_id else ""
+                    entry = (
+                        self.resolver.lookup_atlas(ref.name)
+                        if not ref.is_path
+                        else None
+                    )
+                    descr = ""
+                    if entry is not None and entry.source is not None:
+                        descr = f" | descr {abs_log_path(entry.source)}"
+                    tex_lines[ref.name] = (
+                        f"{ref.name} ({kind}){atlas}{descr} | dds {dds_s}"
+                    )
             if node.text and node.text.content:
-                s = self.strings.resolve(node.text.content)
+                content = node.text.content.strip()
+                s = self.strings.resolve(content)
                 if s.error:
-                    self._log("error", f"text {path}: {node.text.content} → {s.error}")
+                    self._log("error", f"text {path}: {content} -> {s.error}")
                     text_fail += 1
                 elif s.is_literal:
                     text_lit += 1
                 else:
                     text_ok += 1
-        label = f"Audit ({reason})" if reason else "Audit"
+                    src = abs_log_path(s.source) if s.source else "?"
+                    text_lines[content] = f"{content} <- {src}"
+        if tex_lines:
+            self._log("info", f"Textures ({len(tex_lines)} unique):")
+            for name in sorted(tex_lines, key=str.lower):
+                self._log("info", f"  {tex_lines[name]}")
+        if text_lines:
+            self._log("info", f"Strings ({len(text_lines)} unique):")
+            for sid in sorted(text_lines, key=str.lower):
+                self._log("info", f"  {text_lines[sid]}")
         self._log(
             "info",
             f"{label}: textures ok={tex_ok} fail={tex_fail} | "
@@ -5191,7 +5333,7 @@ def _apply_dark_theme(app: QApplication) -> None:
 def main(argv: list[str] | None = None) -> int:
     setup_logging()
     argv = list(sys.argv if argv is None else argv)
-    _log_file.info("main() argv=%s", argv)
+    log.info("main() argv=%s", argv)
     # Before the first widget exists so the HWND isn't created light.
     QApplication.setStyle("Fusion")
     app = QApplication(argv)
@@ -5205,17 +5347,17 @@ def main(argv: list[str] | None = None) -> int:
     settings = load_settings()
     ran_setup = False
     if not installs_configured(settings):
-        _log_file.info("install roots missing/invalid — showing SAGE Setup")
+        log.info("install roots missing/invalid - showing SAGE Setup")
         setup = InstallRootsDialog(settings, None, setup_mode=True)
         if not icon.isNull():
             setup.setWindowIcon(icon)
         if setup.exec() != QDialog.DialogCode.Accepted:
-            _log_file.info("setup cancelled — exit")
+            log.info("setup cancelled - exit")
             return 1
         settings = setup.result_settings()
         save_settings(settings)
         ran_setup = True
-        _log_file.info(
+        log.info(
             "setup saved anomaly=%s gamma=%s",
             settings.get("anomaly_root"),
             settings.get("gamma_root"),
@@ -5225,18 +5367,18 @@ def main(argv: list[str] | None = None) -> int:
     if not ran_setup:
         need = check_anomaly_unpack_needed(settings.get("anomaly_root"))
         if need.needed:
-            _log_file.info("Anomaly unpack needed — showing setup for confirm")
+            log.info("Anomaly unpack needed - showing setup for confirm")
             setup = InstallRootsDialog(settings, None, setup_mode=True)
             if not icon.isNull():
                 setup.setWindowIcon(icon)
             if setup.exec() != QDialog.DialogCode.Accepted:
-                _log_file.info("unpack setup cancelled — exit")
+                log.info("unpack setup cancelled - exit")
                 return 1
             settings = setup.result_settings()
             save_settings(settings)
 
     initial = Path(argv[1]) if len(argv) > 1 else None
-    _log_file.info("creating MainWindow initial=%s", initial)
+    log.info("creating MainWindow initial=%s", initial)
     win = MainWindow(initial)
     if not icon.isNull():
         win.setWindowIcon(icon)
@@ -5249,7 +5391,7 @@ def main(argv: list[str] | None = None) -> int:
     app.processEvents()
     # Dark shell first; chooser (or CLI path) then Loading then workspace.
     QTimer.singleShot(0, win._open_startup_file)
-    _log_file.info("entering app.exec()")
+    log.info("entering app.exec()")
     code = app.exec()
-    _log_file.info("app.exec() returned %s", code)
+    log.info("app.exec() returned %s", code)
     return code

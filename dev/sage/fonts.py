@@ -22,9 +22,12 @@ from PIL import Image, ImageDraw, ImageFont
 from PyQt6.QtGui import QColor, QImage, QPixmap
 
 from .cache_store import PathIndex, load_font_cache, save_font_cache
+from .diaglog import get_logger
 from .model import LayoutNode
 from .settings import UI_HEIGHT
-from .textures import TextureResolver, open_dds_image
+from .textures import TextureResolver, abs_log_path, open_dds_image
+
+_log = get_logger("fonts")
 
 # XML font= → fonts.ltx section (engine names).
 FONT_SECTION_MAP: dict[str, str] = {
@@ -326,9 +329,36 @@ class FontResolver:
     def count(self) -> int:
         return len(self._atlases)
 
+    def invalidate_for_document(self, doc: LayoutNode) -> None:
+        """Drop loaded font atlases for this document so DDS/INI edits re-load."""
+        names = collect_doc_fonts(doc)
+        for name in names:
+            self._atlases.pop(name, None)
+            self._missing.discard(name)
+        _log.info("invalidate fonts: dropped %d name(s)", len(names))
+
     def warm_for_document(self, doc: LayoutNode) -> None:
-        for name in collect_doc_fonts(doc):
-            self.resolve_font(name)
+        names = collect_doc_fonts(doc)
+        _log.info("warm fonts: %d name(s) device_h=%s", len(names), self.device_height)
+        for name in sorted(names):
+            atlas = self.resolve_font(name)
+            if atlas is None:
+                _log.warning("font unresolved: %s", name)
+                continue
+            dds_s = abs_log_path(atlas.dds_path) if atlas.dds_path else "?"
+            ini_s = abs_log_path(atlas.ini_path) if atlas.ini_path else "?"
+            _log.info(
+                "font %s -> logical %s variant=%s glyphs=%d | dds %s | ini %s | "
+                "h=%s ui_scale=%.4f",
+                name,
+                atlas.logical,
+                atlas.variant_key,
+                len(atlas.glyphs),
+                dds_s,
+                ini_s,
+                atlas.height,
+                atlas.ui_scale,
+            )
 
     def _iter_fonts_ltx_paths(self) -> list[Path]:
         """Discover fonts.ltx beside texture roots (Anomaly + GAMMA packs)."""

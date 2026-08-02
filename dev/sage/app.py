@@ -32,6 +32,8 @@ from PyQt6.QtGui import (
     QTextCursor,
 )
 from PyQt6.QtWidgets import (
+    QAbstractSlider,
+    QAbstractSpinBox,
     QApplication,
     QCheckBox,
     QComboBox,
@@ -53,6 +55,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QSlider,
     QSpinBox,
     QSplitter,
     QStackedWidget,
@@ -80,6 +83,7 @@ from .settings import (
     clamp_label_font_size,
     resolve_font_device_height,
     ensure_db_unpacked_and_roots,
+    get_deploy_target,
     installs_configured,
     load_settings,
     normalize_custom_roots,
@@ -87,6 +91,7 @@ from .settings import (
     push_recent_file,
     rescan_asset_roots,
     save_settings,
+    set_deploy_target,
     summarize_custom_root,
     validate_anomaly_root,
     validate_gamma_root,
@@ -105,7 +110,7 @@ from .texture_picker import TexturePickerDialog
 from .textures import TextureResolver, build_picker_root_groups
 from .undo import GeoEdit, GeoState, PropEdit
 from .xml_highlight import XmlHighlighter
-from .xml_io import UiXmlDocument
+from .xml_io import UiXmlDocument, sanitize_ui_xml_text
 
 DOC_MODE_UI = "ui"
 DOC_MODE_ATLAS = "atlas"
@@ -1659,6 +1664,19 @@ class MainWindow(QMainWindow):
         self.tool_font.setSingleStep(1)
         self.tool_font.setValue(clamp_label_font_size(self.settings.get("label_font_size")))
         self.tool_font.setSuffix(" pt")
+        self.tool_zoom = QSlider(Qt.Orientation.Horizontal)
+        self.tool_zoom.setRange(100, 500)
+        self.tool_zoom.setSingleStep(5)
+        self.tool_zoom.setPageStep(25)
+        self.tool_zoom.setTickInterval(100)
+        self.tool_zoom.setTickPosition(QSlider.TickPosition.TicksBelow)
+        self.tool_zoom.setValue(100)
+        self.tool_zoom.setMinimumWidth(140)
+        self.tool_zoom.setMaximumWidth(200)
+        self.tool_zoom.setToolTip("Canvas zoom: native (100%) → 500%")
+        self.tool_zoom_label = QLabel("100%")
+        self.tool_zoom_label.setMinimumWidth(40)
+        self._updating_zoom_slider = False
         options_l.addStretch(1)
         for w in (
             self.tool_border,
@@ -1666,6 +1684,9 @@ class MainWindow(QMainWindow):
             self.tool_labels,
             QLabel("Label size"),
             self.tool_font,
+            QLabel("Zoom"),
+            self.tool_zoom,
+            self.tool_zoom_label,
         ):
             options_l.addWidget(w, 0, Qt.AlignmentFlag.AlignVCenter)
         options_l.addStretch(1)
@@ -1807,9 +1828,12 @@ class MainWindow(QMainWindow):
         self.tool_border.toggled.connect(self._on_toggle_border)
         self.tool_fill.toggled.connect(self._on_toggle_fill)
         self.tool_labels.toggled.connect(self._on_toggle_labels)
+        self.tool_zoom.valueChanged.connect(self._on_zoom_slider)
+        self.canvas.view_changed.connect(self._sync_zoom_slider_from_view)
+        self.descr_board.view.view_changed.connect(self._sync_zoom_slider_from_view)
         self.tool_font.valueChanged.connect(self._on_tool_font_size)
         self.statusBar().showMessage(
-            "1024×768 HUD · wheel zoom · Alt/MMB pan · drag/resize · Ctrl+click cycle · Ctrl+Z undo"
+            "1024×768 HUD · wheel zoom · Alt/MMB pan · drag/resize · arrows nudge · Ctrl+click cycle · Ctrl+Z undo"
         )
 
         # CLI path opens after show; otherwise the startup chooser runs.
@@ -1818,6 +1842,65 @@ class MainWindow(QMainWindow):
             path = Path(initial)
             if path.is_file():
                 self._startup_path = path
+
+        app = QApplication.instance()
+        if app is not None:
+            app.installEventFilter(self)
+
+    def _nudge_focus_ok(self) -> bool:
+        """True when arrows should nudge selection (not typing in a field)."""
+        fw = QApplication.focusWidget()
+        w = fw
+        while w is not None:
+            if isinstance(
+                w,
+                (
+                    QLineEdit,
+                    QTextEdit,
+                    QPlainTextEdit,
+                    QAbstractSpinBox,
+                    QAbstractSlider,
+                    QComboBox,
+                ),
+            ):
+                return False
+            w = w.parentWidget()
+        return True
+
+    def _nudge_view(self):
+        if self._doc_mode == DOC_MODE_ATLAS:
+            return self.descr_board.view
+        return self.canvas
+
+    def _filter_nudge_key(self, event) -> bool:
+        """Consume arrow keys to nudge selected boxes when WYSIWYG is active."""
+        if not getattr(self, "_workspace_revealed", False):
+            return False
+        if self.editor_tabs.currentIndex() != TAB_WYSIWYG:
+            return False
+        key = event.key()
+        if key not in (
+            Qt.Key.Key_Left,
+            Qt.Key.Key_Right,
+            Qt.Key.Key_Up,
+            Qt.Key.Key_Down,
+        ):
+            return False
+        mods = event.modifiers()
+        # Bare arrows only (keypad arrows OK).
+        if mods & ~(
+            Qt.KeyboardModifier.KeypadModifier
+            | Qt.KeyboardModifier.GroupSwitchModifier
+        ):
+            return False
+        if not self._nudge_focus_ok():
+            return False
+        view = self._nudge_view()
+        if event.type() == QEvent.Type.KeyPress:
+            return view.handle_nudge_key_press(event)
+        if event.type() == QEvent.Type.KeyRelease:
+            return view.handle_nudge_key_release(event)
+        return False
 
     def _relayout_sidebar_fit(self) -> None:
         """Layers/Properties size to content; Tree/Undo keep leftover stretch."""
@@ -1907,6 +1990,31 @@ class MainWindow(QMainWindow):
             self.descr_board.fit_stage()
         else:
             self.canvas.fit_stage()
+        self._sync_zoom_slider_from_view()
+
+    def _active_canvas_view(self):
+        if self._doc_mode == DOC_MODE_ATLAS:
+            return self.descr_board.view
+        return self.canvas
+
+    def _on_zoom_slider(self, value: int) -> None:
+        if self._updating_zoom_slider:
+            return
+        self.tool_zoom_label.setText(f"{int(value)}%")
+        view = self._active_canvas_view()
+        view.set_zoom_scale(float(value) / 100.0)
+
+    def _sync_zoom_slider_from_view(self) -> None:
+        if not hasattr(self, "tool_zoom"):
+            return
+        view = self._active_canvas_view()
+        scale = view.zoom_scale()
+        pct = int(round(scale * 100.0))
+        pct = max(100, min(500, pct))
+        self._updating_zoom_slider = True
+        self.tool_zoom.setValue(pct)
+        self.tool_zoom_label.setText(f"{pct}%")
+        self._updating_zoom_slider = False
 
     def _set_doc_mode(self, mode: str) -> None:
         self._doc_mode = mode
@@ -1942,6 +2050,7 @@ class MainWindow(QMainWindow):
         self._apply_splitter_sizes()
         self._update_undo_actions()
         self._refresh_undo_list()
+        self._sync_zoom_slider_from_view()
         self._relayout_sidebar_fit()
         QTimer.singleShot(0, self._relayout_sidebar_fit)
 
@@ -2266,6 +2375,21 @@ class MainWindow(QMainWindow):
         self.save_as_a.setShortcut(QKeySequence.StandardKey.SaveAs)
         self.save_as_a.triggered.connect(self.save_as)
         file_menu.addAction(self.save_as_a)
+        self.deploy_a = QAction("&Deploy", self)
+        self.deploy_a.setShortcut("Ctrl+D")
+        self.deploy_a.setToolTip(
+            "Overwrite the remembered deploy target with this document’s content "
+            "(keeps the target file name). Prompts if no target is set."
+        )
+        self.deploy_a.triggered.connect(self.deploy)
+        file_menu.addAction(self.deploy_a)
+        self.deploy_as_a = QAction("Deploy As…", self)
+        self.deploy_as_a.setShortcut("Ctrl+Shift+D")
+        self.deploy_as_a.setToolTip(
+            "Choose a file to overwrite on Deploy. Source path stays unchanged."
+        )
+        self.deploy_as_a.triggered.connect(self.deploy_as)
+        file_menu.addAction(self.deploy_as_a)
         file_menu.addSeparator()
         quit_a = QAction("&Quit", self)
         quit_a.setShortcut(QKeySequence.StandardKey.Quit)
@@ -2321,7 +2445,7 @@ class MainWindow(QMainWindow):
         self.descr_rename_a.triggered.connect(self._descr_rename)
         edit_menu.addAction(self.descr_rename_a)
         self.descr_dup_a = QAction("Du&plicate region", self)
-        self.descr_dup_a.setShortcut("Ctrl+D")
+        self.descr_dup_a.setShortcut("Ctrl+Alt+D")
         self.descr_dup_a.triggered.connect(self._descr_duplicate)
         edit_menu.addAction(self.descr_dup_a)
         self.descr_new_a = QAction("&New region", self)
@@ -3107,6 +3231,85 @@ class MainWindow(QMainWindow):
         self._restore_view_or_fit()
         return True
 
+    def _export_xml_text(self) -> str:
+        """Current document XML text for deploy (does not change open path)."""
+        if self._doc_mode == DOC_MODE_ATLAS:
+            if self.editor_tabs.currentIndex() == TAB_XML or self._raw_dirty:
+                text = self.raw_editor.toPlainText()
+            else:
+                text = self.descr_doc.serialize()
+            if not text.endswith("\n") and text != "":
+                text += "\n"
+            return text
+        if self.editor_tabs.currentIndex() == TAB_XML or self._raw_dirty:
+            text, _removed = sanitize_ui_xml_text(self.raw_editor.toPlainText())
+        else:
+            text = self.doc.serialize()
+        if not text.endswith("\n") and text != "":
+            text += "\n"
+        return text
+
+    def _deploy_dialog_start(self) -> str:
+        remembered = get_deploy_target(self.settings, self._active_path())
+        if remembered is not None:
+            # Prefer full path so the dialog keeps the target file name.
+            if remembered.is_file() or remembered.parent.is_dir():
+                return str(remembered)
+        saved = Path(str(self.settings.get("last_deploy_dir") or ""))
+        if saved.is_dir():
+            return str(saved)
+        return self._file_dialog_start(self._active_path())
+
+    def deploy(self) -> bool:
+        """Overwrite remembered deploy target; prompt via Deploy As if unset."""
+        target = get_deploy_target(self.settings, self._active_path())
+        if target is None:
+            return self.deploy_as()
+        return self._deploy_to(target)
+
+    def deploy_as(self) -> bool:
+        """Pick (or re-pick) the deploy overwrite target, then deploy."""
+        if self._doc_mode == DOC_MODE_ATLAS:
+            title = "Deploy atlas XML as"
+            filt = "Texture atlas XML (*.xml);;All (*.*)"
+        else:
+            title = "Deploy UI XML as"
+            filt = "UI XML (*.xml);;All (*.*)"
+        path, _ = QFileDialog.getSaveFileName(
+            self, title, self._deploy_dialog_start(), filt
+        )
+        if not path:
+            return False
+        return self._deploy_to(Path(path))
+
+    def _deploy_to(self, target: Path) -> bool:
+        """Write current content to ``target`` (keeps target’s name / path)."""
+        try:
+            target = target.expanduser()
+            target.parent.mkdir(parents=True, exist_ok=True)
+            text = self._export_xml_text()
+            target.write_text(text, encoding="utf-8")
+        except Exception as exc:  # noqa: BLE001
+            self._log("error", f"Deploy failed: {exc}")
+            QMessageBox.critical(self, "Deploy failed", str(exc))
+            return False
+        source = self._active_path()
+        if source is not None:
+            set_deploy_target(self.settings, source, target)
+            save_settings(self.settings)
+        else:
+            # Still remember folder for the next Deploy As dialog.
+            parent = target.parent
+            if parent.is_dir():
+                try:
+                    self.settings["last_deploy_dir"] = str(parent.resolve())
+                except OSError:
+                    self.settings["last_deploy_dir"] = str(parent)
+                save_settings(self.settings)
+        self._log("info", f"Deployed → {target}")
+        self.statusBar().showMessage(f"Deployed → {target}")
+        return True
+
     def save(self) -> bool:
         if self._doc_mode == DOC_MODE_ATLAS:
             return self._save_atlas()
@@ -3580,10 +3783,13 @@ class MainWindow(QMainWindow):
         self.scene.set_tree_hover_path(path)
 
     def eventFilter(self, obj, event) -> bool:  # noqa: N802
+        et = event.type()
+        if et in (QEvent.Type.KeyPress, QEvent.Type.KeyRelease):
+            if self._filter_nudge_key(event):
+                return True
         if obj is self.tree.viewport():
             if self._doc_mode == DOC_MODE_ATLAS:
                 return super().eventFilter(obj, event)
-            et = event.type()
             if et == QEvent.Type.Leave:
                 self.scene.set_tree_hover_path(None)
             elif et == QEvent.Type.MouseMove:
@@ -3591,6 +3797,12 @@ class MainWindow(QMainWindow):
                 if self.tree.itemAt(pos) is None:
                     self.scene.set_tree_hover_path(None)
         return super().eventFilter(obj, event)
+
+    def changeEvent(self, event) -> None:  # noqa: N802
+        if event.type() == QEvent.Type.ActivationChange and not self.isActiveWindow():
+            self.canvas.end_nudge()
+            self.descr_board.view.end_nudge()
+        super().changeEvent(event)
 
     def _on_canvas_selection(self, node: LayoutNode | None) -> None:
         self._commit_props_geo_undo()

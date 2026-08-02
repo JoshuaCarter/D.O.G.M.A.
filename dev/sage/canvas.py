@@ -45,7 +45,13 @@ from .box_chrome import (
 from .diaglog import get_logger
 from .fonts import FontResolver
 from .model import LayoutNode
-from .settings import LABEL_FONT_MIN, UI_HEIGHT, UI_WIDTH
+from .settings import (
+    LABEL_FONT_MIN,
+    UI_HEIGHT,
+    UI_WIDTH,
+    ZOOM_SCALE_MAX,
+    ZOOM_SCALE_MIN,
+)
 from .strings import StringResolver
 from .textures import TextureResolver, gamma_relative_path
 from .undo import Edit, GeoEdit, GeoState, PropEdit, UndoStack
@@ -72,6 +78,23 @@ _GUIDE_Z = 10_000_009.0
 def _decor_z(band: float, doc_z: float) -> float:
     """Keep decorations in their band, but stack by document order within it."""
     return band + float(doc_z) * 0.001
+
+
+# Arrow-key nudge: 1px per press; hold → 500ms delay, then 1px / 50ms.
+_NUDGE_DELAY_MS = 500
+_NUDGE_REPEAT_MS = 50
+
+
+def _arrow_nudge_delta(key: int) -> tuple[int, int] | None:
+    if key == Qt.Key.Key_Left:
+        return (-1, 0)
+    if key == Qt.Key.Key_Right:
+        return (1, 0)
+    if key == Qt.Key.Key_Up:
+        return (0, -1)
+    if key == Qt.Key.Key_Down:
+        return (0, 1)
+    return None
 
 RULER_THICKNESS = 15
 RULER_MINOR = 8  # scene px between short notches
@@ -1339,12 +1362,109 @@ class UiCanvas(QGraphicsView):
         self._marquee_origin = QPointF()
         self._marquee_item: QGraphicsRectItem | None = None
         self._last_cursor_view_pos = QPointF()
+        self._nudge_key: int | None = None
+        self._nudge_dx = 0
+        self._nudge_dy = 0
+        self._nudge_roots: list[WidgetItem] = []
+        self._nudge_befores: dict[WidgetItem, GeoState] = {}
+        self._nudge_delay = QTimer(self)
+        self._nudge_delay.setSingleShot(True)
+        self._nudge_delay.timeout.connect(self._on_nudge_delay)
+        self._nudge_repeat = QTimer(self)
+        self._nudge_repeat.setInterval(_NUDGE_REPEAT_MS)
+        self._nudge_repeat.timeout.connect(self._apply_nudge_step)
         self.setMouseTracking(True)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.scene().selectionChanged.connect(self._on_selection_changed_stack)
         self.fit_stage()
 
+    def handle_nudge_key_press(self, event) -> bool:
+        """Arrow nudge. Returns True if the event was consumed."""
+        delta = _arrow_nudge_delta(event.key())
+        if delta is None:
+            return False
+        if event.isAutoRepeat():
+            return self._nudge_key == event.key()
+        scene = self.scene()
+        if not isinstance(scene, UiScene):
+            return False
+        selected = scene.selected_widgets()
+        if not selected:
+            return False
+        if self._nudge_key is not None:
+            self.end_nudge()
+        roots = scene.move_roots(selected)
+        if not roots:
+            return False
+        self._nudge_key = event.key()
+        self._nudge_dx, self._nudge_dy = delta
+        self._nudge_roots = roots
+        self._nudge_befores = {item: item._snapshot_geo() for item in roots}
+        self._apply_nudge_step()
+        self._nudge_delay.start(_NUDGE_DELAY_MS)
+        return True
+
+    def handle_nudge_key_release(self, event) -> bool:
+        if _arrow_nudge_delta(event.key()) is None:
+            return False
+        if event.isAutoRepeat():
+            return self._nudge_key == event.key()
+        if self._nudge_key != event.key():
+            return False
+        self.end_nudge()
+        return True
+
+    def end_nudge(self) -> None:
+        """Stop timers and commit one undo step for the nudge gesture."""
+        self._nudge_delay.stop()
+        self._nudge_repeat.stop()
+        roots = self._nudge_roots
+        befores = self._nudge_befores
+        self._nudge_key = None
+        self._nudge_dx = 0
+        self._nudge_dy = 0
+        self._nudge_roots = []
+        self._nudge_befores = {}
+        if not roots:
+            return
+        pairs: list[tuple[GeoState, GeoState]] = []
+        for item in roots:
+            before = befores.get(item)
+            if before is None:
+                continue
+            after = item._snapshot_geo()
+            if before != after:
+                pairs.append((before, after))
+        scene = self.scene()
+        if not isinstance(scene, UiScene):
+            return
+        if pairs:
+            scene.push_geo_edit(GeoEdit.multi(pairs))
+        scene.geometry_changed.emit(roots[-1].node)
+
+    def _on_nudge_delay(self) -> None:
+        if self._nudge_key is None:
+            return
+        self._apply_nudge_step()
+        self._nudge_repeat.start()
+
+    def _apply_nudge_step(self) -> None:
+        if self._nudge_key is None or not self._nudge_roots:
+            return
+        scene = self.scene()
+        if not isinstance(scene, UiScene) or scene.doc is None:
+            return
+        dx, dy = self._nudge_dx, self._nudge_dy
+        for item in self._nudge_roots:
+            item.node.set_geometry(x=item.node.x + dx, y=item.node.y + dy)
+        scene.doc.recompute_absolute(0.0, 0.0)
+        scene.refresh_item_positions()
+        scene._sync_focus_chrome()
+
     def _on_selection_changed_stack(self) -> None:
         # Drop transient Ctrl+click peer greys; keep cursor in sync.
+        if self._nudge_key is not None:
+            self.end_nudge()
         if self._stack_peer_paths:
             self._set_stack_peers(set())
         self._update_edit_cursor(self._last_cursor_view_pos)
@@ -1380,6 +1500,36 @@ class UiCanvas(QGraphicsView):
         self.fitInView(QRectF(0, 0, UI_WIDTH, UI_HEIGHT), Qt.AspectRatioMode.KeepAspectRatio)
         self._update_pan_limits()
 
+    def zoom_scale(self) -> float:
+        return abs(float(self.transform().m11()))
+
+    def set_zoom_scale(self, scale: float) -> None:
+        """Absolute view scale (1.0 = native 1:1), keeping the viewport center."""
+        try:
+            scale = float(scale)
+        except (TypeError, ValueError):
+            return
+        if scale <= 0:
+            return
+        scale = max(ZOOM_SCALE_MIN, min(scale, ZOOM_SCALE_MAX))
+        center = self.mapToScene(self.viewport().rect().center())
+        self.resetTransform()
+        self.scale(scale, scale)
+        self._update_pan_limits()
+        self.centerOn(center)
+        self._update_pan_limits()
+
+    def _zoom_by_factor(self, factor: float) -> None:
+        """Multiply current scale by ``factor``, clamped to native…500%."""
+        if factor <= 0:
+            return
+        current = self.zoom_scale()
+        target = max(ZOOM_SCALE_MIN, min(current * factor, ZOOM_SCALE_MAX))
+        if abs(target - current) < 1e-9:
+            return
+        self.scale(target / current, target / current)
+        self._update_pan_limits()
+
     def view_state(self) -> dict[str, float]:
         t = self.transform()
         center = self.mapToScene(self.viewport().rect().center())
@@ -1403,6 +1553,7 @@ class UiCanvas(QGraphicsView):
         if scale <= 0:
             self.fit_stage()
             return
+        scale = max(ZOOM_SCALE_MIN, min(scale, ZOOM_SCALE_MAX))
         self.resetTransform()
         self.scale(scale, scale)
         self._update_pan_limits()
@@ -1723,8 +1874,7 @@ class UiCanvas(QGraphicsView):
             step = dy if dy != 0 else dx
             if step != 0:
                 factor = 1.15 if step > 0 else 1 / 1.15
-                self.scale(factor, factor)
-                self._update_pan_limits()
+                self._zoom_by_factor(factor)
             event.accept()
             return
 
@@ -1750,8 +1900,7 @@ class UiCanvas(QGraphicsView):
         step = dy if dy != 0 else dx
         if step != 0:
             factor = 1.15 if step > 0 else 1 / 1.15
-            self.scale(factor, factor)
-            self._update_pan_limits()
+            self._zoom_by_factor(factor)
         event.accept()
 
     def resizeEvent(self, event) -> None:  # noqa: N802

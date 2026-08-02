@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PIL import Image
-from PyQt6.QtCore import QPointF, QRectF, Qt, pyqtSignal
+from PyQt6.QtCore import QPointF, QRectF, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import (
     QBrush,
     QColor,
@@ -41,12 +41,28 @@ from .box_chrome import (
     FocusCaptionOverlay,
 )
 from .descr_model import DescrDocument, DescrRegion, DescrSheet
-from .settings import clamp_label_font_size
+from .settings import ZOOM_SCALE_MAX, ZOOM_SCALE_MIN, clamp_label_font_size
 from .textures import TextureResolver
 from .undo import GeoEdit, GeoState, UndoStack
 
 HANDLE = 8.0
 MIN_SIZE = 2.0
+
+# Arrow-key nudge: 1px per press; hold → 500ms delay, then 1px / 50ms.
+_NUDGE_DELAY_MS = 500
+_NUDGE_REPEAT_MS = 50
+
+
+def _arrow_nudge_delta(key: int) -> tuple[int, int] | None:
+    if key == Qt.Key.Key_Left:
+        return (-1, 0)
+    if key == Qt.Key.Key_Right:
+        return (1, 0)
+    if key == Qt.Key.Key_Up:
+        return (0, -1)
+    if key == Qt.Key.Key_Down:
+        return (0, 1)
+    return None
 
 
 def _pil_to_pixmap(img: Image.Image) -> QPixmap:
@@ -604,6 +620,8 @@ class DescrScene(QGraphicsScene):
 
 
 class DescrView(QGraphicsView):
+    view_changed = pyqtSignal()
+
     def __init__(self, scene: DescrScene) -> None:
         super().__init__(scene)
         self.setRenderHints(
@@ -614,7 +632,127 @@ class DescrView(QGraphicsView):
         self.setBackgroundBrush(QBrush(QColor(18, 18, 20)))
         self._panning = False
         self._pan_start = QPointF()
+        self._nudge_key: int | None = None
+        self._nudge_dx = 0
+        self._nudge_dy = 0
+        self._nudge_items: list[RegionItem] = []
+        self._nudge_befores: dict[RegionItem, GeoState] = {}
+        self._nudge_delay = QTimer(self)
+        self._nudge_delay.setSingleShot(True)
+        self._nudge_delay.timeout.connect(self._on_nudge_delay)
+        self._nudge_repeat = QTimer(self)
+        self._nudge_repeat.setInterval(_NUDGE_REPEAT_MS)
+        self._nudge_repeat.timeout.connect(self._apply_nudge_step)
         self.setMouseTracking(True)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        scene.selectionChanged.connect(self._on_selection_changed_nudge)
+
+    def handle_nudge_key_press(self, event) -> bool:
+        """Arrow nudge. Returns True if the event was consumed."""
+        delta = _arrow_nudge_delta(event.key())
+        if delta is None:
+            return False
+        if event.isAutoRepeat():
+            return self._nudge_key == event.key()
+        scene = self.scene()
+        if not isinstance(scene, DescrScene):
+            return False
+        items = [
+            i
+            for i in scene.selectedItems()
+            if isinstance(i, RegionItem) and i.isVisible()
+        ]
+        if not items:
+            return False
+        if self._nudge_key is not None:
+            self.end_nudge()
+        self._nudge_key = event.key()
+        self._nudge_dx, self._nudge_dy = delta
+        self._nudge_items = items
+        self._nudge_befores = {
+            item: GeoState(
+                path=item.region.atlas_id,
+                x=item.region.x,
+                y=item.region.y,
+                width=item.region.width,
+                height=item.region.height,
+            )
+            for item in items
+        }
+        self._apply_nudge_step()
+        self._nudge_delay.start(_NUDGE_DELAY_MS)
+        return True
+
+    def handle_nudge_key_release(self, event) -> bool:
+        if _arrow_nudge_delta(event.key()) is None:
+            return False
+        if event.isAutoRepeat():
+            return self._nudge_key == event.key()
+        if self._nudge_key != event.key():
+            return False
+        self.end_nudge()
+        return True
+
+    def end_nudge(self) -> None:
+        self._nudge_delay.stop()
+        self._nudge_repeat.stop()
+        items = self._nudge_items
+        befores = self._nudge_befores
+        self._nudge_key = None
+        self._nudge_dx = 0
+        self._nudge_dy = 0
+        self._nudge_items = []
+        self._nudge_befores = {}
+        if not items:
+            return
+        pairs: list[tuple[GeoState, GeoState]] = []
+        for item in items:
+            before = befores.get(item)
+            if before is None:
+                continue
+            after = GeoState(
+                path=item.region.atlas_id,
+                x=item.region.x,
+                y=item.region.y,
+                width=item.region.width,
+                height=item.region.height,
+            )
+            if before != after:
+                pairs.append((before, after))
+        scene = self.scene()
+        if not isinstance(scene, DescrScene):
+            return
+        if pairs:
+            scene.push_geo_edit(GeoEdit.multi(pairs))
+            if scene.doc is not None:
+                scene.doc.mark_dirty()
+        scene.geometry_changed.emit(items[-1].region)
+
+    def _on_nudge_delay(self) -> None:
+        if self._nudge_key is None:
+            return
+        self._apply_nudge_step()
+        self._nudge_repeat.start()
+
+    def _apply_nudge_step(self) -> None:
+        if self._nudge_key is None or not self._nudge_items:
+            return
+        scene = self.scene()
+        if not isinstance(scene, DescrScene):
+            return
+        dx, dy = float(self._nudge_dx), float(self._nudge_dy)
+        for item in self._nudge_items:
+            x = item.region.x + dx
+            y = item.region.y + dy
+            x = max(0.0, min(x, scene.sheet_w - item.region.width))
+            y = max(0.0, min(y, scene.sheet_h - item.region.height))
+            item.region.set_geometry(x=x, y=y)
+            item.refresh()
+        scene.sync_focus_caption()
+
+    def _on_selection_changed_nudge(self) -> None:
+        if self._nudge_key is not None:
+            self.end_nudge()
 
     def fit_stage(self) -> None:
         scene = self.scene()
@@ -624,10 +762,38 @@ class DescrView(QGraphicsView):
             QRectF(0, 0, scene.sheet_w, scene.sheet_h),
             Qt.AspectRatioMode.KeepAspectRatio,
         )
+        self.view_changed.emit()
+
+    def zoom_scale(self) -> float:
+        return abs(float(self.transform().m11()))
+
+    def set_zoom_scale(self, scale: float) -> None:
+        try:
+            scale = float(scale)
+        except (TypeError, ValueError):
+            return
+        if scale <= 0:
+            return
+        scale = max(ZOOM_SCALE_MIN, min(scale, ZOOM_SCALE_MAX))
+        center = self.mapToScene(self.viewport().rect().center())
+        self.resetTransform()
+        self.scale(scale, scale)
+        self.centerOn(center)
+        self.view_changed.emit()
+
+    def _zoom_by_factor(self, factor: float) -> None:
+        if factor <= 0:
+            return
+        current = self.zoom_scale()
+        target = max(ZOOM_SCALE_MIN, min(current * factor, ZOOM_SCALE_MAX))
+        if abs(target - current) < 1e-9:
+            return
+        self.scale(target / current, target / current)
+        self.view_changed.emit()
 
     def wheelEvent(self, event: QWheelEvent) -> None:  # noqa: N802
         factor = 1.15 if event.angleDelta().y() > 0 else 1 / 1.15
-        self.scale(factor, factor)
+        self._zoom_by_factor(factor)
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
         if event.button() in (Qt.MouseButton.MiddleButton, Qt.MouseButton.RightButton) or (

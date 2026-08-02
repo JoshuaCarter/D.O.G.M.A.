@@ -11,6 +11,9 @@ SETTINGS_PATH = Path(__file__).resolve().parent / "settings.json"
 
 UI_WIDTH = 1024
 UI_HEIGHT = 768
+# Canvas / atlas view zoom floor/ceiling (slider + wheel). Native = 1.0.
+ZOOM_SCALE_MIN = 1.0
+ZOOM_SCALE_MAX = 5.0
 
 # Font preview: engine picks atlas + scales by Device.dwHeight (see fonts.py).
 DEFAULT_FONT_DEVICE_HEIGHT = 1080
@@ -122,6 +125,58 @@ def push_recent_file(settings: dict, path: Path) -> list[str]:
     recent = merged[:RECENT_FILES_MAX]
     settings["recent_files"] = recent
     return recent
+
+
+def _resolved_path_key(path: Path | str) -> str:
+    try:
+        return str(Path(path).expanduser().resolve())
+    except OSError:
+        return str(Path(path).expanduser())
+
+
+def normalize_deploy_targets(value: object) -> dict[str, str]:
+    """Map source XML path → deploy target path (resolved strings)."""
+    if not isinstance(value, dict):
+        return {}
+    out: dict[str, str] = {}
+    for raw_src, raw_dst in value.items():
+        if not isinstance(raw_src, str) or not isinstance(raw_dst, str):
+            continue
+        if not raw_src.strip() or not raw_dst.strip():
+            continue
+        out[_resolved_path_key(raw_src)] = _resolved_path_key(raw_dst)
+    return out
+
+
+def set_deploy_target(settings: dict, source: Path, target: Path) -> None:
+    """Remember deploy overwrite path for a source file."""
+    targets = normalize_deploy_targets(settings.get("deploy_targets"))
+    targets[_resolved_path_key(source)] = _resolved_path_key(target)
+    settings["deploy_targets"] = targets
+    parent = target if target.is_dir() else target.parent
+    try:
+        if parent.is_dir():
+            settings["last_deploy_dir"] = str(parent.resolve())
+    except OSError:
+        settings["last_deploy_dir"] = str(parent)
+
+
+def get_deploy_target(settings: dict, source: Path | None) -> Path | None:
+    if source is None:
+        return None
+    targets = normalize_deploy_targets(settings.get("deploy_targets"))
+    key = _resolved_path_key(source)
+    raw = targets.get(key)
+    if not raw:
+        # Case-insensitive fallback (Windows).
+        low = key.lower()
+        for sk, tv in targets.items():
+            if sk.lower() == low:
+                raw = tv
+                break
+    if not raw:
+        return None
+    return Path(raw)
 
 
 def _norm_root(value: object) -> str:
@@ -583,6 +638,9 @@ def default_settings() -> dict:
         "show_box_fill": False,
         "last_file_dir": "",
         "last_texture_dir": "",
+        "last_deploy_dir": "",
+        # source XML path → deploy overwrite target (resolved strings).
+        "deploy_targets": {},
         "recent_files": [],
         "splitter_sizes": list(DEFAULT_SPLITTER_SIZES),
         # 0 = auto from Anomaly appdata/user.ltx vid_mode (else 1080).
@@ -729,6 +787,10 @@ def load_settings() -> dict:
     )
     data["show_element_labels"] = bool(data.get("show_element_labels", False))
     data["recent_files"] = normalize_recent_files(data.get("recent_files"))
+    data["deploy_targets"] = normalize_deploy_targets(data.get("deploy_targets"))
+    data["last_deploy_dir"] = _norm_root(data.get("last_deploy_dir", ""))
+    if data["last_deploy_dir"] and not Path(data["last_deploy_dir"]).is_dir():
+        data["last_deploy_dir"] = ""
     data["custom_roots"] = normalize_custom_roots(data.get("custom_roots"))
     data["anomaly_root"] = _norm_root(data.get("anomaly_root", ""))
     data["gamma_root"] = _norm_root(data.get("gamma_root", ""))

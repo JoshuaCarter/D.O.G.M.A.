@@ -17,6 +17,7 @@ _log_file = get_logger("app")
 from PyQt6.QtCore import QEvent, QPoint, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import (
     QAction,
+    QBrush,
     QColor,
     QCursor,
     QFont,
@@ -298,6 +299,7 @@ class ElidedLabel(QLabel):
     """Single-line label that elides with … when the pane is narrow.
 
     Prefixed mode: ``{grey xml truncated}::{key}`` — xml elides first; key stays.
+    Horizontal policy is Ignored so trailing action icons keep their fixed width.
     """
 
     _PREFIX_COLOR = _GREY_DEFAULT
@@ -309,7 +311,8 @@ class ElidedLabel(QLabel):
         self._key = ""
         self.setWordWrap(False)
         self.setMinimumWidth(0)
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        # Shrink freely; siblings (tool buttons) keep Fixed size at the row end.
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self._apply_elide()
 
@@ -375,34 +378,67 @@ def windows_explorer_path(path: Path) -> str:
     return str(resolved)
 
 
+def _prop_tool_button(
+    *,
+    tip: str,
+    icon: QIcon | None = None,
+    text: str = "",
+) -> QToolButton:
+    """Fixed-size trailing action; never yields width to the elided label."""
+    btn = QToolButton()
+    btn.setToolTip(tip)
+    btn.setAutoRaise(True)
+    btn.setFixedSize(22, 22)
+    btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+    btn.setCursor(Qt.CursorShape.PointingHandCursor)
+    if icon is not None and not icon.isNull():
+        btn.setIcon(icon)
+        btn.setIconSize(QSize(14, 14))
+    elif text:
+        btn.setText(text)
+    return btn
+
+
 class FilePathRow(QWidget):
-    """Filename (1-line elided) + copy-full-path button; tooltip has the full path."""
+    """Elided value + trailing action icons (copy / clear / browse)."""
+
+    clear_clicked = pyqtSignal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._explorer_path = ""
+        self._has_value = False
+        self._browse_enabled = False
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         lay = QHBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(4)
         self.name = ElidedLabel("-")
-        self.copy_btn = QToolButton()
-        self.copy_btn.setText("📋")
-        self.copy_btn.setToolTip("Copy full path")
-        self.copy_btn.setAutoRaise(True)
-        self.copy_btn.setFixedSize(22, 22)
-        self.copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.copy_btn = _prop_tool_button(tip="Copy full path", text="📋")
         self.copy_btn.clicked.connect(self._copy_path)
-        self.copy_btn.hide()
+        self.clear_btn = _prop_tool_button(
+            tip="Remove",
+            icon=self.style().standardIcon(
+                QStyle.StandardPixmap.SP_LineEditClearButton
+            ),
+        )
+        # Fallback when the style has no clear glyph.
+        if self.clear_btn.icon().isNull():
+            self.clear_btn.setText("✕")
+        self.clear_btn.clicked.connect(self.clear_clicked.emit)
         lay.addWidget(self.name, stretch=1)
         lay.addWidget(self.copy_btn, stretch=0)
+        lay.addWidget(self.clear_btn, stretch=0)
+        self._sync_trailing_icons()
 
     def clear(self, text: str = "-") -> None:
         self._explorer_path = ""
+        self._has_value = False
         self.name.set_full_text(text)
         # Placeholders: <none>, (none), -, (empty …), (meta)
         self.name.setStyleSheet(f"color: {_GREY_INAPPLICABLE};")
         self.name.setToolTip("")
-        self.copy_btn.hide()
+        self._sync_trailing_icons()
         self.setVisible(bool((text or "").strip()))
 
     def set_file(
@@ -412,13 +448,15 @@ class FilePathRow(QWidget):
         explorer_path: str = "",
         tip_extra: str = "",
         color: str = "",
+        clearable: bool = True,
     ) -> None:
         self._explorer_path = explorer_path
+        self._has_value = clearable
         self.name.set_full_text(display)
         self.name.setStyleSheet(f"color: {color};" if color else "")
         tip_parts = [p for p in (explorer_path, tip_extra) if p]
         self.name.setToolTip("\n".join(tip_parts))
-        self.copy_btn.setVisible(bool(explorer_path))
+        self._sync_trailing_icons()
         self.setVisible(bool((display or "").strip()))
 
     def set_xml_key(
@@ -428,15 +466,39 @@ class FilePathRow(QWidget):
         key: str,
         explorer_path: str = "",
         tip_extra: str = "",
+        clearable: bool = True,
     ) -> None:
-        """One-line text ref: ``{xml grey}::{key}`` + copy/browse."""
+        """One-line text ref: ``{xml grey}::{key}`` + trailing actions."""
         self._explorer_path = explorer_path
+        self._has_value = clearable
         self.name.setStyleSheet("")
         self.name.set_xml_key(xml_name, key)
         tip_parts = [p for p in (explorer_path, tip_extra) if p]
         self.name.setToolTip("\n".join(tip_parts))
-        self.copy_btn.setVisible(bool(explorer_path))
+        self._sync_trailing_icons()
         self.setVisible(bool((key or xml_name or "").strip()))
+
+    def set_clearable(self, clearable: bool) -> None:
+        self._has_value = bool(clearable)
+        self._sync_trailing_icons()
+
+    def _sync_trailing_icons(self) -> None:
+        """End icons keep fixed width; only the label elides when space is tight."""
+        self.copy_btn.setVisible(bool(self._explorer_path))
+        self.copy_btn.setEnabled(bool(self._explorer_path))
+        # On editable browse rows, clear stays visible (disabled when empty) so
+        # trailing icons don't jump or get clipped by a long path.
+        show_clear = self._browse_enabled or self._has_value
+        self.clear_btn.setVisible(show_clear)
+        self.clear_btn.setEnabled(self._has_value)
+        trailing = 0
+        if self.copy_btn.isVisible():
+            trailing += 22 + 4
+        if show_clear:
+            trailing += 22 + 4
+        if getattr(self, "browse_btn", None) is not None and self._browse_enabled:
+            trailing += 22 + 4
+        self.setMinimumWidth(40 + trailing)
 
     def _copy_path(self) -> None:
         if not self._explorer_path:
@@ -454,15 +516,13 @@ class BrowseValueRow(FilePathRow):
         parent: QWidget | None = None,
         *,
         browse_tip: str = "Find and change…",
+        clear_tip: str = "Remove",
     ) -> None:
         super().__init__(parent)
-        self.browse_btn = QToolButton()
-        self.browse_btn.setToolTip(browse_tip)
-        self.browse_btn.setAutoRaise(True)
-        self.browse_btn.setFixedSize(22, 22)
-        self.browse_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.browse_btn.setIcon(
-            self.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon)
+        self.clear_btn.setToolTip(clear_tip)
+        self.browse_btn = _prop_tool_button(
+            tip=browse_tip,
+            icon=self.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon),
         )
         self.browse_btn.setIconSize(QSize(16, 16))
         self.browse_btn.clicked.connect(self.browse_clicked.emit)
@@ -470,12 +530,16 @@ class BrowseValueRow(FilePathRow):
         self.set_browse_enabled(False)
 
     def set_browse_enabled(self, enabled: bool) -> None:
-        self.browse_btn.setVisible(enabled)
-        self.browse_btn.setEnabled(enabled)
+        self._browse_enabled = bool(enabled)
+        # Browse stays visible whenever the row is editable so the end icons
+        # don't jump; only the label shrinks when space is tight.
+        self.browse_btn.setVisible(self._browse_enabled)
+        self.browse_btn.setEnabled(self._browse_enabled)
+        self._sync_trailing_icons()
 
 
 class TextureValueRow(BrowseValueRow):
-    """Texture: <none> 📁   or   Texture: [☑] path 📋 📁."""
+    """Texture: <none> 📁   or   Texture: [☑] path 📋 ✕ 📁."""
 
     def __init__(
         self,
@@ -484,13 +548,18 @@ class TextureValueRow(BrowseValueRow):
         *,
         browse_tip: str = "Find and change texture (atlas / DDS)…",
     ) -> None:
-        super().__init__(parent, browse_tip=browse_tip)
+        super().__init__(
+            parent,
+            browse_tip=browse_tip,
+            clear_tip="Remove texture",
+        )
         self._show_cb = show_cb
         self._has_texture = False
         show_cb.setText("")
         show_cb.setToolTip(
             "Preview only — hide this box’s texture on the canvas (not saved)."
         )
+        show_cb.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         lay = self.layout()
         assert lay is not None
         lay.insertWidget(0, show_cb, stretch=0)
@@ -503,6 +572,7 @@ class TextureValueRow(BrowseValueRow):
         """Show the preview checkbox only when a texture is assigned."""
         self._has_texture = bool(has)
         self._show_cb.setVisible(self._has_texture)
+        self.set_clearable(self._has_texture)
 
     def clear(self, text: str = "<none>") -> None:
         super().clear(text)
@@ -517,12 +587,14 @@ class TextureValueRow(BrowseValueRow):
         explorer_path: str = "",
         tip_extra: str = "",
         color: str = "",
+        clearable: bool = True,
     ) -> None:
         super().set_file(
             display=display,
             explorer_path=explorer_path,
             tip_extra=tip_extra,
             color=color,
+            clearable=clearable,
         )
         self.set_has_texture(True)
         self.setVisible(True)
@@ -1313,8 +1385,13 @@ class MainWindow(QMainWindow):
         self.edit_show_texture = QCheckBox()
         self.prop_texture = TextureValueRow(self.edit_show_texture)
         self.prop_texture.browse_clicked.connect(self._browse_texture)
-        self.prop_text = BrowseValueRow(browse_tip="Find and change text…")
+        self.prop_texture.clear_clicked.connect(self._clear_texture)
+        self.prop_text = BrowseValueRow(
+            browse_tip="Find and change text…",
+            clear_tip="Remove text",
+        )
         self.prop_text.browse_clicked.connect(self._browse_text)
+        self.prop_text.clear_clicked.connect(self._clear_text)
 
         def _combo(items: list[tuple[str, str]], *, editable: bool = False) -> QComboBox:
             cb = QComboBox()
@@ -1593,7 +1670,7 @@ class MainWindow(QMainWindow):
             options_l.addWidget(w, 0, Qt.AlignmentFlag.AlignVCenter)
         options_l.addStretch(1)
 
-        # Left: Layers (fit) + Tree (fill). Right: Properties (fit) + Undo (fill).
+        # Left: Layers (fit) + Tree (fill). Right: Properties (fit) + Redo/Undo (fill).
         left = QWidget()
         self._left_sidebar = left
         left.setMinimumWidth(SIDEBAR_MIN_WIDTH)
@@ -1633,12 +1710,13 @@ class MainWindow(QMainWindow):
         self.props_scroll = FitContentScrollArea()
         self.props_scroll.setWidget(props)
         right_body_l.addWidget(self.props_scroll, stretch=0)
-        self._undo_section_label = _section_header("Undo")
+        self._undo_section_label = _section_header("Redo/Undo")
         right_body_l.addWidget(self._undo_section_label)
         self.undo_list = QListWidget()
         self.undo_list.setObjectName("undoHistoryList")
         self.undo_list.setToolTip(
-            "Recent geometry edits (newest first). Stack keeps up to 100; list shows ~10."
+            "Redo (top, 1 = next Ctrl+Y), then Undo (1 = next Ctrl+Z). "
+            "Stack keeps up to 100."
         )
         self.undo_list.setSelectionMode(QListWidget.SelectionMode.NoSelection)
         self.undo_list.setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -1647,6 +1725,8 @@ class MainWindow(QMainWindow):
         self.undo_list.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
+        self.undo_list.setWordWrap(False)
+        self.undo_list.setTextElideMode(Qt.TextElideMode.ElideRight)
         right_body_l.addWidget(self.undo_list, stretch=1)
         right_l.addWidget(right_body, stretch=1)
 
@@ -2472,14 +2552,27 @@ class MainWindow(QMainWindow):
                 atlas = self.resolver.lookup_atlas(pick.name)
                 if atlas is not None:
                     self.resolver.remember_dds(atlas.file_name, pick.dds_path)
-        self._push_prop_edit(before, node.capture_prop_state())
-        self._mark_xml_dirty()
-        self._show_props(node)
-        item = self.scene.item_for_node(node)
-        if item:
-            item.refresh_look()
+        if not self._commit_prop_change(node, before):
+            return
         self.statusBar().showMessage(f"Texture → {pick.name}")
         self._log("info", f"texture {node.path}: {pick.name} ({pick.kind})")
+
+    def _clear_texture(self) -> None:
+        if self._updating_props:
+            return
+        selected = [i for i in self.scene.selectedItems() if hasattr(i, "node")]
+        if not selected:
+            return
+        node: LayoutNode = selected[0].node
+        if node.from_meta or not node.is_drawable or node.texture is None:
+            return
+        before = node.capture_prop_state()
+        if not node.set_texture_name(""):
+            return
+        if not self._commit_prop_change(node, before):
+            return
+        self.statusBar().showMessage("Texture cleared")
+        self._log("info", f"texture {node.path}: cleared")
 
     def open_dialog(self) -> None:
         # Default start: first Settings custom root.
@@ -2671,7 +2764,7 @@ class MainWindow(QMainWindow):
         self._capture_session_meta()
 
     def _refresh_undo_list(self) -> None:
-        """Show newest ~10 undo entries (updates on push / undo / redo)."""
+        """Redo (top) then Undo, numbered per side; dashed rule between when both exist."""
         view = getattr(self, "undo_list", None)
         if view is None:
             return
@@ -2680,26 +2773,44 @@ class MainWindow(QMainWindow):
             if self._doc_mode == DOC_MODE_ATLAS
             else self.scene.undo_stack
         )
-        edits = stack.recent_undo(10)
+        redos = stack.recent_redo()
+        undos = stack.recent_undo()
         view.blockSignals(True)
         view.clear()
-        for edit in edits:
-            item = QListWidgetItem(edit.describe())
-            if isinstance(edit, PropEdit):
-                item.setToolTip(f"{edit.before.path}\n{edit.describe()}")
-            else:
-                tip_parts = []
-                for before, after in edit.parts[:6]:
-                    tip_parts.append(
-                        f"{before.path}: "
-                        f"({before.x:g},{before.y:g} {before.width:g}×{before.height:g}) → "
-                        f"({after.x:g},{after.y:g} {after.width:g}×{after.height:g})"
-                    )
-                if len(edit.parts) > 6:
-                    tip_parts.append(f"… +{len(edit.parts) - 6} more")
-                item.setToolTip("\n".join(tip_parts) if tip_parts else edit.describe())
-            view.addItem(item)
+        for i, edit in enumerate(redos, start=1):
+            view.addItem(self._undo_history_item(i, edit, side="redo"))
+        if redos and undos:
+            sep = QListWidgetItem()
+            sep.setFlags(Qt.ItemFlag.NoItemFlags)
+            sep.setData(Qt.ItemDataRole.UserRole, "separator")
+            sep.setSizeHint(QSize(1, 14))
+            view.addItem(sep)
+            view.setItemWidget(sep, _UndoHistorySeparator(view))
+        for i, edit in enumerate(undos, start=1):
+            view.addItem(self._undo_history_item(i, edit, side="undo"))
         view.blockSignals(False)
+
+    def _undo_history_item(
+        self, index: int, edit, *, side: str
+    ) -> QListWidgetItem:
+        label = edit.describe()
+        item = QListWidgetItem(f"{index}. {label}")
+        item.setForeground(QBrush(_UNDO_TONE_COLORS.get(edit.action_tone(), _DARK_TEXT)))
+        item.setData(Qt.ItemDataRole.UserRole, side)
+        if isinstance(edit, PropEdit):
+            item.setToolTip(f"{side}: {edit.before.path}\n{label}")
+        else:
+            tip_parts = [f"{side}:"]
+            for before, after in edit.parts[:6]:
+                tip_parts.append(
+                    f"{before.path}: "
+                    f"({before.x:g},{before.y:g} {before.width:g}×{before.height:g}) → "
+                    f"({after.x:g},{after.y:g} {after.width:g}×{after.height:g})"
+                )
+            if len(edit.parts) > 6:
+                tip_parts.append(f"… +{len(edit.parts) - 6} more")
+            item.setToolTip("\n".join(tip_parts))
+        return item
 
     def _has_unsaved_changes(self) -> bool:
         if self._doc_mode == DOC_MODE_ATLAS:
@@ -3987,7 +4098,11 @@ class MainWindow(QMainWindow):
                     tip_extra="\n".join(tip_bits),
                 )
         else:
-            self.prop_text.clear("(none)" if not node.text else "(empty <text>)")
+            if not node.text:
+                self.prop_text.clear("(none)")
+            else:
+                self.prop_text.clear("(empty <text>)")
+                self.prop_text.set_clearable(True)
         self._fill_text_prop_fields(node)
         self._fill_scroll_prop_fields(node)
         self._apply_prop_visibility(node)
@@ -4088,6 +4203,15 @@ class MainWindow(QMainWindow):
         if not edit.changed():
             return False
         self.scene.push_edit(edit)
+        return True
+
+    def _commit_prop_change(self, node: LayoutNode, before) -> bool:
+        """Push prop undo (add/remove text/texture, etc.), mark dirty, refresh UI."""
+        if not self._push_prop_edit(before, node.capture_prop_state()):
+            return False
+        self._mark_xml_dirty()
+        self._show_props(node)
+        self._refresh_selected_item(node)
         return True
 
     def _parse_geometry_fields(self) -> tuple[float, float, float, float] | None:
@@ -4233,17 +4357,30 @@ class MainWindow(QMainWindow):
         if entry is None:
             return
         before = node.capture_prop_state()
-        if not node.set_text_content(entry.string_id):
+        if not node.assign_text(entry.string_id):
             return
         self.strings.remember_string(entry)
-        self._push_prop_edit(before, node.capture_prop_state())
-        self._mark_xml_dirty()
-        self._show_props(node)
-        item = self.scene.item_for_node(node)
-        if item:
-            item.refresh_look()
+        if not self._commit_prop_change(node, before):
+            return
         self.statusBar().showMessage(f"Text → {entry.string_id}")
         self._log("info", f"text {node.path}: {entry.string_id}")
+
+    def _clear_text(self) -> None:
+        if self._updating_props:
+            return
+        selected = [i for i in self.scene.selectedItems() if hasattr(i, "node")]
+        if not selected:
+            return
+        node: LayoutNode = selected[0].node
+        if node.from_meta or not node.is_drawable or node.text is None:
+            return
+        before = node.capture_prop_state()
+        if not node.clear_text():
+            return
+        if not self._commit_prop_change(node, before):
+            return
+        self.statusBar().showMessage("Text cleared")
+        self._log("info", f"text {node.path}: cleared")
 
     def _on_stretch_toggled(self, checked: bool) -> None:
         if self._updating_props:
@@ -4434,6 +4571,26 @@ def _app_icon() -> QIcon:
     return QIcon(str(icon_path)) if icon_path.is_file() else QIcon()
 
 
+class _UndoHistorySeparator(QWidget):
+    """Single-line dashed rule that always spans the list viewport width."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setFixedHeight(14)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        del event
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        pen = QPen(QColor(90, 90, 98))
+        pen.setStyle(Qt.PenStyle.DashLine)
+        pen.setWidth(1)
+        painter.setPen(pen)
+        y = self.height() // 2
+        painter.drawLine(0, y, self.width(), y)
+
+
 _DARK_BG = QColor(18, 18, 20)
 _DARK_PANEL = QColor(30, 30, 34)
 _DARK_BASE = QColor(30, 30, 34)
@@ -4441,6 +4598,13 @@ _DARK_TEXT = QColor(212, 212, 212)
 _DARK_DISABLED = QColor(120, 120, 128)
 _DARK_HIGHLIGHT = QColor(38, 79, 120)
 _DARK_MID = QColor(50, 50, 56)
+# Undo list tones (muted on dark panel).
+_UNDO_TONE_COLORS = {
+    "add": QColor(129, 179, 129),  # soft green — assign / create
+    "remove": QColor(196, 120, 120),  # soft red — delete / clear
+    "change": QColor(196, 176, 110),  # soft amber — value / resize
+    "move": QColor(130, 170, 210),  # soft blue — position
+}
 
 
 def _dark_palette() -> QPalette:

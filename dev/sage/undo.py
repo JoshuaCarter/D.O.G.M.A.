@@ -59,6 +59,19 @@ class GeoEdit:
     def changed(self) -> bool:
         return any(b != a for b, a in self.parts)
 
+    def action_tone(self) -> str:
+        """List chrome tone: ``move`` | ``change`` (geometry)."""
+        if len(self.parts) > 1:
+            return "move"
+        before, after = self.parts[0]
+        size_changed = (before.width, before.height) != (after.width, after.height)
+        pos_changed = (before.x, before.y) != (after.x, after.y)
+        if size_changed and not pos_changed:
+            return "change"
+        if pos_changed and not size_changed:
+            return "move"
+        return "change"
+
     def describe(self) -> str:
         """Short label for the undo history list."""
         if len(self.parts) > 1:
@@ -200,12 +213,25 @@ class PropEdit:
     def changed(self) -> bool:
         return self.before != self.after
 
+    def action_tone(self) -> str:
+        """List chrome tone: ``add`` | ``remove`` | ``change``."""
+        b, a = self.before, self.after
+        if b.has_texture != a.has_texture:
+            return "add" if a.has_texture else "remove"
+        if b.has_text != a.has_text:
+            return "add" if a.has_text else "remove"
+        return "change"
+
     def describe(self) -> str:
         name = self.before.path.rsplit("/", 1)[-1] if self.before.path else "?"
         b, a = self.before, self.after
-        if b.texture_name != a.texture_name or b.has_texture != a.has_texture:
+        if b.has_texture != a.has_texture:
+            return f"{'Add' if a.has_texture else 'Remove'} texture {name}"
+        if b.texture_name != a.texture_name:
             return f"Texture {name}"
-        if b.text_content != a.text_content or b.has_text != a.has_text:
+        if b.has_text != a.has_text:
+            return f"{'Add' if a.has_text else 'Remove'} text {name}"
+        if b.text_content != a.text_content:
             return f"Text {name}"
         if b.stretch != a.stretch:
             return f"Stretch {name}"
@@ -277,11 +303,26 @@ class UndoStack:
     def can_redo(self) -> bool:
         return bool(self._redo)
 
-    def recent_undo(self, n: int = 10) -> list[Edit]:
-        """Newest-first slice of the undo stack (what Ctrl+Z will hit first)."""
+    def recent_undo(self, n: int | None = None) -> list[Edit]:
+        """Newest-first undo entries (what Ctrl+Z hits first).
+
+        ``n=None`` → full stack; ``n>0`` → at most that many newest entries.
+        """
+        return self._recent_side(self._undo, n)
+
+    def recent_redo(self, n: int | None = None) -> list[Edit]:
+        """Newest-first redo entries (what Ctrl+Y hits first)."""
+        return self._recent_side(self._redo, n)
+
+    @staticmethod
+    def _recent_side(stack: list[Edit], n: int | None) -> list[Edit]:
+        if not stack:
+            return []
+        if n is None:
+            return list(reversed(stack))
         if n <= 0:
             return []
-        return list(reversed(self._undo[-n:]))
+        return list(reversed(stack[-n:]))
 
     def undo(self) -> Edit | None:
         if not self._undo:

@@ -243,6 +243,40 @@ class LayoutNode:
         self.text = _read_text(self.element)
         return True
 
+    def assign_text(
+        self,
+        content: str,
+        *,
+        default_font: str = "letterica16",
+    ) -> bool:
+        """Set string-table body; ensure ``font`` so InitText won't crash."""
+        if self.from_meta:
+            return False
+        content = (content or "").strip()
+        if not content:
+            return False
+        changed = self.set_text_content(content)
+        t = self.element.find("text")
+        if t is None:
+            return False
+        if not (t.get("font") or "").strip():
+            font = (default_font or "").strip() or "letterica16"
+            if _set_attr(t, "font", font):
+                self.text = _read_text(self.element)
+                changed = True
+        return changed
+
+    def clear_text(self) -> bool:
+        """Remove the ``<text>`` child entirely. Returns True if something was removed."""
+        if self.from_meta:
+            return False
+        t = self.element.find("text")
+        if t is None:
+            return False
+        self.element.remove(t)
+        self.text = None
+        return True
+
     def prune_invalid_text(self) -> bool:
         """Drop fontless ``<text>`` (engine InitText crash). Returns True if removed."""
         if self.from_meta:
@@ -252,9 +286,7 @@ class LayoutNode:
             return False
         if (t.get("font") or "").strip():
             return False
-        self.element.remove(t)
-        self.text = None
-        return True
+        return self.clear_text()
 
     def apply_text_props(
         self,

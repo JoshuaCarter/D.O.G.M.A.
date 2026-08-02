@@ -208,16 +208,20 @@ class UiXmlDocument:
         found = self.doc.find_by_element(el)
         return found.path if found is not None else None
 
-    def reparent_as_children(
-        self, nodes: list[LayoutNode], new_parent: LayoutNode
+    def move_nodes(
+        self,
+        nodes: list[LayoutNode],
+        target: LayoutNode,
+        place: str,
     ) -> list[str] | None:
-        """Move ``nodes`` (roots only) to become last children of ``new_parent``.
+        """Move selection roots relative to ``target``.
 
+        ``place``: ``"on"`` (last children), ``"before"`` / ``"after"`` (siblings).
         Returns new paths of moved roots, or None if the move is illegal.
         """
         if self.root is None or self.doc is None:
             return None
-        if new_parent.element is None:
+        if target.element is None or place not in ("on", "before", "after"):
             return None
         # Only move roots among the selection (skip nodes under another selected).
         path_set = {n.path for n in nodes if n.path}
@@ -238,16 +242,24 @@ class UiXmlDocument:
                 roots.append(n)
         if not roots:
             return None
-        # Reject drop onto a dragged node or any of its descendants.
+        # Reject drop onto / beside a dragged node or any of its descendants.
         for root in roots:
-            if new_parent is root:
+            if target is root:
                 return None
-            if new_parent.path and root.path:
+            if target.path and root.path:
                 if (
-                    new_parent.path == root.path
-                    or new_parent.path.startswith(root.path + PATH_SEP)
+                    target.path == root.path
+                    or target.path.startswith(root.path + PATH_SEP)
                 ):
                     return None
+        if place == "on":
+            dest_parent_el = target.element
+        else:
+            parent = target.parent
+            if parent is None or target.element is self.root:
+                return None
+            dest_parent_el = parent.element
+        target_el = target.element
         old_by_el = {id(n.element): n.path for n in self.doc.iter_all() if n.path}
         moved_els: list[ET.Element] = []
         for root in roots:
@@ -258,10 +270,23 @@ class UiXmlDocument:
                 parent.element.remove(root.element)
             except ValueError:
                 continue
-            new_parent.element.append(root.element)
             moved_els.append(root.element)
         if not moved_els:
             return None
+        # Insert after removals so same-parent reorder indices stay correct.
+        if place == "on":
+            for el in moved_els:
+                dest_parent_el.append(el)
+        else:
+            children = list(dest_parent_el)
+            try:
+                at = children.index(target_el)
+            except ValueError:
+                return None
+            if place == "after":
+                at += 1
+            for i, el in enumerate(moved_els):
+                dest_parent_el.insert(at + i, el)
         self.refresh_model()
         assert self.doc is not None
         self._remap_meta_paths(old_by_el)

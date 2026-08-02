@@ -183,13 +183,24 @@ class _TreePeerDelegate(QStyledItemDelegate):
             opt.palette.setColor(QPalette.ColorRole.Text, QColor(200, 200, 210))
             opt.palette.setColor(QPalette.ColorRole.HighlightedText, QColor(200, 200, 210))
         super().paint(painter, opt, index)
-        if index.data(_TREE_DROP_TARGET_ROLE):
-            painter.save()
-            pen = QPen(QColor(150, 150, 155), 1, Qt.PenStyle.DashLine)
+        place = index.data(_TREE_DROP_TARGET_ROLE)
+        if not place:
+            return
+        painter.save()
+        pen = QPen(QColor(150, 150, 155), 1, Qt.PenStyle.DashLine)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        r = opt.rect
+        if place == "on":
+            painter.drawRect(r.adjusted(1, 1, -2, -2))
+        else:
+            # Insertion line between rows (before = top edge, after = bottom).
+            y = r.top() + 1 if place == "before" else r.bottom() - 1
+            pen.setStyle(Qt.PenStyle.SolidLine)
+            pen.setWidth(2)
             painter.setPen(pen)
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.drawRect(opt.rect.adjusted(1, 1, -2, -2))
-            painter.restore()
+            painter.drawLine(r.left() + 4, y, r.right() - 4, y)
+        painter.restore()
 
 
 class BusyOverlay(QWidget):
@@ -707,7 +718,8 @@ class ElementTreeWidget(QTreeWidget):
     are left to Qt. Dragging an unselected row selects it first, then drags.
     """
 
-    reparent_drop = pyqtSignal(list, str)  # source paths, target path
+    # paths, target path, place ("on" | "before" | "after")
+    reparent_drop = pyqtSignal(list, str, str)
     hover_cleared = pyqtSignal()  # pointer left rows (Leave / empty gap)
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -734,6 +746,7 @@ class ElementTreeWidget(QTreeWidget):
         self._sel_anchor: QTreeWidgetItem | None = None
         self._reparent_enabled = True
         self._drop_hover: QTreeWidgetItem | None = None
+        self._drop_place: str = ""
 
     def set_reparent_enabled(self, enabled: bool) -> None:
         self._reparent_enabled = bool(enabled)
@@ -832,40 +845,56 @@ class ElementTreeWidget(QTreeWidget):
             # One notification after the batch.
             self.itemSelectionChanged.emit()
 
-    def _drop_target_at(self, pos: QPoint) -> QTreeWidgetItem | None:
+    def _drop_at(self, pos: QPoint) -> tuple[QTreeWidgetItem | None, str]:
+        """Hit-test drop: top/bottom thirds = sibling insert, middle = child."""
         target = self.itemAt(pos)
         if target is None or target.isSelected():
-            return None
+            return None, ""
         if not self._item_key(target):
-            return None
-        return target
+            return None, ""
+        rect = self.visualItemRect(target)
+        if rect.height() <= 0:
+            return target, "on"
+        y = pos.y() - rect.top()
+        third = rect.height() / 3.0
+        if y < third:
+            place = "before"
+        elif y > rect.height() - third:
+            place = "after"
+        else:
+            place = "on"
+        return target, place
 
-    def _set_drop_hover(self, item: QTreeWidgetItem | None) -> None:
-        if self._drop_hover is item:
+    def _set_drop_hover(
+        self, item: QTreeWidgetItem | None, place: str = ""
+    ) -> None:
+        if item is None:
+            place = ""
+        if self._drop_hover is item and self._drop_place == place:
             return
         if self._drop_hover is not None:
-            self._drop_hover.setData(0, _TREE_DROP_TARGET_ROLE, False)
+            self._drop_hover.setData(0, _TREE_DROP_TARGET_ROLE, None)
         self._drop_hover = item
-        if item is not None:
-            item.setData(0, _TREE_DROP_TARGET_ROLE, True)
+        self._drop_place = place
+        if item is not None and place:
+            item.setData(0, _TREE_DROP_TARGET_ROLE, place)
         self.viewport().update()
 
     @staticmethod
-    def _drag_plus_cursor() -> QPixmap:
-        """Move-action badge: ~3× the usual 16px OS plus."""
-        s = 48
+    def _drag_plus_pixmap() -> QPixmap:
+        """Small plus badge shown beside the OS cursor during reparent drag."""
+        s = 16
         pm = QPixmap(s, s)
         pm.fill(Qt.GlobalColor.transparent)
         painter = QPainter(pm)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        # Soft disc so it reads over any tree row.
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(40, 40, 46, 210))
+        painter.setBrush(QColor(40, 40, 46, 220))
         painter.drawEllipse(1, 1, s - 2, s - 2)
-        pen = QPen(QColor(210, 210, 215), 5, Qt.PenStyle.SolidLine)
+        pen = QPen(QColor(210, 210, 215), 2.0, Qt.PenStyle.SolidLine)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         painter.setPen(pen)
-        m = 12
+        m = 4
         mid = s // 2
         painter.drawLine(mid, m, mid, s - m)
         painter.drawLine(m, mid, s - m, mid)
@@ -884,12 +913,23 @@ class ElementTreeWidget(QTreeWidget):
         mime.setData(_TREE_DRAG_MIME, "\n".join(paths).encode("utf-8"))
         drag = QDrag(self)
         drag.setMimeData(mime)
-        plus = self._drag_plus_cursor()
-        drag.setPixmap(plus)
-        drag.setHotSpot(QPoint(plus.width() // 2, plus.height() // 2))
-        drag.setDragCursor(plus, Qt.DropAction.MoveAction)
-        drag.setDragCursor(plus, Qt.DropAction.CopyAction)
-        drag.exec(Qt.DropAction.MoveAction)
+        # Only a floating plus badge. Do not setDragCursor — that replaces the
+        # OS pointer (and on Windows stock cursors have no pixmap, so a tiny
+        # hand-drawn arrow was being used instead).
+        plus = self._drag_plus_pixmap()
+        pad = 12
+        badge = QPixmap(plus.width() + pad, plus.height() + pad)
+        badge.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(badge)
+        painter.drawPixmap(pad, pad, plus)
+        painter.end()
+        drag.setPixmap(badge)
+        drag.setHotSpot(QPoint(0, 0))
+        QApplication.setOverrideCursor(Qt.CursorShape.ArrowCursor)
+        try:
+            drag.exec(Qt.DropAction.MoveAction)
+        finally:
+            QApplication.restoreOverrideCursor()
         self._set_drop_hover(None)
 
     def eventFilter(self, obj, event) -> bool:  # noqa: N802
@@ -972,7 +1012,7 @@ class ElementTreeWidget(QTreeWidget):
                 return True
             return False
 
-        # --- reparent drop ---
+        # --- reparent / reorder drop ---
         if self._reparent_enabled:
             if et == QEvent.Type.DragEnter:
                 if event.mimeData().hasFormat(_TREE_DRAG_MIME):
@@ -981,12 +1021,12 @@ class ElementTreeWidget(QTreeWidget):
                     event.ignore()
                 return True
             if et == QEvent.Type.DragMove:
-                target = (
-                    self._drop_target_at(event.position().toPoint())
+                target, place = (
+                    self._drop_at(event.position().toPoint())
                     if event.mimeData().hasFormat(_TREE_DRAG_MIME)
-                    else None
+                    else (None, "")
                 )
-                self._set_drop_hover(target)
+                self._set_drop_hover(target, place)
                 if target is not None:
                     event.acceptProposedAction()
                 else:
@@ -996,13 +1036,13 @@ class ElementTreeWidget(QTreeWidget):
                 self._set_drop_hover(None)
                 return True
             if et == QEvent.Type.Drop:
-                target = (
-                    self._drop_target_at(event.position().toPoint())
+                target, place = (
+                    self._drop_at(event.position().toPoint())
                     if event.mimeData().hasFormat(_TREE_DRAG_MIME)
-                    else None
+                    else (None, "")
                 )
                 self._set_drop_hover(None)
-                if target is None:
+                if target is None or not place:
                     event.ignore()
                     return True
                 raw = bytes(event.mimeData().data(_TREE_DRAG_MIME)).decode("utf-8")
@@ -1014,7 +1054,10 @@ class ElementTreeWidget(QTreeWidget):
                 tkey = self._item_key(target)
                 # Defer past Qt's drop teardown.
                 QTimer.singleShot(
-                    0, lambda p=paths, t=tkey: self.reparent_drop.emit(p, t)
+                    0,
+                    lambda p=paths, t=tkey, pl=place: self.reparent_drop.emit(
+                        p, t, pl
+                    ),
                 )
                 return True
 
@@ -3344,7 +3387,7 @@ class MainWindow(QMainWindow):
         self._apply_preview_doc(doc)
         self._reveal_workspace()
         self._restore_view_or_fit()
-        self.setWindowTitle(f"D.O.G.M.A. Stalker Anomaly Gui Editor - {path.name}")
+        self.setWindowTitle(f"D.O.G.M.A. Stalker Anomaly Gui Editor - {path.resolve()}")
         widgets = len(doc.iter_drawables())
         meta_n = sum(1 for n in doc.iter_drawables() if n.from_meta)
         self._log(
@@ -3397,7 +3440,7 @@ class MainWindow(QMainWindow):
         self._reveal_workspace()
         self.descr_board.fit_stage()
         self.setWindowTitle(
-            f"D.O.G.M.A. Stalker Anomaly Gui Editor - {path.name} [atlas]"
+            f"D.O.G.M.A. Stalker Anomaly Gui Editor - {path.resolve()} [atlas]"
         )
         n_reg = sum(len(s.regions) for s in sheets)
         self._log(
@@ -3991,7 +4034,7 @@ class MainWindow(QMainWindow):
                 self._remember_file_dir(Path(path))
                 self._remember_recent_file(Path(path))
                 self.setWindowTitle(
-                    f"D.O.G.M.A. Stalker Anomaly Gui Editor - {Path(path).name} [atlas]"
+                    f"D.O.G.M.A. Stalker Anomaly Gui Editor - {Path(path).resolve()} [atlas]"
                 )
             except Exception as exc:  # noqa: BLE001
                 self._log("error", f"Save failed: {exc}")
@@ -4028,7 +4071,7 @@ class MainWindow(QMainWindow):
         saved = Path(path)
         self._remember_file_dir(saved)
         self._remember_recent_file(saved)
-        self.setWindowTitle(f"D.O.G.M.A. Stalker Anomaly Gui Editor - {saved.name}")
+        self.setWindowTitle(f"D.O.G.M.A. Stalker Anomaly Gui Editor - {saved.resolve()}")
         meta = self.doc.meta_path
         extra = f" + {meta.name}" if meta and meta.is_file() else ""
         self._log("info", f"Saved {saved}{extra}")
@@ -4539,9 +4582,13 @@ class MainWindow(QMainWindow):
         finally:
             self.tree.blockSignals(False)
 
-    def _on_tree_reparent_drop(self, paths: list, target_path: str) -> None:
-        """Append dragged elements as children of the drop target (undoable)."""
+    def _on_tree_reparent_drop(
+        self, paths: list, target_path: str, place: str
+    ) -> None:
+        """Move dragged elements on/before/after the drop target (undoable)."""
         if self._doc_mode != DOC_MODE_UI or self.doc.doc is None:
+            return
+        if place not in ("on", "before", "after"):
             return
         doc = self.doc.doc
         target = doc.find_by_path(target_path)
@@ -4556,24 +4603,32 @@ class MainWindow(QMainWindow):
             return
         before = self.doc.structure_snapshot()
         select_before = tuple(n.path for n in nodes if n.path)
-        new_paths = self.doc.reparent_as_children(nodes, target)
+        new_paths = self.doc.move_nodes(nodes, target, place)
         if not new_paths:
-            self.statusBar().showMessage("Cannot reparent onto that target")
+            self.statusBar().showMessage("Cannot drop onto that target")
             return
         tname = target_path.rsplit("/", 1)[-1]
-        if len(new_paths) == 1:
-            summary = f"Reparent {new_paths[0].rsplit('/', 1)[-1]} → {tname}"
+        moved = (
+            new_paths[0].rsplit("/", 1)[-1]
+            if len(new_paths) == 1
+            else f"{len(new_paths)} items"
+        )
+        if place == "on":
+            summary = f"Reparent {moved} → {tname}"
+            status = f"Reparented {len(new_paths)} → {target_path}"
+        elif place == "before":
+            summary = f"Move {moved} before {tname}"
+            status = f"Moved {len(new_paths)} before {target_path}"
         else:
-            summary = f"Reparent {len(new_paths)} → {tname}"
+            summary = f"Move {moved} after {tname}"
+            status = f"Moved {len(new_paths)} after {target_path}"
         self._commit_structure_edit(
             before,
             summary=summary,
             select_before=select_before,
             select_after=tuple(new_paths),
         )
-        self.statusBar().showMessage(
-            f"Reparented {len(new_paths)} → {target_path}"
-        )
+        self.statusBar().showMessage(status)
 
     def _commit_structure_edit(
         self,

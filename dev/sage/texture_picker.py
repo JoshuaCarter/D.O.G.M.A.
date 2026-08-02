@@ -48,9 +48,13 @@ _ROLE_PATH = int(Qt.ItemDataRole.UserRole) + 2
 _ROLE_FILE = int(Qt.ItemDataRole.UserRole) + 3
 _ROLE_UV = int(Qt.ItemDataRole.UserRole) + 4  # "x,y,w,h" or ""
 _ROLE_SHORT = int(Qt.ItemDataRole.UserRole) + 5  # icon-grid caption
+_ROLE_ICON_KEY = int(Qt.ItemDataRole.UserRole) + 6  # last applied thumb cache key
 _THUMB = PICKER_THUMB_SIZE
 _SCROLL_SETTLE_MS = 80
+_FILTER_DEBOUNCE_MS = 150
 _MAX_WORKERS = 8
+# When visualRect isn't ready yet, still decode roughly one screen of icons.
+_FALLBACK_VISIBLE = 80
 # Wheel: fixed pixels per 120° notch (not a fraction of content height).
 _WHEEL_STEP_PX = 120
 
@@ -155,11 +159,10 @@ class TexturePickerDialog(QDialog):
         self._placeholder = _placeholder_icon()
         self._fail = _fail_icon()
         self._thumb_cache: dict[str, QIcon] = {}
-        # Visible items waiting for a decode (key → item).
+        # Items waiting for a decode (key → item).
         self._pending: dict[str, QListWidgetItem] = {}
         # In-flight worker futures (key → Future).
         self._inflight: dict[str, Future] = {}
-        self._wanted: set[str] = set()
         self._current = (current_name or "").strip()
         self._mode = "path" if prefer_path else "atlas"
         self._pool = ThreadPoolExecutor(max_workers=_MAX_WORKERS)
@@ -212,7 +215,7 @@ class TexturePickerDialog(QDialog):
 
         self.filter_edit = QLineEdit()
         self.filter_edit.setPlaceholderText("Filter…")
-        self.filter_edit.textChanged.connect(self._apply_filter)
+        self.filter_edit.textChanged.connect(self._on_filter_text_changed)
         lay.addWidget(self.filter_edit)
 
         self.status = QLabel("Scanning…")
@@ -233,8 +236,9 @@ class TexturePickerDialog(QDialog):
         self.list.setMovement(QListWidget.Movement.Static)
         self.list.setWordWrap(True)
         self.list.setUniformItemSizes(True)
-        self.list.setLayoutMode(QListView.LayoutMode.Batched)
-        self.list.setBatchSize(64)
+        # SinglePass: Batched layout after filter hide/show paints the grid in
+        # chunks and reads as flicker. IconMode + uniform sizes is cheap enough.
+        self.list.setLayoutMode(QListView.LayoutMode.SinglePass)
         self.list.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.list.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.list.verticalScrollBar().setSingleStep(_WHEEL_STEP_PX // 3)
@@ -261,11 +265,17 @@ class TexturePickerDialog(QDialog):
         self._scroll_timer.setSingleShot(True)
         self._scroll_timer.setInterval(_SCROLL_SETTLE_MS)
         self._scroll_timer.timeout.connect(self._sync_visible_thumbs)
+        # Debounce filter so typing doesn't thrash hide/show every key.
+        self._filter_timer = QTimer(self)
+        self._filter_timer.setSingleShot(True)
+        self._filter_timer.setInterval(_FILTER_DEBOUNCE_MS)
+        self._filter_timer.timeout.connect(self._apply_filter_now)
 
         self._set_icon_mode(True)
         QTimer.singleShot(0, self._scan_and_populate)
 
     def closeEvent(self, event) -> None:  # noqa: N802
+        self._filter_timer.stop()
         self._cancel_all_thumbs()
         self._pool.shutdown(wait=False, cancel_futures=True)
         super().closeEvent(event)
@@ -374,11 +384,8 @@ class TexturePickerDialog(QDialog):
             self._cancel_all_thumbs()
 
     def _on_scroll(self, _value: int = 0) -> None:
-        if not self.preview_check.isChecked():
-            return
-        # Drop work for cells that left the viewport immediately; load after settle.
-        self._prune_pending_to_visible()
-        self._scroll_timer.start()
+        if self.preview_check.isChecked():
+            self._scroll_timer.start()
 
     def _scan_and_populate(self) -> None:
         self._ensure_mode_catalog()
@@ -462,37 +469,51 @@ class TexturePickerDialog(QDialog):
                         select_row = i
                 self.status.setText(f"{len(dds_list)} DDS paths")
 
-            self._apply_filter(self.filter_edit.text())
+            self._apply_filter_now(schedule_thumbs=False)
             if select_row >= 0:
                 self.list.setCurrentRow(select_row)
                 self.list.scrollToItem(self.list.item(select_row))
         finally:
             self.list.setUpdatesEnabled(True)
         if self.preview_check.isChecked():
-            self._sync_visible_thumbs()
+            self._scroll_timer.start()
         self._on_selection_changed()
 
-    def _apply_filter(self, text: str) -> None:
-        needle = (text or "").strip().lower().replace("/", "\\")
+    def _on_filter_text_changed(self, _text: str = "") -> None:
+        self._filter_timer.start()
+
+    def _apply_filter_now(self, *, schedule_thumbs: bool = True) -> None:
+        """Show/hide rows for the current filter text in one repaint."""
+        needle = (self.filter_edit.text() or "").strip().lower().replace("/", "\\")
+        viewport = self.list.viewport()
+        # Freeze the viewport so the hide/show relayout paints once, not per row.
+        viewport.setUpdatesEnabled(False)
         visible = 0
-        for i in range(self.list.count()):
-            item = self.list.item(i)
-            if item is None:
-                continue
-            name = str(item.data(_ROLE_NAME) or "").lower()
-            file_name = str(item.data(_ROLE_FILE) or "").lower()
-            show = not needle or needle in name or needle in file_name
-            item.setHidden(not show)
-            if show:
-                visible += 1
+        try:
+            for i in range(self.list.count()):
+                item = self.list.item(i)
+                if item is None:
+                    continue
+                name = str(item.data(_ROLE_NAME) or "").lower()
+                file_name = str(item.data(_ROLE_FILE) or "").lower()
+                show = not needle or needle in name or needle in file_name
+                if item.isHidden() == (not show):
+                    if show:
+                        visible += 1
+                    continue
+                item.setHidden(not show)
+                if show:
+                    visible += 1
+        finally:
+            viewport.setUpdatesEnabled(True)
         total = self.list.count()
         kind = "atlas ids" if self._mode == "atlas" else "DDS paths"
         if needle:
             self.status.setText(f"{visible} / {total} {kind}")
         else:
             self.status.setText(f"{total} {kind}")
-        if self.preview_check.isChecked():
-            self._sync_visible_thumbs()
+        if schedule_thumbs and self.preview_check.isChecked():
+            self._scroll_timer.start()
 
     def _on_selection_changed(self) -> None:
         pick = self.selected_pick()
@@ -529,74 +550,76 @@ class TexturePickerDialog(QDialog):
         # Slight pad so near-edge cells start loading before fully on screen.
         rect = rect.adjusted(-8, -8, 8, 8)
         out: list[QListWidgetItem] = []
+        if rect.width() > 0 and rect.height() > 0:
+            for i in range(self.list.count()):
+                item = self.list.item(i)
+                if item is None or item.isHidden():
+                    continue
+                idx = self.list.indexFromItem(item)
+                if not idx.isValid():
+                    continue
+                vr = self.list.visualRect(idx)
+                if vr.isNull() or not vr.intersects(rect):
+                    continue
+                out.append(item)
+        if out:
+            return out
+        # Layout not computed yet (first show / mid-relayout): take the first
+        # screenful of unhidden items so thumbs still load.
         for i in range(self.list.count()):
             item = self.list.item(i)
             if item is None or item.isHidden():
                 continue
-            idx = self.list.indexFromItem(item)
-            if not idx.isValid():
-                continue
-            if self.list.visualRect(idx).intersects(rect):
-                out.append(item)
+            out.append(item)
+            if len(out) >= _FALLBACK_VISIBLE:
+                break
         return out
-
-    def _prune_pending_to_visible(self) -> None:
-        """Cancel queued/in-flight work for cells that left the viewport."""
-        visible_keys = {self._cache_key(it) for it in self._iter_visible_items()}
-        self._wanted = visible_keys
-        for key in list(self._pending):
-            if key not in visible_keys:
-                self._pending.pop(key, None)
-        for key, fut in list(self._inflight.items()):
-            if key in visible_keys:
-                continue
-            fut.cancel()
-            self._inflight.pop(key, None)
 
     def _cancel_all_thumbs(self) -> None:
         self._scroll_timer.stop()
-        self._wanted.clear()
         self._pending.clear()
         for fut in self._inflight.values():
             fut.cancel()
         self._inflight.clear()
 
+    def _apply_icon(self, item: QListWidgetItem, key: str, icon: QIcon) -> None:
+        # Skip redundant setIcon — repainting identical cells reads as flicker.
+        if item.data(_ROLE_ICON_KEY) != key:
+            item.setData(_ROLE_ICON_KEY, key)
+            item.setIcon(icon)
+
     def _sync_visible_thumbs(self) -> None:
-        """Apply cached icons + start async decode only for visible cells."""
+        """Apply cached icons + start async decode for visible cells."""
         if not self.preview_check.isChecked():
             return
         visible = self._iter_visible_items()
         wanted = {self._cache_key(it) for it in visible}
-        self._wanted = wanted
 
-        # Drop pending for off-screen cells.
+        # Drop queued/in-flight work for cells no longer on screen.
         for key in list(self._pending):
             if key not in wanted:
                 self._pending.pop(key, None)
         for key, fut in list(self._inflight.items()):
-            if key in wanted:
-                continue
-            fut.cancel()
-            self._inflight.pop(key, None)
+            if key not in wanted:
+                fut.cancel()
+                self._inflight.pop(key, None)
 
         for item in visible:
             key = self._cache_key(item)
             cached = self._thumb_cache.get(key)
             if cached is not None:
-                item.setIcon(cached)
-                continue
-            if key in self._inflight or key in self._pending:
-                continue
-            self._pending[key] = item
-            self._submit_thumb(key, item)
+                self._apply_icon(item, key, cached)
+            elif key not in self._inflight:
+                self._pending[key] = item
+                self._submit_thumb(key, item)
 
     def _submit_thumb(self, key: str, item: QListWidgetItem) -> None:
         path_s = str(item.data(_ROLE_PATH) or "")
         uv_s = str(item.data(_ROLE_UV) or "")
         if not path_s:
             self._thumb_cache[key] = self._fail
-            item.setIcon(self._fail)
             self._pending.pop(key, None)
+            self._apply_icon(item, key, self._fail)
             return
         uv: tuple[float, float, float, float] | None = None
         if uv_s:
@@ -633,17 +656,13 @@ class TexturePickerDialog(QDialog):
         else:
             icon = self._fail
         self._thumb_cache[key] = icon
-        # Only paint if preview on and still wanted (visible); cache kept for later.
-        if not self.preview_check.isChecked() or key not in self._wanted:
+        if item is None or not self.preview_check.isChecked():
             return
-        if item is None:
-            # Find by key among visible if pending was pruned.
-            for it in self._iter_visible_items():
-                if self._cache_key(it) == key:
-                    item = it
-                    break
-        if item is not None:
-            item.setIcon(icon)
+        try:
+            self._apply_icon(item, key, icon)
+        except RuntimeError:
+            # Item was deleted (list repopulated); the cache keeps the thumb.
+            pass
 
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)

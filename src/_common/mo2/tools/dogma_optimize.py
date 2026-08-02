@@ -18,6 +18,7 @@ ALAO_URL = (
     "https://www.moddb.com/mods/stalker-anomaly/addons/"
     "alao-anomaly-lua-auto-optimizer-tool"
 )
+ALAO_MOD_NAME = "ALAO"
 GC_SCRIPT_NAME = "zzzz_dogma_lua_gc.script"
 GC_SCRIPT_BODY = """--[[
 	DOGMA - Lua GC policy (LuaJIT / Lua 5.1).
@@ -57,23 +58,18 @@ def _yn(prompt: str, default_yes: bool = True) -> bool:
     return raw in ("y", "yes")
 
 
-def _alao_mod_candidates(mo2_root: Path) -> list[Path]:
-    """ALAO installed as an MO2 mod (the ModDB zip nests anomaly_alao-main/)."""
-    mods = mo2_root / "mods"
-    if not mods.is_dir():
-        return []
-    hits = list(mods.glob("*/stalker_lua_lint.py"))
-    hits += mods.glob("*/*/stalker_lua_lint.py")
-    return sorted((h.parent for h in hits), key=lambda p: str(p).lower())
-
-
 def resolve_alao_root(mo2_root: Path | None = None) -> Path | None:
     env = (os.environ.get("ALAO_PATH") or "").strip()
     candidates: list[Path] = []
     if env:
         candidates.append(Path(env))
     if mo2_root is not None:
-        candidates.extend(_alao_mod_candidates(mo2_root))
+        # "anomaly_alao" is MO2's default mod name for the ModDB zip.
+        for name in (ALAO_MOD_NAME, "anomaly_alao"):
+            mod = mo2_root / "mods" / name
+            # ModDB zip nests everything under anomaly_alao-main/.
+            candidates.append(mod)
+            candidates.append(mod / "anomaly_alao-main")
     candidates.append(Path(r"c:\gamma_dev\ALAO"))
     # …/DOGMA/src/_common/mo2/tools → parents[4] = repo root → sibling ALAO
     try:
@@ -373,10 +369,9 @@ def run_alao(
         lib.err(
             "Could not find ALAO (Anomaly Lua Auto Optimizer).\n"
             f"Download: {ALAO_URL}\n"
-            "Then either install the zip in Mod Organizer 2 like any other\n"
-            "addon (MO2 warns that it has no game data - that is fine, and\n"
-            "it can stay unchecked), or set the ALAO_PATH environment\n"
-            "variable to your unpacked ALAO folder."
+            "Install the zip in Mod Organizer 2 with the suggested mod name.\n"
+            "(MO2 warns that it has no game data - that is fine, and it can\n"
+            "stay unchecked.)"
         )
         return 1
 

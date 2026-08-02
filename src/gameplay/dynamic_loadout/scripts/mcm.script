@@ -4,9 +4,11 @@
 	Must live in *mcm.script so it loads at the New Game screen.
 	_conf.script is prepended by the build.
 
-	Hooks LoadLoadout only: fills the inventory panel with scored free supply.
-	Also hooks UINewGame.OnQuit (clear cached dlg) + main_menu.ShowFactionUI so
-	re-opening New Game rescans. Does not touch OnRandomize.
+	Hooks LoadLoadout: fills the purchase panel with scored supply.
+	Heavy scan/score is deferred to UINewGame:Update (after ShowDialog) so the
+	ctor cannot stall/kill New Game. Scored pools are cached for later opens.
+	Also hooks OnQuit (clear cached dlg) + ShowFactionUI for re-open refresh.
+	Does not touch OnRandomize.
 ]]
 
 local CONFIG = _G.dogma_gameplay_dynamic_loadout_conf
@@ -1195,18 +1197,43 @@ local function ammo_stacks_for_weapons(weapons, ammo_scored)
 	return ordered
 end
 
--- Entries for the purchase (loadout) panel: { sec=, pts= }
-local function build_shop_entries(faction)
-	local sformat = string.format
-	STATE.pools = nil
-	STATE.ammo_secs = nil
+-- Fingerprint of MCM knobs that affect scored pts (not faction filters).
+local function score_cfg_fingerprint()
+	local parts = {
+		"cw=" .. tostring(cost_mult_for("weapon")),
+		"ca=" .. tostring(cost_mult_for("armor")),
+		"ch=" .. tostring(cost_mult_for("helmet")),
+		"cm=" .. tostring(cost_mult_for("ammo")),
+		"cs=" .. tostring(cost_mult_for("sight")),
+	}
+	local keys = CONFIG.WEIGHT_KEYS or {}
+	for i = 1, #keys do
+		local k = keys[i]
+		parts[#parts + 1] = k .. "=" .. tostring(cfg_num(k))
+	end
+	return table.concat(parts, "|")
+end
 
-	dlog(string.format(
-		"=== dynamic loadout shop faction=%s cost_mult w/a/h/ammo/sight=%d/%d/%d/%d/%d ===",
-		tostring(faction),
-		cost_mult_for("weapon"), cost_mult_for("armor"), cost_mult_for("helmet"),
-		cost_mult_for("ammo"), cost_mult_for("sight")
-	))
+-- Fingerprint for faction shop lists (scores + supply caps / armor rules).
+local function shop_cfg_fingerprint()
+	return table.concat({
+		score_cfg_fingerprint(),
+		"mw=" .. tostring(cfg_num("max_pts_weapon")),
+		"ma=" .. tostring(cfg_num("max_pts_armor")),
+		"mh=" .. tostring(cfg_num("max_pts_helmet")),
+		"mm=" .. tostring(cfg_num("max_pts_ammo")),
+		"ms=" .. tostring(cfg_num("max_pts_sight")),
+		"univ=" .. tostring(cfg_bool("include_universal_armor")),
+	}, "|")
+end
+
+-- Heavy scan+score once per score-cfg; reused across factions / reopens.
+local function ensure_scored()
+	local fp = score_cfg_fingerprint()
+	if STATE.scored and STATE.scored_fp == fp then
+		return STATE.scored
+	end
+	printf("[dogma_gameplay_dynamic_loadout] scoring shop pools (scan+score)...")
 	local pools = scan_all()
 	local scored = {
 		weapons = build_scored(pools.weapons, "weapon"),
@@ -1214,6 +1241,44 @@ local function build_shop_entries(faction)
 		helmets = build_scored(pools.helmets, "helmet"),
 		ammos = build_scored(pools.ammos, "ammo"),
 	}
+	STATE.scored = scored
+	STATE.scored_fp = fp
+	STATE.shop_cache = {}
+	STATE.shop_cache_fp = nil
+	printf("[dogma_gameplay_dynamic_loadout] scored pools: w=%d a=%d h=%d ammo=%d",
+		#scored.weapons, #scored.armors, #scored.helmets, #scored.ammos)
+	return scored
+end
+
+local function scored_ready()
+	return STATE.scored and STATE.scored_fp == score_cfg_fingerprint()
+end
+
+-- Entries for the purchase (loadout) panel: { sec=, pts= }
+local function build_shop_entries(faction)
+	local sformat = string.format
+	STATE.pools = nil
+	STATE.ammo_secs = nil
+
+	local shop_fp = shop_cfg_fingerprint()
+	local cache_key = tostring(faction or "stalker")
+	if STATE.shop_cache and STATE.shop_cache_fp == shop_fp then
+		local hit = STATE.shop_cache[cache_key]
+		if hit then
+			return hit
+		end
+	else
+		STATE.shop_cache = {}
+		STATE.shop_cache_fp = shop_fp
+	end
+
+	dlog(string.format(
+		"=== dynamic loadout shop faction=%s cost_mult w/a/h/ammo/sight=%d/%d/%d/%d/%d ===",
+		tostring(faction),
+		cost_mult_for("weapon"), cost_mult_for("armor"), cost_mult_for("helmet"),
+		cost_mult_for("ammo"), cost_mult_for("sight")
+	))
+	local scored = ensure_scored()
 
 	local weapons = filter_weapons(scored.weapons, faction, cfg_num("max_pts_weapon"))
 	local armors = dedupe_scored(filter_armors(scored.armors, faction, cfg_num("max_pts_armor")))
@@ -1255,6 +1320,8 @@ local function build_shop_entries(faction)
 		"shop counts: outfit=%d helmet=%d weapon=%d ammo=%d entries=%d",
 		#armors, #helmets, #weapons, #ammo_secs, #entries
 	))
+	STATE.shop_cache[cache_key] = entries
+	STATE.shop_cache_fp = shop_fp
 	return entries
 end
 
@@ -1389,6 +1456,44 @@ local function slog(msg)
 	printf("[dogma_gameplay_dynamic_loadout] %s", tostring(msg))
 end
 
+local function apply_entries_to_dlg(self, entries, why)
+	if not (self and self.CC and self.CC["loadout"]) then
+		slog((why or "apply") .. ": dialog gone before shop apply")
+		return false
+	end
+	local ok_apply, err_apply = pcall(function()
+		apply_shop_to_ui(self, entries or {})
+	end)
+	if not ok_apply then
+		slog("apply_shop_to_ui FAILED: " .. tostring(err_apply))
+		return false
+	end
+	slog(string.format("%s: shop entries=%d", why or "apply", entries and #entries or 0))
+	return true
+end
+
+-- Build+apply once the dialog is alive (Update runs after ShowDialog).
+local function flush_pending_shop(self)
+	local faction = self and self._dogma_dl_pending_faction
+	if not faction then
+		return
+	end
+	-- Clear first to avoid re-entry if apply/score errors.
+	self._dogma_dl_pending_faction = nil
+	if not cfg_bool("enabled") then
+		return
+	end
+	local entries
+	local ok, err = pcall(function()
+		entries = build_shop_entries(faction)
+	end)
+	if not ok then
+		slog("build_shop_entries FAILED: " .. tostring(err))
+		return
+	end
+	apply_entries_to_dlg(self, entries, "Update")
+end
+
 local function wrap_load_loadout(cls)
 	if STATE.wrap_load and cls.LoadLoadout == STATE.wrap_load then
 		return true
@@ -1400,60 +1505,59 @@ local function wrap_load_loadout(cls)
 
 	local function wrapped(self, rand)
 		if not cfg_bool("enabled") then
+			self._dogma_dl_pending_faction = nil
 			return base(self, rand)
 		end
 
-		-- Stock LoadLoadout first (fast). Heavy scan/score is deferred so New Game
-		-- can ShowDialog - otherwise the ctor blocks and the click looks dead.
+		-- Stock LoadLoadout first (fast). Never score inside the UINewGame ctor —
+		-- that blocked ShowDialog (dead click / process death). Apply immediately
+		-- only when scored pools are already warm; otherwise mark pending for Update.
 		base(self, false)
 
 		local faction = self.selected_faction or "stalker"
-		local eco = tostring(self.selected_economy or "")
-		local cache_key = faction .. "|" .. eco
-
-		local function apply_entries(entries)
-			if not (self and self.CC and self.CC["loadout"]) then
-				slog("LoadLoadout: dialog gone before shop apply")
-				return
-			end
-			local ok_apply, err_apply = pcall(function()
-				apply_shop_to_ui(self, entries or {})
-			end)
-			if not ok_apply then
-				slog("apply_shop_to_ui FAILED: " .. tostring(err_apply))
-				return
-			end
-			slog(string.format("LoadLoadout: shop entries=%d", entries and #entries or 0))
-		end
-
-		local cached = STATE.shop_cache and STATE.shop_cache[cache_key]
-		if cached then
-			slog("LoadLoadout: cached shop for " .. cache_key)
-			apply_entries(cached)
-			return
-		end
-
-		slog("LoadLoadout: scheduling shop build for faction=" .. tostring(faction))
-		local token = "dogma_dyn_shop_" .. tostring(math.random(100000, 999999))
-		CreateTimeEvent(0, token, 0, function()
+		if scored_ready() then
+			self._dogma_dl_pending_faction = nil
 			local entries
 			local ok, err = pcall(function()
 				entries = build_shop_entries(faction)
 			end)
 			if not ok then
 				slog("build_shop_entries FAILED: " .. tostring(err))
-				return true
+				return
 			end
-			STATE.shop_cache = STATE.shop_cache or {}
-			STATE.shop_cache[cache_key] = entries or {}
-			apply_entries(entries)
-			return true
-		end)
+			apply_entries_to_dlg(self, entries, "LoadLoadout")
+			return
+		end
+
+		self._dogma_dl_pending_faction = faction
+		slog("LoadLoadout: defer shop build to Update (faction=" .. tostring(faction) .. ")")
 	end
 
 	cls.LoadLoadout = wrapped
 	STATE.wrap_load = wrapped
 	STATE.base_load = base
+	return true
+end
+
+-- Reliable post-ShowDialog hook (CreateTimeEvent often never ticks on main menu).
+local function wrap_update(cls)
+	if STATE.wrap_update and cls.Update == STATE.wrap_update then
+		return true
+	end
+	local base = cls.Update
+	if not base then
+		return false
+	end
+
+	local function wrapped(self, ...)
+		if self._dogma_dl_pending_faction then
+			flush_pending_shop(self)
+		end
+		return base(self, ...)
+	end
+
+	cls.Update = wrapped
+	STATE.wrap_update = wrapped
 	return true
 end
 
@@ -1588,6 +1692,7 @@ local function wrap_owner_show_faction(owner)
 			local uicls = ui_mm_faction_select and ui_mm_faction_select.UINewGame
 			if uicls then
 				wrap_load_loadout(uicls)
+				wrap_update(uicls)
 				wrap_on_cc_mouse1(uicls)
 			end
 			slog("ShowFactionUI: re-open - rescanning shop")
@@ -1612,6 +1717,7 @@ local function wrap_main_controls(cls)
 
 	local function wrapped(self, ...)
 		wrap_load_loadout(cls)
+		wrap_update(cls)
 		wrap_on_cc_mouse1(cls)
 		wrap_on_start_game(cls)
 		wrap_on_quit(cls)
@@ -1647,6 +1753,7 @@ local function wrap_show_faction_ui()
 			local uicls = ui_mm_faction_select and ui_mm_faction_select.UINewGame
 			if uicls then
 				wrap_load_loadout(uicls)
+				wrap_update(uicls)
 				wrap_on_cc_mouse1(uicls)
 			end
 			slog("ShowFactionUI(class): re-open - rescanning shop")
@@ -1666,16 +1773,17 @@ local function patch_new_game()
 	end
 	local ok_ctrl = wrap_main_controls(cls)
 	local ok_load = wrap_load_loadout(cls)
+	local ok_upd = wrap_update(cls)
 	local ok_mouse = wrap_on_cc_mouse1(cls)
 	local ok_start = wrap_on_start_game(cls)
 	local ok_quit = wrap_on_quit(cls)
 	local ok_show = wrap_show_faction_ui()
 	slog(string.format(
-		"patch: controls=%s LoadLoadout=%s mouse1=%s OnStartGame=%s OnQuit=%s ShowFactionUI=%s",
-		tostring(ok_ctrl), tostring(ok_load), tostring(ok_mouse), tostring(ok_start),
+		"patch: controls=%s LoadLoadout=%s Update=%s mouse1=%s OnStartGame=%s OnQuit=%s ShowFactionUI=%s",
+		tostring(ok_ctrl), tostring(ok_load), tostring(ok_upd), tostring(ok_mouse), tostring(ok_start),
 		tostring(ok_quit), tostring(ok_show)
 	))
-	return ok_ctrl and ok_load and ok_mouse and ok_start and ok_quit
+	return ok_ctrl and ok_load and ok_upd and ok_mouse and ok_start and ok_quit
 end
 
 slog("mcm script loaded")

@@ -1,0 +1,187 @@
+--[[
+	Show loadout item pts on New Game icons.
+
+	Lives in *mcm.script so it loads at the main menu (zzzz_* body scripts are
+	not loaded until a game session). Paints via UINewGame:Update with a
+	cell fingerprint; LoadLoadout / On_CC_Mouse1 only invalidate that
+	fingerprint so Reinit (stock or Dynamic Loadout) always gets a fresh paint.
+]]
+
+local STATE = _G.__dogma_tweaks_show_loadout_item_pts or {}
+_G.__dogma_tweaks_show_loadout_item_pts = STATE
+
+local function slog(msg)
+	printf("[dogma_tweaks_show_loadout_item_pts] %s", tostring(msg))
+end
+
+-- Draw pts on the icon (G.A.M.M.A. UI utils_ui UICellItem:Add_CustomText -
+-- same hook workshop/parts-in-tooltip use for condition text). Font: GetFontSmall.
+local function paint_pts_on_cells(cc)
+	if not (cc and cc.cell) then
+		return
+	end
+	local fnt = GetFontSmall and GetFontSmall() or nil
+	local clr = GetARGB and GetARGB(255, 180, 180, 180) or nil
+	-- utils_ui: align_h 0=left, 2=center, 4=right; align_v 0=top
+	local align_l, align_top = 0, 0
+	for _, ci in pairs(cc.cell) do
+		if ci:IsShown() and ci.Add_CustomText then
+			local pts = ci.flags.info or ci.flags.value or 0
+			-- Free (0 pts) items: no number on the icon.
+			if pts and pts > 0 then
+				ci:Add_CustomText(tostring(pts), align_l, align_top, clr, fnt)
+			end
+		end
+	end
+end
+
+local function paint_pts_both(self)
+	if self.CC then
+		paint_pts_on_cells(self.CC["inventory"])
+		paint_pts_on_cells(self.CC["loadout"])
+	end
+end
+
+-- Stable fingerprint of shown cells so we repaint only after Reinit / transfer.
+local function cells_fp(self)
+	local parts = {}
+	local names = { "inventory", "loadout" }
+	for i = 1, #names do
+		local cc = self.CC and self.CC[names[i]]
+		if cc and cc.cell then
+			for _, ci in pairs(cc.cell) do
+				if ci:IsShown() then
+					local sec = ci.section or ""
+					local pts = ci.flags and (ci.flags.info or ci.flags.value) or 0
+					parts[#parts + 1] = names[i] .. ":" .. tostring(sec) .. "=" .. tostring(pts)
+				end
+			end
+		end
+	end
+	table.sort(parts)
+	return table.concat(parts, "|")
+end
+
+local function invalidate(self)
+	if self then
+		self._dogma_show_pts_fp = nil
+	end
+end
+
+local function wrap_update(cls)
+	if STATE.wrap_update and cls.Update == STATE.wrap_update then
+		return true
+	end
+	local base = cls.Update
+	if not base then
+		return false
+	end
+
+	local function wrapped(self, ...)
+		local r = base(self, ...)
+		local fp = cells_fp(self)
+		if fp ~= "" and fp ~= self._dogma_show_pts_fp then
+			self._dogma_show_pts_fp = fp
+			local ok, err = pcall(paint_pts_both, self)
+			if not ok then
+				slog("paint FAILED: " .. tostring(err))
+			end
+		end
+		return r
+	end
+
+	cls.Update = wrapped
+	STATE.wrap_update = wrapped
+	return true
+end
+
+-- Invalidate only - paint happens on the next Update after Reinit settles.
+local function wrap_load_loadout(cls)
+	if STATE.wrap_load and cls.LoadLoadout == STATE.wrap_load then
+		return true
+	end
+	local base = cls.LoadLoadout
+	if not base then
+		return false
+	end
+
+	local function wrapped(self, rand)
+		base(self, rand)
+		invalidate(self)
+	end
+
+	cls.LoadLoadout = wrapped
+	STATE.wrap_load = wrapped
+	return true
+end
+
+local function wrap_on_cc_mouse1(cls)
+	if STATE.wrap_mouse1 and cls.On_CC_Mouse1 == STATE.wrap_mouse1 then
+		return true
+	end
+	local base = cls.On_CC_Mouse1
+	if not base then
+		return false
+	end
+
+	local function wrapped(self, cont, idx)
+		base(self, cont, idx)
+		invalidate(self)
+	end
+
+	cls.On_CC_Mouse1 = wrapped
+	STATE.wrap_mouse1 = wrapped
+	return true
+end
+
+local function wrap_main_controls(cls)
+	if STATE.wrap_controls and cls.Main_Controls == STATE.wrap_controls then
+		return true
+	end
+	local base = cls.Main_Controls
+	if not base then
+		return false
+	end
+
+	-- Re-assert hooks as outermost after other mods re-wrap inside Main_Controls.
+	local function wrapped(self, ...)
+		local r = base(self, ...)
+		wrap_load_loadout(cls)
+		wrap_on_cc_mouse1(cls)
+		wrap_update(cls)
+		invalidate(self)
+		return r
+	end
+
+	cls.Main_Controls = wrapped
+	STATE.wrap_controls = wrapped
+	return true
+end
+
+local function patch_new_game()
+	local cls = ui_mm_faction_select and ui_mm_faction_select.UINewGame
+	if not cls then
+		return false
+	end
+	local ok = wrap_update(cls) and wrap_load_loadout(cls) and wrap_on_cc_mouse1(cls)
+	wrap_main_controls(cls)
+	if ok and not STATE.logged then
+		STATE.logged = true
+		slog("UINewGame wrapped (pts on icons)")
+	end
+	return ok
+end
+
+patch_new_game()
+
+function on_mcm_load(options)
+	patch_new_game()
+
+	dogma_mcm.append(options, "tweaks", "ui_mcm_menu_dogma_tweaks", {
+		{
+			id = "show_loadout_item_pts_description",
+			type = "desc",
+			text = "ui_mcm_dogma_tweaks_show_loadout_item_pts_page_description",
+		},
+	})
+end

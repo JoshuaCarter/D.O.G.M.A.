@@ -5,8 +5,11 @@
 	_conf.script is prepended by the build.
 
 	Hooks LoadLoadout: fills the purchase panel with scored supply.
-	Heavy scan/score is deferred to UINewGame:Update (after ShowDialog) so the
-	ctor cannot stall/kill New Game. Scored pools are cached for later opens.
+	The heavy scan/score runs as a plain blocking call inside LoadLoadout, on
+	the main Lua thread. This is deliberate: async variants (time events,
+	coroutine slicing) crashed the engine natively, while the same work run
+	inline is stable. First open per launch pauses for a few seconds; results
+	are cached until score settings change, so later opens are instant.
 	Also hooks OnQuit (clear cached dlg) + ShowFactionUI for re-open refresh.
 	Does not touch OnRandomize.
 ]]
@@ -324,6 +327,12 @@ local function is_weapon_sec(sec)
 	if is_excluded_misc(sec) or is_junk_gear_sec(sec) then
 		return false
 	end
+	if sec == "wpn_knife" or string.find(sec, "binoc", 1, true) then
+		return false
+	end
+	if not ini_sys:line_exist(sec, "ammo_class") then
+		return false
+	end
 	if is_named_variant(sec) then
 		return false
 	end
@@ -336,10 +345,6 @@ local function is_weapon_sec(sec)
 	end
 	local kind = ini_str(sec, "kind", "")
 	if kind == "w_misc" or kind == "w_explosive" then
-		return false
-	end
-	-- Knives / binocs / tools that look like guns
-	if sec == "wpn_knife" or string.find(sec, "binoc", 1, true) then
 		return false
 	end
 	if is_kit_result(sec) then
@@ -391,7 +396,40 @@ local MAX_COST = {
 	sight = 7000,
 }
 
+-- Bump when scan filters / MAX_COST change so cached pools invalidate.
+local SCAN_CACHE_KEY = "scan_v3"
+
+-- MUST run on the main Lua thread, never inside a coroutine: every crash so
+-- far (native, fixed address 0x14023D90C, no Lua error) happened while
+-- ini_sys:section_for_each ran from a coroutine; the same walk on the main
+-- thread (engine's _g.Parse_ITM at launch, deferred time-event builds) is
+-- fine. One cheap pass, Parse_ITM's gate: inv_grid_x marks real inventory
+-- items, ammo_class marks guns. Returns weapon candidates + (fallback only)
+-- the full section name list.
+local function collect_scan_candidates()
+	local wpn = {}
+	local names = (not GetItemList) and {} or nil
+	ini_sys:section_for_each(function(sec)
+		if ini_sys:r_float_ex(sec, "inv_grid_x")
+			and ini_sys:r_string_ex(sec, "ammo_class") then
+			wpn[#wpn + 1] = sec
+		end
+		if names then
+			names[#names + 1] = sec
+		end
+		return false
+	end)
+	return wpn, names
+end
+
+-- Synchronous, main thread only (see collect_scan_candidates). Blocking is
+-- deliberate: sliced/coroutine variants crashed the engine natively. The
+-- result is cached in STATE, so the cost is paid once per launch.
 local function scan_all()
+	if STATE.scan_pools and STATE.scan_cache_key == SCAN_CACHE_KEY then
+		return STATE.scan_pools
+	end
+
 	local pairs_ = pairs
 	local weapons, armors, helmets, ammos, sights = {}, {}, {}, {}, {}
 	local skipped_cost = { weapon = 0, armor = 0, helmet = 0, ammo = 0 }
@@ -445,6 +483,8 @@ local function scan_all()
 		-- Sights are not part of the shop supply (weapon/ammo/outfit/helmet only).
 	end
 
+	-- Ammo / outfits / helmets / scopes from the engine's launch-built item
+	-- cache (_g.Parse_ITM via GetItemList).
 	if GetItemList then
 		local list = GetItemList("ammo")
 		if list then
@@ -472,25 +512,49 @@ local function scan_all()
 		end
 	end
 
-	ini_sys:section_for_each(function(sec)
-		if is_weapon_sec(sec) then
-			push_weapon(sec)
-		elseif not GetItemList then
-			local cls = ini_str(sec, "class", "")
-			local kind = ini_str(sec, "kind", "")
-			if cls == "AMMO" or (IsItem and IsItem("ammo", sec)) then
-				push_ammo(sec)
-			elseif kind == "o_light" or kind == "o_medium" or kind == "o_heavy"
-				or (IsItem and IsItem("outfit", sec)) then
-				push_armor(sec)
-			elseif IsItem and IsItem("helmet", sec) then
-				push_helm(sec)
-			elseif cls == "WP_SCOPE" or (IsItem and IsItem("scope", sec)) then
-				push_sight(sec)
+	-- Weapons: no engine-prebuilt list exists (Parse_ITM has no weapon type;
+	-- the debug spawner also walks all sections on demand). The candidate
+	-- pass gates on inv_grid_x + ammo_class, so the expensive is_weapon_sec
+	-- chain only runs on a few thousand sections.
+	local wpn_cand, all_names = collect_scan_candidates()
+	if GetItemList then
+		for i = 1, #wpn_cand do
+			local sec = wpn_cand[i]
+			if is_weapon_sec(sec) then
+				push_weapon(sec)
 			end
 		end
-		return false
-	end)
+	else
+		-- Fallback classify when the engine item cache is unavailable.
+		all_names = all_names or {}
+		for i = 1, #all_names do
+			local sec = all_names[i]
+			if is_weapon_sec(sec) then
+				push_weapon(sec)
+			else
+				local cls = ini_str(sec, "class", "")
+				local kind = ini_str(sec, "kind", "")
+				if cls == "AMMO" or (IsItem and IsItem("ammo", sec)) then
+					push_ammo(sec)
+				elseif kind == "o_light" or kind == "o_medium" or kind == "o_heavy"
+					or (IsItem and IsItem("outfit", sec)) then
+					push_armor(sec)
+				elseif IsItem and IsItem("helmet", sec) then
+					push_helm(sec)
+				elseif cls == "WP_SCOPE" or (IsItem and IsItem("scope", sec)) then
+					push_sight(sec)
+				end
+			end
+		end
+	end
+
+	local pools = {
+		weapons = weapons,
+		armors = armors,
+		helmets = helmets,
+		ammos = ammos,
+		sights = sights,
+	}
 
 	dlog(string.format(
 		"scan: weapons=%d armors=%d helmets=%d ammos=%d sights=%d",
@@ -504,13 +568,9 @@ local function scan_all()
 		skipped_cost.ammo, MAX_COST.ammo
 	))
 
-	return {
-		weapons = weapons,
-		armors = armors,
-		helmets = helmets,
-		ammos = ammos,
-		sights = sights,
-	}
+	STATE.scan_pools = pools
+	STATE.scan_cache_key = SCAN_CACHE_KEY
+	return pools
 end
 
 --------------------------------------------------------------------------
@@ -1227,13 +1287,18 @@ local function shop_cfg_fingerprint()
 	}, "|")
 end
 
--- Heavy scan+score once per score-cfg; reused across factions / reopens.
+-- Scan + score everything, blocking, on the main Lua thread. Deliberately
+-- synchronous: every async variant (time events, coroutine slicing) ended in
+-- native engine crashes, while the same work run inline on the main thread
+-- is stable. First call per launch takes a few seconds; results are cached
+-- in STATE until score settings change, so later opens are instant.
 local function ensure_scored()
 	local fp = score_cfg_fingerprint()
 	if STATE.scored and STATE.scored_fp == fp then
-		return STATE.scored
+		return true
 	end
-	printf("[dogma_gameplay_dynamic_loadout] scoring shop pools (scan+score)...")
+	printf("[dogma_gameplay_dynamic_loadout] scoring shop pools (blocking)...")
+	local t0 = os and os.clock and os.clock() or nil
 	local pools = scan_all()
 	local scored = {
 		weapons = build_scored(pools.weapons, "weapon"),
@@ -1245,20 +1310,20 @@ local function ensure_scored()
 	STATE.scored_fp = fp
 	STATE.shop_cache = {}
 	STATE.shop_cache_fp = nil
-	printf("[dogma_gameplay_dynamic_loadout] scored pools: w=%d a=%d h=%d ammo=%d",
-		#scored.weapons, #scored.armors, #scored.helmets, #scored.ammos)
-	return scored
+	printf("[dogma_gameplay_dynamic_loadout] scored pools: w=" .. #scored.weapons
+		.. " a=" .. #scored.armors .. " h=" .. #scored.helmets
+		.. " ammo=" .. #scored.ammos
+		.. (t0 and (" in " .. string.format("%.1f", os.clock() - t0) .. "s") or ""))
+	return true
 end
 
-local function scored_ready()
-	return STATE.scored and STATE.scored_fp == score_cfg_fingerprint()
-end
-
--- Entries for the purchase (loadout) panel: { sec=, pts= }
+-- Entries for the purchase (loadout) panel: { sec=, pts= }.
 local function build_shop_entries(faction)
 	local sformat = string.format
 	STATE.pools = nil
 	STATE.ammo_secs = nil
+
+	ensure_scored()
 
 	local shop_fp = shop_cfg_fingerprint()
 	local cache_key = tostring(faction or "stalker")
@@ -1278,7 +1343,7 @@ local function build_shop_entries(faction)
 		cost_mult_for("weapon"), cost_mult_for("armor"), cost_mult_for("helmet"),
 		cost_mult_for("ammo"), cost_mult_for("sight")
 	))
-	local scored = ensure_scored()
+	local scored = STATE.scored
 
 	local weapons = filter_weapons(scored.weapons, faction, cfg_num("max_pts_weapon"))
 	local armors = dedupe_scored(filter_armors(scored.armors, faction, cfg_num("max_pts_armor")))
@@ -1332,34 +1397,6 @@ local function refresh_cell_values(cc)
 			ci.flags.value = val
 			ci.flags.value_str = game.translate_string("st_mm_new_game_points") .. ": " .. val
 		end
-	end
-end
-
--- Draw pts on the icon (G.A.M.M.A. UI utils_ui UICellItem:Add_CustomText -
--- same hook workshop/parts-in-tooltip use for condition text). Font: GetFontSmall.
-local function paint_pts_on_cells(cc)
-	if not (cc and cc.cell) then
-		return
-	end
-	local fnt = GetFontSmall and GetFontSmall() or nil
-	local clr = GetARGB and GetARGB(255, 180, 180, 180) or nil
-	-- utils_ui: align_h 0=left, 2=center, 4=right; align_v 0=top
-	local align_l, align_top = 0, 0
-	for _, ci in pairs(cc.cell) do
-		if ci:IsShown() and ci.Add_CustomText then
-			local pts = ci.flags.info or ci.flags.value or 0
-			-- Free (0 pts) items: no number on the icon.
-			if pts and pts > 0 then
-				ci:Add_CustomText(tostring(pts), align_l, align_top, clr, fnt)
-			end
-		end
-	end
-end
-
-local function paint_pts_both(self)
-	if self.CC then
-		paint_pts_on_cells(self.CC["inventory"])
-		paint_pts_on_cells(self.CC["loadout"])
 	end
 end
 
@@ -1417,8 +1454,6 @@ local function apply_shop_to_ui(self, shop_entries)
 	self.CC["loadout"]:Reinit(load_secs, load_pts)
 	refresh_cell_values(self.CC["loadout"])
 
-	paint_pts_both(self)
-
 	-- Recalc spent points from inventory (purchases already transferred).
 	local used = 0
 	for _, ci in pairs(self.CC["inventory"].cell) do
@@ -1472,28 +1507,6 @@ local function apply_entries_to_dlg(self, entries, why)
 	return true
 end
 
--- Build+apply once the dialog is alive (Update runs after ShowDialog).
-local function flush_pending_shop(self)
-	local faction = self and self._dogma_dl_pending_faction
-	if not faction then
-		return
-	end
-	-- Clear first to avoid re-entry if apply/score errors.
-	self._dogma_dl_pending_faction = nil
-	if not cfg_bool("enabled") then
-		return
-	end
-	local entries
-	local ok, err = pcall(function()
-		entries = build_shop_entries(faction)
-	end)
-	if not ok then
-		slog("build_shop_entries FAILED: " .. tostring(err))
-		return
-	end
-	apply_entries_to_dlg(self, entries, "Update")
-end
-
 local function wrap_load_loadout(cls)
 	if STATE.wrap_load and cls.LoadLoadout == STATE.wrap_load then
 		return true
@@ -1505,81 +1518,30 @@ local function wrap_load_loadout(cls)
 
 	local function wrapped(self, rand)
 		if not cfg_bool("enabled") then
-			self._dogma_dl_pending_faction = nil
 			return base(self, rand)
 		end
 
-		-- Stock LoadLoadout first (fast). Never score inside the UINewGame ctor —
-		-- that blocked ShowDialog (dead click / process death). Apply immediately
-		-- only when scored pools are already warm; otherwise mark pending for Update.
+		-- Stock LoadLoadout first, then build + apply the shop right here,
+		-- blocking. First open per launch pauses for a few seconds while the
+		-- pools score; after that everything comes from cache. On any Lua
+		-- failure the stock loadout is kept.
 		base(self, false)
 
 		local faction = self.selected_faction or "stalker"
-		if scored_ready() then
-			self._dogma_dl_pending_faction = nil
-			local entries
-			local ok, err = pcall(function()
-				entries = build_shop_entries(faction)
-			end)
-			if not ok then
-				slog("build_shop_entries FAILED: " .. tostring(err))
-				return
-			end
-			apply_entries_to_dlg(self, entries, "LoadLoadout")
+		local entries
+		local ok, err = pcall(function()
+			entries = build_shop_entries(faction)
+		end)
+		if not ok or not entries then
+			slog("build_shop_entries FAILED (stock loadout kept): " .. tostring(err))
 			return
 		end
-
-		self._dogma_dl_pending_faction = faction
-		slog("LoadLoadout: defer shop build to Update (faction=" .. tostring(faction) .. ")")
+		apply_entries_to_dlg(self, entries, "LoadLoadout")
 	end
 
 	cls.LoadLoadout = wrapped
 	STATE.wrap_load = wrapped
 	STATE.base_load = base
-	return true
-end
-
--- Reliable post-ShowDialog hook (CreateTimeEvent often never ticks on main menu).
-local function wrap_update(cls)
-	if STATE.wrap_update and cls.Update == STATE.wrap_update then
-		return true
-	end
-	local base = cls.Update
-	if not base then
-		return false
-	end
-
-	local function wrapped(self, ...)
-		if self._dogma_dl_pending_faction then
-			flush_pending_shop(self)
-		end
-		return base(self, ...)
-	end
-
-	cls.Update = wrapped
-	STATE.wrap_update = wrapped
-	return true
-end
-
-local function wrap_on_cc_mouse1(cls)
-	if STATE.wrap_mouse1 and cls.On_CC_Mouse1 == STATE.wrap_mouse1 then
-		return true
-	end
-	local base = cls.On_CC_Mouse1
-	if not base then
-		return false
-	end
-
-	local function wrapped(self, cont, idx)
-		base(self, cont, idx)
-		if cfg_bool("enabled") then
-			-- Transfer rebuilds cells; restore pts labels on icons.
-			paint_pts_both(self)
-		end
-	end
-
-	cls.On_CC_Mouse1 = wrapped
-	STATE.wrap_mouse1 = wrapped
 	return true
 end
 
@@ -1692,8 +1654,6 @@ local function wrap_owner_show_faction(owner)
 			local uicls = ui_mm_faction_select and ui_mm_faction_select.UINewGame
 			if uicls then
 				wrap_load_loadout(uicls)
-				wrap_update(uicls)
-				wrap_on_cc_mouse1(uicls)
 			end
 			slog("ShowFactionUI: re-open - rescanning shop")
 			dlg:LoadLoadout(false)
@@ -1717,8 +1677,6 @@ local function wrap_main_controls(cls)
 
 	local function wrapped(self, ...)
 		wrap_load_loadout(cls)
-		wrap_update(cls)
-		wrap_on_cc_mouse1(cls)
 		wrap_on_start_game(cls)
 		wrap_on_quit(cls)
 		wrap_owner_show_faction(self.owner)
@@ -1753,8 +1711,6 @@ local function wrap_show_faction_ui()
 			local uicls = ui_mm_faction_select and ui_mm_faction_select.UINewGame
 			if uicls then
 				wrap_load_loadout(uicls)
-				wrap_update(uicls)
-				wrap_on_cc_mouse1(uicls)
 			end
 			slog("ShowFactionUI(class): re-open - rescanning shop")
 			dlg:LoadLoadout(false)
@@ -1773,17 +1729,15 @@ local function patch_new_game()
 	end
 	local ok_ctrl = wrap_main_controls(cls)
 	local ok_load = wrap_load_loadout(cls)
-	local ok_upd = wrap_update(cls)
-	local ok_mouse = wrap_on_cc_mouse1(cls)
 	local ok_start = wrap_on_start_game(cls)
 	local ok_quit = wrap_on_quit(cls)
 	local ok_show = wrap_show_faction_ui()
 	slog(string.format(
-		"patch: controls=%s LoadLoadout=%s Update=%s mouse1=%s OnStartGame=%s OnQuit=%s ShowFactionUI=%s",
-		tostring(ok_ctrl), tostring(ok_load), tostring(ok_upd), tostring(ok_mouse), tostring(ok_start),
+		"patch: controls=%s LoadLoadout=%s OnStartGame=%s OnQuit=%s ShowFactionUI=%s",
+		tostring(ok_ctrl), tostring(ok_load), tostring(ok_start),
 		tostring(ok_quit), tostring(ok_show)
 	))
-	return ok_ctrl and ok_load and ok_upd and ok_mouse and ok_start and ok_quit
+	return ok_ctrl and ok_load and ok_start and ok_quit
 end
 
 slog("mcm script loaded")

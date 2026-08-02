@@ -1,110 +1,63 @@
 --[[
-
 	Hard New Game Defaults - in-session re-patch.
 
-
-
 	Primary patch is in mcm.script (loaded at main menu). This file only runs
-
-	after a game session starts; re-apply if Main_Controls was restored.
-
+	after a game session starts; re-apply if LoadDifficulty / LoadEconomy were
+	restored.
 ]]
-
-
 
 local HARD_INDEX = 3
 
 local STATE = _G.__dogma_tweaks_new_game_defaults_to_hard or {}
-
 _G.__dogma_tweaks_new_game_defaults_to_hard = STATE
 
-
-
-local function apply_hard_defaults(self)
-
-	if not (self.list_difficulty and self.table_difficulty) then
-
+local function force_hard_pick(self, list, table_key, selected_key)
+	local t = self[table_key]
+	if not (self[list] and t) then
 		return
-
 	end
-
-	local diff = self.table_difficulty[HARD_INDEX] or self.table_difficulty[1]
-
-	if diff then
-
-		self.list_difficulty:SetText(game.translate_string(diff))
-
-		self.selected_difficulty = diff
-
-	end
-
-	if not (self.list_economy and self.table_economy) then
-
+	local pick = t[HARD_INDEX] or t[1]
+	if not pick then
 		return
-
 	end
-
-	local eco = self.table_economy[HARD_INDEX] or self.table_economy[1]
-
-	if not eco then
-
-		return
-
-	end
-
-	self.list_economy:SetText(game.translate_string(eco))
-
-	self.selected_economy = eco
-
-	if self.LoadLoadout then
-
-		self:LoadLoadout(false)
-
-	end
-
+	self[list]:SetText(game.translate_string(pick))
+	self[selected_key] = pick
 end
 
+local function wrap_loader(cls, method, list, table_key, selected_key, state_key)
+	if STATE[state_key] and cls[method] == STATE[state_key] then
+		return true
+	end
+	local base = cls[method]
+	if not base then
+		return false
+	end
 
+	local function wrapped(self, rand)
+		base(self, false)
+		force_hard_pick(self, list, table_key, selected_key)
+	end
+
+	cls[method] = wrapped
+	STATE[state_key] = wrapped
+	return true
+end
 
 local function patch_new_game()
-
 	local cls = ui_mm_faction_select and ui_mm_faction_select.UINewGame
-
-	if not (cls and cls.Main_Controls) then
-
+	if not cls then
 		return false
-
 	end
 
-	if STATE.wrap_controls and cls.Main_Controls == STATE.wrap_controls then
-
-		return true
-
-	end
-
-	local base_controls = cls.Main_Controls
-
-	local function wrap_controls(self, ...)
-
-		base_controls(self, ...)
-
-		apply_hard_defaults(self)
-
-	end
-
-	cls.Main_Controls = wrap_controls
-
-	STATE.wrap_controls = wrap_controls
-
-	return true
-
+	local ok_diff = wrap_loader(
+		cls, "LoadDifficulty", "list_difficulty", "table_difficulty", "selected_difficulty", "wrap_difficulty"
+	)
+	local ok_eco = wrap_loader(
+		cls, "LoadEconomy", "list_economy", "table_economy", "selected_economy", "wrap_economy"
+	)
+	return ok_diff and ok_eco
 end
-
-
 
 function on_game_start()
-
 	patch_new_game()
-
 end
-

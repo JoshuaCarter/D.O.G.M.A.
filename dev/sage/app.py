@@ -1672,9 +1672,9 @@ class MainWindow(QMainWindow):
         options_l.setContentsMargins(9, 12, 9, 12)
         options_l.setSpacing(16)
         options_l.setAlignment(Qt.AlignmentFlag.AlignVCenter)
-        self.tool_border = QCheckBox("Box border for unselected")
+        self.tool_border = QCheckBox("Show borders")
         self.tool_border.setChecked(bool(self.settings.get("show_box_border", False)))
-        self.tool_fill = QCheckBox("Box fill selected")
+        self.tool_fill = QCheckBox("Fill selected")
         self.tool_fill.setChecked(bool(self.settings.get("show_box_fill", False)))
         self.tool_labels = QCheckBox("Show labels")
         self.tool_labels.setChecked(bool(self.settings.get("show_element_labels", False)))
@@ -1691,9 +1691,13 @@ class MainWindow(QMainWindow):
         self.tool_grid_step.setRange(GRID_STEP_MIN, GRID_STEP_MAX)
         self.tool_grid_step.setSingleStep(1)
         self.tool_grid_step.setValue(clamp_grid_step(self.settings.get("grid_step")))
-        self.tool_grid_step.setSuffix(" px")
+        self.tool_grid_step.setFixedWidth(52)
+        self.tool_grid_step.setAlignment(Qt.AlignmentFlag.AlignRight)
         self.tool_grid_step.setToolTip("Draw a grid line every N scene pixels")
         self.tool_grid_step.setEnabled(bool(self.settings.get("show_grid", False)))
+        # Separate label so the edit caret can't sit after a "px" suffix.
+        self.tool_grid_step_unit = QLabel("px")
+        self.tool_grid_step_unit.setEnabled(bool(self.settings.get("show_grid", False)))
         self.tool_aspect_label = QLabel("Aspect")
         self.tool_aspect = QComboBox()
         self.tool_aspect.setToolTip(
@@ -1705,7 +1709,9 @@ class MainWindow(QMainWindow):
         self.tool_font.setRange(LABEL_FONT_MIN, LABEL_FONT_MAX)
         self.tool_font.setSingleStep(1)
         self.tool_font.setValue(clamp_label_font_size(self.settings.get("label_font_size")))
-        self.tool_font.setSuffix(" pt")
+        self.tool_font.setFixedWidth(52)
+        self.tool_font.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self.tool_font_unit = QLabel("pt")
         self.tool_zoom = QSlider(Qt.Orientation.Horizontal)
         self.tool_zoom.setRange(100, 1000)
         self.tool_zoom.setSingleStep(5)
@@ -1745,10 +1751,12 @@ class MainWindow(QMainWindow):
             self.tool_rulers,
             self.tool_grid,
             self.tool_grid_step,
+            self.tool_grid_step_unit,
             self.tool_aspect_label,
             self.tool_aspect,
             QLabel("Label size"),
             self.tool_font,
+            self.tool_font_unit,
             QLabel("Zoom"),
             self.tool_zoom,
             self.tool_zoom_label,
@@ -2476,12 +2484,12 @@ class MainWindow(QMainWindow):
         self.fit_a.triggered.connect(self._fit_stage)
         view_menu.addAction(self.fit_a)
         view_menu.addSeparator()
-        self.border_a = QAction("Box border for &unselected", self)
+        self.border_a = QAction("Show &borders", self)
         self.border_a.setCheckable(True)
         self.border_a.setChecked(bool(self.settings.get("show_box_border", False)))
         self.border_a.toggled.connect(self._on_toggle_border)
         view_menu.addAction(self.border_a)
-        self.fill_a = QAction("Box &fill selected", self)
+        self.fill_a = QAction("&Fill selected", self)
         self.fill_a.setCheckable(True)
         self.fill_a.setChecked(bool(self.settings.get("show_box_fill", False)))
         self.fill_a.toggled.connect(self._on_toggle_fill)
@@ -3623,6 +3631,7 @@ class MainWindow(QMainWindow):
         self.tool_grid_step.setValue(step)
         self.tool_grid_step.setEnabled(grid)
         self.tool_grid_step.blockSignals(False)
+        self.tool_grid_step_unit.setEnabled(grid)
         self.tool_font.blockSignals(True)
         self.tool_font.setValue(font)
         self.tool_font.blockSignals(False)

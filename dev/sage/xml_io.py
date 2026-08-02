@@ -23,8 +23,6 @@ class UiXmlDocument:
         self._layers: dict[str, bool] = {}
         self._undo: list[dict[str, Any]] = []
         self._redo: list[dict[str, Any]] = []
-        self._selection: str = ""
-        self._view: dict[str, float] | None = None
         self._source_text = ""
 
     @property
@@ -40,14 +38,6 @@ class UiXmlDocument:
     @property
     def layer_states(self) -> dict[str, bool]:
         return dict(self._layers)
-
-    @property
-    def selection(self) -> str:
-        return self._selection
-
-    @property
-    def view_state(self) -> dict[str, float] | None:
-        return dict(self._view) if self._view else None
 
     def set_layer_state(self, path: str, visible: bool) -> None:
         if not path:
@@ -70,29 +60,15 @@ class UiXmlDocument:
         self._undo = list(undo)
         self._redo = list(redo)
 
-    def set_selection(self, path: str) -> None:
-        path = path or ""
-        if self._selection == path:
-            return
-        self._selection = path
-        # Selection is session chrome (written on save) — not an unsaved "change".
-
-    def set_view_state(self, view: dict[str, float] | None) -> None:
-        self._view = dict(view) if view else None
-
     def capture_session(
         self,
         *,
         undo: list[dict[str, Any]],
         redo: list[dict[str, Any]],
-        selection: str = "",
-        view: dict[str, float] | None = None,
     ) -> None:
-        """Update session fields for the next meta write (does not mark dirty)."""
+        """Update undo/redo for the next meta write (does not mark dirty)."""
         self._undo = list(undo)
         self._redo = list(redo)
-        self._selection = selection or ""
-        self._view = dict(view) if view else None
 
     def undo_snapshot(self) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         return list(self._undo), list(self._redo)
@@ -194,7 +170,7 @@ class UiXmlDocument:
             text = text + "\n"
         target.write_text(text, encoding="utf-8")
         self.path = target
-        # Keep layers / undo / view / selection - reparse only refreshes the tree.
+        # Keep layers / undo — reparse only refreshes the tree.
         self.load_text(text, path=target, keep_meta=True)
         self.save_meta(target)
         return target
@@ -214,8 +190,6 @@ class UiXmlDocument:
                 layers=self._layers,
                 undo=self._undo,
                 redo=self._redo,
-                selection=self._selection,
-                view=self._view,
             ),
         )
         self.meta_dirty = False
@@ -227,8 +201,6 @@ class UiXmlDocument:
             layers=dict(self._layers),
             undo=list(self._undo),
             redo=list(self._redo),
-            selection=self._selection,
-            view=dict(self._view) if self._view else None,
         )
 
     def _apply_meta_doc(self, meta: MetaDocument) -> None:
@@ -236,8 +208,6 @@ class UiXmlDocument:
         self._layers = dict(meta.layers)
         self._undo = list(meta.undo)
         self._redo = list(meta.redo)
-        self._selection = meta.selection or ""
-        self._view = dict(meta.view) if meta.view else None
 
 
 def _is_junk_chrome(el: ET.Element) -> bool:

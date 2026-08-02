@@ -2977,35 +2977,18 @@ class MainWindow(QMainWindow):
             self.scene.undo_stack.restore(undo=undo, redo=redo)
             self._update_undo_actions()
             self._refresh_undo_list()
-            if self.doc.selection:
-                self.scene.select_path(self.doc.selection)
-            else:
-                self._show_props(None)
+            self._show_props(None)
         finally:
             self._restoring_meta = False
 
     def _capture_session_meta(self) -> None:
-        """Pull undo / selection / view into the document for .xml.meta."""
+        """Pull undo/redo into the document for .xml.meta."""
         snap = self.scene.undo_stack.serialize()
-        selection = ""
-        for item in self.scene.selectedItems():
-            node = getattr(item, "node", None)
-            if node is not None and getattr(node, "path", ""):
-                selection = node.path
-                break
-        self.doc.capture_session(
-            undo=snap["undo"],
-            redo=snap["redo"],
-            selection=selection,
-            view=self.canvas.view_state(),
-        )
+        self.doc.capture_session(undo=snap["undo"], redo=snap["redo"])
 
     def _restore_view_or_fit(self) -> None:
-        view = self.doc.view_state
-        if view:
-            self.canvas.restore_view_state(view)
-        else:
-            self.canvas.fit_stage()
+        # View is session-only (not in .xml.meta); always fit on open.
+        self.canvas.fit_stage()
 
     def _on_undo_stack_changed(self) -> None:
         self._update_undo_actions()
@@ -3993,8 +3976,6 @@ class MainWindow(QMainWindow):
     def _on_canvas_selection(self, node: LayoutNode | None) -> None:
         self._commit_props_geo_undo()
         self._show_props(node)
-        if not self._restoring_meta:
-            self.doc.set_selection(node.path if node and node.path else "")
         self._xml_sel_path = node.path if node and node.path else ""
         self._apply_xml_selection_highlight()
         if node and node.path:

@@ -1,4 +1,4 @@
-"""Sidecar .xml.meta - editor session state next to the XML."""
+"""Sidecar .xml.meta — layout handles, layers, undo (not editor options / view)."""
 
 from __future__ import annotations
 
@@ -7,21 +7,19 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-META_VERSION = 2
+META_VERSION = 3
 # Selectable marker only; tag caption is drawn beside it.
 DEFAULT_HANDLE_SIZE = 5.0
 
 
 @dataclass
 class MetaDocument:
-    """Everything SAGE persists beside the XML."""
+    """Persisted beside the XML: elements, layers, undo/redo only."""
 
     elements: dict[str, dict[str, float]] = field(default_factory=dict)
     layers: dict[str, bool] = field(default_factory=dict)
     undo: list[dict[str, Any]] = field(default_factory=list)
     redo: list[dict[str, Any]] = field(default_factory=list)
-    selection: str = ""
-    view: dict[str, float] | None = None
 
 
 def meta_path_for(xml_path: Path) -> Path:
@@ -39,7 +37,7 @@ def load_meta_layers(xml_path: Path) -> dict[str, bool]:
 
 
 def load_meta_document(xml_path: Path) -> MetaDocument:
-    """Load full editor session meta (elements, layers, undo, view, …)."""
+    """Load meta (elements, layers, undo/redo). Ignores legacy selection/view."""
     path = meta_path_for(xml_path)
     if not path.is_file():
         return MetaDocument()
@@ -79,23 +77,11 @@ def _parse_meta_dict(data: dict[str, Any]) -> MetaDocument:
                 continue
             layers[key.replace(":", "/")] = bool(val)
 
-    undo = _parse_edit_list(data.get("undo"))
-    redo = _parse_edit_list(data.get("redo"))
-
-    selection = data.get("selection")
-    if not isinstance(selection, str):
-        selection = ""
-    else:
-        selection = selection.replace(":", "/")
-
-    view = _parse_view(data.get("view"))
     return MetaDocument(
         elements=elements,
         layers=layers,
-        undo=undo,
-        redo=redo,
-        selection=selection,
-        view=view,
+        undo=_parse_edit_list(data.get("undo")),
+        redo=_parse_edit_list(data.get("redo")),
     )
 
 
@@ -169,20 +155,6 @@ def _parse_geo(raw: object) -> dict[str, Any] | None:
         return None
 
 
-def _parse_view(raw: object) -> dict[str, float] | None:
-    if not isinstance(raw, dict):
-        return None
-    try:
-        scale = float(raw.get("scale", 0))
-        cx = float(raw.get("cx", 0))
-        cy = float(raw.get("cy", 0))
-    except (TypeError, ValueError):
-        return None
-    if scale <= 0:
-        return None
-    return {"scale": scale, "cx": cx, "cy": cy}
-
-
 def save_meta(
     xml_path: Path,
     elements: dict[str, dict[str, float]],
@@ -190,8 +162,6 @@ def save_meta(
     layers: dict[str, bool] | None = None,
     undo: list[dict[str, Any]] | None = None,
     redo: list[dict[str, Any]] | None = None,
-    selection: str = "",
-    view: dict[str, float] | None = None,
 ) -> Path:
     path = meta_path_for(xml_path)
     payload: dict[str, Any] = {
@@ -212,14 +182,6 @@ def save_meta(
         payload["undo"] = [_serialize_edit(e) for e in undo]
     if redo is not None:
         payload["redo"] = [_serialize_edit(e) for e in redo]
-    if selection:
-        payload["selection"] = selection
-    if view is not None:
-        payload["view"] = {
-            "scale": _num(float(view["scale"])),
-            "cx": _num(float(view["cx"])),
-            "cy": _num(float(view["cy"])),
-        }
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     return path
 
@@ -231,8 +193,6 @@ def save_meta_document(xml_path: Path, meta: MetaDocument) -> Path:
         layers=meta.layers,
         undo=meta.undo,
         redo=meta.redo,
-        selection=meta.selection,
-        view=meta.view,
     )
 
 

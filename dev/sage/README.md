@@ -51,7 +51,7 @@ py -3 dev/sage/render_preview.py
   `configs.db0` + `textures_ui.db0` there after you confirm in setup/settings
 - Zoom (wheel), pan (MMB or Alt+drag), Fit stage (`F`)
 - Undo/Redo move, resize, and property geometry (`Ctrl+Z` / `Ctrl+Y` or `Ctrl+Shift+Z`)
-- Meta handles for elements without XML `x/y/width/height` (runtime-positioned). Drag them to preview script placement - **children move with the meta origin**; positions save to `file.xml.meta` (not into the XML). `.xml.meta` also stores layer toggles, undo/redo history, selection, and view zoom/pan. ~10×10 diamond markers (move-only); tag caption is display-only.
+- Meta handles for elements without XML `x/y/width/height` (runtime-positioned). Drag them to preview script placement - **children move with the meta origin**; positions save to `file.xml.meta` (not into the XML). `.xml.meta` stores version, element handles, layer toggles, and undo/redo only — editor options and view live in `settings.json` / the session. Diamond markers (move-only); tag caption is display-only.
 - Save / Save As (comments/whitespace may change; meta written alongside)
 
 ## Texture roots

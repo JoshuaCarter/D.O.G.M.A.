@@ -38,15 +38,12 @@ def main() -> int:
     )
 
     resolver = _resolver()
-    # Resolve only the atlas ids / DDS this smoke check needs (no full index).
-    resolver._ingest_descr_for_ids(
-        {"ui_dogma_path_dot_green", "ui_inGame2_button", "ui_new_game_main"}
-    )
-    print(f"atlas ids: {resolver.atlas_count}")
-    assert "ui_dogma_path_dot_green" in resolver._atlas
-    assert resolver.find_dds("ui\\dots") is not None
+    # lookup_atlas ingests descr XMLs on demand (no full index needed).
+    assert resolver.lookup_atlas("ui_dogma_path_dot_green") is not None
     assert resolver.lookup_atlas("ui_inGame2_button") is not None
     assert resolver.lookup_atlas("ui_new_game_main") is not None
+    assert resolver.find_dds("ui\\dots") is not None
+    print(f"atlas ids: {resolver.atlas_count}")
     print(f"dds files: {resolver.dds_count}")
 
     doc = UiXmlDocument()
@@ -67,18 +64,25 @@ def main() -> int:
     bg_tex = resolver.resolve_ref(auto.texture)
     assert bg_tex.image is not None, bg_tex.error
 
-    # Abs = XML parent chain only (no script re-parenting).
-    main = root.find_by_path("main_dialog")
-    front = root.find_by_path("main_dialog/frame_front")
-    assert main is not None and front is not None
-    assert front.abs_x == main.abs_x + front.x
-    assert front.abs_y == main.abs_y + front.y
+    # Abs = XML parent chain only (no script re-parenting). Data-independent:
+    # every drawable must satisfy abs == parent-chain origin + local.
+    def _origin(node):
+        ox = oy = 0.0
+        p = node.parent
+        while p is not None:
+            if p.is_drawable:
+                ox, oy = p.abs_x, p.abs_y
+                break
+            p = p.parent
+        return ox, oy
 
-    btn = root.find_by_path("main_dialog/btn_back")
-    assert btn is not None
-    assert btn.abs_x == main.abs_x + btn.x
-    assert btn.abs_y == main.abs_y + btn.y
-    assert btn.texture is not None
+    for n in drawables:
+        ox, oy = _origin(n)
+        assert n.abs_x == ox + n.x, n.path
+        assert n.abs_y == oy + n.y, n.path
+
+    btn = next((n for n in drawables if n.tag == "btn_back"), None)
+    assert btn is not None and btn.texture is not None
     btn_tex = resolver.resolve_ref(btn.texture)
     assert btn_tex.image is not None, btn_tex.error
     assert btn_tex.atlas_id == "ui_inGame2_button_e"
@@ -89,11 +93,9 @@ def main() -> int:
 
     bare = build_tree(ET.fromstring(faction.read_text(encoding="utf-8")))
     apply_meta_positions(bare, {})
-    opts = bare.find_by_path("main_dialog/options")
-    assert opts is not None and opts.from_meta
-    assert (opts.x, opts.y) == (0.0, 0.0)
-    popup = bare.find_by_path("main_dialog/popup_faction")
-    assert popup is not None and popup.from_meta and (popup.x, popup.y) == (0.0, 0.0)
+    for node in bare.iter_all():
+        if node.from_meta:
+            assert (node.x, node.y) == (0.0, 0.0), node.path
 
     tip = doc.load(tooltip)
     panel = tip.find_by_path("panel")

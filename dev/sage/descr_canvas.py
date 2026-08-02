@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PIL import Image
-from PyQt6.QtCore import QPointF, QRectF, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QPointF, QRectF, QSignalBlocker, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import (
     QBrush,
     QColor,
@@ -36,7 +36,7 @@ from .box_chrome import (
     IdleBorderChrome,
     OutsideLabelChrome,
     SEL_BLUE,
-    SEL_FILL_ATLAS,
+    SEL_BLUE_FILL,
     SELECT_LABEL_TEXT,
     FocusCaptionOverlay,
 )
@@ -151,7 +151,7 @@ class RegionItem(QGraphicsRectItem):
             pen.setCosmetic(True)
             self.setPen(pen)
             self.setBrush(
-                QBrush(SEL_FILL_ATLAS)
+                QBrush(SEL_BLUE_FILL)
                 if self.show_box_fill
                 else QBrush(Qt.BrushStyle.NoBrush)
             )
@@ -469,19 +469,10 @@ class DescrScene(QGraphicsScene):
         self.undo_stack_changed.emit()
 
     def _on_sel(self) -> None:
-        for item in self.selectedItems():
-            if isinstance(item, RegionItem):
-                item.refresh()
-                for other in self._items.values():
-                    if other is not item:
-                        other.refresh()
-                self.sync_focus_caption()
-                self.selection_changed_region.emit(item.region)
-                return
-        for item in self._items.values():
-            item.refresh()
+        # Item chrome updates itself via ItemSelectedHasChanged (delta only).
         self.sync_focus_caption()
-        self.selection_changed_region.emit(None)
+        regs = self.selected_regions()
+        self.selection_changed_region.emit(regs[-1] if regs else None)
 
     def selected_region(self) -> DescrRegion | None:
         regs = self.selected_regions()
@@ -586,12 +577,15 @@ class DescrScene(QGraphicsScene):
         self.select_regions([] if region is None else [region])
 
     def select_regions(self, regions: list) -> None:
-        """Replace selection with the given atlas regions."""
+        """Replace selection with the given atlas regions (one signal, batched)."""
+        blocker = QSignalBlocker(self)
         self.clearSelection()
         want = {id(r) for r in regions}
         for item in self._items.values():
             if id(item.region) in want:
                 item.setSelected(True)
+        del blocker
+        self.selectionChanged.emit()
 
     def add_region_at(self, x: float, y: float, w: float = 32.0, h: float = 32.0) -> DescrRegion | None:
         if self.doc is None or self.sheet is None:
@@ -650,6 +644,8 @@ class DescrView(QGraphicsView):
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
         self.setBackgroundBrush(QBrush(QColor(18, 18, 20)))
         self._panning = False
+        self._pan_moved = False
+        self._pan_button: Qt.MouseButton | None = None
         self._pan_start = QPointF()
         self._nudge_key: int | None = None
         self._nudge_dx = 0
@@ -821,6 +817,8 @@ class DescrView(QGraphicsView):
             and event.modifiers() & Qt.KeyboardModifier.AltModifier
         ):
             self._panning = True
+            self._pan_moved = False
+            self._pan_button = event.button()
             self._pan_start = event.position()
             self.setCursor(Qt.CursorShape.ClosedHandCursor)
             event.accept()
@@ -836,6 +834,8 @@ class DescrView(QGraphicsView):
         self._coords.update_scene_pos(scene_pos)
         if self._panning:
             delta = event.position() - self._pan_start
+            if abs(delta.x()) + abs(delta.y()) >= 2.0:
+                self._pan_moved = True
             self._pan_start = event.position()
             self.horizontalScrollBar().setValue(
                 self.horizontalScrollBar().value() - int(delta.x())
@@ -851,6 +851,15 @@ class DescrView(QGraphicsView):
         if self._panning:
             self._panning = False
             self.unsetCursor()
+            # Right-click without drag deselects (parity with the UI canvas).
+            if (
+                event.button() == Qt.MouseButton.RightButton
+                and event.button() == self._pan_button
+                and not self._pan_moved
+            ):
+                scene = self.scene()
+                if scene is not None:
+                    scene.clearSelection()
             event.accept()
             return
         super().mouseReleaseEvent(event)

@@ -57,11 +57,23 @@ def _yn(prompt: str, default_yes: bool = True) -> bool:
     return raw in ("y", "yes")
 
 
-def resolve_alao_root() -> Path | None:
+def _alao_mod_candidates(mo2_root: Path) -> list[Path]:
+    """ALAO installed as an MO2 mod (the ModDB zip nests anomaly_alao-main/)."""
+    mods = mo2_root / "mods"
+    if not mods.is_dir():
+        return []
+    hits = list(mods.glob("*/stalker_lua_lint.py"))
+    hits += mods.glob("*/*/stalker_lua_lint.py")
+    return sorted((h.parent for h in hits), key=lambda p: str(p).lower())
+
+
+def resolve_alao_root(mo2_root: Path | None = None) -> Path | None:
     env = (os.environ.get("ALAO_PATH") or "").strip()
     candidates: list[Path] = []
     if env:
         candidates.append(Path(env))
+    if mo2_root is not None:
+        candidates.extend(_alao_mod_candidates(mo2_root))
     candidates.append(Path(r"c:\gamma_dev\ALAO"))
     # …/DOGMA/src/_common/mo2/tools → parents[4] = repo root → sibling ALAO
     try:
@@ -349,18 +361,22 @@ def run_alao(
     exclude_lines: list[str] | None = None,
     direct: bool = False,
     dry_run: bool = False,
+    mo2_root: Path | None = None,
 ) -> int:
     """Run ALAO with the same fix flags Optimize uses.
 
     Flags: ``--fix --fix-nil --remove-dead-code --no-first-time-auto-backup``
     plus optional ``--direct`` (authoring trees without gamedata/scripts).
     """
-    alao = resolve_alao_root()
+    alao = resolve_alao_root(mo2_root)
     if alao is None:
         lib.err(
             "Could not find ALAO (Anomaly Lua Auto Optimizer).\n"
             f"Download: {ALAO_URL}\n"
-            "Or set the ALAO_PATH environment variable to your ALAO folder."
+            "Then either install the zip in Mod Organizer 2 like any other\n"
+            "addon (MO2 warns that it has no game data - that is fine, and\n"
+            "it can stay unchecked), or set the ALAO_PATH environment\n"
+            "variable to your unpacked ALAO folder."
         )
         return 1
 
@@ -454,6 +470,7 @@ def step_alao(
         exclude_lines=["VANILLA_SCRIPTS"],
         direct=False,
         dry_run=dry_run,
+        mo2_root=mo2_root,
     )
 
 

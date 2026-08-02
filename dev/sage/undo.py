@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -47,14 +48,6 @@ class GeoEdit:
     @classmethod
     def multi(cls, pairs: list[tuple[GeoState, GeoState]]) -> GeoEdit:
         return cls(parts=tuple(pairs))
-
-    @property
-    def before(self) -> GeoState:
-        return self.parts[0][0]
-
-    @property
-    def after(self) -> GeoState:
-        return self.parts[0][1]
 
     def changed(self) -> bool:
         return any(b != a for b, a in self.parts)
@@ -420,16 +413,18 @@ class UndoStack:
         redo: list[dict[str, Any]] | None = None,
     ) -> None:
         self.clear()
-        for raw in undo or []:
+        dropped = 0
+        for raw, stack in [(r, self._undo) for r in undo or []] + [
+            (r, self._redo) for r in redo or []
+        ]:
             try:
-                self._undo.append(edit_from_dict(raw))
+                stack.append(edit_from_dict(raw))
             except (KeyError, TypeError, ValueError):
-                continue
-        for raw in redo or []:
-            try:
-                self._redo.append(edit_from_dict(raw))
-            except (KeyError, TypeError, ValueError):
-                continue
+                dropped += 1
+        if dropped:
+            logging.getLogger("sage.undo").warning(
+                "restore dropped %d unreadable session edit(s)", dropped
+            )
         if len(self._undo) > self._limit:
             self._undo = self._undo[-self._limit :]
         if len(self._redo) > self._limit:

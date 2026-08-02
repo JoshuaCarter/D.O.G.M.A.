@@ -145,10 +145,6 @@ class DescrSheet:
                 return reg
         return None
 
-    def all_ids(self) -> set[str]:
-        return {r.atlas_id for r in self.regions if r.atlas_id}
-
-
 class DescrDocument:
     """Writable textures_descr document (no .xml.meta)."""
 

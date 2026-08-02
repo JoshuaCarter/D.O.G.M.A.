@@ -598,29 +598,6 @@ class FontResolver:
             ui_scale=scale,
         )
 
-    def measure(self, atlas: FontAtlas, text: str) -> tuple[int, int]:
-        """Size in virtual HUD pixels (after ui_scale)."""
-        if not text:
-            return 0, max(1, int(round(atlas.ui_height)))
-        width = 0.0
-        for ch in text:
-            if ch == "\n":
-                continue
-            code = _char_code(ch)
-            if code is None:
-                continue
-            g = atlas.glyphs.get(code)
-            if g is None or g.width <= 0:
-                continue
-            # Engine: TCMap.z = x1 - x0 (width_correction disabled).
-            width += g.width
-        native_w = max(1, int(round(width)))
-        lines = 1 + text.count("\n")
-        return (
-            max(1, int(round(native_w * atlas.ui_scale))),
-            max(1, int(round(atlas.height * lines * atlas.ui_scale))),
-        )
-
     def render_text(self, atlas: FontAtlas, text: str, color: QColor) -> QPixmap:
         """Compose at native atlas pixels (caller applies atlas.ui_scale)."""
         text = text.replace("\r\n", "\n").replace("\r", "\n")

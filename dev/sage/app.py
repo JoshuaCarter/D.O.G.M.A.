@@ -104,7 +104,6 @@ from .settings import (
     GRID_STEP_MAX,
     GRID_STEP_MIN,
     resolve_font_device_height,
-    ensure_db_unpacked_and_roots,
     get_deploy_target,
     installs_configured,
     load_settings,
@@ -142,7 +141,16 @@ DOC_MODE_ATLAS = "atlas"
 
 TAB_WYSIWYG = 0
 TAB_XML = 1
-TAB_LOG = 2
+
+# Dark+ editor chrome (matches VS Code XML highlighting).
+_EDITOR_QSS = (
+    "QPlainTextEdit {"
+    " background-color: #1E1E1E;"
+    " color: #D4D4D4;"
+    " selection-background-color: #264F78;"
+    " border: none;"
+    "}"
+)
 
 # Tree: mark overlapping canvas stack peers (stylesheet blocks setBackground).
 _TREE_PEER_ROLE = int(Qt.ItemDataRole.UserRole) + 1
@@ -370,9 +378,6 @@ class ElidedLabel(QLabel):
         )
         self.setStyleSheet("")
         self._apply_elide()
-
-    def full_text(self) -> str:
-        return self._full
 
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
@@ -648,9 +653,6 @@ class TextureValueRow(BrowseValueRow):
         self.setVisible(True)
 
 
-TexturePathRow = BrowseValueRow  # back-compat alias
-
-
 class _LayerCheckDelegate(QStyledItemDelegate):
     """Paint layer row checkboxes with a visible tick (QSS images are flaky on lists)."""
 
@@ -706,6 +708,7 @@ class ElementTreeWidget(QTreeWidget):
     """
 
     reparent_drop = pyqtSignal(list, str)  # source paths, target path
+    hover_cleared = pyqtSignal()  # pointer left rows (Leave / empty gap)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -916,6 +919,8 @@ class ElementTreeWidget(QTreeWidget):
                 return True
             return False
         if et == QEvent.Type.MouseMove:
+            if self.itemAt(event.position().toPoint()) is None:
+                self.hover_cleared.emit()
             if (
                 self._armed
                 and self._press_item is not None
@@ -937,6 +942,9 @@ class ElementTreeWidget(QTreeWidget):
                         self._press_item = None
                         self._armed = False
                 return True
+            return False
+        if et == QEvent.Type.Leave:
+            self.hover_cleared.emit()
             return False
         if et == QEvent.Type.MouseButtonRelease:
             if event.button() == Qt.MouseButton.LeftButton:
@@ -1584,10 +1592,6 @@ class InstallRootsDialog(QDialog):
         return out
 
 
-# Back-compat alias used by Edit → Settings…
-SettingsDialog = InstallRootsDialog
-
-
 class MainWindow(QMainWindow):
     def __init__(self, initial: Path | None = None) -> None:
         super().__init__()
@@ -1647,15 +1651,7 @@ class MainWindow(QMainWindow):
         self.raw_editor.setTabStopDistance(
             self.raw_editor.fontMetrics().horizontalAdvance(" ") * 4
         )
-        # Dark+ editor chrome (matches VS Code XML highlighting)
-        self.raw_editor.setStyleSheet(
-            "QPlainTextEdit {"
-            " background-color: #1E1E1E;"
-            " color: #D4D4D4;"
-            " selection-background-color: #264F78;"
-            " border: none;"
-            "}"
-        )
+        self.raw_editor.setStyleSheet(_EDITOR_QSS)
         self._raw_highlighter = XmlHighlighter(self.raw_editor.document())
         self.raw_editor.setUndoRedoEnabled(True)
         self.raw_editor.textChanged.connect(self._on_raw_text_changed)
@@ -1778,14 +1774,7 @@ class MainWindow(QMainWindow):
         self.log_view.setReadOnly(True)
         self.log_view.setPlaceholderText("Editor log…")
         self.log_view.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
-        self.log_view.setStyleSheet(
-            "QPlainTextEdit {"
-            " background-color: #1E1E1E;"
-            " color: #D4D4D4;"
-            " selection-background-color: #264F78;"
-            " border: none;"
-            "}"
-        )
+        self.log_view.setStyleSheet(_EDITOR_QSS)
         log_layout.addWidget(self.log_view, stretch=1)
         attach_log_view(self.log_view)
         self._log("info", "SAGE ready")
@@ -1823,14 +1812,12 @@ class MainWindow(QMainWindow):
             " color: #B0CFFF;"
             "}"
         )
-        self._updating_tree_sel = False
         self._syncing_from_tree = False
         self.tree.itemSelectionChanged.connect(self._on_tree_selection_changed)
         self.tree.itemDoubleClicked.connect(self._on_tree_double_clicked)
         self.tree.itemEntered.connect(self._on_tree_item_entered)
         self.tree.reparent_drop.connect(self._on_tree_reparent_drop)
-        # Hover only — ElementTreeWidget already owns press/move/release/DnD.
-        self.tree.viewport().installEventFilter(self)
+        self.tree.hover_cleared.connect(self._on_tree_hover_cleared)
 
         self.layers = LayerListWidget()
         self.layers.itemChanged.connect(self._on_layer_toggled)
@@ -2407,11 +2394,6 @@ class MainWindow(QMainWindow):
             w = w.parentWidget()
         return True
 
-    def _nudge_view(self):
-        if self._doc_mode == DOC_MODE_ATLAS:
-            return self.descr_board.view
-        return self.canvas
-
     def _filter_nudge_key(self, event) -> bool:
         """Consume arrow keys to nudge selected boxes when WYSIWYG is active."""
         if not getattr(self, "_workspace_revealed", False):
@@ -2435,7 +2417,7 @@ class MainWindow(QMainWindow):
             return False
         if not self._nudge_focus_ok():
             return False
-        view = self._nudge_view()
+        view = self._active_canvas_view()
         if event.type() == QEvent.Type.KeyPress:
             return view.handle_nudge_key_press(event)
         if event.type() == QEvent.Type.KeyRelease:
@@ -2632,7 +2614,6 @@ class MainWindow(QMainWindow):
         sheet = self.descr_board.current_sheet()
         selected = self.descr_board.scene.selected_region()
         sel_id = selected.atlas_id if selected is not None else None
-        self._updating_tree_sel = True
         self.tree.blockSignals(True)
         self.tree.clear()
         self._tree_items_by_path.clear()
@@ -2648,7 +2629,6 @@ class MainWindow(QMainWindow):
                         item, 0, QItemSelectionModel.SelectionFlag.NoUpdate
                     )
         self.tree.blockSignals(False)
-        self._updating_tree_sel = False
 
     def _show_descr_props(self, region) -> None:
         self._updating_props = True
@@ -2682,7 +2662,8 @@ class MainWindow(QMainWindow):
             return
         self._commit_props_geo_undo()
         regs = self.descr_board.scene.selected_regions()
-        self._set_tree_selection([r.atlas_id for r in regs])
+        if not self._syncing_from_tree:
+            self._set_tree_selection([r.atlas_id for r in regs])
         if len(regs) > 1:
             self._show_props_multi()
             self._xml_sel_atlas = ""
@@ -2698,9 +2679,14 @@ class MainWindow(QMainWindow):
             f"{int(region.width)}×{int(region.height)}"
         )
 
-    def _descr_rename(self) -> None:
+    def _rename_selected(self) -> None:
+        """F2: rename atlas id (atlas mode) or XML tag (UI mode)."""
         if self._doc_mode == DOC_MODE_ATLAS:
             self.descr_board.rename_selected()
+            return
+        node = self._single_selected_ele()
+        if node is not None and node.path:
+            self._rename_ui_tree_item(node.path)
 
     def _descr_duplicate(self) -> None:
         if self._doc_mode == DOC_MODE_ATLAS:
@@ -2840,10 +2826,6 @@ class MainWindow(QMainWindow):
                 f" · {thumb_stats.get('written', 0)} sheet previews in {thumb_s:.1f}s"
             )
         self.statusBar().showMessage(msg)
-
-    def _ensure_resources_indexed(self) -> None:
-        """Back-compat alias — roots only; assets resolve on file load."""
-        self._bind_resource_roots()
 
     def _warm_resources_for_doc(self, doc: LayoutNode) -> None:
         """Resolve only atlas / DDS / string / font ids this document references."""
@@ -3044,7 +3026,7 @@ class MainWindow(QMainWindow):
         edit_menu.addSeparator()
         self.descr_rename_a = QAction("Rename atlas &id…", self)
         self.descr_rename_a.setShortcut("F2")
-        self.descr_rename_a.triggered.connect(self._descr_rename)
+        self.descr_rename_a.triggered.connect(self._rename_selected)
         edit_menu.addAction(self.descr_rename_a)
         self.descr_dup_a = QAction("Du&plicate region", self)
         self.descr_dup_a.setShortcut("Ctrl+Alt+D")
@@ -3200,28 +3182,6 @@ class MainWindow(QMainWindow):
         if saved.is_dir():
             return str(saved)
         return str(Path.cwd())
-
-    def _atlas_dialog_start(self) -> str:
-        custom = self._first_custom_root()
-        if custom is not None:
-            for rel in (
-                Path("configs") / "ui" / "textures_descr",
-                Path("gamedata") / "configs" / "ui" / "textures_descr",
-                Path("textures_descr"),
-            ):
-                d = custom / rel
-                if d.is_dir():
-                    return str(d)
-            return str(custom)
-        saved = Path(str(self.settings.get("last_texture_dir") or ""))
-        if saved.is_dir():
-            return str(saved)
-        for key in ("gamedata_descr_roots", "textures_descr_roots"):
-            for raw in self.settings.get(key) or []:
-                p = Path(str(raw))
-                if p.is_dir():
-                    return str(p)
-        return self._file_dialog_start()
 
     def _remember_file_dir(self, path: Path) -> None:
         directory = path if path.is_dir() else path.parent
@@ -3569,7 +3529,10 @@ class MainWindow(QMainWindow):
 
     def _on_raw_text_changed(self) -> None:
         self._raw_dirty = True
-        self.doc.mark_dirty()
+        if self._doc_mode == DOC_MODE_ATLAS:
+            self.descr_doc.mark_dirty()
+        else:
+            self.doc.mark_dirty()
         if not self.find_bar.isHidden():
             self._refresh_find_matches(keep_index=True)
 
@@ -4411,7 +4374,6 @@ class MainWindow(QMainWindow):
     def _fill_tree(self, doc: LayoutNode) -> None:
         self.scene.set_tree_hover_path(None)
         self._on_stack_peers_changed(frozenset())
-        self._updating_tree_sel = True
         self.tree.blockSignals(True)
         self.tree.clear()
         self._tree_items_by_path.clear()
@@ -4435,7 +4397,6 @@ class MainWindow(QMainWindow):
             add(child, None)
         self.tree.expandToDepth(1)
         self.tree.blockSignals(False)
-        self._updating_tree_sel = False
 
     def _on_stack_peers_changed(self, paths: object) -> None:
         """Grey-highlight Tree rows for overlapping canvas stack peers."""
@@ -4514,46 +4475,42 @@ class MainWindow(QMainWindow):
         self.scene.select_path(path)
 
     def _on_tree_selection_changed(self) -> None:
-        """Plain / Shift-range / Ctrl-add tree selection → canvas."""
-        if self._updating_tree_sel:
+        """Plain / Shift-range / Ctrl-add tree selection → canvas.
+
+        While this runs, the canvas echo must not rewrite the tree (the tree may
+        hold hidden / non-drawable rows the canvas cannot mirror). Scene selects
+        are batched (one signal, synchronous), so a plain guard suffices.
+        """
+        if self._syncing_from_tree:
             return
         keys: list[str] = []
         for it in self.tree.selectedItems():
             key = it.data(0, Qt.ItemDataRole.UserRole)
             if isinstance(key, str) and key:
                 keys.append(key)
-        # Hold through canvas's deferred selectionChanged cleanup so it cannot
-        # overwrite a richer tree selection (hidden / non-drawable rows).
         self._syncing_from_tree = True
-        if self._doc_mode == DOC_MODE_ATLAS:
-            sheet = self.descr_board.current_sheet()
-            if sheet is None:
-                QTimer.singleShot(0, self._end_syncing_from_tree)
+        try:
+            if self._doc_mode == DOC_MODE_ATLAS:
+                sheet = self.descr_board.current_sheet()
+                if sheet is None:
+                    return
+                by_id = {r.atlas_id: r for r in sheet.regions}
+                self.descr_board.scene.select_regions(
+                    [by_id[k] for k in keys if k in by_id]
+                )
                 return
-            by_id = {r.atlas_id: r for r in sheet.regions}
-            regs = [by_id[k] for k in keys if k in by_id]
-            self.descr_board.scene.select_regions(regs)
-            QTimer.singleShot(0, self._end_syncing_from_tree)
-            return
-        # Canvas only shows visible drawables; do not let that wipe the tree.
-        paths: list[str] = []
-        doc = self.scene.doc
-        for key in keys:
-            if key not in self.scene._items:
-                continue
-            node = doc.find_by_path(key) if doc is not None else None
-            if node is None or not node.visible:
-                continue
-            paths.append(key)
-        self.scene.select_paths(paths)
-        QTimer.singleShot(0, self._end_syncing_from_tree)
-
-    def _end_syncing_from_tree(self) -> None:
-        self._syncing_from_tree = False
+            doc = self.scene.doc
+            paths: list[str] = []
+            for key in keys:
+                node = doc.find_by_path(key) if doc is not None else None
+                if node is not None and node.visible and self.scene.has_item(key):
+                    paths.append(key)
+            self.scene.select_paths(paths)
+        finally:
+            self._syncing_from_tree = False
 
     def _set_tree_selection(self, keys: list[str]) -> None:
         """Select tree rows for ``keys`` without re-entering canvas sync."""
-        self._updating_tree_sel = True
         self.tree.blockSignals(True)
         try:
             self.tree.clearSelection()
@@ -4581,7 +4538,6 @@ class MainWindow(QMainWindow):
             self.tree.set_sel_anchor(current)
         finally:
             self.tree.blockSignals(False)
-            self._updating_tree_sel = False
 
     def _on_tree_reparent_drop(self, paths: list, target_path: str) -> None:
         """Append dragged elements as children of the drop target (undoable)."""
@@ -4598,41 +4554,55 @@ class MainWindow(QMainWindow):
                 nodes.append(n)
         if not nodes:
             return
-        before_xml, before_meta, before_layers = self.doc.structure_snapshot()
+        before = self.doc.structure_snapshot()
         select_before = tuple(n.path for n in nodes if n.path)
         new_paths = self.doc.reparent_as_children(nodes, target)
         if not new_paths:
             self.statusBar().showMessage("Cannot reparent onto that target")
             return
-        after_xml, after_meta, after_layers = self.doc.structure_snapshot()
-        n = len(new_paths)
         tname = target_path.rsplit("/", 1)[-1]
-        if n == 1:
+        if len(new_paths) == 1:
             summary = f"Reparent {new_paths[0].rsplit('/', 1)[-1]} → {tname}"
         else:
-            summary = f"Reparent {n} → {tname}"
-        edit = StructureEdit(
-            before_xml=before_xml,
-            after_xml=after_xml,
-            before_meta=before_meta,
-            after_meta=after_meta,
-            before_layers=before_layers,
-            after_layers=after_layers,
+            summary = f"Reparent {len(new_paths)} → {tname}"
+        self._commit_structure_edit(
+            before,
             summary=summary,
             select_before=select_before,
             select_after=tuple(new_paths),
         )
-        self._rebuild_ui_after_structure(
-            select_path=new_paths[-1], clear_undo=False
-        )
-        # Structure invalidates path-based geo undos; keep only this edit.
-        self.scene.clear_undo()
-        self.scene.push_edit(edit)
-        self.scene.select_paths(new_paths)
-        self._set_tree_selection(new_paths)
         self.statusBar().showMessage(
             f"Reparented {len(new_paths)} → {target_path}"
         )
+
+    def _commit_structure_edit(
+        self,
+        before: tuple[str, dict, dict],
+        *,
+        summary: str,
+        select_before: tuple[str, ...],
+        select_after: tuple[str, ...],
+    ) -> None:
+        """Record an undoable structure edit (after mutation) and refresh the UI."""
+        after_xml, after_meta, after_layers = self.doc.structure_snapshot()
+        edit = StructureEdit(
+            before_xml=before[0],
+            after_xml=after_xml,
+            before_meta=before[1],
+            after_meta=after_meta,
+            before_layers=before[2],
+            after_layers=after_layers,
+            summary=summary,
+            select_before=select_before,
+            select_after=select_after,
+        )
+        self._rebuild_ui_after_structure(
+            select_path=select_after[-1] if select_after else None
+        )
+        self.scene.push_edit(edit)
+        if select_after:
+            self.scene.select_paths(list(select_after))
+            self._set_tree_selection(list(select_after))
 
     def _on_tree_double_clicked(self, item: QTreeWidgetItem, _col: int) -> None:
         """Double-click renames atlas id or UI element tag."""
@@ -4666,6 +4636,7 @@ class MainWindow(QMainWindow):
         if not new_tag or new_tag == node.tag:
             return
         old = node.path
+        before = self.doc.structure_snapshot()
         new_path = self.doc.rename_tag(node, new_tag)
         if new_path is None:
             QMessageBox.warning(
@@ -4674,14 +4645,19 @@ class MainWindow(QMainWindow):
                 f"Cannot rename to: {new_tag}",
             )
             return
-        self._rebuild_ui_after_structure(select_path=new_path)
+        self._commit_structure_edit(
+            before,
+            summary=f"Rename {old.rsplit('/', 1)[-1]} → {new_tag}",
+            select_before=(old,),
+            select_after=(new_path,),
+        )
         self.statusBar().showMessage(f"Renamed {old} → {new_path}")
 
     def _on_tree_item_entered(self, item: QTreeWidgetItem, _col: int) -> None:
         if self._doc_mode == DOC_MODE_ATLAS:
             return
         path = item.data(0, Qt.ItemDataRole.UserRole)
-        if not isinstance(path, str) or path not in self.scene._items:
+        if not isinstance(path, str) or not self.scene.has_item(path):
             # Structural / non-drawable rows: leave current canvas hover alone.
             return
         node = self.scene.doc.find_by_path(path) if self.scene.doc else None
@@ -4689,6 +4665,10 @@ class MainWindow(QMainWindow):
             self.scene.set_tree_hover_path(None)
             return
         self.scene.set_tree_hover_path(path)
+
+    def _on_tree_hover_cleared(self) -> None:
+        if self._doc_mode != DOC_MODE_ATLAS:
+            self.scene.set_tree_hover_path(None)
 
     def eventFilter(self, obj, event) -> bool:  # noqa: N802
         et = event.type()
@@ -4705,15 +4685,6 @@ class MainWindow(QMainWindow):
             and self._deselect_on_escape()
         ):
             return True
-        if obj is self.tree.viewport():
-            if self._doc_mode == DOC_MODE_ATLAS:
-                return super().eventFilter(obj, event)
-            if et == QEvent.Type.Leave:
-                self.scene.set_tree_hover_path(None)
-            elif et == QEvent.Type.MouseMove:
-                pos = event.position().toPoint()
-                if self.tree.itemAt(pos) is None:
-                    self.scene.set_tree_hover_path(None)
         return super().eventFilter(obj, event)
 
     def changeEvent(self, event) -> None:  # noqa: N802
@@ -4780,11 +4751,17 @@ class MainWindow(QMainWindow):
         text = (QApplication.clipboard().text() or "").strip()
         if not text:
             return
+        before = self.doc.structure_snapshot()
         pasted = self.doc.paste_sibling_after(target, text)
         if pasted is None:
             self.statusBar().showMessage("Paste failed — clipboard is not a UI element")
             return
-        self._rebuild_ui_after_structure(select_path=pasted.path)
+        self._commit_structure_edit(
+            before,
+            summary=f"Paste {pasted.path.rsplit('/', 1)[-1]}",
+            select_before=(target.path,),
+            select_after=(pasted.path,),
+        )
         self.statusBar().showMessage(f"Pasted {pasted.path}")
 
     def _delete_selected_ele(self) -> None:
@@ -4795,22 +4772,24 @@ class MainWindow(QMainWindow):
             return
         path = node.path
         parent_path = node.parent.path if node.parent is not None else ""
+        before = self.doc.structure_snapshot()
         if not self.doc.remove_subtree(node):
             return
-        # Prefer selecting the parent after delete; fall back to clear.
-        select = parent_path if parent_path else None
-        self._rebuild_ui_after_structure(select_path=select)
+        self._commit_structure_edit(
+            before,
+            summary=f"Delete {path.rsplit('/', 1)[-1]}",
+            select_before=(path,),
+            select_after=(parent_path,) if parent_path else (),
+        )
         self.statusBar().showMessage(f"Deleted {path}")
 
-    def _rebuild_ui_after_structure(
-        self, *, select_path: str | None, clear_undo: bool = True
-    ) -> None:
-        """Refresh tree/scene after ElementTree insert/remove."""
+    def _rebuild_ui_after_structure(self, *, select_path: str | None) -> None:
+        """Refresh tree/scene after an XML structure change (undo history kept)."""
         doc = self.doc.doc
         if doc is None:
             return
         self._preview_needs_raw_sync = True
-        self.scene.set_document(doc, clear_undo=clear_undo)
+        self.scene.set_document(doc, clear_undo=False)
         self._fill_tree(doc)
         self._fill_layers(doc)
         self._update_undo_actions()
@@ -4832,7 +4811,7 @@ class MainWindow(QMainWindow):
         paths = edit.select_after if use_after else edit.select_before
         self.doc.restore_structure_snapshot(xml, meta, layers)
         select = paths[-1] if paths else None
-        self._rebuild_ui_after_structure(select_path=select, clear_undo=False)
+        self._rebuild_ui_after_structure(select_path=select)
         if paths:
             self.scene.select_paths(list(paths))
             self._set_tree_selection(list(paths))
@@ -5248,13 +5227,15 @@ class MainWindow(QMainWindow):
         self.edit_vert_align.setEnabled(False)
         self.edit_complex_mode.setEnabled(False)
         self.edit_always_show_scroll.setEnabled(False)
-        # Keep groups visible so the panel doesn't jump; all controls disabled.
+        # UI mode: keep groups visible so the panel doesn't jump (controls
+        # disabled). Atlas mode has no texture/text props — hide them.
+        show_groups = self._doc_mode != DOC_MODE_ATLAS
         for w in self._texture_prop_widgets:
-            w.setVisible(True)
+            w.setVisible(show_groups)
         for w in self._text_prop_widgets:
-            w.setVisible(True)
+            w.setVisible(show_groups)
         for w in self._scroll_prop_widgets:
-            w.setVisible(True)
+            w.setVisible(show_groups)
         self.prop_label_texture.setEnabled(False)
         self.prop_label_text.setEnabled(False)
         for lab in (
@@ -5464,19 +5445,20 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"Undo {edit.describe()}")
             return
         node = self.scene.apply_edit(edit, use_after=False)
-        if node is not None and node.from_meta:
+        self._on_undo_stack_changed()
+        if node is None:
+            return
+        if node.from_meta:
             self.doc.mark_meta_dirty()
         else:
             self._mark_xml_dirty()
-        self._on_undo_stack_changed()
-        if node is not None:
-            self.scene.select_path(node.path)
-            self._show_props(node)
-            self.statusBar().showMessage(f"Undo {edit.describe()}")
+        self.scene.select_path(node.path)
+        self._show_props(node)
+        self.statusBar().showMessage(f"Undo {edit.describe()}")
 
     def redo(self) -> None:
         if self.editor_tabs.currentIndex() == TAB_XML:
-            if not self.raw_editor.document().isUndoAvailable():
+            if not self.raw_editor.document().isRedoAvailable():
                 return
             self.raw_editor.redo()
             self._update_undo_actions()
@@ -5505,15 +5487,16 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"Redo {edit.describe()}")
             return
         node = self.scene.apply_edit(edit, use_after=True)
-        if node is not None and node.from_meta:
+        self._on_undo_stack_changed()
+        if node is None:
+            return
+        if node.from_meta:
             self.doc.mark_meta_dirty()
         else:
             self._mark_xml_dirty()
-        self._on_undo_stack_changed()
-        if node is not None:
-            self.scene.select_path(node.path)
-            self._show_props(node)
-            self.statusBar().showMessage(f"Redo {edit.describe()}")
+        self.scene.select_path(node.path)
+        self._show_props(node)
+        self.statusBar().showMessage(f"Redo {edit.describe()}")
 
     def _push_prop_edit(self, before, after) -> bool:
         """Push a props undo entry when state actually changed."""

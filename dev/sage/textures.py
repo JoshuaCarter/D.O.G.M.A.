@@ -413,22 +413,6 @@ def _scan_dds_under_roots(roots: list[Path], mapping: dict[str, Path]) -> None:
             continue
 
 
-def logical_dds_name(dds_path: Path, texture_roots: list[Path]) -> str | None:
-    """Map a DDS under a texture root → game logical name (``ui\\foo``, no .dds)."""
-    best: tuple[int, str] | None = None
-    for root in texture_roots:
-        logical = _logical_under_root(dds_path, root)
-        if not logical:
-            continue
-        try:
-            depth = len(root.resolve().parts)
-        except OSError:
-            depth = len(root.parts)
-        if best is None or depth > best[0]:
-            best = (depth, logical)
-    return best[1] if best else None
-
-
 def _norm_dir_prefix(root: Path) -> str:
     """Normalized directory prefix for fast ``startswith`` root checks."""
     try:
@@ -451,10 +435,6 @@ def path_is_under_prefixes(path: Path, prefixes: list[str]) -> bool:
     except OSError:
         return False
     return any(s.startswith(p) for p in prefixes)
-
-
-def path_is_under_roots(path: Path, roots: list[Path]) -> bool:
-    return path_is_under_prefixes(path, root_dir_prefixes(roots))
 
 
 @dataclass(frozen=True)
@@ -483,29 +463,6 @@ def _logical_under_root(dds: Path, root: Path) -> str | None:
     if not parts:
         return None
     return str(Path(*parts).with_suffix("")).replace("/", "\\")
-
-
-def scan_dds_catalog(roots: list[Path]) -> list[DdsCatalogEntry]:
-    """Enumerate ``*.dds`` under roots. Later roots win on the same logical name."""
-    by_key: dict[str, DdsCatalogEntry] = {}
-    for root in roots:
-        if not root.is_dir():
-            continue
-        try:
-            batch = root.rglob("*.dds")
-        except OSError:
-            continue
-        for dds in batch:
-            try:
-                if not dds.is_file():
-                    continue
-            except OSError:
-                continue
-            logical = _logical_under_root(dds, root)
-            if not logical:
-                continue
-            by_key[logical.lower()] = DdsCatalogEntry(logical=logical, path=dds)
-    return sorted(by_key.values(), key=lambda e: e.logical.lower())
 
 
 @dataclass(frozen=True)
@@ -674,12 +631,6 @@ class TextureResolver:
             len(drop_ids),
             len(path_names),
         )
-
-    def rebuild_indexes(self) -> None:
-        """Clear memory + disk path index (fonts revalidate via mtime)."""
-        self.clear_cache()
-        if self.path_index is not None:
-            self.path_index.invalidate()
 
     def ensure_indexes(self, *, force: bool = False) -> dict[str, int]:
         """Load or build descr file list + full DDS map (fast loads after first scan)."""
@@ -1099,23 +1050,6 @@ class TextureResolver:
             self.path_index.put_dds(key, path)
         self._resolve_cached.cache_clear()
 
-    def remember_atlas(self, entry: AtlasCatalogEntry) -> None:
-        """Seed atlas + DDS caches after an atlas pick."""
-        self._atlas_missing.discard(entry.atlas_id)
-        self._atlas[entry.atlas_id] = AtlasEntry(
-            entry.file_name,
-            entry.x,
-            entry.y,
-            entry.width,
-            entry.height,
-            resolved_id=entry.state_id or entry.atlas_id,
-            source=entry.source,
-        )
-        dds = self.find_dds(entry.file_name)
-        if dds is not None:
-            self.remember_dds(entry.file_name, dds)
-        self._resolve_cached.cache_clear()
-
     def dds_catalog_for_roots(self, roots: list[Path] | None = None) -> list[DdsCatalogEntry]:
         """DDS entries from the indexed map.
 
@@ -1312,22 +1246,6 @@ class TextureResolver:
     @lru_cache(maxsize=128)
     def _open_dds(self, path_str: str) -> Image.Image | None:
         return open_dds_image(path_str)
-
-    def probe_ref(self, ref: TextureRef | None) -> tuple[bool, str]:
-        """Check atlas/DDS presence without decoding or cropping the image."""
-        if ref is None or not ref.name:
-            return False, "no texture"
-        name = ref.name
-        file_name = name
-        if not ref.is_path:
-            entry = self.lookup_atlas(name)
-            if entry is None:
-                return False, f"unknown atlas id: {name}"
-            file_name = entry.file_name
-        dds = self.find_dds(file_name)
-        if dds is None:
-            return False, f"missing dds: {file_name}"
-        return True, ""
 
     def resolve_ref(self, ref: TextureRef | None) -> ResolvedTexture:
         if ref is None or not ref.name:

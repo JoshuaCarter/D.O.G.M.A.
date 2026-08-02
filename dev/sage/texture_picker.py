@@ -285,12 +285,6 @@ class TexturePickerDialog(QDialog):
             dds_path=Path(path_s) if path_s else None,
         )
 
-    def selected_entry(self) -> DdsCatalogEntry | None:
-        pick = self.selected_pick()
-        if pick is None or pick.kind != "path" or pick.dds_path is None:
-            return None
-        return DdsCatalogEntry(logical=pick.name, path=pick.dds_path)
-
     def _on_mode_changed(self, _checked: bool = False) -> None:
         self._mode = "atlas" if self.mode_atlas.isChecked() else "path"
         self._ensure_mode_catalog()

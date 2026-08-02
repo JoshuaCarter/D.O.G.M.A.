@@ -106,10 +106,6 @@ class StringResolver:
             self._missing.discard(sid)
         _log.info("invalidate strings: dropped %d id(s)", len(ids))
 
-    def rebuild(self) -> None:
-        """Compatibility — clears caches; no full-tree index."""
-        self.clear_cache()
-
     def _text_roots(self) -> list[Path]:
         return list(self.gamedata_text_roots) + list(self.text_scan_roots)
 

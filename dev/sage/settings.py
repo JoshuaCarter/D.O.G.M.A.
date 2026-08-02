@@ -446,16 +446,6 @@ def _pack_asset_paths(pack: Path) -> tuple[list[Path], list[Path], list[Path]]:
     )
 
 
-def _gamma_text_overhaul_roots(gamma: Path) -> list[Path]:
-    """Mods that ship configs/text/eng (e.g. Massive Text Overhaul)."""
-    found: list[Path] = []
-    for pack in _iter_gamma_pack_dirs(gamma):
-        name = pack.name.lower()
-        if "text" in name and ("overhaul" in name or "massive" in name):
-            found.append(pack / "gamedata" / "configs" / "text" / "eng")
-    return found
-
-
 def _known_asset_paths_under(root: Path) -> tuple[list[Path], list[Path], list[Path]]:
     """Pick well-known texture / descr / text folders under an arbitrary root."""
     tex = [
@@ -607,56 +597,6 @@ def rescan_custom_asset_roots(settings: dict) -> dict:
     settings["textures_descr_roots"] = derived["textures_descr_roots"]
     settings["text_roots"] = derived["text_roots"]
     return settings
-
-
-# Back-compat alias
-apply_install_roots = rescan_asset_roots
-
-
-def ensure_db_unpacked_and_roots(settings: dict | None = None) -> dict:
-    """Unpack Anomaly DBs if needed; does not rediscover GAMMA/Anomaly pack lists."""
-    from .db_unpack import ensure_anomaly_db_unpacked
-
-    data = settings if settings is not None else default_settings()
-    anomaly = str(data.get("anomaly_root") or "").strip()
-    ensure_anomaly_db_unpacked(anomaly_root=anomaly or None)
-    _merge_anomaly_unpack_paths(data)
-    return data
-
-
-def _merge_anomaly_unpack_paths(settings: dict) -> None:
-    """If tools/_unpacked appeared after unpack, prepend those dirs (lowest priority)."""
-    anomaly = _norm_root(settings.get("anomaly_root", ""))
-    if not anomaly:
-        return
-    root = Path(anomaly)
-    extras = {
-        "gamedata_texture_roots": [root / "tools" / "_unpacked" / "textures"],
-        "gamedata_descr_roots": [
-            root / "tools" / "_unpacked" / "configs" / "ui" / "textures_descr"
-        ],
-        "gamedata_text_roots": [
-            root / "tools" / "_unpacked" / "configs" / "text" / "eng"
-        ],
-    }
-    for key, paths in extras.items():
-        cur = list(settings.get(key) or [])
-        seen = {str(Path(p)).lower() for p in cur}
-        prepend: list[str] = []
-        for p in paths:
-            if not p.is_dir():
-                continue
-            try:
-                key_path = str(p.resolve())
-            except OSError:
-                key_path = str(p)
-            if key_path.lower() in seen:
-                continue
-            prepend.append(key_path)
-            seen.add(key_path.lower())
-        if prepend:
-            # Unpacked Anomaly is base layer — must stay before GAMMA / custom.
-            settings[key] = prepend + cur
 
 
 # Main-window splitter: left sidebar, editor, right sidebar.

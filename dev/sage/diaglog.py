@@ -67,10 +67,6 @@ _fault_fp: Any = None
 _ui_handler: "UiLogHandler | None" = None
 
 
-def log_path() -> Path:
-    return LOG_PATH
-
-
 # Prefer readable ASCII swaps; anything else becomes '?'.
 _ASCII_TRANS = str.maketrans(
     {

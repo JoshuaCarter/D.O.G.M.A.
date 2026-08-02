@@ -69,15 +69,6 @@ class UiXmlDocument:
         """Replace the full layer map without marking dirty (restore / defaults)."""
         self._layers = {str(k): bool(v) for k, v in states.items() if k}
 
-    def set_undo_snapshot(
-        self,
-        *,
-        undo: list[dict[str, Any]],
-        redo: list[dict[str, Any]],
-    ) -> None:
-        self._undo = list(undo)
-        self._redo = list(redo)
-
     def capture_session(
         self,
         *,
@@ -128,14 +119,6 @@ class UiXmlDocument:
         self.meta_dirty = False
         return self.doc
 
-    def reload_model(self) -> LayoutNode:
-        if self.root is None or self.path is None:
-            raise RuntimeError("No document loaded")
-        self.doc = build_tree(self.root)
-        self._apply_meta_doc(load_meta_document(self.path))
-        apply_meta_positions(self.doc, self._meta)
-        return self.doc
-
     def refresh_model(self) -> LayoutNode:
         """Rebuild LayoutNode tree from the live ElementTree; keep meta/layers."""
         if self.root is None:
@@ -169,10 +152,13 @@ class UiXmlDocument:
             idx = list(parent_el).index(target.element)
         except ValueError:
             return None
+        old_by_el = {id(n.element): n.path for n in self.doc.iter_all() if n.path}
         parent_el.insert(idx + 1, clone)
         self.refresh_model()
-        self.mark_dirty()
         assert self.doc is not None
+        # Sibling [n] indices may shift — keep meta/layers on the right nodes.
+        self._remap_meta_paths(old_by_el)
+        self.mark_dirty()
         return self.doc.find_by_element(clone)
 
     def remove_subtree(self, node: LayoutNode) -> bool:
@@ -182,18 +168,22 @@ class UiXmlDocument:
         parent = node.parent
         if parent is None or not node.path or node.element is self.root:
             return False
+        old_by_el = {id(n.element): n.path for n in self.doc.iter_all() if n.path}
         try:
             parent.element.remove(node.element)
         except ValueError:
             return False
-        # Drop meta handle entry for this path if present.
-        if node.path in self._meta:
-            del self._meta[node.path]
-            self.meta_dirty = True
-        if node.path in self._layers:
-            del self._layers[node.path]
-            self.meta_dirty = True
+        # Drop meta/layer entries for the subtree (path and descendants).
+        prefix = node.path + PATH_SEP
+        for store in (self._meta, self._layers):
+            stale = [k for k in store if k == node.path or k.startswith(prefix)]
+            for k in stale:
+                del store[k]
+                self.meta_dirty = True
         self.refresh_model()
+        assert self.doc is not None
+        # Sibling [n] indices may shift — keep meta/layers on the right nodes.
+        self._remap_meta_paths(old_by_el)
         self.mark_dirty()
         return True
 
@@ -315,11 +305,11 @@ class UiXmlDocument:
     def structure_snapshot(
         self,
     ) -> tuple[str, dict[str, dict[str, float]], dict[str, bool]]:
-        """XML + meta/layers for undoable structure edits."""
+        """XML + meta/layers for undoable structure edits (no sanitize/mutation)."""
         self.sync_meta_from_doc()
         meta = {k: dict(v) for k, v in self._meta.items()}
         layers = dict(self._layers)
-        return self.serialize(), meta, layers
+        return self.serialize(sanitize=False), meta, layers
 
     def restore_structure_snapshot(
         self,
@@ -345,14 +335,19 @@ class UiXmlDocument:
         self.meta_dirty = True
         return self.doc
 
-    def serialize(self) -> str:
-        """Current tree as XML text (applies preview geometry first)."""
+    def serialize(self, *, sanitize: bool = True) -> str:
+        """Current tree as XML text (applies preview geometry first).
+
+        ``sanitize=False`` for snapshots: no junk-chrome removal, no model resync.
+        """
         if self.root is None or self.doc is None:
             return self._source_text
         for node in self.doc.iter_drawables():
             node.apply_geometry_to_element()
-        if sanitize_ui_xml_tree(self.root):
+        if sanitize and sanitize_ui_xml_tree(self.root):
             _resync_nodes_from_elements(self.doc)
+            # sync_from_element cleared from_meta — restore handle geometry.
+            apply_meta_positions(self.doc, self._meta)
         if self._synthetic_wrapper:
             parts: list[str] = []
             for child in list(self.root):

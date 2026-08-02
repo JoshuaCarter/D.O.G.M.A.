@@ -346,10 +346,6 @@ class LayoutNode:
             return True
         return self.element.get("always_show_scroll") is not None
 
-    def has_scroll_attrs(self) -> bool:
-        """Back-compat alias — scroll padding / always_show_scroll apply here."""
-        return self.allows_scroll_props()
-
     def apply_widget_props(
         self,
         *,
@@ -560,15 +556,6 @@ class LayoutNode:
         self.is_drawable = True
         self.from_meta = True
 
-    def hierarchy_depth(self) -> int:
-        """Distance from the document root (root = 0)."""
-        depth = 0
-        node = self.parent
-        while node is not None:
-            depth += 1
-            node = node.parent
-        return depth
-
     def iter_drawables(self) -> list[LayoutNode]:
         out: list[LayoutNode] = []
         if self.is_drawable:
@@ -764,11 +751,6 @@ def collect_meta_positions(doc: LayoutNode) -> dict[str, dict[str, float]]:
             "height": DEFAULT_HANDLE_SIZE,
         }
     return out
-
-
-def top_level_sections(doc: LayoutNode) -> list[LayoutNode]:
-    """Immediate children of the document root (background, main_dialog, ...)."""
-    return list(doc.children)
 
 
 def layer_sections(doc: LayoutNode) -> list[LayoutNode]:

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 from pathlib import Path
 from typing import Any
@@ -71,10 +72,16 @@ def _read_json(path: Path) -> dict[str, Any] | None:
 
 
 def _write_json(path: Path, data: dict[str, Any]) -> None:
-    """Pretty-print JSON (one entry per line for maps/arrays)."""
+    """Pretty-print JSON, written atomically (no partial files on crash)."""
     _ensure_dir(path.parent)
     text = json.dumps(data, indent=2, ensure_ascii=False, sort_keys=False) + "\n"
-    path.write_text(text, encoding="utf-8")
+    _atomic_write_text(path, text)
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
 
 
 def _read_cache_version() -> int | None:
@@ -102,7 +109,7 @@ def ensure_cache_version() -> None:
         return
     clear_cache()
     _ensure_dir(cache_dir())
-    version_path().write_text(f"{CACHE_VERSION}\n", encoding="utf-8")
+    _atomic_write_text(version_path(), f"{CACHE_VERSION}\n")
 
 
 def normalize_roots(roots: list[Path]) -> list[str]:
@@ -114,10 +121,6 @@ def normalize_roots(roots: list[Path]) -> list[str]:
         except OSError:
             out.append(str(r))
     return out
-
-
-def normalize_root(root: Path) -> str:
-    return normalize_roots([root])[0]
 
 
 def roots_match(cached: Any, roots: list[Path]) -> bool:
@@ -334,22 +337,6 @@ class PathIndex:
             _write_json(self._meta_path, self._meta)
             self._meta_dirty = False
 
-    def invalidate(self) -> None:
-        """Drop all path/DDS/descr/text shards (fonts glyph meta kept)."""
-        self._dds_map = None
-        self._dds_roots = []
-        self._meta = {}
-        self._meta_dirty = False
-        if self._meta_path.is_file():
-            try:
-                self._meta_path.unlink()
-            except OSError:
-                pass
-        for kind in (KIND_DDS, KIND_DESCR, KIND_TEXT):
-            folder = cache_dir() / kind
-            if folder.is_dir():
-                shutil.rmtree(folder, ignore_errors=True)
-
     def invalidate_roots(self, roots: list[Path]) -> None:
         """Delete install index files touched by the given concrete roots."""
         installs = {self.classify(root) for root in roots}
@@ -458,55 +445,6 @@ class PathIndex:
             payload["lang"] = lang_key
         _write_json(install_shard_path(kind, install, lang=lang_key), payload)
 
-    # Back-compat names used by older call sites (install-scoped).
-    def get_dds_shard(self, root: Path) -> dict[str, Path] | None:
-        install = self.classify(root)
-        roots = [
-            Path(r)
-            for r in self._dds_roots
-            if self.classify(Path(r)) == install
-        ]
-        if not roots:
-            roots = [root]
-        return self.get_install_dds(install, roots)
-
-    def put_dds_shard(
-        self, root: Path, files: dict[str, Path], *, bust_merge: bool = True
-    ) -> None:
-        install = self.classify(root)
-        roots = [
-            Path(r)
-            for r in self._dds_roots
-            if self.classify(Path(r)) == install
-        ]
-        if not roots:
-            roots = [root]
-        # Merge into existing install map when updating a single root's worth.
-        existing = self.get_install_dds(install, roots) or {}
-        existing.update(files)
-        self.put_install_dds(install, roots, existing, bust_merge=bust_merge)
-
-    def get_name_shard(
-        self,
-        kind: str,
-        root: Path,
-        *,
-        lang: str | None = None,
-    ) -> dict[str, Path] | None:
-        install = self.classify(root)
-        return self.get_install_names(kind, install, [root], lang=lang)
-
-    def put_name_shard(
-        self,
-        kind: str,
-        root: Path,
-        files: dict[str, Path],
-        *,
-        lang: str | None = None,
-    ) -> None:
-        install = self.classify(root)
-        self.put_install_names(kind, install, [root], files, lang=lang)
-
     def merge_dds_shards(self, roots: list[Path]) -> dict[str, Path] | None:
         """Merged logical→path if every non-empty install index is present."""
         groups = self.group_roots(roots)
@@ -550,89 +488,6 @@ class PathIndex:
         ):
             return {k: Path(v) for k, v in self._dds_map.items()}
         return self.merge_dds_shards(roots)
-
-    def put_dds_map(self, roots: list[Path], files: dict[str, Path]) -> None:
-        """Split a combined map into install shards."""
-        groups = self.group_roots(roots)
-        buckets: dict[str, dict[str, Path]] = {k: {} for k in INSTALL_ORDER}
-        for logical, path in files.items():
-            owner_install = INSTALL_CUSTOM
-            for root in reversed(roots):
-                try:
-                    path.resolve().relative_to(root.resolve())
-                    owner_install = self.classify(root)
-                    break
-                except (ValueError, OSError):
-                    try:
-                        path.relative_to(root)
-                        owner_install = self.classify(root)
-                        break
-                    except ValueError:
-                        continue
-            buckets[owner_install][_logical_dds_key(str(logical))] = path
-        for install in INSTALL_ORDER:
-            ir = groups[install]
-            if not ir:
-                continue
-            self.put_install_dds(install, ir, buckets[install])
-        self._dds_roots = normalize_roots(roots)
-        self._dds_map = {
-            _logical_dds_key(str(k)): str(v) for k, v in files.items() if k and v
-        }
-
-    def get_name_map(
-        self,
-        kind: str,
-        roots: list[Path],
-        *,
-        lang: str | None = None,
-    ) -> dict[str, Path] | None:
-        return self.merge_name_shards(kind, roots, lang=lang)
-
-    def put_name_map(
-        self,
-        kind: str,
-        roots: list[Path],
-        files: dict[str, Path],
-        *,
-        lang: str | None = None,
-    ) -> None:
-        groups = self.group_roots(roots)
-        buckets: dict[str, dict[str, Path]] = {k: {} for k in INSTALL_ORDER}
-        for name, path in files.items():
-            owner_install = INSTALL_CUSTOM
-            for root in reversed(roots):
-                try:
-                    path.resolve().relative_to(root.resolve())
-                    owner_install = self.classify(root)
-                    break
-                except (ValueError, OSError):
-                    try:
-                        path.relative_to(root)
-                        owner_install = self.classify(root)
-                        break
-                    except ValueError:
-                        continue
-            buckets[owner_install][_basename_key(name)] = path
-        for install in INSTALL_ORDER:
-            ir = groups[install]
-            if not ir:
-                continue
-            self.put_install_names(
-                kind, install, ir, buckets[install], lang=lang
-            )
-
-    def name_map_paths(
-        self,
-        kind: str,
-        roots: list[Path],
-        *,
-        lang: str | None = None,
-    ) -> list[Path] | None:
-        mapping = self.get_name_map(kind, roots, lang=lang)
-        if mapping is None:
-            return None
-        return [mapping[k] for k in sorted(mapping)]
 
     def get_dds(self, logical: str) -> Path | None:
         key = _logical_dds_key(logical)
@@ -712,11 +567,6 @@ def sheet_proxy_divisor(_max_edge: int = 0) -> int:
     return 4
 
 
-def sheet_proxy_scale(max_edge: int = 0) -> float:
-    """Downscale factor ``1/divisor``."""
-    return 1.0 / sheet_proxy_divisor(max_edge)
-
-
 def sheet_proxy_cache_path(dds_path: Path) -> Path | None:
     """Return cache path for a low-res sheet proxy PNG, or None if unreadable."""
     try:
@@ -776,13 +626,15 @@ def save_sheet_proxy(
         meta = PngImagePlugin.PngInfo()
         meta.add_text("sage_ow", str(int(orig_w)))
         meta.add_text("sage_oh", str(int(orig_h)))
+        tmp = dest.with_suffix(".tmp")
         image.save(
-            dest,
+            tmp,
             format="PNG",
             compress_level=1,
             optimize=False,
             pnginfo=meta,
         )
+        os.replace(tmp, dest)
     except OSError:
         pass
 
@@ -821,7 +673,9 @@ def save_dds_rgba_cache(dds_path: Path, image) -> None:
         return
     try:
         _ensure_dir(dest.parent)
-        image.save(dest, format="PNG", optimize=False)
+        tmp = dest.with_suffix(".tmp")
+        image.save(tmp, format="PNG", optimize=False)
+        os.replace(tmp, dest)
     except OSError:
         pass
 

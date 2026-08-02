@@ -26,16 +26,6 @@ def meta_path_for(xml_path: Path) -> Path:
     return xml_path.with_name(xml_path.name + ".meta")
 
 
-def load_meta(xml_path: Path) -> dict[str, dict[str, float]]:
-    """Return path -> {x,y,width,height} from sidecar meta file."""
-    return load_meta_document(xml_path).elements
-
-
-def load_meta_layers(xml_path: Path) -> dict[str, bool]:
-    """Return layer path -> visible from sidecar meta file."""
-    return load_meta_document(xml_path).layers
-
-
 def load_meta_document(xml_path: Path) -> MetaDocument:
     """Load meta (elements, layers, undo/redo). Ignores legacy selection/view."""
     path = meta_path_for(xml_path)
@@ -99,6 +89,13 @@ def _parse_edit_list(raw: object) -> list[dict[str, Any]]:
 def _parse_edit(raw: object) -> dict[str, Any] | None:
     if not isinstance(raw, dict):
         return None
+    # Structure edit (reparent / paste / delete / rename): full XML snapshots.
+    if raw.get("kind") == "structure":
+        if not isinstance(raw.get("before_xml"), str) or not isinstance(
+            raw.get("after_xml"), str
+        ):
+            return None
+        return dict(raw)
     # Property-panel edit: {"kind": "props", "before":…, "after":…}
     if raw.get("kind") == "props":
         before = raw.get("before")
@@ -197,6 +194,8 @@ def save_meta_document(xml_path: Path, meta: MetaDocument) -> Path:
 
 
 def _serialize_edit(edit: dict[str, Any]) -> dict[str, Any]:
+    if edit.get("kind") == "structure":
+        return dict(edit)
     if edit.get("kind") == "props":
         return {
             "kind": "props",

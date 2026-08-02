@@ -2,7 +2,15 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QEvent, QPoint, QPointF, QRectF, QTimer, Qt, pyqtSignal
+from PyQt6.QtCore import (
+    QPoint,
+    QPointF,
+    QRectF,
+    QSignalBlocker,
+    QTimer,
+    Qt,
+    pyqtSignal,
+)
 from PyQt6.QtGui import (
     QBrush,
     QColor,
@@ -26,7 +34,6 @@ from PyQt6.QtWidgets import (
     QGraphicsView,
     QGridLayout,
     QSizePolicy,
-    QStyle,
     QStyleOptionGraphicsItem,
     QWidget,
 )
@@ -111,7 +118,7 @@ MIN_SIZE = 4.0
 DRAG_THRESHOLD = 5.0  # view px before click becomes marquee / drag
 
 # Selected = normal blue; hovered border = white
-HOVER_BORDER = QColor(255, 255, 255)
+HOVER_BORDER = HOVER_LABEL_TEXT  # same white as the hover caption
 GUIDE_LINE = QColor(220, 220, 230, 128)  # 1px, ~50% alpha
 RULER_BG = QColor(30, 30, 34)
 RULER_TICK = QColor(120, 120, 128)
@@ -258,9 +265,9 @@ class WidgetItem(QGraphicsRectItem):
         # Document-order index for content z and decoration stacking within bands.
         self._doc_z = 0.0
         self.setPos(node.abs_x, node.abs_y)
+        # Not ItemIsMovable: UiCanvas drives all moves/resizes itself.
         flags = (
             QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
-            | QGraphicsItem.GraphicsItemFlag.ItemIsMovable
             | QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges
         )
         # Tag captions may extend past the box; never clip them.
@@ -324,9 +331,6 @@ class WidgetItem(QGraphicsRectItem):
         self.show_element_labels = bool(show)
         self._apply_label()
 
-    def _apply_label_font(self) -> None:
-        self._caption.set_font_size(self.label_font_size)
-
     def set_box_style(self, *, show_border: bool | None = None, show_fill: bool | None = None) -> None:
         if show_border is not None:
             self.show_box_border = show_border
@@ -359,7 +363,6 @@ class WidgetItem(QGraphicsRectItem):
         self.setVisible(visible)
         # Disabled layers: never selectable / never a scroll-select hit target.
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, visible)
-        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, visible)
         self.setAcceptHoverEvents(visible)
         if not visible and self.isSelected():
             self.setSelected(False)
@@ -618,10 +621,6 @@ class WidgetItem(QGraphicsRectItem):
         self._text_item.setPos(x, y)
         self._text_item.show()
 
-    def boundingRect(self) -> QRectF:  # noqa: N802
-        # Labels are scene-level overlays (not children) - do not unite their rects here.
-        return super().boundingRect()
-
     def shape(self):  # noqa: N802
         # Hit-test / select only the widget box (or meta diamond) - never the tag caption.
         path = QPainterPath()
@@ -840,26 +839,8 @@ class WidgetItem(QGraphicsRectItem):
         if isinstance(scene, UiScene):
             scene.push_geo_edit(edit)
 
-    def mousePressEvent(self, event) -> None:  # noqa: N802
-        # Resize is started by UiCanvas.begin_resize — never via item delivery.
-        if event.button() == Qt.MouseButton.LeftButton:
-            self._geo_before = self._snapshot_geo()
-        super().mousePressEvent(event)
-
-    def mouseMoveEvent(self, event) -> None:  # noqa: N802
-        if self._resizing and self._resize_corner:
-            self.apply_resize(event.scenePos())
-            event.accept()
-            return
-        super().mouseMoveEvent(event)
-
-    def mouseReleaseEvent(self, event) -> None:  # noqa: N802
-        if self._resizing:
-            self.end_resize()
-            event.accept()
-            return
-        super().mouseReleaseEvent(event)
-        self._commit_geo_edit()
+    # No item mouse handlers: UiCanvas owns all left-button gestures (press is
+    # never forwarded to the scene), so moves/resizes are canvas-driven only.
 
     def paint(self, painter: QPainter, option: QStyleOptionGraphicsItem, widget: QWidget | None = None) -> None:
         if not self.node.from_meta:
@@ -906,6 +887,7 @@ class UiScene(QGraphicsScene):
         self._items: dict[str, WidgetItem] = {}
         self._layer_visible: dict[str, bool] = {}
         self._hover_path: str | None = None
+        self._last_sel_paths: set[str] = set()
         self.undo_stack = UndoStack()
         self._stage = QGraphicsRectItem(0, 0, UI_WIDTH, UI_HEIGHT)
         self._stage.setBrush(QBrush(QColor(28, 28, 32)))
@@ -982,22 +964,6 @@ class UiScene(QGraphicsScene):
     def clear_undo(self) -> None:
         self.undo_stack.clear()
         self.undo_stack_changed.emit()
-
-    def apply_geo_state(self, state: GeoState) -> LayoutNode | None:
-        if self.doc is None:
-            return None
-        node = self.doc.find_by_path(state.path)
-        if node is None:
-            return None
-        node.set_geometry(
-            x=state.x,
-            y=state.y,
-            width=state.width,
-            height=state.height,
-        )
-        self.doc.recompute_absolute(0.0, 0.0)
-        self.refresh_item_positions()
-        return node
 
     def apply_prop_edit(self, edit: PropEdit, *, use_after: bool) -> LayoutNode | None:
         if self.doc is None:
@@ -1211,6 +1177,7 @@ class UiScene(QGraphicsScene):
             self.clear_undo()
         self._layer_visible = {}
         self._hover_path = None
+        self._last_sel_paths = set()
         self._marquee_preview = None
         self.clear_guides()
         self.doc = doc
@@ -1320,17 +1287,24 @@ class UiScene(QGraphicsScene):
         self.select_paths([path] if path else [])
 
     def select_paths(self, paths: list[str]) -> None:
-        """Replace canvas selection with the given layout paths (visible only)."""
+        """Replace canvas selection with the given layout paths (visible only).
+
+        Batched: one selectionChanged for the whole change, emitted synchronously.
+        Never pans/zooms — only the user moves the view.
+        """
+        blocker = QSignalBlocker(self)
         self.clearSelection()
-        if not paths:
-            self.set_hover_path(None)
-            return
         for path in paths:
             item = self._items.get(path)
-            if item is None or not item.node.visible:
-                continue
-            item.setSelected(True)
-        # Do not pan/zoom the canvas — only the user moves the view.
+            if item is not None and item.node.visible:
+                item.setSelected(True)
+        del blocker
+        if not paths:
+            self.set_hover_path(None)
+        self.selectionChanged.emit()
+
+    def has_item(self, path: str) -> bool:
+        return path in self._items
 
     def rebind_resolver(self, resolver: TextureResolver) -> None:
         """Swap texture resolver and redraw without rebuilding the scene."""
@@ -1356,11 +1330,6 @@ class UiScene(QGraphicsScene):
             if fonts is not None:
                 item.fonts = fonts
             item.refresh_look()
-
-    def invalidate_item_texture_caches(self) -> None:
-        """Forget cached native DDS crops so the next look re-resolves from disk."""
-        for item in self._items.values():
-            item._clear_texture_pixmap()
 
     def hover_path(self) -> str | None:
         return self._hover_path
@@ -1413,20 +1382,20 @@ class UiScene(QGraphicsScene):
         QTimer.singleShot(0, self._after_selection_changed)
 
     def _after_selection_changed(self) -> None:
-        _log.debug("after_selection_changed begin")
+        # Safety net: drop items that became invisible while selected.
         for item in list(self.selectedItems()):
             if isinstance(item, WidgetItem) and (
                 not item.node.visible or not item.isVisible()
             ):
-                _log.debug("deselect invisible %s", item.node.path)
                 item.setSelected(False)
-        for item in self._items.values():
-            item.refresh_look()
+        # Item look depends only on its own state — refresh the delta only.
+        new_paths = {i.node.path for i in self.selected_widgets()}
+        for path in self._last_sel_paths | new_paths:
+            item = self._items.get(path)
+            if item is not None:
+                item.refresh_look()
+        self._last_sel_paths = new_paths
         self._sync_focus_chrome()
-        _log.debug(
-            "after_selection_changed done selected=%s",
-            [i.node.path for i in self.selected_widgets()],
-        )
 
     def render_to_image(self, scale: float = 1.0) -> QImage:
         w = int(UI_WIDTH * scale)
@@ -1461,13 +1430,6 @@ class UiCanvas(QGraphicsView):
         self._pan_button: Qt.MouseButton | None = None
         self._pan_start = QPointF()
         self._stack_peer_paths: frozenset[str] = frozenset()
-        # Last Ctrl+click cycle stack under the cursor (deepest/smallest first).
-        self._scroll_stack: list[WidgetItem] = []
-        self._last_stack_view_pos: QPointF | None = None
-        # While pressed: only the pick accepts mouse / is selectable.
-        self._press_mouse_restore: (
-            list[tuple[WidgetItem, Qt.MouseButton, bool]] | None
-        ) = None
         # Left-button gesture. Selection only ever applies on release of a
         # click (distance < DRAG_THRESHOLD) — never on press, never after a drag.
         # None | "click_or_marquee" | "marquee" | "pending_move" | "move" |
@@ -1616,8 +1578,6 @@ class UiCanvas(QGraphicsView):
         self._update_edit_cursor(self._last_cursor_view_pos)
 
     def _clear_stack_peers(self) -> None:
-        self._scroll_stack = []
-        self._last_stack_view_pos = None
         if self._stack_peer_paths:
             self._set_stack_peers(set())
 
@@ -1698,33 +1658,6 @@ class UiCanvas(QGraphicsView):
         self.scale(k, k)
         self._update_pan_limits()
 
-    def view_state(self) -> dict[str, float]:
-        center = self.mapToScene(self.viewport().rect().center())
-        return {
-            "scale": float(self._zoom),
-            "cx": float(center.x()),
-            "cy": float(center.y()),
-        }
-
-    def restore_view_state(self, state: dict[str, float] | None) -> None:
-        if not state:
-            self.fit_stage()
-            return
-        try:
-            scale = float(state["scale"])
-            cx = float(state["cx"])
-            cy = float(state["cy"])
-        except (KeyError, TypeError, ValueError):
-            self.fit_stage()
-            return
-        if scale <= 0:
-            self.fit_stage()
-            return
-        self._zoom = max(ZOOM_SCALE_MIN, min(scale, ZOOM_SCALE_MAX))
-        self._apply_view_transform()
-        self.centerOn(cx, cy)
-        self._update_pan_limits()
-
     def _widget_items_at(self, view_pos: QPointF) -> list[WidgetItem]:
         """Visible widgets under the cursor (scroll-targets), smallest box first."""
         scene = self.scene()
@@ -1758,60 +1691,30 @@ class UiCanvas(QGraphicsView):
         """Smallest scroll-target under the cursor."""
         return stack[0] if stack else None
 
-    def _arm_press_pick(self, pick: WidgetItem) -> None:
-        """Only `pick` can be hit/selected until release (keeps smallest target)."""
-        self._restore_press_mouse()
-        scene = self.scene()
-        if not isinstance(scene, UiScene):
-            return
-        restore: list[tuple[WidgetItem, Qt.MouseButton, bool]] = []
-        for item in scene._items.values():
-            buttons = item.acceptedMouseButtons()
-            selectable = bool(
-                item.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
-            )
-            restore.append((item, buttons, selectable))
-            if item is pick:
-                item.setAcceptedMouseButtons(
-                    Qt.MouseButton.LeftButton
-                    | Qt.MouseButton.RightButton
-                    | Qt.MouseButton.MiddleButton
-                )
-                item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
-            else:
-                item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
-                item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
-        self._press_mouse_restore = restore
-
-    def _restore_press_mouse(self) -> None:
-        if self._press_mouse_restore is None:
-            return
-        for item, buttons, selectable in self._press_mouse_restore:
-            if item.scene() is self.scene():
-                item.setAcceptedMouseButtons(buttons)
-                item.setFlag(
-                    QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, selectable
-                )
-        self._press_mouse_restore = None
-
     def _force_select(self, pick: WidgetItem) -> None:
-        """Ensure `pick` is the only selected item (never toggle it off)."""
+        """Ensure `pick` is the only selected item (batched, one signal)."""
         scene = self.scene()
         if scene is None:
             return
+        blocker = QSignalBlocker(scene)
         for item in list(scene.selectedItems()):
             if item is not pick:
                 item.setSelected(False)
         if not pick.isSelected():
             pick.setSelected(True)
+        del blocker
+        scene.selectionChanged.emit()
 
     def _select_items(self, items: list[WidgetItem]) -> None:
         scene = self.scene()
         if scene is None:
             return
+        blocker = QSignalBlocker(scene)
         scene.clearSelection()
         for item in items:
             item.setSelected(True)
+        del blocker
+        scene.selectionChanged.emit()
 
     def _marquee_scene_rect(self, a: QPointF, b: QPointF) -> QRectF:
         return QRectF(a, b).normalized()
@@ -1826,7 +1729,7 @@ class UiCanvas(QGraphicsView):
             pen.setCosmetic(True)
             pen.setStyle(Qt.PenStyle.DashLine)
             item.setPen(pen)
-            item.setBrush(QBrush(QColor(40, 130, 255, 40)))
+            item.setBrush(QBrush(SEL_BLUE_FILL))
             item.setZValue(_MARQUEE_Z)
             item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
             scene.addItem(item)
@@ -2116,7 +2019,6 @@ class UiCanvas(QGraphicsView):
 
     def _handle_left_canvas_press(self, event) -> None:
         """Arm a gesture. Selection applies only on release of a non-drag click."""
-        self._restore_press_mouse()
         self._clear_marquee()
         scene = self.scene()
         self._press_view_pos = QPointF(event.position())
@@ -2150,11 +2052,9 @@ class UiCanvas(QGraphicsView):
         if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
             cycled = self._ctrl_cycle_target(event.position())
             if cycled is not None:
-                pick, peers, stack = cycled
+                pick, peers, _stack = cycled
                 self._press_pick = pick
                 self._ctrl_cycle_peers = peers
-                self._scroll_stack = stack
-                self._last_stack_view_pos = QPointF(event.position())
                 self._gesture = "ctrl_cycle"
                 _log.debug("gesture=ctrl_cycle (select on release)")
                 event.accept()
@@ -2307,7 +2207,7 @@ class UiCanvas(QGraphicsView):
         super().mouseMoveEvent(event)
         self._update_edit_cursor(event.position())
         # Don't retarget hover while a press gesture is active.
-        if self._gesture is not None or self._press_mouse_restore is not None:
+        if self._gesture is not None:
             return
         stack = self._widget_items_at(event.position())
         scene = self.scene()
@@ -2399,7 +2299,6 @@ class UiCanvas(QGraphicsView):
             else:
                 super().mouseReleaseEvent(event)
 
-            self._restore_press_mouse()
             self._press_pick = None
             self._ctrl_cycle_peers = set()
             self._update_edit_cursor(event.position())
@@ -2411,7 +2310,6 @@ class UiCanvas(QGraphicsView):
             return
 
         super().mouseReleaseEvent(event)
-        self._restore_press_mouse()
         self._update_edit_cursor(event.position())
         stack = self._widget_items_at(event.position())
         scene = self.scene()

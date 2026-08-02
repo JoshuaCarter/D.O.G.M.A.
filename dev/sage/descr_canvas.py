@@ -40,7 +40,9 @@ from .box_chrome import (
     SELECT_LABEL_TEXT,
     FocusCaptionOverlay,
 )
+from .cursor_coords import CursorCoordsHud
 from .descr_model import DescrDocument, DescrRegion, DescrSheet
+from .pixel_grid import PixelGridItem
 from .settings import ZOOM_SCALE_MAX, ZOOM_SCALE_MIN, clamp_label_font_size
 from .textures import TextureResolver
 from .undo import GeoEdit, GeoState, UndoStack
@@ -391,7 +393,12 @@ class DescrScene(QGraphicsScene):
         self._focus_caption = FocusCaptionOverlay()
         self._focus_caption.setZValue(FOCUS_LABEL_Z)
         self.addItem(self._focus_caption)
+        self._pixel_grid = PixelGridItem(self.sheet_w, self.sheet_h)
+        self.addItem(self._pixel_grid)
         self.selectionChanged.connect(self._on_sel)
+
+    def set_pixel_grid_visible(self, visible: bool) -> None:
+        self._pixel_grid.setVisible(bool(visible))
 
     def _make_item(self, region: DescrRegion) -> RegionItem:
         return RegionItem(
@@ -492,6 +499,7 @@ class DescrScene(QGraphicsScene):
             self.sheet_w, self.sheet_h = 256.0, 256.0
             self._bg.setPixmap(QPixmap())
             self._frame.setRect(0, 0, self.sheet_w, self.sheet_h)
+            self._pixel_grid.set_grid_size(self.sheet_w, self.sheet_h)
             self.setSceneRect(-64, -64, self.sheet_w + 128, self.sheet_h + 128)
             self.dds_path = None
             return
@@ -516,6 +524,7 @@ class DescrScene(QGraphicsScene):
                 self.sheet_missing.emit(sheet.file_name)
 
         self._frame.setRect(0, 0, self.sheet_w, self.sheet_h)
+        self._pixel_grid.set_grid_size(self.sheet_w, self.sheet_h)
         self._bg.setPos(0, 0)
         self.setSceneRect(-64, -64, self.sheet_w + 128, self.sheet_h + 128)
 
@@ -643,6 +652,7 @@ class DescrView(QGraphicsView):
         self._nudge_repeat = QTimer(self)
         self._nudge_repeat.setInterval(_NUDGE_REPEAT_MS)
         self._nudge_repeat.timeout.connect(self._apply_nudge_step)
+        self._coords = CursorCoordsHud(self)
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         scene.selectionChanged.connect(self._on_selection_changed_nudge)
@@ -808,6 +818,12 @@ class DescrView(QGraphicsView):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event) -> None:  # noqa: N802
+        scene_pos = self.mapToScene(event.position().toPoint())
+        # Prefer float-accurate map when available.
+        inverted, ok = self.viewportTransform().inverted()
+        if ok:
+            scene_pos = inverted.map(QPointF(event.position()))
+        self._coords.update_scene_pos(scene_pos)
         if self._panning:
             delta = event.position() - self._pan_start
             self._pan_start = event.position()

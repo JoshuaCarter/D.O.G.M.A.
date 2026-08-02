@@ -13,6 +13,7 @@ from PyQt6.QtGui import (
     QPen,
     QPixmap,
     QPolygonF,
+    QTransform,
     QWheelEvent,
 )
 from PyQt6.QtWidgets import (
@@ -45,6 +46,8 @@ from .box_chrome import (
 from .diaglog import get_logger
 from .fonts import FontResolver
 from .model import LayoutNode
+from .cursor_coords import CursorCoordsHud
+from .pixel_grid import PixelGridItem
 from .settings import (
     LABEL_FONT_MIN,
     UI_HEIGHT,
@@ -545,12 +548,21 @@ class WidgetItem(QGraphicsRectItem):
         # <text x="" y=""> → CUILines::m_TextOffset (UI units).
         x += float(ref.x or 0.0)
         y += float(ref.y or 0.0)
+        # Counter horizontal preview stretch so glyphs stay unstretched while
+        # boxes/layout stretch (editor-only aspect option).
+        aspect_sx = 1.0
+        sc = self.scene()
+        if isinstance(sc, UiScene):
+            aspect_sx = max(1e-6, float(sc.aspect_stretch_x))
         self._text_item.setPixmap(pix)
         self._text_item.setTransformationMode(
             Qt.TransformationMode.FastTransformation
         )
-        self._text_item.setScale(ui_scale)
+        self._text_item.setScale(1.0)
         self._text_item.setTransformOriginPoint(0.0, 0.0)
+        self._text_item.setTransform(
+            QTransform.fromScale(ui_scale / aspect_sx, ui_scale)
+        )
         self._text_item.setOffset(0.0, 0.0)
         self._text_item.setPos(x, y)
         self._text_item.show()
@@ -835,6 +847,8 @@ class UiScene(QGraphicsScene):
         self.show_element_labels = show_element_labels
         self.show_box_border = show_box_border
         self.show_box_fill = show_box_fill
+        # Horizontal view stretch factor for preview aspect (1.0 = native).
+        self.aspect_stretch_x = 1.0
         self.doc: LayoutNode | None = None
         self._items: dict[str, WidgetItem] = {}
         self._layer_visible: dict[str, bool] = {}
@@ -856,14 +870,35 @@ class UiScene(QGraphicsScene):
         self._hover_label.setZValue(_HOVER_LABEL_Z)
         self.addItem(self._hover_label)
         self._guides: list[GuideLine] = []
+        self._guides_visible = True
+        self._pixel_grid = PixelGridItem(UI_WIDTH, UI_HEIGHT)
+        self.addItem(self._pixel_grid)
         # Marquee drag: paths that currently have white hover preview (None = idle).
         self._marquee_preview: list[WidgetItem] | None = None
         self.selectionChanged.connect(self._on_selection_changed)
+
+    def set_pixel_grid_visible(self, visible: bool) -> None:
+        self._pixel_grid.setVisible(bool(visible))
+
+    def set_aspect_stretch_x(self, sx: float) -> None:
+        """Preview-only horizontal stretch; refreshes bitmap text counter-scale."""
+        try:
+            sx = float(sx)
+        except (TypeError, ValueError):
+            return
+        sx = max(1e-6, sx)
+        if abs(sx - self.aspect_stretch_x) < 1e-9:
+            return
+        self.aspect_stretch_x = sx
+        for item in self._items.values():
+            item._apply_text()
 
     def add_guide(self, *, vertical: bool, value: float) -> GuideLine:
         guide = GuideLine(vertical=vertical, value=value)
         self.addItem(guide)
         self._guides.append(guide)
+        if not self._guides_visible:
+            guide.hide()
         return guide
 
     def remove_guide(self, guide: GuideLine) -> None:
@@ -875,6 +910,11 @@ class UiScene(QGraphicsScene):
     def clear_guides(self) -> None:
         for guide in list(self._guides):
             self.remove_guide(guide)
+
+    def set_guides_visible(self, visible: bool) -> None:
+        self._guides_visible = bool(visible)
+        for guide in self._guides:
+            guide.setVisible(self._guides_visible)
 
     def push_geo_edit(self, edit: GeoEdit) -> None:
         self.push_edit(edit)
@@ -1339,6 +1379,9 @@ class UiCanvas(QGraphicsView):
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
         self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
         self.setBackgroundBrush(QBrush(QColor(18, 18, 20)))
+        # Uniform zoom vs preview-only horizontal aspect stretch (m11 = zoom * sx).
+        self._zoom = 1.0
+        self._aspect_sx = 1.0
         self._panning = False
         self._pan_button: Qt.MouseButton | None = None
         self._pan_start = QPointF()
@@ -1373,10 +1416,14 @@ class UiCanvas(QGraphicsView):
         self._nudge_repeat = QTimer(self)
         self._nudge_repeat.setInterval(_NUDGE_REPEAT_MS)
         self._nudge_repeat.timeout.connect(self._apply_nudge_step)
+        self._coords: CursorCoordsHud | None = None
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.scene().selectionChanged.connect(self._on_selection_changed_stack)
         self.fit_stage()
+
+    def set_coords_hud(self, hud: CursorCoordsHud) -> None:
+        self._coords = hud
 
     def handle_nudge_key_press(self, event) -> bool:
         """Arrow nudge. Returns True if the event was consumed."""
@@ -1496,12 +1543,44 @@ class UiCanvas(QGraphicsView):
         self.setSceneRect(-mw, -mh, UI_WIDTH + 2.0 * mw, UI_HEIGHT + 2.0 * mh)
         self.view_changed.emit()
 
+    def aspect_stretch_x(self) -> float:
+        return float(self._aspect_sx)
+
+    def set_aspect_stretch_x(self, sx: float) -> None:
+        """Preview-only horizontal stretch; does not change XML / scene geometry."""
+        try:
+            sx = float(sx)
+        except (TypeError, ValueError):
+            return
+        sx = max(1e-6, sx)
+        if abs(sx - self._aspect_sx) < 1e-9:
+            return
+        center = self.mapToScene(self.viewport().rect().center())
+        self._aspect_sx = sx
+        scene = self.scene()
+        if isinstance(scene, UiScene):
+            scene.set_aspect_stretch_x(sx)
+        self._apply_view_transform()
+        self.centerOn(center)
+        self._update_pan_limits()
+
+    def _apply_view_transform(self) -> None:
+        self.resetTransform()
+        self.scale(self._zoom * self._aspect_sx, self._zoom)
+
     def fit_stage(self) -> None:
-        self.fitInView(QRectF(0, 0, UI_WIDTH, UI_HEIGHT), Qt.AspectRatioMode.KeepAspectRatio)
+        vp = self.viewport().rect()
+        if vp.width() < 1 or vp.height() < 1:
+            return
+        vis_w = float(UI_WIDTH) * self._aspect_sx
+        vis_h = float(UI_HEIGHT)
+        self._zoom = min(vp.width() / vis_w, vp.height() / vis_h)
+        self._apply_view_transform()
+        self.centerOn(UI_WIDTH / 2.0, UI_HEIGHT / 2.0)
         self._update_pan_limits()
 
     def zoom_scale(self) -> float:
-        return abs(float(self.transform().m11()))
+        return float(self._zoom)
 
     def set_zoom_scale(self, scale: float) -> None:
         """Absolute view scale (1.0 = native 1:1), keeping the viewport center."""
@@ -1513,9 +1592,8 @@ class UiCanvas(QGraphicsView):
             return
         scale = max(ZOOM_SCALE_MIN, min(scale, ZOOM_SCALE_MAX))
         center = self.mapToScene(self.viewport().rect().center())
-        self.resetTransform()
-        self.scale(scale, scale)
-        self._update_pan_limits()
+        self._zoom = scale
+        self._apply_view_transform()
         self.centerOn(center)
         self._update_pan_limits()
 
@@ -1523,18 +1601,20 @@ class UiCanvas(QGraphicsView):
         """Multiply current scale by ``factor``, clamped to native…500%."""
         if factor <= 0:
             return
-        current = self.zoom_scale()
+        current = self._zoom
         target = max(ZOOM_SCALE_MIN, min(current * factor, ZOOM_SCALE_MAX))
         if abs(target - current) < 1e-9:
             return
-        self.scale(target / current, target / current)
+        # Uniform factor keeps AnchorUnderMouse and preserves aspect stretch.
+        k = target / current
+        self._zoom = target
+        self.scale(k, k)
         self._update_pan_limits()
 
     def view_state(self) -> dict[str, float]:
-        t = self.transform()
         center = self.mapToScene(self.viewport().rect().center())
         return {
-            "scale": float(t.m11()),
+            "scale": float(self._zoom),
             "cx": float(center.x()),
             "cy": float(center.y()),
         }
@@ -1553,10 +1633,8 @@ class UiCanvas(QGraphicsView):
         if scale <= 0:
             self.fit_stage()
             return
-        scale = max(ZOOM_SCALE_MIN, min(scale, ZOOM_SCALE_MAX))
-        self.resetTransform()
-        self.scale(scale, scale)
-        self._update_pan_limits()
+        self._zoom = max(ZOOM_SCALE_MIN, min(scale, ZOOM_SCALE_MAX))
+        self._apply_view_transform()
         self.centerOn(cx, cy)
         self._update_pan_limits()
 
@@ -1810,7 +1888,9 @@ class UiCanvas(QGraphicsView):
             return None
         scene_pos = self._scene_pos_from_view(view_pos)
         local = item.mapFromScene(scene_pos)
-        scale = abs(self.transform().m11())
+        # Geometric mean under anisotropic preview aspect stretch.
+        t = self.transform()
+        scale = (abs(float(t.m11())) * abs(float(t.m22()))) ** 0.5
         hit = HANDLE / max(scale, 1e-6)
         corner = item._handle_at(local, hit=hit)
         if corner is None:
@@ -2060,6 +2140,8 @@ class UiCanvas(QGraphicsView):
 
     def mouseMoveEvent(self, event) -> None:  # noqa: N802
         self._last_cursor_view_pos = QPointF(event.position())
+        if self._coords is not None:
+            self._coords.update_scene_pos(self._scene_pos_from_view(event.position()))
         if self._panning:
             delta = event.position() - self._pan_start
             self._pan_start = event.position()
@@ -2300,17 +2382,24 @@ class CanvasBoard(QWidget):
         self.canvas = UiCanvas(scene)
         self._top = RulerBar(Qt.Orientation.Horizontal, self.canvas)
         self._left = RulerBar(Qt.Orientation.Vertical, self.canvas)
-        corner = QWidget()
-        corner.setFixedSize(RULER_THICKNESS, RULER_THICKNESS)
-        corner.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        corner.setStyleSheet(
+        self._corner = QWidget()
+        self._corner.setFixedSize(RULER_THICKNESS, RULER_THICKNESS)
+        self._corner.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self._corner.setStyleSheet(
             f"background-color: rgb({RULER_BG.red()},{RULER_BG.green()},{RULER_BG.blue()});"
         )
+        self._rulers_visible = True
+        self._coords = CursorCoordsHud(
+            self,
+            height=RULER_THICKNESS,
+            bg=(RULER_BG.red(), RULER_BG.green(), RULER_BG.blue()),
+        )
+        self.canvas.set_coords_hud(self._coords)
 
         grid = QGridLayout(self)
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setSpacing(0)
-        grid.addWidget(corner, 0, 0)
+        grid.addWidget(self._corner, 0, 0)
         grid.addWidget(self._top, 0, 1)
         grid.addWidget(self._left, 1, 0)
         grid.addWidget(self.canvas, 1, 1)
@@ -2332,8 +2421,25 @@ class CanvasBoard(QWidget):
         self.canvas.view_changed.connect(self._refresh_rulers)
         self.canvas.horizontalScrollBar().valueChanged.connect(self._refresh_rulers)
         self.canvas.verticalScrollBar().valueChanged.connect(self._refresh_rulers)
+        self._coords.raise_hud()
+
+    def set_rulers_visible(self, visible: bool) -> None:
+        """Show/hide ruler bars and scene guide lines."""
+        visible = bool(visible)
+        self._rulers_visible = visible
+        self._corner.setVisible(visible)
+        self._top.setVisible(visible)
+        self._left.setVisible(visible)
+        scene = self.canvas.scene()
+        if isinstance(scene, UiScene):
+            scene.set_guides_visible(visible)
+        if visible:
+            self._refresh_rulers()
+        self._coords.raise_hud()
 
     def _refresh_rulers(self, *_args) -> None:
+        if not self._rulers_visible:
+            return
         self._top.update()
         self._left.update()
 

@@ -13,7 +13,53 @@ UI_WIDTH = 1024
 UI_HEIGHT = 768
 # Canvas / atlas view zoom floor/ceiling (slider + wheel). Native = 1.0.
 ZOOM_SCALE_MIN = 1.0
-ZOOM_SCALE_MAX = 5.0
+ZOOM_SCALE_MAX = 10.0
+
+# Editor-only preview aspect (never written into XML). "" = native stage ratio.
+PREVIEW_ASPECT_NATIVE = ""
+PREVIEW_ASPECT_PRESETS: dict[str, float] = {
+    "4:3": 4.0 / 3.0,
+    "16:9": 16.0 / 9.0,
+    "16:10": 16.0 / 10.0,
+}
+
+
+def native_ui_aspect() -> float:
+    return float(UI_WIDTH) / float(UI_HEIGHT)
+
+
+def normalize_preview_aspect(value: object) -> str:
+    """Return a preset key or '' for native. Unknown / native-equal → ''."""
+    key = str(value or "").strip()
+    if key not in PREVIEW_ASPECT_PRESETS:
+        return PREVIEW_ASPECT_NATIVE
+    if abs(PREVIEW_ASPECT_PRESETS[key] - native_ui_aspect()) < 1e-6:
+        return PREVIEW_ASPECT_NATIVE
+    return key
+
+
+def preview_aspect_stretch_x(value: object) -> float:
+    """Horizontal view stretch vs native stage (text should counter-scale by 1/sx)."""
+    key = normalize_preview_aspect(value)
+    if not key:
+        return 1.0
+    return PREVIEW_ASPECT_PRESETS[key] / native_ui_aspect()
+
+
+def preview_aspect_combo_items() -> list[tuple[str, str]]:
+    """``(label, data)`` for the Aspect combo. Data ``''`` = native stage."""
+    native = native_ui_aspect()
+    default_label = f"{UI_WIDTH}:{UI_HEIGHT} (default)"
+    for name, ratio in PREVIEW_ASPECT_PRESETS.items():
+        if abs(ratio - native) < 1e-6:
+            default_label = f"{name} (default)"
+            break
+    items: list[tuple[str, str]] = [(default_label, PREVIEW_ASPECT_NATIVE)]
+    for name, ratio in PREVIEW_ASPECT_PRESETS.items():
+        if abs(ratio - native) < 1e-6:
+            continue
+        items.append((name, name))
+    return items
 
 # Font preview: engine picks atlas + scales by Device.dwHeight (see fonts.py).
 DEFAULT_FONT_DEVICE_HEIGHT = 1080
@@ -636,6 +682,7 @@ def default_settings() -> dict:
         "show_element_labels": False,
         "show_box_border": False,
         "show_box_fill": False,
+        "show_rulers": True,
         "last_file_dir": "",
         "last_texture_dir": "",
         "last_deploy_dir": "",
@@ -786,6 +833,8 @@ def load_settings() -> dict:
         data.get("font_device_height", 0)
     )
     data["show_element_labels"] = bool(data.get("show_element_labels", False))
+    # Session-only preview; never persist (drop legacy key if present).
+    data.pop("preview_aspect", None)
     data["recent_files"] = normalize_recent_files(data.get("recent_files"))
     data["deploy_targets"] = normalize_deploy_targets(data.get("deploy_targets"))
     data["last_deploy_dir"] = _norm_root(data.get("last_deploy_dir", ""))
@@ -814,6 +863,7 @@ def save_settings(data: dict) -> None:
     data["anomaly_root"] = _norm_root(data.get("anomaly_root", ""))
     data["gamma_root"] = _norm_root(data.get("gamma_root", ""))
     data["custom_roots"] = normalize_custom_roots(data.get("custom_roots"))
+    data.pop("preview_aspect", None)
     SETTINGS_PATH.write_text(
         json.dumps(data, indent=2) + "\n",
         encoding="utf-8",

@@ -87,7 +87,10 @@ from .settings import (
     installs_configured,
     load_settings,
     normalize_custom_roots,
+    normalize_preview_aspect,
     normalize_splitter_sizes,
+    preview_aspect_combo_items,
+    preview_aspect_stretch_x,
     push_recent_file,
     rescan_asset_roots,
     save_settings,
@@ -1191,6 +1194,8 @@ class MainWindow(QMainWindow):
         self.setPalette(_dark_palette())
         self.settings = load_settings()
         self._restore_window_geometry()
+        # Editor-only preview stretch; never written to settings / .xml.meta.
+        self._preview_aspect = ""
         self.doc = UiXmlDocument()
         self.descr_doc = DescrDocument()
         self._doc_mode = DOC_MODE_UI
@@ -1216,7 +1221,15 @@ class MainWindow(QMainWindow):
         )
         self.canvas_board = CanvasBoard(self.scene)
         self.canvas = self.canvas_board.canvas
+        self.canvas_board.set_rulers_visible(
+            bool(self.settings.get("show_rulers", True))
+        )
         self.descr_board = DescrBoard(self.resolver)
+        grid_on = bool(self.settings.get("show_grid", False))
+        self.scene.set_pixel_grid_visible(grid_on)
+        self.descr_board.scene.set_pixel_grid_visible(grid_on)
+        self._apply_preview_aspect()
+        self.canvas.fit_stage()
         self.wysiwyg_stack = QStackedWidget()
         self.wysiwyg_stack.addWidget(self.canvas_board)  # index 0 = UI
         self.wysiwyg_stack.addWidget(self.descr_board)  # index 1 = atlas
@@ -1659,13 +1672,29 @@ class MainWindow(QMainWindow):
         self.tool_fill.setChecked(bool(self.settings.get("show_box_fill", False)))
         self.tool_labels = QCheckBox("Show labels")
         self.tool_labels.setChecked(bool(self.settings.get("show_element_labels", False)))
+        self.tool_rulers = QCheckBox("Show guide lines")
+        self.tool_rulers.setChecked(bool(self.settings.get("show_rulers", True)))
+        self.tool_rulers.setToolTip("Show top/left rulers and guide lines")
+        self.tool_grid = QCheckBox("Pixel grid")
+        self.tool_grid.setChecked(bool(self.settings.get("show_grid", False)))
+        self.tool_grid.setToolTip(
+            "1 scene-pixel grey lines (50% alpha) on every HUD/sheet pixel — "
+            "not cosmetic screen-pixel strokes"
+        )
+        self.tool_aspect_label = QLabel("Aspect")
+        self.tool_aspect = QComboBox()
+        self.tool_aspect.setToolTip(
+            "Preview-only stretch of the UI stage (does not change or save XML). "
+            "Bitmap text is counter-scaled so glyphs stay unstretched."
+        )
+        self._rebuild_aspect_combo()
         self.tool_font = QSpinBox()
         self.tool_font.setRange(LABEL_FONT_MIN, LABEL_FONT_MAX)
         self.tool_font.setSingleStep(1)
         self.tool_font.setValue(clamp_label_font_size(self.settings.get("label_font_size")))
         self.tool_font.setSuffix(" pt")
         self.tool_zoom = QSlider(Qt.Orientation.Horizontal)
-        self.tool_zoom.setRange(100, 500)
+        self.tool_zoom.setRange(100, 1000)
         self.tool_zoom.setSingleStep(5)
         self.tool_zoom.setPageStep(25)
         self.tool_zoom.setTickInterval(100)
@@ -1673,15 +1702,37 @@ class MainWindow(QMainWindow):
         self.tool_zoom.setValue(100)
         self.tool_zoom.setMinimumWidth(140)
         self.tool_zoom.setMaximumWidth(200)
-        self.tool_zoom.setToolTip("Canvas zoom: native (100%) → 500%")
+        self.tool_zoom.setToolTip("Canvas zoom: 100% → 1000%")
+        self.tool_zoom.setStyleSheet(
+            "QSlider::groove:horizontal {"
+            "  height: 4px;"
+            "  background: #3A3A40;"
+            "  border-radius: 2px;"
+            "}"
+            "QSlider::handle:horizontal {"
+            "  background: #6a9955;"
+            "  border: none;"
+            "  width: 12px;"
+            "  height: 12px;"
+            "  margin: -4px 0;"
+            "  border-radius: 6px;"
+            "}"
+            "QSlider::handle:horizontal:hover {"
+            "  background: #7cb068;"
+            "}"
+        )
         self.tool_zoom_label = QLabel("100%")
-        self.tool_zoom_label.setMinimumWidth(40)
+        self.tool_zoom_label.setMinimumWidth(48)
         self._updating_zoom_slider = False
         options_l.addStretch(1)
         for w in (
             self.tool_border,
             self.tool_fill,
             self.tool_labels,
+            self.tool_rulers,
+            self.tool_grid,
+            self.tool_aspect_label,
+            self.tool_aspect,
             QLabel("Label size"),
             self.tool_font,
             QLabel("Zoom"),
@@ -1828,6 +1879,9 @@ class MainWindow(QMainWindow):
         self.tool_border.toggled.connect(self._on_toggle_border)
         self.tool_fill.toggled.connect(self._on_toggle_fill)
         self.tool_labels.toggled.connect(self._on_toggle_labels)
+        self.tool_rulers.toggled.connect(self._on_toggle_rulers)
+        self.tool_grid.toggled.connect(self._on_toggle_grid)
+        self.tool_aspect.currentIndexChanged.connect(self._on_preview_aspect)
         self.tool_zoom.valueChanged.connect(self._on_zoom_slider)
         self.canvas.view_changed.connect(self._sync_zoom_slider_from_view)
         self.descr_board.view.view_changed.connect(self._sync_zoom_slider_from_view)
@@ -2010,7 +2064,7 @@ class MainWindow(QMainWindow):
         view = self._active_canvas_view()
         scale = view.zoom_scale()
         pct = int(round(scale * 100.0))
-        pct = max(100, min(500, pct))
+        pct = max(100, min(1000, pct))
         self._updating_zoom_slider = True
         self.tool_zoom.setValue(pct)
         self.tool_zoom_label.setText(f"{pct}%")
@@ -2046,6 +2100,9 @@ class MainWindow(QMainWindow):
         self._right_body_l.setStretchFactor(self.undo_list, 1)
         if atlas:
             self._apply_descr_view_settings()
+        # Aspect preview is UI-stage only.
+        self.tool_aspect.setEnabled(not atlas)
+        self.tool_aspect_label.setEnabled(not atlas)
         # Mode switches can collapse panes; restore remembered widths.
         self._apply_splitter_sizes()
         self._update_undo_actions()
@@ -2418,6 +2475,16 @@ class MainWindow(QMainWindow):
         self.labels_a.setChecked(bool(self.settings.get("show_element_labels", False)))
         self.labels_a.toggled.connect(self._on_toggle_labels)
         view_menu.addAction(self.labels_a)
+        self.rulers_a = QAction("Show &guide lines", self)
+        self.rulers_a.setCheckable(True)
+        self.rulers_a.setChecked(bool(self.settings.get("show_rulers", True)))
+        self.rulers_a.toggled.connect(self._on_toggle_rulers)
+        view_menu.addAction(self.rulers_a)
+        self.grid_a = QAction("&Pixel grid", self)
+        self.grid_a.setCheckable(True)
+        self.grid_a.setChecked(bool(self.settings.get("show_grid", False)))
+        self.grid_a.toggled.connect(self._on_toggle_grid)
+        view_menu.addAction(self.grid_a)
         view_menu.addSeparator()
         self.reload_tex_a = QAction("Reload &textures / strings", self)
         self.reload_tex_a.triggered.connect(self._reload_textures)
@@ -3506,6 +3573,8 @@ class MainWindow(QMainWindow):
         border = bool(self.settings.get("show_box_border", False))
         fill = bool(self.settings.get("show_box_fill", False))
         labels = bool(self.settings.get("show_element_labels", False))
+        rulers = bool(self.settings.get("show_rulers", True))
+        grid = bool(self.settings.get("show_grid", False))
         font = clamp_label_font_size(self.settings.get("label_font_size"))
         for w in (self.border_a, self.tool_border):
             w.blockSignals(True)
@@ -3519,9 +3588,39 @@ class MainWindow(QMainWindow):
             w.blockSignals(True)
             w.setChecked(labels)
             w.blockSignals(False)
+        for w in (self.rulers_a, self.tool_rulers):
+            w.blockSignals(True)
+            w.setChecked(rulers)
+            w.blockSignals(False)
+        for w in (self.grid_a, self.tool_grid):
+            w.blockSignals(True)
+            w.setChecked(grid)
+            w.blockSignals(False)
         self.tool_font.blockSignals(True)
         self.tool_font.setValue(font)
         self.tool_font.blockSignals(False)
+        self._rebuild_aspect_combo()
+
+    def _rebuild_aspect_combo(self) -> None:
+        if not hasattr(self, "tool_aspect"):
+            return
+        current = normalize_preview_aspect(self._preview_aspect)
+        self.tool_aspect.blockSignals(True)
+        self.tool_aspect.clear()
+        for label, data in preview_aspect_combo_items():
+            self.tool_aspect.addItem(label, data)
+        idx = self.tool_aspect.findData(current)
+        self.tool_aspect.setCurrentIndex(max(0, idx))
+        self.tool_aspect.blockSignals(False)
+
+    def _apply_preview_aspect(self) -> None:
+        key = normalize_preview_aspect(self._preview_aspect)
+        self.canvas.set_aspect_stretch_x(preview_aspect_stretch_x(key))
+
+    def _on_preview_aspect(self, *_args) -> None:
+        self._preview_aspect = normalize_preview_aspect(self.tool_aspect.currentData())
+        self._apply_preview_aspect()
+        self._sync_zoom_slider_from_view()
 
     def _on_toggle_border(self, checked: bool) -> None:
         self.settings["show_box_border"] = checked
@@ -3542,6 +3641,19 @@ class MainWindow(QMainWindow):
         save_settings(self.settings)
         self.scene.set_show_element_labels(checked)
         self.descr_board.scene.set_show_element_labels(checked)
+        self._sync_tool_controls()
+
+    def _on_toggle_rulers(self, checked: bool) -> None:
+        self.settings["show_rulers"] = checked
+        save_settings(self.settings)
+        self.canvas_board.set_rulers_visible(checked)
+        self._sync_tool_controls()
+
+    def _on_toggle_grid(self, checked: bool) -> None:
+        self.settings["show_grid"] = checked
+        save_settings(self.settings)
+        self.scene.set_pixel_grid_visible(checked)
+        self.descr_board.scene.set_pixel_grid_visible(checked)
         self._sync_tool_controls()
 
     def _on_tool_font_size(self, size: int) -> None:

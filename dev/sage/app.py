@@ -14,7 +14,7 @@ from sage.diaglog import get_logger, setup_logging
 
 _log_file = get_logger("app")
 
-from PyQt6.QtCore import QEvent, QPoint, QSize, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QEvent, QObject, QPoint, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import (
     QAction,
     QBrush,
@@ -387,6 +387,16 @@ def windows_explorer_path(path: Path) -> str:
     except OSError:
         resolved = path
     return str(resolved)
+
+
+class _SelectAllOnFocusFilter(QObject):
+    """First focus into a line edit selects all (click or Tab); re-click keeps caret."""
+
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802
+        if event.type() == QEvent.Type.FocusIn and isinstance(obj, QLineEdit):
+            # After mouse focus, Qt places the caret — defer so selectAll wins.
+            QTimer.singleShot(0, obj.selectAll)
+        return False
 
 
 def _prop_tool_button(
@@ -1495,6 +1505,29 @@ class MainWindow(QMainWindow):
             ed.textChanged.connect(self._on_props_changed)
             ed.editingFinished.connect(self._on_props_editing_finished)
 
+        self._select_all_on_focus = _SelectAllOnFocusFilter(self)
+        for ed in (
+            self.edit_x,
+            self.edit_y,
+            self.edit_w,
+            self.edit_h,
+            self.edit_text_r,
+            self.edit_text_g,
+            self.edit_text_b,
+            self.edit_text_a,
+            self.edit_text_x,
+            self.edit_text_y,
+            self.edit_left_ident,
+            self.edit_right_ident,
+            self.edit_top_indent,
+            self.edit_bottom_indent,
+            self.edit_vert_interval,
+        ):
+            ed.installEventFilter(self._select_all_on_focus)
+        font_le = self.edit_font.lineEdit()
+        if font_le is not None:
+            font_le.installEventFilter(self._select_all_on_focus)
+
         def _compact_fields(
             *parts: tuple[str, QWidget],
             field_width: int = 40,
@@ -1708,6 +1741,10 @@ class MainWindow(QMainWindow):
         self.tool_font.setValue(clamp_label_font_size(self.settings.get("label_font_size")))
         self.tool_font.setFixedWidth(52)
         self.tool_font.setAlignment(Qt.AlignmentFlag.AlignRight)
+        for spin in (self.tool_grid_step, self.tool_font):
+            spin_le = spin.lineEdit()
+            if spin_le is not None:
+                spin_le.installEventFilter(self._select_all_on_focus)
         self.tool_zoom = QSlider(Qt.Orientation.Horizontal)
         self.tool_zoom.setRange(100, 1000)
         self.tool_zoom.setSingleStep(5)

@@ -9,7 +9,7 @@ from typing import Any
 
 META_VERSION = 2
 # Selectable marker only; tag caption is drawn beside it.
-DEFAULT_HANDLE_SIZE = 10.0
+DEFAULT_HANDLE_SIZE = 5.0
 
 
 @dataclass

@@ -6,8 +6,10 @@ from PyQt6.QtCore import QRectF, Qt
 from PyQt6.QtGui import QColor, QPainter
 from PyQt6.QtWidgets import QGraphicsItem, QStyleOptionGraphicsItem
 
-# Grey @ 50% alpha.
-PIXEL_GRID_LINE = QColor(128, 128, 128, 128)
+# Grey: every 10th line @ 0.5 alpha, others @ 0.2.
+PIXEL_GRID_MINOR = QColor(128, 128, 128, 51)  # ~0.2
+PIXEL_GRID_MAJOR = QColor(128, 128, 128, 128)  # 0.5
+PIXEL_GRID_MAJOR_STEP = 10
 PIXEL_GRID_Z = 10_000_008.0
 
 
@@ -56,12 +58,29 @@ class PixelGridItem(QGraphicsItem):
         x1 = min(int(self._w), int(er.right()) + 1)
         y0 = max(0, int(er.top()))
         y1 = min(int(self._h), int(er.bottom()) + 1)
-        color = PIXEL_GRID_LINE
+        step = PIXEL_GRID_MAJOR_STEP
+        # Minors first, then majors on top.
         for x in range(x0, x1 + 1):
+            if x % step == 0:
+                continue
             painter.fillRect(
-                QRectF(float(x) - dx * 0.5, 0.0, dx, self._h), color
+                QRectF(float(x) - dx * 0.5, 0.0, dx, self._h), PIXEL_GRID_MINOR
             )
         for y in range(y0, y1 + 1):
+            if y % step == 0:
+                continue
             painter.fillRect(
-                QRectF(0.0, float(y) - dy * 0.5, self._w, dy), color
+                QRectF(0.0, float(y) - dy * 0.5, self._w, dy), PIXEL_GRID_MINOR
+            )
+        for x in range(x0, x1 + 1):
+            if x % step != 0:
+                continue
+            painter.fillRect(
+                QRectF(float(x) - dx * 0.5, 0.0, dx, self._h), PIXEL_GRID_MAJOR
+            )
+        for y in range(y0, y1 + 1):
+            if y % step != 0:
+                continue
+            painter.fillRect(
+                QRectF(0.0, float(y) - dy * 0.5, self._w, dy), PIXEL_GRID_MAJOR
             )

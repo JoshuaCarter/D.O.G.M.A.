@@ -49,10 +49,10 @@ def preview_aspect_stretch_x(value: object) -> float:
 def preview_aspect_combo_items() -> list[tuple[str, str]]:
     """``(label, data)`` for the Aspect combo. Data ``''`` = native stage."""
     native = native_ui_aspect()
-    default_label = f"{UI_WIDTH}:{UI_HEIGHT} (default)"
+    default_label = f"{UI_WIDTH}:{UI_HEIGHT}"
     for name, ratio in PREVIEW_ASPECT_PRESETS.items():
         if abs(ratio - native) < 1e-6:
-            default_label = f"{name} (default)"
+            default_label = name
             break
     items: list[tuple[str, str]] = [(default_label, PREVIEW_ASPECT_NATIVE)]
     for name, ratio in PREVIEW_ASPECT_PRESETS.items():

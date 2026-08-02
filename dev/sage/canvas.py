@@ -522,13 +522,22 @@ class WidgetItem(QGraphicsRectItem):
         # Native atlas px × (768 / device_height) → HUD space (engine parity).
         tw = float(pix.width()) * ui_scale
         th = float(pix.height()) * ui_scale
+        # Counter horizontal preview stretch so glyphs stay unstretched while
+        # boxes stretch. Align using the post-counter scene footprint so
+        # center/right padding isn't computed from the pre-stretch width.
+        aspect_sx = 1.0
+        sc = self.scene()
+        if isinstance(sc, UiScene):
+            aspect_sx = max(1e-6, float(sc.aspect_stretch_x))
+        tw_scene = tw / aspect_sx
+        th_scene = th
         # Engine default is top-left unless XML sets align / vert_align.
         align = (ref.align or "l").lower()
         valign = (ref.vert_align or "t").lower()
         if align in ("c", "center"):
-            x = (box_w - tw) / 2.0
+            x = (box_w - tw_scene) / 2.0
         elif align in ("r", "right"):
-            x = box_w - tw
+            x = box_w - tw_scene
         else:
             x = 0.0
         # Vertical: non-complex CUILines::Draw computes indent in UI space, then
@@ -536,9 +545,9 @@ class WidgetItem(QGraphicsRectItem):
         # offset is indent_ui * (768/device_h). Complex mode applies indent in UI
         # space correctly. Top stays 0 either way.
         if valign in ("c", "center"):
-            indent_ui = (box_h - th) / 2.0
+            indent_ui = (box_h - th_scene) / 2.0
         elif valign in ("b", "bottom"):
-            indent_ui = box_h - th
+            indent_ui = box_h - th_scene
         else:
             indent_ui = 0.0
         if ref.complex_mode or ui_scale >= 0.999:
@@ -546,14 +555,9 @@ class WidgetItem(QGraphicsRectItem):
         else:
             y = indent_ui * ui_scale
         # <text x="" y=""> → CUILines::m_TextOffset (UI units).
+        # X offset is UI space (view-stretched with the box); do not counter-scale it.
         x += float(ref.x or 0.0)
         y += float(ref.y or 0.0)
-        # Counter horizontal preview stretch so glyphs stay unstretched while
-        # boxes/layout stretch (editor-only aspect option).
-        aspect_sx = 1.0
-        sc = self.scene()
-        if isinstance(sc, UiScene):
-            aspect_sx = max(1e-6, float(sc.aspect_stretch_x))
         self._text_item.setPixmap(pix)
         self._text_item.setTransformationMode(
             Qt.TransformationMode.FastTransformation
@@ -1095,7 +1099,6 @@ class UiScene(QGraphicsScene):
                 not hover.node.visible
                 or not hover.isVisible()
                 or hover in selected_set
-                or hover.node.from_meta
             ):
                 hover = None
             self._ensure_hover_chromes(1)

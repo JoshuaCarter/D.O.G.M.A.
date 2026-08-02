@@ -208,12 +208,12 @@ local function start_travel_sequence(pos, lvid, gvid, is_transition, final_gvid)
 
     tft_clear_path_preview()
 
-    -- Drop any stale preview cache so journey rebuilds from coarse nav.
+    -- Drop any stale preview cache so journey rebuilds from aimap.
     tft.path_build_cache = nil
 
     local dest_key = nil
-    if tft.last_menu_target_id and _G.tft_coarse_nav_dest_anchor_key then
-        dest_key = _G.tft_coarse_nav_dest_anchor_key(tft.last_menu_target_id)
+    if tft.last_menu_target_id and _G.tft_nav_mesh_dest_anchor_key then
+        dest_key = _G.tft_nav_mesh_dest_anchor_key(tft.last_menu_target_id)
     end
     tft.dest_anchor_key = dest_key
 
@@ -231,7 +231,7 @@ local function start_travel_sequence(pos, lvid, gvid, is_transition, final_gvid)
         end
     end
     tft.dot_count = #(tft.dot_positions or {})
-    -- Coarse path polyline is authoritative. Densify can yield 0 dots on short paths
+    -- Aimap path polyline is authoritative. Densify can yield 0 dots on short paths
     -- (spacing ~20m); those still fail via too_close below - not "no nav path".
     if not (tft.path_chain and #tft.path_chain >= 2) then
         return fail_start(tft_str("tft_msg_no_nav_path"), "warning")
@@ -708,8 +708,8 @@ local function actor_on_update()
         pcall(update_debug_overlay)
     end
 
-    if _G.tft_coarse_nav_on_actor_update then
-        pcall(_G.tft_coarse_nav_on_actor_update)
+    if _G.tft_nav_mesh_on_actor_update then
+        pcall(_G.tft_nav_mesh_on_actor_update)
     end
 
     pcall(enforce_transition_combat_lock)

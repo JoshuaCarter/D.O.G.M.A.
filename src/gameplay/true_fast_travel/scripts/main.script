@@ -53,9 +53,9 @@ local function load_config()
     end
     tft_config.sneaking_level_up = mcm.key("dogma/debug", "ft_sneaking_level_up")
     tft_config.sneaking_level_down = mcm.key("dogma/debug", "ft_sneaking_level_down")
-    tft_config.coarse_nav_build = mcm.key("dogma/debug", "ft_coarse_nav_build")
-    tft_config.coarse_nav_rebuild_on_load = mcm.bool("dogma/debug", "ft_coarse_nav_rebuild_on_load")
-    tft_config.show_coarse_mesh = mcm.bool("dogma/debug", "ft_show_coarse_mesh")
+    tft_config.nav_mesh_reload = mcm.key("dogma/debug", "ft_nav_mesh_reload")
+    tft_config.nav_mesh_reload_on_load = mcm.bool("dogma/debug", "ft_nav_mesh_reload_on_load")
+    tft_config.show_nav_mesh = mcm.bool("dogma/debug", "ft_show_nav_mesh")
     if not tft_config.show_ambush_range and tft_clear_ambush_range_circle then
         tft_clear_ambush_range_circle()
     end
@@ -65,8 +65,8 @@ local function load_config()
     if not tft_config.debug_overlay and tft then
         tft._debug_overlay_msg = nil
     end
-    if _G.tft_coarse_nav_sync_display then
-        pcall(_G.tft_coarse_nav_sync_display)
+    if _G.tft_nav_mesh_sync_display then
+        pcall(_G.tft_nav_mesh_sync_display)
     end
     if _G.refresh_active_config then
         _G.refresh_active_config()
@@ -159,8 +159,8 @@ function on_game_start()
         if tft_on_level_changing then
             RegisterScriptCallback("on_level_changing", tft_on_level_changing)
         end
-        if _G.tft_coarse_nav_on_level_change then
-            RegisterScriptCallback("on_level_changing", _G.tft_coarse_nav_on_level_change)
+        if _G.tft_nav_mesh_on_level_change then
+            RegisterScriptCallback("on_level_changing", _G.tft_nav_mesh_on_level_change)
         end
         if tft_install_transition_gates then
             tft_install_transition_gates()
@@ -231,15 +231,15 @@ on_loading_screen_dismissed = function()
     tft.player_ready = true
 end
 
--- Hard gate: ensure coarse nav cache for this level before play (blocks until sync build if needed).
+-- Hard gate: load packaged nav mesh for this level before play.
 on_loading_screen_key_prompt = function()
     local ok, err = pcall(function()
         if tft_build_dynamic_map then
             pcall(tft_build_dynamic_map)
         end
-        local force = tft_config and tft_config.coarse_nav_rebuild_on_load == true
-        if _G.tft_coarse_nav_ensure_ready then
-            _G.tft_coarse_nav_ensure_ready(force)
+        local force = tft_config and tft_config.nav_mesh_reload_on_load == true
+        if _G.tft_nav_mesh_ensure_ready then
+            _G.tft_nav_mesh_ensure_ready(force)
         end
     end)
     if not ok then
@@ -262,21 +262,21 @@ actor_on_first_update = function()
 
     tft_build_dynamic_map()
 
-    -- Coarse nav is gated on on_loading_screen_key_prompt; try_load here is a harmless cache-only fallback.
+    -- Nav mesh is gated on on_loading_screen_key_prompt; try_load here is a harmless fallback.
     CreateTimeEvent("tft", "warm_graph_cache", 1.5, function()
-        if _G.tft_coarse_nav_try_load and not (_G.tft_coarse_nav_graph_ready and _G.tft_coarse_nav_graph_ready()) then
-            pcall(_G.tft_coarse_nav_try_load)
+        if _G.tft_nav_mesh_try_load and not (_G.tft_nav_mesh_graph_ready and _G.tft_nav_mesh_graph_ready()) then
+            pcall(_G.tft_nav_mesh_try_load)
         end
         return true
     end)
 
     -- Silent orphan sweep 3s after load to catch dots stuck from previous session.
-    -- include_path_spots=true matches journey/preview/coarse/ambush carrier spot names.
+    -- include_path_spots=true matches journey/preview/nav-mesh/ambush carrier spot names.
     CreateTimeEvent("tft", "orphan_sweep", 3.0, function()
         if not (db.actor and alife() and not tft.is_traveling) then return true end
         -- Drop any in-memory mesh overlay bookkeeping from a prior session (ids are stale).
-        if _G.tft_coarse_nav_clear_display then
-            pcall(_G.tft_coarse_nav_clear_display)
+        if _G.tft_nav_mesh_clear_display then
+            pcall(_G.tft_nav_mesh_clear_display)
         end
         if tft_clear_ambush_range_circle then
             pcall(tft_clear_ambush_range_circle)

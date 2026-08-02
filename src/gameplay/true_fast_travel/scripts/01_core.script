@@ -1,8 +1,8 @@
 -- True Fast Travel: Shared state, constants, logging, and PDA messages.
 -- Loaded automatically before main.script (zzzz_dogma_gameplay_true_fast_travel_main.script)
 
--- Mod semver. Coarse-nav cache files key on major.minor only (patch bumps keep cache).
-_G.tft_version = "0.3.0"
+-- Mod semver. Packaged aimap assets are immutable; bump major.minor when the format changes.
+_G.tft_version = "0.4.0"
 
 -- Shared dft globals (Anomaly isolates zzz_* script environments)
 local tft_config = _G.tft_config
@@ -286,7 +286,7 @@ _G.tft_path = {
     preview_edge_spacing_m = 5,
     lc_snap_max_drift_m   = 25,  -- max navmesh snap distance from level changer
     ground_snap_max_drift_m = 60,
-    land_prefer_node_m    = 10,  -- if a coarse path node or fine nav vertex is within this of the
+    land_prefer_node_m    = 10,  -- if an aimap path node or fine nav vertex is within this of the
                                  -- journey point, teleport snaps to the nearer of those
     -- Zone-exit travel: stop this far short of the changer so we don't land inside the trigger.
     -- Prefers the previous path node when that gap is ~10-20m; otherwise walks back along the path.
@@ -328,8 +328,8 @@ _G.tft_path.dots = {
     _G.tft_path.dot_spot, _G.tft_path.dot_spot_pending,
     _G.tft_path.dot_spot_ambush, _G.tft_path.dot_spot_ambush_icon, _G.tft_path.dot_spot_dodge,
     _G.tft_path.dot_spot_debug_vertex, _G.tft_path.dot_spot_debug_edge,
-    -- Coarse mesh / ambush-range carriers (orphan sweep + remove_path_spots)
-    "tft_coarse_node", "tft_coarse_endpoint", "tft_coarse_edge",
+    -- Nav mesh / ambush-range carriers (orphan sweep + remove_path_spots)
+    "tft_nav_mesh_node", "tft_nav_mesh_endpoint", "tft_nav_mesh_edge",
     _G.tft_path.ambush_range_spot, _G.tft_path.ambush_range_spot_alert,
 }
 

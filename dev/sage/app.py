@@ -4033,11 +4033,22 @@ class MainWindow(QMainWindow):
             self.doc.mark_meta_dirty()
         else:
             self._mark_xml_dirty()
-        self._show_props(node)
+        item = self.scene.item_for_node(node)
+        resizing = bool(item is not None and getattr(item, "_resizing", False))
+        if resizing:
+            # Live drag: only sync geo fields (avoid full props + texture resolve).
+            self._updating_props = True
+            self.edit_x.setText(_num(node.x))
+            self.edit_y.setText(_num(node.y))
+            self.edit_w.setText(_num(node.width))
+            self.edit_h.setText(_num(node.height))
+            self._updating_props = False
+        else:
+            self._show_props(node)
         # Child abs positions: callers that change parent geo should refresh;
         # group-move / resize already refresh before emitting.
         if self.scene.doc is not None:
-            # Cheap pos sync only (textures unchanged on move/resize of others).
+            # Cheap pos + texture-fit sync (no DDS re-decode).
             self.scene.refresh_item_positions()
 
     def _pin_splitter_sizes(self) -> None:

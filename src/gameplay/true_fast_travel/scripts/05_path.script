@@ -103,7 +103,7 @@ ray_snap_ground_pos = function(pos, opts)
         local ok, v = pcall(function() return level.vertex_id(result) end)
         if ok and valid_lvid(v) then lvid = v end
     end
-    -- Success snaps are extremely noisy during coarse-nav builds - don't log them.
+    -- Success snaps are extremely noisy during path builds - don't log them.
     return result, lvid
 end
 
@@ -2365,8 +2365,8 @@ get_cached_line_snap_path = function(start_pos, dest_pos)
     if not cache then return nil end
     local key = path_cache_key(start_pos, dest_pos)
     if not key or cache.key ~= key then return nil end
-    -- Live routing is coarse-only; reject stale fine-mesh / straight caches from older builds.
-    if not (cache.meta and cache.meta.mode == "coarse_graph") then
+    -- Live routing is packaged nav-mesh only; reject stale fine-mesh / straight caches.
+    if not (cache.meta and cache.meta.mode == "aimap") then
         return nil
     end
     return cache.chain, cache.is_vertex, cache.path_len, cache.raw_chain, cache.meta
@@ -2386,8 +2386,8 @@ local function store_line_snap_path_cache(start_pos, dest_pos, chain, is_vertex,
 end
 
 -- Primary (and only) path builder for preview, journey dots, and mid-journey teleports.
--- Coarse nav graph only - no fine navmesh A*, no straight-line fallback.
--- Optional 3rd arg: dest_anchor_key ("base:id" / "transition:id" / "campfire:id").
+-- Packaged level.ai aimap A* only - no straight-line fallback.
+-- Optional 3rd arg: dest_anchor_key ("base:id" / "transition:id" / "campfire:id" / "dest:id").
 build_line_snap_path = function(start_pos, dest_pos, dest_anchor_key)
     if not (start_pos and dest_pos) then return {}, {}, 0, {}, nil end
 
@@ -2397,23 +2397,23 @@ build_line_snap_path = function(start_pos, dest_pos, dest_anchor_key)
     end
 
     local chain, is_vertex, path_len, meta
-    if _G.tft_coarse_nav_build_path then
-        local ok, c, iv, plen, m = pcall(_G.tft_coarse_nav_build_path, start_pos, dest_pos, dest_anchor_key)
+    if _G.tft_nav_mesh_build_path then
+        local ok, c, iv, plen, m = pcall(_G.tft_nav_mesh_build_path, start_pos, dest_pos, dest_anchor_key)
         if ok and c and #c >= 2 then
             chain, is_vertex, path_len, meta = c, iv, plen, m
         elseif not ok then
-            tft_log_error("path build: coarse nav error: %s", tostring(c))
+            tft_log_error("path build: aimap error: %s", tostring(c))
         end
     end
 
     if not (chain and #chain >= 2) then
-        tft_log_error("path build: coarse nav failed at start=%s dest=%s key=%s",
+        tft_log_error("path build: aimap failed at start=%s dest=%s key=%s",
             tft_vec_str(start_pos), tft_vec_str(dest_pos), tostring(dest_anchor_key))
         return {}, {}, 0, {}, nil
     end
 
     tft_path_road_log(
-        "build (coarse graph): start=%s dest=%s points=%d path=%.0fm key=%s",
+        "build (aimap): start=%s dest=%s points=%d path=%.0fm key=%s",
         tft_vec_str(start_pos), tft_vec_str(dest_pos), #chain, path_len or 0,
         tostring(dest_anchor_key or "?")
     )
@@ -2517,9 +2517,9 @@ end
 -- interrupts, and arrival landings all agree on where "ratio% of the way there" actually
 -- is; falls back to a raw straight-line lerp only if no journey chain is available.
 --
--- Coarse nodes sit on fine navmesh, but mid-segment ratio points are chords between those
--- nodes. Prefer snapping to the nearer of (nearest coarse path node, nearest fine nav
--- vertex) when either is within land_prefer_node_m; otherwise fall back to ground-ray.
+-- Aimap path points sit on real AI-map vertices (subsampled). Prefer snapping to the
+-- nearer of (nearest path node, nearest fine nav vertex) when within land_prefer_node_m;
+-- otherwise fall back to ground-ray.
 local function get_safe_lvid_pos(ratio)
     local intended = nil
     if tft.path_chain and #tft.path_chain >= 2 then
@@ -2544,7 +2544,7 @@ local function get_safe_lvid_pos(ratio)
         end
     end
 
-    -- Nearest coarse node on this journey's polyline.
+    -- Nearest path node on this journey's polyline.
     local chain = tft.path_chain
     local is_vertex = tft.path_chain_is_vertex
     if chain then
@@ -2629,11 +2629,11 @@ path_stats_for_target = function(id, ln, click_pos)
     if not target or not target.pos then return { error = terr or "no_target" } end
     local start = db.actor:position()
     local straight = tft_distance_pda(start, target.pos) or start:distance_to(target.pos)
-    local dest_key = _G.tft_coarse_nav_dest_anchor_key and _G.tft_coarse_nav_dest_anchor_key(id) or nil
+    local dest_key = _G.tft_nav_mesh_dest_anchor_key and _G.tft_nav_mesh_dest_anchor_key(id) or nil
     local chain, is_vertex, path_len, _raw, path_meta
     local menu_cache = tft.menu_path_cache
     if menu_cache and menu_cache.seq == tft.menu_open_seq and menu_cache.id == id
-        and menu_cache.meta and menu_cache.meta.mode == "coarse_graph"
+        and menu_cache.meta and menu_cache.meta.mode == "aimap"
         and menu_cache.chain and #menu_cache.chain >= 2 then
         chain = menu_cache.chain
         is_vertex = menu_cache.is_vertex
@@ -3213,7 +3213,7 @@ build_path_preview = function(id, is_lc)
 
     local start = db.actor:position()
     local dest = target.pos
-    local dest_key = _G.tft_coarse_nav_dest_anchor_key and _G.tft_coarse_nav_dest_anchor_key(id) or nil
+    local dest_key = _G.tft_nav_mesh_dest_anchor_key and _G.tft_nav_mesh_dest_anchor_key(id) or nil
     local dist = tft_distance_pda(start, dest) or start:distance_to(dest)
     if dist < 40 and not is_lc then
         tft_log("path preview: too close (%.0fm)", dist)
@@ -3224,7 +3224,7 @@ build_path_preview = function(id, is_lc)
 
     local chain, is_vertex, path_len, raw_chain, path_meta = build_line_snap_path(start, dest, dest_key)
     if #chain < 2 then
-        tft_log("path preview: coarse path failed (%.0fm straight)", dist)
+        tft_log("path preview: nav mesh path failed (%.0fm straight)", dist)
         tft.is_path_preview = false
         tft.path_preview_id = nil
         return

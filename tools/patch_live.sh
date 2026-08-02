@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
-# Copy live-reloadable DOGMA assets into the MO2 mod folder (no full rebuild).
+# Hot-deploy DOGMA assets into the MO2 mod folder (no full rebuild).
 #
 # Overwrites matching files under DOGMA_DEPLOY (default: C:/GAMMA/mods/DOGMA).
-# Safe to run while the game is open — reopen the menu / MCM / UI to pick up
-# XML; DDS may need the texture to be re-bound (close/reopen UI). Scripts and
-# most .ltx still need a game restart (not copied here).
+# Safe to run while the game is open. After deploy:
+#   XML / text  → reopen the menu / MCM / UI (engine re-reads on open)
+#   DDS / THM   → written to disk, but Anomaly keeps sheets in the resource
+#                 cache (vid_restart does not help) — restart the game to see
+# Scripts and most .ltx still need a game restart (not copied here).
 #
-# Live set (gamedata-relative):
+# Deployed set (gamedata-relative):
 #   configs/ui/**/*.xml          UI layouts + textures_descr
 #   configs/text/**/*.xml        string tables + MCM text (ui_mcm_*.xml)
 #   textures/**/*.{dds,thm}      UI / atlas sheets
@@ -171,7 +173,7 @@ map_src_file() {
 	return 0
 }
 
-# Engine re-reads these when the relevant UI / MCM opens (not .script / most .ltx).
+# Included in hot deploy. XML reloads on UI open; DDS need a game restart to show.
 is_live_asset() {
 	local rel="$1"
 	case "$rel" in
@@ -241,9 +243,10 @@ fi
 
 mkdir -p "$DEPLOY_MOD/gamedata"
 echo "patch_live: deploy=$DEPLOY_MOD/gamedata"
-echo "patch_live: scope=$ONLY (live XML/DDS/THM only)"
+echo "patch_live: hot deploy scope=$ONLY (XML/DDS/THM; no scripts)"
 
 copied=0
+copied_dds=0
 skipped=0
 _emit_src=""
 _emit_rel=""
@@ -261,13 +264,22 @@ while IFS= read -r -d '' src_path; do
 	if [[ -n "$DRY" ]]; then
 		echo "  would copy $_emit_rel"
 		copied=$((copied + 1))
+		case "$_emit_rel" in
+			*.dds | *.thm) copied_dds=$((copied_dds + 1)) ;;
+		esac
 		continue
 	fi
 	mkdir -p "$(dirname "$dest")"
 	cp "$src_path" "$dest"
 	echo "  $_emit_rel"
 	copied=$((copied + 1))
+	case "$_emit_rel" in
+		*.dds | *.thm) copied_dds=$((copied_dds + 1)) ;;
+	esac
 done < <(find "$SRC" \( -name assets -o -name installer -o -name __pycache__ \) -prune -o -type f \( -name '*.xml' -o -name '*.dds' -o -name '*.thm' \) -print0)
 
 echo "patch_live: done (wrote $copied, unchanged $skipped)"
-echo "patch_live: reopen the UI / MCM in-game to load XML; scripts still need restart"
+echo "patch_live: XML/text → reopen UI/MCM · scripts still need full Build + restart"
+if [[ "$copied_dds" -gt 0 ]]; then
+	echo "patch_live: DDS/THM ($copied_dds) → restart game to see (vid_restart does not reload)"
+fi

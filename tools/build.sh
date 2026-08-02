@@ -14,6 +14,8 @@
 #   src/.../installer/image.png             optional FOMOD hover image (not shipped into gamedata)
 #   src/_common/mo2/...                     EXCEPTION: files under <mod>/mo2/
 #   src/<category>/<feature>/mo2/...        (sibling of gamedata/), e.g. mo2/tools/…
+#   src/<category>/<feature>/db/...         EXCEPTION: files under <mod>/db/
+#                                           (Anomaly archive mods, e.g. db/mods/*.db0)
 #
 # Scripts (prefix applied at build - src keeps short names like main.script):
 #   _common/scripts/*         -> same basename (dogma_common, dogma_mcm,
@@ -77,8 +79,10 @@ else
 fi
 
 GAMEDATA_ROOTS="scripts configs textures meshes anims sounds spawns materials"
-# Feature bucket that ships next to gamedata/ (MO2 mod root), not into gamedata.
+# Feature buckets that ship next to gamedata/ (MO2 mod root), not into gamedata.
 MODROOT_BUCKET="mo2"
+# Space-separated extra mod-root buckets (same mapping rules as mo2/).
+MODROOT_BUCKETS="mo2 db"
 
 STAGE="$(mktemp -d)"
 STAGE_MODROOT="$(mktemp -d)"
@@ -118,10 +122,21 @@ should_skip_name() {
 		README | README.* | MOVE_MAP | MOVE_MAP.* | .gitkeep | .DS_Store | Thumbs.db) return 0 ;;
 		assets | installer | __pycache__) return 0 ;;
 		*.alao-bak | *.pyc | *.pyo) return 0 ;;
+		# Authoring / pack source only — shipped via db/mods/*.db0 instead.
+		*.aimap) return 0 ;;
 		_conf.script | _common | _debug) return 1 ;;
 		_*) return 0 ;;
 		*) return 1 ;;
 	esac
+}
+
+is_modroot_bucket() {
+	local name="$1"
+	local b
+	for b in $MODROOT_BUCKETS; do
+		[[ "$name" == "$b" ]] && return 0
+	done
+	return 1
 }
 
 is_gamedata_root() {
@@ -201,14 +216,14 @@ map_src_file() {
 	if [[ "$rel" == _common/* ]]; then
 		bucket_rel="${rel#_common/}"
 		path_key=""
-		# EXCEPTION: _common/mo2/ → <MO2 mod>/mo2/ (always-on core tools).
+		# EXCEPTION: _common/mo2|db/ → <MO2 mod>/<bucket>/ (always-on core tools / archives).
 		local common_bucket="${bucket_rel%%/*}"
-		if [[ "$common_bucket" == "$MODROOT_BUCKET" ]]; then
-			bucket_rel="${bucket_rel#"$MODROOT_BUCKET"/}"
+		if is_modroot_bucket "$common_bucket"; then
+			bucket_rel="${bucket_rel#"$common_bucket"/}"
 			[[ -n "$bucket_rel" && "$bucket_rel" != "$common_bucket" ]] || return 1
 			_emit_kind="modroot"
 			_emit_src="$src_path"
-			_emit_rel="$MODROOT_BUCKET/$bucket_rel"
+			_emit_rel="$common_bucket/$bucket_rel"
 			_emit_path_key=""
 			_emit_base="$base"
 			return 0
@@ -218,8 +233,8 @@ map_src_file() {
 		if is_gamedata_root "$cat"; then
 			bucket_rel="$rel"
 			path_key=""
-		elif (( ${#parts[@]} >= 3 )) && is_gamedata_root "${parts[1]}"; then
-			# Top-level feature: src/<feat|/ _debug>/<gamedata-root|/mo2>/...
+		elif (( ${#parts[@]} >= 3 )) && { is_gamedata_root "${parts[1]}" || is_modroot_bucket "${parts[1]}"; }; then
+			# Top-level feature: src/<feat|/ _debug>/<gamedata-root|mo2|db>/...
 			local feat_dir="$cat"
 			local feat
 			feat="$(src_dir_to_feature "$feat_dir")"
@@ -227,12 +242,12 @@ map_src_file() {
 			should_skip_name "$feat_dir" && return 1
 			path_key="$feat"
 
-			if [[ "$bucket" == "$MODROOT_BUCKET" ]]; then
-				bucket_rel="${rel#"$feat_dir/$MODROOT_BUCKET/"}"
+			if is_modroot_bucket "$bucket"; then
+				bucket_rel="${rel#"$feat_dir/$bucket/"}"
 				[[ -n "$bucket_rel" ]] || return 1
 				_emit_kind="modroot"
 				_emit_src="$src_path"
-				_emit_rel="$MODROOT_BUCKET/$bucket_rel"
+				_emit_rel="$bucket/$bucket_rel"
 				_emit_path_key="$path_key"
 				_emit_base="$base"
 				return 0
@@ -247,13 +262,13 @@ map_src_file() {
 			should_skip_name "$feat" && return 1
 			path_key="${cat}_${feat}"
 
-			# EXCEPTION: mo2/ → <MO2 mod>/mo2/ (sibling of gamedata/), paths kept under mo2/.
-			if [[ "$bucket" == "$MODROOT_BUCKET" ]]; then
-				bucket_rel="${rel#"$cat/$feat/$MODROOT_BUCKET/"}"
+			# EXCEPTION: mo2|db/ → <MO2 mod>/<bucket>/ (sibling of gamedata/).
+			if is_modroot_bucket "$bucket"; then
+				bucket_rel="${rel#"$cat/$feat/$bucket/"}"
 				[[ -n "$bucket_rel" ]] || return 1
 				_emit_kind="modroot"
 				_emit_src="$src_path"
-				_emit_rel="$MODROOT_BUCKET/$bucket_rel"
+				_emit_rel="$bucket/$bucket_rel"
 				_emit_path_key="$path_key"
 				_emit_base="$base"
 				return 0
@@ -464,6 +479,9 @@ if [[ -n "$DEPLOY_MOD" ]]; then
 	cp -a "$BUILD_ROOT/gamedata" "$DEPLOY_MOD/gamedata"
 	if [[ -d "$BUILD_ROOT/mo2" ]]; then
 		cp -a "$BUILD_ROOT/mo2" "$DEPLOY_MOD/mo2"
+	fi
+	if [[ -d "$BUILD_ROOT/db" ]]; then
+		cp -a "$BUILD_ROOT/db" "$DEPLOY_MOD/db"
 	fi
 	write_mod_meta "$DEPLOY_MOD"
 fi

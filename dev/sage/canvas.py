@@ -297,6 +297,12 @@ class WidgetItem(QGraphicsRectItem):
         self._missing = False
         # Session-only: Properties checkbox; not written to XML/settings.
         self.show_texture = True
+        # Native UV crop (unscaled); live resize uses item transform.
+        self._tex_native = QPixmap()
+        self._tex_key: tuple | None = None
+        self._pixmap_item.setTransformationMode(
+            Qt.TransformationMode.SmoothTransformation
+        )
         self._resizing = False
         self._resize_corner: str | None = None
         self._resize_start = QPointF()
@@ -448,32 +454,73 @@ class WidgetItem(QGraphicsRectItem):
         self.show_texture = show
         self._apply_texture()
 
-    def _apply_texture(self) -> None:
+    def _texture_cache_key(self) -> tuple | None:
+        ref = self.node.texture
+        if ref is None or not ref.name:
+            return None
+        return (
+            ref.name,
+            float(ref.uv_x),
+            float(ref.uv_y),
+            float(ref.uv_w),
+            float(ref.uv_h),
+            bool(ref.has_uv),
+            bool(ref.is_path),
+            ref.tint_r,
+            ref.tint_g,
+            ref.tint_b,
+            ref.tint_a,
+            id(self.resolver),
+        )
+
+    def _clear_texture_pixmap(self) -> None:
+        self._tex_native = QPixmap()
+        self._tex_key = None
         self._pixmap_item.setPixmap(QPixmap())
+        self._pixmap_item.resetTransform()
         self._pixmap_item.setVisible(False)
-        self._missing = False
-        if not self.show_texture or not self.node.texture:
+
+    def _fit_texture_to_box(self) -> None:
+        """Scale cached DDS crop into the widget box (cheap; used during drag resize)."""
+        if not self.show_texture or self._tex_native.isNull():
+            self._pixmap_item.setVisible(False)
             return
-        resolved = self.resolver.resolve_ref(self.node.texture)
-        if resolved.image is None:
-            self._missing = bool(self.node.texture.name)
-            return
-        img = resolved.image
-        data = img.tobytes("raw", "RGBA")
-        qimg = QImage(data, img.width, img.height, img.width * 4, QImage.Format.Format_RGBA8888).copy()
-        pix = QPixmap.fromImage(qimg)
+        nw = max(self._tex_native.width(), 1)
+        nh = max(self._tex_native.height(), 1)
         target_w = max(int(self.node.width), 1)
         target_h = max(int(self.node.height), 1)
-        # Preview: always fit texture into the widget box.
-        pix = pix.scaled(
-            target_w,
-            target_h,
-            Qt.AspectRatioMode.IgnoreAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
+        self._pixmap_item.setPixmap(self._tex_native)
+        self._pixmap_item.setTransform(
+            QTransform.fromScale(target_w / nw, target_h / nh)
         )
-        self._pixmap_item.setPixmap(pix)
         self._pixmap_item.setPos(0, 0)
         self._pixmap_item.setVisible(True)
+
+    def _apply_texture(self) -> None:
+        """Resolve DDS/atlas crop into a native pixmap, then fit to the box."""
+        self._missing = False
+        if not self.show_texture or not self.node.texture:
+            self._clear_texture_pixmap()
+            return
+        key = self._texture_cache_key()
+        if key is None or key != self._tex_key or self._tex_native.isNull():
+            resolved = self.resolver.resolve_ref(self.node.texture)
+            if resolved.image is None:
+                self._missing = bool(self.node.texture.name)
+                self._clear_texture_pixmap()
+                return
+            img = resolved.image
+            data = img.tobytes("raw", "RGBA")
+            qimg = QImage(
+                data,
+                img.width,
+                img.height,
+                img.width * 4,
+                QImage.Format.Format_RGBA8888,
+            ).copy()
+            self._tex_native = QPixmap.fromImage(qimg)
+            self._tex_key = key
+        self._fit_texture_to_box()
 
     def _apply_text(self) -> None:
         """Paint resolved string-table text with engine bitmap fonts."""
@@ -747,7 +794,8 @@ class WidgetItem(QGraphicsRectItem):
         self.setPos(round(pos.x()), round(pos.y()))
         self._updating = False
         self._sync_node_from_item()
-        self._apply_texture()
+        # Fit cached crop via transform — avoid re-decode / QPixmap.scaled every move.
+        self._fit_texture_to_box()
         self._apply_text()
         self._apply_label()
         self._sync_select_fill(selected=self.isSelected())
@@ -1200,6 +1248,7 @@ class UiScene(QGraphicsScene):
             item.setRect(0, 0, max(item.node.width, 1), max(item.node.height, 1))
             item.setPos(item.node.abs_x, item.node.abs_y)
             item._updating = False
+            item._fit_texture_to_box()
             item._sync_select_fill(selected=item.isSelected())
             item.follow_overlays_to_pos()
         self._sync_focus_chrome()

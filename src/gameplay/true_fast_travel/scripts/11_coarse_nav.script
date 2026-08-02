@@ -1,52 +1,22 @@
--- True Fast Travel: coarse navmesh graph (dev build / load / PDA display).
--- Anchors: bases + transitions (full clique) + campfires >50m from nearest core (spoke to each core).
--- Sparse maps: boundary probes from level bounds (probe clique + spokes to cores).
--- Standalone from 05_path - mesh helpers copied here for offline cache builds.
+-- True Fast Travel: packed level.ai aimap graph (load / pathfind / PDA display).
+-- Node index == engine level_vertex_id. Live travel uses A* on packaged adjacency.
+-- Assets ship in db/mods/dogma_nav_mesh.db0 as configs/tft_aimap/<level>.spawn.
 
 local tft = _G.tft
--- File-format schema (header DFT_COARSE_V…). Independent of mod semver.
-local CN_SCHEMA = 3
--- Cache filename uses mod major.minor from _G.tft_version (see 01_core).
--- Patch bumps (0.1.0 → 0.1.5) keep the same file; feature bumps (0.1 → 0.2) force rebuild.
--- Tag uses underscores (0_3) so filenames stay <level>_<maj>_<min>.nav - no dotted middle segment.
-local CN_SUBSAMPLE_M = 15
-local CN_BUILD_MAX_NODES = 2500
-local CN_SPLICE_MAX_M = 72
-local CN_CONNECTOR_MAX_M = 50
-local CN_CAMPFIRE_MIN_CORE_M = 50
-local CN_JUNCTION_SNAP_M = 8
-local CN_SNAP_TRIVIAL_M = 3
-local CN_SNAP_GRID_M = 15
+
+local CN_AIMAP_VFS_DIR = "tft_aimap\\"
+local CN_HEADER_SIZE = 44
+local CN_MAGIC = "DFT_AIM1"
+local CN_INVALID = 4294967295 -- 0xFFFFFFFF
+local CN_PATH_SUBSAMPLE_M = 12
+local CN_ASTAR_MAX_EXPAND = 750000
+local CN_DISPLAY_STRIDE = 80
+local CN_DISPLAY_MARKERS_MAX = 2500
 local CN_UNDERGROUND_Y = 1000
--- Boundary probes: fill maps whose real travel anchors are few or clustered.
-local CN_PROBE_MIN_CORE = 3          -- always probe if fewer cores than this
-local CN_PROBE_SPAN_FRAC = 0.40      -- or if core AABB diagonal < this * level diagonal
-local CN_PROBE_INSET_FRAC = 0.10     -- inset from level bounds (fraction of width/depth)
-local CN_PROBE_NEAR_CORE_M = 80      -- skip a probe if within this of an existing core
-local CN_PROBE_SNAP_M = 120          -- nav-snap search radius for probe positions
--- Cache under Anomaly appdata (build never touches this):
---   <Anomaly>/appdata/dogma_navmesh_cache/<level>_<maj>_<min>.nav
-local CN_APPDATA_CACHE_SUB = "dogma_navmesh_cache\\"
--- Legacy VFS path (old installs); read-only fallback, never written.
-local CN_CACHE_VFS_DIR = "tft_coarse_nav\\"
 
-local cn_path = {
-    nav_step_m = 22,
-    nav_goal_tol_m = 15,
-    nav_dir_count = 6,
-    nav_min_move_frac = 0.35,
-    nav_min_move_abs_m = 1.2,
-    nav_heuristic_weight = 1.08,
-    nav_smooth_step_m = 15,
-    nav_smooth_tolerance_m = 3,
-}
-
-local SPOT_NODE = "tft_coarse_node"
-local SPOT_ENDPOINT = "tft_coarse_endpoint"
-local SPOT_EDGE = "tft_coarse_edge"
--- Sparse straight-chord samples between nodes (connectivity hint, not a dense "line").
-local CN_EDGE_SPACING_M = 35
-local CN_EDGE_MARKERS_MAX = 800
+local SPOT_NODE = "tft_nav_mesh_node"
+local SPOT_ENDPOINT = "tft_nav_mesh_endpoint"
+local SPOT_EDGE = "tft_nav_mesh_edge"
 
 local function cn_msg(text, style)
     local cfg = _G.tft_config
@@ -56,26 +26,23 @@ end
 
 local function cn_log(fmt, ...)
     if _G.tft_log then
-        _G.tft_log("[coarse-nav] " .. fmt, ...)
+        _G.tft_log("[aimap] " .. fmt, ...)
     end
 end
 
 local function cn_state()
-    if not tft.coarse_nav then
-        tft.coarse_nav = {
+    if not tft.nav_mesh then
+        tft.nav_mesh = {
             graph = nil,
             dot_ids = {},
             endpoint_dot_ids = {},
             edge_dot_ids = {},
             build = nil,
+            dest_lvid_cache = {},
         }
     end
-    return tft.coarse_nav
+    return tft.nav_mesh
 end
-
--- ============================================================
--- Mesh helpers (copied from 05_path, trimmed - no road graph)
--- ============================================================
 
 local function cn_valid_lvid(lvid)
     return lvid and lvid ~= _G.tft_invalid_lvid and lvid ~= -1
@@ -87,110 +54,321 @@ local function cn_horizontal_dist(a, b)
     return math.sqrt(dx * dx + dz * dz)
 end
 
-local function cn_lvid_accessible(lvid)
-    if not cn_valid_lvid(lvid) then return false end
-    if level.is_accessible_vertex_id then
-        local ok, acc = pcall(function() return level.is_accessible_vertex_id(lvid) end)
-        if ok and not acc then return false end
+local function cn_level_name()
+    return (level and level.name) and level.name() or nil
+end
+
+-- ============================================================
+-- Binary helpers (Lua 5.1, little-endian)
+-- ============================================================
+
+local function cn_u32(blob, off1)
+    local b1, b2, b3, b4 = blob:byte(off1, off1 + 3)
+    if not b4 then return nil end
+    return b1 + b2 * 256 + b3 * 65536 + b4 * 16777216
+end
+
+local function cn_f32(blob, off1)
+    local b1, b2, b3, b4 = blob:byte(off1, off1 + 3)
+    if not b4 then return nil end
+    local sign = 1
+    if b4 >= 128 then
+        sign = -1
+        b4 = b4 - 128
     end
+    local exp = b4 * 2 + math.floor(b3 / 128)
+    local mant = ((b3 % 128) * 65536 + b2 * 256 + b1) / 8388608
+    if exp == 0 then
+        if mant == 0 then return 0 end
+        return sign * mant * (2 ^ (-126))
+    elseif exp == 255 then
+        return sign * math.huge
+    end
+    return sign * (1 + mant) * (2 ^ (exp - 127))
+end
+
+local function cn_neighbor(g, node_id, slot)
+    -- node_id 0-based; slot 0..3; links blob starts after header
+    local off = CN_HEADER_SIZE + node_id * 16 + slot * 4 + 1
+    local v = cn_u32(g.blob, off)
+    if not v or v == CN_INVALID or v >= g.node_count then return nil end
+    return v
+end
+
+-- ============================================================
+-- Load packaged aimap
+-- ============================================================
+
+-- Packaged archive uses *.spawn (xrCompress strong-compresses that ext).
+-- Loose authoring dumps may still be *.aimap beside the scripts during dev.
+local function cn_aimap_rel_candidates(level_name)
+    local stem = CN_AIMAP_VFS_DIR .. (level_name or "unknown")
+    return { stem .. ".spawn", stem .. ".aimap" }
+end
+
+local function cn_ensure_dir(path)
+    if not path or path == "" then return false end
+    path = path:gsub("/", "\\")
+    if path:sub(-1) == "\\" then path = path:sub(1, -2) end
+    pcall(function()
+        os.execute('cmd /c mkdir "' .. path .. '" >nul 2>nul')
+    end)
     return true
 end
 
-local function cn_copy_pos(p)
-    return vector():set(p.x, p.y, p.z)
+local function cn_appdata_aimap_path(level_name)
+    if not (getFS and getFS().update_path) then return nil end
+    local ok, dir = pcall(function()
+        return getFS():update_path("$app_data_root$", "dogma_aimap_cache\\")
+    end)
+    if not ok or not dir or dir == "" then return nil end
+    dir = dir:gsub("/", "\\")
+    if dir:sub(-1) ~= "\\" then dir = dir .. "\\" end
+    cn_ensure_dir(dir)
+    -- Cache decompressed payload as .aimap for fast io.open reloads.
+    return dir .. (level_name or "unknown") .. ".aimap"
 end
 
-local function cn_atan2(y, x)
-    if math.atan2 then return math.atan2(y, x) end
-    if x > 0 then return math.atan(y / x) end
-    if x < 0 and y >= 0 then return math.atan(y / x) + math.pi end
-    if x < 0 and y < 0 then return math.atan(y / x) - math.pi end
-    if x == 0 and y > 0 then return math.pi / 2 end
-    if x == 0 and y < 0 then return -math.pi / 2 end
-    return 0
-end
-
-local function cn_mesh_step_ok(moved, use_step)
-    if not moved then return false end
-    local threshold = use_step * cn_path.nav_min_move_frac
-    if cn_path.nav_min_move_abs_m < threshold then threshold = cn_path.nav_min_move_abs_m end
-    return moved >= threshold
-end
-
-local function cn_mesh_step(lvid, from_pos, dir_x, dir_z, dist_m)
-    if not (level and level.vertex_in_direction and cn_valid_lvid(lvid) and from_pos and dist_m and dist_m > 0) then
-        return nil
-    end
-    local len = math.sqrt(dir_x * dir_x + dir_z * dir_z)
-    if len < 0.001 then return nil end
-    local dir = vector():set(dir_x / len, 0, dir_z / len)
-    local ok, next_lvid = pcall(function() return level.vertex_in_direction(lvid, dir, dist_m) end)
-    if not ok or not cn_valid_lvid(next_lvid) or next_lvid == lvid then return nil end
-    if not cn_lvid_accessible(next_lvid) then return nil end
-    local ok_p, pos = pcall(function() return level.vertex_position(next_lvid) end)
-    if not (ok_p and pos and pos.x) then return nil end
-    local next_pos = cn_copy_pos(pos)
-    local moved = cn_horizontal_dist(from_pos, next_pos) or from_pos:distance_to(next_pos)
-    return next_lvid, next_pos, moved
-end
-
-local function cn_mesh_step_adaptive(lvid, from_pos, dir_x, dir_z, dist_m)
-    local nl, np, mv = cn_mesh_step(lvid, from_pos, dir_x, dir_z, dist_m)
-    if nl and cn_mesh_step_ok(mv, dist_m) then return nl, np, mv end
-    for _, frac in ipairs({ 0.5, 0.25, 0.12 }) do
-        local d = dist_m * frac
-        if d >= 1.0 then
-            nl, np, mv = cn_mesh_step(lvid, from_pos, dir_x, dir_z, d)
-            if nl and cn_mesh_step_ok(mv, d) then return nl, np, mv end
-        end
-    end
+local function cn_read_file_rb(abs_path)
+    if not abs_path then return nil end
+    local ok, data = pcall(function()
+        local f = io.open(abs_path, "rb")
+        if not f then return nil end
+        local s = f:read("*a")
+        f:close()
+        return (s and s ~= "") and s or nil
+    end)
+    if ok then return data end
     return nil
 end
 
-local function cn_resolve_nav_vertex(pos, max_scan)
-    if not (level and level.vertex_id and pos) then return nil end
-    max_scan = max_scan or 40
+local function cn_write_file_wb(abs_path, data)
+    if not (abs_path and data) then return false end
+    local ok = pcall(function()
+        local f = io.open(abs_path, "wb")
+        if not f then error("open failed") end
+        f:write(data)
+        f:close()
+    end)
+    return ok == true
+end
+
+local function cn_vfs_read_rel(rel)
+    if not getFS then return nil end
+    local ok, data = pcall(function()
+        local fr = getFS():r_open("$game_config$", rel)
+        if not fr then return nil end
+        local chunks = {}
+        local buf = {}
+        local n = 0
+        while not fr:r_eof() do
+            n = n + 1
+            buf[n] = string.char(fr:r_u8())
+            if n >= 65536 then
+                chunks[#chunks + 1] = table.concat(buf, "", 1, n)
+                n = 0
+            end
+        end
+        if n > 0 then
+            chunks[#chunks + 1] = table.concat(buf, "", 1, n)
+        end
+        local s = table.concat(chunks)
+        return (s ~= "") and s or nil
+    end)
+    if ok then return data end
+    cn_log("vfs read error (%s): %s", tostring(rel), tostring(data))
+    return nil
+end
+
+local function cn_read_aimap_bytes(level_name)
+    local candidates = cn_aimap_rel_candidates(level_name)
+
+    -- 1) Appdata cache (fast io.open after first VFS extract / db decompress)
+    local app_path = cn_appdata_aimap_path(level_name)
+    if app_path then
+        local cached = cn_read_file_rb(app_path)
+        if cached and cached:sub(1, 8) == CN_MAGIC then
+            return cached, app_path
+        end
+    end
+
+    for i = 1, #candidates do
+        local rel = candidates[i]
+
+        -- 2) Loose file via update_path + io.open (dev / unpacked)
+        if getFS and getFS().update_path then
+            local ok, abs = pcall(function()
+                return getFS():update_path("$game_config$", rel)
+            end)
+            if ok and abs and abs ~= "" then
+                local data = cn_read_file_rb(abs)
+                if data and data:sub(1, 8) == CN_MAGIC then
+                    if app_path then pcall(cn_write_file_wb, app_path, data) end
+                    return data, abs
+                end
+            end
+        end
+
+        -- 3) VFS (db/mods archive or virtualized loose): decompress happens in engine
+        local data = cn_vfs_read_rel(rel)
+        if data and data:sub(1, 8) == CN_MAGIC then
+            if app_path then
+                if cn_write_file_wb(app_path, data) then
+                    cn_log("cached aimap to appdata: %s", app_path)
+                end
+            end
+            return data, rel
+        end
+    end
+
+    cn_log("missing aimap for %s (tried .spawn/.aimap under %s)",
+        tostring(level_name), CN_AIMAP_VFS_DIR)
+    return nil
+end
+
+local function cn_parse_aimap(blob, level_name)
+    if not (blob and #blob >= CN_HEADER_SIZE) then return nil, "short" end
+    if blob:sub(1, 8) ~= CN_MAGIC then return nil, "bad_magic" end
+    local ver = cn_u32(blob, 9)
+    local count = cn_u32(blob, 13)
+    if ver ~= 1 then return nil, "bad_version" end
+    if not count or count < 1 then return nil, "empty" end
+    local expect = CN_HEADER_SIZE + count * 16
+    if #blob < expect then return nil, "truncated" end
+    local cell = cn_f32(blob, 17)
+    local g = {
+        level_name = level_name,
+        blob = blob,
+        node_count = count,
+        cell = cell or 0.7,
+        aabb = {
+            cn_f32(blob, 21), cn_f32(blob, 25), cn_f32(blob, 29),
+            cn_f32(blob, 33), cn_f32(blob, 37), cn_f32(blob, 41),
+        },
+        adj = true,
+        anchor_by_key = {},
+    }
+    return g
+end
+
+local function cn_graph_ready()
+    local g = cn_state().graph
+    return g ~= nil and g.node_count and g.node_count >= 1 and g.blob ~= nil
+end
+
+local function cn_try_load()
+    local tostr = tostring
+    local level_name = cn_level_name()
+    if not level_name then
+        cn_log("try_load: no level name")
+        return false
+    end
+    local blob, src = cn_read_aimap_bytes(level_name)
+    if not blob then
+        cn_log("try_load: missing aimap for %s", tostr(level_name))
+        cn_state().graph = nil
+        return false
+    end
+    local g, err = cn_parse_aimap(blob, level_name)
+    if not g then
+        cn_log("try_load: parse failed for %s: %s", tostr(level_name), tostr(err))
+        cn_state().graph = nil
+        return false
+    end
+    cn_state().graph = g
+    cn_log("loaded %s nodes=%d from %s (%.1f MB)",
+        tostr(level_name), g.node_count, tostr(src), #blob / (1024 * 1024))
+    return true
+end
+
+local function cn_clear_appdata_cache(level_name)
+    local path = cn_appdata_aimap_path(level_name or cn_level_name())
+    if not path then return end
+    pcall(function()
+        os.remove(path)
+    end)
+end
+
+local function cn_ensure_ready(force)
+    if force then
+        cn_clear_appdata_cache(cn_level_name())
+        cn_state().graph = nil
+        if tft then
+            tft.path_build_cache = nil
+            tft.menu_path_cache = nil
+        end
+    end
+    if cn_graph_ready() then return true end
+    return cn_try_load()
+end
+
+local function cn_build_sync()
+    -- Packaged nav mesh is immutable; reload from db/mods (drop appdata cache first).
+    cn_clear_appdata_cache(cn_level_name())
+    cn_state().graph = nil
+    if tft then
+        tft.path_build_cache = nil
+        tft.menu_path_cache = nil
+    end
+    local ok = cn_try_load()
+    if ok then
+        cn_msg("Nav mesh reloaded", "info")
+    else
+        cn_msg("Nav mesh reload failed", "warning")
+    end
+    return ok
+end
+
+-- ============================================================
+-- Positions / nearest (engine lvid == aimap index)
+-- ============================================================
+
+local function cn_vertex_pos(lvid, cache)
+    if cache and cache[lvid] then return cache[lvid] end
+    if not (level and level.vertex_position and cn_valid_lvid(lvid)) then return nil end
+    local ok, p = pcall(function() return level.vertex_position(lvid) end)
+    if not (ok and p and p.x) then return nil end
+    local v = vector():set(p.x, p.y, p.z)
+    if cache then cache[lvid] = v end
+    return v
+end
+
+local function cn_resolve_lvid(pos, hint_lvid)
+    if hint_lvid and cn_valid_lvid(hint_lvid) then
+        local g = cn_state().graph
+        if g and hint_lvid < g.node_count then
+            return hint_lvid
+        end
+    end
+    if not (pos and level and level.vertex_id) then return nil end
     local ok, lvid = pcall(function() return level.vertex_id(pos) end)
-    if ok and cn_valid_lvid(lvid) and cn_lvid_accessible(lvid) then return lvid, pos end
-    if _G.tft_find_ground_pos then
-        local snap = _G.tft_find_ground_pos(pos, nil, nil, {
-            anchor = pos, max_drift_m = max_scan, local_only = true, ray_first = true,
-        })
-        if snap then
-            local ok2, lvid2 = pcall(function() return level.vertex_id(snap) end)
-            if ok2 and cn_valid_lvid(lvid2) and cn_lvid_accessible(lvid2) then return lvid2, snap end
-        end
-    end
-    return nil
+    if not (ok and cn_valid_lvid(lvid)) then return nil end
+    local g = cn_state().graph
+    if g and lvid >= g.node_count then return nil end
+    return lvid
 end
 
-local function cn_mesh_line_reachable(from_pos, to_pos)
-    if not (level and level.vertex_id and level.vertex_in_direction) then return false end
-    local step_m = cn_path.nav_smooth_step_m
-    local tol_m = cn_path.nav_smooth_tolerance_m
-    local dist = cn_horizontal_dist(from_pos, to_pos) or from_pos:distance_to(to_pos)
-    if dist <= tol_m then return true end
-    local max_hops = math.min(200, math.ceil(dist / step_m) + 4)
-    local lvid = cn_resolve_nav_vertex(from_pos, 30)
-    if not lvid then return false end
-    local cur_pos = cn_copy_pos(from_pos)
-    for _ = 1, max_hops do
-        local remain = cn_horizontal_dist(cur_pos, to_pos) or cur_pos:distance_to(to_pos)
-        if remain <= tol_m then return true end
-        local dx, dz = to_pos.x - cur_pos.x, to_pos.z - cur_pos.z
-        local use_step = math.min(step_m, remain)
-        local nl, np = cn_mesh_step_adaptive(lvid, cur_pos, dx, dz, use_step)
-        if not nl then return false end
-        lvid, cur_pos = nl, np
+local function cn_nearest_graph_node(g, pos, max_m)
+    if not (g and pos) then return nil end
+    local lvid = cn_resolve_lvid(pos, nil)
+    if not lvid then return nil end
+    if max_m then
+        local p = cn_vertex_pos(lvid, nil)
+        local d = p and cn_horizontal_dist(pos, p)
+        if d and d > max_m then return nil end
     end
-    local remain = cn_horizontal_dist(cur_pos, to_pos) or cur_pos:distance_to(to_pos)
-    return remain <= tol_m
+    return lvid
 end
+
+-- ============================================================
+-- A* on aimap adjacency
+-- ============================================================
 
 local function cn_heap_swap(heap, i, j)
     local a, b = heap.items[i], heap.items[j]
     heap.items[i], heap.items[j] = b, a
-    heap.index[a], heap.index[b] = j, i
+    heap.index[a] = j
+    heap.index[b] = i
 end
 
 local function cn_heap_sift_up(heap, nodes, i)
@@ -199,7 +377,9 @@ local function cn_heap_sift_up(heap, nodes, i)
         if nodes[heap.items[i]].f < nodes[heap.items[parent]].f then
             cn_heap_swap(heap, i, parent)
             i = parent
-        else break end
+        else
+            break
+        end
     end
 end
 
@@ -215,1326 +395,218 @@ local function cn_heap_sift_down(heap, nodes, i)
     end
 end
 
-local function cn_heap_push(heap, nodes, lvid)
+local function cn_heap_push(heap, nodes, id)
     local n = #heap.items + 1
-    heap.items[n] = lvid
-    heap.index[lvid] = n
+    heap.items[n] = id
+    heap.index[id] = n
     cn_heap_sift_up(heap, nodes, n)
 end
 
-local function cn_heap_decrease(heap, nodes, lvid)
-    local i = heap.index[lvid]
-    if not i then cn_heap_push(heap, nodes, lvid); return end
+local function cn_heap_decrease(heap, nodes, id)
+    local i = heap.index[id]
+    if not i then cn_heap_push(heap, nodes, id); return end
     cn_heap_sift_up(heap, nodes, i)
 end
 
 local function cn_heap_pop(heap, nodes)
     local n = #heap.items
-    if n == 0 then return nil end
+    if n < 1 then return nil end
     local top = heap.items[1]
     local last = heap.items[n]
-    heap.items[1] = last
-    heap.index[last] = 1
     heap.items[n] = nil
     heap.index[top] = nil
-    if n > 1 then cn_heap_sift_down(heap, nodes, 1) end
+    if n == 1 then return top end
+    heap.items[1] = last
+    heap.index[last] = 1
+    cn_heap_sift_down(heap, nodes, 1)
     return top
 end
 
-local function cn_astar(start_pos, dest_pos, max_nodes)
-    if not (start_pos and dest_pos) then return nil, false end
-    max_nodes = max_nodes or CN_BUILD_MAX_NODES
-    local step_m = cn_path.nav_step_m
-    local goal_tol = cn_path.nav_goal_tol_m
-    local dir_count = cn_path.nav_dir_count
-    local h_weight = cn_path.nav_heuristic_weight
-
-    local start_lvid, _ = cn_resolve_nav_vertex(start_pos, 35)
-    local goal_lvid, goal_snap = cn_resolve_nav_vertex(dest_pos, 60)
-    if not start_lvid or not goal_lvid then return nil, false end
-
-    local ok_gp, g_pos = pcall(function() return level.vertex_position(goal_lvid) end)
-    if not (ok_gp and g_pos) then return nil, false end
-    local goal_pos = cn_copy_pos(g_pos)
-    if goal_snap and goal_snap.x then goal_pos = cn_copy_pos(goal_snap) end
-
-    local ok_sp, s_pos = pcall(function() return level.vertex_position(start_lvid) end)
-    if not (ok_sp and s_pos) then return nil, false end
-
-    local fan_offsets = (dir_count >= 6) and { 0, 45, -45, 90, -90, 180 } or { 0, 90, -90, 180 }
-
-    local function heuristic(pos)
-        return (cn_horizontal_dist(pos, goal_pos) or pos:distance_to(goal_pos)) * h_weight
+local function cn_graph_path(g, start_id, goal_id, _direct_only)
+    if not (g and g.blob and start_id and goal_id) then return nil end
+    if start_id == goal_id then return { start_id } end
+    if start_id < 0 or goal_id < 0 or start_id >= g.node_count or goal_id >= g.node_count then
+        return nil
     end
+
+    local pos_cache = {}
+    local goal_pos = cn_vertex_pos(goal_id, pos_cache)
+    if not goal_pos then return nil end
 
     local nodes = {}
-    local start_h = heuristic(cn_copy_pos(s_pos))
-    nodes[start_lvid] = {
-        pos = cn_copy_pos(s_pos), g = 0, h = start_h, f = start_h, parent = nil, closed = false,
-    }
     local heap = { items = {}, index = {} }
-    cn_heap_push(heap, nodes, start_lvid)
+    local start_pos = cn_vertex_pos(start_id, pos_cache)
+    if not start_pos then return nil end
 
-    local expanded, best_lvid, best_h = 0, start_lvid, start_h
-    local goal_reached_lvid = nil
+    local h0 = cn_horizontal_dist(start_pos, goal_pos) or start_pos:distance_to(goal_pos)
+    nodes[start_id] = { g = 0, f = h0, parent = nil }
+    cn_heap_push(heap, nodes, start_id)
 
-    while #heap.items > 0 and expanded < max_nodes do
-        local cur_lvid = cn_heap_pop(heap, nodes)
-        local cur = nodes[cur_lvid]
-        if cur and not cur.closed then
-            cur.closed = true
-            expanded = expanded + 1
-            if cur.h < best_h then best_h = cur.h; best_lvid = cur_lvid end
-            if cur.h <= goal_tol then goal_reached_lvid = cur_lvid; break end
-
-            local remain_before = cn_horizontal_dist(cur.pos, goal_pos) or cur.pos:distance_to(goal_pos)
-
-            local function consider(next_lvid, next_pos, moved)
-                local tentative_g = cur.g + moved
-                local existing = nodes[next_lvid]
-                if not existing or (not existing.closed and tentative_g < existing.g) then
-                    local h = heuristic(next_pos)
-                    nodes[next_lvid] = {
-                        pos = next_pos, g = tentative_g, h = h, f = tentative_g + h,
-                        parent = cur_lvid, closed = false,
-                    }
-                    cn_heap_decrease(heap, nodes, next_lvid)
-                end
-            end
-
-            local bx, bz = goal_pos.x - cur.pos.x, goal_pos.z - cur.pos.z
-            local blen = math.sqrt(bx * bx + bz * bz)
-            local base_ang = (blen > 0.01) and cn_atan2(bz, bx) or 0
-            local step_this = math.min(step_m, math.max(blen, 1.0))
-
-            for oi = 1, #fan_offsets do
-                local ang = base_ang + math.rad(fan_offsets[oi])
-                local dx, dz = math.cos(ang), math.sin(ang)
-                local use_step = (fan_offsets[oi] == 0) and step_this or step_m
-                local nl, np, mv = cn_mesh_step_adaptive(cur_lvid, cur.pos, dx, dz, use_step)
-                if nl then consider(nl, np, mv) end
-            end
-        end
-    end
-
-    local end_lvid = goal_reached_lvid or best_lvid
-    local rev, walk, guard = {}, end_lvid, 0
-    while walk and guard < max_nodes + 10 do
-        rev[#rev + 1] = walk
-        walk = nodes[walk] and nodes[walk].parent
-        guard = guard + 1
-    end
-    local chain = {}
-    for i = #rev, 1, -1 do
-        local n = nodes[rev[i]]
-        chain[#chain + 1] = cn_copy_pos(n.pos)
-    end
-    if #chain >= 1 then chain[1] = cn_copy_pos(start_pos) end
-    return chain, goal_reached_lvid ~= nil, expanded
-end
-
-local function cn_reverse_chain(chain)
-    local out = {}
-    for i = #chain, 1, -1 do out[#out + 1] = cn_copy_pos(chain[i]) end
-    return out
-end
-
-local function cn_build_mesh_path(start_pos, dest_pos)
-    local fwd, fwd_ok = cn_astar(start_pos, dest_pos, CN_BUILD_MAX_NODES)
-    if fwd_ok and fwd and #fwd >= 2 then return fwd, true end
-    local rev, rev_ok = cn_astar(dest_pos, start_pos, CN_BUILD_MAX_NODES)
-    if rev_ok and rev and #rev >= 2 then return cn_reverse_chain(rev), true end
-    if fwd and rev and #fwd >= 1 and #rev >= 1 then
-        local a, b = fwd[#fwd], rev[#rev]
-        local gap = cn_horizontal_dist(a, b) or a:distance_to(b)
-        if gap and gap <= CN_SPLICE_MAX_M and cn_mesh_line_reachable(a, b) then
-            local out = {}
-            for i = 1, #fwd do out[#out + 1] = cn_copy_pos(fwd[i]) end
-            if gap > 1.0 then out[#out + 1] = cn_copy_pos(b) end
-            for i = #rev - 1, 1, -1 do out[#out + 1] = cn_copy_pos(rev[i]) end
-            return out, false
-        end
-    end
-    if fwd and #fwd >= 2 then return fwd, false end
-    return nil, false
-end
-
--- ============================================================
--- Graph model
--- ============================================================
-
-local function cn_node_key(x, z)
-    return math.floor(x / 5) .. ":" .. math.floor(z / 5)
-end
-
-local function cn_graph_new()
-    return {
-        level_name = (level and level.name) and level.name() or "?",
-        level_id = _G.tft_actor_level_id and _G.tft_actor_level_id() or nil,
-        schema = CN_SCHEMA,
-        anchor_hash = "",
-        nodes = {},
-        edges = {},
-        adj = {},
-        node_by_key = {},
-        anchor_by_key = {},
-        snap_cells = {},
-        next_id = 1,
-    }
-end
-
-local function cn_graph_node_by_id(g, id)
-    for i = 1, #g.nodes do
-        if g.nodes[i].id == id then return g.nodes[i] end
-    end
-    return nil
-end
-
-local function cn_snap_cell_key(x, z)
-    return math.floor(x / CN_SNAP_GRID_M) .. ":" .. math.floor(z / CN_SNAP_GRID_M)
-end
-
-local function cn_snap_cell_add(g, node_id, x, z)
-    if not (g and node_id and x and z) then return end
-    g.snap_cells = g.snap_cells or {}
-    local key = cn_snap_cell_key(x, z)
-    local cell = g.snap_cells[key]
-    if not cell then
-        g.snap_cells[key] = { node_id }
-        return
-    end
-    for i = 1, #cell do
-        if cell[i] == node_id then return end
-    end
-    cell[#cell + 1] = node_id
-end
-
-local function cn_rebuild_snap_cells(g)
-    if not g then return end
-    g.snap_cells = {}
-    for i = 1, #g.nodes do
-        local n = g.nodes[i]
-        if not n.anchor_key then
-            cn_snap_cell_add(g, n.id, n.x, n.z)
-        end
-    end
-end
-
--- Nearby junction ids from spatial cells only (no full-graph scan).
-local function cn_snap_candidates(g, pos, radius_m)
-    if not (g and pos and pos.x) then return {} end
-    g.snap_cells = g.snap_cells or {}
-    radius_m = radius_m or CN_JUNCTION_SNAP_M
-    local step = CN_SNAP_GRID_M
-    local gx = math.floor(pos.x / step)
-    local gz = math.floor(pos.z / step)
-    local ring = math.ceil(radius_m / step)
-    local out, seen = {}, {}
-    for dx = -ring, ring do
-        for dz = -ring, ring do
-            local cell = g.snap_cells[(gx + dx) .. ":" .. (gz + dz)]
-            if cell then
-                for i = 1, #cell do
-                    local id = cell[i]
-                    if not seen[id] then
-                        seen[id] = true
-                        out[#out + 1] = id
-                    end
-                end
-            end
-        end
-    end
-    return out
-end
-
-local function cn_can_snap_to_junction(pos, n)
-    if not (pos and n) then return false end
-    local np = vector():set(n.x, n.y, n.z)
-    local d = cn_horizontal_dist(pos, np) or pos:distance_to(np)
-    if not d or d > CN_JUNCTION_SNAP_M then return false end
-    if d <= CN_SNAP_TRIVIAL_M then return true end
-    return cn_mesh_line_reachable(pos, np)
-end
-
-local function cn_find_snap_junction(g, pos)
-    local candidates = cn_snap_candidates(g, pos, CN_JUNCTION_SNAP_M)
-    if #candidates == 0 then return nil end
-
-    local ranked = {}
-    for i = 1, #candidates do
-        local n = cn_graph_node_by_id(g, candidates[i])
-        if n and not n.anchor_key then
-            local np = vector():set(n.x, n.y, n.z)
-            local d = cn_horizontal_dist(pos, np) or pos:distance_to(np)
-            if d and d <= CN_JUNCTION_SNAP_M then
-                ranked[#ranked + 1] = { id = n.id, d = d, n = n }
-            end
-        end
-    end
-    if #ranked == 0 then return nil end
-    table.sort(ranked, function(a, b) return a.d < b.d end)
-
-    for i = 1, #ranked do
-        if cn_can_snap_to_junction(pos, ranked[i].n) then
-            return ranked[i].id
-        end
-    end
-    return nil
-end
-
-local function cn_graph_add_node(g, pos, lvid, kind, anchor_key)
-    if not (g and pos) then return nil end
-    g.anchor_by_key = g.anchor_by_key or {}
-    g.node_by_key = g.node_by_key or {}
-
-    if anchor_key then
-        local existing_id = g.anchor_by_key[anchor_key]
-        if existing_id then
-            local n = cn_graph_node_by_id(g, existing_id)
-            if n then
-                n.x, n.y, n.z = pos.x, pos.y, pos.z
-                n.lvid = lvid or n.lvid
-                n.kind = kind or n.kind
-                return existing_id
-            end
-        end
-    else
-        local snap_id = cn_find_snap_junction(g, pos)
-        if snap_id then return snap_id end
-    end
-
-    local id = g.next_id
-    g.next_id = id + 1
-    local node = {
-        id = id,
-        x = pos.x, y = pos.y, z = pos.z,
-        lvid = lvid,
-        kind = kind or "junction",
-        anchor_key = anchor_key,
-    }
-    g.nodes[#g.nodes + 1] = node
-    if anchor_key then
-        g.anchor_by_key[anchor_key] = id
-    else
-        g.node_by_key[cn_node_key(pos.x, pos.z)] = id
-        cn_snap_cell_add(g, id, pos.x, pos.z)
-    end
-    g.adj[id] = g.adj[id] or {}
-    return id
-end
-
-local function cn_graph_add_edge(g, from_id, to_id, cost_m)
-    if not (g and from_id and to_id and from_id ~= to_id) then return end
-    if from_id > to_id then from_id, to_id = to_id, from_id end
-    for i = 1, #g.edges do
-        local e = g.edges[i]
-        if e.from_id == from_id and e.to_id == to_id then return end
-    end
-    g.edges[#g.edges + 1] = { from_id = from_id, to_id = to_id, cost_m = cost_m or 0 }
-    g.adj[from_id] = g.adj[from_id] or {}
-    g.adj[to_id] = g.adj[to_id] or {}
-    g.adj[from_id][#g.adj[from_id] + 1] = { to_id = to_id, cost_m = cost_m or 0 }
-    g.adj[to_id][#g.adj[to_id] + 1] = { to_id = from_id, cost_m = cost_m or 0 }
-end
-
-local function cn_graph_rebuild_adj(g)
-    g.adj = {}
-    for i = 1, #g.nodes do
-        g.adj[g.nodes[i].id] = {}
-    end
-    for i = 1, #g.edges do
-        local e = g.edges[i]
-        if g.adj[e.from_id] and g.adj[e.to_id] then
-            g.adj[e.from_id][#g.adj[e.from_id] + 1] = { to_id = e.to_id, cost_m = e.cost_m or 0 }
-            g.adj[e.to_id][#g.adj[e.to_id] + 1] = { to_id = e.from_id, cost_m = e.cost_m or 0 }
-        end
-    end
-end
-
--- Per-node lookup: which destination anchors are reachable without crossing another anchor.
--- Built by unioning one BFS per anchor (anchors are barriers). A junction on a-b has {a,b};
--- it gains {c} only when a new path splices in and c becomes directly reachable without via b.
-local function cn_graph_is_anchor(g, node_id)
-    local n = cn_graph_node_by_id(g, node_id)
-    return n and n.anchor_key ~= nil
-end
-
-local function cn_build_direct_dests(g)
-    if not (g and g.adj) then return end
-    local direct, direct_keys = {}, {}
-    local anchor_ids = {}
-    local anchor_set = {}
-    for i = 1, #g.nodes do
-        local id = g.nodes[i].id
-        if g.nodes[i].anchor_key then
-            anchor_ids[#anchor_ids + 1] = id
-            anchor_set[id] = true
-        end
-    end
-
-    for ai = 1, #anchor_ids do
-        local src = anchor_ids[ai]
-        local queue, head = { src }, 1
-        local seen = { [src] = true }
-
-        while head <= #queue do
-            local u = queue[head]
-            head = head + 1
-            direct[u] = direct[u] or {}
-            direct[u][src] = true
-
-            for _, e in ipairs(g.adj[u] or {}) do
-                local v = e.to_id
-                if anchor_set[v] then
-                    if v ~= src then
-                        direct[v] = direct[v] or {}
-                        direct[v][src] = true
-                    end
-                elseif not seen[v] then
-                    seen[v] = true
-                    queue[#queue + 1] = v
-                end
-            end
-        end
-    end
-
-    for node_id, dest_ids in pairs(direct) do
-        local keys = {}
-        for dest_id, _ in pairs(dest_ids) do
-            local n = cn_graph_node_by_id(g, dest_id)
-            if n and n.anchor_key then keys[n.anchor_key] = true end
-        end
-        direct_keys[node_id] = keys
-    end
-
-    g.direct_dests = direct
-    g.direct_dest_keys = direct_keys
-end
-
-local function cn_finalize_graph(g)
-    if not g then return end
-    cn_graph_rebuild_adj(g)
-    cn_rebuild_snap_cells(g)
-    cn_build_direct_dests(g)
-end
-
-local function cn_graph_path(g, start_id, goal_id, direct_only)
-    if not (g and g.adj and start_id and goal_id) then return nil end
-    if start_id == goal_id then return { start_id } end
-    if direct_only and g.direct_dests then
-        if not (g.direct_dests[start_id] and g.direct_dests[start_id][goal_id]) then
+    local expanded = 0
+    local max_expand = CN_ASTAR_MAX_EXPAND
+    while #heap.items > 0 do
+        local cur = cn_heap_pop(heap, nodes)
+        if cur == goal_id then break end
+        expanded = expanded + 1
+        if expanded > max_expand then
+            cn_log("A* expand cap (%d) start=%d goal=%d", max_expand, start_id, goal_id)
             return nil
         end
-    end
-
-    local open = { start_id }
-    local came = {}
-    local gscore = { [start_id] = 0 }
-    local function heuristic(id)
-        local a, b = cn_graph_node_by_id(g, id), cn_graph_node_by_id(g, goal_id)
-        if not (a and b) then return 1e9 end
-        local pa, pb = vector():set(a.x, a.y, a.z), vector():set(b.x, b.y, b.z)
-        return cn_horizontal_dist(pa, pb) or pa:distance_to(pb)
-    end
-    local function lowest_f()
-        local best, best_f = nil, 1e18
-        for i = 1, #open do
-            local id = open[i]
-            local f = (gscore[id] or 1e18) + heuristic(id)
-            if f < best_f then best_f = f; best = id end
-        end
-        return best
-    end
-
-    while #open > 0 do
-        local cur = lowest_f()
-        if cur == goal_id then
-            local path = { cur }
-            while came[path[1]] do
-                table.insert(path, 1, came[path[1]])
-            end
-            return path
-        end
-        for i = #open, 1, -1 do
-            if open[i] == cur then table.remove(open, i); break end
-        end
-        for _, e in ipairs(g.adj[cur] or {}) do
-            local next_id = e.to_id
-            local blocked = direct_only and cn_graph_is_anchor(g, next_id)
-                and next_id ~= goal_id and next_id ~= start_id
-            if not blocked then
-                local tent = (gscore[cur] or 0) + (e.cost_m or 0)
-                if tent < (gscore[next_id] or 1e18) then
-                    came[next_id] = cur
-                    gscore[next_id] = tent
-                    local found = false
-                    for k = 1, #open do
-                        if open[k] == next_id then found = true; break end
-                    end
-                    if not found then open[#open + 1] = next_id end
-                end
-            end
-        end
-    end
-    return nil
-end
-
-local function cn_nearest_graph_node(g, pos, max_m)
-    if not (g and pos and pos.x) then return nil end
-    max_m = max_m or 40
-    local best_id, best_d = nil, max_m
-    for _, id in ipairs(cn_snap_candidates(g, pos, max_m)) do
-        local n = cn_graph_node_by_id(g, id)
-        if n then
-            local p = vector():set(n.x, n.y, n.z)
-            local d = cn_horizontal_dist(pos, p) or pos:distance_to(p)
-            if d and d < best_d then best_d = d; best_id = n.id end
-        end
-    end
-    if best_id then return best_id, best_d end
-    for i = 1, #g.nodes do
-        local n = g.nodes[i]
-        local p = vector():set(n.x, n.y, n.z)
-        local d = cn_horizontal_dist(pos, p) or pos:distance_to(p)
-        if d and d < best_d then best_d = d; best_id = n.id end
-    end
-    return best_id, best_d
-end
-
-local function cn_graph_path_positions(g, node_ids)
-    local out = {}
-    for i = 1, #(node_ids or {}) do
-        local n = cn_graph_node_by_id(g, node_ids[i])
-        if n then out[#out + 1] = vector():set(n.x, n.y, n.z) end
-    end
-    return out
-end
-
-local function cn_splice_to_dest(g, from_node_id, dest_anchor_key)
-    if not (g and from_node_id and dest_anchor_key) then return nil end
-    local dest_id = g.anchor_by_key and g.anchor_by_key[dest_anchor_key]
-    if not dest_id then return nil end
-    local keys = g.direct_dest_keys and g.direct_dest_keys[from_node_id]
-    if not (keys and keys[dest_anchor_key]) then return nil end
-    local node_path = cn_graph_path(g, from_node_id, dest_id, true)
-    if not node_path then return nil end
-    return node_path, cn_graph_path_positions(g, node_path)
-end
-
-local function cn_splice_from_pos(g, pos, dest_anchor_key, max_m)
-    local node_id = cn_nearest_graph_node(g, pos, max_m)
-    if not node_id then return nil end
-    local node_path, positions = cn_splice_to_dest(g, node_id, dest_anchor_key)
-    if not node_path then return nil end
-    return node_id, node_path, positions
-end
-
-local function cn_graph_ingest_chain(g, chain, kind_a, kind_b, key_a, key_b, end_a, end_b)
-    if not (g and chain and #chain >= 2) then return end
-    if end_a then chain[1] = cn_copy_pos(end_a) end
-    if end_b then chain[#chain] = cn_copy_pos(end_b) end
-    local node_ids = {}
-    for i = 1, #chain do
-        local p = chain[i]
-        local lvid = nil
-        if level and level.vertex_id then
-            local ok, v = pcall(function() return level.vertex_id(p) end)
-            if ok and cn_valid_lvid(v) then lvid = v end
-        end
-        local nk = (i == 1) and kind_a or ((i == #chain) and kind_b or "junction")
-        local ak = (i == 1) and key_a or ((i == #chain) and key_b or nil)
-        node_ids[i] = cn_graph_add_node(g, p, lvid, nk, ak)
-    end
-    for i = 1, #chain - 1 do
-        local a, b = chain[i], chain[i + 1]
-        local cost = cn_horizontal_dist(a, b) or a:distance_to(b)
-        if node_ids[i] and node_ids[i + 1] then
-            cn_graph_add_edge(g, node_ids[i], node_ids[i + 1], cost)
-        end
-    end
-end
-
-local function cn_subsample_chain(chain, spacing_m)
-    if not chain or #chain < 2 then return chain end
-    spacing_m = spacing_m or CN_SUBSAMPLE_M
-    local out = { cn_copy_pos(chain[1]) }
-    local carry = 0
-    for i = 1, #chain - 1 do
-        local a, b = chain[i], chain[i + 1]
-        local seg = cn_horizontal_dist(a, b) or a:distance_to(b)
-        if seg and seg >= 0.001 then
-            carry = carry + seg
-            while carry >= spacing_m do
-                local t = 1.0 - (carry - spacing_m) / seg
-                if t < 0 then t = 0 elseif t > 1 then t = 1 end
-                local p = vector():set(
-                    a.x + (b.x - a.x) * t,
-                    a.y + (b.y - a.y) * t,
-                    a.z + (b.z - a.z) * t
-                )
-                out[#out + 1] = p
-                carry = carry - spacing_m
-            end
-        end
-    end
-    if #out == 0 or cn_horizontal_dist(out[#out], chain[#chain]) > 1.0 then
-        out[#out + 1] = cn_copy_pos(chain[#chain])
-    end
-    return out
-end
-
--- ============================================================
--- Anchors & edge queue
--- ============================================================
-
-local function cn_is_base_anchor(id)
-    return level and level.map_has_object_spot(id, "fast_travel") ~= 0
-end
-
-local function cn_level_name()
-    return (level and level.name) and level.name() or nil
-end
-
-local function cn_try_add_anchor(out, seen, id, kind)
-    if not (id and id > 0 and kind and not seen[id]) then return false end
-    if not _G.tft_resolve_travel_target then return false end
-    local target = _G.tft_resolve_travel_target(id, cn_level_name(), nil)
-    if not (target and target.pos and target.pos.x) then return false end
-    local pos = cn_copy_pos(target.pos)
-    local lvid = target.lvid
-    if not (lvid and cn_valid_lvid(lvid)) then
-        local resolved_lvid, snap = cn_resolve_nav_vertex(pos, 40)
-        lvid = resolved_lvid
-        if snap and snap.x then pos = cn_copy_pos(snap) end
-    end
-    seen[id] = true
-    out[#out + 1] = {
-        key = kind .. ":" .. tostring(id),
-        id = id, kind = kind, pos = pos, lvid = lvid,
-    }
-    return true
-end
-
-local function cn_nearest_core_m(pos, core)
-    if not (pos and core and #core > 0) then return nil end
-    local best = nil
-    for i = 1, #core do
-        local d = cn_horizontal_dist(pos, core[i].pos) or pos:distance_to(core[i].pos)
-        if d and (not best or d < best) then best = d end
-    end
-    return best
-end
-
-local function cn_collect_core_anchors()
-    if _G.tft_build_dynamic_map then pcall(_G.tft_build_dynamic_map) end
-    local ln = cn_level_name()
-    local core, seen = {}, {}
-
-    local dsts = tft and tft.door_registry and ln and tft.door_registry[ln]
-    if dsts then
-        for _, id_list in pairs(dsts) do
-            for i = 1, #id_list do
-                cn_try_add_anchor(core, seen, id_list[i], "transition")
-            end
-        end
-    end
-
-    local sim = alife()
-    if sim then
-        local function consider_base(obj)
-            if not (obj and obj.id) then return end
-            if seen[obj.id] then return end
-            if _G.tft_object_on_actor_level and not _G.tft_object_on_actor_level(obj) then return end
-            if cn_is_base_anchor(obj.id) then
-                cn_try_add_anchor(core, seen, obj.id, "base")
-            end
-        end
-        if sim.iterate_objects then
-            sim:iterate_objects(consider_base)
-        else
-            for i = 0, 65534 do consider_base(sim:object(i)) end
-        end
-    end
-    return core, seen
-end
-
-local function cn_collect_campfire_anchors(core, seen)
-    local campfires = {}
-    if not (_G.tft_is_campfire and core and #core > 0) then return campfires end
-
-    local function consider_campfire(obj)
-        if not (obj and obj.id) then return end
-        if seen[obj.id] then return end
-        if _G.tft_object_on_actor_level and not _G.tft_object_on_actor_level(obj) then return end
-        if not _G.tft_is_campfire(obj.id, obj) then return end
-        if not _G.tft_resolve_travel_target then return end
-        local target = _G.tft_resolve_travel_target(obj.id, cn_level_name(), nil)
-        if not (target and target.pos and target.pos.x) then return end
-        local pos = cn_copy_pos(target.pos)
-        local near = cn_nearest_core_m(pos, core)
-        if not near or near <= CN_CAMPFIRE_MIN_CORE_M then return end
-        cn_try_add_anchor(campfires, seen, obj.id, "campfire")
-    end
-
-    local sim = alife()
-    if sim then
-        if sim.iterate_objects then
-            sim:iterate_objects(consider_campfire)
-        else
-            for i = 0, 65534 do consider_campfire(sim:object(i)) end
-        end
-    end
-    if bind_campfire and bind_campfire.campfires_all then
-        for id, _ in pairs(bind_campfire.campfires_all) do
-            consider_campfire(alife_object(id))
-        end
-    end
-    return campfires
-end
-
-local function cn_aabb_diagonal(min_x, min_z, max_x, max_z)
-    local dx, dz = max_x - min_x, max_z - min_z
-    return math.sqrt(dx * dx + dz * dz)
-end
-
-local function cn_core_span_m(core)
-    if not (core and #core > 0) then return 0 end
-    local min_x, max_x = core[1].pos.x, core[1].pos.x
-    local min_z, max_z = core[1].pos.z, core[1].pos.z
-    for i = 2, #core do
-        local p = core[i].pos
-        if p.x < min_x then min_x = p.x end
-        if p.x > max_x then max_x = p.x end
-        if p.z < min_z then min_z = p.z end
-        if p.z > max_z then max_z = p.z end
-    end
-    return cn_aabb_diagonal(min_x, min_z, max_x, max_z)
-end
-
-local function cn_need_boundary_probes(core)
-    if not (core and #core >= 1) then return false end
-    if #core < CN_PROBE_MIN_CORE then return true end
-    if not (level and level.get_bounding_volume) then return false end
-    local ok, bv = pcall(level.get_bounding_volume)
-    if not (ok and bv and bv.min and bv.max) then return false end
-    local level_diag = cn_aabb_diagonal(bv.min.x, bv.min.z, bv.max.x, bv.max.z)
-    if level_diag < 50 then return false end
-    return cn_core_span_m(core) < (level_diag * CN_PROBE_SPAN_FRAC)
-end
-
--- Fake travel points around the level AABB so sparse/clustered cores still span the map.
-local function cn_collect_boundary_probes(core)
-    local probes = {}
-    if not cn_need_boundary_probes(core) then return probes end
-    if not (level and level.get_bounding_volume) then return probes end
-    local ok, bv = pcall(level.get_bounding_volume)
-    if not (ok and bv and bv.min and bv.max) then
-        cn_log("boundary probes: get_bounding_volume failed")
-        return probes
-    end
-
-    local min_x, max_x = bv.min.x, bv.max.x
-    local min_z, max_z = bv.min.z, bv.max.z
-    local mid_y = (bv.min.y + bv.max.y) * 0.5
-    local inset_x = (max_x - min_x) * CN_PROBE_INSET_FRAC
-    local inset_z = (max_z - min_z) * CN_PROBE_INSET_FRAC
-    if inset_x < 20 then inset_x = 20 end
-    if inset_z < 20 then inset_z = 20 end
-    local x0, x1 = min_x + inset_x, max_x - inset_x
-    local z0, z1 = min_z + inset_z, max_z - inset_z
-    local xm, zm = (x0 + x1) * 0.5, (z0 + z1) * 0.5
-
-    -- 8 perimeter samples: 4 corners + 4 edge midpoints (no center).
-    local samples = {
-        { x0, z0 }, { xm, z0 }, { x1, z0 },
-        { x0, zm },             { x1, zm },
-        { x0, z1 }, { xm, z1 }, { x1, z1 },
-    }
-
-    for i = 1, #samples do
-        local sx, sz = samples[i][1], samples[i][2]
-        local raw = vector():set(sx, mid_y, sz)
-        local lvid, snap = cn_resolve_nav_vertex(raw, CN_PROBE_SNAP_M)
-        if lvid and snap and snap.x then
-            local pos = cn_copy_pos(snap)
-            local near = cn_nearest_core_m(pos, core)
-            if not near or near > CN_PROBE_NEAR_CORE_M then
-                probes[#probes + 1] = {
-                    key = "probe:" .. tostring(#probes + 1),
-                    id = nil,
-                    kind = "probe",
-                    pos = pos,
-                    lvid = lvid,
-                }
-            end
-        end
-    end
-
-    cn_log("boundary probes: %d placed (cores=%d span=%.0fm)",
-        #probes, #core, cn_core_span_m(core))
-    return probes
-end
-
-local function cn_collect_anchors()
-    local core, seen = cn_collect_core_anchors()
-    local campfires = cn_collect_campfire_anchors(core, seen)
-    local probes = cn_collect_boundary_probes(core)
-
-    local anchors = {}
-    for i = 1, #core do anchors[#anchors + 1] = core[i] end
-    for i = 1, #campfires do anchors[#anchors + 1] = campfires[i] end
-    for i = 1, #probes do anchors[#anchors + 1] = probes[i] end
-
-    local trans_n, base_n = 0, 0
-    for i = 1, #core do
-        if core[i].kind == "transition" then trans_n = trans_n + 1 else base_n = base_n + 1 end
-    end
-
-    cn_log("anchors: %d transitions, %d bases, %d campfires, %d probes (%d total)",
-        trans_n, base_n, #campfires, #probes, #anchors)
-    return anchors, core, campfires, probes
-end
-
-local function cn_anchor_hash(anchors)
-    local keys = {}
-    for i = 1, #anchors do keys[#keys + 1] = anchors[i].key end
-    table.sort(keys)
-    return table.concat(keys, "|")
-end
-
-local function cn_build_edge_queue(core, campfires, probes)
-    local queue = {}
-    for i = 1, #core do
-        local src = core[i]
-        for j = i + 1, #core do
-            local dst = core[j]
-            queue[#queue + 1] = { from = src, to = dst, label = src.kind .. "->" .. dst.kind }
-        end
-    end
-    for ci = 1, #(campfires or {}) do
-        local cf = campfires[ci]
-        for ki = 1, #core do
-            local k = core[ki]
-            queue[#queue + 1] = { from = cf, to = k, label = "campfire->" .. k.kind }
-        end
-    end
-    -- Probes: full clique among themselves (span the map) + spoke to each real core.
-    for i = 1, #(probes or {}) do
-        local p = probes[i]
-        for j = i + 1, #probes do
-            queue[#queue + 1] = { from = p, to = probes[j], label = "probe->probe" }
-        end
-        for ki = 1, #core do
-            queue[#queue + 1] = { from = p, to = core[ki], label = "probe->" .. core[ki].kind }
-        end
-    end
-    table.sort(queue, function(a, b)
-        local da = cn_horizontal_dist(a.from.pos, a.to.pos) or a.from.pos:distance_to(a.to.pos)
-        local db = cn_horizontal_dist(b.from.pos, b.to.pos) or b.from.pos:distance_to(b.to.pos)
-        return da < db
-    end)
-    return queue
-end
-
--- ============================================================
--- Connectivity
--- ============================================================
-
-local function cn_union_find_components(g)
-    local parent = {}
-    for i = 1, #g.nodes do parent[g.nodes[i].id] = g.nodes[i].id end
-    local function find(x)
-        if parent[x] ~= x then parent[x] = find(parent[x]) end
-        return parent[x]
-    end
-    local function unite(a, b)
-        local ra, rb = find(a), find(b)
-        if ra ~= rb then parent[rb] = ra end
-    end
-    for i = 1, #g.edges do
-        unite(g.edges[i].from_id, g.edges[i].to_id)
-    end
-    local comps = {}
-    for i = 1, #g.nodes do
-        local id = g.nodes[i].id
-        local root = find(id)
-        comps[root] = comps[root] or {}
-        comps[root][#comps[root] + 1] = id
-    end
-    local out = {}
-    for _, ids in pairs(comps) do out[#out + 1] = ids end
-    return out
-end
-
-local function cn_try_connect_components(g)
-    local comps = cn_union_find_components(g)
-    if #comps <= 1 then return true end
-    cn_log("connectivity: %d components, attempting bridges", #comps)
-    while #comps > 1 do
-        local best = nil
-        for ci = 1, #comps do
-            for cj = ci + 1, #comps do
-                for _, id_a in ipairs(comps[ci]) do
-                    local na = cn_graph_node_by_id(g, id_a)
-                    if na then
-                        for _, id_b in ipairs(comps[cj]) do
-                            local nb = cn_graph_node_by_id(g, id_b)
-                            if nb then
-                                local pa = vector():set(na.x, na.y, na.z)
-                                local pb = vector():set(nb.x, nb.y, nb.z)
-                                local d = cn_horizontal_dist(pa, pb) or pa:distance_to(pb)
-                                if d <= CN_CONNECTOR_MAX_M * 4
-                                    and cn_mesh_line_reachable(pa, pb)
-                                    and (not best or d < best.d) then
-                                    best = { a = id_a, b = id_b, d = d }
-                                end
-                            end
+        local cur_n = nodes[cur]
+        local cur_pos = cn_vertex_pos(cur, pos_cache)
+        if cur_pos then
+            for slot = 0, 3 do
+                local nxt = cn_neighbor(g, cur, slot)
+                if nxt then
+                    local nxt_pos = cn_vertex_pos(nxt, pos_cache)
+                    if nxt_pos then
+                        local step = cn_horizontal_dist(cur_pos, nxt_pos) or cur_pos:distance_to(nxt_pos)
+                        local tent = cur_n.g + (step or 0)
+                        local prev = nodes[nxt]
+                        if not prev or tent < prev.g then
+                            local h = cn_horizontal_dist(nxt_pos, goal_pos) or nxt_pos:distance_to(goal_pos)
+                            nodes[nxt] = { g = tent, f = tent + (h or 0), parent = cur }
+                            cn_heap_decrease(heap, nodes, nxt)
                         end
                     end
                 end
             end
         end
-        if not best then
-            cn_log("connectivity: no bridge found between remaining components")
-            return false
-        end
-        cn_graph_add_edge(g, best.a, best.b, best.d)
-        cn_log("connectivity: bridge %.0fm between nodes %d and %d", best.d, best.a, best.b)
-        comps = cn_union_find_components(g)
     end
-    return true
-end
 
--- ============================================================
--- File I/O
--- Read/write: <Anomaly>/appdata/dogma_navmesh_cache/*.nav
--- Plain UTF-8 text graph (no compression). Legacy .cng VFS path is read-only fallback.
--- ============================================================
-
-local function cn_ensure_dir(path)
-	if not path or path == "" then return false end
-	path = path:gsub("/", "\\")
-	if path:sub(-1) == "\\" then path = path:sub(1, -2) end
-	-- cmd mkdir creates intermediate dirs; strip trailing slash for reliability.
-	pcall(function()
-		os.execute('cmd /c mkdir "' .. path .. '" >nul 2>nul')
-	end)
-	return true
-end
-
--- Resolve at use-time (getFS is not ready at script parse).
-local CN_CACHE_DIR = nil
-local function cn_appdata_cache_dir()
-	if CN_CACHE_DIR then return CN_CACHE_DIR end
-	if not (getFS and getFS().update_path) then return nil end
-	local ok, path = pcall(function()
-		return getFS():update_path("$app_data_root$", CN_APPDATA_CACHE_SUB)
-	end)
-	if not ok or not path or path == "" then return nil end
-	path = path:gsub("/", "\\")
-	if path:sub(-1) ~= "\\" then path = path .. "\\" end
-	cn_ensure_dir(path)
-	CN_CACHE_DIR = path
-	return path
-end
-
--- major_minor from _G.tft_version - cache identity / rebuild gate.
-local function cn_cache_feature_tag()
-	local ver = tostring(_G.tft_version or "0.0.0")
-	local maj, min = ver:match("^(%d+)%.(%d+)")
-	if not maj then return "0_0" end
-	return maj .. "_" .. min
-end
-
-local function cn_cache_file_name(level_name)
-	return (level_name or "unknown") .. "_" .. cn_cache_feature_tag() .. ".nav"
-end
-
--- Also accept the older dotted tag (…_0.3.nav) as a read fallback.
-local function cn_cache_legacy_file_name(level_name)
-	local ver = tostring(_G.tft_version or "0.0.0")
-	local maj, min = ver:match("^(%d+)%.(%d+)")
-	if not maj then return nil end
-	return (level_name or "unknown") .. "_" .. maj .. "." .. min .. ".nav"
-end
-
-local function cn_cache_disk_path(level_name)
-	local dir = cn_appdata_cache_dir()
-	if not dir then return nil end
-	return dir .. cn_cache_file_name(level_name)
-end
-
-local function cn_cache_vfs_path(level_name)
-	return CN_CACHE_VFS_DIR .. cn_cache_file_name(level_name)
-end
-
-local function cn_disk_read_text(path)
-	if not path then return nil end
-	local ok, text = pcall(function()
-		local f = io.open(path, "r")
-		if not f then return nil end
-		local s = f:read("*a")
-		f:close()
-		return (s and s ~= "") and s or nil
-	end)
-	if ok then return text end
-	return nil
-end
-
--- VFS legacy fallback only. Never byte-append into one string (O(n²) → OOM).
-local function cn_vfs_read_text(vfs_path)
-	if not getFS then return nil end
-	local ok, text = pcall(function()
-		local fr = getFS():r_open("$game_config$", vfs_path)
-		if not fr then return nil end
-		local chunks = {}
-		local buf = {}
-		local n = 0
-		while not fr:r_eof() do
-			n = n + 1
-			buf[n] = string.char(fr:r_u8())
-			if n >= 4096 then
-				chunks[#chunks + 1] = table.concat(buf, "", 1, n)
-				n = 0
-			end
-		end
-		if n > 0 then
-			chunks[#chunks + 1] = table.concat(buf, "", 1, n)
-		end
-		local s = table.concat(chunks)
-		return (s ~= "") and s or nil
-	end)
-	if not ok then
-		cn_log("vfs read error: %s", tostring(text))
-		return nil
-	end
-	return text
-end
-
-local function cn_read_cache_text(level_name)
-	local disk = cn_disk_read_text(cn_cache_disk_path(level_name))
-	if disk then return disk end
-	-- Older builds used a dotted maj.min tag in the filename (…_0.3.nav).
-	local legacy = cn_cache_legacy_file_name(level_name)
-	if legacy then
-		local dir = cn_appdata_cache_dir()
-		if dir then
-			disk = cn_disk_read_text(dir .. legacy)
-			if disk then return disk end
-		end
-	end
-	-- Legacy VFS: old installs used .cng under $game_config$/tft_coarse_nav/
-	local stem = (level_name or "unknown") .. "_" .. cn_cache_feature_tag()
-	local dotted = cn_cache_legacy_file_name(level_name)
-	return cn_vfs_read_text(CN_CACHE_VFS_DIR .. stem .. ".cng")
-		or cn_vfs_read_text(CN_CACHE_VFS_DIR .. stem .. ".nav")
-		or (dotted and cn_vfs_read_text(CN_CACHE_VFS_DIR .. dotted))
-end
-
-local function cn_feature_tags_match(file_tag, expect_tag)
-	if file_tag == expect_tag then return true end
-	if not file_tag or not expect_tag then return false end
-	return (file_tag:gsub("%.", "_") == expect_tag:gsub("%.", "_"))
-end
-
-local function cn_lvid_token(lvid)
-    return (lvid and cn_valid_lvid(lvid)) and tostring(lvid) or "-"
-end
-
-local function cn_parse_lvid_token(lvid_s)
-    if not lvid_s or lvid_s == "" or lvid_s == "-" or lvid_s == "nil" then return nil end
-    return tonumber(lvid_s)
-end
-
-local function cn_save_graph(g)
-    local tostr = tostring
-    local path = cn_cache_disk_path(g.level_name)
-	if not path then
-		cn_log("save failed: no appdata cache path ($app_data_root$/%s)", CN_APPDATA_CACHE_SUB)
-		return false
-	end
-    local ok, err = pcall(function()
-        local f = io.open(path, "w")
-        if not f then error("io.open failed: " .. path) end
-        f:write("DFT_COARSE_V" .. tostr(CN_SCHEMA) .. "\n")
-        f:write("feature_version=" .. cn_cache_feature_tag() .. "\n")
-        f:write("level_name=" .. tostr(g.level_name) .. "\n")
-        f:write("level_id=" .. tostr(g.level_id or "") .. "\n")
-        f:write("anchor_hash=" .. tostr(g.anchor_hash) .. "\n")
-        f:write("nodes=" .. tostr(#g.nodes) .. "\n")
-        for i = 1, #g.nodes do
-            local n = g.nodes[i]
-            f:write(string.format("N %d %s %.3f %.3f %.3f %s %s\n",
-                n.id, n.kind or "junction", n.x, n.y, n.z,
-                cn_lvid_token(n.lvid), tostr(n.anchor_key or "")))
-        end
-        f:write("edges=" .. tostr(#g.edges) .. "\n")
-        for i = 1, #g.edges do
-            local e = g.edges[i]
-            f:write(string.format("E %d %d %.2f\n", e.from_id, e.to_id, e.cost_m or 0))
-        end
-        f:close()
-    end)
-    if not ok then
-        cn_log("save failed: %s", tostr(err))
-        return false
-    end
-    cn_log("saved %d nodes, %d edges -> %s", #g.nodes, #g.edges, path)
-    return true
-end
-
-local function cn_load_graph(level_name)
-	local expect = cn_cache_feature_tag()
-	local text = cn_read_cache_text(level_name)
-	if not text then
-		cn_log("no cache for %s at feature %s", tostring(level_name), expect)
-		return nil
-	end
-    local ok, g_or_err = pcall(function()
-        local tonum = tonumber
-        local g = cn_graph_new()
-        g.level_name = level_name
-        local file_feature = nil
-        for line in text:gmatch("[^\r\n]+") do
-            if line:sub(1, 2) == "N " then
-                local id, kind, x, y, z, lvid_s, anchor_key = line:match(
-                    "^N (%d+) (%S+) ([%-%.%d]+) ([%-%.%d]+) ([%-%.%d]+) (%S+) (.*)$")
-                if id then
-                    id = tonum(id)
-                    local lvid = cn_parse_lvid_token(lvid_s)
-                    if anchor_key then
-                        anchor_key = anchor_key:match("^%s*(.-)%s*$")
-                    end
-                    if anchor_key == "nil" or anchor_key == "" then anchor_key = nil end
-                    g.nodes[#g.nodes + 1] = {
-                        id = id, kind = kind, x = tonum(x), y = tonum(y), z = tonum(z),
-                        lvid = lvid, anchor_key = anchor_key,
-                    }
-                    g.node_by_key[cn_node_key(tonum(x), tonum(z))] = id
-                    if anchor_key and anchor_key ~= "" then
-                        g.anchor_by_key[anchor_key] = id
-                    end
-                    if id >= g.next_id then g.next_id = id + 1 end
-                end
-            elseif line:sub(1, 2) == "E " then
-                local a, b, cost = line:match("^E (%d+) (%d+) ([%-%.%d]+)$")
-                if a then
-                    g.edges[#g.edges + 1] = {
-                        from_id = tonum(a), to_id = tonum(b), cost_m = tonum(cost),
-                    }
-                end
-            elseif line:match("^feature_version=") then
-                file_feature = line:match("^feature_version=(.+)$")
-            elseif line:match("^level_name=") then
-                g.level_name = line:match("^level_name=(.+)$")
-            elseif line:match("^level_id=") then
-                g.level_id = tonum(line:match("^level_id=(.+)$"))
-            elseif line:match("^anchor_hash=") then
-                g.anchor_hash = line:match("^anchor_hash=(.+)$")
-            end
-        end
-        if file_feature and not cn_feature_tags_match(file_feature, expect) then
-            cn_log("cache feature mismatch: file=%s expect=%s - ignoring",
-                tostring(file_feature), expect)
-            return nil
-        end
-        g.feature_version = file_feature or expect
-        cn_finalize_graph(g)
-        if #g.nodes < 1 then return nil end
-        return g
-    end)
-    if not ok then
-        cn_log("load parse ERROR for %s: %s", tostring(level_name), tostring(g_or_err))
+    if not nodes[goal_id] then
+        cn_log("A* failed start=%d goal=%d expanded=%d", start_id, goal_id, expanded)
         return nil
     end
-    if not g_or_err then return nil end
-	cn_log("loaded %d nodes, %d edges (feature %s)",
-		#g_or_err.nodes, #g_or_err.edges, expect)
-	return g_or_err
+
+    local rev = {}
+    local id = goal_id
+    while id ~= nil do
+        rev[#rev + 1] = id
+        id = nodes[id].parent
+    end
+    local path = {}
+    for i = #rev, 1, -1 do
+        path[#path + 1] = rev[i]
+    end
+    return path, pos_cache
 end
 
--- ============================================================
--- Build queue (sync drain via cn_build_sync - load gate / MCM key)
--- ============================================================
-
--- Forward decls: cn_build_step / cn_build_finish call these before their assignments below.
-local cn_sync_display, cn_refresh_display, cn_want_display, cn_sync_display_pda, cn_is_pda_map_shown
-
-local function cn_build_finish(st)
-    local g = st.graph
-    local ok = cn_try_connect_components(g)
-    local comps = cn_union_find_components(g)
-    if #comps > 1 then
-        cn_log("BUILD ABORT: graph still has %d components after bridge pass (%d nodes, %d edges)",
-            #comps, #g.nodes, #g.edges)
-        cn_msg("Coarse nav: graph disconnected (" .. #comps .. " components)", "danger")
-        cn_state().graph = g
-        cn_finalize_graph(g)
-        cn_sync_display()
-        st.active = false
-        return
-    end
-	g.anchor_hash = st.anchor_hash
-	cn_finalize_graph(g)
-	cn_state().graph = g
-	local saved = cn_save_graph(g)
-	local elapsed = (time_global and time_global() or 0) - (st.t0 or 0)
-	cn_log("BUILD DONE: %d nodes, %d edges, %d failed pairs, %dms%s",
-		#g.nodes, #g.edges, #(st.failed or {}), elapsed, saved and "" or " (save failed)")
-	cn_sync_display()
-	cn_msg(string.format("Coarse nav ready: %d nodes, %d edges", #g.nodes, #g.edges), "success")
-	st.active = false
-end
-
-local function cn_build_step()
-    local st = cn_state().build
-    if not (st and st.active) then return end
-    st.idx = (st.idx or 0) + 1
-    if st.idx > #st.queue then
-        cn_build_finish(st)
-        return
-    end
-	local job = st.queue[st.idx]
-	local ok_step, err = pcall(function()
-		local chain, ok = cn_build_mesh_path(job.from.pos, job.to.pos)
-		if chain and #chain >= 2 then
-			chain = cn_subsample_chain(chain, CN_SUBSAMPLE_M)
-			cn_graph_ingest_chain(st.graph, chain, job.from.kind, job.to.kind,
-				job.from.key, job.to.key, job.from.pos, job.to.pos)
-			-- Re-derive direct-dest sets: snap-merge may attach new edges to existing nodes.
-			cn_build_direct_dests(st.graph)
-		else
-			st.failed[#st.failed + 1] = job
-		end
-		cn_state().graph = st.graph
-		if cn_want_display() and cn_is_pda_map_shown() then
-			cn_sync_display()
-		end
-	end)
-	if not ok_step then
-		st.failed[#st.failed + 1] = job
-	end
-end
-
-local function cn_cancel_build()
-    local st = cn_state().build
-    if st then
-        st.active = false
-    end
-end
-
-local function cn_start_build()
-    if cn_state().build and cn_state().build.active then
-        cn_log("build already running")
-        return false
-    end
-    local anchors, core, campfires, probes = cn_collect_anchors()
-    if #core < 1 then
-        cn_log("build aborted: need at least 1 base/transition anchor")
-        return false
-    end
-    if #anchors < 2 then
-        local parts = {}
-        for i = 1, #anchors do parts[#parts + 1] = anchors[i].key end
-        cn_log("build aborted: need >= 2 anchors (found %d: %s)",
-            #anchors, (#parts > 0) and table.concat(parts, ", ") or "none")
-        return false
-    end
-    local queue = cn_build_edge_queue(core, campfires, probes)
-    if #queue < 1 then
-        cn_log("build aborted: no edge jobs (core=%d, campfires=%d, probes=%d)",
-            #core, #(campfires or {}), #(probes or {}))
-        return false
-    end
-	cn_log("starting build: %d core, %d campfires, %d probes, %d edge jobs",
-		#core, #(campfires or {}), #(probes or {}), #queue)
-	cn_msg("Coarse nav: building...", "warning")
-	cn_state().build = {
-		active = true,
-		idx = 0,
-		queue = queue,
-		graph = cn_graph_new(),
-		anchor_hash = cn_anchor_hash(anchors),
-		anchors = anchors,
-		failed = {},
-		t0 = time_global and time_global() or 0,
-	}
-    for i = 1, #anchors do
-        local a = anchors[i]
-        cn_graph_add_node(cn_state().build.graph, a.pos, a.lvid, a.kind, a.key)
-    end
-    cn_state().graph = cn_state().build.graph
-    cn_sync_display()
-    return true
-end
-
--- Drain every edge job + finalize in one call (load gate / MCM key). No per-frame stepping.
-local function cn_build_sync()
-    cn_cancel_build()
-    if not cn_start_build() then
-        return false
-    end
-    local st = cn_state().build
-    local guard = 0
-    local max_steps = (st and st.queue and (#st.queue + 2)) or 2
-    while st and st.active and guard < max_steps do
-        guard = guard + 1
-        st.last_step_tg = nil
-        local ok, err = pcall(cn_build_step)
-        if not ok then
-            cn_log("cn_build_sync step ERROR: %s", tostring(err))
-            cn_cancel_build()
-            return false
+local function cn_subsample_node_path(g, node_path, pos_cache, spacing_m)
+    spacing_m = spacing_m or CN_PATH_SUBSAMPLE_M
+    if not (node_path and #node_path >= 1) then return {} end
+    local out = {}
+    local last_pos = nil
+    local carry = 0
+    for i = 1, #node_path do
+        local p = cn_vertex_pos(node_path[i], pos_cache)
+        if p then
+            if not last_pos then
+                out[#out + 1] = vector():set(p.x, p.y, p.z)
+                last_pos = p
+                carry = 0
+            else
+                local seg = cn_horizontal_dist(last_pos, p) or last_pos:distance_to(p) or 0
+                carry = carry + seg
+                if carry >= spacing_m or i == #node_path then
+                    out[#out + 1] = vector():set(p.x, p.y, p.z)
+                    last_pos = p
+                    carry = 0
+                else
+                    last_pos = p
+                end
+            end
         end
-        st = cn_state().build
     end
-    if st and st.active then
-        cn_log("cn_build_sync aborted: step guard exceeded")
-        cn_cancel_build()
-        return false
-    end
-    return cn_state().graph ~= nil and #(cn_state().graph.nodes or {}) >= 1
+    return out
 end
 
-local function cn_on_actor_update()
-    -- Display only - builds are sync (load gate / MCM key), never job-stepped here.
-    cn_sync_display_pda()
+local function cn_graph_path_positions(g, node_ids)
+    local out = {}
+    local cache = {}
+    for i = 1, #(node_ids or {}) do
+        local p = cn_vertex_pos(node_ids[i], cache)
+        if p then out[#out + 1] = vector():set(p.x, p.y, p.z) end
+    end
+    return out
 end
 
--- Live travel/preview: coarse graph only. Returns chain, is_vertex, path_len, meta or nils.
+-- ============================================================
+-- Dest anchor keys (cache resolved lvids)
+-- ============================================================
+
+local function cn_dest_anchor_key_for_id(id)
+    if not id then return nil end
+    local st = cn_state()
+    local kinds = { "base", "transition", "campfire", "dest" }
+    for i = 1, #kinds do
+        local k = kinds[i] .. ":" .. tostring(id)
+        if st.dest_lvid_cache[k] then return k end
+    end
+    if not _G.tft_resolve_travel_target then return nil end
+    local target = _G.tft_resolve_travel_target(id, cn_level_name(), nil)
+    if not (target and target.pos) then return nil end
+    local kind = "dest"
+    if target.kind then
+        kind = tostring(target.kind)
+    elseif target.is_transition then
+        kind = "transition"
+    end
+    local key = kind .. ":" .. tostring(id)
+    local lvid = target.lvid
+    if not cn_valid_lvid(lvid) then
+        lvid = cn_resolve_lvid(target.pos, nil)
+    end
+    if cn_valid_lvid(lvid) then
+        st.dest_lvid_cache[key] = lvid
+        local g = st.graph
+        if g then g.anchor_by_key[key] = lvid end
+    end
+    return key
+end
+
+local function cn_goal_lvid(dest_pos, dest_anchor_key)
+    local g = cn_state().graph
+    if dest_anchor_key then
+        local cached = cn_state().dest_lvid_cache[dest_anchor_key]
+        if cached and g and cached < g.node_count then return cached end
+        if g and g.anchor_by_key[dest_anchor_key] then
+            return g.anchor_by_key[dest_anchor_key]
+        end
+    end
+    if tft and cn_valid_lvid(tft.dest_lvid) and g and tft.dest_lvid < g.node_count then
+        return tft.dest_lvid
+    end
+    return cn_resolve_lvid(dest_pos, nil)
+end
+
+-- Live travel/preview: aimap A* only.
 local function cn_build_path(start_pos, dest_pos, dest_anchor_key)
     local g = cn_state().graph
-    if not (g and g.nodes and #g.nodes >= 1 and g.adj) then
-        cn_log("build_path: no graph loaded")
+    if not cn_graph_ready() then
+        cn_log("build_path: no aimap loaded")
         return nil
     end
     if not (start_pos and start_pos.x and dest_pos and dest_pos.x) then
         return nil
     end
-    local start_id = cn_nearest_graph_node(g, start_pos, 200)
+    local start_id = cn_resolve_lvid(start_pos, tft and tft.start_lvid or nil)
     if not start_id then
-        cn_log("build_path: no start node near actor")
+        cn_log("build_path: no start lvid")
         return nil
     end
-    local goal_id = nil
-    if dest_anchor_key and g.anchor_by_key then
-        goal_id = g.anchor_by_key[dest_anchor_key]
-    end
+    local goal_id = cn_goal_lvid(dest_pos, dest_anchor_key)
     if not goal_id then
-        goal_id = cn_nearest_graph_node(g, dest_pos, 200)
-    end
-    if not goal_id then
-        cn_log("build_path: no goal node (key=%s)", tostring(dest_anchor_key))
+        cn_log("build_path: no goal lvid (key=%s)", tostring(dest_anchor_key))
         return nil
     end
-    local node_path = cn_graph_path(g, start_id, goal_id, false)
+    local node_path, pos_cache = cn_graph_path(g, start_id, goal_id, false)
     if not (node_path and #node_path >= 1) then
-        cn_log("build_path: graph A* failed %s -> %s", tostring(start_id), tostring(goal_id))
         return nil
     end
-    local mid = cn_graph_path_positions(g, node_path)
+    local mid = cn_subsample_node_path(g, node_path, pos_cache, CN_PATH_SUBSAMPLE_M)
     if not (mid and #mid >= 1) then
-        return nil
+        mid = cn_graph_path_positions(g, node_path)
     end
     local chain = {}
     chain[#chain + 1] = vector():set(start_pos.x, start_pos.y, start_pos.z)
@@ -1551,71 +623,69 @@ local function cn_build_path(start_pos, dest_pos, dest_anchor_key)
         path_len = path_len + (cn_horizontal_dist(chain[i - 1], chain[i]) or chain[i - 1]:distance_to(chain[i]) or 0)
     end
     local meta = {
-        mode = "coarse_graph",
+        mode = "aimap",
         safe_vertices = {},
         no_land_segments = {},
         start_node = start_id,
         goal_node = goal_id,
         dest_anchor_key = dest_anchor_key,
+        node_count = #node_path,
     }
     return chain, is_vertex, path_len, meta
 end
 
-local function cn_dest_anchor_key_for_id(id)
-    local tostr = tostring
-    if not id then return nil end
-    local g = cn_state().graph
-    if g and g.anchor_by_key then
-        local kinds = { "base", "transition", "campfire" }
-        for i = 1, #kinds do
-            local k = kinds[i] .. ":" .. tostr(id)
-            if g.anchor_by_key[k] then return k end
-        end
-    end
-    if _G.tft_is_campfire and _G.tft_is_campfire(id) then
-        return "campfire:" .. tostr(id)
-    end
-    if cn_is_base_anchor(id) then
-        return "base:" .. tostr(id)
-    end
-    return "transition:" .. tostr(id)
+-- ============================================================
+-- Compatibility stubs (rarely used helpers)
+-- ============================================================
+
+local function cn_finalize_graph(g)
+    return g
 end
 
-local function cn_graph_ready()
-    local g = cn_state().graph
-    return g and g.nodes and #g.nodes >= 1 and g.adj ~= nil
+local function cn_direct_dest_keys(_g, _node_id)
+    return nil
+end
+
+local function cn_splice_to_dest(g, from_node_id, dest_anchor_key)
+    local dest_id = cn_goal_lvid(nil, dest_anchor_key)
+    if not (g and from_node_id and dest_id) then return nil end
+    local node_path, cache = cn_graph_path(g, from_node_id, dest_id, false)
+    if not node_path then return nil end
+    return node_path, cn_subsample_node_path(g, node_path, cache, CN_PATH_SUBSAMPLE_M)
+end
+
+local function cn_splice_from_pos(g, pos, dest_anchor_key, max_m)
+    local node_id = cn_nearest_graph_node(g, pos, max_m)
+    if not node_id then return nil end
+    local node_path, positions = cn_splice_to_dest(g, node_id, dest_anchor_key)
+    if not node_path then return nil end
+    return node_id, node_path, positions
+end
+
+local function cn_astar_graph(g, start_id, goal_id)
+    return cn_graph_path(g, start_id, goal_id, false)
 end
 
 -- ============================================================
--- PDA display - big nodes + sparse smaller dots on straight chords
+-- PDA debug overlay (subsampled - full mesh is too dense)
 -- ============================================================
 
-local function cn_clear_display()
-    local st = cn_state()
-    local function clear_table(ids, spot)
-        for _, obj_id in pairs(ids or {}) do
-            pcall(function()
-                if level.map_has_object_spot(obj_id, spot) ~= 0 then
-                    level.map_remove_object_spot(obj_id, spot)
-                end
-                local obj = alife_object(obj_id)
-                if obj then pcall(alife_release, obj) end
-            end)
-        end
-    end
-    clear_table(st.dot_ids, SPOT_NODE)
-    clear_table(st.endpoint_dot_ids, SPOT_ENDPOINT)
-    clear_table(st.edge_dot_ids, SPOT_EDGE)
-    st.dot_ids = {}
-    st.endpoint_dot_ids = {}
-    st.edge_dot_ids = {}
-    st.display_node_n = 0
-    st.display_ep_n = 0
-    st.display_edge_n = 0
-    st.display_active = false
+local function cn_want_display()
+    local cfg = _G.tft_config
+    return cfg and cfg.show_nav_mesh == true
 end
 
--- Copied from 05_path freeze_buried_dot - local to coarse-nav, not shared.
+local function cn_is_pda_map_shown()
+    local shown = false
+    pcall(function()
+        if ActorMenu and ActorMenu.get_pda_menu then
+            local pda = ActorMenu.get_pda_menu()
+            if pda and pda:IsShown() then shown = true end
+        end
+    end)
+    return shown
+end
+
 local function cn_freeze_buried_dot(obj_id, attempts_left)
     attempts_left = attempts_left or 8
     local obj = level.object_by_id(obj_id)
@@ -1636,7 +706,6 @@ local function cn_freeze_buried_dot(obj_id, attempts_left)
     end)
 end
 
--- Copied from 05_path ensure_path_dot - one buried device_pda per map spot.
 local function cn_spawn_dot(ids, index, pos, spot)
     if not ids then return end
     if ids[index] then return end
@@ -1655,201 +724,86 @@ local function cn_spawn_dot(ids, index, pos, spot)
     cn_freeze_buried_dot(se.id)
 end
 
-local function cn_node_lookup(g)
-    local by_id = {}
-    for i = 1, #g.nodes do
-        by_id[g.nodes[i].id] = g.nodes[i]
-    end
-    return by_id
-end
-
--- Few midpoints on the straight chord A→B (not the real walk path - we don't store that).
-local function cn_spawn_edge_samples(st, g)
-    st.edge_dot_ids = st.edge_dot_ids or {}
-    local by_id = cn_node_lookup(g)
-    local spacing = CN_EDGE_SPACING_M
-    local n = 0
-    for i = 1, #g.edges do
-        if n >= CN_EDGE_MARKERS_MAX then break end
-        local e = g.edges[i]
-        local a, b = by_id[e.from_id], by_id[e.to_id]
-        if a and b then
-            local dx, dy, dz = b.x - a.x, b.y - a.y, b.z - a.z
-            local len = math.sqrt(dx * dx + dz * dz)
-            if len >= spacing * 0.75 then
-                local steps = math.min(4, math.floor(len / spacing))
-                if steps < 1 then steps = 1 end
-                for s = 1, steps do
-                    if n >= CN_EDGE_MARKERS_MAX then break end
-                    local t = s / (steps + 1)
-                    n = n + 1
-                    cn_spawn_dot(st.edge_dot_ids, n,
-                        vector():set(a.x + dx * t, a.y + dy * t + 0.05, a.z + dz * t), SPOT_EDGE)
+local function cn_clear_display()
+    local st = cn_state()
+    local function clear_table(ids, spot)
+        for _, obj_id in pairs(ids or {}) do
+            pcall(function()
+                if level and level.map_remove_object_spot then
+                    level.map_remove_object_spot(obj_id, spot)
                 end
-            end
+                local obj = alife_object(obj_id)
+                if obj then pcall(alife_release, obj) end
+            end)
         end
     end
-    return n, spacing
+    clear_table(st.dot_ids, SPOT_NODE)
+    clear_table(st.endpoint_dot_ids, SPOT_ENDPOINT)
+    clear_table(st.edge_dot_ids, SPOT_EDGE)
+    st.dot_ids = {}
+    st.endpoint_dot_ids = {}
+    st.edge_dot_ids = {}
+    st.display_active = false
 end
 
-cn_want_display = function()
-    local cfg = _G.tft_config
-    return cfg and cfg.show_coarse_mesh == true
-end
-
-cn_is_pda_map_shown = function()
-    local shown = false
-    pcall(function()
-        if ActorMenu and ActorMenu.get_pda_menu then
-            local pda = ActorMenu.get_pda_menu()
-            if pda and pda:IsShown() then shown = true end
-        end
-    end)
-    return shown
-end
-
-cn_refresh_display = function()
+local function cn_refresh_display()
     cn_clear_display()
     local st = cn_state()
     local g = st.graph
     if not g then return end
-
-    for i = 1, #g.nodes do
-        local n = g.nodes[i]
-        cn_spawn_dot(st.dot_ids, i, vector():set(n.x, n.y + 0.1, n.z), SPOT_NODE)
+    local cache = {}
+    local placed = 0
+    local idx = 0
+    for id = 0, g.node_count - 1, CN_DISPLAY_STRIDE do
+        if placed >= CN_DISPLAY_MARKERS_MAX then break end
+        local p = cn_vertex_pos(id, cache)
+        if p then
+            idx = idx + 1
+            cn_spawn_dot(st.dot_ids, idx, vector():set(p.x, p.y + 0.1, p.z), SPOT_NODE)
+            placed = placed + 1
+        end
     end
-    st.display_node_n = #g.nodes
-    st.display_edge_n = 0
-
-    local anchors = (st.build and st.build.anchors) or cn_collect_anchors()
-    for i = 1, #anchors do
-        local a = anchors[i]
-        cn_spawn_dot(st.endpoint_dot_ids, i, vector():set(a.pos.x, a.pos.y + 0.15, a.pos.z), SPOT_ENDPOINT)
-    end
-    st.display_ep_n = #anchors
-    cn_log("display ON: %d nodes, %d endpoints", #g.nodes, #anchors)
+    st.display_active = true
+    cn_log("display ON: %d subsampled nodes (stride=%d)", placed, CN_DISPLAY_STRIDE)
 end
 
-cn_sync_display = function()
+local function cn_sync_display()
     local st = cn_state()
     if cn_want_display() and st.graph and cn_is_pda_map_shown() then
         cn_refresh_display()
-        st.display_active = true
     else
         cn_clear_display()
-        st.display_active = false
     end
 end
 
--- Polled from actor_on_update (same pattern as ambush-range circle): hide dots when PDA closes.
-cn_sync_display_pda = function()
-    local next_ = next
+local function cn_sync_display_pda()
     local st = cn_state()
     if not cn_want_display() or not st.graph then
-        if st.display_active
-            or next_(st.dot_ids or {}) or next_(st.endpoint_dot_ids or {})
-            or next_(st.edge_dot_ids or {}) then
-            cn_clear_display()
-            st.display_active = false
-        end
+        if st.display_active then cn_clear_display() end
         return
     end
-    if cn_is_pda_map_shown() then
-        -- display_node_n stays 0 after clear/orphan sweep; 0==0 used to skip spawn forever.
-        if not st.display_active then
-            cn_refresh_display()
-            st.display_active = true
-            return
-        end
-        local node_n, edge_n, ep_n = 0, 0, 0
-        for _ in pairs(st.dot_ids or {}) do node_n = node_n + 1 end
-        for _ in pairs(st.edge_dot_ids or {}) do edge_n = edge_n + 1 end
-        for _ in pairs(st.endpoint_dot_ids or {}) do ep_n = ep_n + 1 end
-        if node_n < 1
-            or node_n ~= (st.display_node_n or 0)
-            or edge_n ~= (st.display_edge_n or 0)
-            or ep_n ~= (st.display_ep_n or 0) then
-            cn_refresh_display()
-            st.display_active = true
-        end
-    elseif st.display_active
-        or next_(st.dot_ids or {}) or next_(st.endpoint_dot_ids or {})
-        or next_(st.edge_dot_ids or {}) then
+    local shown = cn_is_pda_map_shown()
+    if shown and not st.display_active then
+        cn_refresh_display()
+    elseif not shown and st.display_active then
         cn_clear_display()
-        st.display_active = false
     end
 end
 
--- ============================================================
--- Load / init / dev keys
--- ============================================================
-
-local function cn_try_load()
-    local ln = (level and level.name) and level.name() or nil
-    if not ln then return false end
-    local anchors = cn_collect_anchors()
-    local hash = cn_anchor_hash(anchors)
-    local g = cn_load_graph(ln)
-    if not g then
-        cn_state().graph = nil
-        cn_sync_display()
-        return false
-    end
-    if g.anchor_hash ~= hash then
-        cn_log("cache stale (anchor hash mismatch) - rebuild required")
-        cn_state().graph = nil
-        cn_sync_display()
-        return false
-    end
-    cn_state().graph = g
-    local comps = cn_union_find_components(g)
-    cn_log("ready: %s feature %s - %d nodes, %d edges, %d component(s)",
-        ln, cn_cache_feature_tag(), #g.nodes, #g.edges, #comps)
-    cn_sync_display()
-    return true
-end
-
--- Load gate: use cache if valid; otherwise sync-build (and save .nav to appdata).
--- force_rebuild (MCM rebuild-on-load): ignore cache and rebuild every load.
-local function cn_ensure_ready(force_rebuild)
-	if _G.tft_build_dynamic_map then
-		pcall(_G.tft_build_dynamic_map)
-	end
-	if not force_rebuild then
-		cn_try_load()
-		if cn_graph_ready() then
-			return true
-		end
-		cn_log("ensure_ready: no usable cache - sync build")
-	else
-		cn_log("ensure_ready: force rebuild (rebuild_on_load)")
-	end
-	cn_state().graph = nil
-	-- Rebuild invalidates any prior session path polyline.
-	if tft then
-		tft.path_build_cache = nil
-		tft.menu_path_cache = nil
-	end
-	local ok = cn_build_sync()
-	if not ok then
-		cn_log("ensure_ready: sync build failed - travel will fail closed until rebuild")
-	end
-	return ok
+local function cn_on_actor_update()
+    cn_sync_display_pda()
 end
 
 local function cn_on_level_change()
-    cn_cancel_build()
     cn_clear_display()
     cn_state().graph = nil
-    -- Drop any same-session path cache from the previous level.
+    cn_state().dest_lvid_cache = {}
     if tft then
         tft.path_build_cache = nil
         tft.menu_path_cache = nil
         tft.path_chain = nil
-        tft.path_chain_is_vertex = nil
         tft.path_chain_meta = nil
     end
-    -- Cache load only; full gate runs again on next on_loading_screen_key_prompt.
     pcall(function()
         RemoveTimeEvent("tft_cn", "load_after_level")
     end)
@@ -1863,49 +817,31 @@ local function cn_handle_key(key)
     if not key then return end
     local cfg = _G.tft_config
     if not cfg then return end
-    if cfg.coarse_nav_build and key == cfg.coarse_nav_build then
-        cn_log("dev key: sync coarse nav rebuild")
-        if tft then
-            tft.path_build_cache = nil
-            tft.menu_path_cache = nil
-        end
+    if cfg.nav_mesh_reload and key == cfg.nav_mesh_reload then
+        cn_log("dev key: reload packaged nav mesh")
         pcall(cn_build_sync)
-        return
     end
 end
 
--- ============================================================
--- Self-test A* on loaded graph (dev log only)
--- ============================================================
-
-local function cn_astar_graph(g, start_id, goal_id)
-    return cn_graph_path(g, start_id, goal_id, false)
-end
-
-local function cn_direct_dest_keys(g, node_id)
-    if not (g and g.direct_dest_keys and node_id) then return nil end
-    return g.direct_dest_keys[node_id]
-end
-
 do
-    _G.tft_coarse_nav_try_load = cn_try_load
-    _G.tft_coarse_nav_ensure_ready = cn_ensure_ready
-    _G.tft_coarse_nav_build_sync = cn_build_sync
-    _G.tft_coarse_nav_build_path = cn_build_path
-    _G.tft_coarse_nav_dest_anchor_key = cn_dest_anchor_key_for_id
-    _G.tft_coarse_nav_graph_ready = cn_graph_ready
-    _G.tft_coarse_nav_on_level_change = cn_on_level_change
-    _G.tft_coarse_nav_handle_key = cn_handle_key
-    _G.tft_coarse_nav_sync_display = cn_sync_display
-    _G.tft_coarse_nav_sync_display_pda = cn_sync_display_pda
-    _G.tft_coarse_nav_clear_display = cn_clear_display
-    _G.tft_coarse_nav_on_actor_update = cn_on_actor_update
-    _G.tft_coarse_nav_astar_test = cn_astar_graph
-    _G.tft_coarse_nav_graph_path = cn_graph_path
-    _G.tft_coarse_nav_direct_dest_keys = cn_direct_dest_keys
-    _G.tft_coarse_nav_nearest_node = cn_nearest_graph_node
-    _G.tft_coarse_nav_splice_to_dest = cn_splice_to_dest
-    _G.tft_coarse_nav_splice_from_pos = cn_splice_from_pos
-    _G.tft_coarse_nav_finalize_graph = cn_finalize_graph
-    printf("[dogma_gameplay_true_fast_travel] coarse nav module loaded")
+    _G.tft_nav_mesh_try_load = cn_try_load
+    _G.tft_nav_mesh_ensure_ready = cn_ensure_ready
+    _G.tft_nav_mesh_build_sync = cn_build_sync
+    _G.tft_nav_mesh_build_path = cn_build_path
+    _G.tft_nav_mesh_dest_anchor_key = cn_dest_anchor_key_for_id
+    _G.tft_nav_mesh_graph_ready = cn_graph_ready
+    _G.tft_nav_mesh_on_level_change = cn_on_level_change
+    _G.tft_nav_mesh_handle_key = cn_handle_key
+    _G.tft_nav_mesh_sync_display = cn_sync_display
+    _G.tft_nav_mesh_sync_display_pda = cn_sync_display_pda
+    _G.tft_nav_mesh_clear_display = cn_clear_display
+    _G.tft_nav_mesh_on_actor_update = cn_on_actor_update
+    _G.tft_nav_mesh_astar_test = cn_astar_graph
+    _G.tft_nav_mesh_graph_path = cn_graph_path
+    _G.tft_nav_mesh_direct_dest_keys = cn_direct_dest_keys
+    _G.tft_nav_mesh_nearest_node = cn_nearest_graph_node
+    _G.tft_nav_mesh_splice_to_dest = cn_splice_to_dest
+    _G.tft_nav_mesh_splice_from_pos = cn_splice_from_pos
+    _G.tft_nav_mesh_finalize_graph = cn_finalize_graph
+    printf("[dogma_gameplay_true_fast_travel] nav mesh module loaded")
 end

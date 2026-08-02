@@ -1695,9 +1695,6 @@ class MainWindow(QMainWindow):
         self.tool_grid_step.setAlignment(Qt.AlignmentFlag.AlignRight)
         self.tool_grid_step.setToolTip("Draw a grid line every N scene pixels")
         self.tool_grid_step.setEnabled(bool(self.settings.get("show_grid", False)))
-        # Separate label so the edit caret can't sit after a "px" suffix.
-        self.tool_grid_step_unit = QLabel("px")
-        self.tool_grid_step_unit.setEnabled(bool(self.settings.get("show_grid", False)))
         self.tool_aspect_label = QLabel("Aspect")
         self.tool_aspect = QComboBox()
         self.tool_aspect.setToolTip(
@@ -1711,7 +1708,6 @@ class MainWindow(QMainWindow):
         self.tool_font.setValue(clamp_label_font_size(self.settings.get("label_font_size")))
         self.tool_font.setFixedWidth(52)
         self.tool_font.setAlignment(Qt.AlignmentFlag.AlignRight)
-        self.tool_font_unit = QLabel("pt")
         self.tool_zoom = QSlider(Qt.Orientation.Horizontal)
         self.tool_zoom.setRange(100, 1000)
         self.tool_zoom.setSingleStep(5)
@@ -1751,12 +1747,10 @@ class MainWindow(QMainWindow):
             self.tool_rulers,
             self.tool_grid,
             self.tool_grid_step,
-            self.tool_grid_step_unit,
             self.tool_aspect_label,
             self.tool_aspect,
             QLabel("Label size"),
             self.tool_font,
-            self.tool_font_unit,
             QLabel("Zoom"),
             self.tool_zoom,
             self.tool_zoom_label,
@@ -3631,7 +3625,6 @@ class MainWindow(QMainWindow):
         self.tool_grid_step.setValue(step)
         self.tool_grid_step.setEnabled(grid)
         self.tool_grid_step.blockSignals(False)
-        self.tool_grid_step_unit.setEnabled(grid)
         self.tool_font.blockSignals(True)
         self.tool_font.setValue(font)
         self.tool_font.blockSignals(False)

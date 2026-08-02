@@ -68,6 +68,10 @@ DEFAULT_FONT_DEVICE_HEIGHT = 1080
 LABEL_FONT_MIN = 2
 LABEL_FONT_MAX = 40
 LABEL_FONT_DEFAULT = 5
+
+GRID_STEP_MIN = 1
+GRID_STEP_MAX = 256
+GRID_STEP_DEFAULT = 1
 RECENT_FILES_MAX = 10
 # Bump when derived root ordering / discovery rules change (forces one rescan).
 ASSET_ROOTS_VERSION = 5
@@ -135,6 +139,15 @@ def clamp_label_font_size(value: object) -> int:
     except (TypeError, ValueError):
         return LABEL_FONT_DEFAULT
     return max(LABEL_FONT_MIN, min(LABEL_FONT_MAX, n))
+
+
+def clamp_grid_step(value: object) -> int:
+    """Scene pixels between pixel-grid lines."""
+    try:
+        n = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return GRID_STEP_DEFAULT
+    return max(GRID_STEP_MIN, min(GRID_STEP_MAX, n))
 
 
 def normalize_recent_files(value: object) -> list[str]:
@@ -677,7 +690,7 @@ def default_settings() -> dict:
         "gamma_root": "",
         "custom_roots": [],
         "show_grid": False,
-        "grid_step": 16,
+        "grid_step": GRID_STEP_DEFAULT,
         "label_font_size": LABEL_FONT_DEFAULT,
         "show_element_labels": False,
         "show_box_border": False,
@@ -829,6 +842,7 @@ def load_settings() -> dict:
             data["gamma_root"] = inferred
 
     data["label_font_size"] = clamp_label_font_size(data.get("label_font_size"))
+    data["grid_step"] = clamp_grid_step(data.get("grid_step", GRID_STEP_DEFAULT))
     data["font_device_height"] = clamp_font_device_height(
         data.get("font_device_height", 0)
     )

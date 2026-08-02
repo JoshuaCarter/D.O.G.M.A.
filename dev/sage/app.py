@@ -80,7 +80,10 @@ from .settings import (
     LABEL_FONT_MAX,
     LABEL_FONT_MIN,
     SIDEBAR_MIN_WIDTH,
+    clamp_grid_step,
     clamp_label_font_size,
+    GRID_STEP_MAX,
+    GRID_STEP_MIN,
     resolve_font_device_height,
     ensure_db_unpacked_and_roots,
     get_deploy_target,
@@ -1228,6 +1231,9 @@ class MainWindow(QMainWindow):
         grid_on = bool(self.settings.get("show_grid", False))
         self.scene.set_pixel_grid_visible(grid_on)
         self.descr_board.scene.set_pixel_grid_visible(grid_on)
+        grid_step = clamp_grid_step(self.settings.get("grid_step"))
+        self.scene.set_pixel_grid_step(grid_step)
+        self.descr_board.scene.set_pixel_grid_step(grid_step)
         self._apply_preview_aspect()
         self.canvas.fit_stage()
         self.wysiwyg_stack = QStackedWidget()
@@ -1678,9 +1684,16 @@ class MainWindow(QMainWindow):
         self.tool_grid = QCheckBox("Pixel grid")
         self.tool_grid.setChecked(bool(self.settings.get("show_grid", False)))
         self.tool_grid.setToolTip(
-            "1 scene-pixel grey lines (50% alpha) on every HUD/sheet pixel — "
-            "not cosmetic screen-pixel strokes"
+            "Grey grid lines on the HUD/sheet (every N scene pixels; "
+            "every 10th line stronger)"
         )
+        self.tool_grid_step = QSpinBox()
+        self.tool_grid_step.setRange(GRID_STEP_MIN, GRID_STEP_MAX)
+        self.tool_grid_step.setSingleStep(1)
+        self.tool_grid_step.setValue(clamp_grid_step(self.settings.get("grid_step")))
+        self.tool_grid_step.setSuffix(" px")
+        self.tool_grid_step.setToolTip("Draw a grid line every N scene pixels")
+        self.tool_grid_step.setEnabled(bool(self.settings.get("show_grid", False)))
         self.tool_aspect_label = QLabel("Aspect")
         self.tool_aspect = QComboBox()
         self.tool_aspect.setToolTip(
@@ -1731,6 +1744,7 @@ class MainWindow(QMainWindow):
             self.tool_labels,
             self.tool_rulers,
             self.tool_grid,
+            self.tool_grid_step,
             self.tool_aspect_label,
             self.tool_aspect,
             QLabel("Label size"),
@@ -1881,13 +1895,15 @@ class MainWindow(QMainWindow):
         self.tool_labels.toggled.connect(self._on_toggle_labels)
         self.tool_rulers.toggled.connect(self._on_toggle_rulers)
         self.tool_grid.toggled.connect(self._on_toggle_grid)
+        self.tool_grid_step.valueChanged.connect(self._on_grid_step)
         self.tool_aspect.currentIndexChanged.connect(self._on_preview_aspect)
         self.tool_zoom.valueChanged.connect(self._on_zoom_slider)
         self.canvas.view_changed.connect(self._sync_zoom_slider_from_view)
         self.descr_board.view.view_changed.connect(self._sync_zoom_slider_from_view)
         self.tool_font.valueChanged.connect(self._on_tool_font_size)
         self.statusBar().showMessage(
-            "1024×768 HUD · wheel zoom · Alt/MMB pan · drag/resize · arrows nudge · Ctrl+click cycle · Ctrl+Z undo"
+            "1024×768 HUD · wheel zoom · Alt/MMB pan · drag/resize · arrows nudge · "
+            "Ctrl+click cycle · Ctrl+D deploy · Ctrl+Z undo"
         )
 
         # CLI path opens after show; otherwise the startup chooser runs.
@@ -2565,12 +2581,12 @@ class MainWindow(QMainWindow):
             "(1024×768 HUD space).</p>"
             "<p><b>Controls</b></p>"
             "<ul>"
-            "<li><b>Wheel</b> — zoom</li>"
-            "<li><b>Ctrl+Wheel</b> — zoom</li>"
+            "<li><b>Wheel</b> / <b>Ctrl+Wheel</b> — zoom (100%–1000%, or options slider)</li>"
             "<li><b>Shift+Wheel</b> — pan horizontally</li>"
             "<li><b>Alt+Wheel</b> — pan vertically</li>"
             "<li><b>Middle-drag</b> or <b>Alt+Left-drag</b> — pan</li>"
             "<li><b>F</b> — fit stage</li>"
+            "<li><b>Arrow keys</b> — nudge 1px (hold to repeat)</li>"
             "<li><b>Click</b> — select smallest widget under cursor</li>"
             "<li><b>Ctrl+Click</b> — cycle stacked widgets (toward smaller; "
             "wraps to largest)</li>"
@@ -2578,8 +2594,14 @@ class MainWindow(QMainWindow):
             "<li><b>Drag selected</b> — move (multi-move when several selected)</li>"
             "<li><b>Edge / corner</b> — resize (single selection)</li>"
             "<li><b>Right-click</b> — clear selection</li>"
-            "<li><b>Rulers</b> — drag guide; right-click near guide to remove</li>"
-            "<li><b>Ctrl+Z / Ctrl+Y</b> (or <b>Ctrl+Shift+Z</b>) — undo / redo geometry</li>"
+            "<li><b>Guide rulers</b> — drag guide; right-click near guide to remove "
+            "(toggle: Show guide lines)</li>"
+            "<li><b>Cursor coords</b> — scene x,y in the top-left ruler corner</li>"
+            "<li><b>Aspect</b> — options-bar preview stretch only (not saved; "
+            "text stays unstretched)</li>"
+            "<li><b>Pixel grid</b> — options-bar toggle + step (every N px)</li>"
+            "<li><b>Ctrl+D</b> / <b>Ctrl+Shift+D</b> — Deploy / Deploy As</li>"
+            "<li><b>Ctrl+Z / Ctrl+Y</b> (or <b>Ctrl+Shift+Z</b>) — undo / redo</li>"
             "</ul>",
         )
 
@@ -3596,6 +3618,11 @@ class MainWindow(QMainWindow):
             w.blockSignals(True)
             w.setChecked(grid)
             w.blockSignals(False)
+        step = clamp_grid_step(self.settings.get("grid_step"))
+        self.tool_grid_step.blockSignals(True)
+        self.tool_grid_step.setValue(step)
+        self.tool_grid_step.setEnabled(grid)
+        self.tool_grid_step.blockSignals(False)
         self.tool_font.blockSignals(True)
         self.tool_font.setValue(font)
         self.tool_font.blockSignals(False)
@@ -3654,6 +3681,14 @@ class MainWindow(QMainWindow):
         save_settings(self.settings)
         self.scene.set_pixel_grid_visible(checked)
         self.descr_board.scene.set_pixel_grid_visible(checked)
+        self._sync_tool_controls()
+
+    def _on_grid_step(self, step: int) -> None:
+        step = clamp_grid_step(step)
+        self.settings["grid_step"] = step
+        save_settings(self.settings)
+        self.scene.set_pixel_grid_step(step)
+        self.descr_board.scene.set_pixel_grid_step(step)
         self._sync_tool_controls()
 
     def _on_tool_font_size(self, size: int) -> None:

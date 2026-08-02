@@ -400,6 +400,9 @@ class DescrScene(QGraphicsScene):
     def set_pixel_grid_visible(self, visible: bool) -> None:
         self._pixel_grid.setVisible(bool(visible))
 
+    def set_pixel_grid_step(self, step: int) -> None:
+        self._pixel_grid.set_step(step)
+
     def _make_item(self, region: DescrRegion) -> RegionItem:
         return RegionItem(
             region,

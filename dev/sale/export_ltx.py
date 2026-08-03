@@ -205,16 +205,25 @@ def export_shop_ltx(
     stock_ltx: Path | None = None,
     gamma: Path | None = None,
 ) -> Path:
+    log.info("export begin dest=%s gamma=%s", dest, gamma)
     dest.parent.mkdir(parents=True, exist_ok=True)
 
     shops = {f: build_faction_shop(items, balance, f) for f in FACTIONS}
+    for fac, shop in shops.items():
+        log.debug("shop_%s items=%d", fac, len(shop))
     ammo_counts = collect_ammo_for_shops(items, shops)
     ammo_types = collect_ammo_type_overrides(items, shops)
+    log.info(
+        "export shops ready ammo_counts=%d ammo_type_overrides=%d",
+        len(ammo_counts),
+        len(ammo_types),
+    )
 
     stock = stock_ltx or find_stock_loadouts(gamma)
     strip = parse_purchasable_keys(stock) if stock else {s: [] for s in _LOADOUT_SECTIONS}
     if stock:
-        log.info("stripping stock shop keys from %s", stock)
+        n_strip = sum(len(v) for v in strip.values())
+        log.info("stripping %d stock shop keys from %s", n_strip, stock)
     else:
         log.warning("no stock new_game_loadouts.ltx — not stripping prior shop lines")
 

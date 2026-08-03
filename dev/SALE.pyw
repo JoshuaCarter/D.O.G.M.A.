@@ -17,7 +17,10 @@ def _fail(exc: BaseException) -> int:
         from sale.diaglog import get_logger, setup_logging
 
         setup_logging()
+        from sale.diaglog import LOG_PATH
+
         get_logger("launch").critical("SALE failed to start\n%s", text)
+        text = f"{text}\n\nLog: {LOG_PATH}"
     except Exception:
         pass
     try:

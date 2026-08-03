@@ -8,16 +8,19 @@ from typing import Any
 
 import yaml
 
+from .diaglog import get_logger
 from .score import ARMOR_WEIGHTS, WEAPON_WEIGHTS
 from .settings import BALANCE_YML, ensure_dirs
 
+log = get_logger("balance")
+
 
 def _default_weights_weapon() -> dict[str, float]:
-    return {wkey: 0.5 for _sk, wkey, _c, _i in WEAPON_WEIGHTS}
+    return {wkey: float(default_w) for _sk, wkey, _c, _i, default_w in WEAPON_WEIGHTS}
 
 
 def _default_weights_armor() -> dict[str, float]:
-    out = {wkey: 0.5 for _sk, wkey, _c, _i in ARMOR_WEIGHTS}
+    out = {wkey: float(default_w) for _sk, wkey, _c, _i, default_w in ARMOR_WEIGHTS}
     out["a_price"] = 0.5
     return out
 
@@ -50,10 +53,14 @@ def load_balance(path: Path | None = None) -> dict[str, Any]:
     ensure_dirs()
     p = path or BALANCE_YML
     if not p.is_file():
+        log.info("balance defaults (no file %s)", p)
         return default_balance()
-    data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+    try:
+        data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+    except Exception:
+        log.exception("balance load failed %s — using defaults", p)
+        return default_balance()
     base = default_balance()
-    # Shallow merge defaults
     for cat in ("weapons", "outfits", "helmets"):
         dcat = data.get("default", {}).get(cat) or {}
         bcat = base["default"][cat]
@@ -61,13 +68,19 @@ def load_balance(path: Path | None = None) -> dict[str, Any]:
         if "weights" in dcat:
             bcat["weights"].update(dcat["weights"] or {})
     base["factions"] = data.get("factions") or {}
+    log.info("balance loaded factions=%d from %s", len(base["factions"]), p)
     return base
 
 
 def save_balance(data: dict[str, Any], path: Path | None = None) -> None:
     ensure_dirs()
     p = path or BALANCE_YML
-    p.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    try:
+        p.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+        log.debug("balance saved %s", p)
+    except Exception:
+        log.exception("balance save failed %s", p)
+        raise
 
 
 def effective_category(

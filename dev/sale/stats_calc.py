@@ -287,6 +287,11 @@ def build_weapon_input(sec: str, sections: dict[str, dict[str, str]]) -> dict[st
         if not ammo or ammo not in sections:
             continue
         a = sections[ammo]
+        # buck_shot=0 on grenade/rocket ammo means "not a shotgun", not zero pellets.
+        # Match weapon_tooltips: only values > 1 count as multi-pellet.
+        pellets = _f(a.get("buck_shot"), 1)
+        if pellets <= 1:
+            pellets = 1.0
         rounds.append(
             {
                 "sec": ammo,
@@ -295,7 +300,7 @@ def build_weapon_input(sec: str, sections: dict[str, dict[str, str]]) -> dict[st
                 "air_resistance": _f(
                     a.get("k_air_resistance") or a.get("air_resistance"), 0.05
                 ),
-                "pellets": _f(a.get("buck_shot"), 1),
+                "pellets": pellets,
             }
         )
     cam_return = True

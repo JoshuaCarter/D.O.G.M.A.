@@ -346,13 +346,19 @@ local function weapon_input_from_ini(wpn_sec, dist)
 	for part in string.gmatch(ammo_class, "([^,]+)") do
 		local sec = part:match("^%s*(.-)%s*$")
 		if sec and sec ~= "" and ini_sys:section_exist(sec) then
+			-- buck_shot=0 on grenade/rocket ammo = "not shotgun", not zero pellets
+			-- (same clamp as weapon_tooltips: only >1 is multi-pellet).
+			local pellets = ini_sys:r_float_ex(sec, "buck_shot") or 1
+			if pellets <= 1 then
+				pellets = 1
+			end
 			rounds[#rounds + 1] = {
 				sec = sec,
 				k_hit = ini_sys:r_float_ex(sec, "k_hit") or 1,
 				k_ap = ini_sys:r_float_ex(sec, "k_ap") or 0,
 				air_resistance = ini_sys:r_float_ex(sec, "k_air_resistance")
 					or ini_sys:r_float_ex(sec, "air_resistance") or 0.05,
-				pellets = ini_sys:r_float_ex(sec, "buck_shot") or 1,
+				pellets = pellets,
 			}
 		end
 	end

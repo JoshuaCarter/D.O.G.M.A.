@@ -3,7 +3,7 @@
 
 	Universal late-load hook on zzz_player_injuries: on limb damage, force the
 	classic Body Health System screen HUD visible for MCM seconds, overriding
-	hide/keybind for that window. Best-effort 0.5s fade via custom-static alpha.
+	hide/keybind for that window. Best-effort fade-out via custom-static alpha.
 
 	Shipped under scripts/override/ with a long z-prefix so this file loads after
 	other BHS wrappers (build keeps the exact basename).
@@ -11,7 +11,7 @@
 	Note: BHS registers actor_on_update by function reference at its on_game_start,
 	so replacing zzz_player_injuries.actor_on_update does not run. We wrap
 	recieved_damage (table-called by Actor Damage Balancer) and drive the flash
-	from our own actor_on_update callback, re-invoking BHS HUDUpdate after force.
+	from our own actor_on_update callback.
 ]]
 
 local CONFIG = _G.dogma_hud_bhs_on_damage_conf
@@ -19,13 +19,15 @@ local DOGMA
 
 local FADE_MS = 500
 local FLAG = "__dogma_bhs_on_damage"
--- BHS creates one progress bar per HUDUpdate while scuffed_fix is set, then waits
--- disable_hud_fps_fix_tmr (0.2s). Pump enough same-frame passes to finish all bars.
-local SNAP_PASSES = 16
+-- BHS normally spawns one bar per HUDUpdate then waits ~0.2s (scuffed_fix +
+-- CreateTimeEvent). During snap we clear that latch once per frame so bars
+-- appear at frame rate, and overwrite the placeholder SetProgressPos(55).
+local SNAP_FRAMES = 20
 
 local flash_until = 0
 local flash_started = 0
 local flashing = false
+local snap_frames = 0
 local saved_show = nil
 local saved_healthstatus = nil
 
@@ -36,8 +38,32 @@ local uv_scuffed_fn, uv_scuffed_idx = nil, nil
 local uv_change_fn, uv_change_idx = nil, nil
 local hud_update_fn = nil
 
+-- Cached BHS tables / progress-bar upvalue slots (from HUDUpdate).
+local bhs_health, bhs_timedhp, bhs_maxhp, bhs_preview = nil, nil, nil, nil
+local bar_slots = nil -- { {fn, idx, kind, limb?}, ... }
+
 local wrapped_rd = nil
 local update_registered = false
+
+local resolve_bar_slots -- forward decl (used from resolve_upvalues)
+
+-- kind: actor_health | actor_power | limb | limb_green
+local BAR_SPECS = {
+	{ "progress_health", "actor_health" },
+	{ "progress_stamina", "actor_power" },
+	{ "progress_health_head", "limb", "head" },
+	{ "progress_health_torso", "limb", "torso" },
+	{ "progress_health_leftarm", "limb", "leftarm" },
+	{ "progress_health_rightarm", "limb", "rightarm" },
+	{ "progress_health_leftleg", "limb", "leftleg" },
+	{ "progress_health_rightleg", "limb", "rightleg" },
+	{ "progress_health_head_time", "limb_green", "head" },
+	{ "progress_health_torso_time", "limb_green", "torso" },
+	{ "progress_health_leftarm_time", "limb_green", "leftarm" },
+	{ "progress_health_rightarm_time", "limb_green", "rightarm" },
+	{ "progress_health_leftleg_time", "limb_green", "leftleg" },
+	{ "progress_health_rightleg_time", "limb_green", "rightleg" },
+}
 
 local RATIO_SUFFIXES = { "", "_43", "_1610", "_16" }
 
@@ -68,6 +94,15 @@ local STATIC_STEMS = {
 	"bhs_health_leftleg_bar",
 	"bhs_health_leftleg_bar_bg",
 	"bhs_health_leftleg_bar_green",
+}
+
+local SILHOUETTE_NAMES = {
+	"body_health_system",
+	"body_health_system_43",
+	"body_health_system_1610",
+	"body_health_system_16",
+	"body_health_system_text",
+	"cop_debug",
 }
 
 local STATIC_NAMES = {}
@@ -133,8 +168,7 @@ local function resolve_named_upvalue(bhs, name, probe)
 	if owner then
 		return owner, idx, val
 	end
-	-- scuffed_fix / show_hud_change_time live in nested ParamBar; reach via
-	-- other module fns that close over them (e.g. worst_possible_fix).
+	-- scuffed_fix lives in nested ParamBar; worst_possible_fix closes over it.
 	local extras = {
 		bhs.worst_possible_fix,
 		bhs.recieved_damage,
@@ -182,7 +216,159 @@ local function resolve_upvalues(bhs)
 	if type(hud) == "function" then
 		hud_update_fn = hud
 	end
+	resolve_bar_slots(hud_update_fn or probe)
 	return true
+end
+
+local function read_upvalue(fn, idx)
+	if not (fn and idx and debug and debug.getupvalue) then
+		return nil
+	end
+	local _, v = debug.getupvalue(fn, idx)
+	return v
+end
+
+resolve_bar_slots = function(probe)
+	local type_ = type
+	bar_slots = {}
+	if type_(probe) ~= "function" then
+		return
+	end
+	local h_fn, h_idx = find_upvalue_deep(probe, "health")
+	local t_fn, t_idx = find_upvalue_deep(probe, "timedhp")
+	local m_fn, m_idx = find_upvalue_deep(probe, "maxhp")
+	local p_fn, p_idx = find_upvalue_deep(probe, "preview")
+	if h_fn then
+		bhs_health = read_upvalue(h_fn, h_idx)
+	end
+	if t_fn then
+		bhs_timedhp = read_upvalue(t_fn, t_idx)
+	end
+	if m_fn then
+		bhs_maxhp = read_upvalue(m_fn, m_idx)
+	end
+	if p_fn then
+		bhs_preview = read_upvalue(p_fn, p_idx)
+	end
+	-- Also prefer module exports when Medik/others re-expose tables.
+	local mod = rawget(_G, "zzz_player_injuries")
+	if type_(mod) == "table" then
+		if type_(mod.health) == "table" then
+			bhs_health = mod.health
+		end
+		if type_(mod.timedhp) == "table" then
+			bhs_timedhp = mod.timedhp
+		end
+		if type_(mod.maxhp) == "table" then
+			bhs_maxhp = mod.maxhp
+		end
+		if type_(mod.preview) == "table" then
+			bhs_preview = mod.preview
+		end
+	end
+	for i = 1, #BAR_SPECS do
+		local name, kind, limb = BAR_SPECS[i][1], BAR_SPECS[i][2], BAR_SPECS[i][3]
+		local fn, idx = find_upvalue_deep(probe, name)
+		if fn and idx then
+			bar_slots[#bar_slots + 1] = { fn = fn, idx = idx, kind = kind, limb = limb }
+		end
+	end
+end
+
+local function limb_perm_pos(limb)
+	if not (bhs_health and bhs_maxhp and bhs_maxhp[limb]) then
+		return 0
+	end
+	local arg = (bhs_health[limb] or 0) - ((bhs_timedhp and bhs_timedhp[limb]) or 0)
+	if bhs_preview and bhs_preview.health and (bhs_preview.health[limb] or (bhs_preview.bonus and bhs_preview.bonus[limb])) then
+		arg = (bhs_preview.health[limb] or 0) - ((bhs_preview.bonus and bhs_preview.bonus[limb]) or 0)
+	end
+	local maxv = bhs_maxhp[limb]
+	if not maxv or maxv <= 0 then
+		maxv = 1
+	end
+	return (arg * 100) / maxv
+end
+
+local function limb_green_pos(limb)
+	if not (bhs_health and bhs_maxhp and bhs_maxhp[limb]) then
+		return 0
+	end
+	local v = bhs_health[limb] or 0
+	if bhs_preview and bhs_preview.health and bhs_preview.health[limb] then
+		v = bhs_preview.health[limb]
+	end
+	local maxv = bhs_maxhp[limb]
+	if not maxv or maxv <= 0 then
+		maxv = 1
+	end
+	return (v * 100) / maxv
+end
+
+local function bar_target_pos(kind, limb)
+	local actor = db.actor
+	if kind == "actor_health" then
+		if not (db and actor) then
+			return 0
+		end
+		return (actor.health or 0) * 100
+	end
+	if kind == "actor_power" then
+		if not (db and actor) then
+			return 0
+		end
+		return (actor.power or 0) * 100
+	end
+	if kind == "limb" then
+		return limb_perm_pos(limb)
+	end
+	if kind == "limb_green" then
+		return limb_green_pos(limb)
+	end
+	return 0
+end
+
+local function set_bar_pos(bar, pos)
+	if not bar or not bar.SetProgressPos then
+		return
+	end
+	pos = tonumber(pos) or 0
+	pcall(function()
+		-- BHS creates bars at 55; set real value twice so inertion has no delta.
+		bar:SetProgressPos(pos)
+		bar:SetProgressPos(pos)
+	end)
+end
+
+-- Overwrite placeholder 55% (and any lerp) with live BHS values.
+local function settle_bars()
+	local type_ = type
+	if not bar_slots then
+		return
+	end
+	-- Refresh table refs in case another mod swapped them.
+	local mod = rawget(_G, "zzz_player_injuries")
+	if type_(mod) == "table" then
+		if type_(mod.health) == "table" then
+			bhs_health = mod.health
+		end
+		if type_(mod.timedhp) == "table" then
+			bhs_timedhp = mod.timedhp
+		end
+		if type_(mod.maxhp) == "table" then
+			bhs_maxhp = mod.maxhp
+		end
+		if type_(mod.preview) == "table" then
+			bhs_preview = mod.preview
+		end
+	end
+	for i = 1, #bar_slots do
+		local slot = bar_slots[i]
+		local bar = read_upvalue(slot.fn, slot.idx)
+		if bar then
+			set_bar_pos(bar, bar_target_pos(slot.kind, slot.limb))
+		end
+	end
 end
 
 local function get_show()
@@ -220,10 +406,18 @@ local function set_scuffed(v)
 end
 
 local function clear_change_debounce()
-	-- ParamBar hides bars for 50ms after show_hud_change_time; keep that stale.
 	if uv_change_fn and uv_change_idx and debug and debug.setupvalue then
 		debug.setupvalue(uv_change_fn, uv_change_idx, 0)
 	end
+end
+
+local function clear_bhs_bar_timer()
+	if RemoveTimeEvent then
+		pcall(function()
+			RemoveTimeEvent("bvcx", "bvcx")
+		end)
+	end
+	set_scuffed(false)
 end
 
 local function refresh_sec()
@@ -243,27 +437,15 @@ local function refresh_sec()
 	return sec
 end
 
+-- Appear at full opacity; only fade out at the end. Damage during fade-out
+-- extends flash_until so alpha jumps back to full.
 local function flash_alpha(now)
-	local total = flash_until - flash_started
-	if total <= 0 then
-		return 255
-	end
-	local fade_in = FADE_MS
-	local fade_out = FADE_MS
-	if total < (FADE_MS * 2) then
-		fade_in = math.floor(total / 2)
-		fade_out = total - fade_in
-	end
-	local elapsed = now - flash_started
 	local remaining = flash_until - now
-	if fade_in > 0 and elapsed < fade_in then
-		return math.floor(255 * elapsed / fade_in)
+	if remaining <= 0 then
+		return 0
 	end
-	if fade_out > 0 and remaining < fade_out then
-		if remaining <= 0 then
-			return 0
-		end
-		return math.floor(255 * remaining / fade_out)
+	if remaining < FADE_MS then
+		return math.floor(255 * remaining / FADE_MS)
 	end
 	return 255
 end
@@ -316,39 +498,54 @@ local function apply_fade_alpha(alpha)
 	end
 end
 
+local function hud_silhouette_up()
+	local hud = get_hud and get_hud()
+	if not hud or not hud.GetCustomStatic then
+		return false
+	end
+	for i = 1, #SILHOUETTE_NAMES do
+		if hud:GetCustomStatic(SILHOUETTE_NAMES[i]) then
+			return true
+		end
+	end
+	return false
+end
+
 local function redraw_hud()
 	if type(hud_update_fn) == "function" then
 		pcall(hud_update_fn)
 	end
 end
 
--- Collapse BHS's staggered bar spawn into this frame, then settle real SetProgressPos.
-local function snap_hud()
+local function force_visible()
 	set_show(2)
 	set_healthstatus(true)
 	clear_change_debounce()
-	for _ = 1, SNAP_PASSES do
-		set_scuffed(false)
-		redraw_hud()
-	end
 end
 
 local function end_flash()
 	if not flashing then
 		return
 	end
-	if saved_show ~= nil then
-		set_show(saved_show)
-	end
-	if saved_healthstatus ~= nil then
-		set_healthstatus(saved_healthstatus)
-	end
+	local restore_show = saved_show
+	local restore_hs = saved_healthstatus
 	flashing = false
 	flash_until = 0
 	flash_started = 0
+	snap_frames = 0
 	saved_show = nil
 	saved_healthstatus = nil
+	clear_bhs_bar_timer()
+	if restore_show ~= nil then
+		set_show(restore_show)
+	else
+		set_show(0)
+	end
+	if restore_hs ~= nil then
+		set_healthstatus(restore_hs)
+	end
 	redraw_hud()
+	-- Reset any leftover tint on statics that remain (e.g. restore_show == 2).
 	apply_fade_alpha(255)
 end
 
@@ -360,33 +557,77 @@ local function begin_or_refresh_flash()
 	if not (uv_show_fn and uv_hs_fn) then
 		return
 	end
+
 	local now = time_global()
 	local cur_show = get_show()
 	local cur_hs = get_healthstatus()
 	local starting = not flashing
+
 	if starting then
-		if cur_show == 2 and cur_hs then
-			-- Already permanently visible; limb blink handles feedback.
+		-- Skip only when classic HUD is already truly up (not a stuck show=2
+		-- with no statics / leftover alpha from a prior flash).
+		if cur_show == 2 and cur_hs and hud_silhouette_up() then
 			return
 		end
 		saved_show = cur_show
+		if saved_show == nil then
+			saved_show = 0
+		end
 		saved_healthstatus = cur_hs
+		if saved_healthstatus == nil then
+			saved_healthstatus = true
+		end
 		flash_started = now
 		flashing = true
+		snap_frames = SNAP_FRAMES
+		clear_bhs_bar_timer()
 	end
+
+	-- Any further limb hit restarts the hide countdown.
 	flash_until = now + math.floor(sec * 1000)
-	-- Force immediately: BHS's registered actor_on_update is not our wrap.
-	if starting then
-		snap_hud()
-	else
-		set_show(2)
-		set_healthstatus(true)
-		redraw_hud()
-	end
+
+	force_visible()
+	-- One HUDUpdate: silhouette + at most one new bar (BHS scuffed latch).
+	set_scuffed(false)
+	redraw_hud()
+	settle_bars()
+	-- Cancel 0.2s timer and leave latch clear → next frame spawns the next bar.
+	clear_bhs_bar_timer()
 	apply_fade_alpha(flash_alpha(now))
 end
 
+local function ensure_hook()
+	local bhs = rawget(_G, "zzz_player_injuries")
+	if not (bhs and type(bhs.recieved_damage) == "function") then
+		return false
+	end
+	if bhs.recieved_damage == wrapped_rd and uv_show_fn and uv_hs_fn then
+		return true
+	end
+	if not (debug and debug.getupvalue and debug.setupvalue) then
+		return false
+	end
+	if not resolve_upvalues(bhs) then
+		return false
+	end
+	if bhs.recieved_damage ~= wrapped_rd then
+		-- Avoid wrapping ourselves if a re-entry left our wrap installed under
+		-- another outer wrapper: still wrap whatever is outermost.
+		wrapped_rd = (function(inner)
+			return function(...)
+				local ret = inner(...)
+				begin_or_refresh_flash()
+				return ret
+			end
+		end)(bhs.recieved_damage)
+		bhs.recieved_damage = wrapped_rd
+	end
+	bhs[FLAG] = true
+	return true
+end
+
 local function on_actor_update()
+	ensure_hook()
 	if not flashing then
 		return
 	end
@@ -395,20 +636,19 @@ local function on_actor_update()
 		end_flash()
 		return
 	end
-	-- Re-force after BHS/keybind for this frame, then redraw + fade.
-	set_show(2)
-	set_healthstatus(true)
-	clear_change_debounce()
-	redraw_hud()
-	apply_fade_alpha(flash_alpha(now))
-end
 
-local function on_rd_wrap(inner)
-	return function(...)
-		local ret = inner(...)
-		begin_or_refresh_flash()
-		return ret
+	force_visible()
+	-- BHS already ran HUDUpdate earlier this frame (may have created one bar at
+	-- 55%). Snap that bar to live values, then clear the 0.2s latch so the next
+	-- frame creates exactly one more bar.
+	if snap_frames > 0 then
+		settle_bars()
+		clear_bhs_bar_timer()
+		snap_frames = snap_frames - 1
+	else
+		settle_bars()
 	end
+	apply_fade_alpha(flash_alpha(now))
 end
 
 local function apply()
@@ -416,24 +656,13 @@ local function apply()
 	if not (bhs and type(bhs.actor_on_update) == "function" and type(bhs.recieved_damage) == "function") then
 		return false
 	end
-	if not (debug and debug.getupvalue and debug.setupvalue) then
+	if not ensure_hook() then
 		return false
 	end
-	if not resolve_upvalues(bhs) then
-		return false
-	end
-
-	if bhs.recieved_damage ~= wrapped_rd then
-		wrapped_rd = on_rd_wrap(bhs.recieved_damage)
-		bhs.recieved_damage = wrapped_rd
-	end
-
 	if not update_registered then
 		RegisterScriptCallback("actor_on_update", on_actor_update)
 		update_registered = true
 	end
-
-	bhs[FLAG] = true
 	return true
 end
 

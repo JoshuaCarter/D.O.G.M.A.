@@ -588,6 +588,7 @@ class MainWindow(QMainWindow):
             self.ammo_panel.setLayout(ammo_wrap)
             v.addWidget(self.ammo_panel)
             self._ammo_buttons: dict[str, QToolButton] = {}
+            self._ammo_used_by_sel: set[str] = set()
             self._sync_ammo_collapse_ui()
 
             self.main_tabs = QTabWidget()
@@ -1275,6 +1276,42 @@ class MainWindow(QMainWindow):
             self._ammo_box_icon(self._ammo_thumb_path(sec), enabled=enabled)
         )
         btn.setToolTip(self._ammo_tip(sec, enabled))
+        self._apply_ammo_btn_border(sec)
+
+    @staticmethod
+    def _ammo_btn_stylesheet(*, used: bool) -> str:
+        """Border colors: blue = used by selected gun; else green on / orange off."""
+        base = (
+            "QToolButton { border-radius: 0px; padding: 0px; margin: 0px; "
+            "background: transparent; }"
+        )
+        if used:
+            return (
+                base
+                + "QToolButton { border: 1px solid #5ec8ff; }"
+                + "QToolButton:checked { border-color: #5ec8ff; }"
+                + "QToolButton:!checked { border-color: #5ec8ff; }"
+            )
+        return (
+            base
+            + "QToolButton { border: 1px solid #444; }"
+            + "QToolButton:checked { border-color: #6a9e6a; }"
+            + "QToolButton:!checked { border-color: #96826a; }"
+        )
+
+    def _apply_ammo_btn_border(self, sec: str) -> None:
+        btn = self._ammo_buttons.get(sec)
+        if btn is None:
+            return
+        btn.setStyleSheet(
+            self._ammo_btn_stylesheet(used=sec in self._ammo_used_by_sel)
+        )
+
+    def _highlight_weapon_ammos(self, ammo_secs: set[str] | None) -> None:
+        """Blue border on ammo boxes the selected weapon uses (border only)."""
+        self._ammo_used_by_sel = set(ammo_secs or ())
+        for sec in self._ammo_buttons:
+            self._apply_ammo_btn_border(sec)
 
     def _make_ammo_toggle(self, sec: str) -> QToolButton:
         """One ammo toggle: texture box only (name in tooltip)."""
@@ -1291,10 +1328,7 @@ class MainWindow(QMainWindow):
         btn.setIcon(self._ammo_box_icon(self._ammo_thumb_path(sec), enabled=enabled))
         btn.setToolTip(self._ammo_tip(sec, enabled))
         btn.setStyleSheet(
-            "QToolButton { border: 1px solid #444; border-radius: 0px; "
-            "padding: 0px; margin: 0px; background: transparent; }"
-            "QToolButton:checked { border-color: #6a9e6a; }"
-            "QToolButton:!checked { border-color: #96826a; }"
+            self._ammo_btn_stylesheet(used=sec in self._ammo_used_by_sel)
         )
         btn.toggled.connect(lambda on, s=sec: self._on_ammo_toggled(s, on))
         self._ammo_buttons[sec] = btn
@@ -1384,6 +1418,8 @@ class MainWindow(QMainWindow):
             self.ammo_layout.addWidget(row_host, row, 1)
             row += 1
         self.ammo_panel.setVisible(self.category == "weapons")
+        # Re-apply selection highlight after rebuild.
+        self._highlight_weapon_ammos(self._ammo_used_by_sel)
         log.debug(
             "ammo toggles fac=%s sections=%d off=%d",
             self.faction,
@@ -1759,6 +1795,7 @@ class MainWindow(QMainWindow):
     def _clear_detail(self) -> None:
         self._fill_kv_table(self.detail_info, [])
         self._fill_kv_table(self.detail_stats, [])
+        self._highlight_weapon_ammos(None)
 
     def _rebuild_list(self) -> None:
         t0 = time.perf_counter()
@@ -1925,6 +1962,7 @@ class MainWindow(QMainWindow):
         self._set_item_selected_icon(prev, selected=False)
         self._set_item_selected_icon(cur, selected=True)
         if not cur:
+            self._highlight_weapon_ammos(None)
             return
         sec = cur.data(Qt.ItemDataRole.UserRole)
         self._sel_by_cat[self.category] = sec
@@ -1936,6 +1974,10 @@ class MainWindow(QMainWindow):
                 for a in (entry.get("ammo_class") or [])
                 if str(a).strip()
             ]
+            if self.category == "weapons":
+                self._highlight_weapon_ammos(set(ammos))
+            else:
+                self._highlight_weapon_ammos(None)
             ammo_s = (
                 ", ".join(ammo_section_label(a) for a in ammos) if ammos else "—"
             )

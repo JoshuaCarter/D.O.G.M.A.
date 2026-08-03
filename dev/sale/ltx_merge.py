@@ -10,8 +10,10 @@ from .diaglog import get_logger
 
 log = get_logger("ltx_merge")
 
+# Parent list may include spaces after commas:
+#   [actor_helm_battle]:body_damage_absent, head_damage_035
 _SEC_RE = re.compile(
-    r"^\s*(\!?\[)([^\]]+)\](?:\s*:\s*([^\s]+))?",
+    r"^\s*(\!?\[)([^\]]+)\](?:\s*:\s*(.+))?\s*$",
     re.IGNORECASE,
 )
 _KV_RE = re.compile(r"^\s*([^=;\s][^=]*?)\s*=\s*(.*)$")
@@ -128,14 +130,25 @@ def _parent_list(par: str | None) -> list[str]:
     return [p.strip() for p in par.split(",") if p.strip()]
 
 
+def _flatten_parents(
+    sections: dict[str, dict[str, str]], parents: list[str]
+) -> dict[str, str]:
+    """Merge parent sections in order (later parents override), matching the engine."""
+    base: dict[str, str] = {}
+    for p in parents:
+        if p in sections:
+            base.update(sections[p])
+    return base
+
+
 def _rebase_owned(
     sections: dict[str, dict[str, str]],
     owned: dict[str, set[str]],
     sec: str,
-    primary: str | None,
+    parents: list[str],
 ) -> None:
-    """Rebuild ``sec`` from ``primary``, keeping only keys this section wrote."""
-    base = dict(sections[primary]) if primary and primary in sections else {}
+    """Rebuild ``sec`` from all parents, keeping only keys this section wrote."""
+    base = _flatten_parents(sections, parents)
     prev = sections.get(sec) or {}
     for key in owned.get(sec, ()):
         if key in prev:
@@ -161,7 +174,7 @@ def _apply_file(
     block_wrote_icons = False
     # Header-only ``[sec]:fake_parent`` (Enhanced Recoil aliases) must not
     # flatten foreign inv_name / icons_texture onto the weapon.
-    pending_reparent: tuple[str, str] | None = None
+    pending_reparent: tuple[str, list[str]] | None = None
     bundles = icon_bundles if icon_bundles is not None else {}
     parents_out = section_parents if section_parents is not None else {}
     owned_keys = owned if owned is not None else {}
@@ -188,10 +201,10 @@ def _apply_file(
             if primary and section_parents is not None:
                 parents_out[cur] = primary
             if cur not in sections:
-                sections[cur] = dict(sections[primary]) if primary else {}
-            elif not patch and primary:
+                sections[cur] = _flatten_parents(sections, parents)
+            elif not patch and parents:
                 # Defer rebase until a body key proves this isn't a recoil-only alias.
-                pending_reparent = (cur, primary)
+                pending_reparent = (cur, parents)
             n += 1
             continue
         if cur is None:

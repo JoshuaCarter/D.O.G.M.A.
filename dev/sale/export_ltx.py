@@ -14,20 +14,18 @@ from .balance import (
     ammo_enabled_map,
     effective_category,
     get_item_ltx_override,
+    item_in_ltx,
 )
-from .kind_limits import item_limit_for, select_pool_for_ltx, select_weapons_for_ltx
 from .diaglog import get_logger
 from .score import (
-    FACTION_COMMUNITY,
     FACTIONS,
-    armor_pts,
+    armor_score01,
     is_bad_ammo,
-    weapon_ammo_allowed,
+    price_scale_settings,
+    scale_shop_pts,
     weapon_enabled_ammos,
-    weapon_name_faction_ok,
-    weapon_pts,
+    weapon_score01,
 )
-from .spawn_filter import has_attached_scope, has_attached_silencer
 from .settings import STOCK_STRIP_YML, ensure_dirs
 
 log = get_logger("export")
@@ -40,6 +38,25 @@ def ceil_pts_10(pts: int | float) -> int:
         return 10
     return int(math.ceil(p / 10.0) * 10)
 
+
+def apply_price_scale(
+    scores01: dict[str, float], cat_cfg: dict[str, Any] | None
+) -> dict[str, int]:
+    """Shop pts from price scale: relative 0–1 scores → [min, max], ceil to 10."""
+    if not scores01:
+        return {}
+    out_lo, out_hi = price_scale_settings(cat_cfg)
+    vals = [float(v) for v in scores01.values()]
+    pool_min = min(vals)
+    pool_max = max(vals)
+    return {
+        sec: ceil_pts_10(
+            scale_shop_pts(float(s01), pool_min, pool_max, out_lo, out_hi)
+        )
+        for sec, s01 in scores01.items()
+    }
+
+
 # Stock / GAMMA shop lines to strip (true,*) so only editor gear remains.
 # Parsed from a live new_game_loadouts.ltx when available.
 _LOADOUT_SECTIONS = ["shared"] + [f"{f}_loadout" for f in FACTIONS]
@@ -48,69 +65,6 @@ _REPO_SRC = Path(__file__).resolve().parents[2] / "src" / "tweaks" / "stat_deriv
 _DEFAULT_EXPORT = (
     _REPO_SRC / "configs" / "mod_new_game_loadouts_dogma_stat_derived.ltx"
 )
-
-
-def _in_shop_weapon(
-    sec: str,
-    entry: dict[str, Any],
-    faction: str,
-    cat_cfg: dict[str, Any],
-    *,
-    ammo_map: dict[str, bool] | None = None,
-) -> tuple[bool, int]:
-    stats = entry.get("stats") or {}
-    pts = weapon_pts(
-        stats,
-        cat_cfg.get("weights") or {},
-        float(cat_cfg.get("cost_mult") or 1000),
-        cat_cfg.get("ceilings"),
-        cat_cfg.get("curves"),
-    )
-    if pts >= float(cat_cfg.get("max_pts") or 900):
-        return False, pts
-    if not weapon_name_faction_ok(sec, faction):
-        return False, pts
-    if not weapon_ammo_allowed(entry.get("ammo_class") or [], ammo_map):
-        return False, pts
-    if not bool(cat_cfg.get("allow_suppressed", False)) and has_attached_silencer(
-        entry=entry
-    ):
-        return False, pts
-    if not bool(cat_cfg.get("allow_scoped", False)) and has_attached_scope(
-        entry=entry
-    ):
-        return False, pts
-    return True, pts
-
-
-def _in_shop_armor(
-    entry: dict[str, Any],
-    faction: str,
-    cat_cfg: dict[str, Any],
-    *,
-    is_helmet: bool,
-) -> tuple[bool, int]:
-    stats = entry.get("stats") or {}
-    pts = armor_pts(
-        stats,
-        cat_cfg.get("weights") or {},
-        float(cat_cfg.get("cost_mult") or 1000),
-        is_helmet=is_helmet,
-        ceilings=cat_cfg.get("ceilings"),
-        curves=cat_cfg.get("curves"),
-    )
-    if pts >= float(cat_cfg.get("max_pts") or 550):
-        return False, pts
-    if is_helmet:
-        return True, pts
-    want = FACTION_COMMUNITY.get(faction, faction)
-    community = (entry.get("community") or "").strip()
-    allow_univ = bool(cat_cfg.get("include_universal_armor", True))
-    if community == want:
-        return True, pts
-    if allow_univ and community in ("", "actor"):
-        return True, pts
-    return False, pts
 
 
 def first_good_ammo(
@@ -128,48 +82,34 @@ def first_good_ammo(
 def build_faction_shop(
     items: dict[str, Any], balance: dict[str, Any], faction: str
 ) -> dict[str, int]:
-    """sec -> pts for purchasable gear (ammo granted via ammo_count, not shop)."""
+    """sec → pts for checkbox-included gear (ammo via ammo_count, not shop)."""
     shop: dict[str, int] = {}
-    wcfg = effective_category(balance, faction, "weapons")
-    ocfg = effective_category(balance, faction, "outfits")
-    hcfg = effective_category(balance, faction, "helmets")
-    ammo_map = ammo_enabled_map(balance, faction)
-
-    weapons = items.get("weapons") or {}
-    eligible: dict[str, int] = {}
-    pts_by_sec: dict[str, int] = {}
-    for sec, entry in weapons.items():
-        ok, pts = _in_shop_weapon(sec, entry, faction, wcfg, ammo_map=ammo_map)
-        pts_by_sec[sec] = int(pts)
-        if ok:
-            eligible[sec] = int(pts)
-        elif get_item_ltx_override(balance, sec) == "include":
-            # Force-in still needs a pts value for LTX output.
-            pts_by_sec[sec] = int(pts)
-    for sec in select_weapons_for_ltx(
-        weapons, balance, eligible=eligible, cat_cfg=wcfg
-    ):
-        shop[sec] = ceil_pts_10(pts_by_sec.get(sec, 0))
-
-    for cat, cfg, is_helm in (
-        ("outfits", ocfg, False),
-        ("helmets", hcfg, True),
-    ):
+    for cat in ("weapons", "outfits", "helmets"):
+        cfg = effective_category(balance, faction, cat)
         pool = items.get(cat) or {}
-        elig: dict[str, int] = {}
-        pts_map: dict[str, int] = {}
+        picked: dict[str, float] = {}
         for sec, entry in pool.items():
-            ok, pts = _in_shop_armor(entry, faction, cfg, is_helmet=is_helm)
-            pts_map[sec] = int(pts)
-            if ok:
-                elig[sec] = int(pts)
-            elif get_item_ltx_override(balance, sec) == "include":
-                pts_map[sec] = int(pts)
-        for sec in select_pool_for_ltx(
-            pool, balance, eligible=elig, limit=item_limit_for(cfg)
-        ):
-            shop[sec] = ceil_pts_10(pts_map.get(sec, 0))
-
+            if not item_in_ltx(get_item_ltx_override(balance, sec)):
+                continue
+            stats = entry.get("stats") or {}
+            if cat == "weapons":
+                s01 = weapon_score01(
+                    stats,
+                    cfg.get("weights") or {},
+                    ceilings=cfg.get("ceilings"),
+                    curves=cfg.get("curves"),
+                )
+            else:
+                s01 = armor_score01(
+                    stats,
+                    cfg.get("weights") or {},
+                    is_helmet=cat == "helmets",
+                    ceilings=cfg.get("ceilings"),
+                    curves=cfg.get("curves"),
+                )
+            picked[sec] = float(s01)
+        for sec, pts in apply_price_scale(picked, cfg).items():
+            shop[sec] = int(pts)
     return shop
 
 

@@ -1,0 +1,44 @@
+---
+description: SALE never live-recalcs; LTX is checkbox-only
+globs: dev/sale/**/*
+alwaysApply: false
+---
+
+# SALE — recalc + checkbox LTX
+
+## No live recalc on Budget knobs
+
+Weight / ceiling / toggle / price-scale edits → update `self.balance` and `_mark_balance_dirty()` only.
+
+**Do not** call `_run_score_refresh`, `_run_list_refresh`, or `_rebuild_list` from those controls.
+
+Score refresh happens on:
+
+- **Ctrl+S** (`_force_save` → `_save_now` → `_run_score_refresh`)
+- **Export / Deploy** prep (`_prepare_export` → `_save_now`) so LTX matches current weights/price scale
+
+Close saves balance without a score refresh. `_run_list_refresh` is for sort / faction / tab / filter UI only.
+
+## LTX include = checkbox only
+
+- Tile checkbox checked → `item_ltx_overrides[sec] = "include"` → exported.
+- Unchecked → not in LTX.
+- No auto-include, no `max_pts` / `cost_mult`, no kind caps / `max_items`.
+- Wrong-faction paint does **not** block the checkbox or export.
+
+## Tile colors
+
+- **Green** — checkbox checked (in LTX)
+- **Dark orange** — wrong faction (name-lock / community), unchecked
+- **Grey** — everything else unchecked
+
+## Price scaling (Budget)
+
+Always on. Two lines, same indent as other Budget controls:
+
+1. Scale min slider — 0–1000, step 1, default **100**
+2. Scale max slider — 0–1000, step 1, default **900**
+
+Shop pts = price scale only: each item’s relative 0–1 weighted score sets its
+distance between Scale min and Scale max. Tile top-left = shop pts; top-right =
+raw score×1000 (integer, no background). Refreshed on Ctrl+S / export.

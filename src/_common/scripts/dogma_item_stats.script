@@ -25,7 +25,7 @@ local TORSO_TIERS = {
 	{ armor = 0.650, ap_scale = 0.7000, hit_frac = 0.1500, name = "Max" },
 }
 
-local SCORE_COLS = 5 -- Min .. Mid+ for loadout/editor columns
+local SCORE_COLS = #TORSO_TIERS -- Min .. Max (all torso armor tiers)
 local BONE_DMG_TORSO = 0.9
 local BALLISTIC_BONUS = 1.1
 local K_AP_COMBAT_SCALE = 10
@@ -282,8 +282,11 @@ local function weapon_calculate(input)
 	local sniper_ap = input.sniper_ap_bonus or 0
 	local rounds = input.rounds or {}
 
-	local col_max = { 0, 0, 0, 0, 0 }
+	local col_max = {}
 	local col_src = {}
+	for i = 1, SCORE_COLS do
+		col_max[i] = 0
+	end
 	for _, r in ipairs(rounds) do
 		local k_hit = r.k_hit or 1
 		local k_ap = r.k_ap or 0
@@ -297,7 +300,7 @@ local function weapon_calculate(input)
 				tier.armor, tier.ap_scale, tier.hit_frac, BONE_DMG_TORSO,
 				dist, pellets, 1, sec, 1, sniper_ap
 			)
-			if dmg > col_max[i] then
+			if dmg > (col_max[i] or 0) then
 				col_max[i] = dmg
 				col_src[i] = sec
 			end
@@ -339,13 +342,7 @@ local function weapon_calculate(input)
 		sil_ok = 1
 	end
 
-	-- Keys match tooltip torso columns Min / Lgt / Lgt+ / Mid / Mid+.
-	local min_dps = sustained_dps(col_max[1], rpm, mag, reload_s)
-	local lgt_dps = sustained_dps(col_max[2], rpm, mag, reload_s)
-	local lgtp_dps = sustained_dps(col_max[3], rpm, mag, reload_s)
-	local mid_dps = sustained_dps(col_max[4], rpm, mag, reload_s)
-	local midp_dps = sustained_dps(col_max[5], rpm, mag, reload_s)
-
+	-- Keys match tooltip torso columns Min .. Max.
 	return {
 		hit_power = hit_power,
 		min_dmg = col_max[1] or 0,
@@ -353,11 +350,19 @@ local function weapon_calculate(input)
 		lgtp_dmg = col_max[3] or 0,
 		mid_dmg = col_max[4] or 0,
 		midp_dmg = col_max[5] or 0,
-		min_dps = min_dps,
-		lgt_dps = lgt_dps,
-		lgtp_dps = lgtp_dps,
-		mid_dps = mid_dps,
-		midp_dps = midp_dps,
+		hvy_dmg = col_max[6] or 0,
+		hvyp_dmg = col_max[7] or 0,
+		exo_dmg = col_max[8] or 0,
+		max_dmg = col_max[9] or 0,
+		min_dps = sustained_dps(col_max[1], rpm, mag, reload_s),
+		lgt_dps = sustained_dps(col_max[2], rpm, mag, reload_s),
+		lgtp_dps = sustained_dps(col_max[3], rpm, mag, reload_s),
+		mid_dps = sustained_dps(col_max[4], rpm, mag, reload_s),
+		midp_dps = sustained_dps(col_max[5], rpm, mag, reload_s),
+		hvy_dps = sustained_dps(col_max[6], rpm, mag, reload_s),
+		hvyp_dps = sustained_dps(col_max[7], rpm, mag, reload_s),
+		exo_dps = sustained_dps(col_max[8], rpm, mag, reload_s),
+		max_dps = sustained_dps(col_max[9], rpm, mag, reload_s),
 		burst = burst,
 		spread_ads = ads,
 		spread_hip = hip,
@@ -478,8 +483,37 @@ local function armor_input_from_ini(sec)
 		local k = PROT_KEYS[i]
 		prots[k] = ini_sys:r_float_ex(sec, k) or 0
 	end
+	-- Engine LTX typo — psy lives on telepatic_protection.
+	if (prots.telepathy_protection or 0) == 0 then
+		prots.telepathy_protection = ini_sys:r_float_ex(sec, "telepatic_protection") or 0
+	end
 	local is_helm = (IsItem and IsItem("helmet", sec))
 		or (string.find(sec, "helm", 1, true) ~= nil)
+	-- FireWound (ballistic) is bone armor (utils_item.get_outfit_protection).
+	local bones = ini_sys:r_string_ex(sec, "bones_koeff_protection")
+	if bones and bones ~= "" and parse_list then
+		if is_helm then
+			local bone_values = parse_list(ini_sys, bones, "bip01_head")
+			local br = bone_values and tonumber(bone_values[2])
+			if br then
+				prots.fire_wound_protection = br
+			end
+		else
+			local bone_values = parse_list(ini_sys, bones, "bip01_spine")
+			local br = bone_values and tonumber(bone_values[2])
+			if br then
+				prots.fire_wound_protection = br
+			end
+			local helm_ok = ini_sys:r_bool_ex(sec, "helmet_avaliable")
+			if not helm_ok then
+				local head_values = parse_list(ini_sys, bones, "bip01_head")
+				local head = head_values and tonumber(head_values[2])
+				if head then
+					prots.fire_wound_protection = (prots.fire_wound_protection or 0) + head
+				end
+			end
+		end
+	end
 	return {
 		protections = prots,
 		cost = ini_sys:r_float_ex(sec, "cost") or 0,

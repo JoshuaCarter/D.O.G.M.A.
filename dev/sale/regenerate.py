@@ -12,7 +12,7 @@ from .diaglog import get_logger
 from .ltx_merge import merge_configs, resolve_icon_bundle
 from .settings import ITEMS_YML, THUMBS_DIR, ensure_dirs
 from .score import is_bad_ammo
-from .kind_limits import weapon_kind
+from .weapon_kind import weapon_kind
 from .spawn_filter import (
     has_attached_scope,
     has_attached_silencer,
@@ -402,18 +402,13 @@ def load_items(path: Path | None = None) -> dict[str, Any]:
     try:
         data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
         # Drop name-blocked / explosive / gauss from older caches without regenerate.
-        # Also rename legacy mut/mid/hvy/max score keys → Min/Lgt/Lgt+/Mid/Mid+.
-        # Order matters for true legacy files (mid→lgtp before hvy→mid).
-        # Current schema already uses mid_* for Mid — never delete those when lgtp_* exists.
+        # Legacy mut→min; very-old mid→lgtp (keep mid_* when both exist — mid is Mid now).
+        # hvy/max are real Hvy/Max tiers — do not rename them.
         _stat_renames = [
             ("mut_dmg", "min_dmg"),
             ("mut_dps", "min_dps"),
             ("mid_dmg", "lgtp_dmg"),
             ("mid_dps", "lgtp_dps"),
-            ("hvy_dmg", "mid_dmg"),
-            ("hvy_dps", "mid_dps"),
-            ("max_dmg", "midp_dmg"),
-            ("max_dps", "midp_dps"),
         ]
         _legacy_mid_as_lgtp = {"mid_dmg", "mid_dps"}
         renamed_stats = 0

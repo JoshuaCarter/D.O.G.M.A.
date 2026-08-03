@@ -55,7 +55,7 @@ def merge_curves(stored: dict[str, Any] | None) -> dict[str, str]:
 
 # (stat_key, weight_key, scale_slider_max, inverse, default_weight)
 # default weight 0 = excluded until the slider is raised; regenerate always stores all stats.
-# Order = SALE sidebar / detail table. Score cols = tooltip Min/Lgt/Lgt+/Mid/Mid+.
+# Order = SALE sidebar / detail table. Score cols = tip Min..Max torso tiers.
 # scale_slider_max = hard max for the Scale max slider AND default 0–x ceiling.
 # Hit power: engine/Lua is 0–1; SALE display/scoring/ceilings use tip-style percent.
 HIT_POWER_PCT_CEILING = 200.0
@@ -84,11 +84,19 @@ WEAPON_WEIGHTS = [
     ("lgtp_dmg", "w_lgtp_dmg", 500, False, 0.0),
     ("mid_dmg", "w_mid_dmg", 500, False, 0.0),
     ("midp_dmg", "w_midp_dmg", 500, False, 0.0),
+    ("hvy_dmg", "w_hvy_dmg", 500, False, 0.0),
+    ("hvyp_dmg", "w_hvyp_dmg", 500, False, 0.0),
+    ("exo_dmg", "w_exo_dmg", 500, False, 0.0),
+    ("max_dmg", "w_max_dmg", 500, False, 0.0),
     ("min_dps", "w_min_dps", 500, False, 0.5),
     ("lgt_dps", "w_lgt_dps", 500, False, 0.5),
     ("lgtp_dps", "w_lgtp_dps", 500, False, 0.5),
     ("mid_dps", "w_mid_dps", 500, False, 0.5),
     ("midp_dps", "w_midp_dps", 500, False, 0.5),
+    ("hvy_dps", "w_hvy_dps", 500, False, 0.5),
+    ("hvyp_dps", "w_hvyp_dps", 500, False, 0.5),
+    ("exo_dps", "w_exo_dps", 500, False, 0.5),
+    ("max_dps", "w_max_dps", 500, False, 0.5),
     ("reload_s", "w_reload", 10, True, 0.0),
     ("rpm", "w_rpm", 1200, False, 0.0),
     ("mag", "w_mag", 200, False, 0.0),
@@ -260,7 +268,7 @@ def section_name_faction(sec: str) -> str | None:
 
 
 def weapon_name_faction_ok(sec: str, faction: str) -> bool:
-    """False when the weapon section is name-locked to another faction."""
+    """False when name-locked to another faction (paint / tooltip only)."""
     fac = (faction or "").strip()
     if not fac or fac == "Default":
         return True
@@ -268,6 +276,36 @@ def weapon_name_faction_ok(sec: str, faction: str) -> bool:
     if locked is None:
         return True
     return locked == fac
+
+
+def armor_faction_ok(
+    sec: str,
+    entry: dict[str, Any] | None,
+    faction: str,
+    *,
+    allow_universal: bool = True,
+) -> bool:
+    """Whether outfit/helmet matches the viewed faction (paint / tooltip only).
+
+    Does not control LTX include — checkbox alone does.
+
+    - Explicit ``community`` matching the faction always passes (so
+      ``cs_stalker_outfit`` / community=csky stays Clear Sky despite the
+      ``stalker`` name token).
+    - Empty / ``actor`` community passes only when ``allow_universal`` and the
+      section is not name-locked to another faction.
+    - Any other community fails (painted wrong-faction).
+    """
+    fac = (faction or "").strip()
+    if not fac or fac == "Default":
+        return True
+    want = FACTION_COMMUNITY.get(fac, fac)
+    community = ((entry or {}).get("community") or "").strip()
+    if community == want:
+        return True
+    if allow_universal and community in ("", "actor"):
+        return weapon_name_faction_ok(sec, fac)
+    return False
 
 
 def _clamp01(x: float) -> float:
@@ -286,9 +324,69 @@ def _inv_norm01(raw: float, max_v: float) -> float:
     return _clamp01(1.0 - raw / max_v)
 
 
-def score_to_points(avg01: float, cost_mult: float) -> int:
-    pts = int(round((avg01 or 0) * cost_mult))
-    return max(1, pts)
+# Raw score display multiplier (UI only): show round(score01 * 1000).
+SCORE_RAW_DISPLAY = 1000
+
+
+def score_raw_display(score01: float) -> int:
+    """Integer raw score for tiles: score01 × 1000 (no fractional part)."""
+    return int(round(_clamp01(score01 or 0.0) * SCORE_RAW_DISPLAY))
+
+
+def price_scale_settings(cat_cfg: dict[str, Any] | None) -> tuple[int, int]:
+    """Return (out_min, out_max) for shop/LTX pts (always on)."""
+    cfg = cat_cfg or {}
+    try:
+        lo = int(round(float(cfg.get("price_scale_min", 100))))
+    except (TypeError, ValueError):
+        lo = 100
+    try:
+        hi = int(round(float(cfg.get("price_scale_max", 900))))
+    except (TypeError, ValueError):
+        hi = 900
+    lo = max(0, min(1000, lo))
+    hi = max(0, min(1000, hi))
+    if lo > hi:
+        lo, hi = hi, lo
+    return lo, hi
+
+
+def scale_shop_pts(
+    score01: float,
+    pool_min: float,
+    pool_max: float,
+    out_min: float,
+    out_max: float,
+) -> int:
+    """Map relative position of score01 in [pool_min, pool_max] → [out_min, out_max].
+
+    Distance along the price scale is (score - min) / (max - min) among the pool.
+    Equal pool → out_min.
+    """
+    try:
+        r = _clamp01(float(score01))
+    except (TypeError, ValueError):
+        r = 0.0
+    lo_r, hi_r = float(pool_min), float(pool_max)
+    lo_o, hi_o = float(out_min), float(out_max)
+    if hi_r <= lo_r:
+        return max(0, int(round(lo_o)))
+    t = (r - lo_r) / (hi_r - lo_r)
+    t = _clamp01(t)
+    return max(0, int(round(lo_o + t * (hi_o - lo_o))))
+
+
+def _terms_score01(terms: dict[str, tuple[float, float]]) -> float:
+    sum_nw = 0.0
+    sum_w = 0.0
+    for w, final in terms.values():
+        if w <= 0:
+            continue
+        sum_nw += final
+        sum_w += w
+    if sum_w <= 0:
+        return 0.0
+    return _clamp01(sum_nw / sum_w)
 
 
 def weapon_stat_terms(
@@ -356,50 +454,34 @@ def armor_stat_terms(
     return out
 
 
-def weapon_pts(
+def weapon_score01(
     stats: dict[str, Any],
     weights: dict[str, float],
-    cost_mult: float,
     ceilings: dict[str, float] | None = None,
     curves: dict[str, str] | None = None,
-) -> int:
-    terms = weapon_stat_terms(stats, weights, ceilings, curves)
-    sum_nw = 0.0
-    sum_w = 0.0
-    for w, final in terms.values():
-        if w <= 0:
-            continue
-        sum_nw += final
-        sum_w += w
-    avg = (sum_nw / sum_w) if sum_w > 0 else 0.0
-    return score_to_points(avg, cost_mult)
+) -> float:
+    """Weighted average score in 0–1 (input to price scale + raw display)."""
+    return _terms_score01(weapon_stat_terms(stats, weights, ceilings, curves))
 
 
-def armor_pts(
+def armor_score01(
     stats: dict[str, Any],
     weights: dict[str, float],
-    cost_mult: float,
     *,
     is_helmet: bool,
     ceilings: dict[str, float] | None = None,
     curves: dict[str, str] | None = None,
-) -> int:
-    terms = armor_stat_terms(
-        stats,
-        weights,
-        is_helmet=is_helmet,
-        ceilings=ceilings,
-        curves=curves,
+) -> float:
+    """Weighted average score in 0–1 (input to price scale + raw display)."""
+    return _terms_score01(
+        armor_stat_terms(
+            stats,
+            weights,
+            is_helmet=is_helmet,
+            ceilings=ceilings,
+            curves=curves,
+        )
     )
-    sum_nw = 0.0
-    sum_w = 0.0
-    for w, final in terms.values():
-        if w <= 0:
-            continue
-        sum_nw += final
-        sum_w += w
-    avg = (sum_nw / sum_w) if sum_w > 0 else 0.0
-    return score_to_points(avg, cost_mult)
 
 
 def weapon_bloc(sec: str, ammo_class: str) -> str:
@@ -569,17 +651,6 @@ def ammo_bloc_label(bloc: str) -> str:
     }.get((bloc or "").lower(), "neither")
 
 
-def weapon_ammo_families(ammo_class: list[str] | None) -> list[str]:
-    seen: set[str] = set()
-    out: list[str] = []
-    for a in ammo_class or []:
-        fam = ammo_family(str(a))
-        if fam and fam not in seen:
-            seen.add(fam)
-            out.append(fam)
-    return out
-
-
 def ammo_section_label(sec: str) -> str:
     """ammo_5.56x45_fmj → 5.56x45 fmj"""
     s = (sec or "").strip()
@@ -636,15 +707,6 @@ def sort_ammo_sections_by_family_price(
     )
 
 
-def collect_ammo_families(weapons: dict[str, Any] | None) -> list[str]:
-    """Sorted unique ammo families used by any weapon in the pool."""
-    seen: set[str] = set()
-    for entry in (weapons or {}).values():
-        for fam in weapon_ammo_families(entry.get("ammo_class") or []):
-            seen.add(fam)
-    return sorted(seen)
-
-
 def ammo_is_enabled(ammo_sec: str, enabled_map: dict[str, bool] | None) -> bool:
     """Missing keys mean enabled. Legacy family keys still apply to matching sections."""
     em = enabled_map or {}
@@ -670,19 +732,3 @@ def weapon_enabled_ammos(
             out.append(sec)
     return out
 
-
-def weapon_ammo_allowed(
-    ammo_class: list[str] | None, enabled_map: dict[str, bool] | None
-) -> bool:
-    """True if the weapon has ≥1 enabled non-bad ammo (or no ammo_class at all).
-
-    Deselected ammos do not exclude the gun by themselves — only zero enabled does.
-    Bad / verybad rounds never count.
-    """
-    ammos = [str(a).strip() for a in (ammo_class or []) if str(a).strip()]
-    if not ammos:
-        return True
-    good = [a for a in ammos if not is_bad_ammo(a)]
-    if not good:
-        return False
-    return any(ammo_is_enabled(a, enabled_map) for a in good)

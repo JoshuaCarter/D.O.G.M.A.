@@ -21,7 +21,7 @@ TORSO_TIERS = [
     {"armor": 0.550, "ap_scale": 0.7000, "hit_frac": 0.1500},
     {"armor": 0.650, "ap_scale": 0.7000, "hit_frac": 0.1500},
 ]
-SCORE_COLS = 5
+SCORE_COLS = len(TORSO_TIERS)  # Min .. Max
 BONE_DMG_TORSO = 0.9
 BALLISTIC_BONUS = 1.1
 K_AP_COMBAT_SCALE = 10
@@ -241,7 +241,7 @@ def _weapon_calculate_py(inp: dict[str, Any]) -> dict[str, Any]:
                     burst = n
                     break
 
-    # Keys match tooltip torso columns Min / Lgt / Lgt+ / Mid / Mid+.
+    # Keys match tooltip torso columns Min .. Max.
     return {
         "hit_power": hit_power,
         "min_dmg": col_max[0],
@@ -249,11 +249,19 @@ def _weapon_calculate_py(inp: dict[str, Any]) -> dict[str, Any]:
         "lgtp_dmg": col_max[2],
         "mid_dmg": col_max[3],
         "midp_dmg": col_max[4],
+        "hvy_dmg": col_max[5],
+        "hvyp_dmg": col_max[6],
+        "exo_dmg": col_max[7],
+        "max_dmg": col_max[8],
         "min_dps": sustained_dps(col_max[0], rpm, mag, reload_s),
         "lgt_dps": sustained_dps(col_max[1], rpm, mag, reload_s),
         "lgtp_dps": sustained_dps(col_max[2], rpm, mag, reload_s),
         "mid_dps": sustained_dps(col_max[3], rpm, mag, reload_s),
         "midp_dps": sustained_dps(col_max[4], rpm, mag, reload_s),
+        "hvy_dps": sustained_dps(col_max[5], rpm, mag, reload_s),
+        "hvyp_dps": sustained_dps(col_max[6], rpm, mag, reload_s),
+        "exo_dps": sustained_dps(col_max[7], rpm, mag, reload_s),
+        "max_dps": sustained_dps(col_max[8], rpm, mag, reload_s),
         "burst": burst,
         "spread_ads": ads,
         "spread_hip": hip,
@@ -417,10 +425,58 @@ def build_weapon_input(sec: str, sections: dict[str, dict[str, str]]) -> dict[st
     }
 
 
+def _parse_csv_floats(raw: str) -> list[float]:
+    out: list[float] = []
+    for part in str(raw).split(","):
+        part = part.strip()
+        if not part:
+            continue
+        out.append(_f(part, 0.0))
+    return out
+
+
+def _bone_armor_value(
+    sections: dict[str, dict[str, str]], bones_sec: str, bone_key: str
+) -> float | None:
+    """Second float of ``bip01_* = 1, 0.35`` (same as utils_item / parse_list)."""
+    raw = (sections.get(bones_sec) or {}).get(bone_key)
+    if raw is None or str(raw).strip() == "":
+        return None
+    vals = _parse_csv_floats(raw)
+    if len(vals) >= 2:
+        return vals[1]
+    if len(vals) == 1:
+        return vals[0]
+    return None
+
+
 def build_armor_input(sec: str, sections: dict[str, dict[str, str]]) -> dict[str, Any]:
     d = sections.get(sec) or {}
     prots = {k: _f(d.get(k), 0) for k in PROT_KEYS}
+    # Engine LTX typo — psy lives on telepatic_protection.
+    if prots.get("telepathy_protection", 0) == 0:
+        prots["telepathy_protection"] = _f(d.get("telepatic_protection"), 0)
     is_helm = "helm" in sec.lower() or (d.get("class") or "").upper() == "E_HLMET"
+    # FireWound (ballistic) is bone armor, not the flat fire_wound_protection key
+    # (helmets omit that key; outfits often have a matching flat value).
+    bones = (d.get("bones_koeff_protection") or "").strip()
+    if bones:
+        if is_helm:
+            br = _bone_armor_value(sections, bones, "bip01_head")
+            if br is not None:
+                prots["fire_wound_protection"] = br
+        else:
+            br = _bone_armor_value(sections, bones, "bip01_spine")
+            if br is not None:
+                prots["fire_wound_protection"] = br
+            # utils_item: add head bone when the outfit has no helmet slot.
+            helm_slot = (d.get("helmet_avaliable") or "").strip().lower()
+            if helm_slot not in ("true", "1", "yes"):
+                head = _bone_armor_value(sections, bones, "bip01_head")
+                if head is not None:
+                    prots["fire_wound_protection"] = (
+                        _f(prots.get("fire_wound_protection"), 0) + head
+                    )
     return {
         "protections": prots,
         "cost": _f(d.get("cost"), 0),

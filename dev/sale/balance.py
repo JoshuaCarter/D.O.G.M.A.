@@ -38,29 +38,23 @@ def default_balance() -> dict[str, Any]:
     return {
         "default": {
             "weapons": {
-                "max_pts": 900,
-                "cost_mult": 1000,
-                # Off = naturally exclude guns with attached silencer / scope.
-                "allow_suppressed": False,
-                "allow_scoped": False,
-                # Per LTX kind (w_pistol, …): at most N lowest-pts guns (0–10).
-                "kind_limits": {},
+                # Remap checked-item shop pts into [min, max] (display + LTX).
+                "price_scale_min": 100,
+                "price_scale_max": 900,
                 "weights": _default_weights_weapon(),
                 "ceilings": default_ceilings_weapon(),
             },
             "outfits": {
-                "max_pts": 550,
-                "cost_mult": 1000,
                 "include_universal_armor": True,
-                # At most N lowest-pts outfits in LTX (0–10).
-                "max_items": 10,
+                "price_scale_min": 100,
+                "price_scale_max": 900,
                 "weights": _default_weights_armor(),
                 "ceilings": default_ceilings_armor(is_helmet=False),
             },
             "helmets": {
-                "max_pts": 250,
-                "cost_mult": 1000,
-                "max_items": 10,
+                "include_universal_armor": True,
+                "price_scale_min": 100,
+                "price_scale_max": 900,
                 "weights": _default_weights_armor(),
                 "ceilings": default_ceilings_armor(is_helmet=True),
             },
@@ -69,16 +63,25 @@ def default_balance() -> dict[str, Any]:
     }
 
 
-# Old score keys → tooltip-aligned Min/Lgt/Lgt+/Mid/Mid+ (order matters).
+# Legacy Budget keys from the auto-include era — stripped on load.
+_DEAD_CAT_KEYS = (
+    "max_pts",
+    "cost_mult",
+    "kind_limits",
+    "max_items",
+    "allow_suppressed",
+    "allow_scoped",
+    "price_scale_enabled",
+)
+
+
+# Legacy weight keys → current Min/Lgt+/… schema (order matters).
+# Do not rename w_hvy_* / w_max_* — those are real Hvy / Max tiers now.
 _WEIGHT_KEY_RENAMES: list[tuple[str, str]] = [
     ("w_mut_dmg", "w_min_dmg"),
     ("w_mut_dps", "w_min_dps"),
-    ("w_mid_dmg", "w_lgtp_dmg"),  # old mid was Lgt+
+    ("w_mid_dmg", "w_lgtp_dmg"),  # very old mid was Lgt+
     ("w_mid_dps", "w_lgtp_dps"),
-    ("w_hvy_dmg", "w_mid_dmg"),  # old hvy was Mid
-    ("w_hvy_dps", "w_mid_dps"),
-    ("w_max_dmg", "w_midp_dmg"),
-    ("w_max_dps", "w_midp_dps"),
 ]
 
 
@@ -171,31 +174,38 @@ def load_balance(path: Path | None = None) -> dict[str, Any]:
             if "curves" in cblock:
                 cblock.pop("curves", None)
                 migrated = True
-    # Legacy excluded_items (default-on include) → item_ltx_overrides force-exclude.
-    if isinstance(data.get("excluded_items"), dict) and data["excluded_items"]:
-        ovs = base.setdefault("item_ltx_overrides", {})
-        if not isinstance(ovs, dict):
-            ovs = {}
-            base["item_ltx_overrides"] = ovs
-        for sec, flag in data["excluded_items"].items():
-            if flag and str(sec) not in ovs:
-                ovs[str(sec)] = "exclude"
-        migrated = True
+            for dk in _DEAD_CAT_KEYS:
+                if dk in cblock:
+                    cblock.pop(dk, None)
+                    migrated = True
+    for _cat, cblock in (base.get("default") or {}).items():
+        if not isinstance(cblock, dict):
+            continue
+        for dk in _DEAD_CAT_KEYS:
+            if dk in cblock:
+                cblock.pop(dk, None)
+                migrated = True
     if "excluded_items" in data:
+        # Pre-checkbox exclude list — membership is checkbox-only now.
         migrated = True
-    # Do not keep excluded_items on the live balance object.
     base.pop("excluded_items", None)
     if isinstance(data.get("item_ltx_overrides"), dict):
-        ovs = base.setdefault("item_ltx_overrides", {})
-        if not isinstance(ovs, dict):
-            ovs = {}
-            base["item_ltx_overrides"] = ovs
+        ovs: dict[str, str] = {}
         for sec, mode in data["item_ltx_overrides"].items():
             m = str(mode or "").strip().lower()
-            if m in ("include", "exclude"):
-                ovs[str(sec)] = m
+            if m == "include":
+                ovs[str(sec)] = "include"
+            else:
+                # Drop legacy "exclude" / unknown modes.
+                migrated = True
+        if ovs:
+            base["item_ltx_overrides"] = ovs
+        else:
+            base.pop("item_ltx_overrides", None)
+            if data.get("item_ltx_overrides"):
+                migrated = True
     if migrated:
-        log.info("balance migrated score weight keys → Min/Lgt/Lgt+/Mid/Mid+")
+        log.info("balance migrated (weights / checkbox LTX / dead Budget keys)")
         try:
             save_balance(base, p)
         except Exception:
@@ -434,55 +444,42 @@ def clear_ammo_enabled(balance: dict[str, Any], faction: str) -> None:
 
 
 def get_item_ltx_override(balance: dict[str, Any], sec: str) -> str | None:
-    """Return ``\"include\"`` / ``\"exclude\"`` force, or None = follow natural shop."""
+    """Return ``\"include\"`` when checked for LTX, else None."""
     ovs = balance.get("item_ltx_overrides")
     if not isinstance(ovs, dict):
         return None
     mode = ovs.get(str(sec))
-    if mode in ("include", "exclude"):
-        return str(mode)
+    if mode == "include":
+        return "include"
     return None
 
 
 def set_item_ltx_override(
     balance: dict[str, Any], sec: str, mode: str | None
 ) -> None:
-    """Set/clear per-item LTX force. ``mode`` is include/exclude/None."""
+    """Set/clear per-item LTX include. Only ``include`` / None are stored."""
     key = str(sec)
     ovs = balance.setdefault("item_ltx_overrides", {})
     if not isinstance(ovs, dict):
         ovs = {}
         balance["item_ltx_overrides"] = ovs
-    if mode in ("include", "exclude"):
-        ovs[key] = mode
+    if mode == "include":
+        ovs[key] = "include"
         return
     ovs.pop(key, None)
     if not ovs:
         balance.pop("item_ltx_overrides", None)
 
 
-def item_in_ltx(natural_in_shop: bool, override: str | None) -> bool:
-    """Resolve final LTX membership from natural shop + optional force."""
-    if override == "exclude":
-        return False
-    if override == "include":
-        return True
-    return bool(natural_in_shop)
+def item_in_ltx(override: str | None) -> bool:
+    """Checkbox alone: included only when override is ``include``."""
+    return override == "include"
 
 
-def is_item_included(balance: dict[str, Any], sec: str, *, natural_in_shop: bool) -> bool:
-    """Final LTX include for ``sec`` given its natural shop eligibility."""
-    return item_in_ltx(natural_in_shop, get_item_ltx_override(balance, sec))
-
-
-def toggle_item_ltx_override(
-    balance: dict[str, Any], sec: str, *, natural_in_shop: bool
-) -> str | None:
-    """Empty→force opposite of natural; filled→clear back to auto. Returns new override."""
-    cur = get_item_ltx_override(balance, sec)
-    if cur is None:
-        nxt: str | None = "exclude" if natural_in_shop else "include"
-    else:
-        nxt = None
-    set_item_ltx_override(balance, sec, nxt)
-    return nxt
+def toggle_item_ltx_override(balance: dict[str, Any], sec: str) -> str | None:
+    """Toggle checkbox: include ↔ clear. Returns new override (include/None)."""
+    if get_item_ltx_override(balance, sec) == "include":
+        set_item_ltx_override(balance, sec, None)
+        return None
+    set_item_ltx_override(balance, sec, "include")
+    return "include"

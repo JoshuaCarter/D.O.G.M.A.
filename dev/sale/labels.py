@@ -5,20 +5,34 @@ from __future__ import annotations
 # key -> (display name, short tooltip)
 _LABELS: dict[str, tuple[str, str]] = {
     # Controls
-    "max_pts": ("Max points", "Items at or above this score are out of shop."),
-    "cost_mult": ("Cost multiplier", "Scales weighted average into shop points."),
+    "price_scale_min": (
+        "Scale min",
+        "Shop pts for the cheapest checked item (price scale always on).",
+    ),
+    "price_scale_max": (
+        "Scale max",
+        "Shop pts for the most expensive checked item (price scale always on).",
+    ),
     "include_universal_armor": (
         "Include factionless",
-        "Allow outfits with empty/actor community in faction shops.",
+        "Empty/actor community outfits/helmets count as this faction "
+        "(else painted wrong-faction). Checkbox still decides LTX.",
     ),
     # Meta / sort
-    "pts": ("Points", "Final shop score from weighted stats."),
+    "pts": (
+        "Shop pts",
+        "Price-scale value: relative 0–1 score maps cheapest→min, dearest→max.",
+    ),
+    "score_raw": (
+        "Raw score",
+        "Weighted score 0–1 × 1000 (integer). Sets distance along the price scale.",
+    ),
     "name": ("Name", "Friendly item name."),
     "sec": ("ID", "Config section id."),
-    "in_shop": ("In shop", "Under threshold and passes faction/ammo filters."),
+    "in_ltx": ("In LTX", "Checked for export (checkbox on tile)."),
     "community": ("Community", "Outfit faction community tag."),
     "ammo": ("Ammo", "Calibres this weapon uses."),
-    # Weapon stats / weights (score cols = tooltip Min / Lgt / Lgt+ / Mid / Mid+)
+    # Weapon stats / weights (score cols = tip Min .. Max torso tiers)
     "cost": ("Cost", "Base item cost (lower scores better when weighted)."),
     "w_price": ("Price", "Base item cost (lower scores better when weighted)."),
     "hit_power": (
@@ -29,8 +43,8 @@ _LABELS: dict[str, tuple[str, str]] = {
         "Hit power",
         "Weapon hit power as percent (engine 0–1 ×100; tip-style). Scale max 0–200.",
     ),
-    "min_dmg": ("Dmg vs Min", "Best ammo vs Min torso; mutant row if higher."),
-    "w_min_dmg": ("Dmg vs Min", "Best ammo vs Min torso; mutant row if higher."),
+    "min_dmg": ("Dmg vs Min", "Best ammo vs Min torso (0.011); mutant row if higher."),
+    "w_min_dmg": ("Dmg vs Min", "Best ammo vs Min torso (0.011); mutant row if higher."),
     "lgt_dmg": ("Dmg vs Lgt", "Best ammo vs Lgt torso armor (0.075)."),
     "w_lgt_dmg": ("Dmg vs Lgt", "Best ammo vs Lgt torso armor (0.075)."),
     "lgtp_dmg": ("Dmg vs Lgt+", "Best ammo vs Lgt+ torso armor (0.1)."),
@@ -39,6 +53,14 @@ _LABELS: dict[str, tuple[str, str]] = {
     "w_mid_dmg": ("Dmg vs Mid", "Best ammo vs Mid torso armor (0.15)."),
     "midp_dmg": ("Dmg vs Mid+", "Best ammo vs Mid+ torso armor (0.2)."),
     "w_midp_dmg": ("Dmg vs Mid+", "Best ammo vs Mid+ torso armor (0.2)."),
+    "hvy_dmg": ("Dmg vs Hvy", "Best ammo vs Hvy torso armor (0.25)."),
+    "w_hvy_dmg": ("Dmg vs Hvy", "Best ammo vs Hvy torso armor (0.25)."),
+    "hvyp_dmg": ("Dmg vs Hvy+", "Best ammo vs Hvy+ torso armor (0.4)."),
+    "w_hvyp_dmg": ("Dmg vs Hvy+", "Best ammo vs Hvy+ torso armor (0.4)."),
+    "exo_dmg": ("Dmg vs Exo", "Best ammo vs Exo torso armor (0.55)."),
+    "w_exo_dmg": ("Dmg vs Exo", "Best ammo vs Exo torso armor (0.55)."),
+    "max_dmg": ("Dmg vs Max", "Best ammo vs Max torso armor (0.65)."),
+    "w_max_dmg": ("Dmg vs Max", "Best ammo vs Max torso armor (0.65)."),
     "min_dps": ("DPS vs Min", "Sustained DPS vs Min torso / mutant."),
     "w_min_dps": ("DPS vs Min", "Sustained DPS vs Min torso / mutant."),
     "lgt_dps": ("DPS vs Lgt", "Sustained DPS vs Lgt torso armor."),
@@ -49,6 +71,14 @@ _LABELS: dict[str, tuple[str, str]] = {
     "w_mid_dps": ("DPS vs Mid", "Sustained DPS vs Mid torso armor."),
     "midp_dps": ("DPS vs Mid+", "Sustained DPS vs Mid+ torso armor."),
     "w_midp_dps": ("DPS vs Mid+", "Sustained DPS vs Mid+ torso armor."),
+    "hvy_dps": ("DPS vs Hvy", "Sustained DPS vs Hvy torso armor."),
+    "w_hvy_dps": ("DPS vs Hvy", "Sustained DPS vs Hvy torso armor."),
+    "hvyp_dps": ("DPS vs Hvy+", "Sustained DPS vs Hvy+ torso armor."),
+    "w_hvyp_dps": ("DPS vs Hvy+", "Sustained DPS vs Hvy+ torso armor."),
+    "exo_dps": ("DPS vs Exo", "Sustained DPS vs Exo torso armor."),
+    "w_exo_dps": ("DPS vs Exo", "Sustained DPS vs Exo torso armor."),
+    "max_dps": ("DPS vs Max", "Sustained DPS vs Max torso armor."),
+    "w_max_dps": ("DPS vs Max", "Sustained DPS vs Max torso armor."),
     "reload_s": ("Reload time", "Reload duration in seconds (lower is better)."),
     "w_reload": ("Reload time", "Reload duration in seconds (lower is better)."),
     "rpm": ("Fire rate", "Rounds per minute."),

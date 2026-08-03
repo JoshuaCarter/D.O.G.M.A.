@@ -238,18 +238,25 @@ _SECTION_FACTION_TOKENS = {
 }
 
 
+def section_name_faction_token(sec: str) -> str | None:
+    """Raw faction key token from ``sec`` (e.g. ``ecolog``, ``duty``, ``merc``)."""
+    parts = [p for p in (sec or "").strip().lower().split("_") if p]
+    for part in reversed(parts):
+        if part in _SECTION_FACTION_TOKENS:
+            return part
+    return None
+
+
 def section_name_faction(sec: str) -> str | None:
     """If ``sec`` embeds a faction key token, return that faction id.
 
     Scans underscore parts from the end so ``wpn_ak74u_m1_isg`` → isg and
     style prefixes like ``military_…`` do not steal the match.
     """
-    parts = [p for p in (sec or "").strip().lower().split("_") if p]
-    for part in reversed(parts):
-        fac = _SECTION_FACTION_TOKENS.get(part)
-        if fac is not None:
-            return fac
-    return None
+    tok = section_name_faction_token(sec)
+    if tok is None:
+        return None
+    return _SECTION_FACTION_TOKENS.get(tok)
 
 
 def weapon_name_faction_ok(sec: str, faction: str) -> bool:

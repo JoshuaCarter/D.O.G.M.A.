@@ -94,6 +94,7 @@ from .score import (
     hit_power_pct,
     normalize_curve,
     section_name_faction,
+    section_name_faction_token,
     weapon_ammo_allowed,
     weapon_name_faction_ok,
     weapon_pts,
@@ -240,6 +241,7 @@ def _icon_with_pts(
     faction_blocked: bool = False,
     selected: bool = False,
     name: str = "",
+    faction_tag: str = "",
     width: int = GRID_ICON_W,
     height: int = GRID_ICON_H,
 ) -> QIcon:
@@ -287,6 +289,18 @@ def _icon_with_pts(
         painter.fillRect(3, 3, tw, th, QColor(0, 0, 0, 180))
         painter.setPen(pts_color)
         painter.drawText(7, 3 + metrics.ascent(), pts_s)
+        tag = (faction_tag or "").strip()
+        if tag:
+            tag_font = QFont("Consolas", 8)
+            tag_font.setBold(True)
+            painter.setFont(tag_font)
+            tm = painter.fontMetrics()
+            tag_w = tm.horizontalAdvance(tag) + 8
+            tag_h = tm.height() + 2
+            tag_x = width - tag_w - 3
+            painter.fillRect(tag_x, 3, tag_w, tag_h, QColor(0, 0, 0, 180))
+            painter.setPen(QColor(200, 185, 140))
+            painter.drawText(tag_x + 4, 3 + tm.ascent(), tag)
         if name:
             name_font = QFont("Consolas", 8)
             painter.setFont(name_font)
@@ -2398,6 +2412,7 @@ class MainWindow(QMainWindow):
                 if thumb:
                     thumb_ok += 1
                 is_sel = bool(want_sec and sec == want_sec)
+                fac_tag = section_name_faction_token(sec) or ""
                 try:
                     item.setIcon(
                         _icon_with_pts(
@@ -2407,6 +2422,7 @@ class MainWindow(QMainWindow):
                             faction_blocked=fac_blocked,
                             selected=is_sel,
                             name=label,
+                            faction_tag=fac_tag,
                         )
                     )
                 except Exception:  # noqa: BLE001
@@ -2445,6 +2461,7 @@ class MainWindow(QMainWindow):
                         "in_shop": in_shop,
                         "faction_blocked": fac_blocked,
                         "name": label,
+                        "faction_tag": fac_tag,
                     },
                 )
                 # Let gridSize own layout — custom sizeHint breaks IconMode alignment.
@@ -2504,6 +2521,7 @@ class MainWindow(QMainWindow):
                     faction_blocked=bool(meta.get("faction_blocked")),
                     selected=selected,
                     name=str(meta.get("name") or ""),
+                    faction_tag=str(meta.get("faction_tag") or ""),
                 )
             )
         except Exception:  # noqa: BLE001

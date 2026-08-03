@@ -77,7 +77,7 @@ def hit_power_pct(raw: Any) -> float:
 
 
 WEAPON_WEIGHTS = [
-    ("cost", "w_price", 100000, True, 0.5),
+    ("cost", "w_price", 200000, True, 0.5),
     ("hit_power", "w_hit_power", HIT_POWER_PCT_CEILING, False, 0.0),
     ("min_dmg", "w_min_dmg", 500, False, 0.0),
     ("lgt_dmg", "w_lgt_dmg", 500, False, 0.0),
@@ -212,7 +212,7 @@ FACTION_LABELS = {
 def faction_label(faction: str) -> str:
     fac = (faction or "").strip()
     if fac == "Default":
-        return "Default"
+        return "Baseline"
     return FACTION_LABELS.get(fac, fac)
 
 
@@ -599,6 +599,41 @@ def collect_ammo_sections(weapons: dict[str, Any] | None) -> list[str]:
                 seen.add(sec)
                 out.append(sec)
     return sorted(out)
+
+
+def ammo_section_cost(ammo_pool: dict[str, Any] | None, sec: str) -> float:
+    """Inventory cost for an ammo section (0 if unknown)."""
+    entry = (ammo_pool or {}).get(sec) or {}
+    try:
+        return float(entry.get("cost") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def sort_ammo_sections_by_family_price(
+    sections: list[str],
+    ammo_pool: dict[str, Any] | None = None,
+) -> list[str]:
+    """Keep calibre families together; order families and members by cost asc."""
+    secs = [str(s).strip() for s in sections if str(s).strip()]
+    if not secs:
+        return []
+    fam_min: dict[str, float] = {}
+    for sec in secs:
+        fam = ammo_family(sec)
+        c = ammo_section_cost(ammo_pool, sec)
+        prev = fam_min.get(fam)
+        if prev is None or c < prev:
+            fam_min[fam] = c
+    return sorted(
+        secs,
+        key=lambda s: (
+            fam_min.get(ammo_family(s), 0.0),
+            ammo_family(s),
+            ammo_section_cost(ammo_pool, s),
+            s,
+        ),
+    )
 
 
 def collect_ammo_families(weapons: dict[str, Any] | None) -> list[str]:

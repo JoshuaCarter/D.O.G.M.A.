@@ -40,6 +40,11 @@ def default_balance() -> dict[str, Any]:
             "weapons": {
                 "max_pts": 900,
                 "cost_mult": 1000,
+                # Off = naturally exclude guns with attached silencer / scope.
+                "allow_suppressed": False,
+                "allow_scoped": False,
+                # Per LTX kind (w_pistol, …): at most N lowest-pts guns (0–10).
+                "kind_limits": {},
                 "weights": _default_weights_weapon(),
                 "ceilings": default_ceilings_weapon(),
             },
@@ -163,6 +168,29 @@ def load_balance(path: Path | None = None) -> dict[str, Any]:
             if "curves" in cblock:
                 cblock.pop("curves", None)
                 migrated = True
+    # Legacy excluded_items (default-on include) → item_ltx_overrides force-exclude.
+    if isinstance(data.get("excluded_items"), dict) and data["excluded_items"]:
+        ovs = base.setdefault("item_ltx_overrides", {})
+        if not isinstance(ovs, dict):
+            ovs = {}
+            base["item_ltx_overrides"] = ovs
+        for sec, flag in data["excluded_items"].items():
+            if flag and str(sec) not in ovs:
+                ovs[str(sec)] = "exclude"
+        migrated = True
+    if "excluded_items" in data:
+        migrated = True
+    # Do not keep excluded_items on the live balance object.
+    base.pop("excluded_items", None)
+    if isinstance(data.get("item_ltx_overrides"), dict):
+        ovs = base.setdefault("item_ltx_overrides", {})
+        if not isinstance(ovs, dict):
+            ovs = {}
+            base["item_ltx_overrides"] = ovs
+        for sec, mode in data["item_ltx_overrides"].items():
+            m = str(mode or "").strip().lower()
+            if m in ("include", "exclude"):
+                ovs[str(sec)] = m
     if migrated:
         log.info("balance migrated score weight keys → Min/Lgt/Lgt+/Mid/Mid+")
         try:
@@ -400,3 +428,58 @@ def clear_ammo_enabled(balance: dict[str, Any], faction: str) -> None:
         fblock.pop("weapons", None)
     if not fblock:
         (balance.get("factions") or {}).pop(faction, None)
+
+
+def get_item_ltx_override(balance: dict[str, Any], sec: str) -> str | None:
+    """Return ``\"include\"`` / ``\"exclude\"`` force, or None = follow natural shop."""
+    ovs = balance.get("item_ltx_overrides")
+    if not isinstance(ovs, dict):
+        return None
+    mode = ovs.get(str(sec))
+    if mode in ("include", "exclude"):
+        return str(mode)
+    return None
+
+
+def set_item_ltx_override(
+    balance: dict[str, Any], sec: str, mode: str | None
+) -> None:
+    """Set/clear per-item LTX force. ``mode`` is include/exclude/None."""
+    key = str(sec)
+    ovs = balance.setdefault("item_ltx_overrides", {})
+    if not isinstance(ovs, dict):
+        ovs = {}
+        balance["item_ltx_overrides"] = ovs
+    if mode in ("include", "exclude"):
+        ovs[key] = mode
+        return
+    ovs.pop(key, None)
+    if not ovs:
+        balance.pop("item_ltx_overrides", None)
+
+
+def item_in_ltx(natural_in_shop: bool, override: str | None) -> bool:
+    """Resolve final LTX membership from natural shop + optional force."""
+    if override == "exclude":
+        return False
+    if override == "include":
+        return True
+    return bool(natural_in_shop)
+
+
+def is_item_included(balance: dict[str, Any], sec: str, *, natural_in_shop: bool) -> bool:
+    """Final LTX include for ``sec`` given its natural shop eligibility."""
+    return item_in_ltx(natural_in_shop, get_item_ltx_override(balance, sec))
+
+
+def toggle_item_ltx_override(
+    balance: dict[str, Any], sec: str, *, natural_in_shop: bool
+) -> str | None:
+    """Empty→force opposite of natural; filled→clear back to auto. Returns new override."""
+    cur = get_item_ltx_override(balance, sec)
+    if cur is None:
+        nxt: str | None = "exclude" if natural_in_shop else "include"
+    else:
+        nxt = None
+    set_item_ltx_override(balance, sec, nxt)
+    return nxt

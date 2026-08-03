@@ -5,6 +5,9 @@
 	Stock ShowDialog(true) clears game indicators; when Hide HUD is off,
 	ShowDialog gets false so the HUD stays up behind the wheel.
 
+	Also blocks opening QAW while the PDA is out (held or zoomed) or while
+	inventory/trade/upgrade/loot/dialog is open. Put the PDA away first.
+
 	Patches create_GUI + open_radial_menu, and Overhaul IED via UI_IED_Menu.__init.
 ]]
 
@@ -47,6 +50,35 @@ local function on_option_change()
 	end
 	CONFIG.loaded.hide_hud = read_hide_hud()
 	log(string.format("opts: hide_hud=%s", tostring(CONFIG.loaded.hide_hud)))
+end
+
+-- 3D PDA: Shown while held (even if input disabled). Zoomed also Shown.
+local function pda_ui_blocking()
+	local ok, blocking = pcall(function()
+		if not (ActorMenu and ActorMenu.get_pda_menu) then
+			return false
+		end
+		local pda = ActorMenu.get_pda_menu()
+		return pda and pda:IsShown()
+	end)
+	return ok and blocking
+end
+
+local function inventory_ui_blocking()
+	local ok, blocking = pcall(function()
+		return actor_menu and actor_menu.inventory_opened and actor_menu.inventory_opened()
+	end)
+	return ok and blocking
+end
+
+local function qaw_open_blocked()
+	if pda_ui_blocking() then
+		return true
+	end
+	if inventory_ui_blocking() then
+		return true
+	end
+	return false
 end
 
 local function wrap_show_dialog(wnd, label)
@@ -107,6 +139,11 @@ local function patch()
 	if not qaw._dogma_qaw_open and type(qaw.open_radial_menu) == "function" then
 		local orig_open = qaw.open_radial_menu
 		qaw.open_radial_menu = function(temp_tab)
+			-- Allow closing if already open; only block fresh opens.
+			local already_open = qaw.GUI and qaw.GUI.IsShown and qaw.GUI:IsShown()
+			if not already_open and qaw_open_blocked() then
+				return
+			end
 			if qaw.GUI then
 				wrap_show_dialog(qaw.GUI, "pre_open")
 			end

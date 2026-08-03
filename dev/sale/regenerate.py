@@ -12,7 +12,12 @@ from .diaglog import get_logger
 from .ltx_merge import merge_configs, resolve_icon_bundle
 from .settings import ITEMS_YML, THUMBS_DIR, ensure_dirs
 from .score import is_bad_ammo
+from .kind_limits import weapon_kind
 from .spawn_filter import (
+    has_attached_scope,
+    has_attached_silencer,
+    has_installed_upgrades,
+    has_quoted_nickname,
     is_explosive_weapon,
     is_gauss_weapon,
     is_spawnable_gear,
@@ -52,6 +57,7 @@ def classify(
     sections: dict[str, dict[str, str]],
     *,
     ignore: set[str] | None = None,
+    string_table: dict[str, str] | None = None,
 ) -> dict[str, list[str]]:
     """Classify gear using debug-spawner style filters (drops attachment/kit/_cw)."""
     ignore = ignore or set()
@@ -60,6 +66,8 @@ def classify(
     helmets: list[str] = []
     skipped_parent = 0
     skipped_stub = 0
+    skipped_upgraded = 0
+    skipped_nickname = 0
     for sec, d in sections.items():
         gear_candidate = (
             looks_like_weapon(d)
@@ -74,6 +82,9 @@ def classify(
         )
         if not gear_candidate:
             continue
+        if has_installed_upgrades(d):
+            skipped_upgraded += 1
+            continue
         if not is_spawnable_gear(sec, d, ignore=ignore, require_parent_self=True):
             parent = (d.get("parent_section") or "").strip()
             if parent and parent != sec:
@@ -85,6 +96,12 @@ def classify(
         kind = (d.get("kind") or "").lower()
         if looks_like_weapon(d):
             if is_explosive_weapon(sec, d, sections) or is_gauss_weapon(sec, d):
+                continue
+            # Kit skins: Lebedev PL-15 "Bearcat", Glock 17 "Bruder", etc.
+            if string_table is not None and has_quoted_nickname(
+                display_name_for(sec, d, string_table)
+            ):
+                skipped_nickname += 1
                 continue
             weapons.append(sec)
             continue
@@ -103,12 +120,15 @@ def classify(
             else:
                 outfits.append(sec)
     log.info(
-        "classify kept w/o/h=%d/%d/%d dropped attachment/kit=%d stub/name=%d",
+        "classify kept w/o/h=%d/%d/%d dropped attachment/kit=%d stub/name=%d "
+        "pre-upgraded=%d kit-nickname=%d",
         len(set(weapons)),
         len(set(outfits)),
         len(set(helmets)),
         skipped_parent,
         skipped_stub,
+        skipped_upgraded,
+        skipped_nickname,
     )
     return {
         "weapons": sorted(set(weapons)),
@@ -150,7 +170,7 @@ def regenerate(
     )
     ignore = load_spawner_blacklist(anomaly)
     log.info("classify %d sections (blacklist=%d)", len(sections), len(ignore))
-    pools = classify(sections, ignore=ignore)
+    pools = classify(sections, ignore=ignore, string_table=string_table)
     log.info(
         "classified weapons=%d outfits=%d helmets=%d",
         len(pools["weapons"]),
@@ -228,6 +248,20 @@ def regenerate(
                 if p.strip() and not is_bad_ammo(p.strip())
             ],
             "community": d.get("community") or "",
+            # Correct obvious GAMMA mis-tags (e.g. sawn-off Ithaca as w_pistol).
+            "kind": weapon_kind(
+                {
+                    "kind": (d.get("kind") or "").strip().lower(),
+                    "ammo_class": [
+                        p.strip()
+                        for p in str(d.get("ammo_class") or "").split(",")
+                        if p.strip()
+                    ],
+                },
+                sec,
+            ),
+            "silencer_attached": has_attached_silencer(d),
+            "scope_attached": has_attached_scope(d),
             "inv_grid_x": d.get("inv_grid_x"),
             "inv_grid_y": d.get("inv_grid_y"),
             "inv_grid_width": d.get("inv_grid_width"),
@@ -394,7 +428,8 @@ def load_items(path: Path | None = None) -> dict[str, Any]:
                 or (
                     cat == "weapons"
                     and (
-                        is_explosive_weapon(
+                        has_quoted_nickname(entry.get("name"))
+                        or is_explosive_weapon(
                             sec, ammo_class=entry.get("ammo_class") or []
                         )
                         or is_gauss_weapon(
@@ -407,6 +442,10 @@ def load_items(path: Path | None = None) -> dict[str, Any]:
                 pool.pop(sec, None)
             if blocked:
                 log.info("load_items dropped %d %s via filters", len(blocked), cat)
+            if cat == "weapons":
+                for sec, entry in pool.items():
+                    if isinstance(entry, dict):
+                        entry["kind"] = weapon_kind(entry, sec)
             for entry in pool.values():
                 stats = entry.get("stats")
                 if not isinstance(stats, dict):

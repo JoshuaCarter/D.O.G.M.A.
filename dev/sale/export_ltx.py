@@ -10,7 +10,13 @@ from typing import Any
 
 import yaml
 
-from .balance import ammo_enabled_map, effective_category
+from .balance import (
+    ammo_enabled_map,
+    effective_category,
+    get_item_ltx_override,
+    item_in_ltx,
+)
+from .kind_limits import select_weapons_for_ltx
 from .diaglog import get_logger
 from .score import (
     FACTION_COMMUNITY,
@@ -22,6 +28,7 @@ from .score import (
     weapon_name_faction_ok,
     weapon_pts,
 )
+from .spawn_filter import has_attached_scope, has_attached_silencer
 from .settings import STOCK_STRIP_YML, ensure_dirs
 
 log = get_logger("export")
@@ -65,6 +72,14 @@ def _in_shop_weapon(
     if not weapon_name_faction_ok(sec, faction):
         return False, pts
     if not weapon_ammo_allowed(entry.get("ammo_class") or [], ammo_map):
+        return False, pts
+    if not bool(cat_cfg.get("allow_suppressed", False)) and has_attached_silencer(
+        entry=entry
+    ):
+        return False, pts
+    if not bool(cat_cfg.get("allow_scoped", False)) and has_attached_scope(
+        entry=entry
+    ):
         return False, pts
     return True, pts
 
@@ -121,19 +136,30 @@ def build_faction_shop(
     hcfg = effective_category(balance, faction, "helmets")
     ammo_map = ammo_enabled_map(balance, faction)
 
-    for sec, entry in (items.get("weapons") or {}).items():
+    weapons = items.get("weapons") or {}
+    eligible: dict[str, int] = {}
+    pts_by_sec: dict[str, int] = {}
+    for sec, entry in weapons.items():
         ok, pts = _in_shop_weapon(sec, entry, faction, wcfg, ammo_map=ammo_map)
+        pts_by_sec[sec] = int(pts)
         if ok:
-            shop[sec] = ceil_pts_10(pts)
+            eligible[sec] = int(pts)
+        elif get_item_ltx_override(balance, sec) == "include":
+            # Force-in still needs a pts value for LTX output.
+            pts_by_sec[sec] = int(pts)
+    for sec in select_weapons_for_ltx(
+        weapons, balance, eligible=eligible, cat_cfg=wcfg
+    ):
+        shop[sec] = ceil_pts_10(pts_by_sec.get(sec, 0))
 
     for sec, entry in (items.get("outfits") or {}).items():
         ok, pts = _in_shop_armor(entry, faction, ocfg, is_helmet=False)
-        if ok:
+        if item_in_ltx(ok, get_item_ltx_override(balance, sec)):
             shop[sec] = ceil_pts_10(pts)
 
     for sec, entry in (items.get("helmets") or {}).items():
         ok, pts = _in_shop_armor(entry, faction, hcfg, is_helmet=True)
-        if ok:
+        if item_in_ltx(ok, get_item_ltx_override(balance, sec)):
             shop[sec] = ceil_pts_10(pts)
 
     return shop

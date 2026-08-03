@@ -9,7 +9,7 @@ import traceback
 from pathlib import Path
 from typing import Any
 
-from PyQt6.QtCore import QEvent, QSize, Qt, QThread, pyqtSignal
+from PyQt6.QtCore import QEvent, QPoint, QRect, QSize, Qt, QThread, pyqtSignal
 from PyQt6.QtGui import (
     QAction,
     QBrush,
@@ -17,6 +17,7 @@ from PyQt6.QtGui import (
     QFont,
     QIcon,
     QKeySequence,
+    QMouseEvent,
     QPainter,
     QPalette,
     QPen,
@@ -46,6 +47,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSlider,
+    QSpinBox,
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
@@ -58,8 +60,10 @@ from .balance import (
     ammo_enabled_map,
     clear_override,
     effective_category,
+    get_item_ltx_override,
     is_ammo_family_enabled,
     is_overridden,
+    item_in_ltx,
     load_balance,
     override_count,
     save_balance,
@@ -67,12 +71,28 @@ from .balance import (
     set_ceiling,
     set_curve,
     set_override,
+    toggle_item_ltx_override,
 )
 from .diaglog import LOG_PATH, attach_log_view, get_logger, setup_logging
 from .export_ltx import default_export_path, export_shop_ltx
 from .labels import pretty_ceiling_tip, pretty_label, pretty_tip
 from .regenerate import load_items, regenerate
-from .spawn_filter import is_explosive_weapon, is_gauss_weapon, name_blocked
+from .kind_limits import (
+    MAX_KIND_LIMIT,
+    kind_label,
+    kind_limit_for,
+    present_weapon_kinds,
+    select_weapons_for_ltx,
+    set_kind_limit,
+    weapon_kind,
+)
+from .spawn_filter import (
+    has_attached_scope,
+    has_attached_silencer,
+    is_explosive_weapon,
+    is_gauss_weapon,
+    name_blocked,
+)
 from .score import (
     ARMOR_WEIGHTS,
     CURVE_IDS,
@@ -89,6 +109,7 @@ from .score import (
     armor_pts,
     armor_stat_terms,
     collect_ammo_sections,
+    sort_ammo_sections_by_family_price,
     default_ceilings_armor,
     faction_label,
     hit_power_pct,
@@ -119,6 +140,11 @@ GRID_ICON_W = 200
 GRID_ICON_H = 100
 GRID_CELL_W = 212
 GRID_CELL_H = 115
+# Per-item LTX override checkbox (bottom-right): empty=auto, filled=force.
+_ITEM_CB_SIZE = 16
+_ITEM_CB_MARGIN = 4
+# Click target larger than the drawn box (IconMode hit-tests are fiddly).
+_ITEM_CB_HIT = 36
 
 # Stat name colors (CSS) by key family.
 _DMG_KEYS = (
@@ -188,6 +214,14 @@ _TABLE_STYLE = (
 _SORT_NAME_BG = QColor(48, 78, 118)
 # Stats excluded from scoring (weight 0) — Weight / Final columns.
 _STAT_EXCLUDED_FG = "#555555"
+_CLEAR_BTN_STYLE = (
+    "QPushButton {"
+    "  color: #d0d0d0; background: #2a2a2a; border: 1px solid #444;"
+    "  padding: 0; font-weight: 700; font-size: 12px;"
+    "}"
+    "QPushButton:hover { color: #fff; border-color: #666; }"
+    "QPushButton:disabled { color: #555; background: #1e1e1e; border-color: #333; }"
+)
 
 
 def _header_label(text: str) -> QLabel:
@@ -233,23 +267,35 @@ def _fmt_stat_val(val: Any) -> str:
     return str(val)
 
 
+def _item_checkbox_rect(width: int = GRID_ICON_W, height: int = GRID_ICON_H) -> QRect:
+    """Checkbox bounds in icon-local coordinates (bottom-right)."""
+    s = _ITEM_CB_SIZE
+    m = _ITEM_CB_MARGIN
+    return QRect(width - m - s, height - m - s, s, s)
+
+
 def _icon_with_pts(
     thumb: str | None,
     pts: int,
     *,
     in_shop: bool,
     faction_blocked: bool = False,
+    under_pts: bool = True,
     selected: bool = False,
     name: str = "",
     faction_tag: str = "",
+    in_ltx: bool = True,
+    override: str | None = None,
     width: int = GRID_ICON_W,
     height: int = GRID_ICON_H,
 ) -> QIcon:
     canvas = QPixmap(width, height)
     if selected:
         canvas.fill(QColor(36, 72, 120))  # subtle blue behind texture
-    elif in_shop:
+    elif in_ltx:
         canvas.fill(QColor(28, 30, 32))
+    elif under_pts:
+        canvas.fill(QColor(24, 22, 20))
     else:
         canvas.fill(QColor(22, 22, 22))
     painter = QPainter(canvas)
@@ -266,12 +312,12 @@ def _icon_with_pts(
                 x = (width - scaled.width()) // 2
                 y = (height - scaled.height()) // 2
                 painter.drawPixmap(x, y, scaled)
-        # Green = in shop; dark orange = ammo/faction filtered; grey = over threshold.
-        # Selection only changes the canvas fill above — keep border/pts colors.
-        if in_shop:
+        # Below pts threshold: green if in LTX, else orange (never grey).
+        # Over pts threshold: grey (unless force-included → green via in_ltx).
+        if in_ltx:
             border = QColor(40, 120, 70)
             pts_color = QColor(90, 220, 120)
-        elif faction_blocked:
+        elif under_pts:
             border = QColor(100, 82, 58)
             pts_color = QColor(150, 128, 100)
         else:
@@ -299,17 +345,44 @@ def _icon_with_pts(
             tag_h = tm.height() + 2
             tag_x = width - tag_w - 3
             painter.fillRect(tag_x, 3, tag_w, tag_h, QColor(0, 0, 0, 180))
-            painter.setPen(QColor(200, 185, 140))
+            # Mute faction tag when the gun is not in the LTX set.
+            painter.setPen(
+                QColor(200, 185, 140) if in_ltx else QColor(110, 105, 90)
+            )
             painter.drawText(tag_x + 4, 3 + tm.ascent(), tag)
         if name:
             name_font = QFont("Consolas", 8)
             painter.setFont(name_font)
             nm = painter.fontMetrics()
-            text = nm.elidedText(name, Qt.TextElideMode.ElideRight, width - 8)
-            # Text only (no full-width bar); pts badge keeps its own black bg.
+            max_w = max(40, width - _ITEM_CB_SIZE - _ITEM_CB_MARGIN * 2 - 8)
+            text = nm.elidedText(name, Qt.TextElideMode.ElideRight, max_w)
             y = height - 4
             painter.setPen(QColor(230, 230, 230))
             painter.drawText(4, y, text)
+        # Override checkbox: empty = auto; filled = force include/exclude.
+        cb = _item_checkbox_rect(width, height)
+        painter.fillRect(cb, QColor(0, 0, 0, 200))
+        forced = override in ("include", "exclude")
+        painter.setPen(QColor(120, 160, 120) if in_ltx else QColor(90, 90, 90))
+        painter.drawRect(cb.adjusted(0, 0, -1, -1))
+        if forced:
+            x0, y0 = cb.x(), cb.y()
+            s = cb.width()
+            if override == "include":
+                pen = QPen(QColor(90, 200, 120))
+                pen.setWidthF(1.8)
+                pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+                pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+                painter.setPen(pen)
+                painter.drawLine(x0 + 3, y0 + s // 2, x0 + s // 2 - 1, y0 + s - 4)
+                painter.drawLine(x0 + s // 2 - 1, y0 + s - 4, x0 + s - 3, y0 + 3)
+            else:
+                pen = QPen(QColor(180, 180, 180))
+                pen.setWidthF(1.6)
+                pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+                painter.setPen(pen)
+                painter.drawLine(x0 + 3, y0 + 3, x0 + s - 3, y0 + s - 3)
+                painter.drawLine(x0 + s - 3, y0 + 3, x0 + 3, y0 + s - 3)
     finally:
         painter.end()
     return QIcon(canvas)
@@ -514,6 +587,7 @@ class WeightRow(QWidget):
         kind: str | None = None,
         editable: bool = True,
         show_clear: bool = True,
+        clearable: bool = True,
         slider_max: int | None = None,
         show_curve: bool = False,
         curve: str = CURVE_LINEAR,
@@ -521,6 +595,7 @@ class WeightRow(QWidget):
         super().__init__()
         self.key = key
         self.is_weight = is_weight
+        self.clearable = bool(clearable)
         self.curve = normalize_curve(curve)
         # kind: weight | int | float (float uses 0.01 steps via ×100)
         if kind:
@@ -596,10 +671,15 @@ class WeightRow(QWidget):
             lay.addWidget(self.curve_btn)
         else:
             self.curve_btn.hide()
-        self.btn = QPushButton("↺")
-        self.btn.setFixedWidth(28)
-        self.btn.setEnabled(overridden)
-        self.btn.setToolTip("Clear override (use Default)")
+        self.btn = QPushButton("x")
+        self.btn.setFixedWidth(22)
+        self.btn.setStyleSheet(_CLEAR_BTN_STYLE)
+        self.btn.setEnabled(bool(self.clearable and overridden))
+        self.btn.setToolTip(
+            "Clear faction override"
+            if self.clearable
+            else "Baseline — no faction overrides"
+        )
         self.btn.clicked.connect(lambda: self.cleared.emit(self.key, self.is_weight))
         if show_clear:
             lay.addWidget(self.btn)
@@ -744,7 +824,9 @@ class MainWindow(QMainWindow):
             self.faction = str(self.settings.get("faction") or "Default")
             cat0 = str(self.settings.get("category") or "weapons")
             self.category = cat0 if cat0 in CATS else "weapons"
-            self._rows: list[tuple[str, dict[str, Any], int, bool, bool]] = []
+            self._rows: list[
+                tuple[str, dict[str, Any], int, bool, bool, bool]
+            ] = []
             self._sel_by_cat: dict[str, str | None] = {c: None for c in CATS}
             saved_sel = self.settings.get("selection") or {}
             if isinstance(saved_sel, dict):
@@ -795,6 +877,40 @@ class MainWindow(QMainWindow):
             actions.addWidget(self.sort_desc)
             actions.addStretch(1)
             v.addLayout(actions)
+
+            filter_row = QWidget()
+            filters = QHBoxLayout(filter_row)
+            filters.setContentsMargins(0, 0, 0, 2)
+            filters.setSpacing(12)
+            wcfg0 = effective_category(self.balance, "Default", "weapons")
+            self.chk_allow_suppressed = QCheckBox("Allow suppressed")
+            self.chk_allow_suppressed.setChecked(
+                bool(wcfg0.get("allow_suppressed", False))
+            )
+            self.chk_allow_suppressed.setToolTip(
+                "Off: guns with an attached/integrated silencer are naturally "
+                "out of shop (grey). On: they follow normal score rules."
+            )
+            self.chk_allow_suppressed.setStyleSheet("QCheckBox { color: #d0d0d0; }")
+            self.chk_allow_suppressed.toggled.connect(self._on_allow_suppressed)
+            self.chk_allow_scoped = QCheckBox("Allow scoped")
+            self.chk_allow_scoped.setChecked(bool(wcfg0.get("allow_scoped", False)))
+            self.chk_allow_scoped.setToolTip(
+                "Off: guns with a built-in/attached scope are naturally out of "
+                "shop (grey). On: they follow normal score rules."
+            )
+            self.chk_allow_scoped.setStyleSheet("QCheckBox { color: #d0d0d0; }")
+            self.chk_allow_scoped.toggled.connect(self._on_allow_scoped)
+            filters.addWidget(self.chk_allow_suppressed)
+            filters.addWidget(self.chk_allow_scoped)
+            self.kind_limits_host = QWidget()
+            self.kind_limits_layout = QHBoxLayout(self.kind_limits_host)
+            self.kind_limits_layout.setContentsMargins(0, 0, 0, 0)
+            self.kind_limits_layout.setSpacing(8)
+            self._kind_limit_boxes: dict[str, QSpinBox] = {}
+            filters.addWidget(self.kind_limits_host, 1)
+            v.addWidget(filter_row)
+            self._rebuild_kind_limit_boxes()
 
             ammo_wrap = QVBoxLayout()
             ammo_wrap.setSpacing(2)
@@ -916,6 +1032,9 @@ class MainWindow(QMainWindow):
                 "  background: transparent;"
                 "}"
             )
+            self.list.viewport().installEventFilter(self)
+            self.list.installEventFilter(self)
+            self.installEventFilter(self)
             self.list.currentItemChanged.connect(self._on_select)
             body.addWidget(self.list, 1)
 
@@ -1443,6 +1562,15 @@ class MainWindow(QMainWindow):
         if fw is not None and self.isAncestorOf(fw):
             fw.clearFocus()
 
+    def _commit_kind_limits_from_ui(self) -> None:
+        """Spinboxes → balance (source of truth before kind-cap select)."""
+        boxes = getattr(self, "_kind_limit_boxes", None) or {}
+        for kind, box in boxes.items():
+            try:
+                set_kind_limit(self.balance, kind, int(box.value()))
+            except Exception:  # noqa: BLE001
+                log.exception("kind limit commit failed kind=%s", kind)
+
     def _commit_sliders_to_balance(self) -> int:
         """Write current sidebar slider/toggle UI into ``self.balance``.
 
@@ -1452,6 +1580,7 @@ class MainWindow(QMainWindow):
         fac = self.faction
         cat = self.category
         n = 0
+        self._commit_kind_limits_from_ui()
         for row in self._iter_weight_rows():
             key = row.key
             val = float(row.displayed_value())
@@ -1620,6 +1749,68 @@ class MainWindow(QMainWindow):
         """Ctrl+S: save balance/settings and recalculate item scores."""
         if self._save_now():
             self.status.setText("Saved — scores recalculated")
+
+    def _on_allow_suppressed(self, checked: bool) -> None:
+        w = (self.balance.get("default") or {}).setdefault("weapons", {})
+        w["allow_suppressed"] = bool(checked)
+        self._mark_balance_dirty()
+
+    def _on_allow_scoped(self, checked: bool) -> None:
+        w = (self.balance.get("default") or {}).setdefault("weapons", {})
+        w["allow_scoped"] = bool(checked)
+        self._mark_balance_dirty()
+
+    def _rebuild_kind_limit_boxes(self) -> None:
+        """Build 0–10 kind quota spinboxes for kinds present in the weapon pool."""
+        lay = self.kind_limits_layout
+        while lay.count():
+            item = lay.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+        self._kind_limit_boxes.clear()
+        weapons = (self.items or {}).get("weapons") or {}
+        kinds = present_weapon_kinds(weapons)
+        if not kinds:
+            self.kind_limits_host.setVisible(False)
+            return
+        self.kind_limits_host.setVisible(True)
+        cfg = effective_category(self.balance, "Default", "weapons")
+        for kind in kinds:
+            cell = QWidget()
+            cell_l = QHBoxLayout(cell)
+            cell_l.setContentsMargins(0, 0, 0, 0)
+            cell_l.setSpacing(3)
+            name = QLabel(kind_label(kind))
+            name.setStyleSheet("QLabel { color: #d0d0d0; }")
+            name.setToolTip(
+                f"{kind}: max N in LTX (not a minimum). "
+                f"Auto-picks lowest-pts eligible guns; force-includes first."
+            )
+            box = QSpinBox()
+            box.setRange(0, MAX_KIND_LIMIT)
+            box.setSingleStep(1)
+            box.setFixedWidth(48)
+            box.setToolTip(name.toolTip())
+            box.setStyleSheet(
+                "QSpinBox { background: #2a2a2a; color: #e8e8e8; "
+                "border: 1px solid #444; padding: 1px 2px; }"
+            )
+            val0 = kind_limit_for(cfg, kind)
+
+            def _on_change(v: int, k: str = kind) -> None:
+                set_kind_limit(self.balance, k, int(v))
+                self._mark_balance_dirty()
+
+            box.blockSignals(True)
+            box.setValue(val0)
+            box.blockSignals(False)
+            box.valueChanged.connect(_on_change)
+            cell_l.addWidget(name)
+            cell_l.addWidget(box)
+            lay.addWidget(cell)
+            self._kind_limit_boxes[kind] = box
+        lay.addStretch(1)
 
     def _mark_balance_dirty(self) -> None:
         """Record an in-memory balance edit; scores refresh only on Ctrl+S."""
@@ -1867,23 +2058,28 @@ class MainWindow(QMainWindow):
                 w.deleteLater()
         self._ammo_buttons = {}
         sections = collect_ammo_sections((self.items or {}).get("weapons") or {})
+        ammo_pool = (self.items or {}).get("ammo") or {}
+        # Within each bloc: calibre families together, families + members by cost asc.
+        nato = sort_ammo_sections_by_family_price(
+            [s for s in sections if ammo_family_bloc(ammo_family(s)) == "nato"],
+            ammo_pool,
+        )
+        warsaw = sort_ammo_sections_by_family_price(
+            [s for s in sections if ammo_family_bloc(ammo_family(s)) == "wp"],
+            ammo_pool,
+        )
+        other = sort_ammo_sections_by_family_price(
+            [
+                s
+                for s in sections
+                if ammo_family_bloc(ammo_family(s)) not in ("nato", "wp")
+            ],
+            ammo_pool,
+        )
         groups: list[tuple[str, list[str]]] = [
-            (
-                "NATO",
-                [s for s in sections if ammo_family_bloc(ammo_family(s)) == "nato"],
-            ),
-            (
-                "WARSAW",
-                [s for s in sections if ammo_family_bloc(ammo_family(s)) == "wp"],
-            ),
-            (
-                "OTHER",
-                [
-                    s
-                    for s in sections
-                    if ammo_family_bloc(ammo_family(s)) not in ("nato", "wp")
-                ],
-            ),
+            ("NATO", nato),
+            ("WARSAW", warsaw),
+            ("OTHER", other),
         ]
         type_style = (
             "QLabel { color: #d0d0d0; font-size: 12px; font-weight: 700; "
@@ -2050,6 +2246,7 @@ class MainWindow(QMainWindow):
             cat = self.category
             cfg = effective_category(self.balance, fac, cat)
             ceilings_locked = fac != "Default"
+            clearable = fac != "Default"
 
             def add_scalar(key: str, value: float) -> None:
                 ov = is_overridden(self.balance, fac, cat, key, weight=False)
@@ -2062,6 +2259,7 @@ class MainWindow(QMainWindow):
                     tip=pretty_tip(key),
                     kind="int",
                     slider_max=5000,
+                    clearable=clearable,
                 )
                 row.changed.connect(self._weight_changed)
                 row.cleared.connect(self._weight_cleared)
@@ -2076,6 +2274,7 @@ class MainWindow(QMainWindow):
                     is_weight=True,
                     overridden=ov,
                     tip=pretty_tip(key),
+                    clearable=clearable,
                 )
                 row.changed.connect(self._weight_changed)
                 row.cleared.connect(self._weight_cleared)
@@ -2100,7 +2299,7 @@ class MainWindow(QMainWindow):
                     smax = max(1, int(round(cap)))
                 tip = pretty_ceiling_tip(stat_key)
                 if ceilings_locked:
-                    tip = f"{tip} (Default faction only — shared by all factions.)"
+                    tip = f"{tip} (Baseline only — shared by all factions.)"
                 tip = f"{tip} Slider range 0–{cap:g}."
                 curve = normalize_curve((curve_map or {}).get(stat_key))
                 row = WeightRow(
@@ -2143,10 +2342,15 @@ class MainWindow(QMainWindow):
                     lambda on, k=key: self._weight_changed(k, 1.0 if on else 0.0, False)
                 )
                 lay.addWidget(cb, 1)
-                btn = QPushButton("↺")
-                btn.setFixedWidth(28)
-                btn.setEnabled(ov)
-                btn.setToolTip("Clear override (use Default)")
+                btn = QPushButton("x")
+                btn.setFixedWidth(22)
+                btn.setStyleSheet(_CLEAR_BTN_STYLE)
+                btn.setEnabled(bool(clearable and ov))
+                btn.setToolTip(
+                    "Clear faction override"
+                    if clearable
+                    else "Baseline — no faction overrides"
+                )
                 btn.clicked.connect(
                     lambda _=False, k=key: self._weight_cleared(k, False)
                 )
@@ -2174,10 +2378,10 @@ class MainWindow(QMainWindow):
                     add_weight(wkey, float(weights.get(wkey, default_w)))
             self.weights_layout.addStretch(1)
 
-            # Tab 2: Scale maxes (0–x) — Default-only; other factions inherit.
+            # Tab 2: Scale maxes (0–x) — Baseline-only; other factions inherit.
             ceil_note = "Normalization ceilings (0–x)"
             if ceilings_locked:
-                ceil_note += " — Default only"
+                ceil_note += " — Baseline only"
             self.ceilings_layout.addWidget(self._section_label(ceil_note))
             ceil_map = cfg.get("ceilings") or {}
             curve_map = cfg.get("curves") or {}
@@ -2260,7 +2464,7 @@ class MainWindow(QMainWindow):
             self._rebuild_weights()
             self._mark_balance_dirty()
             return
-        # Orange = faction override only; Default edits are the baseline.
+        # Orange = faction override only; Baseline edits are the shared base.
         if self.faction != "Default":
             for i in range(self.weights_layout.count()):
                 w = self.weights_layout.itemAt(i).widget()
@@ -2270,7 +2474,8 @@ class MainWindow(QMainWindow):
                     and w.is_weight == is_weight
                 ):
                     w.lbl.setStyleSheet("color: #e6a23c; font-weight: bold;")
-                    w.btn.setEnabled(True)
+                    if w.clearable:
+                        w.btn.setEnabled(True)
         self._mark_balance_dirty()
 
     def _weight_cleared(self, key: str, is_weight: bool) -> None:
@@ -2297,11 +2502,12 @@ class MainWindow(QMainWindow):
 
     def _row_pts_inshop(
         self, sec: str, entry: dict[str, Any]
-    ) -> tuple[int, bool, bool]:
-        """Return (pts, in_shop, faction_blocked).
+    ) -> tuple[int, bool, bool, bool]:
+        """Return (pts, in_shop, faction_blocked, under_pts).
 
-        ``faction_blocked`` means ammo-type toggle, name-locked faction, or outfit
-        community excluded it (orange border). Ammo toggles are per-faction.
+        ``under_pts`` is score below max_pts (independent of ammo/faction/kind).
+        ``faction_blocked`` = ammo toggle / name-lock / outfit community.
+        ``in_shop`` = under_pts and not faction/allow blocked (pre kind-cap).
         """
         cfg = effective_category(self.balance, self.faction, self.category)
         stats = entry.get("stats") or {}
@@ -2319,8 +2525,17 @@ class MainWindow(QMainWindow):
             ammo_map = ammo_enabled_map(self.balance, self.faction)
             name_ok = weapon_name_faction_ok(sec, self.faction)
             ammo_ok = weapon_ammo_allowed(entry.get("ammo_class") or [], ammo_map)
+            allow_ok = True
+            if not bool(cfg.get("allow_suppressed", False)) and has_attached_silencer(
+                entry=entry
+            ):
+                allow_ok = False
+            if not bool(cfg.get("allow_scoped", False)) and has_attached_scope(
+                entry=entry
+            ):
+                allow_ok = False
             gear_ok = name_ok and ammo_ok
-            return pts, under and gear_ok, (not gear_ok)
+            return pts, under and gear_ok and allow_ok, (not gear_ok), under
         is_helm = self.category == "helmets"
         pts = armor_pts(
             stats,
@@ -2332,14 +2547,14 @@ class MainWindow(QMainWindow):
         )
         under = pts < float(cfg.get("max_pts") or 550)
         if is_helm or self.faction == "Default":
-            return pts, under, False
+            return pts, under, False, under
         from .score import FACTION_COMMUNITY
 
         want = FACTION_COMMUNITY.get(self.faction, self.faction)
         community = (entry.get("community") or "").strip()
         allow_univ = bool(cfg.get("include_universal_armor", True))
         gear_ok = community == want or (allow_univ and community in ("", "actor"))
-        return pts, under and gear_ok, (not gear_ok)
+        return pts, under and gear_ok, (not gear_ok), under
 
     def _clear_detail(self) -> None:
         self._fill_kv_table(self.detail_info, [])
@@ -2361,7 +2576,7 @@ class MainWindow(QMainWindow):
             self.list.blockSignals(True)
             self.list.clear()
             pool = (self.items.get(self.category) or {}) if self.items else {}
-            rows: list[tuple[str, dict[str, Any], int, bool, bool]] = []
+            rows: list[tuple[str, dict[str, Any], int, bool, bool, bool]] = []
             for sec, entry in pool.items():
                 if name_blocked(sec):
                     continue
@@ -2375,25 +2590,59 @@ class MainWindow(QMainWindow):
                 ):
                     continue
                 try:
-                    pts, in_shop, fac_blocked = self._row_pts_inshop(sec, entry)
+                    pts, in_shop, fac_blocked, under_pts = self._row_pts_inshop(
+                        sec, entry
+                    )
                 except Exception:  # noqa: BLE001
                     log.exception("pts failed for %s", sec)
-                    pts, in_shop, fac_blocked = 0, False, False
-                rows.append((sec, entry, pts, in_shop, fac_blocked))
+                    pts, in_shop, fac_blocked, under_pts = 0, False, False, False
+                rows.append((sec, entry, pts, in_shop, fac_blocked, under_pts))
+
+            selected_weapons: set[str] | None = None
+            if self.category == "weapons":
+                # Spinbox values win (may not have been flushed via valueChanged).
+                self._commit_kind_limits_from_ui()
+                wcfg = effective_category(self.balance, self.faction, "weapons")
+                eligible = {
+                    sec: pts for sec, _e, pts, ok, _fb, _u in rows if ok
+                }
+                selected_weapons = select_weapons_for_ltx(
+                    pool, self.balance, eligible=eligible, cat_cfg=wcfg
+                )
+                log.debug(
+                    "kind caps %s → ltx %d / eligible %d",
+                    {
+                        k: kind_limit_for(wcfg, k)
+                        for k in present_weapon_kinds(pool)
+                    },
+                    len(selected_weapons),
+                    len(eligible),
+                )
+            # Final LTX flag per row (kind cap applied); used for paint + in_shop sort.
+            in_ltx_map: dict[str, bool] = {}
+            for sec, _e, _pts, in_shop, _fb, _u in rows:
+                ov = get_item_ltx_override(self.balance, sec)
+                if selected_weapons is not None:
+                    in_ltx_map[sec] = sec in selected_weapons
+                else:
+                    in_ltx_map[sec] = item_in_ltx(in_shop, ov)
 
             sort_key = self._current_sort_key() or "pts"
             descending = self.sort_desc.isChecked()
-            rows.sort(
-                key=lambda r: self._row_sort_value(
-                    r[0], r[1], r[2], r[3], sort_key
-                ),
-                reverse=descending,
-            )
 
+            def _sort_val(r: tuple) -> object:
+                sec, entry, pts, in_shop, _fb, _u = r
+                if sort_key == "in_shop":
+                    return 1 if in_ltx_map.get(sec) else 0
+                return self._row_sort_value(sec, entry, pts, in_shop, sort_key)
+
+            rows.sort(key=_sort_val, reverse=descending)
             self._rows = rows
+
             thumb_ok = 0
             restore_item: QListWidgetItem | None = None
-            for sec, entry, pts, in_shop, fac_blocked in rows:
+            n_ltx = 0
+            for sec, entry, pts, in_shop, fac_blocked, under_pts in rows:
                 # Name is painted bottom-left on the tile (no under-icon label).
                 label = _nice_item_name(sec, entry)
                 item = QListWidgetItem("")
@@ -2413,22 +2662,35 @@ class MainWindow(QMainWindow):
                     thumb_ok += 1
                 is_sel = bool(want_sec and sec == want_sec)
                 fac_tag = section_name_faction_token(sec) or ""
+                ov = get_item_ltx_override(self.balance, sec)
+                in_ltx = bool(in_ltx_map.get(sec))
+                if in_ltx:
+                    n_ltx += 1
+                # Below pts: green (in LTX) or orange (not). Grey only over pts.
+                paint_blocked = bool(fac_blocked) and not bool(in_shop)
                 try:
                     item.setIcon(
                         _icon_with_pts(
                             thumb or None,
                             pts,
                             in_shop=in_shop,
-                            faction_blocked=fac_blocked,
+                            faction_blocked=paint_blocked,
+                            under_pts=under_pts,
                             selected=is_sel,
                             name=label,
                             faction_tag=fac_tag,
+                            in_ltx=in_ltx,
+                            override=ov,
                         )
                     )
                 except Exception:  # noqa: BLE001
                     log.exception("icon compose failed sec=%s", sec)
                 block_note = ""
-                if fac_blocked:
+                if ov == "exclude":
+                    block_note = "  |  force-excluded from LTX"
+                elif ov == "include":
+                    block_note = "  |  force-included in LTX"
+                elif fac_blocked:
                     locked = (
                         section_name_faction(sec)
                         if self.category == "weapons"
@@ -2446,9 +2708,25 @@ class MainWindow(QMainWindow):
                         block_note = "  |  ammo type disabled"
                     else:
                         block_note = "  |  faction community"
+                elif not in_ltx and in_shop and self.category == "weapons":
+                    block_note = "  |  over kind pts quota"
+                elif not in_shop and self.category == "weapons":
+                    if has_attached_silencer(entry=entry) and not bool(
+                        effective_category(
+                            self.balance, self.faction, "weapons"
+                        ).get("allow_suppressed", False)
+                    ):
+                        block_note = "  |  suppressed (Allow suppressed off)"
+                    elif has_attached_scope(entry=entry) and not bool(
+                        effective_category(
+                            self.balance, self.faction, "weapons"
+                        ).get("allow_scoped", False)
+                    ):
+                        block_note = "  |  scoped (Allow scoped off)"
                 tip = (
                     f"{sec}\n{entry.get('name') or ''}\n"
-                    f"{pts} pts  |  in_shop={in_shop}{block_note}"
+                    f"{pts} pts  |  in_ltx={in_ltx}  eligible={in_shop}{block_note}\n"
+                    f"Checkbox: empty=auto · click=force opposite"
                 )
                 item.setToolTip(tip)
                 item.setData(Qt.ItemDataRole.UserRole, sec)
@@ -2459,9 +2737,15 @@ class MainWindow(QMainWindow):
                         "thumb": thumb or None,
                         "pts": pts,
                         "in_shop": in_shop,
-                        "faction_blocked": fac_blocked,
+                        "faction_blocked": paint_blocked,
+                        "under_pts": under_pts,
                         "name": label,
                         "faction_tag": fac_tag,
+                        "in_ltx": in_ltx,
+                        "override": ov,
+                        # Used to restore tile color when clearing a force override
+                        # before the next Ctrl+S rebuild.
+                        "auto_in": in_ltx if ov is None else in_shop,
                     },
                 )
                 # Let gridSize own layout — custom sizeHint breaks IconMode alignment.
@@ -2478,19 +2762,18 @@ class MainWindow(QMainWindow):
             # After pts recalc / resort, always show the top of the grid.
             self.list.scrollToTop()
             elapsed = time.perf_counter() - t0
-            n_shop = sum(1 for r in rows if r[3])
             n_blocked = sum(1 for r in rows if r[4])
             self.status.setText(
                 f"{len(rows)} {self.category}  "
                 f"(faction={faction_label(self.faction)})  "
-                f"in_shop={n_shop}  blocked={n_blocked}  {elapsed:.2f}s"
+                f"in_ltx={n_ltx}  blocked={n_blocked}  {elapsed:.2f}s"
             )
             log.info(
-                "rebuild_list cat=%s fac=%s rows=%d in_shop=%d blocked=%d thumbs=%d in %.3fs",
+                "rebuild_list cat=%s fac=%s rows=%d in_ltx=%d blocked=%d thumbs=%d in %.3fs",
                 self.category,
                 self.faction,
                 len(rows),
-                n_shop,
+                n_ltx,
                 n_blocked,
                 thumb_ok,
                 elapsed,
@@ -2519,13 +2802,175 @@ class MainWindow(QMainWindow):
                     int(meta.get("pts") or 0),
                     in_shop=bool(meta.get("in_shop")),
                     faction_blocked=bool(meta.get("faction_blocked")),
+                    under_pts=bool(meta.get("under_pts", True)),
                     selected=selected,
                     name=str(meta.get("name") or ""),
                     faction_tag=str(meta.get("faction_tag") or ""),
+                    in_ltx=bool(meta.get("in_ltx", meta.get("in_shop"))),
+                    override=meta.get("override"),
                 )
             )
         except Exception:  # noqa: BLE001
             log.exception("selection icon refresh failed")
+
+    def _item_icon_origin(self, item: QListWidgetItem) -> QPoint:
+        """Top-left of the painted icon inside the list viewport.
+
+        IconMode places the decoration at the top-center of the cell (not
+        vertically centered) — matching that keeps checkbox hits aligned.
+        """
+        vrect = self.list.visualItemRect(item)
+        ix = vrect.x() + max(0, (vrect.width() - GRID_ICON_W) // 2)
+        iy = vrect.y() + max(0, (vrect.height() - GRID_ICON_H) // 2)
+        # Prefer top alignment when the cell is taller than the icon (IconMode).
+        if vrect.height() > GRID_ICON_H + 2:
+            iy = vrect.y()
+        return QPoint(ix, iy)
+
+    def _item_checkbox_hit(self, item: QListWidgetItem, pos: QPoint) -> bool:
+        """True if ``pos`` (viewport coords) is on this tile's override checkbox."""
+        vrect = self.list.visualItemRect(item)
+        # Generous cell-corner target — survives icon padding / DPI quirks.
+        corner = QRect(
+            vrect.right() - _ITEM_CB_HIT + 1,
+            vrect.bottom() - _ITEM_CB_HIT + 1,
+            _ITEM_CB_HIT,
+            _ITEM_CB_HIT,
+        )
+        if corner.contains(pos):
+            return True
+        origin = self._item_icon_origin(item)
+        cb = _item_checkbox_rect()
+        drawn = QRect(
+            origin.x() + cb.x() - 6,
+            origin.y() + cb.y() - 6,
+            cb.width() + 12,
+            cb.height() + 12,
+        )
+        return drawn.contains(pos)
+
+    def _item_for_checkbox_click(self, pos: QPoint) -> QListWidgetItem | None:
+        """Resolve which tile's checkbox was clicked (``itemAt`` misses edges)."""
+        item = self.list.itemAt(pos)
+        if item is not None:
+            return item if self._item_checkbox_hit(item, pos) else None
+        # itemAt missed (padding/gaps): check checkbox corners of on-screen tiles.
+        vp = self.list.viewport().rect()
+        for i in range(self.list.count()):
+            it = self.list.item(i)
+            if it is None:
+                continue
+            vr = self.list.visualItemRect(it)
+            if not vr.intersects(vp):
+                continue
+            if self._item_checkbox_hit(it, pos):
+                return it
+        return None
+
+    def _toggle_item_included(self, item: QListWidgetItem) -> None:
+        sec = item.data(Qt.ItemDataRole.UserRole)
+        if not sec:
+            return
+        sec = str(sec)
+        meta = item.data(Qt.ItemDataRole.UserRole + 1) or {}
+        if not isinstance(meta, dict):
+            meta = {}
+        # Opposite of current LTX membership; colors/quotas fully sync on Ctrl+S.
+        currently_in = bool(meta.get("in_ltx"))
+        prev_ov = get_item_ltx_override(self.balance, sec)
+        if prev_ov is None:
+            meta["auto_in"] = currently_in
+        ov = toggle_item_ltx_override(
+            self.balance, sec, natural_in_shop=currently_in
+        )
+        if ov == "include":
+            in_ltx = True
+        elif ov == "exclude":
+            in_ltx = False
+        else:
+            in_ltx = bool(meta.get("auto_in", meta.get("in_shop")))
+        meta["override"] = ov
+        meta["in_ltx"] = in_ltx
+        item.setData(Qt.ItemDataRole.UserRole + 1, meta)
+        self._mark_balance_dirty()
+        selected = item is self.list.currentItem()
+        try:
+            item.setIcon(
+                _icon_with_pts(
+                    meta.get("thumb"),
+                    int(meta.get("pts") or 0),
+                    in_shop=bool(meta.get("in_shop")),
+                    faction_blocked=bool(meta.get("faction_blocked")),
+                    under_pts=bool(meta.get("under_pts", True)),
+                    selected=selected,
+                    name=str(meta.get("name") or ""),
+                    faction_tag=str(meta.get("faction_tag") or ""),
+                    in_ltx=in_ltx,
+                    override=ov,
+                )
+            )
+        except Exception:  # noqa: BLE001
+            log.exception("include toggle icon refresh failed sec=%s", sec)
+        tip = item.toolTip() or ""
+        base = tip.split("\n")
+        if len(base) >= 3:
+            pts_line = base[2].split("  |  ")[0]
+            if ov == "exclude":
+                note = "  |  force-excluded from LTX"
+            elif ov == "include":
+                note = "  |  force-included in LTX"
+            else:
+                note = ""
+            base[2] = (
+                f"{pts_line}  |  in_ltx={in_ltx}  "
+                f"eligible={bool(meta.get('in_shop'))}{note}"
+            )
+            base = base[:3] + ["Checkbox: empty=auto · click=force opposite"]
+            item.setToolTip("\n".join(base[:4]))
+        if selected:
+            self._on_select(item, None)
+        log.debug(
+            "item ltx override sec=%s ov=%s was_in=%s in_ltx=%s",
+            sec,
+            ov,
+            currently_in,
+            in_ltx,
+        )
+
+    def _deselect_list_item(self) -> None:
+        """Clear grid selection + detail panel."""
+        if self.list.currentItem() is None and not self.list.selectedItems():
+            return
+        self.list.clearSelection()
+        self.list.setCurrentItem(None)
+
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802
+        if isinstance(event, QMouseEvent):
+            et = event.type()
+            # Right-click anywhere (except text fields) clears the grid selection.
+            if (
+                et == QEvent.Type.MouseButtonPress
+                and event.button() == Qt.MouseButton.RightButton
+            ):
+                if not isinstance(
+                    obj, (QLineEdit, QPlainTextEdit, QSpinBox, QComboBox)
+                ):
+                    self._deselect_list_item()
+                if obj is self.list or obj is self.list.viewport():
+                    return True  # no list context menu / rubber-band
+            # Checkbox clicks on item tiles — consume so selection does not change.
+            if obj is self.list.viewport() and et in (
+                QEvent.Type.MouseButtonPress,
+                QEvent.Type.MouseButtonDblClick,
+            ):
+                if event.button() == Qt.MouseButton.LeftButton:
+                    pos = event.position().toPoint()
+                    item = self._item_for_checkbox_click(pos)
+                    if item is not None:
+                        if et == QEvent.Type.MouseButtonPress:
+                            self._toggle_item_included(item)
+                        return True
+        return super().eventFilter(obj, event)
 
     def _on_select(
         self, cur: QListWidgetItem | None, prev: QListWidgetItem | None
@@ -2533,13 +2978,17 @@ class MainWindow(QMainWindow):
         self._set_item_selected_icon(prev, selected=False)
         self._set_item_selected_icon(cur, selected=True)
         if not cur:
+            self._sel_by_cat[self.category] = None
             self._highlight_weapon_ammos(None)
+            self._clear_detail()
             return
         sec = cur.data(Qt.ItemDataRole.UserRole)
         self._sel_by_cat[self.category] = sec
         try:
             entry = (self.items.get(self.category) or {}).get(sec) or {}
-            pts, in_shop, fac_blocked = self._row_pts_inshop(sec, entry)
+            pts, in_shop, fac_blocked, under_pts = self._row_pts_inshop(
+                sec, entry
+            )
             ammos = [
                 str(a).strip()
                 for a in (entry.get("ammo_class") or [])
@@ -2552,10 +3001,27 @@ class MainWindow(QMainWindow):
             ammo_s = (
                 ", ".join(ammo_section_label(a) for a in ammos) if ammos else "—"
             )
-            shop_s = "true" if in_shop else ("blocked" if fac_blocked else "false")
-            shop_c = (
-                "#7dcea0" if in_shop else ("#96826a" if fac_blocked else "#aab2bf")
-            )
+            ov = get_item_ltx_override(self.balance, str(sec))
+            meta = cur.data(Qt.ItemDataRole.UserRole + 1) or {}
+            if isinstance(meta, dict) and "in_ltx" in meta:
+                in_ltx = bool(meta.get("in_ltx"))
+            else:
+                in_ltx = item_in_ltx(in_shop, ov)
+            # Match tile colors: under pts → green/orange; over pts → grey.
+            if in_ltx or ov == "include":
+                shop_s = "force-in" if ov == "include" else "true"
+                shop_c = "#7dcea0"
+            elif under_pts:
+                if ov == "exclude":
+                    shop_s = "force-out"
+                elif fac_blocked:
+                    shop_s = "blocked"
+                else:
+                    shop_s = "false"
+                shop_c = "#96826a"
+            else:
+                shop_s = "force-out" if ov == "exclude" else "false"
+                shop_c = "#aab2bf"
             info_rows: list[tuple[str, list[str], str]] = [
                 ("sec", [str(sec)], "#aab2bf"),
                 ("name", [_nice_item_name(str(sec), entry)], "#aab2bf"),
@@ -2563,6 +3029,13 @@ class MainWindow(QMainWindow):
                 ("community", [str(entry.get("community") or "—")], "#aab2bf"),
             ]
             if self.category == "weapons":
+                info_rows.append(
+                    (
+                        "kind",
+                        [kind_label(weapon_kind(entry, str(sec)))],
+                        "#aab2bf",
+                    )
+                )
                 info_rows.append(("ammo", [ammo_s], "#5ec8ff"))
             self._fill_kv_table(self.detail_info, info_rows)
 
@@ -2679,6 +3152,7 @@ class MainWindow(QMainWindow):
             self.status.setText("Scan complete")
             self._refresh_sort_options()
             self._rebuild_ammo_toggles()
+            self._rebuild_kind_limit_boxes()
             self._rebuild_list()
         except Exception as exc:  # noqa: BLE001
             log.exception("post-regen load/rebuild failed")
@@ -2702,6 +3176,7 @@ class MainWindow(QMainWindow):
             log.info("reloaded counts=%s", meta.get("counts"))
             self._refresh_sort_options()
             self._rebuild_ammo_toggles()
+            self._rebuild_kind_limit_boxes()
             self._rebuild_list()
         except Exception as exc:  # noqa: BLE001
             log.exception("reload failed")

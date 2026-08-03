@@ -183,6 +183,11 @@ def regenerate(
             reload_ok += 1
         try:
             stats = weapon_calculate(inp)
+            # Engine 0–1 → SALE percent for display / scale max / scoring.
+            if stats.get("hit_power") is not None:
+                from .score import hit_power_pct
+
+                stats["hit_power"] = hit_power_pct(stats["hit_power"])
         except Exception as exc:  # noqa: BLE001
             w_fail += 1
             log.exception("weapon calc failed %s: %s", sec, exc)

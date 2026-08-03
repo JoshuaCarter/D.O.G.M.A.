@@ -21,8 +21,14 @@ _LABELS: dict[str, tuple[str, str]] = {
     # Weapon stats / weights (score cols = tooltip Min / Lgt / Lgt+ / Mid / Mid+)
     "cost": ("Cost", "Base item cost (lower scores better when weighted)."),
     "w_price": ("Price", "Base item cost (lower scores better when weighted)."),
-    "hit_power": ("Hit power", "Base hit power from best ammo."),
-    "w_hit_power": ("Hit power", "Base hit power from best ammo."),
+    "hit_power": (
+        "Hit power",
+        "Weapon hit power as percent (engine 0–1 ×100; tip-style). Scale max 0–200.",
+    ),
+    "w_hit_power": (
+        "Hit power",
+        "Weapon hit power as percent (engine 0–1 ×100; tip-style). Scale max 0–200.",
+    ),
     "min_dmg": ("Best Mutant dmg", "Best ammo vs Min torso; mutant row if higher."),
     "w_min_dmg": ("Best Mutant dmg", "Best ammo vs Min torso; mutant row if higher."),
     "lgt_dmg": ("Dmg vs lgt armor", "Best ammo vs Lgt torso armor (0.075)."),

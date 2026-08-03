@@ -8,7 +8,7 @@ import traceback
 from pathlib import Path
 from typing import Any
 
-from PyQt6.QtCore import QSize, Qt, QThread, pyqtSignal
+from PyQt6.QtCore import QSize, Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -71,6 +71,7 @@ from .score import (
     collect_ammo_families,
     default_ceilings_armor,
     faction_label,
+    hit_power_pct,
     is_bad_ammo,
     weapon_ammo_allowed,
     weapon_ammo_families,
@@ -83,8 +84,10 @@ log = get_logger("app")
 
 CATS = ("weapons", "outfits", "helmets")
 # Item tile; cell is icon + half the previous inter-box gutter (was +24×+30).
-GRID_ICON_W = 400
-GRID_ICON_H = 200
+# Display size in the icon grid (must fit inside GRID_CELL_*).
+# Cached thumbs may be 2× inv_grid; _icon_with_pts scales them down.
+GRID_ICON_W = 200
+GRID_ICON_H = 100
 GRID_CELL_W = 212
 GRID_CELL_H = 115
 
@@ -316,6 +319,8 @@ class FineStepSlider(QSlider):
 class WeightRow(QWidget):
     changed = pyqtSignal(str, float, bool)  # key, value, is_weight
     cleared = pyqtSignal(str, bool)
+    drag_started = pyqtSignal()
+    drag_ended = pyqtSignal()
 
     def __init__(
         self,
@@ -373,6 +378,8 @@ class WeightRow(QWidget):
             self.slider.setPageStep(1)
             self.slider.setValue(max(1, min(hi, int(round(float(value))))))
         self.slider.valueChanged.connect(self._on_slide)
+        self.slider.sliderPressed.connect(self.drag_started.emit)
+        self.slider.sliderReleased.connect(self.drag_ended.emit)
         lay.addWidget(self.slider, 3)
         self.val = QLineEdit(self._fmt(value))
         self.val.setFixedWidth(56)
@@ -491,6 +498,12 @@ class MainWindow(QMainWindow):
                     if saved_sel.get(c):
                         self._sel_by_cat[c] = str(saved_sel[c])
             self._worker: RegenWorker | None = None
+            # Coalesce rapid weight/ceiling slider edits into one save + list rebuild.
+            self._balance_dirty = False
+            self._slider_drag_depth = 0
+            self._score_refresh_timer = QTimer(self)
+            self._score_refresh_timer.setSingleShot(True)
+            self._score_refresh_timer.timeout.connect(self._on_score_refresh_timeout)
 
             root = QWidget()
             self.setCentralWidget(root)
@@ -543,19 +556,6 @@ class MainWindow(QMainWindow):
             actions.addWidget(self.filter_box)
             actions.addStretch(1)
             v.addLayout(actions)
-
-            fac = QHBoxLayout()
-            fac.addWidget(_header_label("Faction:"))
-            self.faction_box = QComboBox()
-            self.faction_box.addItem(faction_label("Default"), "Default")
-            for f in FACTIONS:
-                self.faction_box.addItem(faction_label(f), f)
-            self.faction_box.currentTextChanged.connect(self._on_faction)
-            fac.addWidget(self.faction_box)
-            self.faction_meta = QLabel("")
-            fac.addWidget(self.faction_meta)
-            fac.addStretch(1)
-            v.addLayout(fac)
 
             ammo_wrap = QVBoxLayout()
             ammo_wrap.setSpacing(2)
@@ -626,16 +626,39 @@ class MainWindow(QMainWindow):
             body.setContentsMargins(0, 0, 0, 0)
             body.setSpacing(0)
 
-            left_scroll = QScrollArea()
-            left_scroll.setWidgetResizable(True)
-            left_scroll.setFixedWidth(SIDEBAR_W)
-            left_scroll.setHorizontalScrollBarPolicy(
-                Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+            left_col = QWidget()
+            left_col.setFixedWidth(SIDEBAR_W)
+            left_v = QVBoxLayout(left_col)
+            left_v.setContentsMargins(6, 6, 6, 0)
+            left_v.setSpacing(4)
+
+            fac = QHBoxLayout()
+            fac.setContentsMargins(0, 0, 0, 0)
+            fac.setSpacing(6)
+            fac.addWidget(_header_label("Faction:"))
+            self.faction_box = QComboBox()
+            self.faction_box.addItem(faction_label("Default"), "Default")
+            for f in FACTIONS:
+                self.faction_box.addItem(faction_label(f), f)
+            self.faction_box.currentTextChanged.connect(self._on_faction)
+            fac.addWidget(self.faction_box, 1)
+            self.faction_meta = QLabel("")
+            self.faction_meta.setStyleSheet("color: #9aa3ad;")
+            fac.addWidget(self.faction_meta)
+            left_v.addLayout(fac)
+
+            self.sidebar_tabs = QTabWidget()
+            self.sidebar_tabs.setStyleSheet(_TAB_STYLE)
+            weights_scroll, self.weights_host, self.weights_layout = (
+                self._make_sidebar_scroll_page()
             )
-            self.weights_host = QWidget()
-            self.weights_layout = QVBoxLayout(self.weights_host)
-            left_scroll.setWidget(self.weights_host)
-            body.addWidget(left_scroll)
+            ceilings_scroll, self.ceilings_host, self.ceilings_layout = (
+                self._make_sidebar_scroll_page()
+            )
+            self.sidebar_tabs.addTab(weights_scroll, "Weights")
+            self.sidebar_tabs.addTab(ceilings_scroll, "Scale max")
+            left_v.addWidget(self.sidebar_tabs, 1)
+            body.addWidget(left_col)
 
             self.list = QListWidget()
             self.list.setViewMode(QListWidget.ViewMode.IconMode)
@@ -897,6 +920,8 @@ class MainWindow(QMainWindow):
         if key == "ammo":
             return ",".join(str(a) for a in (entry.get("ammo_class") or [])).lower()
         raw = (entry.get("stats") or {}).get(key)
+        if key == "hit_power":
+            return hit_power_pct(raw)
         if isinstance(raw, bool):
             return 1.0 if raw else 0.0
         if isinstance(raw, (int, float)):
@@ -1017,6 +1042,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:  # noqa: N802
         try:
+            self._flush_score_refresh(rebuild=False)
             self._persist_ui_state()
             save_settings(self.settings)
             save_balance(self.balance)
@@ -1029,7 +1055,50 @@ class MainWindow(QMainWindow):
             log.exception("save on close failed")
         super().closeEvent(event)
 
+    def _schedule_score_refresh(self) -> None:
+        """Debounce balance save + full list/pts rebuild after slider edits."""
+        self._balance_dirty = True
+        if self._slider_drag_depth > 0:
+            # Wait for mouse-up; release handler will schedule.
+            if self._score_refresh_timer.isActive():
+                self._score_refresh_timer.stop()
+            return
+        self._score_refresh_timer.start(500)
+
+    def _flush_score_refresh(self, *, rebuild: bool = True) -> None:
+        """Apply any pending debounced save (and optionally rebuild now)."""
+        if self._score_refresh_timer.isActive():
+            self._score_refresh_timer.stop()
+        if self._balance_dirty:
+            try:
+                save_balance(self.balance)
+            except Exception:  # noqa: BLE001
+                log.exception("debounced balance save failed")
+            self._balance_dirty = False
+        if rebuild:
+            self._rebuild_list()
+
+    def _on_score_refresh_timeout(self) -> None:
+        if self._slider_drag_depth > 0:
+            return
+        self._flush_score_refresh(rebuild=True)
+
+    def _on_slider_drag_start(self) -> None:
+        self._slider_drag_depth += 1
+        if self._score_refresh_timer.isActive():
+            self._score_refresh_timer.stop()
+
+    def _on_slider_drag_end(self) -> None:
+        self._slider_drag_depth = max(0, self._slider_drag_depth - 1)
+        if self._slider_drag_depth == 0 and self._balance_dirty:
+            self._schedule_score_refresh()
+
+    def _wire_slider_row(self, row: WeightRow) -> None:
+        row.drag_started.connect(self._on_slider_drag_start)
+        row.drag_ended.connect(self._on_slider_drag_end)
+
     def _on_faction(self, _name: str) -> None:
+        self._flush_score_refresh(rebuild=False)
         data = self.faction_box.currentData()
         fac = str(data if data is not None else _name)
         log.debug("faction -> %s (%s)", fac, faction_label(fac))
@@ -1041,6 +1110,7 @@ class MainWindow(QMainWindow):
         self._rebuild_list()
 
     def _on_tab(self, idx: int) -> None:
+        self._flush_score_refresh(rebuild=False)
         # Stash selection under the category we're leaving.
         cur = self.list.currentItem()
         if cur is not None:
@@ -1311,21 +1381,41 @@ class MainWindow(QMainWindow):
             enabled,
         )
         set_ammo_family_enabled(self.balance, self.faction, family, enabled)
-        save_balance(self.balance)
         n = override_count(self.balance, self.faction)
         self.faction_meta.setText(f"({n} overrides)" if n else "")
         self._refresh_ammo_button_icon(family, enabled)
-        self._rebuild_list()
+        self._schedule_score_refresh()
 
     def _set_row_ammo(self, families: list[str], enabled: bool) -> None:
         """Enable/disable only the ammo families in one type row."""
         for fam in families:
             set_ammo_family_enabled(self.balance, self.faction, fam, enabled)
-        save_balance(self.balance)
         n = override_count(self.balance, self.faction)
         self.faction_meta.setText(f"({n} overrides)" if n else "")
         self._rebuild_ammo_toggles()
-        self._rebuild_list()
+        self._schedule_score_refresh()
+
+    @staticmethod
+    def _make_sidebar_scroll_page() -> tuple[QScrollArea, QWidget, QVBoxLayout]:
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setStyleSheet(
+            "QScrollArea { border: none; background: transparent; }"
+        )
+        host = QWidget()
+        lay = QVBoxLayout(host)
+        lay.setContentsMargins(4, 4, 4, 4)
+        scroll.setWidget(host)
+        return scroll, host, lay
+
+    @staticmethod
+    def _clear_layout(lay: QVBoxLayout) -> None:
+        while lay.count():
+            item = lay.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
 
     def _section_label(self, text: str) -> QLabel:
         lbl = QLabel(text)
@@ -1351,11 +1441,10 @@ class MainWindow(QMainWindow):
 
     def _rebuild_weights(self) -> None:
         try:
-            while self.weights_layout.count():
-                item = self.weights_layout.takeAt(0)
-                w = item.widget()
-                if w:
-                    w.deleteLater()
+            # Rows are destroyed; clear any in-progress drag tracking.
+            self._slider_drag_depth = 0
+            self._clear_layout(self.weights_layout)
+            self._clear_layout(self.ceilings_layout)
             fac = self.faction
             cat = self.category
             cfg = effective_category(self.balance, fac, cat)
@@ -1375,6 +1464,7 @@ class MainWindow(QMainWindow):
                 )
                 row.changed.connect(self._weight_changed)
                 row.cleared.connect(self._weight_cleared)
+                self._wire_slider_row(row)
                 self.weights_layout.addWidget(row)
 
             def add_weight(key: str, value: float) -> None:
@@ -1389,27 +1479,34 @@ class MainWindow(QMainWindow):
                 )
                 row.changed.connect(self._weight_changed)
                 row.cleared.connect(self._weight_cleared)
+                self._wire_slider_row(row)
                 self.weights_layout.addWidget(row)
 
-            def add_ceiling(stat_key: str, value: float) -> None:
-                default_v = value
-                # Slider headroom: ×4 default, with sensible floors.
-                if default_v < 10:
+            def add_ceiling(stat_key: str, value: float, slider_cap: float) -> None:
+                # slider_cap is the hard max for this Scale max slider (0–x).
+                # Code defaults in WEAPON_WEIGHTS / ARMOR_* are those caps — not ×5 headroom.
+                cap = float(slider_cap) if slider_cap and float(slider_cap) > 0 else 1.0
+                try:
+                    cur = float(value)
+                except (TypeError, ValueError):
+                    cur = cap
+                if cur <= 0:
+                    cur = cap
+                cur = min(cur, cap)
+                if cap <= 10:
                     kind = "float"
-                    smax = max(1000, int(round(default_v * 100 * 5)))
+                    smax = max(1, int(round(cap * 100)))
                 else:
-                    kind = "int" if default_v >= 50 else "float"
-                    if kind == "int":
-                        smax = max(2000, int(round(default_v * 5)))
-                    else:
-                        smax = max(1000, int(round(default_v * 100 * 5)))
+                    kind = "int"
+                    smax = max(1, int(round(cap)))
                 tip = pretty_ceiling_tip(stat_key)
                 if ceilings_locked:
                     tip = f"{tip} (Default faction only — shared by all factions.)"
+                tip = f"{tip} Slider range 0–{cap:g}."
                 row = WeightRow(
                     f"ceiling:{stat_key}",
                     pretty_label(stat_key),
-                    value,
+                    cur,
                     is_weight=False,
                     overridden=False,
                     tip=tip,
@@ -1419,7 +1516,8 @@ class MainWindow(QMainWindow):
                     slider_max=smax,
                 )
                 row.changed.connect(self._ceiling_changed)
-                self.weights_layout.addWidget(row)
+                self._wire_slider_row(row)
+                self.ceilings_layout.addWidget(row)
 
             def add_toggle(key: str, checked: bool) -> None:
                 ov = is_overridden(self.balance, fac, cat, key, weight=False)
@@ -1452,7 +1550,7 @@ class MainWindow(QMainWindow):
                 lay.addWidget(btn)
                 self.weights_layout.addWidget(row)
 
-            # Budget / filters (per-faction).
+            # Tab 1: Budget + stat weights (per-faction).
             self.weights_layout.addWidget(self._section_label("Budget"))
             if cat == "outfits":
                 add_toggle(
@@ -1461,24 +1559,6 @@ class MainWindow(QMainWindow):
                 )
             add_scalar("max_pts", float(cfg.get("max_pts") or 900))
             add_scalar("cost_mult", float(cfg.get("cost_mult") or 1000))
-
-            # Scale maxes (0–x) — Default-only; other factions inherit.
-            ceil_title = "Scale max (0–x)"
-            if ceilings_locked:
-                ceil_title += " — Default only"
-            self.weights_layout.addWidget(self._section_break(ceil_title))
-            ceil_map = cfg.get("ceilings") or {}
-            if cat == "weapons":
-                for sk, _wk, default_c, _inv, _dw in WEAPON_WEIGHTS:
-                    if sk in NO_CEILING_STATS:
-                        continue
-                    add_ceiling(sk, float(ceil_map.get(sk, default_c)))
-            else:
-                defs = default_ceilings_armor(is_helmet=cat == "helmets")
-                # Price first, then protections (match weight order).
-                add_ceiling("cost", float(ceil_map.get("cost", defs["cost"])))
-                for sk, _wk, default_c, _inv, _dw in ARMOR_WEIGHTS:
-                    add_ceiling(sk, float(ceil_map.get(sk, default_c)))
 
             self.weights_layout.addWidget(self._section_break("Stat weights"))
             weights = cfg.get("weights") or {}
@@ -1489,8 +1569,34 @@ class MainWindow(QMainWindow):
                 add_weight("a_price", float(weights.get("a_price", 0.5)))
                 for _sk, wkey, _c, _i, default_w in ARMOR_WEIGHTS:
                     add_weight(wkey, float(weights.get(wkey, default_w)))
-
             self.weights_layout.addStretch(1)
+
+            # Tab 2: Scale maxes (0–x) — Default-only; other factions inherit.
+            ceil_note = "Normalization ceilings (0–x)"
+            if ceilings_locked:
+                ceil_note += " — Default only"
+            self.ceilings_layout.addWidget(self._section_label(ceil_note))
+            ceil_map = cfg.get("ceilings") or {}
+            if cat == "weapons":
+                for sk, _wk, default_c, _inv, _dw in WEAPON_WEIGHTS:
+                    if sk in NO_CEILING_STATS:
+                        continue
+                    add_ceiling(
+                        sk, float(ceil_map.get(sk, default_c)), float(default_c)
+                    )
+            else:
+                defs = default_ceilings_armor(is_helmet=cat == "helmets")
+                # Price first, then protections (match weight order).
+                add_ceiling(
+                    "cost",
+                    float(ceil_map.get("cost", defs["cost"])),
+                    float(defs["cost"]),
+                )
+                for sk, _wk, default_c, _inv, _dw in ARMOR_WEIGHTS:
+                    add_ceiling(
+                        sk, float(ceil_map.get(sk, default_c)), float(default_c)
+                    )
+            self.ceilings_layout.addStretch(1)
         except Exception:
             log.exception("_rebuild_weights failed fac=%s cat=%s", self.faction, self.category)
             raise
@@ -1508,8 +1614,7 @@ class MainWindow(QMainWindow):
             value,
         )
         set_ceiling(self.balance, self.category, stat_key, float(value))
-        save_balance(self.balance)
-        self._rebuild_list()
+        self._schedule_score_refresh()
 
     def _weight_changed(self, key: str, value: float, is_weight: bool) -> None:
         store: Any = value
@@ -1526,13 +1631,12 @@ class MainWindow(QMainWindow):
         set_override(
             self.balance, self.faction, self.category, key, store, weight=is_weight
         )
-        save_balance(self.balance)
         n = override_count(self.balance, self.faction)
         self.faction_meta.setText(f"({n} overrides)" if n else "")
         if key == "include_universal_armor":
             # Recreate toggle row so override styling/reset btn stay in sync.
             self._rebuild_weights()
-            self._rebuild_list()
+            self._schedule_score_refresh()
             return
         # Orange = faction override only; Default edits are the baseline.
         if self.faction != "Default":
@@ -1545,7 +1649,7 @@ class MainWindow(QMainWindow):
                 ):
                     w.lbl.setStyleSheet("color: #e6a23c; font-weight: bold;")
                     w.btn.setEnabled(True)
-        self._rebuild_list()
+        self._schedule_score_refresh()
 
     def _weight_cleared(self, key: str, is_weight: bool) -> None:
         log.debug(
@@ -1566,9 +1670,8 @@ class MainWindow(QMainWindow):
                 fov.pop(self.category, None)
             if not fov:
                 (self.balance.get("factions") or {}).pop(fac, None)
-        save_balance(self.balance)
         self._rebuild_weights()
-        self._rebuild_list()
+        self._schedule_score_refresh()
 
     def _row_pts_inshop(
         self, sec: str, entry: dict[str, Any]
@@ -1729,6 +1832,8 @@ class MainWindow(QMainWindow):
                 self._on_select(restore_item, None)
             else:
                 self._clear_detail()
+            # After pts recalc / resort, always show the top of the grid.
+            self.list.scrollToTop()
             elapsed = time.perf_counter() - t0
             n_shop = sum(1 for r in rows if r[3])
             n_blocked = sum(1 for r in rows if r[4])
@@ -1847,7 +1952,12 @@ class MainWindow(QMainWindow):
             for key in ordered:
                 seen.add(key)
                 w_s, f_s, n01 = _wf(key)
-                raw = cost_v if key == "cost" else stats.get(key)
+                if key == "cost":
+                    raw = cost_v
+                elif key == "hit_power":
+                    raw = hit_power_pct(stats.get(key))
+                else:
+                    raw = stats.get(key)
                 cell_colors = [
                     None,
                     None,
@@ -1946,6 +2056,7 @@ class MainWindow(QMainWindow):
         if not self.items:
             QMessageBox.warning(self, "Export", "No items.yml — Regenerate first.")
             return
+        self._flush_score_refresh(rebuild=False)
         self._save_roots()
         dest = default_export_path()
         log.info("Export dialog default=%s", dest)

@@ -5,29 +5,48 @@ from __future__ import annotations
 import re
 from typing import Any
 
-# (stat_key, weight_key, ceiling, inverse, default_weight)
-# default 0 = excluded until the slider is raised; regenerate always stores all stats.
+# (stat_key, weight_key, scale_slider_max, inverse, default_weight)
+# default weight 0 = excluded until the slider is raised; regenerate always stores all stats.
 # Order = SALE sidebar / detail table. Score cols = tooltip Min/Lgt/Lgt+/Mid/Mid+.
-# Ceiling = the "x" in 0–x normalization (editable on Default only).
+# scale_slider_max = hard max for the Scale max slider AND default 0–x ceiling.
+# Hit power: engine/Lua is 0–1; SALE display/scoring/ceilings use tip-style percent.
+HIT_POWER_PCT_CEILING = 200.0
+# Values at or below this are treated as engine fractions and ×100 for SALE.
+_HIT_POWER_FRACTION_MAX = 5.0
+
+
+def hit_power_pct(raw: Any) -> float:
+    """Convert engine hit_power (0–1) to SALE percent; leave percent values as-is."""
+    try:
+        v = float(raw or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    if v <= 0:
+        return 0.0
+    if v <= _HIT_POWER_FRACTION_MAX:
+        return v * 100.0
+    return v
+
+
 WEAPON_WEIGHTS = [
-    ("cost", "w_price", 30000, True, 0.5),
-    ("hit_power", "w_hit_power", 3, False, 0.0),
-    ("min_dmg", "w_min_dmg", 800, False, 0.0),
-    ("lgt_dmg", "w_lgt_dmg", 800, False, 0.0),
-    ("lgtp_dmg", "w_lgtp_dmg", 800, False, 0.0),
-    ("mid_dmg", "w_mid_dmg", 800, False, 0.0),
-    ("midp_dmg", "w_midp_dmg", 800, False, 0.0),
-    ("min_dps", "w_min_dps", 1000, False, 0.5),
-    ("lgt_dps", "w_lgt_dps", 1000, False, 0.5),
-    ("lgtp_dps", "w_lgtp_dps", 1000, False, 0.5),
-    ("mid_dps", "w_mid_dps", 1000, False, 0.5),
-    ("midp_dps", "w_midp_dps", 1000, False, 0.5),
-    ("reload_s", "w_reload", 5, True, 0.0),
-    ("rpm", "w_rpm", 1500, False, 0.0),
-    ("mag", "w_mag", 100, False, 0.0),
-    ("burst", "w_burst", 30, False, 0.5),
-    ("spread_ads", "w_spread_ads", 1.5, True, 0.5),
-    ("spread_hip", "w_spread_hip", 20, True, 0.5),
+    ("cost", "w_price", 100000, True, 0.5),
+    ("hit_power", "w_hit_power", HIT_POWER_PCT_CEILING, False, 0.0),
+    ("min_dmg", "w_min_dmg", 500, False, 0.0),
+    ("lgt_dmg", "w_lgt_dmg", 500, False, 0.0),
+    ("lgtp_dmg", "w_lgtp_dmg", 500, False, 0.0),
+    ("mid_dmg", "w_mid_dmg", 500, False, 0.0),
+    ("midp_dmg", "w_midp_dmg", 500, False, 0.0),
+    ("min_dps", "w_min_dps", 500, False, 0.5),
+    ("lgt_dps", "w_lgt_dps", 500, False, 0.5),
+    ("lgtp_dps", "w_lgtp_dps", 500, False, 0.5),
+    ("mid_dps", "w_mid_dps", 500, False, 0.5),
+    ("midp_dps", "w_midp_dps", 500, False, 0.5),
+    ("reload_s", "w_reload", 10, True, 0.0),
+    ("rpm", "w_rpm", 1200, False, 0.0),
+    ("mag", "w_mag", 200, False, 0.0),
+    ("burst", "w_burst", 20, False, 0.5),
+    ("spread_ads", "w_spread_ads", 3, True, 0.5),
+    ("spread_hip", "w_spread_hip", 10, True, 0.5),
     ("scope", "w_scope", 1, False, 0.5),
     ("silencer", "w_silencer", 1, False, 0.5),
 ]
@@ -35,7 +54,7 @@ WEAPON_WEIGHTS = [
 # Binary flags — no 0–x scale slider.
 NO_CEILING_STATS = frozenset({"scope", "silencer"})
 
-# (stat_key, weight_key, ceiling, inverse, default_weight)
+# (stat_key, weight_key, scale_slider_max, inverse, default_weight)
 # a_price / cost ceiling is added separately (outfit vs helmet soft cap).
 ARMOR_WEIGHTS = [
     ("radiation_protection", "a_rad", 1, False, 0.5),
@@ -79,8 +98,17 @@ def merge_ceilings(
                 fv = float(v)
             except (TypeError, ValueError):
                 continue
-            if fv > 0:
-                out[str(k)] = fv
+            if fv <= 0:
+                continue
+            key = str(k)
+            # Old balance used 0–1 hit_power ceilings (e.g. 3.0); ignore those.
+            if key == "hit_power" and fv <= _HIT_POWER_FRACTION_MAX:
+                continue
+            # Cap at code slider max (defaults); drop runaway values from old ×5 UI.
+            cap = out.get(key)
+            if cap is not None and fv > cap:
+                fv = cap
+            out[key] = fv
     return out
 
 FACTION_BLOC = {
@@ -172,6 +200,8 @@ def weapon_stat_terms(
     for stat_key, wkey, default_ceiling, inverse, default_w in WEAPON_WEIGHTS:
         w = float(weights.get(wkey, default_w) or 0)
         raw = float(stats.get(stat_key) or 0)
+        if stat_key == "hit_power":
+            raw = hit_power_pct(raw)
         if w <= 0:
             out[stat_key] = (w, 0.0)
             continue

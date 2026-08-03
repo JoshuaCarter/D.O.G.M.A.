@@ -14,9 +14,8 @@ from .balance import (
     ammo_enabled_map,
     effective_category,
     get_item_ltx_override,
-    item_in_ltx,
 )
-from .kind_limits import select_weapons_for_ltx
+from .kind_limits import item_limit_for, select_pool_for_ltx, select_weapons_for_ltx
 from .diaglog import get_logger
 from .score import (
     FACTION_COMMUNITY,
@@ -152,15 +151,24 @@ def build_faction_shop(
     ):
         shop[sec] = ceil_pts_10(pts_by_sec.get(sec, 0))
 
-    for sec, entry in (items.get("outfits") or {}).items():
-        ok, pts = _in_shop_armor(entry, faction, ocfg, is_helmet=False)
-        if item_in_ltx(ok, get_item_ltx_override(balance, sec)):
-            shop[sec] = ceil_pts_10(pts)
-
-    for sec, entry in (items.get("helmets") or {}).items():
-        ok, pts = _in_shop_armor(entry, faction, hcfg, is_helmet=True)
-        if item_in_ltx(ok, get_item_ltx_override(balance, sec)):
-            shop[sec] = ceil_pts_10(pts)
+    for cat, cfg, is_helm in (
+        ("outfits", ocfg, False),
+        ("helmets", hcfg, True),
+    ):
+        pool = items.get(cat) or {}
+        elig: dict[str, int] = {}
+        pts_map: dict[str, int] = {}
+        for sec, entry in pool.items():
+            ok, pts = _in_shop_armor(entry, faction, cfg, is_helmet=is_helm)
+            pts_map[sec] = int(pts)
+            if ok:
+                elig[sec] = int(pts)
+            elif get_item_ltx_override(balance, sec) == "include":
+                pts_map[sec] = int(pts)
+        for sec in select_pool_for_ltx(
+            pool, balance, eligible=elig, limit=item_limit_for(cfg)
+        ):
+            shop[sec] = ceil_pts_10(pts_map.get(sec, 0))
 
     return shop
 

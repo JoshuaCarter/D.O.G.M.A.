@@ -52,12 +52,15 @@ def default_balance() -> dict[str, Any]:
                 "max_pts": 550,
                 "cost_mult": 1000,
                 "include_universal_armor": True,
+                # At most N lowest-pts outfits in LTX (0–10).
+                "max_items": 10,
                 "weights": _default_weights_armor(),
                 "ceilings": default_ceilings_armor(is_helmet=False),
             },
             "helmets": {
                 "max_pts": 250,
                 "cost_mult": 1000,
+                "max_items": 10,
                 "weights": _default_weights_armor(),
                 "ceilings": default_ceilings_armor(is_helmet=True),
             },

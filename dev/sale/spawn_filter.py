@@ -127,6 +127,9 @@ def name_blocked(sec: str) -> bool:
     # One-off Nimble/stock exclusives without the above tokens.
     if s in ("wpn_toz34_mark4", "pri_a17_gauss_rifle", "wpn_gauss_quest"):
         return True
+    # Yantar story psy-helmets (devices / quest gear — not loadout helmets).
+    if s in ("bad_psy_helmet", "good_psy_helmet"):
+        return True
     return False
 
 

@@ -78,11 +78,15 @@ from .export_ltx import default_export_path, export_shop_ltx
 from .labels import pretty_ceiling_tip, pretty_label, pretty_tip
 from .regenerate import load_items, regenerate
 from .kind_limits import (
+    MAX_ITEM_LIMIT,
     MAX_KIND_LIMIT,
+    item_limit_for,
     kind_label,
     kind_limit_for,
     present_weapon_kinds,
+    select_pool_for_ltx,
     select_weapons_for_ltx,
+    set_item_limit,
     set_kind_limit,
     weapon_kind,
 )
@@ -147,10 +151,9 @@ _ITEM_CB_MARGIN = 4
 _ITEM_CB_HIT = 36
 
 # Stat name colors (CSS) by key family.
+_DPS_KEYS = ("dps",)
 _DMG_KEYS = (
-    "hit_power",
     "dmg",
-    "dps",
     "ap",
     "penetr",
     "wound",
@@ -170,8 +173,13 @@ _ECON_KEYS = ("cost", "price", "weight", "condition")
 
 def _stat_color(key: str) -> str:
     k = key.lower()
+    if "hit_power" in k:
+        return "#3d8b5a"  # dark green
+    # DPS before Dmg — "*_dps" must not pick up the Dmg purple.
+    if any(p in k for p in _DPS_KEYS):
+        return "#ff7a45"  # bright orange (DPS)
     if any(p in k for p in _DMG_KEYS):
-        return "#ff7a45"  # orange-red
+        return "#c39bd3"  # purple (Dmg)
     if any(p in k for p in _FIRE_KEYS):
         return "#5ec8ff"  # cyan
     if any(p in k for p in _HANDLE_KEYS):
@@ -191,6 +199,31 @@ def _n01_color(n01: float) -> str:
     r = int(round(r0 + (r1 - r0) * t))
     g = int(round(g0 + (g1 - g0) * t))
     b = int(round(b0 + (b1 - b0) * t))
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
+def _signed_diff_norm(primary: float, compare: float) -> float:
+    """Map primary−compare into [−1, 1] relative to the larger magnitude."""
+    d = float(primary) - float(compare)
+    scale = max(abs(float(primary)), abs(float(compare)), abs(d), 1e-9)
+    return max(-1.0, min(1.0, d / scale))
+
+
+def _signed_diff_color(n: float) -> str:
+    """Lerp red (−1) → white (0) → green (+1) for compare Diff."""
+    t = max(-1.0, min(1.0, float(n)))
+    wr, wg, wb = 0xF0, 0xF0, 0xF0
+    if t <= 0:
+        r0, g0, b0 = 0xFF, 0x4A, 0x4A
+        u = t + 1.0  # −1→0, 0→1
+        r = int(round(r0 + (wr - r0) * u))
+        g = int(round(g0 + (wg - g0) * u))
+        b = int(round(b0 + (wb - b0) * u))
+    else:
+        r1, g1, b1 = 0x3D, 0xE0, 0x6E
+        r = int(round(wr + (r1 - wr) * t))
+        g = int(round(wg + (g1 - wg) * t))
+        b = int(round(wb + (b1 - wb) * t))
     return f"#{r:02x}{g:02x}{b:02x}"
 
 
@@ -281,7 +314,7 @@ def _icon_with_pts(
     in_shop: bool,
     faction_blocked: bool = False,
     under_pts: bool = True,
-    selected: bool = False,
+    selected: bool | str = False,
     name: str = "",
     faction_tag: str = "",
     in_ltx: bool = True,
@@ -290,10 +323,16 @@ def _icon_with_pts(
     height: int = GRID_ICON_H,
 ) -> QIcon:
     canvas = QPixmap(width, height)
-    if selected:
-        canvas.fill(QColor(36, 72, 120))  # subtle blue behind texture
+    # selected: True/"primary" = blue; "compare" = red; else default.
+    sel = "primary" if selected is True else (selected or "")
+    if sel == "primary":
+        canvas.fill(QColor(36, 72, 120))
+    elif sel == "compare":
+        canvas.fill(QColor(110, 40, 40))
     elif in_ltx:
         canvas.fill(QColor(28, 30, 32))
+    elif under_pts and faction_blocked:
+        canvas.fill(QColor(28, 20, 20))
     elif under_pts:
         canvas.fill(QColor(24, 22, 20))
     else:
@@ -312,11 +351,14 @@ def _icon_with_pts(
                 x = (width - scaled.width()) // 2
                 y = (height - scaled.height()) // 2
                 painter.drawPixmap(x, y, scaled)
-        # Below pts threshold: green if in LTX, else orange (never grey).
+        # Below pts: green (in LTX), muted red (faction/ammo block), else orange.
         # Over pts threshold: grey (unless force-included → green via in_ltx).
         if in_ltx:
             border = QColor(40, 120, 70)
             pts_color = QColor(90, 220, 120)
+        elif under_pts and faction_blocked:
+            border = QColor(100, 58, 58)
+            pts_color = QColor(150, 100, 100)
         elif under_pts:
             border = QColor(100, 82, 58)
             pts_color = QColor(150, 128, 100)
@@ -828,6 +870,9 @@ class MainWindow(QMainWindow):
                 tuple[str, dict[str, Any], int, bool, bool, bool]
             ] = []
             self._sel_by_cat: dict[str, str | None] = {c: None for c in CATS}
+            self._compare_by_cat: dict[str, str | None] = {
+                c: None for c in CATS
+            }
             saved_sel = self.settings.get("selection") or {}
             if isinstance(saved_sel, dict):
                 for c in CATS:
@@ -877,40 +922,6 @@ class MainWindow(QMainWindow):
             actions.addWidget(self.sort_desc)
             actions.addStretch(1)
             v.addLayout(actions)
-
-            filter_row = QWidget()
-            filters = QHBoxLayout(filter_row)
-            filters.setContentsMargins(0, 0, 0, 2)
-            filters.setSpacing(12)
-            wcfg0 = effective_category(self.balance, "Default", "weapons")
-            self.chk_allow_suppressed = QCheckBox("Allow suppressed")
-            self.chk_allow_suppressed.setChecked(
-                bool(wcfg0.get("allow_suppressed", False))
-            )
-            self.chk_allow_suppressed.setToolTip(
-                "Off: guns with an attached/integrated silencer are naturally "
-                "out of shop (grey). On: they follow normal score rules."
-            )
-            self.chk_allow_suppressed.setStyleSheet("QCheckBox { color: #d0d0d0; }")
-            self.chk_allow_suppressed.toggled.connect(self._on_allow_suppressed)
-            self.chk_allow_scoped = QCheckBox("Allow scoped")
-            self.chk_allow_scoped.setChecked(bool(wcfg0.get("allow_scoped", False)))
-            self.chk_allow_scoped.setToolTip(
-                "Off: guns with a built-in/attached scope are naturally out of "
-                "shop (grey). On: they follow normal score rules."
-            )
-            self.chk_allow_scoped.setStyleSheet("QCheckBox { color: #d0d0d0; }")
-            self.chk_allow_scoped.toggled.connect(self._on_allow_scoped)
-            filters.addWidget(self.chk_allow_suppressed)
-            filters.addWidget(self.chk_allow_scoped)
-            self.kind_limits_host = QWidget()
-            self.kind_limits_layout = QHBoxLayout(self.kind_limits_host)
-            self.kind_limits_layout.setContentsMargins(0, 0, 0, 0)
-            self.kind_limits_layout.setSpacing(8)
-            self._kind_limit_boxes: dict[str, QSpinBox] = {}
-            filters.addWidget(self.kind_limits_host, 1)
-            v.addWidget(filter_row)
-            self._rebuild_kind_limit_boxes()
 
             ammo_wrap = QVBoxLayout()
             ammo_wrap.setSpacing(2)
@@ -968,7 +979,7 @@ class MainWindow(QMainWindow):
             self.tabs.currentChanged.connect(self._on_tab)
             editor_v.addWidget(self.tabs)
 
-            SIDEBAR_W = 400
+            SIDEBAR_W = 460
             body = QHBoxLayout()
             body.setContentsMargins(0, 0, 0, 0)
             body.setSpacing(0)
@@ -993,6 +1004,78 @@ class MainWindow(QMainWindow):
             self.faction_meta.setStyleSheet("color: #9aa3ad;")
             fac.addWidget(self.faction_meta)
             left_v.addLayout(fac)
+
+            # Under faction: weapons allow/kind caps, or outfit/helmet max count.
+            self.cat_filters_host = QWidget()
+            cf = QVBoxLayout(self.cat_filters_host)
+            cf.setContentsMargins(0, 4, 0, 4)
+            cf.setSpacing(4)
+
+            self.weapon_filters_host = QWidget()
+            wf = QVBoxLayout(self.weapon_filters_host)
+            wf.setContentsMargins(0, 0, 0, 0)
+            wf.setSpacing(4)
+            wcfg0 = effective_category(self.balance, "Default", "weapons")
+            allow_row = QHBoxLayout()
+            allow_row.setContentsMargins(0, 0, 0, 0)
+            allow_row.setSpacing(12)
+            self.chk_allow_suppressed = QCheckBox("Allow suppressed")
+            self.chk_allow_suppressed.setChecked(
+                bool(wcfg0.get("allow_suppressed", False))
+            )
+            self.chk_allow_suppressed.setToolTip(
+                "Off: guns with an attached/integrated silencer are naturally "
+                "out of shop. On: they follow normal score rules."
+            )
+            self.chk_allow_suppressed.setStyleSheet("QCheckBox { color: #d0d0d0; }")
+            self.chk_allow_suppressed.toggled.connect(self._on_allow_suppressed)
+            self.chk_allow_scoped = QCheckBox("Allow scoped")
+            self.chk_allow_scoped.setChecked(bool(wcfg0.get("allow_scoped", False)))
+            self.chk_allow_scoped.setToolTip(
+                "Off: guns with a built-in/attached scope are naturally out of "
+                "shop. On: they follow normal score rules."
+            )
+            self.chk_allow_scoped.setStyleSheet("QCheckBox { color: #d0d0d0; }")
+            self.chk_allow_scoped.toggled.connect(self._on_allow_scoped)
+            allow_row.addWidget(self.chk_allow_suppressed)
+            allow_row.addWidget(self.chk_allow_scoped)
+            allow_row.addStretch(1)
+            wf.addLayout(allow_row)
+            self.kind_limits_host = QWidget()
+            self.kind_limits_layout = QVBoxLayout(self.kind_limits_host)
+            self.kind_limits_layout.setContentsMargins(0, 2, 0, 0)
+            self.kind_limits_layout.setSpacing(2)
+            self._kind_limit_boxes: dict[str, QSpinBox] = {}
+            wf.addWidget(self.kind_limits_host)
+            cf.addWidget(self.weapon_filters_host)
+
+            self.armor_limit_host = QWidget()
+            al = QHBoxLayout(self.armor_limit_host)
+            al.setContentsMargins(0, 0, 0, 0)
+            al.setSpacing(6)
+            self.armor_limit_label = QLabel("Max items")
+            self.armor_limit_label.setStyleSheet("QLabel { color: #d0d0d0; }")
+            self.armor_limit_label.setToolTip(
+                "At most N lowest-pts items in LTX (not a minimum). "
+                "Force-includes first; force-excludes never enter."
+            )
+            self.armor_limit_box = QSpinBox()
+            self.armor_limit_box.setRange(0, MAX_ITEM_LIMIT)
+            self.armor_limit_box.setSingleStep(1)
+            self.armor_limit_box.setFixedWidth(52)
+            self.armor_limit_box.setToolTip(self.armor_limit_label.toolTip())
+            self.armor_limit_box.setStyleSheet(
+                "QSpinBox { background: #2a2a2a; color: #e8e8e8; "
+                "border: 1px solid #444; padding: 1px 2px; }"
+            )
+            self.armor_limit_box.valueChanged.connect(self._on_armor_limit_changed)
+            al.addWidget(self.armor_limit_label, 1)
+            al.addWidget(self.armor_limit_box)
+            cf.addWidget(self.armor_limit_host)
+
+            left_v.addWidget(self.cat_filters_host)
+            self._rebuild_kind_limit_boxes()
+            self._sync_cat_filters_ui()
 
             self.sidebar_tabs = QTabWidget()
             self.sidebar_tabs.setStyleSheet(_TAB_STYLE)
@@ -1051,7 +1134,7 @@ class MainWindow(QMainWindow):
             )
             detail_lay.addWidget(self.detail_info)
             self.detail_stats = self._make_kv_table(
-                ["Stat", "Value", "Weight", "Final"]
+                ["Stat", "Value", "Weight", "Final", "Diff"]
             )
             self.detail_stats.clicked.connect(
                 lambda idx: self._on_detail_sort_click(
@@ -1095,6 +1178,10 @@ class MainWindow(QMainWindow):
             deploy_as_sc = QShortcut(QKeySequence("Ctrl+Shift+D"), self)
             deploy_as_sc.setContext(Qt.ShortcutContext.WindowShortcut)
             deploy_as_sc.activated.connect(self._deploy_as)
+
+            esc_sc = QShortcut(QKeySequence("Esc"), self)
+            esc_sc.setContext(Qt.ShortcutContext.WindowShortcut)
+            esc_sc.activated.connect(self._deselect_all)
 
             attach_log_view(self.log_view)
             self._restore_ui_state()
@@ -1187,12 +1274,10 @@ class MainWindow(QMainWindow):
                 text = vals[c - 1] if c - 1 < len(vals) else ""
                 cell = QTableWidgetItem(text)
                 fg = "#e8e8e8"
-                if (
-                    cell_colors
-                    and c - 1 < len(cell_colors)
-                    and cell_colors[c - 1]
-                ):
-                    fg = cell_colors[c - 1]
+                if cell_colors and c - 1 < len(cell_colors):
+                    cc = cell_colors[c - 1]
+                    if cc is not None:
+                        fg = cc
                 cell.setForeground(QColor(fg))
                 cell.setTextAlignment(align_l)
                 cell.setData(Qt.ItemDataRole.UserRole, key)
@@ -1571,6 +1656,38 @@ class MainWindow(QMainWindow):
             except Exception:  # noqa: BLE001
                 log.exception("kind limit commit failed kind=%s", kind)
 
+    def _commit_armor_limit_from_ui(self) -> None:
+        """Outfit/helmet max-items spinbox → balance."""
+        box = getattr(self, "armor_limit_box", None)
+        if box is None or self.category not in ("outfits", "helmets"):
+            return
+        try:
+            set_item_limit(self.balance, self.category, int(box.value()))
+        except Exception:  # noqa: BLE001
+            log.exception("armor limit commit failed cat=%s", self.category)
+
+    def _on_armor_limit_changed(self, value: int) -> None:
+        if self.category not in ("outfits", "helmets"):
+            return
+        set_item_limit(self.balance, self.category, int(value))
+        self._mark_balance_dirty()
+
+    def _sync_cat_filters_ui(self) -> None:
+        """Show weapon kind caps or armor max-items under the faction dropdown."""
+        is_wpn = self.category == "weapons"
+        is_armor = self.category in ("outfits", "helmets")
+        if hasattr(self, "weapon_filters_host"):
+            self.weapon_filters_host.setVisible(is_wpn)
+        if hasattr(self, "armor_limit_host"):
+            self.armor_limit_host.setVisible(is_armor)
+        if is_armor and hasattr(self, "armor_limit_box"):
+            cfg = effective_category(self.balance, self.faction, self.category)
+            self.armor_limit_box.blockSignals(True)
+            self.armor_limit_box.setValue(item_limit_for(cfg))
+            self.armor_limit_box.blockSignals(False)
+            label = "Max outfits" if self.category == "outfits" else "Max helmets"
+            self.armor_limit_label.setText(label)
+
     def _commit_sliders_to_balance(self) -> int:
         """Write current sidebar slider/toggle UI into ``self.balance``.
 
@@ -1581,6 +1698,7 @@ class MainWindow(QMainWindow):
         cat = self.category
         n = 0
         self._commit_kind_limits_from_ui()
+        self._commit_armor_limit_from_ui()
         for row in self._iter_weight_rows():
             key = row.key
             val = float(row.displayed_value())
@@ -1780,7 +1898,7 @@ class MainWindow(QMainWindow):
             cell = QWidget()
             cell_l = QHBoxLayout(cell)
             cell_l.setContentsMargins(0, 0, 0, 0)
-            cell_l.setSpacing(3)
+            cell_l.setSpacing(6)
             name = QLabel(kind_label(kind))
             name.setStyleSheet("QLabel { color: #d0d0d0; }")
             name.setToolTip(
@@ -1790,7 +1908,7 @@ class MainWindow(QMainWindow):
             box = QSpinBox()
             box.setRange(0, MAX_KIND_LIMIT)
             box.setSingleStep(1)
-            box.setFixedWidth(48)
+            box.setFixedWidth(52)
             box.setToolTip(name.toolTip())
             box.setStyleSheet(
                 "QSpinBox { background: #2a2a2a; color: #e8e8e8; "
@@ -1806,11 +1924,10 @@ class MainWindow(QMainWindow):
             box.setValue(val0)
             box.blockSignals(False)
             box.valueChanged.connect(_on_change)
-            cell_l.addWidget(name)
+            cell_l.addWidget(name, 1)
             cell_l.addWidget(box)
             lay.addWidget(cell)
             self._kind_limit_boxes[kind] = box
-        lay.addStretch(1)
 
     def _mark_balance_dirty(self) -> None:
         """Record an in-memory balance edit; scores refresh only on Ctrl+S."""
@@ -1895,6 +2012,7 @@ class MainWindow(QMainWindow):
         self.category = CATS[idx] if 0 <= idx < len(CATS) else "weapons"
         log.debug("category tab -> %s", self.category)
         self.ammo_panel.setVisible(self.category == "weapons")
+        self._sync_cat_filters_ui()
         self._rebuild_weights()
         self._refresh_sort_options()
         self._run_list_refresh()
@@ -2598,7 +2716,7 @@ class MainWindow(QMainWindow):
                     pts, in_shop, fac_blocked, under_pts = 0, False, False, False
                 rows.append((sec, entry, pts, in_shop, fac_blocked, under_pts))
 
-            selected_weapons: set[str] | None = None
+            selected_ltx: set[str] | None = None
             if self.category == "weapons":
                 # Spinbox values win (may not have been flushed via valueChanged).
                 self._commit_kind_limits_from_ui()
@@ -2606,7 +2724,7 @@ class MainWindow(QMainWindow):
                 eligible = {
                     sec: pts for sec, _e, pts, ok, _fb, _u in rows if ok
                 }
-                selected_weapons = select_weapons_for_ltx(
+                selected_ltx = select_weapons_for_ltx(
                     pool, self.balance, eligible=eligible, cat_cfg=wcfg
                 )
                 log.debug(
@@ -2615,15 +2733,34 @@ class MainWindow(QMainWindow):
                         k: kind_limit_for(wcfg, k)
                         for k in present_weapon_kinds(pool)
                     },
-                    len(selected_weapons),
+                    len(selected_ltx),
                     len(eligible),
                 )
-            # Final LTX flag per row (kind cap applied); used for paint + in_shop sort.
+            elif self.category in ("outfits", "helmets"):
+                self._commit_armor_limit_from_ui()
+                acfg = effective_category(
+                    self.balance, self.faction, self.category
+                )
+                eligible = {
+                    sec: pts for sec, _e, pts, ok, _fb, _u in rows if ok
+                }
+                limit = item_limit_for(acfg)
+                selected_ltx = select_pool_for_ltx(
+                    pool, self.balance, eligible=eligible, limit=limit
+                )
+                log.debug(
+                    "%s max_items=%d → ltx %d / eligible %d",
+                    self.category,
+                    limit,
+                    len(selected_ltx),
+                    len(eligible),
+                )
+            # Final LTX flag per row (caps applied); used for paint + in_shop sort.
             in_ltx_map: dict[str, bool] = {}
             for sec, _e, _pts, in_shop, _fb, _u in rows:
                 ov = get_item_ltx_override(self.balance, sec)
-                if selected_weapons is not None:
-                    in_ltx_map[sec] = sec in selected_weapons
+                if selected_ltx is not None:
+                    in_ltx_map[sec] = sec in selected_ltx
                 else:
                     in_ltx_map[sec] = item_in_ltx(in_shop, ov)
 
@@ -2642,6 +2779,10 @@ class MainWindow(QMainWindow):
             thumb_ok = 0
             restore_item: QListWidgetItem | None = None
             n_ltx = 0
+            want_cmp = self._compare_by_cat.get(self.category)
+            if want_cmp and want_cmp == want_sec:
+                want_cmp = None
+                self._compare_by_cat[self.category] = None
             for sec, entry, pts, in_shop, fac_blocked, under_pts in rows:
                 # Name is painted bottom-left on the tile (no under-icon label).
                 label = _nice_item_name(sec, entry)
@@ -2660,7 +2801,12 @@ class MainWindow(QMainWindow):
                             break
                 if thumb:
                     thumb_ok += 1
-                is_sel = bool(want_sec and sec == want_sec)
+                if want_sec and sec == want_sec:
+                    sel_mode: bool | str = "primary"
+                elif want_cmp and sec == want_cmp:
+                    sel_mode = "compare"
+                else:
+                    sel_mode = False
                 fac_tag = section_name_faction_token(sec) or ""
                 ov = get_item_ltx_override(self.balance, sec)
                 in_ltx = bool(in_ltx_map.get(sec))
@@ -2676,7 +2822,7 @@ class MainWindow(QMainWindow):
                             in_shop=in_shop,
                             faction_blocked=paint_blocked,
                             under_pts=under_pts,
-                            selected=is_sel,
+                            selected=sel_mode,
                             name=label,
                             faction_tag=fac_tag,
                             in_ltx=in_ltx,
@@ -2788,7 +2934,10 @@ class MainWindow(QMainWindow):
             raise
 
     def _set_item_selected_icon(
-        self, item: QListWidgetItem | None, *, selected: bool
+        self,
+        item: QListWidgetItem | None,
+        *,
+        selected: bool | str = False,
     ) -> None:
         if item is None:
             return
@@ -2812,6 +2961,46 @@ class MainWindow(QMainWindow):
             )
         except Exception:  # noqa: BLE001
             log.exception("selection icon refresh failed")
+
+    def _item_by_sec(self, sec: str | None) -> QListWidgetItem | None:
+        if not sec:
+            return None
+        for i in range(self.list.count()):
+            it = self.list.item(i)
+            if it is not None and it.data(Qt.ItemDataRole.UserRole) == sec:
+                return it
+        return None
+
+    def _compare_sec(self) -> str | None:
+        return self._compare_by_cat.get(self.category)
+
+    def _clear_compare(self, *, refresh_detail: bool = False) -> None:
+        old = self._item_by_sec(self._compare_sec())
+        self._compare_by_cat[self.category] = None
+        if old is not None and old is not self.list.currentItem():
+            self._set_item_selected_icon(old, selected=False)
+        if refresh_detail and self.list.currentItem() is not None:
+            self._populate_detail(self.list.currentItem())
+
+    def _set_compare_item(self, item: QListWidgetItem) -> None:
+        primary = self.list.currentItem()
+        if primary is None or item is primary:
+            return
+        sec = item.data(Qt.ItemDataRole.UserRole)
+        if not sec:
+            return
+        sec = str(sec)
+        old_sec = self._compare_sec()
+        if old_sec == sec:
+            self._clear_compare(refresh_detail=True)
+            return
+        old = self._item_by_sec(old_sec)
+        if old is not None and old is not primary:
+            self._set_item_selected_icon(old, selected=False)
+        self._compare_by_cat[self.category] = sec
+        self._set_item_selected_icon(item, selected="compare")
+        self._populate_detail(primary)
+        log.debug("compare %s vs %s", primary.data(Qt.ItemDataRole.UserRole), sec)
 
     def _item_icon_origin(self, item: QListWidgetItem) -> QPoint:
         """Top-left of the painted icon inside the list viewport.
@@ -2893,7 +3082,12 @@ class MainWindow(QMainWindow):
         meta["in_ltx"] = in_ltx
         item.setData(Qt.ItemDataRole.UserRole + 1, meta)
         self._mark_balance_dirty()
-        selected = item is self.list.currentItem()
+        if item is self.list.currentItem():
+            sel_mode: bool | str = "primary"
+        elif sec == self._compare_sec():
+            sel_mode = "compare"
+        else:
+            sel_mode = False
         try:
             item.setIcon(
                 _icon_with_pts(
@@ -2902,7 +3096,7 @@ class MainWindow(QMainWindow):
                     in_shop=bool(meta.get("in_shop")),
                     faction_blocked=bool(meta.get("faction_blocked")),
                     under_pts=bool(meta.get("under_pts", True)),
-                    selected=selected,
+                    selected=sel_mode,
                     name=str(meta.get("name") or ""),
                     faction_tag=str(meta.get("faction_tag") or ""),
                     in_ltx=in_ltx,
@@ -2927,8 +3121,8 @@ class MainWindow(QMainWindow):
             )
             base = base[:3] + ["Checkbox: empty=auto · click=force opposite"]
             item.setToolTip("\n".join(base[:4]))
-        if selected:
-            self._on_select(item, None)
+        if item is self.list.currentItem():
+            self._populate_detail(item)
         log.debug(
             "item ltx override sec=%s ov=%s was_in=%s in_ltx=%s",
             sec,
@@ -2938,25 +3132,34 @@ class MainWindow(QMainWindow):
         )
 
     def _deselect_list_item(self) -> None:
-        """Clear grid selection + detail panel."""
+        """Clear primary grid selection + detail panel."""
         if self.list.currentItem() is None and not self.list.selectedItems():
             return
         self.list.clearSelection()
         self.list.setCurrentItem(None)
 
+    def _deselect_all(self) -> None:
+        """Escape: clear compare + primary selection."""
+        self._clear_compare(refresh_detail=False)
+        self._deselect_list_item()
+
     def eventFilter(self, obj, event) -> bool:  # noqa: N802
         if isinstance(event, QMouseEvent):
             et = event.type()
-            # Right-click anywhere (except text fields) clears the grid selection.
+            # Right-click a tile (with a primary selected) → compare (red).
             if (
                 et == QEvent.Type.MouseButtonPress
                 and event.button() == Qt.MouseButton.RightButton
             ):
-                if not isinstance(
-                    obj, (QLineEdit, QPlainTextEdit, QSpinBox, QComboBox)
-                ):
-                    self._deselect_list_item()
                 if obj is self.list or obj is self.list.viewport():
+                    pos = event.position().toPoint()
+                    hit = self.list.itemAt(pos)
+                    primary = self.list.currentItem()
+                    if hit is not None and primary is not None:
+                        if hit is primary:
+                            self._clear_compare(refresh_detail=True)
+                        else:
+                            self._set_compare_item(hit)
                     return True  # no list context menu / rubber-band
             # Checkbox clicks on item tiles — consume so selection does not change.
             if obj is self.list.viewport() and et in (
@@ -2975,15 +3178,58 @@ class MainWindow(QMainWindow):
     def _on_select(
         self, cur: QListWidgetItem | None, prev: QListWidgetItem | None
     ) -> None:
-        self._set_item_selected_icon(prev, selected=False)
-        self._set_item_selected_icon(cur, selected=True)
+        cmp_sec = self._compare_sec()
+        if prev is not None:
+            prev_sec = prev.data(Qt.ItemDataRole.UserRole)
+            if cmp_sec and prev_sec == cmp_sec:
+                self._set_item_selected_icon(prev, selected="compare")
+            else:
+                self._set_item_selected_icon(prev, selected=False)
+        if cur is not None:
+            cur_sec = cur.data(Qt.ItemDataRole.UserRole)
+            if cmp_sec and cur_sec == cmp_sec:
+                # Promoting compare → primary clears the compare slot.
+                self._compare_by_cat[self.category] = None
+            self._set_item_selected_icon(cur, selected="primary")
         if not cur:
             self._sel_by_cat[self.category] = None
             self._highlight_weapon_ammos(None)
             self._clear_detail()
             return
+        self._sel_by_cat[self.category] = cur.data(Qt.ItemDataRole.UserRole)
+        self._populate_detail(cur)
+
+    def _stat_terms_for(
+        self, sec: str, entry: dict[str, Any]
+    ) -> tuple[dict[str, Any], dict[str, tuple[float, float]], Any, Any]:
+        """Return (stats_dict, terms, cost_v, pts)."""
+        stats = dict(entry.get("stats") or {})
+        cost_v = entry.get("cost")
+        if cost_v is None:
+            cost_v = stats.get("cost")
+        stats["cost"] = cost_v
+        cfg = effective_category(self.balance, self.faction, self.category)
+        wmap = cfg.get("weights") or {}
+        ceilings = cfg.get("ceilings") or {}
+        curves = cfg.get("curves") or {}
+        if self.category == "weapons":
+            terms = weapon_stat_terms(stats, wmap, ceilings, curves)
+        else:
+            terms = armor_stat_terms(
+                stats,
+                wmap,
+                is_helmet=self.category == "helmets",
+                ceilings=ceilings,
+                curves=curves,
+            )
+        pts, *_ = self._row_pts_inshop(sec, entry)
+        return stats, terms, cost_v, pts
+
+    def _populate_detail(self, cur: QListWidgetItem) -> None:
         sec = cur.data(Qt.ItemDataRole.UserRole)
-        self._sel_by_cat[self.category] = sec
+        if not sec:
+            self._clear_detail()
+            return
         try:
             entry = (self.items.get(self.category) or {}).get(sec) or {}
             pts, in_shop, fac_blocked, under_pts = self._row_pts_inshop(
@@ -3007,18 +3253,15 @@ class MainWindow(QMainWindow):
                 in_ltx = bool(meta.get("in_ltx"))
             else:
                 in_ltx = item_in_ltx(in_shop, ov)
-            # Match tile colors: under pts → green/orange; over pts → grey.
             if in_ltx or ov == "include":
                 shop_s = "force-in" if ov == "include" else "true"
                 shop_c = "#7dcea0"
+            elif under_pts and fac_blocked:
+                shop_s = "blocked"
+                shop_c = "#96646a"  # muted red (faction / ammo lock)
             elif under_pts:
-                if ov == "exclude":
-                    shop_s = "force-out"
-                elif fac_blocked:
-                    shop_s = "blocked"
-                else:
-                    shop_s = "false"
-                shop_c = "#96826a"
+                shop_s = "force-out" if ov == "exclude" else "false"
+                shop_c = "#96826a"  # muted orange (kind cap / allow / etc.)
             else:
                 shop_s = "force-out" if ov == "exclude" else "false"
                 shop_c = "#aab2bf"
@@ -3028,6 +3271,19 @@ class MainWindow(QMainWindow):
                 ("in_shop", [shop_s], shop_c),
                 ("community", [str(entry.get("community") or "—")], "#aab2bf"),
             ]
+            cmp_sec = self._compare_sec()
+            cmp_entry: dict[str, Any] | None = None
+            if cmp_sec:
+                cmp_entry = (self.items.get(self.category) or {}).get(
+                    cmp_sec
+                ) or {}
+                info_rows.append(
+                    (
+                        "compare",
+                        [_nice_item_name(str(cmp_sec), cmp_entry)],
+                        "#e07070",
+                    )
+                )
             if self.category == "weapons":
                 info_rows.append(
                     (
@@ -3039,40 +3295,82 @@ class MainWindow(QMainWindow):
                 info_rows.append(("ammo", [ammo_s], "#5ec8ff"))
             self._fill_kv_table(self.detail_info, info_rows)
 
-            stats = dict(entry.get("stats") or {})
-            cost_v = entry.get("cost")
-            if cost_v is None:
-                cost_v = stats.get("cost")
-            stats["cost"] = cost_v
-            cfg = effective_category(self.balance, self.faction, self.category)
-            wmap = cfg.get("weights") or {}
-            ceilings = cfg.get("ceilings") or {}
-            curves = cfg.get("curves") or {}
-            if self.category == "weapons":
-                terms = weapon_stat_terms(stats, wmap, ceilings, curves)
-            else:
-                terms = armor_stat_terms(
-                    stats,
-                    wmap,
-                    is_helmet=self.category == "helmets",
-                    ceilings=ceilings,
-                    curves=curves,
+            stats, terms, cost_v, _pts = self._stat_terms_for(str(sec), entry)
+            cmp_stats: dict[str, Any] | None = None
+            cmp_terms: dict[str, tuple[float, float]] | None = None
+            cmp_pts: int | None = None
+            if cmp_sec and cmp_entry is not None:
+                cmp_stats, cmp_terms, _cc, cmp_pts = self._stat_terms_for(
+                    str(cmp_sec), cmp_entry
                 )
 
-            def _wf(key: str) -> tuple[str, str, float | None, bool]:
-                pair = terms.get(key)
+            def _wf(
+                key: str, tmap: dict[str, tuple[float, float]]
+            ) -> tuple[str, str, float | None, bool, float | None]:
+                pair = tmap.get(key)
                 if not pair:
-                    return "—", "—", None, False
+                    return "—", "—", None, False, None
                 w, final = pair
                 excluded = w <= 0
-                # Final column color tracks normalized 0–1 (final / weight).
                 n01 = (final / w) if w > 0 else None
-                return f"{w:.2f}", f"{final:.3f}", n01, excluded
+                return f"{w:.2f}", f"{final:.3f}", n01, excluded, float(final)
 
-            stat_rows: list[tuple] = [
-                ("pts", [str(int(pts)), "—", "—"], "#7dcea0"),
-            ]
-            # Weighted stats first (cost included), then any leftover raw stats.
+            def _raw_num(key: str, st: dict[str, Any], cost: Any) -> float | None:
+                if key == "cost":
+                    v = cost
+                elif key == "hit_power":
+                    v = hit_power_pct(st.get(key))
+                elif key == "pts":
+                    return None
+                else:
+                    v = st.get(key)
+                try:
+                    return float(v)  # type: ignore[arg-type]
+                except (TypeError, ValueError):
+                    return None
+
+            # Build rows; Diff = primary − compare (Final when weighted, else Value).
+            draft: list[dict[str, Any]] = []
+
+            def _add_row(
+                key: str,
+                vals: list[str],
+                name_c: str,
+                cell_colors: list[str | None],
+                diff_v: float | None,
+                diff_a: float | None = None,
+                diff_b: float | None = None,
+            ) -> None:
+                draft.append(
+                    {
+                        "key": key,
+                        "vals": vals,
+                        "name_c": name_c,
+                        "cell_colors": cell_colors,
+                        "diff_v": diff_v,
+                        "diff_a": diff_a,
+                        "diff_b": diff_b,
+                    }
+                )
+
+            if cmp_pts is not None:
+                _add_row(
+                    "pts",
+                    [str(int(pts)), "—", "—", ""],
+                    "#7dcea0",
+                    [None, None, None, None],
+                    float(pts - cmp_pts),
+                    float(pts),
+                    float(cmp_pts),
+                )
+            else:
+                _add_row(
+                    "pts",
+                    [str(int(pts)), "—", "—", ""],
+                    "#7dcea0",
+                    [None, None, None, None],
+                    None,
+                )
             seen: set[str] = set()
             if self.category == "weapons":
                 ordered = [k for k, *_ in WEAPON_WEIGHTS]
@@ -3080,7 +3378,7 @@ class MainWindow(QMainWindow):
                 ordered = ["cost"] + [k for k, *_ in ARMOR_WEIGHTS]
             for key in ordered:
                 seen.add(key)
-                w_s, f_s, n01, excluded = _wf(key)
+                w_s, f_s, n01, excluded, final_v = _wf(key, terms)
                 if key == "cost":
                     raw = cost_v
                 elif key == "hit_power":
@@ -3088,36 +3386,94 @@ class MainWindow(QMainWindow):
                 else:
                     raw = stats.get(key)
                 if excluded:
-                    # Weight 0 → not in score fold; mute Weight / Final only.
-                    cell_colors = [None, _STAT_EXCLUDED_FG, _STAT_EXCLUDED_FG]
+                    cell_colors: list[str | None] = [
+                        None,
+                        _STAT_EXCLUDED_FG,
+                        _STAT_EXCLUDED_FG,
+                        None,
+                    ]
                 else:
                     cell_colors = [
                         None,
                         None,
                         _n01_color(n01) if n01 is not None else None,
+                        None,
                     ]
-                stat_rows.append(
-                    (
-                        key,
-                        [_fmt_stat_val(raw), w_s, f_s],
-                        _stat_color(key),
-                        cell_colors,
-                    )
+                diff_v: float | None = None
+                diff_a: float | None = None
+                diff_b: float | None = None
+                if cmp_terms is not None and cmp_stats is not None:
+                    _cw, _cf, _cn, _ce, c_final = _wf(key, cmp_terms)
+                    if final_v is not None and c_final is not None:
+                        diff_a, diff_b = final_v, c_final
+                        diff_v = final_v - c_final
+                    else:
+                        a = _raw_num(key, stats, cost_v)
+                        b = _raw_num(
+                            key, cmp_stats, cmp_stats.get("cost")
+                        )
+                        if a is not None and b is not None:
+                            diff_a, diff_b, diff_v = a, b, a - b
+                _add_row(
+                    key,
+                    [_fmt_stat_val(raw), w_s, f_s, ""],
+                    _stat_color(key),
+                    cell_colors,
+                    diff_v,
+                    diff_a,
+                    diff_b,
                 )
             for key in sorted(
                 k
                 for k in stats.keys()
                 if k not in seen and k not in ("is_helmet", "col_src")
             ):
+                diff_v = None
+                diff_a = None
+                diff_b = None
+                if cmp_stats is not None:
+                    a = _raw_num(key, stats, cost_v)
+                    b = _raw_num(key, cmp_stats, cmp_stats.get("cost"))
+                    if a is not None and b is not None:
+                        diff_a, diff_b, diff_v = a, b, a - b
+                _add_row(
+                    key,
+                    [_fmt_stat_val(stats[key]), "—", "—", ""],
+                    _stat_color(key),
+                    [None, None, None, None],
+                    diff_v,
+                    diff_a,
+                    diff_b,
+                )
+
+            stat_rows: list[tuple] = []
+            for r in draft:
+                vals = list(r["vals"])
+                colors = list(r["cell_colors"])
+                dv = r["diff_v"]
+                if dv is None or cmp_sec is None:
+                    vals[3] = "—"
+                    colors[3] = _STAT_EXCLUDED_FG
+                else:
+                    vals[3] = f"{dv:+.3f}"
+                    a = r.get("diff_a")
+                    b = r.get("diff_b")
+                    if a is not None and b is not None:
+                        n = _signed_diff_norm(float(a), float(b))
+                    else:
+                        n = 0.0 if abs(dv) < 1e-12 else (1.0 if dv > 0 else -1.0)
+                    colors[3] = _signed_diff_color(n)
                 stat_rows.append(
-                    (
-                        key,
-                        [_fmt_stat_val(stats[key]), "—", "—"],
-                        _stat_color(key),
-                    )
+                    (r["key"], vals, r["name_c"], colors)
                 )
             self._fill_kv_table(self.detail_stats, stat_rows)
-            log.debug("select %s pts=%s in_shop=%s", sec, pts, in_shop)
+            log.debug(
+                "select %s pts=%s in_shop=%s compare=%s",
+                sec,
+                pts,
+                in_shop,
+                cmp_sec,
+            )
         except Exception:
             log.exception("select failed sec=%s", sec)
 

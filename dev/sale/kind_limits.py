@@ -26,6 +26,9 @@ _KIND_LABELS = {
 
 DEFAULT_KIND_LIMIT = 10
 MAX_KIND_LIMIT = 10
+# Flat pool cap for outfits / helmets (same range as per-kind weapon caps).
+DEFAULT_ITEM_LIMIT = 10
+MAX_ITEM_LIMIT = 10
 
 
 def weapon_kind(entry: dict[str, Any] | None, sec: str | None = None) -> str:
@@ -111,11 +114,77 @@ def set_kind_limit(balance: dict[str, Any], kind: str, value: int) -> None:
     limits[str(kind)] = max(0, min(MAX_KIND_LIMIT, int(value)))
 
 
+def item_limit_for(cat_cfg: dict[str, Any] | None) -> int:
+    """At-most-N LTX cap for a flat category (outfits / helmets)."""
+    try:
+        return max(
+            0,
+            min(
+                MAX_ITEM_LIMIT,
+                int((cat_cfg or {}).get("max_items", DEFAULT_ITEM_LIMIT)),
+            ),
+        )
+    except (TypeError, ValueError):
+        return DEFAULT_ITEM_LIMIT
+
+
+def set_item_limit(
+    balance: dict[str, Any], category: str, value: int
+) -> None:
+    cat = str(category or "").strip()
+    if cat not in ("outfits", "helmets"):
+        return
+    cfg = (balance.setdefault("default", {})).setdefault(cat, {})
+    cfg["max_items"] = max(0, min(MAX_ITEM_LIMIT, int(value)))
+
+
 def weapon_cost(entry: dict[str, Any] | None) -> float:
     try:
         return float((entry or {}).get("cost") or 0)
     except (TypeError, ValueError):
         return 0.0
+
+
+def select_pool_for_ltx(
+    pool: dict[str, Any],
+    balance: dict[str, Any],
+    *,
+    eligible: dict[str, Any],
+    limit: int,
+) -> set[str]:
+    """Pick LTX items from a flat pool under an at-most-N cap (lowest pts).
+
+    Force-includes take slots first (may exceed N). Force-exclude never enters.
+    ``eligible`` maps section id → pts for filter-ok items.
+    """
+
+    def _rank(sec: str) -> tuple[float, float, str]:
+        try:
+            p = float(eligible.get(sec, 1e18))
+        except (TypeError, ValueError):
+            p = 1e18
+        return (p, weapon_cost(pool.get(sec)), sec)
+
+    force_in: list[str] = []
+    auto: list[str] = []
+    for sec, entry in (pool or {}).items():
+        if not isinstance(entry, dict):
+            continue
+        sid = str(sec)
+        ov = get_item_ltx_override(balance, sid)
+        if ov == "exclude":
+            continue
+        if ov == "include":
+            force_in.append(sid)
+            continue
+        if sid in eligible:
+            auto.append(sid)
+    force_in.sort(key=_rank)
+    auto.sort(key=_rank)
+    selected: set[str] = set(force_in)
+    slots = max(0, int(limit) - len(force_in))
+    selected.update(auto[:slots])
+    return selected
 
 
 def select_weapons_for_ltx(
@@ -139,32 +208,14 @@ def select_weapons_for_ltx(
             continue
         by_kind[weapon_kind(entry, sec)].append(str(sec))
 
-    def _rank(sec: str) -> tuple[float, float, str]:
-        try:
-            p = float(eligible.get(sec, 1e18))
-        except (TypeError, ValueError):
-            p = 1e18
-        return (p, weapon_cost(weapons.get(sec)), sec)
-
     selected: set[str] = set()
     for kind, secs in by_kind.items():
-        limit = kind_limit_for(cat_cfg, kind)
-        force_in: list[str] = []
-        force_out: set[str] = set()
-        pool: list[str] = []
-        for sec in secs:
-            ov = get_item_ltx_override(balance, sec)
-            if ov == "exclude":
-                force_out.add(sec)
-                continue
-            if ov == "include":
-                force_in.append(sec)
-                continue
-            if sec in eligible:
-                pool.append(sec)
-        force_in.sort(key=_rank)
-        pool.sort(key=_rank)
-        selected.update(force_in)
-        slots = max(0, limit - len(force_in))
-        selected.update(pool[:slots])
+        sub = {s: (weapons.get(s) or {}) for s in secs}
+        sub_eligible = {s: eligible[s] for s in secs if s in eligible}
+        selected |= select_pool_for_ltx(
+            sub,
+            balance,
+            eligible=sub_eligible,
+            limit=kind_limit_for(cat_cfg, kind),
+        )
     return selected

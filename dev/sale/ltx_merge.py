@@ -128,11 +128,27 @@ def _parent_list(par: str | None) -> list[str]:
     return [p.strip() for p in par.split(",") if p.strip()]
 
 
+def _rebase_owned(
+    sections: dict[str, dict[str, str]],
+    owned: dict[str, set[str]],
+    sec: str,
+    primary: str | None,
+) -> None:
+    """Rebuild ``sec`` from ``primary``, keeping only keys this section wrote."""
+    base = dict(sections[primary]) if primary and primary in sections else {}
+    prev = sections.get(sec) or {}
+    for key in owned.get(sec, ()):
+        if key in prev:
+            base[key] = prev[key]
+    sections[sec] = base
+
+
 def _apply_file(
     sections: dict[str, dict[str, str]],
     path: Path,
     icon_bundles: dict[str, dict[str, str]] | None = None,
     section_parents: dict[str, str] | None = None,
+    owned: dict[str, set[str]] | None = None,
 ) -> int:
     n = 0
     try:
@@ -141,11 +157,20 @@ def _apply_file(
         log.warning("skip unreadable %s: %s", path, exc)
         return 0
     cur: str | None = None
-    parents: list[str] = []
     patch = False
     block_wrote_icons = False
+    # Header-only ``[sec]:fake_parent`` (Enhanced Recoil aliases) must not
+    # flatten foreign inv_name / icons_texture onto the weapon.
+    pending_reparent: tuple[str, str] | None = None
     bundles = icon_bundles if icon_bundles is not None else {}
     parents_out = section_parents if section_parents is not None else {}
+    owned_keys = owned if owned is not None else {}
+
+    def _close_pending() -> None:
+        nonlocal pending_reparent
+        # No body keys → keep existing fields; parent link already recorded.
+        pending_reparent = None
+
     for raw in text.splitlines():
         line = raw.split(";", 1)[0].rstrip()
         if not line.strip():
@@ -153,6 +178,7 @@ def _apply_file(
         m = _SEC_RE.match(line)
         if m:
             _flush_icon_bundle(cur, block_wrote_icons, sections, bundles)
+            _close_pending()
             bang, name, par = m.group(1), m.group(2).strip(), m.group(3)
             patch = bang.startswith("!")
             cur = name
@@ -164,10 +190,8 @@ def _apply_file(
             if cur not in sections:
                 sections[cur] = dict(sections[primary]) if primary else {}
             elif not patch and primary:
-                # Fresh section with parent — start from parent then overwrite
-                base = dict(sections[primary])
-                base.update(sections[cur])
-                sections[cur] = base
+                # Defer rebase until a body key proves this isn't a recoil-only alias.
+                pending_reparent = (cur, primary)
             n += 1
             continue
         if cur is None:
@@ -175,12 +199,17 @@ def _apply_file(
         km = _KV_RE.match(line)
         if not km:
             continue
+        if pending_reparent and pending_reparent[0] == cur:
+            _rebase_owned(sections, owned_keys, cur, pending_reparent[1])
+            pending_reparent = None
         key = km.group(1).strip()
         val = km.group(2).strip()
         sections[cur][key] = val
+        owned_keys.setdefault(cur, set()).add(key)
         if key == "icons_texture":
             block_wrote_icons = True
     _flush_icon_bundle(cur, block_wrote_icons, sections, bundles)
+    _close_pending()
     return n
 
 
@@ -193,11 +222,15 @@ def merge_configs(
 
     ``icon_bundles`` snapshots inv_grid_* whenever a file writes ``icons_texture``,
     so thumbs can recover when a later mod only patches one grid axis.
+
+    Header-only parent lines (e.g. Enhanced Recoil ``[gun]:wpn_aps``) update the
+    recorded parent but do not copy the alias parent's display fields.
     """
     roots = iter_config_roots(anomaly, gamma)
     sections: dict[str, dict[str, str]] = {}
     icon_bundles: dict[str, dict[str, str]] = {}
     section_parents: dict[str, str] = {}
+    owned: dict[str, set[str]] = {}
     files: list[Path] = []
     for root in roots:
         found = sorted(root.rglob("*.ltx"))
@@ -208,7 +241,7 @@ def merge_configs(
     errors = 0
     for i, path in enumerate(files):
         try:
-            _apply_file(sections, path, icon_bundles, section_parents)
+            _apply_file(sections, path, icon_bundles, section_parents, owned)
         except Exception:  # noqa: BLE001
             errors += 1
             log.exception("merge parse failed: %s", path)

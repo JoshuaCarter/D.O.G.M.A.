@@ -1409,6 +1409,7 @@ class MainWindow(QMainWindow):
             )
 
             row_host = QWidget()
+            row_host.setFixedHeight(self._AMMO_ICON_H + 2)
             row_lay = QHBoxLayout(row_host)
             row_lay.setContentsMargins(0, 0, 0, 0)
             row_lay.setSpacing(2)

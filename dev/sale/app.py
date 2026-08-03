@@ -8,7 +8,7 @@ import traceback
 from pathlib import Path
 from typing import Any
 
-from PyQt6.QtCore import QSize, Qt, QThread, QTimer, pyqtSignal
+from PyQt6.QtCore import QEvent, QSize, Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import (
     QAction,
     QBrush,
@@ -322,6 +322,72 @@ class RegenWorker(QThread):
             self.failed.emit(f"{exc}\n\nSee log:\n{LOG_PATH}")
 
 
+class BusyOverlayHost(QWidget):
+    """Hosts a child widget with a darker grey overlay that blocks input while busy.
+
+    Does **not** call setEnabled(False) on content — that can make sliders emit
+    valueChanged(min) and corrupt Scale max / weights.
+    """
+
+    def __init__(self, child: QWidget, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._content = child
+        self._busy = False
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+        lay.addWidget(child)
+        self.overlay = QWidget(self)
+        self.overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+        self.overlay.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        # Darker grey ~70% alpha.
+        self.overlay.setStyleSheet("background-color: rgba(24, 24, 24, 180);")
+        self.overlay.hide()
+        self.overlay.raise_()
+        child.installEventFilter(self)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self.overlay.setGeometry(self.rect())
+
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802
+        if self._busy and obj is self._content:
+            et = event.type()
+            if et in (
+                QEvent.Type.MouseButtonPress,
+                QEvent.Type.MouseButtonRelease,
+                QEvent.Type.MouseButtonDblClick,
+                QEvent.Type.MouseMove,
+                QEvent.Type.Wheel,
+                QEvent.Type.KeyPress,
+                QEvent.Type.KeyRelease,
+                QEvent.Type.ShortcutOverride,
+            ):
+                return True
+        return super().eventFilter(obj, event)
+
+    def set_busy(self, busy: bool) -> None:
+        busy = bool(busy)
+        self._busy = busy
+        # Pass mouse/wheel through content so overlay (raised + grab) owns input.
+        # Avoid setEnabled(False) — it can emit slider valueChanged and write junk.
+        self._content.setAttribute(
+            Qt.WidgetAttribute.WA_TransparentForMouseEvents, busy
+        )
+        self.overlay.setVisible(busy)
+        if busy:
+            self.overlay.setGeometry(self.rect())
+            self.overlay.raise_()
+            self.overlay.setFocus(Qt.FocusReason.OtherFocusReason)
+            self.overlay.grabMouse()
+            self.overlay.grabKeyboard()
+        else:
+            if self.overlay.mouseGrabber() is self.overlay:
+                self.overlay.releaseMouse()
+            if self.overlay.keyboardGrabber() is self.overlay:
+                self.overlay.releaseKeyboard()
+
+
 class FineStepSlider(QSlider):
     """Horizontal slider whose wheel moves one singleStep and doesn't scroll parents."""
 
@@ -509,6 +575,22 @@ class WeightRow(QWidget):
             for act in menu.actions():
                 act.setChecked(str(act.data()) == self.curve)
 
+    def displayed_value(self) -> float:
+        """Value currently shown (slider), not a stale line-edit string."""
+        return float(self._slider_to_value(self.slider.value()))
+
+    def displayed_curve(self) -> str:
+        return normalize_curve(self.curve)
+
+    def set_signals_blocked(self, block: bool) -> None:
+        self.blockSignals(block)
+        self.slider.blockSignals(block)
+        self.val.blockSignals(block)
+        self.curve_btn.blockSignals(block)
+        menu = self.curve_btn.menu()
+        if menu is not None:
+            menu.blockSignals(block)
+
     def _on_curve_menu(self, action: QAction) -> None:
         cid = normalize_curve(str(action.data() or CURVE_LINEAR))
         if cid == self.curve:
@@ -610,13 +692,14 @@ class MainWindow(QMainWindow):
             self._worker: RegenWorker | None = None
             # Coalesce rapid weight/ceiling slider edits into one save + list rebuild.
             self._balance_dirty = False
+            self._recalc_running = False
+            self._recalc_queued = False
             self._slider_drag_depth = 0
             self._score_refresh_timer = QTimer(self)
             self._score_refresh_timer.setSingleShot(True)
             self._score_refresh_timer.timeout.connect(self._on_score_refresh_timeout)
 
             root = QWidget()
-            self.setCentralWidget(root)
             v = QVBoxLayout(root)
 
             actions = QHBoxLayout()
@@ -806,6 +889,14 @@ class MainWindow(QMainWindow):
 
             self.status = QLabel(f"Ready — log: {LOG_PATH}")
             v.addWidget(self.status)
+
+            # Full-window busy overlay (shown only while a debounced recalc runs).
+            self.ui_host = BusyOverlayHost(root)
+            self.setCentralWidget(self.ui_host)
+
+            save_sc = QShortcut(QKeySequence.StandardKey.Save, self)
+            save_sc.setContext(Qt.ShortcutContext.WindowShortcut)
+            save_sc.activated.connect(self._force_save)
 
             attach_log_view(self.log_view)
             self._restore_ui_state()
@@ -1238,36 +1329,231 @@ class MainWindow(QMainWindow):
             log.exception("save on close failed")
         super().closeEvent(event)
 
+    def _set_window_busy(self, busy: bool) -> None:
+        host = getattr(self, "ui_host", None)
+        if host is not None:
+            host.set_busy(busy)
+            if busy:
+                QApplication.processEvents()
+
+    def _iter_weight_rows(self) -> list[WeightRow]:
+        rows: list[WeightRow] = []
+        for lay in (self.weights_layout, self.ceilings_layout):
+            for i in range(lay.count()):
+                w = lay.itemAt(i).widget()
+                if isinstance(w, WeightRow):
+                    rows.append(w)
+        return rows
+
+    def _block_slider_signals(self, block: bool) -> None:
+        for row in self._iter_weight_rows():
+            row.set_signals_blocked(block)
+
+    def _read_slider_ui_state(self) -> dict[str, tuple[float, str]]:
+        """key → (displayed value, curve id)."""
+        out: dict[str, tuple[float, str]] = {}
+        for row in self._iter_weight_rows():
+            out[row.key] = (row.displayed_value(), row.displayed_curve())
+        return out
+
+    def _balance_slider_state(self) -> dict[str, tuple[float, str]]:
+        """Authoritative key → (value, curve) from stored balance (current fac/cat)."""
+        fac = self.faction
+        cat = self.category
+        cfg = effective_category(self.balance, fac, cat)
+        out: dict[str, tuple[float, str]] = {}
+        out["max_pts"] = (float(cfg.get("max_pts") or 900), CURVE_LINEAR)
+        out["cost_mult"] = (float(cfg.get("cost_mult") or 1000), CURVE_LINEAR)
+        weights = cfg.get("weights") or {}
+        if cat == "weapons":
+            for _sk, wkey, _c, _i, default_w in WEAPON_WEIGHTS:
+                out[wkey] = (float(weights.get(wkey, default_w)), CURVE_LINEAR)
+        else:
+            out["a_price"] = (float(weights.get("a_price", 0.5)), CURVE_LINEAR)
+            for _sk, wkey, _c, _i, default_w in ARMOR_WEIGHTS:
+                out[wkey] = (float(weights.get(wkey, default_w)), CURVE_LINEAR)
+        ceil_map = cfg.get("ceilings") or {}
+        curve_map = cfg.get("curves") or {}
+        if cat == "weapons":
+            for sk, _wk, default_c, _inv, _dw in WEAPON_WEIGHTS:
+                if sk in NO_CEILING_STATS:
+                    continue
+                cap = float(default_c)
+                try:
+                    cur = float(ceil_map.get(sk, default_c))
+                except (TypeError, ValueError):
+                    cur = cap
+                if cur <= 0:
+                    cur = cap
+                cur = min(cur, cap)
+                out[f"ceiling:{sk}"] = (cur, normalize_curve(curve_map.get(sk)))
+        else:
+            defs = default_ceilings_armor(is_helmet=cat == "helmets")
+            for sk, default_c in defs.items():
+                cap = float(default_c)
+                try:
+                    cur = float(ceil_map.get(sk, default_c))
+                except (TypeError, ValueError):
+                    cur = cap
+                if cur <= 0:
+                    cur = cap
+                cur = min(cur, cap)
+                out[f"ceiling:{sk}"] = (cur, normalize_curve(curve_map.get(sk)))
+        return out
+
+    def _resync_sliders_from_balance(self, *, reason: str) -> int:
+        """Failsafe: detect UI↔balance drift, then rebuild sidebar from balance.
+
+        Returns number of drifted keys found before resync.
+        """
+        expected = self._balance_slider_state()
+        before = self._read_slider_ui_state()
+        drift: list[str] = []
+        for key, exp in expected.items():
+            got = before.get(key)
+            if got is None:
+                continue
+            if abs(got[0] - exp[0]) > 1e-6 or got[1] != exp[1]:
+                drift.append(key)
+                log.warning(
+                    "slider drift (%s) key=%s ui=%s balance=%s",
+                    reason,
+                    key,
+                    got,
+                    exp,
+                )
+        if drift:
+            log.warning(
+                "slider drift after %s — %d key(s); forcing UI resync from balance",
+                reason,
+                len(drift),
+            )
+        # Always rebuild from stored balance so display is authoritative.
+        self._rebuild_weights()
+        after = self._read_slider_ui_state()
+        bad: list[str] = []
+        for key, exp in expected.items():
+            got = after.get(key)
+            if got is None or abs(got[0] - exp[0]) > 1e-6 or got[1] != exp[1]:
+                bad.append(key)
+        if bad:
+            log.error(
+                "slider resync incomplete after %s: %s",
+                reason,
+                ", ".join(bad[:20]),
+            )
+        else:
+            log.debug(
+                "slider resync ok after %s keys=%d drift_was=%d",
+                reason,
+                len(expected),
+                len(drift),
+            )
+        return len(drift)
+
+    def _force_save(self) -> None:
+        """Ctrl+S: flush pending edits, verify sliders vs balance, save everything."""
+        if self._recalc_running:
+            self._balance_dirty = True
+            self._recalc_queued = True
+            self.status.setText("Save queued — wait for recalc…")
+            log.info("Ctrl+S during recalc — queued")
+            return
+        try:
+            pending = self._balance_dirty or self._score_refresh_timer.isActive()
+            if pending:
+                # Full refresh path already resyncs sliders when done.
+                self._flush_score_refresh(rebuild=True)
+                drift_n = 0
+            else:
+                drift_n = self._resync_sliders_from_balance(reason="ctrl+s")
+            save_balance(self.balance)
+            self._persist_ui_state()
+            save_settings(self.settings)
+            if drift_n:
+                self.status.setText(
+                    f"Saved — fixed {drift_n} slider drift(s) from balance"
+                )
+            else:
+                self.status.setText("Saved — sliders match balance")
+            log.info("Ctrl+S force save ok drift=%d", drift_n)
+        except Exception:  # noqa: BLE001
+            log.exception("Ctrl+S force save failed")
+            self.status.setText("Save failed — see Log tab")
+
     def _schedule_score_refresh(self) -> None:
-        """Debounce balance save + full list/pts rebuild after slider edits."""
+        """Debounce: wait 1000ms after last change, then save + rebuild.
+
+        Overlay appears only when the debounced recalc actually starts — not on edit.
+        Edits during an in-flight recalc set dirty and queue another pass.
+        """
         self._balance_dirty = True
+        if self._recalc_running:
+            self._recalc_queued = True
+            return
         if self._slider_drag_depth > 0:
-            # Wait for mouse-up; release handler will schedule.
+            # Wait for mouse-up; release handler will (re)start the debounce timer.
             if self._score_refresh_timer.isActive():
                 self._score_refresh_timer.stop()
             return
+        # Restart debounce window on every change.
         self._score_refresh_timer.start(1000)
 
-    def _flush_score_refresh(self, *, rebuild: bool = True) -> None:
-        """Apply any pending debounced save (and optionally rebuild now)."""
+    def _save_balance_if_dirty(self) -> None:
+        if not self._balance_dirty:
+            return
+        try:
+            save_balance(self.balance)
+        except Exception:  # noqa: BLE001
+            log.exception("debounced balance save failed")
+        self._balance_dirty = False
+
+    def _run_score_refresh(self) -> None:
+        """Show full-window overlay, save + rebuild; loop if more edits queued."""
+        if self._recalc_running:
+            self._recalc_queued = True
+            return
         if self._score_refresh_timer.isActive():
             self._score_refresh_timer.stop()
-        if self._balance_dirty:
+        self._recalc_running = True
+        self._block_slider_signals(True)
+        self._set_window_busy(True)
+        try:
+            while True:
+                self._recalc_queued = False
+                self._save_balance_if_dirty()
+                self._rebuild_list()
+                if not self._recalc_queued and not self._balance_dirty:
+                    break
+        finally:
+            self._set_window_busy(False)
+            self._block_slider_signals(False)
+            self._recalc_running = False
+            # Authoritative UI sync — display must match stored balance.
             try:
-                save_balance(self.balance)
+                self._resync_sliders_from_balance(reason="score_refresh")
             except Exception:  # noqa: BLE001
-                log.exception("debounced balance save failed")
-            self._balance_dirty = False
+                log.exception("post-recalc slider resync failed")
+            if self._balance_dirty:
+                self._schedule_score_refresh()
+
+    def _flush_score_refresh(self, *, rebuild: bool = True) -> None:
+        """Immediate save (and optional rebuild) — used for faction/tab/export/close."""
+        if self._score_refresh_timer.isActive():
+            self._score_refresh_timer.stop()
         if rebuild:
-            self._rebuild_list()
+            self._run_score_refresh()
+        else:
+            self._save_balance_if_dirty()
 
     def _on_score_refresh_timeout(self) -> None:
         if self._slider_drag_depth > 0:
             return
-        self._flush_score_refresh(rebuild=True)
+        self._run_score_refresh()
 
     def _on_slider_drag_start(self) -> None:
         self._slider_drag_depth += 1
+        # Pause debounce until release so we don't recalc mid-drag.
         if self._score_refresh_timer.isActive():
             self._score_refresh_timer.stop()
 
@@ -1807,7 +2093,7 @@ class MainWindow(QMainWindow):
             raise
 
     def _ceiling_changed(self, key: str, value: float, _is_weight: bool) -> None:
-        if self.faction != "Default":
+        if self._recalc_running or self.faction != "Default":
             return
         stat_key = key[8:] if key.startswith("ceiling:") else key
         if value <= 0:
@@ -1822,7 +2108,7 @@ class MainWindow(QMainWindow):
         self._schedule_score_refresh()
 
     def _ceiling_curve_changed(self, key: str, curve: str) -> None:
-        if self.faction != "Default":
+        if self._recalc_running or self.faction != "Default":
             return
         stat_key = key[8:] if key.startswith("ceiling:") else key
         log.debug(
@@ -1835,6 +2121,11 @@ class MainWindow(QMainWindow):
         self._schedule_score_refresh()
 
     def _weight_changed(self, key: str, value: float, is_weight: bool) -> None:
+        if self._recalc_running:
+            # Overlay should block input; if a signal still slips through, queue.
+            self._balance_dirty = True
+            self._recalc_queued = True
+            return
         store: Any = value
         if key == "include_universal_armor":
             store = value >= 0.5

@@ -2127,6 +2127,25 @@ local function weapon_score_table_stats(wpn_sec, dist)
 	for i = 1, SCORE_ARMOR_COLS do
 		out[SCORE_COL_KEYS[i]] = col_max[i]
 	end
+
+	-- Sustained DPS columns (shared calculator in dogma_item_stats).
+	local IS = _G.dogma_item_stats
+	if IS and IS.sustained_dps then
+		local rpm = ini_sys:r_float_ex(wpn_sec, "rpm") or 0
+		local mag = ini_sys:r_float_ex(wpn_sec, "ammo_mag_size") or 0
+		local reload_s = 2.5
+		local tip = _G.dogma_gui_weapon_tooltips
+		if tip and tip.weapon_reload_seconds then
+			local ok_r, t = pcall(tip.weapon_reload_seconds, wpn_sec)
+			if ok_r and type(t) == "number" and t > 0 then
+				reload_s = t
+			end
+		end
+		local dps_keys = { "mut_dps", "lgt_dps", "mid_dps", "hvy_dps", "max_dps" }
+		for i = 1, SCORE_ARMOR_COLS do
+			out[dps_keys[i]] = IS.sustained_dps(col_max[i], rpm, mag, reload_s)
+		end
+	end
 	return out
 end
 

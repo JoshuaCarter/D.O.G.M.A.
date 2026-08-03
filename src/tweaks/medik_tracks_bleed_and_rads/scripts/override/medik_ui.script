@@ -1,1080 +1,540 @@
 local singleton = nil
 
-
-
 local scratch_size = vector2()
-
 local scratch_pos = vector2()
-
-
 
 local LIMBS = { "head", "torso", "leftarm", "rightarm", "leftleg", "rightleg" }
 
-
-
 local DATA_KEY = {
-
     leftarm = "rightarm",
-
     rightarm = "leftarm",
-
     leftleg = "rightleg",
-
     rightleg = "leftleg",
-
 }
-
-
 
 local THEME_PREFIX = ""
 
-
-
 local THEMED_MEMO = {}
-
 local function themed(id)
-
     local v = THEMED_MEMO[id]
-
     if v == nil then
-
         v = id:sub(1, 14) == "medik_bar_sys_"
-
             or id:sub(1, 3) == "bo_"
-
             or id:sub(1, 3) == "ic_"
-
             or id == "bhs_silhouette"
-
             or id == "bhs_silhouette_bleeding"
-
         THEMED_MEMO[id] = v
-
     end
-
     return v
-
 end
-
-
 
 local RESOLVE_MEMO = {}
-
 local function resolve_tex(id)
-
     local v = RESOLVE_MEMO[id]
-
     if v == nil then
-
         if THEME_PREFIX ~= "" and themed(id) then
-
             v = THEME_PREFIX .. id
-
         else
-
             v = id
-
         end
-
         RESOLVE_MEMO[id] = v
-
     end
-
     return v
-
 end
-
-
 
 local function bind_slot(slot, part, id)
-
     local t = resolve_tex(id)
-
     local f = part .. "_tex"
-
     if slot[f] ~= t then
-
         slot[part]:InitTextureEx(t, "hud\\p3d")
-
         slot[f] = t
-
     end
-
 end
-
-
 
 local function hovered_wheel_section()
-
     local qaw = haru_quick_action_wheel_mcm
-
     local gui = qaw and qaw.GUI
-
     if not gui then
-
         return nil
-
     end
-
     if gui.IsShown and not gui:IsShown() then
-
         return nil
-
     end
-
     local idx = gui.hovered_idx
-
     if not idx or idx <= 0 then
-
         return nil
-
     end
-
     local opt = gui.options and gui.options[idx]
-
     return opt and opt.section or nil
-
 end
-
-
 
 local function compute_preview(sec, health, timedhp, maxhp)
-
     local ipairs_ = ipairs
-
     local mk = zzz_player_injuries.medkits and zzz_player_injuries.medkits[sec]
-
     local hh = zzz_player_injuries.healhelp and zzz_player_injuries.healhelp[sec]
-
     if not mk and not hh then
-
         return nil, nil
-
     end
-
-
 
     local pv_h, pv_b = {}, {}
-
     for _, k in ipairs_(LIMBS) do
-
         pv_h[k] = health[k]
-
         pv_b[k] = timedhp[k]
-
     end
-
-
 
     if mk then
-
         for _, k in ipairs_(LIMBS) do
-
             local bonus = mk[k]
-
             if bonus then
-
                 if mk.harming then
-
                     pv_h[k] = pv_h[k] + bonus
-
                     pv_b[k] = pv_b[k] + bonus
-
                 elseif pv_h[k] + bonus > maxhp[k] then
-
                     local amt = maxhp[k] - pv_h[k]
-
                     pv_h[k] = pv_h[k] + amt
-
                     pv_b[k] = pv_b[k] + amt
-
                 else
-
                     pv_h[k] = pv_h[k] + bonus
-
                     pv_b[k] = pv_b[k] + bonus
-
                 end
-
             end
-
         end
-
     end
-
     if hh then
-
         for _, k in ipairs_(LIMBS) do
-
             if hh[k] then
-
                 pv_b[k] = pv_b[k] - hh[k]
-
                 if pv_b[k] < 0 then
-
                     pv_b[k] = 0
-
                 end
-
             end
-
         end
-
     end
-
     for _, k in ipairs_(LIMBS) do
-
         if pv_h[k] > maxhp[k] then
-
             pv_h[k] = maxhp[k]
-
         end
-
         if pv_h[k] <= 0 then
-
             pv_h[k] = 0
-
         end
-
         if pv_h[k] < pv_b[k] then
-
             pv_b[k] = health[k]
-
         end
-
     end
-
     return pv_h, pv_b
-
 end
-
-
 
 class("UIMedik")(CUIScriptWnd)
 
-
-
 function UIMedik:__init()
-
     super()
-
     self:Show(true)
-
     self:Enable(true)
 
-
-
     local xml = CScriptXmlInit()
-
     self.xml = xml
-
     xml:ParseFile("ui_medik.xml")
-
     xml:InitWindow("medik", 0, self)
 
-
-
     self.elements = {}
-
     local function track(wnd, bx, by, bw, bh)
-
         self.elements[#self.elements + 1] = { wnd = wnd, bx = bx, by = by, bw = bw, bh = bh, is_bar = false }
-
         return wnd
-
     end
-
     local function track_bar(wnd, bx, by, full_w, h, anchor)
-
         local e = {
-
             wnd = wnd,
-
             bx = bx,
-
             by = by,
-
             full_w = full_w,
-
             h = h,
-
             anchor = anchor,
-
             is_bar = true,
-
             tex_cache = nil,
-
         }
-
         self.elements[#self.elements + 1] = e
-
         return e
-
     end
-
-
 
     self.sil = track(xml:InitStatic("medik:silhouette", self), 0.03726, -0.00138, 0.01324, 0.03053)
-
     self.sil_tex = nil
-
     self.blink_phase = 0.0
-
     self.blink_last = nil
-
     track(xml:InitStatic("medik:lbl_head", self), 0.02346, 0.00094, 0.00218, 0.00305)
-
     track(xml:InitStatic("medik:lbl_torso", self), 0.06463, 0.00094, 0.00218, 0.00305)
-
     track(xml:InitStatic("medik:lbl_rightarm", self), 0.02084, 0.01123, 0.00480, 0.00305)
-
     track(xml:InitStatic("medik:lbl_leftarm", self), 0.06463, 0.01123, 0.00480, 0.00305)
-
     track(xml:InitStatic("medik:lbl_rightleg", self), 0.02084, 0.02151, 0.00480, 0.00305)
-
     track(xml:InitStatic("medik:lbl_leftleg", self), 0.06463, 0.02151, 0.00480, 0.00305)
-
     self.ico_faction = track(xml:InitStatic("medik:ico_faction", self), 0.02084, -0.02600, 0.00980, 0.00980)
-
     self.elements[#self.elements].emblem = true
-
     self.ico_health = track(xml:InitStatic("medik:ico_health", self), 0.02084, -0.01404, 0.00292, 0.00292)
-
     self.ico_psy = track(xml:InitStatic("medik:ico_psy", self), 0.02084, -0.00924, 0.00292, 0.00292)
-
     self.ico_rad = track(xml:InitStatic("medik:ico_rad", self), 0.02084, 0.03850, 0.00292, 0.00292)
 
-
-
     local LIMB_XY = {
-
         head = { 0.02670, 0.00094 },
-
         torso = { 0.05362, 0.00094 },
-
         rightarm = { 0.02670, 0.01123 },
-
         leftarm = { 0.05362, 0.01123 },
-
         rightleg = { 0.02670, 0.02151 },
-
         leftleg = { 0.05362, 0.02151 },
-
     }
-
     for _, k in ipairs(LIMBS) do
-
         local x, y = LIMB_XY[k][1], LIMB_XY[k][2]
-
         for _, suffix in ipairs({ "_track", "_temp", "" }) do
-
             local name = "bar_" .. k .. suffix
-
             self[name] = track_bar(xml:InitStatic("medik:" .. name, self), x, y, 0.00996, 0.00305, "L")
-
         end
-
     end
-
     self.bar_health_track =
-
         track_bar(xml:InitStatic("medik:bar_health_track", self), 0.02469, -0.01410, 0.04474, 0.00305, "L")
-
     self.bar_health = track_bar(xml:InitStatic("medik:bar_health", self), 0.02469, -0.01410, 0.04474, 0.00305, "L")
-
     self.bar_psy_track =
-
         track_bar(xml:InitStatic("medik:bar_psy_track", self), 0.02469, -0.00930, 0.04474, 0.00305, "L")
-
     self.bar_psy = track_bar(xml:InitStatic("medik:bar_psy", self), 0.02469, -0.00930, 0.04474, 0.00305, "L")
-
     self.bar_rad_track = track_bar(xml:InitStatic("medik:bar_rad_track", self), 0.02469, 0.03843, 0.04474, 0.00305, "L")
-
     self.bar_rad = track_bar(xml:InitStatic("medik:bar_rad", self), 0.02469, 0.03843, 0.04474, 0.00305, "L")
 
-
-
     self.ico_stam = track(xml:InitStatic("medik:ico_stam", self), 0.02084, 0.03410, 0.00292, 0.00292)
-
     self.bar_stam_track =
-
         track_bar(xml:InitStatic("medik:bar_stam_track", self), 0.02469, 0.03403, 0.04474, 0.00305, "L")
-
     self.bar_stam = track_bar(xml:InitStatic("medik:bar_stam", self), 0.02469, 0.03403, 0.04474, 0.00305, "L")
 
-
-
     self.bo = {}
-
     self.bo_by_typ = {}
-
     local bo_names = { "bo_hp", "bo_bleed", "bo_rad", "bo_carry", "bo_power", "bo_ext_rad", "bo_psi", "bo_chem" }
-
     local bo_boostid = {
-
         BoosterID.HpRestore,
-
         BoosterID.BleedingRestore,
-
         BoosterID.RadiationRestore,
-
         BoosterID.MaxWeight,
-
         BoosterID.PowerRestore,
-
         BoosterID.RadiationProtection,
-
         BoosterID.TelepaticProtection,
-
         BoosterID.ChemicalBurnProtection,
-
     }
-
     local BO_X0, BO_COLW = 0.02270, 0.011185
-
     local ICON_WH = 0.009
-
     local DIG_W, DIG_H = 0.0022, 0.0032
-
     local ICON_Y0, ROW_PITCH = 0.04438, 0.0130
-
     for i = 1, 8 do
-
         local row = (i <= 4) and 0 or 1
-
         local col = (i - 1) % 4
-
         local icon_x = BO_X0 + col * BO_COLW + (BO_COLW - ICON_WH) / 2
-
         local icon_y = ICON_Y0 + row * ROW_PITCH
-
         local dig_y = icon_y + ICON_WH + 0.0006
-
         local d1x = icon_x + (ICON_WH - 3 * DIG_W) / 2
-
         local ic = xml:InitStatic("medik:bo_icon_" .. i, self)
-
         local d1 = xml:InitStatic("medik:bo_dig1_" .. i, self)
-
         local d2 = xml:InitStatic("medik:bo_dig2_" .. i, self)
-
         local d3 = xml:InitStatic("medik:bo_dig3_" .. i, self)
-
         if ic and d1 and d2 and d3 then
-
             local slot = {}
-
             slot.tex = bo_names[i]
-
             track(ic, icon_x, icon_y, ICON_WH, ICON_WH)
-
             ic:Show(true)
-
             slot.icon = ic
-
             track(d1, d1x, dig_y, DIG_W, DIG_H)
-
             d1:Show(true)
-
             slot.d1 = d1
-
             track(d2, d1x + DIG_W, dig_y, DIG_W, DIG_H)
-
             d2:Show(true)
-
             slot.d2 = d2
-
             track(d3, d1x + 2 * DIG_W, dig_y, DIG_W, DIG_H)
-
             d3:Show(true)
-
             slot.d3 = d3
-
             slot.active = false
-
             slot.icon_tex, slot.d1_tex, slot.d2_tex, slot.d3_tex = nil, nil, nil, nil
-
             self.bo[i] = slot
-
             self.bo_by_typ[bo_boostid[i]] = slot
-
         end
-
     end
-
-
 
     self.tm = {}
-
     local TM_W, TM_H = 0.00286, 0.00416
-
     local tm_x0, tm_y = 0.05513, -0.02420
-
     local tm_nodes = { "tm_h1", "tm_h2", "tm_colon", "tm_m1", "tm_m2" }
-
     for i, name in ipairs(tm_nodes) do
-
         local wnd = xml:InitStatic("medik:" .. name, self)
-
         track(wnd, tm_x0 + (i - 1) * TM_W, tm_y, TM_W, TM_H)
-
         wnd:Show(true)
-
         self.tm[i] = { wnd = wnd, tex_cache = nil }
-
     end
-
-
 
     self._booster_cb = function(typ, period)
-
         self:_apply_booster(typ, period)
-
     end
-
-
 
     self:seat_fixed()
-
     self:retheme()
-
 end
-
-
 
 function UIMedik:retheme()
-
     self.ico_health:InitTextureEx(resolve_tex("ic_heart"), "hud\\p3d")
-
     self.ico_psy:InitTextureEx(resolve_tex("ic_brain"), "hud\\p3d")
-
     self.ico_rad:InitTextureEx(resolve_tex("ic_rad"), "hud\\p3d")
-
     self.ico_stam:InitTextureEx(resolve_tex("ic_stam"), "hud\\p3d")
-
     local fac = medik_config.emblem_faction()
-
     if fac then
-
         self.ico_faction:InitTextureEx("medik_fac_" .. fac, "hud\\p3d")
-
         self._emblem_on = true
-
     else
-
         self._emblem_on = false
-
     end
-
     self.ico_faction:Show(self._emblem_on and not self._blanked)
-
 end
-
-
 
 function set_theme(prefix)
-
     prefix = prefix or ""
-
     if prefix ~= THEME_PREFIX then
-
         THEME_PREFIX = prefix
-
         RESOLVE_MEMO = {}
-
     end
-
     if singleton then
-
         singleton:retheme()
-
     end
-
 end
-
-
 
 function UIMedik:_apply_booster(typ, period)
-
     local slot = self.bo_by_typ[typ]
-
     if not slot then
-
         return
-
     end
-
     slot.active = true
-
     local secs = math.floor(period or 0)
-
     if secs > 999 then
-
         secs = 999
-
     elseif secs < 0 then
-
         secs = 0
-
     end
-
     bind_slot(slot, "icon", slot.tex .. "_lit")
-
     bind_slot(slot, "d1", "dig_" .. math.floor(secs / 100))
-
     bind_slot(slot, "d2", "dig_" .. (math.floor(secs / 10) % 10))
-
     bind_slot(slot, "d3", "dig_" .. (secs % 10))
-
 end
-
-
 
 function UIMedik:_bind_time(slot, tex)
-
     if slot.tex_cache ~= tex then
-
         slot.wnd:InitTextureEx(tex, "hud\\p3d")
-
         slot.tex_cache = tex
-
     end
-
 end
-
-
 
 function UIMedik:_update_time()
-
     local hrs = level.get_time_hours()
-
     local mins = level.get_time_minutes()
-
     self:_bind_time(self.tm[1], "dig_" .. math.floor(hrs / 10))
-
     self:_bind_time(self.tm[2], "dig_" .. (hrs % 10))
-
     self:_bind_time(self.tm[3], "dig_colon")
-
     self:_bind_time(self.tm[4], "dig_" .. math.floor(mins / 10))
-
     self:_bind_time(self.tm[5], "dig_" .. (mins % 10))
-
 end
-
-
 
 function UIMedik:seat_fixed()
-
     for _, e in ipairs(self.elements) do
-
         if not e.is_bar then
-
             e.wnd:SetWndPos(scratch_pos:set(e.bx, e.by))
-
             e.wnd:SetWndSize(scratch_size:set(e.bw, e.bh))
-
         end
-
     end
-
 end
-
-
 
 function UIMedik:set_bar(e, ratio, tex)
-
     if not e or not ratio then
-
         return
-
     end
-
     tex = resolve_tex(tex)
-
     ratio = math.max(0.0, math.min(ratio, 1.0))
-
     local width = ratio * e.full_w
-
     local height = e.h
-
     if e.tex_cache ~= tex then
-
         e.wnd:InitTextureEx(tex, "hud\\p3d")
-
         e.tex_cache = tex
-
     end
-
     local ax, ay
-
     if e.anchor == "R" then
-
         ax, ay = e.bx + e.full_w - width, e.by
-
     else
-
         ax, ay = e.bx, e.by
-
     end
-
     e.wnd:SetWndPos(scratch_pos:set(ax, ay))
-
     e.wnd:SetWndSize(scratch_size:set(width, height))
-
 end
-
-
 
 function UIMedik:set_seg(e, a, b, tex)
-
     if not e then
-
         return
-
     end
-
     tex = resolve_tex(tex)
-
     a = math.max(0.0, math.min(a, 1.0))
-
     b = math.max(0.0, math.min(b, 1.0))
-
     if b < a then
-
         b = a
-
     end
-
     if e.tex_cache ~= tex then
-
         e.wnd:InitTextureEx(tex, "hud\\p3d")
-
         e.tex_cache = tex
-
     end
-
     e.wnd:SetWndPos(scratch_pos:set(e.bx + a * e.full_w, e.by))
-
     e.wnd:SetWndSize(scratch_size:set((b - a) * e.full_w, e.h))
-
 end
-
-
 
 function UIMedik:set_limb(perm_e, temp_e, track_e, perm, total, max_val)
-
     if not max_val or max_val <= 0 then
-
         return
-
     end
-
     local pr = perm / max_val
-
     local tr = total / max_val
-
     self:set_seg(perm_e, 0, pr, "medik_limb_bar")
-
     self:set_seg(temp_e, pr, tr, "medik_limb_bar_green")
-
     self:set_seg(track_e, tr, 1.0, "medik_bar_track")
-
 end
-
-
 
 function UIMedik:_limb_total(k, h, pv_h)
-
     return (pv_h and pv_h[k]) or h[k]
-
 end
-
 function UIMedik:_limb_perm(k, h, t, pv_h, pv_b)
-
     local p
-
     if pv_h then
-
         p = pv_h[k] - (pv_b[k] or 0)
-
     else
-
         p = h[k] - (t[k] or 0)
-
     end
-
     return p > 0 and p or 0
-
 end
-
-
 
 function UIMedik:_set_sil(tex)
-
     tex = resolve_tex(tex)
-
     if self.sil_tex ~= tex then
-
         self.sil:InitTextureEx(tex, "hud\\p3d")
-
         self.sil_tex = tex
-
     end
-
 end
-
-
 
 function UIMedik:_set_blanked(b)
-
     if self._blanked == b then
-
         return
-
     end
-
     self._blanked = b
-
     for _, e in ipairs(self.elements or {}) do
-
         if e.wnd then
-
             if e.emblem then
-
                 e.wnd:Show((not b) and self._emblem_on)
-
             else
-
                 e.wnd:Show(not b)
-
             end
-
         end
-
     end
-
 end
 
-
-
 function UIMedik:Update()
-
   local actor = db.actor
-
     CUIScriptWnd.Update(self)
 
-
-
     if not zzz_player_injuries or not actor or not db.actor:alive() then
-
         self:_set_blanked(true)
-
         return
-
     end
-
-
 
     self:_set_blanked(false)
 
-
-
     local h = zzz_player_injuries.health
-
     local m = zzz_player_injuries.maxhp
-
     local t = zzz_player_injuries.timedhp
-
     if not h or not m or not t then
-
         return
-
     end
-
-
 
     local pv_h, pv_b
-
     local sec = hovered_wheel_section()
-
     if sec then
-
         pv_h, pv_b = compute_preview(sec, h, t, m)
-
     end
-
     for _, k in ipairs(LIMBS) do
-
         local dk = DATA_KEY[k] or k
-
         self:set_limb(
-
             self["bar_" .. k],
-
             self["bar_" .. k .. "_temp"],
-
             self["bar_" .. k .. "_track"],
-
             self:_limb_perm(dk, h, t, pv_h, pv_b),
-
             self:_limb_total(dk, h, pv_h),
-
             m[dk]
-
         )
-
     end
-
-
 
     self:set_bar(self.bar_health_track, 1.0, "medik_bar_track")
-
     self:set_bar(self.bar_health, actor.health or 0, "medik_bar_sys_hp")
-
     self:set_bar(self.bar_psy_track, 1.0, "medik_bar_track")
-
     local psy = arszi_psy and arszi_psy.get_psy_health and arszi_psy.get_psy_health() or actor.psy_health or 0
-
     self:set_bar(self.bar_psy, psy, "medik_bar_sys_psy")
-
     local show_rad = (tonumber(medik_config.transforms.hud_rad) or 0) < 0.5
-
     self.ico_rad:Show(show_rad)
-
     self.bar_rad_track.wnd:Show(show_rad)
-
     self.bar_rad.wnd:Show(show_rad)
-
     if show_rad then
-
         self:set_bar(self.bar_rad_track, 1.0, "medik_bar_track")
-
         self:set_bar(self.bar_rad, actor.radiation or 0, "medik_bar_sys_rad")
-
     end
-
     self:set_bar(self.bar_stam_track, 1.0, "medik_bar_track")
-
     self:set_bar(self.bar_stam, actor.power or 0, "medik_bar_sys_stam")
 
-
-
     local now = time_global()
-
     local bleed = actor.bleeding or 0
-
     local dt = self.blink_last and (now - self.blink_last) or 0
-
     self.blink_last = now
-
     if dt < 0 then
-
         dt = 0
-
     elseif dt > 100 then
-
         dt = 100
-
     end
-
     if bleed <= 0 then
-
         self.blink_phase = 0.0
-
         self:_set_sil("bhs_silhouette")
-
         self.sil:Show(true)
-
     else
-
         local b = bleed > 1.0 and 1.0 or bleed
-
         local freq = 0.0011 + b * 0.0029
-
         self.blink_phase = (self.blink_phase + dt * freq) % 1.0
-
         if self.blink_phase < 0.5 then
-
             self:_set_sil("bhs_silhouette_bleeding")
-
             self.sil:Show(true)
-
         else
-
             self.sil:Show(false)
-
         end
-
     end
-
-
 
     for _, slot in pairs(self.bo) do
-
         slot.active = false
-
     end
-
-
 
     if actor.cast_Actor then
-
         local cond = db.actor:cast_Actor():conditions()
-
         if cond and cond.BoosterForEach then
-
             cond:BoosterForEach(self._booster_cb)
-
         end
-
     end
-
-
 
     for _, slot in pairs(self.bo) do
-
         if not slot.active then
-
             bind_slot(slot, "icon", slot.tex .. "_glyph")
-
             bind_slot(slot, "d1", "dig_g0")
-
             bind_slot(slot, "d2", "dig_g0")
-
             bind_slot(slot, "d3", "dig_g0")
-
         end
-
     end
-
-
 
     self:_update_time()
 
-
-
     -- DOGMA tweaks/medik_tracks_bleed_and_rads: paint rad/bleed vitals after stock booster digits.
-
     if dogma_tweaks_medik_tracks_bleed_and_rads_apply then
-
         dogma_tweaks_medik_tracks_bleed_and_rads_apply(self)
-
     end
-
 end
-
-
 
 function get_UI()
-
     if singleton == nil then
-
         singleton = UIMedik()
-
     end
-
     return singleton
-
 end
-

@@ -191,7 +191,22 @@ local function weapon_table_damage_stats(wpn_sec, dist)
 			return st
 		end
 	end
-	-- Tip not loaded yet (rare boot race): empty stats, never invent ammo types.
+	-- Tip not loaded: use isolated dogma_item_stats calculator.
+	local IS = _G.dogma_item_stats
+	if IS and IS.weapon_input_from_ini and IS.weapon_calculate then
+		local ok2, st2 = pcall(function()
+			return IS.weapon_calculate(IS.weapon_input_from_ini(wpn_sec, dist))
+		end)
+		if ok2 and st2 then
+			st2.hit_power_pct = (st2.hit_power or 0) * 100
+			st2.col_max = {
+				st2.mut_dmg or 0, st2.lgt_dmg or 0, st2.mid_dmg or 0,
+				st2.hvy_dmg or 0, st2.max_dmg or 0,
+			}
+			st2.score_cols = 5
+			return st2
+		end
+	end
 	local hp = read_hit_power(wpn_sec) or 0
 	return {
 		hit_power = hp,

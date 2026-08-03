@@ -7,6 +7,11 @@
 
 	Shipped under scripts/override/ with a long z-prefix so this file loads after
 	other BHS wrappers (build keeps the exact basename).
+
+	Note: BHS registers actor_on_update by function reference at its on_game_start,
+	so replacing zzz_player_injuries.actor_on_update does not run. We wrap
+	recieved_damage (table-called by Actor Damage Balancer) and drive the flash
+	from our own actor_on_update callback, re-invoking BHS HUDUpdate after force.
 ]]
 
 local CONFIG = _G.dogma_hud_bhs_on_damage_conf
@@ -14,6 +19,9 @@ local DOGMA
 
 local FADE_MS = 500
 local FLAG = "__dogma_bhs_on_damage"
+-- BHS creates one progress bar per HUDUpdate while scuffed_fix is set, then waits
+-- disable_hud_fps_fix_tmr (0.2s). Pump enough same-frame passes to finish all bars.
+local SNAP_PASSES = 16
 
 local flash_until = 0
 local flash_started = 0
@@ -24,9 +32,12 @@ local saved_healthstatus = nil
 -- Upvalue owners (may be nested under other wraps).
 local uv_show_fn, uv_show_idx = nil, nil
 local uv_hs_fn, uv_hs_idx = nil, nil
+local uv_scuffed_fn, uv_scuffed_idx = nil, nil
+local uv_change_fn, uv_change_idx = nil, nil
+local hud_update_fn = nil
 
-local wrapped_update = nil
 local wrapped_rd = nil
+local update_registered = false
 
 local RATIO_SUFFIXES = { "", "_43", "_1610", "_16" }
 
@@ -117,6 +128,36 @@ local function find_upvalue_deep(fn, name, depth, seen)
 	return nil, nil, nil
 end
 
+local function resolve_named_upvalue(bhs, name, probe)
+	local owner, idx, val = find_upvalue_deep(probe, name)
+	if owner then
+		return owner, idx, val
+	end
+	-- scuffed_fix / show_hud_change_time live in nested ParamBar; reach via
+	-- other module fns that close over them (e.g. worst_possible_fix).
+	local extras = {
+		bhs.worst_possible_fix,
+		bhs.recieved_damage,
+		bhs.actor_on_hit_callback,
+		bhs.actor_on_before_death,
+	}
+	for i = 1, #extras do
+		owner, idx, val = find_upvalue_deep(extras[i], name)
+		if owner then
+			return owner, idx, val
+		end
+	end
+	for _, v in pairs(bhs) do
+		if type(v) == "function" then
+			owner, idx, val = find_upvalue_deep(v, name)
+			if owner then
+				return owner, idx, val
+			end
+		end
+	end
+	return nil, nil, nil
+end
+
 local function resolve_upvalues(bhs)
 	local probe = bhs.actor_on_update
 	if type(probe) ~= "function" then
@@ -129,6 +170,18 @@ local function resolve_upvalues(bhs)
 	end
 	uv_show_fn, uv_show_idx = show_fn, show_idx
 	uv_hs_fn, uv_hs_idx = hs_fn, hs_idx
+	local sc_fn, sc_idx = resolve_named_upvalue(bhs, "scuffed_fix", probe)
+	if sc_fn and sc_idx then
+		uv_scuffed_fn, uv_scuffed_idx = sc_fn, sc_idx
+	end
+	local ch_fn, ch_idx = resolve_named_upvalue(bhs, "show_hud_change_time", probe)
+	if ch_fn and ch_idx then
+		uv_change_fn, uv_change_idx = ch_fn, ch_idx
+	end
+	local _, _, hud = find_upvalue_deep(probe, "HUDUpdate")
+	if type(hud) == "function" then
+		hud_update_fn = hud
+	end
 	return true
 end
 
@@ -157,6 +210,19 @@ end
 local function set_healthstatus(v)
 	if uv_hs_fn and uv_hs_idx and debug and debug.setupvalue then
 		debug.setupvalue(uv_hs_fn, uv_hs_idx, v)
+	end
+end
+
+local function set_scuffed(v)
+	if uv_scuffed_fn and uv_scuffed_idx and debug and debug.setupvalue then
+		debug.setupvalue(uv_scuffed_fn, uv_scuffed_idx, v)
+	end
+end
+
+local function clear_change_debounce()
+	-- ParamBar hides bars for 50ms after show_hud_change_time; keep that stale.
+	if uv_change_fn and uv_change_idx and debug and debug.setupvalue then
+		debug.setupvalue(uv_change_fn, uv_change_idx, 0)
 	end
 end
 
@@ -250,6 +316,23 @@ local function apply_fade_alpha(alpha)
 	end
 end
 
+local function redraw_hud()
+	if type(hud_update_fn) == "function" then
+		pcall(hud_update_fn)
+	end
+end
+
+-- Collapse BHS's staggered bar spawn into this frame, then settle real SetProgressPos.
+local function snap_hud()
+	set_show(2)
+	set_healthstatus(true)
+	clear_change_debounce()
+	for _ = 1, SNAP_PASSES do
+		set_scuffed(false)
+		redraw_hud()
+	end
+end
+
 local function end_flash()
 	if not flashing then
 		return
@@ -265,7 +348,7 @@ local function end_flash()
 	flash_started = 0
 	saved_show = nil
 	saved_healthstatus = nil
-	-- Leave alpha at whatever BHS redraws next; force full opacity once if still up.
+	redraw_hud()
 	apply_fade_alpha(255)
 end
 
@@ -280,7 +363,8 @@ local function begin_or_refresh_flash()
 	local now = time_global()
 	local cur_show = get_show()
 	local cur_hs = get_healthstatus()
-	if not flashing then
+	local starting = not flashing
+	if starting then
 		if cur_show == 2 and cur_hs then
 			-- Already permanently visible; limb blink handles feedback.
 			return
@@ -291,25 +375,32 @@ local function begin_or_refresh_flash()
 		flashing = true
 	end
 	flash_until = now + math.floor(sec * 1000)
+	-- Force immediately: BHS's registered actor_on_update is not our wrap.
+	if starting then
+		snap_hud()
+	else
+		set_show(2)
+		set_healthstatus(true)
+		redraw_hud()
+	end
+	apply_fade_alpha(flash_alpha(now))
 end
 
-local function on_update_wrap(inner)
-	return function(...)
-		local now = time_global()
-		if flashing then
-			if now >= flash_until then
-				end_flash()
-			else
-				set_show(2)
-				set_healthstatus(true)
-			end
-		end
-		local ret = inner(...)
-		if flashing and now < flash_until then
-			apply_fade_alpha(flash_alpha(now))
-		end
-		return ret
+local function on_actor_update()
+	if not flashing then
+		return
 	end
+	local now = time_global()
+	if now >= flash_until then
+		end_flash()
+		return
+	end
+	-- Re-force after BHS/keybind for this frame, then redraw + fade.
+	set_show(2)
+	set_healthstatus(true)
+	clear_change_debounce()
+	redraw_hud()
+	apply_fade_alpha(flash_alpha(now))
 end
 
 local function on_rd_wrap(inner)
@@ -332,17 +423,16 @@ local function apply()
 		return false
 	end
 
-	-- Already outermost wraps: keep them (upvalues refreshed above).
-	if bhs.actor_on_update == wrapped_update and bhs.recieved_damage == wrapped_rd then
-		bhs[FLAG] = true
-		return true
+	if bhs.recieved_damage ~= wrapped_rd then
+		wrapped_rd = on_rd_wrap(bhs.recieved_damage)
+		bhs.recieved_damage = wrapped_rd
 	end
 
-	-- Wrap whatever is currently outermost so we run after other BHS patches.
-	wrapped_update = on_update_wrap(bhs.actor_on_update)
-	wrapped_rd = on_rd_wrap(bhs.recieved_damage)
-	bhs.actor_on_update = wrapped_update
-	bhs.recieved_damage = wrapped_rd
+	if not update_registered then
+		RegisterScriptCallback("actor_on_update", on_actor_update)
+		update_registered = true
+	end
+
 	bhs[FLAG] = true
 	return true
 end

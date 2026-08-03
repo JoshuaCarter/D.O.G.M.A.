@@ -1,0 +1,413 @@
+--[[
+	Isolated item stat calculators (no UI, no ini_sys reads).
+
+	Game/tip: gather fields → dogma_item_stats.weapon_calculate(input) → display.
+	Editor (lupa): build the same input table from merged LTX → calculate → YML.
+
+	Input tables are plain Lua tables; see weapon_calculate / armor_calculate.
+]]
+
+local TORSO_TIERS = {
+	{ armor = 0.011, ap_scale = 0.8889, hit_frac = 0.8500, name = "Min" },
+	{ armor = 0.075, ap_scale = 0.8562, hit_frac = 0.6250, name = "Lgt" },
+	{ armor = 0.100, ap_scale = 0.7955, hit_frac = 0.5000, name = "Lgt+" },
+	{ armor = 0.150, ap_scale = 0.8117, hit_frac = 0.4783, name = "Mid" },
+	{ armor = 0.200, ap_scale = 0.7412, hit_frac = 0.3618, name = "Mid+" },
+	{ armor = 0.250, ap_scale = 0.7400, hit_frac = 0.3050, name = "Hvy" },
+	{ armor = 0.400, ap_scale = 0.7500, hit_frac = 0.2000, name = "Hvy+" },
+	{ armor = 0.550, ap_scale = 0.7000, hit_frac = 0.1500, name = "Exo" },
+	{ armor = 0.650, ap_scale = 0.7000, hit_frac = 0.1500, name = "Max" },
+}
+
+local SCORE_COLS = 5 -- Min .. Mid+ for loadout/editor columns
+local BONE_DMG_TORSO = 0.9
+local BALLISTIC_BONUS = 1.1
+local K_AP_COMBAT_SCALE = 10
+local AP_TAIL = 0.80
+local ARMOR_CHIP_FRAC = 0.60
+local HARD_FAIL_SCALE = 0.0025 * 62.5
+local DAMAGE_SCALE = 100
+local DEFAULT_DIST = 30
+local MUTANT_BASE_MULT = 0.85
+local MUTANT_AMMO_MULT_DEFAULT = 0.85
+
+local HP_AMMO_MULT = {
+	["ammo_357_hp_mag"] = 2,
+	["ammo_9x18_pmm"] = 2,
+	["ammo_9x19_pbp"] = 2,
+	["ammo_7.62x25_p"] = 1.75,
+	["ammo_11.43x23_hydro"] = 2.7,
+	["ammo_5.45x39_ep"] = 1.45,
+	["ammo_5.56x45_ss190"] = 1.33,
+	["ammo_12x76_zhekan"] = 3.5,
+	["ammo_12x76_dart"] = 1.5,
+	["ammo_12x70_buck"] = 3,
+	["ammo_23x75_shrapnel"] = 2,
+	["ammo_23x75_barrikada"] = 3.5,
+	["ammo_20x70_buck"] = 2,
+	["ammo_338_federal"] = 10,
+}
+
+local MUTANT_AMMO_MULT = {
+	["ammo_12x70_buck"] = 0.90,
+	["ammo_20x70_buck"] = 0.90,
+	["ammo_23x75_shrapnel"] = 1.00,
+	["ammo_12x76_zhekan"] = 1.00,
+	["ammo_23x75_barrikada"] = 1.00,
+	["ammo_9x19_pbp"] = 1.00,
+	["ammo_9x18_pmm"] = 1.00,
+	["ammo_5.45x39_ep"] = 1.00,
+	["ammo_5.56x45_ss190"] = 1.00,
+	["ammo_7.62x25_ps"] = 1.00,
+	["ammo_7.62x25_p"] = 1.75,
+	["ammo_357_hp_mag"] = 1.00,
+	["ammo_11.43x23_hydro"] = 1.00,
+	["ammo_11.43x23_fmj"] = 1.00,
+}
+
+local ACTOR_DISP_BASE = 1.5
+local ACTOR_DISP_VEL = 2.5
+local VEL_MAX = 10
+local SPEED_RUN = 5.0
+local BURST_KICK_DEG = 3
+
+local PROT_KEYS = {
+	"fire_wound_protection",
+	"strike_protection",
+	"wound_protection",
+	"explosion_protection",
+	"shock_protection",
+	"burn_protection",
+	"chemical_burn_protection",
+	"radiation_protection",
+	"telepathy_protection",
+}
+
+local function dist_atten(air_res, dist)
+	local k = air_res or 0.05
+	return 1 + ((dist or DEFAULT_DIST) / 200) * k * 0.5 / (1 - k + 0.1)
+end
+
+local function combat_ap(k_ap_ltx, air_res, dist, ap_scale, barrel, silencer, sniper_bonus)
+	return ((k_ap_ltx or 0) * K_AP_COMBAT_SCALE + (sniper_bonus or 0))
+		* (ap_scale or 1) * (barrel or 1)
+		/ dist_atten(air_res, dist)
+		* AP_TAIL
+		* (silencer or 1)
+end
+
+local function base_power(hit_power, k_hit, air_res, dist, bone_mult, ap_scale, pellet_mult, barrel, silencer)
+	return (hit_power or 0.5) / dist_atten(air_res, dist)
+		* (k_hit or 1) * (bone_mult or BONE_DMG_TORSO) * (ap_scale or 1) * BALLISTIC_BONUS
+		* (pellet_mult or 1) * (barrel or 1) * (silencer or 1)
+end
+
+local function effective_dmg(hit_power, k_hit, k_ap_ltx, air_res, armor, ap_scale, hit_frac, bone_mult, dist, pellet_mult, barrel, ammo_sec, silencer, sniper_bonus)
+	local ap = combat_ap(k_ap_ltx, air_res, dist, ap_scale, barrel, silencer, sniper_bonus)
+	local power = base_power(hit_power, k_hit, air_res, dist, bone_mult, ap_scale, pellet_mult, barrel, silencer)
+	local dmg
+	if (armor or 0) <= 0 or ap >= armor then
+		dmg = power
+	else
+		local soft_pen_ap = armor / (1 + ARMOR_CHIP_FRAC)
+		if ap > soft_pen_ap then
+			dmg = power * (hit_frac or 1)
+		else
+			local hp_mult = HP_AMMO_MULT[ammo_sec] or 1
+			dmg = HARD_FAIL_SCALE * power * (hit_frac or 1) / hp_mult
+		end
+	end
+	return dmg * DAMAGE_SCALE
+end
+
+local function sustained_dps(dmg, rpm, mag, reload_s)
+	dmg = dmg or 0
+	rpm = rpm or 0
+	mag = mag or 0
+	reload_s = reload_s or 0
+	if dmg <= 0 or mag <= 0 or rpm <= 0 then
+		return 0
+	end
+	local fire_s = mag * 60 / rpm
+	local cycle = fire_s + math.max(0, reload_s)
+	if cycle <= 0 then
+		return 0
+	end
+	return dmg * mag / cycle
+end
+
+local function burst_shots(inp)
+	if type(inp.burst_shots) == "number" and inp.burst_shots > 0 then
+		return inp.burst_shots
+	end
+	local zoom_disp = inp.zoom_cam_dispersion or 0
+	local hip_disp = inp.cam_dispersion or 0
+	local disp = (zoom_disp > 0) and zoom_disp or hip_disp
+	local max_shots = 200
+	if not disp or disp <= 0 then
+		return max_shots
+	end
+	local inc = inp.zoom_cam_dispersion_inc or 0
+	if inc == 0 then
+		inc = inp.cam_dispersion_inc or 0
+	end
+	local return_on = inp.cam_return
+	if return_on == nil then
+		return_on = true
+	end
+	local relax = 0
+	if return_on then
+		relax = inp.zoom_cam_relax_speed or 0
+		if relax <= 0 then
+			relax = inp.cam_relax_speed or 0
+		end
+	end
+	local rpm = inp.rpm or 0
+	local dt = (rpm > 0) and (60 / rpm) or 0
+	local climb = 0
+	for n = 1, max_shots do
+		climb = climb + disp + (n - 1) * inc
+		if return_on and relax > 0 and dt > 0 then
+			climb = math.max(0, climb - relax * dt)
+		end
+		if climb >= BURST_KICK_DEG then
+			return n
+		end
+	end
+	return max_shots
+end
+
+local function spread_pair(inp)
+	local fire_disp = inp.fire_dispersion_base or 0
+	if fire_disp <= 0 then
+		return 0, 0
+	end
+	local pdm_base = inp.PDM_disp_base or 1
+	local pdm_vel = inp.PDM_disp_vel_factor or 1
+	local actor = ACTOR_DISP_BASE * pdm_base
+		* (1 + (SPEED_RUN / VEL_MAX) * ACTOR_DISP_VEL * pdm_vel)
+	return fire_disp, fire_disp + actor
+end
+
+--[[
+	input = {
+	  hit_power, rpm, ammo_mag_size, reload_s, use_mag,
+	  scope_status, silencer_status, sniper_ap_bonus,
+	  fire_dispersion_base, PDM_disp_base, PDM_disp_vel_factor,
+	  cam_dispersion, zoom_cam_dispersion, cam_dispersion_inc, zoom_cam_dispersion_inc,
+	  cam_relax_speed, zoom_cam_relax_speed, cam_return, burst_shots,
+	  cost, dist,
+	  rounds = { { sec, k_hit, k_ap, air_resistance, pellets }, ... },
+	}
+]]
+local function weapon_calculate(input)
+	input = input or {}
+	local dist = input.dist or DEFAULT_DIST
+	local hit_power = input.hit_power or 0
+	local rpm = input.rpm or 0
+	local mag = input.ammo_mag_size or 0
+	local reload_s = input.reload_s
+	if not reload_s or reload_s <= 0 then
+		if (input.use_mag or 1) == 0 then
+			reload_s = 1.2 + 0.7 * math.max(mag, 1)
+		else
+			reload_s = 2.5
+		end
+	end
+	local sniper_ap = input.sniper_ap_bonus or 0
+	local rounds = input.rounds or {}
+
+	local col_max = { 0, 0, 0, 0, 0 }
+	local col_src = {}
+	for _, r in ipairs(rounds) do
+		local k_hit = r.k_hit or 1
+		local k_ap = r.k_ap or 0
+		local air = r.air_resistance or 0.05
+		local pellets = r.pellets or 1
+		local sec = r.sec or ""
+		for i = 1, SCORE_COLS do
+			local tier = TORSO_TIERS[i]
+			local dmg = effective_dmg(
+				hit_power, k_hit, k_ap, air,
+				tier.armor, tier.ap_scale, tier.hit_frac, BONE_DMG_TORSO,
+				dist, pellets, 1, sec, 1, sniper_ap
+			)
+			if dmg > col_max[i] then
+				col_max[i] = dmg
+				col_src[i] = sec
+			end
+		end
+	end
+
+	-- Mutant-row override for column 1 (same as tip score table).
+	local mut_max = 0
+	local mut_src = nil
+	for _, r in ipairs(rounds) do
+		local air = r.air_resistance or 0.05
+		local k_hit = r.k_hit or 1
+		local pellets = r.pellets or 1
+		local sec = r.sec or ""
+		local dmg = math.floor(
+			hit_power / dist_atten(air, dist)
+				* k_hit * pellets
+				* MUTANT_BASE_MULT * (MUTANT_AMMO_MULT[sec] or MUTANT_AMMO_MULT_DEFAULT)
+				* DAMAGE_SCALE + 0.5
+		)
+		if dmg > mut_max then
+			mut_max = dmg
+			mut_src = sec
+		end
+	end
+	if mut_max > (col_max[1] or 0) then
+		col_max[1] = mut_max
+		col_src[1] = mut_src
+	end
+
+	local ads, hip = spread_pair(input)
+	local burst = burst_shots(input)
+	local scope_ok = ((input.scope_status or 0) > 0) and 1 or 0
+	local sil_ok = ((input.silencer_status or 0) > 0) and 1 or 0
+
+	local mut_dps = sustained_dps(col_max[1], rpm, mag, reload_s)
+	local lgt_dps = sustained_dps(col_max[2], rpm, mag, reload_s)
+	local mid_dps = sustained_dps(col_max[3], rpm, mag, reload_s)
+	local hvy_dps = sustained_dps(col_max[4], rpm, mag, reload_s)
+	local max_dps = sustained_dps(col_max[5], rpm, mag, reload_s)
+
+	return {
+		hit_power = hit_power,
+		mut_dmg = col_max[1] or 0,
+		lgt_dmg = col_max[2] or 0,
+		mid_dmg = col_max[3] or 0,
+		hvy_dmg = col_max[4] or 0,
+		max_dmg = col_max[5] or 0,
+		mut_dps = mut_dps,
+		lgt_dps = lgt_dps,
+		mid_dps = mid_dps,
+		hvy_dps = hvy_dps,
+		max_dps = max_dps,
+		burst = burst,
+		spread_ads = ads,
+		spread_hip = hip,
+		scope = scope_ok,
+		silencer = sil_ok,
+		reload_s = reload_s,
+		rpm = rpm,
+		mag = mag,
+		cost = input.cost or 0,
+		rounds_n = #rounds,
+		col_src = col_src,
+	}
+end
+
+--[[
+	input = {
+	  protections = { fire_wound_protection=…, … }  -- or flat keys on input
+	  cost, is_helmet
+	}
+]]
+local function armor_calculate(input)
+	input = input or {}
+	local prots = input.protections or input
+	local out = { cost = input.cost or 0, is_helmet = input.is_helmet and true or false }
+	for i = 1, #PROT_KEYS do
+		local k = PROT_KEYS[i]
+		out[k] = tonumber(prots[k]) or 0
+	end
+	return out
+end
+
+-- Game helper: build weapon input from ini_sys (not used by lupa).
+local function weapon_input_from_ini(wpn_sec, dist)
+	if not wpn_sec or not ini_sys then
+		return nil
+	end
+	local function f(key, def)
+		local v = ini_sys:r_float_ex(wpn_sec, key)
+		if v == nil then
+			return def
+		end
+		return v
+	end
+	local function s(key, def)
+		return ini_sys:r_string_ex(wpn_sec, key) or def
+	end
+	local hp = f("hit_power", nil)
+	if hp == nil then
+		local hp_s = s("hit_power", nil)
+		if hp_s then
+			hp = tonumber((hp_s:match("([^,]+)") or ""):match("^%s*(.-)%s*$")) or 0.5
+		else
+			hp = 0.5
+		end
+	end
+	local rounds = {}
+	local ammo_class = s("ammo_class", "") or ""
+	for part in string.gmatch(ammo_class, "([^,]+)") do
+		local sec = part:match("^%s*(.-)%s*$")
+		if sec and sec ~= "" and ini_sys:section_exist(sec) then
+			rounds[#rounds + 1] = {
+				sec = sec,
+				k_hit = ini_sys:r_float_ex(sec, "k_hit") or 1,
+				k_ap = ini_sys:r_float_ex(sec, "k_ap") or 0,
+				air_resistance = ini_sys:r_float_ex(sec, "k_air_resistance")
+					or ini_sys:r_float_ex(sec, "air_resistance") or 0.05,
+				pellets = ini_sys:r_float_ex(sec, "buck_shot") or 1,
+			}
+		end
+	end
+	local return_on = true
+	if ini_sys:line_exist(wpn_sec, "cam_return") then
+		return_on = f("cam_return", 1) ~= 0
+	end
+	return {
+		hit_power = hp,
+		rpm = f("rpm", 0),
+		ammo_mag_size = f("ammo_mag_size", 0),
+		scope_status = f("scope_status", 0),
+		silencer_status = f("silencer_status", 0),
+		fire_dispersion_base = f("fire_dispersion_base", 0),
+		PDM_disp_base = f("PDM_disp_base", 1),
+		PDM_disp_vel_factor = f("PDM_disp_vel_factor", 1),
+		cam_dispersion = f("cam_dispersion", 0),
+		zoom_cam_dispersion = f("zoom_cam_dispersion", 0),
+		cam_dispersion_inc = f("cam_dispersion_inc", 0),
+		zoom_cam_dispersion_inc = f("zoom_cam_dispersion_inc", 0),
+		cam_relax_speed = f("cam_relax_speed", 0),
+		zoom_cam_relax_speed = f("zoom_cam_relax_speed", 0),
+		cam_return = return_on,
+		cost = f("cost", 0),
+		dist = dist or DEFAULT_DIST,
+		rounds = rounds,
+	}
+end
+
+local function armor_input_from_ini(sec)
+	if not sec or not ini_sys then
+		return nil
+	end
+	local prots = {}
+	for i = 1, #PROT_KEYS do
+		local k = PROT_KEYS[i]
+		prots[k] = ini_sys:r_float_ex(sec, k) or 0
+	end
+	local is_helm = (IsItem and IsItem("helmet", sec))
+		or (string.find(sec, "helm", 1, true) ~= nil)
+	return {
+		protections = prots,
+		cost = ini_sys:r_float_ex(sec, "cost") or 0,
+		is_helmet = is_helm,
+	}
+end
+
+_G.dogma_item_stats = {
+	TORSO_TIERS = TORSO_TIERS,
+	PROT_KEYS = PROT_KEYS,
+	DEFAULT_DIST = DEFAULT_DIST,
+	DAMAGE_SCALE = DAMAGE_SCALE,
+	sustained_dps = sustained_dps,
+	weapon_calculate = weapon_calculate,
+	armor_calculate = armor_calculate,
+	weapon_input_from_ini = weapon_input_from_ini,
+	armor_input_from_ini = armor_input_from_ini,
+}

@@ -1,78 +1,39 @@
 -- tweaks/medik_tracks_bleed_and_rads conf
-
 -- Remaps Medik's booster icon+digit row to rad/bleed vitals (6 slots, 2x3).
 
-
-
 _G.dogma_tweaks_medik_tracks_bleed_and_rads_conf = {
-
 	MOD_ID = "dogma/tweaks/medik_tracks_bleed_and_rads",
-
 	DEFAULTS = {},
 
-
-
 	-- Icons use stock Medik ids from ui\medik_boosters (top-row *_glyph, 32x32).
-
 	-- Ship textures/ui/medik_boosters.dds override; place art in these cells L→R:
-
 	--   0 hp | 1 bleed | 2 rad | 3 carry | 4 power | 5 ext_rad  (y=0)
-
 	-- Bottom row (*_lit, y=32) unused - we always bind glyphs + tint in script.
-
 	-- `tint`: nil = white; "rad"/"bleed" = white→green/red by value.
-
 	SLOTS = {
-
 		-- row 1
-
 		{ id = "rad_dose", icon = "bo_hp_glyph", fmt = "int", tint = "rad", tint_max = 999 },
-
 		{ id = "rad_restore", icon = "bo_bleed_glyph", fmt = "int" },
-
 		{ id = "rad_protect", icon = "bo_rad_glyph", fmt = "pct" },
-
 		-- row 2
-
 		{ id = "bleed", icon = "bo_carry_glyph", fmt = "int", tint = "bleed", tint_max = 999 },
-
 		{ id = "bleed_restore", icon = "bo_power_glyph", fmt = "int" },
-
 		{ id = "bleed_protect", icon = "bo_ext_rad_glyph", fmt = "pct" },
-
 	},
-
-
 
 	-- HUD rad-icon mSv scale (G_FLAT Msv Above Radiation Icon / item_device tip).
-
 	MSV_K = 10000 * 0.387,
 
-
-
 	-- Medik layout constants (medik_ui UIMedik:__init)
-
 	LAYOUT = {
-
 		BO_X0 = 0.02270,
-
 		BO_COLW = 0.011185,
-
 		ICON_WH = 0.009,
-
 		DIG_W = 0.0022,
-
 		DIG_H = 0.0032,
-
 		ICON_Y0 = 0.04438,
-
 		ROW_PITCH = 0.0130,
-
 		DIG_GAP = 0.0006,
-
 		COLS = 3,
-
 	},
-
 }
-

@@ -921,8 +921,10 @@ class Dependency:
     # Download/apply without creating an MO2 mods/ folder or modlist entry.
     skip_mo2: bool = False
 
+    # Wizard / FOMOD checkbox default. Absent / false = off; true = preselected.
+    default: bool = False
+
     # Wizard checkbox metadata (stage != omit on the same block).
-    # Default checked state is derived (not buy_url) - see option_default_selected.
     wizard_requires: list[str] = field(default_factory=list)  # radio parents from requires:
 
     @property
@@ -991,7 +993,7 @@ DOGMA_NAME_PREFIX = "D.O.G.M.A."
 
 
 def with_dogma_prefix(name: str) -> str:
-    """Prefix a D.O.G.M.A. path-mod display name if not already prefixed."""
+    """Legacy helper; Setup/FOMOD use bare manifest titles (no prefix)."""
     n = (name or "").strip()
     if not n:
         return n
@@ -1024,7 +1026,8 @@ class FeatureMeta:
 
     @property
     def display_name(self) -> str:
-        return with_dogma_prefix((self.title or self.path).strip() or self.path)
+        """Manifest title (or path) for Setup / FOMOD labels — no D.O.G.M.A. prefix."""
+        return (self.title or self.path).strip() or self.path
 
     @property
     def level(self) -> str:
@@ -1196,6 +1199,9 @@ class ManifestData:
             if meta.title and meta.title.lower() == low:
                 return path
             if meta.display_name.lower() == low:
+                return path
+            # Accept legacy "D.O.G.M.A. <title>" refs from older selections.
+            if with_dogma_prefix(meta.display_name).lower() == low:
                 return path
         return None
 
@@ -1665,27 +1671,30 @@ def _dep_from_mapping(
             f"for a checkbox, or stage:+options: (no url) for a radio group"
         )
 
-    # default: [mcm roots…] - wipe/reset those MCM namespaces to script defs
-    # (alias for mcm_reset:). Boolean default: is rejected.
+    # default: true|false - Setup / FOMOD checkbox preselected (absent = false).
+    # MCM wipe roots belong under mcm_reset: (legacy list form of default: rejected).
     default_raw = item.get("default")
-    if isinstance(default_raw, bool) or (
-        isinstance(default_raw, str)
-        and default_raw.strip().lower()
-        in ("1", "true", "yes", "on", "0", "false", "no", "off")
-    ):
-        raise ValueError(
-            f"{section}.{dep_id}: default: must be a list of MCM roots to "
-            f"wipe/default (e.g. [idiots, video/weather]); wizard checkbox "
-            f"defaults follow buy_url: (paid = off, else on)"
-        )
-    if default_raw is not None:
-        resets = _parse_str_list(
-            default_raw, field=f"{section}.{dep_id}.default"
-        )
-        if effects["mcm_reset"]:
-            resets = _unique_strs([*resets, *effects["mcm_reset"]])
+    if default_raw is None:
+        default_selected = False
+    elif isinstance(default_raw, bool):
+        default_selected = default_raw
+    elif isinstance(default_raw, str):
+        key = default_raw.strip().lower()
+        if key in ("1", "true", "yes", "on"):
+            default_selected = True
+        elif key in ("0", "false", "no", "off"):
+            default_selected = False
+        else:
+            raise ValueError(
+                f"{section}.{dep_id}: default: want true|false "
+                f"(got {default_raw!r}); use mcm_reset: for MCM wipe roots"
+            )
     else:
-        resets = effects["mcm_reset"]
+        raise ValueError(
+            f"{section}.{dep_id}: default: want true|false "
+            f"(wizard/FOMOD checkbox); use mcm_reset: for MCM wipe roots"
+        )
+    resets = effects["mcm_reset"]
     if item.get("wipes") is not None:
         raise ValueError(
             f"{section}.{dep_id}: wipes: removed - use mcm_reset: with MCM "
@@ -1795,6 +1804,7 @@ def _dep_from_mapping(
         feature=feature,
         file_regex=file_regex,
         skip_mo2=skip_mo2,
+        default=default_selected,
         wizard_requires=[],
     )
 
@@ -2045,27 +2055,15 @@ def pack_needs_purchase(dep: Dependency) -> bool:
 def option_default_selected(
     opt: InstallerOption, pack_by_id: dict[str, Dependency]
 ) -> bool:
-    """Checked by default only when no archive field is required (path mods).
-
-    Third-party packs default off; the wizard auto-checks when archives are linked.
-    """
+    """Checked only when the option's pack has ``default: true`` (absent = false)."""
+    primary = pack_by_id.get(opt.id)
+    if primary is not None:
+        return bool(primary.default)
     for mid in opt.mods:
         pack = pack_by_id.get(mid)
-        if pack is None:
-            continue
-        try:
-            leaves = expand_pack_composition(pack_by_id, mid)
-        except ValueError:
-            leaves = [mid]
-        for lid in leaves:
-            leaf = pack_by_id.get(lid, pack if lid == mid else None)
-            if leaf is not None and pack_needs_archive(leaf):
-                return False
-            if leaf is not None and pack_needs_purchase(leaf):
-                return False
-        if pack_needs_archive(pack) or pack_needs_purchase(pack):
-            return False
-    return True
+        if pack is not None:
+            return bool(pack.default)
+    return False
 
 
 def feature_installer_options(
@@ -2097,7 +2095,7 @@ def feature_installer_options(
             id=feat,
             desc="",
             mods=list(seeds),
-            default=True,
+            default=False,
             requires=[],
         )
         opt.default = option_default_selected(opt, by_id)
@@ -2109,14 +2107,14 @@ def apply_feature_option_defaults(
     data: ManifestData,
     installed: set[str] | None,
 ) -> None:
-    """Path-mod defaults: D.O.G.M.A. features/tweaks start selected."""
+    """Path-mod defaults: selected only when ``default: true``."""
     _ = installed  # kept for call-site compat; presence no longer clears defaults
     by_id = data.suggested_by_id()
     for opt in data.installer_options:
         dep = by_id.get(opt.id)
         if dep is None or not dep.path:
             continue
-        opt.default = True
+        opt.default = bool(dep.default)
 
 
 def features_from_deps(suggested: list[Dependency]) -> dict[str, FeatureMeta]:
@@ -2212,7 +2210,7 @@ def wizard_options_from_deps(
             id=dep.id,
             desc=dep.desc,
             mods=installer_seed_ids(dep, by_id),
-            default=True,
+            default=False,
             requires=dep.wizard_requires,
         )
         opt.default = option_default_selected(opt, by_id)
@@ -2245,35 +2243,35 @@ def wizard_page1_section_order(
     *,
     min_stage: str = "dev",
 ) -> list[tuple[str, str]]:
-    """Page 1: radio groups + third-party (non-path) checkboxes."""
+    """Page 1: radio groups + third-party checkboxes in manifest order."""
     min_stage = parse_stage(min_stage)
-    radios = wizard_radio_groups(data, min_stage=min_stage)
     sections: list[tuple[str, str]] = []
     by_id = data.suggested_by_id()
+    seen: set[str] = set()
 
+    # 1:1 with third-party (non-path) catalog order — radios interleaved with checks.
     for dep in data.suggested:
-        if dep.id in radios:
-            sections.append(("radio", dep.id))
-
-    for dep in data.suggested:
+        if dep.path:
+            continue
         if is_wizard_radio_parent(dep):
+            if stage_meets(dep.stage, min_stage):
+                sections.append(("radio", dep.id))
+                seen.add(dep.id)
             continue
         if not dep.wizard:
             continue
         if not stage_meets(dep.stage, min_stage):
             continue
-        if dep.path:
-            continue
         sections.append(("option", dep.id))
+        seen.add(dep.id)
 
     # Legacy feature options without a path pack stay on page 1.
     feat_ids = set(data.features.keys())
     for opt in data.installer_options:
-        if opt.id in feat_ids:
-            continue
-        if opt.id in by_id:
+        if opt.id in seen or opt.id in feat_ids or opt.id in by_id:
             continue
         sections.append(("option", opt.id))
+        seen.add(opt.id)
     return sections
 
 
@@ -3178,16 +3176,43 @@ def required_exclusive_groups(
     return out
 
 
+def default_radio_picks(
+    data: ManifestData,
+    *,
+    min_stage: str = "dev",
+) -> dict[str, str]:
+    """First ``options:`` entry for each radio parent with ``default: true``."""
+    min_stage = parse_stage(min_stage)
+    out: dict[str, str] = {}
+    for dep in data.suggested:
+        if not is_wizard_radio_parent(dep):
+            continue
+        if not stage_meets(dep.stage, min_stage):
+            continue
+        if not dep.default:
+            continue
+        if dep.options:
+            out[dep.id] = dep.options[0]
+    return out
+
+
 def default_exclusive_picks(
     data: ManifestData, option_ids: Iterable[str] | None = None
 ) -> dict[str, str]:
-    """Exclusive picks for default/NO_WIZARD installs (required groups only)."""
+    """Exclusive picks for default/NO_WIZARD installs.
+
+    Includes radio groups required by selected options, plus radio parents with
+    ``default: true`` (first ``options:`` entry).
+    """
     ids = (
         list(option_ids)
         if option_ids is not None
         else default_installer_option_ids(data)
     )
-    return dict(required_exclusive_groups(data, ids))
+    out = dict(required_exclusive_groups(data, ids))
+    for group, pick in default_radio_picks(data).items():
+        out.setdefault(group, pick)
+    return out
 
 
 def resolve_install_order(
@@ -3468,7 +3493,7 @@ def default_installer_option_ids(
     *,
     installed: set[str] | None = None,
 ) -> list[str]:
-    """Options checked by default (packs: no buy_url; features: not yet installed)."""
+    """Options checked by default (``default:`` / derived archive rules)."""
     if installed is not None:
         apply_feature_option_defaults(data, installed)
     return [o.id for o in data.installer_options if o.default]

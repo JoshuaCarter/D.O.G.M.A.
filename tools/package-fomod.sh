@@ -10,7 +10,9 @@
 #     meta.ini  .mod_id
 #
 # FOMOD: one install step per category; each step is SelectAny checkboxes
-# (one per feature). Hover a feature for its description + optional image.
+# (one per feature). Category pages and plugins follow manifest FEATURES order
+# (first appearance of each category; features within a category keep YAML order).
+# Hover a feature for its description + optional image.
 # A Required "About" row per step shows the default hover text.
 #
 # Plugin name / description / module id come from config/manifest-*.yml
@@ -216,43 +218,43 @@ steps_xml=""
 feature_count=0
 step_count=0
 
-while IFS= read -r -d '' cat_dir; do
-	[[ -d "$cat_dir" ]] || continue
-	cat_base="$(basename "$cat_dir")"
-	[[ "$cat_base" == "_common" ]] && continue
-	case "$cat_base" in
-		scripts | configs | textures | meshes | anims | sounds | spawns) continue ;;
-	esac
-
-	plugins_xml=""
-	cat_feat_count=0
-	# Page title uses logical name (debug, not _debug).
-	local_feat="$(src_dir_to_feature "$cat_base")"
-	title="$(cat_title "$local_feat")"
-	title_x="$(printf '%s' "$title" | xml_escape)"
-
-	# Top-level feature: src/<_feat|feat>/{scripts,configs,...} (manifest path has no slash).
-	if manifest_has "$local_feat"; then
-		package_one_feature "$local_feat"
+# Category = first path segment (tweaks/foo → tweaks; top-level debug → debug).
+feature_category() {
+	local rel="$1"
+	if [[ "$rel" == */* ]]; then
+		printf '%s' "${rel%%/*}"
 	else
-		while IFS= read -r -d '' feat_dir; do
-			[[ -d "$feat_dir" ]] || continue
-			feat_base="$(basename "$feat_dir")"
-			case "$feat_base" in
-				assets | installer) continue ;;
-			esac
-			rel="${feat_dir#"$SRC"/}"
-			rel="${rel//\\/\/}"
-			manifest_has "$rel" || continue
-			package_one_feature "$rel"
-		done < <(find "$cat_dir" -mindepth 1 -maxdepth 1 -type d -print0 | sort -z)
+		printf '%s' "$rel"
 	fi
+}
 
-	[[ "$cat_feat_count" -gt 0 ]] || continue
+# Walk FEATURES in manifest order; group into category steps by first appearance.
+declare -a CAT_ORDER=()
+declare -A CAT_PLUGINS=()
+declare -A CAT_COUNTS=()
 
+for rel in "${FEATURES[@]}"; do
+	cat_key="$(feature_category "$rel")"
+	# Reserved roots never get FOMOD pages (should already be absent from FEATURES).
+	[[ "$cat_key" == "common" || "$cat_key" == "debug" ]] && continue
+	if [[ -z "${CAT_COUNTS[$cat_key]+x}" ]]; then
+		CAT_ORDER+=("$cat_key")
+		CAT_COUNTS[$cat_key]=0
+		CAT_PLUGINS[$cat_key]=""
+	fi
+	plugins_xml="${CAT_PLUGINS[$cat_key]}"
+	cat_feat_count="${CAT_COUNTS[$cat_key]}"
+	package_one_feature "$rel"
+	CAT_PLUGINS[$cat_key]="$plugins_xml"
+	CAT_COUNTS[$cat_key]="$cat_feat_count"
+done
+
+for cat_key in "${CAT_ORDER[@]}"; do
+	[[ "${CAT_COUNTS[$cat_key]}" -gt 0 ]] || continue
+	title="$(cat_title "$cat_key")"
+	title_x="$(printf '%s' "$title" | xml_escape)"
 	# About first so the page opens on the hover hint; features follow.
-	plugins_xml="$(about_plugin_xml)${plugins_xml}"
-
+	plugins_xml="$(about_plugin_xml)${CAT_PLUGINS[$cat_key]}"
 	steps_xml+="$(cat <<EOF
 
 		<installStep name="${title_x}">
@@ -266,7 +268,7 @@ while IFS= read -r -d '' cat_dir; do
 EOF
 )"
 	step_count=$((step_count + 1))
-done < <(find "$SRC" -mindepth 1 -maxdepth 1 -type d -print0 | sort -z)
+done
 
 if [[ "$feature_count" -eq 0 ]]; then
 	echo "package-fomod: no features found" >&2

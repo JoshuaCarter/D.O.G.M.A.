@@ -5,29 +5,30 @@
 # Fields below are listed in apply order (later steps see earlier results).
 #
 # 1. stage: OMIT | DEV | RELEASE - wizard / FOMOD gate
-# 2. options: radio choices (pack id, or [A, B] composition) - parent only
-# 3. requires: / disables: / enables: - install graph + modlist toggles
+# 2. default: true|false - Setup checkbox preselected (absent = false)
+# 3. options: radio choices (pack id, or [A, B] composition) - parent only
+# 4. requires: / disables: / enables: - install graph + modlist toggles
 #       requires entries may be a pack id, or {Pack: {select: […]}} to push
 #       BAIN/FOMOD package picks onto that dependency (merged additively if
 #       several parents define select for the same dep). Required deps always
 #       reinstall so those picks are not skipped as "already present".
-# 4. url_download: (+ url_moddb / url_github / url_discord / url_kofi / url_patreon)
+# 5. url_download: (+ url_moddb / url_github / url_discord / url_kofi / url_patreon)
 #      each link is independent (own wizard icon); url_download is download target
-# 5. file_regex: pick GitHub release asset by filename (Python regex, ignore case)
-# 6. skip_mo2: download/apply without an MO2 mods/ folder (engine drops, etc.)
-# 7. extract archive → mods/<manifest name>  (or temp if skip_mo2)
-# 8. select: BAIN/FOMOD packages - merge listed top-level folder contents
+# 6. file_regex: pick GitHub release asset by filename (Python regex, ignore case)
+# 7. skip_mo2: download/apply without an MO2 mods/ folder (engine drops, etc.)
+# 8. extract archive → mods/<manifest name>  (or temp if skip_mo2)
+# 9. select: BAIN/FOMOD packages - merge listed top-level folder contents
 #       into the mod root (list order; later wins). Unlisted packages dropped.
-#       Also settable under a parent's requires: entry (see #3).
-# 9. after_unpack: optional post-extract script
-# 10. backup: zip listed paths into newest DOGMA/backups/<stamp>/misc/
+#       Also settable under a parent's requires: entry (see #4).
+# 10. after_unpack: optional post-extract script
+# 11. backup: zip listed paths into newest DOGMA/backups/<stamp>/misc/
 #       (skip if already archived; always before moves/overwrite/deletes)
-# 11. moves: copy src → dest (replace whole dest tree)
-# 12. overwrite: { src: <Anomaly>|<GAMMA> } - merge like Explorer
+# 12. moves: copy src → dest (replace whole dest tree)
+# 13. overwrite: { src: <Anomaly>|<GAMMA> } - merge like Explorer
 #       "Replace the files in the destination" (file-level; dirs merge)
 #       src may be a dir (bin), file (foo.dll), or glob ("*.dll", "MT/*.dll")
-# 13. deletes: <Anomaly>/<GAMMA>/<Mod> paths (zip untouched; after overwrite)
-# 14. console: / mcm_reset: / mcm_set: / settings: - game/MCM side effects
+# 14. deletes: <Anomaly>/<GAMMA>/<Mod> paths (zip untouched; after overwrite)
+# 15. console: / mcm_reset: / mcm_set: / settings: - game/MCM side effects
 #       mcm_reset: MCM key roots (e.g. ssfx_module) → script def= before mcm_set:
 #
 
@@ -35,8 +36,9 @@
 # ENGINE
 # --------------------------------
 
-XRAY Monolith:
+XRAY Monolith MT:
   stage: RELEASE
+  default: true
   url_download: https://github.com/themrdemonized/xray-monolith/releases
   url_github: https://github.com/themrdemonized/xray-monolith/releases
   file_regex: ^STALKER-Anomaly-modded-exes-MT-TEST_[\d.]+\.zip$
@@ -52,10 +54,11 @@ XRAY Monolith:
 
 Screen Space Shaders:
   stage: RELEASE
+  default: true
   options:
-    - Screen Space Shaders v23
-    - Screen Space Shaders v24
     - [Screen Space Shaders v23, Screen Space Shaders v24]
+    - Screen Space Shaders v24
+    - Screen Space Shaders v23
   deletes:
     - <Anomaly>/appdata/shaders_cache
 
@@ -81,7 +84,7 @@ Screen Space Shaders v24:
     - 190- Screen Space Shaders 7 - Ascii1457
     - 190- Screen Space Shaders latest - Ascii1457
   requires:
-    - XRAY Monolith
+    - XRAY Monolith MT
   backup:
     - <Anomaly>/gamedata
     - <Anomaly>/bin
@@ -95,6 +98,7 @@ Screen Space Shaders v24:
 
 Screen Space Shaders Editor:
   stage: RELEASE
+  default: false
   url_discord: https://discord.com/channels/912320241713958912/1490630710208499852
   requires:
     - Screen Space Shaders
@@ -105,6 +109,7 @@ Screen Space Shaders Editor:
 
 Weather (Atmospherics or Melancholy):
   stage: RELEASE
+  default: true
   options:
     - Atmospherics
     - Melancholy Weathers
@@ -202,6 +207,7 @@ Dark Signal Soundscape Overhaul Melancholy Edition:
 
 C Consciousness Grass and Trees:
   stage: RELEASE
+  default: true
   url_moddb: https://www.moddb.com/mods/stalker-anomaly/addons/ccon-grass-n-trees
   url_download: https://www.moddb.com/mods/stalker-anomaly/addons/ccon-grass-n-trees
   url_discord: https://discord.com/channels/912320241713958912/1279805292472832101
@@ -217,18 +223,21 @@ C Consciousness Grass and Trees:
 
 Glossy Puddles:
   stage: RELEASE
+  default: true
   url_discord: https://discord.com/channels/912320241713958912/1420720303092400230/1420720303092400230
   requires:
     - Screen Space Shaders
 
 G2X Tactical Light Presets:
   stage: RELEASE
+  default: true
   url_download: https://www.moddb.com/mods/stalker-anomaly/addons/g2x-tactical-light-preset-600-lm-range-max-100-m-eff-70-m-55006500-k
   url_moddb: https://www.moddb.com/mods/stalker-anomaly/addons/g2x-tactical-light-preset-600-lm-range-max-100-m-eff-70-m-55006500-k
   url_discord: https://discord.com/channels/912320241713958912/1460902627029155900
 
 NPC Weapon Position Tweaks:
   stage: RELEASE
+  default: true
   url_discord: https://discord.com/channels/912320241713958912/1472762418760519923
   disables:
     - A_triangle's NPC Weapon Position Tweak
@@ -236,6 +245,7 @@ NPC Weapon Position Tweaks:
 
 Painter of the Zone:
   stage: RELEASE
+  default: true
   url_download: https://github.com/windelicato/painterofthezone
   url_github: https://github.com/windelicato/painterofthezone
   url_discord: https://discord.com/channels/912320241713958912/1290829430020898826
@@ -253,6 +263,7 @@ Painter of the Zone:
 
 Alife Plus:
   stage: RELEASE
+  default: true
   requires:
     - xlibs
     - AlifePlus
@@ -335,6 +346,7 @@ AlifeTactics:
 
 Tarkov-like Level Transitions:
   stage: RELEASE
+  default: true
   url_download: https://www.moddb.com/mods/stalker-anomaly/addons/tarkov-like-level-transitions
   url_moddb: https://www.moddb.com/mods/stalker-anomaly/addons/tarkov-like-level-transitions
   url_github: https://github.com/Priler/tarkov_transitions
@@ -344,26 +356,11 @@ RNG Attach:
   stage: RELEASE
   url_download: https://www.moddb.com/mods/stalker-anomaly/addons/rng-attach-kits
   url_moddb: https://www.moddb.com/mods/stalker-anomaly/addons/rng-attach-kits
-  url_discord: https://discord.com/channels/912320241713958912/1522886110034788444'
-
-Hideout Furniture:
-  stage: RELEASE
-  url_download: https://www.moddb.com/mods/stalker-anomaly/addons/hideout-furniture-hf
-  url_moddb: https://www.moddb.com/mods/stalker-anomaly/addons/hideout-furniture-hf
-  url_github: https://github.com/Aoldri/anomaly-hf
-  enables:
-    - 245- Hideout Furniture - Aoldri
-    - 245- Hideout Furniture 1.2.0 - Aoldri
-
-The Anomalous Stash:
-  stage: OMIT
-  url_moddb: https://www.moddb.com/mods/stalker-anomaly/addons/the-anomalous-stash-beta-09
-  url_download: https://www.moddb.com/mods/stalker-anomaly/addons/the-anomalous-stash-beta-09
-  dirs:
-    - 02 The Anomalous Stash - Fetch task QoL
+  url_discord: https://discord.com/channels/912320241713958912/1522886110034788444
 
 Fair Autocomplete Task Enhanced:
   stage: RELEASE
+  default: true
   url_download: https://www.moddb.com/mods/stalker-anomaly/addons/fair-autocomplete-tasks
   url_moddb: https://www.moddb.com/mods/stalker-anomaly/addons/fair-autocomplete-tasks
   url_discord: https://discord.com/channels/912320241713958912/1514715046800920807
@@ -372,17 +369,19 @@ Fair Autocomplete Task Enhanced:
 # INTERFACE
 # --------------------------------
 
-Interaction Dot Marks:
-  stage: RELEASE
-  url_download: https://www.moddb.com/mods/stalker-anomaly/addons/interaction-dot-marks
-  url_moddb: https://www.moddb.com/mods/stalker-anomaly/addons/interaction-dot-marks
-  url_github: https://github.com/CatspawMods/Anomaly-Addon-Archive
-  url_discord: https://discord.com/channels/912320241713958912/1351707279036121230
-  disables:
-    - 452- Interaction Dot Marks - Catspaw
+# Interaction Dot Marks:
+#   stage: OMIT
+#   default: true
+#   url_download: https://www.moddb.com/mods/stalker-anomaly/addons/interaction-dot-marks
+#   url_moddb: https://www.moddb.com/mods/stalker-anomaly/addons/interaction-dot-marks
+#   url_github: https://github.com/CatspawMods/Anomaly-Addon-Archive
+#   url_discord: https://discord.com/channels/912320241713958912/1351707279036121230
+#   disables:
+#     - 452- Interaction Dot Marks - Catspaw
 
 Medik Health Monitor:
   stage: RELEASE
+  default: true
   url_discord: https://discord.com/channels/912320241713958912/1513868339158581318
   mcm_set:
     - medik/activation: "hold"
@@ -390,6 +389,7 @@ Medik Health Monitor:
 
 Quick Action Wheels Overhaul:
   stage: RELEASE
+  default: true
   url_download: https://www.moddb.com/mods/stalker-anomaly/addons/quick-action-wheels-overhaul-10
   url_moddb: https://www.moddb.com/mods/stalker-anomaly/addons/quick-action-wheels-overhaul-10
   url_discord: https://discord.com/channels/912320241713958912/1468805859906687218
@@ -399,6 +399,7 @@ Quick Action Wheels Overhaul:
 
 Ammo Check Enhanced:
   stage: RELEASE
+  default: true
   url_download: https://www.moddb.com/mods/stalker-anomaly/addons/ammo-check-enhanced
   url_moddb: https://www.moddb.com/mods/stalker-anomaly/addons/ammo-check-enhanced
   url_github: https://github.com/Priler/AmmoCheck
@@ -413,16 +414,19 @@ Ammo Check Enhanced:
 
 Crafting UI Tweaks:
   stage: RELEASE
+  default: true
   url_discord: https://discord.com/channels/912320241713958912/1518238783596789870
 
 Better Upgrade Tooltips:
   stage: RELEASE
+  default: true
   url_download: https://github.com/Verdatim25/Better-Upgrade-Tooltips-For-Stalker-GAMMA/releases
   url_github: https://github.com/Verdatim25/Better-Upgrade-Tooltips-For-Stalker-GAMMA/releases
   url_discord: https://discord.com/channels/912320241713958912/1518876207784136755
 
 Seamless Inventory Sort:
   stage: RELEASE
+  default: true
   url_download: https://www.moddb.com/mods/stalker-anomaly/addons/seamless-inventory-sort
   url_moddb: https://www.moddb.com/mods/stalker-anomaly/addons/seamless-inventory-sort
   url_discord: https://discord.com/channels/912320241713958912/1520580529273962567
@@ -434,6 +438,7 @@ Seamless Inventory Sort:
 
 Compact PDA Taskboard:
   stage: OMIT
+  default: true
   url_discord: https://discord.com/channels/912320241713958912/1505998547303268432
   url_gdrive: https://drive.google.com/drive/folders/1ixCUzW3ZNtyOaJ-yshDhRX-R-4W3iXZR
   disables:
@@ -442,6 +447,7 @@ Compact PDA Taskboard:
 
 Custom PDA Taskboard:
   stage: DEV
+  default: true
   url_discord: https://discord.com/channels/912320241713958912/1495056407727312926
   disables:
     - 478- Custom iTheon's PDA Taskboard - lizzardman

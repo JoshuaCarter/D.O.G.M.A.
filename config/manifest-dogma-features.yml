@@ -5,26 +5,31 @@
 # path: feature under src/<path> (common→src/_common, debug→src/_debug on disk);
 #       package zip mo2/packages/<path_key>.zip
 # stage: OMIT | DEV | RELEASE
+# default: true|false - Setup / FOMOD checkbox (absent = false)
 #
 
 common:
   stage: OMIT
+  default: true
   disables:
     - 95- Doom-like weapon inspection - Grokitach
   enables: []
 
 Debug:
-  stage: DEV
+  stage: OMIT
+  default: true
   path: debug
-  desc: "DEV ONLY"
+  desc: "DEV ONLY - local builds only; never Setup / FOMOD"
 
 Radiation FX:
   stage: RELEASE
+  default: true
   path: fx/radiation
   desc: Customisable radiation FX that tracks your actual irradiation level (like a dosimeter).
 
 Bleed FX:
   stage: DEV
+  default: true
   path: fx/bleed
   desc: Bleed screen FX from two overlapping PPEs, intensity scaled to bleed level.
   settings:
@@ -32,6 +37,7 @@ Bleed FX:
 
 Health FX:
   stage: DEV
+  default: true
   path: fx/health
   desc: Low-health screen FX from two overlapping PPEs, intensity scaled to missing HP.
   settings:
@@ -39,11 +45,13 @@ Health FX:
 
 FPS:
   stage: RELEASE
+  default: true
   path: hud/fps
   desc: Customisable FPS counter with optional graph view.
 
 Minimap Toggle:
   stage: RELEASE
+  default: true
   path: hud/minimap
   desc: Toggle/hold keybind for the minimap.
   disables:
@@ -51,14 +59,22 @@ Minimap Toggle:
 
 Stalker ID:
   stage: RELEASE
+  default: true
   path: hud/stalker_id
   desc: "Centered version of \"Identification UI - CrookR\", to show name, rank, and faction icon when looking at stalkers."
   disables:
     - 163- Identification UI - CrookR
     - G.A.M.M.A. Crook's Identification UI Fix
 
+BHS HUD On Damage:
+  stage: DEV
+  default: true
+  path: hud/bhs_on_damage
+  desc: "Show the classic Body Health System HUD for a few seconds when you take limb damage (overrides hide/keybind during that window)."
+
 Better Disassemble Keybind:
   stage: DEV
+  default: true
   path: items/disassemble
   desc: Keybind to disassemble items from inventory, with press/hold/drag support.
   disables:
@@ -66,6 +82,7 @@ Better Disassemble Keybind:
 
 Better Drop Keybind:
   stage: DEV
+  default: true
   path: items/drop
   desc: Keybind to drop items from inventory, with press/hold/drag support.
   disables:
@@ -73,30 +90,44 @@ Better Drop Keybind:
 
 Weapon Stripper:
   stage: RELEASE
+  default: true
   path: items/stripping
   desc: Keybind to strip all attachments/parts from a weapon in one go.
 
 Parts In Stashes:
-  stage: DEV
+  stage: OMIT
+  default: true
   path: gameplay/parts_in_stashes
   desc: "Weapon parts in white stashes (RNG Attach tier/condition bands). Mechanics destocked."
   requires:
     - RNG Attach
 
-Workshop Shared Stash:
+Weapons Ban:
   stage: DEV
+  default: true
+  path: gameplay/weapons_ban
+  desc: "Traders won't buy your guns, ammo, or attachments - you must find them in stashes and corpses."
+  disables:
+    - RNG Attach
+    - Parts In Stashes
+
+Toolbench Shared Stash:
+  stage: DEV
+  default: true
   path: gameplay/shared_stash
-  desc: "One shared stash for all portable workshops; 1 workshop per level; carry weight = table + contents."
-  requires:
-    - Hideout Furniture
+  desc: "One shared stash for all crafted toolbenches; max 1 toolbench per map; toolbench weight includes weight of contents."
+  enables:
+    - 245- Hideout Furniture - Aoldri
 
 Faster Skinning:
   stage: OMIT
+  default: true
   path: gameplay/faster_skinning
   desc: "Faster mutant skinning."
 
 Melee Skinning:
   stage: DEV
+  default: true
   path: gameplay/melee_skinning
   desc: "Heavy knife stab to skin a mutant."
   mcm_set:
@@ -105,6 +136,7 @@ Melee Skinning:
 
 PDA Go Away:
   stage: RELEASE
+  default: true
   path: controls/pda_go_away
   desc: Stops the PDA reequipping after closing inventory or teleporting.
   disables:
@@ -113,6 +145,7 @@ PDA Go Away:
 
 Campfire Healing:
   stage: RELEASE
+  default: true
   path: gameplay/campfire_healing
   desc: "Heal near campfires when not in combat. Faster than current system and heals limbs if they have temporary health."
   disables:
@@ -120,6 +153,7 @@ Campfire Healing:
 
 Better Exo Power Drain:
   stage: DEV
+  default: true
   path: gameplay/exo_power
   desc: "Replaces Exosuit drain system. No drain when not moving and more drain when moving (compared to base G.A.M.M.A.)."
   enables:
@@ -127,11 +161,13 @@ Better Exo Power Drain:
 
 Pose Controls:
   stage: RELEASE
+  default: true
   path: controls/pose_controls
   desc: "Dedicated keys for sprint, crouch, walk, and prone which always set your pose accordingly."
 
 True Prone:
   stage: RELEASE
+  default: true
   path: gameplay/true_prone
   desc: Makes the player model actually go prone rather than just low crouch.
   disables:
@@ -139,16 +175,19 @@ True Prone:
 
 What the Fuck:
   stage: DEV
+  default: true
   path: gameplay/death_spectator
   desc: "After death, press Tab to see what killed you and read a summary of recent damage sources."
 
 Better Equipable Controls:
   stage: DEV
+  default: true
   path: controls/equipment_controls
   desc: "Dedicated keys for equipping Melee, Pistol, Detector, Geiger, RF, Glowstick, and Torch/Flashlight. Missing items do nothing."
 
 Dynamic Loadout:
   stage: OMIT
+  default: true
   path: gameplay/dynamic_loadout
   desc: "On New Game LoadLoadout, replace stock weapon/ammo/outfit/helmet shop options with scored ones under point caps; leave other loadout items alone. Disables R.N.G. and RNGLO."
   disables:
@@ -160,6 +199,7 @@ Dynamic Loadout:
 
 Weapon Tooltips:
   stage: RELEASE
+  default: true
   path: gui/weapon_tooltips
   desc: Adds detailed weapon performance stats to weapon tooltips.
   enables:
@@ -167,11 +207,13 @@ Weapon Tooltips:
 
 Stealth:
   stage: DEV
+  default: true
   path: gameplay/stealth
   desc: "Player-only visual detection gate: scale stock visibility, foliage coverage bonus (8 short rays), pose cutoffs (stand/crouch/prone), optional smooth remap above cutoff. Bottom-center visibility gem. Leaves NPC-vs-NPC vision, sound, and AlifeTactics alone."
 
 True Fast Travel:
   stage: DEV
+  default: true
   path: gameplay/true_fast_travel
   desc: "Real path travel with spectator camera along the route, in-mod time simulation, LoS ambushes, walk-to-discover destinations. Blanks vanilla game_fast_travel so map FT does not return. Optional keybind teleports companions to you."
   disables:
@@ -184,6 +226,7 @@ True Fast Travel:
 
 ADS Zoom:
   stage: RELEASE
+  default: true
   path: gameplay/ads_zoom
   desc: "Brings weapon model closer to camera when ADS (can adjust per gun+sight combo), with defaults for irons/sights/scopes"
   disables:
@@ -191,6 +234,7 @@ ADS Zoom:
 
 Free Zoom:
   stage: RELEASE
+  default: true
   path: gameplay/free_zoom
   desc: Freely zoom when not ADS. Better input support than base G.A.M.M.A. (e.g. scroll wheel).
   disables:

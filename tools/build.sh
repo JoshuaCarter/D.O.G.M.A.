@@ -348,7 +348,8 @@ src_in_scope() {
 	local sdir
 	case "$ONLY" in
 		all | "")
-			[[ "$rel" == _common/* ]] && return 0
+			# common + debug are stage:OMIT (no Setup/FOMOD) but still ship locally.
+			[[ "$rel" == _common/* || "$rel" == _debug/* ]] && return 0
 			for sdir in "${FEATURE_SRC_DIRS[@]}"; do
 				[[ "$rel" == "$sdir"/* || "$rel" == "$sdir" ]] && return 0
 			done
@@ -357,6 +358,9 @@ src_in_scope() {
 		common)
 			[[ "$rel" == _common/* ]]
 			;;
+		debug)
+			[[ "$rel" == _debug/* ]]
+			;;
 		*)
 			[[ "$rel" == "$ONLY_SRC_DIR"/* || "$rel" == "$ONLY_SRC_DIR" ]]
 			;;
@@ -364,7 +368,7 @@ src_in_scope() {
 }
 
 case "$ONLY" in
-	all | "" | common) ;;
+	all | "" | common | debug) ;;
 	*)
 		ONLY_SRC_DIR="$(src_feature_dir "$ONLY")"
 		[[ -d "$SRC/$ONLY_SRC_DIR" ]] || {

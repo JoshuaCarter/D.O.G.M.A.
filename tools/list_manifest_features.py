@@ -49,8 +49,13 @@ def main() -> int:
     data = lib.load_manifest(path)
     min_stage = lib.parse_stage(args.min_stage)
     src = _REPO / "src"
-    for feat, meta in sorted(data.features.items()):
-        if meta.always_on:
+    # Preserve catalog order (third-party → features → tweaks; YAML key order).
+    for dep in data.suggested:
+        feat = (dep.path or "").replace("\\", "/").strip()
+        if not feat:
+            continue
+        meta = data.features.get(feat)
+        if meta is None or meta.always_on:
             continue
         if not lib.stage_meets(meta.stage, min_stage):
             continue

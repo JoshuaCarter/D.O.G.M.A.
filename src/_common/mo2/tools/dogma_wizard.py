@@ -16,6 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
+import dogma_backup as backup
 import dogma_mo2_lib as lib
 
 _URL_RE = re.compile(r"https?://[^\s\]\)>,;]+")
@@ -2024,16 +2025,20 @@ def run_wizard(
 
     if initial is None:
         lib.apply_feature_option_defaults(data, installed_feats)
-        # Wizard UI starts with no radio picks - re-click clears; requires:
-        # gate Install instead of auto-selecting a choice.
+        option_ids = [o.id for o in options if o.default]
+        # Radio parents with default: true → first options: entry.
         initial = lib.InstallerSelection(
-            option_ids=[o.id for o in options if o.default],
-            exclusive_picks={},
+            option_ids=option_ids,
+            exclusive_picks=lib.default_radio_picks(data, min_stage=min_stage),
         )
     else:
         # Still apply feature defaults for ids not in a prior selection
         lib.apply_feature_option_defaults(data, installed_feats)
     initial_picks = dict(initial.exclusive_picks)
+    # Fill empty radio groups that declare default: true (first options: entry).
+    for group, pick in lib.default_radio_picks(data, min_stage=min_stage).items():
+        if not (initial_picks.get(group) or "").strip():
+            initial_picks[group] = pick
 
     # Hide the launching console while the Tk wizard is up. Leave it hidden when
     # the wizard closes (cancel → process exits; Install → batch jobs keep logging
@@ -2197,8 +2202,7 @@ def _run_wizard_ui(
     page3_option_ids: list[str] = []
     wizard_page = {"n": 1}
     for group, packs in radio_groups.items():
-        # Preferred fallback when a selected option requires this group - not a
-        # default selection (radios start empty unless restored / required).
+        # Preferred fallback when a selected option requires this group.
         default_pack = packs[0].id if packs else ""
         parent = pack_by_id.get(group)
         for opt in options:
@@ -2217,7 +2221,9 @@ def _run_wizard_ui(
         start = initial_picks.get(group, "")
         if start and start not in {p.id for p in packs}:
             start = ""
-        # Fresh open: never auto-select a radio choice.
+        # default: true on the radio parent → first options: entry when unset.
+        if not start and parent is not None and parent.default and packs:
+            start = packs[0].id
         exclusive_vars[group] = tk.StringVar(value=start)
 
     def _add_desc(parent: ttk.Frame, desc: str) -> None:
@@ -2415,10 +2421,23 @@ def _run_wizard_ui(
             archive_fields.setdefault(leaf.id, []).append(field)
         return leaves
 
+    def _dep_is_ui_selected(dep: lib.Dependency) -> bool:
+        """True when this pack/group is part of the current Setup selection."""
+        bv = bool_vars.get(dep.id)
+        if bv is not None and bv.get():
+            return True
+        if lib.is_wizard_radio_parent(dep):
+            var = exclusive_vars.get(dep.id)
+            return bool(var is not None and (var.get() or "").strip())
+        for var in exclusive_vars.values():
+            if (var.get() or "").strip() == dep.id:
+                return True
+        return False
+
     def _require_relation_sections(
         dep: lib.Dependency,
     ) -> list[tuple[str, list[str], str]]:
-        """Parents/children for info tips - red ``alert`` kind."""
+        """Parents/children for info tips — red only when this mod is selected."""
         children = [d for d in dep.requires if d]
         parents = sorted(
             {
@@ -2428,11 +2447,12 @@ def _run_wizard_ui(
             },
             key=str.lower,
         )
+        kind = "alert" if _dep_is_ui_selected(dep) else "normal"
         out: list[tuple[str, list[str], str]] = []
         if children:
-            out.append(("Requires", children, "alert"))
+            out.append(("Requires", children, kind))
         if parents:
-            out.append(("Required by", parents, "alert"))
+            out.append(("Required by", parents, kind))
         return out
 
     def _catalog_sections_for(
@@ -2670,18 +2690,21 @@ def _run_wizard_ui(
                         on = True
                         break
             _set_path_info_alert(lbl, on)
-        blocked = bool(missing)
+        has_backup = bool(backup.list_backups(mo2_root))
+        blocked = bool(missing) or not has_backup
         btn = footer_btns.get("install")
         if btn is not None:
             try:
                 btn.configure(state=("disabled" if blocked else "normal"))
             except tk.TclError:
                 pass
-        if blocked:
+        if missing:
             msg = "Selected mods still need archives linked"
             if wizard_page["n"] >= 2:
                 msg += " (page 1)"
             requires_warn_var.set(msg)
+        elif not has_backup:
+            requires_warn_var.set("Create a Backup before installing")
         else:
             requires_warn_var.set("")
 
@@ -2750,7 +2773,7 @@ def _run_wizard_ui(
         title = opt.id
         if pack is not None:
             if pack.path:
-                title = lib.with_dogma_prefix(pack.id)
+                title = pack.id
             elif not title:
                 title = pack.id
         elif feat is not None:
@@ -2872,11 +2895,7 @@ def _run_wizard_ui(
         if pack is not None and pack.path:
             feat = data.features.get(pack.path) or feat
         if pack is not None:
-            title = (
-                pack.id
-                if lib.is_wizard_tweak_pack(pack)
-                else lib.with_dogma_prefix(pack.id)
-            )
+            title = pack.id
             desc_fg = (
                 _THEME["fg_muted"]
                 if lib.is_wizard_tweak_pack(pack)
@@ -3209,6 +3228,7 @@ def _run_wizard_ui(
         next_btn.pack_forget()
         back_btn.pack_forget()
         install_btn.pack_forget()
+        backup_btn.pack_forget()
 
         if n == 1:
             page1_col.pack(fill="both", expand=True, padx=4, pady=4)
@@ -3222,7 +3242,9 @@ def _run_wizard_ui(
         else:
             page3_col.pack(fill="both", expand=True, padx=4, pady=4)
             subtitle_var.set("Choose D.O.G.M.A. tweaks to install")
+            # side=right: first packed is rightmost → Back | Backup | Install
             install_btn.pack(side="right")
+            backup_btn.pack(side="right", padx=(0, 8))
             back_btn.pack(side="right", padx=(0, 8))
 
         _refresh_page_tabs()
@@ -3244,7 +3266,51 @@ def _run_wizard_ui(
         if n > 1:
             _show_page(n - 1)
 
+    def on_backup() -> None:
+        """Run DOGMA Backup (MCM diff + user.ltx + modlist) into DOGMA/backups/."""
+        if not messagebox.askyesno(
+            "D.O.G.M.A. Backup",
+            "Back up MCM options, user.ltx, and the MO2 mod list now?\n\n"
+            f"Saves under:\n{backup.backup_root(mo2_root)}",
+        ):
+            return
+        backup_btn.configure(state="disabled")
+        install_btn.configure(state="disabled")
+        root.update_idletasks()
+        try:
+            code, dest = backup.run_backup(
+                mo2_root,
+                backup.BackupComponents.config_only(),
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            messagebox.showerror("D.O.G.M.A. Backup", str(exc))
+            _on_selection_changed()
+            return
+        finally:
+            try:
+                backup_btn.configure(state="normal")
+            except tk.TclError:
+                pass
+        if code == 0 and dest is not None:
+            messagebox.showinfo(
+                "D.O.G.M.A. Backup",
+                f"Backup complete:\n\n{dest}",
+            )
+        elif code != 0:
+            messagebox.showerror(
+                "D.O.G.M.A. Backup",
+                "Backup failed - see DOGMA/logs for details.",
+            )
+        _on_selection_changed()
+
     def on_install() -> None:
+        if not backup.list_backups(mo2_root):
+            messagebox.showwarning(
+                "D.O.G.M.A.",
+                "Create at least one Backup before installing.",
+            )
+            _on_selection_changed()
+            return
         chosen = collect()
         if not chosen.option_ids and not any(chosen.exclusive_picks.values()):
             messagebox.showwarning(
@@ -3312,8 +3378,10 @@ def _run_wizard_ui(
     ).pack(side="left", fill="x", expand=True, padx=(0, 12))
     next_btn = ttk.Button(footer, text="Next", command=on_next)
     back_btn = ttk.Button(footer, text="Back", command=on_back)
+    backup_btn = ttk.Button(footer, text="Backup", command=on_backup)
     install_btn = ttk.Button(footer, text="Install", command=on_install)
     footer_btns["install"] = install_btn
+    footer_btns["backup"] = backup_btn
     _show_page(1)
 
     # Detect Explorer deletes in DOGMA/downloads while the wizard is open.

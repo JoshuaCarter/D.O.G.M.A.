@@ -6,7 +6,7 @@ Prints shell assignments (eval-safe)::
   FEATURE_NAME='...'
   FEATURE_DESC='...'
   FEATURE_ID='fx_thirst'
-  FEATURE_DEFAULT='Recommended'
+  FEATURE_DEFAULT='Recommended'  # or Optional when default: false
 
 Name = manifest key, desc = desc: plus the same effect lists as Setup tooltips
 (Installs / Disables / Enables / … / Requires). id = path with / → _.
@@ -81,7 +81,11 @@ def main(argv: list[str] | None = None) -> int:
     if effects:
         desc = f"{desc.rstrip()}\n\n{effects}"
     fid = lib.feature_path_key(feat)
-    default = "Recommended"
+    # default: true → Recommended (checked); absent/false → Optional.
+    if dep is not None and dep.default:
+        default = "Recommended"
+    else:
+        default = "Optional"
 
     sys.stdout.write(
         f"FEATURE_NAME={_shell_quote(name)}\n"

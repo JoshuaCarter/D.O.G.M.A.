@@ -1,0 +1,396 @@
+--[[
+	Weapons Ban
+
+	Traders only deal knives among combat gear. Stashes get 0–3 weighted
+	adds (sight/kit/sil/ammo/parts). Corpses: strip loose ammo, then 0–4
+	mags worth per kept gun. Replaces RNG Attach + Parts In Stashes.
+]]
+
+local CONFIG = _G.dogma_gameplay_weapons_ban_conf
+local MOD_ID = CONFIG.MOD_ID
+local Tiers
+local DOGMA
+
+local original_set_random_stash
+local original_try_spawn_ammo
+local original_get_trade_status
+local original_trade_update
+local hooked_stash = false
+local hooked_ammo = false
+local hooked_trade_status = false
+local hooked_trade_update = false
+
+local function log(msg)
+	if Tiers and Tiers.log then
+		Tiers.log(msg)
+	elseif DOGMA and DOGMA.dbg and DOGMA.dbg.logging() then
+		DOGMA.dbg.log(MOD_ID, tostring(msg))
+	end
+end
+
+local function on_option_change()
+	local L = CONFIG.loaded
+	local D = CONFIG.DEFAULTS
+	for _, cat in ipairs(CONFIG.CATS) do
+		for _, n in ipairs({ 2, 3, 4, 5 }) do
+			local key = cat .. "_tier_cost_" .. n
+			L[key] = DOGMA.mcm.number(MOD_ID, key, D[key])
+		end
+	end
+	if Tiers and Tiers.rebuild then
+		Tiers.rebuild()
+	end
+end
+
+--------------------------------------------------------------------------------
+-- Cheese paid stash (copied from RNG Attach; NMN cannot rely on RNG when disabled)
+--------------------------------------------------------------------------------
+local function is_cheese_paid_stash(_hint)
+	local sfind = string.find
+	local act_pos = db.actor and db.actor:position()
+	if not act_pos then
+		return false
+	end
+
+	for i = 2, 12 do
+		local info = debug.getinfo(i, "S")
+		if not info then
+			break
+		end
+		if info.short_src then
+			if sfind(info.short_src, "task", 1, true) then
+				return false
+			end
+			if sfind(info.short_src, "pda", 1, true) then
+				return false
+			end
+		end
+	end
+
+	for i = 1, 65534 do
+		local obj = level.object_by_id(i)
+		if obj then
+			local dist = obj:position():distance_to(act_pos)
+			if dist < 20 then
+				local obj_name = obj:name()
+				if obj_name then
+					if sfind(obj_name, "esc_m_trader", 1, true)
+						or sfind(obj_name, "mar_smart_terrain_base_stalker_leader_marsh", 1, true)
+						or sfind(obj_name, "mar_base_owl_stalker_trader", 1, true)
+					then
+						return true
+					end
+				end
+			end
+		end
+	end
+	return false
+end
+
+--------------------------------------------------------------------------------
+-- Trade ban / vendor strip classifier
+--------------------------------------------------------------------------------
+local function is_magazine(sec)
+	if not sec then
+		return false
+	end
+	local kind = ini_sys:r_string_ex(sec, "kind")
+	return kind == "w_ammo"
+end
+
+local function is_banned_combat_gear(obj, sec)
+	if not sec then
+		return false
+	end
+	-- Knives stay tradable
+	if obj and IsMelee and IsMelee(obj) then
+		return false
+	end
+
+	if Tiers.is_weapon_part(sec) then
+		return true
+	end
+	if Tiers.is_ammo_box(sec) then
+		return true
+	end
+	if is_magazine(sec) then
+		return true
+	end
+	if IsItem then
+		if IsItem("scope", sec) or IsItem("sil", sec) or IsItem("gl", sec) then
+			return true
+		end
+	end
+	if Tiers.is_name_kit(sec) then
+		return true
+	end
+	local visual = ini_sys:r_string_ex(sec, "visual") or ""
+	if string.find(visual, "wpn_tac_kit", 1, true) then
+		return true
+	end
+	if obj and IsGrenade and IsGrenade(obj) then
+		return true
+	end
+	-- Guns (non-melee already allowed above)
+	if obj and IsWeapon and IsWeapon(obj) then
+		return true
+	end
+	return false
+end
+
+local function patched_get_trade_status(obj, profile)
+	if profile and profile.mode == 1 and obj and is_banned_combat_gear(obj, obj:section()) then
+		return 2
+	end
+	return original_get_trade_status(obj, profile)
+end
+
+local function strip_banned_from_npc(npc)
+	if not (npc and npc.iterate_inventory) then
+		return
+	end
+	local to_release = {}
+	npc:iterate_inventory(function(_temp, item)
+		if item and is_banned_combat_gear(item, item:section()) then
+			to_release[#to_release + 1] = item:id()
+		end
+	end)
+	for i = 1, #to_release do
+		alife_release_id(to_release[i])
+	end
+end
+
+local function delayed_strip(npc_id)
+	local npc = level.object_by_id(npc_id)
+	if npc and npc:alive() then
+		strip_banned_from_npc(npc)
+	end
+	return true
+end
+
+local function patched_trade_update(npc, force_refresh)
+	original_trade_update(npc, force_refresh)
+	if not (DOGMA and DOGMA.sys and DOGMA.sys.ready(MOD_ID, db, on_option_change)) then
+		return
+	end
+	if not npc then
+		return
+	end
+	if npc.alive and not npc:alive() then
+		return
+	end
+	strip_banned_from_npc(npc)
+	local npc_id = npc:id()
+	if CreateTimeEvent then
+		CreateTimeEvent("dogma_wb_strip", "s1_" .. npc_id, 0.1, delayed_strip, npc_id)
+		CreateTimeEvent("dogma_wb_strip", "s2_" .. npc_id, 0.5, delayed_strip, npc_id)
+		CreateTimeEvent("dogma_wb_strip", "s3_" .. npc_id, 1.1, delayed_strip, npc_id)
+	end
+end
+
+--------------------------------------------------------------------------------
+-- Stash inject
+--------------------------------------------------------------------------------
+local function spawn_addition(box, cat, result_tier)
+	local sec = Tiers.pick_section(cat, result_tier)
+	if not sec then
+		return
+	end
+	if cat == "parts" then
+		local band = Tiers.cond_band(result_tier)
+		alife_create_item(sec, box, {
+			cond_r = { band[1], band[2] },
+			cond_ct = "part",
+			cond_cr = { 0.5, 0.75, 1 },
+		})
+	elseif cat == "ammo" then
+		local cap = Tiers.mag_equiv_for_ammo(sec)
+		local n = cap * math.random(2, 4)
+		alife_create_item(sec, box, { ammo = n })
+	else
+		alife_create_item(sec, box)
+	end
+	log(string.format("stash +%s t%s %s", cat, result_tier, sec))
+end
+
+local function roll_stash_loot(id)
+	local box = alife_object(id)
+	if not box then
+		return
+	end
+	Tiers.ensure()
+	local target = Tiers.base_tier_for_stash(id)
+	local n = math.random(0, 3)
+	for _ = 1, n do
+		local cat = Tiers.pick_category()
+		local rt = Tiers.pick_tier(target)
+		spawn_addition(box, cat, rt)
+	end
+end
+
+local function patched_set_random_stash(no_spot, hint, bonus_items, id, dbg)
+	local result = original_set_random_stash(no_spot, hint, bonus_items, id, dbg)
+
+	if not (DOGMA and DOGMA.sys and DOGMA.sys.ready(MOD_ID, db, on_option_change)) then
+		return result
+	end
+	if not id then
+		return result
+	end
+	if is_cheese_paid_stash(hint) then
+		return result
+	end
+
+	roll_stash_loot(id)
+	return result
+end
+
+--------------------------------------------------------------------------------
+-- Corpse ammo replace
+--------------------------------------------------------------------------------
+local function strip_loose_ammo(npc)
+	local to_release = {}
+	npc:iterate_inventory(function(_temp, item)
+		if not item then
+			return
+		end
+		local sec = item:section()
+		if Tiers.is_ammo_box(sec) then
+			to_release[#to_release + 1] = item:id()
+		elseif IsAmmo and IsAmmo(item) and not (IsItem and IsItem("grenade_ammo", sec)) then
+			to_release[#to_release + 1] = item:id()
+		end
+	end)
+	for i = 1, #to_release do
+		alife_release_id(to_release[i])
+	end
+end
+
+local function mag_cap_for_weapon(wpn_sec)
+	local mag = ini_sys:r_float_ex(wpn_sec, "ammo_mag_size") or 0
+	if mag > 0 then
+		return math.floor(mag)
+	end
+	return 30
+end
+
+local function inject_corpse_ammo(npc)
+	local mrandom = math.random
+	npc:iterate_inventory(function(_temp, itm)
+		if not itm then
+			return
+		end
+		if not (IsWeapon and IsWeapon(nil, itm:clsid())) then
+			return
+		end
+		if npc.marked_dropped and npc:marked_dropped(itm) then
+			return
+		end
+		if IsMelee and IsMelee(itm) then
+			return
+		end
+		local ammo_class = parse_list(ini_sys, itm:section(), "ammo_class")
+		if not (ammo_class and #ammo_class > 0) then
+			return
+		end
+		local sec = ammo_class[mrandom(1, #ammo_class)]
+		if not (sec and ini_sys:section_exist(sec)) then
+			return
+		end
+		local mags = mrandom(0, 4)
+		if mags <= 0 then
+			return
+		end
+		local cap = mag_cap_for_weapon(itm:section())
+		alife_create_item(sec, npc, { ammo = cap * mags })
+		log(string.format("corpse ammo %s x%s (%s mags)", sec, cap * mags, mags))
+	end)
+end
+
+local function patched_try_spawn_ammo(npc)
+	original_try_spawn_ammo(npc)
+	if not (DOGMA and DOGMA.sys and DOGMA.sys.ready(MOD_ID, db, on_option_change)) then
+		return
+	end
+	if not npc then
+		return
+	end
+	strip_loose_ammo(npc)
+	inject_corpse_ammo(npc)
+	if item_weapon and item_weapon.ammo_aggregation_full and CreateTimeEvent then
+		CreateTimeEvent(npc:id(), "dogma_wb_ammo_agg", 0, item_weapon.ammo_aggregation_full, npc:id())
+	end
+end
+
+--------------------------------------------------------------------------------
+-- Hooks
+--------------------------------------------------------------------------------
+local function try_hook_stash()
+	if hooked_stash then
+		return
+	end
+	if not (treasure_manager and treasure_manager.set_random_stash) then
+		return
+	end
+	original_set_random_stash = treasure_manager.set_random_stash
+	treasure_manager.set_random_stash = patched_set_random_stash
+	hooked_stash = true
+	log("hooked treasure_manager.set_random_stash")
+end
+
+local function try_hook_ammo()
+	if hooked_ammo then
+		return
+	end
+	if not (death_manager and death_manager.try_spawn_ammo) then
+		return
+	end
+	original_try_spawn_ammo = death_manager.try_spawn_ammo
+	death_manager.try_spawn_ammo = patched_try_spawn_ammo
+	hooked_ammo = true
+	log("hooked death_manager.try_spawn_ammo")
+end
+
+local function try_hook_trade_status()
+	if hooked_trade_status then
+		return
+	end
+	if not (utils_item and utils_item.get_item_trade_status) then
+		return
+	end
+	original_get_trade_status = utils_item.get_item_trade_status
+	utils_item.get_item_trade_status = patched_get_trade_status
+	hooked_trade_status = true
+	log("hooked utils_item.get_item_trade_status")
+end
+
+local function try_hook_trade_update()
+	if hooked_trade_update then
+		return
+	end
+	if not (trade_manager and trade_manager.update) then
+		return
+	end
+	original_trade_update = trade_manager.update
+	trade_manager.update = patched_trade_update
+	hooked_trade_update = true
+	log("hooked trade_manager.update")
+end
+
+local function try_hooks()
+	try_hook_stash()
+	try_hook_ammo()
+	try_hook_trade_status()
+	try_hook_trade_update()
+end
+
+function on_game_start()
+	Tiers = _G.dogma_gameplay_weapons_ban_tiers
+	DOGMA = dogma_common.load(MOD_ID)
+	CONFIG.DOGMA = DOGMA
+	RegisterScriptCallback("on_option_change", on_option_change)
+	RegisterScriptCallback("actor_on_first_update", try_hooks)
+	on_option_change()
+	try_hooks()
+	log("weapons_ban ready")
+end

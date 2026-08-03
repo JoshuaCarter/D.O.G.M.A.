@@ -1,0 +1,64 @@
+function on_mcm_load(options)
+	local CONFIG = _G.dogma_gameplay_weapons_ban_conf
+	local D = CONFIG.DEFAULTS
+
+	local function track(cat, n, min_v, max_v, step_v)
+		local id = cat .. "_tier_cost_" .. n
+		return {
+			id = id,
+			type = "track",
+			val = 2,
+			min = min_v,
+			max = max_v,
+			step = step_v,
+			def = D[id],
+			hint = "dogma_gameplay_weapons_ban_" .. id,
+		}
+	end
+
+	local function cat_header(cat)
+		return {
+			id = cat .. "_header",
+			type = "desc",
+			text = "ui_mcm_dogma_gameplay_weapons_ban_" .. cat .. "_header",
+		}
+	end
+
+	dogma_mcm.attach(options, "gameplay", "ui_mcm_menu_dogma_gameplay", {
+		id = "weapons_ban",
+		sh = true,
+		text = "ui_mcm_menu_dogma_gameplay_weapons_ban",
+		gr = dogma_mcm.with_header({
+			{
+				id = "page_description",
+				type = "desc",
+				text = "ui_mcm_dogma_gameplay_weapons_ban_page_description",
+			},
+			cat_header("sight"),
+			track("sight", 2, 0, 150000, 500),
+			track("sight", 3, 0, 150000, 500),
+			track("sight", 4, 0, 150000, 500),
+			track("sight", 5, 0, 150000, 500),
+			cat_header("kit"),
+			track("kit", 2, 0, 100000, 500),
+			track("kit", 3, 0, 100000, 500),
+			track("kit", 4, 0, 100000, 500),
+			track("kit", 5, 0, 100000, 500),
+			cat_header("suppressor"),
+			track("suppressor", 2, 0, 25000, 250),
+			track("suppressor", 3, 0, 25000, 250),
+			track("suppressor", 4, 0, 25000, 250),
+			track("suppressor", 5, 0, 25000, 250),
+			cat_header("ammo"),
+			track("ammo", 2, 0, 15000, 100),
+			track("ammo", 3, 0, 15000, 100),
+			track("ammo", 4, 0, 15000, 100),
+			track("ammo", 5, 0, 15000, 100),
+			cat_header("parts"),
+			track("parts", 2, 0, 10000, 125),
+			track("parts", 3, 0, 10000, 125),
+			track("parts", 4, 0, 10000, 125),
+			track("parts", 5, 0, 10000, 125),
+		}),
+	})
+end

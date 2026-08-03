@@ -11,6 +11,7 @@ import yaml
 from .diaglog import get_logger
 from .ltx_merge import merge_configs, resolve_icon_bundle
 from .settings import ITEMS_YML, THUMBS_DIR, ensure_dirs
+from .score import is_bad_ammo
 from .spawn_filter import (
     is_explosive_weapon,
     is_gauss_weapon,
@@ -30,7 +31,12 @@ from .stats_calc import (
     weapon_calculate,
 )
 from .strings import display_name_for, load_string_table
-from .thumbs import iter_texture_roots, make_thumb, set_texture_roots
+from .thumbs import (
+    THUMB_SCALE_WEAPON,
+    iter_texture_roots,
+    make_thumb,
+    set_texture_roots,
+)
 
 log = get_logger("regenerate")
 
@@ -206,6 +212,7 @@ def regenerate(
                 THUMBS_DIR,
                 icon_bundle=own_bundle,
                 parent_icon_bundle=parent_bundle,
+                scale=THUMB_SCALE_WEAPON,
             )
         except Exception:  # noqa: BLE001
             log.exception("weapon thumb failed %s", sec)
@@ -216,7 +223,9 @@ def regenerate(
             "inv_name_short": (d.get("inv_name_short") or "").strip(),
             "cost": float(d.get("cost") or 0),
             "ammo_class": [
-                p.strip() for p in str(d.get("ammo_class") or "").split(",") if p.strip()
+                p.strip()
+                for p in str(d.get("ammo_class") or "").split(",")
+                if p.strip() and not is_bad_ammo(p.strip())
             ],
             "community": d.get("community") or "",
             "inv_grid_x": d.get("inv_grid_x"),
@@ -296,7 +305,7 @@ def regenerate(
     items["ammo"] = {}
     a_fail = 0
     for i, a in enumerate(sorted(ammo_secs)):
-        if "gauss" in a.lower() or name_blocked(a):
+        if is_bad_ammo(a) or "gauss" in a.lower() or name_blocked(a):
             continue
         d = sections.get(a) or {}
         try:
@@ -313,6 +322,7 @@ def regenerate(
                 THUMBS_DIR,
                 icon_bundle=own_bundle,
                 parent_icon_bundle=parent_bundle,
+                scale=THUMB_SCALE_WEAPON,
             )
         except Exception:  # noqa: BLE001
             a_fail += 1
@@ -358,6 +368,8 @@ def load_items(path: Path | None = None) -> dict[str, Any]:
         data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
         # Drop name-blocked / explosive / gauss from older caches without regenerate.
         # Also rename legacy mut/mid/hvy/max score keys → Min/Lgt/Lgt+/Mid/Mid+.
+        # Order matters for true legacy files (mid→lgtp before hvy→mid).
+        # Current schema already uses mid_* for Mid — never delete those when lgtp_* exists.
         _stat_renames = [
             ("mut_dmg", "min_dmg"),
             ("mut_dps", "min_dps"),
@@ -368,6 +380,7 @@ def load_items(path: Path | None = None) -> dict[str, Any]:
             ("max_dmg", "midp_dmg"),
             ("max_dps", "midp_dps"),
         ]
+        _legacy_mid_as_lgtp = {"mid_dmg", "mid_dps"}
         renamed_stats = 0
         for cat in ("weapons", "outfits", "helmets"):
             pool = data.get(cat) or {}
@@ -403,8 +416,13 @@ def load_items(path: Path | None = None) -> dict[str, Any]:
                             continue
                         if new not in stats:
                             stats[new] = stats.pop(old)
-                        else:
-                            stats.pop(old)
+                            renamed_stats += 1
+                            continue
+                        # Both keys present: drop legacy alias only.
+                        # mid_* + lgtp_* together means current schema — keep mid_*.
+                        if old in _legacy_mid_as_lgtp:
+                            continue
+                        stats.pop(old)
                         renamed_stats += 1
                     if "rounds_n" in stats:
                         stats.pop("rounds_n", None)
@@ -421,9 +439,27 @@ def load_items(path: Path | None = None) -> dict[str, Any]:
                     renamed_stats += 1
         if renamed_stats:
             log.info("load_items renamed/dropped %d legacy score stat keys", renamed_stats)
+        # Scrub bad / gauss / name-blocked ammo from older caches (and weapon lists).
+        weapons_pool = data.get("weapons") or {}
+        if isinstance(weapons_pool, dict):
+            scrubbed = 0
+            for entry in weapons_pool.values():
+                ac = entry.get("ammo_class")
+                if not isinstance(ac, list):
+                    continue
+                kept = [a for a in ac if a and not is_bad_ammo(str(a))]
+                if len(kept) != len(ac):
+                    entry["ammo_class"] = kept
+                    scrubbed += 1
+            if scrubbed:
+                log.info("load_items scrubbed bad ammo_class on %d weapons", scrubbed)
         ammo_pool = data.get("ammo") or {}
         if isinstance(ammo_pool, dict):
-            drop_ammo = [s for s in ammo_pool if "gauss" in s.lower() or name_blocked(s)]
+            drop_ammo = [
+                s
+                for s in ammo_pool
+                if is_bad_ammo(s) or "gauss" in s.lower() or name_blocked(s)
+            ]
             for sec in drop_ammo:
                 ammo_pool.pop(sec, None)
             if drop_ammo:

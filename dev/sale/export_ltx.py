@@ -17,6 +17,7 @@ from .score import (
     armor_pts,
     is_bad_ammo,
     weapon_ammo_allowed,
+    weapon_enabled_ammos,
     weapon_pts,
 )
 from .settings import STOCK_STRIP_YML, ensure_dirs
@@ -83,11 +84,16 @@ def _in_shop_armor(
     return False, pts
 
 
-def first_good_ammo(ammo_class: list[str] | None) -> str | None:
-    for ammo in ammo_class or []:
+def first_good_ammo(
+    ammo_class: list[str] | None,
+    enabled_map: dict[str, bool] | None = None,
+) -> str | None:
+    """First enabled ammo for a gun; prefer non-bad, else first enabled."""
+    enabled = weapon_enabled_ammos(ammo_class, enabled_map)
+    for ammo in enabled:
         if ammo and not is_bad_ammo(ammo):
             return ammo
-    return None
+    return enabled[0] if enabled else None
 
 
 def build_faction_shop(
@@ -119,40 +125,46 @@ def build_faction_shop(
 
 
 def collect_ammo_for_shops(
-    items: dict[str, Any], shops: dict[str, dict[str, int]]
+    items: dict[str, Any],
+    shops: dict[str, dict[str, int]],
+    balance: dict[str, Any],
 ) -> dict[str, int]:
-    """ammo_sec -> rounds (4 stacks)."""
+    """ammo_sec -> rounds (4 stacks). Only enabled ammos used by shop guns."""
     ammo_box = {
         sec: float((meta or {}).get("box_size") or 50)
         for sec, meta in (items.get("ammo") or {}).items()
     }
     out: dict[str, int] = {}
     weapons = items.get("weapons") or {}
-    for shop in shops.values():
+    for faction, shop in shops.items():
+        ammo_map = ammo_enabled_map(balance, faction)
         for sec in shop:
             entry = weapons.get(sec)
             if not entry:
                 continue
-            ammo = first_good_ammo(entry.get("ammo_class"))
-            if not ammo:
-                continue
-            box = ammo_box.get(ammo, 50.0)
-            out[ammo] = int(round(4 * box))
+            for ammo in weapon_enabled_ammos(entry.get("ammo_class"), ammo_map):
+                if not ammo:
+                    continue
+                box = ammo_box.get(ammo, 50.0)
+                out[ammo] = int(round(4 * box))
     return out
 
 
 def collect_ammo_type_overrides(
-    items: dict[str, Any], shops: dict[str, dict[str, int]]
+    items: dict[str, Any],
+    shops: dict[str, dict[str, int]],
+    balance: dict[str, Any],
 ) -> dict[str, str]:
-    """weapon -> first non-bad ammo (stock would otherwise pick bad first)."""
+    """weapon -> first enabled ammo (prefer non-bad)."""
     out: dict[str, str] = {}
     weapons = items.get("weapons") or {}
-    for shop in shops.values():
+    for faction, shop in shops.items():
+        ammo_map = ammo_enabled_map(balance, faction)
         for sec in shop:
             entry = weapons.get(sec)
             if not entry:
                 continue
-            ammo = first_good_ammo(entry.get("ammo_class"))
+            ammo = first_good_ammo(entry.get("ammo_class"), ammo_map)
             if ammo:
                 out[sec] = ammo
     return out
@@ -292,8 +304,8 @@ def export_shop_ltx(
     shops = {f: build_faction_shop(items, balance, f) for f in FACTIONS}
     for fac, shop in shops.items():
         log.debug("shop_%s items=%d", fac, len(shop))
-    ammo_counts = collect_ammo_for_shops(items, shops)
-    ammo_types = collect_ammo_type_overrides(items, shops)
+    ammo_counts = collect_ammo_for_shops(items, shops, balance)
+    ammo_types = collect_ammo_type_overrides(items, shops, balance)
     log.info(
         "export shops ready ammo_counts=%d ammo_type_overrides=%d",
         len(ammo_counts),

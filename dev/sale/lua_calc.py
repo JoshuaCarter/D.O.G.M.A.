@@ -112,16 +112,6 @@ def _weapon_result(out) -> dict[str, Any]:
             stats[k] = float(v)
         except (TypeError, ValueError):
             stats[k] = 0.0
-    col_src = _lua_get(out, "col_src", None)
-    src_list: list[str | None] = []
-    if col_src is not None:
-        for i in range(1, 6):
-            try:
-                v = col_src[i]
-            except Exception:  # noqa: BLE001
-                v = None
-            src_list.append(str(v) if v else None)
-    stats["col_src"] = src_list
     return stats
 
 

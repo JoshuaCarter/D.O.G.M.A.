@@ -15,8 +15,8 @@ log = get_logger("thumbs")
 # Anomaly inventory atlas cell size (pixels per inv_grid unit).
 CELL = 50
 # Upscale factor when writing PNG thumbs (native crop is CELL×CELL units).
-THUMB_SCALE = 2
-THUMB_SIZE = 100 * THUMB_SCALE  # fallback color tile
+THUMB_SCALE = 2  # outfits / helmets
+THUMB_SCALE_WEAPON = 4  # weapons + ammo (2× the armor thumb scale)
 DEFAULT_SHEET = "ui/ui_icon_equipment.dds"
 
 _texture_roots: list[Path] = []
@@ -150,15 +150,18 @@ def _grid_ints(fields: dict[str, Any]) -> tuple[int, int, int, int] | None:
     return x, y, w, h
 
 
-def _color_fallback(sec: str, out_dir: Path) -> Path | None:
+def _color_fallback(
+    sec: str, out_dir: Path, *, scale: int = THUMB_SCALE
+) -> Path | None:
     dest = out_dir / f"{sec}.fallback.png"
     if dest.is_file():
         return dest
+    size = 100 * max(1, int(scale))
     h = hashlib.md5(sec.encode("utf-8")).hexdigest()
     color = tuple(max(28, int(h[i : i + 2], 16) // 2) for i in (0, 2, 4))
-    img = Image.new("RGBA", (THUMB_SIZE, THUMB_SIZE), color + (255,))
+    img = Image.new("RGBA", (size, size), color + (255,))
     draw = ImageDraw.Draw(img)
-    draw.rectangle((0, 0, THUMB_SIZE - 1, THUMB_SIZE - 1), outline=(70, 70, 70, 255))
+    draw.rectangle((0, 0, size - 1, size - 1), outline=(70, 70, 70, 255))
     try:
         img.save(dest)
         return dest
@@ -237,12 +240,18 @@ def make_thumb(
     *,
     icon_bundle: dict[str, Any] | None = None,
     parent_icon_bundle: dict[str, Any] | None = None,
+    scale: int | None = None,
 ) -> Path | None:
-    """Write PNG thumb (real inv_grid crop when possible)."""
+    """Write PNG thumb (real inv_grid crop when possible).
+
+    ``scale`` upscales the native CELL crop (default ``THUMB_SCALE``).
+    Weapons/ammo use ``THUMB_SCALE_WEAPON`` (2× armor thumbs).
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
     dest = out_dir / f"{sec}.inv.png"
     if dest.is_file():
         return dest
+    thumb_scale = THUMB_SCALE if scale is None else max(1, int(scale))
 
     def _bundle_attempts(bundle: dict[str, Any] | None) -> list[dict[str, Any]]:
         if not bundle:
@@ -270,9 +279,9 @@ def make_thumb(
         if crop is None or _crop_is_empty(crop):
             continue
         try:
-            if THUMB_SCALE != 1:
+            if thumb_scale != 1:
                 crop = crop.resize(
-                    (crop.width * THUMB_SCALE, crop.height * THUMB_SCALE),
+                    (crop.width * thumb_scale, crop.height * thumb_scale),
                     Image.Resampling.LANCZOS,
                 )
             crop.save(dest)
@@ -286,4 +295,4 @@ def make_thumb(
         except OSError as exc:
             log.warning("save crop %s: %s", sec, exc)
 
-    return _color_fallback(sec, out_dir)
+    return _color_fallback(sec, out_dir, scale=thumb_scale)

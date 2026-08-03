@@ -9,12 +9,23 @@ from pathlib import Path
 from typing import Any
 
 from PyQt6.QtCore import QSize, Qt, QThread, QTimer, pyqtSignal
-from PyQt6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
+from PyQt6.QtGui import (
+    QBrush,
+    QColor,
+    QFont,
+    QIcon,
+    QKeySequence,
+    QPainter,
+    QPixmap,
+    QShortcut,
+)
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QCheckBox,
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
     QFileDialog,
     QFrame,
     QGridLayout,
@@ -25,6 +36,7 @@ from PyQt6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
@@ -65,16 +77,14 @@ from .score import (
     ammo_bloc_tag,
     ammo_family,
     ammo_family_bloc,
-    ammo_family_label,
+    ammo_section_label,
     armor_pts,
     armor_stat_terms,
-    collect_ammo_families,
+    collect_ammo_sections,
     default_ceilings_armor,
     faction_label,
     hit_power_pct,
-    is_bad_ammo,
     weapon_ammo_allowed,
-    weapon_ammo_families,
     weapon_pts,
     weapon_stat_terms,
 )
@@ -85,7 +95,7 @@ log = get_logger("app")
 CATS = ("weapons", "outfits", "helmets")
 # Item tile; cell is icon + half the previous inter-box gutter (was +24×+30).
 # Display size in the icon grid (must fit inside GRID_CELL_*).
-# Cached thumbs may be 2× inv_grid; _icon_with_pts scales them down.
+# Display size; cached weapon/ammo thumbs are 4× inv_grid, armor 2× — scaled to fit.
 GRID_ICON_W = 200
 GRID_ICON_H = 100
 GRID_CELL_W = 212
@@ -149,10 +159,14 @@ _TAB_STYLE = (
 _TABLE_STYLE = (
     "QTableWidget { background: #1e1e1e; color: #e8e8e8; border: none; "
     "font-family: Consolas, monospace; font-size: 12px; "
-    "gridline-color: #2a2a2a; alternate-background-color: #242424; }"
+    "gridline-color: #2a2a2a; alternate-background-color: #242424; "
+    "outline: none; }"
+    "QTableWidget::item:selected { background: transparent; }"
+    "QTableWidget::item:hover { background: transparent; }"
     f"QHeaderView::section {{ background: #2a2a2a; color: #ddd; border: none; "
     f"padding: 5px 8px; {_HEADER_FONT} text-align: left; }}"
 )
+_SORT_NAME_BG = QColor(48, 78, 118)
 
 
 def _header_label(text: str) -> QLabel:
@@ -183,6 +197,8 @@ def _nice_item_name(sec: str, entry: dict[str, Any] | None = None) -> str:
 
 
 def _fmt_stat_val(val: Any) -> str:
+    if val is None:
+        return "—"
     if isinstance(val, bool):
         return "true" if val else "false"
     if isinstance(val, int):
@@ -509,22 +525,6 @@ class MainWindow(QMainWindow):
             self.setCentralWidget(root)
             v = QVBoxLayout(root)
 
-            # Top bar
-            top = QHBoxLayout()
-            self.anomaly_edit = QLineEdit(self.settings.get("anomaly_root", ""))
-            self.gamma_edit = QLineEdit(self.settings.get("gamma_root", ""))
-            top.addWidget(_header_label("Anomaly:"))
-            top.addWidget(self.anomaly_edit, 2)
-            b_a = QPushButton("…")
-            b_a.clicked.connect(lambda: self._browse(self.anomaly_edit))
-            top.addWidget(b_a)
-            top.addWidget(_header_label("GAMMA:"))
-            top.addWidget(self.gamma_edit, 2)
-            b_g = QPushButton("…")
-            b_g.clicked.connect(lambda: self._browse(self.gamma_edit))
-            top.addWidget(b_g)
-            v.addLayout(top)
-
             actions = QHBoxLayout()
             self.btn_regen = QPushButton("Regenerate")
             self.btn_regen.clicked.connect(self._regen)
@@ -542,9 +542,6 @@ class MainWindow(QMainWindow):
             self.sort_desc.setToolTip("Sort descending (off = ascending)")
             self.sort_desc.setStyleSheet("QCheckBox { color: #d0d0d0; }")
             self.sort_desc.toggled.connect(lambda _: self._rebuild_list())
-            self.filter_box = QComboBox()
-            self.filter_box.addItems(["all", "in-shop", "over-threshold"])
-            self.filter_box.currentTextChanged.connect(lambda _: self._rebuild_list())
             actions.addWidget(self.btn_regen)
             actions.addWidget(self.btn_load)
             actions.addWidget(self.btn_export)
@@ -552,8 +549,6 @@ class MainWindow(QMainWindow):
             actions.addWidget(_header_label("Sort:"))
             actions.addWidget(self.sort_box)
             actions.addWidget(self.sort_desc)
-            actions.addWidget(_header_label("Filter:"))
-            actions.addWidget(self.filter_box)
             actions.addStretch(1)
             v.addLayout(actions)
 
@@ -577,27 +572,18 @@ class MainWindow(QMainWindow):
             ammo_hdr.addWidget(self.btn_ammo_collapse)
             ammo_hdr.addStretch(1)
             ammo_wrap.addLayout(ammo_hdr)
-            self.ammo_scroll = QScrollArea()
-            self.ammo_scroll.setWidgetResizable(True)
-            self.ammo_scroll.setFixedHeight(230)
-            self.ammo_scroll.setHorizontalScrollBarPolicy(
-                Qt.ScrollBarPolicy.ScrollBarAsNeeded
-            )
-            self.ammo_scroll.setVerticalScrollBarPolicy(
-                Qt.ScrollBarPolicy.ScrollBarAsNeeded
-            )
-            self.ammo_scroll.setStyleSheet(
-                "QScrollArea { border: 1px solid #333; background: #1a1a1a; }"
-            )
             self.ammo_host = QWidget()
-            # Invisible 2-col table: Type | horizontal ammo toggles
+            self.ammo_host.setStyleSheet(
+                "QWidget#ammoHost { border: 1px solid #333; background: #1a1a1a; }"
+            )
+            self.ammo_host.setObjectName("ammoHost")
+            # Invisible 2-col table: Type | horizontal ammo toggles (no scroll).
             self.ammo_layout = QGridLayout(self.ammo_host)
-            self.ammo_layout.setContentsMargins(6, 4, 6, 4)
-            self.ammo_layout.setHorizontalSpacing(10)
-            self.ammo_layout.setVerticalSpacing(6)
+            self.ammo_layout.setContentsMargins(2, 2, 2, 2)
+            self.ammo_layout.setHorizontalSpacing(6)
+            self.ammo_layout.setVerticalSpacing(2)
             self.ammo_layout.setColumnStretch(1, 1)
-            self.ammo_scroll.setWidget(self.ammo_host)
-            ammo_wrap.addWidget(self.ammo_scroll)
+            ammo_wrap.addWidget(self.ammo_host)
             self.ammo_panel = QWidget()
             self.ammo_panel.setLayout(ammo_wrap)
             v.addWidget(self.ammo_panel)
@@ -695,14 +681,18 @@ class MainWindow(QMainWindow):
             detail_lay.setSpacing(6)
             self.detail_info = self._make_kv_table(["Info", "Value"])
             self.detail_info.clicked.connect(
-                lambda idx: self._on_detail_sort_click(self.detail_info, idx.row())
+                lambda idx: self._on_detail_sort_click(
+                    self.detail_info, idx.row(), idx.column()
+                )
             )
             detail_lay.addWidget(self.detail_info)
             self.detail_stats = self._make_kv_table(
                 ["Stat", "Value", "Weight", "Final"]
             )
             self.detail_stats.clicked.connect(
-                lambda idx: self._on_detail_sort_click(self.detail_stats, idx.row())
+                lambda idx: self._on_detail_sort_click(
+                    self.detail_stats, idx.row(), idx.column()
+                )
             )
             detail_lay.addWidget(self.detail_stats, 1)
             body.addWidget(detail_host)
@@ -743,8 +733,8 @@ class MainWindow(QMainWindow):
         table.setHorizontalHeaderLabels(headers)
         table.verticalHeader().setVisible(False)
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        # No selection chrome; current cell still updates for Ctrl+C / context copy.
+        table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         table.setShowGrid(False)
         table.setAlternatingRowColors(True)
         table.setWordWrap(False)
@@ -761,8 +751,29 @@ class MainWindow(QMainWindow):
         hdr.setStretchLastSection(True)
         hdr.setMinimumSectionSize(40)
         table.setStyleSheet(_TABLE_STYLE)
-        table.setCursor(Qt.CursorShape.PointingHandCursor)
+        table.setCursor(Qt.CursorShape.ArrowCursor)
+        table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        table.customContextMenuRequested.connect(
+            lambda pos, t=table: self._kv_table_context_menu(t, pos)
+        )
+        copy_sc = QShortcut(QKeySequence.StandardKey.Copy, table)
+        copy_sc.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        copy_sc.activated.connect(lambda t=table: self._copy_kv_table_selection(t))
         return table
+
+    def _copy_kv_table_selection(self, table: QTableWidget) -> None:
+        item = table.currentItem()
+        if item is None:
+            return
+        QApplication.clipboard().setText(item.text())
+
+    def _kv_table_context_menu(self, table: QTableWidget, pos) -> None:
+        menu = QMenu(table)
+        act = menu.addAction("Copy")
+        act.setShortcut(QKeySequence.StandardKey.Copy)
+        chosen = menu.exec(table.viewport().mapToGlobal(pos))
+        if chosen is act:
+            self._copy_kv_table_selection(table)
 
     def _fill_kv_table(
         self,
@@ -785,9 +796,8 @@ class MainWindow(QMainWindow):
             name_item.setFont(font)
             name_item.setTextAlignment(align_l)
             name_item.setData(Qt.ItemDataRole.UserRole, key)
-            name_item.setFlags(
-                Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
-            )
+            # Stats names can be sort-highlighted; info names never are.
+            name_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
             table.setItem(row, 0, name_item)
             for c in range(1, ncols):
                 text = vals[c - 1] if c - 1 < len(vals) else ""
@@ -802,9 +812,7 @@ class MainWindow(QMainWindow):
                 cell.setForeground(QColor(fg))
                 cell.setTextAlignment(align_l)
                 cell.setData(Qt.ItemDataRole.UserRole, key)
-                cell.setFlags(
-                    Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
-                )
+                cell.setFlags(Qt.ItemFlag.ItemIsEnabled)
                 table.setItem(row, c, cell)
         hdr = table.horizontalHeader()
         for c in range(max(0, ncols - 1)):
@@ -820,6 +828,8 @@ class MainWindow(QMainWindow):
             rows_h = sum(table.rowHeight(i) for i in range(table.rowCount()))
             header_h = table.horizontalHeader().height()
             table.setFixedHeight(header_h + rows_h + 4)
+        elif table is self.detail_stats:
+            self._apply_stats_sort_highlight()
 
     def _sort_keys_for_category(self) -> list[str]:
         keys: list[str] = ["pts", "name", "cost", "sec", "in_shop", "community"]
@@ -876,10 +886,33 @@ class MainWindow(QMainWindow):
         self.sort_box.setCurrentIndex(idx if idx >= 0 else 0)
         self.sort_box.blockSignals(False)
 
+    def _apply_stats_sort_highlight(self) -> None:
+        """Highlight only the stats-table name matching the active sort key."""
+        table = getattr(self, "detail_stats", None)
+        if table is None:
+            return
+        sort_key = self._current_sort_key() or ""
+        for row in range(table.rowCount()):
+            item = table.item(row, 0)
+            if item is None:
+                continue
+            key = str(item.data(Qt.ItemDataRole.UserRole) or "")
+            if key and key == sort_key:
+                item.setBackground(_SORT_NAME_BG)
+            else:
+                item.setBackground(QBrush())
+
     def _on_sort_key_changed(self, _text: str) -> None:
+        self._apply_stats_sort_highlight()
         self._rebuild_list()
 
-    def _on_detail_sort_click(self, table: QTableWidget, row: int) -> None:
+    def _on_detail_sort_click(
+        self, table: QTableWidget, row: int, column: int = 0
+    ) -> None:
+        # Only the name column sorts; value / weight / final are inert.
+        if column != 0:
+            return
+        # Info names can still sort, but only stats names get a persistent highlight.
         item = table.item(row, 0)
         if not item:
             return
@@ -894,6 +927,7 @@ class MainWindow(QMainWindow):
         else:
             self._set_sort_key(key)
         self.sort_box.blockSignals(False)
+        self._apply_stats_sort_highlight()
         self._rebuild_list()
 
     def _row_sort_value(
@@ -958,13 +992,11 @@ class MainWindow(QMainWindow):
             self.settings["window_h"] = int(self.height())
 
     def _persist_ui_state(self) -> None:
-        self.settings["anomaly_root"] = self.anomaly_edit.text().strip()
-        self.settings["gamma_root"] = self.gamma_edit.text().strip()
+        # anomaly_root / gamma_root are set from the Regenerate dialog.
         self.settings["faction"] = self.faction
         self.settings["category"] = self.category
         self.settings["sort_key"] = self._current_sort_key() or "pts"
         self.settings["sort_dir"] = "Desc" if self.sort_desc.isChecked() else "Asc"
-        self.settings["filter"] = self.filter_box.currentText() or "all"
         self.settings["selection"] = {
             c: self._sel_by_cat.get(c) for c in CATS if self._sel_by_cat.get(c)
         }
@@ -1001,12 +1033,6 @@ class MainWindow(QMainWindow):
         self.sort_desc.setChecked(sdir == "Desc")
         self.sort_desc.blockSignals(False)
 
-        filt = str(self.settings.get("filter") or "all")
-        self.filter_box.blockSignals(True)
-        fi = self.filter_box.findText(filt)
-        self.filter_box.setCurrentIndex(fi if fi >= 0 else 0)
-        self.filter_box.blockSignals(False)
-
         n = override_count(self.balance, self.faction)
         self.faction_meta.setText(f"({n} overrides)" if n else "")
 
@@ -1022,7 +1048,7 @@ class MainWindow(QMainWindow):
         self.btn_ammo_collapse.setArrowType(
             Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow
         )
-        self.ammo_scroll.setVisible(expanded)
+        self.ammo_host.setVisible(expanded)
 
     def _on_ammo_collapse(self, expanded: bool) -> None:
         self._ammo_expanded = bool(expanded)
@@ -1036,9 +1062,71 @@ class MainWindow(QMainWindow):
         save_settings(self.settings)
         log.debug(
             "roots saved anomaly=%r gamma=%r",
-            self.settings["anomaly_root"],
-            self.settings["gamma_root"],
+            self.settings.get("anomaly_root"),
+            self.settings.get("gamma_root"),
         )
+
+    def _prompt_regen_paths(self) -> tuple[Path | None, Path | None] | None:
+        """Modal path picker for Regenerate. Returns (anomaly, gamma) or None if cancelled."""
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Regenerate — scan roots")
+        dlg.setMinimumWidth(560)
+        dlg.setStyleSheet(
+            "QDialog { background: #252525; }"
+            "QLabel { color: #d0d0d0; }"
+            "QLineEdit { background: #1e1e1e; color: #e8e8e8; border: 1px solid #444; "
+            "padding: 4px 6px; }"
+            "QPushButton { background: #3a3a3a; color: #eee; border: 1px solid #555; "
+            "padding: 5px 12px; }"
+            "QPushButton:hover { background: #4a4a4a; }"
+        )
+        lay = QVBoxLayout(dlg)
+        lay.setSpacing(10)
+        tip = QLabel("Set Anomaly and/or GAMMA roots, then Scan to rebuild items.yml.")
+        tip.setWordWrap(True)
+        tip.setStyleSheet("color: #9aa3ad;")
+        lay.addWidget(tip)
+
+        def path_row(label: str, initial: str) -> tuple[QLineEdit, QHBoxLayout]:
+            row = QHBoxLayout()
+            row.addWidget(_header_label(label))
+            edit = QLineEdit(initial)
+            row.addWidget(edit, 1)
+            browse = QPushButton("…")
+            browse.setFixedWidth(36)
+            browse.clicked.connect(lambda: self._browse(edit))
+            row.addWidget(browse)
+            return edit, row
+
+        anomaly_edit, a_row = path_row(
+            "Anomaly:", str(self.settings.get("anomaly_root") or "")
+        )
+        gamma_edit, g_row = path_row(
+            "GAMMA:", str(self.settings.get("gamma_root") or "")
+        )
+        lay.addLayout(a_row)
+        lay.addLayout(g_row)
+
+        buttons = QDialogButtonBox()
+        scan_btn = buttons.addButton("Scan", QDialogButtonBox.ButtonRole.AcceptRole)
+        buttons.addButton(QDialogButtonBox.StandardButton.Cancel)
+        scan_btn.setDefault(True)
+        lay.addWidget(buttons)
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            log.info("Regenerate cancelled (path dialog)")
+            return None
+
+        a_txt = anomaly_edit.text().strip()
+        g_txt = gamma_edit.text().strip()
+        self.settings["anomaly_root"] = a_txt
+        self.settings["gamma_root"] = g_txt
+        self._save_roots()
+        anomaly = Path(a_txt) if a_txt else None
+        gamma = Path(g_txt) if g_txt else None
+        return anomaly, gamma
 
     def closeEvent(self, event) -> None:  # noqa: N802
         try:
@@ -1122,27 +1210,8 @@ class MainWindow(QMainWindow):
         self._refresh_sort_options()
         self._rebuild_list()
 
-    def _ammo_rep_section(self, family: str) -> str | None:
-        """Pick a representative ammo section for thumbs / tooltips."""
-        ammo = (self.items or {}).get("ammo") or {}
-        cands = [s for s in ammo if ammo_family(s) == family]
-        if not cands:
-            # Fall back to first matching ammo_class mention on a weapon.
-            for entry in ((self.items or {}).get("weapons") or {}).values():
-                for a in entry.get("ammo_class") or []:
-                    if ammo_family(str(a)) == family:
-                        cands.append(str(a))
-            cands = sorted(set(cands))
-        if not cands:
-            return None
-        for sec in sorted(cands):
-            if not is_bad_ammo(sec):
-                return sec
-        return sorted(cands)[0]
-
-    def _ammo_thumb_path(self, family: str) -> str | None:
+    def _ammo_thumb_path(self, sec: str) -> str | None:
         """Cached thumbs only (produced by Regenerate)."""
-        sec = self._ammo_rep_section(family)
         if not sec:
             return None
         entry = ((self.items or {}).get("ammo") or {}).get(sec) or {}
@@ -1157,99 +1226,60 @@ class MainWindow(QMainWindow):
                 return str(cand)
         return None
 
-    # Ammo toggle: wide rectangle (width 90, height 40% less → 54).
+    # Ammo toggle: wide texture box, 2px outer margin.
     _AMMO_ICON_W = 90
     _AMMO_ICON_H = 54
-    _AMMO_CELL_W = 92
-    _AMMO_CELL_H = 56
 
-    def _ammo_box_icon(
-        self, thumb: str | None, bloc_tag: str, *, enabled: bool = True
-    ) -> QIcon:
-        """Wide icon box with N/W/NW/- badge; selected ammos get a subtle green fill."""
+    def _ammo_box_icon(self, thumb: str | None, *, enabled: bool = True) -> QIcon:
+        """Wide icon box; texture KeepAspectRatio-fitted inside (no stretch / badge)."""
         w = self._AMMO_ICON_W
         h = self._AMMO_ICON_H
         canvas = QPixmap(w, h)
         if enabled:
-            canvas.fill(QColor(36, 72, 48))  # subtle green behind texture
+            canvas.fill(QColor(36, 72, 48))
         else:
             canvas.fill(QColor(30, 30, 30))
         painter = QPainter(canvas)
         try:
-            pad = 1
             if thumb and Path(thumb).is_file():
                 pix = QPixmap(thumb)
                 if not pix.isNull():
                     scaled = pix.scaled(
-                        w - pad * 2,
-                        h - pad * 2,
+                        w,
+                        h,
                         Qt.AspectRatioMode.KeepAspectRatio,
                         Qt.TransformationMode.SmoothTransformation,
                     )
                     x = (w - scaled.width()) // 2
                     y = (h - scaled.height()) // 2
                     painter.drawPixmap(x, y, scaled)
-            font = QFont("Consolas", 9)
-            font.setBold(True)
-            painter.setFont(font)
-            metrics = painter.fontMetrics()
-            tag = bloc_tag or "-"
-            tw = metrics.horizontalAdvance(tag) + 4
-            th = metrics.height()
-            painter.fillRect(1, 1, tw, th, QColor(0, 0, 0, 200))
-            if tag == "N":
-                color = QColor(100, 180, 255)
-            elif tag == "W":
-                color = QColor(220, 120, 90)
-            elif tag == "NW":
-                color = QColor(180, 160, 90)
-            else:
-                color = QColor(160, 160, 160)
-            painter.setPen(color)
-            painter.drawText(3, 1 + metrics.ascent(), tag)
         finally:
             painter.end()
         return QIcon(canvas)
 
-    def _ammo_tip(self, family: str, enabled: bool) -> str:
-        tip_sec = self._ammo_rep_section(family) or family
-        bloc = ammo_family_bloc(family)
-        tag = ammo_bloc_tag(bloc)
-        return (
-            f"{family}\n{tip_sec}\n"
-            f"bloc: {tag} ({ammo_bloc_label(bloc)})\n"
-            f"{'enabled' if enabled else 'DISABLED — weapons excluded'}"
-        )
-
-    def _refresh_ammo_button_icon(self, family: str, enabled: bool) -> None:
-        btn = self._ammo_buttons.get(family)
-        if btn is None:
-            return
-        tag = ammo_bloc_tag(ammo_family_bloc(family))
-        btn.setIcon(
-            self._ammo_box_icon(self._ammo_thumb_path(family), tag, enabled=enabled)
-        )
-        tip = self._ammo_tip(family, enabled)
-        btn.setToolTip(tip)
-        parent = btn.parentWidget()
-        if parent is not None:
-            for child in parent.findChildren(QLabel):
-                child.setToolTip(tip)
-
-    def _make_ammo_toggle(self, fam: str) -> QWidget:
-        """One ammo cell: icon box + calibre label under it."""
-        enabled = is_ammo_family_enabled(self.balance, self.faction, fam)
+    def _ammo_tip(self, sec: str, enabled: bool) -> str:
+        fam = ammo_family(sec)
         bloc = ammo_family_bloc(fam)
         tag = ammo_bloc_tag(bloc)
-        label = ammo_family_label(fam)
-        cw, ch = self._AMMO_CELL_W, self._AMMO_CELL_H
-        iw, ih = self._AMMO_ICON_W, self._AMMO_ICON_H
+        return (
+            f"{sec}\n"
+            f"bloc: {tag} ({ammo_bloc_label(bloc)})\n"
+            f"{'enabled' if enabled else 'DISABLED — not in loadout; gun kept if ≥1 other ammo on'}"
+        )
 
-        wrap = QWidget()
-        wrap.setFixedWidth(cw + 6)
-        col = QVBoxLayout(wrap)
-        col.setContentsMargins(0, 0, 0, 0)
-        col.setSpacing(1)
+    def _refresh_ammo_button_icon(self, sec: str, enabled: bool) -> None:
+        btn = self._ammo_buttons.get(sec)
+        if btn is None:
+            return
+        btn.setIcon(
+            self._ammo_box_icon(self._ammo_thumb_path(sec), enabled=enabled)
+        )
+        btn.setToolTip(self._ammo_tip(sec, enabled))
+
+    def _make_ammo_toggle(self, sec: str) -> QToolButton:
+        """One ammo toggle: texture box only (name in tooltip)."""
+        enabled = is_ammo_family_enabled(self.balance, self.faction, sec)
+        iw, ih = self._AMMO_ICON_W, self._AMMO_ICON_H
 
         btn = QToolButton()
         btn.setCheckable(True)
@@ -1257,31 +1287,18 @@ class MainWindow(QMainWindow):
         btn.setAutoRaise(False)
         btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
         btn.setIconSize(QSize(iw, ih))
-        btn.setFixedSize(cw, ch)
-        btn.setIcon(
-            self._ammo_box_icon(self._ammo_thumb_path(fam), tag, enabled=enabled)
-        )
-        btn.setToolTip(self._ammo_tip(fam, enabled))
+        btn.setFixedSize(iw, ih)
+        btn.setIcon(self._ammo_box_icon(self._ammo_thumb_path(sec), enabled=enabled))
+        btn.setToolTip(self._ammo_tip(sec, enabled))
         btn.setStyleSheet(
-            "QToolButton { border: 1px solid #444; border-radius: 2px; "
+            "QToolButton { border: 1px solid #444; border-radius: 0px; "
             "padding: 0px; margin: 0px; background: transparent; }"
             "QToolButton:checked { border-color: #6a9e6a; }"
             "QToolButton:!checked { border-color: #96826a; }"
         )
-        btn.toggled.connect(lambda on, f=fam: self._on_ammo_toggled(f, on))
-        col.addWidget(btn, 0, Qt.AlignmentFlag.AlignHCenter)
-
-        lbl = QLabel(label)
-        lbl.setAlignment(Qt.AlignmentFlag.AlignHCenter)
-        lbl.setStyleSheet(
-            "QLabel { color: #b0b0b0; font-size: 10px; font-family: Consolas, monospace; "
-            "padding: 0px; margin: 0px; }"
-        )
-        lbl.setToolTip(self._ammo_tip(fam, enabled))
-        col.addWidget(lbl)
-
-        self._ammo_buttons[fam] = btn
-        return wrap
+        btn.toggled.connect(lambda on, s=sec: self._on_ammo_toggled(s, on))
+        self._ammo_buttons[sec] = btn
+        return btn
 
     def _rebuild_ammo_toggles(self) -> None:
         """Rebuild ammo toggles as invisible 2-col table: Type | horizontal ammos."""
@@ -1291,16 +1308,22 @@ class MainWindow(QMainWindow):
             if w:
                 w.deleteLater()
         self._ammo_buttons = {}
-        families = collect_ammo_families((self.items or {}).get("weapons") or {})
+        sections = collect_ammo_sections((self.items or {}).get("weapons") or {})
         groups: list[tuple[str, list[str]]] = [
-            ("NATO", [f for f in families if ammo_family_bloc(f) == "nato"]),
-            ("WARSAW", [f for f in families if ammo_family_bloc(f) == "wp"]),
+            (
+                "NATO",
+                [s for s in sections if ammo_family_bloc(ammo_family(s)) == "nato"],
+            ),
+            (
+                "WARSAW",
+                [s for s in sections if ammo_family_bloc(ammo_family(s)) == "wp"],
+            ),
             (
                 "OTHER",
                 [
-                    f
-                    for f in families
-                    if ammo_family_bloc(f) not in ("nato", "wp")
+                    s
+                    for s in sections
+                    if ammo_family_bloc(ammo_family(s)) not in ("nato", "wp")
                 ],
             ),
         ]
@@ -1314,8 +1337,8 @@ class MainWindow(QMainWindow):
             "QPushButton:hover { background: #3a3a3a; }"
         )
         row = 0
-        for title, fams in groups:
-            if not fams:
+        for title, secs in groups:
+            if not secs:
                 continue
             type_host = QWidget()
             type_lay = QVBoxLayout(type_host)
@@ -1333,14 +1356,14 @@ class MainWindow(QMainWindow):
             btn_all.setStyleSheet(row_btn_style)
             btn_all.setToolTip(f"Enable all {title} ammo for this faction")
             btn_all.clicked.connect(
-                lambda _=False, fs=list(fams): self._set_row_ammo(fs, True)
+                lambda _=False, ss=list(secs): self._set_row_ammo(ss, True)
             )
             btn_none = QPushButton("None")
             btn_none.setFixedWidth(44)
             btn_none.setStyleSheet(row_btn_style)
             btn_none.setToolTip(f"Disable all {title} ammo for this faction")
             btn_none.clicked.connect(
-                lambda _=False, fs=list(fams): self._set_row_ammo(fs, False)
+                lambda _=False, ss=list(secs): self._set_row_ammo(ss, False)
             )
             btn_row.addWidget(btn_all)
             btn_row.addWidget(btn_none)
@@ -1354,42 +1377,61 @@ class MainWindow(QMainWindow):
             row_host = QWidget()
             row_lay = QHBoxLayout(row_host)
             row_lay.setContentsMargins(0, 0, 0, 0)
-            row_lay.setSpacing(4)
-            for fam in fams:
-                row_lay.addWidget(self._make_ammo_toggle(fam))
+            row_lay.setSpacing(2)
+            for sec in secs:
+                row_lay.addWidget(self._make_ammo_toggle(sec))
             row_lay.addStretch(1)
             self.ammo_layout.addWidget(row_host, row, 1)
             row += 1
-        self.ammo_layout.setRowStretch(row, 1)
         self.ammo_panel.setVisible(self.category == "weapons")
         log.debug(
-            "ammo toggles fac=%s families=%d off=%d",
+            "ammo toggles fac=%s sections=%d off=%d",
             self.faction,
-            len(families),
+            len(sections),
             sum(
                 1
-                for f in families
-                if not is_ammo_family_enabled(self.balance, self.faction, f)
+                for s in sections
+                if not is_ammo_family_enabled(self.balance, self.faction, s)
             ),
         )
 
-    def _on_ammo_toggled(self, family: str, enabled: bool) -> None:
+    def _migrate_legacy_ammo_family(self, sec: str) -> None:
+        """If an old calibre-family off key still applies, expand to per-section offs."""
+        fam = ammo_family(sec)
+        ae = ammo_enabled_map(self.balance, self.faction)
+        if fam not in ae or bool(ae[fam]):
+            return
+        siblings = [
+            s
+            for s in collect_ammo_sections((self.items or {}).get("weapons") or {})
+            if ammo_family(s) == fam and s != sec
+        ]
+        set_ammo_family_enabled(self.balance, self.faction, fam, True)  # drop legacy key
+        for s in siblings:
+            set_ammo_family_enabled(self.balance, self.faction, s, False)
+
+    def _on_ammo_toggled(self, sec: str, enabled: bool) -> None:
         log.debug(
-            "ammo toggle fac=%s family=%s enabled=%s",
+            "ammo toggle fac=%s sec=%s enabled=%s",
             self.faction,
-            family,
+            sec,
             enabled,
         )
-        set_ammo_family_enabled(self.balance, self.faction, family, enabled)
+        if enabled:
+            self._migrate_legacy_ammo_family(sec)
+        set_ammo_family_enabled(self.balance, self.faction, sec, enabled)
         n = override_count(self.balance, self.faction)
         self.faction_meta.setText(f"({n} overrides)" if n else "")
-        self._refresh_ammo_button_icon(family, enabled)
+        self._refresh_ammo_button_icon(sec, enabled)
         self._schedule_score_refresh()
 
-    def _set_row_ammo(self, families: list[str], enabled: bool) -> None:
-        """Enable/disable only the ammo families in one type row."""
-        for fam in families:
-            set_ammo_family_enabled(self.balance, self.faction, fam, enabled)
+    def _set_row_ammo(self, sections: list[str], enabled: bool) -> None:
+        """Enable/disable only the ammo sections in one type row."""
+        if enabled:
+            for sec in sections:
+                self._migrate_legacy_ammo_family(sec)
+        for sec in sections:
+            set_ammo_family_enabled(self.balance, self.faction, sec, enabled)
         n = override_count(self.balance, self.faction)
         self.faction_meta.setText(f"({n} overrides)" if n else "")
         self._rebuild_ammo_toggles()
@@ -1753,12 +1795,6 @@ class MainWindow(QMainWindow):
                     pts, in_shop, fac_blocked = 0, False, False
                 rows.append((sec, entry, pts, in_shop, fac_blocked))
 
-            filt = self.filter_box.currentText()
-            if filt == "in-shop":
-                rows = [r for r in rows if r[3]]
-            elif filt == "over-threshold":
-                rows = [r for r in rows if not r[3]]
-
             sort_key = self._current_sort_key() or "pts"
             descending = self.sort_desc.isChecked()
             rows.sort(
@@ -1895,9 +1931,13 @@ class MainWindow(QMainWindow):
         try:
             entry = (self.items.get(self.category) or {}).get(sec) or {}
             pts, in_shop, fac_blocked = self._row_pts_inshop(sec, entry)
-            fams = weapon_ammo_families(entry.get("ammo_class") or [])
+            ammos = [
+                str(a).strip()
+                for a in (entry.get("ammo_class") or [])
+                if str(a).strip()
+            ]
             ammo_s = (
-                ", ".join(ammo_family_label(f) for f in fams) if fams else "—"
+                ", ".join(ammo_section_label(a) for a in ammos) if ammos else "—"
             )
             shop_s = "true" if in_shop else ("blocked" if fac_blocked else "false")
             shop_c = (
@@ -1972,7 +2012,9 @@ class MainWindow(QMainWindow):
                     )
                 )
             for key in sorted(
-                k for k in stats.keys() if k not in seen and k != "is_helmet"
+                k
+                for k in stats.keys()
+                if k not in seen and k not in ("is_helmet", "col_src")
             ):
                 stat_rows.append(
                     (
@@ -1987,21 +2029,14 @@ class MainWindow(QMainWindow):
             log.exception("select failed sec=%s", sec)
 
     def _regen(self) -> None:
-        self._save_roots()
-        anomaly = (
-            Path(self.anomaly_edit.text().strip())
-            if self.anomaly_edit.text().strip()
-            else None
-        )
-        gamma = (
-            Path(self.gamma_edit.text().strip())
-            if self.gamma_edit.text().strip()
-            else None
-        )
+        paths = self._prompt_regen_paths()
+        if paths is None:
+            return
+        anomaly, gamma = paths
         if not gamma and not anomaly:
             QMessageBox.warning(self, "SALE", "Set Anomaly and/or GAMMA roots first.")
             return
-        log.info("Regenerate clicked anomaly=%s gamma=%s", anomaly, gamma)
+        log.info("Regenerate Scan anomaly=%s gamma=%s", anomaly, gamma)
         self.btn_regen.setEnabled(False)
         self.status.setText("Regenerating…")
         self._worker = RegenWorker(anomaly, gamma)
@@ -2057,7 +2092,8 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Export", "No items.yml — Regenerate first.")
             return
         self._flush_score_refresh(rebuild=False)
-        self._save_roots()
+        self._persist_ui_state()
+        save_settings(self.settings)
         dest = default_export_path()
         log.info("Export dialog default=%s", dest)
         path, _ = QFileDialog.getSaveFileName(

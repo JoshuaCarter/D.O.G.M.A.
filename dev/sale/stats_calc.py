@@ -169,7 +169,6 @@ def _weapon_calculate_py(inp: dict[str, Any]) -> dict[str, Any]:
     rounds = inp.get("rounds") or []
 
     col_max = [0.0] * SCORE_COLS
-    col_src: list[str | None] = [None] * SCORE_COLS
     for r in rounds:
         k_hit = _f(r.get("k_hit"), 1)
         k_ap = _f(r.get("k_ap"), 0)
@@ -185,10 +184,8 @@ def _weapon_calculate_py(inp: dict[str, Any]) -> dict[str, Any]:
             )
             if dmg > col_max[i]:
                 col_max[i] = dmg
-                col_src[i] = sec
 
     mut_max = 0.0
-    mut_src = None
     for r in rounds:
         air = _f(r.get("air_resistance"), 0.05)
         k_hit = _f(r.get("k_hit"), 1)
@@ -202,10 +199,8 @@ def _weapon_calculate_py(inp: dict[str, Any]) -> dict[str, Any]:
         )
         if dmg > mut_max:
             mut_max = float(dmg)
-            mut_src = sec
     if mut_max > col_max[0]:
         col_max[0] = mut_max
-        col_src[0] = mut_src
 
     fire_disp = _f(inp.get("fire_dispersion_base"), 0)
     if fire_disp <= 0:
@@ -332,10 +327,12 @@ def build_weapon_input(sec: str, sections: dict[str, dict[str, str]]) -> dict[st
     hp = d.get("hit_power")
     if hp and "," in str(hp):
         hp = str(hp).split(",")[0].strip()
+    from .score import is_bad_ammo
+
     rounds = []
     for part in str(d.get("ammo_class") or "").split(","):
         ammo = part.strip()
-        if not ammo or ammo not in sections:
+        if not ammo or is_bad_ammo(ammo) or ammo not in sections:
             continue
         a = sections[ammo]
         # buck_shot=0 on grenade/rocket ammo means "not a shotgun", not zero pellets.

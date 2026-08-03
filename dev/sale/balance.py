@@ -76,13 +76,18 @@ def _migrate_weight_keys(weights: dict[str, Any] | None) -> bool:
     if not isinstance(weights, dict) or not weights:
         return False
     changed = False
+    # Current schema uses w_mid_* for Mid; do not drop it when w_lgtp_* also exists.
+    _keep_when_both = {"w_mid_dmg", "w_mid_dps"}
     for old, new in _WEIGHT_KEY_RENAMES:
         if old not in weights:
             continue
         if new not in weights:
             weights[new] = weights.pop(old)
-        else:
-            weights.pop(old)
+            changed = True
+            continue
+        if old in _keep_when_both:
+            continue
+        weights.pop(old)
         changed = True
     if "w_rounds" in weights:
         weights.pop("w_rounds", None)
@@ -301,7 +306,7 @@ def override_count(balance: dict[str, Any], faction: str) -> int:
 
 
 def ammo_enabled_map(balance: dict[str, Any], faction: str) -> dict[str, bool]:
-    """Sparse map of ammo_family → enabled. Missing family = enabled."""
+    """Sparse map of ammo section (or legacy family) → enabled. Missing = enabled."""
     if faction == "Default":
         raw = (balance.get("default") or {}).get("weapons") or {}
     else:
@@ -315,16 +320,16 @@ def ammo_enabled_map(balance: dict[str, Any], faction: str) -> dict[str, bool]:
 def is_ammo_family_enabled(
     balance: dict[str, Any], faction: str, family: str
 ) -> bool:
-    ae = ammo_enabled_map(balance, faction)
-    if family in ae:
-        return bool(ae[family])
-    return True
+    """``family`` may be a full ammo section id or a legacy calibre family key."""
+    from .score import ammo_is_enabled
+
+    return ammo_is_enabled(family, ammo_enabled_map(balance, faction))
 
 
 def set_ammo_family_enabled(
     balance: dict[str, Any], faction: str, family: str, enabled: bool
 ) -> None:
-    """Persist toggle. Enabled families are omitted (all-on default)."""
+    """Persist toggle for one ammo section (or legacy family key). On = omit key."""
     if faction == "Default":
         cat = balance.setdefault("default", {}).setdefault("weapons", {})
     else:

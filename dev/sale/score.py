@@ -336,7 +336,7 @@ _AMMO_NUMERIC_RE = re.compile(r"^(ammo_[0-9]+(?:\.[0-9]+)?)", re.IGNORECASE)
 
 
 def ammo_family(sec: str) -> str:
-    """Collapse ammo_5.56x45_fmj_bad → ammo_5.56x45 (toggle key)."""
+    """Collapse ammo_5.56x45_fmj_bad → ammo_5.56x45 (NATO/WP grouping only)."""
     s = (sec or "").strip()
     if not s:
         return ""
@@ -467,6 +467,27 @@ def weapon_ammo_families(ammo_class: list[str] | None) -> list[str]:
     return out
 
 
+def ammo_section_label(sec: str) -> str:
+    """ammo_5.56x45_fmj → 5.56x45 fmj"""
+    s = (sec or "").strip()
+    if s.lower().startswith("ammo_"):
+        s = s[5:]
+    return s.replace("_", " ") or "?"
+
+
+def collect_ammo_sections(weapons: dict[str, Any] | None) -> list[str]:
+    """Sorted unique ammo sections used by any weapon (excludes _bad / _verybad)."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for entry in (weapons or {}).values():
+        for a in entry.get("ammo_class") or []:
+            sec = str(a).strip()
+            if sec and not is_bad_ammo(sec) and sec not in seen:
+                seen.add(sec)
+                out.append(sec)
+    return sorted(out)
+
+
 def collect_ammo_families(weapons: dict[str, Any] | None) -> list[str]:
     """Sorted unique ammo families used by any weapon in the pool."""
     seen: set[str] = set()
@@ -476,18 +497,44 @@ def collect_ammo_families(weapons: dict[str, Any] | None) -> list[str]:
     return sorted(seen)
 
 
+def ammo_is_enabled(ammo_sec: str, enabled_map: dict[str, bool] | None) -> bool:
+    """Missing keys mean enabled. Legacy family keys still apply to matching sections."""
+    em = enabled_map or {}
+    sec = (ammo_sec or "").strip()
+    if not sec:
+        return True
+    if sec in em:
+        return bool(em[sec])
+    fam = ammo_family(sec)
+    if fam in em:
+        return bool(em[fam])
+    return True
+
+
+def weapon_enabled_ammos(
+    ammo_class: list[str] | None, enabled_map: dict[str, bool] | None
+) -> list[str]:
+    """Enabled non-bad ammo sections for a weapon."""
+    out: list[str] = []
+    for a in ammo_class or []:
+        sec = str(a).strip()
+        if sec and not is_bad_ammo(sec) and ammo_is_enabled(sec, enabled_map):
+            out.append(sec)
+    return out
+
+
 def weapon_ammo_allowed(
     ammo_class: list[str] | None, enabled_map: dict[str, bool] | None
 ) -> bool:
-    """False if any of the weapon's ammo families is toggled off.
+    """True if the weapon has ≥1 enabled non-bad ammo (or no ammo_class at all).
 
-    Missing keys in ``enabled_map`` mean enabled (all on by default).
+    Deselected ammos do not exclude the gun by themselves — only zero enabled does.
+    Bad / verybad rounds never count.
     """
-    families = weapon_ammo_families(ammo_class)
-    if not families:
+    ammos = [str(a).strip() for a in (ammo_class or []) if str(a).strip()]
+    if not ammos:
         return True
-    em = enabled_map or {}
-    for fam in families:
-        if fam in em and not bool(em[fam]):
-            return False
-    return True
+    good = [a for a in ammos if not is_bad_ammo(a)]
+    if not good:
+        return False
+    return any(ammo_is_enabled(a, enabled_map) for a in good)

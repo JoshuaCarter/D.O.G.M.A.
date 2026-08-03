@@ -698,20 +698,26 @@ class MainWindow(QMainWindow):
         self.setAutoFillBackground(True)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setPalette(_dark_palette())
+        self._start_maximized = False
         try:
             self.settings = load_settings()
             w = int(self.settings.get("window_w") or 1600)
             h = int(self.settings.get("window_h") or 900)
             self.resize(max(800, w), max(500, h))
-            if self.settings.get("window_maximized"):
-                self.showMaximized()
+            # Do NOT showMaximized() here — that paints a white HWND before
+            # Fusion/dark titlebar (SAGE uses setWindowState, show later in main).
+            self._start_maximized = bool(self.settings.get("window_maximized"))
+            if self._start_maximized:
+                self.setWindowState(
+                    self.windowState() | Qt.WindowState.WindowMaximized
+                )
             log.info(
                 "settings loaded anomaly=%r gamma=%r size=%sx%s max=%s",
                 self.settings.get("anomaly_root"),
                 self.settings.get("gamma_root"),
                 w,
                 h,
-                bool(self.settings.get("window_maximized")),
+                self._start_maximized,
             )
             self.balance = load_balance()
             self.items: dict[str, Any] = load_items()
@@ -2855,6 +2861,7 @@ def _apply_windows_dark_titlebar(widget: QWidget) -> None:
     try:
         import ctypes
 
+        # Ensure native HWND exists before DWM attribute (safe while still hidden).
         hwnd = int(widget.winId())
         value = ctypes.c_int(1)
         # 20 = DWMWA_USE_IMMERSIVE_DARK_MODE (Win10 1903+); 19 was the older name.
@@ -2996,17 +3003,26 @@ def _apply_dark_theme(app: QApplication) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     setup_logging()
-    log.info("starting SALE argv=%s", argv or sys.argv)
+    argv = list(sys.argv if argv is None else argv)
+    log.info("starting SALE argv=%s", argv)
     try:
         # Before the first widget exists so the HWND isn't created light.
         QApplication.setStyle("Fusion")
-        app = QApplication(argv or sys.argv)
+        app = QApplication(argv)
         _apply_dark_theme(app)
         app.setApplicationName("SALE — Stalker Anomaly Loadout Editor")
         win = MainWindow()
+        # Opaque dark fill before show — avoids the white first frame on Windows.
         win.setAutoFillBackground(True)
         win.setPalette(_dark_palette())
         win.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        host = getattr(win, "ui_host", None)
+        if host is not None:
+            host.setAutoFillBackground(True)
+            host.setPalette(_dark_palette())
+            host.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        # DWM dark frame before first paint (winId creates HWND while still hidden).
+        _apply_windows_dark_titlebar(win)
         win.show()
         _apply_windows_dark_titlebar(win)
         app.processEvents()

@@ -13,8 +13,11 @@ from PyQt6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
+    QCheckBox,
     QComboBox,
     QFileDialog,
+    QFrame,
+    QGridLayout,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -30,32 +33,47 @@ from PyQt6.QtWidgets import (
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from .balance import (
+    ammo_enabled_map,
     clear_override,
     effective_category,
+    is_ammo_family_enabled,
     is_overridden,
     load_balance,
     override_count,
     save_balance,
+    set_ammo_family_enabled,
+    set_ceiling,
     set_override,
 )
 from .diaglog import LOG_PATH, attach_log_view, get_logger, setup_logging
 from .export_ltx import default_export_path, export_shop_ltx
+from .labels import pretty_ceiling_tip, pretty_label, pretty_tip
 from .regenerate import load_items, regenerate
-from .spawn_filter import name_blocked
-from .thumbs import iter_texture_roots, make_thumb, set_texture_roots
+from .spawn_filter import is_explosive_weapon, is_gauss_weapon, name_blocked
 from .score import (
     ARMOR_WEIGHTS,
     FACTIONS,
     WEAPON_WEIGHTS,
+    NO_CEILING_STATS,
+    ammo_bloc_label,
+    ammo_bloc_tag,
+    ammo_family,
+    ammo_family_bloc,
+    ammo_family_label,
     armor_pts,
     armor_stat_terms,
-    bloc_ok,
-    weapon_bloc,
+    collect_ammo_families,
+    default_ceilings_armor,
+    faction_label,
+    is_bad_ammo,
+    weapon_ammo_allowed,
+    weapon_ammo_families,
     weapon_pts,
     weapon_stat_terms,
 )
@@ -65,8 +83,8 @@ log = get_logger("app")
 
 CATS = ("weapons", "outfits", "helmets")
 # Item tile; cell is icon + half the previous inter-box gutter (was +24×+30).
-GRID_ICON_W = 200
-GRID_ICON_H = 100
+GRID_ICON_W = 400
+GRID_ICON_H = 200
 GRID_CELL_W = 212
 GRID_CELL_H = 115
 
@@ -107,6 +125,17 @@ def _stat_color(key: str) -> str:
     return "#aab2bf"  # muted
 
 
+def _n01_color(n01: float) -> str:
+    """Lerp muted red (0) → bright green (1) for normalized Final values."""
+    t = max(0.0, min(1.0, float(n01)))
+    r0, g0, b0 = 0x8A, 0x4A, 0x4A
+    r1, g1, b1 = 0x3D, 0xDC, 0x6E
+    r = int(round(r0 + (r1 - r0) * t))
+    g = int(round(g0 + (g1 - g0) * t))
+    b = int(round(b0 + (b1 - b0) * t))
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
 _HEADER_FONT = "font-size: 13px; font-weight: 700;"
 _HEADER_LABEL_STYLE = f"QLabel {{ {_HEADER_FONT} color: #d0d0d0; }}"
 _TAB_STYLE = (
@@ -129,6 +158,27 @@ def _header_label(text: str) -> QLabel:
     return lbl
 
 
+def _nice_item_name(sec: str, entry: dict[str, Any] | None = None) -> str:
+    """Friendly name for detail/grid: resolved inv_name text, else cleaned section id."""
+    raw = str((entry or {}).get("name") or "").strip()
+    sec_l = (sec or "").lower()
+    # Skip unresolved string-table keys / bare section ids.
+    unresolved = (
+        not raw
+        or raw.lower() == sec_l
+        or raw.startswith("st_")
+        or raw.endswith("_name")
+    )
+    if not unresolved:
+        return raw
+    short = sec or ""
+    for prefix in ("wpn_", "outfit_", "helm_", "helmet_"):
+        if short.startswith(prefix):
+            short = short[len(prefix) :]
+            break
+    return short.replace("_", " ") or sec or "?"
+
+
 def _fmt_stat_val(val: Any) -> str:
     if isinstance(val, bool):
         return "true" if val else "false"
@@ -149,12 +199,18 @@ def _icon_with_pts(
     *,
     in_shop: bool,
     faction_blocked: bool = False,
+    selected: bool = False,
     name: str = "",
     width: int = GRID_ICON_W,
     height: int = GRID_ICON_H,
 ) -> QIcon:
     canvas = QPixmap(width, height)
-    canvas.fill(QColor(28, 30, 32) if in_shop else QColor(22, 22, 22))
+    if selected:
+        canvas.fill(QColor(36, 72, 120))  # subtle blue behind texture
+    elif in_shop:
+        canvas.fill(QColor(28, 30, 32))
+    else:
+        canvas.fill(QColor(22, 22, 22))
     painter = QPainter(canvas)
     try:
         if thumb and Path(thumb).is_file():
@@ -169,7 +225,8 @@ def _icon_with_pts(
                 x = (width - scaled.width()) // 2
                 y = (height - scaled.height()) // 2
                 painter.drawPixmap(x, y, scaled)
-        # Green = in shop; dark orange = calibre/faction filtered; grey = over threshold.
+        # Green = in shop; dark orange = ammo/faction filtered; grey = over threshold.
+        # Selection only changes the canvas fill above — keep border/pts colors.
         if in_shop:
             border = QColor(40, 120, 70)
             pts_color = QColor(90, 220, 120)
@@ -239,36 +296,86 @@ class RegenWorker(QThread):
             self.failed.emit(f"{exc}\n\nSee log:\n{LOG_PATH}")
 
 
+class FineStepSlider(QSlider):
+    """Horizontal slider whose wheel moves one singleStep and doesn't scroll parents."""
+
+    def wheelEvent(self, event) -> None:  # noqa: N802
+        delta = event.angleDelta().y() or event.angleDelta().x()
+        if delta == 0:
+            event.ignore()
+            return
+        step = max(1, int(self.singleStep()))
+        # Reversed vs Qt default: scroll up = decrease, scroll down = increase.
+        if delta > 0:
+            self.setValue(max(self.minimum(), self.value() - step))
+        else:
+            self.setValue(min(self.maximum(), self.value() + step))
+        event.accept()
+
+
 class WeightRow(QWidget):
     changed = pyqtSignal(str, float, bool)  # key, value, is_weight
     cleared = pyqtSignal(str, bool)
 
     def __init__(
-        self, key: str, label: str, value: float, *, is_weight: bool, overridden: bool
+        self,
+        key: str,
+        label: str,
+        value: float,
+        *,
+        is_weight: bool,
+        overridden: bool,
+        tip: str = "",
+        kind: str | None = None,
+        editable: bool = True,
+        show_clear: bool = True,
+        slider_max: int | None = None,
     ) -> None:
         super().__init__()
         self.key = key
         self.is_weight = is_weight
+        # kind: weight | int | float (float uses 0.01 steps via ×100)
+        if kind:
+            self.kind = kind
+        else:
+            self.kind = "weight" if is_weight else "int"
         lay = QHBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         self.lbl = QLabel(label)
+        if tip:
+            self.lbl.setToolTip(tip)
         if overridden:
             self.lbl.setStyleSheet("color: #e6a23c; font-weight: bold;")
+        elif not editable:
+            self.lbl.setStyleSheet("color: #777;")
         lay.addWidget(self.lbl, 2)
-        self.slider = QSlider(Qt.Orientation.Horizontal)
-        if is_weight:
+        self.slider = FineStepSlider(Qt.Orientation.Horizontal)
+        if self.kind == "weight":
+            # 0..100 ↔ 0.00..1.00 so one wheel tick = 0.01
             self.slider.setRange(0, 100)
+            self.slider.setSingleStep(1)
+            self.slider.setPageStep(1)
             self.slider.setValue(int(round(float(value) * 100)))
-        elif key == "include_universal_armor":
-            self.slider.setRange(0, 1)
-            self.slider.setValue(1 if value else 0)
+        elif self.kind == "float":
+            hi = int(slider_max) if slider_max else max(1000, int(round(float(value) * 100 * 4)))
+            hi = max(hi, 100)
+            self.slider.setRange(1, hi)
+            self.slider.setSingleStep(1)
+            self.slider.setPageStep(10)
+            self.slider.setValue(
+                max(1, min(hi, int(round(float(value) * 100))))
+            )
         else:
-            self.slider.setRange(1, 2000)
-            self.slider.setValue(int(value))
+            hi = int(slider_max) if slider_max else 2000
+            hi = max(hi, 2)
+            self.slider.setRange(1, hi)
+            self.slider.setSingleStep(1)
+            self.slider.setPageStep(1)
+            self.slider.setValue(max(1, min(hi, int(round(float(value))))))
         self.slider.valueChanged.connect(self._on_slide)
         lay.addWidget(self.slider, 3)
         self.val = QLineEdit(self._fmt(value))
-        self.val.setFixedWidth(52)
+        self.val.setFixedWidth(56)
         self.val.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.val.setStyleSheet(
             "QLineEdit { background: #2a2a2a; color: #e8e8e8; border: 1px solid #444; "
@@ -281,21 +388,32 @@ class WeightRow(QWidget):
         self.btn.setEnabled(overridden)
         self.btn.setToolTip("Clear override (use Default)")
         self.btn.clicked.connect(lambda: self.cleared.emit(self.key, self.is_weight))
-        lay.addWidget(self.btn)
+        if show_clear:
+            lay.addWidget(self.btn)
+        else:
+            self.btn.hide()
+        if not editable:
+            self.slider.setEnabled(False)
+            self.val.setReadOnly(True)
+            self.val.setStyleSheet(
+                "QLineEdit { background: #222; color: #888; border: 1px solid #333; "
+                "padding: 1px 4px; font-family: Consolas, monospace; }"
+            )
 
     def _fmt(self, v: float) -> str:
-        return f"{v:.2f}" if self.is_weight else str(int(v))
+        if self.kind == "weight":
+            return f"{v:.2f}"
+        if self.kind == "float":
+            if abs(v - round(v)) < 1e-9 and abs(v) >= 10:
+                return str(int(round(v)))
+            return f"{v:.2f}"
+        return str(int(round(v)))
 
     def _emit_value(self, val: float) -> None:
         self.changed.emit(self.key, float(val), self.is_weight)
 
     def _on_slide(self, v: int) -> None:
-        if self.is_weight:
-            val = v / 100.0
-        elif self.key == "include_universal_armor":
-            val = 1.0 if v else 0.0
-        else:
-            val = float(v)
+        val = self._slider_to_value(v)
         self.val.blockSignals(True)
         self.val.setText(self._fmt(val))
         self.val.blockSignals(False)
@@ -309,12 +427,14 @@ class WeightRow(QWidget):
             # Snap back to current slider value.
             self.val.setText(self._fmt(self._slider_to_value(self.slider.value())))
             return
-        if self.is_weight:
+        if self.kind == "weight":
             raw = max(0.0, min(1.0, raw))
             slider_v = int(round(raw * 100))
-        elif self.key == "include_universal_armor":
-            raw = 1.0 if raw >= 0.5 else 0.0
-            slider_v = 1 if raw else 0
+        elif self.kind == "float":
+            lo = self.slider.minimum() / 100.0
+            hi = self.slider.maximum() / 100.0
+            raw = max(lo, min(hi, raw))
+            slider_v = int(round(raw * 100))
         else:
             lo, hi = self.slider.minimum(), self.slider.maximum()
             raw = max(float(lo), min(float(hi), raw))
@@ -327,10 +447,8 @@ class WeightRow(QWidget):
         self._emit_value(val)
 
     def _slider_to_value(self, v: int) -> float:
-        if self.is_weight:
+        if self.kind in ("weight", "float"):
             return v / 100.0
-        if self.key == "include_universal_armor":
-            return 1.0 if v else 0.0
         return float(v)
 
 
@@ -362,10 +480,16 @@ class MainWindow(QMainWindow):
                 meta.get("counts"),
                 meta.get("generated"),
             )
-            self.faction = "Default"
-            self.category = "weapons"
+            self.faction = str(self.settings.get("faction") or "Default")
+            cat0 = str(self.settings.get("category") or "weapons")
+            self.category = cat0 if cat0 in CATS else "weapons"
             self._rows: list[tuple[str, dict[str, Any], int, bool, bool]] = []
             self._sel_by_cat: dict[str, str | None] = {c: None for c in CATS}
+            saved_sel = self.settings.get("selection") or {}
+            if isinstance(saved_sel, dict):
+                for c in CATS:
+                    if saved_sel.get(c):
+                        self._sel_by_cat[c] = str(saved_sel[c])
             self._worker: RegenWorker | None = None
 
             root = QWidget()
@@ -400,11 +524,11 @@ class MainWindow(QMainWindow):
             self.sort_box = QComboBox()
             self.sort_box.setMinimumWidth(140)
             self.sort_box.currentTextChanged.connect(self._on_sort_key_changed)
-            self.sort_dir_box = QComboBox()
-            self.sort_dir_box.addItems(["Asc", "Desc"])
-            self.sort_dir_box.currentTextChanged.connect(
-                lambda _: self._rebuild_list()
-            )
+            self.sort_desc = QCheckBox("Desc")
+            self.sort_desc.setChecked(False)
+            self.sort_desc.setToolTip("Sort descending (off = ascending)")
+            self.sort_desc.setStyleSheet("QCheckBox { color: #d0d0d0; }")
+            self.sort_desc.toggled.connect(lambda _: self._rebuild_list())
             self.filter_box = QComboBox()
             self.filter_box.addItems(["all", "in-shop", "over-threshold"])
             self.filter_box.currentTextChanged.connect(lambda _: self._rebuild_list())
@@ -414,7 +538,7 @@ class MainWindow(QMainWindow):
             actions.addWidget(self.btn_open_log)
             actions.addWidget(_header_label("Sort:"))
             actions.addWidget(self.sort_box)
-            actions.addWidget(self.sort_dir_box)
+            actions.addWidget(self.sort_desc)
             actions.addWidget(_header_label("Filter:"))
             actions.addWidget(self.filter_box)
             actions.addStretch(1)
@@ -423,15 +547,62 @@ class MainWindow(QMainWindow):
             fac = QHBoxLayout()
             fac.addWidget(_header_label("Faction:"))
             self.faction_box = QComboBox()
-            self.faction_box.addItem("Default")
+            self.faction_box.addItem(faction_label("Default"), "Default")
             for f in FACTIONS:
-                self.faction_box.addItem(f)
+                self.faction_box.addItem(faction_label(f), f)
             self.faction_box.currentTextChanged.connect(self._on_faction)
             fac.addWidget(self.faction_box)
             self.faction_meta = QLabel("")
             fac.addWidget(self.faction_meta)
             fac.addStretch(1)
             v.addLayout(fac)
+
+            ammo_wrap = QVBoxLayout()
+            ammo_wrap.setSpacing(2)
+            ammo_hdr = QHBoxLayout()
+            self._ammo_expanded = bool(self.settings.get("ammo_expanded", True))
+            self.btn_ammo_collapse = QToolButton()
+            self.btn_ammo_collapse.setCheckable(True)
+            self.btn_ammo_collapse.setChecked(self._ammo_expanded)
+            self.btn_ammo_collapse.setToolButtonStyle(
+                Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+            )
+            self.btn_ammo_collapse.setStyleSheet(
+                "QToolButton { color: #d0d0d0; font-size: 13px; font-weight: 700; "
+                "border: none; background: transparent; padding: 2px 4px; }"
+                "QToolButton:hover { color: #fff; }"
+            )
+            self.btn_ammo_collapse.setToolTip("Show / hide ammo filters")
+            self.btn_ammo_collapse.toggled.connect(self._on_ammo_collapse)
+            ammo_hdr.addWidget(self.btn_ammo_collapse)
+            ammo_hdr.addStretch(1)
+            ammo_wrap.addLayout(ammo_hdr)
+            self.ammo_scroll = QScrollArea()
+            self.ammo_scroll.setWidgetResizable(True)
+            self.ammo_scroll.setFixedHeight(230)
+            self.ammo_scroll.setHorizontalScrollBarPolicy(
+                Qt.ScrollBarPolicy.ScrollBarAsNeeded
+            )
+            self.ammo_scroll.setVerticalScrollBarPolicy(
+                Qt.ScrollBarPolicy.ScrollBarAsNeeded
+            )
+            self.ammo_scroll.setStyleSheet(
+                "QScrollArea { border: 1px solid #333; background: #1a1a1a; }"
+            )
+            self.ammo_host = QWidget()
+            # Invisible 2-col table: Type | horizontal ammo toggles
+            self.ammo_layout = QGridLayout(self.ammo_host)
+            self.ammo_layout.setContentsMargins(6, 4, 6, 4)
+            self.ammo_layout.setHorizontalSpacing(10)
+            self.ammo_layout.setVerticalSpacing(6)
+            self.ammo_layout.setColumnStretch(1, 1)
+            self.ammo_scroll.setWidget(self.ammo_host)
+            ammo_wrap.addWidget(self.ammo_scroll)
+            self.ammo_panel = QWidget()
+            self.ammo_panel.setLayout(ammo_wrap)
+            v.addWidget(self.ammo_panel)
+            self._ammo_buttons: dict[str, QToolButton] = {}
+            self._sync_ammo_collapse_ui()
 
             self.main_tabs = QTabWidget()
             self.main_tabs.setStyleSheet(_TAB_STYLE)
@@ -485,7 +656,10 @@ class MainWindow(QMainWindow):
                 "  color: transparent; background: transparent; padding: 0;"
                 "}"
                 "QListWidget::item:selected {"
-                "  background: #2a4a3a;"
+                "  background: transparent;"
+                "}"
+                "QListWidget::item:selected:active {"
+                "  background: transparent;"
                 "}"
             )
             self.list.currentItemChanged.connect(self._on_select)
@@ -511,8 +685,6 @@ class MainWindow(QMainWindow):
             body.addWidget(detail_host)
             editor_v.addLayout(body, 1)
 
-            self._configure_textures()
-
             self.main_tabs.addTab(editor, "Editor")
 
             self.log_view = QPlainTextEdit()
@@ -528,8 +700,12 @@ class MainWindow(QMainWindow):
             v.addWidget(self.status)
 
             attach_log_view(self.log_view)
+            self._restore_ui_state()
             self._rebuild_weights()
-            self._refresh_sort_options(prefer="pts")
+            self._rebuild_ammo_toggles()
+            self._refresh_sort_options(
+                prefer=str(self.settings.get("sort_key") or "pts")
+            )
             self._rebuild_list()
             log.info("MainWindow.__init__ done")
         except Exception:
@@ -568,14 +744,18 @@ class MainWindow(QMainWindow):
     def _fill_kv_table(
         self,
         table: QTableWidget,
-        rows: list[tuple[str, list[str], str]],
+        rows: list[tuple],
     ) -> None:
-        """rows: (key, [col values…], name_color)."""
+        """rows: (key, [col values…], name_color[, optional cell_colors for vals])."""
         ncols = table.columnCount()
         table.setRowCount(len(rows))
         align_l = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
-        for row, (key, vals, color) in enumerate(rows):
-            name_item = QTableWidgetItem(key)
+        for row, entry in enumerate(rows):
+            key = entry[0]
+            vals = entry[1]
+            color = entry[2]
+            cell_colors = entry[3] if len(entry) > 3 else None
+            name_item = QTableWidgetItem(pretty_label(key))
             name_item.setForeground(QColor(color))
             font = name_item.font()
             font.setBold(True)
@@ -589,7 +769,14 @@ class MainWindow(QMainWindow):
             for c in range(1, ncols):
                 text = vals[c - 1] if c - 1 < len(vals) else ""
                 cell = QTableWidgetItem(text)
-                cell.setForeground(QColor("#e8e8e8"))
+                fg = "#e8e8e8"
+                if (
+                    cell_colors
+                    and c - 1 < len(cell_colors)
+                    and cell_colors[c - 1]
+                ):
+                    fg = cell_colors[c - 1]
+                cell.setForeground(QColor(fg))
                 cell.setTextAlignment(align_l)
                 cell.setData(Qt.ItemDataRole.UserRole, key)
                 cell.setFlags(
@@ -627,13 +814,42 @@ class MainWindow(QMainWindow):
                 keys.append(k)
         return keys
 
+    def _current_sort_key(self) -> str:
+        data = self.sort_box.currentData()
+        if data:
+            return str(data)
+        text = self.sort_box.currentText() or "pts"
+        # Legacy settings may still store raw keys as the visible text.
+        return text
+
+    def _set_sort_key(self, key: str) -> None:
+        idx = self.sort_box.findData(key)
+        if idx < 0:
+            self.sort_box.addItem(pretty_label(key), key)
+            tip = pretty_tip(key)
+            if tip:
+                self.sort_box.setItemData(
+                    self.sort_box.count() - 1, tip, Qt.ItemDataRole.ToolTipRole
+                )
+            idx = self.sort_box.findData(key)
+        if idx >= 0:
+            self.sort_box.setCurrentIndex(idx)
+
     def _refresh_sort_options(self, prefer: str | None = None) -> None:
         keys = self._sort_keys_for_category()
-        cur = prefer or self.sort_box.currentText() or "pts"
+        cur = prefer or self._current_sort_key() or "pts"
         self.sort_box.blockSignals(True)
         self.sort_box.clear()
-        self.sort_box.addItems(keys)
-        idx = self.sort_box.findText(cur)
+        for k in keys:
+            self.sort_box.addItem(pretty_label(k), k)
+            tip = pretty_tip(k)
+            if tip:
+                self.sort_box.setItemData(
+                    self.sort_box.count() - 1, tip, Qt.ItemDataRole.ToolTipRole
+                )
+        idx = self.sort_box.findData(cur)
+        if idx < 0:
+            idx = self.sort_box.findText(cur)
         self.sort_box.setCurrentIndex(idx if idx >= 0 else 0)
         self.sort_box.blockSignals(False)
 
@@ -647,24 +863,14 @@ class MainWindow(QMainWindow):
         key = str(item.data(Qt.ItemDataRole.UserRole) or item.text())
         if not key:
             return
-        cur = self.sort_box.currentText()
+        cur = self._current_sort_key()
+        self.sort_box.blockSignals(True)
         if cur == key:
-            # Toggle Asc ↔ Desc.
-            nxt = "Desc" if self.sort_dir_box.currentText() == "Asc" else "Asc"
-            self.sort_dir_box.blockSignals(True)
-            self.sort_dir_box.setCurrentText(nxt)
-            self.sort_dir_box.blockSignals(False)
+            # Reselect → clear sort key (back to pts). Desc toggle is left alone.
+            self._set_sort_key("pts")
         else:
-            if self.sort_box.findText(key) < 0:
-                self.sort_box.blockSignals(True)
-                self.sort_box.addItem(key)
-                self.sort_box.blockSignals(False)
-            self.sort_box.blockSignals(True)
-            self.sort_box.setCurrentText(key)
-            self.sort_box.blockSignals(False)
-            self.sort_dir_box.blockSignals(True)
-            self.sort_dir_box.setCurrentText("Asc")
-            self.sort_dir_box.blockSignals(False)
+            self._set_sort_key(key)
+        self.sort_box.blockSignals(False)
         self._rebuild_list()
 
     def _row_sort_value(
@@ -720,31 +926,89 @@ class MainWindow(QMainWindow):
             edit.setText(d)
             log.info("browse selected %s", d)
 
-    def _configure_textures(self) -> None:
-        anomaly = (
-            Path(self.anomaly_edit.text().strip())
-            if self.anomaly_edit.text().strip()
-            else None
-        )
-        gamma = (
-            Path(self.gamma_edit.text().strip())
-            if self.gamma_edit.text().strip()
-            else None
-        )
-        set_texture_roots(iter_texture_roots(anomaly, gamma))
-
     def _save_window_geom(self) -> None:
         self.settings["window_maximized"] = self.isMaximized()
         if not self.isMaximized():
             self.settings["window_w"] = int(self.width())
             self.settings["window_h"] = int(self.height())
 
-    def _save_roots(self) -> None:
+    def _persist_ui_state(self) -> None:
         self.settings["anomaly_root"] = self.anomaly_edit.text().strip()
         self.settings["gamma_root"] = self.gamma_edit.text().strip()
+        self.settings["faction"] = self.faction
+        self.settings["category"] = self.category
+        self.settings["sort_key"] = self._current_sort_key() or "pts"
+        self.settings["sort_dir"] = "Desc" if self.sort_desc.isChecked() else "Asc"
+        self.settings["filter"] = self.filter_box.currentText() or "all"
+        self.settings["selection"] = {
+            c: self._sel_by_cat.get(c) for c in CATS if self._sel_by_cat.get(c)
+        }
+        self.settings["ammo_expanded"] = bool(self._ammo_expanded)
         self._save_window_geom()
+
+    def _restore_ui_state(self) -> None:
+        fac = str(self.settings.get("faction") or "Default")
+        idx = self.faction_box.findData(fac)
+        if idx < 0:
+            # Legacy settings may have stored a display label.
+            idx = self.faction_box.findText(fac)
+            if idx < 0:
+                for i in range(self.faction_box.count()):
+                    if faction_label(str(self.faction_box.itemData(i) or "")) == fac:
+                        idx = i
+                        break
+        self.faction_box.blockSignals(True)
+        self.faction_box.setCurrentIndex(idx if idx >= 0 else 0)
+        self.faction_box.blockSignals(False)
+        data = self.faction_box.currentData()
+        self.faction = str(data if data is not None else self.faction_box.currentText())
+
+        cat = str(self.settings.get("category") or "weapons")
+        if cat not in CATS:
+            cat = "weapons"
+        self.category = cat
+        self.tabs.blockSignals(True)
+        self.tabs.setCurrentIndex(CATS.index(cat))
+        self.tabs.blockSignals(False)
+
+        sdir = str(self.settings.get("sort_dir") or "Asc")
+        self.sort_desc.blockSignals(True)
+        self.sort_desc.setChecked(sdir == "Desc")
+        self.sort_desc.blockSignals(False)
+
+        filt = str(self.settings.get("filter") or "all")
+        self.filter_box.blockSignals(True)
+        fi = self.filter_box.findText(filt)
+        self.filter_box.setCurrentIndex(fi if fi >= 0 else 0)
+        self.filter_box.blockSignals(False)
+
+        n = override_count(self.balance, self.faction)
+        self.faction_meta.setText(f"({n} overrides)" if n else "")
+
+        self._ammo_expanded = bool(self.settings.get("ammo_expanded", True))
+        self.btn_ammo_collapse.blockSignals(True)
+        self.btn_ammo_collapse.setChecked(self._ammo_expanded)
+        self.btn_ammo_collapse.blockSignals(False)
+        self._sync_ammo_collapse_ui()
+
+    def _sync_ammo_collapse_ui(self) -> None:
+        expanded = bool(self._ammo_expanded)
+        self.btn_ammo_collapse.setText("Ammo" if expanded else "Ammo")
+        self.btn_ammo_collapse.setArrowType(
+            Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow
+        )
+        self.ammo_scroll.setVisible(expanded)
+
+    def _on_ammo_collapse(self, expanded: bool) -> None:
+        self._ammo_expanded = bool(expanded)
+        self._sync_ammo_collapse_ui()
+        self.settings["ammo_expanded"] = self._ammo_expanded
         save_settings(self.settings)
-        self._configure_textures()
+        log.debug("ammo panel expanded=%s", self._ammo_expanded)
+
+    def _save_roots(self) -> None:
+        self._persist_ui_state()
+        save_settings(self.settings)
         log.debug(
             "roots saved anomaly=%r gamma=%r",
             self.settings["anomaly_root"],
@@ -753,18 +1017,27 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:  # noqa: N802
         try:
-            self._save_window_geom()
+            self._persist_ui_state()
             save_settings(self.settings)
+            save_balance(self.balance)
+            log.info(
+                "saved on close balance=%s settings=%s",
+                "ok",
+                "ok",
+            )
         except Exception:  # noqa: BLE001
-            log.exception("save window size on close failed")
+            log.exception("save on close failed")
         super().closeEvent(event)
 
-    def _on_faction(self, name: str) -> None:
-        log.debug("faction -> %s", name)
-        self.faction = name
-        n = override_count(self.balance, name)
+    def _on_faction(self, _name: str) -> None:
+        data = self.faction_box.currentData()
+        fac = str(data if data is not None else _name)
+        log.debug("faction -> %s (%s)", fac, faction_label(fac))
+        self.faction = fac
+        n = override_count(self.balance, fac)
         self.faction_meta.setText(f"({n} overrides)" if n else "")
         self._rebuild_weights()
+        self._rebuild_ammo_toggles()
         self._rebuild_list()
 
     def _on_tab(self, idx: int) -> None:
@@ -774,9 +1047,307 @@ class MainWindow(QMainWindow):
             self._sel_by_cat[self.category] = cur.data(Qt.ItemDataRole.UserRole)
         self.category = CATS[idx] if 0 <= idx < len(CATS) else "weapons"
         log.debug("category tab -> %s", self.category)
+        self.ammo_panel.setVisible(self.category == "weapons")
         self._rebuild_weights()
         self._refresh_sort_options()
         self._rebuild_list()
+
+    def _ammo_rep_section(self, family: str) -> str | None:
+        """Pick a representative ammo section for thumbs / tooltips."""
+        ammo = (self.items or {}).get("ammo") or {}
+        cands = [s for s in ammo if ammo_family(s) == family]
+        if not cands:
+            # Fall back to first matching ammo_class mention on a weapon.
+            for entry in ((self.items or {}).get("weapons") or {}).values():
+                for a in entry.get("ammo_class") or []:
+                    if ammo_family(str(a)) == family:
+                        cands.append(str(a))
+            cands = sorted(set(cands))
+        if not cands:
+            return None
+        for sec in sorted(cands):
+            if not is_bad_ammo(sec):
+                return sec
+        return sorted(cands)[0]
+
+    def _ammo_thumb_path(self, family: str) -> str | None:
+        """Cached thumbs only (produced by Regenerate)."""
+        sec = self._ammo_rep_section(family)
+        if not sec:
+            return None
+        entry = ((self.items or {}).get("ammo") or {}).get(sec) or {}
+        cached = str(entry.get("thumb") or "").strip()
+        if cached and Path(cached).is_file():
+            return cached
+        for cand in (
+            THUMBS_DIR / f"{sec}.inv.png",
+            THUMBS_DIR / f"{sec}.fallback.png",
+        ):
+            if cand.is_file():
+                return str(cand)
+        return None
+
+    # Ammo toggle: wide rectangle (width 90, height 40% less → 54).
+    _AMMO_ICON_W = 90
+    _AMMO_ICON_H = 54
+    _AMMO_CELL_W = 92
+    _AMMO_CELL_H = 56
+
+    def _ammo_box_icon(
+        self, thumb: str | None, bloc_tag: str, *, enabled: bool = True
+    ) -> QIcon:
+        """Wide icon box with N/W/NW/- badge; selected ammos get a subtle green fill."""
+        w = self._AMMO_ICON_W
+        h = self._AMMO_ICON_H
+        canvas = QPixmap(w, h)
+        if enabled:
+            canvas.fill(QColor(36, 72, 48))  # subtle green behind texture
+        else:
+            canvas.fill(QColor(30, 30, 30))
+        painter = QPainter(canvas)
+        try:
+            pad = 1
+            if thumb and Path(thumb).is_file():
+                pix = QPixmap(thumb)
+                if not pix.isNull():
+                    scaled = pix.scaled(
+                        w - pad * 2,
+                        h - pad * 2,
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation,
+                    )
+                    x = (w - scaled.width()) // 2
+                    y = (h - scaled.height()) // 2
+                    painter.drawPixmap(x, y, scaled)
+            font = QFont("Consolas", 9)
+            font.setBold(True)
+            painter.setFont(font)
+            metrics = painter.fontMetrics()
+            tag = bloc_tag or "-"
+            tw = metrics.horizontalAdvance(tag) + 4
+            th = metrics.height()
+            painter.fillRect(1, 1, tw, th, QColor(0, 0, 0, 200))
+            if tag == "N":
+                color = QColor(100, 180, 255)
+            elif tag == "W":
+                color = QColor(220, 120, 90)
+            elif tag == "NW":
+                color = QColor(180, 160, 90)
+            else:
+                color = QColor(160, 160, 160)
+            painter.setPen(color)
+            painter.drawText(3, 1 + metrics.ascent(), tag)
+        finally:
+            painter.end()
+        return QIcon(canvas)
+
+    def _ammo_tip(self, family: str, enabled: bool) -> str:
+        tip_sec = self._ammo_rep_section(family) or family
+        bloc = ammo_family_bloc(family)
+        tag = ammo_bloc_tag(bloc)
+        return (
+            f"{family}\n{tip_sec}\n"
+            f"bloc: {tag} ({ammo_bloc_label(bloc)})\n"
+            f"{'enabled' if enabled else 'DISABLED — weapons excluded'}"
+        )
+
+    def _refresh_ammo_button_icon(self, family: str, enabled: bool) -> None:
+        btn = self._ammo_buttons.get(family)
+        if btn is None:
+            return
+        tag = ammo_bloc_tag(ammo_family_bloc(family))
+        btn.setIcon(
+            self._ammo_box_icon(self._ammo_thumb_path(family), tag, enabled=enabled)
+        )
+        tip = self._ammo_tip(family, enabled)
+        btn.setToolTip(tip)
+        parent = btn.parentWidget()
+        if parent is not None:
+            for child in parent.findChildren(QLabel):
+                child.setToolTip(tip)
+
+    def _make_ammo_toggle(self, fam: str) -> QWidget:
+        """One ammo cell: icon box + calibre label under it."""
+        enabled = is_ammo_family_enabled(self.balance, self.faction, fam)
+        bloc = ammo_family_bloc(fam)
+        tag = ammo_bloc_tag(bloc)
+        label = ammo_family_label(fam)
+        cw, ch = self._AMMO_CELL_W, self._AMMO_CELL_H
+        iw, ih = self._AMMO_ICON_W, self._AMMO_ICON_H
+
+        wrap = QWidget()
+        wrap.setFixedWidth(cw + 6)
+        col = QVBoxLayout(wrap)
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(1)
+
+        btn = QToolButton()
+        btn.setCheckable(True)
+        btn.setChecked(enabled)
+        btn.setAutoRaise(False)
+        btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        btn.setIconSize(QSize(iw, ih))
+        btn.setFixedSize(cw, ch)
+        btn.setIcon(
+            self._ammo_box_icon(self._ammo_thumb_path(fam), tag, enabled=enabled)
+        )
+        btn.setToolTip(self._ammo_tip(fam, enabled))
+        btn.setStyleSheet(
+            "QToolButton { border: 1px solid #444; border-radius: 2px; "
+            "padding: 0px; margin: 0px; background: transparent; }"
+            "QToolButton:checked { border-color: #6a9e6a; }"
+            "QToolButton:!checked { border-color: #96826a; }"
+        )
+        btn.toggled.connect(lambda on, f=fam: self._on_ammo_toggled(f, on))
+        col.addWidget(btn, 0, Qt.AlignmentFlag.AlignHCenter)
+
+        lbl = QLabel(label)
+        lbl.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        lbl.setStyleSheet(
+            "QLabel { color: #b0b0b0; font-size: 10px; font-family: Consolas, monospace; "
+            "padding: 0px; margin: 0px; }"
+        )
+        lbl.setToolTip(self._ammo_tip(fam, enabled))
+        col.addWidget(lbl)
+
+        self._ammo_buttons[fam] = btn
+        return wrap
+
+    def _rebuild_ammo_toggles(self) -> None:
+        """Rebuild ammo toggles as invisible 2-col table: Type | horizontal ammos."""
+        while self.ammo_layout.count():
+            item = self.ammo_layout.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
+        self._ammo_buttons = {}
+        families = collect_ammo_families((self.items or {}).get("weapons") or {})
+        groups: list[tuple[str, list[str]]] = [
+            ("NATO", [f for f in families if ammo_family_bloc(f) == "nato"]),
+            ("WARSAW", [f for f in families if ammo_family_bloc(f) == "wp"]),
+            (
+                "OTHER",
+                [
+                    f
+                    for f in families
+                    if ammo_family_bloc(f) not in ("nato", "wp")
+                ],
+            ),
+        ]
+        type_style = (
+            "QLabel { color: #d0d0d0; font-size: 12px; font-weight: 700; "
+            "font-family: Consolas, monospace; padding: 0; }"
+        )
+        row_btn_style = (
+            "QPushButton { color: #ccc; background: #2a2a2a; border: 1px solid #444; "
+            "padding: 1px 6px; font-size: 10px; }"
+            "QPushButton:hover { background: #3a3a3a; }"
+        )
+        row = 0
+        for title, fams in groups:
+            if not fams:
+                continue
+            type_host = QWidget()
+            type_lay = QVBoxLayout(type_host)
+            type_lay.setContentsMargins(0, 0, 0, 0)
+            type_lay.setSpacing(2)
+            type_lbl = QLabel(title)
+            type_lbl.setStyleSheet(type_style)
+            type_lbl.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+            type_lay.addWidget(type_lbl)
+            btn_row = QHBoxLayout()
+            btn_row.setContentsMargins(0, 0, 0, 0)
+            btn_row.setSpacing(4)
+            btn_all = QPushButton("All")
+            btn_all.setFixedWidth(36)
+            btn_all.setStyleSheet(row_btn_style)
+            btn_all.setToolTip(f"Enable all {title} ammo for this faction")
+            btn_all.clicked.connect(
+                lambda _=False, fs=list(fams): self._set_row_ammo(fs, True)
+            )
+            btn_none = QPushButton("None")
+            btn_none.setFixedWidth(44)
+            btn_none.setStyleSheet(row_btn_style)
+            btn_none.setToolTip(f"Disable all {title} ammo for this faction")
+            btn_none.clicked.connect(
+                lambda _=False, fs=list(fams): self._set_row_ammo(fs, False)
+            )
+            btn_row.addWidget(btn_all)
+            btn_row.addWidget(btn_none)
+            btn_row.addStretch(1)
+            type_lay.addLayout(btn_row)
+            type_lay.addStretch(1)
+            self.ammo_layout.addWidget(
+                type_host, row, 0, Qt.AlignmentFlag.AlignTop
+            )
+
+            row_host = QWidget()
+            row_lay = QHBoxLayout(row_host)
+            row_lay.setContentsMargins(0, 0, 0, 0)
+            row_lay.setSpacing(4)
+            for fam in fams:
+                row_lay.addWidget(self._make_ammo_toggle(fam))
+            row_lay.addStretch(1)
+            self.ammo_layout.addWidget(row_host, row, 1)
+            row += 1
+        self.ammo_layout.setRowStretch(row, 1)
+        self.ammo_panel.setVisible(self.category == "weapons")
+        log.debug(
+            "ammo toggles fac=%s families=%d off=%d",
+            self.faction,
+            len(families),
+            sum(
+                1
+                for f in families
+                if not is_ammo_family_enabled(self.balance, self.faction, f)
+            ),
+        )
+
+    def _on_ammo_toggled(self, family: str, enabled: bool) -> None:
+        log.debug(
+            "ammo toggle fac=%s family=%s enabled=%s",
+            self.faction,
+            family,
+            enabled,
+        )
+        set_ammo_family_enabled(self.balance, self.faction, family, enabled)
+        save_balance(self.balance)
+        n = override_count(self.balance, self.faction)
+        self.faction_meta.setText(f"({n} overrides)" if n else "")
+        self._refresh_ammo_button_icon(family, enabled)
+        self._rebuild_list()
+
+    def _set_row_ammo(self, families: list[str], enabled: bool) -> None:
+        """Enable/disable only the ammo families in one type row."""
+        for fam in families:
+            set_ammo_family_enabled(self.balance, self.faction, fam, enabled)
+        save_balance(self.balance)
+        n = override_count(self.balance, self.faction)
+        self.faction_meta.setText(f"({n} overrides)" if n else "")
+        self._rebuild_ammo_toggles()
+        self._rebuild_list()
+
+    def _section_label(self, text: str) -> QLabel:
+        lbl = QLabel(text)
+        lbl.setStyleSheet(
+            "color: #9aa3ad; font-weight: bold; margin-top: 2px; margin-bottom: 2px;"
+        )
+        return lbl
+
+    def _section_break(self, title: str) -> QWidget:
+        """Horizontal rule + section title to split slider groups by nature."""
+        wrap = QWidget()
+        lay = QVBoxLayout(wrap)
+        lay.setContentsMargins(0, 10, 0, 2)
+        lay.setSpacing(4)
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setFrameShadow(QFrame.Shadow.Plain)
+        line.setFixedHeight(1)
+        line.setStyleSheet("background: #4a4a4a; border: none;")
+        lay.addWidget(line)
+        lay.addWidget(self._section_label(title))
+        return wrap
 
     def _rebuild_weights(self) -> None:
         try:
@@ -788,40 +1359,157 @@ class MainWindow(QMainWindow):
             fac = self.faction
             cat = self.category
             cfg = effective_category(self.balance, fac, cat)
+            ceilings_locked = fac != "Default"
 
-            def add_scalar(key: str, label: str, value: float) -> None:
+            def add_scalar(key: str, value: float) -> None:
                 ov = is_overridden(self.balance, fac, cat, key, weight=False)
-                row = WeightRow(key, label, value, is_weight=False, overridden=ov)
+                row = WeightRow(
+                    key,
+                    pretty_label(key),
+                    value,
+                    is_weight=False,
+                    overridden=ov,
+                    tip=pretty_tip(key),
+                    kind="int",
+                    slider_max=5000,
+                )
                 row.changed.connect(self._weight_changed)
                 row.cleared.connect(self._weight_cleared)
                 self.weights_layout.addWidget(row)
 
-            def add_weight(key: str, label: str, value: float) -> None:
+            def add_weight(key: str, value: float) -> None:
                 ov = is_overridden(self.balance, fac, cat, key, weight=True)
-                row = WeightRow(key, label, value, is_weight=True, overridden=ov)
+                row = WeightRow(
+                    key,
+                    pretty_label(key),
+                    value,
+                    is_weight=True,
+                    overridden=ov,
+                    tip=pretty_tip(key),
+                )
                 row.changed.connect(self._weight_changed)
                 row.cleared.connect(self._weight_cleared)
                 self.weights_layout.addWidget(row)
 
-            add_scalar("max_pts", "max_pts (threshold)", float(cfg.get("max_pts") or 900))
-            add_scalar("cost_mult", "cost_mult", float(cfg.get("cost_mult") or 1000))
-            if cat == "outfits":
-                univ = 1.0 if cfg.get("include_universal_armor", True) else 0.0
-                add_scalar("include_universal_armor", "include_universal_armor", univ)
+            def add_ceiling(stat_key: str, value: float) -> None:
+                default_v = value
+                # Slider headroom: ×4 default, with sensible floors.
+                if default_v < 10:
+                    kind = "float"
+                    smax = max(1000, int(round(default_v * 100 * 5)))
+                else:
+                    kind = "int" if default_v >= 50 else "float"
+                    if kind == "int":
+                        smax = max(2000, int(round(default_v * 5)))
+                    else:
+                        smax = max(1000, int(round(default_v * 100 * 5)))
+                tip = pretty_ceiling_tip(stat_key)
+                if ceilings_locked:
+                    tip = f"{tip} (Default faction only — shared by all factions.)"
+                row = WeightRow(
+                    f"ceiling:{stat_key}",
+                    pretty_label(stat_key),
+                    value,
+                    is_weight=False,
+                    overridden=False,
+                    tip=tip,
+                    kind=kind,
+                    editable=not ceilings_locked,
+                    show_clear=False,
+                    slider_max=smax,
+                )
+                row.changed.connect(self._ceiling_changed)
+                self.weights_layout.addWidget(row)
 
+            def add_toggle(key: str, checked: bool) -> None:
+                ov = is_overridden(self.balance, fac, cat, key, weight=False)
+                row = QWidget()
+                lay = QHBoxLayout(row)
+                lay.setContentsMargins(0, 2, 0, 4)
+                lay.setSpacing(6)
+                cb = QCheckBox(pretty_label(key))
+                tip = pretty_tip(key)
+                if tip:
+                    cb.setToolTip(tip)
+                cb.setChecked(bool(checked))
+                if ov:
+                    cb.setStyleSheet(
+                        "QCheckBox { color: #e6a23c; font-weight: bold; }"
+                    )
+                else:
+                    cb.setStyleSheet("QCheckBox { color: #d0d0d0; }")
+                cb.toggled.connect(
+                    lambda on, k=key: self._weight_changed(k, 1.0 if on else 0.0, False)
+                )
+                lay.addWidget(cb, 1)
+                btn = QPushButton("↺")
+                btn.setFixedWidth(28)
+                btn.setEnabled(ov)
+                btn.setToolTip("Clear override (use Default)")
+                btn.clicked.connect(
+                    lambda _=False, k=key: self._weight_cleared(k, False)
+                )
+                lay.addWidget(btn)
+                self.weights_layout.addWidget(row)
+
+            # Budget / filters (per-faction).
+            self.weights_layout.addWidget(self._section_label("Budget"))
+            if cat == "outfits":
+                add_toggle(
+                    "include_universal_armor",
+                    bool(cfg.get("include_universal_armor", True)),
+                )
+            add_scalar("max_pts", float(cfg.get("max_pts") or 900))
+            add_scalar("cost_mult", float(cfg.get("cost_mult") or 1000))
+
+            # Scale maxes (0–x) — Default-only; other factions inherit.
+            ceil_title = "Scale max (0–x)"
+            if ceilings_locked:
+                ceil_title += " — Default only"
+            self.weights_layout.addWidget(self._section_break(ceil_title))
+            ceil_map = cfg.get("ceilings") or {}
+            if cat == "weapons":
+                for sk, _wk, default_c, _inv, _dw in WEAPON_WEIGHTS:
+                    if sk in NO_CEILING_STATS:
+                        continue
+                    add_ceiling(sk, float(ceil_map.get(sk, default_c)))
+            else:
+                defs = default_ceilings_armor(is_helmet=cat == "helmets")
+                # Price first, then protections (match weight order).
+                add_ceiling("cost", float(ceil_map.get("cost", defs["cost"])))
+                for sk, _wk, default_c, _inv, _dw in ARMOR_WEIGHTS:
+                    add_ceiling(sk, float(ceil_map.get(sk, default_c)))
+
+            self.weights_layout.addWidget(self._section_break("Stat weights"))
             weights = cfg.get("weights") or {}
             if cat == "weapons":
                 for _sk, wkey, _c, _i, default_w in WEAPON_WEIGHTS:
-                    add_weight(wkey, wkey, float(weights.get(wkey, default_w)))
+                    add_weight(wkey, float(weights.get(wkey, default_w)))
             else:
+                add_weight("a_price", float(weights.get("a_price", 0.5)))
                 for _sk, wkey, _c, _i, default_w in ARMOR_WEIGHTS:
-                    add_weight(wkey, wkey, float(weights.get(wkey, default_w)))
-                add_weight("a_price", "a_price", float(weights.get("a_price", 0.5)))
+                    add_weight(wkey, float(weights.get(wkey, default_w)))
 
             self.weights_layout.addStretch(1)
         except Exception:
             log.exception("_rebuild_weights failed fac=%s cat=%s", self.faction, self.category)
             raise
+
+    def _ceiling_changed(self, key: str, value: float, _is_weight: bool) -> None:
+        if self.faction != "Default":
+            return
+        stat_key = key[8:] if key.startswith("ceiling:") else key
+        if value <= 0:
+            return
+        log.debug(
+            "ceiling set cat=%s key=%s value=%s",
+            self.category,
+            stat_key,
+            value,
+        )
+        set_ceiling(self.balance, self.category, stat_key, float(value))
+        save_balance(self.balance)
+        self._rebuild_list()
 
     def _weight_changed(self, key: str, value: float, is_weight: bool) -> None:
         store: Any = value
@@ -841,6 +1529,11 @@ class MainWindow(QMainWindow):
         save_balance(self.balance)
         n = override_count(self.balance, self.faction)
         self.faction_meta.setText(f"({n} overrides)" if n else "")
+        if key == "include_universal_armor":
+            # Recreate toggle row so override styling/reset btn stay in sync.
+            self._rebuild_weights()
+            self._rebuild_list()
+            return
         # Orange = faction override only; Default edits are the baseline.
         if self.faction != "Default":
             for i in range(self.weights_layout.count()):
@@ -882,20 +1575,22 @@ class MainWindow(QMainWindow):
     ) -> tuple[int, bool, bool]:
         """Return (pts, in_shop, faction_blocked).
 
-        ``faction_blocked`` means calibre/community filter excluded it (border orange).
+        ``faction_blocked`` means ammo-type toggle or outfit community excluded it
+        (orange border). Ammo toggles are per-faction (all on by default).
         """
-        fac = self.faction if self.faction != "Default" else "stalker"
         cfg = effective_category(self.balance, self.faction, self.category)
         stats = entry.get("stats") or {}
+        ceilings = cfg.get("ceilings") or {}
         if self.category == "weapons":
             pts = weapon_pts(
-                stats, cfg.get("weights") or {}, float(cfg.get("cost_mult") or 1000)
+                stats,
+                cfg.get("weights") or {},
+                float(cfg.get("cost_mult") or 1000),
+                ceilings,
             )
             under = pts < float(cfg.get("max_pts") or 900)
-            bloc = weapon_bloc(sec, ",".join(entry.get("ammo_class") or []))
-            from .score import FACTION_BLOC
-
-            gear_ok = bloc_ok(bloc, FACTION_BLOC.get(fac, "both"))
+            ammo_map = ammo_enabled_map(self.balance, self.faction)
+            gear_ok = weapon_ammo_allowed(entry.get("ammo_class") or [], ammo_map)
             return pts, under and gear_ok, (not gear_ok)
         is_helm = self.category == "helmets"
         pts = armor_pts(
@@ -903,13 +1598,14 @@ class MainWindow(QMainWindow):
             cfg.get("weights") or {},
             float(cfg.get("cost_mult") or 1000),
             is_helmet=is_helm,
+            ceilings=ceilings,
         )
         under = pts < float(cfg.get("max_pts") or 550)
-        if is_helm:
+        if is_helm or self.faction == "Default":
             return pts, under, False
         from .score import FACTION_COMMUNITY
 
-        want = FACTION_COMMUNITY.get(fac, fac)
+        want = FACTION_COMMUNITY.get(self.faction, self.faction)
         community = (entry.get("community") or "").strip()
         allow_univ = bool(cfg.get("include_universal_armor", True))
         gear_ok = community == want or (allow_univ and community in ("", "actor"))
@@ -938,6 +1634,15 @@ class MainWindow(QMainWindow):
             for sec, entry in pool.items():
                 if name_blocked(sec):
                     continue
+                if self.category == "weapons" and (
+                    is_explosive_weapon(
+                        sec, ammo_class=entry.get("ammo_class") or []
+                    )
+                    or is_gauss_weapon(
+                        sec, ammo_class=entry.get("ammo_class") or []
+                    )
+                ):
+                    continue
                 try:
                     pts, in_shop, fac_blocked = self._row_pts_inshop(sec, entry)
                 except Exception:  # noqa: BLE001
@@ -951,8 +1656,8 @@ class MainWindow(QMainWindow):
             elif filt == "over-threshold":
                 rows = [r for r in rows if not r[3]]
 
-            sort_key = self.sort_box.currentText() or "pts"
-            descending = self.sort_dir_box.currentText() == "Desc"
+            sort_key = self._current_sort_key() or "pts"
+            descending = self.sort_desc.isChecked()
             rows.sort(
                 key=lambda r: self._row_sort_value(
                     r[0], r[1], r[2], r[3], sort_key
@@ -964,31 +1669,24 @@ class MainWindow(QMainWindow):
             thumb_ok = 0
             restore_item: QListWidgetItem | None = None
             for sec, entry, pts, in_shop, fac_blocked in rows:
-                short = sec
-                for prefix in ("wpn_", "outfit_", "helm_", "helmet_"):
-                    if short.startswith(prefix):
-                        short = short[len(prefix) :]
-                        break
                 # Name is painted bottom-left on the tile (no under-icon label).
-                label = short.replace("_", " ")
+                label = _nice_item_name(sec, entry)
                 item = QListWidgetItem("")
-                # Real inv_grid crop when DDS roots are configured.
-                thumb_path = THUMBS_DIR / f"{sec}.inv.png"
-                if not thumb_path.is_file():
-                    try:
-                        make_thumb(sec, entry, THUMBS_DIR)
-                    except Exception:  # noqa: BLE001
-                        log.exception("lazy thumb %s", sec)
-                thumb = ""
-                for cand in (
-                    THUMBS_DIR / f"{sec}.inv.png",
-                    THUMBS_DIR / f"{sec}.fallback.png",
-                ):
-                    if cand.is_file():
-                        thumb = str(cand)
-                        break
+                # Cached thumbs only (produced by Regenerate).
+                thumb = str(entry.get("thumb") or "").strip()
+                if thumb and not Path(thumb).is_file():
+                    thumb = ""
+                if not thumb:
+                    for cand in (
+                        THUMBS_DIR / f"{sec}.inv.png",
+                        THUMBS_DIR / f"{sec}.fallback.png",
+                    ):
+                        if cand.is_file():
+                            thumb = str(cand)
+                            break
                 if thumb:
                     thumb_ok += 1
+                is_sel = bool(want_sec and sec == want_sec)
                 try:
                     item.setIcon(
                         _icon_with_pts(
@@ -996,6 +1694,7 @@ class MainWindow(QMainWindow):
                             pts,
                             in_shop=in_shop,
                             faction_blocked=fac_blocked,
+                            selected=is_sel,
                             name=label,
                         )
                     )
@@ -1004,10 +1703,21 @@ class MainWindow(QMainWindow):
                 tip = (
                     f"{sec}\n{entry.get('name') or ''}\n"
                     f"{pts} pts  |  in_shop={in_shop}"
-                    f"{'  |  faction/calibre blocked' if fac_blocked else ''}"
+                    f"{'  |  ammo type disabled' if fac_blocked else ''}"
                 )
                 item.setToolTip(tip)
                 item.setData(Qt.ItemDataRole.UserRole, sec)
+                # Cache paint inputs for selection highlight refresh.
+                item.setData(
+                    Qt.ItemDataRole.UserRole + 1,
+                    {
+                        "thumb": thumb or None,
+                        "pts": pts,
+                        "in_shop": in_shop,
+                        "faction_blocked": fac_blocked,
+                        "name": label,
+                    },
+                )
                 # Let gridSize own layout — custom sizeHint breaks IconMode alignment.
                 self.list.addItem(item)
                 if want_sec and sec == want_sec:
@@ -1020,16 +1730,20 @@ class MainWindow(QMainWindow):
             else:
                 self._clear_detail()
             elapsed = time.perf_counter() - t0
+            n_shop = sum(1 for r in rows if r[3])
+            n_blocked = sum(1 for r in rows if r[4])
             self.status.setText(
-                f"{len(rows)} {self.category}  (faction={self.faction})  "
-                f"{elapsed:.2f}s"
+                f"{len(rows)} {self.category}  "
+                f"(faction={faction_label(self.faction)})  "
+                f"in_shop={n_shop}  blocked={n_blocked}  {elapsed:.2f}s"
             )
             log.info(
-                "rebuild_list cat=%s fac=%s rows=%d in_shop=%d thumbs=%d in %.3fs",
+                "rebuild_list cat=%s fac=%s rows=%d in_shop=%d blocked=%d thumbs=%d in %.3fs",
                 self.category,
                 self.faction,
                 len(rows),
-                sum(1 for r in rows if r[3]),
+                n_shop,
+                n_blocked,
                 thumb_ok,
                 elapsed,
             )
@@ -1042,9 +1756,33 @@ class MainWindow(QMainWindow):
             )
             raise
 
-    def _on_select(
-        self, cur: QListWidgetItem | None, _prev: QListWidgetItem | None
+    def _set_item_selected_icon(
+        self, item: QListWidgetItem | None, *, selected: bool
     ) -> None:
+        if item is None:
+            return
+        meta = item.data(Qt.ItemDataRole.UserRole + 1) or {}
+        if not isinstance(meta, dict):
+            return
+        try:
+            item.setIcon(
+                _icon_with_pts(
+                    meta.get("thumb"),
+                    int(meta.get("pts") or 0),
+                    in_shop=bool(meta.get("in_shop")),
+                    faction_blocked=bool(meta.get("faction_blocked")),
+                    selected=selected,
+                    name=str(meta.get("name") or ""),
+                )
+            )
+        except Exception:  # noqa: BLE001
+            log.exception("selection icon refresh failed")
+
+    def _on_select(
+        self, cur: QListWidgetItem | None, prev: QListWidgetItem | None
+    ) -> None:
+        self._set_item_selected_icon(prev, selected=False)
+        self._set_item_selected_icon(cur, selected=True)
         if not cur:
             return
         sec = cur.data(Qt.ItemDataRole.UserRole)
@@ -1052,15 +1790,17 @@ class MainWindow(QMainWindow):
         try:
             entry = (self.items.get(self.category) or {}).get(sec) or {}
             pts, in_shop, fac_blocked = self._row_pts_inshop(sec, entry)
-            ammo = entry.get("ammo_class") or []
-            ammo_s = ", ".join(str(a) for a in ammo) if ammo else "—"
+            fams = weapon_ammo_families(entry.get("ammo_class") or [])
+            ammo_s = (
+                ", ".join(ammo_family_label(f) for f in fams) if fams else "—"
+            )
             shop_s = "true" if in_shop else ("blocked" if fac_blocked else "false")
             shop_c = (
                 "#7dcea0" if in_shop else ("#96826a" if fac_blocked else "#aab2bf")
             )
             info_rows: list[tuple[str, list[str], str]] = [
                 ("sec", [str(sec)], "#aab2bf"),
-                ("name", [str(entry.get("name") or sec)], "#aab2bf"),
+                ("name", [_nice_item_name(str(sec), entry)], "#aab2bf"),
                 ("in_shop", [shop_s], shop_c),
                 ("community", [str(entry.get("community") or "—")], "#aab2bf"),
             ]
@@ -1075,36 +1815,55 @@ class MainWindow(QMainWindow):
             stats["cost"] = cost_v
             cfg = effective_category(self.balance, self.faction, self.category)
             wmap = cfg.get("weights") or {}
+            ceilings = cfg.get("ceilings") or {}
             if self.category == "weapons":
-                terms = weapon_stat_terms(stats, wmap)
+                terms = weapon_stat_terms(stats, wmap, ceilings)
             else:
                 terms = armor_stat_terms(
-                    stats, wmap, is_helmet=self.category == "helmets"
+                    stats,
+                    wmap,
+                    is_helmet=self.category == "helmets",
+                    ceilings=ceilings,
                 )
 
-            def _wf(key: str) -> tuple[str, str]:
+            def _wf(key: str) -> tuple[str, str, float | None]:
                 pair = terms.get(key)
                 if not pair:
-                    return "—", "—"
+                    return "—", "—", None
                 w, final = pair
-                return f"{w:.2f}", f"{final:.3f}"
+                # Final column color tracks normalized 0–1 (final / weight).
+                n01 = (final / w) if w > 0 else None
+                return f"{w:.2f}", f"{final:.3f}", n01
 
-            stat_rows: list[tuple[str, list[str], str]] = [
+            stat_rows: list[tuple] = [
                 ("pts", [str(int(pts)), "—", "—"], "#7dcea0"),
             ]
             # Weighted stats first (cost included), then any leftover raw stats.
             seen: set[str] = set()
-            ordered = [k for k, *_ in (WEAPON_WEIGHTS if self.category == "weapons" else ARMOR_WEIGHTS)]
-            if self.category != "weapons" and "cost" not in ordered:
-                ordered.append("cost")
+            if self.category == "weapons":
+                ordered = [k for k, *_ in WEAPON_WEIGHTS]
+            else:
+                ordered = ["cost"] + [k for k, *_ in ARMOR_WEIGHTS]
             for key in ordered:
                 seen.add(key)
-                w_s, f_s = _wf(key)
+                w_s, f_s, n01 = _wf(key)
                 raw = cost_v if key == "cost" else stats.get(key)
+                cell_colors = [
+                    None,
+                    None,
+                    _n01_color(n01) if n01 is not None else None,
+                ]
                 stat_rows.append(
-                    (key, [_fmt_stat_val(raw), w_s, f_s], _stat_color(key))
+                    (
+                        key,
+                        [_fmt_stat_val(raw), w_s, f_s],
+                        _stat_color(key),
+                        cell_colors,
+                    )
                 )
-            for key in sorted(k for k in stats.keys() if k not in seen):
+            for key in sorted(
+                k for k in stats.keys() if k not in seen and k != "is_helmet"
+            ):
                 stat_rows.append(
                     (
                         key,
@@ -1154,6 +1913,7 @@ class MainWindow(QMainWindow):
             log.info("regen done path=%s counts=%s", path, meta.get("counts"))
             self.status.setText(f"Regenerated → {path}")
             self._refresh_sort_options()
+            self._rebuild_ammo_toggles()
             self._rebuild_list()
         except Exception as exc:  # noqa: BLE001
             log.exception("post-regen load/rebuild failed")
@@ -1176,6 +1936,7 @@ class MainWindow(QMainWindow):
             meta = (self.items or {}).get("meta") or {}
             log.info("reloaded counts=%s", meta.get("counts"))
             self._refresh_sort_options()
+            self._rebuild_ammo_toggles()
             self._rebuild_list()
         except Exception as exc:  # noqa: BLE001
             log.exception("reload failed")
@@ -1186,12 +1947,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Export", "No items.yml — Regenerate first.")
             return
         self._save_roots()
-        gamma = (
-            Path(self.gamma_edit.text().strip())
-            if self.gamma_edit.text().strip()
-            else None
-        )
-        dest = default_export_path(gamma if gamma and gamma.is_dir() else None)
+        dest = default_export_path()
         log.info("Export dialog default=%s", dest)
         path, _ = QFileDialog.getSaveFileName(
             self,
@@ -1207,7 +1963,6 @@ class MainWindow(QMainWindow):
                 self.items,
                 self.balance,
                 Path(path),
-                gamma=gamma if gamma and gamma.is_dir() else None,
             )
             log.info("Export wrote %s", path)
             self.status.setText(f"Exported → {path}")

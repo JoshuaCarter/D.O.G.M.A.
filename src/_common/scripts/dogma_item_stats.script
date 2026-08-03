@@ -1,10 +1,16 @@
 --[[
-	Isolated item stat calculators (no UI, no ini_sys reads).
+	Sole owner of neutral weapon/armor scoring math (dmg columns, DPS, burst, spread).
 
-	Game/tip: gather fields → dogma_item_stats.weapon_calculate(input) → display.
-	Editor (lupa): build the same input table from merged LTX → calculate → YML.
+	Callers gather inputs (LTX fields + reload_s from motions), then call:
+	  dogma_item_stats.weapon_calculate(input)
+	  dogma_item_stats.armor_calculate(input)
 
-	Input tables are plain Lua tables; see weapon_calculate / armor_calculate.
+	SALE (lupa) and any in-game scorer must use these — do not reimplement.
+	Weapon tooltips keep a richer live damage table (barrel/silencer/condition/diff);
+	that UI path is display-only and is not the loadout scorer.
+
+	reload_s is an input (OMF/motions offline, tip.weapon_reload_seconds in-game).
+	weapon_input_from_ini / armor_input_from_ini need ini_sys (game only).
 ]]
 
 local TORSO_TIERS = {
@@ -71,6 +77,29 @@ local VEL_MAX = 10
 local SPEED_RUN = 5.0
 local BURST_KICK_DEG = 3
 
+-- CQC snipers (parent_section keys). +0.05 to raw k_ap before combat scale.
+local SNIPER_AP_BONUS = 0.05
+local SNIPERS = {
+	["wpn_dvl10_m1"] = true,
+	["wpn_dvl10"] = true,
+	["wpn_l96a1"] = true,
+	["wpn_l96a1m"] = true,
+	["wpn_m98b"] = true,
+	["wpn_m24"] = true,
+	["wpn_remington700"] = true,
+	["wpn_remington700_archangel"] = true,
+	["wpn_remington700_lapua700"] = true,
+	["wpn_remington700_magpul_pro"] = true,
+	["wpn_remington700_mod_x_gen3"] = true,
+	["wpn_steyr_scout_big"] = true,
+	["wpn_sv98"] = true,
+	["wpn_sv98_custom"] = true,
+	["wpn_k98_mod"] = true,
+	["wpn_wa2000"] = true,
+	["wpn_trg"] = true,
+	["wpn_mosin"] = true,
+}
+
 local PROT_KEYS = {
 	"fire_wound_protection",
 	"strike_protection",
@@ -86,6 +115,15 @@ local PROT_KEYS = {
 local function dist_atten(air_res, dist)
 	local k = air_res or 0.05
 	return 1 + ((dist or DEFAULT_DIST) / 200) * k * 0.5 / (1 - k + 0.1)
+end
+
+-- parent_section preferred when known (variants inherit sniper status from parent).
+local function sniper_ap_bonus(sec, parent_section)
+	local parent = parent_section or sec
+	if parent and SNIPERS[parent] then
+		return SNIPER_AP_BONUS
+	end
+	return 0
 end
 
 local function combat_ap(k_ap_ltx, air_res, dist, ap_scale, barrel, silencer, sniper_bonus)
@@ -268,24 +306,25 @@ local function weapon_calculate(input)
 	local scope_ok = ((input.scope_status or 0) > 0) and 1 or 0
 	local sil_ok = ((input.silencer_status or 0) > 0) and 1 or 0
 
-	local mut_dps = sustained_dps(col_max[1], rpm, mag, reload_s)
+	-- Keys match tooltip torso columns Min / Lgt / Lgt+ / Mid / Mid+.
+	local min_dps = sustained_dps(col_max[1], rpm, mag, reload_s)
 	local lgt_dps = sustained_dps(col_max[2], rpm, mag, reload_s)
-	local mid_dps = sustained_dps(col_max[3], rpm, mag, reload_s)
-	local hvy_dps = sustained_dps(col_max[4], rpm, mag, reload_s)
-	local max_dps = sustained_dps(col_max[5], rpm, mag, reload_s)
+	local lgtp_dps = sustained_dps(col_max[3], rpm, mag, reload_s)
+	local mid_dps = sustained_dps(col_max[4], rpm, mag, reload_s)
+	local midp_dps = sustained_dps(col_max[5], rpm, mag, reload_s)
 
 	return {
 		hit_power = hit_power,
-		mut_dmg = col_max[1] or 0,
+		min_dmg = col_max[1] or 0,
 		lgt_dmg = col_max[2] or 0,
-		mid_dmg = col_max[3] or 0,
-		hvy_dmg = col_max[4] or 0,
-		max_dmg = col_max[5] or 0,
-		mut_dps = mut_dps,
+		lgtp_dmg = col_max[3] or 0,
+		mid_dmg = col_max[4] or 0,
+		midp_dmg = col_max[5] or 0,
+		min_dps = min_dps,
 		lgt_dps = lgt_dps,
+		lgtp_dps = lgtp_dps,
 		mid_dps = mid_dps,
-		hvy_dps = hvy_dps,
-		max_dps = max_dps,
+		midp_dps = midp_dps,
 		burst = burst,
 		spread_ads = ads,
 		spread_hip = hip,
@@ -295,7 +334,6 @@ local function weapon_calculate(input)
 		rpm = rpm,
 		mag = mag,
 		cost = input.cost or 0,
-		rounds_n = #rounds,
 		col_src = col_src,
 	}
 end
@@ -309,7 +347,7 @@ end
 local function armor_calculate(input)
 	input = input or {}
 	local prots = input.protections or input
-	local out = { cost = input.cost or 0, is_helmet = input.is_helmet and true or false }
+	local out = { cost = input.cost or 0 }
 	for i = 1, #PROT_KEYS do
 		local k = PROT_KEYS[i]
 		out[k] = tonumber(prots[k]) or 0
@@ -366,6 +404,7 @@ local function weapon_input_from_ini(wpn_sec, dist)
 	if ini_sys:line_exist(wpn_sec, "cam_return") then
 		return_on = f("cam_return", 1) ~= 0
 	end
+	local parent = s("parent_section", wpn_sec)
 	return {
 		hit_power = hp,
 		rpm = f("rpm", 0),
@@ -382,6 +421,7 @@ local function weapon_input_from_ini(wpn_sec, dist)
 		cam_relax_speed = f("cam_relax_speed", 0),
 		zoom_cam_relax_speed = f("zoom_cam_relax_speed", 0),
 		cam_return = return_on,
+		sniper_ap_bonus = sniper_ap_bonus(wpn_sec, parent),
 		cost = f("cost", 0),
 		dist = dist or DEFAULT_DIST,
 		rounds = rounds,
@@ -411,7 +451,9 @@ _G.dogma_item_stats = {
 	PROT_KEYS = PROT_KEYS,
 	DEFAULT_DIST = DEFAULT_DIST,
 	DAMAGE_SCALE = DAMAGE_SCALE,
+	SNIPER_AP_BONUS = SNIPER_AP_BONUS,
 	sustained_dps = sustained_dps,
+	sniper_ap_bonus = sniper_ap_bonus,
 	weapon_calculate = weapon_calculate,
 	armor_calculate = armor_calculate,
 	weapon_input_from_ini = weapon_input_from_ini,

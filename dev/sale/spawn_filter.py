@@ -56,7 +56,117 @@ def name_blocked(sec: str) -> bool:
     # Decorative / non-functional gear (decor_psi_helmet, wpn_toz34_decor).
     if s.startswith("decor_") or "_decor_" in s or s.endswith("_decor"):
         return True
+    # Explosives / launchers — scored poorly by ballistic math; excluded for now.
+    if _explosive_name(s):
+        return True
+    # Gauss rifle / ammo — unique quest gear, not loadout-shop.
+    if "gauss" in s:
+        return True
     return False
+
+
+def _explosive_name(s: str) -> bool:
+    s = s.lower()
+    needles = (
+        "rpg",
+        "m79",
+        "rg-6",
+        "rg6",
+        "grenade",
+        "rocket",
+        "gp25",
+        "gp-25",
+        "ag36",
+        "mgl",
+        "ags_",
+        "ags30",
+        "ags-30",
+        "panzerschreck",
+        "law_",
+        "rpg7",
+    )
+    return any(n in s for n in needles)
+
+
+def _ammo_is_explosive(ammo_sec: str, sections: dict[str, dict[str, str]] | None = None) -> bool:
+    a = (ammo_sec or "").strip()
+    if not a:
+        return False
+    al = a.lower()
+    if any(
+        x in al
+        for x in (
+            "vog-",
+            "vog_",
+            "m209",
+            "og-7",
+            "og7",
+            "grenade",
+            "rocket",
+            "rpg",
+        )
+    ):
+        return True
+    if not sections:
+        return False
+    d = sections.get(a) or {}
+    if (d.get("fake_grenade_name") or "").strip():
+        return True
+    flag = str(d.get("grenade_ammo") or "").strip().lower()
+    return flag in ("true", "1", "on", "yes")
+
+
+def is_explosive_weapon(
+    sec: str,
+    d: dict[str, str] | None = None,
+    sections: dict[str, dict[str, str]] | None = None,
+    *,
+    ammo_class: list[str] | None = None,
+) -> bool:
+    """True for GLs / rockets / grenade launchers (exclude from SALE for now)."""
+    if _explosive_name(sec):
+        return True
+    d = d or {}
+    cls = (d.get("class") or "").upper()
+    if cls in ("WP_ROCKET", "WP_GRENADE", "G_RPG7"):
+        return True
+    if (d.get("hit_type_blast") or "").strip() and (d.get("blast") or "").strip():
+        # Weapon-native explosion (RPG shells etc.) — not underbarrel stubs.
+        try:
+            if float(d.get("blast") or 0) > 0:
+                return True
+        except (TypeError, ValueError):
+            return True
+    ammos = ammo_class
+    if ammos is None:
+        ammos = [
+            p.strip()
+            for p in str(d.get("ammo_class") or "").split(",")
+            if p.strip()
+        ]
+    for ammo in ammos or []:
+        if _ammo_is_explosive(ammo, sections):
+            return True
+    return False
+
+
+def is_gauss_weapon(
+    sec: str,
+    d: dict[str, str] | None = None,
+    *,
+    ammo_class: list[str] | None = None,
+) -> bool:
+    """True for gauss rifle / anything chambered in gauss ammo."""
+    if "gauss" in (sec or "").lower():
+        return True
+    ammos = ammo_class
+    if ammos is None and d is not None:
+        ammos = [
+            p.strip()
+            for p in str(d.get("ammo_class") or "").split(",")
+            if p.strip()
+        ]
+    return any("gauss" in str(a).lower() for a in (ammos or []))
 
 
 def is_spawnable_gear(

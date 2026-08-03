@@ -1,7 +1,8 @@
-"""Pure Python mirror of dogma_item_stats.script (weapon/armor calculate).
+"""Weapon/armor calculate for SALE.
 
-Kept in sync with src/_common/scripts/dogma_item_stats.script. Used when lupa
-is unavailable; lupa path loads the Lua file when possible.
+Primary path: lupa → src/_common/scripts/dogma_item_stats.script (sole math owner).
+This module keeps a Python mirror as fallback if lupa/Lua fails to load, and
+builds input tables from merged LTX (including sniper_ap_bonus).
 """
 
 from __future__ import annotations
@@ -148,6 +149,15 @@ def _effective_dmg(
 
 
 def weapon_calculate(inp: dict[str, Any]) -> dict[str, Any]:
+    from . import lua_calc
+
+    lua_out = lua_calc.weapon_calculate(inp)
+    if lua_out is not None:
+        return lua_out
+    return _weapon_calculate_py(inp)
+
+
+def _weapon_calculate_py(inp: dict[str, Any]) -> dict[str, Any]:
     dist = _f(inp.get("dist"), DEFAULT_DIST)
     hit_power = _f(inp.get("hit_power"), 0)
     rpm = _f(inp.get("rpm"), 0)
@@ -236,18 +246,19 @@ def weapon_calculate(inp: dict[str, Any]) -> dict[str, Any]:
                     burst = n
                     break
 
+    # Keys match tooltip torso columns Min / Lgt / Lgt+ / Mid / Mid+.
     return {
         "hit_power": hit_power,
-        "mut_dmg": col_max[0],
+        "min_dmg": col_max[0],
         "lgt_dmg": col_max[1],
-        "mid_dmg": col_max[2],
-        "hvy_dmg": col_max[3],
-        "max_dmg": col_max[4],
-        "mut_dps": sustained_dps(col_max[0], rpm, mag, reload_s),
+        "lgtp_dmg": col_max[2],
+        "mid_dmg": col_max[3],
+        "midp_dmg": col_max[4],
+        "min_dps": sustained_dps(col_max[0], rpm, mag, reload_s),
         "lgt_dps": sustained_dps(col_max[1], rpm, mag, reload_s),
-        "mid_dps": sustained_dps(col_max[2], rpm, mag, reload_s),
-        "hvy_dps": sustained_dps(col_max[3], rpm, mag, reload_s),
-        "max_dps": sustained_dps(col_max[4], rpm, mag, reload_s),
+        "lgtp_dps": sustained_dps(col_max[2], rpm, mag, reload_s),
+        "mid_dps": sustained_dps(col_max[3], rpm, mag, reload_s),
+        "midp_dps": sustained_dps(col_max[4], rpm, mag, reload_s),
         "burst": burst,
         "spread_ads": ads,
         "spread_hip": hip,
@@ -257,19 +268,59 @@ def weapon_calculate(inp: dict[str, Any]) -> dict[str, Any]:
         "rpm": rpm,
         "mag": mag,
         "cost": _f(inp.get("cost"), 0),
-        "rounds_n": len(rounds),
     }
 
 
 def armor_calculate(inp: dict[str, Any]) -> dict[str, Any]:
+    from . import lua_calc
+
+    lua_out = lua_calc.armor_calculate(inp)
+    if lua_out is not None:
+        return lua_out
+    return _armor_calculate_py(inp)
+
+
+def _armor_calculate_py(inp: dict[str, Any]) -> dict[str, Any]:
     prots = inp.get("protections") or inp
     out: dict[str, Any] = {
         "cost": _f(inp.get("cost"), 0),
-        "is_helmet": bool(inp.get("is_helmet")),
     }
     for k in PROT_KEYS:
         out[k] = _f(prots.get(k), 0)
     return out
+
+
+# Fallback sniper list (kept in sync with dogma_item_stats.SNIPERS) when lupa is down.
+_SNIPER_AP_BONUS = 0.05
+_SNIPERS = {
+    "wpn_dvl10_m1",
+    "wpn_dvl10",
+    "wpn_l96a1",
+    "wpn_l96a1m",
+    "wpn_m98b",
+    "wpn_m24",
+    "wpn_remington700",
+    "wpn_remington700_archangel",
+    "wpn_remington700_lapua700",
+    "wpn_remington700_magpul_pro",
+    "wpn_remington700_mod_x_gen3",
+    "wpn_steyr_scout_big",
+    "wpn_sv98",
+    "wpn_sv98_custom",
+    "wpn_k98_mod",
+    "wpn_wa2000",
+    "wpn_trg",
+    "wpn_mosin",
+}
+
+
+def _sniper_ap_bonus(sec: str, parent: str | None) -> float:
+    from . import lua_calc
+
+    if lua_calc.available():
+        return lua_calc.sniper_ap_bonus(sec, parent or sec)
+    key = parent or sec
+    return _SNIPER_AP_BONUS if key in _SNIPERS else 0.0
 
 
 def build_weapon_input(sec: str, sections: dict[str, dict[str, str]]) -> dict[str, Any]:
@@ -306,6 +357,7 @@ def build_weapon_input(sec: str, sections: dict[str, dict[str, str]]) -> dict[st
     cam_return = True
     if "cam_return" in d:
         cam_return = gf("cam_return", 1) != 0
+    parent = (d.get("parent_section") or sec).strip() or sec
     return {
         "hit_power": _f(hp, 0.5),
         "rpm": gf("rpm"),
@@ -322,6 +374,7 @@ def build_weapon_input(sec: str, sections: dict[str, dict[str, str]]) -> dict[st
         "cam_relax_speed": gf("cam_relax_speed"),
         "zoom_cam_relax_speed": gf("zoom_cam_relax_speed"),
         "cam_return": cam_return,
+        "sniper_ap_bonus": _sniper_ap_bonus(sec, parent),
         "cost": gf("cost"),
         "rounds": rounds,
     }

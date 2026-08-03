@@ -13,9 +13,13 @@ log = get_logger("settings")
 PKG = Path(__file__).resolve().parent
 CACHE = PKG / "cache"
 SETTINGS_PATH = PKG / "settings.json"
+# Keep balance next to settings (not under cache/) so thumb/regen wipes don't touch it.
+BALANCE_YML = PKG / "balance.yml"
+LEGACY_BALANCE_YML = CACHE / "balance.yml"
 ITEMS_YML = CACHE / "items.yml"
-BALANCE_YML = CACHE / "balance.yml"
 THUMBS_DIR = CACHE / "thumbs"
+# Purchasable keys stripped on export (captured at regenerate from stock LTX).
+STOCK_STRIP_YML = CACHE / "stock_strip.yml"
 
 
 def ensure_dirs() -> None:

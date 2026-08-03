@@ -7,18 +7,19 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .balance import effective_category
+import yaml
+
+from .balance import ammo_enabled_map, effective_category
 from .diaglog import get_logger
 from .score import (
-    FACTION_BLOC,
     FACTION_COMMUNITY,
     FACTIONS,
     armor_pts,
-    bloc_ok,
     is_bad_ammo,
-    weapon_bloc,
+    weapon_ammo_allowed,
     weapon_pts,
 )
+from .settings import STOCK_STRIP_YML, ensure_dirs
 
 log = get_logger("export")
 
@@ -33,15 +34,22 @@ _DEFAULT_EXPORT = (
 
 
 def _in_shop_weapon(
-    entry: dict[str, Any], faction: str, cat_cfg: dict[str, Any]
+    entry: dict[str, Any],
+    faction: str,
+    cat_cfg: dict[str, Any],
+    *,
+    ammo_map: dict[str, bool] | None = None,
 ) -> tuple[bool, int]:
     stats = entry.get("stats") or {}
-    pts = weapon_pts(stats, cat_cfg.get("weights") or {}, float(cat_cfg.get("cost_mult") or 1000))
+    pts = weapon_pts(
+        stats,
+        cat_cfg.get("weights") or {},
+        float(cat_cfg.get("cost_mult") or 1000),
+        cat_cfg.get("ceilings"),
+    )
     if pts >= float(cat_cfg.get("max_pts") or 900):
         return False, pts
-    bloc = weapon_bloc("", ",".join(entry.get("ammo_class") or []))
-    want = FACTION_BLOC.get(faction, "both")
-    if not bloc_ok(bloc, want):
+    if not weapon_ammo_allowed(entry.get("ammo_class") or [], ammo_map):
         return False, pts
     return True, pts
 
@@ -59,6 +67,7 @@ def _in_shop_armor(
         cat_cfg.get("weights") or {},
         float(cat_cfg.get("cost_mult") or 1000),
         is_helmet=is_helmet,
+        ceilings=cat_cfg.get("ceilings"),
     )
     if pts >= float(cat_cfg.get("max_pts") or 550):
         return False, pts
@@ -89,9 +98,10 @@ def build_faction_shop(
     wcfg = effective_category(balance, faction, "weapons")
     ocfg = effective_category(balance, faction, "outfits")
     hcfg = effective_category(balance, faction, "helmets")
+    ammo_map = ammo_enabled_map(balance, faction)
 
     for sec, entry in (items.get("weapons") or {}).items():
-        ok, pts = _in_shop_weapon(entry, faction, wcfg)
+        ok, pts = _in_shop_weapon(entry, faction, wcfg, ammo_map=ammo_map)
         if ok:
             shop[sec] = pts
 
@@ -178,23 +188,95 @@ def parse_purchasable_keys(ltx_path: Path) -> dict[str, list[str]]:
     return found
 
 
-def find_stock_loadouts(gamma: Path | None) -> Path | None:
+def find_stock_loadouts(
+    anomaly: Path | None = None, gamma: Path | None = None
+) -> Path | None:
+    """Locate stock new_game_loadouts.ltx (regenerate-time only)."""
     candidates: list[Path] = []
     if gamma:
         candidates.extend(
             [
-                gamma / "overwrite" / "gamedata" / "configs" / "items" / "settings" / "new_game_loadouts.ltx",
-                gamma / "gamedata" / "configs" / "items" / "settings" / "new_game_loadouts.ltx",
+                gamma
+                / "overwrite"
+                / "gamedata"
+                / "configs"
+                / "items"
+                / "settings"
+                / "new_game_loadouts.ltx",
+                gamma
+                / "gamedata"
+                / "configs"
+                / "items"
+                / "settings"
+                / "new_game_loadouts.ltx",
             ]
         )
-    # Anomaly unpack next to common GAMMA layouts
-    candidates.append(
-        Path(r"c:\Anomaly\tools\_unpacked\configs\items\settings\new_game_loadouts.ltx")
-    )
+    if anomaly:
+        candidates.extend(
+            [
+                anomaly
+                / "tools"
+                / "_unpacked"
+                / "configs"
+                / "items"
+                / "settings"
+                / "new_game_loadouts.ltx",
+                anomaly
+                / "gamedata"
+                / "configs"
+                / "items"
+                / "settings"
+                / "new_game_loadouts.ltx",
+            ]
+        )
     for p in candidates:
         if p.is_file():
             return p
     return None
+
+
+def cache_stock_strip(
+    anomaly: Path | None = None, gamma: Path | None = None
+) -> dict[str, list[str]]:
+    """Parse stock shop keys → cache/stock_strip.yml (call from regenerate)."""
+    ensure_dirs()
+    stock = find_stock_loadouts(anomaly, gamma)
+    strip = (
+        parse_purchasable_keys(stock)
+        if stock
+        else {s: [] for s in _LOADOUT_SECTIONS}
+    )
+    try:
+        STOCK_STRIP_YML.write_text(
+            yaml.safe_dump(strip, sort_keys=False), encoding="utf-8"
+        )
+        n = sum(len(v) for v in strip.values())
+        log.info(
+            "cached stock strip keys=%d from %s → %s",
+            n,
+            stock or "(none)",
+            STOCK_STRIP_YML,
+        )
+    except OSError:
+        log.exception("failed writing stock strip cache")
+    return strip
+
+
+def load_stock_strip() -> dict[str, list[str]]:
+    """Load strip keys from regenerate cache (no Anomaly/GAMMA access)."""
+    if not STOCK_STRIP_YML.is_file():
+        return {s: [] for s in _LOADOUT_SECTIONS}
+    try:
+        data = yaml.safe_load(STOCK_STRIP_YML.read_text(encoding="utf-8")) or {}
+    except Exception:
+        log.exception("stock strip cache load failed")
+        return {s: [] for s in _LOADOUT_SECTIONS}
+    out: dict[str, list[str]] = {s: [] for s in _LOADOUT_SECTIONS}
+    if isinstance(data, dict):
+        for sec, keys in data.items():
+            if sec in out and isinstance(keys, list):
+                out[sec] = [str(k) for k in keys]
+    return out
 
 
 def export_shop_ltx(
@@ -203,9 +285,8 @@ def export_shop_ltx(
     dest: Path,
     *,
     stock_ltx: Path | None = None,
-    gamma: Path | None = None,
 ) -> Path:
-    log.info("export begin dest=%s gamma=%s", dest, gamma)
+    log.info("export begin dest=%s", dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
 
     shops = {f: build_faction_shop(items, balance, f) for f in FACTIONS}
@@ -219,13 +300,26 @@ def export_shop_ltx(
         len(ammo_types),
     )
 
-    stock = stock_ltx or find_stock_loadouts(gamma)
-    strip = parse_purchasable_keys(stock) if stock else {s: [] for s in _LOADOUT_SECTIONS}
-    if stock:
-        n_strip = sum(len(v) for v in strip.values())
-        log.info("stripping %d stock shop keys from %s", n_strip, stock)
+    if stock_ltx and stock_ltx.is_file():
+        strip = parse_purchasable_keys(stock_ltx)
+        log.info(
+            "stripping %d stock shop keys from explicit %s",
+            sum(len(v) for v in strip.values()),
+            stock_ltx,
+        )
     else:
-        log.warning("no stock new_game_loadouts.ltx — not stripping prior shop lines")
+        strip = load_stock_strip()
+        n_strip = sum(len(v) for v in strip.values())
+        if n_strip:
+            log.info(
+                "stripping %d stock shop keys from cache %s",
+                n_strip,
+                STOCK_STRIP_YML,
+            )
+        else:
+            log.warning(
+                "no stock strip cache — regenerate once to capture stock shop keys"
+            )
 
     lines = [
         "; DOGMA Stat Derived Loadout — generated by SALE (Stalker Anomaly Loadout Editor)",
@@ -281,15 +375,6 @@ def export_shop_ltx(
     return dest
 
 
-def default_export_path(gamma: Path | None = None) -> Path:
-    """Prefer repo feature config; optional gamma overwrite for live testing."""
-    if gamma:
-        live = (
-            gamma
-            / "overwrite"
-            / "gamedata"
-            / "configs"
-            / "mod_new_game_loadouts_dogma_stat_derived.ltx"
-        )
-        return live
+def default_export_path(_gamma: Path | None = None) -> Path:
+    """Repo feature config path (no Anomaly/GAMMA required at export time)."""
     return _DEFAULT_EXPORT

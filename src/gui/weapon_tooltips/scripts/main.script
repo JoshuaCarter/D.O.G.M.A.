@@ -1657,6 +1657,11 @@ local function sniper_ap_bonus(sec)
 		return 0
 	end
 	local parent = ini_sys:r_string_ex(sec, "parent_section") or sec
+	-- Prefer shared list in dogma_item_stats (same as SALE/loadout scoring).
+	local IS = _G.dogma_item_stats
+	if IS and IS.sniper_ap_bonus then
+		return IS.sniper_ap_bonus(sec, parent)
+	end
 	if SNIPERS[parent] then
 		return SNIPER_AP_BONUS
 	end
@@ -1860,11 +1865,6 @@ local function collect_sorted_ammo_rounds(obj, sec, max_count, class_only)
 	return rounds
 end
 
--- Dynamic-loadout scoring: always full ammo_class (ignore live get_ammo subset).
-local function collect_score_ammo_rounds(wpn_sec)
-	return collect_sorted_ammo_rounds(nil, wpn_sec, nil, true)
-end
-
 local function build_ammo_damage_rows(obj, sec)
 	local all = collect_sorted_ammo_rounds(obj, sec, nil)
 	if not all then
@@ -2023,134 +2023,7 @@ stalker_ammo_damage_items = function(obj, sec)
 	return items
 end
 
---------------------------------------------------------------------------
--- Dynamic-loadout scoring API (section-only, neutral barrel/silencer).
--- Same ammo typing (AMMO_TYPE_SHORT / color families) + CQC tier math as the
--- damage table - callers should not re-classify HP/FMJ/AP classification.
---------------------------------------------------------------------------
--- Dynamic-loadout armor columns (TT torso Min → Mid+): max across ammos per col.
-local SCORE_ARMOR_COLS = 5
-local SCORE_COL_KEYS = { "mut_dmg", "lgt_dmg", "mid_dmg", "hvy_dmg", "max_dmg" }
-
-local function pick_round_by_color(rounds, color)
-	for _, r in ipairs(rounds or {}) do
-		if ammo_color_key(r.label) == color then
-			return r
-		end
-	end
-	return nil
-end
-
--- Returns scoring fields for one weapon section. Safe with obj=nil (menu).
--- Per SCORE_ARMOR_COLS torso column: max damage across all TT-table ammos.
-local function weapon_score_table_stats(wpn_sec, dist)
-	if not wpn_sec or wpn_sec == "" then
-		return nil
-	end
-	dist = dist or REF_DIST_M
-	-- Full ammo_class - never the live get_ammo subset (broken at New Game).
-	local rounds = collect_score_ammo_rounds(wpn_sec)
-	if not rounds then
-		return nil
-	end
-	local hit_power = gun_hit_power(nil, wpn_sec)
-	if not hit_power or hit_power <= 0 then
-		return nil
-	end
-	local sniper_ap = sniper_ap_bonus(wpn_sec)
-
-	local score_tiers = {}
-	for i = 1, SCORE_ARMOR_COLS do
-		score_tiers[i] = TORSO_TIERS[i]
-	end
-
-	local col_max = {}
-	local col_src = {}
-	for i = 1, SCORE_ARMOR_COLS do
-		col_max[i] = 0
-		col_src[i] = nil
-	end
-
-	for _, r in ipairs(rounds) do
-		local cells = calc_tier_damages(
-			hit_power, r.k_hit, r.k_ap, r.air_res, score_tiers,
-			false, dist, r.pellets, 1, r.sec, 1, sniper_ap
-		)
-		for i = 1, SCORE_ARMOR_COLS do
-			local dmg = (cells[i] and cells[i].dmg) or 0
-			if dmg > col_max[i] then
-				col_max[i] = dmg
-				col_src[i] = { sec = r.sec, label = r.label }
-			end
-		end
-	end
-
-	-- If tooltip mutant-row damage exceeds armor-col-1 (mut_dmg), use that instead.
-	-- Neutral barrel/diff (menu scoring) - same formula as mutant_ammo_damage_items.
-	local mut_max = 0
-	local mut_src = nil
-	for _, r in ipairs(rounds) do
-		local dmg = math.floor(
-			hit_power / dist_atten(r.air_res, dist)
-				* r.k_hit * r.pellets
-				* MUTANT_BASE_MULT * (MUTANT_AMMO_MULT[r.sec] or MUTANT_AMMO_MULT_DEFAULT)
-				* DAMAGE_SCALE + 0.5
-		)
-		if dmg > mut_max then
-			mut_max = dmg
-			mut_src = { sec = r.sec, label = r.label, kind = "mutant_row" }
-		end
-	end
-	if mut_max > (col_max[1] or 0) then
-		col_max[1] = mut_max
-		col_src[1] = mut_src
-	end
-
-	local fmj_r = pick_round_by_color(rounds, "yellow")
-	local ap_r = pick_round_by_color(rounds, "orange")
-	local hp_r = pick_round_by_color(rounds, "blue")
-
-	local out = {
-		hit_power = hit_power,
-		hit_power_pct = hit_power * 100,
-		fmj_sec = fmj_r and fmj_r.sec or nil,
-		ap_sec = ap_r and ap_r.sec or nil,
-		hp_sec = hp_r and hp_r.sec or nil,
-		fmj_label = fmj_r and fmj_r.label or nil,
-		ap_label = ap_r and ap_r.label or nil,
-		hp_label = hp_r and hp_r.label or nil,
-		col_max = col_max,
-		col_src = col_src,
-		score_cols = SCORE_ARMOR_COLS,
-		rounds_n = #rounds,
-	}
-	for i = 1, SCORE_ARMOR_COLS do
-		out[SCORE_COL_KEYS[i]] = col_max[i]
-	end
-
-	-- Sustained DPS columns (shared calculator in dogma_item_stats).
-	local IS = _G.dogma_item_stats
-	if IS and IS.sustained_dps then
-		local rpm = ini_sys:r_float_ex(wpn_sec, "rpm") or 0
-		local mag = ini_sys:r_float_ex(wpn_sec, "ammo_mag_size") or 0
-		local reload_s = 2.5
-		local tip = _G.dogma_gui_weapon_tooltips
-		if tip and tip.weapon_reload_seconds then
-			local ok_r, t = pcall(tip.weapon_reload_seconds, wpn_sec)
-			if ok_r and type(t) == "number" and t > 0 then
-				reload_s = t
-			end
-		end
-		local dps_keys = { "mut_dps", "lgt_dps", "mid_dps", "hvy_dps", "max_dps" }
-		for i = 1, SCORE_ARMOR_COLS do
-			out[dps_keys[i]] = IS.sustained_dps(col_max[i], rpm, mag, reload_s)
-		end
-	end
-	return out
-end
-
 _G.dogma_gui_weapon_tooltips = _G.dogma_gui_weapon_tooltips or {}
-_G.dogma_gui_weapon_tooltips.weapon_score_table_stats = weapon_score_table_stats
 _G.dogma_gui_weapon_tooltips.ammo_display_label = ammo_display_label
 -- Prefer stats.script implementation when present (same function name).
 if not _G.dogma_gui_weapon_tooltips.weapon_use_mag then

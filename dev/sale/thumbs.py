@@ -14,7 +14,9 @@ log = get_logger("thumbs")
 
 # Anomaly inventory atlas cell size (pixels per inv_grid unit).
 CELL = 50
-THUMB_SIZE = 100  # fallback color tile
+# Upscale factor when writing PNG thumbs (native crop is CELL×CELL units).
+THUMB_SCALE = 2
+THUMB_SIZE = 100 * THUMB_SCALE  # fallback color tile
 DEFAULT_SHEET = "ui/ui_icon_equipment.dds"
 
 _texture_roots: list[Path] = []
@@ -268,6 +270,11 @@ def make_thumb(
         if crop is None or _crop_is_empty(crop):
             continue
         try:
+            if THUMB_SCALE != 1:
+                crop = crop.resize(
+                    (crop.width * THUMB_SCALE, crop.height * THUMB_SCALE),
+                    Image.Resampling.LANCZOS,
+                )
             crop.save(dest)
             fb = out_dir / f"{sec}.fallback.png"
             if fb.is_file():

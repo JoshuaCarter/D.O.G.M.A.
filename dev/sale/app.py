@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import shutil
 import sys
 import time
 import traceback
 from pathlib import Path
 from typing import Any
 
-from PyQt6.QtCore import QEvent, QSize, Qt, QThread, QTimer, pyqtSignal
+from PyQt6.QtCore import QEvent, QSize, Qt, QThread, pyqtSignal
 from PyQt6.QtGui import (
     QAction,
     QBrush,
@@ -17,6 +18,7 @@ from PyQt6.QtGui import (
     QIcon,
     QKeySequence,
     QPainter,
+    QPalette,
     QPen,
     QPixmap,
     QShortcut,
@@ -91,11 +93,20 @@ from .score import (
     faction_label,
     hit_power_pct,
     normalize_curve,
+    section_name_faction,
     weapon_ammo_allowed,
+    weapon_name_faction_ok,
     weapon_pts,
     weapon_stat_terms,
 )
-from .settings import THUMBS_DIR, load_settings, save_settings
+from .settings import (
+    CACHE,
+    THUMBS_DIR,
+    get_deploy_target,
+    load_settings,
+    save_settings,
+    set_deploy_target,
+)
 
 log = get_logger("app")
 
@@ -174,6 +185,8 @@ _TABLE_STYLE = (
     f"padding: 5px 8px; {_HEADER_FONT} text-align: left; }}"
 )
 _SORT_NAME_BG = QColor(48, 78, 118)
+# Stats excluded from scoring (weight 0) — Weight / Final columns.
+_STAT_EXCLUDED_FG = "#555555"
 
 
 def _header_label(text: str) -> QLabel:
@@ -322,17 +335,48 @@ class RegenWorker(QThread):
             self.failed.emit(f"{exc}\n\nSee log:\n{LOG_PATH}")
 
 
+# Input events eaten while the busy overlay is up (app-wide filter).
+_BUSY_BLOCK_EVENTS = frozenset(
+    {
+        QEvent.Type.MouseButtonPress,
+        QEvent.Type.MouseButtonRelease,
+        QEvent.Type.MouseButtonDblClick,
+        QEvent.Type.MouseMove,
+        QEvent.Type.Wheel,
+        QEvent.Type.KeyPress,
+        QEvent.Type.KeyRelease,
+        QEvent.Type.ShortcutOverride,
+        QEvent.Type.Shortcut,
+        QEvent.Type.ContextMenu,
+        QEvent.Type.Enter,
+        QEvent.Type.Leave,
+        QEvent.Type.HoverEnter,
+        QEvent.Type.HoverLeave,
+        QEvent.Type.HoverMove,
+        QEvent.Type.DragEnter,
+        QEvent.Type.DragMove,
+        QEvent.Type.Drop,
+        QEvent.Type.TouchBegin,
+        QEvent.Type.TouchUpdate,
+        QEvent.Type.TouchEnd,
+        QEvent.Type.Gesture,
+    }
+)
+
+
 class BusyOverlayHost(QWidget):
     """Hosts a child widget with a darker grey overlay that blocks input while busy.
 
     Does **not** call setEnabled(False) on content — that can make sliders emit
-    valueChanged(min) and corrupt Scale max / weights.
+    valueChanged(min) and corrupt Scale max / weights. Instead an app-wide event
+    filter discards all input for the duration.
     """
 
     def __init__(self, child: QWidget, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._content = child
         self._busy = False
+        self._app_filter = False
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
@@ -344,54 +388,48 @@ class BusyOverlayHost(QWidget):
         self.overlay.setStyleSheet("background-color: rgba(24, 24, 24, 180);")
         self.overlay.hide()
         self.overlay.raise_()
-        child.installEventFilter(self)
 
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
         self.overlay.setGeometry(self.rect())
 
     def eventFilter(self, obj, event) -> bool:  # noqa: N802
-        if self._busy and obj is self._content:
-            et = event.type()
-            if et in (
-                QEvent.Type.MouseButtonPress,
-                QEvent.Type.MouseButtonRelease,
-                QEvent.Type.MouseButtonDblClick,
-                QEvent.Type.MouseMove,
-                QEvent.Type.Wheel,
-                QEvent.Type.KeyPress,
-                QEvent.Type.KeyRelease,
-                QEvent.Type.ShortcutOverride,
-            ):
-                return True
+        if self._busy and event.type() in _BUSY_BLOCK_EVENTS:
+            return True
         return super().eventFilter(obj, event)
 
     def set_busy(self, busy: bool) -> None:
         busy = bool(busy)
+        was = self._busy
         self._busy = busy
-        # Pass mouse/wheel through content so overlay (raised + grab) owns input.
-        # Avoid setEnabled(False) — it can emit slider valueChanged and write junk.
-        self._content.setAttribute(
-            Qt.WidgetAttribute.WA_TransparentForMouseEvents, busy
-        )
         self.overlay.setVisible(busy)
+        app = QApplication.instance()
         if busy:
             self.overlay.setGeometry(self.rect())
             self.overlay.raise_()
             self.overlay.setFocus(Qt.FocusReason.OtherFocusReason)
-            self.overlay.grabMouse()
-            self.overlay.grabKeyboard()
+            if app is not None and not self._app_filter:
+                app.installEventFilter(self)
+                self._app_filter = True
         else:
-            if self.overlay.mouseGrabber() is self.overlay:
-                self.overlay.releaseMouse()
-            if self.overlay.keyboardGrabber() is self.overlay:
-                self.overlay.releaseKeyboard()
+            if app is not None and self._app_filter:
+                app.removeEventFilter(self)
+                self._app_filter = False
+            # Drop any focus acquired during busy so widgets don't keep a stuck grab.
+            if was and self.overlay.hasFocus():
+                self.clearFocus()
 
 
 class FineStepSlider(QSlider):
     """Horizontal slider whose wheel moves one singleStep and doesn't scroll parents."""
 
     def wheelEvent(self, event) -> None:  # noqa: N802
+        # Busy overlay uses an app filter; belt-and-suspenders if that is bypassed.
+        host = self.window()
+        ui = getattr(host, "ui_host", None)
+        if ui is not None and getattr(ui, "_busy", False):
+            event.accept()
+            return
         delta = event.angleDelta().y() or event.angleDelta().x()
         if delta == 0:
             event.ignore()
@@ -656,6 +694,10 @@ class MainWindow(QMainWindow):
         super().__init__()
         log.info("MainWindow.__init__ begin")
         self.setWindowTitle("SALE — Stalker Anomaly Loadout Editor")
+        # Opaque dark fill before first paint (same as SAGE).
+        self.setAutoFillBackground(True)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setPalette(_dark_palette())
         try:
             self.settings = load_settings()
             w = int(self.settings.get("window_w") or 1600)
@@ -690,14 +732,10 @@ class MainWindow(QMainWindow):
                     if saved_sel.get(c):
                         self._sel_by_cat[c] = str(saved_sel[c])
             self._worker: RegenWorker | None = None
-            # Coalesce rapid weight/ceiling slider edits into one save + list rebuild.
+            # Balance edits stay in memory until Ctrl+S (or close/export) saves + recalcs.
             self._balance_dirty = False
             self._recalc_running = False
             self._recalc_queued = False
-            self._slider_drag_depth = 0
-            self._score_refresh_timer = QTimer(self)
-            self._score_refresh_timer.setSingleShot(True)
-            self._score_refresh_timer.timeout.connect(self._on_score_refresh_timeout)
 
             root = QWidget()
             v = QVBoxLayout(root)
@@ -708,7 +746,15 @@ class MainWindow(QMainWindow):
             self.btn_load = QPushButton("Reload YML")
             self.btn_load.clicked.connect(self._reload_items)
             self.btn_export = QPushButton("Export LTX")
+            self.btn_export.setToolTip(
+                "Write loadout LTX (Ctrl+E → repo path · Ctrl+D deploy)"
+            )
             self.btn_export.clicked.connect(self._export)
+            self.btn_deploy = QPushButton("Deploy")
+            self.btn_deploy.setToolTip(
+                "Generate LTX and overwrite remembered target (Ctrl+D · Ctrl+Shift+D as…)"
+            )
+            self.btn_deploy.clicked.connect(self._deploy)
             self.btn_open_log = QPushButton("Open log")
             self.btn_open_log.clicked.connect(self._open_log)
             self.sort_box = QComboBox()
@@ -718,10 +764,11 @@ class MainWindow(QMainWindow):
             self.sort_desc.setChecked(False)
             self.sort_desc.setToolTip("Sort descending (off = ascending)")
             self.sort_desc.setStyleSheet("QCheckBox { color: #d0d0d0; }")
-            self.sort_desc.toggled.connect(lambda _: self._rebuild_list())
+            self.sort_desc.toggled.connect(lambda _: self._run_list_refresh())
             actions.addWidget(self.btn_regen)
             actions.addWidget(self.btn_load)
             actions.addWidget(self.btn_export)
+            actions.addWidget(self.btn_deploy)
             actions.addWidget(self.btn_open_log)
             actions.addWidget(_header_label("Sort:"))
             actions.addWidget(self.sort_box)
@@ -897,6 +944,18 @@ class MainWindow(QMainWindow):
             save_sc = QShortcut(QKeySequence.StandardKey.Save, self)
             save_sc.setContext(Qt.ShortcutContext.WindowShortcut)
             save_sc.activated.connect(self._force_save)
+
+            export_sc = QShortcut(QKeySequence("Ctrl+E"), self)
+            export_sc.setContext(Qt.ShortcutContext.WindowShortcut)
+            export_sc.activated.connect(self._generate_ltx)
+
+            deploy_sc = QShortcut(QKeySequence("Ctrl+D"), self)
+            deploy_sc.setContext(Qt.ShortcutContext.WindowShortcut)
+            deploy_sc.activated.connect(self._deploy)
+
+            deploy_as_sc = QShortcut(QKeySequence("Ctrl+Shift+D"), self)
+            deploy_as_sc.setContext(Qt.ShortcutContext.WindowShortcut)
+            deploy_as_sc.activated.connect(self._deploy_as)
 
             attach_log_view(self.log_view)
             self._restore_ui_state()
@@ -1090,7 +1149,7 @@ class MainWindow(QMainWindow):
 
     def _on_sort_key_changed(self, _text: str) -> None:
         self._apply_stats_sort_highlight()
-        self._rebuild_list()
+        self._run_list_refresh()
 
     def _on_detail_sort_click(
         self, table: QTableWidget, row: int, column: int = 0
@@ -1114,7 +1173,7 @@ class MainWindow(QMainWindow):
             self._set_sort_key(key)
         self.sort_box.blockSignals(False)
         self._apply_stats_sort_highlight()
-        self._rebuild_list()
+        self._run_list_refresh()
 
     def _row_sort_value(
         self,
@@ -1316,10 +1375,12 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:  # noqa: N802
         try:
-            self._flush_score_refresh(rebuild=False)
+            self._flush_slider_focus()
+            self._commit_sliders_to_balance()
             self._persist_ui_state()
             save_settings(self.settings)
             save_balance(self.balance)
+            self._balance_dirty = False
             log.info(
                 "saved on close balance=%s settings=%s",
                 "ok",
@@ -1355,6 +1416,69 @@ class MainWindow(QMainWindow):
         for row in self._iter_weight_rows():
             out[row.key] = (row.displayed_value(), row.displayed_curve())
         return out
+
+    def _flush_slider_focus(self) -> None:
+        """Clear focus so in-progress line edits commit via editingFinished."""
+        fw = QApplication.focusWidget()
+        if fw is not None and self.isAncestorOf(fw):
+            fw.clearFocus()
+
+    def _commit_sliders_to_balance(self) -> int:
+        """Write current sidebar slider/toggle UI into ``self.balance``.
+
+        UI is the source of truth at save time — avoids stale balance when a
+        signal was blocked or a line-edit hadn't flushed yet.
+        """
+        fac = self.faction
+        cat = self.category
+        n = 0
+        for row in self._iter_weight_rows():
+            key = row.key
+            val = float(row.displayed_value())
+            if key.startswith("ceiling:"):
+                if fac != "Default":
+                    continue
+                stat_key = key[8:]
+                if val <= 0:
+                    continue
+                set_ceiling(self.balance, cat, stat_key, val)
+                set_curve(self.balance, cat, stat_key, row.displayed_curve())
+                n += 1
+                continue
+            store: Any = val
+            if key == "include_universal_armor":
+                store = val >= 0.5
+            set_override(
+                self.balance, fac, cat, key, store, weight=bool(row.is_weight)
+            )
+            n += 1
+        # Toggle rows (not WeightRow) — keyed via objectName.
+        for i in range(self.weights_layout.count()):
+            host = self.weights_layout.itemAt(i).widget()
+            if host is None:
+                continue
+            for cb in host.findChildren(QCheckBox):
+                key = cb.objectName()
+                if not key:
+                    continue
+                set_override(
+                    self.balance,
+                    fac,
+                    cat,
+                    key,
+                    bool(cb.isChecked()),
+                    weight=False,
+                )
+                n += 1
+        if n:
+            self._balance_dirty = True
+            log.debug(
+                "committed %d slider/toggle value(s) → balance fac=%s cat=%s",
+                n,
+                fac,
+                cat,
+            )
+        return n
 
     def _balance_slider_state(self) -> dict[str, tuple[float, str]]:
         """Authoritative key → (value, curve) from stored balance (current fac/cat)."""
@@ -1451,77 +1575,80 @@ class MainWindow(QMainWindow):
             )
         return len(drift)
 
-    def _force_save(self) -> None:
-        """Ctrl+S: flush pending edits, verify sliders vs balance, save everything."""
+    def _save_now(self) -> bool:
+        """Save balance/settings and recalculate scores. False if blocked/failed."""
         if self._recalc_running:
-            self._balance_dirty = True
             self._recalc_queued = True
             self.status.setText("Save queued — wait for recalc…")
-            log.info("Ctrl+S during recalc — queued")
-            return
+            log.info("save during recalc — queued")
+            return False
         try:
-            pending = self._balance_dirty or self._score_refresh_timer.isActive()
-            if pending:
-                # Full refresh path already resyncs sliders when done.
-                self._flush_score_refresh(rebuild=True)
-                drift_n = 0
-            else:
-                drift_n = self._resync_sliders_from_balance(reason="ctrl+s")
-            save_balance(self.balance)
+            # UI → balance before any disk write / score rebuild.
+            self._flush_slider_focus()
+            self._commit_sliders_to_balance()
             self._persist_ui_state()
             save_settings(self.settings)
-            if drift_n:
-                self.status.setText(
-                    f"Saved — fixed {drift_n} slider drift(s) from balance"
-                )
-            else:
-                self.status.setText("Saved — sliders match balance")
-            log.info("Ctrl+S force save ok drift=%d", drift_n)
+            self._run_score_refresh()
+            log.info("save + recalc ok")
+            return True
         except Exception:  # noqa: BLE001
-            log.exception("Ctrl+S force save failed")
+            log.exception("save failed")
             self.status.setText("Save failed — see Log tab")
+            return False
 
-    def _schedule_score_refresh(self) -> None:
-        """Debounce: wait 1000ms after last change, then save + rebuild.
+    def _force_save(self) -> None:
+        """Ctrl+S: save balance/settings and recalculate item scores."""
+        if self._save_now():
+            self.status.setText("Saved — scores recalculated")
 
-        Overlay appears only when the debounced recalc actually starts — not on edit.
-        Edits during an in-flight recalc set dirty and queue another pass.
-        """
+    def _mark_balance_dirty(self) -> None:
+        """Record an in-memory balance edit; scores refresh only on Ctrl+S."""
         self._balance_dirty = True
         if self._recalc_running:
             self._recalc_queued = True
-            return
-        if self._slider_drag_depth > 0:
-            # Wait for mouse-up; release handler will (re)start the debounce timer.
-            if self._score_refresh_timer.isActive():
-                self._score_refresh_timer.stop()
-            return
-        # Restart debounce window on every change.
-        self._score_refresh_timer.start(1000)
 
-    def _save_balance_if_dirty(self) -> None:
-        if not self._balance_dirty:
-            return
-        try:
-            save_balance(self.balance)
-        except Exception:  # noqa: BLE001
-            log.exception("debounced balance save failed")
-        self._balance_dirty = False
-
-    def _run_score_refresh(self) -> None:
-        """Show full-window overlay, save + rebuild; loop if more edits queued."""
+    def _run_list_refresh(self) -> None:
+        """Grey out and rebuild the item list (sort / desc — no disk save)."""
         if self._recalc_running:
             self._recalc_queued = True
             return
-        if self._score_refresh_timer.isActive():
-            self._score_refresh_timer.stop()
+        self._recalc_running = True
+        self._block_slider_signals(True)
+        self._set_window_busy(True)
+        try:
+            self._rebuild_list()
+        finally:
+            self._set_window_busy(False)
+            self._block_slider_signals(False)
+            self._recalc_running = False
+            if self._recalc_queued:
+                self._recalc_queued = False
+                if self._balance_dirty:
+                    self._run_score_refresh()
+                else:
+                    self._run_list_refresh()
+
+    def _run_score_refresh(self) -> None:
+        """Save balance, grey out, rebuild scores; loop if more edits queued."""
+        if self._recalc_running:
+            self._recalc_queued = True
+            return
+        # Re-commit in case caller skipped _save_now, or UI changed mid-queue.
+        self._flush_slider_focus()
+        self._commit_sliders_to_balance()
         self._recalc_running = True
         self._block_slider_signals(True)
         self._set_window_busy(True)
         try:
             while True:
                 self._recalc_queued = False
-                self._save_balance_if_dirty()
+                # Capture whatever the UI currently shows before writing disk.
+                self._commit_sliders_to_balance()
+                try:
+                    save_balance(self.balance)
+                except Exception:  # noqa: BLE001
+                    log.exception("balance save during recalc failed")
+                self._balance_dirty = False
                 self._rebuild_list()
                 if not self._recalc_queued and not self._balance_dirty:
                     break
@@ -1529,45 +1656,16 @@ class MainWindow(QMainWindow):
             self._set_window_busy(False)
             self._block_slider_signals(False)
             self._recalc_running = False
-            # Authoritative UI sync — display must match stored balance.
             try:
-                self._resync_sliders_from_balance(reason="score_refresh")
+                # Verify UI still matches what we saved (should be a no-op).
+                self._resync_sliders_from_balance(reason="save")
             except Exception:  # noqa: BLE001
-                log.exception("post-recalc slider resync failed")
-            if self._balance_dirty:
-                self._schedule_score_refresh()
-
-    def _flush_score_refresh(self, *, rebuild: bool = True) -> None:
-        """Immediate save (and optional rebuild) — used for faction/tab/export/close."""
-        if self._score_refresh_timer.isActive():
-            self._score_refresh_timer.stop()
-        if rebuild:
-            self._run_score_refresh()
-        else:
-            self._save_balance_if_dirty()
-
-    def _on_score_refresh_timeout(self) -> None:
-        if self._slider_drag_depth > 0:
-            return
-        self._run_score_refresh()
-
-    def _on_slider_drag_start(self) -> None:
-        self._slider_drag_depth += 1
-        # Pause debounce until release so we don't recalc mid-drag.
-        if self._score_refresh_timer.isActive():
-            self._score_refresh_timer.stop()
-
-    def _on_slider_drag_end(self) -> None:
-        self._slider_drag_depth = max(0, self._slider_drag_depth - 1)
-        if self._slider_drag_depth == 0 and self._balance_dirty:
-            self._schedule_score_refresh()
-
-    def _wire_slider_row(self, row: WeightRow) -> None:
-        row.drag_started.connect(self._on_slider_drag_start)
-        row.drag_ended.connect(self._on_slider_drag_end)
+                log.exception("post-save slider resync failed")
+            if self._recalc_queued or self._balance_dirty:
+                self._recalc_queued = False
+                self._run_score_refresh()
 
     def _on_faction(self, _name: str) -> None:
-        self._flush_score_refresh(rebuild=False)
         data = self.faction_box.currentData()
         fac = str(data if data is not None else _name)
         log.debug("faction -> %s (%s)", fac, faction_label(fac))
@@ -1576,10 +1674,9 @@ class MainWindow(QMainWindow):
         self.faction_meta.setText(f"({n} overrides)" if n else "")
         self._rebuild_weights()
         self._rebuild_ammo_toggles()
-        self._rebuild_list()
+        self._run_list_refresh()
 
     def _on_tab(self, idx: int) -> None:
-        self._flush_score_refresh(rebuild=False)
         # Stash selection under the category we're leaving.
         cur = self.list.currentItem()
         if cur is not None:
@@ -1589,7 +1686,7 @@ class MainWindow(QMainWindow):
         self.ammo_panel.setVisible(self.category == "weapons")
         self._rebuild_weights()
         self._refresh_sort_options()
-        self._rebuild_list()
+        self._run_list_refresh()
 
     def _ammo_thumb_path(self, sec: str) -> str | None:
         """Cached thumbs only (produced by Regenerate)."""
@@ -1867,7 +1964,7 @@ class MainWindow(QMainWindow):
         n = override_count(self.balance, self.faction)
         self.faction_meta.setText(f"({n} overrides)" if n else "")
         self._refresh_ammo_button_icon(sec, enabled)
-        self._schedule_score_refresh()
+        self._mark_balance_dirty()
 
     def _set_row_ammo(self, sections: list[str], enabled: bool) -> None:
         """Enable/disable only the ammo sections in one type row."""
@@ -1879,7 +1976,7 @@ class MainWindow(QMainWindow):
         n = override_count(self.balance, self.faction)
         self.faction_meta.setText(f"({n} overrides)" if n else "")
         self._rebuild_ammo_toggles()
-        self._schedule_score_refresh()
+        self._mark_balance_dirty()
 
     @staticmethod
     def _make_sidebar_scroll_page() -> tuple[QScrollArea, QWidget, QVBoxLayout]:
@@ -1927,8 +2024,6 @@ class MainWindow(QMainWindow):
 
     def _rebuild_weights(self) -> None:
         try:
-            # Rows are destroyed; clear any in-progress drag tracking.
-            self._slider_drag_depth = 0
             self._clear_layout(self.weights_layout)
             self._clear_layout(self.ceilings_layout)
             fac = self.faction
@@ -1950,7 +2045,6 @@ class MainWindow(QMainWindow):
                 )
                 row.changed.connect(self._weight_changed)
                 row.cleared.connect(self._weight_cleared)
-                self._wire_slider_row(row)
                 self.weights_layout.addWidget(row)
 
             def add_weight(key: str, value: float) -> None:
@@ -1965,7 +2059,6 @@ class MainWindow(QMainWindow):
                 )
                 row.changed.connect(self._weight_changed)
                 row.cleared.connect(self._weight_cleared)
-                self._wire_slider_row(row)
                 self.weights_layout.addWidget(row)
 
             def add_ceiling(stat_key: str, value: float, slider_cap: float) -> None:
@@ -2006,7 +2099,6 @@ class MainWindow(QMainWindow):
                 )
                 row.changed.connect(self._ceiling_changed)
                 row.curve_changed.connect(self._ceiling_curve_changed)
-                self._wire_slider_row(row)
                 self.ceilings_layout.addWidget(row)
 
             def add_toggle(key: str, checked: bool) -> None:
@@ -2016,6 +2108,7 @@ class MainWindow(QMainWindow):
                 lay.setContentsMargins(0, 2, 0, 4)
                 lay.setSpacing(6)
                 cb = QCheckBox(pretty_label(key))
+                cb.setObjectName(key)
                 tip = pretty_tip(key)
                 if tip:
                     cb.setToolTip(tip)
@@ -2105,7 +2198,7 @@ class MainWindow(QMainWindow):
             value,
         )
         set_ceiling(self.balance, self.category, stat_key, float(value))
-        self._schedule_score_refresh()
+        self._mark_balance_dirty()
 
     def _ceiling_curve_changed(self, key: str, curve: str) -> None:
         if self._recalc_running or self.faction != "Default":
@@ -2118,7 +2211,7 @@ class MainWindow(QMainWindow):
             curve,
         )
         set_curve(self.balance, self.category, stat_key, curve)
-        self._schedule_score_refresh()
+        self._mark_balance_dirty()
 
     def _weight_changed(self, key: str, value: float, is_weight: bool) -> None:
         if self._recalc_running:
@@ -2145,7 +2238,7 @@ class MainWindow(QMainWindow):
         if key == "include_universal_armor":
             # Recreate toggle row so override styling/reset btn stay in sync.
             self._rebuild_weights()
-            self._schedule_score_refresh()
+            self._mark_balance_dirty()
             return
         # Orange = faction override only; Default edits are the baseline.
         if self.faction != "Default":
@@ -2158,7 +2251,7 @@ class MainWindow(QMainWindow):
                 ):
                     w.lbl.setStyleSheet("color: #e6a23c; font-weight: bold;")
                     w.btn.setEnabled(True)
-        self._schedule_score_refresh()
+        self._mark_balance_dirty()
 
     def _weight_cleared(self, key: str, is_weight: bool) -> None:
         log.debug(
@@ -2180,15 +2273,15 @@ class MainWindow(QMainWindow):
             if not fov:
                 (self.balance.get("factions") or {}).pop(fac, None)
         self._rebuild_weights()
-        self._schedule_score_refresh()
+        self._mark_balance_dirty()
 
     def _row_pts_inshop(
         self, sec: str, entry: dict[str, Any]
     ) -> tuple[int, bool, bool]:
         """Return (pts, in_shop, faction_blocked).
 
-        ``faction_blocked`` means ammo-type toggle or outfit community excluded it
-        (orange border). Ammo toggles are per-faction (all on by default).
+        ``faction_blocked`` means ammo-type toggle, name-locked faction, or outfit
+        community excluded it (orange border). Ammo toggles are per-faction.
         """
         cfg = effective_category(self.balance, self.faction, self.category)
         stats = entry.get("stats") or {}
@@ -2204,7 +2297,9 @@ class MainWindow(QMainWindow):
             )
             under = pts < float(cfg.get("max_pts") or 900)
             ammo_map = ammo_enabled_map(self.balance, self.faction)
-            gear_ok = weapon_ammo_allowed(entry.get("ammo_class") or [], ammo_map)
+            name_ok = weapon_name_faction_ok(sec, self.faction)
+            ammo_ok = weapon_ammo_allowed(entry.get("ammo_class") or [], ammo_map)
+            gear_ok = name_ok and ammo_ok
             return pts, under and gear_ok, (not gear_ok)
         is_helm = self.category == "helmets"
         pts = armor_pts(
@@ -2310,10 +2405,28 @@ class MainWindow(QMainWindow):
                     )
                 except Exception:  # noqa: BLE001
                     log.exception("icon compose failed sec=%s", sec)
+                block_note = ""
+                if fac_blocked:
+                    locked = (
+                        section_name_faction(sec)
+                        if self.category == "weapons"
+                        else None
+                    )
+                    if (
+                        locked
+                        and self.faction != "Default"
+                        and locked != self.faction
+                    ):
+                        block_note = (
+                            f"  |  name-locked to {faction_label(locked)}"
+                        )
+                    elif self.category == "weapons":
+                        block_note = "  |  ammo type disabled"
+                    else:
+                        block_note = "  |  faction community"
                 tip = (
                     f"{sec}\n{entry.get('name') or ''}\n"
-                    f"{pts} pts  |  in_shop={in_shop}"
-                    f"{'  |  ammo type disabled' if fac_blocked else ''}"
+                    f"{pts} pts  |  in_shop={in_shop}{block_note}"
                 )
                 item.setToolTip(tip)
                 item.setData(Qt.ItemDataRole.UserRole, sec)
@@ -2449,14 +2562,15 @@ class MainWindow(QMainWindow):
                     curves=curves,
                 )
 
-            def _wf(key: str) -> tuple[str, str, float | None]:
+            def _wf(key: str) -> tuple[str, str, float | None, bool]:
                 pair = terms.get(key)
                 if not pair:
-                    return "—", "—", None
+                    return "—", "—", None, False
                 w, final = pair
+                excluded = w <= 0
                 # Final column color tracks normalized 0–1 (final / weight).
                 n01 = (final / w) if w > 0 else None
-                return f"{w:.2f}", f"{final:.3f}", n01
+                return f"{w:.2f}", f"{final:.3f}", n01, excluded
 
             stat_rows: list[tuple] = [
                 ("pts", [str(int(pts)), "—", "—"], "#7dcea0"),
@@ -2469,18 +2583,22 @@ class MainWindow(QMainWindow):
                 ordered = ["cost"] + [k for k, *_ in ARMOR_WEIGHTS]
             for key in ordered:
                 seen.add(key)
-                w_s, f_s, n01 = _wf(key)
+                w_s, f_s, n01, excluded = _wf(key)
                 if key == "cost":
                     raw = cost_v
                 elif key == "hit_power":
                     raw = hit_power_pct(stats.get(key))
                 else:
                     raw = stats.get(key)
-                cell_colors = [
-                    None,
-                    None,
-                    _n01_color(n01) if n01 is not None else None,
-                ]
+                if excluded:
+                    # Weight 0 → not in score fold; mute Weight / Final only.
+                    cell_colors = [None, _STAT_EXCLUDED_FG, _STAT_EXCLUDED_FG]
+                else:
+                    cell_colors = [
+                        None,
+                        None,
+                        _n01_color(n01) if n01 is not None else None,
+                    ]
                 stat_rows.append(
                     (
                         key,
@@ -2565,13 +2683,47 @@ class MainWindow(QMainWindow):
             log.exception("reload failed")
             QMessageBox.critical(self, "Reload failed", f"{exc}\n\n{LOG_PATH}")
 
-    def _export(self) -> None:
+    def _prepare_export(self) -> bool:
+        """Save + recalc first, then allow LTX write. Returns False if blocked/no items."""
         if not self.items:
             QMessageBox.warning(self, "Export", "No items.yml — Regenerate first.")
+            return False
+        return self._save_now()
+
+    def _write_ltx(self, path: Path, *, notify: bool) -> None:
+        try:
+            if self._recalc_running:
+                self.status.setText("Export blocked — wait for recalc…")
+                return
+            self._set_window_busy(True)
+            try:
+                export_shop_ltx(self.items, self.balance, path)
+            finally:
+                self._set_window_busy(False)
+            log.info("Export wrote %s", path)
+            self.status.setText(f"Exported → {path}")
+            if notify:
+                QMessageBox.information(self, "Export", f"Wrote:\n{path}")
+        except Exception as exc:  # noqa: BLE001
+            log.exception("export failed path=%s", path)
+            QMessageBox.critical(
+                self,
+                "Export failed",
+                f"{exc}\n\nSee log:\n{LOG_PATH}",
+            )
+
+    def _generate_ltx(self) -> None:
+        """Ctrl+E: save + recalc, then write loadout LTX to the default repo path."""
+        if not self._prepare_export():
             return
-        self._flush_score_refresh(rebuild=False)
-        self._persist_ui_state()
-        save_settings(self.settings)
+        dest = default_export_path()
+        log.info("Ctrl+E generate LTX → %s", dest)
+        self._write_ltx(dest, notify=False)
+        self.status.setText(f"Saved + exported → {dest}")
+
+    def _export(self) -> None:
+        if not self._prepare_export():
+            return
         dest = default_export_path()
         log.info("Export dialog default=%s", dest)
         path, _ = QFileDialog.getSaveFileName(
@@ -2583,31 +2735,281 @@ class MainWindow(QMainWindow):
         if not path:
             log.info("Export cancelled")
             return
+        self._write_ltx(Path(path), notify=True)
+
+    def _deploy_dialog_start(self) -> str:
+        source = default_export_path()
+        remembered = get_deploy_target(self.settings, source)
+        if remembered is not None:
+            if remembered.is_file() or remembered.parent.is_dir():
+                return str(remembered)
+        saved = Path(str(self.settings.get("last_deploy_dir") or ""))
+        if saved.is_dir():
+            return str(saved / source.name)
+        gamma = Path(str(self.settings.get("gamma_root") or "")).expanduser()
+        dogma_cfg = gamma / "mods" / "DOGMA" / "gamedata" / "configs"
+        if dogma_cfg.is_dir():
+            return str(dogma_cfg / source.name)
+        return str(source)
+
+    def _deploy(self) -> bool:
+        """Ctrl+D: generate LTX and overwrite remembered deploy target."""
+        if not self._prepare_export():
+            return False
+        source = default_export_path()
+        target = get_deploy_target(self.settings, source)
+        if target is None:
+            return self._deploy_as()
+        return self._deploy_to(target)
+
+    def _deploy_as(self) -> bool:
+        """Ctrl+Shift+D: pick (or re-pick) deploy overwrite target, then deploy."""
+        if not self._prepare_export():
+            return False
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Deploy loadout LTX as",
+            self._deploy_dialog_start(),
+            "LTX (*.ltx);;All (*.*)",
+        )
+        if not path:
+            log.info("Deploy As cancelled")
+            return False
+        return self._deploy_to(Path(path))
+
+    def _deploy_to(self, target: Path) -> bool:
+        """Generate repo LTX then copy it onto ``target`` (SAGE-style deploy)."""
+        source = default_export_path()
         try:
-            export_shop_ltx(
-                self.items,
-                self.balance,
-                Path(path),
-            )
-            log.info("Export wrote %s", path)
-            self.status.setText(f"Exported → {path}")
-            QMessageBox.information(self, "Export", f"Wrote:\n{path}")
+            if self._recalc_running:
+                self.status.setText("Deploy blocked — wait for recalc…")
+                return False
+            self._set_window_busy(True)
+            try:
+                export_shop_ltx(self.items, self.balance, source)
+                target = target.expanduser()
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, target)
+            finally:
+                self._set_window_busy(False)
+            set_deploy_target(self.settings, source, target)
+            save_settings(self.settings)
+            log.info("Deployed %s → %s", source, target)
+            self.status.setText(f"Deployed → {target}")
+            return True
         except Exception as exc:  # noqa: BLE001
-            log.exception("export failed path=%s", path)
+            log.exception("deploy failed target=%s", target)
             QMessageBox.critical(
                 self,
-                "Export failed",
+                "Deploy failed",
                 f"{exc}\n\nSee log:\n{LOG_PATH}",
             )
+            return False
+
+
+_DARK_BG = QColor(18, 18, 20)
+_DARK_PANEL = QColor(30, 30, 34)
+_DARK_BASE = QColor(30, 30, 34)
+_DARK_TEXT = QColor(212, 212, 212)
+_DARK_DISABLED = QColor(120, 120, 128)
+_DARK_HIGHLIGHT = QColor(38, 79, 120)
+_DARK_MID = QColor(50, 50, 56)
+_GREY_INAPPLICABLE = "#555555"
+
+
+def _dark_palette() -> QPalette:
+    pal = QPalette()
+    bg, panel, base, text = _DARK_BG, _DARK_PANEL, _DARK_BASE, _DARK_TEXT
+    disabled, highlight, mid = _DARK_DISABLED, _DARK_HIGHLIGHT, _DARK_MID
+    pal.setColor(QPalette.ColorRole.Window, bg)
+    pal.setColor(QPalette.ColorRole.WindowText, text)
+    pal.setColor(QPalette.ColorRole.Base, base)
+    pal.setColor(QPalette.ColorRole.AlternateBase, panel)
+    pal.setColor(QPalette.ColorRole.Text, text)
+    pal.setColor(QPalette.ColorRole.Button, panel)
+    pal.setColor(QPalette.ColorRole.ButtonText, text)
+    pal.setColor(QPalette.ColorRole.ToolTipBase, panel)
+    pal.setColor(QPalette.ColorRole.ToolTipText, text)
+    pal.setColor(QPalette.ColorRole.PlaceholderText, disabled)
+    pal.setColor(QPalette.ColorRole.BrightText, QColor(255, 80, 80))
+    pal.setColor(QPalette.ColorRole.Highlight, highlight)
+    pal.setColor(QPalette.ColorRole.HighlightedText, QColor(255, 255, 255))
+    pal.setColor(QPalette.ColorRole.Link, QColor(100, 180, 255))
+    pal.setColor(QPalette.ColorRole.Light, mid)
+    pal.setColor(QPalette.ColorRole.Mid, mid)
+    pal.setColor(QPalette.ColorRole.Dark, bg)
+    pal.setColor(QPalette.ColorRole.Shadow, QColor(0, 0, 0))
+    for group in (QPalette.ColorGroup.Disabled, QPalette.ColorGroup.Inactive):
+        pal.setColor(group, QPalette.ColorRole.WindowText, disabled)
+        pal.setColor(group, QPalette.ColorRole.Text, disabled)
+        pal.setColor(group, QPalette.ColorRole.ButtonText, disabled)
+        pal.setColor(group, QPalette.ColorRole.Highlight, QColor(55, 55, 60))
+        pal.setColor(group, QPalette.ColorRole.HighlightedText, disabled)
+    return pal
+
+
+def _apply_windows_dark_titlebar(widget: QWidget) -> None:
+    """Ask DWM for a dark title bar so the frame isn't bright on first show."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        hwnd = int(widget.winId())
+        value = ctypes.c_int(1)
+        # 20 = DWMWA_USE_IMMERSIVE_DARK_MODE (Win10 1903+); 19 was the older name.
+        for attr in (20, 19):
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                hwnd, attr, ctypes.byref(value), ctypes.sizeof(value)
+            )
+    except Exception:
+        pass
+
+
+def _ui_font() -> QFont:
+    font = QFont("Consolas")
+    font.setFamilies(["Consolas", "Cascadia Mono", "Courier New"])
+    font.setStyleHint(QFont.StyleHint.Monospace)
+    font.setPointSize(9)
+    return font
+
+
+def _checkbox_check_image_url() -> str:
+    dest = CACHE / "ui" / "checkbox_check.png"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    pix = QPixmap(14, 14)
+    pix.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pix)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    pen = QPen(QColor("#2D6A4F"))
+    pen.setWidthF(2.2)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    painter.setPen(pen)
+    painter.drawLine(3, 7, 6, 10)
+    painter.drawLine(6, 10, 11, 3)
+    painter.end()
+    pix.save(str(dest), "PNG")
+    return dest.resolve().as_posix()
+
+
+def _apply_dark_theme(app: QApplication) -> None:
+    """Force dark chrome before the first paint (Windows otherwise flashes white)."""
+    app.setStyle("Fusion")
+    try:
+        app.styleHints().setColorScheme(Qt.ColorScheme.Dark)
+    except Exception:
+        pass
+    pal = _dark_palette()
+    app.setPalette(pal)
+    app.setFont(_ui_font())
+    check_img = _checkbox_check_image_url()
+    app.setStyleSheet(
+        "* {"
+        "  color: #D4D4D4;"
+        "  font-family: Consolas, 'Cascadia Mono', 'Courier New', monospace;"
+        "}"
+        "QMainWindow, QDialog, QWidget, QSplitter, QScrollArea, QFrame, QTabWidget {"
+        "  background-color: #121214; color: #D4D4D4;"
+        "}"
+        "QToolTip { color: #D4D4D4; background-color: #2A2A30; border: 1px solid #555; }"
+        "QMenuBar { background-color: #121214; color: #D4D4D4; }"
+        "QMenuBar::item:selected { background-color: #264F78; }"
+        "QMenu { background-color: #1E1E22; color: #D4D4D4; }"
+        "QMenu::item:selected { background-color: #264F78; }"
+        "QStatusBar { background-color: #121214; color: #D4D4D4; }"
+        "QTabWidget::pane { border: 1px solid #3A3A40; top: -1px; background: #121214; }"
+        "QTabBar::tab {"
+        "  background: #1E1E22; color: #D4D4D4; padding: 6px 12px;"
+        "  font-size: 10pt; font-weight: bold;"
+        "}"
+        "QTabBar::tab:selected { background: #2A2A30; }"
+        "QHeaderView::section { background-color: #1E1E22; color: #D4D4D4; "
+        "  padding: 4px; border: 1px solid #3A3A40; }"
+        "QSplitter::handle { background-color: #2A2A30; }"
+        "QLineEdit, QSpinBox, QPlainTextEdit, QTextEdit, QListWidget, QComboBox {"
+        "  background-color: #1E1E22; color: #D4D4D4; border: 1px solid #3A3A40; "
+        "  selection-background-color: #264F78;"
+        "}"
+        "QGroupBox {"
+        "  background-color: #121214;"
+        "  border: 1px solid #3A3A40;"
+        "  border-radius: 4px;"
+        "  margin-top: 10px;"
+        "  padding-top: 8px;"
+        "  padding-left: 5px;"
+        "  padding-right: 5px;"
+        "  padding-bottom: 5px;"
+        "  color: #D4D4D4;"
+        "}"
+        "QGroupBox::title {"
+        "  subcontrol-origin: margin;"
+        "  subcontrol-position: top left;"
+        "  left: 8px;"
+        "  padding: 0 4px;"
+        "  color: #D4D4D4;"
+        "  font-weight: bold;"
+        "}"
+        "QCheckBox, QLabel { background: transparent; color: #D4D4D4; }"
+        f"QCheckBox:disabled, QLabel:disabled {{ color: {_GREY_INAPPLICABLE}; }}"
+        "QLineEdit:disabled, QComboBox:disabled, QComboBox:disabled QAbstractItemView {"
+        f"  color: {_GREY_INAPPLICABLE};"
+        "}"
+        "QCheckBox::indicator, QListWidget::indicator {"
+        "  width: 14px; height: 14px;"
+        "  border: 1px solid #3A3A40;"
+        "  border-radius: 2px;"
+        "  background-color: #0E0E10;"
+        "}"
+        "QCheckBox::indicator:hover, QListWidget::indicator:hover {"
+        "  background-color: #161618; border-color: #55555C;"
+        "}"
+        "QCheckBox::indicator:disabled {"
+        "  background-color: #0A0A0C; border-color: #2A2A30;"
+        "}"
+        "QCheckBox::indicator:checked, QListWidget::indicator:checked {"
+        "  background-color: #0E0E10;"
+        "  border-color: #3A3A40;"
+        f"  image: url({check_img});"
+        "}"
+        "QCheckBox::indicator:checked:hover, QListWidget::indicator:checked:hover {"
+        "  background-color: #161618; border-color: #55555C;"
+        f"  image: url({check_img});"
+        "}"
+        "QCheckBox::indicator:checked:disabled {"
+        "  background-color: #0A0A0C; border-color: #2A2A30;"
+        f"  image: url({check_img});"
+        "}"
+        "QScrollBar:vertical { background: #121214; width: 12px; }"
+        "QScrollBar:horizontal { background: #121214; height: 12px; }"
+        "QScrollBar::handle { background: #3A3A40; border-radius: 4px; min-height: 24px; }"
+        "QScrollBar::add-line, QScrollBar::sub-line { height: 0; width: 0; }"
+        "QMessageBox { background-color: #121214; }"
+        "QPushButton {"
+        "  background-color: #2A2A30; color: #D4D4D4; border: 1px solid #3A3A40; "
+        "  padding: 4px 12px;"
+        "}"
+        "QPushButton:hover { background-color: #3A3A40; }"
+        "QPushButton:pressed { background-color: #264F78; }"
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
     setup_logging()
     log.info("starting SALE argv=%s", argv or sys.argv)
     try:
+        # Before the first widget exists so the HWND isn't created light.
+        QApplication.setStyle("Fusion")
         app = QApplication(argv or sys.argv)
+        _apply_dark_theme(app)
+        app.setApplicationName("SALE — Stalker Anomaly Loadout Editor")
         win = MainWindow()
+        win.setAutoFillBackground(True)
+        win.setPalette(_dark_palette())
+        win.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         win.show()
+        _apply_windows_dark_titlebar(win)
+        app.processEvents()
         log.info("entering event loop")
         code = app.exec()
         log.info("event loop exited code=%s", code)

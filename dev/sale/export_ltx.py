@@ -19,6 +19,7 @@ from .score import (
     is_bad_ammo,
     weapon_ammo_allowed,
     weapon_enabled_ammos,
+    weapon_name_faction_ok,
     weapon_pts,
 )
 from .settings import STOCK_STRIP_YML, ensure_dirs
@@ -44,6 +45,7 @@ _DEFAULT_EXPORT = (
 
 
 def _in_shop_weapon(
+    sec: str,
     entry: dict[str, Any],
     faction: str,
     cat_cfg: dict[str, Any],
@@ -59,6 +61,8 @@ def _in_shop_weapon(
         cat_cfg.get("curves"),
     )
     if pts >= float(cat_cfg.get("max_pts") or 900):
+        return False, pts
+    if not weapon_name_faction_ok(sec, faction):
         return False, pts
     if not weapon_ammo_allowed(entry.get("ammo_class") or [], ammo_map):
         return False, pts
@@ -118,7 +122,7 @@ def build_faction_shop(
     ammo_map = ammo_enabled_map(balance, faction)
 
     for sec, entry in (items.get("weapons") or {}).items():
-        ok, pts = _in_shop_weapon(entry, faction, wcfg, ammo_map=ammo_map)
+        ok, pts = _in_shop_weapon(sec, entry, faction, wcfg, ammo_map=ammo_map)
         if ok:
             shop[sec] = ceil_pts_10(pts)
 

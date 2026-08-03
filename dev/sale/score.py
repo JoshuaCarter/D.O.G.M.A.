@@ -216,6 +216,53 @@ def faction_label(faction: str) -> str:
     return FACTION_LABELS.get(fac, fac)
 
 
+# Underscore tokens in section ids → SALE faction id.
+# e.g. wpn_ks23_ecolog → ecolog, wpn_aek_duty → dolg, wpn_aug_merc → killer.
+_SECTION_FACTION_TOKENS = {
+    "ecolog": "ecolog",
+    "freedom": "freedom",
+    "duty": "dolg",
+    "dolg": "dolg",
+    "bandit": "bandit",
+    "army": "army",
+    "stalker": "stalker",
+    "loner": "stalker",
+    "monolith": "monolith",
+    "csky": "csky",
+    "killer": "killer",
+    "merc": "killer",
+    "renegade": "renegade",
+    "isg": "isg",
+    "greh": "greh",
+    "sin": "greh",
+}
+
+
+def section_name_faction(sec: str) -> str | None:
+    """If ``sec`` embeds a faction key token, return that faction id.
+
+    Scans underscore parts from the end so ``wpn_ak74u_m1_isg`` → isg and
+    style prefixes like ``military_…`` do not steal the match.
+    """
+    parts = [p for p in (sec or "").strip().lower().split("_") if p]
+    for part in reversed(parts):
+        fac = _SECTION_FACTION_TOKENS.get(part)
+        if fac is not None:
+            return fac
+    return None
+
+
+def weapon_name_faction_ok(sec: str, faction: str) -> bool:
+    """False when the weapon section is name-locked to another faction."""
+    fac = (faction or "").strip()
+    if not fac or fac == "Default":
+        return True
+    locked = section_name_faction(sec)
+    if locked is None:
+        return True
+    return locked == fac
+
+
 def _clamp01(x: float) -> float:
     return max(0.0, min(1.0, x))
 

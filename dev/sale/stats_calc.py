@@ -258,7 +258,18 @@ def _weapon_calculate_py(inp: dict[str, Any]) -> dict[str, Any]:
         "spread_ads": ads,
         "spread_hip": hip,
         "scope": 1 if _f(inp.get("scope_status"), 0) > 0 else 0,
-        "silencer": 1 if _f(inp.get("silencer_status"), 0) > 0 else 0,
+        "silencer": (
+            1
+            if (
+                _f(inp.get("silencer_status"), 0) > 0
+                or bool(inp.get("integrated_silencer"))
+                or _has_integrated_silencer(
+                    str(inp.get("sec") or ""),
+                    str(inp.get("parent_section") or "") or None,
+                )
+            )
+            else 0
+        ),
         "reload_s": reload_s,
         "rpm": rpm,
         "mag": mag,
@@ -285,7 +296,7 @@ def _armor_calculate_py(inp: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-# Fallback sniper list (kept in sync with dogma_item_stats.SNIPERS) when lupa is down.
+# Fallback lists (kept in sync with dogma_item_stats) when lupa is down.
 _SNIPER_AP_BONUS = 0.05
 _SNIPERS = {
     "wpn_dvl10_m1",
@@ -307,6 +318,20 @@ _SNIPERS = {
     "wpn_trg",
     "wpn_mosin",
 }
+_INTEGRATED_SILENCER = {
+    "wpn_dvl10_m1",
+    "wpn_vssk",
+    "wpn_val_tac",
+    "wpn_vintorez",
+    "wpn_val",
+    "wpn_val_modern",
+    "wpn_vintorez_m1",
+    "wpn_vintorez_m2",
+    "wpn_vintorez_isg",
+    "wpn_mp5sd",
+    "wpn_mp5sd_custom",
+    "wpn_mp5sd_new",
+}
 
 
 def _sniper_ap_bonus(sec: str, parent: str | None) -> float:
@@ -316,6 +341,14 @@ def _sniper_ap_bonus(sec: str, parent: str | None) -> float:
         return lua_calc.sniper_ap_bonus(sec, parent or sec)
     key = parent or sec
     return _SNIPER_AP_BONUS if key in _SNIPERS else 0.0
+
+
+def _has_integrated_silencer(sec: str, parent: str | None) -> bool:
+    from . import lua_calc
+
+    if lua_calc.available():
+        return lua_calc.has_integrated_silencer(sec, parent or sec)
+    return (parent or sec) in _INTEGRATED_SILENCER or sec in _INTEGRATED_SILENCER
 
 
 def build_weapon_input(sec: str, sections: dict[str, dict[str, str]]) -> dict[str, Any]:
@@ -355,12 +388,19 @@ def build_weapon_input(sec: str, sections: dict[str, dict[str, str]]) -> dict[st
     if "cam_return" in d:
         cam_return = gf("cam_return", 1) != 0
     parent = (d.get("parent_section") or sec).strip() or sec
+    integrated = _has_integrated_silencer(sec, parent)
+    sil_status = gf("silencer_status")
+    if integrated and sil_status <= 0:
+        sil_status = 1.0
     return {
         "hit_power": _f(hp, 0.5),
         "rpm": gf("rpm"),
         "ammo_mag_size": gf("ammo_mag_size"),
         "scope_status": gf("scope_status"),
-        "silencer_status": gf("silencer_status"),
+        "silencer_status": sil_status,
+        "integrated_silencer": integrated,
+        "sec": sec,
+        "parent_section": parent,
         "fire_dispersion_base": gf("fire_dispersion_base"),
         "PDM_disp_base": gf("PDM_disp_base", 1),
         "PDM_disp_vel_factor": gf("PDM_disp_vel_factor", 1),

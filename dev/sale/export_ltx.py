@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,6 +24,14 @@ from .score import (
 from .settings import STOCK_STRIP_YML, ensure_dirs
 
 log = get_logger("export")
+
+
+def ceil_pts_10(pts: int | float) -> int:
+    """Round points up to the nearest 10 for LTX output (min 10)."""
+    p = max(0, int(pts))
+    if p <= 0:
+        return 10
+    return int(math.ceil(p / 10.0) * 10)
 
 # Stock / GAMMA shop lines to strip (true,*) so only editor gear remains.
 # Parsed from a live new_game_loadouts.ltx when available.
@@ -47,6 +56,7 @@ def _in_shop_weapon(
         cat_cfg.get("weights") or {},
         float(cat_cfg.get("cost_mult") or 1000),
         cat_cfg.get("ceilings"),
+        cat_cfg.get("curves"),
     )
     if pts >= float(cat_cfg.get("max_pts") or 900):
         return False, pts
@@ -69,6 +79,7 @@ def _in_shop_armor(
         float(cat_cfg.get("cost_mult") or 1000),
         is_helmet=is_helmet,
         ceilings=cat_cfg.get("ceilings"),
+        curves=cat_cfg.get("curves"),
     )
     if pts >= float(cat_cfg.get("max_pts") or 550):
         return False, pts
@@ -109,17 +120,17 @@ def build_faction_shop(
     for sec, entry in (items.get("weapons") or {}).items():
         ok, pts = _in_shop_weapon(entry, faction, wcfg, ammo_map=ammo_map)
         if ok:
-            shop[sec] = pts
+            shop[sec] = ceil_pts_10(pts)
 
     for sec, entry in (items.get("outfits") or {}).items():
         ok, pts = _in_shop_armor(entry, faction, ocfg, is_helmet=False)
         if ok:
-            shop[sec] = pts
+            shop[sec] = ceil_pts_10(pts)
 
     for sec, entry in (items.get("helmets") or {}).items():
         ok, pts = _in_shop_armor(entry, faction, hcfg, is_helmet=True)
         if ok:
-            shop[sec] = pts
+            shop[sec] = ceil_pts_10(pts)
 
     return shop
 

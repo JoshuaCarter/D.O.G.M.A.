@@ -100,6 +100,22 @@ local SNIPERS = {
 	["wpn_mosin"] = true,
 }
 
+-- Integrally suppressed (parent_section keys). Score silencer=1 even if LTX status is 0.
+local INTEGRATED_SILENCER = {
+	["wpn_dvl10_m1"] = true,
+	["wpn_vssk"] = true,
+	["wpn_val_tac"] = true,
+	["wpn_vintorez"] = true,
+	["wpn_val"] = true,
+	["wpn_val_modern"] = true,
+	["wpn_vintorez_m1"] = true,
+	["wpn_vintorez_m2"] = true,
+	["wpn_vintorez_isg"] = true,
+	["wpn_mp5sd"] = true,
+	["wpn_mp5sd_custom"] = true,
+	["wpn_mp5sd_new"] = true,
+}
+
 local PROT_KEYS = {
 	"fire_wound_protection",
 	"strike_protection",
@@ -124,6 +140,17 @@ local function sniper_ap_bonus(sec, parent_section)
 		return SNIPER_AP_BONUS
 	end
 	return 0
+end
+
+local function has_integrated_silencer(sec, parent_section)
+	local parent = parent_section or sec
+	if parent and INTEGRATED_SILENCER[parent] then
+		return true
+	end
+	if sec and INTEGRATED_SILENCER[sec] then
+		return true
+	end
+	return false
 end
 
 local function combat_ap(k_ap_ltx, air_res, dist, ap_scale, barrel, silencer, sniper_bonus)
@@ -305,6 +332,12 @@ local function weapon_calculate(input)
 	local burst = burst_shots(input)
 	local scope_ok = ((input.scope_status or 0) > 0) and 1 or 0
 	local sil_ok = ((input.silencer_status or 0) > 0) and 1 or 0
+	if sil_ok == 0 and (
+		input.integrated_silencer
+		or has_integrated_silencer(input.sec, input.parent_section)
+	) then
+		sil_ok = 1
+	end
 
 	-- Keys match tooltip torso columns Min / Lgt / Lgt+ / Mid / Mid+.
 	local min_dps = sustained_dps(col_max[1], rpm, mag, reload_s)
@@ -405,12 +438,20 @@ local function weapon_input_from_ini(wpn_sec, dist)
 		return_on = f("cam_return", 1) ~= 0
 	end
 	local parent = s("parent_section", wpn_sec)
+	local sil_status = f("silencer_status", 0)
+	local integrated = has_integrated_silencer(wpn_sec, parent)
+	if integrated and (not sil_status or sil_status <= 0) then
+		sil_status = 1
+	end
 	return {
 		hit_power = hp,
 		rpm = f("rpm", 0),
 		ammo_mag_size = f("ammo_mag_size", 0),
 		scope_status = f("scope_status", 0),
-		silencer_status = f("silencer_status", 0),
+		silencer_status = sil_status,
+		integrated_silencer = integrated,
+		sec = wpn_sec,
+		parent_section = parent,
 		fire_dispersion_base = f("fire_dispersion_base", 0),
 		PDM_disp_base = f("PDM_disp_base", 1),
 		PDM_disp_vel_factor = f("PDM_disp_vel_factor", 1),
@@ -452,8 +493,10 @@ _G.dogma_item_stats = {
 	DEFAULT_DIST = DEFAULT_DIST,
 	DAMAGE_SCALE = DAMAGE_SCALE,
 	SNIPER_AP_BONUS = SNIPER_AP_BONUS,
+	INTEGRATED_SILENCER = INTEGRATED_SILENCER,
 	sustained_dps = sustained_dps,
 	sniper_ap_bonus = sniper_ap_bonus,
+	has_integrated_silencer = has_integrated_silencer,
 	weapon_calculate = weapon_calculate,
 	armor_calculate = armor_calculate,
 	weapon_input_from_ini = weapon_input_from_ini,

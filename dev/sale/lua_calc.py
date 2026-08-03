@@ -158,5 +158,16 @@ def sniper_ap_bonus(sec: str, parent_section: str | None = None) -> float:
         return 0.0
 
 
+def has_integrated_silencer(sec: str, parent_section: str | None = None) -> bool:
+    mod = _module()
+    if mod is None:
+        return False
+    parent = parent_section or sec
+    try:
+        return bool(mod.has_integrated_silencer(sec, parent))
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def calc_backend() -> str:
     return "dogma_item_stats.lupa" if available() else "stats_calc.py"

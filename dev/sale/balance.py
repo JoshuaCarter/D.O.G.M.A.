@@ -11,10 +11,13 @@ import yaml
 from .diaglog import get_logger
 from .score import (
     ARMOR_WEIGHTS,
+    CURVE_LINEAR,
     WEAPON_WEIGHTS,
     default_ceilings_armor,
     default_ceilings_weapon,
     merge_ceilings,
+    merge_curves,
+    normalize_curve,
 )
 from .settings import BALANCE_YML, LEGACY_BALANCE_YML, ensure_dirs
 
@@ -129,7 +132,11 @@ def load_balance(path: Path | None = None) -> dict[str, Any]:
         dcat = data.get("default", {}).get(cat) or {}
         bcat = base["default"][cat]
         bcat.update(
-            {k: v for k, v in dcat.items() if k not in ("weights", "ceilings")}
+            {
+                k: v
+                for k, v in dcat.items()
+                if k not in ("weights", "ceilings", "curves")
+            }
         )
         if "weights" in dcat:
             w = dict(dcat["weights"] or {})
@@ -139,6 +146,8 @@ def load_balance(path: Path | None = None) -> dict[str, Any]:
             bcat["ceilings"] = merge_ceilings(
                 bcat.get("ceilings") or {}, dcat.get("ceilings")
             )
+        if "curves" in dcat and isinstance(dcat.get("curves"), dict):
+            bcat["curves"] = merge_curves(dcat.get("curves"))
         # Drop any faction-copied ceilings left from older experiments.
     base["factions"] = data.get("factions") or {}
     for _fac, fblock in (base.get("factions") or {}).items():
@@ -147,9 +156,12 @@ def load_balance(path: Path | None = None) -> dict[str, Any]:
                 continue
             if "weights" in cblock:
                 migrated = _migrate_weight_keys(cblock.get("weights")) or migrated
-            # Scale ceilings are Default-only; strip from faction overrides.
+            # Scale ceilings / curves are Default-only; strip from faction overrides.
             if "ceilings" in cblock:
                 cblock.pop("ceilings", None)
+                migrated = True
+            if "curves" in cblock:
+                cblock.pop("curves", None)
                 migrated = True
     if migrated:
         log.info("balance migrated score weight keys → Min/Lgt/Lgt+/Mid/Mid+")
@@ -177,7 +189,7 @@ def effective_category(
 ) -> dict[str, Any]:
     """Resolve Default + faction overrides for one category.
 
-    ``ceilings`` always come from Default (shared scale maxes).
+    ``ceilings`` / ``curves`` always come from Default (shared scale maxes).
     """
     base = deepcopy(balance["default"][category])
     # Ensure ceilings always present / merged with code defaults.
@@ -190,12 +202,13 @@ def effective_category(
         base["ceilings"] = merge_ceilings(
             default_ceilings_armor(is_helmet=is_helm), base.get("ceilings")
         )
+    base["curves"] = merge_curves(base.get("curves"))
     if faction == "Default":
         return base
     fov = (balance.get("factions") or {}).get(faction) or {}
     ov = fov.get(category) or {}
     for k, v in ov.items():
-        if k == "ceilings":
+        if k in ("ceilings", "curves"):
             continue  # Default-only
         if k == "weights":
             base["weights"].update(v or {})
@@ -220,6 +233,24 @@ def set_ceiling(
     ceilings[stat_key] = float(value)
 
 
+def set_curve(
+    balance: dict[str, Any], category: str, stat_key: str, curve: str
+) -> None:
+    """Write a scale-max curve (Default only). Linear omits the key."""
+    cat = balance.setdefault("default", {}).setdefault(category, {})
+    curves = cat.setdefault("curves", {})
+    if not isinstance(curves, dict):
+        curves = {}
+        cat["curves"] = curves
+    c = normalize_curve(curve)
+    if c == CURVE_LINEAR:
+        curves.pop(stat_key, None)
+        if not curves:
+            cat.pop("curves", None)
+    else:
+        curves[stat_key] = c
+
+
 def set_override(
     balance: dict[str, Any],
     faction: str,
@@ -236,7 +267,7 @@ def set_override(
         else:
             cat[key] = value
         return
-    if key == "ceilings":
+    if key in ("ceilings", "curves"):
         return
     factions = balance.setdefault("factions", {})
     fblock = factions.setdefault(faction, {})

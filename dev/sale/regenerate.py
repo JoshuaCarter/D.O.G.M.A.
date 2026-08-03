@@ -332,6 +332,7 @@ def regenerate(
             "name": display_name_for(a, d, string_table),
             "inv_name": (d.get("inv_name") or "").strip(),
             "inv_name_short": (d.get("inv_name_short") or "").strip(),
+            "cost": float(d.get("cost") or 0),
             "box_size": float(d.get("box_size") or 50),
             "inv_grid_x": d.get("inv_grid_x"),
             "inv_grid_y": d.get("inv_grid_y"),

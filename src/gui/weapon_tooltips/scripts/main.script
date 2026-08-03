@@ -123,7 +123,7 @@ local HP_AMMO_MULT = {
 	["ammo_20x70_buck"] = 2,
 	["ammo_338_federal"] = 10,
 }
--- CQC integrated_silencer table (parent_section keys).
+-- Fallback if dogma_item_stats not loaded yet (parent_section keys).
 local INTEGRATED_SILENCER = {
 	["wpn_dvl10_m1"] = true,
 	["wpn_vssk"] = true,
@@ -1645,7 +1645,12 @@ local function silencer_mult(obj, sec, enabled)
 		end
 	end
 	local parent = sec and (ini_sys:r_string_ex(sec, "parent_section") or sec) or nil
-	if parent and INTEGRATED_SILENCER[parent] then
+	local IS = _G.dogma_item_stats
+	if IS and IS.has_integrated_silencer then
+		if IS.has_integrated_silencer(sec, parent) then
+			return SILENCER_BOOST
+		end
+	elseif parent and INTEGRATED_SILENCER[parent] then
 		return SILENCER_BOOST
 	end
 	return 1

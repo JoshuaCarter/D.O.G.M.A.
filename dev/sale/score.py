@@ -2,8 +2,56 @@
 
 from __future__ import annotations
 
+import math
 import re
 from typing import Any
+
+# Normalization curves for Scale max (0→ceiling → 0→1 contribution).
+CURVE_LINEAR = "linear"
+CURVE_EXP = "exp"
+CURVE_LOG = "log"
+CURVE_IDS = (CURVE_LINEAR, CURVE_EXP, CURVE_LOG)
+CURVE_LABELS = {
+    CURVE_LINEAR: "Linear",
+    CURVE_EXP: "Exponential",
+    CURVE_LOG: "Logarithmic",
+}
+# Steepness for exp/log maps (both pin 0→0 and 1→1).
+_CURVE_K = 2.5
+
+
+def normalize_curve(curve: str | None) -> str:
+    c = (curve or CURVE_LINEAR).strip().lower()
+    if c in ("exponential", "expo"):
+        return CURVE_EXP
+    if c in ("logarithmic", "loga"):
+        return CURVE_LOG
+    if c in CURVE_IDS:
+        return c
+    return CURVE_LINEAR
+
+
+def apply_score_curve(t01: float, curve: str | None) -> float:
+    """Map linear 0–1 contribution through linear / exp / log."""
+    t = _clamp01(t01)
+    c = normalize_curve(curve)
+    if c == CURVE_EXP:
+        return (math.exp(_CURVE_K * t) - 1.0) / (math.exp(_CURVE_K) - 1.0)
+    if c == CURVE_LOG:
+        return math.log(1.0 + _CURVE_K * t) / math.log(1.0 + _CURVE_K)
+    return t
+
+
+def merge_curves(stored: dict[str, Any] | None) -> dict[str, str]:
+    """Sparse stat_key → curve id (omit / linear = default)."""
+    out: dict[str, str] = {}
+    if not isinstance(stored, dict):
+        return out
+    for k, v in stored.items():
+        c = normalize_curve(str(v) if v is not None else None)
+        if c != CURVE_LINEAR:
+            out[str(k)] = c
+    return out
 
 # (stat_key, weight_key, scale_slider_max, inverse, default_weight)
 # default weight 0 = excluded until the slider is raised; regenerate always stores all stats.
@@ -193,9 +241,11 @@ def weapon_stat_terms(
     stats: dict[str, Any],
     weights: dict[str, float],
     ceilings: dict[str, float] | None = None,
+    curves: dict[str, str] | None = None,
 ) -> dict[str, tuple[float, float]]:
-    """stat_key → (slider_weight, final_weight) where final = n01 * w."""
+    """stat_key → (slider_weight, final_weight) where final = curve(n01) * w."""
     ceil = merge_ceilings(default_ceilings_weapon(), ceilings)
+    cmap = merge_curves(curves)
     out: dict[str, tuple[float, float]] = {}
     for stat_key, wkey, default_ceiling, inverse, default_w in WEAPON_WEIGHTS:
         w = float(weights.get(wkey, default_w) or 0)
@@ -210,6 +260,7 @@ def weapon_stat_terms(
         else:
             ceiling = float(ceil.get(stat_key, default_ceiling) or default_ceiling)
             n01 = _inv_norm01(raw, ceiling) if inverse else _norm01(raw, ceiling)
+            n01 = apply_score_curve(n01, cmap.get(stat_key))
         out[stat_key] = (w, n01 * w)
     return out
 
@@ -220,9 +271,11 @@ def armor_stat_terms(
     *,
     is_helmet: bool,
     ceilings: dict[str, float] | None = None,
+    curves: dict[str, str] | None = None,
 ) -> dict[str, tuple[float, float]]:
     """stat_key → (slider_weight, final_weight); includes cost via a_price."""
     ceil = merge_ceilings(default_ceilings_armor(is_helmet=is_helmet), ceilings)
+    cmap = merge_curves(curves)
     out: dict[str, tuple[float, float]] = {}
     for stat_key, wkey, default_ceiling, _inv, default_w in ARMOR_WEIGHTS:
         w = float(weights.get(wkey, default_w) or 0)
@@ -231,7 +284,7 @@ def armor_stat_terms(
             out[stat_key] = (w, 0.0)
             continue
         ceiling = float(ceil.get(stat_key, default_ceiling) or default_ceiling)
-        n01 = _norm01(raw, ceiling)
+        n01 = apply_score_curve(_norm01(raw, ceiling), cmap.get(stat_key))
         out[stat_key] = (w, n01 * w)
     w_price = float(weights.get("a_price", 0.5) or 0)
     cost = float(stats.get("cost") or 0)
@@ -244,7 +297,7 @@ def armor_stat_terms(
                 ARMOR_COST_CEILING_HELMET if is_helmet else ARMOR_COST_CEILING_OUTFIT,
             )
         )
-        n01 = _inv_norm01(cost, soft)
+        n01 = apply_score_curve(_inv_norm01(cost, soft), cmap.get("cost"))
         out["cost"] = (w_price, n01 * w_price)
     return out
 
@@ -254,8 +307,9 @@ def weapon_pts(
     weights: dict[str, float],
     cost_mult: float,
     ceilings: dict[str, float] | None = None,
+    curves: dict[str, str] | None = None,
 ) -> int:
-    terms = weapon_stat_terms(stats, weights, ceilings)
+    terms = weapon_stat_terms(stats, weights, ceilings, curves)
     sum_nw = 0.0
     sum_w = 0.0
     for w, final in terms.values():
@@ -274,9 +328,14 @@ def armor_pts(
     *,
     is_helmet: bool,
     ceilings: dict[str, float] | None = None,
+    curves: dict[str, str] | None = None,
 ) -> int:
     terms = armor_stat_terms(
-        stats, weights, is_helmet=is_helmet, ceilings=ceilings
+        stats,
+        weights,
+        is_helmet=is_helmet,
+        ceilings=ceilings,
+        curves=curves,
     )
     sum_nw = 0.0
     sum_w = 0.0

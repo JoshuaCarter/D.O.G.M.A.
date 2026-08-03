@@ -10,12 +10,14 @@ from typing import Any
 
 from PyQt6.QtCore import QSize, Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import (
+    QAction,
     QBrush,
     QColor,
     QFont,
     QIcon,
     QKeySequence,
     QPainter,
+    QPen,
     QPixmap,
     QShortcut,
 )
@@ -61,6 +63,7 @@ from .balance import (
     save_balance,
     set_ammo_family_enabled,
     set_ceiling,
+    set_curve,
     set_override,
 )
 from .diaglog import LOG_PATH, attach_log_view, get_logger, setup_logging
@@ -70,6 +73,9 @@ from .regenerate import load_items, regenerate
 from .spawn_filter import is_explosive_weapon, is_gauss_weapon, name_blocked
 from .score import (
     ARMOR_WEIGHTS,
+    CURVE_IDS,
+    CURVE_LABELS,
+    CURVE_LINEAR,
     FACTIONS,
     WEAPON_WEIGHTS,
     NO_CEILING_STATS,
@@ -84,6 +90,7 @@ from .score import (
     default_ceilings_armor,
     faction_label,
     hit_power_pct,
+    normalize_curve,
     weapon_ammo_allowed,
     weapon_pts,
     weapon_stat_terms,
@@ -332,9 +339,48 @@ class FineStepSlider(QSlider):
         event.accept()
 
 
+def _curve_picker_icon(curve: str, size: int = 16) -> QIcon:
+    """Tiny polyline icon: linear / ease-in (exp) / ease-out (log)."""
+    c = normalize_curve(curve)
+    pix = QPixmap(size, size)
+    pix.fill(QColor(0, 0, 0, 0))
+    painter = QPainter(pix)
+    try:
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        pen = QPen(QColor(190, 210, 230))
+        pen.setWidthF(1.6)
+        painter.setPen(pen)
+        m = 2.0
+        w = size - 2 * m
+        h = size - 2 * m
+        pts = []
+        steps = 10
+        for i in range(steps + 1):
+            t = i / steps
+            if c == "exp":
+                y01 = t * t
+            elif c == "log":
+                u = 1.0 - t
+                y01 = 1.0 - u * u
+            else:
+                y01 = t
+            pts.append((m + t * w, m + (1.0 - y01) * h))
+        for i in range(len(pts) - 1):
+            painter.drawLine(
+                int(pts[i][0]),
+                int(pts[i][1]),
+                int(pts[i + 1][0]),
+                int(pts[i + 1][1]),
+            )
+    finally:
+        painter.end()
+    return QIcon(pix)
+
+
 class WeightRow(QWidget):
     changed = pyqtSignal(str, float, bool)  # key, value, is_weight
     cleared = pyqtSignal(str, bool)
+    curve_changed = pyqtSignal(str, str)  # key, curve id
     drag_started = pyqtSignal()
     drag_ended = pyqtSignal()
 
@@ -351,10 +397,13 @@ class WeightRow(QWidget):
         editable: bool = True,
         show_clear: bool = True,
         slider_max: int | None = None,
+        show_curve: bool = False,
+        curve: str = CURVE_LINEAR,
     ) -> None:
         super().__init__()
         self.key = key
         self.is_weight = is_weight
+        self.curve = normalize_curve(curve)
         # kind: weight | int | float (float uses 0.01 steps via ×100)
         if kind:
             self.kind = kind
@@ -406,6 +455,29 @@ class WeightRow(QWidget):
         )
         self.val.editingFinished.connect(self._on_edit)
         lay.addWidget(self.val)
+        self.curve_btn = QToolButton()
+        self.curve_btn.setFixedSize(22, 22)
+        self.curve_btn.setAutoRaise(True)
+        self.curve_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.curve_btn.setStyleSheet(
+            "QToolButton { border: 1px solid #444; border-radius: 2px; padding: 0; "
+            "background: #2a2a2a; }"
+            "QToolButton:hover { border-color: #6a8aaa; }"
+            "QToolButton:disabled { border-color: #333; background: #222; }"
+        )
+        menu = QMenu(self.curve_btn)
+        for cid in CURVE_IDS:
+            act = QAction(CURVE_LABELS[cid], menu)
+            act.setData(cid)
+            act.setCheckable(True)
+            menu.addAction(act)
+        menu.triggered.connect(self._on_curve_menu)
+        self.curve_btn.setMenu(menu)
+        self._sync_curve_btn()
+        if show_curve:
+            lay.addWidget(self.curve_btn)
+        else:
+            self.curve_btn.hide()
         self.btn = QPushButton("↺")
         self.btn.setFixedWidth(28)
         self.btn.setEnabled(overridden)
@@ -418,10 +490,32 @@ class WeightRow(QWidget):
         if not editable:
             self.slider.setEnabled(False)
             self.val.setReadOnly(True)
+            self.curve_btn.setEnabled(False)
             self.val.setStyleSheet(
                 "QLineEdit { background: #222; color: #888; border: 1px solid #333; "
                 "padding: 1px 4px; font-family: Consolas, monospace; }"
             )
+
+    def _sync_curve_btn(self) -> None:
+        self.curve_btn.setIcon(_curve_picker_icon(self.curve))
+        self.curve_btn.setIconSize(QSize(14, 14))
+        label = CURVE_LABELS.get(self.curve, CURVE_LABELS[CURVE_LINEAR])
+        self.curve_btn.setToolTip(
+            f"Score curve: {label}\n"
+            "How 0→scale-max maps into the 0–1 score contribution."
+        )
+        menu = self.curve_btn.menu()
+        if menu is not None:
+            for act in menu.actions():
+                act.setChecked(str(act.data()) == self.curve)
+
+    def _on_curve_menu(self, action: QAction) -> None:
+        cid = normalize_curve(str(action.data() or CURVE_LINEAR))
+        if cid == self.curve:
+            return
+        self.curve = cid
+        self._sync_curve_btn()
+        self.curve_changed.emit(self.key, self.curve)
 
     def _fmt(self, v: float) -> str:
         if self.kind == "weight":
@@ -1152,7 +1246,7 @@ class MainWindow(QMainWindow):
             if self._score_refresh_timer.isActive():
                 self._score_refresh_timer.stop()
             return
-        self._score_refresh_timer.start(500)
+        self._score_refresh_timer.start(1000)
 
     def _flush_score_refresh(self, *, rebuild: bool = True) -> None:
         """Apply any pending debounced save (and optionally rebuild now)."""
@@ -1231,8 +1325,17 @@ class MainWindow(QMainWindow):
     _AMMO_ICON_W = 90
     _AMMO_ICON_H = 54
 
-    def _ammo_box_icon(self, thumb: str | None, *, enabled: bool = True) -> QIcon:
-        """Wide icon box; texture KeepAspectRatio-fitted inside (no stretch / badge)."""
+    def _ammo_cost(self, sec: str) -> int:
+        entry = ((self.items or {}).get("ammo") or {}).get(sec) or {}
+        try:
+            return max(0, int(round(float(entry.get("cost") or 0))))
+        except (TypeError, ValueError):
+            return 0
+
+    def _ammo_box_icon(
+        self, thumb: str | None, *, enabled: bool = True, cost: int = 0
+    ) -> QIcon:
+        """Wide icon box; texture fitted inside; grey cost number top-left (no bg)."""
         w = self._AMMO_ICON_W
         h = self._AMMO_ICON_H
         canvas = QPixmap(w, h)
@@ -1254,6 +1357,11 @@ class MainWindow(QMainWindow):
                     x = (w - scaled.width()) // 2
                     y = (h - scaled.height()) // 2
                     painter.drawPixmap(x, y, scaled)
+            if cost > 0:
+                font = QFont("Consolas", 8)
+                painter.setFont(font)
+                painter.setPen(QColor(255, 255, 255))
+                painter.drawText(2, 2 + painter.fontMetrics().ascent(), str(cost))
         finally:
             painter.end()
         return QIcon(canvas)
@@ -1262,8 +1370,11 @@ class MainWindow(QMainWindow):
         fam = ammo_family(sec)
         bloc = ammo_family_bloc(fam)
         tag = ammo_bloc_tag(bloc)
+        cost = self._ammo_cost(sec)
+        cost_s = f"{cost:,} RU".replace(",", " ") if cost > 0 else "—"
         return (
             f"{sec}\n"
+            f"cost: {cost_s}\n"
             f"bloc: {tag} ({ammo_bloc_label(bloc)})\n"
             f"{'enabled' if enabled else 'DISABLED — not in loadout; gun kept if ≥1 other ammo on'}"
         )
@@ -1273,7 +1384,11 @@ class MainWindow(QMainWindow):
         if btn is None:
             return
         btn.setIcon(
-            self._ammo_box_icon(self._ammo_thumb_path(sec), enabled=enabled)
+            self._ammo_box_icon(
+                self._ammo_thumb_path(sec),
+                enabled=enabled,
+                cost=self._ammo_cost(sec),
+            )
         )
         btn.setToolTip(self._ammo_tip(sec, enabled))
         self._apply_ammo_btn_border(sec)
@@ -1325,7 +1440,13 @@ class MainWindow(QMainWindow):
         btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
         btn.setIconSize(QSize(iw, ih))
         btn.setFixedSize(iw, ih)
-        btn.setIcon(self._ammo_box_icon(self._ammo_thumb_path(sec), enabled=enabled))
+        btn.setIcon(
+            self._ammo_box_icon(
+                self._ammo_thumb_path(sec),
+                enabled=enabled,
+                cost=self._ammo_cost(sec),
+            )
+        )
         btn.setToolTip(self._ammo_tip(sec, enabled))
         btn.setStyleSheet(
             self._ammo_btn_stylesheet(used=sec in self._ammo_used_by_sel)
@@ -1582,6 +1703,7 @@ class MainWindow(QMainWindow):
                 if ceilings_locked:
                     tip = f"{tip} (Default faction only — shared by all factions.)"
                 tip = f"{tip} Slider range 0–{cap:g}."
+                curve = normalize_curve((curve_map or {}).get(stat_key))
                 row = WeightRow(
                     f"ceiling:{stat_key}",
                     pretty_label(stat_key),
@@ -1593,8 +1715,11 @@ class MainWindow(QMainWindow):
                     editable=not ceilings_locked,
                     show_clear=False,
                     slider_max=smax,
+                    show_curve=True,
+                    curve=curve,
                 )
                 row.changed.connect(self._ceiling_changed)
+                row.curve_changed.connect(self._ceiling_curve_changed)
                 self._wire_slider_row(row)
                 self.ceilings_layout.addWidget(row)
 
@@ -1656,6 +1781,7 @@ class MainWindow(QMainWindow):
                 ceil_note += " — Default only"
             self.ceilings_layout.addWidget(self._section_label(ceil_note))
             ceil_map = cfg.get("ceilings") or {}
+            curve_map = cfg.get("curves") or {}
             if cat == "weapons":
                 for sk, _wk, default_c, _inv, _dw in WEAPON_WEIGHTS:
                     if sk in NO_CEILING_STATS:
@@ -1693,6 +1819,19 @@ class MainWindow(QMainWindow):
             value,
         )
         set_ceiling(self.balance, self.category, stat_key, float(value))
+        self._schedule_score_refresh()
+
+    def _ceiling_curve_changed(self, key: str, curve: str) -> None:
+        if self.faction != "Default":
+            return
+        stat_key = key[8:] if key.startswith("ceiling:") else key
+        log.debug(
+            "ceiling curve set cat=%s key=%s curve=%s",
+            self.category,
+            stat_key,
+            curve,
+        )
+        set_curve(self.balance, self.category, stat_key, curve)
         self._schedule_score_refresh()
 
     def _weight_changed(self, key: str, value: float, is_weight: bool) -> None:
@@ -1763,12 +1902,14 @@ class MainWindow(QMainWindow):
         cfg = effective_category(self.balance, self.faction, self.category)
         stats = entry.get("stats") or {}
         ceilings = cfg.get("ceilings") or {}
+        curves = cfg.get("curves") or {}
         if self.category == "weapons":
             pts = weapon_pts(
                 stats,
                 cfg.get("weights") or {},
                 float(cfg.get("cost_mult") or 1000),
                 ceilings,
+                curves,
             )
             under = pts < float(cfg.get("max_pts") or 900)
             ammo_map = ammo_enabled_map(self.balance, self.faction)
@@ -1781,6 +1922,7 @@ class MainWindow(QMainWindow):
             float(cfg.get("cost_mult") or 1000),
             is_helmet=is_helm,
             ceilings=ceilings,
+            curves=curves,
         )
         under = pts < float(cfg.get("max_pts") or 550)
         if is_helm or self.faction == "Default":
@@ -2004,14 +2146,16 @@ class MainWindow(QMainWindow):
             cfg = effective_category(self.balance, self.faction, self.category)
             wmap = cfg.get("weights") or {}
             ceilings = cfg.get("ceilings") or {}
+            curves = cfg.get("curves") or {}
             if self.category == "weapons":
-                terms = weapon_stat_terms(stats, wmap, ceilings)
+                terms = weapon_stat_terms(stats, wmap, ceilings, curves)
             else:
                 terms = armor_stat_terms(
                     stats,
                     wmap,
                     is_helmet=self.category == "helmets",
                     ceilings=ceilings,
+                    curves=curves,
                 )
 
             def _wf(key: str) -> tuple[str, str, float | None]:
@@ -2099,7 +2243,7 @@ class MainWindow(QMainWindow):
             self.items = load_items(Path(path))
             meta = (self.items or {}).get("meta") or {}
             log.info("regen done path=%s counts=%s", path, meta.get("counts"))
-            self.status.setText(f"Regenerated → {path}")
+            self.status.setText("Scan complete")
             self._refresh_sort_options()
             self._rebuild_ammo_toggles()
             self._rebuild_list()

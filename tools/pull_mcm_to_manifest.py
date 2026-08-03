@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Pull live MCM diffs into config/manifest-*.yml ``mcm_set:`` blocks.
 
-Uses the same baseline as DOGMA Backup (pristine G.A.M.M.A. MCM values, else
-script ``def=``). Matched packs get their ``mcm_set:`` merged/updated in place
-so surrounding comments and key order stay intact.
+Uses ``dogma_backup.collect_mcm_diff`` unchanged (pristine G.A.M.M.A. +
+mod script defaults in load order).
+Matched packs get ``mcm_set:`` merged in place so comments and key order stay
+intact.
 
   py -3 tools/pull_mcm_to_manifest.py
   py -3 tools/pull_mcm_to_manifest.py --dry-run
@@ -477,7 +478,7 @@ def main(argv: list[str] | None = None) -> int:
         if not changed:
             info(f"No text change: {path.name}")
             continue
-        bak = path.with_suffix(path.suffix + ".bak")
+        bak = path.with_name(f"{path.stem}.back{path.suffix}")
         bak.write_text(original, encoding="utf-8", newline="\n")
         path.write_text(new_text, encoding="utf-8", newline="\n")
         info(f"Updated {path.name}: {', '.join(changed)}")

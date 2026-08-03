@@ -190,15 +190,52 @@ def _normalize_val(raw: str) -> str:
     return raw
 
 
-def _lookup_script_default(key: str, defaults: dict[str, str]) -> str | None:
-    if key in defaults:
-        return defaults[key]
-    parts = key.split("/")
-    if len(parts) >= 2:
-        guess = f"{parts[0]}/{parts[-1]}"
-        if guess in defaults:
-            return defaults[guess]
-    return None
+def _enabled_mods_low_to_high(mo2_root: Path) -> list[str] | None:
+    """Enabled MO2 mods from lowest to highest priority (last wins).
+
+    ``modlist.txt`` lists highest priority first (top of left pane).
+    """
+    try:
+        modlist = lib.modlist_path(mo2_root)
+    except FileNotFoundError:
+        return None
+    high_first = [n for f, n in lib.list_modlist_entries(modlist) if f == "+"]
+    return list(reversed(high_first))
+
+
+def build_mcm_baseline(mo2_root: Path) -> dict[str, str]:
+    """Effective MCM defaults: pristine G.A.M.M.A. + mod script defs (load order).
+
+    1. Start from installer G.A.M.M.A. MCM values ``axr_options``.
+    2. Overlay enabled mods' script ``def=`` / ``defaults = {…}`` low→high
+       priority so later (higher) mods win.
+    """
+    baseline: dict[str, str] = {}
+    pristine = find_pristine_gamma_axr(mo2_root)
+    if pristine is not None and pristine.is_file():
+        baseline.update(parse_axr_section(pristine, "mcm"))
+        lib.info(
+            f"MCM baseline: pristine G.A.M.M.A. ({len(baseline)} key(s) from {pristine})"
+        )
+    else:
+        lib.warn("MCM baseline: no pristine G.A.M.M.A. axr_options found")
+
+    mod_order = _enabled_mods_low_to_high(mo2_root)
+    if mod_order is None:
+        lib.warn("MCM baseline: no modlist - indexing all mods (unordered)")
+        script_defs = lib.index_mcm_script_defaults(mo2_root)
+    else:
+        script_defs = lib.index_mcm_script_defaults(mo2_root, mod_names=mod_order)
+        lib.info(
+            f"MCM baseline: overlay script defaults from {len(mod_order)} "
+            f"enabled mod(s) (load order, last wins) -> {len(script_defs)} key(s)"
+        )
+    baseline.update(script_defs)
+    return baseline
+
+
+def _lookup_baseline(key: str, baseline: dict[str, str]) -> str | None:
+    return lib.lookup_mcm_script_default(key, baseline)
 
 
 def _collect_root_to_mod(mo2_root: Path) -> dict[str, str]:
@@ -208,8 +245,7 @@ def _collect_root_to_mod(mo2_root: Path) -> dict[str, str]:
     if not mods.is_dir():
         return root_to_mod
     for script in mods.rglob("*.script"):
-        name = script.name.lower()
-        if "mcm" not in name and not name.endswith("_mcm.script"):
+        if not lib._is_mcm_script_name(script.name):  # noqa: SLF001
             continue
         try:
             text = script.read_text(encoding="utf-8", errors="replace")
@@ -237,9 +273,9 @@ def _section_for_key(key: str, root_to_mod: dict[str, str]) -> str:
 def collect_mcm_diff(mo2_root: Path) -> dict[str, dict[str, str]]:
     """Non-default MCM keys grouped by MO2 mod name.
 
-    Baseline:
-      - key present in pristine G.A.M.M.A. MCM values -> that value (gamma default)
-      - else -> script ``def=`` (mod default)
+    Baseline is pristine G.A.M.M.A. MCM values overlaid with enabled mods'
+    script defaults in MO2 load order (last wins). Keys with no known
+    baseline are skipped.
     """
     axr = live_axr_options_path(mo2_root)
     if axr is None or not axr.is_file():
@@ -247,38 +283,27 @@ def collect_mcm_diff(mo2_root: Path) -> dict[str, dict[str, str]]:
         return {}
 
     current = parse_axr_section(axr, "mcm")
-    script_defs = lib.index_mcm_script_defaults(mo2_root)
+    baseline = build_mcm_baseline(mo2_root)
     root_to_mod = _collect_root_to_mod(mo2_root)
 
-    pristine = find_pristine_gamma_axr(mo2_root)
-    gamma_defaults: dict[str, str] = {}
-    if pristine is not None:
-        gamma_defaults = parse_axr_section(pristine, "mcm")
-        lib.info(f"Gamma MCM defaults: {pristine}")
-    else:
-        lib.warn(
-            "Pristine G.A.M.M.A. MCM values not found under "
-            ".Grok's Modpack Installer - using script defaults only."
-        )
-
     groups: dict[str, dict[str, str]] = {}
+    skipped_unknown = 0
+    skipped_default = 0
     for key, val in current.items():
-        if key in gamma_defaults:
-            baseline = gamma_defaults[key]
-        else:
-            baseline = _lookup_script_default(key, script_defs)
-            if baseline is None:
-                # Unknown default - keep (explicitly saved).
-                baseline = None
-
-        if baseline is not None and _normalize_val(val) == _normalize_val(baseline):
+        expected = _lookup_baseline(key, baseline)
+        if expected is None:
+            skipped_unknown += 1
+            continue
+        if _normalize_val(val) == _normalize_val(expected):
+            skipped_default += 1
             continue
         section = _section_for_key(key, root_to_mod)
         groups.setdefault(section, {})[key] = val
 
     lib.info(
         f"MCM diff: {sum(len(v) for v in groups.values())} key(s) "
-        f"across {len(groups)} mod(s) (from {axr.name})"
+        f"across {len(groups)} mod(s) (from {axr.name}); "
+        f"skipped default={skipped_default} unknown={skipped_unknown}"
     )
     return groups
 

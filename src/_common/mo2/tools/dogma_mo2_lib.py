@@ -4448,34 +4448,122 @@ def _normalize_mcm_def(raw: str) -> str:
     return raw
 
 
-def index_mcm_script_defaults(mo2_root: Path) -> dict[str, str]:
-    """Scan mods/**/*mcm*.script for id/def= pairs (and root/id paths)."""
+_LUA_DEFAULTS_ASSIGN = re.compile(r"(?im)^\s*defaults\s*=\s*\{")
+_LUA_DEFAULTS_ENTRY = re.compile(
+    r"(?im)^\s*([A-Za-z_][\w]*)\s*=\s*([^,\n]+?)(?:\s*--[^\n]*)?\s*,?\s*$"
+)
+
+
+def _parse_lua_defaults_table(text: str) -> dict[str, str]:
+    """Parse ``defaults = { key = value, ... }`` tables (AlifePlus-style MCM)."""
+    out: dict[str, str] = {}
+    for m in _LUA_DEFAULTS_ASSIGN.finditer(text):
+        start = m.end()
+        depth = 1
+        i = start
+        while i < len(text) and depth:
+            c = text[i]
+            if c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
+            i += 1
+        body = text[start : i - 1]
+        for em in _LUA_DEFAULTS_ENTRY.finditer(body):
+            key = em.group(1)
+            raw = em.group(2).strip().rstrip(",")
+            if not raw or raw.startswith("--"):
+                continue
+            # Skip non-literals (tables, calls, refs).
+            if raw.startswith("{") or "(" in raw or raw.startswith("defaults"):
+                continue
+            out[key] = _normalize_mcm_def(raw)
+    return out
+
+
+def _is_mcm_script_name(name: str) -> bool:
+    lower = name.lower()
+    return "mcm" in lower or lower.endswith("_mcm.script")
+
+
+def extract_mcm_script_defaults(text: str) -> dict[str, str]:
+    """Parse one MCM script for id/def= pairs and ``defaults = {…}`` tables."""
+    defaults: dict[str, str] = {}
+    root = None
+    m = _ROOT_ID.search(text)
+    if m:
+        root = m.group(1)
+    else:
+        m2 = _SIMPLE_ROOT.search(text)
+        if m2:
+            root = m2.group(1)
+    for m in _ID_DEF_LINE.finditer(text):
+        opt_id, def_raw = m.group(1), _normalize_mcm_def(m.group(2))
+        defaults[opt_id] = def_raw
+        if root and opt_id != root:
+            defaults[f"{root}/{opt_id}"] = def_raw
+    for opt_id, def_raw in _parse_lua_defaults_table(text).items():
+        defaults[opt_id] = def_raw
+        if root and opt_id != root:
+            defaults[f"{root}/{opt_id}"] = def_raw
+    return defaults
+
+
+def index_mcm_script_defaults(
+    mo2_root: Path,
+    *,
+    mod_names: list[str] | None = None,
+) -> dict[str, str]:
+    """Scan *mcm*.script files for id/def= pairs (and root/id paths).
+
+    Also reads ``defaults = { … }`` tables used by mods that set
+    ``def = defaults[key]`` (e.g. AlifePlus).
+
+    If ``mod_names`` is given, only those mod folders are scanned, in list
+    order (later entries overwrite — pass low→high priority for last-wins).
+    Otherwise every mod under ``mods/`` is scanned (filesystem order).
+    """
     defaults: dict[str, str] = {}
     mods = mo2_root / "mods"
     if not mods.is_dir():
         return defaults
-    for script in mods.rglob("*.script"):
-        name = script.name.lower()
-        if "mcm" not in name and not name.endswith("_mcm.script"):
-            continue
+
+    def _ingest(script: Path) -> None:
+        if not _is_mcm_script_name(script.name):
+            return
         try:
             text = script.read_text(encoding="utf-8", errors="replace")
         except OSError:
-            continue
-        root = None
-        m = _ROOT_ID.search(text)
-        if m:
-            root = m.group(1)
-        else:
-            m2 = _SIMPLE_ROOT.search(text)
-            if m2:
-                root = m2.group(1)
-        for m in _ID_DEF_LINE.finditer(text):
-            opt_id, def_raw = m.group(1), _normalize_mcm_def(m.group(2))
-            defaults[opt_id] = def_raw
-            if root and opt_id != root:
-                defaults[f"{root}/{opt_id}"] = def_raw
+            return
+        defaults.update(extract_mcm_script_defaults(text))
+
+    if mod_names is not None:
+        for name in mod_names:
+            mod_dir = mods / name
+            if not mod_dir.is_dir():
+                continue
+            for script in sorted(mod_dir.rglob("*.script"), key=lambda p: str(p).lower()):
+                _ingest(script)
+        return defaults
+
+    for script in mods.rglob("*.script"):
+        _ingest(script)
     return defaults
+
+
+def lookup_mcm_script_default(key: str, defaults: dict[str, str]) -> str | None:
+    """Resolve an axr ``[mcm]`` key against indexed script defaults."""
+    if key in defaults:
+        return defaults[key]
+    parts = key.split("/")
+    if len(parts) >= 2:
+        guess = f"{parts[0]}/{parts[-1]}"
+        if guess in defaults:
+            return defaults[guess]
+        leaf = parts[-1]
+        if leaf in defaults:
+            return defaults[leaf]
+    return None
 
 
 def apply_settings_to_axr_options(

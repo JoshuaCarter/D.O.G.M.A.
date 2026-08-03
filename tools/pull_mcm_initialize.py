@@ -496,7 +496,7 @@ def main(argv: list[str] | None = None) -> int:
     def _write_yml(path: Path, data: dict) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         if path.is_file():
-            bak = path.with_suffix(path.suffix + ".bak")
+            bak = path.with_name(f"{path.stem}.back{path.suffix}")
             bak.write_bytes(path.read_bytes())
             info(f"Backup   : {bak}")
         path.write_text(

@@ -203,65 +203,89 @@ def _enabled_mods_low_to_high(mo2_root: Path) -> list[str] | None:
     return list(reversed(high_first))
 
 
-def build_mcm_baseline(mo2_root: Path) -> dict[str, str]:
-    """Effective MCM defaults: pristine G.A.M.M.A. + mod script defs (load order).
-
-    1. Start from installer G.A.M.M.A. MCM values ``axr_options``.
-    2. Overlay enabled mods' script ``def=`` / ``defaults = {…}`` low→high
-       priority so later (higher) mods win.
-    """
-    baseline: dict[str, str] = {}
-    pristine = find_pristine_gamma_axr(mo2_root)
-    if pristine is not None and pristine.is_file():
-        baseline.update(parse_axr_section(pristine, "mcm"))
-        lib.info(
-            f"MCM baseline: pristine G.A.M.M.A. ({len(baseline)} key(s) from {pristine})"
-        )
-    else:
-        lib.warn("MCM baseline: no pristine G.A.M.M.A. axr_options found")
-
+def index_user_mcm_options(mo2_root: Path) -> dict[str, str]:
+    """User-facing MCM option paths → script defaults (enabled mods, load order)."""
     mod_order = _enabled_mods_low_to_high(mo2_root)
     if mod_order is None:
         lib.warn("MCM baseline: no modlist - indexing all mods (unordered)")
         script_defs = lib.index_mcm_script_defaults(mo2_root)
+        n_mods = 0
     else:
         script_defs = lib.index_mcm_script_defaults(mo2_root, mod_names=mod_order)
+        n_mods = len(mod_order)
+    lib.info(
+        f"MCM user options: {len(script_defs)} key(s) from "
+        f"{n_mods or 'all'} enabled mod(s) (load order, last wins)"
+    )
+    return script_defs
+
+
+def build_mcm_baseline(mo2_root: Path) -> tuple[dict[str, str], dict[str, str]]:
+    """Return ``(user_options, baseline)`` for MCM diffing.
+
+    ``user_options``: full paths of controls exposed in MCM (check/list/…).
+    ``baseline``: per those keys — installer G.A.M.M.A. value if present,
+    else script default. Keys not in ``user_options`` are never compared.
+    """
+    user_opts = index_user_mcm_options(mo2_root)
+    gamma: dict[str, str] = {}
+    pristine = find_pristine_gamma_axr(mo2_root)
+    if pristine is not None and pristine.is_file():
+        gamma = parse_axr_section(pristine, "mcm")
         lib.info(
-            f"MCM baseline: overlay script defaults from {len(mod_order)} "
-            f"enabled mod(s) (load order, last wins) -> {len(script_defs)} key(s)"
+            f"MCM baseline: pristine G.A.M.M.A. ({len(gamma)} key(s) from {pristine})"
         )
-    baseline.update(script_defs)
-    return baseline
+    else:
+        lib.warn("MCM baseline: no pristine G.A.M.M.A. axr_options found")
+
+    baseline: dict[str, str] = {}
+    for key, script_def in user_opts.items():
+        if key in gamma:
+            baseline[key] = gamma[key]
+        else:
+            baseline[key] = script_def
+    return user_opts, baseline
 
 
 def _lookup_baseline(key: str, baseline: dict[str, str]) -> str | None:
-    return lib.lookup_mcm_script_default(key, baseline)
+    return baseline.get(key)
+
+
+def _enabled_mod_name_set(mo2_root: Path) -> set[str] | None:
+    try:
+        modlist = lib.modlist_path(mo2_root)
+    except FileNotFoundError:
+        return None
+    return {n for f, n in lib.list_modlist_entries(modlist) if f == "+"}
 
 
 def _collect_root_to_mod(mo2_root: Path) -> dict[str, str]:
-    """Map MCM root id -> MO2 mod folder name (from *mcm*.script paths)."""
+    """Map MCM root id -> MO2 mod folder (enabled mods, load order last wins)."""
     root_to_mod: dict[str, str] = {}
     mods = mo2_root / "mods"
     if not mods.is_dir():
         return root_to_mod
-    for script in mods.rglob("*.script"):
-        if not lib._is_mcm_script_name(script.name):  # noqa: SLF001
+
+    mod_order = _enabled_mods_low_to_high(mo2_root)
+    if mod_order is None:
+        scan_names = [p.name for p in mods.iterdir() if p.is_dir()]
+    else:
+        scan_names = mod_order
+
+    for mod_folder in scan_names:
+        mod_dir = mods / mod_folder
+        if not mod_dir.is_dir():
             continue
-        try:
-            text = script.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        mod_folder = script.relative_to(mods).parts[0]
-        root = None
-        m = lib._ROOT_ID.search(text)  # noqa: SLF001
-        if m:
-            root = m.group(1)
-        else:
-            m2 = lib._SIMPLE_ROOT.search(text)  # noqa: SLF001
-            if m2:
-                root = m2.group(1)
-        if root:
-            root_to_mod.setdefault(root, mod_folder)
+        for script in sorted(mod_dir.rglob("*.script"), key=lambda p: str(p).lower()):
+            if not lib._is_mcm_script_name(script.name):  # noqa: SLF001
+                continue
+            try:
+                text = script.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            root = lib.detect_mcm_root(text)
+            if root:
+                root_to_mod[root] = mod_folder
     return root_to_mod
 
 
@@ -273,9 +297,9 @@ def _section_for_key(key: str, root_to_mod: dict[str, str]) -> str:
 def collect_mcm_diff(mo2_root: Path) -> dict[str, dict[str, str]]:
     """Non-default MCM keys grouped by MO2 mod name.
 
-    Baseline is pristine G.A.M.M.A. MCM values overlaid with enabled mods'
-    script defaults in MO2 load order (last wins). Keys with no known
-    baseline are skipped.
+    Only **user-facing** MCM controls (check/list/track/input/…) are
+    considered. Baseline is installer G.A.M.M.A. when present, else the
+    option's script default. Keys owned by a **disabled** mod are skipped.
     """
     axr = live_axr_options_path(mo2_root)
     if axr is None or not axr.is_file():
@@ -283,27 +307,42 @@ def collect_mcm_diff(mo2_root: Path) -> dict[str, dict[str, str]]:
         return {}
 
     current = parse_axr_section(axr, "mcm")
-    baseline = build_mcm_baseline(mo2_root)
+    user_opts, baseline = build_mcm_baseline(mo2_root)
     root_to_mod = _collect_root_to_mod(mo2_root)
+    enabled = _enabled_mod_name_set(mo2_root)
 
     groups: dict[str, dict[str, str]] = {}
-    skipped_unknown = 0
+    skipped_non_user = 0
     skipped_default = 0
+    skipped_disabled = 0
     for key, val in current.items():
+        if key not in user_opts:
+            skipped_non_user += 1
+            continue
         expected = _lookup_baseline(key, baseline)
         if expected is None:
-            skipped_unknown += 1
+            skipped_non_user += 1
             continue
         if _normalize_val(val) == _normalize_val(expected):
             skipped_default += 1
             continue
         section = _section_for_key(key, root_to_mod)
+        if enabled is not None:
+            owner = root_to_mod.get(key.split("/", 1)[0])
+            if owner is not None and owner not in enabled:
+                skipped_disabled += 1
+                continue
+            # Section is a concrete mods/ folder that is disabled.
+            if (mo2_root / "mods" / section).is_dir() and section not in enabled:
+                skipped_disabled += 1
+                continue
         groups.setdefault(section, {})[key] = val
 
     lib.info(
         f"MCM diff: {sum(len(v) for v in groups.values())} key(s) "
         f"across {len(groups)} mod(s) (from {axr.name}); "
-        f"skipped default={skipped_default} unknown={skipped_unknown}"
+        f"skipped default={skipped_default} non_user={skipped_non_user} "
+        f"disabled={skipped_disabled}"
     )
     return groups
 

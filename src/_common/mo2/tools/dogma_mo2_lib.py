@@ -4408,18 +4408,6 @@ def format_axr_line(indent: str, key: str, value: str, width: int = 40) -> str:
     return f"{indent}{key:<{pad}} = {value}"
 
 
-_ID_DEF_LINE = re.compile(
-    r"""(?ix)
-    id\s*=\s*['"]([^'"]+)['"]
-    .*?
-    def\s*=\s*
-    (
-        -?\d+(?:\.\d+)?
-        | true | false
-        | ['"][^'"]*['"]
-    )
-    """
-)
 _ROOT_ID = re.compile(
     r"""(?ix)
     (?:function\s+on_mcm_load|return\s*\{)
@@ -4435,6 +4423,66 @@ _SIMPLE_ROOT = re.compile(
     """,
     re.MULTILINE,
 )
+# Prefer explicit MCM menu root assignment (avoids nested return { id=… } hits).
+_OP_ROOT = re.compile(
+    r"""(?ix)
+    \bop\s*=\s*\{\s*
+    id\s*=\s*['"]([^'"]+)['"]
+    """
+)
+# Nested MCM modules: ``return op, "ssfx_module"`` (parent path root).
+_RETURN_PARENT_ROOT = re.compile(
+    r"""(?ix)
+    return\s+op\s*,\s*['"]([^'"]+)['"]
+    """
+)
+_MCM_OP_ASSIGN = re.compile(r"(?is)\bop\s*=\s*\{")
+_MCM_ID = re.compile(r"""(?ix)\bid\s*=\s*['"]([^'"]+)['"]""")
+_MCM_TYPE = re.compile(r"""(?ix)\btype\s*=\s*['"]([^'"]+)['"]""")
+_MCM_SH = re.compile(r"(?ix)\bsh\s*=\s*(true|false)")
+_MCM_GR = re.compile(r"(?is)\bgr\s*=\s*\{")
+_MCM_DEF_LIT = re.compile(
+    r"""(?ix)\bdef\s*=\s*(
+        -?\d+(?:\.\d+)?
+        | true | false
+        | ['"][^'"]*['"]
+    )"""
+)
+_MCM_DEF_DEFAULTS_REF = re.compile(
+    r"""(?ix)\bdef\s*=\s*defaults\s*(?:\[\s*['"]([^'"]+)['"]\s*\]|\.([A-Za-z_][\w]*))"""
+)
+_MCM_CONTENT = re.compile(r"(?is)\bcontent\s*=\s*\{")
+# User-editable MCM control types (stored in axr_options).
+_MCM_USER_TYPES = frozenset(
+    {
+        "check",
+        "list",
+        "track",
+        "input",
+        "radio",
+        "key_bind",
+        "keybind",
+        "bind",
+    }
+)
+
+
+def detect_mcm_root(text: str) -> str | None:
+    """Best-effort MCM menu root id from a *mcm*.script body."""
+    # Parent path root wins when present (ssfx_module/… keys live under it).
+    m = _RETURN_PARENT_ROOT.search(text)
+    if m:
+        return m.group(1)
+    m = _OP_ROOT.search(text)
+    if m:
+        return m.group(1)
+    m = _SIMPLE_ROOT.search(text)
+    if m:
+        return m.group(1)
+    m = _ROOT_ID.search(text)
+    if m:
+        return m.group(1)
+    return None
 
 
 def _normalize_mcm_def(raw: str) -> str:
@@ -4486,27 +4534,178 @@ def _is_mcm_script_name(name: str) -> bool:
     return "mcm" in lower or lower.endswith("_mcm.script")
 
 
-def extract_mcm_script_defaults(text: str) -> dict[str, str]:
-    """Parse one MCM script for id/def= pairs and ``defaults = {…}`` tables."""
-    defaults: dict[str, str] = {}
-    root = None
-    m = _ROOT_ID.search(text)
-    if m:
-        root = m.group(1)
+def _extract_balanced(text: str, open_idx: int) -> str:
+    """Return ``text[open_idx:close+1]`` for a ``{…}`` starting at ``open_idx``."""
+    if open_idx < 0 or open_idx >= len(text) or text[open_idx] != "{":
+        return ""
+    depth = 0
+    for i in range(open_idx, len(text)):
+        c = text[i]
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return text[open_idx : i + 1]
+    return ""
+
+
+def _split_top_level_tables(body: str) -> list[str]:
+    """Split a comma-separated sequence of ``{…}`` tables at depth 0."""
+    out: list[str] = []
+    i = 0
+    n = len(body)
+    while i < n:
+        while i < n and body[i] not in "{":
+            i += 1
+        if i >= n:
+            break
+        block = _extract_balanced(body, i)
+        if not block:
+            break
+        out.append(block)
+        i += len(block)
+    return out
+
+
+def _list_content_values(entry: str) -> list[str]:
+    m = _MCM_CONTENT.search(entry)
+    if not m:
+        return []
+    block = _extract_balanced(entry, m.end() - 1)
+    if not block:
+        return []
+    vals: list[str] = []
+    # { value, "label" } or { "value", "label" } or {0,"label"}
+    for em in re.finditer(
+        r"""(?ix)\{\s*(?:['"]([^'"]+)['"]|(-?\d+(?:\.\d+)?))\s*,""",
+        block,
+    ):
+        vals.append(em.group(1) if em.group(1) is not None else em.group(2))
+    return vals
+
+
+def _resolve_list_def(def_val: str, content_vals: list[str]) -> str:
+    """Map a list ``def`` to the value MCM actually stores when possible."""
+    if not content_vals:
+        return def_val
+    if def_val in content_vals:
+        return def_val
+    # Numeric def often means content index / value id.
+    for cv in content_vals:
+        if cv == def_val:
+            return cv
+    # Shorthand def: "whtx" → "deadbody_location_whtx"
+    hits = [cv for cv in content_vals if cv.endswith(def_val) or def_val in cv]
+    if len(hits) == 1:
+        return hits[0]
+    return def_val
+
+
+def _parse_mcm_entry(
+    entry: str,
+    path_prefix: list[str],
+    defaults_tbl: dict[str, str],
+    out: dict[str, str],
+) -> None:
+    """Walk one MCM table entry; record user-facing options with full paths."""
+    id_m = _MCM_ID.search(entry)
+    if not id_m:
+        return
+    opt_id = id_m.group(1)
+    sh_m = _MCM_SH.search(entry)
+    if sh_m and sh_m.group(1).lower() == "false":
+        return
+
+    type_m = _MCM_TYPE.search(entry)
+    gr_m = _MCM_GR.search(entry)
+    # Page / group: has gr= and no control type (or type absent).
+    if gr_m and (type_m is None or type_m.group(1).lower() not in _MCM_USER_TYPES):
+        gr_block = _extract_balanced(entry, gr_m.end() - 1)
+        if not gr_block:
+            return
+        for child in _split_top_level_tables(gr_block[1:-1]):
+            _parse_mcm_entry(child, path_prefix + [opt_id], defaults_tbl, out)
+        return
+
+    if type_m is None:
+        return
+    typ = type_m.group(1).lower()
+    if typ not in _MCM_USER_TYPES:
+        return
+
+    def_val: str | None = None
+    lit = _MCM_DEF_LIT.search(entry)
+    if lit:
+        def_val = _normalize_mcm_def(lit.group(1))
     else:
-        m2 = _SIMPLE_ROOT.search(text)
-        if m2:
-            root = m2.group(1)
-    for m in _ID_DEF_LINE.finditer(text):
-        opt_id, def_raw = m.group(1), _normalize_mcm_def(m.group(2))
-        defaults[opt_id] = def_raw
-        if root and opt_id != root:
-            defaults[f"{root}/{opt_id}"] = def_raw
-    for opt_id, def_raw in _parse_lua_defaults_table(text).items():
-        defaults[opt_id] = def_raw
-        if root and opt_id != root:
-            defaults[f"{root}/{opt_id}"] = def_raw
-    return defaults
+        ref = _MCM_DEF_DEFAULTS_REF.search(entry)
+        if ref:
+            ref_key = ref.group(1) or ref.group(2)
+            if ref_key and ref_key in defaults_tbl:
+                def_val = defaults_tbl[ref_key]
+    if def_val is None:
+        return
+
+    if typ == "list":
+        def_val = _resolve_list_def(def_val, _list_content_values(entry))
+
+    full = "/".join(path_prefix + [opt_id])
+    out[full] = def_val
+
+
+def extract_mcm_script_defaults(text: str) -> dict[str, str]:
+    """User-facing MCM options → full axr path → default value.
+
+    Walks ``op = { id=…, gr={…} }`` trees so duplicate leaf ids under different
+    pages stay distinct (e.g. ``milpda/progressive/army`` vs
+    ``milpda/facblacklist/army``). Skips non-controls (slide/desc/line) and
+    ``sh=false`` entries.
+    """
+    defaults_tbl = _parse_lua_defaults_table(text)
+    out: dict[str, str] = {}
+
+    parent = None
+    pm = _RETURN_PARENT_ROOT.search(text)
+    if pm:
+        parent = pm.group(1)
+
+    op_m = _MCM_OP_ASSIGN.search(text)
+    if op_m is None:
+        # Dynamic menus (AlifePlus): expose defaults table under detected root.
+        root = detect_mcm_root(text)
+        for key, val in defaults_tbl.items():
+            out[key] = val
+            if root:
+                out[f"{root}/{key}"] = val
+        return out
+
+    op_table = _extract_balanced(text, op_m.end() - 1)
+    if not op_table:
+        return out
+    op_id_m = _MCM_ID.search(op_table)
+    op_id = op_id_m.group(1) if op_id_m else None
+    prefix: list[str] = []
+    if parent:
+        prefix.append(parent)
+    if op_id:
+        prefix.append(op_id)
+
+    gr_m = _MCM_GR.search(op_table)
+    if gr_m:
+        gr_block = _extract_balanced(op_table, gr_m.end() - 1)
+        if gr_block:
+            for child in _split_top_level_tables(gr_block[1:-1]):
+                _parse_mcm_entry(child, prefix, defaults_tbl, out)
+
+    # Fill gaps for scripts that build widgets from a defaults table.
+    if defaults_tbl and prefix:
+        root_path = "/".join(prefix)
+        for key, val in defaults_tbl.items():
+            path = f"{root_path}/{key}"
+            out.setdefault(path, val)
+
+    return out
 
 
 def index_mcm_script_defaults(
@@ -4514,10 +4713,10 @@ def index_mcm_script_defaults(
     *,
     mod_names: list[str] | None = None,
 ) -> dict[str, str]:
-    """Scan *mcm*.script files for id/def= pairs (and root/id paths).
+    """Scan *mcm*.script files for user-facing option defaults (full paths).
 
-    Also reads ``defaults = { … }`` tables used by mods that set
-    ``def = defaults[key]`` (e.g. AlifePlus).
+    Only control widgets (check/list/track/input/…) are indexed — not slides,
+    descriptions, or hidden ``sh=false`` items.
 
     If ``mod_names`` is given, only those mod folders are scanned, in list
     order (later entries overwrite — pass low→high priority for last-wins).
@@ -4552,18 +4751,11 @@ def index_mcm_script_defaults(
 
 
 def lookup_mcm_script_default(key: str, defaults: dict[str, str]) -> str | None:
-    """Resolve an axr ``[mcm]`` key against indexed script defaults."""
-    if key in defaults:
-        return defaults[key]
-    parts = key.split("/")
-    if len(parts) >= 2:
-        guess = f"{parts[0]}/{parts[-1]}"
-        if guess in defaults:
-            return defaults[guess]
-        leaf = parts[-1]
-        if leaf in defaults:
-            return defaults[leaf]
-    return None
+    """Resolve an axr ``[mcm]`` key against indexed script defaults.
+
+    Exact path only — leaf aliases are ambiguous across MCM pages.
+    """
+    return defaults.get(key)
 
 
 def apply_settings_to_axr_options(
@@ -4651,6 +4843,94 @@ def iter_files(root: Path, name: str | None = None, suffix: str | None = None) -
         yield path
 
 
+MCM_CONFIG_NAME = "mcm_config.yml"
+
+
+def mcm_config_path(cfg_dir: Path) -> Path:
+    return cfg_dir / MCM_CONFIG_NAME
+
+
+def load_mcm_config_settings(path: Path) -> list[InitSetting]:
+    """Parse ``mcm_config.yml`` → InitSetting list for ``[mcm]``.
+
+    Shape::
+
+        Mod Folder Name:
+          - key: value
+        other:
+          - orphan/key: value
+    """
+    if not path.is_file():
+        return []
+    try:
+        import yaml
+    except ImportError as exc:
+        raise RuntimeError("PyYAML required - run DOGMA Setup once") from exc
+
+    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    if not isinstance(raw, dict):
+        raise ValueError(f"Invalid MCM config (not a mapping): {path}")
+
+    out: list[InitSetting] = []
+    for group, entries in raw.items():
+        src = f"mcm_config:{group}"
+        if isinstance(entries, dict):
+            items = entries.items()
+        elif isinstance(entries, list):
+            merged: dict[str, str] = {}
+            for item in entries:
+                if isinstance(item, dict):
+                    merged.update({str(k): str(v) for k, v in item.items()})
+            items = merged.items()
+        else:
+            continue
+        for key, val in items:
+            out.append(InitSetting(src, "mcm", str(key), str(val)))
+    return out
+
+
+def format_mcm_config_yaml(groups: dict[str, dict[str, str]]) -> str:
+    """Serialize MCM config groups (mod name → key/value); ``other`` last."""
+    try:
+        import yaml
+    except ImportError as exc:
+        raise RuntimeError("PyYAML required - run DOGMA Setup once") from exc
+
+    class _IndentDumper(yaml.SafeDumper):
+        def increase_indent(self, flow=False, indentless=False):
+            return super().increase_indent(flow, False)
+
+    payload: dict[str, list[dict[str, str]]] = {}
+    names = [n for n in groups if n != "other"]
+    names.sort(key=str.lower)
+    if "other" in groups:
+        names.append("other")
+    for name in names:
+        pairs = groups[name]
+        if not pairs:
+            continue
+        payload[name] = [
+            {k: v} for k, v in sorted(pairs.items(), key=lambda kv: kv[0].lower())
+        ]
+    header = (
+        "# DOGMA MCM config — deviations from (G.A.M.M.A. pristine + mod defaults).\n"
+        "# Applied by Setup in addition to pack-level mcm_set: "
+        "(this file first; pack mcm_set wins).\n"
+        "# Regenerated by tools/pull_mcm_config.py (Alt+U).\n"
+        "# Unmatched MCM roots land under other: (alphabetical keys).\n"
+        "\n"
+    )
+    body = yaml.dump(
+        payload,
+        Dumper=_IndentDumper,
+        sort_keys=False,
+        allow_unicode=True,
+        default_flow_style=False,
+        width=120,
+    )
+    return header + body
+
+
 def apply_initialize(
     mo2_root: Path,
     initialize_path: Path,
@@ -4664,10 +4944,15 @@ def apply_initialize(
 
     Keys are written blindly into axr_options once selected. Manual (no url:)
     packs are omitted unless that mod is installed.
+
+    Also applies ``mcm_config.yml`` from the catalog config dir (after
+    ``mcm_reset``, before pack ``mcm_set`` / ``settings``).
     """
-    if initialize_path.suffix.lower() in (".yml", ".yaml") or initialize_path.name in (
-        "manifest.yml",
-        "features.yml",
+    cfg_dir = initialize_path if initialize_path.is_dir() else initialize_path.parent
+    if (
+        initialize_path.is_dir()
+        or initialize_path.suffix.lower() in (".yml", ".yaml")
+        or initialize_path.name in ("manifest.yml", "features.yml")
     ):
         to_apply = load_manifest(initialize_path).collect_defaults(
             installed=installed,
@@ -4677,6 +4962,14 @@ def apply_initialize(
         )
     else:
         to_apply = read_initialize_ini(initialize_path)
+
+    mcm_cfg = load_mcm_config_settings(mcm_config_path(cfg_dir))
+    if mcm_cfg:
+        resets = [s for s in to_apply if str(s.mod_pattern).startswith("reset:")]
+        rest = [s for s in to_apply if not str(s.mod_pattern).startswith("reset:")]
+        to_apply = resets + mcm_cfg + rest
+        info(f"mcm_config.yml: {len(mcm_cfg)} key(s)")
+
     if not to_apply:
         return 0, 0
 

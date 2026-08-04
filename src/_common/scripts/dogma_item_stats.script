@@ -391,6 +391,9 @@ local function armor_calculate(input)
 		local k = PROT_KEYS[i]
 		out[k] = tonumber(prots[k]) or 0
 	end
+	-- Outfit-only (0 on helmets): carry bonus % and artefact belt slots.
+	out.carry_weight = tonumber(input.carry_weight) or 0
+	out.artefact_count = tonumber(input.artefact_count) or 0
 	return out
 end
 
@@ -515,10 +518,24 @@ local function armor_input_from_ini(sec)
 			end
 		end
 	end
+	local carry_weight = 0
+	local artefact_count = 0
+	if not is_helm then
+		-- Tip shows kg; SALE stores % of actor max_walk_weight.
+		local base = ini_sys:r_float_ex("actor", "max_walk_weight") or 100
+		if base <= 0 then
+			base = 100
+		end
+		local kg = ini_sys:r_float_ex(sec, "additional_inventory_weight") or 0
+		carry_weight = (kg / base) * 100
+		artefact_count = ini_sys:r_float_ex(sec, "artefact_count") or 0
+	end
 	return {
 		protections = prots,
 		cost = ini_sys:r_float_ex(sec, "cost") or 0,
 		is_helmet = is_helm,
+		carry_weight = carry_weight,
+		artefact_count = artefact_count,
 	}
 end
 

@@ -1,7 +1,7 @@
 --[[
 	Tooltips Fix - always-on tooltip fixes for ALL item types.
 
-	Three independent fixes live here:
+	Four independent fixes live here:
 
 	1. LAYOUT: item tooltips (utils_ui.UIInfoItem) often end up with
 	   overlapping / clipped sections after other mods append widgets (Parts
@@ -20,15 +20,24 @@
 	   likewise on_game_start-gated. Without this, the first Loadout screen of
 	   a session shows raw stock-Anomaly tooltips; they only turn correct
 	   after a game has been started once. run_early_inits() (bottom) runs all
-	   of that on every main_menu_on_init.
+	   of that on every main_menu_on_init - including outfit/artefact/booster
+	   /backpack ADV rows, device power tables, and section-only outfit
+	   FireWound / AP-res functors (stock ADB only computes those from a live
+	   object).
 
-	3. USES LINE: ui_item.get_obj_desc() builds a description header (uses /
-	   power / condition lines) via build_desc_header, which needs a live game
-	   object. The section-only path, get_sec_desc(), skips the header
-	   entirely - so multi-use items (food, meds, drink) never show their uses
-	   anywhere tooltips render from a bare section: the New Game Loadout
-	   screen, craft/repair previews, etc. We wrap get_sec_desc to prepend the
-	   uses line from the section's max_uses (what a fresh item has).
+	3. SECTION DESC HEADER: ui_item.get_obj_desc() builds a description header
+	   (uses / power / condition / artefact-container lines) via
+	   build_desc_header, which needs a live game object. The section-only
+	   path, get_sec_desc(), skips the header entirely - so multi-use items,
+	   devices, outfits, etc. look bare anywhere tooltips render from a
+	   section: New Game Loadout, craft/repair previews, etc. We wrap
+	   get_sec_desc to prepend whatever header lines a *fresh* item would
+	   show (max uses, 100% power/condition, contained artefact name).
+
+	4. SECTION OUTFIT FOOTER: build_desc_footer's outfit property block
+	   (faction / helmet / sprint) gates on IsOutfit(obj), so section-only
+	   outfit tooltips skip it even though every field is readable from the
+	   section. We wrap build_desc_footer to inject that block when obj is nil.
 
 	Load timing (empirically established, xray log 2026-07-31): the engine
 	loads .script modules LAZILY, on first reference of their global
@@ -50,11 +59,16 @@ local SECTION_GAP = 10 -- match vanilla UIInfoItem:Sync_Finale section spacing
 -- tighter gap than the stock 10px.
 local PANEL_TOP_OFFSET = 0
 local STATS_AFTER_PANEL = 2
+-- Match grok_actor_damage_balancer.get_adb_constants("FireWound").adjuster
+local FIREWOUND_ADJUSTER = 0.80
 
 local pending_settle = setmetatable({}, { __mode = "k" })
 local base_uiinfo_update
 local base_get_sec_desc
+local base_build_desc_footer
 local hooks_ok = false
+local device_init_wrapped = false
+local outfit_functors_wrapped = false
 
 ------------------------------------------------------------------------------
 -- Fix 1: layout restacking
@@ -217,25 +231,244 @@ local function uiinfo_update_hook(self, obj, sec, flags)
 end
 
 ------------------------------------------------------------------------------
--- Fix 3: uses line for section-only descriptions (no live object)
+-- Fix 3 / 4: section-only description header + outfit footer
 ------------------------------------------------------------------------------
+
+local function gc(id)
+	return game.translate_string(id)
+end
+
+-- Header lines a fresh (section-only) item can show. Mirrors ui_item.build_desc_header
+-- without needing a live object; condition/power assume a brand-new item (100%).
+local function build_sec_desc_header(sec)
+	if not sec or not ini_sys then
+		return ""
+	end
+
+	local clr_g = utils_xml.get_color("d_green")
+	local clr_o = utils_xml.get_color("d_orange")
+	local clr_b1 = utils_xml.get_color("pda_blue")
+	local clr_2 = utils_xml.get_color("ui_gray_1")
+
+	-- Consumable uses (IsItem("multiuse") returns max_uses as a number).
+	local uses = IsItem("multiuse", sec)
+	if type(uses) ~= "number" then
+		uses = ini_sys:r_float_ex(sec, "max_uses")
+	end
+	if type(uses) == "number" and uses > 0 then
+		return clr_g .. "  " .. clr_2 .. gc("st_ui_number_of_uses") .. ": " .. clr_g
+			.. string.format("%d", uses) .. "\\n \\n" .. clr_2
+	end
+
+	-- Device / battery power (fresh = full).
+	if IsItem("device", sec) or IsItem("battery", sec) then
+		return clr_b1 .. "  " .. clr_2 .. gc("st_ui_power") .. ": " .. clr_b1
+			.. "100%" .. "\\n \\n" .. clr_2
+	end
+
+	-- Outfit / helmet / backpack / disassemble condition (fresh = 100%).
+	if IsItem("outfit", sec) or IsItem("helmet", sec)
+		or IsItem("backpack", sec) or IsItem("disassemble", sec)
+	then
+		local clr = utils_xml.get_color_con and utils_xml.get_color_con(100) or clr_g
+		return clr .. "  " .. clr_2 .. gc("st_condition") .. ": " .. clr
+			.. "100%" .. "\\n \\n" .. clr_2
+	end
+
+	-- Named condition parts (fresh = excellent / 100).
+	if ini_sys:r_bool_ex(sec, "cond_part") then
+		local con_name = (utils_xml.get_name_cond and utils_xml.get_name_cond(100, nil, sec))
+			or "100%"
+		local clr = utils_xml.get_color_con and utils_xml.get_color_con(100) or clr_g
+		return clr .. "  " .. clr_2 .. gc("st_condition") .. ": " .. clr
+			.. con_name .. "\\n \\n" .. clr_2
+	end
+
+	-- Contained artefact (lead box / IAM / AAC / AAM) - name only, no obj needed.
+	if string.find(sec, "af_", 1, true) then
+		local break_arty
+		if string.find(sec, "_lead_box", 1, true) then
+			break_arty = sec:gsub("_lead_box", "")
+		elseif string.find(sec, "_af_iam", 1, true) then
+			break_arty = sec:gsub("_af_iam", "")
+		elseif string.find(sec, "_af_aac", 1, true) then
+			break_arty = sec:gsub("_af_aac", "")
+		elseif string.find(sec, "_af_aam", 1, true) then
+			break_arty = sec:gsub("_af_aam", "")
+		end
+		if break_arty and ini_sys:section_exist(break_arty) then
+			local name = (ui_item and ui_item.get_sec_name and ui_item.get_sec_name(break_arty))
+				or gc(ini_sys:r_string_ex(break_arty, "inv_name") or "")
+			if name and name ~= "" then
+				return clr_o .. "  " .. clr_2 .. gc("st_itm_desc_arty_cont") .. ": "
+					.. clr_o .. name .. "\\n \\n" .. clr_2
+			end
+		end
+	end
+
+	return ""
+end
+
+-- Outfit property block from section (stock gates on IsOutfit(obj)).
+local function build_outfit_props_from_sec(sec)
+	if not sec or not ini_sys or not IsItem("outfit", sec) then
+		return ""
+	end
+
+	local clr_y = utils_xml.get_color("yellow")
+	local clr_p = utils_xml.get_color("d_purple")
+	local clr_1 = utils_xml.get_color("ui_gray_2")
+	local clr_2 = utils_xml.get_color("ui_gray_1")
+
+	local helmet_avaliable = ini_sys:r_bool_ex(sec, "helmet_avaliable") ~= false
+	local sprint_allowed = ini_sys:r_bool_ex(sec, "sprint_allowed") ~= false
+	local community = ini_sys:r_string_ex(sec, "community")
+	local comm_str = (community and community ~= ""
+		and gc("st_dyn_news_comm_" .. community .. "_6"))
+		or gc("st_dyn_news_unknown_contact")
+
+	local _str = clr_2 .. " " .. gc("st_itm_desc_properties") .. ":\\n"
+	_str = _str .. clr_y .. "  " .. clr_1 .. " " .. gc("st_itm_desc_outfit_faction")
+		.. ": " .. clr_2 .. comm_str .. " \\n"
+	_str = _str .. clr_p .. "  " .. clr_1 .. " " .. gc("st_itm_desc_outfit_heardgear")
+		.. ": " .. clr_2
+		.. (helmet_avaliable and gc("st_itm_desc_state_not_included")
+			or gc("st_itm_desc_state_avail"))
+		.. " \\n"
+	_str = _str .. clr_p .. "  " .. clr_1 .. " " .. gc("st_itm_desc_outfit_run") .. " "
+		.. (sprint_allowed and gc("st_itm_desc_state_possible")
+			or gc("st_itm_desc_state_not_possible"))
+		.. " \\n"
+	return _str
+end
 
 local function sec_desc_hook(sec)
 	local str = base_get_sec_desc and base_get_sec_desc(sec) or ""
-
-	-- Mirror build_desc_header's uses line; a bare section describes a fresh
-	-- item, so its uses count is the section's max_uses (which IsItem's
-	-- "multiuse" lookup already holds).
-	local uses = sec and str ~= "" and IsItem("multiuse", sec)
-	if uses and type(uses) == "number" then
-		local clr_g = utils_xml.get_color("d_green")
-		local clr_2 = utils_xml.get_color("ui_gray_1")
-		local label = game.translate_string("st_ui_number_of_uses")
-		str = clr_g .. "  " .. clr_2 .. label .. ": " .. clr_g
-			.. string.format("%d", uses) .. "\\n \\n" .. clr_2 .. str
+	if not sec or str == "" then
+		return str
 	end
 
+	local header = build_sec_desc_header(sec)
+	if header ~= "" then
+		str = header .. str
+	end
 	return str
+end
+
+local function build_desc_footer_hook(obj, sec, str)
+	local result = base_build_desc_footer and base_build_desc_footer(obj, sec, str) or (str or "")
+	-- Stock skips the outfit props block when obj is nil (IsOutfit(nil) == false).
+	if obj or not sec or not IsItem("outfit", sec) then
+		return result
+	end
+
+	local helm_label = gc("st_itm_desc_outfit_heardgear")
+	if string.find(result, helm_label, 1, true) then
+		return result
+	end
+
+	local props = build_outfit_props_from_sec(sec)
+	if props == "" then
+		return result
+	end
+
+	-- Insert outfit props immediately after the pre-footer description text.
+	local base_str = str or ""
+	if base_str ~= "" and string.sub(result, 1, #base_str) == base_str then
+		return base_str .. props .. string.sub(result, #base_str + 1)
+	end
+	return props .. result
+end
+
+------------------------------------------------------------------------------
+-- Early arming helpers (device power table + outfit ADB functors)
+------------------------------------------------------------------------------
+
+-- item_device.initialize() only runs from its on_game_start; without it,
+-- build_desc_footer's power-consumption line reads an empty table. Stock
+-- initialize is not idempotent (re-run doubles totals), so wrap once and
+-- skip if the table was already filled by an earlier on_game_start.
+local function early_init_item_device()
+	-- Direct global reference: lazy-loads the module into the menu VM.
+	if not item_device or not item_device.initialize then
+		return
+	end
+
+	if not device_init_wrapped then
+		device_init_wrapped = true
+		local base_init = item_device.initialize
+		local done = false
+		item_device.initialize = function()
+			if done then
+				return
+			end
+			done = true
+			if item_device.dev_consumption_tot
+				and next(item_device.dev_consumption_tot)
+			then
+				return
+			end
+			base_init()
+		end
+	end
+
+	item_device.initialize()
+end
+
+-- ADB outfit functors: AP-res has no section path; FireWound's section path
+-- wrongly uses hit_fraction_actor instead of bones_koeff bone armor. Wrap so
+-- Loadout / craft previews match in-game fresh-item tooltips.
+local function wrap_outfit_functors()
+	if outfit_functors_wrapped then
+		return
+	end
+	-- Direct global reference: lazy-loads Actor Damage Balancer.
+	if not grok_actor_damage_balancer then
+		return
+	end
+	local grok = grok_actor_damage_balancer
+	outfit_functors_wrapped = true
+
+	local base_ap = grok.get_outfit_ap_res
+	if base_ap then
+		grok.get_outfit_ap_res = function(obj, sec)
+			local v = base_ap(obj, sec)
+			if v ~= nil then
+				return v
+			end
+			sec = sec or (obj and obj:section())
+			if not sec or not ini_sys then
+				return
+			end
+			local hit_frac = ini_sys:r_float_ex(sec, "hit_fraction_actor")
+			if hit_frac then
+				return 1 - hit_frac
+			end
+		end
+	end
+
+	local base_val = grok.get_outfit_value
+	if base_val then
+		grok.get_outfit_value = function(obj, sec, name, def)
+			if obj then
+				return base_val(obj, sec, name, def)
+			end
+			-- Section-only FireWound: bone armor x FireWound adjuster x 100
+			-- (matches cast_CustomOutfit():GetBoneArmor path at condition 1.0).
+			if name == "FireWound" and sec and ini_sys and parse_list then
+				local bones = ini_sys:r_string_ex(sec, "bones_koeff_protection")
+				if bones and bones ~= "" then
+					local bone = IsItem("helmet", sec) and "bip01_head" or "bip01_spine"
+					local vals = parse_list(ini_sys, bones, bone)
+					local br = vals and tonumber(vals[2])
+					if br then
+						return math.ceil(br * FIREWOUND_ADJUSTER * 100)
+					end
+				end
+			end
+			return base_val(obj, sec, name, def)
+		end
+	end
 end
 
 ------------------------------------------------------------------------------
@@ -267,6 +500,15 @@ local function install_hooks()
 		ui_item.get_sec_desc = sec_desc_hook
 	end
 
+	if ui_item and ui_item.build_desc_footer
+		and ui_item.build_desc_footer ~= build_desc_footer_hook
+	then
+		if not base_build_desc_footer then
+			base_build_desc_footer = ui_item.build_desc_footer
+		end
+		ui_item.build_desc_footer = build_desc_footer_hook
+	end
+
 	hooks_ok = true
 	return true
 end
@@ -292,6 +534,8 @@ local callbacks_registered = false
 -- Idempotent. Safe from main_menu_on_init (no game loaded yet).
 function early_init()
 	install_hooks()
+	early_init_item_device()
+	wrap_outfit_functors()
 
 	if not callbacks_registered then
 		callbacks_registered = true
@@ -308,9 +552,10 @@ end
 	On every main_menu_on_init: populate the stock stats table, arm this
 	module and Weapon Tooltips (if installed), then force ish_item_stats'
 	GAMMA rebuild (Weapon Tooltips wraps override_stats_table in its
-	early_init, so its rows are re-applied on top). All steps are idempotent
-	full rebuilds or internally guarded, and they re-run safely when the real
-	on_game_start eventually fires.
+	early_init, so its rows are re-applied on top). Also warm item_device
+	power tables and wrap ADB outfit functors for section-only tooltips.
+	All steps are idempotent / internally guarded, and they re-run safely
+	when the real on_game_start eventually fires.
 
 	Deliberately NOT forced early: ish_item_stats.on_game_start() itself - its
 	UIInfoItem.Update tweak needs db.actor paths the Loadout screen never

@@ -1,4 +1,4 @@
-"""Weight → pts fold (live UI / export) for Stat Derived Loadout."""
+"""Weight → pts fold (live UI / export) for SALE loadouts."""
 
 from __future__ import annotations
 

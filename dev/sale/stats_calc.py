@@ -265,11 +265,12 @@ def _weapon_calculate_py(inp: dict[str, Any]) -> dict[str, Any]:
         "burst": burst,
         "spread_ads": ads,
         "spread_hip": hip,
-        "scope": 1 if _f(inp.get("scope_status"), 0) > 0 else 0,
+        # status 1 = attached/built-in; 2 = empty rail/slot (do not score).
+        "scope": 1 if abs(_f(inp.get("scope_status"), 0) - 1.0) < 1e-9 else 0,
         "silencer": (
             1
             if (
-                _f(inp.get("silencer_status"), 0) > 0
+                abs(_f(inp.get("silencer_status"), 0) - 1.0) < 1e-9
                 or bool(inp.get("integrated_silencer"))
                 or _has_integrated_silencer(
                     str(inp.get("sec") or ""),

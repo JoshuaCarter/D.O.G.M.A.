@@ -60,11 +60,11 @@ from .balance import (
     ammo_enabled_map,
     clear_override,
     effective_category,
-    get_item_ltx_override,
     is_ammo_family_enabled,
     is_overridden,
-    item_in_ltx,
+    item_in_ltx_for_faction,
     load_balance,
+    ltx_paint_state,
     override_count,
     save_balance,
     set_ammo_family_enabled,
@@ -305,19 +305,25 @@ def _icon_with_pts(
     name: str = "",
     faction_tag: str = "",
     in_ltx: bool = False,
+    ltx_paint: str = "off",
     width: int = GRID_ICON_W,
     height: int = GRID_ICON_H,
 ) -> QIcon:
-    """Compose tile: shop pts (price scale) top-left; raw score×1000 top-right."""
+    """Compose tile: shop pts top-left; raw×1000 top-right.
+
+    ``ltx_paint``: both (green) | faction (light green) | baseline (yellow) | off.
+    Selection is outline-only (primary blue / compare red), inset thick border.
+    """
     canvas = QPixmap(width, height)
-    # selected: True/"primary" = blue; "compare" = red; else paint state.
+    # selected: True/"primary" = blue outline; "compare" = red; fill from LTX paint.
     sel = "primary" if selected is True else (selected or "")
-    if sel == "primary":
-        canvas.fill(QColor(36, 72, 120))
-    elif sel == "compare":
-        canvas.fill(QColor(110, 40, 40))
-    elif in_ltx:
-        canvas.fill(QColor(18, 42, 28))  # green
+    paint = (ltx_paint or "off").strip().lower()
+    if paint == "both":
+        canvas.fill(QColor(18, 42, 28))  # normal green
+    elif paint == "faction":
+        canvas.fill(QColor(28, 52, 36))  # light green
+    elif paint == "baseline":
+        canvas.fill(QColor(52, 46, 14))  # yellow
     elif faction_wrong:
         canvas.fill(QColor(48, 28, 10))  # dark orange
     else:
@@ -336,18 +342,39 @@ def _icon_with_pts(
                 x = (width - scaled.width()) // 2
                 y = (height - scaled.height()) // 2
                 painter.drawPixmap(x, y, scaled)
-        # Checkbox alone → green. Wrong faction → dark orange. Else grey.
-        if in_ltx:
+        if paint == "both":
             border = QColor(40, 120, 70)
             pts_color = QColor(90, 220, 120)
+        elif paint == "faction":
+            border = QColor(70, 170, 100)
+            pts_color = QColor(140, 230, 160)
+        elif paint == "baseline":
+            border = QColor(180, 160, 40)
+            pts_color = QColor(230, 210, 80)
         elif faction_wrong:
             border = QColor(160, 90, 36)
             pts_color = QColor(200, 130, 70)
         else:
             border = QColor(55, 55, 55)
             pts_color = QColor(140, 140, 140)
-        painter.setPen(border)
-        painter.drawRect(0, 0, width - 1, height - 1)
+        if sel == "primary":
+            outline = QColor(70, 150, 240)
+        elif sel == "compare":
+            outline = QColor(230, 80, 80)
+        else:
+            outline = None
+        if outline is not None:
+            # Thick stroke inset so the tile footprint stays the same size.
+            bw = 3
+            pen = QPen(outline)
+            pen.setWidth(bw)
+            pen.setJoinStyle(Qt.PenJoinStyle.MiterJoin)
+            painter.setPen(pen)
+            inset = bw // 2
+            painter.drawRect(inset, inset, width - 1 - 2 * inset, height - 1 - 2 * inset)
+        else:
+            painter.setPen(border)
+            painter.drawRect(0, 0, width - 1, height - 1)
         # Top-left: shop pts from price scale (with background).
         pts_s = str(int(shop_pts))
         font = QFont("Consolas", 10)
@@ -391,7 +418,7 @@ def _icon_with_pts(
             y = height - 4
             painter.setPen(QColor(230, 230, 230))
             painter.drawText(4, y, text)
-        # Checkbox: checked = include in LTX.
+        # Checkbox: checked = included for this faction.
         cb = _item_checkbox_rect(width, height)
         painter.fillRect(cb, QColor(0, 0, 0, 200))
         painter.setPen(QColor(120, 160, 120) if in_ltx else QColor(90, 90, 90))
@@ -399,7 +426,11 @@ def _icon_with_pts(
         if in_ltx:
             x0, y0 = cb.x(), cb.y()
             s = cb.width()
-            pen = QPen(QColor(90, 200, 120))
+            pen = QPen(
+                QColor(140, 230, 160)
+                if paint == "faction"
+                else QColor(90, 200, 120)
+            )
             pen.setWidthF(1.8)
             pen.setCapStyle(Qt.PenCapStyle.RoundCap)
             pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
@@ -944,6 +975,7 @@ class MainWindow(QMainWindow):
             self.ammo_panel.setLayout(ammo_wrap)
             v.addWidget(self.ammo_panel)
             self._ammo_buttons: dict[str, QToolButton] = {}
+            self._ammo_rows: list[tuple[QWidget, set[str]]] = []
             self._ammo_used_by_sel: set[str] = set()
             self._sync_ammo_collapse_ui()
 
@@ -1584,7 +1616,7 @@ class MainWindow(QMainWindow):
                 n += 1
                 continue
             store: Any = val
-            if key == "include_universal_armor":
+            if key in ("include_universal_armor", "shotguns_zero_spread"):
                 store = val >= 0.5
             set_override(
                 self.balance, fac, cat, key, store, weight=bool(row.is_weight)
@@ -1942,11 +1974,23 @@ class MainWindow(QMainWindow):
             self._ammo_btn_stylesheet(used=sec in self._ammo_used_by_sel)
         )
 
+    # Muted blue fill for ammo rows the selected gun uses.
+    _AMMO_ROW_USED_BG = "#243a52"
+    _AMMO_ROW_IDLE_STYLE = "QWidget#ammoRow { background: transparent; }"
+    _AMMO_ROW_USED_STYLE = (
+        f"QWidget#ammoRow {{ background: {_AMMO_ROW_USED_BG}; }}"
+    )
+
     def _highlight_weapon_ammos(self, ammo_secs: set[str] | None) -> None:
-        """Blue border on ammo boxes the selected weapon uses (border only)."""
+        """Muted blue row bg + blue border on boxes the selected weapon uses."""
         self._ammo_used_by_sel = set(ammo_secs or ())
         for sec in self._ammo_buttons:
             self._apply_ammo_btn_border(sec)
+        for host, secs in self._ammo_rows:
+            used = bool(secs & self._ammo_used_by_sel)
+            host.setStyleSheet(
+                self._AMMO_ROW_USED_STYLE if used else self._AMMO_ROW_IDLE_STYLE
+            )
 
     def _make_ammo_toggle(self, sec: str) -> QToolButton:
         """One ammo toggle: texture box only (name in tooltip)."""
@@ -2016,13 +2060,14 @@ class MainWindow(QMainWindow):
             "padding: 1px 6px; font-size: 10px; }"
             "QPushButton:hover { background: #3a3a3a; }"
         )
+        self._ammo_rows = []
         row = 0
         for title, secs in groups:
             if not secs:
                 continue
             type_host = QWidget()
             type_lay = QVBoxLayout(type_host)
-            type_lay.setContentsMargins(0, 0, 0, 0)
+            type_lay.setContentsMargins(4, 2, 4, 2)
             type_lay.setSpacing(2)
             type_lbl = QLabel(title)
             type_lbl.setStyleSheet(type_style)
@@ -2050,19 +2095,27 @@ class MainWindow(QMainWindow):
             btn_row.addStretch(1)
             type_lay.addLayout(btn_row)
             type_lay.addStretch(1)
-            self.ammo_layout.addWidget(
-                type_host, row, 0, Qt.AlignmentFlag.AlignTop
-            )
 
-            row_host = QWidget()
-            row_host.setFixedHeight(self._AMMO_ICON_H + 2)
-            row_lay = QHBoxLayout(row_host)
-            row_lay.setContentsMargins(0, 0, 0, 0)
-            row_lay.setSpacing(2)
+            ammos_host = QWidget()
+            ammos_host.setFixedHeight(self._AMMO_ICON_H + 2)
+            ammos_lay = QHBoxLayout(ammos_host)
+            ammos_lay.setContentsMargins(2, 0, 2, 0)
+            ammos_lay.setSpacing(2)
             for sec in secs:
-                row_lay.addWidget(self._make_ammo_toggle(sec))
-            row_lay.addStretch(1)
-            self.ammo_layout.addWidget(row_host, row, 1)
+                ammos_lay.addWidget(self._make_ammo_toggle(sec))
+            ammos_lay.addStretch(1)
+
+            # Full row (type + ammos) so gun-used highlight covers the strip.
+            full_row = QWidget()
+            full_row.setObjectName("ammoRow")
+            full_row.setStyleSheet(self._AMMO_ROW_IDLE_STYLE)
+            full_lay = QHBoxLayout(full_row)
+            full_lay.setContentsMargins(0, 1, 0, 1)
+            full_lay.setSpacing(6)
+            full_lay.addWidget(type_host, 0, Qt.AlignmentFlag.AlignTop)
+            full_lay.addWidget(ammos_host, 1)
+            self.ammo_layout.addWidget(full_row, row, 0, 1, 2)
+            self._ammo_rows.append((full_row, set(secs)))
             row += 1
         self.ammo_panel.setVisible(self.category == "weapons")
         # Re-apply selection highlight after rebuild.
@@ -2273,6 +2326,11 @@ class MainWindow(QMainWindow):
                     "include_universal_armor",
                     bool(cfg.get("include_universal_armor", True)),
                 )
+            if cat == "weapons":
+                add_toggle(
+                    "shotguns_zero_spread",
+                    bool(cfg.get("shotguns_zero_spread", True)),
+                )
             # Price scale min/max (always on; same WeightRow indent).
             scale_lo, scale_hi = price_scale_settings(cfg)
             for key, val in (
@@ -2373,7 +2431,7 @@ class MainWindow(QMainWindow):
             self._recalc_queued = True
             return
         store: Any = value
-        if key == "include_universal_armor":
+        if key in ("include_universal_armor", "shotguns_zero_spread"):
             store = value >= 0.5
         log.debug(
             "override set fac=%s cat=%s key=%s value=%r weight=%s",
@@ -2388,7 +2446,7 @@ class MainWindow(QMainWindow):
         )
         n = override_count(self.balance, self.faction)
         self.faction_meta.setText(f"({n} overrides)" if n else "")
-        if key == "include_universal_armor":
+        if key in ("include_universal_armor", "shotguns_zero_spread"):
             # Recreate toggle row so override styling/reset btn stay in sync.
             self._rebuild_weights()
             self._mark_balance_dirty()
@@ -2443,6 +2501,8 @@ class MainWindow(QMainWindow):
                 cfg.get("weights") or {},
                 ceilings=ceilings,
                 curves=curves,
+                kind=weapon_kind(entry, sec),
+                zero_shotgun_spread=bool(cfg.get("shotguns_zero_spread", True)),
             )
             # Wrong faction = name-locked to another faction (ammo is separate).
             fac_wrong = not weapon_name_faction_ok(sec, self.faction)
@@ -2502,18 +2562,27 @@ class MainWindow(QMainWindow):
                     s01, fac_wrong = 0.0, False
                 scored.append((sec, entry, float(s01), fac_wrong))
 
-            # Checkbox alone decides LTX membership.
+            # Per-faction checkbox (baseline ± faction include/exclude).
             in_ltx_map: dict[str, bool] = {
-                sec: item_in_ltx(get_item_ltx_override(self.balance, sec))
+                sec: item_in_ltx_for_faction(
+                    self.balance, self.faction, sec
+                )
+                for sec, _e, _s01, _fw in scored
+            }
+            paint_map: dict[str, str] = {
+                sec: ltx_paint_state(self.balance, self.faction, sec)
                 for sec, _e, _s01, _fw in scored
             }
 
             cat_cfg = effective_category(
                 self.balance, self.faction, self.category
             )
-            # Shop pts = price scale of relative score01 in the category pool.
+            # Shop pts: scale anchors = checked items; others extrapolate.
             scores01 = {sec: s01 for sec, _e, s01, _fw in scored}
-            shop_map = apply_price_scale(scores01, cat_cfg)
+            anchor_secs = {sec for sec, on in in_ltx_map.items() if on}
+            shop_map = apply_price_scale(
+                scores01, cat_cfg, anchor_secs=anchor_secs
+            )
             raw_map = {sec: score_raw_display(s01) for sec, s01 in scores01.items()}
             # (sec, entry, shop_pts, faction_wrong)
             rows: list[tuple[str, dict[str, Any], int, bool]] = [
@@ -2533,6 +2602,12 @@ class MainWindow(QMainWindow):
                 sec, entry, shop_pts, _fw = r
                 if sort_key == "in_ltx":
                     return 1 if in_ltx_map.get(sec) else 0
+                if sort_key == "pts":
+                    # Pts primary; raw score tiebreaker (also orders when pts=0).
+                    return (
+                        int(shop_pts),
+                        float(scores01.get(sec, 0.0)),
+                    )
                 return self._row_sort_value(
                     sec, entry, shop_pts, bool(in_ltx_map.get(sec)), sort_key
                 )
@@ -2571,6 +2646,7 @@ class MainWindow(QMainWindow):
                     sel_mode = False
                 fac_tag = section_name_faction_token(sec) or ""
                 in_ltx = bool(in_ltx_map.get(sec))
+                paint = paint_map.get(sec) or "off"
                 if in_ltx:
                     n_ltx += 1
                 score_raw = int(raw_map.get(sec, 0))
@@ -2585,13 +2661,20 @@ class MainWindow(QMainWindow):
                             name=label,
                             faction_tag=fac_tag,
                             in_ltx=in_ltx,
+                            ltx_paint=paint,
                         )
                     )
                 except Exception:  # noqa: BLE001
                     log.exception("icon compose failed sec=%s", sec)
                 status_note = ""
-                if in_ltx:
-                    status_note = "  |  included (checkbox)"
+                if self.faction == "Default" and in_ltx:
+                    status_note = "  |  in LTX (baseline)"
+                elif paint == "both":
+                    status_note = "  |  in LTX (baseline + faction)"
+                elif paint == "faction":
+                    status_note = "  |  faction only (not in baseline)"
+                elif paint == "baseline":
+                    status_note = "  |  baseline only (off for faction)"
                 elif fac_wrong:
                     locked = section_name_faction(sec)
                     if (
@@ -2608,7 +2691,7 @@ class MainWindow(QMainWindow):
                     f"{sec}\n{entry.get('name') or ''}\n"
                     f"shop={shop_pts}  raw={score_raw}  |  "
                     f"in_ltx={in_ltx}{status_note}\n"
-                    f"Checkbox: checked = in LTX"
+                    f"Checkbox: per-faction include in LTX"
                 )
                 item.setToolTip(tip)
                 item.setData(Qt.ItemDataRole.UserRole, sec)
@@ -2618,10 +2701,12 @@ class MainWindow(QMainWindow):
                         "thumb": thumb or None,
                         "pts": shop_pts,
                         "score_raw": score_raw,
+                        "score01": float(scores01.get(sec, 0.0)),
                         "faction_wrong": fac_wrong,
                         "name": label,
                         "faction_tag": fac_tag,
                         "in_ltx": in_ltx,
+                        "ltx_paint": paint,
                     },
                 )
                 self.list.addItem(item)
@@ -2682,6 +2767,7 @@ class MainWindow(QMainWindow):
                     name=str(meta.get("name") or ""),
                     faction_tag=str(meta.get("faction_tag") or ""),
                     in_ltx=bool(meta.get("in_ltx")),
+                    ltx_paint=str(meta.get("ltx_paint") or "off"),
                 )
             )
         except Exception:  # noqa: BLE001
@@ -2790,11 +2876,15 @@ class MainWindow(QMainWindow):
         if not isinstance(meta, dict):
             meta = {}
         currently_in = bool(meta.get("in_ltx"))
-        ov = toggle_item_ltx_override(self.balance, sec)
-        in_ltx = ov == "include"
+        in_ltx = toggle_item_ltx_override(self.balance, self.faction, sec)
+        paint = ltx_paint_state(self.balance, self.faction, sec)
         meta["in_ltx"] = in_ltx
+        meta["ltx_paint"] = paint
         item.setData(Qt.ItemDataRole.UserRole + 1, meta)
+        n = override_count(self.balance, self.faction)
+        self.faction_meta.setText(f"({n} overrides)" if n else "")
         self._mark_balance_dirty()
+        # Local icon/paint only — NEVER list/score/pts refresh on checkbox.
         if item is self.list.currentItem():
             sel_mode: bool | str = "primary"
         elif sec == self._compare_sec():
@@ -2812,6 +2902,7 @@ class MainWindow(QMainWindow):
                     name=str(meta.get("name") or ""),
                     faction_tag=str(meta.get("faction_tag") or ""),
                     in_ltx=in_ltx,
+                    ltx_paint=paint,
                 )
             )
         except Exception:  # noqa: BLE001
@@ -2820,20 +2911,30 @@ class MainWindow(QMainWindow):
         base = tip.split("\n")
         if len(base) >= 3:
             pts_line = base[2].split("  |  ")[0]
-            note = "  |  included (checkbox)" if in_ltx else ""
-            if not in_ltx and meta.get("faction_wrong"):
+            if self.faction == "Default" and in_ltx:
+                note = "  |  in LTX (baseline)"
+            elif paint == "both":
+                note = "  |  in LTX (baseline + faction)"
+            elif paint == "faction":
+                note = "  |  faction only (not in baseline)"
+            elif paint == "baseline":
+                note = "  |  baseline only (off for faction)"
+            elif meta.get("faction_wrong"):
                 note = "  |  wrong faction"
+            else:
+                note = ""
             base[2] = f"{pts_line}  |  in_ltx={in_ltx}{note}"
-            base = base[:3] + ["Checkbox: checked = in LTX"]
+            base = base[:3] + ["Checkbox: per-faction include in LTX"]
             item.setToolTip("\n".join(base[:4]))
         if item is self.list.currentItem():
             self._populate_detail(item)
         log.debug(
-            "item ltx override sec=%s ov=%s was_in=%s in_ltx=%s",
+            "item ltx toggle sec=%s fac=%s was_in=%s in_ltx=%s paint=%s",
             sec,
-            ov,
+            self.faction,
             currently_in,
             in_ltx,
+            paint,
         )
 
     def _deselect_list_item(self) -> None:
@@ -2918,7 +3019,14 @@ class MainWindow(QMainWindow):
         ceilings = cfg.get("ceilings") or {}
         curves = cfg.get("curves") or {}
         if self.category == "weapons":
-            terms = weapon_stat_terms(stats, wmap, ceilings, curves)
+            terms = weapon_stat_terms(
+                stats,
+                wmap,
+                ceilings,
+                curves,
+                kind=weapon_kind(entry, sec),
+                zero_shotgun_spread=bool(cfg.get("shotguns_zero_spread", True)),
+            )
         else:
             terms = armor_stat_terms(
                 stats,
@@ -2951,21 +3059,37 @@ class MainWindow(QMainWindow):
             ammo_s = (
                 ", ".join(ammo_section_label(a) for a in ammos) if ammos else "—"
             )
-            ov = get_item_ltx_override(self.balance, str(sec))
             meta = cur.data(Qt.ItemDataRole.UserRole + 1) or {}
             if isinstance(meta, dict) and "in_ltx" in meta:
                 in_ltx = bool(meta.get("in_ltx"))
             else:
-                in_ltx = item_in_ltx(ov)
+                in_ltx = item_in_ltx_for_faction(
+                    self.balance, self.faction, str(sec)
+                )
+            if isinstance(meta, dict) and meta.get("ltx_paint"):
+                paint = str(meta.get("ltx_paint"))
+            else:
+                paint = ltx_paint_state(
+                    self.balance, self.faction, str(sec)
+                )
             if isinstance(meta, dict) and meta.get("pts") is not None:
                 shop_pts = int(meta["pts"])
             else:
                 shop_pts = 0
             if isinstance(meta, dict) and meta.get("score_raw") is not None:
                 score_raw = int(meta["score_raw"])
-            if in_ltx:
+            if self.faction == "Default" and in_ltx:
                 shop_s = "true"
                 shop_c = "#7dcea0"
+            elif paint == "both":
+                shop_s = "true"
+                shop_c = "#7dcea0"
+            elif paint == "faction":
+                shop_s = "faction only"
+                shop_c = "#8fd9a8"  # light green
+            elif paint == "baseline":
+                shop_s = "baseline only"
+                shop_c = "#e6c84a"  # yellow
             elif fac_wrong:
                 shop_s = "wrong faction"
                 shop_c = "#c87832"  # dark orange
@@ -3240,13 +3364,26 @@ class MainWindow(QMainWindow):
         try:
             self.items = load_items(Path(path))
             meta = (self.items or {}).get("meta") or {}
-            log.info("regen done path=%s counts=%s", path, meta.get("counts"))
-            self.status.setText("Scan complete")
+            counts = meta.get("counts") or {}
+            log.info("regen done path=%s counts=%s", path, counts)
             self._refresh_sort_options()
             self._rebuild_ammo_toggles()
             self._rebuild_list()
+            # After rebuild — it would overwrite any earlier status text.
+            bits = []
+            for key, label in (
+                ("weapons", "weapons"),
+                ("outfits", "outfits"),
+                ("helmets", "helmets"),
+                ("ammo", "ammo"),
+            ):
+                if key in counts:
+                    bits.append(f"{counts[key]} {label}")
+            detail = ", ".join(bits) if bits else Path(path).name
+            self.status.setText(f"Regenerate complete — {detail}")
         except Exception as exc:  # noqa: BLE001
             log.exception("post-regen load/rebuild failed")
+            self.status.setText("Regenerate load failed — see Log tab")
             QMessageBox.critical(
                 self,
                 "Regenerate load failed",

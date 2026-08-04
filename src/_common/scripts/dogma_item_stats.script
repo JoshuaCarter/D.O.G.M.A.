@@ -333,8 +333,9 @@ local function weapon_calculate(input)
 
 	local ads, hip = spread_pair(input)
 	local burst = burst_shots(input)
-	local scope_ok = ((input.scope_status or 0) > 0) and 1 or 0
-	local sil_ok = ((input.silencer_status or 0) > 0) and 1 or 0
+	-- status 1 = attached/built-in; 2 = empty rail/slot only (do not score).
+	local scope_ok = ((input.scope_status or 0) == 1) and 1 or 0
+	local sil_ok = ((input.silencer_status or 0) == 1) and 1 or 0
 	if sil_ok == 0 and (
 		input.integrated_silencer
 		or has_integrated_silencer(input.sec, input.parent_section)

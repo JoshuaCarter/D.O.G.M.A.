@@ -13,8 +13,7 @@ import yaml
 from .balance import (
     ammo_enabled_map,
     effective_category,
-    get_item_ltx_override,
-    item_in_ltx,
+    item_in_ltx_for_faction,
 )
 from .diaglog import get_logger
 from .score import (
@@ -27,6 +26,7 @@ from .score import (
     weapon_score01,
 )
 from .settings import STOCK_STRIP_YML, ensure_dirs
+from .weapon_kind import weapon_kind
 
 log = get_logger("export")
 
@@ -40,18 +40,40 @@ def ceil_pts_10(pts: int | float) -> int:
 
 
 def apply_price_scale(
-    scores01: dict[str, float], cat_cfg: dict[str, Any] | None
+    scores01: dict[str, float],
+    cat_cfg: dict[str, Any] | None,
+    *,
+    anchor_secs: set[str] | frozenset[str] | None = None,
 ) -> dict[str, int]:
-    """Shop pts from price scale: relative 0–1 scores → [min, max], ceil to 10."""
+    """Shop pts from price scale → [min, max], ceil to 10.
+
+    Anchor pool = ``anchor_secs`` (checked/LTX) when given; else all keys in
+    ``scores01`` (export). Need ≥2 anchors to define a scale — otherwise every
+    item gets 0 pts. Unchecked scores still map on the anchor line (extrapolate).
+    """
     if not scores01:
         return {}
     out_lo, out_hi = price_scale_settings(cat_cfg)
-    vals = [float(v) for v in scores01.values()]
-    pool_min = min(vals)
-    pool_max = max(vals)
+    if anchor_secs is not None:
+        anchor_vals = [
+            float(scores01[s]) for s in anchor_secs if s in scores01
+        ]
+    else:
+        anchor_vals = [float(v) for v in scores01.values()]
+    if len(anchor_vals) < 2:
+        return {sec: 0 for sec in scores01}
+    pool_min = min(anchor_vals)
+    pool_max = max(anchor_vals)
     return {
         sec: ceil_pts_10(
-            scale_shop_pts(float(s01), pool_min, pool_max, out_lo, out_hi)
+            scale_shop_pts(
+                float(s01),
+                pool_min,
+                pool_max,
+                out_lo,
+                out_hi,
+                clamp=False,
+            )
         )
         for sec, s01 in scores01.items()
     }
@@ -89,7 +111,7 @@ def build_faction_shop(
         pool = items.get(cat) or {}
         picked: dict[str, float] = {}
         for sec, entry in pool.items():
-            if not item_in_ltx(get_item_ltx_override(balance, sec)):
+            if not item_in_ltx_for_faction(balance, faction, sec):
                 continue
             stats = entry.get("stats") or {}
             if cat == "weapons":
@@ -98,6 +120,10 @@ def build_faction_shop(
                     cfg.get("weights") or {},
                     ceilings=cfg.get("ceilings"),
                     curves=cfg.get("curves"),
+                    kind=weapon_kind(entry, sec),
+                    zero_shotgun_spread=bool(
+                        cfg.get("shotguns_zero_spread", True)
+                    ),
                 )
             else:
                 s01 = armor_score01(
@@ -108,6 +134,15 @@ def build_faction_shop(
                     curves=cfg.get("curves"),
                 )
             picked[sec] = float(s01)
+        # Need ≥2 checked items to define Scale min/max — skip category otherwise.
+        if len(picked) < 2:
+            log.info(
+                "export skip %s/%s — %d checked (need ≥2 for price scale)",
+                faction,
+                cat,
+                len(picked),
+            )
+            continue
         for sec, pts in apply_price_scale(picked, cfg).items():
             shop[sec] = int(pts)
     return shop

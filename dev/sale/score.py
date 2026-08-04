@@ -77,7 +77,7 @@ def hit_power_pct(raw: Any) -> float:
 
 
 WEAPON_WEIGHTS = [
-    ("cost", "w_price", 200000, True, 0.5),
+    ("cost", "w_price", 200000, False, 0.5),
     ("hit_power", "w_hit_power", HIT_POWER_PCT_CEILING, False, 0.0),
     ("min_dmg", "w_min_dmg", 500, False, 0.0),
     ("lgt_dmg", "w_lgt_dmg", 500, False, 0.0),
@@ -357,11 +357,14 @@ def scale_shop_pts(
     pool_max: float,
     out_min: float,
     out_max: float,
+    *,
+    clamp: bool = True,
 ) -> int:
     """Map relative position of score01 in [pool_min, pool_max] → [out_min, out_max].
 
     Distance along the price scale is (score - min) / (max - min) among the pool.
-    Equal pool → out_min.
+    Equal pool → out_min. With ``clamp=False``, scores outside the pool
+    extrapolate past out_min/out_max (floor at 0).
     """
     try:
         r = _clamp01(float(score01))
@@ -372,7 +375,8 @@ def scale_shop_pts(
     if hi_r <= lo_r:
         return max(0, int(round(lo_o)))
     t = (r - lo_r) / (hi_r - lo_r)
-    t = _clamp01(t)
+    if clamp:
+        t = _clamp01(t)
     return max(0, int(round(lo_o + t * (hi_o - lo_o))))
 
 
@@ -389,18 +393,31 @@ def _terms_score01(terms: dict[str, tuple[float, float]]) -> float:
     return _clamp01(sum_nw / sum_w)
 
 
+_SPREAD_STATS = frozenset({"spread_ads", "spread_hip"})
+
+
 def weapon_stat_terms(
     stats: dict[str, Any],
     weights: dict[str, float],
     ceilings: dict[str, float] | None = None,
     curves: dict[str, str] | None = None,
+    *,
+    kind: str | None = None,
+    zero_shotgun_spread: bool = False,
 ) -> dict[str, tuple[float, float]]:
     """stat_key → (slider_weight, final_weight) where final = curve(n01) * w."""
     ceil = merge_ceilings(default_ceilings_weapon(), ceilings)
     cmap = merge_curves(curves)
+    skip_spread = bool(zero_shotgun_spread) and (
+        str(kind or "").strip().lower() == "w_shotgun"
+    )
     out: dict[str, tuple[float, float]] = {}
     for stat_key, wkey, default_ceiling, inverse, default_w in WEAPON_WEIGHTS:
         w = float(weights.get(wkey, default_w) or 0)
+        if skip_spread and stat_key in _SPREAD_STATS:
+            # Drop spread from the weighted average for shotguns.
+            out[stat_key] = (0.0, 0.0)
+            continue
         raw = float(stats.get(stat_key) or 0)
         if stat_key == "hit_power":
             raw = hit_power_pct(raw)
@@ -449,7 +466,8 @@ def armor_stat_terms(
                 ARMOR_COST_CEILING_HELMET if is_helmet else ARMOR_COST_CEILING_OUTFIT,
             )
         )
-        n01 = apply_score_curve(_inv_norm01(cost, soft), cmap.get("cost"))
+        # Higher cost → higher score (same direction as weapon w_price).
+        n01 = apply_score_curve(_norm01(cost, soft), cmap.get("cost"))
         out["cost"] = (w_price, n01 * w_price)
     return out
 
@@ -459,9 +477,21 @@ def weapon_score01(
     weights: dict[str, float],
     ceilings: dict[str, float] | None = None,
     curves: dict[str, str] | None = None,
+    *,
+    kind: str | None = None,
+    zero_shotgun_spread: bool = False,
 ) -> float:
     """Weighted average score in 0–1 (input to price scale + raw display)."""
-    return _terms_score01(weapon_stat_terms(stats, weights, ceilings, curves))
+    return _terms_score01(
+        weapon_stat_terms(
+            stats,
+            weights,
+            ceilings,
+            curves,
+            kind=kind,
+            zero_shotgun_spread=zero_shotgun_spread,
+        )
+    )
 
 
 def armor_score01(

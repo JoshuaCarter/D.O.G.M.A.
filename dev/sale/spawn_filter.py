@@ -105,6 +105,9 @@ def name_blocked(sec: str) -> bool:
     # Melee knives / axes — not loadout-shop guns.
     if "knife" in s or "axe" in s:
         return True
+    # Engine animation stubs (bolt-throw hit proxy — not a shop weapon).
+    if s.startswith("animation_hit") or "animation_hit_" in s:
+        return True
     # Decorative / non-functional gear (decor_psi_helmet, wpn_toz34_decor).
     if s.startswith("decor_") or "_decor_" in s or s.endswith("_decor"):
         return True

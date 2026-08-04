@@ -7,21 +7,29 @@ _LABELS: dict[str, tuple[str, str]] = {
     # Controls
     "price_scale_min": (
         "Scale min",
-        "Shop pts for the cheapest checked item (price scale always on).",
+        "Shop pts for the cheapest checked item. Unchecked items use the "
+        "same line (may land below this).",
     ),
     "price_scale_max": (
         "Scale max",
-        "Shop pts for the most expensive checked item (price scale always on).",
+        "Shop pts for the most expensive checked item. Unchecked items use "
+        "the same line (may land above this).",
     ),
     "include_universal_armor": (
         "Include factionless",
         "Empty/actor community outfits/helmets count as this faction "
         "(else painted wrong-faction). Checkbox still decides LTX.",
     ),
+    "shotguns_zero_spread": (
+        "Shotguns ignore spread",
+        "When on, shotguns score 0 for ADS/hip spread (spread weights "
+        "do not affect their total).",
+    ),
     # Meta / sort
     "pts": (
         "Shop pts",
-        "Price-scale value: relative 0–1 score maps cheapest→min, dearest→max.",
+        "Price scale from checked items (cheapest→min, dearest→max; need ≥2 "
+        "else all 0). Sort uses raw score as tiebreaker.",
     ),
     "score_raw": (
         "Raw score",
@@ -29,12 +37,16 @@ _LABELS: dict[str, tuple[str, str]] = {
     ),
     "name": ("Name", "Friendly item name."),
     "sec": ("ID", "Config section id."),
-    "in_ltx": ("In LTX", "Checked for export (checkbox on tile)."),
+    "in_ltx": (
+        "In LTX",
+        "Per-faction checkbox. Green = both baseline+faction; light green = "
+        "faction only; yellow = baseline only (off here).",
+    ),
     "community": ("Community", "Outfit faction community tag."),
     "ammo": ("Ammo", "Calibres this weapon uses."),
     # Weapon stats / weights (score cols = tip Min .. Max torso tiers)
-    "cost": ("Cost", "Base item cost (lower scores better when weighted)."),
-    "w_price": ("Price", "Base item cost (lower scores better when weighted)."),
+    "cost": ("Cost", "Base item cost (higher scores better when weighted)."),
+    "w_price": ("Price", "Base item cost (higher scores better when weighted)."),
     "hit_power": (
         "Hit power",
         "Weapon hit power as percent (engine 0–1 ×100; tip-style). Scale max 0–200.",
@@ -91,12 +103,21 @@ _LABELS: dict[str, tuple[str, str]] = {
     "w_spread_ads": ("ADS spread", "Aim-down-sights dispersion (lower is better)."),
     "spread_hip": ("Hip spread", "Hipfire dispersion (lower is better)."),
     "w_spread_hip": ("Hip spread", "Hipfire dispersion (lower is better)."),
-    "scope": ("Scope", "Has an optic / scoped fire mode."),
-    "w_scope": ("Scope", "Has an optic / scoped fire mode."),
-    "silencer": ("Silencer", "Supports or includes a suppressor."),
-    "w_silencer": ("Silencer", "Supports or includes a suppressor."),
+    "scope": ("Scope", "Built-in / attached optic (scope_status=1), not an empty rail."),
+    "w_scope": (
+        "Scope",
+        "Built-in / attached optic (scope_status=1), not an empty rail.",
+    ),
+    "silencer": (
+        "Silencer",
+        "Attached / integrated suppressor (silencer_status=1), not an empty slot.",
+    ),
+    "w_silencer": (
+        "Silencer",
+        "Attached / integrated suppressor (silencer_status=1), not an empty slot.",
+    ),
     # Armor
-    "a_price": ("Price", "Base item cost (lower scores better when weighted)."),
+    "a_price": ("Price", "Base item cost (higher scores better when weighted)."),
     "radiation_protection": ("Radiation", "Protection vs radiation."),
     "a_rad": ("Radiation", "Protection vs radiation."),
     "fire_wound_protection": ("Ballistic", "Protection vs bullets / fire-wound."),

@@ -41,6 +41,8 @@ def default_balance() -> dict[str, Any]:
                 # Remap checked-item shop pts into [min, max] (display + LTX).
                 "price_scale_min": 100,
                 "price_scale_max": 900,
+                # Shotguns skip ADS/hip spread in the weighted score.
+                "shotguns_zero_spread": True,
                 "weights": _default_weights_weapon(),
                 "ceilings": default_ceilings_weapon(),
             },
@@ -190,20 +192,30 @@ def load_balance(path: Path | None = None) -> dict[str, Any]:
         migrated = True
     base.pop("excluded_items", None)
     if isinstance(data.get("item_ltx_overrides"), dict):
-        ovs: dict[str, str] = {}
-        for sec, mode in data["item_ltx_overrides"].items():
-            m = str(mode or "").strip().lower()
-            if m == "include":
-                ovs[str(sec)] = "include"
-            else:
-                # Drop legacy "exclude" / unknown modes.
-                migrated = True
+        ovs = _normalize_ltx_map(data["item_ltx_overrides"], allow_exclude=False)
+        if ovs != (data.get("item_ltx_overrides") or {}):
+            migrated = True
         if ovs:
             base["item_ltx_overrides"] = ovs
         else:
             base.pop("item_ltx_overrides", None)
             if data.get("item_ltx_overrides"):
                 migrated = True
+    # Per-faction LTX deltas (include / exclude vs baseline).
+    for _fac, fblock in (base.get("factions") or {}).items():
+        if not isinstance(fblock, dict):
+            continue
+        raw_fac = fblock.get("item_ltx_overrides")
+        if not isinstance(raw_fac, dict):
+            continue
+        cleaned = _normalize_ltx_map(raw_fac, allow_exclude=True)
+        if cleaned != raw_fac:
+            migrated = True
+        if cleaned:
+            fblock["item_ltx_overrides"] = cleaned
+        else:
+            fblock.pop("item_ltx_overrides", None)
+            migrated = True
     if migrated:
         log.info("balance migrated (weights / checkbox LTX / dead Budget keys)")
         try:
@@ -365,12 +377,16 @@ def override_count(balance: dict[str, Any], faction: str) -> int:
         return 0
     fov = (balance.get("factions") or {}).get(faction) or {}
     n = 0
-    for _cat, cblock in fov.items():
-        for k, v in (cblock or {}).items():
+    for key, cblock in fov.items():
+        if key == "item_ltx_overrides":
+            n += len(cblock or {}) if isinstance(cblock, dict) else 0
+            continue
+        if not isinstance(cblock, dict):
+            continue
+        for k, v in cblock.items():
             if k == "weights":
                 n += len(v or {})
             elif k == "ammo_enabled":
-                # Count only explicit offs (and any true overrides).
                 n += len(v or {})
             else:
                 n += 1
@@ -443,21 +459,75 @@ def clear_ammo_enabled(balance: dict[str, Any], faction: str) -> None:
         (balance.get("factions") or {}).pop(faction, None)
 
 
-def get_item_ltx_override(balance: dict[str, Any], sec: str) -> str | None:
-    """Return ``\"include\"`` when checked for LTX, else None."""
-    ovs = balance.get("item_ltx_overrides")
-    if not isinstance(ovs, dict):
-        return None
-    mode = ovs.get(str(sec))
-    if mode == "include":
-        return "include"
-    return None
+def _normalize_ltx_map(
+    raw: dict[str, Any] | None, *, allow_exclude: bool
+) -> dict[str, str]:
+    """Keep only ``include`` (and ``exclude`` when allowed)."""
+    out: dict[str, str] = {}
+    if not isinstance(raw, dict):
+        return out
+    for sec, mode in raw.items():
+        m = str(mode or "").strip().lower()
+        if m == "include":
+            out[str(sec)] = "include"
+        elif allow_exclude and m == "exclude":
+            out[str(sec)] = "exclude"
+    return out
 
 
-def set_item_ltx_override(
+def _baseline_ltx_map(balance: dict[str, Any]) -> dict[str, str]:
+    return _normalize_ltx_map(
+        balance.get("item_ltx_overrides"), allow_exclude=False
+    )
+
+
+def _faction_ltx_map(balance: dict[str, Any], faction: str) -> dict[str, str]:
+    if not faction or faction == "Default":
+        return {}
+    fblock = (balance.get("factions") or {}).get(faction) or {}
+    return _normalize_ltx_map(
+        fblock.get("item_ltx_overrides"), allow_exclude=True
+    )
+
+
+def baseline_item_in_ltx(balance: dict[str, Any], sec: str) -> bool:
+    """True when Baseline (Default) has the item checked."""
+    return _baseline_ltx_map(balance).get(str(sec)) == "include"
+
+
+def item_in_ltx_for_faction(
+    balance: dict[str, Any], faction: str, sec: str
+) -> bool:
+    """Effective include for a faction: baseline ± faction include/exclude."""
+    base_on = baseline_item_in_ltx(balance, sec)
+    if not faction or faction == "Default":
+        return base_on
+    ov = _faction_ltx_map(balance, faction).get(str(sec))
+    if ov == "include":
+        return True
+    if ov == "exclude":
+        return False
+    return base_on
+
+
+def ltx_paint_state(
+    balance: dict[str, Any], faction: str, sec: str
+) -> str:
+    """Tile paint vs baseline: ``both`` | ``faction`` | ``baseline`` | ``off``."""
+    fac_on = item_in_ltx_for_faction(balance, faction, sec)
+    base_on = baseline_item_in_ltx(balance, sec)
+    if fac_on and base_on:
+        return "both"
+    if fac_on and not base_on:
+        return "faction"
+    if (not fac_on) and base_on:
+        return "baseline"
+    return "off"
+
+
+def _set_baseline_ltx(
     balance: dict[str, Any], sec: str, mode: str | None
 ) -> None:
-    """Set/clear per-item LTX include. Only ``include`` / None are stored."""
     key = str(sec)
     ovs = balance.setdefault("item_ltx_overrides", {})
     if not isinstance(ovs, dict):
@@ -465,21 +535,73 @@ def set_item_ltx_override(
         balance["item_ltx_overrides"] = ovs
     if mode == "include":
         ovs[key] = "include"
-        return
-    ovs.pop(key, None)
+    else:
+        ovs.pop(key, None)
     if not ovs:
         balance.pop("item_ltx_overrides", None)
 
 
+def _set_faction_ltx(
+    balance: dict[str, Any], faction: str, sec: str, mode: str | None
+) -> None:
+    """Set faction delta: ``include`` / ``exclude`` / None (inherit baseline)."""
+    fac = str(faction or "").strip()
+    if not fac or fac == "Default":
+        _set_baseline_ltx(balance, sec, mode)
+        return
+    factions = balance.setdefault("factions", {})
+    fblock = factions.setdefault(fac, {})
+    if not isinstance(fblock, dict):
+        fblock = {}
+        factions[fac] = fblock
+    ovs = fblock.setdefault("item_ltx_overrides", {})
+    if not isinstance(ovs, dict):
+        ovs = {}
+        fblock["item_ltx_overrides"] = ovs
+    key = str(sec)
+    if mode in ("include", "exclude"):
+        ovs[key] = mode
+    else:
+        ovs.pop(key, None)
+    if not ovs:
+        fblock.pop("item_ltx_overrides", None)
+    if not fblock:
+        factions.pop(fac, None)
+
+
+def toggle_item_ltx_override(
+    balance: dict[str, Any], faction: str, sec: str
+) -> bool:
+    """Toggle effective include for faction. Returns new effective in-LTX state."""
+    fac = str(faction or "Default").strip() or "Default"
+    key = str(sec)
+    if fac == "Default":
+        now = baseline_item_in_ltx(balance, key)
+        _set_baseline_ltx(balance, key, None if now else "include")
+        return not now
+
+    currently = item_in_ltx_for_faction(balance, fac, key)
+    base_on = baseline_item_in_ltx(balance, key)
+    if currently:
+        # Turn off for this faction.
+        if base_on:
+            _set_faction_ltx(balance, fac, key, "exclude")
+        else:
+            _set_faction_ltx(balance, fac, key, None)  # clear force-in
+        return False
+    # Turn on for this faction.
+    if base_on:
+        _set_faction_ltx(balance, fac, key, None)  # clear force-out
+    else:
+        _set_faction_ltx(balance, fac, key, "include")
+    return True
+
+
+# Back-compat aliases used by older call sites during transition.
+def get_item_ltx_override(balance: dict[str, Any], sec: str) -> str | None:
+    """Baseline-only include flag (Default). Prefer ``item_in_ltx_for_faction``."""
+    return "include" if baseline_item_in_ltx(balance, sec) else None
+
+
 def item_in_ltx(override: str | None) -> bool:
-    """Checkbox alone: included only when override is ``include``."""
     return override == "include"
-
-
-def toggle_item_ltx_override(balance: dict[str, Any], sec: str) -> str | None:
-    """Toggle checkbox: include ↔ clear. Returns new override (include/None)."""
-    if get_item_ltx_override(balance, sec) == "include":
-        set_item_ltx_override(balance, sec, None)
-        return None
-    set_item_ltx_override(balance, sec, "include")
-    return "include"

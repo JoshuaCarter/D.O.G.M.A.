@@ -147,13 +147,14 @@ def _rebase_owned(
     sec: str,
     parents: list[str],
 ) -> None:
-    """Rebuild ``sec`` from all parents, keeping only keys this section wrote."""
-    base = _flatten_parents(sections, parents)
-    prev = sections.get(sec) or {}
-    for key in owned.get(sec, ()):
-        if key in prev:
-            base[key] = prev[key]
-    sections[sec] = base
+    """Rebuild ``sec`` from parents for a non-patch ``[sec]:parent`` redefine.
+
+    Drop prior owned keys — a full redefine must not keep Frankenstein leftovers
+    (e.g. AWAR ``inv_grid_y`` sticking after 3DSS reparents ``wpn_pkp`` → siber).
+    Keys from the current block are re-applied after this returns.
+    """
+    sections[sec] = _flatten_parents(sections, parents)
+    owned[sec] = set()
 
 
 def _apply_file(

@@ -19,18 +19,27 @@ Score refresh happens on:
 
 Close saves balance without a score refresh. `_run_list_refresh` is for sort / faction / tab / filter UI only.
 
-## LTX include = checkbox only
+## LTX checkbox — NEVER recalc
 
-- Tile checkbox checked → `item_ltx_overrides[sec] = "include"` → exported.
-- Unchecked → not in LTX.
-- No auto-include, no `max_pts` / `cost_mult`, no kind caps / `max_items`.
-- Wrong-faction paint does **not** block the checkbox or export.
+Per-item In-LTX checkbox → update balance + **local tile icon/paint/tooltip only**.
 
-## Tile colors
+**Never** call `_run_list_refresh`, `_rebuild_list`, `_run_score_refresh`, or remap shop pts from the checkbox handler. Stale pts/order until Ctrl+S / tab-sort refresh is intentional.
 
-- **Green** — checkbox checked (in LTX)
-- **Dark orange** — wrong faction (name-lock / community), unchecked
-- **Grey** — everything else unchecked
+## LTX include = per-faction checkbox
+
+- Baseline (Default): `item_ltx_overrides[sec] = "include"`.
+- Faction: inherits baseline, plus `factions[fac].item_ltx_overrides` deltas
+  (`include` = force in, `exclude` = force out).
+- Export uses each faction’s effective include set.
+- No auto-include. Wrong-faction paint does **not** block the checkbox.
+
+## Tile colors (when viewing a faction)
+
+- **Green** — baseline + faction both include
+- **Light green** — faction only (not in baseline)
+- **Yellow** — baseline only (off for this faction)
+- **Dark orange** — wrong faction name-lock/community, otherwise off
+- **Grey** — off for both
 
 ## Price scaling (Budget)
 
@@ -39,6 +48,11 @@ Always on. Two lines, same indent as other Budget controls:
 1. Scale min slider — 0–1000, step 1, default **100**
 2. Scale max slider — 0–1000, step 1, default **900**
 
-Shop pts = price scale only: each item’s relative 0–1 weighted score sets its
-distance between Scale min and Scale max. Tile top-left = shop pts; top-right =
-raw score×1000 (integer, no background). Refreshed on Ctrl+S / export.
+Shop pts = price scale only. Anchors = checked (In LTX) items: cheapest→Scale
+min, dearest→Scale max. Need ≥2 checked items — otherwise all shop pts are 0 (UI) and that
+category is omitted from export for the faction.
+Unchecked items still get pts on that same line (extrapolate past min/max by
+score distance). Default sort is pts, with raw score as tiebreaker (so when
+pts are all 0, score orders the grid). Tile top-left = shop pts; top-right =
+raw score×1000 (integer, no background). Pts/order refresh on Ctrl+S / export /
+sort-faction-tab list refresh — **not** on checkbox.

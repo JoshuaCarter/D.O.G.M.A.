@@ -1,21 +1,21 @@
 ---
-description: SALE never live-recalcs; LTX is checkbox-only
+description: SALE never live-recalcs; LTX is checkbox-only; pts are manual
 globs: dev/sale/**/*
 alwaysApply: false
 ---
 
-# SALE — recalc + checkbox LTX
+# SALE — recalc + checkbox LTX + manual pts
 
 ## No live recalc on Budget knobs
 
-Weight / ceiling / toggle / price-scale edits → update `self.balance` and `_mark_balance_dirty()` only.
+Weight / ceiling / toggle / pts edits → update `self.balance` and `_mark_balance_dirty()` only.
 
 **Do not** call `_run_score_refresh`, `_run_list_refresh`, or `_rebuild_list` from those controls.
 
 Score refresh happens on:
 
 - **Ctrl+S** (`_force_save` → `_save_now` → `_run_score_refresh`)
-- **Export / Deploy** prep (`_prepare_export` → `_save_now`) so LTX matches current weights/price scale
+- **Export / Deploy** prep (`_prepare_export` → `_save_now`) so LTX matches current weights + manual pts
 
 Close saves balance without a score refresh. `_run_list_refresh` is for sort / faction / tab / filter UI only.
 
@@ -23,7 +23,17 @@ Close saves balance without a score refresh. `_run_list_refresh` is for sort / f
 
 Per-item In-LTX checkbox → update balance + **local tile icon/paint/tooltip only**.
 
-**Never** call `_run_list_refresh`, `_rebuild_list`, `_run_score_refresh`, or remap shop pts from the checkbox handler. Stale pts/order until Ctrl+S / tab-sort refresh is intentional.
+**Never** call `_run_list_refresh`, `_rebuild_list`, `_run_score_refresh` from the checkbox handler. Stale order until Ctrl+S / tab-sort refresh is intentional.
+
+## Manual shop pts (Budget)
+
+- Control lives under **Budget** on the left sidebar (selected item).
+- Baseline: `balance.item_pts[sec]` (0–1000; 0 omits the key).
+- Faction: `factions[fac].item_pts[sec]` overrides baseline (0 is a valid override).
+- **x** clears the faction override (inherits baseline). Disabled on Default.
+- Edits update balance + **local tile icon/tooltip / Stats pts row only** — no list rebuild.
+- Tile top-left = effective pts for the viewed faction; top-right = raw score×1000.
+- Export LTX pts = effective pts per faction for checked items (no price scale).
 
 ## LTX include = per-faction checkbox
 
@@ -40,19 +50,3 @@ Per-item In-LTX checkbox → update balance + **local tile icon/paint/tooltip on
 - **Yellow** — baseline only (off for this faction)
 - **Dark orange** — wrong faction name-lock/community, otherwise off
 - **Grey** — off for both
-
-## Price scaling (Budget)
-
-Always on. Two lines, same indent as other Budget controls:
-
-1. Scale min slider — 0–1000, step 1, default **100**
-2. Scale max slider — 0–1000, step 1, default **900**
-
-Shop pts = price scale only. Anchors = checked (In LTX) items: cheapest→Scale
-min, dearest→Scale max. Need ≥2 checked items — otherwise all shop pts are 0 (UI) and that
-category is omitted from export for the faction.
-Unchecked items still get pts on that same line (extrapolate past min/max by
-score distance). Default sort is pts, with raw score as tiebreaker (so when
-pts are all 0, score orders the grid). Tile top-left = shop pts; top-right =
-raw score×1000 (integer, no background). Pts/order refresh on Ctrl+S / export /
-sort-faction-tab list refresh — **not** on checkbox.

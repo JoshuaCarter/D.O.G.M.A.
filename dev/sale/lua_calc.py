@@ -132,6 +132,11 @@ def _armor_result(out) -> dict[str, Any]:
             stats[k] = float(_lua_get(out, k, 0) or 0)
         except (TypeError, ValueError):
             stats[k] = 0.0
+    for k in ("carry_weight", "artefact_count"):
+        try:
+            stats[k] = float(_lua_get(out, k, 0) or 0)
+        except (TypeError, ValueError):
+            stats[k] = 0.0
     return stats
 
 

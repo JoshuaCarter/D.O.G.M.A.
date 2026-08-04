@@ -8,10 +8,16 @@ from typing import Any, Callable
 
 import yaml
 
+from .balance import effective_category, load_balance
 from .diaglog import get_logger
 from .ltx_merge import merge_configs, resolve_icon_bundle
 from .settings import ITEMS_YML, THUMBS_DIR, ensure_dirs
-from .score import is_bad_ammo
+from .score import (
+    hit_power_pct,
+    is_bad_ammo,
+    protection_tip_denoms_from_sections,
+    weapon_tier_map,
+)
 from .weapon_kind import weapon_kind
 from .spawn_filter import (
     has_attached_scope,
@@ -25,7 +31,6 @@ from .spawn_filter import (
     looks_like_weapon,
     name_blocked,
 )
-from .export_ltx import cache_stock_strip
 from .lua_calc import calc_backend
 from .motions import MotionLibrary, weapon_reload_seconds, weapon_use_mag
 from .stats_calc import (
@@ -162,9 +167,6 @@ def regenerate(
     prog("string tables", 0, 1)
     string_table = load_string_table(anomaly, gamma)
 
-    prog("stock shop strip", 0, 1)
-    cache_stock_strip(anomaly, gamma)
-
     sections, icon_bundles, section_parents = merge_configs(
         anomaly, gamma, progress=prog
     )
@@ -177,6 +179,7 @@ def regenerate(
         len(pools["outfits"]),
         len(pools["helmets"]),
     )
+    tip_denoms = protection_tip_denoms_from_sections(sections)
     items: dict[str, Any] = {
         "meta": {
             "schema": 1,
@@ -186,6 +189,8 @@ def regenerate(
             "gamma": str(gamma) if gamma else "",
             "reload_source": _RELOAD_SOURCE,
             "stats_calc": calc_backend(),
+            # Better Stats Bars tip denoms (max_damage * factor); stats stay engine-raw.
+            "protection_tip_denoms": tip_denoms,
         },
         "weapons": {},
         "outfits": {},
@@ -211,8 +216,6 @@ def regenerate(
             stats = weapon_calculate(inp)
             # Engine 0–1 → SALE percent for display / scale max / scoring.
             if stats.get("hit_power") is not None:
-                from .score import hit_power_pct
-
                 stats["hit_power"] = hit_power_pct(stats["hit_power"])
         except Exception as exc:  # noqa: BLE001
             w_fail += 1
@@ -281,6 +284,24 @@ def regenerate(
         reload_ok,
         len(wlist),
     )
+
+    # Quartile A..D quality grade, baked in like every other stat — Default
+    # weights at regen time, so display never has to score anything live.
+    try:
+        balance = load_balance()
+        cfg = effective_category(balance, "Default", "weapons")
+        tiers = weapon_tier_map(
+            items["weapons"],
+            cfg.get("weights") or {},
+            ceilings=cfg.get("ceilings") or {},
+            curves=cfg.get("curves") or {},
+            zero_shotgun_spread=bool(cfg.get("shotguns_zero_spread", True)),
+        )
+        for sec, tier in tiers.items():
+            items["weapons"][sec]["stats"]["tier"] = tier
+        log.info("weapon tiers assigned %d/%d", len(tiers), len(wlist))
+    except Exception:  # noqa: BLE001
+        log.exception("weapon tier assignment failed")
 
     for cat, is_helm in (("outfits", False), ("helmets", True)):
         clist = pools[cat]
@@ -472,6 +493,9 @@ def load_items(path: Path | None = None) -> dict[str, Any]:
                 if "is_helmet" in stats:
                     stats.pop("is_helmet", None)
                     renamed_stats += 1
+                # Older caches may still store engine 0–1 hit_power.
+                if cat == "weapons" and "hit_power" in stats:
+                    stats["hit_power"] = hit_power_pct(stats["hit_power"])
         if renamed_stats:
             log.info("load_items renamed/dropped %d legacy score stat keys", renamed_stats)
         # Scrub bad / gauss / name-blocked ammo from older caches (and weapon lists).

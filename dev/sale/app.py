@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import shutil
 import sys
 import time
@@ -57,12 +58,19 @@ from PyQt6.QtWidgets import (
 )
 
 from .balance import (
+    ITEM_PTS_MAX,
+    ITEM_PTS_MIN,
     ammo_enabled_map,
+    clear_all_overrides,
+    clear_item_pts_override,
     clear_override,
     effective_category,
     is_ammo_family_enabled,
+    is_item_pts_overridden,
     is_overridden,
+    item_in_ltx_any_faction,
     item_in_ltx_for_faction,
+    item_pts_for,
     load_balance,
     ltx_paint_state,
     override_count,
@@ -70,11 +78,12 @@ from .balance import (
     set_ammo_family_enabled,
     set_ceiling,
     set_curve,
+    set_item_pts,
     set_override,
     toggle_item_ltx_override,
 )
 from .diaglog import LOG_PATH, attach_log_view, get_logger, setup_logging
-from .export_ltx import apply_price_scale, default_export_path, export_shop_ltx
+from .export_ltx import default_export_path, export_shop_ltx
 from .labels import pretty_ceiling_tip, pretty_label, pretty_tip
 from .regenerate import load_items, regenerate
 from .weapon_kind import kind_label, weapon_kind
@@ -84,7 +93,7 @@ from .spawn_filter import (
     name_blocked,
 )
 from .score import (
-    ARMOR_WEIGHTS,
+    armor_weight_rows,
     CURVE_IDS,
     CURVE_LABELS,
     CURVE_LINEAR,
@@ -102,10 +111,13 @@ from .score import (
     collect_ammo_sections,
     sort_ammo_sections_by_family_price,
     default_ceilings_armor,
+    DEFAULT_PROTECTION_TIP_DENOM,
+    FRACTION_STAT_KEYS,
     faction_label,
     hit_power_pct,
     normalize_curve,
-    price_scale_settings,
+    protection_tip_display,
+    protection_tip_pct,
     score_raw_display,
     section_name_faction,
     section_name_faction_token,
@@ -137,6 +149,9 @@ _ITEM_CB_SIZE = 16
 _ITEM_CB_MARGIN = 4
 # Click target larger than the drawn box (IconMode hit-tests are fiddly).
 _ITEM_CB_HIT = 36
+
+# Weapon quality quartile grade (A best .. D worst) — bottom-left tile badge.
+TIER_COLORS_HEX = {"A": "#5adc78", "B": "#5aaae6", "C": "#e6be3c", "D": "#dc5a5a"}
 
 # Stat name colors (CSS) by key family.
 _DPS_KEYS = ("dps",)
@@ -272,6 +287,20 @@ def _nice_item_name(sec: str, entry: dict[str, Any] | None = None) -> str:
     return short.replace("_", " ") or sec or "?"
 
 
+def _thumb_path(sec: str, entry: dict[str, Any] | None = None) -> str | None:
+    """Resolve a usable thumbnail path for an items.yml entry."""
+    thumb = str((entry or {}).get("thumb") or "").strip()
+    if thumb and Path(thumb).is_file():
+        return thumb
+    for cand in (
+        THUMBS_DIR / f"{sec}.inv.png",
+        THUMBS_DIR / f"{sec}.fallback.png",
+    ):
+        if cand.is_file():
+            return str(cand)
+    return None
+
+
 def _fmt_stat_val(val: Any) -> str:
     if val is None:
         return "—"
@@ -306,13 +335,18 @@ def _icon_with_pts(
     faction_tag: str = "",
     in_ltx: bool = False,
     ltx_paint: str = "off",
+    any_faction_ltx: bool = False,
+    checkbox_enabled: bool = True,
+    tier: str = "",
     width: int = GRID_ICON_W,
     height: int = GRID_ICON_H,
 ) -> QIcon:
-    """Compose tile: shop pts top-left; raw×1000 top-right.
+    """Compose tile: shop pts top-left; raw×1000 top-right; tier bottom-left.
 
     ``ltx_paint``: both (green) | faction (light green) | baseline (yellow) | off.
     Selection is outline-only (primary blue / compare red), inset thick border.
+    On Baseline, ``any_faction_ltx`` draws a white border (faction include overview).
+    ``tier``: weapon quartile grade A..D (blank for non-weapons); name bottom-center.
     """
     canvas = QPixmap(width, height)
     # selected: True/"primary" = blue outline; "compare" = red; fill from LTX paint.
@@ -357,6 +391,11 @@ def _icon_with_pts(
         else:
             border = QColor(55, 55, 55)
             pts_color = QColor(140, 140, 140)
+        if any_faction_ltx and not checkbox_enabled:
+            # Baseline overview: white = included by at least one faction.
+            border = QColor(235, 235, 235)
+            if paint == "off" and not faction_wrong:
+                pts_color = QColor(220, 220, 220)
         if sel == "primary":
             outline = QColor(70, 150, 240)
         elif sel == "compare":
@@ -373,7 +412,10 @@ def _icon_with_pts(
             inset = bw // 2
             painter.drawRect(inset, inset, width - 1 - 2 * inset, height - 1 - 2 * inset)
         else:
-            painter.setPen(border)
+            pen = QPen(border)
+            if any_faction_ltx and not checkbox_enabled:
+                pen.setWidth(2)
+            painter.setPen(pen)
             painter.drawRect(0, 0, width - 1, height - 1)
         # Top-left: shop pts from price scale (with background).
         pts_s = str(int(shop_pts))
@@ -383,7 +425,8 @@ def _icon_with_pts(
         metrics = painter.fontMetrics()
         tw = metrics.horizontalAdvance(pts_s) + 8
         th = metrics.height() + 2
-        painter.fillRect(3, 3, tw, th, QColor(0, 0, 0, 180))
+        pts_box = QColor(30, 70, 170, 210) if shop_pts > 0 else QColor(0, 0, 0, 180)
+        painter.fillRect(3, 3, tw, th, pts_box)
         painter.setPen(pts_color)
         painter.drawText(7, 3 + metrics.ascent(), pts_s)
         # Top-right: raw score×1000, plain text (no background).
@@ -393,8 +436,9 @@ def _icon_with_pts(
         painter.setFont(raw_font)
         rm = painter.fontMetrics()
         raw_x = width - rm.horizontalAdvance(raw_s) - 5
+        show_ltx = in_ltx or (any_faction_ltx and not checkbox_enabled)
         painter.setPen(
-            QColor(210, 210, 210) if in_ltx else QColor(150, 150, 150)
+            QColor(210, 210, 210) if show_ltx else QColor(150, 150, 150)
         )
         painter.drawText(raw_x, 3 + rm.ascent(), raw_s)
         tag = (faction_tag or "").strip()
@@ -406,37 +450,84 @@ def _icon_with_pts(
             tm = painter.fontMetrics()
             tag_x = width - tm.horizontalAdvance(tag) - 5
             painter.setPen(
-                QColor(200, 185, 140) if in_ltx else QColor(110, 105, 90)
+                QColor(200, 185, 140) if show_ltx else QColor(110, 105, 90)
             )
             painter.drawText(tag_x, 3 + rm.height() + tm.ascent(), tag)
+        # Bottom-left: weapon quality tier (A best .. D worst).
+        tier_s = (tier or "").strip().upper()
+        tier_w = 0
+        if tier_s in TIER_COLORS_HEX:
+            tier_font = QFont("Consolas", 10)
+            tier_font.setBold(True)
+            painter.setFont(tier_font)
+            tmet = painter.fontMetrics()
+            ttw = tmet.horizontalAdvance(tier_s) + 8
+            tth = tmet.height() + 2
+            ty = height - tth - 3
+            painter.fillRect(3, ty, ttw, tth, QColor(0, 0, 0, 180))
+            painter.setPen(QColor(TIER_COLORS_HEX[tier_s]))
+            painter.drawText(7, ty + tmet.ascent(), tier_s)
+            tier_w = ttw + 4
         if name:
             name_font = QFont("Consolas", 8)
             painter.setFont(name_font)
             nm = painter.fontMetrics()
-            max_w = max(40, width - _ITEM_CB_SIZE - _ITEM_CB_MARGIN * 2 - 8)
+            # Center between tier (left) and include checkbox (right).
+            left = 3 + tier_w
+            right = width - _ITEM_CB_SIZE - _ITEM_CB_MARGIN * 2 - 4
+            max_w = max(24, right - left)
             text = nm.elidedText(name, Qt.TextElideMode.ElideRight, max_w)
-            y = height - 4
+            tw = nm.horizontalAdvance(text)
+            nx = left + max(0, (max_w - tw) // 2)
             painter.setPen(QColor(230, 230, 230))
-            painter.drawText(4, y, text)
-        # Checkbox: checked = included for this faction.
+            painter.drawText(nx, height - 4, text)
+        # Checkbox: checked = included for this faction (disabled on Baseline).
         cb = _item_checkbox_rect(width, height)
-        painter.fillRect(cb, QColor(0, 0, 0, 200))
-        painter.setPen(QColor(120, 160, 120) if in_ltx else QColor(90, 90, 90))
-        painter.drawRect(cb.adjusted(0, 0, -1, -1))
-        if in_ltx:
-            x0, y0 = cb.x(), cb.y()
-            s = cb.width()
-            pen = QPen(
-                QColor(140, 230, 160)
-                if paint == "faction"
-                else QColor(90, 200, 120)
+        if checkbox_enabled:
+            painter.fillRect(cb, QColor(0, 0, 0, 200))
+            painter.setPen(
+                QColor(120, 160, 120) if in_ltx else QColor(90, 90, 90)
             )
-            pen.setWidthF(1.8)
-            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-            painter.setPen(pen)
-            painter.drawLine(x0 + 3, y0 + s // 2, x0 + s // 2 - 1, y0 + s - 4)
-            painter.drawLine(x0 + s // 2 - 1, y0 + s - 4, x0 + s - 3, y0 + 3)
+            painter.drawRect(cb.adjusted(0, 0, -1, -1))
+            if in_ltx:
+                x0, y0 = cb.x(), cb.y()
+                s = cb.width()
+                pen = QPen(
+                    QColor(140, 230, 160)
+                    if paint == "faction"
+                    else QColor(90, 200, 120)
+                )
+                pen.setWidthF(1.8)
+                pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+                pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+                painter.setPen(pen)
+                painter.drawLine(
+                    x0 + 3, y0 + s // 2, x0 + s // 2 - 1, y0 + s - 4
+                )
+                painter.drawLine(
+                    x0 + s // 2 - 1, y0 + s - 4, x0 + s - 3, y0 + 3
+                )
+        else:
+            # Baseline: no include control — faint mark if any faction has it.
+            painter.fillRect(cb, QColor(0, 0, 0, 140))
+            painter.setPen(
+                QColor(160, 160, 160) if any_faction_ltx else QColor(60, 60, 60)
+            )
+            painter.drawRect(cb.adjusted(0, 0, -1, -1))
+            if any_faction_ltx:
+                x0, y0 = cb.x(), cb.y()
+                s = cb.width()
+                pen = QPen(QColor(210, 210, 210))
+                pen.setWidthF(1.5)
+                pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+                pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+                painter.setPen(pen)
+                painter.drawLine(
+                    x0 + 3, y0 + s // 2, x0 + s // 2 - 1, y0 + s - 4
+                )
+                painter.drawLine(
+                    x0 + s // 2 - 1, y0 + s - 4, x0 + s - 3, y0 + 3
+                )
     finally:
         painter.end()
     return QIcon(canvas)
@@ -772,6 +863,53 @@ class WeightRow(QWidget):
     def displayed_curve(self) -> str:
         return normalize_curve(self.curve)
 
+    def sync_display(
+        self,
+        value: float,
+        *,
+        overridden: bool = False,
+        enabled: bool = True,
+    ) -> None:
+        """Update slider/edit/clear chrome without emitting changed."""
+        self.set_signals_blocked(True)
+        try:
+            if self.kind == "weight":
+                self.slider.setValue(int(round(float(value) * 100)))
+            elif self.kind == "float":
+                lo = self.slider.minimum()
+                hi = self.slider.maximum()
+                self.slider.setValue(
+                    max(lo, min(hi, int(round(float(value) * 100))))
+                )
+            else:
+                lo = self.slider.minimum()
+                hi = self.slider.maximum()
+                self.slider.setValue(
+                    max(lo, min(hi, int(round(float(value)))))
+                )
+            self.val.setText(self._fmt(float(value)))
+            if overridden:
+                self.lbl.setStyleSheet("color: #e6a23c; font-weight: bold;")
+            elif not enabled:
+                self.lbl.setStyleSheet("color: #777;")
+            else:
+                self.lbl.setStyleSheet("")
+            self.btn.setEnabled(bool(self.clearable and overridden))
+            self.slider.setEnabled(bool(enabled))
+            self.val.setReadOnly(not bool(enabled))
+            if enabled:
+                self.val.setStyleSheet(
+                    "QLineEdit { background: #2a2a2a; color: #e8e8e8; border: 1px solid #444; "
+                    "padding: 1px 4px; font-family: Consolas, monospace; }"
+                )
+            else:
+                self.val.setStyleSheet(
+                    "QLineEdit { background: #222; color: #888; border: 1px solid #333; "
+                    "padding: 1px 4px; font-family: Consolas, monospace; }"
+                )
+        finally:
+            self.set_signals_blocked(False)
+
     def set_signals_blocked(self, block: bool) -> None:
         self.blockSignals(block)
         self.slider.blockSignals(block)
@@ -874,6 +1012,7 @@ class MainWindow(QMainWindow):
             self.balance = load_balance()
             self.items: dict[str, Any] = load_items()
             meta = (self.items or {}).get("meta") or {}
+            self._prot_zones = self._zones_from_items(self.items)
             log.info(
                 "items.yml loaded counts=%s generated=%s",
                 meta.get("counts"),
@@ -895,10 +1034,12 @@ class MainWindow(QMainWindow):
                         self._sel_by_cat[c] = str(saved_sel[c])
             self._worker: RegenWorker | None = None
             # Balance edits stay in memory until Ctrl+S (score refresh) or close (save only).
-            # Export/Deploy call _save_now first so LTX uses current weights/price scale.
+            # Export/Deploy call _save_now first so LTX matches current weights + manual pts.
             self._balance_dirty = False
             self._recalc_running = False
             self._recalc_queued = False
+            self._budget_pts_sec: str | None = None
+            self.budget_pts_row: WeightRow | None = None
 
             root = QWidget()
             v = QVBoxLayout(root)
@@ -924,7 +1065,7 @@ class MainWindow(QMainWindow):
             self.sort_box.setMinimumWidth(140)
             self.sort_box.currentTextChanged.connect(self._on_sort_key_changed)
             self.sort_desc = QCheckBox("Desc")
-            self.sort_desc.setChecked(False)
+            self.sort_desc.setChecked(True)
             self.sort_desc.setToolTip("Sort descending (off = ascending)")
             self.sort_desc.setStyleSheet("QCheckBox { color: #d0d0d0; }")
             self.sort_desc.toggled.connect(lambda _: self._run_list_refresh())
@@ -1020,6 +1161,20 @@ class MainWindow(QMainWindow):
             self.faction_meta = QLabel("")
             self.faction_meta.setStyleSheet("color: #9aa3ad;")
             fac.addWidget(self.faction_meta)
+            self.btn_clear_all_overrides = QPushButton("x")
+            self.btn_clear_all_overrides.setFixedWidth(22)
+            self.btn_clear_all_overrides.setStyleSheet(_CLEAR_BTN_STYLE)
+            self.btn_clear_all_overrides.setToolTip(
+                "Clear all overrides for this faction "
+                "(weights, pts, In-LTX, ammo filters)"
+            )
+            # Sits next to the faction combo — keep Space/Enter from reaching it.
+            self.btn_clear_all_overrides.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            self.btn_clear_all_overrides.clicked.connect(
+                self._clear_all_faction_overrides
+            )
+            self.btn_clear_all_overrides.setEnabled(False)
+            fac.addWidget(self.btn_clear_all_overrides)
             left_v.addLayout(fac)
 
             self.sidebar_tabs = QTabWidget()
@@ -1079,7 +1234,7 @@ class MainWindow(QMainWindow):
             )
             detail_lay.addWidget(self.detail_info)
             self.detail_stats = self._make_kv_table(
-                ["Stat", "Value", "Weight", "Final", "Diff"]
+                ["Stat", "Value", "Diff", "Weight", "Final"]
             )
             self.detail_stats.clicked.connect(
                 lambda idx: self._on_detail_sort_click(
@@ -1092,6 +1247,55 @@ class MainWindow(QMainWindow):
 
             self.main_tabs.addTab(editor, "Editor")
 
+            output = QWidget()
+            out_v = QVBoxLayout(output)
+            out_v.setContentsMargins(6, 6, 6, 6)
+            out_v.setSpacing(6)
+            out_bar = QHBoxLayout()
+            out_bar.setContentsMargins(0, 0, 0, 0)
+            out_bar.setSpacing(6)
+            out_bar.addWidget(_header_label("Faction:"))
+            self.output_faction_box = QComboBox()
+            for f in FACTIONS:
+                self.output_faction_box.addItem(faction_label(f), f)
+            self.output_faction_box.currentTextChanged.connect(
+                self._on_output_faction
+            )
+            out_bar.addWidget(self.output_faction_box, 0)
+            self.output_meta = QLabel("")
+            self.output_meta.setStyleSheet("color: #9aa3ad;")
+            out_bar.addWidget(self.output_meta, 1)
+            out_v.addLayout(out_bar)
+            self.output_list = QListWidget()
+            self.output_list.setViewMode(QListWidget.ViewMode.IconMode)
+            self.output_list.setFlow(QListWidget.Flow.LeftToRight)
+            self.output_list.setWrapping(True)
+            self.output_list.setIconSize(QSize(GRID_ICON_W, GRID_ICON_H))
+            self.output_list.setGridSize(QSize(GRID_CELL_W, GRID_CELL_H))
+            self.output_list.setResizeMode(QListWidget.ResizeMode.Adjust)
+            self.output_list.setMovement(QListWidget.Movement.Static)
+            self.output_list.setUniformItemSizes(True)
+            self.output_list.setWordWrap(False)
+            self.output_list.setTextElideMode(Qt.TextElideMode.ElideRight)
+            self.output_list.setSpacing(1)
+            self.output_list.setVerticalScrollMode(
+                QAbstractItemView.ScrollMode.ScrollPerPixel
+            )
+            self.output_list.setStyleSheet(
+                "QListWidget { background: #1a1a1a; border: none; outline: none; }"
+                "QListWidget::item {"
+                "  color: transparent; background: transparent; padding: 0;"
+                "}"
+                "QListWidget::item:selected {"
+                "  background: transparent;"
+                "}"
+                "QListWidget::item:selected:active {"
+                "  background: transparent;"
+                "}"
+            )
+            out_v.addWidget(self.output_list, 1)
+            self.main_tabs.addTab(output, "Output")
+
             self.log_view = QPlainTextEdit()
             self.log_view.setReadOnly(True)
             self.log_view.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
@@ -1099,6 +1303,7 @@ class MainWindow(QMainWindow):
                 "QPlainTextEdit { background: #1e1e1e; color: #d4d4d4; font-family: Consolas, monospace; }"
             )
             self.main_tabs.addTab(self.log_view, "Log")
+            self.main_tabs.currentChanged.connect(self._on_main_tab)
             v.addWidget(self.main_tabs, 1)
 
             self.status = QLabel(f"Ready — log: {LOG_PATH}")
@@ -1132,9 +1337,16 @@ class MainWindow(QMainWindow):
             self._restore_ui_state()
             self._rebuild_weights()
             self._rebuild_ammo_toggles()
-            prefer_sort = str(self.settings.get("sort_key") or "pts")
+            prefer_sort = str(self.settings.get("sort_key") or "score")
             if prefer_sort == "in_shop":
                 prefer_sort = "in_ltx"
+            if prefer_sort in ("score_raw", "pts"):
+                # pts was the old default; score_raw is the Info-row alias.
+                prefer_sort = "score"
+                self.settings["sort_dir"] = "Desc"
+                self.sort_desc.blockSignals(True)
+                self.sort_desc.setChecked(True)
+                self.sort_desc.blockSignals(False)
             self._refresh_sort_options(prefer=prefer_sort)
             self._rebuild_list()
             log.info("MainWindow.__init__ done")
@@ -1247,12 +1459,18 @@ class MainWindow(QMainWindow):
             self._apply_stats_sort_highlight()
 
     def _sort_keys_for_category(self) -> list[str]:
-        keys: list[str] = ["pts", "name", "cost", "sec", "in_ltx", "community"]
+        keys: list[str] = ["score", "pts", "name", "cost", "sec", "in_ltx", "community"]
         if self.category == "weapons":
             keys.append("ammo")
             keys.extend(sk for sk, *_ in WEAPON_WEIGHTS if sk not in keys)
         else:
-            keys.extend(sk for sk, *_ in ARMOR_WEIGHTS if sk not in keys)
+            keys.extend(
+                sk
+                for sk, *_ in armor_weight_rows(
+                    is_helmet=self.category == "helmets"
+                )
+                if sk not in keys
+            )
         pool = (self.items.get(self.category) or {}) if self.items else {}
         extras: set[str] = set()
         for entry in pool.values():
@@ -1266,8 +1484,10 @@ class MainWindow(QMainWindow):
         data = self.sort_box.currentData()
         if data:
             return str(data)
-        text = self.sort_box.currentText() or "pts"
+        text = self.sort_box.currentText() or "score"
         # Legacy settings may still store raw keys as the visible text.
+        if text == "score_raw":
+            return "score"
         return text
 
     def _set_sort_key(self, key: str) -> None:
@@ -1285,7 +1505,9 @@ class MainWindow(QMainWindow):
 
     def _refresh_sort_options(self, prefer: str | None = None) -> None:
         keys = self._sort_keys_for_category()
-        cur = prefer or self._current_sort_key() or "pts"
+        cur = prefer or self._current_sort_key() or "score"
+        if cur == "score_raw":
+            cur = "score"
         self.sort_box.blockSignals(True)
         self.sort_box.clear()
         for k in keys:
@@ -1324,7 +1546,7 @@ class MainWindow(QMainWindow):
     def _on_detail_sort_click(
         self, table: QTableWidget, row: int, column: int = 0
     ) -> None:
-        # Only the name column sorts; value / weight / final are inert.
+        # Only the name column sorts; value / diff / weight / final are inert.
         if column != 0:
             return
         # Info names can still sort, but only stats names get a persistent highlight.
@@ -1337,13 +1559,43 @@ class MainWindow(QMainWindow):
         cur = self._current_sort_key()
         self.sort_box.blockSignals(True)
         if cur == key:
-            # Reselect → clear sort key (back to pts). Desc toggle is left alone.
-            self._set_sort_key("pts")
+            # Reselect → clear sort key (back to score). Desc toggle is left alone.
+            self._set_sort_key("score")
         else:
-            self._set_sort_key(key)
+            # Info panel uses score_raw; sort dropdown key is score.
+            self._set_sort_key("score" if key == "score_raw" else key)
         self.sort_box.blockSignals(False)
         self._apply_stats_sort_highlight()
         self._run_list_refresh()
+
+    @staticmethod
+    def _zones_from_items(items: dict[str, Any] | None) -> dict[str, float]:
+        meta = (items or {}).get("meta") or {}
+        # Only tip denoms (BSB). Ignore legacy meta.protection_zones (actor_condition).
+        stored = meta.get("protection_tip_denoms")
+        out = dict(DEFAULT_PROTECTION_TIP_DENOM)
+        if isinstance(stored, dict):
+            for k, v in stored.items():
+                if str(k) not in FRACTION_STAT_KEYS:
+                    continue
+                try:
+                    z = float(v)
+                except (TypeError, ValueError):
+                    continue
+                if z > 0:
+                    out[str(k)] = z
+        return out
+
+    def _weapon_tier_for(self, sec: str) -> str:
+        """Quartile A..D grade — baked into items.yml at regen time (score.py)."""
+        pool = (self.items or {}).get("weapons") or {}
+        entry = pool.get(str(sec)) or {}
+        tier = str((entry.get("stats") or {}).get("tier") or "").strip().upper()
+        return tier if tier in TIER_COLORS_HEX else ""
+
+    def _protection_zones(self) -> dict[str, float]:
+        z = getattr(self, "_prot_zones", None)
+        return z if isinstance(z, dict) else dict(DEFAULT_PROTECTION_TIP_DENOM)
 
     def _row_sort_value(
         self,
@@ -1371,6 +1623,11 @@ class MainWindow(QMainWindow):
         raw = (entry.get("stats") or {}).get(key)
         if key == "hit_power":
             return hit_power_pct(raw)
+        if key in FRACTION_STAT_KEYS:
+            return protection_tip_pct(raw, key, self._protection_zones())
+        if key == "tier":
+            order = {"A": 3.0, "B": 2.0, "C": 1.0, "D": 0.0}
+            return order.get(str(raw or "").strip().upper(), -1.0)
         if isinstance(raw, bool):
             return 1.0 if raw else 0.0
         if isinstance(raw, (int, float)):
@@ -1410,12 +1667,15 @@ class MainWindow(QMainWindow):
         # anomaly_root / gamma_root are set from the Regenerate dialog.
         self.settings["faction"] = self.faction
         self.settings["category"] = self.category
-        self.settings["sort_key"] = self._current_sort_key() or "pts"
+        self.settings["sort_key"] = self._current_sort_key() or "score"
         self.settings["sort_dir"] = "Desc" if self.sort_desc.isChecked() else "Asc"
         self.settings["selection"] = {
             c: self._sel_by_cat.get(c) for c in CATS if self._sel_by_cat.get(c)
         }
         self.settings["ammo_expanded"] = bool(self._ammo_expanded)
+        out_fac = self._output_faction()
+        if out_fac:
+            self.settings["output_faction"] = out_fac
         self._save_window_geom()
 
     def _restore_ui_state(self) -> None:
@@ -1443,19 +1703,30 @@ class MainWindow(QMainWindow):
         self.tabs.setCurrentIndex(CATS.index(cat))
         self.tabs.blockSignals(False)
 
-        sdir = str(self.settings.get("sort_dir") or "Asc")
+        # Score-first default: highest weighted score at the top.
+        sdir = str(self.settings.get("sort_dir") or "Desc")
         self.sort_desc.blockSignals(True)
         self.sort_desc.setChecked(sdir == "Desc")
         self.sort_desc.blockSignals(False)
 
-        n = override_count(self.balance, self.faction)
-        self.faction_meta.setText(f"({n} overrides)" if n else "")
+        self._sync_faction_override_ui()
 
         self._ammo_expanded = bool(self.settings.get("ammo_expanded", True))
         self.btn_ammo_collapse.blockSignals(True)
         self.btn_ammo_collapse.setChecked(self._ammo_expanded)
         self.btn_ammo_collapse.blockSignals(False)
         self._sync_ammo_collapse_ui()
+
+        out_fac = str(self.settings.get("output_faction") or "")
+        if out_fac not in FACTIONS:
+            out_fac = (
+                self.faction if self.faction in FACTIONS else (FACTIONS[0] if FACTIONS else "")
+            )
+        if out_fac:
+            oidx = self.output_faction_box.findData(out_fac)
+            self.output_faction_box.blockSignals(True)
+            self.output_faction_box.setCurrentIndex(oidx if oidx >= 0 else 0)
+            self.output_faction_box.blockSignals(False)
 
     def _sync_ammo_collapse_ui(self) -> None:
         expanded = bool(self._ammo_expanded)
@@ -1596,17 +1867,19 @@ class MainWindow(QMainWindow):
     def _commit_sliders_to_balance(self) -> int:
         """Write current sidebar slider/toggle UI into ``self.balance``.
 
-        UI is the source of truth at save time — avoids stale balance when a
-        signal was blocked or a line-edit hadn't flushed yet.
+        Default: UI is source of truth for baseline weights / pts / ceilings.
+        Faction: only flush values that are already overrides — never recreate
+        an override that the user cleared with x.
         """
         fac = self.faction
         cat = self.category
+        fac_view = fac != "Default"
         n = 0
         for row in self._iter_weight_rows():
             key = row.key
             val = float(row.displayed_value())
             if key.startswith("ceiling:"):
-                if fac != "Default":
+                if fac_view:
                     continue
                 stat_key = key[8:]
                 if val <= 0:
@@ -1614,6 +1887,22 @@ class MainWindow(QMainWindow):
                 set_ceiling(self.balance, cat, stat_key, val)
                 set_curve(self.balance, cat, stat_key, row.displayed_curve())
                 n += 1
+                continue
+            if key == "item_pts":
+                sec = self._budget_pts_sec
+                if not sec:
+                    continue
+                # Faction: skip unless this item still has a pts override.
+                if fac_view and not is_item_pts_overridden(
+                    self.balance, fac, sec
+                ):
+                    continue
+                set_item_pts(self.balance, sec, val, faction=fac)
+                n += 1
+                continue
+            if fac_view and not is_overridden(
+                self.balance, fac, cat, key, weight=bool(row.is_weight)
+            ):
                 continue
             store: Any = val
             if key in ("include_universal_armor", "shotguns_zero_spread"):
@@ -1630,6 +1919,10 @@ class MainWindow(QMainWindow):
             for cb in host.findChildren(QCheckBox):
                 key = cb.objectName()
                 if not key:
+                    continue
+                if fac_view and not is_overridden(
+                    self.balance, fac, cat, key, weight=False
+                ):
                     continue
                 store: Any = bool(cb.isChecked())
                 set_override(
@@ -1663,7 +1956,9 @@ class MainWindow(QMainWindow):
                 out[wkey] = (float(weights.get(wkey, default_w)), CURVE_LINEAR)
         else:
             out["a_price"] = (float(weights.get("a_price", 0.5)), CURVE_LINEAR)
-            for _sk, wkey, _c, _i, default_w in ARMOR_WEIGHTS:
+            for _sk, wkey, _c, _i, default_w in armor_weight_rows(
+                is_helmet=cat == "helmets"
+            ):
                 out[wkey] = (float(weights.get(wkey, default_w)), CURVE_LINEAR)
         ceil_map = cfg.get("ceilings") or {}
         curve_map = cfg.get("curves") or {}
@@ -1786,6 +2081,7 @@ class MainWindow(QMainWindow):
         self._set_window_busy(True)
         try:
             self._rebuild_list()
+            self._maybe_refresh_output()
         finally:
             self._set_window_busy(False)
             self._block_slider_signals(False)
@@ -1819,6 +2115,7 @@ class MainWindow(QMainWindow):
                     log.exception("balance save during recalc failed")
                 self._balance_dirty = False
                 self._rebuild_list()
+                self._maybe_refresh_output()
                 if not self._recalc_queued and not self._balance_dirty:
                     break
         finally:
@@ -1834,16 +2131,191 @@ class MainWindow(QMainWindow):
                 self._recalc_queued = False
                 self._run_score_refresh()
 
+    def _sync_faction_override_ui(self) -> None:
+        """Refresh override count label + clear-all button for current faction."""
+        n = override_count(self.balance, self.faction)
+        meta = getattr(self, "faction_meta", None)
+        if meta is not None:
+            meta.setText(f"({n} overrides)" if n else "")
+        btn = getattr(self, "btn_clear_all_overrides", None)
+        if btn is not None:
+            can = self.faction != "Default" and n > 0
+            btn.setEnabled(can)
+            if self.faction == "Default":
+                btn.setToolTip("Baseline — no faction overrides")
+            elif n <= 0:
+                btn.setToolTip("No overrides for this faction")
+            else:
+                btn.setToolTip(
+                    f"Clear all {n} override(s) for {faction_label(self.faction)} "
+                    "(weights, pts, In-LTX, ammo filters)"
+                )
+
+    def _confirm_clear_all_overrides(self) -> bool:
+        """Ask before the x wipes a faction. Item picks are unrecoverable."""
+        fblock = (self.balance.get("factions") or {}).get(self.faction) or {}
+        picks = fblock.get("item_ltx_overrides") or {}
+        pts = fblock.get("item_pts") or {}
+        if not picks and not pts:
+            return True
+        lines = []
+        if picks:
+            inc = sum(1 for v in picks.values() if v == "include")
+            exc = len(picks) - inc
+            lines.append(f"{inc} item(s) included, {exc} excluded")
+        if pts:
+            lines.append(f"{len(pts)} point-cost override(s)")
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Clear faction overrides")
+        box.setText(
+            f"Discard all overrides for {faction_label(self.faction)}?"
+        )
+        box.setInformativeText(
+            "This deletes:\n  • " + "\n  • ".join(lines) + "\n\nThis cannot be undone."
+        )
+        box.setStandardButtons(
+            QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.Discard
+        )
+        box.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        return box.exec() == QMessageBox.StandardButton.Discard
+
+    def _clear_all_faction_overrides(self) -> None:
+        """Clear every override for the current faction (sidebar top x)."""
+        if self.faction == "Default":
+            return
+        self._flush_slider_focus()
+        if not self._confirm_clear_all_overrides():
+            log.info("clear all overrides cancelled fac=%s", self.faction)
+            return
+        n = clear_all_overrides(self.balance, self.faction)
+        log.info(
+            "cleared all overrides fac=%s count=%d",
+            self.faction,
+            n,
+        )
+        self._mark_balance_dirty()
+        self._sync_faction_override_ui()
+        self._rebuild_weights()
+        self._rebuild_ammo_toggles()
+        # LTX / pts / weight overrides affect tiles + scores.
+        self._run_list_refresh()
+
     def _on_faction(self, _name: str) -> None:
         data = self.faction_box.currentData()
         fac = str(data if data is not None else _name)
         log.debug("faction -> %s (%s)", fac, faction_label(fac))
         self.faction = fac
-        n = override_count(self.balance, fac)
-        self.faction_meta.setText(f"({n} overrides)" if n else "")
+        self._sync_faction_override_ui()
         self._rebuild_weights()
         self._rebuild_ammo_toggles()
         self._run_list_refresh()
+        self._maybe_refresh_output()
+
+    def _output_faction(self) -> str:
+        box = getattr(self, "output_faction_box", None)
+        if box is None:
+            return ""
+        data = box.currentData()
+        fac = str(data if data is not None else "")
+        return fac if fac in FACTIONS else (FACTIONS[0] if FACTIONS else "")
+
+    def _on_output_faction(self, _name: str) -> None:
+        self._rebuild_output_list()
+
+    def _on_main_tab(self, idx: int) -> None:
+        # Output tab is immediately after Editor (index 1).
+        if idx == 1:
+            # Prefer editor faction when it's a real faction.
+            if self.faction in FACTIONS:
+                oidx = self.output_faction_box.findData(self.faction)
+                if oidx >= 0 and oidx != self.output_faction_box.currentIndex():
+                    self.output_faction_box.blockSignals(True)
+                    self.output_faction_box.setCurrentIndex(oidx)
+                    self.output_faction_box.blockSignals(False)
+            self._rebuild_output_list()
+
+    def _maybe_refresh_output(self) -> None:
+        tabs = getattr(self, "main_tabs", None)
+        if tabs is not None and tabs.currentIndex() == 1:
+            self._rebuild_output_list()
+
+    def _rebuild_output_list(self) -> None:
+        """Show checkbox-included items for Output faction: helmets → outfits → weapons."""
+        lst = getattr(self, "output_list", None)
+        if lst is None:
+            return
+        fac = self._output_faction()
+        lst.blockSignals(True)
+        lst.clear()
+        counts = {"helmets": 0, "outfits": 0, "weapons": 0}
+        try:
+            if not fac or not self.items:
+                self.output_meta.setText("(no items)")
+                return
+            # Fixed category order for the Output overview.
+            for cat in ("helmets", "outfits", "weapons"):
+                pool = self.items.get(cat) or {}
+                rows: list[tuple[str, dict[str, Any], int, str]] = []
+                for sec, entry in pool.items():
+                    if not isinstance(entry, dict):
+                        continue
+                    if not item_in_ltx_for_faction(self.balance, fac, sec):
+                        continue
+                    pts = item_pts_for(self.balance, sec, fac)
+                    paint = ltx_paint_state(self.balance, fac, sec)
+                    rows.append((sec, entry, pts, paint))
+                rows.sort(
+                    key=lambda r: (
+                        -int(r[2]),
+                        _nice_item_name(r[0], r[1]).lower(),
+                        r[0],
+                    )
+                )
+                counts[cat] = len(rows)
+                for sec, entry, pts, paint in rows:
+                    label = _nice_item_name(sec, entry)
+                    thumb = _thumb_path(sec, entry)
+                    item = QListWidgetItem("")
+                    try:
+                        item.setIcon(
+                            _icon_with_pts(
+                                thumb,
+                                pts,
+                                selected=False,
+                                name=label,
+                                faction_tag=section_name_faction_token(sec) or "",
+                                in_ltx=True,
+                                ltx_paint=paint or "faction",
+                                checkbox_enabled=True,
+                                tier=self._weapon_tier_for(sec) if cat == "weapons" else "",
+                            )
+                        )
+                    except Exception:  # noqa: BLE001
+                        log.exception("output icon failed sec=%s", sec)
+                    item.setToolTip(
+                        f"{sec}\n{entry.get('name') or ''}\n"
+                        f"shop={pts}  |  {cat}  |  {faction_label(fac)}"
+                    )
+                    item.setData(Qt.ItemDataRole.UserRole, sec)
+                    lst.addItem(item)
+            total = sum(counts.values())
+            self.output_meta.setText(
+                f"{total} items — "
+                f"helmets {counts['helmets']}, "
+                f"outfits {counts['outfits']}, "
+                f"weapons {counts['weapons']}"
+            )
+            log.debug(
+                "output list fac=%s h=%d o=%d w=%d",
+                fac,
+                counts["helmets"],
+                counts["outfits"],
+                counts["weapons"],
+            )
+        finally:
+            lst.blockSignals(False)
+            lst.scrollToTop()
 
     def _on_tab(self, idx: int) -> None:
         # Stash selection under the category we're leaving.
@@ -2156,8 +2628,7 @@ class MainWindow(QMainWindow):
         if enabled:
             self._migrate_legacy_ammo_family(sec)
         set_ammo_family_enabled(self.balance, self.faction, sec, enabled)
-        n = override_count(self.balance, self.faction)
-        self.faction_meta.setText(f"({n} overrides)" if n else "")
+        self._sync_faction_override_ui()
         self._refresh_ammo_button_icon(sec, enabled)
         self._mark_balance_dirty()
 
@@ -2168,8 +2639,7 @@ class MainWindow(QMainWindow):
                 self._migrate_legacy_ammo_family(sec)
         for sec in sections:
             set_ammo_family_enabled(self.balance, self.faction, sec, enabled)
-        n = override_count(self.balance, self.faction)
-        self.faction_meta.setText(f"({n} overrides)" if n else "")
+        self._sync_faction_override_ui()
         self._rebuild_ammo_toggles()
         self._mark_balance_dirty()
 
@@ -2331,28 +2801,41 @@ class MainWindow(QMainWindow):
                     "shotguns_zero_spread",
                     bool(cfg.get("shotguns_zero_spread", True)),
                 )
-            # Price scale min/max (always on; same WeightRow indent).
-            scale_lo, scale_hi = price_scale_settings(cfg)
-            for key, val in (
-                ("price_scale_min", float(scale_lo)),
-                ("price_scale_max", float(scale_hi)),
-            ):
-                ov = is_overridden(self.balance, fac, cat, key, weight=False)
-                row = WeightRow(
-                    key,
-                    pretty_label(key),
-                    val,
-                    is_weight=False,
-                    overridden=ov,
-                    tip=pretty_tip(key),
-                    kind="int",
-                    slider_min=0,
-                    slider_max=1000,
-                    clearable=clearable,
-                )
-                row.changed.connect(self._weight_changed)
-                row.cleared.connect(self._weight_cleared)
-                self.weights_layout.addWidget(row)
+            # Selected-item shop pts (baseline + faction override / clear).
+            pts_sec = self._budget_pts_sec
+            if pts_sec is None:
+                cur_it = self.list.currentItem() if hasattr(self, "list") else None
+                if cur_it is not None:
+                    pts_sec = cur_it.data(Qt.ItemDataRole.UserRole)
+                if not pts_sec:
+                    pts_sec = (self._sel_by_cat or {}).get(cat)
+                if pts_sec:
+                    pts_sec = str(pts_sec)
+                    self._budget_pts_sec = pts_sec
+            pts_val = (
+                item_pts_for(self.balance, pts_sec, fac) if pts_sec else 0
+            )
+            pts_ov = (
+                is_item_pts_overridden(self.balance, fac, pts_sec)
+                if pts_sec
+                else False
+            )
+            self.budget_pts_row = WeightRow(
+                "item_pts",
+                pretty_label("pts"),
+                float(pts_val),
+                is_weight=False,
+                overridden=pts_ov,
+                tip=pretty_tip("pts"),
+                kind="int",
+                slider_min=ITEM_PTS_MIN,
+                slider_max=ITEM_PTS_MAX,
+                clearable=clearable,
+            )
+            self.budget_pts_row.changed.connect(self._budget_pts_changed)
+            self.budget_pts_row.cleared.connect(self._budget_pts_cleared)
+            self.weights_layout.addWidget(self.budget_pts_row)
+            self._sync_budget_pts_row()
 
             self.weights_layout.addWidget(self._section_break("Stat weights"))
             weights = cfg.get("weights") or {}
@@ -2361,7 +2844,9 @@ class MainWindow(QMainWindow):
                     add_weight(wkey, float(weights.get(wkey, default_w)))
             else:
                 add_weight("a_price", float(weights.get("a_price", 0.5)))
-                for _sk, wkey, _c, _i, default_w in ARMOR_WEIGHTS:
+                for _sk, wkey, _c, _i, default_w in armor_weight_rows(
+                    is_helmet=cat == "helmets"
+                ):
                     add_weight(wkey, float(weights.get(wkey, default_w)))
             self.weights_layout.addStretch(1)
 
@@ -2387,7 +2872,9 @@ class MainWindow(QMainWindow):
                     float(ceil_map.get("cost", defs["cost"])),
                     float(defs["cost"]),
                 )
-                for sk, _wk, default_c, _inv, _dw in ARMOR_WEIGHTS:
+                for sk, _wk, default_c, _inv, _dw in armor_weight_rows(
+                    is_helmet=cat == "helmets"
+                ):
                     add_ceiling(
                         sk, float(ceil_map.get(sk, default_c)), float(default_c)
                     )
@@ -2444,8 +2931,7 @@ class MainWindow(QMainWindow):
         set_override(
             self.balance, self.faction, self.category, key, store, weight=is_weight
         )
-        n = override_count(self.balance, self.faction)
-        self.faction_meta.setText(f"({n} overrides)" if n else "")
+        self._sync_faction_override_ui()
         if key in ("include_universal_armor", "shotguns_zero_spread"):
             # Recreate toggle row so override styling/reset btn stay in sync.
             self._rebuild_weights()
@@ -2473,17 +2959,12 @@ class MainWindow(QMainWindow):
             key,
             is_weight,
         )
+        # Flush focused line-edit first so editingFinished can't re-apply after clear.
+        self._flush_slider_focus()
         clear_override(
             self.balance, self.faction, self.category, key, weight=is_weight
         )
-        fac = self.faction
-        if fac != "Default":
-            fov = (self.balance.get("factions") or {}).get(fac) or {}
-            cblock = fov.get(self.category) or {}
-            if not cblock:
-                fov.pop(self.category, None)
-            if not fov:
-                (self.balance.get("factions") or {}).pop(fac, None)
+        self._sync_faction_override_ui()
         self._rebuild_weights()
         self._mark_balance_dirty()
 
@@ -2514,6 +2995,7 @@ class MainWindow(QMainWindow):
             is_helmet=is_helm,
             ceilings=ceilings,
             curves=curves,
+            zones=self._protection_zones(),
         )
         allow_univ = bool(cfg.get("include_universal_armor", True))
         fac_wrong = not armor_faction_ok(
@@ -2522,9 +3004,114 @@ class MainWindow(QMainWindow):
         return s01, fac_wrong
 
     def _clear_detail(self) -> None:
+        self._budget_pts_sec = None
+        self._sync_budget_pts_row()
         self._fill_kv_table(self.detail_info, [])
         self._fill_kv_table(self.detail_stats, [])
         self._highlight_weapon_ammos(None)
+
+    def _sync_budget_pts_row(self) -> None:
+        """Refresh Budget Pts row for the current selection / faction."""
+        row = getattr(self, "budget_pts_row", None)
+        if row is None:
+            return
+        sec = self._budget_pts_sec
+        if not sec:
+            row.sync_display(0, overridden=False, enabled=False)
+            return
+        fac = self.faction
+        pts = item_pts_for(self.balance, sec, fac)
+        ov = is_item_pts_overridden(self.balance, fac, sec)
+        row.sync_display(float(pts), overridden=ov, enabled=True)
+
+    def _budget_pts_changed(self, _key: str, value: float, _is_weight: bool) -> None:
+        """Write baseline/faction pts for the selected item; local tile update only."""
+        sec = self._budget_pts_sec
+        if not sec:
+            return
+        v = set_item_pts(self.balance, sec, value, faction=self.faction)
+        self._mark_balance_dirty()
+        self._sync_faction_override_ui()
+        row = self.budget_pts_row
+        if row is not None and self.faction != "Default":
+            row.lbl.setStyleSheet("color: #e6a23c; font-weight: bold;")
+            if row.clearable:
+                row.btn.setEnabled(True)
+        self._apply_pts_to_tile(sec, v)
+
+    def _budget_pts_cleared(self, _key: str, _is_weight: bool) -> None:
+        """Clear faction pts override → inherit baseline."""
+        sec = self._budget_pts_sec
+        if not sec or self.faction == "Default":
+            return
+        # Flush focused line-edit first so editingFinished can't re-apply after clear.
+        self._flush_slider_focus()
+        clear_item_pts_override(self.balance, self.faction, sec)
+        self._mark_balance_dirty()
+        self._sync_faction_override_ui()
+        v = item_pts_for(self.balance, sec, self.faction)
+        self._sync_budget_pts_row()
+        self._apply_pts_to_tile(sec, v)
+
+    def _apply_pts_to_tile(self, sec: str, pts: int) -> None:
+        """Update tile icon/tooltip + Stats pts Value locally (no list rebuild)."""
+        item = self._item_by_sec(sec)
+        if item is None:
+            return
+        meta = item.data(Qt.ItemDataRole.UserRole + 1) or {}
+        if not isinstance(meta, dict):
+            meta = {}
+        meta["pts"] = int(pts)
+        item.setData(Qt.ItemDataRole.UserRole + 1, meta)
+        if item is self.list.currentItem():
+            sel_mode: bool | str = "primary"
+        elif sec == self._compare_sec():
+            sel_mode = "compare"
+        else:
+            sel_mode = False
+        try:
+            item.setIcon(
+                _icon_with_pts(
+                    meta.get("thumb"),
+                    int(pts),
+                    score_raw=int(meta.get("score_raw") or 0),
+                    faction_wrong=bool(meta.get("faction_wrong")),
+                    selected=sel_mode,
+                    name=str(meta.get("name") or ""),
+                    faction_tag=str(meta.get("faction_tag") or ""),
+                    in_ltx=bool(meta.get("in_ltx")),
+                    ltx_paint=str(meta.get("ltx_paint") or "off"),
+                    any_faction_ltx=bool(meta.get("any_faction_ltx")),
+                    checkbox_enabled=bool(
+                        meta.get("checkbox_enabled", True)
+                    ),
+                    tier=str(meta.get("tier") or ""),
+                )
+            )
+        except Exception:  # noqa: BLE001
+            log.exception("pts icon refresh failed sec=%s", sec)
+        tip = item.toolTip() or ""
+        tip2 = re.sub(r"shop=\d+", f"shop={int(pts)}", tip, count=1)
+        if tip2 != tip:
+            item.setToolTip(tip2)
+        if item is self.list.currentItem():
+            self._refresh_stats_pts_row(int(pts))
+
+    def _refresh_stats_pts_row(self, pts: int) -> None:
+        """Update the Stats table pts Value cell after a local pts edit."""
+        table = self.detail_stats
+        for row in range(table.rowCount()):
+            name_item = table.item(row, 0)
+            if name_item is None:
+                continue
+            key = name_item.data(Qt.ItemDataRole.UserRole)
+            if key != "pts":
+                if (name_item.text() or "").strip().lower() != "pts":
+                    continue
+            val_item = table.item(row, 1)
+            if val_item is not None:
+                val_item.setText(str(int(pts)))
+            return
 
     def _rebuild_list(self) -> None:
         t0 = time.perf_counter()
@@ -2563,6 +3150,8 @@ class MainWindow(QMainWindow):
                 scored.append((sec, entry, float(s01), fac_wrong))
 
             # Per-faction checkbox (baseline ± faction include/exclude).
+            # Baseline cannot include — checkbox disabled; white border = any faction.
+            baseline_view = self.faction == "Default"
             in_ltx_map: dict[str, bool] = {
                 sec: item_in_ltx_for_faction(
                     self.balance, self.faction, sec
@@ -2573,44 +3162,51 @@ class MainWindow(QMainWindow):
                 sec: ltx_paint_state(self.balance, self.faction, sec)
                 for sec, _e, _s01, _fw in scored
             }
+            any_fac_map: dict[str, bool] = (
+                {
+                    sec: item_in_ltx_any_faction(self.balance, sec)
+                    for sec, _e, _s01, _fw in scored
+                }
+                if baseline_view
+                else {}
+            )
 
-            cat_cfg = effective_category(
-                self.balance, self.faction, self.category
-            )
-            # Shop pts: scale anchors = checked items; others extrapolate.
             scores01 = {sec: s01 for sec, _e, s01, _fw in scored}
-            anchor_secs = {sec for sec, on in in_ltx_map.items() if on}
-            shop_map = apply_price_scale(
-                scores01, cat_cfg, anchor_secs=anchor_secs
-            )
             raw_map = {sec: score_raw_display(s01) for sec, s01 in scores01.items()}
-            # (sec, entry, shop_pts, faction_wrong)
+            # (sec, entry, manual_pts, faction_wrong)
             rows: list[tuple[str, dict[str, Any], int, bool]] = [
                 (
                     sec,
                     entry,
-                    int(shop_map.get(sec, 0)),
+                    item_pts_for(self.balance, sec, self.faction),
                     fac_wrong,
                 )
                 for sec, entry, _s01, fac_wrong in scored
             ]
 
-            sort_key = self._current_sort_key() or "pts"
+            sort_key = self._current_sort_key() or "score"
+            if sort_key == "score_raw":
+                sort_key = "score"
             descending = self.sort_desc.isChecked()
 
             def _sort_val(r: tuple) -> object:
                 sec, entry, shop_pts, _fw = r
+                score = float(scores01.get(sec, 0.0))
+                # Score is the fallback tiebreaker for every key but itself —
+                # always ascending, regardless of the primary asc/desc toggle.
+                # `reverse=` flips the whole tuple, so pre-negate to cancel that.
+                tiebreak = -score if descending else score
                 if sort_key == "in_ltx":
-                    return 1 if in_ltx_map.get(sec) else 0
+                    on = any_fac_map.get(sec) if baseline_view else in_ltx_map.get(sec)
+                    return (1 if on else 0, tiebreak)
+                if sort_key in ("score", "score_raw"):
+                    return score
                 if sort_key == "pts":
-                    # Pts primary; raw score tiebreaker (also orders when pts=0).
-                    return (
-                        int(shop_pts),
-                        float(scores01.get(sec, 0.0)),
-                    )
-                return self._row_sort_value(
+                    return (int(shop_pts), tiebreak)
+                primary = self._row_sort_value(
                     sec, entry, shop_pts, bool(in_ltx_map.get(sec)), sort_key
                 )
+                return (primary, tiebreak)
 
             rows.sort(key=_sort_val, reverse=descending)
             self._rows = rows
@@ -2647,9 +3243,16 @@ class MainWindow(QMainWindow):
                 fac_tag = section_name_faction_token(sec) or ""
                 in_ltx = bool(in_ltx_map.get(sec))
                 paint = paint_map.get(sec) or "off"
-                if in_ltx:
+                any_fac = bool(any_fac_map.get(sec))
+                if baseline_view:
+                    if any_fac:
+                        n_ltx += 1
+                elif in_ltx:
                     n_ltx += 1
                 score_raw = int(raw_map.get(sec, 0))
+                tier = (
+                    self._weapon_tier_for(sec) if self.category == "weapons" else ""
+                )
                 try:
                     item.setIcon(
                         _icon_with_pts(
@@ -2662,13 +3265,18 @@ class MainWindow(QMainWindow):
                             faction_tag=fac_tag,
                             in_ltx=in_ltx,
                             ltx_paint=paint,
+                            any_faction_ltx=any_fac,
+                            checkbox_enabled=not baseline_view,
+                            tier=tier,
                         )
                     )
                 except Exception:  # noqa: BLE001
                     log.exception("icon compose failed sec=%s", sec)
                 status_note = ""
-                if self.faction == "Default" and in_ltx:
-                    status_note = "  |  in LTX (baseline)"
+                if baseline_view and any_fac:
+                    status_note = "  |  included by a faction (white)"
+                elif baseline_view and in_ltx:
+                    status_note = "  |  baseline inherit (not editable)"
                 elif paint == "both":
                     status_note = "  |  in LTX (baseline + faction)"
                 elif paint == "faction":
@@ -2687,11 +3295,17 @@ class MainWindow(QMainWindow):
                         )
                     else:
                         status_note = "  |  wrong faction"
+                tip_cb = (
+                    "Baseline: include is faction-only (white = used by a faction)"
+                    if baseline_view
+                    else "Checkbox: per-faction include in LTX"
+                )
                 tip = (
                     f"{sec}\n{entry.get('name') or ''}\n"
                     f"shop={shop_pts}  raw={score_raw}  |  "
-                    f"in_ltx={in_ltx}{status_note}\n"
-                    f"Checkbox: per-faction include in LTX"
+                    f"in_ltx={in_ltx if not baseline_view else any_fac}"
+                    f"{status_note}\n"
+                    f"{tip_cb}"
                 )
                 item.setToolTip(tip)
                 item.setData(Qt.ItemDataRole.UserRole, sec)
@@ -2707,6 +3321,9 @@ class MainWindow(QMainWindow):
                         "faction_tag": fac_tag,
                         "in_ltx": in_ltx,
                         "ltx_paint": paint,
+                        "any_faction_ltx": any_fac,
+                        "checkbox_enabled": not baseline_view,
+                        "tier": tier,
                     },
                 )
                 self.list.addItem(item)
@@ -2768,6 +3385,11 @@ class MainWindow(QMainWindow):
                     faction_tag=str(meta.get("faction_tag") or ""),
                     in_ltx=bool(meta.get("in_ltx")),
                     ltx_paint=str(meta.get("ltx_paint") or "off"),
+                    any_faction_ltx=bool(meta.get("any_faction_ltx")),
+                    checkbox_enabled=bool(
+                        meta.get("checkbox_enabled", True)
+                    ),
+                    tier=str(meta.get("tier") or ""),
                 )
             )
         except Exception:  # noqa: BLE001
@@ -2868,6 +3490,9 @@ class MainWindow(QMainWindow):
         return None
 
     def _toggle_item_included(self, item: QListWidgetItem) -> None:
+        if self.faction == "Default":
+            # Baseline cannot include — factions only.
+            return
         sec = item.data(Qt.ItemDataRole.UserRole)
         if not sec:
             return
@@ -2880,9 +3505,9 @@ class MainWindow(QMainWindow):
         paint = ltx_paint_state(self.balance, self.faction, sec)
         meta["in_ltx"] = in_ltx
         meta["ltx_paint"] = paint
+        meta["checkbox_enabled"] = True
         item.setData(Qt.ItemDataRole.UserRole + 1, meta)
-        n = override_count(self.balance, self.faction)
-        self.faction_meta.setText(f"({n} overrides)" if n else "")
+        self._sync_faction_override_ui()
         self._mark_balance_dirty()
         # Local icon/paint only — NEVER list/score/pts refresh on checkbox.
         if item is self.list.currentItem():
@@ -2903,6 +3528,9 @@ class MainWindow(QMainWindow):
                     faction_tag=str(meta.get("faction_tag") or ""),
                     in_ltx=in_ltx,
                     ltx_paint=paint,
+                    any_faction_ltx=bool(meta.get("any_faction_ltx")),
+                    checkbox_enabled=True,
+                    tier=str(meta.get("tier") or ""),
                 )
             )
         except Exception:  # noqa: BLE001
@@ -2911,9 +3539,7 @@ class MainWindow(QMainWindow):
         base = tip.split("\n")
         if len(base) >= 3:
             pts_line = base[2].split("  |  ")[0]
-            if self.faction == "Default" and in_ltx:
-                note = "  |  in LTX (baseline)"
-            elif paint == "both":
+            if paint == "both":
                 note = "  |  in LTX (baseline + faction)"
             elif paint == "faction":
                 note = "  |  faction only (not in baseline)"
@@ -2928,6 +3554,7 @@ class MainWindow(QMainWindow):
             item.setToolTip("\n".join(base[:4]))
         if item is self.list.currentItem():
             self._populate_detail(item)
+        self._maybe_refresh_output()
         log.debug(
             "item ltx toggle sec=%s fac=%s was_in=%s in_ltx=%s paint=%s",
             sec,
@@ -2968,9 +3595,15 @@ class MainWindow(QMainWindow):
                             self._set_compare_item(hit)
                     return True  # no list context menu / rubber-band
             # Checkbox clicks on item tiles — consume so selection does not change.
-            if obj is self.list.viewport() and et in (
-                QEvent.Type.MouseButtonPress,
-                QEvent.Type.MouseButtonDblClick,
+            # Baseline has no include control — let the click select normally.
+            if (
+                self.faction != "Default"
+                and obj is self.list.viewport()
+                and et
+                in (
+                    QEvent.Type.MouseButtonPress,
+                    QEvent.Type.MouseButtonDblClick,
+                )
             ):
                 if event.button() == Qt.MouseButton.LeftButton:
                     pos = event.position().toPoint()
@@ -3034,6 +3667,7 @@ class MainWindow(QMainWindow):
                 is_helmet=self.category == "helmets",
                 ceilings=ceilings,
                 curves=curves,
+                zones=self._protection_zones(),
             )
         s01, _fw = self._row_score_flags(sec, entry)
         return stats, terms, cost_v, score_raw_display(s01)
@@ -3072,12 +3706,17 @@ class MainWindow(QMainWindow):
                 paint = ltx_paint_state(
                     self.balance, self.faction, str(sec)
                 )
+            shop_pts = item_pts_for(self.balance, str(sec), self.faction)
             if isinstance(meta, dict) and meta.get("pts") is not None:
-                shop_pts = int(meta["pts"])
-            else:
-                shop_pts = 0
+                # Prefer live tile meta (may be newer than a stale balance read).
+                try:
+                    shop_pts = int(meta["pts"])
+                except (TypeError, ValueError):
+                    pass
             if isinstance(meta, dict) and meta.get("score_raw") is not None:
                 score_raw = int(meta["score_raw"])
+            self._budget_pts_sec = str(sec)
+            self._sync_budget_pts_row()
             if self.faction == "Default" and in_ltx:
                 shop_s = "true"
                 shop_c = "#7dcea0"
@@ -3100,7 +3739,6 @@ class MainWindow(QMainWindow):
                 ("sec", [str(sec)], "#aab2bf"),
                 ("name", [_nice_item_name(str(sec), entry)], "#aab2bf"),
                 ("in_ltx", [shop_s], shop_c),
-                ("pts", [str(shop_pts)], "#aab2bf"),
                 ("score_raw", [str(score_raw)], "#aab2bf"),
                 ("community", [str(entry.get("community") or "—")], "#aab2bf"),
             ]
@@ -3125,17 +3763,21 @@ class MainWindow(QMainWindow):
                         "#aab2bf",
                     )
                 )
+                tier = self._weapon_tier_for(str(sec))
+                if tier:
+                    info_rows.append(
+                        ("tier", [tier], TIER_COLORS_HEX.get(tier, "#aab2bf"))
+                    )
                 info_rows.append(("ammo", [ammo_s], "#5ec8ff"))
             self._fill_kv_table(self.detail_info, info_rows)
 
             stats, terms, cost_v, _raw = self._stat_terms_for(str(sec), entry)
-            # Stats "pts" row = shop pts (price-scaled); raw score is in info panel.
+            # Stats "pts" row = manual shop pts; raw score is in info panel.
             pts = int(shop_pts)
             cmp_stats: dict[str, Any] | None = None
-            cmp_terms: dict[str, tuple[float, float]] | None = None
             cmp_pts: int | None = None
             if cmp_sec and cmp_entry is not None:
-                cmp_stats, cmp_terms, _cc, _cmp_raw = self._stat_terms_for(
+                cmp_stats, _cmp_terms, _cc, _cmp_raw = self._stat_terms_for(
                     str(cmp_sec), cmp_entry
                 )
                 cmp_item = self._item_by_sec(str(cmp_sec))
@@ -3147,7 +3789,9 @@ class MainWindow(QMainWindow):
                 if isinstance(cmp_meta, dict) and cmp_meta.get("pts") is not None:
                     cmp_pts = int(cmp_meta["pts"])
                 else:
-                    cmp_pts = int(_cmp_raw)
+                    cmp_pts = item_pts_for(
+                        self.balance, str(cmp_sec), self.faction
+                    )
 
             def _wf(
                 key: str, tmap: dict[str, tuple[float, float]]
@@ -3168,10 +3812,15 @@ class MainWindow(QMainWindow):
                 )
 
             def _raw_num(key: str, st: dict[str, Any], cost: Any) -> float | None:
+                """Numeric for Diff: tip-style % for armor protections."""
                 if key == "cost":
                     v = cost
                 elif key == "hit_power":
                     v = hit_power_pct(st.get(key))
+                elif key in FRACTION_STAT_KEYS:
+                    v = protection_tip_pct(
+                        st.get(key), key, self._protection_zones()
+                    )
                 elif key == "pts":
                     return None
                 else:
@@ -3181,7 +3830,20 @@ class MainWindow(QMainWindow):
                 except (TypeError, ValueError):
                     return None
 
-            # Build rows; Diff = primary − compare (Final when weighted, else Value).
+            def _value_display(key: str, st: dict[str, Any], cost: Any) -> Any:
+                """Value column: tip % for hit_power / armor protections."""
+                if key == "cost":
+                    return cost
+                if key == "hit_power":
+                    return hit_power_pct(st.get(key))
+                if key in FRACTION_STAT_KEYS:
+                    return protection_tip_display(
+                        st.get(key), key, self._protection_zones()
+                    )
+                return st.get(key)
+
+            # Build rows; Diff = primary Value − compare Value (never Final).
+            # vals / cell_colors order: Value, Diff, Weight, Final.
             draft: list[dict[str, Any]] = []
 
             def _add_row(
@@ -3208,7 +3870,7 @@ class MainWindow(QMainWindow):
             if cmp_pts is not None:
                 _add_row(
                     "pts",
-                    [str(int(pts)), "—", "—", ""],
+                    [str(int(pts)), "", "—", "—"],
                     "#7dcea0",
                     [None, None, None, None],
                     float(pts - cmp_pts),
@@ -3218,7 +3880,7 @@ class MainWindow(QMainWindow):
             else:
                 _add_row(
                     "pts",
-                    [str(int(pts)), "—", "—", ""],
+                    [str(int(pts)), "", "—", "—"],
                     "#7dcea0",
                     [None, None, None, None],
                     None,
@@ -3227,48 +3889,41 @@ class MainWindow(QMainWindow):
             if self.category == "weapons":
                 ordered = [k for k, *_ in WEAPON_WEIGHTS]
             else:
-                ordered = ["cost"] + [k for k, *_ in ARMOR_WEIGHTS]
+                ordered = ["cost"] + [
+                    k
+                    for k, *_ in armor_weight_rows(
+                        is_helmet=self.category == "helmets"
+                    )
+                ]
             for key in ordered:
                 seen.add(key)
-                w_s, f_s, n01, excluded, final_v = _wf(key, terms)
-                if key == "cost":
-                    raw = cost_v
-                elif key == "hit_power":
-                    raw = hit_power_pct(stats.get(key))
-                else:
-                    raw = stats.get(key)
+                w_s, f_s, n01, excluded, _final_v = _wf(key, terms)
+                raw = _value_display(key, stats, cost_v)
                 if excluded:
                     cell_colors: list[str | None] = [
                         None,
-                        _STAT_EXCLUDED_FG,
-                        _STAT_EXCLUDED_FG,
                         None,
+                        _STAT_EXCLUDED_FG,
+                        _STAT_EXCLUDED_FG,
                     ]
                 else:
                     cell_colors = [
                         None,
                         None,
-                        _n01_color(n01) if n01 is not None else None,
                         None,
+                        _n01_color(n01) if n01 is not None else None,
                     ]
                 diff_v: float | None = None
                 diff_a: float | None = None
                 diff_b: float | None = None
-                if cmp_terms is not None and cmp_stats is not None:
-                    _cw, _cf, _cn, _ce, c_final = _wf(key, cmp_terms)
-                    if final_v is not None and c_final is not None:
-                        diff_a, diff_b = final_v, c_final
-                        diff_v = final_v - c_final
-                    else:
-                        a = _raw_num(key, stats, cost_v)
-                        b = _raw_num(
-                            key, cmp_stats, cmp_stats.get("cost")
-                        )
-                        if a is not None and b is not None:
-                            diff_a, diff_b, diff_v = a, b, a - b
+                if cmp_stats is not None:
+                    a = _raw_num(key, stats, cost_v)
+                    b = _raw_num(key, cmp_stats, cmp_stats.get("cost"))
+                    if a is not None and b is not None:
+                        diff_a, diff_b, diff_v = a, b, a - b
                 _add_row(
                     key,
-                    [_fmt_stat_val(raw), w_s, f_s, ""],
+                    [_fmt_stat_val(raw), "", w_s, f_s],
                     _stat_color(key),
                     cell_colors,
                     diff_v,
@@ -3278,7 +3933,8 @@ class MainWindow(QMainWindow):
             for key in sorted(
                 k
                 for k in stats.keys()
-                if k not in seen and k not in ("is_helmet", "col_src")
+                # tier already shown (colored) in the info panel above.
+                if k not in seen and k not in ("is_helmet", "col_src", "tier")
             ):
                 diff_v = None
                 diff_a = None
@@ -3290,7 +3946,12 @@ class MainWindow(QMainWindow):
                         diff_a, diff_b, diff_v = a, b, a - b
                 _add_row(
                     key,
-                    [_fmt_stat_val(stats[key]), "—", "—", ""],
+                    [
+                        _fmt_stat_val(_value_display(key, stats, cost_v)),
+                        "",
+                        "—",
+                        "—",
+                    ],
                     _stat_color(key),
                     [None, None, None, None],
                     diff_v,
@@ -3304,24 +3965,23 @@ class MainWindow(QMainWindow):
                 colors = list(r["cell_colors"])
                 dv = r["diff_v"]
                 if dv is None or cmp_sec is None:
-                    vals[3] = "—"
-                    colors[3] = _STAT_EXCLUDED_FG
+                    vals[1] = "—"
+                    colors[1] = _STAT_EXCLUDED_FG
                 else:
-                    # Same ×100 / 1-decimal scale as Weight & Final.
                     diff_s = f"{float(dv):+.1f}"
                     if diff_s in ("+0.0", "-0.0"):
                         # Display rounds to zero — drop sign, mute color.
-                        vals[3] = "0.0"
-                        colors[3] = "#6a6a6a"
+                        vals[1] = "0.0"
+                        colors[1] = "#6a6a6a"
                     else:
-                        vals[3] = diff_s
+                        vals[1] = diff_s
                         a = r.get("diff_a")
                         b = r.get("diff_b")
                         if a is not None and b is not None:
                             n = _signed_diff_norm(float(a), float(b))
                         else:
                             n = 1.0 if dv > 0 else -1.0
-                        colors[3] = _signed_diff_color(n)
+                        colors[1] = _signed_diff_color(n)
                 stat_rows.append(
                     (r["key"], vals, r["name_c"], colors)
                 )
@@ -3363,6 +4023,7 @@ class MainWindow(QMainWindow):
         self.btn_regen.setEnabled(True)
         try:
             self.items = load_items(Path(path))
+            self._prot_zones = self._zones_from_items(self.items)
             meta = (self.items or {}).get("meta") or {}
             counts = meta.get("counts") or {}
             log.info("regen done path=%s counts=%s", path, counts)
@@ -3400,6 +4061,7 @@ class MainWindow(QMainWindow):
         log.info("Reload YML")
         try:
             self.items = load_items()
+            self._prot_zones = self._zones_from_items(self.items)
             meta = (self.items or {}).get("meta") or {}
             log.info("reloaded counts=%s", meta.get("counts"))
             self._refresh_sort_options()
@@ -3454,7 +4116,7 @@ class MainWindow(QMainWindow):
         log.info("Export dialog default=%s", dest)
         path, _ = QFileDialog.getSaveFileName(
             self,
-            "Export new_game_loadouts DLTX",
+            "Export new_game_loadouts.ltx",
             str(dest),
             "LTX (*.ltx)",
         )

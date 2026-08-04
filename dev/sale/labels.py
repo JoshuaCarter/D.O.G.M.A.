@@ -5,16 +5,6 @@ from __future__ import annotations
 # key -> (display name, short tooltip)
 _LABELS: dict[str, tuple[str, str]] = {
     # Controls
-    "price_scale_min": (
-        "Scale min",
-        "Shop pts for the cheapest checked item. Unchecked items use the "
-        "same line (may land below this).",
-    ),
-    "price_scale_max": (
-        "Scale max",
-        "Shop pts for the most expensive checked item. Unchecked items use "
-        "the same line (may land above this).",
-    ),
     "include_universal_armor": (
         "Include factionless",
         "Empty/actor community outfits/helmets count as this faction "
@@ -27,13 +17,18 @@ _LABELS: dict[str, tuple[str, str]] = {
     ),
     # Meta / sort
     "pts": (
-        "Shop pts",
-        "Price scale from checked items (cheapest→min, dearest→max; need ≥2 "
-        "else all 0). Sort uses raw score as tiebreaker.",
+        "Pts",
+        "Manual shop points (0–1000) for the selected item. Baseline applies "
+        "to all factions; faction view can override (x clears). "
+        "Sort uses raw score as tiebreaker.",
+    ),
+    "score": (
+        "Score",
+        "Weighted score (0–1 × 1000 on tiles). Independent of shop pts.",
     ),
     "score_raw": (
-        "Raw score",
-        "Weighted score 0–1 × 1000 (integer). Sets distance along the price scale.",
+        "Score",
+        "Weighted score 0–1 × 1000 (integer). Independent of shop pts.",
     ),
     "name": ("Name", "Friendly item name."),
     "sec": ("ID", "Config section id."),
@@ -44,6 +39,11 @@ _LABELS: dict[str, tuple[str, str]] = {
     ),
     "community": ("Community", "Outfit faction community tag."),
     "ammo": ("Ammo", "Calibres this weapon uses."),
+    "tier": (
+        "Tier",
+        "Quartile grade (A best .. D worst) vs every other weapon, using "
+        "Default weights — stays the same across faction tabs.",
+    ),
     # Weapon stats / weights (score cols = tip Min .. Max torso tiers)
     "cost": ("Cost", "Base item cost (higher scores better when weighted)."),
     "w_price": ("Price", "Base item cost (higher scores better when weighted)."),
@@ -136,6 +136,24 @@ _LABELS: dict[str, tuple[str, str]] = {
     "a_chem": ("Chemical", "Protection vs chemical burn."),
     "telepathy_protection": ("Psy", "Protection vs psy / telepathy."),
     "a_psy": ("Psy", "Protection vs psy / telepathy."),
+    "carry_weight": (
+        "Carry weight %",
+        "Outfit carry bonus as % of actor max_walk_weight "
+        "(additional_inventory_weight / max_walk_weight × 100).",
+    ),
+    "a_carry": (
+        "Carry weight %",
+        "Outfit carry bonus as % of actor max_walk_weight "
+        "(additional_inventory_weight / max_walk_weight × 100).",
+    ),
+    "artefact_count": (
+        "Artifact slots",
+        "Outfit artefact belt slots (artefact_count).",
+    ),
+    "a_artefact": (
+        "Artifact slots",
+        "Outfit artefact belt slots (artefact_count).",
+    ),
 }
 
 

@@ -6,6 +6,8 @@ import math
 import re
 from typing import Any
 
+from .weapon_kind import weapon_kind
+
 # Normalization curves for Scale max (0→ceiling → 0→1 contribution).
 CURVE_LINEAR = "linear"
 CURVE_EXP = "exp"
@@ -61,10 +63,304 @@ def merge_curves(stored: dict[str, Any] | None) -> dict[str, str]:
 HIT_POWER_PCT_CEILING = 200.0
 # Values at or below this are treated as engine fractions and ×100 for SALE.
 _HIT_POWER_FRACTION_MAX = 5.0
+# Armor protections stay as engine raw in items.yml. Display / Diff / scoring use
+# Better Stats Bars tip %: ceil(clamp(|raw| / (max_damage * factor), 0, 1) * 100).
+# (Vanilla utils_ui uses actor_condition zone maxes instead — that reads ~23% rad here.)
+PROTECTION_TIP_CEILING = 100.0
+FRACTION_STAT_KEYS = frozenset(
+    {
+        "radiation_protection",
+        "fire_wound_protection",
+        "strike_protection",
+        "wound_protection",
+        "explosion_protection",
+        "shock_protection",
+        "burn_protection",
+        "chemical_burn_protection",
+        "telepathy_protection",
+    }
+)
+# Tip denom = max_damage[k] * factor (BSB prepare_stats_table).
+# Defaults ≈ G.A.M.M.A. Keybinds fixes BSB scan (ignore_sections + use_game_values=max).
+DEFAULT_PROTECTION_TIP_DENOM: dict[str, float] = {
+    "fire_wound_protection": 1.236,
+    "burn_protection": 10.0,
+    "shock_protection": 10.0,
+    "chemical_burn_protection": 8.0,
+    "radiation_protection": 0.102,
+    "telepathy_protection": 0.6,
+    "wound_protection": 1.9,
+    "strike_protection": 2.0,
+    "explosion_protection": 3.0,
+}
+# Back-compat alias used by app load paths.
+DEFAULT_PROTECTION_ZONE_MAX = DEFAULT_PROTECTION_TIP_DENOM
+
+# BSB stats_prot_to_dmg + damage_threshold (G.A.M.M.A. Keybinds fixes copy).
+_BSB_HIT_TO_DMG = {
+    "burn": "fire",
+    "light_burn": "fire",
+    "shock": "shock",
+    "chemical_burn": "acid",
+    "acid": "acid",
+    "radiation": "radia",
+    "radia": "radia",
+    "telepatic": "psi",
+    "psi": "psi",
+    "strike": "wound",
+    "explosion": "explosion",
+    "wound": "wound",
+    "fire_wound": "fire_wound",
+}
+_BSB_DAMAGE_THRESHOLD = {
+    "fire": 1.0,
+    "shock": 1.0,
+    "radia": 0.1,
+    "psi": 1.0,
+    "acid": 1.0,
+    "wound": 1.96,
+    "fire_wound": 1.37,
+    "explosion": 3.1,
+    "strike": 2.0,
+}
+_BSB_TIP_FACTOR: dict[str, tuple[str, float]] = {
+    "fire_wound_protection": ("fire_wound", 1.0),
+    "burn_protection": ("fire", 10.0),
+    "shock_protection": ("shock", 10.0),
+    "chemical_burn_protection": ("acid", 10.0),
+    "radiation_protection": ("radia", 10.0),
+    "telepathy_protection": ("psi", 1.0),
+    "wound_protection": ("wound", 1.0),
+    "strike_protection": ("strike", 1.0),
+    "explosion_protection": ("explosion", 1.0),
+}
+# Non-prefix entries from BSB ignore_sections (mp_* / wpn_knife* handled by prefix).
+_BSB_IGNORE_SECTIONS = frozenset(
+    {
+        "bibliotekar_normal",
+        "bibliotekar_strong",
+        "bibliotekar_weak",
+        "campfire",
+        "campfire_base",
+        "campfire_base_noshadow",
+        "fireball_acidic_zone",
+        "fireball_electric_zone",
+        "fireball_zone",
+        "generator_dust",
+        "generator_dust_static",
+        "generator_electra",
+        "generator_torrid",
+        "m_bibliotekar_e",
+        "pri_a17_gauss_rifle",
+        "zone_burning_fuzz",
+        "zone_burning_fuzz1",
+        "zone_burning_fuzz_average",
+        "zone_burning_fuzz_strong",
+        "zone_burning_fuzz_weak",
+        "zone_buzz",
+        "zone_buzz_average",
+        "zone_buzz_strong",
+        "zone_buzz_weak",
+        "zone_gravi_zone",
+        "zone_hvatalka",
+        "zone_liana",
+        "zone_mine_acidic",
+        "zone_mine_acidic_big",
+        "zone_mine_electric",
+        "zone_mine_thermal",
+        "zone_monolith",
+        "zone_no_gravity",
+        "zone_radioactive",
+        "zone_sarcofag",
+        "zone_student",
+        "zone_teleport",
+        "zone_witches_galantine",
+        "zone_witches_galantine_average",
+        "zone_witches_galantine_strong",
+        "zone_witches_galantine_weak",
+        "zone_zharka_static",
+        "zone_zharka_static_average",
+        "zone_zharka_static_strong",
+        "zone_zharka_static_weak",
+    }
+)
+
+
+def _bsb_ignored_section(sec: str) -> bool:
+    if not sec:
+        return True
+    if sec.startswith("wpn_knife") or sec.startswith("mp_"):
+        return True
+    return sec in _BSB_IGNORE_SECTIONS
 
 
 def hit_power_pct(raw: Any) -> float:
     """Convert engine hit_power (0–1) to SALE percent; leave percent values as-is."""
+    try:
+        v = float(raw or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    if v <= 0:
+        return 0.0
+    if v <= _HIT_POWER_FRACTION_MAX:
+        return v * 100.0
+    return v
+
+
+def _f_ltx(v: Any, default: float = 0.0) -> float:
+    try:
+        if v is None or v == "":
+            return default
+        return float(v)
+    except (TypeError, ValueError):
+        return default
+
+
+def build_bsb_max_damages(
+    sections: dict[str, dict[str, str]] | None,
+    *,
+    abf_compatibility: bool = False,
+) -> dict[str, float]:
+    """Mirror G.A.M.M.A. Keybinds BSB build_tables() (use_game_values=max)."""
+    out = {k: 0.0 for k in _BSB_DAMAGE_THRESHOLD}
+    if not isinstance(sections, dict):
+        return out
+
+    def add_damage(dmg: float, key: str) -> None:
+        thr = _BSB_DAMAGE_THRESHOLD.get(key)
+        if thr is None:
+            return
+        if dmg > 0 and dmg <= thr and dmg > out[key]:
+            out[key] = dmg
+
+    for sec, d in sections.items():
+        if not isinstance(d, dict) or _bsb_ignored_section(sec):
+            continue
+        hit = (d.get("hit_type") or d.get("hit_type_blast") or "").strip().lower()
+        if not hit:
+            continue
+        dmg_key = _BSB_HIT_TO_DMG.get(hit)
+        if not dmg_key:
+            continue
+
+        dmg = 0.0
+        ap = (d.get("attack_params") or "").strip()
+        if dmg_key == "fire_wound":
+            hp_s = (d.get("hit_power") or "0").split(",")[0].strip()
+            base = _f_ltx(hp_s)
+            ammo = d.get("ammo_class") or ""
+            scale = 1.0
+            if ammo.strip():
+                mx = 0.0
+                for a in ammo.split(","):
+                    a = a.strip()
+                    if not a:
+                        continue
+                    ad = sections.get(a) or {}
+                    ka = _f_ltx(ad.get("k_hit"), 1.0)
+                    if ka > mx and ka <= _BSB_DAMAGE_THRESHOLD["fire_wound"]:
+                        mx = ka
+                scale = mx or 1.0
+            dmg = base * scale
+        elif ap:
+            apsec = sections.get(ap) or {}
+            mx = 0.0
+            thr = _BSB_DAMAGE_THRESHOLD[dmg_key]
+            for val in apsec.values():
+                parts = [p.strip() for p in str(val).split(",")]
+                if len(parts) != 11:
+                    continue
+                dd = _f_ltx(parts[1])
+                if dd > mx and dd <= thr:
+                    mx = dd
+            dmg = mx
+        elif dmg_key == "explosion":
+            dmg = _f_ltx(d.get("hit_power") or d.get("hit_power_blast"))
+            if dmg <= 0:
+                pwr = _f_ltx(d.get("max_start_power"))
+                if pwr > 0:
+                    dmg = pwr
+        else:
+            pwr = _f_ltx(d.get("max_start_power"))
+            if pwr > 0:
+                scale = 1.0
+                cls = (d.get("class") or "").upper()
+                if abf_compatibility and dmg_key in ("fire", "acid"):
+                    scale = 0.1
+                elif cls == "ZS_RADIO":
+                    scale = 0.1
+                dmg = pwr * scale
+
+        add_damage(dmg, dmg_key)
+        if hit == "strike":
+            add_damage(dmg, "strike")
+        elif hit == "explosion":
+            add_damage(dmg, "explosion")
+        tube = _f_ltx(d.get("tube_damage"))
+        if tube > 0:
+            add_damage(min(tube * 0.5, 1.0), "psi")
+    return out
+
+
+def protection_tip_denoms_from_sections(
+    sections: dict[str, dict[str, str]] | None,
+) -> dict[str, float]:
+    """Tip denominators (max_damage * factor) from merged configs + BSB factors."""
+    out = dict(DEFAULT_PROTECTION_TIP_DENOM)
+    max_d = build_bsb_max_damages(sections)
+    for sk, (dk, factor) in _BSB_TIP_FACTOR.items():
+        md = float(max_d.get(dk) or 0)
+        if md > 0 and factor > 0:
+            out[sk] = md * factor
+    return out
+
+
+def protection_zones_from_sections(
+    sections: dict[str, dict[str, str]] | None,
+) -> dict[str, float]:
+    """Alias: tip denoms used as the |raw|/denom scale for armor tip %."""
+    return protection_tip_denoms_from_sections(sections)
+
+
+def protection_tip_pct(
+    raw: Any,
+    key: str,
+    zones: dict[str, float] | None = None,
+) -> float:
+    """Engine protection → BSB tip-style percent (continuous; tip UI ceils)."""
+    try:
+        v = float(raw or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    if v <= 0:
+        return 0.0
+    zmap = zones or DEFAULT_PROTECTION_TIP_DENOM
+    z = float(zmap.get(key) or DEFAULT_PROTECTION_TIP_DENOM.get(key) or 1.0)
+    if z <= 0:
+        z = 1.0
+    return min(PROTECTION_TIP_CEILING, abs(v) / z * 100.0)
+
+
+def protection_tip_display(
+    raw: Any,
+    key: str,
+    zones: dict[str, float] | None = None,
+) -> int:
+    """Inventory tip percent text: ceil(clamp(|raw|/denom,0,1)*100)."""
+    pct = protection_tip_pct(raw, key, zones)
+    if pct <= 0:
+        return 0
+    return int(math.ceil(pct - 1e-12))
+
+
+def fraction_pct(
+    raw: Any,
+    key: str | None = None,
+    zones: dict[str, float] | None = None,
+) -> float:
+    """Tip-style percent for Diff / sort; key required for accurate zone scaling."""
+    if key:
+        return protection_tip_pct(raw, key, zones)
     try:
         v = float(raw or 0)
     except (TypeError, ValueError):
@@ -112,20 +408,38 @@ NO_CEILING_STATS = frozenset({"scope", "silencer"})
 
 # (stat_key, weight_key, scale_slider_max, inverse, default_weight)
 # a_price / cost ceiling is added separately (outfit vs helmet soft cap).
+# carry_weight / artefact_count are outfit-only (hidden for helmets).
+OUTFIT_ONLY_STATS = frozenset({"carry_weight", "artefact_count"})
+CARRY_WEIGHT_PCT_CEILING = 150.0
+ARTEFACT_COUNT_CEILING = 8.0
 ARMOR_WEIGHTS = [
-    ("radiation_protection", "a_rad", 1, False, 0.5),
-    ("fire_wound_protection", "a_fire_wound", 1, False, 0.5),
-    ("strike_protection", "a_strike", 1, False, 0.5),
-    ("wound_protection", "a_wound", 1, False, 0.5),
-    ("explosion_protection", "a_explosion", 1, False, 0.5),
-    ("shock_protection", "a_shock", 1, False, 0.5),
-    ("burn_protection", "a_burn", 1, False, 0.5),
-    ("chemical_burn_protection", "a_chem", 1, False, 0.5),
-    ("telepathy_protection", "a_psy", 1, False, 0.5),
+    ("radiation_protection", "a_rad", PROTECTION_TIP_CEILING, False, 0.5),
+    ("fire_wound_protection", "a_fire_wound", PROTECTION_TIP_CEILING, False, 0.5),
+    ("strike_protection", "a_strike", PROTECTION_TIP_CEILING, False, 0.5),
+    ("wound_protection", "a_wound", PROTECTION_TIP_CEILING, False, 0.5),
+    ("explosion_protection", "a_explosion", PROTECTION_TIP_CEILING, False, 0.5),
+    ("shock_protection", "a_shock", PROTECTION_TIP_CEILING, False, 0.5),
+    ("burn_protection", "a_burn", PROTECTION_TIP_CEILING, False, 0.5),
+    ("chemical_burn_protection", "a_chem", PROTECTION_TIP_CEILING, False, 0.5),
+    ("telepathy_protection", "a_psy", PROTECTION_TIP_CEILING, False, 0.5),
+    ("carry_weight", "a_carry", CARRY_WEIGHT_PCT_CEILING, False, 0.5),
+    ("artefact_count", "a_artefact", ARTEFACT_COUNT_CEILING, False, 0.5),
 ]
 
 ARMOR_COST_CEILING_OUTFIT = 100000.0
 ARMOR_COST_CEILING_HELMET = 20000.0
+
+
+def armor_weight_rows(*, is_helmet: bool) -> list[tuple]:
+    """ARMOR_WEIGHTS rows visible for this category (outfits get carry/slots)."""
+    if is_helmet:
+        return [t for t in ARMOR_WEIGHTS if t[0] not in OUTFIT_ONLY_STATS]
+    return list(ARMOR_WEIGHTS)
+
+
+def default_weapon_weights() -> dict[str, float]:
+    """Code-level default weapon score weights (pre any balance.yml)."""
+    return {wkey: float(default_w) for _sk, wkey, _c, _i, default_w in WEAPON_WEIGHTS}
 
 
 def default_ceilings_weapon() -> dict[str, float]:
@@ -137,7 +451,10 @@ def default_ceilings_weapon() -> dict[str, float]:
 
 
 def default_ceilings_armor(*, is_helmet: bool) -> dict[str, float]:
-    out = {sk: float(ceiling) for sk, _wk, ceiling, _inv, _dw in ARMOR_WEIGHTS}
+    out = {
+        sk: float(ceiling)
+        for sk, _wk, ceiling, _inv, _dw in armor_weight_rows(is_helmet=is_helmet)
+    }
     out["cost"] = (
         ARMOR_COST_CEILING_HELMET if is_helmet else ARMOR_COST_CEILING_OUTFIT
     )
@@ -157,8 +474,10 @@ def merge_ceilings(
             if fv <= 0:
                 continue
             key = str(k)
-            # Old balance used 0–1 hit_power ceilings (e.g. 3.0); ignore those.
+            # Old balance used 0–1 hit_power / protection ceilings; ignore those.
             if key == "hit_power" and fv <= _HIT_POWER_FRACTION_MAX:
+                continue
+            if key in FRACTION_STAT_KEYS and fv <= _HIT_POWER_FRACTION_MAX:
                 continue
             # Cap at code slider max (defaults); drop runaway values from old ×5 UI.
             cap = out.get(key)
@@ -333,53 +652,6 @@ def score_raw_display(score01: float) -> int:
     return int(round(_clamp01(score01 or 0.0) * SCORE_RAW_DISPLAY))
 
 
-def price_scale_settings(cat_cfg: dict[str, Any] | None) -> tuple[int, int]:
-    """Return (out_min, out_max) for shop/LTX pts (always on)."""
-    cfg = cat_cfg or {}
-    try:
-        lo = int(round(float(cfg.get("price_scale_min", 100))))
-    except (TypeError, ValueError):
-        lo = 100
-    try:
-        hi = int(round(float(cfg.get("price_scale_max", 900))))
-    except (TypeError, ValueError):
-        hi = 900
-    lo = max(0, min(1000, lo))
-    hi = max(0, min(1000, hi))
-    if lo > hi:
-        lo, hi = hi, lo
-    return lo, hi
-
-
-def scale_shop_pts(
-    score01: float,
-    pool_min: float,
-    pool_max: float,
-    out_min: float,
-    out_max: float,
-    *,
-    clamp: bool = True,
-) -> int:
-    """Map relative position of score01 in [pool_min, pool_max] → [out_min, out_max].
-
-    Distance along the price scale is (score - min) / (max - min) among the pool.
-    Equal pool → out_min. With ``clamp=False``, scores outside the pool
-    extrapolate past out_min/out_max (floor at 0).
-    """
-    try:
-        r = _clamp01(float(score01))
-    except (TypeError, ValueError):
-        r = 0.0
-    lo_r, hi_r = float(pool_min), float(pool_max)
-    lo_o, hi_o = float(out_min), float(out_max)
-    if hi_r <= lo_r:
-        return max(0, int(round(lo_o)))
-    t = (r - lo_r) / (hi_r - lo_r)
-    if clamp:
-        t = _clamp01(t)
-    return max(0, int(round(lo_o + t * (hi_o - lo_o))))
-
-
 def _terms_score01(terms: dict[str, tuple[float, float]]) -> float:
     sum_nw = 0.0
     sum_w = 0.0
@@ -441,14 +713,23 @@ def armor_stat_terms(
     is_helmet: bool,
     ceilings: dict[str, float] | None = None,
     curves: dict[str, str] | None = None,
+    zones: dict[str, float] | None = None,
 ) -> dict[str, tuple[float, float]]:
     """stat_key → (slider_weight, final_weight); includes cost via a_price."""
     ceil = merge_ceilings(default_ceilings_armor(is_helmet=is_helmet), ceilings)
     cmap = merge_curves(curves)
     out: dict[str, tuple[float, float]] = {}
-    for stat_key, wkey, default_ceiling, _inv, default_w in ARMOR_WEIGHTS:
+    for stat_key, wkey, default_ceiling, _inv, default_w in armor_weight_rows(
+        is_helmet=is_helmet
+    ):
         w = float(weights.get(wkey, default_w) or 0)
-        raw = float(stats.get(stat_key) or 0)
+        if stat_key in FRACTION_STAT_KEYS:
+            raw = protection_tip_pct(stats.get(stat_key), stat_key, zones)
+        else:
+            try:
+                raw = float(stats.get(stat_key) or 0)
+            except (TypeError, ValueError):
+                raw = 0.0
         if w <= 0:
             out[stat_key] = (w, 0.0)
             continue
@@ -494,6 +775,47 @@ def weapon_score01(
     )
 
 
+WEAPON_TIER_LABELS = ("D", "C", "B", "A")
+
+
+def weapon_tier_map(
+    pool: dict[str, dict[str, Any]],
+    weights: dict[str, float],
+    ceilings: dict[str, float] | None = None,
+    curves: dict[str, str] | None = None,
+    *,
+    zero_shotgun_spread: bool = False,
+) -> dict[str, str]:
+    """Bucket every weapon's score01 into quartile letter grades, D (worst)..A (best).
+
+    Relative to the whole ``pool`` at once (equal-ish sized buckets) rather
+    than a fixed absolute cutoff, so the grade stays meaningful as the mod's
+    weapon roster or Default weights change. Always fed Default weights by
+    the caller so a weapon's letter stays the same across every faction tab.
+    """
+    ranked: list[tuple[str, float]] = []
+    for sec, entry in pool.items():
+        stats = entry.get("stats") or {}
+        s01 = weapon_score01(
+            stats,
+            weights,
+            ceilings=ceilings,
+            curves=curves,
+            kind=weapon_kind(entry, sec),
+            zero_shotgun_spread=zero_shotgun_spread,
+        )
+        ranked.append((sec, float(s01)))
+    n = len(ranked)
+    if n == 0:
+        return {}
+    ranked.sort(key=lambda t: t[1])
+    out: dict[str, str] = {}
+    for i, (sec, _s01) in enumerate(ranked):
+        bucket = min(3, (i * 4) // n)  # 0=D .. 3=A, quartiles by rank
+        out[sec] = WEAPON_TIER_LABELS[bucket]
+    return out
+
+
 def armor_score01(
     stats: dict[str, Any],
     weights: dict[str, float],
@@ -501,6 +823,7 @@ def armor_score01(
     is_helmet: bool,
     ceilings: dict[str, float] | None = None,
     curves: dict[str, str] | None = None,
+    zones: dict[str, float] | None = None,
 ) -> float:
     """Weighted average score in 0–1 (input to price scale + raw display)."""
     return _terms_score01(
@@ -510,6 +833,7 @@ def armor_score01(
             is_helmet=is_helmet,
             ceilings=ceilings,
             curves=curves,
+            zones=zones,
         )
     )
 
@@ -592,7 +916,6 @@ _AMMO_FAMILY_BLOC: dict[str, str] = {
     # NATO / Western
     "ammo_5.56x45": "nato",
     "ammo_9x19": "nato",
-    "ammo_11.43x23": "nato",  # .45 ACP
     "ammo_7.62x51": "nato",
     "ammo_338": "nato",
     "ammo_magnum": "nato",  # .300 / .338-class Western sniper (ammo_magnum_300)
@@ -614,7 +937,8 @@ _AMMO_FAMILY_BLOC: dict[str, str] = {
     "ammo_12x70": "both",
     "ammo_12x76": "both",
     "ammo_20x70": "both",
-    # Neither (WWII / unique)
+    # Neither (WWII / unique / parked in OTHER sidebar)
+    "ammo_11.43x23": "neither",  # .45 ACP
     "ammo_7.92x33": "neither",  # 7.92×33 Kurz
     "ammo_gauss": "neither",
 }
@@ -632,13 +956,11 @@ def ammo_family_bloc(family: str) -> str:
         for x in (
             "5.56",
             "9x19",
-            "11.43",
             "7.62x51",
             "5.7",
             "338",
             "357",
             "magnum",
-            ".45",
             ".308",
         )
     ):

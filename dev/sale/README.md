@@ -23,7 +23,7 @@ Or: `PYTHONPATH=dev py -3 -m sale`
 
 1. Set Anomaly + GAMMA (MO2) roots.
 2. **Regenerate** — merges enabled-mod LTX in MO2 priority order (modlist top wins), classifies weapons/outfits/helmets (spawner-style filter: drops attachment/kit variants via `parent_section`, `*_cw` / `*_mp` stubs, `tch_`/`mp_`/`_base`, blacklist), computes stats, writes `cache/items.yml`.
-3. Tune faction **Default** / overrides + price-scale min/max (Budget; always on). Shop pts = relative 0–1 score mapped through that scale (tile top-left); raw score×1000 is top-right. Per-faction checkbox decides LTX (green = baseline+faction, light green = faction only, yellow = baseline only / off here). **Ctrl+S** refreshes.
-4. **Export LTX** → `dev/sale/out/mod_new_game_loadouts_dogma_stat_derived.ltx` (or GAMMA overwrite via Deploy). Export saves + refreshes first so LTX matches current weights/price scale.
+3. Tune faction **Default** / overrides (Budget toggles + weights). Select an item and set **Pts** (0–1000) under Budget — baseline applies to all factions; faction view can override (**x** clears). Tile top-left = pts; top-right = raw score×1000. Per-faction checkbox decides LTX. **Ctrl+S** refreshes scores.
+4. **Export LTX** → `dev/sale/out/mod_new_game_loadouts_dogma_stat_derived.ltx` (or GAMMA overwrite via Deploy). Export saves + refreshes first so LTX matches current weights + manual pts.
 
 Format is native New Game loadout lines (`sec = true,1,pts`) plus `ammo_type_per_wpn` / `ammo_count` (4 stacks). Stock `UINewGame` reads it; no runtime scripts.

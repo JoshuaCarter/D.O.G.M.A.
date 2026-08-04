@@ -302,6 +302,9 @@ def _armor_calculate_py(inp: dict[str, Any]) -> dict[str, Any]:
     }
     for k in PROT_KEYS:
         out[k] = _f(prots.get(k), 0)
+    # Outfit-only (0 on helmets).
+    out["carry_weight"] = _f(inp.get("carry_weight"), 0)
+    out["artefact_count"] = _f(inp.get("artefact_count"), 0)
     return out
 
 
@@ -478,8 +481,20 @@ def build_armor_input(sec: str, sections: dict[str, dict[str, str]]) -> dict[str
                     prots["fire_wound_protection"] = (
                         _f(prots.get("fire_wound_protection"), 0) + head
                     )
+    carry_pct = 0.0
+    artefact_n = 0.0
+    if not is_helm:
+        # Tip shows kg; with max_walk_weight=100 that equals carry bonus %.
+        base = _f((sections.get("actor") or {}).get("max_walk_weight"), 100.0)
+        if base <= 0:
+            base = 100.0
+        kg = _f(d.get("additional_inventory_weight"), 0)
+        carry_pct = (kg / base) * 100.0
+        artefact_n = _f(d.get("artefact_count"), 0)
     return {
         "protections": prots,
         "cost": _f(d.get("cost"), 0),
         "is_helmet": is_helm,
+        "carry_weight": carry_pct,
+        "artefact_count": artefact_n,
     }

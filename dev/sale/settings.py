@@ -16,6 +16,9 @@ SETTINGS_PATH = PKG / "settings.json"
 # Keep balance next to settings (not under cache/) so thumb/regen wipes don't touch it.
 BALANCE_YML = PKG / "balance.yml"
 LEGACY_BALANCE_YML = CACHE / "balance.yml"
+# Pre-save snapshots of balance.yml — also outside cache/ so wipes can't eat them.
+BALANCE_BACKUPS_DIR = PKG / "backups"
+BALANCE_BACKUPS_KEEP = 200
 ITEMS_YML = CACHE / "items.yml"
 THUMBS_DIR = CACHE / "thumbs"
 # Purchasable keys stripped on export (captured at regenerate from stock LTX).
@@ -25,6 +28,7 @@ STOCK_STRIP_YML = CACHE / "stock_strip.yml"
 def ensure_dirs() -> None:
     CACHE.mkdir(parents=True, exist_ok=True)
     THUMBS_DIR.mkdir(parents=True, exist_ok=True)
+    BALANCE_BACKUPS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def load_settings() -> dict[str, Any]:

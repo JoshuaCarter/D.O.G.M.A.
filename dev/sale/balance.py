@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import shutil
 from copy import deepcopy
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -12,20 +14,27 @@ from .diaglog import get_logger
 from .score import (
     ARMOR_WEIGHTS,
     CURVE_LINEAR,
-    WEAPON_WEIGHTS,
+    FACTIONS,
     default_ceilings_armor,
     default_ceilings_weapon,
+    default_weapon_weights,
     merge_ceilings,
     merge_curves,
     normalize_curve,
 )
-from .settings import BALANCE_YML, LEGACY_BALANCE_YML, ensure_dirs
+from .settings import (
+    BALANCE_BACKUPS_DIR,
+    BALANCE_BACKUPS_KEEP,
+    BALANCE_YML,
+    LEGACY_BALANCE_YML,
+    ensure_dirs,
+)
 
 log = get_logger("balance")
 
 
 def _default_weights_weapon() -> dict[str, float]:
-    return {wkey: float(default_w) for _sk, wkey, _c, _i, default_w in WEAPON_WEIGHTS}
+    return default_weapon_weights()
 
 
 def _default_weights_armor() -> dict[str, float]:
@@ -34,13 +43,15 @@ def _default_weights_armor() -> dict[str, float]:
     return out
 
 
+# Manual shop pts per item (tile top-left + LTX). Score is separate.
+ITEM_PTS_MIN = 0
+ITEM_PTS_MAX = 1000
+
+
 def default_balance() -> dict[str, Any]:
     return {
         "default": {
             "weapons": {
-                # Remap checked-item shop pts into [min, max] (display + LTX).
-                "price_scale_min": 100,
-                "price_scale_max": 900,
                 # Shotguns skip ADS/hip spread in the weighted score.
                 "shotguns_zero_spread": True,
                 "weights": _default_weights_weapon(),
@@ -48,24 +59,21 @@ def default_balance() -> dict[str, Any]:
             },
             "outfits": {
                 "include_universal_armor": True,
-                "price_scale_min": 100,
-                "price_scale_max": 900,
                 "weights": _default_weights_armor(),
                 "ceilings": default_ceilings_armor(is_helmet=False),
             },
             "helmets": {
                 "include_universal_armor": True,
-                "price_scale_min": 100,
-                "price_scale_max": 900,
                 "weights": _default_weights_armor(),
                 "ceilings": default_ceilings_armor(is_helmet=True),
             },
         },
         "factions": {},
+        "item_pts": {},
     }
 
 
-# Legacy Budget keys from the auto-include era — stripped on load.
+# Legacy Budget keys — stripped on load.
 _DEAD_CAT_KEYS = (
     "max_pts",
     "cost_mult",
@@ -74,6 +82,8 @@ _DEAD_CAT_KEYS = (
     "allow_suppressed",
     "allow_scoped",
     "price_scale_enabled",
+    "price_scale_min",
+    "price_scale_max",
 )
 
 
@@ -201,21 +211,39 @@ def load_balance(path: Path | None = None) -> dict[str, Any]:
             base.pop("item_ltx_overrides", None)
             if data.get("item_ltx_overrides"):
                 migrated = True
-    # Per-faction LTX deltas (include / exclude vs baseline).
+    # Manual per-item shop pts (0–1000) — baseline + per-faction overrides.
+    raw_pts = data.get("item_pts")
+    if isinstance(raw_pts, dict):
+        cleaned_pts = _normalize_item_pts_map(raw_pts, keep_zero=False)
+        if cleaned_pts != raw_pts:
+            migrated = True
+        base["item_pts"] = cleaned_pts
+    else:
+        base["item_pts"] = {}
+    # Per-faction LTX deltas + pts overrides.
     for _fac, fblock in (base.get("factions") or {}).items():
         if not isinstance(fblock, dict):
             continue
         raw_fac = fblock.get("item_ltx_overrides")
-        if not isinstance(raw_fac, dict):
-            continue
-        cleaned = _normalize_ltx_map(raw_fac, allow_exclude=True)
-        if cleaned != raw_fac:
-            migrated = True
-        if cleaned:
-            fblock["item_ltx_overrides"] = cleaned
-        else:
-            fblock.pop("item_ltx_overrides", None)
-            migrated = True
+        if isinstance(raw_fac, dict):
+            cleaned = _normalize_ltx_map(raw_fac, allow_exclude=True)
+            if cleaned != raw_fac:
+                migrated = True
+            if cleaned:
+                fblock["item_ltx_overrides"] = cleaned
+            else:
+                fblock.pop("item_ltx_overrides", None)
+                migrated = True
+        raw_fac_pts = fblock.get("item_pts")
+        if isinstance(raw_fac_pts, dict):
+            cleaned_fp = _normalize_item_pts_map(raw_fac_pts, keep_zero=True)
+            if cleaned_fp != raw_fac_pts:
+                migrated = True
+            if cleaned_fp:
+                fblock["item_pts"] = cleaned_fp
+            else:
+                fblock.pop("item_pts", None)
+                migrated = True
     if migrated:
         log.info("balance migrated (weights / checkbox LTX / dead Budget keys)")
         try:
@@ -226,9 +254,39 @@ def load_balance(path: Path | None = None) -> dict[str, Any]:
     return base
 
 
+def _backup_before_save(p: Path) -> None:
+    """Snapshot the on-disk file before it gets overwritten.
+
+    Best-effort: a backup failure must never block the actual save.
+    """
+    if not p.is_file():
+        return
+    try:
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+        dest = BALANCE_BACKUPS_DIR / f"{p.stem}-{stamp}{p.suffix}"
+        shutil.copy2(p, dest)
+        _prune_backups(p)
+    except Exception:
+        log.exception("balance backup failed %s", p)
+
+
+def _prune_backups(p: Path, keep: int = BALANCE_BACKUPS_KEEP) -> None:
+    pattern = f"{p.stem}-*{p.suffix}"
+    snaps = sorted(
+        BALANCE_BACKUPS_DIR.glob(pattern), key=lambda f: f.stat().st_mtime
+    )
+    excess = snaps[: max(0, len(snaps) - keep)]
+    for old in excess:
+        try:
+            old.unlink()
+        except OSError:
+            log.exception("balance backup prune failed %s", old)
+
+
 def save_balance(data: dict[str, Any], path: Path | None = None) -> None:
     ensure_dirs()
     p = path or BALANCE_YML
+    _backup_before_save(p)
     try:
         p.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
         log.info("balance saved %s", p)
@@ -341,19 +399,28 @@ def clear_override(
 ) -> None:
     if faction == "Default":
         return
-    fov = (balance.get("factions") or {}).get(faction) or {}
-    cblock = fov.get(category) or {}
+    factions = balance.get("factions")
+    if not isinstance(factions, dict):
+        return
+    fov = factions.get(faction)
+    if not isinstance(fov, dict):
+        return
+    cblock = fov.get(category)
+    if not isinstance(cblock, dict):
+        return
     if weight:
-        w = cblock.get("weights") or {}
-        w.pop(key, None)
-        if not w:
-            cblock.pop("weights", None)
+        w = cblock.get("weights")
+        if isinstance(w, dict):
+            w.pop(key, None)
+            if not w:
+                cblock.pop("weights", None)
     else:
         cblock.pop(key, None)
-    if not cblock and faction in (balance.get("factions") or {}):
-        balance["factions"].pop(faction, None)
-    elif not cblock:
-        pass
+    # Drop empty category; keep faction if it still has item_pts / ltx / etc.
+    if not cblock:
+        fov.pop(category, None)
+    if not fov:
+        factions.pop(faction, None)
 
 
 def is_overridden(
@@ -381,6 +448,9 @@ def override_count(balance: dict[str, Any], faction: str) -> int:
         if key == "item_ltx_overrides":
             n += len(cblock or {}) if isinstance(cblock, dict) else 0
             continue
+        if key == "item_pts":
+            n += len(cblock or {}) if isinstance(cblock, dict) else 0
+            continue
         if not isinstance(cblock, dict):
             continue
         for k, v in cblock.items():
@@ -390,6 +460,21 @@ def override_count(balance: dict[str, Any], faction: str) -> int:
                 n += len(v or {})
             else:
                 n += 1
+    return n
+
+
+def clear_all_overrides(balance: dict[str, Any], faction: str) -> int:
+    """Remove every override for ``faction`` (weights, pts, LTX, ammo, …).
+
+    Returns how many override entries were cleared. No-op on Default.
+    """
+    fac = str(faction or "").strip()
+    if not fac or fac == "Default":
+        return 0
+    n = override_count(balance, fac)
+    factions = balance.get("factions")
+    if isinstance(factions, dict):
+        factions.pop(fac, None)
     return n
 
 
@@ -475,6 +560,134 @@ def _normalize_ltx_map(
     return out
 
 
+def _normalize_item_pts_map(
+    raw: dict[str, Any] | None, *, keep_zero: bool = False
+) -> dict[str, int]:
+    """Keep secs with integer pts in [ITEM_PTS_MIN, ITEM_PTS_MAX].
+
+    Baseline maps drop 0 (unset). Faction override maps keep 0 (explicit free).
+    """
+    out: dict[str, int] = {}
+    if not isinstance(raw, dict):
+        return out
+    for sec, val in raw.items():
+        try:
+            pts = int(round(float(val)))
+        except (TypeError, ValueError):
+            continue
+        pts = max(ITEM_PTS_MIN, min(ITEM_PTS_MAX, pts))
+        if pts > 0 or keep_zero:
+            out[str(sec)] = pts
+    return out
+
+
+def _clamp_item_pts(pts: int | float) -> int:
+    try:
+        v = int(round(float(pts)))
+    except (TypeError, ValueError):
+        v = 0
+    return max(ITEM_PTS_MIN, min(ITEM_PTS_MAX, v))
+
+
+def baseline_item_pts(balance: dict[str, Any], sec: str) -> int:
+    """Baseline (Default) manual shop pts for an item (0 if unset)."""
+    raw = balance.get("item_pts")
+    if not isinstance(raw, dict):
+        return 0
+    try:
+        pts = int(round(float(raw.get(str(sec), 0) or 0)))
+    except (TypeError, ValueError):
+        return 0
+    return max(ITEM_PTS_MIN, min(ITEM_PTS_MAX, pts))
+
+
+def is_item_pts_overridden(
+    balance: dict[str, Any], faction: str, sec: str
+) -> bool:
+    """True when faction has an explicit pts override for ``sec``."""
+    fac = str(faction or "").strip()
+    if not fac or fac == "Default":
+        return False
+    fblock = (balance.get("factions") or {}).get(fac) or {}
+    raw = fblock.get("item_pts")
+    return isinstance(raw, dict) and str(sec) in raw
+
+
+def item_pts_for(
+    balance: dict[str, Any], sec: str, faction: str = "Default"
+) -> int:
+    """Effective manual shop pts: faction override if set, else baseline."""
+    fac = str(faction or "Default").strip() or "Default"
+    key = str(sec)
+    if fac != "Default":
+        fblock = (balance.get("factions") or {}).get(fac) or {}
+        raw = fblock.get("item_pts")
+        if isinstance(raw, dict) and key in raw:
+            try:
+                pts = int(round(float(raw[key])))
+            except (TypeError, ValueError):
+                pts = 0
+            return max(ITEM_PTS_MIN, min(ITEM_PTS_MAX, pts))
+    return baseline_item_pts(balance, key)
+
+
+def set_item_pts(
+    balance: dict[str, Any],
+    sec: str,
+    pts: int | float,
+    *,
+    faction: str = "Default",
+) -> int:
+    """Set manual shop pts. Baseline: 0 clears. Faction: stores override (incl. 0)."""
+    v = _clamp_item_pts(pts)
+    key = str(sec)
+    fac = str(faction or "Default").strip() or "Default"
+    if fac == "Default":
+        ovs = balance.setdefault("item_pts", {})
+        if not isinstance(ovs, dict):
+            ovs = {}
+            balance["item_pts"] = ovs
+        if v <= 0:
+            ovs.pop(key, None)
+        else:
+            ovs[key] = v
+        if not ovs:
+            balance.pop("item_pts", None)
+        return v
+    factions = balance.setdefault("factions", {})
+    fblock = factions.setdefault(fac, {})
+    if not isinstance(fblock, dict):
+        fblock = {}
+        factions[fac] = fblock
+    ovs = fblock.setdefault("item_pts", {})
+    if not isinstance(ovs, dict):
+        ovs = {}
+        fblock["item_pts"] = ovs
+    ovs[key] = v
+    return v
+
+
+def clear_item_pts_override(
+    balance: dict[str, Any], faction: str, sec: str
+) -> None:
+    """Remove faction pts override so the item inherits baseline."""
+    fac = str(faction or "").strip()
+    if not fac or fac == "Default":
+        return
+    factions = balance.get("factions") or {}
+    fblock = factions.get(fac)
+    if not isinstance(fblock, dict):
+        return
+    ovs = fblock.get("item_pts")
+    if not isinstance(ovs, dict):
+        return
+    ovs.pop(str(sec), None)
+    if not ovs:
+        fblock.pop("item_pts", None)
+    if not fblock:
+        factions.pop(fac, None)
+
+
 def _baseline_ltx_map(balance: dict[str, Any]) -> dict[str, str]:
     return _normalize_ltx_map(
         balance.get("item_ltx_overrides"), allow_exclude=False
@@ -508,6 +721,15 @@ def item_in_ltx_for_faction(
     if ov == "exclude":
         return False
     return base_on
+
+
+def item_in_ltx_any_faction(balance: dict[str, Any], sec: str) -> bool:
+    """True if any non-Default faction effectively includes ``sec`` in LTX."""
+    key = str(sec)
+    for fac in FACTIONS:
+        if item_in_ltx_for_faction(balance, fac, key):
+            return True
+    return False
 
 
 def ltx_paint_state(
@@ -572,13 +794,14 @@ def _set_faction_ltx(
 def toggle_item_ltx_override(
     balance: dict[str, Any], faction: str, sec: str
 ) -> bool:
-    """Toggle effective include for faction. Returns new effective in-LTX state."""
+    """Toggle effective include for faction. Returns new effective in-LTX state.
+
+    Baseline (Default) cannot include — factions only.
+    """
     fac = str(faction or "Default").strip() or "Default"
     key = str(sec)
     if fac == "Default":
-        now = baseline_item_in_ltx(balance, key)
-        _set_baseline_ltx(balance, key, None if now else "include")
-        return not now
+        return baseline_item_in_ltx(balance, key)
 
     currently = item_in_ltx_for_faction(balance, fac, key)
     base_on = baseline_item_in_ltx(balance, key)

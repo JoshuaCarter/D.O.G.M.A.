@@ -28,6 +28,10 @@ local awaiting_use_outcome = false
 local use_opened_loot = false
 local pending_obj_id = nil
 
+-- Deferred FDDA pickup so it does not cut off the knife swing.
+local pending_pickup_id = nil
+local pending_pickup_at = nil
+
 local function log(msg)
 	if not (DOGMA and DOGMA.dbg) then
 		return
@@ -170,6 +174,46 @@ local function degrade_knife()
 	end
 end
 
+local function clear_pending_pickup()
+	pending_pickup_id = nil
+	pending_pickup_at = nil
+end
+
+local function schedule_pickup(obj_id)
+	local delay = CONFIG.loaded.pickup_delay_ms or 0
+	if delay <= 0 then
+		local still = use_target_dead_mutant()
+		if still and still:id() == obj_id then
+			log("pickup: immediate")
+			queue_pickup_anim()
+		else
+			log("pickup: look lost - skip")
+		end
+		return
+	end
+	pending_pickup_id = obj_id
+	pending_pickup_at = time_global() + delay
+	log(string.format("pickup: scheduled in %dms id=%s", delay, tostring(obj_id)))
+end
+
+local function tick_pending_pickup()
+	if not pending_pickup_at then
+		return
+	end
+	if time_global() < pending_pickup_at then
+		return
+	end
+	local id = pending_pickup_id
+	clear_pending_pickup()
+	local still = use_target_dead_mutant()
+	if still and still:id() == id then
+		log("pickup: delay done, still targeting - play")
+		queue_pickup_anim()
+	else
+		log("pickup: delay done, look lost - skip")
+	end
+end
+
 local function try_light_skin()
 	if not CONFIG.loaded.enabled then
 		return
@@ -215,14 +259,13 @@ local function try_light_skin()
 	end
 
 	if use_opened_loot then
+		degrade_knife()
 		local still = use_target_dead_mutant()
 		if still and still:id() == pending_obj_id then
-			log("light: loot ok, still targeting - pickup")
-			queue_pickup_anim()
-			degrade_knife()
+			log("light: loot ok, still targeting - schedule pickup")
+			schedule_pickup(pending_obj_id)
 		else
 			log("light: loot ok, look lost - skip pickup")
-			degrade_knife()
 		end
 	else
 		-- Already skinned / decayed / empty Reset: start never ran.
@@ -258,13 +301,19 @@ end
 
 local function on_option_change()
 	CONFIG.loaded.enabled = DOGMA.mcm.bool(CONFIG.MOD_ID, "enabled")
+	CONFIG.loaded.pickup_delay_ms = DOGMA.mcm.number(CONFIG.MOD_ID, "pickup_delay_ms")
 	CONFIG.loaded.debug_log = DOGMA.dbg.logging()
 	if not CONFIG.loaded.enabled then
 		awaiting_use_outcome = false
 		use_opened_loot = false
 		pending_obj_id = nil
+		clear_pending_pickup()
 	end
-	log(string.format("options: enabled=%s", tostring(CONFIG.loaded.enabled)))
+	log(string.format(
+		"options: enabled=%s pickup_delay_ms=%s",
+		tostring(CONFIG.loaded.enabled),
+		tostring(CONFIG.loaded.pickup_delay_ms)
+	))
 end
 
 function on_game_start()
@@ -277,6 +326,7 @@ function on_game_start()
 
 	RegisterScriptCallback("actor_on_update", function()
 		DOGMA.sys.ready(CONFIG.MOD_ID, db, on_option_change)
+		tick_pending_pickup()
 		tick_knife_light()
 	end)
 	RegisterScriptCallback("on_option_change", on_option_change)

@@ -2,10 +2,9 @@
 	Death Spectator
 
 	Tracks recent hits while alive. On death: hit summary (bottom-left) +
-	"Press TAB to spectate". Tab starts demo_record free-fly 2m above the
-	corpse looking at the killer. W/S are remapped from demo_record's
-	vertical slide to horizontal forward. Space continue stays until
-	spectating (demo_record eats Space); Esc exits.
+	"Press TAB to spectate". Tab starts free-fly 2m above the corpse looking
+	at the killer. Move with the player's bound walk/strafe/jump/crouch keys.
+	Jump continues are blocked while spectating; Esc opens the menu.
 ]]
 
 local CONFIG = _G.dogma_gameplay_death_spectator_conf
@@ -14,6 +13,9 @@ local DOGMA
 local HIT_WINDOW_MS = 30000
 local HIT_CAP = 10
 local CAM_HEIGHT = 2.0
+local FLY_SPEED = 5.0
+local MOUSE_SENS = 0.0035
+local PITCH_LIMIT = 1.4
 local UI_W = 1024
 local UI_H = 768
 local LINE_H = 18
@@ -63,9 +65,24 @@ local corpse_pos = nil
 local killer_id = nil
 local frozen_lines = nil
 local adb_wrapped = false
-local last_cam_pos = nil
 local saved_show_actor_body = nil
 local saved_hud_weapon = nil
+local saved_tutor_stop = nil
+local fly = {
+	x = 0,
+	y = 0,
+	z = 0,
+	h = 0,
+	p = 0,
+	fwd = false,
+	back = false,
+	left = false,
+	right = false,
+	up = false,
+	down = false,
+}
+local orig_level_input_mouse_move = nil
+local mouse_move_patched = false
 
 -- BHS limb keys → summary labels (Body is actor.health, not torso).
 local DIED_LIMBS = {
@@ -399,8 +416,7 @@ local function hide_tab_prompt()
 end
 
 local function hide_space_continue()
-	-- demo_record captures Space (Append Key). Cover the stock continue line
-	-- and point at Esc instead.
+	-- Jump/Space would finish game_over; we block that while spectating.
 	set_static_text(
 		SPACE_COVER_STATIC,
 		"%c[255,200,200,200]Press ESC for menu",
@@ -575,63 +591,156 @@ local function restore_corpse_visibility()
 	saved_hud_weapon = nil
 end
 
--- demo_record binds W/S to slide along camera-up (world vertical when level).
--- Convert that component into horizontal forward along look yaw each tick.
-local function remap_demo_wasd()
+-- demo_record binds W/S to slide along camera-up and eats jump/crouch, so we
+-- drive a custom freecam from the player's bound actions instead.
+local function clear_fly_holds()
+	fly.fwd = false
+	fly.back = false
+	fly.left = false
+	fly.right = false
+	fly.up = false
+	fly.down = false
+end
+
+local function apply_fly_cam()
+	if not (level and level.set_cam_custom_position_direction) then
+		return
+	end
+	local pos = vector():set(fly.x, fly.y, fly.z)
+	local hpb = vector():set(fly.h, fly.p, 0)
+	pcall(function()
+		level.set_cam_custom_position_direction(pos, hpb, 0, false, false)
+	end)
+end
+
+local function fly_tick()
 	if not spectating then
 		return true
 	end
+	local dt = 0.016
 	local d = device and device()
-	if not (d and d.cam_pos and d.cam_dir and d.cam_top) then
-		return false
+	if d then
+		dt = tonumber(d.f_time_delta or d.time_delta) or dt
 	end
-	local pos = d.cam_pos
-	local top = d.cam_top
-	local dir = d.cam_dir
-	if not last_cam_pos then
-		last_cam_pos = vector():set(pos.x, pos.y, pos.z)
-		return false
+	if dt <= 0 then
+		dt = 0.016
+	elseif dt > 0.1 then
+		dt = 0.1
 	end
 
-	local mdx = pos.x - last_cam_pos.x
-	local mdy = pos.y - last_cam_pos.y
-	local mdz = pos.z - last_cam_pos.z
-	local up_amt = mdx * top.x + mdy * top.y + mdz * top.z
-	if math.abs(up_amt) < 1e-5 then
-		last_cam_pos = vector():set(pos.x, pos.y, pos.z)
-		return false
+	local move_x = (fly.right and 1 or 0) - (fly.left and 1 or 0)
+	local move_z = (fly.fwd and 1 or 0) - (fly.back and 1 or 0)
+	local move_y = (fly.up and 1 or 0) - (fly.down and 1 or 0)
+	if move_x ~= 0 or move_z ~= 0 or move_y ~= 0 then
+		local step = FLY_SPEED * dt
+		-- Match dir_to_hpb: h = -atan2(nx, nz) → forward xz = (-sin(h), cos(h))
+		local fx = -math.sin(fly.h)
+		local fz = math.cos(fly.h)
+		local rx = fz
+		local rz = -fx
+		fly.x = fly.x + (fx * move_z + rx * move_x) * step
+		fly.z = fly.z + (fz * move_z + rz * move_x) * step
+		fly.y = fly.y + move_y * step
+		apply_fly_cam()
 	end
-
-	local nx = pos.x - top.x * up_amt
-	local ny = pos.y - top.y * up_amt
-	local nz = pos.z - top.z * up_amt
-
-	local fx, fz = dir.x, dir.z
-	local flen = math.sqrt(fx * fx + fz * fz)
-	if flen < 1e-4 then
-		last_cam_pos = vector():set(pos.x, pos.y, pos.z)
-		return false
-	end
-	fx, fz = fx / flen, fz / flen
-	nx = nx + fx * up_amt
-	nz = nz + fz * up_amt
-
-	if exec_console_cmd then
-		exec_console_cmd(string.format("demo_set_cam_position %f,%f,%f", nx, ny, nz))
-	end
-	last_cam_pos = vector():set(nx, ny, nz)
 	return false
 end
 
-local function start_wasd_remap()
-	last_cam_pos = nil
-	RemoveTimeEvent(CONFIG.MOD_ID, "wasd_remap")
-	CreateTimeEvent(CONFIG.MOD_ID, "wasd_remap", 0, remap_demo_wasd)
+local function start_fly_tick()
+	RemoveTimeEvent(CONFIG.MOD_ID, "fly_tick")
+	CreateTimeEvent(CONFIG.MOD_ID, "fly_tick", 0, fly_tick)
 end
 
-local function stop_wasd_remap()
-	RemoveTimeEvent(CONFIG.MOD_ID, "wasd_remap")
-	last_cam_pos = nil
+local function stop_fly_tick()
+	RemoveTimeEvent(CONFIG.MOD_ID, "fly_tick")
+	clear_fly_holds()
+end
+
+local function suppress_game_over_continue()
+	-- Stopping the tutorial would otherwise open main menu via function_on_stop.
+	if not (xr_effects and xr_effects.on_tutor_gameover_stop) then
+		return
+	end
+	if saved_tutor_stop == nil then
+		saved_tutor_stop = xr_effects.on_tutor_gameover_stop
+	end
+	xr_effects.on_tutor_gameover_stop = function() end
+	if game and game.has_active_tutorial and game.has_active_tutorial() and game.stop_tutorial then
+		pcall(function()
+			game.stop_tutorial()
+		end)
+	end
+end
+
+local function restore_game_over_continue()
+	if saved_tutor_stop ~= nil and xr_effects then
+		xr_effects.on_tutor_gameover_stop = saved_tutor_stop
+	end
+	saved_tutor_stop = nil
+end
+
+local function apply_mouse_look(dx, dy)
+	if not spectating then
+		return
+	end
+	dx = tonumber(dx) or 0
+	dy = tonumber(dy) or 0
+	if dx == 0 and dy == 0 then
+		return
+	end
+	fly.h = fly.h - dx * MOUSE_SENS
+	fly.p = fly.p - dy * MOUSE_SENS * 0.75
+	if fly.p > PITCH_LIMIT then
+		fly.p = PITCH_LIMIT
+	elseif fly.p < -PITCH_LIMIT then
+		fly.p = -PITCH_LIMIT
+	end
+	apply_fly_cam()
+end
+
+local function patch_mouse_look()
+	if mouse_move_patched or not level_input then
+		return
+	end
+	orig_level_input_mouse_move = level_input.on_mouse_move
+	level_input.on_mouse_move = function(dx, dy, dis)
+		if spectating then
+			apply_mouse_look(dx, dy)
+			return true
+		end
+		if orig_level_input_mouse_move then
+			return orig_level_input_mouse_move(dx, dy, dis)
+		end
+		return false
+	end
+	mouse_move_patched = true
+end
+
+local function set_fly_hold(bind, down)
+	local kb = key_bindings
+	if not kb then
+		return false
+	end
+	if bind == kb.kFWD then
+		fly.fwd = down
+		return true
+	elseif bind == kb.kBACK then
+		fly.back = down
+		return true
+	elseif bind == kb.kL_STRAFE then
+		fly.left = down
+		return true
+	elseif bind == kb.kR_STRAFE then
+		fly.right = down
+		return true
+	elseif bind == kb.kJUMP then
+		fly.up = down
+		return true
+	elseif bind == kb.kCROUCH then
+		fly.down = down
+		return true
+	end
+	return false
 end
 
 local function start_spectator()
@@ -657,7 +766,6 @@ local function start_spectator()
 	if look_at then
 		dir = vector():set(look_at.x - cam_pos.x, look_at.y - cam_pos.y, look_at.z - cam_pos.z)
 	elseif last_hit_dir then
-		-- Face toward the incoming hit direction (attacker is opposite of hit dir).
 		dir = vector():set(-(last_hit_dir.x or 0), 0, -(last_hit_dir.z or 0))
 	else
 		dir = vector():set(0, 0, 1)
@@ -670,25 +778,17 @@ local function start_spectator()
 	hide_space_continue()
 	show_hit_summary()
 	reveal_corpse()
+	suppress_game_over_continue()
+	patch_mouse_look()
 
-	if exec_console_cmd then
-		exec_console_cmd("demo_record dogma_death_spectator")
-		-- Force start pose; demo_record otherwise inherits the death FP view.
-		exec_console_cmd(string.format(
-			"demo_set_cam_position %f,%f,%f",
-			cam_pos.x,
-			cam_pos.y,
-			cam_pos.z
-		))
-		exec_console_cmd(string.format(
-			"demo_set_cam_direction %f,%f,%f",
-			hpb.x,
-			hpb.y,
-			hpb.z or 0
-		))
-	end
-
-	start_wasd_remap()
+	fly.x = cam_pos.x
+	fly.y = cam_pos.y
+	fly.z = cam_pos.z
+	fly.h = hpb.x or 0
+	fly.p = hpb.y or 0
+	clear_fly_holds()
+	apply_fly_cam()
+	start_fly_tick()
 
 	log(string.format(
 		"spectate started at %.1f,%.1f,%.1f killer=%s",
@@ -697,6 +797,14 @@ local function start_spectator()
 		cam_pos.z,
 		tostring(killer_id)
 	))
+end
+
+local function open_menu_from_spectate()
+	if exec_console_cmd then
+		pcall(function()
+			exec_console_cmd("main_menu on")
+		end)
+	end
 end
 
 local function reset_state()
@@ -710,14 +818,10 @@ local function reset_state()
 	corpse_pos = nil
 	killer_id = nil
 	frozen_lines = nil
-	stop_wasd_remap()
+	stop_fly_tick()
+	restore_game_over_continue()
 	restore_corpse_visibility()
 	clear_death_ui()
-	if exec_console_cmd then
-		pcall(function()
-			exec_console_cmd("demo_record_stop")
-		end)
-	end
 	if level and level.remove_cam_custom_position_direction then
 		pcall(function()
 			level.remove_cam_custom_position_direction()
@@ -827,11 +931,47 @@ local function try_spectate_from_key(dik)
 	return true
 end
 
--- Prefer on_before_key_press: it still fires when KEYS_UNLOCK is false
--- (scripted UIs) and during the game_over tutorial.
-local function on_before_key_press(dik, bind, dis, flags)
-	if try_spectate_from_key(dik) and flags then
+local function block_engine(flags)
+	if flags then
 		flags.ret_value = false
+	end
+end
+
+-- Prefer on_before_key_*: fires even when KEYS_UNLOCK is false / during UI.
+local function on_before_key_press(dik, bind, dis, flags)
+	if try_spectate_from_key(dik) then
+		block_engine(flags)
+		return
+	end
+	if not spectating then
+		return
+	end
+	local kb = key_bindings
+	if kb and bind == kb.kQUIT then
+		block_engine(flags)
+		open_menu_from_spectate()
+		return
+	end
+	if set_fly_hold(bind, true) then
+		block_engine(flags)
+	end
+end
+
+local function on_before_key_release(dik, bind, dis, flags)
+	if not spectating then
+		return
+	end
+	if set_fly_hold(bind, false) then
+		block_engine(flags)
+	end
+end
+
+local function on_before_key_hold(dik, bind, dis, flags)
+	if not spectating then
+		return
+	end
+	if set_fly_hold(bind, true) then
+		block_engine(flags)
 	end
 end
 
@@ -864,10 +1004,13 @@ function on_game_start()
 	init_mitigation_labels()
 	wrap_adb_shit_booster()
 	on_option_change()
+	patch_mouse_look()
 
 	RegisterScriptCallback("actor_on_before_hit", actor_on_before_hit)
 	RegisterScriptCallback("actor_on_before_death", actor_on_before_death)
 	RegisterScriptCallback("on_before_key_press", on_before_key_press)
+	RegisterScriptCallback("on_before_key_release", on_before_key_release)
+	RegisterScriptCallback("on_before_key_hold", on_before_key_hold)
 	RegisterScriptCallback("on_key_press", on_key_press)
 	RegisterScriptCallback("GUI_on_show", GUI_on_show)
 	RegisterScriptCallback("on_game_load", on_game_load)

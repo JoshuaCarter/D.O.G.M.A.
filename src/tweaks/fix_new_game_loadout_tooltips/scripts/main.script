@@ -1,7 +1,7 @@
 --[[
 	Tooltips Fix - always-on tooltip fixes for ALL item types.
 
-	Four independent fixes live here:
+	Six independent fixes live here:
 
 	1. LAYOUT: item tooltips (utils_ui.UIInfoItem) often end up with
 	   overlapping / clipped sections after other mods append widgets (Parts
@@ -38,6 +38,21 @@
 	   (faction / helmet / sprint) gates on IsOutfit(obj), so section-only
 	   outfit tooltips skip it even though every field is readable from the
 	   section. We wrap build_desc_footer to inject that block when obj is nil.
+
+	5. ICON OVERLAYS: Utjan Item UI Improvements draws outfit/helmet class
+	   (novice/light/medium/heavy) and gun repair class (A/B/C/D colour chips)
+	   on cell icons, but only after its on_game_start has run - so the first
+	   New Game screen of a cold boot misses them, and they appear after you
+	   start a game and quit back. early_init_icon_overlays() force-loads and
+	   arms those modules on main_menu_on_init (nil-safe if Utjan is absent).
+
+	6. LOADOUT / INVENTORY SORT: SortingPlus replaces utils_ui sort fns at MCM
+	   load but only fills item_order on actor_on_first_update - so both New
+	   Game panels can reshuffle after a game session. We pin:
+	   - Loadout: non-weapon/outfit/helm items first; remaining gear keeps
+	     cold-boot first-load order (size descending, then alpha).
+	   - Inventory: cold-boot first-load order (size descending, then alpha)
+	     so quit-back matches the first open.
 
 	Load timing (empirically established, xray log 2026-07-31): the engine
 	loads .script modules LAZILY, on first reference of their global
@@ -530,12 +545,224 @@ local function on_actor_update()
 end
 
 local callbacks_registered = false
+local gsm_wrapped = false
+local ng_wrap_state = {}
+
+------------------------------------------------------------------------------
+-- Fix 5: Utjan icon overlays on first New Game screen
+------------------------------------------------------------------------------
+
+-- Force-load + arm Item UI Improvements so outfit/helmet class chips and gun
+-- repair-class icons paint on showcase cells before any on_game_start.
+local function early_init_icon_overlays()
+	-- Direct refs: lazy-load into the menu VM (nil if Utjan is not installed).
+	if not z_item_icon_info then
+		return
+	end
+
+	-- Hooks (Add_Counter / Add_ProgressBar wrappers) install at module load.
+	-- XML + MCM settings normally wait for z_item_icon_info.on_game_start.
+	if not z_item_icon_info.utjan_xml and CScriptXmlInit then
+		z_item_icon_info.utjan_xml = CScriptXmlInit()
+		z_item_icon_info.utjan_xml:ParseFile("ui_utjan_icon_info.xml")
+	end
+	if z_item_icon_info.load_settings then
+		z_item_icon_info.load_settings()
+	end
+
+	-- Armor/helmet class layers register via rax_icon_layers in
+	-- dynamic_eq_icon.on_game_start. Wrap once so a later real on_game_start
+	-- does not double-register the same functors (duplicate chips).
+	if dynamic_eq_icon and dynamic_eq_icon.on_game_start then
+		if not dynamic_eq_icon._dogma_ogs_wrapped then
+			dynamic_eq_icon._dogma_ogs_wrapped = true
+			local base_ogs = dynamic_eq_icon.on_game_start
+			dynamic_eq_icon.on_game_start = function()
+				if dynamic_eq_icon.ini_icons then
+					return
+				end
+				base_ogs()
+			end
+		end
+		dynamic_eq_icon.on_game_start()
+	end
+end
+
+------------------------------------------------------------------------------
+-- Fix 6: New Game Loadout sort (first-load safe, loadout panel only)
+------------------------------------------------------------------------------
+
+local GROUP_MISC = 1
+local GROUP_GEAR = 2
+
+local function loadout_group(sec)
+	if not sec then
+		return GROUP_MISC
+	end
+	if IsItem("helmet", sec) or IsItem("outfit", sec) then
+		return GROUP_GEAR
+	end
+	local kind = SYS_GetParam and SYS_GetParam(0, sec, "kind", "") or ""
+	if kind == "o_helmet" or string.sub(kind, 1, 2) == "o_" or string.sub(kind, 1, 2) == "w_" then
+		return GROUP_GEAR
+	end
+	return GROUP_MISC
+end
+
+local function loadout_size(sec)
+	local w, h = 1, 1
+	if SYS_GetParam then
+		w = SYS_GetParam(2, sec, "inv_grid_width", 1) or 1
+		h = SYS_GetParam(2, sec, "inv_grid_height", 1) or 1
+	end
+	return (w * h), w, h
+end
+
+local function sec_of(entry)
+	if type(entry) == "string" then
+		return entry
+	end
+	if entry and entry.section then
+		return entry:section()
+	end
+	return nil
+end
+
+-- Cold-boot sizekind with empty SortingPlus item_order: bigger w/h first, then alpha.
+local function sort_size_desc(t, a, b)
+	local seca = sec_of(t[a])
+	local secb = sec_of(t[b])
+	if not seca then
+		return false
+	end
+	if not secb then
+		return true
+	end
+
+	local _, wa, ha = loadout_size(seca)
+	local _, wb, hb = loadout_size(secb)
+	if wa ~= wb then
+		return wa > wb
+	end
+	if ha ~= hb then
+		return ha > hb
+	end
+	return seca < secb
+end
+
+-- Loadout: misc (non wpn/outfit/helm) first; gear keeps first-load size order.
+local function sort_loadout(t, a, b)
+	local seca = sec_of(t[a])
+	local secb = sec_of(t[b])
+	if not seca then
+		return false
+	end
+	if not secb then
+		return true
+	end
+
+	local ga = loadout_group(seca)
+	local gb = loadout_group(secb)
+	if ga ~= gb then
+		return ga < gb
+	end
+	return sort_size_desc(t, a, b)
+end
+
+-- Inventory: same cold-boot first-load order end-to-end.
+local function sort_inventory_first_load(t, a, b)
+	return sort_size_desc(t, a, b)
+end
+
+local function wrap_get_sort_method()
+	if gsm_wrapped or not utils_ui or not utils_ui.UICellContainer then
+		return gsm_wrapped
+	end
+	local base = utils_ui.UICellContainer.GetSortMethod
+	if not base then
+		return false
+	end
+	utils_ui.UICellContainer.GetSortMethod = function(self)
+		if self and self.dogma_ng_loadout_sort then
+			return self.dogma_ng_loadout_sort
+		end
+		return base(self)
+	end
+	gsm_wrapped = true
+	return true
+end
+
+local function mark_loadout_sort(self)
+	local cc = self and self.CC and self.CC["loadout"]
+	if cc then
+		cc.dogma_ng_loadout_sort = sort_loadout
+	end
+	-- Inventory: freeze cold-boot first-load order (size desc), so SortingPlus
+	-- filling item_order after a game session cannot reshuffle it.
+	local inv = self and self.CC and self.CC["inventory"]
+	if inv then
+		inv.dogma_ng_loadout_sort = sort_inventory_first_load
+	end
+end
+
+local function wrap_load_loadout(cls)
+	if ng_wrap_state.load and cls.LoadLoadout == ng_wrap_state.load then
+		return true
+	end
+	local base = cls.LoadLoadout
+	if not base then
+		return false
+	end
+	local function wrapped(self, rand)
+		mark_loadout_sort(self)
+		return base(self, rand)
+	end
+	cls.LoadLoadout = wrapped
+	ng_wrap_state.load = wrapped
+	return true
+end
+
+local function wrap_main_controls(cls)
+	if ng_wrap_state.controls and cls.Main_Controls == ng_wrap_state.controls then
+		return true
+	end
+	local base = cls.Main_Controls
+	if not base then
+		return false
+	end
+	local function wrapped(self, ...)
+		-- Wrap LoadLoadout before base so any LoadLoadout inside uses our sort.
+		wrap_get_sort_method()
+		wrap_load_loadout(cls)
+		local r = base(self, ...)
+		mark_loadout_sort(self)
+		return r
+	end
+	cls.Main_Controls = wrapped
+	ng_wrap_state.controls = wrapped
+	return true
+end
+
+-- Public: patch UINewGame so Loadout Reinit uses our comparator. Safe to call
+-- repeatedly (menu MCM load, main_menu_on_init, Main_Controls).
+function patch_new_game_ui()
+	wrap_get_sort_method()
+	local cls = ui_mm_faction_select and ui_mm_faction_select.UINewGame
+	if not cls then
+		return false
+	end
+	local ok = wrap_load_loadout(cls)
+	wrap_main_controls(cls)
+	return ok
+end
 
 -- Idempotent. Safe from main_menu_on_init (no game loaded yet).
 function early_init()
 	install_hooks()
 	early_init_item_device()
 	wrap_outfit_functors()
+	early_init_icon_overlays()
+	patch_new_game_ui()
 
 	if not callbacks_registered then
 		callbacks_registered = true
@@ -553,9 +780,10 @@ end
 	module and Weapon Tooltips (if installed), then force ish_item_stats'
 	GAMMA rebuild (Weapon Tooltips wraps override_stats_table in its
 	early_init, so its rows are re-applied on top). Also warm item_device
-	power tables and wrap ADB outfit functors for section-only tooltips.
-	All steps are idempotent / internally guarded, and they re-run safely
-	when the real on_game_start eventually fires.
+	power tables, wrap ADB outfit functors, arm Utjan icon overlays, and
+	patch New Game Loadout sorting. All steps are idempotent / internally
+	guarded, and they re-run safely when the real on_game_start eventually
+	fires.
 
 	Deliberately NOT forced early: ish_item_stats.on_game_start() itself - its
 	UIInfoItem.Update tweak needs db.actor paths the Loadout screen never

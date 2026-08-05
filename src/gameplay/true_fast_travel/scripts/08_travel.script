@@ -8,7 +8,7 @@
 local tft = _G.tft
 -- Forward declarations for this file's private (non-exported) helpers, so they can
 -- reference each other regardless of definition order below.
-local apply_final_stats, cancel_journey_emission, check_and_skip_surges, cleanup_dots, close_pda_for_travel, complete_travel_sequence, detect_ambush, enforce_transition_combat_lock, force_end_surge, get_surge_manager, is_emission_active, is_safety_active, journey_path_ratio, maybe_pause_on_danger, plan_emission_interrupt, play_ambush_alert, play_fade_teleport, seconds_until_surge, set_safety_active, should_emission_interrupt, stop_travel_logic, teleport_companions, trigger_emission_interrupt, trigger_encounter, update_debug_overlay, update_sneak_cooldown_hud
+local apply_final_stats, cancel_journey_emission, check_and_skip_surges, cleanup_dots, close_pda_for_travel, complete_travel_sequence, detect_ambush, enforce_transition_combat_lock, force_end_surge, get_surge_manager, is_emission_active, is_safety_active, journey_path_ratio, maybe_pause_on_danger, plan_emission_interrupt, play_ambush_alert, play_fade_teleport, seconds_until_surge, set_safety_active, should_emission_interrupt, stop_travel_logic, teleport_companions, trigger_emission_interrupt, trigger_encounter, update_debug_overlay
 local clear_ambush_pause_prompt, show_ambush_pause_prompt, try_resume_ambush_pause
 local PP_FADE_ID = 22301
 local FADE_TELEPORT_DELAY_S = 0.5
@@ -482,19 +482,6 @@ local function advance_travel_time_seconds(sec, opts)
         total_sec, days, hrs, mins, tostring(opts.allow_surge == true))
 end
 
--- The PDA map has to stay open for the whole journey (closing it is how you cancel now,
--- instead of Escape/right-click) - so we need a reliable read of whether it's currently shown.
-local function is_pda_map_shown()
-    local shown = false
-    pcall(function()
-        if ActorMenu and ActorMenu.get_pda_menu then
-            local pda = ActorMenu.get_pda_menu()
-            if pda and pda:IsShown() then shown = true end
-        end
-    end)
-    return shown
-end
-
 close_pda_for_travel = function()
     pcall(function()
         if ActorMenu and ActorMenu.get_pda_menu then
@@ -514,12 +501,6 @@ trigger_emission_interrupt = function()
     ratio = math.max(0, math.min(ratio, 1.0))
     tft.emission_interrupt_pending = true
     tft_log("!!! EMISSION INTERRUPT at %.1f%% of route", ratio * 100)
-
-    -- Cut short by an emission partway through a sneak journey - same proportional cooldown
-    -- rule as an ambush. Grab tft.travel_mode now, before tft_clear() resets it further down.
-    if tft.travel_mode == "sneaky" then
-        tft_start_sneak_cooldown(ratio)
-    end
 
     close_pda_for_travel()
     cleanup_dots()
@@ -624,42 +605,6 @@ end
 is_safety_active = function()
     if tft.is_traveling then return true end
     return tft.safety_until and tft.safety_until > time_global()
-end
--- Sneak-travel cooldown countdown, shown while the PDA map is open. Attached as a real child of
--- the live PDA dialog (not a flat HUD overlay) so it renders as part of the PDA's own UI, moving
--- correctly with the 3D holographic PDA (g_3d_pda) the same way the vanilla clock/battery readouts
--- do. Independent of tft.is_traveling - the cooldown can tick down while doing anything else.
-local DFT_SNEAK_CD_XML = "ui_dogma_true_fast_travel_sneak_cd.xml"
-local DFT_SNEAK_CD_ID = "tft_sneak_cd_label"
-update_sneak_cooldown_hud = function()
-    local remaining = (tft_sneak_cooldown_remaining_secs and tft_sneak_cooldown_remaining_secs()) or 0
-    local show = remaining > 0 and is_pda_map_shown()
-
-    if not show then
-        if tft._sneak_cd_label then
-            pcall(function() tft._sneak_cd_label:Show(false) end)
-        end
-        return
-    end
-
-    local ok = pcall(function()
-        if not tft._sneak_cd_label then
-            local pda = ActorMenu.get_pda_menu()
-            if not pda then return end
-            local xml = CScriptXmlInit()
-            xml:ParseFile(DFT_SNEAK_CD_XML)
-            tft._sneak_cd_label = xml:InitTextWnd(DFT_SNEAK_CD_ID, pda)
-        end
-        local text = string.format(tft_str("tft_hud_sneak_cooldown"), tft_format_duration(remaining / 60))
-        tft._sneak_cd_label:SetTextColor(GetARGB(255, 255, 224, 64))
-        tft._sneak_cd_label:SetText(text)
-        tft._sneak_cd_label:Show(true)
-    end)
-    if not ok then
-        -- Construction/attach failed (e.g. engine rejected the foreign parent) - drop the
-        -- reference and quietly stay hidden rather than retry-spamming every tick.
-        tft._sneak_cd_label = nil
-    end
 end
 
 -- ============================================================
@@ -982,9 +927,6 @@ complete_travel_sequence = function(opts)
                         enemy_dist_m = tft_nearest_hostile_dist_m(final_pos, arrival_targets) or tft.arrival_short_m or 0,
                     }
                     tft_msg(tft_journey_result_message(ambush_opts), tft_journey_result_style(ambush_opts))
-                    if tft.travel_mode == "sneaky" then
-                        tft_award_sneaking_xp((_G.tft_travel and _G.tft_travel.sneak_xp_ambush) or 10)
-                    end
                 else
                     local arrive_opts = {
                         outcome = "arrived",
@@ -995,9 +937,9 @@ complete_travel_sequence = function(opts)
                     tft_msg(tft_journey_result_message(arrive_opts), tft_journey_result_style(arrive_opts))
                 end
 
-                tft_log("Arrived %.0fm | %s | avoided %d encounter(s) | sneak %d%% (Lv%d)",
+                tft_log("Arrived %.0fm | %s | avoided %d encounter(s) | mode=%s dodge=%d%%",
                     tft.travel_dist, tft_format_duration(tft.expected_duration or 1), tft.encounters_avoided or 0,
-                    tft_calc_sneak_chance(tft.travel_mode == "sneaky"), tft_get_sneaking_level())
+                    tostring(tft.travel_mode or "normal"), tft_calc_sneak_chance(tft.travel_mode == "sneaky"))
 
                 tft_clear()
             end
@@ -1137,13 +1079,6 @@ trigger_encounter = function()
     stop_travel_logic()
     local ratio = math.min(tft.current_dist / tft.travel_dist, 1.0)
 
-    -- Ambushed partway through a sneak journey - only charge cooldown for the fraction of the
-    -- route actually covered (20% progress = 20% of the cooldown). Grab tft.travel_mode now,
-    -- before tft_clear() resets it back to "normal" further down.
-    if tft.travel_mode == "sneaky" then
-        tft_start_sneak_cooldown(ratio)
-    end
-
     -- Skip surges, wipe stats, then jump clock (set_safety_active also skips surges).
     set_safety_active(60.0)
     -- Immediately zero dangerous stats before time jump
@@ -1225,9 +1160,6 @@ trigger_encounter = function()
             enemy_dist_m = enemy_dist_m or 0,
         }
         tft_msg(tft_journey_result_message(ambush_opts), tft_journey_result_style(ambush_opts))
-        if tft.travel_mode == "sneaky" then
-            tft_award_sneaking_xp((_G.tft_travel and _G.tft_travel.sneak_xp_ambush) or 10)
-        end
 
         cleanup_dots()
         stop_travel_logic()

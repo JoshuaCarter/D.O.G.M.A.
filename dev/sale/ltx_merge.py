@@ -227,6 +227,11 @@ def _apply_file(
     return n
 
 
+def _rel_key(root: Path, path: Path) -> str:
+    """VFS-style relative path key (case-insensitive, posix separators)."""
+    return path.relative_to(root).as_posix().lower()
+
+
 def merge_configs(
     anomaly: Path | None,
     gamma: Path | None,
@@ -239,19 +244,45 @@ def merge_configs(
 
     Header-only parent lines (e.g. Enhanced Recoil ``[gun]:wpn_aps``) update the
     recorded parent but do not copy the alias parent's display fields.
+
+    Same relative path under ``configs/`` follows MO2/VFS rules: only the
+    highest-priority file for that path is applied. A later mod that replaces
+    ``items/weapons/w_aks74u.ltx`` without ``wpn_ak74u_old`` drops that section
+    entirely — matching the game — instead of keeping ghosts from lower mods.
+    Unique-path DLTX / ``mod_system_*.ltx`` files still all apply.
     """
     roots = iter_config_roots(anomaly, gamma)
     sections: dict[str, dict[str, str]] = {}
     icon_bundles: dict[str, dict[str, str]] = {}
     section_parents: dict[str, str] = {}
     owned: dict[str, set[str]] = {}
-    files: list[Path] = []
+
+    # Later roots win (modlist top / overwrite). Key = path relative to configs/.
+    winners: dict[str, Path] = {}
+    root_files: list[tuple[Path, list[Path]]] = []
     for root in roots:
         found = sorted(root.rglob("*.ltx"))
         log.debug("root %s -> %d ltx", root, len(found))
-        files.extend(found)
+        root_files.append((root, found))
+        for path in found:
+            winners[_rel_key(root, path)] = path
+
+    files: list[Path] = []
+    superseded = 0
+    for root, found in root_files:
+        for path in found:
+            if winners[_rel_key(root, path)] != path:
+                superseded += 1
+                continue
+            files.append(path)
+
     total = len(files)
-    log.info("merging %d ltx files from %d roots", total, len(roots))
+    log.info(
+        "merging %d ltx files from %d roots (vfs-skipped supersedes=%d)",
+        total,
+        len(roots),
+        superseded,
+    )
     errors = 0
     for i, path in enumerate(files):
         try:

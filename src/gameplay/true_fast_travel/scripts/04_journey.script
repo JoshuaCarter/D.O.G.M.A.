@@ -1,4 +1,4 @@
--- True Fast Travel: Sneaking skill, encumbrance, ambush math, journey specs, guide travel.
+-- True Fast Travel: encumbrance, ambush math, journey specs.
 -- Loaded automatically before main.script (zzzz_dogma_gameplay_true_fast_travel_main.script)
 
 -- Shared dft globals (Anomaly isolates zzz_* script environments)
@@ -7,7 +7,7 @@ local tft_config = _G.tft_config
 
 -- Forward declarations for this file's private (non-exported) helpers, so they can
 -- reference each other regardless of definition order below.
-local ambush_close_radius_m, ambush_radius_m, ambush_time_reduction_m, apply_sneaking_stat_delta, dev_adjust_sneaking, format_distance, get_actor_max_carry_weight, get_encounter_offset, get_encumbrance_time_mult, get_journey_specs, get_sneaking_travel_speed_mult, get_weather_name, is_night_hour, is_raining, is_twilight_hour, mode_pda_speed_ratio, sneak_cooldown_minutes, sneak_minutes_per_km, time_band
+local ambush_close_radius_m, ambush_radius_m, ambush_time_reduction_m, format_distance, get_actor_max_carry_weight, get_encounter_offset, get_encumbrance_time_mult, get_journey_specs, get_sneaking_travel_speed_mult, get_weather_name, is_night_hour, is_raining, is_twilight_hour, mode_pda_speed_ratio, sneak_minutes_per_km, time_band
 -- Sneaking skill retired for True Walk Travel. Stubs keep callers safe.
 local function get_sneaking_level()
     return 0
@@ -15,17 +15,6 @@ end
 
 get_sneaking_travel_speed_mult = function()
     return 1.0
-end
-
-sneak_cooldown_minutes = function()
-    return 0
-end
-
-local function sneak_cooldown_remaining_secs()
-    return 0
-end
-
-local function start_sneak_cooldown(_ratio)
 end
 
 get_encounter_offset = function()
@@ -357,38 +346,10 @@ local function journey_specs_for_object(id, is_lc)
     return get_journey_specs(dist)
 end
 
-local function ensure_sneaking_skill_options()
-end
-
-local function award_sneaking_xp(_amount)
-end
-
-apply_sneaking_stat_delta = function(_delta_levels)
-    return false
-end
-
-dev_adjust_sneaking = function(_delta)
-    local ok, err = xpcall(function()
-        tft_log("dev sneaking: skill retired")
-    end, debug.traceback)
-    if not ok then
-        tft_log_error("dev sneaking failed: %s", tostring(err))
-    end
-end
-
 local function handle_dev_keys(key)
     if not key then return end
     if _G.tft_nav_mesh_handle_key then
         _G.tft_nav_mesh_handle_key(key)
-    end
-    local cfg = _G.tft_config
-    if not cfg then return end
-    if cfg.sneaking_level_up and key == cfg.sneaking_level_up then
-        tft_log("dev key: sneaking level up (key=%s)", tostring(key))
-        dev_adjust_sneaking(1)
-    elseif cfg.sneaking_level_down and key == cfg.sneaking_level_down then
-        tft_log("dev key: sneaking level down (key=%s)", tostring(key))
-        dev_adjust_sneaking(-1)
     end
 end
 
@@ -398,125 +359,6 @@ local function format_travel_menu(label_id, dist_str, dur_str, _sneak_pct)
     local ok, text = pcall(string.format, fmt, label, dist_str or "?m", dur_str or "?")
     if ok and text then return text end
     return string.format("%s (%s, %s)", label, dist_str or "?m", dur_str or "?")
-end
-
--- Average of tft_get_level_danger (01_core) for the origin/destination - backed by our own
--- guide_danger.ltx, no runtime dependency on Fair Fast Travel or anything else.
-local function guide_route_danger(from_lid, to_lid)
-    local from_d = tft_get_level_danger(tft_resolve_level_name(from_lid))
-    local to_d   = tft_get_level_danger(tft_resolve_level_name(to_lid))
-    return (from_d + to_d) / 2
-end
-
--- tft_guide_cost_per_km is the rate at danger 1.0; the per-route danger average scales it up/down.
-local function calc_guide_cost(dist, from_lid, to_lid)
-    local danger = guide_route_danger(from_lid, to_lid)
-    return math.floor((dist / 1000) * tft_guide_cost_per_km * danger)
-end
-
--- Guide travel is no longer instant: 1 game-hour per straight-line PDA km, same distance the
--- fee is based on. Floored at a minute so a very short hop still ticks the clock forward.
-local function calc_guide_duration_secs(dist)
-    return math.max(60, (dist / 1000) * 3600)
-end
-
-local function guide_distance(dest_pos, dest_obj, id)
-    if dest_obj and not dest_pos then
-        dest_pos = tft_object_position(dest_obj, id)
-    end
-    if not (dest_pos and db.actor) then return 0 end
-
-    local actor_pos = db.actor:position()
-    local actor_lid = tft_actor_level_id()
-    local dest_lid = tft_object_level_id(dest_obj)
-
-    if not dest_lid and id then
-        local target = tft_resolve_travel_target(id, nil, nil)
-        if target then
-            dest_lid = tft_object_level_id(dest_obj, target.gvid)
-        end
-    end
-
-    return tft_pda_distance(actor_pos, actor_lid, dest_pos, dest_lid)
-end
-
-local function do_guide_travel(id, ln)
-    local tostr = tostring
-    local emission_blocks = _G.tft_emission_blocks_travel_start or tft_emission_blocks_travel_start
-    if emission_blocks and emission_blocks() then
-        tft_msg(tft_str("tft_msg_emission_active"), "warning")
-        return false
-    end
-    local target, err = tft_resolve_travel_target(id, ln, tft.last_map_click_pos)
-    if not (target and target.pos and db.actor) then
-        tft_log("guide travel: unresolved id=%s err=%s", tostr(id), tostr(err))
-        return false
-    end
-    local obj = target.se_obj
-    if not tft_is_base(id, obj) and not tft_is_player_stash(id, obj) then
-        tft_log("guide travel: id=%s is not a guide destination", tostr(id))
-        return false
-    end
-    local pos = target.pos
-    local lvid = target.lvid
-    local gvid = target.gvid
-
-    -- Guide travel: no journey/ambush/survival drain, but the clock still moves - 1hr per
-    -- straight-line PDA km, same distance the fee is based on.
-    local mapchange = tft_is_cross_zone_destination(obj, ln)
-    local dist, from_lid, to_lid = guide_distance(pos, obj, id)
-    local cost = calc_guide_cost(dist, from_lid, to_lid)
-    local duration_secs = calc_guide_duration_secs(dist)
-    if cost > 0 and db.actor:money() < cost then
-        tft_msg(string.format(tft_str("tft_msg_cannot_afford"), tostr(cost)), "warning")
-        return false
-    end
-
-    if cost > 0 then
-        db.actor:give_money(-cost)
-        tft_msg(string.format(tft_str("tft_msg_guide_paid"), cost))
-    end
-
-    local arrival
-    if mapchange then
-        arrival = pos
-    else
-        arrival = tft_get_safe_pos(pos) or pos
-    end
-
-    pcall(function()
-        if ActorMenu and ActorMenu.get_pda_menu then
-            local pda = ActorMenu.get_pda_menu()
-            if pda and pda:IsShown() then pda:HideDialog() end
-        end
-        if db.actor and db.actor:active_slot() == 8 then
-            db.actor:activate_slot(0)
-        end
-    end)
-
-    tft_set_fft_trip_in_progress(true)
-    tft_set_safety_active(60.0)
-    tft_advance_travel_time_seconds(duration_secs)
-
-    if mapchange then
-        ChangeLevel(arrival, lvid, gvid, VEC_Z, true)
-    else
-        db.actor:set_actor_position(arrival)
-        tft_teleport_companions(arrival, lvid, gvid)
-    end
-
-    CreateTimeEvent("tft", "guide_travel_safety", 1.0, function()
-        tft_set_safety_active(30.0)
-        return true
-    end)
-    CreateTimeEvent("tft", "guide_travel_fft_flag", 1.0, function()
-        tft_set_fft_trip_in_progress(false)
-        return true
-    end)
-
-    tft_log("Guide travel complete | dist %.0f | cost %d | duration %ds | mapchange %s",
-        dist, cost, math.floor(duration_secs), tostr(mapchange))
-    return true
 end
 
 -- tft_publish_to_global
@@ -538,14 +380,6 @@ do
     _G.tft_ambush_close_radius_m = ambush_close_radius_m
     _G.tft_calc_sneak_chance = calc_sneak_chance
     _G.tft_journey_specs_for_object = journey_specs_for_object
-    _G.tft_ensure_sneaking_skill_options = ensure_sneaking_skill_options
-    _G.tft_award_sneaking_xp = award_sneaking_xp
     _G.tft_handle_dev_keys = handle_dev_keys
     _G.tft_format_travel_menu = format_travel_menu
-    _G.tft_calc_guide_cost = calc_guide_cost
-    _G.tft_calc_guide_duration_secs = calc_guide_duration_secs
-    _G.tft_guide_distance = guide_distance
-    _G.tft_do_guide_travel = do_guide_travel
-    _G.tft_sneak_cooldown_remaining_secs = sneak_cooldown_remaining_secs
-    _G.tft_start_sneak_cooldown = start_sneak_cooldown
 end

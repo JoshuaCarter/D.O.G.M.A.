@@ -63,9 +63,11 @@ def classify(
     *,
     ignore: set[str] | None = None,
     string_table: dict[str, str] | None = None,
+    section_parents: dict[str, str] | None = None,
 ) -> dict[str, list[str]]:
     """Classify gear using debug-spawner style filters (drops attachment/kit/_cw)."""
     ignore = ignore or set()
+    section_parents = section_parents or {}
     weapons: list[str] = []
     outfits: list[str] = []
     helmets: list[str] = []
@@ -90,9 +92,19 @@ def classify(
         if has_installed_upgrades(d):
             skipped_upgraded += 1
             continue
-        if not is_spawnable_gear(sec, d, ignore=ignore, require_parent_self=True):
+        if not is_spawnable_gear(
+            sec,
+            d,
+            ignore=ignore,
+            require_parent_self=True,
+            ltx_parent=section_parents.get(sec),
+            sections=sections,
+        ):
             parent = (d.get("parent_section") or "").strip()
-            if parent and parent != sec:
+            ltx_p = (section_parents.get(sec) or "").strip()
+            if (parent and parent != sec) or (
+                not parent and ltx_p and ltx_p != sec
+            ):
                 skipped_parent += 1
             else:
                 skipped_stub += 1
@@ -172,7 +184,12 @@ def regenerate(
     )
     ignore = load_spawner_blacklist(anomaly)
     log.info("classify %d sections (blacklist=%d)", len(sections), len(ignore))
-    pools = classify(sections, ignore=ignore, string_table=string_table)
+    pools = classify(
+        sections,
+        ignore=ignore,
+        string_table=string_table,
+        section_parents=section_parents,
+    )
     log.info(
         "classified weapons=%d outfits=%d helmets=%d",
         len(pools["weapons"]),

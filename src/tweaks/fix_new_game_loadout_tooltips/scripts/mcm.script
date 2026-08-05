@@ -1,4 +1,11 @@
 function on_mcm_load(options)
+	-- UINewGame may only exist after faction_select loads; re-assert hooks.
+	if zzzz_dogma_tweaks_fix_new_game_loadout_tooltips_main
+		and zzzz_dogma_tweaks_fix_new_game_loadout_tooltips_main.patch_new_game_ui
+	then
+		zzzz_dogma_tweaks_fix_new_game_loadout_tooltips_main.patch_new_game_ui()
+	end
+
 	dogma_mcm.append(options, "tweaks", "ui_mcm_menu_dogma_tweaks", {
 		{
 			id = "fix_new_game_loadout_tooltips_description",
@@ -19,4 +26,7 @@ end
 	main_menu:__init(), strictly before main_menu_on_init is sent, so this
 	bare reference is enough to get main.script registered in time.
 ]]
-local _ = zzzz_dogma_tweaks_fix_new_game_loadout_tooltips_main
+local main = zzzz_dogma_tweaks_fix_new_game_loadout_tooltips_main
+if main and main.patch_new_game_ui then
+	main.patch_new_game_ui()
+end

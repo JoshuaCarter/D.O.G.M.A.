@@ -1,10 +1,10 @@
 --[[
 	Death Spectator
 
-	Tracks recent hits while alive. After death fade-to-black: hit summary
-	(bottom-left) + "Press TAB to spectate". Tab starts demo_record free-fly
-	2m above the corpse looking at the killer. Space continue stays until
-	spectating (demo_record eats Space); Esc exits.
+	Tracks recent hits while alive. On death: hit summary (bottom-left) +
+	"Press TAB to spectate". Tab starts demo_record free-fly 2m above the
+	corpse looking at the killer. Space continue stays until spectating
+	(demo_record eats Space); Esc exits.
 ]]
 
 local CONFIG = _G.dogma_gameplay_death_spectator_conf
@@ -12,7 +12,6 @@ local DOGMA
 
 local HIT_WINDOW_MS = 30000
 local HIT_CAP = 10
-local ARM_DELAY_S = 2.5
 local CAM_HEIGHT = 2.0
 local UI_W = 1024
 local UI_H = 768
@@ -485,16 +484,6 @@ local function arm_death_ui()
 	log("death UI armed")
 end
 
-local function schedule_arm()
-	RemoveTimeEvent(CONFIG.MOD_ID, "arm_ui")
-	CreateTimeEvent(CONFIG.MOD_ID, "arm_ui", ARM_DELAY_S, function()
-		if death_pending then
-			arm_death_ui()
-		end
-		return true
-	end)
-end
-
 local function dir_to_hpb(dir)
 	local len = math.sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z)
 	if len < 0.001 then
@@ -534,7 +523,16 @@ local function start_spectator()
 	if not awaiting_spectate or spectating then
 		return
 	end
+	if not corpse_pos and db.actor then
+		local ok, pos = pcall(function()
+			return db.actor:position()
+		end)
+		if ok and pos then
+			corpse_pos = vector():set(pos.x, pos.y, pos.z)
+		end
+	end
 	if not corpse_pos then
+		log("spectate aborted: no corpse_pos")
 		return
 	end
 
@@ -597,7 +595,6 @@ local function reset_state()
 	corpse_pos = nil
 	killer_id = nil
 	frozen_lines = nil
-	RemoveTimeEvent(CONFIG.MOD_ID, "arm_ui")
 	RemoveTimeEvent(CONFIG.MOD_ID, "clear_custom_cam")
 	clear_death_ui()
 	if exec_console_cmd then
@@ -681,7 +678,7 @@ local function actor_on_before_death(whoID, flags)
 	death_pending = true
 	awaiting_spectate = false
 	spectating = false
-	schedule_arm()
+	arm_death_ui()
 	log(string.format(
 		"before_death killer=%s hits=%d",
 		tostring(killer_id),
@@ -689,16 +686,41 @@ local function actor_on_before_death(whoID, flags)
 	))
 end
 
-local function on_key_press(dik)
-	if not awaiting_spectate or spectating then
-		return
-	end
+local function tab_dik()
+	-- Anomaly exposes scan codes on DIK_keys, not as bare globals.
+	return (DIK_keys and DIK_keys.DIK_TAB) or 15
+end
+
+local function try_spectate_from_key(dik)
 	if not CONFIG.loaded.enabled then
-		return
+		return false
 	end
-	if dik == DIK_TAB then
-		start_spectator()
+	if spectating then
+		return false
 	end
+	if dik ~= tab_dik() then
+		return false
+	end
+	if death_pending and not awaiting_spectate then
+		arm_death_ui()
+	end
+	if not awaiting_spectate then
+		return false
+	end
+	start_spectator()
+	return true
+end
+
+-- Prefer on_before_key_press: it still fires when KEYS_UNLOCK is false
+-- (scripted UIs) and during the game_over tutorial.
+local function on_before_key_press(dik, bind, dis, flags)
+	if try_spectate_from_key(dik) and flags then
+		flags.ret_value = false
+	end
+end
+
+local function on_key_press(dik)
+	try_spectate_from_key(dik)
 end
 
 local function GUI_on_show(gui, str2)
@@ -729,6 +751,7 @@ function on_game_start()
 
 	RegisterScriptCallback("actor_on_before_hit", actor_on_before_hit)
 	RegisterScriptCallback("actor_on_before_death", actor_on_before_death)
+	RegisterScriptCallback("on_before_key_press", on_before_key_press)
 	RegisterScriptCallback("on_key_press", on_key_press)
 	RegisterScriptCallback("GUI_on_show", GUI_on_show)
 	RegisterScriptCallback("on_game_load", on_game_load)

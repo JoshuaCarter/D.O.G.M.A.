@@ -138,6 +138,18 @@ local scroll_want_in = false
 local scroll_last_ms = 0
 local last_ctx = nil
 
+-- Crash breadcrumbs: last mark() line in xray log is the phase we reached.
+-- Native AVs after Lua returns still leave the prior mark as the smoking gun.
+local crash_phase = "boot"
+local ads_enter_ms = 0
+local ads_post_frames = 0
+local ADS_POST_LOG_FRAMES = 8
+-- Hot window: verbose marks around ADS enter / FOV writes (avoids every-frame spam).
+local diag_hot = false
+local diag_hot_frames = 0
+-- Forward decl: assigned after weapon helpers. Must be above every caller.
+local zoom_diag
+
 local on_mouse_wheel
 
 local function clamp(n, lo, hi)
@@ -161,6 +173,58 @@ end
 
 local function logf(fmt, ...)
 	log(string.format(fmt, ...))
+end
+
+-- Always update crash_phase; only print during the ADS hot window or force=true
+-- so a native crash leaves a precise "last alive" line without drowning the log.
+local function mark(phase, detail, force)
+	crash_phase = phase
+	if not force and not diag_hot then
+		return
+	end
+	local tick = (time_global and time_global()) or 0
+	if detail and detail ~= "" then
+		logf("phase=%s tick=%s %s", phase, tostring(tick), detail)
+	else
+		logf("phase=%s tick=%s", phase, tostring(tick))
+	end
+end
+
+local function diag_hot_begin(reason)
+	diag_hot = true
+	diag_hot_frames = 0
+	ads_post_frames = 0
+	mark("diag_hot_begin", tostring(reason or ""), true)
+end
+
+-- Returns true while the ADS enter hot window is active (including this frame).
+local function diag_hot_on_update()
+	if not diag_hot then
+		return false
+	end
+	diag_hot_frames = diag_hot_frames + 1
+	ads_post_frames = diag_hot_frames
+	mark(
+		"update_ads_frame",
+		string.format(
+			"frame=%d since_enter=%sms %s",
+			diag_hot_frames,
+			tostring(((time_global and time_global()) or 0) - ads_enter_ms),
+			zoom_diag("upd")
+		),
+		true
+	)
+	return true
+end
+
+local function diag_hot_end_if_due()
+	if not diag_hot then
+		return
+	end
+	if diag_hot_frames >= ADS_POST_LOG_FRAMES then
+		mark("diag_hot_end", string.format("frames=%d", diag_hot_frames), true)
+		diag_hot = false
+	end
 end
 
 local function wpn_label()
@@ -416,6 +480,112 @@ local function attached_scope_sec()
 	return nil
 end
 
+-- Safe engine/weapon snapshot for ADS crash diagnosis (all pcall'd).
+-- Must sit below active_item_id / scope helpers so those names bind as locals.
+zoom_diag = function(tag)
+	local parts = { tag or "diag" }
+	local function add(fmt, ...)
+		parts[#parts + 1] = string.format(fmt, ...)
+	end
+
+	add("mode=%s free=%s ads=%s", mode_label(), tostring(free_on), tostring(ads_on))
+	add(
+		"fov hip=%.2f live=%s tgt=%s write=%s wrote=%s",
+		hip_fov or -1,
+		live_fov and string.format("%.2f", live_fov) or "nil",
+		tgt_fov and string.format("%.2f", tgt_fov) or "nil",
+		tostring(world_write),
+		tostring(we_wrote_fov)
+	)
+	add(
+		"hud hip=%.3f live=%s tgt=%s wrote=%s",
+		hip_hud or -1,
+		live_hud and string.format("%.3f", live_hud) or "nil",
+		tgt_hud and string.format("%.3f", tgt_hud) or "nil",
+		tostring(we_wrote_hud)
+	)
+
+	local ok_c, con_fov = pcall(function()
+		return get_console_cmd(2, "fov")
+	end)
+	local ok_h, con_hud = pcall(function()
+		return get_console_cmd(2, "hud_fov")
+	end)
+	add(
+		"console fov=%s hud=%s",
+		(ok_c and con_fov and string.format("%.2f", con_fov)) or "?",
+		(ok_h and con_hud and string.format("%.3f", con_hud)) or "?"
+	)
+
+	local slot = "?"
+	if db and db.actor then
+		local ok_s, s = pcall(function()
+			return db.actor:active_slot()
+		end)
+		if ok_s then
+			slot = tostring(s)
+		end
+	end
+	add("slot=%s wpn=%s id=%s", slot, wpn_label(), tostring(active_item_id()))
+
+	local gun_bits = "no_gun"
+	if wpn then
+		local ok_g, bits = pcall(function()
+			local gun = wpn.cast_Weapon and wpn:cast_Weapon()
+			if not gun then
+				return "not_weapon"
+			end
+			local zoomed = gun.IsZoomed and gun:IsZoomed()
+			local ztype = gun.GetZoomType and gun:GetZoomType()
+			local scoped = gun.IsScopeAttached and gun:IsScopeAttached()
+			local state = wpn.get_state and wpn:get_state()
+			return string.format(
+				"zoomed=%s ztype=%s scope_eng=%s state=%s",
+				tostring(zoomed),
+				tostring(ztype),
+				tostring(scoped),
+				tostring(state)
+			)
+		end)
+		gun_bits = (ok_g and bits) or ("gun_err:" .. tostring(bits))
+	end
+	add("%s", gun_bits)
+
+	local ok_opt, optical = pcall(is_optical_ads)
+	local ok_att, attached = pcall(scope_attached)
+	local ok_cls, oclass = pcall(optic_class)
+	local ok_scp, scp = pcall(attached_scope_sec)
+	add(
+		"optical=%s attached=%s class=%s scope_sec=%s 3dss=%s",
+		ok_opt and tostring(optical) or "err",
+		ok_att and tostring(attached) or "err",
+		ok_cls and tostring(oclass) or "err",
+		(ok_scp and scp) and tostring(scp) or "nil",
+		tostring(z_3d_scopes ~= nil)
+	)
+
+	local menus = {}
+	for name in pairs(menus_open) do
+		menus[#menus + 1] = name
+	end
+	table.sort(menus)
+	local ok_pda, pda = pcall(pda_blocking)
+	local ok_low, lowered = pcall(weapon_is_lowered)
+	add(
+		"menus=%s pda=%s lowered=%s phase=%s",
+		(#menus > 0) and table.concat(menus, ",") or "none",
+		ok_pda and tostring(pda) or "err",
+		ok_low and tostring(lowered) or "err",
+		crash_phase
+	)
+
+	if actor_menu and actor_menu.last_mode ~= nil then
+		add("actor_menu.last_mode=%s", tostring(actor_menu.last_mode))
+	end
+
+	return table.concat(parts, " | ")
+end
+
 local function optic_key()
 	if not scope_attached() then
 		return "irons"
@@ -642,16 +812,20 @@ local function ensure_live_fov()
 end
 
 local function write_world_fov(fov)
+	mark("write_world_fov", string.format("fov=%.3f sens=%.4f", fov, fov * sens_per_fov))
 	exec_console_cmd("fov " .. fov)
 	exec_console_cmd("mouse_sens " .. fov * sens_per_fov)
 	live_fov = fov
 	we_wrote_fov = true
+	mark("write_world_fov_done", string.format("fov=%.3f", fov))
 end
 
 local function write_hud_fov(hud)
+	mark("write_hud_fov", string.format("hud=%.4f", hud))
 	exec_console_cmd("hud_fov " .. hud)
 	live_hud = hud
 	we_wrote_hud = math.abs(hud - hip_hud) > 0.0005
+	mark("write_hud_fov_done", string.format("hud=%.4f wrote=%s", hud, tostring(we_wrote_hud)))
 end
 
 -- Peripheral edge DOF via SSFX uniforms. Snapshot prior values; restore only if still ours.
@@ -752,6 +926,11 @@ end
 
 -- Set FOV/HUD targets from current mode. snap=true writes immediately (disable/death).
 local function apply_fov(snap)
+	if diag_hot then
+		mark("apply_fov", string.format("snap=%s %s", tostring(not not snap), zoom_diag("pre")))
+	else
+		mark("apply_fov", string.format("snap=%s", tostring(not not snap)))
+	end
 	ensure_live_fov()
 	publish_fov_targets()
 	local fov = compute_fov()
@@ -774,7 +953,13 @@ local function apply_fov(snap)
 		end
 		last_smooth_ms = time_global() or 0
 	end
+	mark("apply_fov_dof", string.format("tgt_fov=%s tgt_hud=%.4f", tgt_fov and string.format("%.2f", tgt_fov) or "nil", tgt_hud or -1))
 	apply_zoom_dof()
+	if diag_hot then
+		mark("apply_fov_done", zoom_diag("post"))
+	else
+		mark("apply_fov_done", nil)
+	end
 end
 
 local function poll_fov_smooth()
@@ -796,6 +981,7 @@ local function poll_fov_smooth()
 	end
 	last_smooth_ms = now
 	local k = 1 - math.exp(-FOV_SMOOTH_RATE * dt)
+	local wrote = false
 
 	if world_write and tgt_fov ~= nil and live_fov ~= nil then
 		local effective = clamp_fov_target(tgt_fov) or tgt_fov
@@ -805,6 +991,7 @@ local function poll_fov_smooth()
 		end
 		if mabs(next_fov - live_fov) >= 0.001 then
 			write_world_fov(next_fov)
+			wrote = true
 		elseif next_fov == effective then
 			live_fov = next_fov
 		end
@@ -821,10 +1008,26 @@ local function poll_fov_smooth()
 		end
 		if mabs(next_hud - live_hud) >= 0.00005 then
 			write_hud_fov(next_hud)
+			wrote = true
 		else
 			live_hud = next_hud
 			we_wrote_hud = mabs(live_hud - hip_hud) > 0.0005
 		end
+	end
+
+	-- While ADS is settling, log smooth ticks even if we skipped a write.
+	if ads_on and ads_post_frames > 0 and ads_post_frames <= ADS_POST_LOG_FRAMES and not wrote then
+		mark(
+			"smooth_idle",
+			string.format(
+				"frame=%d live_fov=%s tgt_fov=%s live_hud=%s tgt_hud=%s",
+				ads_post_frames,
+				live_fov and string.format("%.2f", live_fov) or "nil",
+				tgt_fov and string.format("%.2f", tgt_fov) or "nil",
+				live_hud and string.format("%.3f", live_hud) or "nil",
+				tgt_hud and string.format("%.3f", tgt_hud) or "nil"
+			)
+		)
 	end
 end
 
@@ -991,11 +1194,16 @@ local function set_ads_zoom(want_ads, source)
 			logf("ads skipped: source=%s ads_zoom disabled wpn=%s", source, wpn_label())
 			return false
 		end
+		diag_hot_begin("ads_enter:" .. tostring(source))
+		mark("ads_enter_pre", zoom_diag("pre"), true)
 		-- Drop free state without applying FOV - ADS apply below owns the transition.
 		clear_free_zoom("ads", true)
 		ads_on = true
+		ads_enter_ms = (time_global and time_global()) or 0
+		ads_post_frames = 0
 		-- Optical: ease world FOV to hip, then stop writing (scope owns it).
 		if is_optical_ads() then
+			mark("ads_enter_optical", nil, true)
 			apply_fov()
 			local hud = resolve_ads()
 			logf(
@@ -1005,13 +1213,17 @@ local function set_ads_zoom(want_ads, source)
 				hud,
 				wpn_label()
 			)
+			mark("ads_enter_done_optical", zoom_diag("post"), true)
 			return true
 		end
+		mark("ads_enter_apply_fov", nil, true)
 		apply_fov()
 	else
 		if not ads_on then
 			return false
 		end
+		diag_hot_begin("ads_exit:" .. tostring(source))
+		mark("ads_exit_pre", zoom_diag("pre"), true)
 		ads_on = false
 		apply_fov()
 	end
@@ -1028,6 +1240,7 @@ local function set_ads_zoom(want_ads, source)
 		tostring(free_on),
 		wpn_label()
 	)
+	mark(want_ads and "ads_enter_done" or "ads_exit_done", zoom_diag("post"), true)
 	return true
 end
 
@@ -1287,6 +1500,8 @@ local function actor_on_update()
 		return
 	end
 
+	local hot = diag_hot_on_update()
+
 	refresh_wpn()
 	local id = active_item_id()
 	if id ~= last_item_id then
@@ -1303,9 +1518,19 @@ local function actor_on_update()
 	if CONFIG.loaded.enabled then
 		poll_hold_zoom()
 	end
+	if hot then
+		mark("update_before_smooth", nil)
+	end
 	poll_fov_smooth()
 	-- Re-assert zoom DOF each tick (SSS aim_in/out also writes ssfx_wpn_dof_*).
+	if hot then
+		mark("update_before_dof", nil)
+	end
 	apply_zoom_dof()
+	if hot then
+		mark("update_frame_done", nil)
+	end
+	diag_hot_end_if_due()
 end
 
 -- zoom_key_mode: 0=toggle, 2=hold (in on down, out on up).
@@ -1504,23 +1729,29 @@ local function actor_on_weapon_zoom_in()
 		return
 	end
 
+	mark("cb_zoom_in_enter", nil, true)
 	refresh_wpn()
 	if not (wpn and wpn:cast_Weapon()) then
 		logf("ADS in ignored: no weapon (wpn=%s mode=%s)", wpn_label(), mode_label())
+		mark("cb_zoom_in_ignored", zoom_diag("no_wpn"), true)
 		return
 	end
 
 	logf("ADS in: wpn=%s from_mode=%s", wpn_label(), mode_label())
 	set_ads_zoom(true, "zoom_in")
+	-- If the process dies after this line, the crash is in engine zoom_in after our callback.
+	mark("cb_zoom_in_return_to_engine", zoom_diag("callback_done"), true)
 end
 
 local function actor_on_weapon_zoom_out()
 	if not ads_on then
 		return
 	end
+	mark("cb_zoom_out_enter", nil, true)
 	refresh_wpn()
 	logf("ADS out: wpn=%s mode=%s", wpn_label(), mode_label())
 	set_ads_zoom(false, "zoom_out")
+	mark("cb_zoom_out_return_to_engine", zoom_diag("callback_done"), true)
 end
 
 -- Optical <-> iron: re-assert ADS FOV ownership (free already cleared on ADS enter).
@@ -1528,10 +1759,13 @@ local function actor_on_weapon_zoom_type_changed()
 	if not CONFIG.loaded.ads_enabled or not ads_on then
 		return
 	end
+	diag_hot_begin("zoom_type_changed")
+	mark("cb_zoom_type_enter", zoom_diag("pre"), true)
 	refresh_wpn()
 	apply_fov()
 	if is_optical_ads() then
 		logf("ADS type changed: optical=true wads=%d%% wpn=%s", resolve_ads(), wpn_label())
+		mark("cb_zoom_type_done", zoom_diag("optical"), true)
 		return
 	end
 	local fov = compute_fov()
@@ -1542,6 +1776,7 @@ local function actor_on_weapon_zoom_type_changed()
 		resolve_ads(),
 		wpn_label()
 	)
+	mark("cb_zoom_type_done", zoom_diag("iron_sight"), true)
 end
 
 local function actor_on_weapon_reload()

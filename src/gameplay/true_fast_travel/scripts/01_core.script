@@ -9,7 +9,7 @@ local tft_config = _G.tft_config
 
 -- Forward declarations for this file's private (non-exported) helpers, so they can
 -- reference each other regardless of definition order below.
-local format_msg, load_level_danger, msg_style_icon, msg_style_prefix
+local format_msg, msg_style_icon, msg_style_prefix
 local defaults = {
     is_traveling        = false,
     player_ready        = true,
@@ -97,15 +97,13 @@ _G.tft_travel_max_click_drift = 150
 
 _G.tft_travel = {
     pda_speed            = 50,  -- reference PDA bar speed; at this rate, normal travel = min_per_km game minutes
-    sneak_dodge_base     = 25,  -- ambush dodge at Sneaking Lv 0 (sneak mode only)
-    sneak_dodge_per_lvl  = 3,
+    sneak_dodge_base     = 25,  -- ambush dodge in sneak mode (skill levels retired)
+    sneak_dodge_per_lvl  = 0,
     sneak_dodge_cap      = 85,
-    sneak_xp_dodge       = 20,  -- XP when dodging an ambush during sneak travel
-    sneak_xp_ambush      = 10,  -- XP when caught in an ambush during sneak travel
     min_per_km           = 30,  -- normal travel: 30 game minutes per km
-    sneak_min_per_km     = 180, -- sneak Lv0: 3 hours per km
-    sneak_min_per_lvl    = 5,   -- sneak: -5 min/km per Sneaking level
-    sneak_min_floor      = 80,  -- sneak: 80 min/km at high level
+    sneak_min_per_km     = 180, -- sneak: 3 hours per km
+    sneak_min_per_lvl    = 0,
+    sneak_min_floor      = 80,
     emission_lead_secs   = 8,   -- game seconds before emission after planned interrupt
     resource_rate_per_hr = 0.10,
     encumbrance_yellow_buffer_kg = 10,
@@ -117,47 +115,6 @@ _G.tft_travel = {
     damage_cancel_min_loss     = 0.01, -- cancel journey only after this much HP lost (1% of max; health is 0-1)
 }
 
--- Guide fee scales with how dangerous the origin/destination levels are on average (1.0 safest
--- - 2.0 most dangerous, see get_level_danger below). tft_guide_cost_per_km (the rate at
--- cost multiplier 1.0, i.e. the safest possible route) x that multiplier is tuned so a guide
--- trip costs roughly 2x what FFT's own guide travel would charge for the same trip (FFT default:
--- 1500 RU/km flat, x(1 + avg map hazard 0.5-2.0) - hazard scaling applies by default regardless
--- of FFT's "progressive cost" toggle) at every danger level, not just on average.
-_G.tft_guide_danger_mid = 1.3 -- fallback for any level missing from guide_danger.ltx
-_G.tft_guide_cost_per_km = 4500 -- RU per km at cost multiplier 1.0
-_G.tft_guide_costs = nil -- lazy-loaded from guide_danger.ltx on first use, see below
-
--- gamedata/configs/scripts/dogma_true_fast_travel/guide_danger.ltx - values tuned from Fair Fast
--- Travel's own [map_hazard_coefs] table since that's the best available reference for "how
--- dangerous is this level", but kept as our own standalone ltx (easy to inspect/rebalance)
--- rather than read from FFT at runtime, so this mod has zero dependency on FFT being installed.
-load_level_danger = function()
-    local danger = {}
-    local ini = ini_file("scripts\\dogma_true_fast_travel\\guide_danger.ltx")
-    if ini and ini:section_exist("tft_guide_costs") then
-        local ok_n, n = pcall(function() return ini:line_count("tft_guide_costs") end)
-        if ok_n and n and n > 0 then
-            for i = 0, n - 1 do
-                local ok_line, found, key, val = pcall(function() return ini:r_line("tft_guide_costs", i, "", "") end)
-                if ok_line and found and key then
-                    danger[key] = tonumber(val)
-                end
-            end
-        end
-    end
-    if not next(danger) then
-        log_error("guide_danger.ltx missing/empty - guide fee will default to cost multiplier 1.3 everywhere")
-    end
-    return danger
-end
-
-local function get_level_danger(level_name)
-    if not _G.tft_guide_costs then
-        _G.tft_guide_costs = load_level_danger()
-    end
-    return (level_name and _G.tft_guide_costs[level_name]) or tft_guide_danger_mid
-end
-
 -- Some third-party mods (e.g. Milspec PDA) read game_fast_travel.trip_in_progress to avoid
 -- misreading our journey's game-time jumps as elapsed real time (e.g. faction-access decay
 -- timers). We mirror our own travel state into that flag so those mods behave correctly whether
@@ -166,32 +123,6 @@ end
 local function set_fft_trip_in_progress(active)
     _G.game_fast_travel = _G.game_fast_travel or {}
     _G.game_fast_travel.trip_in_progress = active and true or false
-end
-
--- In-game seconds since a fixed anchor point, persisted on the actor so it survives saves,
--- level changes, and quickloads alike. Used for the sneak cooldown. NOTE: this deliberately
--- does NOT use level.get_start_time() - that resets on every level change (and every save
--- reload), which silently corrupted the cooldown any time a sneak journey crossed a zone
--- boundary (i.e. almost always, since that's the whole point of fast travel). The anchor
--- itself is just the first game-time snapshot ever taken this save; only its absolute
--- distance to "now" matters, so it never needs to be recomputed once set.
-local function time_elapsed()
-    if not db.actor then return 0 end
-    local anchor_fields = load_var(db.actor, tft_save_vars.time_anchor, nil)
-    local ok, secs = pcall(function()
-        local now = game.get_game_time()
-        local anchor = now
-        if anchor_fields then
-            anchor = game.CTime()
-            anchor:set(anchor_fields.Y, anchor_fields.M, anchor_fields.D,
-                anchor_fields.h, anchor_fields.m, anchor_fields.s, anchor_fields.ms)
-        else
-            local Y, M, D, h, m, s, ms = now:get(0, 0, 0, 0, 0, 0, 0)
-            save_var(db.actor, tft_save_vars.time_anchor, { Y = Y, M = M, D = D, h = h, m = m, s = s, ms = ms })
-        end
-        return now:diffSec(anchor)
-    end)
-    return ok and math.floor(secs) or 0
 end
 
 _G.tft_hostile = {
@@ -333,15 +264,6 @@ _G.tft_path.dots = {
     _G.tft_path.ambush_range_spot, _G.tft_path.ambush_range_spot_alert,
 }
 
-_G.tft_sneaking = {
-    travel_speed_per_level = 2,   -- percent PDA map speed per level (fallback)
-}
-
--- Sneak travel cooldown: no MCM option (this mod doesn't expose balance knobs) - 1h base,
--- reduced 3min per Sneaking level, reaching exactly 0 at the skill's max level (20).
-_G.tft_sneak_cooldown_base_minutes = 60
-_G.tft_sneak_cooldown_reduction_per_level = 3
-
 _G.tft_save_vars = {
     traveling  = "tft_jt",
     dest_x     = "tft_dx",
@@ -362,8 +284,6 @@ _G.tft_save_vars = {
     stats_amb  = "tft_sa",
     stats_pos  = "tft_sp",
     progress_ratio = "tft_pr", -- 0-1 fraction of the trip completed at save time (used for refund on cancel)
-    sneak_cd   = "tft_scd", -- time_elapsed() value at which the next sneak journey is allowed
-    time_anchor = "tft_ta", -- {Y,M,D,h,m,s,ms} game-time snapshot time_elapsed() measures from
 }
 
 _G.tft_door_keywords = {
@@ -528,8 +448,6 @@ do
     _G.tft_is_cross_zone_destination = is_cross_zone_destination
     _G.tft_is_trader_restrictor = is_trader_restrictor
     _G.tft_msg = msg
-    _G.tft_get_level_danger = get_level_danger
     _G.tft_set_fft_trip_in_progress = set_fft_trip_in_progress
-    _G.tft_time_elapsed = time_elapsed
     printf("[dogma_gameplay_true_fast_travel] core module loaded")
 end

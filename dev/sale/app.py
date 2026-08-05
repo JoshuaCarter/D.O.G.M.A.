@@ -152,6 +152,8 @@ _ITEM_CB_HIT = 36
 
 # Weapon quality quartile grade (A best .. D worst) — bottom-left tile badge.
 TIER_COLORS_HEX = {"A": "#5adc78", "B": "#5aaae6", "C": "#e6be3c", "D": "#dc5a5a"}
+# items.yml stores quartiles inverted vs what we want on screen — flip for UI only.
+_TIER_DISPLAY = {"A": "D", "B": "C", "C": "B", "D": "A"}
 
 # Stat name colors (CSS) by key family.
 _DPS_KEYS = ("dps",)
@@ -1587,11 +1589,13 @@ class MainWindow(QMainWindow):
         return out
 
     def _weapon_tier_for(self, sec: str) -> str:
-        """Quartile A..D grade — baked into items.yml at regen time (score.py)."""
+        """Displayed quartile A..D (items.yml letter flipped for UI)."""
         pool = (self.items or {}).get("weapons") or {}
         entry = pool.get(str(sec)) or {}
         tier = str((entry.get("stats") or {}).get("tier") or "").strip().upper()
-        return tier if tier in TIER_COLORS_HEX else ""
+        if tier not in TIER_COLORS_HEX:
+            return ""
+        return _TIER_DISPLAY.get(tier, tier)
 
     def _protection_zones(self) -> dict[str, float]:
         z = getattr(self, "_prot_zones", None)
@@ -1627,7 +1631,8 @@ class MainWindow(QMainWindow):
             return protection_tip_pct(raw, key, self._protection_zones())
         if key == "tier":
             order = {"A": 3.0, "B": 2.0, "C": 1.0, "D": 0.0}
-            return order.get(str(raw or "").strip().upper(), -1.0)
+            shown = self._weapon_tier_for(sec)
+            return order.get(shown, -1.0)
         if isinstance(raw, bool):
             return 1.0 if raw else 0.0
         if isinstance(raw, (int, float)):

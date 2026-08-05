@@ -279,6 +279,8 @@ def is_spawnable_gear(
     *,
     ignore: set[str],
     require_parent_self: bool = True,
+    ltx_parent: str | None = None,
+    sections: dict[str, dict[str, str]] | None = None,
 ) -> bool:
     """True if section would survive debug item-spawner gates for gear."""
     if not sec or sec.startswith("!") or " " in sec:
@@ -303,9 +305,17 @@ def is_spawnable_gear(
     if "inv_grid_x" not in d and "inv_grid_y" not in d:
         return False
     if require_parent_self:
-        parent = (d.get("parent_section") or sec).strip()
-        if parent != sec:
-            return False
+        explicit = (d.get("parent_section") or "").strip()
+        if explicit:
+            # Body parent_section must name this section (base shop item).
+            if explicit != sec:
+                return False
+        elif ltx_parent and ltx_parent != sec and sections is not None:
+            # No body parent_section — header ``[gun_optic]:wpn_base`` clones
+            # (FN57 aimpoint/rmr/etc.) inherit the base gun; not shop bases.
+            # Skins that set parent_section=self while inheriting stats still pass.
+            if looks_like_weapon(sections.get(ltx_parent) or {}):
+                return False
     return True
 
 

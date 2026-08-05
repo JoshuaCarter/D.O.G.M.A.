@@ -2,9 +2,9 @@
 	Weapons Ban
 
 	Traders only deal knives among combat gear. Stashes get 0–3 weighted
-	adds (sight/kit/sil/ammo/parts). Corpses: strip loose ammo, then 0–4
-	mags worth per kept gun. New game: extra ammo stacks for owned weapons
-	(same types as stock UINewGame), scaled by caliber damage+AP.
+	adds (sight/kit/sil/ammo/parts). Corpses: strip loose ammo, then
+	rank-ticketed 0–4 full mags per kept gun (+ partial mag variance).
+	New game: extra ammo for owned weapons = mag_size × N mags (default 10).
 	Replaces RNG Attach + Parts In Stashes.
 ]]
 
@@ -25,13 +25,7 @@ local hooked_trade_update = false
 -- Persist so we never double-grant within the new-game window before
 -- start_equippment_handled is given (~4s).
 local EXTRA_AMMO_SAVE_KEY = "dogma_wb_extra_start_ammo"
-local EXTRA_AMMO_BOX_ROUNDS = 15
--- Caliber power ≈ damage mult + scaled AP (k_ap ~0.03–1.5 → same order as k_hit).
-local AMMO_POWER_AP_SCALE = 100
 local ini_loadouts
-local ammo_power_cache = {} -- sec → power
-local ammo_power_min = nil
-local ammo_power_max = nil
 
 local function log(msg)
 	if Tiers and Tiers.log then
@@ -44,8 +38,7 @@ end
 local function on_option_change()
 	local L = CONFIG.loaded
 	local D = CONFIG.DEFAULTS
-	L.extra_start_ammo_max = DOGMA.mcm.number(MOD_ID, "extra_start_ammo_max", D.extra_start_ammo_max)
-	L.extra_start_ammo_min = DOGMA.mcm.number(MOD_ID, "extra_start_ammo_min", D.extra_start_ammo_min)
+	L.extra_start_ammo_mags = DOGMA.mcm.number(MOD_ID, "extra_start_ammo_mags", D.extra_start_ammo_mags)
 	for _, cat in ipairs(CONFIG.CATS) do
 		for _, n in ipairs({ 2, 3, 4, 5 }) do
 			local key = cat .. "_tier_cost_" .. n
@@ -98,94 +91,20 @@ local function ammo_sec_for_weapon(wpn_sec)
 	return sec_ammo
 end
 
-local function ammo_power(sec)
-	local cached = ammo_power_cache[sec]
-	if cached then
-		return cached
+local function mag_cap_for_weapon(wpn_sec)
+	local mag = ini_sys:r_float_ex(wpn_sec, "ammo_mag_size") or 0
+	if mag > 0 then
+		return math.floor(mag)
 	end
-	local k_hit = ini_sys:r_float_ex(sec, "k_hit") or 1
-	local k_ap = ini_sys:r_float_ex(sec, "k_ap") or 0
-	local p = k_hit + (k_ap * AMMO_POWER_AP_SCALE)
-	ammo_power_cache[sec] = p
-	return p
-end
-
-local function is_ballistic_ammo_box(sec)
-	if Tiers and Tiers.is_ammo_box then
-		if not Tiers.is_ammo_box(sec) then
-			return false
-		end
-	else
-		if not (IsItem and IsItem("ammo", sec)) then
-			return false
-		end
-		if IsItem("grenade_ammo", sec) or IsItem("fake_ammo", sec) then
-			return false
-		end
-	end
-	-- Need at least one coeff so placeholders don't anchor the range.
-	return (ini_sys:r_float_ex(sec, "k_hit") ~= nil) or (ini_sys:r_float_ex(sec, "k_ap") ~= nil)
-end
-
-local function ensure_ammo_power_range()
-	if ammo_power_min and ammo_power_max then
-		return
-	end
-	local pmin, pmax = nil, nil
-	ini_sys:section_for_each(function(sec)
-		if not is_ballistic_ammo_box(sec) then
-			return false
-		end
-		local p = ammo_power(sec)
-		if not pmin or p < pmin then
-			pmin = p
-		end
-		if not pmax or p > pmax then
-			pmax = p
-		end
-		return false
-	end)
-	ammo_power_min = pmin or 0
-	ammo_power_max = pmax or ammo_power_min
-	log(string.format("ammo power range %.2f–%.2f", ammo_power_min, ammo_power_max))
-end
-
-local function stacks_for_ammo(sec, stacks_light, stacks_heavy)
-	ensure_ammo_power_range()
-	if stacks_light == stacks_heavy then
-		return stacks_light
-	end
-	if ammo_power_max <= ammo_power_min then
-		return math.floor((stacks_light + stacks_heavy) * 0.5 + 0.5)
-	end
-	-- Log blend so pistol/rifle/magnum spread instead of clustering near max
-	-- (raw linear is dominated by gauss / .50 outliers).
-	local p = ammo_power(sec)
-	if p < ammo_power_min then
-		p = ammo_power_min
-	elseif p > ammo_power_max then
-		p = ammo_power_max
-	end
-	local llo = math.log(ammo_power_min + 1)
-	local lhi = math.log(ammo_power_max + 1)
-	local t = (math.log(p + 1) - llo) / (lhi - llo)
-	-- t=0 lightest → stacks_light; t=1 heaviest → stacks_heavy
-	return math.floor(stacks_light + (stacks_heavy - stacks_light) * t + 0.5)
+	return 30
 end
 
 local function give_extra_start_ammo()
 	if not (DOGMA and DOGMA.sys and DOGMA.sys.ready(MOD_ID, db, on_option_change)) then
 		return
 	end
-	local stacks_light = math.floor((CONFIG.loaded.extra_start_ammo_max or 0) + 0.5)
-	local stacks_heavy = math.floor((CONFIG.loaded.extra_start_ammo_min or 0) + 0.5)
-	if stacks_light < 0 then
-		stacks_light = 0
-	end
-	if stacks_heavy < 0 then
-		stacks_heavy = 0
-	end
-	if stacks_light <= 0 and stacks_heavy <= 0 then
+	local mags = math.floor((CONFIG.loaded.extra_start_ammo_mags or 0) + 0.5)
+	if mags <= 0 then
 		return
 	end
 	-- New game only: stock sets this after the delayed equipment pass.
@@ -207,10 +126,6 @@ local function give_extra_start_ammo()
 	end
 	m_data[EXTRA_AMMO_SAVE_KEY] = true
 
-	if Tiers and Tiers.ensure then
-		Tiers.ensure()
-	end
-
 	local ammo_to_spawn = {}
 	db.actor:iterate_inventory(function(_temp, itm)
 		if not itm then
@@ -224,21 +139,16 @@ local function give_extra_start_ammo()
 		if not sec_ammo then
 			return
 		end
-		local stacks = stacks_for_ammo(sec_ammo, stacks_light, stacks_heavy)
-		if stacks <= 0 then
+		local add = mag_cap_for_weapon(wpn_sec) * mags
+		if add <= 0 then
 			return
 		end
-		local add = stacks * EXTRA_AMMO_BOX_ROUNDS
 		ammo_to_spawn[sec_ammo] = (ammo_to_spawn[sec_ammo] or 0) + add
 	end)
 
 	for sec, cnt in pairs(ammo_to_spawn) do
 		alife_create_item(sec, db.actor, { ammo = cnt })
-		local stacks = math.floor(cnt / EXTRA_AMMO_BOX_ROUNDS + 0.5)
-		log(string.format(
-			"new game +%s x%s (%s stacks, power=%.2f)",
-			sec, cnt, stacks, ammo_power(sec)
-		))
+		log(string.format("new game +%s x%s (%s mags × mag size)", sec, cnt, mags))
 	end
 end
 
@@ -448,6 +358,20 @@ end
 --------------------------------------------------------------------------------
 -- Corpse ammo replace
 --------------------------------------------------------------------------------
+-- Rank → ticket weights for full-mag counts 0..4. Low ranks skew empty/light;
+-- high ranks skew heavier, but every rank can still roll any bucket.
+local CORPSE_MAG_TICKETS = {
+	novice = { [0] = 50, [1] = 35, [2] = 10, [3] = 4, [4] = 1 },
+	trainee = { [0] = 43, [1] = 34, [2] = 12, [3] = 7, [4] = 4 },
+	experienced = { [0] = 36, [1] = 32, [2] = 14, [3] = 10, [4] = 8 },
+	professional = { [0] = 29, [1] = 31, [2] = 16, [3] = 13, [4] = 11 },
+	veteran = { [0] = 21, [1] = 29, [2] = 19, [3] = 16, [4] = 15 },
+	expert = { [0] = 14, [1] = 28, [2] = 21, [3] = 19, [4] = 18 },
+	master = { [0] = 7, [1] = 26, [2] = 23, [3] = 22, [4] = 22 },
+	legend = { [0] = 0, [1] = 25, [2] = 25, [3] = 25, [4] = 25 },
+}
+local CORPSE_MAG_TICKETS_FALLBACK = CORPSE_MAG_TICKETS.experienced
+
 local function strip_loose_ammo(npc)
 	local to_release = {}
 	npc:iterate_inventory(function(_temp, item)
@@ -466,16 +390,40 @@ local function strip_loose_ammo(npc)
 	end
 end
 
-local function mag_cap_for_weapon(wpn_sec)
-	local mag = ini_sys:r_float_ex(wpn_sec, "ammo_mag_size") or 0
-	if mag > 0 then
-		return math.floor(mag)
+local function npc_rank_name(npc)
+	if not (npc and ranks and ranks.get_obj_rank_name) then
+		return nil
 	end
-	return 30
+	local ok, name = pcall(ranks.get_obj_rank_name, npc)
+	if ok and name and name ~= "" then
+		return name
+	end
+	return nil
+end
+
+local function pick_corpse_mags(rank_name)
+	local tickets = (rank_name and CORPSE_MAG_TICKETS[rank_name]) or CORPSE_MAG_TICKETS_FALLBACK
+	local total = 0
+	for m = 0, 4 do
+		total = total + (tickets[m] or 0)
+	end
+	if total <= 0 then
+		return 0
+	end
+	local r = math.random(1, total)
+	local acc = 0
+	for m = 0, 4 do
+		acc = acc + (tickets[m] or 0)
+		if r <= acc then
+			return m
+		end
+	end
+	return 0
 end
 
 local function inject_corpse_ammo(npc)
 	local mrandom = math.random
+	local rank = npc_rank_name(npc)
 	npc:iterate_inventory(function(_temp, itm)
 		if not itm then
 			return
@@ -497,13 +445,24 @@ local function inject_corpse_ammo(npc)
 		if not (sec and ini_sys:section_exist(sec)) then
 			return
 		end
-		local mags = mrandom(0, 4)
-		if mags <= 0 then
+		local mags = pick_corpse_mags(rank)
+		local cap = mag_cap_for_weapon(itm:section())
+		-- Always roll a partial (0..cap-1). Mag ticket 0 still yields up to
+		-- almost one mag; empty only if both the ticket and partial are 0.
+		local partial = (cap > 0) and mrandom(0, cap - 1) or 0
+		local rounds = cap * mags + partial
+		if rounds <= 0 then
 			return
 		end
-		local cap = mag_cap_for_weapon(itm:section())
-		alife_create_item(sec, npc, { ammo = cap * mags })
-		log(string.format("corpse ammo %s x%s (%s mags)", sec, cap * mags, mags))
+		alife_create_item(sec, npc, { ammo = rounds })
+		log(string.format(
+			"corpse ammo %s x%s (%s mags +%s, rank=%s)",
+			sec,
+			rounds,
+			mags,
+			partial,
+			rank or "?"
+		))
 	end)
 end
 

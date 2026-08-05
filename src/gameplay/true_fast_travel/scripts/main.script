@@ -15,7 +15,7 @@ local tft = _G.tft
 -- function, never a local, even though no other DFT script calls it by name.
 local actor_on_before_hit, on_option_change,
     on_loading_screen_dismissed, on_loading_screen_key_prompt, actor_on_first_update, menu_item_is_ours,
-    strip_own_menu_items, strip_overlapping_spot_noise, mark_menu_primary, add_cannot_travel_item, add_guide_menu_item,
+    strip_own_menu_items, strip_overlapping_spot_noise, mark_menu_primary, add_cannot_travel_item,
     add_travel_menu_items, on_map_right_click, on_map_spot_menu_add_property_impl,
     on_map_spot_menu_add_property, on_map_spot_menu_property_clicked, on_key_press, on_before_key_press
 
@@ -43,7 +43,7 @@ local function load_config()
     tft_config.screen_msg_duration = mcm.number(CONFIG.MOD_ID, "screen_msg_duration", CONFIG.DEFAULTS["screen_msg_duration"] or 4)
     -- legacy alias used by pause helper
     tft_config.pause_on_ambush = tft_config.pause_on_stop
-    tft_config.show_ambush_range = false
+    tft_config.show_ambush_range = false -- retired MCM; PDA ambush-range ring stays off
     -- nil when unbound (-1 in MCM)
     tft_config.companion_teleport_key = mcm.key(CONFIG.MOD_ID, "companion_teleport_key")
     tft_config.visited_radius_m = CONFIG.DEFAULTS["visited_radius_m"] or 30
@@ -259,10 +259,6 @@ actor_on_first_update = function()
         tft_poll_discoveries()
     end
 
-    -- Drop any cached PDA-attached sneak-cooldown label - the live PDA dialog object can be
-    -- recreated across a level load, and reusing a stale reference to the old one would crash.
-    tft._sneak_cd_label = nil
-
     tft_build_dynamic_map()
 
     -- Nav mesh is gated on on_loading_screen_key_prompt; try_load here is a harmless fallback.
@@ -475,16 +471,6 @@ add_cannot_travel_item = function(pui, id, reason)
     tft_log("menu: cannot travel id=%s reason=%s", tostring(id), tostring(reason or "unknown"))
     tft_clear_path_preview()
     return true
-end
-
-add_guide_menu_item = function(pui, id, se_obj)
-    local dist, from_lid, to_lid = tft_guide_distance(nil, se_obj, id)
-    local guide_text = tft_str("tft_menu_hire_guide")
-    local guide_cost = tft_calc_guide_cost(dist, from_lid, to_lid)
-    local dur_str = tft_format_duration(tft_calc_guide_duration_secs(dist) / 60)
-    local cost_str = (guide_cost > 0) and string.format(tft_str("tft_ru_amount"), guide_cost) or tft_str("tft_menu_free")
-    pui:AddItem(string.format(tft_str("tft_menu_guide_format"), guide_text, dur_str, cost_str))
-    tft_log("menu: guide id=%s cost=%d dist=%.0f dur=%s", tostring(id), guide_cost, dist, dur_str)
 end
 
 add_travel_menu_items = function(pui, id, is_lc, include_sneak)

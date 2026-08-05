@@ -2,7 +2,7 @@
 -- Loaded automatically before main.script (zzzz_dogma_gameplay_true_fast_travel_main.script)
 
 -- Mod semver. Packaged aimap assets are immutable; bump major.minor when the format changes.
-_G.tft_version = "0.4.0"
+_G.tft_version = "0.5.0"
 
 -- Shared dft globals (Anomaly isolates zzz_* script environments)
 local tft_config = _G.tft_config
@@ -247,22 +247,22 @@ _G.tft_transition_guard = {
     scan_interval_ms   = 150, -- combat lock poll interval
 }
 
--- Real-time spectator fly-through (13_fly_camera.script); always used when the cam API is present.
+-- Spectator walk puppet (13_fly_camera.script); used when the cam API is present.
 _G.tft_fly = {
-    sprint_mps            = 6.0,  -- baseline "sprint" used for MCM multipliers
-    speed_mult_normal     = 5.0,  -- default: 5x sprint
-    speed_mult_sneak      = 2.0,  -- default: 2x sprint
+    ref_run_mps           = 4.2,  -- approx naked run m/s (calibrated vs run_coef baseline)
+    baseline_run_coef     = 2.41, -- Teepo/speed-stack naked baseline
+    crouch_scale          = 0.55, -- sneak vs run cam speed
+    zero_gravity          = true, -- stash/restore; 0 while traveling to reduce teleport fight
     eye_height_m          = 1.6,
-    sample_m              = 3.0,  -- resample spacing along refined path
+    sample_m              = 3.0,
     look_ahead_m          = 12.0,
-    turn_smooth           = 0.30, -- exponential blend toward look target (higher = snappier)
+    turn_smooth           = 0.30,
     handoff_s             = 0.35,
     companion_back_m      = 2.2,
     companion_side_m      = 1.1,
-    companion_bury_m      = 1000, -- park companions underground during flight
-    refine_max_segments   = 48,   -- cap fine-nav refine legs per journey
-    refine_min_seg_m      = 18,   -- chords shorter than this stay as chords
-    proxy_underground_m   = 0,    -- actor stays on ground under cam for streaming
+    refine_max_segments   = 48,
+    refine_min_seg_m      = 18,
+    proxy_underground_m   = 0,
 }
 
 _G.tft_path = {
@@ -502,17 +502,15 @@ end
 
 msg = function(text, style)
     if not (db.actor and db.actor:alive()) then return end
-    local prefix = msg_style_prefix(style)
-    if prefix ~= "" then
-        text = prefix .. text
-    end
-    local icon = msg_style_icon(style)
+    if not text or text == "" then return end
     local refresh = _G.refresh_active_config or refresh_active_config
     local cfg = tft.active_config or (refresh and refresh()) or {}
-    local duration = tonumber(cfg.message_duration) or 30
-    if news_manager and news_manager.send_tip then
-        news_manager.send_tip(db.actor, text, nil, icon, duration * 1000)
-    elseif actor_menu and actor_menu.set_msg then
+    local duration = tonumber(cfg.screen_msg_duration)
+    if duration == nil then duration = tonumber(cfg.message_duration) end
+    if duration == nil then duration = 4 end
+    if duration <= 0 then return end -- MCM 0 = off
+    -- On-screen toast only (same channel as Geiger mSv text) — no PDA tips.
+    if actor_menu and actor_menu.set_msg then
         actor_menu.set_msg(1, text, duration)
     end
 end

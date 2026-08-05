@@ -5,6 +5,7 @@
 	  Free: both channels = free% (cleared on ADS enter; never while ADS)
 	  ADS world FOV: FOV zoom % (cap 15; skipped on magnified optical scopes)
 	  ADS HUD: Irons / Sights / Scopes % (caps 15 / 25 / 35)
+	Optional peripheral DOF (SSFX ssfx_wpn_dof_*) while free-zoomed / ADS.
 	Console fov snaps; we lerp live → target quickly. Free/ADS publish tgt FOVs to
 	_G.dogma_fov_tgt_free / _G.dogma_fov_tgt_ads; lerp clamps so zoom-out never
 	passes the other system's more-zoomed floor.
@@ -18,6 +19,17 @@ local DOGMA
 -- Lower FOV number = more zoom. nil = not requesting (other systems may read these).
 _G.dogma_fov_tgt_free = nil
 _G.dogma_fov_tgt_ads = nil
+
+-- SSFX Weapons DOF: edge-only peripheral blur (shader needs .w + _2; .z is far/fullscreen).
+-- Full intensity matches SSFX aim defaults (blur 1.6, edgeblur MCM 1.0 → console 0.5).
+-- Snapshot prior console values on enter; restore them on exit only if still ours.
+local DOF_BLUR_AT_FULL = 1.6
+local DOF_EDGE_AT_FULL = 0.5
+local dof_we_own = false
+local dof_saved_1 = nil -- status string for ssfx_wpn_dof_1
+local dof_saved_2 = nil -- number for ssfx_wpn_dof_2
+local dof_ours_blur = nil
+local dof_ours_edge = nil
 
 -- zoom_key_mode: 0=toggle, 2=hold (in on down, out on up; 1 was double, removed)
 local MODE_TOGGLE = 0
@@ -193,6 +205,8 @@ local function refresh_config()
 	CONFIG.loaded.scroll_wheel_max_gap_ms = DOGMA.mcm.number(CONFIG.MOD_ID, "free_zoom/scroll_wheel_max_gap_ms")
 	CONFIG.loaded.free_zoom = clamp(DOGMA.mcm.number(CONFIG.MOD_ID, "free_zoom/free_zoom"), 0, 40)
 	CONFIG.loaded.move_speed = DOGMA.mcm.number(CONFIG.MOD_ID, "free_zoom/move_speed")
+	CONFIG.loaded.free_dof = DOGMA.mcm.bool(CONFIG.MOD_ID, "free_zoom/dof")
+	CONFIG.loaded.free_dof_intensity = clamp(DOGMA.mcm.number(CONFIG.MOD_ID, "free_zoom/dof_intensity"), 0, 1)
 
 	CONFIG.loaded.ads_enabled = (_G.dogma_gameplay_ads_zoom_conf ~= nil)
 	CONFIG.loaded.fov_zoom = clamp(DOGMA.mcm.number(ADS_MOD, "fov_zoom"), 0, ADS_FOV_MAX)
@@ -201,6 +215,8 @@ local function refresh_config()
 		sight = clamp(DOGMA.mcm.number(ADS_MOD, "wads_sight"), 0, ADS_MAX.sight),
 		scope = clamp(DOGMA.mcm.number(ADS_MOD, "wads_scope"), 0, ADS_MAX.scope),
 	}
+	CONFIG.loaded.ads_dof = DOGMA.mcm.bool(ADS_MOD, "dof")
+	CONFIG.loaded.ads_dof_intensity = clamp(DOGMA.mcm.number(ADS_MOD, "dof_intensity"), 0, 1)
 	CONFIG.loaded.wads_inc_key = DOGMA.mcm.key(ADS_MOD, "wads_inc_key")
 	CONFIG.loaded.wads_dec_key = DOGMA.mcm.key(ADS_MOD, "wads_dec_key")
 	CONFIG.loaded.wads_reset_key = DOGMA.mcm.key(ADS_MOD, "wads_reset_key")
@@ -638,6 +654,88 @@ local function write_hud_fov(hud)
 	we_wrote_hud = math.abs(hud - hip_hud) > 0.0005
 end
 
+-- Peripheral edge DOF via SSFX uniforms. Snapshot prior values; restore only if still ours.
+local function read_dof_1_status()
+	local c = get_console and get_console()
+	if c and c.get_string then
+		return c:get_string("ssfx_wpn_dof_1")
+	end
+	return get_console_cmd(0, "ssfx_wpn_dof_1")
+end
+
+local function read_dof_2()
+	return get_console_cmd(2, "ssfx_wpn_dof_2") or 0
+end
+
+local function parse_dof_1_w(status)
+	if type(status) ~= "string" then
+		return nil
+	end
+	local w = status:match("%([%-%d%.eE]+,%s*[%-%d%.eE]+,%s*[%-%d%.eE]+,%s*([%-%d%.eE]+)%)")
+	return w and tonumber(w) or nil
+end
+
+local function dof_still_ours()
+	local w = parse_dof_1_w(read_dof_1_status())
+	local edge = read_dof_2()
+	if w == nil or dof_ours_blur == nil or dof_ours_edge == nil then
+		return false
+	end
+	return math.abs(w - dof_ours_blur) < 0.02 and math.abs(edge - dof_ours_edge) < 0.02
+end
+
+local function write_zoom_dof(blur, edge)
+	exec_console_cmd(string.format("ssfx_wpn_dof_1 (0.000,0.000,0.000,%.3f)", blur))
+	exec_console_cmd(string.format("ssfx_wpn_dof_2 %.3f", edge))
+	dof_ours_blur = blur
+	dof_ours_edge = edge
+end
+
+local function restore_saved_dof()
+	if dof_saved_1 then
+		exec_console_cmd("ssfx_wpn_dof_1 " .. dof_saved_1)
+	end
+	if dof_saved_2 ~= nil then
+		exec_console_cmd(string.format("ssfx_wpn_dof_2 %.6f", dof_saved_2))
+	end
+	dof_saved_1 = nil
+	dof_saved_2 = nil
+	dof_ours_blur = nil
+	dof_ours_edge = nil
+end
+
+local function apply_zoom_dof()
+	local intensity = 0
+	if free_on and not ads_on and CONFIG.loaded.free_dof then
+		intensity = CONFIG.loaded.free_dof_intensity or 0
+	elseif ads_on and CONFIG.loaded.ads_enabled and CONFIG.loaded.ads_dof then
+		intensity = CONFIG.loaded.ads_dof_intensity or 0
+	end
+	if intensity > 0 then
+		local blur = intensity * DOF_BLUR_AT_FULL
+		local edge = intensity * DOF_EDGE_AT_FULL
+		if not dof_we_own then
+			dof_saved_1 = read_dof_1_status()
+			dof_saved_2 = read_dof_2()
+			dof_we_own = true
+		end
+		write_zoom_dof(blur, edge)
+		return
+	end
+	if dof_we_own then
+		-- Only undo ourselves; if SSS/another mod already rewrote, leave their values.
+		if dof_still_ours() then
+			restore_saved_dof()
+		else
+			dof_saved_1 = nil
+			dof_saved_2 = nil
+			dof_ours_blur = nil
+			dof_ours_edge = nil
+		end
+		dof_we_own = false
+	end
+end
+
 -- Desired HUD value for current free/ADS state.
 local function compute_hud()
 	local pct = 0
@@ -676,6 +774,7 @@ local function apply_fov(snap)
 		end
 		last_smooth_ms = time_global() or 0
 	end
+	apply_zoom_dof()
 end
 
 local function poll_fov_smooth()
@@ -1061,10 +1160,14 @@ local function on_option_change()
 	end
 
 	logf(
-		"opts: free_en=%s free=%d%% ads_fov=%d%% hud=%d/%d/%d speed=%d%% sprint=%s empty_hands=%s scroll=%s reverse=%s steps=%d gap=%dms mode=%s key=%s mod=%d km=%d rmb=%d mmb=%d",
+		"opts: free_en=%s free=%d%% free_dof=%s/%.2f ads_fov=%d%% ads_dof=%s/%.2f hud=%d/%d/%d speed=%d%% sprint=%s empty_hands=%s scroll=%s reverse=%s steps=%d gap=%dms mode=%s key=%s mod=%d km=%d rmb=%d mmb=%d",
 		tostr(CONFIG.loaded.enabled),
 		CONFIG.loaded.free_zoom,
+		tostr(CONFIG.loaded.free_dof),
+		CONFIG.loaded.free_dof_intensity or 0,
 		CONFIG.loaded.fov_zoom,
+		tostr(CONFIG.loaded.ads_dof),
+		CONFIG.loaded.ads_dof_intensity or 0,
 		CONFIG.loaded.wads.irons,
 		CONFIG.loaded.wads.sight,
 		CONFIG.loaded.wads.scope,
@@ -1201,6 +1304,8 @@ local function actor_on_update()
 		poll_hold_zoom()
 	end
 	poll_fov_smooth()
+	-- Re-assert zoom DOF each tick (SSS aim_in/out also writes ssfx_wpn_dof_*).
+	apply_zoom_dof()
 end
 
 -- zoom_key_mode: 0=toggle, 2=hold (in on down, out on up).

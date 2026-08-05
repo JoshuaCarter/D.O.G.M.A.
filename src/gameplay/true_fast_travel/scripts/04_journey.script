@@ -8,53 +8,24 @@ local tft_config = _G.tft_config
 -- Forward declarations for this file's private (non-exported) helpers, so they can
 -- reference each other regardless of definition order below.
 local ambush_close_radius_m, ambush_radius_m, ambush_time_reduction_m, apply_sneaking_stat_delta, dev_adjust_sneaking, format_distance, get_actor_max_carry_weight, get_encounter_offset, get_encumbrance_time_mult, get_journey_specs, get_sneaking_travel_speed_mult, get_weather_name, is_night_hour, is_raining, is_twilight_hour, mode_pda_speed_ratio, sneak_cooldown_minutes, sneak_minutes_per_km, time_band
+-- Sneaking skill retired for True Walk Travel. Stubs keep callers safe.
 local function get_sneaking_level()
-    if haru_skills and haru_skills.skills_levels and haru_skills.skills_levels.sneaking then
-        return haru_skills.skills_levels.sneaking.current_level or 0
-    end
     return 0
 end
 
 get_sneaking_travel_speed_mult = function()
-    local bonus_pct = 0
-    if haru_skills and haru_skills.skills_stats and haru_skills.skills_stats.sneaking then
-        bonus_pct = haru_skills.skills_stats.sneaking.travel_speed_bonus or 0
-    else
-        bonus_pct = get_sneaking_level() * tft_sneaking.travel_speed_per_level
-    end
-    return 1.0 + (bonus_pct / 100.0)
+    return 1.0
 end
 
--- Sneak travel cooldown: 1h base, reduced 3min per Sneaking level (20 max level * 3min = 60min,
--- so it fully disappears at max level). Normal travel and guide travel have no cooldown.
 sneak_cooldown_minutes = function()
-    local level = get_sneaking_level() or 0
-    return math.max(0, tft_sneak_cooldown_base_minutes - level * tft_sneak_cooldown_reduction_per_level)
+    return 0
 end
 
 local function sneak_cooldown_remaining_secs()
-    if not db.actor then return 0 end
-    local minutes = sneak_cooldown_minutes()
-    if minutes <= 0 then return 0 end
-    local ready_at = load_var(db.actor, tft_save_vars.sneak_cd, 0)
-    local remaining = ready_at - tft_time_elapsed()
-    return remaining > 0 and remaining or 0
+    return 0
 end
 
--- Called whenever a sneak journey actually teleports the player somewhere (arrival, mid-journey
--- ambush, or an emission cutting it short) - never on a plain cancel (PDA closed, damage taken),
--- since nothing actually happened to the player in those cases. ratio is how much of the route
--- was covered (1.0 for a full arrival, less for an ambush/emission partway through) - the
--- cooldown scales down proportionally, so a journey cut short at 20% only costs 20% of the
--- cooldown.
-local function start_sneak_cooldown(ratio)
-    if not db.actor then return end
-    local minutes = sneak_cooldown_minutes()
-    if minutes <= 0 then return end
-    ratio = math.max(0, math.min(ratio or 1.0, 1.0))
-    minutes = minutes * ratio
-    if minutes <= 0 then return end
-    save_var(db.actor, tft_save_vars.sneak_cd, tft_time_elapsed() + minutes * 60)
+local function start_sneak_cooldown(_ratio)
 end
 
 get_encounter_offset = function()
@@ -387,60 +358,18 @@ local function journey_specs_for_object(id, is_lc)
 end
 
 local function ensure_sneaking_skill_options()
-    if haru_skills and haru_skills.options then
-        haru_skills.options["exp_multiplier_sneaking"] = haru_skills.options["exp_multiplier_sneaking"] or 1
-    end
 end
 
-local function award_sneaking_xp(amount)
-    if not (haru_skills and haru_skills.increase_skill and haru_skills.skills_levels and haru_skills.skills_levels.sneaking) then
-        return
-    end
-    ensure_sneaking_skill_options()
-    pcall(function() haru_skills.increase_skill("sneaking", amount) end)
+local function award_sneaking_xp(_amount)
 end
 
-apply_sneaking_stat_delta = function(delta_levels)
-    if not (haru_skills and haru_skills.skills_stats and haru_skills.skills_stats.sneaking
-        and haru_skills.skills_increments and haru_skills.skills_increments.sneaking) then
-        return false
-    end
-    local stats = haru_skills.skills_stats.sneaking
-    local inc = haru_skills.skills_increments.sneaking
-    local sign = delta_levels > 0 and 1 or -1
-    for _ = 1, math.abs(delta_levels) do
-        for stat, _ in pairs(stats) do
-            if stat ~= "functor" and inc[stat] then
-                stats[stat] = stats[stat] + inc[stat] * sign
-            end
-        end
-    end
-    return true
+apply_sneaking_stat_delta = function(_delta_levels)
+    return false
 end
 
-dev_adjust_sneaking = function(delta)
+dev_adjust_sneaking = function(_delta)
     local ok, err = xpcall(function()
-        if not (haru_skills and haru_skills.skills_levels) then
-            tft_log("dev sneaking: haru_skills not loaded")
-            return
-        end
-        if not haru_skills.skills_levels.sneaking then
-            tft_log_error("dev sneaking: skills_levels.sneaking missing")
-            return
-        end
-        local stats = haru_skills.skills_levels.sneaking
-        local max_lvl = stats.max_level or 16
-        local old_lvl = stats.current_level or 0
-        local new_lvl = math.max(0, math.min(max_lvl, old_lvl + delta))
-        if new_lvl == old_lvl then
-            tft_log("dev sneaking: already at boundary (lvl %d)", old_lvl)
-            return
-        end
-        stats.current_level = new_lvl
-        if not apply_sneaking_stat_delta(new_lvl - old_lvl) then
-            tft_log("dev sneaking: stats table missing, level set to %d without stat refresh", new_lvl)
-        end
-        tft_log("dev sneaking level %d -> %d", old_lvl, new_lvl)
+        tft_log("dev sneaking: skill retired")
     end, debug.traceback)
     if not ok then
         tft_log_error("dev sneaking failed: %s", tostring(err))
@@ -463,11 +392,12 @@ local function handle_dev_keys(key)
     end
 end
 
-local function format_travel_menu(label_id, dist_str, dur_str, sneak_pct)
+local function format_travel_menu(label_id, dist_str, dur_str, _sneak_pct)
     local label = tft_str(label_id)
     local fmt = tft_str("tft_menu_travel_format")
-    local ok, text = pcall(string.format, fmt, label, dist_str or "?m", dur_str or "?", sneak_pct or 0)
-    return ok and text or string.format("%s (%s, %s)", label, dist_str or "?m", dur_str or "?")
+    local ok, text = pcall(string.format, fmt, label, dist_str or "?m", dur_str or "?")
+    if ok and text then return text end
+    return string.format("%s (%s, %s)", label, dist_str or "?m", dur_str or "?")
 end
 
 -- Average of tft_get_level_danger (01_core) for the origin/destination - backed by our own

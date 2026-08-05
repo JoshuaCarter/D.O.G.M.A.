@@ -140,12 +140,22 @@ local function start_travel_sequence(pos, lvid, gvid, is_transition, final_gvid)
         return false
     end
 
-    -- Survival checks: Don't allow travel if bleeding or near death
-    if actor.health < 0.2 then
-        return fail_start(tft_str("tft_msg_too_wounded"), "warning")
+    local unfit_gate = true
+    local cfg_unfit = (_G.tft_config and _G.tft_config.block_travel_when_unfit)
+    if cfg_unfit == nil and tft.active_config then
+        cfg_unfit = tft.active_config.block_travel_when_unfit
     end
-    if (actor.bleeding or 0) > 0.05 then
-        return fail_start(tft_str("tft_msg_must_stop_bleeding"), "warning")
+    if cfg_unfit ~= nil then unfit_gate = cfg_unfit end
+    if unfit_gate then
+        if actor.health < 0.2 then
+            return fail_start(tft_str("tft_msg_cannot_travel_injured") or tft_str("tft_msg_too_wounded"), "warning")
+        end
+        if (actor.bleeding or 0) > 0.05 then
+            return fail_start(tft_str("tft_msg_must_stop_bleeding"), "warning")
+        end
+        if (actor.radiation or 0) > 0.35 then
+            return fail_start(tft_str("tft_msg_cannot_travel_radiation") or tft_str("tft_msg_too_wounded"), "warning")
+        end
     end
 
     if tft_actor_too_encumbered_to_move() then
@@ -155,13 +165,6 @@ local function start_travel_sequence(pos, lvid, gvid, is_transition, final_gvid)
     local emission_blocks = _G.tft_emission_blocks_travel_start or emission_blocks_travel_start
     if emission_blocks and emission_blocks() then
         return fail_start(tft_str("tft_msg_emission_active"), "warning")
-    end
-
-    if tft.travel_mode == "sneaky" then
-        local sneak_cd_remaining = tft_sneak_cooldown_remaining_secs()
-        if sneak_cd_remaining > 0 then
-            return fail_start(string.format(tft_str("tft_msg_sneak_cooldown"), tft_format_duration(sneak_cd_remaining / 60)), "warning")
-        end
     end
 
     local sneaky_start = tft.travel_mode == "sneaky"
@@ -264,11 +267,11 @@ local function start_travel_sequence(pos, lvid, gvid, is_transition, final_gvid)
     tft.arrival_short_m = 0
     tft.target_stamina = 1.0
     tft.journey_start_health = actor.health
-    tft_log("Trip start | %.0fm | sneak %d%%", tft.travel_dist, tft_calc_sneak_chance(tft.travel_mode == "sneaky"))
+    tft.target_stamina = 1.0 -- never sprint during walk travel; do not wind arrival stamina
     tft.expected_duration = tft_game_minutes_for_dist(tft.travel_dist, tft.travel_mode == "sneaky", tft.encumbrance_time_mult)
-    tft_log("Journey duration: %d game minutes (dist %.1f, mode %s, encumbrance %s speed x%.2f time x%.2f)",
-        tft.expected_duration, tft.travel_dist, tft.travel_mode,
-        tft_get_inventory_weight_band(), tft.encumbrance_speed_mult, tft.encumbrance_time_mult)
+    tft_log("Trip start | %.0fm | mode %s | encumbrance %s speed x%.2f",
+        tft.travel_dist, tostring(tft.travel_mode),
+        tft_get_inventory_weight_band(), tft.encumbrance_speed_mult)
 
     tft.journey_cost = 0
 
@@ -277,16 +280,15 @@ local function start_travel_sequence(pos, lvid, gvid, is_transition, final_gvid)
     tft.is_traveling = true
     tft_save(tft.dest_pos, tft.dest_lvid, tft.dest_gvid, tft.final_gvid)
 
-    tft_log("Journey started (%s, %.0fm, ~%s).",
+    tft_log("Walk journey started (%s, %.0fm).",
         tft.is_transition and "zone exit" or tft.travel_mode,
-        tft.travel_dist,
-        tft_format_duration(tft.expected_duration or 1))
+        tft.travel_dist)
 
-    -- Spectator fly-through; stepped teleports only if the camera API is missing / fails.
+    -- Spectator walk puppet; stepped teleports only if the camera API is missing / fails.
     if _G.tft_begin_fly_camera and _G.tft_begin_fly_camera() then
         return true
     end
-    tft_log("Fly camera unavailable - falling back to stepped journey.")
+    tft_log("Walk camera unavailable - falling back to stepped journey.")
     if tft_begin_stepped_journey then
         tft_begin_stepped_journey()
     end
@@ -436,15 +438,24 @@ should_emission_interrupt = function()
 end
 
 cancel_journey_emission = function()
-    if not tft.is_traveling then return end
-    tft_log("Journey cancelled - emission started before planned interrupt point.")
+    if not tft.is_traveling and not tft.fly_active then return end
+    tft_log("Journey cancelled - emission starting.")
+    if _G.tft_fly_stop_emission then
+        _G.tft_fly_stop_emission()
+        return
+    end
     close_pda_for_travel()
+    if _G.tft_cancel_fly_camera then _G.tft_cancel_fly_camera() end
     cleanup_dots()
     stop_travel_logic()
     tft_clear()
     local cancel_opts = { outcome = "cancelled_emission" }
     tft_msg(tft_journey_result_message(cancel_opts), tft_journey_result_style(cancel_opts))
     pcall(function() save_var(db.actor, "surge_immuned", false) end)
+    CreateTimeEvent("tft", "emission_pause", 0.2, function()
+        if device and device().pause then pcall(function() device().pause(true) end) end
+        return true
+    end)
 end
 
 local function advance_travel_time_seconds(sec, opts)
@@ -698,11 +709,6 @@ local function actor_on_update()
         pcall(tft_sync_ambush_range_circle)
     end
 
-    if not tft._last_sneak_cd_ui_tick or (tg_ui - tft._last_sneak_cd_ui_tick) > 500 then
-        tft._last_sneak_cd_ui_tick = tg_ui
-        pcall(update_sneak_cooldown_hud)
-    end
-
     if not tft._last_debug_overlay_tick or (tg_ui - tft._last_debug_overlay_tick) > 500 then
         tft._last_debug_overlay_tick = tg_ui
         pcall(update_debug_overlay)
@@ -819,12 +825,6 @@ complete_travel_sequence = function(opts)
         if tft.last_menu_target_id and tft_discover_destination then
             tft_discover_destination(tft.last_menu_target_id, true)
         end
-    end
-    -- Full arrival - the player is about to be teleported having covered the whole route, so
-    -- the sneak cooldown (if this was a sneaky journey) starts now at its full duration. Grab
-    -- this before tft_clear() resets tft.travel_mode back to "normal" further down.
-    if tft.travel_mode == "sneaky" then
-        tft_start_sneak_cooldown(1.0)
     end
     cleanup_dots()
 

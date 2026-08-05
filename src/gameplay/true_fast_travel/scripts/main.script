@@ -32,31 +32,29 @@ local function load_config()
     tft_config.debug_log = (dogma.dbg and dogma.dbg.logging and dogma.dbg.logging()) or false
     tft_config.path_preview = mcm.bool(CONFIG.MOD_ID, "path_preview")
     tft_config.block_transition_in_combat = mcm.bool(CONFIG.MOD_ID, "block_transition_in_combat")
-    tft_config.show_ambush_range = mcm.bool(CONFIG.MOD_ID, "show_ambush_range")
-    tft_config.pause_on_ambush = mcm.bool(CONFIG.MOD_ID, "pause_on_ambush")
-    tft_config.fly_speed_mult_normal = mcm.number(CONFIG.MOD_ID, "fly_speed_mult_normal", CONFIG.DEFAULTS["fly_speed_mult_normal"] or 5)
-    tft_config.fly_speed_mult_sneak = mcm.number(CONFIG.MOD_ID, "fly_speed_mult_sneak", CONFIG.DEFAULTS["fly_speed_mult_sneak"] or 2)
+    tft_config.block_travel_when_unfit = mcm.bool(CONFIG.MOD_ID, "block_travel_when_unfit")
+    tft_config.pause_on_stop = mcm.bool(CONFIG.MOD_ID, "pause_on_stop")
+    tft_config.pause_on_done = mcm.bool(CONFIG.MOD_ID, "pause_on_done")
+    tft_config.show_hud_during_travel = mcm.bool(CONFIG.MOD_ID, "show_hud_during_travel")
+    tft_config.time_factor_travel = mcm.number(CONFIG.MOD_ID, "time_factor_travel", CONFIG.DEFAULTS["time_factor_travel"] or 1)
+    tft_config.time_factor_backslide = mcm.number(CONFIG.MOD_ID, "time_factor_backslide", CONFIG.DEFAULTS["time_factor_backslide"] or 0.05)
+    tft_config.cam_speed_mult = mcm.number(CONFIG.MOD_ID, "cam_speed_mult", CONFIG.DEFAULTS["cam_speed_mult"] or 1)
+    tft_config.backslide_clear_m = mcm.number(CONFIG.MOD_ID, "backslide_clear_m", CONFIG.DEFAULTS["backslide_clear_m"] or 25)
+    tft_config.screen_msg_duration = mcm.number(CONFIG.MOD_ID, "screen_msg_duration", CONFIG.DEFAULTS["screen_msg_duration"] or 4)
+    -- legacy alias used by pause helper
+    tft_config.pause_on_ambush = tft_config.pause_on_stop
+    tft_config.show_ambush_range = false
     -- nil when unbound (-1 in MCM)
     tft_config.companion_teleport_key = mcm.key(CONFIG.MOD_ID, "companion_teleport_key")
     tft_config.visited_radius_m = CONFIG.DEFAULTS["visited_radius_m"] or 30
-    if _G.tft_fly then
-        if tft_config.fly_speed_mult_normal then
-            _G.tft_fly.speed_mult_normal = tft_config.fly_speed_mult_normal
-        end
-        if tft_config.fly_speed_mult_sneak then
-            _G.tft_fly.speed_mult_sneak = tft_config.fly_speed_mult_sneak
-        end
-    end
     -- debug keys still under shared Debug page
     if mcm.bool("dogma/debug", "ft_path_preview") then
         tft_config.path_preview = true
     end
-    tft_config.sneaking_level_up = mcm.key("dogma/debug", "ft_sneaking_level_up")
-    tft_config.sneaking_level_down = mcm.key("dogma/debug", "ft_sneaking_level_down")
     tft_config.nav_mesh_reload = mcm.key("dogma/debug", "ft_nav_mesh_reload")
     tft_config.nav_mesh_reload_on_load = mcm.bool("dogma/debug", "ft_nav_mesh_reload_on_load")
     tft_config.show_nav_mesh = mcm.bool("dogma/debug", "ft_show_nav_mesh")
-    if not tft_config.show_ambush_range and tft_clear_ambush_range_circle then
+    if tft_clear_ambush_range_circle then
         tft_clear_ambush_range_circle()
     end
     if dogma.dbg and dogma.dbg.set_enabled then
@@ -73,20 +71,25 @@ local function load_config()
     elseif refresh_active_config then
         refresh_active_config()
     end
-    if _G.tft_ensure_sneaking_skill_options then
-        _G.tft_ensure_sneaking_skill_options()
-    end
 end
 
 refresh_active_config = function()
-    local msg_dur = 30
     local dogma = tft and tft.dogma
+    local msg_dur = 4
+    local pause_stop = true
+    local pause_done = true
     if dogma and dogma.mcm then
-        msg_dur = dogma.mcm.number(CONFIG.MOD_ID, "message_duration")
+        msg_dur = dogma.mcm.number(CONFIG.MOD_ID, "screen_msg_duration", CONFIG.DEFAULTS["screen_msg_duration"] or 4)
+        pause_stop = dogma.mcm.bool(CONFIG.MOD_ID, "pause_on_stop")
+        pause_done = dogma.mcm.bool(CONFIG.MOD_ID, "pause_on_done")
     end
 
     tft.active_config = {
-        message_duration = msg_dur,
+        screen_msg_duration = msg_dur,
+        message_duration = msg_dur, -- legacy alias
+        pause_on_stop = pause_stop,
+        pause_on_done = pause_done,
+        pause_on_ambush = pause_stop,
     }
     return tft.active_config
 end
@@ -373,9 +376,10 @@ end
 menu_item_is_ours = function(text)
     if not text or text == "" then return false end
     local markers = {
-        tft_str("tft_menu_travel_here"),
-        tft_str("tft_menu_sneaky_travel"),
-        tft_str("tft_menu_hire_guide"),
+        tft_str("tft_menu_run_to"),
+        tft_str("tft_menu_sneak_to"),
+        tft_str("tft_menu_travel_here"), -- legacy
+        tft_str("tft_menu_sneaky_travel"), -- legacy
         tft_str("tft_menu_not_visited"),
         tft_str("tft_msg_cross_zone_denied"),
         tft_str("tft_msg_cannot_travel_here"),
@@ -502,15 +506,9 @@ add_travel_menu_items = function(pui, id, is_lc, include_sneak)
         tft_log("menu: no specs for id=%s (lc=%s)", tostr(id), tostr(is_lc))
         return false
     end
-    pui:AddItem(tft_format_travel_menu("tft_menu_travel_here", specs.dist_str, specs.dur_str, specs.sneak_normal))
+    pui:AddItem(tft_format_travel_menu("tft_menu_run_to", specs.dist_str, specs.dur_str, 0))
     if include_sneak ~= false then
-        local sneak_cd_remaining = tft_sneak_cooldown_remaining_secs and tft_sneak_cooldown_remaining_secs() or 0
-        if sneak_cd_remaining > 0 then
-            local wait_str = tft_format_duration(sneak_cd_remaining / 60)
-            pui:AddItem(string.format(tft_str("tft_menu_sneak_cooldown_format"), tft_str("tft_menu_sneaky_travel"), wait_str))
-        else
-            pui:AddItem(tft_format_travel_menu("tft_menu_sneaky_travel", specs.dist_str, specs.sneaky_dur_str, specs.sneak_sneaky))
-        end
+        pui:AddItem(tft_format_travel_menu("tft_menu_sneak_to", specs.dist_str, specs.sneaky_dur_str, 0))
     end
     tft_log("menu: added travel items id=%s dist=%.0f dur=%s sneak=%s", tostr(id), specs.dist or 0, specs.dur_str or "?", tostr(include_sneak ~= false))
     return true
@@ -648,30 +646,20 @@ on_map_spot_menu_add_property_impl = function(pui, id, ln, hint)
 
     if is_base then
         if cross_zone then
-            resolve_base_or_campfire()
-            tft.last_menu_target_id = id
             tft_clear_path_preview()
-            mark_menu_primary(pui)
-            add_guide_menu_item(pui, id, se_obj)
-            return true
+            return add_cannot_travel_item(pui, id, "cross_zone")
         end
         resolve_base_or_campfire()
         tft.last_menu_target_id = id
         maybe_preview(false)
         mark_menu_primary(pui)
-        local ok = add_travel_menu_items(pui, id, false)
-        add_guide_menu_item(pui, id, se_obj)
-        return ok
+        return add_travel_menu_items(pui, id, false)
     end
 
     if is_stash then
-        resolve_base_or_campfire()
-        tft.last_menu_target_id = id
         tft_clear_path_preview()
         tft_strip_backpack_travel_menu_items(pui)
-        mark_menu_primary(pui)
-        add_guide_menu_item(pui, id, se_obj)
-        return true
+        return add_cannot_travel_item(pui, id, "stash_no_guide")
     end
 
     if tft_is_place_like_spot(se_obj) then
@@ -696,6 +684,7 @@ end
 
 on_map_spot_menu_property_clicked = function(pui, id, ln, t)
     local ok, err = xpcall(function()
+        local sfind = string.find
         local tostr = tostring
         local result = t or (pui and pui.GetResult and pui:GetResult())
         tft_log("menu click: id=%s ln=%s result=%s", tostr(id), tostr(ln), tostr(result))
@@ -717,21 +706,22 @@ on_map_spot_menu_property_clicked = function(pui, id, ln, t)
 
         local pos, lvid, gvid = target.pos, target.lvid, target.gvid
 
-        if string.find(result, tft_str("tft_menu_sneaky_travel"), 1, true) then
+        local sneak_lbl = tft_str("tft_menu_sneak_to")
+        local run_lbl = tft_str("tft_menu_run_to")
+        local sneak_legacy = tft_str("tft_menu_sneaky_travel")
+        local run_legacy = tft_str("tft_menu_travel_here")
+        if sfind(result, sneak_lbl, 1, true) or sfind(result, sneak_legacy, 1, true) then
             tft.travel_mode = "sneaky"
             tft.final_pos  = vector():set(pos.x, pos.y, pos.z)
             tft.final_lvid = lvid
             tft.last_menu_target_id = id
             tft_start_travel_sequence(pos, lvid, gvid, is_lc, gvid)
-        elseif string.find(result, tft_str("tft_menu_travel_here"), 1, true) then
+        elseif sfind(result, run_lbl, 1, true) or sfind(result, run_legacy, 1, true) then
             tft.travel_mode = "normal"
             tft.final_pos  = vector():set(pos.x, pos.y, pos.z)
             tft.final_lvid = lvid
             tft.last_menu_target_id = id
             tft_start_travel_sequence(pos, lvid, gvid, is_lc, gvid)
-        elseif string.find(result, tft_str("tft_menu_hire_guide"), 1, true) then
-            tft_log("Hiring guide...")
-            tft_do_guide_travel(id, ln)
         end
     end, debug.traceback)
     if not ok then
@@ -817,6 +807,13 @@ end
 on_before_key_press = function(dik, bind, dis, flags)
     if _G.tft_try_resume_ambush_pause then
         _G.tft_try_resume_ambush_pause(dik, bind)
+    end
+    -- PDA raise cancels walk travel (input may be disabled, so key callback is required).
+    if tft and (tft.fly_active or tft.is_traveling) and key_bindings and bind == key_bindings.kPDA then
+        if _G.tft_fly_begin_backslide and tft.fly_phase == "fly" then
+            _G.tft_fly_begin_backslide("cancel")
+            if flags then flags.ret_value = false end
+        end
     end
 end
 

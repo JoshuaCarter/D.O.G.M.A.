@@ -1,11 +1,11 @@
 --[[
 	Melee Skinning
 
-	Heavy knife stab on a dead mutant synthesizes Use so loot-claim and FDDA/vanilla
-	mutant loot handle success/failure. On a successful Use, branches into a short
-	knife light-slash rip with movement locked only during that rip. Suppresses
-	FDDA mutant_skin / mutant_loot lam2 actions while enabled (setup also turns off
-	FDDA skinning anims and enables auto-loot-all).
+	Light knife slash on a dead mutant synthesizes Use so loot-claim mods can veto
+	and FDDA/vanilla mutant loot handle success. Suppresses FDDA mutant_skin /
+	mutant_loot spam from auto-loot, then queues one mutant_loot pickup if loot
+	succeeded and the corpse is still the use-target. Setup turns off FDDA
+	skinning anims and enables auto-loot-all.
 ]]
 
 local CONFIG = _G.dogma_gameplay_melee_skinning_conf
@@ -16,11 +16,8 @@ local ACTION_MUTANT_SKIN = "mutant_skin"
 
 -- Knife HUD states (HudItem eLastBaseState=eBore=4; Weapon eFire/eFire2 follow)
 local KNIFE_STATE_FIRE = 5
-local KNIFE_STATE_FIRE2 = 6
 
 local USE_DEBOUNCE_MS = 400
-local RIP_FIRE2_GRACE_MS = 700
-local RIP_TIMEOUT_MS = 1400
 
 local original_lam2_add_action = nil
 local original_ui_mutant_loot_start = nil
@@ -30,14 +27,6 @@ local last_use_ms = 0
 local awaiting_use_outcome = false
 local use_opened_loot = false
 local pending_obj_id = nil
-
--- Rip phase: wait for FIRE2 to end, then pulse light FIRE under move lock.
-local rip_pending = false
-local rip_active = false
-local rip_lock_active = false
-local rip_deadline = nil
-local rip_saw_fire2 = false
-local rip_saw_fire = false
 
 local function log(msg)
 	if not (DOGMA and DOGMA.dbg) then
@@ -127,76 +116,11 @@ local function patch_ui_mutant_loot()
 	log("ui_mutant_loot.start patched")
 end
 
-local function set_rip_movement_lock(lock)
-	if lock then
-		if rip_lock_active then
-			return
-		end
-		level.disable_input()
-		game.only_allow_movekeys(false)
-		if _G.liz_fdda_input_manager then
-			liz_fdda_input_manager.is_input_disabled = true
-		end
-		game.set_actor_allow_ladder(false)
-		rip_lock_active = true
-		log("rip: movement locked")
-		return
-	end
-	if not rip_lock_active then
-		return
-	end
-	level.enable_input()
-	game.only_allow_movekeys(false)
-	if _G.liz_fdda_input_manager then
-		liz_fdda_input_manager.is_input_disabled = false
-	end
-	game.set_actor_allow_ladder(true)
-	rip_lock_active = false
-	log("rip: movement lock released")
-end
-
-local function clear_rip_state()
-	rip_pending = false
-	rip_active = false
-	rip_deadline = nil
-	rip_saw_fire2 = false
-	rip_saw_fire = false
-	set_rip_movement_lock(false)
-end
-
-local function begin_rip_phase()
-	if rip_active or rip_pending then
-		return
-	end
-	rip_pending = true
-	rip_saw_fire2 = false
-	rip_deadline = time_global() + RIP_TIMEOUT_MS + RIP_FIRE2_GRACE_MS
-	log("rip: pending (wait for FIRE2 end)")
-end
-
-local function pulse_knife_fire()
-	local dik = bind_to_dik(key_bindings.kWPN_FIRE)
-	if not (dik and dik ~= 0) then
-		log("rip: no kWPN_FIRE bind")
-		return false
-	end
-	level.press_action(dik)
-	level.release_action(dik)
-	return true
-end
-
-local function start_rip_slash()
-	rip_pending = false
-	rip_active = true
-	rip_saw_fire = false
-	rip_deadline = time_global() + RIP_TIMEOUT_MS
-	-- Pulse FIRE before input lock so press_action is not swallowed.
-	if not pulse_knife_fire() then
-		clear_rip_state()
-		return
-	end
-	set_rip_movement_lock(true)
-	log("rip: light FIRE pulsed")
+-- press_action bypasses on_before_key_press; claim mods veto there, so gate first.
+local function claim_allows_use(dik)
+	local flags = { ret_value = true }
+	SendScriptCallback("on_before_key_press", dik, key_bindings.kUSE, false, flags)
+	return flags.ret_value ~= false
 end
 
 local function synthesize_use()
@@ -205,16 +129,44 @@ local function synthesize_use()
 		log("use: no kUSE bind")
 		return false
 	end
+	if not claim_allows_use(dik) then
+		log("use: blocked by claim / on_before_key_press")
+		return false
+	end
 	level.press_action(dik)
 	level.release_action(dik)
 	return true
 end
 
-local function try_heavy_skin()
+local function queue_pickup_anim()
+	local fdda = _G.liz_fdda_redone_mutant_skinning
+	if not (fdda and fdda.get_template_action_mutant_loot and original_lam2_add_action) then
+		log("pickup: FDDA mutant_loot template unavailable")
+		return
+	end
+	local anim_sec = "item_ea_harv_meat_" .. tostring(math.random(14)) .. "_hud"
+	-- nil target: skip must not drop_item a part/corpse
+	local action = fdda.get_template_action_mutant_loot(nil, anim_sec)
+	if not action then
+		log("pickup: get_template_action_mutant_loot returned nil")
+		return
+	end
+	original_lam2_add_action(action)
+	log("pickup: queued mutant_loot " .. anim_sec)
+end
+
+local function degrade_knife()
+	if item_knife and item_knife.degradate then
+		item_knife.degradate()
+		log("knife: degradate")
+	end
+end
+
+local function try_light_skin()
 	if not CONFIG.loaded.enabled then
 		return
 	end
-	if rip_active or rip_pending or awaiting_use_outcome then
+	if awaiting_use_outcome then
 		return
 	end
 	if input_blocked() then
@@ -231,11 +183,11 @@ local function try_heavy_skin()
 
 	local obj = use_target_dead_mutant()
 	if not obj then
-		log("heavy: missed (no dead mutant use-target)")
+		log("light: missed (no dead mutant use-target)")
 		return
 	end
 	if is_corpse_looted(obj) then
-		log("heavy: already looted id=" .. tostring(obj:id()))
+		log("light: already looted id=" .. tostring(obj:id()))
 		return
 	end
 
@@ -244,7 +196,7 @@ local function try_heavy_skin()
 	use_opened_loot = false
 	awaiting_use_outcome = true
 
-	log("heavy: synthesize Use id=" .. tostring(pending_obj_id))
+	log("light: synthesize Use id=" .. tostring(pending_obj_id))
 	local ok = synthesize_use()
 	awaiting_use_outcome = false
 
@@ -255,21 +207,28 @@ local function try_heavy_skin()
 	end
 
 	if use_opened_loot then
-		log("heavy: Use allowed - schedule rip")
-		begin_rip_phase()
+		local still = use_target_dead_mutant()
+		if still and still:id() == pending_obj_id then
+			log("light: loot ok, still targeting - pickup")
+			queue_pickup_anim()
+			degrade_knife()
+		else
+			log("light: loot ok, look lost - skip pickup")
+			degrade_knife()
+		end
 	else
-		log("heavy: Use blocked or no loot UI - retract only")
+		log("light: Use blocked or no loot UI")
 	end
 	pending_obj_id = nil
 	use_opened_loot = false
 end
 
-local function tick_knife_heavy()
+local function tick_knife_light()
 	if not CONFIG.loaded.enabled then
 		last_knife_state = 0
 		return
 	end
-	if input_blocked() or rip_active then
+	if input_blocked() then
 		last_knife_state = 0
 		return
 	end
@@ -281,66 +240,10 @@ local function tick_knife_heavy()
 	end
 
 	local state = wpn:get_state()
-	local rising_fire2 = state == KNIFE_STATE_FIRE2 and state ~= last_knife_state
+	local rising_fire = state == KNIFE_STATE_FIRE and state ~= last_knife_state
 	last_knife_state = state
-	if rising_fire2 then
-		try_heavy_skin()
-	end
-end
-
-local function tick_rip()
-	if not (rip_pending or rip_active) then
-		return
-	end
-
-	local now = time_global()
-	if rip_deadline and now > rip_deadline then
-		log("rip: timed out")
-		clear_rip_state()
-		return
-	end
-
-	local wpn = equipped_knife()
-	if not wpn then
-		clear_rip_state()
-		return
-	end
-
-	local state = wpn:get_state()
-	if rip_pending then
-		-- Must observe FIRE2 (heavy stab) before branching, so a zoom-key Use
-		-- before the HUD state flips does not skip the stab into the rip.
-		if state == KNIFE_STATE_FIRE2 then
-			rip_saw_fire2 = true
-			return
-		end
-		if rip_saw_fire2 then
-			start_rip_slash()
-			return
-		end
-		if now >= last_use_ms + RIP_FIRE2_GRACE_MS then
-			log("rip: FIRE2 never seen, branching anyway")
-			start_rip_slash()
-		end
-		return
-	end
-
-	if state == KNIFE_STATE_FIRE then
-		rip_saw_fire = true
-		return
-	end
-	if rip_saw_fire and state ~= KNIFE_STATE_FIRE then
-		log("rip: complete")
-		clear_rip_state()
-	end
-end
-
-local function on_heavy_key_press(dik)
-	if not CONFIG.loaded.enabled then
-		return
-	end
-	if dik_to_bind(dik) == key_bindings.kWPN_ZOOM then
-		try_heavy_skin()
+	if rising_fire then
+		try_light_skin()
 	end
 end
 
@@ -348,7 +251,6 @@ local function on_option_change()
 	CONFIG.loaded.enabled = DOGMA.mcm.bool(CONFIG.MOD_ID, "enabled")
 	CONFIG.loaded.debug_log = DOGMA.dbg.logging()
 	if not CONFIG.loaded.enabled then
-		clear_rip_state()
 		awaiting_use_outcome = false
 		use_opened_loot = false
 		pending_obj_id = nil
@@ -366,10 +268,8 @@ function on_game_start()
 
 	RegisterScriptCallback("actor_on_update", function()
 		DOGMA.sys.ready(CONFIG.MOD_ID, db, on_option_change)
-		tick_knife_heavy()
-		tick_rip()
+		tick_knife_light()
 	end)
-	RegisterScriptCallback("on_key_press", on_heavy_key_press)
 	RegisterScriptCallback("on_option_change", on_option_change)
 	log("loaded")
 end

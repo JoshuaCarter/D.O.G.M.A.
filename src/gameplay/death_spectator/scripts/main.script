@@ -3,8 +3,9 @@
 
 	Tracks recent hits while alive. On death: hit summary (bottom-left) +
 	"Press TAB to spectate". Tab starts demo_record free-fly 2m above the
-	corpse looking at the killer. Space continue stays until spectating
-	(demo_record eats Space); Esc exits.
+	corpse looking at the killer. W/S are remapped from demo_record's
+	vertical slide to horizontal forward. Space continue stays until
+	spectating (demo_record eats Space); Esc exits.
 ]]
 
 local CONFIG = _G.dogma_gameplay_death_spectator_conf
@@ -62,6 +63,9 @@ local corpse_pos = nil
 local killer_id = nil
 local frozen_lines = nil
 local adb_wrapped = false
+local last_cam_pos = nil
+local saved_show_actor_body = nil
+local saved_hud_weapon = nil
 
 -- BHS limb keys → summary labels (Body is actor.health, not torso).
 local DIED_LIMBS = {
@@ -519,6 +523,117 @@ local function resolve_killer_pos()
 	return nil
 end
 
+-- First-person normally hides the actor mesh; show full body while spectating.
+-- Keep FP weapon/hands HUD off — we only want the world corpse, not arms-in-face.
+local function reveal_corpse()
+	if saved_show_actor_body == nil then
+		local prev = 0
+		pcall(function()
+			if get_console_cmd then
+				prev = tonumber(get_console_cmd(1, "show_actor_body")) or 0
+			end
+		end)
+		saved_show_actor_body = prev
+	end
+	if saved_hud_weapon == nil then
+		local prev = 1
+		pcall(function()
+			if get_console_cmd then
+				prev = get_console_cmd(1, "hud_weapon") and 1 or 0
+			end
+		end)
+		saved_hud_weapon = prev
+	end
+	if exec_console_cmd then
+		exec_console_cmd("show_actor_body 1")
+		exec_console_cmd("hud_weapon 0")
+	end
+	if db.actor then
+		pcall(function()
+			db.actor:set_invisible(false)
+		end)
+	end
+	if level and level.show_weapon then
+		pcall(function()
+			level.show_weapon(false)
+		end)
+	end
+end
+
+local function restore_corpse_visibility()
+	if saved_show_actor_body ~= nil and exec_console_cmd then
+		pcall(function()
+			exec_console_cmd("show_actor_body " .. tostring(saved_show_actor_body))
+		end)
+	end
+	saved_show_actor_body = nil
+	if saved_hud_weapon ~= nil and exec_console_cmd then
+		pcall(function()
+			exec_console_cmd("hud_weapon " .. tostring(saved_hud_weapon))
+		end)
+	end
+	saved_hud_weapon = nil
+end
+
+-- demo_record binds W/S to slide along camera-up (world vertical when level).
+-- Convert that component into horizontal forward along look yaw each tick.
+local function remap_demo_wasd()
+	if not spectating then
+		return true
+	end
+	local d = device and device()
+	if not (d and d.cam_pos and d.cam_dir and d.cam_top) then
+		return false
+	end
+	local pos = d.cam_pos
+	local top = d.cam_top
+	local dir = d.cam_dir
+	if not last_cam_pos then
+		last_cam_pos = vector():set(pos.x, pos.y, pos.z)
+		return false
+	end
+
+	local mdx = pos.x - last_cam_pos.x
+	local mdy = pos.y - last_cam_pos.y
+	local mdz = pos.z - last_cam_pos.z
+	local up_amt = mdx * top.x + mdy * top.y + mdz * top.z
+	if math.abs(up_amt) < 1e-5 then
+		last_cam_pos = vector():set(pos.x, pos.y, pos.z)
+		return false
+	end
+
+	local nx = pos.x - top.x * up_amt
+	local ny = pos.y - top.y * up_amt
+	local nz = pos.z - top.z * up_amt
+
+	local fx, fz = dir.x, dir.z
+	local flen = math.sqrt(fx * fx + fz * fz)
+	if flen < 1e-4 then
+		last_cam_pos = vector():set(pos.x, pos.y, pos.z)
+		return false
+	end
+	fx, fz = fx / flen, fz / flen
+	nx = nx + fx * up_amt
+	nz = nz + fz * up_amt
+
+	if exec_console_cmd then
+		exec_console_cmd(string.format("demo_set_cam_position %f,%f,%f", nx, ny, nz))
+	end
+	last_cam_pos = vector():set(nx, ny, nz)
+	return false
+end
+
+local function start_wasd_remap()
+	last_cam_pos = nil
+	RemoveTimeEvent(CONFIG.MOD_ID, "wasd_remap")
+	CreateTimeEvent(CONFIG.MOD_ID, "wasd_remap", 0, remap_demo_wasd)
+end
+
+local function stop_wasd_remap()
+	RemoveTimeEvent(CONFIG.MOD_ID, "wasd_remap")
+	last_cam_pos = nil
+end
+
 local function start_spectator()
 	if not awaiting_spectate or spectating then
 		return
@@ -554,26 +669,26 @@ local function start_spectator()
 	hide_tab_prompt()
 	hide_space_continue()
 	show_hit_summary()
-
-	if level.set_cam_custom_position_direction then
-		pcall(function()
-			level.set_cam_custom_position_direction(cam_pos, hpb, 0, false, false)
-		end)
-	end
+	reveal_corpse()
 
 	if exec_console_cmd then
 		exec_console_cmd("demo_record dogma_death_spectator")
+		-- Force start pose; demo_record otherwise inherits the death FP view.
+		exec_console_cmd(string.format(
+			"demo_set_cam_position %f,%f,%f",
+			cam_pos.x,
+			cam_pos.y,
+			cam_pos.z
+		))
+		exec_console_cmd(string.format(
+			"demo_set_cam_direction %f,%f,%f",
+			hpb.x,
+			hpb.y,
+			hpb.z or 0
+		))
 	end
 
-	-- Free-fly takes over; drop custom cam override if it blocks movement.
-	CreateTimeEvent(CONFIG.MOD_ID, "clear_custom_cam", 0.05, function()
-		if level.remove_cam_custom_position_direction then
-			pcall(function()
-				level.remove_cam_custom_position_direction()
-			end)
-		end
-		return true
-	end)
+	start_wasd_remap()
 
 	log(string.format(
 		"spectate started at %.1f,%.1f,%.1f killer=%s",
@@ -595,7 +710,8 @@ local function reset_state()
 	corpse_pos = nil
 	killer_id = nil
 	frozen_lines = nil
-	RemoveTimeEvent(CONFIG.MOD_ID, "clear_custom_cam")
+	stop_wasd_remap()
+	restore_corpse_visibility()
 	clear_death_ui()
 	if exec_console_cmd then
 		pcall(function()

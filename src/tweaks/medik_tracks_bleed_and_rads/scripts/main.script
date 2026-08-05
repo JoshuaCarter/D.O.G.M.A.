@@ -93,6 +93,10 @@ local function bind_part(slot, part, tex_id)
 	if wnd and wnd.InitTextureEx then
 		wnd:InitTextureEx(tex_id, "hud\\p3d")
 		slot[cache] = tex_id
+		-- InitTextureEx resets multiply color; force SetTextureColor next.
+		if part == "icon" then
+			slot.icon_color = nil
+		end
 	end
 end
 
@@ -101,6 +105,8 @@ local function clear_slot_tex_cache(slot)
 		return
 	end
 	slot.icon_tex, slot.d1_tex, slot.d2_tex, slot.d3_tex = nil, nil, nil, nil
+	-- Paired with forced rebind: color cache must not outlive InitTextureEx.
+	slot.icon_color = nil
 end
 
 local function resolve_tex(id)

@@ -76,6 +76,10 @@ end
 
 local function patched_add_action(action)
 	if CONFIG.loaded.enabled and action and (action.name == ACTION_MUTANT_SKIN or action.name == ACTION_MUTANT_LOOT) then
+		-- Intentional post-loot grab from Melee Skinning.
+		if action.name == ACTION_MUTANT_LOOT and action.flags and action.flags.dogma_melee_pickup then
+			return original_lam2_add_action(action)
+		end
 		log("fdda: dropped " .. tostring(action.name) .. " from queue")
 		return
 	end
@@ -116,31 +120,32 @@ local function patch_ui_mutant_loot()
 	log("ui_mutant_loot.start patched")
 end
 
--- press_action bypasses on_before_key_press; claim mods veto there, so gate first.
-local function claim_allows_use(dik)
+-- press_action(kUSE) bypasses on_before_key_press AND is ignored mid-knife FIRE,
+-- so gate claims explicitly then invoke the same monster-use callback as a real Use.
+local function claim_allows_use()
+	local dik = bind_to_dik(key_bindings.kUSE)
+	if not (dik and dik ~= 0) then
+		-- No bind: still allow (claim mods key off bind == kUSE).
+		dik = 0
+	end
 	local flags = { ret_value = true }
 	SendScriptCallback("on_before_key_press", dik, key_bindings.kUSE, false, flags)
 	return flags.ret_value ~= false
 end
 
-local function synthesize_use()
-	local dik = bind_to_dik(key_bindings.kUSE)
-	if not (dik and dik ~= 0) then
-		log("use: no kUSE bind")
-		return false
-	end
-	if not claim_allows_use(dik) then
+local function synthesize_use(obj)
+	if not claim_allows_use() then
 		log("use: blocked by claim / on_before_key_press")
 		return false
 	end
-	level.press_action(dik)
-	level.release_action(dik)
+	-- Direct callback: engine Use via press_action does not fire while knife is in FIRE.
+	SendScriptCallback("monster_on_actor_use_callback", obj, db.actor)
 	return true
 end
 
 local function queue_pickup_anim()
 	local fdda = _G.liz_fdda_redone_mutant_skinning
-	if not (fdda and fdda.get_template_action_mutant_loot and original_lam2_add_action) then
+	if not (fdda and fdda.get_template_action_mutant_loot and _G.lam2 and _G.lam2.add_action) then
 		log("pickup: FDDA mutant_loot template unavailable")
 		return
 	end
@@ -151,7 +156,10 @@ local function queue_pickup_anim()
 		log("pickup: get_template_action_mutant_loot returned nil")
 		return
 	end
-	original_lam2_add_action(action)
+	action.flags = action.flags or {}
+	action.flags.dogma_melee_pickup = true
+	-- Top of lam2 chain so Faster Skinning / our suppress filters can allow the flag.
+	_G.lam2.add_action(action)
 	log("pickup: queued mutant_loot " .. anim_sec)
 end
 
@@ -197,7 +205,7 @@ local function try_light_skin()
 	awaiting_use_outcome = true
 
 	log("light: synthesize Use id=" .. tostring(pending_obj_id))
-	local ok = synthesize_use()
+	local ok = synthesize_use(obj)
 	awaiting_use_outcome = false
 
 	if not ok then
@@ -217,7 +225,8 @@ local function try_light_skin()
 			degrade_knife()
 		end
 	else
-		log("light: Use blocked or no loot UI")
+		-- Already skinned / decayed / empty Reset: start never ran.
+		log("light: no loot UI (already looted, decayed, or empty)")
 	end
 	pending_obj_id = nil
 	use_opened_loot = false

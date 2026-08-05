@@ -205,6 +205,9 @@ local function patched_add_action(action)
 		return
 	end
 	if CONFIG.loaded.enabled and action and action.name == ACTION_MUTANT_LOOT then
+		if action.flags and action.flags.dogma_melee_pickup then
+			return original_lam2_add_action(action)
+		end
 		log("mutant_loot: dropped from queue (item is already in inventory)")
 		return
 	end

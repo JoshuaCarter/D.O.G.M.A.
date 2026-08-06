@@ -6,6 +6,9 @@
 
 Used by tools/build.sh and the git pre-commit hook. Skip via DOGMA_NO_ALAO=1
 in the environment (build only checks that; this CLI always runs when invoked).
+
+Clears *.alao-bak under the target before --fix so authoring src/ is always
+re-processed (git is the undo). Full-mod Optimize does not use this path.
 """
 
 from __future__ import annotations
@@ -19,7 +22,20 @@ _MO2 = _REPO / "src" / "_common" / "mo2" / "tools"
 if str(_MO2) not in sys.path:
     sys.path.insert(0, str(_MO2))
 
+import dogma_mo2_lib as lib  # noqa: E402
 import dogma_optimize as optimize  # noqa: E402
+
+
+def _clean_alao_backups(root: Path) -> int:
+    """Remove ALAO skip-markers so --fix can touch every script again."""
+    deleted = 0
+    for bak in root.rglob("*.alao-bak"):
+        try:
+            bak.unlink()
+            deleted += 1
+        except OSError as e:
+            lib.err(f"Could not delete {bak}: {e}")
+    return deleted
 
 
 def main() -> int:
@@ -46,6 +62,10 @@ def main() -> int:
     args = p.parse_args()
 
     target = args.path.expanduser().resolve()
+    if not args.dry_run:
+        n = _clean_alao_backups(target)
+        if n:
+            lib.info(f"Removed {n} stale ALAO backup(s) under {target}")
     return optimize.run_alao(
         target,
         report=args.report.expanduser().resolve(),

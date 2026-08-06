@@ -98,6 +98,7 @@ if [[ ! -d "$SRC" ]]; then
 fi
 
 # Same ALAO command as DOGMA Optimize, on local src/ only (--direct).
+# alao_local.py clears *.alao-bak first so src/ is always re-fixed (not all-mods Optimize).
 run_alao_local() {
 	if [[ -n "${DOGMA_NO_ALAO:-}" ]]; then
 		echo "build: skipping ALAO (DOGMA_NO_ALAO set)"

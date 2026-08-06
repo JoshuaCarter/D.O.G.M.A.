@@ -487,26 +487,28 @@ end
 -- Safe engine/weapon snapshot for ADS crash diagnosis (all pcall'd).
 -- Must sit below active_item_id / scope helpers so those names bind as locals.
 zoom_diag = function(tag)
+	local sformat = string.format
+	local tostr = tostring
 	local parts = { tag or "diag" }
 	local function add(fmt, ...)
 		parts[#parts + 1] = string.format(fmt, ...)
 	end
 
-	add("mode=%s free=%s ads=%s", mode_label(), tostring(free_on), tostring(ads_on))
+	add("mode=%s free=%s ads=%s", mode_label(), tostr(free_on), tostr(ads_on))
 	add(
 		"fov hip=%.2f live=%s tgt=%s write=%s wrote=%s",
 		hip_fov or -1,
-		live_fov and string.format("%.2f", live_fov) or "nil",
-		tgt_fov and string.format("%.2f", tgt_fov) or "nil",
-		tostring(world_write),
-		tostring(we_wrote_fov)
+		live_fov and sformat("%.2f", live_fov) or "nil",
+		tgt_fov and sformat("%.2f", tgt_fov) or "nil",
+		tostr(world_write),
+		tostr(we_wrote_fov)
 	)
 	add(
 		"hud hip=%.3f live=%s tgt=%s wrote=%s",
 		hip_hud or -1,
-		live_hud and string.format("%.3f", live_hud) or "nil",
-		tgt_hud and string.format("%.3f", tgt_hud) or "nil",
-		tostring(we_wrote_hud)
+		live_hud and sformat("%.3f", live_hud) or "nil",
+		tgt_hud and sformat("%.3f", tgt_hud) or "nil",
+		tostr(we_wrote_hud)
 	)
 
 	local ok_c, con_fov = pcall(function()
@@ -517,8 +519,8 @@ zoom_diag = function(tag)
 	end)
 	add(
 		"console fov=%s hud=%s",
-		(ok_c and con_fov and string.format("%.2f", con_fov)) or "?",
-		(ok_h and con_hud and string.format("%.3f", con_hud)) or "?"
+		(ok_c and con_fov and sformat("%.2f", con_fov)) or "?",
+		(ok_h and con_hud and sformat("%.3f", con_hud)) or "?"
 	)
 
 	local slot = "?"
@@ -527,14 +529,15 @@ zoom_diag = function(tag)
 			return db.actor:active_slot()
 		end)
 		if ok_s then
-			slot = tostring(s)
+			slot = tostr(s)
 		end
 	end
-	add("slot=%s wpn=%s id=%s", slot, wpn_label(), tostring(active_item_id()))
+	add("slot=%s wpn=%s id=%s", slot, wpn_label(), tostr(active_item_id()))
 
 	local gun_bits = "no_gun"
 	if wpn then
 		local ok_g, bits = pcall(function()
+			local tostr = tostring
 			local gun = wpn.cast_Weapon and wpn:cast_Weapon()
 			if not gun then
 				return "not_weapon"
@@ -545,13 +548,13 @@ zoom_diag = function(tag)
 			local state = wpn.get_state and wpn:get_state()
 			return string.format(
 				"zoomed=%s ztype=%s scope_eng=%s state=%s",
-				tostring(zoomed),
-				tostring(ztype),
-				tostring(scoped),
-				tostring(state)
+				tostr(zoomed),
+				tostr(ztype),
+				tostr(scoped),
+				tostr(state)
 			)
 		end)
-		gun_bits = (ok_g and bits) or ("gun_err:" .. tostring(bits))
+		gun_bits = (ok_g and bits) or ("gun_err:" .. tostr(bits))
 	end
 	add("%s", gun_bits)
 
@@ -561,11 +564,11 @@ zoom_diag = function(tag)
 	local ok_scp, scp = pcall(attached_scope_sec)
 	add(
 		"optical=%s attached=%s class=%s scope_sec=%s 3dss=%s",
-		ok_opt and tostring(optical) or "err",
-		ok_att and tostring(attached) or "err",
-		ok_cls and tostring(oclass) or "err",
-		(ok_scp and scp) and tostring(scp) or "nil",
-		tostring(z_3d_scopes ~= nil)
+		ok_opt and tostr(optical) or "err",
+		ok_att and tostr(attached) or "err",
+		ok_cls and tostr(oclass) or "err",
+		(ok_scp and scp) and tostr(scp) or "nil",
+		tostr(z_3d_scopes ~= nil)
 	)
 
 	local menus = {}
@@ -578,13 +581,13 @@ zoom_diag = function(tag)
 	add(
 		"menus=%s pda=%s lowered=%s phase=%s",
 		(#menus > 0) and table.concat(menus, ",") or "none",
-		ok_pda and tostring(pda) or "err",
-		ok_low and tostring(lowered) or "err",
+		ok_pda and tostr(pda) or "err",
+		ok_low and tostr(lowered) or "err",
 		crash_phase
 	)
 
 	if actor_menu and actor_menu.last_mode ~= nil then
-		add("actor_menu.last_mode=%s", tostring(actor_menu.last_mode))
+		add("actor_menu.last_mode=%s", tostr(actor_menu.last_mode))
 	end
 
 	return table.concat(parts, " | ")
@@ -971,6 +974,7 @@ local function apply_fov(snap)
 end
 
 local function poll_fov_smooth()
+	local sformat = string.format
 	local mabs = math.abs
 	publish_fov_targets()
 	if tgt_fov == nil and tgt_hud == nil then
@@ -1027,13 +1031,13 @@ local function poll_fov_smooth()
 	if ads_on and ads_post_frames > 0 and ads_post_frames <= ADS_POST_LOG_FRAMES and not wrote then
 		mark(
 			"smooth_idle",
-			string.format(
+			sformat(
 				"frame=%d live_fov=%s tgt_fov=%s live_hud=%s tgt_hud=%s",
 				ads_post_frames,
-				live_fov and string.format("%.2f", live_fov) or "nil",
-				tgt_fov and string.format("%.2f", tgt_fov) or "nil",
-				live_hud and string.format("%.3f", live_hud) or "nil",
-				tgt_hud and string.format("%.3f", tgt_hud) or "nil"
+				live_fov and sformat("%.2f", live_fov) or "nil",
+				tgt_fov and sformat("%.2f", tgt_fov) or "nil",
+				live_hud and sformat("%.3f", live_hud) or "nil",
+				tgt_hud and sformat("%.3f", tgt_hud) or "nil"
 			)
 		)
 	end

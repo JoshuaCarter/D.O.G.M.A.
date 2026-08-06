@@ -107,7 +107,9 @@ end
 
 local function has_headlamp()
 	local actor = db.actor
-	return actor and actor:item_in_slot(10) ~= nil
+	if actor then
+	    return actor and actor:item_in_slot(10) ~= nil
+	end
 end
 
 local function is_fav(sec)

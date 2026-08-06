@@ -1055,11 +1055,7 @@ local function poll_discoveries()
             consider(id)
         end
     end
-    if db.storage then
-        for id, _ in pairs_(db.storage) do
-            consider(id)
-        end
-    end
+    -- No db.storage walk: every online object + map_has_object_spot tanks FPS.
     local lvl = level and level.name and level.name()
     local dsts = tft.door_registry and lvl and tft.door_registry[lvl]
     if dsts then

@@ -227,9 +227,11 @@ function on_game_start()
 
 	if tft_poll_discoveries then
 		RegisterScriptCallback("actor_on_update", function()
-			if not tft.is_traveling then
-				pcall(tft_poll_discoveries)
-			end
+			if tft.is_traveling then return end
+			local tg = time_global()
+			if tg <= (tft._next_visit_poll or 0) then return end
+			tft._next_visit_poll = tg + 1000
+			pcall(tft_poll_discoveries)
 		end)
 	end
 

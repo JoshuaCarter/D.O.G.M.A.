@@ -444,6 +444,26 @@ local function claim_allows_use()
 end
 
 local function queue_pickup_anim()
+	-- Always left hand (1): knife stays in the right/weapon hand.
+	local LEFT = 1
+
+	if CONFIG.loaded.slash_world_grab then
+		local pickup = _G.liz_fdda_redone_item_pickup
+		if pickup and pickup.get_template_action_pickup and _G.lam2 and _G.lam2.add_action then
+			-- anm_ea_takelw = left-hand take while weapon is out
+			local action = pickup.get_template_action_pickup(LEFT, "anm_ea_takelw")
+			if action then
+				action.flags = action.flags or {}
+				action.flags.dogma_melee_pickup = true
+				action.hands = LEFT
+				_G.lam2.add_action(action)
+				log("pickup: queued world grab (left)")
+				return
+			end
+		end
+		log("pickup: world grab unavailable, falling back to harvest")
+	end
+
 	local fdda = _G.liz_fdda_redone_mutant_skinning
 	if not (fdda and fdda.get_template_action_mutant_loot and _G.lam2 and _G.lam2.add_action) then
 		log("pickup: FDDA mutant_loot template unavailable")
@@ -457,11 +477,9 @@ local function queue_pickup_anim()
 	end
 	action.flags = action.flags or {}
 	action.flags.dogma_melee_pickup = true
-	-- hands=2 holsters weapon+detector. hands=0 holsters the knife (weapon hand).
-	-- hands=1 = offhand only: lam2 frees the detector hand if needed, knife stays out.
-	action.hands = 1
+	action.hands = LEFT
 	_G.lam2.add_action(action)
-	log("pickup: queued mutant_loot " .. anim_sec)
+	log("pickup: queued harvest grab (left) " .. anim_sec)
 end
 
 local function degrade_knife()
@@ -673,13 +691,15 @@ local function on_option_change()
 	CONFIG.loaded.look_at_offset = DOGMA.mcm.number(CONFIG.MOD_ID, "look_at_offset")
 	CONFIG.loaded.slash_loot = DOGMA.mcm.bool(CONFIG.MOD_ID, "slash_loot")
 	CONFIG.loaded.pickup_delay_ms = DOGMA.mcm.number(CONFIG.MOD_ID, "pickup_delay_ms")
+	CONFIG.loaded.slash_world_grab = DOGMA.mcm.bool(CONFIG.MOD_ID, "slash_world_grab")
 	if not CONFIG.loaded.slash_loot then
 		clear_pending_pickup()
 	end
 	log(string.format(
-		"options: slash_loot=%s pickup_delay_ms=%s",
+		"options: slash_loot=%s pickup_delay_ms=%s slash_world_grab=%s",
 		tostring(CONFIG.loaded.slash_loot),
-		tostring(CONFIG.loaded.pickup_delay_ms)
+		tostring(CONFIG.loaded.pickup_delay_ms),
+		tostring(CONFIG.loaded.slash_world_grab)
 	))
 end
 

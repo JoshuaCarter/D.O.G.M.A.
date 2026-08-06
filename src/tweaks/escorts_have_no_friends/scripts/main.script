@@ -3,9 +3,14 @@
 
 	Guide jobs + friend/paid hire: only the speaker joins.
 	- Offline squad mates are removed (they would pop in on accept).
-	- Online squad mates are moved to a leftover squad (not deleted).
+	- Online squad mates are moved to leftover squads (not deleted).
 	Hostage join and story/special companions (full story squads included) are untouched.
 	Actor squad size limits stay with stock companion systems.
+
+	Note: become_actor_companion is usually attached to NPC reply phrases, so the
+	engine passes (npc, actor). Always resolve with dialogs.who_is_npc first —
+	gating on is_non_story(second_arg) before that skips the strip and the whole
+	squad joins.
 ]]
 
 local CONFIG = _G.dogma_tweaks_escorts_have_no_friends_conf
@@ -23,8 +28,16 @@ local function is_hostage(actor, npc)
 end
 
 -- Story / special / unclassified → leave stock behaviour (full squads ok).
+-- `npc` must already be the real NPC (who_is_npc), not a raw dialog speaker.
 local function is_hire_or_guide(mod, actor, npc)
-	return mod and mod.is_non_story and mod.is_non_story(actor, npc) and not is_hostage(actor, npc)
+	if not (mod and mod.is_non_story) then
+		return false
+	end
+	-- is_non_story only inspects the second arg's squad.
+	if not mod.is_non_story(actor, npc) then
+		return false
+	end
+	return not is_hostage(actor, npc)
 end
 
 local function member_online(id)
@@ -44,55 +57,25 @@ local function remove_members(squad, ids)
 	end
 end
 
--- Move online leftovers into a new squad; scrub any auto-spawned section roster.
--- Returns false if rehome failed (caller should fall back to remove).
-local function rehome_online(squad, keep_id, online_ids)
-	if #online_ids == 0 then
-		return true
-	end
+-- Useful Idiots pattern: alife_create(section) makes an empty squad container
+-- (NPCs spawn only via create_npc). Move one leftover into it.
+local function rehome_one(squad, id)
+	local se = alife_object(id)
 	local section = squad:section_name()
-	if not section then
+	if not (se and section) then
 		return false
 	end
-	local speaker = level.object_by_id(keep_id) or (db.storage[keep_id] and db.storage[keep_id].object)
-	if not speaker then
-		return false
-	end
-	local pos = speaker:position()
-	local lvid = speaker:level_vertex_id()
-	local gvid = speaker:game_vertex_id()
+	local pos = se.position
+	local lvid = se.m_level_vertex_id
+	local gvid = se.m_game_vertex_id
 	local new_squad = alife_create(section, pos, lvid, gvid)
 	if not new_squad then
 		return false
 	end
-
-	local keep = {}
-	for i = 1, #online_ids do
-		keep[online_ids[i]] = true
-	end
-
-	-- Drop anyone the section auto-spawned that isn't one of our leftovers.
-	local spawned = {}
-	for k in new_squad:squad_members() do
-		if k.id and not keep[k.id] then
-			spawned[#spawned + 1] = k.id
-		end
-	end
-	remove_members(new_squad, spawned)
-
-	for i = 1, #online_ids do
-		local id = online_ids[i]
-		local se = alife_object(id)
-		if se then
-			squad:unregister_member(id)
-			new_squad:register_member(id)
-			if SIMBOARD and SIMBOARD.setup_squad_and_group then
-				SIMBOARD:setup_squad_and_group(se)
-			end
-		end
-	end
-	if squad.refresh then
-		squad:refresh()
+	squad:unregister_member(id)
+	new_squad:register_member(id)
+	if SIMBOARD and SIMBOARD.setup_squad_and_group then
+		SIMBOARD:setup_squad_and_group(se)
 	end
 	if new_squad.refresh then
 		new_squad:refresh()
@@ -105,6 +88,7 @@ local function rehome_online(squad, keep_id, online_ids)
 end
 
 -- Offline mates: remove (prevent pop-in). Online mates: rehome, don't delete.
+-- Always verify the speaker squad is solo afterward.
 local function strip_to_speaker(npc)
 	local squad = get_object_squad(npc)
 	if not squad then
@@ -122,17 +106,36 @@ local function strip_to_speaker(npc)
 			end
 		end
 	end
+	if #offline + #online == 0 then
+		return
+	end
+	log(string.format("strip id=%s offline=%d online=%d", tostring(keep_id), #offline, #online))
 	remove_members(squad, offline)
-	if not rehome_online(squad, keep_id, online) then
-		-- Solo guarantee: better to despawn online mates than let them join.
-		remove_members(squad, online)
+	for i = 1, #online do
+		if not rehome_one(squad, online[i]) then
+			remove_members(squad, { online[i] })
+		end
+	end
+	if squad.refresh then
+		squad:refresh()
+	end
+	-- Solo guarantee: anything still attached gets force-removed.
+	local still = {}
+	for k in squad:squad_members() do
+		if k.id and k.id ~= keep_id then
+			still[#still + 1] = k.id
+		end
+	end
+	if #still > 0 then
+		log(string.format("strip fallback remove %d still attached", #still))
+		remove_members(squad, still)
 	end
 end
 
-local function become_solo_hire_or_guide(actor, npc, orig)
-	local npc = dialogs.who_is_npc(actor, npc)
+local function become_solo_hire_or_guide(first, second, orig)
+	local npc = dialogs.who_is_npc(first, second)
 	strip_to_speaker(npc)
-	orig(actor, npc)
+	orig(first, second)
 end
 
 -- Stock is_room uses joining squad size; after strip only the speaker joins.
@@ -141,7 +144,7 @@ local function room_for_solo(actor, npc, orig_room)
 		return orig_room(actor, npc)
 	end
 	local max_size = axr_companions.max_actor_squad_size
-		+ (has_alife_info("achieved_patriarch") and 2 or 0)
+		+ (game_achievements and game_achievements.has_achievement and game_achievements.has_achievement("patriarch") and 2 or 0)
 	return axr_companions.get_companion_count() + 1 <= max_size
 end
 
@@ -152,27 +155,30 @@ local function patch_module(mod)
 
 	local orig_become = mod.become_actor_companion
 	if orig_become then
-		mod.become_actor_companion = function(actor, npc)
+		mod.become_actor_companion = function(first, second)
+			local npc = dialogs.who_is_npc(first, second)
 			-- Story squads usually use add_special_squad; if they hit this path,
 			-- is_non_story is false when the squad has a story id - leave intact.
-			if not is_hire_or_guide(mod, actor, npc) then
-				return orig_become(actor, npc)
+			if not is_hire_or_guide(mod, db.actor or first, npc) then
+				return orig_become(first, second)
 			end
-			return become_solo_hire_or_guide(actor, npc, orig_become)
+			return become_solo_hire_or_guide(first, second, orig_become)
 		end
 	end
 
 	local orig_room = mod.is_room_in_actor_squad
 	if orig_room then
-		mod.is_room_in_actor_squad = function(actor, npc)
-			if not is_hire_or_guide(mod, actor, npc) then
-				return orig_room(actor, npc)
+		mod.is_room_in_actor_squad = function(first, second)
+			local npc = dialogs.who_is_npc(first, second)
+			if not is_hire_or_guide(mod, db.actor or first, npc) then
+				return orig_room(first, second)
 			end
-			return room_for_solo(actor, npc, orig_room)
+			return room_for_solo(first, second, orig_room)
 		end
 	end
 
 	mod.__dogma_tweaks_escorts_have_no_friends = true
+	log("patched " .. tostring(mod))
 end
 
 local function patch_all()

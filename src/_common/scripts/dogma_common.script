@@ -2,7 +2,8 @@
 	DOGMA common loader (vendored - stable, no commit hash).
 
 	Ships as dogma_common.script (no zzzz_), with dogma_mcm / dogma_dbg / dogma_sys /
-	dogma_key_mirror_mcm. Key mirrors: dogma_key_mirror_mcm (re-exported on dogma_mcm).
+	dogma_key_mirror_mcm / _dogma_input (alias dogma_input). Key mirrors:
+	dogma_key_mirror_mcm (re-exported on dogma_mcm). Input: DOGMA.input / dogma_input.
 	Features claim Controls rows via claim_control / mirror_spec; modxml_keybinds injects them.
 	Feature body scripts are zzzz_*, so these globals exist before any feature
 	on_game_start(). Feature _conf.script builds to dogma_{cat}_{feat}_conf.script
@@ -18,6 +19,7 @@
 			-- CONFIG.DEFAULTS = MCM defs; live values live in CONFIG.loaded
 			-- CONFIG.loaded.x = DOGMA.mcm.bool(CONFIG.MOD_ID, "x")
 			-- debug: DOGMA.dbg.logging() / DOGMA.dbg.overlay_enabled()
+			-- input: DOGMA.input.is_key_down(dik) / DOGMA.input.is_key_held(dik, ms)
 		end
 ]]
 
@@ -26,10 +28,11 @@ function load(mod_id)
 	local dbg = _G.dogma_dbg
 	local sys = _G.dogma_sys
 	local keys = _G.dogma_key_mirror_mcm
+	local input = _G.dogma_input or _G._dogma_input
 	sys.set_deps(mcm, dbg)
 	if mod_id then
 		sys.reset_mod(mod_id)
 		dbg.clear_source(mod_id)
 	end
-	return { mcm = mcm, dbg = dbg, sys = sys, keys = keys }
+	return { mcm = mcm, dbg = dbg, sys = sys, keys = keys, input = input }
 end

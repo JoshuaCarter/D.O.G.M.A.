@@ -333,19 +333,40 @@ local function cn_vertex_pos(lvid, cache)
     return v
 end
 
-local function cn_resolve_lvid(pos, hint_lvid)
-    if hint_lvid and cn_valid_lvid(hint_lvid) then
-        local g = cn_state().graph
-        if g and hint_lvid < g.node_count then
-            return hint_lvid
-        end
-    end
-    if not (pos and level and level.vertex_id) then return nil end
-    local ok, lvid = pcall(function() return level.vertex_id(pos) end)
-    if not (ok and cn_valid_lvid(lvid)) then return nil end
+local function cn_lvid_in_graph(lvid)
+    if not cn_valid_lvid(lvid) then return nil end
     local g = cn_state().graph
     if g and lvid >= g.node_count then return nil end
     return lvid
+end
+
+-- Cheap point cover query only (no ring scan). Used for destinations / generic snaps.
+local function cn_resolve_lvid(pos, hint_lvid)
+    local from_hint = cn_lvid_in_graph(hint_lvid)
+    if from_hint then return from_hint end
+    if not (pos and level and level.vertex_id) then return nil end
+    local ok, lvid = pcall(function() return level.vertex_id(pos) end)
+    local hit = ok and cn_lvid_in_graph(lvid) or nil
+    if hit then return hit end
+    if pos.y then
+        local raised = vector():set(pos.x, pos.y + 1.0, pos.z)
+        ok, lvid = pcall(function() return level.vertex_id(raised) end)
+        hit = ok and cn_lvid_in_graph(lvid) or nil
+        if hit then return hit end
+    end
+    return nil
+end
+
+-- Travel always starts at the player. Prefer the engine's tracked actor node (O(1)) —
+-- level.vertex_id(actor_pos) can fail on slopes / feet-under-plane while the actor is
+-- still on a valid graph node. No nearest-node scan needed.
+local function cn_start_lvid(start_pos, hint_lvid)
+    if db and db.actor and db.actor.level_vertex_id then
+        local ok_a, actor_lvid = pcall(function() return db.actor:level_vertex_id() end)
+        local from_actor = ok_a and cn_lvid_in_graph(actor_lvid) or nil
+        if from_actor then return from_actor end
+    end
+    return cn_resolve_lvid(start_pos, hint_lvid)
 end
 
 local function cn_nearest_graph_node(g, pos, max_m)
@@ -590,10 +611,16 @@ local function cn_build_path(start_pos, dest_pos, dest_anchor_key)
     if not (start_pos and start_pos.x and dest_pos and dest_pos.x) then
         return nil
     end
-    local start_id = cn_resolve_lvid(start_pos, tft and tft.start_lvid or nil)
+    local start_hint = tft and tft.start_lvid or nil
+    local start_id = cn_start_lvid(start_pos, start_hint)
     if not start_id then
-        cn_log("build_path: no start lvid")
+        cn_log("build_path: no start lvid (start=%s hint=%s)",
+            start_pos and string.format("(%.0f,%.0f,%.0f)", start_pos.x, start_pos.y or 0, start_pos.z) or "nil",
+            tostring(start_hint))
         return nil
+    end
+    if tft then
+        tft.start_lvid = start_id
     end
     local goal_id = cn_goal_lvid(dest_pos, dest_anchor_key)
     if not goal_id then

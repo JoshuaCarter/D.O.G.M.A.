@@ -1,0 +1,31 @@
+-- Extra Equip Slots MCM (POC)
+
+local CONFIG = _G.dogma_controls_extra_equip_slots_conf
+
+local function kb_bind(id, hint)
+	return {
+		id = id,
+		type = "key_bind",
+		val = 2,
+		def = CONFIG.DEFAULTS[id],
+		hint = hint,
+	}
+end
+
+function on_mcm_load(options)
+	dogma_mcm.attach(options, "controls", "ui_mcm_menu_dogma_controls", {
+		id = "extra_equip_slots",
+		sh = true,
+		text = "ui_mcm_menu_dogma_controls_extra_equip_slots",
+		gr = dogma_mcm.with_header({
+			{
+				id = "page_description",
+				type = "desc",
+				text = "ui_mcm_dogma_controls_extra_equip_slots_page_description",
+			},
+			kb_bind("key_holster", "dogma_controls_extra_equip_slots_key_holster"),
+			kb_bind("key_draw", "dogma_controls_extra_equip_slots_key_draw"),
+			kb_bind("key_unequip", "dogma_controls_extra_equip_slots_key_unequip"),
+		}),
+	})
+end

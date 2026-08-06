@@ -3212,6 +3212,8 @@ build_path_preview = function(id, is_lc)
     end
 
     local start = db.actor:position()
+    local ok_sl, start_lvid = pcall(function() return db.actor:level_vertex_id() end)
+    tft.start_lvid = (ok_sl and start_lvid) or nil
     local dest = target.pos
     local dest_key = _G.tft_nav_mesh_dest_anchor_key and _G.tft_nav_mesh_dest_anchor_key(id) or nil
     local dist = tft_distance_pda(start, dest) or start:distance_to(dest)

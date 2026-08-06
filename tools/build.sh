@@ -19,10 +19,12 @@
 #
 # Scripts (prefix applied at build - src keeps short names like main.script):
 #   _common/scripts/*         -> same basename (dogma_common, dogma_mcm,
-#                               dogma_key_mirror_mcm, …)
+#                               dogma_key_mirror_mcm, _dogma_input, …)
 #                               no zzzz_ - always before every feature script
 #                               *mcm.script also participates in MCM gather
 #                               (key mirrors live in dogma_key_mirror_mcm)
+#                               _dogma_input kept (underscore sorts early);
+#                               bare _* names are otherwise skipped
 #   …/scripts/_conf.script    -> dogma_{path}_conf.script
 #                               no zzzz_ - before that feature's zzzz_ body scripts
 #   …/scripts/mcm.script      -> dogma_{path}_mcm.script   (*mcm.script glob)
@@ -124,7 +126,8 @@ should_skip_name() {
 		*.alao-bak | *.pyc | *.pyo) return 0 ;;
 		# Authoring / pack source only — shipped via db/mods/*.db0 instead.
 		*.aimap) return 0 ;;
-		_conf.script | _common | _debug) return 1 ;;
+		# _conf: feature defaults. _dogma_input: early-load input ticker (before dogma_*).
+		_conf.script | _dogma_input.script | _common | _debug) return 1 ;;
 		_*) return 0 ;;
 		*) return 1 ;;
 	esac

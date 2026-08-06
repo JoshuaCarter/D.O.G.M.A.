@@ -279,8 +279,12 @@ local function refresh_config()
 		sight = clamp(DOGMA.mcm.number(ADS_MOD, "wads_sight"), 0, ADS_MAX.sight),
 		scope = clamp(DOGMA.mcm.number(ADS_MOD, "wads_scope"), 0, ADS_MAX.scope),
 	}
-	CONFIG.loaded.ads_dof = DOGMA.mcm.bool(ADS_MOD, "dof")
-	CONFIG.loaded.ads_dof_intensity = clamp(DOGMA.mcm.number(ADS_MOD, "dof_intensity"), 0, 1)
+	CONFIG.loaded.ads_dof = {
+		enabled = DOGMA.mcm.bool(ADS_MOD, "dof"),
+		irons = clamp(DOGMA.mcm.number(ADS_MOD, "dof_irons"), 0, 1),
+		sight = clamp(DOGMA.mcm.number(ADS_MOD, "dof_sight"), 0, 1),
+		scope = clamp(DOGMA.mcm.number(ADS_MOD, "dof_scope"), 0, 1),
+	}
 	CONFIG.loaded.wads_inc_key = DOGMA.mcm.key(ADS_MOD, "wads_inc_key")
 	CONFIG.loaded.wads_dec_key = DOGMA.mcm.key(ADS_MOD, "wads_dec_key")
 	CONFIG.loaded.wads_reset_key = DOGMA.mcm.key(ADS_MOD, "wads_reset_key")
@@ -882,8 +886,12 @@ local function apply_zoom_dof()
 	local intensity = 0
 	if free_on and not ads_on and CONFIG.loaded.free_dof then
 		intensity = CONFIG.loaded.free_dof_intensity or 0
-	elseif ads_on and CONFIG.loaded.ads_enabled and CONFIG.loaded.ads_dof then
-		intensity = CONFIG.loaded.ads_dof_intensity or 0
+	elseif ads_on and CONFIG.loaded.ads_enabled then
+		local dof = CONFIG.loaded.ads_dof
+		if dof and dof.enabled then
+			local optic = optic_class()
+			intensity = dof[optic] or 0
+		end
 	end
 	if intensity > 0 then
 		local blur = intensity * DOF_BLUR_AT_FULL
@@ -1373,14 +1381,16 @@ local function on_option_change()
 	end
 
 	logf(
-		"opts: free_en=%s free=%d%% free_dof=%s/%.2f ads_fov=%d%% ads_dof=%s/%.2f hud=%d/%d/%d speed=%d%% sprint=%s empty_hands=%s scroll=%s reverse=%s steps=%d gap=%dms mode=%s key=%s mod=%d km=%d rmb=%d mmb=%d",
+		"opts: free_en=%s free=%d%% free_dof=%s/%.2f ads_fov=%d%% ads_dof=%s/%.2f/%.2f/%.2f hud=%d/%d/%d speed=%d%% sprint=%s empty_hands=%s scroll=%s reverse=%s steps=%d gap=%dms mode=%s key=%s mod=%d km=%d rmb=%d mmb=%d",
 		tostr(CONFIG.loaded.enabled),
 		CONFIG.loaded.free_zoom,
 		tostr(CONFIG.loaded.free_dof),
 		CONFIG.loaded.free_dof_intensity or 0,
 		CONFIG.loaded.fov_zoom,
-		tostr(CONFIG.loaded.ads_dof),
-		CONFIG.loaded.ads_dof_intensity or 0,
+		tostr(CONFIG.loaded.ads_dof and CONFIG.loaded.ads_dof.enabled),
+		(CONFIG.loaded.ads_dof and CONFIG.loaded.ads_dof.irons) or 0,
+		(CONFIG.loaded.ads_dof and CONFIG.loaded.ads_dof.sight) or 0,
+		(CONFIG.loaded.ads_dof and CONFIG.loaded.ads_dof.scope) or 0,
 		CONFIG.loaded.wads.irons,
 		CONFIG.loaded.wads.sight,
 		CONFIG.loaded.wads.scope,

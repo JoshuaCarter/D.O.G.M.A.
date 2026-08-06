@@ -65,8 +65,6 @@ local corpse_pos = nil
 local killer_id = nil
 local frozen_lines = nil
 local adb_wrapped = false
-local saved_show_actor_body = nil
-local saved_hud_weapon = nil
 local saved_tutor_stop = nil
 local fly = {
 	x = 0,
@@ -539,56 +537,33 @@ local function resolve_killer_pos()
 	return nil
 end
 
--- First-person normally hides the actor mesh; show full body while spectating.
--- Keep FP weapon/hands HUD off — we only want the world corpse, not arms-in-face.
-local function reveal_corpse()
-	if saved_show_actor_body == nil then
-		local prev = 0
-		pcall(function()
-			if get_console_cmd then
-				prev = tonumber(get_console_cmd(1, "show_actor_body")) or 0
-			end
-		end)
-		saved_show_actor_body = prev
+-- Dead: world body on, FP HUD off. Alive: body off (FP), FP HUD on.
+local function apply_body_hud(dead)
+	if not exec_console_cmd then
+		return
 	end
-	if saved_hud_weapon == nil then
-		local prev = 1
-		pcall(function()
-			if get_console_cmd then
-				prev = get_console_cmd(1, "hud_weapon") and 1 or 0
-			end
-		end)
-		saved_hud_weapon = prev
-	end
-	if exec_console_cmd then
+	if dead then
 		exec_console_cmd("show_actor_body 1")
 		exec_console_cmd("hud_weapon 0")
+		if db.actor then
+			pcall(function()
+				db.actor:set_invisible(false)
+			end)
+		end
+		if level and level.show_weapon then
+			pcall(function()
+				level.show_weapon(false)
+			end)
+		end
+	else
+		exec_console_cmd("show_actor_body 0")
+		exec_console_cmd("hud_weapon 1")
+		if level and level.show_weapon then
+			pcall(function()
+				level.show_weapon(true)
+			end)
+		end
 	end
-	if db.actor then
-		pcall(function()
-			db.actor:set_invisible(false)
-		end)
-	end
-	if level and level.show_weapon then
-		pcall(function()
-			level.show_weapon(false)
-		end)
-	end
-end
-
-local function restore_corpse_visibility()
-	if saved_show_actor_body ~= nil and exec_console_cmd then
-		pcall(function()
-			exec_console_cmd("show_actor_body " .. tostring(saved_show_actor_body))
-		end)
-	end
-	saved_show_actor_body = nil
-	if saved_hud_weapon ~= nil and exec_console_cmd then
-		pcall(function()
-			exec_console_cmd("hud_weapon " .. tostring(saved_hud_weapon))
-		end)
-	end
-	saved_hud_weapon = nil
 end
 
 -- demo_record binds W/S to slide along camera-up and eats jump/crouch, so we
@@ -796,7 +771,7 @@ local function start_spectator()
 	hide_tab_prompt()
 	hide_space_continue()
 	show_hit_summary()
-	reveal_corpse()
+	apply_body_hud(true)
 	suppress_game_over_continue()
 	patch_mouse_look()
 
@@ -840,7 +815,7 @@ local function reset_state()
 	stop_fly_tick()
 	unpatch_mouse_look()
 	restore_game_over_continue()
-	restore_corpse_visibility()
+	apply_body_hud(false)
 	clear_death_ui()
 	clear_custom_cam()
 end
@@ -857,7 +832,7 @@ local function on_option_change()
 			stop_fly_tick()
 			unpatch_mouse_look()
 			clear_custom_cam()
-			restore_corpse_visibility()
+			apply_body_hud(false)
 			restore_game_over_continue()
 		end
 	end
@@ -922,6 +897,7 @@ local function actor_on_before_death(whoID, flags)
 	death_pending = true
 	awaiting_spectate = false
 	spectating = false
+	apply_body_hud(true)
 	arm_death_ui()
 	log(string.format(
 		"before_death killer=%s hits=%d",
@@ -1019,10 +995,11 @@ local function on_game_load()
 end
 
 local function actor_on_first_update()
-	-- Load can leave a custom-cam override stuck; clear once actor is ready.
+	-- Always enforce alive FP defaults on spawn/load (console vars stick otherwise).
 	if not spectating then
 		unpatch_mouse_look()
 		clear_custom_cam()
+		apply_body_hud(false)
 	end
 	wrap_adb_shit_booster()
 	on_option_change()

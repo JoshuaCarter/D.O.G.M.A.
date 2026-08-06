@@ -1,0 +1,183 @@
+--[[
+	A not dogshit input interface because the AI is fucking retarded.
+]]
+
+local pairs = pairs
+local error = error
+local tostring = tostring
+
+local keys = {}
+
+local KeyStates = {
+	UP = 0,
+	DOWN = 1,
+}
+
+local ModKeys = {
+	NONE = 0,
+	SHIFT = 1,
+	CTRL = 2,
+	ALT = 3,
+}
+
+--------------------------------------------------------------------------------
+-- Private methods
+--------------------------------------------------------------------------------
+
+local function is_uint(val)
+	return type(val) == "number" and val >= 0 and val == math.floor(val)
+end
+
+local function get_key(dik)
+	if not is_uint(dik) then
+		error("Invalid dik: " .. tostring(dik))
+	end
+
+	if not keys[dik] then
+		keys[dik] = {
+			down = false,
+			down_at = nil,
+			down_at_last = nil,
+			down_ms = nil,
+			up = true,
+			up_at = time_continual(),
+			up_ms = 0,
+		}
+	end
+
+	return keys[dik]
+end
+
+local function set_key_state(dik, state, time_ms)
+	local key = get_key(dik)
+
+	if state == KeyStates.DOWN then
+		-- reset up
+		key.up = false
+		key.up_at = nil
+		key.up_ms = nil
+		-- set down
+		key.down = true
+		if key.down_at == nil then
+			key.down_at = time_ms
+			key.down_ms = 0
+		else
+			key.down_ms = time_ms - key.down_at
+		end
+	elseif state == KeyStates.UP then
+		-- reset down
+		key.down = false
+		key.down_at_last = key.down_at
+		key.down_at = nil
+		key.down_ms = nil
+		-- set up
+		key.up = true
+		if key.up_at == nil then
+			key.up_at = time_ms
+			key.up_ms = 0
+		else
+			key.up_ms = time_ms - key.up_at
+		end
+	else
+		error("Invalid key state: " .. state)
+	end
+
+	return key
+end
+
+local function update_keys()
+	local time_ms = time_continual()
+	for dik in pairs(keys) do
+		if key_state(dik) ~= 0 then
+			set_key_state(dik, KeyStates.DOWN, time_ms)
+		else
+			set_key_state(dik, KeyStates.UP, time_ms)
+		end
+	end
+end
+
+local function reset_keys()
+	keys = {}
+end
+
+function on_game_start()
+	RegisterScriptCallback("actor_on_update", update_keys)
+	RegisterScriptCallback("on_game_load", reset_keys)
+	RegisterScriptCallback("main_menu_on_init", reset_keys)
+	RegisterScriptCallback("main_menu_on_quit", reset_keys)
+	RegisterScriptCallback("actor_on_net_destroy", reset_keys)
+end
+
+--------------------------------------------------------------------------------
+-- Public methods
+--------------------------------------------------------------------------------
+
+function is_key_down(dik)
+	local key = get_key(dik)
+	return key.down
+end
+
+function is_key_up(dik)
+	local key = get_key(dik)
+	return key.up
+end
+
+function is_key_held(dik, ms)
+	if not is_uint(ms) then
+		error("Invalid ms: " .. tostring(ms))
+	end
+	local key = get_key(dik)
+	return key.down and key.down_ms >= ms
+end
+
+function is_key_pressed(dik)
+	local key = get_key(dik)
+	return key.down and key.down_ms == 0
+end
+
+function is_key_dbl_pressed(dik, ms)
+	if not is_uint(ms) then
+		error("Invalid ms: " .. tostring(ms))
+	end
+	local key = get_key(dik)
+	if key.down and key.down_ms == 0 and key.down_at_last ~= nil then
+		return (key.down_at - key.down_at_last) <= ms
+	end
+	return false
+end
+
+function is_key_released(dik)
+	local key = get_key(dik)
+	return key.up and key.up_ms == 0
+end
+
+function is_mod_down(mod)
+	-- MCM can do blind check for modifier down with 0 (none) and expect true to pass the gate
+	if mod == ModKeys.NONE then
+		return true
+	end
+	if mod == ModKeys.SHIFT or mod == DIK_keys.DIK_LSHIFT or mod == DIK_keys.DIK_RSHIFT then
+		return is_key_down(DIK_keys.DIK_LSHIFT) or is_key_down(DIK_keys.DIK_RSHIFT)
+	end
+	if mod == ModKeys.CTRL or mod == DIK_keys.DIK_LCONTROL or mod == DIK_keys.DIK_RCONTROL then
+		return is_key_down(DIK_keys.DIK_LCONTROL) or is_key_down(DIK_keys.DIK_RCONTROL)
+	end
+	if mod == ModKeys.ALT or mod == DIK_keys.DIK_LMENU or mod == DIK_keys.DIK_RMENU then
+		return is_key_down(DIK_keys.DIK_LMENU) or is_key_down(DIK_keys.DIK_RMENU)
+	end
+	return false
+end
+
+function is_shift_down()
+	return is_mod_down(ModKeys.SHIFT)
+end
+
+function is_ctrl_down()
+	return is_mod_down(ModKeys.CTRL)
+end
+
+function is_alt_down()
+	return is_mod_down(ModKeys.ALT)
+end
+
+_G.dogma_input = _G._dogma_input

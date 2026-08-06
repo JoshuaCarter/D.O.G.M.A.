@@ -5,16 +5,16 @@
 	Toggle: flip visibility. Hold: visible only while the key is down.
 	Based on RavenAscendant Mini Map Toggle, with hold-to-show.
 
-	Hold polls key_state each frame so a dialog that steals focus (e.g. item
-	wheel) cannot leave the map stuck on/off. HUD hide while the wheel is open
-	is controlled by tweaks/qaw_hud_toggle.
+	Hold uses press/release latch (like hud/fps) plus key_state / on_key_hold
+	recovery. Spurious on_key_release (common when a dialog steals focus) is
+	ignored while key_state still reports down, so show_delay_ms can elapse.
 
 	While the user wants the map on, we re-assert every update: option flag,
-	UIZoneMap.disabled, motion icon, and level.show_indicators() so dialogs /
-	Hide HUD / other scripts cannot leave it stuck off. Option disk writes only
-	happen when the stored value actually changes.
+	UIZoneMap.disabled, motion icon, hud_draw, and show_indicators so dialogs /
+	Hide HUD / scopes that clear indicators cannot leave it stuck off. Option
+	disk writes only happen when the stored value actually changes.
 
-	show_delay_ms: wait after wanting show before enabling (hide is immediate).
+	show_delay_ms: wait after press/hold before showing (hide is immediate).
 ]]
 
 local CONFIG = _G.dogma_hud_minimap_conf
@@ -23,14 +23,18 @@ local DOGMA
 local MODE_TOGGLE = 0
 local MODE_HOLD = 2
 
--- Hold: key is down (map may still be waiting on show_delay_ms).
+-- Hold: latched from press/release (key_state alone is unreliable with dialogs).
 local holding = false
+-- True once key_state reported down during this hold (missed-release recovery).
+local seen_key_down = false
 -- Continual-ms when the current show request started (hold down / toggle-on).
 local show_request_at = nil
 -- Toggle mode: waiting to show after delay.
 local pending_toggle_show = false
 -- Source of truth: user wants the map visible (independent of option / UI).
 local desired_show = false
+-- Debounce spurious press/release pairs.
+local press_at_ms = nil
 
 local function log(msg)
 	if not (DOGMA and DOGMA.dbg) then
@@ -42,7 +46,13 @@ local function log(msg)
 end
 
 local function now_ms()
-	return time_continual and time_continual() or 0
+	if time_continual then
+		return time_continual()
+	end
+	if time_global then
+		return time_global()
+	end
+	return 0
 end
 
 local function mod_ok()
@@ -60,14 +70,19 @@ local function maingame()
 	return ActorMenu and ActorMenu.get_maingame and ActorMenu.get_maingame()
 end
 
-local function option_shown()
-	if ui_options and ui_options.get then
-		return ui_options.get("video/hud/show_minimap") and true or false
-	end
-	return false
+local function key_is_down(dik)
+	return dik and dik > 0 and key_state and (key_state(dik) or 0) ~= 0
 end
 
--- Live widget state (what actually gates Render), not the options file.
+local function option_shown()
+	if not (ui_options and ui_options.get) then
+		return false
+	end
+	local v = ui_options.get("video/hud/show_minimap")
+	-- Config may be bool or 0/1; only nil/false/0 count as off.
+	return v ~= nil and v ~= false and v ~= 0
+end
+
 local function ui_minimap_enabled()
 	local ui = maingame()
 	if ui and ui.UIZoneMap then
@@ -95,34 +110,69 @@ local function delay_elapsed()
 	return (now_ms() - show_request_at) >= d
 end
 
+local function force_hud_draw()
+	-- MainIngameWnd draw also needs HUD_DRAW (console hud_draw).
+	if get_console_cmd and not get_console_cmd(1, "hud_draw") then
+		if exec_console_cmd then
+			exec_console_cmd("hud_draw 1")
+		elseif get_console then
+			local c = get_console()
+			if c and c.execute then
+				c:execute("hud_draw 1")
+			end
+		end
+	end
+end
+
+local function force_indicators()
+	if level and level.show_indicators then
+		level.show_indicators()
+	end
+	-- _g.script wrapper also clears related HUD-hide state.
+	if show_indicators then
+		show_indicators(true)
+	end
+end
+
 -- Apply desired visibility. Cheap UI writes every call; option disk write only
--- on change. When showing, also punch through ShowGameIndicators(false).
+-- on change. When showing, punch through indicator / hud_draw hides.
 local function set_minimap(want_show)
 	want_show = not not want_show
 
-	if ui_options and ui_options.set and ui_options.get then
+	if ui_options and ui_options.set then
 		if option_shown() ~= want_show then
 			ui_options.set("video/hud/show_minimap", want_show)
 		end
-	elseif ui_options and ui_options.set then
-		ui_options.set("video/hud/show_minimap", want_show)
 	end
 
 	local ui = maingame()
 	if ui and ui.UIZoneMap then
 		ui.UIZoneMap.disabled = not want_show
+		-- visible is engine-readonly in bindings; try anyway (some builds allow it).
+		pcall(function()
+			ui.UIZoneMap.visible = want_show
+		end)
+		if ui.ShowZoneMap then
+			pcall(function()
+				ui:ShowZoneMap(want_show)
+			end)
+		end
+		if want_show and ui.DrawZoneMap then
+			pcall(function()
+				ui:DrawZoneMap()
+			end)
+		end
 		if ui.UIMotionIcon and ui.UIMotionIcon.Show then
 			ui.UIMotionIcon:Show(want_show)
 		end
 	end
 
-	-- Indicators gate the whole MainIngameWnd draw (minimap included).
-	if want_show and level and level.show_indicators then
-		level.show_indicators()
+	if want_show then
+		force_hud_draw()
+		force_indicators()
 	end
 end
 
--- Keep live UI matching desired_show (other scripts re-hide every frame).
 local function enforce_desired(source)
 	if not desired_show then
 		return
@@ -130,9 +180,8 @@ local function enforce_desired(source)
 	if not delay_elapsed() then
 		return
 	end
-	-- Always re-apply widget + indicators while wanted; option write is gated.
 	set_minimap(true)
-	if source and source ~= "tick" then
+	if source and source ~= "tick" and source ~= "key_hold" then
 		log(string.format("enforce show (%s)", source))
 	end
 end
@@ -188,31 +237,82 @@ local function tick_pending_toggle()
 	end
 end
 
--- Hold owns visibility via key_state (press/release can be missed when a
--- dialog takes focus).
+-- Hold: press latches on; release latches off (ignored if key still down).
+-- Tick / on_key_hold recover from missed press/release when dialogs steal focus.
 local function sync_hold_visibility(source)
 	if not (CONFIG.loaded.enabled and CONFIG.loaded.mode == MODE_HOLD) then
 		return
 	end
 	local key = CONFIG.loaded.keybind
-	local down = key and key > 0 and key_state and (key_state(key) or 0) ~= 0
-	local want = down and mod_ok()
-	if want then
+	if not key or key <= 0 then
+		return
+	end
+
+	local state_down = key_is_down(key) and mod_ok()
+
+	if source == "press" then
+		if not mod_ok() then
+			return
+		end
+		holding = true
+		seen_key_down = state_down
+		press_at_ms = now_ms()
+		begin_show_request("press")
+		return
+	end
+
+	if source == "release" then
+		-- Spurious release while physically held (dialogs / input quirks).
+		if state_down then
+			log("ignore release (key still down)")
+			return
+		end
+		holding = false
+		seen_key_down = false
+		press_at_ms = nil
+		if desired_show then
+			hide_minimap("release")
+		end
+		return
+	end
+
+	if source == "key_hold" then
+		if not mod_ok() then
+			return
+		end
+		holding = true
+		seen_key_down = true
+		if not desired_show then
+			begin_show_request("key_hold")
+		else
+			enforce_desired("key_hold")
+		end
+		return
+	end
+
+	-- tick / opts / start: reconcile latch with key_state
+	if state_down then
+		seen_key_down = true
 		if not holding then
 			holding = true
-			begin_show_request(source or "hold")
+			begin_show_request(source or "tick")
 		else
-			enforce_desired(source or "hold")
+			enforce_desired(source or "tick")
 		end
-	else
-		if holding or desired_show then
+	elseif holding then
+		if seen_key_down then
+			-- key_state was down, now up: missed real release.
 			holding = false
-			hide_minimap(source or "hold")
-		elseif source ~= "tick" then
-			-- Ensure hidden when not holding (e.g. mode/opts change).
-			desired_show = false
-			set_minimap(false)
+			seen_key_down = false
+			press_at_ms = nil
+			hide_minimap(source or "tick")
+		else
+			-- Press-latched; key_state never confirmed - keep enforcing.
+			enforce_desired(source or "tick")
 		end
+	elseif source ~= "tick" then
+		desired_show = false
+		set_minimap(false)
 	end
 end
 
@@ -232,12 +332,12 @@ local function on_option_change()
 	end
 
 	cancel_show_request()
+	holding = false
+	seen_key_down = false
+	press_at_ms = nil
+	desired_show = false
 	if CONFIG.loaded.enabled and CONFIG.loaded.mode == MODE_HOLD then
-		holding = false
-		desired_show = false
 		sync_hold_visibility("opts")
-	elseif holding then
-		holding = false
 	end
 
 	log(string.format(
@@ -262,8 +362,7 @@ local function on_key_press(key)
 		return
 	end
 
-	local km = CONFIG.loaded.mode
-	if km == MODE_HOLD then
+	if CONFIG.loaded.mode == MODE_HOLD then
 		sync_hold_visibility("press")
 		return
 	end
@@ -284,6 +383,18 @@ local function on_key_release(key)
 	end
 	if CONFIG.loaded.mode == MODE_HOLD then
 		sync_hold_visibility("release")
+	end
+end
+
+local function on_key_hold(key)
+	if not CONFIG.loaded.enabled then
+		return
+	end
+	if not CONFIG.loaded.keybind or key ~= CONFIG.loaded.keybind then
+		return
+	end
+	if CONFIG.loaded.mode == MODE_HOLD then
+		sync_hold_visibility("key_hold")
 	end
 end
 
@@ -311,6 +422,7 @@ function on_game_start()
 	RegisterScriptCallback("on_option_change", on_option_change)
 	RegisterScriptCallback("on_key_press", on_key_press)
 	RegisterScriptCallback("on_key_release", on_key_release)
+	RegisterScriptCallback("on_key_hold", on_key_hold)
 	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
 	RegisterScriptCallback("actor_on_update", actor_on_update)
 	log("on_game_start: callbacks registered")

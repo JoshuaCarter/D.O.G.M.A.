@@ -208,6 +208,8 @@ local function start_travel_sequence(pos, lvid, gvid, is_transition, final_gvid)
     if not tft.start_pos then tft.start_pos = vector() end
     local ap = db.actor:position()
     tft.start_pos:set(ap.x, ap.y, ap.z)
+    local ok_sl, start_lvid = pcall(function() return db.actor:level_vertex_id() end)
+    tft.start_lvid = (ok_sl and start_lvid) or nil
 
     tft_clear_path_preview()
 

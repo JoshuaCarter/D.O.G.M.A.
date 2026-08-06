@@ -698,22 +698,41 @@ local function apply_mouse_look(dx, dy)
 	apply_fly_cam()
 end
 
+-- Only hook mouse while spectating. A permanent level_input.on_mouse_move
+-- breaks normal look even when it returns false (and can stick after load).
 local function patch_mouse_look()
 	if mouse_move_patched or not level_input then
 		return
 	end
 	orig_level_input_mouse_move = level_input.on_mouse_move
 	level_input.on_mouse_move = function(dx, dy, dis)
-		if spectating then
-			apply_mouse_look(dx, dy)
-			return true
+		if not spectating then
+			if orig_level_input_mouse_move then
+				return orig_level_input_mouse_move(dx, dy, dis)
+			end
+			return false
 		end
-		if orig_level_input_mouse_move then
-			return orig_level_input_mouse_move(dx, dy, dis)
-		end
-		return false
+		apply_mouse_look(dx, dy)
+		return true
 	end
 	mouse_move_patched = true
+end
+
+local function unpatch_mouse_look()
+	if not mouse_move_patched or not level_input then
+		return
+	end
+	level_input.on_mouse_move = orig_level_input_mouse_move
+	orig_level_input_mouse_move = nil
+	mouse_move_patched = false
+end
+
+local function clear_custom_cam()
+	if level and level.remove_cam_custom_position_direction then
+		pcall(function()
+			level.remove_cam_custom_position_direction()
+		end)
+	end
 end
 
 local function set_fly_hold(bind, down)
@@ -819,14 +838,11 @@ local function reset_state()
 	killer_id = nil
 	frozen_lines = nil
 	stop_fly_tick()
+	unpatch_mouse_look()
 	restore_game_over_continue()
 	restore_corpse_visibility()
 	clear_death_ui()
-	if level and level.remove_cam_custom_position_direction then
-		pcall(function()
-			level.remove_cam_custom_position_direction()
-		end)
-	end
+	clear_custom_cam()
 end
 
 local function on_option_change()
@@ -836,6 +852,14 @@ local function on_option_change()
 		clear_death_ui()
 		awaiting_spectate = false
 		death_pending = false
+		if spectating then
+			spectating = false
+			stop_fly_tick()
+			unpatch_mouse_look()
+			clear_custom_cam()
+			restore_corpse_visibility()
+			restore_game_over_continue()
+		end
 	end
 end
 
@@ -995,6 +1019,11 @@ local function on_game_load()
 end
 
 local function actor_on_first_update()
+	-- Load can leave a custom-cam override stuck; clear once actor is ready.
+	if not spectating then
+		unpatch_mouse_look()
+		clear_custom_cam()
+	end
 	wrap_adb_shit_booster()
 	on_option_change()
 end
@@ -1004,7 +1033,7 @@ function on_game_start()
 	init_mitigation_labels()
 	wrap_adb_shit_booster()
 	on_option_change()
-	patch_mouse_look()
+	-- Do not patch mouse here — only while spectating (see patch_mouse_look).
 
 	RegisterScriptCallback("actor_on_before_hit", actor_on_before_hit)
 	RegisterScriptCallback("actor_on_before_death", actor_on_before_death)

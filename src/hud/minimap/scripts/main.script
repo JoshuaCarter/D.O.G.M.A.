@@ -9,6 +9,11 @@
 	wheel) cannot leave the map stuck on/off. HUD hide while the wheel is open
 	is controlled by tweaks/qaw_hud_toggle.
 
+	While the user wants the map on, we re-assert every update: option flag,
+	UIZoneMap.disabled, motion icon, and level.show_indicators() so dialogs /
+	Hide HUD / other scripts cannot leave it stuck off. Option disk writes only
+	happen when the stored value actually changes.
+
 	show_delay_ms: wait after wanting show before enabling (hide is immediate).
 ]]
 
@@ -24,6 +29,8 @@ local holding = false
 local show_request_at = nil
 -- Toggle mode: waiting to show after delay.
 local pending_toggle_show = false
+-- Source of truth: user wants the map visible (independent of option / UI).
+local desired_show = false
 
 local function log(msg)
 	if not (DOGMA and DOGMA.dbg) then
@@ -53,31 +60,20 @@ local function maingame()
 	return ActorMenu and ActorMenu.get_maingame and ActorMenu.get_maingame()
 end
 
--- Mirror Mini Map Toggle: options flag + live UIZoneMap / motion icon.
-local function set_minimap(want_show)
-	want_show = not not want_show
-	if ui_options and ui_options.set then
-		ui_options.set("video/hud/show_minimap", want_show)
-	end
-	local ui = maingame()
-	if not (ui and ui.UIZoneMap) then
-		return
-	end
-	ui.UIZoneMap.disabled = not want_show
-	if ui.UIMotionIcon and ui.UIMotionIcon.Show then
-		ui.UIMotionIcon:Show(want_show)
-	end
-end
-
-local function minimap_shown()
+local function option_shown()
 	if ui_options and ui_options.get then
 		return ui_options.get("video/hud/show_minimap") and true or false
 	end
+	return false
+end
+
+-- Live widget state (what actually gates Render), not the options file.
+local function ui_minimap_enabled()
 	local ui = maingame()
 	if ui and ui.UIZoneMap then
 		return not ui.UIZoneMap.disabled
 	end
-	return false
+	return option_shown()
 end
 
 local function delay_ms()
@@ -99,7 +95,50 @@ local function delay_elapsed()
 	return (now_ms() - show_request_at) >= d
 end
 
+-- Apply desired visibility. Cheap UI writes every call; option disk write only
+-- on change. When showing, also punch through ShowGameIndicators(false).
+local function set_minimap(want_show)
+	want_show = not not want_show
+
+	if ui_options and ui_options.set and ui_options.get then
+		if option_shown() ~= want_show then
+			ui_options.set("video/hud/show_minimap", want_show)
+		end
+	elseif ui_options and ui_options.set then
+		ui_options.set("video/hud/show_minimap", want_show)
+	end
+
+	local ui = maingame()
+	if ui and ui.UIZoneMap then
+		ui.UIZoneMap.disabled = not want_show
+		if ui.UIMotionIcon and ui.UIMotionIcon.Show then
+			ui.UIMotionIcon:Show(want_show)
+		end
+	end
+
+	-- Indicators gate the whole MainIngameWnd draw (minimap included).
+	if want_show and level and level.show_indicators then
+		level.show_indicators()
+	end
+end
+
+-- Keep live UI matching desired_show (other scripts re-hide every frame).
+local function enforce_desired(source)
+	if not desired_show then
+		return
+	end
+	if not delay_elapsed() then
+		return
+	end
+	-- Always re-apply widget + indicators while wanted; option write is gated.
+	set_minimap(true)
+	if source and source ~= "tick" then
+		log(string.format("enforce show (%s)", source))
+	end
+end
+
 local function begin_show_request(source)
+	desired_show = true
 	show_request_at = now_ms()
 	if delay_elapsed() then
 		set_minimap(true)
@@ -115,17 +154,20 @@ local function cancel_show_request()
 	pending_toggle_show = false
 end
 
+local function hide_minimap(source)
+	desired_show = false
+	cancel_show_request()
+	set_minimap(false)
+	log(string.format("hide (%s)", source or "hide"))
+end
+
 local function toggle_minimap(source)
 	if pending_toggle_show then
-		cancel_show_request()
-		set_minimap(false)
-		log(string.format("%s -> cancel pending", source or "toggle"))
+		hide_minimap(source or "cancel pending")
 		return
 	end
-	if minimap_shown() then
-		cancel_show_request()
-		set_minimap(false)
-		log(string.format("%s -> false", source or "toggle"))
+	if desired_show or ui_minimap_enabled() then
+		hide_minimap(source or "toggle")
 		return
 	end
 	pending_toggle_show = true
@@ -140,6 +182,7 @@ local function tick_pending_toggle()
 	end
 	if delay_elapsed() then
 		pending_toggle_show = false
+		desired_show = true
 		set_minimap(true)
 		log("show (toggle delay)")
 	end
@@ -158,21 +201,16 @@ local function sync_hold_visibility(source)
 		if not holding then
 			holding = true
 			begin_show_request(source or "hold")
-		elseif delay_elapsed() then
-			if not minimap_shown() then
-				set_minimap(true)
-				if source ~= "tick" then
-					log(string.format("hold: show (%s)", source or "sync"))
-				end
-			end
+		else
+			enforce_desired(source or "hold")
 		end
 	else
-		cancel_show_request()
-		if holding then
+		if holding or desired_show then
 			holding = false
-			set_minimap(false)
-			log(string.format("hold: hide (%s)", source or "sync"))
+			hide_minimap(source or "hold")
 		elseif source ~= "tick" then
+			-- Ensure hidden when not holding (e.g. mode/opts change).
+			desired_show = false
 			set_minimap(false)
 		end
 	end
@@ -196,6 +234,7 @@ local function on_option_change()
 	cancel_show_request()
 	if CONFIG.loaded.enabled and CONFIG.loaded.mode == MODE_HOLD then
 		holding = false
+		desired_show = false
 		sync_hold_visibility("opts")
 	elseif holding then
 		holding = false
@@ -263,6 +302,7 @@ local function actor_on_update()
 		sync_hold_visibility("tick")
 	else
 		tick_pending_toggle()
+		enforce_desired("tick")
 	end
 end
 

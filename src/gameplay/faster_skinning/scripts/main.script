@@ -3,8 +3,9 @@
 
 	Applies the vanilla "Well Dressed" skinning speed-up by default, skips FDDA's
 	redundant post-cut pickup anim, and optionally speeds the knife-cut, auto-crouches,
-	and looks at the mutant during the cut. Optional slash-to-loot: two light knife
-	swings or one heavy on a dead mutant takes all parts with no popup/anim.
+	and looks at the mutant during the cut. Optional knife hit on a dead mutant:
+	claim-gated take-all + one delayed FDDA harvest pickup. Use-key FDDA skinning
+	is left alone.
 ]]
 
 local CONFIG = _G.dogma_gameplay_faster_skinning_conf
@@ -19,11 +20,8 @@ local LAM2_CAM_EFFECTOR_ID = 2190 -- lam2.get_template_action_play_animation's c
 local LAM2_MISSING_LTX_KEY = "__dogma_no_ltx__" -- bogus ini key so lam2 skips cam/snd lookups
 local LOOK_AT_BONE = "bip01_spine1"
 
--- Knife HUD states (HudItem eLastBaseState=eBore=4; Weapon eFire/eFire2 follow)
-local KNIFE_STATE_FIRE = 5
-local KNIFE_STATE_FIRE2 = 6
-local SLASH_PROGRESS_NEEDED = 2
-local SLASH_PROGRESS_TIMEOUT_MS = 4000
+-- Knife splash can deliver multiple hits in one swing; debounce one loot per strike.
+local USE_DEBOUNCE_MS = 400
 
 local original_has_achievement = nil
 local original_lam2_add_action = nil
@@ -32,9 +30,11 @@ local original_xr_sound_set_sound_play = nil
 local skin_cut_sfx = nil
 local mutant_loot_decay_time = 7200
 local slash_looting = false
-local last_knife_state = 0
-local last_slash_credit_ms = 0
-local slash_progress = nil -- { id, progress, last_hit_ms }
+local last_slash_ms = 0
+
+-- Deferred FDDA pickup so it does not cut off the knife swing.
+local pending_pickup_id = nil
+local pending_pickup_at = nil
 
 local function log(msg)
 	if not (DOGMA and DOGMA.dbg) then
@@ -333,7 +333,7 @@ end
 
 local function patched_set_sound_play(actor_id, sound_theme, ...)
 	-- During knife-cut anim, mute Loot's stock sound (synced harvest plays instead).
-	-- Slash loot has no cut anim - keep inv_mutant_loot_animal for PDA/take feedback.
+	-- Slash has no cut anim - keep inv_mutant_loot_animal for PDA/take feedback.
 	if CONFIG.loaded.enabled and CONFIG.loaded.skin_speed_multiplier > 1 and sound_theme == MUTANT_LOOT_SOUND and not slash_looting then
 		log("inv_mutant_loot_animal: suppressed in favor of the synced cut sound")
 		return
@@ -367,7 +367,7 @@ local function slash_input_blocked()
 	return false
 end
 
--- Use-target already means looking at them within interact range - no ray/cone checks.
+-- Pickup still wants you looking at the corpse (interact use-target).
 local function use_target_dead_mutant()
 	local target = level.get_target_obj and level.get_target_obj()
 	if target and IsMonster(target) and not target:alive() then
@@ -432,17 +432,94 @@ local function slash_loot_parts_tip(obj, loot_tbl)
 	)
 end
 
+-- press_action(kUSE) bypasses on_before_key_press; claim mods veto there, so gate first.
+local function claim_allows_use()
+	local dik = bind_to_dik(key_bindings.kUSE)
+	if not (dik and dik ~= 0) then
+		dik = 0
+	end
+	local flags = { ret_value = true }
+	SendScriptCallback("on_before_key_press", dik, key_bindings.kUSE, false, flags)
+	return flags.ret_value ~= false
+end
+
+local function queue_pickup_anim()
+	local fdda = _G.liz_fdda_redone_mutant_skinning
+	if not (fdda and fdda.get_template_action_mutant_loot and _G.lam2 and _G.lam2.add_action) then
+		log("pickup: FDDA mutant_loot template unavailable")
+		return
+	end
+	local anim_sec = "item_ea_harv_meat_" .. tostring(math.random(14)) .. "_hud"
+	local action = fdda.get_template_action_mutant_loot(nil, anim_sec)
+	if not action then
+		log("pickup: get_template_action_mutant_loot returned nil")
+		return
+	end
+	action.flags = action.flags or {}
+	action.flags.dogma_melee_pickup = true
+	_G.lam2.add_action(action)
+	log("pickup: queued mutant_loot " .. anim_sec)
+end
+
+local function degrade_knife()
+	if item_knife and item_knife.degradate then
+		item_knife.degradate()
+		log("knife: degradate")
+	end
+end
+
+local function clear_pending_pickup()
+	pending_pickup_id = nil
+	pending_pickup_at = nil
+end
+
+local function schedule_pickup(obj_id)
+	local delay = CONFIG.loaded.pickup_delay_ms or 0
+	if delay <= 0 then
+		local still = use_target_dead_mutant()
+		if still and still:id() == obj_id then
+			log("pickup: immediate")
+			queue_pickup_anim()
+		else
+			log("pickup: look lost - skip")
+		end
+		return
+	end
+	pending_pickup_id = obj_id
+	pending_pickup_at = time_global() + delay
+	log(string.format("pickup: scheduled in %dms id=%s", delay, tostring(obj_id)))
+end
+
+local function tick_pending_pickup()
+	if not pending_pickup_at then
+		return
+	end
+	if time_global() < pending_pickup_at then
+		return
+	end
+	local id = pending_pickup_id
+	clear_pending_pickup()
+	local still = use_target_dead_mutant()
+	if still and still:id() == id then
+		log("pickup: delay done, still targeting - play")
+		queue_pickup_anim()
+	else
+		log("pickup: delay done, look lost - skip")
+	end
+end
+
+-- Returns true if loot succeeded.
 local function instant_slash_loot(obj)
 	if not (ui_mutant_loot and ui_mutant_loot.UIMutantLoot) then
 		log("slash_loot: ui_mutant_loot missing")
-		return
+		return false
 	end
 	if not ui_mutant_loot.GUI then
 		ui_mutant_loot.GUI = ui_mutant_loot.UIMutantLoot()
 	end
 	local gui = ui_mutant_loot.GUI
 	if not gui or gui:IsShown() then
-		return
+		return false
 	end
 
 	-- FillList builds loot + may fire mutant encyclopedia unlock. Skip ShowDialog so
@@ -453,7 +530,7 @@ local function instant_slash_loot(obj)
 	gui.ShowDialog = orig_show
 	if not can_show then
 		log("slash_loot: Reset returned false")
-		return
+		return false
 	end
 	if gui.Close then
 		gui:Close()
@@ -494,24 +571,7 @@ local function instant_slash_loot(obj)
 	end
 	slash_loot_parts_tip(obj, loot_snapshot)
 	log("slash_loot: looted id=" .. tostring(obj:id()))
-end
-
-local function credit_slash(obj, amount)
-	local id = obj:id()
-	local now = time_global()
-	if slash_progress and (slash_progress.id ~= id or now - slash_progress.last_hit_ms > SLASH_PROGRESS_TIMEOUT_MS) then
-		slash_progress = nil
-	end
-	if not slash_progress then
-		slash_progress = { id = id, progress = 0, last_hit_ms = now }
-	end
-	slash_progress.progress = slash_progress.progress + amount
-	slash_progress.last_hit_ms = now
-	log(string.format("slash_loot: +%d progress=%d id=%s", amount, slash_progress.progress, tostring(id)))
-	if slash_progress.progress >= SLASH_PROGRESS_NEEDED then
-		slash_progress = nil
-		instant_slash_loot(obj)
-	end
+	return true
 end
 
 local function equipped_knife()
@@ -526,11 +586,15 @@ local function equipped_knife()
 	return wpn
 end
 
-local function try_slash_credit(amount)
+-- Real knife strike on a corpse (KnifeStrike → Hit → monster_on_before_hit).
+local function try_melee_slash(obj)
 	if not (CONFIG.loaded.enabled and CONFIG.loaded.slash_loot) then
 		return
 	end
 	if slash_input_blocked() then
+		return
+	end
+	if not (obj and IsMonster(obj) and not obj:alive()) then
 		return
 	end
 	local wpn = equipped_knife()
@@ -538,16 +602,10 @@ local function try_slash_credit(amount)
 		return
 	end
 	local now = time_global()
-	if now - last_slash_credit_ms < 150 then
+	if now - last_slash_ms < USE_DEBOUNCE_MS then
 		return
 	end
-	last_slash_credit_ms = now
 
-	local obj = use_target_dead_mutant()
-	if not obj then
-		log("slash_loot: swing missed (no dead mutant use-target)")
-		return
-	end
 	if is_corpse_looted(obj) then
 		log("slash_loot: already looted id=" .. tostring(obj:id()))
 		return
@@ -556,45 +614,51 @@ local function try_slash_credit(amount)
 		actor_menu.set_msg(1, game.translate_string("st_body_decayed"), 4)
 		return
 	end
-	credit_slash(obj, amount)
+
+	last_slash_ms = now
+	local obj_id = obj:id()
+
+	if not claim_allows_use() then
+		log("slash_loot: blocked by claim / on_before_key_press")
+		return
+	end
+
+	log("slash_loot: loot id=" .. tostring(obj_id))
+	if not instant_slash_loot(obj) then
+		return
+	end
+
+	degrade_knife()
+	local still = use_target_dead_mutant()
+	if still and still:id() == obj_id then
+		log("slash_loot: schedule pickup")
+		schedule_pickup(obj_id)
+	else
+		log("slash_loot: look lost - skip pickup")
+	end
 end
 
-local function tick_slash_loot()
+local function monster_on_before_hit(monster, shit, bone_id, flags)
 	if not (CONFIG.loaded.enabled and CONFIG.loaded.slash_loot) then
-		last_knife_state = 0
 		return
 	end
-	if slash_input_blocked() then
-		last_knife_state = 0
+	if not (monster and IsMonster(monster) and not monster:alive()) then
 		return
 	end
-
+	local draftsman = shit and shit.draftsman
+	if not (draftsman and db.actor and draftsman:id() == db.actor:id()) then
+		return
+	end
 	local wpn = equipped_knife()
 	if not wpn then
-		last_knife_state = 0
 		return
 	end
-
-	-- Rising edge on knife fire states (backup if key callbacks miss a swing).
-	local state = wpn:get_state()
-	local rising = (state == KNIFE_STATE_FIRE or state == KNIFE_STATE_FIRE2) and state ~= last_knife_state
-	last_knife_state = state
-	if not rising then
+	-- Prefer weapon_id when present so splash from another weapon can't false-trigger.
+	local wid = shit.weapon_id
+	if wid and wid ~= 0 and wid ~= wpn:id() then
 		return
 	end
-	try_slash_credit((state == KNIFE_STATE_FIRE2) and 2 or 1)
-end
-
-local function on_slash_key_press(dik)
-	if not (CONFIG.loaded.enabled and CONFIG.loaded.slash_loot) then
-		return
-	end
-	local bind = dik_to_bind(dik)
-	if bind == key_bindings.kWPN_FIRE then
-		try_slash_credit(1)
-	elseif bind == key_bindings.kWPN_ZOOM then
-		try_slash_credit(2)
-	end
+	try_melee_slash(monster)
 end
 
 local function on_option_change()
@@ -605,7 +669,15 @@ local function on_option_change()
 	CONFIG.loaded.look_at_mutant = DOGMA.mcm.bool(CONFIG.MOD_ID, "look_at_mutant")
 	CONFIG.loaded.look_at_offset = DOGMA.mcm.number(CONFIG.MOD_ID, "look_at_offset")
 	CONFIG.loaded.slash_loot = DOGMA.mcm.bool(CONFIG.MOD_ID, "slash_loot")
-	log(string.format("options: slash_loot=%s", tostring(CONFIG.loaded.slash_loot)))
+	CONFIG.loaded.pickup_delay_ms = DOGMA.mcm.number(CONFIG.MOD_ID, "pickup_delay_ms")
+	if not CONFIG.loaded.slash_loot then
+		clear_pending_pickup()
+	end
+	log(string.format(
+		"options: slash_loot=%s pickup_delay_ms=%s",
+		tostring(CONFIG.loaded.slash_loot),
+		tostring(CONFIG.loaded.pickup_delay_ms)
+	))
 end
 
 function on_game_start()
@@ -628,9 +700,9 @@ function on_game_start()
 		if pending_skin_action then
 			do_look_at(pending_skin_action, true)
 		end
-		tick_slash_loot()
+		tick_pending_pickup()
 	end)
-	RegisterScriptCallback("on_key_press", on_slash_key_press)
+	RegisterScriptCallback("monster_on_before_hit", monster_on_before_hit)
 	RegisterScriptCallback("on_option_change", on_option_change)
 	log("loaded")
 end

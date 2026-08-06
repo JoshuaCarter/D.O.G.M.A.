@@ -1,0 +1,45 @@
+---
+description: Prefer simple, proven code over speculative edge-case machinery
+alwaysApply: true
+---
+
+# Simple, safe, maintainable
+
+Bias toward **few lines that work**. Complexity must earn its keep.
+
+## Before adding logic
+
+1. **Name the concrete failure** in one sentence a player or you would notice.
+2. **Name the call path** that makes it reachable (callback / caller).
+3. If the user did not ask for it and you cannot show both — **do not implement it**.
+
+## Prefer
+
+- Clearing state on known lifecycle callbacks (`on_game_load`, `main_menu_on_*`, `actor_on_net_destroy`) over reconciling across pause/menu gaps
+- Polling shared helpers (`DOGMA.input`) over local press/release latches and duplicate `key_state` logic
+- One obvious control flow over layered “recovery” paths
+
+## Reject
+
+- Guards that cannot fire on the actual call path (e.g. `device():is_paused()` inside something only run from `actor_on_update`)
+- Speculative edge-case sync, debounce, or dual clocks without a proven bug
+- Comments/code that explain imaginary hazards instead of real behavior
+
+## After it works
+
+Re-read and **delete** anything that is not required for the named failure or the requested behavior.
+
+## Example (this repo)
+
+```lua
+-- BAD: unreachable + speculative
+function update_keys()
+	if device():is_paused() then return end  -- actor_on_update already skips pause
+	-- ...silent resync for "fake" pause edges the user accepted as fine...
+end
+
+-- GOOD: poll + reset on lifecycle
+RegisterScriptCallback("actor_on_update", update_keys)
+RegisterScriptCallback("on_game_load", reset_keys)
+RegisterScriptCallback("main_menu_on_init", reset_keys)
+```

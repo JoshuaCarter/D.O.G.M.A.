@@ -50,7 +50,6 @@ local FONTS = {
 local hud = nil
 local init = false
 local visible = false
-local holding = false
 local sample_buf = nil
 local history_buf = nil
 local next_display_time = 0
@@ -155,13 +154,9 @@ local function on_option_change()
 
 	-- Hold owns visibility only with a bound key. Unbound hold must not force-hide.
 	if hold_owns_visibility() then
-		holding = false
 		visible = false
 	elseif CONFIG.loaded.key_mode == MODE_HOLD then
-		holding = false
 		visible = CONFIG.loaded.enabled_default
-	elseif holding then
-		holding = false
 	end
 
 	update_wait_until_time()
@@ -278,6 +273,26 @@ local function on_unique_update()
 	end
 end
 
+local function poll_visibility_key()
+	local key = CONFIG.loaded.toggle_key
+	local inp = DOGMA and DOGMA.input
+	if not (inp and key and key >= 0) then
+		return
+	end
+	if CONFIG.loaded.key_mode == MODE_HOLD then
+		local want = inp.is_key_down(key)
+		if want ~= visible then
+			visible = want
+			update_wait_until_time()
+		end
+		return
+	end
+	if inp.is_key_pressed(key) then
+		visible = not visible
+		update_wait_until_time()
+	end
+end
+
 local function on_actor_on_update()
 	if not DOGMA.sys.ready(CONFIG.MOD_ID, db, on_option_change) then
 		return
@@ -293,6 +308,8 @@ local function on_actor_on_update()
 		end
 		return
 	end
+
+	poll_visibility_key()
 
 	if visible and not hud then
 		hud = ui_dogma_fps()
@@ -310,33 +327,6 @@ local function on_actor_on_update()
 	end
 end
 
-local function on_key_press(key)
-	if not CONFIG.loaded.toggle_key or key ~= CONFIG.loaded.toggle_key then
-		return
-	end
-	if CONFIG.loaded.key_mode == MODE_HOLD then
-		holding = true
-		visible = true
-		update_wait_until_time()
-		return
-	end
-	visible = not visible
-	update_wait_until_time()
-end
-
-local function on_key_release(key)
-	if not holding then
-		return
-	end
-	if not CONFIG.loaded.toggle_key or key ~= CONFIG.loaded.toggle_key then
-		return
-	end
-	holding = false
-	if CONFIG.loaded.key_mode == MODE_HOLD then
-		visible = false
-	end
-end
-
 -- Fires once right after loading finishes (level start/load/transition). The
 -- engine doesn't tick actor_on_update while a loading screen is up, so the
 -- gap since the last frame is loading time, not a real long frame; drop it.
@@ -349,7 +339,6 @@ function on_game_start()
 
 	init = false
 	visible = false
-	holding = false
 	sample_buf = nil
 	history_buf = nil
 	next_display_time = 0
@@ -358,8 +347,6 @@ function on_game_start()
 
 	RegisterScriptCallback("actor_on_update", on_actor_on_update)
 	RegisterScriptCallback("actor_on_first_update", on_actor_first_update)
-	RegisterScriptCallback("on_key_press", on_key_press)
-	RegisterScriptCallback("on_key_release", on_key_release)
 	RegisterScriptCallback("on_option_change", on_option_change)
 end
 

@@ -1,0 +1,834 @@
+-- True Fast Travel: MCM config, callbacks, and PDA map menu wiring.
+-- Module libs load first as 01_*.script … (zzzz_dogma_gameplay_true_fast_travel_*)
+
+local CONFIG = _G.dogma_gameplay_true_fast_travel_conf
+_G.tft_config = _G.tft_config or {}
+local tft_config = _G.tft_config
+local tft = _G.tft
+
+-- Forward declarations for this file's private (non-exported) helpers, so they can
+-- reference each other regardless of definition order below. refresh_active_config and
+-- abort_journey are the only two functions here any other DFT script calls, so they
+-- alone stay bare globals (see the publish block at the end of this file). on_game_start
+-- is NOT in this list - X-Ray calls it directly per-file at boot (see
+-- dogma_common_f575cc9b.script's header comment), so it must stay a real bare top-level
+-- function, never a local, even though no other DFT script calls it by name.
+local actor_on_before_hit, on_option_change,
+    on_loading_screen_dismissed, on_loading_screen_key_prompt, actor_on_first_update, menu_item_is_ours,
+    strip_own_menu_items, strip_overlapping_spot_noise, mark_menu_primary, add_cannot_travel_item,
+    add_travel_menu_items, on_map_right_click, on_map_spot_menu_add_property_impl,
+    on_map_spot_menu_add_property, on_map_spot_menu_property_clicked, on_key_press, on_before_key_press
+
+-- ============================================================
+-- 2. Configuration
+-- ============================================================
+local function load_config()
+    local dogma = tft and tft.dogma
+    local mcm = dogma and dogma.mcm
+    if not mcm then
+        return
+    end
+    tft_config.debug_overlay = (dogma.dbg and dogma.dbg.overlay_enabled and dogma.dbg.overlay_enabled()) or false
+    tft_config.debug_log = (dogma.dbg and dogma.dbg.logging and dogma.dbg.logging()) or false
+    tft_config.path_preview = mcm.bool(CONFIG.MOD_ID, "path_preview")
+    tft_config.block_transition_in_combat = mcm.bool(CONFIG.MOD_ID, "block_transition_in_combat")
+    tft_config.block_travel_when_unfit = mcm.bool(CONFIG.MOD_ID, "block_travel_when_unfit")
+    tft_config.pause_on_stop = mcm.bool(CONFIG.MOD_ID, "pause_on_stop")
+    tft_config.pause_on_done = mcm.bool(CONFIG.MOD_ID, "pause_on_done")
+    tft_config.show_hud_during_travel = mcm.bool(CONFIG.MOD_ID, "show_hud_during_travel")
+    tft_config.time_factor_travel = mcm.number(CONFIG.MOD_ID, "time_factor_travel", CONFIG.DEFAULTS["time_factor_travel"] or 1)
+    tft_config.time_factor_backslide = mcm.number(CONFIG.MOD_ID, "time_factor_backslide", CONFIG.DEFAULTS["time_factor_backslide"] or 0.05)
+    tft_config.cam_speed_mult = mcm.number(CONFIG.MOD_ID, "cam_speed_mult", CONFIG.DEFAULTS["cam_speed_mult"] or 1)
+    tft_config.backslide_clear_m = mcm.number(CONFIG.MOD_ID, "backslide_clear_m", CONFIG.DEFAULTS["backslide_clear_m"] or 25)
+    tft_config.screen_msg_duration = mcm.number(CONFIG.MOD_ID, "screen_msg_duration", CONFIG.DEFAULTS["screen_msg_duration"] or 4)
+    -- legacy alias used by pause helper
+    tft_config.pause_on_ambush = tft_config.pause_on_stop
+    tft_config.show_ambush_range = false -- retired MCM; PDA ambush-range ring stays off
+    -- nil when unbound (-1 in MCM)
+    tft_config.companion_teleport_key = mcm.key(CONFIG.MOD_ID, "companion_teleport_key")
+    tft_config.visited_radius_m = CONFIG.DEFAULTS["visited_radius_m"] or 30
+    -- debug keys still under shared Debug page
+    if mcm.bool("dogma/debug", "ft_path_preview") then
+        tft_config.path_preview = true
+    end
+    tft_config.nav_mesh_reload = mcm.key("dogma/debug", "ft_nav_mesh_reload")
+    tft_config.nav_mesh_reload_on_load = mcm.bool("dogma/debug", "ft_nav_mesh_reload_on_load")
+    tft_config.show_nav_mesh = mcm.bool("dogma/debug", "ft_show_nav_mesh")
+    if tft_clear_ambush_range_circle then
+        tft_clear_ambush_range_circle()
+    end
+    if dogma.dbg and dogma.dbg.set_enabled then
+        dogma.dbg.set_enabled(CONFIG.MOD_ID, dogma.dbg.overlay_enabled())
+    end
+    if not tft_config.debug_overlay and tft then
+        tft._debug_overlay_msg = nil
+    end
+    if _G.tft_nav_mesh_sync_display then
+        pcall(_G.tft_nav_mesh_sync_display)
+    end
+    if _G.refresh_active_config then
+        _G.refresh_active_config()
+    elseif refresh_active_config then
+        refresh_active_config()
+    end
+end
+
+refresh_active_config = function()
+    local dogma = tft and tft.dogma
+    local msg_dur = 4
+    local pause_stop = true
+    local pause_done = true
+    if dogma and dogma.mcm then
+        msg_dur = dogma.mcm.number(CONFIG.MOD_ID, "screen_msg_duration", CONFIG.DEFAULTS["screen_msg_duration"] or 4)
+        pause_stop = dogma.mcm.bool(CONFIG.MOD_ID, "pause_on_stop")
+        pause_done = dogma.mcm.bool(CONFIG.MOD_ID, "pause_on_done")
+    end
+
+    tft.active_config = {
+        screen_msg_duration = msg_dur,
+        message_duration = msg_dur, -- legacy alias
+        pause_on_stop = pause_stop,
+        pause_on_done = pause_done,
+        pause_on_ambush = pause_stop,
+    }
+    return tft.active_config
+end
+
+-- Damage cancel during travel is handled in tft_actor_on_update (health snapshot vs 1% threshold).
+-- Post-teleport invuln is handled by tft_is_safety_active() below.
+actor_on_before_hit = function(shit, bone_id)
+    if tft_is_safety_active() then
+        tft_log("Damage blocked by travel safety. Original power: %f, type: %d", shit.power, shit.type)
+        shit.power = 0
+    end
+end
+
+on_option_change = function()
+    tft_log("Options changed, refreshing config...")
+    load_config()
+end
+
+local function abort_journey(reason)
+    if not tft.is_traveling and not tft.fly_active then return end
+    if not (db.actor and db.actor:alive()) then return end
+
+    tft_close_pda_for_travel()
+
+    local ratio = 0
+    if tft.travel_dist and tft.travel_dist > 0 then
+        ratio = math.min(tft.current_dist / tft.travel_dist, 1.0)
+    end
+    tft_process_refund(ratio)
+
+    tft_log("Journey cancelled (%.0f%% complete, reason=%s) - actor stays in place.", ratio * 100, tostring(reason or "manual"))
+    if _G.tft_cancel_fly_camera then _G.tft_cancel_fly_camera() end
+    if _G.tft_cancel_stepped_journey then _G.tft_cancel_stepped_journey() end
+    tft_cleanup_dots()
+    tft_stop_travel_logic()
+    tft_clear()
+
+    if reason == "damage" then
+        tft_msg(tft_str("tft_msg_journey_cancelled_damage"), "warning")
+    else
+        local cancel_opts = { outcome = "cancelled" }
+        tft_msg(tft_journey_result_message(cancel_opts), tft_journey_result_style(cancel_opts))
+    end
+
+    pcall(function() save_var(db.actor, "surge_immuned", false) end)
+end
+
+function on_game_start()
+    local ok, err = xpcall(function()
+        if not _G.tft then
+            printf("[dogma_gameplay_true_fast_travel] FATAL: core module failed to publish _G.tft")
+            return
+        end
+        tft.dogma = dogma_common.load(CONFIG.MOD_ID)
+        load_config()
+        tft_log("Starting on_game_start registration...")
+        tft_build_level_names_registry()
+        tft.right_click_avail = (_G.COnRightClickMap ~= nil)
+        if tft.right_click_avail then
+            RegisterScriptCallback("on_map_right_click", on_map_right_click)
+            tft_log("on_map_right_click registered (modded PDA map clicks).")
+        end
+        RegisterScriptCallback("actor_on_update",                tft_actor_on_update)
+        RegisterScriptCallback("actor_on_first_update",          actor_on_first_update)
+        RegisterScriptCallback("actor_on_before_hit",            actor_on_before_hit)
+        RegisterScriptCallback("on_key_press",                   on_key_press)
+        RegisterScriptCallback("on_before_key_press",            on_before_key_press)
+        RegisterScriptCallback("on_loading_screen_dismissed",    on_loading_screen_dismissed)
+        RegisterScriptCallback("on_loading_screen_key_prompt",   on_loading_screen_key_prompt)
+        if tft_on_level_changing then
+            RegisterScriptCallback("on_level_changing", tft_on_level_changing)
+        end
+        if _G.tft_nav_mesh_on_level_change then
+            RegisterScriptCallback("on_level_changing", _G.tft_nav_mesh_on_level_change)
+        end
+        if tft_install_transition_gates then
+            tft_install_transition_gates()
+        end
+        RegisterScriptCallback("map_spot_menu_add_property",     on_map_spot_menu_add_property)
+        RegisterScriptCallback("map_spot_menu_property_clicked", on_map_spot_menu_property_clicked)
+        RegisterScriptCallback("on_option_change",               on_option_change)
+        -- End walk/custom-cam before any other save work (dots, zone map).
+        RegisterScriptCallback("save_state", function(m_data)
+            if _G.tft_force_clean_walk_for_save then
+                pcall(_G.tft_force_clean_walk_for_save)
+            end
+        end)
+        RegisterScriptCallback("save_state",                 tft_on_save_state)
+        RegisterScriptCallback("load_state",                 tft_on_load_state)
+        RegisterScriptCallback("save_state",                 tft_persist_dots)
+        RegisterScriptCallback("load_state",                 tft_restore_dots)
+        tft_log("Callbacks registered.")
+        tft_log("session start | debug_log=%s", tostring(tft_config.debug_log))
+
+        -- Initial config load
+        on_option_change()
+
+        -- BHS travel/sleep safety integration (pure monkey-patch to prevent BHS limb damage on travel/sleep)
+        if zzz_player_injuries and zzz_player_injuries.actor_on_update then
+            tft_log("Hooking BHS zzz_player_injuries.actor_on_update for travel safety...")
+            local original_bhs_update = zzz_player_injuries.actor_on_update
+            local bhs_idx = nil
+            local last_game_time = nil
+
+            local function get_bhs_myhealth_index()
+                local idx = 1
+                while true do
+                    local name, val = debug.getupvalue(original_bhs_update, idx)
+                    if not name then break end
+                    if name == "myhealth" then
+                        return idx
+                    end
+                    idx = idx + 1
+                end
+                return nil
+            end
+
+            zzz_player_injuries.actor_on_update = function(...)
+                local curr_game_time = game.get_game_time()
+                local time_jump = false
+                if last_game_time then
+                    local time_diff = curr_game_time:diffSec(last_game_time)
+                    if time_diff > 30 then
+                        time_jump = true
+                    end
+                end
+                last_game_time = curr_game_time
+
+                if time_jump or tft_is_safety_active() then
+                    if not bhs_idx then
+                        bhs_idx = get_bhs_myhealth_index()
+                    end
+                    if bhs_idx and db.actor then
+                        debug.setupvalue(original_bhs_update, bhs_idx, db.actor.health)
+                    end
+                end
+                original_bhs_update(...)
+            end
+        end
+        printf("[dogma_gameplay_true_fast_travel] main module loaded")
+    end, debug.traceback)
+    if not ok then
+        printf("[dogma_gameplay_true_fast_travel] FATAL on_game_start: %s", tostring(err))
+    end
+end
+
+on_loading_screen_dismissed = function()
+    tft.player_ready = true
+end
+
+-- Hard gate: load packaged nav mesh for this level before play.
+on_loading_screen_key_prompt = function()
+    local ok, err = pcall(function()
+        if tft_build_dynamic_map then
+            pcall(tft_build_dynamic_map)
+        end
+        local force = tft_config and tft_config.nav_mesh_reload_on_load == true
+        if _G.tft_nav_mesh_ensure_ready then
+            _G.tft_nav_mesh_ensure_ready(force)
+        end
+    end)
+    if not ok then
+        printf("[dogma_gameplay_true_fast_travel] on_loading_screen_key_prompt ERROR: %s", tostring(err))
+    end
+end
+
+actor_on_first_update = function()
+    tft_log("actor_on_first_update triggered.")
+    if tft_ensure_destination_map_spots then
+        tft_ensure_destination_map_spots()
+    end
+    if tft_poll_discoveries then
+        tft_poll_discoveries()
+    end
+
+    tft_build_dynamic_map()
+
+    -- Nav mesh is gated on on_loading_screen_key_prompt; try_load here is a harmless fallback.
+    CreateTimeEvent("tft", "warm_graph_cache", 1.5, function()
+        if _G.tft_nav_mesh_try_load and not (_G.tft_nav_mesh_graph_ready and _G.tft_nav_mesh_graph_ready()) then
+            pcall(_G.tft_nav_mesh_try_load)
+        end
+        return true
+    end)
+
+    -- Silent orphan sweep 3s after load to catch dots stuck from previous session.
+    -- include_path_spots=true matches journey/preview/nav-mesh/ambush carrier spot names.
+    CreateTimeEvent("tft", "orphan_sweep", 3.0, function()
+        if not (db.actor and alife() and not tft.is_traveling) then return true end
+        -- Drop any in-memory mesh overlay bookkeeping from a prior session (ids are stale).
+        if _G.tft_nav_mesh_clear_display then
+            pcall(_G.tft_nav_mesh_clear_display)
+        end
+        if tft_clear_ambush_range_circle then
+            pcall(tft_clear_ambush_range_circle)
+        end
+        local purged = tft_purge_stuck_dot_pdas(true)
+
+        -- Precise cleanup: release the exact dot IDs snapshotted at whatever save
+        -- produced this load (see tft_persist_dots), regardless of whether the pattern
+        -- scan above would have caught them (e.g. a spot-add that failed silently).
+        if tft.pending_dot_cleanup then
+            for _, obj_id in pairs(tft.pending_dot_cleanup) do
+                pcall(function()
+                    tft_remove_path_spots(obj_id)
+                    if level.map_has_object_spot(obj_id, "primary_object") ~= 0 then
+                        level.map_remove_object_spot(obj_id, "primary_object")
+                    end
+                    if level.map_has_object_spot(obj_id, "green_location") ~= 0 then
+                        level.map_remove_object_spot(obj_id, "green_location")
+                    end
+                    local obj = alife_object(obj_id)
+                    if obj then alife_release(obj) end
+                end)
+                purged = purged + 1
+            end
+            tft.pending_dot_cleanup = nil
+        end
+
+        if purged > 0 then
+            tft_log("Auto orphan sweep: removed %d stuck dot(s)", purged)
+        end
+        return true
+    end)
+
+    local pos, _, _, final_gvid = tft_load()
+    if pos and final_gvid then
+        tft.player_ready = false
+        -- Pre-activate safety immediately on first update for the level transition!
+        tft_set_safety_active(60.0)
+        if db.actor then
+            -- surge_immuned removed: it causes GAMMA to loop surges via start(true)
+            tft_log("Surge immunity pre-activated on first update for transition.")
+        end
+    end
+
+    local resume_start_tg = nil
+    CreateTimeEvent("tft", "resume", 1.0, function()
+        if not resume_start_tg then
+            resume_start_tg = time_global()
+            return false
+        end
+        if time_global() - resume_start_tg > 60000 then
+            tft_log("Resume timed out after 60 seconds - clearing stale journey state")
+            tft_clear()
+            return true
+        end
+        if not (db.actor and alife()) then return false end
+        if not tft.player_ready then return false end
+
+        local pos, lvid, gvid, final_gvid, f_pos, f_lvid, ratio = tft_load()
+        if not pos or not final_gvid then
+            tft_log("No pending journey found on load.")
+            return true
+        end
+
+        -- v2.0.7: IMMEDIATELY clear the persistent traveling flag after reading it.
+        -- This prevents infinite loading screen loops: if we crash or the travel
+        -- completes instantly (same-level arrival), the next load won't re-trigger.
+        save_var(db.actor, tft_save_vars.traveling, false)
+
+        -- A journey mid-flight in a loaded save is an interruption like any other (ambush,
+        -- damage, closing the PDA) - it does NOT resume. The PDA is obviously closed right
+        -- after a load anyway, and forcing it back open would defeat the "you have to keep
+        -- it open yourself" rule. The player just has to start a new journey from here.
+        -- Time only ever moves forward when we actually teleport the player somewhere (arrival,
+        -- ambush, emission interrupt) - a cancel is a cancel, so no time is skipped here either,
+        -- same as closing the PDA or taking damage cancels the trip with no time jump.
+        ratio = math.max(0, math.min(ratio or 0, 1.0))
+        tft_log("Journey was mid-flight at save time (%.0f%% complete) - ending it, not resuming.", ratio * 100)
+
+        tft_set_safety_active(60.0)
+
+        -- v1.9.4: Ensure companions are with the actor immediately after level load
+        tft_teleport_companions(db.actor:position(), db.actor:level_vertex_id(), db.actor:game_vertex_id())
+
+        tft_process_refund(ratio)
+
+        pcall(function() if level then level.enable_input() end end)
+
+        tft_msg(tft_journey_result_message({ outcome = "cancelled" }), tft_journey_result_style({ outcome = "cancelled" }))
+        tft_clear()
+        return true
+    end)
+end
+menu_item_is_ours = function(text)
+    if not text or text == "" then return false end
+    local markers = {
+        tft_str("tft_menu_run_to"),
+        tft_str("tft_menu_sneak_to"),
+        tft_str("tft_menu_travel_here"), -- legacy
+        tft_str("tft_menu_sneaky_travel"), -- legacy
+        tft_str("tft_menu_not_visited"),
+        tft_str("tft_msg_cross_zone_denied"),
+        tft_str("tft_msg_cannot_travel_here"),
+        tft_str("tft_msg_too_encumbered"),
+    }
+    for i = 1, #markers do
+        if string.find(text, markers[i], 1, true) then return true end
+    end
+    return false
+end
+
+local function menu_item_text(item)
+    local text = ""
+    pcall(function()
+        local tc = item and item.GetTextItem and item:GetTextItem()
+        if tc then text = tc:GetText() or "" end
+    end)
+    return text
+end
+
+strip_own_menu_items = function(pui)
+    pcall(function()
+        if not (pui and pui.GetItemsCount and pui.GetItemByIndex and pui.RemoveItem) then return end
+        local count = pui:GetItemsCount()
+        for i = count - 1, 0, -1 do
+            local item = pui:GetItemByIndex(i)
+            if item and menu_item_is_ours(menu_item_text(item)) then
+                pui:RemoveItem(item)
+            end
+        end
+    end)
+end
+
+-- PDA stacks one section per overlapping spot (base + companion + sleep marker…).
+-- PAW adds Add Pin / Set Waypoint to every section; we must not re-strip our travel
+-- rows on later callbacks, and we scrub the secondary sections' pin/waypoint tails.
+strip_overlapping_spot_noise = function(pui, hint)
+    pcall(function()
+        if not (pui and pui.GetItemsCount and pui.GetItemByIndex and pui.RemoveItem) then return end
+        local kill = {
+            [game.translate_string("ui_mcm_pawsys_pawmenu_pn_add")] = true,
+            [game.translate_string("ui_mcm_pawsys_pawmenu_wp_set")] = true,
+            [game.translate_string("ui_mcm_pawsys_pawmenu_pn_del")] = true,
+            [game.translate_string("ui_mcm_pawsys_pawmenu_wp_del")] = true,
+            [game.translate_string("ui_mcm_pawsys_pawmenu_wp_mov")] = true,
+            [tft_str("tft_msg_cannot_travel_here")] = true,
+        }
+        local hint_text = nil
+        if hint and hint ~= "" then
+            hint_text = game.translate_string(hint)
+            if not hint_text or hint_text == "" or hint_text == hint then
+                hint_text = hint
+            end
+        end
+        -- Remove trailing noise this overlapping spot just appended.
+        while true do
+            local count = pui:GetItemsCount()
+            if count <= 0 then break end
+            local item = pui:GetItemByIndex(count - 1)
+            local text = menu_item_text(item)
+            if kill[text] or menu_item_is_ours(text) then
+                pui:RemoveItem(item)
+            elseif hint_text and text == hint_text then
+                pui:RemoveItem(item)
+                break
+            else
+                break
+            end
+        end
+    end)
+end
+
+mark_menu_primary = function(pui)
+    tft.menu_primary_seq = tft.menu_open_seq or 0
+    -- Drop "Cannot travel" left by an earlier overlapping place-like spot in this menu.
+    if pui then
+        pcall(function()
+            if not (pui.GetItemsCount and pui.GetItemByIndex and pui.RemoveItem) then return end
+            local cannot = tft_str("tft_msg_cannot_travel_here")
+            local count = pui:GetItemsCount()
+            for i = count - 1, 0, -1 do
+                local item = pui:GetItemByIndex(i)
+                if item and menu_item_text(item) == cannot then
+                    pui:RemoveItem(item)
+                end
+            end
+        end)
+    end
+end
+
+add_cannot_travel_item = function(pui, id, reason)
+    pui:AddItem(tft_str("tft_msg_cannot_travel_here"))
+    tft_log("menu: cannot travel id=%s reason=%s", tostring(id), tostring(reason or "unknown"))
+    tft_clear_path_preview()
+    return true
+end
+
+add_travel_menu_items = function(pui, id, is_lc, include_sneak)
+    local tostr = tostring
+    if tft_is_destination_unlocked and not tft_is_destination_unlocked(id) then
+        pui:AddItem(tft_str("tft_menu_not_visited"))
+        tft_clear_path_preview()
+        tft_log("menu: blocked unvisited id=%s", tostr(id))
+        return false
+    end
+    if tft_actor_too_encumbered_to_move() then
+        pui:AddItem(tft_str("tft_msg_too_encumbered"))
+        tft_clear_path_preview()
+        tft_log("menu: encumbered - walk/sneak blocked id=%s", tostr(id))
+        return false
+    end
+    local specs = tft_journey_specs_for_object(id, is_lc)
+    if not specs then
+        tft_log("menu: no specs for id=%s (lc=%s)", tostr(id), tostr(is_lc))
+        return false
+    end
+    pui:AddItem(tft_format_travel_menu("tft_menu_run_to", specs.dist_str, specs.dur_str, 0))
+    if include_sneak ~= false then
+        pui:AddItem(tft_format_travel_menu("tft_menu_sneak_to", specs.dist_str, specs.sneaky_dur_str, 0))
+    end
+    tft_log("menu: added travel items id=%s dist=%.0f dur=%s sneak=%s", tostr(id), specs.dist or 0, specs.dur_str or "?", tostr(include_sneak ~= false))
+    return true
+end
+
+on_map_right_click = function(property_ui, map_table)
+    if tft.right_click_avail then
+        tft.menu_open_seq = (tft.menu_open_seq or 0) + 1
+        tft.menu_resolve_cache = nil
+        tft.menu_path_cache = nil
+        tft.menu_primary_seq = nil
+        tft.menu_strip_seq = nil
+    end
+    tft_report_map_click(map_table, nil)
+end
+
+on_map_spot_menu_add_property_impl = function(pui, id, ln, hint)
+    local tostr = tostring
+
+    if not pui then
+        tft_log_error("menu: pui is nil")
+        return false
+    end
+
+    if not tft.right_click_avail then
+        tft.menu_open_seq = (tft.menu_open_seq or 0) + 1
+        tft.menu_resolve_cache = nil
+        tft.menu_path_cache = nil
+        tft.menu_primary_seq = nil
+        tft.menu_strip_seq = nil
+        tft_report_map_click({ object_id = id, level_name = ln, pos = tft.last_map_click_pos }, hint)
+    elseif hint then
+        tft_log("map-spot hint=%s id=%s (rclick hook active)", tostr(hint), tostr(id))
+    end
+
+    local seq = tft.menu_open_seq or 0
+
+    -- Overlapping spots (companion / sleep marker / second location) share one list.
+    -- After a real travel destination filled this menu, scrub their pin/waypoint noise.
+    if tft.menu_primary_seq == seq then
+        strip_overlapping_spot_noise(pui, hint)
+        tft_log("menu: skip overlapping id=%s hint=%s", tostr(id), tostr(hint or "none"))
+        return false
+    end
+
+    -- Only strip leftover TFT rows once per menu open - later spots must not erase them.
+    if tft.menu_strip_seq ~= seq then
+        tft.menu_strip_seq = seq
+        strip_own_menu_items(pui)
+    end
+
+    tft.last_menu_target_id = id
+
+    local click_pos = tft.last_map_click_pos
+    if tft_resolve_menu_spot_from_click and click_pos then
+        id, ln = tft_resolve_menu_spot_from_click(id, ln, click_pos, alife_object(id))
+    end
+
+    local se_obj = alife_object(id)
+    tft_log_menu_diag(id, se_obj, ln, hint)
+
+    if tft.is_traveling then
+        -- Journey is only cancelled by closing the PDA (or taking damage) now - no menu
+        -- items to add while a trip is already in progress.
+        return false
+    end
+
+    local is_lc = tft_is_pda_transition(id, se_obj)
+            or (tft_is_registry_transition_door and tft_is_registry_transition_door(id))
+    local is_campfire = tft_is_campfire(id, se_obj)
+    local is_base = tft_is_base(id, se_obj)
+    local is_stash = tft_is_player_stash(id, se_obj)
+    local cross_zone = tft_is_cross_zone_destination(se_obj, ln)
+    tft.last_menu_target_ln = ln
+
+    tft_log("menu: #%d id=%s ln=%s hint=%s cur=%s lc=%s base=%s campfire=%s stash=%s cross=%s",
+        tft.menu_open_seq, tostr(id), tostr(ln), tostr(hint or "none"),
+        tostr(level and level.name and level.name()),
+        tostr(is_lc), tostr(is_base), tostr(is_campfire), tostr(is_stash), tostr(cross_zone))
+
+    local can_preview, preview_lc = tft_preview_eligible(id, se_obj, ln)
+
+    local function resolve_base_or_campfire()
+        local target, terr = tft_resolve_travel_target(id, ln, click_pos)
+        if not target then
+            target = tft_fallback_travel_target(id, se_obj, tft_object_on_actor_level(se_obj, ln))
+            if target then
+                tft_log("menu: fallback target id=%s (was %s)", tostring(id), tostring(terr))
+            elseif terr then
+                tft_log("menu: resolve warn id=%s err=%s - showing travel anyway", tostring(id), tostring(terr))
+            end
+        end
+        return target
+    end
+
+    local function maybe_preview(is_lc_flag)
+        pcall(function()
+            if can_preview then
+                tft_build_path_preview(id, is_lc_flag)
+            else
+                tft_clear_path_preview()
+            end
+        end)
+    end
+
+    if is_lc then
+        local target, terr = tft_resolve_travel_target(id, ln, click_pos)
+        if not target then
+            if terr == "lc_wrong_level" or terr == "invalid_id" or terr == "no_object" then
+                tft_log("menu: skip lc id=%s (%s, off-level or unavailable)", tostr(id), tostr(terr))
+                tft_clear_path_preview()
+                return false
+            end
+            mark_menu_primary(pui)
+            return add_cannot_travel_item(pui, id, terr)
+        end
+        tft.last_menu_target_id = id
+        maybe_preview(true)
+        mark_menu_primary(pui)
+        return add_travel_menu_items(pui, id, true)
+    end
+
+    if is_campfire then
+        if cross_zone then
+            tft_clear_path_preview()
+            tft_log("menu: skip campfire (other zone)")
+            return false
+        end
+        resolve_base_or_campfire()
+        tft.last_menu_target_id = id
+        maybe_preview(false)
+        mark_menu_primary(pui)
+        return add_travel_menu_items(pui, id, false)
+    end
+
+    if is_base then
+        if cross_zone then
+            tft_clear_path_preview()
+            return add_cannot_travel_item(pui, id, "cross_zone")
+        end
+        resolve_base_or_campfire()
+        tft.last_menu_target_id = id
+        maybe_preview(false)
+        mark_menu_primary(pui)
+        return add_travel_menu_items(pui, id, false)
+    end
+
+    if is_stash then
+        tft_clear_path_preview()
+        tft_strip_backpack_travel_menu_items(pui)
+        return add_cannot_travel_item(pui, id, "stash_no_guide")
+    end
+
+    if tft_is_place_like_spot(se_obj) then
+        tft_log("menu: unclassified place-like spot id=%s - showing cannot-travel", tostr(id))
+        -- Do not mark primary: a later overlapping base/campfire must still win.
+        return add_cannot_travel_item(pui, id, "not_a_destination")
+    end
+
+    tft_log("menu: skip (not a travel destination)")
+    tft_clear_path_preview()
+    return false
+end
+
+on_map_spot_menu_add_property = function(pui, id, ln, hint)
+    local ok, err = xpcall(function()
+        on_map_spot_menu_add_property_impl(pui, id, ln, hint)
+    end, debug.traceback)
+    if not ok then
+        tft_log_error("map_spot_menu_add_property error (id=%s ln=%s): %s", tostring(id), tostring(ln), tostring(err))
+    end
+end
+
+on_map_spot_menu_property_clicked = function(pui, id, ln, t)
+    local ok, err = xpcall(function()
+        local sfind = string.find
+        local tostr = tostring
+        local result = t or (pui and pui.GetResult and pui:GetResult())
+        tft_log("menu click: id=%s ln=%s result=%s", tostr(id), tostr(ln), tostr(result))
+        if not result then return end
+
+        id = tft.last_menu_target_id or id
+        ln = tft.last_menu_target_ln or ln
+        local se_click = alife_object(id)
+        local is_lc = tft_is_pda_transition(id, se_click)
+
+        local target, terr = tft_resolve_travel_target(id, ln, tft.last_map_click_pos)
+        if not target and not is_lc then
+            target = tft_fallback_travel_target(id, se_click, tft_object_on_actor_level(se_click, ln))
+        end
+        if not target then
+            tft_log_error("menu click: no target for id=%s err=%s", tostr(id), tostr(terr))
+            return
+        end
+
+        local pos, lvid, gvid = target.pos, target.lvid, target.gvid
+
+        local sneak_lbl = tft_str("tft_menu_sneak_to")
+        local run_lbl = tft_str("tft_menu_run_to")
+        local sneak_legacy = tft_str("tft_menu_sneaky_travel")
+        local run_legacy = tft_str("tft_menu_travel_here")
+        if sfind(result, sneak_lbl, 1, true) or sfind(result, sneak_legacy, 1, true) then
+            tft.travel_mode = "sneaky"
+            tft.final_pos  = vector():set(pos.x, pos.y, pos.z)
+            tft.final_lvid = lvid
+            tft.last_menu_target_id = id
+            tft_start_travel_sequence(pos, lvid, gvid, is_lc, gvid)
+        elseif sfind(result, run_lbl, 1, true) or sfind(result, run_legacy, 1, true) then
+            tft.travel_mode = "normal"
+            tft.final_pos  = vector():set(pos.x, pos.y, pos.z)
+            tft.final_lvid = lvid
+            tft.last_menu_target_id = id
+            tft_start_travel_sequence(pos, lvid, gvid, is_lc, gvid)
+        end
+    end, debug.traceback)
+    if not ok then
+        tft_log_error("map_spot_menu_property_clicked error (id=%s ln=%s): %s", tostring(id), tostring(ln), tostring(err))
+    end
+end
+
+-- Manual pull (MCM key). Skips waiting companions and locked hostages / rescue targets.
+-- Journey teleports use tft_teleport_companions instead.
+local function companion_is_waiting(npc)
+    return npc and npc:has_info("npcx_beh_wait")
+end
+
+local function pull_companions_to_actor()
+    if not (axr_companions and axr_companions.companion_squads) then
+        return
+    end
+    local actor = db.actor
+    if not actor then
+        return
+    end
+
+    local lvid = actor:level_vertex_id()
+    local gvid = actor:game_vertex_id()
+    local pos = actor:position()
+    local land = level.vertex_position(lvid) or pos
+    local sim = alife()
+    if not sim then
+        return
+    end
+
+    local count = 0
+    for _, squad in pairs(axr_companions.companion_squads) do
+        if squad and squad.commander_id
+            and (not axr_companions.companion_squad_can_teleport
+                or axr_companions.companion_squad_can_teleport(squad))
+        then
+            if squad.online == false and squad.force_change_position then
+                squad:force_change_position(land)
+            end
+
+            for member in squad:squad_members() do
+                local id = member and member.id
+                if id then
+                    local npc = db.storage[id] and db.storage[id].object
+                    if not companion_is_waiting(npc) then
+                        local se = alife_object(id)
+                        local alive = (npc and npc:alive())
+                            or (se and se.alive and se:alive())
+                        if alive then
+                            if npc then
+                                if sim_squad_scripted and sim_squad_scripted.reset_animation then
+                                    sim_squad_scripted.reset_animation(npc)
+                                end
+                                npc:set_npc_position(land)
+                            end
+                            sim:teleport_object(id, gvid, lvid, land)
+                            count = count + 1
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    if count > 0 then
+        tft_log("pulled %s companion(s) to actor", tostring(count))
+    end
+end
+
+on_key_press = function(_key)
+    -- Any key: mark player ready after load resume (cannot poll "any DIK").
+    tft.player_ready = true
+end
+
+local function poll_tft_keys()
+    local inp = tft.dogma and tft.dogma.input
+    if not inp then
+        return
+    end
+    local reload = tft_config and tft_config.nav_mesh_reload
+    if reload and reload >= 0 and inp.is_key_pressed(reload) then
+        if _G.tft_handle_dev_keys then
+            _G.tft_handle_dev_keys(reload)
+        end
+    end
+    local tp_key = tft_config and tft_config.companion_teleport_key
+    if tp_key and tp_key >= 0 and inp.is_key_pressed(tp_key) then
+        pull_companions_to_actor()
+    end
+end
+
+-- Fires from level_input before the engine's "ignore keys while paused" gate, so WASD
+-- can resume our ambush pause. bind is key_bindings.kFWD / kBACK / kL_STRAFE / kR_STRAFE.
+on_before_key_press = function(dik, bind, dis, flags)
+    if _G.tft_try_resume_ambush_pause then
+        _G.tft_try_resume_ambush_pause(dik, bind)
+    end
+    -- PDA raise cancels walk travel (input may be disabled, so key callback is required).
+    if tft and (tft.fly_active or tft.is_traveling) and key_bindings and bind == key_bindings.kPDA then
+        if _G.tft_fly_begin_backslide and tft.fly_phase == "fly" then
+            _G.tft_fly_begin_backslide("cancel")
+            if flags then flags.ret_value = false end
+        end
+    end
+end
+
+-- tft_publish_to_global - every other 01_*.script module explicitly re-exports its
+-- functions this way because a bare top-level "function foo()" is NOT automatically visible from
+-- another script file here. These two are the only functions in this file any other DFT script
+-- calls (abort_journey from 08_travel.script to cancel a journey when
+-- the PDA closes; refresh_active_config from 01_core.script/08_travel.script
+-- to read the message-duration MCM setting) - everything else here (menu building, event
+-- callbacks) is only ever used within this same file, so it stays a private local function.
+do
+    _G.tft_abort_journey = abort_journey
+    _G.refresh_active_config = refresh_active_config
+end

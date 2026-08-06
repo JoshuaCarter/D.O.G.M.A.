@@ -81,6 +81,7 @@ local fly = {
 }
 local orig_level_input_mouse_move = nil
 local mouse_move_patched = false
+local saved_first_person_death = nil
 
 -- BHS limb keys → summary labels (Body is actor.health, not torso).
 local DIED_LIMBS = {
@@ -405,8 +406,11 @@ local function show_tab_prompt()
 	if not msg or msg == "" or msg == "ui_dogma_gameplay_death_spectator_prompt" then
 		msg = "Press TAB to spectate"
 	end
-	-- Centered, above typical "Press Space to continue" (near bottom).
-	set_static_text(TAB_STATIC, "%c[255,255,255,255]" .. msg, 380, 680)
+	-- Centered horizontally; vertically screen-center + ~100px down.
+	local tab_w = 800
+	local x = (UI_W - tab_w) * 0.5
+	local y = (UI_H * 0.5) + 100
+	set_static_text(TAB_STATIC, "%c[255,255,255,255]" .. msg, x, y)
 end
 
 local function hide_tab_prompt()
@@ -583,9 +587,15 @@ local function apply_fly_cam()
 	end
 	local pos = vector():set(fly.x, fly.y, fly.z)
 	local hpb = vector():set(fly.h, fly.p, 0)
-	pcall(function()
-		level.set_cam_custom_position_direction(pos, hpb, 0, false, false)
+	-- smoothing must be >= 1 (engine clamps); match TFT / ledge-grab callers.
+	local ok = pcall(function()
+		level.set_cam_custom_position_direction(pos, hpb, 1, false, false)
 	end)
+	if not ok then
+		pcall(function()
+			level.set_cam_custom_position_direction(pos, hpb)
+		end)
+	end
 end
 
 local function fly_tick()
@@ -616,8 +626,9 @@ local function fly_tick()
 		fly.x = fly.x + (fx * move_z + rx * move_x) * step
 		fly.z = fly.z + (fz * move_z + rz * move_x) * step
 		fly.y = fly.y + move_y * step
-		apply_fly_cam()
 	end
+	-- Re-apply every tick so the freecam pose sticks after clearing death fade.
+	apply_fly_cam()
 	return false
 end
 
@@ -629,6 +640,71 @@ end
 local function stop_fly_tick()
 	RemoveTimeEvent(CONFIG.MOD_ID, "fly_tick")
 	clear_fly_holds()
+end
+
+local FADE_IN_PP_ID = 22302
+-- Engine: effActorDeath = eStartEffectorID(50)+10
+local ACTOR_DEATH_EFF_ID = 60
+
+local function clear_death_fade()
+	-- Death screen is a fade-to-black PP (+ optional cam effector). Tab must
+	-- strip that so the freecam world is actually visible again.
+	if not level then
+		return
+	end
+	if level.remove_pp_effector then
+		pcall(function()
+			level.remove_pp_effector(ACTOR_DEATH_EFF_ID)
+		end)
+		pcall(function()
+			level.remove_pp_effector(FADE_IN_PP_ID)
+		end)
+	end
+	if level.remove_cam_effector then
+		pcall(function()
+			level.remove_cam_effector(ACTOR_DEATH_EFF_ID)
+		end)
+	end
+	if level.add_pp_effector then
+		pcall(function()
+			level.add_pp_effector("fade_in.ppe", FADE_IN_PP_ID, false)
+		end)
+	end
+	if level.show_indicators then
+		pcall(function()
+			level.show_indicators()
+		end)
+	end
+	if level.enable_input then
+		pcall(function()
+			level.enable_input()
+		end)
+	end
+end
+
+local function suppress_first_person_death()
+	-- FPCam is also used by first_person_death; keep it off while we own the cam.
+	if saved_first_person_death == nil then
+		local prev = 0
+		pcall(function()
+			if get_console_cmd then
+				prev = get_console_cmd(1, "first_person_death") and 1 or 0
+			end
+		end)
+		saved_first_person_death = prev
+	end
+	if exec_console_cmd then
+		exec_console_cmd("first_person_death 0")
+	end
+end
+
+local function restore_first_person_death()
+	if saved_first_person_death ~= nil and exec_console_cmd then
+		pcall(function()
+			exec_console_cmd("first_person_death " .. tostring(saved_first_person_death))
+		end)
+	end
+	saved_first_person_death = nil
 end
 
 local function suppress_game_over_continue()
@@ -708,6 +784,11 @@ local function clear_custom_cam()
 			level.remove_cam_custom_position_direction()
 		end)
 	end
+	if level and level.remove_pp_effector then
+		pcall(function()
+			level.remove_pp_effector(FADE_IN_PP_ID)
+		end)
+	end
 end
 
 local function set_fly_hold(bind, down)
@@ -772,6 +853,8 @@ local function start_spectator()
 	hide_space_continue()
 	show_hit_summary()
 	apply_body_hud(true)
+	clear_death_fade()
+	suppress_first_person_death()
 	suppress_game_over_continue()
 	patch_mouse_look()
 
@@ -815,6 +898,7 @@ local function reset_state()
 	stop_fly_tick()
 	unpatch_mouse_look()
 	restore_game_over_continue()
+	restore_first_person_death()
 	apply_body_hud(false)
 	clear_death_ui()
 	clear_custom_cam()
@@ -833,6 +917,7 @@ local function on_option_change()
 			unpatch_mouse_look()
 			clear_custom_cam()
 			apply_body_hud(false)
+			restore_first_person_death()
 			restore_game_over_continue()
 		end
 	end

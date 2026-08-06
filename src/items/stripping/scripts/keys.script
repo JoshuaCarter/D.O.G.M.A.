@@ -1,6 +1,7 @@
 --[[
 	Inventory strip keybinds (press / hold + hold-paint On_Hover).
 	Burst work stays in main.script; this only queues via dogma_strip.
+	Input via DOGMA.input (polled from inventory Update).
 ]]
 
 local CONFIG = _G.dogma_items_stripping_conf
@@ -20,6 +21,7 @@ local ALLOWED_BAGS = {
 
 local BINDS = {}
 local hold_state = {} -- [dik] = { bind, t0, fired }
+local down_prev = {}
 local paint = {
 	active = false,
 	dik = nil,
@@ -38,9 +40,31 @@ local function log(msg)
 	end
 end
 
+local function inp()
+	return DOGMA and DOGMA.input
+end
+
+local function mod_ok(modifier)
+	local i = inp()
+	if not i then
+		return false
+	end
+	return i.is_mod_down(modifier or 0)
+end
+
+local function clear_paint()
+	paint.active = false
+	paint.dik = nil
+	paint.last_bag = nil
+	paint.last_idx = nil
+end
+
 -- Old dtap (1) acts as press; hold stays 2.
 local function on_option_change()
 	BINDS = {}
+	hold_state = {}
+	down_prev = {}
+	clear_paint()
 	local key = DOGMA.mcm.key(MOD_ID, "key")
 	if key then
 		local mode = math.floor(DOGMA.mcm.number(MOD_ID, "key_mode", 0) + 0.5)
@@ -55,13 +79,6 @@ local function on_option_change()
 			all_stacks = false,
 		}
 	end
-end
-
-local function mod_ok(modifier)
-	if not (ui_mcm and ui_mcm.get_mod_key) then
-		return true
-	end
-	return ui_mcm.get_mod_key(modifier)
 end
 
 local function hold_time_ms()
@@ -132,13 +149,6 @@ local function arm_paint(bind)
 	paint.all_stacks = bind.all_stacks
 end
 
-local function clear_paint()
-	paint.active = false
-	paint.dik = nil
-	paint.last_bag = nil
-	paint.last_idx = nil
-end
-
 local function fire_and_maybe_paint(bind)
 	fire_bind(bind)
 	if bind.mode == MODE_HOLD then
@@ -146,47 +156,46 @@ local function fire_and_maybe_paint(bind)
 	end
 end
 
-local function on_key_pressed(dik, gui)
-	if gui and gui.mode == "loot" and (dik == DIK_keys.DIK_LSHIFT or dik == DIK_keys.DIK_RSHIFT) then
-		return
-	end
-	for i = 1, #BINDS do
-		local bind = BINDS[i]
-		if bind.key ~= dik or not mod_ok(bind.modifier) then
-			-- skip
-		elseif bind.mode == MODE_HOLD then
-			hold_state[dik] = { bind = bind, t0 = time_continual(), fired = false }
-		else
-			fire_and_maybe_paint(bind)
-		end
-	end
-end
-
-local function on_key_released(dik)
-	hold_state[dik] = nil
-	if paint.active and paint.dik == dik then
-		clear_paint()
-	end
-end
-
-local function hold_tick(gui)
-	if not inv_mode_ok(gui) then
+local function poll_binds(gui)
+	local i = inp()
+	if not (i and inv_mode_ok(gui)) then
 		return
 	end
 	local now = time_continual()
 	local threshold = hold_time_ms()
-	for dik, hs in pairs(hold_state) do
-		if not hs.fired then
-			if key_state(dik) == 0 then
+
+	for b = 1, #BINDS do
+		local bind = BINDS[b]
+		local dik = bind.key
+		if not (dik and dik >= 0) then
+			-- skip
+		else
+			local down = i.is_key_down(dik)
+			local pressed = down and not down_prev[dik]
+			down_prev[dik] = down
+
+			if not mod_ok(bind.modifier) then
 				hold_state[dik] = nil
-			elseif mod_ok(hs.bind.modifier) and (now - hs.t0) >= threshold then
-				hs.fired = true
-				fire_and_maybe_paint(hs.bind)
-			end
-		elseif key_state(dik) == 0 or not mod_ok(hs.bind.modifier) then
-			hold_state[dik] = nil
-			if paint.active and paint.dik == dik then
-				clear_paint()
+				if paint.active and paint.dik == dik then
+					clear_paint()
+				end
+			elseif bind.mode == MODE_HOLD then
+				if pressed then
+					hold_state[dik] = { bind = bind, t0 = now, fired = false }
+				elseif hold_state[dik] then
+					local hs = hold_state[dik]
+					if not down then
+						hold_state[dik] = nil
+						if paint.active and paint.dik == dik then
+							clear_paint()
+						end
+					elseif not hs.fired and (now - hs.t0) >= threshold then
+						hs.fired = true
+						fire_and_maybe_paint(hs.bind)
+					end
+				end
+			elseif pressed then
+				fire_and_maybe_paint(bind)
 			end
 		end
 	end
@@ -202,7 +211,8 @@ local function paint_on_hover(self, idx)
 	if in_action or not paint.active or not idx then
 		return call_base_hover(self, idx)
 	end
-	if key_state(paint.dik) == 0 or not mod_ok(paint.modifier) then
+	local i = inp()
+	if not (i and paint.dik and i.is_key_down(paint.dik) and mod_ok(paint.modifier)) then
 		clear_paint()
 		return call_base_hover(self, idx)
 	end
@@ -237,31 +247,12 @@ local function reapply_on_hover_patch()
 	log("On_Hover patched")
 end
 
-local original_on_keyboard = ui_inventory and ui_inventory.UIInventory and ui_inventory.UIInventory.OnKeyboard
-if original_on_keyboard then
-	function ui_inventory.UIInventory:OnKeyboard(dik, keyboard_action)
-		local res = original_on_keyboard(self, dik, keyboard_action)
-		if not (DOGMA and DOGMA.sys and DOGMA.sys.ready(MOD_ID, db, on_option_change)) then
-			return res
-		end
-		if not inv_mode_ok(self) then
-			return res
-		end
-		if keyboard_action == ui_events.WINDOW_KEY_PRESSED then
-			on_key_pressed(dik, self)
-		elseif keyboard_action == ui_events.WINDOW_KEY_RELEASED then
-			on_key_released(dik)
-		end
-		return res
-	end
-end
-
 local original_on_update = ui_inventory and ui_inventory.UIInventory and ui_inventory.UIInventory.Update
 if original_on_update then
 	function ui_inventory.UIInventory:Update()
 		original_on_update(self)
 		if DOGMA and DOGMA.sys and DOGMA.sys.ready(MOD_ID, db, on_option_change) then
-			hold_tick(self)
+			poll_binds(self)
 		end
 	end
 end

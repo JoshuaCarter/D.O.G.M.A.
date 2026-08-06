@@ -42,7 +42,13 @@ local function clamp(v, lo, hi)
 end
 
 local function key_down(dik)
-	return dik and dik > 0 and key_state and (key_state(dik) or 0) ~= 0
+	local inp = DOGMA and DOGMA.input
+	return inp and dik and dik >= 0 and inp.is_key_down(dik)
+end
+
+local function key_pressed(dik)
+	local inp = DOGMA and DOGMA.input
+	return inp and dik and dik >= 0 and inp.is_key_pressed(dik)
 end
 
 local function hold_signed(inc_dik, dec_dik, rate, dt)
@@ -207,18 +213,14 @@ local function on_option_change()
 	refresh_keys()
 end
 
-local function on_key_press(dik)
-	local actor = db.actor
-	if not (actor and actor:alive()) then
-		return
-	end
+local function poll_limb_keys()
 	for i = 1, #LIMBS do
 		local limb = LIMBS[i]
-		if keys.limb_inc[limb] and dik == keys.limb_inc[limb] then
+		if key_pressed(keys.limb_inc[limb]) then
 			adjust_limb(limb, 1)
 			return
 		end
-		if keys.limb_dec[limb] and dik == keys.limb_dec[limb] then
+		if key_pressed(keys.limb_dec[limb]) then
 			adjust_limb(limb, -1)
 			return
 		end
@@ -231,6 +233,8 @@ local function actor_on_update()
 		last_tg = nil
 		return
 	end
+
+	poll_limb_keys()
 
 	local now = time_global()
 	local dt = 0
@@ -275,6 +279,5 @@ function on_game_start()
 	DOGMA = dogma_common.load(DEBUG_MOD)
 	refresh_keys()
 	RegisterScriptCallback("on_option_change", on_option_change)
-	RegisterScriptCallback("on_key_press", on_key_press)
 	RegisterScriptCallback("actor_on_update", actor_on_update)
 end

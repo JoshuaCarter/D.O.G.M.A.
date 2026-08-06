@@ -1,0 +1,413 @@
+-- True Fast Travel: Tarkov Transitions guard layer (combat, arrival suppress, min 5s).
+-- Patches are applied from on_game_start (and retried on actor update) so they
+-- survive later ui_sr_teleport / lc_extra_transitions reloads.
+
+local tft = _G.tft
+local guard = _G.tft_transition_guard or {}
+local MIN_COUNTDOWN_S = guard.min_countdown_s or 5
+local COMBAT_TEXT = "IN COMBAT"
+local FALLBACK_COMBAT_R = 220
+local FALLBACK_COMBAT_G = 45
+local FALLBACK_COMBAT_B = 45
+
+local function gate_log(fmt, ...)
+    if tft_trans_log then
+        tft_trans_log(fmt, ...)
+    else
+        printf("[dogma_gameplay_true_fast_travel] [trans] " .. string.format(fmt, ...))
+    end
+end
+
+local function combat_blocks()
+    return tft_transition_combat_blocks and tft_transition_combat_blocks()
+end
+
+local function arrival_blocks_start(inside_fn)
+    return tft_transition_arrival_gate_blocks_start and tft_transition_arrival_gate_blocks_start(inside_fn)
+end
+
+local function combat_fade_mul(self)
+    if self and self.FadeInMul then
+        return self:FadeInMul()
+    end
+    return 1
+end
+
+local function apply_combat_label(self)
+    if not (self and self.panel and self.panel.label) then return end
+    local m = _G.tarkov_transitions_mcm
+    local fade = combat_fade_mul(self)
+    if m and m.apply_layout then
+        m.apply_layout(self.panel, fade)
+        self.panel.label:SetText(COMBAT_TEXT)
+        return
+    end
+    self.panel.label:SetText(COMBAT_TEXT)
+    self.panel.label:SetTextColor(GetARGB(255, FALLBACK_COMBAT_R, FALLBACK_COMBAT_G, FALLBACK_COMBAT_B))
+end
+
+local function countdown_inside(self)
+    if not self then return false end
+    if self.is_inside then
+        return self.is_inside()
+    end
+    if self.restrictor and db.actor then
+        return self.restrictor:inside(db.actor:position())
+    end
+    return false
+end
+
+local function class_from_instance(obj)
+    if not obj then return nil end
+    local mt = getmetatable(obj)
+    if type(mt) == "table" then
+        if type(mt.__index) == "table" then return mt.__index end
+        return mt
+    end
+    return nil
+end
+
+local function resolve_countdown_class(name)
+    return _G[name]
+end
+
+local function patch_countdown_instance(self)
+    if not self or self._tft_combat_inst_patched then return false end
+    self._tft_combat_inst_patched = true
+
+    if self.SetLabel then
+        local orig_set = self.SetLabel
+        self.SetLabel = function(wnd, remaining_sec)
+            if combat_blocks() then
+                apply_combat_label(wnd)
+                return
+            end
+            orig_set(wnd, remaining_sec)
+        end
+    end
+
+    if self.Update then
+        local orig_update = self.Update
+        self.Update = function(wnd)
+            if wnd.done or wnd.fading_out then
+                if tft._transition_active_countdown == wnd then
+                    tft._transition_active_countdown = nil
+                end
+            elseif not (wnd.done or wnd.fading_out) and combat_blocks() and countdown_inside(wnd) then
+                wnd.last = time_global()
+                apply_combat_label(wnd)
+                return
+            end
+            orig_update(wnd)
+        end
+    end
+
+    if self.FinishCountdown then
+        local orig_finish_cd = self.FinishCountdown
+        self.FinishCountdown = function(wnd)
+            if combat_blocks() then return end
+            orig_finish_cd(wnd)
+        end
+    end
+
+    return true
+end
+
+local function patch_countdown_ui_class(cls, name)
+    if not cls then return false end
+    local patched_any = false
+
+    if cls.SetLabel and not cls._tft_label_patched then
+        local orig_set = cls.SetLabel
+        function cls:SetLabel(remaining_sec)
+            if combat_blocks() then
+                apply_combat_label(self)
+                return
+            end
+            orig_set(self, remaining_sec)
+        end
+        cls._tft_label_patched = true
+        gate_log("patched %s.SetLabel (combat label)", tostring(name))
+        patched_any = true
+    end
+
+    if cls.Update and not cls._tft_combat_update_patched then
+        local orig_update = cls.Update
+        function cls:Update()
+            if not (self.done or self.fading_out) and combat_blocks() and countdown_inside(self) then
+                self.last = time_global()
+                apply_combat_label(self)
+                return
+            end
+            orig_update(self)
+        end
+        cls._tft_combat_update_patched = true
+        gate_log("patched %s.Update (combat freeze)", tostring(name))
+        patched_any = true
+    end
+
+    if cls.FinishCountdown and not cls._tft_finish_cd_patched then
+        local orig_finish_cd = cls.FinishCountdown
+        function cls:FinishCountdown()
+            if combat_blocks() then return end
+            orig_finish_cd(self)
+        end
+        cls._tft_finish_cd_patched = true
+        patched_any = true
+    end
+
+    return patched_any
+end
+
+local function pre_patch_countdown_classes(name)
+    patch_countdown_ui_class(resolve_countdown_class("tarkov_countdown_window"), "tarkov_countdown_window")
+    if name == "msg_box_ui" then
+        patch_countdown_ui_class(_G.msg_box_ui, "msg_box_ui")
+    end
+end
+
+local function ensure_countdown_patched(wnd, name)
+    if not wnd then return false end
+    local cls = class_from_instance(wnd) or resolve_countdown_class(name)
+    if cls then
+        patch_countdown_ui_class(cls, name)
+    end
+    return patch_countdown_instance(wnd)
+end
+
+local function track_active_countdown(wnd)
+    if wnd and not wnd.done then
+        tft._transition_active_countdown = wnd
+    end
+end
+
+local function apply_combat_if_needed(wnd)
+    if not (wnd and combat_blocks() and countdown_inside(wnd)) then return end
+    wnd.last = time_global()
+    apply_combat_label(wnd)
+end
+
+local function poll_active_combat_label()
+    local wnd = tft._transition_active_countdown
+    if not wnd then return end
+    if wnd.done or wnd.fading_out then
+        tft._transition_active_countdown = nil
+        return
+    end
+    if combat_blocks() and countdown_inside(wnd) then
+        wnd.last = time_global()
+        apply_combat_label(wnd)
+    end
+end
+
+local function ensure_combat_label_poll()
+    if tft._transition_combat_poll_registered then return end
+    RegisterScriptCallback("actor_on_update", poll_active_combat_label)
+    tft._transition_combat_poll_registered = true
+end
+
+local function patch_duration_clamp()
+    local mcm = _G.tarkov_transitions_mcm
+    if not (mcm and mcm.get_duration and not mcm._tft_duration_patched) then return false end
+    local orig = mcm.get_duration
+    mcm.get_duration = function()
+        return math.max(MIN_COUNTDOWN_S, orig())
+    end
+    mcm._tft_duration_patched = true
+    gate_log("patched tarkov_transitions_mcm.get_duration (min %ds)", MIN_COUNTDOWN_S)
+    return true
+end
+
+local function wrap_finish(orig_finish)
+    return function()
+        if combat_blocks() then
+            gate_log("transition on_finish blocked (combat)")
+            return
+        end
+        orig_finish()
+    end
+end
+
+local function patch_tarkov_countdown(mod, name)
+    if not (mod and type(mod.start) == "function" and not mod._tft_gate_patched) then return false end
+    local orig_start = mod.start
+    mod.start = function(opts)
+        if not (opts and opts.is_inside and opts.on_finish) then
+            return nil
+        end
+        local orig_inside = opts.is_inside
+        if arrival_blocks_start(orig_inside) then
+            gate_log("shared transition countdown.start blocked (arrival) (%s)", tostring(name))
+            return nil
+        end
+        pre_patch_countdown_classes(name)
+        ensure_combat_label_poll()
+        local orig_finish = opts.on_finish
+        opts.is_inside = tft_transition_wrap_is_inside and tft_transition_wrap_is_inside(orig_inside) or orig_inside
+        opts.on_finish = wrap_finish(orig_finish)
+        local wnd = orig_start(opts)
+        track_active_countdown(wnd)
+        ensure_countdown_patched(wnd, name)
+        apply_combat_if_needed(wnd)
+        return wnd
+    end
+    mod._tft_gate_patched = true
+    gate_log("patched shared transition countdown.start (%s)", tostring(name))
+    return true
+end
+
+local function patch_sr_teleport_class(cls)
+    if not cls then return false end
+    local patched_any = false
+
+    if cls.StartCountdown and not cls._tft_start_patched then
+        local orig_start = cls.StartCountdown
+        function cls:StartCountdown()
+            local inside_fn = function()
+                return db.actor and self.restrictor and self.restrictor:inside(db.actor:position())
+            end
+            if arrival_blocks_start(inside_fn) then
+                gate_log("sr_teleport StartCountdown blocked (arrival) name=%s", tostring(self.name))
+                return
+            end
+            pre_patch_countdown_classes("msg_box_ui")
+            ensure_combat_label_poll()
+            orig_start(self)
+            track_active_countdown(self)
+            ensure_countdown_patched(self, "msg_box_ui")
+            apply_combat_if_needed(self)
+        end
+        cls._tft_start_patched = true
+        gate_log("patched msg_box_ui.StartCountdown")
+        patched_any = true
+    end
+
+    if patch_countdown_ui_class(cls, "msg_box_ui") then
+        patched_any = true
+    end
+
+    if cls.Update and not cls._tft_arrival_update_patched then
+        local orig_update = cls.Update
+        function cls:Update()
+            if not (self.done or self.fading_out) and tft._transition_arrival_suppress then
+                local inside_fn = function()
+                    return db.actor and self.restrictor and self.restrictor:inside(db.actor:position())
+                end
+                if arrival_blocks_start(inside_fn) then
+                    self:CancelCountdown()
+                    return
+                end
+            end
+            orig_update(self)
+        end
+        cls._tft_arrival_update_patched = true
+        gate_log("patched msg_box_ui.Update (arrival)")
+        patched_any = true
+    end
+
+    if cls.OnMsgOk and not cls._tft_ok_patched then
+        local orig_ok = cls.OnMsgOk
+        function cls:OnMsgOk()
+            if combat_blocks() then
+                gate_log("sr_teleport OnMsgOk blocked (combat) name=%s", tostring(self.name))
+                return
+            end
+            orig_ok(self)
+        end
+        cls._tft_ok_patched = true
+        gate_log("patched msg_box_ui.OnMsgOk")
+        patched_any = true
+    end
+
+    return patched_any
+end
+
+local function patch_lc_extra_travel()
+    if not (_G.lc_extra_transitions and _G.lc_extra_transitions.teleport_actor
+            and not _G.lc_extra_transitions._tft_gate_patched) then
+        return false
+    end
+    local orig_extra = _G.lc_extra_transitions.teleport_actor
+    _G.lc_extra_transitions.teleport_actor = function(actor, obj)
+        if combat_blocks() then
+            local oid = nil
+            if obj then
+                local ok, id = pcall(function() return obj:id() end)
+                if ok then oid = id end
+            end
+            gate_log("lc_extra_transitions.teleport_actor blocked (combat) id=%s", tostring(oid))
+            return
+        end
+        orig_extra(actor, obj)
+    end
+    _G.lc_extra_transitions._tft_gate_patched = true
+    gate_log("patched lc_extra_transitions.teleport_actor")
+    return true
+end
+
+local function install_transition_gates()
+    local patched_any = false
+
+    if patch_duration_clamp() then patched_any = true end
+
+    ensure_combat_label_poll()
+
+    if patch_countdown_ui_class(resolve_countdown_class("tarkov_countdown_window"), "tarkov_countdown_window") then
+        patched_any = true
+    end
+
+    if patch_sr_teleport_class(_G.msg_box_ui) then
+        patched_any = true
+    end
+
+    if patch_tarkov_countdown(_G.tarkov_transitions_countdown, "tarkov_transitions_countdown") then
+        patched_any = true
+    end
+
+    for gname, mod in pairs(_G) do
+        if type(gname) == "string" and gname:match("_transitions_countdown$") then
+            if patch_tarkov_countdown(mod, gname) then
+                patched_any = true
+            end
+        end
+    end
+
+    if patch_lc_extra_travel() then
+        patched_any = true
+    end
+
+    if not tft._transition_gates_callback_registered then
+        RegisterScriptCallback("actor_on_first_update", install_transition_gates)
+        tft._transition_gates_callback_registered = true
+    end
+
+    if not tft._transition_gates_done then
+        local need_msg = not (_G.msg_box_ui and _G.msg_box_ui._tft_start_patched)
+        local need_tarkov = not (_G.tarkov_transitions_mcm and _G.tarkov_transitions_mcm._tft_duration_patched)
+        local need_extra = not (_G.lc_extra_transitions and _G.lc_extra_transitions._tft_gate_patched)
+        if not (need_msg or need_tarkov or need_extra) then
+            tft._transition_gates_done = true
+        elseif not tft._transition_gates_retry_registered then
+            RegisterScriptCallback("actor_on_update", function()
+                if tft._transition_gates_done then return end
+                local tg = time_global()
+                if tft._transition_gates_retry_next and tg < tft._transition_gates_retry_next then return end
+                tft._transition_gates_retry_next = tg + 1000
+                install_transition_gates()
+            end)
+            tft._transition_gates_retry_registered = true
+        end
+    end
+
+    if patched_any or not tft._transition_gates_announced then
+        tft._transition_gates_announced = true
+        gate_log("transition gates installed (msg_box_ui=%s tarkov_wnd=%s tarkov=%s)",
+            tostring(_G.msg_box_ui ~= nil),
+            tostring(resolve_countdown_class("tarkov_countdown_window") ~= nil),
+            tostring(_G.tarkov_transitions_countdown ~= nil))
+    end
+end
+
+do
+    _G.tft_install_transition_gates = install_transition_gates
+end

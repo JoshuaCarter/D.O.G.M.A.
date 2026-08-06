@@ -1,0 +1,454 @@
+-- True Fast Travel: Shared state, constants, logging, and PDA messages.
+-- Loaded automatically before main.script (zzzz_dogma_gameplay_true_fast_travel_main.script)
+
+-- Mod semver. Packaged aimap assets are immutable; bump major.minor when the format changes.
+_G.tft_version = "0.5.0"
+
+-- Shared dft globals (Anomaly isolates zzz_* script environments)
+local tft_config = _G.tft_config
+
+-- Forward declarations for this file's private (non-exported) helpers, so they can
+-- reference each other regardless of definition order below.
+local format_msg, msg_style_icon, msg_style_prefix
+local defaults = {
+    is_traveling        = false,
+    player_ready        = true,
+    start_pos           = nil,
+    start_lvid          = nil,
+    dest_pos            = nil,
+    dest_lvid           = nil,
+    dest_gvid           = nil,
+    final_gvid          = nil,
+    final_pos           = nil,
+    final_lvid          = nil,
+    travel_dist         = 0,
+    current_dist        = 0,
+    last_update_tg      = 0,
+    next_update         = 0,
+    is_transition       = false,
+    start_game_time     = nil,
+    last_encounter_check = 0,
+    journey_cost        = 0,
+    dynamic_map         = {}, -- [src_lvl][dst_lvl] = true
+    door_registry       = {}, -- [src_lvl][dst_lvl] = {ids}
+    level_names         = {}, -- [lid] = name
+    level_ids_by_name   = {}, -- [name] = lid
+    level_offsets       = {}, -- [lid] = {x,y,z} global PDA map offset
+    level_registry_built = false,
+    dot_positions       = {},
+    dot_ids             = {},
+    dot_path_ratio      = {},
+    dot_done            = {},
+    pending_dot_cleanup = nil, -- dot object IDs snapshotted at save time, released after load
+    pda_check_from      = nil, -- time_global() ms; PDA-closed checks are ignored before this
+    ambush_pending      = false, -- true during the brief delay between ambush detection and the actual teleport
+    ambush_stop_ratio   = nil,   -- path ratio where a mid-journey ambush froze dot promotion
+    ambush_range_ids    = {},    -- buried device_pda ids forming the PDA ambush-range ring(s)
+    ambush_range_last   = nil,   -- {close_r,los_r,cx,cz,alert_kind} cache to avoid rebuilding every tick
+    ambush_dir_ids      = {},    -- temporary minimap pin(s) pointing at nearest ambusher
+    ambush_kind         = nil,   -- "close" | "los" for the last triggered ambush scan
+    journey_start_health = nil, -- actor.health snapshot at journey start; damage cancel compares against this
+    target_stamina      = 1.0, -- end-of-travel stamina the post-arrival safety window should hold at
+    path_preview_id     = nil,
+    is_path_preview     = false,
+    visited             = {}, -- legacy pos list (unused)
+    unlocked            = {}, -- [id] = true - discoverable travel points
+    menu_open_seq       = 0,
+    last_map_click_pos  = nil,
+    last_menu_target_id = nil,
+    lc_spot_ids         = nil,
+    right_click_avail   = false,
+    active_config       = {},
+    travel_mode         = "normal",
+    encounters_avoided  = 0,
+    arrival_forced_ambushes = 0,
+    arrival_short_m       = 0,
+    ambush_targets      = nil,  -- { squads={}, npcs={} } when mid-journey ambush confirmed
+    arrival_ambush_targets = nil,
+    emission_interrupt_ratio = nil, -- 0-1 path fraction when scheduled emission hits
+    emission_time_jump_secs  = nil, -- game seconds to advance at interrupt (secs_until - lead)
+    emission_interrupt_pending = false,
+    graph_cache         = nil,  -- [{gvid, lvid, pos}] on current level
+    graph_lvid_map      = nil,  -- [lvid] = gvid
+    graph_cache_level   = nil,
+    graph_cache_name    = nil,
+    door_pos_cache      = nil,  -- [vector] transition-trigger positions leading out of the current level
+    door_pos_cache_level = nil,
+    menu_resolve_cache  = nil,  -- { seq, id, ln, target, err } - one resolve per map menu open
+    menu_path_cache     = nil,  -- { seq, id, chain, is_vertex, path_len, raw_chain } - one path build per menu open
+    encumbrance_time_mult = 1.0,
+    encumbrance_speed_mult = 1.0,
+    path_chain          = nil, -- polyline (vector list) for the active journey; authoritative for
+                                -- display dots, ambush ratio->position, and interrupt teleports.
+    path_chain_is_vertex = nil,
+    path_chain_meta     = nil, -- { safe_vertices, no_land_segments, mode } from path build
+}
+_G.tft = _G.tft or {}
+for key, value in pairs(defaults) do
+    if _G.tft[key] == nil then
+        _G.tft[key] = value
+    end
+end
+local tft = _G.tft
+
+_G.tft_invalid_lvid = 4294967295
+_G.tft_invalid_gvid = 65535
+_G.tft_travel_max_alife_graph_drift = 100
+_G.tft_travel_max_click_drift = 150
+
+_G.tft_travel = {
+    pda_speed            = 50,  -- reference PDA bar speed; at this rate, normal travel = min_per_km game minutes
+    sneak_dodge_base     = 25,  -- ambush dodge in sneak mode (skill levels retired)
+    sneak_dodge_per_lvl  = 0,
+    sneak_dodge_cap      = 85,
+    min_per_km           = 30,  -- normal travel: 30 game minutes per km
+    sneak_min_per_km     = 180, -- sneak: 3 hours per km
+    sneak_min_per_lvl    = 0,
+    sneak_min_floor      = 80,
+    emission_lead_secs   = 8,   -- game seconds before emission after planned interrupt
+    resource_rate_per_hr = 0.10,
+    encumbrance_yellow_buffer_kg = 10,
+    encumbrance_yellow_speed   = 0.8,
+    encumbrance_red_speed      = 0.5,
+    encumbrance_red_stamina    = 0.10, -- end-of-travel stamina when arriving over max carry weight
+    ambush_stamina_normal      = 0.50, -- end-of-travel stamina when ambushed in normal (non-sneak) mode
+    ambush_stamina_sneaky      = 1.00, -- end-of-travel stamina when ambushed while sneaking
+    damage_cancel_min_loss     = 0.01, -- cancel journey only after this much HP lost (1% of max; health is 0-1)
+}
+
+-- Some third-party mods (e.g. Milspec PDA) read game_fast_travel.trip_in_progress to avoid
+-- misreading our journey's game-time jumps as elapsed real time (e.g. faction-access decay
+-- timers). We mirror our own travel state into that flag so those mods behave correctly whether
+-- or not Fair Fast Travel itself is installed - this never reads from or calls into FFT, it just
+-- writes a shared flag other mods may be watching.
+local function set_fft_trip_in_progress(active)
+    _G.game_fast_travel = _G.game_fast_travel or {}
+    _G.game_fast_travel.trip_in_progress = active and true or false
+end
+
+_G.tft_hostile = {
+    radius_m   = 50,  -- legacy travel-block reference; ambush uses tft_ambush_radius_m
+    vertical_m = 10,  -- |dy| for proximity without LOS check
+}
+
+_G.tft_ambush = {
+    radius_base        = 100, -- LoS ambush range (weather/daylight/sneak shrink it)
+    radius_min         = 20,
+    radius_max         = 150,
+    skill_los_per_lvl  = 3,   -- sneaking: -3m LoS range per level
+    travel_detection_m   = 0,
+    time_twilight_m    = 10,
+    time_night_m       = 20,
+    weather_rain_m     = 10,
+    weather_storm_m    = 15,
+    weather_fog_m      = 20,
+    offset_mode_travel = -10,
+    offset_mode_sneak  = 10,
+    offset_per_sneak   = 1,
+    offset_min         = 20,
+    offset_max         = 80,
+    standoff_min_m     = 20,
+    ping_hit_power     = 0.01,
+    dir_marker_s       = 10,
+}
+
+-- Integer game hours from level.get_time_hours() (0-23).
+-- day:      07-19  full daylight, widest ambush scan
+-- twilight: 06-07 dawn, 19-20 dusk  reduced visibility (tighter ambush scan)
+-- night:    20-06  dark hours, lowest visibility (tightest ambush scan)
+_G.tft_time_of_day = {
+    day_start           = 7,
+    day_end             = 19,
+    twilight_dawn_start = 6,
+    twilight_dawn_end   = 7,
+    twilight_dusk_start = 19,
+    twilight_dusk_end   = 20,
+    night_start         = 20,
+    night_end           = 6,
+}
+
+_G.tft_arrival = {
+    reroute_max = 10,
+}
+
+-- Tarkov Transitions guard (09_transition_guard / 10_transition_compat):
+-- combat block, post-load arrival suppress (via Tarkov zone checks), min countdown.
+-- Native level_changer lock polling uses scan_interval_ms / buffer_m below.
+_G.tft_transition_guard = {
+    min_countdown_s    = 5,   -- floor on tarkov_transitions_mcm duration
+    scan_interval_ms   = 150, -- combat lock poll interval
+}
+
+-- Spectator walk puppet (13_fly_camera.script); used when the cam API is present.
+_G.tft_fly = {
+    ref_run_mps           = 4.2,  -- approx naked run m/s (calibrated vs run_coef baseline)
+    baseline_run_coef     = 2.41, -- Teepo/speed-stack naked baseline
+    crouch_scale          = 0.55, -- sneak vs run cam speed
+    zero_gravity          = true, -- stash/restore; 0 while traveling to reduce teleport fight
+    eye_height_m          = 1.6,
+    sample_m              = 3.0,
+    look_ahead_m          = 12.0,
+    turn_smooth           = 0.30,
+    handoff_s             = 0.35,
+    companion_back_m      = 2.2,
+    companion_side_m      = 1.1,
+    refine_max_segments   = 48,
+    refine_min_seg_m      = 18,
+    proxy_underground_m   = 0,
+}
+
+_G.tft_path = {
+    dot_spot              = "tft_path_dot",
+    dot_spot_pending      = "tft_path_dot_pending",
+    dot_spot_ambush       = "tft_path_dot_ambush", -- red dot: ambush happened here
+    dot_spot_ambush_icon  = "tft_path_dot_ambush_icon", -- ui_common pin centered on red dot
+    dot_spot_dodge        = "tft_path_dot_dodge",  -- blue: a threat was dodged around here
+    dot_spot_debug_vertex = "tft_path_debug_vertex",
+    dot_spot_debug_edge   = "tft_path_debug_edge",
+    dot_max_count         = 1000,
+    dot_spacing_m         = 20,  -- journey dots every 20m along generated path
+    dot_underground_offset_m = 1000, -- bury carrier device_pdas deep so they never appear in-world
+                                     -- (map spots only use x/z)
+    ambush_range_segments = 32,  -- ring markers approximating ambush radius on the PDA map
+    ambush_range_close_segments = 24, -- inner (close / no-LOS) ring
+    ambush_range_spot     = "tft_ambush_range_ring",
+    ambush_range_spot_alert = "tft_ambush_range_ring_alert", -- red on the ring that triggered the ambush
+    ambush_dir_spot       = "tft_path_dot_ambush_icon", -- red waypoint pin toward nearest hostile
+    road_on_graph_max_m   = 5,   -- navmesh counts as on-road when this close to a graph node
+    preview_edge_spacing_m = 5,
+    lc_snap_max_drift_m   = 25,  -- max navmesh snap distance from level changer
+    ground_snap_max_drift_m = 60,
+    land_prefer_node_m    = 10,  -- if an aimap path node or fine nav vertex is within this of the
+                                 -- journey point, teleport snaps to the nearer of those
+    -- Zone-exit travel: stop this far short of the changer so we don't land inside the trigger.
+    -- Prefers the previous path node when that gap is ~10-20m; otherwise walks back along the path.
+    transition_arrival_short_m = 15,
+    graph_nearest_max_m   = 50,  -- tight graph lookup for transitions
+    menu_click_redirect_off_m = 60,  -- non-dest spot farther than this from click may redirect
+    menu_click_transition_near_m = 120, -- find transition doors within this radius of click
+
+    -- Navmesh A* pathfinder (tft_astar_navmesh_path). Walks level.vertex_in_direction,
+    -- the same mesh-constrained stepping primitive the engine's AI uses, so every hop is
+    -- guaranteed to stay on walkable ground (no underground/void jumps).
+    nav_step_m            = 18,   -- horizontal distance per mesh-walk hop
+    nav_max_nodes         = 2000, -- hard cap on expanded search nodes per A* leg
+    nav_anchor_scan_rings = { 20, 50, 100, 400 }, -- progressive endpoint anchor scan (m)
+    nav_connector_max_m   = 50,   -- max drift for mesh-valid start/dest connector hops
+    nav_link_splice_max_m = 72,   -- tier-1 fwd/rev splice gap
+    nav_link_mid_max_m    = 50,   -- tier-2 mid↔mid patch gap
+    nav_link_sample_max   = 6,    -- max sample points per chain in link search
+    nav_link_pair_max     = 36,   -- cap candidate pair evaluations per build
+    nav_goal_tol_m        = 12,   -- close enough to destination vertex to stop searching
+    nav_dir_count         = 10,   -- direction fan size per node expansion (relative to goal bearing)
+    -- Roads are strongly preferred, but only when a road hop still nets closer to the
+    -- destination afterward (see the "progressing" check in tft_astar_navmesh_path) - a
+    -- road that leads away/sideways gets no discount, so the search won't detour onto it.
+    nav_road_cost_mult    = 0.15, -- cost multiplier for progressing hops near a road vertex
+    nav_road_seek_m       = 45,   -- search radius for the "hop straight at nearest road node" candidate
+    nav_min_move_frac     = 0.35, -- min fraction of intended hop distance to count as unobstructed
+    nav_min_move_abs_m    = 1.2,  -- absolute floor (m) - whichever of this or the fraction is smaller wins,
+                                   -- so short real progress near walls/corners isn't thrown away just because
+                                   -- it's a small % of a long requested hop (see tft_mesh_step_ok in 05_path)
+    nav_heuristic_weight  = 1.05, -- >1 = faster/greedier search, still near-optimal
+    nav_smooth_step_m     = 15,   -- hop size used while validating shortcut line-of-sight
+    nav_smooth_tolerance_m = 3,   -- allowed endpoint drift when validating a shortcut
+    nav_goal_scan_max_m = 60,  -- widen ring search for A* goal near transitions/off-mesh doors
+    nav_incomplete_gap_mult = 2.5, -- reject partial A* results if final gap > nav_step_m * this
+}
+
+_G.tft_path.dots = {
+    _G.tft_path.dot_spot, _G.tft_path.dot_spot_pending,
+    _G.tft_path.dot_spot_ambush, _G.tft_path.dot_spot_ambush_icon, _G.tft_path.dot_spot_dodge,
+    _G.tft_path.dot_spot_debug_vertex, _G.tft_path.dot_spot_debug_edge,
+    -- Nav mesh / ambush-range carriers (orphan sweep + remove_path_spots)
+    "tft_nav_mesh_node", "tft_nav_mesh_endpoint", "tft_nav_mesh_edge",
+    _G.tft_path.ambush_range_spot, _G.tft_path.ambush_range_spot_alert,
+}
+
+_G.tft_save_vars = {
+    traveling  = "tft_jt",
+    dest_x     = "tft_dx",
+    dest_y     = "tft_dy",
+    dest_z     = "tft_dz",
+    dest_raw_x = "tft_drx",
+    dest_raw_y = "tft_dry",
+    dest_raw_z = "tft_drz",
+    dest_lvid  = "tft_dl",
+    dest_gvid  = "tft_dg",
+    final_gvid = "tft_fg",
+    final_x    = "tft_fx",
+    final_y    = "tft_fy",
+    final_z    = "tft_fz",
+    final_lvid = "tft_fl",
+    cost       = "tft_co",
+    dot_count  = "tft_dc",
+    stats_amb  = "tft_sa",
+    stats_pos  = "tft_sp",
+    progress_ratio = "tft_pr", -- 0-1 fraction of the trip completed at save time (used for refund on cancel)
+}
+
+_G.tft_door_keywords = {
+    l01_escape          = {"escape", "esc"},
+    l02_garbage         = {"garbage", "gar"},
+    l03_agroprom        = {"agroprom", "agr"},
+    l04_darkvalley      = {"darkvalley", "val"},
+    l05_bar             = {"bar"},
+    l06_rostok          = {"rostok", "ros"},
+    l07_military        = {"military", "mil", "army_warehouses", "army", "warehouse", "aw"},
+    l08_yantar          = {"yantar", "yan"},
+    l09_deadcity        = {"deadcity", "dead_city", "cit"},
+    l10_red_forest      = {"red_forest", "redforest", "red"},
+    l10_radar           = {"radar", "rad"},
+    l11_pripyat         = {"l11_pripyat", "l11"},
+    l12_stancia         = {"stancia", "aes"},
+    l12_stancia_2       = {"stancia_2", "stancia2", "aes2"},
+    l13_generators      = {"generators", "gen"},
+    k00_marsh           = {"marsh", "mar", "swamp"},
+    k01_darkscape       = {"darkscape", "dsc"},
+    k02_trucks_cemetery = {"tc", "trc", "trucks", "truck", "cemetery", "cem", "k02"},
+    meadow              = {"pole", "meadow", "y04_pole", "field"},
+    jupiter             = {"jupiter", "jup"},
+    zaton               = {"zaton", "zat"},
+    pripyat             = {"outskirts", "pripyat", "pri"},
+    limansk             = {"limansk", "lim"},
+    l11_hospital        = {"hospital", "hos"},
+}
+
+format_msg = function(fmt, ...)
+    local arg = {...}
+    if #arg == 0 then return tostring(fmt) end
+    local ok, res = pcall(string.format, fmt, ...)
+    return ok and res or (tostring(fmt) .. " (format error)")
+end
+
+local function log(fmt, ...)
+    local cfg = _G.tft_config
+    if not (cfg and cfg.debug_log) then return end
+    local tft_dogma = _G.tft and _G.tft.dogma
+    if tft_dogma and tft_dogma.dbg then
+        tft_dogma.dbg.log("dogma/gameplay/true_fast_travel", format_msg(fmt, ...))
+    end
+end
+
+local function path_road_log_enabled()
+    local cfg = _G.tft_config
+    if cfg and cfg.debug_log then return true end
+    if cfg and cfg.path_preview and tft.is_path_preview then return true end
+    return false
+end
+
+local function path_road_log(fmt, ...)
+    if not path_road_log_enabled() then return end
+    local tft_dogma = _G.tft and _G.tft.dogma
+    if tft_dogma and tft_dogma.dbg then
+        tft_dogma.dbg.log("dogma/gameplay/true_fast_travel", "[path-road] " .. format_msg(fmt, ...))
+    end
+end
+
+local function log_error(fmt, ...)
+    local tft_dogma = _G.tft and _G.tft.dogma
+    if tft_dogma and tft_dogma.dbg then
+        tft_dogma.dbg.log("dogma/gameplay/true_fast_travel", "[ERROR] " .. format_msg(fmt, ...))
+    end
+end
+
+-- Player-facing text: edit gamedata/configs/text/eng/st_dogma_true_fast_travel.xml
+-- Display via msg() / str(); MCM labels stay in ui_mcm_dogma_gameplay_true_fast_travel.xml
+local function str(id)
+    local s = game.translate_string(id)
+    if s and s ~= "" and s ~= id then return s end
+    return id
+end
+
+local function destination_on_other_level(obj)
+    if not (obj and db.actor) then return false end
+    local gg = game_graph()
+    if not gg then return false end
+    local ok_a, actor_lid = pcall(function() return gg:vertex(db.actor:game_vertex_id()):level_id() end)
+    local ok_d, dest_lid = pcall(function() return gg:vertex(obj.m_game_vertex_id):level_id() end)
+    return ok_a and ok_d and actor_lid ~= dest_lid
+end
+
+-- True when object's game-graph level matches the actor's loaded level (not PDA tab name).
+local function object_on_loaded_level(se_obj)
+    if not (se_obj and db.actor and game_graph) then return true end
+    local gg = game_graph()
+    local obj_gvid = se_obj.m_game_vertex_id
+    if not (obj_gvid and gg.valid_vertex_id and gg:valid_vertex_id(obj_gvid)) then
+        return not destination_on_other_level(se_obj)
+    end
+    local ok_a, actor_lid = pcall(function() return gg:vertex(db.actor:game_vertex_id()):level_id() end)
+    local ok_o, obj_lid = pcall(function() return gg:vertex(obj_gvid):level_id() end)
+    return ok_a and ok_o and actor_lid == obj_lid
+end
+
+local function is_cross_zone_destination(se_obj, ln)
+    local cur_lvl = (level and level.name) and level.name() or nil
+    if ln and cur_lvl and ln ~= cur_lvl then return true end
+    if se_obj then return destination_on_other_level(se_obj) end
+    return false
+end
+
+local function is_trader_restrictor(name)
+    local sfind = string.find
+    if not name then return false end
+    local low_name = string.lower(name)
+    return sfind(low_name, "trader", 1, true) ~= nil
+        or sfind(low_name, "merchant", 1, true) ~= nil
+        or sfind(low_name, "barman", 1, true) ~= nil
+        or sfind(low_name, "sidorovich", 1, true) ~= nil
+        or sfind(low_name, "saharov", 1, true) ~= nil
+        or sfind(low_name, "forester", 1, true) ~= nil
+end
+
+-- %c[] prefixes work reliably in news_manager.send_tip.
+local msg_style_prefix_map = {
+    danger  = "%c[255,238,28,36]",
+    warning = "%c[255,209,209,56]",
+    success = "%c[255,56,209,115]",
+}
+
+local msg_style_icon_map = {
+    danger  = "ui_inGame2_radiation_hard",
+    warning = "ui_inGame2_radiation_middle",
+}
+
+msg_style_prefix = function(style)
+    return (style and msg_style_prefix_map[style]) or ""
+end
+
+msg_style_icon = function(style)
+    return (style and msg_style_icon_map[style]) or nil
+end
+
+msg = function(text, style)
+    if not (db.actor and db.actor:alive()) then return end
+    if not text or text == "" then return end
+    local refresh = _G.refresh_active_config or refresh_active_config
+    local cfg = tft.active_config or (refresh and refresh()) or {}
+    local duration = tonumber(cfg.screen_msg_duration)
+    if duration == nil then duration = tonumber(cfg.message_duration) end
+    if duration == nil then duration = 4 end
+    if duration <= 0 then return end -- MCM 0 = off
+    -- On-screen toast only (same channel as Geiger mSv text) — no PDA tips.
+    if actor_menu and actor_menu.set_msg then
+        actor_menu.set_msg(1, text, duration)
+    end
+end
+
+-- tft_publish_to_global
+do
+    _G.tft_config = _G.tft_config or {}
+    _G.tft_log = log
+    _G.tft_path_road_log_enabled = path_road_log_enabled
+    _G.tft_path_road_log = path_road_log
+    _G.tft_log_error = log_error
+    _G.tft_str = str
+    _G.tft_destination_on_other_level = destination_on_other_level
+    _G.tft_object_on_loaded_level = object_on_loaded_level
+    _G.tft_is_cross_zone_destination = is_cross_zone_destination
+    _G.tft_is_trader_restrictor = is_trader_restrictor
+    _G.tft_msg = msg
+    _G.tft_set_fft_trip_in_progress = set_fft_trip_in_progress
+    printf("[dogma_gameplay_true_fast_travel] core module loaded")
+end

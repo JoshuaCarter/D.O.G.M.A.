@@ -457,9 +457,9 @@ local function queue_pickup_anim()
 	end
 	action.flags = action.flags or {}
 	action.flags.dogma_melee_pickup = true
-	-- hands=2 makes lam2 holster first (hide_items_in_hands). 0 = weapon hand:
-	-- go_to_next_action treats it as falsy so no holster; play_hud_motion still runs.
-	action.hands = 0
+	-- hands=2 holsters weapon+detector. hands=0 holsters the knife (weapon hand).
+	-- hands=1 = offhand only: lam2 frees the detector hand if needed, knife stays out.
+	action.hands = 1
 	_G.lam2.add_action(action)
 	log("pickup: queued mutant_loot " .. anim_sec)
 end

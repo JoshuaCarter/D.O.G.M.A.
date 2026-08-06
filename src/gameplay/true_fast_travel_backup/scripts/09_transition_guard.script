@@ -1,0 +1,124 @@
+-- True Fast Travel: thin transition guard for Tarkov Transitions (required).
+-- Combat block and post-load arrival suppress (zone checks delegated to Tarkov/Extra/sr_teleport).
+-- Min countdown enforced in 10_compat.
+-- Loaded automatically before main.script (zzzz_dogma_gameplay_true_fast_travel_main.script)
+
+local tft = _G.tft
+
+local function trans_log(fmt, ...)
+    local ok, msg = pcall(string.format, fmt, ...)
+    if not ok then msg = tostring(fmt) end
+    if tft_log then
+        tft_log("[trans] %s", msg)
+    else
+        printf("[dogma_gameplay_true_fast_travel] [trans] %s", msg)
+    end
+end
+
+local function format_transition_dest_label(info)
+    if not info then return "?" end
+    local humanize = _G.tft_humanize_level_name or function(n)
+        if not n then return "?" end
+        n = tostring(n):gsub("_", " ")
+        return n == "" and "?" or (n:sub(1, 1):upper() .. n:sub(2))
+    end
+    if info.dest_level then
+        return humanize(info.dest_level)
+    end
+    if info.dest_gvid then
+        local ok, lid = pcall(function() return game_graph():vertex(info.dest_gvid):level_id() end)
+        if ok and lid then
+            return humanize(tft_resolve_level_name(lid))
+        end
+    end
+    return "?"
+end
+
+local function combat_blocks()
+    local cfg = _G.tft_config
+    if cfg and cfg.block_transition_in_combat == false then return false end
+    if not (db.actor and db.actor:alive()) then return false end
+    return tft_alerted_enemy_within(db.actor:position(), tft_ambush_radius_m(false))
+end
+
+local function clear_arrival_suppress()
+    if not tft._transition_arrival_suppress then return end
+    tft._transition_arrival_suppress = nil
+    tft._transition_arrival_inside_fn = nil
+    trans_log("arrival suppress cleared (left transition zone)")
+end
+
+local function activate_arrival_suppress(inside_fn)
+    tft._transition_arrival_suppress = true
+    tft._transition_arrival_inside_fn = inside_fn
+    tft._transition_post_load = nil
+    trans_log("arrival suppress activated")
+end
+
+local function poll_arrival_suppress()
+    if not tft._transition_arrival_suppress then return end
+    local inside_fn = tft._transition_arrival_inside_fn
+    if not inside_fn or not inside_fn() then
+        clear_arrival_suppress()
+    end
+end
+
+local function ensure_arrival_suppress_poll()
+    if tft._transition_arrival_poll_registered then return end
+    RegisterScriptCallback("actor_on_update", poll_arrival_suppress)
+    tft._transition_arrival_poll_registered = true
+end
+
+-- Caller passes the transition system's own is_inside (Tarkov/Extra/sr_teleport restrictor).
+-- Returns true when countdown start should be blocked.
+local function arrival_gate_blocks_start(inside_fn)
+    if not inside_fn then return false end
+    local inside = inside_fn()
+
+    if tft._transition_arrival_suppress then
+        if inside then return true end
+        clear_arrival_suppress()
+        return false
+    end
+
+    if tft._transition_post_load then
+        tft._transition_post_load = nil
+        if inside then
+            activate_arrival_suppress(inside_fn)
+            ensure_arrival_suppress_poll()
+            return true
+        end
+    end
+
+    return false
+end
+
+local function wrap_is_inside(orig_inside)
+    return function()
+        if tft._transition_arrival_suppress then
+            if not orig_inside() then
+                clear_arrival_suppress()
+            end
+            return false
+        end
+        return orig_inside()
+    end
+end
+
+local function on_level_changing()
+    tft._transition_post_load = true
+    tft._transition_arrival_suppress = nil
+    tft._transition_arrival_inside_fn = nil
+    -- Force map-spot re-ensure on the next discovery poll after the new level is up.
+    tft.travel_base_ids = nil
+    tft.travel_campfire_ids = nil
+end
+
+do
+    _G.tft_format_transition_dest_label = format_transition_dest_label
+    _G.tft_transition_combat_blocks = combat_blocks
+    _G.tft_transition_arrival_gate_blocks_start = arrival_gate_blocks_start
+    _G.tft_transition_wrap_is_inside = wrap_is_inside
+    _G.tft_trans_log = trans_log
+    _G.tft_on_level_changing = on_level_changing
+end

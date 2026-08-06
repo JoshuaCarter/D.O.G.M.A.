@@ -7,6 +7,8 @@ local error = error
 local tostring = tostring
 
 local keys = {}
+-- on_key_press sets 2; we run first and decrement once so later updates still see >0.
+local any_pressed = 0
 
 local KeyStates = {
 	UP = 0,
@@ -86,6 +88,9 @@ local function set_key_state(dik, state, time_ms)
 end
 
 local function update_keys()
+	-- Press sets 2; we run first and decrement so later updates still see >0 for one frame.
+	any_pressed = any_pressed - 1
+
 	local time_ms = time_continual()
 	for dik in pairs(keys) do
 		if key_state(dik) ~= 0 then
@@ -98,10 +103,16 @@ end
 
 local function reset_keys()
 	keys = {}
+	any_pressed = 0
+end
+
+local function on_key_press(_dik)
+	any_pressed = 2
 end
 
 function on_game_start()
 	RegisterScriptCallback("actor_on_update", update_keys)
+	RegisterScriptCallback("on_key_press", on_key_press)
 	RegisterScriptCallback("on_game_load", reset_keys)
 	RegisterScriptCallback("main_menu_on_init", reset_keys)
 	RegisterScriptCallback("main_menu_on_quit", reset_keys)
@@ -133,6 +144,10 @@ end
 function is_key_pressed(dik)
 	local key = get_key(dik)
 	return key.down and key.down_ms == 0
+end
+
+function is_any_key_pressed()
+	return any_pressed > 0
 end
 
 function is_key_dbl_pressed(dik, ms)

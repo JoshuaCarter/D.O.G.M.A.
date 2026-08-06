@@ -164,17 +164,6 @@ local function patch_actor_menu()
 	end
 end
 
-local function on_key_press(key)
-	if dik_to_bind(key) ~= key_bindings.kINVENTORY then
-		return
-	end
-
-	log(string.format("on_key_press: kINVENTORY, active_slot=%s", tostring(db.actor and db.actor:active_slot())))
-	if db.actor and db.actor:active_slot() == PDA_SLOT then
-		holster_pda_for("inventory", "key_press(kINVENTORY)")
-	end
-end
-
 -- Tick-accurate diagnostic + restore-slot tracking: logs every time
 -- active_slot actually changes, captures slot_before_pda when the PDA is
 -- pulled out, and remembers real equip slots without letting transient
@@ -234,6 +223,15 @@ local function on_actor_on_update()
 	patch_actor_menu()
 	log_active_slot_transitions()
 
+	local inp = DOGMA.input
+	local inv_dik = bind_to_dik and key_bindings and bind_to_dik(key_bindings.kINVENTORY)
+	if inp and inv_dik and inv_dik >= 0 and inp.is_key_pressed(inv_dik) then
+		log(string.format("kINVENTORY pressed, active_slot=%s", tostring(db.actor:active_slot())))
+		if db.actor:active_slot() == PDA_SLOT then
+			holster_pda_for("inventory", "key_press(kINVENTORY)")
+		end
+	end
+
 	-- teleport position jump: holster PDA when actor teleports
 	if CONFIG.loaded.after_teleport then
 		local pos = db.actor:position()
@@ -291,6 +289,5 @@ function on_game_start()
 	RegisterScriptCallback("ActorMenu_on_before_init_mode", on_actor_menu_before_init_mode)
 	RegisterScriptCallback("ActorMenu_on_mode_changed", on_actor_menu_mode_changed)
 	RegisterScriptCallback("on_option_change", on_option_change)
-	RegisterScriptCallback("on_key_press", on_key_press)
 	RegisterScriptCallback("actor_on_update", on_actor_on_update)
 end

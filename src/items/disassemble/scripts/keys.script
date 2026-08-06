@@ -2,6 +2,7 @@
 	Inventory disassemble keybinds.
 	Press: one stack. Hold: one stack then step-timed repeats while held;
 	hovered item id change resets the streak and fires again.
+	Input via DOGMA.input (polled from inventory Update).
 ]]
 
 local CONFIG = _G.dogma_items_disassemble_conf
@@ -21,6 +22,7 @@ local ALLOWED_BAGS = {
 
 local BINDS = {}
 local hold_state = {} -- [dik] = { bind, t0, fire_count, last_id }
+local down_prev = {}
 
 local function log(msg)
 	if DOGMA and DOGMA.dbg and DOGMA.dbg.logging() then
@@ -31,6 +33,8 @@ end
 local function on_option_change()
 	CONFIG.loaded.disa_safe_equipped = DOGMA.mcm.bool(MOD_ID, "disa_safe_equipped")
 	BINDS = {}
+	hold_state = {}
+	down_prev = {}
 	local key = DOGMA.mcm.key(MOD_ID, "key_disa")
 	if key then
 		local mode = math.floor(DOGMA.mcm.number(MOD_ID, "key_disa_mode", 0) + 0.5)
@@ -47,11 +51,16 @@ local function on_option_change()
 	end
 end
 
+local function inp()
+	return DOGMA and DOGMA.input
+end
+
 local function mod_ok(modifier)
-	if not (ui_mcm and ui_mcm.get_mod_key) then
-		return true
+	local i = inp()
+	if not i then
+		return false
 	end
-	return ui_mcm.get_mod_key(modifier)
+	return i.is_mod_down(modifier or 0)
 end
 
 local function inv_mode_ok(gui)
@@ -151,71 +160,56 @@ local function start_hold(bind, dik)
 	end
 end
 
-local function on_key_pressed(dik, gui)
-	if gui and gui.mode == "loot" and (dik == DIK_keys.DIK_LSHIFT or dik == DIK_keys.DIK_RSHIFT) then
-		return
-	end
-	for i = 1, #BINDS do
-		local bind = BINDS[i]
-		if bind.key ~= dik or not mod_ok(bind.modifier) then
-			-- skip
-		elseif bind.mode == MODE_HOLD then
-			start_hold(bind, dik)
-		else
-			fire_bind()
-		end
-	end
-end
-
-local function on_key_released(dik)
-	hold_state[dik] = nil
-end
-
-local function hold_tick(gui)
-	if not inv_mode_ok(gui) then
+local function poll_binds(gui)
+	local i = inp()
+	if not (i and inv_mode_ok(gui)) then
 		return
 	end
 	local now = time_continual()
-	for dik, hs in pairs(hold_state) do
-		if key_state(dik) == 0 or not mod_ok(hs.bind.modifier) then
-			hold_state[dik] = nil
+
+	for b = 1, #BINDS do
+		local bind = BINDS[b]
+		local dik = bind.key
+		if not (dik and dik >= 0) then
+			-- skip
 		else
-			local obj, bag, idx, g = get_hover()
-			local id = obj and obj:id() or nil
-			if not id then
-				hs.last_id = nil
-				hs.fire_count = 0
-				hs.t0 = now
-			elseif id ~= hs.last_id then
-				hs.last_id = id
-				hs.fire_count = 0
-				hs.t0 = now
-				do_disa(g, obj)
-				hs.fire_count = 1
-			elseif (now - hs.t0) >= repeat_delay_ms(hs.fire_count) then
-				do_disa(g, obj)
-				hs.fire_count = hs.fire_count + 1
+			local down = i.is_key_down(dik)
+			local pressed = down and not down_prev[dik]
+			down_prev[dik] = down
+
+			if not mod_ok(bind.modifier) then
+				hold_state[dik] = nil
+			elseif bind.mode == MODE_HOLD then
+				if pressed then
+					start_hold(bind, dik)
+				elseif hold_state[dik] then
+					if not down then
+						hold_state[dik] = nil
+					else
+						local hs = hold_state[dik]
+						local obj, bag, idx, g = get_hover()
+						local id = obj and obj:id() or nil
+						if not id then
+							hs.last_id = nil
+							hs.fire_count = 0
+							hs.t0 = now
+						elseif id ~= hs.last_id then
+							hs.last_id = id
+							hs.fire_count = 0
+							hs.t0 = now
+							do_disa(g, obj)
+							hs.fire_count = 1
+						elseif (now - hs.t0) >= repeat_delay_ms(hs.fire_count) then
+							do_disa(g, obj)
+							hs.fire_count = hs.fire_count + 1
+							hs.t0 = now
+						end
+					end
+				end
+			elseif pressed then
+				fire_bind()
 			end
 		end
-	end
-end
-
-local original_on_keyboard = ui_inventory and ui_inventory.UIInventory and ui_inventory.UIInventory.OnKeyboard
-if original_on_keyboard then
-	function ui_inventory.UIInventory:OnKeyboard(dik, keyboard_action)
-		local res = original_on_keyboard(self, dik, keyboard_action)
-		if not (DOGMA and DOGMA.sys and DOGMA.sys.ready(MOD_ID, db, on_option_change)) then
-			return res
-		end
-		if not inv_mode_ok(self) then
-			return res
-		end
-		if keyboard_action == ui_events.WINDOW_KEY_PRESSED then
-			on_key_pressed(dik, self)
-		elseif keyboard_action == ui_events.WINDOW_KEY_RELEASED then
-			on_key_released(dik)
-		end
-		return res
 	end
 end
 
@@ -224,7 +218,7 @@ if original_on_update then
 	function ui_inventory.UIInventory:Update()
 		original_on_update(self)
 		if DOGMA and DOGMA.sys and DOGMA.sys.ready(MOD_ID, db, on_option_change) then
-			hold_tick(self)
+			poll_binds(self)
 		end
 	end
 end

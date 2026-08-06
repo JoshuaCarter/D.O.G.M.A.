@@ -206,37 +206,34 @@ local function on_option_change()
 	CONFIG.loaded.key_unequip = DOGMA.mcm.key(CONFIG.MOD_ID, "key_unequip")
 end
 
-local function on_key_press(dik)
+local function try_key(dik, fn)
+	local inp = DOGMA and DOGMA.input
+	if not (inp and dik and dik >= 0) then
+		return
+	end
+	if inp.is_key_pressed(dik) then
+		fn()
+	end
+end
+
+local function actor_on_update()
 	if not DOGMA.sys.ready(CONFIG.MOD_ID, db, on_option_change) then
 		return
 	end
 	if not CONFIG.loaded.enabled then
 		return
 	end
-	if not can_use_keys() then
+	if not can_use_keys() or place_busy then
 		return
 	end
-	if place_busy then
-		return
-	end
-
-	if CONFIG.loaded.key_holster and dik == CONFIG.loaded.key_holster then
-		holster_pistol()
-		return
-	end
-	if CONFIG.loaded.key_draw and dik == CONFIG.loaded.key_draw then
-		draw_toggle()
-		return
-	end
-	if CONFIG.loaded.key_unequip and dik == CONFIG.loaded.key_unequip then
-		unequip_pistol()
-		return
-	end
+	try_key(CONFIG.loaded.key_holster, holster_pistol)
+	try_key(CONFIG.loaded.key_draw, draw_toggle)
+	try_key(CONFIG.loaded.key_unequip, unequip_pistol)
 end
 
 function on_game_start()
 	DOGMA = dogma_common.load(CONFIG.MOD_ID)
 	on_option_change()
 	RegisterScriptCallback("on_option_change", on_option_change)
-	RegisterScriptCallback("on_key_press", on_key_press)
+	RegisterScriptCallback("actor_on_update", actor_on_update)
 end

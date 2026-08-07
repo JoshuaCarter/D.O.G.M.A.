@@ -1,5 +1,6 @@
--- Inject DOGMA Controls rows + keep Settings labels matched to MCM.
--- Feature MCM scripts claim rows via __dogma_key_mirror_mcm.claim_control / mirror_spec.
+-- Inject Controls rows claimed by features; keep Settings labels matched to MCM.
+-- Feature MCM scripts claim via __dogma_key_mirror_mcm.claim_control / mirror_spec.
+-- Claiming an engine action replaces any other Controls row on that same exe=.
 
 local fmt = string.format
 
@@ -32,6 +33,25 @@ local function ensure_string(xml_obj, id, text)
 		id,
 		text
 	))
+end
+
+local function remove_other_rows_for_action(xml_obj, action, keep_id)
+	local nodes = xml_obj:query(fmt("command[exe=%s]", action))
+	if not is_not_empty(nodes) then
+		return
+	end
+	local remove = {}
+	for i = 1, #nodes do
+		local el = nodes[i]
+		local attr = xml_obj:getElementAttr(el)
+		local id = attr and attr.id
+		if id and id ~= keep_id then
+			remove[#remove + 1] = el
+		end
+	end
+	for i = 1, #remove do
+		xml_obj:removeElement(remove[i])
+	end
 end
 
 local function insert_after_command(xml_obj, group_name, after_id, new_id, exe)
@@ -73,6 +93,7 @@ local function patch_keybinding_ui(xml_obj)
 	each_control(function(e)
 		if e.group and e.after and e.id and e.action then
 			insert_after_command(xml_obj, e.group, e.after, e.id, e.action)
+			remove_other_rows_for_action(xml_obj, e.action, e.id)
 		end
 	end)
 end

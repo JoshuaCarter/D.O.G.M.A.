@@ -1,0 +1,38 @@
+-- Functional defaults (user POV): two Controls labels on the same engine
+-- action feel like two defaults for one input — change one, the other
+-- "comes back". Collapse to one row per exe= (later row wins). No feature
+-- claim list. Technical stock defaults stay Exit-only in default_controls.ltx.
+
+local fmt = string.format
+
+local function collapse_duplicate_exe_rows(xml_obj)
+	local nodes = xml_obj:query("command")
+	if not is_not_empty(nodes) then
+		return
+	end
+	-- Later row wins so an injected replacement outranks an earlier stub.
+	local keep = {}
+	local remove = {}
+	for i = 1, #nodes do
+		local el = nodes[i]
+		local attr = xml_obj:getElementAttr(el)
+		local exe = attr and attr.exe
+		if exe and exe ~= "" then
+			if keep[exe] then
+				remove[#remove + 1] = keep[exe]
+			end
+			keep[exe] = el
+		end
+	end
+	for i = 1, #remove do
+		xml_obj:removeElement(remove[i])
+	end
+end
+
+function on_xml_read()
+	RegisterScriptCallback("on_xml_read", function(xml_file_name, xml_obj)
+		if xml_file_name == [[ui\ui_keybinding.xml]] then
+			collapse_duplicate_exe_rows(xml_obj)
+		end
+	end)
+end

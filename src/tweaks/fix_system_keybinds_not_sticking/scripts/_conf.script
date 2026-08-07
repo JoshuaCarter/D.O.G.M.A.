@@ -1,10 +1,13 @@
 -- tweaks/fix_system_keybinds_not_sticking conf
 --
--- Options→Controls: Escape unbinds (MCM-style), Exit stays on Escape.
--- Persistence: this feature ships a minimal configs/default_controls.ltx
--- (Exit only). Boot + cfg_save always run `default_controls` first; an empty
--- default list is what stops unbound keys from coming back. Stamping unbind
--- into user.ltx fails because destroyConsole cfg_save's on exit.
+-- Rule: nothing should *feel* like a default bind except Exit → Escape.
+--
+-- Technical: default_controls.ltx is Exit-only (boot / Options→Default /
+-- cfg_save's leading `default_controls`). Full stock lists rewrite unbound
+-- keys back into user.ltx — Escape-unbind alone cannot stop that on boot.
+-- Functional: Escape unbinds in engine memory (UI-only "---" still left the
+-- old bind in cfg_save). modxml collapses duplicate Controls rows that share
+-- an exe= so one input cannot show two labels that keep "resetting" each other.
 
 _G.dogma_tweaks_fix_system_keybinds_not_sticking_conf = {
 	MOD_ID = "dogma/tweaks/fix_system_keybinds_not_sticking",
@@ -208,16 +211,21 @@ local function patch_ui_options()
 		opt:SetCurrentValues("key_binding")
 	end
 
-	-- C++ assigns Escape into the pending UI slot; steal it back via conflict
-	-- message so the slot becomes "---" (do not SetCurrentValues - that
-	-- reloads the old engine bind).
+	-- C++ assigns Escape into the pending UI slot. Commit that to the engine,
+	-- then strip Escape from every non-quit action (unbinds the slot) and
+	-- refresh widgets + backups from engine so Apply/cfg_save see a real null.
+	-- UI-only "---" via conflict message left the old engine bind in memory,
+	-- so user.ltx kept lines like `bind cam_zoom_out kRBRACKET`.
 	local function escape_unbind_pending_slot()
 		if not COptionsManager then
 			return
 		end
 		local opt = COptionsManager()
-		opt:SendMessage2Group("key_binding", "quit=kESCAPE")
+		opt:SaveValues("key_binding")
+		clear_escape_binds()
 		ensure_quit_escape()
+		opt:SetCurrentValues("key_binding")
+		opt:SaveBackupValues("key_binding")
 	end
 
 	local function wrap_keyboard(self, dik, keyboard_action)

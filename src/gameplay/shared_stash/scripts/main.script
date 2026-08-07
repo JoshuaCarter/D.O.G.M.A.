@@ -22,15 +22,12 @@ local weight_tick = 0
 local WEIGHT_INTERVAL_MS = 500
 
 local function log(msg)
-	if dogma.dbg and dogma.dbg.logging() then
+	if dogma.dbg.logging() then
 		dogma.dbg.log(MOD_ID, tostring(msg))
 	end
 end
 
 local function on_option_change()
-	if not (dogma.mcm) then
-		return
-	end
 	CONFIG.loaded.one_per_level = dogma.mcm.bool(MOD_ID, "one_per_level")
 end
 
@@ -235,7 +232,7 @@ local function update_carry_weight()
 end
 
 local function on_actor_update()
-	if not (dogma.sys and dogma.sys.ready(MOD_ID, db)) then
+	if not dogma.sys.ready(MOD_ID, db) then
 		return
 	end
 	try_hook_place()

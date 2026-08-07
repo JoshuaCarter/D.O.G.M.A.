@@ -17,7 +17,7 @@ local show_request_at = nil
 local pending_toggle_show = false
 
 local function log(msg)
-	if not (dogma.dbg and dogma.dbg.logging and dogma.dbg.logging()) then
+	if not dogma.dbg.logging() then
 		return
 	end
 	dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
@@ -27,21 +27,13 @@ local function now_ms()
 	return time_continual()
 end
 
-local function input()
-	return dogma.input
-end
-
 local function key_bound()
 	local key = CONFIG.loaded.keybind
 	return key and key >= 0 and key
 end
 
 local function mod_ok()
-	local inp = input()
-	if not inp then
-		return false
-	end
-	return inp.is_mod_down(CONFIG.loaded.modifier or 0)
+	return dogma.input.is_mod_down(CONFIG.loaded.modifier or 0)
 end
 
 local function maingame()
@@ -191,9 +183,8 @@ local function toggle_minimap(source)
 end
 
 local function tick_hold()
-	local inp = input()
 	local key = key_bound()
-	if not (inp and key and mod_ok()) then
+	if not (key and mod_ok()) then
 		if desired_show then
 			hide_minimap("hold")
 		end
@@ -201,7 +192,7 @@ local function tick_hold()
 	end
 
 	-- Delay via held_ms; hide as soon as the hold ends.
-	if inp.is_key_held(key, delay_ms()) then
+	if dogma.input.is_key_held(key, delay_ms()) then
 		if not desired_show then
 			desired_show = true
 			show_request_at = nil
@@ -216,9 +207,8 @@ local function tick_hold()
 end
 
 local function tick_toggle()
-	local inp = input()
 	local key = key_bound()
-	if inp and key and mod_ok() and inp.is_key_pressed(key) then
+	if key and mod_ok() and dogma.input.is_key_pressed(key) then
 		toggle_minimap("toggle")
 	end
 	if pending_toggle_show and delay_elapsed() then

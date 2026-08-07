@@ -22,7 +22,7 @@ local PLACE_MAX_TICKS = 100
 local place_busy = false
 
 local function log(msg)
-	if dogma.dbg and dogma.dbg.logging() then
+	if dogma.dbg.logging() then
 		dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
 	end
 end
@@ -206,11 +206,10 @@ local function on_option_change()
 end
 
 local function try_key(dik, fn)
-	local inp = dogma.input
-	if not (inp and dik and dik >= 0) then
+	if not (dik and dik >= 0) then
 		return
 	end
-	if inp.is_key_pressed(dik) then
+	if dogma.input.is_key_pressed(dik) then
 		fn()
 	end
 end

@@ -16,9 +16,6 @@ local MODE_TO_KIND = {
 
 
 local function log(msg)
-	if not (dogma.dbg) then
-		return
-	end
 	if CONFIG.loaded.debug_log then
 		dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
 	end
@@ -222,9 +219,8 @@ local function on_actor_on_update()
 	patch_actor_menu()
 	log_active_slot_transitions()
 
-	local inp = dogma.input
 	local inv_dik = bind_to_dik and key_bindings and bind_to_dik(key_bindings.kINVENTORY)
-	if inp and inv_dik and inv_dik >= 0 and inp.is_key_pressed(inv_dik) then
+	if inv_dik and inv_dik >= 0 and dogma.input.is_key_pressed(inv_dik) then
 		log(string.format("kINVENTORY pressed, active_slot=%s", tostring(db.actor:active_slot())))
 		if db.actor:active_slot() == PDA_SLOT then
 			holster_pda_for("inventory", "key_press(kINVENTORY)")

@@ -229,7 +229,7 @@ local function wrap_inventory_ui()
 	local orig_drag = UI.On_CC_DragDrop
 	if orig_drag then
 		function UI:On_CC_DragDrop(bag_from, idx_from)
-			if dogma.sys and dogma.sys.ready(MOD_ID, db, on_option_change) then
+			if dogma.sys.ready(MOD_ID, db, on_option_change) then
 				if try_drag_glowstick_to_belt(self, bag_from, idx_from) then
 					if self.On_Item_Update then
 						self:On_Item_Update()
@@ -245,7 +245,7 @@ local function wrap_inventory_ui()
 	if orig_hover then
 		function UI:On_CC_Hover(bag, idx)
 			orig_hover(self, bag, idx)
-			if dogma.sys and dogma.sys.ready(MOD_ID, db, on_option_change) then
+			if dogma.sys.ready(MOD_ID, db, on_option_change) then
 				highlight_belt_for_glowstick(self, bag, idx)
 			end
 		end

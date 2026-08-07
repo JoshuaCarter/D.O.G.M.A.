@@ -24,7 +24,7 @@ local hold_state = {} -- [dik] = { bind, t0, fire_count, last_id }
 local down_prev = {}
 
 local function log(msg)
-	if dogma.dbg and dogma.dbg.logging() then
+	if dogma.dbg.logging() then
 		dogma.dbg.log(MOD_ID, tostring(msg))
 	end
 end
@@ -50,16 +50,8 @@ local function on_option_change()
 	end
 end
 
-local function inp()
-	return dogma.input
-end
-
 local function mod_ok(modifier)
-	local i = inp()
-	if not i then
-		return false
-	end
-	return i.is_mod_down(modifier or 0)
+	return dogma.input.is_mod_down(modifier or 0)
 end
 
 local function inv_mode_ok(gui)
@@ -160,8 +152,7 @@ local function start_hold(bind, dik)
 end
 
 local function poll_binds(gui)
-	local i = inp()
-	if not (i and inv_mode_ok(gui)) then
+	if not inv_mode_ok(gui) then
 		return
 	end
 	local now = time_continual()
@@ -172,7 +163,7 @@ local function poll_binds(gui)
 		if not (dik and dik >= 0) then
 			-- skip
 		else
-			local down = i.is_key_down(dik)
+			local down = dogma.input.is_key_down(dik)
 			local pressed = down and not down_prev[dik]
 			down_prev[dik] = down
 
@@ -216,7 +207,7 @@ local original_on_update = ui_inventory and ui_inventory.UIInventory and ui_inve
 if original_on_update then
 	function ui_inventory.UIInventory:Update()
 		original_on_update(self)
-		if dogma.sys and dogma.sys.ready(MOD_ID, db, on_option_change) then
+		if dogma.sys.ready(MOD_ID, db, on_option_change) then
 			poll_binds(self)
 		end
 	end

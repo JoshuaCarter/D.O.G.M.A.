@@ -126,19 +126,18 @@ local function actor_on_update()
 	patch()
 
 	local dik = key_bindings and bind_to_dik and bind_to_dik(key_bindings.kWPN_NEXT)
-	local inp = dogma.input
-	if not (inp and dik and dik > 0) then
+	if not (dik and dik > 0) then
 		return
 	end
 
-	if inp.is_key_down(dik) then
+	if dogma.input.is_key_down(dik) then
 		if holding then
 			if not active_gui() then
 				holding = false
 			end
 		elseif active_gui() then
 			holding = true
-		elseif inp.is_key_held(dik, CONFIG.loaded.hold_delay_ms or 0) then
+		elseif dogma.input.is_key_held(dik, CONFIG.loaded.hold_delay_ms or 0) then
 			open()
 			holding = active_gui() ~= nil
 		end

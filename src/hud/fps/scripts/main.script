@@ -58,9 +58,6 @@ local last_frame_time_ms = nil
 -- FPS samples/refreshes change many times per second and aren't something the
 -- player can usefully watch or time, so this mod only supports file logging.
 local function log(msg)
-	if not (dogma.dbg) then
-		return
-	end
 	if CONFIG.loaded.debug_log then
 		dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
 	end
@@ -274,19 +271,18 @@ end
 
 local function poll_visibility_key()
 	local key = CONFIG.loaded.toggle_key
-	local inp = dogma.input
-	if not (inp and key and key >= 0) then
+	if not (key and key >= 0) then
 		return
 	end
 	if CONFIG.loaded.key_mode == MODE_HOLD then
-		local want = inp.is_key_down(key)
+		local want = dogma.input.is_key_down(key)
 		if want ~= visible then
 			visible = want
 			update_wait_until_time()
 		end
 		return
 	end
-	if inp.is_key_pressed(key) then
+	if dogma.input.is_key_pressed(key) then
 		visible = not visible
 		update_wait_until_time()
 	end

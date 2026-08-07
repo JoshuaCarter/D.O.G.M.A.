@@ -29,7 +29,7 @@ local ini_loadouts
 local function log(msg)
 	if Tiers and Tiers.log then
 		Tiers.log(msg)
-	elseif dogma.dbg and dogma.dbg.logging() then
+	elseif dogma.dbg.logging() then
 		dogma.dbg.log(MOD_ID, tostring(msg))
 	end
 end
@@ -99,7 +99,7 @@ local function mag_cap_for_weapon(wpn_sec)
 end
 
 local function give_extra_start_ammo()
-	if not (dogma.sys and dogma.sys.ready(MOD_ID, db, on_option_change)) then
+	if not dogma.sys.ready(MOD_ID, db, on_option_change) then
 		return
 	end
 	local mags = math.floor((CONFIG.loaded.extra_start_ammo_mags or 0) + 0.5)
@@ -279,7 +279,7 @@ end
 
 local function patched_trade_update(npc, force_refresh)
 	original_trade_update(npc, force_refresh)
-	if not (dogma.sys and dogma.sys.ready(MOD_ID, db, on_option_change)) then
+	if not dogma.sys.ready(MOD_ID, db, on_option_change) then
 		return
 	end
 	if not npc then
@@ -340,7 +340,7 @@ end
 local function patched_set_random_stash(no_spot, hint, bonus_items, id, dbg)
 	local result = original_set_random_stash(no_spot, hint, bonus_items, id, dbg)
 
-	if not (dogma.sys and dogma.sys.ready(MOD_ID, db, on_option_change)) then
+	if not dogma.sys.ready(MOD_ID, db, on_option_change) then
 		return result
 	end
 	if not id then
@@ -467,7 +467,7 @@ end
 
 local function patched_try_spawn_ammo(npc)
 	original_try_spawn_ammo(npc)
-	if not (dogma.sys and dogma.sys.ready(MOD_ID, db, on_option_change)) then
+	if not dogma.sys.ready(MOD_ID, db, on_option_change) then
 		return
 	end
 	if not npc then

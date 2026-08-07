@@ -43,15 +43,8 @@ local function clamp_sec(sec, min_sec, max_sec, fallback)
 end
 
 local function refresh_settings()
-	local body_sec = 30
-	local limb_sec = 20
-	if dogma.mcm then
-		body_sec = dogma.mcm.number(CONFIG.MOD_ID, "body_sec", CONFIG.DEFAULTS.body_sec)
-		limb_sec = dogma.mcm.number(CONFIG.MOD_ID, "limb_sec", CONFIG.DEFAULTS.limb_sec)
-	elseif CONFIG and CONFIG.DEFAULTS then
-		body_sec = CONFIG.DEFAULTS.body_sec or 30
-		limb_sec = CONFIG.DEFAULTS.limb_sec or 20
-	end
+	local body_sec = dogma.mcm.number(CONFIG.MOD_ID, "body_sec", CONFIG.DEFAULTS.body_sec)
+	local limb_sec = dogma.mcm.number(CONFIG.MOD_ID, "limb_sec", CONFIG.DEFAULTS.limb_sec)
 	cached_body_sec = clamp_sec(body_sec, 30, 100, 30)
 	cached_limb_sec = clamp_sec(limb_sec, 20, 100, 20)
 end

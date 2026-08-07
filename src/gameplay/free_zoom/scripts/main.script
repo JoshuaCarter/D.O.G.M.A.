@@ -163,9 +163,6 @@ local function clamp(n, lo, hi)
 end
 
 local function log(msg)
-	if not (dogma.dbg) then
-		return
-	end
 	if CONFIG.loaded.debug_log then
 		dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
 	end
@@ -291,12 +288,8 @@ local function refresh_config()
 	CONFIG.loaded.wads_key_modifier = dogma.mcm.number(ADS_MOD, "wads_key_modifier")
 
 	CONFIG.loaded.debug_log = dogma.dbg.logging()
-	if dogma.dbg and dogma.dbg.set_enabled then
-		dogma.dbg.set_enabled(CONFIG.MOD_ID, CONFIG.loaded.debug_log)
-	end
-	if dogma.dbg and dogma.dbg.clear_source then
-		dogma.dbg.clear_source(CONFIG.MOD_ID)
-	end
+	dogma.dbg.set_enabled(CONFIG.MOD_ID, CONFIG.loaded.debug_log)
+	dogma.dbg.clear_source(CONFIG.MOD_ID)
 end
 
 local function reset_scroll_accum()
@@ -1425,11 +1418,7 @@ local function actor_on_first_update()
 end
 
 local function wads_mod_ok()
-	local inp = dogma.input
-	if not inp then
-		return false
-	end
-	return inp.is_mod_down(CONFIG.loaded.wads_key_modifier or 0)
+	return dogma.input.is_mod_down(CONFIG.loaded.wads_key_modifier or 0)
 end
 
 local OPTIC_FEED = {
@@ -1540,11 +1529,7 @@ end
 -- zoom_key_mode: 0=toggle, 2=hold (in on down, out on up).
 -- modifier 0 = no extra modifier required (not "forbid Shift/Ctrl/Alt").
 local function zoom_mod_ok()
-	local inp = dogma.input
-	if not inp then
-		return false
-	end
-	return inp.is_mod_down(CONFIG.loaded.zoom_key_modifier or 0)
+	return dogma.input.is_mod_down(CONFIG.loaded.zoom_key_modifier or 0)
 end
 
 local function keys_blocked_ctx()
@@ -1559,23 +1544,15 @@ local function key_ok(dik)
 	return dik and dik >= 0
 end
 
-local function inp()
-	return dogma.input
-end
-
 local function hold_source_down()
-	local i = inp()
-	if not i then
-		return false
-	end
-	if CONFIG.loaded.rmb_zoom == MOUSE_HOLD and i.is_key_down(DIK_RMB) then
+	if CONFIG.loaded.rmb_zoom == MOUSE_HOLD and dogma.input.is_key_down(DIK_RMB) then
 		return true
 	end
-	if CONFIG.loaded.mmb_zoom == MOUSE_HOLD and i.is_key_down(DIK_MMB) then
+	if CONFIG.loaded.mmb_zoom == MOUSE_HOLD and dogma.input.is_key_down(DIK_MMB) then
 		return true
 	end
 	local key = CONFIG.loaded.zoom_key
-	if CONFIG.loaded.zoom_key_mode == MODE_HOLD and key_ok(key) and i.is_key_down(key) and zoom_mod_ok() then
+	if CONFIG.loaded.zoom_key_mode == MODE_HOLD and key_ok(key) and dogma.input.is_key_down(key) and zoom_mod_ok() then
 		return true
 	end
 	return false
@@ -1585,22 +1562,21 @@ local function try_wads_keys()
 	if not CONFIG.loaded.ads_enabled or not ads_on then
 		return
 	end
-	local i = inp()
-	if not (i and wads_mod_ok()) then
+	if not wads_mod_ok() then
 		return
 	end
 	local inc = CONFIG.loaded.wads_inc_key
 	local dec = CONFIG.loaded.wads_dec_key
 	local reset = CONFIG.loaded.wads_reset_key
-	if key_ok(reset) and i.is_key_pressed(reset) then
+	if key_ok(reset) and dogma.input.is_key_pressed(reset) then
 		mutate_wads("reset", "wads_reset")
 		return
 	end
-	if key_ok(inc) and i.is_key_pressed(inc) then
+	if key_ok(inc) and dogma.input.is_key_pressed(inc) then
 		mutate_wads(WADS_STEP, "wads_press")
 		return
 	end
-	if key_ok(dec) and i.is_key_pressed(dec) then
+	if key_ok(dec) and dogma.input.is_key_pressed(dec) then
 		mutate_wads(-WADS_STEP, "wads_press")
 	end
 end
@@ -1609,13 +1585,9 @@ local function try_toggle_keys()
 	if not CONFIG.loaded.enabled then
 		return
 	end
-	local i = inp()
-	if not i then
-		return
-	end
 	local blocked = keys_blocked_ctx()
 
-	if CONFIG.loaded.rmb_zoom == MOUSE_TOGGLE and i.is_key_pressed(DIK_RMB) then
+	if CONFIG.loaded.rmb_zoom == MOUSE_TOGGLE and dogma.input.is_key_pressed(DIK_RMB) then
 		if blocked then
 			logf("mouse ignored: key=%s ctx=%s mode=%s", tostring(DIK_RMB), blocked, mode_label())
 		else
@@ -1624,7 +1596,7 @@ local function try_toggle_keys()
 		end
 		return
 	end
-	if CONFIG.loaded.mmb_zoom == MOUSE_TOGGLE and i.is_key_pressed(DIK_MMB) then
+	if CONFIG.loaded.mmb_zoom == MOUSE_TOGGLE and dogma.input.is_key_pressed(DIK_MMB) then
 		if blocked then
 			logf("mouse ignored: key=%s ctx=%s mode=%s", tostring(DIK_MMB), blocked, mode_label())
 		else
@@ -1635,7 +1607,7 @@ local function try_toggle_keys()
 	end
 
 	local key = CONFIG.loaded.zoom_key
-	if CONFIG.loaded.zoom_key_mode ~= MODE_HOLD and key_ok(key) and i.is_key_pressed(key) then
+	if CONFIG.loaded.zoom_key_mode ~= MODE_HOLD and key_ok(key) and dogma.input.is_key_pressed(key) then
 		if blocked then
 			logf("key ignored: key=%s ctx=%s mode=%s", tostring(key), blocked, mode_label())
 			return

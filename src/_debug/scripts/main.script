@@ -41,13 +41,11 @@ local function clamp(v, lo, hi)
 end
 
 local function key_down(dik)
-	local inp = dogma.input
-	return inp and dik and dik >= 0 and inp.is_key_down(dik)
+	return dik and dik >= 0 and dogma.input.is_key_down(dik)
 end
 
 local function key_pressed(dik)
-	local inp = dogma.input
-	return inp and dik and dik >= 0 and inp.is_key_pressed(dik)
+	return dik and dik >= 0 and dogma.input.is_key_pressed(dik)
 end
 
 local function hold_signed(inc_dik, dec_dik, rate, dt)
@@ -171,8 +169,8 @@ local function adjust_limb(limb, delta)
 end
 
 -- Prefer new MCM id; fall back to a legacy stored bind (old grain_* rad keys).
-local function read_key(mcm, id, legacy_id)
-	local dik = mcm.key(DEBUG_MOD, id)
+local function read_key(id, legacy_id)
+	local dik = dogma.mcm.key(DEBUG_MOD, id)
 	if dik then
 		return dik
 	end
@@ -191,20 +189,16 @@ local function read_key(mcm, id, legacy_id)
 end
 
 local function refresh_keys()
-	local mcm = dogma.mcm
-	if not mcm then
-		return
-	end
-	keys.inc_radiation = read_key(mcm, "inc_radiation_key", "grain_add_radiation_key")
-	keys.dec_radiation = read_key(mcm, "dec_radiation_key", "grain_clear_radiation_key")
-	keys.inc_bleed = read_key(mcm, "inc_bleed_key")
-	keys.dec_bleed = read_key(mcm, "dec_bleed_key")
-	keys.inc_health = read_key(mcm, "inc_health_key")
-	keys.dec_health = read_key(mcm, "dec_health_key")
+	keys.inc_radiation = read_key("inc_radiation_key", "grain_add_radiation_key")
+	keys.dec_radiation = read_key("dec_radiation_key", "grain_clear_radiation_key")
+	keys.inc_bleed = read_key("inc_bleed_key")
+	keys.dec_bleed = read_key("dec_bleed_key")
+	keys.inc_health = read_key("inc_health_key")
+	keys.dec_health = read_key("dec_health_key")
 	for i = 1, #LIMBS do
 		local limb = LIMBS[i]
-		keys.limb_inc[limb] = read_key(mcm, "inc_limb_" .. limb .. "_key")
-		keys.limb_dec[limb] = read_key(mcm, "dec_limb_" .. limb .. "_key")
+		keys.limb_inc[limb] = read_key("inc_limb_" .. limb .. "_key")
+		keys.limb_dec[limb] = read_key("dec_limb_" .. limb .. "_key")
 	end
 end
 

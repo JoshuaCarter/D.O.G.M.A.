@@ -26,9 +26,6 @@ local LOG = {
 }
 
 local function overlay(log_type, msg)
-	if not dogma.dbg then
-		return
-	end
 	if CONFIG.loaded.debug_overlay then
 		local slot = log_type or LOG.LIFECYCLE
 		dogma.dbg.overlay(CONFIG.MOD_ID, slot.order, tostring(msg), slot.color)
@@ -36,9 +33,6 @@ local function overlay(log_type, msg)
 end
 
 local function log(msg)
-	if not dogma.dbg then
-		return
-	end
 	if CONFIG.loaded.debug_log then
 		dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
 	end

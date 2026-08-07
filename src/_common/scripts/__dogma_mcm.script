@@ -89,6 +89,35 @@ function number(mod_id, key, default)
 	return 0
 end
 
+function float(mod_id, key, default)
+	local value = get(mod_id, key, default)
+	if type(value) == "number" then
+		return value
+	end
+	local n = tonumber(value)
+	if n ~= nil then
+		return n
+	end
+	if type(default) == "number" then
+		return default
+	end
+	local d = tonumber(default)
+	if d ~= nil then
+		return d
+	end
+	return 0
+end
+
+function int(mod_id, key, default)
+	local value = float(mod_id, key, default)
+	return math.floor(value + 0.5)
+end
+
+function uint(mod_id, key, default)
+	local value = float(mod_id, key, default)
+	return math.max(0, math.floor(value + 0.5))
+end
+
 function string(mod_id, key, default)
 	local value = get(mod_id, key, default)
 	if value == nil then

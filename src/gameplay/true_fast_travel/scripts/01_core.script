@@ -156,9 +156,7 @@ end
 local function log(fmt, ...)
 	local cfg = _G.tft_config
 	if not (cfg and cfg.debug_log) then return end
-	if dogma and dogma.dbg then
-		dogma.dbg.log("dogma/gameplay/true_fast_travel", format_msg(fmt, ...))
-	end
+	dogma.dbg.log("dogma/gameplay/true_fast_travel", format_msg(fmt, ...))
 end
 
 local function path_road_log(fmt, ...)
@@ -166,9 +164,7 @@ local function path_road_log(fmt, ...)
 end
 
 local function log_error(fmt, ...)
-	if dogma and dogma.dbg then
-		dogma.dbg.log("dogma/gameplay/true_fast_travel", "[ERROR] " .. format_msg(fmt, ...))
-	end
+	dogma.dbg.log("dogma/gameplay/true_fast_travel", "[ERROR] " .. format_msg(fmt, ...))
 end
 
 local function str(id)

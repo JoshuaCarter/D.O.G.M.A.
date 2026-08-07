@@ -23,42 +23,36 @@ local actor_on_before_hit, on_option_change,
 -- 2. Configuration
 -- ============================================================
 local function load_config()
-    local mcm = dogma.mcm
-    if not mcm then
-        return
-    end
-    tft_config.debug_overlay = (dogma.dbg and dogma.dbg.overlay_enabled and dogma.dbg.overlay_enabled()) or false
-    tft_config.debug_log = (dogma.dbg and dogma.dbg.logging and dogma.dbg.logging()) or false
-    tft_config.path_preview = mcm.bool(CONFIG.MOD_ID, "path_preview")
-    tft_config.block_transition_in_combat = mcm.bool(CONFIG.MOD_ID, "block_transition_in_combat")
-    tft_config.block_travel_when_unfit = mcm.bool(CONFIG.MOD_ID, "block_travel_when_unfit")
-    tft_config.pause_on_stop = mcm.bool(CONFIG.MOD_ID, "pause_on_stop")
-    tft_config.pause_on_done = mcm.bool(CONFIG.MOD_ID, "pause_on_done")
-    tft_config.show_hud_during_travel = mcm.bool(CONFIG.MOD_ID, "show_hud_during_travel")
-    tft_config.time_factor_travel = mcm.number(CONFIG.MOD_ID, "time_factor_travel", CONFIG.DEFAULTS["time_factor_travel"] or 1)
-    tft_config.time_factor_backslide = mcm.number(CONFIG.MOD_ID, "time_factor_backslide", CONFIG.DEFAULTS["time_factor_backslide"] or 0.05)
-    tft_config.cam_speed_mult = mcm.number(CONFIG.MOD_ID, "cam_speed_mult", CONFIG.DEFAULTS["cam_speed_mult"] or 1)
-    tft_config.backslide_clear_m = mcm.number(CONFIG.MOD_ID, "backslide_clear_m", CONFIG.DEFAULTS["backslide_clear_m"] or 25)
-    tft_config.screen_msg_duration = mcm.number(CONFIG.MOD_ID, "screen_msg_duration", CONFIG.DEFAULTS["screen_msg_duration"] or 4)
+    tft_config.debug_overlay = dogma.dbg.overlay_enabled()
+    tft_config.debug_log = dogma.dbg.logging()
+    tft_config.path_preview = dogma.mcm.bool(CONFIG.MOD_ID, "path_preview")
+    tft_config.block_transition_in_combat = dogma.mcm.bool(CONFIG.MOD_ID, "block_transition_in_combat")
+    tft_config.block_travel_when_unfit = dogma.mcm.bool(CONFIG.MOD_ID, "block_travel_when_unfit")
+    tft_config.pause_on_stop = dogma.mcm.bool(CONFIG.MOD_ID, "pause_on_stop")
+    tft_config.pause_on_done = dogma.mcm.bool(CONFIG.MOD_ID, "pause_on_done")
+    tft_config.show_hud_during_travel = dogma.mcm.bool(CONFIG.MOD_ID, "show_hud_during_travel")
+    tft_config.time_factor_travel = dogma.mcm.number(CONFIG.MOD_ID, "time_factor_travel", CONFIG.DEFAULTS["time_factor_travel"] or 1)
+    tft_config.time_factor_backslide = dogma.mcm.number(CONFIG.MOD_ID, "time_factor_backslide", CONFIG.DEFAULTS["time_factor_backslide"] or 0.05)
+    tft_config.cam_speed_mult = dogma.mcm.number(CONFIG.MOD_ID, "cam_speed_mult", CONFIG.DEFAULTS["cam_speed_mult"] or 1)
+    tft_config.backslide_clear_m = dogma.mcm.number(CONFIG.MOD_ID, "backslide_clear_m", CONFIG.DEFAULTS["backslide_clear_m"] or 25)
+    tft_config.screen_msg_duration = dogma.mcm.number(CONFIG.MOD_ID, "screen_msg_duration", CONFIG.DEFAULTS["screen_msg_duration"] or 4)
     -- legacy alias used by pause helper
     tft_config.pause_on_ambush = tft_config.pause_on_stop
     tft_config.show_ambush_range = false -- retired MCM; PDA ambush-range ring stays off
     -- nil when unbound (-1 in MCM)
-    tft_config.companion_teleport_key = mcm.key(CONFIG.MOD_ID, "companion_teleport_key")
+    tft_config.companion_teleport_key = dogma.mcm.key(CONFIG.MOD_ID, "companion_teleport_key")
     tft_config.visited_radius_m = CONFIG.DEFAULTS["visited_radius_m"] or 30
     -- debug keys still under shared Debug page
-    if mcm.bool("dogma/debug", "ft_path_preview") then
+    if dogma.mcm.bool("dogma/debug", "ft_path_preview") then
         tft_config.path_preview = true
     end
-    tft_config.nav_mesh_reload = mcm.key("dogma/debug", "ft_nav_mesh_reload")
-    tft_config.nav_mesh_reload_on_load = mcm.bool("dogma/debug", "ft_nav_mesh_reload_on_load")
-    tft_config.show_nav_mesh = mcm.bool("dogma/debug", "ft_show_nav_mesh")
+    tft_config.nav_mesh_reload = dogma.mcm.key("dogma/debug", "ft_nav_mesh_reload")
+    tft_config.nav_mesh_reload_on_load = dogma.mcm.bool("dogma/debug", "ft_nav_mesh_reload_on_load")
+    tft_config.show_nav_mesh = dogma.mcm.bool("dogma/debug", "ft_show_nav_mesh")
     if tft_clear_ambush_range_circle then
         tft_clear_ambush_range_circle()
     end
-    if dogma.dbg and dogma.dbg.set_enabled then
-        dogma.dbg.set_enabled(CONFIG.MOD_ID, dogma.dbg.overlay_enabled())
-    end
+    dogma.dbg.set_enabled(CONFIG.MOD_ID, dogma.dbg.overlay_enabled())
     if not tft_config.debug_overlay and tft then
         tft._debug_overlay_msg = nil
     end
@@ -73,14 +67,9 @@ local function load_config()
 end
 
 refresh_active_config = function()
-    local msg_dur = 4
-    local pause_stop = true
-    local pause_done = true
-    if dogma.mcm then
-        msg_dur = dogma.mcm.number(CONFIG.MOD_ID, "screen_msg_duration", CONFIG.DEFAULTS["screen_msg_duration"] or 4)
-        pause_stop = dogma.mcm.bool(CONFIG.MOD_ID, "pause_on_stop")
-        pause_done = dogma.mcm.bool(CONFIG.MOD_ID, "pause_on_done")
-    end
+    local msg_dur = dogma.mcm.number(CONFIG.MOD_ID, "screen_msg_duration", CONFIG.DEFAULTS["screen_msg_duration"] or 4)
+    local pause_stop = dogma.mcm.bool(CONFIG.MOD_ID, "pause_on_stop")
+    local pause_done = dogma.mcm.bool(CONFIG.MOD_ID, "pause_on_done")
 
     tft.active_config = {
         screen_msg_duration = msg_dur,
@@ -788,18 +777,14 @@ on_key_press = function(_key)
 end
 
 local function poll_tft_keys()
-    local inp = dogma.input
-    if not inp then
-        return
-    end
     local reload = tft_config and tft_config.nav_mesh_reload
-    if reload and reload >= 0 and inp.is_key_pressed(reload) then
+    if reload and reload >= 0 and dogma.input.is_key_pressed(reload) then
         if _G.tft_handle_dev_keys then
             _G.tft_handle_dev_keys(reload)
         end
     end
     local tp_key = tft_config and tft_config.companion_teleport_key
-    if tp_key and tp_key >= 0 and inp.is_key_pressed(tp_key) then
+    if tp_key and tp_key >= 0 and dogma.input.is_key_pressed(tp_key) then
         pull_companions_to_actor()
     end
 end

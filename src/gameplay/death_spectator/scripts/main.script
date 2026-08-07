@@ -86,7 +86,7 @@ local DIED_LIMBS = {
 }
 
 local function log(msg)
-	if dogma.dbg and CONFIG.loaded.debug_log then
+	if CONFIG.loaded.debug_log then
 		dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
 	end
 end
@@ -584,8 +584,7 @@ local function restore_game_over_continue()
 end
 
 local function bind_down(bind)
-	local inp = dogma.input
-	if not (inp and bind and bind_to_dik) then
+	if not (bind and bind_to_dik) then
 		return false
 	end
 	local ok, dik = pcall(function()
@@ -594,7 +593,7 @@ local function bind_down(bind)
 	if not ok or not dik or dik == 0 then
 		return false
 	end
-	return inp.is_key_down(dik)
+	return dogma.input.is_key_down(dik)
 end
 
 local function apply_fly_cam()

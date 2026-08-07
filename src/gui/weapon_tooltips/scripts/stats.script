@@ -79,11 +79,7 @@ local function dbg(msg)
 	if not DEBUG_ENABLED then
 		return
 	end
-	if dogma.dbg and dogma.dbg.log then
-		dogma.dbg.log(CONFIG.MOD_ID, msg)
-	else
-		printf("[%s] %s", CONFIG.MOD_ID:gsub("/", "_"), tostring(msg))
-	end
+	dogma.dbg.log(CONFIG.MOD_ID, msg)
 end
 
 local function log_once(key, msg)

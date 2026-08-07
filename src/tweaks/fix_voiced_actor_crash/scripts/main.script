@@ -1,0 +1,119 @@
+--[[
+	Fix Voiced Actor Crash
+
+	Voiced Actor Refined uses companion squad distance checks without guarding
+	alife_object(commander_id) when commander_id is invalid (65535). Patches
+	agdd_voiced_actor.squad_* and axr_companions.squad_* (varefined monkeypatch).
+]]
+
+local CONFIG = _G.dogma_tweaks_fix_voiced_actor_crash_conf
+
+local NEAR_SQR = 576 -- 24m
+local HEAR_SQR = 3600 -- 60m
+local CLOSE_SQR = 144 -- 12m
+local MID_SQR = 1600 -- 40m
+
+local function commander_dist_sqr()
+	local companions = rawget(_G, "axr_companions")
+	local squads = companions and companions.companion_squads
+	if not squads then
+		return nil
+	end
+	local _, squad = next(squads, nil)
+	if not squad then
+		return nil
+	end
+	local ok, id = pcall(function()
+		return squad:commander_id()
+	end)
+	if not ok or not id or id >= 65535 then
+		return nil
+	end
+	local commander = alife_object(id)
+	if not (commander and commander.position and db and db.actor) then
+		return nil
+	end
+	return commander.position:distance_to_sqr(db.actor:position())
+end
+
+local function squad_near()
+	local d = commander_dist_sqr()
+	return d ~= nil and d <= NEAR_SQR
+end
+
+local function squad_can_hear()
+	local d = commander_dist_sqr()
+	return d ~= nil and d > NEAR_SQR and d <= HEAR_SQR
+end
+
+local function squad_out()
+	local d = commander_dist_sqr()
+	return d == nil or d > HEAR_SQR
+end
+
+local function squad_close()
+	local d = commander_dist_sqr()
+	return d ~= nil and d <= CLOSE_SQR
+end
+
+local function squad_mid()
+	local d = commander_dist_sqr()
+	return d ~= nil and d > NEAR_SQR and d <= MID_SQR
+end
+
+local function squad_far()
+	local d = commander_dist_sqr()
+	return d ~= nil and d > MID_SQR and d <= HEAR_SQR
+end
+
+local function squad_too_far()
+	local d = commander_dist_sqr()
+	return d == nil or d > HEAR_SQR
+end
+
+local function patch_agdd()
+	local mod = rawget(_G, "agdd_voiced_actor")
+	if not mod or mod._dogma_va_crash then
+		return mod and mod._dogma_va_crash or false
+	end
+	if type(mod.squad_can_hear) ~= "function" then
+		return false
+	end
+	mod.squad_near = squad_near
+	mod.squad_can_hear = squad_can_hear
+	mod.squad_out = squad_out
+	mod._dogma_va_crash = true
+	return true
+end
+
+local function patch_axr()
+	local mod = rawget(_G, "axr_companions")
+	if not mod or mod._dogma_va_crash then
+		return mod and mod._dogma_va_crash or false
+	end
+	if type(mod.squad_close) ~= "function" then
+		return false
+	end
+	mod.squad_close = squad_close
+	mod.squad_near = function()
+		local d = commander_dist_sqr()
+		return d ~= nil and d > CLOSE_SQR and d <= NEAR_SQR
+	end
+	mod.squad_mid = squad_mid
+	mod.squad_far = squad_far
+	mod.squad_too_far = squad_too_far
+	mod._dogma_va_crash = true
+	return true
+end
+
+local function patch()
+	patch_agdd()
+	patch_axr()
+end
+
+function on_game_start()
+	dogma.load(CONFIG.MOD_ID)
+	patch()
+	RegisterScriptCallback("actor_on_first_update", patch)
+	RegisterScriptCallback("on_game_load", patch)
+end

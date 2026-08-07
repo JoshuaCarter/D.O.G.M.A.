@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# Snapshot live user.ltx + axr_options.ltx into appdata/ and commit before push.
+# Install: cp tools/git-hooks/pre-push .git/hooks/pre-push && chmod +x .git/hooks/pre-push
+# Skip:    DOGMA_NO_APPDATA_SYNC=1 git push …
+set -euo pipefail
+
+HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
+case "$HOOK_DIR" in
+	*/.git/hooks) ROOT="$(cd "$HOOK_DIR/../.." && pwd)" ;;
+	*/tools/git-hooks) ROOT="$(cd "$HOOK_DIR/../.." && pwd)" ;;
+	*) ROOT="$(cd "$HOOK_DIR/../.." && pwd)" ;;
+esac
+
+if [[ -n "${DOGMA_NO_APPDATA_SYNC:-}" ]]; then
+	echo "pre-push: skipping appdata sync (DOGMA_NO_APPDATA_SYNC set)"
+	exit 0
+fi
+
+if [[ "${DOGMA_APPDATA_SYNC_PUSH:-}" == "1" ]]; then
+	exit 0
+fi
+
+USER_SRC="${DOGMA_USER_LTX:-/c/Anomaly/appdata/user.ltx}"
+AXR_SRC="${DOGMA_AXR_OPTIONS:-/c/GAMMA/mods/G.A.M.M.A. MCM values - Rename to keep your personal changes/gamedata/configs/axr_options.ltx}"
+DEST_DIR="$ROOT/appdata"
+
+missing=0
+for src in "$USER_SRC" "$AXR_SRC"; do
+	if [[ ! -f "$src" ]]; then
+		echo "pre-push: source not found: $src" >&2
+		missing=1
+	fi
+done
+if [[ "$missing" == "1" ]]; then
+	exit 1
+fi
+
+mkdir -p "$DEST_DIR"
+cp -f "$USER_SRC" "$DEST_DIR/user.ltx"
+cp -f "$AXR_SRC" "$DEST_DIR/axr_options.ltx"
+
+git -C "$ROOT" add appdata/user.ltx appdata/axr_options.ltx
+
+if git -C "$ROOT" diff --cached --quiet; then
+	exit 0
+fi
+
+git -C "$ROOT" commit -m "$(cat <<'EOF'
+sync appdata config
+
+Snapshot Anomaly user.ltx and GAMMA axr_options.ltx before push.
+EOF
+)"
+
+echo "pre-push: committed synced appdata/ — re-running push…"
+export DOGMA_APPDATA_SYNC_PUSH=1
+remote="${1:-}"
+if [[ -n "$remote" ]]; then
+	exec git -C "$ROOT" push "$remote"
+fi
+exec git -C "$ROOT" push

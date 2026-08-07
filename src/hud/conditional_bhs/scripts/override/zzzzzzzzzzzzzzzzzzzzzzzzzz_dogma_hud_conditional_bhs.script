@@ -1,0 +1,503 @@
+--[[
+	Conditional BHS
+
+	Universal late-load hook on zzz_player_injuries: force the classic Body
+	Health System screen HUD visible when limb damage hits, a hold keybind is
+	down, and/or inventory is open (MCM). Overrides hide/keybind while forced.
+	Best-effort fade-out on damage timer end via custom-static alpha.
+
+	Shipped under scripts/override/ with a long z-prefix so this file loads after
+	other BHS wrappers (build keeps the exact basename).
+
+	Note: BHS registers actor_on_update by function reference at its on_game_start,
+	so replacing zzz_player_injuries.actor_on_update does not run. We wrap
+	recieved_damage (table-called by Actor Damage Balancer) and drive visibility
+	from our own actor_on_update callback.
+]]
+
+local CONFIG = _G.dogma_hud_conditional_bhs_conf
+
+local FADE_MS = 500
+local FLAG = "__dogma_conditional_bhs"
+
+local flash_until = 0
+local forced = false
+local saved_show = nil
+local saved_healthstatus = nil
+
+local uv_show_fn, uv_show_idx = nil, nil
+local uv_hs_fn, uv_hs_idx = nil, nil
+local uv_change_fn, uv_change_idx = nil, nil
+
+local wrapped_rd = nil
+local update_registered = false
+
+local RATIO_SUFFIXES = { "", "_43", "_1610", "_16" }
+
+local STATIC_STEMS = {
+	"body_health_system",
+	"body_health_system_text",
+	"cop_debug",
+	"bhs_garbage",
+	"bhs_health_bar",
+	"bhs_health_bar_bg",
+	"bhs_stamina_bar",
+	"bhs_stamina_bar_bg",
+	"bhs_health_head_bar",
+	"bhs_health_head_bar_bg",
+	"bhs_health_head_bar_green",
+	"bhs_health_torso_bar",
+	"bhs_health_torso_bar_bg",
+	"bhs_health_torso_bar_green",
+	"bhs_health_rightarm_bar",
+	"bhs_health_rightarm_bar_bg",
+	"bhs_health_rightarm_bar_green",
+	"bhs_health_leftarm_bar",
+	"bhs_health_leftarm_bar_bg",
+	"bhs_health_leftarm_bar_green",
+	"bhs_health_rightleg_bar",
+	"bhs_health_rightleg_bar_bg",
+	"bhs_health_rightleg_bar_green",
+	"bhs_health_leftleg_bar",
+	"bhs_health_leftleg_bar_bg",
+	"bhs_health_leftleg_bar_green",
+}
+
+local SILHOUETTE_NAMES = {
+	"body_health_system",
+	"body_health_system_43",
+	"body_health_system_1610",
+	"body_health_system_16",
+	"body_health_system_text",
+	"cop_debug",
+}
+
+local STATIC_NAMES = {}
+do
+	for i = 1, #STATIC_STEMS do
+		local stem = STATIC_STEMS[i]
+		for j = 1, #RATIO_SUFFIXES do
+			STATIC_NAMES[#STATIC_NAMES + 1] = stem .. RATIO_SUFFIXES[j]
+		end
+	end
+end
+
+local function find_upvalue(fn, name)
+	if type(fn) ~= "function" or not (debug and debug.getupvalue) then
+		return nil, nil
+	end
+	local i = 1
+	while true do
+		local n, v = debug.getupvalue(fn, i)
+		if not n then
+			return nil, nil
+		end
+		if n == name then
+			return i, v
+		end
+		i = i + 1
+	end
+end
+
+local function find_upvalue_deep(fn, name, depth, seen)
+	depth = depth or 0
+	seen = seen or {}
+	if type(fn) ~= "function" or depth > 8 or seen[fn] then
+		return nil, nil, nil
+	end
+	seen[fn] = true
+	local idx, val = find_upvalue(fn, name)
+	if idx then
+		return fn, idx, val
+	end
+	if not (debug and debug.getupvalue) then
+		return nil, nil, nil
+	end
+	local i = 1
+	while true do
+		local n, v = debug.getupvalue(fn, i)
+		if not n then
+			break
+		end
+		if type(v) == "function" then
+			local owner, oidx, oval = find_upvalue_deep(v, name, depth + 1, seen)
+			if owner then
+				return owner, oidx, oval
+			end
+		end
+		i = i + 1
+	end
+	return nil, nil, nil
+end
+
+local function resolve_named_upvalue(bhs, name, probe)
+	local owner, idx, val = find_upvalue_deep(probe, name)
+	if owner then
+		return owner, idx, val
+	end
+	local extras = {
+		bhs.worst_possible_fix,
+		bhs.recieved_damage,
+		bhs.actor_on_hit_callback,
+		bhs.actor_on_before_death,
+	}
+	for i = 1, #extras do
+		owner, idx, val = find_upvalue_deep(extras[i], name)
+		if owner then
+			return owner, idx, val
+		end
+	end
+	for _, v in pairs(bhs) do
+		if type(v) == "function" then
+			owner, idx, val = find_upvalue_deep(v, name)
+			if owner then
+				return owner, idx, val
+			end
+		end
+	end
+	return nil, nil, nil
+end
+
+local function resolve_upvalues(bhs)
+	local probe = bhs.actor_on_update
+	if type(probe) ~= "function" then
+		return false
+	end
+	local show_fn, show_idx = find_upvalue_deep(probe, "show_hud_type")
+	local hs_fn, hs_idx = find_upvalue_deep(probe, "healthstatus")
+	if not (show_fn and show_idx and hs_fn and hs_idx) then
+		return false
+	end
+	uv_show_fn, uv_show_idx = show_fn, show_idx
+	uv_hs_fn, uv_hs_idx = hs_fn, hs_idx
+	local ch_fn, ch_idx = resolve_named_upvalue(bhs, "show_hud_change_time", probe)
+	if ch_fn and ch_idx then
+		uv_change_fn, uv_change_idx = ch_fn, ch_idx
+	end
+	return true
+end
+
+local function get_show()
+	if not (uv_show_fn and uv_show_idx and debug and debug.getupvalue) then
+		return nil
+	end
+	local _, v = debug.getupvalue(uv_show_fn, uv_show_idx)
+	return v
+end
+
+local function get_healthstatus()
+	if not (uv_hs_fn and uv_hs_idx and debug and debug.getupvalue) then
+		return nil
+	end
+	local _, v = debug.getupvalue(uv_hs_fn, uv_hs_idx)
+	return v
+end
+
+local function set_show(v)
+	if uv_show_fn and uv_show_idx and debug and debug.setupvalue then
+		debug.setupvalue(uv_show_fn, uv_show_idx, v)
+	end
+end
+
+local function set_healthstatus(v)
+	if uv_hs_fn and uv_hs_idx and debug and debug.setupvalue then
+		debug.setupvalue(uv_hs_fn, uv_hs_idx, v)
+	end
+end
+
+local function clear_change_debounce()
+	if uv_change_fn and uv_change_idx and debug and debug.setupvalue then
+		debug.setupvalue(uv_change_fn, uv_change_idx, 0)
+	end
+end
+
+local function refresh_options()
+	if not (CONFIG and CONFIG.loaded) then
+		return 0
+	end
+	local sec = dogma.mcm.int(CONFIG.MOD_ID, "sec", CONFIG.DEFAULTS and CONFIG.DEFAULTS.sec or 3)
+	sec = tonumber(sec) or 0
+	if sec < 0 then
+		sec = 0
+	elseif sec > 60 then
+		sec = 60
+	end
+	CONFIG.loaded.sec = sec
+	CONFIG.loaded.keybind = dogma.mcm.key(CONFIG.MOD_ID, "keybind")
+	CONFIG.loaded.modifier = dogma.mcm.int(CONFIG.MOD_ID, "modifier")
+	CONFIG.loaded.show_in_inventory = dogma.mcm.bool(CONFIG.MOD_ID, "show_in_inventory")
+	return sec
+end
+
+local function hold_wants()
+	if not (CONFIG and CONFIG.loaded) then
+		return false
+	end
+	local key = CONFIG.loaded.keybind
+	if not key or key < 0 then
+		return false
+	end
+	if not dogma.input.is_mod_down(CONFIG.loaded.modifier or 0) then
+		return false
+	end
+	return dogma.input.is_key_down(key)
+end
+
+local function inventory_wants()
+	if not (CONFIG and CONFIG.loaded and CONFIG.loaded.show_in_inventory) then
+		return false
+	end
+	return actor_menu and actor_menu.inventory_opened and actor_menu.inventory_opened()
+end
+
+local function damage_wants(now)
+	return flash_until > now
+end
+
+local function should_force(now)
+	return hold_wants() or inventory_wants() or damage_wants(now)
+end
+
+local function damage_flash_alpha(now)
+	local remaining = flash_until - now
+	if remaining <= 0 then
+		return 0
+	end
+	if remaining < FADE_MS then
+		return math.floor(255 * remaining / FADE_MS)
+	end
+	return 255
+end
+
+local function display_alpha(now)
+	if hold_wants() or inventory_wants() then
+		return 255
+	end
+	if damage_wants(now) then
+		return damage_flash_alpha(now)
+	end
+	return 0
+end
+
+local function tint_wnd(wnd, alpha)
+	if not wnd then
+		return
+	end
+	local argb = GetARGB and GetARGB(alpha, 255, 255, 255)
+	if not argb then
+		return
+	end
+	if wnd.SetTextureColor then
+		pcall(function()
+			wnd:SetTextureColor(argb)
+		end)
+	end
+	if wnd.SetColor then
+		pcall(function()
+			wnd:SetColor(argb)
+		end)
+	end
+	if wnd.TextControl then
+		local ok, tc = pcall(function()
+			return wnd:TextControl()
+		end)
+		if ok and tc and tc.SetTextColor then
+			pcall(function()
+				tc:SetTextColor(argb)
+			end)
+		end
+	end
+end
+
+local function apply_fade_alpha(alpha)
+	local hud = get_hud and get_hud()
+	if not hud or not hud.GetCustomStatic then
+		return
+	end
+	for i = 1, #STATIC_NAMES do
+		local cs = hud:GetCustomStatic(STATIC_NAMES[i])
+		if cs then
+			local ok, wnd = pcall(function()
+				return cs:wnd()
+			end)
+			if ok then
+				tint_wnd(wnd, alpha)
+			end
+		end
+	end
+end
+
+local function hud_silhouette_up()
+	local hud = get_hud and get_hud()
+	if not hud or not hud.GetCustomStatic then
+		return false
+	end
+	for i = 1, #SILHOUETTE_NAMES do
+		if hud:GetCustomStatic(SILHOUETTE_NAMES[i]) then
+			return true
+		end
+	end
+	return false
+end
+
+local function force_visible()
+	set_show(2)
+	set_healthstatus(true)
+	clear_change_debounce()
+end
+
+local function end_force()
+	if not forced then
+		return
+	end
+	local restore_show = saved_show
+	local restore_hs = saved_healthstatus
+	forced = false
+	flash_until = 0
+	saved_show = nil
+	saved_healthstatus = nil
+	if restore_show ~= nil then
+		set_show(restore_show)
+	else
+		set_show(0)
+	end
+	if restore_hs ~= nil then
+		set_healthstatus(restore_hs)
+	end
+	apply_fade_alpha(255)
+end
+
+local function begin_force()
+	if forced then
+		return
+	end
+	local cur_show = get_show()
+	local cur_hs = get_healthstatus()
+	saved_show = cur_show
+	if saved_show == nil then
+		saved_show = 0
+	end
+	saved_healthstatus = cur_hs
+	if saved_healthstatus == nil then
+		saved_healthstatus = true
+	end
+	forced = true
+end
+
+local function begin_or_refresh_damage()
+	local sec = refresh_options()
+	if sec <= 0 then
+		return
+	end
+	if not (uv_show_fn and uv_hs_fn) then
+		return
+	end
+
+	local now = time_global()
+	if not forced then
+		local cur_show = get_show()
+		local cur_hs = get_healthstatus()
+		if cur_show == 2 and cur_hs and hud_silhouette_up() then
+			flash_until = now + math.floor(sec * 1000)
+			return
+		end
+	end
+
+	flash_until = now + math.floor(sec * 1000)
+	if not forced then
+		begin_force()
+	end
+	force_visible()
+	apply_fade_alpha(display_alpha(now))
+end
+
+local function ensure_hook()
+	local bhs = rawget(_G, "zzz_player_injuries")
+	if not (bhs and type(bhs.recieved_damage) == "function") then
+		return false
+	end
+	if bhs.recieved_damage == wrapped_rd and uv_show_fn and uv_hs_fn then
+		return true
+	end
+	if not (debug and debug.getupvalue and debug.setupvalue) then
+		return false
+	end
+	if not resolve_upvalues(bhs) then
+		return false
+	end
+	if bhs.recieved_damage ~= wrapped_rd then
+		wrapped_rd = (function(inner)
+			return function(...)
+				local ret = inner(...)
+				begin_or_refresh_damage()
+				return ret
+			end
+		end)(bhs.recieved_damage)
+		bhs.recieved_damage = wrapped_rd
+	end
+	bhs[FLAG] = true
+	return true
+end
+
+local function on_actor_update()
+	ensure_hook()
+	local now = time_global()
+	if not should_force(now) then
+		if forced then
+			end_force()
+		elseif flash_until > 0 and now >= flash_until then
+			flash_until = 0
+		end
+		return
+	end
+
+	if not forced then
+		begin_force()
+	end
+
+	force_visible()
+	apply_fade_alpha(display_alpha(now))
+end
+
+local function apply()
+	local bhs = rawget(_G, "zzz_player_injuries")
+	if not (bhs and type(bhs.actor_on_update) == "function" and type(bhs.recieved_damage) == "function") then
+		return false
+	end
+	if not ensure_hook() then
+		return false
+	end
+	if not update_registered then
+		RegisterScriptCallback("actor_on_update", on_actor_update)
+		update_registered = true
+	end
+	return true
+end
+
+local function on_option_change()
+	refresh_options()
+end
+
+local function reset_force_state()
+	forced = false
+	flash_until = 0
+	saved_show = nil
+	saved_healthstatus = nil
+	wrapped_rd = nil
+	uv_show_fn, uv_show_idx = nil, nil
+	uv_hs_fn, uv_hs_idx = nil, nil
+	uv_change_fn, uv_change_idx = nil, nil
+end
+
+function on_game_start()
+	if not CONFIG then
+		return
+	end
+	dogma.load(CONFIG.MOD_ID)
+	refresh_options()
+	apply()
+	RegisterScriptCallback("actor_on_first_update", apply)
+	RegisterScriptCallback("on_option_change", on_option_change)
+	RegisterScriptCallback("on_game_load", reset_force_state)
+	RegisterScriptCallback("main_menu_on_init", reset_force_state)
+end

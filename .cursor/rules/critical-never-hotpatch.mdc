@@ -1,9 +1,41 @@
 ---
-description: No modifications to deployed code
+description: Workspace-only edits; never touch live GAMMA deploy
 alwaysApply: true
 ---
 
-# DO NOT MODIFY DEPLOYED CODE
+# Workspace only — never hotpatch deploy
 
-NEVER MODIFY DEPLOYED CODE, ONLY EVER MODIFY CODE IN THIS PROJECT WORKSPACE. CODE IN GAMMA/mods IS STRICTLY OFF LIMITS!!!
+Source of truth: **`c:\gamma_dev\DOGMA\`** (especially `src/`).
 
+Live game mod tree is **read-only** for the agent unless the user **explicitly** asks to deploy.
+
+## Forbidden paths (no Read for debugging deploy, no Write, no Delete)
+
+- `C:/GAMMA/**` and `C:\GAMMA\**` (entire GAMMA install)
+- `**/GAMMA/mods/**` outside this repo
+- Default deploy root: `C:/GAMMA/mods/DOGMA/**`
+- Any path under another mod’s `gamedata/` used as the running game copy
+
+Do **not** “verify the fix” by opening or grepping deployed scripts. Use `src/` and `build/gamedata/` only.
+
+## Forbidden commands (unless user explicitly asked to deploy)
+
+- `DOGMA_DEPLOY=... tools/build.sh` (VS Code build task sets this — **user runs deploy, not the agent**)
+- `tools/patch_live.sh` (writes straight to deploy)
+- `cp`, `mv`, `rsync`, `robocopy`, or any copy **into** `C:/GAMMA/` or `**/GAMMA/mods/`
+- Manual single-file copy to deploy (e.g. `cp build/.../foo.script /c/GAMMA/mods/DOGMA/...`)
+
+## Allowed
+
+- Edit/create/delete under `c:\gamma_dev\DOGMA\src\`, `config/`, `tools/`, `.cursor/`, etc.
+- Run **`tools/build.sh` without `DOGMA_DEPLOY`** → output goes to `build/gamedata/` only
+- Read `build/gamedata/` to confirm build output
+- Read `appdata/` in this repo (synced dev copies)
+
+## After code changes
+
+Tell the user to run their normal build/deploy (e.g. VS Code **build** task). Do not deploy for them.
+
+## Explicit deploy exception
+
+Only if the user clearly says deploy / push to GAMMA / patch live: then deploy commands are allowed — and still **never** hand-edit files under `GAMMA/mods` without going through build output.

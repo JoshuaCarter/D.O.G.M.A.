@@ -168,24 +168,49 @@ local function adjust_limb(limb, delta)
 	save_limb(limb, health, timedhp)
 end
 
--- Prefer new MCM id; fall back to a legacy stored bind (old grain_* rad keys).
+local function adjust_bleeding(actor, delta)
+	if delta == 0 then
+		return
+	end
+
+	if delta > 0 and actor.cast_Actor and hit and hit.wound then
+		local cond = actor:cast_Actor():conditions()
+		if cond and cond.AddWound then
+			local power = delta
+			if power < 0.01 then
+				power = 0.01
+			end
+			-- GAMMA bleed level comes from wounds; plain assignment does not raise it.
+			cond:AddWound(power, hit.wound, 0)
+			return
+		end
+	end
+
+	-- Decrease (or AddWound unavailable): SetBleeding via property.
+	actor.bleeding = clamp((actor.bleeding or 0) + delta, 0, 2)
+end
+
+-- Prefer MCM bind; legacy grain_* rad ids; then dogma_debug_conf DEFAULTS (dev fallbacks).
 local function read_key(id, legacy_id)
 	local dik = dogma.mcm.key(DEBUG_MOD, id)
 	if dik then
 		return dik
 	end
-	if not legacy_id or not (ui_mcm and ui_mcm.get) then
-		return nil
+	if legacy_id and ui_mcm and ui_mcm.get then
+		local ok, value = pcall(ui_mcm.get, DEBUG_MOD .. "/" .. legacy_id)
+		if ok then
+			value = tonumber(value)
+			if value ~= nil and value >= 0 then
+				return value
+			end
+		end
 	end
-	local ok, value = pcall(ui_mcm.get, DEBUG_MOD .. "/" .. legacy_id)
-	if not ok then
-		return nil
+	local defaults = _G.dogma_debug_conf and _G.dogma_debug_conf.DEFAULTS
+	local fallback = defaults and tonumber(defaults[id])
+	if fallback ~= nil and fallback >= 0 then
+		return fallback
 	end
-	value = tonumber(value)
-	if value == nil or value == -1 then
-		return nil
-	end
-	return value
+	return nil
 end
 
 local function refresh_keys()
@@ -249,8 +274,7 @@ local function actor_on_update()
 
 	local d_bleed = hold_signed(keys.inc_bleed, keys.dec_bleed, BLEED_PER_SEC, dt)
 	if d_bleed ~= 0 then
-		-- GAMMA bleed icon red tier is >= 1.5; allow past 1 for FX testing.
-		actor.bleeding = clamp((actor.bleeding or 0) + d_bleed, 0, 2)
+		adjust_bleeding(actor, d_bleed)
 	end
 
 	local d_hp = hold_signed(keys.inc_health, keys.dec_health, HP_PER_SEC, dt)
@@ -270,7 +294,9 @@ end
 
 function on_game_start()
 	dogma.load(DEBUG_MOD)
-	refresh_keys()
 	RegisterScriptCallback("on_option_change", on_option_change)
+	RegisterScriptCallback("mcm_option_change", on_option_change)
+	RegisterScriptCallback("on_game_load", refresh_keys)
 	RegisterScriptCallback("actor_on_update", actor_on_update)
+	refresh_keys()
 end

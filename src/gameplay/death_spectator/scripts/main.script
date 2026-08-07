@@ -2,9 +2,10 @@
 	Death Spectator
 
 	Tracks recent hits while alive. On death: hit summary (left, Y center
-	+ 50px) + "Press TAB to spectate". Tab starts free-fly 2m above the
-	corpse looking at the killer. Move with bound walk/strafe; jump/crouch
-	for up/down via dogma.input. Esc opens the menu.
+	+ 50px) + "Press TAB to spectate". Tab starts demo_record free-fly 2m
+	above the corpse looking at the killer (demo_record replaces death
+	FPCam). Stock demo W/S are vertical; control override is separate.
+	Esc / quit opens the menu when we get the bind.
 ]]
 
 local CONFIG = _G.dogma_gameplay_death_spectator_conf
@@ -12,14 +13,12 @@ local CONFIG = _G.dogma_gameplay_death_spectator_conf
 local HIT_WINDOW_MS = 30000
 local HIT_CAP = 10
 local CAM_HEIGHT = 2.0
-local FLY_SPEED = 5.0
-local MOUSE_SENS = 0.0035
-local PITCH_LIMIT = 1.4
 local UI_W = 1024
 local UI_H = 768
 local LINE_H = 18
 local MARGIN_X = 12
 local HIT_Y_OFFSET = 50
+local DEMO_FILE = "dogma_death_spectator"
 
 local HIT_STATIC = "dogma_death_hit_summary"
 local TAB_STATIC = "dogma_death_tab_prompt"
@@ -67,16 +66,6 @@ local adb_wrapped = false
 local saved_tutor_stop = nil
 -- Prev first_person_death; forced off on Tab, restored on game load.
 local saved_first_person_death = nil
--- Pose only — movement polled each tick via dogma.input.
-local fly = {
-	x = 0,
-	y = 0,
-	z = 0,
-	h = 0,
-	p = 0,
-}
-local orig_level_input_mouse_move = nil
-local mouse_move_patched = false
 
 -- BHS limb keys → summary labels (Body is actor.health, not torso).
 local DIED_LIMBS = {
@@ -610,125 +599,13 @@ local function restore_game_over_continue()
 	saved_tutor_stop = nil
 end
 
-local function bind_down(bind)
-	if not (bind and bind_to_dik) then
-		return false
-	end
-	local ok, dik = pcall(function()
-		return bind_to_dik(bind)
-	end)
-	if not ok or not dik or dik == 0 then
-		return false
-	end
-	return dogma.input.is_key_down(dik)
-end
-
-local function apply_fly_cam()
-	if not (level and level.set_cam_custom_position_direction) then
-		return
-	end
-	local pos = vector():set(fly.x, fly.y, fly.z)
-	local hpb = vector():set(fly.h, fly.p, 0)
-	-- smoothing >= 1 snaps (engine clamps); death FPCam left smoothing at 0.
-	local ok = pcall(function()
-		level.set_cam_custom_position_direction(pos, hpb, 1, false, false)
-	end)
-	if not ok then
+local function stop_demo_record()
+	RemoveTimeEvent(CONFIG.MOD_ID, "clear_custom_cam")
+	if exec_console_cmd then
 		pcall(function()
-			level.set_cam_custom_position_direction(pos, hpb)
+			exec_console_cmd("demo_record_stop")
 		end)
 	end
-end
-
-local function fly_tick()
-	if not spectating then
-		return true
-	end
-	local dt = 0.016
-	local d = device and device()
-	if d then
-		dt = tonumber(d.f_time_delta or d.time_delta) or dt
-	end
-	if dt <= 0 then
-		dt = 0.016
-	elseif dt > 0.1 then
-		dt = 0.1
-	end
-
-	local kb = key_bindings
-	local move_x, move_z, move_y = 0, 0, 0
-	if kb then
-		move_x = (bind_down(kb.kR_STRAFE) and 1 or 0) - (bind_down(kb.kL_STRAFE) and 1 or 0)
-		move_z = (bind_down(kb.kFWD) and 1 or 0) - (bind_down(kb.kBACK) and 1 or 0)
-		move_y = (bind_down(kb.kJUMP) and 1 or 0) - (bind_down(kb.kCROUCH) and 1 or 0)
-	end
-	if move_x ~= 0 or move_z ~= 0 or move_y ~= 0 then
-		local step = FLY_SPEED * dt
-		local fx = -math.sin(fly.h)
-		local fz = math.cos(fly.h)
-		local rx = fz
-		local rz = -fx
-		fly.x = fly.x + (fx * move_z + rx * move_x) * step
-		fly.z = fly.z + (fz * move_z + rz * move_x) * step
-		fly.y = fly.y + move_y * step
-	end
-	apply_fly_cam()
-	return false
-end
-
-local function start_fly_tick()
-	RemoveTimeEvent(CONFIG.MOD_ID, "fly_tick")
-	CreateTimeEvent(CONFIG.MOD_ID, "fly_tick", 0, fly_tick)
-end
-
-local function stop_fly_tick()
-	RemoveTimeEvent(CONFIG.MOD_ID, "fly_tick")
-end
-
-local function apply_mouse_look(dx, dy)
-	if not spectating then
-		return
-	end
-	dx = tonumber(dx) or 0
-	dy = tonumber(dy) or 0
-	if dx == 0 and dy == 0 then
-		return
-	end
-	fly.h = fly.h - dx * MOUSE_SENS
-	fly.p = fly.p - dy * MOUSE_SENS * 0.75
-	if fly.p > PITCH_LIMIT then
-		fly.p = PITCH_LIMIT
-	elseif fly.p < -PITCH_LIMIT then
-		fly.p = -PITCH_LIMIT
-	end
-	apply_fly_cam()
-end
-
-local function patch_mouse_look()
-	if mouse_move_patched or not level_input then
-		return
-	end
-	orig_level_input_mouse_move = level_input.on_mouse_move
-	level_input.on_mouse_move = function(dx, dy, dis)
-		if not spectating then
-			if orig_level_input_mouse_move then
-				return orig_level_input_mouse_move(dx, dy, dis)
-			end
-			return false
-		end
-		apply_mouse_look(dx, dy)
-		return true
-	end
-	mouse_move_patched = true
-end
-
-local function unpatch_mouse_look()
-	if not mouse_move_patched or not level_input then
-		return
-	end
-	level_input.on_mouse_move = orig_level_input_mouse_move
-	orig_level_input_mouse_move = nil
-	mouse_move_patched = false
 end
 
 local function clear_custom_cam()
@@ -739,7 +616,7 @@ local function clear_custom_cam()
 	end
 end
 
-local function is_fly_bind(bind)
+local function is_move_bind(bind)
 	local kb = key_bindings
 	if not (kb and bind) then
 		return false
@@ -795,29 +672,30 @@ local function start_spectator()
 	hide_space_continue()
 	show_hit_summary()
 	apply_body_hud(true)
+	force_first_person_death_off()
+	suppress_game_over_continue()
+
+	-- Proven path: seed pose, then plain demo_record (not blocked_input).
+	if level and level.set_cam_custom_position_direction then
+		pcall(function()
+			level.set_cam_custom_position_direction(cam_pos, hpb, 0, false, false)
+		end)
+	end
+	if exec_console_cmd then
+		exec_console_cmd("demo_record " .. DEMO_FILE)
+	end
+	CreateTimeEvent(CONFIG.MOD_ID, "clear_custom_cam", 0.05, function()
+		clear_custom_cam()
+		return true
+	end)
 
 	log(string.format(
-		"spectate begin at %.1f,%.1f,%.1f killer=%s",
+		"spectate started at %.1f,%.1f,%.1f killer=%s",
 		cam_pos.x,
 		cam_pos.y,
 		cam_pos.z,
 		tostring(killer_id)
 	))
-
-	force_first_person_death_off()
-	clear_custom_cam()
-	suppress_game_over_continue()
-	patch_mouse_look()
-
-	fly.x = cam_pos.x
-	fly.y = cam_pos.y
-	fly.z = cam_pos.z
-	fly.h = hpb.x or 0
-	fly.p = hpb.y or 0
-	apply_fly_cam()
-	start_fly_tick()
-
-	log("spectate started")
 end
 
 local function reset_state()
@@ -831,8 +709,7 @@ local function reset_state()
 	corpse_pos = nil
 	killer_id = nil
 	frozen_lines = nil
-	stop_fly_tick()
-	unpatch_mouse_look()
+	stop_demo_record()
 	restore_game_over_continue()
 	apply_body_hud(false)
 	clear_death_ui()
@@ -848,8 +725,7 @@ local function on_option_change()
 		death_pending = false
 		if spectating then
 			spectating = false
-			stop_fly_tick()
-			unpatch_mouse_look()
+			stop_demo_record()
 			clear_custom_cam()
 			apply_body_hud(false)
 			restore_game_over_continue()
@@ -956,8 +832,7 @@ local function block_engine(flags)
 	end
 end
 
--- Tab/Esc edges + eat move binds so Jump doesn't finish game_over.
--- Movement itself is polled in fly_tick via dogma.input.
+-- Tab/Esc edges + eat jump/crouch so they don't finish game_over.
 local function on_before_key_press(dik, bind, dis, flags)
 	if try_spectate_from_key(dik) then
 		block_engine(flags)
@@ -972,13 +847,13 @@ local function on_before_key_press(dik, bind, dis, flags)
 		open_menu_from_spectate()
 		return
 	end
-	if is_fly_bind(bind) then
+	if is_move_bind(bind) then
 		block_engine(flags)
 	end
 end
 
 local function on_before_key_hold(dik, bind, dis, flags)
-	if spectating and is_fly_bind(bind) then
+	if spectating and is_move_bind(bind) then
 		block_engine(flags)
 	end
 end
@@ -1005,7 +880,7 @@ end
 
 local function actor_on_first_update()
 	if not spectating then
-		unpatch_mouse_look()
+		stop_demo_record()
 		clear_custom_cam()
 		apply_body_hud(false)
 	end

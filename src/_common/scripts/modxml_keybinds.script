@@ -1,5 +1,5 @@
 -- Inject DOGMA Controls rows + keep Settings labels matched to MCM.
--- Feature MCM scripts claim rows via dogma.keys.claim_control / mirror_spec.
+-- Feature MCM scripts claim rows via __dogma_key_mirror_mcm.claim_control / mirror_spec.
 
 local fmt = string.format
 
@@ -59,7 +59,7 @@ local function insert_after_command(xml_obj, group_name, after_id, new_id, exe)
 end
 
 local function each_control(fn)
-	local m = dogma.keys
+	local m = __dogma_key_mirror_mcm
 	local list = m and m.CONTROLS
 	if not list then
 		return

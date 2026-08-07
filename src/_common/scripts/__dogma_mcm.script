@@ -1,7 +1,7 @@
 --[[
 	DOGMA MCM - getters, tree attach, shared Debug page, banner helper.
 
-	Private MCM API; features use dogma.mcm (via _dogma.script).
+	Private MCM API. MCM scripts call dogma_mcm.* (dogma_mcm.script); in-game uses dogma.mcm.
 	Also registered as *mcm.script (API + defaults). Debug page itself is
 	registered only by the local-build feature debug (manifest stage: DEV).
 
@@ -137,7 +137,7 @@ end
 
 --------------------------------------------------------------------------------
 -- Engine keybind mirrors - implementation in __dogma_key_mirror_mcm.script.
--- Thin re-exports so features can call dogma.mcm.key_mirror / migrate.
+-- Thin re-exports so callers can use __dogma_mcm.key_mirror / migrate.
 --------------------------------------------------------------------------------
 
 local function keys()
@@ -677,13 +677,4 @@ end
 function on_mcm_load(_options)
 end
 
--- MCM gather only loads *mcm.script — seed dogma before feature mcm scripts run.
-do
-	local pub = rawget(_G, "dogma")
-	if type(pub) ~= "table" then
-		pub = {}
-		rawset(_G, "dogma", pub)
-	end
-	pub.mcm = getfenv(1)
-end
 

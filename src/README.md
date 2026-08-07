@@ -46,10 +46,10 @@ Release zip: `bash tools/package-fomod.sh` → `build/fomod/`. Wizard is **one p
 
 ## Common
 
-Sole public entry for call sites: `dogma.script` (`dogma.load`, `dogma.mcm`, …),
-which re-exports `_dogma.script`. Private impls are `__dogma_*.script`
-(double underscore so they load before the index) and must not be referenced
-from feature scripts.
+Sole common index: `dogma_mcm.script` (same field shape as `dogma.*`).
+In-game: `dogma.script` copies those fields — always prefer `dogma.*`.
+MCM gather cannot load `dogma.script`, so MCM scripts use `dogma_mcm.mcm` /
+`dogma_mcm.keys` / …. Modxml uses `__dogma_key_mirror_mcm`.
 
 ```lua
 function on_game_start()

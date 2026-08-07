@@ -1,8 +1,17 @@
 --[[
-	dogma.script - engine-registered public name (call sites: dogma.mcm / .load / …).
-	Implementation is _dogma.script (loads first: "_" < "d").
+	dogma.script - in-game public name (dogma.load / .mcm / .dbg / …).
+	Copies fields from dogma_mcm.script (the real index).
 ]]
 
-setmetatable(getfenv(1), {
-	__index = _dogma,
-})
+local S = dogma_mcm
+
+mcm = S.mcm
+dbg = S.dbg
+sys = S.sys
+keys = S.keys
+input = S.input
+xlibs = S.xlibs
+console_once = S.console_once
+sfx_prefetch = S.sfx_prefetch
+item_stats = S.item_stats
+load = S.load

@@ -18,13 +18,12 @@
 #                                           (Anomaly archive mods, e.g. db/mods/*.db0)
 #
 # Scripts (prefix applied at build - src keeps short names like main.script):
-#   _common/scripts/__dogma_*      -> private impls (load before _dogma.script)
-#   _common/scripts/_dogma.script  -> common index (wires __dogma_*)
-#   _common/scripts/dogma.script   -> public re-export (__index → _dogma)
-#                               Only _dogma.script may reference __dogma_*;
-#                               features use dogma.* only.
-#                               *mcm.script still matches MCM gather
-#                               bare _* names other than _dogma / __dogma_* / _conf skipped
+#   _common/scripts/__dogma_*       -> private impls (load before dogma_mcm)
+#   _common/scripts/dogma_mcm.script -> common index (MCM-gatherable *mcm name)
+#   _common/scripts/dogma.script    -> in-game re-export (__index → dogma_mcm)
+#                               Only dogma_mcm may reference __dogma_*;
+#                               in-game uses dogma.*; MCM uses dogma_mcm.*
+#                               bare _* names other than __dogma_* / _conf skipped
 #   …/scripts/_conf.script    -> dogma_{path}_conf.script
 #                               no zzzz_ - before that feature's zzzz_ body scripts
 #   …/scripts/mcm.script      -> dogma_{path}_mcm.script   (*mcm.script glob)
@@ -127,8 +126,8 @@ should_skip_name() {
 		*.alao-bak | *.pyc | *.pyo) return 0 ;;
 		# Authoring / pack source only — shipped via db/mods/*.db0 instead.
 		*.aimap) return 0 ;;
-		# _conf: feature defaults. __dogma_*: private early-load; _dogma: public index.
-		_conf.script | _dogma.script | __dogma_*.script | _common | _debug) return 1 ;;
+		# _conf: feature defaults. __dogma_*: private; dogma_mcm: common index.
+		_conf.script | dogma_mcm.script | dogma.script | __dogma_*.script | _common | _debug) return 1 ;;
 		_*) return 0 ;;
 		*) return 1 ;;
 	esac

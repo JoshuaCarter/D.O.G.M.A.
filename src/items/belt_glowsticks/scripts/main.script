@@ -28,15 +28,6 @@ local next_drain_tick = 0
 local pending_new_belt_items = {}
 local convert_in_progress = false
 
-local function tip(string_id)
-	if CONFIG.loaded.disable_messages then
-		return
-	end
-	if news_manager and news_manager.send_tip and db.actor then
-		news_manager.send_tip(db.actor, game.translate_string(string_id), nil, nil, 3000)
-	end
-end
-
 local function find_belted_glowstick(exclude_id)
 	local found = nil
 	if not (db.actor and db.actor.iterate_belt) then
@@ -108,11 +99,9 @@ local function convert_device_to_belt(item)
 		return false
 	end
 	if find_belted_glowstick() then
-		tip("st_dogma_belt_glowstick_already_attached")
 		return false
 	end
 	if not belt_has_room() then
-		tip("st_dogma_belt_glowstick_no_slots")
 		return false
 	end
 
@@ -142,11 +131,8 @@ local function convert_device_to_belt(item)
 				if not current then
 					return
 				end
-				if db.actor:is_on_belt(current) then
-					tip("st_dogma_belt_glowstick_ready")
-				else
+				if not db.actor:is_on_belt(current) then
 					convert_belt_item_to_device(current)
-					tip("st_dogma_belt_glowstick_no_slots")
 				end
 			end)
 			convert_in_progress = false
@@ -293,18 +279,18 @@ local function update_belt_light()
 		light.volumetric_distance = ini_sys:r_float_ex(light_section, "volumetric_distance", 0.25)
 	end
 
-	local native_range = ini_sys:r_float_ex(light_section, "range_r2", 12)
+	local native_range = ini_sys:r_float_ex(light_section, "range_r2", 12) or 12
 	light.range = native_range * (CONFIG.loaded.light_range or 1.0)
 
+	-- script_light intensity is RGB magnitude (alpha alone does little without lanim).
 	local br = CONFIG.loaded.brightness or 1.0
-	local lum = CONFIG.loaded.luminosity or 1.0
 	local color_s = ini_sys:r_string_ex(light_section, "color_r2", "0.0,0.4,0.3,0.8")
 	local c = str_explode(color_s, ",")
 	light.color = fcolor():set(
 		(tonum(c[1]) or 0) * br,
 		(tonum(c[2]) or 0.4) * br,
 		(tonum(c[3]) or 0.3) * br,
-		(tonum(c[4]) or 0.8) * lum
+		(tonum(c[4]) or 0.8) * br
 	)
 
 	local pos = db.actor:bone_position("bip01_pelvis")
@@ -327,18 +313,16 @@ end
 function on_option_change()
 	CONFIG.loaded.light_range = dogma.mcm.number(MOD_ID, "light_range")
 	CONFIG.loaded.brightness = dogma.mcm.number(MOD_ID, "brightness")
-	CONFIG.loaded.luminosity = dogma.mcm.number(MOD_ID, "luminosity")
-	CONFIG.loaded.disable_messages = dogma.mcm.bool(MOD_ID, "disable_messages")
+	-- Force a fresh light so range/color changes apply immediately.
+	clear_light()
 end
 
 local function on_item_to_belt(item)
 	if not item or not device_by_variant[item:section()] then
 		return
 	end
-	local other = find_belted_glowstick(item:id())
-	if other then
+	if find_belted_glowstick(item:id()) then
 		convert_belt_item_to_device(item)
-		tip("st_dogma_belt_glowstick_already_attached")
 	end
 end
 

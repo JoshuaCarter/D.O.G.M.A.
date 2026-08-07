@@ -101,6 +101,16 @@ local function update_keys()
 	end
 end
 
+-- actor_on_update is skipped while dead; ProcessEventQueue still runs (death cam, etc.).
+local function tick()
+	update_keys()
+	return false
+end
+
+local function ensure_tick()
+	CreateTimeEvent("dogma_input", "tick", 0, tick)
+end
+
 local function reset_keys()
 	keys = {}
 	any_pressed = 0
@@ -111,12 +121,15 @@ local function on_key_press(_dik)
 end
 
 function on_game_start()
-	RegisterScriptCallback("actor_on_update", update_keys)
-	RegisterScriptCallback("on_key_press", on_key_press)
-	RegisterScriptCallback("on_game_load", reset_keys)
+	ensure_tick()
+	RegisterScriptCallback("on_game_load", function()
+		reset_keys()
+		ensure_tick()
+	end)
 	RegisterScriptCallback("main_menu_on_init", reset_keys)
 	RegisterScriptCallback("main_menu_on_quit", reset_keys)
 	RegisterScriptCallback("actor_on_net_destroy", reset_keys)
+	RegisterScriptCallback("on_key_press", on_key_press)
 end
 
 --------------------------------------------------------------------------------

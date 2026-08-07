@@ -38,8 +38,11 @@ function update_keys()
 	-- ...silent resync for "fake" pause edges the user accepted as fine...
 end
 
--- GOOD: poll + reset on lifecycle
-RegisterScriptCallback("actor_on_update", update_keys)
+-- GOOD: poll on a path that still runs while dead + reset on lifecycle
+CreateTimeEvent("dogma_input", "tick", 0, function()
+	update_keys()
+	return false
+end)
 RegisterScriptCallback("on_game_load", reset_keys)
 RegisterScriptCallback("main_menu_on_init", reset_keys)
 ```

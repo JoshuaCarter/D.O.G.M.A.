@@ -2,8 +2,8 @@
 	Sole owner of neutral weapon/armor scoring math (dmg columns, DPS, burst, spread).
 
 	Callers gather inputs (LTX fields + reload_s from motions), then call:
-	  dogma_item_stats.weapon_calculate(input)
-	  dogma_item_stats.armor_calculate(input)
+	  dogma.item_stats.weapon_calculate(input)
+	  dogma.item_stats.armor_calculate(input)
 
 	SALE (lupa) and any in-game scorer must use these — do not reimplement.
 	Weapon tooltips keep a richer live damage table (barrel/silencer/condition/diff);
@@ -539,7 +539,7 @@ local function armor_input_from_ini(sec)
 	}
 end
 
-_G.dogma_item_stats = {
+exports = {
 	TORSO_TIERS = TORSO_TIERS,
 	PROT_KEYS = PROT_KEYS,
 	DEFAULT_DIST = DEFAULT_DIST,

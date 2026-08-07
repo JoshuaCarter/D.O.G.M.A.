@@ -5,7 +5,6 @@
 ]]
 
 local CONFIG = _G.dogma_tweaks_nvg_sticks_after_load_conf
-local DOGMA
 
 local want_on = false
 
@@ -34,7 +33,7 @@ local function restore()
 end
 
 function on_game_start()
-	DOGMA = dogma_common.load(CONFIG.MOD_ID)
+	dogma.load(CONFIG.MOD_ID)
 	RegisterScriptCallback("on_level_changing", stash)
 	RegisterScriptCallback("actor_on_first_update", restore)
 	if USE_MARSHAL then

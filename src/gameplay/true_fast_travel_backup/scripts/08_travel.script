@@ -355,8 +355,7 @@ update_debug_overlay = function()
     local cfg = _G.tft_config
     if not (cfg and cfg.debug_overlay) then return end
     local ok, err = pcall(function()
-        local tft_dogma = _G.tft and _G.tft.dogma
-        if not (tft_dogma and tft_dogma.dbg and tft_dogma.dbg.overlay) then return end
+            if not (dogma and dogma.dbg and dogma.dbg.overlay) then return end
         if not get_hud then return end
 
         local msg
@@ -374,7 +373,7 @@ update_debug_overlay = function()
         end
         if tft._debug_overlay_msg == msg then return end
         tft._debug_overlay_msg = msg
-        tft_dogma.dbg.overlay("dogma/gameplay/true_fast_travel", 1, msg, "orange")
+        dogma.dbg.overlay("dogma/gameplay/true_fast_travel", 1, msg, "orange")
     end)
     if not ok then
         tft_log("debug overlay error: %s", tostring(err))

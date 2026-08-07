@@ -13,7 +13,7 @@ from .diaglog import get_logger
 log = get_logger("lua_calc")
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_LUA_PATH = _REPO_ROOT / "src" / "_common" / "scripts" / "dogma_item_stats.script"
+_LUA_PATH = _REPO_ROOT / "src" / "_common" / "scripts" / "__dogma_item_stats.script"
 
 _runtime = None
 _mod = None
@@ -74,13 +74,13 @@ def _module():
     try:
         _runtime = LuaRuntime(unpack_returned_tuples=True)
         _runtime.execute(_LUA_PATH.read_text(encoding="utf-8"))
-        _mod = _runtime.globals().dogma_item_stats
+        _mod = _runtime.globals().exports
         if _mod is None:
-            raise RuntimeError("dogma_item_stats not registered on _G")
+            raise RuntimeError("__dogma_item_stats.exports not registered")
         log.info("loaded %s via lupa", _LUA_PATH.name)
         return _mod
     except Exception as exc:  # noqa: BLE001
-        log.exception("failed to load dogma_item_stats via lupa: %s", exc)
+        log.exception("failed to load __dogma_item_stats via lupa: %s", exc)
         _failed = True
         _runtime = None
         _mod = None

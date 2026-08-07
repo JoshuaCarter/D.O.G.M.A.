@@ -10,7 +10,6 @@
 ]]
 
 local CONFIG = _G.dogma_items_disassemble_conf
-local DOGMA
 local TIER_MIN = 1
 local TIER_MAX = 5
 -- 	  TIER_COST_1 = 0
@@ -49,11 +48,11 @@ local menu_disassembly_wrapper = nil
 local disassembly_item_wrapper = nil
 
 local function log(msg)
-	if not (DOGMA and DOGMA.dbg) then
+	if not (dogma.dbg) then
 		return
 	end
 	if CONFIG.loaded.attach_debug_log then
-		DOGMA.dbg.log(CONFIG.MOD_ID, tostring(msg))
+		dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
 	end
 end
 
@@ -495,9 +494,9 @@ local function apply_patches()
 end
 
 local function on_option_change()
-	CONFIG.loaded.attachments_enabled = DOGMA.mcm.bool(CONFIG.MOD_ID, "attachments_enabled")
+	CONFIG.loaded.attachments_enabled = dogma.mcm.bool(CONFIG.MOD_ID, "attachments_enabled")
 	CONFIG.loaded.attach_enabled = CONFIG.loaded.attachments_enabled
-	CONFIG.loaded.attach_debug_log = DOGMA.dbg.logging()
+	CONFIG.loaded.attach_debug_log = dogma.dbg.logging()
 	log(string.format(
 		"attachments: enabled=%s menu_patched=%s item_patched=%s",
 		tostring(CONFIG.loaded.attach_enabled),
@@ -507,7 +506,7 @@ local function on_option_change()
 end
 
 function on_game_start()
-	DOGMA = CONFIG:ensure_dogma()
+	CONFIG:ensure_dogma()
 	load_price_ini()
 	on_option_change()
 	apply_patches()

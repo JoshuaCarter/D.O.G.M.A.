@@ -10,7 +10,6 @@
 ]]
 
 local CONFIG = _G.dogma_hud_stalker_id_conf
-local DOGMA
 
 local UI_WIDTH = 1024
 local UI_CENTER_X = UI_WIDTH * 0.5
@@ -62,7 +61,7 @@ local function pct_to_byte(pct, fade_mul)
 end
 
 local function on_option_change()
-	local m = DOGMA.mcm
+	local m = dogma.mcm
 	local id = CONFIG.MOD_ID
 	CONFIG.loaded.dead_id = m.bool(id, "dead_id")
 	CONFIG.loaded.name_id = m.bool(id, "name_id")
@@ -479,7 +478,7 @@ function GUI_on_show(gui, str2)
 end
 
 function on_game_start()
-	DOGMA = dogma_common.load(CONFIG.MOD_ID)
+	dogma.load(CONFIG.MOD_ID)
 	zombified_text = game.translate_string("ui_dogma_hud_stalker_id_zombified")
 	on_option_change()
 

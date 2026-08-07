@@ -7,7 +7,6 @@
 ]]
 
 local CONFIG = _G.dogma_gameplay_true_prone_conf
-local DOGMA
 
 local POSTURES = {
 	STAND 	= "stand",
@@ -44,35 +43,35 @@ end
 
 -- HUD-only: for values that change every frame (height/posture/crouch/slow/motion).
 local function overlay(log_type, msg)
-	if not (DOGMA and DOGMA.dbg) then
+	if not (dogma.dbg) then
 		return
 	end
 	if CONFIG.loaded.debug_overlay then
 		local slot = log_type or LOG.LIFECYCLE
-		DOGMA.dbg.overlay(CONFIG.MOD_ID, slot.order, tostring(msg), slot.color)
+		dogma.dbg.overlay(CONFIG.MOD_ID, slot.order, tostring(msg), slot.color)
 	end
 end
 
 -- File-only: for one-off/lifecycle and state-transition events worth keeping in the log.
 local function log(msg)
-	if not (DOGMA and DOGMA.dbg) then
+	if not (dogma.dbg) then
 		return
 	end
 	if CONFIG.loaded.debug_log then
-		DOGMA.dbg.log(CONFIG.MOD_ID, tostring(msg))
+		dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
 	end
 end
 
 local function on_option_change()
 	CONFIG.loaded.enabled = true
-	CONFIG.loaded.debug_log = DOGMA.dbg.logging()
-	CONFIG.loaded.debug_overlay = DOGMA.dbg.overlay_enabled()
-	CONFIG.loaded.hide_prone_bones = DOGMA.mcm.bool(CONFIG.MOD_ID, "hide_prone_bones")
-	CONFIG.loaded.prone_damage_mult = DOGMA.mcm.number(CONFIG.MOD_ID, "prone_damage_mult")
+	CONFIG.loaded.debug_log = dogma.dbg.logging()
+	CONFIG.loaded.debug_overlay = dogma.dbg.overlay_enabled()
+	CONFIG.loaded.hide_prone_bones = dogma.mcm.bool(CONFIG.MOD_ID, "hide_prone_bones")
+	CONFIG.loaded.prone_damage_mult = dogma.mcm.number(CONFIG.MOD_ID, "prone_damage_mult")
 	blend_move_anims = console_bool("blend_move_anims")
-	DOGMA.dbg.set_enabled(CONFIG.MOD_ID, DOGMA.dbg.overlay_enabled())
+	dogma.dbg.set_enabled(CONFIG.MOD_ID, dogma.dbg.overlay_enabled())
 
-	local actor = DOGMA.sys.ready(CONFIG.MOD_ID, db)
+	local actor = dogma.sys.ready(CONFIG.MOD_ID, db)
 	if actor and actor:alive() then
 		if CONFIG.loaded.hide_prone_bones then
 			set_prone_bones_visible(actor, not is_prone)
@@ -116,7 +115,7 @@ end
 
 local function on_actor_on_update()
 	local tostr = tostring
-	local actor = DOGMA.sys.ready(CONFIG.MOD_ID, db, on_option_change)
+	local actor = dogma.sys.ready(CONFIG.MOD_ID, db, on_option_change)
 	if not actor then
 		return
 	end
@@ -245,7 +244,7 @@ local function on_actor_on_update()
 end
 
 local function on_actor_on_before_hit(shit, bone_id, flags)
-	if not DOGMA.sys.ready(CONFIG.MOD_ID, db) then
+	if not dogma.sys.ready(CONFIG.MOD_ID, db) then
 		return
 	end
 	if not CONFIG.loaded.enabled then
@@ -264,7 +263,7 @@ local function on_actor_on_before_hit(shit, bone_id, flags)
 end
 
 function on_game_start()
-	DOGMA = dogma_common.load(CONFIG.MOD_ID)
+	dogma.load(CONFIG.MOD_ID)
 	blend_move_anims = console_bool("blend_move_anims")
 
 	is_prone = nil

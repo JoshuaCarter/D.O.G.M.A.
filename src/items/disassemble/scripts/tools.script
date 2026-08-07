@@ -10,22 +10,21 @@
 ]]
 
 local CONFIG = _G.dogma_items_disassemble_conf
-local DOGMA
 local orig_get_suitable_dtool = nil
 local orig_func_disassembly = nil
 
 local function log(msg)
-	if not (DOGMA and DOGMA.dbg) then
+	if not (dogma.dbg) then
 		return
 	end
 	if CONFIG.loaded.debug_log then
-		DOGMA.dbg.log(CONFIG.MOD_ID, tostring(msg))
+		dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
 	end
 end
 
 local function on_option_change()
-	CONFIG.loaded.tools_enabled = DOGMA.mcm.bool(CONFIG.MOD_ID, "tools_enabled")
-	CONFIG.loaded.debug_log = DOGMA.dbg.logging()
+	CONFIG.loaded.tools_enabled = dogma.mcm.bool(CONFIG.MOD_ID, "tools_enabled")
+	CONFIG.loaded.debug_log = dogma.dbg.logging()
 end
 
 local function redirect_to_lowest_stack(obj_d, note)
@@ -130,7 +129,7 @@ local function optimal_func_disassembly(obj, obj_d)
 end
 
 function on_game_start()
-	DOGMA = CONFIG:ensure_dogma()
+	CONFIG:ensure_dogma()
 
 	on_option_change()
 

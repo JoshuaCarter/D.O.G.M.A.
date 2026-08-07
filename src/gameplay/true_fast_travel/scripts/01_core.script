@@ -59,9 +59,9 @@ for key, value in pairs(defaults) do
 end
 local tft = _G.tft
 
--- tft_* aliases → xconst (dogma_xlibs binds on first field access).
-_G.tft_invalid_lvid = dogma_xlibs.xconst.INVALID_LEVEL_VERTEX_ID
-_G.tft_invalid_gvid = dogma_xlibs.xconst.INVALID_GAME_VERTEX_ID
+-- tft_* aliases → xconst (dogma.xlibs binds on first field access).
+_G.tft_invalid_lvid = dogma.xlibs.xconst.INVALID_LEVEL_VERTEX_ID
+_G.tft_invalid_gvid = dogma.xlibs.xconst.INVALID_GAME_VERTEX_ID
 _G.tft_travel_max_alife_graph_drift = 100
 _G.tft_travel_max_click_drift = 150
 
@@ -156,9 +156,8 @@ end
 local function log(fmt, ...)
 	local cfg = _G.tft_config
 	if not (cfg and cfg.debug_log) then return end
-	local tft_dogma = _G.tft and _G.tft.dogma
-	if tft_dogma and tft_dogma.dbg then
-		tft_dogma.dbg.log("dogma/gameplay/true_fast_travel", format_msg(fmt, ...))
+	if dogma and dogma.dbg then
+		dogma.dbg.log("dogma/gameplay/true_fast_travel", format_msg(fmt, ...))
 	end
 end
 
@@ -167,9 +166,8 @@ local function path_road_log(fmt, ...)
 end
 
 local function log_error(fmt, ...)
-	local tft_dogma = _G.tft and _G.tft.dogma
-	if tft_dogma and tft_dogma.dbg then
-		tft_dogma.dbg.log("dogma/gameplay/true_fast_travel", "[ERROR] " .. format_msg(fmt, ...))
+	if dogma and dogma.dbg then
+		dogma.dbg.log("dogma/gameplay/true_fast_travel", "[ERROR] " .. format_msg(fmt, ...))
 	end
 end
 

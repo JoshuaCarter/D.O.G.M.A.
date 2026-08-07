@@ -11,7 +11,7 @@ local tft = _G.tft
 -- abort_journey are the only two functions here any other DFT script calls, so they
 -- alone stay bare globals (see the publish block at the end of this file). on_game_start
 -- is NOT in this list - X-Ray calls it directly per-file at boot (see
--- dogma_common_f575cc9b.script's header comment), so it must stay a real bare top-level
+-- _dogma_f575cc9b.script's header comment), so it must stay a real bare top-level
 -- function, never a local, even though no other DFT script calls it by name.
 local actor_on_before_hit, on_option_change,
     on_loading_screen_dismissed, on_loading_screen_key_prompt, actor_on_first_update, menu_item_is_ours,
@@ -23,8 +23,7 @@ local actor_on_before_hit, on_option_change,
 -- 2. Configuration
 -- ============================================================
 local function load_config()
-    local dogma = tft and tft.dogma
-    local mcm = dogma and dogma.mcm
+    local mcm = dogma.mcm
     if not mcm then
         return
     end
@@ -74,11 +73,10 @@ local function load_config()
 end
 
 refresh_active_config = function()
-    local dogma = tft and tft.dogma
     local msg_dur = 4
     local pause_stop = true
     local pause_done = true
-    if dogma and dogma.mcm then
+    if dogma.mcm then
         msg_dur = dogma.mcm.number(CONFIG.MOD_ID, "screen_msg_duration", CONFIG.DEFAULTS["screen_msg_duration"] or 4)
         pause_stop = dogma.mcm.bool(CONFIG.MOD_ID, "pause_on_stop")
         pause_done = dogma.mcm.bool(CONFIG.MOD_ID, "pause_on_done")
@@ -143,7 +141,7 @@ function on_game_start()
             printf("[dogma_gameplay_true_fast_travel] FATAL: core module failed to publish _G.tft")
             return
         end
-        tft.dogma = dogma_common.load(CONFIG.MOD_ID)
+        dogma.load(CONFIG.MOD_ID)
         load_config()
         tft_log("Starting on_game_start registration...")
         tft_build_level_names_registry()
@@ -790,7 +788,7 @@ on_key_press = function(_key)
 end
 
 local function poll_tft_keys()
-    local inp = tft.dogma and tft.dogma.input
+    local inp = dogma.input
     if not inp then
         return
     end

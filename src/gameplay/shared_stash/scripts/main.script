@@ -7,7 +7,6 @@
 
 local CONFIG = _G.dogma_gameplay_shared_stash_conf
 local MOD_ID = CONFIG.MOD_ID
-local DOGMA
 
 local BASE_WEIGHT = CONFIG.BASE_WEIGHT
 local WORKSHOP_SECTION = CONFIG.WORKSHOP_SECTION
@@ -23,16 +22,16 @@ local weight_tick = 0
 local WEIGHT_INTERVAL_MS = 500
 
 local function log(msg)
-	if DOGMA and DOGMA.dbg and DOGMA.dbg.logging() then
-		DOGMA.dbg.log(MOD_ID, tostring(msg))
+	if dogma.dbg and dogma.dbg.logging() then
+		dogma.dbg.log(MOD_ID, tostring(msg))
 	end
 end
 
 local function on_option_change()
-	if not (DOGMA and DOGMA.mcm) then
+	if not (dogma.mcm) then
 		return
 	end
-	CONFIG.loaded.one_per_level = DOGMA.mcm.bool(MOD_ID, "one_per_level")
+	CONFIG.loaded.one_per_level = dogma.mcm.bool(MOD_ID, "one_per_level")
 end
 
 local function m_state()
@@ -236,7 +235,7 @@ local function update_carry_weight()
 end
 
 local function on_actor_update()
-	if not (DOGMA and DOGMA.sys and DOGMA.sys.ready(MOD_ID, db)) then
+	if not (dogma.sys and dogma.sys.ready(MOD_ID, db)) then
 		return
 	end
 	try_hook_place()
@@ -288,7 +287,7 @@ local function on_game_load()
 end
 
 function on_game_start()
-	DOGMA = dogma_common.load(MOD_ID)
+	dogma.load(MOD_ID)
 	on_option_change()
 	RegisterScriptCallback("actor_on_update", on_actor_update)
 	RegisterScriptCallback("on_game_load", on_game_load)

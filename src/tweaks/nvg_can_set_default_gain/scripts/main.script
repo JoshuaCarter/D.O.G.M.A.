@@ -5,7 +5,6 @@
 ]]
 
 local CONFIG = _G.dogma_tweaks_nvg_can_set_default_gain_conf
-local DOGMA
 
 -- Beef: step_size = (max-min)/3 → rungs 0..3.
 local BEEF_GAIN_DIV = 3
@@ -101,7 +100,7 @@ local function on_option_change()
 end
 
 function on_game_start()
-	DOGMA = dogma_common.load(CONFIG.MOD_ID)
+	dogma.load(CONFIG.MOD_ID)
 	RegisterScriptCallback("actor_on_first_update", apply_default_gain)
 	RegisterScriptCallback("on_option_change", on_option_change)
 	apply_default_gain()

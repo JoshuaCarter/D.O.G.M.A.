@@ -8,7 +8,6 @@
 ]]
 
 local CONFIG = _G.dogma_gameplay_death_spectator_conf
-local DOGMA
 
 local HIT_WINDOW_MS = 30000
 local HIT_CAP = 10
@@ -93,8 +92,8 @@ local DIED_LIMBS = {
 }
 
 local function log(msg)
-	if DOGMA and DOGMA.dbg and CONFIG.loaded.debug_log then
-		DOGMA.dbg.log(CONFIG.MOD_ID, tostring(msg))
+	if dogma.dbg and CONFIG.loaded.debug_log then
+		dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
 	end
 end
 
@@ -905,8 +904,8 @@ local function reset_state()
 end
 
 local function on_option_change()
-	CONFIG.loaded.enabled = DOGMA.mcm.bool(CONFIG.MOD_ID, "enabled")
-	CONFIG.loaded.debug_log = DOGMA.dbg.logging()
+	CONFIG.loaded.enabled = dogma.mcm.bool(CONFIG.MOD_ID, "enabled")
+	CONFIG.loaded.debug_log = dogma.dbg.logging()
 	if not CONFIG.loaded.enabled then
 		clear_death_ui()
 		awaiting_spectate = false
@@ -1091,7 +1090,7 @@ local function actor_on_first_update()
 end
 
 function on_game_start()
-	DOGMA = dogma_common.load(CONFIG.MOD_ID)
+	dogma.load(CONFIG.MOD_ID)
 	init_mitigation_labels()
 	wrap_adb_shit_booster()
 	on_option_change()

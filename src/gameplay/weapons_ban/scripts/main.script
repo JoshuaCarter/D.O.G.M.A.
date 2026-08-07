@@ -11,7 +11,6 @@
 local CONFIG = _G.dogma_gameplay_weapons_ban_conf
 local MOD_ID = CONFIG.MOD_ID
 local Tiers
-local DOGMA
 
 local original_set_random_stash
 local original_try_spawn_ammo
@@ -30,19 +29,19 @@ local ini_loadouts
 local function log(msg)
 	if Tiers and Tiers.log then
 		Tiers.log(msg)
-	elseif DOGMA and DOGMA.dbg and DOGMA.dbg.logging() then
-		DOGMA.dbg.log(MOD_ID, tostring(msg))
+	elseif dogma.dbg and dogma.dbg.logging() then
+		dogma.dbg.log(MOD_ID, tostring(msg))
 	end
 end
 
 local function on_option_change()
 	local L = CONFIG.loaded
 	local D = CONFIG.DEFAULTS
-	L.extra_start_ammo_mags = DOGMA.mcm.number(MOD_ID, "extra_start_ammo_mags", D.extra_start_ammo_mags)
+	L.extra_start_ammo_mags = dogma.mcm.number(MOD_ID, "extra_start_ammo_mags", D.extra_start_ammo_mags)
 	for _, cat in ipairs(CONFIG.CATS) do
 		for _, n in ipairs({ 2, 3, 4, 5 }) do
 			local key = cat .. "_tier_cost_" .. n
-			L[key] = DOGMA.mcm.number(MOD_ID, key, D[key])
+			L[key] = dogma.mcm.number(MOD_ID, key, D[key])
 		end
 	end
 	if Tiers and Tiers.rebuild then
@@ -100,7 +99,7 @@ local function mag_cap_for_weapon(wpn_sec)
 end
 
 local function give_extra_start_ammo()
-	if not (DOGMA and DOGMA.sys and DOGMA.sys.ready(MOD_ID, db, on_option_change)) then
+	if not (dogma.sys and dogma.sys.ready(MOD_ID, db, on_option_change)) then
 		return
 	end
 	local mags = math.floor((CONFIG.loaded.extra_start_ammo_mags or 0) + 0.5)
@@ -280,7 +279,7 @@ end
 
 local function patched_trade_update(npc, force_refresh)
 	original_trade_update(npc, force_refresh)
-	if not (DOGMA and DOGMA.sys and DOGMA.sys.ready(MOD_ID, db, on_option_change)) then
+	if not (dogma.sys and dogma.sys.ready(MOD_ID, db, on_option_change)) then
 		return
 	end
 	if not npc then
@@ -341,7 +340,7 @@ end
 local function patched_set_random_stash(no_spot, hint, bonus_items, id, dbg)
 	local result = original_set_random_stash(no_spot, hint, bonus_items, id, dbg)
 
-	if not (DOGMA and DOGMA.sys and DOGMA.sys.ready(MOD_ID, db, on_option_change)) then
+	if not (dogma.sys and dogma.sys.ready(MOD_ID, db, on_option_change)) then
 		return result
 	end
 	if not id then
@@ -468,7 +467,7 @@ end
 
 local function patched_try_spawn_ammo(npc)
 	original_try_spawn_ammo(npc)
-	if not (DOGMA and DOGMA.sys and DOGMA.sys.ready(MOD_ID, db, on_option_change)) then
+	if not (dogma.sys and dogma.sys.ready(MOD_ID, db, on_option_change)) then
 		return
 	end
 	if not npc then
@@ -550,8 +549,8 @@ end
 
 function on_game_start()
 	Tiers = _G.dogma_gameplay_weapons_ban_tiers
-	DOGMA = dogma_common.load(MOD_ID)
-	CONFIG.DOGMA = DOGMA
+	dogma.load(MOD_ID)
+	
 	RegisterScriptCallback("on_option_change", on_option_change)
 	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
 	on_option_change()

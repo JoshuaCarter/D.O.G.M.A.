@@ -9,8 +9,7 @@
 ]]
 
 local CONFIG = _G.dogma_tweaks_opaque_bushes_conf
-local DOGMA
-local INVALID_LVID = dogma_xlibs.xconst.INVALID_LEVEL_VERTEX_ID
+local INVALID_LVID = dogma.xlibs.xconst.INVALID_LEVEL_VERTEX_ID
 
 local RQT_STATIC = 2
 local CHECK_RANGE = 80
@@ -29,8 +28,8 @@ local last_check = 0
 local dirs -- plain {x,y,z} tables; converted to vectors per probe
 
 local function log(msg)
-	if DOGMA and DOGMA.dbg and DOGMA.dbg.logging and DOGMA.dbg.logging() then
-		DOGMA.dbg.log(CONFIG.MOD_ID, tostring(msg))
+	if dogma.dbg and dogma.dbg.logging and dogma.dbg.logging() then
+		dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
 	end
 end
 
@@ -404,7 +403,7 @@ function on_game_start()
 	if not CONFIG then
 		return
 	end
-	DOGMA = dogma_common.load(CONFIG.MOD_ID)
+	dogma.load(CONFIG.MOD_ID)
 	RegisterScriptCallback("actor_on_update", tick)
 	log("foliage tweak started")
 end

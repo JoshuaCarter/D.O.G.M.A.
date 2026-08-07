@@ -14,23 +14,22 @@ local MODE_TO_KIND = {
 	[4] = "loot",
 }
 
-local DOGMA
 
 local function log(msg)
-	if not (DOGMA and DOGMA.dbg) then
+	if not (dogma.dbg) then
 		return
 	end
 	if CONFIG.loaded.debug_log then
-		DOGMA.dbg.log(CONFIG.MOD_ID, tostring(msg))
+		dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
 	end
 end
 
 local function on_option_change()
 	local tostr = tostring
-	CONFIG.loaded.after_inventory = DOGMA.mcm.bool(CONFIG.MOD_ID, "after_inventory")
-	CONFIG.loaded.after_loot = DOGMA.mcm.bool(CONFIG.MOD_ID, "after_loot")
-	CONFIG.loaded.after_teleport = DOGMA.mcm.bool(CONFIG.MOD_ID, "after_teleport")
-	CONFIG.loaded.debug_log = DOGMA.dbg.logging()
+	CONFIG.loaded.after_inventory = dogma.mcm.bool(CONFIG.MOD_ID, "after_inventory")
+	CONFIG.loaded.after_loot = dogma.mcm.bool(CONFIG.MOD_ID, "after_loot")
+	CONFIG.loaded.after_teleport = dogma.mcm.bool(CONFIG.MOD_ID, "after_teleport")
+	CONFIG.loaded.debug_log = dogma.dbg.logging()
 	log(string.format(
 		"config: inventory=%s loot=%s teleport=%s debug=%s",
 		tostr(CONFIG.loaded.after_inventory), tostr(CONFIG.loaded.after_loot),
@@ -216,14 +215,14 @@ local function log_active_slot_transitions()
 end
 
 local function on_actor_on_update()
-	if not DOGMA.sys.ready(CONFIG.MOD_ID, db, on_option_change) or not db.actor then
+	if not dogma.sys.ready(CONFIG.MOD_ID, db, on_option_change) or not db.actor then
 		return
 	end
 
 	patch_actor_menu()
 	log_active_slot_transitions()
 
-	local inp = DOGMA.input
+	local inp = dogma.input
 	local inv_dik = bind_to_dik and key_bindings and bind_to_dik(key_bindings.kINVENTORY)
 	if inp and inv_dik and inv_dik >= 0 and inp.is_key_pressed(inv_dik) then
 		log(string.format("kINVENTORY pressed, active_slot=%s", tostring(db.actor:active_slot())))
@@ -275,12 +274,12 @@ local function on_actor_on_update()
 end
 
 function on_game_start()
-	DOGMA = dogma_common.load(CONFIG.MOD_ID)
+	dogma.load(CONFIG.MOD_ID)
 
 	-- Not gated by CONFIG.loaded.debug_log: at this point MCM options haven't been
 	-- read yet (that happens later via on_option_change), so the gate would
 	-- always be closed here regardless of the user's actual setting.
-	DOGMA.dbg.log(CONFIG.MOD_ID, "on_game_start: mod loaded")
+	dogma.dbg.log(CONFIG.MOD_ID, "on_game_start: mod loaded")
 
 	on_option_change()
 

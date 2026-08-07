@@ -6,19 +6,18 @@
 ]]
 
 local CONFIG = _G.dogma_tweaks_dodge_pseudogiant_slam_if_airborne_conf
-local DOGMA
 
 local HOOK_STATE = _G.__dogma_pseudogiant_slam_hooks or {}
 _G.__dogma_pseudogiant_slam_hooks = HOOK_STATE
 
 local function log(msg)
-	if DOGMA and DOGMA.dbg then
-		DOGMA.dbg.log(CONFIG.MOD_ID, tostring(msg))
+	if dogma.dbg then
+		dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
 	end
 end
 
 function on_game_start()
-	DOGMA = dogma_common.load(CONFIG.MOD_ID)
+	dogma.load(CONFIG.MOD_ID)
 
 	if HOOK_STATE.grok then
 		return

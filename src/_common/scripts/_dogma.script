@@ -1,0 +1,31 @@
+--[[
+	_dogma.script - sole public entry for DOGMA common (early load after __dogma_*).
+
+	Features use the friendly global dogma (aliased below):
+	  dogma.load(mod_id)
+	  dogma.mcm / .dbg / .sys / .keys / .input / .xlibs / …
+	Never reference __dogma_* from feature scripts.
+]]
+
+mcm = __dogma_mcm
+dbg = __dogma_dbg
+sys = __dogma_sys
+keys = __dogma_key_mirror_mcm
+input = __dogma_input
+xlibs = __dogma_xlibs
+console_once = __dogma_console_once
+sfx_prefetch = __dogma_sfx_prefetch
+item_stats = __dogma_item_stats.exports
+
+-- Friendly name for call sites (module is still _dogma from the filename).
+_G.dogma = _dogma
+
+--- Wire sys→mcm/dbg; optionally reset per-mod debug state.
+function load(mod_id)
+	sys.set_deps(mcm, dbg)
+	if mod_id then
+		sys.reset_mod(mod_id)
+		dbg.clear_source(mod_id)
+	end
+	return _dogma
+end

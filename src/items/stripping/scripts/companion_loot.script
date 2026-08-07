@@ -6,7 +6,6 @@
 ]]
 
 local CONFIG = _G.dogma_items_stripping_conf
-local DOGMA
 local ACTOR_SOURCE_BAGS = {
 	[EDDListType.iActorBag] = true,
 	[EDDListType.iActorSlot] = true,
@@ -14,16 +13,16 @@ local ACTOR_SOURCE_BAGS = {
 }
 
 local function log(msg)
-	if not (DOGMA and DOGMA.dbg) then
+	if not (dogma.dbg) then
 		return
 	end
 	if CONFIG.loaded.debug_log then
-		DOGMA.dbg.log(CONFIG.MOD_ID, tostring(msg))
+		dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
 	end
 end
 
 local function on_option_change()
-	CONFIG.loaded.block_special_items = DOGMA.mcm.bool(CONFIG.MOD_ID, "block_companion_special_items")
+	CONFIG.loaded.block_special_items = dogma.mcm.bool(CONFIG.MOD_ID, "block_companion_special_items")
 	log(string.format("companion loot: block_special_items=%s", tostring(CONFIG.loaded.block_special_items)))
 end
 
@@ -98,7 +97,7 @@ local function on_item_before_move(flags, npc_id, obj, mode, bag)
 end
 
 function on_game_start()
-	DOGMA = CONFIG:ensure_dogma()
+	CONFIG:ensure_dogma()
 	RegisterScriptCallback("on_option_change", on_option_change)
 	RegisterScriptCallback("ActorMenu_on_item_before_move", on_item_before_move)
 	on_option_change()

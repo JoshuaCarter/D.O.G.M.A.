@@ -15,7 +15,6 @@
 ]]
 
 local CONFIG = _G.dogma_hud_bhs_on_damage_conf
-local DOGMA
 
 local FADE_MS = 500
 local FLAG = "__dogma_bhs_on_damage"
@@ -422,8 +421,8 @@ end
 
 local function refresh_sec()
 	local sec = CONFIG and CONFIG.DEFAULTS and CONFIG.DEFAULTS.sec or 3
-	if DOGMA and DOGMA.mcm then
-		sec = DOGMA.mcm.number(CONFIG.MOD_ID, "sec", sec)
+	if dogma.mcm then
+		sec = dogma.mcm.number(CONFIG.MOD_ID, "sec", sec)
 	end
 	sec = tonumber(sec) or 0
 	if sec < 0 then
@@ -671,10 +670,8 @@ local function on_option_change()
 end
 
 function on_game_start()
-	if dogma_common and dogma_common.load and CONFIG then
-		DOGMA = dogma_common.load(CONFIG.MOD_ID)
-	else
-		DOGMA = _G.DOGMA
+	if CONFIG then
+		dogma.load(CONFIG.MOD_ID)
 	end
 	refresh_sec()
 	apply()

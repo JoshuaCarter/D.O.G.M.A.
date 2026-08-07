@@ -20,7 +20,6 @@
 ]]
 
 local CONFIG = _G.dogma_controls_pose_controls_conf
-local DOGMA
 
 local POSE = {
 	STAND = "stand",
@@ -57,7 +56,7 @@ local ENGINE_BINDS = {
 	walk = {
 		action = CONFIG.BINDS.walk.action,
 		bind = function()
-			return dogma_key_mirror_mcm.bind_kb(CONFIG.BINDS.walk.kb)
+			return dogma.keys.bind_kb(CONFIG.BINDS.walk.kb)
 		end,
 		mcm = "walk_key",
 	},
@@ -66,21 +65,21 @@ local ENGINE_BINDS = {
 local TOGGLE_CMDS = { "g_crouch_toggle", "g_walk_toggle", "g_sprint_toggle" }
 
 local function log(msg)
-	if not (DOGMA and DOGMA.dbg) then
+	if not (dogma.dbg) then
 		return
 	end
 	if CONFIG.loaded.debug_log then
-		DOGMA.dbg.log(CONFIG.MOD_ID, tostring(msg))
+		dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
 	end
 end
 
 local function overlay(log_type, msg)
-	if not (DOGMA and DOGMA.dbg) then
+	if not (dogma.dbg) then
 		return
 	end
 	if CONFIG.loaded.debug_overlay then
 		local slot = log_type or LOG.POSE
-		DOGMA.dbg.overlay(CONFIG.MOD_ID, slot.order, tostring(msg), slot.color)
+		dogma.dbg.overlay(CONFIG.MOD_ID, slot.order, tostring(msg), slot.color)
 	end
 end
 
@@ -121,7 +120,7 @@ local function passthrough_scripted_pose_pulse()
 	return false
 end
 
--- DIK -> console bind token handled by dogma_key_mirror_mcm (via dogma_mcm).
+-- DIK -> console bind token handled by dogma.keys (via dogma.mcm).
 -- main only reads engine binds.
 local function engine_bind_dik(kb)
 	local bind = kb.bind()
@@ -160,10 +159,10 @@ end
 local function on_option_change()
 	CONFIG.loaded.enabled = true
 	-- Promote legacy MCM-only walk DIK into Controls if unbound.
-	dogma_mcm.migrate_key_to_mirror(CONFIG.MOD_ID, "walk_key", CONFIG.BINDS.walk)
-	CONFIG.loaded.debug_log = DOGMA.dbg.logging()
-	CONFIG.loaded.debug_overlay = DOGMA.dbg.overlay_enabled()
-	DOGMA.dbg.set_enabled(CONFIG.MOD_ID, DOGMA.dbg.overlay_enabled())
+	dogma.mcm.migrate_key_to_mirror(CONFIG.MOD_ID, "walk_key", CONFIG.BINDS.walk)
+	CONFIG.loaded.debug_log = dogma.dbg.logging()
+	CONFIG.loaded.debug_overlay = dogma.dbg.overlay_enabled()
+	dogma.dbg.set_enabled(CONFIG.MOD_ID, dogma.dbg.overlay_enabled())
 	-- Always refresh mirrored CONFIG.loaded from Controls (MCM curr already wrote
 	-- Accept changes into the engine).
 	sync_mirrored_controls()
@@ -171,7 +170,7 @@ end
 
 -- Keys need a free HUD. Pending pose steps may finish during loot UI.
 local function actor_can_change_pose()
-	if not DOGMA.sys.ready(CONFIG.MOD_ID, db, on_option_change) then
+	if not dogma.sys.ready(CONFIG.MOD_ID, db, on_option_change) then
 		return false
 	end
 	if device():is_paused() then
@@ -190,7 +189,7 @@ local function input_allowed()
 end
 
 local function is_walk_bind(bind)
-	local walk = dogma_key_mirror_mcm.bind_kb(CONFIG.BINDS.walk.kb)
+	local walk = dogma.keys.bind_kb(CONFIG.BINDS.walk.kb)
 	return walk and bind == walk
 end
 
@@ -408,11 +407,11 @@ local function on_before_key_release(key, bind, _dis, flags)
 end
 
 local function on_actor_on_first_update()
-	DOGMA.sys.ready(CONFIG.MOD_ID, db, on_option_change)
+	dogma.sys.ready(CONFIG.MOD_ID, db, on_option_change)
 end
 
 local function on_actor_on_update()
-	if not DOGMA.sys.ready(CONFIG.MOD_ID, db, on_option_change) then
+	if not dogma.sys.ready(CONFIG.MOD_ID, db, on_option_change) then
 		return
 	end
 
@@ -429,7 +428,7 @@ local function on_actor_on_update()
 end
 
 function on_game_start()
-	DOGMA = dogma_common.load(CONFIG.MOD_ID)
+	dogma.load(CONFIG.MOD_ID)
 
 	RegisterScriptCallback("on_before_key_press", on_before_key_press)
 	RegisterScriptCallback("on_before_key_hold", on_before_key_hold)

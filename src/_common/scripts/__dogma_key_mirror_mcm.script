@@ -284,7 +284,7 @@ function migrate(mod_id, mcm_key, mirror, opts)
 	end
 	migrated[stamp] = true
 
-	local dik = dogma_mcm.key(mod_id, mcm_key)
+	local dik = __dogma_mcm.key(mod_id, mcm_key)
 	if not dik then
 		return
 	end
@@ -312,4 +312,3 @@ end
 function on_mcm_load(_options)
 end
 
-_G.dogma_key_mirror_mcm = _G._dogma_key_mirror_mcm

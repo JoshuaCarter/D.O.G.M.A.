@@ -4,8 +4,8 @@
 	xlibs is a separate MO2 mod (common requires it). First field access binds;
 	call sites use one line:
 
-		dogma_xlibs.xconst.INVALID_LEVEL_VERTEX_ID
-		dogma_xlibs.xlevel.get_level_id(se)
+		dogma.xlibs.xconst.INVALID_LEVEL_VERTEX_ID
+		dogma.xlibs.xlevel.get_level_id(se)
 ]]
 
 local MIN_VERSION = "1.8.4"
@@ -60,7 +60,7 @@ end
 
 --- Optional explicit bind; usually unnecessary (field access binds).
 function get()
-	local self = rawget(_G, "_dogma_xlibs") or rawget(_G, "dogma_xlibs")
+	local self = rawget(_G, "__dogma_xlibs")
 	bind(self)
 	return self
 end
@@ -69,7 +69,7 @@ function min_version()
 	return MIN_VERSION
 end
 
--- Lazy bind: dogma_xlibs.xconst → bind once, then return module.
+-- Lazy bind: __dogma_xlibs.xconst → bind once, then return module.
 setmetatable(getfenv(1), {
 	__index = function(t, k)
 		bind(t)
@@ -77,5 +77,3 @@ setmetatable(getfenv(1), {
 	end,
 })
 
--- Friendly name (file is _dogma_xlibs.script for early load order).
-_G.dogma_xlibs = _G._dogma_xlibs

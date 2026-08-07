@@ -6,16 +6,15 @@ local tft_config = _G.tft_config
 local tft = _G.tft
 
 local function load_config()
-	local dogma = tft and tft.dogma
-	tft_config.debug_overlay = (dogma and dogma.dbg and dogma.dbg.overlay_enabled and dogma.dbg.overlay_enabled()) or false
-	tft_config.debug_log = (dogma and dogma.dbg and dogma.dbg.logging and dogma.dbg.logging()) or false
+	tft_config.debug_overlay = (dogma.dbg and dogma.dbg.overlay_enabled and dogma.dbg.overlay_enabled()) or false
+	tft_config.debug_log = (dogma.dbg and dogma.dbg.logging and dogma.dbg.logging()) or false
 	tft_config.time_factor_travel = 2.0
 	tft_config.show_hud_during_travel = true
 	tft_config.path_preview = true
 	tft_config.visited_radius_m = (CONFIG and CONFIG.DEFAULTS and CONFIG.DEFAULTS.visited_radius_m) or 30
 	tft_config.screen_msg_duration = (CONFIG and CONFIG.DEFAULTS and CONFIG.DEFAULTS.screen_msg_duration) or 4
 
-	if dogma and dogma.dbg and dogma.dbg.set_enabled then
+	if dogma.dbg and dogma.dbg.set_enabled then
 		dogma.dbg.set_enabled(CONFIG.MOD_ID, dogma.dbg.overlay_enabled())
 	end
 end
@@ -198,7 +197,7 @@ local function on_game_load()
 end
 
 function on_game_start()
-	tft.dogma = DOGMA
+	dogma.load(CONFIG.MOD_ID)
 	load_config()
 	refresh_active_config()
 

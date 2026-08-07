@@ -1,12 +1,11 @@
 --[[
 	Inventory strip keybinds (press / hold + hold-paint On_Hover).
 	Burst work stays in main.script; this only queues via dogma_strip.
-	Input via DOGMA.input (polled from inventory Update).
+	Input via dogma.input (polled from inventory Update).
 ]]
 
 local CONFIG = _G.dogma_items_stripping_conf
 local MOD_ID = CONFIG.MOD_ID
-local DOGMA
 
 local MODE_PRESS = 0
 local MODE_HOLD = 2
@@ -35,13 +34,13 @@ local original_on_hover = nil
 local hover_wrapper = nil
 
 local function log(msg)
-	if DOGMA and DOGMA.dbg and DOGMA.dbg.logging() then
-		DOGMA.dbg.log(MOD_ID, tostring(msg))
+	if dogma.dbg and dogma.dbg.logging() then
+		dogma.dbg.log(MOD_ID, tostring(msg))
 	end
 end
 
 local function inp()
-	return DOGMA and DOGMA.input
+	return dogma.input
 end
 
 local function mod_ok(modifier)
@@ -65,16 +64,16 @@ local function on_option_change()
 	hold_state = {}
 	down_prev = {}
 	clear_paint()
-	local key = DOGMA.mcm.key(MOD_ID, "key")
+	local key = dogma.mcm.key(MOD_ID, "key")
 	if key then
-		local mode = math.floor(DOGMA.mcm.number(MOD_ID, "key_mode", 0) + 0.5)
+		local mode = math.floor(dogma.mcm.number(MOD_ID, "key_mode", 0) + 0.5)
 		if mode ~= MODE_HOLD then
 			mode = MODE_PRESS
 		end
 		BINDS[1] = {
 			id = "strip",
 			key = key,
-			modifier = math.floor(DOGMA.mcm.number(MOD_ID, "key_modifier", 0) + 0.5),
+			modifier = math.floor(dogma.mcm.number(MOD_ID, "key_modifier", 0) + 0.5),
 			mode = mode,
 			all_stacks = false,
 		}
@@ -251,14 +250,14 @@ local original_on_update = ui_inventory and ui_inventory.UIInventory and ui_inve
 if original_on_update then
 	function ui_inventory.UIInventory:Update()
 		original_on_update(self)
-		if DOGMA and DOGMA.sys and DOGMA.sys.ready(MOD_ID, db, on_option_change) then
+		if dogma.sys and dogma.sys.ready(MOD_ID, db, on_option_change) then
 			poll_binds(self)
 		end
 	end
 end
 
 function on_game_start()
-	DOGMA = dogma_common.load(MOD_ID)
+	dogma.load(MOD_ID)
 	RegisterScriptCallback("on_option_change", on_option_change)
 	RegisterScriptCallback("actor_on_first_update", reapply_on_hover_patch)
 	on_option_change()

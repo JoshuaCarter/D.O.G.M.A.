@@ -14,7 +14,6 @@
 
 local CONFIG = _G.dogma_gameplay_free_zoom_conf
 local ADS_MOD = "dogma/gameplay/ads_zoom"
-local DOGMA
 
 -- Lower FOV number = more zoom. nil = not requesting (other systems may read these).
 _G.dogma_fov_tgt_free = nil
@@ -164,11 +163,11 @@ local function clamp(n, lo, hi)
 end
 
 local function log(msg)
-	if not (DOGMA and DOGMA.dbg) then
+	if not (dogma.dbg) then
 		return
 	end
 	if CONFIG.loaded.debug_log then
-		DOGMA.dbg.log(CONFIG.MOD_ID, tostring(msg))
+		dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
 	end
 end
 
@@ -250,53 +249,53 @@ end
 
 local function refresh_config()
 	CONFIG.loaded.enabled = true
-	CONFIG.loaded.allow_during_sprint = DOGMA.mcm.bool(CONFIG.MOD_ID, "free_zoom/allow_during_sprint")
-	CONFIG.loaded.empty_hands_only = DOGMA.mcm.bool(CONFIG.MOD_ID, "free_zoom/empty_hands_only")
-	CONFIG.loaded.zoom_key = DOGMA.mcm.key(CONFIG.MOD_ID, "free_zoom/zoom_key")
-	CONFIG.loaded.zoom_key_modifier = DOGMA.mcm.number(CONFIG.MOD_ID, "free_zoom/zoom_key_modifier")
+	CONFIG.loaded.allow_during_sprint = dogma.mcm.bool(CONFIG.MOD_ID, "free_zoom/allow_during_sprint")
+	CONFIG.loaded.empty_hands_only = dogma.mcm.bool(CONFIG.MOD_ID, "free_zoom/empty_hands_only")
+	CONFIG.loaded.zoom_key = dogma.mcm.key(CONFIG.MOD_ID, "free_zoom/zoom_key")
+	CONFIG.loaded.zoom_key_modifier = dogma.mcm.number(CONFIG.MOD_ID, "free_zoom/zoom_key_modifier")
 	-- Legacy MCM: Hold was 3 when Long occupied 2. Double (1) maps to toggle.
-	local zoom_key_mode = math.floor((DOGMA.mcm.number(CONFIG.MOD_ID, "free_zoom/zoom_key_mode") or 0) + 0.5)
+	local zoom_key_mode = math.floor((dogma.mcm.number(CONFIG.MOD_ID, "free_zoom/zoom_key_mode") or 0) + 0.5)
 	if zoom_key_mode >= 2 then
 		zoom_key_mode = MODE_HOLD
 	else
 		zoom_key_mode = MODE_TOGGLE
 	end
 	CONFIG.loaded.zoom_key_mode = zoom_key_mode
-	CONFIG.loaded.rmb_zoom = DOGMA.mcm.number(CONFIG.MOD_ID, "free_zoom/rmb_zoom")
-	CONFIG.loaded.mmb_zoom = DOGMA.mcm.number(CONFIG.MOD_ID, "free_zoom/mmb_zoom")
-	CONFIG.loaded.scroll_wheel_zoom = DOGMA.mcm.bool(CONFIG.MOD_ID, "free_zoom/scroll_wheel_zoom")
-	CONFIG.loaded.scroll_wheel_reverse = DOGMA.mcm.bool(CONFIG.MOD_ID, "free_zoom/scroll_wheel_reverse")
-	CONFIG.loaded.scroll_wheel_steps = DOGMA.mcm.number(CONFIG.MOD_ID, "free_zoom/scroll_wheel_steps")
-	CONFIG.loaded.scroll_wheel_max_gap_ms = DOGMA.mcm.number(CONFIG.MOD_ID, "free_zoom/scroll_wheel_max_gap_ms")
-	CONFIG.loaded.free_zoom = clamp(DOGMA.mcm.number(CONFIG.MOD_ID, "free_zoom/free_zoom"), 0, 40)
-	CONFIG.loaded.move_speed = DOGMA.mcm.number(CONFIG.MOD_ID, "free_zoom/move_speed")
-	CONFIG.loaded.free_dof = DOGMA.mcm.bool(CONFIG.MOD_ID, "free_zoom/dof")
-	CONFIG.loaded.free_dof_intensity = clamp(DOGMA.mcm.number(CONFIG.MOD_ID, "free_zoom/dof_intensity"), 0, 1)
+	CONFIG.loaded.rmb_zoom = dogma.mcm.number(CONFIG.MOD_ID, "free_zoom/rmb_zoom")
+	CONFIG.loaded.mmb_zoom = dogma.mcm.number(CONFIG.MOD_ID, "free_zoom/mmb_zoom")
+	CONFIG.loaded.scroll_wheel_zoom = dogma.mcm.bool(CONFIG.MOD_ID, "free_zoom/scroll_wheel_zoom")
+	CONFIG.loaded.scroll_wheel_reverse = dogma.mcm.bool(CONFIG.MOD_ID, "free_zoom/scroll_wheel_reverse")
+	CONFIG.loaded.scroll_wheel_steps = dogma.mcm.number(CONFIG.MOD_ID, "free_zoom/scroll_wheel_steps")
+	CONFIG.loaded.scroll_wheel_max_gap_ms = dogma.mcm.number(CONFIG.MOD_ID, "free_zoom/scroll_wheel_max_gap_ms")
+	CONFIG.loaded.free_zoom = clamp(dogma.mcm.number(CONFIG.MOD_ID, "free_zoom/free_zoom"), 0, 40)
+	CONFIG.loaded.move_speed = dogma.mcm.number(CONFIG.MOD_ID, "free_zoom/move_speed")
+	CONFIG.loaded.free_dof = dogma.mcm.bool(CONFIG.MOD_ID, "free_zoom/dof")
+	CONFIG.loaded.free_dof_intensity = clamp(dogma.mcm.number(CONFIG.MOD_ID, "free_zoom/dof_intensity"), 0, 1)
 
 	CONFIG.loaded.ads_enabled = (_G.dogma_gameplay_ads_zoom_conf ~= nil)
-	CONFIG.loaded.fov_zoom = clamp(DOGMA.mcm.number(ADS_MOD, "fov_zoom"), 0, ADS_FOV_MAX)
+	CONFIG.loaded.fov_zoom = clamp(dogma.mcm.number(ADS_MOD, "fov_zoom"), 0, ADS_FOV_MAX)
 	CONFIG.loaded.wads = {
-		irons = clamp(DOGMA.mcm.number(ADS_MOD, "wads_irons"), 0, ADS_MAX.irons),
-		sight = clamp(DOGMA.mcm.number(ADS_MOD, "wads_sight"), 0, ADS_MAX.sight),
-		scope = clamp(DOGMA.mcm.number(ADS_MOD, "wads_scope"), 0, ADS_MAX.scope),
+		irons = clamp(dogma.mcm.number(ADS_MOD, "wads_irons"), 0, ADS_MAX.irons),
+		sight = clamp(dogma.mcm.number(ADS_MOD, "wads_sight"), 0, ADS_MAX.sight),
+		scope = clamp(dogma.mcm.number(ADS_MOD, "wads_scope"), 0, ADS_MAX.scope),
 	}
 	CONFIG.loaded.ads_dof = {
-		enabled = DOGMA.mcm.bool(ADS_MOD, "dof"),
-		irons = clamp(DOGMA.mcm.number(ADS_MOD, "dof_irons"), 0, 1),
-		sight = clamp(DOGMA.mcm.number(ADS_MOD, "dof_sight"), 0, 1),
-		scope = clamp(DOGMA.mcm.number(ADS_MOD, "dof_scope"), 0, 1),
+		enabled = dogma.mcm.bool(ADS_MOD, "dof"),
+		irons = clamp(dogma.mcm.number(ADS_MOD, "dof_irons"), 0, 1),
+		sight = clamp(dogma.mcm.number(ADS_MOD, "dof_sight"), 0, 1),
+		scope = clamp(dogma.mcm.number(ADS_MOD, "dof_scope"), 0, 1),
 	}
-	CONFIG.loaded.wads_inc_key = DOGMA.mcm.key(ADS_MOD, "wads_inc_key")
-	CONFIG.loaded.wads_dec_key = DOGMA.mcm.key(ADS_MOD, "wads_dec_key")
-	CONFIG.loaded.wads_reset_key = DOGMA.mcm.key(ADS_MOD, "wads_reset_key")
-	CONFIG.loaded.wads_key_modifier = DOGMA.mcm.number(ADS_MOD, "wads_key_modifier")
+	CONFIG.loaded.wads_inc_key = dogma.mcm.key(ADS_MOD, "wads_inc_key")
+	CONFIG.loaded.wads_dec_key = dogma.mcm.key(ADS_MOD, "wads_dec_key")
+	CONFIG.loaded.wads_reset_key = dogma.mcm.key(ADS_MOD, "wads_reset_key")
+	CONFIG.loaded.wads_key_modifier = dogma.mcm.number(ADS_MOD, "wads_key_modifier")
 
-	CONFIG.loaded.debug_log = DOGMA.dbg.logging()
-	if DOGMA.dbg and DOGMA.dbg.set_enabled then
-		DOGMA.dbg.set_enabled(CONFIG.MOD_ID, CONFIG.loaded.debug_log)
+	CONFIG.loaded.debug_log = dogma.dbg.logging()
+	if dogma.dbg and dogma.dbg.set_enabled then
+		dogma.dbg.set_enabled(CONFIG.MOD_ID, CONFIG.loaded.debug_log)
 	end
-	if DOGMA.dbg and DOGMA.dbg.clear_source then
-		DOGMA.dbg.clear_source(CONFIG.MOD_ID)
+	if dogma.dbg and dogma.dbg.clear_source then
+		dogma.dbg.clear_source(CONFIG.MOD_ID)
 	end
 end
 
@@ -1361,9 +1360,6 @@ end
 
 local function on_option_change()
 	local tostr = tostring
-	if not DOGMA then
-		return
-	end
 	refresh_config()
 	reset_scroll_accum()
 
@@ -1414,7 +1410,7 @@ local function on_option_change()
 end
 
 local function actor_on_first_update()
-	if not DOGMA.sys.ready(CONFIG.MOD_ID, db, on_option_change) then
+	if not dogma.sys.ready(CONFIG.MOD_ID, db, on_option_change) then
 		log("first_update: DOGMA not ready yet")
 		return
 	end
@@ -1429,7 +1425,7 @@ local function actor_on_first_update()
 end
 
 local function wads_mod_ok()
-	local inp = DOGMA and DOGMA.input
+	local inp = dogma.input
 	if not inp then
 		return false
 	end
@@ -1503,7 +1499,7 @@ end
 local poll_zoom_input
 
 local function actor_on_update()
-	if not DOGMA or not DOGMA.sys.ready(CONFIG.MOD_ID, db, on_option_change) then
+	if not dogma.sys.ready(CONFIG.MOD_ID, db, on_option_change) then
 		return
 	end
 	if not CONFIG.loaded.enabled and not CONFIG.loaded.ads_enabled then
@@ -1544,7 +1540,7 @@ end
 -- zoom_key_mode: 0=toggle, 2=hold (in on down, out on up).
 -- modifier 0 = no extra modifier required (not "forbid Shift/Ctrl/Alt").
 local function zoom_mod_ok()
-	local inp = DOGMA and DOGMA.input
+	local inp = dogma.input
 	if not inp then
 		return false
 	end
@@ -1564,7 +1560,7 @@ local function key_ok(dik)
 end
 
 local function inp()
-	return DOGMA and DOGMA.input
+	return dogma.input
 end
 
 local function hold_source_down()
@@ -1844,7 +1840,7 @@ local function on_load_state(m_data)
 end
 
 function on_game_start()
-	DOGMA = dogma_common.load(CONFIG.MOD_ID)
+	dogma.load(CONFIG.MOD_ID)
 
 	-- Fill CONFIG.loaded before registering callbacks (empty until refresh_config).
 	on_option_change()

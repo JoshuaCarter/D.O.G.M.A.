@@ -7,7 +7,6 @@
 ]]
 
 local CONFIG = _G.dogma_items_disassemble_conf
-local DOGMA
 local icon_xml
 local pda_stash_wear_extra = 0
 
@@ -21,11 +20,11 @@ local disassembly_wrapper = nil
 local disassembly_item_wrapper = nil
 
 local function log(msg)
-	if not (DOGMA and DOGMA.dbg) then
+	if not (dogma.dbg) then
 		return
 	end
 	if CONFIG.loaded.debug_log then
-		DOGMA.dbg.log(CONFIG.MOD_ID, tostring(msg))
+		dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
 	end
 end
 
@@ -224,9 +223,9 @@ local function reapply_disassembly_patch()
 end
 
 local function on_option_change()
-	if DOGMA then
-		CONFIG.loaded.pda_grants_stash_coords = DOGMA.mcm.bool(CONFIG.MOD_ID, "pda_grants_stash_coords")
-		CONFIG.loaded.debug_log = DOGMA.dbg.logging()
+	if dogma then
+		CONFIG.loaded.pda_grants_stash_coords = dogma.mcm.bool(CONFIG.MOD_ID, "pda_grants_stash_coords")
+		CONFIG.loaded.debug_log = dogma.dbg.logging()
 	end
 end
 
@@ -257,7 +256,7 @@ if item_parts and item_parts.disassembly_item then
 end
 
 function on_game_start()
-	DOGMA = CONFIG:ensure_dogma()
+	CONFIG:ensure_dogma()
 	RegisterScriptCallback("on_option_change", on_option_change)
 	RegisterScriptCallback("actor_on_first_update", function()
 		reapply_disassembly_patch()

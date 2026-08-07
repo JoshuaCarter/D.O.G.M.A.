@@ -22,7 +22,6 @@
 ]]
 
 local CONFIG = _G.dogma_controls_equipment_controls_conf
-local DOGMA
 
 local MELEE_SLOT = 1
 local VISION_SLOT = 5
@@ -814,25 +813,25 @@ end
 
 local function on_option_change()
 	CONFIG.loaded.enabled = true
-	CONFIG.loaded.auto_bolt_on_detector = DOGMA.mcm.bool(CONFIG.MOD_ID, "auto_bolt_on_detector")
+	CONFIG.loaded.auto_bolt_on_detector = dogma.mcm.bool(CONFIG.MOD_ID, "auto_bolt_on_detector")
 	-- Promote legacy MCM-only pistol/RF DIKs into Controls if unbound.
 	-- Skip DIK_R: old pistol slot shared GAMMA Unjam (custom22).
 	local skip_r = DIK_keys and DIK_keys.DIK_R
-	dogma_mcm.migrate_key_to_mirror(CONFIG.MOD_ID, "tertiary_key", CONFIG.BINDS.pistol, {
+	dogma.mcm.migrate_key_to_mirror(CONFIG.MOD_ID, "tertiary_key", CONFIG.BINDS.pistol, {
 		skip_dik = skip_r,
 	})
-	dogma_mcm.migrate_key_to_mirror(CONFIG.MOD_ID, "key_radio", CONFIG.BINDS.rf_scanner)
-	dogma_mcm.migrate_key_to_mirror(CONFIG.MOD_ID, "key_glowstick", CONFIG.BINDS.glowstick)
-	CONFIG.loaded.tertiary_key = dik_for(dogma_key_mirror_mcm.bind_kb(CONFIG.BINDS.pistol.kb))
-	CONFIG.loaded.key_radio = dik_for(dogma_key_mirror_mcm.bind_kb(CONFIG.BINDS.rf_scanner.kb))
-	CONFIG.loaded.key_glowstick = dik_for(dogma_key_mirror_mcm.bind_kb(CONFIG.BINDS.glowstick.kb))
+	dogma.mcm.migrate_key_to_mirror(CONFIG.MOD_ID, "key_radio", CONFIG.BINDS.rf_scanner)
+	dogma.mcm.migrate_key_to_mirror(CONFIG.MOD_ID, "key_glowstick", CONFIG.BINDS.glowstick)
+	CONFIG.loaded.tertiary_key = dik_for(dogma.keys.bind_kb(CONFIG.BINDS.pistol.kb))
+	CONFIG.loaded.key_radio = dik_for(dogma.keys.bind_kb(CONFIG.BINDS.rf_scanner.kb))
+	CONFIG.loaded.key_glowstick = dik_for(dogma.keys.bind_kb(CONFIG.BINDS.glowstick.kb))
 	CONFIG.loaded.key_detector = dik_for(key_bindings and key_bindings.kDETECTOR)
 	CONFIG.loaded.key_geiger = dik_for(key_bindings and key_bindings.kCUSTOM14)
 	CONFIG.loaded.key_torch = dik_for(key_bindings and key_bindings.kTORCH)
 end
 
 local function on_before_key_press(_key, bind, _dis, flags)
-	if not DOGMA.sys.ready(CONFIG.MOD_ID, db, on_option_change) then
+	if not dogma.sys.ready(CONFIG.MOD_ID, db, on_option_change) then
 		return
 	end
 	if not CONFIG.loaded.enabled then
@@ -845,9 +844,9 @@ local function on_before_key_press(_key, bind, _dis, flags)
 		return
 	end
 
-	local pistol_bind = dogma_key_mirror_mcm.bind_kb(CONFIG.BINDS.pistol.kb)
-	local rf_bind = dogma_key_mirror_mcm.bind_kb(CONFIG.BINDS.rf_scanner.kb)
-	local glow_bind = dogma_key_mirror_mcm.bind_kb(CONFIG.BINDS.glowstick.kb)
+	local pistol_bind = dogma.keys.bind_kb(CONFIG.BINDS.pistol.kb)
+	local rf_bind = dogma.keys.bind_kb(CONFIG.BINDS.rf_scanner.kb)
+	local glow_bind = dogma.keys.bind_kb(CONFIG.BINDS.glowstick.kb)
 
 	-- Headlamp present: never steal Torch from stock, even while busy.
 	if bind == key_bindings.kTORCH and has_headlamp() then
@@ -924,7 +923,7 @@ local function on_before_key_press(_key, bind, _dis, flags)
 end
 
 function on_game_start()
-	DOGMA = dogma_common.load(CONFIG.MOD_ID)
+	dogma.load(CONFIG.MOD_ID)
 	on_option_change()
 	RegisterScriptCallback("on_option_change", on_option_change)
 	RegisterScriptCallback("on_before_key_press", on_before_key_press)

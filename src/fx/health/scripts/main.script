@@ -7,7 +7,6 @@
 ]]
 
 local CONFIG = _G.dogma_fx_health_conf
-local DOGMA
 
 local a_active = false
 local b_active = false
@@ -20,21 +19,21 @@ local LOG = {
 }
 
 local function overlay(log_type, msg)
-	if not DOGMA.dbg then
+	if not dogma.dbg then
 		return
 	end
 	if CONFIG.loaded.debug_overlay then
 		local slot = log_type or LOG.LIFECYCLE
-		DOGMA.dbg.overlay(CONFIG.MOD_ID, slot.order, tostring(msg), slot.color)
+		dogma.dbg.overlay(CONFIG.MOD_ID, slot.order, tostring(msg), slot.color)
 	end
 end
 
 local function log(msg)
-	if not DOGMA.dbg then
+	if not dogma.dbg then
 		return
 	end
 	if CONFIG.loaded.debug_log then
-		DOGMA.dbg.log(CONFIG.MOD_ID, tostring(msg))
+		dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
 	end
 end
 
@@ -77,18 +76,18 @@ local function clear_all()
 end
 
 local function on_option_change()
-	CONFIG.loaded.debug_log = DOGMA.dbg.logging()
-	CONFIG.loaded.debug_overlay = DOGMA.dbg.overlay_enabled()
-	CONFIG.loaded.enabled = DOGMA.mcm.bool(CONFIG.MOD_ID, "enable")
-	CONFIG.loaded.intensity = DOGMA.mcm.number(CONFIG.MOD_ID, "intensity")
-	DOGMA.dbg.set_enabled(CONFIG.MOD_ID, DOGMA.dbg.overlay_enabled())
+	CONFIG.loaded.debug_log = dogma.dbg.logging()
+	CONFIG.loaded.debug_overlay = dogma.dbg.overlay_enabled()
+	CONFIG.loaded.enabled = dogma.mcm.bool(CONFIG.MOD_ID, "enable")
+	CONFIG.loaded.intensity = dogma.mcm.number(CONFIG.MOD_ID, "intensity")
+	dogma.dbg.set_enabled(CONFIG.MOD_ID, dogma.dbg.overlay_enabled())
 	if not CONFIG.loaded.enabled then
 		clear_all()
 	end
 end
 
 local function on_actor_on_update()
-	local actor = DOGMA.sys.ready(CONFIG.MOD_ID, db, on_option_change)
+	local actor = dogma.sys.ready(CONFIG.MOD_ID, db, on_option_change)
 	if not actor then
 		return
 	end
@@ -116,7 +115,7 @@ end
 
 
 function on_game_start()
-	DOGMA = dogma_common.load(CONFIG.MOD_ID)
+	dogma.load(CONFIG.MOD_ID)
 	a_active = false
 	b_active = false
 	on_option_change()

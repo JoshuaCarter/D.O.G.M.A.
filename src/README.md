@@ -46,9 +46,16 @@ Release zip: `bash tools/package-fomod.sh` → `build/fomod/`. Wizard is **one p
 
 ## Common
 
-Stable globals: `dogma_common`, `dogma_mcm`, `dogma_dbg`, `dogma_sys`, banner `dogma_mcm_banner`.
+Sole public entry: `_dogma.script` (call sites use `dogma.load`, `dogma.mcm`, …).
+Private impls are `__dogma_*.script` (double underscore so they load before the index)
+and must not be referenced from feature scripts.
 
 ```lua
-local DOGMA_COMMON_VERSION = "dogma_common"
-DOGMA = _G[DOGMA_COMMON_VERSION].load(MOD_ID)  -- in on_game_start only
+function on_game_start()
+	dogma.load(MOD_ID)  -- resets per-mod dbg state
+	-- live MCM: dogma.mcm.bool(MOD_ID, "x")
+	-- debug: dogma.dbg.logging() / dogma.dbg.overlay_enabled()
+	-- input: dogma.input.is_key_down(dik)
+	-- xlibs: dogma.xlibs.xconst.INVALID_LEVEL_VERTEX_ID
+end
 ```

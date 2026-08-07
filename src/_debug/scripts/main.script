@@ -6,7 +6,6 @@
 ]]
 
 local DEBUG_MOD = "dogma/debug"
-local DOGMA
 
 -- Hardcoded climb rates for the useful 0-1 (or mSv) scales.
 local RAD_MSV_PER_SEC = 200
@@ -42,12 +41,12 @@ local function clamp(v, lo, hi)
 end
 
 local function key_down(dik)
-	local inp = DOGMA and DOGMA.input
+	local inp = dogma.input
 	return inp and dik and dik >= 0 and inp.is_key_down(dik)
 end
 
 local function key_pressed(dik)
-	local inp = DOGMA and DOGMA.input
+	local inp = dogma.input
 	return inp and dik and dik >= 0 and inp.is_key_pressed(dik)
 end
 
@@ -192,7 +191,7 @@ local function read_key(mcm, id, legacy_id)
 end
 
 local function refresh_keys()
-	local mcm = DOGMA and DOGMA.mcm
+	local mcm = dogma.mcm
 	if not mcm then
 		return
 	end
@@ -276,7 +275,7 @@ local function actor_on_update()
 end
 
 function on_game_start()
-	DOGMA = dogma_common.load(DEBUG_MOD)
+	dogma.load(DEBUG_MOD)
 	refresh_keys()
 	RegisterScriptCallback("on_option_change", on_option_change)
 	RegisterScriptCallback("actor_on_update", actor_on_update)

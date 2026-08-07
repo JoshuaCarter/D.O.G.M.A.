@@ -20,7 +20,6 @@
 ]]
 
 local CONFIG = _G.dogma_items_stripping_conf
-local DOGMA
 -- Queued strip targets when paint/hold asks for more than one burst.
 local strip_queue = {}
 
@@ -81,11 +80,11 @@ local companion_pull_frames_left = 0
 local companion_pull_wait_frames = 0
 
 local function log(msg)
-	if not (DOGMA and DOGMA.dbg) then
+	if not (dogma.dbg) then
 		return
 	end
 	if CONFIG.loaded.debug_log then
-		DOGMA.dbg.log(CONFIG.MOD_ID, tostring(msg))
+		dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
 	end
 end
 
@@ -95,9 +94,9 @@ end
 -- to actually show up once debug logging is on.
 local function on_option_change()
 	local tostr = tostring
-	CONFIG.loaded.intercept_disassemble = DOGMA.mcm.bool(CONFIG.MOD_ID, "intercept_disassemble")
-	CONFIG.loaded.keep_parts_with_weapon = DOGMA.mcm.bool(CONFIG.MOD_ID, "keep_parts_with_weapon")
-	CONFIG.loaded.debug_log = DOGMA.dbg.logging()
+	CONFIG.loaded.intercept_disassemble = dogma.mcm.bool(CONFIG.MOD_ID, "intercept_disassemble")
+	CONFIG.loaded.keep_parts_with_weapon = dogma.mcm.bool(CONFIG.MOD_ID, "keep_parts_with_weapon")
+	CONFIG.loaded.debug_log = dogma.dbg.logging()
 	log(string.format(
 		"on_option_change: intercept_disassemble=%s keep_parts_with_weapon=%s debug_log=%s onupdate_patched=%s cc_update_patched=%s func_disassembly_patched=%s sort_guard_patched=%s",
 		tostr(CONFIG.loaded.intercept_disassemble), tostr(CONFIG.loaded.keep_parts_with_weapon),
@@ -1309,7 +1308,7 @@ end
 
 function on_game_start()
 	local tostr = tostring
-	DOGMA = CONFIG:ensure_dogma()
+	CONFIG:ensure_dogma()
 
 	RegisterScriptCallback("on_option_change", on_option_change)
 	RegisterScriptCallback("actor_on_item_take", function(item)

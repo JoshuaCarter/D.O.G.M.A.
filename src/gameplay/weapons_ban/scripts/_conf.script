@@ -38,8 +38,6 @@ _G.dogma_gameplay_weapons_ban_conf = {
 }
 
 function _G.dogma_gameplay_weapons_ban_conf:ensure_dogma()
-	if not self.DOGMA then
-		self.DOGMA = dogma_common.load(self.MOD_ID)
-	end
-	return self.DOGMA
+	dogma.load(self.MOD_ID)
+	return dogma
 end

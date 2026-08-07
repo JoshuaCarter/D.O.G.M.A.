@@ -9,7 +9,6 @@
 ]]
 
 local CONFIG = _G.dogma_gameplay_faster_skinning_conf
-local DOGMA
 
 local WELL_DRESSED_ID = "well_dressed"
 local ACTION_MUTANT_LOOT = "mutant_loot"
@@ -41,11 +40,11 @@ local pending_pickup_id = nil
 local pending_pickup_at = nil
 
 local function log(msg)
-	if not (DOGMA and DOGMA.dbg) then
+	if not (dogma.dbg) then
 		return
 	end
 	if CONFIG.loaded.debug_log then
-		DOGMA.dbg.log(CONFIG.MOD_ID, tostring(msg))
+		dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
 	end
 end
 
@@ -151,14 +150,14 @@ local pending_skin_deadline = nil
 
 local function start_skin_action(action)
 	-- Full input lock, then queue. Skip re-lock if we already locked this action.
-	if action and action.flags and not action.flags.dogma_input_disabled then
+	if action and action.flags and not action.flags.dogma.input_disabled then
 		level.disable_input()
 		game.only_allow_movekeys(false)
 		if _G.liz_fdda_input_manager then
 			liz_fdda_input_manager.is_input_disabled = true
 		end
 		game.set_actor_allow_ladder(false)
-		action.flags.dogma_input_disabled = true
+		action.flags.dogma.input_disabled = true
 		log("mutant_skin: movement locked")
 	end
 	return original_lam2_add_action(action)
@@ -199,7 +198,7 @@ local function release_mutant_skin_movement_lock(action)
 	end
 	game.set_actor_allow_ladder(true)
 	action.flags.dogma_early_movement_lock = nil
-	action.flags.dogma_input_disabled = nil
+	action.flags.dogma.input_disabled = nil
 	log("mutant_skin: movement lock released")
 end
 
@@ -696,13 +695,13 @@ end
 
 local function on_option_change()
 	CONFIG.loaded.enabled = true
-	CONFIG.loaded.debug_log = DOGMA.dbg.logging()
-	CONFIG.loaded.skin_speed_multiplier = DOGMA.mcm.number(CONFIG.MOD_ID, "skin_speed_multiplier")
-	CONFIG.loaded.auto_crouch = DOGMA.mcm.bool(CONFIG.MOD_ID, "auto_crouch")
-	CONFIG.loaded.look_at_mutant = DOGMA.mcm.bool(CONFIG.MOD_ID, "look_at_mutant")
-	CONFIG.loaded.look_at_offset = DOGMA.mcm.number(CONFIG.MOD_ID, "look_at_offset")
-	CONFIG.loaded.slash_loot = DOGMA.mcm.bool(CONFIG.MOD_ID, "slash_loot")
-	CONFIG.loaded.pickup_delay_ms = DOGMA.mcm.number(CONFIG.MOD_ID, "pickup_delay_ms")
+	CONFIG.loaded.debug_log = dogma.dbg.logging()
+	CONFIG.loaded.skin_speed_multiplier = dogma.mcm.number(CONFIG.MOD_ID, "skin_speed_multiplier")
+	CONFIG.loaded.auto_crouch = dogma.mcm.bool(CONFIG.MOD_ID, "auto_crouch")
+	CONFIG.loaded.look_at_mutant = dogma.mcm.bool(CONFIG.MOD_ID, "look_at_mutant")
+	CONFIG.loaded.look_at_offset = dogma.mcm.number(CONFIG.MOD_ID, "look_at_offset")
+	CONFIG.loaded.slash_loot = dogma.mcm.bool(CONFIG.MOD_ID, "slash_loot")
+	CONFIG.loaded.pickup_delay_ms = dogma.mcm.number(CONFIG.MOD_ID, "pickup_delay_ms")
 	if not CONFIG.loaded.slash_loot then
 		clear_pending_pickup()
 	end
@@ -714,7 +713,7 @@ local function on_option_change()
 end
 
 function on_game_start()
-	DOGMA = dogma_common.load(CONFIG.MOD_ID)
+	dogma.load(CONFIG.MOD_ID)
 
 	on_option_change()
 
@@ -728,7 +727,7 @@ function on_game_start()
 	skin_cut_sfx = sound_object(SKIN_CUT_SOUND)
 
 	RegisterScriptCallback("actor_on_update", function()
-		DOGMA.sys.ready(CONFIG.MOD_ID, db, on_option_change)
+		dogma.sys.ready(CONFIG.MOD_ID, db, on_option_change)
 		tick_pending_skin_action()
 		if pending_skin_action then
 			do_look_at(pending_skin_action, true)

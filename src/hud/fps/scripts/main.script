@@ -18,7 +18,6 @@
 ]]
 
 local CONFIG = _G.dogma_hud_fps_conf
-local DOGMA
 
 local MODE_TOGGLE = 0
 local MODE_HOLD = 1
@@ -59,11 +58,11 @@ local last_frame_time_ms = nil
 -- FPS samples/refreshes change many times per second and aren't something the
 -- player can usefully watch or time, so this mod only supports file logging.
 local function log(msg)
-	if not (DOGMA and DOGMA.dbg) then
+	if not (dogma.dbg) then
 		return
 	end
 	if CONFIG.loaded.debug_log then
-		DOGMA.dbg.log(CONFIG.MOD_ID, tostring(msg))
+		dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
 	end
 end
 
@@ -110,33 +109,33 @@ local function hold_owns_visibility()
 end
 
 local function on_option_change()
-	CONFIG.loaded.enabled_default = DOGMA.mcm.bool(CONFIG.MOD_ID, "enabled_default")
-	CONFIG.loaded.debug_log = DOGMA.dbg.logging()
-	CONFIG.loaded.long_frame_threshold_ms = DOGMA.mcm.number("dogma/debug", "fps_long_frame_threshold_ms")
-	CONFIG.loaded.toggle_key = DOGMA.mcm.key(CONFIG.MOD_ID, "toggle_key")
-	CONFIG.loaded.key_mode = DOGMA.mcm.number(CONFIG.MOD_ID, "key_mode")
-	CONFIG.loaded.display_mode = DOGMA.mcm.number(CONFIG.MOD_ID, "display")
-	CONFIG.loaded.sample_window = DOGMA.mcm.number(CONFIG.MOD_ID, "sample_window")
-	CONFIG.loaded.max_fps = math.max(60, math.min(500, DOGMA.mcm.number(CONFIG.MOD_ID, "max_fps")))
-	CONFIG.loaded.minmax_window = DOGMA.mcm.number(CONFIG.MOD_ID, "minmax_window")
-	CONFIG.loaded.refresh_rate = DOGMA.mcm.number(CONFIG.MOD_ID, "refresh_rate")
-	CONFIG.loaded.vertical_spacing = DOGMA.mcm.number(CONFIG.MOD_ID, "vertical_spacing")
-	CONFIG.loaded.pos_anchor = DOGMA.mcm.number(CONFIG.MOD_ID, "pos_anchor")
-	CONFIG.loaded.pos_x = DOGMA.mcm.number(CONFIG.MOD_ID, "pos_x")
-	CONFIG.loaded.pos_y = DOGMA.mcm.number(CONFIG.MOD_ID, "pos_y")
+	CONFIG.loaded.enabled_default = dogma.mcm.bool(CONFIG.MOD_ID, "enabled_default")
+	CONFIG.loaded.debug_log = dogma.dbg.logging()
+	CONFIG.loaded.long_frame_threshold_ms = dogma.mcm.number("dogma/debug", "fps_long_frame_threshold_ms")
+	CONFIG.loaded.toggle_key = dogma.mcm.key(CONFIG.MOD_ID, "toggle_key")
+	CONFIG.loaded.key_mode = dogma.mcm.number(CONFIG.MOD_ID, "key_mode")
+	CONFIG.loaded.display_mode = dogma.mcm.number(CONFIG.MOD_ID, "display")
+	CONFIG.loaded.sample_window = dogma.mcm.number(CONFIG.MOD_ID, "sample_window")
+	CONFIG.loaded.max_fps = math.max(60, math.min(500, dogma.mcm.number(CONFIG.MOD_ID, "max_fps")))
+	CONFIG.loaded.minmax_window = dogma.mcm.number(CONFIG.MOD_ID, "minmax_window")
+	CONFIG.loaded.refresh_rate = dogma.mcm.number(CONFIG.MOD_ID, "refresh_rate")
+	CONFIG.loaded.vertical_spacing = dogma.mcm.number(CONFIG.MOD_ID, "vertical_spacing")
+	CONFIG.loaded.pos_anchor = dogma.mcm.number(CONFIG.MOD_ID, "pos_anchor")
+	CONFIG.loaded.pos_x = dogma.mcm.number(CONFIG.MOD_ID, "pos_x")
+	CONFIG.loaded.pos_y = dogma.mcm.number(CONFIG.MOD_ID, "pos_y")
 	CONFIG.loaded.font = FONTS[display_font_idx(CONFIG.loaded.display_mode)]
-	CONFIG.loaded.text_r = mcm_byte(DOGMA.mcm.number(CONFIG.MOD_ID, "colors/text_r"))
-	CONFIG.loaded.text_g = mcm_byte(DOGMA.mcm.number(CONFIG.MOD_ID, "colors/text_g"))
-	CONFIG.loaded.text_b = mcm_byte(DOGMA.mcm.number(CONFIG.MOD_ID, "colors/text_b"))
-	CONFIG.loaded.text_a = mcm_byte(DOGMA.mcm.number(CONFIG.MOD_ID, "colors/text_a"))
-	CONFIG.loaded.graph_line_r = mcm_byte(DOGMA.mcm.number(CONFIG.MOD_ID, "colors/graph_line_r"))
-	CONFIG.loaded.graph_line_g = mcm_byte(DOGMA.mcm.number(CONFIG.MOD_ID, "colors/graph_line_g"))
-	CONFIG.loaded.graph_line_b = mcm_byte(DOGMA.mcm.number(CONFIG.MOD_ID, "colors/graph_line_b"))
-	CONFIG.loaded.graph_line_a = mcm_byte(DOGMA.mcm.number(CONFIG.MOD_ID, "colors/graph_line_a"))
-	CONFIG.loaded.graph_border_r = mcm_byte(DOGMA.mcm.number(CONFIG.MOD_ID, "colors/graph_border_r"))
-	CONFIG.loaded.graph_border_g = mcm_byte(DOGMA.mcm.number(CONFIG.MOD_ID, "colors/graph_border_g"))
-	CONFIG.loaded.graph_border_b = mcm_byte(DOGMA.mcm.number(CONFIG.MOD_ID, "colors/graph_border_b"))
-	CONFIG.loaded.graph_border_a = mcm_byte(DOGMA.mcm.number(CONFIG.MOD_ID, "colors/graph_border_a"))
+	CONFIG.loaded.text_r = mcm_byte(dogma.mcm.number(CONFIG.MOD_ID, "colors/text_r"))
+	CONFIG.loaded.text_g = mcm_byte(dogma.mcm.number(CONFIG.MOD_ID, "colors/text_g"))
+	CONFIG.loaded.text_b = mcm_byte(dogma.mcm.number(CONFIG.MOD_ID, "colors/text_b"))
+	CONFIG.loaded.text_a = mcm_byte(dogma.mcm.number(CONFIG.MOD_ID, "colors/text_a"))
+	CONFIG.loaded.graph_line_r = mcm_byte(dogma.mcm.number(CONFIG.MOD_ID, "colors/graph_line_r"))
+	CONFIG.loaded.graph_line_g = mcm_byte(dogma.mcm.number(CONFIG.MOD_ID, "colors/graph_line_g"))
+	CONFIG.loaded.graph_line_b = mcm_byte(dogma.mcm.number(CONFIG.MOD_ID, "colors/graph_line_b"))
+	CONFIG.loaded.graph_line_a = mcm_byte(dogma.mcm.number(CONFIG.MOD_ID, "colors/graph_line_a"))
+	CONFIG.loaded.graph_border_r = mcm_byte(dogma.mcm.number(CONFIG.MOD_ID, "colors/graph_border_r"))
+	CONFIG.loaded.graph_border_g = mcm_byte(dogma.mcm.number(CONFIG.MOD_ID, "colors/graph_border_g"))
+	CONFIG.loaded.graph_border_b = mcm_byte(dogma.mcm.number(CONFIG.MOD_ID, "colors/graph_border_b"))
+	CONFIG.loaded.graph_border_a = mcm_byte(dogma.mcm.number(CONFIG.MOD_ID, "colors/graph_border_a"))
 
 	local sample_len = math.max(1, math.ceil(CONFIG.loaded.sample_window * CONFIG.loaded.max_fps))
 	if not sample_buf or sample_buf.cap ~= sample_len then
@@ -275,7 +274,7 @@ end
 
 local function poll_visibility_key()
 	local key = CONFIG.loaded.toggle_key
-	local inp = DOGMA and DOGMA.input
+	local inp = dogma.input
 	if not (inp and key and key >= 0) then
 		return
 	end
@@ -294,7 +293,7 @@ local function poll_visibility_key()
 end
 
 local function on_actor_on_update()
-	if not DOGMA.sys.ready(CONFIG.MOD_ID, db, on_option_change) then
+	if not dogma.sys.ready(CONFIG.MOD_ID, db, on_option_change) then
 		return
 	end
 
@@ -335,7 +334,7 @@ local function on_actor_first_update()
 end
 
 function on_game_start()
-	DOGMA = dogma_common.load(CONFIG.MOD_ID)
+	dogma.load(CONFIG.MOD_ID)
 
 	init = false
 	visible = false

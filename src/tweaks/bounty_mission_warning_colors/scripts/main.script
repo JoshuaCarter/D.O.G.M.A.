@@ -40,7 +40,7 @@ end
 
 local function squad_rel(se)
 	local gid = se and se.group_id
-	if gid and gid ~= dogma.xlibs.xconst.INVALID_ENTITY_ID and game_relations and game_relations.get_squad_goodwill_to_actor_by_id then
+	if gid and gid ~= xconst.INVALID_ENTITY_ID and game_relations and game_relations.get_squad_goodwill_to_actor_by_id then
 		return game_relations.get_squad_goodwill_to_actor_by_id(gid)
 	end
 	return nil
@@ -48,12 +48,12 @@ end
 
 -- returns color name or nil
 local function warn_color(target_id)
-	local se = dogma.xlibs.xobject.se(target_id)
+	local se = xobject.se(target_id)
 	if not se then
 		return nil
 	end
 
-	local tcomm = faction_key(dogma.xlibs.xcreature.community(se))
+	local tcomm = faction_key(xcreature.community(se))
 	local acomm = actor_faction()
 
 	-- Same faction always red (army vs army is only ~neutral in the matrix).

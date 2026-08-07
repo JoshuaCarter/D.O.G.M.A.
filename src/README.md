@@ -57,6 +57,6 @@ function on_game_start()
 	-- live MCM: dogma.mcm.bool(MOD_ID, "x")
 	-- debug: dogma.dbg.logging() / dogma.dbg.overlay_enabled()
 	-- input: dogma.input.is_key_down(dik)
-	-- xlibs: dogma.xlibs.xconst.INVALID_LEVEL_VERTEX_ID
+	-- xlibs (separate MO2 mod): xconst.INVALID_LEVEL_VERTEX_ID
 end
 ```

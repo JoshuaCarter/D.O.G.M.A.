@@ -40,11 +40,11 @@ local function is_hire_or_guide(mod, actor, npc)
 end
 
 local function member_online(id)
-	local se = dogma.xlibs.xobject.se(id)
+	local se = xobject.se(id)
 	if se and se.online then
 		return true
 	end
-	local client = dogma.xlibs.xobject.go(id)
+	local client = xobject.go(id)
 	return client and client:alive() and true or false
 end
 
@@ -60,7 +60,7 @@ end
 -- (NPCs spawn only via create_npc). Move one leftover into it.
 -- Note: xsquad.create_squad spawns a full roster — not used here.
 local function rehome_one(squad, id)
-	local se = dogma.xlibs.xobject.se(id)
+	local se = xobject.se(id)
 	local section = squad:section_name()
 	if not (se and section) then
 		return false
@@ -80,9 +80,9 @@ local function rehome_one(squad, id)
 	if new_squad.refresh then
 		new_squad:refresh()
 	end
-	local smart = dogma.xlibs.xsmart.get_actor_smart()
+	local smart = xsmart.get_actor_smart()
 	if smart then
-		dogma.xlibs.xsmart.assign_squad_to_smart(new_squad, smart.id)
+		xsmart.assign_squad_to_smart(new_squad, smart.id)
 	end
 	return true
 end
@@ -90,14 +90,14 @@ end
 -- Offline mates: remove (prevent pop-in). Online mates: rehome, don't delete.
 -- Always verify the speaker squad is solo afterward.
 local function strip_to_speaker(npc)
-	local squad = dogma.xlibs.xsquad.get_squad_by_member(npc:id())
+	local squad = xsquad.get_squad_by_member(npc:id())
 	if not squad then
 		return
 	end
 	local keep_id = npc:id()
 	local offline = {}
 	local online = {}
-	for mid in dogma.xlibs.xsquad.iter_member_ids(squad) do
+	for mid in xsquad.iter_member_ids(squad) do
 		if mid and mid ~= keep_id then
 			if member_online(mid) then
 				online[#online + 1] = mid
@@ -121,7 +121,7 @@ local function strip_to_speaker(npc)
 	end
 	-- Solo guarantee: anything still attached gets force-removed.
 	local still = {}
-	for mid in dogma.xlibs.xsquad.iter_member_ids(squad) do
+	for mid in xsquad.iter_member_ids(squad) do
 		if mid and mid ~= keep_id then
 			still[#still + 1] = mid
 		end

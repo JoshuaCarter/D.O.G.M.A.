@@ -305,8 +305,8 @@ local function ensure_rare_names()
 end
 
 local function map_name_for_stash(id)
-	local se_box = id and dogma.xlibs.xobject.se(id)
-	local lid = se_box and dogma.xlibs.xlevel.get_level_id(se_box)
+	local se_box = id and xobject.se(id)
+	local lid = se_box and xlevel.get_level_id(se_box)
 	if not lid then
 		return nil
 	end
@@ -326,7 +326,7 @@ end
 
 local function is_yellow_stash(id)
 	ensure_rare_names()
-	local se = id and dogma.xlibs.xobject.se(id)
+	local se = id and xobject.se(id)
 	if not se then
 		return false
 	end

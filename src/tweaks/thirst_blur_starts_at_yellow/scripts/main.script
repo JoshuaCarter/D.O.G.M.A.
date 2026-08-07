@@ -11,8 +11,13 @@ local PPE = "yantar_underground_psi.ppe"
 local PPE_ID = 39568
 local ORIG
 
+local function thirst_mod()
+	-- Normal _G index (not rawget): Anomaly lazy-loads the peer script.
+	return _G.actor_status_thirst
+end
+
 local function apply()
-	local ast = rawget(_G, "actor_status_thirst")
+	local ast = thirst_mod()
 	if not (ast and type(ast.test_blur) == "function") then
 		return
 	end
@@ -35,11 +40,12 @@ local function apply()
 end
 
 function on_game_start()
-	if not rawget(_G, "actor_status_thirst") then
-		printf("[%s] actor_status_thirst.test_blur not found", CONFIG.MOD_ID:gsub("/", "_"))
+	-- Always register retries: peer may not be loaded yet at on_game_start.
+	RegisterScriptCallback("on_option_change", apply)
+	RegisterScriptCallback("actor_on_first_update", apply)
+	if not thirst_mod() then
+		printf("[%s] actor_status_thirst not found yet (will retry)", CONFIG.MOD_ID:gsub("/", "_"))
 		return
 	end
 	apply()
-	RegisterScriptCallback("on_option_change", apply)
-	RegisterScriptCallback("actor_on_first_update", apply)
 end

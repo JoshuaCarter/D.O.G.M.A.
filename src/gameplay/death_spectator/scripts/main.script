@@ -2,10 +2,9 @@
 	Death Spectator
 
 	Tracks recent hits while alive. On death: hit summary (left, Y center
-	+ 50px) + "Press TAB to spectate". Tab starts demo_record free-fly 2m
-	above the corpse looking at the killer (demo_record replaces death
-	FPCam). Stock demo W/S are vertical; control override is separate.
-	Esc / quit opens the menu when we get the bind.
+	+ 50px) + "Press TAB to spectate". Tab starts demo_record_blocked_input
+	2m above the corpse looking at the killer (demo cam, input ignored —
+	smoke test for blocked path; bind drive comes later). Esc opens menu.
 ]]
 
 local CONFIG = _G.dogma_gameplay_death_spectator_conf
@@ -675,14 +674,14 @@ local function start_spectator()
 	force_first_person_death_off()
 	suppress_game_over_continue()
 
-	-- Proven path: seed pose, then plain demo_record (not blocked_input).
+	-- Seed pose, then blocked demo cam (no demo WASD/mouse — smoke test only).
 	if level and level.set_cam_custom_position_direction then
 		pcall(function()
 			level.set_cam_custom_position_direction(cam_pos, hpb, 0, false, false)
 		end)
 	end
 	if exec_console_cmd then
-		exec_console_cmd("demo_record " .. DEMO_FILE)
+		exec_console_cmd("demo_record_blocked_input " .. DEMO_FILE)
 	end
 	CreateTimeEvent(CONFIG.MOD_ID, "clear_custom_cam", 0.05, function()
 		clear_custom_cam()
@@ -690,7 +689,7 @@ local function start_spectator()
 	end)
 
 	log(string.format(
-		"spectate started at %.1f,%.1f,%.1f killer=%s",
+		"spectate started (blocked) at %.1f,%.1f,%.1f killer=%s",
 		cam_pos.x,
 		cam_pos.y,
 		cam_pos.z,

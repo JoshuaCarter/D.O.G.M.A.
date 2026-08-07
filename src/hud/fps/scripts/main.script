@@ -96,10 +96,6 @@ local function update_wait_until_time()
 	wait_until_time = device():time_global() + CONFIG.loaded.sample_window * 1000
 end
 
-local function mcm_byte(v)
-	return math.floor(math.max(0, math.min(255, tonumber(v) or 0) + 0.5))
-end
-
 -- Hold owns visibility only when a key can reveal it; unbound = honor On by default.
 local function hold_owns_visibility()
 	return CONFIG.loaded.key_mode == MODE_HOLD and CONFIG.loaded.toggle_key
@@ -108,31 +104,31 @@ end
 local function on_option_change()
 	CONFIG.loaded.enabled_default = dogma.mcm.bool(CONFIG.MOD_ID, "enabled_default")
 	CONFIG.loaded.debug_log = dogma.dbg.logging()
-	CONFIG.loaded.long_frame_threshold_ms = dogma.mcm.number("dogma/debug", "fps_long_frame_threshold_ms")
+	CONFIG.loaded.long_frame_threshold_ms = dogma.mcm.uint("dogma/debug", "fps_long_frame_threshold_ms")
 	CONFIG.loaded.toggle_key = dogma.mcm.key(CONFIG.MOD_ID, "toggle_key")
-	CONFIG.loaded.key_mode = dogma.mcm.number(CONFIG.MOD_ID, "key_mode")
-	CONFIG.loaded.display_mode = dogma.mcm.number(CONFIG.MOD_ID, "display")
-	CONFIG.loaded.sample_window = dogma.mcm.number(CONFIG.MOD_ID, "sample_window")
-	CONFIG.loaded.max_fps = math.max(60, math.min(500, dogma.mcm.number(CONFIG.MOD_ID, "max_fps")))
-	CONFIG.loaded.minmax_window = dogma.mcm.number(CONFIG.MOD_ID, "minmax_window")
-	CONFIG.loaded.refresh_rate = dogma.mcm.number(CONFIG.MOD_ID, "refresh_rate")
-	CONFIG.loaded.vertical_spacing = dogma.mcm.number(CONFIG.MOD_ID, "vertical_spacing")
-	CONFIG.loaded.pos_anchor = dogma.mcm.number(CONFIG.MOD_ID, "pos_anchor")
-	CONFIG.loaded.pos_x = dogma.mcm.number(CONFIG.MOD_ID, "pos_x")
-	CONFIG.loaded.pos_y = dogma.mcm.number(CONFIG.MOD_ID, "pos_y")
+	CONFIG.loaded.key_mode = dogma.mcm.int(CONFIG.MOD_ID, "key_mode")
+	CONFIG.loaded.display_mode = dogma.mcm.int(CONFIG.MOD_ID, "display")
+	CONFIG.loaded.sample_window = dogma.mcm.uint(CONFIG.MOD_ID, "sample_window")
+	CONFIG.loaded.max_fps = math.max(60, math.min(500, dogma.mcm.uint(CONFIG.MOD_ID, "max_fps")))
+	CONFIG.loaded.minmax_window = dogma.mcm.uint(CONFIG.MOD_ID, "minmax_window")
+	CONFIG.loaded.refresh_rate = dogma.mcm.uint(CONFIG.MOD_ID, "refresh_rate")
+	CONFIG.loaded.vertical_spacing = dogma.mcm.uint(CONFIG.MOD_ID, "vertical_spacing")
+	CONFIG.loaded.pos_anchor = dogma.mcm.int(CONFIG.MOD_ID, "pos_anchor")
+	CONFIG.loaded.pos_x = dogma.mcm.int(CONFIG.MOD_ID, "pos_x")
+	CONFIG.loaded.pos_y = dogma.mcm.int(CONFIG.MOD_ID, "pos_y")
 	CONFIG.loaded.font = FONTS[display_font_idx(CONFIG.loaded.display_mode)]
-	CONFIG.loaded.text_r = mcm_byte(dogma.mcm.number(CONFIG.MOD_ID, "colors/text_r"))
-	CONFIG.loaded.text_g = mcm_byte(dogma.mcm.number(CONFIG.MOD_ID, "colors/text_g"))
-	CONFIG.loaded.text_b = mcm_byte(dogma.mcm.number(CONFIG.MOD_ID, "colors/text_b"))
-	CONFIG.loaded.text_a = mcm_byte(dogma.mcm.number(CONFIG.MOD_ID, "colors/text_a"))
-	CONFIG.loaded.graph_line_r = mcm_byte(dogma.mcm.number(CONFIG.MOD_ID, "colors/graph_line_r"))
-	CONFIG.loaded.graph_line_g = mcm_byte(dogma.mcm.number(CONFIG.MOD_ID, "colors/graph_line_g"))
-	CONFIG.loaded.graph_line_b = mcm_byte(dogma.mcm.number(CONFIG.MOD_ID, "colors/graph_line_b"))
-	CONFIG.loaded.graph_line_a = mcm_byte(dogma.mcm.number(CONFIG.MOD_ID, "colors/graph_line_a"))
-	CONFIG.loaded.graph_border_r = mcm_byte(dogma.mcm.number(CONFIG.MOD_ID, "colors/graph_border_r"))
-	CONFIG.loaded.graph_border_g = mcm_byte(dogma.mcm.number(CONFIG.MOD_ID, "colors/graph_border_g"))
-	CONFIG.loaded.graph_border_b = mcm_byte(dogma.mcm.number(CONFIG.MOD_ID, "colors/graph_border_b"))
-	CONFIG.loaded.graph_border_a = mcm_byte(dogma.mcm.number(CONFIG.MOD_ID, "colors/graph_border_a"))
+	CONFIG.loaded.text_r = dogma.mcm.byte(CONFIG.MOD_ID, "colors/text_r")
+	CONFIG.loaded.text_g = dogma.mcm.byte(CONFIG.MOD_ID, "colors/text_g")
+	CONFIG.loaded.text_b = dogma.mcm.byte(CONFIG.MOD_ID, "colors/text_b")
+	CONFIG.loaded.text_a = dogma.mcm.byte(CONFIG.MOD_ID, "colors/text_a")
+	CONFIG.loaded.graph_line_r = dogma.mcm.byte(CONFIG.MOD_ID, "colors/graph_line_r")
+	CONFIG.loaded.graph_line_g = dogma.mcm.byte(CONFIG.MOD_ID, "colors/graph_line_g")
+	CONFIG.loaded.graph_line_b = dogma.mcm.byte(CONFIG.MOD_ID, "colors/graph_line_b")
+	CONFIG.loaded.graph_line_a = dogma.mcm.byte(CONFIG.MOD_ID, "colors/graph_line_a")
+	CONFIG.loaded.graph_border_r = dogma.mcm.byte(CONFIG.MOD_ID, "colors/graph_border_r")
+	CONFIG.loaded.graph_border_g = dogma.mcm.byte(CONFIG.MOD_ID, "colors/graph_border_g")
+	CONFIG.loaded.graph_border_b = dogma.mcm.byte(CONFIG.MOD_ID, "colors/graph_border_b")
+	CONFIG.loaded.graph_border_a = dogma.mcm.byte(CONFIG.MOD_ID, "colors/graph_border_a")
 
 	local sample_len = math.max(1, math.ceil(CONFIG.loaded.sample_window * CONFIG.loaded.max_fps))
 	if not sample_buf or sample_buf.cap ~= sample_len then
@@ -404,7 +400,7 @@ local HUD_TEXT_RECT = Frect()
 local GRAPH_TEXTURE = "ui_inGame2_white_rect"
 
 local function argb_from_bytes(a, r, g, b)
-	return GetARGB(mcm_byte(a), mcm_byte(r), mcm_byte(g), mcm_byte(b))
+	return GetARGB(a, r, g, b)
 end
 
 local function init_text_wnd(text_wnd, align)

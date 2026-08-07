@@ -249,43 +249,43 @@ local function refresh_config()
 	CONFIG.loaded.allow_during_sprint = dogma.mcm.bool(CONFIG.MOD_ID, "free_zoom/allow_during_sprint")
 	CONFIG.loaded.empty_hands_only = dogma.mcm.bool(CONFIG.MOD_ID, "free_zoom/empty_hands_only")
 	CONFIG.loaded.zoom_key = dogma.mcm.key(CONFIG.MOD_ID, "free_zoom/zoom_key")
-	CONFIG.loaded.zoom_key_modifier = dogma.mcm.number(CONFIG.MOD_ID, "free_zoom/zoom_key_modifier")
+	CONFIG.loaded.zoom_key_modifier = dogma.mcm.int(CONFIG.MOD_ID, "free_zoom/zoom_key_modifier")
 	-- Legacy MCM: Hold was 3 when Long occupied 2. Double (1) maps to toggle.
-	local zoom_key_mode = math.floor((dogma.mcm.number(CONFIG.MOD_ID, "free_zoom/zoom_key_mode") or 0) + 0.5)
+	local zoom_key_mode = dogma.mcm.int(CONFIG.MOD_ID, "free_zoom/zoom_key_mode")
 	if zoom_key_mode >= 2 then
 		zoom_key_mode = MODE_HOLD
 	else
 		zoom_key_mode = MODE_TOGGLE
 	end
 	CONFIG.loaded.zoom_key_mode = zoom_key_mode
-	CONFIG.loaded.rmb_zoom = dogma.mcm.number(CONFIG.MOD_ID, "free_zoom/rmb_zoom")
-	CONFIG.loaded.mmb_zoom = dogma.mcm.number(CONFIG.MOD_ID, "free_zoom/mmb_zoom")
+	CONFIG.loaded.rmb_zoom = dogma.mcm.int(CONFIG.MOD_ID, "free_zoom/rmb_zoom")
+	CONFIG.loaded.mmb_zoom = dogma.mcm.int(CONFIG.MOD_ID, "free_zoom/mmb_zoom")
 	CONFIG.loaded.scroll_wheel_zoom = dogma.mcm.bool(CONFIG.MOD_ID, "free_zoom/scroll_wheel_zoom")
 	CONFIG.loaded.scroll_wheel_reverse = dogma.mcm.bool(CONFIG.MOD_ID, "free_zoom/scroll_wheel_reverse")
-	CONFIG.loaded.scroll_wheel_steps = dogma.mcm.number(CONFIG.MOD_ID, "free_zoom/scroll_wheel_steps")
-	CONFIG.loaded.scroll_wheel_max_gap_ms = dogma.mcm.number(CONFIG.MOD_ID, "free_zoom/scroll_wheel_max_gap_ms")
-	CONFIG.loaded.free_zoom = clamp(dogma.mcm.number(CONFIG.MOD_ID, "free_zoom/free_zoom"), 0, 40)
-	CONFIG.loaded.move_speed = dogma.mcm.number(CONFIG.MOD_ID, "free_zoom/move_speed")
+	CONFIG.loaded.scroll_wheel_steps = dogma.mcm.uint(CONFIG.MOD_ID, "free_zoom/scroll_wheel_steps")
+	CONFIG.loaded.scroll_wheel_max_gap_ms = dogma.mcm.uint(CONFIG.MOD_ID, "free_zoom/scroll_wheel_max_gap_ms")
+	CONFIG.loaded.free_zoom = clamp(dogma.mcm.float(CONFIG.MOD_ID, "free_zoom/free_zoom"), 0, 40)
+	CONFIG.loaded.move_speed = dogma.mcm.float(CONFIG.MOD_ID, "free_zoom/move_speed")
 	CONFIG.loaded.free_dof = dogma.mcm.bool(CONFIG.MOD_ID, "free_zoom/dof")
-	CONFIG.loaded.free_dof_intensity = clamp(dogma.mcm.number(CONFIG.MOD_ID, "free_zoom/dof_intensity"), 0, 1)
+	CONFIG.loaded.free_dof_intensity = clamp(dogma.mcm.float(CONFIG.MOD_ID, "free_zoom/dof_intensity"), 0, 1)
 
 	CONFIG.loaded.ads_enabled = (_G.dogma_gameplay_ads_zoom_conf ~= nil)
-	CONFIG.loaded.fov_zoom = clamp(dogma.mcm.number(ADS_MOD, "fov_zoom"), 0, ADS_FOV_MAX)
+	CONFIG.loaded.fov_zoom = clamp(dogma.mcm.int(ADS_MOD, "fov_zoom"), 0, ADS_FOV_MAX)
 	CONFIG.loaded.wads = {
-		irons = clamp(dogma.mcm.number(ADS_MOD, "wads_irons"), 0, ADS_MAX.irons),
-		sight = clamp(dogma.mcm.number(ADS_MOD, "wads_sight"), 0, ADS_MAX.sight),
-		scope = clamp(dogma.mcm.number(ADS_MOD, "wads_scope"), 0, ADS_MAX.scope),
+		irons = clamp(dogma.mcm.int(ADS_MOD, "wads_irons"), 0, ADS_MAX.irons),
+		sight = clamp(dogma.mcm.int(ADS_MOD, "wads_sight"), 0, ADS_MAX.sight),
+		scope = clamp(dogma.mcm.int(ADS_MOD, "wads_scope"), 0, ADS_MAX.scope),
 	}
 	CONFIG.loaded.ads_dof = {
 		enabled = dogma.mcm.bool(ADS_MOD, "dof"),
-		irons = clamp(dogma.mcm.number(ADS_MOD, "dof_irons"), 0, 1),
-		sight = clamp(dogma.mcm.number(ADS_MOD, "dof_sight"), 0, 1),
-		scope = clamp(dogma.mcm.number(ADS_MOD, "dof_scope"), 0, 1),
+		irons = clamp(dogma.mcm.float(ADS_MOD, "dof_irons"), 0, 1),
+		sight = clamp(dogma.mcm.float(ADS_MOD, "dof_sight"), 0, 1),
+		scope = clamp(dogma.mcm.float(ADS_MOD, "dof_scope"), 0, 1),
 	}
 	CONFIG.loaded.wads_inc_key = dogma.mcm.key(ADS_MOD, "wads_inc_key")
 	CONFIG.loaded.wads_dec_key = dogma.mcm.key(ADS_MOD, "wads_dec_key")
 	CONFIG.loaded.wads_reset_key = dogma.mcm.key(ADS_MOD, "wads_reset_key")
-	CONFIG.loaded.wads_key_modifier = dogma.mcm.number(ADS_MOD, "wads_key_modifier")
+	CONFIG.loaded.wads_key_modifier = dogma.mcm.int(ADS_MOD, "wads_key_modifier")
 
 	CONFIG.loaded.debug_log = dogma.dbg.logging()
 	dogma.dbg.set_enabled(CONFIG.MOD_ID, CONFIG.loaded.debug_log)

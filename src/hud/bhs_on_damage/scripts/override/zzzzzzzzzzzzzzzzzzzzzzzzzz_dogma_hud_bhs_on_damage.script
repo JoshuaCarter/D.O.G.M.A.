@@ -420,7 +420,7 @@ local function clear_bhs_bar_timer()
 end
 
 local function refresh_sec()
-	local sec = dogma.mcm.number(CONFIG.MOD_ID, "sec", CONFIG and CONFIG.DEFAULTS and CONFIG.DEFAULTS.sec or 3)
+	local sec = dogma.mcm.int(CONFIG.MOD_ID, "sec", CONFIG and CONFIG.DEFAULTS and CONFIG.DEFAULTS.sec or 3)
 	sec = tonumber(sec) or 0
 	if sec < 0 then
 		sec = 0

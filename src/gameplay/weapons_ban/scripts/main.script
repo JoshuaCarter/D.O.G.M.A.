@@ -37,11 +37,11 @@ end
 local function on_option_change()
 	local L = CONFIG.loaded
 	local D = CONFIG.DEFAULTS
-	L.extra_start_ammo_mags = dogma.mcm.number(MOD_ID, "extra_start_ammo_mags", D.extra_start_ammo_mags)
+	L.extra_start_ammo_mags = dogma.mcm.int(MOD_ID, "extra_start_ammo_mags", D.extra_start_ammo_mags)
 	for _, cat in ipairs(CONFIG.CATS) do
 		for _, n in ipairs({ 2, 3, 4, 5 }) do
 			local key = cat .. "_tier_cost_" .. n
-			L[key] = dogma.mcm.number(MOD_ID, key, D[key])
+			L[key] = dogma.mcm.int(MOD_ID, key, D[key])
 		end
 	end
 	if Tiers and Tiers.rebuild then

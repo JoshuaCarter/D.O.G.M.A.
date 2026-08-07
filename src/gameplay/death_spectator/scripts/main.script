@@ -65,6 +65,8 @@ local killer_id = nil
 local frozen_lines = nil
 local adb_wrapped = false
 local saved_tutor_stop = nil
+-- Prev first_person_death; forced off on Tab, restored on game load.
+local saved_first_person_death = nil
 -- Pose only — movement polled each tick via dogma.input.
 local fly = {
 	x = 0,
@@ -560,6 +562,31 @@ local function apply_body_hud(dead)
 	end
 end
 
+local function force_first_person_death_off()
+	if saved_first_person_death == nil then
+		local prev = 0
+		pcall(function()
+			if get_console_cmd then
+				prev = get_console_cmd(1, "first_person_death") and 1 or 0
+			end
+		end)
+		saved_first_person_death = prev
+	end
+	if exec_console_cmd then
+		exec_console_cmd("first_person_death 0")
+	end
+end
+
+local function restore_first_person_death()
+	if saved_first_person_death == nil or not exec_console_cmd then
+		return
+	end
+	pcall(function()
+		exec_console_cmd("first_person_death " .. tostring(saved_first_person_death))
+	end)
+	saved_first_person_death = nil
+end
+
 local function suppress_game_over_continue()
 	-- Stopping the tutorial would otherwise open main menu via function_on_stop.
 	if not (xr_effects and xr_effects.on_tutor_gameover_stop) then
@@ -777,6 +804,7 @@ local function start_spectator()
 		tostring(killer_id)
 	))
 
+	force_first_person_death_off()
 	clear_custom_cam()
 	suppress_game_over_continue()
 	patch_mouse_look()
@@ -971,6 +999,7 @@ end
 
 local function on_game_load()
 	reset_state()
+	restore_first_person_death()
 	wrap_adb_shit_booster()
 end
 

@@ -61,7 +61,7 @@ local function on_option_change()
 	CONFIG.loaded.dual_enabled = dogma.mcm.bool(CONFIG.MOD_ID, "duality/enable")
 	CONFIG.loaded.level_msv = {}
 	for i = 1, #GRAIN_PPES do
-		CONFIG.loaded.level_msv[i] = dogma.mcm.number(CONFIG.MOD_ID, string.format("grain/level_%02d_msv", i))
+		CONFIG.loaded.level_msv[i] = dogma.mcm.uint(CONFIG.MOD_ID, string.format("grain/level_%02d_msv", i))
 	end
 	CONFIG.loaded.blur_range = dogma.mcm.range(CONFIG.MOD_ID, "desaturation/blur_min", "desaturation/blur_max")
 	CONFIG.loaded.dual_range = dogma.mcm.range(CONFIG.MOD_ID, "duality/dual_min", "duality/dual_max")

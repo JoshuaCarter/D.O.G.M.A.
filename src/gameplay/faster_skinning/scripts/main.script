@@ -693,12 +693,12 @@ end
 local function on_option_change()
 	CONFIG.loaded.enabled = true
 	CONFIG.loaded.debug_log = dogma.dbg.logging()
-	CONFIG.loaded.skin_speed_multiplier = dogma.mcm.number(CONFIG.MOD_ID, "skin_speed_multiplier")
+	CONFIG.loaded.skin_speed_multiplier = dogma.mcm.float(CONFIG.MOD_ID, "skin_speed_multiplier")
 	CONFIG.loaded.auto_crouch = dogma.mcm.bool(CONFIG.MOD_ID, "auto_crouch")
 	CONFIG.loaded.look_at_mutant = dogma.mcm.bool(CONFIG.MOD_ID, "look_at_mutant")
-	CONFIG.loaded.look_at_offset = dogma.mcm.number(CONFIG.MOD_ID, "look_at_offset")
+	CONFIG.loaded.look_at_offset = dogma.mcm.float(CONFIG.MOD_ID, "look_at_offset")
 	CONFIG.loaded.slash_loot = dogma.mcm.bool(CONFIG.MOD_ID, "slash_loot")
-	CONFIG.loaded.pickup_delay_ms = dogma.mcm.number(CONFIG.MOD_ID, "pickup_delay_ms")
+	CONFIG.loaded.pickup_delay_ms = dogma.mcm.uint(CONFIG.MOD_ID, "pickup_delay_ms")
 	if not CONFIG.loaded.slash_loot then
 		clear_pending_pickup()
 	end

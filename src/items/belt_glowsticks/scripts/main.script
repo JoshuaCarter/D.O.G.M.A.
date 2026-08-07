@@ -311,8 +311,8 @@ local function update_belt_light()
 end
 
 function on_option_change()
-	CONFIG.loaded.light_range = dogma.mcm.number(MOD_ID, "light_range")
-	CONFIG.loaded.brightness = dogma.mcm.number(MOD_ID, "brightness")
+	CONFIG.loaded.light_range = dogma.mcm.float(MOD_ID, "light_range")
+	CONFIG.loaded.brightness = dogma.mcm.float(MOD_ID, "brightness")
 	-- Force a fresh light so range/color changes apply immediately.
 	clear_light()
 end

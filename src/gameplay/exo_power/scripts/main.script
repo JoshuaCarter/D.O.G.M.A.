@@ -43,9 +43,9 @@ local function clamp_mult(key, value)
 end
 
 local function on_option_change()
-	CONFIG.loaded.base_drain = clamp_mult("base_drain", dogma.mcm.number(CONFIG.MOD_ID, "base_drain", CONFIG.DEFAULTS.base_drain))
-	CONFIG.loaded.run_drain = clamp_mult("run_drain", dogma.mcm.number(CONFIG.MOD_ID, "run_drain", CONFIG.DEFAULTS.run_drain))
-	CONFIG.loaded.sprint_drain = clamp_mult("sprint_drain", dogma.mcm.number(CONFIG.MOD_ID, "sprint_drain", CONFIG.DEFAULTS.sprint_drain))
+	CONFIG.loaded.base_drain = clamp_mult("base_drain", dogma.mcm.float(CONFIG.MOD_ID, "base_drain", CONFIG.DEFAULTS.base_drain))
+	CONFIG.loaded.run_drain = clamp_mult("run_drain", dogma.mcm.float(CONFIG.MOD_ID, "run_drain", CONFIG.DEFAULTS.run_drain))
+	CONFIG.loaded.sprint_drain = clamp_mult("sprint_drain", dogma.mcm.float(CONFIG.MOD_ID, "sprint_drain", CONFIG.DEFAULTS.sprint_drain))
 end
 
 local function mult_for_move()

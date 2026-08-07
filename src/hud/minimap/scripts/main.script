@@ -225,9 +225,9 @@ local function on_option_change()
 	local prev_mode = CONFIG.loaded.mode
 	CONFIG.loaded.enabled = true
 	CONFIG.loaded.keybind = dogma.mcm.key(CONFIG.MOD_ID, "keybind")
-	CONFIG.loaded.modifier = dogma.mcm.number(CONFIG.MOD_ID, "modifier")
-	CONFIG.loaded.mode = dogma.mcm.number(CONFIG.MOD_ID, "mode")
-	CONFIG.loaded.show_delay_ms = dogma.mcm.number(CONFIG.MOD_ID, "show_delay_ms")
+	CONFIG.loaded.modifier = dogma.mcm.int(CONFIG.MOD_ID, "modifier")
+	CONFIG.loaded.mode = dogma.mcm.int(CONFIG.MOD_ID, "mode")
+	CONFIG.loaded.show_delay_ms = dogma.mcm.uint(CONFIG.MOD_ID, "show_delay_ms")
 	if CONFIG.loaded.mode ~= MODE_HOLD then
 		CONFIG.loaded.mode = MODE_TOGGLE
 	end

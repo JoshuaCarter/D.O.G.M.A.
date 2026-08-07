@@ -13,9 +13,9 @@ local allow_open = false
 local holding = false
 
 local function on_option_change()
-	local mode = math.floor((dogma.mcm.number(CONFIG.MOD_ID, "mode") or 0) + 0.5)
+	local mode = dogma.mcm.int(CONFIG.MOD_ID, "mode")
 	CONFIG.loaded.mode = (mode == MODE_HOLD) and MODE_HOLD or 0
-	CONFIG.loaded.hold_delay_ms = math.max(0, math.floor((dogma.mcm.number(CONFIG.MOD_ID, "hold_delay_ms") or 0) + 0.5))
+	CONFIG.loaded.hold_delay_ms = dogma.mcm.uint(CONFIG.MOD_ID, "hold_delay_ms")
 	CONFIG.loaded.select_on_release = dogma.mcm.bool(CONFIG.MOD_ID, "select_on_release")
 	if CONFIG.loaded.mode ~= MODE_HOLD then
 		holding = false

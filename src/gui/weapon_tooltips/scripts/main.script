@@ -1315,20 +1315,20 @@ local function on_option_change()
 	end
 	CONFIG.loaded.compact_header = dogma.mcm.bool(CONFIG.MOD_ID, "compact_header")
 	CONFIG.loaded.hide_description = dogma.mcm.bool(CONFIG.MOD_ID, "hide_description")
-	CONFIG.loaded.table_row_pad = dogma.mcm.number(CONFIG.MOD_ID, "table_row_pad")
+	CONFIG.loaded.table_row_pad = dogma.mcm.uint(CONFIG.MOD_ID, "table_row_pad")
 	for i = 1, NUM_TORSO_TIERS do
 		CONFIG.loaded["show_torso_" .. i] = dogma.mcm.bool(CONFIG.MOD_ID, "show_torso_" .. i)
 	end
 	for i = 1, NUM_HEAD_TIERS do
 		CONFIG.loaded["show_head_" .. i] = dogma.mcm.bool(CONFIG.MOD_ID, "show_head_" .. i)
 	end
-	CONFIG.loaded.calc_range_m = dogma.mcm.number(CONFIG.MOD_ID, "calc_range")
-	CONFIG.loaded.pellet_hit_pct = dogma.mcm.number(CONFIG.MOD_ID, "pellet_hit_pct")
-	local drop_range = dogma.mcm.number(CONFIG.MOD_ID, "drop_range")
+	CONFIG.loaded.calc_range_m = dogma.mcm.int(CONFIG.MOD_ID, "calc_range")
+	CONFIG.loaded.pellet_hit_pct = dogma.mcm.uint(CONFIG.MOD_ID, "pellet_hit_pct")
+	local drop_range = dogma.mcm.int(CONFIG.MOD_ID, "drop_range")
 	if zzzz_dogma_gui_weapon_tooltips_stats and zzzz_dogma_gui_weapon_tooltips_stats.set_drop_range then
 		zzzz_dogma_gui_weapon_tooltips_stats.set_drop_range(drop_range)
 	end
-	local burst_threshold = dogma.mcm.number(CONFIG.MOD_ID, "burst_threshold")
+	local burst_threshold = dogma.mcm.int(CONFIG.MOD_ID, "burst_threshold")
 	if zzzz_dogma_gui_weapon_tooltips_stats and zzzz_dogma_gui_weapon_tooltips_stats.set_burst_threshold then
 		zzzz_dogma_gui_weapon_tooltips_stats.set_burst_threshold(burst_threshold)
 	end

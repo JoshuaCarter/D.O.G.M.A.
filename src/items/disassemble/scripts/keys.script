@@ -36,7 +36,7 @@ local function on_option_change()
 	down_prev = {}
 	local key = dogma.mcm.key(MOD_ID, "key_disa")
 	if key then
-		local mode = math.floor(dogma.mcm.number(MOD_ID, "key_disa_mode", 0) + 0.5)
+		local mode = dogma.mcm.int(MOD_ID, "key_disa_mode", 0)
 		-- Old dtap (1) acts as press; hold stays 2.
 		if mode ~= MODE_HOLD then
 			mode = MODE_PRESS
@@ -44,7 +44,7 @@ local function on_option_change()
 		BINDS[1] = {
 			id = "disa",
 			key = key,
-			modifier = math.floor(dogma.mcm.number(MOD_ID, "key_disa_modifier", 0) + 0.5),
+			modifier = dogma.mcm.int(MOD_ID, "key_disa_modifier", 0),
 			mode = mode,
 		}
 	end

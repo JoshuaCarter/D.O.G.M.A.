@@ -58,14 +58,14 @@ local function on_option_change()
 	clear_paint()
 	local key = dogma.mcm.key(MOD_ID, "key")
 	if key then
-		local mode = math.floor(dogma.mcm.number(MOD_ID, "key_mode", 0) + 0.5)
+		local mode = dogma.mcm.int(MOD_ID, "key_mode", 0)
 		if mode ~= MODE_HOLD then
 			mode = MODE_PRESS
 		end
 		BINDS[1] = {
 			id = "strip",
 			key = key,
-			modifier = math.floor(dogma.mcm.number(MOD_ID, "key_modifier", 0) + 0.5),
+			modifier = dogma.mcm.int(MOD_ID, "key_modifier", 0),
 			mode = mode,
 			all_stacks = false,
 		}

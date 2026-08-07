@@ -118,6 +118,11 @@ function uint(mod_id, key, default)
 	return math.max(0, math.floor(value + 0.5))
 end
 
+function byte(mod_id, key, default)
+	local value = float(mod_id, key, default)
+	return math.floor(math.max(0, math.min(255, value + 0.5)))
+end
+
 function string(mod_id, key, default)
 	local value = get(mod_id, key, default)
 	if value == nil then
@@ -135,8 +140,8 @@ function key(mod_id, key, default)
 end
 
 function range(mod_id, min_key, max_key, min_default, max_default, min_floor)
-	local min_val = number(mod_id, min_key, min_default)
-	local max_val = number(mod_id, max_key, max_default)
+	local min_val = int(mod_id, min_key, min_default)
+	local max_val = int(mod_id, max_key, max_default)
 	local floor_val = min_floor or 1
 
 	if max_val > 0 and min_val >= max_val then

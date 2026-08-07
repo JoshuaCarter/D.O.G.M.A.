@@ -109,10 +109,11 @@ local function ensure_no_cycle(cls)
 end
 
 local function patch()
-	ensure_gate(rawget(_G, "item_weapon"), "start_ammo_wheel")
-	ensure_gate(rawget(_G, "haru_quick_action_wheel_mcm"), "_start_ammo_wheel")
-	ensure_no_cycle(rawget(_G, "UIWheelAmmo"))
-	ensure_no_cycle(rawget(_G, "UIWheelAmmoWuut"))
+	local rawget_ = rawget
+	ensure_gate(rawget_(_G, "item_weapon"), "start_ammo_wheel")
+	ensure_gate(rawget_(_G, "haru_quick_action_wheel_mcm"), "_start_ammo_wheel")
+	ensure_no_cycle(rawget_(_G, "UIWheelAmmo"))
+	ensure_no_cycle(rawget_(_G, "UIWheelAmmoWuut"))
 end
 
 local function actor_on_update()

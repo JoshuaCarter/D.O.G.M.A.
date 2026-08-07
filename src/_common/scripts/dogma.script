@@ -1,0 +1,8 @@
+--[[
+	dogma.script - engine-registered public name (call sites: dogma.mcm / .load / …).
+	Implementation is _dogma.script (loads first: "_" < "d").
+]]
+
+setmetatable(getfenv(1), {
+	__index = _dogma,
+})

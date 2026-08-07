@@ -46,9 +46,10 @@ Release zip: `bash tools/package-fomod.sh` → `build/fomod/`. Wizard is **one p
 
 ## Common
 
-Sole public entry: `_dogma.script` (call sites use `dogma.load`, `dogma.mcm`, …).
-Private impls are `__dogma_*.script` (double underscore so they load before the index)
-and must not be referenced from feature scripts.
+Sole public entry for call sites: `dogma.script` (`dogma.load`, `dogma.mcm`, …),
+which re-exports `_dogma.script`. Private impls are `__dogma_*.script`
+(double underscore so they load before the index) and must not be referenced
+from feature scripts.
 
 ```lua
 function on_game_start()

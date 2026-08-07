@@ -19,7 +19,8 @@
 #
 # Scripts (prefix applied at build - src keeps short names like main.script):
 #   _common/scripts/__dogma_*      -> private impls (load before _dogma.script)
-#   _common/scripts/_dogma.script  -> public index; aliases _G.dogma for call sites
+#   _common/scripts/_dogma.script  -> common index (wires __dogma_*)
+#   _common/scripts/dogma.script   -> public re-export (__index → _dogma)
 #                               Only _dogma.script may reference __dogma_*;
 #                               features use dogma.* only.
 #                               *mcm.script still matches MCM gather

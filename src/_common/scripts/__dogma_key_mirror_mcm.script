@@ -312,3 +312,13 @@ end
 function on_mcm_load(_options)
 end
 
+-- MCM gather only loads *mcm.script — seed dogma.keys before feature mcm scripts.
+do
+	local pub = rawget(_G, "dogma")
+	if type(pub) ~= "table" then
+		pub = {}
+		rawset(_G, "dogma", pub)
+	end
+	pub.keys = getfenv(1)
+end
+

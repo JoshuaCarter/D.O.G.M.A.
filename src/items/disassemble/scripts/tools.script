@@ -46,7 +46,7 @@ local function redirect_to_lowest_stack(obj_d, note)
 	-- pick lowest-condition stack of this section that survives the use
 	local optimal, best_cond = nil, nil
 	local candidates = {}
-	db.actor:iterate_inventory(function(_, item)
+	xinventory.iterate_inventory(db.actor:id(), function(_, item)
 		if item:section() == sec then
 			candidates[#candidates + 1] = item
 		end

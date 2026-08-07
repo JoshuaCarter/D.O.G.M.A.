@@ -103,7 +103,7 @@ local function on_map_spot_menu_add_property(pui, id, ln, hint)
 
 		if tft.is_traveling then return end
 
-		local se_obj = alife_object(id)
+		local se_obj = xobject.se(id)
 		local is_lc = tft_is_pda_transition and tft_is_pda_transition(id, se_obj)
 		local is_campfire = tft_is_campfire and tft_is_campfire(id, se_obj)
 		local is_base = tft_is_base and tft_is_base(id, se_obj)
@@ -154,7 +154,7 @@ local function on_map_spot_menu_property_clicked(pui, id, ln, t)
 
 		id = tft.last_menu_target_id or id
 		ln = tft.last_menu_target_ln or ln
-		local se_click = alife_object(id)
+		local se_click = xobject.se(id)
 		local is_lc = tft_is_pda_transition and tft_is_pda_transition(id, se_click)
 
 		local target, terr = tft_resolve_travel_target(id, ln, tft.last_map_click_pos)

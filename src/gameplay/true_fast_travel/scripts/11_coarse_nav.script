@@ -715,7 +715,7 @@ end
 
 local function cn_freeze_buried_dot(obj_id, attempts_left)
     attempts_left = attempts_left or 8
-    local obj = level.object_by_id(obj_id)
+    local obj = xobject.go(obj_id)
     if obj then
         pcall(function()
             local shell = obj:get_physics_shell()
@@ -759,8 +759,8 @@ local function cn_clear_display()
                 if level and level.map_remove_object_spot then
                     level.map_remove_object_spot(obj_id, spot)
                 end
-                local obj = alife_object(obj_id)
-                if obj then pcall(alife_release, obj) end
+                local obj = xobject.se(obj_id)
+                if obj then xobject.release(obj) end
             end)
         end
     end

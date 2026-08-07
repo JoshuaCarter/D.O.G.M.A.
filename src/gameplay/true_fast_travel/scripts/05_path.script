@@ -246,8 +246,8 @@ local function cleanup_dots()
 				level.map_remove_object_spot(id, "green_location")
 			end
 		end)
-		local obj = alife_object(id)
-		if obj then pcall(alife_release, obj) end
+		local obj = xobject.se(id)
+		if obj then xobject.release(obj) end
 	end
 	tft.dot_ids = {}
 	tft.dot_done = {}
@@ -258,7 +258,7 @@ end
 
 local function freeze_buried_dot(obj_id, attempts_left)
 	attempts_left = attempts_left or 8
-	local obj = level.object_by_id(obj_id)
+	local obj = xobject.go(obj_id)
 	if obj then
 		pcall(function()
 			local shell = obj:get_physics_shell()

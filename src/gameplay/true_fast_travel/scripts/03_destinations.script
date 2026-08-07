@@ -48,7 +48,7 @@ end
 -- those PDA markers fell through every category (not lc/base/campfire/stash) and the menu
 -- silently added nothing at all, even though they're a real, valid transition.
 is_scripted_lc_restrictor = function(id, se_obj)
-    if not se_obj then se_obj = alife_object(id) end
+    if not se_obj then se_obj = xobject.se(id) end
     if not se_obj then return false end
     local cls = 0
     local ok_c = pcall(function() cls = se_obj:clsid() end)
@@ -132,10 +132,10 @@ end
 -- Same name resolution as sr_teleport / lc_extra confirmation dialogs.
 local function transition_dest_label_for_door(door_id)
     if not door_id then return "?" end
-    local se = alife_object(door_id)
+    local se = xobject.se(door_id)
     if not se then return "?" end
 
-    local online = level.object_by_id(door_id)
+    local online = xobject.go(door_id)
     local sec = nil
     pcall(function() sec = se:section_name() end)
     if online then
@@ -160,7 +160,7 @@ local function transition_dest_label_for_door(door_id)
     if online then
         pcall(function() sr_name = online:name() end)
     elseif oid then
-        local o = level.object_by_id(oid)
+        local o = xobject.go(oid)
         if o then pcall(function() sr_name = o:name() end) end
     end
     if not sr_name then pcall(function() sr_name = se:name() end) end
@@ -219,7 +219,7 @@ local function vec_str(v)
 end
 
 local function is_base(id, se_obj)
-    if not se_obj then se_obj = alife_object(id) end
+    if not se_obj then se_obj = xobject.se(id) end
     if not se_obj then return false end
     if level.map_has_object_spot(id, "fast_travel") ~= 0 then return true end
     local ok_cls, obj_cls = pcall(function() return se_obj:clsid() end)
@@ -250,7 +250,7 @@ end
 local function is_travel_destination(id)
     if not id or id <= 0 then return false end
     if is_pda_transition(id) then return true end
-    local se_obj = alife_object(id)
+    local se_obj = xobject.se(id)
     if is_campfire(id, se_obj) then return true end
     if is_player_stash(id) then return true end
     if not se_obj then return false end
@@ -315,18 +315,12 @@ level_offset = function(level_id)
 end
 
 level_id_from_gvid = function(gvid)
-    if not (gvid and game_graph) then return nil end
-    local gg = game_graph()
-    if not (gg and gg.valid_vertex_id and gg:valid_vertex_id(gvid)) then return nil end
-    local ok, lid = pcall(function() return gg:vertex(gvid):level_id() end)
-    return ok and lid or nil
+    if not gvid then return nil end
+    return xlevel.get_level_id({ m_game_vertex_id = gvid })
 end
 
 local function actor_level_id()
-    local lid = xlevel.get_actor_level_id()
-    if lid then return lid end
-    if not (db.actor and game_graph) then return nil end
-    return level_id_from_gvid(db.actor:game_vertex_id())
+    return xlevel.get_actor_level_id()
 end
 
 local function object_level_id(se_obj, gvid)
@@ -334,13 +328,7 @@ local function object_level_id(se_obj, gvid)
         local lid = level_id_from_gvid(gvid)
         if lid then return lid end
     end
-    -- xlevel caches gvid→level; falls back nil during transitions.
-    local lid = xlevel.get_level_id(se_obj)
-    if lid then return lid end
-    if se_obj and se_obj.m_game_vertex_id then
-        return level_id_from_gvid(se_obj.m_game_vertex_id)
-    end
-    return nil
+    return xlevel.get_level_id(se_obj)
 end
 
 -- Straight-line PDA map distance (global coords via per-level offsets from game.ltx). No
@@ -509,9 +497,9 @@ local function object_position(se_obj, id)
         local ok_p, pos = pcall(function() return se_obj.position end)
         if ok_p and pos and type(pos) ~= "function" and pos.x then return pos end
     end
-    if id and level and level.object_by_id then
-        local ok_o, obj = pcall(level.object_by_id, id)
-        if ok_o and obj then
+    if id then
+        local obj = xobject.go(id)
+        if obj then
             local ok_op, opos = pcall(function() return obj:position() end)
             if ok_op and opos and opos.x then return opos end
         end
@@ -548,7 +536,7 @@ end
 -- travel used to land players underground. Only trust level.* lookups when the target is
 -- actually on the level the actor is standing on right now.
 local function fallback_travel_target(id, se_obj, on_actor_level)
-    if not se_obj then se_obj = alife_object(id) end
+    if not se_obj then se_obj = xobject.se(id) end
     if not se_obj then return nil end
     local pos = object_position(se_obj, id)
     if not (pos and pos.x) then return nil end
@@ -580,7 +568,7 @@ end
 -- Bases and campfires: always resolve permissively via the branch after is_lc.
 local function resolve_travel_target_impl(id, ln, click_pos)
     if not id or id <= 0 then return nil, "invalid_id" end
-    local se_obj = alife_object(id)
+    local se_obj = xobject.se(id)
     if not se_obj then return nil, "no_object" end
 
     local on_actor_level = object_on_actor_level(se_obj, ln)
@@ -597,14 +585,12 @@ local function resolve_travel_target_impl(id, ln, click_pos)
         local pos = pos_copy(anchor)
         local lvid, gvid
 
-        if level and level.object_by_id then
-            local ok_o, live_obj = pcall(level.object_by_id, id)
-            if ok_o and live_obj then
-                local ok_l, lv = pcall(function() return live_obj:level_vertex_id() end)
-                local ok_g, gv = pcall(function() return live_obj:game_vertex_id() end)
-                if ok_l and lv and lv ~= tft_invalid_lvid then lvid = lv end
-                if ok_g and gv and gv ~= tft_invalid_gvid then gvid = gv end
-            end
+        local live_obj = xobject.go(id)
+        if live_obj then
+            local ok_l, lv = pcall(function() return live_obj:level_vertex_id() end)
+            local ok_g, gv = pcall(function() return live_obj:game_vertex_id() end)
+            if ok_l and lv and lv ~= tft_invalid_lvid then lvid = lv end
+            if ok_g and gv and gv ~= tft_invalid_gvid then gvid = gv end
         end
 
         local max_snap = (_G.tft_path and _G.tft_path.lc_snap_max_drift_m) or 25
@@ -655,9 +641,9 @@ local function resolve_travel_target_impl(id, ln, click_pos)
         pos = graph.pos
         lvid = graph.lvid
         gvid = graph.gvid
-    elseif on_actor_level and level and level.object_by_id then
-        local ok_o, obj = pcall(level.object_by_id, id)
-        if ok_o and obj then
+    elseif on_actor_level then
+        local obj = xobject.go(id)
+        if obj then
             local ok_p, lp = pcall(function() return obj:position() end)
             local ok_l, lv = pcall(function() return obj:level_vertex_id() end)
             local ok_g, gv = pcall(function() return obj:game_vertex_id() end)
@@ -862,7 +848,7 @@ local function tip_for_discovery(id, se, kind)
     elseif kind == "campfire" then
         return tft_str("tft_discover_campfire")
     elseif kind == "base" then
-        local name = game.translate_string(se:name()) or se:name() or "?"
+        local name = xlevel.get_smart_display_name(se) or se:name() or "?"
         return string.format(tft_str("tft_discover_base"), name)
     elseif kind == "stash" then
         return tft_str("tft_discover_stash") or "Stash discovered"
@@ -908,7 +894,7 @@ local function ensure_base_map_spot(id, se)
     if not (id and se and level and level.map_has_object_spot) then return end
     pcall(function()
         if level.map_has_object_spot(id, "fast_travel") ~= 0 then return end
-        local name = game.translate_string(se:name()) or se:name() or ""
+        local name = xlevel.get_smart_display_name(se) or se:name() or ""
         level.map_add_object_spot(id, "fast_travel", name)
     end)
 end
@@ -976,7 +962,7 @@ end
 local function discover_destination(id, silent)
     local tostr = tostring
     if not id or is_destination_unlocked(id) then return false end
-    local se = alife_object(id)
+    local se = xobject.se(id)
     if not se then return false end
     local kind = discovery_kind_and_radius(id, se)
     if not kind then return false end
@@ -1027,7 +1013,7 @@ local function poll_discoveries()
 
     local function consider(id)
         if not id or is_destination_unlocked(id) then return end
-        local se = alife_object(id)
+        local se = xobject.se(id)
         if not se then return end
         -- Local coords collide across levels; only discover what is on the actor's level.
         if actor_lid then

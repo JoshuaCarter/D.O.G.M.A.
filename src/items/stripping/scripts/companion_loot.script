@@ -28,7 +28,7 @@ end
 
 local function is_companion(npc)
 	return npc
-		and IsStalker(npc)
+		and xcreature.is_stalker(npc)
 		and npc:alive()
 		and npc:has_info("npcx_is_companion")
 end
@@ -80,7 +80,7 @@ local function on_item_before_move(flags, npc_id, obj, mode, bag)
 		return
 	end
 
-	local npc = get_object_by_id(npc_id)
+	local npc = xobject.go(npc_id)
 	if not is_companion(npc) then
 		return
 	end

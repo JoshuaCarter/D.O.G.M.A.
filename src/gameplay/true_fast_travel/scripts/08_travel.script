@@ -46,12 +46,9 @@ local function start_travel_sequence(pos, lvid, gvid, is_transition, final_gvid)
 		return fail_start()
 	end
 
-	local gg = game_graph()
-	if not gg then return fail_start(tft_str("tft_msg_no_nav_path"), "warning") end
-
-	local ok_actor, actor_lid = pcall(function() return gg:vertex(db.actor:game_vertex_id()):level_id() end)
-	local ok_dest, dest_lid = pcall(function() return gg:vertex(gvid):level_id() end)
-	if not (ok_actor and ok_dest) then
+	local actor_lid = xlevel.get_actor_level_id()
+	local dest_lid = xlevel.get_level_id({ m_game_vertex_id = gvid })
+	if not (actor_lid and dest_lid) then
 		return fail_start(tft_str("tft_msg_no_nav_path"), "warning")
 	end
 

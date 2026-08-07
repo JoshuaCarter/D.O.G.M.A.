@@ -175,8 +175,8 @@ local function snapshot_owner_weapons(owner)
 					weapons[item:id()] = item:section()
 				end
 			end, nil)
-		elseif owner.iterate_inventory then
-			owner:iterate_inventory(function(_, item)
+		elseif owner.id then
+			xinventory.iterate_inventory(owner:id(), function(_, item)
 				if IsWeapon(item) then
 					weapons[item:id()] = item:section()
 				end
@@ -192,11 +192,11 @@ end
 
 local function snapshot_actor_inventory_ids()
 	local ids = {}
-	if not (db.actor and db.actor.iterate_inventory) then
+	if not db.actor then
 		return ids
 	end
 	local ok = pcall(function()
-		db.actor:iterate_inventory(function(_, item)
+		xinventory.iterate_inventory(db.actor:id(), function(_, item)
 			ids[item:id()] = true
 		end)
 	end)
@@ -243,11 +243,11 @@ end
 
 local function snapshot_actor_ammo_sections()
 	local counts = {}
-	if not (db.actor and db.actor.iterate_inventory) then
+	if not db.actor then
 		return counts
 	end
 	local ok = pcall(function()
-		db.actor:iterate_inventory(function(_, item)
+		xinventory.iterate_inventory(db.actor:id(), function(_, item)
 			local count = actor_ammo_count(item)
 			if count > 0 then
 				local sec = item:section()
@@ -295,11 +295,11 @@ end
 local function build_reclaim_pending_ids()
 	local pending = {}
 	local before = burst_actor_inv_before or {}
-	if not (db.actor and db.actor.iterate_inventory) then
+	if not db.actor then
 		return pending
 	end
 	local ok = pcall(function()
-		db.actor:iterate_inventory(function(_, item)
+		xinventory.iterate_inventory(db.actor:id(), function(_, item)
 			local id = item:id()
 			if not before[id] then
 				if companion_strip_active and not CONFIG.loaded.keep_parts_with_weapon then
@@ -1115,7 +1115,7 @@ kick_strip_queue = function()
 	end
 	while #strip_queue > 0 do
 		local next = table.remove(strip_queue, 1)
-		local obj = next and next.id and level.object_by_id(next.id)
+		local obj = next and next.id and xobject.go(next.id)
 		if obj and IsWeapon(obj) then
 			log(string.format("strip_queue: starting %s id=%s", obj:section(), tostring(next.id)))
 			start_burst(obj, next.bag, next.idx)

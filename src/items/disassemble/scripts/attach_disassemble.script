@@ -363,7 +363,7 @@ local function resolve_drops_to_parts(drops)
 end
 
 local function timer_give_parts(npc_id, parts_tbl, name)
-	local npc = npc_id and get_object_by_id(npc_id)
+	local npc = npc_id and xobject.go(npc_id)
 	if not npc then
 		return true
 	end
@@ -381,7 +381,7 @@ local function timer_give_parts(npc_id, parts_tbl, name)
 	for i = 1, #parts_tbl do
 		local part_sec = parts_tbl[i]
 		if ini_sys:section_exist(part_sec) then
-			alife_create_item(part_sec, npc)
+			xinventory.create_item(part_sec, npc:id())
 		else
 			log(string.format("disassembly_item: unknown section %s", part_sec))
 		end

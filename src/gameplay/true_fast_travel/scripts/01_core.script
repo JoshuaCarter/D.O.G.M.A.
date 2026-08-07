@@ -183,24 +183,22 @@ local function set_fft_trip_in_progress(active)
 end
 
 local function destination_on_other_level(obj)
-	if not (obj and db.actor) then return false end
-	local gg = game_graph()
-	if not gg then return false end
-	local ok_a, actor_lid = pcall(function() return gg:vertex(db.actor:game_vertex_id()):level_id() end)
-	local ok_d, dest_lid = pcall(function() return gg:vertex(obj.m_game_vertex_id):level_id() end)
-	return ok_a and ok_d and actor_lid ~= dest_lid
+	if not obj then return false end
+	local actor_lid = xlevel.get_actor_level_id()
+	local dest_lid = xlevel.get_level_id(obj)
+	return actor_lid ~= nil and dest_lid ~= nil and actor_lid ~= dest_lid
 end
 
 local function object_on_loaded_level(se_obj)
-	if not (se_obj and db.actor and game_graph) then return true end
-	local gg = game_graph()
-	local obj_gvid = se_obj.m_game_vertex_id
-	if not (obj_gvid and gg.valid_vertex_id and gg:valid_vertex_id(obj_gvid)) then
+	if not se_obj then return true end
+	local actor_lid = xlevel.get_actor_level_id()
+	local obj_lid = xlevel.get_level_id(se_obj)
+	if not (actor_lid and obj_lid) then
+		-- Transition / invalid graph: treat as "not on loaded level" only when we
+		-- can prove a cross-level mismatch; otherwise allow.
 		return not destination_on_other_level(se_obj)
 	end
-	local ok_a, actor_lid = pcall(function() return gg:vertex(db.actor:game_vertex_id()):level_id() end)
-	local ok_o, obj_lid = pcall(function() return gg:vertex(obj_gvid):level_id() end)
-	return ok_a and ok_o and actor_lid == obj_lid
+	return actor_lid == obj_lid
 end
 
 local function is_cross_zone_destination(se_obj, ln)

@@ -32,8 +32,8 @@ local function cleanup_private_stash(workshop_id, shared_id)
 		return
 	end
 
-	local shared_box = shared_id and level.object_by_id(shared_id)
-	local old_box = level.object_by_id(old_id)
+	local shared_box = shared_id and xobject.go(shared_id)
+	local old_box = xobject.go(old_id)
 	if not old_box then
 		pr("private stash %s is offline; deferring cleanup", tostr(old_id))
 		return
@@ -52,7 +52,7 @@ local function cleanup_private_stash(workshop_id, shared_id)
 
 	if has_content then
 		old_box:iterate_inventory_box(function(temp, obj)
-			old_box:transfer_item(obj, shared_box)
+			xinventory.transfer_item(old_box, obj, shared_box)
 		end, old_box)
 	end
 
@@ -66,13 +66,13 @@ local function cleanup_private_stash(workshop_id, shared_id)
 		return
 	end
 
-	alife_release_id(old_id)
+	xinventory.release_item_id(old_id)
 	m_data.workshop_stashes[workshop_id] = nil
 	pr("private stash %s released after safe cleanup", tostr(old_id))
 end
 
 local function ensure_shared_near_workshop(workshop_id)
-	local workshop = workshop_id and get_object_by_id(workshop_id)
+	local workshop = workshop_id and xobject.go(workshop_id)
 	if not workshop then
 		return nil
 	end
@@ -82,7 +82,7 @@ local function ensure_shared_near_workshop(workshop_id)
 		return nil
 	end
 	local shared_id = m_data.dogma_gameplay_shared_stash
-	local se = shared_id and alife_object(shared_id)
+	local se = shared_id and xobject.se(shared_id)
 
 	if not (se and IsInvbox(nil, se:clsid())) then
 		local pos = vec_set(workshop:position())
@@ -101,7 +101,7 @@ local function ensure_shared_near_workshop(workshop_id)
 	alife():set_switch_online(shared_id, true)
 	alife():set_switch_offline(shared_id, false)
 
-	if not level.object_by_id(shared_id) and TeleportObject then
+	if not xobject.go(shared_id) and TeleportObject then
 		local pos = vec_set(workshop:position())
 		pos.y = pos.y - 50
 		TeleportObject(shared_id, pos, workshop:level_vertex_id(), workshop:game_vertex_id())
@@ -122,7 +122,7 @@ end
 
 function CreateStash(id)
 	local stash_id = ensure_shared_near_workshop(id)
-	return stash_id and alife_object(stash_id) or nil
+	return stash_id and xobject.se(stash_id) or nil
 end
 
 function GetStash(id)
@@ -130,7 +130,7 @@ function GetStash(id)
 end
 
 local function UseStash(id)
-	local box = id and level.object_by_id(id)
+	local box = id and xobject.go(id)
 	if not box then
 		return false
 	end
@@ -144,13 +144,13 @@ function GiveStashItemsToActor(workshop_id, stash_id)
 	local items = {}
 
 	if stash_id then
-		local stash_obj = get_object_by_id(stash_id)
+		local stash_obj = xobject.go(stash_id)
 		if not stash_obj then
 			return false
 		end
 		stash_obj:iterate_inventory_box(function(temp, obj)
 			items[#items + 1] = obj:id()
-			stash_obj:transfer_item(obj, db.actor)
+			xinventory.transfer_item(stash_obj, obj, db.actor)
 		end, stash_obj)
 	end
 
@@ -163,7 +163,7 @@ end
 
 function OpenWorkshop(stashId)
 	-- Wait until shared box is online (cross-level teleport).
-	if stashId and not level.object_by_id(stashId) then
+	if stashId and not xobject.go(stashId) then
 		return false
 	end
 	is_teleporting = false
@@ -244,7 +244,7 @@ function UIFurnitureWorkshop:AccessStash()
 end
 
 function UIFurnitureWorkshop:Pickup()
-	local obj = self.obj_id and get_object_by_id(self.obj_id)
+	local obj = self.obj_id and xobject.go(self.obj_id)
 	if not obj then
 		self:Close()
 		return

@@ -23,8 +23,8 @@ function hf_workshop_wrapper:pickup()
 	if m_data.workshop_stashes then
 		local old_id = m_data.workshop_stashes[workshop_id]
 		if old_id and old_id ~= shared_id then
-			local old_box = level.object_by_id(old_id)
-			local shared_box = shared_id and level.object_by_id(shared_id)
+			local old_box = xobject.go(old_id)
+			local shared_box = shared_id and xobject.go(shared_id)
 			if old_box then
 				local has_content = false
 				old_box:iterate_inventory_box(function(temp, obj)
@@ -33,7 +33,7 @@ function hf_workshop_wrapper:pickup()
 				end, old_box)
 				if has_content and shared_box then
 					old_box:iterate_inventory_box(function(temp, obj)
-						old_box:transfer_item(obj, shared_box)
+						xinventory.transfer_item(old_box, obj, shared_box)
 					end, old_box)
 				end
 				local still_has = false
@@ -42,7 +42,7 @@ function hf_workshop_wrapper:pickup()
 					return true
 				end, old_box)
 				if not still_has then
-					alife_release_id(old_id)
+					xinventory.release_item_id(old_id)
 					m_data.workshop_stashes[workshop_id] = nil
 				end
 			end

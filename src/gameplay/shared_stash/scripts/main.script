@@ -67,7 +67,7 @@ local function level_has_workshop()
 	local lvl = level.name()
 	local id = map[lvl]
 	if id then
-		local se = alife_object(id)
+		local se = xobject.se(id)
 		if se_is_workshop(se) then
 			return true
 		end
@@ -92,7 +92,7 @@ local function register_workshop(id)
 	if not m_data then
 		return
 	end
-	local se = alife_object(id)
+	local se = xobject.se(id)
 	if not se_is_workshop(se) then
 		return
 	end
@@ -174,7 +174,7 @@ local function try_hook_place()
 end
 
 local function sum_shared_contents_weight(shared_id)
-	local box = shared_id and level.object_by_id(shared_id)
+	local box = shared_id and xobject.go(shared_id)
 	if not box then
 		return nil
 	end

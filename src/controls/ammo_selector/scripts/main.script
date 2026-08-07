@@ -1,0 +1,156 @@
+--[[
+	Ammo Selector
+
+	Toggle: vanilla. Hold: dogma.input opens after delay, closes on release
+	(optional hover-select). Gates start_ammo_wheel so vanilla release-open
+	cannot fight us; stubs SwitchNextAmmo so release does not cycle ammo.
+]]
+
+local CONFIG = _G.dogma_controls_ammo_selector_conf
+local MODE_HOLD = 2
+
+local allow_open = false
+local holding = false
+
+local function on_option_change()
+	local mode = math.floor((dogma.mcm.number(CONFIG.MOD_ID, "mode") or 0) + 0.5)
+	CONFIG.loaded.mode = (mode == MODE_HOLD) and MODE_HOLD or 0
+	CONFIG.loaded.hold_delay_ms = math.max(0, math.floor((dogma.mcm.number(CONFIG.MOD_ID, "hold_delay_ms") or 0) + 0.5))
+	CONFIG.loaded.select_on_release = dogma.mcm.bool(CONFIG.MOD_ID, "select_on_release")
+	if CONFIG.loaded.mode ~= MODE_HOLD then
+		holding = false
+	end
+end
+
+local function shown(gui)
+	return gui and gui.IsShown and gui:IsShown()
+end
+
+local function active_gui()
+	local qaw = rawget(_G, "haru_quick_action_wheel_mcm")
+	if shown(qaw and qaw.GUI) then
+		return qaw.GUI, "qaw"
+	end
+	local iw = rawget(_G, "item_weapon")
+	if shown(iw and iw.GUI) then
+		return iw.GUI, "iw"
+	end
+end
+
+local function open()
+	local iw = rawget(_G, "item_weapon")
+	if not (iw and iw.start_ammo_wheel) then
+		return
+	end
+	allow_open = true
+	pcall(iw.start_ammo_wheel)
+	allow_open = false
+end
+
+local function select_or_close()
+	local gui, kind = active_gui()
+	if not gui then
+		return
+	end
+	if CONFIG.loaded.select_on_release then
+		if kind == "qaw" and gui.hovered_idx and gui.hovered_idx ~= 0 and gui.OnButtonClick then
+			gui:OnButtonClick(gui.hovered_idx)
+			return
+		end
+		if kind == "iw" and gui.box_btn and gui.OnAmmo then
+			for i = 1, (gui.ammo_max or #gui.box_btn) do
+				local btn = gui.box_btn[i]
+				local box = gui.box and gui.box[i]
+				if btn and box and box:IsShown() and btn:IsCursorOverWindow() then
+					gui:OnAmmo(i)
+					return
+				end
+			end
+		end
+	end
+	if gui.Close then
+		gui:Close()
+	end
+end
+
+local function gate(fn)
+	return function(...)
+		if CONFIG.loaded.mode == MODE_HOLD and not allow_open then
+			return
+		end
+		return fn(...)
+	end
+end
+
+local function ensure_gate(owner, field)
+	if not owner or type(owner[field]) ~= "function" then
+		return
+	end
+	if owner._dogma_as_wrap == owner[field] then
+		return
+	end
+	local wrapped = gate(owner[field])
+	owner[field] = wrapped
+	owner._dogma_as_wrap = wrapped
+end
+
+local function ensure_no_cycle(cls)
+	if not cls or type(cls.SwitchNextAmmo) ~= "function" or cls._dogma_as_cycle then
+		return
+	end
+	local orig = cls.SwitchNextAmmo
+	cls.SwitchNextAmmo = function(self, ...)
+		if CONFIG.loaded.mode == MODE_HOLD then
+			return
+		end
+		return orig(self, ...)
+	end
+	cls._dogma_as_cycle = true
+end
+
+local function patch()
+	ensure_gate(rawget(_G, "item_weapon"), "start_ammo_wheel")
+	ensure_gate(rawget(_G, "haru_quick_action_wheel_mcm"), "_start_ammo_wheel")
+	ensure_no_cycle(rawget(_G, "UIWheelAmmo"))
+	ensure_no_cycle(rawget(_G, "UIWheelAmmoWuut"))
+end
+
+local function actor_on_update()
+	if not dogma.sys.ready(CONFIG.MOD_ID, db, on_option_change) then
+		holding = false
+		return
+	end
+	if CONFIG.loaded.mode ~= MODE_HOLD then
+		return
+	end
+	patch()
+
+	local dik = key_bindings and bind_to_dik and bind_to_dik(key_bindings.kWPN_NEXT)
+	local inp = dogma.input
+	if not (inp and dik and dik > 0) then
+		return
+	end
+
+	if inp.is_key_down(dik) then
+		if holding then
+			if not active_gui() then
+				holding = false
+			end
+		elseif active_gui() then
+			holding = true
+		elseif inp.is_key_held(dik, CONFIG.loaded.hold_delay_ms or 0) then
+			open()
+			holding = active_gui() ~= nil
+		end
+	elseif holding then
+		select_or_close()
+		holding = false
+	end
+end
+
+function on_game_start()
+	dogma.load(CONFIG.MOD_ID)
+	RegisterScriptCallback("on_option_change", on_option_change)
+	RegisterScriptCallback("actor_on_first_update", patch)
+	RegisterScriptCallback("actor_on_update", actor_on_update)
+end

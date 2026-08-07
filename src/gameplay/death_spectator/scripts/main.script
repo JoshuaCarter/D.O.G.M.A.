@@ -65,7 +65,6 @@ local killer_id = nil
 local frozen_lines = nil
 local adb_wrapped = false
 local saved_tutor_stop = nil
-local saved_first_person_death = nil
 -- Pose only — movement polled each tick via dogma.input.
 local fly = {
 	x = 0,
@@ -397,10 +396,10 @@ local function show_tab_prompt()
 	if not msg or msg == "" or msg == "ui_dogma_gameplay_death_spectator_prompt" then
 		msg = "Press TAB to spectate"
 	end
-	-- Centered horizontally; y = center - 50% of half-height (upper quarter).
+	-- Centered horizontally; vertically screen-center + 50px.
 	local tab_w = 800
 	local x = (UI_W - tab_w) * 0.5
-	local y = UI_H * 0.25
+	local y = (UI_H * 0.5) + 50
 	set_static_text(TAB_STATIC, "%c[255,255,255,255]" .. msg, x, y)
 end
 
@@ -561,75 +560,6 @@ local function apply_body_hud(dead)
 	end
 end
 
-local FADE_IN_PP_ID = 22302
--- Engine: effActorDeath = eStartEffectorID(50)+10
-local ACTOR_DEATH_EFF_ID = 60
-
-local function clear_death_fade()
-	-- Hard-remove death PP/cam (remove_pp_effector only soft-Stops and can leave black).
-	if not level then
-		return
-	end
-	if level.remove_complex_effector then
-		pcall(function()
-			level.remove_complex_effector(ACTOR_DEATH_EFF_ID)
-		end)
-	end
-	if level.remove_pp_effector then
-		pcall(function()
-			level.remove_pp_effector(ACTOR_DEATH_EFF_ID)
-		end)
-		pcall(function()
-			level.remove_pp_effector(FADE_IN_PP_ID)
-		end)
-	end
-	if level.remove_cam_effector then
-		pcall(function()
-			level.remove_cam_effector(ACTOR_DEATH_EFF_ID)
-		end)
-	end
-	if level.add_pp_effector then
-		pcall(function()
-			level.add_pp_effector("fade_in.ppe", FADE_IN_PP_ID, false)
-		end)
-	end
-	if level.show_indicators then
-		pcall(function()
-			level.show_indicators()
-		end)
-	end
-	if level.enable_input then
-		pcall(function()
-			level.enable_input()
-		end)
-	end
-end
-
-local function suppress_first_person_death()
-	-- While on, cam_Update stomps FPCam onto the eye bone every frame (black).
-	if saved_first_person_death == nil then
-		local prev = 0
-		pcall(function()
-			if get_console_cmd then
-				prev = get_console_cmd(1, "first_person_death") and 1 or 0
-			end
-		end)
-		saved_first_person_death = prev
-	end
-	if exec_console_cmd then
-		exec_console_cmd("first_person_death 0")
-	end
-end
-
-local function restore_first_person_death()
-	if saved_first_person_death ~= nil and exec_console_cmd then
-		pcall(function()
-			exec_console_cmd("first_person_death " .. tostring(saved_first_person_death))
-		end)
-	end
-	saved_first_person_death = nil
-end
-
 local function suppress_game_over_continue()
 	-- Stopping the tutorial would otherwise open main menu via function_on_stop.
 	if not (xr_effects and xr_effects.on_tutor_gameover_stop) then
@@ -781,11 +711,6 @@ local function clear_custom_cam()
 			level.remove_cam_custom_position_direction()
 		end)
 	end
-	if level and level.remove_pp_effector then
-		pcall(function()
-			level.remove_pp_effector(FADE_IN_PP_ID)
-		end)
-	end
 end
 
 local function is_fly_bind(bind)
@@ -845,10 +770,15 @@ local function start_spectator()
 	show_hit_summary()
 	apply_body_hud(true)
 
-	-- 1) stop eye-bone stomping  2) drop death FPCam  3) hard-clear death PP  4) own freecam
-	suppress_first_person_death()
+	log(string.format(
+		"spectate begin at %.1f,%.1f,%.1f killer=%s",
+		cam_pos.x,
+		cam_pos.y,
+		cam_pos.z,
+		tostring(killer_id)
+	))
+
 	clear_custom_cam()
-	clear_death_fade()
 	suppress_game_over_continue()
 	patch_mouse_look()
 
@@ -860,13 +790,7 @@ local function start_spectator()
 	apply_fly_cam()
 	start_fly_tick()
 
-	log(string.format(
-		"spectate started at %.1f,%.1f,%.1f killer=%s",
-		cam_pos.x,
-		cam_pos.y,
-		cam_pos.z,
-		tostring(killer_id)
-	))
+	log("spectate started")
 end
 
 local function reset_state()
@@ -883,7 +807,6 @@ local function reset_state()
 	stop_fly_tick()
 	unpatch_mouse_look()
 	restore_game_over_continue()
-	restore_first_person_death()
 	apply_body_hud(false)
 	clear_death_ui()
 	clear_custom_cam()
@@ -902,7 +825,6 @@ local function on_option_change()
 			unpatch_mouse_look()
 			clear_custom_cam()
 			apply_body_hud(false)
-			restore_first_person_death()
 			restore_game_over_continue()
 		end
 	end

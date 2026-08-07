@@ -1202,7 +1202,7 @@ teleport_companions = function(pos, lvid, gvid)
             -- Add randomization to avoid stacking
             local t_pos = vector():set(pos.x + math.random(-2, 2), pos.y, pos.z + math.random(-2, 2))
             local t_lvid = level.vertex_id(t_pos)
-            if not (t_lvid and t_lvid ~= 4294967295 and t_lvid ~= -1) then t_lvid = lvid end
+            if not (t_lvid and t_lvid ~= tft_invalid_lvid and t_lvid ~= -1) then t_lvid = lvid end
 
             -- Ensure we have a valid GVID for the target level
             local t_gvid = gvid

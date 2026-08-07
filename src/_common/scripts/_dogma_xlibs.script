@@ -60,7 +60,7 @@ end
 
 --- Optional explicit bind; usually unnecessary (field access binds).
 function get()
-	local self = rawget(_G, "dogma_xlibs")
+	local self = rawget(_G, "_dogma_xlibs") or rawget(_G, "dogma_xlibs")
 	bind(self)
 	return self
 end
@@ -76,3 +76,6 @@ setmetatable(getfenv(1), {
 		return rawget(t, k)
 	end,
 })
+
+-- Friendly name (file is _dogma_xlibs.script for early load order).
+_G.dogma_xlibs = _G._dogma_xlibs

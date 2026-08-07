@@ -292,7 +292,7 @@ scan_transition_object = function(obj, sim, gg, total_ref)
             local src_name = resolve_level_name(src_lid)
             if src_name then
                 local dgv = obj.dest_game_vertex_id or obj.m_dest_game_vertex_id
-                if dgv and dgv < 65535 and gg:valid_vertex_id(dgv) then
+                if dgv and dgv < tft_invalid_gvid and gg:valid_vertex_id(dgv) then
                     local dst_lid = gg:vertex(dgv):level_id()
                     local dst_name = resolve_level_name(dst_lid)
                     if dst_name and src_name ~= dst_name then

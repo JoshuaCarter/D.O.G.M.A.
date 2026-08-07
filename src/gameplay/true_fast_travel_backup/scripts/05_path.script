@@ -2867,7 +2867,7 @@ local function ensure_path_dot(index, as_pending, spot_override)
     local dp = tft.dot_positions[index]
     if not (dp and db.actor) then return end
     local lvid = level.vertex_id(dp)
-    if not lvid or lvid == 4294967295 or lvid == -1 then
+	if not lvid or lvid == tft_invalid_lvid or lvid == -1 then
         lvid = db.actor:level_vertex_id()
     end
     local buried = vector():set(dp.x, dp.y - (tft_path.dot_underground_offset_m or 100), dp.z)

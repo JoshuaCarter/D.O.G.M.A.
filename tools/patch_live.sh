@@ -43,7 +43,7 @@ should_skip_name() {
 		README | README.* | MOVE_MAP | MOVE_MAP.* | .gitkeep | .DS_Store | Thumbs.db) return 0 ;;
 		assets | installer | __pycache__) return 0 ;;
 		*.alao-bak | *.pyc | *.pyo) return 0 ;;
-		_conf.script | _common | _debug) return 1 ;;
+		_conf.script | _dogma_*.script | _common | _debug) return 1 ;;
 		_*) return 0 ;;
 		*) return 1 ;;
 	esac

@@ -15,6 +15,7 @@ local holding = false
 local function on_option_change()
 	local mode = dogma.mcm.int(CONFIG.MOD_ID, "mode")
 	CONFIG.loaded.mode = (mode == MODE_HOLD) and MODE_HOLD or 0
+	CONFIG.loaded.ammo_key = dogma.mcm.key(CONFIG.MOD_ID, "ammo_key")
 	CONFIG.loaded.hold_delay_ms = dogma.mcm.uint(CONFIG.MOD_ID, "hold_delay_ms")
 	CONFIG.loaded.select_on_release = dogma.mcm.bool(CONFIG.MOD_ID, "select_on_release")
 	if CONFIG.loaded.mode ~= MODE_HOLD then
@@ -126,7 +127,7 @@ local function actor_on_update()
 	end
 	patch()
 
-	local dik = key_bindings and bind_to_dik and bind_to_dik(key_bindings.kWPN_NEXT)
+	local dik = CONFIG.loaded.ammo_key
 	if not (dik and dik > 0) then
 		return
 	end

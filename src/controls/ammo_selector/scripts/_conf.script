@@ -1,8 +1,9 @@
 -- controls/ammo_selector conf
--- MCM mirror of Settings → Controls "Ammo Selector" (wpn_next / kWPN_NEXT).
--- Optional hold: open while held, close on release (vanilla is release-to-open).
+-- Hold mode: MCM ammo_key (overlaps OK). Toggle: vanilla wpn_next in Settings→Controls.
 
 local defaults = {
+	-- Hold-mode key (MCM-only; may overlap engine binds). Stock wpn_next default = DIK 29.
+	["ammo_key"] = 29,
 	-- 0 = toggle (vanilla release-open), 2 = hold (open on down, close on up)
 	["mode"] = 2,
 	-- Hold only: ms to wait before opening (release before this = no open).
@@ -15,6 +16,7 @@ _G.dogma_controls_ammo_selector_conf = {
 	MOD_ID = "dogma/controls/ammo_selector",
 	DEFAULTS = defaults,
 	loaded = {
+		ammo_key = defaults["ammo_key"],
 		mode = defaults["mode"],
 		hold_delay_ms = defaults["hold_delay_ms"],
 		select_on_release = defaults["select_on_release"],

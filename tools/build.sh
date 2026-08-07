@@ -53,6 +53,30 @@
 # deploy. package-fomod sets DOGMA_OUT and merges into its own stage dirs.
 set -euo pipefail
 
+build_fail_banner() {
+	local w cols
+	cols="$(tput cols 2>/dev/null || true)"
+	w="${cols:-80}"
+	(( w < 40 )) && w=80
+	local n
+	for n in 1 2 3; do
+		printf '\033[41m\033[97m' >&2
+		printf '%*s' "$w" '' >&2
+		printf '\033[0m\n' >&2
+	done
+}
+
+build_fail() {
+	trap - ERR
+	local msg="${1:-build failed}"
+	local code="${2:-1}"
+	build_fail_banner
+	echo "build: FAILED — $msg" >&2
+	exit "$code"
+}
+
+trap 'build_fail "unexpected error (line $LINENO)"' ERR
+
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SRC="$ROOT/src"
 ONLY="${DOGMA_ONLY:-all}"
@@ -91,8 +115,7 @@ MANIFEST_MODROOT="$(mktemp)"
 trap 'rm -rf "$STAGE" "$STAGE_MODROOT"; rm -f "$MANIFEST" "$MANIFEST_MODROOT"' EXIT
 
 if [[ ! -d "$SRC" ]]; then
-	echo "build: missing $SRC" >&2
-	exit 1
+	build_fail "missing $SRC"
 fi
 
 # Same ALAO command as DOGMA Optimize, on local src/ only (--direct).
@@ -373,23 +396,18 @@ case "$ONLY" in
 	all | "" | common | debug) ;;
 	*)
 		ONLY_SRC_DIR="$(src_feature_dir "$ONLY")"
-		[[ -d "$SRC/$ONLY_SRC_DIR" ]] || {
-			echo "build: DOGMA_ONLY=$ONLY not found at $SRC/$ONLY_SRC_DIR" >&2
-			exit 1
-		}
+		[[ -d "$SRC/$ONLY_SRC_DIR" ]] || build_fail "DOGMA_ONLY=$ONLY not found at $SRC/$ONLY_SRC_DIR"
 		;;
 esac
 
 if [[ -n "$DEPLOY_MOD" && "$ONLY" != "all" && "$ONLY" != "" ]]; then
-	echo "build: DOGMA_DEPLOY requires full build (DOGMA_ONLY=$ONLY would replace the whole mod)" >&2
-	exit 1
+	build_fail "DOGMA_DEPLOY requires full build (DOGMA_ONLY=$ONLY would replace the whole mod)"
 fi
 
 if [[ "$ONLY" == "all" || "$ONLY" == "" ]]; then
-	dogma_load_manifest 1 || exit 1
+	dogma_load_manifest 1 || build_fail "manifest load failed"
 	if ((${#FEATURES[@]} == 0)) && [[ -z "${DOGMA_ALLOW_EMPTY:-}" ]]; then
-		echo "build: manifest yielded 0 features - refusing full build (fix YAML or set DOGMA_ALLOW_EMPTY=1)" >&2
-		exit 1
+		build_fail "manifest yielded 0 features (fix YAML or set DOGMA_ALLOW_EMPTY=1)"
 	fi
 	echo "build: config manifests stage>=dev (${#FEATURES[@]} features)"
 	FEATURE_SRC_DIRS=()
@@ -416,7 +434,7 @@ if [[ -n "$DEPLOY_MOD" ]]; then
 	echo "build: deploy=$DEPLOY_MOD (full replace after build)"
 fi
 
-run_alao_local || exit 1
+run_alao_local || build_fail "ALAO failed"
 echo "building..."
 
 # Stage every shippable file (quiet).

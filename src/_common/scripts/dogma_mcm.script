@@ -1,37 +1,17 @@
 --[[
-	dogma_mcm.script - single common index (MCM-gatherable *mcm name).
+	dogma_mcm.script - MCM-gather public API only (*mcm name).
 
-	Same shape as dogma.* (dogma.script copies these fields for in-game):
-	  dogma_mcm.mcm / .dbg / .sys / .keys / .load / …
-
-	MCM gather cannot load dogma.script — MCM scripts use dogma_mcm.*.
-	Everywhere else uses dogma.*.
+	MCM scripts: dogma_mcm.attach / .append / .keys / …
+	Not the runtime index — that is dogma.script (dogma.mcm / .dbg / …).
 ]]
 
 local M = __dogma_mcm
 
-mcm = M
-dbg = rawget(_G, "__dogma_dbg")
-sys = rawget(_G, "__dogma_sys")
 keys = __dogma_key_mirror_mcm
-input = rawget(_G, "__dogma_input")
-xlibs = rawget(_G, "__dogma_xlibs")
-console_once = rawget(_G, "__dogma_console_once")
-sfx_prefetch = rawget(_G, "__dogma_sfx_prefetch")
-do
-	local item = rawget(_G, "__dogma_item_stats")
-	item_stats = item and item.exports or nil
-end
-
---- Wire sys→mcm/dbg; optionally reset per-mod debug state.
-function load(mod_id)
-	if not (sys and mcm and dbg) then
-		return getfenv(1)
-	end
-	sys.set_deps(mcm, dbg)
-	if mod_id then
-		sys.reset_mod(mod_id)
-		dbg.clear_source(mod_id)
-	end
-	return getfenv(1)
-end
+attach = M.attach
+append = M.append
+with_header = M.with_header
+key_mirror = M.key_mirror
+key_mirror_kb = M.key_mirror_kb
+mirror_spec = M.mirror_spec
+register_debug_page = M.register_debug_page

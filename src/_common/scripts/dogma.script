@@ -1,17 +1,26 @@
 --[[
-	dogma.script - in-game public name (dogma.load / .mcm / .dbg / …).
-	Copies fields from dogma_mcm.script (the real index).
+	dogma.script - runtime public API (full script load only).
+
+	dogma.mcm / .dbg / .sys / .keys / .load / …
+	Wires __dogma_* directly (never snapshots dogma_mcm — that runs at MCM
+	gather without dbg/sys). MCM scripts use dogma_mcm.* instead.
 ]]
 
-local S = dogma_mcm
+mcm = __dogma_mcm
+dbg = __dogma_dbg
+sys = __dogma_sys
+keys = __dogma_key_mirror_mcm
+input = __dogma_input
+xlibs = __dogma_xlibs
+console_once = __dogma_console_once
+sfx_prefetch = __dogma_sfx_prefetch
+item_stats = __dogma_item_stats.exports
 
-mcm = S.mcm
-dbg = S.dbg
-sys = S.sys
-keys = S.keys
-input = S.input
-xlibs = S.xlibs
-console_once = S.console_once
-sfx_prefetch = S.sfx_prefetch
-item_stats = S.item_stats
-load = S.load
+function load(mod_id)
+	sys.set_deps(mcm, dbg)
+	if mod_id then
+		sys.reset_mod(mod_id)
+		dbg.clear_source(mod_id)
+	end
+	return getfenv(1)
+end

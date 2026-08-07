@@ -18,11 +18,10 @@
 #                                           (Anomaly archive mods, e.g. db/mods/*.db0)
 #
 # Scripts (prefix applied at build - src keeps short names like main.script):
-#   _common/scripts/__dogma_*       -> private impls (load before dogma_mcm)
-#   _common/scripts/dogma_mcm.script -> common index (MCM-gatherable *mcm name)
-#   _common/scripts/dogma.script    -> in-game re-export (__index → dogma_mcm)
-#                               Only dogma_mcm may reference __dogma_*;
-#                               in-game uses dogma.*; MCM uses dogma_mcm.*
+#   _common/scripts/__dogma_*        -> private impls
+#   _common/scripts/dogma_mcm.script -> MCM-gather API only (dogma_mcm.attach / .keys)
+#   _common/scripts/dogma.script     -> runtime API (dogma.mcm / .dbg / .load / …)
+#                               in-game uses dogma.*; MCM scripts use dogma_mcm.*
 #                               bare _* names other than __dogma_* / _conf skipped
 #   …/scripts/_conf.script    -> dogma_{path}_conf.script
 #                               no zzzz_ - before that feature's zzzz_ body scripts

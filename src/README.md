@@ -46,10 +46,10 @@ Release zip: `bash tools/package-fomod.sh` → `build/fomod/`. Wizard is **one p
 
 ## Common
 
-Sole common index: `dogma_mcm.script` (same field shape as `dogma.*`).
-In-game: `dogma.script` copies those fields — always prefer `dogma.*`.
-MCM gather cannot load `dogma.script`, so MCM scripts use `dogma_mcm.mcm` /
-`dogma_mcm.keys` / …. Modxml uses `__dogma_key_mirror_mcm`.
+Runtime API: `dogma.script` (`dogma.mcm`, `dogma.dbg`, `dogma.load`, …) — wires
+`__dogma_*` on full script load. MCM gather API: `dogma_mcm.script`
+(`dogma_mcm.attach`, `dogma_mcm.keys`, …) — MCM-only, no dbg/sys.
+Modxml uses `__dogma_key_mirror_mcm`.
 
 ```lua
 function on_game_start()

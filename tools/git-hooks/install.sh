@@ -1,19 +1,20 @@
 #!/usr/bin/env bash
-# Install DOGMA git hooks into .git/hooks/
+# Point this repo at tracked hooks under tools/git-hooks/ (no copying into .git/hooks).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-HOOKS_SRC="$ROOT/tools/git-hooks"
-HOOKS_DST="$ROOT/.git/hooks"
+HOOKS_REL="tools/git-hooks"
 
-for name in pre-commit pre-push; do
-	src="$HOOKS_SRC/$name"
-	dst="$HOOKS_DST/$name"
-	if [[ ! -f "$src" ]]; then
-		echo "missing hook: $src" >&2
+git -C "$ROOT" config core.hooksPath "$HOOKS_REL"
+
+for name in pre-commit pre-push sync-appdata.sh; do
+	path="$ROOT/$HOOKS_REL/$name"
+	if [[ ! -f "$path" ]]; then
+		echo "missing hook: $path" >&2
 		exit 1
 	fi
-	cp -f "$src" "$dst"
-	chmod +x "$dst"
-	echo "installed $dst"
+	chmod +x "$path"
 done
+
+echo "core.hooksPath = $HOOKS_REL (local)"
+echo "hooks: pre-commit (appdata + ALAO), pre-push (late appdata catch-up)"

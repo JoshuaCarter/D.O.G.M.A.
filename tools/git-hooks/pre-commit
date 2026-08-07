@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Run ALAO on local src/ before commit (same flags as DOGMA Optimize).
-# Install: cp tools/git-hooks/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
-# Skip:    DOGMA_NO_ALAO=1 git commit …
+# pre-commit: snapshot appdata config + ALAO on src/ script changes.
+# Install: bash tools/git-hooks/install.sh
+# Skip appdata: DOGMA_NO_APPDATA_SYNC=1 git commit …
+# Skip ALAO:     DOGMA_NO_ALAO=1 git commit …
 set -euo pipefail
 
 HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -11,8 +12,15 @@ case "$HOOK_DIR" in
 	*) ROOT="$(cd "$HOOK_DIR/../.." && pwd)" ;;
 esac
 
+# shellcheck source=sync-appdata.sh
+source "$HOOK_DIR/sync-appdata.sh"
+if sync_appdata "$ROOT"; then
+	if ! git -C "$ROOT" diff --cached --quiet -- appdata/; then
+		echo "pre-commit: staged appdata/user.ltx + appdata/axr_options.ltx"
+	fi
+fi
+
 if [[ -n "${DOGMA_NO_ALAO:-}" ]]; then
-	echo "pre-commit: skipping ALAO (DOGMA_NO_ALAO set)"
 	exit 0
 fi
 

@@ -19,7 +19,7 @@
 #
 # Scripts (prefix applied at build - src keeps short names like main.script):
 #   _common/scripts/*         -> same basename (dogma_common, dogma_mcm,
-#                               dogma_key_mirror_mcm, _dogma_input, …)
+#                               dogma_key_mirror_mcm, _dogma_input, dogma_xlibs, …)
 #                               no zzzz_ - always before every feature script
 #                               *mcm.script also participates in MCM gather
 #                               (key mirrors live in dogma_key_mirror_mcm)

@@ -323,6 +323,8 @@ level_id_from_gvid = function(gvid)
 end
 
 local function actor_level_id()
+    local lid = dogma_xlibs.xlevel.get_actor_level_id()
+    if lid then return lid end
     if not (db.actor and game_graph) then return nil end
     return level_id_from_gvid(db.actor:game_vertex_id())
 end
@@ -332,6 +334,9 @@ local function object_level_id(se_obj, gvid)
         local lid = level_id_from_gvid(gvid)
         if lid then return lid end
     end
+    -- xlevel caches gvid→level; falls back nil during transitions.
+    local lid = dogma_xlibs.xlevel.get_level_id(se_obj)
+    if lid then return lid end
     if se_obj and se_obj.m_game_vertex_id then
         return level_id_from_gvid(se_obj.m_game_vertex_id)
     end

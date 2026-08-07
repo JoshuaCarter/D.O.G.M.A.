@@ -41,11 +41,11 @@ local function is_hire_or_guide(mod, actor, npc)
 end
 
 local function member_online(id)
-	local se = alife_object(id)
+	local se = dogma_xlibs.xobject.se(id)
 	if se and se.online then
 		return true
 	end
-	local client = db.storage[id] and db.storage[id].object
+	local client = dogma_xlibs.xobject.go(id)
 	return client and client:alive() and true or false
 end
 
@@ -59,8 +59,9 @@ end
 
 -- Useful Idiots pattern: alife_create(section) makes an empty squad container
 -- (NPCs spawn only via create_npc). Move one leftover into it.
+-- Note: xsquad.create_squad spawns a full roster — not used here.
 local function rehome_one(squad, id)
-	local se = alife_object(id)
+	local se = dogma_xlibs.xobject.se(id)
 	local section = squad:section_name()
 	if not (se and section) then
 		return false
@@ -80,9 +81,9 @@ local function rehome_one(squad, id)
 	if new_squad.refresh then
 		new_squad:refresh()
 	end
-	local smart = smart_terrain and smart_terrain.nearest_to_actor_smart
-	if smart and SIMBOARD and SIMBOARD.assign_squad_to_smart then
-		SIMBOARD:assign_squad_to_smart(new_squad, smart.id)
+	local smart = dogma_xlibs.xsmart.get_actor_smart()
+	if smart then
+		dogma_xlibs.xsmart.assign_squad_to_smart(new_squad, smart.id)
 	end
 	return true
 end
@@ -90,19 +91,19 @@ end
 -- Offline mates: remove (prevent pop-in). Online mates: rehome, don't delete.
 -- Always verify the speaker squad is solo afterward.
 local function strip_to_speaker(npc)
-	local squad = get_object_squad(npc)
+	local squad = dogma_xlibs.xsquad.get_squad_by_member(npc:id())
 	if not squad then
 		return
 	end
 	local keep_id = npc:id()
 	local offline = {}
 	local online = {}
-	for k in squad:squad_members() do
-		if k.id and k.id ~= keep_id then
-			if member_online(k.id) then
-				online[#online + 1] = k.id
+	for mid in dogma_xlibs.xsquad.iter_member_ids(squad) do
+		if mid and mid ~= keep_id then
+			if member_online(mid) then
+				online[#online + 1] = mid
 			else
-				offline[#offline + 1] = k.id
+				offline[#offline + 1] = mid
 			end
 		end
 	end
@@ -121,9 +122,9 @@ local function strip_to_speaker(npc)
 	end
 	-- Solo guarantee: anything still attached gets force-removed.
 	local still = {}
-	for k in squad:squad_members() do
-		if k.id and k.id ~= keep_id then
-			still[#still + 1] = k.id
+	for mid in dogma_xlibs.xsquad.iter_member_ids(squad) do
+		if mid and mid ~= keep_id then
+			still[#still + 1] = mid
 		end
 	end
 	if #still > 0 then

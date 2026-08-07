@@ -306,12 +306,18 @@ local function ensure_rare_names()
 end
 
 local function map_name_for_stash(id)
-	local se_box = id and alife_object(id)
-	if not (se_box and se_box.m_game_vertex_id) then
+	local se_box = id and dogma_xlibs.xobject.se(id)
+	local lid = se_box and dogma_xlibs.xlevel.get_level_id(se_box)
+	if not lid then
+		return nil
+	end
+	-- Raw engine name (not translated) — keys MAP_BASE_TIER.
+	local sim = alife()
+	if not sim then
 		return nil
 	end
 	local ok, name = pcall(function()
-		return alife():level_name(game_graph():vertex(se_box.m_game_vertex_id):level_id())
+		return sim:level_name(lid)
 	end)
 	if ok then
 		return name

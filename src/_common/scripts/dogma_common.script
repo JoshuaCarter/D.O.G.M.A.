@@ -9,6 +9,9 @@
 	on_game_start(). Feature _conf.script builds to dogma_{cat}_{feat}_conf.script
 	(also no zzzz_) and publishes MOD_ID + defaults on _G.dogma_<feature>_conf.
 
+	xlibs (Damian Sirbu) is a separate MO2 mod. Use dogma_xlibs.xconst / .xlevel / …
+	(or DOGMA.xlibs after load). First access binds; do not call raw xconst / xsquad.
+
 	Usage:
 
 		local CONFIG = _G.dogma_feature_conf
@@ -20,6 +23,7 @@
 			-- CONFIG.loaded.x = DOGMA.mcm.bool(CONFIG.MOD_ID, "x")
 			-- debug: DOGMA.dbg.logging() / DOGMA.dbg.overlay_enabled()
 			-- input: DOGMA.input.is_key_down(dik) / DOGMA.input.is_key_held(dik, ms)
+			-- xlibs: DOGMA.xlibs.xconst.INVALID_LEVEL_VERTEX_ID
 		end
 ]]
 
@@ -34,5 +38,12 @@ function load(mod_id)
 		sys.reset_mod(mod_id)
 		dbg.clear_source(mod_id)
 	end
-	return { mcm = mcm, dbg = dbg, sys = sys, keys = keys, input = input }
+	return {
+		mcm = mcm,
+		dbg = dbg,
+		sys = sys,
+		keys = keys,
+		input = input,
+		xlibs = dogma_xlibs,
+	}
 end

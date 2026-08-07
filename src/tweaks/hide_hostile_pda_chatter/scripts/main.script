@@ -85,36 +85,7 @@ local function channel_faction(name)
 end
 
 local function community_of_id(id)
-	if type(id) == "number" then
-		local se = alife_object(id)
-		if se and IsStalker(nil, se:clsid()) then
-			return normalize_faction(se:community())
-		end
-		local obj = level and level.object_by_id and level.object_by_id(id)
-		if obj and obj.character_community then
-			return normalize_faction(character_community(obj))
-		end
-		return nil
-	end
-	if type(id) == "userdata" then
-		local ok, comm = pcall(function()
-			if id.character_community then
-				return character_community(id)
-			end
-			if id.community then
-				return id:community()
-			end
-			if id.id then
-				local n = type(id.id) == "function" and id:id() or id.id
-				return community_of_id(n)
-			end
-			return nil
-		end)
-		if ok then
-			return normalize_faction(comm)
-		end
-	end
-	return nil
+	return normalize_faction(dogma_xlibs.xcreature.community(id))
 end
 
 -- Best-effort speaker/subject faction on a general-channel payload.

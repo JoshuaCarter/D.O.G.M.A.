@@ -1,0 +1,78 @@
+--[[
+	dogma_xlibs - single DOGMA entry point to standalone xlibs (Damian Sirbu).
+
+	xlibs is a separate MO2 mod (common requires it). First field access binds;
+	call sites use one line:
+
+		dogma_xlibs.xconst.INVALID_LEVEL_VERTEX_ID
+		dogma_xlibs.xlevel.get_level_id(se)
+]]
+
+local MIN_VERSION = "1.8.4"
+
+local MODULES = {
+	"xlibs",
+	"xconst",
+	"xobject",
+	"xlevel",
+	"xtime",
+	"xcreature",
+	"xsquad",
+	"xsmart",
+	"xstash",
+	"xinventory",
+	"xactor",
+	"xdata",
+	"xmath",
+	"xtable",
+	"xlog",
+	"xcombat",
+}
+
+local warned = false
+
+local function warn_once(msg)
+	if warned then
+		return
+	end
+	warned = true
+	if printf then
+		printf("! [DOGMA] %s", msg)
+	end
+end
+
+local function bind(self)
+	if rawget(self, "_ready") then
+		return
+	end
+	-- Assume xlibs is installed and script modules live on _G (Anomaly).
+	for i = 1, #MODULES do
+		local name = MODULES[i]
+		rawset(self, name, rawget(_G, name))
+	end
+	local xl = rawget(self, "xlibs")
+	if xl and xl.is_compatible and not xl.is_compatible(MIN_VERSION) then
+		local ver = (xl.get_version and xl.get_version()) or "?"
+		warn_once(string.format("xlibs %s found; DOGMA wants >= %s", tostring(ver), MIN_VERSION))
+	end
+	rawset(self, "_ready", true)
+end
+
+--- Optional explicit bind; usually unnecessary (field access binds).
+function get()
+	local self = rawget(_G, "dogma_xlibs")
+	bind(self)
+	return self
+end
+
+function min_version()
+	return MIN_VERSION
+end
+
+-- Lazy bind: dogma_xlibs.xconst → bind once, then return module.
+setmetatable(getfenv(1), {
+	__index = function(t, k)
+		bind(t)
+		return rawget(t, k)
+	end,
+})

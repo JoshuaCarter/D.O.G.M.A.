@@ -10,6 +10,7 @@
 
 local CONFIG = _G.dogma_tweaks_opaque_bushes_conf
 local DOGMA
+local INVALID_LVID = dogma_xlibs.xconst.INVALID_LEVEL_VERTEX_ID
 
 local RQT_STATIC = 2
 local CHECK_RANGE = 80
@@ -154,7 +155,7 @@ local function already_moving(npc)
 end
 
 local function resolve_accessible(npc, vid)
-	if type(vid) ~= "number" or vid < 0 or vid >= 4294967295 then
+	if type(vid) ~= "number" or vid < 0 or vid >= INVALID_LVID then
 		return nil
 	end
 	local ok_acc, accessible = pcall(function()
@@ -169,7 +170,7 @@ local function resolve_accessible(npc, vid)
 		local pos = level.vertex_position(vid)
 		return npc:accessible_nearest(pos, tmp)
 	end)
-	if ok_n and type(nvid) == "number" and nvid >= 0 and nvid < 4294967295 then
+	if ok_n and type(nvid) == "number" and nvid >= 0 and nvid < INVALID_LVID then
 		return nvid
 	end
 	return nil

@@ -91,8 +91,9 @@ for key, value in pairs(defaults) do
 end
 local tft = _G.tft
 
-_G.tft_invalid_lvid = 4294967295
-_G.tft_invalid_gvid = 65535
+-- tft_* aliases → xconst (dogma_xlibs binds on first field access).
+_G.tft_invalid_lvid = dogma_xlibs.xconst.INVALID_LEVEL_VERTEX_ID
+_G.tft_invalid_gvid = dogma_xlibs.xconst.INVALID_GAME_VERTEX_ID
 _G.tft_travel_max_alife_graph_drift = 100
 _G.tft_travel_max_click_drift = 150
 

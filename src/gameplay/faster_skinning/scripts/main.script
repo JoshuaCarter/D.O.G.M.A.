@@ -150,14 +150,14 @@ local pending_skin_deadline = nil
 
 local function start_skin_action(action)
 	-- Full input lock, then queue. Skip re-lock if we already locked this action.
-	if action and action.flags and not action.flags.dogma.input_disabled then
+	if action and action.flags and not action.flags.dogma_input_disabled then
 		level.disable_input()
 		game.only_allow_movekeys(false)
 		if _G.liz_fdda_input_manager then
 			liz_fdda_input_manager.is_input_disabled = true
 		end
 		game.set_actor_allow_ladder(false)
-		action.flags.dogma.input_disabled = true
+		action.flags.dogma_input_disabled = true
 		log("mutant_skin: movement locked")
 	end
 	return original_lam2_add_action(action)
@@ -198,7 +198,7 @@ local function release_mutant_skin_movement_lock(action)
 	end
 	game.set_actor_allow_ladder(true)
 	action.flags.dogma_early_movement_lock = nil
-	action.flags.dogma.input_disabled = nil
+	action.flags.dogma_input_disabled = nil
 	log("mutant_skin: movement lock released")
 end
 

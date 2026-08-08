@@ -526,4 +526,4 @@ if [[ -n "$DEPLOY_MOD" ]]; then
 	write_mod_meta "$DEPLOY_MOD"
 fi
 
-echo "build: done ($count gamedata, $count_modroot modroot)"
+echo "build: done ($count gamedata, $count_modroot modroot) at $(date '+%Y-%m-%d %H:%M:%S')"

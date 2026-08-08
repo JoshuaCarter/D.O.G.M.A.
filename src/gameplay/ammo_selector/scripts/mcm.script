@@ -1,32 +1,32 @@
 -- Ammo Selector MCM — Hold mode key + Toggle / Hold mode.
 
-local CONFIG = _G.dogma_controls_ammo_selector_conf
+local CONFIG = _G.dogma_gameplay_ammo_selector_conf
 
 function on_mcm_load(options)
 	local kb_mod = (ui_mcm and ui_mcm.kb_mod_radio) or "radio_h"
-	dogma_mcm.attach(options, "controls", "ui_mcm_menu_dogma_controls", {
+	dogma_mcm.attach(options, "gameplay", "ui_mcm_menu_dogma_gameplay", {
 		id = "ammo_selector",
 		sh = true,
-		text = "ui_mcm_menu_dogma_controls_ammo_selector",
+		text = "ui_mcm_menu_dogma_gameplay_ammo_selector",
 		gr = dogma_mcm.with_header({
 			{
 				id = "page_description",
 				type = "desc",
-				text = "ui_mcm_dogma_controls_ammo_selector_page_description",
+				text = "ui_mcm_dogma_gameplay_ammo_selector_page_description",
 			},
 			{
 				id = "ammo_key",
 				type = "key_bind",
 				val = 2,
 				def = CONFIG.DEFAULTS["ammo_key"],
-				hint = "dogma_controls_ammo_selector_ammo_key",
+				hint = "dogma_gameplay_ammo_selector_ammo_key",
 			},
 			{
 				id = "mode",
 				type = kb_mod,
 				val = 2,
 				def = CONFIG.DEFAULTS["mode"],
-				hint = "dogma_controls_ammo_selector_mode",
+				hint = "dogma_gameplay_ammo_selector_mode",
 				content = {
 					{ 0, "toggle" },
 					{ 2, "hold" },
@@ -40,14 +40,14 @@ function on_mcm_load(options)
 				max = 1000,
 				step = 25,
 				def = CONFIG.DEFAULTS["hold_delay_ms"],
-				hint = "dogma_controls_ammo_selector_hold_delay_ms",
+				hint = "dogma_gameplay_ammo_selector_hold_delay_ms",
 			},
 			{
 				id = "select_on_release",
 				type = "check",
 				val = 1,
 				def = CONFIG.DEFAULTS["select_on_release"],
-				hint = "dogma_controls_ammo_selector_select_on_release",
+				hint = "dogma_gameplay_ammo_selector_select_on_release",
 			},
 		}),
 	})

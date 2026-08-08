@@ -1,11 +1,11 @@
 --[[
-	NPC Foliage (tweak)
+	Opaque Bushes (tweak)
 
 	1) materials/*.ltx - bush / bush_sux vis_transparency_factor = 0
 
-	2) Always-on nudge - stalkers fighting the actor whose torso is inside
-	   bush collision are sent to solid cover, or advance toward the actor
-	   if no cover is found.
+	2) NPC foliage nudge — disabled for now (testing opaque materials only).
+	   Stalkers fighting the actor in bush collision would be sent to cover
+	   or advanced toward the actor if none is found.
 ]]
 
 local CONFIG = _G.dogma_tweaks_opaque_bushes_conf
@@ -404,6 +404,6 @@ function on_game_start()
 		return
 	end
 	dogma.load(CONFIG.MOD_ID)
-	RegisterScriptCallback("actor_on_update", tick)
-	log("foliage tweak started")
+	-- RegisterScriptCallback("actor_on_update", tick)
+	log("opaque bushes (materials only; nudge disabled)")
 end

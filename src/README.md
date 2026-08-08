@@ -48,7 +48,27 @@ Release zip: `bash tools/package-fomod.sh` → `build/fomod/`. Wizard is **one p
 
 Runtime API: `dogma.script` (`dogma.mcm`, `dogma.keybinds`, `dogma.dbg`, `dogma.load`, …).
 MCM gather: `dogma_mcm.attach` / `append` / `with_header`.
-Controls rows: `__dogma_keybinds.claim` / `claim_bind` in feature `_conf.script`.
+Controls rows: `__dogma_keybinds.claim_bind` in feature `_conf.script`.
+
+### Script load order (Controls keybinds)
+
+Anomaly loads scripts **lazily**. `gather_options()` at the main menu runs every `*mcm.script` (top-level + `on_mcm_load`). `zzzz_*` body scripts stay unloaded until `on_game_start` or an explicit global reference.
+
+Build output names enforce order when scripts do load:
+
+| Shipped name | Role |
+|--------------|------|
+| `__dogma_keybinds.script` | `CONTROLS` registry |
+| `dogma.script` | `dogma.keybinds = __dogma_keybinds` |
+| `dogma_{path}_conf.script` | `_G` conf + `claim_bind` (game session) |
+| `dogma_{path}_mcm.script` | `_conf` prepended; also runs at main-menu MCM gather |
+| `modxml_keybinds.script` | `on_xml_read` → inject rows into `ui_keybinding.xml` |
+| `zzzz_dogma_{path}_main.script` | Body; `on_game_start` callbacks |
+
+`_conf.script`: set `_G.dogma_*_conf`, define `BINDS`, call `__dogma_keybinds.claim_bind`.
+Features with Controls keys but **no MCM page** still ship an empty `mcm.script` so build prepends `_conf` for main-menu gather (see `hud/pistol_slot`).
+
+`zzzz_*` main: `local CONFIG = _G.dogma_*_conf` (conf always loads first — `dogma_*_conf` before `zzzz_*`). Handlers use `dogma.keybinds.bind_kb("kCUSTOMxx")` in callbacks only (`bind_kb` reads `key_bindings`, which exists once the engine is up).
 
 ```lua
 function on_game_start()

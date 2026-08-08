@@ -19,15 +19,15 @@
 #
 # Scripts (prefix applied at build - src keeps short names like main.script):
 #   _common/scripts/__dogma_*        -> private impls
-#   _common/scripts/dogma_mcm.script -> MCM-gather API (dogma_mcm.attach / .keys)
+#   _common/scripts/dogma_mcm.script -> MCM-gather API (dogma_mcm.attach / …)
 #   _common/scripts/dogma.script     -> game-time API (dogma.mcm / .dbg / .load)
 #                               game-time: dogma.*; MCM scripts: dogma_mcm.*
 #                               bare _* names other than __dogma_* / _conf skipped
 #   …/scripts/_conf.script    -> dogma_{path}_conf.script
 #                               no zzzz_ - before that feature's zzzz_ body scripts
 #   …/scripts/mcm.script      -> dogma_{path}_mcm.script   (*mcm.script glob)
-#                               _conf is prepended so main-menu MCM (which only
-#                               loads *mcm.script) still gets MOD_ID + defaults
+#                               _conf is prepended so main-menu MCM gather (which only
+#                               loads *mcm.script) still runs conf + claim_bind
 #   …/scripts/modxml_*.script -> modxml_dogma_{path}_*.script
 #                               keep modxml_ prefix - Modded Exes only gathers
 #                               that glob for DXML on_xml_read injection
@@ -145,7 +145,7 @@ should_skip_name() {
 	case "$base" in
 		README | README.* | MOVE_MAP | MOVE_MAP.* | .gitkeep | .DS_Store | Thumbs.db) return 0 ;;
 		assets | installer | __pycache__) return 0 ;;
-		*.alao-bak | *.pyc | *.pyo) return 0 ;;
+		*.alao-bak | *.pyc | *.pyo | *.meta) return 0 ;;
 		# Authoring / pack source only — shipped via db/mods/*.db0 instead.
 		*.aimap) return 0 ;;
 		# _conf: feature defaults. __dogma_*: private; dogma_mcm: common index.
@@ -351,7 +351,7 @@ stage_file() {
 			{
 				cat "$conf_src"
 				echo ""
-				echo "-- dogma-build: conf prepended so main-menu MCM (*mcm.script) has defaults"
+				echo "-- dogma-build: conf prepended so main-menu MCM gather runs claim_bind"
 				cat "$src_path"
 			} > "$staged"
 			printf '%s\n' "$dest_rel" >> "$MANIFEST"

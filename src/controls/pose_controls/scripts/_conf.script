@@ -1,4 +1,6 @@
 -- controls/pose_controls conf
+-- Shipped as dogma_controls_pose_controls_conf.script (before zzzz main).
+-- Also prepended into mcm.script for main-menu MCM gather + claim_bind.
 
 local BINDS = {
 	walk = {
@@ -28,7 +30,4 @@ _G.dogma_controls_pose_controls_conf = {
 	},
 }
 
-local KB = __dogma_keybinds
-if KB then
-	KB.claim_bind(BINDS.walk)
-end
+__dogma_keybinds.claim_bind(BINDS.walk)

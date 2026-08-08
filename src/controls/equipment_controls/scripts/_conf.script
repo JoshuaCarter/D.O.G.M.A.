@@ -1,4 +1,6 @@
 -- controls/equipment_controls conf
+-- Shipped as dogma_controls_equipment_controls_conf.script (before zzzz main).
+-- Also prepended into mcm.script for main-menu MCM gather + claim_bind.
 
 local defaults = {
 	["auto_bolt_on_detector"] = true,
@@ -42,10 +44,7 @@ _G.dogma_controls_equipment_controls_conf = {
 	},
 }
 
-local KB = __dogma_keybinds
-if KB then
-	local order = { "rf_scanner", "glowstick" }
-	for i = 1, #order do
-		KB.claim_bind(BINDS[order[i]])
-	end
+local order = { "rf_scanner", "glowstick" }
+for i = 1, #order do
+	__dogma_keybinds.claim_bind(BINDS[order[i]])
 end

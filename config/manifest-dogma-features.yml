@@ -30,8 +30,8 @@ Radiation FX:
   desc: Customisable radiation FX that tracks your actual irradiation level (like a dosimeter).
 
 Bleed FX:
-  stage: DEV
-  default: true
+  stage: OMIT
+  default: false
   path: fx/bleed
   desc: Bleed screen FX from two overlapping PPEs, intensity scaled to bleed level.
   settings:
@@ -41,8 +41,9 @@ Health FX:
   stage: DEV
   default: true
   path: fx/health
-  desc: Low-health screen FX from two overlapping PPEs, intensity scaled to missing HP.
+  desc: Low-health screen FX from stock edge blood and/or xlibs PPE washes, scaled to missing HP.
   settings:
+    - video/player/blood_splash: "false" # Anomaly "Bleeding effect" (we drive edge blood + PPEs ourselves)
     - video/player/bleed_effect: "false" # Anomaly "Low health blur"
 
 FPS:

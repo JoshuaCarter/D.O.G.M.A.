@@ -1,29 +1,31 @@
 -- fx/health conf
 --
--- Intensity rises as actor.health falls (0..1). Two overlapping PPEs:
---   PPE A starts at half health → full near death
---   PPE B starts later (critical) → full near death
+-- Intensity 0 at START_HP, 1 at END_HP, then × MCM intensity.
+-- Edge blood = stock hud_blood1–4 overlays only (not Update_Bleeding blur/shock).
+-- PPE list = xpp.script damage-wash filenames (no custom .ppe).
 
 _G.dogma_fx_health_conf = {
 	MOD_ID = "dogma/fx/health",
+	START_HP = 0.50,
+	END_HP = 0.05,
+	EDGE_LAYERS = 4,
 	DEFAULTS = {
 		["enable"] = true,
 		["intensity"] = 1.0,
+		["edge_blood"] = true,
+		["ppe_bloody"] = false,
+		["ppe_death"] = false,
+		["ppe_actor_death"] = false,
+		["ppe_amk_shoot"] = false,
+		["ppe_snd_shock"] = false,
 	},
-	-- Values are actor.health; intensity uses (1 - health) mapped through
-	-- start_hp → end_hp (higher start_hp = earlier onset), then MCM multiplier.
-	PPE_A = {
-		name = "dogma_health_a.ppe",
-		id = 2040,
-		start_hp = 0.50,
-		end_hp = 0.05,
+	-- xlibs/xpp.script damage washes; fixed slots above actor_effects (2010–2016).
+	PPE_EFFECTS = {
+		{ key = "ppe_bloody", ppe = "bloody.ppe", id = 2040 },
+		{ key = "ppe_death", ppe = "death.ppe", id = 2041 },
+		{ key = "ppe_actor_death", ppe = "actor_death.ppe", id = 2042 },
+		{ key = "ppe_amk_shoot", ppe = "amk_shoot.ppe", id = 2043 },
+		{ key = "ppe_snd_shock", ppe = "snd_shock.ppe", id = 2044 },
 	},
-	PPE_B = {
-		name = "dogma_health_b.ppe",
-		id = 2041,
-		start_hp = 0.25,
-		end_hp = 0.05,
-	},
-	-- Filled by on_option_change (runs at boot before any read).
 	loaded = {},
 }

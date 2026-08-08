@@ -1,19 +1,29 @@
 --[[
 	Settings → Controls keybind rows only (no MCM).
 
-	Features register rows before ui_keybinding.xml is read; modxml_keybinds
-	injects them next to an existing command in the same group.
+	Load order (build output names; lazy unless referenced):
+	  1. __dogma_keybinds.script     — this module; CONTROLS registry
+	  2. dogma.script                — dogma.keybinds = __dogma_keybinds
+	  3. dogma_{path}_conf.script    — _G conf + claim_bind at top level
+	  4. dogma_{path}_mcm.script     — _conf prepended by build; also runs at
+	                                   main-menu MCM gather (see below)
+	  5. modxml_keybinds.script      — on_xml_read → inject CONTROLS rows
+	  6. zzzz_dogma_{path}_main.script — body; lazy until game session
 
-	  __dogma_keybinds.claim({
-	    action = "custom25",
-	    id = "kb_pistol_holster",
-	    label = "Pistol holster",
-	    group = "kb_grp_weapons",
-	    after = "kb_weapon3",   -- insert immediately after this command
-	    -- before = "kb_grenade", -- or immediately before (not both)
-	  })
+	Main menu vs game session (Anomaly lazy scripts):
+	  gather_options() loads every *mcm.script (top-level + on_mcm_load).
+	  zzzz_* body scripts stay unloaded until on_game_start or an explicit
+	  global reference. claim_bind belongs in _conf; build ships it standalone
+	  (for game session) and prepends it into *mcm.script when that file exists
+	  (so Controls rows exist before the first New Game / Options visit).
+	  A feature with Controls keys but no MCM page still needs an empty mcm.script
+	  so build prepends _conf for main-menu gather.
 
-	Runtime handlers: dogma.keybinds.bind_kb("kCUSTOM25") → key_bindings entry.
+	Registration (feature _conf.script):
+	  __dogma_keybinds.claim_bind(BINDS.entry)
+
+	Runtime handlers (feature zzzz main, in callbacks only):
+	  dogma.keybinds.bind_kb("kCUSTOM25")  → key_bindings entry
 ]]
 
 local tostr = tostring

@@ -1,4 +1,6 @@
 -- hud/pistol_slot conf
+-- Shipped as dogma_hud_pistol_slot_conf.script (before zzzz main).
+-- Also prepended into mcm.script (stub) for main-menu claim_bind.
 
 local BINDS = {
 	draw = {
@@ -21,7 +23,4 @@ _G.dogma_hud_pistol_slot_conf = {
 	PISTOL_TYPE_KEY = 2, -- LTX slot 1 (pistol) + 1 → ui_inventory slot_cell key
 }
 
-local KB = __dogma_keybinds
-if KB then
-	KB.claim_bind(BINDS.draw)
-end
+__dogma_keybinds.claim_bind(BINDS.draw)

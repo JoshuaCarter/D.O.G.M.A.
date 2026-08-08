@@ -64,6 +64,10 @@ local function insert_command(xml_obj, group_name, anchor_id, new_id, exe, befor
 		return
 	end
 	local el = anchor[1]
+	local parent = el and el.parent
+	if not parent then
+		return
+	end
 	local pos = xml_obj:getElementPosition(el)
 	if not pos then
 		return
@@ -73,7 +77,7 @@ local function insert_command(xml_obj, group_name, anchor_id, new_id, exe, befor
 	end
 	xml_obj:insertFromXMLString(
 		fmt('<command id="%s"\t\t\t\t\t\texe="%s"/>', new_id, exe),
-		el.parent,
+		parent,
 		pos
 	)
 end

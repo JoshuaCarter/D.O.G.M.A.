@@ -1,7 +1,7 @@
 --[[
 	Health FX
 
-	Desaturation PPE only — full colour at full HP, black and white at 0 HP.
+	Desaturation PPE — ramps from 0 at hp_start to full at hp_end.
 	Manifest disables stock Low health blur.
 ]]
 
@@ -10,9 +10,9 @@ local CONFIG = _G.dogma_fx_health_conf
 local ppe_active = false
 
 local LOG = {
-	LIFECYCLE = {order = 0, color = "gray"},
-	HEALTH    = {order = 1, color = "green"},
-	DESAT     = {order = 2, color = "yellow"},
+	LIFECYCLE = { order = 0, color = "gray" },
+	HEALTH = { order = 1, color = "green" },
+	DESAT = { order = 2, color = "yellow" },
 }
 
 local function overlay(log_type, msg)
@@ -29,13 +29,20 @@ local function log(msg)
 end
 
 local function desat_factor(health)
-	local hp = health or 0
-	if hp < 0 then
-		hp = 0
-	elseif hp > 1 then
-		hp = 1
+	local hp = dogma.math.clamp01(health or 0)
+	local start = CONFIG.loaded.hp_start or CONFIG.DEFAULTS["hp_start"]
+	local finish = CONFIG.loaded.hp_end or CONFIG.DEFAULTS["hp_end"]
+	if hp >= start then
+		return 0
 	end
-	return 1 - hp
+	if hp <= finish then
+		return 1
+	end
+	local span = start - finish
+	if span <= 0 then
+		return 1
+	end
+	return (start - hp) / span
 end
 
 local function set_ppe(active, factor)
@@ -63,6 +70,8 @@ local function on_option_change()
 	CONFIG.loaded.debug_overlay = dogma.dbg.overlay_enabled()
 	CONFIG.loaded.enabled = dogma.mcm.bool(CONFIG.MOD_ID, "enable")
 	CONFIG.loaded.intensity = dogma.mcm.float(CONFIG.MOD_ID, "intensity")
+	CONFIG.loaded.hp_start = dogma.mcm.float(CONFIG.MOD_ID, "hp_start")
+	CONFIG.loaded.hp_end = dogma.mcm.float(CONFIG.MOD_ID, "hp_end")
 	dogma.dbg.set_enabled(CONFIG.MOD_ID, dogma.dbg.overlay_enabled())
 	if not CONFIG.loaded.enabled then
 		clear_all()

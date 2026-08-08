@@ -4,10 +4,6 @@
 	Injects keybinds + remember toggles into SortingPlus's page.
 ]]
 
-local function dik_or(fallback)
-	return (DIK_keys and DIK_keys[fallback]) or -1
-end
-
 local function find_gr_child(gr, id)
 	if not gr then
 		return nil
@@ -40,13 +36,13 @@ local function inject_sortingplus(tree)
 		id = "key_favorite",
 		type = "key_bind",
 		val = 2,
-		def = dik_or("DIK_K"),
+		def = -1,
 	})
 	table.insert(tree.gr, at + 2, {
 		id = "key_junk",
 		type = "key_bind",
 		val = 2,
-		def = dik_or("DIK_J"),
+		def = -1,
 	})
 	table.insert(tree.gr, at + 3, {
 		id = "persist_favorites",

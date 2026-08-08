@@ -99,10 +99,6 @@ local function patch_keybinding_ui(xml_obj)
 end
 
 local function patch_keybinding_strings(xml_obj)
-	set_string_text(xml_obj, "kb_weapon1", "Weapon 1 (Melee)")
-	set_string_text(xml_obj, "kb_weapon2", "Weapon 2 (Secondary)")
-	set_string_text(xml_obj, "kb_weapon3", "Weapon 3 (Primary)")
-	set_string_text(xml_obj, "kb_walk", "Prone")
 	each_control(function(e)
 		if e.id and e.label then
 			ensure_string(xml_obj, e.id, e.label)

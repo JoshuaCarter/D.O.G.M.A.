@@ -47,6 +47,9 @@ end
 
 local function set_ppe(active, factor)
 	local spec = CONFIG.PPE
+	if not level then
+		return false
+	end
 	if factor <= 0 then
 		if active then
 			level.remove_pp_effector(spec.id)
@@ -61,7 +64,9 @@ local function set_ppe(active, factor)
 end
 
 local function clear_all()
-	level.remove_pp_effector(CONFIG.PPE.id)
+	if level then
+		level.remove_pp_effector(CONFIG.PPE.id)
+	end
 	ppe_active = false
 end
 

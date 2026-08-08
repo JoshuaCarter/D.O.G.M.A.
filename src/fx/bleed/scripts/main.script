@@ -64,7 +64,10 @@ local function set_corner_alpha(wnd, alpha)
 end
 
 local function layout_corner(corner, appearance, scale_idx, alpha)
-	local hud = get_hud()
+	local hud = get_hud and get_hud()
+	if not hud then
+		return nil
+	end
 	local cs = hud:GetCustomStatic(static_name(appearance, corner))
 	if not cs then
 		return nil
@@ -145,7 +148,10 @@ local function overlay_alpha(o, now, max_alpha)
 end
 
 local function hide_static(name)
-	local hud = get_hud()
+	local hud = get_hud and get_hud()
+	if not hud then
+		return
+	end
 	if hud:GetCustomStatic(name) then
 		hud:RemoveCustomStatic(name)
 	end
@@ -169,7 +175,10 @@ local function begin_fade_out(o, now, max_alpha)
 end
 
 local function add_overlay(corner, appearance, now)
-	local hud = get_hud()
+	local hud = get_hud and get_hud()
+	if not hud then
+		return
+	end
 	local name = static_name(appearance, corner)
 	if not hud:GetCustomStatic(name) then
 		hud:AddCustomStatic(name)
@@ -184,11 +193,15 @@ local function add_overlay(corner, appearance, now)
 end
 
 local function swap_appearance(appearance)
+	local hud = get_hud and get_hud()
+	if not hud then
+		active_appearance = appearance
+		return
+	end
 	for _, o in ipairs(overlays) do
 		if o.state ~= "done" and o.appearance ~= appearance then
 			hide_static(static_name(o.appearance, o.corner))
 			o.appearance = appearance
-			local hud = get_hud()
 			if not hud:GetCustomStatic(static_name(appearance, o.corner)) then
 				hud:AddCustomStatic(static_name(appearance, o.corner))
 			end

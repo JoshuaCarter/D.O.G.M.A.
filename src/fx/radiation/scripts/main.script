@@ -161,9 +161,11 @@ local function set_dual(msv)
 end
 
 local function clear_all()
-	level.remove_pp_effector(PP_GRAIN_ID)
-	level.remove_pp_effector(PP_BLUR_ID)
-	level.remove_pp_effector(PP_DUAL_ID)
+	if level then
+		level.remove_pp_effector(PP_GRAIN_ID)
+		level.remove_pp_effector(PP_BLUR_ID)
+		level.remove_pp_effector(PP_DUAL_ID)
+	end
 	current_ppe = nil
 	blur_active = false
 	dual_active = false

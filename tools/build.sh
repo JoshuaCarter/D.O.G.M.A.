@@ -53,18 +53,19 @@
 #
 # Default (no DOGMA_OUT): wipe build/, stage → build/, then optional full-replace
 # deploy. package-fomod sets DOGMA_OUT and merges into its own stage dirs.
-set -euo pipefail
+set -eEuo pipefail
+
+# Shown on every non-zero exit (EXIT trap). ERR alone misses failures inside
+# functions unless errtrace (-E) is on; EXIT is the hard guarantee.
+FAIL_BANNER_SHOWN=0
 
 build_fail_banner() {
-	local w cols
-	cols="$(tput cols 2>/dev/null || true)"
-	w="${cols:-80}"
-	(( w < 40 )) && w=80
+	[[ "$FAIL_BANNER_SHOWN" == "1" ]] && return 0
+	FAIL_BANNER_SHOWN=1
+	# Fixed-width red bars — no tput (can fail / lie in VS Code / CI).
 	local n
 	for n in 1 2 3; do
-		printf '\033[41m\033[97m' >&2
-		printf '%*s' "$w" '' >&2
-		printf '\033[0m\n' >&2
+		printf '\033[41m\033[97m%80s\033[0m\n' '' >&2
 	done
 }
 
@@ -77,7 +78,18 @@ build_fail() {
 	exit "$code"
 }
 
+build_on_exit() {
+	local rc=$?
+	rm -rf "${STAGE:-}" "${STAGE_MODROOT:-}" 2>/dev/null || true
+	rm -f "${MANIFEST:-}" "${MANIFEST_MODROOT:-}" 2>/dev/null || true
+	if [[ "$rc" -ne 0 ]]; then
+		build_fail_banner
+	fi
+	exit "$rc"
+}
+
 trap 'build_fail "unexpected error (line $LINENO)"' ERR
+trap 'build_on_exit' EXIT
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SRC="$ROOT/src"
@@ -114,7 +126,6 @@ STAGE="$(mktemp -d)"
 STAGE_MODROOT="$(mktemp -d)"
 MANIFEST="$(mktemp)"
 MANIFEST_MODROOT="$(mktemp)"
-trap 'rm -rf "$STAGE" "$STAGE_MODROOT"; rm -f "$MANIFEST" "$MANIFEST_MODROOT"' EXIT
 
 if [[ ! -d "$SRC" ]]; then
 	build_fail "missing $SRC"

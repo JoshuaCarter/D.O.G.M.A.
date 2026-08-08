@@ -13,6 +13,7 @@
 ]]
 
 local CONFIG = _G.dogma_tweaks_hide_hostile_pda_chatter_conf
+local logged_first_drop = false
 
 local FACTIONS = {
 	stalker = true,
@@ -129,18 +130,27 @@ local function patch()
 		local drop, reason = should_drop(name, t)
 		if drop then
 			log("drop " .. tostring(reason))
+			if not logged_first_drop then
+				logged_first_drop = true
+				dogma.console.say("hostile PDA chatter dropped: " .. tostring(reason), "blue")
+			end
 			return false
 		end
 		return orig(self, name, t, fifo)
 	end
 	cls.__dogma_no_hostile_pda = true
 	log("PushToChannel hooked")
+	dogma.console.say("hostile PDA chatter: PushToChannel hooked", "blue")
 	return true
 end
 
 function on_game_start()
 	dogma.load(CONFIG.MOD_ID)
+	logged_first_drop = false
 	patch()
 	RegisterScriptCallback("actor_on_first_update", patch)
-	RegisterScriptCallback("on_game_load", patch)
+	RegisterScriptCallback("on_game_load", function()
+		logged_first_drop = false
+		patch()
+	end)
 end

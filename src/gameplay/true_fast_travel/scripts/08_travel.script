@@ -34,6 +34,10 @@ local function fail_start(msg, style)
 	tft.is_traveling = false
 	tft.path_chain = nil
 	if tft_set_fft_trip_in_progress then tft_set_fft_trip_in_progress(false) end
+	if msg then
+		local color = (style == "error") and "red" or "yellow"
+		dogma.console.say("true fast travel: start failed - " .. tostring(msg), color)
+	end
 	if msg and tft_msg then tft_msg(msg, style or "warning") end
 	return false
 end
@@ -109,9 +113,11 @@ local function start_travel_sequence(pos, lvid, gvid, is_transition, final_gvid)
 			chain, is_vertex, path_len, meta = c, iv, plen, m
 		else
 			tft_log("MVP path build failed: %s", tostring(c))
+			dogma.console.say("true fast travel: path build failed - " .. tostring(c), "yellow")
 		end
 	end
 	if not chain or #chain < 2 then
+		dogma.console.say("true fast travel: no path at start", "yellow")
 		return fail_start(tft_str("tft_msg_no_nav_path"), "warning")
 	end
 
@@ -142,6 +148,10 @@ local function start_travel_sequence(pos, lvid, gvid, is_transition, final_gvid)
 	set_safety_active(120)
 
 	tft_log("MVP travel start %.0fm pts=%d", tft.travel_dist, #chain)
+	dogma.console.say(string.format(
+		"true fast travel: started %.0fm %d pts%s",
+		tft.travel_dist, #chain, tft.is_transition and " (transition)" or ""
+	), "blue")
 
 	if not (_G.tft_begin_fly_camera and _G.tft_begin_fly_camera()) then
 		return fail_start(tft_str("tft_msg_no_nav_path"), "warning")
@@ -151,6 +161,9 @@ end
 
 local function stop_travel_logic(reason)
 	tft_log("MVP travel stop: %s", tostring(reason))
+	local r = tostring(reason or "stop")
+	local color = (r == "cancel" or r == "manual") and "yellow" or "blue"
+	dogma.console.say("true fast travel: stopped - " .. r, color)
 	if _G.tft_cancel_fly_camera then
 		_G.tft_cancel_fly_camera()
 	end
@@ -165,6 +178,7 @@ local function complete_travel_sequence(opts)
 	opts = opts or {}
 	local reason = opts.reason or "arrive"
 	tft_log("MVP travel complete: %s", tostring(reason))
+	dogma.console.say("true fast travel: complete - " .. tostring(reason), "blue")
 
 	if db.actor and tft.dest_pos then
 		pcall(function() db.actor:set_actor_position(tft.dest_pos) end)

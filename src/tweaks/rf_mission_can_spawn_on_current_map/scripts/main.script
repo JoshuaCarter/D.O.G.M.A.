@@ -37,13 +37,58 @@ local function allow_same_map_spawns()
 	return true
 end
 
+local function log_same_map_spawn(source)
+	if not (level and level.name and tb_package_in_level) then
+		return
+	end
+	local here = level.name()
+	if tb_package_in_level ~= here then
+		return
+	end
+	dogma.console.say(string.format("RF package spawned on current map (%s, %s)", here, source or "spawn"), "blue")
+end
+
+local function hook_tb_spawn()
+	if type(tb_radio_thing) ~= "function" or tb_radio_thing.__dogma_rf_same_map then
+		return type(tb_radio_thing) == "function"
+	end
+	local orig_radio = tb_radio_thing
+	function tb_radio_thing()
+		local ok = orig_radio()
+		if ok then
+			log_same_map_spawn("tb_radio_thing")
+		end
+		return ok
+	end
+	tb_radio_thing.__dogma_rf_same_map = true
+
+	if type(failsafepackagespawn) == "function" and not failsafepackagespawn.__dogma_rf_same_map then
+		local orig_fail = failsafepackagespawn
+		function failsafepackagespawn()
+			local ok = orig_fail()
+			if ok then
+				log_same_map_spawn("failsafe")
+			end
+			return ok
+		end
+		failsafepackagespawn.__dogma_rf_same_map = true
+	end
+	return true
+end
+
 -- TB_RF_Receiver_Packages.script loads earlier (no zzzz_); patch once here.
 allow_same_map_spawns()
 
 function on_game_start()
-	-- Re-apply in case another mod rebuilt tb_allmaps after our file load.
-	CreateTimeEvent("dogma_rf_receiver", "allow_same_map", 0.1, function()
+	dogma.load("dogma/tweaks/rf_mission_can_spawn_on_current_map")
+	local function refresh()
 		allow_same_map_spawns()
+		hook_tb_spawn()
+	end
+	refresh()
+	RegisterScriptCallback("on_game_load", refresh)
+	CreateTimeEvent("dogma_rf_receiver", "allow_same_map", 0.1, function()
+		refresh()
 		return true
 	end)
 end

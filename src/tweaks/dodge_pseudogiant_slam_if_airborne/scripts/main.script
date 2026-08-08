@@ -24,6 +24,7 @@ function on_game_start()
 	local mod = _G.grok_actor_damage_balancer
 	if not mod or type(mod.actor_on_before_hit) ~= "function" then
 		printf("[%s] grok_actor_damage_balancer.actor_on_before_hit not found", CONFIG.MOD_ID:gsub("/", "_"))
+		dogma.console.say("pseudogiant slam dodge: grok hook missing", "red")
 		return
 	end
 
@@ -49,6 +50,7 @@ function on_game_start()
 				flags.ret_value = false
 			end
 			log("dodged giant slam")
+			dogma.console.say("pseudogiant slam dodged (airborne)", "blue")
 			return
 		end
 		return grok_orig(shit, bone_id, flags)

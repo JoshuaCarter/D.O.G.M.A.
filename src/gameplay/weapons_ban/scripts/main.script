@@ -148,6 +148,7 @@ local function give_extra_start_ammo()
 	for sec, cnt in pairs(ammo_to_spawn) do
 		alife_create_item(sec, db.actor, { ammo = cnt })
 		log(string.format("new game +%s x%s (%s mags × mag size)", sec, cnt, mags))
+		dogma.console.say(string.format("weapons ban: extra start ammo %s x%d", sec, cnt), "blue")
 	end
 end
 

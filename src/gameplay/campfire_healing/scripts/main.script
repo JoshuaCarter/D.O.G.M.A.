@@ -272,6 +272,7 @@ local function tick_limb()
 	end
 	if heal_limb_perm(health, timedhp, maxhp, key) then
 		save_limb(key, health, timedhp)
+		dogma.console.say(string.format("campfire: limb %s temp->perm +1", key), "blue")
 	end
 end
 

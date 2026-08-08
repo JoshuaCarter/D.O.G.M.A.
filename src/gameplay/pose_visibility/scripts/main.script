@@ -9,9 +9,18 @@ local FLAG = "__dogma_pose_visibility"
 local function refresh_settings()
 	local d = CONFIG.DEFAULTS
 	local L = CONFIG.loaded
+	local prev_stand = L.cap_stand
+	local prev_crouch = L.cap_crouch
+	local prev_prone = L.cap_prone
 	L.cap_stand = dogma.mcm.float(CONFIG.MOD_ID, "cap_stand", d.cap_stand)
 	L.cap_crouch = dogma.mcm.float(CONFIG.MOD_ID, "cap_crouch", d.cap_crouch)
 	L.cap_prone = dogma.mcm.float(CONFIG.MOD_ID, "cap_prone", d.cap_prone)
+	if prev_stand ~= nil and (prev_stand ~= L.cap_stand or prev_crouch ~= L.cap_crouch or prev_prone ~= L.cap_prone) then
+		dogma.console.say(string.format(
+			"pose visibility caps: stand %.2f->%.2f crouch %.2f->%.2f prone %.2f->%.2f",
+			prev_stand, L.cap_stand, prev_crouch, L.cap_crouch, prev_prone, L.cap_prone
+		), "blue")
+	end
 end
 
 local function pose_cap()

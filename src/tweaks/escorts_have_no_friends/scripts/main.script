@@ -90,6 +90,7 @@ end
 -- Offline mates: remove (prevent pop-in). Online mates: rehome, don't delete.
 -- Always verify the speaker squad is solo afterward.
 local function strip_to_speaker(npc)
+	local sformat = string.format
 	local squad = xsquad.get_squad_by_member(npc:id())
 	if not squad then
 		return
@@ -109,7 +110,11 @@ local function strip_to_speaker(npc)
 	if #offline + #online == 0 then
 		return
 	end
-	log(string.format("strip id=%s offline=%d online=%d", tostring(keep_id), #offline, #online))
+	log(sformat("strip id=%s offline=%d online=%d", tostring(keep_id), #offline, #online))
+	dogma.console.say(sformat(
+		"escorts solo: id=%s offline=%d online=%d",
+		tostring(keep_id), #offline, #online
+	), "blue")
 	remove_members(squad, offline)
 	for i = 1, #online do
 		if not rehome_one(squad, online[i]) then
@@ -127,7 +132,8 @@ local function strip_to_speaker(npc)
 		end
 	end
 	if #still > 0 then
-		log(string.format("strip fallback remove %d still attached", #still))
+		log(sformat("strip fallback remove %d still attached", #still))
+		dogma.console.say(sformat("escorts solo: fallback removed %d attached", #still), "yellow")
 		remove_members(squad, still)
 	end
 end
@@ -179,6 +185,7 @@ local function patch_module(mod)
 
 	mod.__dogma_tweaks_escorts_have_no_friends = true
 	log("patched " .. tostring(mod))
+	dogma.console.say("escorts have no friends: patched " .. tostring(mod), "blue")
 end
 
 local function patch_all()

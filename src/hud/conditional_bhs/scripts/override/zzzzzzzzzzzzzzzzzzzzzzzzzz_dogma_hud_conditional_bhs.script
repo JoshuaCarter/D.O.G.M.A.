@@ -367,7 +367,7 @@ local function end_force()
 	apply_fade_alpha(255)
 end
 
-local function begin_force()
+local function begin_force(reason)
 	if forced then
 		return
 	end
@@ -382,6 +382,9 @@ local function begin_force()
 		saved_healthstatus = true
 	end
 	forced = true
+	if reason then
+		dogma.console.say("conditional BHS: shown (" .. reason .. ")", "blue")
+	end
 end
 
 local function begin_or_refresh_damage()
@@ -405,7 +408,7 @@ local function begin_or_refresh_damage()
 
 	flash_until = now + math.floor(sec * 1000)
 	if not forced then
-		begin_force()
+		begin_force("damage")
 	end
 	force_visible()
 	apply_fade_alpha(display_alpha(now))
@@ -452,7 +455,13 @@ local function on_actor_update()
 	end
 
 	if not forced then
-		begin_force()
+		local why = "hold"
+		if inventory_wants() then
+			why = "inventory"
+		elseif damage_wants(now) then
+			why = "damage"
+		end
+		begin_force(why)
 	end
 
 	force_visible()

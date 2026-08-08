@@ -5,6 +5,11 @@
 -- Technical: default_controls.ltx is Exit-only (boot / Options→Default /
 -- cfg_save's leading `default_controls`). Full stock lists rewrite unbound
 -- keys back into user.ltx — Escape-unbind alone cannot stop that on boot.
+-- If another mod's stock default_controls.ltx wins the FS fight, unbound
+-- actions (arrow Turn Left/Right/etc.) still return on every launch because
+-- user.ltx only lists bound keys. Boot strip: unbind any ACTIONS entry that
+-- has no bind/bind_sec line in user.ltx (Accept path must not do this — the
+-- on-disk file is still pre-Apply).
 -- Functional: Escape unbinds in engine memory (UI-only "---" still left the
 -- old bind in cfg_save). Duplicate Controls rows on the same exe= are deduped
 -- by modxml_keybinds when a feature claims that action; unclaimed dupes remain.
@@ -140,6 +145,59 @@ local function ensure_quit_escape()
 	exec_console_cmd("bind quit kESCAPE")
 end
 
+local function user_ltx_path()
+	if not (getFS and getFS().update_path) then
+		return nil
+	end
+	local ok, path = pcall(function()
+		return getFS():update_path("$app_data_root$", "user.ltx")
+	end)
+	if ok and path and path ~= "" then
+		return path
+	end
+	return nil
+end
+
+-- Actions that have an explicit bind / bind_sec line in the saved user.ltx.
+-- cfg_save never writes unbound keys, so missing here means "stay unbound".
+local function saved_bind_actions()
+	local path = user_ltx_path()
+	if not path then
+		return nil
+	end
+	local f = io.open(path, "r")
+	if not f then
+		return nil
+	end
+	local saved = {}
+	for line in f:lines() do
+		local action = string.match(line, "^%s*bind_sec%s+(%S+)")
+			or string.match(line, "^%s*bind%s+(%S+)")
+		if action then
+			saved[action] = true
+		end
+	end
+	f:close()
+	return saved
+end
+
+-- Stock default_controls (when it wins over our Exit-only file) re-applies
+-- Turn Left/Right/Up/Down etc. on every launch. Clear anything the user did
+-- not persist — only safe once user.ltx is the source of truth (boot/load).
+local function strip_unsaved_defaults()
+	local saved = saved_bind_actions()
+	if not saved or not saved.quit then
+		return
+	end
+	for i = 1, #CONFIG.ACTIONS do
+		local action = CONFIG.ACTIONS[i][1]
+		if action ~= "quit" and not saved[action] then
+			exec_console_cmd("unbind " .. action)
+			exec_console_cmd("unbind_sec " .. action)
+		end
+	end
+end
+
 local function clear_escape_binds()
 	local esc = DIK_keys and DIK_keys.DIK_ESCAPE
 	if not esc then
@@ -172,10 +230,21 @@ local function repair_keybinds()
 	ensure_quit_escape()
 end
 
+-- Boot / load only: strip stock leftovers, then Escape pin.
+local function repair_keybinds_boot()
+	if not enabled() then
+		return
+	end
+	strip_unsaved_defaults()
+	repair_keybinds()
+end
+
 CONFIG.enabled = enabled
 CONFIG.ensure_quit_escape = ensure_quit_escape
 CONFIG.clear_escape_binds = clear_escape_binds
+CONFIG.strip_unsaved_defaults = strip_unsaved_defaults
 CONFIG.repair_keybinds = repair_keybinds
+CONFIG.repair_keybinds_boot = repair_keybinds_boot
 
 --------------------------------------------------------------------------------
 -- ui_options hooks (Options → Controls → Keybinds)

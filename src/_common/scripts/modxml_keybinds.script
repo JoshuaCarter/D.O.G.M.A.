@@ -4,29 +4,15 @@
 
 local fmt = string.format
 
-local function set_string_text(xml_obj, id, text)
-	local nodes = xml_obj:query(fmt("string[id=%s] > text", id))
-	if nodes[1] then
-		xml_obj:setText(nodes[1], text)
-		return true
-	end
-	return false
-end
-
 local function ensure_string(xml_obj, id, text)
-	-- Always set text when a text node exists (including empty / stale ids).
-	if set_string_text(xml_obj, id, text) then
-		return
-	end
-	-- String shell without <text> - do not bail; replace with a full node.
-	local existing = xml_obj:query(fmt("string[id=%s]", id))
-	if is_not_empty(existing) then
-		xml_obj:insertFromXMLString(fmt(
-			'<string id="%s">\n\t\t<text>%s</text>\n\t</string>',
-			id,
-			text
-		))
-		return
+	-- Replace the whole string node. Prefer this over setText on a child query:
+	-- a failed `string[id] > text` match used to insert a duplicate and leave
+	-- the stock label (e.g. Walk/Low Crouch) as the first hit.
+	local q = fmt("string[id=%s]", id)
+	local existing = xml_obj:query(q)
+	while existing[1] do
+		xml_obj:removeElement(existing[1])
+		existing = xml_obj:query(q)
 	end
 	xml_obj:insertFromXMLString(fmt(
 		'<string id="%s">\n\t\t<text>%s</text>\n\t</string>',

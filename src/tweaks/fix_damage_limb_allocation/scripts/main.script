@@ -81,11 +81,6 @@ local function find_upvalue(fn, name)
 	end
 end
 
--- Same point formula BHS uses for non-head limbs.
-local function estimate_limb_points(amount, damagescale)
-	return math.ceil((amount * 100) / 11 * damagescale)
-end
-
 -- BHS limb points including head 2× and per-limb caps.
 local function bhs_limb_points(amount, limb, damagescale)
 	local d = math.ceil((amount * 100) / 11 * damagescale)
@@ -106,6 +101,15 @@ local function bhs_limb_points(amount, limb, damagescale)
 		d = 3
 	end
 	return d
+end
+
+-- Amount that ceils to exactly `pts` under BHS's non-head formula (no limb cap).
+-- Split by points, not hit power — halving amount and calling twice inflates via ceil.
+local function amount_for_limb_points(pts, damagescale)
+	if pts <= 0 or damagescale <= 0 then
+		return 0
+	end
+	return (pts - 0.01) * 11 / (100 * damagescale)
 end
 
 local function log_bhs_fix(ctx, stock_limb, fixed_limb, amount, damagescale)
@@ -192,60 +196,64 @@ local function patch_bhs()
 			return
 		end
 
-		-- Fall / bottom-of-model: both legs, even split. 1 BHS point → one random leg.
+		-- Fall / bottom-of-model: both legs, even split of BHS points (not hit
+		-- power — ceil-per-call would otherwise roughly double severity).
+		-- 1 BHS point → one random leg.
 		if bone_id == 0 then
-			local pts = estimate_limb_points(amount, damagescale)
+			local stock_limb = (mrandom(1, 2) == 1) and "leftleg" or "rightleg"
+			local pts = bhs_limb_points(amount, stock_limb, damagescale)
 			if pts <= 1 then
-				local leg = (mrandom(1, 2) == 1) and BONE_LEFT_LEG or BONE_RIGHT_LEG
+				local leg = (stock_limb == "leftleg") and BONE_LEFT_LEG or BONE_RIGHT_LEG
 				return orig_rd(amount, leg)
 			end
-			local stock_limb = (mrandom(1, 2) == 1) and "leftleg" or "rightleg"
-			local half = amount * 0.5
-			local pts_stock = bhs_limb_points(amount, stock_limb, damagescale)
-			local pts_fix = bhs_limb_points(half, "leftleg", damagescale)
-				+ bhs_limb_points(half, "rightleg", damagescale)
+			local left_pts = math.floor(pts / 2)
+			local right_pts = pts - left_pts
 			dogma.console.say(string.format(
 				"limb damage fix (fall): %s %d pts -> leftleg+rightleg %d pts (hit %.3f)",
 				stock_limb,
-				pts_stock,
-				pts_fix,
+				pts,
+				left_pts + right_pts,
 				amount
 			), "yellow")
-			orig_rd(half, BONE_LEFT_LEG)
-			orig_rd(half, BONE_RIGHT_LEG)
+			if left_pts > 0 then
+				orig_rd(amount_for_limb_points(left_pts, damagescale), BONE_LEFT_LEG)
+			end
+			if right_pts > 0 then
+				orig_rd(amount_for_limb_points(right_pts, damagescale), BONE_RIGHT_LEG)
+			end
 			return
 		end
 
-		-- Unknown bone: arms + legs only. Split evenly when there are enough
-		-- points for all four; otherwise one random limb from that pool.
+		-- Unknown bone: arms + legs only. Split BHS points evenly when there
+		-- are enough for all four; otherwise one random limb from that pool.
 		if not HITBOX[bone_id] then
-			local pts = estimate_limb_points(amount, damagescale)
 			local pick = mrandom(1, 3)
 			local stock_bone = (pick == 1) and 35 or ((pick == 2) and 23 or 11)
 			local stock_limb = HITBOX[stock_bone]
-			if pts < #BONES_ARMS_LEGS then
-				local fixed_bone = BONES_ARMS_LEGS[mrandom(1, #BONES_ARMS_LEGS)]
+			local pts = bhs_limb_points(amount, stock_limb, damagescale)
+			local n = #BONES_ARMS_LEGS
+			if pts < n then
+				local fixed_bone = BONES_ARMS_LEGS[mrandom(1, n)]
 				local fixed_limb = HITBOX[fixed_bone]
 				if stock_limb ~= fixed_limb then
 					log_bhs_fix("unknown bone", stock_limb, fixed_limb, amount, damagescale)
 				end
 				return orig_rd(amount, fixed_bone)
 			end
-			local share = amount / #BONES_ARMS_LEGS
-			local pts_fix = 0
-			for i = 1, #BONES_ARMS_LEGS do
-				pts_fix = pts_fix + bhs_limb_points(share, HITBOX[BONES_ARMS_LEGS[i]], damagescale)
-			end
-			local pts_stock = bhs_limb_points(amount, stock_limb, damagescale)
+			local base = math.floor(pts / n)
+			local rem = pts - base * n
 			dogma.console.say(string.format(
 				"limb damage fix (unknown bone): %s %d pts -> 4-way %d pts (hit %.3f)",
 				stock_limb,
-				pts_stock,
-				pts_fix,
+				pts,
+				pts,
 				amount
 			), "yellow")
-			for i = 1, #BONES_ARMS_LEGS do
-				orig_rd(share, BONES_ARMS_LEGS[i])
+			for i = 1, n do
+				local share_pts = base + ((i <= rem) and 1 or 0)
+				if share_pts > 0 then
+					orig_rd(amount_for_limb_points(share_pts, damagescale), BONES_ARMS_LEGS[i])
+				end
 			end
 			return
 		end

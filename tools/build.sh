@@ -12,6 +12,8 @@
 #
 #   src/.../assets/...                      authoring only (ignored; not shipped)
 #   src/.../installer/image.png             optional FOMOD hover image (not shipped into gamedata)
+#   *.pdn                                   authoring only (Paint.NET; never shipped)
+#   *.png under gamedata                    authoring only (convert to DDS; MO2 modroot PNGs still ship)
 #   src/_common/mo2/...                     EXCEPTION: files under <mod>/mo2/
 #   src/<category>/<feature>/mo2/...        (sibling of gamedata/), e.g. mo2/tools/…
 #   src/<category>/<feature>/db/...         EXCEPTION: files under <mod>/db/
@@ -147,7 +149,7 @@ should_skip_name() {
 		assets | installer | __pycache__) return 0 ;;
 		*.alao-bak | *.pyc | *.pyo | *.meta) return 0 ;;
 		# Authoring / pack source only — shipped via db/mods/*.db0 instead.
-		*.aimap) return 0 ;;
+		*.aimap | *.pdn) return 0 ;;
 		# _conf: feature defaults. __dogma_*: private; dogma_mcm: common index.
 		_conf.script | dogma_mcm.script | dogma.script | __dogma_*.script | _common | _debug) return 1 ;;
 		_*) return 0 ;;
@@ -445,6 +447,9 @@ _emit_kind=""
 while IFS= read -r -d '' src_path; do
 	src_in_scope "$src_path" || continue
 	map_src_file "$src_path" || continue
+	case "$_emit_base" in
+		*.png) [[ "$_emit_kind" == "gamedata" ]] && continue ;;
+	esac
 	stage_file "$_emit_kind" "$_emit_src" "$_emit_rel" "$_emit_path_key" "$_emit_base"
 done < <(find "$SRC" \( -name assets -o -name installer -o -name __pycache__ \) -prune -o -type f -print0)
 

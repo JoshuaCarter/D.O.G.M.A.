@@ -6,8 +6,8 @@
 -- cfg_save's leading `default_controls`). Full stock lists rewrite unbound
 -- keys back into user.ltx — Escape-unbind alone cannot stop that on boot.
 -- Functional: Escape unbinds in engine memory (UI-only "---" still left the
--- old bind in cfg_save). Duplicate Controls rows on the same exe= are left to
--- the engine; DOGMA does not inject or mirror custom bind rows.
+-- old bind in cfg_save). Duplicate Controls rows on the same exe= are deduped
+-- by modxml_keybinds when a feature claims that action; unclaimed dupes remain.
 
 _G.dogma_tweaks_fix_system_keybinds_not_sticking_conf = {
 	MOD_ID = "dogma/tweaks/fix_system_keybinds_not_sticking",

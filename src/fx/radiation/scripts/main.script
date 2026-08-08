@@ -160,6 +160,15 @@ local function set_dual(msv)
 	)
 end
 
+local function clear_all()
+	level.remove_pp_effector(PP_GRAIN_ID)
+	level.remove_pp_effector(PP_BLUR_ID)
+	level.remove_pp_effector(PP_DUAL_ID)
+	current_ppe = nil
+	blur_active = false
+	dual_active = false
+end
+
 local function on_actor_on_update()
 	local actor = dogma.sys.ready(CONFIG.MOD_ID, db, on_option_change)
 	if not actor then
@@ -167,12 +176,7 @@ local function on_actor_on_update()
 	end
 
 	if not actor:alive() then
-		level.remove_pp_effector(PP_GRAIN_ID)
-		level.remove_pp_effector(PP_BLUR_ID)
-		level.remove_pp_effector(PP_DUAL_ID)
-		current_ppe = nil
-		blur_active = false
-		dual_active = false
+		clear_all()
 		return
 	end
 
@@ -196,5 +200,6 @@ function on_game_start()
 	on_option_change()
 	RegisterScriptCallback("actor_on_update", on_actor_on_update)
 	RegisterScriptCallback("on_option_change", on_option_change)
+	RegisterScriptCallback("on_game_load", clear_all)
 	log("loaded")
 end

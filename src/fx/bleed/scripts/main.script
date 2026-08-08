@@ -1,18 +1,23 @@
 --[[
 	Bleed FX
 
-	Stock edge-blood HUD overlays (copied textures), one layer per wound tier.
-	Manifest disables stock Bleeding effect so bloody.ppe / hud_blood don't stack.
+	Corner blood HUD overlays from hud_blood_0..2 atlases.
+	n wound tiers → n random corners (no overlap, max 4).
 ]]
 
 local CONFIG = _G.dogma_fx_bleed_conf
 
-local active_layers = 0
+local overlays = {}
+local active_appearance = nil
+local active_scale = nil
+
+local SIZE_VEC = vector2()
+local POS_VEC = vector2()
 
 local LOG = {
-	LIFECYCLE = {order = 0, color = "gray"},
-	BLEED     = {order = 1, color = "red"},
-	LAYERS    = {order = 2, color = "orange"},
+	LIFECYCLE = { order = 0, color = "gray" },
+	BLEED = { order = 1, color = "red" },
+	LAYERS = { order = 2, color = "orange" },
 }
 
 local function overlay(log_type, msg)
@@ -28,6 +33,54 @@ local function log(msg)
 	end
 end
 
+local function static_name(appearance, corner)
+	return string.format("dogma_bleed_%d_%s", appearance, corner)
+end
+
+local function scale_size(scale_idx)
+	local pct = CONFIG.SCALES[(scale_idx or 0) + 1] or 1.0
+	return math.floor(CONFIG.BASE_SIZE * pct)
+end
+
+local function corner_pos(corner, size)
+	if corner == "tl" then
+		return 0, 0
+	end
+	if corner == "tr" then
+		return CONFIG.UI_W - size, 0
+	end
+	if corner == "bl" then
+		return 0, CONFIG.UI_H - size
+	end
+	return CONFIG.UI_W - size, CONFIG.UI_H - size
+end
+
+local function set_corner_alpha(wnd, alpha)
+	if not wnd or not wnd.SetTextureColor then
+		return
+	end
+	local a = math.floor(dogma.math.clamp01(alpha) * 255 + 0.5)
+	wnd:SetTextureColor(GetARGB(a, 255, 255, 255))
+end
+
+local function layout_corner(corner, appearance, scale_idx, alpha)
+	local hud = get_hud()
+	local cs = hud:GetCustomStatic(static_name(appearance, corner))
+	if not cs then
+		return nil
+	end
+	local wnd = cs:wnd()
+	if not wnd then
+		return nil
+	end
+	local size = scale_size(scale_idx)
+	local x, y = corner_pos(corner, size)
+	wnd:SetWndSize(SIZE_VEC:set(size, size))
+	wnd:SetWndPos(POS_VEC:set(x, y))
+	set_corner_alpha(wnd, alpha)
+	return wnd
+end
+
 local function wound_layers(bleed)
 	for _, tier in ipairs(CONFIG.WOUND_TIERS) do
 		if bleed >= tier.min then
@@ -37,33 +90,168 @@ local function wound_layers(bleed)
 	return 0
 end
 
-local function set_blood_layers(layers)
-	if layers == active_layers then
-		return
-	end
-	local hud = get_hud()
-	for i = 1, CONFIG.LAYERS do
-		local name = "dogma_bleed_blood" .. i
-		if i <= layers then
-			if not hud:GetCustomStatic(name) then
-				hud:AddCustomStatic(name)
-			end
-		elseif hud:GetCustomStatic(name) then
-			hud:RemoveCustomStatic(name)
+local function corner_in_use(corner)
+	for _, o in ipairs(overlays) do
+		if o.corner == corner and o.state ~= "done" then
+			return true
 		end
 	end
-	active_layers = layers
+	return false
+end
+
+local function pick_corner()
+	local pool = {}
+	for _, corner in ipairs(CONFIG.CORNERS) do
+		if not corner_in_use(corner) then
+			pool[#pool + 1] = corner
+		end
+	end
+	if #pool == 0 then
+		return nil
+	end
+	return pool[math.random(#pool)]
+end
+
+local function steady_count()
+	local n = 0
+	for _, o in ipairs(overlays) do
+		if o.state == "hold" or o.state == "in" then
+			n = n + 1
+		end
+	end
+	return n
+end
+
+local function overlay_alpha(o, now, max_alpha)
+	if o.state == "hold" then
+		return max_alpha
+	end
+	local elapsed = now - o.start_ms
+	if o.state == "in" then
+		local t = elapsed / CONFIG.FADE_IN_MS
+		if t >= 1 then
+			return max_alpha
+		end
+		return max_alpha * t
+	end
+	if o.state == "out" then
+		local t = elapsed / CONFIG.FADE_OUT_MS
+		if t >= 1 then
+			return 0
+		end
+		return o.from_alpha * (1 - t)
+	end
+	return 0
+end
+
+local function hide_static(name)
+	local hud = get_hud()
+	if hud:GetCustomStatic(name) then
+		hud:RemoveCustomStatic(name)
+	end
 end
 
 local function clear_all()
-	set_blood_layers(0)
+	for app = 0, CONFIG.APPEARANCES - 1 do
+		for _, corner in ipairs(CONFIG.CORNERS) do
+			hide_static(static_name(app, corner))
+		end
+	end
+	overlays = {}
+	active_appearance = nil
+	active_scale = nil
+end
+
+local function begin_fade_out(o, now, max_alpha)
+	o.from_alpha = overlay_alpha(o, now, max_alpha)
+	o.state = "out"
+	o.start_ms = now
+end
+
+local function add_overlay(corner, appearance, now)
+	local hud = get_hud()
+	local name = static_name(appearance, corner)
+	if not hud:GetCustomStatic(name) then
+		hud:AddCustomStatic(name)
+	end
+	overlays[#overlays + 1] = {
+		corner = corner,
+		appearance = appearance,
+		state = "in",
+		start_ms = now,
+		from_alpha = 0,
+	}
+end
+
+local function swap_appearance(appearance)
+	for _, o in ipairs(overlays) do
+		if o.state ~= "done" and o.appearance ~= appearance then
+			hide_static(static_name(o.appearance, o.corner))
+			o.appearance = appearance
+			local hud = get_hud()
+			if not hud:GetCustomStatic(static_name(appearance, o.corner)) then
+				hud:AddCustomStatic(static_name(appearance, o.corner))
+			end
+		end
+	end
+	active_appearance = appearance
+end
+
+local function sync_layer_count(target_layers, appearance, now, max_alpha)
+	while steady_count() > target_layers do
+		local picked = nil
+		for i = #overlays, 1, -1 do
+			local o = overlays[i]
+			if o.state == "hold" or o.state == "in" then
+				picked = o
+				break
+			end
+		end
+		if not picked then
+			break
+		end
+		begin_fade_out(picked, now, max_alpha)
+	end
+
+	while steady_count() < target_layers do
+		local corner = pick_corner()
+		if not corner then
+			break
+		end
+		add_overlay(corner, appearance, now)
+	end
+end
+
+local function update_overlays(now, appearance, scale_idx, max_alpha)
+	local write = 1
+	for i = 1, #overlays do
+		local o = overlays[i]
+		if o.state == "in" and (now - o.start_ms) >= CONFIG.FADE_IN_MS then
+			o.state = "hold"
+		end
+
+		local alpha = overlay_alpha(o, now, max_alpha)
+		if o.state == "out" and (now - o.start_ms) >= CONFIG.FADE_OUT_MS then
+			hide_static(static_name(o.appearance, o.corner))
+			o.state = "done"
+		else
+			layout_corner(o.corner, o.appearance, scale_idx, alpha)
+			overlays[write] = o
+			write = write + 1
+		end
+	end
+	for i = write, #overlays do
+		overlays[i] = nil
+	end
 end
 
 local function on_option_change()
 	CONFIG.loaded.debug_log = dogma.dbg.logging()
 	CONFIG.loaded.debug_overlay = dogma.dbg.overlay_enabled()
 	CONFIG.loaded.enabled = dogma.mcm.bool(CONFIG.MOD_ID, "enable")
-	CONFIG.loaded.intensity = dogma.mcm.float(CONFIG.MOD_ID, "intensity")
+	CONFIG.loaded.max_alpha = dogma.mcm.float(CONFIG.MOD_ID, "max_alpha")
+	CONFIG.loaded.style = dogma.mcm.int(CONFIG.MOD_ID, "style", CONFIG.DEFAULTS["style"])
+	CONFIG.loaded.scale = dogma.mcm.int(CONFIG.MOD_ID, "scale", CONFIG.DEFAULTS["scale"])
 	dogma.dbg.set_enabled(CONFIG.MOD_ID, dogma.dbg.overlay_enabled())
 	if not CONFIG.loaded.enabled then
 		clear_all()
@@ -82,19 +270,56 @@ local function on_actor_on_update()
 	end
 
 	local bleed = actor.bleeding or 0
-	local layers = wound_layers(bleed)
-	if (CONFIG.loaded.intensity or 1) <= 0 then
-		layers = 0
+	local target_layers = wound_layers(bleed)
+	local max_alpha = dogma.math.clamp01(CONFIG.loaded.max_alpha or CONFIG.DEFAULTS["max_alpha"])
+	if max_alpha <= 0 then
+		target_layers = 0
+	end
+
+	local appearance = CONFIG.loaded.style or 0
+	if appearance < 0 or appearance >= CONFIG.APPEARANCES then
+		appearance = 0
+	end
+
+	local scale_idx = CONFIG.loaded.scale or CONFIG.DEFAULTS["scale"]
+	if scale_idx < 0 or scale_idx >= #CONFIG.SCALES then
+		scale_idx = CONFIG.DEFAULTS["scale"]
+	end
+
+	local now = time_global()
+
+	if active_appearance ~= appearance then
+		swap_appearance(appearance)
+	end
+
+	sync_layer_count(target_layers, appearance, now, max_alpha)
+	update_overlays(now, appearance, scale_idx, max_alpha)
+
+	if active_scale ~= scale_idx then
+		active_scale = scale_idx
 	end
 
 	overlay(LOG.BLEED, string.format("Bleed: %.3f", bleed))
-	overlay(LOG.LAYERS, string.format("Layers: %d", layers))
-	set_blood_layers(layers)
+	local names = {}
+	for _, o in ipairs(overlays) do
+		names[#names + 1] = o.corner .. ":" .. o.state
+	end
+	overlay(
+		LOG.LAYERS,
+		string.format(
+			"Target: %d  Style: %d  Scale: %d%%  Alpha: %.0f%%  %s",
+			target_layers,
+			appearance,
+			CONFIG.SCALES[scale_idx + 1] * 100,
+			max_alpha * 100,
+			table.concat(names, " ")
+		)
+	)
 end
 
 function on_game_start()
 	dogma.load(CONFIG.MOD_ID)
-	active_layers = 0
+	clear_all()
 	on_option_change()
 	RegisterScriptCallback("actor_on_update", on_actor_on_update)
 	RegisterScriptCallback("on_option_change", on_option_change)

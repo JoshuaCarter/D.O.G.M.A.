@@ -5,6 +5,8 @@
 	Also registered as *mcm.script (API + defaults). Debug page itself is
 	registered only by the local-build feature debug (manifest stage: DEV).
 
+	Key mirrors: __dogma_key_mirror_mcm (re-exported as key_mirror / migrate_key_to_mirror).
+
 	Tree shape (MCM max 3 levels under the list root):
 	  dogma / <category> / <feature page> / options
 	  dogma / <shared page> / options   -- append() (e.g. Tweaks)
@@ -135,6 +137,37 @@ function key(mod_id, key, default)
 		return nil
 	end
 	return value
+end
+
+--------------------------------------------------------------------------------
+-- Engine keybind mirrors - implementation in __dogma_key_mirror_mcm.script.
+-- Thin re-exports so callers can use dogma.mcm.key_mirror / migrate_key_to_mirror.
+--------------------------------------------------------------------------------
+
+local function keys()
+	return __dogma_key_mirror_mcm
+end
+
+function key_mirror(action, bind_fn)
+	local m = keys()
+	return m and m.key_mirror(action, bind_fn)
+end
+
+function key_mirror_kb(action, kb)
+	local m = keys()
+	return m and m.key_mirror_kb(action, kb)
+end
+
+function mirror_spec(spec)
+	local m = keys()
+	return m and m.mirror_spec(spec)
+end
+
+function migrate_key_to_mirror(mod_id, mcm_key, mirror, opts)
+	local m = keys()
+	if m then
+		return m.migrate(mod_id, mcm_key, mirror, opts)
+	end
 end
 
 function range(mod_id, min_key, max_key, min_default, max_default, min_floor)

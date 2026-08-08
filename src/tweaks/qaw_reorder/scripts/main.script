@@ -17,7 +17,17 @@ local function log(msg)
 	end
 end
 
-local function clear_drag()
+local function hide_drag_selection(gui)
+	if drag_from and gui and gui.options then
+		local opt = gui.options[drag_from]
+		if opt and opt.selected_bg then
+			opt.selected_bg:Show(false)
+		end
+	end
+end
+
+local function clear_drag(gui)
+	hide_drag_selection(gui)
 	drag_from = nil
 	drag_tab = nil
 end
@@ -67,13 +77,13 @@ local function wrap_gui(gui, qaw)
 		local manual = tab and tm and tm.tabs[tab] and not tm.dynamic_tabs[tab]
 
 		if not manual or reorder_key <= 0 then
-			clear_drag()
+			clear_drag(self)
 			reorder_was_held = held
 			return
 		end
 
 		if drag_tab and tab ~= drag_tab then
-			clear_drag()
+			clear_drag(self)
 		end
 
 		local idx = self.hovered_idx
@@ -93,13 +103,13 @@ local function wrap_gui(gui, qaw)
 			local items = tm.tabs[drag_tab]
 			if items and to and to > 0 and to ~= drag_from and items[drag_from] and items[to] then
 				items[drag_from], items[to] = items[to], items[drag_from]
-				clear_drag()
+				clear_drag(self)
 				self:UpdateItems()
 			else
-				clear_drag()
+				clear_drag(self)
 			end
 		elseif not held then
-			clear_drag()
+			clear_drag(self)
 		end
 
 		reorder_was_held = held
@@ -118,7 +128,7 @@ local function wrap_gui(gui, qaw)
 	end
 
 	function gui:Close()
-		clear_drag()
+		clear_drag(self)
 		reorder_was_held = false
 		if orig_close then
 			return orig_close(self)

@@ -27,7 +27,7 @@
 #                               no zzzz_ - before that feature's zzzz_ body scripts
 #   …/scripts/mcm.script      -> dogma_{path}_mcm.script   (*mcm.script glob)
 #                               _conf is prepended so main-menu MCM gather (which only
-#                               loads *mcm.script) still runs conf + claim_bind
+#                               loads *mcm.script) still runs conf for _G setup
 #   …/scripts/modxml_*.script -> modxml_dogma_{path}_*.script
 #                               keep modxml_ prefix - Modded Exes only gathers
 #                               that glob for DXML on_xml_read injection
@@ -351,7 +351,7 @@ stage_file() {
 			{
 				cat "$conf_src"
 				echo ""
-				echo "-- dogma-build: conf prepended so main-menu MCM gather runs claim_bind"
+				echo "-- dogma-build: conf prepended so main-menu MCM gather sets _G conf"
 				cat "$src_path"
 			} > "$staged"
 			printf '%s\n' "$dest_rel" >> "$MANIFEST"

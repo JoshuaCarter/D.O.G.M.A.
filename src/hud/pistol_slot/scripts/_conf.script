@@ -1,26 +1,10 @@
 -- hud/pistol_slot conf
--- Shipped as dogma_hud_pistol_slot_conf.script (before zzzz main).
--- Also prepended into mcm.script (stub) for main-menu claim_bind.
 
-local BINDS = {
-	draw = {
-		action = "custom25",
-		kb = "kCUSTOM25",
-		control = {
-			id = "kb_pistol_holster",
-			label = "Pistol holster",
-			group = "kb_grp_weapons",
-			after = "kb_weapon3",
-		},
-	},
-}
-
-_G.dogma_hud_pistol_slot_conf = {
+local CONF = {
 	MOD_ID = "dogma/hud/pistol_slot",
-	BINDS = BINDS,
 	PISTOL_SLOT = 15,
 	PISTOL_CELL = 15,
 	PISTOL_TYPE_KEY = 2, -- LTX slot 1 (pistol) + 1 → ui_inventory slot_cell key
 }
 
-__dogma_keybinds.claim_bind(BINDS.draw)
+_G.dogma_hud_pistol_slot_conf = CONF

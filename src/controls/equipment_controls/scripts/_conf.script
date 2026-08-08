@@ -1,50 +1,16 @@
 -- controls/equipment_controls conf
--- Shipped as dogma_controls_equipment_controls_conf.script (before zzzz main).
--- Also prepended into mcm.script for main-menu MCM gather + claim_bind.
 
 local defaults = {
 	["auto_bolt_on_detector"] = true,
 }
 
-local BINDS = {
-	rf_scanner = {
-		action = "custom23",
-		kb = "kCUSTOM23",
-		control = {
-			id = "kb_rf_scanner",
-			label = "RF Scanner",
-			group = "kb_grp_inventory",
-			after = "kb_geiger",
-		},
-	},
-	glowstick = {
-		action = "custom12",
-		kb = "kCUSTOM12",
-		control = {
-			id = "kb_glowstick",
-			label = "Glowstick",
-			group = "kb_grp_inventory",
-			after = "kb_torch",
-		},
-	},
-}
-
-_G.dogma_controls_equipment_controls_conf = {
+local CONF = {
 	MOD_ID = "dogma/controls/equipment_controls",
 	DEFAULTS = defaults,
-	BINDS = BINDS,
 	loaded = {
 		enabled = true,
 		auto_bolt_on_detector = defaults["auto_bolt_on_detector"],
-		key_radio = nil,
-		key_glowstick = nil,
-		key_detector = nil,
-		key_geiger = nil,
-		key_torch = nil,
 	},
 }
 
-local order = { "rf_scanner", "glowstick" }
-for i = 1, #order do
-	__dogma_keybinds.claim_bind(BINDS[order[i]])
-end
+_G.dogma_controls_equipment_controls_conf = CONF

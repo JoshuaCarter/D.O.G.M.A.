@@ -1,33 +1,16 @@
 -- controls/pose_controls conf
--- Shipped as dogma_controls_pose_controls_conf.script (before zzzz main).
--- Also prepended into mcm.script for main-menu MCM gather + claim_bind.
 
-local BINDS = {
-	walk = {
-		action = "custom16",
-		kb = "kCUSTOM16",
-		control = {
-			id = "kb_pose_walk",
-			label = "Walk",
-			group = "kb_grp_movement",
-			after = "kb_walk",
-		},
-	},
-}
-
-_G.dogma_controls_pose_controls_conf = {
+local CONF = {
 	MOD_ID = "dogma/controls/pose_controls",
-	BINDS = BINDS,
 	loaded = {
 		enabled = true,
 		crouch_key = nil,
 		prone_key = nil,
 		sprint_key = nil,
-		walk_key = nil,
 		toggle_mode = false,
 		debug_log = true,
 		debug_overlay = false,
 	},
 }
 
-__dogma_keybinds.claim_bind(BINDS.walk)
+_G.dogma_controls_pose_controls_conf = CONF

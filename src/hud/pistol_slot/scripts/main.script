@@ -3,14 +3,12 @@
 
 	Engine slot 15 + ui_inventory cell_15 as the only pistol holster.
 	Double-click / equip / drag-drop pistols → slot 15.
-	Settings → Controls → Weapons: "Pistol holster" raises/lowers slot 15.
 ]]
 
-local CONFIG = _G.dogma_hud_pistol_slot_conf
-
-local PISTOL_SLOT = CONFIG.PISTOL_SLOT
-local PISTOL_CELL = CONFIG.PISTOL_CELL
-local PISTOL_TYPE_KEY = CONFIG.PISTOL_TYPE_KEY
+local MOD_ID = "dogma/hud/pistol_slot"
+local PISTOL_SLOT = 15
+local PISTOL_CELL = 15
+local PISTOL_TYPE_KEY = 2
 local ENGINE_SLOT_2 = 2
 local UI_CELL_2 = 2
 
@@ -26,41 +24,31 @@ local function is_sidearm(obj)
 	return s ~= nil and tonumber(s) == 1
 end
 
-local function can_use_keys()
-	local actor = db.actor
-	if not (actor and actor:alive()) then
-		return false
-	end
-	if actor_menu and actor_menu.inventory_opened and actor_menu.inventory_opened() then
-		return false
-	end
-	return true
-end
-
-local function block(flags)
-	if flags then
-		flags.ret_value = false
-	end
-end
-
-local function draw_toggle()
-	local actor = db.actor
-	if not actor or not actor:item_in_slot(PISTOL_SLOT) then
-		return
-	end
-	if actor:active_slot() == PISTOL_SLOT then
-		actor:activate_slot(0)
-	else
-		actor:activate_slot(PISTOL_SLOT)
-	end
-end
-
 local function sync_engine_cell(cc, engine_slot, ui_cell)
 	local item = db.actor:item_in_slot(engine_slot)
 	if item then
 		cc:AddItemManual(item, nil, ui_cell)
 	else
 		cc:RemoveItemManual(ui_cell)
+	end
+end
+
+local function equip_sidearm(gui, obj)
+	obj = gui:CheckItem(obj, "Action_Equip")
+	local cc = gui.CC["actor_equ"]
+	local occupant = cc:GetObj(PISTOL_CELL)
+	if occupant then
+		db.actor:move_to_ruck(occupant)
+	end
+	db.actor:move_to_slot(obj, PISTOL_SLOT)
+	gui:PlaySND(snd_item_to_slot)
+	gui:On_Item_Update()
+end
+
+local function eject_non_sidearm_from_holster()
+	local item = db.actor:item_in_slot(PISTOL_SLOT)
+	if item and not is_sidearm(item) then
+		db.actor:move_to_ruck(item)
 	end
 end
 
@@ -79,23 +67,40 @@ local function patch_inventory_gui(gui)
 	local orig_equip = gui.Action_Equip
 	gui.Action_Equip = function(self, obj, bag)
 		if is_sidearm(obj) then
-			obj = self:CheckItem(obj, "Action_Equip")
-			local cc = self.CC["actor_equ"]
-			local occupant = cc:GetObj(PISTOL_CELL)
-			if occupant then
-				db.actor:move_to_ruck(occupant)
-			end
-			db.actor:move_to_slot(obj, PISTOL_SLOT)
-			self:PlaySND(snd_item_to_slot)
-			self:On_Item_Update()
+			equip_sidearm(self, obj)
 			return
 		end
 		return orig_equip(self, obj, bag)
 	end
 
+	local orig_drag = gui.On_CC_DragDrop
+	if orig_drag then
+		gui.On_CC_DragDrop = function(self, bag_from, idx_from)
+			local hover = self.hover
+			if hover and hover.bag == "actor_equ" and hover.idx == PISTOL_CELL then
+				local cc_from = self.CC and self.CC[bag_from]
+				local obj = cc_from and cc_from:GetObj(idx_from)
+				if obj and self.Picker_Ownership then
+					bag_from, idx_from = self:Picker_Ownership(bag_from, idx_from, obj)
+					cc_from = self.CC[bag_from]
+					obj = cc_from and cc_from:GetObj(idx_from)
+				end
+				if obj then
+					if not is_sidearm(obj) then
+						return
+					end
+					equip_sidearm(self, obj)
+					return
+				end
+			end
+			return orig_drag(self, bag_from, idx_from)
+		end
+	end
+
 	local orig_update = gui.UpdateSlots
 	gui.UpdateSlots = function(self, ...)
 		orig_update(self, ...)
+		eject_non_sidearm_from_holster()
 		local cc = self.CC and self.CC["actor_equ"]
 		if not cc then
 			return
@@ -115,26 +120,10 @@ local function on_gui_show(name)
 	end
 end
 
-local function on_before_key_press(_key, bind, _dis, flags)
-	if not dogma.sys.ready(CONFIG.MOD_ID, db) then
-		return
-	end
-	if not can_use_keys() then
-		return
-	end
-	local holster_bind = dogma.keybinds.bind_kb(CONFIG.BINDS.draw.kb)
-	if not (holster_bind and bind == holster_bind) then
-		return
-	end
-	block(flags)
-	draw_toggle()
-end
-
 function on_game_start()
-	dogma.load(CONFIG.MOD_ID)
+	dogma.load(MOD_ID)
 	if _G.SCANNED_SLOTS then
 		_G.SCANNED_SLOTS[PISTOL_SLOT] = true
 	end
 	RegisterScriptCallback("GUI_on_show", on_gui_show)
-	RegisterScriptCallback("on_before_key_press", on_before_key_press)
 end

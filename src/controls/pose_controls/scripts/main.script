@@ -5,9 +5,8 @@
 	- Crouch bind -> crouch only (mcCrouch, never mcAccel)
 	- Walk/Low Crouch bind -> prone only (mcCrouch + mcAccel)
 	- Sprint bind -> vanilla stand + sprint
-	- Walk bind (CONFIG.BINDS.walk) -> walk only (mcAccel without mcCrouch)
 
-	MCM Hold/Toggle only; pose keys bind in Settings → Controls.
+	MCM Hold/Toggle only; crouch/prone use Settings → Controls binds.
 	Hold/Toggle forces g_crouch_toggle / g_walk_toggle / g_sprint_toggle to match.
 
 	FDDA body search / Faster Skinning briefly flip g_crouch_toggle to pulse
@@ -18,7 +17,18 @@
 	mods can read pose via IsMoveState("mcCrouch") / IsMoveState("mcAccel").
 ]]
 
-local CONFIG = _G.dogma_controls_pose_controls_conf
+local CONFIG = _G.dogma_controls_pose_controls_conf or {
+	MOD_ID = "dogma/controls/pose_controls",
+	loaded = {
+		enabled = true,
+		crouch_key = nil,
+		prone_key = nil,
+		sprint_key = nil,
+		toggle_mode = false,
+		debug_log = false,
+		debug_overlay = false,
+	},
+}
 
 local POSE = {
 	STAND = "stand",
@@ -45,19 +55,26 @@ local pending_goal = nil
 local cached_crouch_toggle = false
 
 local ENGINE_BINDS = {
-	crouch = { action = "crouch", bind = function() return key_bindings.kCROUCH end, mcm = "crouch_key" },
-	prone = { action = "accel", bind = function() return key_bindings.kACCEL end, mcm = "prone_key" },
+	crouch = {
+		action = "crouch",
+		bind = function()
+			return key_bindings and key_bindings.kCROUCH
+		end,
+		mcm = "crouch_key",
+	},
+	prone = {
+		action = "accel",
+		bind = function()
+			return key_bindings and key_bindings.kACCEL
+		end,
+		mcm = "prone_key",
+	},
 	sprint = {
 		action = "sprint_toggle",
-		bind = function() return key_bindings.kSPRINT_TOGGLE or key_bindings.kSPRINT end,
-		mcm = "sprint_key",
-	},
-	walk = {
-		action = CONFIG.BINDS.walk.action,
 		bind = function()
-			return dogma.keybinds.bind_kb(CONFIG.BINDS.walk.kb)
+			return key_bindings and (key_bindings.kSPRINT_TOGGLE or key_bindings.kSPRINT)
 		end,
-		mcm = "walk_key",
+		mcm = "sprint_key",
 	},
 }
 
@@ -113,7 +130,7 @@ local function passthrough_scripted_pose_pulse()
 	return false
 end
 
--- DIK from Settings → Controls (dogma.keybinds.bind_kb for walk).
+-- DIK from Settings → Controls.
 local function engine_bind_dik(kb)
 	local bind = kb.bind()
 	if not bind then
@@ -135,14 +152,18 @@ end
 
 -- Refresh CONFIG.loaded DIKs from Settings → Controls.
 local function sync_engine_controls()
+	if not key_bindings then
+		return
+	end
 	local crouch_toggle = get_console_cmd(1, "g_crouch_toggle") or false
 	CONFIG.loaded.toggle_mode = crouch_toggle and true or false
 	cached_crouch_toggle = CONFIG.loaded.toggle_mode
-	-- Keep the three engine toggle cmds matched while the feature is on.
 	set_engine_toggle(CONFIG.loaded.toggle_mode)
 
 	for _, kb in pairs(ENGINE_BINDS) do
-		CONFIG.loaded[kb.mcm] = engine_bind_dik(kb)
+		if kb.bind then
+			CONFIG.loaded[kb.mcm] = engine_bind_dik(kb)
+		end
 	end
 end
 
@@ -173,11 +194,6 @@ end
 
 local function input_allowed()
 	return actor_can_change_pose() and actor_menu and actor_menu.is_hud_free and actor_menu.is_hud_free()
-end
-
-local function is_walk_bind(bind)
-	local walk = dogma.keybinds.bind_kb(CONFIG.BINDS.walk.kb)
-	return walk and bind == walk
 end
 
 local function bind_dik(bind)
@@ -229,6 +245,9 @@ end
 
 -- Toggle: one XOR pulse per step.
 local function step_toward(goal)
+	if not key_bindings then
+		return false
+	end
 	local pose = get_pose()
 	if pose == goal then
 		return true
@@ -282,22 +301,10 @@ local function run_transition(goal)
 end
 
 local function on_before_key_press(key, bind, _dis, flags)
-	if applying_pose or not mod_active() or not input_allowed() then
+	if not key_bindings then
 		return
 	end
-
-	if is_walk_bind(bind) then
-		if use_hold_mode() then
-			block(flags)
-		else
-			block(flags)
-			if get_pose() == POSE.WALK then
-				run_transition(POSE.STAND)
-			else
-				run_transition(POSE.WALK)
-			end
-			overlay(LOG.KEY, "walk key")
-		end
+	if applying_pose or not mod_active() or not input_allowed() then
 		return
 	end
 
@@ -328,6 +335,9 @@ local function on_before_key_press(key, bind, _dis, flags)
 end
 
 local function on_before_key_hold(key, bind, _dis, flags)
+	if not key_bindings then
+		return
+	end
 	if applying_pose or not mod_active() or not input_allowed() then
 		return
 	end
@@ -337,17 +347,6 @@ local function on_before_key_hold(key, bind, _dis, flags)
 	end
 
 	if passthrough_scripted_pose_pulse() then
-		return
-	end
-
-	if is_walk_bind(bind) then
-		block(flags)
-		with_synthetic_input(function()
-			if IsMoveState("mcCrouch") then
-				set_bind_down(key_bindings.kCROUCH, false)
-			end
-			hold_bind(key_bindings.kACCEL)
-		end)
 		return
 	end
 
@@ -369,6 +368,9 @@ local function on_before_key_hold(key, bind, _dis, flags)
 end
 
 local function on_before_key_release(key, bind, _dis, flags)
+	if not key_bindings then
+		return
+	end
 	if applying_pose or not mod_active() or not input_allowed() then
 		return
 	end
@@ -378,13 +380,6 @@ local function on_before_key_release(key, bind, _dis, flags)
 	end
 
 	if use_hold_mode() then
-		if is_walk_bind(bind) and get_pose() == POSE.WALK then
-			with_synthetic_input(function()
-				set_bind_down(key_bindings.kACCEL, false)
-			end)
-			pending_goal = nil
-			log(string.format("walk key release -> %s", get_pose()))
-		end
 		return
 	end
 

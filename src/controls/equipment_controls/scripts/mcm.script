@@ -1,6 +1,8 @@
 -- Equipment Controls MCM
 
-local CONFIG = _G.dogma_controls_equipment_controls_conf
+local CONFIG = _G.dogma_controls_equipment_controls_conf or {
+	DEFAULTS = { ["auto_bolt_on_detector"] = true },
+}
 
 function on_mcm_load(options)
 	dogma_mcm.attach(options, "controls", "ui_mcm_menu_dogma_controls", {

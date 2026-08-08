@@ -1,0 +1,16 @@
+-- Death Report: register HUD custom statics used by AddCustomStatic.
+function on_xml_read()
+	RegisterScriptCallback("on_xml_read", function(xml_file_name, xml_obj)
+		if xml_file_name ~= [[ui\ui_custom_msgs.xml]] then
+			return
+		end
+		xml_obj:insertFromXMLString([[
+	<dogma_death_report_summary x="12" y="434" width="700" height="400" complex_mode="1">
+		<text font="letterica16" r="220" g="220" b="220" a="255" align="l" vert_align="t"/>
+	</dogma_death_report_summary>
+	<dogma_death_report_prompt x="112" y="434" width="800" height="28" complex_mode="1">
+		<text font="letterica18" r="255" g="255" b="255" a="255" align="c" vert_align="c"/>
+	</dogma_death_report_prompt>
+]])
+	end)
+end

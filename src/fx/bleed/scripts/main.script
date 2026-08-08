@@ -1,28 +1,18 @@
 --[[
 	Bleed FX
 
-	Two overlapping PPEs. Intensity is a tier target from actor.bleeding
-	(white 0.33 / yellow 0.66 / orange+red 1.0) that lerps over 1s up and down.
-	Disable stock Bleeding Effect under Settings > Visual > Player so they
-	don't stack with bloody.ppe / snd_shock.ppe.
+	Stock edge-blood HUD overlays (copied textures), one layer per wound tier.
+	Manifest disables stock Bleeding effect so bloody.ppe / hud_blood don't stack.
 ]]
 
 local CONFIG = _G.dogma_fx_bleed_conf
 
-local a_active = false
-local b_active = false
-
--- Smooth intensity toward tier target.
-local intensity = 0
-local lerp_from = 0
-local lerp_to = 0
-local lerp_t0 = nil
+local active_layers = 0
 
 local LOG = {
 	LIFECYCLE = {order = 0, color = "gray"},
 	BLEED     = {order = 1, color = "red"},
-	TARGET    = {order = 2, color = "orange"},
-	INTENSITY = {order = 3, color = "yellow"},
+	LAYERS    = {order = 2, color = "orange"},
 }
 
 local function overlay(log_type, msg)
@@ -38,73 +28,35 @@ local function log(msg)
 	end
 end
 
-local function tier_target(bleed)
-	for _, tier in ipairs(CONFIG.TIERS) do
+local function wound_layers(bleed)
+	for _, tier in ipairs(CONFIG.WOUND_TIERS) do
 		if bleed >= tier.min then
-			return tier.intensity
+			return tier.layers
 		end
 	end
 	return 0
 end
 
-local function reset_lerp()
-	intensity = 0
-	lerp_from = 0
-	lerp_to = 0
-	lerp_t0 = nil
-end
-
--- Retarget starts a fresh 1s lerp from the current intensity.
-local function update_intensity(target)
-	local now = time_global()
-	local dur_ms = (CONFIG.LERP_SEC or 1) * 1000
-
-	if target ~= lerp_to then
-		lerp_from = intensity
-		lerp_to = target
-		lerp_t0 = now
+local function set_blood_layers(layers)
+	if layers == active_layers then
+		return
 	end
-
-	if not lerp_t0 or dur_ms <= 0 then
-		intensity = target
-		return intensity
-	end
-
-	local t = (now - lerp_t0) / dur_ms
-	if t >= 1 then
-		intensity = lerp_to
-		return intensity
-	end
-	if t <= 0 then
-		intensity = lerp_from
-		return intensity
-	end
-
-	intensity = lerp_from + (lerp_to - lerp_from) * t
-	return intensity
-end
-
-local function set_ppe(spec, active, factor)
-	if factor <= 0 then
-		if active then
-			level.remove_pp_effector(spec.id)
+	local hud = get_hud()
+	for i = 1, CONFIG.LAYERS do
+		local name = "dogma_bleed_blood" .. i
+		if i <= layers then
+			if not hud:GetCustomStatic(name) then
+				hud:AddCustomStatic(name)
+			end
+		elseif hud:GetCustomStatic(name) then
+			hud:RemoveCustomStatic(name)
 		end
-		return false
 	end
-
-	if not active then
-		level.add_pp_effector(spec.name, spec.id, true)
-	end
-	level.set_pp_effector_factor(spec.id, factor)
-	return true
+	active_layers = layers
 end
 
 local function clear_all()
-	level.remove_pp_effector(CONFIG.PPE_A.id)
-	level.remove_pp_effector(CONFIG.PPE_B.id)
-	a_active = false
-	b_active = false
-	reset_lerp()
+	set_blood_layers(0)
 end
 
 local function on_option_change()
@@ -130,24 +82,22 @@ local function on_actor_on_update()
 	end
 
 	local bleed = actor.bleeding or 0
-	local target = tier_target(bleed)
-	local factor = update_intensity(target) * (CONFIG.loaded.intensity or 1)
+	local layers = wound_layers(bleed)
+	if (CONFIG.loaded.intensity or 1) <= 0 then
+		layers = 0
+	end
 
 	overlay(LOG.BLEED, string.format("Bleed: %.3f", bleed))
-	overlay(LOG.TARGET, string.format("Target: %.2f", target))
-	overlay(LOG.INTENSITY, string.format("FX: %.2f", factor))
-
-	a_active = set_ppe(CONFIG.PPE_A, a_active, factor)
-	b_active = set_ppe(CONFIG.PPE_B, b_active, factor)
+	overlay(LOG.LAYERS, string.format("Layers: %d", layers))
+	set_blood_layers(layers)
 end
 
 function on_game_start()
 	dogma.load(CONFIG.MOD_ID)
-	a_active = false
-	b_active = false
-	reset_lerp()
+	active_layers = 0
 	on_option_change()
 	RegisterScriptCallback("actor_on_update", on_actor_on_update)
 	RegisterScriptCallback("on_option_change", on_option_change)
+	RegisterScriptCallback("on_game_load", clear_all)
 	log("loaded")
 end

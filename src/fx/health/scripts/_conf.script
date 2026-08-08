@@ -1,31 +1,16 @@
 -- fx/health conf
 --
--- Intensity 0 at START_HP, 1 at END_HP, then × MCM intensity.
--- Edge blood = stock hud_blood1–4 overlays only (not Update_Bleeding blur/shock).
--- PPE list = xpp.script damage-wash filenames (no custom .ppe).
+-- Desaturation only: actor.health 1 → factor 0, health 0 → factor 1 (B&W).
 
 _G.dogma_fx_health_conf = {
 	MOD_ID = "dogma/fx/health",
-	START_HP = 0.50,
-	END_HP = 0.05,
-	EDGE_LAYERS = 4,
 	DEFAULTS = {
 		["enable"] = true,
 		["intensity"] = 1.0,
-		["edge_blood"] = true,
-		["ppe_bloody"] = false,
-		["ppe_death"] = false,
-		["ppe_actor_death"] = false,
-		["ppe_amk_shoot"] = false,
-		["ppe_snd_shock"] = false,
 	},
-	-- xlibs/xpp.script damage washes; fixed slots above actor_effects (2010–2016).
-	PPE_EFFECTS = {
-		{ key = "ppe_bloody", ppe = "bloody.ppe", id = 2040 },
-		{ key = "ppe_death", ppe = "death.ppe", id = 2041 },
-		{ key = "ppe_actor_death", ppe = "actor_death.ppe", id = 2042 },
-		{ key = "ppe_amk_shoot", ppe = "amk_shoot.ppe", id = 2043 },
-		{ key = "ppe_snd_shock", ppe = "snd_shock.ppe", id = 2044 },
+	PPE = {
+		name = "dogma_health_desat.ppe",
+		id = 2040,
 	},
 	loaded = {},
 }

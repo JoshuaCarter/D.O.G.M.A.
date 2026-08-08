@@ -1,20 +1,18 @@
 --[[
 	Health FX
 
-	Stock edge-blood HUD overlays and/or xlibs PPE washes, intensity scaled to
-	missing HP. Manifest disables stock Bleeding effect and Low health blur.
+	Desaturation PPE only — full colour at full HP, black and white at 0 HP.
+	Manifest disables stock Low health blur.
 ]]
 
 local CONFIG = _G.dogma_fx_health_conf
 
-local ppe_active = {}
-local edge_layers = 0
+local ppe_active = false
 
 local LOG = {
 	LIFECYCLE = {order = 0, color = "gray"},
 	HEALTH    = {order = 1, color = "green"},
-	EDGE      = {order = 2, color = "red"},
-	PPE       = {order = 3, color = "orange"},
+	DESAT     = {order = 2, color = "yellow"},
 }
 
 local function overlay(log_type, msg)
@@ -30,48 +28,18 @@ local function log(msg)
 	end
 end
 
-local function health_intensity(health)
-	local start_hp = CONFIG.START_HP
-	local end_hp = CONFIG.END_HP
-	if start_hp <= end_hp or health >= start_hp then
-		return 0
+local function desat_factor(health)
+	local hp = health or 0
+	if hp < 0 then
+		hp = 0
+	elseif hp > 1 then
+		hp = 1
 	end
-	if health <= end_hp then
-		return 1
-	end
-	return (start_hp - health) / (start_hp - end_hp)
+	return 1 - hp
 end
 
-local function intensity_to_layers(intensity)
-	if intensity <= 0 then
-		return 0
-	end
-	return math.min(CONFIG.EDGE_LAYERS, math.ceil(intensity * CONFIG.EDGE_LAYERS))
-end
-
-local function set_edge_blood(layers)
-	if layers == edge_layers then
-		return
-	end
-	local hud = get_hud()
-	for i = 1, CONFIG.EDGE_LAYERS do
-		local name = "hud_blood" .. i
-		if i <= layers then
-			if not hud:GetCustomStatic(name) then
-				hud:AddCustomStatic(name)
-			end
-		elseif hud:GetCustomStatic(name) then
-			hud:RemoveCustomStatic(name)
-		end
-	end
-	edge_layers = layers
-end
-
-local function clear_edge_blood()
-	set_edge_blood(0)
-end
-
-local function set_ppe(spec, active, factor)
+local function set_ppe(active, factor)
+	local spec = CONFIG.PPE
 	if factor <= 0 then
 		if active then
 			level.remove_pp_effector(spec.id)
@@ -79,22 +47,15 @@ local function set_ppe(spec, active, factor)
 		return false
 	end
 	if not active then
-		level.add_pp_effector(spec.ppe, spec.id, true)
+		level.add_pp_effector(spec.name, spec.id, true)
 	end
 	level.set_pp_effector_factor(spec.id, factor)
 	return true
 end
 
-local function clear_ppe()
-	for _, spec in ipairs(CONFIG.PPE_EFFECTS) do
-		level.remove_pp_effector(spec.id)
-		ppe_active[spec.key] = false
-	end
-end
-
 local function clear_all()
-	clear_edge_blood()
-	clear_ppe()
+	level.remove_pp_effector(CONFIG.PPE.id)
+	ppe_active = false
 end
 
 local function on_option_change()
@@ -102,10 +63,6 @@ local function on_option_change()
 	CONFIG.loaded.debug_overlay = dogma.dbg.overlay_enabled()
 	CONFIG.loaded.enabled = dogma.mcm.bool(CONFIG.MOD_ID, "enable")
 	CONFIG.loaded.intensity = dogma.mcm.float(CONFIG.MOD_ID, "intensity")
-	CONFIG.loaded.edge_blood = dogma.mcm.bool(CONFIG.MOD_ID, "edge_blood")
-	for _, spec in ipairs(CONFIG.PPE_EFFECTS) do
-		CONFIG.loaded[spec.key] = dogma.mcm.bool(CONFIG.MOD_ID, spec.key)
-	end
 	dogma.dbg.set_enabled(CONFIG.MOD_ID, dogma.dbg.overlay_enabled())
 	if not CONFIG.loaded.enabled then
 		clear_all()
@@ -123,35 +80,15 @@ local function on_actor_on_update()
 		return
 	end
 
-	local factor = health_intensity(actor.health or 0) * (CONFIG.loaded.intensity or 1)
-	overlay(LOG.HEALTH, string.format("HP: %.2f  FX: %.2f", actor.health or 0, factor))
-
-	if CONFIG.loaded.edge_blood then
-		local layers = intensity_to_layers(factor)
-		set_edge_blood(layers)
-		overlay(LOG.EDGE, string.format("Layers: %d", layers))
-	else
-		clear_edge_blood()
-	end
-
-	local ppe_lines = {}
-	for _, spec in ipairs(CONFIG.PPE_EFFECTS) do
-		local on = CONFIG.loaded[spec.key]
-		local intensity = on and factor or 0
-		ppe_active[spec.key] = set_ppe(spec, ppe_active[spec.key], intensity)
-		if on then
-			ppe_lines[#ppe_lines + 1] = string.format("%s: %.2f", spec.key, intensity)
-		end
-	end
-	if #ppe_lines > 0 then
-		overlay(LOG.PPE, table.concat(ppe_lines, "  "))
-	end
+	local factor = desat_factor(actor.health) * (CONFIG.loaded.intensity or 1)
+	overlay(LOG.HEALTH, string.format("HP: %.2f", actor.health or 0))
+	overlay(LOG.DESAT, string.format("Desat: %.2f", factor))
+	ppe_active = set_ppe(ppe_active, factor)
 end
 
 function on_game_start()
 	dogma.load(CONFIG.MOD_ID)
-	ppe_active = {}
-	edge_layers = 0
+	ppe_active = false
 	on_option_change()
 	RegisterScriptCallback("actor_on_update", on_actor_on_update)
 	RegisterScriptCallback("on_option_change", on_option_change)

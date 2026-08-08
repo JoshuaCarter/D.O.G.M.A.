@@ -1,28 +1,22 @@
 --[[
-	Death Spectator
+	Death Report
 
-	Tracks recent hits while alive. On death: hit summary (left, Y center
-	+ 50px) + "Press TAB to spectate". Tab starts demo_record free-fly 2m
-	above the corpse looking at the killer. demo_record_blocked_input
-	crashes when started from death/Tab (same ctor, isInputBlocked=1);
-	plain demo_record is the safe path. Esc / quit opens the menu.
+	Tracks recent hits while alive. On death: "Press TAB to see death report".
+	Tab toggles the hit summary (off by default). No camera / spectate.
 ]]
 
-local CONFIG = _G.dogma_gameplay_death_spectator_conf
+local CONFIG = _G.dogma_gameplay_death_report_conf
 
 local HIT_WINDOW_MS = 30000
 local HIT_CAP = 10
-local CAM_HEIGHT = 2.0
 local UI_W = 1024
 local UI_H = 768
 local LINE_H = 18
 local MARGIN_X = 12
 local HIT_Y_OFFSET = 50
-local DEMO_FILE = "dogma_death_spectator"
 
-local HIT_STATIC = "dogma_death_hit_summary"
-local TAB_STATIC = "dogma_death_tab_prompt"
-local SPACE_COVER_STATIC = "dogma_death_space_cover"
+local HIT_STATIC = "dogma_death_report_summary"
+local TAB_STATIC = "dogma_death_report_prompt"
 
 -- Faithful bone → limb (same ids as damage_location_fix / ADB).
 local HITBOX = {
@@ -52,20 +46,11 @@ local HITBOX_MULT = {
 local MITIGATION_LABEL = {}
 
 local hits = {} -- newest at index 1
-local last_attacker_id = nil
-local last_attacker_pos = nil
-local last_hit_dir = nil
-
-local death_pending = false
-local awaiting_spectate = false
-local spectating = false
-local corpse_pos = nil
-local killer_id = nil
+local death_armed = false
+local report_visible = false
+local last_toggle_ms = 0
 local frozen_lines = nil
 local adb_wrapped = false
-local saved_tutor_stop = nil
--- Prev first_person_death; forced off on Tab, restored on game load.
-local saved_first_person_death = nil
 
 -- BHS limb keys → summary labels (Body is actor.health, not torso).
 local DIED_LIMBS = {
@@ -236,38 +221,15 @@ local function record_hit(shit, bone_id, damage, mitigated_frac)
 	if not shit or not damage or damage <= 0 then
 		return
 	end
-	local now = time_global()
-	local draftsman = shit.draftsman
 	local hit_type = shit.type
-	local entry = {
-		t = now,
-		source = source_label(draftsman, hit_type),
+	push_hit({
+		t = time_global(),
+		source = source_label(shit.draftsman, hit_type),
 		limb = limb_label(bone_id),
 		damage = damage,
 		mitigated = math.max(0, math.min(1, mitigated_frac or 0)),
 		type_label = mitigation_label(hit_type),
-	}
-	push_hit(entry)
-
-	if draftsman then
-		local ok, id = pcall(function()
-			return draftsman:id()
-		end)
-		if ok and id then
-			last_attacker_id = id
-		end
-		local okp, pos = pcall(function()
-			return draftsman:position()
-		end)
-		if okp and pos then
-			last_attacker_pos = vector():set(pos.x, pos.y, pos.z)
-		end
-	end
-
-	if shit.direction then
-		local d = shit.direction
-		last_hit_dir = vector():set(d.x or 0, d.y or 0, d.z or 0)
-	end
+	})
 end
 
 -- Match ADB shit_booster printf numbers from the same inputs.
@@ -311,7 +273,7 @@ local function wrap_adb_shit_booster()
 	if not (adb and type(adb.shit_booster) == "function") then
 		return false
 	end
-	if adb.__dogma_death_spectator then
+	if adb.__dogma_death_report then
 		adb_wrapped = true
 		return true
 	end
@@ -324,7 +286,7 @@ local function wrap_adb_shit_booster()
 		end
 		return orig(shit, bone_id, k_ap)
 	end
-	adb.__dogma_death_spectator = true
+	adb.__dogma_death_report = true
 	adb_wrapped = true
 	log("wrapped grok_actor_damage_balancer.shit_booster")
 	return true
@@ -367,7 +329,6 @@ end
 local function clear_death_ui()
 	remove_static(HIT_STATIC)
 	remove_static(TAB_STATIC)
-	remove_static(SPACE_COVER_STATIC)
 end
 
 local function show_hit_summary()
@@ -382,30 +343,61 @@ local function show_hit_summary()
 	set_static_text(HIT_STATIC, "%c[255,220,220,220]" .. text, MARGIN_X, y)
 end
 
+local function hide_hit_summary()
+	remove_static(HIT_STATIC)
+end
+
 local function show_tab_prompt()
-	local msg = game.translate_string("ui_dogma_gameplay_death_spectator_prompt")
-	if not msg or msg == "" or msg == "ui_dogma_gameplay_death_spectator_prompt" then
-		msg = "Press TAB to spectate"
+	local msg = game.translate_string("ui_dogma_gameplay_death_report_prompt")
+	if not msg or msg == "" or msg == "ui_dogma_gameplay_death_report_prompt" then
+		msg = "Press TAB to see death report"
 	end
-	-- Centered horizontally; vertically screen-center + 50px.
 	local tab_w = 800
 	local x = (UI_W - tab_w) * 0.5
 	local y = (UI_H * 0.5) + 50
 	set_static_text(TAB_STATIC, "%c[255,255,255,255]" .. msg, x, y)
 end
 
-local function hide_tab_prompt()
-	remove_static(TAB_STATIC)
+local function apply_report_visibility()
+	if report_visible then
+		show_hit_summary()
+	else
+		hide_hit_summary()
+	end
 end
 
-local function hide_space_continue()
-	-- Jump/Space would finish game_over; we block that while spectating.
-	set_static_text(
-		SPACE_COVER_STATIC,
-		"%c[255,200,200,200]Press ESC for menu",
-		380,
-		710
-	)
+local function arm_death_ui()
+	if not CONFIG.loaded.enabled then
+		return
+	end
+	death_armed = true
+	report_visible = false
+	show_tab_prompt()
+	hide_hit_summary()
+	log("death UI armed (report off)")
+end
+
+local function tab_dik()
+	return (DIK_keys and DIK_keys.DIK_TAB) or 15
+end
+
+local function try_toggle_report(dik)
+	if not CONFIG.loaded.enabled or not death_armed then
+		return false
+	end
+	if dik ~= tab_dik() then
+		return false
+	end
+	-- Both before_key_press and key_press can fire; debounce so Tab doesn't flip twice.
+	local now = time_global()
+	if (now - last_toggle_ms) < 200 then
+		return true
+	end
+	last_toggle_ms = now
+	report_visible = not report_visible
+	apply_report_visibility()
+	log(report_visible and "death report shown" or "death report hidden")
+	return true
 end
 
 local function pct_of_max(cur, maxv)
@@ -415,7 +407,6 @@ local function pct_of_max(cur, maxv)
 		return 0
 	end
 	if not maxv or maxv <= 0 then
-		-- Already 0-1 (body HP) or raw percent-ish.
 		if cur <= 1 then
 			return math.floor(cur * 100 + 0.5)
 		end
@@ -462,258 +453,16 @@ local function freeze_hit_lines()
 	for i = 1, #hits do
 		frozen_lines[#frozen_lines + 1] = format_hit_line(hits[i])
 	end
-	-- Final line: totals at death (newest hits above; this stays at the bottom).
 	frozen_lines[#frozen_lines + 1] = format_died_with_line()
-end
-
-local function copy_vec(v)
-	if not v then
-		return nil
-	end
-	return vector():set(v.x, v.y, v.z)
-end
-
-local function arm_death_ui()
-	if not CONFIG.loaded.enabled then
-		return
-	end
-	if awaiting_spectate or spectating then
-		return
-	end
-	awaiting_spectate = true
-	death_pending = false
-	show_hit_summary()
-	show_tab_prompt()
-	log("death UI armed")
-end
-
-local function dir_to_hpb(dir)
-	local len = math.sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z)
-	if len < 0.001 then
-		return vector():set(0, 0, 0)
-	end
-	local nx, ny, nz = dir.x / len, dir.y / len, dir.z / len
-	local h = -math.atan2(nx, nz)
-	local p = math.asin(math.max(-1, math.min(1, ny)))
-	return vector():set(h, p, 0)
-end
-
-local function resolve_killer_pos()
-	if killer_id then
-		local obj = level.object_by_id(killer_id)
-		if obj then
-			local ok, mp = pcall(function()
-				return obj:bone_position("bip01_spine1")
-			end)
-			if ok and mp and mp.y then
-				return vector():set(mp.x, mp.y, mp.z)
-			end
-			local ok2, pos = pcall(function()
-				return obj:position()
-			end)
-			if ok2 and pos then
-				return vector():set(pos.x, pos.y + 1.2, pos.z)
-			end
-		end
-	end
-	if last_attacker_pos then
-		return copy_vec(last_attacker_pos)
-	end
-	return nil
-end
-
--- Dead: world body on, FP HUD off. Alive: body off (FP), FP HUD on.
-local function apply_body_hud(dead)
-	if not exec_console_cmd then
-		return
-	end
-	if dead then
-		exec_console_cmd("show_actor_body 1")
-		exec_console_cmd("hud_weapon 0")
-		if db.actor then
-			pcall(function()
-				db.actor:set_invisible(false)
-			end)
-		end
-		if level and level.show_weapon then
-			pcall(function()
-				level.show_weapon(false)
-			end)
-		end
-	else
-		exec_console_cmd("show_actor_body 0")
-		exec_console_cmd("hud_weapon 1")
-		if level and level.show_weapon then
-			pcall(function()
-				level.show_weapon(true)
-			end)
-		end
-	end
-end
-
-local function force_first_person_death_off()
-	if saved_first_person_death == nil then
-		local prev = 0
-		pcall(function()
-			if get_console_cmd then
-				prev = get_console_cmd(1, "first_person_death") and 1 or 0
-			end
-		end)
-		saved_first_person_death = prev
-	end
-	if exec_console_cmd then
-		exec_console_cmd("first_person_death 0")
-	end
-end
-
-local function restore_first_person_death()
-	if saved_first_person_death == nil or not exec_console_cmd then
-		return
-	end
-	pcall(function()
-		exec_console_cmd("first_person_death " .. tostring(saved_first_person_death))
-	end)
-	saved_first_person_death = nil
-end
-
-local function suppress_game_over_continue()
-	-- Stopping the tutorial would otherwise open main menu via function_on_stop.
-	if not (xr_effects and xr_effects.on_tutor_gameover_stop) then
-		return
-	end
-	if saved_tutor_stop == nil then
-		saved_tutor_stop = xr_effects.on_tutor_gameover_stop
-	end
-	xr_effects.on_tutor_gameover_stop = function() end
-	if game and game.has_active_tutorial and game.has_active_tutorial() and game.stop_tutorial then
-		pcall(function()
-			game.stop_tutorial()
-		end)
-	end
-end
-
-local function restore_game_over_continue()
-	if saved_tutor_stop ~= nil and xr_effects then
-		xr_effects.on_tutor_gameover_stop = saved_tutor_stop
-	end
-	saved_tutor_stop = nil
-end
-
-local function stop_demo_record()
-	RemoveTimeEvent(CONFIG.MOD_ID, "clear_custom_cam")
-	if exec_console_cmd then
-		pcall(function()
-			exec_console_cmd("demo_record_stop")
-		end)
-	end
-end
-
-local function clear_custom_cam()
-	if level and level.remove_cam_custom_position_direction then
-		pcall(function()
-			level.remove_cam_custom_position_direction()
-		end)
-	end
-end
-
-local function is_move_bind(bind)
-	local kb = key_bindings
-	if not (kb and bind) then
-		return false
-	end
-	return bind == kb.kFWD
-		or bind == kb.kBACK
-		or bind == kb.kL_STRAFE
-		or bind == kb.kR_STRAFE
-		or bind == kb.kJUMP
-		or bind == kb.kCROUCH
-end
-
-local function open_menu_from_spectate()
-	if exec_console_cmd then
-		pcall(function()
-			exec_console_cmd("main_menu on")
-		end)
-	end
-end
-
-local function start_spectator()
-	if not awaiting_spectate or spectating then
-		return
-	end
-	if not corpse_pos and db.actor then
-		local ok, pos = pcall(function()
-			return db.actor:position()
-		end)
-		if ok and pos then
-			corpse_pos = vector():set(pos.x, pos.y, pos.z)
-		end
-	end
-	if not corpse_pos then
-		log("spectate aborted: no corpse_pos")
-		return
-	end
-
-	local cam_pos = vector():set(corpse_pos.x, corpse_pos.y + CAM_HEIGHT, corpse_pos.z)
-	local look_at = resolve_killer_pos()
-	local dir
-	if look_at then
-		dir = vector():set(look_at.x - cam_pos.x, look_at.y - cam_pos.y, look_at.z - cam_pos.z)
-	elseif last_hit_dir then
-		dir = vector():set(-(last_hit_dir.x or 0), 0, -(last_hit_dir.z or 0))
-	else
-		dir = vector():set(0, 0, 1)
-	end
-	local hpb = dir_to_hpb(dir)
-
-	awaiting_spectate = false
-	spectating = true
-	hide_tab_prompt()
-	hide_space_continue()
-	show_hit_summary()
-	apply_body_hud(true)
-	force_first_person_death_off()
-	suppress_game_over_continue()
-
-	-- Seed pose, then plain demo_record. (blocked_input crashes here when dead.)
-	if level and level.set_cam_custom_position_direction then
-		pcall(function()
-			level.set_cam_custom_position_direction(cam_pos, hpb, 0, false, false)
-		end)
-	end
-	if exec_console_cmd then
-		exec_console_cmd("demo_record " .. DEMO_FILE)
-	end
-	CreateTimeEvent(CONFIG.MOD_ID, "clear_custom_cam", 0.05, function()
-		clear_custom_cam()
-		return true
-	end)
-
-	log(string.format(
-		"spectate started at %.1f,%.1f,%.1f killer=%s",
-		cam_pos.x,
-		cam_pos.y,
-		cam_pos.z,
-		tostring(killer_id)
-	))
 end
 
 local function reset_state()
 	hits = {}
-	last_attacker_id = nil
-	last_attacker_pos = nil
-	last_hit_dir = nil
-	death_pending = false
-	awaiting_spectate = false
-	spectating = false
-	corpse_pos = nil
-	killer_id = nil
+	death_armed = false
+	report_visible = false
+	last_toggle_ms = 0
 	frozen_lines = nil
-	stop_demo_record()
-	restore_game_over_continue()
-	apply_body_hud(false)
 	clear_death_ui()
-	clear_custom_cam()
 end
 
 local function on_option_change()
@@ -721,15 +470,8 @@ local function on_option_change()
 	CONFIG.loaded.debug_log = dogma.dbg.logging()
 	if not CONFIG.loaded.enabled then
 		clear_death_ui()
-		awaiting_spectate = false
-		death_pending = false
-		if spectating then
-			spectating = false
-			stop_demo_record()
-			clear_custom_cam()
-			apply_body_hud(false)
-			restore_game_over_continue()
-		end
+		death_armed = false
+		report_visible = false
 	end
 end
 
@@ -747,21 +489,6 @@ local function actor_on_before_hit(shit, bone_id, flags)
 		if hit and shit.type == hit.radiation then
 			record_hit(shit, bone_id, shit.power, 0)
 		end
-		-- Keep attacker tracking even when ADB owns damage numbers.
-		if shit.draftsman then
-			local ok, id = pcall(function()
-				return shit.draftsman:id()
-			end)
-			if ok and id then
-				last_attacker_id = id
-			end
-			local okp, pos = pcall(function()
-				return shit.draftsman:position()
-			end)
-			if okp and pos then
-				last_attacker_pos = vector():set(pos.x, pos.y, pos.z)
-			end
-		end
 		return
 	end
 
@@ -773,117 +500,40 @@ local function actor_on_before_death(whoID, flags)
 		return
 	end
 
-	local actor = db.actor
-	if actor then
-		local ok, pos = pcall(function()
-			return actor:position()
-		end)
-		if ok and pos then
-			corpse_pos = vector():set(pos.x, pos.y, pos.z)
-		end
-	end
-
-	killer_id = last_attacker_id
-	if (not killer_id) and whoID and whoID ~= 0 then
-		killer_id = whoID
-	end
-
 	freeze_hit_lines()
-	death_pending = true
-	awaiting_spectate = false
-	spectating = false
-	apply_body_hud(true)
 	arm_death_ui()
-	log(string.format(
-		"before_death killer=%s hits=%d",
-		tostring(killer_id),
-		frozen_lines and #frozen_lines or 0
-	))
-end
-
-local function tab_dik()
-	-- Anomaly exposes scan codes on DIK_keys, not as bare globals.
-	return (DIK_keys and DIK_keys.DIK_TAB) or 15
-end
-
-local function try_spectate_from_key(dik)
-	if not CONFIG.loaded.enabled then
-		return false
-	end
-	if spectating then
-		return false
-	end
-	if dik ~= tab_dik() then
-		return false
-	end
-	if death_pending and not awaiting_spectate then
-		arm_death_ui()
-	end
-	if not awaiting_spectate then
-		return false
-	end
-	start_spectator()
-	return true
-end
-
-local function block_engine(flags)
-	if flags then
-		flags.ret_value = false
-	end
-end
-
--- Tab/Esc edges + eat jump/crouch so they don't finish game_over.
-local function on_before_key_press(dik, bind, dis, flags)
-	if try_spectate_from_key(dik) then
-		block_engine(flags)
-		return
-	end
-	if not spectating then
-		return
-	end
-	local kb = key_bindings
-	if kb and bind == kb.kQUIT then
-		block_engine(flags)
-		open_menu_from_spectate()
-		return
-	end
-	if is_move_bind(bind) then
-		block_engine(flags)
-	end
-end
-
-local function on_before_key_hold(dik, bind, dis, flags)
-	if spectating and is_move_bind(bind) then
-		block_engine(flags)
-	end
-end
-
-local function on_key_press(dik)
-	try_spectate_from_key(dik)
+	log(string.format("before_death hits=%d", frozen_lines and #frozen_lines or 0))
 end
 
 local function GUI_on_show(gui, str2)
-	if not CONFIG.loaded.enabled or not death_pending then
+	if not CONFIG.loaded.enabled or not death_armed then
 		return
 	end
 	local name = tostring(gui or "") .. " " .. tostring(str2 or "")
 	if name:find("game_over", 1, true) or name:find("GameOver", 1, true) then
-		arm_death_ui()
+		show_tab_prompt()
+		apply_report_visibility()
 	end
+end
+
+local function on_before_key_press(dik, bind, dis, flags)
+	if try_toggle_report(dik) then
+		if flags then
+			flags.ret_value = false
+		end
+	end
+end
+
+local function on_key_press(dik)
+	try_toggle_report(dik)
 end
 
 local function on_game_load()
 	reset_state()
-	restore_first_person_death()
 	wrap_adb_shit_booster()
 end
 
 local function actor_on_first_update()
-	if not spectating then
-		stop_demo_record()
-		clear_custom_cam()
-		apply_body_hud(false)
-	end
 	wrap_adb_shit_booster()
 	on_option_change()
 end
@@ -897,7 +547,6 @@ function on_game_start()
 	RegisterScriptCallback("actor_on_before_hit", actor_on_before_hit)
 	RegisterScriptCallback("actor_on_before_death", actor_on_before_death)
 	RegisterScriptCallback("on_before_key_press", on_before_key_press)
-	RegisterScriptCallback("on_before_key_hold", on_before_key_hold)
 	RegisterScriptCallback("on_key_press", on_key_press)
 	RegisterScriptCallback("GUI_on_show", GUI_on_show)
 	RegisterScriptCallback("on_game_load", on_game_load)

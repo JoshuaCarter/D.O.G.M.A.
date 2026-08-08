@@ -30,10 +30,10 @@ Radiation FX:
   desc: Customisable radiation FX that tracks your actual irradiation level (like a dosimeter).
 
 Bleed FX:
-  stage: OMIT
-  default: false
+  stage: DEV
+  default: true
   path: fx/bleed
-  desc: Bleed screen FX from two overlapping PPEs, intensity scaled to bleed level.
+  desc: Screen-edge blood HUD overlays (stock textures), one layer per wound tier.
   settings:
     - video/player/blood_splash: "false" # Anomaly "Bleeding effect"
 
@@ -41,9 +41,8 @@ Health FX:
   stage: DEV
   default: true
   path: fx/health
-  desc: Low-health screen FX from stock edge blood and/or xlibs PPE washes, scaled to missing HP.
+  desc: Desaturates the screen as HP falls; black and white at 0 HP.
   settings:
-    - video/player/blood_splash: "false" # Anomaly "Bleeding effect" (we drive edge blood + PPEs ourselves)
     - video/player/bleed_effect: "false" # Anomaly "Low health blur"
 
 FPS:
@@ -178,11 +177,11 @@ Ammo Selector:
   path: gameplay/ammo_selector
   desc: "Optional hold-to-open / release-to-close ammo wheel. Ships GAMMA ammo wheel UI."
 
-What the Fuck:
+Death Report:
   stage: DEV
   default: true
-  path: gameplay/death_spectator
-  desc: "After death, press Tab to see what killed you and read a summary of recent damage sources."
+  path: gameplay/death_report
+  desc: "On death, press Tab to toggle a summary of recent hits and remaining body health."
 
 Better Equipable Controls:
   stage: DEV

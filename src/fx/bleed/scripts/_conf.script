@@ -1,35 +1,21 @@
 -- fx/bleed conf
 --
--- Tier targets match GAMMA bleed HUD icon (grok_bleed_icon), intensity in thirds:
---   none          → 0
---   white  (> 0)  → 0.33
---   yellow (≥0.5) → 0.66
---   orange (≥1.0) → 1.0
---   red    (≥1.5) → 1.0
--- Intensity lerps to the tier target over LERP_SEC (up and down).
+-- One edge-blood HUD layer per wound tier (matches grok_bleed_icon).
+-- Textures: dogma_bleed/screen_blood + splash1-3 (Painter/BOTZ VFX).
+-- NOT dinamic_hud/blood1-4 — those are flat red placeholder sheets in Anomaly 1.5.3.
 
 _G.dogma_fx_bleed_conf = {
 	MOD_ID = "dogma/fx/bleed",
+	LAYERS = 4,
 	DEFAULTS = {
 		["enable"] = true,
 		["intensity"] = 1.0,
 	},
-	LERP_SEC = 1.0,
-	-- Highest matching threshold wins. bleed >= min → intensity.
-	TIERS = {
-		{ min = 1.5, intensity = 1.0 },
-		{ min = 1.0, intensity = 1.0 },
-		{ min = 0.5, intensity = 2 / 3 },
-		{ min = 0.01, intensity = 1 / 3 },
+	WOUND_TIERS = {
+		{ min = 1.5, layers = 4 },
+		{ min = 1.0, layers = 3 },
+		{ min = 0.5, layers = 2 },
+		{ min = 0.01, layers = 1 },
 	},
-	PPE_A = {
-		name = "dogma_bleed_a.ppe",
-		id = 2030,
-	},
-	PPE_B = {
-		name = "dogma_bleed_b.ppe",
-		id = 2031,
-	},
-	-- Filled by on_option_change (runs at boot before any read).
 	loaded = {},
 }

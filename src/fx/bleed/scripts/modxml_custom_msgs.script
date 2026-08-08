@@ -1,0 +1,23 @@
+-- Bleed FX: screen-edge blood HUD statics.
+-- Textures from Painter of the Zone / BOTZ VFX (ScreenBloodAlpha + splashes).
+function on_xml_read()
+	RegisterScriptCallback("on_xml_read", function(xml_file_name, xml_obj)
+		if xml_file_name ~= [[ui\ui_custom_msgs.xml]] then
+			return
+		end
+		xml_obj:insertFromXMLString([[
+	<dogma_bleed_blood1 x="0" y="0" width="1024" height="768" stretch="1">
+		<texture>dogma_bleed\screen_blood</texture>
+	</dogma_bleed_blood1>
+	<dogma_bleed_blood2 x="0" y="0" width="1024" height="768" stretch="1">
+		<texture>dogma_bleed\splash1</texture>
+	</dogma_bleed_blood2>
+	<dogma_bleed_blood3 x="0" y="0" width="1024" height="768" stretch="1">
+		<texture>dogma_bleed\splash2</texture>
+	</dogma_bleed_blood3>
+	<dogma_bleed_blood4 x="0" y="0" width="1024" height="768" stretch="1">
+		<texture>dogma_bleed\splash3</texture>
+	</dogma_bleed_blood4>
+]])
+	end)
+end

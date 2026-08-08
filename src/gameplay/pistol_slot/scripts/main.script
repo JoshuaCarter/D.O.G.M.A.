@@ -1,16 +1,17 @@
 --[[
 	Pistol Slot
 
-	Engine slot 15 + ui_inventory cell_15 as the only pistol holster.
-	Vanilla Action_Equip / drag-drop use slot_cell[type] → move_to_slot(cell).
-	Overrides GAMMA "Knife Pistol in Binocular Slot" routing every inventory open.
-	Settings → Controls "Weapon 4 (Pistol)" (custom25) draws / holsters slot 15.
+	Engine slot 15 + ui_inventory cell_15 as a pistol holster.
+	Pistols also keep primary/secondary (cells 2/3). Vision stays cell 5 only.
+	Ejects junk from holster (15) and vision (5). Re-applies routing over GAMMA
+	knife/binoc slot sharing. Controls "Weapon 4 (Pistol)" draws / holsters 15.
 ]]
 
 local CONFIG = _G.dogma_gameplay_pistol_slot_conf
 local MOD_ID = CONFIG.MOD_ID
 local PISTOL_SLOT = CONFIG.PISTOL_SLOT
 local PISTOL_CELL = CONFIG.PISTOL_CELL
+local PISTOL_TYPE_KEY = CONFIG.PISTOL_TYPE_KEY
 local VISION_SLOT = 5
 
 local function ltx_slot(obj)
@@ -105,23 +106,16 @@ local function sync_holster_cell(cc)
 	end
 end
 
--- Full table so we win over mods that replace slot_cell on GUI_on_show.
+-- Only the keys we care about. Re-applied over GAMMA binoc_pistol_knife.
 local function apply_slot_routing(gui)
-	gui.slot_cell = {
-		[1] = { 1 }, -- knife only
-		[2] = { PISTOL_CELL }, -- pistol → holster 15 only
-		[3] = { 3 }, -- rifle → primary only
-		[4] = { 4 }, -- grenade
-		[5] = { VISION_SLOT }, -- binoculars → vision only
-		[6] = { 6 }, -- bolt
-		[7] = { 7 }, -- outfit
-		[8] = { 8 }, -- PDA
-		[9] = { 9 }, -- detector
-		[10] = { 10 }, -- torch
-		[11] = { 11 }, -- artefact
-		[12] = { 12 }, -- helmet
-		[13] = { 13 }, -- backpack
-	}
+	local sc = gui.slot_cell
+	if not sc then
+		return
+	end
+	sc[1] = { 1 } -- knife/axe (LTX slot 0) → melee cell only (not vision)
+	-- Pistol: holster first on double-click, still primary/secondary.
+	sc[PISTOL_TYPE_KEY] = { PISTOL_CELL, 2, 3 }
+	sc[VISION_SLOT] = { VISION_SLOT } -- binoculars → vision only
 end
 
 local function patch_inventory_gui(gui)
@@ -147,36 +141,20 @@ local function patch_inventory_gui(gui)
 
 	local orig_update = gui.UpdateSlots
 	gui.UpdateSlots = function(self, ...)
-		-- Vanilla maps engine slot i → slot_cell[i][1]. With [2]={15} that would
-		-- draw engine slot 2 into cell 15 and clear our holster. Use identity for
-		-- type 2 during the stock loop, then restore routing.
-		local saved_map = self.slot_cell
-		self.slot_cell = {
-			[1] = { 1 },
-			[2] = { 2 },
-			[3] = { 3 },
-			[4] = { 4 },
-			[5] = { 5 },
-			[6] = { 6 },
-			[7] = { 7 },
-			[8] = { 8 },
-			[9] = { 9 },
-			[10] = { 10 },
-			[11] = { 11 },
-			[12] = { 12 },
-			[13] = { 13 },
-		}
+		-- Stock loop: engine slot i → slot_cell[i][1]. With [2]={15,...} that
+		-- would draw/clear cell 15 from engine slot 2. Identity for type 2 only.
+		local sc = self.slot_cell
+		local saved = sc[PISTOL_TYPE_KEY]
+		sc[PISTOL_TYPE_KEY] = { 2 }
 		orig_update(self, ...)
-		self.slot_cell = saved_map
+		sc[PISTOL_TYPE_KEY] = saved
 		apply_slot_routing(self)
 
-		-- Kick knives / other junk out of vision so binoculars can equip again.
 		eject_if(VISION_SLOT, is_binocular)
 
 		local equ = self.CC and self.CC["actor_equ"]
 		if equ then
 			sync_holster_cell(equ)
-			-- Re-sync vision after possible eject (stock loop already ran).
 			local vision = db.actor:item_in_slot(VISION_SLOT)
 			if vision then
 				equ:AddItemManual(vision, nil, VISION_SLOT)
@@ -196,7 +174,7 @@ local function on_gui_show(name)
 		return
 	end
 	patch_inventory_gui(gui)
-	-- Next tick beats other GUI_on_show slot_cell replacements (binoc_pistol_knife).
+	-- Next tick beats other GUI_on_show slot_cell patches (binoc_pistol_knife).
 	CreateTimeEvent("dogma_pistol_slot", "slot_route", 0, function()
 		local g = ui_inventory and ui_inventory.GUI
 		if g then

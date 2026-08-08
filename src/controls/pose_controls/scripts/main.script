@@ -3,9 +3,9 @@
 
 	Maps movement pose keys directly instead of cycling:
 	- Crouch bind -> crouch only (mcCrouch, never mcAccel)
-	- Walk bind (stock accel / kb_walk) -> walk only (mcAccel without mcCrouch)
-	- Prone bind (CONFIG.BINDS.prone / custom16) -> prone only (mcCrouch + mcAccel)
+	- Walk/Low Crouch bind -> prone only (mcCrouch + mcAccel)
 	- Sprint bind -> vanilla stand + sprint
+	- Walk bind (CONFIG.BINDS.walk) -> walk only (mcAccel without mcCrouch)
 
 	MCM Hold/Toggle and pose keys mirror Options→Controls
 	(live curr/functor - not axr copies).
@@ -47,20 +47,21 @@ local cached_crouch_toggle = false
 
 local ENGINE_BINDS = {
 	crouch = { action = "crouch", bind = function() return key_bindings.kCROUCH end, mcm = "crouch_key" },
-	walk = { action = "accel", bind = function() return key_bindings.kACCEL end, mcm = "walk_key" },
+	prone = { action = "accel", bind = function() return key_bindings.kACCEL end, mcm = "prone_key" },
 	sprint = {
 		action = "sprint_toggle",
 		bind = function() return key_bindings.kSPRINT_TOGGLE or key_bindings.kSPRINT end,
 		mcm = "sprint_key",
 	},
-	prone = {
-		action = CONFIG.BINDS.prone.action,
+	walk = {
+		action = CONFIG.BINDS.walk.action,
 		bind = function()
-			return dogma.keys.bind_kb(CONFIG.BINDS.prone.kb)
+			return dogma.keys.bind_kb(CONFIG.BINDS.walk.kb)
 		end,
-		mcm = "prone_key",
+		mcm = "walk_key",
 	},
 }
+
 local TOGGLE_CMDS = { "g_crouch_toggle", "g_walk_toggle", "g_sprint_toggle" }
 
 local function log(msg)
@@ -157,8 +158,8 @@ end
 
 local function on_option_change()
 	CONFIG.loaded.enabled = true
-	-- Promote legacy MCM-only prone DIK into Controls if unbound.
-	dogma.mcm.migrate_key_to_mirror(CONFIG.MOD_ID, "prone_key", CONFIG.BINDS.prone)
+	-- Promote legacy MCM-only walk DIK into Controls if unbound.
+	dogma.mcm.migrate_key_to_mirror(CONFIG.MOD_ID, "walk_key", CONFIG.BINDS.walk)
 	CONFIG.loaded.debug_log = dogma.dbg.logging()
 	CONFIG.loaded.debug_overlay = dogma.dbg.overlay_enabled()
 	dogma.dbg.set_enabled(CONFIG.MOD_ID, dogma.dbg.overlay_enabled())
@@ -187,16 +188,9 @@ local function input_allowed()
 	return actor_can_change_pose() and actor_menu and actor_menu.is_hud_free and actor_menu.is_hud_free()
 end
 
-local function is_prone_bind(bind)
-	local prone = dogma.keys.bind_kb(CONFIG.BINDS.prone.kb)
-	return prone and bind == prone
-end
-
--- Prone hold synthesizes crouch+accel. Crouch's hold path clears accel to stay
--- crouch-only; skip that while the prone key is still down or we end up crouched.
-local function is_prone_key_down()
-	local dik = engine_bind_dik(ENGINE_BINDS.prone)
-	return dik and key_state(dik) ~= 0
+local function is_walk_bind(bind)
+	local walk = dogma.keys.bind_kb(CONFIG.BINDS.walk.kb)
+	return walk and bind == walk
 end
 
 local function bind_dik(bind)
@@ -305,17 +299,17 @@ local function on_before_key_press(key, bind, _dis, flags)
 		return
 	end
 
-	if is_prone_bind(bind) then
+	if is_walk_bind(bind) then
 		if use_hold_mode() then
 			block(flags)
 		else
 			block(flags)
-			if get_pose() == POSE.PRONE then
+			if get_pose() == POSE.WALK then
 				run_transition(POSE.STAND)
 			else
-				run_transition(POSE.PRONE)
+				run_transition(POSE.WALK)
 			end
-			overlay(LOG.KEY, "prone key")
+			overlay(LOG.KEY, "walk key")
 		end
 		return
 	end
@@ -337,12 +331,12 @@ local function on_before_key_press(key, bind, _dis, flags)
 		end
 	elseif bind == key_bindings.kACCEL and not use_hold_mode() then
 		block(flags)
-		if get_pose() == POSE.WALK then
+		if get_pose() == POSE.PRONE then
 			run_transition(POSE.STAND)
 		else
-			run_transition(POSE.WALK)
+			run_transition(POSE.PRONE)
 		end
-		overlay(LOG.KEY, "walk key")
+		overlay(LOG.KEY, "prone key")
 	end
 end
 
@@ -359,10 +353,12 @@ local function on_before_key_hold(key, bind, _dis, flags)
 		return
 	end
 
-	if is_prone_bind(bind) then
+	if is_walk_bind(bind) then
 		block(flags)
 		with_synthetic_input(function()
-			hold_bind(key_bindings.kCROUCH)
+			if IsMoveState("mcCrouch") then
+				set_bind_down(key_bindings.kCROUCH, false)
+			end
 			hold_bind(key_bindings.kACCEL)
 		end)
 		return
@@ -371,7 +367,7 @@ local function on_before_key_hold(key, bind, _dis, flags)
 	if bind == key_bindings.kCROUCH then
 		block(flags)
 		with_synthetic_input(function()
-			if IsMoveState("mcAccel") and not is_prone_key_down() then
+			if IsMoveState("mcAccel") then
 				set_bind_down(key_bindings.kACCEL, false)
 			end
 			hold_bind(key_bindings.kCROUCH)
@@ -379,9 +375,7 @@ local function on_before_key_hold(key, bind, _dis, flags)
 	elseif bind == key_bindings.kACCEL then
 		block(flags)
 		with_synthetic_input(function()
-			if IsMoveState("mcCrouch") then
-				set_bind_down(key_bindings.kCROUCH, false)
-			end
+			hold_bind(key_bindings.kCROUCH)
 			hold_bind(key_bindings.kACCEL)
 		end)
 	end
@@ -397,24 +391,17 @@ local function on_before_key_release(key, bind, _dis, flags)
 	end
 
 	if use_hold_mode() then
-		if bind == key_bindings.kACCEL and get_pose() == POSE.WALK then
+		if is_walk_bind(bind) and get_pose() == POSE.WALK then
 			with_synthetic_input(function()
 				set_bind_down(key_bindings.kACCEL, false)
 			end)
 			pending_goal = nil
 			log(string.format("walk key release -> %s", get_pose()))
-		elseif is_prone_bind(bind) then
-			with_synthetic_input(function()
-				set_bind_down(key_bindings.kACCEL, false)
-				set_bind_down(key_bindings.kCROUCH, false)
-			end)
-			pending_goal = nil
-			log(string.format("prone key release -> %s", get_pose()))
 		end
 		return
 	end
 
-	if bind == key_bindings.kCROUCH or bind == key_bindings.kACCEL or is_prone_bind(bind) then
+	if bind == key_bindings.kCROUCH or bind == key_bindings.kACCEL then
 		block(flags)
 	end
 end

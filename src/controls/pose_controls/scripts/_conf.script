@@ -1,19 +1,28 @@
 -- controls/pose_controls conf
 -- crouch/prone/sprint/walk + hold_toggle mirrored from Options→Controls.
--- Prone owns a rare custom (playlist 16 - no script listeners; avoid Quick Melee 24).
--- Stock kb_walk / accel is mirrored; label Walk/Low Crouch -> Walk via modxml_keybind_labels.
+-- Walk owns a rare custom (playlist 16 - no script listeners; avoid Quick Melee 24).
 
 local defaults = {
-	["prone_key"] = -1,
+	["walk_key"] = -1,
 }
 
 local BINDS = {
+	-- Stock Controls row for engine accel (= prone under this mod).
 	prone = {
+		action = "accel",
+		control = {
+			id = "kb_walk",
+			label = "Prone",
+			group = "kb_grp_movement",
+			after = "kb_crouch",
+		},
+	},
+	walk = {
 		action = "custom16",
 		kb = "kCUSTOM16",
 		control = {
-			id = "kb_pose_prone",
-			label = "Prone",
+			id = "kb_pose_walk",
+			label = "Walk",
 			group = "kb_grp_movement",
 			after = "kb_walk",
 		},
@@ -26,9 +35,9 @@ _G.dogma_controls_pose_controls_conf = {
 	BINDS = BINDS,
 	loaded = {
 		enabled = true,
-		walk_key = nil,
+		walk_key = defaults["walk_key"],
 		crouch_key = nil,
-		prone_key = defaults["prone_key"],
+		prone_key = nil,
 		sprint_key = nil,
 		-- true = toggle, false = hold (after sync)
 		toggle_mode = false,

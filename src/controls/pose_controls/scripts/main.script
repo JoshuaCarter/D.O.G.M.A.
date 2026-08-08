@@ -192,6 +192,13 @@ local function is_prone_bind(bind)
 	return prone and bind == prone
 end
 
+-- Prone hold synthesizes crouch+accel. Crouch's hold path clears accel to stay
+-- crouch-only; skip that while the prone key is still down or we end up crouched.
+local function is_prone_key_down()
+	local dik = engine_bind_dik(ENGINE_BINDS.prone)
+	return dik and key_state(dik) ~= 0
+end
+
 local function bind_dik(bind)
 	local dik = bind_to_dik(bind)
 	if dik and dik ~= 0 then
@@ -364,7 +371,7 @@ local function on_before_key_hold(key, bind, _dis, flags)
 	if bind == key_bindings.kCROUCH then
 		block(flags)
 		with_synthetic_input(function()
-			if IsMoveState("mcAccel") then
+			if IsMoveState("mcAccel") and not is_prone_key_down() then
 				set_bind_down(key_bindings.kACCEL, false)
 			end
 			hold_bind(key_bindings.kCROUCH)
@@ -396,7 +403,7 @@ local function on_before_key_release(key, bind, _dis, flags)
 			end)
 			pending_goal = nil
 			log(string.format("walk key release -> %s", get_pose()))
-		elseif is_prone_bind(bind) and get_pose() == POSE.PRONE then
+		elseif is_prone_bind(bind) then
 			with_synthetic_input(function()
 				set_bind_down(key_bindings.kACCEL, false)
 				set_bind_down(key_bindings.kCROUCH, false)

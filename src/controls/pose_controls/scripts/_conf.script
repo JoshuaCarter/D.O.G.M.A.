@@ -1,13 +1,22 @@
 -- controls/pose_controls conf
 -- crouch/prone/sprint/walk + hold_toggle mirrored from Options→Controls.
 -- Prone owns a rare custom (playlist 16 - no script listeners; avoid Quick Melee 24).
--- Stock kb_walk / accel stays Walk (mirrored only; never renamed).
+-- Stock kb_walk / accel is mirrored and relabeled Walk (stock string is Walk/Low Crouch).
 
 local defaults = {
 	["prone_key"] = -1,
 }
 
 local BINDS = {
+	walk = {
+		action = "accel",
+		control = {
+			id = "kb_walk",
+			label = "Walk",
+			group = "kb_grp_movement",
+			after = "kb_crouch",
+		},
+	},
 	prone = {
 		action = "custom16",
 		kb = "kCUSTOM16",

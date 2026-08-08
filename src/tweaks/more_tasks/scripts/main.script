@@ -10,15 +10,18 @@
 local CONFIG = _G.dogma_tweaks_more_tasks_conf
 
 local function hook()
-	if not (axr_task_manager and type(axr_task_manager.generate_available_tasks) == "function") then
+	local tm = axr_task_manager
+	if not (tm and type(tm.generate_available_tasks) == "function") then
 		return false
 	end
-	if axr_task_manager.generate_available_tasks.__dogma_more_tasks then
+	if tm.__dogma_more_tasks_orig then
 		return true
 	end
 
-	local orig = axr_task_manager.generate_available_tasks
-	axr_task_manager.generate_available_tasks = function(npc, is_sim)
+	local orig = tm.generate_available_tasks
+	tm.__dogma_more_tasks_orig = orig
+
+	tm.generate_available_tasks = function(npc, is_sim)
 		local st = is_sim and npc and db.storage[npc:id()]
 		if st and st.dyn_quest_rand == "nil" then
 			st.dyn_quest_rand = nil
@@ -35,7 +38,6 @@ local function hook()
 			st.dyn_quest_rand = nil
 		end
 	end
-	axr_task_manager.generate_available_tasks.__dogma_more_tasks = true
 	return true
 end
 

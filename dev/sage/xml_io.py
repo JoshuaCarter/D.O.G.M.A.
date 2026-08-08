@@ -446,22 +446,32 @@ class UiXmlDocument:
         self._redo = list(meta.redo)
 
 
+def _text_has_font(el: ET.Element) -> bool:
+	"""Font may be on <text font="…"> (InitText) or child <font font="…"/> (InitTextWnd)."""
+	if (el.get("font") or "").strip():
+		return True
+	for child in el:
+		if isinstance(child.tag, str) and child.tag == "font" and (child.get("font") or "").strip():
+			return True
+	return False
+
+
 def _is_junk_chrome(el: ET.Element) -> bool:
-    """True for empty / engine-invalid leaf chrome (InitText font, bare texture, …)."""
-    tag = el.tag
-    if not isinstance(tag, str):
-        return False
-    body = (el.text or "").strip()
-    if tag == "text":
-        # CUIXmlInit::InitText asserts pTmpFont — fontless <text> crashes.
-        return not (el.get("font") or "").strip()
-    if tag == "texture":
-        return not body
-    if tag == "list_font":
-        return not (el.get("font") or "").strip()
-    if tag == "window_name":
-        return not body
-    return False
+	"""True for empty / engine-invalid leaf chrome (InitText font, bare texture, …)."""
+	tag = el.tag
+	if not isinstance(tag, str):
+		return False
+	body = (el.text or "").strip()
+	if tag == "text":
+		# Fontless <text> crashes InitText; InitTextWnd uses a child <font> instead.
+		return not _text_has_font(el)
+	if tag == "texture":
+		return not body
+	if tag == "list_font":
+		return not (el.get("font") or "").strip()
+	if tag == "window_name":
+		return not body
+	return False
 
 
 def sanitize_ui_xml_tree(root: ET.Element) -> int:

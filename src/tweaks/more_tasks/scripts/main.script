@@ -1,0 +1,46 @@
+--[[
+	Sim stalkers: remove stock ~30% "offer nothing" roll in
+	axr_task_manager.generate_available_tasks.
+
+	Calls the live function (no fork of the pool logic). On a fresh sim roll,
+	retries if stock stuck dyn_quest_rand to "nil". Also clears an existing
+	"nil" sticky so barren NPCs can get a job after this tweak loads.
+]]
+
+local CONFIG = _G.dogma_tweaks_more_tasks_conf
+
+local function hook()
+	if not (axr_task_manager and type(axr_task_manager.generate_available_tasks) == "function") then
+		return false
+	end
+	if axr_task_manager.generate_available_tasks.__dogma_more_tasks then
+		return true
+	end
+
+	local orig = axr_task_manager.generate_available_tasks
+	axr_task_manager.generate_available_tasks = function(npc, is_sim)
+		local st = is_sim and npc and db.storage[npc:id()]
+		if st and st.dyn_quest_rand == "nil" then
+			st.dyn_quest_rand = nil
+		end
+		if not (st and st.dyn_quest_rand == nil) then
+			return orig(npc, is_sim)
+		end
+		-- Stock only sets "nil" on the no-quest roll; empty eligible pool leaves nil.
+		for _ = 1, 32 do
+			orig(npc, is_sim)
+			if st.dyn_quest_rand ~= "nil" then
+				return
+			end
+			st.dyn_quest_rand = nil
+		end
+	end
+	axr_task_manager.generate_available_tasks.__dogma_more_tasks = true
+	return true
+end
+
+function on_game_start()
+	dogma.load(CONFIG.MOD_ID)
+	hook()
+	RegisterScriptCallback("on_game_load", hook)
+end

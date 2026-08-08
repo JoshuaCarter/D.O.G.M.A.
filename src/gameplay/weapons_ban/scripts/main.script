@@ -255,6 +255,19 @@ local function patched_get_trade_status(obj, profile)
 	return original_get_trade_status(obj, profile)
 end
 
+-- Only release ids that still have a server object. Trade strip runs
+-- immediately plus delayed retries; client inventory can still list items
+-- whose se was already released (alife_release | no server object!), and a
+-- recycled id must not be released again.
+local function release_inventory_ids(ids)
+	for i = 1, #ids do
+		local id = ids[i]
+		if id and alife_object(id) then
+			alife_release_id(id)
+		end
+	end
+end
+
 local function strip_banned_from_npc(npc)
 	if not (npc and npc.iterate_inventory) then
 		return
@@ -262,12 +275,13 @@ local function strip_banned_from_npc(npc)
 	local to_release = {}
 	npc:iterate_inventory(function(_temp, item)
 		if item and is_banned_combat_gear(item, item:section()) then
-			to_release[#to_release + 1] = item:id()
+			local id = item:id()
+			if id and alife_object(id) then
+				to_release[#to_release + 1] = id
+			end
 		end
 	end)
-	for i = 1, #to_release do
-		alife_release_id(to_release[i])
-	end
+	release_inventory_ids(to_release)
 end
 
 local function delayed_strip(npc_id)
@@ -379,15 +393,17 @@ local function strip_loose_ammo(npc)
 			return
 		end
 		local sec = item:section()
+		local id = item:id()
+		if not (id and alife_object(id)) then
+			return
+		end
 		if Tiers.is_ammo_box(sec) then
-			to_release[#to_release + 1] = item:id()
+			to_release[#to_release + 1] = id
 		elseif IsAmmo and IsAmmo(item) and not (IsItem and IsItem("grenade_ammo", sec)) then
-			to_release[#to_release + 1] = item:id()
+			to_release[#to_release + 1] = id
 		end
 	end)
-	for i = 1, #to_release do
-		alife_release_id(to_release[i])
-	end
+	release_inventory_ids(to_release)
 end
 
 local function npc_rank_name(npc)

@@ -1,0 +1,95 @@
+--[[
+	Pistol Slot
+
+	Engine slot 15 + ui_inventory cell_15 as the only pistol holster.
+	Double-click / equip / drag-drop pistols → slot 15.
+	Melee, vision, and rifle cells no longer accept pistols.
+]]
+
+local CONFIG = _G.dogma_hud_pistol_slot_conf
+
+local PISTOL_SLOT = CONFIG.PISTOL_SLOT
+local PISTOL_CELL = CONFIG.PISTOL_CELL
+local PISTOL_TYPE_KEY = CONFIG.PISTOL_TYPE_KEY
+local ENGINE_SLOT_2 = 2
+local UI_CELL_2 = 2
+
+local function is_sidearm(obj)
+	if not obj or IsMelee(obj) or not IsWeapon(obj) then
+		return false
+	end
+	local sec = obj:section()
+	if not (sec and ini_sys) then
+		return false
+	end
+	local s = ini_sys:r_float_ex(sec, "slot")
+	return s ~= nil and tonumber(s) == 1
+end
+
+local function sync_engine_cell(cc, engine_slot, ui_cell)
+	local item = db.actor:item_in_slot(engine_slot)
+	if item then
+		cc:AddItemManual(item, nil, ui_cell)
+	else
+		cc:RemoveItemManual(ui_cell)
+	end
+end
+
+local function patch_inventory_gui(gui)
+	if gui._dogma_pistol_slot_patched then
+		return
+	end
+	gui._dogma_pistol_slot_patched = true
+
+	gui.slot_cell[PISTOL_TYPE_KEY] = { PISTOL_CELL }
+	gui.slot_cell[PISTOL_SLOT] = { PISTOL_CELL }
+	gui.slot_cell[1] = { 1 }
+	gui.slot_cell[3] = { 3 }
+	gui.slot_cell[5] = { 5 }
+
+	local orig_equip = gui.Action_Equip
+	gui.Action_Equip = function(self, obj, bag)
+		if is_sidearm(obj) then
+			obj = self:CheckItem(obj, "Action_Equip")
+			local cc = self.CC["actor_equ"]
+			local occupant = cc:GetObj(PISTOL_CELL)
+			if occupant then
+				db.actor:move_to_ruck(occupant)
+			end
+			db.actor:move_to_slot(obj, PISTOL_SLOT)
+			self:PlaySND(snd_item_to_slot)
+			self:On_Item_Update()
+			return
+		end
+		return orig_equip(self, obj, bag)
+	end
+
+	local orig_update = gui.UpdateSlots
+	gui.UpdateSlots = function(self, ...)
+		orig_update(self, ...)
+		local cc = self.CC and self.CC["actor_equ"]
+		if not cc then
+			return
+		end
+		sync_engine_cell(cc, PISTOL_SLOT, PISTOL_CELL)
+		sync_engine_cell(cc, ENGINE_SLOT_2, UI_CELL_2)
+	end
+end
+
+local function on_gui_show(name)
+	if name ~= "UIInventory" then
+		return
+	end
+	local gui = ui_inventory and ui_inventory.GUI
+	if gui then
+		patch_inventory_gui(gui)
+	end
+end
+
+function on_game_start()
+	dogma.load(CONFIG.MOD_ID)
+	if _G.SCANNED_SLOTS then
+		_G.SCANNED_SLOTS[PISTOL_SLOT] = true
+	end
+	RegisterScriptCallback("GUI_on_show", on_gui_show)
+end

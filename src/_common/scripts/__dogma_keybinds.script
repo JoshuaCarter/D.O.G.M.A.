@@ -1,0 +1,77 @@
+--[[
+	Settings → Controls keybind rows only (no MCM).
+
+	Features register rows before ui_keybinding.xml is read; modxml_keybinds
+	injects them next to an existing command in the same group.
+
+	  __dogma_keybinds.claim({
+	    action = "custom25",
+	    id = "kb_pistol_holster",
+	    label = "Pistol holster",
+	    group = "kb_grp_weapons",
+	    after = "kb_weapon3",   -- insert immediately after this command
+	    -- before = "kb_grenade", -- or immediately before (not both)
+	  })
+
+	Runtime handlers: dogma.keybinds.bind_kb("kCUSTOM25") → key_bindings entry.
+]]
+
+local tostr = tostring
+
+-- Ordered: { action, id, label, group, after?, before? }
+CONTROLS = {}
+
+local function has_anchor(spec)
+	return spec.after ~= nil or spec.before ~= nil
+end
+
+function claim(spec)
+	if not (spec and spec.action and spec.id and spec.group and has_anchor(spec)) then
+		return
+	end
+	if spec.after and spec.before then
+		return
+	end
+	local id = tostr(spec.id)
+	for i = 1, #CONTROLS do
+		if CONTROLS[i].id == id then
+			return
+		end
+	end
+	local row = {
+		action = tostr(spec.action),
+		id = id,
+		label = spec.label and tostr(spec.label) or nil,
+		group = tostr(spec.group),
+	}
+	if spec.after then
+		row.after = tostr(spec.after)
+	end
+	if spec.before then
+		row.before = tostr(spec.before)
+	end
+	CONTROLS[#CONTROLS + 1] = row
+end
+
+-- Feature BIND entry: { action, kb, control = { id, label, group, after/before } }
+function claim_bind(entry)
+	if not (entry and entry.action and entry.control) then
+		return
+	end
+	local c = entry.control
+	claim({
+		action = entry.action,
+		id = c.id,
+		label = c.label,
+		group = c.group,
+		after = c.after,
+		before = c.before,
+	})
+end
+
+function bind_kb(kb)
+	if not (kb and key_bindings) then
+		return nil
+	end
+	return key_bindings[kb]
+end

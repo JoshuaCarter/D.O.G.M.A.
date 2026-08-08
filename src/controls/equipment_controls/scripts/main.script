@@ -479,10 +479,8 @@ end
 local function on_option_change()
 	CONFIG.loaded.enabled = true
 	CONFIG.loaded.auto_bolt_on_detector = dogma.mcm.bool(CONFIG.MOD_ID, "auto_bolt_on_detector")
-	dogma.mcm.migrate_key_to_mirror(CONFIG.MOD_ID, "key_radio", CONFIG.BINDS.rf_scanner)
-	dogma.mcm.migrate_key_to_mirror(CONFIG.MOD_ID, "key_glowstick", CONFIG.BINDS.glowstick)
-	CONFIG.loaded.key_radio = dik_for(dogma.keys.bind_kb(CONFIG.BINDS.rf_scanner.kb))
-	CONFIG.loaded.key_glowstick = dik_for(dogma.keys.bind_kb(CONFIG.BINDS.glowstick.kb))
+	CONFIG.loaded.key_radio = dik_for(dogma.keybinds.bind_kb(CONFIG.BINDS.rf_scanner.kb))
+	CONFIG.loaded.key_glowstick = dik_for(dogma.keybinds.bind_kb(CONFIG.BINDS.glowstick.kb))
 	CONFIG.loaded.key_detector = dik_for(key_bindings and key_bindings.kDETECTOR)
 	CONFIG.loaded.key_geiger = dik_for(key_bindings and key_bindings.kCUSTOM14)
 	CONFIG.loaded.key_torch = dik_for(key_bindings and key_bindings.kTORCH)
@@ -496,8 +494,8 @@ local function on_before_key_press(_key, bind, _dis, flags)
 		return
 	end
 
-	local rf_bind = dogma.keys.bind_kb(CONFIG.BINDS.rf_scanner.kb)
-	local glow_bind = dogma.keys.bind_kb(CONFIG.BINDS.glowstick.kb)
+	local rf_bind = dogma.keybinds.bind_kb(CONFIG.BINDS.rf_scanner.kb)
+	local glow_bind = dogma.keybinds.bind_kb(CONFIG.BINDS.glowstick.kb)
 
 	if bind == key_bindings.kTORCH and has_headlamp() then
 		return

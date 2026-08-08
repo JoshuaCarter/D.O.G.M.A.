@@ -7,8 +7,7 @@
 	- Sprint bind -> vanilla stand + sprint
 	- Walk bind (CONFIG.BINDS.walk) -> walk only (mcAccel without mcCrouch)
 
-	MCM Hold/Toggle and pose keys mirror Options→Controls
-	(live curr/functor - not axr copies).
+	MCM Hold/Toggle only; pose keys bind in Settings → Controls.
 	Hold/Toggle forces g_crouch_toggle / g_walk_toggle / g_sprint_toggle to match.
 
 	FDDA body search / Faster Skinning briefly flip g_crouch_toggle to pulse
@@ -56,7 +55,7 @@ local ENGINE_BINDS = {
 	walk = {
 		action = CONFIG.BINDS.walk.action,
 		bind = function()
-			return dogma.keys.bind_kb(CONFIG.BINDS.walk.kb)
+			return dogma.keybinds.bind_kb(CONFIG.BINDS.walk.kb)
 		end,
 		mcm = "walk_key",
 	},
@@ -114,8 +113,7 @@ local function passthrough_scripted_pose_pulse()
 	return false
 end
 
--- DIK -> console bind token handled by dogma.keys (via dogma.mcm).
--- main only reads engine binds.
+-- DIK from Settings → Controls (dogma.keybinds.bind_kb for walk).
 local function engine_bind_dik(kb)
 	local bind = kb.bind()
 	if not bind then
@@ -135,10 +133,8 @@ local function set_engine_toggle(toggle_on)
 	log(string.format("toggle modes -> %s", word))
 end
 
--- Mirror Hold/Toggle + crouch/prone/sprint/walk from Options→Controls.
--- MCM key rows use curr/functor so they always show engine binds; this only
--- refreshes CONFIG.loaded and keeps walk/sprint toggle bits matched to crouch.
-local function sync_mirrored_controls()
+-- Refresh CONFIG.loaded DIKs from Settings → Controls.
+local function sync_engine_controls()
 	local crouch_toggle = get_console_cmd(1, "g_crouch_toggle") or false
 	CONFIG.loaded.toggle_mode = crouch_toggle and true or false
 	cached_crouch_toggle = CONFIG.loaded.toggle_mode
@@ -152,14 +148,11 @@ end
 
 local function on_option_change()
 	CONFIG.loaded.enabled = true
-	-- Promote legacy MCM-only walk DIK into Controls if unbound.
-	dogma.mcm.migrate_key_to_mirror(CONFIG.MOD_ID, "walk_key", CONFIG.BINDS.walk)
 	CONFIG.loaded.debug_log = dogma.dbg.logging()
 	CONFIG.loaded.debug_overlay = dogma.dbg.overlay_enabled()
 	dogma.dbg.set_enabled(CONFIG.MOD_ID, dogma.dbg.overlay_enabled())
-	-- Always refresh mirrored CONFIG.loaded from Controls (MCM curr already wrote
-	-- Accept changes into the engine).
-	sync_mirrored_controls()
+	-- Refresh CONFIG.loaded from Controls; keep engine toggle cmds matched.
+	sync_engine_controls()
 end
 
 -- Keys need a free HUD. Pending pose steps may finish during loot UI.
@@ -183,7 +176,7 @@ local function input_allowed()
 end
 
 local function is_walk_bind(bind)
-	local walk = dogma.keys.bind_kb(CONFIG.BINDS.walk.kb)
+	local walk = dogma.keybinds.bind_kb(CONFIG.BINDS.walk.kb)
 	return walk and bind == walk
 end
 

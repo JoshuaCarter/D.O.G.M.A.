@@ -46,10 +46,9 @@ Release zip: `bash tools/package-fomod.sh` → `build/fomod/`. Wizard is **one p
 
 ## Common
 
-Runtime API: `dogma.script` (`dogma.mcm`, `dogma.dbg`, `dogma.load`, …) — wires
-`__dogma_*` on full script load. MCM gather API: `dogma_mcm.script`
-(`dogma_mcm.attach`, `dogma_mcm.keys`, …) — MCM-only, no dbg/sys.
-Modxml uses `__dogma_key_mirror_mcm`.
+Runtime API: `dogma.script` (`dogma.mcm`, `dogma.keybinds`, `dogma.dbg`, `dogma.load`, …).
+MCM gather: `dogma_mcm.attach` / `append` / `with_header`.
+Controls rows: `__dogma_keybinds.claim` / `claim_bind` in feature `_conf.script`.
 
 ```lua
 function on_game_start()

@@ -21,17 +21,7 @@ _G.dogma_hud_pistol_slot_conf = {
 	PISTOL_TYPE_KEY = 2, -- LTX slot 1 (pistol) + 1 → ui_inventory slot_cell key
 }
 
-do
-	local KM = dogma_mcm.keys
-	local spec = BINDS.draw
-	local c = spec and spec.control
-	if KM and c then
-		KM.claim_control({
-			action = spec.action,
-			id = c.id,
-			label = c.label,
-			group = c.group,
-			after = c.after,
-		})
-	end
+local KB = __dogma_keybinds
+if KB then
+	KB.claim_bind(BINDS.draw)
 end

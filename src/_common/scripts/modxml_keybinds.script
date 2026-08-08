@@ -1,5 +1,4 @@
--- Inject Controls rows claimed by features; keep Settings labels matched to MCM.
--- Feature MCM scripts claim via __dogma_key_mirror_mcm.claim_control / mirror_spec.
+-- Inject Controls rows registered via __dogma_keybinds; replace duplicate exe= rows.
 -- Claiming an engine action replaces any other Controls row on that same exe=.
 
 local fmt = string.format
@@ -14,11 +13,9 @@ local function set_string_text(xml_obj, id, text)
 end
 
 local function ensure_string(xml_obj, id, text)
-	-- Always set text when a text node exists (including empty / stale ids).
 	if set_string_text(xml_obj, id, text) then
 		return
 	end
-	-- String shell without <text> - do not bail; replace with a full node.
 	local existing = xml_obj:query(fmt("string[id=%s]", id))
 	if is_not_empty(existing) then
 		xml_obj:insertFromXMLString(fmt(
@@ -54,14 +51,14 @@ local function remove_other_rows_for_action(xml_obj, action, keep_id)
 	end
 end
 
-local function insert_after_command(xml_obj, group_name, after_id, new_id, exe)
+local function insert_command(xml_obj, group_name, anchor_id, new_id, exe, before)
 	if is_not_empty(xml_obj:query(fmt("command[id=%s]", new_id))) then
 		return
 	end
 	local anchor = xml_obj:query(fmt(
 		"group[name=%s] > command[id=%s]",
 		group_name,
-		after_id
+		anchor_id
 	))
 	if not anchor[1] then
 		return
@@ -71,16 +68,19 @@ local function insert_after_command(xml_obj, group_name, after_id, new_id, exe)
 	if not pos then
 		return
 	end
+	if not before then
+		pos = pos + 1
+	end
 	xml_obj:insertFromXMLString(
 		fmt('<command id="%s"\t\t\t\t\t\texe="%s"/>', new_id, exe),
 		el.parent,
-		pos + 1
+		pos
 	)
 end
 
 local function each_control(fn)
-	local m = __dogma_key_mirror_mcm
-	local list = m and m.CONTROLS
+	local kb = __dogma_keybinds
+	local list = kb and kb.CONTROLS
 	if not list then
 		return
 	end
@@ -91,10 +91,15 @@ end
 
 local function patch_keybinding_ui(xml_obj)
 	each_control(function(e)
-		if e.group and e.after and e.id and e.action then
-			insert_after_command(xml_obj, e.group, e.after, e.id, e.action)
-			remove_other_rows_for_action(xml_obj, e.action, e.id)
+		if not (e.group and e.id and e.action) then
+			return
 		end
+		if e.after then
+			insert_command(xml_obj, e.group, e.after, e.id, e.action, false)
+		elseif e.before then
+			insert_command(xml_obj, e.group, e.before, e.id, e.action, true)
+		end
+		remove_other_rows_for_action(xml_obj, e.action, e.id)
 	end)
 end
 

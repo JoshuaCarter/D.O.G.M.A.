@@ -1,10 +1,7 @@
 -- controls/equipment_controls conf
--- Device keys via dogma_mcm.keys (RF / Glowstick customs).
 
 local defaults = {
 	["auto_bolt_on_detector"] = true,
-	["key_radio"] = -1,
-	["key_glowstick"] = -1,
 }
 
 local BINDS = {
@@ -45,22 +42,10 @@ _G.dogma_controls_equipment_controls_conf = {
 	},
 }
 
-do
-	local KM = dogma_mcm.keys
-	if KM then
-		local order = { "rf_scanner", "glowstick" }
-		for i = 1, #order do
-			local spec = BINDS[order[i]]
-			local c = spec and spec.control
-			if c then
-				KM.claim_control({
-					action = spec.action,
-					id = c.id,
-					label = c.label,
-					group = c.group,
-					after = c.after,
-				})
-			end
-		end
+local KB = __dogma_keybinds
+if KB then
+	local order = { "rf_scanner", "glowstick" }
+	for i = 1, #order do
+		KB.claim_bind(BINDS[order[i]])
 	end
 end

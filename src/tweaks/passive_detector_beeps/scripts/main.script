@@ -1,14 +1,13 @@
 --[[
 	Detector Subtle SFX
 
-	Every 2000ms, if the actor has an artefact detector that is not shown,
+	Every 5000ms, if the actor has an artefact detector that is not shown,
 	scan within that scanner's af_radius for world artefacts. If any are
-	found, play that scanner's af_sound_1_ at half volume.
+	found, play that scanner's af_sound_1_.
 ]]
 
 local SLOT_MAX = 13
-local SCAN_MS = 2000
-local BEEP_VOLUME = 0.5
+local SCAN_MS = 5000
 local FALLBACK_SOUND = "detectors\\art_beep1"
 local FALLBACK_RADIUS = 30
 
@@ -118,9 +117,7 @@ local function artefact_nearby(actor, radius)
 end
 
 local function play_beep(actor, path)
-	local snd = get_sound(path)
-	snd.volume = BEEP_VOLUME
-	snd:play(actor, 0, sound_object.s2d)
+	get_sound(path):play(actor, 0, sound_object.s2d)
 end
 
 local function on_update()

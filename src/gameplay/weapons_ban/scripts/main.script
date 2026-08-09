@@ -15,11 +15,12 @@ local Tiers
 
 local original_set_random_stash
 local original_try_spawn_ammo
-local original_get_trade_status
 local original_trade_update
+local original_check_trade_mode
+local original_is_tradable
 local hooked_stash = false
 local hooked_ammo = false
-local hooked_trade_status = false
+local hooked_trade_ui = false
 local hooked_trade_update = false
 
 -- Persist so we never double-grant within the new-game window before
@@ -274,18 +275,36 @@ local function is_supply_trader(npc)
 	return supplies ~= nil and supplies ~= ""
 end
 
-local function patched_get_trade_status(obj, profile)
-	if profile and obj and is_banned_combat_gear(obj, obj:section()) then
-		-- mode 2 = trader inventory shown to player (hide)
+-- utils_ui caches utils_item.get_item_trade_status in a local at load, so
+-- patching the table never reaches Check_TradeMode / IsTradable. Hook those.
+local function patched_check_trade_mode(self, obj, sec)
+	local profile = self.container and self.container.trade_profile
+	if profile and obj and is_banned_combat_gear(obj, sec or obj:section()) then
+		self.flags.value = nil
+		self.flags.value_str = nil
+		self.flags.note = nil
+		self.flags.no_trade = nil
+		self.flags.note_str = nil
+		-- mode 2 = trader stock: hide cell
 		if profile.mode == 2 then
-			return 3
+			return true
 		end
-		-- mode 1 = player inventory in trade (block sell-to-trader)
+		-- mode 1 = player selling: show as no-trade
 		if profile.mode == 1 then
-			return 1
+			self.flags.note = 1
+			self.flags.no_trade = true
+			self.flags.note_str = game.translate_string("st_no_trade_tip_1")
+			return false
 		end
 	end
-	return original_get_trade_status(obj, profile)
+	return original_check_trade_mode(self, obj, sec)
+end
+
+local function patched_is_tradable(self, obj)
+	if obj and is_banned_combat_gear(obj, obj:section()) then
+		return false
+	end
+	return original_is_tradable(self, obj)
 end
 
 -- Only release ids that still have a server object. Trade strip runs
@@ -350,47 +369,53 @@ end
 
 --------------------------------------------------------------------------------
 -- Stash inject
+-- set_random_stash only queues section names in treasure_manager.caches; items
+-- spawn on first open (try_spawn_treasure). Early alife_create_item shows only
+-- our extras until the UI refreshes — append to the cache instead.
 --------------------------------------------------------------------------------
-local function spawn_addition(box, cat, result_tier)
-	local sec = Tiers.pick_section(cat, result_tier)
-	if not sec then
+local function append_stash_sections(id, sections)
+	if not (treasure_manager and treasure_manager.caches) or #sections == 0 then
 		return
 	end
-	if cat == "parts" then
-		local band = Tiers.cond_band(result_tier)
-		alife_create_item(sec, box, {
-			cond_r = { band[1], band[2] },
-			cond_ct = "part",
-			cond_cr = { 0.5, 0.75, 1 },
-		})
-	elseif cat == "ammo" then
-		local cap = Tiers.mag_equiv_for_ammo(sec)
-		local n = cap * math.random(2, 4)
-		alife_create_item(sec, box, { ammo = n })
-	else
-		alife_create_item(sec, box)
+	local caches = treasure_manager.caches
+	local cur = caches[id]
+	if cur == true then
+		return
 	end
-	log(string.format("stash +%s t%s %s", cat, result_tier, sec))
+	local add = table.concat(sections, ",")
+	if type(cur) == "string" and cur ~= "" then
+		caches[id] = cur .. "," .. add
+	else
+		caches[id] = add
+	end
 end
 
 local function roll_stash_loot(id)
-	local box = alife_object(id)
-	if not box then
+	if not alife_object(id) then
 		return
 	end
 	Tiers.ensure()
 	local target = Tiers.base_tier_for_stash(id)
+	local sections = {}
 	local n = math.random(0, 3)
 	for _ = 1, n do
 		local cat = Tiers.pick_category()
 		local rt = Tiers.pick_tier(target)
-		spawn_addition(box, cat, rt)
+		local sec = Tiers.pick_section(cat, rt)
+		if sec then
+			sections[#sections + 1] = sec
+			log(string.format("stash +%s t%s %s", cat, rt, sec))
+		end
 	end
+	append_stash_sections(id, sections)
 end
 
 local function patched_set_random_stash(no_spot, hint, bonus_items, id, dbg)
 	local result = original_set_random_stash(no_spot, hint, bonus_items, id, dbg)
 
+	if dbg then
+		return result
+	end
 	if not dogma.sys.ready(MOD_ID, db, on_option_change) then
 		return result
 	end
@@ -562,17 +587,21 @@ local function try_hook_ammo()
 	log("hooked death_manager.try_spawn_ammo")
 end
 
-local function try_hook_trade_status()
-	if hooked_trade_status then
+local function try_hook_trade_ui()
+	if hooked_trade_ui then
 		return
 	end
-	if not (utils_item and utils_item.get_item_trade_status) then
+	local cell = utils_ui and utils_ui.UICellItem
+	local cont = utils_ui and utils_ui.UICellContainer
+	if not (cell and cell.Check_TradeMode and cont and cont.IsTradable) then
 		return
 	end
-	original_get_trade_status = utils_item.get_item_trade_status
-	utils_item.get_item_trade_status = patched_get_trade_status
-	hooked_trade_status = true
-	log("hooked utils_item.get_item_trade_status")
+	original_check_trade_mode = cell.Check_TradeMode
+	original_is_tradable = cont.IsTradable
+	cell.Check_TradeMode = patched_check_trade_mode
+	cont.IsTradable = patched_is_tradable
+	hooked_trade_ui = true
+	log("hooked utils_ui trade Check_TradeMode + IsTradable")
 end
 
 local function try_hook_trade_update()
@@ -591,7 +620,7 @@ end
 local function try_hooks()
 	try_hook_stash()
 	try_hook_ammo()
-	try_hook_trade_status()
+	try_hook_trade_ui()
 	try_hook_trade_update()
 end
 

@@ -641,6 +641,25 @@ local function hands_are_empty()
 	return true
 end
 
+-- RF receiver drawn (detector_radio). NERFS uses Shift+wheel for ±10 frequency.
+local function rf_receiver_out()
+	if not (db and db.actor and db.actor.active_detector) then
+		return false
+	end
+	local det = db.actor:active_detector()
+	if not det then
+		return false
+	end
+	local ok, sec = pcall(function()
+		return det:section()
+	end)
+	return ok and sec == "detector_radio"
+end
+
+local function rf_shift_blocks_zoom()
+	return rf_receiver_out() and dogma.input.is_shift_down()
+end
+
 local function get_context()
 	if actor_dead() then
 		return CTX.DEAD
@@ -1665,6 +1684,12 @@ on_mouse_wheel = function(dir, _flags)
 		return
 	end
 	if not (db and db.actor) then
+		return
+	end
+
+	-- Let RF (NERFS) own Shift+wheel for coarse tuning while the receiver is out.
+	if rf_shift_blocks_zoom() then
+		reset_scroll_accum()
 		return
 	end
 

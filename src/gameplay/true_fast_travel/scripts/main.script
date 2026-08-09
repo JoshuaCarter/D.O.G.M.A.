@@ -63,10 +63,11 @@ local function add_travel_item(pui, id)
 end
 
 local function menu_no_option(reason, id, ln, detail)
+	local tostr = tostring
 	local cur = (level and level.name) and level.name() or "?"
 	local msg = string.format(
 		"true fast travel: no travel option (%s) id=%s ln=%s cur=%s",
-		tostring(reason), tostring(id), tostring(ln), tostring(cur)
+		tostr(reason), tostr(id), tostr(ln), tostr(cur)
 	)
 	if detail and detail ~= "" then
 		msg = msg .. " " .. detail

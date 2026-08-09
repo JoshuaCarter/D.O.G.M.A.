@@ -69,37 +69,8 @@ local function add_status_item(pui, id, label_id, reason, ln, detail)
 end
 
 local function strip_own_menu_items(pui)
-	-- Multi-spot engine menus use headers; RemoveItem is tag-based in script bindings.
-	-- Prefer GetItemsCount/GetItemByIndex when present (Anomaly), else no-op.
-	if not (pui and pui.RemoveItem) then return end
-	if pui.GetItemsCount and pui.GetItemByIndex then
-		local ok, count = pcall(function() return pui:GetItemsCount() end)
-		if not (ok and count) then return end
-		for i = count - 1, 0, -1 do
-			local item = nil
-			pcall(function() item = pui:GetItemByIndex(i) end)
-			local text = ""
-			pcall(function()
-				local tc = item and item.GetTextItem and item:GetTextItem()
-				if tc and tc.GetText then text = tc:GetText() or "" end
-				if text == "" and item and item.GetText then text = item:GetText() or "" end
-			end)
-			if menu_item_is_ours(text) then
-				pcall(function() pui:RemoveItem(item) end)
-			end
-		end
-		return
-	end
-	if pui.GetSize and pui.GetItem then
-		local ok, size = pcall(function() return pui:GetSize() end)
-		if not (ok and size) then return end
-		for i = size - 1, 0, -1 do
-			local ok_t, text = pcall(function() return pui:GetItem(i) end)
-			if ok_t and menu_item_is_ours(text) then
-				pcall(function() pui:RemoveItem(i) end)
-			end
-		end
-	end
+	-- No-op: CUIListBox RemoveItem/GetTextItem can native-crash (AV); pcall cannot catch that.
+	-- Duplicates are prevented by menu_added_ids / menu_open_seq instead.
 end
 
 local function menu_no_option(reason, id, ln, detail)
@@ -135,17 +106,15 @@ local function selected_item_text(pui)
 	local text = nil
 	pcall(function()
 		if not pui then return end
+		-- Prefer GetResult: GetSelectedItem/GetTextItem can native-crash on some list rows.
+		if pui.GetResult then
+			text = pui:GetResult()
+		end
+		if text and text ~= "" then return end
 		local item = pui.GetSelectedItem and pui:GetSelectedItem()
 		if not item and pui.GetClickedItem then item = pui:GetClickedItem() end
-		if item and item.GetTextItem then
-			local tc = item:GetTextItem()
-			if tc and tc.GetText then text = tc:GetText() end
-		end
-		if (not text or text == "") and item and item.GetText then
+		if item and item.GetText then
 			text = item:GetText()
-		end
-		if (not text or text == "") and pui.GetResult then
-			text = pui:GetResult()
 		end
 	end)
 	return text

@@ -419,27 +419,7 @@ backpack_menu_markers = function()
 end
 
 local function strip_backpack_travel_menu_items(pui)
-    pcall(function()
-        if not (pui and pui.GetItemsCount and pui.GetItemByIndex and pui.RemoveItem) then return end
-        local markers = backpack_menu_markers()
-        local count = pui:GetItemsCount()
-        for i = count - 1, 0, -1 do
-            local item = pui:GetItemByIndex(i)
-            if item then
-                local text = ""
-                pcall(function()
-                    local tc = item:GetTextItem()
-                    if tc then text = tc:GetText() or "" end
-                end)
-                for m = 1, #markers do
-                    if text == markers[m] then
-                        pui:RemoveItem(item)
-                        break
-                    end
-                end
-            end
-        end
-    end)
+    -- No-op: list RemoveItem/GetTextItem can native-crash; do not touch CUIListBox items here.
 end
 
 pos_copy = function(pos)

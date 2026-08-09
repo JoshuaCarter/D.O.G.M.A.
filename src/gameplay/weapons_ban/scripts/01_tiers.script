@@ -424,6 +424,65 @@ local function cond_band(result_tier)
 	return COND_BANDS[clamp_tier(result_tier)] or COND_BANDS[1]
 end
 
+--------------------------------------------------------------------------------
+-- Ammo quantity via RU budget (cost is per box; rounds = ru * box_size / cost)
+--------------------------------------------------------------------------------
+local RANK_RU = {
+	novice = { 0, 3500 },
+	trainee = { 500, 4500 },
+	experienced = { 1000, 6500 },
+	professional = { 1500, 8000 },
+	veteran = { 2000, 11000 },
+	expert = { 3000, 14000 },
+	master = { 4000, 17000 },
+	legend = { 5000, 20000 },
+}
+local RANK_RU_FALLBACK = RANK_RU.experienced
+
+-- Stash ammo result tier → rank band for RU rolls.
+local AMMO_TIER_RANK = {
+	[1] = "novice",
+	[2] = "trainee",
+	[3] = "experienced",
+	[4] = "veteran",
+	[5] = "legend",
+}
+
+local function roll_ru_for_rank(rank_name)
+	local band = (rank_name and RANK_RU[rank_name]) or RANK_RU_FALLBACK
+	local lo, hi = band[1], band[2]
+	if hi < lo then
+		lo, hi = hi, lo
+	end
+	if hi <= 0 then
+		return 0
+	end
+	if lo < 0 then
+		lo = 0
+	end
+	return math.random(lo, hi)
+end
+
+local function roll_ru_for_ammo_tier(result_tier)
+	local rank = AMMO_TIER_RANK[clamp_tier(result_tier)] or "experienced"
+	return roll_ru_for_rank(rank), rank
+end
+
+local function rounds_for_ru(ammo_sec, ru)
+	if not ammo_sec or not ru or ru <= 0 then
+		return 0
+	end
+	local cost = get_effective_cost(ammo_sec)
+	if not cost or cost <= 0 then
+		return 0
+	end
+	local box = ini_sys:r_float_ex(ammo_sec, "box_size") or 1
+	if box <= 0 then
+		box = 1
+	end
+	return math.floor(ru * box / cost)
+end
+
 _G.dogma_gameplay_weapons_ban_tiers = {
 	classify_section = classify_section,
 	is_ammo_box = is_ammo_box,
@@ -439,5 +498,11 @@ _G.dogma_gameplay_weapons_ban_tiers = {
 	mag_equiv_for_ammo = mag_equiv_for_ammo,
 	cond_band = cond_band,
 	clamp_tier = clamp_tier,
+	get_effective_cost = get_effective_cost,
+	roll_ru_for_rank = roll_ru_for_rank,
+	roll_ru_for_ammo_tier = roll_ru_for_ammo_tier,
+	rounds_for_ru = rounds_for_ru,
+	RANK_RU = RANK_RU,
+	AMMO_TIER_RANK = AMMO_TIER_RANK,
 	log = log,
 }

@@ -4,22 +4,20 @@
 	- anim_binoc: attachable dummy (same name/icon as real binocs, unusable)
 	- wpn_binoc: Gunslinger NPC/ruck section (shop sells wpn_binoc_inv)
 
-	Also DLTX release_on_first_update on both (stock itms_manager).
-	Script polls during the new-game window as backup.
+	DLTX sets release_on_first_update (stock itms_manager). This script only
+	does a few delayed one-shots — no per-frame release (that crashed).
 ]]
 
+local dte = demonized_time_events
 local JUNK = {
 	anim_binoc = true,
 	wpn_binoc = true,
 }
 
-local polling = false
-local deadline = 0
-
-local function strip_once()
+local function strip()
 	local actor = db and db.actor
 	if not (actor and actor.iterate_inventory) then
-		return 0
+		return true
 	end
 	local ids = {}
 	actor:iterate_inventory(function(_, itm)
@@ -30,30 +28,23 @@ local function strip_once()
 	for i = 1, #ids do
 		alife_release_id(ids[i])
 	end
-	return #ids
-end
-
-local function actor_on_update()
-	if not polling then
-		return
-	end
-	strip_once()
-	if time_global() >= deadline then
-		polling = false
-	end
+	return true
 end
 
 local function actor_on_first_update()
 	if has_alife_info and has_alife_info("start_equippment_handled") then
 		return
 	end
-	strip_once()
-	-- Cover ChangeLevel + delayed start equip (~4s).
-	polling = true
-	deadline = time_global() + 8000
+	if not (dte and dte.CreateTimeEvent) then
+		strip()
+		return
+	end
+	-- Sparse delays only (not actor_on_update).
+	dte.CreateTimeEvent("dogma_sobre_binoc", "s1", 0.5, strip)
+	dte.CreateTimeEvent("dogma_sobre_binoc", "s2", 2.0, strip)
+	dte.CreateTimeEvent("dogma_sobre_binoc", "s3", 5.0, strip)
 end
 
 function on_game_start()
 	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
-	RegisterScriptCallback("actor_on_update", actor_on_update)
 end

@@ -1,19 +1,19 @@
 --[[
 	Reactive BHS
 
-	Hide classic Body Health System (type 0) and optionally the actor_status
-	icon strip; show BHS on limb damage / hold key; show opted-in status icons
-	when not grey (with grey grace). Late-load override so this wraps after
-	other BHS / ADB scripts.
+	Keep classic BHS type 2 alive and park/unpark HUD pieces off-screen
+	(Medik-style) to avoid recreate animations. Per-piece MCM toggles +
+	thresholds. Status icons still use actor_status functor gates.
 
-	BHS visibility uses local upvalues show_hud_type / healthstatus via
-	debug.setupvalue (module field writes are ignored by stock BHS).
+	BHS visibility upvalues: show_hud_type / healthstatus via debug.setupvalue.
 ]]
 
 local CONFIG = _G.dogma_hud_bhs_reactive_conf
 
 local FADE_MS = 500
 local STATUS_TICK_MS = 1000
+local PARK_OFF = 4000
+local PARKED_X = -1000
 local FLAG = "__dogma_bhs_reactive"
 
 local LIMBS = { "head", "torso", "leftarm", "rightarm", "leftleg", "rightleg" }
@@ -26,37 +26,27 @@ local OPT_IN_ICONS = {
 	{ name = "Sleep", opt = "icons_sleep" },
 }
 
-local flash_until = 0
-local heal_clamped = false
-local forced_bhs = false
-local last_status_tick = 0
-local last_hide_tick = 0
-local last_heal_tick = 0
-local icons_hold_prev = false
-local gates_installed = false
-local update_registered = false
-
-local uv_show_fn, uv_show_idx = nil, nil
-local uv_hs_fn, uv_hs_idx = nil, nil
-local uv_change_fn, uv_change_idx = nil, nil
-local wrapped_rd = nil
-
--- Per-icon: original functor table, cached display value, grey-since time, typ
-local orig_functors = {}
-local cache_visual = {}
-local grey_since = {}
-local icon_typ = {}
-
 local RATIO_SUFFIXES = { "", "_43", "_1610", "_16" }
-local STATIC_STEMS = {
+
+local function expand_stems(stems)
+	local out = {}
+	for i = 1, #stems do
+		local stem = stems[i]
+		for j = 1, #RATIO_SUFFIXES do
+			out[#out + 1] = stem .. RATIO_SUFFIXES[j]
+		end
+	end
+	return out
+end
+
+local PACK_SIL = expand_stems({
 	"body_health_system",
 	"body_health_system_text",
 	"cop_debug",
+})
+
+local PACK_LIMBS = expand_stems({
 	"bhs_garbage",
-	"bhs_health_bar",
-	"bhs_health_bar_bg",
-	"bhs_stamina_bar",
-	"bhs_stamina_bar_bg",
 	"bhs_health_head_bar",
 	"bhs_health_head_bar_bg",
 	"bhs_health_head_bar_green",
@@ -75,19 +65,38 @@ local STATIC_STEMS = {
 	"bhs_health_leftleg_bar",
 	"bhs_health_leftleg_bar_bg",
 	"bhs_health_leftleg_bar_green",
-}
+})
 
-local STATIC_NAMES = {}
-do
-	for i = 1, #STATIC_STEMS do
-		local stem = STATIC_STEMS[i]
-		for j = 1, #RATIO_SUFFIXES do
-			STATIC_NAMES[#STATIC_NAMES + 1] = stem .. RATIO_SUFFIXES[j]
-		end
-	end
-end
+local PACK_HP = expand_stems({ "bhs_health_bar", "bhs_health_bar_bg" })
+local PACK_STAM = expand_stems({ "bhs_stamina_bar", "bhs_stamina_bar_bg" })
 
--- Global gate table for execute_func(file, func, ...) from actor_status.
+local flash_until = 0
+local heal_clamped = false
+local last_status_tick = 0
+local last_park_tick = 0
+local last_heal_tick = 0
+local icons_hold_prev = false
+local body_force_prev = false
+local gates_installed = false
+local update_registered = false
+
+local uv_show_fn, uv_show_idx = nil, nil
+local uv_hs_fn, uv_hs_idx = nil, nil
+local uv_change_fn, uv_change_idx = nil, nil
+local wrapped_rd = nil
+
+local home_cs = {}
+local parked_cs = {}
+local home_psy = nil
+local parked_psy = false
+local home_rad = nil
+local parked_rad = false
+
+local orig_functors = {}
+local cache_visual = {}
+local grey_since = {}
+local icon_typ = {}
+
 _G.dogma_bhs_reactive_icon = _G.dogma_bhs_reactive_icon or {}
 local GATE = _G.dogma_bhs_reactive_icon
 
@@ -224,12 +233,21 @@ local function refresh_options()
 	end
 	local d = CONFIG.DEFAULTS
 	local L = CONFIG.loaded
-	L.hide_bhs = dogma.mcm.bool(CONFIG.MOD_ID, "hide_bhs", d.hide_bhs)
+	L.hide_silhouette = dogma.mcm.bool(CONFIG.MOD_ID, "hide_silhouette", d.hide_silhouette)
+	L.hide_limbs = dogma.mcm.bool(CONFIG.MOD_ID, "hide_limbs", d.hide_limbs)
 	L.key_bhs = dogma.mcm.key(CONFIG.MOD_ID, "key_bhs")
 	L.key_bhs_modifier = dogma.mcm.int(CONFIG.MOD_ID, "key_bhs_modifier", d.key_bhs_modifier) or 0
 	L.show_on_damage = dogma.mcm.bool(CONFIG.MOD_ID, "show_on_damage", d.show_on_damage)
 	L.sec = clamp_int(dogma.mcm.int(CONFIG.MOD_ID, "sec", d.sec), 0, 60, d.sec)
 	L.full_heal_clamp_sec = clamp_int(dogma.mcm.int(CONFIG.MOD_ID, "full_heal_clamp_sec", d.full_heal_clamp_sec), 0, 60, d.full_heal_clamp_sec)
+	L.hide_hp = dogma.mcm.bool(CONFIG.MOD_ID, "hide_hp", d.hide_hp)
+	L.hp_show_below_pct = clamp_int(dogma.mcm.int(CONFIG.MOD_ID, "hp_show_below_pct", d.hp_show_below_pct), 0, 100, d.hp_show_below_pct)
+	L.hide_stam = dogma.mcm.bool(CONFIG.MOD_ID, "hide_stam", d.hide_stam)
+	L.stam_show_below_pct = clamp_int(dogma.mcm.int(CONFIG.MOD_ID, "stam_show_below_pct", d.stam_show_below_pct), 0, 100, d.stam_show_below_pct)
+	L.hide_psy = dogma.mcm.bool(CONFIG.MOD_ID, "hide_psy", d.hide_psy)
+	L.psy_show_below_pct = clamp_int(dogma.mcm.int(CONFIG.MOD_ID, "psy_show_below_pct", d.psy_show_below_pct), 0, 100, d.psy_show_below_pct)
+	L.hide_rad = dogma.mcm.bool(CONFIG.MOD_ID, "hide_rad", d.hide_rad)
+	L.rad_show_above_pct = clamp_int(dogma.mcm.int(CONFIG.MOD_ID, "rad_show_above_pct", d.rad_show_above_pct), 0, 100, d.rad_show_above_pct)
 	L.hide_status_icons = dogma.mcm.bool(CONFIG.MOD_ID, "hide_status_icons", d.hide_status_icons)
 	L.key_icons = dogma.mcm.key(CONFIG.MOD_ID, "key_icons")
 	L.key_icons_modifier = dogma.mcm.int(CONFIG.MOD_ID, "key_icons_modifier", d.key_icons_modifier) or 0
@@ -253,26 +271,37 @@ end
 
 local function hold_bhs()
 	local L = CONFIG and CONFIG.loaded
-	if not L then
-		return false
-	end
-	return hold_key(L.key_bhs, L.key_bhs_modifier)
+	return L and hold_key(L.key_bhs, L.key_bhs_modifier)
 end
 
 local function hold_icons()
 	local L = CONFIG and CONFIG.loaded
-	if not L then
-		return false
-	end
-	return hold_key(L.key_icons, L.key_icons_modifier)
+	return L and hold_key(L.key_icons, L.key_icons_modifier)
 end
 
 local function damage_wants(now)
 	return flash_until > now
 end
 
-local function bhs_wants(now)
+local function body_force(now)
 	return hold_bhs() or damage_wants(now)
+end
+
+local function manages_bhs_type()
+	local L = CONFIG and CONFIG.loaded
+	if not L then
+		return false
+	end
+	return L.hide_silhouette or L.hide_limbs or L.hide_hp or L.hide_stam
+end
+
+local function ensure_bhs_type2()
+	if not manages_bhs_type() then
+		return
+	end
+	set_show(2)
+	set_healthstatus(true)
+	clear_change_debounce()
 end
 
 local function tint_wnd(wnd, alpha)
@@ -293,25 +322,15 @@ local function tint_wnd(wnd, alpha)
 			wnd:SetColor(argb)
 		end)
 	end
-	if wnd.TextControl then
-		local ok, tc = pcall(function()
-			return wnd:TextControl()
-		end)
-		if ok and tc and tc.SetTextColor then
-			pcall(function()
-				tc:SetTextColor(argb)
-			end)
-		end
-	end
 end
 
-local function apply_fade_alpha(alpha)
+local function apply_fade_to_names(names, alpha)
 	local hud = get_hud and get_hud()
 	if not hud or not hud.GetCustomStatic then
 		return
 	end
-	for i = 1, #STATIC_NAMES do
-		local cs = hud:GetCustomStatic(STATIC_NAMES[i])
+	for i = 1, #names do
+		local cs = hud:GetCustomStatic(names[i])
 		if cs then
 			local ok, wnd = pcall(function()
 				return cs:wnd()
@@ -334,48 +353,269 @@ local function damage_flash_alpha(now)
 	return 255
 end
 
-local function display_alpha(now)
-	if hold_bhs() then
-		return 255
+local function get_cs_wnd(name)
+	local hud = get_hud and get_hud()
+	if not hud or not hud.GetCustomStatic then
+		return nil
 	end
-	if damage_wants(now) then
-		return damage_flash_alpha(now)
+	local cs = hud:GetCustomStatic(name)
+	if not cs then
+		return nil
 	end
-	return 0
+	local ok, wnd = pcall(function()
+		return cs:wnd()
+	end)
+	if ok then
+		return wnd
+	end
+	return nil
 end
 
-local psy_forced_off = false
-
-local function set_psy_bar_shown(show)
-	local mgui = ActorMenu and ActorMenu.get_maingame and ActorMenu.get_maingame()
-	local st = mgui and mgui.m_ui_hud_states
-	if not st then
+local function park_cs(name, want_parked)
+	local wnd = get_cs_wnd(name)
+	if not wnd or not wnd.GetWndPos or not wnd.SetWndPos then
+		if not want_parked then
+			parked_cs[name] = false
+		end
 		return
 	end
-	st.m_ui_psy_bar_show = show and true or false
-	local bar = st.m_ui_psy_bar
-	if bar and bar.Show then
-		pcall(function()
-			bar:Show(show and true or false)
-		end)
+	local p = wnd:GetWndPos()
+	if not p then
+		return
 	end
-	psy_forced_off = not show
+	local is_parked = p.x < PARKED_X
+	if want_parked then
+		if not is_parked then
+			home_cs[name] = { x = p.x, y = p.y }
+			p.x = p.x - PARK_OFF
+			p.y = p.y - PARK_OFF
+			wnd:SetWndPos(p)
+		elseif not home_cs[name] then
+			home_cs[name] = { x = p.x + PARK_OFF, y = p.y + PARK_OFF }
+		end
+		parked_cs[name] = true
+	else
+		if is_parked then
+			local home = home_cs[name]
+			if home then
+				p.x = home.x
+				p.y = home.y
+			else
+				p.x = p.x + PARK_OFF
+				p.y = p.y + PARK_OFF
+			end
+			wnd:SetWndPos(p)
+		elseif not home_cs[name] then
+			home_cs[name] = { x = p.x, y = p.y }
+		end
+		parked_cs[name] = false
+		tint_wnd(wnd, 255)
+	end
 end
 
-local function force_bhs_visible()
-	set_show(2)
-	set_healthstatus(true)
-	clear_change_debounce()
-	forced_bhs = true
-	set_psy_bar_shown(true)
+local function park_pack(names, want_parked)
+	for i = 1, #names do
+		park_cs(names[i], want_parked)
+	end
 end
 
-local function hide_bhs_idle()
-	set_show(0)
-	clear_change_debounce()
-	forced_bhs = false
-	apply_fade_alpha(255)
-	set_psy_bar_shown(false)
+local function get_psy_bar()
+	local mgui = ActorMenu and ActorMenu.get_maingame and ActorMenu.get_maingame()
+	local st = mgui and mgui.m_ui_hud_states
+	return st, st and st.m_ui_psy_bar
+end
+
+local function park_psy(want_parked)
+	local st, bar = get_psy_bar()
+	if not bar or not bar.GetWndPos or not bar.SetWndPos then
+		return
+	end
+	local p = bar:GetWndPos()
+	if not p then
+		return
+	end
+	local is_parked = p.x < PARKED_X
+	if want_parked then
+		if not is_parked then
+			home_psy = { x = p.x, y = p.y }
+			p.x = p.x - PARK_OFF
+			p.y = p.y - PARK_OFF
+			bar:SetWndPos(p)
+		elseif not home_psy then
+			home_psy = { x = p.x + PARK_OFF, y = p.y + PARK_OFF }
+		end
+		if st then
+			st.m_ui_psy_bar_show = false
+		end
+		if bar.Show then
+			pcall(function()
+				bar:Show(false)
+			end)
+		end
+		parked_psy = true
+	else
+		if is_parked then
+			local home = home_psy
+			if home then
+				p.x = home.x
+				p.y = home.y
+			else
+				p.x = p.x + PARK_OFF
+				p.y = p.y + PARK_OFF
+			end
+			bar:SetWndPos(p)
+		elseif not home_psy then
+			home_psy = { x = p.x, y = p.y }
+		end
+		if st then
+			st.m_ui_psy_bar_show = true
+		end
+		if bar.Show then
+			pcall(function()
+				bar:Show(true)
+			end)
+		end
+		parked_psy = false
+	end
+end
+
+local function get_rad_window()
+	local mod = rawget(_G, "ui_sidhud_mcm")
+	local hud = mod and mod.HUD
+	return hud and hud.radhealthwindow
+end
+
+local function park_rad(want_parked)
+	local bar = get_rad_window()
+	if not bar or not bar.GetWndPos or not bar.SetWndPos then
+		return
+	end
+	local p = bar:GetWndPos()
+	if not p then
+		return
+	end
+	local is_parked = p.x < PARKED_X
+	if want_parked then
+		if not is_parked then
+			home_rad = { x = p.x, y = p.y }
+			p.x = p.x - PARK_OFF
+			p.y = p.y - PARK_OFF
+			bar:SetWndPos(p)
+		elseif not home_rad then
+			home_rad = { x = p.x + PARK_OFF, y = p.y + PARK_OFF }
+		end
+		parked_rad = true
+	else
+		if is_parked then
+			local home = home_rad
+			if home then
+				p.x = home.x
+				p.y = home.y
+			else
+				p.x = p.x + PARK_OFF
+				p.y = p.y + PARK_OFF
+			end
+			bar:SetWndPos(p)
+		elseif not home_rad then
+			home_rad = { x = p.x, y = p.y }
+		end
+		parked_rad = false
+	end
+end
+
+local function actor_pct_health()
+	local a = db and db.actor
+	if not a then
+		return 100
+	end
+	return (a.health or 1) * 100
+end
+
+local function actor_pct_power()
+	local a = db and db.actor
+	if not a then
+		return 100
+	end
+	return (a.power or 1) * 100
+end
+
+local function actor_pct_psy()
+	local a = db and db.actor
+	if not a then
+		return 100
+	end
+	local psy = a.psy_health
+	local mod = rawget(_G, "arszi_psy")
+	if mod and type(mod.get_psy_health) == "function" then
+		local ok, v = pcall(mod.get_psy_health)
+		if ok and v ~= nil then
+			psy = v
+		end
+	end
+	return (psy or 1) * 100
+end
+
+local function actor_pct_rad()
+	local a = db and db.actor
+	if not a then
+		return 0
+	end
+	return (a.radiation or 0) * 100
+end
+
+local function apply_parks(now)
+	local L = CONFIG and CONFIG.loaded
+	if not L then
+		return
+	end
+	ensure_bhs_type2()
+
+	local force_body = body_force(now)
+
+	if L.hide_silhouette then
+		park_pack(PACK_SIL, not force_body)
+	else
+		park_pack(PACK_SIL, false)
+	end
+
+	if L.hide_limbs then
+		park_pack(PACK_LIMBS, not force_body)
+	else
+		park_pack(PACK_LIMBS, false)
+	end
+
+	if L.hide_hp then
+		park_pack(PACK_HP, not (actor_pct_health() < (L.hp_show_below_pct or 90)))
+	else
+		park_pack(PACK_HP, false)
+	end
+
+	if L.hide_stam then
+		park_pack(PACK_STAM, not (actor_pct_power() < (L.stam_show_below_pct or 90)))
+	else
+		park_pack(PACK_STAM, false)
+	end
+
+	if L.hide_psy then
+		park_psy(not (actor_pct_psy() < (L.psy_show_below_pct or 90)))
+	else
+		park_psy(false)
+	end
+
+	if L.hide_rad then
+		park_rad(not (actor_pct_rad() > (L.rad_show_above_pct or 0)))
+	else
+		park_rad(false)
+	end
+
+	if force_body then
+		local alpha = 255
+		if damage_wants(now) and not hold_bhs() then
+			alpha = damage_flash_alpha(now)
+		end
+		apply_fade_to_names(PACK_SIL, alpha)
+		apply_fade_to_names(PACK_LIMBS, alpha)
+	end
 end
 
 local function limbs_full()
@@ -430,8 +670,8 @@ local function begin_or_refresh_damage()
 	local now = time_global()
 	flash_until = now + math.floor(sec * 1000)
 	heal_clamped = false
-	force_bhs_visible()
-	apply_fade_alpha(display_alpha(now))
+	ensure_bhs_type2()
+	apply_parks(now)
 end
 
 local function call_orig_functor(name)
@@ -476,12 +716,10 @@ local function gate_state_value(name, visual, now, icons_held)
 		grey_since[name] = nil
 		return visual
 	end
-	-- grey (1)
 	if icons_held then
 		return visual
 	end
-	local L = CONFIG.loaded
-	local grace = L.grey_hide_after_sec or 0
+	local grace = CONFIG.loaded.grey_hide_after_sec or 0
 	if grace <= 0 then
 		grey_since[name] = nil
 		return 0
@@ -502,7 +740,6 @@ local function ensure_gate_fn(name)
 	GATE[name] = function(visual_flag, ...)
 		local typ = icon_typ[name]
 		if typ == "booster" then
-			-- Suppressed boosters while we manage the strip.
 			return nil
 		end
 		if visual_flag then
@@ -526,7 +763,6 @@ local function install_gates()
 				ensure_gate_fn(name)
 				def.functor = { "dogma_bhs_reactive_icon", name, true }
 			elseif type(f) == "table" and f[1] == "dogma_bhs_reactive_icon" then
-				-- already ours; keep orig if we have it
 				icon_typ[name] = def.typ or icon_typ[name] or "state"
 				ensure_gate_fn(name)
 			end
@@ -568,13 +804,11 @@ local function status_tick(now, icons_held)
 	end
 
 	install_gates()
-
 	local as = rawget(_G, "actor_status")
 	if not (as and as.indicators) then
 		return
 	end
 
-	-- Re-capture any new indicators (e.g. Bleed after ADB first_update).
 	for name, def in pairs(as.indicators) do
 		if type(def) == "table" and def.functor then
 			local f = def.functor
@@ -657,32 +891,23 @@ local function on_actor_update()
 	end
 
 	local now = time_global()
-	local bhs_hold = hold_bhs()
 	local icons_held = hold_icons()
-	local want_bhs = bhs_hold or damage_wants(now)
+	local force = body_force(now)
+	local force_edge = force ~= body_force_prev
+	body_force_prev = force
 
-	if want_bhs then
-		force_bhs_visible()
-		apply_fade_alpha(display_alpha(now))
-	else
-		if forced_bhs or flash_until > 0 then
-			flash_until = 0
-			heal_clamped = false
-			if L.hide_bhs then
-				hide_bhs_idle()
-			else
-				forced_bhs = false
-				apply_fade_alpha(255)
-				if psy_forced_off then
-					set_psy_bar_shown(true)
-				end
-			end
-		elseif L.hide_bhs and (now - last_hide_tick >= STATUS_TICK_MS) then
-			last_hide_tick = now
-			hide_bhs_idle()
-		elseif (not L.hide_bhs) and psy_forced_off then
-			set_psy_bar_shown(true)
-		end
+	-- Body force: re-assert every frame. Idle packs: 1s tick. Re-park on force edge.
+	if force or force_edge or (now - last_park_tick >= STATUS_TICK_MS) then
+		last_park_tick = now
+		apply_parks(now)
+	end
+
+	if force and damage_wants(now) and (now - last_heal_tick >= STATUS_TICK_MS) then
+		last_heal_tick = now
+		apply_heal_clamp(now)
+	elseif not force and flash_until ~= 0 and now >= flash_until then
+		flash_until = 0
+		heal_clamped = false
 	end
 
 	local press_edge = icons_held and not icons_hold_prev
@@ -698,11 +923,6 @@ local function on_actor_update()
 	elseif gates_installed then
 		restore_gates()
 	end
-
-	if want_bhs and damage_wants(now) and (now - last_heal_tick >= STATUS_TICK_MS) then
-		last_heal_tick = now
-		apply_heal_clamp(now)
-	end
 end
 
 local function apply()
@@ -712,6 +932,7 @@ local function apply()
 		RegisterScriptCallback("actor_on_update", on_actor_update)
 		update_registered = true
 	end
+	apply_parks(time_global())
 	return true
 end
 
@@ -720,21 +941,27 @@ local function on_option_change()
 	if CONFIG and CONFIG.loaded and not CONFIG.loaded.hide_status_icons and not hold_icons() then
 		restore_gates()
 	end
+	apply_parks(time_global())
 end
 
 local function reset_state()
 	flash_until = 0
 	heal_clamped = false
-	forced_bhs = false
-	psy_forced_off = false
 	last_status_tick = 0
-	last_hide_tick = 0
+	last_park_tick = 0
 	last_heal_tick = 0
 	icons_hold_prev = false
+	body_force_prev = false
 	wrapped_rd = nil
 	uv_show_fn, uv_show_idx = nil, nil
 	uv_hs_fn, uv_hs_idx = nil, nil
 	uv_change_fn, uv_change_idx = nil, nil
+	home_cs = {}
+	parked_cs = {}
+	home_psy = nil
+	parked_psy = false
+	home_rad = nil
+	parked_rad = false
 	restore_gates()
 	cache_visual = {}
 	grey_since = {}
@@ -749,7 +976,6 @@ function on_game_start()
 	apply()
 	RegisterScriptCallback("actor_on_first_update", function()
 		apply()
-		-- Bleed indicator is registered on ADB first_update; install after.
 		if CONFIG.loaded and CONFIG.loaded.hide_status_icons then
 			status_tick(time_global(), hold_icons())
 		end

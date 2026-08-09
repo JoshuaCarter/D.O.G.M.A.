@@ -4,7 +4,11 @@
 	Drag a device_glowstick* onto an artefact belt slot → convert to
 	af_dogma_glowstick_belt* twin, wear it, light the actor from the pelvis.
 	Take it off the belt → convert back to device form in ruck.
-	Detector-slot hold / throw / existing keybinds stay on the device form.
+
+	MCM range/brightness also drive held (detector slot) script lights and
+	thrown/dropped lights_glowstick lamp data (via spawn_glowstick wrap).
+	Native D_FLALIT light_sections are zeroed in mod_system so held doesn't
+	double-light; dogma_gs_light_* keep the real color/range values.
 ]]
 
 local CONFIG = _G.dogma_items_belt_glowsticks_conf
@@ -22,11 +26,25 @@ for device_sec, belt_sec in pairs(variant_by_device) do
 	device_by_variant[belt_sec] = device_sec
 end
 
-local light = nil
-local light_obj_id = nil
+local dogma_light_by_device = {
+	["device_glowstick"] = "dogma_gs_light_green",
+	["device_glowstick_orange"] = "dogma_gs_light_orange",
+	["device_glowstick_red"] = "dogma_gs_light_red",
+	["device_glowstick_blue"] = "dogma_gs_light_blue",
+}
+
+local belt_light = nil
+local belt_light_obj_id = nil
+local held_light = nil
+local held_light_obj_id = nil
 local next_drain_tick = 0
 local pending_new_belt_items = {}
 local convert_in_progress = false
+local spawn_wrapped = false
+
+local function light_section_for(device_sec)
+	return dogma_light_by_device[device_sec] or "dogma_gs_light_green"
+end
 
 local function find_belted_glowstick(exclude_id)
 	local found = nil
@@ -39,6 +57,21 @@ local function find_belted_glowstick(exclude_id)
 		end
 	end)
 	return found
+end
+
+local function find_held_glowstick()
+	local actor = db.actor
+	if not actor then
+		return nil
+	end
+	local det = actor:active_detector()
+	if not (det and variant_by_device[det:section()]) then
+		return nil
+	end
+	if det:condition() <= 0.011 then
+		return nil
+	end
+	return det
 end
 
 local function belt_has_room()
@@ -59,13 +92,127 @@ local function belt_has_room()
 	return rooms > 0 and rooms > used
 end
 
-local function clear_light()
-	if light then
-		light.enabled = false
-		light:update()
+local function clear_belt_light()
+	if belt_light then
+		belt_light.enabled = false
+		belt_light:update()
 	end
-	light = nil
-	light_obj_id = nil
+	belt_light = nil
+	belt_light_obj_id = nil
+end
+
+local function clear_held_light()
+	if held_light then
+		held_light.enabled = false
+		held_light:update()
+	end
+	held_light = nil
+	held_light_obj_id = nil
+end
+
+local function clear_lights()
+	clear_belt_light()
+	clear_held_light()
+end
+
+local function configure_script_light(light, device_sec)
+	local tonum = tonumber
+	local light_section = light_section_for(device_sec)
+
+	light.volumetric = ini_sys:r_bool_ex(light_section, "volumetric", false)
+	if light.volumetric then
+		light.volumetric_quality = ini_sys:r_float_ex(light_section, "volumetric_quality", 0.5)
+		light.volumetric_intensity = ini_sys:r_float_ex(light_section, "volumetric_intensity", 0.1)
+		light.volumetric_distance = ini_sys:r_float_ex(light_section, "volumetric_distance", 0.25)
+	end
+
+	local native_range = ini_sys:r_float_ex(light_section, "range_r2", 12) or 12
+	light.range = native_range * (CONFIG.loaded.light_range or 1.0)
+
+	-- script_light intensity is RGB magnitude (alpha alone does little without lanim).
+	local br = CONFIG.loaded.brightness or 1.0
+	local color_s = ini_sys:r_string_ex(light_section, "color_r2", "0.0,0.4,0.3,0.8")
+	local c = str_explode(color_s, ",")
+	light.color = fcolor():set(
+		(tonum(c[1]) or 0) * br,
+		(tonum(c[2]) or 0.4) * br,
+		(tonum(c[3]) or 0.3) * br,
+		(tonum(c[4]) or 0.8) * br
+	)
+end
+
+local function make_script_light(device_sec)
+	local light = script_light()
+	light.type = 1
+	light.shadow = false
+	light.hud_mode = false
+	light.enabled = true
+	configure_script_light(light, device_sec)
+	return light
+end
+
+local function pack_lamp_color(color_s, br)
+	local c = str_explode(color_s, ",")
+	local function byte(i, fallback)
+		local v = (tonumber(c[i]) or fallback) * br
+		return clamp(round(v * 255), 0, 255)
+	end
+	local r = byte(1, 0)
+	local g = byte(2, 0.4)
+	local b = byte(3, 0.3)
+	local a = byte(4, 0.8)
+	local function lshift(x, by)
+		return x * 2 ^ by
+	end
+	local packed = lshift(bit_and(a, 0xff), 24)
+		+ lshift(bit_and(r, 0xff), 16)
+		+ lshift(bit_and(g, 0xff), 8)
+		+ bit_and(b, 0xff)
+	local brightness = (r / 255 + g / 255 + b / 255) / 3 + 1
+	return packed, brightness
+end
+
+local function apply_mcm_to_lamp_data(data, device_sec, con_d)
+	if not data then
+		return
+	end
+	local light_section = light_section_for(device_sec)
+	local br = CONFIG.loaded.brightness or 1.0
+	local color_s = ini_sys:r_string_ex(light_section, "color_r2", "0.0,0.4,0.3,0.8")
+	local packed, brightness = pack_lamp_color(color_s, br)
+	local native_range = ini_sys:r_float_ex(light_section, "range_r2", 15) or 15
+
+	data.main_color = packed
+	data.main_brightness = (con_d and con_d <= 0.01) and 0 or brightness
+	data.main_range = native_range * (CONFIG.loaded.light_range or 1.0)
+	data.main_color_animator = ini_sys:r_string_ex(light_section, "color_animator", "empty")
+end
+
+local function wrap_spawn_glowstick()
+	if spawn_wrapped or type(spawn_glowstick) ~= "function" or not (utils_stpk and utils_stpk.set_lamp_data) then
+		return
+	end
+	local orig = spawn_glowstick
+	spawn_glowstick = function(id, throw)
+		local itm = id and level.object_by_id(id)
+		local device_sec = itm and itm:section()
+		local con_d = itm and itm:condition()
+		local orig_set = utils_stpk.set_lamp_data
+		utils_stpk.set_lamp_data = function(data, obj)
+			if device_sec and variant_by_device[device_sec] then
+				apply_mcm_to_lamp_data(data, device_sec, con_d)
+			end
+			return orig_set(data, obj)
+		end
+		local ok, result = pcall(orig, id, throw)
+		utils_stpk.set_lamp_data = orig_set
+		if not ok then
+			printf("!dogma belt_glowsticks: spawn_glowstick wrap failed: %s", tostring(result))
+			return true
+		end
+		return result
+	end
+	spawn_wrapped = true
 end
 
 -- Belt twin → hand-held device in ruck. Returns true if it was a belt twin.
@@ -79,8 +226,8 @@ local function convert_belt_item_to_device(item)
 	end
 
 	local id = item:id()
-	if light_obj_id == id then
-		clear_light()
+	if belt_light_obj_id == id then
+		clear_belt_light()
 	end
 
 	local cond = item:condition()
@@ -253,50 +400,28 @@ local function wrap_inventory_ui()
 end
 
 local function update_belt_light()
-	local tonum = tonumber
 	local lit_item = find_belted_glowstick()
-	if not lit_item or lit_item:condition() <= 0.011 then
-		clear_light()
+	if not lit_item then
+		clear_belt_light()
+		return
+	end
+	if lit_item:condition() <= 0.011 then
+		clear_belt_light()
 		return
 	end
 
 	local device_sec = device_by_variant[lit_item:section()]
-	local light_section = ini_sys:r_string_ex(device_sec, "light_section", "glowstick_definition")
-
-	if (not light) or (light_obj_id ~= lit_item:id()) then
-		light = script_light()
-		light.type = 1
-		light.shadow = false
-		light.hud_mode = false
-		light.enabled = true
-		light_obj_id = lit_item:id()
+	if (not belt_light) or (belt_light_obj_id ~= lit_item:id()) then
+		belt_light = make_script_light(device_sec)
+		belt_light_obj_id = lit_item:id()
+	else
+		configure_script_light(belt_light, device_sec)
 	end
-
-	light.volumetric = ini_sys:r_bool_ex(light_section, "volumetric", false)
-	if light.volumetric then
-		light.volumetric_quality = ini_sys:r_float_ex(light_section, "volumetric_quality", 0.5)
-		light.volumetric_intensity = ini_sys:r_float_ex(light_section, "volumetric_intensity", 0.1)
-		light.volumetric_distance = ini_sys:r_float_ex(light_section, "volumetric_distance", 0.25)
-	end
-
-	local native_range = ini_sys:r_float_ex(light_section, "range_r2", 12) or 12
-	light.range = native_range * (CONFIG.loaded.light_range or 1.0)
-
-	-- script_light intensity is RGB magnitude (alpha alone does little without lanim).
-	local br = CONFIG.loaded.brightness or 1.0
-	local color_s = ini_sys:r_string_ex(light_section, "color_r2", "0.0,0.4,0.3,0.8")
-	local c = str_explode(color_s, ",")
-	light.color = fcolor():set(
-		(tonum(c[1]) or 0) * br,
-		(tonum(c[2]) or 0.4) * br,
-		(tonum(c[3]) or 0.3) * br,
-		(tonum(c[4]) or 0.8) * br
-	)
 
 	local pos = db.actor:bone_position("bip01_pelvis")
-	light:set_position(pos)
-	light:set_direction(db.actor:direction())
-	light:update()
+	belt_light:set_position(pos)
+	belt_light:set_direction(db.actor:direction())
+	belt_light:update()
 
 	local tg = time_global()
 	if tg > next_drain_tick then
@@ -310,11 +435,32 @@ local function update_belt_light()
 	end
 end
 
+local function update_held_light()
+	local lit_item = find_held_glowstick()
+	if not lit_item then
+		clear_held_light()
+		return
+	end
+
+	local device_sec = lit_item:section()
+	if (not held_light) or (held_light_obj_id ~= lit_item:id()) then
+		held_light = make_script_light(device_sec)
+		held_light_obj_id = lit_item:id()
+	else
+		configure_script_light(held_light, device_sec)
+	end
+
+	local pos = db.actor:bone_position("bip01_l_hand")
+	held_light:set_position(pos)
+	held_light:set_direction(db.actor:direction())
+	held_light:update()
+end
+
 function on_option_change()
 	CONFIG.loaded.light_range = dogma.mcm.float(MOD_ID, "light_range")
 	CONFIG.loaded.brightness = dogma.mcm.float(MOD_ID, "brightness")
-	-- Force a fresh light so range/color changes apply immediately.
-	clear_light()
+	-- Force fresh script lights so range/color changes apply immediately.
+	clear_lights()
 end
 
 local function on_item_to_belt(item)
@@ -343,16 +489,19 @@ local function actor_on_update()
 		return
 	end
 	update_belt_light()
+	update_held_light()
 end
 
 local function actor_on_first_update()
 	wrap_inventory_ui()
+	wrap_spawn_glowstick()
 	on_option_change()
 end
 
 function on_game_start()
 	dogma.load(MOD_ID)
 	wrap_inventory_ui()
+	wrap_spawn_glowstick()
 	RegisterScriptCallback("on_option_change", on_option_change)
 	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
 	RegisterScriptCallback("actor_on_update", actor_on_update)

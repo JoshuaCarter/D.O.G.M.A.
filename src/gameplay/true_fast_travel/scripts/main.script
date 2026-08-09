@@ -1,4 +1,4 @@
--- True Fast Travel MVP: config + single PDA "Travel here" menu item.
+-- True Fast Travel MVP: config + PDA "Travel here" menu item.
 
 local CONFIG = _G.dogma_gameplay_true_fast_travel_conf
 _G.tft_config = _G.tft_config or {}
@@ -37,29 +37,69 @@ end
 
 local function menu_item_is_ours(text)
 	if not text then return false end
-	local travel = tft_str("tft_menu_travel_here")
-	return string.find(text, travel, 1, true) ~= nil
+	local markers = {
+		tft_str("tft_menu_travel_here"),
+		tft_str("tft_menu_not_visited"),
+		tft_str("tft_msg_cross_zone_denied"),
+		tft_str("tft_msg_cannot_travel_here"),
+	}
+	for i = 1, #markers do
+		if string.find(text, markers[i], 1, true) ~= nil then
+			return true
+		end
+	end
+	return false
+end
+
+local function menu_item_starts_travel(text)
+	if not text then return false end
+	return string.find(text, tft_str("tft_menu_travel_here"), 1, true) ~= nil
+end
+
+-- Always leave a visible TFT row for travel-related spots (never silent).
+local function add_status_item(pui, id, label_id, reason, ln, detail)
+	if id then
+		tft.menu_added_ids = tft.menu_added_ids or {}
+		tft.menu_added_ids[id] = true
+	end
+	pui:AddItem(tft_str(label_id))
+	menu_no_option(reason, id, ln, detail)
+	if tft_clear_path_preview then tft_clear_path_preview() end
+	return true
 end
 
 local function strip_own_menu_items(pui)
-	if not (pui and pui.GetSize and pui.RemoveItem) then return end
-	local ok, size = pcall(function() return pui:GetSize() end)
-	if not ok or not size then return end
-	for i = size - 1, 0, -1 do
-		local ok_t, text = pcall(function() return pui:GetItem(i) end)
-		if ok_t and menu_item_is_ours(text) then
-			pcall(function() pui:RemoveItem(i) end)
+	-- Multi-spot engine menus use headers; RemoveItem is tag-based in script bindings.
+	-- Prefer GetItemsCount/GetItemByIndex when present (Anomaly), else no-op.
+	if not (pui and pui.RemoveItem) then return end
+	if pui.GetItemsCount and pui.GetItemByIndex then
+		local ok, count = pcall(function() return pui:GetItemsCount() end)
+		if not (ok and count) then return end
+		for i = count - 1, 0, -1 do
+			local item = nil
+			pcall(function() item = pui:GetItemByIndex(i) end)
+			local text = ""
+			pcall(function()
+				local tc = item and item.GetTextItem and item:GetTextItem()
+				if tc and tc.GetText then text = tc:GetText() or "" end
+				if text == "" and item and item.GetText then text = item:GetText() or "" end
+			end)
+			if menu_item_is_ours(text) then
+				pcall(function() pui:RemoveItem(item) end)
+			end
+		end
+		return
+	end
+	if pui.GetSize and pui.GetItem then
+		local ok, size = pcall(function() return pui:GetSize() end)
+		if not (ok and size) then return end
+		for i = size - 1, 0, -1 do
+			local ok_t, text = pcall(function() return pui:GetItem(i) end)
+			if ok_t and menu_item_is_ours(text) then
+				pcall(function() pui:RemoveItem(i) end)
+			end
 		end
 	end
-end
-
-local function add_travel_item(pui, id)
-	if tft_is_destination_unlocked and not tft_is_destination_unlocked(id) then
-		pui:AddItem(tft_str("tft_menu_not_visited"))
-		return false
-	end
-	pui:AddItem(tft_str("tft_menu_travel_here"))
-	return true
 end
 
 local function menu_no_option(reason, id, ln, detail)
@@ -76,34 +116,67 @@ local function menu_no_option(reason, id, ln, detail)
 	tft_log("%s", msg)
 end
 
+local function begin_menu_seq()
+	tft.menu_open_seq = (tft.menu_open_seq or 0) + 1
+	tft.menu_added_ids = {}
+	tft.menu_strip_seq = nil
+end
+
 local function on_map_right_click(property_ui, map_table)
 	if tft.right_click_avail then
-		tft.menu_open_seq = (tft.menu_open_seq or 0) + 1
-		tft.menu_primary_seq = nil
-		tft.menu_strip_seq = nil
+		begin_menu_seq()
 	end
 	if tft_report_map_click then
 		tft_report_map_click(map_table, nil)
 	end
 end
 
+local function selected_item_text(pui)
+	local text = nil
+	pcall(function()
+		if not pui then return end
+		local item = pui.GetSelectedItem and pui:GetSelectedItem()
+		if not item and pui.GetClickedItem then item = pui:GetClickedItem() end
+		if item and item.GetTextItem then
+			local tc = item:GetTextItem()
+			if tc and tc.GetText then text = tc:GetText() end
+		end
+		if (not text or text == "") and item and item.GetText then
+			text = item:GetText()
+		end
+		if (not text or text == "") and pui.GetResult then
+			text = pui:GetResult()
+		end
+	end)
+	return text
+end
+
 local function on_map_spot_menu_add_property(pui, id, ln, hint)
 	local ok, err = xpcall(function()
+		local sformat = string.format
+		local tostr = tostring
 		if not pui then return end
 
+		if not tft._menu_hook_logged then
+			tft._menu_hook_logged = true
+			dogma.console.say("true fast travel: map menu hook alive", "blue")
+		end
+
 		if not tft.right_click_avail then
-			tft.menu_open_seq = (tft.menu_open_seq or 0) + 1
-			tft.menu_primary_seq = nil
-			tft.menu_strip_seq = nil
+			-- Engine multi-spot path: one add_properties call per spot under a shared box.
+			if not tft.menu_open_seq then begin_menu_seq() end
 			if tft_report_map_click then
 				tft_report_map_click({ object_id = id, level_name = ln, pos = tft.last_map_click_pos }, hint)
 			end
 		end
 
 		local seq = tft.menu_open_seq or 0
-		if tft.menu_primary_seq == seq then
+		tft.menu_added_ids = tft.menu_added_ids or {}
+		-- Per-spot idempotency (callback + pda.property_box wrap can both fire).
+		if id and tft.menu_added_ids[id] then
 			return
 		end
+
 		if tft.menu_strip_seq ~= seq then
 			tft.menu_strip_seq = seq
 			strip_own_menu_items(pui)
@@ -118,20 +191,30 @@ local function on_map_spot_menu_add_property(pui, id, ln, hint)
 		local is_lc = tft_is_pda_transition and tft_is_pda_transition(id, se_obj)
 		local is_campfire = tft_is_campfire and tft_is_campfire(id, se_obj)
 		local is_base = tft_is_base and tft_is_base(id, se_obj)
+		local is_place = tft_is_place_like_spot and tft_is_place_like_spot(se_obj)
 		local cross_zone = tft_is_cross_zone_destination and tft_is_cross_zone_destination(se_obj, ln)
 		local kind = is_lc and "lc" or (is_campfire and "campfire" or (is_base and "base" or "other"))
+		local travel_related = is_lc or is_campfire or is_base or is_place
 
-		if not (is_lc or is_campfire or is_base) then
+		-- Companions / traders / quest NPCs: stay silent (PAW Set Waypoint only).
+		if not travel_related then
 			if tft_clear_path_preview then tft_clear_path_preview() end
 			return
 		end
+
+		local detail = sformat("kind=%s hint=%s", kind, tostr(hint or ""))
+
+		-- Place-like but not a known travel destination → still show a row.
+		if not (is_lc or is_campfire or is_base) then
+			add_status_item(pui, id, "tft_msg_cannot_travel_here", "not_travel_spot", ln, detail)
+			return
+		end
+
 		if (is_campfire or is_base) and cross_zone then
-			if tft_clear_path_preview then tft_clear_path_preview() end
 			local canon_ln = _G.tft_canonicalize_level_name and _G.tft_canonicalize_level_name(ln) or ln
 			local canon_cur = _G.tft_canonicalize_level_name and _G.tft_canonicalize_level_name(level and level.name and level.name()) or nil
-			menu_no_option("cross_zone", id, ln, string.format(
-				"kind=%s canon_ln=%s canon_cur=%s",
-				kind, tostring(canon_ln), tostring(canon_cur)
+			add_status_item(pui, id, "tft_msg_cross_zone_denied", "cross_zone", ln, sformat(
+				"%s canon_ln=%s canon_cur=%s", detail, tostr(canon_ln), tostr(canon_cur)
 			))
 			return
 		end
@@ -142,23 +225,34 @@ local function on_map_spot_menu_add_property(pui, id, ln, hint)
 			target = tft_fallback_travel_target and tft_fallback_travel_target(id, se_obj, tft_object_on_actor_level(se_obj, ln))
 		end
 		if not target then
-			if tft_clear_path_preview then tft_clear_path_preview() end
-			menu_no_option("no_target", id, ln, string.format("kind=%s err=%s", kind, tostring(terr)))
+			add_status_item(pui, id, "tft_msg_cannot_travel_here", "no_target", ln, sformat(
+				"%s err=%s", detail, tostr(terr)
+			))
 			return
 		end
 
+		if id then tft.menu_added_ids[id] = true end
 		tft.last_menu_target_id = id
-		tft.menu_primary_seq = seq
 		if tft_is_destination_unlocked and not tft_is_destination_unlocked(id) then
 			if tft_clear_path_preview then tft_clear_path_preview() end
-		else
-			pcall(function()
-				if tft_build_path_preview then
-					tft_build_path_preview(id, is_lc)
-				end
-			end)
+			pui:AddItem(tft_str("tft_menu_not_visited"))
+			dogma.console.say(sformat(
+				"true fast travel: offer Not visited id=%s kind=%s ln=%s",
+				tostr(id), kind, tostr(ln)
+			), "blue")
+			return
 		end
-		add_travel_item(pui, id)
+
+		pcall(function()
+			if tft_build_path_preview then
+				tft_build_path_preview(id, is_lc)
+			end
+		end)
+		pui:AddItem(tft_str("tft_menu_travel_here"))
+		dogma.console.say(sformat(
+			"true fast travel: offer Travel here id=%s kind=%s ln=%s",
+			tostr(id), kind, tostr(ln)
+		), "blue")
 	end, debug.traceback)
 	if not ok then
 		tft_log_error("map_spot_menu_add_property error: %s", tostring(err))
@@ -168,12 +262,23 @@ end
 
 local function on_map_spot_menu_property_clicked(pui, id, ln, t)
 	local ok, err = xpcall(function()
-		local result = t or (pui and pui.GetResult and pui:GetResult())
+		local result = t or selected_item_text(pui)
 		if not result then return end
 		if not menu_item_is_ours(result) then return end
+		-- Status rows (Not visited / cannot / cross-zone) are informational only.
+		if not menu_item_starts_travel(result) then
+			if tft_msg then tft_msg(result) end
+			return
+		end
 
+		-- Multi-spot menus set owning spot via pda.set_map_spot_context before click.
+		if _G.pda and pda.map_spot_property then
+			id = pda.map_spot_property.id or id
+			ln = pda.map_spot_property.level_name or ln
+		end
 		id = tft.last_menu_target_id or id
 		ln = tft.last_menu_target_ln or ln
+
 		local se_click = xobject.se(id)
 		local is_lc = tft_is_pda_transition and tft_is_pda_transition(id, se_click)
 
@@ -183,6 +288,7 @@ local function on_map_spot_menu_property_clicked(pui, id, ln, t)
 		end
 		if not target then
 			tft_log_error("menu click: no target id=%s err=%s", tostring(id), tostring(terr))
+			dogma.console.say("true fast travel: click no target id=" .. tostring(id), "yellow")
 			return
 		end
 
@@ -195,7 +301,66 @@ local function on_map_spot_menu_property_clicked(pui, id, ln, t)
 	end, debug.traceback)
 	if not ok then
 		tft_log_error("map_spot_menu_property_clicked error: %s", tostring(err))
+		dogma.console.say("true fast travel: click error - " .. tostring(err), "red")
 	end
+end
+
+-- Engine calls pda.property_box_add_properties (not the callback alone). PAW may wrap the
+-- same function; re-wrap on PDA open so TFT stays outermost and always injects.
+local function ensure_pda_property_box_patch()
+	if not _G.pda then return false end
+	local cur_add = pda.property_box_add_properties
+	if type(cur_add) ~= "function" then return false end
+	if cur_add == tft._pda_add_wrap then return true end
+
+	local inner_add = cur_add
+	local function wrap_add(pui, id, level_name, hint)
+		-- New multi-spot menu: RemoveAll + AddHeader leave count==1 before first properties call.
+		local count = 0
+		pcall(function()
+			if pui and pui.GetItemsCount then
+				count = pui:GetItemsCount() or 0
+			elseif pui and pui.GetSize then
+				count = pui:GetSize() or 0
+			end
+		end)
+		if count <= 1 then
+			begin_menu_seq()
+		end
+		if inner_add and inner_add ~= wrap_add then
+			pcall(inner_add, pui, id, level_name, hint)
+		end
+		on_map_spot_menu_add_property(pui, id, level_name, hint)
+	end
+	tft._pda_add_wrap = wrap_add
+	pda.property_box_add_properties = wrap_add
+
+	local cur_click = pda.property_box_clicked
+	if type(cur_click) == "function" and cur_click ~= tft._pda_click_wrap then
+		local inner_click = cur_click
+		local function wrap_click(pui)
+			if _G.pda and pda.map_spot_property then
+				tft.last_menu_target_id = pda.map_spot_property.id or tft.last_menu_target_id
+				tft.last_menu_target_ln = pda.map_spot_property.level_name or tft.last_menu_target_ln
+			end
+			local text = selected_item_text(pui)
+			if text and menu_item_is_ours(text) then
+				on_map_spot_menu_property_clicked(pui, tft.last_menu_target_id, tft.last_menu_target_ln, text)
+				return
+			end
+			if inner_click and inner_click ~= wrap_click then
+				pcall(inner_click, pui)
+			end
+		end
+		tft._pda_click_wrap = wrap_click
+		pda.property_box_clicked = wrap_click
+	end
+
+	if not tft._pda_patch_logged then
+		tft._pda_patch_logged = true
+		dogma.console.say("true fast travel: pda property box patched", "blue")
+	end
+	return true
 end
 
 local function on_save_state(m_data)
@@ -205,21 +370,49 @@ local function on_save_state(m_data)
 end
 
 local function actor_on_first_update()
+	dogma.console.say("true fast travel: actor first update", "blue")
+	ensure_pda_property_box_patch()
 	if tft_build_dynamic_map then pcall(tft_build_dynamic_map) end
 	if tft_ensure_destination_map_spots then pcall(tft_ensure_destination_map_spots) end
 	if _G.tft_nav_mesh_try_load then pcall(_G.tft_nav_mesh_try_load) end
+	local aimap = (_G.tft_nav_mesh_graph_ready and _G.tft_nav_mesh_graph_ready()) and "ready" or "missing"
+	local lvl = (level and level.name) and level.name() or "?"
+	dogma.console.say(string.format("true fast travel: aimap %s level=%s", aimap, tostring(lvl)), aimap == "ready" and "blue" or "yellow")
 end
 
 local function on_game_load()
+	tft.travel_base_ids = nil
+	tft.travel_campfire_ids = nil
+	tft._next_map_spot_ensure = nil
+	tft._spots_console_nb = nil
+	tft._spots_console_nc = nil
+	tft._menu_hook_logged = nil
+	tft.menu_open_seq = nil
+	tft.menu_added_ids = nil
 	if tft_load then tft_load() end
 	if tft_clear then tft_clear() end
 	if _G.tft_cancel_fly_camera then pcall(_G.tft_cancel_fly_camera) end
+end
+
+local function on_gui_show(name)
+	if not name then return end
+	local n = tostring(name)
+	if not (string.find(n, "Pda", 1, true) or string.find(n, "Map", 1, true)) then
+		return
+	end
+	ensure_pda_property_box_patch()
+	if tft_ensure_destination_map_spots then
+		pcall(tft_ensure_destination_map_spots)
+	end
 end
 
 function on_game_start()
 	dogma.load(CONFIG.MOD_ID)
 	load_config()
 	refresh_active_config()
+
+	_G.tft_map_spot_menu_add_property = on_map_spot_menu_add_property
+	_G.tft_map_spot_menu_property_clicked = on_map_spot_menu_property_clicked
 
 	RegisterScriptCallback("on_option_change", on_option_change)
 	RegisterScriptCallback("actor_on_before_hit", actor_on_before_hit)
@@ -231,8 +424,12 @@ function on_game_start()
 	RegisterScriptCallback("save_state", on_save_state)
 	RegisterScriptCallback("map_spot_menu_add_property", on_map_spot_menu_add_property)
 	RegisterScriptCallback("map_spot_menu_property_clicked", on_map_spot_menu_property_clicked)
+	RegisterScriptCallback("GUI_on_show", on_gui_show)
 	if _G.tft_nav_mesh_on_level_change then
 		RegisterScriptCallback("on_level_changing", function()
+			tft.travel_base_ids = nil
+			tft.travel_campfire_ids = nil
+			tft._next_map_spot_ensure = nil
 			pcall(_G.tft_nav_mesh_on_level_change)
 		end)
 	end
@@ -254,7 +451,11 @@ function on_game_start()
 		end)
 	end
 
+	ensure_pda_property_box_patch()
+	dogma.console.say("true fast travel: started", "blue")
 	printf("[dogma_gameplay_true_fast_travel] MVP main started")
 end
 
 _G.refresh_active_config = refresh_active_config
+_G.tft_map_spot_menu_add_property = on_map_spot_menu_add_property
+_G.tft_map_spot_menu_property_clicked = on_map_spot_menu_property_clicked

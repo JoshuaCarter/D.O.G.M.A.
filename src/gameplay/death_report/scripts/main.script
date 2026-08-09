@@ -53,13 +53,18 @@ local frozen_lines = nil
 local adb_wrapped = false
 
 -- BHS limb keys → summary labels (Body is actor.health, not torso).
+-- Limb HP is absolute BHS points (not 0-1); percent needs maxhp.
 local DIED_LIMBS = {
 	{ key = "head", label = "Head" },
+	{ key = "torso", label = "Torso" },
 	{ key = "leftarm", label = "Arm L" },
 	{ key = "rightarm", label = "Arm R" },
 	{ key = "leftleg", label = "Leg L" },
 	{ key = "rightleg", label = "Leg R" },
 }
+
+-- Cached live BHS tables (same refs Medik / campfire use).
+local bhs_health, bhs_timedhp, bhs_maxhp
 
 local function log(msg)
 	if CONFIG.loaded.debug_log then
@@ -400,46 +405,134 @@ local function try_toggle_report(dik)
 	return true
 end
 
-local function pct_of_max(cur, maxv)
+-- Body HP is 0-1. Limb HP is BHS points — only cur/maxhp is valid.
+local function body_pct_of(cur)
 	cur = tonumber(cur)
-	maxv = tonumber(maxv)
 	if not cur then
 		return 0
 	end
-	if not maxv or maxv <= 0 then
-		if cur <= 1 then
-			return math.floor(cur * 100 + 0.5)
-		end
-		return math.floor(cur + 0.5)
+	local pct = math.floor(cur * 100 + 0.5)
+	if pct < 0 then
+		return 0
 	end
-	return math.floor((cur / maxv) * 100 + 0.5)
+	if pct > 100 then
+		return 100
+	end
+	return pct
 end
 
-local function resolve_bhs_health()
-	local mod = rawget(_G, "zzz_player_injuries")
-	if type(mod) == "table" and type(mod.health) == "table" and mod.health.head ~= nil then
-		return mod.health, mod.maxhp
+local function limb_pct_of(cur, maxv)
+	cur = tonumber(cur)
+	maxv = tonumber(maxv)
+	if not cur or not maxv or maxv <= 0 then
+		return 0
 	end
-	return nil, nil
+	local pct = math.floor((cur / maxv) * 100 + 0.5)
+	if pct < 0 then
+		return 0
+	end
+	if pct > 100 then
+		return 100
+	end
+	return pct
+end
+
+local function tables_are_bhs(health, timedhp, maxhp)
+	return type(health) == "table"
+		and type(timedhp) == "table"
+		and type(maxhp) == "table"
+		and health.head ~= nil
+		and timedhp.head ~= nil
+		and maxhp.head ~= nil
+		and tonumber(maxhp.head) ~= nil
+end
+
+local function dig_bhs_from_fn(fn, depth)
+	if depth > 5 or type(fn) ~= "function" then
+		return nil
+	end
+	if debug.getfenv then
+		local env = debug.getfenv(fn)
+		if tables_are_bhs(env.health, env.timedhp, env.maxhp) then
+			return env.health, env.timedhp, env.maxhp
+		end
+	end
+	local i = 1
+	while true do
+		local name, val = debug.getupvalue(fn, i)
+		if not name then
+			break
+		end
+		if type(val) == "function" then
+			local h, t, m = dig_bhs_from_fn(val, depth + 1)
+			if h then
+				return h, t, m
+			end
+		elseif name == "health" and type(val) == "table" and val.head ~= nil then
+			local timedhp, maxhp
+			local j = 1
+			while true do
+				local n2, v2 = debug.getupvalue(fn, j)
+				if not n2 then
+					break
+				end
+				if n2 == "timedhp" then
+					timedhp = v2
+				elseif n2 == "maxhp" then
+					maxhp = v2
+				end
+				j = j + 1
+			end
+			if tables_are_bhs(val, timedhp, maxhp) then
+				return val, timedhp, maxhp
+			end
+		end
+		i = i + 1
+	end
+	return nil
+end
+
+local function resolve_bhs_tables()
+	if tables_are_bhs(bhs_health, bhs_timedhp, bhs_maxhp) then
+		return bhs_health, bhs_timedhp, bhs_maxhp
+	end
+
+	local mod = rawget(_G, "zzz_player_injuries")
+	if type(mod) == "table" then
+		if tables_are_bhs(mod.health, mod.timedhp, mod.maxhp) then
+			bhs_health, bhs_timedhp, bhs_maxhp = mod.health, mod.timedhp, mod.maxhp
+			return bhs_health, bhs_timedhp, bhs_maxhp
+		end
+		if type(mod.actor_on_update) == "function" then
+			local h, t, m = dig_bhs_from_fn(mod.actor_on_update, 0)
+			if h then
+				bhs_health, bhs_timedhp, bhs_maxhp = h, t, m
+				mod.health = h
+				mod.timedhp = t
+				mod.maxhp = m
+				return h, t, m
+			end
+		end
+	end
+	return nil
 end
 
 local function format_died_with_line()
 	local body_pct = 0
 	if db.actor then
-		body_pct = pct_of_max(db.actor.health, 1)
+		body_pct = body_pct_of(db.actor.health)
 	end
 
 	local parts = {
 		string.format("Body %d%%", body_pct),
 	}
 
-	local health, maxhp = resolve_bhs_health()
+	local health, _, maxhp = resolve_bhs_tables()
 	for i = 1, #DIED_LIMBS do
 		local spec = DIED_LIMBS[i]
 		local pct = 0
-		if health then
-			local maxv = maxhp and maxhp[spec.key] or nil
-			pct = pct_of_max(health[spec.key], maxv)
+		if health and maxhp then
+			pct = limb_pct_of(health[spec.key], maxhp[spec.key])
 		end
 		parts[#parts + 1] = string.format("%s %d%%", spec.label, pct)
 	end

@@ -219,11 +219,21 @@ local function vec_str(v)
 end
 
 local function is_base(id, se_obj)
+    if not id then return false end
+    -- Spot first: icons can exist even when se lookup fails briefly.
+    if level and level.map_has_object_spot and level.map_has_object_spot(id, "fast_travel") ~= 0 then
+        return true
+    end
     if not se_obj then se_obj = xobject.se(id) end
     if not se_obj then return false end
-    if level.map_has_object_spot(id, "fast_travel") ~= 0 then return true end
     local ok_cls, obj_cls = pcall(function() return se_obj:clsid() end)
-    return ok_cls and obj_cls == clsid.smart_terrain
+    if ok_cls and obj_cls == clsid.smart_terrain then return true end
+    -- GAMMA / story location icons (not stalker companions / quest NPCs).
+    if level and level.map_has_object_spot and is_place_like_spot(se_obj) then
+        if level.map_has_object_spot(id, "primary_object") ~= 0 then return true end
+        if level.map_has_object_spot(id, "green_location") ~= 0 then return true end
+    end
+    return false
 end
 
 local function is_campfire(id, se_obj)
@@ -862,31 +872,6 @@ local function tip_for_discovery(id, se, kind)
     return nil
 end
 
-local function faction_travel_smart_names()
-    local names = {}
-    if not db.actor then return names end
-    local ok, faction = pcall(function()
-        return character_community(db.actor):sub(7)
-    end)
-    if not (ok and faction and faction ~= "") then return names end
-    local pini = ini_file("plugins\\faction_quick_travel.ltx")
-    if not pini then return names end
-    if utils_data and utils_data.collect_section then
-        local t = utils_data.collect_section(pini, faction, true)
-        if t and next(t) then return t end
-    end
-    if not pini.section_exist or not pini:section_exist(faction) then return names end
-    local ok_n, n = pcall(function() return pini:line_count(faction) end)
-    if not (ok_n and n) then return names end
-    for i = 0, n - 1 do
-        local ok_l, result, key = pcall(function() return pini:r_line(faction, i, "", "") end)
-        if ok_l and result and key and key ~= "" then
-            names[key] = true
-        end
-    end
-    return names
-end
-
 local function ensure_campfire_map_spot(id)
     if not (id and level and level.map_has_object_spot) then return end
     pcall(function()
@@ -907,12 +892,14 @@ end
 
 -- Always show base / campfire icons. Visit unlock only gates the travel menu ("Not visited yet").
 -- Replaces FFT's update_travel_markers which our game_fast_travel stub otherwise kills.
+-- Do NOT reuse FFT's faction_quick_travel.ltx filter — that hid most smart terrains (e.g. Garbage).
 local function ensure_destination_map_spots()
     local sim = alife()
-    if not (sim and level and db.actor) then return end
+    if not (sim and level and db.actor) then
+        dogma.console.say("true fast travel: map spots skipped (no alife/actor yet)", "yellow")
+        return
+    end
 
-    local tsmarts = faction_travel_smart_names()
-    local filter = tsmarts and next(tsmarts) ~= nil
     local base_ids = {}
     local campfire_ids = {}
 
@@ -922,9 +909,6 @@ local function ensure_destination_map_spots()
         if not ok_cls then return end
         local id = obj.id
         if cls == clsid.smart_terrain then
-            local name = nil
-            pcall(function() name = obj:name() end)
-            if filter and not (name and tsmarts[name]) then return end
             base_ids[id] = true
             ensure_base_map_spot(id, obj)
         elseif clsid.zone_campfire and cls == clsid.zone_campfire then
@@ -951,7 +935,15 @@ local function ensure_destination_map_spots()
     local nb, nc = 0, 0
     for _ in pairs(base_ids) do nb = nb + 1 end
     for _ in pairs(campfire_ids) do nc = nc + 1 end
-    tft_log("Map spots ensured: bases=%d campfires=%d (faction_filter=%s)", nb, nc, tostring(filter))
+    tft_log("Map spots ensured: bases=%d campfires=%d", nb, nc)
+    local lvl = (level and level.name) and level.name() or "?"
+    local msg = string.format("true fast travel: map spots bases=%d campfires=%d level=%s", nb, nc, tostring(lvl))
+    -- Log when counts change (or first zero) — avoid 5s poll spam.
+    if tft._spots_console_nb ~= nb or tft._spots_console_nc ~= nc then
+        tft._spots_console_nb = nb
+        tft._spots_console_nc = nc
+        dogma.console.say(msg, (nb == 0 and nc == 0) and "yellow" or "blue")
+    end
 end
 
 -- Lightweight refresh for campfires that come online after the initial alife scan.
@@ -1002,8 +994,10 @@ local function poll_discoveries()
     local apos = db.actor:position()
     local actor_lid = actor_level_id()
 
-    -- First poll (or after a level load wiped cache): place base/campfire icons.
-    if not tft.travel_base_ids then
+    -- Place / refresh base+campfire icons (campfires come online as you explore).
+    local tg = time_global()
+    if not tft.travel_base_ids or tg > (tft._next_map_spot_ensure or 0) then
+        tft._next_map_spot_ensure = tg + 5000
         ensure_destination_map_spots()
     end
 

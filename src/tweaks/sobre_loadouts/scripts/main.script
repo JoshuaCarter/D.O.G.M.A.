@@ -1,51 +1,59 @@
 --[[
-	Strip free NPC-variant binoculars (wpn_binoc) on new game.
+	Strip free junk binoculars on new game.
 
-	Shop/loadout sells wpn_binoc_inv (kept). Use demonized_time_events
-	directly — bare CreateTimeEvent is overridden by PDA Taskboard.
+	- anim_binoc: attachable dummy (same name/icon as real binocs, unusable)
+	- wpn_binoc: Gunslinger NPC/ruck section (shop sells wpn_binoc_inv)
+
+	Also DLTX release_on_first_update on both (stock itms_manager).
+	Script polls during the new-game window as backup.
 ]]
 
-local dte = demonized_time_events
-local SEC = "wpn_binoc"
+local JUNK = {
+	anim_binoc = true,
+	wpn_binoc = true,
+}
 
-local function strip()
+local polling = false
+local deadline = 0
+
+local function strip_once()
 	local actor = db and db.actor
 	if not (actor and actor.iterate_inventory) then
-		return true
+		return 0
 	end
 	local ids = {}
 	actor:iterate_inventory(function(_, itm)
-		if itm and itm:section() == SEC then
+		if itm and JUNK[itm:section()] then
 			ids[#ids + 1] = itm:id()
 		end
 	end)
 	for i = 1, #ids do
 		alife_release_id(ids[i])
 	end
-	return true
+	return #ids
 end
 
-local function strip_again()
-	strip()
-	dte.CreateTimeEvent("dogma_sobre_binoc", "s3", 2.0, strip)
-	dte.CreateTimeEvent("dogma_sobre_binoc", "s4", 5.0, strip)
-	return true
-end
-
-local function strip_start()
-	strip()
-	dte.CreateTimeEvent("dogma_sobre_binoc", "s2", 0.25, strip_again)
-	return true
+local function actor_on_update()
+	if not polling then
+		return
+	end
+	strip_once()
+	if time_global() >= deadline then
+		polling = false
+	end
 end
 
 local function actor_on_first_update()
-	-- Saves already past start equip — leave later loot alone.
 	if has_alife_info and has_alife_info("start_equippment_handled") then
 		return
 	end
-	dte.CreateTimeEvent("dogma_sobre_binoc", "s1", 0.25, strip_start)
+	strip_once()
+	-- Cover ChangeLevel + delayed start equip (~4s).
+	polling = true
+	deadline = time_global() + 8000
 end
 
 function on_game_start()
 	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+	RegisterScriptCallback("actor_on_update", actor_on_update)
 end

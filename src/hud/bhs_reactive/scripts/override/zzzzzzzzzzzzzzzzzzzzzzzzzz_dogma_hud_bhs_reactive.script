@@ -84,6 +84,9 @@ local uv_show_fn, uv_show_idx = nil, nil
 local uv_hs_fn, uv_hs_idx = nil, nil
 local uv_change_fn, uv_change_idx = nil, nil
 local wrapped_rd = nil
+local orig_rd = nil
+
+local scratch_pos = nil
 
 local home_cs = {}
 local parked_cs = {}
@@ -163,14 +166,6 @@ local function resolve_named_upvalue(bhs, name, probe)
 		owner, idx, val = find_upvalue_deep(extras[i], name)
 		if owner then
 			return owner, idx, val
-		end
-	end
-	for _, v in pairs(bhs) do
-		if type(v) == "function" then
-			owner, idx, val = find_upvalue_deep(v, name)
-			if owner then
-				return owner, idx, val
-			end
 		end
 	end
 	return nil, nil, nil
@@ -295,13 +290,23 @@ local function manages_bhs_type()
 	return L.hide_silhouette or L.hide_limbs or L.hide_hp or L.hide_stam
 end
 
+local function current_show_type()
+	if not (uv_show_fn and uv_show_idx and debug and debug.getupvalue) then
+		return nil
+	end
+	local _, v = debug.getupvalue(uv_show_fn, uv_show_idx)
+	return v
+end
+
 local function ensure_bhs_type2()
 	if not manages_bhs_type() then
 		return
 	end
-	set_show(2)
+	if current_show_type() ~= 2 then
+		set_show(2)
+		clear_change_debounce()
+	end
 	set_healthstatus(true)
-	clear_change_debounce()
 end
 
 local function tint_wnd(wnd, alpha)
@@ -358,8 +363,10 @@ local function get_cs_wnd(name)
 	if not hud or not hud.GetCustomStatic then
 		return nil
 	end
-	local cs = hud:GetCustomStatic(name)
-	if not cs then
+	local ok_cs, cs = pcall(function()
+		return hud:GetCustomStatic(name)
+	end)
+	if not (ok_cs and cs) then
 		return nil
 	end
 	local ok, wnd = pcall(function()
@@ -371,42 +378,62 @@ local function get_cs_wnd(name)
 	return nil
 end
 
+local function read_pos(wnd)
+	if not (wnd and wnd.GetWndPos) then
+		return nil
+	end
+	local ok, p = pcall(function()
+		return wnd:GetWndPos()
+	end)
+	if ok and p and p.x and p.y then
+		return p.x, p.y
+	end
+	return nil
+end
+
+local function write_pos(wnd, x, y)
+	if not (wnd and wnd.SetWndPos and vector2) then
+		return
+	end
+	if not scratch_pos then
+		scratch_pos = vector2()
+	end
+	pcall(function()
+		wnd:SetWndPos(scratch_pos:set(x, y))
+	end)
+end
+
 local function park_cs(name, want_parked)
 	local wnd = get_cs_wnd(name)
-	if not wnd or not wnd.GetWndPos or not wnd.SetWndPos then
+	if not wnd then
 		if not want_parked then
 			parked_cs[name] = false
 		end
 		return
 	end
-	local p = wnd:GetWndPos()
-	if not p then
+	local x, y = read_pos(wnd)
+	if not x then
 		return
 	end
-	local is_parked = p.x < PARKED_X
+	local is_parked = x < PARKED_X
 	if want_parked then
 		if not is_parked then
-			home_cs[name] = { x = p.x, y = p.y }
-			p.x = p.x - PARK_OFF
-			p.y = p.y - PARK_OFF
-			wnd:SetWndPos(p)
+			home_cs[name] = { x = x, y = y }
+			write_pos(wnd, x - PARK_OFF, y - PARK_OFF)
 		elseif not home_cs[name] then
-			home_cs[name] = { x = p.x + PARK_OFF, y = p.y + PARK_OFF }
+			home_cs[name] = { x = x + PARK_OFF, y = y + PARK_OFF }
 		end
 		parked_cs[name] = true
 	else
 		if is_parked then
 			local home = home_cs[name]
 			if home then
-				p.x = home.x
-				p.y = home.y
+				write_pos(wnd, home.x, home.y)
 			else
-				p.x = p.x + PARK_OFF
-				p.y = p.y + PARK_OFF
+				write_pos(wnd, x + PARK_OFF, y + PARK_OFF)
 			end
-			wnd:SetWndPos(p)
 		elseif not home_cs[name] then
-			home_cs[name] = { x = p.x, y = p.y }
+			home_cs[name] = { x = x, y = y }
 		end
 		parked_cs[name] = false
 		tint_wnd(wnd, 255)
@@ -427,22 +454,20 @@ end
 
 local function park_psy(want_parked)
 	local st, bar = get_psy_bar()
-	if not bar or not bar.GetWndPos or not bar.SetWndPos then
+	if not bar then
 		return
 	end
-	local p = bar:GetWndPos()
-	if not p then
+	local x, y = read_pos(bar)
+	if not x then
 		return
 	end
-	local is_parked = p.x < PARKED_X
+	local is_parked = x < PARKED_X
 	if want_parked then
 		if not is_parked then
-			home_psy = { x = p.x, y = p.y }
-			p.x = p.x - PARK_OFF
-			p.y = p.y - PARK_OFF
-			bar:SetWndPos(p)
+			home_psy = { x = x, y = y }
+			write_pos(bar, x - PARK_OFF, y - PARK_OFF)
 		elseif not home_psy then
-			home_psy = { x = p.x + PARK_OFF, y = p.y + PARK_OFF }
+			home_psy = { x = x + PARK_OFF, y = y + PARK_OFF }
 		end
 		if st then
 			st.m_ui_psy_bar_show = false
@@ -457,15 +482,12 @@ local function park_psy(want_parked)
 		if is_parked then
 			local home = home_psy
 			if home then
-				p.x = home.x
-				p.y = home.y
+				write_pos(bar, home.x, home.y)
 			else
-				p.x = p.x + PARK_OFF
-				p.y = p.y + PARK_OFF
+				write_pos(bar, x + PARK_OFF, y + PARK_OFF)
 			end
-			bar:SetWndPos(p)
 		elseif not home_psy then
-			home_psy = { x = p.x, y = p.y }
+			home_psy = { x = x, y = y }
 		end
 		if st then
 			st.m_ui_psy_bar_show = true
@@ -487,37 +509,32 @@ end
 
 local function park_rad(want_parked)
 	local bar = get_rad_window()
-	if not bar or not bar.GetWndPos or not bar.SetWndPos then
+	if not bar then
 		return
 	end
-	local p = bar:GetWndPos()
-	if not p then
+	local x, y = read_pos(bar)
+	if not x then
 		return
 	end
-	local is_parked = p.x < PARKED_X
+	local is_parked = x < PARKED_X
 	if want_parked then
 		if not is_parked then
-			home_rad = { x = p.x, y = p.y }
-			p.x = p.x - PARK_OFF
-			p.y = p.y - PARK_OFF
-			bar:SetWndPos(p)
+			home_rad = { x = x, y = y }
+			write_pos(bar, x - PARK_OFF, y - PARK_OFF)
 		elseif not home_rad then
-			home_rad = { x = p.x + PARK_OFF, y = p.y + PARK_OFF }
+			home_rad = { x = x + PARK_OFF, y = y + PARK_OFF }
 		end
 		parked_rad = true
 	else
 		if is_parked then
 			local home = home_rad
 			if home then
-				p.x = home.x
-				p.y = home.y
+				write_pos(bar, home.x, home.y)
 			else
-				p.x = p.x + PARK_OFF
-				p.y = p.y + PARK_OFF
+				write_pos(bar, x + PARK_OFF, y + PARK_OFF)
 			end
-			bar:SetWndPos(p)
 		elseif not home_rad then
-			home_rad = { x = p.x, y = p.y }
+			home_rad = { x = x, y = y }
 		end
 		parked_rad = false
 	end
@@ -566,6 +583,9 @@ end
 local function apply_parks(now)
 	local L = CONFIG and CONFIG.loaded
 	if not L then
+		return
+	end
+	if not (db and db.actor and get_hud and get_hud() and vector2) then
 		return
 	end
 	ensure_bhs_type2()
@@ -738,15 +758,22 @@ local function ensure_gate_fn(name)
 		return
 	end
 	GATE[name] = function(visual_flag, ...)
-		local typ = icon_typ[name]
-		if typ == "booster" then
-			return nil
-		end
 		if visual_flag then
 			return cache_visual[name] or 0
 		end
 		return call_orig_functor(name)
 	end
+end
+
+local function should_gate_indicator(def)
+	if type(def) ~= "table" or not def.functor then
+		return false
+	end
+	-- Boosters need numeric period values; never wrap them.
+	if (def.typ or "state") == "booster" then
+		return false
+	end
+	return true
 end
 
 local function install_gates()
@@ -755,7 +782,7 @@ local function install_gates()
 		return false
 	end
 	for name, def in pairs(as.indicators) do
-		if type(def) == "table" and def.functor then
+		if should_gate_indicator(def) then
 			local f = def.functor
 			if type(f) == "table" and f[1] ~= "dogma_bhs_reactive_icon" then
 				orig_functors[name] = f
@@ -810,7 +837,7 @@ local function status_tick(now, icons_held)
 	end
 
 	for name, def in pairs(as.indicators) do
-		if type(def) == "table" and def.functor then
+		if should_gate_indicator(def) then
 			local f = def.functor
 			if type(f) == "table" and f[1] ~= "dogma_bhs_reactive_icon" then
 				orig_functors[name] = f
@@ -823,10 +850,7 @@ local function status_tick(now, icons_held)
 
 	local any = false
 	for name, _ in pairs(orig_functors) do
-		local typ = icon_typ[name] or "state"
-		if typ == "booster" then
-			cache_visual[name] = nil
-		elseif opt_in_for(name) then
+		if opt_in_for(name) then
 			local raw = call_orig_functor(name)
 			local shown = gate_state_value(name, raw, now, icons_held)
 			cache_visual[name] = shown
@@ -839,10 +863,11 @@ local function status_tick(now, icons_held)
 		end
 	end
 
+	-- Never deactivate_hud: destroying actor_status.HUD races SidHUD's SetWndPos.
+	if as.activate_hud then
+		pcall(as.activate_hud)
+	end
 	if any or icons_held then
-		if as.activate_hud then
-			pcall(as.activate_hud)
-		end
 		if as.update_hud then
 			pcall(as.update_hud)
 		elseif as.HUD and as.HUD.Update then
@@ -850,8 +875,8 @@ local function status_tick(now, icons_held)
 				as.HUD:Update(true)
 			end)
 		end
-	elseif as.deactivate_hud then
-		pcall(as.deactivate_hud)
+	elseif as.update_hud then
+		pcall(as.update_hud)
 	end
 end
 
@@ -870,13 +895,15 @@ local function ensure_bhs_hook()
 		return false
 	end
 	if bhs.recieved_damage ~= wrapped_rd then
-		wrapped_rd = (function(inner)
-			return function(...)
-				local ret = inner(...)
-				begin_or_refresh_damage()
-				return ret
-			end
-		end)(bhs.recieved_damage)
+		local inner = bhs.recieved_damage
+		if not orig_rd then
+			orig_rd = inner
+		end
+		wrapped_rd = function(...)
+			local ret = inner(...)
+			begin_or_refresh_damage()
+			return ret
+		end
 		bhs.recieved_damage = wrapped_rd
 	end
 	bhs[FLAG] = true
@@ -925,14 +952,16 @@ local function on_actor_update()
 	end
 end
 
-local function apply()
+local function apply(do_parks)
 	refresh_options()
 	ensure_bhs_hook()
 	if not update_registered then
 		RegisterScriptCallback("actor_on_update", on_actor_update)
 		update_registered = true
 	end
-	apply_parks(time_global())
+	if do_parks then
+		apply_parks(time_global())
+	end
 	return true
 end
 
@@ -952,7 +981,13 @@ local function reset_state()
 	last_heal_tick = 0
 	icons_hold_prev = false
 	body_force_prev = false
+	local bhs = rawget(_G, "zzz_player_injuries")
+	if bhs and orig_rd and bhs.recieved_damage == wrapped_rd then
+		bhs.recieved_damage = orig_rd
+		bhs[FLAG] = nil
+	end
 	wrapped_rd = nil
+	orig_rd = nil
 	uv_show_fn, uv_show_idx = nil, nil
 	uv_hs_fn, uv_hs_idx = nil, nil
 	uv_change_fn, uv_change_idx = nil, nil
@@ -973,9 +1008,10 @@ function on_game_start()
 	end
 	dogma.load(CONFIG.MOD_ID)
 	refresh_options()
-	apply()
+	-- Register only; park/gates wait for actor + HUD.
+	apply(false)
 	RegisterScriptCallback("actor_on_first_update", function()
-		apply()
+		apply(true)
 		if CONFIG.loaded and CONFIG.loaded.hide_status_icons then
 			status_tick(time_global(), hold_icons())
 		end

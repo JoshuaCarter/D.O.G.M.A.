@@ -197,9 +197,111 @@ local function object_on_loaded_level(se_obj)
 	return actor_lid == obj_lid
 end
 
+-- GAMMA / modpack level names disagree (e.g. Meadow: meadow, y04_pole, pole, field).
+-- Canonical keys match tft_door_keywords / door_registry / packaged aimaps.
+local LEVEL_PLAIN = {
+	["garbage"] = "l02_garbage",
+	["escape"] = "l01_escape",
+	["cordon"] = "l01_escape",
+	["agroprom"] = "l03_agroprom",
+	["darkvalley"] = "l04_darkvalley",
+	["dark_valley"] = "l04_darkvalley",
+	["bar"] = "l05_bar",
+	["rostok"] = "l06_rostok",
+	["wild_territory"] = "l06_rostok",
+	["military"] = "l07_military",
+	["army_warehouses"] = "l07_military",
+	["army_warehouse"] = "l07_military",
+	["yantar"] = "l08_yantar",
+	["deadcity"] = "l09_deadcity",
+	["dead_city"] = "l09_deadcity",
+	["radar"] = "l10_radar",
+	["redforest"] = "l10_red_forest",
+	["red_forest"] = "l10_red_forest",
+	["marsh"] = "k00_marsh",
+	["swamp"] = "k00_marsh",
+	["darkscape"] = "k01_darkscape",
+	["trucks_cemetery"] = "k02_trucks_cemetery",
+	["truck_cemetery"] = "k02_trucks_cemetery",
+	["hospital"] = "l11_hospital",
+	["generators"] = "l13_generators",
+	["outskirts"] = "pripyat",
+	["stancia"] = "l12_stancia",
+	["stancia_2"] = "l12_stancia_2",
+	["limansk"] = "limansk",
+	["jupiter"] = "jupiter",
+	["zaton"] = "zaton",
+	["meadow"] = "meadow",
+	["field"] = "meadow",
+	["pole"] = "meadow",
+	["y04_pole"] = "meadow",
+}
+
+local function canonicalize_level_name(name)
+	if name == nil then return nil end
+	if type(name) == "number" then
+		if _G.tft_resolve_level_name then
+			return _G.tft_resolve_level_name(name)
+		end
+		return nil
+	end
+	local n = string.lower(tostring(name))
+	n = n:gsub("_%d+$", "")
+	local sgsub = string.gsub
+	n = sgsub(n, "dark_valley", "l04_darkvalley")
+	n = sgsub(n, "truck_cemetery", "k02_trucks_cemetery")
+	n = sgsub(n, "army_warehouses", "l07_military")
+	n = sgsub(n, "army_warehouse", "l07_military")
+	n = sgsub(n, "swamp", "k00_marsh")
+	n = sgsub(n, "y04_pole", "meadow")
+	n = sgsub(n, "l10_limansk", "limansk")
+	local kws = _G.tft_door_keywords
+	if kws then
+		if kws[n] then return n end
+		for canon, aliases in pairs(kws) do
+			for i = 1, #aliases do
+				if aliases[i] == n then return canon end
+			end
+		end
+	end
+	return LEVEL_PLAIN[n] or n
+end
+
+local function levels_same(a, b)
+	if not a or not b then return false end
+	if a == b then return true end
+	return canonicalize_level_name(a) == canonicalize_level_name(b)
+end
+
+-- Names to try for VFS aimap / door_registry lookups (raw + canonical + aliases).
+local function level_name_load_candidates(name)
+	local raw = name
+	if raw == nil and level and level.name then
+		raw = level.name()
+	end
+	if not raw then return {} end
+	local out, seen = {}, {}
+	local function add(n)
+		if n and n ~= "" and not seen[n] then
+			seen[n] = true
+			out[#out + 1] = n
+		end
+	end
+	add(tostring(raw))
+	local canon = canonicalize_level_name(raw)
+	add(canon)
+	local kws = _G.tft_door_keywords and canon and _G.tft_door_keywords[canon]
+	if kws then
+		for i = 1, #kws do
+			add(kws[i])
+		end
+	end
+	return out
+end
+
 local function is_cross_zone_destination(se_obj, ln)
 	local cur_lvl = (level and level.name) and level.name() or nil
-	if ln and cur_lvl and ln ~= cur_lvl then return true end
+	if ln and cur_lvl and not levels_same(ln, cur_lvl) then return true end
 	if se_obj then return destination_on_other_level(se_obj) end
 	return false
 end
@@ -239,6 +341,9 @@ do
 	_G.tft_str = str
 	_G.tft_destination_on_other_level = destination_on_other_level
 	_G.tft_object_on_loaded_level = object_on_loaded_level
+	_G.tft_canonicalize_level_name = canonicalize_level_name
+	_G.tft_levels_same = levels_same
+	_G.tft_level_name_load_candidates = level_name_load_candidates
 	_G.tft_is_cross_zone_destination = is_cross_zone_destination
 	_G.tft_is_trader_restrictor = is_trader_restrictor
 	_G.tft_msg = msg

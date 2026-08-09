@@ -256,6 +256,8 @@ local function cn_graph_ready()
     return g ~= nil and g.node_count and g.node_count >= 1 and g.blob ~= nil
 end
 
+local cn_missing_aimap_logged = nil
+
 local function cn_try_load()
     local tostr = tostring
     local level_name = cn_level_name()
@@ -263,21 +265,49 @@ local function cn_try_load()
         cn_log("try_load: no level name")
         return false
     end
-    local blob, src = cn_read_aimap_bytes(level_name)
+    -- Packaged aimap may use canonical name (meadow.spawn) while level.name() is y04_pole/pole/field.
+    local cands = (_G.tft_level_name_load_candidates and _G.tft_level_name_load_candidates(level_name))
+        or { level_name }
+    local blob, src, used_name
+    for i = 1, #cands do
+        blob, src = cn_read_aimap_bytes(cands[i])
+        if blob then
+            used_name = cands[i]
+            break
+        end
+    end
     if not blob then
-        cn_log("try_load: missing aimap for %s", tostr(level_name))
+        cn_log("try_load: missing aimap for %s (tried %s)", tostr(level_name), table.concat(cands, ","))
         cn_state().graph = nil
+        if cn_missing_aimap_logged ~= level_name then
+            cn_missing_aimap_logged = level_name
+            dogma.console.say(string.format(
+                "true fast travel: no aimap for %s (tried %s)",
+                tostr(level_name), table.concat(cands, ",")
+            ), "yellow")
+        end
         return false
     end
-    local g, err = cn_parse_aimap(blob, level_name)
+    local g, err = cn_parse_aimap(blob, used_name or level_name)
     if not g then
-        cn_log("try_load: parse failed for %s: %s", tostr(level_name), tostr(err))
+        cn_log("try_load: parse failed for %s: %s", tostr(used_name or level_name), tostr(err))
         cn_state().graph = nil
+        dogma.console.say(string.format(
+            "true fast travel: aimap parse failed for %s (%s)",
+            tostr(used_name or level_name), tostr(err)
+        ), "red")
         return false
     end
     cn_state().graph = g
-    cn_log("loaded %s nodes=%d from %s (%.1f MB)",
-        tostr(level_name), g.node_count, tostr(src), #blob / (1024 * 1024))
+    cn_missing_aimap_logged = nil
+    cn_log("loaded %s nodes=%d from %s (%.1f MB) [level=%s]",
+        tostr(used_name or level_name), g.node_count, tostr(src), #blob / (1024 * 1024), tostr(level_name))
+    if used_name and used_name ~= level_name then
+        dogma.console.say(string.format(
+            "true fast travel: aimap loaded as %s (level.name=%s) %d nodes",
+            tostr(used_name), tostr(level_name), g.node_count
+        ), "blue")
+    end
     return true
 end
 
@@ -606,7 +636,13 @@ local function cn_build_path(start_pos, dest_pos, dest_anchor_key)
     local g = cn_state().graph
     if not cn_graph_ready() then
         cn_log("build_path: no aimap loaded")
-        return nil
+        if not cn_ensure_ready(false) then
+            return nil
+        end
+        g = cn_state().graph
+        if not cn_graph_ready() then
+            return nil
+        end
     end
     if not (start_pos and start_pos.x and dest_pos and dest_pos.x) then
         return nil

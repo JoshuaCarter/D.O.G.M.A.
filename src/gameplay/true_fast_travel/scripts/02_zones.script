@@ -38,50 +38,14 @@ local function build_level_names_registry()
             local id_str = game_ini:line_exist(section, "id") and game_ini:r_string(section, "id")
             local id = tonum(id_str)
             if name and id then
-                name = string.lower(name)
-                name = sgsub(name, "dark_valley", "l04_darkvalley")
-                name = sgsub(name, "truck_cemetery", "k02_trucks_cemetery")
-                name = sgsub(name, "army_warehouses", "l07_military")
-                name = sgsub(name, "army_warehouse", "l07_military")
-                name = sgsub(name, "swamp", "k00_marsh")
-                name = sgsub(name, "y04_pole", "meadow")
-                name = sgsub(name, "^pole$", "meadow")
-                name = sgsub(name, "l10_limansk", "limansk")
-
-                local canonical = {
-                    ["garbage"] = "l02_garbage",
-                    ["escape"] = "l01_escape",
-                    ["cordon"] = "l01_escape",
-                    ["agroprom"] = "l03_agroprom",
-                    ["darkvalley"] = "l04_darkvalley",
-                    ["dark_valley"] = "l04_darkvalley",
-                    ["bar"] = "l05_bar",
-                    ["rostok"] = "l06_rostok",
-                    ["wild_territory"] = "l06_rostok",
-                    ["military"] = "l07_military",
-                    ["army_warehouses"] = "l07_military",
-                    ["army_warehouse"] = "l07_military",
-                    ["yantar"] = "l08_yantar",
-                    ["deadcity"] = "l09_deadcity",
-                    ["dead_city"] = "l09_deadcity",
-                    ["radar"] = "l10_radar",
-                    ["redforest"] = "l10_red_forest",
-                    ["red_forest"] = "l10_red_forest",
-                    ["marsh"] = "k00_marsh",
-                    ["swamp"] = "k00_marsh",
-                    ["darkscape"] = "k01_darkscape",
-                    ["trucks_cemetery"] = "k02_trucks_cemetery",
-                    ["truck_cemetery"] = "k02_trucks_cemetery",
-                    ["hospital"] = "l11_hospital",
-                    ["generators"] = "l13_generators",
-                    ["outskirts"] = "pripyat",
-                    ["stancia"] = "l12_stancia",
-                    ["stancia_2"] = "l12_stancia_2",
-                    ["limansk"] = "limansk",
-                    ["jupiter"] = "jupiter",
-                    ["zaton"] = "zaton",
-                }
-                if canonical[name] then name = canonical[name] end
+                if _G.tft_canonicalize_level_name then
+                    name = _G.tft_canonicalize_level_name(name)
+                else
+                    name = string.lower(name)
+                    name = sgsub(name, "y04_pole", "meadow")
+                    name = sgsub(name, "^pole$", "meadow")
+                    name = sgsub(name, "^field$", "meadow")
+                end
                 tft.level_names[id] = name
                 tft.level_ids_by_name[name] = id
                 if game_ini:line_exist(section, "offset") then
@@ -141,53 +105,16 @@ local function resolve_level_name(level_id)
         name = level_id
     end
 
-    -- Normalize common GAMMA / Modpack / Akagi variations
+    -- Normalize common GAMMA / Modpack / Akagi variations (incl. Meadow aliases).
     if name then
-        name = string.lower(name)
-        name = sgsub(name, "dark_valley", "l04_darkvalley")
-        name = sgsub(name, "truck_cemetery", "k02_trucks_cemetery")
-        name = sgsub(name, "army_warehouses", "l07_military")
-        name = sgsub(name, "army_warehouse", "l07_military")
-        name = sgsub(name, "swamp", "k00_marsh")
-        name = sgsub(name, "y04_pole", "meadow")
-        name = sgsub(name, "^pole$", "meadow")
-        name = sgsub(name, "l10_limansk", "limansk")
-
-        -- Map common plain names to canonical IDs
-        local canonical = {
-            ["garbage"] = "l02_garbage",
-            ["escape"] = "l01_escape",
-            ["cordon"] = "l01_escape",
-            ["agroprom"] = "l03_agroprom",
-            ["darkvalley"] = "l04_darkvalley",
-            ["dark_valley"] = "l04_darkvalley",
-            ["bar"] = "l05_bar",
-            ["rostok"] = "l06_rostok",
-            ["wild_territory"] = "l06_rostok",
-            ["military"] = "l07_military",
-            ["army_warehouses"] = "l07_military",
-            ["army_warehouse"] = "l07_military",
-            ["yantar"] = "l08_yantar",
-            ["deadcity"] = "l09_deadcity",
-            ["dead_city"] = "l09_deadcity",
-            ["radar"] = "l10_radar",
-            ["redforest"] = "l10_red_forest",
-            ["red_forest"] = "l10_red_forest",
-            ["marsh"] = "k00_marsh",
-            ["swamp"] = "k00_marsh",
-            ["darkscape"] = "k01_darkscape",
-            ["trucks_cemetery"] = "k02_trucks_cemetery",
-            ["truck_cemetery"] = "k02_trucks_cemetery",
-            ["hospital"] = "l11_hospital",
-            ["generators"] = "l13_generators",
-            ["outskirts"] = "pripyat",
-            ["stancia"] = "l12_stancia",
-            ["stancia_2"] = "l12_stancia_2",
-            ["limansk"] = "limansk",
-            ["jupiter"] = "jupiter",
-            ["zaton"] = "zaton",
-        }
-        if canonical[name] then name = canonical[name] end
+        if _G.tft_canonicalize_level_name then
+            name = _G.tft_canonicalize_level_name(name)
+        else
+            name = string.lower(name)
+            name = sgsub(name, "y04_pole", "meadow")
+            name = sgsub(name, "^pole$", "meadow")
+            name = sgsub(name, "^field$", "meadow")
+        end
     end
 
     tft.level_names[level_id] = name

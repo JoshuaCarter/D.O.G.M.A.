@@ -117,7 +117,12 @@ local function start_travel_sequence(pos, lvid, gvid, is_transition, final_gvid)
 		end
 	end
 	if not chain or #chain < 2 then
-		dogma.console.say("true fast travel: no path at start", "yellow")
+		local lvl = (level and level.name) and level.name() or "?"
+		local aimap = (_G.tft_nav_mesh_graph_ready and _G.tft_nav_mesh_graph_ready()) and "ready" or "missing"
+		dogma.console.say(string.format(
+			"true fast travel: no path at start level=%s aimap=%s",
+			tostring(lvl), aimap
+		), "yellow")
 		return fail_start(tft_str("tft_msg_no_nav_path"), "warning")
 	end
 

@@ -389,8 +389,13 @@ local function build_path_preview(id, is_lc)
 
 	local ok, chain, is_vertex, path_len, meta = pcall(_G.tft_nav_mesh_build_path, start, dest, dest_key)
 	if not ok or not chain or #chain < 2 then
-		tft_log("path preview: nav mesh path failed (%.0fm straight)", dist)
-		dogma.console.say(string.format("true fast travel: path failed (%.0fm straight)", dist), "yellow")
+		local lvl = (level and level.name) and level.name() or "?"
+		local aimap = (_G.tft_nav_mesh_graph_ready and _G.tft_nav_mesh_graph_ready()) and "ready" or "missing"
+		tft_log("path preview: nav mesh path failed (%.0fm straight) level=%s aimap=%s", dist, lvl, aimap)
+		dogma.console.say(string.format(
+			"true fast travel: path failed (%.0fm straight) level=%s aimap=%s",
+			dist, lvl, aimap
+		), "yellow")
 		tft.is_path_preview = false
 		tft.path_preview_id = nil
 		return

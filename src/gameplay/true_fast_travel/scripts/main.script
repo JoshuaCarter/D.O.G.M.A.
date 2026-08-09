@@ -62,6 +62,19 @@ local function add_travel_item(pui, id)
 	return true
 end
 
+local function menu_no_option(reason, id, ln, detail)
+	local cur = (level and level.name) and level.name() or "?"
+	local msg = string.format(
+		"true fast travel: no travel option (%s) id=%s ln=%s cur=%s",
+		tostring(reason), tostring(id), tostring(ln), tostring(cur)
+	)
+	if detail and detail ~= "" then
+		msg = msg .. " " .. detail
+	end
+	dogma.console.say(msg, "yellow")
+	tft_log("%s", msg)
+end
+
 local function on_map_right_click(property_ui, map_table)
 	if tft.right_click_avail then
 		tft.menu_open_seq = (tft.menu_open_seq or 0) + 1
@@ -105,6 +118,7 @@ local function on_map_spot_menu_add_property(pui, id, ln, hint)
 		local is_campfire = tft_is_campfire and tft_is_campfire(id, se_obj)
 		local is_base = tft_is_base and tft_is_base(id, se_obj)
 		local cross_zone = tft_is_cross_zone_destination and tft_is_cross_zone_destination(se_obj, ln)
+		local kind = is_lc and "lc" or (is_campfire and "campfire" or (is_base and "base" or "other"))
 
 		if not (is_lc or is_campfire or is_base) then
 			if tft_clear_path_preview then tft_clear_path_preview() end
@@ -112,6 +126,12 @@ local function on_map_spot_menu_add_property(pui, id, ln, hint)
 		end
 		if (is_campfire or is_base) and cross_zone then
 			if tft_clear_path_preview then tft_clear_path_preview() end
+			local canon_ln = _G.tft_canonicalize_level_name and _G.tft_canonicalize_level_name(ln) or ln
+			local canon_cur = _G.tft_canonicalize_level_name and _G.tft_canonicalize_level_name(level and level.name and level.name()) or nil
+			menu_no_option("cross_zone", id, ln, string.format(
+				"kind=%s canon_ln=%s canon_cur=%s",
+				kind, tostring(canon_ln), tostring(canon_cur)
+			))
 			return
 		end
 
@@ -122,6 +142,7 @@ local function on_map_spot_menu_add_property(pui, id, ln, hint)
 		end
 		if not target then
 			if tft_clear_path_preview then tft_clear_path_preview() end
+			menu_no_option("no_target", id, ln, string.format("kind=%s err=%s", kind, tostring(terr)))
 			return
 		end
 
@@ -140,6 +161,7 @@ local function on_map_spot_menu_add_property(pui, id, ln, hint)
 	end, debug.traceback)
 	if not ok then
 		tft_log_error("map_spot_menu_add_property error: %s", tostring(err))
+		dogma.console.say("true fast travel: menu error - " .. tostring(err), "red")
 	end
 end
 

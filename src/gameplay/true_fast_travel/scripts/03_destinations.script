@@ -464,6 +464,9 @@ normalize_level_key = function(name)
         tft_build_level_names_registry()
         return tft.level_names[name] or tft_resolve_level_name(name)
     end
+    if _G.tft_canonicalize_level_name then
+        return _G.tft_canonicalize_level_name(name)
+    end
     name = string.lower(tostring(name))
     name = name:gsub("_%d+$", "")
     tft_build_level_names_registry()
@@ -476,6 +479,9 @@ end
 
 levels_match = function(a, b)
     if not a or not b then return false end
+    if _G.tft_levels_same then
+        return _G.tft_levels_same(a, b)
+    end
     return normalize_level_key(a) == normalize_level_key(b)
 end
 
@@ -1047,12 +1053,21 @@ local function poll_discoveries()
         end
     end
     -- No db.storage walk: every online object + map_has_object_spot tanks FPS.
-    local lvl = level and level.name and level.name()
-    local dsts = tft.door_registry and lvl and tft.door_registry[lvl]
-    if dsts then
-        for _, ids in pairs_(dsts) do
-            for i = 1, #ids do
-                consider(ids[i])
+    -- door_registry keys are canonical (meadow); level.name() may be y04_pole/pole/field.
+    local cands = (_G.tft_level_name_load_candidates and _G.tft_level_name_load_candidates())
+        or { level and level.name and level.name() }
+    local seen_doors = {}
+    for ci = 1, #cands do
+        local dsts = tft.door_registry and cands[ci] and tft.door_registry[cands[ci]]
+        if dsts then
+            for _, ids in pairs_(dsts) do
+                for i = 1, #ids do
+                    local did = ids[i]
+                    if did and not seen_doors[did] then
+                        seen_doors[did] = true
+                        consider(did)
+                    end
+                end
             end
         end
     end

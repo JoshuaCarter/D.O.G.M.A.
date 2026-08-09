@@ -1,11 +1,12 @@
 --[[
 	Weapons Ban
 
-	Traders only deal knives among combat gear. Stashes get 0–3 weighted
-	adds (sight/kit/sil/ammo/parts). Corpses: strip loose ammo, then
-	rank-ticketed 0–4 full mags per kept gun (+ partial mag variance).
-	New game: extra ammo for owned weapons = mag_size × N mags (default 10).
-	Replaces RNG Attach + Parts In Stashes.
+	Trade: buy-block + strip banned combat gear from supply traders
+	(knives stay). Field stalkers untouched.
+	Stashes get 0–3 weighted adds (sight/kit/sil/ammo/parts).
+	Corpses: strip loose ammo, then rank-ticketed 0–4 full mags per kept
+	gun (+ partial mag variance). New game: extra ammo for owned weapons
+	= mag_size × N mags (default 10). Replaces RNG Attach + Parts In Stashes.
 ]]
 
 local CONFIG = _G.dogma_gameplay_weapons_ban_conf
@@ -198,7 +199,9 @@ local function is_cheese_paid_stash(_hint)
 end
 
 --------------------------------------------------------------------------------
--- Trade ban / vendor strip classifier
+-- Trade ban / vendor strip
+-- trade_manager.update runs on every stalker use (xr_motivator) — never strip
+-- field stalkers. Supply traders lose all banned combat stock (not knives).
 --------------------------------------------------------------------------------
 local function is_magazine(sec)
 	if not sec then
@@ -248,9 +251,39 @@ local function is_banned_combat_gear(obj, sec)
 	return false
 end
 
+-- Restocking vendors (buy_supplies). trade_generic / companions have none.
+local function is_supply_trader(npc)
+	if not npc then
+		return false
+	end
+	if clsid then
+		local c = npc:clsid()
+		if c == clsid.script_trader or c == clsid.trader then
+			return true
+		end
+	end
+	local cfg = trade_manager.get_trade_profile(npc:id(), "cfg_ltx")
+	if not cfg or cfg == "items\\trade\\trade_generic.ltx" then
+		return false
+	end
+	local config = trade_manager.get_trade_cfg(cfg)
+	if not config then
+		return false
+	end
+	local supplies = config:r_string_ex("trader", "buy_supplies")
+	return supplies ~= nil and supplies ~= ""
+end
+
 local function patched_get_trade_status(obj, profile)
-	if profile and profile.mode == 1 and obj and is_banned_combat_gear(obj, obj:section()) then
-		return 2
+	if profile and obj and is_banned_combat_gear(obj, obj:section()) then
+		-- mode 2 = trader inventory shown to player (hide)
+		if profile.mode == 2 then
+			return 3
+		end
+		-- mode 1 = player inventory in trade (block sell-to-trader)
+		if profile.mode == 1 then
+			return 1
+		end
 	end
 	return original_get_trade_status(obj, profile)
 end
@@ -268,7 +301,7 @@ local function release_inventory_ids(ids)
 	end
 end
 
-local function strip_banned_from_npc(npc)
+local function strip_banned_from_trader(npc)
 	if not (npc and npc.iterate_inventory) then
 		return
 	end
@@ -286,8 +319,8 @@ end
 
 local function delayed_strip(npc_id)
 	local npc = level.object_by_id(npc_id)
-	if npc and npc:alive() then
-		strip_banned_from_npc(npc)
+	if npc and npc:alive() and is_supply_trader(npc) then
+		strip_banned_from_trader(npc)
 	end
 	return true
 end
@@ -303,7 +336,10 @@ local function patched_trade_update(npc, force_refresh)
 	if npc.alive and not npc:alive() then
 		return
 	end
-	strip_banned_from_npc(npc)
+	if not is_supply_trader(npc) then
+		return
+	end
+	strip_banned_from_trader(npc)
 	local npc_id = npc:id()
 	if CreateTimeEvent then
 		CreateTimeEvent("dogma_wb_strip", "s1_" .. npc_id, 0.1, delayed_strip, npc_id)

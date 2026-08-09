@@ -1247,7 +1247,7 @@ local function set_ads_zoom(want_ads, source)
 	return true
 end
 
--- Drop free + ADS and restore hip FOV (weapon lower / item swap).
+-- Drop free + ADS and restore hip FOV (weapon lower / death / opts / etc.).
 local function reset_zoom(reason)
 	if not free_on and not ads_on then
 		reset_scroll_accum()
@@ -1255,6 +1255,23 @@ local function reset_zoom(reason)
 	end
 	logf("zoom reset: reason=%s was=%s", tostring(reason), mode_label())
 	reset_session(false, reason)
+end
+
+-- Weapon / detector / slot swaps: keep free zoom; ADS is gun-specific so drop it.
+-- Draw/holster often snaps console FOV - resync live so smooth re-applies free zoom.
+local function on_equipment_swap(reason)
+	local had_ads = ads_on
+	if ads_on then
+		logf("ads out: reason=%s keep_free=%s wpn=%s", tostring(reason), tostring(free_on), wpn_label())
+		ads_on = false
+	end
+	if free_on then
+		live_fov = get_console_cmd(2, "fov") or live_fov
+		live_hud = get_console_cmd(2, "hud_fov") or live_hud
+		apply_fov()
+	elseif had_ads then
+		apply_fov()
+	end
 end
 
 local function is_weapon_slot_bind(bind)
@@ -1278,7 +1295,7 @@ local function on_before_key_press(key, bind, dis, flags)
 		bind = dik_to_bind(key)
 	end
 	if is_weapon_slot_bind(bind) then
-		reset_zoom("slot_key")
+		on_equipment_swap("slot_key")
 	end
 end
 
@@ -1329,7 +1346,7 @@ local function actor_on_changed_slot(new_slot, new_obj, prev_slot, prev_obj)
 			return
 		end
 	end
-	reset_zoom("changed_slot")
+	on_equipment_swap("changed_slot")
 end
 
 local function on_active_item_changed(prev_id, new_id, prev_sec, new_sec)
@@ -1341,7 +1358,7 @@ local function on_active_item_changed(prev_id, new_id, prev_sec, new_sec)
 		tostr(prev_sec),
 		tostr(new_sec)
 	)
-	reset_zoom("item_change")
+	on_equipment_swap("item_change")
 end
 
 local function actor_on_weapon_lower(_wpn)

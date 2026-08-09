@@ -1,0 +1,29 @@
+--[[
+	New Game Defaults - MCM + main-menu patch.
+
+	Must live in *mcm.script: MCM loads those at the main menu.
+	zzzz_* body scripts are not loaded until a game session, so a main.script
+	patch never sees New Game on a cold boot (same pattern as tweaks/search).
+
+	Wraps LoadDifficulty / LoadEconomy / LoadMap so first open and Randomize
+	pick Veteran + Survivalist + each faction's main base. Manual combo
+	changes still work (OnSelect*).
+]]
+
+local CONFIG = _G.dogma_tweaks_new_game_defaults_conf
+
+-- Top-level: runs when MCM gathers *mcm.script at main menu.
+CONFIG.patch_new_game()
+
+function on_mcm_load(options)
+	-- Re-patch in case another injector rewrote loaders after our load.
+	CONFIG.patch_new_game()
+
+	dogma_mcm.append(options, "tweaks", "ui_mcm_menu_dogma_tweaks", {
+		{
+			id = "new_game_defaults_description",
+			type = "desc",
+			text = "ui_mcm_dogma_tweaks_new_game_defaults_page_description",
+		},
+	})
+end

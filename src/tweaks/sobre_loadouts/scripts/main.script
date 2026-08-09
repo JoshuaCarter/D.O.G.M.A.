@@ -1,0 +1,51 @@
+--[[
+	Strip free NPC-variant binoculars (wpn_binoc) on new game.
+
+	Shop/loadout sells wpn_binoc_inv (kept). Use demonized_time_events
+	directly — bare CreateTimeEvent is overridden by PDA Taskboard.
+]]
+
+local dte = demonized_time_events
+local SEC = "wpn_binoc"
+
+local function strip()
+	local actor = db and db.actor
+	if not (actor and actor.iterate_inventory) then
+		return true
+	end
+	local ids = {}
+	actor:iterate_inventory(function(_, itm)
+		if itm and itm:section() == SEC then
+			ids[#ids + 1] = itm:id()
+		end
+	end)
+	for i = 1, #ids do
+		alife_release_id(ids[i])
+	end
+	return true
+end
+
+local function strip_again()
+	strip()
+	dte.CreateTimeEvent("dogma_sobre_binoc", "s3", 2.0, strip)
+	dte.CreateTimeEvent("dogma_sobre_binoc", "s4", 5.0, strip)
+	return true
+end
+
+local function strip_start()
+	strip()
+	dte.CreateTimeEvent("dogma_sobre_binoc", "s2", 0.25, strip_again)
+	return true
+end
+
+local function actor_on_first_update()
+	-- Saves already past start equip — leave later loot alone.
+	if has_alife_info and has_alife_info("start_equippment_handled") then
+		return
+	end
+	dte.CreateTimeEvent("dogma_sobre_binoc", "s1", 0.25, strip_start)
+end
+
+function on_game_start()
+	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+end

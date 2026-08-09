@@ -1,0 +1,13 @@
+--[[
+	New Game Defaults - in-session re-patch.
+
+	Primary patch is in mcm.script (loaded at main menu). This file only runs
+	after a game session starts; re-apply if LoadDifficulty / LoadEconomy /
+	LoadMap were restored.
+]]
+
+local CONFIG = _G.dogma_tweaks_new_game_defaults_conf
+
+function on_game_start()
+	CONFIG.patch_new_game()
+end

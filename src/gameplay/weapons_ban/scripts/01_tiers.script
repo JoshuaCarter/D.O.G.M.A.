@@ -468,7 +468,8 @@ local function roll_ru_for_ammo_tier(result_tier)
 	return roll_ru_for_rank(rank), rank
 end
 
-local function rounds_for_ru(ammo_sec, ru)
+-- apply_box_cap: stash/corpse rolls only (not start ammo).
+local function rounds_for_ru(ammo_sec, ru, apply_box_cap)
 	if not ammo_sec or not ru or ru <= 0 then
 		return 0
 	end
@@ -480,7 +481,14 @@ local function rounds_for_ru(ammo_sec, ru)
 	if box <= 0 then
 		box = 1
 	end
-	return math.floor(ru * box / cost)
+	local rounds = math.floor(ru * box / cost)
+	if apply_box_cap then
+		local cap = math.floor(box * 10)
+		if rounds > cap then
+			rounds = cap
+		end
+	end
+	return rounds
 end
 
 _G.dogma_gameplay_weapons_ban_tiers = {

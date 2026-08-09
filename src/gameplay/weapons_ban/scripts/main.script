@@ -3,10 +3,11 @@
 
 	Trade: buy-block + strip banned combat gear from supply traders
 	(knives stay). Field stalkers untouched.
-	Stashes get 0–3 weighted adds (sight/kit/sil/ammo/parts).
-	Corpses: strip loose ammo, then rank-ticketed 0–4 full mags per kept
-	gun (+ partial mag variance). New game: extra ammo for owned weapons
-	= mag_size × N mags (default 10). Replaces RNG Attach + Parts In Stashes.
+	Stashes: 0–3 weighted adds (sight/kit/sil/ammo/parts); ammo rolls use
+	tier→rank RU budgets for round counts.
+	Corpses: strip loose ammo, then one rank RU budget split across guns.
+	New game: RU budget per owned start weapon (default 10k).
+	Replaces RNG Attach + Parts In Stashes.
 ]]
 
 local CONFIG = _G.dogma_gameplay_weapons_ban_conf
@@ -14,11 +15,13 @@ local MOD_ID = CONFIG.MOD_ID
 local Tiers
 
 local original_set_random_stash
+local original_try_spawn_treasure
 local original_try_spawn_ammo
 local original_trade_update
 local original_check_trade_mode
 local original_is_tradable
 local hooked_stash = false
+local hooked_stash_spawn = false
 local hooked_ammo = false
 local hooked_trade_ui = false
 local hooked_trade_update = false
@@ -26,7 +29,11 @@ local hooked_trade_update = false
 -- Persist so we never double-grant within the new-game window before
 -- start_equippment_handled is given (~4s).
 local EXTRA_AMMO_SAVE_KEY = "dogma_wb_extra_start_ammo"
+local STASH_AMMO_SAVE_KEY = "dogma_wb_stash_ammo"
 local ini_loadouts
+
+-- stash_id → { { sec, rounds }, ... } (ammo qty; not put in treasure caches)
+local pending_stash_ammo = {}
 
 local function log(msg)
 	if Tiers and Tiers.log then
@@ -39,7 +46,7 @@ end
 local function on_option_change()
 	local L = CONFIG.loaded
 	local D = CONFIG.DEFAULTS
-	L.extra_start_ammo_mags = dogma.mcm.int(MOD_ID, "extra_start_ammo_mags", D.extra_start_ammo_mags)
+	L.extra_start_ammo_ru = dogma.mcm.int(MOD_ID, "extra_start_ammo_ru", D.extra_start_ammo_ru)
 	for _, cat in ipairs(CONFIG.CATS) do
 		for _, n in ipairs({ 2, 3, 4, 5 }) do
 			local key = cat .. "_tier_cost_" .. n
@@ -49,6 +56,14 @@ local function on_option_change()
 	if Tiers and Tiers.rebuild then
 		Tiers.rebuild()
 	end
+end
+
+local function on_save_state(m_data)
+	m_data[STASH_AMMO_SAVE_KEY] = pending_stash_ammo
+end
+
+local function on_load_state(m_data)
+	pending_stash_ammo = m_data[STASH_AMMO_SAVE_KEY] or {}
 end
 
 --------------------------------------------------------------------------------
@@ -92,20 +107,12 @@ local function ammo_sec_for_weapon(wpn_sec)
 	return sec_ammo
 end
 
-local function mag_cap_for_weapon(wpn_sec)
-	local mag = ini_sys:r_float_ex(wpn_sec, "ammo_mag_size") or 0
-	if mag > 0 then
-		return math.floor(mag)
-	end
-	return 30
-end
-
 local function give_extra_start_ammo()
 	if not dogma.sys.ready(MOD_ID, db, on_option_change) then
 		return
 	end
-	local mags = math.floor((CONFIG.loaded.extra_start_ammo_mags or 0) + 0.5)
-	if mags <= 0 then
+	local budget = math.floor((CONFIG.loaded.extra_start_ammo_ru or 0) + 0.5)
+	if budget <= 0 then
 		return
 	end
 	-- New game only: stock sets this after the delayed equipment pass.
@@ -140,7 +147,7 @@ local function give_extra_start_ammo()
 		if not sec_ammo then
 			return
 		end
-		local add = mag_cap_for_weapon(wpn_sec) * mags
+		local add = Tiers.rounds_for_ru(sec_ammo, budget)
 		if add <= 0 then
 			return
 		end
@@ -149,7 +156,7 @@ local function give_extra_start_ammo()
 
 	for sec, cnt in pairs(ammo_to_spawn) do
 		alife_create_item(sec, db.actor, { ammo = cnt })
-		log(string.format("new game +%s x%s (%s mags × mag size)", sec, cnt, mags))
+		log(string.format("new game +%s x%s (%s RU)", sec, cnt, budget))
 		dogma.console.say(string.format("weapons ban: extra start ammo %s x%d", sec, cnt), "blue")
 	end
 end
@@ -390,6 +397,37 @@ local function append_stash_sections(id, sections)
 	end
 end
 
+local function queue_stash_ammo(id, sec, rounds)
+	if not (id and sec and rounds and rounds > 0) then
+		return
+	end
+	local list = pending_stash_ammo[id]
+	if not list then
+		list = {}
+		pending_stash_ammo[id] = list
+	end
+	list[#list + 1] = { sec = sec, rounds = rounds }
+end
+
+local function spawn_pending_stash_ammo(box)
+	if not box then
+		return
+	end
+	local id = box:id()
+	local list = pending_stash_ammo[id]
+	if not list then
+		return
+	end
+	pending_stash_ammo[id] = nil
+	for i = 1, #list do
+		local e = list[i]
+		if e and e.sec and e.rounds and e.rounds > 0 then
+			alife_create_item(e.sec, box, { ammo = e.rounds })
+			log(string.format("stash spawn ammo %s x%s", e.sec, e.rounds))
+		end
+	end
+end
+
 local function roll_stash_loot(id)
 	if not alife_object(id) then
 		return
@@ -402,7 +440,21 @@ local function roll_stash_loot(id)
 		local cat = Tiers.pick_category()
 		local rt = Tiers.pick_tier(target)
 		local sec = Tiers.pick_section(cat, rt)
-		if sec then
+		if sec and cat == "ammo" then
+			local ru, rank = Tiers.roll_ru_for_ammo_tier(rt)
+			local rounds = Tiers.rounds_for_ru(sec, ru)
+			if rounds > 0 then
+				queue_stash_ammo(id, sec, rounds)
+				log(string.format(
+					"stash +ammo t%s %s x%s (%s RU, rank=%s)",
+					rt,
+					sec,
+					rounds,
+					ru,
+					rank
+				))
+			end
+		elseif sec then
 			sections[#sections + 1] = sec
 			log(string.format("stash +%s t%s %s", cat, rt, sec))
 		end
@@ -430,23 +482,14 @@ local function patched_set_random_stash(no_spot, hint, bonus_items, id, dbg)
 	return result
 end
 
---------------------------------------------------------------------------------
--- Corpse ammo replace
---------------------------------------------------------------------------------
--- Rank → ticket weights for full-mag counts 0..4. Low ranks skew empty/light;
--- high ranks skew heavier, but every rank can still roll any bucket.
-local CORPSE_MAG_TICKETS = {
-	novice = { [0] = 50, [1] = 35, [2] = 10, [3] = 4, [4] = 1 },
-	trainee = { [0] = 43, [1] = 34, [2] = 12, [3] = 7, [4] = 4 },
-	experienced = { [0] = 36, [1] = 32, [2] = 14, [3] = 10, [4] = 8 },
-	professional = { [0] = 29, [1] = 31, [2] = 16, [3] = 13, [4] = 11 },
-	veteran = { [0] = 21, [1] = 29, [2] = 19, [3] = 16, [4] = 15 },
-	expert = { [0] = 14, [1] = 28, [2] = 21, [3] = 19, [4] = 18 },
-	master = { [0] = 7, [1] = 26, [2] = 23, [3] = 22, [4] = 22 },
-	legend = { [0] = 0, [1] = 25, [2] = 25, [3] = 25, [4] = 25 },
-}
-local CORPSE_MAG_TICKETS_FALLBACK = CORPSE_MAG_TICKETS.experienced
+local function patched_try_spawn_treasure(box)
+	original_try_spawn_treasure(box)
+	spawn_pending_stash_ammo(box)
+end
 
+--------------------------------------------------------------------------------
+-- Corpse ammo replace — one rank RU budget, split across kept guns
+--------------------------------------------------------------------------------
 local function strip_loose_ammo(npc)
 	local to_release = {}
 	npc:iterate_inventory(function(_temp, item)
@@ -478,29 +521,10 @@ local function npc_rank_name(npc)
 	return nil
 end
 
-local function pick_corpse_mags(rank_name)
-	local tickets = (rank_name and CORPSE_MAG_TICKETS[rank_name]) or CORPSE_MAG_TICKETS_FALLBACK
-	local total = 0
-	for m = 0, 4 do
-		total = total + (tickets[m] or 0)
-	end
-	if total <= 0 then
-		return 0
-	end
-	local r = math.random(1, total)
-	local acc = 0
-	for m = 0, 4 do
-		acc = acc + (tickets[m] or 0)
-		if r <= acc then
-			return m
-		end
-	end
-	return 0
-end
-
 local function inject_corpse_ammo(npc)
 	local mrandom = math.random
 	local rank = npc_rank_name(npc)
+	local guns = {}
 	npc:iterate_inventory(function(_temp, itm)
 		if not itm then
 			return
@@ -519,28 +543,38 @@ local function inject_corpse_ammo(npc)
 			return
 		end
 		local sec = ammo_class[mrandom(1, #ammo_class)]
-		if not (sec and ini_sys:section_exist(sec)) then
-			return
+		if sec and ini_sys:section_exist(sec) then
+			guns[#guns + 1] = sec
 		end
-		local mags = pick_corpse_mags(rank)
-		local cap = mag_cap_for_weapon(itm:section())
-		-- Always roll a partial (0..cap-1). Mag ticket 0 still yields up to
-		-- almost one mag; empty only if both the ticket and partial are 0.
-		local partial = (cap > 0) and mrandom(0, cap - 1) or 0
-		local rounds = cap * mags + partial
-		if rounds <= 0 then
-			return
-		end
-		alife_create_item(sec, npc, { ammo = rounds })
-		log(string.format(
-			"corpse ammo %s x%s (%s mags +%s, rank=%s)",
-			sec,
-			rounds,
-			mags,
-			partial,
-			rank or "?"
-		))
 	end)
+	if #guns == 0 then
+		return
+	end
+	local total_ru = Tiers.roll_ru_for_rank(rank)
+	if total_ru <= 0 then
+		return
+	end
+	local share = total_ru / #guns
+	local pooled = {}
+	for i = 1, #guns do
+		local sec = guns[i]
+		pooled[sec] = (pooled[sec] or 0) + share
+	end
+	for sec, ru in pairs(pooled) do
+		local rounds = Tiers.rounds_for_ru(sec, ru)
+		if rounds > 0 then
+			alife_create_item(sec, npc, { ammo = rounds })
+			log(string.format(
+				"corpse ammo %s x%s (%.0f RU share, total=%s, guns=%s, rank=%s)",
+				sec,
+				rounds,
+				ru,
+				total_ru,
+				#guns,
+				rank or "?"
+			))
+		end
+	end
 end
 
 local function patched_try_spawn_ammo(npc)
@@ -572,6 +606,19 @@ local function try_hook_stash()
 	treasure_manager.set_random_stash = patched_set_random_stash
 	hooked_stash = true
 	log("hooked treasure_manager.set_random_stash")
+end
+
+local function try_hook_stash_spawn()
+	if hooked_stash_spawn then
+		return
+	end
+	if not (treasure_manager and treasure_manager.try_spawn_treasure) then
+		return
+	end
+	original_try_spawn_treasure = treasure_manager.try_spawn_treasure
+	treasure_manager.try_spawn_treasure = patched_try_spawn_treasure
+	hooked_stash_spawn = true
+	log("hooked treasure_manager.try_spawn_treasure")
 end
 
 local function try_hook_ammo()
@@ -619,6 +666,7 @@ end
 
 local function try_hooks()
 	try_hook_stash()
+	try_hook_stash_spawn()
 	try_hook_ammo()
 	try_hook_trade_ui()
 	try_hook_trade_update()
@@ -632,9 +680,11 @@ end
 function on_game_start()
 	Tiers = _G.dogma_gameplay_weapons_ban_tiers
 	dogma.load(MOD_ID)
-	
+
 	RegisterScriptCallback("on_option_change", on_option_change)
 	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+	RegisterScriptCallback("save_state", on_save_state)
+	RegisterScriptCallback("load_state", on_load_state)
 	on_option_change()
 	try_hooks()
 	log("weapons_ban ready")

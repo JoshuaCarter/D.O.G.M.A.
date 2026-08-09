@@ -344,11 +344,30 @@ local function display_alpha(now)
 	return 0
 end
 
+local psy_forced_off = false
+
+local function set_psy_bar_shown(show)
+	local mgui = ActorMenu and ActorMenu.get_maingame and ActorMenu.get_maingame()
+	local st = mgui and mgui.m_ui_hud_states
+	if not st then
+		return
+	end
+	st.m_ui_psy_bar_show = show and true or false
+	local bar = st.m_ui_psy_bar
+	if bar and bar.Show then
+		pcall(function()
+			bar:Show(show and true or false)
+		end)
+	end
+	psy_forced_off = not show
+end
+
 local function force_bhs_visible()
 	set_show(2)
 	set_healthstatus(true)
 	clear_change_debounce()
 	forced_bhs = true
+	set_psy_bar_shown(true)
 end
 
 local function hide_bhs_idle()
@@ -356,6 +375,7 @@ local function hide_bhs_idle()
 	clear_change_debounce()
 	forced_bhs = false
 	apply_fade_alpha(255)
+	set_psy_bar_shown(false)
 end
 
 local function limbs_full()
@@ -653,10 +673,15 @@ local function on_actor_update()
 			else
 				forced_bhs = false
 				apply_fade_alpha(255)
+				if psy_forced_off then
+					set_psy_bar_shown(true)
+				end
 			end
 		elseif L.hide_bhs and (now - last_hide_tick >= STATUS_TICK_MS) then
 			last_hide_tick = now
 			hide_bhs_idle()
+		elseif (not L.hide_bhs) and psy_forced_off then
+			set_psy_bar_shown(true)
 		end
 	end
 
@@ -701,6 +726,7 @@ local function reset_state()
 	flash_until = 0
 	heal_clamped = false
 	forced_bhs = false
+	psy_forced_off = false
 	last_status_tick = 0
 	last_hide_tick = 0
 	last_heal_tick = 0

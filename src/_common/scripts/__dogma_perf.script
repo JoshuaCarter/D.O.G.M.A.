@@ -1,0 +1,84 @@
+--[[
+	DOGMA perf timing (namespace module, no globals).
+
+	Private impl; features use dogma.perf (wired by dogma.script).
+
+	time(label, fn[, threshold_ms]) - run fn, warn if slow; returns fn's returns
+	start(label[, threshold_ms])    - push a timing frame
+	stop()                          - pop; warn if slow; return elapsed_ms (or nil)
+
+	Threshold: call override → MCM dogma/debug perf_warn_threshold_ms → ≤0 = no warn.
+	Warnings always printf + console.say (not gated by debug_log).
+]]
+
+local DEBUG_MOD = "dogma/debug"
+local stack = {}
+
+local function now_ms()
+	if time_global then
+		return time_global()
+	end
+	return 0
+end
+
+local function default_threshold()
+	local mcm = rawget(_G, "__dogma_mcm")
+	if mcm and mcm.uint then
+		return mcm.uint(DEBUG_MOD, "perf_warn_threshold_ms", 0)
+	end
+	return 0
+end
+
+local function effective_threshold(override_ms)
+	if override_ms ~= nil then
+		local n = tonumber(override_ms)
+		if n ~= nil then
+			return math.max(0, math.floor(n + 0.5))
+		end
+	end
+	return default_threshold()
+end
+
+local function warn_slow(label, elapsed_ms, threshold_ms)
+	if threshold_ms <= 0 or elapsed_ms < threshold_ms then
+		return
+	end
+	local msg = string.format(
+		"[dogma_perf] SLOW %s took %dms (threshold %dms)",
+		tostring(label or "?"),
+		elapsed_ms,
+		threshold_ms
+	)
+	printf("%s", msg)
+	local console = rawget(_G, "__dogma_console")
+	if console and console.say then
+		console.say(msg, "yellow")
+	end
+end
+
+function start(label, threshold_ms)
+	stack[#stack + 1] = {
+		label = label,
+		t0 = now_ms(),
+		threshold = threshold_ms,
+	}
+end
+
+function stop()
+	local n = #stack
+	if n < 1 then
+		return nil
+	end
+	local frame = stack[n]
+	stack[n] = nil
+	local elapsed = now_ms() - (frame.t0 or 0)
+	warn_slow(frame.label, elapsed, effective_threshold(frame.threshold))
+	return elapsed
+end
+
+function time(label, fn, threshold_ms)
+	start(label, threshold_ms)
+	local results = { fn() }
+	stop()
+	return unpack(results)
+end

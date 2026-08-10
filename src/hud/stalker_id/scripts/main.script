@@ -39,8 +39,6 @@ local PATCH_H = 24 -- faction patch / zombified row height in ui xml
 local LINE_START_BELOW_PX = 5 -- below bottom of patch (or zombified text)
 local LINE_A = 200
 local FOV_ZOOM_RATIO = 0.7
-local LINE_GAP_FAR_DIST = 10 -- metres: 10m end applies fully at this range
-
 local FACTION_KEYS = {
 	"stalker", "bandit", "csky", "army", "freedom", "dolg", "ecolog",
 	"killer", "monolith", "greh", "renegade", "isg",
@@ -102,8 +100,7 @@ local function on_option_change()
 	CONFIG.loaded.always_show_line_binoc = dogma.mcm.bool(id, "always_show_line_binoc")
 	CONFIG.loaded.line_keybind = dogma.mcm.key(id, "line_keybind")
 	CONFIG.loaded.line_width_px = dogma.mcm.uint(id, "line_width_px")
-	CONFIG.loaded.line_gap_near_px = dogma.mcm.uint(id, "line_gap_near_px")
-	CONFIG.loaded.line_gap_10m_px = dogma.mcm.uint(id, "line_gap_10m_px")
+	CONFIG.loaded.line_gap_mul = dogma.mcm.float(id, "line_gap_mul")
 end
 
 local function hide_all_patches(hud)
@@ -644,33 +641,6 @@ local function line_start_ui()
 	return UI_CENTER_X, uy
 end
 
--- Shortfall from head tip (virtual UI px), lerped 0m→10m. Both 0 = tip on bone.
--- Zoom (narrow FOV) reads as closer → larger shortfall (near end of the lerp).
-local function line_end_gap_px(dist_m)
-	local near = CONFIG.loaded.line_gap_near_px or 0
-	local far = CONFIG.loaded.line_gap_10m_px or 0
-	local d = dist_m or 0
-	if d < 0 then
-		d = 0
-	end
-	local dev = device and device()
-	local fov = dev and dev.fov
-	if fov and fov > 0 and _fov_baseline and _fov_baseline > 0 then
-		local zoom = fov / _fov_baseline
-		if zoom < 0.05 then
-			zoom = 0.05
-		elseif zoom > 1 then
-			zoom = 1
-		end
-		d = d * zoom
-	end
-	local t = d / LINE_GAP_FAR_DIST
-	if t > 1 then
-		t = 1
-	end
-	return near + (far - near) * t
-end
-
 local function update_leader_line()
 	-- Active ID or fading: line_target_id is kept through fade, cleared on clear().
 	if not (HUD and line_target_id and want_line() and fade_mul > 0 and (LastHitObject or fade_active)) then
@@ -701,17 +671,18 @@ local function update_leader_line()
 		return
 	end
 
-	local dist_m = 0
-	local d = device and device()
-	local cam = d and d.cam_pos
-	if cam and tip then
-		dist_m = cam:distance_to(tip)
-	elseif db.actor and tip then
-		dist_m = db.actor:position():distance_to(tip)
+	-- Shorten by screen-space upper-spine→head span × multiplier (0 = tip on bone).
+	local gap = 0
+	local mul = CONFIG.loaded.line_gap_mul or 0
+	if mul > 0 then
+		local spine = los_pos(obj)
+		local sx, sy = project_world(spine)
+		if sx then
+			local bdx = hx - sx
+			local bdy = hy - sy
+			gap = sqrt(bdx * bdx + bdy * bdy) * mul
+		end
 	end
-
-	-- Pull tip back from head toward ID by shortfall; 0/0 keeps tip on the bone.
-	local gap = line_end_gap_px(dist_m)
 	if gap > 0 then
 		if gap > screen_len * 0.9 then
 			gap = screen_len * 0.9

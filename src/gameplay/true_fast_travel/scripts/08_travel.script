@@ -14,11 +14,8 @@ local function close_pda_for_travel()
 			end
 		end
 	end)
-	pcall(function()
-		if db.actor.active_slot and db.actor:active_slot() == 8 then
-			db.actor:activate_slot(0)
-		end
-	end)
+	-- Do NOT activate_slot(0): that forces knife and overwrites the engine's
+	-- pre-PDA slot restore. HideDialog puts the PDA away and restores the prior weapon.
 end
 
 local function set_safety_active(seconds)
@@ -148,6 +145,11 @@ local function start_travel_sequence(pos, lvid, gvid, is_transition, final_gvid)
 
 	if tft_clear_path_preview then tft_clear_path_preview() end
 	close_pda_for_travel()
+
+	if not (_G.tft_begin_fly_camera and _G.tft_begin_fly_camera()) then
+		return fail_start(tft_str("tft_msg_no_nav_path"), "warning")
+	end
+
 	tft.is_traveling = true
 	if tft_set_fft_trip_in_progress then tft_set_fft_trip_in_progress(true) end
 	set_safety_active(120)
@@ -157,10 +159,6 @@ local function start_travel_sequence(pos, lvid, gvid, is_transition, final_gvid)
 		"true fast travel: started %.0fm %d pts%s",
 		tft.travel_dist, #chain, tft.is_transition and " (transition)" or ""
 	), "blue")
-
-	if not (_G.tft_begin_fly_camera and _G.tft_begin_fly_camera()) then
-		return fail_start(tft_str("tft_msg_no_nav_path"), "warning")
-	end
 	return true
 end
 

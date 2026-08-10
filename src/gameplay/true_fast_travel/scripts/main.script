@@ -8,7 +8,10 @@ local tft = _G.tft
 local function load_config()
 	tft_config.debug_overlay = dogma.dbg.overlay_enabled()
 	tft_config.debug_log = dogma.dbg.logging()
-	tft_config.time_factor_travel = 2.0
+	local tf = dogma.mcm.number(CONFIG.MOD_ID, "time_factor_travel", CONFIG.DEFAULTS["time_factor_travel"])
+	if tf < 1 then tf = 1 end
+	if tf > 10 then tf = 10 end
+	tft_config.time_factor_travel = tf
 	tft_config.show_hud_during_travel = true
 	tft_config.path_preview = true
 	tft_config.visited_radius_m = (CONFIG and CONFIG.DEFAULTS and CONFIG.DEFAULTS.visited_radius_m) or 30

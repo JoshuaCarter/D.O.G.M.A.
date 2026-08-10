@@ -8,7 +8,6 @@ local CN_AIMAP_VFS_DIR = "tft_aimap\\"
 local CN_HEADER_SIZE = 44
 local CN_MAGIC = "DFT_AIM1"
 local CN_INVALID = xconst.INVALID_LEVEL_VERTEX_ID
-local CN_PATH_SUBSAMPLE_M = 12
 local CN_ASTAR_MAX_EXPAND = 750000
 local CN_DISPLAY_STRIDE = 80
 local CN_DISPLAY_MARKERS_MAX = 2500
@@ -543,38 +542,9 @@ local function cn_graph_path(g, start_id, goal_id, _direct_only)
     return path, pos_cache
 end
 
-local function cn_subsample_node_path(g, node_path, pos_cache, spacing_m)
-    spacing_m = spacing_m or CN_PATH_SUBSAMPLE_M
-    if not (node_path and #node_path >= 1) then return {} end
+local function cn_graph_path_positions(g, node_ids, pos_cache)
     local out = {}
-    local last_pos = nil
-    local carry = 0
-    for i = 1, #node_path do
-        local p = cn_vertex_pos(node_path[i], pos_cache)
-        if p then
-            if not last_pos then
-                out[#out + 1] = vector():set(p.x, p.y, p.z)
-                last_pos = p
-                carry = 0
-            else
-                local seg = cn_horizontal_dist(last_pos, p) or last_pos:distance_to(p) or 0
-                carry = carry + seg
-                if carry >= spacing_m or i == #node_path then
-                    out[#out + 1] = vector():set(p.x, p.y, p.z)
-                    last_pos = p
-                    carry = 0
-                else
-                    last_pos = p
-                end
-            end
-        end
-    end
-    return out
-end
-
-local function cn_graph_path_positions(g, node_ids)
-    local out = {}
-    local cache = {}
+    local cache = pos_cache or {}
     for i = 1, #(node_ids or {}) do
         local p = cn_vertex_pos(node_ids[i], cache)
         if p then out[#out + 1] = vector():set(p.x, p.y, p.z) end
@@ -667,19 +637,14 @@ local function cn_build_path(start_pos, dest_pos, dest_anchor_key)
     if not (node_path and #node_path >= 1) then
         return nil
     end
-    local mid = cn_subsample_node_path(g, node_path, pos_cache, CN_PATH_SUBSAMPLE_M)
-    if not (mid and #mid >= 1) then
-        mid = cn_graph_path_positions(g, node_path)
+    -- Keep every A* mesh vertex (no thinning — chords cut corners/walls).
+    local chain = cn_graph_path_positions(g, node_path, pos_cache)
+    if not (chain and #chain >= 1) then
+        return nil
     end
-    local chain = {}
-    chain[#chain + 1] = vector():set(start_pos.x, start_pos.y, start_pos.z)
-    for i = 1, #mid do
-        chain[#chain + 1] = mid[i]
-    end
-    chain[#chain + 1] = vector():set(dest_pos.x, dest_pos.y, dest_pos.z)
     local is_vertex = {}
     for i = 1, #chain do
-        is_vertex[i] = (i > 1 and i < #chain)
+        is_vertex[i] = true
     end
     local path_len = 0
     for i = 2, #chain do
@@ -714,7 +679,7 @@ local function cn_splice_to_dest(g, from_node_id, dest_anchor_key)
     if not (g and from_node_id and dest_id) then return nil end
     local node_path, cache = cn_graph_path(g, from_node_id, dest_id, false)
     if not node_path then return nil end
-    return node_path, cn_subsample_node_path(g, node_path, cache, CN_PATH_SUBSAMPLE_M)
+    return node_path, cn_graph_path_positions(g, node_path, cache)
 end
 
 local function cn_splice_from_pos(g, pos, dest_anchor_key, max_m)

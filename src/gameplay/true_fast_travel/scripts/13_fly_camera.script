@@ -3,9 +3,9 @@
 local tft = _G.tft
 
 local cam_api_ok, cam_api_checked
-local TIME_FACTOR = 2.0
 local REF_RUN_MPS = 4.2
 local BASELINE_RUN_COEF = 2.41
+local PDA_SLOT = 8
 
 local function log(fmt, ...)
 	if tft_log then tft_log("[walk] " .. fmt, ...) end
@@ -13,6 +13,14 @@ end
 
 local function fly_cfg()
 	return _G.tft_fly or {}
+end
+
+local function travel_time_factor()
+	local tf = _G.tft_config and _G.tft_config.time_factor_travel
+	tf = tonumber(tf) or 2
+	if tf < 1 then tf = 1 end
+	if tf > 10 then tf = 10 end
+	return tf
 end
 
 local function probe_cam_api()
@@ -83,8 +91,27 @@ local function set_time_factor(v)
 	console_exec(string.format("time_factor %.4f", tonumber(v) or 1))
 end
 
+local function stash_time_factor()
+	if tft.walk_time_factor_stashed then return end
+	local prev = 1
+	pcall(function()
+		if get_console_cmd then
+			prev = tonumber(get_console_cmd(2, "time_factor")) or 1
+		end
+	end)
+	tft.walk_time_factor_saved = prev
+	tft.walk_time_factor_stashed = true
+end
+
 local function restore_time_factor()
-	console_exec("time_factor 1")
+	if not tft.walk_time_factor_stashed then
+		console_exec("time_factor 1")
+		return
+	end
+	local prev = tonumber(tft.walk_time_factor_saved) or 1
+	tft.walk_time_factor_stashed = nil
+	tft.walk_time_factor_saved = nil
+	console_exec(string.format("time_factor %.4f", prev))
 end
 
 local function stash_gravity()
@@ -110,6 +137,24 @@ local function restore_gravity()
 	tft.walk_gravity_saved = nil
 end
 
+-- Body/world collision pops the actor up when dragged near geometry; disable for the trip.
+local function set_actor_collision(enabled)
+	if not (db.actor and db.actor.set_collision_off) then return end
+	pcall(function() db.actor:set_collision_off(not enabled) end)
+end
+
+local function disable_actor_collision()
+	if tft.walk_collision_off then return end
+	set_actor_collision(false)
+	tft.walk_collision_off = true
+end
+
+local function restore_actor_collision()
+	if not tft.walk_collision_off then return end
+	set_actor_collision(true)
+	tft.walk_collision_off = nil
+end
+
 local function dik_for(bind)
 	if not (bind and bind_to_dik) then return nil end
 	local ok, dik = pcall(function() return bind_to_dik(bind) end)
@@ -132,16 +177,27 @@ local function release_fwd()
 	tft.walk_fwd_held = false
 end
 
-local function equip_primary()
-	if not db.actor then return end
-	for _, s in ipairs({ 2, 1, 3 }) do
-		local it = nil
-		pcall(function() it = db.actor:item_in_slot(s) end)
-		if it then
-			pcall(function() db.actor:activate_slot(s) end)
-			return
-		end
+local function active_slot()
+	if not db.actor then return nil end
+	local slot = nil
+	pcall(function() slot = db.actor:active_slot() end)
+	return slot
+end
+
+-- Remember non-PDA slot once the PDA is down; restore on journey end/cancel.
+local function maybe_stash_weapon_slot()
+	if tft.walk_prev_slot ~= nil then return end
+	local slot = active_slot()
+	if slot ~= nil and slot ~= PDA_SLOT then
+		tft.walk_prev_slot = slot
 	end
+end
+
+local function restore_weapon_slot()
+	local slot = tft.walk_prev_slot
+	tft.walk_prev_slot = nil
+	if slot == nil or not db.actor then return end
+	pcall(function() db.actor:activate_slot(slot) end)
 end
 
 local function force_weapon_hud()
@@ -172,17 +228,37 @@ local function lerp(a, b, t)
 	return a + (b - a) * t
 end
 
-local function damp_dir(cur, tgt, alpha)
-	alpha = math.max(0, math.min(alpha or 0.2, 1))
+-- Move cur toward tgt over ~turn_settle_s (default 100ms). Recomputes each frame
+-- from current→desired so a moving target still settles quickly without snapping.
+local function rotate_dir_toward(cur, tgt, dt, settle_s)
+	if not tgt then return cur end
+	if not cur then return copy_v(tgt) end
+	settle_s = tonumber(settle_s) or 0.1
+	if settle_s < 0.001 then settle_s = 0.001 end
+	local alpha = math.min(1, math.max(0, (dt or 0.016) / settle_s))
 	local x = lerp(cur.x, tgt.x, alpha)
-	local y = lerp(cur.y, tgt.y, alpha)
+	local y = lerp(cur.y or 0, tgt.y or 0, alpha)
 	local z = lerp(cur.z, tgt.z, alpha)
 	local nx, ny, nz = normalize_dir(x, y, z)
 	return vector():set(nx, ny, nz)
 end
 
+-- Snap interpolated samples back onto the AI mesh so chords don't clip walls.
+local function mesh_snap_xz(pos)
+	if not (pos and level and level.vertex_id and level.vertex_position) then return pos end
+	local ok, lvid = pcall(function() return level.vertex_id(pos) end)
+	if not (ok and lvid) then
+		local raised = vector():set(pos.x, (pos.y or 0) + 1.0, pos.z)
+		ok, lvid = pcall(function() return level.vertex_id(raised) end)
+	end
+	if not (ok and lvid) then return pos end
+	local okp, p = pcall(function() return level.vertex_position(lvid) end)
+	if okp and p then return vector():set(p.x, p.y, p.z) end
+	return pos
+end
+
 local function ground_eye_pos(world_pos, eye_h)
-	eye_h = eye_h or (fly_cfg().eye_height_m or 1.6)
+	eye_h = eye_h or (fly_cfg().eye_height_m or 1.44)
 	local g = world_pos
 	if tft_find_ground_pos then
 		local snap = tft_find_ground_pos(world_pos, nil, nil, {
@@ -196,64 +272,99 @@ local function ground_eye_pos(world_pos, eye_h)
 	return vector():set(g.x, (g.y or 0) + eye_h, g.z), g
 end
 
+-- Ray-snap ground lazily while moving (avoids hitching on long A* paths at click).
+local function resolve_fly_point(fly, i)
+	local p = fly and fly[i]
+	if not p or p.ready then return p end
+	local eye, ground = ground_eye_pos(p.raw or p, fly_cfg().eye_height_m or 1.44)
+	p.x, p.y, p.z = eye.x, eye.y, eye.z
+	p.ground = ground
+	p.ready = true
+	return p
+end
+
+local function ensure_fly_window(fly, cum, u)
+	if not (fly and cum and #fly >= 1) then return end
+	local look_m = fly_cfg().look_ahead_m or 8
+	local target_u = (u or 0) + look_m + 4
+	local idx = 2
+	for i = 2, #cum do
+		if (cum[i] or 0) >= (u or 0) then
+			idx = i
+			break
+		end
+		idx = i
+	end
+	local from = math.max(1, idx - 1)
+	local to = math.min(#fly, idx + 2)
+	while to < #fly and (cum[to] or 0) < target_u do
+		to = to + 1
+	end
+	to = math.min(#fly, to + 1)
+	for i = from, to do
+		resolve_fly_point(fly, i)
+	end
+end
+
 local function build_fly_path(coarse)
 	local cfg = fly_cfg()
 	if not (coarse and #coarse >= 2) then return nil, 0 end
 
 	local sample_m = cfg.sample_m or 3
+	-- Keep every A* mesh vertex; only insert extras on long edges for cam smoothness.
 	local dense = { copy_v(coarse[1]) }
 	for i = 2, #coarse do
 		local a, b = coarse[i - 1], coarse[i]
 		local seg = hdist(a, b) or a:distance_to(b) or 0
-		if seg > 0.001 then
+		if seg > sample_m then
 			local along = sample_m
-			while along < seg do
-				local t = along / seg
-				dense[#dense + 1] = vector():set(
-					a.x + (b.x - a.x) * t,
-					(a.y or 0) + ((b.y or 0) - (a.y or 0)) * t,
-					a.z + (b.z - a.z) * t
+			while along < seg - 0.2 do
+				local u = along / seg
+				local raw = vector():set(
+					a.x + (b.x - a.x) * u,
+					(a.y or 0) + ((b.y or 0) - (a.y or 0)) * u,
+					a.z + (b.z - a.z) * u
 				)
+				dense[#dense + 1] = mesh_snap_xz(raw)
 				along = along + sample_m
 			end
 		end
 		dense[#dense + 1] = copy_v(b)
 	end
 
-	local cleaned = { dense[1] }
-	for i = 2, #dense do
-		local d = hdist(cleaned[#cleaned], dense[i]) or 0
-		if d >= 0.4 then cleaned[#cleaned + 1] = dense[i] end
-	end
-	if #cleaned < 2 then cleaned = { copy_v(coarse[1]), copy_v(coarse[#coarse]) } end
-
-	local eye_h = cfg.eye_height_m or 1.6
 	local fly = {}
 	local cum = { 0 }
 	local total = 0
-	for i = 1, #cleaned do
-		local eye, ground = ground_eye_pos(cleaned[i], eye_h)
-		fly[i] = eye
-		fly[i].ground = ground
+	for i = 1, #dense do
+		fly[i] = { raw = dense[i], ready = false }
 		if i > 1 then
-			local d = hdist(fly[i - 1], fly[i]) or fly[i - 1]:distance_to(fly[i]) or 0
+			local d = hdist(dense[i - 1], dense[i]) or dense[i - 1]:distance_to(dense[i]) or 0
 			total = total + d
 			cum[i] = total
 		end
 	end
+	-- Prime the first window only (rest resolve while traveling).
+	ensure_fly_window(fly, cum, 0)
 	return fly, total, cum
 end
 
 local function pos_at_arc(fly, cum, total, u)
 	if not (fly and cum and #fly >= 2) then return nil, nil end
 	u = math.max(0, math.min(u or 0, total or 0))
-	if u <= 0 then return copy_v(fly[1]), copy_v(fly[1].ground or fly[1]) end
+	if u <= 0 then
+		resolve_fly_point(fly, 1)
+		local p = fly[1]
+		return copy_v(p), copy_v(p.ground or p.raw or p)
+	end
 	if u >= (total or 0) then
+		resolve_fly_point(fly, #fly)
 		local last = fly[#fly]
-		return copy_v(last), copy_v(last.ground or last)
+		return copy_v(last), copy_v(last.ground or last.raw or last)
 	end
 	for i = 2, #fly do
 		if cum[i] >= u then
+			resolve_fly_point(fly, i - 1)
+			resolve_fly_point(fly, i)
 			local a, b = fly[i - 1], fly[i]
 			local seg = (cum[i] - cum[i - 1])
 			local t = (seg > 1e-4) and ((u - cum[i - 1]) / seg) or 0
@@ -262,8 +373,8 @@ local function pos_at_arc(fly, cum, total, u)
 				lerp(a.y or 0, b.y or 0, t),
 				lerp(a.z, b.z, t)
 			)
-			local ga = a.ground or a
-			local gb = b.ground or b
+			local ga = a.ground or a.raw or a
+			local gb = b.ground or b.raw or b
 			local ground = vector():set(
 				lerp(ga.x, gb.x, t),
 				lerp(ga.y or 0, gb.y or 0, t),
@@ -272,8 +383,9 @@ local function pos_at_arc(fly, cum, total, u)
 			return pos, ground
 		end
 	end
+	resolve_fly_point(fly, #fly)
 	local last = fly[#fly]
-	return copy_v(last), copy_v(last.ground or last)
+	return copy_v(last), copy_v(last.ground or last.raw or last)
 end
 
 local function dir_toward(from_eye, look_at)
@@ -303,19 +415,90 @@ local function snapshot_cam_mps()
 	return mps
 end
 
+-- Real-time dt scaled by travel time_factor so cam speed matches world scale.
+local function move_dt(dt)
+	return (dt or 0.016) * travel_time_factor()
+end
+
 local function face_direction(dir)
 	if not (db.actor and dir) then return end
 	local hpb = look_dir_to_hpb(dir)
-	pcall(function()
-		if db.actor.set_actor_direction then
-			db.actor:set_actor_direction(-hpb.x)
-		end
-	end)
+	local yaw, pitch = -hpb.x, hpb.y or 0
+	-- Modded exes: yaw+pitch (and optional roll / HPB vector).
+	local ok = pcall(function() db.actor:set_actor_direction(yaw, pitch) end)
+	if not ok then
+		ok = pcall(function() db.actor:set_actor_direction(vector():set(yaw, pitch, 0)) end)
+	end
+	if not ok then
+		pcall(function() db.actor:set_actor_direction(yaw) end)
+	end
+end
+
+local function clear_land_state()
+	tft.fly_land_ground = nil
+	tft.fly_land_eye = nil
+	tft.fly_land_dir = nil
+	tft.fly_land_from = nil
+	tft.fly_land_dist = nil
+	tft.fly_land_u = nil
 end
 
 local function hard_restore()
 	release_fwd()
 	clear_custom_cam()
+	unlock_input()
+	restore_gravity()
+	restore_actor_collision()
+	restore_time_factor()
+	tft.fly_active = false
+	tft.fly_phase = nil
+	tft.fly_path = nil
+	tft.fly_cum = nil
+	tft.fly_total = nil
+	tft.fly_u = nil
+	tft.fly_dir = nil
+	tft.fly_move_dir = nil
+	tft.walk_cam_mps = nil
+	tft.fly_cancel_key_down = nil
+	clear_land_state()
+end
+
+local function resolve_land_ground()
+	local prefer = tft.dest_pos
+	if not prefer then
+		local fly = tft.fly_path
+		local last = fly and fly[#fly]
+		if last then
+			prefer = last.ground or last.raw
+		end
+	end
+	if not prefer then return nil end
+	if tft_find_ground_pos then
+		local snap = tft_find_ground_pos(prefer, tft.dest_lvid, tft.dest_gvid, {
+			anchor = prefer,
+			max_drift_m = 25,
+			local_only = true,
+			ray_first = true,
+		})
+		if snap then return snap end
+	end
+	return copy_v(prefer)
+end
+
+local function finish_arrive()
+	local land = tft.fly_land_ground or resolve_land_ground()
+	local dir = tft.fly_land_dir or tft.fly_dir
+	if db.actor and land then
+		pcall(function() db.actor:set_actor_position(land) end)
+		tft.dest_pos = vector():set(land.x, land.y, land.z)
+	end
+	-- Apply full yaw+pitch to player cam before dropping custom cam.
+	if dir then face_direction(dir) end
+	-- Keep collision off until after final place (complete_travel also sets position).
+	release_fwd()
+	clear_custom_cam()
+	-- Re-apply facing after cam swap (engine may reset look on remove_cam_custom).
+	if dir then face_direction(dir) end
 	unlock_input()
 	restore_gravity()
 	restore_time_factor()
@@ -326,12 +509,11 @@ local function hard_restore()
 	tft.fly_total = nil
 	tft.fly_u = nil
 	tft.fly_dir = nil
+	tft.fly_move_dir = nil
 	tft.walk_cam_mps = nil
 	tft.fly_cancel_key_down = nil
-end
-
-local function finish_arrive()
-	hard_restore()
+	clear_land_state()
+	restore_weapon_slot()
 	if tft_complete_travel_sequence then
 		tft_complete_travel_sequence({ reason = "arrive" })
 	else
@@ -339,21 +521,57 @@ local function finish_arrive()
 		if tft_set_fft_trip_in_progress then tft_set_fft_trip_in_progress(false) end
 		if tft_clear then tft_clear() end
 	end
+	restore_actor_collision()
+end
+
+local function begin_land(from_eye)
+	-- Ensure last path points are ray-snapped for a valid landing.
+	local fly = tft.fly_path
+	if fly then
+		resolve_fly_point(fly, #fly)
+		if #fly > 1 then resolve_fly_point(fly, #fly - 1) end
+	end
+	local land_g = resolve_land_ground()
+	if not land_g then
+		finish_arrive()
+		return
+	end
+	local eye_h = fly_cfg().eye_height_m or 1.44
+	local land_eye = vector():set(land_g.x, (land_g.y or 0) + eye_h, land_g.z)
+	local from = copy_v(from_eye) or land_eye
+	local dist = hdist(from, land_eye) or from:distance_to(land_eye) or 0
+	local min_m = fly_cfg().land_min_m or 1.5
+	if dist < min_m then
+		tft.fly_land_ground = land_g
+		tft.fly_land_dir = copy_v(tft.fly_dir)
+		finish_arrive()
+		return
+	end
+	tft.fly_phase = "land"
+	tft.fly_land_ground = land_g
+	tft.fly_land_eye = land_eye
+	tft.fly_land_dir = copy_v(tft.fly_dir)
+	tft.fly_land_from = from
+	tft.fly_land_dist = dist
+	tft.fly_land_u = 0
+	release_fwd()
+	log("land handoff %.1fm", dist)
 end
 
 local function cancel_fly_camera()
 	if not (tft.fly_active or tft.fly_phase) then
 		hard_restore()
+		restore_weapon_slot()
 		return
 	end
 	hard_restore()
+	restore_weapon_slot()
 end
 
 local function space_dik()
 	return (DIK_keys and DIK_keys.DIK_SPACE) or 57
 end
 
--- Spacebar cancel (edge). Prefer dogma.input; key_state still works under disable_input.
 local function cancel_key_pressed()
 	local dik = space_dik()
 	if dogma and dogma.input and dogma.input.is_key_pressed then
@@ -363,6 +581,53 @@ local function cancel_key_pressed()
 	local was = tft.fly_cancel_key_down == true
 	tft.fly_cancel_key_down = down
 	return down and not was
+end
+
+local function update_land(dt)
+	if cancel_key_pressed() then
+		if tft_stop_travel_logic then
+			tft_stop_travel_logic("cancel")
+		else
+			cancel_fly_camera()
+		end
+		return
+	end
+
+	local from = tft.fly_land_from
+	local to = tft.fly_land_eye
+	local dist = tft.fly_land_dist or 0
+	local dir = tft.fly_land_dir or tft.fly_dir
+	if not (from and to and dist > 0) then
+		finish_arrive()
+		return
+	end
+
+	local mps = tft.walk_cam_mps or snapshot_cam_mps()
+	tft.fly_land_u = (tft.fly_land_u or 0) + mps * move_dt(dt)
+	local t = math.min(1, (tft.fly_land_u or 0) / dist)
+	local eye = vector():set(
+		lerp(from.x, to.x, t),
+		lerp(from.y or 0, to.y or 0, t),
+		lerp(from.z, to.z, t)
+	)
+	if dir then
+		set_custom_cam(eye, dir)
+		face_direction(dir)
+	end
+	if db.actor and tft.fly_land_ground then
+		local g = tft.fly_land_ground
+		local eye_h = fly_cfg().eye_height_m or 1.44
+		local body = vector():set(
+			lerp(from.x, g.x, t),
+			lerp((from.y or 0) - eye_h, g.y or 0, t),
+			lerp(from.z, g.z, t)
+		)
+		pcall(function() db.actor:set_actor_position(body) end)
+	end
+
+	if t >= 1 then
+		finish_arrive()
+	end
 end
 
 local function update_fly(dt)
@@ -375,9 +640,14 @@ local function update_fly(dt)
 		return
 	end
 
+	maybe_stash_weapon_slot()
+
 	if cancel_key_pressed() then
-		hard_restore()
-		if tft_stop_travel_logic then tft_stop_travel_logic("cancel") end
+		if tft_stop_travel_logic then
+			tft_stop_travel_logic("cancel")
+		else
+			cancel_fly_camera()
+		end
 		return
 	end
 
@@ -385,27 +655,35 @@ local function update_fly(dt)
 	hold_fwd()
 
 	local mps = tft.walk_cam_mps or snapshot_cam_mps()
-	local u = (tft.fly_u or 0) + mps * dt
+	local u = (tft.fly_u or 0) + mps * move_dt(dt)
 	if u > total then u = total end
 	tft.fly_u = u
 	tft.current_dist = u
 
+	ensure_fly_window(fly, cum, u)
 	local eye, ground = pos_at_arc(fly, cum, total, u)
 	if not eye then return end
 
-	local look_u = math.min(u + (fly_cfg().look_ahead_m or 12), total)
+	local look_u = math.min(u + (fly_cfg().look_ahead_m or 8), total)
 	local look_eye = pos_at_arc(fly, cum, total, look_u)
-	local tgt = dir_toward(eye, look_eye or eye)
-	tft.fly_dir = damp_dir(tft.fly_dir or tgt, tgt, fly_cfg().turn_smooth or 0.3)
+	local look_tgt = dir_toward(eye, look_eye or eye)
+	-- Path tangent for body facing (short look-ahead).
+	local move_u = math.min(u + 2.0, total)
+	local move_eye = pos_at_arc(fly, cum, total, move_u)
+	local move_tgt = dir_toward(eye, move_eye or eye)
+
+	local settle = fly_cfg().turn_settle_s or 0.1
+	tft.fly_dir = rotate_dir_toward(tft.fly_dir, look_tgt, dt, settle)
+	tft.fly_move_dir = rotate_dir_toward(tft.fly_move_dir, move_tgt, dt, settle)
 
 	set_custom_cam(eye, tft.fly_dir)
 	if db.actor and ground then
 		pcall(function() db.actor:set_actor_position(ground) end)
-		face_direction(tft.fly_dir)
+		face_direction(tft.fly_move_dir or tft.fly_dir)
 	end
 
 	if u >= total - 0.05 then
-		finish_arrive()
+		begin_land(eye)
 	end
 end
 
@@ -419,7 +697,9 @@ local function fly_on_actor_update()
 	local last = tft.fly_last_tg or tg
 	tft.fly_last_tg = tg
 	local dt = math.max(0.001, math.min((tg - last) / 1000, 0.1))
-	if tft.fly_phase == "fly" then
+	if tft.fly_phase == "land" then
+		update_land(dt)
+	elseif tft.fly_phase == "fly" then
 		update_fly(dt)
 	end
 end
@@ -446,27 +726,35 @@ local function begin_fly_camera()
 	tft.fly_phase = "fly"
 	tft.fly_active = true
 	tft.fly_cancel_key_down = false
+	tft.walk_prev_slot = nil
+	clear_land_state()
 
 	if tft_close_pda_for_travel then tft_close_pda_for_travel() end
-	equip_primary()
 	force_weapon_hud()
 	snapshot_cam_mps()
-	set_time_factor(TIME_FACTOR)
+	local tf = travel_time_factor()
+	stash_time_factor()
+	set_time_factor(tf)
 	stash_gravity()
+	disable_actor_collision()
 	lock_input()
 	hold_fwd()
 
 	if tft_set_safety_active then tft_set_safety_active(120) end
 
+	ensure_fly_window(fly, cum, 0)
+	resolve_fly_point(fly, 1)
+	if #fly >= 2 then resolve_fly_point(fly, 2) end
 	tft.fly_dir = dir_toward(fly[1], fly[math.min(2, #fly)])
+	tft.fly_move_dir = copy_v(tft.fly_dir)
 	local p0 = pos_at_arc(fly, cum, total, 0)
 	if p0 then set_custom_cam(p0, tft.fly_dir) end
 	if db.actor and fly[1] and fly[1].ground then
 		pcall(function() db.actor:set_actor_position(fly[1].ground) end)
-		face_direction(tft.fly_dir)
+		face_direction(tft.fly_move_dir)
 	end
 
-	log("start: %d pts, %.0fm, %.1f m/s tf=%.1f", #fly, total, tft.walk_cam_mps or 0, TIME_FACTOR)
+	log("start: %d pts, %.0fm, %.1f m/s tf=%.1f", #fly, total, tft.walk_cam_mps or 0, tf)
 	return true
 end
 

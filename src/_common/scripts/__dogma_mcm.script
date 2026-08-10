@@ -336,6 +336,7 @@ _G.dogma_debug_conf = {
 		["inc_limb_rightleg_key"] = -1,
 		["dec_limb_rightleg_key"] = -1,
 		["fps_long_frame_threshold_ms"] = 0,
+		["perf_warn_threshold_ms"] = 0,
 	},
 }
 
@@ -636,6 +637,27 @@ function register_debug_page(options)
 				step = 5,
 				def = CONFIG.DEFAULTS["fps_long_frame_threshold_ms"],
 				hint = "dogma_debug_fps_long_frame_threshold_ms",
+			},
+			{ id = "line_perf", type = "line" },
+			{
+				id = "hdr_perf",
+				type = "desc",
+				text = "ui_mcm_dogma_debug_hdr_perf",
+			},
+			{
+				id = "perf_warn_threshold_desc",
+				type = "desc",
+				text = "ui_mcm_dogma_debug_perf_warn_threshold_desc",
+			},
+			{
+				id = "perf_warn_threshold_ms",
+				type = "track",
+				val = 2,
+				min = 0,
+				max = 1000,
+				step = 5,
+				def = CONFIG.DEFAULTS["perf_warn_threshold_ms"],
+				hint = "dogma_debug_perf_warn_threshold_ms",
 			},
 		}),
 	}

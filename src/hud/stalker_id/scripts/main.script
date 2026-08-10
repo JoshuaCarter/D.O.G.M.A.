@@ -1,7 +1,7 @@
 --[[
 	Stalker ID - centered Faction Identification replacement.
 
-	Soft aim: every 100ms, project nearby stalker spine to screen and pick
+	Soft aim: every 100ms, project nearby stalker upper chest to screen and pick
 	closest to center within aim_radius_px. Optional LOS recast toward the
 	anchor (bushes pierce; walls block), walking screen-near candidates in
 	distance order. Losing the target fades the HUD out over 2s.
@@ -17,7 +17,8 @@ local ALIGN_CENTER = 2 -- CGameFont::alCenter
 local UPDATE_DELAY = 100
 local FADE_MS = 2000
 
-local ANCHOR_BONES = { "bip01_spine", "bip01_spine1", "bip01_spine2" }
+-- Upper chest first (no dedicated upper-torso bone); mid spine / neck as fallbacks.
+local ANCHOR_BONES = { "bip01_spine2", "bip01_spine1", "bip01_neck" }
 
 -- LOS recast: pierce solid bushes; walls / other statics still block.
 local LOOK_FLAGS = 3 -- rqtObject | rqtStatic
@@ -96,6 +97,8 @@ local function on_option_change()
 	CONFIG.loaded.always_show_line_binoc = dogma.mcm.bool(id, "always_show_line_binoc")
 	CONFIG.loaded.line_keybind = dogma.mcm.key(id, "line_keybind")
 	CONFIG.loaded.line_width_px = dogma.mcm.uint(id, "line_width_px")
+	CONFIG.loaded.line_gap_near_px = dogma.mcm.uint(id, "line_gap_near_px")
+	CONFIG.loaded.line_gap_far_px = dogma.mcm.uint(id, "line_gap_far_px")
 end
 
 local function hide_all_patches(hud)
@@ -606,6 +609,23 @@ local function line_start_ui()
 	return UI_CENTER_X, uy
 end
 
+local LINE_GAP_FAR_DIST = 200 -- metres: far slider applies fully at this range
+
+-- Screen-space inset before the bone projection. Lerps near→far px by stalker distance
+-- (0m = full near gap, 200m = far gap). ID start stays fixed.
+local function line_end_gap_px(dist_m)
+	local near = CONFIG.loaded.line_gap_near_px or 0
+	local far = CONFIG.loaded.line_gap_far_px or 0
+	local t = 0
+	if dist_m and dist_m > 0 then
+		t = dist_m / LINE_GAP_FAR_DIST
+		if t > 1 then
+			t = 1
+		end
+	end
+	return near + (far - near) * t
+end
+
 local function update_leader_line()
 	-- Active ID or fading: line_target_id is kept through fade, cleared on clear().
 	if not (HUD and line_target_id and want_line() and fade_mul > 0 and (LastHitObject or fade_active)) then
@@ -619,7 +639,8 @@ local function update_leader_line()
 		return
 	end
 
-	local hx, hy = project_world(anchor_pos(obj))
+	local anchor = anchor_pos(obj)
+	local hx, hy = project_world(anchor)
 	if not hx then
 		hide_line()
 		return
@@ -634,6 +655,35 @@ local function update_leader_line()
 	if len < 1 then
 		hide_line()
 		return
+	end
+
+	local dist_m = 0
+	local d = device and device()
+	local cam = d and d.cam_pos
+	if cam and anchor then
+		dist_m = cam:distance_to(anchor)
+	elseif db.actor and anchor then
+		dist_m = db.actor:position():distance_to(anchor)
+	end
+
+	-- Shorten from stalker end in virtual UI px (distance-lerped near→far).
+	local screen_len = sqrt(dx * dx + dy * dy)
+	local gap = line_end_gap_px(dist_m)
+	if gap > 0 and screen_len > 1 then
+		if gap > screen_len * 0.9 then
+			gap = screen_len * 0.9
+		end
+		local f = gap / screen_len
+		hx = hx - dx * f
+		hy = hy - dy * f
+		dx = hx - ux
+		dy = hy - uy
+		dxk = dx / UI_KX
+		len = sqrt(dxk * dxk + dy * dy)
+		if len < 1 then
+			hide_line()
+			return
+		end
 	end
 
 	local ang = atan2(-dy, dxk)

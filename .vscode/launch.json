@@ -2,10 +2,14 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Tail Log",
-            "type": "node-terminal",
+            "name": "Build",
+            "type": "node",
             "request": "launch",
-            "command": "tail -f \"C:\\Anomaly\\appdata\\logs\\xray_khada.log\" | grep --line-buffered -E \"\\[DBG\\]\""
+            "runtimeExecutable": "node",
+            "runtimeArgs": ["-e", ""],
+            "preLaunchTask": "DOGMA: Build",
+            "console": "internalConsole",
+            "internalConsoleOptions": "neverOpen"
         },
         {
             "type": "lua",

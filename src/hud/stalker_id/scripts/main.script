@@ -1,31 +1,38 @@
 --[[
 	Stalker ID - centered Faction Identification replacement.
 
-	Instant ID on look-at. Losing the target fades the HUD out over 2s;
-	a new target replaces it immediately. Layout is screen-centered:
-	name, rank, then icon (or "Zombified" for zombied community).
-
-	Look pick pierces bush materials so solid-bush tweaks don't block ID;
-	other statics (walls, etc.) still occlude.
+	Soft aim: every 100ms, project nearby stalker neck/torso to screen and pick
+	closest to center within aim_radius_px. Optional LOS recast toward the
+	anchor (bushes pierce; walls block), walking screen-near candidates in
+	distance order. Losing the target fades the HUD out over 2s.
 ]]
 
 local CONFIG = _G.dogma_hud_stalker_id_conf
 
 local UI_WIDTH = 1024
+local UI_HEIGHT = 768
 local UI_CENTER_X = UI_WIDTH * 0.5
+local UI_CX, UI_CY = 512, 384
 local ALIGN_CENTER = 2 -- CGameFont::alCenter
 local UPDATE_DELAY = 100
 local FADE_MS = 2000
 
--- Look-at pick: pierce solid bushes (vis_transparency_factor=0) so ID still works
--- through foliage. Walls / other statics still block. Flags 3 = rqtObject|rqtStatic.
-local LOOK_RANGE = 100
+local ANCHOR_BONES = { "bip01_neck", "bip01_spine2", "bip01_spine1", "bip01_head" }
+
+-- LOS recast: pierce solid bushes; walls / other statics still block.
 local LOOK_FLAGS = 3 -- rqtObject | rqtStatic
 local LOOK_MAX_PIERCE = 16
 local LOOK_BUSH_STEP = 0.2
 local look_pick = nil
 local LOOK_POS = vector()
 local LOOK_DIR = vector()
+local LOOK_SCRATCH = vector()
+local W2U_SCRATCH = vector()
+
+local LINE_THICK = 2
+local LINE_HALO = 2
+local LINE_A = 200
+local FOV_ZOOM_RATIO = 0.7
 
 local FACTION_KEYS = {
 	"stalker", "bandit", "csky", "army", "freedom", "dolg", "ecolog",
@@ -35,16 +42,24 @@ local FACTION_KEYS = {
 local HUD = nil
 local nametable = {}
 local LastHitObject = nil
+local line_target_id = nil
 local trigger = 0
 local grok_delay = 0
 
 local fade_active = false
 local fade_start_ms = 0
-local shown_faction = nil -- currently visible patch key (or nil)
+local fade_mul = 1
+local shown_faction = nil
 
 local zombified_text
+local _fov_baseline = 60
+local UI_KX = 1
+local _ui_w = 0
 
 local POS_VEC = vector2()
+local SIZE_VEC = vector2()
+
+local floor, sqrt, atan2 = math.floor, math.sqrt, math.atan2
 
 local function clamp01(v)
 	if v < 0 then
@@ -56,8 +71,8 @@ local function clamp01(v)
 	return v
 end
 
-local function pct_to_byte(pct, fade_mul)
-	return math.floor(255 * clamp01((tonumber(pct) or 0) / 100) * clamp01(fade_mul) + 0.5)
+local function pct_to_byte(pct, mul)
+	return floor(255 * clamp01((tonumber(pct) or 0) / 100) * clamp01(mul) + 0.5)
 end
 
 local function on_option_change()
@@ -71,6 +86,12 @@ local function on_option_change()
 	CONFIG.loaded.name_a = dogma.mcm.uint(id, "name_a")
 	CONFIG.loaded.rank_a = dogma.mcm.uint(id, "rank_a")
 	CONFIG.loaded.icon_a = dogma.mcm.uint(id, "icon_a")
+	CONFIG.loaded.max_range = dogma.mcm.uint(id, "max_range")
+	CONFIG.loaded.aim_radius_px = dogma.mcm.uint(id, "aim_radius_px")
+	CONFIG.loaded.require_visible = dogma.mcm.bool(id, "require_visible")
+	CONFIG.loaded.always_show_line = dogma.mcm.bool(id, "always_show_line")
+	CONFIG.loaded.always_show_line_binoc = dogma.mcm.bool(id, "always_show_line_binoc")
+	CONFIG.loaded.line_keybind = dogma.mcm.key(id, "line_keybind")
 end
 
 local function hide_all_patches(hud)
@@ -88,10 +109,20 @@ local function clear_text(hud)
 	hud.zombified:Show(false)
 end
 
-local function apply_alphas(fade_mul)
+local function hide_line(hud)
+	hud = hud or HUD
+	if not hud then
+		return
+	end
+	hud.line:Show(false)
+	hud.line_sh:Show(false)
+end
+
+local function apply_alphas(mul)
 	if not HUD then
 		return
 	end
+	fade_mul = clamp01(mul)
 	local cfg = CONFIG.loaded
 	local name_a = pct_to_byte(cfg.name_a, fade_mul)
 	local rank_a = pct_to_byte(cfg.rank_a, fade_mul)
@@ -111,6 +142,7 @@ end
 local function cancel_fade()
 	fade_active = false
 	fade_start_ms = 0
+	fade_mul = 1
 end
 
 local function start_fade()
@@ -121,6 +153,7 @@ end
 local function clear()
 	cancel_fade()
 	shown_faction = nil
+	line_target_id = nil
 	if HUD then
 		HUD:Reset()
 	end
@@ -131,6 +164,13 @@ class "UIStalkerIDHUD" (CUIScriptWnd)
 function UIStalkerIDHUD:__init() super()
 	local xml = CScriptXmlInit()
 	xml:ParseFile("ui_dogma_stalker_id.xml")
+
+	self.line_sh = xml:InitStatic("line_sh", self)
+	self.line = xml:InitStatic("line", self)
+	self.line_sh:EnableHeading(true)
+	self.line:EnableHeading(true)
+	self.line_sh:Show(false)
+	self.line:Show(false)
 
 	self.factions = {}
 	for i = 1, #FACTION_KEYS do
@@ -162,6 +202,7 @@ end
 function UIStalkerIDHUD:Reset()
 	hide_all_patches(self)
 	clear_text(self)
+	hide_line(self)
 end
 
 local function activate_hud()
@@ -183,6 +224,7 @@ end
 function on_screen_resolution_changed()
 	deactivate_hud()
 	activate_hud()
+	_ui_w = 0
 end
 
 function actor_on_net_destroy()
@@ -190,6 +232,7 @@ function actor_on_net_destroy()
 		get_hud():RemoveDialogToRender(HUD)
 		HUD = nil
 	end
+	line_target_id = nil
 end
 
 function actor_on_first_update()
@@ -290,12 +333,35 @@ local function is_bush_material(name)
 	return name:find("bush", 1, true) ~= nil
 end
 
--- Camera look ray that skips bush/bush_sux static hits (solid-bush tweak).
--- Falls back to level.get_target_obj if ray_pick is unavailable.
-local function get_look_target()
+local function anchor_pos(obj)
+	for i = 1, #ANCHOR_BONES do
+		local ok, p = pcall(obj.bone_position, obj, ANCHOR_BONES[i])
+		if ok and p then
+			return p
+		end
+	end
+	local p = obj:position()
+	return LOOK_SCRATCH:set(p.x, p.y + 1.2, p.z)
+end
+
+local function project_world(pos)
+	local w2u = (game and game.world2ui) or (level and level.world2ui)
+	if not w2u then
+		return nil
+	end
+	local ui = w2u(W2U_SCRATCH:set(pos), false, false)
+	if not ui or ui.x < -9000 then
+		return nil
+	end
+	return ui.x, ui.y
+end
+
+-- Bush-piercing ray from camera toward `to_pos`. True if the first non-bush
+-- hit is `target_obj`.
+local function ray_hits_object(target_obj, to_pos, max_range)
 	local d = device()
-	if not (ray_pick and d and d.cam_pos and d.cam_dir) then
-		return level.get_target_obj and level.get_target_obj()
+	if not (ray_pick and d and d.cam_pos and target_obj and to_pos) then
+		return false
 	end
 
 	if not look_pick then
@@ -305,10 +371,22 @@ local function get_look_target()
 	pick:set_flags(LOOK_FLAGS)
 
 	local ox, oy, oz = d.cam_pos.x, d.cam_pos.y, d.cam_pos.z
-	local dx, dy, dz = d.cam_dir.x, d.cam_dir.y, d.cam_dir.z
-	local remaining = LOOK_RANGE
-	local pierces = 0
+	local dx = to_pos.x - ox
+	local dy = to_pos.y - oy
+	local dz = to_pos.z - oz
+	local dist = sqrt(dx * dx + dy * dy + dz * dz)
+	if dist < 0.05 then
+		return true
+	end
+	dx, dy, dz = dx / dist, dy / dist, dz / dist
 	LOOK_DIR:set(dx, dy, dz)
+
+	local remaining = dist + 0.5
+	if max_range and remaining > max_range then
+		remaining = max_range
+	end
+	local pierces = 0
+	local target_id = target_obj:id()
 
 	while remaining > LOOK_BUSH_STEP and pierces <= LOOK_MAX_PIERCE do
 		LOOK_POS:set(ox, oy, oz)
@@ -323,18 +401,18 @@ local function get_look_target()
 			return pick:query()
 		end)
 		if not (ok and hit) then
-			return nil
+			return false
 		end
 
 		local obj = pick:get_object()
 		if obj then
-			return obj
+			return obj:id() == target_id
 		end
 
 		local result = pick:get_result()
 		local hit_dist = pick:get_distance()
 		if not (result and hit_dist and hit_dist > 0 and is_bush_material(result.material_name)) then
-			return nil
+			return false
 		end
 
 		local step = hit_dist + LOOK_BUSH_STEP
@@ -345,18 +423,224 @@ local function get_look_target()
 		pierces = pierces + 1
 	end
 
+	return false
+end
+
+local function cand_screen_cmp(a, b)
+	return a.sd < b.sd
+end
+
+local function find_id_target()
+	local cfg = CONFIG.loaded
+	local max_range = cfg.max_range or 0
+	if max_range <= 0 or not (db and db.actor) or not level.iterate_nearest then
+		return nil
+	end
+	if not HUD then
+		return nil
+	end
+
+	local apos = db.actor:position()
+	local actor_id = db.actor:id()
+	local radius = cfg.aim_radius_px or 0
+	local candidates = {}
+
+	pcall(level.iterate_nearest, apos, max_range, function(obj)
+		if not obj then
+			return false
+		end
+		local id = obj:id()
+		if id == 0 or id == actor_id then
+			return false
+		end
+		if not IsStalker(obj) then
+			return false
+		end
+		if not (obj.health > 0 or cfg.dead_id) then
+			return false
+		end
+		if not is_valid_community(obj:character_community()) then
+			return false
+		end
+
+		local anchor = anchor_pos(obj)
+		if not anchor then
+			return false
+		end
+		if apos:distance_to(anchor) > max_range then
+			return false
+		end
+
+		local sx, sy = project_world(anchor)
+		if not sx then
+			return false
+		end
+		local dx, dy = sx - UI_CX, sy - UI_CY
+		local sd = sqrt(dx * dx + dy * dy)
+		if sd <= radius then
+			candidates[#candidates + 1] = {
+				obj = obj,
+				ax = anchor.x,
+				ay = anchor.y,
+				az = anchor.z,
+				sd = sd,
+			}
+		end
+		return false
+	end)
+
+	if #candidates == 0 then
+		return nil
+	end
+	table.sort(candidates, cand_screen_cmp)
+
+	if not cfg.require_visible then
+		return candidates[1].obj
+	end
+
+	for i = 1, #candidates do
+		local c = candidates[i]
+		LOOK_SCRATCH:set(c.ax, c.ay, c.az)
+		if ray_hits_object(c.obj, LOOK_SCRATCH, max_range) then
+			return c.obj
+		end
+	end
 	return nil
+end
+
+local function is_binoc_held()
+	if not db.actor then
+		return false
+	end
+	local ok, item = pcall(db.actor.active_item, db.actor)
+	if not ok or not item then
+		return false
+	end
+	local ok2, sec = pcall(item.section, item)
+	if not ok2 or not sec then
+		return false
+	end
+	return sec == "wpn_binoc_inv" or sec:find("binoc") ~= nil
+end
+
+local function update_fov_baseline()
+	if is_binoc_held() then
+		return
+	end
+	local d = device and device()
+	local fov = d and d.fov
+	if fov and fov > _fov_baseline then
+		_fov_baseline = fov
+	end
+end
+
+local function is_binoc_active()
+	local axr = axr_main
+	if axr and axr.binoc_is_zoomed then
+		return true
+	end
+	if not is_binoc_held() then
+		return false
+	end
+	local d = device and device()
+	local fov = d and d.fov
+	if not fov or fov <= 0 then
+		return true
+	end
+	return fov < _fov_baseline * FOV_ZOOM_RATIO
+end
+
+local function want_line()
+	local cfg = CONFIG.loaded
+	if cfg.always_show_line then
+		return true
+	end
+	if cfg.always_show_line_binoc and is_binoc_active() then
+		return true
+	end
+	local key = cfg.line_keybind
+	if key and dogma.input and dogma.input.is_key_down(key) then
+		return true
+	end
+	return false
+end
+
+local function refresh_ui_kx()
+	local d = device and device()
+	if not (d and d.width and d.width > 0) then
+		return
+	end
+	if d.width == _ui_w then
+		return
+	end
+	_ui_w = d.width
+	UI_KX = (d.height / d.width) / (UI_HEIGHT / UI_WIDTH)
+end
+
+local function update_leader_line()
+	-- Active ID or fading: line_target_id is kept through fade, cleared on clear().
+	if not (HUD and line_target_id and want_line() and fade_mul > 0 and (LastHitObject or fade_active)) then
+		hide_line()
+		return
+	end
+
+	local obj = level.object_by_id and level.object_by_id(line_target_id)
+	if not obj then
+		hide_line()
+		return
+	end
+
+	local anchor = anchor_pos(obj)
+	local hx, hy = project_world(anchor)
+	if not hx then
+		hide_line()
+		return
+	end
+
+	refresh_ui_kx()
+	local cfg = CONFIG.loaded
+	local ux, uy = UI_CENTER_X, cfg.icon_y or 60
+	local dx = hx - ux
+	local dy = hy - uy
+	local dxk = dx / UI_KX
+	local len = sqrt(dxk * dxk + dy * dy)
+	if len < 1 then
+		hide_line()
+		return
+	end
+
+	local ang = atan2(-dy, dxk)
+	local mx = (ux + hx) * 0.5
+	local my = (uy + hy) * 0.5
+	local a = floor(LINE_A * fade_mul + 0.5)
+	if a < 1 then
+		hide_line()
+		return
+	end
+
+	local halo_t = LINE_THICK + LINE_HALO
+	HUD.line_sh:SetWndSize(SIZE_VEC:set(len, halo_t))
+	HUD.line_sh:SetWndPos(POS_VEC:set(mx - len * 0.5, my - halo_t * 0.5))
+	HUD.line_sh:SetHeading(ang)
+	HUD.line_sh:SetTextureColor(GetARGB(floor(a * 0.6), 0, 0, 0))
+	HUD.line_sh:Show(true)
+
+	HUD.line:SetWndSize(SIZE_VEC:set(len, LINE_THICK))
+	HUD.line:SetWndPos(POS_VEC:set(mx - len * 0.5, my - LINE_THICK * 0.5))
+	HUD.line:SetHeading(ang)
+	HUD.line:SetTextureColor(GetARGB(a, 255, 255, 255))
+	HUD.line:Show(true)
 end
 
 local function target_enter(obj)
 	if not obj then
 		return
 	end
+	line_target_id = obj:id()
 	display_faction(obj)
 end
 
 local function target_lost()
-	-- Keep current HUD content; fade it out over FADE_MS.
 	if not HUD then
 		return
 	end
@@ -377,8 +661,9 @@ local function update_fade()
 end
 
 function actor_on_update()
-	-- Fade must tick every frame for smooth alpha.
+	update_fov_baseline()
 	update_fade()
+	update_leader_line()
 
 	local tg = time_global()
 	local cfg = CONFIG.loaded
@@ -393,31 +678,26 @@ function actor_on_update()
 	end
 	trigger = 0
 
-	local obj = get_look_target()
-	local valid = HUD
-		and obj
-		and IsStalker(obj)
-		and obj:id() ~= 0
-		and (obj.health > 0 or cfg.dead_id)
-		and is_valid_community(obj:character_community())
+	local obj = find_id_target()
+	local valid = HUD and obj ~= nil
 
 	if valid then
 		if LastHitObject then
 			if obj:id() ~= LastHitObject:id() then
-				-- New target instantly overrides (cancel any fade).
 				target_enter(obj)
 			elseif fade_active then
-				-- Re-acquired same target during fade: snap back to full.
 				target_enter(obj)
 			end
 		else
 			target_enter(obj)
 		end
 		LastHitObject = obj
+		line_target_id = obj:id()
 		return
 	end
 
 	if LastHitObject then
+		-- Keep line_target_id through fade so the leader line can track.
 		LastHitObject = nil
 		target_lost()
 	end
@@ -441,6 +721,9 @@ function npc_on_death_callback(npc, who)
 end
 
 function npc_on_net_destroy(npc)
+	if line_target_id and npc:id() == line_target_id then
+		line_target_id = nil
+	end
 	if not LastHitObject then
 		return
 	end
@@ -461,7 +744,7 @@ function GUI_on_show(gui, str2)
 	end
 
 	if gui == "UIInventory" then
-		local obj = get_look_target()
+		local obj = find_id_target()
 		if not (obj and IsStalker(obj)) then
 			return
 		end

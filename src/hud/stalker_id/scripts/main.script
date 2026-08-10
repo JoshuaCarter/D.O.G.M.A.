@@ -100,7 +100,6 @@ local function on_option_change()
 	CONFIG.loaded.always_show_line_binoc = dogma.mcm.bool(id, "always_show_line_binoc")
 	CONFIG.loaded.line_keybind = dogma.mcm.key(id, "line_keybind")
 	CONFIG.loaded.line_width_px = dogma.mcm.uint(id, "line_width_px")
-	CONFIG.loaded.line_gap_mul = dogma.mcm.float(id, "line_gap_mul")
 end
 
 local function hide_all_patches(hud)
@@ -671,31 +670,27 @@ local function update_leader_line()
 		return
 	end
 
-	-- Shorten by screen-space upper-spine→head span × multiplier (0 = tip on bone).
-	local gap = 0
-	local mul = CONFIG.loaded.line_gap_mul or 0
-	if mul > 0 then
-		local spine = los_pos(obj)
-		local sx, sy = project_world(spine)
-		if sx then
-			local bdx = hx - sx
-			local bdy = hy - sy
-			gap = sqrt(bdx * bdx + bdy * bdy) * mul
-		end
-	end
-	if gap > 0 then
-		if gap > screen_len * 0.9 then
-			gap = screen_len * 0.9
-		end
-		local f = gap / screen_len
-		hx = hx - dx * f
-		hy = hy - dy * f
-		dx = hx - ux
-		dy = hy - uy
-		screen_len = sqrt(dx * dx + dy * dy)
-		if screen_len < 1 then
-			hide_line()
-			return
+	-- Shorten by screen-space upper-spine→head span so tip sits near upper spine.
+	local spine = los_pos(obj)
+	local sx, sy = project_world(spine)
+	if sx then
+		local bdx = hx - sx
+		local bdy = hy - sy
+		local gap = sqrt(bdx * bdx + bdy * bdy)
+		if gap > 0 then
+			if gap > screen_len * 0.9 then
+				gap = screen_len * 0.9
+			end
+			local f = gap / screen_len
+			hx = hx - dx * f
+			hy = hy - dy * f
+			dx = hx - ux
+			dy = hy - uy
+			screen_len = sqrt(dx * dx + dy * dy)
+			if screen_len < 1 then
+				hide_line()
+				return
+			end
 		end
 	end
 

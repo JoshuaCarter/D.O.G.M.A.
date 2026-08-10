@@ -1,7 +1,7 @@
 --[[
 	Stalker ID - centered Faction Identification replacement.
 
-	Soft aim: every 100ms, project nearby stalker neck/torso to screen and pick
+	Soft aim: every 100ms, project nearby stalker spine to screen and pick
 	closest to center within aim_radius_px. Optional LOS recast toward the
 	anchor (bushes pierce; walls block), walking screen-near candidates in
 	distance order. Losing the target fades the HUD out over 2s.
@@ -17,7 +17,7 @@ local ALIGN_CENTER = 2 -- CGameFont::alCenter
 local UPDATE_DELAY = 100
 local FADE_MS = 2000
 
-local ANCHOR_BONES = { "bip01_neck", "bip01_spine2", "bip01_spine1", "bip01_head" }
+local ANCHOR_BONES = { "bip01_spine", "bip01_spine1", "bip01_spine2" }
 
 -- LOS recast: pierce solid bushes; walls / other statics still block.
 local LOOK_FLAGS = 3 -- rqtObject | rqtStatic
@@ -29,8 +29,10 @@ local LOOK_DIR = vector()
 local LOOK_SCRATCH = vector()
 local W2U_SCRATCH = vector()
 
-local LINE_THICK = 2
-local LINE_HALO = 2
+-- Line thickness: real pixels from MCM (halo +1), converted to virtual UI space.
+local LINE_HALO_REAL_PX = 1
+local PATCH_H = 24 -- faction patch / zombified row height in ui xml
+local LINE_START_BELOW_PX = 5 -- below bottom of patch (or zombified text)
 local LINE_A = 200
 local FOV_ZOOM_RATIO = 0.7
 
@@ -89,9 +91,11 @@ local function on_option_change()
 	CONFIG.loaded.max_range = dogma.mcm.uint(id, "max_range")
 	CONFIG.loaded.aim_radius_px = dogma.mcm.uint(id, "aim_radius_px")
 	CONFIG.loaded.require_visible = dogma.mcm.bool(id, "require_visible")
+	CONFIG.loaded.hide_on_death = dogma.mcm.bool(id, "hide_on_death")
 	CONFIG.loaded.always_show_line = dogma.mcm.bool(id, "always_show_line")
 	CONFIG.loaded.always_show_line_binoc = dogma.mcm.bool(id, "always_show_line_binoc")
 	CONFIG.loaded.line_keybind = dogma.mcm.key(id, "line_keybind")
+	CONFIG.loaded.line_width_px = dogma.mcm.uint(id, "line_width_px")
 end
 
 local function hide_all_patches(hud)
@@ -577,6 +581,31 @@ local function refresh_ui_kx()
 	UI_KX = (d.height / d.width) / (UI_HEIGHT / UI_WIDTH)
 end
 
+-- Virtual-UI thickness for a given real-pixel width (UI is always 1024x768).
+local function line_thick_ui(real_px)
+	local d = device and device()
+	local h = (d and d.height and d.height > 0) and d.height or UI_HEIGHT
+	local t = (real_px or 1) * UI_HEIGHT / h
+	if t < 0.35 then
+		t = 0.35
+	end
+	return t
+end
+
+-- Leader-line start: centered under the faction patch (or zombified row), +5px.
+local function line_start_ui()
+	local icon_y = CONFIG.loaded.icon_y or 60
+	local uy
+	if shown_faction then
+		-- Patch uses alignment="c"; icon_y is the vertical centre.
+		uy = icon_y + PATCH_H * 0.5 + LINE_START_BELOW_PX
+	else
+		-- Zombified text static is top-aligned at icon_y.
+		uy = icon_y + PATCH_H + LINE_START_BELOW_PX
+	end
+	return UI_CENTER_X, uy
+end
+
 local function update_leader_line()
 	-- Active ID or fading: line_target_id is kept through fade, cleared on clear().
 	if not (HUD and line_target_id and want_line() and fade_mul > 0 and (LastHitObject or fade_active)) then
@@ -590,16 +619,14 @@ local function update_leader_line()
 		return
 	end
 
-	local anchor = anchor_pos(obj)
-	local hx, hy = project_world(anchor)
+	local hx, hy = project_world(anchor_pos(obj))
 	if not hx then
 		hide_line()
 		return
 	end
 
 	refresh_ui_kx()
-	local cfg = CONFIG.loaded
-	local ux, uy = UI_CENTER_X, cfg.icon_y or 60
+	local ux, uy = line_start_ui()
 	local dx = hx - ux
 	local dy = hy - uy
 	local dxk = dx / UI_KX
@@ -618,15 +645,16 @@ local function update_leader_line()
 		return
 	end
 
-	local halo_t = LINE_THICK + LINE_HALO
+	local thick = line_thick_ui(CONFIG.loaded.line_width_px or 1)
+	local halo_t = thick + line_thick_ui(LINE_HALO_REAL_PX)
 	HUD.line_sh:SetWndSize(SIZE_VEC:set(len, halo_t))
 	HUD.line_sh:SetWndPos(POS_VEC:set(mx - len * 0.5, my - halo_t * 0.5))
 	HUD.line_sh:SetHeading(ang)
 	HUD.line_sh:SetTextureColor(GetARGB(floor(a * 0.6), 0, 0, 0))
 	HUD.line_sh:Show(true)
 
-	HUD.line:SetWndSize(SIZE_VEC:set(len, LINE_THICK))
-	HUD.line:SetWndPos(POS_VEC:set(mx - len * 0.5, my - LINE_THICK * 0.5))
+	HUD.line:SetWndSize(SIZE_VEC:set(len, thick))
+	HUD.line:SetWndPos(POS_VEC:set(mx - len * 0.5, my - thick * 0.5))
 	HUD.line:SetHeading(ang)
 	HUD.line:SetTextureColor(GetARGB(a, 255, 255, 255))
 	HUD.line:Show(true)
@@ -661,6 +689,10 @@ local function update_fade()
 end
 
 function actor_on_update()
+	if CONFIG.loaded.hide_on_death and db.actor and not db.actor:alive() then
+		return
+	end
+
 	update_fov_baseline()
 	update_fade()
 	update_leader_line()
@@ -701,6 +733,14 @@ function actor_on_update()
 		LastHitObject = nil
 		target_lost()
 	end
+end
+
+function actor_on_before_death()
+	if not CONFIG.loaded.hide_on_death then
+		return
+	end
+	LastHitObject = nil
+	clear()
 end
 
 function npc_on_death_callback(npc, who)
@@ -767,6 +807,7 @@ function on_game_start()
 	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
 	RegisterScriptCallback("on_screen_resolution_changed", on_screen_resolution_changed)
 	RegisterScriptCallback("actor_on_update", actor_on_update)
+	RegisterScriptCallback("actor_on_before_death", actor_on_before_death)
 	RegisterScriptCallback("npc_on_death_callback", npc_on_death_callback)
 	RegisterScriptCallback("npc_on_net_destroy", npc_on_net_destroy)
 	RegisterScriptCallback("GUI_on_show", GUI_on_show)

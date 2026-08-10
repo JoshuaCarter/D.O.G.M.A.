@@ -3,19 +3,105 @@
 local tft = _G.tft
 
 local safety_until = 0
+local PDA_SLOT = 8
+-- Engine often re-equips PDA ~1-2s after holster (see pda_go_away); re-assert past that.
+local PDA_HOLSTER_GUARD_MS = 3000
 
-local function close_pda_for_travel()
-	if not db.actor then return end
+local function slot_has_item(slot)
+	if not (db.actor and slot ~= nil) then return false end
+	local ok, item = pcall(function() return db.actor:item_in_slot(slot) end)
+	return ok and item ~= nil
+end
+
+local function pick_weapon_slot(prefer)
+	prefer = tonumber(prefer)
+	if prefer and prefer ~= PDA_SLOT and prefer ~= 0 and slot_has_item(prefer) then
+		return prefer
+	end
+	for _, s in ipairs({ 1, 2, 3, 4 }) do
+		if slot_has_item(s) then return s end
+	end
+	return 0
+end
+
+local function hide_pda_dialog()
 	pcall(function()
-		if ActorMenu and ActorMenu.get_pda_menu then
-			local pda = ActorMenu.get_pda_menu()
-			if pda and pda.IsShown and pda:IsShown() and pda.HideDialog then
-				pda:HideDialog()
-			end
+		if not (ActorMenu and ActorMenu.get_pda_menu) then return end
+		local pda = ActorMenu.get_pda_menu()
+		if pda and pda.HideDialog then
+			-- Always HideDialog; IsShown can lag after custom cam / travel.
+			pda:HideDialog()
 		end
 	end)
-	-- Do NOT activate_slot(0): that forces knife and overwrites the engine's
-	-- pre-PDA slot restore. HideDialog puts the PDA away and restores the prior weapon.
+end
+
+local function activate_non_pda(prefer)
+	if not db.actor then return end
+	local target = pick_weapon_slot(prefer)
+	pcall(function() db.actor:activate_slot(target) end)
+end
+
+-- Hide PDA UI + leave slot 8. Does not unequip the PDA item.
+local function holster_pda(prefer)
+	if not db.actor then return end
+	hide_pda_dialog()
+	local cur = nil
+	pcall(function() cur = db.actor:active_slot() end)
+	if cur == PDA_SLOT then
+		activate_non_pda(prefer)
+		return
+	end
+	-- Dialog can linger even when slot already changed.
+	prefer = tonumber(prefer)
+	if prefer and prefer ~= PDA_SLOT and prefer ~= cur and slot_has_item(prefer) then
+		activate_non_pda(prefer)
+	end
+end
+
+local function start_pda_holster_guard(prefer, ms)
+	local want = pick_weapon_slot(prefer or tft.walk_prev_slot or tft.pda_holster_prefer)
+	tft.pda_holster_prefer = want
+	tft.pda_holster_until = time_global() + (tonumber(ms) or PDA_HOLSTER_GUARD_MS)
+	holster_pda(want)
+end
+
+local function journey_cam_active()
+	return tft.fly_active or tft.fly_phase ~= nil or tft.is_traveling
+end
+
+local function tick_pda_holster_guard()
+	local until_tg = tft.pda_holster_until
+	if not until_tg then return end
+	-- Never HideDialog / activate_slot under custom cam + disable_input (native crash risk).
+	if journey_cam_active() then return end
+	if time_global() > until_tg then
+		tft.pda_holster_until = nil
+		return
+	end
+	if not db.actor then return end
+	local cur = nil
+	pcall(function() cur = db.actor:active_slot() end)
+	if cur == PDA_SLOT then
+		hide_pda_dialog()
+		activate_non_pda(tft.pda_holster_prefer)
+	else
+		-- Dialog can linger after slot already changed; only then.
+		pcall(function()
+			if ActorMenu and ActorMenu.get_pda_menu then
+				local pda = ActorMenu.get_pda_menu()
+				if pda and pda.IsShown and pda:IsShown() and pda.HideDialog then
+					pda:HideDialog()
+				end
+			end
+		end)
+	end
+end
+
+local function close_pda_for_travel()
+	-- One-shot before fly cam starts. No tick guard during the trip.
+	holster_pda(tft.walk_prev_slot)
+	tft.pda_holster_prefer = pick_weapon_slot(tft.walk_prev_slot or tft.pda_holster_prefer)
+	tft.pda_holster_until = nil
 end
 
 local function set_safety_active(seconds)
@@ -167,6 +253,7 @@ local function stop_travel_logic(reason)
 	local r = tostring(reason or "stop")
 	local color = (r == "cancel" or r == "manual") and "yellow" or "blue"
 	dogma.console.say("true fast travel: stopped - " .. r, color)
+	local prefer = tft.walk_prev_slot or tft.pda_holster_prefer
 	if _G.tft_cancel_fly_camera then
 		_G.tft_cancel_fly_camera()
 	end
@@ -175,6 +262,8 @@ local function stop_travel_logic(reason)
 	if tft_set_fft_trip_in_progress then tft_set_fft_trip_in_progress(false) end
 	if tft_clear then tft_clear() end
 	set_safety_active(3)
+	-- After cancel: engine often re-raises PDA ~1-2s later — keep fighting it.
+	start_pda_holster_guard(prefer, PDA_HOLSTER_GUARD_MS)
 end
 
 local function complete_travel_sequence(opts)
@@ -183,6 +272,7 @@ local function complete_travel_sequence(opts)
 	tft_log("MVP travel complete: %s", tostring(reason))
 	dogma.console.say("true fast travel: complete - " .. tostring(reason), "blue")
 
+	local prefer = tft.walk_prev_slot or tft.pda_holster_prefer
 	if db.actor and tft.dest_pos then
 		pcall(function() db.actor:set_actor_position(tft.dest_pos) end)
 	end
@@ -193,12 +283,16 @@ local function complete_travel_sequence(opts)
 	if tft_clear then tft_clear() end
 	set_safety_active(5)
 
+	-- Landing teleport also triggers PDA re-equip; guard after position set.
+	start_pda_holster_guard(prefer, PDA_HOLSTER_GUARD_MS)
+
 	if reason == "arrive" and tft_msg then
 		tft_msg(tft_str("tft_msg_arrived"), "success")
 	end
 end
 
 local function actor_on_update()
+	tick_pda_holster_guard()
 	if _G.tft_nav_mesh_on_actor_update then
 		pcall(_G.tft_nav_mesh_on_actor_update)
 	end
@@ -209,6 +303,7 @@ end
 
 do
 	_G.tft_close_pda_for_travel = close_pda_for_travel
+	_G.tft_start_pda_holster_guard = start_pda_holster_guard
 	_G.tft_start_travel_sequence = start_travel_sequence
 	_G.tft_set_safety_active = set_safety_active
 	_G.tft_is_safety_active = is_safety_active

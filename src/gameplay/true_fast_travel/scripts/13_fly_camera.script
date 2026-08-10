@@ -212,8 +212,12 @@ end
 local function restore_weapon_slot()
 	local slot = tft.walk_prev_slot
 	tft.walk_prev_slot = nil
-	if slot == nil or not db.actor then return end
-	pcall(function() db.actor:activate_slot(slot) end)
+	-- Prefer the long post-journey guard (beats engine PDA re-equip after teleport).
+	if tft_start_pda_holster_guard then
+		pcall(tft_start_pda_holster_guard, slot)
+	elseif tft_close_pda_for_travel then
+		pcall(tft_close_pda_for_travel)
+	end
 end
 
 local function force_weapon_hud()
@@ -589,12 +593,23 @@ local function space_dik()
 	return (DIK_keys and DIK_keys.DIK_SPACE) or 57
 end
 
+local function escape_dik()
+	return (DIK_keys and DIK_keys.DIK_ESCAPE) or 1
+end
+
+-- Space or Escape cancel. Menu Escape is blocked by level.disable_input (engine).
 local function cancel_key_pressed()
-	local dik = space_dik()
+	local space = space_dik()
+	local esc = escape_dik()
 	if dogma and dogma.input and dogma.input.is_key_pressed then
-		return dogma.input.is_key_pressed(dik)
+		if dogma.input.is_key_pressed(space) or dogma.input.is_key_pressed(esc) then
+			return true
+		end
 	end
-	local down = key_state and (key_state(dik) ~= 0) or false
+	local down = false
+	if key_state then
+		down = (key_state(space) ~= 0) or (key_state(esc) ~= 0)
+	end
 	local was = tft.fly_cancel_key_down == true
 	tft.fly_cancel_key_down = down
 	return down and not was
@@ -735,6 +750,9 @@ local function begin_fly_camera()
 		return false
 	end
 
+	-- Holster PDA while still in normal cam/input — never under custom cam.
+	if tft_close_pda_for_travel then tft_close_pda_for_travel() end
+
 	tft.fly_path = fly
 	tft.fly_cum = cum
 	tft.fly_total = total
@@ -746,7 +764,6 @@ local function begin_fly_camera()
 	tft.walk_prev_slot = nil
 	clear_land_state()
 
-	if tft_close_pda_for_travel then tft_close_pda_for_travel() end
 	force_weapon_hud()
 	snapshot_cam_mps()
 	local tf = travel_time_factor()

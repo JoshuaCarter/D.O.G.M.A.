@@ -117,20 +117,6 @@ local function on_actor_on_update()
 		return
 	end
 
-	if not actor:alive() then
-		if CONFIG.loaded.hide_prone_bones then
-			set_prone_bones_visible(actor, true)
-		end
-		if is_prone then
-			log("state: died, restore bones")
-			is_prone = false
-			if blend_move_anims then
-				console_exec("blend_move_anims on")
-			end
-		end
-		return
-	end
-
 	-- nearest posture from camera height (feet to cam)
 	local ok, height = pcall(function()
 		return device().cam_pos.y - actor:position().y
@@ -256,6 +242,24 @@ local function on_actor_on_before_hit(shit, bone_id, flags)
 	log(string.format("damage: x%.2f: %.2f -> %.2f", CONFIG.loaded.prone_damage_mult, before, shit.power))
 end
 
+-- actor_on_update is skipped while dead; restore limbs here for death cam / corpse.
+local function on_actor_on_before_death()
+	local actor = db and db.actor
+	if not actor then
+		return
+	end
+	if CONFIG.loaded.hide_prone_bones then
+		set_prone_bones_visible(actor, true)
+	end
+	if is_prone then
+		log("state: died, restore bones")
+		is_prone = false
+		if blend_move_anims then
+			console_exec("blend_move_anims on")
+		end
+	end
+end
+
 function on_game_start()
 	dogma.load(CONFIG.MOD_ID)
 	blend_move_anims = console_bool("blend_move_anims")
@@ -263,6 +267,7 @@ function on_game_start()
 	is_prone = nil
 	RegisterScriptCallback("actor_on_update", on_actor_on_update)
 	RegisterScriptCallback("actor_on_before_hit", on_actor_on_before_hit)
+	RegisterScriptCallback("actor_on_before_death", on_actor_on_before_death)
 	RegisterScriptCallback("on_option_change", on_option_change)
 	log("loaded")
 end

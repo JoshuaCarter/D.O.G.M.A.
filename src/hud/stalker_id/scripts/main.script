@@ -4,8 +4,9 @@
 	Soft aim: every 100ms, project nearby stalker pelvis and upper spine to
 	screen; the closest bone within aim_radius_px wins and its stalker is
 	the target. Optional LOS recast toward upper spine or top of head
-	(bushes pierce; walls block). Leader line aims at top of head. Losing
-	the target fades the HUD out over 2s.
+	(bushes pierce; walls block). Leader line aims at top of head; only living
+	non-hostiles get it normally, all living stalkers while binoculars are
+	active. Losing the target fades the HUD out over 2s.
 ]]
 
 local CONFIG = _G.dogma_hud_stalker_id_conf
@@ -94,7 +95,7 @@ local function on_option_change()
 	CONFIG.loaded.max_range = dogma.mcm.uint(id, "max_range")
 	CONFIG.loaded.aim_radius_px = dogma.mcm.uint(id, "aim_radius_px")
 	CONFIG.loaded.require_visible = dogma.mcm.bool(id, "require_visible")
-	CONFIG.loaded.bush_pierce_max = dogma.mcm.uint(id, "bush_pierce_max")
+	CONFIG.loaded.bush_pierce_max = math.min(5, dogma.mcm.uint(id, "bush_pierce_max"))
 	CONFIG.loaded.hide_on_death = dogma.mcm.bool(id, "hide_on_death")
 	CONFIG.loaded.always_show_line = dogma.mcm.bool(id, "always_show_line")
 	CONFIG.loaded.always_show_line_binoc = dogma.mcm.bool(id, "always_show_line_binoc")
@@ -603,6 +604,25 @@ local function want_line()
 	return false
 end
 
+local function is_hostile(obj)
+	if not (obj and db.actor and game_object and game_object.enemy) then
+		return false
+	end
+	local ok, rel = pcall(obj.relation, obj, db.actor)
+	return ok and rel ~= nil and rel >= game_object.enemy
+end
+
+local function allow_line_for(obj)
+	-- Living only: non-hostiles anytime the line is wanted; hostiles only in binocs.
+	if not obj or not (obj.health and obj.health > 0) then
+		return false
+	end
+	if is_binoc_active() then
+		return true
+	end
+	return not is_hostile(obj)
+end
+
 local function refresh_ui_kx()
 	local d = device and device()
 	if not (d and d.width and d.width > 0) then
@@ -649,6 +669,10 @@ local function update_leader_line()
 
 	local obj = level.object_by_id and level.object_by_id(line_target_id)
 	if not obj then
+		hide_line()
+		return
+	end
+	if not allow_line_for(obj) then
 		hide_line()
 		return
 	end

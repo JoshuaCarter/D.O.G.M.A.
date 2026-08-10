@@ -562,41 +562,21 @@ local function apply_parks(now)
 		return
 	end
 
-	-- Hold / damage flash: body, HP, psy together.
-	-- Stam / rad stay on their own thresholds.
-	local force_body = body_force(now)
-	local hp_thresh = actor_pct_health() < (L.hp_show_below_pct or 90)
-	local psy_thresh = actor_pct_psy() < (L.psy_show_below_pct or 90)
+	-- show_all: damage flash, hold key, or HP/psy/rad threshold.
+	-- Stamina threshold alone shows only the stam bar (does not trigger show_all).
+	-- Status icons stay on their own gates.
+	local force = body_force(now)
+	local show_all = force
+		or (actor_pct_health() < (L.hp_show_below_pct or 90))
+		or (actor_pct_psy() < (L.psy_show_below_pct or 90))
+		or (actor_pct_rad() > (L.rad_show_above_pct or 0))
+	local show_stam = show_all or (actor_pct_power() < (L.stam_show_below_pct or 90))
 
-	if L.hide_body then
-		park_pack(PACK_BODY, not force_body)
-	else
-		park_pack(PACK_BODY, false)
-	end
-
-	if L.hide_hp then
-		park_pack(PACK_HP, not (force_body or hp_thresh))
-	else
-		park_pack(PACK_HP, false)
-	end
-
-	if L.hide_stam then
-		park_pack(PACK_STAM, not (actor_pct_power() < (L.stam_show_below_pct or 90)))
-	else
-		park_pack(PACK_STAM, false)
-	end
-
-	if L.hide_psy then
-		park_psy(not (force_body or psy_thresh))
-	else
-		park_psy(false)
-	end
-
-	if L.hide_rad then
-		park_rad(not (actor_pct_rad() > (L.rad_show_above_pct or 0)))
-	else
-		park_rad(false)
-	end
+	park_pack(PACK_BODY, L.hide_body and not show_all)
+	park_pack(PACK_HP, L.hide_hp and not show_all)
+	park_pack(PACK_STAM, L.hide_stam and not show_stam)
+	park_psy(L.hide_psy and not show_all)
+	park_rad(L.hide_rad and not show_all)
 end
 
 local function limbs_full()
@@ -645,14 +625,16 @@ local function begin_or_refresh_damage()
 	if sec <= 0 then
 		return
 	end
-	if not (uv_show_fn and uv_hs_fn) then
-		return
-	end
 	local now = time_global()
 	flash_until = now + math.floor(sec * 1000)
 	heal_clamped = false
+	ensure_bhs_hook()
 	ensure_bhs_type2()
 	apply_parks(now)
+end
+
+local function on_actor_before_hit(_shit, _bone_id)
+	begin_or_refresh_damage()
 end
 
 local function call_orig_functor(name)
@@ -983,6 +965,7 @@ function on_game_start()
 			status_tick(time_global(), hold_icons())
 		end
 	end)
+	RegisterScriptCallback("actor_on_before_hit", on_actor_before_hit)
 	RegisterScriptCallback("on_option_change", on_option_change)
 	RegisterScriptCallback("on_game_load", reset_state)
 	RegisterScriptCallback("main_menu_on_init", reset_state)

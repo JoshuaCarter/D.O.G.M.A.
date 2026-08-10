@@ -4,10 +4,12 @@
 	Drag a device_glowstick* onto an artefact belt slot → convert to
 	af_dogma_glowstick_belt* twin, wear it, light the actor from the pelvis.
 	Take it off the belt → convert back to device form in ruck.
-	Detector-slot hold / throw / existing keybinds stay on the device form.
+
+	Belt light reads the device's light_section (glowstick_definition*) as-is —
+	no MCM. Held/thrown stay on the stock glowstick path.
 ]]
 
-local CONFIG = _G.dogma_items_belt_glowsticks_conf
+local CONFIG = _G.dogma_tweaks_belt_glowsticks_conf
 local MOD_ID = CONFIG.MOD_ID
 
 local variant_by_device = {
@@ -279,18 +281,15 @@ local function update_belt_light()
 		light.volumetric_distance = ini_sys:r_float_ex(light_section, "volumetric_distance", 0.25)
 	end
 
-	local native_range = ini_sys:r_float_ex(light_section, "range_r2", 12) or 12
-	light.range = native_range * (CONFIG.loaded.light_range or 1.0)
+	light.range = ini_sys:r_float_ex(light_section, "range_r2", 12) or 12
 
-	-- script_light intensity is RGB magnitude (alpha alone does little without lanim).
-	local br = CONFIG.loaded.brightness or 1.0
 	local color_s = ini_sys:r_string_ex(light_section, "color_r2", "0.0,0.4,0.3,0.8")
 	local c = str_explode(color_s, ",")
 	light.color = fcolor():set(
-		(tonum(c[1]) or 0) * br,
-		(tonum(c[2]) or 0.4) * br,
-		(tonum(c[3]) or 0.3) * br,
-		(tonum(c[4]) or 0.8) * br
+		tonum(c[1]) or 0,
+		tonum(c[2]) or 0.4,
+		tonum(c[3]) or 0.3,
+		tonum(c[4]) or 0.8
 	)
 
 	local pos = db.actor:bone_position("bip01_pelvis")
@@ -311,9 +310,7 @@ local function update_belt_light()
 end
 
 function on_option_change()
-	CONFIG.loaded.light_range = dogma.mcm.float(MOD_ID, "light_range")
-	CONFIG.loaded.brightness = dogma.mcm.float(MOD_ID, "brightness")
-	-- Force a fresh light so range/color changes apply immediately.
+	-- No MCM options; clear light so a mid-session ini reload still refreshes.
 	clear_light()
 end
 

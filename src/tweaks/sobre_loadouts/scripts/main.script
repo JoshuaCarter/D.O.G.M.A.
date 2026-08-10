@@ -1,49 +1,137 @@
 --[[
-	Strip free junk binoculars on new game.
+	Strip free junk binoculars on new game + inventory dump for debug.
 
-	- anim_binoc: attachable dummy (same name/icon as real binocs, unusable)
-	- wpn_binoc: Gunslinger NPC/ruck section (shop sells wpn_binoc_inv)
+	Junk:
+	  anim_binoc  — attachable dummy (binoc name/icon, unusable)
+	  wpn_binoc   — Gunslinger NPC/ruck section
+	  any other section with inv_name st_binocular_name except wpn_binoc_inv
 
-	DLTX sets release_on_first_update (stock itms_manager). This script only
-	does a few delayed one-shots as backup.
+	Shop item wpn_binoc_inv is kept. DLTX also sets release_on_first_update.
 ]]
 
 local dte = demonized_time_events
-local JUNK = {
-	anim_binoc = true,
-	wpn_binoc = true,
-}
+local KEEP = { wpn_binoc_inv = true }
+local JUNK_SEC = { anim_binoc = true, wpn_binoc = true }
+
+local function is_junk_sec(sec)
+	if not sec or KEEP[sec] then
+		return false
+	end
+	if JUNK_SEC[sec] then
+		return true
+	end
+	if not ini_sys then
+		return false
+	end
+	local inv = ini_sys:r_string_ex(sec, "inv_name")
+	if inv == "st_binocular_name" then
+		return true
+	end
+	local cls = ini_sys:r_string_ex(sec, "class")
+	return cls == "WP_BINOC"
+end
+
+local function dump_inventory(tag)
+	local actor = db and db.actor
+	if not (actor and actor.iterate_inventory) then
+		printf("[dogma_inv_dump] %s: no actor", tostring(tag))
+		return true
+	end
+	local n = 0
+	printf("[dogma_inv_dump] %s ---- begin ----", tostring(tag))
+	actor:iterate_inventory(function(_, itm)
+		if not itm then
+			return
+		end
+		n = n + 1
+		local sec = itm:section()
+		local id = itm:id()
+		local inv = ini_sys and ini_sys:r_string_ex(sec, "inv_name") or "?"
+		local cls = ini_sys and ini_sys:r_string_ex(sec, "class") or "?"
+		printf("[dogma_inv_dump] %s #%s id=%s sec=%s inv_name=%s class=%s",
+			tostring(tag), tostring(n), tostring(id), tostring(sec), tostring(inv), tostring(cls))
+	end)
+	printf("[dogma_inv_dump] %s ---- end count=%s ----", tostring(tag), tostring(n))
+	return true
+end
 
 local function strip()
 	local actor = db and db.actor
-	if not (actor and actor.iterate_inventory) then
+	if not actor then
 		return true
 	end
 	local ids = {}
-	actor:iterate_inventory(function(_, itm)
-		if itm and JUNK[itm:section()] then
-			ids[#ids + 1] = itm:id()
+	local seen = {}
+
+	local function consider(itm)
+		if not itm then
+			return
 		end
-	end)
+		local id = itm:id()
+		if seen[id] then
+			return
+		end
+		local sec = itm:section()
+		if is_junk_sec(sec) then
+			seen[id] = true
+			ids[#ids + 1] = id
+			printf("[dogma_sobre_binoc] release %s id=%s", tostring(sec), tostring(id))
+		end
+	end
+
+	for sec, _ in pairs(JUNK_SEC) do
+		consider(actor:object(sec))
+	end
+	if actor.iterate_inventory then
+		actor:iterate_inventory(function(_, itm)
+			consider(itm)
+		end)
+	end
 	for i = 1, #ids do
 		alife_release_id(ids[i])
 	end
 	return true
 end
 
+local tick_n = 0
+local function schedule_tick(delay)
+	tick_n = tick_n + 1
+	local act = "t" .. tostring(tick_n)
+	dte.CreateTimeEvent("dogma_sobre_binoc", act, delay, function()
+		strip()
+		local done = has_alife_info and has_alife_info("start_equippment_handled")
+		if (not done) and tick_n < 12 then
+			schedule_tick(1.0)
+		elseif done and tick_n < 14 then
+			schedule_tick(1.0)
+		end
+		return true
+	end)
+end
+
+local function schedule_dumps()
+	dump_inventory("t0")
+	if dte and dte.CreateTimeEvent then
+		dte.CreateTimeEvent("dogma_inv_dump", "t10", 10.0, function()
+			dump_inventory("t10")
+			return true
+		end)
+	end
+end
+
 local function actor_on_first_update()
+	schedule_dumps()
 	if has_alife_info and has_alife_info("start_equippment_handled") then
 		return
 	end
-	if not (dte and dte.CreateTimeEvent) then
-		strip()
-		return
+	strip()
+	if dte and dte.CreateTimeEvent then
+		tick_n = 0
+		schedule_tick(0.5)
 	end
-	dte.CreateTimeEvent("dogma_sobre_binoc", "s1", 0.5, strip)
-	dte.CreateTimeEvent("dogma_sobre_binoc", "s2", 2.0, strip)
-	dte.CreateTimeEvent("dogma_sobre_binoc", "s3", 5.0, strip)
 end
 
 function on_game_start()
+	printf("[dogma_sobre_binoc] on_game_start dte=%s", tostring(dte ~= nil))
 	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
 end

@@ -87,8 +87,18 @@ local function console_exec(cmd)
 	if c and c.execute then pcall(function() c:execute(cmd) end) end
 end
 
+-- Lua treats 0 as truthy, so `tonumber(x) or 1` does NOT reject 0.
+-- Restoring time_factor 0 freezes the world (menus still work).
+local function sane_time_factor(v, fallback)
+	v = tonumber(v)
+	if not v or v < 0.25 then
+		return fallback or 1
+	end
+	return v
+end
+
 local function set_time_factor(v)
-	console_exec(string.format("time_factor %.4f", tonumber(v) or 1))
+	console_exec(string.format("time_factor %.4f", sane_time_factor(v, 1)))
 end
 
 local function stash_time_factor()
@@ -96,22 +106,28 @@ local function stash_time_factor()
 	local prev = 1
 	pcall(function()
 		if get_console_cmd then
-			prev = tonumber(get_console_cmd(2, "time_factor")) or 1
+			prev = get_console_cmd(2, "time_factor")
 		end
 	end)
-	tft.walk_time_factor_saved = prev
+	tft.walk_time_factor_saved = sane_time_factor(prev, 1)
 	tft.walk_time_factor_stashed = true
 end
 
 local function restore_time_factor()
-	if not tft.walk_time_factor_stashed then
-		console_exec("time_factor 1")
-		return
+	-- Always clear stash flags first so a second cancel can't re-apply junk.
+	local prev = 1
+	if tft.walk_time_factor_stashed then
+		prev = sane_time_factor(tft.walk_time_factor_saved, 1)
 	end
-	local prev = tonumber(tft.walk_time_factor_saved) or 1
 	tft.walk_time_factor_stashed = nil
 	tft.walk_time_factor_saved = nil
-	console_exec(string.format("time_factor %.4f", prev))
+	set_time_factor(prev)
+end
+
+local function force_time_factor_normal()
+	tft.walk_time_factor_stashed = nil
+	tft.walk_time_factor_saved = nil
+	set_time_factor(1)
 end
 
 local function stash_gravity()
@@ -449,7 +465,8 @@ local function hard_restore()
 	unlock_input()
 	restore_gravity()
 	restore_actor_collision()
-	restore_time_factor()
+	-- Cancel/hard stop must never leave time_factor near 0 (soft hang).
+	force_time_factor_normal()
 	tft.fly_active = false
 	tft.fly_phase = nil
 	tft.fly_path = nil

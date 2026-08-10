@@ -798,9 +798,10 @@ local function resolve_travel_target(id, ln, click_pos)
     return target, err
 end
 
-local DISCOVER_BASE_M = 50
-local DISCOVER_CAMPFIRE_M = 30
-local DISCOVER_TRANSITION_M = 30
+local DISCOVER_BASE_M = 20
+local DISCOVER_CAMPFIRE_M = 10
+local DISCOVER_TRANSITION_M = 10
+local DISCOVER_STASH_M = 5
 local function discovery_kind_and_radius(id, se)
     if is_pda_transition(id, se) then
         return "transition", DISCOVER_TRANSITION_M
@@ -814,7 +815,7 @@ local function discovery_kind_and_radius(id, se)
         return "base", DISCOVER_BASE_M
     end
     if is_player_stash(id) then
-        return "stash", DISCOVER_TRANSITION_M
+        return "stash", DISCOVER_STASH_M
     end
     return nil, nil
 end

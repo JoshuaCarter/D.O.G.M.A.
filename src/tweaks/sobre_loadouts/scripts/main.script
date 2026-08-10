@@ -32,14 +32,16 @@ local function is_junk_sec(sec)
 end
 
 local function dump_inventory(tag)
+	local tostr = tostring
 	local actor = db and db.actor
 	if not (actor and actor.iterate_inventory) then
-		printf("[dogma_inv_dump] %s: no actor", tostring(tag))
+		printf("[dogma_inv_dump] %s: no actor", tostr(tag))
 		return true
 	end
 	local n = 0
-	printf("[dogma_inv_dump] %s ---- begin ----", tostring(tag))
+	printf("[dogma_inv_dump] %s ---- begin ----", tostr(tag))
 	actor:iterate_inventory(function(_, itm)
+		local tostr = tostring
 		if not itm then
 			return
 		end
@@ -49,9 +51,9 @@ local function dump_inventory(tag)
 		local inv = ini_sys and ini_sys:r_string_ex(sec, "inv_name") or "?"
 		local cls = ini_sys and ini_sys:r_string_ex(sec, "class") or "?"
 		printf("[dogma_inv_dump] %s #%s id=%s sec=%s inv_name=%s class=%s",
-			tostring(tag), tostring(n), tostring(id), tostring(sec), tostring(inv), tostring(cls))
+			tostr(tag), tostr(n), tostr(id), tostr(sec), tostr(inv), tostr(cls))
 	end)
-	printf("[dogma_inv_dump] %s ---- end count=%s ----", tostring(tag), tostring(n))
+	printf("[dogma_inv_dump] %s ---- end count=%s ----", tostr(tag), tostr(n))
 	return true
 end
 

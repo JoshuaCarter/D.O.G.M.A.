@@ -1,10 +1,12 @@
 --[[
 	Reactive BHS
 
-	Keep BHS type 2 alive. Hide by moving widgets off-screen only (never Show).
-	After load: do not move for LOAD_GRACE_MS so spawn anims finish.
-	Damage / hold / HP|psy|rad thresholds → full pack (incl. stam).
-	Stamina threshold alone → stam only. Status icons: separate gates.
+	GAMMA BHS (type 2): body_health_system is the panel bg for the limb fills —
+	same visibility gate; park them together. Hide = SetWndPos only (never Show).
+	Force type 2 + healthstatus while parking so BHS does not RemoveCustomStatic.
+	Load grace: no moves while BHS stagger-creates bars (scuffed_fix ~0.2s each).
+	Damage / hold / HP|psy|rad → full pack. Stam threshold alone → stam only.
+	Status icons: separate functor gates.
 ]]
 
 local CONFIG = _G.dogma_hud_bhs_reactive_conf
@@ -224,7 +226,8 @@ local function in_load_grace(now)
 	return grace_until ~= 0 and now < grace_until
 end
 
-local function ensure_bhs_type2()
+-- While we park BHS pieces, stock HUDUpdate must not RemoveCustomStatic (type 0/1 / H).
+local function ensure_bhs_statics_exist()
 	local L = CONFIG and CONFIG.loaded
 	if not L or not (L.hide_body or L.hide_hp or L.hide_stam) then
 		return
@@ -369,25 +372,36 @@ local function limbs_full()
 	return true
 end
 
-apply_parks = function(now)
-	local L = CONFIG and CONFIG.loaded
-	if not L or not (db and db.actor and get_hud and get_hud() and vector2) then
-		return
-	end
-	-- Keep statics alive, but never move during load grace.
-	ensure_bhs_hook()
-	ensure_bhs_type2()
-	if in_load_grace(now) then
-		return
-	end
-
+local function compute_show(L, now)
 	local force = hold_key(L.key_bhs, L.key_bhs_modifier) or (flash_until > now)
 	local show_all = force
 		or (actor_pct("health", 100) < (L.hp_show_below_pct or 90))
 		or (actor_pct_psy() < (L.psy_show_below_pct or 90))
 		or (actor_pct("radiation", 0) > (L.rad_show_above_pct or 0))
 	local show_stam = show_all or (actor_pct("power", 100) < (L.stam_show_below_pct or 90))
+	return force, show_all, show_stam
+end
 
+local function any_want_parked(L, show_all, show_stam)
+	return (L.hide_body and not show_all)
+		or (L.hide_hp and not show_all)
+		or (L.hide_stam and not show_stam)
+		or (L.hide_psy and not show_all)
+		or (L.hide_rad and not show_all)
+end
+
+apply_parks = function(now)
+	local L = CONFIG and CONFIG.loaded
+	if not L or not (db and db.actor and get_hud and get_hud() and vector2) then
+		return
+	end
+	ensure_bhs_hook()
+	ensure_bhs_statics_exist()
+	if in_load_grace(now) then
+		return
+	end
+
+	local _, show_all, show_stam = compute_show(L, now)
 	park_pack(PACK_BODY, L.hide_body and not show_all)
 	park_pack(PACK_HP, L.hide_hp and not show_all)
 	park_pack(PACK_STAM, L.hide_stam and not show_stam)
@@ -623,20 +637,17 @@ local function on_actor_update()
 	end
 	local now = time_global()
 	local grace = in_load_grace(now)
-	local Lhold = hold_key(L.key_bhs, L.key_bhs_modifier)
-	local force = Lhold or (flash_until > now)
-	local show_all = force
-		or (actor_pct("health", 100) < (L.hp_show_below_pct or 90))
-		or (actor_pct_psy() < (L.psy_show_below_pct or 90))
-		or (actor_pct("radiation", 0) > (L.rad_show_above_pct or 0))
+	local force, show_all, show_stam = compute_show(L, now)
 	local show_edge = show_all ~= show_all_prev
 	show_all_prev = show_all
 
-	-- Grace: type2 only, no moves. Else park on edge / while forced / 1s idle.
+	-- Grace: keep statics, no moves. While any piece should be parked, park every
+	-- update so late BHS AddCustomStatic (scuffed_fix) does not flash on-screen.
 	if grace then
 		ensure_bhs_hook()
-		ensure_bhs_type2()
-	elseif force or show_edge or (now - last_park_tick >= STATUS_TICK_MS) then
+		ensure_bhs_statics_exist()
+	elseif force or show_edge or any_want_parked(L, show_all, show_stam)
+		or (now - last_park_tick >= STATUS_TICK_MS) then
 		last_park_tick = now
 		apply_parks(now)
 	end
@@ -700,7 +711,7 @@ local function on_first_update()
 	refresh_options()
 	start_load_grace()
 	ensure_bhs_hook()
-	ensure_bhs_type2()
+	ensure_bhs_statics_exist()
 	if not update_registered then
 		RegisterScriptCallback("actor_on_update", on_actor_update)
 		update_registered = true

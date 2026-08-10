@@ -282,6 +282,14 @@ local function body_force(now)
 	return hold_bhs() or damage_wants(now)
 end
 
+local function start_load_grace()
+	grace_until = time_global() + LOAD_GRACE_MS
+end
+
+local function in_load_grace(now)
+	return grace_until ~= 0 and now < grace_until
+end
+
 local function manages_bhs_type()
 	local L = CONFIG and CONFIG.loaded
 	if not L then
@@ -544,7 +552,17 @@ local function apply_parks(now)
 	end
 	ensure_bhs_type2()
 
-	-- Hold / damage flash: silhouette, limbs, HP, psy together.
+	-- After load: leave everything visible so BHS/SidHUD spawn anims finish.
+	if in_load_grace(now) then
+		park_pack(PACK_BODY, false)
+		park_pack(PACK_HP, false)
+		park_pack(PACK_STAM, false)
+		park_psy(false)
+		park_rad(false)
+		return
+	end
+
+	-- Hold / damage flash: body, HP, psy together.
 	-- Stam / rad stay on their own thresholds.
 	local force_body = body_force(now)
 	local hp_thresh = actor_pct_health() < (L.hp_show_below_pct or 90)
@@ -865,9 +883,12 @@ local function on_actor_update()
 	local force = body_force(now)
 	local force_edge = force ~= body_force_prev
 	body_force_prev = force
+	local grace = in_load_grace(now)
+	local grace_edge = grace ~= grace_prev
+	grace_prev = grace
 
-	-- Body force: re-assert every frame. Idle packs: 1s tick. Re-park on force edge.
-	if force or force_edge or (now - last_park_tick >= STATUS_TICK_MS) then
+	-- Grace / body force: every frame. Idle packs: 1s tick. Re-park on edges.
+	if grace or force or force_edge or grace_edge or (now - last_park_tick >= STATUS_TICK_MS) then
 		last_park_tick = now
 		apply_parks(now)
 	end
@@ -919,11 +940,13 @@ end
 local function reset_state()
 	flash_until = 0
 	heal_clamped = false
+	grace_until = 0
 	last_status_tick = 0
 	last_park_tick = 0
 	last_heal_tick = 0
 	icons_hold_prev = false
 	body_force_prev = false
+	grace_prev = false
 	local bhs = rawget(_G, "zzz_player_injuries")
 	if bhs and orig_rd and bhs.recieved_damage == wrapped_rd then
 		bhs.recieved_damage = orig_rd
@@ -954,6 +977,7 @@ function on_game_start()
 	-- Register only; park/gates wait for actor + HUD.
 	apply(false)
 	RegisterScriptCallback("actor_on_first_update", function()
+		start_load_grace()
 		apply(true)
 		if CONFIG.loaded and CONFIG.loaded.hide_status_icons then
 			status_tick(time_global(), hold_icons())

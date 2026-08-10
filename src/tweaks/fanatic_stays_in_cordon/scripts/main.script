@@ -1,0 +1,107 @@
+--[[
+	Fanatic Stays In Cordon
+
+	Training Day / Sid car-park help make Fanatic a companion. Stock training
+	join does not set companion_cannot_teleport, so axr_companions teleports him
+	off-map with the actor.
+
+	- Never teleport Fanatic's squad with the actor.
+	- If the actor leaves Cordon while Fanatic is companion: fail Training Day
+	  tasks and dismiss him (he returns to village AI on his own).
+	- Uncompanioned: no-op (stash-hunt / between-stage phases stay open).
+]]
+
+local CONFIG = _G.dogma_tweaks_fanatic_stays_in_cordon_conf
+
+local CORDON = "l01_escape"
+local FANAT_SQUAD = "esc_2_12_stalker_fanat_squad"
+local TRAINING_TASKS = {
+	"task_fanat_training_1",
+	"task_fanat_training_2",
+	"task_fanat_training_3",
+}
+
+local function log(msg)
+	if dogma.dbg.logging() then
+		dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
+	end
+end
+
+local function is_fanat_squad(squad)
+	return squad and get_object_story_id(squad.id) == FANAT_SQUAD
+end
+
+local function fanat_is_companion()
+	return xsquad.is_companion(get_story_squad(FANAT_SQUAD))
+end
+
+-- Only when we can resolve both lids; nil during transitions → wait for first_update.
+local function actor_off_cordon()
+	local actor_lid = xlevel.get_actor_level_id()
+	local cordon_lid = xlevel.get_level_id_by_name(CORDON)
+	return actor_lid and cordon_lid and actor_lid ~= cordon_lid
+end
+
+local function fail_training_tasks()
+	local tm = task_manager and task_manager.get_task_manager and task_manager.get_task_manager()
+	if not (tm and tm.task_info and tm.set_task_failed) then
+		return
+	end
+	for i = 1, #TRAINING_TASKS do
+		local id = TRAINING_TASKS[i]
+		if tm.task_info[id] then
+			tm:set_task_failed(id)
+			log("failed " .. id)
+		end
+	end
+end
+
+local function dismiss_fanat()
+	if not (xr_effects and xr_effects.remove_task_companion) then
+		return
+	end
+	xr_effects.remove_task_companion(db.actor, nil, { FANAT_SQUAD })
+	log("dismissed " .. FANAT_SQUAD)
+end
+
+local function abandon_if_needed()
+	if not fanat_is_companion() then
+		return
+	end
+	if not actor_off_cordon() then
+		return
+	end
+	log("actor left Cordon with Fanatic")
+	fail_training_tasks()
+	dismiss_fanat()
+end
+
+local function patch_no_teleport()
+	if not (axr_companions and axr_companions.companion_squad_can_teleport) then
+		return false
+	end
+	if axr_companions.__dogma_fanatic_stays_in_cordon then
+		return true
+	end
+	local orig = axr_companions.companion_squad_can_teleport
+	axr_companions.companion_squad_can_teleport = function(squad)
+		if is_fanat_squad(squad) then
+			return false
+		end
+		return orig(squad)
+	end
+	axr_companions.__dogma_fanatic_stays_in_cordon = true
+	log("patched companion_squad_can_teleport")
+	return true
+end
+
+function on_game_start()
+	dogma.load(CONFIG.MOD_ID)
+	patch_no_teleport()
+	RegisterScriptCallback("on_game_load", patch_no_teleport)
+	RegisterScriptCallback("actor_on_first_update", function()
+		patch_no_teleport()
+		abandon_if_needed()
+	end)
+	RegisterScriptCallback("on_level_changing", abandon_if_needed)
+end

@@ -327,6 +327,7 @@ local function hard_restore()
 	tft.fly_u = nil
 	tft.fly_dir = nil
 	tft.walk_cam_mps = nil
+	tft.fly_cancel_key_down = nil
 end
 
 local function finish_arrive()
@@ -348,19 +349,20 @@ local function cancel_fly_camera()
 	hard_restore()
 end
 
-local function pda_raised()
-	if not db.actor then return false end
-	local slot = nil
-	pcall(function() slot = db.actor:active_slot() end)
-	if slot == 8 then return true end
-	local shown = false
-	pcall(function()
-		if ActorMenu and ActorMenu.get_pda_menu then
-			local pda = ActorMenu.get_pda_menu()
-			if pda and pda.IsShown then shown = pda:IsShown() end
-		end
-	end)
-	return shown
+local function space_dik()
+	return (DIK_keys and DIK_keys.DIK_SPACE) or 57
+end
+
+-- Spacebar cancel (edge). Prefer dogma.input; key_state still works under disable_input.
+local function cancel_key_pressed()
+	local dik = space_dik()
+	if dogma and dogma.input and dogma.input.is_key_pressed then
+		return dogma.input.is_key_pressed(dik)
+	end
+	local down = key_state and (key_state(dik) ~= 0) or false
+	local was = tft.fly_cancel_key_down == true
+	tft.fly_cancel_key_down = down
+	return down and not was
 end
 
 local function update_fly(dt)
@@ -373,8 +375,7 @@ local function update_fly(dt)
 		return
 	end
 
-	-- PDA open cancels in place (no backslide).
-	if pda_raised() then
+	if cancel_key_pressed() then
 		hard_restore()
 		if tft_stop_travel_logic then tft_stop_travel_logic("cancel") end
 		return
@@ -444,6 +445,7 @@ local function begin_fly_camera()
 	tft.fly_last_tg = time_global()
 	tft.fly_phase = "fly"
 	tft.fly_active = true
+	tft.fly_cancel_key_down = false
 
 	if tft_close_pda_for_travel then tft_close_pda_for_travel() end
 	equip_primary()

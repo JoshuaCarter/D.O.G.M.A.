@@ -30,6 +30,9 @@ local FACTIONS = {
 	renegade = true,
 }
 
+-- Se headers use GetCommunityDescription(npc, 6) → "Name, Loner"
+local se_label_to_faction = nil
+
 local function log(msg)
 	if dogma.dbg.logging() then
 		dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
@@ -84,8 +87,71 @@ local function channel_faction(name)
 	return normalize_faction(name)
 end
 
-local function community_of_id(id)
-	return normalize_faction(xcreature.community(id))
+-- DNM Id is often a game_object (DeathBySurge etc.), sometimes SE / numeric id.
+local function community_of_ref(ref)
+	if ref == nil then
+		return nil
+	end
+
+	local function from_se(se)
+		if not se then
+			return nil
+		end
+		local ok, c = pcall(function()
+			if xcreature and xcreature.community then
+				return xcreature.community(se)
+			end
+			return se:community()
+		end)
+		return ok and normalize_faction(c) or nil
+	end
+
+	if type(ref) == "number" then
+		return from_se(alife_object and alife_object(ref))
+	end
+
+	local ok_go, c = pcall(function()
+		if type(ref.character_community) == "function" then
+			return ref:character_community()
+		end
+		if type(ref.community) == "function" then
+			return ref:community()
+		end
+		return nil
+	end)
+	if ok_go then
+		local fac = normalize_faction(c)
+		if fac then
+			return fac
+		end
+	end
+
+	local ok_id, id = pcall(function()
+		return ref:id()
+	end)
+	if ok_id and type(id) == "number" then
+		return from_se(alife_object and alife_object(id))
+	end
+
+	return from_se(ref)
+end
+
+local function faction_from_se_header(se)
+	if type(se) ~= "string" or se == "" then
+		return nil
+	end
+	if not se_label_to_faction then
+		se_label_to_faction = {}
+		for fac in pairs(FACTIONS) do
+			local key = "st_dyn_news_comm_" .. fac .. "_6"
+			local label = game.translate_string(key)
+			if label and label ~= "" and label ~= key then
+				se_label_to_faction[label] = fac
+			end
+		end
+	end
+	local label = string.match(se, ",%s*(.+)$")
+	return label and se_label_to_faction[label] or nil
 end
 
 -- Best-effort speaker/subject faction on a general-channel payload.
@@ -93,14 +159,17 @@ local function payload_faction(t)
 	if type(t) ~= "table" then
 		return nil
 	end
-	local from_id = community_of_id(t.Id)
+	local from_id = community_of_ref(t.Id)
 	if from_id then
 		return from_id
 	end
-	if t.It == "gr" then
-		return normalize_faction(t.Ic)
+	-- Ic is faction for many It="gr" tips (and a few others)
+	local from_ic = normalize_faction(t.Ic)
+	if from_ic then
+		return from_ic
 	end
-	return nil
+	-- "Name, Loner" headers when Id was omitted (SeenDeathOfStalker, …)
+	return faction_from_se_header(t.Se)
 end
 
 local function should_drop(name, t)
@@ -109,8 +178,11 @@ local function should_drop(name, t)
 		return true, name
 	end
 	-- Open net about/from a hostile
-	if name == "general" and is_hostile_faction(payload_faction(t)) then
-		return true, "general/" .. tostring(payload_faction(t))
+	if name == "general" then
+		local fac = payload_faction(t)
+		if is_hostile_faction(fac) then
+			return true, "general/" .. tostring(fac)
+		end
 	end
 	return false, nil
 end
@@ -147,10 +219,12 @@ end
 function on_game_start()
 	dogma.load(CONFIG.MOD_ID)
 	logged_first_drop = false
+	se_label_to_faction = nil
 	patch()
 	RegisterScriptCallback("actor_on_first_update", patch)
 	RegisterScriptCallback("on_game_load", function()
 		logged_first_drop = false
+		se_label_to_faction = nil
 		patch()
 	end)
 end

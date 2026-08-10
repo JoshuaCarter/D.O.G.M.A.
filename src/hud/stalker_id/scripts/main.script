@@ -1,10 +1,11 @@
 --[[
 	Stalker ID - centered Faction Identification replacement.
 
-	Soft aim: every 100ms, project nearby stalker upper chest to screen and pick
-	closest to center within aim_radius_px. Optional LOS recast toward the
-	anchor (bushes pierce; walls block), walking screen-near candidates in
-	distance order. Losing the target fades the HUD out over 2s.
+	Soft aim: every 100ms, project nearby stalker pelvis and upper spine to
+	screen; the closest bone within aim_radius_px wins and its stalker is
+	the target. Optional LOS recast toward upper spine or top of head
+	(bushes pierce; walls block). Leader line aims at top of head. Losing
+	the target fades the HUD out over 2s.
 ]]
 
 local CONFIG = _G.dogma_hud_stalker_id_conf
@@ -17,13 +18,15 @@ local ALIGN_CENTER = 2 -- CGameFont::alCenter
 local UPDATE_DELAY = 100
 local FADE_MS = 2000
 
--- Upper chest first (no dedicated upper-torso bone); mid spine / neck as fallbacks.
-local ANCHOR_BONES = { "bip01_spine2", "bip01_spine1", "bip01_neck" }
+-- Aim / nearest: pelvis. LOS: upper spine. Line tip: head (lifted toward crown).
+local BONES_AIM = { "bip01_pelvis" }
+local BONES_LOS = { "bip01_spine2", "bip01_spine1", "bip01_neck" }
+local BONES_LINE = { "bip01_head" }
+local HEAD_CROWN_LIFT = 0.12 -- metres above head bone ≈ top of head
 
 -- LOS recast: pierce solid bushes; walls / other statics still block.
 local LOOK_FLAGS = 3 -- rqtObject | rqtStatic
-local LOOK_MAX_PIERCE = 16
-local LOOK_BUSH_STEP = 0.2
+local LOOK_BUSH_STEP = 0.2 -- metres nudged past each bush hit to avoid re-hitting it
 local look_pick = nil
 local LOOK_POS = vector()
 local LOOK_DIR = vector()
@@ -36,6 +39,7 @@ local PATCH_H = 24 -- faction patch / zombified row height in ui xml
 local LINE_START_BELOW_PX = 5 -- below bottom of patch (or zombified text)
 local LINE_A = 200
 local FOV_ZOOM_RATIO = 0.7
+local LINE_GAP_FAR_DIST = 10 -- metres: 10m end applies fully at this range
 
 local FACTION_KEYS = {
 	"stalker", "bandit", "csky", "army", "freedom", "dolg", "ecolog",
@@ -92,13 +96,14 @@ local function on_option_change()
 	CONFIG.loaded.max_range = dogma.mcm.uint(id, "max_range")
 	CONFIG.loaded.aim_radius_px = dogma.mcm.uint(id, "aim_radius_px")
 	CONFIG.loaded.require_visible = dogma.mcm.bool(id, "require_visible")
+	CONFIG.loaded.bush_pierce_max = dogma.mcm.uint(id, "bush_pierce_max")
 	CONFIG.loaded.hide_on_death = dogma.mcm.bool(id, "hide_on_death")
 	CONFIG.loaded.always_show_line = dogma.mcm.bool(id, "always_show_line")
 	CONFIG.loaded.always_show_line_binoc = dogma.mcm.bool(id, "always_show_line_binoc")
 	CONFIG.loaded.line_keybind = dogma.mcm.key(id, "line_keybind")
 	CONFIG.loaded.line_width_px = dogma.mcm.uint(id, "line_width_px")
 	CONFIG.loaded.line_gap_near_px = dogma.mcm.uint(id, "line_gap_near_px")
-	CONFIG.loaded.line_gap_50m_px = dogma.mcm.uint(id, "line_gap_50m_px")
+	CONFIG.loaded.line_gap_10m_px = dogma.mcm.uint(id, "line_gap_10m_px")
 end
 
 local function hide_all_patches(hud)
@@ -340,15 +345,30 @@ local function is_bush_material(name)
 	return name:find("bush", 1, true) ~= nil
 end
 
-local function anchor_pos(obj)
-	for i = 1, #ANCHOR_BONES do
-		local ok, p = pcall(obj.bone_position, obj, ANCHOR_BONES[i])
+local function bone_pos(obj, bones, y_lift)
+	for i = 1, #bones do
+		local ok, p = pcall(obj.bone_position, obj, bones[i])
 		if ok and p then
+			if y_lift and y_lift ~= 0 then
+				return LOOK_SCRATCH:set(p.x, p.y + y_lift, p.z)
+			end
 			return p
 		end
 	end
 	local p = obj:position()
 	return LOOK_SCRATCH:set(p.x, p.y + 1.2, p.z)
+end
+
+local function aim_pos(obj)
+	return bone_pos(obj, BONES_AIM, 0)
+end
+
+local function los_pos(obj)
+	return bone_pos(obj, BONES_LOS, 0)
+end
+
+local function line_tip_pos(obj)
+	return bone_pos(obj, BONES_LINE, HEAD_CROWN_LIFT)
 end
 
 local function project_world(pos)
@@ -394,8 +414,9 @@ local function ray_hits_object(target_obj, to_pos, max_range)
 	end
 	local pierces = 0
 	local target_id = target_obj:id()
+	local max_pierce = CONFIG.loaded.bush_pierce_max or 0
 
-	while remaining > LOOK_BUSH_STEP and pierces <= LOOK_MAX_PIERCE do
+	while remaining > LOOK_BUSH_STEP and pierces <= max_pierce do
 		LOOK_POS:set(ox, oy, oz)
 		pick:set_position(LOOK_POS)
 		pick:set_direction(LOOK_DIR)
@@ -431,6 +452,35 @@ local function ray_hits_object(target_obj, to_pos, max_range)
 	end
 
 	return false
+end
+
+local function screen_dist_to_center(pos)
+	local sx, sy = project_world(pos)
+	if not sx then
+		return nil
+	end
+	local dx, dy = sx - UI_CX, sy - UI_CY
+	return sqrt(dx * dx + dy * dy)
+end
+
+-- Closest of pelvis / upper-spine to screen centre (nil if neither projects in range).
+local function aim_screen_dist(obj, max_range, apos, radius)
+	local best = nil
+	local pelvis = aim_pos(obj)
+	if pelvis and apos:distance_to(pelvis) <= max_range then
+		local sd = screen_dist_to_center(pelvis)
+		if sd and sd <= radius then
+			best = sd
+		end
+	end
+	local spine = los_pos(obj)
+	if spine and apos:distance_to(spine) <= max_range then
+		local sd = screen_dist_to_center(spine)
+		if sd and sd <= radius and (not best or sd < best) then
+			best = sd
+		end
+	end
+	return best
 end
 
 local function cand_screen_cmp(a, b)
@@ -470,28 +520,9 @@ local function find_id_target()
 			return false
 		end
 
-		local anchor = anchor_pos(obj)
-		if not anchor then
-			return false
-		end
-		if apos:distance_to(anchor) > max_range then
-			return false
-		end
-
-		local sx, sy = project_world(anchor)
-		if not sx then
-			return false
-		end
-		local dx, dy = sx - UI_CX, sy - UI_CY
-		local sd = sqrt(dx * dx + dy * dy)
-		if sd <= radius then
-			candidates[#candidates + 1] = {
-				obj = obj,
-				ax = anchor.x,
-				ay = anchor.y,
-				az = anchor.z,
-				sd = sd,
-			}
+		local sd = aim_screen_dist(obj, max_range, apos, radius)
+		if sd then
+			candidates[#candidates + 1] = { obj = obj, sd = sd }
 		end
 		return false
 	end)
@@ -506,10 +537,14 @@ local function find_id_target()
 	end
 
 	for i = 1, #candidates do
-		local c = candidates[i]
-		LOOK_SCRATCH:set(c.ax, c.ay, c.az)
-		if ray_hits_object(c.obj, LOOK_SCRATCH, max_range) then
-			return c.obj
+		local obj = candidates[i].obj
+		local spine = los_pos(obj)
+		if spine and ray_hits_object(obj, spine, max_range) then
+			return obj
+		end
+		local head = line_tip_pos(obj)
+		if head and ray_hits_object(obj, head, max_range) then
+			return obj
 		end
 	end
 	return nil
@@ -609,18 +644,15 @@ local function line_start_ui()
 	return UI_CENTER_X, uy
 end
 
-local LINE_GAP_FAR_DIST = 50 -- metres: 50m slider applies fully at this range
-
--- Screen-space inset before the bone projection. Lerps 0m→50m gap by FOV-corrected
--- distance so scopes/binocs (narrow FOV) read as closer and keep a larger gap.
+-- Shortfall from head tip (virtual UI px), lerped 0m→10m. Both 0 = tip on bone.
+-- Zoom (narrow FOV) reads as closer → larger shortfall (near end of the lerp).
 local function line_end_gap_px(dist_m)
 	local near = CONFIG.loaded.line_gap_near_px or 0
-	local far = CONFIG.loaded.line_gap_50m_px or 0
+	local far = CONFIG.loaded.line_gap_10m_px or 0
 	local d = dist_m or 0
 	if d < 0 then
 		d = 0
 	end
-	-- Treat zoomed FOV as shorter range: half FOV ≈ half effective metres.
 	local dev = device and device()
 	local fov = dev and dev.fov
 	if fov and fov > 0 and _fov_baseline and _fov_baseline > 0 then
@@ -652,8 +684,8 @@ local function update_leader_line()
 		return
 	end
 
-	local anchor = anchor_pos(obj)
-	local hx, hy = project_world(anchor)
+	local tip = line_tip_pos(obj)
+	local hx, hy = project_world(tip)
 	if not hx then
 		hide_line()
 		return
@@ -663,9 +695,8 @@ local function update_leader_line()
 	local ux, uy = line_start_ui()
 	local dx = hx - ux
 	local dy = hy - uy
-	local dxk = dx / UI_KX
-	local len = sqrt(dxk * dxk + dy * dy)
-	if len < 1 then
+	local screen_len = sqrt(dx * dx + dy * dy)
+	if screen_len < 1 then
 		hide_line()
 		return
 	end
@@ -673,16 +704,15 @@ local function update_leader_line()
 	local dist_m = 0
 	local d = device and device()
 	local cam = d and d.cam_pos
-	if cam and anchor then
-		dist_m = cam:distance_to(anchor)
-	elseif db.actor and anchor then
-		dist_m = db.actor:position():distance_to(anchor)
+	if cam and tip then
+		dist_m = cam:distance_to(tip)
+	elseif db.actor and tip then
+		dist_m = db.actor:position():distance_to(tip)
 	end
 
-	-- Shorten from stalker end in virtual UI px (distance-lerped near→far).
-	local screen_len = sqrt(dx * dx + dy * dy)
+	-- Pull tip back from head toward ID by shortfall; 0/0 keeps tip on the bone.
 	local gap = line_end_gap_px(dist_m)
-	if gap > 0 and screen_len > 1 then
+	if gap > 0 then
 		if gap > screen_len * 0.9 then
 			gap = screen_len * 0.9
 		end
@@ -691,12 +721,18 @@ local function update_leader_line()
 		hy = hy - dy * f
 		dx = hx - ux
 		dy = hy - uy
-		dxk = dx / UI_KX
-		len = sqrt(dxk * dxk + dy * dy)
-		if len < 1 then
+		screen_len = sqrt(dx * dx + dy * dy)
+		if screen_len < 1 then
 			hide_line()
 			return
 		end
+	end
+
+	local dxk = dx / UI_KX
+	local len = sqrt(dxk * dxk + dy * dy)
+	if len < 1 then
+		hide_line()
+		return
 	end
 
 	local ang = atan2(-dy, dxk)

@@ -137,6 +137,59 @@ local function is_ammo_box(sec)
 	return false
 end
 
+-- OLD / BAD box sections (Anomaly suffixes). Never loot these.
+local function is_worn_ammo(sec)
+	if not sec then
+		return false
+	end
+	if sec:sub(-8) == "_verybad" then
+		return true
+	end
+	if sec:sub(-4) == "_bad" then
+		return true
+	end
+	return false
+end
+
+local function fresh_ammo_sec(sec)
+	if not sec then
+		return nil
+	end
+	if sec:sub(-8) == "_verybad" then
+		sec = sec:sub(1, -9)
+	elseif sec:sub(-4) == "_bad" then
+		sec = sec:sub(1, -5)
+	end
+	if sec ~= "" and ini_sys:section_exist(sec) then
+		return sec
+	end
+	return nil
+end
+
+-- Prefer non-worn entries from ammo_class; else map worn → fresh base.
+local function pick_fresh_ammo(ammo_list)
+	if not ammo_list then
+		return nil
+	end
+	local fresh = {}
+	for i = 1, #ammo_list do
+		local s = ammo_list[i]
+		if s and s ~= "" and not is_worn_ammo(s) and ini_sys:section_exist(s) then
+			fresh[#fresh + 1] = s
+		end
+	end
+	if #fresh > 0 then
+		return fresh[math.random(1, #fresh)]
+	end
+	for i = 1, #ammo_list do
+		local s = fresh_ammo_sec(ammo_list[i])
+		if s then
+			return s
+		end
+	end
+	return nil
+end
+
 local function is_weapon_part(sec)
 	return sec and string.find(sec, "prt_w", 1, true) ~= nil
 end
@@ -150,6 +203,9 @@ local function classify_section(sec)
 		return "parts"
 	end
 	if is_ammo_box(sec) then
+		if is_worn_ammo(sec) then
+			return nil
+		end
 		return "ammo"
 	end
 	if IsItem and IsItem("sil", sec) then
@@ -428,14 +484,14 @@ end
 -- Ammo quantity via RU budget (cost is per box; rounds = ru * box_size / cost)
 --------------------------------------------------------------------------------
 local RANK_RU = {
-	novice = { 0, 3500 },
-	trainee = { 500, 4500 },
-	experienced = { 1000, 6500 },
-	professional = { 1500, 8000 },
-	veteran = { 2000, 11000 },
-	expert = { 3000, 14000 },
-	master = { 4000, 17000 },
-	legend = { 5000, 20000 },
+	novice = { 0, 1000 },
+	trainee = { 0, 1500 },
+	experienced = { 0, 2000 },
+	professional = { 0, 2500 },
+	veteran = { 0, 3000 },
+	expert = { 0, 3500 },
+	master = { 500, 4000 },
+	legend = { 1000, 5000 },
 }
 local RANK_RU_FALLBACK = RANK_RU.experienced
 
@@ -443,8 +499,8 @@ local RANK_RU_FALLBACK = RANK_RU.experienced
 local AMMO_TIER_RANK = {
 	[1] = "novice",
 	[2] = "trainee",
-	[3] = "experienced",
-	[4] = "veteran",
+	[3] = "professional",
+	[4] = "expert",
 	[5] = "legend",
 }
 
@@ -468,8 +524,8 @@ local function roll_ru_for_ammo_tier(result_tier)
 	return roll_ru_for_rank(rank), rank
 end
 
--- apply_box_cap: stash/corpse rolls only (not start ammo).
-local function rounds_for_ru(ammo_sec, ru, apply_box_cap)
+-- Hard cap: 10 boxes per RU→rounds conversion (start / stash / corpse).
+local function rounds_for_ru(ammo_sec, ru)
 	if not ammo_sec or not ru or ru <= 0 then
 		return 0
 	end
@@ -482,11 +538,9 @@ local function rounds_for_ru(ammo_sec, ru, apply_box_cap)
 		box = 1
 	end
 	local rounds = math.floor(ru * box / cost)
-	if apply_box_cap then
-		local cap = math.floor(box * 10)
-		if rounds > cap then
-			rounds = cap
-		end
+	local cap = math.floor(box * 10)
+	if rounds > cap then
+		rounds = cap
 	end
 	return rounds
 end
@@ -510,6 +564,9 @@ _G.dogma_gameplay_weapons_ban_tiers = {
 	roll_ru_for_rank = roll_ru_for_rank,
 	roll_ru_for_ammo_tier = roll_ru_for_ammo_tier,
 	rounds_for_ru = rounds_for_ru,
+	is_worn_ammo = is_worn_ammo,
+	fresh_ammo_sec = fresh_ammo_sec,
+	pick_fresh_ammo = pick_fresh_ammo,
 	RANK_RU = RANK_RU,
 	AMMO_TIER_RANK = AMMO_TIER_RANK,
 	log = log,

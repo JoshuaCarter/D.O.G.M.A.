@@ -104,6 +104,9 @@ local function ammo_sec_for_weapon(wpn_sec)
 			sec_ammo = ammo_type
 		end
 	end
+	if Tiers.is_worn_ammo(sec_ammo) then
+		sec_ammo = Tiers.fresh_ammo_sec(sec_ammo)
+	end
 	return sec_ammo
 end
 
@@ -147,6 +150,7 @@ local function give_extra_start_ammo()
 		if not sec_ammo then
 			return
 		end
+		-- Cap is per start weapon (10 boxes), then sum if several share a type.
 		local add = Tiers.rounds_for_ru(sec_ammo, budget)
 		if add <= 0 then
 			return
@@ -156,7 +160,7 @@ local function give_extra_start_ammo()
 
 	for sec, cnt in pairs(ammo_to_spawn) do
 		alife_create_item(sec, db.actor, { ammo = cnt })
-		log(string.format("new game +%s x%s (%s RU)", sec, cnt, budget))
+		log(string.format("new game +%s x%s", sec, cnt))
 		dogma.console.say(string.format("weapons ban: extra start ammo %s x%d", sec, cnt), "blue")
 	end
 end
@@ -219,6 +223,22 @@ local function is_magazine(sec)
 	return kind == "w_ammo"
 end
 
+-- Gunsmith / cleaning kits etc. (repair_only targets firearms). Outfit/knife kits stay.
+local function is_weapon_repair_kit(sec)
+	local sfind = string.find
+	if not sec then
+		return false
+	end
+	local only = ini_sys:r_string_ex(sec, "repair_only")
+	if not only then
+		return false
+	end
+	return sfind(only, "pistol", 1, true)
+		or sfind(only, "shotgun", 1, true)
+		or sfind(only, "rifle_5", 1, true)
+		or sfind(only, "rifle_7", 1, true)
+end
+
 local function is_banned_combat_gear(obj, sec)
 	if not sec then
 		return false
@@ -243,6 +263,9 @@ local function is_banned_combat_gear(obj, sec)
 		end
 	end
 	if Tiers.is_name_kit(sec) then
+		return true
+	end
+	if is_weapon_repair_kit(sec) then
 		return true
 	end
 	local visual = ini_sys:r_string_ex(sec, "visual") or ""
@@ -397,6 +420,41 @@ local function append_stash_sections(id, sections)
 	end
 end
 
+-- Replace/drop _bad/_verybad entries in stock treasure cache strings.
+local function scrub_worn_ammo_from_cache(id)
+	if not (treasure_manager and treasure_manager.caches and id) then
+		return
+	end
+	local caches = treasure_manager.caches
+	local cur = caches[id]
+	if type(cur) ~= "string" or cur == "" then
+		return
+	end
+	local parts = str_explode(cur, ",")
+	if not parts then
+		return
+	end
+	local out = {}
+	for i = 1, #parts do
+		local s = parts[i]
+		if not s or s == "" then
+			-- skip
+		elseif Tiers.is_worn_ammo(s) then
+			local fresh = Tiers.fresh_ammo_sec(s)
+			if fresh then
+				out[#out + 1] = fresh
+			end
+		else
+			out[#out + 1] = s
+		end
+	end
+	if #out > 0 then
+		caches[id] = table.concat(out, ",")
+	else
+		caches[id] = false
+	end
+end
+
 local function queue_stash_ammo(id, sec, rounds)
 	if not (id and sec and rounds and rounds > 0) then
 		return
@@ -474,6 +532,7 @@ local function patched_set_random_stash(no_spot, hint, bonus_items, id, dbg)
 	if not id then
 		return result
 	end
+	scrub_worn_ammo_from_cache(id)
 	if is_cheese_paid_stash(hint) then
 		return result
 	end
@@ -483,6 +542,9 @@ local function patched_set_random_stash(no_spot, hint, bonus_items, id, dbg)
 end
 
 local function patched_try_spawn_treasure(box)
+	if box then
+		scrub_worn_ammo_from_cache(box:id())
+	end
 	original_try_spawn_treasure(box)
 	spawn_pending_stash_ammo(box)
 end
@@ -522,7 +584,6 @@ local function npc_rank_name(npc)
 end
 
 local function inject_corpse_ammo(npc)
-	local mrandom = math.random
 	local rank = npc_rank_name(npc)
 	local guns = {}
 	npc:iterate_inventory(function(_temp, itm)
@@ -542,8 +603,8 @@ local function inject_corpse_ammo(npc)
 		if not (ammo_class and #ammo_class > 0) then
 			return
 		end
-		local sec = ammo_class[mrandom(1, #ammo_class)]
-		if sec and ini_sys:section_exist(sec) then
+		local sec = Tiers.pick_fresh_ammo(ammo_class)
+		if sec then
 			guns[#guns + 1] = sec
 		end
 	end)

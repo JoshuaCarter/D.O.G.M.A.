@@ -98,7 +98,7 @@ local function on_option_change()
 	CONFIG.loaded.line_keybind = dogma.mcm.key(id, "line_keybind")
 	CONFIG.loaded.line_width_px = dogma.mcm.uint(id, "line_width_px")
 	CONFIG.loaded.line_gap_near_px = dogma.mcm.uint(id, "line_gap_near_px")
-	CONFIG.loaded.line_gap_far_px = dogma.mcm.uint(id, "line_gap_far_px")
+	CONFIG.loaded.line_gap_50m_px = dogma.mcm.uint(id, "line_gap_50m_px")
 end
 
 local function hide_all_patches(hud)
@@ -609,19 +609,32 @@ local function line_start_ui()
 	return UI_CENTER_X, uy
 end
 
-local LINE_GAP_FAR_DIST = 200 -- metres: far slider applies fully at this range
+local LINE_GAP_FAR_DIST = 50 -- metres: 50m slider applies fully at this range
 
--- Screen-space inset before the bone projection. Lerps near→far px by stalker distance
--- (0m = full near gap, 200m = far gap). ID start stays fixed.
+-- Screen-space inset before the bone projection. Lerps 0m→50m gap by FOV-corrected
+-- distance so scopes/binocs (narrow FOV) read as closer and keep a larger gap.
 local function line_end_gap_px(dist_m)
 	local near = CONFIG.loaded.line_gap_near_px or 0
-	local far = CONFIG.loaded.line_gap_far_px or 0
-	local t = 0
-	if dist_m and dist_m > 0 then
-		t = dist_m / LINE_GAP_FAR_DIST
-		if t > 1 then
-			t = 1
+	local far = CONFIG.loaded.line_gap_50m_px or 0
+	local d = dist_m or 0
+	if d < 0 then
+		d = 0
+	end
+	-- Treat zoomed FOV as shorter range: half FOV ≈ half effective metres.
+	local dev = device and device()
+	local fov = dev and dev.fov
+	if fov and fov > 0 and _fov_baseline and _fov_baseline > 0 then
+		local zoom = fov / _fov_baseline
+		if zoom < 0.05 then
+			zoom = 0.05
+		elseif zoom > 1 then
+			zoom = 1
 		end
+		d = d * zoom
+	end
+	local t = d / LINE_GAP_FAR_DIST
+	if t > 1 then
+		t = 1
 	end
 	return near + (far - near) * t
 end

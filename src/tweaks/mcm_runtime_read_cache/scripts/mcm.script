@@ -169,14 +169,13 @@ local function flush_summary(force)
 end
 
 local function clear_all(reason)
-	flush_summary(true)
-	local n = count_present()
+	if logging_on then
+		flush_summary(true)
+		emit(string.format("clear all (%s) dropped=%d", tostring(reason or "?"), count_present()))
+	end
 	for id in pairs(present) do
 		present[id] = nil
 		cache[id] = nil
-	end
-	if logging_on then
-		emit(string.format("clear all (%s) dropped=%d", tostring(reason or "?"), n))
 	end
 end
 
@@ -193,15 +192,19 @@ local function patch_get_set()
 
 	ui_mcm.get = function(id)
 		if present[id] then
-			note_hit(id)
-			flush_summary(false)
+			if logging_on then
+				note_hit(id)
+				flush_summary(false)
+			end
 			return cache[id]
 		end
 		local value = orig_get(id)
 		present[id] = true
 		cache[id] = value
-		note_miss(id)
-		flush_summary(false)
+		if logging_on then
+			note_miss(id)
+			flush_summary(false)
+		end
 		return value
 	end
 

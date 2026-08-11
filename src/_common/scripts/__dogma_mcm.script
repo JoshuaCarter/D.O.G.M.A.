@@ -337,7 +337,7 @@ _G.dogma_debug_conf = {
 		["dec_limb_rightleg_key"] = -1,
 		["fps_long_frame_threshold_ms"] = 0,
 		["perf_log"] = false,
-		["perf_warn_threshold_ns"] = 0,
+		["perf_warn_threshold_us"] = 0,
 	},
 }
 
@@ -658,14 +658,14 @@ function register_debug_page(options)
 				text = "ui_mcm_dogma_debug_perf_warn_threshold_desc",
 			},
 			{
-				id = "perf_warn_threshold_ns",
+				id = "perf_warn_threshold_us",
 				type = "track",
 				val = 2,
 				min = 0,
 				max = 5000,
 				step = 100,
-				def = CONFIG.DEFAULTS["perf_warn_threshold_ns"],
-				hint = "dogma_debug_perf_warn_threshold_ns",
+				def = CONFIG.DEFAULTS["perf_warn_threshold_us"],
+				hint = "dogma_debug_perf_warn_threshold_us",
 			},
 		}),
 	}

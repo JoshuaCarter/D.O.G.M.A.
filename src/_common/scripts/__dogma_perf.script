@@ -5,34 +5,43 @@
 
 	Prefer start/stop (no callback). time() is a thin wrapper for rare cases.
 
-	start(label[, threshold_ns]) - push a timing frame (no-op if perf_log off)
-	stop()                        - pop; warn if slow; return elapsed_ns (or nil)
-	time(label, threshold_ns, fn) - start/fn/stop; returns fn's returns
+	start(label[, threshold_us]) - push a timing frame (no-op if perf_log off)
+	stop()                        - pop; warn if slow; return elapsed_us (or nil)
+	time(label, threshold_us, fn) - start/fn/stop; returns fn's returns
 
-	Warnings require MCM dogma/debug perf_log. Threshold: call arg (ns) →
-	perf_warn_threshold_ns → ≤0 = no warn. Outputs: printf + console.say +
+	Warnings require MCM dogma/debug perf_log. Threshold: call arg (µs) →
+	perf_warn_threshold_us → ≤0 = no warn. Outputs: printf + console.say +
 	$app_data_root$/dogma_perf.log (not gated by debug_log).
 
-	Note: os.clock is often ~1ms quantum; sub-ms thresholds may still report
-	elapsed as 0 or 1000000ns.
+	Timing uses engine profile_timer (QPC → microseconds) when available.
+	os.clock fallback is ~1ms quantum and cannot resolve sub-ms work.
 ]]
 
 local DEBUG_MOD = "dogma/debug"
 local LOG_NAME = "dogma_perf.log"
-local MS_TO_NS = 1000000
+local SEC_TO_US = 1000000
 local stack = {}
 local log_path = nil
 local log_path_tried = false
 -- Cached so hot start()/stop() paths avoid MCM lookups every call.
 local logging_on = false
+local use_profile_timer = false
 
-local function now_ns()
-	-- os.clock is fractional seconds; prefer it for sub-ms MCM thresholds.
+-- Detect once: luabind exposes profile_timer as a constructible class.
+do
+	local ok, t = pcall(function()
+		return profile_timer()
+	end)
+	use_profile_timer = ok and t ~= nil and type(t.start) == "function"
+		and type(t.stop) == "function" and type(t.time) == "function"
+end
+
+local function now_us_fallback()
 	if os and os.clock then
-		return os.clock() * 1e9
+		return os.clock() * SEC_TO_US
 	end
 	if time_global then
-		return time_global() * MS_TO_NS
+		return time_global() * 1000 -- ms → µs
 	end
 	return 0
 end
@@ -81,37 +90,42 @@ function sync()
 	return logging_on
 end
 
-local function default_threshold_ns()
+local function default_threshold_us()
 	local mcm = rawget(_G, "__dogma_mcm")
 	if mcm and mcm.uint then
+		local us = mcm.uint(DEBUG_MOD, "perf_warn_threshold_us", 0)
+		if us > 0 then
+			return us
+		end
+		-- Legacy mislabeled key (same numeric intent).
 		return mcm.uint(DEBUG_MOD, "perf_warn_threshold_ns", 0)
 	end
 	return 0
 end
 
--- Call override and MCM default are both nanoseconds.
-local function effective_threshold_ns(override_ns)
-	if override_ns ~= nil then
-		local n = tonumber(override_ns)
+-- Call override and MCM default are both microseconds.
+local function effective_threshold_us(override_us)
+	if override_us ~= nil then
+		local n = tonumber(override_us)
 		if n ~= nil then
 			return math.max(0, math.floor(n + 0.5))
 		end
 	end
-	return default_threshold_ns()
+	return default_threshold_us()
 end
 
-local function warn_slow(label, elapsed_ns, threshold_ns)
+local function warn_slow(label, elapsed_us, threshold_us)
 	if not logging_on then
 		return
 	end
-	if threshold_ns <= 0 or elapsed_ns < threshold_ns then
+	if threshold_us <= 0 or elapsed_us < threshold_us then
 		return
 	end
 	local msg = string.format(
-		"[dogma_perf] SLOW %s took %dns (threshold %dns)",
+		"[dogma_perf] SLOW %s took %dus (threshold %dus)",
 		tostring(label or "?"),
-		math.floor(elapsed_ns + 0.5),
-		threshold_ns
+		math.floor(elapsed_us + 0.5),
+		threshold_us
 	)
 	printf("%s", msg)
 	local console = rawget(_G, "__dogma_console")
@@ -123,15 +137,26 @@ local function warn_slow(label, elapsed_ns, threshold_ns)
 	append_log(string.format("%d %s", stamp, msg))
 end
 
-function start(label, threshold_ns)
+function start(label, threshold_us)
 	if not logging_on then
 		return
 	end
-	stack[#stack + 1] = {
+	local frame = {
 		label = label,
-		t0 = now_ns(),
-		threshold = threshold_ns,
+		threshold = threshold_us,
 	}
+	if use_profile_timer then
+		local ok, timer = pcall(profile_timer)
+		if ok and timer then
+			timer:start()
+			frame.timer = timer
+		else
+			frame.t0 = now_us_fallback()
+		end
+	else
+		frame.t0 = now_us_fallback()
+	end
+	stack[#stack + 1] = frame
 end
 
 function stop()
@@ -141,16 +166,25 @@ function stop()
 	end
 	local frame = stack[n]
 	stack[n] = nil
-	local elapsed = now_ns() - (frame.t0 or 0)
-	warn_slow(frame.label, elapsed, effective_threshold_ns(frame.threshold))
+
+	local elapsed
+	if frame.timer then
+		frame.timer:stop()
+		-- profile_timer:time() is already microseconds (engine QPC).
+		elapsed = frame.timer:time() or 0
+	else
+		elapsed = now_us_fallback() - (frame.t0 or 0)
+	end
+
+	warn_slow(frame.label, elapsed, effective_threshold_us(frame.threshold))
 	return elapsed
 end
 
-function time(label, threshold_ns, fn)
+function time(label, threshold_us, fn)
 	if not logging_on then
 		return fn()
 	end
-	start(label, threshold_ns)
+	start(label, threshold_us)
 	-- Preserve all returns (Lua 5.1 `{ fn() }` only keeps the first).
 	return (function(...)
 		stop()

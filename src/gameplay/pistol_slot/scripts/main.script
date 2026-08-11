@@ -1,13 +1,16 @@
 --[[
 	Pistol Slot
 
-	Engine slot 15 + ui_inventory cell_15 as a pistol holster.
+	Engine slot 16 + ui_inventory cell_16 as a pistol holster.
 	Pistols also keep primary/secondary (cells 2/3). Vision stays cell 5 only.
-	Ejects junk from holster (15) and vision (5). Re-applies routing over GAMMA
-	knife/binoc slot sharing. Controls "Weapon 4 (Pistol)" draws / holsters 15.
+	Ejects junk from holster (16) and vision (5). Re-applies routing over GAMMA
+	knife/binoc slot sharing. Controls "Weapon 4 (Pistol)" draws / holsters 16.
 
-	FDDA body search treats active_slot 15 as wpn_hands and holsters instead of
-	lowering. We restore slot 15 + actor_lower_weapon so loot matches other guns.
+	LTX also registers slot 15 (unused) so slot 16 can exist — Anomaly slots
+	must be sequential after vanilla's last slot 14.
+
+	GAMMA CQC / Teivaz quickdraw only allows active_slot 0..5; we add 16 to
+	their hit_slot allowlist (or wrap hit_key if upvalues aren't available).
 ]]
 
 local CONFIG = _G.dogma_gameplay_pistol_slot_conf
@@ -16,11 +19,11 @@ local PISTOL_SLOT = CONFIG.PISTOL_SLOT
 local PISTOL_CELL = CONFIG.PISTOL_CELL
 local PISTOL_TYPE_KEY = CONFIG.PISTOL_TYPE_KEY
 local VISION_SLOT = 5
+local ANIM_SLOT = 14
 
--- Last non-loot active slot; used when FDDA starts body_search.
-local prev_active_slot = nil
-local body_search_active = false
-local restore_lower_pistol = false
+local qm_patched = false
+local qm_patch_tries = 0
+local QM_PATCH_MAX_TRIES = 120
 
 local function ltx_slot(obj)
 	if not (obj and ini_sys) then
@@ -65,7 +68,7 @@ local function can_use_keys()
 	return true
 end
 
--- Draw sidearm from holster slot 15; re-press while active lowers it.
+-- Draw sidearm from holster; re-press while active lowers it.
 local function toggle_pistol_holster()
 	local actor = db.actor
 	if not actor then
@@ -126,6 +129,15 @@ local function apply_slot_routing(gui)
 	sc[VISION_SLOT] = { VISION_SLOT } -- binoculars → vision only
 end
 
+local function ensure_equ_cells(cc)
+	-- Vanilla inits 1..13. Keep 14..PISTOL_CELL dense for #cc.cell highlight loops.
+	for i = ANIM_SLOT, PISTOL_CELL do
+		if not cc.cell[i] then
+			cc:AddItemManual(nil, nil, i)
+		end
+	end
+end
+
 local function patch_inventory_gui(gui)
 	local cc = gui.CC and gui.CC["actor_equ"]
 	if not cc then
@@ -139,18 +151,12 @@ local function patch_inventory_gui(gui)
 	end
 	gui._dogma_pistol_slot_patched = true
 
-	-- Vanilla only creates cells 1..13. Create 14 (offscreen) + 15 so #cell is dense.
-	if not cc.cell[14] then
-		cc:AddItemManual(nil, nil, 14)
-	end
-	if not cc.cell[PISTOL_CELL] then
-		cc:AddItemManual(nil, nil, PISTOL_CELL)
-	end
+	ensure_equ_cells(cc)
 
 	local orig_update = gui.UpdateSlots
 	gui.UpdateSlots = function(self, ...)
-		-- Stock loop: engine slot i → slot_cell[i][1]. With [2]={15,...} that
-		-- would draw/clear cell 15 from engine slot 2. Identity for type 2 only.
+		-- Stock loop: engine slot i → slot_cell[i][1]. With [2]={16,...} that
+		-- would draw/clear cell 16 from engine slot 2. Identity for type 2 only.
 		local sc = self.slot_cell
 		local saved = sc[PISTOL_TYPE_KEY]
 		sc[PISTOL_TYPE_KEY] = { 2 }
@@ -192,56 +198,46 @@ local function on_gui_show(name)
 	end)
 end
 
-local function is_body_search()
-	if not (_G.lam2 and lam2.get_current_action) then
-		return false
-	end
-	local action = lam2.get_current_action()
-	return action ~= nil and action.tag == "body_search"
-end
-
-local function lower_active_weapon()
-	if game and game.actor_lower_weapon then
-		game.actor_lower_weapon(true)
-	end
-end
-
--- FDDA: `wpn = active_slot ~= 0 and active_slot ~= 15` → skip lower, go empty hands.
-local function on_actor_update()
-	local actor = dogma.sys.ready(MOD_ID, db)
-	if not actor then
-		return
+-- CQC/Teivaz: `if not hit_slot[active_slot()] then return end` with only 0..5.
+local function patch_quick_melee_allowlist()
+	if qm_patched or type(hit_key) ~= "function" then
+		return qm_patched
 	end
 
-	local searching = is_body_search()
-	local active = actor:active_slot()
-
-	if searching and not body_search_active then
-		if prev_active_slot == PISTOL_SLOT then
-			local item = actor:item_in_slot(PISTOL_SLOT)
-			if item and is_sidearm(item) then
-				restore_lower_pistol = true
+	if debug and debug.getupvalue then
+		local i = 1
+		while true do
+			local name, val = debug.getupvalue(hit_key, i)
+			if not name then
+				break
 			end
-		end
-	end
-	body_search_active = searching
-
-	if restore_lower_pistol then
-		if not searching then
-			restore_lower_pistol = false
-		elseif active == PISTOL_SLOT then
-			lower_active_weapon()
-			restore_lower_pistol = false
-		elseif active == 0 and actor:item_in_slot(PISTOL_SLOT) then
-			actor:activate_slot(PISTOL_SLOT)
-			lower_active_weapon()
-			restore_lower_pistol = false
+			if name == "hit_slot" and type(val) == "table" then
+				val[PISTOL_SLOT] = true
+				qm_patched = true
+				return true
+			end
+			i = i + 1
 		end
 	end
 
-	if not searching then
-		prev_active_slot = active
+	-- Fallback: allowlist is local; briefly use slot 0 for the check, then
+	-- restore last_slot (CQC writes it as a global) and hide the holster gun.
+	local orig = hit_key
+	hit_key = function()
+		local actor = db.actor
+		if not (actor and actor:active_slot() == PISTOL_SLOT) then
+			return orig()
+		end
+		actor:activate_slot(0)
+		orig()
+		last_slot = PISTOL_SLOT
+		local wpn = actor:item_in_slot(PISTOL_SLOT)
+		if wpn and wpn.switch_state then
+			wpn:switch_state(3)
+		end
 	end
+	qm_patched = true
+	return true
 end
 
 function on_game_start()
@@ -251,5 +247,17 @@ function on_game_start()
 	end
 	RegisterScriptCallback("GUI_on_show", on_gui_show)
 	RegisterScriptCallback("on_before_key_press", on_before_key_press)
-	RegisterScriptCallback("actor_on_update", on_actor_update)
+	-- quickdraw may load after us; retry briefly, then give up if absent.
+	CreateTimeEvent("dogma_pistol_slot", "qm_patch", 0, function()
+		if patch_quick_melee_allowlist() then
+			return true
+		end
+		qm_patch_tries = qm_patch_tries + 1
+		return qm_patch_tries >= QM_PATCH_MAX_TRIES
+	end)
+	RegisterScriptCallback("on_game_load", function()
+		qm_patched = false
+		qm_patch_tries = 0
+		patch_quick_melee_allowlist()
+	end)
 end

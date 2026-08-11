@@ -4,16 +4,16 @@
 	Wraps ui_mcm.get with an in-Lua table so mods that spam get() every
 	update pay one axr_options:r_value per key until the value changes.
 
-	Invalidation:
-	  - ui_mcm.set(id, ...) drops that key (next get refills from axr)
-	  - on_option_change clears all (MCM Accept / apply)
-	  - on_game_load clears all
+	Lifecycle (checked against ui_mcm On_Accept):
+	  - Caching starts empty on on_game_load (first enable only; map/save
+	    reloads keep a warm cache — axr_options is profile-scoped).
+	  - main_menu_on_init disables + clears (main-menu Accept does NOT send
+	    on_option_change — only mcm_option_change — so menu must not use cache).
+	  - In-game Accept: on_option_change clears slots, cache stays on.
+	  - ui_mcm.set drops that key only.
 
 	Debug (DOGMA → Debug → debug_log): clears/sets log immediately;
 	get hit/miss aggregates print at most once per SUMMARY_MS.
-
-	Lives in *mcm.script so the patch is installed as soon as MCM gathers
-	at the main menu (same pattern as clear_mcm_search_box).
 ]]
 
 local MOD_ID = "dogma/tweaks/mcm_runtime_read_cache"
@@ -39,10 +39,13 @@ local hit_total = HOOK.hit_total or 0
 local miss_total = HOOK.miss_total or 0
 local last_flush_ms = HOOK.last_flush_ms or 0
 local logging_on = HOOK.logging_on or false
+-- Only serve/fill cache while a game session is loaded.
+local active = HOOK.active or false
 HOOK.hit_total = hit_total
 HOOK.miss_total = miss_total
 HOOK.last_flush_ms = last_flush_ms
 HOOK.logging_on = logging_on
+HOOK.active = active
 
 local function now_ms()
 	if time_continual then
@@ -95,19 +98,20 @@ local function count_present()
 	return n
 end
 
-local function note_hit(id)
-	if not logging_on then
-		return
+local function wipe_slots()
+	for id in pairs(present) do
+		present[id] = nil
+		cache[id] = nil
 	end
+end
+
+local function note_hit(id)
 	hits[id] = (hits[id] or 0) + 1
 	hit_total = hit_total + 1
 	HOOK.hit_total = hit_total
 end
 
 local function note_miss(id)
-	if not logging_on then
-		return
-	end
 	misses[id] = (misses[id] or 0) + 1
 	miss_total = miss_total + 1
 	HOOK.miss_total = miss_total
@@ -152,8 +156,8 @@ local function flush_summary(force)
 
 	local hit_pct = total > 0 and (100 * hit_total / total) or 0
 	emit(string.format(
-		"get window: total=%d hit=%d miss=%d hit_rate=%.1f%% unique=%d cached=%d",
-		total, hit_total, miss_total, hit_pct, n_uniq, count_present()
+		"get window: total=%d hit=%d miss=%d hit_rate=%.1f%% unique=%d cached=%d active=%s",
+		total, hit_total, miss_total, hit_pct, n_uniq, count_present(), tostring(active)
 	))
 
 	local limit = math.min(TOP_N, #ranked)
@@ -168,14 +172,40 @@ local function flush_summary(force)
 	reset_window_stats()
 end
 
-local function clear_all(reason)
+local function clear_slots(reason)
 	if logging_on then
 		flush_summary(true)
-		emit(string.format("clear all (%s) dropped=%d", tostring(reason or "?"), count_present()))
+		emit(string.format("clear (%s) dropped=%d active=%s", tostring(reason or "?"), count_present(), tostring(active)))
 	end
-	for id in pairs(present) do
-		present[id] = nil
-		cache[id] = nil
+	wipe_slots()
+	reset_window_stats()
+end
+
+local function enable_cache(reason)
+	sync_logging()
+	if active then
+		return
+	end
+	wipe_slots()
+	reset_window_stats()
+	active = true
+	HOOK.active = true
+	if logging_on then
+		emit(string.format("cache on (%s)", tostring(reason or "?")))
+	end
+end
+
+local function disable_cache(reason)
+	sync_logging()
+	if not active then
+		wipe_slots()
+		return
+	end
+	clear_slots(reason)
+	active = false
+	HOOK.active = false
+	if logging_on then
+		emit(string.format("cache off (%s)", tostring(reason or "?")))
 	end
 end
 
@@ -191,7 +221,7 @@ local function patch_get_set()
 	local orig_set = ui_mcm.set
 
 	ui_mcm.get = function(id)
-		if present[id] then
+		if active and present[id] then
 			if logging_on then
 				note_hit(id)
 				flush_summary(false)
@@ -199,11 +229,13 @@ local function patch_get_set()
 			return cache[id]
 		end
 		local value = orig_get(id)
-		present[id] = true
-		cache[id] = value
-		if logging_on then
-			note_miss(id)
-			flush_summary(false)
+		if active then
+			present[id] = true
+			cache[id] = value
+			if logging_on then
+				note_miss(id)
+				flush_summary(false)
+			end
 		end
 		return value
 	end
@@ -216,10 +248,11 @@ local function patch_get_set()
 			cache[id] = nil
 			if logging_on then
 				emit(string.format(
-					"set %s := %s (cache_%s)",
+					"set %s := %s (cache_%s active=%s)",
 					tostring(id),
 					tostring(value),
-					had and "dropped" or "miss"
+					had and "dropped" or "miss",
+					tostring(active)
 				))
 			end
 			return orig_set(id, value)
@@ -233,32 +266,39 @@ local function patch_get_set()
 	return true
 end
 
-local function register_invalidators()
+local function register_lifecycle()
 	if HOOK.callbacks then
 		return
 	end
 	if not RegisterScriptCallback then
 		return
 	end
+	-- In-game Accept only (ui_mcm gates on level.present()).
 	RegisterScriptCallback("on_option_change", function()
 		sync_logging()
-		clear_all("on_option_change")
+		if active then
+			clear_slots("on_option_change")
+		end
 	end)
+	-- Fresh enable when entering a loaded game; warm across later map loads.
 	RegisterScriptCallback("on_game_load", function()
-		sync_logging()
-		clear_all("on_game_load")
+		enable_cache("on_game_load")
+	end)
+	-- Menu Accept skips on_option_change — do not cache until the next load.
+	RegisterScriptCallback("main_menu_on_init", function()
+		disable_cache("main_menu_on_init")
 	end)
 	HOOK.callbacks = true
 end
 
--- MCM gather loads this file at main menu - patch immediately.
+-- MCM gather loads this file at main menu - patch immediately (inactive).
 patch_get_set()
-register_invalidators()
+register_lifecycle()
 sync_logging()
 
 function on_mcm_load(options)
 	patch_get_set()
-	register_invalidators()
+	register_lifecycle()
 	sync_logging()
 
 	dogma_mcm.append(options, "tweaks", "ui_mcm_menu_dogma_tweaks", {
@@ -274,7 +314,6 @@ function on_game_start()
 	if not patch_get_set() then
 		printf("[%s] ui_mcm.get missing - patch skipped", TAG)
 	end
-	register_invalidators()
+	register_lifecycle()
 	sync_logging()
-	clear_all("on_game_start")
 end

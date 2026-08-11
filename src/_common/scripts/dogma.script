@@ -19,6 +19,9 @@ item_stats = __dogma_item_stats.exports
 
 function load(mod_id)
 	sys.set_deps(mcm, dbg)
+	if perf and perf.sync then
+		perf.sync()
+	end
 	if mod_id then
 		sys.reset_mod(mod_id)
 		dbg.clear_source(mod_id)

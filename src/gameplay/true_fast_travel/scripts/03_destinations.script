@@ -853,88 +853,83 @@ local function tip_for_discovery(id, se, kind)
     return nil
 end
 
-local function ensure_campfire_map_spot(id)
-    if not (id and level and level.map_has_object_spot) then return end
-    pcall(function()
-        if level.map_has_object_spot(id, "campfire_lit") ~= 0 then return end
-        if level.map_has_object_spot(id, "campfire_unlit") ~= 0 then return end
-        level.map_add_object_spot(id, "campfire_unlit", "")
-    end)
-end
+-- Index smart terrains / campfires for discovery proximity checks only.
+-- Do NOT add/remove PDA map icons — those belong to the game / other mods (FFT, etc.).
+-- Once per level load (see schedule_index_travel_destinations); not on the 1s discovery poll.
+local function index_travel_destinations()
+    dogma.perf.start("tft.index_destinations", 1)
+    local ok = false
+    repeat
+        local sim = alife()
+        if not (sim and db.actor) then break end
 
-local function ensure_base_map_spot(id, se)
-    if not (id and se and level and level.map_has_object_spot) then return end
-    pcall(function()
-        if level.map_has_object_spot(id, "fast_travel") ~= 0 then return end
-        local name = xlevel.get_smart_display_name(se) or se:name() or ""
-        level.map_add_object_spot(id, "fast_travel", name)
-    end)
-end
+        local base_ids = {}
+        local campfire_ids = {}
 
--- Always show base / campfire icons. Visit unlock only gates the travel menu ("Not visited yet").
--- Replaces FFT's update_travel_markers which our game_fast_travel stub otherwise kills.
--- Do NOT reuse FFT's faction_quick_travel.ltx filter — that hid most smart terrains (e.g. Garbage).
-local function ensure_destination_map_spots()
-    local sim = alife()
-    if not (sim and level and db.actor) then
-        dogma.console.say("true fast travel: map spots skipped (no alife/actor yet)", "yellow")
-        return
-    end
-
-    local base_ids = {}
-    local campfire_ids = {}
-
-    local function visit(obj)
-        if not obj then return end
-        local ok_cls, cls = pcall(function() return obj:clsid() end)
-        if not ok_cls then return end
-        local id = obj.id
-        if cls == clsid.smart_terrain then
-            base_ids[id] = true
-            ensure_base_map_spot(id, obj)
-        elseif clsid.zone_campfire and cls == clsid.zone_campfire then
-            campfire_ids[id] = true
-            ensure_campfire_map_spot(id)
+        local function visit(obj)
+            if not obj then return end
+            local ok_cls, cls = pcall(function() return obj:clsid() end)
+            if not ok_cls then return end
+            local id = obj.id
+            if cls == clsid.smart_terrain then
+                base_ids[id] = true
+            elseif clsid.zone_campfire and cls == clsid.zone_campfire then
+                campfire_ids[id] = true
+            end
         end
-    end
 
-    if sim.iterate_objects then
-        sim:iterate_objects(visit)
-    else
-        for id = 1, 65534 do visit(sim:object(id)) end
-    end
-
-    if bind_campfire and bind_campfire.campfires_all then
-        for id, _ in pairs(bind_campfire.campfires_all) do
-            campfire_ids[id] = true
-            ensure_campfire_map_spot(id)
+        if sim.iterate_objects then
+            sim:iterate_objects(visit)
+        else
+            for id = 1, 65534 do visit(sim:object(id)) end
         end
-    end
 
-    tft.travel_base_ids = base_ids
-    tft.travel_campfire_ids = campfire_ids
-    local nb, nc = 0, 0
-    for _ in pairs(base_ids) do nb = nb + 1 end
-    for _ in pairs(campfire_ids) do nc = nc + 1 end
-    tft_log("Map spots ensured: bases=%d campfires=%d", nb, nc)
-    local lvl = (level and level.name) and level.name() or "?"
-    local msg = string.format("true fast travel: map spots bases=%d campfires=%d level=%s", nb, nc, tostring(lvl))
-    -- Log when counts change (or first zero) — avoid 5s poll spam.
-    if tft._spots_console_nb ~= nb or tft._spots_console_nc ~= nc then
-        tft._spots_console_nb = nb
-        tft._spots_console_nc = nc
-        dogma.console.say(msg, (nb == 0 and nc == 0) and "yellow" or "blue")
-    end
+        if bind_campfire and bind_campfire.campfires_all then
+            for id, _ in pairs(bind_campfire.campfires_all) do
+                campfire_ids[id] = true
+            end
+        end
+
+        tft.travel_base_ids = base_ids
+        tft.travel_campfire_ids = campfire_ids
+        ok = true
+    until true
+    dogma.perf.stop()
+    return ok
 end
 
--- Lightweight refresh for campfires that come online after the initial alife scan.
-local function refresh_online_campfire_map_spots()
-    if not (bind_campfire and bind_campfire.campfires_all) then return end
-    tft.travel_campfire_ids = tft.travel_campfire_ids or {}
-    for id, _ in pairs(bind_campfire.campfires_all) do
-        tft.travel_campfire_ids[id] = true
-        ensure_campfire_map_spot(id)
-    end
+-- Try now; on failure retry every 1s up to INDEX_MAX_ATTEMPTS, then error + stop.
+local INDEX_MAX_ATTEMPTS = 10
+local function schedule_index_travel_destinations()
+	pcall(function()
+		RemoveTimeEvent("tft", "index_destinations")
+	end)
+	local attempts = 0
+	local function try()
+		attempts = attempts + 1
+		if index_travel_destinations() then
+			return true
+		end
+		if attempts >= INDEX_MAX_ATTEMPTS then
+			local msg = string.format(
+				"true fast travel: destination index failed after %d attempts (alife/actor not ready)",
+				INDEX_MAX_ATTEMPTS
+			)
+			if tft_log_error then
+				tft_log_error("%s", msg)
+			end
+			if dogma and dogma.console and dogma.console.say then
+				dogma.console.say(msg, "red")
+			end
+			printf("[dogma_gameplay_true_fast_travel] %s", msg)
+			return true
+		end
+		return false
+	end
+	if try() then
+		return
+	end
+	CreateTimeEvent("tft", "index_destinations", 1.0, try)
 end
 
 -- silent=true: unlock only (arrival / guide), no tip/sound.
@@ -949,13 +944,6 @@ local function discover_destination(id, silent)
     tft.unlocked = tft.unlocked or {}
     tft.unlocked[id] = true
 
-    -- Keep icons visible regardless of unlock; ensure spots exist as a safety net.
-    if kind == "base" then
-        ensure_base_map_spot(id, se)
-    elseif kind == "campfire" then
-        ensure_campfire_map_spot(id)
-    end
-
     if silent or kind == "campfire" or kind == "stash" then
         tft_log("Unlocked travel point id=%s kind=%s (silent)", tostr(id), tostr(kind))
         return true
@@ -968,25 +956,25 @@ local function discover_destination(id, silent)
 end
 
 local function poll_discoveries()
+    dogma.perf.start("tft.poll_discoveries", 1)
     -- Never discover mid-journey (stepped teleports would otherwise trip nearby points).
     local pairs_ = pairs
-    if tft.is_traveling or tft.stepped_active then return end
-    if not (db.actor and db.actor:alive()) then return end
+    if tft.is_traveling or tft.stepped_active then
+        dogma.perf.stop()
+        return
+    end
+    if not (db.actor and db.actor:alive()) then
+        dogma.perf.stop()
+        return
+    end
     local apos = db.actor:position()
     local actor_lid = actor_level_id()
 
-    -- Place / refresh base+campfire icons (campfires come online as you explore).
-    local tg = time_global()
-    if not tft.travel_base_ids or tg > (tft._next_map_spot_ensure or 0) then
-        tft._next_map_spot_ensure = tg + 5000
-        ensure_destination_map_spots()
-    end
-
-    -- Campfires register as you explore; keep their icons visible without a full alife rescan.
-    local tg = time_global()
-    if tg > (tft._next_campfire_spot_refresh or 0) then
-        tft._next_campfire_spot_refresh = tg + 5000
-        refresh_online_campfire_map_spots()
+    if bind_campfire and bind_campfire.campfires_all then
+        tft.travel_campfire_ids = tft.travel_campfire_ids or {}
+        for id, _ in pairs_(bind_campfire.campfires_all) do
+            tft.travel_campfire_ids[id] = true
+        end
     end
 
     -- Collect candidates within their own radius, nearest-first.
@@ -1051,6 +1039,7 @@ local function poll_discoveries()
     for i = 1, #hits do
         discover_destination(hits[i].id, false)
     end
+    dogma.perf.stop()
 end
 
 -- tft_publish_to_global
@@ -1076,7 +1065,9 @@ do
     _G.tft_is_destination_unlocked = is_destination_unlocked
     _G.tft_discover_destination = discover_destination
     _G.tft_poll_discoveries = poll_discoveries
-    _G.tft_ensure_destination_map_spots = ensure_destination_map_spots
+    _G.tft_index_travel_destinations = index_travel_destinations
+    _G.tft_schedule_index_travel_destinations = schedule_index_travel_destinations
+    _G.tft_ensure_destination_map_spots = index_travel_destinations -- legacy alias (no longer adds map icons)
     _G.tft_strip_backpack_travel_menu_items = strip_backpack_travel_menu_items
     _G.tft_pos_drift = pos_drift
     _G.tft_graph_vertex_target = graph_vertex_target

@@ -1,12 +1,11 @@
 --[[
 	Stalker ID - centered Faction Identification replacement.
 
-	Soft aim: every 100ms, project nearby stalker pelvis and upper spine to
-	screen; the closest bone within aim_radius_px wins and its stalker is
-	the target. Optional LOS recast toward upper spine or top of head
-	(bushes pierce; walls block). Leader line aims at top of head; only living
-	non-hostiles get it normally, all living stalkers while binoculars are
-	active. Losing the target fades the HUD out over 2s.
+	Every 100ms: exact camera look-ray first (no bush pierce), then soft aim
+	(screen tolerance + optional bush-pierce LOS). Hipfire both 100m; binoculars
+	both 200m; other ADS/zoom keeps soft at 100m but exact at 200m. Leader line:
+	living non-hostiles normally, all living stalkers in binocs; never corpses.
+	Living hostile / zombified names are red. Losing the target fades over 2s.
 ]]
 
 local CONFIG = _G.dogma_hud_stalker_id_conf
@@ -18,6 +17,7 @@ local UI_CX, UI_CY = 512, 384
 local ALIGN_CENTER = 2 -- CGameFont::alCenter
 local UPDATE_DELAY = 100
 local FADE_MS = 2000
+local NAME_HOSTILE_RGB = { 220, 48, 48 }
 
 -- Aim / nearest: pelvis. LOS: upper spine. Line tip: head (lifted toward crown).
 local BONES_AIM = { "bip01_pelvis" }
@@ -38,7 +38,6 @@ local W2U_SCRATCH = vector()
 local LINE_HALO_REAL_PX = 1
 local PATCH_H = 24 -- faction patch / zombified row height in ui xml
 local LINE_START_BELOW_PX = 5 -- below bottom of patch (or zombified text)
-local LINE_A = 200
 local FOV_ZOOM_RATIO = 0.7
 local FACTION_KEYS = {
 	"stalker", "bandit", "csky", "army", "freedom", "dolg", "ecolog",
@@ -56,6 +55,7 @@ local fade_active = false
 local fade_start_ms = 0
 local fade_mul = 1
 local shown_faction = nil
+local name_r, name_g, name_b = 255, 255, 255
 
 local zombified_text
 local _fov_baseline = 60
@@ -93,6 +93,7 @@ local function on_option_change()
 	CONFIG.loaded.rank_a = dogma.mcm.uint(id, "rank_a")
 	CONFIG.loaded.icon_a = dogma.mcm.uint(id, "icon_a")
 	CONFIG.loaded.max_range = dogma.mcm.uint(id, "max_range")
+	CONFIG.loaded.binoc_max_range = dogma.mcm.uint(id, "binoc_max_range")
 	CONFIG.loaded.aim_radius_px = dogma.mcm.uint(id, "aim_radius_px")
 	CONFIG.loaded.require_visible = dogma.mcm.bool(id, "require_visible")
 	CONFIG.loaded.bush_pierce_max = math.min(5, dogma.mcm.uint(id, "bush_pierce_max"))
@@ -101,6 +102,10 @@ local function on_option_change()
 	CONFIG.loaded.always_show_line_binoc = dogma.mcm.bool(id, "always_show_line_binoc")
 	CONFIG.loaded.line_keybind = dogma.mcm.key(id, "line_keybind")
 	CONFIG.loaded.line_width_px = dogma.mcm.uint(id, "line_width_px")
+	CONFIG.loaded.line_r = dogma.mcm.uint(id, "line_r")
+	CONFIG.loaded.line_g = dogma.mcm.uint(id, "line_g")
+	CONFIG.loaded.line_b = dogma.mcm.uint(id, "line_b")
+	CONFIG.loaded.line_a = dogma.mcm.uint(id, "line_a")
 end
 
 local function hide_all_patches(hud)
@@ -137,7 +142,7 @@ local function apply_alphas(mul)
 	local rank_a = pct_to_byte(cfg.rank_a, fade_mul)
 	local icon_a = pct_to_byte(cfg.icon_a, fade_mul)
 
-	HUD.name:TextControl():SetTextColor(GetARGB(name_a, 255, 255, 255))
+	HUD.name:TextControl():SetTextColor(GetARGB(name_a, name_r, name_g, name_b))
 	HUD.rank:TextControl():SetTextColor(GetARGB(rank_a, 200, 200, 200))
 	HUD.zombified:TextControl():SetTextColor(GetARGB(icon_a, 255, 255, 255))
 
@@ -163,6 +168,7 @@ local function clear()
 	cancel_fade()
 	shown_faction = nil
 	line_target_id = nil
+	name_r, name_g, name_b = 255, 255, 255
 	if HUD then
 		HUD:Reset()
 	end
@@ -262,6 +268,24 @@ local function is_valid_community(community)
 	return HUD and HUD.factions[community] ~= nil
 end
 
+local function is_hostile(obj)
+	if not (obj and db.actor and game_object and game_object.enemy) then
+		return false
+	end
+	local ok, rel = pcall(obj.relation, obj, db.actor)
+	return ok and rel ~= nil and rel >= game_object.enemy
+end
+
+local function set_name_color_for(obj)
+	local alive = obj and obj.health and obj.health > 0
+	local threat = alive and (is_zombied(obj:character_community()) or is_hostile(obj))
+	if threat then
+		name_r, name_g, name_b = NAME_HOSTILE_RGB[1], NAME_HOSTILE_RGB[2], NAME_HOSTILE_RGB[3]
+	else
+		name_r, name_g, name_b = 255, 255, 255
+	end
+end
+
 local function display(faction, name, rank, zombified)
 	if not HUD then
 		return
@@ -322,6 +346,8 @@ local function display_faction(obj)
 	if rank == nil or rank == "" then
 		rank = nil
 	end
+
+	set_name_color_for(obj)
 
 	if is_zombied(fact) then
 		display(nil, name, rank, true)
@@ -484,69 +510,6 @@ local function cand_screen_cmp(a, b)
 	return a.sd < b.sd
 end
 
-local function find_id_target()
-	local cfg = CONFIG.loaded
-	local max_range = cfg.max_range or 0
-	if max_range <= 0 or not (db and db.actor) or not level.iterate_nearest then
-		return nil
-	end
-	if not HUD then
-		return nil
-	end
-
-	local apos = db.actor:position()
-	local actor_id = db.actor:id()
-	local radius = cfg.aim_radius_px or 0
-	local candidates = {}
-
-	pcall(level.iterate_nearest, apos, max_range, function(obj)
-		if not obj then
-			return false
-		end
-		local id = obj:id()
-		if id == 0 or id == actor_id then
-			return false
-		end
-		if not IsStalker(obj) then
-			return false
-		end
-		if not (obj.health > 0 or cfg.dead_id) then
-			return false
-		end
-		if not is_valid_community(obj:character_community()) then
-			return false
-		end
-
-		local sd = aim_screen_dist(obj, max_range, apos, radius)
-		if sd then
-			candidates[#candidates + 1] = { obj = obj, sd = sd }
-		end
-		return false
-	end)
-
-	if #candidates == 0 then
-		return nil
-	end
-	table.sort(candidates, cand_screen_cmp)
-
-	if not cfg.require_visible then
-		return candidates[1].obj
-	end
-
-	for i = 1, #candidates do
-		local obj = candidates[i].obj
-		local spine = los_pos(obj)
-		if spine and ray_hits_object(obj, spine, max_range) then
-			return obj
-		end
-		local head = line_tip_pos(obj)
-		if head and ray_hits_object(obj, head, max_range) then
-			return obj
-		end
-	end
-	return nil
-end
-
 local function is_binoc_held()
 	if not db.actor then
 		return false
@@ -589,6 +552,162 @@ local function is_binoc_active()
 	return fov < _fov_baseline * FOV_ZOOM_RATIO
 end
 
+local function using_binocs()
+	return is_binoc_held() or (axr_main and axr_main.binoc_is_zoomed)
+end
+
+-- Soft-aim search: 100m hipfire, 200m with binoculars only.
+local function approx_max_range()
+	local cfg = CONFIG.loaded
+	if using_binocs() then
+		return cfg.binoc_max_range or cfg.max_range or 0
+	end
+	return cfg.max_range or 0
+end
+
+-- ADS / free-zoom / binoc zoom: FOV below hipfire baseline.
+local function is_ads_zoomed()
+	if using_binocs() then
+		return true
+	end
+	local d = device and device()
+	local fov = d and d.fov
+	if not fov or fov <= 0 or not _fov_baseline or _fov_baseline <= 0 then
+		return false
+	end
+	return fov < _fov_baseline * FOV_ZOOM_RATIO
+end
+
+-- Exact look-ray: 100m hipfire; 200m with binocs or other ADS/zoom.
+local function exact_max_range()
+	local cfg = CONFIG.loaded
+	if using_binocs() or is_ads_zoomed() then
+		return cfg.binoc_max_range or cfg.max_range or 0
+	end
+	return cfg.max_range or 0
+end
+
+local function is_id_candidate(obj)
+	local cfg = CONFIG.loaded
+	if not obj or not IsStalker(obj) then
+		return false
+	end
+	if db.actor and obj:id() == db.actor:id() then
+		return false
+	end
+	if not (obj.health > 0 or cfg.dead_id) then
+		return false
+	end
+	return is_valid_community(obj:character_community())
+end
+
+-- Exact look-ray (no bush pierce): first object under crosshair within range.
+local function cam_look_object(max_range)
+	local d = device and device()
+	if not (ray_pick and d and d.cam_pos and d.cam_dir and max_range and max_range > 0) then
+		return nil
+	end
+	if not look_pick then
+		look_pick = ray_pick()
+	end
+	local pick = look_pick
+	pick:set_flags(LOOK_FLAGS)
+	LOOK_POS:set(d.cam_pos.x, d.cam_pos.y, d.cam_pos.z)
+	LOOK_DIR:set(d.cam_dir.x, d.cam_dir.y, d.cam_dir.z)
+	pick:set_position(LOOK_POS)
+	pick:set_direction(LOOK_DIR)
+	pick:set_range(max_range)
+	if db and db.actor then
+		pick:set_ignore_object(db.actor)
+	end
+	local ok, hit = pcall(function()
+		return pick:query()
+	end)
+	if not (ok and hit) then
+		return nil
+	end
+	return pick:get_object()
+end
+
+local function find_exact_target()
+	local obj = cam_look_object(exact_max_range())
+	if obj and is_id_candidate(obj) then
+		return obj
+	end
+	return nil
+end
+
+local function find_id_target()
+	-- Exact under crosshair + optional soft-aim iterate_nearest; runs on 100ms tick.
+	dogma.perf.start("stalker_id.find_target", 1)
+	local result = nil
+	repeat
+		local exact = find_exact_target()
+		if exact then
+			result = exact
+			break
+		end
+
+		local cfg = CONFIG.loaded
+		local max_range = approx_max_range()
+		if max_range <= 0 or not (db and db.actor) or not level.iterate_nearest then
+			break
+		end
+		if not HUD then
+			break
+		end
+
+		local apos = db.actor:position()
+		local actor_id = db.actor:id()
+		local radius = cfg.aim_radius_px or 0
+		local candidates = {}
+
+		pcall(level.iterate_nearest, apos, max_range, function(obj)
+			if not obj then
+				return false
+			end
+			if obj:id() == 0 or obj:id() == actor_id then
+				return false
+			end
+			if not is_id_candidate(obj) then
+				return false
+			end
+
+			local sd = aim_screen_dist(obj, max_range, apos, radius)
+			if sd then
+				candidates[#candidates + 1] = { obj = obj, sd = sd }
+			end
+			return false
+		end)
+
+		if #candidates == 0 then
+			break
+		end
+		table.sort(candidates, cand_screen_cmp)
+
+		if not cfg.require_visible then
+			result = candidates[1].obj
+			break
+		end
+
+		for i = 1, #candidates do
+			local obj = candidates[i].obj
+			local spine = los_pos(obj)
+			if spine and ray_hits_object(obj, spine, max_range) then
+				result = obj
+				break
+			end
+			local head = line_tip_pos(obj)
+			if head and ray_hits_object(obj, head, max_range) then
+				result = obj
+				break
+			end
+		end
+	until true
+	dogma.perf.stop()
+	return result
+end
+
 local function want_line()
 	local cfg = CONFIG.loaded
 	if cfg.always_show_line then
@@ -602,14 +721,6 @@ local function want_line()
 		return true
 	end
 	return false
-end
-
-local function is_hostile(obj)
-	if not (obj and db.actor and game_object and game_object.enemy) then
-		return false
-	end
-	local ok, rel = pcall(obj.relation, obj, db.actor)
-	return ok and rel ~= nil and rel >= game_object.enemy
 end
 
 local function allow_line_for(obj)
@@ -667,86 +778,100 @@ local function update_leader_line()
 		return
 	end
 
-	local obj = level.object_by_id and level.object_by_id(line_target_id)
-	if not obj then
-		hide_line()
-		return
-	end
-	if not allow_line_for(obj) then
-		hide_line()
-		return
-	end
+	dogma.perf.start("stalker_id.leader_line", 2)
+	repeat
+		local obj = level.object_by_id and level.object_by_id(line_target_id)
+		if not obj then
+			hide_line()
+			break
+		end
+		if not allow_line_for(obj) then
+			hide_line()
+			break
+		end
 
-	local tip = line_tip_pos(obj)
-	local hx, hy = project_world(tip)
-	if not hx then
-		hide_line()
-		return
-	end
+		local tip = line_tip_pos(obj)
+		local hx, hy = project_world(tip)
+		if not hx then
+			hide_line()
+			break
+		end
 
-	refresh_ui_kx()
-	local ux, uy = line_start_ui()
-	local dx = hx - ux
-	local dy = hy - uy
-	local screen_len = sqrt(dx * dx + dy * dy)
-	if screen_len < 1 then
-		hide_line()
-		return
-	end
+		refresh_ui_kx()
+		local ux, uy = line_start_ui()
+		local dx = hx - ux
+		local dy = hy - uy
+		local screen_len = sqrt(dx * dx + dy * dy)
+		if screen_len < 1 then
+			hide_line()
+			break
+		end
 
-	-- Shorten by screen-space upper-spine→head span so tip sits near upper spine.
-	local spine = los_pos(obj)
-	local sx, sy = project_world(spine)
-	if sx then
-		local bdx = hx - sx
-		local bdy = hy - sy
-		local gap = sqrt(bdx * bdx + bdy * bdy)
-		if gap > 0 then
-			if gap > screen_len * 0.9 then
-				gap = screen_len * 0.9
-			end
-			local f = gap / screen_len
-			hx = hx - dx * f
-			hy = hy - dy * f
-			dx = hx - ux
-			dy = hy - uy
-			screen_len = sqrt(dx * dx + dy * dy)
-			if screen_len < 1 then
-				hide_line()
-				return
+		-- Shorten by screen-space upper-spine→head span so tip sits near upper spine.
+		local spine = los_pos(obj)
+		local sx, sy = project_world(spine)
+		if sx then
+			local bdx = hx - sx
+			local bdy = hy - sy
+			local gap = sqrt(bdx * bdx + bdy * bdy)
+			if gap > 0 then
+				if gap > screen_len * 0.9 then
+					gap = screen_len * 0.9
+				end
+				local f = gap / screen_len
+				hx = hx - dx * f
+				hy = hy - dy * f
+				dx = hx - ux
+				dy = hy - uy
+				screen_len = sqrt(dx * dx + dy * dy)
+				if screen_len < 1 then
+					hide_line()
+					break
+				end
 			end
 		end
-	end
 
-	local dxk = dx / UI_KX
-	local len = sqrt(dxk * dxk + dy * dy)
-	if len < 1 then
-		hide_line()
-		return
-	end
+		local dxk = dx / UI_KX
+		local len = sqrt(dxk * dxk + dy * dy)
+		if len < 1 then
+			hide_line()
+			break
+		end
 
-	local ang = atan2(-dy, dxk)
-	local mx = (ux + hx) * 0.5
-	local my = (uy + hy) * 0.5
-	local a = floor(LINE_A * fade_mul + 0.5)
-	if a < 1 then
-		hide_line()
-		return
-	end
+		local ang = atan2(-dy, dxk)
+		local mx = (ux + hx) * 0.5
+		local my = (uy + hy) * 0.5
+		local cfg = CONFIG.loaded
+		local a = floor((cfg.line_a or 200) * fade_mul + 0.5)
+		if a < 1 then
+			hide_line()
+			break
+		end
+		if a > 255 then
+			a = 255
+		end
 
-	local thick = line_thick_ui(CONFIG.loaded.line_width_px or 1)
-	local halo_t = thick + line_thick_ui(LINE_HALO_REAL_PX)
-	HUD.line_sh:SetWndSize(SIZE_VEC:set(len, halo_t))
-	HUD.line_sh:SetWndPos(POS_VEC:set(mx - len * 0.5, my - halo_t * 0.5))
-	HUD.line_sh:SetHeading(ang)
-	HUD.line_sh:SetTextureColor(GetARGB(floor(a * 0.6), 0, 0, 0))
-	HUD.line_sh:Show(true)
+		local thick = line_thick_ui(cfg.line_width_px or 1)
+		local halo_t = thick + line_thick_ui(LINE_HALO_REAL_PX)
+		HUD.line_sh:SetWndSize(SIZE_VEC:set(len, halo_t))
+		HUD.line_sh:SetWndPos(POS_VEC:set(mx - len * 0.5, my - halo_t * 0.5))
+		HUD.line_sh:SetHeading(ang)
+		HUD.line_sh:SetTextureColor(GetARGB(floor(a * 0.6), 0, 0, 0))
+		HUD.line_sh:Show(true)
 
-	HUD.line:SetWndSize(SIZE_VEC:set(len, thick))
-	HUD.line:SetWndPos(POS_VEC:set(mx - len * 0.5, my - thick * 0.5))
-	HUD.line:SetHeading(ang)
-	HUD.line:SetTextureColor(GetARGB(a, 255, 255, 255))
-	HUD.line:Show(true)
+		local lr = cfg.line_r or 255
+		local lg = cfg.line_g or 255
+		local lb = cfg.line_b or 255
+		if lr > 255 then lr = 255 end
+		if lg > 255 then lg = 255 end
+		if lb > 255 then lb = 255 end
+		HUD.line:SetWndSize(SIZE_VEC:set(len, thick))
+		HUD.line:SetWndPos(POS_VEC:set(mx - len * 0.5, my - thick * 0.5))
+		HUD.line:SetHeading(ang)
+		HUD.line:SetTextureColor(GetARGB(a, lr, lg, lb))
+		HUD.line:Show(true)
+	until true
+	dogma.perf.stop()
 end
 
 local function target_enter(obj)

@@ -3,22 +3,74 @@
 
 	Private impl; features use dogma.perf (wired by dogma.script).
 
-	time(label, fn[, threshold_ms]) - run fn, warn if slow; returns fn's returns
-	start(label[, threshold_ms])    - push a timing frame
-	stop()                          - pop; warn if slow; return elapsed_ms (or nil)
+	Prefer start/stop (no callback). time() is a thin wrapper for rare cases.
 
-	Threshold: call override → MCM dogma/debug perf_warn_threshold_ms → ≤0 = no warn.
-	Warnings always printf + console.say (not gated by debug_log).
+	start(label[, threshold_ms]) - push a timing frame (no-op if perf_log off)
+	stop()                       - pop; warn if slow; return elapsed_ms (or nil)
+	time(label, threshold_ms, fn)- start/fn/stop; returns fn's returns
+
+	Warnings require MCM dogma/debug perf_log. Threshold: call arg →
+	perf_warn_threshold_ms → ≤0 = no warn. Outputs: printf + console.say +
+	$app_data_root$/dogma_perf.log (not gated by debug_log).
 ]]
 
 local DEBUG_MOD = "dogma/debug"
+local LOG_NAME = "dogma_perf.log"
 local stack = {}
+local log_path = nil
+local log_path_tried = false
+-- Cached so hot start()/stop() paths avoid MCM lookups every call.
+local logging_on = false
 
 local function now_ms()
 	if time_global then
 		return time_global()
 	end
 	return 0
+end
+
+local function resolve_log_path()
+	if log_path_tried then
+		return log_path
+	end
+	log_path_tried = true
+	if not (getFS and getFS().update_path) then
+		return nil
+	end
+	local ok, path = pcall(function()
+		return getFS():update_path("$app_data_root$", LOG_NAME)
+	end)
+	if ok and path and path ~= "" then
+		log_path = path
+	end
+	return log_path
+end
+
+local function append_log(line)
+	local path = resolve_log_path()
+	if not path then
+		return
+	end
+	local ok, f = pcall(io.open, path, "a")
+	if not (ok and f) then
+		return
+	end
+	f:write(line)
+	f:write("\n")
+	f:close()
+end
+
+local function read_logging_enabled()
+	local mcm = rawget(_G, "__dogma_mcm")
+	if mcm and mcm.bool then
+		return mcm.bool(DEBUG_MOD, "perf_log", false)
+	end
+	return false
+end
+
+function sync()
+	logging_on = read_logging_enabled()
+	return logging_on
 end
 
 local function default_threshold()
@@ -40,6 +92,9 @@ local function effective_threshold(override_ms)
 end
 
 local function warn_slow(label, elapsed_ms, threshold_ms)
+	if not logging_on then
+		return
+	end
 	if threshold_ms <= 0 or elapsed_ms < threshold_ms then
 		return
 	end
@@ -54,9 +109,14 @@ local function warn_slow(label, elapsed_ms, threshold_ms)
 	if console and console.say then
 		console.say(msg, "yellow")
 	end
+	-- Game-time stamp keeps lines sortable without depending on OS clock APIs.
+	append_log(string.format("%d %s", now_ms(), msg))
 end
 
 function start(label, threshold_ms)
+	if not logging_on then
+		return
+	end
 	stack[#stack + 1] = {
 		label = label,
 		t0 = now_ms(),
@@ -76,9 +136,21 @@ function stop()
 	return elapsed
 end
 
-function time(label, fn, threshold_ms)
+function time(label, threshold_ms, fn)
+	if not logging_on then
+		return fn()
+	end
 	start(label, threshold_ms)
-	local results = { fn() }
-	stop()
-	return unpack(results)
+	-- Preserve all returns (Lua 5.1 `{ fn() }` only keeps the first).
+	return (function(...)
+		stop()
+		return ...
+	end)(fn())
+end
+
+-- Keep cache in sync with MCM.
+if RegisterScriptCallback then
+	RegisterScriptCallback("on_option_change", sync)
+	RegisterScriptCallback("on_game_load", sync)
+	RegisterScriptCallback("actor_on_first_update", sync)
 end

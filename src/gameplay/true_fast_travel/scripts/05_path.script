@@ -236,6 +236,7 @@ local function remove_path_spots(obj_id)
 end
 
 local function cleanup_dots()
+	dogma.perf.start("tft.cleanup_dots", 1)
 	for _, id in pairs(tft.dot_ids or {}) do
 		remove_path_spots(id)
 		pcall(function()
@@ -254,6 +255,7 @@ local function cleanup_dots()
 	tft.dot_path_ratio = {}
 	tft.dot_positions = {}
 	tft.dot_count = 0
+	dogma.perf.stop()
 end
 
 local function freeze_buried_dot(obj_id, attempts_left)
@@ -355,81 +357,85 @@ local function preview_eligible(id, se_obj, ln)
 end
 
 local function build_path_preview(id, is_lc)
-	if tft.is_traveling then return end
-	if not path_preview_enabled() then return end
-	if not (db.actor and id) then return end
+	dogma.perf.start("tft.path_preview", 1)
+	repeat
+		if tft.is_traveling then break end
+		if not path_preview_enabled() then break end
+		if not (db.actor and id) then break end
 
-	cleanup_dots()
-	tft.is_path_preview = true
-	tft.path_preview_id = id
+		cleanup_dots()
+		tft.is_path_preview = true
+		tft.path_preview_id = id
 
-	local target = tft_resolve_travel_target(id, tft.last_menu_target_ln, tft.last_map_click_pos)
-	if not target or not target.pos then
-		tft.is_path_preview = false
-		tft.path_preview_id = nil
-		return
-	end
+		local target = tft_resolve_travel_target(id, tft.last_menu_target_ln, tft.last_map_click_pos)
+		if not target or not target.pos then
+			tft.is_path_preview = false
+			tft.path_preview_id = nil
+			break
+		end
 
-	local start = db.actor:position()
-	local dest = target.pos
-	local dest_key = _G.tft_nav_mesh_dest_anchor_key and _G.tft_nav_mesh_dest_anchor_key(id) or nil
-	local dist = (tft_distance_pda and tft_distance_pda(start, dest)) or start:distance_to(dest)
-	if dist < 40 and not is_lc then
-		tft_log("path preview: too close (%.0fm)", dist)
-		tft.is_path_preview = false
-		tft.path_preview_id = nil
-		return
-	end
+		local start = db.actor:position()
+		local dest = target.pos
+		local dest_key = _G.tft_nav_mesh_dest_anchor_key and _G.tft_nav_mesh_dest_anchor_key(id) or nil
+		local dist = (tft_distance_pda and tft_distance_pda(start, dest)) or start:distance_to(dest)
+		if dist < 40 and not is_lc then
+			tft_log("path preview: too close (%.0fm)", dist)
+			tft.is_path_preview = false
+			tft.path_preview_id = nil
+			break
+		end
 
-	if not _G.tft_nav_mesh_build_path then
-		tft.is_path_preview = false
-		tft.path_preview_id = nil
-		return
-	end
+		if not _G.tft_nav_mesh_build_path then
+			tft.is_path_preview = false
+			tft.path_preview_id = nil
+			break
+		end
 
-	local ok, chain, is_vertex, path_len, meta = pcall(_G.tft_nav_mesh_build_path, start, dest, dest_key)
-	if not ok or not chain or #chain < 2 then
-		local lvl = (level and level.name) and level.name() or "?"
-		local aimap = (_G.tft_nav_mesh_graph_ready and _G.tft_nav_mesh_graph_ready()) and "ready" or "missing"
-		tft_log("path preview: nav mesh path failed (%.0fm straight) level=%s aimap=%s", dist, lvl, aimap)
+		local ok, chain, is_vertex, path_len, meta = pcall(_G.tft_nav_mesh_build_path, start, dest, dest_key)
+		if not ok or not chain or #chain < 2 then
+			local lvl = (level and level.name) and level.name() or "?"
+			local aimap = (_G.tft_nav_mesh_graph_ready and _G.tft_nav_mesh_graph_ready()) and "ready" or "missing"
+			tft_log("path preview: nav mesh path failed (%.0fm straight) level=%s aimap=%s", dist, lvl, aimap)
+			dogma.console.say(string.format(
+				"true fast travel: path failed (%.0fm straight) level=%s aimap=%s",
+				dist, lvl, aimap
+			), "yellow")
+			tft.is_path_preview = false
+			tft.path_preview_id = nil
+			break
+		end
+
+		if tft.menu_open_seq then
+			tft.menu_path_cache = {
+				seq = tft.menu_open_seq,
+				id = id,
+				chain = chain,
+				is_vertex = is_vertex,
+				path_len = path_len,
+				raw_chain = chain,
+				meta = meta,
+			}
+		end
+
+		local markers = build_preview_markers(chain, chain)
+		tft.dot_positions = {}
+		for i, m in ipairs(markers) do
+			tft.dot_positions[i] = m.pos
+		end
+		tft.dot_count = #markers
+		tft_log("path preview: %d waypoints, %d markers (path %.0fm, straight %.0fm)",
+			#chain, #markers, path_len or dist, dist)
 		dogma.console.say(string.format(
-			"true fast travel: path failed (%.0fm straight) level=%s aimap=%s",
-			dist, lvl, aimap
-		), "yellow")
-		tft.is_path_preview = false
-		tft.path_preview_id = nil
-		return
-	end
+			"true fast travel: path found %d pts %.0fm (straight %.0fm)",
+			#chain, path_len or dist, dist
+		), "blue")
 
-	if tft.menu_open_seq then
-		tft.menu_path_cache = {
-			seq = tft.menu_open_seq,
-			id = id,
-			chain = chain,
-			is_vertex = is_vertex,
-			path_len = path_len,
-			raw_chain = chain,
-			meta = meta,
-		}
-	end
-
-	local markers = build_preview_markers(chain, chain)
-	tft.dot_positions = {}
-	for i, m in ipairs(markers) do
-		tft.dot_positions[i] = m.pos
-	end
-	tft.dot_count = #markers
-	tft_log("path preview: %d waypoints, %d markers (path %.0fm, straight %.0fm)",
-		#chain, #markers, path_len or dist, dist)
-	dogma.console.say(string.format(
-		"true fast travel: path found %d pts %.0fm (straight %.0fm)",
-		#chain, path_len or dist, dist
-	), "blue")
-
-	for i = 1, tft.dot_count do
-		local spot = markers[i] and markers[i].spot or tft_path.dot_spot_debug_edge
-		ensure_path_dot(i, true, spot)
-	end
+		for i = 1, tft.dot_count do
+			local spot = markers[i] and markers[i].spot or tft_path.dot_spot_debug_edge
+			ensure_path_dot(i, true, spot)
+		end
+	until true
+	dogma.perf.stop()
 end
 
 do

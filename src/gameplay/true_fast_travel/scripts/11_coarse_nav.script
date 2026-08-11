@@ -603,62 +603,68 @@ end
 
 -- Live travel/preview: aimap A* only.
 local function cn_build_path(start_pos, dest_pos, dest_anchor_key)
-    local g = cn_state().graph
-    if not cn_graph_ready() then
-        cn_log("build_path: no aimap loaded")
-        if not cn_ensure_ready(false) then
-            return nil
-        end
-        g = cn_state().graph
+    dogma.perf.start("tft.nav_build_path", 1)
+    local chain, is_vertex, path_len, meta
+    repeat
+        local g = cn_state().graph
         if not cn_graph_ready() then
-            return nil
+            cn_log("build_path: no aimap loaded")
+            if not cn_ensure_ready(false) then
+                break
+            end
+            g = cn_state().graph
+            if not cn_graph_ready() then
+                break
+            end
         end
-    end
-    if not (start_pos and start_pos.x and dest_pos and dest_pos.x) then
-        return nil
-    end
-    local start_hint = tft and tft.start_lvid or nil
-    local start_id = cn_start_lvid(start_pos, start_hint)
-    if not start_id then
-        cn_log("build_path: no start lvid (start=%s hint=%s)",
-            start_pos and string.format("(%.0f,%.0f,%.0f)", start_pos.x, start_pos.y or 0, start_pos.z) or "nil",
-            tostring(start_hint))
-        return nil
-    end
-    if tft then
-        tft.start_lvid = start_id
-    end
-    local goal_id = cn_goal_lvid(dest_pos, dest_anchor_key)
-    if not goal_id then
-        cn_log("build_path: no goal lvid (key=%s)", tostring(dest_anchor_key))
-        return nil
-    end
-    local node_path, pos_cache = cn_graph_path(g, start_id, goal_id, false)
-    if not (node_path and #node_path >= 1) then
-        return nil
-    end
-    -- Keep every A* mesh vertex (no thinning — chords cut corners/walls).
-    local chain = cn_graph_path_positions(g, node_path, pos_cache)
-    if not (chain and #chain >= 1) then
-        return nil
-    end
-    local is_vertex = {}
-    for i = 1, #chain do
-        is_vertex[i] = true
-    end
-    local path_len = 0
-    for i = 2, #chain do
-        path_len = path_len + (cn_horizontal_dist(chain[i - 1], chain[i]) or chain[i - 1]:distance_to(chain[i]) or 0)
-    end
-    local meta = {
-        mode = "aimap",
-        safe_vertices = {},
-        no_land_segments = {},
-        start_node = start_id,
-        goal_node = goal_id,
-        dest_anchor_key = dest_anchor_key,
-        node_count = #node_path,
-    }
+        if not (start_pos and start_pos.x and dest_pos and dest_pos.x) then
+            break
+        end
+        local start_hint = tft and tft.start_lvid or nil
+        local start_id = cn_start_lvid(start_pos, start_hint)
+        if not start_id then
+            cn_log("build_path: no start lvid (start=%s hint=%s)",
+                start_pos and string.format("(%.0f,%.0f,%.0f)", start_pos.x, start_pos.y or 0, start_pos.z) or "nil",
+                tostring(start_hint))
+            break
+        end
+        if tft then
+            tft.start_lvid = start_id
+        end
+        local goal_id = cn_goal_lvid(dest_pos, dest_anchor_key)
+        if not goal_id then
+            cn_log("build_path: no goal lvid (key=%s)", tostring(dest_anchor_key))
+            break
+        end
+        local node_path, pos_cache = cn_graph_path(g, start_id, goal_id, false)
+        if not (node_path and #node_path >= 1) then
+            break
+        end
+        -- Keep every A* mesh vertex (no thinning — chords cut corners/walls).
+        chain = cn_graph_path_positions(g, node_path, pos_cache)
+        if not (chain and #chain >= 1) then
+            chain = nil
+            break
+        end
+        is_vertex = {}
+        for i = 1, #chain do
+            is_vertex[i] = true
+        end
+        path_len = 0
+        for i = 2, #chain do
+            path_len = path_len + (cn_horizontal_dist(chain[i - 1], chain[i]) or chain[i - 1]:distance_to(chain[i]) or 0)
+        end
+        meta = {
+            mode = "aimap",
+            safe_vertices = {},
+            no_land_segments = {},
+            start_node = start_id,
+            goal_node = goal_id,
+            dest_anchor_key = dest_anchor_key,
+            node_count = #node_path,
+        }
+    until true
+    dogma.perf.stop()
     return chain, is_vertex, path_len, meta
 end
 
@@ -753,6 +759,7 @@ local function cn_spawn_dot(ids, index, pos, spot)
 end
 
 local function cn_clear_display()
+    dogma.perf.start("tft.nav_clear_display", 1)
     local st = cn_state()
     local function clear_table(ids, spot)
         for _, obj_id in pairs(ids or {}) do
@@ -772,27 +779,32 @@ local function cn_clear_display()
     st.endpoint_dot_ids = {}
     st.edge_dot_ids = {}
     st.display_active = false
+    
+    dogma.perf.stop()
 end
 
 local function cn_refresh_display()
+    dogma.perf.start("tft.nav_refresh_display", 1)
     cn_clear_display()
     local st = cn_state()
     local g = st.graph
-    if not g then return end
-    local cache = {}
-    local placed = 0
-    local idx = 0
-    for id = 0, g.node_count - 1, CN_DISPLAY_STRIDE do
-        if placed >= CN_DISPLAY_MARKERS_MAX then break end
-        local p = cn_vertex_pos(id, cache)
-        if p then
-            idx = idx + 1
-            cn_spawn_dot(st.dot_ids, idx, vector():set(p.x, p.y + 0.1, p.z), SPOT_NODE)
-            placed = placed + 1
+    if g then
+        local cache = {}
+        local placed = 0
+        local idx = 0
+        for id = 0, g.node_count - 1, CN_DISPLAY_STRIDE do
+            if placed >= CN_DISPLAY_MARKERS_MAX then break end
+            local p = cn_vertex_pos(id, cache)
+            if p then
+                idx = idx + 1
+                cn_spawn_dot(st.dot_ids, idx, vector():set(p.x, p.y + 0.1, p.z), SPOT_NODE)
+                placed = placed + 1
+            end
         end
+        st.display_active = true
+        cn_log("display ON: %d subsampled nodes (stride=%d)", placed, CN_DISPLAY_STRIDE)
     end
-    st.display_active = true
-    cn_log("display ON: %d subsampled nodes (stride=%d)", placed, CN_DISPLAY_STRIDE)
+    dogma.perf.stop()
 end
 
 local function cn_sync_display()

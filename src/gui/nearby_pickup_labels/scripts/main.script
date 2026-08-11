@@ -14,11 +14,13 @@ local LABEL_HALF_W = LABEL_W * 0.5
 local LABEL_HALF_H = LABEL_H * 0.5
 local MAX_LABELS = 32
 local ALIGN_CENTER = 2 -- CGameFont::alCenter
+local UPDATE_DELAY = 250
 
 local HUD = nil
 local POS_VEC = vector2()
 local name_cache = {}
 local label_color = nil
+local next_update = 0
 
 -- vanilla PICKUP_INFO_COLOR 0xFFDDDDDD
 local function pickup_color()
@@ -162,6 +164,8 @@ local function hide_labels()
 end
 
 local function update_labels(actor, radius)
+	-- Nearest scan + world2ui on UPDATE_DELAY; 2ms catches hitch spikes.
+	dogma.perf.start("nearby_labels.update", 2)
 	activate_hud()
 	local shown = 0
 	level.iterate_nearest(actor:position(), radius, function(obj)
@@ -183,6 +187,7 @@ local function update_labels(actor, radius)
 	for i = shown + 1, #HUD.labels do
 		HUD.labels[i]:Show(false)
 	end
+	dogma.perf.stop()
 end
 
 function actor_on_net_destroy()
@@ -202,13 +207,20 @@ local function on_actor_on_update()
 	local radius = CONFIG.loaded.range
 	if type(radius) ~= "number" or radius <= 0 then
 		hide_labels()
+		next_update = 0
 		return
 	end
 	if not actor:alive() or use_held() or pda_shown() then
 		hide_labels()
+		next_update = 0
 		return
 	end
 
+	local tg = time_global()
+	if tg < next_update then
+		return
+	end
+	next_update = tg + UPDATE_DELAY
 	update_labels(actor, radius)
 end
 

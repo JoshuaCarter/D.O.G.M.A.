@@ -721,19 +721,21 @@ end
 
 local function fly_on_actor_update()
 	if not (tft.fly_active or tft.fly_phase) then return end
+	dogma.perf.start("tft.fly_update", 2)
 	if not db.actor then
 		cancel_fly_camera()
-		return
+	else
+		local tg = time_global()
+		local last = tft.fly_last_tg or tg
+		tft.fly_last_tg = tg
+		local dt = math.max(0.001, math.min((tg - last) / 1000, 0.1))
+		if tft.fly_phase == "land" then
+			update_land(dt)
+		elseif tft.fly_phase == "fly" then
+			update_fly(dt)
+		end
 	end
-	local tg = time_global()
-	local last = tft.fly_last_tg or tg
-	tft.fly_last_tg = tg
-	local dt = math.max(0.001, math.min((tg - last) / 1000, 0.1))
-	if tft.fly_phase == "land" then
-		update_land(dt)
-	elseif tft.fly_phase == "fly" then
-		update_fly(dt)
-	end
+	dogma.perf.stop()
 end
 
 local function begin_fly_camera()

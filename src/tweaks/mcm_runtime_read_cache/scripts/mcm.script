@@ -1,0 +1,111 @@
+--[[
+	MCM Runtime Read Cache
+
+	Wraps ui_mcm.get with an in-Lua table so mods that spam get() every
+	update pay one axr_options:r_value per key until the value changes.
+
+	Invalidation:
+	  - ui_mcm.set(id, ...) drops that key (next get refills from axr)
+	  - on_option_change clears all (MCM Accept / apply)
+	  - on_game_load clears all
+
+	Lives in *mcm.script so the patch is installed as soon as MCM gathers
+	at the main menu (same pattern as clear_mcm_search_box).
+]]
+
+local HOOK = _G.__dogma_tweaks_mcm_runtime_read_cache or {}
+_G.__dogma_tweaks_mcm_runtime_read_cache = HOOK
+
+-- present[id] marks a cached slot (value may be false or nil).
+local cache = HOOK.cache or {}
+local present = HOOK.present or {}
+HOOK.cache = cache
+HOOK.present = present
+
+local function clear_all()
+	for id in pairs(present) do
+		present[id] = nil
+		cache[id] = nil
+	end
+end
+
+local function drop(id)
+	if id == nil then
+		return
+	end
+	present[id] = nil
+	cache[id] = nil
+end
+
+local function patch_get_set()
+	if HOOK.patched then
+		return true
+	end
+	if not (ui_mcm and type(ui_mcm.get) == "function") then
+		return false
+	end
+
+	local orig_get = ui_mcm.get
+	local orig_set = ui_mcm.set
+
+	ui_mcm.get = function(id)
+		if present[id] then
+			return cache[id]
+		end
+		local value = orig_get(id)
+		present[id] = true
+		cache[id] = value
+		return value
+	end
+
+	-- Keep disk/write behavior; drop so the next get re-reads axr.
+	if type(orig_set) == "function" then
+		ui_mcm.set = function(id, value)
+			drop(id)
+			return orig_set(id, value)
+		end
+	end
+
+	HOOK.orig_get = orig_get
+	HOOK.orig_set = orig_set
+	HOOK.patched = true
+	printf("[dogma_tweaks_mcm_runtime_read_cache] patched ui_mcm.get/set")
+	return true
+end
+
+local function register_invalidators()
+	if HOOK.callbacks then
+		return
+	end
+	if not RegisterScriptCallback then
+		return
+	end
+	RegisterScriptCallback("on_option_change", clear_all)
+	RegisterScriptCallback("on_game_load", clear_all)
+	HOOK.callbacks = true
+end
+
+-- MCM gather loads this file at main menu - patch immediately.
+patch_get_set()
+register_invalidators()
+
+function on_mcm_load(options)
+	patch_get_set()
+	register_invalidators()
+
+	dogma_mcm.append(options, "tweaks", "ui_mcm_menu_dogma_tweaks", {
+		{
+			id = "mcm_runtime_read_cache_description",
+			type = "desc",
+			text = "ui_mcm_dogma_tweaks_mcm_runtime_read_cache_page_description",
+		},
+	})
+end
+
+function on_game_start()
+	if not patch_get_set() then
+		printf("[dogma_tweaks_mcm_runtime_read_cache] ui_mcm.get missing - patch skipped")
+	end
+	register_invalidators()
+	clear_all()
+end

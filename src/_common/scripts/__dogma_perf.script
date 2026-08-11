@@ -6,25 +6,30 @@
 	Prefer start/stop (no callback). time() is a thin wrapper for rare cases.
 
 	start(label[, threshold_ms]) - push a timing frame (no-op if perf_log off)
-	stop()                       - pop; warn if slow; return elapsed_ms (or nil)
+	stop()                       - pop; warn if slow; return elapsed_ns (or nil)
 	time(label, threshold_ms, fn)- start/fn/stop; returns fn's returns
 
-	Warnings require MCM dogma/debug perf_log. Threshold: call arg →
-	perf_warn_threshold_ms → ≤0 = no warn. Outputs: printf + console.say +
+	Warnings require MCM dogma/debug perf_log. Threshold: call arg (ms) →
+	perf_warn_threshold_ns → ≤0 = no warn. Outputs: printf + console.say +
 	$app_data_root$/dogma_perf.log (not gated by debug_log).
 ]]
 
 local DEBUG_MOD = "dogma/debug"
 local LOG_NAME = "dogma_perf.log"
+local MS_TO_NS = 1000000
 local stack = {}
 local log_path = nil
 local log_path_tried = false
 -- Cached so hot start()/stop() paths avoid MCM lookups every call.
 local logging_on = false
 
-local function now_ms()
+local function now_ns()
+	-- os.clock is fractional seconds; prefer it for sub-ms MCM thresholds.
+	if os and os.clock then
+		return os.clock() * 1e9
+	end
 	if time_global then
-		return time_global()
+		return time_global() * MS_TO_NS
 	end
 	return 0
 end
@@ -73,36 +78,37 @@ function sync()
 	return logging_on
 end
 
-local function default_threshold()
+local function default_threshold_ns()
 	local mcm = rawget(_G, "__dogma_mcm")
 	if mcm and mcm.uint then
-		return mcm.uint(DEBUG_MOD, "perf_warn_threshold_ms", 0)
+		return mcm.uint(DEBUG_MOD, "perf_warn_threshold_ns", 0)
 	end
 	return 0
 end
 
-local function effective_threshold(override_ms)
+-- Per-call override stays in ms; MCM default is ns.
+local function effective_threshold_ns(override_ms)
 	if override_ms ~= nil then
 		local n = tonumber(override_ms)
 		if n ~= nil then
-			return math.max(0, math.floor(n + 0.5))
+			return math.max(0, math.floor(n * MS_TO_NS + 0.5))
 		end
 	end
-	return default_threshold()
+	return default_threshold_ns()
 end
 
-local function warn_slow(label, elapsed_ms, threshold_ms)
+local function warn_slow(label, elapsed_ns, threshold_ns)
 	if not logging_on then
 		return
 	end
-	if threshold_ms <= 0 or elapsed_ms < threshold_ms then
+	if threshold_ns <= 0 or elapsed_ns < threshold_ns then
 		return
 	end
 	local msg = string.format(
-		"[dogma_perf] SLOW %s took %dms (threshold %dms)",
+		"[dogma_perf] SLOW %s took %dns (threshold %dns)",
 		tostring(label or "?"),
-		elapsed_ms,
-		threshold_ms
+		math.floor(elapsed_ns + 0.5),
+		threshold_ns
 	)
 	printf("%s", msg)
 	local console = rawget(_G, "__dogma_console")
@@ -110,7 +116,8 @@ local function warn_slow(label, elapsed_ms, threshold_ms)
 		console.say(msg, "yellow")
 	end
 	-- Game-time stamp keeps lines sortable without depending on OS clock APIs.
-	append_log(string.format("%d %s", now_ms(), msg))
+	local stamp = time_global and time_global() or 0
+	append_log(string.format("%d %s", stamp, msg))
 end
 
 function start(label, threshold_ms)
@@ -119,7 +126,7 @@ function start(label, threshold_ms)
 	end
 	stack[#stack + 1] = {
 		label = label,
-		t0 = now_ms(),
+		t0 = now_ns(),
 		threshold = threshold_ms,
 	}
 end
@@ -131,8 +138,8 @@ function stop()
 	end
 	local frame = stack[n]
 	stack[n] = nil
-	local elapsed = now_ms() - (frame.t0 or 0)
-	warn_slow(frame.label, elapsed, effective_threshold(frame.threshold))
+	local elapsed = now_ns() - (frame.t0 or 0)
+	warn_slow(frame.label, elapsed, effective_threshold_ns(frame.threshold))
 	return elapsed
 end
 

@@ -220,9 +220,10 @@ local function patch_get_set()
 	local orig_get = ui_mcm.get
 	local orig_set = ui_mcm.set
 
+	-- Gates read HOOK.logging_on (not a closed-over local) so bench can mute.
 	ui_mcm.get = function(id)
 		if active and present[id] then
-			if logging_on then
+			if HOOK.logging_on then
 				note_hit(id)
 				flush_summary(false)
 			end
@@ -232,7 +233,7 @@ local function patch_get_set()
 		if active then
 			present[id] = true
 			cache[id] = value
-			if logging_on then
+			if HOOK.logging_on then
 				note_miss(id)
 				flush_summary(false)
 			end
@@ -246,7 +247,7 @@ local function patch_get_set()
 			local had = present[id]
 			present[id] = nil
 			cache[id] = nil
-			if logging_on then
+			if HOOK.logging_on then
 				emit(string.format(
 					"set %s := %s (cache_%s active=%s)",
 					tostring(id),

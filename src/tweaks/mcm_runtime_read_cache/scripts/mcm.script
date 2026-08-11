@@ -9,9 +9,17 @@
 	  - on_option_change clears all (MCM Accept / apply)
 	  - on_game_load clears all
 
+	Debug (DOGMA → Debug → debug_log): clears/sets log immediately;
+	get hit/miss aggregates print at most once per SUMMARY_MS.
+
 	Lives in *mcm.script so the patch is installed as soon as MCM gathers
 	at the main menu (same pattern as clear_mcm_search_box).
 ]]
+
+local MOD_ID = "dogma/tweaks/mcm_runtime_read_cache"
+local TAG = "dogma_tweaks_mcm_runtime_read_cache"
+local SUMMARY_MS = 10000
+local TOP_N = 20
 
 local HOOK = _G.__dogma_tweaks_mcm_runtime_read_cache or {}
 _G.__dogma_tweaks_mcm_runtime_read_cache = HOOK
@@ -22,19 +30,154 @@ local present = HOOK.present or {}
 HOOK.cache = cache
 HOOK.present = present
 
-local function clear_all()
+local hits = HOOK.hits or {}
+local misses = HOOK.misses or {}
+HOOK.hits = hits
+HOOK.misses = misses
+
+local hit_total = HOOK.hit_total or 0
+local miss_total = HOOK.miss_total or 0
+local last_flush_ms = HOOK.last_flush_ms or 0
+local logging_on = HOOK.logging_on or false
+HOOK.hit_total = hit_total
+HOOK.miss_total = miss_total
+HOOK.last_flush_ms = last_flush_ms
+HOOK.logging_on = logging_on
+
+local function now_ms()
+	if time_continual then
+		return time_continual()
+	end
+	if time_global then
+		return time_global()
+	end
+	return 0
+end
+
+local function sync_logging()
+	local on = false
+	local dogma = rawget(_G, "dogma")
+	if dogma and dogma.dbg and dogma.dbg.logging then
+		on = dogma.dbg.logging() == true
+	end
+	logging_on = on
+	HOOK.logging_on = on
+	return on
+end
+
+local function emit(msg)
+	local dogma = rawget(_G, "dogma")
+	if dogma and dogma.dbg and dogma.dbg.log then
+		dogma.dbg.log(MOD_ID, msg)
+		return
+	end
+	printf("[%s] %s", TAG, tostring(msg))
+end
+
+local function reset_window_stats()
+	for id in pairs(hits) do
+		hits[id] = nil
+	end
+	for id in pairs(misses) do
+		misses[id] = nil
+	end
+	hit_total = 0
+	miss_total = 0
+	HOOK.hit_total = 0
+	HOOK.miss_total = 0
+end
+
+local function count_present()
+	local n = 0
+	for _ in pairs(present) do
+		n = n + 1
+	end
+	return n
+end
+
+local function note_hit(id)
+	if not logging_on then
+		return
+	end
+	hits[id] = (hits[id] or 0) + 1
+	hit_total = hit_total + 1
+	HOOK.hit_total = hit_total
+end
+
+local function note_miss(id)
+	if not logging_on then
+		return
+	end
+	misses[id] = (misses[id] or 0) + 1
+	miss_total = miss_total + 1
+	HOOK.miss_total = miss_total
+end
+
+local function flush_summary(force)
+	if not logging_on then
+		return
+	end
+	if hit_total == 0 and miss_total == 0 then
+		last_flush_ms = now_ms()
+		HOOK.last_flush_ms = last_flush_ms
+		return
+	end
+	local t = now_ms()
+	if not force and (t - last_flush_ms) < SUMMARY_MS then
+		return
+	end
+	last_flush_ms = t
+	HOOK.last_flush_ms = t
+
+	local total = hit_total + miss_total
+	local uniq = {}
+	local n_uniq = 0
+	for id, n in pairs(hits) do
+		uniq[id] = (uniq[id] or 0) + n
+	end
+	for id, n in pairs(misses) do
+		uniq[id] = (uniq[id] or 0) + n
+	end
+	local ranked = {}
+	for id, n in pairs(uniq) do
+		n_uniq = n_uniq + 1
+		ranked[#ranked + 1] = { id = id, n = n, h = hits[id] or 0, m = misses[id] or 0 }
+	end
+	table.sort(ranked, function(a, b)
+		if a.n == b.n then
+			return tostring(a.id) < tostring(b.id)
+		end
+		return a.n > b.n
+	end)
+
+	local hit_pct = total > 0 and (100 * hit_total / total) or 0
+	emit(string.format(
+		"get window: total=%d hit=%d miss=%d hit_rate=%.1f%% unique=%d cached=%d",
+		total, hit_total, miss_total, hit_pct, n_uniq, count_present()
+	))
+
+	local limit = math.min(TOP_N, #ranked)
+	for i = 1, limit do
+		local r = ranked[i]
+		emit(string.format("  #%d %s  reads=%d (hit=%d miss=%d)", i, tostring(r.id), r.n, r.h, r.m))
+	end
+	if #ranked > limit then
+		emit(string.format("  ... +%d more keys", #ranked - limit))
+	end
+
+	reset_window_stats()
+end
+
+local function clear_all(reason)
+	flush_summary(true)
+	local n = count_present()
 	for id in pairs(present) do
 		present[id] = nil
 		cache[id] = nil
 	end
-end
-
-local function drop(id)
-	if id == nil then
-		return
+	if logging_on then
+		emit(string.format("clear all (%s) dropped=%d", tostring(reason or "?"), n))
 	end
-	present[id] = nil
-	cache[id] = nil
 end
 
 local function patch_get_set()
@@ -50,18 +193,32 @@ local function patch_get_set()
 
 	ui_mcm.get = function(id)
 		if present[id] then
+			note_hit(id)
+			flush_summary(false)
 			return cache[id]
 		end
 		local value = orig_get(id)
 		present[id] = true
 		cache[id] = value
+		note_miss(id)
+		flush_summary(false)
 		return value
 	end
 
 	-- Keep disk/write behavior; drop so the next get re-reads axr.
 	if type(orig_set) == "function" then
 		ui_mcm.set = function(id, value)
-			drop(id)
+			local had = present[id]
+			present[id] = nil
+			cache[id] = nil
+			if logging_on then
+				emit(string.format(
+					"set %s := %s (cache_%s)",
+					tostring(id),
+					tostring(value),
+					had and "dropped" or "miss"
+				))
+			end
 			return orig_set(id, value)
 		end
 	end
@@ -69,7 +226,7 @@ local function patch_get_set()
 	HOOK.orig_get = orig_get
 	HOOK.orig_set = orig_set
 	HOOK.patched = true
-	printf("[dogma_tweaks_mcm_runtime_read_cache] patched ui_mcm.get/set")
+	printf("[%s] patched ui_mcm.get/set", TAG)
 	return true
 end
 
@@ -80,18 +237,26 @@ local function register_invalidators()
 	if not RegisterScriptCallback then
 		return
 	end
-	RegisterScriptCallback("on_option_change", clear_all)
-	RegisterScriptCallback("on_game_load", clear_all)
+	RegisterScriptCallback("on_option_change", function()
+		sync_logging()
+		clear_all("on_option_change")
+	end)
+	RegisterScriptCallback("on_game_load", function()
+		sync_logging()
+		clear_all("on_game_load")
+	end)
 	HOOK.callbacks = true
 end
 
 -- MCM gather loads this file at main menu - patch immediately.
 patch_get_set()
 register_invalidators()
+sync_logging()
 
 function on_mcm_load(options)
 	patch_get_set()
 	register_invalidators()
+	sync_logging()
 
 	dogma_mcm.append(options, "tweaks", "ui_mcm_menu_dogma_tweaks", {
 		{
@@ -104,8 +269,9 @@ end
 
 function on_game_start()
 	if not patch_get_set() then
-		printf("[dogma_tweaks_mcm_runtime_read_cache] ui_mcm.get missing - patch skipped")
+		printf("[%s] ui_mcm.get missing - patch skipped", TAG)
 	end
 	register_invalidators()
-	clear_all()
+	sync_logging()
+	clear_all("on_game_start")
 end

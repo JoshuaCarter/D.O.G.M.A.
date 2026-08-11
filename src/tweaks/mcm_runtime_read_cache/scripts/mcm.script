@@ -222,6 +222,14 @@ local function patch_get_set()
 
 	-- Gates read HOOK.logging_on (not a closed-over local) so bench can mute.
 	ui_mcm.get = function(id)
+		-- MCM asserts on get while gathering (e.g. Reset/Default). Soft-fail like dogma.mcm.
+		if ui_mcm.is_gathering and ui_mcm.is_gathering() then
+			local ok, value = pcall(orig_get, id)
+			if ok then
+				return value
+			end
+			return nil
+		end
 		if active and present[id] then
 			if HOOK.logging_on then
 				note_hit(id)

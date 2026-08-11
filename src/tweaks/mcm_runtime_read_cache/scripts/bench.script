@@ -1,150 +1,150 @@
---[[
-	TEMP microbench for mcm_runtime_read_cache (keep for testing; disable to ship quiet).
+-- --[[
+-- 	TEMP microbench for mcm_runtime_read_cache (keep for testing; disable to ship quiet).
 
-	After DELAY_SEC in a loaded game: time ITERS× original ui_mcm.get (axr),
-	then ITERS× patched get (Lua cache). Logs both + ratio via printf.
+-- 	After DELAY_SEC in a loaded game: time ITERS× original ui_mcm.get (axr),
+-- 	then ITERS× patched get (Lua cache). Logs both + ratio via printf.
 
-	Disable without deleting: set BENCH_ENABLE = false below.
-	Build output: zzzz_dogma_tweaks_mcm_runtime_read_cache_bench.script
-]]
+-- 	Disable without deleting: set BENCH_ENABLE = false below.
+-- 	Build output: zzzz_dogma_tweaks_mcm_runtime_read_cache_bench.script
+-- ]]
 
-local BENCH_ENABLE = true
-local BENCH_ONCE = true
-local DELAY_SEC = 10
-local ITERS = 10000000
-local KEY = "dogma/debug/debug_log"
-local TAG = "dogma_tweaks_mcm_runtime_read_cache_bench"
-local EVT = "mcm_cache_bench"
+-- local BENCH_ENABLE = true
+-- local BENCH_ONCE = true
+-- local DELAY_SEC = 10
+-- local ITERS = 10000000
+-- local KEY = "dogma/debug/debug_log"
+-- local TAG = "dogma_tweaks_mcm_runtime_read_cache_bench"
+-- local EVT = "mcm_cache_bench"
 
-local scheduled = false
-local finished = false
+-- local scheduled = false
+-- local finished = false
 
-local function now()
-	if os and os.clock then
-		return os.clock()
-	end
-	return 0
-end
+-- local function now()
+-- 	if os and os.clock then
+-- 		return os.clock()
+-- 	end
+-- 	return 0
+-- end
 
-local function log(fmt, ...)
-	local ok, msg = pcall(string.format, fmt, ...)
-	if not ok then
-		msg = tostring(fmt)
-	end
-	-- Engine printf is unreliable with multiple %-specs; one string only.
-	printf("[%s] %s", TAG, msg)
-end
+-- local function log(fmt, ...)
+-- 	local ok, msg = pcall(string.format, fmt, ...)
+-- 	if not ok then
+-- 		msg = tostring(fmt)
+-- 	end
+-- 	-- Engine printf is unreliable with multiple %-specs; one string only.
+-- 	printf("[%s] %s", TAG, msg)
+-- end
 
--- Smallest positive delta os.clock will report (for lower-bound speedup).
-local function clock_quantum()
-	local a = now()
-	local b = a
-	local spins = 0
-	while b <= a and spins < 5000000 do
-		spins = spins + 1
-		b = now()
-	end
-	if b > a then
-		return b - a
-	end
-	return 0.001 -- fallback 1ms
-end
+-- -- Smallest positive delta os.clock will report (for lower-bound speedup).
+-- local function clock_quantum()
+-- 	local a = now()
+-- 	local b = a
+-- 	local spins = 0
+-- 	while b <= a and spins < 5000000 do
+-- 		spins = spins + 1
+-- 		b = now()
+-- 	end
+-- 	if b > a then
+-- 		return b - a
+-- 	end
+-- 	return 0.001 -- fallback 1ms
+-- end
 
-local function run_bench()
-	local hook = rawget(_G, "__dogma_tweaks_mcm_runtime_read_cache")
-	if not (hook and hook.patched and hook.orig_get and type(ui_mcm) == "table" and type(ui_mcm.get) == "function") then
-		log("skip: cache patch not ready")
-		return
-	end
-	if not hook.active then
-		log("skip: cache inactive (not in loaded game?)")
-		return
-	end
+-- local function run_bench()
+-- 	local hook = rawget(_G, "__dogma_tweaks_mcm_runtime_read_cache")
+-- 	if not (hook and hook.patched and hook.orig_get and type(ui_mcm) == "table" and type(ui_mcm.get) == "function") then
+-- 		log("skip: cache patch not ready")
+-- 		return
+-- 	end
+-- 	if not hook.active then
+-- 		log("skip: cache inactive (not in loaded game?)")
+-- 		return
+-- 	end
 
-	local orig = hook.orig_get
-	local n = ITERS
-	local key = KEY
-	local q = clock_quantum()
+-- 	local orig = hook.orig_get
+-- 	local n = ITERS
+-- 	local key = KEY
+-- 	local q = clock_quantum()
 
-	-- Fairness: don't count debug hit/miss bookkeeping inside the timed loops.
-	local prev_log = hook.logging_on
-	hook.logging_on = false
+-- 	-- Fairness: don't count debug hit/miss bookkeeping inside the timed loops.
+-- 	local prev_log = hook.logging_on
+-- 	hook.logging_on = false
 
-	-- Warm both paths once (and ensure key is cacheable).
-	local ok, sample = pcall(orig, key)
-	if not ok then
-		hook.logging_on = prev_log
-		log("skip: orig_get failed for %s: %s", key, tostring(sample))
-		return
-	end
-	pcall(ui_mcm.get, key)
+-- 	-- Warm both paths once (and ensure key is cacheable).
+-- 	local ok, sample = pcall(orig, key)
+-- 	if not ok then
+-- 		hook.logging_on = prev_log
+-- 		log("skip: orig_get failed for %s: %s", key, tostring(sample))
+-- 		return
+-- 	end
+-- 	pcall(ui_mcm.get, key)
 
-	local t0 = now()
-	for _ = 1, n do
-		orig(key)
-	end
-	local t_axr = now() - t0
+-- 	local t0 = now()
+-- 	for _ = 1, n do
+-- 		orig(key)
+-- 	end
+-- 	local t_axr = now() - t0
 
-	t0 = now()
-	for _ = 1, n do
-		ui_mcm.get(key)
-	end
-	local t_cache = now() - t0
+-- 	t0 = now()
+-- 	for _ = 1, n do
+-- 		ui_mcm.get(key)
+-- 	end
+-- 	local t_cache = now() - t0
 
-	hook.logging_on = prev_log
+-- 	hook.logging_on = prev_log
 
-	local axr_us = (t_axr / n) * 1e6
-	local cache_us = (t_cache / n) * 1e6
-	local under = (not t_cache) or (t_cache <= 0)
-	local t_cache_eff = under and q or t_cache
-	local ratio = (t_cache_eff > 0) and (t_axr / t_cache_eff) or nil
-	local saved_pct = (t_axr > 0) and (100 * (1 - t_cache_eff / t_axr)) or 0
-	-- Rough gameplay: ms of axr get-time per second at G gets/s (edit G from log totals/10).
-	local example_gets_per_sec = 800
-	local ms_per_sec = example_gets_per_sec * axr_us / 1000
+-- 	local axr_us = (t_axr / n) * 1e6
+-- 	local cache_us = (t_cache / n) * 1e6
+-- 	local under = (not t_cache) or (t_cache <= 0)
+-- 	local t_cache_eff = under and q or t_cache
+-- 	local ratio = (t_cache_eff > 0) and (t_axr / t_cache_eff) or nil
+-- 	local saved_pct = (t_axr > 0) and (100 * (1 - t_cache_eff / t_axr)) or 0
+-- 	-- Rough gameplay: ms of axr get-time per second at G gets/s (edit G from log totals/10).
+-- 	local example_gets_per_sec = 800
+-- 	local ms_per_sec = example_gets_per_sec * axr_us / 1000
 
-	log("key=%s iters=%d sample=%s clock_quantum=%.6fs", key, n, tostring(sample), q)
-	log("axr/orig_get:  %.4fs  (%.3f us/call)", t_axr, axr_us)
-	if under then
-		log("lua cache get: <%.6fs  (<%.3f us/call)  [under clock]", q, (q / n) * 1e6)
-		log("speedup => >%.0fx  cache_saves => >%.1f%% of get-time", ratio or 0, saved_pct)
-	else
-		log("lua cache get: %.4fs  (%.3f us/call)", t_cache, cache_us)
-		log("speedup=%.1fx  cache_saves=%.1f%% of get-time", ratio or 0, saved_pct)
-	end
-	log("ballpark: at %d gets/s, uncached get-time ~%.2f ms/s (not ms/frame)", example_gets_per_sec, ms_per_sec)
-end
+-- 	log("key=%s iters=%d sample=%s clock_quantum=%.6fs", key, n, tostring(sample), q)
+-- 	log("axr/orig_get:  %.4fs  (%.3f us/call)", t_axr, axr_us)
+-- 	if under then
+-- 		log("lua cache get: <%.6fs  (<%.3f us/call)  [under clock]", q, (q / n) * 1e6)
+-- 		log("speedup => >%.0fx  cache_saves => >%.1f%% of get-time", ratio or 0, saved_pct)
+-- 	else
+-- 		log("lua cache get: %.4fs  (%.3f us/call)", t_cache, cache_us)
+-- 		log("speedup=%.1fx  cache_saves=%.1f%% of get-time", ratio or 0, saved_pct)
+-- 	end
+-- 	log("ballpark: at %d gets/s, uncached get-time ~%.2f ms/s (not ms/frame)", example_gets_per_sec, ms_per_sec)
+-- end
 
-local function schedule()
-	if not BENCH_ENABLE then
-		return
-	end
-	if BENCH_ONCE and finished then
-		return
-	end
-	if scheduled then
-		return
-	end
-	scheduled = true
-	RemoveTimeEvent(TAG, EVT)
-	CreateTimeEvent(TAG, EVT, DELAY_SEC, function()
-		scheduled = false
-		if BENCH_ONCE then
-			finished = true
-		end
-		run_bench()
-		return true -- one-shot
-	end)
-	log("scheduled in %ss (%d iters, key=%s)", DELAY_SEC, ITERS, KEY)
-end
+-- local function schedule()
+-- 	if not BENCH_ENABLE then
+-- 		return
+-- 	end
+-- 	if BENCH_ONCE and finished then
+-- 		return
+-- 	end
+-- 	if scheduled then
+-- 		return
+-- 	end
+-- 	scheduled = true
+-- 	RemoveTimeEvent(TAG, EVT)
+-- 	CreateTimeEvent(TAG, EVT, DELAY_SEC, function()
+-- 		scheduled = false
+-- 		if BENCH_ONCE then
+-- 			finished = true
+-- 		end
+-- 		run_bench()
+-- 		return true -- one-shot
+-- 	end)
+-- 	log("scheduled in %ss (%d iters, key=%s)", DELAY_SEC, ITERS, KEY)
+-- end
 
-function on_game_start()
-	if not BENCH_ENABLE then
-		return
-	end
-	RegisterScriptCallback("on_game_load", schedule)
-	RegisterScriptCallback("main_menu_on_init", function()
-		scheduled = false
-		RemoveTimeEvent(TAG, EVT)
-	end)
-end
+-- function on_game_start()
+-- 	if not BENCH_ENABLE then
+-- 		return
+-- 	end
+-- 	RegisterScriptCallback("on_game_load", schedule)
+-- 	RegisterScriptCallback("main_menu_on_init", function()
+-- 		scheduled = false
+-- 		RemoveTimeEvent(TAG, EVT)
+-- 	end)
+-- end

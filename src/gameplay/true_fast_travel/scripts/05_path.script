@@ -236,7 +236,7 @@ local function remove_path_spots(obj_id)
 end
 
 local function cleanup_dots()
-	dogma.perf.start("tft.cleanup_dots", 1)
+	dogma.perf.start("tft.cleanup_dots")
 	for _, id in pairs(tft.dot_ids or {}) do
 		remove_path_spots(id)
 		pcall(function()
@@ -357,7 +357,7 @@ local function preview_eligible(id, se_obj, ln)
 end
 
 local function build_path_preview(id, is_lc)
-	dogma.perf.start("tft.path_preview", 1)
+	dogma.perf.start("tft.path_preview")
 	repeat
 		if tft.is_traveling then break end
 		if not path_preview_enabled() then break end

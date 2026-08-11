@@ -1,0 +1,177 @@
+--[[
+	Pistol Slot — CQC / Teivaz quick melee compat
+
+	X-Ray loads each script into its own namespace (setfenv this; __index=_G).
+	`function hit_key()` is quickdraw.hit_key, not a real _G global — replacing
+	bare hit_key from our script only wrote our namespace. Their on_key_press
+	still called quickdraw.hit_key with the 0..5 allowlist.
+
+	We replace quickdraw.hit_key / hit_animation so their callbacks pick ours up.
+]]
+
+local CONFIG = _G.dogma_gameplay_pistol_slot_conf
+local MOD_ID = CONFIG.MOD_ID
+local PISTOL_SLOT = CONFIG.PISTOL_SLOT
+
+local installed = false
+local tries = 0
+local MAX_TRIES = 120
+
+local anm_state = 0
+local anm_slot = 14
+local anm_time = 350
+local anm_start = 0
+local knife_sec = nil
+local knifesm = {
+	"wpn_knife",
+	"wpn_knife2",
+	"wpn_knife3",
+	"wpn_knife4",
+	"wpn_knife5",
+	"wpn_knife6",
+	"wpn_knife7",
+	"wpn_knife8",
+}
+local hit_slot = {
+	[0] = true,
+	[1] = true,
+	[2] = true,
+	[3] = true,
+	[4] = true,
+	[5] = true,
+	[PISTOL_SLOT] = true,
+}
+
+local function our_hit_key()
+	local actor = db.actor
+	if not actor then
+		return
+	end
+	if actor_menu.get_last_mode() ~= 0 then
+		return
+	end
+	if not hit_slot[actor:active_slot()] then
+		return
+	end
+	if anm_state ~= 0 then
+		return
+	end
+	if actor:active_detector() then
+		return
+	end
+
+	knife_sec = nil
+	for i = 1, #knifesm do
+		local knife = actor:object(knifesm[i])
+		if knife then
+			knife_to_degrade = knife
+			knife_sec = "animation_hit_" .. knife:section()
+		end
+	end
+	if not knife_sec then
+		return
+	end
+
+	local anm = actor:item_in_slot(anm_slot)
+	if anm then
+		alife():release(alife_object(anm:id()))
+		return
+	end
+
+	anm_state = 1
+	last_slot = actor:active_slot() or 0
+
+	local wpn = actor:item_in_slot(actor:active_slot())
+	if wpn then
+		wpn:switch_state(3)
+	end
+
+	alife():create(
+		knife_sec,
+		actor:position(),
+		actor:level_vertex_id(),
+		actor:game_vertex_id(),
+		actor:id()
+	)
+	knife_sec = nil
+end
+
+local function our_hit_animation()
+	local actor = db.actor
+	if not actor then
+		return
+	end
+	local wpn = actor:item_in_slot(last_slot)
+
+	if anm_state == 1 then
+		if actor:item_in_slot(anm_slot) then
+			actor:activate_slot(anm_slot)
+			if wpn then
+				wpn:switch_state(3)
+			end
+			anm_start = time_global()
+			anm_state = 2
+		end
+	elseif anm_state == 2 and actor:active_slot() == anm_slot and time_global() > anm_start then
+		anm_start = time_global()
+		anm_state = 3
+		local anm = actor:item_in_slot(anm_slot)
+		if anm then
+			anm:switch_state(5)
+		end
+	elseif anm_state == 3 and time_global() > anm_start + anm_time then
+		local anm = actor:item_in_slot(anm_slot)
+		if anm then
+			alife():release(alife_object(anm:id()))
+		end
+		anm_state = 4
+	elseif anm_state == 4 and time_global() > anm_start + anm_time + 20 then
+		actor:activate_slot(last_slot)
+		anm_state = 5
+	elseif anm_state == 5 and time_global() > anm_start + anm_time + 400 then
+		anm_state = 0
+	elseif anm_state ~= 0 and actor:active_slot() ~= anm_slot and time_global() > anm_start + anm_time + 400 then
+		anm_state = 0
+	end
+end
+
+local function quickdraw_ns()
+	return rawget(_G, "quickdraw")
+end
+
+local function install()
+	if installed then
+		return true
+	end
+	if not dogma.sys.ready(MOD_ID, db) then
+		return false
+	end
+	local ns = quickdraw_ns()
+	if not (ns and type(ns.hit_key) == "function" and type(ns.hit_animation) == "function") then
+		return false
+	end
+	ns.hit_key = our_hit_key
+	ns.hit_animation = our_hit_animation
+	installed = true
+	return true
+end
+
+function on_game_start()
+	CreateTimeEvent("dogma_pistol_slot", "qm_install", 0, function()
+		if install() then
+			return true
+		end
+		tries = tries + 1
+		return tries >= MAX_TRIES
+	end)
+	RegisterScriptCallback("on_game_load", function()
+		installed = false
+		tries = 0
+		install()
+	end)
+	RegisterScriptCallback("on_before_key_press", function(_key, bind)
+		if key_bindings and bind == key_bindings.kCUSTOM24 then
+			install()
+		end
+	end)
+end

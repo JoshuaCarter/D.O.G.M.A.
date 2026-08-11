@@ -857,7 +857,7 @@ end
 -- Do NOT add/remove PDA map icons — those belong to the game / other mods (FFT, etc.).
 -- Once per level load (see schedule_index_travel_destinations); not on the 1s discovery poll.
 local function index_travel_destinations()
-    dogma.perf.start("tft.index_destinations", 1)
+    dogma.perf.start("tft.index_destinations")
     local ok = false
     repeat
         local sim = alife()
@@ -956,7 +956,7 @@ local function discover_destination(id, silent)
 end
 
 local function poll_discoveries()
-    dogma.perf.start("tft.poll_discoveries", 1)
+    dogma.perf.start("tft.poll_discoveries")
     -- Never discover mid-journey (stepped teleports would otherwise trip nearby points).
     local pairs_ = pairs
     if tft.is_traveling or tft.stepped_active then

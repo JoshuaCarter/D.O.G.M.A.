@@ -603,7 +603,7 @@ end
 
 -- Live travel/preview: aimap A* only.
 local function cn_build_path(start_pos, dest_pos, dest_anchor_key)
-    dogma.perf.start("tft.nav_build_path", 1)
+    dogma.perf.start("tft.nav_build_path")
     local chain, is_vertex, path_len, meta
     repeat
         local g = cn_state().graph
@@ -759,7 +759,7 @@ local function cn_spawn_dot(ids, index, pos, spot)
 end
 
 local function cn_clear_display()
-    dogma.perf.start("tft.nav_clear_display", 1)
+    dogma.perf.start("tft.nav_clear_display")
     local st = cn_state()
     local function clear_table(ids, spot)
         for _, obj_id in pairs(ids or {}) do
@@ -784,7 +784,7 @@ local function cn_clear_display()
 end
 
 local function cn_refresh_display()
-    dogma.perf.start("tft.nav_refresh_display", 1)
+    dogma.perf.start("tft.nav_refresh_display")
     cn_clear_display()
     local st = cn_state()
     local g = st.graph

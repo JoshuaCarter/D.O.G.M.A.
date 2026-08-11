@@ -5,13 +5,16 @@
 
 	Prefer start/stop (no callback). time() is a thin wrapper for rare cases.
 
-	start(label[, threshold_ms]) - push a timing frame (no-op if perf_log off)
-	stop()                       - pop; warn if slow; return elapsed_ns (or nil)
-	time(label, threshold_ms, fn)- start/fn/stop; returns fn's returns
+	start(label[, threshold_ns]) - push a timing frame (no-op if perf_log off)
+	stop()                        - pop; warn if slow; return elapsed_ns (or nil)
+	time(label, threshold_ns, fn) - start/fn/stop; returns fn's returns
 
-	Warnings require MCM dogma/debug perf_log. Threshold: call arg (ms) →
+	Warnings require MCM dogma/debug perf_log. Threshold: call arg (ns) →
 	perf_warn_threshold_ns → ≤0 = no warn. Outputs: printf + console.say +
 	$app_data_root$/dogma_perf.log (not gated by debug_log).
+
+	Note: os.clock is often ~1ms quantum; sub-ms thresholds may still report
+	elapsed as 0 or 1000000ns.
 ]]
 
 local DEBUG_MOD = "dogma/debug"
@@ -86,12 +89,12 @@ local function default_threshold_ns()
 	return 0
 end
 
--- Per-call override stays in ms; MCM default is ns.
-local function effective_threshold_ns(override_ms)
-	if override_ms ~= nil then
-		local n = tonumber(override_ms)
+-- Call override and MCM default are both nanoseconds.
+local function effective_threshold_ns(override_ns)
+	if override_ns ~= nil then
+		local n = tonumber(override_ns)
 		if n ~= nil then
-			return math.max(0, math.floor(n * MS_TO_NS + 0.5))
+			return math.max(0, math.floor(n + 0.5))
 		end
 	end
 	return default_threshold_ns()
@@ -120,14 +123,14 @@ local function warn_slow(label, elapsed_ns, threshold_ns)
 	append_log(string.format("%d %s", stamp, msg))
 end
 
-function start(label, threshold_ms)
+function start(label, threshold_ns)
 	if not logging_on then
 		return
 	end
 	stack[#stack + 1] = {
 		label = label,
 		t0 = now_ns(),
-		threshold = threshold_ms,
+		threshold = threshold_ns,
 	}
 end
 
@@ -143,11 +146,11 @@ function stop()
 	return elapsed
 end
 
-function time(label, threshold_ms, fn)
+function time(label, threshold_ns, fn)
 	if not logging_on then
 		return fn()
 	end
-	start(label, threshold_ms)
+	start(label, threshold_ns)
 	-- Preserve all returns (Lua 5.1 `{ fn() }` only keeps the first).
 	return (function(...)
 		stop()

@@ -185,7 +185,7 @@ end
 
 -- Expensive: iterate_nearest + filters. Cadence = UPDATE_DELAY (idle and while tracking).
 local function scan_nearby(actor, radius)
-	dogma.perf.start("nearby_labels.scan", 2)
+	dogma.perf.start("nearby_labels.scan")
 	clear_tracked()
 	local n = 0
 	level.iterate_nearest(actor:position(), radius, function(obj)
@@ -205,7 +205,7 @@ end
 
 -- Cheap: object_by_id + range + world2ui for cached ids (every frame while tracking).
 local function project_labels(actor, radius)
-	dogma.perf.start("nearby_labels.draw", 1)
+	dogma.perf.start("nearby_labels.draw")
 	activate_hud()
 	local apos = actor:position()
 	local r2 = radius * radius

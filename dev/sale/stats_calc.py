@@ -93,6 +93,44 @@ def _f(v: Any, default: float = 0.0) -> float:
         return default
 
 
+def _csv_names(raw: object) -> list[str]:
+    return [p.strip().lower() for p in str(raw or "").split(",") if p.strip()]
+
+
+def _is_sight_addon(tok: str, sections: dict[str, dict[str, str]] | None) -> bool:
+    """True for a real optic id; false for tac kits / lasers / ``none``."""
+    t = (tok or "").strip()
+    if not t or t.lower() == "none":
+        return False
+    d = (sections or {}).get(t) or (sections or {}).get(t.lower()) or {}
+    vis = (d.get("visual") or "").lower().replace("/", "\\")
+    if "wpn_tac_kit" in vis:
+        return False
+    if (d.get("class") or "").upper() == "WP_SCOPE":
+        return True
+    if "\\wpn_addons\\" in vis or "wpn_scope" in vis:
+        return True
+    return False
+
+
+def can_attach_sight(
+    d: dict[str, str] | None,
+    sections: dict[str, dict[str, str]] | None = None,
+) -> bool:
+    """True when the gun can take an optic (empty rail or 3DSS sight list)."""
+    if not d:
+        return False
+    if int(round(_f(d.get("scope_status"), 0))) == 2:
+        return True
+    if (d.get("scopes_sect") or "").strip():
+        return True
+    names = set(_csv_names(d.get("scopes")))
+    names.update(_csv_names(d.get(">scopes")))
+    for p in _csv_names(d.get("<scopes")):
+        names.discard(p)
+    return any(_is_sight_addon(p, sections) for p in names)
+
+
 def dist_atten(air_res: float, dist: float) -> float:
     k = air_res if air_res is not None else 0.05
     return 1 + (dist / 200) * k * 0.5 / (1 - k + 0.1)
@@ -265,12 +303,14 @@ def _weapon_calculate_py(inp: dict[str, Any]) -> dict[str, Any]:
         "burst": burst,
         "spread_ads": ads,
         "spread_hip": hip,
-        # status 1 = attached/built-in; 2 = empty rail/slot (do not score).
-        "scope": 1 if abs(_f(inp.get("scope_status"), 0) - 1.0) < 1e-9 else 0,
+        # Already has an optic (status 1). Empty rail is att, not scope.
+        "scope": 1 if int(round(_f(inp.get("scope_status"), 0))) == 1 else 0,
+        # Can attach a sight (empty rail / 3DSS scopes list). Built-in-only is 0.
+        "att": 1 if int(round(_f(inp.get("can_attach_sight"), 0))) > 0 else 0,
         "silencer": (
             1
             if (
-                abs(_f(inp.get("silencer_status"), 0) - 1.0) < 1e-9
+                int(round(_f(inp.get("silencer_status"), 0))) in (1, 2)
                 or bool(inp.get("integrated_silencer"))
                 or _has_integrated_silencer(
                     str(inp.get("sec") or ""),
@@ -409,6 +449,7 @@ def build_weapon_input(sec: str, sections: dict[str, dict[str, str]]) -> dict[st
         "rpm": gf("rpm"),
         "ammo_mag_size": gf("ammo_mag_size"),
         "scope_status": gf("scope_status"),
+        "can_attach_sight": 1 if can_attach_sight(d, sections) else 0,
         "silencer_status": sil_status,
         "integrated_silencer": integrated,
         "sec": sec,

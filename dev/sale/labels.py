@@ -41,8 +41,8 @@ _LABELS: dict[str, tuple[str, str]] = {
     "ammo": ("Ammo", "Calibres this weapon uses."),
     "tier": (
         "Tier",
-        "Quartile grade (A best .. D worst) vs every other weapon, using "
-        "Default weights — stays the same across faction tabs.",
+        "Gun repair class from LTX repair_type — A pistol, B shotgun, "
+        "C rifle_5, D rifle_7 (same letters/colours as inventory chips).",
     ),
     # Weapon stats / weights (score cols = tip Min .. Max torso tiers)
     "cost": ("Cost", "Base item cost (higher scores better when weighted)."),
@@ -103,18 +103,33 @@ _LABELS: dict[str, tuple[str, str]] = {
     "w_spread_ads": ("ADS spread", "Aim-down-sights dispersion (lower is better)."),
     "spread_hip": ("Hip spread", "Hipfire dispersion (lower is better)."),
     "w_spread_hip": ("Hip spread", "Hipfire dispersion (lower is better)."),
-    "scope": ("Scope", "Built-in / attached optic (scope_status=1), not an empty rail."),
+    "scope": (
+        "Scope",
+        "Binary 0/1: already has a built-in or attached optic (scope_status 1).",
+    ),
     "w_scope": (
         "Scope",
-        "Built-in / attached optic (scope_status=1), not an empty rail.",
+        "Binary 0/1: already has a built-in or attached optic (scope_status 1).",
+    ),
+    "att": (
+        "Sight rail",
+        "Binary 0/1: can attach a sight (3DSS optic list or empty rail). "
+        "Kits and lasers do not count.",
+    ),
+    "w_att": (
+        "Sight rail",
+        "Binary 0/1: can attach a sight (3DSS optic list or empty rail). "
+        "Kits and lasers do not count.",
     ),
     "silencer": (
         "Silencer",
-        "Attached / integrated suppressor (silencer_status=1), not an empty slot.",
+        "Binary 0/1: has an attached/integrated suppressor or an empty slot "
+        "(silencer_status 1 or 2).",
     ),
     "w_silencer": (
         "Silencer",
-        "Attached / integrated suppressor (silencer_status=1), not an empty slot.",
+        "Binary 0/1: has an attached/integrated suppressor or an empty slot "
+        "(silencer_status 1 or 2).",
     ),
     # Armor
     "a_price": ("Price", "Base item cost (higher scores better when weighted)."),

@@ -142,6 +142,55 @@ local function sniper_ap_bonus(sec, parent_section)
 	return 0
 end
 
+local function is_sight_addon(tok)
+	if not tok or tok == "" or tok == "none" then
+		return false
+	end
+	if not ini_sys or not ini_sys:section_exist(tok) then
+		return false
+	end
+	local vis = string.lower(ini_sys:r_string_ex(tok, "visual") or "")
+	if string.find(vis, "wpn_tac_kit", 1, true) then
+		return false
+	end
+	local cls = string.upper(ini_sys:r_string_ex(tok, "class") or "")
+	if cls == "WP_SCOPE" then
+		return true
+	end
+	if string.find(vis, "wpn_addons", 1, true) or string.find(vis, "wpn_scope", 1, true) then
+		return true
+	end
+	return false
+end
+
+local function scopes_csv_has_sight(s)
+	if not s or s == "" then
+		return false
+	end
+	for part in string.gmatch(s, "([^,]+)") do
+		local tok = part:match("^%s*(.-)%s*$")
+		if is_sight_addon(tok) then
+			return true
+		end
+	end
+	return false
+end
+
+local function can_attach_sight_ini(wpn_sec)
+	if not wpn_sec or not ini_sys then
+		return false
+	end
+	local st = ini_sys:r_float_ex(wpn_sec, "scope_status") or 0
+	if st == 2 then
+		return true
+	end
+	local sect = ini_sys:r_string_ex(wpn_sec, "scopes_sect")
+	if sect and sect ~= "" then
+		return true
+	end
+	return scopes_csv_has_sight(ini_sys:r_string_ex(wpn_sec, "scopes"))
+end
+
 local function has_integrated_silencer(sec, parent_section)
 	local parent = parent_section or sec
 	if parent and INTEGRATED_SILENCER[parent] then
@@ -333,9 +382,15 @@ local function weapon_calculate(input)
 
 	local ads, hip = spread_pair(input)
 	local burst = burst_shots(input)
-	-- status 1 = attached/built-in; 2 = empty rail/slot only (do not score).
-	local scope_ok = ((input.scope_status or 0) == 1) and 1 or 0
-	local sil_ok = ((input.silencer_status or 0) == 1) and 1 or 0
+	-- scope = already has an optic (status 1). att = can take a sight (rail / 3DSS list).
+	local scope_st = tonumber(input.scope_status) or 0
+	local sil_st = tonumber(input.silencer_status) or 0
+	local scope_ok = (scope_st == 1) and 1 or 0
+	local att_ok = 0
+	if (tonumber(input.can_attach_sight) or 0) > 0 or scope_st == 2 then
+		att_ok = 1
+	end
+	local sil_ok = (sil_st == 1 or sil_st == 2) and 1 or 0
 	if sil_ok == 0 and (
 		input.integrated_silencer
 		or has_integrated_silencer(input.sec, input.parent_section)
@@ -368,6 +423,7 @@ local function weapon_calculate(input)
 		spread_ads = ads,
 		spread_hip = hip,
 		scope = scope_ok,
+		att = att_ok,
 		silencer = sil_ok,
 		reload_s = reload_s,
 		rpm = rpm,
@@ -457,6 +513,7 @@ local function weapon_input_from_ini(wpn_sec, dist)
 		rpm = f("rpm", 0),
 		ammo_mag_size = f("ammo_mag_size", 0),
 		scope_status = f("scope_status", 0),
+		can_attach_sight = can_attach_sight_ini(wpn_sec) and 1 or 0,
 		silencer_status = sil_status,
 		integrated_silencer = integrated,
 		sec = wpn_sec,

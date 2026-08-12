@@ -8,7 +8,6 @@ from typing import Any, Callable
 
 import yaml
 
-from .balance import effective_category, load_balance
 from .diaglog import get_logger
 from .ltx_merge import merge_configs, resolve_icon_bundle
 from .settings import ITEMS_YML, THUMBS_DIR, ensure_dirs
@@ -16,20 +15,22 @@ from .score import (
     hit_power_pct,
     is_bad_ammo,
     protection_tip_denoms_from_sections,
-    weapon_tier_map,
+    repair_type_tier,
 )
 from .weapon_kind import weapon_kind
 from .spawn_filter import (
     has_attached_scope,
     has_attached_silencer,
     has_installed_upgrades,
-    has_quoted_nickname,
+    is_quoted_kit_skin,
     is_explosive_weapon,
     is_gauss_weapon,
+    is_same_name_weapon_alias,
     is_spawnable_gear,
     load_spawner_blacklist,
     looks_like_weapon,
     name_blocked,
+    prefer_unique_weapons,
 )
 from .lua_calc import calc_backend
 from .motions import MotionLibrary, weapon_reload_seconds, weapon_use_mag
@@ -75,6 +76,8 @@ def classify(
     skipped_stub = 0
     skipped_upgraded = 0
     skipped_nickname = 0
+    skipped_alias = 0
+    weapon_names: dict[str, str] = {}
     for sec, d in sections.items():
         gear_candidate = (
             looks_like_weapon(d)
@@ -114,13 +117,32 @@ def classify(
         if looks_like_weapon(d):
             if is_explosive_weapon(sec, d, sections) or is_gauss_weapon(sec, d):
                 continue
-            # Kit skins: Lebedev PL-15 "Bearcat", Glock 17 "Bruder", etc.
-            if string_table is not None and has_quoted_nickname(
+            disp = (
                 display_name_for(sec, d, string_table)
-            ):
+                if string_table is not None
+                else (d.get("inv_name") or sec)
+            )
+            # Kit skins: Lebedev PL-15 "Bearcat" — not official names like OTs-33 "Pernach".
+            if string_table is not None and is_quoted_kit_skin(sec, disp):
                 skipped_nickname += 1
                 continue
+            # Alias stubs that inherit another gun and reuse its inv_name
+            # (wpn_axmc→L96A1, rem700_aics→L96A1). BAS remakes are allowed.
+            ltx_p = section_parents.get(sec)
+            if string_table is not None and ltx_p and is_same_name_weapon_alias(
+                sec,
+                d,
+                ltx_parent=ltx_p,
+                sections=sections,
+                display_name=disp,
+                parent_display_name=display_name_for(
+                    ltx_p, sections.get(ltx_p) or {}, string_table
+                ),
+            ):
+                skipped_alias += 1
+                continue
             weapons.append(sec)
+            weapon_names[sec] = disp
             continue
         if kind in ("o_light", "o_medium", "o_heavy") or cls in (
             "EQU_STLK",
@@ -136,19 +158,25 @@ def classify(
                 helmets.append(sec)
             else:
                 outfits.append(sec)
+    before_dedupe = len(set(weapons))
+    weapons = prefer_unique_weapons(
+        weapons, sections, weapon_names, section_parents=section_parents
+    )
     log.info(
         "classify kept w/o/h=%d/%d/%d dropped attachment/kit=%d stub/name=%d "
-        "pre-upgraded=%d kit-nickname=%d",
-        len(set(weapons)),
+        "pre-upgraded=%d kit-nickname=%d same-name-alias=%d skin-dedupe=%d",
+        len(weapons),
         len(set(outfits)),
         len(set(helmets)),
         skipped_parent,
         skipped_stub,
         skipped_upgraded,
         skipped_nickname,
+        skipped_alias,
+        before_dedupe - len(weapons),
     )
     return {
-        "weapons": sorted(set(weapons)),
+        "weapons": weapons,
         "outfits": sorted(set(outfits)),
         "helmets": sorted(set(helmets)),
     }
@@ -268,6 +296,7 @@ def regenerate(
                 if p.strip() and not is_bad_ammo(p.strip())
             ],
             "community": d.get("community") or "",
+            "repair_type": (d.get("repair_type") or "").strip().lower(),
             # Correct obvious GAMMA mis-tags (e.g. sawn-off Ithaca as w_pistol).
             "kind": weapon_kind(
                 {
@@ -290,6 +319,9 @@ def regenerate(
             "stats": stats,
             "thumb": str(thumb) if thumb else "",
         }
+        tier = repair_type_tier(items["weapons"][sec]["repair_type"])
+        if tier:
+            items["weapons"][sec]["stats"]["tier"] = tier
         if progress and (i % 20 == 0 or i + 1 == len(wlist)):
             prog(f"weapons {sec}", i + 1, len(wlist))
             if i % 200 == 0:
@@ -302,23 +334,12 @@ def regenerate(
         len(wlist),
     )
 
-    # Quartile A..D quality grade, baked in like every other stat — Default
-    # weights at regen time, so display never has to score anything live.
-    try:
-        balance = load_balance()
-        cfg = effective_category(balance, "Default", "weapons")
-        tiers = weapon_tier_map(
-            items["weapons"],
-            cfg.get("weights") or {},
-            ceilings=cfg.get("ceilings") or {},
-            curves=cfg.get("curves") or {},
-            zero_shotgun_spread=bool(cfg.get("shotguns_zero_spread", True)),
-        )
-        for sec, tier in tiers.items():
-            items["weapons"][sec]["stats"]["tier"] = tier
-        log.info("weapon tiers assigned %d/%d", len(tiers), len(wlist))
-    except Exception:  # noqa: BLE001
-        log.exception("weapon tier assignment failed")
+    n_tier = sum(
+        1
+        for w in items["weapons"].values()
+        if (w.get("stats") or {}).get("tier") in ("A", "B", "C", "D")
+    )
+    log.info("weapon repair-type tiers assigned %d/%d", n_tier, len(wlist))
 
     for cat, is_helm in (("outfits", False), ("helmets", True)):
         clist = pools[cat]
@@ -461,7 +482,7 @@ def load_items(path: Path | None = None) -> dict[str, Any]:
                 or (
                     cat == "weapons"
                     and (
-                        has_quoted_nickname(entry.get("name"))
+                        is_quoted_kit_skin(sec, entry.get("name"))
                         or is_explosive_weapon(
                             sec, ammo_class=entry.get("ammo_class") or []
                         )

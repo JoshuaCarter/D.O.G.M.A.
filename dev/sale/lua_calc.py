@@ -43,6 +43,7 @@ _WEAPON_NUM_KEYS = (
     "spread_ads",
     "spread_hip",
     "scope",
+    "att",
     "silencer",
     "reload_s",
     "rpm",
@@ -120,6 +121,9 @@ def _weapon_result(out) -> dict[str, Any]:
             stats[k] = float(v)
         except (TypeError, ValueError):
             stats[k] = 0.0
+    # Binary flags — keep as int 0/1 (never float, never raw status 2).
+    for k in ("scope", "att", "silencer"):
+        stats[k] = 1 if float(stats.get(k) or 0) > 0 else 0
     return stats
 
 

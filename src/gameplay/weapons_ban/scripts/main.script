@@ -6,7 +6,7 @@
 	Stashes: 0–3 weighted adds (sight/kit/sil/ammo/parts); ammo rolls use
 	tier→rank RU budgets for round counts.
 	Corpses: strip loose ammo, then one rank RU budget split across guns.
-	New game: RU budget per owned start weapon (default 10k).
+	New game: RU budget per owned start weapon (pistols/shotguns 5k, else 10k).
 	Replaces RNG Attach + Parts In Stashes.
 	Ammo Maker 1:1 craft (casing/bullet/powder per output round) lives in ammo_craft.script.
 ]]
@@ -86,6 +86,23 @@ local function is_start_weapon_sec(sec)
 	return ((slot == 0) and (ani_slot == 1)) or (slot == 1) or (slot == 2)
 end
 
+-- Pistol slot (1-hand) or shotgun: 5k RU. Rifles/SMGs use extra_start_ammo_ru.
+local START_AMMO_RU_SIDEARM = 5000
+
+local function start_ammo_ru_for_weapon(itm, wpn_sec)
+	local slot = ini_sys:r_float_ex(wpn_sec, "slot")
+	if slot == 1 then
+		return START_AMMO_RU_SIDEARM
+	end
+	if ini_sys:r_string_ex(wpn_sec, "kind") == "w_shotgun" then
+		return START_AMMO_RU_SIDEARM
+	end
+	if itm and IsShotgun and IsShotgun(itm) then
+		return START_AMMO_RU_SIDEARM
+	end
+	return math.floor((CONFIG.loaded.extra_start_ammo_ru or 0) + 0.5)
+end
+
 local function ammo_sec_for_weapon(wpn_sec)
 	local ammo_class = ini_sys:r_string_ex(wpn_sec, "ammo_class")
 	if not ammo_class then
@@ -115,8 +132,8 @@ local function give_extra_start_ammo()
 	if not dogma.sys.ready(MOD_ID, db, on_option_change) then
 		return
 	end
-	local budget = math.floor((CONFIG.loaded.extra_start_ammo_ru or 0) + 0.5)
-	if budget <= 0 then
+	local rifle_budget = math.floor((CONFIG.loaded.extra_start_ammo_ru or 0) + 0.5)
+	if rifle_budget <= 0 and START_AMMO_RU_SIDEARM <= 0 then
 		return
 	end
 	-- New game only: stock sets this after the delayed equipment pass.
@@ -152,6 +169,10 @@ local function give_extra_start_ammo()
 			return
 		end
 		-- Cap is per start weapon (10 boxes), then sum if several share a type.
+		local budget = start_ammo_ru_for_weapon(itm, wpn_sec)
+		if budget <= 0 then
+			return
+		end
 		local add = Tiers.rounds_for_ru(sec_ammo, budget)
 		if add <= 0 then
 			return

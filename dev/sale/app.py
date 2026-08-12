@@ -97,6 +97,7 @@ from .score import (
     CURVE_IDS,
     CURVE_LABELS,
     CURVE_LINEAR,
+    FACTION_BLOC,
     FACTIONS,
     WEAPON_WEIGHTS,
     NO_CEILING_STATS,
@@ -121,6 +122,7 @@ from .score import (
     score_raw_display,
     section_name_faction,
     section_name_faction_token,
+    weapon_ammo_bloc,
     weapon_name_faction_ok,
     weapon_score01,
     weapon_stat_terms,
@@ -150,10 +152,71 @@ _ITEM_CB_MARGIN = 4
 # Click target larger than the drawn box (IconMode hit-tests are fiddly).
 _ITEM_CB_HIT = 36
 
-# Weapon quality quartile grade (A best .. D worst) — bottom-left tile badge.
-TIER_COLORS_HEX = {"A": "#5adc78", "B": "#5aaae6", "C": "#e6be3c", "D": "#dc5a5a"}
-# items.yml stores quartiles inverted vs what we want on screen — flip for UI only.
-_TIER_DISPLAY = {"A": "D", "B": "C", "C": "B", "D": "A"}
+# Weapon repair-class letter (A pistol .. D rifle_7) — bottom-left tile badge.
+# Colors match GAMMA gun-repair chips (Equipment_icons ui_dyn_eq_repair_*).
+TIER_COLORS_HEX = {
+    "A": "#84d4ff",
+    "B": "#6ac46a",
+    "C": "#ff816d",
+    "D": "#ffaa49",
+}
+
+# Faction dropdown + weapon names: NATO / Warsaw / mixed / other.
+_FACTION_BLOC_FG = {
+    "nato": QColor("#5aaae6"),
+    "wp": QColor("#e07070"),
+    "both": QColor("#e6c35c"),
+    "neither": QColor("#aab2bf"),
+}
+
+
+def _bloc_fg(bloc: str) -> QColor:
+    return _FACTION_BLOC_FG.get((bloc or "").lower(), QColor("#aab2bf"))
+
+
+def _weapon_name_qcolor(entry: dict | None) -> QColor:
+    return _bloc_fg(weapon_ammo_bloc((entry or {}).get("ammo_class")))
+
+
+def _meta_name_color(meta: dict) -> QColor | None:
+    s = str(meta.get("name_color") or "").strip()
+    if not s:
+        return None
+    c = QColor(s)
+    return c if c.isValid() else None
+
+
+def _color_faction_combo(box: QComboBox) -> None:
+    """Tint faction names by trader bloc (NATO blue / Warsaw red / mixed gold)."""
+    for i in range(box.count()):
+        fac = str(box.itemData(i) or "")
+        bloc = FACTION_BLOC.get(fac, "")
+        color = _FACTION_BLOC_FG.get(bloc)
+        if color is None or not bloc:
+            color = QColor("#aab2bf")
+            tip = "Baseline (no trader bloc)" if fac == "Default" else ""
+        else:
+            tip = ammo_bloc_label(bloc)
+        box.setItemData(i, QBrush(color), Qt.ItemDataRole.ForegroundRole)
+        if tip:
+            box.setItemData(i, tip, Qt.ItemDataRole.ToolTipRole)
+
+
+def _faction_combo_closed_color(box: QComboBox) -> None:
+    """Match the closed combo text color to the selected faction's bloc."""
+    fac = str(box.currentData() or "")
+    bloc = FACTION_BLOC.get(fac, "")
+    color = _FACTION_BLOC_FG.get(bloc, QColor("#aab2bf"))
+    box.setStyleSheet(
+        "QComboBox {"
+        f"  color: {color.name()}; background-color: #1E1E22;"
+        "  border: 1px solid #3A3A40; selection-background-color: #264F78;"
+        "}"
+        "QComboBox QAbstractItemView {"
+        "  background-color: #1E1E22; selection-background-color: #264F78;"
+        "}"
+    )
+
 
 # Stat name colors (CSS) by key family.
 _DPS_KEYS = ("dps",)
@@ -340,6 +403,7 @@ def _icon_with_pts(
     any_faction_ltx: bool = False,
     checkbox_enabled: bool = True,
     tier: str = "",
+    name_color: QColor | None = None,
     width: int = GRID_ICON_W,
     height: int = GRID_ICON_H,
 ) -> QIcon:
@@ -348,7 +412,7 @@ def _icon_with_pts(
     ``ltx_paint``: both (green) | faction (light green) | baseline (yellow) | off.
     Selection is outline-only (primary blue / compare red), inset thick border.
     On Baseline, ``any_faction_ltx`` draws a white border (faction include overview).
-    ``tier``: weapon quartile grade A..D (blank for non-weapons); name bottom-center.
+    ``tier``: gun repair class A..D (blank if unknown); name bottom-center.
     """
     canvas = QPixmap(width, height)
     # selected: True/"primary" = blue outline; "compare" = red; fill from LTX paint.
@@ -455,7 +519,7 @@ def _icon_with_pts(
                 QColor(200, 185, 140) if show_ltx else QColor(110, 105, 90)
             )
             painter.drawText(tag_x, 3 + rm.height() + tm.ascent(), tag)
-        # Bottom-left: weapon quality tier (A best .. D worst).
+        # Bottom-left: gun repair class (A pistol .. D rifle_7).
         tier_s = (tier or "").strip().upper()
         tier_w = 0
         if tier_s in TIER_COLORS_HEX:
@@ -481,7 +545,7 @@ def _icon_with_pts(
             text = nm.elidedText(name, Qt.TextElideMode.ElideRight, max_w)
             tw = nm.horizontalAdvance(text)
             nx = left + max(0, (max_w - tw) // 2)
-            painter.setPen(QColor(230, 230, 230))
+            painter.setPen(name_color or QColor(230, 230, 230))
             painter.drawText(nx, height - 4, text)
         # Checkbox: checked = included for this faction (disabled on Baseline).
         cb = _item_checkbox_rect(width, height)
@@ -1158,6 +1222,8 @@ class MainWindow(QMainWindow):
             self.faction_box.addItem(faction_label("Default"), "Default")
             for f in FACTIONS:
                 self.faction_box.addItem(faction_label(f), f)
+            _color_faction_combo(self.faction_box)
+            _faction_combo_closed_color(self.faction_box)
             self.faction_box.currentTextChanged.connect(self._on_faction)
             fac.addWidget(self.faction_box, 1)
             self.faction_meta = QLabel("")
@@ -1260,6 +1326,8 @@ class MainWindow(QMainWindow):
             self.output_faction_box = QComboBox()
             for f in FACTIONS:
                 self.output_faction_box.addItem(faction_label(f), f)
+            _color_faction_combo(self.output_faction_box)
+            _faction_combo_closed_color(self.output_faction_box)
             self.output_faction_box.currentTextChanged.connect(
                 self._on_output_faction
             )
@@ -1589,13 +1657,13 @@ class MainWindow(QMainWindow):
         return out
 
     def _weapon_tier_for(self, sec: str) -> str:
-        """Displayed quartile A..D (items.yml letter flipped for UI)."""
+        """In-game repair class letter A..D from items.yml."""
         pool = (self.items or {}).get("weapons") or {}
         entry = pool.get(str(sec)) or {}
         tier = str((entry.get("stats") or {}).get("tier") or "").strip().upper()
         if tier not in TIER_COLORS_HEX:
             return ""
-        return _TIER_DISPLAY.get(tier, tier)
+        return tier
 
     def _protection_zones(self) -> dict[str, float]:
         z = getattr(self, "_prot_zones", None)
@@ -1630,7 +1698,7 @@ class MainWindow(QMainWindow):
         if key in FRACTION_STAT_KEYS:
             return protection_tip_pct(raw, key, self._protection_zones())
         if key == "tier":
-            order = {"A": 3.0, "B": 2.0, "C": 1.0, "D": 0.0}
+            order = {"A": 0.0, "B": 1.0, "C": 2.0, "D": 3.0}
             shown = self._weapon_tier_for(sec)
             return order.get(shown, -1.0)
         if isinstance(raw, bool):
@@ -1697,6 +1765,7 @@ class MainWindow(QMainWindow):
         self.faction_box.blockSignals(True)
         self.faction_box.setCurrentIndex(idx if idx >= 0 else 0)
         self.faction_box.blockSignals(False)
+        _faction_combo_closed_color(self.faction_box)
         data = self.faction_box.currentData()
         self.faction = str(data if data is not None else self.faction_box.currentText())
 
@@ -1732,6 +1801,7 @@ class MainWindow(QMainWindow):
             self.output_faction_box.blockSignals(True)
             self.output_faction_box.setCurrentIndex(oidx if oidx >= 0 else 0)
             self.output_faction_box.blockSignals(False)
+            _faction_combo_closed_color(self.output_faction_box)
 
     def _sync_ammo_collapse_ui(self) -> None:
         expanded = bool(self._ammo_expanded)
@@ -2211,6 +2281,7 @@ class MainWindow(QMainWindow):
         fac = str(data if data is not None else _name)
         log.debug("faction -> %s (%s)", fac, faction_label(fac))
         self.faction = fac
+        _faction_combo_closed_color(self.faction_box)
         self._sync_faction_override_ui()
         self._rebuild_weights()
         self._rebuild_ammo_toggles()
@@ -2226,6 +2297,7 @@ class MainWindow(QMainWindow):
         return fac if fac in FACTIONS else (FACTIONS[0] if FACTIONS else "")
 
     def _on_output_faction(self, _name: str) -> None:
+        _faction_combo_closed_color(self.output_faction_box)
         self._rebuild_output_list()
 
     def _on_main_tab(self, idx: int) -> None:
@@ -2238,6 +2310,7 @@ class MainWindow(QMainWindow):
                     self.output_faction_box.blockSignals(True)
                     self.output_faction_box.setCurrentIndex(oidx)
                     self.output_faction_box.blockSignals(False)
+                    _faction_combo_closed_color(self.output_faction_box)
             self._rebuild_output_list()
 
     def _maybe_refresh_output(self) -> None:
@@ -2294,6 +2367,11 @@ class MainWindow(QMainWindow):
                                 ltx_paint=paint or "faction",
                                 checkbox_enabled=True,
                                 tier=self._weapon_tier_for(sec) if cat == "weapons" else "",
+                                name_color=(
+                                    _weapon_name_qcolor(entry)
+                                    if cat == "weapons"
+                                    else None
+                                ),
                             )
                         )
                     except Exception:  # noqa: BLE001
@@ -3091,6 +3169,7 @@ class MainWindow(QMainWindow):
                         meta.get("checkbox_enabled", True)
                     ),
                     tier=str(meta.get("tier") or ""),
+                    name_color=_meta_name_color(meta),
                 )
             )
         except Exception:  # noqa: BLE001
@@ -3258,6 +3337,11 @@ class MainWindow(QMainWindow):
                 tier = (
                     self._weapon_tier_for(sec) if self.category == "weapons" else ""
                 )
+                name_color = (
+                    _weapon_name_qcolor(entry)
+                    if self.category == "weapons"
+                    else None
+                )
                 try:
                     item.setIcon(
                         _icon_with_pts(
@@ -3273,6 +3357,7 @@ class MainWindow(QMainWindow):
                             any_faction_ltx=any_fac,
                             checkbox_enabled=not baseline_view,
                             tier=tier,
+                            name_color=name_color,
                         )
                     )
                 except Exception:  # noqa: BLE001
@@ -3329,6 +3414,7 @@ class MainWindow(QMainWindow):
                         "any_faction_ltx": any_fac,
                         "checkbox_enabled": not baseline_view,
                         "tier": tier,
+                        "name_color": name_color.name() if name_color else "",
                     },
                 )
                 self.list.addItem(item)
@@ -3395,6 +3481,7 @@ class MainWindow(QMainWindow):
                         meta.get("checkbox_enabled", True)
                     ),
                     tier=str(meta.get("tier") or ""),
+                    name_color=_meta_name_color(meta),
                 )
             )
         except Exception:  # noqa: BLE001
@@ -3536,6 +3623,7 @@ class MainWindow(QMainWindow):
                     any_faction_ltx=bool(meta.get("any_faction_ltx")),
                     checkbox_enabled=True,
                     tier=str(meta.get("tier") or ""),
+                    name_color=_meta_name_color(meta),
                 )
             )
         except Exception:  # noqa: BLE001
@@ -3740,9 +3828,12 @@ class MainWindow(QMainWindow):
             else:
                 shop_s = "false"
                 shop_c = "#aab2bf"
+            name_hex = "#aab2bf"
+            if self.category == "weapons":
+                name_hex = _weapon_name_qcolor(entry).name()
             info_rows: list[tuple[str, list[str], str]] = [
                 ("sec", [str(sec)], "#aab2bf"),
-                ("name", [_nice_item_name(str(sec), entry)], "#aab2bf"),
+                ("name", [_nice_item_name(str(sec), entry)], name_hex),
                 ("in_ltx", [shop_s], shop_c),
                 ("score_raw", [str(score_raw)], "#aab2bf"),
                 ("community", [str(entry.get("community") or "—")], "#aab2bf"),
@@ -3753,11 +3844,14 @@ class MainWindow(QMainWindow):
                 cmp_entry = (self.items.get(self.category) or {}).get(
                     cmp_sec
                 ) or {}
+                cmp_hex = "#e07070"
+                if self.category == "weapons":
+                    cmp_hex = _weapon_name_qcolor(cmp_entry).name()
                 info_rows.append(
                     (
                         "compare",
                         [_nice_item_name(str(cmp_sec), cmp_entry)],
-                        "#e07070",
+                        cmp_hex,
                     )
                 )
             if self.category == "weapons":
@@ -3903,21 +3997,15 @@ class MainWindow(QMainWindow):
             for key in ordered:
                 seen.add(key)
                 w_s, f_s, n01, excluded, _final_v = _wf(key, terms)
-                raw = _value_display(key, stats, cost_v)
                 if excluded:
-                    cell_colors: list[str | None] = [
-                        None,
-                        None,
-                        _STAT_EXCLUDED_FG,
-                        _STAT_EXCLUDED_FG,
-                    ]
-                else:
-                    cell_colors = [
-                        None,
-                        None,
-                        None,
-                        _n01_color(n01) if n01 is not None else None,
-                    ]
+                    continue
+                raw = _value_display(key, stats, cost_v)
+                cell_colors: list[str | None] = [
+                    None,
+                    None,
+                    None,
+                    _n01_color(n01) if n01 is not None else None,
+                ]
                 diff_v: float | None = None
                 diff_a: float | None = None
                 diff_b: float | None = None

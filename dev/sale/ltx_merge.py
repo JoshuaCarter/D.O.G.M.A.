@@ -249,7 +249,10 @@ def merge_configs(
     highest-priority file for that path is applied. A later mod that replaces
     ``items/weapons/w_aks74u.ltx`` without ``wpn_ak74u_old`` drops that section
     entirely — matching the game — instead of keeping ghosts from lower mods.
-    Unique-path DLTX / ``mod_system_*.ltx`` files still all apply.
+
+    Unique-path ``mod_system*.ltx`` DLTX files all apply in a **second pass**
+    after base LTX (engine order), so a DLTX ammo/repair patch still wins over
+    a higher-priority full weapon redefine that loaded earlier.
     """
     roots = iter_config_roots(anomaly, gamma)
     sections: dict[str, dict[str, str]] = {}
@@ -267,19 +270,30 @@ def merge_configs(
         for path in found:
             winners[_rel_key(root, path)] = path
 
-    files: list[Path] = []
+    # Two passes match the engine: VFS-resolved base LTX first, then every
+    # unique-path ``mod_system*.ltx`` DLTX patch. Interleaving by mod priority
+    # alone lets a high-priority full weapon file (e.g. GIMP ``w_mts_255.ltx``)
+    # overwrite a lower-priority DLTX ammo fix (``mod_system_zzzzz_gamma_*.ltx``).
+    base_files: list[Path] = []
+    dltx_files: list[Path] = []
     superseded = 0
     for root, found in root_files:
         for path in found:
             if winners[_rel_key(root, path)] != path:
                 superseded += 1
                 continue
-            files.append(path)
+            if path.name.lower().startswith("mod_system"):
+                dltx_files.append(path)
+            else:
+                base_files.append(path)
 
+    files = base_files + dltx_files
     total = len(files)
     log.info(
-        "merging %d ltx files from %d roots (vfs-skipped supersedes=%d)",
+        "merging %d ltx (%d base + %d dltx) from %d roots (vfs-skipped supersedes=%d)",
         total,
+        len(base_files),
+        len(dltx_files),
         len(roots),
         superseded,
     )

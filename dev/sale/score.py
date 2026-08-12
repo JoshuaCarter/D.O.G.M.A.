@@ -6,8 +6,6 @@ import math
 import re
 from typing import Any
 
-from .weapon_kind import weapon_kind
-
 # Normalization curves for Scale max (0→ceiling → 0→1 contribution).
 CURVE_LINEAR = "linear"
 CURVE_EXP = "exp"
@@ -400,11 +398,12 @@ WEAPON_WEIGHTS = [
     ("spread_ads", "w_spread_ads", 3, True, 0.5),
     ("spread_hip", "w_spread_hip", 10, True, 0.5),
     ("scope", "w_scope", 1, False, 0.5),
+    ("att", "w_att", 1, False, 0.5),
     ("silencer", "w_silencer", 1, False, 0.5),
 ]
 
 # Binary flags — no 0–x scale slider.
-NO_CEILING_STATS = frozenset({"scope", "silencer"})
+NO_CEILING_STATS = frozenset({"scope", "att", "silencer"})
 
 # (stat_key, weight_key, scale_slider_max, inverse, default_weight)
 # a_price / cost ceiling is added separately (outfit vs helmet soft cap).
@@ -696,7 +695,8 @@ def weapon_stat_terms(
         if w <= 0:
             out[stat_key] = (w, 0.0)
             continue
-        if stat_key in ("scope", "silencer"):
+        if stat_key in ("scope", "att", "silencer"):
+            # Binary flag: only 0 or 1 enters the weighted score.
             n01 = 1.0 if raw > 0 else 0.0
         else:
             ceiling = float(ceil.get(stat_key, default_ceiling) or default_ceiling)
@@ -775,45 +775,19 @@ def weapon_score01(
     )
 
 
-WEAPON_TIER_LABELS = ("D", "C", "B", "A")
+# In-game gun repair class chips (G.A.M.M.A. Repair Kit Renaming).
+REPAIR_TYPE_TIER = {
+    "pistol": "A",
+    "shotgun": "B",
+    "rifle_5": "C",
+    "rifle_7": "D",
+}
 
 
-def weapon_tier_map(
-    pool: dict[str, dict[str, Any]],
-    weights: dict[str, float],
-    ceilings: dict[str, float] | None = None,
-    curves: dict[str, str] | None = None,
-    *,
-    zero_shotgun_spread: bool = False,
-) -> dict[str, str]:
-    """Bucket every weapon's score01 into quartile letter grades, D (worst)..A (best).
-
-    Relative to the whole ``pool`` at once (equal-ish sized buckets) rather
-    than a fixed absolute cutoff, so the grade stays meaningful as the mod's
-    weapon roster or Default weights change. Always fed Default weights by
-    the caller so a weapon's letter stays the same across every faction tab.
-    """
-    ranked: list[tuple[str, float]] = []
-    for sec, entry in pool.items():
-        stats = entry.get("stats") or {}
-        s01 = weapon_score01(
-            stats,
-            weights,
-            ceilings=ceilings,
-            curves=curves,
-            kind=weapon_kind(entry, sec),
-            zero_shotgun_spread=zero_shotgun_spread,
-        )
-        ranked.append((sec, float(s01)))
-    n = len(ranked)
-    if n == 0:
-        return {}
-    ranked.sort(key=lambda t: t[1])
-    out: dict[str, str] = {}
-    for i, (sec, _s01) in enumerate(ranked):
-        bucket = min(3, (i * 4) // n)  # 0=D .. 3=A, quartiles by rank
-        out[sec] = WEAPON_TIER_LABELS[bucket]
-    return out
+def repair_type_tier(repair_type: str | None) -> str:
+    """Map LTX ``repair_type`` → inventory letter A..D (blank if unknown)."""
+    key = (repair_type or "").strip().lower()
+    return REPAIR_TYPE_TIER.get(key, "")
 
 
 def armor_score01(
@@ -911,17 +885,18 @@ def ammo_family_label(family: str) -> str:
 
 
 # Per-family origin: "nato" | "wp" | "both" | "neither"
-# Keys are ammo_family() ids. Shotguns are both (Western + Soviet guns share them).
+# Keys are ammo_family() ids.
+# Rule: NATO / Warsaw = standard military rifle/pistol/MG calibres for that bloc.
+# Civilian revolver, WWII, oddball, and **all shotgun shells** → neither (OTHER).
 _AMMO_FAMILY_BLOC: dict[str, str] = {
-    # NATO / Western
+    # NATO / Western military standards
     "ammo_5.56x45": "nato",
     "ammo_9x19": "nato",
     "ammo_7.62x51": "nato",
     "ammo_338": "nato",
-    "ammo_magnum": "nato",  # .300 / .338-class Western sniper (ammo_magnum_300)
+    "ammo_magnum": "nato",  # .300 Win Mag — Western precision rifle
     "ammo_5.7x28": "nato",
-    "ammo_357": "nato",
-    # Warsaw Pact / Soviet–Russian
+    # Warsaw Pact / Soviet–Russian military standards
     "ammo_5.45x39": "wp",
     "ammo_7.62x39": "wp",
     "ammo_9x18": "wp",
@@ -930,14 +905,14 @@ _AMMO_FAMILY_BLOC: dict[str, str] = {
     "ammo_12.7x55": "wp",
     "ammo_7.62x54": "wp",
     "ammo_pkm": "wp",  # 7.62×54R belts
-    "ammo_9x21": "wp",  # 9×21 Gyurza (SR-1), not IMI
-    "ammo_23x75": "wp",  # KS-23
-    "ammo_23": "wp",
-    # Shared / both
-    "ammo_12x70": "both",
-    "ammo_12x76": "both",
-    "ammo_20x70": "both",
-    # Neither (WWII / unique / parked in OTHER sidebar)
+    "ammo_9x21": "wp",  # 9×21 Gyurza (SR-1)
+    # OTHER — shotgun shells, revolver, WWII, oddball
+    "ammo_12x70": "neither",
+    "ammo_12x76": "neither",
+    "ammo_20x70": "neither",
+    "ammo_23x75": "neither",  # KS-23
+    "ammo_23": "neither",
+    "ammo_357": "neither",  # .357 Magnum
     "ammo_11.43x23": "neither",  # .45 ACP
     "ammo_7.92x33": "neither",  # 7.92×33 Kurz
     "ammo_gauss": "neither",
@@ -959,7 +934,6 @@ def ammo_family_bloc(family: str) -> str:
             "7.62x51",
             "5.7",
             "338",
-            "357",
             "magnum",
             ".308",
         )
@@ -977,13 +951,32 @@ def ammo_family_bloc(family: str) -> str:
             "7.62x54",
             "pkm",
             "9x21",
-            "23x75",
             "pmm",
         )
     ):
         return "wp"
-    if any(x in s for x in ("12x70", "12x76", "20x70", "shot")):
+    if any(x in s for x in ("12x70", "12x76", "20x70", "23x75", "shot")):
+        return "neither"
+    return "neither"
+
+
+def weapon_ammo_bloc(ammo_class: object) -> str:
+    """nato|wp|both|neither from a gun's ammo_class (same table as ammo sidebar)."""
+    if isinstance(ammo_class, str):
+        parts = [p.strip() for p in ammo_class.split(",") if p.strip()]
+    elif isinstance(ammo_class, (list, tuple)):
+        parts = [str(p).strip() for p in ammo_class if str(p).strip()]
+    else:
+        parts = []
+    blocs = {ammo_family_bloc(ammo_family(p)) for p in parts}
+    nato = "nato" in blocs
+    wp = "wp" in blocs
+    if nato and wp:
         return "both"
+    if nato:
+        return "nato"
+    if wp:
+        return "wp"
     return "neither"
 
 

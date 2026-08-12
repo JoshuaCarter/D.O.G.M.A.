@@ -18,9 +18,9 @@
 
 	dogma_perf.log records every stop while perf_log is on (threshold only
 	gates console/xray warns). Rewritten every ~10s as a fixed-width table:
-	  tick (n n/s min max avg) | total (n n/s min max avg) | key
-	tick = last flush window; total = while logging stays on (survives game
-	load). Cleared when logging is toggled off/on. Units: us.
+	  n  n/s  min  max  avg  key
+	Totals reset on game load (and when logging is toggled). File is left as-is
+	on quit so the last flush remains readable. Units: us.
 
 	Timing uses engine profile_timer (QPC → microseconds) when available.
 	os.clock fallback is ~1ms quantum and cannot resolve sub-ms work.
@@ -33,7 +33,7 @@ local FLUSH_INTERVAL_SEC = 10
 local FLUSH_INTERVAL_MS = FLUSH_INTERVAL_SEC * 1000
 local FLUSH_POLL_SEC = 1 -- poll cadence; write is gated by FLUSH_INTERVAL_MS
 local stack = {}
--- [label] = { n,sum,min,max,first_ms, w_n,w_sum,w_min,w_max }
+-- [label] = { n, sum, min, max, first_ms }
 local stats = {}
 local last_flush_ms = 0
 local flush_count = 0
@@ -86,13 +86,6 @@ local function clear_stats()
 	flush_count = 0
 end
 
-local function reset_window(s)
-	s.w_n = 0
-	s.w_sum = 0
-	s.w_min = nil
-	s.w_max = nil
-end
-
 local function sorted_labels()
 	local labels = {}
 	for label in pairs(stats) do
@@ -103,29 +96,20 @@ local function sorted_labels()
 end
 
 local COL_HDR = string.format(
-	"%-8s %-8s %-8s %-8s %-8s  %-8s %-8s %-8s %-8s %-8s  %s\n",
-	"n", "n/s", "min", "max", "avg",
-	"n", "n/s", "min", "max", "avg",
-	"key"
+	"%-8s %-8s %-8s %-8s %-8s  %s",
+	"n", "n/s", "min", "max", "avg", "key"
 )
-local GRP_HDR = string.format(
-	"%-44s  %-44s  %s\n",
-	"tick (last window, us)",
-	"total (while logging on, us)",
-	""
-)
+local SEP = "--------------------------------------------------------------------------------"
 
-local function fmt_block(n, cps, min_v, max_v, avg)
-	if n <= 0 then
-		return string.format("%-8d %-8s %-8s %-8s %-8s", 0, "-", "-", "-", "-")
-	end
+local function fmt_row(n, cps, min_v, max_v, avg, label)
 	return string.format(
-		"%-8d %-8.1f %-8d %-8d %-8d",
+		"%-8d %-8.1f %-8d %-8d %-8d  %s",
 		n,
 		cps,
 		math.floor(min_v + 0.5),
 		math.floor(max_v + 0.5),
-		math.floor(avg + 0.5)
+		math.floor(avg + 0.5),
+		label
 	)
 end
 
@@ -139,11 +123,6 @@ local function write_summary()
 		return
 	end
 	local stamp = time_global and time_global() or 0
-	local dt_ms = stamp - last_flush_ms
-	if dt_ms < 1 then
-		dt_ms = 1
-	end
-	local dt_s = dt_ms / 1000
 	flush_count = flush_count + 1
 	f:write(string.format(
 		"# dogma_perf (us) flush=%d interval=%ds game_ms=%d\n",
@@ -151,25 +130,22 @@ local function write_summary()
 		FLUSH_INTERVAL_SEC,
 		stamp
 	))
-	f:write("# " .. GRP_HDR)
+	f:write(SEP)
+	f:write("\n")
 	f:write(COL_HDR)
+	f:write("\n")
+	f:write(SEP)
+	f:write("\n")
 	for _, label in ipairs(sorted_labels()) do
 		local s = stats[label]
-		local tick_avg = s.w_n > 0 and (s.w_sum / s.w_n) or 0
-		local tick_cps = s.w_n / dt_s
-		local total_avg = s.n > 0 and (s.sum / s.n) or 0
+		local avg = s.n > 0 and (s.sum / s.n) or 0
 		local total_ms = stamp - (s.first_ms or stamp)
 		if total_ms < 1 then
 			total_ms = 1
 		end
-		local total_cps = s.n * 1000 / total_ms
-		f:write(string.format(
-			"%s  %s  %s\n",
-			fmt_block(s.w_n, tick_cps, s.w_min, s.w_max, tick_avg),
-			fmt_block(s.n, total_cps, s.min, s.max, total_avg),
-			label
-		))
-		reset_window(s)
+		local cps = s.n * 1000 / total_ms
+		f:write(fmt_row(s.n, cps, s.min, s.max, avg, label))
+		f:write("\n")
 	end
 	f:close()
 	last_flush_ms = stamp
@@ -180,18 +156,14 @@ local function record(label, elapsed_us)
 	local now = time_global and time_global() or 0
 	local s = stats[key]
 	if not s then
-		s = {
-			n = 0,
-			sum = 0,
+		stats[key] = {
+			n = 1,
+			sum = elapsed_us,
 			min = elapsed_us,
 			max = elapsed_us,
 			first_ms = now,
-			w_n = 0,
-			w_sum = 0,
-			w_min = nil,
-			w_max = nil,
 		}
-		stats[key] = s
+		return
 	end
 	s.n = s.n + 1
 	s.sum = s.sum + elapsed_us
@@ -200,14 +172,6 @@ local function record(label, elapsed_us)
 	end
 	if elapsed_us > s.max then
 		s.max = elapsed_us
-	end
-	s.w_n = s.w_n + 1
-	s.w_sum = s.w_sum + elapsed_us
-	if s.w_min == nil or elapsed_us < s.w_min then
-		s.w_min = elapsed_us
-	end
-	if s.w_max == nil or elapsed_us > s.w_max then
-		s.w_max = elapsed_us
 	end
 end
 
@@ -242,18 +206,27 @@ local function ensure_flush_timer()
 	CreateTimeEvent("dogma_perf", "flush", FLUSH_POLL_SEC, flush_tick)
 end
 
+local function begin_session()
+	clear_stats()
+	stack = {}
+	last_flush_ms = time_global and time_global() or 0
+	write_summary()
+	ensure_flush_timer()
+end
+
 function sync()
 	local was_on = logging_on
 	logging_on = read_logging_enabled()
 	if logging_on and not was_on then
-		clear_stats()
-		last_flush_ms = time_global and time_global() or 0
-		write_summary()
-		ensure_flush_timer()
+		begin_session()
 	elseif was_on and not logging_on then
+		-- Final snapshot stays on disk; memory cleared. No wipe-on-quit path.
 		write_summary()
 		clear_stats()
 		stack = {}
+		if RemoveTimeEvent then
+			pcall(RemoveTimeEvent, "dogma_perf", "flush")
+		end
 	end
 	return logging_on
 end
@@ -371,27 +344,14 @@ function time(mod_id, method, a, b)
 	end)(fn())
 end
 
--- Keep cache in sync with MCM. Totals survive game load; only the open
--- start/stop stack is dropped (in-flight frames would be bogus after load).
+-- Totals reset on game load only (file left alone on quit).
 if RegisterScriptCallback then
 	RegisterScriptCallback("on_option_change", sync)
 	RegisterScriptCallback("on_game_load", function()
 		stack = {}
-		local now = time_global and time_global() or 0
-		-- time_global can rewind across load; keep ages so total n/s stays sane.
-		if last_flush_ms > 0 and now < last_flush_ms then
-			for _, s in pairs(stats) do
-				local age = last_flush_ms - (s.first_ms or last_flush_ms)
-				if age < 0 then
-					age = 0
-				end
-				s.first_ms = now - age
-			end
-			last_flush_ms = now
-		end
 		sync()
 		if logging_on then
-			ensure_flush_timer()
+			begin_session()
 		end
 	end)
 	RegisterScriptCallback("actor_on_first_update", function()

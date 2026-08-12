@@ -721,7 +721,7 @@ end
 
 local function fly_on_actor_update()
 	if not (tft.fly_active or tft.fly_phase) then return end
-	dogma.perf.start("tft.fly_update")
+	dogma.perf.start("tft", "fly_update")
 	if not db.actor then
 		cancel_fly_camera()
 	else

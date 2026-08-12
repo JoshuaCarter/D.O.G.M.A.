@@ -5,13 +5,21 @@
 
 	Prefer start/stop (no callback). time() is a thin wrapper for rare cases.
 
-	start(label[, threshold_us]) - push a timing frame (no-op if perf_log off)
-	stop()                        - pop; warn if slow; return elapsed_us (or nil)
-	time(label, threshold_us, fn) - start/fn/stop; returns fn's returns
+	start(mod_id, method[, threshold_us])
+	  Label becomes "mod_id.method" (unique per feature). No-op if perf_log off.
+	stop()
+	  Pop; always record stats while logging; warn if slow; return elapsed_us.
+	time(mod_id, method, fn)
+	time(mod_id, method, threshold_us, fn)
+	  start/fn/stop; returns fn's returns.
 
 	Warnings require MCM dogma/debug perf_log. Threshold: call arg (µs) →
-	perf_warn_threshold_us → ≤0 = no warn. Outputs: printf + console.say +
-	$app_data_root$/dogma_perf.log (not gated by debug_log).
+	perf_warn_threshold_us → ≤0 = no console warn.
+
+	dogma_perf.log records every stop while perf_log is on (threshold only
+	gates console/xray warns). Rewritten every ~10s with per-label:
+	  key: tick( n n/s min max avg ) total( n n/s min max avg )
+	tick = last flush window; total = since enable / game load. Units: us.
 
 	Timing uses engine profile_timer (QPC → microseconds) when available.
 	os.clock fallback is ~1ms quantum and cannot resolve sub-ms work.
@@ -20,7 +28,11 @@
 local DEBUG_MOD = "dogma/debug"
 local LOG_NAME = "dogma_perf.log"
 local SEC_TO_US = 1000000
+local FLUSH_INTERVAL_SEC = 10
 local stack = {}
+-- [label] = { n,sum,min,max,first_ms, w_n,w_sum,w_min,w_max }
+local stats = {}
+local last_flush_ms = 0
 local log_path = nil
 local log_path_tried = false
 -- Cached so hot start()/stop() paths avoid MCM lookups every call.
@@ -63,18 +75,120 @@ local function resolve_log_path()
 	return log_path
 end
 
-local function append_log(line)
+local function clear_stats()
+	for k in pairs(stats) do
+		stats[k] = nil
+	end
+end
+
+local function reset_window(s)
+	s.w_n = 0
+	s.w_sum = 0
+	s.w_min = nil
+	s.w_max = nil
+end
+
+local function sorted_labels()
+	local labels = {}
+	for label in pairs(stats) do
+		labels[#labels + 1] = label
+	end
+	table.sort(labels)
+	return labels
+end
+
+local function fmt_side(tag, n, cps, min_v, max_v, avg)
+	if n <= 0 then
+		return string.format("%s( n=0 n/s=0.0 min=- max=- avg=- )", tag)
+	end
+	return string.format(
+		"%s( n=%d n/s=%.1f min=%d max=%d avg=%d )",
+		tag,
+		n,
+		cps,
+		math.floor(min_v + 0.5),
+		math.floor(max_v + 0.5),
+		math.floor(avg + 0.5)
+	)
+end
+
+local function write_summary()
 	local path = resolve_log_path()
 	if not path then
 		return
 	end
-	local ok, f = pcall(io.open, path, "a")
+	local ok, f = pcall(io.open, path, "w")
 	if not (ok and f) then
 		return
 	end
-	f:write(line)
-	f:write("\n")
+	local stamp = time_global and time_global() or 0
+	local dt_ms = stamp - last_flush_ms
+	if dt_ms < 1 then
+		dt_ms = 1
+	end
+	local dt_s = dt_ms / 1000
+	f:write(string.format(
+		"# dogma_perf (us) flush=%ds game_ms=%d\n",
+		FLUSH_INTERVAL_SEC,
+		stamp
+	))
+	f:write("# key: tick( n n/s min max avg ) total( n n/s min max avg ) — tick=last window, total=since enable/load\n")
+	for _, label in ipairs(sorted_labels()) do
+		local s = stats[label]
+		local tick_avg = s.w_n > 0 and (s.w_sum / s.w_n) or 0
+		local tick_cps = s.w_n / dt_s
+		local total_avg = s.n > 0 and (s.sum / s.n) or 0
+		local total_ms = stamp - (s.first_ms or stamp)
+		if total_ms < 1 then
+			total_ms = 1
+		end
+		local total_cps = s.n * 1000 / total_ms
+		f:write(string.format(
+			"%s: %s %s\n",
+			label,
+			fmt_side("tick", s.w_n, tick_cps, s.w_min, s.w_max, tick_avg),
+			fmt_side("total", s.n, total_cps, s.min, s.max, total_avg)
+		))
+		reset_window(s)
+	end
 	f:close()
+	last_flush_ms = stamp
+end
+
+local function record(label, elapsed_us)
+	local key = tostring(label or "?")
+	local now = time_global and time_global() or 0
+	local s = stats[key]
+	if not s then
+		s = {
+			n = 0,
+			sum = 0,
+			min = elapsed_us,
+			max = elapsed_us,
+			first_ms = now,
+			w_n = 0,
+			w_sum = 0,
+			w_min = nil,
+			w_max = nil,
+		}
+		stats[key] = s
+	end
+	s.n = s.n + 1
+	s.sum = s.sum + elapsed_us
+	if elapsed_us < s.min then
+		s.min = elapsed_us
+	end
+	if elapsed_us > s.max then
+		s.max = elapsed_us
+	end
+	s.w_n = s.w_n + 1
+	s.w_sum = s.w_sum + elapsed_us
+	if s.w_min == nil or elapsed_us < s.w_min then
+		s.w_min = elapsed_us
+	end
+	if s.w_max == nil or elapsed_us > s.w_max then
+		s.w_max = elapsed_us
+	end
 end
 
 local function read_logging_enabled()
@@ -85,8 +199,34 @@ local function read_logging_enabled()
 	return false
 end
 
+local function flush_tick()
+	if not logging_on then
+		return true -- stop timer
+	end
+	write_summary()
+	return false -- keep repeating every FLUSH_INTERVAL_SEC
+end
+
+local function ensure_flush_timer()
+	if not CreateTimeEvent then
+		return
+	end
+	CreateTimeEvent("dogma_perf", "flush", FLUSH_INTERVAL_SEC, flush_tick)
+end
+
 function sync()
+	local was_on = logging_on
 	logging_on = read_logging_enabled()
+	if logging_on and not was_on then
+		clear_stats()
+		last_flush_ms = time_global and time_global() or 0
+		write_summary()
+		ensure_flush_timer()
+	elseif was_on and not logging_on then
+		write_summary()
+		clear_stats()
+		stack = {}
+	end
 	return logging_on
 end
 
@@ -132,17 +272,14 @@ local function warn_slow(label, elapsed_us, threshold_us)
 	if console and console.say then
 		console.say(msg, "yellow")
 	end
-	-- Game-time stamp keeps lines sortable without depending on OS clock APIs.
-	local stamp = time_global and time_global() or 0
-	append_log(string.format("%d %s", stamp, msg))
 end
 
-function start(label, threshold_us)
+function start(mod_id, method, threshold_us)
 	if not logging_on then
 		return
 	end
 	local frame = {
-		label = label,
+		label = tostring(mod_id or "?") .. "." .. tostring(method or "?"),
 		threshold = threshold_us,
 	}
 	if use_profile_timer then
@@ -176,15 +313,29 @@ function stop()
 		elapsed = now_us_fallback() - (frame.t0 or 0)
 	end
 
-	warn_slow(frame.label, elapsed, effective_threshold_us(frame.threshold))
+	if logging_on then
+		record(frame.label, elapsed)
+		warn_slow(frame.label, elapsed, effective_threshold_us(frame.threshold))
+	end
 	return elapsed
 end
 
-function time(label, threshold_us, fn)
+-- time(mod, method, fn) or time(mod, method, threshold_us, fn)
+function time(mod_id, method, a, b)
+	local threshold_us, fn
+	if type(a) == "function" then
+		fn = a
+	else
+		threshold_us = a
+		fn = b
+	end
+	if type(fn) ~= "function" then
+		return
+	end
 	if not logging_on then
 		return fn()
 	end
-	start(label, threshold_us)
+	start(mod_id, method, threshold_us)
 	-- Preserve all returns (Lua 5.1 `{ fn() }` only keeps the first).
 	return (function(...)
 		stop()
@@ -195,6 +346,20 @@ end
 -- Keep cache in sync with MCM.
 if RegisterScriptCallback then
 	RegisterScriptCallback("on_option_change", sync)
-	RegisterScriptCallback("on_game_load", sync)
-	RegisterScriptCallback("actor_on_first_update", sync)
+	RegisterScriptCallback("on_game_load", function()
+		clear_stats()
+		stack = {}
+		sync()
+		if logging_on then
+			last_flush_ms = time_global and time_global() or 0
+			write_summary()
+			ensure_flush_timer()
+		end
+	end)
+	RegisterScriptCallback("actor_on_first_update", function()
+		sync()
+		if logging_on then
+			ensure_flush_timer()
+		end
+	end)
 end

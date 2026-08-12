@@ -117,6 +117,7 @@ local function on_actor_on_update()
 		return
 	end
 
+	dogma.perf.start("true_prone", "actor_on_update")
 	-- nearest posture from camera height (feet to cam)
 	local ok, height = pcall(function()
 		return device().cam_pos.y - actor:position().y
@@ -221,6 +222,7 @@ local function on_actor_on_update()
 			console_exec("blend_move_anims on")
 		end
 	end
+	dogma.perf.stop()
 end
 
 local function on_actor_on_before_hit(shit, bone_id, flags)

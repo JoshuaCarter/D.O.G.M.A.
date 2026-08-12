@@ -177,9 +177,11 @@ local function find_scanner(match_sec)
 		return nil
 	end
 
+	dogma.perf.start("equipment_controls", "find_scanner")
 	for s = 1, SLOT_MAX do
 		local o = actor:item_in_slot(s)
 		if o and match_sec(o:section()) then
+			dogma.perf.stop()
 			return o
 		end
 	end
@@ -206,6 +208,7 @@ local function find_scanner(match_sec)
 		actor:iterate_inventory(consider, nil)
 	end
 
+	dogma.perf.stop()
 	return fav or other
 end
 

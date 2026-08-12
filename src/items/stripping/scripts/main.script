@@ -165,6 +165,7 @@ local function snapshot_owner_weapons(owner)
 	if not owner then
 		return weapons
 	end
+	dogma.perf.start("stripping", "snapshot_owner_weapons")
 	local ok = pcall(function()
 		if IsInvbox and IsInvbox(owner) and owner.iterate_inventory_box then
 			owner:iterate_inventory_box(function(_, item)
@@ -182,8 +183,10 @@ local function snapshot_owner_weapons(owner)
 	end)
 	if not ok then
 		log("snapshot_owner_weapons: inventory scan errored")
+		dogma.perf.stop()
 		return {}
 	end
+	dogma.perf.stop()
 	return weapons
 end
 
@@ -1043,6 +1046,7 @@ local function burst_tick()
 		return
 	end
 
+	dogma.perf.start("stripping", "burst_tick")
 	local continued = try_field_strip_step()
 	if not continued then
 		log(string.format("burst complete/stop: last tracked id=%s", tostring(burst_obj_id)))
@@ -1057,8 +1061,10 @@ local function burst_tick()
 		else
 			clear_reclaim_state()
 		end
+		dogma.perf.stop()
 		return
 	end
+	dogma.perf.stop()
 end
 
 -- Arms a new burst on obj (whether from the keybind or the disassemble

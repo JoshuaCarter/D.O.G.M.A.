@@ -262,6 +262,7 @@ local function update_belt_light()
 		return
 	end
 
+	dogma.perf.start("belt_glowsticks", "update_belt_light")
 	local device_sec = device_by_variant[lit_item:section()]
 	local light_section = ini_sys:r_string_ex(device_sec, "light_section", "glowstick_definition")
 
@@ -307,6 +308,7 @@ local function update_belt_light()
 		end
 		lit_item:set_condition(new_cond)
 	end
+	dogma.perf.stop()
 end
 
 function on_option_change()

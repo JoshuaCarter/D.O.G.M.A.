@@ -264,6 +264,7 @@ local function cn_try_load()
         cn_log("try_load: no level name")
         return false
     end
+    dogma.perf.start("tft", "cn_try_load")
     -- Packaged aimap may use canonical name (meadow.spawn) while level.name() is y04_pole/pole/field.
     local cands = (_G.tft_level_name_load_candidates and _G.tft_level_name_load_candidates(level_name))
         or { level_name }
@@ -285,6 +286,7 @@ local function cn_try_load()
                 tostr(level_name), table.concat(cands, ",")
             ), "yellow")
         end
+        dogma.perf.stop()
         return false
     end
     local g, err = cn_parse_aimap(blob, used_name or level_name)
@@ -295,6 +297,7 @@ local function cn_try_load()
             "true fast travel: aimap parse failed for %s (%s)",
             tostr(used_name or level_name), tostr(err)
         ), "red")
+        dogma.perf.stop()
         return false
     end
     cn_state().graph = g
@@ -307,6 +310,7 @@ local function cn_try_load()
             tostr(used_name), tostr(level_name), g.node_count
         ), "blue")
     end
+    dogma.perf.stop()
     return true
 end
 
@@ -603,7 +607,7 @@ end
 
 -- Live travel/preview: aimap A* only.
 local function cn_build_path(start_pos, dest_pos, dest_anchor_key)
-    dogma.perf.start("tft.nav_build_path")
+    dogma.perf.start("tft", "nav_build_path")
     local chain, is_vertex, path_len, meta
     repeat
         local g = cn_state().graph
@@ -759,7 +763,7 @@ local function cn_spawn_dot(ids, index, pos, spot)
 end
 
 local function cn_clear_display()
-    dogma.perf.start("tft.nav_clear_display")
+    dogma.perf.start("tft", "nav_clear_display")
     local st = cn_state()
     local function clear_table(ids, spot)
         for _, obj_id in pairs(ids or {}) do
@@ -784,7 +788,7 @@ local function cn_clear_display()
 end
 
 local function cn_refresh_display()
-    dogma.perf.start("tft.nav_refresh_display")
+    dogma.perf.start("tft", "nav_refresh_display")
     cn_clear_display()
     local st = cn_state()
     local g = st.graph

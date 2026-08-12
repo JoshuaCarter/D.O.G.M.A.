@@ -236,6 +236,7 @@ local function sync_layer_count(target_layers, appearance, now, max_alpha)
 end
 
 local function update_overlays(now, appearance, scale_idx, max_alpha)
+	dogma.perf.start("bleed", "update_overlays")
 	local write = 1
 	for i = 1, #overlays do
 		local o = overlays[i]
@@ -256,6 +257,7 @@ local function update_overlays(now, appearance, scale_idx, max_alpha)
 	for i = write, #overlays do
 		overlays[i] = nil
 	end
+	dogma.perf.stop()
 end
 
 local function on_option_change()

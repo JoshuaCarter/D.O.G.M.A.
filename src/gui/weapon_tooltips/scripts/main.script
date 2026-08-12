@@ -1137,6 +1137,7 @@ local function apply_enhanced_weapon_stats()
 	if not utils_ui or not utils_ui.stats_table then
 		return
 	end
+	dogma.perf.start("weapon_tooltips", "apply_enhanced_weapon_stats")
 
 	-- utils_ui.stats_table["weapon"] is normally only built lazily, the first
 	-- time any item tooltip/details sheet is shown (utils_ui.get_stats_table ->
@@ -1151,6 +1152,7 @@ local function apply_enhanced_weapon_stats()
 
 	local weapon_stats = utils_ui.stats_table["weapon"]
 	if not weapon_stats then
+		dogma.perf.stop()
 		return
 	end
 
@@ -1210,6 +1212,7 @@ local function apply_enhanced_weapon_stats()
 	weapon_stats["dogma_burst_control"] = CONFIG.loaded.show_burst_control
 		and make_stat_row(idx.burst_control, N.burst_control, "ui_wp_prop_otdacha", "prop_burst_control")
 		or nil
+	dogma.perf.stop()
 end
 
 local logged_once = {}
@@ -1845,8 +1848,10 @@ local function collect_sorted_ammo_rounds(obj, sec, max_count, class_only)
 end
 
 local function build_ammo_damage_rows(obj, sec)
+	dogma.perf.start("weapon_tooltips", "build_ammo_damage_rows")
 	local all = collect_sorted_ammo_rounds(obj, sec, nil)
 	if not all then
+		dogma.perf.stop()
 		return nil
 	end
 
@@ -1864,6 +1869,7 @@ local function build_ammo_damage_rows(obj, sec)
 	local hit_power = gun_hit_power(obj, sec)
 	if hit_power <= 0 then
 		log_item_once("no_hit_power", sec, string.format("%s: hit_power<=0", sec))
+		dogma.perf.stop()
 		return nil
 	end
 
@@ -1890,6 +1896,7 @@ local function build_ammo_damage_rows(obj, sec)
 	end
 
 	if #rows == 0 then
+		dogma.perf.stop()
 		return nil
 	end
 
@@ -1912,6 +1919,7 @@ local function build_ammo_damage_rows(obj, sec)
 		}
 	end
 
+	dogma.perf.stop()
 	return {
 		rows = ordered,
 		silencer = silencer,
@@ -2771,6 +2779,7 @@ local function itm_details_addtext_hook(self, xml, path, offset, txt)
 end
 
 local function itm_details_reset_hook(self, obj)
+	dogma.perf.start("weapon_tooltips", "itm_details_reset")
 	if obj and CONFIG.loaded.show_damage_table then
 		local sec = safe_section(obj)
 		if sec then
@@ -2786,6 +2795,7 @@ local function itm_details_reset_hook(self, obj)
 	end
 
 	self.dogma_details_pending = nil
+	dogma.perf.stop()
 end
 
 local details_hook_ok = false
@@ -2866,6 +2876,7 @@ local function uiinfo_init_hook(self, owner, delay)
 end
 
 local function uiinfo_update_hook(self, obj, sec, flags)
+	dogma.perf.start("weapon_tooltips", "uiinfo_update")
 	local oid = safe_id(obj)
 	local same_item = (oid and self.id and oid == self.id)
 		or (not obj and sec and self.section == sec)
@@ -2881,6 +2892,7 @@ local function uiinfo_update_hook(self, obj, sec, flags)
 		refresh_weapon_damage_panel(self, obj, sec)
 		sync_damage_layout(self)
 	end
+	dogma.perf.stop()
 end
 
 local ui_hooks_ok = false

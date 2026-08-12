@@ -235,6 +235,7 @@ local function on_unique_update()
 	end
 	next_display_time = current_time_ms + interval
 
+	dogma.perf.start("fps", "unique_update")
 	-- average FPS over sample_window from recent frame timestamps
 	local fps = 0
 	if sample_buf.count > 0 then
@@ -263,6 +264,7 @@ local function on_unique_update()
 		graph_clear()
 		hud:SetSimple(fps)
 	end
+	dogma.perf.stop()
 end
 
 local function poll_visibility_key()
@@ -697,6 +699,7 @@ function ui_dogma_fps:DrawGraph(buf, cfg)
 		return
 	end
 
+	dogma.perf.start("fps", "draw_graph")
 	self:InitGraph()
 	self.cfg = cfg
 	self:ApplyGraphColors(cfg)
@@ -772,6 +775,7 @@ function ui_dogma_fps:DrawGraph(buf, cfg)
 	for i = part, self.graph_part_count do
 		self.graph_parts[i]:Show(false)
 	end
+	dogma.perf.stop()
 end
 
 function ui_dogma_fps:SetDisplayMode(mode)

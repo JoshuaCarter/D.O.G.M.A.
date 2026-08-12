@@ -80,6 +80,7 @@ local function in_combat()
 	if not (actor and db.storage) then
 		return false
 	end
+	dogma.perf.start("campfire_healing", "in_combat")
 	local actor_id = actor:id()
 	for id, _ in pairs(db.storage) do
 		if id ~= actor_id then
@@ -102,6 +103,7 @@ local function in_combat()
 								return enemy:id()
 							end)
 							if ok_id and eid == actor_id then
+								dogma.perf.stop()
 								return true
 							end
 						end
@@ -110,6 +112,7 @@ local function in_combat()
 			end
 		end
 	end
+	dogma.perf.stop()
 	return false
 end
 
@@ -288,6 +291,7 @@ local function actor_on_update()
 		return
 	end
 
+	dogma.perf.start("campfire_healing", "actor_on_update")
 	local now = time_global()
 
 	if now >= next_body_tick then
@@ -299,6 +303,7 @@ local function actor_on_update()
 		next_limb_tick = now + limb_interval_ms()
 		tick_limb()
 	end
+	dogma.perf.stop()
 end
 
 local function on_option_change()

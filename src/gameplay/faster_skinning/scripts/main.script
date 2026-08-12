@@ -523,6 +523,7 @@ local function instant_slash_loot(obj)
 		return false
 	end
 
+	dogma.perf.start("faster_skinning", "instant_slash_loot")
 	-- FillList builds loot + may fire mutant encyclopedia unlock. Skip ShowDialog so
 	-- tips aren't swallowed by an open loot UI (FDDA auto-loot closes first).
 	local orig_show = gui.ShowDialog
@@ -531,6 +532,7 @@ local function instant_slash_loot(obj)
 	gui.ShowDialog = orig_show
 	if not can_show then
 		log("slash_loot: Reset returned false")
+		dogma.perf.stop()
 		return false
 	end
 	if gui.Close then
@@ -572,6 +574,7 @@ local function instant_slash_loot(obj)
 	end
 	slash_loot_parts_tip(obj, loot_snapshot)
 	log("slash_loot: looted id=" .. tostring(obj:id()))
+	dogma.perf.stop()
 	return true
 end
 
@@ -724,6 +727,7 @@ function on_game_start()
 	skin_cut_sfx = sound_object(SKIN_CUT_SOUND)
 
 	RegisterScriptCallback("actor_on_update", function()
+		dogma.perf.start("faster_skinning", "actor_on_update")
 		dogma.sys.ready(CONFIG.MOD_ID, db, on_option_change)
 		tick_pending_skin_action()
 		if pending_skin_action then
@@ -731,6 +735,7 @@ function on_game_start()
 		end
 		tick_pending_pickup()
 		tick_slash_swing()
+		dogma.perf.stop()
 	end)
 	RegisterScriptCallback("monster_on_before_hit", monster_on_before_hit)
 	RegisterScriptCallback("on_option_change", on_option_change)

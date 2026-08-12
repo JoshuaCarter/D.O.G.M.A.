@@ -639,7 +639,7 @@ end
 
 local function find_id_target()
 	-- Exact under crosshair + optional soft-aim iterate_nearest; runs on 100ms tick.
-	dogma.perf.start("stalker_id.find_target")
+	dogma.perf.start("stalker_id", "find_target")
 	local result = nil
 	repeat
 		local exact = find_exact_target()
@@ -778,7 +778,7 @@ local function update_leader_line()
 		return
 	end
 
-	dogma.perf.start("stalker_id.leader_line")
+	dogma.perf.start("stalker_id", "leader_line")
 	repeat
 		local obj = level.object_by_id and level.object_by_id(line_target_id)
 		if not obj then

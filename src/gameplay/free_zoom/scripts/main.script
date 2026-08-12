@@ -1527,6 +1527,7 @@ local function actor_on_update()
 		return
 	end
 
+	dogma.perf.start("free_zoom", "actor_on_update")
 	local hot = diag_hot_on_update()
 
 	refresh_wpn()
@@ -1556,6 +1557,7 @@ local function actor_on_update()
 		mark("update_frame_done", nil)
 	end
 	diag_hot_end_if_due()
+	dogma.perf.stop()
 end
 
 -- zoom_key_mode: 0=toggle, 2=hold (in on down, out on up).

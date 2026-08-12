@@ -311,11 +311,13 @@ local function build_dynamic_map()
         return
     end
     if try_restore_zone_map() then return end
+    dogma.perf.start("tft", "build_dynamic_map")
     tft_log("Building zone map (first run this save)...")
     local sim = alife()
     local gg = game_graph()
     if not (sim and gg) then
         tft_log("ERROR: alife() or game_graph() not ready")
+        dogma.perf.stop()
         return
     end
 
@@ -367,6 +369,7 @@ local function build_dynamic_map()
     pcall(function()
         persist_zone_map(alife_storage_manager.get_state())
     end)
+    dogma.perf.stop()
 end
 
 -- tft_publish_to_global

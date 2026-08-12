@@ -100,6 +100,7 @@ local function get_sound(path)
 end
 
 local function artefact_nearby(actor, radius)
+	dogma.perf.start("detector_beeps", "artefact_nearby")
 	local found = false
 	local actor_id = actor:id()
 	level.iterate_nearest(actor:position(), radius, function(obj)
@@ -113,6 +114,7 @@ local function artefact_nearby(actor, radius)
 		end
 		found = true
 	end)
+	dogma.perf.stop()
 	return found
 end
 

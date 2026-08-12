@@ -170,6 +170,7 @@ local function scan_stalkers_before_pda()
 	if not (db and db.storage and db.actor) then
 		return
 	end
+	dogma.perf.start("pda_go_away", "scan_stalkers")
 	local actor_id = db.actor:id()
 	local total = 0
 	local bad = 0
@@ -221,6 +222,7 @@ local function scan_stalkers_before_pda()
 		tostr(total),
 		tostr(bad)
 	)
+	dogma.perf.stop()
 end
 
 -- Tick-accurate diagnostic + restore-slot tracking: logs every time

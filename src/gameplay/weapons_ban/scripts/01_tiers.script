@@ -308,6 +308,7 @@ local function build_parts_from_prices()
 end
 
 local function build_buckets()
+	dogma.perf.start("weapons_ban", "build_buckets")
 	clear_buckets()
 	for _, cat in ipairs(CONFIG.CATS) do
 		enforce_cutoffs(cat)
@@ -333,6 +334,7 @@ local function build_buckets()
 	build_parts_from_prices()
 	buckets_built = true
 	log("buckets built")
+	dogma.perf.stop()
 end
 
 local function ensure_buckets()

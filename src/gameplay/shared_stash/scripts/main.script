@@ -219,9 +219,11 @@ local function update_carry_weight()
 		return
 	end
 
+	dogma.perf.start("shared_stash", "update_carry_weight")
 	local contents = contents_weight_for_carry(m_data)
 	local target = BASE_WEIGHT + (contents or 0)
 	if last_applied_weight == target then
+		dogma.perf.stop()
 		return
 	end
 	pcall(function()
@@ -229,6 +231,7 @@ local function update_carry_weight()
 	end)
 	last_applied_weight = target
 	log(string.format("workshop_item weight -> %.2f (base %.0f + contents %.2f)", target, BASE_WEIGHT, contents or 0))
+	dogma.perf.stop()
 end
 
 local function on_actor_update()

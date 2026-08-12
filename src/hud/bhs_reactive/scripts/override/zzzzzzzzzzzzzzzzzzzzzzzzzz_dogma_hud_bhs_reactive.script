@@ -401,12 +401,14 @@ apply_parks = function(now)
 		return
 	end
 
+	dogma.perf.start("bhs_reactive", "apply_parks")
 	local _, show_all, show_stam = compute_show(L, now)
 	park_pack(PACK_BODY, L.hide_body and not show_all)
 	park_pack(PACK_HP, L.hide_hp and not show_all)
 	park_pack(PACK_STAM, L.hide_stam and not show_stam)
 	park_psy(L.hide_psy and not show_all)
 	park_rad(L.hide_rad and not show_all)
+	dogma.perf.stop()
 end
 
 local function apply_heal_clamp(now)
@@ -589,9 +591,11 @@ local function status_tick(now, icons_held)
 		end
 		return
 	end
+	dogma.perf.start("bhs_reactive", "status_tick")
 	install_gates()
 	local as = rawget(_G, "actor_status")
 	if not (as and as.indicators) then
+		dogma.perf.stop()
 		return
 	end
 	for name, def in pairs(as.indicators) do
@@ -628,6 +632,7 @@ local function status_tick(now, icons_held)
 			as.HUD:Update(true)
 		end)
 	end
+	dogma.perf.stop()
 end
 
 local function on_actor_update()

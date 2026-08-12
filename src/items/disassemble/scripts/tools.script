@@ -28,6 +28,7 @@ local function redirect_to_lowest_stack(obj_d, note)
 	if not (CONFIG.loaded.tools_enabled and obj_d and db.actor) then
 		return obj_d
 	end
+	dogma.perf.start("disassemble", "redirect_to_lowest_stack")
 	local diss_tools = GetItemList("disassemble")
 
 	-- read DIT break thresholds (matches Disassembly Item Tweaks is_breaking())
@@ -86,11 +87,13 @@ local function redirect_to_lowest_stack(obj_d, note)
 			optimal:section(),
 			optimal:condition()
 		))
+		dogma.perf.stop()
 		return optimal
 	end
 	if optimal then
 		log(string.format("%s %s cond=%.3f (same stack)", note or "pick", sec, optimal:condition()))
 	end
+	dogma.perf.stop()
 	return optimal or obj_d
 end
 

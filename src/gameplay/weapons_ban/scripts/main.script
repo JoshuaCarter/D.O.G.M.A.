@@ -8,6 +8,7 @@
 	Corpses: strip loose ammo, then one rank RU budget split across guns.
 	New game: RU budget per owned start weapon (default 10k).
 	Replaces RNG Attach + Parts In Stashes.
+	Ammo Maker 1:1 craft (casing/bullet/powder per output round) lives in ammo_craft.script.
 ]]
 
 local CONFIG = _G.dogma_gameplay_weapons_ban_conf
@@ -354,6 +355,7 @@ local function strip_banned_from_trader(npc)
 	if not (npc and npc.iterate_inventory) then
 		return
 	end
+	dogma.perf.start("weapons_ban", "strip_banned_from_trader")
 	local to_release = {}
 	npc:iterate_inventory(function(_temp, item)
 		if item and is_banned_combat_gear(item, item:section()) then
@@ -364,6 +366,7 @@ local function strip_banned_from_trader(npc)
 		end
 	end)
 	release_inventory_ids(to_release)
+	dogma.perf.stop()
 end
 
 local function delayed_strip(npc_id)
@@ -490,6 +493,7 @@ local function roll_stash_loot(id)
 	if not alife_object(id) then
 		return
 	end
+	dogma.perf.start("weapons_ban", "roll_stash_loot")
 	Tiers.ensure()
 	local target = Tiers.base_tier_for_stash(id)
 	local sections = {}
@@ -518,6 +522,7 @@ local function roll_stash_loot(id)
 		end
 	end
 	append_stash_sections(id, sections)
+	dogma.perf.stop()
 end
 
 local function patched_set_random_stash(no_spot, hint, bonus_items, id, dbg)
@@ -532,12 +537,15 @@ local function patched_set_random_stash(no_spot, hint, bonus_items, id, dbg)
 	if not id then
 		return result
 	end
+	dogma.perf.start("weapons_ban", "set_random_stash")
 	scrub_worn_ammo_from_cache(id)
 	if is_cheese_paid_stash(hint) then
+		dogma.perf.stop()
 		return result
 	end
 
 	roll_stash_loot(id)
+	dogma.perf.stop()
 	return result
 end
 
@@ -748,6 +756,7 @@ local function patched_try_spawn_ammo(npc)
 	if not npc then
 		return
 	end
+	dogma.perf.start("weapons_ban", "try_spawn_ammo")
 	-- Snapshot matching ammo before strip so we can reinject the same types.
 	local inv_ammo = collect_inventory_ammo_secs(npc)
 	strip_loose_ammo(npc)
@@ -755,6 +764,7 @@ local function patched_try_spawn_ammo(npc)
 	if item_weapon and item_weapon.ammo_aggregation_full and CreateTimeEvent then
 		CreateTimeEvent(npc:id(), "dogma_wb_ammo_agg", 0, item_weapon.ammo_aggregation_full, npc:id())
 	end
+	dogma.perf.stop()
 end
 
 --------------------------------------------------------------------------------

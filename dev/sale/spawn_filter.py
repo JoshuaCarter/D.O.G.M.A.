@@ -378,7 +378,8 @@ def is_same_name_weapon_alias(
     Example: ``[wpn_axmc]:wpn_l96a1`` both resolve to \"L96A1\".
     Also ``[wpn_sig220]:wpn_sig220_n`` with ``parent_section = self`` — still an
     alias of the real BAS section. Allows intentional BAS remakes
-    (``wpn_ppsh_bas`` / ``wpn_sks_b``) that replace the plain section.
+    (``wpn_sks_b``) that replace the plain section; icon-less remakes like
+    ``wpn_ppsh_bas`` lose to the plain gun in ``prefer_unique_weapons``.
     """
     ps = (d.get("parent_section") or "").strip()
     # Real attach trees point at another section; self/empty can still be LTX aliases.
@@ -422,9 +423,15 @@ def _model_fingerprint(d: dict[str, str]) -> tuple[str, str, str]:
     return (ammo, mag, (d.get("hud") or "").strip().lower())
 
 
+def _has_icons_texture(d: dict[str, str]) -> bool:
+    return bool((d.get("icons_texture") or "").strip())
+
+
 def _keep_rank(sec: str, display_key: str, d: dict[str, str]) -> tuple:
     """Higher wins when collapsing same-name combat clones."""
     sl = sec.lower()
+    # Prefer a real icon sheet over a blank-atlas remake (e.g. wpn_ppsh41 vs _bas).
+    icons = 4 if _has_icons_texture(d) else 0
     bas = 3 if _is_bas_remake(sec) else 0
     n = 1 if sl.endswith("_n") else 0
     body = sl[4:] if sl.startswith("wpn_") else sl
@@ -434,7 +441,7 @@ def _keep_rank(sec: str, display_key: str, d: dict[str, str]) -> tuple:
         cost = float((d.get("cost") or "0").strip() or 0)
     except ValueError:
         cost = 0.0
-    return (bas, n, overlap, cost, len(body))
+    return (icons, bas, n, overlap, cost, len(body))
 
 
 def prefer_unique_weapons(
@@ -489,10 +496,28 @@ def prefer_unique_weapons(
         return out
 
     # 3) Same display name: prefer BAS / _b, then _n, over every other sibling.
+    #    Skip icon-less remakes when a non-remake sibling has icons_texture
+    #    (wpn_ppsh_bas blank atlas vs wpn_ppsh41 on ui_icon_bas).
     for group in _by_name().values():
         if len(group) < 2:
             continue
         preferred = [s for s in group if _is_bas_remake(s)]
+        if preferred:
+            rem_icons = [
+                s
+                for s in preferred
+                if _has_icons_texture(sections.get(s) or {})
+            ]
+            plain_icons = [
+                s
+                for s in group
+                if not _is_bas_remake(s)
+                and _has_icons_texture(sections.get(s) or {})
+            ]
+            if rem_icons:
+                preferred = rem_icons
+            elif plain_icons:
+                preferred = []
         if not preferred:
             preferred = [s for s in group if s.lower().endswith("_n")]
         if not preferred:
@@ -502,7 +527,8 @@ def prefer_unique_weapons(
                 kept.discard(s)
 
     # 4) Same display name: drop LTX child aliases (keep the inherited parent).
-    #    Remakes (_bas/_b) that inherit the plain gun: drop the plain parent instead.
+    #    Remakes (_bas/_b) that inherit the plain gun: drop the plain parent instead,
+    #    unless the remake has no icons_texture and the parent does.
     for group in _by_name().values():
         if len(group) < 2:
             continue
@@ -518,7 +544,12 @@ def prefer_unique_weapons(
             ):
                 continue
             if _is_bas_remake(sec):
-                kept.discard(parent)
+                rem_tex = _has_icons_texture(sections.get(sec) or {})
+                par_tex = _has_icons_texture(sections.get(parent) or {})
+                if not rem_tex and par_tex:
+                    kept.discard(sec)
+                else:
+                    kept.discard(parent)
             else:
                 kept.discard(sec)
 

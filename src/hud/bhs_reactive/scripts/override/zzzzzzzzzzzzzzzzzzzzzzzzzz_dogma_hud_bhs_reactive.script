@@ -12,6 +12,9 @@
 local CONFIG = _G.dogma_hud_bhs_reactive_conf
 
 local STATUS_TICK_MS = 1000
+-- While HUD pieces should stay hidden, re-assert parks on this cadence so late
+-- BHS AddCustomStatic (scuffed_fix) still gets parked — not every actor update.
+local PARK_REASSERT_MS = 250
 local LOAD_GRACE_MS = 10000
 local PARK_OFF = 4000
 local PARKED_X = -1000
@@ -646,15 +649,18 @@ local function on_actor_update()
 	local show_edge = show_all ~= show_all_prev
 	show_all_prev = show_all
 
-	-- Grace: keep statics, no moves. While any piece should be parked, park every
-	-- update so late BHS AddCustomStatic (scuffed_fix) does not flash on-screen.
+	-- Grace: keep statics, no moves. While hiding, re-assert parks on a short
+	-- cadence (not every frame) so late BHS AddCustomStatic still gets parked.
 	if grace then
 		ensure_bhs_hook()
 		ensure_bhs_statics_exist()
-	elseif force or show_edge or any_want_parked(L, show_all, show_stam)
-		or (now - last_park_tick >= STATUS_TICK_MS) then
-		last_park_tick = now
-		apply_parks(now)
+	else
+		local want_park = any_want_parked(L, show_all, show_stam)
+		local interval = want_park and PARK_REASSERT_MS or STATUS_TICK_MS
+		if force or show_edge or (now - last_park_tick >= interval) then
+			last_park_tick = now
+			apply_parks(now)
+		end
 	end
 
 	if force and flash_until > now and (now - last_heal_tick >= STATUS_TICK_MS) then

@@ -727,14 +727,26 @@ function on_game_start()
 	skin_cut_sfx = sound_object(SKIN_CUT_SOUND)
 
 	RegisterScriptCallback("actor_on_update", function()
+		-- Slash rising-edge must stay every frame when slash_loot is on.
+		-- Skip the rest (and perf) when nothing is pending and slash is off.
+		local slash_on = CONFIG.loaded.enabled and CONFIG.loaded.slash_loot
+		local busy = pending_skin_action or pending_pickup_at
+		if not busy and not slash_on then
+			dogma.sys.ready(CONFIG.MOD_ID, db, on_option_change)
+			return
+		end
 		dogma.perf.start("faster_skinning", "actor_on_update")
 		dogma.sys.ready(CONFIG.MOD_ID, db, on_option_change)
-		tick_pending_skin_action()
-		if pending_skin_action then
-			do_look_at(pending_skin_action, true)
+		if busy then
+			tick_pending_skin_action()
+			if pending_skin_action then
+				do_look_at(pending_skin_action, true)
+			end
+			tick_pending_pickup()
 		end
-		tick_pending_pickup()
-		tick_slash_swing()
+		if slash_on then
+			tick_slash_swing()
+		end
 		dogma.perf.stop()
 	end)
 	RegisterScriptCallback("monster_on_before_hit", monster_on_before_hit)

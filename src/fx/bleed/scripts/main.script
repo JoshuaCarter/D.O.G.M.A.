@@ -10,6 +10,10 @@ local CONFIG = _G.dogma_fx_bleed_conf
 local overlays = {}
 local active_appearance = nil
 local active_scale = nil
+local next_update_ms = 0
+-- Idle: bleed==0 and no overlays. Active: fading/holding layers need smoother ticks.
+local IDLE_POLL_MS = 200
+local ACTIVE_POLL_MS = 50
 
 local SIZE_VEC = vector2()
 local POS_VEC = vector2()
@@ -281,14 +285,29 @@ local function on_actor_on_update()
 
 	if not CONFIG.loaded.enabled or not actor:alive() then
 		clear_all()
+		next_update_ms = 0
 		return
 	end
+
+	local now = time_global()
+	local busy = #overlays > 0
+	local poll = busy and ACTIVE_POLL_MS or IDLE_POLL_MS
+	if now < next_update_ms then
+		return
+	end
+	next_update_ms = now + poll
 
 	local bleed = actor.bleeding or 0
 	local target_layers = wound_layers(bleed)
 	local max_alpha = dogma.math.clamp01(CONFIG.loaded.max_alpha or CONFIG.DEFAULTS["max_alpha"])
 	if max_alpha <= 0 then
 		target_layers = 0
+	end
+
+	-- Still idle and nothing to show: stay on the slow poll.
+	if target_layers <= 0 and not busy then
+		overlay(LOG.BLEED, string.format("Bleed: %.3f", bleed))
+		return
 	end
 
 	local appearance = CONFIG.loaded.style or 0
@@ -301,8 +320,6 @@ local function on_actor_on_update()
 		scale_idx = CONFIG.DEFAULTS["scale"]
 	end
 
-	local now = time_global()
-
 	if active_appearance ~= appearance then
 		swap_appearance(appearance)
 	end
@@ -312,6 +329,11 @@ local function on_actor_on_update()
 
 	if active_scale ~= scale_idx then
 		active_scale = scale_idx
+	end
+
+	-- Fades need the faster cadence while overlays exist.
+	if #overlays > 0 then
+		next_update_ms = now + ACTIVE_POLL_MS
 	end
 
 	overlay(LOG.BLEED, string.format("Bleed: %.3f", bleed))
@@ -335,9 +357,13 @@ end
 function on_game_start()
 	dogma.load(CONFIG.MOD_ID)
 	clear_all()
+	next_update_ms = 0
 	on_option_change()
 	RegisterScriptCallback("actor_on_update", on_actor_on_update)
 	RegisterScriptCallback("on_option_change", on_option_change)
-	RegisterScriptCallback("on_game_load", clear_all)
+	RegisterScriptCallback("on_game_load", function()
+		clear_all()
+		next_update_ms = 0
+	end)
 	log("loaded")
 end

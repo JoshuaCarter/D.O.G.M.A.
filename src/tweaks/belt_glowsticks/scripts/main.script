@@ -26,9 +26,11 @@ end
 
 local light = nil
 local light_obj_id = nil
+local light_props_sec = nil -- cached light_section last applied to `light`
 local next_drain_tick = 0
 local pending_new_belt_items = {}
 local convert_in_progress = false
+local light_props_cache = {} -- [light_section] = { volumetric, ..., color, drain_by_device }
 
 local function find_belted_glowstick(exclude_id)
 	local found = nil
@@ -68,6 +70,32 @@ local function clear_light()
 	end
 	light = nil
 	light_obj_id = nil
+	light_props_sec = nil
+end
+
+local function light_props_for(light_section)
+	local props = light_props_cache[light_section]
+	if props then
+		return props
+	end
+	local tonum = tonumber
+	props = {
+		volumetric = ini_sys:r_bool_ex(light_section, "volumetric", false),
+		volumetric_quality = ini_sys:r_float_ex(light_section, "volumetric_quality", 0.5),
+		volumetric_intensity = ini_sys:r_float_ex(light_section, "volumetric_intensity", 0.1),
+		volumetric_distance = ini_sys:r_float_ex(light_section, "volumetric_distance", 0.25),
+		range = ini_sys:r_float_ex(light_section, "range_r2", 12) or 12,
+	}
+	local color_s = ini_sys:r_string_ex(light_section, "color_r2", "0.0,0.4,0.3,0.8")
+	local c = str_explode(color_s, ",")
+	props.color = fcolor():set(
+		tonum(c[1]) or 0,
+		tonum(c[2]) or 0.4,
+		tonum(c[3]) or 0.3,
+		tonum(c[4]) or 0.8
+	)
+	light_props_cache[light_section] = props
+	return props
 end
 
 -- Belt twin → hand-held device in ruck. Returns true if it was a belt twin.
@@ -255,7 +283,6 @@ local function wrap_inventory_ui()
 end
 
 local function update_belt_light()
-	local tonum = tonumber
 	local lit_item = find_belted_glowstick()
 	if not lit_item or lit_item:condition() <= 0.011 then
 		clear_light()
@@ -273,25 +300,22 @@ local function update_belt_light()
 		light.hud_mode = false
 		light.enabled = true
 		light_obj_id = lit_item:id()
+		light_props_sec = nil
 	end
 
-	light.volumetric = ini_sys:r_bool_ex(light_section, "volumetric", false)
-	if light.volumetric then
-		light.volumetric_quality = ini_sys:r_float_ex(light_section, "volumetric_quality", 0.5)
-		light.volumetric_intensity = ini_sys:r_float_ex(light_section, "volumetric_intensity", 0.1)
-		light.volumetric_distance = ini_sys:r_float_ex(light_section, "volumetric_distance", 0.25)
+	-- Ini props are static per light_section; only re-apply when section changes.
+	if light_props_sec ~= light_section then
+		local props = light_props_for(light_section)
+		light.volumetric = props.volumetric
+		if props.volumetric then
+			light.volumetric_quality = props.volumetric_quality
+			light.volumetric_intensity = props.volumetric_intensity
+			light.volumetric_distance = props.volumetric_distance
+		end
+		light.range = props.range
+		light.color = props.color
+		light_props_sec = light_section
 	end
-
-	light.range = ini_sys:r_float_ex(light_section, "range_r2", 12) or 12
-
-	local color_s = ini_sys:r_string_ex(light_section, "color_r2", "0.0,0.4,0.3,0.8")
-	local c = str_explode(color_s, ",")
-	light.color = fcolor():set(
-		tonum(c[1]) or 0,
-		tonum(c[2]) or 0.4,
-		tonum(c[3]) or 0.3,
-		tonum(c[4]) or 0.8
-	)
 
 	local pos = db.actor:bone_position("bip01_pelvis")
 	light:set_position(pos)
@@ -313,6 +337,9 @@ end
 
 function on_option_change()
 	-- No MCM options; clear light so a mid-session ini reload still refreshes.
+	for k in pairs(light_props_cache) do
+		light_props_cache[k] = nil
+	end
 	clear_light()
 end
 

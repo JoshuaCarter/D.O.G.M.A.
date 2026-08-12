@@ -28,6 +28,10 @@ local is_prone = nil
 local set_prone_bones_visible
 -- Lazy: get_console() can be nil while scripts load.
 local blend_move_anims = false
+local next_update_ms = 0
+-- Standing/crouch: posture check is enough at ~20Hz. While prone we still
+-- re-assert play_cycle every actor update (engine drops the cycle otherwise).
+local IDLE_POLL_MS = 50
 
 local function console_bool(key)
 	local c = get_console and get_console()
@@ -117,6 +121,15 @@ local function on_actor_on_update()
 		return
 	end
 
+	local now = time_global()
+	-- Keep every-frame while prone (play_cycle spam). Throttle only when upright.
+	if not is_prone and now < next_update_ms then
+		return
+	end
+	if not is_prone then
+		next_update_ms = now + IDLE_POLL_MS
+	end
+
 	dogma.perf.start("true_prone", "actor_on_update")
 	-- nearest posture from camera height (feet to cam)
 	local ok, height = pcall(function()
@@ -199,6 +212,7 @@ local function on_actor_on_update()
 	-- leave prone
 	elseif is_prone then
 		is_prone = false
+		next_update_ms = now + IDLE_POLL_MS
 
 		-- show bones and trigger new idle motion on leaving prone
 		if CONFIG.loaded.hide_prone_bones then
@@ -267,9 +281,14 @@ function on_game_start()
 	blend_move_anims = console_bool("blend_move_anims")
 
 	is_prone = nil
+	next_update_ms = 0
 	RegisterScriptCallback("actor_on_update", on_actor_on_update)
 	RegisterScriptCallback("actor_on_before_hit", on_actor_on_before_hit)
 	RegisterScriptCallback("actor_on_before_death", on_actor_on_before_death)
 	RegisterScriptCallback("on_option_change", on_option_change)
+	RegisterScriptCallback("on_game_load", function()
+		is_prone = nil
+		next_update_ms = 0
+	end)
 	log("loaded")
 end

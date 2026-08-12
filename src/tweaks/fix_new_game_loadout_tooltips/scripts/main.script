@@ -49,8 +49,8 @@
 	6. LOADOUT / INVENTORY SORT: SortingPlus replaces utils_ui sort fns at MCM
 	   load but only fills item_order on actor_on_first_update - so both New
 	   Game panels can reshuffle after a game session. We pin:
-	   - Loadout: non-weapon/outfit/helm items first; remaining gear keeps
-	     cold-boot first-load order (size descending, then alpha).
+	   - Loadout: misc → weapons → outfits/helms; each section size ascending
+	     (small → large), then alpha.
 	   - Inventory: cold-boot first-load order (size descending, then alpha)
 	     so quit-back matches the first open.
 
@@ -593,18 +593,22 @@ end
 ------------------------------------------------------------------------------
 
 local GROUP_MISC = 1
-local GROUP_GEAR = 2
+local GROUP_WEAP = 2
+local GROUP_OUTFIT = 3
 
 local function loadout_group(sec)
 	if not sec then
 		return GROUP_MISC
 	end
 	if IsItem("helmet", sec) or IsItem("outfit", sec) then
-		return GROUP_GEAR
+		return GROUP_OUTFIT
 	end
 	local kind = SYS_GetParam and SYS_GetParam(0, sec, "kind", "") or ""
-	if kind == "o_helmet" or string.sub(kind, 1, 2) == "o_" or string.sub(kind, 1, 2) == "w_" then
-		return GROUP_GEAR
+	if kind == "o_helmet" or string.sub(kind, 1, 2) == "o_" then
+		return GROUP_OUTFIT
+	end
+	if string.sub(kind, 1, 2) == "w_" then
+		return GROUP_WEAP
 	end
 	return GROUP_MISC
 end
@@ -626,6 +630,28 @@ local function sec_of(entry)
 		return entry:section()
 	end
 	return nil
+end
+
+-- Size ascending (small → large by grid w, then h), then alpha.
+local function sort_size_asc(t, a, b)
+	local seca = sec_of(t[a])
+	local secb = sec_of(t[b])
+	if not seca then
+		return false
+	end
+	if not secb then
+		return true
+	end
+
+	local _, wa, ha = loadout_size(seca)
+	local _, wb, hb = loadout_size(secb)
+	if wa ~= wb then
+		return wa < wb
+	end
+	if ha ~= hb then
+		return ha < hb
+	end
+	return seca < secb
 end
 
 -- Cold-boot sizekind with empty SortingPlus item_order: bigger w/h first, then alpha.
@@ -650,7 +676,7 @@ local function sort_size_desc(t, a, b)
 	return seca < secb
 end
 
--- Loadout: misc (non wpn/outfit/helm) first; gear keeps first-load size order.
+-- Loadout: misc → weapons → outfits/helms; each section size ascending.
 local function sort_loadout(t, a, b)
 	local seca = sec_of(t[a])
 	local secb = sec_of(t[b])
@@ -666,7 +692,7 @@ local function sort_loadout(t, a, b)
 	if ga ~= gb then
 		return ga < gb
 	end
-	return sort_size_desc(t, a, b)
+	return sort_size_asc(t, a, b)
 end
 
 -- Inventory: same cold-boot first-load order end-to-end.

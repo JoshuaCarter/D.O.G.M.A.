@@ -1,0 +1,754 @@
+--[[
+	Reactive BHS
+
+	GAMMA BHS (type 2): body_health_system is the panel bg for the limb fills —
+	same visibility gate; park them together. Hide = SetWndPos only (never Show).
+	Force type 2 + healthstatus while parking so BHS does not RemoveCustomStatic.
+	Load grace: no moves while BHS stagger-creates bars (scuffed_fix ~0.2s each).
+	Damage / hold / HP|psy|rad → full pack. Stam threshold alone → stam only.
+	Status icons: separate functor gates.
+]]
+
+local CONFIG = _G.dogma_gui_bhs_reactive_conf
+
+local STATUS_TICK_MS = 1000
+-- While HUD pieces should stay hidden, re-assert parks on this cadence so late
+-- BHS AddCustomStatic (scuffed_fix) still gets parked — not every actor update.
+local PARK_REASSERT_MS = 250
+local LOAD_GRACE_MS = 10000
+local PARK_OFF = 4000
+local PARKED_X = -1000
+local FLAG = "__dogma_bhs_reactive"
+
+local LIMBS = { "head", "torso", "leftarm", "rightarm", "leftleg", "rightleg" }
+local OPT_IN_ICONS = {
+	{ name = "Radiation", opt = "icons_radiation" },
+	{ name = "Bleed", opt = "icons_bleed" },
+	{ name = "Hunger", opt = "icons_hunger" },
+	{ name = "Thirst", opt = "icons_thirst" },
+	{ name = "Sleep", opt = "icons_sleep" },
+}
+local RATIO_SUFFIXES = { "", "_43", "_1610", "_16" }
+
+local function expand_stems(stems)
+	local out = {}
+	for i = 1, #stems do
+		for j = 1, #RATIO_SUFFIXES do
+			out[#out + 1] = stems[i] .. RATIO_SUFFIXES[j]
+		end
+	end
+	return out
+end
+
+local PACK_BODY = expand_stems({
+	"body_health_system",
+	"body_health_system_2",
+	"body_health_system_text",
+	"cop_debug",
+	"bhs_garbage",
+	"bhs_health_head_bar",
+	"bhs_health_head_bar_bg",
+	"bhs_health_head_bar_green",
+	"bhs_health_torso_bar",
+	"bhs_health_torso_bar_bg",
+	"bhs_health_torso_bar_green",
+	"bhs_health_rightarm_bar",
+	"bhs_health_rightarm_bar_bg",
+	"bhs_health_rightarm_bar_green",
+	"bhs_health_leftarm_bar",
+	"bhs_health_leftarm_bar_bg",
+	"bhs_health_leftarm_bar_green",
+	"bhs_health_rightleg_bar",
+	"bhs_health_rightleg_bar_bg",
+	"bhs_health_rightleg_bar_green",
+	"bhs_health_leftleg_bar",
+	"bhs_health_leftleg_bar_bg",
+	"bhs_health_leftleg_bar_green",
+})
+local PACK_HP = expand_stems({ "bhs_health_bar", "bhs_health_bar_bg" })
+local PACK_STAM = expand_stems({ "bhs_stamina_bar", "bhs_stamina_bar_bg" })
+
+local flash_until = 0
+local heal_clamped = false
+local grace_until = 0
+local last_status_tick = 0
+local last_park_tick = 0
+local last_heal_tick = 0
+local icons_hold_prev = false
+local show_all_prev = false
+local gates_installed = false
+local update_registered = false
+
+local uv_show_fn, uv_show_idx = nil, nil
+local uv_hs_fn, uv_hs_idx = nil, nil
+local uv_change_fn, uv_change_idx = nil, nil
+local wrapped_rd, orig_rd = nil, nil
+local scratch_pos = nil
+local home = {} -- key -> {x,y}
+
+local orig_functors = {}
+local cache_visual = {}
+local grey_since = {}
+local icon_typ = {}
+
+_G.dogma_bhs_reactive_icon = _G.dogma_bhs_reactive_icon or {}
+local GATE = _G.dogma_bhs_reactive_icon
+
+-- Forward decls (Lua locals must exist before mutually recursive callers).
+local ensure_bhs_hook, apply_parks, begin_or_refresh_damage
+
+local function find_upvalue(fn, name)
+	if type(fn) ~= "function" or not (debug and debug.getupvalue) then
+		return nil, nil
+	end
+	local i = 1
+	while true do
+		local n, v = debug.getupvalue(fn, i)
+		if not n then
+			return nil, nil
+		end
+		if n == name then
+			return i, v
+		end
+		i = i + 1
+	end
+end
+
+local function find_upvalue_deep(fn, name, depth, seen)
+	depth = depth or 0
+	seen = seen or {}
+	if type(fn) ~= "function" or depth > 8 or seen[fn] then
+		return nil, nil, nil
+	end
+	seen[fn] = true
+	local idx = find_upvalue(fn, name)
+	if idx then
+		return fn, idx
+	end
+	local i = 1
+	while true do
+		local n, v = debug.getupvalue(fn, i)
+		if not n then
+			break
+		end
+		if type(v) == "function" then
+			local owner, oidx = find_upvalue_deep(v, name, depth + 1, seen)
+			if owner then
+				return owner, oidx
+			end
+		end
+		i = i + 1
+	end
+	return nil, nil
+end
+
+local function resolve_upvalues(bhs)
+	local probe = bhs.actor_on_update
+	if type(probe) ~= "function" then
+		return false
+	end
+	local show_fn, show_idx = find_upvalue_deep(probe, "show_hud_type")
+	local hs_fn, hs_idx = find_upvalue_deep(probe, "healthstatus")
+	if not (show_fn and show_idx and hs_fn and hs_idx) then
+		return false
+	end
+	uv_show_fn, uv_show_idx = show_fn, show_idx
+	uv_hs_fn, uv_hs_idx = hs_fn, hs_idx
+	local ch_fn, ch_idx = find_upvalue_deep(probe, "show_hud_change_time")
+	if not ch_fn then
+		ch_fn, ch_idx = find_upvalue_deep(bhs.recieved_damage, "show_hud_change_time")
+	end
+	if ch_fn and ch_idx then
+		uv_change_fn, uv_change_idx = ch_fn, ch_idx
+	end
+	return true
+end
+
+local function set_uv(fn, idx, v)
+	if fn and idx and debug and debug.setupvalue then
+		debug.setupvalue(fn, idx, v)
+	end
+end
+
+local function clamp_int(v, lo, hi, fallback)
+	v = tonumber(v)
+	if v == nil then
+		v = fallback
+	end
+	if v < lo then
+		return lo
+	end
+	if v > hi then
+		return hi
+	end
+	return v
+end
+
+local function refresh_options()
+	if not (CONFIG and CONFIG.loaded) then
+		return
+	end
+	local d, L = CONFIG.DEFAULTS, CONFIG.loaded
+	L.hide_body = dogma.mcm.bool(CONFIG.MOD_ID, "hide_body", d.hide_body)
+	L.key_bhs = dogma.mcm.key(CONFIG.MOD_ID, "key_bhs")
+	L.key_bhs_modifier = dogma.mcm.int(CONFIG.MOD_ID, "key_bhs_modifier", d.key_bhs_modifier) or 0
+	L.show_on_damage = dogma.mcm.bool(CONFIG.MOD_ID, "show_on_damage", d.show_on_damage)
+	L.sec = clamp_int(dogma.mcm.int(CONFIG.MOD_ID, "sec", d.sec), 0, 60, d.sec)
+	L.full_heal_clamp_sec = clamp_int(dogma.mcm.int(CONFIG.MOD_ID, "full_heal_clamp_sec", d.full_heal_clamp_sec), 0, 60, d.full_heal_clamp_sec)
+	L.hide_hp = dogma.mcm.bool(CONFIG.MOD_ID, "hide_hp", d.hide_hp)
+	L.hp_show_below_pct = clamp_int(dogma.mcm.int(CONFIG.MOD_ID, "hp_show_below_pct", d.hp_show_below_pct), 0, 100, d.hp_show_below_pct)
+	L.hide_stam = dogma.mcm.bool(CONFIG.MOD_ID, "hide_stam", d.hide_stam)
+	L.stam_show_below_pct = clamp_int(dogma.mcm.int(CONFIG.MOD_ID, "stam_show_below_pct", d.stam_show_below_pct), 0, 100, d.stam_show_below_pct)
+	L.hide_psy = dogma.mcm.bool(CONFIG.MOD_ID, "hide_psy", d.hide_psy)
+	L.psy_show_below_pct = clamp_int(dogma.mcm.int(CONFIG.MOD_ID, "psy_show_below_pct", d.psy_show_below_pct), 0, 100, d.psy_show_below_pct)
+	L.hide_rad = dogma.mcm.bool(CONFIG.MOD_ID, "hide_rad", d.hide_rad)
+	L.rad_show_above_pct = clamp_int(dogma.mcm.int(CONFIG.MOD_ID, "rad_show_above_pct", d.rad_show_above_pct), 0, 100, d.rad_show_above_pct)
+	L.hide_status_icons = dogma.mcm.bool(CONFIG.MOD_ID, "hide_status_icons", d.hide_status_icons)
+	L.key_icons = dogma.mcm.key(CONFIG.MOD_ID, "key_icons")
+	L.key_icons_modifier = dogma.mcm.int(CONFIG.MOD_ID, "key_icons_modifier", d.key_icons_modifier) or 0
+	L.icons_radiation = dogma.mcm.bool(CONFIG.MOD_ID, "icons_radiation", d.icons_radiation)
+	L.icons_bleed = dogma.mcm.bool(CONFIG.MOD_ID, "icons_bleed", d.icons_bleed)
+	L.icons_hunger = dogma.mcm.bool(CONFIG.MOD_ID, "icons_hunger", d.icons_hunger)
+	L.icons_thirst = dogma.mcm.bool(CONFIG.MOD_ID, "icons_thirst", d.icons_thirst)
+	L.icons_sleep = dogma.mcm.bool(CONFIG.MOD_ID, "icons_sleep", d.icons_sleep)
+	L.grey_hide_after_sec = clamp_int(dogma.mcm.int(CONFIG.MOD_ID, "grey_hide_after_sec", d.grey_hide_after_sec), 0, 10, d.grey_hide_after_sec)
+end
+
+local function hold_key(key, mod)
+	if not key or key < 0 then
+		return false
+	end
+	return dogma.input.is_mod_down(mod or 0) and dogma.input.is_key_down(key)
+end
+
+local function start_load_grace()
+	grace_until = time_global() + LOAD_GRACE_MS
+end
+
+local function in_load_grace(now)
+	return grace_until ~= 0 and now < grace_until
+end
+
+-- While we park BHS pieces, stock HUDUpdate must not RemoveCustomStatic (type 0/1 / H).
+local function ensure_bhs_statics_exist()
+	local L = CONFIG and CONFIG.loaded
+	if not L or not (L.hide_body or L.hide_hp or L.hide_stam) then
+		return
+	end
+	if not (uv_show_fn and uv_show_idx) then
+		return
+	end
+	local _, cur = debug.getupvalue(uv_show_fn, uv_show_idx)
+	if cur ~= 2 then
+		set_uv(uv_show_fn, uv_show_idx, 2)
+		set_uv(uv_change_fn, uv_change_idx, 0)
+	end
+	set_uv(uv_hs_fn, uv_hs_idx, true)
+end
+
+local function get_cs_wnd(name)
+	local hud = get_hud and get_hud()
+	if not (hud and hud.GetCustomStatic) then
+		return nil
+	end
+	local ok_cs, cs = pcall(function()
+		return hud:GetCustomStatic(name)
+	end)
+	if not (ok_cs and cs) then
+		return nil
+	end
+	local ok, wnd = pcall(function()
+		return cs:wnd()
+	end)
+	return ok and wnd or nil
+end
+
+local function read_xy(wnd)
+	if not (wnd and wnd.GetWndPos) then
+		return nil
+	end
+	local ok, p = pcall(function()
+		return wnd:GetWndPos()
+	end)
+	if ok and p then
+		return p.x, p.y
+	end
+	return nil
+end
+
+local function write_xy(wnd, x, y)
+	if not (wnd and wnd.SetWndPos and vector2) then
+		return
+	end
+	if not scratch_pos then
+		scratch_pos = vector2()
+	end
+	pcall(function()
+		wnd:SetWndPos(scratch_pos:set(x, y))
+	end)
+end
+
+-- Move only. Never Show().
+local function park_wnd(wnd, key, want_parked)
+	if not wnd then
+		return
+	end
+	local x, y = read_xy(wnd)
+	if x == nil then
+		return
+	end
+	local is_parked = x < PARKED_X
+	if is_parked and not home[key] then
+		home[key] = { x = x + PARK_OFF, y = y + PARK_OFF }
+	elseif not is_parked and not home[key] then
+		home[key] = { x = x, y = y }
+	end
+	if want_parked and not is_parked then
+		home[key] = { x = x, y = y }
+		write_xy(wnd, x - PARK_OFF, y - PARK_OFF)
+	elseif not want_parked and is_parked then
+		local h = home[key]
+		if h then
+			write_xy(wnd, h.x, h.y)
+		else
+			write_xy(wnd, x + PARK_OFF, y + PARK_OFF)
+		end
+	end
+end
+
+local function park_pack(names, want_parked)
+	for i = 1, #names do
+		park_wnd(get_cs_wnd(names[i]), names[i], want_parked)
+	end
+end
+
+local function park_psy(want_parked)
+	local mgui = ActorMenu and ActorMenu.get_maingame and ActorMenu.get_maingame()
+	local bar = mgui and mgui.m_ui_hud_states and mgui.m_ui_hud_states.m_ui_psy_bar
+	park_wnd(bar, "__psy", want_parked)
+end
+
+local function park_rad(want_parked)
+	local mod = rawget(_G, "ui_sidhud_mcm")
+	local bar = mod and mod.HUD and mod.HUD.radhealthwindow
+	park_wnd(bar, "__rad", want_parked)
+end
+
+local function actor_pct(field, fallback)
+	local a = db and db.actor
+	if not a then
+		return fallback
+	end
+	return (a[field] or fallback / 100) * 100
+end
+
+local function actor_pct_psy()
+	local a = db and db.actor
+	if not a then
+		return 100
+	end
+	local psy = a.psy_health
+	local mod = rawget(_G, "arszi_psy")
+	if mod and type(mod.get_psy_health) == "function" then
+		local ok, v = pcall(mod.get_psy_health)
+		if ok and v ~= nil then
+			psy = v
+		end
+	end
+	return (psy or 1) * 100
+end
+
+local function limbs_full()
+	local bhs = rawget(_G, "zzz_player_injuries")
+	local health = bhs and bhs.health
+	local maxhp = bhs and bhs.maxhp
+	if not (health and maxhp) then
+		return false
+	end
+	for i = 1, #LIMBS do
+		local k = LIMBS[i]
+		local h, m = health[k], maxhp[k]
+		if not (h and m) or h < m then
+			return false
+		end
+	end
+	return true
+end
+
+local function compute_show(L, now)
+	local force = hold_key(L.key_bhs, L.key_bhs_modifier) or (flash_until > now)
+	local show_all = force
+		or (actor_pct("health", 100) < (L.hp_show_below_pct or 90))
+		or (actor_pct_psy() < (L.psy_show_below_pct or 90))
+		or (actor_pct("radiation", 0) > (L.rad_show_above_pct or 0))
+	local show_stam = show_all or (actor_pct("power", 100) < (L.stam_show_below_pct or 90))
+	return force, show_all, show_stam
+end
+
+local function any_want_parked(L, show_all, show_stam)
+	return (L.hide_body and not show_all)
+		or (L.hide_hp and not show_all)
+		or (L.hide_stam and not show_stam)
+		or (L.hide_psy and not show_all)
+		or (L.hide_rad and not show_all)
+end
+
+apply_parks = function(now)
+	local L = CONFIG and CONFIG.loaded
+	if not L or not (db and db.actor and get_hud and get_hud() and vector2) then
+		return
+	end
+	ensure_bhs_hook()
+	ensure_bhs_statics_exist()
+	if in_load_grace(now) then
+		return
+	end
+
+	dogma.perf.start("bhs_reactive", "apply_parks")
+	local _, show_all, show_stam = compute_show(L, now)
+	park_pack(PACK_BODY, L.hide_body and not show_all)
+	park_pack(PACK_HP, L.hide_hp and not show_all)
+	park_pack(PACK_STAM, L.hide_stam and not show_stam)
+	park_psy(L.hide_psy and not show_all)
+	park_rad(L.hide_rad and not show_all)
+	dogma.perf.stop()
+end
+
+local function apply_heal_clamp(now)
+	local L = CONFIG and CONFIG.loaded
+	if not L or heal_clamped or flash_until <= now or not limbs_full() then
+		return
+	end
+	heal_clamped = true
+	local target = now + math.floor((L.full_heal_clamp_sec or 0) * 1000)
+	if flash_until > target then
+		flash_until = target
+	end
+end
+
+begin_or_refresh_damage = function()
+	local L = CONFIG and CONFIG.loaded
+	if not L or not L.show_on_damage then
+		return
+	end
+	local sec = L.sec or 0
+	if sec <= 0 then
+		return
+	end
+	local now = time_global()
+	flash_until = now + math.floor(sec * 1000)
+	heal_clamped = false
+	apply_parks(now)
+end
+
+ensure_bhs_hook = function()
+	local bhs = rawget(_G, "zzz_player_injuries")
+	if not (bhs and type(bhs.recieved_damage) == "function") then
+		return false
+	end
+	if bhs.recieved_damage == wrapped_rd and uv_show_fn and uv_hs_fn then
+		return true
+	end
+	if not (debug and debug.getupvalue and debug.setupvalue) then
+		return false
+	end
+	if not resolve_upvalues(bhs) then
+		return false
+	end
+	if bhs.recieved_damage ~= wrapped_rd then
+		local inner = bhs.recieved_damage
+		if not orig_rd then
+			orig_rd = inner
+		end
+		wrapped_rd = function(...)
+			local ret = inner(...)
+			begin_or_refresh_damage()
+			return ret
+		end
+		bhs.recieved_damage = wrapped_rd
+	end
+	bhs[FLAG] = true
+	return true
+end
+
+local function call_orig_functor(name)
+	local f = orig_functors[name]
+	if not f then
+		return nil
+	end
+	if execute_func then
+		return execute_func(unpack(f))
+	end
+	local mod = rawget(_G, f[1])
+	if mod and type(mod[f[2]]) == "function" then
+		return mod[f[2]](select(3, unpack(f)))
+	end
+	return nil
+end
+
+local function opt_in_for(name)
+	local L = CONFIG and CONFIG.loaded
+	if not L then
+		return false
+	end
+	for i = 1, #OPT_IN_ICONS do
+		if OPT_IN_ICONS[i].name == name then
+			return L[OPT_IN_ICONS[i].opt] and true or false
+		end
+	end
+	return false
+end
+
+local function gate_state_value(name, visual, now, icons_held)
+	if not opt_in_for(name) then
+		return 0
+	end
+	visual = tonumber(visual) or 0
+	if visual <= 0 then
+		grey_since[name] = nil
+		return 0
+	end
+	if visual >= 2 or icons_held then
+		if visual >= 2 then
+			grey_since[name] = nil
+		end
+		return visual
+	end
+	local grace = CONFIG.loaded.grey_hide_after_sec or 0
+	if grace <= 0 then
+		grey_since[name] = nil
+		return 0
+	end
+	if not grey_since[name] then
+		grey_since[name] = now
+	end
+	if now - grey_since[name] >= grace * 1000 then
+		return 0
+	end
+	return visual
+end
+
+local function ensure_gate_fn(name)
+	if GATE[name] then
+		return
+	end
+	GATE[name] = function(visual_flag, ...)
+		if visual_flag then
+			return cache_visual[name] or 0
+		end
+		return call_orig_functor(name)
+	end
+end
+
+local function should_gate(def)
+	return type(def) == "table" and def.functor and (def.typ or "state") ~= "booster"
+end
+
+local function install_gates()
+	local as = rawget(_G, "actor_status")
+	if not (as and as.indicators) then
+		return false
+	end
+	for name, def in pairs(as.indicators) do
+		if should_gate(def) then
+			local f = def.functor
+			if type(f) == "table" and f[1] ~= "dogma_bhs_reactive_icon" then
+				orig_functors[name] = f
+				icon_typ[name] = def.typ or "state"
+				ensure_gate_fn(name)
+				def.functor = { "dogma_bhs_reactive_icon", name, true }
+			elseif type(f) == "table" and f[1] == "dogma_bhs_reactive_icon" then
+				icon_typ[name] = def.typ or icon_typ[name] or "state"
+				ensure_gate_fn(name)
+			end
+		end
+	end
+	gates_installed = true
+	return true
+end
+
+local function restore_gates()
+	local as = rawget(_G, "actor_status")
+	if as and as.indicators then
+		for name, f in pairs(orig_functors) do
+			local def = as.indicators[name]
+			if def then
+				def.functor = f
+			end
+		end
+	end
+	orig_functors = {}
+	cache_visual = {}
+	grey_since = {}
+	gates_installed = false
+end
+
+local function status_tick(now, icons_held)
+	local L = CONFIG and CONFIG.loaded
+	if not L then
+		return
+	end
+	if not L.hide_status_icons and not icons_held then
+		if gates_installed then
+			restore_gates()
+		end
+		return
+	end
+	dogma.perf.start("bhs_reactive", "status_tick")
+	install_gates()
+	local as = rawget(_G, "actor_status")
+	if not (as and as.indicators) then
+		dogma.perf.stop()
+		return
+	end
+	for name, def in pairs(as.indicators) do
+		if should_gate(def) then
+			local f = def.functor
+			if type(f) == "table" and f[1] ~= "dogma_bhs_reactive_icon" then
+				orig_functors[name] = f
+				icon_typ[name] = def.typ or "state"
+				ensure_gate_fn(name)
+				def.functor = { "dogma_bhs_reactive_icon", name, true }
+			end
+		end
+	end
+	local any = false
+	for name, _ in pairs(orig_functors) do
+		if opt_in_for(name) then
+			local shown = gate_state_value(name, call_orig_functor(name), now, icons_held)
+			cache_visual[name] = shown
+			if shown and shown >= 1 then
+				any = true
+			end
+		else
+			cache_visual[name] = 0
+			grey_since[name] = nil
+		end
+	end
+	if as.activate_hud then
+		pcall(as.activate_hud)
+	end
+	if as.update_hud then
+		pcall(as.update_hud)
+	elseif (any or icons_held) and as.HUD and as.HUD.Update then
+		pcall(function()
+			as.HUD:Update(true)
+		end)
+	end
+	dogma.perf.stop()
+end
+
+local function on_actor_update()
+	local L = CONFIG and CONFIG.loaded
+	if not L then
+		return
+	end
+	local now = time_global()
+	local grace = in_load_grace(now)
+	local force, show_all, show_stam = compute_show(L, now)
+	local show_edge = show_all ~= show_all_prev
+	show_all_prev = show_all
+
+	-- Grace: keep statics, no moves. While hiding, re-assert parks on a short
+	-- cadence (not every frame) so late BHS AddCustomStatic still gets parked.
+	if grace then
+		ensure_bhs_hook()
+		ensure_bhs_statics_exist()
+	else
+		local want_park = any_want_parked(L, show_all, show_stam)
+		local interval = want_park and PARK_REASSERT_MS or STATUS_TICK_MS
+		if force or show_edge or (now - last_park_tick >= interval) then
+			last_park_tick = now
+			apply_parks(now)
+		end
+	end
+
+	if force and flash_until > now and (now - last_heal_tick >= STATUS_TICK_MS) then
+		last_heal_tick = now
+		apply_heal_clamp(now)
+	elseif flash_until ~= 0 and now >= flash_until then
+		flash_until = 0
+		heal_clamped = false
+	end
+
+	local icons_held = hold_key(L.key_icons, L.key_icons_modifier)
+	local press_edge = icons_held and not icons_hold_prev
+	icons_hold_prev = icons_held
+	if L.hide_status_icons or icons_held then
+		if press_edge or (now - last_status_tick >= STATUS_TICK_MS) then
+			last_status_tick = now
+			status_tick(now, icons_held)
+		elseif icons_held and actor_status and actor_status.activate_hud then
+			pcall(actor_status.activate_hud)
+		end
+	elseif gates_installed then
+		restore_gates()
+	end
+end
+
+local function reset_park_state()
+	flash_until = 0
+	heal_clamped = false
+	last_status_tick = 0
+	last_park_tick = 0
+	last_heal_tick = 0
+	icons_hold_prev = false
+	show_all_prev = false
+	home = {}
+	local bhs = rawget(_G, "zzz_player_injuries")
+	if bhs and orig_rd and bhs.recieved_damage == wrapped_rd then
+		bhs.recieved_damage = orig_rd
+		bhs[FLAG] = nil
+	end
+	wrapped_rd, orig_rd = nil, nil
+	uv_show_fn, uv_show_idx = nil, nil
+	uv_hs_fn, uv_hs_idx = nil, nil
+	uv_change_fn, uv_change_idx = nil, nil
+	restore_gates()
+end
+
+local function on_game_load()
+	reset_park_state()
+	-- Start grace here so actor_on_update never parks before first_update.
+	start_load_grace()
+end
+
+local function on_main_menu()
+	reset_park_state()
+	grace_until = 0
+end
+
+local function on_first_update()
+	refresh_options()
+	start_load_grace()
+	ensure_bhs_hook()
+	ensure_bhs_statics_exist()
+	if not update_registered then
+		RegisterScriptCallback("actor_on_update", on_actor_update)
+		update_registered = true
+	end
+	if CONFIG.loaded and CONFIG.loaded.hide_status_icons then
+		status_tick(time_global(), hold_key(CONFIG.loaded.key_icons, CONFIG.loaded.key_icons_modifier))
+	end
+end
+
+local function on_option_change()
+	refresh_options()
+	if CONFIG and CONFIG.loaded and not CONFIG.loaded.hide_status_icons and not hold_key(CONFIG.loaded.key_icons, CONFIG.loaded.key_icons_modifier) then
+		restore_gates()
+	end
+	apply_parks(time_global())
+end
+
+function on_game_start()
+	if not CONFIG then
+		return
+	end
+	dogma.load(CONFIG.MOD_ID)
+	refresh_options()
+	RegisterScriptCallback("actor_on_first_update", on_first_update)
+	RegisterScriptCallback("actor_on_before_hit", begin_or_refresh_damage)
+	RegisterScriptCallback("on_option_change", on_option_change)
+	RegisterScriptCallback("on_game_load", on_game_load)
+	RegisterScriptCallback("main_menu_on_init", on_main_menu)
+end

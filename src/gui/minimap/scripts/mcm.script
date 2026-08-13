@@ -1,0 +1,58 @@
+function on_mcm_load(options)
+	local CONFIG = _G.dogma_gui_minimap_conf
+	local kb_mod = (ui_mcm and ui_mcm.kb_mod_radio) or "radio_h"
+
+	dogma_mcm.attach(options, "gui", "ui_mcm_menu_dogma_gui", {
+		id = "minimap",
+		sh = true,
+		text = "ui_mcm_menu_dogma_gui_minimap",
+		gr = dogma_mcm.with_header({
+			{
+				id = "page_description",
+				type = "desc",
+				text = "ui_mcm_dogma_gui_minimap_page_description",
+			},
+			{
+				id = "keybind",
+				type = "key_bind",
+				val = 2,
+				def = CONFIG.DEFAULTS["keybind"],
+				hint = "dogma_gui_minimap_keybind",
+			},
+			{
+				id = "mode",
+				type = kb_mod,
+				val = 2,
+				def = CONFIG.DEFAULTS["mode"],
+				hint = "dogma_gui_minimap_mode",
+				content = {
+					{ 0, "toggle" },
+					{ 2, "hold" },
+				},
+			},
+			{
+				id = "show_delay_ms",
+				type = "track",
+				val = 2,
+				min = 0,
+				max = 1000,
+				step = 25,
+				def = CONFIG.DEFAULTS["show_delay_ms"],
+				hint = "dogma_gui_minimap_show_delay_ms",
+			},
+			{
+				id = "modifier",
+				type = kb_mod,
+				val = 2,
+				def = CONFIG.DEFAULTS["modifier"],
+				hint = "mcm_kb_modifier",
+				content = {
+					{ 0, "mcm_kb_mod_none" },
+					{ 1, "mcm_kb_mod_shift" },
+					{ 2, "mcm_kb_mod_ctrl" },
+					{ 3, "mcm_kb_mod_alt" },
+				},
+			},
+		}),
+	})
+end

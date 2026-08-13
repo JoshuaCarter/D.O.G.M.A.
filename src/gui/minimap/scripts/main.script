@@ -1,0 +1,269 @@
+--[[
+	Minimap
+
+	Keybind show/hide for the HUD minimap (video/hud/show_minimap + UIZoneMap).
+	Toggle: flip visibility. Hold: visible while key held (after show_delay_ms).
+	Input via dogma.input. While desired on, re-assert UI / indicators each tick;
+	option disk write only when the stored value changes.
+]]
+
+local CONFIG = _G.dogma_gui_minimap_conf
+
+local MODE_TOGGLE = 0
+local MODE_HOLD = 2
+
+local desired_show = false
+local show_request_at = nil
+local pending_toggle_show = false
+
+local function log(msg)
+	if not dogma.dbg.logging() then
+		return
+	end
+	dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
+end
+
+local function now_ms()
+	return time_continual()
+end
+
+local function key_bound()
+	local key = CONFIG.loaded.keybind
+	return key and key >= 0 and key
+end
+
+local function mod_ok()
+	return dogma.input.is_mod_down(CONFIG.loaded.modifier or 0)
+end
+
+local function maingame()
+	return ActorMenu and ActorMenu.get_maingame and ActorMenu.get_maingame()
+end
+
+local function option_shown()
+	if not (ui_options and ui_options.get) then
+		return false
+	end
+	local v = ui_options.get("video/hud/show_minimap")
+	return v ~= nil and v ~= false and v ~= 0
+end
+
+local function ui_minimap_enabled()
+	local ui = maingame()
+	if ui and ui.UIZoneMap then
+		return not ui.UIZoneMap.disabled
+	end
+	return option_shown()
+end
+
+local function delay_ms()
+	local d = CONFIG.loaded.show_delay_ms
+	if type(d) ~= "number" or d < 0 then
+		return 0
+	end
+	return math.floor(d)
+end
+
+local function delay_elapsed()
+	if not show_request_at then
+		return true
+	end
+	local d = delay_ms()
+	if d <= 0 then
+		return true
+	end
+	return (now_ms() - show_request_at) >= d
+end
+
+local function force_hud_draw()
+	if get_console_cmd and not get_console_cmd(1, "hud_draw") then
+		if exec_console_cmd then
+			exec_console_cmd("hud_draw 1")
+		elseif get_console then
+			local c = get_console()
+			if c and c.execute then
+				c:execute("hud_draw 1")
+			end
+		end
+	end
+end
+
+local function force_indicators()
+	if level and level.show_indicators then
+		level.show_indicators()
+	end
+	if show_indicators then
+		show_indicators(true)
+	end
+end
+
+local function set_minimap(want_show)
+	want_show = not not want_show
+
+	if ui_options and ui_options.set then
+		if option_shown() ~= want_show then
+			ui_options.set("video/hud/show_minimap", want_show)
+		end
+	end
+
+	local ui = maingame()
+	if ui and ui.UIZoneMap then
+		ui.UIZoneMap.disabled = not want_show
+		pcall(function()
+			ui.UIZoneMap.visible = want_show
+		end)
+		if ui.ShowZoneMap then
+			pcall(function()
+				ui:ShowZoneMap(want_show)
+			end)
+		end
+		if want_show and ui.DrawZoneMap then
+			pcall(function()
+				ui:DrawZoneMap()
+			end)
+		end
+		if ui.UIMotionIcon and ui.UIMotionIcon.Show then
+			ui.UIMotionIcon:Show(want_show)
+		end
+	end
+
+	if want_show then
+		force_hud_draw()
+		force_indicators()
+	end
+end
+
+local function enforce_desired(source)
+	if not desired_show or not delay_elapsed() then
+		return
+	end
+	set_minimap(true)
+	if source and source ~= "tick" then
+		log(string.format("enforce show (%s)", source))
+	end
+end
+
+local function begin_show_request(source)
+	desired_show = true
+	show_request_at = now_ms()
+	if delay_elapsed() then
+		set_minimap(true)
+		log(string.format("show (%s)", source or "now"))
+		return true
+	end
+	log(string.format("show pending %dms (%s)", delay_ms(), source or "delay"))
+	return false
+end
+
+local function cancel_show_request()
+	show_request_at = nil
+	pending_toggle_show = false
+end
+
+local function hide_minimap(source)
+	desired_show = false
+	cancel_show_request()
+	set_minimap(false)
+	log(string.format("hide (%s)", source or "hide"))
+end
+
+local function toggle_minimap(source)
+	if pending_toggle_show then
+		hide_minimap(source or "cancel pending")
+		return
+	end
+	if desired_show or ui_minimap_enabled() then
+		hide_minimap(source or "toggle")
+		return
+	end
+	pending_toggle_show = true
+	if begin_show_request(source or "toggle") then
+		pending_toggle_show = false
+	end
+end
+
+local function tick_hold()
+	local key = key_bound()
+	if not (key and mod_ok()) then
+		if desired_show then
+			hide_minimap("hold")
+		end
+		return
+	end
+
+	-- Delay via held_ms; hide as soon as the hold ends.
+	if dogma.input.is_key_held(key, delay_ms()) then
+		if not desired_show then
+			desired_show = true
+			show_request_at = nil
+			set_minimap(true)
+			log("show (hold)")
+		else
+			enforce_desired("tick")
+		end
+	elseif desired_show then
+		hide_minimap("hold")
+	end
+end
+
+local function tick_toggle()
+	local key = key_bound()
+	if key and mod_ok() and dogma.input.is_key_pressed(key) then
+		toggle_minimap("toggle")
+	end
+	if pending_toggle_show and delay_elapsed() then
+		pending_toggle_show = false
+		desired_show = true
+		set_minimap(true)
+		log("show (toggle delay)")
+	end
+	enforce_desired("tick")
+end
+
+local function on_option_change()
+	local tostr = tostring
+	local prev_mode = CONFIG.loaded.mode
+	CONFIG.loaded.enabled = true
+	CONFIG.loaded.keybind = dogma.mcm.key(CONFIG.MOD_ID, "keybind")
+	CONFIG.loaded.modifier = dogma.mcm.int(CONFIG.MOD_ID, "modifier")
+	CONFIG.loaded.mode = dogma.mcm.int(CONFIG.MOD_ID, "mode")
+	CONFIG.loaded.show_delay_ms = dogma.mcm.uint(CONFIG.MOD_ID, "show_delay_ms")
+	if CONFIG.loaded.mode ~= MODE_HOLD then
+		CONFIG.loaded.mode = MODE_TOGGLE
+	end
+
+	cancel_show_request()
+	desired_show = false
+	set_minimap(false)
+
+	log(string.format(
+		"opts: en=%s key=%s mod=%s mode=%s delay=%s (was %s)",
+		tostr(CONFIG.loaded.enabled),
+		tostr(CONFIG.loaded.keybind),
+		tostr(CONFIG.loaded.modifier),
+		tostr(CONFIG.loaded.mode),
+		tostr(CONFIG.loaded.show_delay_ms),
+		tostr(prev_mode)
+	))
+end
+
+local function actor_on_update()
+	if not dogma.sys.ready(CONFIG.MOD_ID, db, on_option_change) then
+		return
+	end
+	if not CONFIG.loaded.enabled then
+		return
+	end
+	if CONFIG.loaded.mode == MODE_HOLD then
+		tick_hold()
+	else
+		tick_toggle()
+	end
+end
+
+function on_game_start()
+	dogma.load(CONFIG.MOD_ID)
+	RegisterScriptCallback("on_option_change", on_option_change)
+	RegisterScriptCallback("actor_on_update", actor_on_update)
+	log("on_game_start: callbacks registered")
+end

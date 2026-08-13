@@ -1,0 +1,39 @@
+-- gui/fx_bleed conf
+--
+-- Corner blood HUD overlays from 1024² atlases (512² quadrant per screen corner).
+-- One visible corner per wound tier, random corners without overlap (max 4).
+
+_G.dogma_gui_fx_bleed_conf = {
+	MOD_ID = "dogma/gui/fx_bleed",
+	MAX_LAYERS = 4,
+	APPEARANCES = 3,
+	UI_W = 1024,
+	UI_H = 768,
+	BASE_SIZE = 512,
+	FADE_IN_MS = 100,
+	FADE_OUT_MS = 1000,
+	SCALES = { 0.25, 0.5, 1.0 },
+	-- MCM only: one short-wide DDS (512x64 source), all 3 styles left-to-right. Not hud_blood_*.
+	MCM_STYLE_PREVIEW = "dogma_gui_fx_bleed_mcm_preview",
+	MCM_STYLE_PREVIEW_SIZE = { 512, 50 },
+	CORNERS = { "tl", "tr", "bl", "br" },
+	CORNER_LAYOUT = {
+		tl = { tx = 0, ty = 0 },
+		tr = { tx = 512, ty = 0 },
+		bl = { tx = 0, ty = 512 },
+		br = { tx = 512, ty = 512 },
+	},
+	DEFAULTS = {
+		["enable"] = true,
+		["max_alpha"] = 0.7,
+		["style"] = 0,
+		["scale"] = 2,
+	},
+	WOUND_TIERS = {
+		{ min = 1.5, layers = 4 },
+		{ min = 1.0, layers = 3 },
+		{ min = 0.5, layers = 2 },
+		{ min = 0.01, layers = 1 },
+	},
+	loaded = {},
+}

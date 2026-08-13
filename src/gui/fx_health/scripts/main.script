@@ -1,0 +1,111 @@
+--[[
+	Health FX
+
+	Desaturation PPE — ramps from 0 at hp_start to full at hp_end.
+	Manifest disables stock Low health blur.
+]]
+
+local CONFIG = _G.dogma_gui_fx_health_conf
+
+local ppe_active = false
+
+local LOG = {
+	LIFECYCLE = { order = 0, color = "gray" },
+	HEALTH = { order = 1, color = "green" },
+	DESAT = { order = 2, color = "yellow" },
+}
+
+local function overlay(log_type, msg)
+	if CONFIG.loaded.debug_overlay then
+		local slot = log_type or LOG.LIFECYCLE
+		dogma.dbg.overlay(CONFIG.MOD_ID, slot.order, tostring(msg), slot.color)
+	end
+end
+
+local function log(msg)
+	if CONFIG.loaded.debug_log then
+		dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
+	end
+end
+
+local function desat_factor(health)
+	local hp = dogma.math.clamp01(health or 0)
+	local start = CONFIG.loaded.hp_start or CONFIG.DEFAULTS["hp_start"]
+	local finish = CONFIG.loaded.hp_end or CONFIG.DEFAULTS["hp_end"]
+	if hp >= start then
+		return 0
+	end
+	if hp <= finish then
+		return 1
+	end
+	local span = start - finish
+	if span <= 0 then
+		return 1
+	end
+	return (start - hp) / span
+end
+
+local function set_ppe(active, factor)
+	local spec = CONFIG.PPE
+	if not level then
+		return false
+	end
+	if factor <= 0 then
+		if active then
+			level.remove_pp_effector(spec.id)
+		end
+		return false
+	end
+	if not active then
+		level.add_pp_effector(spec.name, spec.id, true)
+	end
+	level.set_pp_effector_factor(spec.id, factor)
+	return true
+end
+
+local function clear_all()
+	if level then
+		level.remove_pp_effector(CONFIG.PPE.id)
+	end
+	ppe_active = false
+end
+
+local function on_option_change()
+	CONFIG.loaded.debug_log = dogma.dbg.logging()
+	CONFIG.loaded.debug_overlay = dogma.dbg.overlay_enabled()
+	CONFIG.loaded.enabled = dogma.mcm.bool(CONFIG.MOD_ID, "enable")
+	CONFIG.loaded.intensity = dogma.mcm.float(CONFIG.MOD_ID, "intensity")
+	CONFIG.loaded.hp_start = dogma.mcm.float(CONFIG.MOD_ID, "hp_start")
+	CONFIG.loaded.hp_end = dogma.mcm.float(CONFIG.MOD_ID, "hp_end")
+	dogma.dbg.set_enabled(CONFIG.MOD_ID, dogma.dbg.overlay_enabled())
+	if not CONFIG.loaded.enabled then
+		clear_all()
+	end
+end
+
+local function on_actor_on_update()
+	local actor = dogma.sys.ready(CONFIG.MOD_ID, db, on_option_change)
+	if not actor then
+		return
+	end
+
+	if not CONFIG.loaded.enabled or not actor:alive() then
+		clear_all()
+		return
+	end
+
+	local factor = desat_factor(actor.health) * (CONFIG.loaded.intensity or 1)
+	overlay(LOG.HEALTH, string.format("HP: %.2f", actor.health or 0))
+	overlay(LOG.DESAT, string.format("Desat: %.2f", factor))
+	ppe_active = set_ppe(ppe_active, factor)
+end
+
+function on_game_start()
+	dogma.load(CONFIG.MOD_ID)
+	ppe_active = false
+	on_option_change()
+	RegisterScriptCallback("actor_on_update", on_actor_on_update)
+	RegisterScriptCallback("on_option_change", on_option_change)
+	RegisterScriptCallback("on_game_load", clear_all)
+	log("loaded")
+end

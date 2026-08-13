@@ -245,11 +245,15 @@ local function is_magazine(sec)
 	return kind == "w_ammo"
 end
 
--- Gunsmith / cleaning kits etc. (repair_only targets firearms). Outfit/knife kits stay.
+-- Firearm repair kits (GAMMA A–D = toolkit_p/s/r5/r7; repair_only is barrel_a..d).
+-- Outfit/knife kits stay.
 local function is_weapon_repair_kit(sec)
 	local sfind = string.find
 	if not sec then
 		return false
+	end
+	if string.sub(sec, 1, 8) == "toolkit_" then
+		return true
 	end
 	local only = ini_sys:r_string_ex(sec, "repair_only")
 	if not only then
@@ -259,6 +263,10 @@ local function is_weapon_repair_kit(sec)
 		or sfind(only, "shotgun", 1, true)
 		or sfind(only, "rifle_5", 1, true)
 		or sfind(only, "rifle_7", 1, true)
+		or sfind(only, "barrel_a", 1, true)
+		or sfind(only, "barrel_b", 1, true)
+		or sfind(only, "barrel_c", 1, true)
+		or sfind(only, "barrel_d", 1, true)
 end
 
 local function is_banned_combat_gear(obj, sec)

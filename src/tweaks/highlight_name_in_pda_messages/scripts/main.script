@@ -1,74 +1,81 @@
 --[[
 	PDA Name Highlight
 
-	Yellow-highlights PDA / news tips that mention the player's character name.
+	Yellow-wraps the player's character name in PDA / news messages.
+	Uses on_news_received so every HUD news path is covered
+	(send_tip, give_game_news, Dynamic News, xpda, tasks, …).
 	Always on while installed.
 
 	Port of Eroktics QoL "Highlight Player Name in News".
 ]]
 
-local original_send_tip = nil
-local original_news_send_tip = nil
-local original_xpda_send = nil
 local logged_highlight = false
 
 local YELLOW = "%c[255,255,255,0]"
+local RESET = "%c[default]"
 
-local function highlight_msg_if_needed(msg)
-	if not msg or not db.actor then
-		return msg
-	end
-	local p_name = db.actor:character_name()
-	if not p_name or p_name == "" then
-		return msg
-	end
-
-	local translated_msg = game.translate_string(msg)
-	local lower_msg = string.lower(translated_msg)
-	local lower_name = string.lower(p_name)
-
-	if string.find(lower_msg, lower_name, 1, true) then
-		if not logged_highlight then
-			logged_highlight = true
-			dogma.console.say("PDA name highlighted in tip", "blue")
+local function wrap_name_yellow(text, name)
+	local ssub = string.sub
+	local lower_text = string.lower(text)
+	local lower_name = string.lower(name)
+	local nlen = #name
+	local ylen = #YELLOW
+	local out = ""
+	local i = 1
+	local found = false
+	while true do
+		local pos = string.find(lower_text, lower_name, i, true)
+		if not pos then
+			if not found then
+				return nil
+			end
+			return out .. ssub(text, i)
 		end
-		return YELLOW .. translated_msg
-	end
-	return msg
-end
-
-local function send_tip_hacked(msg, header, timeout, showtime, sender, sound, icon_by)
-	msg = highlight_msg_if_needed(msg)
-	if original_send_tip then
-		return original_send_tip(msg, header, timeout, showtime, sender, sound, icon_by)
-	end
-end
-
-local function news_send_tip_hacked(actor, msg, timeout, sender, showtime, sender_id)
-	msg = highlight_msg_if_needed(msg)
-	if original_news_send_tip then
-		return original_news_send_tip(actor, msg, timeout, sender, showtime, sender_id)
+		-- Already wrapped by us (or a previous pass).
+		if pos > ylen and ssub(text, pos - ylen, pos - 1) == YELLOW then
+			out = out .. ssub(text, i, pos + nlen - 1)
+			i = pos + nlen
+		else
+			out = out .. ssub(text, i, pos - 1)
+				.. YELLOW .. ssub(text, pos, pos + nlen - 1) .. RESET
+			i = pos + nlen
+			found = true
+		end
 	end
 end
 
-local function xpda_send_hacked(sender, msg, icon)
-	msg = highlight_msg_if_needed(msg)
-	if original_xpda_send then
-		return original_xpda_send(sender, msg, icon)
+local function highlight_wnd(wnd, name)
+	if not (wnd and wnd.GetText and wnd.SetText) then
+		return
 	end
+	local text = wnd:GetText()
+	if not text or text == "" then
+		return
+	end
+	local wrapped = wrap_name_yellow(text, name)
+	if not wrapped then
+		return
+	end
+	wnd:SetText(wrapped)
+	if not logged_highlight then
+		logged_highlight = true
+		dogma.console.say("PDA name highlighted in tip", "blue")
+	end
+end
+
+local function on_news_received(_, _, caption, msg)
+	if not db.actor then
+		return
+	end
+	local name = db.actor:character_name()
+	if not name or name == "" then
+		return
+	end
+	highlight_wnd(caption, name)
+	highlight_wnd(msg, name)
 end
 
 function on_game_start()
-	if dynamic_news_helper and dynamic_news_helper.send_tip then
-		original_send_tip = dynamic_news_helper.send_tip
-		dynamic_news_helper.send_tip = send_tip_hacked
-	end
-	if news_manager and news_manager.send_tip then
-		original_news_send_tip = news_manager.send_tip
-		news_manager.send_tip = news_send_tip_hacked
-	end
-	if xpda and xpda.send then
-		original_xpda_send = xpda.send
-		xpda.send = xpda_send_hacked
-	end
+	logged_highlight = false
+	RegisterScriptCallback("on_news_received", on_news_received)
 end

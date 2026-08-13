@@ -3,8 +3,8 @@
 
 	Engine keeps last binocular FOV in global czoom, initialized to
 	scope_zoom_factor (fully zoomed in). OnZoomIn restores that, so ADS
-	starts max-zoomed. After zoom-in, set the dynamic-zoom wide end
-	(same GetZoomData min used by ZoomDec / first weapon ADS).
+	starts max-zoomed. After zoom-in, set the ZoomDec clamp
+	(CWeaponBinoculars::GetZoomData min).
 ]]
 
 local CONFIG = _G.dogma_game_ads_zoom_conf
@@ -47,19 +47,14 @@ local function ini_float(sec, key)
 	return nil
 end
 
--- Match CWeaponBinoculars::GetZoomData / CWeapon first-zoom min end.
-local function zoomed_out_factor(sec, scope_factor)
+-- Match CWeaponBinoculars::GetZoomData / ZoomDec (new_zoom cap is 200).
+local function zoomed_out_factor(scope_factor)
 	local def_fov = (get_console_cmd and get_console_cmd(2, "fov")) or 75
-	local min_base = ini_float(sec, "min_scope_zoom_factor") or 200
 	local delta_total = def_fov - scope_factor
 	if delta_total <= 0 then
 		return scope_factor
 	end
-	local min_zoom = def_fov - delta_total * 0.3
-	if min_zoom > min_base then
-		min_zoom = min_base
-	end
-	return min_zoom
+	return def_fov - delta_total * 0.3
 end
 
 local function apply()
@@ -79,7 +74,7 @@ local function apply()
 	if not scope_factor or scope_factor <= 0 then
 		scope_factor = gun:GetZoomFactor()
 	end
-	gun:SetZoomFactor(zoomed_out_factor(sec, scope_factor))
+	gun:SetZoomFactor(zoomed_out_factor(scope_factor))
 	return true
 end
 

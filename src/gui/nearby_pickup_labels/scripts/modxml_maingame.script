@@ -1,0 +1,28 @@
+--[[
+	Nearby Pickup Labels — hide look-at pickup icon.
+
+	DXML only loads modxml_*.script. Moves floating look-at pickup icon
+	off-screen when MCM hide_icons is on (default). Does not touch
+	g_draw_pickup_item_names (hold-Use text stays).
+]]
+
+function on_xml_read()
+	RegisterScriptCallback("on_xml_read", function(xml_file_name, xml_obj)
+		if xml_file_name ~= [[ui\maingame.xml]]
+			and xml_file_name ~= [[ui\maingame_16.xml]]
+			and xml_file_name ~= [[ui\maingame_21.xml]]
+		then
+			return
+		end
+		local CONFIG = _G.dogma_gui_nearby_pickup_labels_conf
+		if CONFIG and dogma and dogma.mcm
+			and not dogma.mcm.bool(CONFIG.MOD_ID, "hide_icons")
+		then
+			return
+		end
+		local res = xml_obj:query("pick_up_item")
+		if res and res[1] then
+			xml_obj:setElementAttr(res[1], {x = -9999})
+		end
+	end)
+end

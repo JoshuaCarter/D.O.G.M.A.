@@ -1,0 +1,110 @@
+--[[
+	ADS Zoom - binoculars start at the wide end of dynamic zoom.
+
+	Engine keeps last binocular FOV in global czoom, initialized to
+	scope_zoom_factor (fully zoomed in). OnZoomIn restores that, so ADS
+	starts max-zoomed. After zoom-in, set the dynamic-zoom wide end
+	(same GetZoomData min used by ZoomDec / first weapon ADS).
+]]
+
+local CONFIG = _G.dogma_game_ads_zoom_conf
+local APPLY = "binoc_zoom_out"
+
+local function is_binoc(obj)
+	if not obj then
+		return false
+	end
+	local ok, sec = pcall(obj.section, obj)
+	if not ok or not sec then
+		return false
+	end
+	return sec == "wpn_binoc_inv" or sec:find("binoc") ~= nil
+end
+
+local function active_binoc()
+	if not db.actor then
+		return nil
+	end
+	local ok, item = pcall(db.actor.active_item, db.actor)
+	if not ok or not item or not is_binoc(item) then
+		return nil
+	end
+	return item
+end
+
+local function ini_float(sec, key)
+	if not (ini_sys and sec) then
+		return nil
+	end
+	local v = ini_sys:r_float_ex(sec, key)
+	if v then
+		return v
+	end
+	local parent = ini_sys:r_string_ex(sec, "parent_section")
+	if parent and parent ~= "" then
+		return ini_sys:r_float_ex(parent, key)
+	end
+	return nil
+end
+
+-- Match CWeaponBinoculars::GetZoomData / CWeapon first-zoom min end.
+local function zoomed_out_factor(sec, scope_factor)
+	local def_fov = (get_console_cmd and get_console_cmd(2, "fov")) or 75
+	local min_base = ini_float(sec, "min_scope_zoom_factor") or 200
+	local delta_total = def_fov - scope_factor
+	if delta_total <= 0 then
+		return scope_factor
+	end
+	local min_zoom = def_fov - delta_total * 0.3
+	if min_zoom > min_base then
+		min_zoom = min_base
+	end
+	return min_zoom
+end
+
+local function apply()
+	if not CONFIG.loaded.binoculars_zoomed_out then
+		return true
+	end
+	local item = active_binoc()
+	if not item then
+		return true
+	end
+	local gun = item.cast_Weapon and item:cast_Weapon()
+	if not (gun and gun.IsZoomed and gun:IsZoomed() and gun.SetZoomFactor) then
+		return true
+	end
+	local sec = item:section()
+	local scope_factor = ini_float(sec, "scope_zoom_factor")
+	if not scope_factor or scope_factor <= 0 then
+		scope_factor = gun:GetZoomFactor()
+	end
+	gun:SetZoomFactor(zoomed_out_factor(sec, scope_factor))
+	return true
+end
+
+local function on_zoom_in()
+	if not CONFIG.loaded.binoculars_zoomed_out then
+		return
+	end
+	if not active_binoc() then
+		return
+	end
+	RemoveTimeEvent(CONFIG.MOD_ID, APPLY)
+	-- Deferred: actor_on_weapon_zoom_in can run before engine SetZoomFactor(czoom).
+	CreateTimeEvent(CONFIG.MOD_ID, APPLY, 0, apply)
+end
+
+function on_option_change()
+	CONFIG.loaded.binoculars_zoomed_out = dogma.mcm.bool(CONFIG.MOD_ID, "binoculars_zoomed_out")
+	if not CONFIG.loaded.binoculars_zoomed_out then
+		RemoveTimeEvent(CONFIG.MOD_ID, APPLY)
+	end
+end
+
+function on_game_start()
+	dogma.load(CONFIG.MOD_ID)
+	on_option_change()
+	RegisterScriptCallback("actor_on_weapon_zoom_in", on_zoom_in)
+	RegisterScriptCallback("on_option_change", on_option_change)
+end

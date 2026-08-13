@@ -1,0 +1,52 @@
+--[[
+	SFX Prefetcher
+
+	Prefetch the MO2-generated dogma_sfx_prefetch.ltx list on first actor
+	update. Rebuild the list with D.O.G.M.A. SFX Prefetch / Optimize after
+	changing sound mods. MCM enable (on by default) skips the loop when off.
+]]
+
+local CONFIG = _G.dogma_perf_sfx_prefetcher_conf
+local TAG = "dogma_sfx_prefetch"
+local LTX_NAME = "dogma_sfx_prefetch.ltx"
+local SECTION = "dogma_sfx_list"
+
+local function prefetch_enabled()
+	return CONFIG.loaded.enable ~= false
+end
+
+function actor_on_first_update()
+	if not prefetch_enabled() then
+		return
+	end
+	local ini = ini_file(LTX_NAME)
+	if not ini or not ini:section_exist(SECTION) then
+		return
+	end
+	local lines = ini:line_count(SECTION)
+	if not lines or lines < 1 then
+		return
+	end
+	local n = 0
+	for i = 0, lines - 1 do
+		local _, _, value = ini:r_line(SECTION, i, "", "")
+		if value and value ~= "" then
+			level.prefetch_sound(value)
+			n = n + 1
+		end
+	end
+	if n > 0 then
+		printf("[%s] prefetched %s sounds", TAG, tostring(n))
+	end
+end
+
+function on_option_change()
+	CONFIG.loaded.enable = dogma.mcm.bool(CONFIG.MOD_ID, "enable")
+end
+
+function on_game_start()
+	dogma.load(CONFIG.MOD_ID)
+	on_option_change()
+	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+	RegisterScriptCallback("on_option_change", on_option_change)
+end

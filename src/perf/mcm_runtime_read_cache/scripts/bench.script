@@ -5,7 +5,7 @@
 -- 	then ITERS× patched get (Lua cache). Logs both + ratio via printf.
 
 -- 	Disable without deleting: set BENCH_ENABLE = false below.
--- 	Build output: zzzz_dogma_tweaks_mcm_runtime_read_cache_bench.script
+-- 	Build output: zzzz_dogma_perf_mcm_runtime_read_cache_bench.script
 -- ]]
 
 -- local BENCH_ENABLE = true
@@ -13,7 +13,7 @@
 -- local DELAY_SEC = 10
 -- local ITERS = 10000000
 -- local KEY = "dogma/debug/debug_log"
--- local TAG = "dogma_tweaks_mcm_runtime_read_cache_bench"
+-- local TAG = "dogma_perf_mcm_runtime_read_cache_bench"
 -- local EVT = "mcm_cache_bench"
 
 -- local scheduled = false
@@ -51,7 +51,7 @@
 -- end
 
 -- local function run_bench()
--- 	local hook = rawget(_G, "__dogma_tweaks_mcm_runtime_read_cache")
+-- 	local hook = rawget(_G, "__dogma_perf_mcm_runtime_read_cache")
 -- 	if not (hook and hook.patched and hook.orig_get and type(ui_mcm) == "table" and type(ui_mcm.get) == "function") then
 -- 		log("skip: cache patch not ready")
 -- 		return

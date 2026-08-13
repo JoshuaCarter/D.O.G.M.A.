@@ -290,26 +290,35 @@ def step_gc(mo2_root: Path, *, dry_run: bool) -> int:
     return 0
 
 
-def resolve_sfx_builder() -> Path | None:
+def resolve_sfx_builder(mo2_root: Path | None = None) -> Path | None:
     here = Path(__file__).resolve().parent
-    # Deployed / common: mods/DOGMA/mo2/tools/dogma_sfx_prefetch.py (next to this file)
+    # Unified build: feature mo2/tools merges next to this file.
     candidates: list[Path] = [
         here / "dogma_sfx_prefetch.py",
-        # Legacy name
-        here / "build_sound_prefetch.py",
     ]
-    # Legacy flat path from older builds
     if here.name.lower() == "tools":
         candidates.append(here.parent / "dogma_sfx_prefetch.py")
-        candidates.append(here.parent / "build_sound_prefetch.py")
     try:
         repo = Path(__file__).resolve().parents[4]
-        tools = repo / "src" / "_common" / "mo2" / "tools"
-        candidates.append(tools / "dogma_sfx_prefetch.py")
-        candidates.append(tools / "build_sound_prefetch.py")
+        candidates.append(
+            repo / "src" / "perf" / "sfx_prefetcher" / "mo2" / "tools" / "dogma_sfx_prefetch.py"
+        )
     except IndexError:
         pass
+    if mo2_root is not None:
+        mods = Path(mo2_root) / "mods"
+        if mods.is_dir():
+            for p in sorted(mods.glob("*/mo2/tools/dogma_sfx_prefetch.py")):
+                candidates.append(p)
+    seen: set[Path] = set()
     for py in candidates:
+        try:
+            key = py.resolve()
+        except OSError:
+            key = py
+        if key in seen:
+            continue
+        seen.add(key)
         if py.is_file():
             return py
     return None
@@ -317,10 +326,10 @@ def resolve_sfx_builder() -> Path | None:
 
 def run_sfx_prefetch(mo2_root: Path, *, force: bool = False) -> int:
     """Run sound prefetch builder; tee to action log. Shared with cmd_sfx."""
-    py = resolve_sfx_builder()
+    py = resolve_sfx_builder(mo2_root)
     if py is None:
-        lib.err("Sound prefetch tool is missing from this DOGMA install.")
-        return 1
+        lib.warn("SFX Prefetcher is not installed - skipped sound prefetch list.")
+        return 0
     cmd = [sys.executable, "-u", str(py), "--mo2-root", str(mo2_root)]
     if force:
         cmd.append("--force")

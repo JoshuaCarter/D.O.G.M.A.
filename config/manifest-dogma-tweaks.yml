@@ -51,12 +51,6 @@ QAW Reorder:
   path: tweaks/qaw_reorder
   desc: "Hold a reorder key on the QAW custom wheel to swap item positions (manual tabs only)."
 
-Thirst Blur Starts At Yellow:
-  stage: DEV
-  default: true
-  path: tweaks/thirst_blur_starts_at_yellow
-  desc: "Thirst blur starts at yellow instead of gray."
-
 Hide Geiger Screen Text:
   stage: DEV
   default: true
@@ -64,12 +58,6 @@ Hide Geiger Screen Text:
   desc: "Hides the \"mSv\" screen text when first equipping the Geiger Counter."
   disables:
     - G_FLAT's Msv Above Radiation Icon
-
-Hide Pickup Item Icons:
-  stage: DEV
-  default: true
-  path: tweaks/hide_pickup_item_icons
-  desc: "Hides the floating inventory icon when looking at a pickable item. Hold-Use item name text is unchanged."
 
 Fix Damage Limb Allocation:
   stage: DEV
@@ -84,12 +72,6 @@ Fix Geiger For Dynamic Rad Patches:
   desc: "Geiger Counter reads Dynamic Radiation Patch levels (env mode)."
   enables:
     - G.A.M.M.A. Radiation Dynamic Areas
-
-New Game Defaults:
-  stage: DEV
-  default: true
-  path: tweaks/new_game_defaults
-  desc: New game defaults to Veteran difficulty, Survivalist economy, and each faction's main base (you can still change them).
 
 Fix System Keybinds Not Sticking:
   stage: DEV
@@ -118,12 +100,6 @@ Clear MCM Search Box:
   path: tweaks/clear_mcm_search_box
   desc: Removes pre-filled text from MCM search box.
 
-MCM Runtime Read Cache:
-  stage: DEV
-  default: true
-  path: tweaks/mcm_runtime_read_cache
-  desc: "Caches ui_mcm.get in Lua while a game is loaded so mods that poll MCM every frame skip axr_options lookups. Off at main menu; refreshes on in-game Accept and set()."
-
 Fix Footsteps SFX:
   stage: DEV
   default: false
@@ -149,24 +125,6 @@ Fanatic Stays In Cordon:
   default: true
   path: tweaks/fanatic_stays_in_cordon
   desc: "Fanatic never leaves Cordon. Leaving the map while he is with you fails Training Day and sends him back to the village."
-
-Close Dialog With Tab:
-  stage: DEV
-  default: true
-  path: tweaks/close_dialog_with_tab
-  desc: "Close NPC talk dialogs with Tab as well as Escape/Use."
-
-Binoculars ADS Zoomed Out:
-  stage: DEV
-  default: true
-  path: tweaks/binoculars_ads_zoomed_out
-  desc: "Raising binoculars starts at full zoom-out (scroll wheel back), not max zoom-in."
-
-Bounty Mission Warning Colors:
-  stage: DEV
-  default: true
-  path: tweaks/bounty_mission_warning_colors
-  desc: "Marks bounty missions red for same-faction/friendly targets and orange for neutral on the PDA taskboard."
 
 More Tasks:
   stage: DEV
@@ -232,7 +190,7 @@ Fix New Game Loadout Tooltips:
   stage: RELEASE
   default: true
   path: tweaks/fix_new_game_loadout_tooltips
-  desc: "Always-on tooltip fixes for all item types: restacks tooltip sections so extra widgets never overlap or clip, arms the stat builders at the main menu so the first-session New Game Loadout screen shows correct GAMMA/DOGMA tooltips, and shows uses for multi-use items in section-only tooltips (Loadout screen, craft/repair previews)."
+  desc: "Always-on tooltip fixes for all item types: restacks tooltip sections so extra widgets never overlap or clip, arms the stat builders at the main menu so the first-session New Game Loadout screen shows correct GAMMA/DOGMA tooltips, shows uses for multi-use items in section-only tooltips (Loadout screen, craft/repair previews), and draws each item's point cost on New Game loadout icons."
 
 Increase Blood Decal Range:
   stage: RELEASE
@@ -262,18 +220,6 @@ Fix Double Mutant Hits:
   path: tweaks/fix_double_mutant_hits
   desc: "Ignores a second mutant hit on the actor within 500ms (stops animation-skip double damage from any mutant)."
 
-Bigger New Game Loadout Panel:
-  stage: DEV
-  default: true
-  path: tweaks/bigger_new_game_loadout_panel
-  desc: "Makes the new game loadout panel take more space."
-
-Show Loadout Item Points:
-  stage: DEV
-  default: true
-  path: tweaks/show_loadout_item_pts
-  desc: "Draws each item's point cost on its icon in the New Game loadout screen. Free (0 pts) items show no number."
-
 Sobre Loadouts:
   stage: DEV
   default: true
@@ -290,11 +236,3 @@ Glowstick Lights:
   default: true
   path: tweaks/glowstick_lights
   desc: "HD Glowsticks: +50% light range and -50% RGB intensity (held, thrown, and belt)."
-
-Belt Glowsticks:
-  stage: DEV
-  default: true
-  path: tweaks/belt_glowsticks
-  desc: "Drag a glowstick onto an artefact belt slot to wear it as a light. Uses the glowstick light_section as-is."
-  disables:
-    - contains:Belt Glowsticks

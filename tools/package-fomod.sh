@@ -60,6 +60,7 @@ cat_title() {
 		crafting) echo "Crafting" ;;
 		game) echo "Game" ;;
 		gui) echo "GUI" ;;
+		perf) echo "Perf" ;;
 		debug) echo "Debug" ;;
 		menu) echo "Menu" ;;
 		misc) echo "Misc" ;;

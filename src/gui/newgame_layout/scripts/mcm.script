@@ -1,0 +1,47 @@
+--[[
+	New Game Layout - MCM + main-menu patch.
+
+	Must live in *mcm.script: MCM loads those at the main menu.
+	zzzz_* body scripts are not loaded until a game session, so a main.script
+	patch never sees New Game on a cold boot.
+
+	Wraps LoadDifficulty / LoadEconomy / LoadMap so first open and Randomize
+	can pick Veteran + Survivalist + each faction's main base. Manual combo
+	changes still work (OnSelect*). MCM toggles gate those defaults.
+]]
+
+local CONFIG = _G.dogma_gui_newgame_layout_conf
+
+-- Top-level: runs when MCM gathers *mcm.script at main menu.
+CONFIG.patch_new_game()
+
+function on_mcm_load(options)
+	CONFIG.patch_new_game()
+
+	dogma_mcm.attach(options, "gui", "ui_mcm_menu_dogma_gui", {
+		id = "newgame_layout",
+		sh = true,
+		text = "ui_mcm_menu_dogma_gui_newgame_layout",
+		gr = dogma_mcm.with_header({
+			{
+				id = "page_description",
+				type = "desc",
+				text = "ui_mcm_dogma_gui_newgame_layout_page_description",
+			},
+			{
+				id = "default_hard",
+				type = "check",
+				val = 1,
+				def = CONFIG.DEFAULTS["default_hard"],
+				hint = "dogma_gui_newgame_layout_default_hard",
+			},
+			{
+				id = "default_spawn",
+				type = "check",
+				val = 1,
+				def = CONFIG.DEFAULTS["default_spawn"],
+				hint = "dogma_gui_newgame_layout_default_spawn",
+			},
+		}),
+	})
+end

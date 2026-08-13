@@ -1,0 +1,432 @@
+--[[
+	Belt Glowsticks
+
+	Drag a device_glowstick* onto an artefact belt slot → convert to
+	af_dogma_glowstick_belt* twin, wear it, light the actor from the pelvis.
+	Take it off the belt → convert back to device form in ruck.
+
+	Double-click in inventory (MCM, default on) tries belt first; if there is
+	no room or one is already worn, vanilla equips to hands.
+
+	Belt light reads the device's light_section (glowstick_definition*) as-is.
+	Held/thrown stay on the stock glowstick path.
+]]
+
+local CONFIG = _G.dogma_game_belt_glowsticks_conf
+local MOD_ID = CONFIG.MOD_ID
+
+local variant_by_device = {
+	["device_glowstick"] = "af_dogma_glowstick_belt",
+	["device_glowstick_orange"] = "af_dogma_glowstick_belt_orange",
+	["device_glowstick_red"] = "af_dogma_glowstick_belt_red",
+	["device_glowstick_blue"] = "af_dogma_glowstick_belt_blue",
+}
+
+local device_by_variant = {}
+for device_sec, belt_sec in pairs(variant_by_device) do
+	device_by_variant[belt_sec] = device_sec
+end
+
+local light = nil
+local light_obj_id = nil
+local light_props_sec = nil -- cached light_section last applied to `light`
+local next_drain_tick = 0
+local pending_new_belt_items = {}
+local convert_in_progress = false
+local light_props_cache = {} -- [light_section] = { volumetric, ..., color, drain_by_device }
+
+local function find_belted_glowstick(exclude_id)
+	local found = nil
+	if not (db.actor and db.actor.iterate_belt) then
+		return nil
+	end
+	db.actor:iterate_belt(function(_, obj)
+		if (not found) and obj and device_by_variant[obj:section()] and obj:id() ~= exclude_id then
+			found = obj
+		end
+	end)
+	return found
+end
+
+local function belt_has_room()
+	local actor = db.actor
+	if not actor then
+		return false
+	end
+	local outfit = actor:item_in_slot(7)
+	if not outfit then
+		return false
+	end
+	local c_outfit = outfit:cast_CustomOutfit()
+	if not c_outfit then
+		return false
+	end
+	local rooms = c_outfit:get_artefact_count() or 0
+	local used = actor:belt_count() or 0
+	return rooms > 0 and rooms > used
+end
+
+local function clear_light()
+	if light then
+		light.enabled = false
+		light:update()
+	end
+	light = nil
+	light_obj_id = nil
+	light_props_sec = nil
+end
+
+local function light_props_for(light_section)
+	local props = light_props_cache[light_section]
+	if props then
+		return props
+	end
+	local tonum = tonumber
+	props = {
+		volumetric = ini_sys:r_bool_ex(light_section, "volumetric", false),
+		volumetric_quality = ini_sys:r_float_ex(light_section, "volumetric_quality", 0.5),
+		volumetric_intensity = ini_sys:r_float_ex(light_section, "volumetric_intensity", 0.1),
+		volumetric_distance = ini_sys:r_float_ex(light_section, "volumetric_distance", 0.25),
+		range = ini_sys:r_float_ex(light_section, "range_r2", 12) or 12,
+	}
+	local color_s = ini_sys:r_string_ex(light_section, "color_r2", "0.0,0.4,0.3,0.8")
+	local c = str_explode(color_s, ",")
+	props.color = fcolor():set(
+		tonum(c[1]) or 0,
+		tonum(c[2]) or 0.4,
+		tonum(c[3]) or 0.3,
+		tonum(c[4]) or 0.8
+	)
+	light_props_cache[light_section] = props
+	return props
+end
+
+-- Belt twin → hand-held device in ruck. Returns true if it was a belt twin.
+local function convert_belt_item_to_device(item)
+	if not item then
+		return false
+	end
+	local target_sec = device_by_variant[item:section()]
+	if not target_sec then
+		return false
+	end
+
+	local id = item:id()
+	if light_obj_id == id then
+		clear_light()
+	end
+
+	local cond = item:condition()
+	alife_release_id(id)
+	alife_create_item(target_sec, db.actor, { cond = cond })
+	return true
+end
+
+-- Device → belt twin, then move_to_belt (delayed like Remember Outfit Belt / Lukis).
+local function convert_device_to_belt(item)
+	if not item or convert_in_progress then
+		return false
+	end
+	local target_sec = variant_by_device[item:section()]
+	if not target_sec then
+		return false
+	end
+	if find_belted_glowstick() then
+		return false
+	end
+	if not belt_has_room() then
+		return false
+	end
+
+	-- Artefacts Reinvention randomizes condition of brand-new i_arty at exactly 1.0.
+	local cond = math.min(item:condition(), 0.9999)
+	alife_release_id(item:id())
+	local se_obj = alife_create_item(target_sec, db.actor, { cond = cond })
+	if not se_obj then
+		return false
+	end
+
+	local new_id = se_obj.id
+	pending_new_belt_items[new_id] = true
+	convert_in_progress = true
+
+	CreateTimeEvent(MOD_ID, "belt_equip_" .. new_id, 0.1, function()
+		pcall(function()
+			local belt_item = db.actor:object_id(new_id)
+			if belt_item then
+				db.actor:move_to_belt(belt_item)
+			end
+		end)
+
+		CreateTimeEvent(MOD_ID, "belt_verify_" .. new_id, 0.1, function()
+			pcall(function()
+				local current = db.actor:object_id(new_id)
+				if not current then
+					return
+				end
+				if not db.actor:is_on_belt(current) then
+					convert_belt_item_to_device(current)
+				end
+			end)
+			convert_in_progress = false
+			return true
+		end)
+		return true
+	end)
+
+	return true
+end
+
+local function focused_bag(gui)
+	if not (gui and gui.CC) then
+		return nil
+	end
+	for name, cc in pairs(gui.CC) do
+		local bag_to = cc:GetCell_Focused()
+		if bag_to then
+			return bag_to
+		end
+	end
+	for bag, cc in pairs(gui.CC) do
+		if bag ~= "picker" and cc.IsCursorOverWindow and cc:IsCursorOverWindow() then
+			return bag
+		end
+	end
+	return nil
+end
+
+local function glowstick_from_cell(gui, bag, idx)
+	if not gui then
+		return nil, bag, idx
+	end
+	local cc = gui.CC and gui.CC[bag]
+	local obj = cc and cc:GetObj(idx)
+	if not obj then
+		return nil, bag, idx
+	end
+	if gui.Picker_Ownership then
+		bag, idx = gui:Picker_Ownership(bag, idx, obj)
+		cc = gui.CC[bag]
+		obj = cc and cc:GetObj(idx)
+	end
+	if not (obj and variant_by_device[obj:section()]) then
+		return nil, bag, idx
+	end
+	return obj, bag, idx
+end
+
+local function try_drag_glowstick_to_belt(gui, bag_from, idx_from)
+	if not gui or convert_in_progress then
+		return false
+	end
+	if gui.mode == "trade" then
+		return false
+	end
+	local obj
+	obj, bag_from, idx_from = glowstick_from_cell(gui, bag_from, idx_from)
+	if not obj then
+		return false
+	end
+	-- Same sources Cond_Equip allows for belt (pack), plus detector slot.
+	if bag_from ~= "actor_bag" and bag_from ~= "actor_equ" then
+		return false
+	end
+	if focused_bag(gui) ~= "actor_belt" then
+		return false
+	end
+	return convert_device_to_belt(obj)
+end
+
+-- Double-click in pack: belt if MCM on and it fits; else false → vanilla hands.
+local function try_dblclick_glowstick_to_belt(gui, bag, idx)
+	if not CONFIG.loaded.dblclick_to_belt then
+		return false
+	end
+	if not gui or convert_in_progress or gui.mode ~= "inventory" then
+		return false
+	end
+	local obj
+	obj, bag = glowstick_from_cell(gui, bag, idx)
+	if not obj or bag ~= "actor_bag" then
+		return false
+	end
+	return convert_device_to_belt(obj)
+end
+
+local function highlight_belt_for_glowstick(gui, bag, idx)
+	if not (gui and gui.CC and gui.CC["actor_belt"]) then
+		return
+	end
+	if bag == "actor_equ" or bag == "actor_belt" or bag == "actor_quick" then
+		return
+	end
+	if not (bag and idx) then
+		return
+	end
+	local cc = gui.CC[bag]
+	local obj = cc and cc:GetObj(idx)
+	if not (obj and variant_by_device[obj:section()]) then
+		return
+	end
+	if not belt_has_room() then
+		return
+	end
+	local belt_cc = gui.CC["actor_belt"]
+	for i = 1, #belt_cc.cell do
+		belt_cc.cell[i]:Highlight(true, "def", true)
+	end
+end
+
+local function after_convert(gui)
+	if gui and gui.On_Item_Update then
+		gui:On_Item_Update()
+	end
+end
+
+local function wrap_inventory_ui()
+	local UI = ui_inventory and ui_inventory.UIInventory
+	if not UI or UI._dogma_belt_glowsticks_wrapped then
+		return
+	end
+	UI._dogma_belt_glowsticks_wrapped = true
+
+	local orig_drag = UI.On_CC_DragDrop
+	if orig_drag then
+		function UI:On_CC_DragDrop(bag_from, idx_from)
+			if dogma.sys.ready(MOD_ID, db, on_option_change) then
+				if try_drag_glowstick_to_belt(self, bag_from, idx_from) then
+					after_convert(self)
+					return
+				end
+			end
+			return orig_drag(self, bag_from, idx_from)
+		end
+	end
+
+	local orig_db = UI.On_CC_Mouse1_DB
+	if orig_db then
+		function UI:On_CC_Mouse1_DB(bag, idx)
+			if dogma.sys.ready(MOD_ID, db, on_option_change) then
+				if try_dblclick_glowstick_to_belt(self, bag, idx) then
+					after_convert(self)
+					return
+				end
+			end
+			return orig_db(self, bag, idx)
+		end
+	end
+
+	local orig_hover = UI.On_CC_Hover
+	if orig_hover then
+		function UI:On_CC_Hover(bag, idx)
+			orig_hover(self, bag, idx)
+			if dogma.sys.ready(MOD_ID, db, on_option_change) then
+				highlight_belt_for_glowstick(self, bag, idx)
+			end
+		end
+	end
+end
+
+local function update_belt_light()
+	local lit_item = find_belted_glowstick()
+	if not lit_item or lit_item:condition() <= 0.011 then
+		clear_light()
+		return
+	end
+
+	dogma.perf.start("belt_glowsticks", "update_belt_light")
+	local device_sec = device_by_variant[lit_item:section()]
+	local light_section = ini_sys:r_string_ex(device_sec, "light_section", "glowstick_definition")
+
+	if (not light) or (light_obj_id ~= lit_item:id()) then
+		light = script_light()
+		light.type = 1
+		light.shadow = false
+		light.hud_mode = false
+		light.enabled = true
+		light_obj_id = lit_item:id()
+		light_props_sec = nil
+	end
+
+	-- Ini props are static per light_section; only re-apply when section changes.
+	if light_props_sec ~= light_section then
+		local props = light_props_for(light_section)
+		light.volumetric = props.volumetric
+		if props.volumetric then
+			light.volumetric_quality = props.volumetric_quality
+			light.volumetric_intensity = props.volumetric_intensity
+			light.volumetric_distance = props.volumetric_distance
+		end
+		light.range = props.range
+		light.color = props.color
+		light_props_sec = light_section
+	end
+
+	local pos = db.actor:bone_position("bip01_pelvis")
+	light:set_position(pos)
+	light:set_direction(db.actor:direction())
+	light:update()
+
+	local tg = time_global()
+	if tg > next_drain_tick then
+		next_drain_tick = tg + 1000
+		local drain = ini_sys:r_float_ex(device_sec, "power_drain", 0.001)
+		local new_cond = lit_item:condition() - drain
+		if new_cond < 0.01 then
+			new_cond = 0.01
+		end
+		lit_item:set_condition(new_cond)
+	end
+	dogma.perf.stop()
+end
+
+function on_option_change()
+	CONFIG.loaded.dblclick_to_belt = dogma.mcm.bool(CONFIG.MOD_ID, "dblclick_to_belt")
+	for k in pairs(light_props_cache) do
+		light_props_cache[k] = nil
+	end
+	clear_light()
+end
+
+local function on_item_to_belt(item)
+	if not item or not device_by_variant[item:section()] then
+		return
+	end
+	if find_belted_glowstick(item:id()) then
+		convert_belt_item_to_device(item)
+	end
+end
+
+local function on_item_to_ruck(item)
+	if not item then
+		return
+	end
+	local id = item:id()
+	if pending_new_belt_items[id] then
+		pending_new_belt_items[id] = nil
+		return
+	end
+	convert_belt_item_to_device(item)
+end
+
+local function actor_on_update()
+	if not dogma.sys.ready(MOD_ID, db, on_option_change) then
+		return
+	end
+	update_belt_light()
+end
+
+local function actor_on_first_update()
+	wrap_inventory_ui()
+	on_option_change()
+end
+
+function on_game_start()
+	dogma.load(MOD_ID)
+	wrap_inventory_ui()
+	RegisterScriptCallback("on_option_change", on_option_change)
+	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+	RegisterScriptCallback("actor_on_update", actor_on_update)
+	RegisterScriptCallback("actor_item_to_ruck", on_item_to_ruck)
+	RegisterScriptCallback("actor_item_to_belt", on_item_to_belt)
+end

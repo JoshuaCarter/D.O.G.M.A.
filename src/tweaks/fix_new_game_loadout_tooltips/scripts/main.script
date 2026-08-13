@@ -1,7 +1,7 @@
 --[[
 	Tooltips Fix - always-on tooltip fixes for ALL item types.
 
-	Six independent fixes live here:
+	Seven independent fixes live here:
 
 	1. LAYOUT: item tooltips (utils_ui.UIInfoItem) often end up with
 	   overlapping / clipped sections after other mods append widgets (Parts
@@ -53,6 +53,11 @@
 	     (small → large), then alpha.
 	   - Inventory: cold-boot first-load order (size descending, then alpha)
 	     so quit-back matches the first open.
+
+	7. LOADOUT PTS: paints each item's point cost on its New Game icon
+	   (Add_CustomText, small font). Free (0 pts) items show no number.
+	   Fingerprint of shown cells; LoadLoadout / click invalidate so Reinit
+	   always gets a fresh paint.
 
 	Load timing (empirically established, xray log 2026-07-31): the engine
 	loads .script modules LAZILY, on first reference of their global
@@ -731,6 +736,96 @@ local function mark_loadout_sort(self)
 	end
 end
 
+-- Fix 7: point cost on New Game icons (G.A.M.M.A. UICellItem:Add_CustomText).
+local function paint_pts_on_cells(cc)
+	if not (cc and cc.cell) then
+		return
+	end
+	local fnt = GetFontSmall and GetFontSmall() or nil
+	local clr = GetARGB and GetARGB(255, 180, 180, 180) or nil
+	local align_l, align_top = 0, 0 -- utils_ui: 0=left/top
+	for _, ci in pairs(cc.cell) do
+		if ci:IsShown() and ci.Add_CustomText then
+			local pts = ci.flags and (ci.flags.info or ci.flags.value) or 0
+			if pts and pts > 0 then
+				ci:Add_CustomText(tostring(pts), align_l, align_top, clr, fnt)
+			end
+		end
+	end
+end
+
+local function paint_pts_both(self)
+	if self.CC then
+		paint_pts_on_cells(self.CC["inventory"])
+		paint_pts_on_cells(self.CC["loadout"])
+	end
+end
+
+local function cells_fp(self)
+	local parts = {}
+	local names = { "inventory", "loadout" }
+	for i = 1, #names do
+		local cc = self.CC and self.CC[names[i]]
+		if cc and cc.cell then
+			for _, ci in pairs(cc.cell) do
+				if ci:IsShown() then
+					local sec = ci.section or ""
+					local pts = ci.flags and (ci.flags.info or ci.flags.value) or 0
+					parts[#parts + 1] = names[i] .. ":" .. tostring(sec) .. "=" .. tostring(pts)
+				end
+			end
+		end
+	end
+	table.sort(parts)
+	return table.concat(parts, "|")
+end
+
+local function invalidate_pts(self)
+	if self then
+		self._dogma_loadout_pts_fp = nil
+	end
+end
+
+local function wrap_update(cls)
+	if ng_wrap_state.update and cls.Update == ng_wrap_state.update then
+		return true
+	end
+	local base = cls.Update
+	if not base then
+		return false
+	end
+	local function wrapped(self, ...)
+		local r = base(self, ...)
+		local fp = cells_fp(self)
+		if fp ~= "" and fp ~= self._dogma_loadout_pts_fp then
+			self._dogma_loadout_pts_fp = fp
+			pcall(paint_pts_both, self)
+		end
+		return r
+	end
+	cls.Update = wrapped
+	ng_wrap_state.update = wrapped
+	return true
+end
+
+local function wrap_on_cc_mouse1(cls)
+	if ng_wrap_state.mouse1 and cls.On_CC_Mouse1 == ng_wrap_state.mouse1 then
+		return true
+	end
+	local base = cls.On_CC_Mouse1
+	if not base then
+		return false
+	end
+	local function wrapped(self, cont, idx)
+		local r = base(self, cont, idx)
+		invalidate_pts(self)
+		return r
+	end
+	cls.On_CC_Mouse1 = wrapped
+	ng_wrap_state.mouse1 = wrapped
+	return true
+end
+
 local function wrap_load_loadout(cls)
 	if ng_wrap_state.load and cls.LoadLoadout == ng_wrap_state.load then
 		return true
@@ -741,7 +836,9 @@ local function wrap_load_loadout(cls)
 	end
 	local function wrapped(self, rand)
 		mark_loadout_sort(self)
-		return base(self, rand)
+		local r = base(self, rand)
+		invalidate_pts(self)
+		return r
 	end
 	cls.LoadLoadout = wrapped
 	ng_wrap_state.load = wrapped
@@ -761,7 +858,12 @@ local function wrap_main_controls(cls)
 		wrap_get_sort_method()
 		wrap_load_loadout(cls)
 		local r = base(self, ...)
+		-- Re-assert as outermost after other mods re-wrap inside Main_Controls.
+		wrap_load_loadout(cls)
+		wrap_on_cc_mouse1(cls)
+		wrap_update(cls)
 		mark_loadout_sort(self)
+		invalidate_pts(self)
 		return r
 	end
 	cls.Main_Controls = wrapped
@@ -769,15 +871,15 @@ local function wrap_main_controls(cls)
 	return true
 end
 
--- Public: patch UINewGame so Loadout Reinit uses our comparator. Safe to call
--- repeatedly (menu MCM load, main_menu_on_init, Main_Controls).
+-- Public: patch UINewGame so Loadout Reinit uses our comparator and pts paint.
+-- Safe to call repeatedly (menu MCM load, main_menu_on_init, Main_Controls).
 function patch_new_game_ui()
 	wrap_get_sort_method()
 	local cls = ui_mm_faction_select and ui_mm_faction_select.UINewGame
 	if not cls then
 		return false
 	end
-	local ok = wrap_load_loadout(cls)
+	local ok = wrap_load_loadout(cls) and wrap_on_cc_mouse1(cls) and wrap_update(cls)
 	wrap_main_controls(cls)
 	return ok
 end

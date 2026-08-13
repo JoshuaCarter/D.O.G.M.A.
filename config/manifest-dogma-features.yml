@@ -23,6 +23,24 @@ Debug:
   path: debug
   desc: "DEV ONLY - local builds only; never Setup / FOMOD"
 
+MCM Runtime Read Cache:
+  stage: DEV
+  default: true
+  path: perf/mcm_runtime_read_cache
+  desc: "Caches ui_mcm.get in Lua while a game is loaded so mods that poll MCM every frame skip axr_options lookups. Off at main menu; refreshes on in-game Accept and set()."
+
+SFX Prefetcher:
+  stage: DEV
+  default: true
+  path: perf/sfx_prefetcher
+  desc: "Prefetches a generated list of loose mod sounds on load to reduce first-play hitching. Rebuild with D.O.G.M.A. SFX Prefetch / Optimize after changing sound mods."
+
+New Game Layout:
+  stage: DEV
+  default: true
+  path: gui/newgame_layout
+  desc: "Wider New Game loadout panel. Optional Veteran/Survivalist and faction-base spawn defaults."
+
 Radiation FX:
   stage: RELEASE
   default: true
@@ -72,7 +90,7 @@ Reactive BHS:
   stage: DEV
   default: true
   path: gui/bhs_reactive
-  desc: "Hide classic BHS and status icons by default; show BHS on limb damage or hold key; show opted-in status icons when not grey (with grey grace)."
+  desc: "Hide classic BHS and status icons by default; show BHS on limb damage or hold key; show opted-in status icons when not grey (with grey grace). Thirst blur starts at yellow (toggle)."
 
 Better Disassemble Keybind:
   stage: RELEASE
@@ -130,6 +148,12 @@ PDA Go Away:
     - Dorns_Dont_ReEquip_PDA
     - 136- Previous weapon is automatically pulled after closing PDA - Demonized
 
+Dialogue:
+  stage: DEV
+  default: true
+  path: input/dialogue
+  desc: "Close NPC talk dialogs with a bind (Tab by default) as well as Escape/Use."
+
 Campfire Healing:
   stage: RELEASE
   default: true
@@ -137,6 +161,14 @@ Campfire Healing:
   desc: "Heal near campfires when not in combat. Faster than current system and heals limbs if they have temporary health."
   disables:
     - 115- Campfire slowly regens life - arti
+
+Belt Glowsticks:
+  stage: DEV
+  default: true
+  path: game/belt_glowsticks
+  desc: "Drag a glowstick onto an artefact belt slot to wear it as a light. Double-click equips to belt by default (falls back to hands). Uses the glowstick light_section as-is."
+  disables:
+    - contains:Belt Glowsticks
 
 Better Exo Power Drain:
   stage: DEV
@@ -198,7 +230,7 @@ Nearby Pickup Labels:
   stage: RELEASE
   default: true
   path: gui/nearby_pickup_labels
-  desc: "Auto-show hold-Use style name labels on nearby pickable items (0–10 m). Off while Use is held."
+  desc: "Auto-show hold-Use style name labels on nearby pickable items (default 3 m, 0–10 m). Off while Use is held. Hides the look-at inventory icon by default."
 
 # True Fast Travel:
 #   stage: DEV
@@ -217,7 +249,7 @@ ADS Zoom:
   stage: RELEASE
   default: true
   path: game/ads_zoom
-  desc: "Brings weapon model closer to camera when ADS (can adjust per gun+sight combo), with defaults for irons/sights/scopes"
+  desc: "Brings weapon model closer to camera when ADS (can adjust per gun+sight combo), with defaults for irons/sights/scopes. Optional: binoculars start zoomed out."
   disables:
     - 72- Adjustable Scope View - sneaky
 

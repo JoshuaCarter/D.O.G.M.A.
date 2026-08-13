@@ -20,6 +20,41 @@ local PARK_OFF = 4000
 local PARKED_X = -1000
 local FLAG = "__dogma_bhs_reactive"
 
+-- Stock thirst blur starts at gray. Yellow = soft flash; orange/red follows deprivation.
+local THIRST_PPE = "yantar_underground_psi.ppe"
+local THIRST_PPE_ID = 39568
+local thirst_blur_orig = nil
+
+local function apply_thirst_blur()
+	local ast = _G.actor_status_thirst
+	if not (ast and type(ast.test_blur) == "function") then
+		return
+	end
+	local want = CONFIG.loaded and CONFIG.loaded.thirst_blur_yellow
+	if want then
+		if not thirst_blur_orig then
+			thirst_blur_orig = ast.test_blur
+		end
+		function ast.test_blur()
+			level.remove_pp_effector(THIRST_PPE_ID)
+			local tier = ast.get_water_deprivation(true)
+			if tier == 2 then
+				level.add_pp_effector(THIRST_PPE, THIRST_PPE_ID, false)
+				level.remove_pp_effector(THIRST_PPE_ID)
+			elseif tier > 2 then
+				level.add_pp_effector(THIRST_PPE, THIRST_PPE_ID, false)
+				level.set_pp_effector_factor(THIRST_PPE_ID, ast.get_water_deprivation(false))
+			end
+		end
+	elseif thirst_blur_orig then
+		ast.test_blur = thirst_blur_orig
+		thirst_blur_orig = nil
+		if level and level.remove_pp_effector then
+			level.remove_pp_effector(THIRST_PPE_ID)
+		end
+	end
+end
+
 local LIMBS = { "head", "torso", "leftarm", "rightarm", "leftleg", "rightleg" }
 local OPT_IN_ICONS = {
 	{ name = "Radiation", opt = "icons_radiation" },
@@ -212,6 +247,8 @@ local function refresh_options()
 	L.icons_thirst = dogma.mcm.bool(CONFIG.MOD_ID, "icons_thirst", d.icons_thirst)
 	L.icons_sleep = dogma.mcm.bool(CONFIG.MOD_ID, "icons_sleep", d.icons_sleep)
 	L.grey_hide_after_sec = clamp_int(dogma.mcm.int(CONFIG.MOD_ID, "grey_hide_after_sec", d.grey_hide_after_sec), 0, 10, d.grey_hide_after_sec)
+	L.thirst_blur_yellow = dogma.mcm.bool(CONFIG.MOD_ID, "thirst_blur_yellow", d.thirst_blur_yellow)
+	apply_thirst_blur()
 end
 
 local function hold_key(key, mod)

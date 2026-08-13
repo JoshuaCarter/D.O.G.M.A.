@@ -96,10 +96,12 @@ end
 local function send_fanat_to_village()
 	local squad = fanat_squad()
 	local smart = SIMBOARD and SIMBOARD.smarts_by_names and SIMBOARD.smarts_by_names[VILLAGE_SMART]
-	if not (squad and smart and smart.id and utils_obj and utils_obj.assign_squad_to_smart) then
+	if not (squad and smart and smart.id and SIMBOARD.assign_squad_to_smart) then
 		return
 	end
-	utils_obj.assign_squad_to_smart(squad.id, smart.id)
+	SIMBOARD:assign_squad_to_smart(squad, smart.id)
+	squad.assigned_target_id = smart.id
+	squad.current_action = nil
 	log("assigned to " .. VILLAGE_SMART)
 end
 

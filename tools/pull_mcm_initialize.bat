@@ -1,15 +1,6 @@
 @echo off
 setlocal
-REM Pull non-default MCM options from axr_options.ltx into config\defaults.ini
-REM
-REM Requires Python 3.
-REM
-REM Usage:
-REM   pull_mcm_initialize.bat
-REM   pull_mcm_initialize.bat --dry-run
-REM   pull_mcm_initialize.bat --include-dogma
-REM   pull_mcm_initialize.bat --all-saved
-REM   pull_mcm_initialize.bat --mo2-root "D:\Games\GAMMA"
+REM Removed. Edit config\mcm_config.yml by hand; build snapshots axr.
 
 cd /d "%~dp0"
 

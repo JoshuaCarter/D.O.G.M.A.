@@ -776,11 +776,11 @@ def _materialize_inline_radio_compositions(
 def _reject_legacy_defaults(item: dict, *, field: str) -> None:
     if item.get("defaults") is not None:
         raise ValueError(
-            f"{field}: defaults: removed - use top-level mcm_reset: / mcm_set: / settings:"
+            f"{field}: defaults: removed - 3rd-party MCM lives in mcm_config.yml"
         )
     if item.get("target_mod") is not None:
         raise ValueError(
-            f"{field}: target_mod removed - put keys under mcm_set: / settings:"
+            f"{field}: target_mod removed - 3rd-party MCM lives in mcm_config.yml"
         )
 
 
@@ -789,23 +789,25 @@ def _pack_effect_fields(item: dict, *, section: str) -> dict:
     _reject_legacy_defaults(item, field=section)
     if item.get("resets") is not None:
         raise ValueError(
-            f"{section}: resets: renamed - use mcm_reset: (MCM key roots)"
+            f"{section}: resets: removed - 3rd-party MCM lives in mcm_config.yml"
         )
     if item.get("mcm") is not None:
         raise ValueError(
-            f"{section}: mcm: renamed - use mcm_set: (key: value overrides)"
+            f"{section}: mcm: removed - 3rd-party MCM lives in mcm_config.yml"
         )
+    for banned in ("mcm_reset", "mcm_set", "settings", "console"):
+        if item.get(banned) is not None:
+            raise ValueError(
+                f"{section}: {banned}: removed - MCM / [options] / console "
+                "live in mcm_config.yml (in-game Defaults tab)"
+            )
     return {
-        "mcm_reset": _parse_str_list(
-            item.get("mcm_reset"), field=f"{section}.mcm_reset"
-        ),
-        "mcm_set": _parse_kv_entries(
-            item.get("mcm_set"), field=f"{section}.mcm_set"
-        ),
-        "settings": _parse_kv_entries(item.get("settings"), field=f"{section}.settings"),
+        "mcm_reset": [],
+        "mcm_set": {},
+        "settings": {},
         "moves": _parse_moves(item.get("moves"), field=f"{section}.moves"),
         "deletes": _parse_str_list(item.get("deletes"), field=f"{section}.deletes"),
-        "console": _parse_str_list(item.get("console"), field=f"{section}.console"),
+        "console": [],
     }
 
 
@@ -1672,7 +1674,6 @@ def _dep_from_mapping(
         )
 
     # default: true|false - Setup / FOMOD checkbox preselected (absent = false).
-    # MCM wipe roots belong under mcm_reset: (legacy list form of default: rejected).
     default_raw = item.get("default")
     if default_raw is None:
         default_selected = False
@@ -1687,26 +1688,25 @@ def _dep_from_mapping(
         else:
             raise ValueError(
                 f"{section}.{dep_id}: default: want true|false "
-                f"(got {default_raw!r}); use mcm_reset: for MCM wipe roots"
+                f"(got {default_raw!r})"
             )
     else:
         raise ValueError(
             f"{section}.{dep_id}: default: want true|false "
-            f"(wizard/FOMOD checkbox); use mcm_reset: for MCM wipe roots"
+            f"(wizard/FOMOD checkbox)"
         )
     resets = effects["mcm_reset"]
     if item.get("wipes") is not None:
         raise ValueError(
-            f"{section}.{dep_id}: wipes: removed - use mcm_reset: with MCM "
-            f"key roots (e.g. [ssfx_module]), not mod names"
+            f"{section}.{dep_id}: wipes: removed - 3rd-party MCM lives in mcm_config.yml"
         )
     if item.get("resets") is not None:
         raise ValueError(
-            f"{section}.{dep_id}: resets: renamed - use mcm_reset:"
+            f"{section}.{dep_id}: resets: removed - 3rd-party MCM lives in mcm_config.yml"
         )
     if item.get("mcm") is not None:
         raise ValueError(
-            f"{section}.{dep_id}: mcm: renamed - use mcm_set:"
+            f"{section}.{dep_id}: mcm: removed - 3rd-party MCM lives in mcm_config.yml"
         )
 
     # Unified requires: (legacy depends/dependencies still accepted).
@@ -4875,6 +4875,8 @@ def load_mcm_config_settings(path: Path) -> list[InitSetting]:
     for group, entries in raw.items():
         src = f"mcm_config:{group}"
         if isinstance(entries, dict):
+            if "key" in entries or "commands" in entries or "axr" in entries:
+                continue
             items = entries.items()
         elif isinstance(entries, list):
             merged: dict[str, str] = {}
@@ -5980,6 +5982,32 @@ def insert_mod_under_separator(modlist: Path, mod_name: str, dry_run: bool) -> N
     ok(f"  modlist enable under separator: {mod_name}" + (" (dry-run)" if dry_run else ""))
 
 
+def pin_mod_highest(mo2_root: Path, modlist: Path, mod_name: str, dry_run: bool) -> None:
+    """Put ``+mod_name`` as the first +/- line (bottom of MO2 left pane)."""
+    folder = Path(mo2_root) / "mods" / mod_name
+    if not folder.is_dir():
+        raise FileNotFoundError(f"{mod_name} mod folder not found: {folder}")
+    lines = read_text_lines(modlist)
+    header: list[str] = []
+    body: list[str] = []
+    seen_entry = False
+    for line in lines:
+        if not seen_entry and line.startswith("#"):
+            header.append(line)
+            continue
+        seen_entry = True
+        if re.match(rf"^[+\-]{re.escape(mod_name)}$", line):
+            continue
+        body.append(line)
+    out = header + [f"+{mod_name}"] + body
+    if dry_run:
+        info(f"Would pin {mod_name} highest in {modlist}")
+        return
+    stamp_backup(modlist)
+    write_text_lines(modlist, out)
+    ok(f"modlist: pinned {mod_name} highest (first +/- line)")
+
+
 def wipe_managed_mod(mo2_root: Path, modlist: Path, folder_name: str, dry_run: bool) -> None:
     # Never wipe Grok-numbered catalog folders
     if re.match(r"^\d+-", folder_name):
@@ -6567,7 +6595,7 @@ def run_dep_side_effects(
     *,
     dry_run: bool,
 ) -> None:
-    """Apply backup → moves → overwrite → deletes → console.
+    """Apply backup → moves → overwrite → deletes.
 
     ``backup:`` zips into newest DOGMA/backups/<stamp>/misc/ first (skip if
     already archived). ``deletes: [<Mod>/bin]`` runs after overwrite.
@@ -6579,7 +6607,6 @@ def run_dep_side_effects(
     if mod_dir is not None and dep.overwrite:
         run_dep_overwrites(mo2_root, dep, mod_dir, dry_run=dry_run)
     run_dep_deletes(mo2_root, dep, dry_run=dry_run, mod_dir=mod_dir)
-    queue_console_cmds(mo2_root, dep, dry_run=dry_run)
 
 
 def _migrate_file_into_downloads(src: Path, dest_dir: Path) -> bool:

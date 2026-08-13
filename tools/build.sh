@@ -3,6 +3,7 @@
 #
 # Layout (MCM-aligned):
 #   src/_common/<gamedata-rel>/...          -> <out>/<gamedata-rel>/...  (names kept)
+#   src/_common/<feat>/<gamedata-rel>/...   -> always-on nested (path_key=<feat>)
 #   src/<category>/<feature>/<gamedata-rel>/... -> <out>/<gamedata-rel>/...  (merged)
 #   src/_debug/<gamedata-rel>/...           -> top-level feature; path_key = debug
 #   src/<feature>/<gamedata-rel>/...        -> same (top-level; path_key = feature)
@@ -153,6 +154,26 @@ run_alao_local() {
 	"${py[@]}" "$ROOT/tools/alao_local.py"
 }
 
+run_gen_defaults() {
+	case "$ONLY" in
+		all | "" | common) ;;
+		*) return 0 ;;
+	esac
+	local py=()
+	if command -v py >/dev/null 2>&1; then
+		py=(py -3)
+	elif command -v python3 >/dev/null 2>&1; then
+		py=(python3)
+	elif command -v python >/dev/null 2>&1; then
+		py=(python)
+	else
+		echo "build: Python 3 required for gen_defaults.py" >&2
+		return 1
+	fi
+	echo "build: snapshot 3rd-party defaults…"
+	"${py[@]}" "$ROOT/tools/gen_defaults.py"
+}
+
 should_skip_name() {
 	local base="$1"
 	case "$base" in
@@ -265,6 +286,14 @@ map_src_file() {
 			_emit_path_key=""
 			_emit_base="$base"
 			return 0
+		elif ! is_gamedata_root "$common_bucket"; then
+			# Nested always-on: _common/<feat>/<gamedata-root>/... → path_key=<feat>
+			local rest="${bucket_rel#"$common_bucket"/}"
+			local nested_bucket="${rest%%/*}"
+			if [[ -n "$rest" && "$rest" != "$bucket_rel" ]] && is_gamedata_root "$nested_bucket"; then
+				path_key="$common_bucket"
+				bucket_rel="$rest"
+			fi
 		fi
 	else
 		local cat="${parts[0]}"
@@ -359,12 +388,20 @@ stage_file() {
 	mkdir -p "${staged%/*}"
 
 	if [[ -n "$path_key" && "$base" == "mcm.script" ]]; then
+		local data_src="${src_path%/*}/_data.script"
 		local conf_src="${src_path%/*}/_conf.script"
-		if [[ -f "$conf_src" ]]; then
+		if [[ -f "$data_src" || -f "$conf_src" ]]; then
 			{
-				cat "$conf_src"
-				echo ""
-				echo "-- dogma-build: conf prepended so main-menu MCM gather sets _G conf"
+				if [[ -f "$data_src" ]]; then
+					cat "$data_src"
+					echo ""
+					echo "-- dogma-build: _data prepended so MCM gather sees dogma_defaults_data"
+				fi
+				if [[ -f "$conf_src" ]]; then
+					cat "$conf_src"
+					echo ""
+					echo "-- dogma-build: conf prepended so main-menu MCM gather sets _G conf"
+				fi
 				cat "$src_path"
 			} > "$staged"
 			printf '%s\n' "$dest_rel" >> "$MANIFEST"
@@ -448,6 +485,7 @@ if [[ -n "$DEPLOY_MOD" ]]; then
 fi
 
 run_alao_local || build_fail "ALAO failed"
+run_gen_defaults || build_fail "gen_defaults failed"
 echo "building..."
 
 # Stage every shippable file (quiet).

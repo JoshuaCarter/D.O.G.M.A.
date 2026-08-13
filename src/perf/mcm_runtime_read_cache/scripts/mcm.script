@@ -42,11 +42,17 @@ local last_flush_ms = HOOK.last_flush_ms or 0
 local logging_on = HOOK.logging_on or false
 -- Only serve/fill cache while a game session is loaded.
 local active = HOOK.active or false
+-- MCM enable: off = pass through to orig get/set (session gate still runs).
+local wanted = HOOK.wanted
+if wanted == nil then
+	wanted = true
+end
 HOOK.hit_total = hit_total
 HOOK.miss_total = miss_total
 HOOK.last_flush_ms = last_flush_ms
 HOOK.logging_on = logging_on
 HOOK.active = active
+HOOK.wanted = wanted
 
 local function now_ms()
 	if time_continual then
@@ -67,6 +73,23 @@ local function sync_logging()
 	logging_on = on
 	HOOK.logging_on = on
 	return on
+end
+
+local function sync_wanted()
+	local on = true
+	local orig = HOOK.orig_get
+	if orig then
+		local ok, v = pcall(orig, MOD_ID .. "/enable")
+		if ok and v ~= nil then
+			on = v == true or v == 1
+		end
+	end
+	wanted = on
+	HOOK.wanted = on
+end
+
+local function use_cache()
+	return active and wanted
 end
 
 local function emit(msg)
@@ -231,7 +254,8 @@ local function patch_get_set()
 			end
 			return nil
 		end
-		if active and present[id] then
+		local use = use_cache()
+		if use and present[id] then
 			if HOOK.logging_on then
 				note_hit(id)
 				flush_summary(false)
@@ -239,7 +263,7 @@ local function patch_get_set()
 			return cache[id]
 		end
 		local value = orig_get(id)
-		if active then
+		if use then
 			present[id] = true
 			cache[id] = value
 			if HOOK.logging_on then
@@ -289,9 +313,11 @@ local function register_lifecycle()
 		if active then
 			clear_slots("on_option_change")
 		end
+		sync_wanted()
 	end)
 	-- Fresh enable when entering a loaded game; warm across later map loads.
 	RegisterScriptCallback("on_game_load", function()
+		sync_wanted()
 		enable_cache("on_game_load")
 	end)
 	-- Menu Accept skips on_option_change — do not cache until the next load.
@@ -321,6 +347,13 @@ function on_mcm_load(options)
 				type = "desc",
 				text = "ui_mcm_dogma_perf_mcm_runtime_read_cache_page_description",
 			},
+			{
+				id = "enable",
+				type = "check",
+				val = 1,
+				def = CONFIG.DEFAULTS["enable"],
+				hint = "dogma_perf_mcm_runtime_read_cache_enable",
+			},
 		}),
 	})
 end
@@ -331,4 +364,5 @@ function on_game_start()
 	end
 	register_lifecycle()
 	sync_logging()
+	sync_wanted()
 end

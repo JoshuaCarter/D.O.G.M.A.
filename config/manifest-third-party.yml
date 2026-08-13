@@ -28,10 +28,7 @@
 #       "Replace the files in the destination" (file-level; dirs merge)
 #       src may be a dir (bin), file (foo.dll), or glob ("*.dll", "MT/*.dll")
 # 14. deletes: <Anomaly>/<GAMMA>/<Mod> paths (zip untouched; after overwrite)
-# 15. console: / mcm_reset: / mcm_set: / settings: - game/MCM side effects
-#       mcm_reset: MCM key roots (e.g. ssfx_module) → script def= before mcm_set:
-#       mcm_set: only when keys are 1:1 with this pack (e.g. blood/* on Painter).
-#       Profile-wide MCM deviations live in mcm_config.yml (Alt+U / Setup).
+# MCM / [options] / console defaults live in mcm_config.yml (in-game Defaults tab).
 #
 
 # --------------------------------
@@ -128,8 +125,6 @@ Atmospherics:
     - 290- Atmospherics Shaders Weathers and Reshade Latest - Hippobot
     - 290- Atmospherics Shaders Weathers and Reshade - Hippobot
     - 296- Atmospherics Shaders Weathers and Reshade - Hippobot
-  settings:
-    - video/weather/persistent_weather: "false"
   deletes:
     - <Anomaly>/appdata/shaders_cache
 
@@ -178,16 +173,6 @@ Melancholy Weathers:
     - 296- Atmospherics Shaders Weathers and Reshade - Hippobot
   deletes:
     - <Anomaly>/appdata/shaders_cache
-  mcm_set:
-    - melancholy/melansurge/stormtype: "3"
-    - melancholy/melansurge/surgetype: "1"
-  mcm_reset:
-    - ssfx_module
-  settings:
-    - video/weather/persistent_weather: "false"
-  console:
-    - cfg_load melancholy
-    - ssfx_water 1,0.8,1,0.1
 
 Enhanced Shader Color Grading:
   stage: OMIT
@@ -253,11 +238,6 @@ Painter of the Zone:
   url_discord: https://discord.com/channels/912320241713958912/1290829430020898826
   requires:
     - Screen Space Shaders
-  mcm_set:
-    - blood/bullettime/enable: "false"
-    - blood/dismemberment/enable: "false"
-    - blood/killcam/enable: "false"
-    - blood/particles/fingers_size_min: "3"
 
 # --------------------------------
 # GAMEPLAY / AlifePlus
@@ -339,8 +319,6 @@ AlifeTactics:
     # Stealth Crash Fix fights Stealth / xcvb for visual_memory_manager.
     - G.A.M.M.A. Stealth Crash Fix
     - G.A.M.M.A. NPCs Faster Reactions
-  mcm_set:
-    - idiots/options/noNpcLooting: "false"
 
 # --------------------------------
 # GAMEPLAY
@@ -397,9 +375,6 @@ Medik Health Monitor:
   stage: RELEASE
   default: true
   url_discord: https://discord.com/channels/912320241713958912/1513868339158581318
-  mcm_set:
-    - medik/activation: "hold"
-    - medik/gui_mod: "none"
 
 Quick Action Wheels Overhaul:
   stage: RELEASE
@@ -420,11 +395,6 @@ Ammo Check Enhanced:
   url_discord: https://discord.com/channels/912320241713958912/1511043338583806003
   disables:
     - 261- Ammo Check - Ishmaeel
-  mcm_set:
-    - rax_ammo_check/display/minimalist_bar: "true"
-    - rax_ammo_check/firemode/doubletap_ms: "50"
-    - rax_ammo_check/firemode/enable: "true"
-    - rax_ammo_check/hud_behavior/auto_check_reload: "true"
 
 Crafting UI Tweaks:
   stage: RELEASE
@@ -446,9 +416,6 @@ Seamless Inventory Sort:
   url_discord: https://discord.com/channels/912320241713958912/1520580529273962567
   enables:
     - 110- SortingPlus - RavenAscendant
-  mcm_set:
-    - seamless_sort/siss_gaps/keep_gaps: "true"
-    - seamless_sort/siss_hl/hl_new_a: "20"
 
 Custom PDA Taskboard:
   stage: DEV

@@ -208,7 +208,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--all-profiles", action="store_true", help="Apply mod disables to every profile")
     only = p.add_mutually_exclusive_group()
     only.add_argument("--disable-only", action="store_true", help="Only apply disables")
-    only.add_argument("--initialize-only", action="store_true", help="Only apply MCM defaults")
+    only.add_argument("--initialize-only", action="store_true", help="No-op (MCM defaults are in-game)")
     only.add_argument("--keybinds-only", action="store_true", help="Only scrub MCM keybinds")
     only.add_argument("--user-ltx-only", action="store_true", help="Only restore user.ltx")
     p.add_argument("--dry-run", action="store_true", help="Print changes; write nothing")
@@ -251,7 +251,7 @@ def main(argv: list[str] | None = None) -> int:
         mo2_root = cwd
 
     do_disable = not (args.initialize_only or args.keybinds_only or args.user_ltx_only)
-    do_initialize = not (args.disable_only or args.keybinds_only or args.user_ltx_only)
+    do_initialize = False
     do_keybinds = not (args.disable_only or args.initialize_only or args.user_ltx_only)
     do_user_ltx = not (args.disable_only or args.initialize_only or args.keybinds_only)
 

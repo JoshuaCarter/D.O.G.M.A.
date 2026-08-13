@@ -270,46 +270,10 @@ def cmd_disable(args: argparse.Namespace) -> int:
 
 
 def cmd_defaults(args: argparse.Namespace) -> int:
-    mo2, cfg = cfg_paths(args)
-    lib.guard_mo2_closed(force=args.force, dry_run=args.dry_run)
-    modlist = lib.modlist_path(mo2, args.profile)
-    init_path = lib.resolve_manifest_path(cfg)
-    data = lib.load_manifest(init_path)
-    installed = lib.resolve_installed_features(mo2, data)
-
-    suggested_ids: set[str] | None = None
-    sel = resolve_selection(args, mo2, data)
-    if sel is None and data.installer_options:
-        option_ids = lib.default_installer_option_ids(data, installed=installed)
-        sel = lib.InstallerSelection(
-            option_ids=option_ids,
-            exclusive_picks=lib.default_exclusive_picks(data, option_ids),
-        )
-    if sel is not None:
-        suggested_ids = {
-            d.id
-            for d in lib.resolve_install_order(
-                data,
-                sel.option_ids,
-                sel.exclusive_picks,
-                installed=installed,
-            )
-        }
-
-    files, values = lib.apply_initialize(
-        mo2,
-        init_path,
-        modlist,
-        args.dry_run,
-        installed=installed,
-        suggested_ids=suggested_ids,
+    lib.info(
+        "defaults job skipped: MCM / [options] / console are applied in-game "
+        "(DOGMA → Defaults), not by Setup"
     )
-    if values:
-        verb = "Would change" if args.dry_run else "Changed"
-        lib.ok(f"{verb} {values} setting(s) across {files} file(s)")
-    else:
-        lib.info("No defaults needed changing.")
-    lib.ok(f"defaults job done: values={values} files={files}")
     return 0
 
 
@@ -432,8 +396,16 @@ def _with_selection(args: argparse.Namespace, **overrides: object) -> argparse.N
     return ns
 
 
+def cmd_pin_dogma(args: argparse.Namespace) -> int:
+    mo2, _cfg = cfg_paths(args)
+    lib.guard_mo2_closed(force=args.force, dry_run=args.dry_run)
+    modlist = lib.modlist_path(mo2, args.profile)
+    lib.pin_mod_highest(mo2, modlist, "DOGMA", args.dry_run)
+    return 0
+
+
 def cmd_update(args: argparse.Namespace) -> int:
-    """Ensure deps + disable + defaults + validate (uses saved wizard selection)."""
+    """Ensure deps + disable + validate, then pin DOGMA highest (saved wizard selection)."""
     code = cmd_setup(args)
     if code:
         return code
@@ -441,8 +413,8 @@ def cmd_update(args: argparse.Namespace) -> int:
     for step in (
         lambda: cmd_dependencies(sel),
         lambda: cmd_disable(sel),
-        lambda: cmd_defaults(sel),
         lambda: cmd_validate(sel),
+        lambda: cmd_pin_dogma(sel),
     ):
         code = step()
         if code:
@@ -483,8 +455,8 @@ def cmd_reset(args: argparse.Namespace) -> int:
         lambda: cmd_reset_base(args),
         lambda: cmd_dependencies(sel),
         lambda: cmd_disable(sel),
-        lambda: cmd_defaults(sel),
         lambda: cmd_validate(sel),
+        lambda: cmd_pin_dogma(sel),
     ):
         code = step()
         if code:
@@ -495,7 +467,7 @@ def cmd_reset(args: argparse.Namespace) -> int:
 
 
 def cmd_install(args: argparse.Namespace) -> int:
-    """Full Setup pipeline: tools → wizard → backup → deps → disable → defaults → validate."""
+    """Full Setup pipeline: tools → wizard → backup → deps → disable → validate → pin DOGMA."""
     code = cmd_setup(args)
     if code:
         return code
@@ -520,8 +492,8 @@ def cmd_install(args: argparse.Namespace) -> int:
         lambda: cmd_preinstall_backup(args),
         lambda: cmd_dependencies(mid),
         lambda: cmd_disable(mid),
-        lambda: cmd_defaults(mid),
         lambda: cmd_validate(val),
+        lambda: cmd_pin_dogma(mid),
     ):
         code = step()
         if code:
@@ -575,7 +547,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     inst = sub.add_parser(
         "install",
-        help="Full Setup: tools, wizard, deps, disable, defaults, validate",
+        help="Full Setup: tools, wizard, deps, disable, validate, pin DOGMA",
         parents=[common],
     )
     inst.add_argument(
@@ -631,7 +603,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     a = sub.add_parser(
         "defaults",
-        help="Apply MCM defaults from manifest.yml",
+        help="No-op: MCM defaults are in-game (DOGMA → Defaults)",
         parents=[common, sel],
     )
     a.set_defaults(func=cmd_defaults)
@@ -653,14 +625,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     rst = sub.add_parser(
         "reset",
-        help="FRESH_INSTALL + MCM, then deps/disable/defaults/validate",
+        help="FRESH_INSTALL + MCM, then deps/disable/validate/pin",
         parents=[common],
     )
     rst.set_defaults(func=cmd_reset)
 
     upd = sub.add_parser(
         "update",
-        help="Ensure deps + disable + defaults + validate (saved selection)",
+        help="Ensure deps + disable + validate + pin DOGMA (saved selection)",
         parents=[common],
     )
     upd.set_defaults(func=cmd_update)

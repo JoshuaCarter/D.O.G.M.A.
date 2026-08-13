@@ -19,8 +19,9 @@
 	dogma_perf.log records every stop while perf_log is on (threshold only
 	gates console/xray warns). Rewritten every ~10s as a fixed-width table:
 	  n  n/s  min  max  avg  key
-	Totals reset on game load (and when logging is toggled). File is left as-is
-	on quit so the last flush remains readable. Units: us.
+	Totals reset on game load (and when logging is toggled). Empty snapshots
+	are never written, so quit/menu reload/crash cannot blank the last flush.
+	Replace is write-to-.tmp then rename. Units: us.
 
 	Timing uses engine profile_timer (QPC → microseconds) when available.
 	os.clock fallback is ~1ms quantum and cannot resolve sub-ms work.
@@ -113,29 +114,61 @@ local function fmt_row(n, cps, min_v, max_v, avg, label)
 	)
 end
 
+local function has_stats()
+	return next(stats) ~= nil
+end
+
+-- Write tmp, rotate live → .bak, then tmp → live. Crash mid-flush leaves
+-- .bak (and never truncates dogma_perf.log in place).
+local function replace_log(path, body)
+	local tmp = path .. ".tmp"
+	local bak = path .. ".bak"
+	local ok, f = pcall(io.open, tmp, "w")
+	if not (ok and f) then
+		return false
+	end
+	f:write(body)
+	f:close()
+	pcall(os.remove, bak)
+	pcall(os.rename, path, bak)
+	if pcall(os.rename, tmp, path) then
+		return true
+	end
+	ok, f = pcall(io.open, path, "w")
+	if not (ok and f) then
+		pcall(os.rename, bak, path)
+		pcall(os.remove, tmp)
+		return false
+	end
+	f:write(body)
+	f:close()
+	pcall(os.remove, tmp)
+	return true
+end
+
 local function write_summary()
+	if not has_stats() then
+		return
+	end
 	local path = resolve_log_path()
 	if not path then
 		return
 	end
-	local ok, f = pcall(io.open, path, "w")
-	if not (ok and f) then
-		return
-	end
 	local stamp = time_global and time_global() or 0
-	flush_count = flush_count + 1
-	f:write(string.format(
-		"# dogma_perf (us) flush=%d interval=%ds game_ms=%d\n",
-		flush_count,
-		FLUSH_INTERVAL_SEC,
-		stamp
-	))
-	f:write(SEP)
-	f:write("\n")
-	f:write(COL_HDR)
-	f:write("\n")
-	f:write(SEP)
-	f:write("\n")
+	local lines = {
+		string.format(
+			"# dogma_perf (us) flush=%d interval=%ds game_ms=%d\n",
+			flush_count + 1,
+			FLUSH_INTERVAL_SEC,
+			stamp
+		),
+		SEP,
+		"\n",
+		COL_HDR,
+		"\n",
+		SEP,
+		"\n",
+	}
 	for _, label in ipairs(sorted_labels()) do
 		local s = stats[label]
 		local avg = s.n > 0 and (s.sum / s.n) or 0
@@ -144,10 +177,13 @@ local function write_summary()
 			total_ms = 1
 		end
 		local cps = s.n * 1000 / total_ms
-		f:write(fmt_row(s.n, cps, s.min, s.max, avg, label))
-		f:write("\n")
+		lines[#lines + 1] = fmt_row(s.n, cps, s.min, s.max, avg, label)
+		lines[#lines + 1] = "\n"
 	end
-	f:close()
+	if not replace_log(path, table.concat(lines)) then
+		return
+	end
+	flush_count = flush_count + 1
 	last_flush_ms = stamp
 end
 
@@ -210,7 +246,6 @@ local function begin_session()
 	clear_stats()
 	stack = {}
 	last_flush_ms = time_global and time_global() or 0
-	write_summary()
 	ensure_flush_timer()
 end
 
@@ -220,7 +255,6 @@ function sync()
 	if logging_on and not was_on then
 		begin_session()
 	elseif was_on and not logging_on then
-		-- Final snapshot stays on disk; memory cleared. No wipe-on-quit path.
 		write_summary()
 		clear_stats()
 		stack = {}
@@ -344,7 +378,8 @@ function time(mod_id, method, a, b)
 	end)(fn())
 end
 
--- Totals reset on game load only (file left alone on quit).
+-- Totals reset on game load only. Empty writes are skipped so the last
+-- flush stays on disk through quit, menu reload, and crash.
 if RegisterScriptCallback then
 	RegisterScriptCallback("on_option_change", sync)
 	RegisterScriptCallback("on_game_load", function()

@@ -666,18 +666,9 @@ local function monster_on_before_hit(monster, shit, bone_id, flags)
 end
 
 -- Heavy (FIRE2) often doesn't register a corpse hit; also catch light/heavy swing
--- while the dead mutant is the use-target.
-local function tick_slash_swing()
-	if not (CONFIG.loaded.enabled and CONFIG.loaded.slash_loot) then
-		last_knife_state = 0
-		return
-	end
+-- while the dead mutant is the use-target. Caller already verified `wpn`.
+local function tick_slash_swing(wpn)
 	if slash_input_blocked() then
-		last_knife_state = 0
-		return
-	end
-	local wpn = equipped_knife()
-	if not wpn then
 		last_knife_state = 0
 		return
 	end
@@ -727,16 +718,16 @@ function on_game_start()
 	skin_cut_sfx = sound_object(SKIN_CUT_SOUND)
 
 	RegisterScriptCallback("actor_on_update", function()
-		-- Slash rising-edge must stay every frame when slash_loot is on.
-		-- Skip the rest (and perf) when nothing is pending and slash is off.
-		local slash_on = CONFIG.loaded.enabled and CONFIG.loaded.slash_loot
+		dogma.sys.ready(CONFIG.MOD_ID, db, on_option_change)
 		local busy = pending_skin_action or pending_pickup_at
-		if not busy and not slash_on then
-			dogma.sys.ready(CONFIG.MOD_ID, db, on_option_change)
+		local knife = (CONFIG.loaded.enabled and CONFIG.loaded.slash_loot) and equipped_knife() or nil
+		if not knife then
+			last_knife_state = 0
+		end
+		if not busy and not knife then
 			return
 		end
 		dogma.perf.start("faster_skinning", "actor_on_update")
-		dogma.sys.ready(CONFIG.MOD_ID, db, on_option_change)
 		if busy then
 			tick_pending_skin_action()
 			if pending_skin_action then
@@ -744,8 +735,8 @@ function on_game_start()
 			end
 			tick_pending_pickup()
 		end
-		if slash_on then
-			tick_slash_swing()
+		if knife then
+			tick_slash_swing(knife)
 		end
 		dogma.perf.stop()
 	end)

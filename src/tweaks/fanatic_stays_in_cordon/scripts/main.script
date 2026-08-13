@@ -85,11 +85,43 @@ local function cancel_training_tasks()
 	end
 end
 
-local function dismiss_fanat()
-	if not (xr_effects and xr_effects.remove_task_companion) then
+-- Stock remove_task_companion runs execute_script_on_squad → get_object_squad,
+-- which is whoever Fanatic is grouped with. Only strip HIS story squad.
+local function strip_companion_npc(id)
+	if not id then
 		return
 	end
-	xr_effects.remove_task_companion(db.actor, nil, { FANAT_SQUAD })
+	local npc = db.storage[id] and db.storage[id].object
+	if npc then
+		npc:disable_info_portion("npcx_is_companion")
+		npc:disable_info_portion("npcx_beh_cannot_dismiss")
+		if xr_logic and xr_logic.restore_scheme_and_logic then
+			xr_logic.restore_scheme_and_logic(npc)
+		end
+	end
+	local se = alife_object(id)
+	if se then
+		se_save_var(se.id, se:name(), "companion", nil)
+		se_save_var(se.id, se:name(), "companion_cannot_dismiss", nil)
+		se_save_var(se.id, se:name(), "companion_cannot_teleport", nil)
+	end
+	if axr_companions and axr_companions.non_task_companions then
+		axr_companions.non_task_companions[id] = nil
+	end
+end
+
+local function dismiss_fanat()
+	local squad = fanat_squad()
+	if not squad then
+		return
+	end
+	if axr_companions and axr_companions.companion_squads then
+		axr_companions.companion_squads[squad.id] = nil
+	end
+	squad.scripted_target = nil
+	for k in squad:squad_members() do
+		strip_companion_npc(k.id)
+	end
 	log("dismissed " .. FANAT_SQUAD)
 end
 

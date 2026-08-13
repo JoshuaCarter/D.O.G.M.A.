@@ -11,63 +11,68 @@ local HIT_WINDOW_MS = 30000
 local HIT_CAP = 10
 local UI_W = 1024
 local UI_H = 768
-local LINE_H = 20
-local PANEL_W = 688
-local PANEL_PAD = 16
-local TICK_W = 4
-local TICK_H = 14
-local TICK_GAP = 10
+local LINE_H = 18 -- letterica16
+local PANEL_W = 1024
+local PANEL_PAD = 12
 local TITLE_LINES = 2 -- title + blank
 local PANEL_TEX = "ui_inGame2_white_rect"
+local BHS_DAMAGESCALE = 0.85
 
 local HIT_STATIC = "dogma_death_report_summary"
 local TAB_STATIC = "dogma_death_report_prompt"
 local PANEL_STATIC = "dogma_death_report_panel"
 
--- Faithful bone → limb (same ids as damage_location_fix / ADB).
+-- Faithful bone → BHS limb (same ids as damage_location_fix / ADB).
 local HITBOX = {
 	[14] = "head", [15] = "head", [16] = "head", [17] = "head",
 	[18] = "head", [19] = "head",
 	[2] = "torso", [11] = "torso", [12] = "torso", [13] = "torso",
-	[20] = "left arm", [21] = "left arm", [22] = "left arm", [23] = "left arm",
-	[24] = "left arm", [25] = "left arm", [26] = "left arm", [27] = "left arm",
-	[28] = "left arm", [29] = "left arm", [30] = "left arm", [31] = "left arm",
-	[32] = "left arm",
-	[33] = "right arm", [34] = "right arm", [35] = "right arm", [36] = "right arm",
-	[3] = "left leg", [4] = "left leg", [5] = "left leg", [6] = "left leg",
-	[7] = "right leg", [8] = "right leg", [9] = "right leg", [10] = "right leg",
+	[20] = "leftarm", [21] = "leftarm", [22] = "leftarm", [23] = "leftarm",
+	[24] = "leftarm", [25] = "leftarm", [26] = "leftarm", [27] = "leftarm",
+	[28] = "leftarm", [29] = "leftarm", [30] = "leftarm", [31] = "leftarm",
+	[32] = "leftarm",
+	[33] = "rightarm", [34] = "rightarm", [35] = "rightarm", [36] = "rightarm",
+	[3] = "leftleg", [4] = "leftleg", [5] = "leftleg", [6] = "leftleg",
+	[7] = "rightleg", [8] = "rightleg", [9] = "rightleg", [10] = "rightleg",
 }
 
 -- ADB body-part multipliers (used only when estimating via get_protection).
 local HITBOX_MULT = {
 	["head"] = 0.8,
 	["torso"] = 0.9,
-	["left arm"] = 0.85,
-	["right arm"] = 0.85,
-	["left leg"] = 0.85,
-	["right leg"] = 0.85,
+	["leftarm"] = 0.85,
+	["rightarm"] = 0.85,
+	["leftleg"] = 0.85,
+	["rightleg"] = 0.85,
 }
 
 local LIMB_DISPLAY = {
 	["head"] = "Head",
 	["torso"] = "Torso",
-	["left arm"] = "Left Arm",
-	["right arm"] = "Right Arm",
-	["left leg"] = "Left Leg",
-	["right leg"] = "Right Leg",
+	["leftarm"] = "Left Arm",
+	["rightarm"] = "Right Arm",
+	["leftleg"] = "Left Leg",
+	["rightleg"] = "Right Leg",
 	["body"] = "Body",
 	["legs"] = "Legs",
 }
 
-local LIMB_RGB = {
-	["head"] = {255, 92, 92},
-	["torso"] = {230, 230, 230},
-	["left arm"] = {130, 190, 255},
-	["right arm"] = {130, 190, 255},
-	["left leg"] = {140, 220, 160},
-	["right leg"] = {140, 220, 160},
-	["body"] = {200, 200, 200},
-	["legs"] = {140, 220, 160},
+-- Anomaly community colors (same keys as stalker_id / PDA factions).
+local COMM_RGB = {
+	stalker = {255, 200, 60},
+	bandit = {255, 170, 40},
+	csky = {80, 190, 220},
+	army = {70, 160, 70},
+	freedom = {90, 200, 80},
+	dolg = {220, 50, 50},
+	ecolog = {180, 210, 70},
+	killer = {90, 110, 200},
+	monolith = {255, 140, 40},
+	zombied = {140, 170, 70},
+	renegade = {180, 70, 70},
+	greh = {160, 40, 40},
+	isg = {140, 140, 150},
+	actor = {255, 255, 255},
 }
 
 local KIND_RGB = {
@@ -77,9 +82,9 @@ local KIND_RGB = {
 }
 
 local TYPE_INFO = {
-	bullet = { label = "Bullet", rgb = {220, 190, 110} },
-	tear = { label = "Tear", rgb = {220, 80, 70} },
-	impact = { label = "Impact", rgb = {186, 186, 196} },
+	bullet = { label = "Gun", rgb = {220, 190, 110} },
+	tear = { label = "Claws", rgb = {220, 80, 70} },
+	impact = { label = "Strike", rgb = {186, 186, 196} },
 	burn = { label = "Fire", rgb = {255, 140, 40} },
 	explosion = { label = "Explosion", rgb = {255, 200, 50} },
 	radiation = { label = "Radiation", rgb = {80, 220, 90} },
@@ -87,15 +92,16 @@ local TYPE_INFO = {
 	chemical = { label = "Chemical", rgb = {80, 210, 160} },
 	electric = { label = "Electric", rgb = {90, 170, 255} },
 	bleed = { label = "Bleed", rgb = {190, 48, 56} },
-	unknown = { label = "Hit", rgb = {170, 170, 170} },
+	unknown = { label = "Melee", rgb = {170, 170, 170} },
 }
 
 local COL = {
 	title = "%c[255,255,214,140]",
-	muted = "%c[255,150,150,150]",
+	white = "%c[255,255,255,255]",
+	red = "%c[255,255,72,72]",
+	orange = "%c[255,255,160,48]",
+	muted = "%c[255,180,180,180]",
 	dim = "%c[255,110,110,110]",
-	count = "%c[255,180,180,180]",
-	armor = "%c[255,110,200,130]",
 }
 
 -- Engine hit.type → TYPE_INFO key.
@@ -107,6 +113,7 @@ local report_visible = false
 local last_toggle_ms = 0
 local frozen = nil -- { lines, footer, hint }
 local adb_wrapped = false
+local bhs_rd_wrapped = false
 
 -- BHS limb keys → summary labels. Limb HP is points, not 0-1; percent needs maxhp.
 local DIED_LIMBS = {
@@ -120,6 +127,9 @@ local DIED_LIMBS = {
 
 -- Cached live BHS tables (same refs Medik / campfire use).
 local bhs_health, bhs_timedhp, bhs_maxhp
+-- Running limb points from recorded hits (BHS tables are often still full at death).
+local limb_pts = {}
+local limb_max_pts = {}
 
 local function log(msg)
 	if CONFIG.loaded.debug_log then
@@ -129,6 +139,85 @@ end
 
 local function rgb_code(rgb)
 	return string.format("%%c[255,%d,%d,%d]", rgb[1], rgb[2], rgb[3])
+end
+
+local function comm_rgb(comm)
+	if not comm or comm == "" then
+		return KIND_RGB.stalker
+	end
+	if COMM_RGB[comm] then
+		return COMM_RGB[comm]
+	end
+	local base = comm:match("^([^_]+)")
+	return (base and COMM_RGB[base]) or KIND_RGB.stalker
+end
+
+local function actor_hp()
+	local a = db and db.actor
+	if not a then
+		return nil
+	end
+	return tonumber(a.health)
+end
+
+local function pct_num(frac)
+	if not frac then
+		return 0
+	end
+	local pct = math.floor(frac * 100 + 0.5)
+	if pct < 0 then
+		return 0
+	end
+	if pct > 100 then
+		return 100
+	end
+	return pct
+end
+
+local function dmg_txt(pct)
+	if not pct or pct < 1 then
+		return "-<1%"
+	end
+	return string.format("-%d%%", pct)
+end
+
+local function pts_pct(cur, maxv)
+	cur = tonumber(cur)
+	maxv = tonumber(maxv)
+	if not cur or not maxv or maxv <= 0 then
+		return 0
+	end
+	local pct = math.floor((cur / maxv) * 100 + 0.5)
+	if pct < 0 then
+		return 0
+	end
+	if pct > 100 then
+		return 100
+	end
+	return pct
+end
+
+-- BHS limb points (same formula as damage_location_fix).
+local function bhs_limb_points(amount, limb, damagescale)
+	damagescale = damagescale or BHS_DAMAGESCALE
+	local d = math.ceil((amount * 100) / 11 * damagescale)
+	if limb == "head" then
+		d = math.ceil((amount * 2 * 100) / 11 * damagescale)
+		if d >= 8 then
+			d = 7
+		end
+		return d
+	end
+	if limb == "torso" and d >= 8 then
+		d = 7
+	end
+	if
+		(limb == "leftarm" or limb == "rightarm" or limb == "leftleg" or limb == "rightleg")
+		and d >= 4
+	then
+		d = 3
+	end
+	return d
 end
 
 local function init_type_keys()
@@ -285,7 +374,7 @@ local function object_char_name(obj)
 	return nil
 end
 
-local function weapon_label(shit, draftsman)
+local function weapon_obj(shit, draftsman)
 	local wid = shit and shit.weapon_id
 	if not wid or wid == 0 or not level or not level.object_by_id then
 		return nil
@@ -310,7 +399,82 @@ local function weapon_label(shit, draftsman)
 			return nil
 		end
 	end
+	return obj
+end
+
+local function weapon_label(obj)
+	if not obj then
+		return nil
+	end
 	return section_nice_name(object_section(obj), false)
+end
+
+local function ammo_list_for(obj)
+	if not obj then
+		return nil
+	end
+	if utils_item and utils_item.get_ammo then
+		local ok, list = pcall(function()
+			return utils_item.get_ammo(nil, obj:id())
+		end)
+		if ok and list and list[1] then
+			return list
+		end
+	end
+	local sec = object_section(obj)
+	if not (sec and ini_sys and ini_sys.r_string_ex) then
+		return nil
+	end
+	local s = ini_sys:r_string_ex(sec, "ammo_class")
+	if not s or s == "" then
+		return nil
+	end
+	local list = {}
+	for part in string.gmatch(s, "([^,]+)") do
+		local t = part:match("^%s*(.-)%s*$")
+		if t and t ~= "" then
+			list[#list + 1] = t
+		end
+	end
+	if not list[1] then
+		return nil
+	end
+	return list
+end
+
+local function ammo_label(obj)
+	if not obj then
+		return nil
+	end
+	if IsMelee and IsMelee(obj) then
+		return nil
+	end
+	if not obj.get_ammo_type then
+		return nil
+	end
+	local list = ammo_list_for(obj)
+	if not list then
+		return nil
+	end
+	local ok, idx = pcall(function()
+		return obj:get_ammo_type()
+	end)
+	if not (ok and idx ~= nil) then
+		return nil
+	end
+	local sec = list[idx + 1]
+	if not sec then
+		return nil
+	end
+	return section_nice_name(sec, true)
+end
+
+local function mutant_weapon(type_key)
+	local info = type_info(type_key)
+	if info and info.label and info.label ~= "Gun" then
+		return info.label
+	end
+	return "Melee"
 end
 
 local function world_source(type_key)
@@ -326,7 +490,8 @@ end
 
 local function source_from_draftsman(draftsman, type_key)
 	if not draftsman or is_actor(draftsman) then
-		return world_source(type_key)
+		local name, tkey = world_source(type_key)
+		return { name = name, kind = "world", type_key = tkey }
 	end
 
 	local ok_stalker, is_stalker = pcall(function()
@@ -334,24 +499,22 @@ local function source_from_draftsman(draftsman, type_key)
 	end)
 	if ok_stalker and is_stalker then
 		local name = object_char_name(draftsman)
-		local comm
+		local comm, comm_label
 		local ok_c, c = pcall(function()
 			return draftsman:character_community()
 		end)
 		if ok_c then
-			comm = community_label(c)
+			comm = c
+			comm_label = community_label(c)
 		end
-		if name and comm then
-			return name .. " (" .. comm .. ")", "stalker"
+		if not name then
+			name = comm_label
 		end
-		if name then
-			return name, "stalker"
+		if not name then
+			local sec = object_section(draftsman)
+			name = section_nice_name(sec, true) or "Stalker"
 		end
-		if comm then
-			return comm, "stalker"
-		end
-		local sec = object_section(draftsman)
-		return section_nice_name(sec, true) or "Stalker", "stalker"
+		return { name = name, faction = comm_label, comm = comm, kind = "stalker" }
 	end
 
 	local ok_mon, is_mon = pcall(function()
@@ -359,21 +522,25 @@ local function source_from_draftsman(draftsman, type_key)
 	end)
 	if ok_mon and is_mon then
 		local name = object_char_name(draftsman) or section_nice_name(object_section(draftsman), true)
-		return name or "Mutant", "monster"
+		return { name = name or "Mutant", kind = "monster" }
 	end
 
 	local ok_an, is_an = pcall(function()
 		return IsAnomaly and IsAnomaly(draftsman)
 	end)
 	if ok_an and is_an then
-		return section_nice_name(object_section(draftsman), true) or "Anomaly", "world"
+		return {
+			name = section_nice_name(object_section(draftsman), true) or "Anomaly",
+			kind = "world",
+		}
 	end
 
 	local name = object_char_name(draftsman) or section_nice_name(object_section(draftsman), true)
 	if name then
-		return name, "world"
+		return { name = name, kind = "world" }
 	end
-	return world_source(type_key)
+	local wname, tkey = world_source(type_key)
+	return { name = wname, kind = "world", type_key = tkey }
 end
 
 local function prune_hits(now)
@@ -389,19 +556,6 @@ local function prune_hits(now)
 		end
 	end
 	hits = kept
-end
-
-local function dmg_rgb(pct)
-	if pct >= 50 then
-		return {255, 72, 72}
-	end
-	if pct >= 25 then
-		return {255, 160, 48}
-	end
-	if pct >= 10 then
-		return {255, 214, 96}
-	end
-	return {210, 210, 210}
 end
 
 local function hp_rgb(pct)
@@ -420,42 +574,64 @@ local function hp_rgb(pct)
 	return {110, 200, 130}
 end
 
-local function format_hit_line(e)
-	local tinfo = type_info(e.type_key)
-	local dmg_pct = math.floor((e.damage * 100) + 0.5)
-	local mit_pct = math.floor((e.mitigated * 100) + 0.5)
-	local src_rgb = KIND_RGB[e.kind] or KIND_RGB.world
-	local limb = LIMB_DISPLAY[e.limb] or "Body"
-	local l_rgb = LIMB_RGB[e.limb] or LIMB_RGB.body
+local function body_after_and_dmg(e)
+	local before = e.hp_before
+	local after = e.hp_after
+	local dmg = e.damage or 0
+	if before and after and before > after + 0.0005 then
+		return after, before - after
+	end
+	if before then
+		return math.max(0, before - dmg), dmg
+	end
+	return nil, dmg
+end
 
-	local dmg_txt = dmg_pct < 1 and "-<1%" or string.format("-%d%%", dmg_pct)
+local function format_hit_line(e)
+	local hp_after, body_dmg = body_after_and_dmg(e)
+	local hp_pct = pct_num(hp_after)
+	local body_pct = pct_num(body_dmg)
+	local limb = LIMB_DISPLAY[e.limb] or "Body"
+	local limb_dmg = e.limb_dmg_pct or 0
+
+	local fac_rgb
+	if e.kind == "stalker" then
+		fac_rgb = comm_rgb(e.comm)
+	else
+		fac_rgb = KIND_RGB[e.kind] or KIND_RGB.world
+	end
+	local fac = rgb_code(fac_rgb)
+
 	local parts = {
-		rgb_code(src_rgb) .. e.source,
-		COL.dim .. "   ",
-		rgb_code(l_rgb) .. limb,
-		COL.dim .. "   ",
-		rgb_code(dmg_rgb(math.max(dmg_pct, 1))) .. dmg_txt,
+		COL.white .. tostring(hp_pct) .. "%",
+		COL.red .. "(" .. dmg_txt(body_pct) .. ")",
+		COL.white .. limb,
+		COL.orange .. "(" .. dmg_txt(limb_dmg) .. ")",
+		fac .. (e.name or "?"),
 	}
-	if e.count and e.count > 1 then
-		parts[#parts + 1] = COL.count .. " x" .. tostring(e.count)
+	if e.faction and e.faction ~= "" then
+		parts[#parts + 1] = fac .. "(" .. e.faction .. ")"
 	end
-	parts[#parts + 1] = COL.dim .. "   "
-	parts[#parts + 1] = rgb_code(tinfo.rgb) .. tinfo.label
 	if e.weapon and e.weapon ~= "" then
-		parts[#parts + 1] = COL.muted .. "  " .. e.weapon
+		parts[#parts + 1] = COL.muted .. e.weapon
 	end
-	if mit_pct >= 5 then
-		parts[#parts + 1] = COL.armor .. string.format("  %d%% armor", mit_pct)
+	if e.ammo and e.ammo ~= "" then
+		parts[#parts + 1] = COL.muted .. e.ammo
 	end
-	return table.concat(parts), tinfo.rgb
+	if e.count and e.count > 1 then
+		parts[#parts + 1] = COL.dim .. "x" .. tostring(e.count)
+	end
+	return table.concat(parts, " ")
 end
 
 local function same_group(a, b)
-	return a.source == b.source
+	return a.name == b.name
 		and a.kind == b.kind
 		and a.limb == b.limb
 		and a.type_key == b.type_key
 		and a.weapon == b.weapon
+		and a.ammo == b.ammo
+		and a.comm == b.comm
 end
 
 local function merge_into(dst, src)
@@ -466,6 +642,39 @@ local function merge_into(dst, src)
 	dst.damage = sum
 	dst.count = (dst.count or 1) + (src.count or 1)
 	dst.t = src.t or dst.t
+	dst.hp_after = src.hp_after or dst.hp_after
+	dst.limb_after_pct = src.limb_after_pct or dst.limb_after_pct
+	dst.limb_dmg_pct = (dst.limb_dmg_pct or 0) + (src.limb_dmg_pct or 0)
+	if dst.limb_dmg_pct > 100 then
+		dst.limb_dmg_pct = 100
+	end
+end
+
+local function apply_limb_hit(limb, amount)
+	if not (limb == "head" or limb == "torso"
+		or limb == "leftarm" or limb == "rightarm"
+		or limb == "leftleg" or limb == "rightleg")
+	then
+		return 0, 0
+	end
+	local maxp = limb_max_pts[limb] or 11
+	if limb_pts[limb] == nil then
+		limb_pts[limb] = maxp
+	end
+	local before = limb_pts[limb]
+	local pts = bhs_limb_points(amount or 0, limb)
+	local after = before - pts
+	if after < 0 then
+		after = 0
+	end
+	limb_pts[limb] = after
+	local before_pct = pts_pct(before, maxp)
+	local after_pct = pts_pct(after, maxp)
+	local dmg_pct = before_pct - after_pct
+	if dmg_pct < 0 then
+		dmg_pct = 0
+	end
+	return after_pct, dmg_pct
 end
 
 local function push_hit(entry)
@@ -488,19 +697,53 @@ local function record_hit(shit, bone_id, damage, mitigated_frac)
 	end
 	local hit_type = shit.type
 	local tkey = type_key_of(hit_type)
-	local source, kind = source_from_draftsman(shit.draftsman, tkey)
-	if kind == "world" and tkey == "tear" then
+	local src = source_from_draftsman(shit.draftsman, tkey)
+	if src.kind == "world" and tkey == "tear" then
 		tkey = "bleed"
 	end
+	if src.type_key then
+		tkey = src.type_key
+	end
+
+	local hp_now = actor_hp()
+	local prev = hits[1]
+	if prev and prev.hp_before and prev.hp_after == nil then
+		prev.hp_after = hp_now
+	end
+
+	local limb = limb_key(bone_id)
+	local limb_after_pct, limb_dmg_pct = apply_limb_hit(limb, damage)
+
+	local wpn = weapon_obj(shit, shit.draftsman)
+	local wpn_name = weapon_label(wpn)
+	local ammo = ammo_label(wpn)
+	if not wpn_name then
+		if src.kind == "monster" then
+			wpn_name = mutant_weapon(tkey)
+		elseif src.kind == "stalker" and tkey ~= "bullet" then
+			if tkey == "tear" or tkey == "impact" then
+				wpn_name = "Melee"
+			else
+				wpn_name = mutant_weapon(tkey)
+			end
+		end
+	end
+
 	push_hit({
 		t = time_global(),
-		source = source,
-		kind = kind,
-		limb = limb_key(bone_id),
+		name = src.name,
+		faction = src.faction,
+		comm = src.comm,
+		kind = src.kind,
+		limb = limb,
 		damage = damage,
 		mitigated = math.max(0, math.min(1, mitigated_frac or 0)),
 		type_key = tkey,
-		weapon = weapon_label(shit, shit.draftsman),
+		weapon = wpn_name,
+		ammo = ammo,
+		hp_before = hp_now,
+		limb_after_pct = limb_after_pct,
+		limb_dmg_pct = limb_dmg_pct,
 	})
 end
 
@@ -590,20 +833,9 @@ local function remove_static(name)
 	end
 end
 
-local function tick_name(i)
-	return "dogma_death_report_tick_" .. tostring(i)
-end
-
-local function clear_ticks()
-	for i = 1, HIT_CAP do
-		remove_static(tick_name(i))
-	end
-end
-
 local function clear_report_ui()
 	remove_static(HIT_STATIC)
 	remove_static(PANEL_STATIC)
-	clear_ticks()
 end
 
 local function clear_death_ui()
@@ -611,20 +843,36 @@ local function clear_death_ui()
 	remove_static(TAB_STATIC)
 end
 
-local function set_text(name, text, x, y)
+local function set_text(name, text, x, y, w, h)
 	local wnd = hud_wnd(name, true)
 	if not wnd then
 		return
 	end
 	wnd:SetWndPos(vector2():set(x, y))
+	if w and h then
+		pcall(function()
+			wnd:SetWndSize(vector2():set(w, h))
+		end)
+	end
 	pcall(function()
 		wnd:SetTextComplexMode(true)
 	end)
+	local font = GetFontLetterica16Russian and GetFontLetterica16Russian()
+	if font then
+		pcall(function()
+			wnd:SetFont(font)
+		end)
+	end
 	local tc = wnd:TextControl()
 	if tc then
 		pcall(function()
 			tc:SetTextComplexMode(true)
 		end)
+		if font then
+			pcall(function()
+				tc:SetFont(font)
+			end)
+		end
 		tc:SetText(text or "")
 	end
 end
@@ -647,24 +895,6 @@ local function show_panel(x, y, w, h)
 	end)
 end
 
-local function show_tick(i, x, y, rgb)
-	local wnd = hud_wnd(tick_name(i), true)
-	if not wnd then
-		return
-	end
-	wnd:SetWndPos(vector2():set(x, y))
-	wnd:SetWndSize(vector2():set(TICK_W, TICK_H))
-	pcall(function()
-		wnd:InitTexture(PANEL_TEX)
-	end)
-	pcall(function()
-		wnd:SetStretchTexture(true)
-	end)
-	pcall(function()
-		wnd:SetTextureColor(GetARGB(255, rgb[1], rgb[2], rgb[3]))
-	end)
-end
-
 local function show_hit_summary()
 	if not frozen then
 		clear_report_ui()
@@ -677,11 +907,11 @@ local function show_hit_summary()
 
 	local text_h = n * LINE_H
 	local panel_h = text_h + PANEL_PAD * 2
-	local panel_x = math.floor((UI_W - PANEL_W) * 0.5)
+	local panel_x = 0
 	local panel_y = math.floor((UI_H - panel_h) * 0.42)
-	local text_x = panel_x + PANEL_PAD + TICK_W + TICK_GAP
+	local text_x = PANEL_PAD
 	local text_y = panel_y + PANEL_PAD
-	local tick_x = panel_x + PANEL_PAD
+	local text_w = UI_W - PANEL_PAD * 2
 
 	show_panel(panel_x, panel_y, PANEL_W, panel_h)
 
@@ -703,15 +933,7 @@ local function show_hit_summary()
 	end
 	chunks[#chunks + 1] = COL.dim .. (frozen.hint or "Press TAB to hide")
 
-	set_text(HIT_STATIC, table.concat(chunks, "\\n"), text_x, text_y)
-
-	clear_ticks()
-	local hit_y0 = text_y + TITLE_LINES * LINE_H
-	for i = 1, hit_n do
-		local rgb = frozen.lines[i].rgb or TYPE_INFO.unknown.rgb
-		local y = hit_y0 + (i - 1) * LINE_H + math.floor((LINE_H - TICK_H) * 0.5)
-		show_tick(i, tick_x, y, rgb)
-	end
+	set_text(HIT_STATIC, table.concat(chunks, "\\n"), text_x, text_y, text_w, text_h)
 end
 
 local function hide_hit_summary()
@@ -720,10 +942,8 @@ end
 
 local function show_tab_prompt()
 	local msg = tr("ui_dogma_game_death_report_prompt") or "Press TAB for death report"
-	local tab_w = 800
-	local x = (UI_W - tab_w) * 0.5
 	local y = (UI_H * 0.5) + 50
-	set_text(TAB_STATIC, COL.title .. msg, x, y)
+	set_text(TAB_STATIC, COL.title .. msg, PANEL_PAD, y, UI_W - PANEL_PAD * 2, 28)
 end
 
 local function apply_report_visibility()
@@ -867,30 +1087,115 @@ local function resolve_bhs_tables()
 	return nil
 end
 
-local function format_condition_line()
-	local health, _, maxhp = resolve_bhs_tables()
-	if not (health and maxhp) then
-		return nil
+-- Permanent `health` can stay at max while `timedhp` is current (HUD).
+local function bhs_limb_current(health, timedhp, maxhp, key)
+	local hp = tonumber(health and health[key])
+	local maxv = tonumber(maxhp and maxhp[key])
+	local temp = tonumber(timedhp and timedhp[key])
+	if not (hp and maxv and maxv > 0) then
+		return nil, maxv
 	end
+	if hp >= maxv and temp and temp > 0 and temp < maxv then
+		return temp, maxv
+	end
+	return hp, maxv
+end
+
+local function init_limb_state()
+	local health, timedhp, maxhp = resolve_bhs_tables()
+	for i = 1, #DIED_LIMBS do
+		local k = DIED_LIMBS[i].key
+		local maxv = 11
+		local cur = limb_pts[k]
+		if maxhp then
+			maxv = tonumber(maxhp[k]) or 11
+		end
+		limb_max_pts[k] = maxv
+		if cur == nil then
+			local live = bhs_limb_current(health, timedhp, maxhp, k)
+			limb_pts[k] = live or maxv
+		end
+	end
+end
+
+local function wrap_bhs_recieved_damage()
+	local bhs = rawget(_G, "zzz_player_injuries")
+	if not (bhs and type(bhs.recieved_damage) == "function") then
+		return false
+	end
+	if bhs.__dogma_death_report_rd then
+		bhs_rd_wrapped = true
+		return true
+	end
+	local orig = bhs.recieved_damage
+	bhs.recieved_damage = function(amount, bone_id)
+		local result = orig(amount, bone_id)
+		local health, timedhp, maxhp = resolve_bhs_tables()
+		if health and maxhp then
+			for i = 1, #DIED_LIMBS do
+				local k = DIED_LIMBS[i].key
+				local cur, maxv = bhs_limb_current(health, timedhp, maxhp, k)
+				if maxv then
+					limb_max_pts[k] = maxv
+				end
+				-- Trust BHS when it actually dropped; ignore stale 100% at death.
+				if cur and maxv and cur < maxv then
+					limb_pts[k] = cur
+				elseif cur and limb_pts[k] == nil then
+					limb_pts[k] = cur
+				end
+			end
+		end
+		return result
+	end
+	bhs.__dogma_death_report_rd = true
+	bhs_rd_wrapped = true
+	log("wrapped zzz_player_injuries.recieved_damage")
+	return true
+end
+
+local function format_condition_line()
+	init_limb_state()
+	local health, timedhp, maxhp = resolve_bhs_tables()
 
 	local parts = { COL.muted .. "Condition  " }
+	local any = false
 	for i = 1, #DIED_LIMBS do
 		local spec = DIED_LIMBS[i]
-		local pct = limb_pct_of(health[spec.key], maxhp[spec.key])
+		local k = spec.key
+		local track = pts_pct(limb_pts[k], limb_max_pts[k] or 11)
+		local bhs_pct
+		if health and maxhp then
+			local cur, maxv = bhs_limb_current(health, timedhp, maxhp, k)
+			if cur and maxv then
+				bhs_pct = limb_pct_of(cur, maxv)
+			end
+		end
+		local pct = track
+		if bhs_pct and bhs_pct < 100 and bhs_pct < track then
+			pct = bhs_pct
+		end
 		if i > 1 then
 			parts[#parts + 1] = COL.dim .. "   "
 		end
-		parts[#parts + 1] = rgb_code(hp_rgb(pct)) .. string.format("%s %d%%", spec.label, pct)
+		parts[#parts + 1] = rgb_code(hp_rgb(pct or 0)) .. string.format("%s %d%%", spec.label, pct or 0)
+		any = true
+	end
+	if not any then
+		return nil
 	end
 	return table.concat(parts)
 end
 
 local function freeze_hit_lines()
 	prune_hits()
+	local hp_now = actor_hp()
+	if hits[1] and hits[1].hp_before and hits[1].hp_after == nil then
+		hits[1].hp_after = hp_now
+	end
 	local lines = {}
 	for i = 1, #hits do
-		local text, rgb = format_hit_line(hits[i])
-		lines[#lines + 1] = { text = text, rgb = rgb }
+		lines[#lines + 1] = { text = format_hit_line(hits[i]) }
 	end
 	frozen = {
 		lines = lines,
@@ -905,6 +1210,8 @@ local function reset_state()
 	report_visible = false
 	last_toggle_ms = 0
 	frozen = nil
+	limb_pts = {}
+	limb_max_pts = {}
 	clear_death_ui()
 end
 
@@ -970,20 +1277,26 @@ local function on_key_press(dik)
 	try_toggle_report(dik)
 end
 
+local function wrap_hooks()
+	wrap_adb_shit_booster()
+	wrap_bhs_recieved_damage()
+end
+
 local function on_game_load()
 	reset_state()
-	wrap_adb_shit_booster()
+	wrap_hooks()
 end
 
 local function actor_on_first_update()
-	wrap_adb_shit_booster()
+	wrap_hooks()
+	init_limb_state()
 	on_option_change()
 end
 
 function on_game_start()
 	dogma.load(CONFIG.MOD_ID)
 	init_type_keys()
-	wrap_adb_shit_booster()
+	wrap_hooks()
 	on_option_change()
 
 	RegisterScriptCallback("actor_on_before_hit", actor_on_before_hit)

@@ -4,12 +4,13 @@
 	Hides ambient Dynamic News broadcast radio from hostile factions:
 	  - Faction nets (SOS, loot, artifact, trade, nearby combat, …)
 	  - Open "general" channel when speaker/subject is hostile
+	  - DNM send_tip that skips the queue (surge reactions, …)
 
 	Enemies would not SOS/loot-announce to you; story/quest tips and other
 	direct give_game_news / xpda.send paths are untouched.
 
-	Hooks DynamicNewsManager:PushToChannel only - same inject point as
-	dEmergence's DNM patch, after their wrap (zzzz_ load order).
+	Hooks DynamicNewsManager:PushToChannel (same inject as dEmergence, after
+	their wrap) and dynamic_news_helper.send_tip for queue bypasses.
 ]]
 
 local CONFIG = _G.dogma_tweaks_hide_hostile_pda_chatter_conf
@@ -30,12 +31,20 @@ local FACTIONS = {
 	renegade = true,
 }
 
--- Se headers use GetCommunityDescription(npc, 6) → "Name, Loner"
+-- Se headers: "Name, Loner" / whole title "Mercenary"
 local se_label_to_faction = nil
 
 local function log(msg)
 	if dogma.dbg.logging() then
 		dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
+	end
+end
+
+local function note_drop(reason)
+	log("drop " .. tostring(reason))
+	if not logged_first_drop then
+		logged_first_drop = true
+		dogma.console.say("hostile PDA chatter dropped: " .. tostring(reason), "blue")
 	end
 end
 
@@ -64,15 +73,27 @@ local function normalize_faction(comm)
 	return base
 end
 
+local function actor_faction()
+	local fn = rawget(_G, "get_actor_true_community") or get_actor_true_community
+	local comm = fn and fn() or nil
+	if not comm and db and db.actor then
+		local ok, c = pcall(function()
+			return db.actor:character_community()
+		end)
+		comm = ok and c or nil
+	end
+	return normalize_faction(comm)
+end
+
 local function is_hostile_faction(faction)
 	if not faction then
 		return false
 	end
-	local actor_comm = get_actor_true_community and get_actor_true_community() or nil
+	local actor_comm = actor_faction()
 	if not actor_comm or actor_comm == faction then
 		return false
 	end
-	local gr = game_relations
+	local gr = rawget(_G, "game_relations") or game_relations
 	if not (gr and gr.is_factions_enemies) then
 		return false
 	end
@@ -110,11 +131,12 @@ local function community_of_ref(ref)
 		return from_se(alife_object and alife_object(ref))
 	end
 
+	-- luabind methods are not always type "function"
 	local ok_go, c = pcall(function()
-		if type(ref.character_community) == "function" then
+		if ref.character_community then
 			return ref:character_community()
 		end
-		if type(ref.community) == "function" then
+		if ref.community then
 			return ref:community()
 		end
 		return nil
@@ -136,22 +158,44 @@ local function community_of_ref(ref)
 	return from_se(ref)
 end
 
+local function ensure_se_labels()
+	if se_label_to_faction then
+		return
+	end
+	se_label_to_faction = {}
+	for fac in pairs(FACTIONS) do
+		local key6 = "st_dyn_news_comm_" .. fac .. "_6"
+		local label6 = game.translate_string(key6)
+		if label6 and label6 ~= "" and label6 ~= key6 then
+			se_label_to_faction[label6] = fac
+		end
+		local keyf = "st_faction_" .. fac
+		local labelf = game.translate_string(keyf)
+		if labelf and labelf ~= "" and labelf ~= keyf then
+			se_label_to_faction[labelf] = fac
+		end
+	end
+end
+
 local function faction_from_se_header(se)
 	if type(se) ~= "string" or se == "" then
 		return nil
 	end
-	if not se_label_to_faction then
-		se_label_to_faction = {}
-		for fac in pairs(FACTIONS) do
-			local key = "st_dyn_news_comm_" .. fac .. "_6"
-			local label = game.translate_string(key)
-			if label and label ~= "" and label ~= key then
-				se_label_to_faction[label] = fac
-			end
+	ensure_se_labels()
+	local after = string.match(se, ",%s*(.+)$")
+	if after then
+		local fac = se_label_to_faction[after]
+		if fac then
+			return fac
+		end
+		local last = string.match(after, "([^,]+)$")
+		last = last and string.match(last, "^%s*(.-)%s*$")
+		fac = last and se_label_to_faction[last]
+		if fac then
+			return fac
 		end
 	end
-	local label = string.match(se, ",%s*(.+)$")
-	return label and se_label_to_faction[label] or nil
+	return se_label_to_faction[se]
 end
 
 -- Best-effort speaker/subject faction on a general-channel payload.
@@ -168,12 +212,13 @@ local function payload_faction(t)
 	if from_ic then
 		return from_ic
 	end
-	-- "Name, Loner" headers when Id was omitted (SeenDeathOfStalker, …)
+	-- "Name, Loner" / "Mercenary" headers when Id was omitted
 	return faction_from_se_header(t.Se)
 end
 
 local function should_drop(name, t)
 	-- Hostile faction net (SOS / loot / artifact / trade / combat chatter, …)
+	-- Merc (`killer`) net is open to everyone in DNM; loners are still enemies.
 	if is_hostile_faction(channel_faction(name)) then
 		return true, name
 	end
@@ -187,33 +232,52 @@ local function should_drop(name, t)
 	return false, nil
 end
 
-local function patch()
-	local cls = dnm_class()
-	if not cls or cls.__dogma_no_hostile_pda then
-		return cls and cls.__dogma_no_hostile_pda or false
-	end
-
-	local orig = cls.PushToChannel
-	if type(orig) ~= "function" then
+local function wrap_push(cls)
+	if not cls or type(cls.PushToChannel) ~= "function" or cls.__dogma_no_hostile_pda then
 		return false
 	end
-
+	local orig = cls.PushToChannel
 	cls.PushToChannel = function(self, name, t, fifo)
 		local drop, reason = should_drop(name, t)
 		if drop then
-			log("drop " .. tostring(reason))
-			if not logged_first_drop then
-				logged_first_drop = true
-				dogma.console.say("hostile PDA chatter dropped: " .. tostring(reason), "blue")
-			end
+			note_drop(reason)
 			return false
 		end
 		return orig(self, name, t, fifo)
 	end
 	cls.__dogma_no_hostile_pda = true
-	log("PushToChannel hooked")
-	dogma.console.say("hostile PDA chatter: PushToChannel hooked", "blue")
 	return true
+end
+
+local function wrap_send_tip()
+	local h = rawget(_G, "dynamic_news_helper")
+	if not h or type(h.send_tip) ~= "function" or h.__dogma_no_hostile_pda then
+		return false
+	end
+	local orig = h.send_tip
+	h.send_tip = function(msg, header, timeout, showtime, sender, sound, icon_by)
+		local fac = faction_from_se_header(header)
+		if not fac and icon_by == "gr" then
+			fac = normalize_faction(sender)
+		end
+		if is_hostile_faction(fac) then
+			note_drop("send_tip/" .. tostring(fac))
+			return false
+		end
+		return orig(msg, header, timeout, showtime, sender, sound, icon_by)
+	end
+	h.__dogma_no_hostile_pda = true
+	return true
+end
+
+local function patch()
+	local hooked = wrap_push(dnm_class())
+	hooked = wrap_send_tip() or hooked
+	if hooked then
+		log("hostile PDA chatter hooked")
+		dogma.console.say("hostile PDA chatter: hooked", "blue")
+	end
+	return hooked
 end
 
 function on_game_start()

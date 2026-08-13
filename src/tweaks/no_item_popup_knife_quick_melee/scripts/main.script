@@ -1,0 +1,55 @@
+--[[
+	No Item Popup Knife Quick Melee
+
+	CQC / Teivaz quick melee creates an animation_hit_* dummy (named like the
+	bayonet). Anomaly Popup Messages treats that as a pickup toast.
+
+	Wrap popup_pickup.actor_on_item_take and skip those stubs. Real knife
+	pickups still pop.
+]]
+
+local CONFIG = _G.dogma_tweaks_no_item_popup_knife_quick_melee_conf
+
+local HOOK_STATE = _G.__dogma_no_item_popup_qm_hooks or {}
+_G.__dogma_no_item_popup_qm_hooks = HOOK_STATE
+
+local function is_qm_dummy(item)
+	if not item then
+		return false
+	end
+	local ok, sec = pcall(function()
+		return item:section()
+	end)
+	return ok and type(sec) == "string" and string.find(sec, "animation_hit", 1, true) ~= nil
+end
+
+local function patch()
+	if HOOK_STATE.patched then
+		return true
+	end
+	local mod = rawget(_G, "popup_pickup")
+	if not (mod and type(mod.actor_on_item_take) == "function") then
+		return false
+	end
+
+	local orig = mod.actor_on_item_take
+	UnregisterScriptCallback("actor_on_item_take", orig)
+
+	HOOK_STATE.wrapped = function(item)
+		if is_qm_dummy(item) then
+			return
+		end
+		return orig(item)
+	end
+	mod.actor_on_item_take = HOOK_STATE.wrapped
+	RegisterScriptCallback("actor_on_item_take", HOOK_STATE.wrapped)
+	HOOK_STATE.patched = true
+	return true
+end
+
+function on_game_start()
+	dogma.load(CONFIG.MOD_ID)
+	patch()
+	RegisterScriptCallback("actor_on_first_update", patch)
+	RegisterScriptCallback("on_game_load", patch)
+end

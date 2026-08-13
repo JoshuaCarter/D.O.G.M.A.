@@ -1,9 +1,9 @@
 --[[
 	Stalker ID - centered Faction Identification replacement.
 
-	Every 100ms: exact camera look-ray first (no bush pierce), then soft aim
-	(screen tolerance + optional bush-pierce LOS). Hipfire both 100m; binoculars
-	both 200m; other ADS/zoom keeps soft at 100m but exact at 200m. Leader line:
+	Every 100ms: exact camera look-ray first, then soft aim (screen tolerance +
+	optional LOS). No bush pierce. Hipfire both 100m; binoculars both 200m;
+	other ADS/zoom keeps soft at 100m but exact at 200m. Leader line:
 	living non-hostiles normally, all living stalkers in binocs; never corpses.
 	Living hostile / zombified names are red. Losing the target fades over 2s.
 ]]
@@ -25,9 +25,8 @@ local BONES_LOS = { "bip01_spine2", "bip01_spine1", "bip01_neck" }
 local BONES_LINE = { "bip01_head" }
 local HEAD_CROWN_LIFT = 0.12 -- metres above head bone ≈ top of head
 
--- LOS recast: pierce solid bushes; walls / other statics still block.
+-- First-hit ray: objects + statics (bushes block).
 local LOOK_FLAGS = 3 -- rqtObject | rqtStatic
-local LOOK_BUSH_STEP = 0.2 -- metres nudged past each bush hit to avoid re-hitting it
 local look_pick = nil
 local LOOK_POS = vector()
 local LOOK_DIR = vector()
@@ -96,7 +95,6 @@ local function on_option_change()
 	CONFIG.loaded.binoc_max_range = dogma.mcm.uint(id, "binoc_max_range")
 	CONFIG.loaded.aim_radius_px = dogma.mcm.uint(id, "aim_radius_px")
 	CONFIG.loaded.require_visible = dogma.mcm.bool(id, "require_visible")
-	CONFIG.loaded.bush_pierce_max = math.min(5, dogma.mcm.uint(id, "bush_pierce_max"))
 	CONFIG.loaded.hide_on_death = dogma.mcm.bool(id, "hide_on_death")
 	CONFIG.loaded.always_show_line = dogma.mcm.bool(id, "always_show_line")
 	CONFIG.loaded.always_show_line_binoc = dogma.mcm.bool(id, "always_show_line_binoc")
@@ -361,13 +359,6 @@ local function display_faction(obj)
 	display(fact, name, rank, false)
 end
 
-local function is_bush_material(name)
-	if type(name) ~= "string" then
-		return false
-	end
-	return name:find("bush", 1, true) ~= nil
-end
-
 local function bone_pos(obj, bones, y_lift)
 	for i = 1, #bones do
 		local ok, p = pcall(obj.bone_position, obj, bones[i])
@@ -406,8 +397,7 @@ local function project_world(pos)
 	return ui.x, ui.y
 end
 
--- Bush-piercing ray from camera toward `to_pos`. True if the first non-bush
--- hit is `target_obj`.
+-- First hit from camera toward `to_pos`. True if that object is `target_obj`.
 local function ray_hits_object(target_obj, to_pos, max_range)
 	local d = device()
 	if not (ray_pick and d and d.cam_pos and target_obj and to_pos) then
@@ -428,53 +418,29 @@ local function ray_hits_object(target_obj, to_pos, max_range)
 	if dist < 0.05 then
 		return true
 	end
-	dx, dy, dz = dx / dist, dy / dist, dz / dist
-	LOOK_DIR:set(dx, dy, dz)
+	LOOK_DIR:set(dx / dist, dy / dist, dz / dist)
 
 	local remaining = dist + 0.5
 	if max_range and remaining > max_range then
 		remaining = max_range
 	end
-	local pierces = 0
-	local target_id = target_obj:id()
-	local max_pierce = CONFIG.loaded.bush_pierce_max or 0
 
-	while remaining > LOOK_BUSH_STEP and pierces <= max_pierce do
-		LOOK_POS:set(ox, oy, oz)
-		pick:set_position(LOOK_POS)
-		pick:set_direction(LOOK_DIR)
-		pick:set_range(remaining)
-		if db and db.actor then
-			pick:set_ignore_object(db.actor)
-		end
-
-		local ok, hit = pcall(function()
-			return pick:query()
-		end)
-		if not (ok and hit) then
-			return false
-		end
-
-		local obj = pick:get_object()
-		if obj then
-			return obj:id() == target_id
-		end
-
-		local result = pick:get_result()
-		local hit_dist = pick:get_distance()
-		if not (result and hit_dist and hit_dist > 0 and is_bush_material(result.material_name)) then
-			return false
-		end
-
-		local step = hit_dist + LOOK_BUSH_STEP
-		ox = ox + dx * step
-		oy = oy + dy * step
-		oz = oz + dz * step
-		remaining = remaining - step
-		pierces = pierces + 1
+	LOOK_POS:set(ox, oy, oz)
+	pick:set_position(LOOK_POS)
+	pick:set_direction(LOOK_DIR)
+	pick:set_range(remaining)
+	if db and db.actor then
+		pick:set_ignore_object(db.actor)
 	end
 
-	return false
+	local ok, hit = pcall(function()
+		return pick:query()
+	end)
+	if not (ok and hit) then
+		return false
+	end
+	local obj = pick:get_object()
+	return obj and obj:id() == target_obj:id()
 end
 
 local function screen_dist_to_center(pos)
@@ -486,24 +452,17 @@ local function screen_dist_to_center(pos)
 	return sqrt(dx * dx + dy * dy)
 end
 
--- Closest of pelvis / upper-spine to screen centre (nil if neither projects in range).
+-- Pelvis vs screen centre (nil if it does not project inside the aim circle).
 local function aim_screen_dist(obj, max_range, apos, radius)
-	local best = nil
 	local pelvis = aim_pos(obj)
-	if pelvis and apos:distance_to(pelvis) <= max_range then
-		local sd = screen_dist_to_center(pelvis)
-		if sd and sd <= radius then
-			best = sd
-		end
+	if not (pelvis and apos:distance_to(pelvis) <= max_range) then
+		return nil
 	end
-	local spine = los_pos(obj)
-	if spine and apos:distance_to(spine) <= max_range then
-		local sd = screen_dist_to_center(spine)
-		if sd and sd <= radius and (not best or sd < best) then
-			best = sd
-		end
+	local sd = screen_dist_to_center(pelvis)
+	if sd and sd <= radius then
+		return sd
 	end
-	return best
+	return nil
 end
 
 local function cand_screen_cmp(a, b)
@@ -601,7 +560,7 @@ local function is_id_candidate(obj)
 	return is_valid_community(obj:character_community())
 end
 
--- Exact look-ray (no bush pierce): first object under crosshair within range.
+-- Exact look-ray: first object under crosshair within range.
 local function cam_look_object(max_range)
 	local d = device and device()
 	if not (ray_pick and d and d.cam_pos and d.cam_dir and max_range and max_range > 0) then
@@ -692,13 +651,8 @@ local function find_id_target()
 
 		for i = 1, #candidates do
 			local obj = candidates[i].obj
-			local spine = los_pos(obj)
-			if spine and ray_hits_object(obj, spine, max_range) then
-				result = obj
-				break
-			end
-			local head = line_tip_pos(obj)
-			if head and ray_hits_object(obj, head, max_range) then
+			local chest = los_pos(obj)
+			if chest and ray_hits_object(obj, chest, max_range) then
 				result = obj
 				break
 			end

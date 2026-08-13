@@ -18,14 +18,12 @@ local Tiers
 local original_set_random_stash
 local original_try_spawn_treasure
 local original_try_spawn_ammo
-local original_trade_update
 local original_check_trade_mode
 local original_is_tradable
 local hooked_stash = false
 local hooked_stash_spawn = false
 local hooked_ammo = false
 local hooked_trade_ui = false
-local hooked_trade_update = false
 
 -- Persist so we never double-grant within the new-game window before
 -- start_equippment_handled is given (~4s).
@@ -234,8 +232,9 @@ end
 
 --------------------------------------------------------------------------------
 -- Trade ban / vendor strip
--- trade_manager.update runs on every stalker use (xr_motivator) — never strip
--- field stalkers. Supply traders lose all banned combat stock (not knives).
+-- Strip on talk/trade only. trade_manager.update runs on every stalker
+-- (xr_motivator + nearby npc_on_update) so we do not hook it.
+-- Supply traders lose all banned combat stock (not knives).
 --------------------------------------------------------------------------------
 local function is_magazine(sec)
 	if not sec then
@@ -406,8 +405,8 @@ local function delayed_strip(npc_id)
 	return true
 end
 
-local function patched_trade_update(npc, force_refresh)
-	original_trade_update(npc, force_refresh)
+-- Restock can land just after talk/trade opens; retry a few times then stop.
+local function strip_trader_on_interact(npc)
 	if not dogma.sys.ready(MOD_ID, db, on_option_change) then
 		return
 	end
@@ -426,6 +425,17 @@ local function patched_trade_update(npc, force_refresh)
 		CreateTimeEvent("dogma_wb_strip", "s1_" .. npc_id, 0.1, delayed_strip, npc_id)
 		CreateTimeEvent("dogma_wb_strip", "s2_" .. npc_id, 0.5, delayed_strip, npc_id)
 		CreateTimeEvent("dogma_wb_strip", "s3_" .. npc_id, 1.1, delayed_strip, npc_id)
+	end
+end
+
+local function npc_on_use(npc)
+	strip_trader_on_interact(npc)
+end
+
+local function ActorMenu_on_trade_started()
+	local actor = db.actor
+	if actor and actor.get_talking_npc then
+		strip_trader_on_interact(actor:get_talking_npc())
 	end
 end
 
@@ -900,25 +910,11 @@ local function try_hook_trade_ui()
 	log("hooked utils_ui trade Check_TradeMode + IsTradable")
 end
 
-local function try_hook_trade_update()
-	if hooked_trade_update then
-		return
-	end
-	if not (trade_manager and trade_manager.update) then
-		return
-	end
-	original_trade_update = trade_manager.update
-	trade_manager.update = patched_trade_update
-	hooked_trade_update = true
-	log("hooked trade_manager.update")
-end
-
 local function try_hooks()
 	try_hook_stash()
 	try_hook_stash_spawn()
 	try_hook_ammo()
 	try_hook_trade_ui()
-	try_hook_trade_update()
 end
 
 local function actor_on_first_update()
@@ -932,6 +928,8 @@ function on_game_start()
 
 	RegisterScriptCallback("on_option_change", on_option_change)
 	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+	RegisterScriptCallback("npc_on_use", npc_on_use)
+	RegisterScriptCallback("ActorMenu_on_trade_started", ActorMenu_on_trade_started)
 	RegisterScriptCallback("save_state", on_save_state)
 	RegisterScriptCallback("load_state", on_load_state)
 	on_option_change()

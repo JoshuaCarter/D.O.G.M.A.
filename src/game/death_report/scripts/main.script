@@ -8,12 +8,16 @@
 local CONFIG = _G.dogma_game_death_report_conf
 
 local HIT_WINDOW_MS = 30000
-local HIT_CAP = 10
+local HIT_CAP_MIN = 1
+local HIT_CAP_MAX = 20
 local UI_W = 1024
 local UI_H = 768
 local LINE_H = 18 -- letterica16
-local PANEL_W = 1024
 local PANEL_PAD = 12
+local PANEL_W_MIN = 200
+local PANEL_W_MAX = 1024
+local PANEL_TOP_MAX = 700
+local TAB_PROMPT_Y = math.floor(UI_H * 0.5) + 50
 local TITLE_LINES = 2 -- title + blank
 local PANEL_TEX = "ui_inGame2_white_rect"
 local BHS_DAMAGESCALE = 0.85
@@ -111,7 +115,7 @@ local hits = {} -- newest at index 1
 local death_armed = false
 local report_visible = false
 local last_toggle_ms = 0
-local frozen = nil -- { lines, footer, hint }
+local frozen = nil -- { lines, footer }
 local adb_wrapped = false
 local bhs_rd_wrapped = false
 
@@ -135,6 +139,29 @@ local function log(msg)
 	if CONFIG.loaded.debug_log then
 		dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
 	end
+end
+
+local function clamp_ui(v, lo, hi, fallback)
+	v = tonumber(v) or fallback
+	if v < lo then
+		return lo
+	end
+	if v > hi then
+		return hi
+	end
+	return math.floor(v)
+end
+
+local function panel_width()
+	return clamp_ui(CONFIG.loaded.panel_width, PANEL_W_MIN, PANEL_W_MAX, 410)
+end
+
+local function panel_top()
+	return clamp_ui(CONFIG.loaded.panel_top, 0, PANEL_TOP_MAX, 270)
+end
+
+local function hit_cap()
+	return clamp_ui(CONFIG.loaded.hit_cap, HIT_CAP_MIN, HIT_CAP_MAX, 10)
 end
 
 local function rgb_code(rgb)
@@ -550,7 +577,7 @@ local function prune_hits(now)
 		local e = hits[i]
 		if e and (now - e.t) <= HIT_WINDOW_MS then
 			kept[#kept + 1] = e
-			if #kept >= HIT_CAP then
+			if #kept >= hit_cap() then
 				break
 			end
 		end
@@ -618,36 +645,7 @@ local function format_hit_line(e)
 	if e.ammo and e.ammo ~= "" then
 		parts[#parts + 1] = COL.muted .. e.ammo
 	end
-	if e.count and e.count > 1 then
-		parts[#parts + 1] = COL.dim .. "x" .. tostring(e.count)
-	end
 	return table.concat(parts, " ")
-end
-
-local function same_group(a, b)
-	return a.name == b.name
-		and a.kind == b.kind
-		and a.limb == b.limb
-		and a.type_key == b.type_key
-		and a.weapon == b.weapon
-		and a.ammo == b.ammo
-		and a.comm == b.comm
-end
-
-local function merge_into(dst, src)
-	local sum = dst.damage + src.damage
-	if sum > 0 then
-		dst.mitigated = (dst.mitigated * dst.damage + src.mitigated * src.damage) / sum
-	end
-	dst.damage = sum
-	dst.count = (dst.count or 1) + (src.count or 1)
-	dst.t = src.t or dst.t
-	dst.hp_after = src.hp_after or dst.hp_after
-	dst.limb_after_pct = src.limb_after_pct or dst.limb_after_pct
-	dst.limb_dmg_pct = (dst.limb_dmg_pct or 0) + (src.limb_dmg_pct or 0)
-	if dst.limb_dmg_pct > 100 then
-		dst.limb_dmg_pct = 100
-	end
 end
 
 local function apply_limb_hit(limb, amount)
@@ -679,19 +677,31 @@ end
 
 local function push_hit(entry)
 	prune_hits(entry.t)
-	entry.count = entry.count or 1
-	local top = hits[1]
-	if top and same_group(top, entry) then
-		merge_into(top, entry)
-		return
-	end
 	table.insert(hits, 1, entry)
-	while #hits > HIT_CAP do
+	while #hits > hit_cap() do
 		table.remove(hits)
 	end
 end
 
+local function actor_already_dead()
+	if death_armed then
+		return true
+	end
+	local a = db and db.actor
+	if not a then
+		return true
+	end
+	if a.alive and not a:alive() then
+		return true
+	end
+	local hp = tonumber(a.health)
+	return hp ~= nil and hp <= 0
+end
+
 local function record_hit(shit, bone_id, damage, mitigated_frac)
+	if actor_already_dead() then
+		return
+	end
 	if not shit or not damage or damage <= 0 then
 		return
 	end
@@ -902,18 +912,25 @@ local function show_hit_summary()
 	end
 
 	local hit_n = frozen.lines and #frozen.lines or 0
-	local extra = frozen.footer and 4 or 2
+	local extra = frozen.footer and 2 or 0
 	local n = TITLE_LINES + math.max(hit_n, 1) + extra
 
 	local text_h = n * LINE_H
 	local panel_h = text_h + PANEL_PAD * 2
+	local panel_w = panel_width()
 	local panel_x = 0
-	local panel_y = math.floor((UI_H - panel_h) * 0.42)
+	local panel_y = panel_top()
+	if panel_y + panel_h > UI_H then
+		panel_y = UI_H - panel_h
+	end
+	if panel_y < 0 then
+		panel_y = 0
+	end
 	local text_x = PANEL_PAD
 	local text_y = panel_y + PANEL_PAD
-	local text_w = UI_W - PANEL_PAD * 2
+	local text_w = panel_w - PANEL_PAD * 2
 
-	show_panel(panel_x, panel_y, PANEL_W, panel_h)
+	show_panel(panel_x, panel_y, panel_w, panel_h)
 
 	local chunks = {
 		COL.title .. "DEATH REPORT",
@@ -926,12 +943,10 @@ local function show_hit_summary()
 			chunks[#chunks + 1] = frozen.lines[i].text
 		end
 	end
-	chunks[#chunks + 1] = ""
 	if frozen.footer then
-		chunks[#chunks + 1] = frozen.footer
 		chunks[#chunks + 1] = ""
+		chunks[#chunks + 1] = frozen.footer
 	end
-	chunks[#chunks + 1] = COL.dim .. (frozen.hint or "Press TAB to hide")
 
 	set_text(HIT_STATIC, table.concat(chunks, "\\n"), text_x, text_y, text_w, text_h)
 end
@@ -941,19 +956,22 @@ local function hide_hit_summary()
 end
 
 local function show_tab_prompt()
-	local msg = tr("ui_dogma_game_death_report_prompt") or "Press TAB for death report"
-	local y = (UI_H * 0.5) + 50
-	set_text(TAB_STATIC, COL.title .. msg, PANEL_PAD, y, UI_W - PANEL_PAD * 2, 28)
+	local msg
+	if report_visible then
+		msg = tr("ui_dogma_game_death_report_hide") or "TAB to close death report"
+	else
+		msg = tr("ui_dogma_game_death_report_prompt") or "TAB to open death report"
+	end
+	set_text(TAB_STATIC, COL.title .. msg, PANEL_PAD, TAB_PROMPT_Y, UI_W - PANEL_PAD * 2, 28)
 end
 
 local function apply_report_visibility()
 	if report_visible then
-		remove_static(TAB_STATIC)
 		show_hit_summary()
 	else
 		hide_hit_summary()
-		show_tab_prompt()
 	end
+	show_tab_prompt()
 end
 
 local function arm_death_ui()
@@ -1200,7 +1218,6 @@ local function freeze_hit_lines()
 	frozen = {
 		lines = lines,
 		footer = format_condition_line(),
-		hint = tr("ui_dogma_game_death_report_hide") or "Press TAB to hide",
 	}
 end
 
@@ -1217,11 +1234,19 @@ end
 
 local function on_option_change()
 	CONFIG.loaded.enabled = dogma.mcm.bool(CONFIG.MOD_ID, "enabled")
+	CONFIG.loaded.panel_width = dogma.mcm.uint(CONFIG.MOD_ID, "panel_width", 410)
+	CONFIG.loaded.panel_top = dogma.mcm.uint(CONFIG.MOD_ID, "panel_top", 270)
+	CONFIG.loaded.hit_cap = dogma.mcm.uint(CONFIG.MOD_ID, "hit_cap", 10)
 	CONFIG.loaded.debug_log = dogma.dbg.logging()
+	if not death_armed then
+		prune_hits()
+	end
 	if not CONFIG.loaded.enabled then
 		clear_death_ui()
 		death_armed = false
 		report_visible = false
+	elseif death_armed then
+		apply_report_visibility()
 	end
 end
 

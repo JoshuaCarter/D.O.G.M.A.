@@ -1,0 +1,293 @@
+<!-- Hand-authored FOMOD wizard. Edit this file; packaging copies it as-is. -->
+<config xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://qconsulting.ca/fo3/ModConfig5.0.xsd">
+	<moduleName>D.O.G.M.A.</moduleName>
+	<requiredInstallFiles>
+		<folder source="common\gamedata" destination="gamedata" />
+		<folder source="common\mo2" destination="mo2" />
+	</requiredInstallFiles>
+	<installSteps order="Explicit">
+		<installStep name="Weapons Ban">
+			<optionalFileGroups order="Explicit">
+				<group name="Core" type="SelectAny">
+					<plugins order="Explicit">
+						<plugin name="Weapons Ban">
+							<description>Traders won't buy your guns, ammo, or attachments - you must find them in stashes and corpses. Ammo craft: 1 casing + 1 bullet per round; powder is round(vanilla/box) per round.</description>
+							<files>
+								<folder source="game_weapons_ban\gamedata" destination="gamedata" priority="0" />
+							</files>
+							<typeDescriptor>
+								<type name="Recommended"/>
+							</typeDescriptor>
+						</plugin>
+					</plugins>
+				</group>
+				<group name="Recommended" type="SelectAny">
+					<plugins order="Explicit">
+						<plugin name="Sobre Loadouts">
+							<description>New vanilla-like loadout options</description>
+							<files>
+								<folder source="tweaks_sobre_loadouts\gamedata" destination="gamedata" priority="0" />
+							</files>
+							<typeDescriptor>
+								<type name="Recommended"/>
+							</typeDescriptor>
+						</plugin>
+					</plugins>
+				</group>
+			</optionalFileGroups>
+		</installStep>
+		<installStep name="Misc">
+			<optionalFileGroups order="Explicit">
+				<group name="Misc" type="SelectAny">
+					<plugins order="Explicit">
+						<plugin name="Radiation FX">
+							<description>Customisable radiation FX that tracks your actual irradiation level (like a dosimeter).</description>
+							<files>
+								<folder source="gui_fx_radiation\gamedata" destination="gamedata" priority="0" />
+							</files>
+							<typeDescriptor>
+								<type name="Recommended"/>
+							</typeDescriptor>
+						</plugin>
+						<plugin name="Bleed FX">
+							<description>Corner blood HUD overlays (hud_blood atlases), random corners per wound tier.</description>
+							<files>
+								<folder source="gui_fx_bleed\gamedata" destination="gamedata" priority="0" />
+							</files>
+							<typeDescriptor>
+								<type name="Recommended"/>
+							</typeDescriptor>
+						</plugin>
+						<plugin name="Health FX">
+							<description>Desaturates the screen as HP falls; black and white at 0 HP.</description>
+							<files>
+								<folder source="gui_fx_health\gamedata" destination="gamedata" priority="0" />
+							</files>
+							<typeDescriptor>
+								<type name="Recommended"/>
+							</typeDescriptor>
+						</plugin>
+						<plugin name="FPS">
+							<description>Customisable FPS counter with optional graph view.</description>
+							<image path="fomod\images\gui_fps.png" />
+							<files>
+								<folder source="gui_fps\gamedata" destination="gamedata" priority="0" />
+							</files>
+							<typeDescriptor>
+								<type name="Recommended"/>
+							</typeDescriptor>
+						</plugin>
+						<plugin name="Minimap Toggle">
+							<description>Toggle/hold keybind for the minimap.</description>
+							<files>
+								<folder source="gui_minimap\gamedata" destination="gamedata" priority="0" />
+							</files>
+							<typeDescriptor>
+								<type name="Recommended"/>
+							</typeDescriptor>
+						</plugin>
+						<plugin name="Stalker ID">
+							<description>Centered version of "Identification UI - CrookR", to show name, rank, and faction icon when looking at stalkers.</description>
+							<files>
+								<folder source="gui_stalker_id\gamedata" destination="gamedata" priority="0" />
+							</files>
+							<typeDescriptor>
+								<type name="Recommended"/>
+							</typeDescriptor>
+						</plugin>
+						<plugin name="Better Disassemble Keybind">
+							<description>Keybind to disassemble items from inventory, with press/hold/drag support.</description>
+							<files>
+								<folder source="input_disassemble\gamedata" destination="gamedata" priority="0" />
+							</files>
+							<typeDescriptor>
+								<type name="Recommended"/>
+							</typeDescriptor>
+						</plugin>
+						<plugin name="Better Drop Keybind">
+							<description>Keybind to drop items fro*m inventory, with press/hold/drag support.</description>
+							<files>
+								<folder source="input_drop\gamedata" destination="gamedata" priority="0" />
+							</files>
+							<typeDescriptor>
+								<type name="Recommended"/>
+							</typeDescriptor>
+						</plugin>
+						<plugin name="Weapon Stripper">
+							<description>Keybind to strip all attachments/parts from a weapon in one go.</description>
+							<files>
+								<folder source="input_stripping\gamedata" destination="gamedata" priority="0" />
+							</files>
+							<typeDescriptor>
+								<type name="Recommended"/>
+							</typeDescriptor>
+						</plugin>
+						<plugin name="Faster Skinning">
+							<description>Faster mutant skinning; optional light-slash loot with delayed pickup.</description>
+							<files>
+								<folder source="game_faster_skinning\gamedata" destination="gamedata" priority="0" />
+							</files>
+							<typeDescriptor>
+								<type name="Recommended"/>
+							</typeDescriptor>
+						</plugin>
+						<plugin name="PDA Go Away">
+							<description>Stops the PDA reequipping after closing inventory or teleporting.</description>
+							<files>
+								<folder source="input_pda_go_away\gamedata" destination="gamedata" priority="0" />
+							</files>
+							<typeDescriptor>
+								<type name="Recommended"/>
+							</typeDescriptor>
+						</plugin>
+						<plugin name="Campfire Healing">
+							<description>Heal near campfires when not in combat. Faster than current system and heals limbs if they have temporary health.</description>
+							<files>
+								<folder source="game_campfire_healing\gamedata" destination="gamedata" priority="0" />
+							</files>
+							<typeDescriptor>
+								<type name="Recommended"/>
+							</typeDescriptor>
+						</plugin>
+						<plugin name="Pose Controls">
+							<description>Remaps crouch and prone Controls binds to set pose directly (hold/toggle via MCM). Sprint stays vanilla.</description>
+							<files>
+								<folder source="input_pose_controls\gamedata" destination="gamedata" priority="0" />
+							</files>
+							<typeDescriptor>
+								<type name="Recommended"/>
+							</typeDescriptor>
+						</plugin>
+						<plugin name="True Prone">
+							<description>Makes the player model actually go prone rather than just low crouch.</description>
+							<files>
+								<folder source="game_true_prone\gamedata" destination="gamedata" priority="0" />
+							</files>
+							<typeDescriptor>
+								<type name="Recommended"/>
+							</typeDescriptor>
+						</plugin>
+						<plugin name="Ammo Selector">
+							<description>Optional hold-to-open / release-to-close ammo wheel. Ships GAMMA ammo wheel UI.</description>
+							<files>
+								<folder source="game_ammo_selector\gamedata" destination="gamedata" priority="0" />
+							</files>
+							<typeDescriptor>
+								<type name="Recommended"/>
+							</typeDescriptor>
+						</plugin>
+						<plugin name="Better Equipable Controls">
+							<description>Detector, Geiger, and Torch/Flashlight Controls binds force-equip matching devices into the detector slot.</description>
+							<files>
+								<folder source="input_equipment_controls\gamedata" destination="gamedata" priority="0" />
+							</files>
+							<typeDescriptor>
+								<type name="Recommended"/>
+							</typeDescriptor>
+						</plugin>
+						<plugin name="Weapon Tooltips">
+							<description>Adds detailed weapon performance stats to weapon tooltips.</description>
+							<image path="fomod\images\gui_weapon_tooltips.png" />
+							<files>
+								<folder source="gui_weapon_tooltips\gamedata" destination="gamedata" priority="0" />
+							</files>
+							<typeDescriptor>
+								<type name="Recommended"/>
+							</typeDescriptor>
+						</plugin>
+						<plugin name="Nearby Pickup Labels">
+							<description>Auto-show hold-Use style name labels on nearby pickable items (default 3 m, 0–10 m). Off while Use is held. Hides the look-at inventory icon by default.</description>
+							<files>
+								<folder source="gui_nearby_pickup_labels\gamedata" destination="gamedata" priority="0" />
+							</files>
+							<typeDescriptor>
+								<type name="Recommended"/>
+							</typeDescriptor>
+						</plugin>
+						<plugin name="ADS Zoom">
+							<description>Brings weapon model closer to camera when ADS (can adjust per gun+sight combo), with defaults for irons/sights/scopes. Optional: binoculars start zoomed out.</description>
+							<files>
+								<folder source="game_ads_zoom\gamedata" destination="gamedata" priority="0" />
+							</files>
+							<typeDescriptor>
+								<type name="Recommended"/>
+							</typeDescriptor>
+						</plugin>
+						<plugin name="Free Zoom">
+							<description>Freely zoom when not ADS. Better input support than base G.A.M.M.A. (e.g. scroll wheel).</description>
+							<files>
+								<folder source="game_free_zoom\gamedata" destination="gamedata" priority="0" />
+							</files>
+							<typeDescriptor>
+								<type name="Recommended"/>
+							</typeDescriptor>
+						</plugin>
+						<plugin name="Quieter Bush Rustle SFX For Dark Signal">
+							<description>Quieter bush rustling sfx for when player brushes against foliage.</description>
+							<files>
+								<folder source="tweaks_quieter_bush_rustle_sfx_for_dark_signal\gamedata" destination="gamedata" priority="0" />
+							</files>
+							<typeDescriptor>
+								<type name="Recommended"/>
+							</typeDescriptor>
+						</plugin>
+						<plugin name="Clear MCM Search Box">
+							<description>Removes pre-filled text from MCM search box.</description>
+							<files>
+								<folder source="tweaks_clear_mcm_search_box\gamedata" destination="gamedata" priority="0" />
+							</files>
+							<typeDescriptor>
+								<type name="Recommended"/>
+							</typeDescriptor>
+						</plugin>
+						<plugin name="Sane NPC Combat Speeds">
+							<description>Resets non-combat NPC speeds to Anomaly defaults. Combat speeds are +20% faster (+50% for ISG).</description>
+							<files>
+								<folder source="tweaks_sane_npc_combat_speeds\gamedata" destination="gamedata" priority="0" />
+							</files>
+							<typeDescriptor>
+								<type name="Recommended"/>
+							</typeDescriptor>
+						</plugin>
+						<plugin name="Dodge Pseudogiant Slam If Airborne">
+							<description>If your are airborne when a slam happens, you don't take damage (instead of a 200ms window before the slam which is dumb).</description>
+							<files>
+								<folder source="tweaks_dodge_pseudogiant_slam_if_airborne\gamedata" destination="gamedata" priority="0" />
+							</files>
+							<typeDescriptor>
+								<type name="Recommended"/>
+							</typeDescriptor>
+						</plugin>
+						<plugin name="No Controller Tube Spam">
+							<description>Controller tube attack cooldown is 5s instead of 2s.</description>
+							<files>
+								<folder source="tweaks_no_controller_tube_spam\gamedata" destination="gamedata" priority="0" />
+							</files>
+							<typeDescriptor>
+								<type name="Recommended"/>
+							</typeDescriptor>
+						</plugin>
+						<plugin name="Fix New Game Loadout Tooltips">
+							<description>Always-on tooltip fixes for all item types: restacks tooltip sections so extra widgets never overlap or clip, arms the stat builders at the main menu so the first-session New Game Loadout screen shows correct GAMMA/DOGMA tooltips, shows uses for multi-use items in section-only tooltips (Loadout screen, craft/repair previews), and draws each item's point cost on New Game loadout icons.</description>
+							<files>
+								<folder source="tweaks_fix_new_game_loadout_tooltips\gamedata" destination="gamedata" priority="0" />
+							</files>
+							<typeDescriptor>
+								<type name="Recommended"/>
+							</typeDescriptor>
+						</plugin>
+						<plugin name="Increase Blood Decal Range">
+							<description>Blood wallmarks appear when shooting from farther away (vanilla cuts out at short range).</description>
+							<files>
+								<folder source="tweaks_increase_blood_decal_range\gamedata" destination="gamedata" priority="0" />
+							</files>
+							<typeDescriptor>
+								<type name="Recommended"/>
+							</typeDescriptor>
+						</plugin>
+					</plugins>
+				</group>
+			</optionalFileGroups>
+		</installStep>
+	</installSteps>
+</config>

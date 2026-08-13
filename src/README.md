@@ -37,12 +37,13 @@ Skip: `README*`, `MOVE_MAP*`, `.gitkeep`, `*.alao-bak`, `_` names.
 
 ## Installer (FOMOD)
 
-Path-mod **name**, **description**, and **module id** come from `config/manifest-dogma-features.yml` / `manifest-dogma-tweaks.yml`
-(YAML key, `desc:`, `path:` → `category_feature`). Optional hover preview only:
+Wizard pages, plugin names, hover copy, and which folder each checkbox installs live in one file:
 
-`src/<category>/<feature>/installer/image.png`
+`fomod/ModuleConfig.xml`
 
-Release zip: `bash tools/package-fomod.sh` → `build/fomod/`. Wizard is **one page per category**; each page is SelectAny feature checkboxes. Hover a feature for its description and image; an About row shows "Hover each checkbox to see feature information". Descriptions append `Requires:` lines from `requires:` when present. Common is always installed. Root `config/manifest-dogma-*.yml` gates features: `omit` / `dev` / `release`. Pack catalog: `config/manifest-third-party.yml`. Feature third-party needs use `requires:` → pack ids. Local `Ctrl+Shift+B` builds `>= dev`; packaging ships `>= release`. MO2 entry point: `DOGMA Setup.bat`.
+Hover images (optional) live in `fomod/images/` and are referenced from that XML. `info.xml` is written at pack time from `meta.ini`.
+
+Release zip: `bash tools/package-fomod.sh` → `build/fomod/`. Common is always installed. FOMOD checkboxes are whatever `ModuleConfig.xml` lists. Root `config/manifest-dogma-*.yml` gates Setup packages: `omit` / `dev` / `release`. Pack catalog: `config/manifest-third-party.yml`. Local `Ctrl+Shift+B` builds `>= dev`; packaging ships Setup zips for `>= release`. MO2 entry point: `DOGMA Setup.bat`.
 
 ## Common
 

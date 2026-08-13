@@ -11,7 +11,7 @@
 #   Manifest paths, path_keys, and MCM ids stay unprefixed (common, debug).
 #
 #   src/.../assets/...                      authoring only (ignored; not shipped)
-#   src/.../installer/image.png             optional FOMOD hover image (not shipped into gamedata)
+#   src/.../installer/...                   leftover skip (FOMOD images live in fomod/images/)
 #   *.pdn                                   authoring only (Paint.NET; never shipped)
 #   *.png under gamedata                    authoring only (convert to DDS; MO2 modroot PNGs still ship)
 #   src/_common/mo2/...                     EXCEPTION: files under <mod>/mo2/

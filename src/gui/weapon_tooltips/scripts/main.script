@@ -907,13 +907,6 @@ local PANEL_TOP_OFFSET = 0    -- gap below item description, above our damage pa
 local BOTTOM_OFFSET = 2       -- gap between damage panel and stats block
 local SECTION_GAP = 10        -- match vanilla UIInfoItem:Sync_Finale section spacing
 
--- True when the Tooltips Fix tweak's layout module will restack after our
--- Update returns. rawget on purpose: render-time check, never force a load.
-local function layout_tweak_active()
-	local m = rawget(_G, "zzzz_dogma_tweaks_fix_new_game_loadout_tooltips_main")
-	return m and m.fix ~= nil
-end
-
 -- Generic rows, filled top-down in order. Rows beyond the data are hidden.
 local ROW_XML = {
 	"panel:row_1",
@@ -2478,10 +2471,7 @@ local function add_details_damage_section(sheet, obj)
 	_st:SetAutoDelete(true)
 end
 
--- Fallback restack when the Tooltips Fix tweak (tweaks/fix_new_game_loadout_tooltips) is not
--- installed/armed. When it is, its outermost Update hook owns the full body
--- stack (incl. parts / recipes / cooking); we only need
--- apply_description_visibility beforehand.
+-- Parts beside stats (Raven vertical) or under ammo (horizontal).
 local function sync_parts_layout(info, tail)
 	if not info.parts or not info.parts:IsShown() then
 		return tail
@@ -2535,11 +2525,6 @@ end
 
 local function sync_damage_layout(info)
 	apply_description_visibility(info)
-
-	-- Layout tweak restacks after we return (incl. dogma_wpn_damage if shown).
-	if layout_tweak_active() then
-		return
-	end
 
 	local tail
 	if CONFIG.loaded.hide_description then

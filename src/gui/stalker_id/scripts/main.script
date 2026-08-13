@@ -98,6 +98,7 @@ local function on_option_change()
 	CONFIG.loaded.hide_on_death = dogma.mcm.bool(id, "hide_on_death")
 	CONFIG.loaded.always_show_line = dogma.mcm.bool(id, "always_show_line")
 	CONFIG.loaded.always_show_line_binoc = dogma.mcm.bool(id, "always_show_line_binoc")
+	CONFIG.loaded.hide_line_on_pda = dogma.mcm.bool(id, "hide_line_on_pda")
 	CONFIG.loaded.line_keybind = dogma.mcm.key(id, "line_keybind")
 	CONFIG.loaded.line_width_px = dogma.mcm.uint(id, "line_width_px")
 	CONFIG.loaded.line_r = dogma.mcm.uint(id, "line_r")
@@ -662,8 +663,18 @@ local function find_id_target()
 	return result
 end
 
+local PDA_SLOT = 8
+
+local function pda_in_hands()
+	local actor = db and db.actor
+	return actor and actor:active_slot() == PDA_SLOT
+end
+
 local function want_line()
 	local cfg = CONFIG.loaded
+	if cfg.hide_line_on_pda and pda_in_hands() then
+		return false
+	end
 	if cfg.always_show_line then
 		return true
 	end

@@ -359,21 +359,41 @@ local function resolve_drops_to_parts(drops)
 	return parts
 end
 
+-- Vanilla item_parts.disassembly_item posts the same PDA list; swallow it when the toggle is off.
+local function call_orig_disassembly(orig, obj, obj_d)
+	if not orig then
+		return
+	end
+	if CONFIG.loaded.pda_parts_tip then
+		return orig(obj, obj_d)
+	end
+	local news = actor_menu and actor_menu.set_item_news
+	if news then
+		actor_menu.set_item_news = function() end
+	end
+	orig(obj, obj_d)
+	if news then
+		actor_menu.set_item_news = news
+	end
+end
+
 local function timer_give_parts(npc_id, parts_tbl, name)
 	local npc = npc_id and xobject.go(npc_id)
 	if not npc then
 		return true
 	end
 
-	local parts_text = item_parts.create_disassemble_list(parts_tbl)
-	actor_menu.set_item_news(
-		"success",
-		"weapon_ammo",
-		"st_dis_text_11",
-		name,
-		game.translate_string("st_dis_text_9"),
-		parts_text
-	)
+	if CONFIG.loaded.pda_parts_tip then
+		local parts_text = item_parts.create_disassemble_list(parts_tbl)
+		actor_menu.set_item_news(
+			"success",
+			"weapon_ammo",
+			"st_dis_text_11",
+			name,
+			game.translate_string("st_dis_text_9"),
+			parts_text
+		)
+	end
 
 	for i = 1, #parts_tbl do
 		local part_sec = parts_tbl[i]
@@ -401,9 +421,7 @@ local function perform_attachment_disassembly(obj, obj_d, info, orig_disassembly
 	local parts_tbl = resolve_drops_to_parts(lookup_drops(info))
 	if #parts_tbl == 0 then
 		log(string.format("disassembly_item: empty drops for %s (%s/%s/T%s)", sec, info.kind, tostr(info.subtype), tostr(info.tier)))
-		if orig_disassembly_item then
-			orig_disassembly_item(obj, obj_d)
-		end
+		call_orig_disassembly(orig_disassembly_item, obj, obj_d)
 		return
 	end
 
@@ -455,7 +473,7 @@ local function make_disassembly_item_wrapper(orig)
 				return
 			end
 		end
-		return orig(obj, obj_d)
+		return call_orig_disassembly(orig, obj, obj_d)
 	end
 end
 
@@ -493,6 +511,7 @@ end
 local function on_option_change()
 	CONFIG.loaded.attachments_enabled = dogma.mcm.bool(CONFIG.MOD_ID, "attachments_enabled")
 	CONFIG.loaded.attach_enabled = CONFIG.loaded.attachments_enabled
+	CONFIG.loaded.pda_parts_tip = dogma.mcm.bool(CONFIG.MOD_ID, "pda_parts_tip")
 	CONFIG.loaded.attach_debug_log = dogma.dbg.logging()
 	log(string.format(
 		"attachments: enabled=%s menu_patched=%s item_patched=%s",

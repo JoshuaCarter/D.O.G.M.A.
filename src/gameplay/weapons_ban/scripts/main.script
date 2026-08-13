@@ -426,7 +426,39 @@ end
 -- set_random_stash only queues section names in treasure_manager.caches; items
 -- spawn on first open (try_spawn_treasure). Early alife_create_item shows only
 -- our extras until the UI refreshes — append to the cache instead.
+-- AlifePlus xstash.fill_stash also writes deposits into that same string;
+-- original set_random_stash replaces it, so keep the previous string.
 --------------------------------------------------------------------------------
+local function cache_of(id)
+	if not (treasure_manager and treasure_manager.caches and id) then
+		return nil
+	end
+	return treasure_manager.caches[id]
+end
+
+-- Keep a pending cache string (NPC deposits, etc.) when set_random_stash
+-- replaces the entry. Skip if already spawned (true).
+local function restore_existing_cache(id, prev)
+	if type(prev) ~= "string" or prev == "" then
+		return
+	end
+	local caches = treasure_manager and treasure_manager.caches
+	if not (caches and id) then
+		return
+	end
+	local cur = caches[id]
+	if cur == true then
+		return
+	end
+	if type(cur) == "string" and cur ~= "" then
+		if cur ~= prev then
+			caches[id] = prev .. "," .. cur
+		end
+		return
+	end
+	caches[id] = prev
+end
+
 local function append_stash_sections(id, sections)
 	if not (treasure_manager and treasure_manager.caches) or #sections == 0 then
 		return
@@ -514,6 +546,9 @@ local function roll_stash_loot(id)
 	if not alife_object(id) then
 		return
 	end
+	if cache_of(id) == true then
+		return
+	end
 	dogma.perf.start("weapons_ban", "roll_stash_loot")
 	Tiers.ensure()
 	local target = Tiers.base_tier_for_stash(id)
@@ -547,7 +582,9 @@ local function roll_stash_loot(id)
 end
 
 local function patched_set_random_stash(no_spot, hint, bonus_items, id, dbg)
+	local prev = cache_of(id)
 	local result = original_set_random_stash(no_spot, hint, bonus_items, id, dbg)
+	restore_existing_cache(id, prev)
 
 	if dbg then
 		return result
@@ -571,11 +608,19 @@ local function patched_set_random_stash(no_spot, hint, bonus_items, id, dbg)
 end
 
 local function patched_try_spawn_treasure(box)
-	if box then
-		scrub_worn_ammo_from_cache(box:id())
+	if not box then
+		original_try_spawn_treasure(box)
+		return
 	end
+	local id = box:id()
+	scrub_worn_ammo_from_cache(id)
+	-- Only inject queued ammo when this open actually spawns the cache
+	-- string. Already-looted (true) or empty (false) boxes keep their items.
+	local pending = cache_of(id)
 	original_try_spawn_treasure(box)
-	spawn_pending_stash_ammo(box)
+	if type(pending) == "string" then
+		spawn_pending_stash_ammo(box)
+	end
 end
 
 --------------------------------------------------------------------------------

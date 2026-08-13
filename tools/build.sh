@@ -43,7 +43,7 @@
 #   DOGMA_ONLY=spec    what to build:
 #                        (empty|all)  → common + features with config/features.yml >= local
 #                        common       → common only
-#                        cat/feat     → that feature only (e.g. gameplay/free_zoom; ignores manifest)
+#                        cat/feat     → that feature only (e.g. game/free_zoom; ignores manifest)
 #                        feat         → top-level feature only (e.g. debug)
 #   DOGMA_DEPLOY=path  after a fresh build/, full-replace this MO2 mod folder
 #                      (gamedata + mo2 + meta). Full builds only (not DOGMA_ONLY).

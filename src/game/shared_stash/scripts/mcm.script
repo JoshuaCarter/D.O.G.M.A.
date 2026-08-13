@@ -1,0 +1,22 @@
+function on_mcm_load(options)
+	local CONFIG = _G.dogma_game_shared_stash_conf
+	dogma_mcm.attach(options, "game", "ui_mcm_menu_dogma_game", {
+		id = "shared_stash",
+		sh = true,
+		text = "ui_mcm_menu_dogma_game_shared_stash",
+		gr = dogma_mcm.with_header({
+			{
+				id = "page_description",
+				type = "desc",
+				text = "ui_mcm_dogma_game_shared_stash_page_description",
+			},
+			{
+				id = "one_per_level",
+				type = "check",
+				val = 1,
+				def = CONFIG.DEFAULTS.one_per_level,
+				hint = "dogma_game_shared_stash_one_per_level",
+			},
+		}),
+	})
+end

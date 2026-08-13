@@ -1,0 +1,440 @@
+--[[
+	Pose Controls
+
+	Maps movement pose keys directly instead of cycling:
+	- Crouch bind -> crouch only (mcCrouch, never mcAccel)
+	- Walk/Low Crouch bind -> prone only (mcCrouch + mcAccel)
+	- Sprint bind -> vanilla stand + sprint
+	- Walk bind (CONFIG.BINDS.walk) -> walk only (mcAccel without mcCrouch)
+
+	MCM Hold/Toggle and pose keys mirror Options→Controls
+	(live curr/functor - not axr copies).
+	Hold/Toggle forces g_crouch_toggle / g_walk_toggle / g_sprint_toggle to match.
+
+	FDDA body search / Faster Skinning briefly flip g_crouch_toggle to pulse
+	crouch. We cache the player's real preference so that trick does not yank us
+	into toggle handling, and we pass those scripted pulses straight through.
+
+	Engine move states remain the source of truth so true_prone and other
+	mods can read pose via IsMoveState("mcCrouch") / IsMoveState("mcAccel").
+]]
+
+local CONFIG = _G.dogma_input_pose_controls_conf
+
+local POSE = {
+	STAND = "stand",
+	CROUCH = "crouch",
+	PRONE = "prone",
+	WALK = "walk",
+}
+
+local BLOCKED_MOVE_STATES = {
+	mcJump = true,
+	mcFall = true,
+	mcClimb = true,
+}
+
+local LOG = {
+	POSE = { order = 1, color = "yellow" },
+	KEY = { order = 2, color = "cyan" },
+}
+
+local applying_pose = false
+local pending_goal = nil
+-- Player preference from MCM sync. Not the live console value -
+-- other mods temporarily flip g_crouch_toggle for scripted crouch pulses.
+local cached_crouch_toggle = false
+
+local ENGINE_BINDS = {
+	crouch = { action = "crouch", bind = function() return key_bindings.kCROUCH end, mcm = "crouch_key" },
+	prone = { action = "accel", bind = function() return key_bindings.kACCEL end, mcm = "prone_key" },
+	sprint = {
+		action = "sprint_toggle",
+		bind = function() return key_bindings.kSPRINT_TOGGLE or key_bindings.kSPRINT end,
+		mcm = "sprint_key",
+	},
+	walk = {
+		action = CONFIG.BINDS.walk.action,
+		bind = function()
+			return dogma.keys.bind_kb(CONFIG.BINDS.walk.kb)
+		end,
+		mcm = "walk_key",
+	},
+}
+
+local TOGGLE_CMDS = { "g_crouch_toggle", "g_walk_toggle", "g_sprint_toggle" }
+
+local function log(msg)
+	if not (dogma.dbg) then
+		return
+	end
+	if CONFIG.loaded.debug_log then
+		dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
+	end
+end
+
+local function overlay(log_type, msg)
+	if not (dogma.dbg) then
+		return
+	end
+	if CONFIG.loaded.debug_overlay then
+		local slot = log_type or LOG.POSE
+		dogma.dbg.overlay(CONFIG.MOD_ID, slot.order, tostring(msg), slot.color)
+	end
+end
+
+local function get_pose()
+	if IsMoveState("mcCrouch") then
+		if IsMoveState("mcAccel") then
+			return POSE.PRONE
+		end
+		return POSE.CROUCH
+	end
+	if IsMoveState("mcAccel") then
+		return POSE.WALK
+	end
+	return POSE.STAND
+end
+
+local function use_hold_mode()
+	return not cached_crouch_toggle
+end
+
+local function mod_active()
+	return CONFIG.loaded.enabled
+end
+
+-- Let FDDA / skinning crouch pulses hit the engine instead of our key remap.
+local function passthrough_scripted_pose_pulse()
+	-- Those mods only force-enable toggle for a press/release; never force-disable.
+	local live_crouch_toggle = get_console_cmd(1, "g_crouch_toggle") or false
+	if live_crouch_toggle and not cached_crouch_toggle then
+		return true
+	end
+	if _G.lam2 and lam2.get_current_action then
+		local action = lam2.get_current_action()
+		if action and action.tag == "body_search" then
+			return true
+		end
+	end
+	return false
+end
+
+-- DIK -> console bind token handled by dogma.keys (via dogma.mcm).
+-- main only reads engine binds.
+local function engine_bind_dik(kb)
+	local bind = kb.bind()
+	if not bind then
+		return
+	end
+	local dik = bind_to_dik(bind)
+	if dik and dik ~= 0 then
+		return dik
+	end
+end
+
+local function set_engine_toggle(toggle_on)
+	local word = toggle_on and "1" or "0"
+	for _, cmd in ipairs(TOGGLE_CMDS) do
+		exec_console_cmd(cmd .. " " .. word)
+	end
+	log(string.format("toggle modes -> %s", word))
+end
+
+-- Mirror Hold/Toggle + crouch/prone/sprint/walk from Options→Controls.
+-- MCM key rows use curr/functor so they always show engine binds; this only
+-- refreshes CONFIG.loaded and keeps walk/sprint toggle bits matched to crouch.
+local function sync_mirrored_controls()
+	local crouch_toggle = get_console_cmd(1, "g_crouch_toggle") or false
+	CONFIG.loaded.toggle_mode = crouch_toggle and true or false
+	cached_crouch_toggle = CONFIG.loaded.toggle_mode
+	-- Keep the three engine toggle cmds matched while the feature is on.
+	set_engine_toggle(CONFIG.loaded.toggle_mode)
+
+	for _, kb in pairs(ENGINE_BINDS) do
+		CONFIG.loaded[kb.mcm] = engine_bind_dik(kb)
+	end
+end
+
+local function on_option_change()
+	CONFIG.loaded.enabled = true
+	-- Promote legacy MCM-only walk DIK into Controls if unbound.
+	dogma.mcm.migrate_key_to_mirror(CONFIG.MOD_ID, "walk_key", CONFIG.BINDS.walk)
+	CONFIG.loaded.debug_log = dogma.dbg.logging()
+	CONFIG.loaded.debug_overlay = dogma.dbg.overlay_enabled()
+	dogma.dbg.set_enabled(CONFIG.MOD_ID, dogma.dbg.overlay_enabled())
+	-- Always refresh mirrored CONFIG.loaded from Controls (MCM curr already wrote
+	-- Accept changes into the engine).
+	sync_mirrored_controls()
+end
+
+-- Keys need a free HUD. Pending pose steps may finish during loot UI.
+local function actor_can_change_pose()
+	if not dogma.sys.ready(CONFIG.MOD_ID, db, on_option_change) then
+		return false
+	end
+	if device():is_paused() then
+		return false
+	end
+	for state in pairs(BLOCKED_MOVE_STATES) do
+		if IsMoveState(state) then
+			return false
+		end
+	end
+	return true
+end
+
+local function input_allowed()
+	return actor_can_change_pose() and actor_menu and actor_menu.is_hud_free and actor_menu.is_hud_free()
+end
+
+local function is_walk_bind(bind)
+	local walk = dogma.keys.bind_kb(CONFIG.BINDS.walk.kb)
+	return walk and bind == walk
+end
+
+local function bind_dik(bind)
+	local dik = bind_to_dik(bind)
+	if dik and dik ~= 0 then
+		return dik
+	end
+end
+
+local function block(flags)
+	if flags then
+		flags.ret_value = false
+	end
+end
+
+local function with_synthetic_input(fn)
+	applying_pose = true
+	fn()
+	applying_pose = false
+end
+
+local function pulse_bind(bind)
+	local dik = bind_dik(bind)
+	if not dik then
+		return
+	end
+	level.press_action(dik)
+	level.release_action(dik)
+end
+
+local function set_bind_down(bind, down)
+	local dik = bind_dik(bind)
+	if not dik then
+		return
+	end
+	if down then
+		level.press_action(dik)
+	else
+		level.release_action(dik)
+	end
+end
+
+local function hold_bind(bind)
+	local dik = bind_dik(bind)
+	if dik then
+		level.hold_action(dik)
+	end
+end
+
+-- Toggle: one XOR pulse per step.
+local function step_toward(goal)
+	local pose = get_pose()
+	if pose == goal then
+		return true
+	end
+
+	if goal == POSE.STAND then
+		if pose == POSE.PRONE then
+			pulse_bind(key_bindings.kACCEL)
+		elseif pose == POSE.CROUCH then
+			pulse_bind(key_bindings.kCROUCH)
+		elseif pose == POSE.WALK then
+			pulse_bind(key_bindings.kACCEL)
+		end
+	elseif goal == POSE.CROUCH then
+		if pose == POSE.PRONE then
+			pulse_bind(key_bindings.kACCEL)
+		elseif pose == POSE.WALK then
+			pulse_bind(key_bindings.kACCEL)
+		elseif pose == POSE.STAND then
+			pulse_bind(key_bindings.kCROUCH)
+		end
+	elseif goal == POSE.PRONE then
+		if pose == POSE.WALK then
+			pulse_bind(key_bindings.kACCEL)
+		elseif pose == POSE.STAND then
+			pulse_bind(key_bindings.kCROUCH)
+		elseif pose == POSE.CROUCH then
+			pulse_bind(key_bindings.kACCEL)
+		end
+	elseif goal == POSE.WALK then
+		if pose == POSE.PRONE then
+			pulse_bind(key_bindings.kACCEL)
+		elseif pose == POSE.CROUCH then
+			pulse_bind(key_bindings.kCROUCH)
+		elseif pose == POSE.STAND then
+			pulse_bind(key_bindings.kACCEL)
+		end
+	end
+
+	return get_pose() == goal
+end
+
+local function run_transition(goal)
+	pending_goal = goal
+	with_synthetic_input(function()
+		if step_toward(goal) then
+			pending_goal = nil
+		end
+	end)
+	log(string.format("transition -> %s (engine: %s)", goal, get_pose()))
+end
+
+local function on_before_key_press(key, bind, _dis, flags)
+	if applying_pose or not mod_active() or not input_allowed() then
+		return
+	end
+
+	if is_walk_bind(bind) then
+		if use_hold_mode() then
+			block(flags)
+		else
+			block(flags)
+			if get_pose() == POSE.WALK then
+				run_transition(POSE.STAND)
+			else
+				run_transition(POSE.WALK)
+			end
+			overlay(LOG.KEY, "walk key")
+		end
+		return
+	end
+
+	-- Scripted crouch pulses (FDDA body search, Faster Skinning) - leave alone.
+	if passthrough_scripted_pose_pulse() then
+		return
+	end
+
+	if bind == key_bindings.kCROUCH then
+		if not use_hold_mode() then
+			block(flags)
+			if get_pose() == POSE.CROUCH then
+				run_transition(POSE.STAND)
+			else
+				run_transition(POSE.CROUCH)
+			end
+			overlay(LOG.KEY, "crouch key")
+		end
+	elseif bind == key_bindings.kACCEL and not use_hold_mode() then
+		block(flags)
+		if get_pose() == POSE.PRONE then
+			run_transition(POSE.STAND)
+		else
+			run_transition(POSE.PRONE)
+		end
+		overlay(LOG.KEY, "prone key")
+	end
+end
+
+local function on_before_key_hold(key, bind, _dis, flags)
+	if applying_pose or not mod_active() or not input_allowed() then
+		return
+	end
+
+	if not use_hold_mode() then
+		return
+	end
+
+	if passthrough_scripted_pose_pulse() then
+		return
+	end
+
+	if is_walk_bind(bind) then
+		block(flags)
+		with_synthetic_input(function()
+			if IsMoveState("mcCrouch") then
+				set_bind_down(key_bindings.kCROUCH, false)
+			end
+			hold_bind(key_bindings.kACCEL)
+		end)
+		return
+	end
+
+	if bind == key_bindings.kCROUCH then
+		block(flags)
+		with_synthetic_input(function()
+			if IsMoveState("mcAccel") then
+				set_bind_down(key_bindings.kACCEL, false)
+			end
+			hold_bind(key_bindings.kCROUCH)
+		end)
+	elseif bind == key_bindings.kACCEL then
+		block(flags)
+		with_synthetic_input(function()
+			hold_bind(key_bindings.kCROUCH)
+			hold_bind(key_bindings.kACCEL)
+		end)
+	end
+end
+
+local function on_before_key_release(key, bind, _dis, flags)
+	if applying_pose or not mod_active() or not input_allowed() then
+		return
+	end
+
+	if passthrough_scripted_pose_pulse() then
+		return
+	end
+
+	if use_hold_mode() then
+		if is_walk_bind(bind) and get_pose() == POSE.WALK then
+			with_synthetic_input(function()
+				set_bind_down(key_bindings.kACCEL, false)
+			end)
+			pending_goal = nil
+			log(string.format("walk key release -> %s", get_pose()))
+		end
+		return
+	end
+
+	if bind == key_bindings.kCROUCH or bind == key_bindings.kACCEL then
+		block(flags)
+	end
+end
+
+local function on_actor_on_first_update()
+	dogma.sys.ready(CONFIG.MOD_ID, db, on_option_change)
+end
+
+local function on_actor_on_update()
+	if not dogma.sys.ready(CONFIG.MOD_ID, db, on_option_change) then
+		return
+	end
+
+	-- Finish in-progress transitions even while loot UI is open (FDDA body search).
+	if pending_goal and mod_active() and actor_can_change_pose() and not use_hold_mode() then
+		with_synthetic_input(function()
+			if step_toward(pending_goal) then
+				pending_goal = nil
+			end
+		end)
+	end
+
+	overlay(LOG.POSE, "pose: " .. get_pose())
+end
+
+function on_game_start()
+	dogma.load(CONFIG.MOD_ID)
+
+	RegisterScriptCallback("on_before_key_press", on_before_key_press)
+	RegisterScriptCallback("on_before_key_hold", on_before_key_hold)
+	RegisterScriptCallback("on_before_key_release", on_before_key_release)
+	RegisterScriptCallback("actor_on_first_update", on_actor_on_first_update)
+	RegisterScriptCallback("actor_on_update", on_actor_on_update)
+	RegisterScriptCallback("on_option_change", on_option_change)
+	log("loaded")
+end

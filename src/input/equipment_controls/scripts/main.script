@@ -1,0 +1,553 @@
+--[[
+	Equipment Controls
+
+	Detector / Geiger / RF / Glowstick / Torch force-equip into the detector slot.
+	Artefact detector + auto-bolt: wait until RH empty (or already bolt), then bolt
+	+ detector together. RF/Geiger/Glowstick never touch the bolt.
+]]
+
+local CONFIG = _G.dogma_input_equipment_controls_conf or {
+	MOD_ID = "dogma/input/equipment_controls",
+	DEFAULTS = { ["auto_bolt_on_detector"] = true },
+	loaded = {
+		enabled = true,
+		auto_bolt_on_detector = true,
+	},
+}
+
+local BOLT_SLOT = 6
+local DET_SLOT = 9
+local SLOT_MAX = 13
+
+local STATE_HIDDEN = 3
+
+local DET_CLASS = {
+	DET_SIMP = true,
+	DET_ADVA = true,
+	DET_ELIT = true,
+	DET_SCIE = true,
+}
+
+local scanner_busy = false
+local SCANNER_SHOW_EVENT = "scanner_show"
+local SCANNER_SWAP_EVENT = "scanner_swap"
+
+local function geiger_sec()
+	return (item_device and item_device.device_geiger) or "detector_geiger"
+end
+
+local function radio_sec()
+	return "detector_radio"
+end
+
+local function is_artefact_detector(sec)
+	if not sec or sec == geiger_sec() or sec == radio_sec() then
+		return false
+	end
+	local cls = ini_sys and ini_sys:r_string_ex(sec, "class")
+	return cls and DET_CLASS[cls] == true
+end
+
+local function is_handheld_flashlight(sec)
+	if not sec then
+		return false
+	end
+	if string.find(sec, "device_flashlight", 1, true) then
+		return true
+	end
+	return false
+end
+
+local function is_glowstick(sec)
+	if not sec or sec == "lights_glowstick" or is_handheld_flashlight(sec) then
+		return false
+	end
+	if string.find(sec, "device_glowstick", 1, true) then
+		return true
+	end
+	local cls = ini_sys and ini_sys:r_string_ex(sec, "class")
+	return cls == "D_FLALIT"
+end
+
+local function has_headlamp()
+	local actor = db.actor
+	if actor then
+		return actor:item_in_slot(10) ~= nil
+	end
+end
+
+local function is_fav(sec)
+	local sp = zzz_rax_sortingplus_mcm
+	return sp and sp.is_favorite and sp.is_favorite(sec) or false
+end
+
+local function is_sidearm(obj)
+	if not obj or IsMelee(obj) or not IsWeapon(obj) then
+		return false
+	end
+	local sec = obj:section()
+	if not (sec and ini_sys) then
+		return false
+	end
+	local s = ini_sys:r_float_ex(sec, "slot")
+	return s ~= nil and tonumber(s) == 1
+end
+
+local function can_use_keys()
+	local actor = db.actor
+	if not (actor and actor:alive()) then
+		return false
+	end
+	if actor_menu and actor_menu.inventory_opened and actor_menu.inventory_opened() then
+		return false
+	end
+	return true
+end
+
+local function cancel_scanner_show()
+	RemoveTimeEvent(CONFIG.MOD_ID, SCANNER_SHOW_EVENT)
+end
+
+local function cancel_scanner_hand()
+	RemoveTimeEvent(CONFIG.MOD_ID, "scanner_hand")
+end
+
+local function cancel_scanner_swap()
+	scanner_busy = false
+	RemoveTimeEvent(CONFIG.MOD_ID, SCANNER_SWAP_EVENT)
+	cancel_scanner_show()
+	cancel_scanner_hand()
+	RemoveTimeEvent(CONFIG.MOD_ID, "auto_bolt")
+end
+
+local function put_away_slot9(style)
+	local actor = db.actor
+	if not (actor and actor:active_detector()) then
+		return
+	end
+	if style == "force" then
+		actor:force_hide_detector()
+	elseif actor.hide_detector then
+		actor:hide_detector(style == "fast")
+	else
+		actor:force_hide_detector()
+	end
+end
+
+local function equip_and_show_detector(obj)
+	local actor = db.actor
+	if not (actor and obj) then
+		scanner_busy = false
+		return
+	end
+	actor:move_to_slot(obj, DET_SLOT)
+	cancel_scanner_show()
+	CreateTimeEvent(CONFIG.MOD_ID, SCANNER_SHOW_EVENT, 0.1, function()
+		if db.actor and db.actor:alive() then
+			db.actor:show_detector(true)
+		end
+		scanner_busy = false
+		return true
+	end)
+end
+
+local function cycle_detector(prev, next_obj, is_fast)
+	if not (prev and next_obj) then
+		scanner_busy = false
+		return
+	end
+	db.actor:hide_detector(is_fast)
+	local next_id = next_obj:id()
+	CreateTimeEvent(CONFIG.MOD_ID, SCANNER_SWAP_EVENT, 0, function()
+		if not (db.actor and db.actor:alive() and scanner_busy) then
+			scanner_busy = false
+			return true
+		end
+		if prev:get_state() == STATE_HIDDEN then
+			equip_and_show_detector(level.object_by_id(next_id) or next_obj)
+			return true
+		end
+		return false
+	end)
+end
+
+local function find_scanner(match_sec)
+	local actor = db.actor
+	if not actor then
+		return nil
+	end
+
+	dogma.perf.start("equipment_controls", "find_scanner")
+	for s = 1, SLOT_MAX do
+		local o = actor:item_in_slot(s)
+		if o and match_sec(o:section()) then
+			dogma.perf.stop()
+			return o
+		end
+	end
+
+	local fav, other
+	local function consider(_, it)
+		if fav or not it then
+			return
+		end
+		local sec = it:section()
+		if not match_sec(sec) then
+			return
+		end
+		if is_fav(sec) then
+			fav = it
+		elseif not other then
+			other = it
+		end
+	end
+
+	if actor.iterate_ruck then
+		actor:iterate_ruck(consider)
+	else
+		actor:iterate_inventory(consider, nil)
+	end
+
+	dogma.perf.stop()
+	return fav or other
+end
+
+local function right_hand_lowered(lowering_id)
+	if not lowering_id then
+		return true
+	end
+	local actor = db.actor
+	if not actor then
+		return true
+	end
+	local active = actor:active_item()
+	if active and active:id() == lowering_id then
+		return false
+	end
+	local obj = level.object_by_id(lowering_id)
+	if obj and obj.get_state and obj:get_state() ~= STATE_HIDDEN then
+		return false
+	end
+	return true
+end
+
+local function rh_blocks_detector(held)
+	if not held then
+		return false
+	end
+	if IsBolt and IsBolt(held) then
+		return false
+	end
+	if (IsPistol and IsPistol(held)) or is_sidearm(held) then
+		return false
+	end
+	if IsMelee and IsMelee(held) then
+		return false
+	end
+	return IsWeapon and IsWeapon(held)
+end
+
+local function has_bolt()
+	local actor = db.actor
+	local bolt = actor and actor:item_in_slot(BOLT_SLOT)
+	return bolt and IsBolt and IsBolt(bolt)
+end
+
+local function draw_bolt_now()
+	local actor = db.actor
+	if not (actor and has_bolt()) then
+		return
+	end
+	if actor:active_slot() ~= BOLT_SLOT then
+		actor:activate_slot(BOLT_SLOT)
+	end
+end
+
+local function rh_empty()
+	local actor = db.actor
+	if not actor then
+		return true
+	end
+	if actor:active_slot() == BOLT_SLOT then
+		return true
+	end
+	if actor:active_item() then
+		return false
+	end
+	return actor:active_slot() == 0
+end
+
+local function when_rh_ready(fn)
+	local actor = db.actor
+	if not actor then
+		return
+	end
+	if rh_empty() then
+		fn()
+		return
+	end
+	local held = actor:active_item()
+	local lowering_id = held and held:id() or nil
+	if actor:active_slot() ~= 0 then
+		actor:activate_slot(0)
+	end
+	local attempts = 0
+	CreateTimeEvent(CONFIG.MOD_ID, "scanner_hand", 0, function()
+		attempts = attempts + 1
+		local a = db.actor
+		if not (a and a:alive() and scanner_busy) then
+			scanner_busy = false
+			return true
+		end
+		if lowering_id and not right_hand_lowered(lowering_id) then
+			if attempts > 300 then
+				scanner_busy = false
+				return true
+			end
+			return false
+		end
+		if not rh_empty() and attempts <= 300 then
+			return false
+		end
+		fn()
+		return true
+	end)
+end
+
+local function when_blocking_rh_clear(lowering_id, fn)
+	local actor = db.actor
+	if not actor then
+		return
+	end
+	if actor:active_slot() ~= 0 then
+		actor:activate_slot(0)
+	end
+	local attempts = 0
+	CreateTimeEvent(CONFIG.MOD_ID, "scanner_hand", 0, function()
+		attempts = attempts + 1
+		local a = db.actor
+		if not (a and a:alive() and scanner_busy) then
+			scanner_busy = false
+			return true
+		end
+		if not right_hand_lowered(lowering_id) then
+			if attempts > 300 then
+				scanner_busy = false
+				return true
+			end
+			return false
+		end
+		fn()
+		return true
+	end)
+end
+
+local function start_detector_after_hand(device_id, is_fast)
+	local a = db.actor
+	local device = level.object_by_id(device_id)
+	if not device then
+		scanner_busy = false
+		return
+	end
+	if is_fast == nil then
+		is_fast = true
+	end
+	local current_det = a:item_in_slot(DET_SLOT)
+	if current_det and current_det:id() ~= device:id() then
+		cycle_detector(current_det, device, is_fast)
+	else
+		a:move_to_slot(device, DET_SLOT)
+		cancel_scanner_show()
+		CreateTimeEvent(CONFIG.MOD_ID, SCANNER_SHOW_EVENT, 0.1, function()
+			if db.actor and db.actor:alive() then
+				db.actor:show_detector(true)
+			end
+			scanner_busy = false
+			return true
+		end)
+	end
+end
+
+local function force_equip_scanner(obj)
+	local actor = db.actor
+	if not (actor and obj) then
+		return
+	end
+	if scanner_busy then
+		return
+	end
+
+	local want_bolt = is_artefact_detector(obj:section()) and CONFIG.loaded.auto_bolt_on_detector
+
+	local cur = actor:item_in_slot(DET_SLOT)
+	if cur and cur:id() == obj:id() then
+		if actor:active_detector() then
+			put_away_slot9("fast")
+			return
+		end
+		local function show_only()
+			if want_bolt then
+				draw_bolt_now()
+			end
+			if db.actor and db.actor:alive() then
+				db.actor:show_detector(true)
+			end
+			scanner_busy = false
+		end
+		if want_bolt and not rh_empty() then
+			scanner_busy = true
+			cancel_scanner_hand()
+			when_rh_ready(show_only)
+			return
+		end
+		show_only()
+		return
+	end
+
+	scanner_busy = true
+	cancel_scanner_show()
+	cancel_scanner_hand()
+	RemoveTimeEvent(CONFIG.MOD_ID, "auto_bolt")
+	RemoveTimeEvent(CONFIG.MOD_ID, SCANNER_SWAP_EVENT)
+
+	local device_id = obj:id()
+	local function go()
+		if want_bolt then
+			draw_bolt_now()
+		end
+		start_detector_after_hand(device_id)
+	end
+
+	if want_bolt then
+		when_rh_ready(go)
+		return
+	end
+
+	local held = actor:active_item()
+	if rh_blocks_detector(held) then
+		when_blocking_rh_clear(held:id(), go)
+		return
+	end
+
+	go()
+end
+
+local function force_equip_glowstick(obj)
+	local actor = db.actor
+	if not (actor and obj) then
+		return
+	end
+	if scanner_busy then
+		return
+	end
+
+	local cur = actor:item_in_slot(DET_SLOT)
+	if cur and cur:id() == obj:id() then
+		if actor:active_detector() then
+			put_away_slot9("full")
+			return
+		end
+		actor:show_detector(true)
+		return
+	end
+
+	scanner_busy = true
+	cancel_scanner_show()
+	cancel_scanner_hand()
+	RemoveTimeEvent(CONFIG.MOD_ID, SCANNER_SWAP_EVENT)
+
+	local device_id = obj:id()
+	local function go()
+		start_detector_after_hand(device_id, false)
+	end
+
+	local held = actor:active_item()
+	if rh_blocks_detector(held) then
+		when_blocking_rh_clear(held:id(), go)
+		return
+	end
+
+	go()
+end
+
+local function block(flags)
+	if flags then
+		flags.ret_value = false
+	end
+end
+
+local function on_option_change()
+	CONFIG.loaded.enabled = true
+	CONFIG.loaded.auto_bolt_on_detector = dogma.mcm.bool(CONFIG.MOD_ID, "auto_bolt_on_detector")
+	CONFIG.loaded.key_radio = dogma.mcm.key(CONFIG.MOD_ID, "key_radio")
+	CONFIG.loaded.key_glowstick = dogma.mcm.key(CONFIG.MOD_ID, "key_glowstick")
+end
+
+local function on_before_key_press(dik, bind, _dis, flags)
+	if not dogma.sys.ready(CONFIG.MOD_ID, db, on_option_change) then
+		return
+	end
+	if not CONFIG.loaded.enabled or not can_use_keys() or not key_bindings then
+		return
+	end
+
+	local rf_dik = CONFIG.loaded.key_radio
+	local glow_dik = CONFIG.loaded.key_glowstick
+
+	if bind == key_bindings.kTORCH and has_headlamp() then
+		return
+	end
+
+	if scanner_busy then
+		if bind == key_bindings.kDETECTOR
+			or bind == key_bindings.kCUSTOM14
+			or bind == key_bindings.kTORCH
+			or (rf_dik and dik == rf_dik)
+			or (glow_dik and dik == glow_dik)
+		then
+			block(flags)
+		end
+		return
+	end
+
+	if bind == key_bindings.kDETECTOR then
+		block(flags)
+		force_equip_scanner(find_scanner(is_artefact_detector))
+		return
+	end
+
+	if bind == key_bindings.kCUSTOM14 then
+		block(flags)
+		force_equip_scanner(find_scanner(function(sec)
+			return sec == geiger_sec()
+		end))
+		return
+	end
+
+	if rf_dik and dik == rf_dik then
+		block(flags)
+		force_equip_scanner(find_scanner(function(sec)
+			return sec == radio_sec()
+		end))
+		return
+	end
+
+	if glow_dik and dik == glow_dik then
+		block(flags)
+		force_equip_glowstick(find_scanner(is_glowstick))
+		return
+	end
+
+	if bind == key_bindings.kTORCH then
+		block(flags)
+		force_equip_scanner(find_scanner(is_handheld_flashlight))
+		return
+	end
+end
+
+function on_game_start()
+	dogma.load(CONFIG.MOD_ID)
+	on_option_change()
+	RegisterScriptCallback("on_option_change", on_option_change)
+	RegisterScriptCallback("on_before_key_press", on_before_key_press)
+end

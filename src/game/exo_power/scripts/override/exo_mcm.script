@@ -1,0 +1,75 @@
+--[[
+	DOGMA override: Powered Exos - arti (exo_mcm.script).
+
+	Drain multipliers live on DOGMA → Game → Exo Power.
+	This keeps arti's battery_chance + debug on the Powered Exoskeletons page.
+]]
+
+local defaults = {
+	loot_amt = 1.0,
+	battery_chance = 0.7,
+	debug = false,
+}
+
+function get_config(key)
+	-- Drain keys: DOGMA game/exo_power (arti page no longer owns them).
+	if key == "base_drain" or key == "run_drain" or key == "sprint_drain" or key == "drain" then
+		local conf = _G.dogma_game_exo_power_conf
+		if conf and conf.loaded then
+			if key == "drain" then
+				return conf.loaded.run_drain
+			end
+			return conf.loaded[key]
+		end
+		if conf and conf.DEFAULTS then
+			if key == "drain" then
+				return conf.DEFAULTS.run_drain
+			end
+			return conf.DEFAULTS[key]
+		end
+	end
+	if ui_mcm then
+		local value = ui_mcm.get("exo/" .. key)
+		if value ~= nil then
+			return value
+		end
+	end
+	return defaults[key]
+end
+
+function on_mcm_load()
+	return {
+		id = "exo",
+		sh = true,
+		gr = {
+			{
+				id = "title",
+				type = "slide",
+				link = "ui_options_slider_player",
+				text = "ui_mcm_exo_title",
+				size = { 512, 50 },
+				spacing = 20,
+			},
+			{
+				id = "drain_desc",
+				type = "desc",
+				text = "ui_mcm_dogma_game_exo_power_arti_redirect",
+			},
+			{
+				id = "battery_chance",
+				type = "track",
+				val = 2,
+				min = 0.1,
+				max = 1,
+				step = 0.1,
+				def = 0.7,
+			},
+			{
+				id = "debug",
+				type = "check",
+				val = 1,
+				def = false,
+			},
+		},
+	}
+end

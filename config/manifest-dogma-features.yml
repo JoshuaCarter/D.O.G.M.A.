@@ -26,13 +26,13 @@ Debug:
 Radiation FX:
   stage: RELEASE
   default: true
-  path: fx/radiation
+  path: gui/fx_radiation
   desc: Customisable radiation FX that tracks your actual irradiation level (like a dosimeter).
 
 Bleed FX:
   stage: RELEASE
   default: true
-  path: fx/bleed
+  path: gui/fx_bleed
   desc: Corner blood HUD overlays (hud_blood atlases), random corners per wound tier.
   settings:
     - video/player/blood_splash: "false" # Anomaly "Bleeding effect"
@@ -40,7 +40,7 @@ Bleed FX:
 Health FX:
   stage: RELEASE
   default: true
-  path: fx/health
+  path: gui/fx_health
   desc: Desaturates the screen as HP falls; black and white at 0 HP.
   settings:
     - video/player/bleed_effect: "false" # Anomaly "Low health blur"
@@ -48,13 +48,13 @@ Health FX:
 FPS:
   stage: RELEASE
   default: true
-  path: hud/fps
+  path: gui/fps
   desc: Customisable FPS counter with optional graph view.
 
 Minimap Toggle:
   stage: RELEASE
   default: true
-  path: hud/minimap
+  path: gui/minimap
   desc: Toggle/hold keybind for the minimap.
   disables:
     - 177- Minimap Toggle - RavenAscendant
@@ -62,7 +62,7 @@ Minimap Toggle:
 Stalker ID:
   stage: RELEASE
   default: true
-  path: hud/stalker_id
+  path: gui/stalker_id
   desc: "Centered version of \"Identification UI - CrookR\", to show name, rank, and faction icon when looking at stalkers."
   disables:
     - 163- Identification UI - CrookR
@@ -71,13 +71,13 @@ Stalker ID:
 Reactive BHS:
   stage: DEV
   default: true
-  path: hud/bhs_reactive
+  path: gui/bhs_reactive
   desc: "Hide classic BHS and status icons by default; show BHS on limb damage or hold key; show opted-in status icons when not grey (with grey grace)."
 
 Better Disassemble Keybind:
   stage: RELEASE
   default: true
-  path: items/disassemble
+  path: input/disassemble
   desc: Keybind to disassemble items from inventory, with press/hold/drag support.
   disables:
     - 144- Prefer Best Disassembly Tool - Demonized
@@ -85,7 +85,7 @@ Better Disassemble Keybind:
 Better Drop Keybind:
   stage: RELEASE
   default: true
-  path: items/drop
+  path: input/drop
   desc: Keybind to drop items fro*m inventory, with press/hold/drag support.
   disables:
     - G.A.M.M.A. Press Key to Drop Item
@@ -93,13 +93,13 @@ Better Drop Keybind:
 Weapon Stripper:
   stage: RELEASE
   default: true
-  path: items/stripping
+  path: input/stripping
   desc: Keybind to strip all attachments/parts from a weapon in one go.
 
 Weapons Ban:
   stage: DEV
   default: true
-  path: gameplay/weapons_ban
+  path: game/weapons_ban
   desc: "Traders won't buy your guns, ammo, or attachments - you must find them in stashes and corpses. Ammo craft: 1 casing + 1 bullet per round; powder is round(vanilla/box) per round."
   enables:
     - 145- Ammo Maker - arti
@@ -110,7 +110,7 @@ Weapons Ban:
 Toolbench Shared Stash:
   stage: DEV
   default: true
-  path: gameplay/shared_stash
+  path: game/shared_stash
   desc: "One shared stash for all crafted toolbenches; max 1 toolbench per map; toolbench weight includes weight of contents."
   enables:
     - 245- Hideout Furniture - Aoldri
@@ -118,13 +118,13 @@ Toolbench Shared Stash:
 Faster Skinning:
   stage: RELEASE
   default: true
-  path: gameplay/faster_skinning
+  path: game/faster_skinning
   desc: "Faster mutant skinning; optional light-slash loot with delayed pickup."
 
 PDA Go Away:
   stage: RELEASE
   default: true
-  path: controls/pda_go_away
+  path: input/pda_go_away
   desc: Stops the PDA reequipping after closing inventory or teleporting.
   disables:
     - Dorns_Dont_ReEquip_PDA
@@ -133,7 +133,7 @@ PDA Go Away:
 Campfire Healing:
   stage: RELEASE
   default: true
-  path: gameplay/campfire_healing
+  path: game/campfire_healing
   desc: "Heal near campfires when not in combat. Faster than current system and heals limbs if they have temporary health."
   disables:
     - 115- Campfire slowly regens life - arti
@@ -141,7 +141,7 @@ Campfire Healing:
 Better Exo Power Drain:
   stage: DEV
   default: true
-  path: gameplay/exo_power
+  path: game/exo_power
   desc: "Replaces Exosuit drain system. No drain when not moving and more drain when moving (compared to base G.A.M.M.A.)."
   enables:
     - 47- Powered Exos - arti
@@ -149,13 +149,13 @@ Better Exo Power Drain:
 Pose Controls:
   stage: RELEASE
   default: true
-  path: controls/pose_controls
+  path: input/pose_controls
   desc: "Remaps crouch and prone Controls binds to set pose directly (hold/toggle via MCM). Sprint stays vanilla."
 
 True Prone:
   stage: RELEASE
   default: true
-  path: gameplay/true_prone
+  path: game/true_prone
   desc: Makes the player model actually go prone rather than just low crouch.
   disables:
     - xrMPE
@@ -163,25 +163,25 @@ True Prone:
 Ammo Selector:
   stage: RELEASE
   default: true
-  path: gameplay/ammo_selector
+  path: game/ammo_selector
   desc: "Optional hold-to-open / release-to-close ammo wheel. Ships GAMMA ammo wheel UI."
 
 Death Report:
   stage: DEV
   default: true
-  path: gameplay/death_report
+  path: game/death_report
   desc: "On death, press Tab to toggle a summary of recent hits and remaining body health."
 
 Better Equipable Controls:
   stage: RELEASE
   default: true
-  path: controls/equipment_controls
+  path: input/equipment_controls
   desc: "Detector, Geiger, and Torch/Flashlight Controls binds force-equip matching devices into the detector slot."
 
 Pistol Slot:
   stage: DEV
   default: true
-  path: gameplay/pistol_slot
+  path: game/pistol_slot
   desc: "Dedicated engine inventory slot 16 as a pistol holster (pistols still equip to primary/secondary). Adds a Pistol holster key under weapon binds in Settings → Controls."
   disables:
     - 113- Knife Pistol in Binocular Slot - RavenAscendant
@@ -203,7 +203,7 @@ Nearby Pickup Labels:
 # True Fast Travel:
 #   stage: DEV
 #   default: true
-#   path: gameplay/true_fast_travel
+#   path: game/true_fast_travel
 #   desc: "Real path travel with spectator camera along the route, in-mod time simulation, LoS ambushes, walk-to-discover destinations. Blanks vanilla game_fast_travel so map FT does not return. Optional keybind teleports companions to you."
 #   disables:
 #     - 329- Fair Fast Travel - Catspaw
@@ -216,7 +216,7 @@ Nearby Pickup Labels:
 ADS Zoom:
   stage: RELEASE
   default: true
-  path: gameplay/ads_zoom
+  path: game/ads_zoom
   desc: "Brings weapon model closer to camera when ADS (can adjust per gun+sight combo), with defaults for irons/sights/scopes"
   disables:
     - 72- Adjustable Scope View - sneaky
@@ -224,7 +224,7 @@ ADS Zoom:
 Free Zoom:
   stage: RELEASE
   default: true
-  path: gameplay/free_zoom
+  path: game/free_zoom
   desc: Freely zoom when not ADS. Better input support than base G.A.M.M.A. (e.g. scroll wheel).
   disables:
     - 178- Free Zoom - SlowVibe

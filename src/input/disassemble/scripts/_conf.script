@@ -1,0 +1,28 @@
+-- input/disassemble conf - shared loaded options for disassemble / tools / attachments / PDA stash.
+
+local defaults = {
+	["attachments_enabled"] = true,
+	["disa_safe_equipped"] = true,
+	["key_disa"] = -1,
+	["key_disa_mode"] = 2,
+	["key_disa_modifier"] = 0,
+	["pda_grants_stash_coords"] = true,
+	["tools_enabled"] = true,
+}
+
+_G.dogma_input_disassemble_conf = {
+	MOD_ID = "dogma/input/disassemble",
+	DEFAULTS = defaults,
+	loaded = {
+		attachments_enabled = defaults["attachments_enabled"],
+		attach_enabled = defaults["attachments_enabled"],
+		disa_safe_equipped = defaults["disa_safe_equipped"],
+		pda_grants_stash_coords = defaults["pda_grants_stash_coords"],
+		tools_enabled = defaults["tools_enabled"],
+	},
+}
+
+function _G.dogma_input_disassemble_conf:ensure_dogma()
+	dogma.load(self.MOD_ID)
+	return dogma
+end

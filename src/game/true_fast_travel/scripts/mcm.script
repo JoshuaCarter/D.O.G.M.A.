@@ -1,0 +1,25 @@
+function on_mcm_load(options)
+	local CONFIG = _G.dogma_game_true_fast_travel_conf
+	dogma_mcm.attach(options, "game", "ui_mcm_menu_dogma_game", {
+		id = "true_fast_travel",
+		sh = true,
+		text = "ui_mcm_menu_dogma_game_true_fast_travel",
+		gr = dogma_mcm.with_header({
+			{
+				id = "page_description",
+				type = "desc",
+				text = "ui_mcm_dogma_game_true_fast_travel_page_description",
+			},
+			{
+				id = "time_factor_travel",
+				type = "track",
+				val = 2,
+				min = 1,
+				max = 10,
+				step = 1,
+				def = CONFIG.DEFAULTS["time_factor_travel"],
+				hint = "dogma_game_true_fast_travel_time_factor_travel",
+			},
+		}),
+	})
+end

@@ -1,0 +1,998 @@
+--[[
+	Death Report
+
+	Tracks recent hits while alive. On death: Tab toggles a styled hit summary
+	(off by default). No camera / spectate.
+]]
+
+local CONFIG = _G.dogma_game_death_report_conf
+
+local HIT_WINDOW_MS = 30000
+local HIT_CAP = 10
+local UI_W = 1024
+local UI_H = 768
+local LINE_H = 20
+local PANEL_W = 688
+local PANEL_PAD = 16
+local TICK_W = 4
+local TICK_H = 14
+local TICK_GAP = 10
+local TITLE_LINES = 2 -- title + blank
+local PANEL_TEX = "ui_inGame2_white_rect"
+
+local HIT_STATIC = "dogma_death_report_summary"
+local TAB_STATIC = "dogma_death_report_prompt"
+local PANEL_STATIC = "dogma_death_report_panel"
+
+-- Faithful bone → limb (same ids as damage_location_fix / ADB).
+local HITBOX = {
+	[14] = "head", [15] = "head", [16] = "head", [17] = "head",
+	[18] = "head", [19] = "head",
+	[2] = "torso", [11] = "torso", [12] = "torso", [13] = "torso",
+	[20] = "left arm", [21] = "left arm", [22] = "left arm", [23] = "left arm",
+	[24] = "left arm", [25] = "left arm", [26] = "left arm", [27] = "left arm",
+	[28] = "left arm", [29] = "left arm", [30] = "left arm", [31] = "left arm",
+	[32] = "left arm",
+	[33] = "right arm", [34] = "right arm", [35] = "right arm", [36] = "right arm",
+	[3] = "left leg", [4] = "left leg", [5] = "left leg", [6] = "left leg",
+	[7] = "right leg", [8] = "right leg", [9] = "right leg", [10] = "right leg",
+}
+
+-- ADB body-part multipliers (used only when estimating via get_protection).
+local HITBOX_MULT = {
+	["head"] = 0.8,
+	["torso"] = 0.9,
+	["left arm"] = 0.85,
+	["right arm"] = 0.85,
+	["left leg"] = 0.85,
+	["right leg"] = 0.85,
+}
+
+local LIMB_DISPLAY = {
+	["head"] = "Head",
+	["torso"] = "Torso",
+	["left arm"] = "Left Arm",
+	["right arm"] = "Right Arm",
+	["left leg"] = "Left Leg",
+	["right leg"] = "Right Leg",
+	["body"] = "Body",
+	["legs"] = "Legs",
+}
+
+local LIMB_RGB = {
+	["head"] = {255, 92, 92},
+	["torso"] = {230, 230, 230},
+	["left arm"] = {130, 190, 255},
+	["right arm"] = {130, 190, 255},
+	["left leg"] = {140, 220, 160},
+	["right leg"] = {140, 220, 160},
+	["body"] = {200, 200, 200},
+	["legs"] = {140, 220, 160},
+}
+
+local KIND_RGB = {
+	stalker = {255, 196, 96},
+	monster = {255, 118, 96},
+	world = {150, 210, 230},
+}
+
+local TYPE_INFO = {
+	bullet = { label = "Bullet", rgb = {220, 190, 110} },
+	tear = { label = "Tear", rgb = {220, 80, 70} },
+	impact = { label = "Impact", rgb = {186, 186, 196} },
+	burn = { label = "Fire", rgb = {255, 140, 40} },
+	explosion = { label = "Explosion", rgb = {255, 200, 50} },
+	radiation = { label = "Radiation", rgb = {80, 220, 90} },
+	psy = { label = "Psy", rgb = {180, 100, 255} },
+	chemical = { label = "Chemical", rgb = {80, 210, 160} },
+	electric = { label = "Electric", rgb = {90, 170, 255} },
+	bleed = { label = "Bleed", rgb = {190, 48, 56} },
+	unknown = { label = "Hit", rgb = {170, 170, 170} },
+}
+
+local COL = {
+	title = "%c[255,255,214,140]",
+	muted = "%c[255,150,150,150]",
+	dim = "%c[255,110,110,110]",
+	count = "%c[255,180,180,180]",
+	armor = "%c[255,110,200,130]",
+}
+
+-- Engine hit.type → TYPE_INFO key.
+local TYPE_KEY = {}
+
+local hits = {} -- newest at index 1
+local death_armed = false
+local report_visible = false
+local last_toggle_ms = 0
+local frozen = nil -- { lines, footer, hint }
+local adb_wrapped = false
+
+-- BHS limb keys → summary labels. Limb HP is points, not 0-1; percent needs maxhp.
+local DIED_LIMBS = {
+	{ key = "head", label = "Head" },
+	{ key = "torso", label = "Torso" },
+	{ key = "leftarm", label = "L Arm" },
+	{ key = "rightarm", label = "R Arm" },
+	{ key = "leftleg", label = "L Leg" },
+	{ key = "rightleg", label = "R Leg" },
+}
+
+-- Cached live BHS tables (same refs Medik / campfire use).
+local bhs_health, bhs_timedhp, bhs_maxhp
+
+local function log(msg)
+	if CONFIG.loaded.debug_log then
+		dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
+	end
+end
+
+local function rgb_code(rgb)
+	return string.format("%%c[255,%d,%d,%d]", rgb[1], rgb[2], rgb[3])
+end
+
+local function init_type_keys()
+	if next(TYPE_KEY) then
+		return
+	end
+	if not hit then
+		return
+	end
+	TYPE_KEY[hit.fire_wound] = "bullet"
+	TYPE_KEY[hit.wound] = "tear"
+	if hit.wound_2 then
+		TYPE_KEY[hit.wound_2] = "tear"
+	end
+	TYPE_KEY[hit.strike] = "impact"
+	TYPE_KEY[hit.explosion] = "explosion"
+	TYPE_KEY[hit.burn] = "burn"
+	if hit.light_burn then
+		TYPE_KEY[hit.light_burn] = "burn"
+	end
+	TYPE_KEY[hit.shock] = "electric"
+	TYPE_KEY[hit.chemical_burn] = "chemical"
+	TYPE_KEY[hit.radiation] = "radiation"
+	TYPE_KEY[hit.telepatic] = "psy"
+end
+
+local function type_key_of(hit_type)
+	init_type_keys()
+	return TYPE_KEY[hit_type] or "unknown"
+end
+
+local function type_info(key)
+	return TYPE_INFO[key] or TYPE_INFO.unknown
+end
+
+local function limb_key(bone_id)
+	if bone_id == 65535 then
+		return "body"
+	end
+	if bone_id == 0 then
+		return "legs"
+	end
+	return HITBOX[bone_id] or "body"
+end
+
+local function limb_key_for_mult(bone_id)
+	local label = HITBOX[bone_id]
+	if not label then
+		return "torso"
+	end
+	return label
+end
+
+local function tr(id)
+	if not id or id == "" then
+		return nil
+	end
+	local s = game.translate_string and game.translate_string(id)
+	if s and s ~= "" and s ~= id then
+		return s
+	end
+	return nil
+end
+
+local function looks_like_id(s)
+	if not s or s == "" then
+		return true
+	end
+	if s:find("_", 1, true) then
+		return true
+	end
+	return s:match("^[a-z][a-z0-9]*$") ~= nil
+end
+
+local function title_case_words(s)
+	return (s:gsub("(%a)([%w]*)", function(a, rest)
+		return a:upper() .. rest:lower()
+	end))
+end
+
+local function humanize_section(sec)
+	local s = sec
+	s = s:gsub("^zone_mine_", ""):gsub("^zone_", "")
+	s = s:gsub("_(weak|normal|strong|veteran|expert|master|novice|experienced|average|special)$", "")
+	s = s:gsub("_", " ")
+	return title_case_words(s)
+end
+
+local function section_nice_name(sec, fallback)
+	if not sec or sec == "" then
+		return nil
+	end
+	local named = tr(sec)
+	if named then
+		return named
+	end
+	if ui_item and ui_item.get_sec_name then
+		local n = ui_item.get_sec_name(sec)
+		if n and n ~= "" and n ~= sec and not looks_like_id(n) then
+			return n
+		end
+	end
+	if ini_sys and ini_sys.r_string_ex then
+		local inv = ini_sys:r_string_ex(sec, "inv_name") or ini_sys:r_string_ex(sec, "inv_name_short")
+		named = tr(inv)
+		if named then
+			return named
+		end
+		named = tr(ini_sys:r_string_ex(sec, "character_name"))
+		if named then
+			return named
+		end
+	end
+	if fallback then
+		return humanize_section(sec)
+	end
+	return nil
+end
+
+local function community_label(comm)
+	if not comm or comm == "" then
+		return nil
+	end
+	return tr("ui_st_" .. comm) or tr("st_" .. comm) or tr(comm) or title_case_words(comm:gsub("_", " "))
+end
+
+local function is_actor(obj)
+	if not (obj and db.actor) then
+		return false
+	end
+	local ok, id = pcall(function()
+		return obj:id()
+	end)
+	return ok and id == db.actor:id()
+end
+
+local function object_section(obj)
+	local ok, sec = pcall(function()
+		return obj:section()
+	end)
+	if ok and sec and sec ~= "" then
+		return sec
+	end
+	return nil
+end
+
+local function object_char_name(obj)
+	local ok, name = pcall(function()
+		return obj:character_name()
+	end)
+	if ok and name and name ~= "" and not looks_like_id(name) then
+		return name
+	end
+	return nil
+end
+
+local function weapon_label(shit, draftsman)
+	local wid = shit and shit.weapon_id
+	if not wid or wid == 0 or not level or not level.object_by_id then
+		return nil
+	end
+	local ok, obj = pcall(function()
+		return level.object_by_id(wid)
+	end)
+	if not (ok and obj) then
+		return nil
+	end
+	if is_actor(obj) then
+		return nil
+	end
+	if draftsman then
+		local ok_id, did = pcall(function()
+			return draftsman:id()
+		end)
+		local ok_oid, oid = pcall(function()
+			return obj:id()
+		end)
+		if ok_id and ok_oid and did == oid then
+			return nil
+		end
+	end
+	return section_nice_name(object_section(obj), false)
+end
+
+local function world_source(type_key)
+	if type_key == "impact" then
+		return "Fall", "impact"
+	end
+	if type_key == "tear" then
+		return "Bleed", "bleed"
+	end
+	local info = type_info(type_key)
+	return info.label, type_key
+end
+
+local function source_from_draftsman(draftsman, type_key)
+	if not draftsman or is_actor(draftsman) then
+		return world_source(type_key)
+	end
+
+	local ok_stalker, is_stalker = pcall(function()
+		return IsStalker and IsStalker(draftsman)
+	end)
+	if ok_stalker and is_stalker then
+		local name = object_char_name(draftsman)
+		local comm
+		local ok_c, c = pcall(function()
+			return draftsman:character_community()
+		end)
+		if ok_c then
+			comm = community_label(c)
+		end
+		if name and comm then
+			return name .. " (" .. comm .. ")", "stalker"
+		end
+		if name then
+			return name, "stalker"
+		end
+		if comm then
+			return comm, "stalker"
+		end
+		local sec = object_section(draftsman)
+		return section_nice_name(sec, true) or "Stalker", "stalker"
+	end
+
+	local ok_mon, is_mon = pcall(function()
+		return IsMonster and IsMonster(draftsman)
+	end)
+	if ok_mon and is_mon then
+		local name = object_char_name(draftsman) or section_nice_name(object_section(draftsman), true)
+		return name or "Mutant", "monster"
+	end
+
+	local ok_an, is_an = pcall(function()
+		return IsAnomaly and IsAnomaly(draftsman)
+	end)
+	if ok_an and is_an then
+		return section_nice_name(object_section(draftsman), true) or "Anomaly", "world"
+	end
+
+	local name = object_char_name(draftsman) or section_nice_name(object_section(draftsman), true)
+	if name then
+		return name, "world"
+	end
+	return world_source(type_key)
+end
+
+local function prune_hits(now)
+	now = now or time_global()
+	local kept = {}
+	for i = 1, #hits do
+		local e = hits[i]
+		if e and (now - e.t) <= HIT_WINDOW_MS then
+			kept[#kept + 1] = e
+			if #kept >= HIT_CAP then
+				break
+			end
+		end
+	end
+	hits = kept
+end
+
+local function dmg_rgb(pct)
+	if pct >= 50 then
+		return {255, 72, 72}
+	end
+	if pct >= 25 then
+		return {255, 160, 48}
+	end
+	if pct >= 10 then
+		return {255, 214, 96}
+	end
+	return {210, 210, 210}
+end
+
+local function hp_rgb(pct)
+	if pct <= 0 then
+		return {180, 48, 48}
+	end
+	if pct <= 25 then
+		return {255, 80, 80}
+	end
+	if pct <= 50 then
+		return {255, 160, 48}
+	end
+	if pct <= 75 then
+		return {255, 214, 96}
+	end
+	return {110, 200, 130}
+end
+
+local function format_hit_line(e)
+	local tinfo = type_info(e.type_key)
+	local dmg_pct = math.floor((e.damage * 100) + 0.5)
+	local mit_pct = math.floor((e.mitigated * 100) + 0.5)
+	local src_rgb = KIND_RGB[e.kind] or KIND_RGB.world
+	local limb = LIMB_DISPLAY[e.limb] or "Body"
+	local l_rgb = LIMB_RGB[e.limb] or LIMB_RGB.body
+
+	local dmg_txt = dmg_pct < 1 and "-<1%" or string.format("-%d%%", dmg_pct)
+	local parts = {
+		rgb_code(src_rgb) .. e.source,
+		COL.dim .. "   ",
+		rgb_code(l_rgb) .. limb,
+		COL.dim .. "   ",
+		rgb_code(dmg_rgb(math.max(dmg_pct, 1))) .. dmg_txt,
+	}
+	if e.count and e.count > 1 then
+		parts[#parts + 1] = COL.count .. " x" .. tostring(e.count)
+	end
+	parts[#parts + 1] = COL.dim .. "   "
+	parts[#parts + 1] = rgb_code(tinfo.rgb) .. tinfo.label
+	if e.weapon and e.weapon ~= "" then
+		parts[#parts + 1] = COL.muted .. "  " .. e.weapon
+	end
+	if mit_pct >= 5 then
+		parts[#parts + 1] = COL.armor .. string.format("  %d%% armor", mit_pct)
+	end
+	return table.concat(parts), tinfo.rgb
+end
+
+local function same_group(a, b)
+	return a.source == b.source
+		and a.kind == b.kind
+		and a.limb == b.limb
+		and a.type_key == b.type_key
+		and a.weapon == b.weapon
+end
+
+local function merge_into(dst, src)
+	local sum = dst.damage + src.damage
+	if sum > 0 then
+		dst.mitigated = (dst.mitigated * dst.damage + src.mitigated * src.damage) / sum
+	end
+	dst.damage = sum
+	dst.count = (dst.count or 1) + (src.count or 1)
+	dst.t = src.t or dst.t
+end
+
+local function push_hit(entry)
+	prune_hits(entry.t)
+	entry.count = entry.count or 1
+	local top = hits[1]
+	if top and same_group(top, entry) then
+		merge_into(top, entry)
+		return
+	end
+	table.insert(hits, 1, entry)
+	while #hits > HIT_CAP do
+		table.remove(hits)
+	end
+end
+
+local function record_hit(shit, bone_id, damage, mitigated_frac)
+	if not shit or not damage or damage <= 0 then
+		return
+	end
+	local hit_type = shit.type
+	local tkey = type_key_of(hit_type)
+	local source, kind = source_from_draftsman(shit.draftsman, tkey)
+	if kind == "world" and tkey == "tear" then
+		tkey = "bleed"
+	end
+	push_hit({
+		t = time_global(),
+		source = source,
+		kind = kind,
+		limb = limb_key(bone_id),
+		damage = damage,
+		mitigated = math.max(0, math.min(1, mitigated_frac or 0)),
+		type_key = tkey,
+		weapon = weapon_label(shit, shit.draftsman),
+	})
+end
+
+-- Match ADB shit_booster printf numbers from the same inputs.
+local function estimate_adb_damage(shit, bone_id, k_ap)
+	local power = shit.power or 0
+	local player_protection = 0
+	local premitigation = 0
+
+	local adb = rawget(_G, "grok_actor_damage_balancer")
+	if adb and type(adb.get_protection) == "function" then
+		local ok, pp, _lim, _ap, _hp, _abv, _hbv, pre = pcall(function()
+			return adb.get_protection(shit, bone_id, k_ap or 0)
+		end)
+		if ok then
+			player_protection = tonumber(pp) or 0
+			premitigation = tonumber(pre) or 0
+		end
+	end
+
+	if not (hit and shit.type == hit.fire_wound) then
+		premitigation = 0
+	end
+
+	if hit and shit.type == hit.fire_wound then
+		power = power * 0.8
+	elseif hit and shit.type == hit.wound then
+		power = power * 0.65
+	end
+
+	local key = limb_key_for_mult(bone_id)
+	power = power * (HITBOX_MULT[key] or 1.0)
+
+	local remain = (1 - premitigation) * (1 - player_protection)
+	local damage = power * remain
+	local mitigated = 1 - remain
+	return damage, mitigated
+end
+
+local function wrap_adb_shit_booster()
+	local adb = rawget(_G, "grok_actor_damage_balancer")
+	if not (adb and type(adb.shit_booster) == "function") then
+		return false
+	end
+	if adb.__dogma_death_report then
+		adb_wrapped = true
+		return true
+	end
+
+	local orig = adb.shit_booster
+	adb.shit_booster = function(shit, bone_id, k_ap)
+		if CONFIG.loaded.enabled and shit and (shit.power or 0) > 0 then
+			local damage, mitigated = estimate_adb_damage(shit, bone_id, k_ap)
+			record_hit(shit, bone_id, damage, mitigated)
+		end
+		return orig(shit, bone_id, k_ap)
+	end
+	adb.__dogma_death_report = true
+	adb_wrapped = true
+	log("wrapped grok_actor_damage_balancer.shit_booster")
+	return true
+end
+
+local function hud_wnd(name, create)
+	local hud = get_hud and get_hud()
+	if not hud then
+		return nil
+	end
+	local cs = hud:GetCustomStatic(name)
+	if not cs and create then
+		hud:AddCustomStatic(name, true)
+		cs = hud:GetCustomStatic(name)
+	end
+	if not cs then
+		return nil
+	end
+	return cs:wnd()
+end
+
+local function remove_static(name)
+	local hud = get_hud and get_hud()
+	if not hud then
+		return
+	end
+	if hud:GetCustomStatic(name) then
+		hud:RemoveCustomStatic(name)
+	end
+end
+
+local function tick_name(i)
+	return "dogma_death_report_tick_" .. tostring(i)
+end
+
+local function clear_ticks()
+	for i = 1, HIT_CAP do
+		remove_static(tick_name(i))
+	end
+end
+
+local function clear_report_ui()
+	remove_static(HIT_STATIC)
+	remove_static(PANEL_STATIC)
+	clear_ticks()
+end
+
+local function clear_death_ui()
+	clear_report_ui()
+	remove_static(TAB_STATIC)
+end
+
+local function set_text(name, text, x, y)
+	local wnd = hud_wnd(name, true)
+	if not wnd then
+		return
+	end
+	wnd:SetWndPos(vector2():set(x, y))
+	pcall(function()
+		wnd:SetTextComplexMode(true)
+	end)
+	local tc = wnd:TextControl()
+	if tc then
+		pcall(function()
+			tc:SetTextComplexMode(true)
+		end)
+		tc:SetText(text or "")
+	end
+end
+
+local function show_panel(x, y, w, h)
+	local wnd = hud_wnd(PANEL_STATIC, true)
+	if not wnd then
+		return
+	end
+	wnd:SetWndPos(vector2():set(x, y))
+	wnd:SetWndSize(vector2():set(w, h))
+	pcall(function()
+		wnd:InitTexture(PANEL_TEX)
+	end)
+	pcall(function()
+		wnd:SetStretchTexture(true)
+	end)
+	pcall(function()
+		wnd:SetTextureColor(GetARGB(175, 8, 8, 10))
+	end)
+end
+
+local function show_tick(i, x, y, rgb)
+	local wnd = hud_wnd(tick_name(i), true)
+	if not wnd then
+		return
+	end
+	wnd:SetWndPos(vector2():set(x, y))
+	wnd:SetWndSize(vector2():set(TICK_W, TICK_H))
+	pcall(function()
+		wnd:InitTexture(PANEL_TEX)
+	end)
+	pcall(function()
+		wnd:SetStretchTexture(true)
+	end)
+	pcall(function()
+		wnd:SetTextureColor(GetARGB(255, rgb[1], rgb[2], rgb[3]))
+	end)
+end
+
+local function show_hit_summary()
+	if not frozen then
+		clear_report_ui()
+		return
+	end
+
+	local hit_n = frozen.lines and #frozen.lines or 0
+	local extra = frozen.footer and 4 or 2
+	local n = TITLE_LINES + math.max(hit_n, 1) + extra
+
+	local text_h = n * LINE_H
+	local panel_h = text_h + PANEL_PAD * 2
+	local panel_x = math.floor((UI_W - PANEL_W) * 0.5)
+	local panel_y = math.floor((UI_H - panel_h) * 0.42)
+	local text_x = panel_x + PANEL_PAD + TICK_W + TICK_GAP
+	local text_y = panel_y + PANEL_PAD
+	local tick_x = panel_x + PANEL_PAD
+
+	show_panel(panel_x, panel_y, PANEL_W, panel_h)
+
+	local chunks = {
+		COL.title .. "DEATH REPORT",
+		"",
+	}
+	if hit_n == 0 then
+		chunks[#chunks + 1] = COL.muted .. "No hits in the last 30 seconds."
+	else
+		for i = 1, hit_n do
+			chunks[#chunks + 1] = frozen.lines[i].text
+		end
+	end
+	chunks[#chunks + 1] = ""
+	if frozen.footer then
+		chunks[#chunks + 1] = frozen.footer
+		chunks[#chunks + 1] = ""
+	end
+	chunks[#chunks + 1] = COL.dim .. (frozen.hint or "Press TAB to hide")
+
+	set_text(HIT_STATIC, table.concat(chunks, "\\n"), text_x, text_y)
+
+	clear_ticks()
+	local hit_y0 = text_y + TITLE_LINES * LINE_H
+	for i = 1, hit_n do
+		local rgb = frozen.lines[i].rgb or TYPE_INFO.unknown.rgb
+		local y = hit_y0 + (i - 1) * LINE_H + math.floor((LINE_H - TICK_H) * 0.5)
+		show_tick(i, tick_x, y, rgb)
+	end
+end
+
+local function hide_hit_summary()
+	clear_report_ui()
+end
+
+local function show_tab_prompt()
+	local msg = tr("ui_dogma_game_death_report_prompt") or "Press TAB for death report"
+	local tab_w = 800
+	local x = (UI_W - tab_w) * 0.5
+	local y = (UI_H * 0.5) + 50
+	set_text(TAB_STATIC, COL.title .. msg, x, y)
+end
+
+local function apply_report_visibility()
+	if report_visible then
+		remove_static(TAB_STATIC)
+		show_hit_summary()
+	else
+		hide_hit_summary()
+		show_tab_prompt()
+	end
+end
+
+local function arm_death_ui()
+	if not CONFIG.loaded.enabled then
+		return
+	end
+	death_armed = true
+	report_visible = false
+	show_tab_prompt()
+	hide_hit_summary()
+	log("death UI armed (report off)")
+end
+
+local function tab_dik()
+	return (DIK_keys and DIK_keys.DIK_TAB) or 15
+end
+
+local function try_toggle_report(dik)
+	if not CONFIG.loaded.enabled or not death_armed then
+		return false
+	end
+	if dik ~= tab_dik() then
+		return false
+	end
+	-- Both before_key_press and key_press can fire; debounce so Tab doesn't flip twice.
+	local now = time_global()
+	if (now - last_toggle_ms) < 200 then
+		return true
+	end
+	last_toggle_ms = now
+	report_visible = not report_visible
+	apply_report_visibility()
+	log(report_visible and "death report shown" or "death report hidden")
+	return true
+end
+
+-- Limb HP is BHS points — only cur/maxhp is valid.
+local function limb_pct_of(cur, maxv)
+	cur = tonumber(cur)
+	maxv = tonumber(maxv)
+	if not cur or not maxv or maxv <= 0 then
+		return 0
+	end
+	local pct = math.floor((cur / maxv) * 100 + 0.5)
+	if pct < 0 then
+		return 0
+	end
+	if pct > 100 then
+		return 100
+	end
+	return pct
+end
+
+local function tables_are_bhs(health, timedhp, maxhp)
+	return type(health) == "table"
+		and type(timedhp) == "table"
+		and type(maxhp) == "table"
+		and health.head ~= nil
+		and timedhp.head ~= nil
+		and maxhp.head ~= nil
+		and tonumber(maxhp.head) ~= nil
+end
+
+local function dig_bhs_from_fn(fn, depth)
+	if depth > 5 or type(fn) ~= "function" then
+		return nil
+	end
+	if debug.getfenv then
+		local env = debug.getfenv(fn)
+		if tables_are_bhs(env.health, env.timedhp, env.maxhp) then
+			return env.health, env.timedhp, env.maxhp
+		end
+	end
+	local i = 1
+	while true do
+		local name, val = debug.getupvalue(fn, i)
+		if not name then
+			break
+		end
+		if type(val) == "function" then
+			local h, t, m = dig_bhs_from_fn(val, depth + 1)
+			if h then
+				return h, t, m
+			end
+		elseif name == "health" and type(val) == "table" and val.head ~= nil then
+			local timedhp, maxhp
+			local j = 1
+			while true do
+				local n2, v2 = debug.getupvalue(fn, j)
+				if not n2 then
+					break
+				end
+				if n2 == "timedhp" then
+					timedhp = v2
+				elseif n2 == "maxhp" then
+					maxhp = v2
+				end
+				j = j + 1
+			end
+			if tables_are_bhs(val, timedhp, maxhp) then
+				return val, timedhp, maxhp
+			end
+		end
+		i = i + 1
+	end
+	return nil
+end
+
+local function resolve_bhs_tables()
+	if tables_are_bhs(bhs_health, bhs_timedhp, bhs_maxhp) then
+		return bhs_health, bhs_timedhp, bhs_maxhp
+	end
+
+	local mod = rawget(_G, "zzz_player_injuries")
+	if type(mod) == "table" then
+		if tables_are_bhs(mod.health, mod.timedhp, mod.maxhp) then
+			bhs_health, bhs_timedhp, bhs_maxhp = mod.health, mod.timedhp, mod.maxhp
+			return bhs_health, bhs_timedhp, bhs_maxhp
+		end
+		if type(mod.actor_on_update) == "function" then
+			local h, t, m = dig_bhs_from_fn(mod.actor_on_update, 0)
+			if h then
+				bhs_health, bhs_timedhp, bhs_maxhp = h, t, m
+				mod.health = h
+				mod.timedhp = t
+				mod.maxhp = m
+				return h, t, m
+			end
+		end
+	end
+	return nil
+end
+
+local function format_condition_line()
+	local health, _, maxhp = resolve_bhs_tables()
+	if not (health and maxhp) then
+		return nil
+	end
+
+	local parts = { COL.muted .. "Condition  " }
+	for i = 1, #DIED_LIMBS do
+		local spec = DIED_LIMBS[i]
+		local pct = limb_pct_of(health[spec.key], maxhp[spec.key])
+		if i > 1 then
+			parts[#parts + 1] = COL.dim .. "   "
+		end
+		parts[#parts + 1] = rgb_code(hp_rgb(pct)) .. string.format("%s %d%%", spec.label, pct)
+	end
+	return table.concat(parts)
+end
+
+local function freeze_hit_lines()
+	prune_hits()
+	local lines = {}
+	for i = 1, #hits do
+		local text, rgb = format_hit_line(hits[i])
+		lines[#lines + 1] = { text = text, rgb = rgb }
+	end
+	frozen = {
+		lines = lines,
+		footer = format_condition_line(),
+		hint = tr("ui_dogma_game_death_report_hide") or "Press TAB to hide",
+	}
+end
+
+local function reset_state()
+	hits = {}
+	death_armed = false
+	report_visible = false
+	last_toggle_ms = 0
+	frozen = nil
+	clear_death_ui()
+end
+
+local function on_option_change()
+	CONFIG.loaded.enabled = dogma.mcm.bool(CONFIG.MOD_ID, "enabled")
+	CONFIG.loaded.debug_log = dogma.dbg.logging()
+	if not CONFIG.loaded.enabled then
+		clear_death_ui()
+		death_armed = false
+		report_visible = false
+	end
+end
+
+local function actor_on_before_hit(shit, bone_id, flags)
+	if not CONFIG.loaded.enabled then
+		return
+	end
+	if not shit or (shit.power or 0) <= 0 then
+		return
+	end
+
+	-- When ADB is wrapped, physical hits are recorded in shit_booster.
+	-- Still record radiation / other paths that skip shit_booster.
+	if adb_wrapped then
+		if hit and shit.type == hit.radiation then
+			record_hit(shit, bone_id, shit.power, 0)
+		end
+		return
+	end
+
+	record_hit(shit, bone_id, shit.power, 0)
+end
+
+local function actor_on_before_death(whoID, flags)
+	if not CONFIG.loaded.enabled then
+		return
+	end
+
+	freeze_hit_lines()
+	arm_death_ui()
+	log(string.format("before_death hits=%d", frozen and frozen.lines and #frozen.lines or 0))
+end
+
+local function GUI_on_show(gui, str2)
+	if not CONFIG.loaded.enabled or not death_armed then
+		return
+	end
+	local name = tostring(gui or "") .. " " .. tostring(str2 or "")
+	if name:find("game_over", 1, true) or name:find("GameOver", 1, true) then
+		apply_report_visibility()
+	end
+end
+
+local function on_before_key_press(dik, bind, dis, flags)
+	if try_toggle_report(dik) then
+		if flags then
+			flags.ret_value = false
+		end
+	end
+end
+
+local function on_key_press(dik)
+	try_toggle_report(dik)
+end
+
+local function on_game_load()
+	reset_state()
+	wrap_adb_shit_booster()
+end
+
+local function actor_on_first_update()
+	wrap_adb_shit_booster()
+	on_option_change()
+end
+
+function on_game_start()
+	dogma.load(CONFIG.MOD_ID)
+	init_type_keys()
+	wrap_adb_shit_booster()
+	on_option_change()
+
+	RegisterScriptCallback("actor_on_before_hit", actor_on_before_hit)
+	RegisterScriptCallback("actor_on_before_death", actor_on_before_death)
+	RegisterScriptCallback("on_before_key_press", on_before_key_press)
+	RegisterScriptCallback("on_key_press", on_key_press)
+	RegisterScriptCallback("GUI_on_show", GUI_on_show)
+	RegisterScriptCallback("on_game_load", on_game_load)
+	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+	RegisterScriptCallback("on_option_change", on_option_change)
+	log("loaded")
+end

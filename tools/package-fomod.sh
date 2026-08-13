@@ -56,13 +56,10 @@ dogma_py() {
 # Category folder -> installer page title (matches MCM labels).
 cat_title() {
 	case "$1" in
-		controls) echo "Controls" ;;
+		input) echo "Input" ;;
 		crafting) echo "Crafting" ;;
-		fx) echo "FX" ;;
-		gameplay) echo "Gameplay" ;;
+		game) echo "Game" ;;
 		gui) echo "GUI" ;;
-		hud) echo "HUD" ;;
-		items) echo "Items" ;;
 		debug) echo "Debug" ;;
 		menu) echo "Menu" ;;
 		misc) echo "Misc" ;;

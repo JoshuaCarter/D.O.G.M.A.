@@ -1,0 +1,66 @@
+function on_mcm_load(options)
+	local CONFIG = _G.dogma_game_faster_skinning_conf
+	dogma_mcm.attach(options, "game", "ui_mcm_menu_dogma_game", {
+		id = "faster_skinning",
+		sh = true,
+		text = "ui_mcm_menu_dogma_game_faster_skinning",
+		gr = dogma_mcm.with_header({
+			{
+				id = "page_description",
+				type = "desc",
+				text = "ui_mcm_dogma_game_faster_skinning_page_description",
+			},
+			{
+				id = "skin_speed_multiplier",
+				type = "track",
+				val = 2,
+				min = 1,
+				max = 2,
+				step = 0.1,
+				def = CONFIG.DEFAULTS["skin_speed_multiplier"],
+				hint = "dogma_game_faster_skinning_skin_speed_multiplier",
+			},
+			{
+				id = "auto_crouch",
+				type = "check",
+				val = 1,
+				def = CONFIG.DEFAULTS["auto_crouch"],
+				hint = "dogma_game_faster_skinning_auto_crouch",
+			},
+			{
+				id = "look_at_mutant",
+				type = "check",
+				val = 1,
+				def = CONFIG.DEFAULTS["look_at_mutant"],
+				hint = "dogma_game_faster_skinning_look_at_mutant",
+			},
+			{
+				id = "look_at_offset",
+				type = "track",
+				val = 2,
+				min = 0,
+				max = 1,
+				step = 0.05,
+				def = CONFIG.DEFAULTS["look_at_offset"],
+				hint = "dogma_game_faster_skinning_look_at_offset",
+			},
+			{
+				id = "slash_loot",
+				type = "check",
+				val = 1,
+				def = CONFIG.DEFAULTS["slash_loot"],
+				hint = "dogma_game_faster_skinning_slash_loot",
+			},
+			{
+				id = "pickup_delay_ms",
+				type = "track",
+				val = 2,
+				min = 0,
+				max = 1000,
+				step = 25,
+				def = CONFIG.DEFAULTS["pickup_delay_ms"],
+				hint = "dogma_game_faster_skinning_pickup_delay_ms",
+			},
+		}),
+	})
+end

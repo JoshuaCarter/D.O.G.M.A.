@@ -34,7 +34,7 @@ def main() -> int:
     )
     dots_xml = (
         REPO_ROOT
-        / "src/gameplay/true_fast_travel/configs/ui/map_spots_dogma_true_fast_travel.xml"
+        / "src/game/true_fast_travel/configs/ui/map_spots_dogma_true_fast_travel.xml"
     )
 
     resolver = _resolver()

@@ -13,7 +13,7 @@ src/_common/<gamedata-root>/...    # vendored Common, not in MCM
 
 `_common` / `_debug` are underscore-prefixed **on disk only** (sort first / mark reserved). Manifest paths, package ids, and MCM keys stay `common` / `debug`.
 
-Example: `src/gameplay/faster_skinning/scripts/...` → MCM `D.O.G.M.A. → Gameplay → Faster Skinning`.  
+Example: `src/game/faster_skinning/scripts/...` → MCM `D.O.G.M.A. → Game → Faster Skinning`.  
 Top-level: `src/_debug/...` → MCM `D.O.G.M.A. → Debug` (DEV-only; not a category page).  
 Tweaks: `src/tweaks/<feature>/...` → MCM `D.O.G.M.A. → Tweaks` (one shared page; each feature appends a description).
 

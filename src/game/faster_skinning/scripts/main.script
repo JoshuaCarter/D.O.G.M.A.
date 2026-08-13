@@ -1,0 +1,746 @@
+--[[
+	Faster Skinning
+
+	Applies the vanilla "Well Dressed" skinning speed-up by default, skips FDDA's
+	redundant post-cut pickup anim, and optionally speeds the knife-cut, auto-crouches,
+	and looks at the mutant during the cut. Optional knife hit on a dead mutant:
+	claim-gated take-all + one delayed FDDA harvest pickup. Use-key FDDA skinning
+	is left alone.
+]]
+
+local CONFIG = _G.dogma_game_faster_skinning_conf
+
+local WELL_DRESSED_ID = "well_dressed"
+local ACTION_MUTANT_LOOT = "mutant_loot"
+local ACTION_MUTANT_SKIN = "mutant_skin"
+local MUTANT_LOOT_SOUND = "inv_mutant_loot_animal"
+local SKIN_CUT_SOUND = "interface\\item_usage\\harvest_use"
+local LAM2_CAM_EFFECTOR_ID = 2190 -- lam2.get_template_action_play_animation's cam effector id
+local LAM2_MISSING_LTX_KEY = "__dogma_no_ltx__" -- bogus ini key so lam2 skips cam/snd lookups
+local LOOK_AT_BONE = "bip01_spine1"
+
+-- Knife splash can deliver multiple hits in one swing; debounce one loot per strike.
+local USE_DEBOUNCE_MS = 400
+-- Knife HUD states (HudItem eLastBaseState=eBore=4; Weapon eFire/eFire2 follow)
+local KNIFE_STATE_FIRE = 5
+local KNIFE_STATE_FIRE2 = 6
+
+local original_has_achievement = nil
+local original_lam2_add_action = nil
+local original_get_template_action_mutant_skin = nil
+local original_xr_sound_set_sound_play = nil
+local skin_cut_sfx = nil
+local mutant_loot_decay_time = 7200
+local slash_looting = false
+local last_slash_ms = 0
+local last_knife_state = 0
+
+-- Deferred FDDA pickup so it does not cut off the knife swing.
+local pending_pickup_id = nil
+local pending_pickup_at = nil
+
+local function log(msg)
+	if CONFIG.loaded.debug_log then
+		dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
+	end
+end
+
+local function patched_has_achievement(achievement)
+	if CONFIG.loaded.enabled and achievement == WELL_DRESSED_ID then
+		log("well_dressed queried -> forced true")
+		return true
+	end
+	return original_has_achievement(achievement)
+end
+
+local function patch_achievements()
+	if original_has_achievement then
+		return
+	end
+	if not (_G.game_achievements and _G.game_achievements.has_achievement) then
+		log("game_achievements.has_achievement not found, nothing to patch")
+		return
+	end
+	original_has_achievement = _G.game_achievements.has_achievement
+	_G.game_achievements.has_achievement = patched_has_achievement
+	log("game_achievements.has_achievement patched")
+end
+
+-- Auto-crouch for the knife-cut. crouch=true applies; crouch=false restores the
+-- prior pose. A press/release only sticks when g_crouch_toggle is on (same trick
+-- FDDA body search uses), so if the player uses hold-crouch we briefly enable
+-- toggle, then put their previous setting back. No-ops when the MCM option is
+-- off or pose is already right.
+local function do_crouch(flags, crouch)
+	if not CONFIG.loaded.auto_crouch or not flags then
+		return
+	end
+
+	if crouch then
+		flags.dogma_skin_was_crouching = IsMoveState("mcCrouch")
+		if flags.dogma_skin_was_crouching then
+			return
+		end
+		flags.dogma_prev_crouch_toggle = get_console_cmd(1, "g_crouch_toggle") or false
+		if not flags.dogma_prev_crouch_toggle then
+			exec_console_cmd("g_crouch_toggle 1")
+		end
+		local dik = bind_to_dik(key_bindings.kCROUCH)
+		if dik and dik ~= 0 then
+			level.press_action(dik)
+			level.release_action(dik)
+		end
+		log("mutant_skin: auto-crouch applied")
+		return
+	end
+
+	if flags.dogma_skin_was_crouching == nil then
+		return
+	end
+	if flags.dogma_skin_was_crouching ~= IsMoveState("mcCrouch") then
+		local dik = bind_to_dik(key_bindings.kCROUCH)
+		if dik and dik ~= 0 then
+			level.press_action(dik)
+			level.release_action(dik)
+		end
+		log("mutant_skin: auto-crouch restored")
+	end
+	if flags.dogma_prev_crouch_toggle ~= nil then
+		exec_console_cmd(flags.dogma_prev_crouch_toggle and "g_crouch_toggle 1" or "g_crouch_toggle 0")
+	end
+	flags.dogma_skin_was_crouching = nil
+	flags.dogma_prev_crouch_toggle = nil
+end
+
+-- Engine look-at has no speed arg (actor_look_at_point(vector) only). Call it
+-- directly; hold through crouch/stand by re-applying until we stop.
+local function do_look_at(action, look)
+	if not CONFIG.loaded.look_at_mutant then
+		return
+	end
+	if look then
+		local target = action and action.target
+		if not (target and db.actor) then
+			return
+		end
+		local ok, mp = pcall(function()
+			return target:bone_position(LOOK_AT_BONE)
+		end)
+		if not (ok and mp and mp.y) then
+			return
+		end
+		mp.y = mp.y + CONFIG.loaded.look_at_offset
+		db.actor:actor_look_at_point(mp)
+		return
+	end
+	if db.actor and db.actor.actor_stop_look_at_point then
+		db.actor:actor_stop_look_at_point()
+	end
+end
+
+-- With Pose Controls (and the engine), crouch lands over several frames. If we
+-- disable_input or start the knife anim immediately, you stay standing. Wait for
+-- mcCrouch (or a short timeout) before locking input and queuing the action.
+local CROUCH_BEFORE_SKIN_MS = 600
+local pending_skin_action = nil
+local pending_skin_deadline = nil
+
+local function start_skin_action(action)
+	-- Full input lock, then queue. Skip re-lock if we already locked this action.
+	if action and action.flags and not action.flags.dogma_input_disabled then
+		level.disable_input()
+		game.only_allow_movekeys(false)
+		if _G.liz_fdda_input_manager then
+			liz_fdda_input_manager.is_input_disabled = true
+		end
+		game.set_actor_allow_ladder(false)
+		action.flags.dogma_input_disabled = true
+		log("mutant_skin: movement locked")
+	end
+	return original_lam2_add_action(action)
+end
+
+local function tick_pending_skin_action()
+	if not pending_skin_action then
+		return
+	end
+	if IsMoveState("mcCrouch") or time_global() >= pending_skin_deadline then
+		local action = pending_skin_action
+		pending_skin_action = nil
+		pending_skin_deadline = nil
+		if IsMoveState("mcCrouch") then
+			log("mutant_skin: crouch ready, starting knife-cut")
+		else
+			log("mutant_skin: crouch wait timed out, starting knife-cut")
+		end
+		start_skin_action(action)
+	end
+end
+
+local function release_mutant_skin_movement_lock(action)
+	if not (action.flags and action.flags.dogma_early_movement_lock) then
+		return
+	end
+	if pending_skin_action == action then
+		pending_skin_action = nil
+		pending_skin_deadline = nil
+	end
+	level.enable_input()
+	-- Stand while still looking, then release the look-at.
+	do_crouch(action.flags, false)
+	do_look_at(action, false)
+	game.only_allow_movekeys(false)
+	if _G.liz_fdda_input_manager then
+		liz_fdda_input_manager.is_input_disabled = false
+	end
+	game.set_actor_allow_ladder(true)
+	action.flags.dogma_early_movement_lock = nil
+	action.flags.dogma_input_disabled = nil
+	log("mutant_skin: movement lock released")
+end
+
+local function patched_add_action(action)
+	if slash_looting and action and (action.name == ACTION_MUTANT_SKIN or action.name == ACTION_MUTANT_LOOT) then
+		log("slash_loot: dropped " .. tostring(action.name) .. " from queue")
+		return
+	end
+	if CONFIG.loaded.enabled and action and action.name == ACTION_MUTANT_LOOT then
+		if action.flags and action.flags.dogma_melee_pickup then
+			return original_lam2_add_action(action)
+		end
+		log("mutant_loot: dropped from queue (item is already in inventory)")
+		return
+	end
+	if CONFIG.loaded.enabled and action and action.name == ACTION_MUTANT_SKIN then
+		action.flags = action.flags or {}
+		do_look_at(action, true)
+		do_crouch(action.flags, true)
+		action.flags.dogma_early_movement_lock = true
+		game.set_actor_allow_ladder(false)
+		-- Wait for crouch before lock + queue so Pose Controls can finish the pose.
+		if CONFIG.loaded.auto_crouch and action.flags.dogma_skin_was_crouching == false and not IsMoveState("mcCrouch") then
+			pending_skin_action = action
+			pending_skin_deadline = time_global() + CROUCH_BEFORE_SKIN_MS
+			log("mutant_skin: waiting for crouch before knife-cut")
+			return
+		end
+		return start_skin_action(action)
+	end
+	return original_lam2_add_action(action)
+end
+
+local function patch_lam2()
+	if original_lam2_add_action then
+		return
+	end
+	if not (_G.lam2 and _G.lam2.add_action) then
+		log("lam2.add_action not found, nothing to patch (FDDA Redone's mutant skinning not installed?)")
+		return
+	end
+	original_lam2_add_action = _G.lam2.add_action
+	_G.lam2.add_action = patched_add_action
+	log("lam2.add_action patched")
+end
+
+local function patched_get_template_action_mutant_skin(obj)
+	local a = original_get_template_action_mutant_skin(obj)
+	if not CONFIG.loaded.enabled then
+		return a
+	end
+
+	local fdda_on_enter = a.on_enter
+	local fdda_on_exit = a.on_exit
+	local fdda_on_skip = a.on_skip
+	local fdda_on_execute = a.on_execute
+	local speed_up = CONFIG.loaded.skin_speed_multiplier > 1
+
+	if speed_up then
+		a.speed = a.speed * CONFIG.loaded.skin_speed_multiplier
+		-- lam2 enter reads cam/snd from the hud section ltx before on_enter runs; point at a
+		-- missing key so it skips both (we play our own pitched cut sound instead).
+		a.cam = LAM2_MISSING_LTX_KEY
+		a.snd = LAM2_MISSING_LTX_KEY
+	end
+
+	a.on_enter = function(self)
+		self.flags = self.flags or {}
+
+		if speed_up then
+			if lam_fov_manager then
+				lam_fov_manager.restore_fov()
+			end
+			if skin_cut_sfx then
+				skin_cut_sfx:play_no_feedback(db.actor, sound_object.s2d, 0, VEC_ZERO, 1.0, CONFIG.loaded.skin_speed_multiplier)
+			end
+		elseif fdda_on_enter then
+			-- Keep FDDA cam effector / other enter work; strip its look-at so only our toggle owns it.
+			fdda_on_enter(self)
+			if db.actor and db.actor.actor_stop_look_at_point then
+				db.actor:actor_stop_look_at_point()
+			end
+		end
+		do_look_at(self, true)
+	end
+
+	a.on_execute = function(self, time)
+		do_look_at(self, true)
+		if fdda_on_execute then
+			return fdda_on_execute(self, time)
+		end
+	end
+
+	a.on_exit = function(self)
+		if speed_up then
+			level.remove_cam_effector(LAM2_CAM_EFFECTOR_ID)
+		end
+		if fdda_on_exit then
+			-- Knife degrade etc.; also stops look-at - re-apply so stand-up keeps it.
+			fdda_on_exit(self)
+		end
+		do_look_at(self, true)
+		release_mutant_skin_movement_lock(self)
+	end
+
+	a.on_skip = function(self)
+		if speed_up then
+			level.remove_cam_effector(LAM2_CAM_EFFECTOR_ID)
+		end
+		if fdda_on_skip then
+			fdda_on_skip(self)
+		end
+		do_look_at(self, true)
+		release_mutant_skin_movement_lock(self)
+	end
+
+	if speed_up then
+		log(string.format("mutant_skin: speed x%.2f", CONFIG.loaded.skin_speed_multiplier))
+	end
+	return a
+end
+
+local function patch_mutant_skin_speed()
+	if original_get_template_action_mutant_skin then
+		return
+	end
+	if not (_G.liz_fdda_redone_mutant_skinning and _G.liz_fdda_redone_mutant_skinning.get_template_action_mutant_skin) then
+		log("liz_fdda_redone_mutant_skinning.get_template_action_mutant_skin not found, nothing to patch (FDDA Redone's mutant skinning not installed?)")
+		return
+	end
+	original_get_template_action_mutant_skin = _G.liz_fdda_redone_mutant_skinning.get_template_action_mutant_skin
+	_G.liz_fdda_redone_mutant_skinning.get_template_action_mutant_skin = patched_get_template_action_mutant_skin
+	log("liz_fdda_redone_mutant_skinning.get_template_action_mutant_skin patched")
+end
+
+local function patched_set_sound_play(actor_id, sound_theme, ...)
+	-- During knife-cut anim, mute Loot's stock sound (synced harvest plays instead).
+	-- Slash has no cut anim - keep inv_mutant_loot_animal for PDA/take feedback.
+	if CONFIG.loaded.enabled and CONFIG.loaded.skin_speed_multiplier > 1 and sound_theme == MUTANT_LOOT_SOUND and not slash_looting then
+		log("inv_mutant_loot_animal: suppressed in favor of the synced cut sound")
+		return
+	end
+	return original_xr_sound_set_sound_play(actor_id, sound_theme, ...)
+end
+
+local function patch_xr_sound()
+	if original_xr_sound_set_sound_play then
+		return
+	end
+	if not (_G.xr_sound and _G.xr_sound.set_sound_play) then
+		log("xr_sound.set_sound_play not found, nothing to patch")
+		return
+	end
+	original_xr_sound_set_sound_play = _G.xr_sound.set_sound_play
+	_G.xr_sound.set_sound_play = patched_set_sound_play
+	log("xr_sound.set_sound_play patched")
+end
+
+local function slash_input_blocked()
+	if not db.actor then
+		return true
+	end
+	if db.actor.is_talking and db.actor:is_talking() then
+		return true
+	end
+	if actor_menu and actor_menu.get_last_mode and actor_menu.get_last_mode() ~= 0 then
+		return true
+	end
+	return false
+end
+
+-- Pickup still wants you looking at the corpse (interact use-target).
+local function use_target_dead_mutant()
+	local target = level.get_target_obj and level.get_target_obj()
+	if target and IsMonster(target) and not target:alive() then
+		return target
+	end
+	return nil
+end
+
+local function is_corpse_looted(obj)
+	return se_load_var(obj:id(), obj:name(), "looted")
+end
+
+local function mark_corpse_looted(obj)
+	if obj:clsid() == clsid.crow then
+		save_var(obj, "looted", true)
+	else
+		se_save_var(obj:id(), obj:name(), "looted", true)
+	end
+	if xr_corpse_detection and xr_corpse_detection.set_valuable_loot then
+		xr_corpse_detection.set_valuable_loot(obj:id(), false)
+	end
+end
+
+local function is_body_decayed(obj)
+	local st = db.storage[obj:id()]
+	if st and st.death_time and game.get_game_time():diffSec(st.death_time) > mutant_loot_decay_time then
+		return true
+	end
+	return false
+end
+
+-- Same PDA tip path as weapon disassembly (news_manager via actor_menu.set_item_news).
+local function slash_loot_parts_tip(obj, loot_tbl)
+	if not (actor_menu and actor_menu.set_item_news) then
+		return
+	end
+	local parts = {}
+	for sec, t in pairs(loot_tbl or {}) do
+		for _ = 1, (t.count or 0) do
+			parts[#parts + 1] = sec
+		end
+	end
+	if #parts == 0 then
+		return
+	end
+	local parts_text
+	if item_parts and item_parts.create_disassemble_list then
+		parts_text = item_parts.create_disassemble_list(parts)
+	else
+		parts_text = ""
+		for i = 1, #parts do
+			parts_text = parts_text .. "\\n- " .. ui_item.get_sec_name(parts[i])
+		end
+	end
+	actor_menu.set_item_news(
+		"success",
+		"weapon_ammo",
+		"st_dis_text_11",
+		ui_item.get_sec_name(obj:section()) or obj:section(),
+		game.translate_string("st_dis_text_9"),
+		parts_text
+	)
+end
+
+-- press_action(kUSE) bypasses on_before_key_press; claim mods veto there, so gate first.
+local function claim_allows_use()
+	local dik = bind_to_dik(key_bindings.kUSE)
+	if not (dik and dik ~= 0) then
+		dik = 0
+	end
+	local flags = { ret_value = true }
+	SendScriptCallback("on_before_key_press", dik, key_bindings.kUSE, false, flags)
+	return flags.ret_value ~= false
+end
+
+local function queue_pickup_anim()
+	-- Left-hand world grab (anm_ea_takelw) so the knife stays in the right hand.
+	local pickup = _G.liz_fdda_redone_item_pickup
+	if not (pickup and pickup.get_template_action_pickup and _G.lam2 and _G.lam2.add_action) then
+		log("pickup: FDDA item_pickup unavailable")
+		return
+	end
+	local action = pickup.get_template_action_pickup(1, "anm_ea_takelw")
+	if not action then
+		log("pickup: get_template_action_pickup returned nil")
+		return
+	end
+	action.flags = action.flags or {}
+	action.flags.dogma_melee_pickup = true
+	action.hands = 1
+	_G.lam2.add_action(action)
+	log("pickup: queued world grab (left)")
+end
+
+local function degrade_knife()
+	if item_knife and item_knife.degradate then
+		item_knife.degradate()
+		log("knife: degradate")
+	end
+end
+
+local function clear_pending_pickup()
+	pending_pickup_id = nil
+	pending_pickup_at = nil
+end
+
+local function schedule_pickup(obj_id)
+	local delay = CONFIG.loaded.pickup_delay_ms or 0
+	if delay <= 0 then
+		local still = use_target_dead_mutant()
+		if still and still:id() == obj_id then
+			log("pickup: immediate")
+			queue_pickup_anim()
+		else
+			log("pickup: look lost - skip")
+		end
+		return
+	end
+	pending_pickup_id = obj_id
+	pending_pickup_at = time_global() + delay
+	log(string.format("pickup: scheduled in %dms id=%s", delay, tostring(obj_id)))
+end
+
+local function tick_pending_pickup()
+	if not pending_pickup_at then
+		return
+	end
+	if time_global() < pending_pickup_at then
+		return
+	end
+	local id = pending_pickup_id
+	clear_pending_pickup()
+	local still = use_target_dead_mutant()
+	if still and still:id() == id then
+		log("pickup: delay done, still targeting - play")
+		queue_pickup_anim()
+	else
+		log("pickup: delay done, look lost - skip")
+	end
+end
+
+-- Returns true if loot succeeded.
+local function instant_slash_loot(obj)
+	if not (ui_mutant_loot and ui_mutant_loot.UIMutantLoot) then
+		log("slash_loot: ui_mutant_loot missing")
+		return false
+	end
+	if not ui_mutant_loot.GUI then
+		ui_mutant_loot.GUI = ui_mutant_loot.UIMutantLoot()
+	end
+	local gui = ui_mutant_loot.GUI
+	if not gui or gui:IsShown() then
+		return false
+	end
+
+	dogma.perf.start("faster_skinning", "instant_slash_loot")
+	-- FillList builds loot + may fire mutant encyclopedia unlock. Skip ShowDialog so
+	-- tips aren't swallowed by an open loot UI (FDDA auto-loot closes first).
+	local orig_show = gui.ShowDialog
+	gui.ShowDialog = function() end
+	local can_show = gui:Reset(obj)
+	gui.ShowDialog = orig_show
+	if not can_show then
+		log("slash_loot: Reset returned false")
+		dogma.perf.stop()
+		return false
+	end
+	if gui.Close then
+		gui:Close()
+	end
+
+	-- Snapshot before Loot empties the table.
+	local loot_snapshot = {}
+	for sec, t in pairs(gui.loot or {}) do
+		loot_snapshot[sec] = { count = t.count }
+	end
+
+	mark_corpse_looted(obj)
+	slash_looting = true
+
+	local original_play_item_fx = actor_effects and actor_effects.play_item_fx
+	if original_play_item_fx then
+		actor_effects.play_item_fx = function(item)
+			if item == "mutant_looting" or item == "mutant_looting_boost_1" or item == "mutant_looting_boost_2" then
+				return
+			end
+			return original_play_item_fx(item)
+		end
+	end
+
+	gui:Loot(true)
+	if gui.Close then
+		gui:Close()
+	end
+
+	if original_play_item_fx then
+		actor_effects.play_item_fx = original_play_item_fx
+	end
+	slash_looting = false
+
+	-- Encyclopedia unlock tip (same callback loot_mutant uses; no-ops if already unlocked).
+	if ui_mutant_loot.loot_mutant then
+		ui_mutant_loot.loot_mutant(obj:section(), obj:clsid(), nil, db.actor, true, obj)
+	end
+	slash_loot_parts_tip(obj, loot_snapshot)
+	log("slash_loot: looted id=" .. tostring(obj:id()))
+	dogma.perf.stop()
+	return true
+end
+
+local function equipped_knife()
+	local wpn = db.actor and db.actor:active_item()
+	if not (wpn and wpn:clsid() == clsid.wpn_knife_s) then
+		return nil
+	end
+	local sec = wpn:section()
+	if string.find(sec, "animation_hit_", 1, true) then
+		return nil
+	end
+	return wpn
+end
+
+-- Real knife strike on a corpse (KnifeStrike → Hit → monster_on_before_hit).
+local function try_melee_slash(obj)
+	if not (CONFIG.loaded.enabled and CONFIG.loaded.slash_loot) then
+		return
+	end
+	if slash_input_blocked() then
+		return
+	end
+	if not (obj and IsMonster(obj) and not obj:alive()) then
+		return
+	end
+	local wpn = equipped_knife()
+	if not wpn then
+		return
+	end
+	local now = time_global()
+	if now - last_slash_ms < USE_DEBOUNCE_MS then
+		return
+	end
+
+	if is_corpse_looted(obj) then
+		log("slash_loot: already looted id=" .. tostring(obj:id()))
+		return
+	end
+	if is_body_decayed(obj) then
+		actor_menu.set_msg(1, game.translate_string("st_body_decayed"), 4)
+		return
+	end
+
+	last_slash_ms = now
+	local obj_id = obj:id()
+
+	if not claim_allows_use() then
+		log("slash_loot: blocked by claim / on_before_key_press")
+		return
+	end
+
+	log("slash_loot: loot id=" .. tostring(obj_id))
+	if not instant_slash_loot(obj) then
+		return
+	end
+
+	degrade_knife()
+	local still = use_target_dead_mutant()
+	if still and still:id() == obj_id then
+		log("slash_loot: schedule pickup")
+		schedule_pickup(obj_id)
+	else
+		log("slash_loot: look lost - skip pickup")
+	end
+end
+
+local function monster_on_before_hit(monster, shit, bone_id, flags)
+	if not (CONFIG.loaded.enabled and CONFIG.loaded.slash_loot) then
+		return
+	end
+	if not (monster and IsMonster(monster) and not monster:alive()) then
+		return
+	end
+	local draftsman = shit and shit.draftsman
+	if not (draftsman and db.actor and draftsman:id() == db.actor:id()) then
+		return
+	end
+	local wpn = equipped_knife()
+	if not wpn then
+		return
+	end
+	-- Prefer weapon_id when present so splash from another weapon can't false-trigger.
+	local wid = shit.weapon_id
+	if wid and wid ~= 0 and wid ~= wpn:id() then
+		return
+	end
+	try_melee_slash(monster)
+end
+
+-- Heavy (FIRE2) often doesn't register a corpse hit; also catch light/heavy swing
+-- while the dead mutant is the use-target. Caller already verified `wpn`.
+local function tick_slash_swing(wpn)
+	if slash_input_blocked() then
+		last_knife_state = 0
+		return
+	end
+	local state = wpn:get_state()
+	local rising = (state == KNIFE_STATE_FIRE or state == KNIFE_STATE_FIRE2) and state ~= last_knife_state
+	last_knife_state = state
+	if not rising then
+		return
+	end
+	local obj = use_target_dead_mutant()
+	if obj then
+		try_melee_slash(obj)
+	end
+end
+
+local function on_option_change()
+	CONFIG.loaded.enabled = true
+	CONFIG.loaded.debug_log = dogma.dbg.logging()
+	CONFIG.loaded.skin_speed_multiplier = dogma.mcm.float(CONFIG.MOD_ID, "skin_speed_multiplier")
+	CONFIG.loaded.auto_crouch = dogma.mcm.bool(CONFIG.MOD_ID, "auto_crouch")
+	CONFIG.loaded.look_at_mutant = dogma.mcm.bool(CONFIG.MOD_ID, "look_at_mutant")
+	CONFIG.loaded.look_at_offset = dogma.mcm.float(CONFIG.MOD_ID, "look_at_offset")
+	CONFIG.loaded.slash_loot = dogma.mcm.bool(CONFIG.MOD_ID, "slash_loot")
+	CONFIG.loaded.pickup_delay_ms = dogma.mcm.uint(CONFIG.MOD_ID, "pickup_delay_ms")
+	if not CONFIG.loaded.slash_loot then
+		clear_pending_pickup()
+	end
+	log(string.format(
+		"options: slash_loot=%s pickup_delay_ms=%s",
+		tostring(CONFIG.loaded.slash_loot),
+		tostring(CONFIG.loaded.pickup_delay_ms)
+	))
+end
+
+function on_game_start()
+	dogma.load(CONFIG.MOD_ID)
+
+	on_option_change()
+
+	local ini_mutant = ini_file("items\\settings\\mutant_loot.ltx")
+	mutant_loot_decay_time = ini_mutant:r_float_ex("mutant_loot_mod", "decay_time") or 7200
+
+	patch_achievements()
+	patch_lam2()
+	patch_mutant_skin_speed()
+	patch_xr_sound()
+	skin_cut_sfx = sound_object(SKIN_CUT_SOUND)
+
+	RegisterScriptCallback("actor_on_update", function()
+		dogma.sys.ready(CONFIG.MOD_ID, db, on_option_change)
+		local busy = pending_skin_action or pending_pickup_at
+		local knife = (CONFIG.loaded.enabled and CONFIG.loaded.slash_loot) and equipped_knife() or nil
+		if not knife then
+			last_knife_state = 0
+		end
+		if not busy and not knife then
+			return
+		end
+		dogma.perf.start("faster_skinning", "actor_on_update")
+		if busy then
+			tick_pending_skin_action()
+			if pending_skin_action then
+				do_look_at(pending_skin_action, true)
+			end
+			tick_pending_pickup()
+		end
+		if knife then
+			tick_slash_swing(knife)
+		end
+		dogma.perf.stop()
+	end)
+	RegisterScriptCallback("monster_on_before_hit", monster_on_before_hit)
+	RegisterScriptCallback("on_option_change", on_option_change)
+	log("loaded")
+end

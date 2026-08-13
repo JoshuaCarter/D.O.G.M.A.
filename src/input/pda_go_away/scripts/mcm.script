@@ -1,0 +1,36 @@
+function on_mcm_load(options)
+	local CONFIG = _G.dogma_input_pda_go_away_conf
+	dogma_mcm.attach(options, "input", "ui_mcm_menu_dogma_input", {
+		id = "pda_go_away",
+		sh = true,
+		text = "ui_mcm_menu_dogma_input_pda_go_away",
+		gr = dogma_mcm.with_header({
+			{
+				id = "main_description",
+				type = "desc",
+				text = "ui_mcm_dogma_input_pda_go_away_main_description",
+			},
+			{
+				id = "after_inventory",
+				type = "check",
+				val = 1,
+				def = CONFIG.DEFAULTS["after_inventory"],
+				hint = "dogma_input_pda_go_away_after_inventory",
+			},
+			{
+				id = "after_loot",
+				type = "check",
+				val = 1,
+				def = CONFIG.DEFAULTS["after_loot"],
+				hint = "dogma_input_pda_go_away_after_loot",
+			},
+			{
+				id = "after_teleport",
+				type = "check",
+				val = 1,
+				def = CONFIG.DEFAULTS["after_teleport"],
+				hint = "dogma_input_pda_go_away_after_teleport",
+			},
+		}),
+	})
+end

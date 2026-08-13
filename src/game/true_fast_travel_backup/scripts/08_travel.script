@@ -1,0 +1,1252 @@
+-- True Fast Travel: Travel sequence, safety/surge, update loop, arrival and ambush.
+-- Loaded automatically before main.script (zzzz_dogma_game_true_fast_travel_main.script)
+
+-- ============================================================
+-- 4. Travel Sequence
+-- ============================================================
+-- Shared dft globals (Anomaly isolates zzz_* script environments)
+local tft = _G.tft
+-- Forward declarations for this file's private (non-exported) helpers, so they can
+-- reference each other regardless of definition order below.
+local apply_final_stats, cancel_journey_emission, check_and_skip_surges, cleanup_dots, close_pda_for_travel, complete_travel_sequence, detect_ambush, enforce_transition_combat_lock, force_end_surge, get_surge_manager, is_emission_active, is_safety_active, journey_path_ratio, maybe_pause_on_danger, plan_emission_interrupt, play_ambush_alert, play_fade_teleport, seconds_until_surge, set_safety_active, should_emission_interrupt, stop_travel_logic, teleport_companions, trigger_emission_interrupt, trigger_encounter, update_debug_overlay
+local clear_ambush_pause_prompt, show_ambush_pause_prompt, try_resume_ambush_pause
+local PP_FADE_ID = 22301
+local FADE_TELEPORT_DELAY_S = 0.5
+local TELEPORT_INVULN_S = 1.0
+local PAUSE_ON_DANGER_DELAY_S = 0.35
+local AMBUSH_PAUSE_STATIC = "tft_ambush_pause_prompt"
+
+clear_ambush_pause_prompt = function()
+    tft.ambush_pause_active = false
+    pcall(function()
+        local hud = get_hud and get_hud()
+        if hud and hud:GetCustomStatic(AMBUSH_PAUSE_STATIC) then
+            hud:RemoveCustomStatic(AMBUSH_PAUSE_STATIC)
+        end
+    end)
+end
+
+show_ambush_pause_prompt = function()
+    pcall(function()
+        local hud = get_hud and get_hud()
+        if not hud then return end
+        local cs = hud:GetCustomStatic(AMBUSH_PAUSE_STATIC)
+        if not cs then
+            hud:AddCustomStatic(AMBUSH_PAUSE_STATIC, true)
+            cs = hud:GetCustomStatic(AMBUSH_PAUSE_STATIC)
+        end
+        if not cs then return end
+        local wnd = cs:wnd()
+        if not wnd then return end
+        local msg = (tft_str and tft_str("tft_hud_ambush_pause_prompt"))
+            or "Hostiles nearby! Move to resume encounter."
+        local tc = wnd:TextControl()
+        if tc then
+            tc:SetText(msg)
+        end
+    end)
+end
+
+-- MCM: freeze time + "Paused" overlay after ambush / hostiles-near-dest (Pause key, not ESC menu).
+-- Movement keys (bound kFWD/kBACK/strafe) or Pause clear this specific pause.
+maybe_pause_on_danger = function()
+    local cfg = _G.tft_config
+    if not (cfg and cfg.pause_on_ambush) then return end
+    CreateTimeEvent("tft", "pause_on_ambush", PAUSE_ON_DANGER_DELAY_S, function()
+        pcall(function()
+            if not device then return end
+            if device().is_paused and device():is_paused() then return end
+            device():pause(true)
+            tft.ambush_pause_active = true
+            show_ambush_pause_prompt()
+            tft_log("Paused after dangerous travel arrival (pause_on_ambush).")
+        end)
+        return true
+    end)
+end
+
+-- Called from on_before_key_press (runs even while paused). Returns true if handled.
+try_resume_ambush_pause = function(dik, bind)
+    if not tft.ambush_pause_active then return false end
+
+    local kb = key_bindings
+    local is_move = kb and (
+        bind == kb.kFWD or bind == kb.kBACK
+        or bind == kb.kL_STRAFE or bind == kb.kR_STRAFE
+    )
+    local is_pause = kb and bind == kb.kPAUSE
+
+    if not (is_move or is_pause) then return false end
+
+    if is_move then
+        pcall(function()
+            if device and device().pause then
+                device():pause(false)
+            end
+        end)
+        tft_log("Resumed ambush pause via movement bind.")
+    else
+        -- Pause key: engine toggles pause after this callback; just drop our prompt/flag.
+        tft_log("Ambush pause prompt cleared (Pause key).")
+    end
+    clear_ambush_pause_prompt()
+    return true
+end
+
+play_fade_teleport = function(final_pos, lvid, gvid, on_done)
+    pcall(function()
+        level.add_pp_effector("dogma_tft_fade.ppe", PP_FADE_ID, false)
+        level.set_pp_effector_factor(PP_FADE_ID, 1.0)
+    end)
+    CreateTimeEvent("tft", "fade_tp", FADE_TELEPORT_DELAY_S, function()
+        if db.actor and final_pos then
+            db.actor:set_actor_position(final_pos)
+            teleport_companions(final_pos, lvid, gvid)
+            set_safety_active(TELEPORT_INVULN_S)
+            CreateTimeEvent("tft", "nudge_arrival_1", 0.05, function()
+                if db.actor then
+                    local cp = db.actor:position()
+                    db.actor:set_actor_position(vector():set(cp.x + 0.05, cp.y, cp.z + 0.05))
+                end
+                return true
+            end)
+            CreateTimeEvent("tft", "nudge_arrival_2", 0.1, function()
+                if db.actor then
+                    local cp = db.actor:position()
+                    db.actor:set_actor_position(vector():set(cp.x + 0.05, cp.y, cp.z + 0.05))
+                end
+                return true
+            end)
+        end
+        pcall(function() level.remove_pp_effector(PP_FADE_ID) end)
+        if on_done then on_done() end
+        return true
+    end)
+end
+
+local function start_travel_sequence(pos, lvid, gvid, is_transition, final_gvid)
+  local actor = db.actor
+    if tft.is_traveling or not pos then return false end
+    if not (db and actor) then return false end
+
+    -- v2.0.8: Set traveling flag immediately to close double-click race window.
+    -- fail_start -> tft_clear will reset it if the travel attempt fails.
+    tft.is_traveling = true
+    tft_set_fft_trip_in_progress(true)
+
+    local function fail_start(message, style)
+        if message then tft_msg(message, style) end
+        tft_clear()
+        return false
+    end
+
+    local unfit_gate = true
+    local cfg_unfit = (_G.tft_config and _G.tft_config.block_travel_when_unfit)
+    if cfg_unfit == nil and tft.active_config then
+        cfg_unfit = tft.active_config.block_travel_when_unfit
+    end
+    if cfg_unfit ~= nil then unfit_gate = cfg_unfit end
+    if unfit_gate then
+        if actor.health < 0.2 then
+            return fail_start(tft_str("tft_msg_cannot_travel_injured") or tft_str("tft_msg_too_wounded"), "warning")
+        end
+        if (actor.bleeding or 0) > 0.05 then
+            return fail_start(tft_str("tft_msg_must_stop_bleeding"), "warning")
+        end
+        if (actor.radiation or 0) > 0.35 then
+            return fail_start(tft_str("tft_msg_cannot_travel_radiation") or tft_str("tft_msg_too_wounded"), "warning")
+        end
+    end
+
+    if tft_actor_too_encumbered_to_move() then
+        return fail_start(tft_str("tft_msg_too_encumbered"), "warning")
+    end
+
+    local emission_blocks = _G.tft_emission_blocks_travel_start or emission_blocks_travel_start
+    if emission_blocks and emission_blocks() then
+        return fail_start(tft_str("tft_msg_emission_active"), "warning")
+    end
+
+    local sneaky_start = tft.travel_mode == "sneaky"
+    local actor_lid_start = tft_actor_level_id()
+    local start_targets = tft_scan_ambush_targets(db.actor:position(), sneaky_start, actor_lid_start)
+    if start_targets then
+        -- Player-facing distance is always the outer (main) range.
+        local outer_m = math.floor(tft_ambush_radius_m(sneaky_start) + 0.5)
+        return fail_start(string.format(tft_str("tft_msg_hostiles_nearby"), outer_m), "warning")
+    end
+
+    local gg = game_graph()
+    local ok_actor, actor_lid = pcall(function() return gg:vertex(db.actor:game_vertex_id()):level_id() end)
+    local ok_dest, dest_lid = pcall(function() return gg:vertex(gvid):level_id() end)
+
+    if not (ok_actor and ok_dest) then
+        tft_log("ERROR: Invalid vertex ID for actor (%s) or destination (%s)", tostring(db.actor:game_vertex_id()), tostring(gvid))
+        return fail_start()
+    end
+
+    tft.is_transition = is_transition or false
+    tft.final_gvid    = final_gvid or gvid
+
+    if is_transition then
+        local safe_pos, safe_lvid = tft_find_ground_pos(pos, lvid, gvid)
+        tft.dest_pos  = vector():set(safe_pos.x, safe_pos.y, safe_pos.z)
+        tft.dest_raw_pos = vector():set(safe_pos.x, safe_pos.y, safe_pos.z)
+        tft.dest_lvid = safe_lvid or lvid
+        tft.dest_gvid = gvid
+        tft_log("Traveling to zone exit on current map.")
+    elseif actor_lid ~= dest_lid then
+        return fail_start(tft_str("tft_msg_cross_zone_denied"), "warning")
+    else
+        local safe_pos, safe_lvid = tft_find_ground_pos(pos, lvid, gvid)
+        tft.dest_pos  = vector():set(safe_pos.x, safe_pos.y, safe_pos.z)
+        tft.dest_raw_pos = nil
+        tft.dest_lvid = safe_lvid or lvid
+        tft.dest_gvid = gvid
+    end
+
+    if not tft.start_pos then tft.start_pos = vector() end
+    local ap = db.actor:position()
+    tft.start_pos:set(ap.x, ap.y, ap.z)
+    local ok_sl, start_lvid = pcall(function() return db.actor:level_vertex_id() end)
+    tft.start_lvid = (ok_sl and start_lvid) or nil
+
+    tft_clear_path_preview()
+
+    -- Drop any stale preview cache so journey rebuilds from aimap.
+    tft.path_build_cache = nil
+
+    local dest_key = nil
+    if tft.last_menu_target_id and _G.tft_nav_mesh_dest_anchor_key then
+        dest_key = _G.tft_nav_mesh_dest_anchor_key(tft.last_menu_target_id)
+    end
+    tft.dest_anchor_key = dest_key
+
+    local straight_dist = tft_distance_pda(tft.start_pos, tft.dest_pos) or tft.start_pos:distance_to(tft.dest_pos)
+    local path_len = straight_dist
+    -- Build to the real exit first; transitions then pull the landing ~10-20m short so the
+    -- last journey step (and arrival teleport) never sit inside the level-changer trigger.
+    tft.dot_positions, path_len = tft_build_path_dots(tft.start_pos, tft.dest_pos, dest_key)
+    if tft.is_transition and _G.tft_apply_transition_arrival_short then
+        local short_dots, short_len = _G.tft_apply_transition_arrival_short()
+        if short_dots and short_len then
+            tft.dot_positions = short_dots
+            path_len = short_len
+            straight_dist = tft_distance_pda(tft.start_pos, tft.dest_pos) or tft.start_pos:distance_to(tft.dest_pos)
+        end
+    end
+    tft.dot_count = #(tft.dot_positions or {})
+    -- Aimap path polyline is authoritative. Densify can yield 0 dots on short paths
+    -- (spacing ~20m); those still fail via too_close below - not "no nav path".
+    if not (tft.path_chain and #tft.path_chain >= 2) then
+        return fail_start(tft_str("tft_msg_no_nav_path"), "warning")
+    end
+    tft.travel_dist = math.max(path_len or straight_dist, straight_dist)
+    if tft.travel_dist < 40 and not tft.is_transition then
+        return fail_start(tft_str("tft_msg_too_close"), "warning")
+    end
+
+    tft.dot_ids = {}
+    tft.dot_done = {}
+    tft.dot_path_ratio = {}
+
+    tft_assign_dot_path_ratios(tft.dot_positions, tft.travel_dist, tft.start_pos)
+    tft_log("Journey path: %d dots @ %dm, %.0fm along path (straight %.0fm)",
+        tft.dot_count, tft_path.dot_spacing_m, tft.travel_dist, straight_dist)
+    for i = 1, tft.dot_count do
+        tft_ensure_path_dot(i, true)
+    end
+
+    tft.current_dist   = 0
+    tft.last_update_tg = time_global()
+    tft.next_update    = tft.last_update_tg + 100
+    tft.start_game_time = game.get_game_time()
+
+    tft.encumbrance_speed_mult = tft_get_encumbrance_speed_mult()
+    tft.encumbrance_time_mult = 1.0 / tft.encumbrance_speed_mult
+    tft.encounters_avoided = 0
+    tft.arrival_forced_ambushes = 0
+    tft.arrival_short_m = 0
+    tft.target_stamina = 1.0
+    tft.journey_start_health = actor.health
+    tft.target_stamina = 1.0 -- never sprint during walk travel; do not wind arrival stamina
+    tft.expected_duration = tft_game_minutes_for_dist(tft.travel_dist, tft.travel_mode == "sneaky", tft.encumbrance_time_mult)
+    tft_log("Trip start | %.0fm | mode %s | encumbrance %s speed x%.2f",
+        tft.travel_dist, tostring(tft.travel_mode),
+        tft_get_inventory_weight_band(), tft.encumbrance_speed_mult)
+
+    tft.journey_cost = 0
+
+    local refresh = _G.refresh_active_config or refresh_active_config
+    if refresh then refresh() end
+    tft.is_traveling = true
+    tft_save(tft.dest_pos, tft.dest_lvid, tft.dest_gvid, tft.final_gvid)
+
+    tft_log("Walk journey started (%s, %.0fm).",
+        tft.is_transition and "zone exit" or tft.travel_mode,
+        tft.travel_dist)
+
+    -- Spectator walk puppet; stepped teleports only if the camera API is missing / fails.
+    if _G.tft_begin_fly_camera and _G.tft_begin_fly_camera() then
+        return true
+    end
+    tft_log("Walk camera unavailable - falling back to stepped journey.")
+    if tft_begin_stepped_journey then
+        tft_begin_stepped_journey()
+    end
+    return true
+end
+
+-- ============================================================
+-- Emission / surge scheduling (GAMMA surge_manager)
+-- ============================================================
+
+get_surge_manager = function()
+    if surge_manager and surge_manager.get_surge_manager then
+        local ok, sm = pcall(surge_manager.get_surge_manager)
+        if ok then return sm end
+    end
+    return nil
+end
+
+local function get_psi_storm_manager()
+    if psi_storm_manager and psi_storm_manager.get_psi_storm_manager then
+        local ok, pm = pcall(psi_storm_manager.get_psi_storm_manager)
+        if ok then return pm end
+    end
+    return nil
+end
+
+seconds_until_surge = function(sm)
+    sm = sm or get_surge_manager()
+    if not (sm and sm._delta and sm.last_surge_time) then return nil end
+    local ok, elapsed = pcall(function() return game.get_game_time():diffSec(sm.last_surge_time) end)
+    if not ok then return nil end
+    return sm._delta - elapsed
+end
+
+is_emission_active = function()
+    if surge_manager and surge_manager.is_started then
+        local ok, active = pcall(surge_manager.is_started)
+        if ok and active then return true end
+    end
+    local sm = get_surge_manager()
+    if sm and sm.started then return true end
+    local pm = get_psi_storm_manager()
+    if pm and pm.started then return true end
+    return false
+end
+
+local function format_secs_until(secs)
+    secs = math.max(0, math.floor(secs + 0.5))
+    local h = math.floor(secs / 3600)
+    local m = math.floor((secs % 3600) / 60)
+    local s = secs % 60
+    if h > 0 then
+        return string.format("%dh %02dm %02ds", h, m, s)
+    end
+    if m > 0 then
+        return string.format("%dm %02ds", m, s)
+    end
+    return string.format("%ds", s)
+end
+
+update_debug_overlay = function()
+    local cfg = _G.tft_config
+    if not (cfg and cfg.debug_overlay) then return end
+    local ok, err = pcall(function()
+        if not get_hud then return end
+
+        local msg
+        if is_emission_active() then
+            msg = "Emission: active"
+        else
+            local secs = seconds_until_surge()
+            if secs == nil then
+                msg = "Emission: unknown"
+            elseif secs <= 0 then
+                msg = "Emission: due now"
+            else
+                msg = "Emission in: " .. format_secs_until(secs)
+            end
+        end
+        if tft._debug_overlay_msg == msg then return end
+        tft._debug_overlay_msg = msg
+        dogma.dbg.overlay("dogma/game/true_fast_travel", 1, msg, "orange")
+    end)
+    if not ok then
+        tft_log("debug overlay error: %s", tostring(err))
+    end
+end
+
+local function emission_blocks_travel_start()
+    if is_emission_active() then return true end
+    local secs = seconds_until_surge()
+    if secs and secs <= 0 then return true end
+    return false
+end
+
+-- Precompute path % and time jump for a scheduled emission during this trip.
+plan_emission_interrupt = function()
+    tft.emission_interrupt_ratio = nil
+    tft.emission_time_jump_secs = nil
+    tft.emission_interrupt_pending = false
+
+    local secs_until = seconds_until_surge()
+    if not secs_until then return end
+
+    local journey_secs = (tft.expected_duration or 0) * 60
+    if journey_secs <= 0 then return end
+
+    if secs_until <= 0 then
+        tft_log("Emission due now - travel blocked at start.")
+        return
+    end
+    if secs_until > journey_secs then
+        tft_log("Emission after trip (%.0fs until surge, journey %.0fs) - no interrupt planned.", secs_until, journey_secs)
+        return
+    end
+
+    local ratio = secs_until / journey_secs
+    ratio = math.max(0, math.min(ratio, 1.0))
+    local lead = tft_travel.emission_lead_secs or 8
+    local jump_secs = math.max(0, math.floor(secs_until - lead + 0.5))
+
+    tft.emission_interrupt_ratio = ratio
+    tft.emission_time_jump_secs = jump_secs
+    tft_log("Emission planned at %.1f%% of route (%.0fs until surge, jump %.0fs, lead %ds).",
+        ratio * 100, secs_until, jump_secs, lead)
+end
+
+journey_path_ratio = function()
+    if not (tft.travel_dist and tft.travel_dist > 0) then return 0 end
+    return math.min((tft.current_dist or 0) / tft.travel_dist, 1.0)
+end
+
+local function emission_started_unexpectedly()
+    if not is_emission_active() then return false end
+    if tft.emission_interrupt_pending then return false end
+    local planned = tft.emission_interrupt_ratio
+    if not planned then return true end
+    return journey_path_ratio() + 0.001 < planned
+end
+
+should_emission_interrupt = function()
+    if not tft.emission_interrupt_ratio then return false end
+    if tft.emission_interrupt_pending then return false end
+    return journey_path_ratio() >= tft.emission_interrupt_ratio
+end
+
+cancel_journey_emission = function()
+    if not tft.is_traveling and not tft.fly_active then return end
+    tft_log("Journey cancelled - emission starting.")
+    if _G.tft_fly_stop_emission then
+        _G.tft_fly_stop_emission()
+        return
+    end
+    close_pda_for_travel()
+    if _G.tft_cancel_fly_camera then _G.tft_cancel_fly_camera() end
+    cleanup_dots()
+    stop_travel_logic()
+    tft_clear()
+    local cancel_opts = { outcome = "cancelled_emission" }
+    tft_msg(tft_journey_result_message(cancel_opts), tft_journey_result_style(cancel_opts))
+    pcall(function() save_var(db.actor, "surge_immuned", false) end)
+    CreateTimeEvent("tft", "emission_pause", 0.2, function()
+        if device and device().pause then pcall(function() device().pause(true) end) end
+        return true
+    end)
+end
+
+local function advance_travel_time_seconds(sec, opts)
+    local mfloor = math.floor
+    opts = opts or {}
+    if not sec or sec <= 0 or not (level and level.change_game_time) then return end
+    local total_sec = mfloor(sec + 0.5)
+    local days = mfloor(total_sec / 86400)
+    local hrs  = mfloor((total_sec % 86400) / 3600)
+    local mins = mfloor((total_sec % 3600) / 60)
+    local leftover = total_sec % 60
+    if leftover > 0 then
+        mins = mins + 1
+        if mins >= 60 then
+            hrs = hrs + mfloor(mins / 60)
+            mins = mins % 60
+        end
+    end
+    if not opts.allow_surge then
+        check_and_skip_surges()
+    end
+    level.change_game_time(days, hrs, mins)
+    tft_log("advance_travel_time_seconds: +%ds -> %dd %dh %dm (allow_surge=%s)",
+        total_sec, days, hrs, mins, tostring(opts.allow_surge == true))
+end
+
+close_pda_for_travel = function()
+    pcall(function()
+        if ActorMenu and ActorMenu.get_pda_menu then
+            local pda = ActorMenu.get_pda_menu()
+            if pda and pda:IsShown() then
+                pda:HideDialog()
+            end
+        end
+        if db.actor and db.actor:active_slot() == 8 then
+            db.actor:activate_slot(0)
+        end
+    end)
+end
+
+trigger_emission_interrupt = function()
+    local ratio = tft.emission_interrupt_ratio or journey_path_ratio()
+    ratio = math.max(0, math.min(ratio, 1.0))
+    tft.emission_interrupt_pending = true
+    tft_log("!!! EMISSION INTERRUPT at %.1f%% of route", ratio * 100)
+
+    close_pda_for_travel()
+    cleanup_dots()
+    stop_travel_logic()
+
+    local interrupt_pos = tft_get_safe_lvid_pos(ratio)
+    if not interrupt_pos then
+        interrupt_pos = vector():set(
+            tft.start_pos.x + (tft.dest_pos.x - tft.start_pos.x) * ratio,
+            tft.start_pos.y + (tft.dest_pos.y - tft.start_pos.y) * ratio,
+            tft.start_pos.z + (tft.dest_pos.z - tft.start_pos.z) * ratio
+        )
+    end
+    local safe_landing, safe_lvid = tft_find_ground_pos(interrupt_pos, nil, tft.dest_gvid, {
+        anchor = interrupt_pos,
+        max_drift_m = tft_path.ground_snap_max_drift_m or 60,
+    })
+    local lvid = safe_lvid or tft_resolve_lvid_for_pos(safe_landing, nil, tft.dest_gvid)
+    if not lvid and safe_landing and level and level.vertex_id then
+        local ok, lv = pcall(function() return level.vertex_id(safe_landing) end)
+        if ok then lvid = lv end
+    end
+    local gvid = db.actor and db.actor:game_vertex_id() or 0
+    local jump_secs = tft.emission_time_jump_secs or 0
+
+    local function after_emission_tp()
+        local journey_secs = (tft.expected_duration or 1) * 60
+        local partial = journey_secs > 0 and math.min(jump_secs / journey_secs, 1.0) or 0
+        advance_travel_time_seconds(jump_secs, { allow_surge = true })
+        apply_final_stats(partial)
+        local emit_opts = { outcome = "emission" }
+        tft_msg(tft_journey_result_message(emit_opts), tft_journey_result_style(emit_opts))
+        tft_clear()
+    end
+
+    if db.actor and safe_landing then
+        play_fade_teleport(safe_landing, lvid, gvid, after_emission_tp)
+    else
+        after_emission_tp()
+    end
+end
+
+-- ============================================================
+-- ULTRA AGGRESSIVE SURGE PROTECTION (GAMMA)
+-- ============================================================
+
+force_end_surge = function(manager)
+    if not manager then return end
+    -- If a surge is actively running, use GAMMA's skip_surge() to cleanly end it.
+    -- skip_surge() is safe (unlike end_surge which calls kill_all_unhided).
+    if manager.started then
+        pcall(function()
+            if not manager.inited_time then manager.inited_time = game.get_game_time() end
+            if not manager.last_surge_time then manager.last_surge_time = game.get_game_time() end
+            if not manager.surge_time then manager.surge_time = 222 end
+            manager:skip_surge()
+        end)
+    end
+    -- CRITICAL: Set last_surge_time to NOW and _delta to 6+ hours.
+    -- This prevents a new surge from starting after a time jump.
+    -- Without this, skip_surge sets last_surge_time to a past value
+    -- and the next update() immediately starts a new surge.
+    pcall(function() manager.started = false end)
+    pcall(function() manager.finished = true end)
+    pcall(function() manager.time_forwarded = false end)
+    pcall(function() manager.last_surge_time = game.get_game_time() end)
+    pcall(function() manager._delta = 6 * 3600 end)  -- 6 hours until next surge
+end
+
+check_and_skip_surges = function()
+    -- Surge Manager
+    if surge_manager and surge_manager.get_surge_manager then
+        local sm = surge_manager.get_surge_manager()
+        if sm then force_end_surge(sm) end
+    end
+
+    -- Psi Storm Manager
+    if psi_storm_manager and psi_storm_manager.get_psi_storm_manager then
+        local pm = psi_storm_manager.get_psi_storm_manager()
+        if pm then force_end_surge(pm) end
+    end
+end
+
+set_safety_active = function(duration)
+    tft.safety_until = time_global() + (duration * 1000)
+    tft_log("SAFETY WINDOW ACTIVATED: %d seconds", duration)
+
+    -- Immediate kill
+    check_and_skip_surges()
+
+    -- Very frequent repeated kills (this is what was missing)
+    for i = 1, 40 do
+        CreateTimeEvent("tft_safety", "kill_"..i, i * 0.6, function()
+            if is_safety_active() then
+                check_and_skip_surges()
+            end
+            return true
+        end)
+    end
+end
+
+is_safety_active = function()
+    if tft.is_traveling then return true end
+    return tft.safety_until and tft.safety_until > time_global()
+end
+
+-- ============================================================
+-- 6. Update Loop
+-- ============================================================
+enforce_transition_combat_lock = function()
+    local cfg = _G.tft_config
+    if cfg and cfg.block_transition_in_combat == false then
+        if tft._transition_locked then
+            tft_set_current_level_changers_locked(false)
+            tft._transition_locked = false
+        end
+        return
+    end
+    -- Mid fast-travel journey the actor's real position is teleport-managed elsewhere; the
+    -- zone-exit arrival itself syncs the lock directly (see complete_travel_sequence).
+    if tft.is_traveling then return end
+    if not (db.actor and db.actor:alive()) then return end
+
+    local tg = time_global()
+    local guard = _G.tft_transition_guard or {}
+    local interval = guard.scan_interval_ms or 150
+    if tft._transition_guard_next and tg < tft._transition_guard_next then return end
+    tft._transition_guard_next = tg + interval
+
+    local actor_pos = db.actor:position()
+    local radius = tft_ambush_radius_m(false)
+    local alerted, enemy_dist = tft_alerted_enemy_within(actor_pos, radius)
+
+    if alerted ~= tft._transition_locked then
+        tft_set_current_level_changers_locked(alerted)
+        tft._transition_locked = alerted
+        tft_log("Transition lock %s (nearest alerted enemy: %s).",
+            alerted and "ENGAGED - border crossings disabled" or "RELEASED - crossings re-enabled",
+            alerted and (tostring(enemy_dist) .. "m") or "none within " .. math.floor(radius) .. "m")
+    end
+    -- No PDA tip here: Tarkov Transitions UI already shows the combat block on the countdown.
+end
+
+local function actor_on_update()
+  local actor = db.actor
+    local tg_ui = time_global()
+    -- Keep the ring tight to the walking path while travelling; idle can stay slower.
+    local ring_ms = (tft.is_traveling and 100) or 500
+    if not tft._last_ambush_range_sync or (tg_ui - tft._last_ambush_range_sync) > ring_ms then
+        tft._last_ambush_range_sync = tg_ui
+        pcall(tft_sync_ambush_range_circle)
+    end
+
+    if not tft._last_debug_overlay_tick or (tg_ui - tft._last_debug_overlay_tick) > 500 then
+        tft._last_debug_overlay_tick = tg_ui
+        pcall(update_debug_overlay)
+    end
+
+    if _G.tft_nav_mesh_on_actor_update then
+        pcall(_G.tft_nav_mesh_on_actor_update)
+    end
+
+    pcall(enforce_transition_combat_lock)
+
+    if tft.is_traveling and emission_started_unexpectedly() then
+        cancel_journey_emission()
+        return
+    end
+
+    -- Discover nearby travel points while walking (must run before the is_traveling early-out).
+    if not tft.is_traveling and actor and tft_poll_discoveries then
+        local tg = time_global()
+        if tg > (tft._next_visit_poll or 0) then
+            tft._next_visit_poll = tg + 1000
+            tft_poll_discoveries()
+        end
+    end
+
+    -- Safety stat wipe runs EVERY tick (not throttled) so progressive
+    -- damage scripts like grok_progressive_rad_damages can't accumulate.
+    if actor then
+        if is_safety_active() then
+            pcall(function()
+                db.actor.radiation = -1.0
+                db.actor.psy_health = 1.0
+                if db.actor.health < 0.8 then
+                    db.actor.health = 0.8
+                end
+                -- Full stamina by default (mid-journey, the abstracted skip shouldn't drain
+                -- it); once an outcome sets tft.target_stamina (ambush/encumbrance), hold that
+                -- value for the rest of the safety window instead of snapping back to full
+                -- every tick.
+                pcall(function() db.actor.power = tft.target_stamina or 1.0 end)
+
+                if not tft._was_sleeping then
+                    if actor_status_sleep and actor_status_sleep.force_sleep then
+                        tft.orig_sleep = actor_status_sleep.force_sleep
+                        actor_status_sleep.force_sleep = function() end
+                    end
+                    if actor_status_thirst and actor_status_thirst.force_sleep then
+                        tft.orig_thirst = actor_status_thirst.force_sleep
+                        actor_status_thirst.force_sleep = function() end
+                    end
+                    tft._was_sleeping = true
+                end
+            end)
+
+            -- Throttle surge checks to once per second to avoid hammering the engine
+            local tg_now = time_global()
+            if not tft._last_surge_check or (tg_now - tft._last_surge_check) > 1000 then
+                tft._last_surge_check = tg_now
+                if not tft.emission_interrupt_ratio then
+                    check_and_skip_surges()
+                end
+            end
+
+        elseif tft._was_sleeping then
+            if actor_status_sleep and tft.orig_sleep then
+                actor_status_sleep.force_sleep = tft.orig_sleep
+                tft.orig_sleep = nil
+            end
+            if actor_status_thirst and tft.orig_thirst then
+                actor_status_thirst.force_sleep = tft.orig_thirst
+                tft.orig_thirst = nil
+            end
+            tft._was_sleeping = false
+        end
+    end
+
+    if _G.tft_fly_on_actor_update then
+        pcall(_G.tft_fly_on_actor_update)
+    end
+
+    if not tft.is_traveling then return end
+    if not actor or not db.actor:alive() then
+        if _G.tft_cancel_fly_camera then _G.tft_cancel_fly_camera() end
+        if tft_cancel_stepped_journey then tft_cancel_stepped_journey() end
+        stop_travel_logic()
+        tft_clear()
+        return
+    end
+
+    -- Fly / stepped journey owns progression.
+    if tft.fly_active or tft.stepped_active then
+        return
+    end
+
+    if tft.ambush_pending then return end
+
+    local tg = time_global()
+    if tg < tft.next_update then return end
+    tft.last_update_tg = tg
+    tft.next_update    = tg + 100
+
+    -- Legacy non-stepped path (should not run); keep emission react only.
+    if tft_is_emission_active and tft_is_emission_active() then
+        trigger_emission_interrupt()
+    end
+end
+
+complete_travel_sequence = function(opts)
+    opts = opts or {}
+    local fly_handoff = opts.fly_handoff == true
+
+    if db.actor then
+        tft_log("Surge immunity set on complete_travel_sequence.")
+        if tft.last_menu_target_id and tft_discover_destination then
+            tft_discover_destination(tft.last_menu_target_id, true)
+        end
+    end
+    cleanup_dots()
+
+    -- Close PDA GUI and sheathe the physical device forcefully so the map is put away and engine messages/prompts render correctly!
+    close_pda_for_travel()
+
+    -- v1.8.7 Final Stat Injection
+    apply_final_stats()
+
+    stop_travel_logic()
+
+    -- Skip any active surges before jumping the clock (also (re)activates the safety window).
+    set_safety_active(60.0)
+    pcall(function()
+        if db.actor then
+            db.actor.radiation   = -1.0
+            db.actor.psy_health  = 1.0
+            db.actor.health      = 1.0
+        end
+    end)
+
+    -- TELEPORT BEFORE TIME JUMP to prevent starting location ambushes during simulation
+    local final_pos, final_lvid
+    if tft.is_transition then
+        -- Land on dest_pos (already pulled ~10-20m short of the exit). Do not pass dest_gvid -
+        -- find_ground_pos would resolve the changer vertex and yank the landing onto the trigger.
+        final_pos, final_lvid = tft_find_ground_pos(tft.dest_pos, nil, nil, {
+            anchor = tft.dest_pos,
+            max_drift_m = 12,
+            local_only = true,
+            ray_first = true,
+        })
+        if final_pos then
+            local alerted = tft_alerted_enemy_within(final_pos, tft_ambush_radius_m(false))
+            tft_set_current_level_changers_locked(alerted)
+            tft._transition_locked = alerted
+            if alerted then
+                tft_log("Transition arrival: alerted enemy nearby - exit locked at (%.1f,%.1f,%.1f).",
+                    final_pos.x, final_pos.y, final_pos.z)
+            end
+            if tft.dest_raw_pos then
+                local short_of = tft_horizontal_dist(final_pos, tft.dest_raw_pos)
+                    or final_pos:distance_to(tft.dest_raw_pos)
+                tft.arrival_short_m = math.floor(short_of or 0)
+            end
+            tft_log("Transition Teleport: pos=(%f, %f, %f) short_of_exit=%dm",
+                final_pos.x, final_pos.y, final_pos.z, tft.arrival_short_m or 0)
+        end
+    else
+        local forced_arrival = 0
+        final_pos, forced_arrival = tft_resolve_arrival_position()
+        final_lvid = tft.dest_lvid
+        tft.arrival_forced_ambushes = forced_arrival
+        local arrival_targets = tft.arrival_ambush_targets
+        if forced_arrival > 0 and tft.dest_pos and final_pos then
+            -- resolve_arrival_position already placed the landing (path / standoff rules).
+            tft.arrival_short_m = math.floor(tft_horizontal_dist(final_pos, tft.dest_pos) or final_pos:distance_to(tft.dest_pos))
+            local pre_nearest = arrival_targets and tft_nearest_hostile_dist_m(final_pos, arrival_targets)
+            tft_log("Arrival pre-teleport: kind=%s short_of_dest=%dm nearest_hostile=%sm pos=(%.1f,%.1f,%.1f)",
+                tostring(tft.ambush_kind), tft.arrival_short_m, pre_nearest and tostring(pre_nearest) or "?",
+                final_pos.x, final_pos.y, final_pos.z)
+        else
+            tft.arrival_short_m = 0
+        end
+        if forced_arrival > 0 then
+            tft_log("Arrival resolved after %d forced offset(s) - stopped %dm short.",
+                forced_arrival, tft.arrival_short_m)
+        end
+    end
+
+    if tft.arrival_forced_ambushes and tft.arrival_forced_ambushes > 0 then
+        final_pos, final_lvid = tft_ambush_ground_snap(final_pos, final_lvid)
+        if tft.dest_pos and final_pos then
+            tft.arrival_short_m = math.floor(tft_horizontal_dist(final_pos, tft.dest_pos) or final_pos:distance_to(tft.dest_pos))
+        end
+    elseif not tft.is_transition then
+        final_pos, final_lvid = tft_find_ground_pos(final_pos, final_lvid, tft.dest_gvid)
+    end
+    -- Transitions: keep the short landing lvid; dest_gvid is the exit and must not override.
+    if tft.is_transition then
+        final_lvid = tft_resolve_lvid_for_pos(final_pos, final_lvid, nil)
+    else
+        final_lvid = tft_resolve_lvid_for_pos(final_pos, final_lvid, tft.dest_gvid)
+    end
+    local lvid = final_lvid
+    if not lvid and final_pos and level and level.vertex_id then
+        local ok, lv = pcall(function() return level.vertex_id(final_pos) end)
+        if ok then lvid = lv end
+    end
+    local gvid = tft.dest_gvid or (db.actor and db.actor:game_vertex_id()) or 0
+    local arrival_targets = tft.arrival_ambush_targets
+    local was_arrival_ambush = arrival_targets ~= nil
+    tft.target_stamina = tft_resolve_arrival_stamina(was_arrival_ambush, tft.travel_mode == "sneaky")
+    pcall(function() if db.actor then db.actor.power = tft.target_stamina end end)
+    if was_arrival_ambush then
+        play_ambush_alert()
+    end
+    if was_arrival_ambush and arrival_targets and final_pos then
+        local post_nearest = tft_nearest_hostile_dist_m(final_pos, arrival_targets)
+        tft_log("Arrival post-snap: short_of_dest=%dm nearest_hostile=%sm pos=(%.1f,%.1f,%.1f)",
+            tft.arrival_short_m or 0, post_nearest and tostring(post_nearest) or "?",
+            final_pos.x, final_pos.y, final_pos.z)
+    end
+
+    local look_dir = nil
+    if tft.fly_dir then
+        look_dir = vector():set(tft.fly_dir.x, tft.fly_dir.y, tft.fly_dir.z)
+    end
+
+    local danger_at_dest = was_arrival_ambush or tft._transition_locked
+
+    -- do_agro: nil/true = schedule or run agro here; false = already handled (fly handoff).
+    local function after_control_restored(do_agro)
+        if do_agro ~= false and was_arrival_ambush and arrival_targets then
+            local function do_agro_fn()
+                if db.actor and arrival_targets then
+                    tft_alert_ambushers(arrival_targets)
+                    tft_log("Arrival ambush: hostiles alerted.")
+                end
+                return true
+            end
+            if do_agro == "immediate" then
+                do_agro_fn()
+            else
+                CreateTimeEvent("tft", "ambush_alert", 0.5, do_agro_fn)
+            end
+            if tft_show_ambush_dir_marker then
+                tft_show_ambush_dir_marker(arrival_targets, final_pos)
+            end
+            tft.arrival_ambush_targets = nil
+        elseif fly_handoff then
+            tft.arrival_ambush_targets = nil
+        end
+        if final_pos then
+            tft_log("Actor teleported to (%f, %f, %f)", final_pos.x, final_pos.y, final_pos.z)
+        end
+
+        -- Fly-through is real-time; skip game-time jump for that path.
+        if not (fly_handoff or tft.fly_no_time) then
+            tft_advance_travel_time(1.0)
+        end
+        set_safety_active(90.0)
+
+        CreateTimeEvent("tft", "safe_arrival", 0.8, function()
+            if not db.actor then return true end
+            set_safety_active(60.0)
+
+            if tft.is_transition then
+                tft_log("Zone exit reached.")
+                tft_clear()
+            else
+                if was_arrival_ambush then
+                    local ambush_opts = {
+                        outcome = "ambushed",
+                        enemy_dist_m = tft_nearest_hostile_dist_m(final_pos, arrival_targets) or tft.arrival_short_m or 0,
+                    }
+                    tft_msg(tft_journey_result_message(ambush_opts), tft_journey_result_style(ambush_opts))
+                else
+                    local arrive_opts = {
+                        outcome = "arrived",
+                        duration = tft_format_duration(tft.expected_duration or 1),
+                        short_m = tft.arrival_short_m or 0,
+                        encounters_avoided = tft.encounters_avoided or 0,
+                    }
+                    tft_msg(tft_journey_result_message(arrive_opts), tft_journey_result_style(arrive_opts))
+                end
+
+                tft_log("Arrived %.0fm | %s | avoided %d encounter(s) | mode=%s dodge=%d%%",
+                    tft.travel_dist, tft_format_duration(tft.expected_duration or 1), tft.encounters_avoided or 0,
+                    tostring(tft.travel_mode or "normal"), tft_calc_sneak_chance(tft.travel_mode == "sneaky"))
+
+                tft_clear()
+            end
+
+            if danger_at_dest then
+                maybe_pause_on_danger()
+            end
+
+            CreateTimeEvent("tft", "safety_reset", 15.0, function()
+                if db.actor then
+                    pcall(function() save_var(db.actor, "surge_immuned", false) end)
+                end
+                tft.safety_until = 0
+                tft_log("Surge immunity and safety cleared after arrival stabilization.")
+                return true
+            end)
+
+            return true
+        end)
+    end
+
+    if fly_handoff and _G.tft_fly_begin_handoff and final_pos then
+        -- Handoff alerts ambushers after unlock; messages/time follow via on_done (no second agro).
+        local ok_ho = _G.tft_fly_begin_handoff({
+            pos = final_pos,
+            lvid = lvid,
+            gvid = gvid,
+            was_ambush = was_arrival_ambush,
+            targets = arrival_targets,
+            look_dir = look_dir,
+            on_done = function()
+                after_control_restored(false)
+            end,
+        })
+        if ok_ho then return end
+        tft_log("Fly handoff failed - falling back to fade teleport.")
+        if _G.tft_cancel_fly_camera then _G.tft_cancel_fly_camera() end
+    end
+
+    if db.actor and final_pos then
+        play_fade_teleport(final_pos, lvid, gvid, function()
+            after_control_restored(true)
+        end)
+    else
+        after_control_restored(true)
+    end
+end
+
+local function process_refund(ratio)
+    if not (db.actor and tft.journey_cost and tft.journey_cost > 0) then return 0 end
+
+    local remaining = 1.0 - ratio
+    if remaining <= 0.05 then return 0 end -- No refund for arrival
+
+    local refund = math.floor(tft.journey_cost * remaining)
+    if refund > 0 then
+        db.actor:give_money(refund)
+        tft_log("Refunded %d RU from aborted journey.", refund)
+    end
+    return refund
+end
+
+-- Short PDA error/alarm blip (not a siren) - a heads-up that something found you,
+-- whether that's a mid-journey ambush or the "unavoidable" one waiting at the destination.
+play_ambush_alert = function()
+    pcall(function()
+        xr_sound.set_sound_play(db.actor:id(), "pda_alarm")
+    end)
+end
+
+detect_ambush = function(virtual_pos)
+    if not (virtual_pos and db.actor) then return false end
+
+    local gg = game_graph()
+    local actor_lid = gg:vertex(db.actor:game_vertex_id()):level_id()
+    local sneaky = tft.travel_mode == "sneaky"
+    local weather_cut = tft_get_weather_visibility_reduction_m()
+    local targets, ambush_radius, kind = tft_scan_ambush_targets(virtual_pos, sneaky, actor_lid)
+    if not targets then
+        return false
+    end
+
+    tft_log("Ambush LoS radius %.0fm (hr %.1f, weather -%.0fm, mode %s)",
+        ambush_radius, tft_get_time_hours(), weather_cut, sneaky and "sneak" or "travel")
+    tft_log_ambush_scan("journey-scan-" .. tostring(kind), virtual_pos, ambush_radius, targets)
+
+    tft.stats_ambushes = (tft.stats_ambushes or 0) + 1
+    tft.ambush_kind = kind or "los"
+    tft.ambush_targets = targets
+    return true
+end
+apply_final_stats = function(time_ratio)
+  local actor = db.actor
+    if not actor then return end
+    time_ratio = time_ratio or 1.0
+    time_ratio = math.max(0, math.min(time_ratio, 1.0))
+
+    local hours = ((tft.expected_duration or 1) / 60.0) * time_ratio
+    if hours <= 0 then return end
+
+    local drain = tft_travel.resource_rate_per_hr * hours
+
+    if actor.change_hunger then db.actor:change_hunger(-drain) end
+    if actor.change_thirst then db.actor:change_thirst(-drain) end
+    if actor.change_sleepiness then db.actor:change_sleepiness(-drain) end
+
+    tft_log("Survival drain: %.3f/stat over %.2fh (ratio %.2f)", drain, hours, time_ratio)
+end
+
+stop_travel_logic = function()
+    tft.is_traveling = false
+    tft_set_fft_trip_in_progress(false)
+end
+
+cleanup_dots = function()
+    for _, id in pairs(tft.dot_ids) do
+        tft_remove_path_spots(id)
+        pcall(function()
+            if level.map_has_object_spot(id, "primary_object") ~= 0 then
+                level.map_remove_object_spot(id, "primary_object")
+            end
+            if level.map_has_object_spot(id, "green_location") ~= 0 then
+                level.map_remove_object_spot(id, "green_location")
+            end
+        end)
+        local obj = alife_object(id)
+        if obj then pcall(alife_release, obj) end
+    end
+    tft.dot_ids = {}
+    tft.dot_done = {}
+    tft.dot_path_ratio = {}
+end
+
+trigger_encounter = function()
+    -- Stop the journey update loop immediately so no further dots turn green during the
+    -- fade/teleport lead-in (ambush_pending alone only blocks until this fires).
+    stop_travel_logic()
+    local ratio = math.min(tft.current_dist / tft.travel_dist, 1.0)
+
+    -- Skip surges, wipe stats, then jump clock (set_safety_active also skips surges).
+    set_safety_active(60.0)
+    -- Immediately zero dangerous stats before time jump
+    pcall(function()
+        if db.actor then
+            db.actor.radiation   = -1.0
+            db.actor.psy_health  = 1.0
+            db.actor.health      = 1.0
+        end
+    end)
+    tft.target_stamina = tft_resolve_arrival_stamina(true, tft.travel_mode == "sneaky")
+    pcall(function() if db.actor then db.actor.power = tft.target_stamina end end)
+
+    -- Calculate safe encounter position BEFORE jumping time.
+    -- Always land on the journey path point (nav snap only). Do not pull back along the
+    -- route or toward hostiles - that can move you closer than the path already was,
+    -- especially for long-range LOS ambushes.
+    tft_log("!!! ENCOUNTER TRIGGERED at ratio %.2f kind=%s - Start pos: %.1f %.1f %.1f",
+        ratio, tostring(tft.ambush_kind), tft.start_pos.x, tft.start_pos.y, tft.start_pos.z)
+    local encounter_pos = tft_get_safe_lvid_pos(ratio)
+    if not encounter_pos then
+        encounter_pos = vector():set(
+            tft.start_pos.x + (tft.dest_pos.x - tft.start_pos.x) * ratio,
+            tft.start_pos.y + (tft.dest_pos.y - tft.start_pos.y) * ratio,
+            tft.start_pos.z + (tft.dest_pos.z - tft.start_pos.z) * ratio
+        )
+    end
+    local path_prefer = (tft_path and tft_path.land_prefer_node_m) or 10
+    local safe_landing, safe_lvid = tft_find_ground_pos(encounter_pos, nil, tft.dest_gvid, {
+        anchor = encounter_pos,
+        max_drift_m = path_prefer + 5,
+        local_only = true,
+        ray_first = true,
+    })
+    if not safe_landing then
+        safe_landing = encounter_pos
+    end
+
+    local ambush_targets = tft.ambush_targets
+    -- Close-band only: optional standoff, but never closer to hostiles than the path point.
+    if tft.ambush_kind == "close" and ambush_targets
+        and (#(ambush_targets.squads or {}) > 0 or #(ambush_targets.npcs or {}) > 0) then
+        local path_dist = tft_nearest_hostile_dist_m(safe_landing, ambush_targets)
+        local adjusted = tft_finalize_ambush_landing(safe_landing, ambush_targets, tft.start_pos, { snap = true })
+        local out_dist = tft_nearest_hostile_dist_m(adjusted, ambush_targets)
+        if path_dist and out_dist and out_dist < path_dist then
+            tft_log("Ambush landing: standoff would close gap (%dm -> %dm) - keeping path.",
+                path_dist, out_dist)
+        else
+            safe_landing = adjusted
+        end
+    end
+    local enemy_dist_m = ambush_targets and tft_nearest_hostile_dist_m(safe_landing, ambush_targets) or nil
+
+    -- TELEPORT BEFORE TIME JUMP to prevent starting location ambushes during simulation
+    local lvid = safe_lvid or tft_resolve_lvid_for_pos(safe_landing, nil, tft.dest_gvid)
+    if not lvid and safe_landing and level and level.vertex_id then
+        local ok, lv = pcall(function() return level.vertex_id(safe_landing) end)
+        if ok then lvid = lv end
+    end
+    local gvid = db.actor and db.actor:game_vertex_id() or 0
+
+    local function after_ambush_tp()
+        if ambush_targets then
+            tft_alert_ambushers(ambush_targets)
+            if tft_show_ambush_dir_marker then
+                tft_show_ambush_dir_marker(ambush_targets, safe_landing)
+            end
+            tft.ambush_targets = nil
+        end
+
+        tft_advance_travel_time(ratio)
+        set_safety_active(90.0)
+
+        apply_final_stats()
+        process_refund(ratio)
+        local ambush_opts = {
+            outcome = "ambushed",
+            enemy_dist_m = enemy_dist_m or 0,
+        }
+        tft_msg(tft_journey_result_message(ambush_opts), tft_journey_result_style(ambush_opts))
+
+        cleanup_dots()
+        stop_travel_logic()
+        tft_clear()
+        maybe_pause_on_danger()
+
+        CreateTimeEvent("tft", "safe_encounter", 1.3, function()
+            if not db.actor then return true end
+            set_safety_active(60.0)
+
+            CreateTimeEvent("tft", "encounter_cleanup", 0.5, function()
+                tft.safety_until = 0
+                pcall(function() save_var(db.actor, "surge_immuned", false) end)
+                tft_log("Safety and surge immunity cleared (encounter).")
+                return true
+            end)
+            return true
+        end)
+    end
+
+    if db.actor and safe_landing then
+        play_fade_teleport(safe_landing, lvid, gvid, after_ambush_tp)
+    else
+        after_ambush_tp()
+    end
+end
+
+teleport_companions = function(pos, lvid, gvid)
+    if not (axr_companions and axr_companions.list_actor_squad_by_id) then return end
+
+    local companion_ids = axr_companions.list_actor_squad_by_id()
+    local gg = game_graph()
+
+    for i=1, #companion_ids do
+        local id = companion_ids[i]
+        local obj = alife_object(id)
+        if obj and (obj.alive and obj:alive()) then
+            -- Add randomization to avoid stacking
+            local t_pos = vector():set(pos.x + math.random(-2, 2), pos.y, pos.z + math.random(-2, 2))
+            local t_lvid = level.vertex_id(t_pos)
+            if not (t_lvid and t_lvid ~= tft_invalid_lvid and t_lvid ~= -1) then t_lvid = lvid end
+
+            -- Ensure we have a valid GVID for the target level
+            local t_gvid = gvid
+            local ok_vcheck = pcall(function()
+                if not gg:valid_vertex_id(t_gvid) then
+                    if type(gg.nearest_vertex) == "function" then
+                        t_gvid = gg:nearest_vertex(t_pos) or gvid
+                    else
+                        t_gvid = gvid
+                    end
+                end
+            end)
+            if not ok_vcheck then t_gvid = gvid end
+
+            -- AUTHORITATIVE TELEPORT: Handles both online and offline
+            alife():teleport_object(id, t_gvid, t_lvid, t_pos)
+
+            -- If online, force visual update
+            local online_obj = level.object_by_id(id)
+            if online_obj then
+                online_obj:set_npc_position(t_pos)
+            end
+        end
+    end
+end
+
+-- tft_publish_to_global
+do
+    _G.tft_emission_blocks_travel_start = emission_blocks_travel_start
+    _G.tft_advance_travel_time_seconds = advance_travel_time_seconds
+    _G.tft_close_pda_for_travel = close_pda_for_travel
+    _G.tft_start_travel_sequence = start_travel_sequence
+    _G.tft_check_and_skip_surges = check_and_skip_surges
+    _G.tft_set_safety_active = set_safety_active
+    _G.tft_is_safety_active = is_safety_active
+    _G.tft_actor_on_update = actor_on_update
+    _G.tft_process_refund = process_refund
+    _G.tft_stop_travel_logic = stop_travel_logic
+    _G.tft_cleanup_dots = cleanup_dots
+    _G.tft_teleport_companions = teleport_companions
+    _G.tft_detect_ambush = detect_ambush
+    _G.tft_play_ambush_alert = play_ambush_alert
+    _G.tft_complete_travel_sequence = complete_travel_sequence
+    _G.tft_trigger_encounter = trigger_encounter
+    _G.tft_trigger_emission_interrupt = trigger_emission_interrupt
+    _G.tft_is_emission_active = is_emission_active
+    _G.tft_try_resume_ambush_pause = try_resume_ambush_pause
+    _G.tft_clear_ambush_pause_prompt = clear_ambush_pause_prompt
+end

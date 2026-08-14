@@ -23,6 +23,10 @@ local was_hp = 1
 local function on_option_change()
 	CONFIG.loaded.always_min = dogma.mcm.int(CONFIG.MOD_ID, "always_min", CONFIG.DEFAULTS.always_min)
 	CONFIG.loaded.event_min = dogma.mcm.int(CONFIG.MOD_ID, "event_min", CONFIG.DEFAULTS.event_min)
+	CONFIG.loaded.on_inventory = dogma.mcm.bool(CONFIG.MOD_ID, "on_inventory", CONFIG.DEFAULTS.on_inventory)
+	CONFIG.loaded.on_heal = dogma.mcm.bool(CONFIG.MOD_ID, "on_heal", CONFIG.DEFAULTS.on_heal)
+	CONFIG.loaded.on_eat = dogma.mcm.bool(CONFIG.MOD_ID, "on_eat", CONFIG.DEFAULTS.on_eat)
+	CONFIG.loaded.on_drink = dogma.mcm.bool(CONFIG.MOD_ID, "on_drink", CONFIG.DEFAULTS.on_drink)
 end
 
 local function reset_session()
@@ -55,10 +59,10 @@ local function actor_on_update()
 	local eating = dogma.status.is_eating()
 	local drinking = dogma.status.is_drinking()
 	local hp = dogma.status.health()
-	local event = (inv and not was_inv)
-		or (eating and not was_eating)
-		or (drinking and not was_drinking)
-		or (hp >= 1 and was_hp < 1)
+	local event = (CONFIG.loaded.on_inventory and inv and not was_inv)
+		or (CONFIG.loaded.on_eat and eating and not was_eating)
+		or (CONFIG.loaded.on_drink and drinking and not was_drinking)
+		or (CONFIG.loaded.on_heal and hp >= 1 and was_hp < 1)
 	was_inv = inv
 	was_eating = eating
 	was_drinking = drinking

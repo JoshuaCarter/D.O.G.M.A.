@@ -279,29 +279,31 @@ local function clear_buckets()
 end
 
 local function is_junk_section(sec)
+	local sfind = string.find
+	local ssub = string.sub
 	if not sec or sec == "" then
 		return true
 	end
 	local s = string.lower(sec)
-	if string.find(s, "tch_", 1, true) then
+	if sfind(s, "tch_", 1, true) then
 		return true
 	end
-	if string.sub(s, -3) == "_mp" or string.find(s, "_mp_", 1, true) then
+	if ssub(s, -3) == "_mp" or sfind(s, "_mp_", 1, true) then
 		return true
 	end
-	if string.sub(s, 1, 3) == "mp_" then
+	if ssub(s, 1, 3) == "mp_" then
 		return true
 	end
-	if string.sub(s, -3) == "_cw" or string.find(s, "_cw_", 1, true) then
+	if ssub(s, -3) == "_cw" or sfind(s, "_cw_", 1, true) then
 		return true
 	end
-	if string.sub(s, -5) == "_base" or string.find(s, "_base_", 1, true) then
+	if ssub(s, -5) == "_base" or sfind(s, "_base_", 1, true) then
 		return true
 	end
-	if string.find(s, "debug", 1, true) or string.find(s, "dummy", 1, true) then
+	if sfind(s, "debug", 1, true) or sfind(s, "dummy", 1, true) then
 		return true
 	end
-	if string.sub(s, 1, 5) == "test_" or string.find(s, "_test_", 1, true) then
+	if ssub(s, 1, 5) == "test_" or sfind(s, "_test_", 1, true) then
 		return true
 	end
 	return false

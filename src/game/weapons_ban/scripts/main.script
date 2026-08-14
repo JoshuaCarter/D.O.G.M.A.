@@ -388,6 +388,7 @@ local function load_catalog(path)
 end
 
 local function rewrite_catalog()
+	local mmax = math.max
 	local path = debug_log_path()
 	if not path then
 		return
@@ -405,10 +406,10 @@ local function rewrite_catalog()
 	local w_kind, w_sec, w_tr, w_map = 4, 7, 6, 3
 	for i = 1, #rows do
 		local r = rows[i]
-		w_kind = math.max(w_kind, #r.kind)
-		w_sec = math.max(w_sec, #r.sec)
-		w_tr = math.max(w_tr, #r.trader)
-		w_map = math.max(w_map, #r.map)
+		w_kind = mmax(w_kind, #r.kind)
+		w_sec = mmax(w_sec, #r.sec)
+		w_tr = mmax(w_tr, #r.trader)
+		w_map = mmax(w_map, #r.map)
 	end
 	local fmt = string.format("%%-%ds  %%-%ds  %%-%ds  %%-%ds", w_kind, w_sec, w_tr, w_map)
 	local lines = {

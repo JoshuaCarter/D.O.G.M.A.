@@ -318,8 +318,8 @@ end
 
 --------------------------------------------------------------------------------
 -- Debug dump (debug MCM only):
---   weapons_ban_debug.log  — unique trader-strip sections
---   weapons_ban_pool.log   — unique loot-pool sections
+--   dogma_weapons_ban_debug.log  — unique trader-strip sections
+--   dogma_weapons_ban_pool.log   — unique loot-pool sections
 -- Same fixed columns so the two files can be compared side by side.
 --------------------------------------------------------------------------------
 local catalog = {}
@@ -423,7 +423,7 @@ local function rewrite_catalog()
 	for _, r in pairs(catalog) do
 		rows[#rows + 1] = r
 	end
-	write_debug_table("weapons_ban_debug.log", rows)
+	write_debug_table("dogma_weapons_ban_debug.log", rows)
 end
 
 local function ensure_catalog()
@@ -431,7 +431,7 @@ local function ensure_catalog()
 		return
 	end
 	catalog_ready = true
-	local path = debug_log_path("weapons_ban_debug.log")
+	local path = debug_log_path("dogma_weapons_ban_debug.log")
 	if path then
 		load_catalog(path)
 	end
@@ -527,7 +527,7 @@ local function dump_online_traders()
 	if added > 0 then
 		rewrite_catalog()
 	end
-	log(string.format("weapons_ban_debug.log +%d new (%d traders, %d unique)", added, n, total))
+	log(string.format("dogma_weapons_ban_debug.log +%d new (%d traders, %d unique)", added, n, total))
 	return true
 end
 
@@ -546,8 +546,8 @@ local function dump_loot_pool()
 		seen[key] = true
 		rows[#rows + 1] = { kind = kind, sec = sec, trader = "-", map = "-" }
 	end)
-	write_debug_table("weapons_ban_pool.log", rows)
-	log(string.format("weapons_ban_pool.log %d unique", #rows))
+	write_debug_table("dogma_weapons_ban_pool.log", rows)
+	log(string.format("dogma_weapons_ban_pool.log %d unique", #rows))
 end
 
 -- utils_ui caches utils_item.get_item_trade_status in a local at load, so

@@ -5,7 +5,7 @@
 	optional LOS). Both rays share one bush-pierce budget. Hipfire both 100m; binoculars both 200m;
 	other ADS/zoom keeps soft at 100m but exact at 200m. Leader line:
 	living non-hostiles normally, all living stalkers in binocs; never corpses.
-	Living hostile / zombified names are red. Losing the target fades over 2s.
+	Living hostile / zombified names are red; dead names are grey. Losing the target fades over 2s.
 ]]
 
 local CONFIG = _G.dogma_gui_stalker_id_conf
@@ -18,6 +18,9 @@ local ALIGN_CENTER = 2 -- CGameFont::alCenter
 local UPDATE_DELAY = 100
 local FADE_MS = 2000
 local NAME_HOSTILE_RGB = { 220, 48, 48 }
+local NAME_DEAD_RGB = { 200, 200, 200 }
+local RANK_RGB = { 200, 200, 200 }
+local RANK_DEAD_RGB = { 160, 160, 160 }
 
 -- Aim / nearest: pelvis. LOS: upper spine. Line tip: head (lifted toward crown).
 local BONES_AIM = { "bip01_pelvis" }
@@ -56,6 +59,7 @@ local fade_start_ms = 0
 local fade_mul = 1
 local shown_faction = nil
 local name_r, name_g, name_b = 255, 255, 255
+local rank_r, rank_g, rank_b = RANK_RGB[1], RANK_RGB[2], RANK_RGB[3]
 
 local zombified_text
 local _fov_baseline = 60
@@ -144,7 +148,7 @@ local function apply_alphas(mul)
 	local icon_a = pct_to_byte(cfg.icon_a, fade_mul)
 
 	HUD.name:TextControl():SetTextColor(GetARGB(name_a, name_r, name_g, name_b))
-	HUD.rank:TextControl():SetTextColor(GetARGB(rank_a, 200, 200, 200))
+	HUD.rank:TextControl():SetTextColor(GetARGB(rank_a, rank_r, rank_g, rank_b))
 	HUD.zombified:TextControl():SetTextColor(GetARGB(icon_a, 255, 255, 255))
 
 	if shown_faction and HUD.factions[shown_faction] then
@@ -170,6 +174,7 @@ local function clear()
 	shown_faction = nil
 	line_target_id = nil
 	name_r, name_g, name_b = 255, 255, 255
+	rank_r, rank_g, rank_b = RANK_RGB[1], RANK_RGB[2], RANK_RGB[3]
 	if HUD then
 		HUD:Reset()
 	end
@@ -279,8 +284,13 @@ end
 
 local function set_name_color_for(obj)
 	local alive = obj and obj.health and obj.health > 0
-	local threat = alive and (is_zombied(obj:character_community()) or is_hostile(obj))
-	if threat then
+	if not alive then
+		name_r, name_g, name_b = NAME_DEAD_RGB[1], NAME_DEAD_RGB[2], NAME_DEAD_RGB[3]
+		rank_r, rank_g, rank_b = RANK_DEAD_RGB[1], RANK_DEAD_RGB[2], RANK_DEAD_RGB[3]
+		return
+	end
+	rank_r, rank_g, rank_b = RANK_RGB[1], RANK_RGB[2], RANK_RGB[3]
+	if is_zombied(obj:character_community()) or is_hostile(obj) then
 		name_r, name_g, name_b = NAME_HOSTILE_RGB[1], NAME_HOSTILE_RGB[2], NAME_HOSTILE_RGB[3]
 	else
 		name_r, name_g, name_b = 255, 255, 255

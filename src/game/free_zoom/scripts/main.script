@@ -661,8 +661,9 @@ local function get_context()
 		return CTX.PDA
 	end
 	refresh_wpn()
-	-- Consumables (eat/drink/meds) lower the weapon - block free zoom either mode.
-	if dogma.status.is_weapon_lowered() then
+	-- Eat/drink use only. actor_weapon_lowered() is safemode and stays true
+	-- after sprint/draw/melee, which blocked the wheel until ADS cleared it.
+	if dogma.status.is_eating() or dogma.status.is_drinking() then
 		return CTX.LOWERED
 	end
 	if CONFIG.loaded.empty_hands_only then
@@ -1118,7 +1119,7 @@ local function handle_context(ctx)
 		return ctx
 	end
 
-	-- No gun / weapon lowered (medkit etc.): drop free + ADS so we don't fight use anims.
+	-- No gun / eat-drink use: drop free + ADS so we don't fight use anims.
 	if (ctx == CTX.NO_GUN or ctx == CTX.LOWERED) and (free_on or ads_on or hold_zoom_active()) then
 		reset_session(false, ctx)
 		return ctx
@@ -1683,6 +1684,9 @@ on_mouse_wheel = function(dir, _flags)
 
 	local ctx = get_context()
 	if CTX_SCROLL_PASS[ctx] then
+		if ctx == CTX.LOWERED then
+			logf("scroll ignored: ctx=%s mode=%s wpn=%s", ctx, mode_label(), wpn_label())
+		end
 		reset_scroll_accum()
 		return
 	end

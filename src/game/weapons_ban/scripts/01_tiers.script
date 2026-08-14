@@ -102,20 +102,82 @@ local function get_effective_cost(sec)
 	return live or 0
 end
 
--- Name-based kits only (not visual). Scopes checked before visual kit-case.
-local function is_name_kit(sec)
-	local sfind = string.find
-	if sfind(sec, "_kit", 1, true) or sfind(sec, "_upgr_kit", 1, true) then
+-- Outfit / artefact / survival kits — not weapon loot.
+local function is_outfit_or_misc_kit(sec)
+	local s = string.lower(sec)
+	if string.find(s, "sewing", 1, true) then
 		return true
 	end
-	if sfind(sec, "mod9", 1, true) then
+	if string.find(s, "survival_kit", 1, true) then
 		return true
 	end
-	if sfind(sec, "_up", 1, true)
-		and not IsItem("scope", sec)
-		and not IsItem("sil", sec)
-		and not IsItem("gl", sec)
+	if string.find(s, "helmet_repair", 1, true) then
+		return true
+	end
+	if string.find(s, "exo_repair", 1, true) then
+		return true
+	end
+	if s == "light_repair_kit" or s == "medium_repair_kit" or s == "heavy_repair_kit" then
+		return true
+	end
+	if s == "cleaning_kit_u" then
+		return true
+	end
+	if string.sub(s, 1, 3) == "af_" then
+		return true
+	end
+	return false
+end
+
+local function is_firearm_repair_or_clean(sec)
+	if string.sub(sec, 1, 8) == "toolkit_" then
+		return true
+	end
+	if sec == "cleaning_kit_p" or sec == "cleaning_kit_s"
+		or sec == "cleaning_kit_r5" or sec == "cleaning_kit_r7"
 	then
+		return true
+	end
+	local only = ini_sys:r_string_ex(sec, "repair_only")
+	if not only then
+		return false
+	end
+	local sfind = string.find
+	return sfind(only, "pistol", 1, true)
+		or sfind(only, "shotgun", 1, true)
+		or sfind(only, "rifle_5", 1, true)
+		or sfind(only, "rifle_7", 1, true)
+		or sfind(only, "barrel_a", 1, true)
+		or sfind(only, "barrel_b", 1, true)
+		or sfind(only, "barrel_c", 1, true)
+		or sfind(only, "barrel_d", 1, true)
+end
+
+-- Weapon upgrade / tac / firearm kits only. Guns (ammo_class) are not kits.
+local function is_name_kit(sec)
+	if not sec or sec == "" then
+		return false
+	end
+	if ini_sys:r_string_ex(sec, "ammo_class") then
+		return false
+	end
+	if is_outfit_or_misc_kit(sec) then
+		return false
+	end
+	if is_firearm_repair_or_clean(sec) then
+		return true
+	end
+	local sfind = string.find
+	if sfind(sec, "_upgr_kit", 1, true) or sfind(sec, "_upkit", 1, true) then
+		return true
+	end
+	if sec == "mod9" or sfind(sec, "_mod9", 1, true) then
+		return true
+	end
+	if sfind(sec, "tactical_kit", 1, true) then
+		return true
+	end
+	if sfind(sec, "_kit", 1, true) then
 		return true
 	end
 	return false

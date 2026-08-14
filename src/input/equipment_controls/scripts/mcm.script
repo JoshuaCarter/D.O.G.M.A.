@@ -1,6 +1,6 @@
 -- Equipment Controls MCM
 -- Detector / Geiger / Torch mirror Settings → Controls.
--- RF / Glowstick are standalone MCM key_binds.
+-- RF / Measurement / Glowstick are standalone MCM key_binds.
 
 local CONFIG = _G.dogma_input_equipment_controls_conf
 
@@ -39,6 +39,7 @@ function on_mcm_load(options)
 				return key_bindings and key_bindings.kCUSTOM14
 			end):option("key_geiger", "dogma_input_equipment_controls_key_geiger"),
 			kb_bind("key_radio", "dogma_input_equipment_controls_key_radio"),
+			kb_bind("key_anomaly", "dogma_input_equipment_controls_key_anomaly"),
 			dogma_mcm.mcm.key_mirror("torch", function()
 				return key_bindings and key_bindings.kTORCH
 			end):option("key_torch", "dogma_input_equipment_controls_key_torch"),

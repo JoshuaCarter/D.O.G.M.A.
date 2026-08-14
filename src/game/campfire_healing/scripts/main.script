@@ -259,7 +259,9 @@ local function actor_on_update()
 	local now = time_global()
 	if now >= next_state_tick then
 		next_state_tick = now + STATE_MS
+		dogma.perf.start("campfire_healing", "refresh_heal_state")
 		refresh_heal_state()
+		dogma.perf.stop()
 	end
 	tick_ppe(now)
 

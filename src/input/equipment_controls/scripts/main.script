@@ -1,9 +1,9 @@
 --[[
 	Equipment Controls
 
-	Detector / Geiger / RF / Glowstick / Torch force-equip into the detector slot.
+	Detector / Geiger / RF / Measurement / Glowstick / Torch force-equip into the detector slot.
 	Artefact detector + auto-bolt: wait until RH empty (or already bolt), then bolt
-	+ detector together. RF/Geiger/Glowstick never touch the bolt.
+	+ detector together. RF/Geiger/Measurement/Glowstick never touch the bolt.
 ]]
 
 local CONFIG = _G.dogma_input_equipment_controls_conf or {
@@ -40,8 +40,12 @@ local function radio_sec()
 	return "detector_radio"
 end
 
+local function anomaly_sec()
+	return "detector_anomaly"
+end
+
 local function is_artefact_detector(sec)
-	if not sec or sec == geiger_sec() or sec == radio_sec() then
+	if not sec or sec == geiger_sec() or sec == radio_sec() or sec == anomaly_sec() then
 		return false
 	end
 	local cls = ini_sys and ini_sys:r_string_ex(sec, "class")
@@ -480,6 +484,7 @@ local function on_option_change()
 	CONFIG.loaded.enabled = true
 	CONFIG.loaded.auto_bolt_on_detector = dogma.mcm.bool(CONFIG.MOD_ID, "auto_bolt_on_detector")
 	CONFIG.loaded.key_radio = dogma.mcm.key(CONFIG.MOD_ID, "key_radio")
+	CONFIG.loaded.key_anomaly = dogma.mcm.key(CONFIG.MOD_ID, "key_anomaly")
 	CONFIG.loaded.key_glowstick = dogma.mcm.key(CONFIG.MOD_ID, "key_glowstick")
 end
 
@@ -492,6 +497,7 @@ local function on_before_key_press(dik, bind, _dis, flags)
 	end
 
 	local rf_dik = CONFIG.loaded.key_radio
+	local anomaly_dik = CONFIG.loaded.key_anomaly
 	local glow_dik = CONFIG.loaded.key_glowstick
 
 	if bind == key_bindings.kTORCH and has_headlamp() then
@@ -503,6 +509,7 @@ local function on_before_key_press(dik, bind, _dis, flags)
 			or bind == key_bindings.kCUSTOM14
 			or bind == key_bindings.kTORCH
 			or (rf_dik and dik == rf_dik)
+			or (anomaly_dik and dik == anomaly_dik)
 			or (glow_dik and dik == glow_dik)
 		then
 			block(flags)
@@ -528,6 +535,14 @@ local function on_before_key_press(dik, bind, _dis, flags)
 		block(flags)
 		force_equip_scanner(find_scanner(function(sec)
 			return sec == radio_sec()
+		end))
+		return
+	end
+
+	if anomaly_dik and dik == anomaly_dik then
+		block(flags)
+		force_equip_scanner(find_scanner(function(sec)
+			return sec == anomaly_sec()
 		end))
 		return
 	end

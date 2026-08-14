@@ -20,13 +20,31 @@ local was_eating = false
 local was_drinking = false
 local was_hp = 1
 
+local function log(msg)
+	if CONFIG.loaded.debug_log then
+		dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
+	end
+end
+
 local function on_option_change()
+	CONFIG.loaded.debug_log = dogma.dbg.logging()
 	CONFIG.loaded.always_min = dogma.mcm.int(CONFIG.MOD_ID, "always_min", CONFIG.DEFAULTS.always_min)
 	CONFIG.loaded.event_min = dogma.mcm.int(CONFIG.MOD_ID, "event_min", CONFIG.DEFAULTS.event_min)
+	CONFIG.loaded.show_text = dogma.mcm.bool(CONFIG.MOD_ID, "show_text", CONFIG.DEFAULTS.show_text)
 	CONFIG.loaded.on_inventory = dogma.mcm.bool(CONFIG.MOD_ID, "on_inventory", CONFIG.DEFAULTS.on_inventory)
 	CONFIG.loaded.on_heal = dogma.mcm.bool(CONFIG.MOD_ID, "on_heal", CONFIG.DEFAULTS.on_heal)
 	CONFIG.loaded.on_eat = dogma.mcm.bool(CONFIG.MOD_ID, "on_eat", CONFIG.DEFAULTS.on_eat)
 	CONFIG.loaded.on_drink = dogma.mcm.bool(CONFIG.MOD_ID, "on_drink", CONFIG.DEFAULTS.on_drink)
+	log(string.format(
+		"options: always_min=%s event_min=%s show_text=%s inv=%s heal=%s eat=%s drink=%s",
+		tostring(CONFIG.loaded.always_min),
+		tostring(CONFIG.loaded.event_min),
+		tostring(CONFIG.loaded.show_text),
+		tostring(CONFIG.loaded.on_inventory),
+		tostring(CONFIG.loaded.on_heal),
+		tostring(CONFIG.loaded.on_eat),
+		tostring(CONFIG.loaded.on_drink)
+	))
 end
 
 local function reset_session()
@@ -36,11 +54,20 @@ local function reset_session()
 	was_eating = dogma.status.is_eating()
 	was_drinking = dogma.status.is_drinking()
 	was_hp = dogma.status.health()
+	log("session reset")
 end
 
-local function do_save()
+local function do_save(reason)
 	exec_console_cmd("save safety_save")
 	last_save_ms = time_global()
+	dogma.console.say("safety save (" .. reason .. ")", "green")
+	if not CONFIG.loaded.show_text then
+		local hud = get_hud and get_hud()
+		if hud and hud.RemoveCustomStatic then
+			hud:RemoveCustomStatic("game_saved")
+		end
+	end
+	log("save (" .. reason .. ")")
 end
 
 local function actor_on_update()
@@ -59,27 +86,41 @@ local function actor_on_update()
 	local eating = dogma.status.is_eating()
 	local drinking = dogma.status.is_drinking()
 	local hp = dogma.status.health()
-	local event = (CONFIG.loaded.on_inventory and inv and not was_inv)
-		or (CONFIG.loaded.on_eat and eating and not was_eating)
-		or (CONFIG.loaded.on_drink and drinking and not was_drinking)
-		or (CONFIG.loaded.on_heal and hp >= 1 and was_hp < 1)
+	local reason
+	if CONFIG.loaded.on_inventory and inv and not was_inv then
+		reason = "inventory"
+	elseif CONFIG.loaded.on_eat and eating and not was_eating then
+		reason = "eat"
+	elseif CONFIG.loaded.on_drink and drinking and not was_drinking then
+		reason = "drink"
+	elseif CONFIG.loaded.on_heal and hp >= 1 and was_hp < 1 then
+		reason = "heal"
+	end
 	was_inv = inv
 	was_eating = eating
 	was_drinking = drinking
 	was_hp = hp
 
+	local elapsed = now - last_save_ms
+	local always_min = CONFIG.loaded.always_min
 	if dogma.status.is_in_combat() then
+		if reason then
+			log("skip " .. reason .. " (combat)")
+		end
 		return
 	end
 
-	local elapsed = now - last_save_ms
-	local always_min = CONFIG.loaded.always_min
 	if always_min > 0 and elapsed >= always_min * MIN_MS then
-		do_save()
+		do_save("always")
 		return
 	end
-	if event and elapsed >= CONFIG.loaded.event_min * MIN_MS then
-		do_save()
+	if not reason then
+		return
+	end
+	if elapsed >= CONFIG.loaded.event_min * MIN_MS then
+		do_save(reason)
+	else
+		log(string.format("skip %s (cooldown %.1f/%s min)", reason, elapsed / MIN_MS, tostring(CONFIG.loaded.event_min)))
 	end
 end
 
@@ -92,4 +133,6 @@ function on_game_start()
 	RegisterScriptCallback("on_game_load", reset_session)
 	RegisterScriptCallback("main_menu_on_init", reset_session)
 	RegisterScriptCallback("actor_on_net_destroy", reset_session)
+	log("loaded")
 end
+

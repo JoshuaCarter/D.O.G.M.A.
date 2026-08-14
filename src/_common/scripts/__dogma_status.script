@@ -60,8 +60,24 @@ local function scan_combat()
 	return false
 end
 
+local function perf_start(method)
+	local perf = rawget(_G, "__dogma_perf")
+	if perf then
+		perf.start("dogma", method)
+	end
+end
+
+local function perf_stop()
+	local perf = rawget(_G, "__dogma_perf")
+	if perf then
+		perf.stop()
+	end
+end
+
 local function refresh()
+	perf_start("status.in_combat")
 	local ok, engaged = pcall(scan_combat)
+	perf_stop()
 	if ok then
 		in_combat = engaged
 	end
@@ -217,25 +233,27 @@ local function resolve_bhs()
 	if tables_are_bhs(bhs_health, bhs_timedhp, bhs_maxhp) then
 		return bhs_health, bhs_timedhp, bhs_maxhp
 	end
+	-- Miss: module fields or upvalue dig. Cached hits stay untimed.
+	perf_start("status.bhs_resolve")
+	local h, t, m
 	local mod = rawget(_G, "zzz_player_injuries") or zzz_player_injuries
-	if type(mod) ~= "table" then
-		return nil
-	end
-	if tables_are_bhs(mod.health, mod.timedhp, mod.maxhp) then
-		bhs_health, bhs_timedhp, bhs_maxhp = mod.health, mod.timedhp, mod.maxhp
-		return bhs_health, bhs_timedhp, bhs_maxhp
-	end
-	if type(mod.actor_on_update) == "function" then
-		local h, t, m = dig_bhs_from_fn(mod.actor_on_update, 0)
-		if h then
-			bhs_health, bhs_timedhp, bhs_maxhp = h, t, m
-			mod.health = h
-			mod.timedhp = t
-			mod.maxhp = m
-			return h, t, m
+	if type(mod) == "table" then
+		if tables_are_bhs(mod.health, mod.timedhp, mod.maxhp) then
+			h, t, m = mod.health, mod.timedhp, mod.maxhp
+		elseif type(mod.actor_on_update) == "function" then
+			h, t, m = dig_bhs_from_fn(mod.actor_on_update, 0)
+			if h then
+				mod.health = h
+				mod.timedhp = t
+				mod.maxhp = m
+			end
 		end
 	end
-	return nil
+	if h then
+		bhs_health, bhs_timedhp, bhs_maxhp = h, t, m
+	end
+	perf_stop()
+	return h, t, m
 end
 
 local function reset()

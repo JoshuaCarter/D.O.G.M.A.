@@ -36,7 +36,9 @@ local function npc_hunting_actor(npc, actor_id)
 		return false
 	end
 	local enemy = npc:best_enemy()
-	return enemy and enemy:id() == actor_id
+	if enemy then
+	    return enemy and enemy:id() == actor_id
+	end
 end
 
 -- st.object skips offline / unbound storage. best_enemy is the engine hunt target.

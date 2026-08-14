@@ -488,6 +488,23 @@ local function ensure_buckets()
 	end
 end
 
+local function each_loot_section(fn)
+	ensure_buckets()
+	for _, cat in ipairs(CONFIG.CATS) do
+		local by = buckets[cat]
+		if by then
+			for t = 1, 5 do
+				local bucket = by[t]
+				if bucket then
+					for i = 1, #bucket do
+						fn(cat, bucket[i])
+					end
+				end
+			end
+		end
+	end
+end
+
 local function ensure_rare_names()
 	if rare_names_built then
 		return
@@ -699,6 +716,7 @@ _G.dogma_game_weapons_ban_tiers = {
 	is_name_kit = is_name_kit,
 	rebuild = build_buckets,
 	ensure = ensure_buckets,
+	each_loot_section = each_loot_section,
 	base_tier_for_stash = base_tier_for_stash,
 	is_yellow_stash = is_yellow_stash,
 	pick_category = pick_category,

@@ -317,11 +317,15 @@ local function is_supply_trader(npc)
 end
 
 --------------------------------------------------------------------------------
--- Debug dump: appdata/logs/weapons_ban_debug.log (debug MCM only)
--- One unique kind+section row. File is rewritten as a sorted table.
+-- Debug dump (debug MCM only):
+--   weapons_ban_debug.log  — unique trader-strip sections
+--   weapons_ban_pool.log   — unique loot-pool sections
+-- Same fixed columns so the two files can be compared side by side.
 --------------------------------------------------------------------------------
 local catalog = {}
 local catalog_ready = false
+local ROW_FMT = "%-12s  %-48s  %-36s  %-24s"
+local ROW_SEP = string.rep("-", 12 + 48 + 36 + 24 + 6)
 
 local function loot_kind(item, sec)
 	local cat = Tiers and Tiers.classify_section and Tiers.classify_section(sec)
@@ -343,23 +347,50 @@ local function loot_kind(item, sec)
 	return "other"
 end
 
-local function debug_log_path()
+local function debug_log_path(name)
 	if not (getFS and getFS().update_path) then
 		return nil
 	end
 	local ok, path = pcall(function()
-		return getFS():update_path("$logs$", "weapons_ban_debug.log")
+		return getFS():update_path("$logs$", name)
 	end)
 	if ok and path and path ~= "" then
 		return path
 	end
 	ok, path = pcall(function()
-		return getFS():update_path("$app_data_root$", "logs\\weapons_ban_debug.log")
+		return getFS():update_path("$app_data_root$", "logs\\" .. name)
 	end)
 	if ok and path and path ~= "" then
 		return path
 	end
 	return nil
+end
+
+local function write_debug_table(name, rows)
+	local path = debug_log_path(name)
+	if not path then
+		return
+	end
+	table.sort(rows, function(a, b)
+		if a.kind ~= b.kind then
+			return a.kind < b.kind
+		end
+		return a.sec < b.sec
+	end)
+	local lines = {
+		string.format(ROW_FMT, "kind", "section", "trader", "map"),
+		ROW_SEP,
+	}
+	for i = 1, #rows do
+		local r = rows[i]
+		lines[#lines + 1] = string.format(ROW_FMT, r.kind, r.sec, r.trader or "-", r.map or "-")
+	end
+	local ok, f = pcall(io.open, path, "w")
+	if not (ok and f) then
+		return
+	end
+	f:write(table.concat(lines, "\n") .. "\n")
+	f:close()
 end
 
 local function catalog_key(kind, sec)
@@ -388,44 +419,11 @@ local function load_catalog(path)
 end
 
 local function rewrite_catalog()
-	local mmax = math.max
-	local path = debug_log_path()
-	if not path then
-		return
-	end
 	local rows = {}
 	for _, r in pairs(catalog) do
 		rows[#rows + 1] = r
 	end
-	table.sort(rows, function(a, b)
-		if a.kind ~= b.kind then
-			return a.kind < b.kind
-		end
-		return a.sec < b.sec
-	end)
-	local w_kind, w_sec, w_tr, w_map = 4, 7, 6, 3
-	for i = 1, #rows do
-		local r = rows[i]
-		w_kind = mmax(w_kind, #r.kind)
-		w_sec = mmax(w_sec, #r.sec)
-		w_tr = mmax(w_tr, #r.trader)
-		w_map = mmax(w_map, #r.map)
-	end
-	local fmt = string.format("%%-%ds  %%-%ds  %%-%ds  %%-%ds", w_kind, w_sec, w_tr, w_map)
-	local lines = {
-		string.format(fmt, "kind", "section", "trader", "map"),
-		string.rep("-", w_kind + w_sec + w_tr + w_map + 6),
-	}
-	for i = 1, #rows do
-		local r = rows[i]
-		lines[#lines + 1] = string.format(fmt, r.kind, r.sec, r.trader, r.map)
-	end
-	local ok, f = pcall(io.open, path, "w")
-	if not (ok and f) then
-		return
-	end
-	f:write(table.concat(lines, "\n") .. "\n")
-	f:close()
+	write_debug_table("weapons_ban_debug.log", rows)
 end
 
 local function ensure_catalog()
@@ -433,7 +431,7 @@ local function ensure_catalog()
 		return
 	end
 	catalog_ready = true
-	local path = debug_log_path()
+	local path = debug_log_path("weapons_ban_debug.log")
 	if path then
 		load_catalog(path)
 	end
@@ -531,6 +529,25 @@ local function dump_online_traders()
 	end
 	log(string.format("weapons_ban_debug.log +%d new (%d traders, %d unique)", added, n, total))
 	return true
+end
+
+local function dump_loot_pool()
+	if not (dogma.dbg.logging() and Tiers and Tiers.each_loot_section) then
+		return
+	end
+	Tiers.ensure()
+	local seen = {}
+	local rows = {}
+	Tiers.each_loot_section(function(kind, sec)
+		local key = catalog_key(kind, sec)
+		if seen[key] then
+			return
+		end
+		seen[key] = true
+		rows[#rows + 1] = { kind = kind, sec = sec, trader = "-", map = "-" }
+	end)
+	write_debug_table("weapons_ban_pool.log", rows)
+	log(string.format("weapons_ban_pool.log %d unique", #rows))
 end
 
 -- utils_ui caches utils_item.get_item_trade_status in a local at load, so
@@ -1115,7 +1132,11 @@ local function actor_on_first_update()
 	try_hooks()
 	give_extra_start_ammo()
 	if dogma.dbg.logging() and CreateTimeEvent then
-		CreateTimeEvent("dogma_wb_dbg", "trader_dump", 1.5, dump_online_traders)
+		CreateTimeEvent("dogma_wb_dbg", "trader_dump", 1.5, function()
+			dump_online_traders()
+			dump_loot_pool()
+			return true
+		end)
 	end
 end
 

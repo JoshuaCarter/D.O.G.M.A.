@@ -104,17 +104,18 @@ end
 
 -- Outfit / artefact / survival kits — not weapon loot.
 local function is_outfit_or_misc_kit(sec)
+	local sfind = string.find
 	local s = string.lower(sec)
-	if string.find(s, "sewing", 1, true) then
+	if sfind(s, "sewing", 1, true) then
 		return true
 	end
-	if string.find(s, "survival_kit", 1, true) then
+	if sfind(s, "survival_kit", 1, true) then
 		return true
 	end
-	if string.find(s, "helmet_repair", 1, true) then
+	if sfind(s, "helmet_repair", 1, true) then
 		return true
 	end
-	if string.find(s, "exo_repair", 1, true) then
+	if sfind(s, "exo_repair", 1, true) then
 		return true
 	end
 	if s == "light_repair_kit" or s == "medium_repair_kit" or s == "heavy_repair_kit" then

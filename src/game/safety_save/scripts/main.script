@@ -27,6 +27,7 @@ local function log(msg)
 end
 
 local function on_option_change()
+	local tostr = tostring
 	CONFIG.loaded.debug_log = dogma.dbg.logging()
 	CONFIG.loaded.always_min = dogma.mcm.int(CONFIG.MOD_ID, "always_min", CONFIG.DEFAULTS.always_min)
 	CONFIG.loaded.event_min = dogma.mcm.int(CONFIG.MOD_ID, "event_min", CONFIG.DEFAULTS.event_min)
@@ -37,13 +38,13 @@ local function on_option_change()
 	CONFIG.loaded.on_drink = dogma.mcm.bool(CONFIG.MOD_ID, "on_drink", CONFIG.DEFAULTS.on_drink)
 	log(string.format(
 		"options: always_min=%s event_min=%s show_text=%s inv=%s heal=%s eat=%s drink=%s",
-		tostring(CONFIG.loaded.always_min),
-		tostring(CONFIG.loaded.event_min),
-		tostring(CONFIG.loaded.show_text),
-		tostring(CONFIG.loaded.on_inventory),
-		tostring(CONFIG.loaded.on_heal),
-		tostring(CONFIG.loaded.on_eat),
-		tostring(CONFIG.loaded.on_drink)
+		tostr(CONFIG.loaded.always_min),
+		tostr(CONFIG.loaded.event_min),
+		tostr(CONFIG.loaded.show_text),
+		tostr(CONFIG.loaded.on_inventory),
+		tostr(CONFIG.loaded.on_heal),
+		tostr(CONFIG.loaded.on_eat),
+		tostr(CONFIG.loaded.on_drink)
 	))
 end
 

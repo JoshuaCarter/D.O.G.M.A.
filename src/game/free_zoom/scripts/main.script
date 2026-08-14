@@ -359,10 +359,6 @@ local function weapon_reloading()
 	return wpn:get_state() == 7
 end
 
--- Medkit / bandage / food / drink / sprint-lower / dialog lower, etc.
-local function weapon_is_lowered()
-	return game and game.actor_weapon_lowered and game.actor_weapon_lowered() or false
-end
 
 -- Any equipped optic (sight or scope) - not irons. Engine IsScopeAttached misses
 -- some section-baked / DXR optics that utils_item still reports.
@@ -570,7 +566,7 @@ zoom_diag = function(tag)
 	end
 	table.sort(menus)
 	local ok_pda, pda = pcall(pda_blocking)
-	local ok_low, lowered = pcall(weapon_is_lowered)
+	local ok_low, lowered = pcall(dogma.status.is_weapon_lowered)
 	add(
 		"menus=%s pda=%s lowered=%s phase=%s",
 		(#menus > 0) and table.concat(menus, ",") or "none",
@@ -620,12 +616,6 @@ local function actor_dead()
 	return not (db and db.actor and db.actor:alive())
 end
 
-local function actor_sprinting()
-	if not (db and db.actor) then
-		return false
-	end
-	return IsMoveState("mcSprint")
-end
 
 -- True empty hands: holstered slot and no detector/scanner in hand.
 local function hands_are_empty()
@@ -672,14 +662,14 @@ local function get_context()
 	end
 	refresh_wpn()
 	-- Consumables (eat/drink/meds) lower the weapon - block free zoom either mode.
-	if weapon_is_lowered() then
+	if dogma.status.is_weapon_lowered() then
 		return CTX.LOWERED
 	end
 	if CONFIG.loaded.empty_hands_only then
 		if not hands_are_empty() then
 			return CTX.HANDS_FULL
 		end
-		if not CONFIG.loaded.allow_during_sprint and actor_sprinting() then
+		if not CONFIG.loaded.allow_during_sprint and dogma.status.is_sprinting() then
 			return CTX.SPRINT
 		end
 		return CTX.OK
@@ -691,7 +681,7 @@ local function get_context()
 	if is_optical_ads() then
 		return CTX.OPTICAL
 	end
-	if not CONFIG.loaded.allow_during_sprint and actor_sprinting() then
+	if not CONFIG.loaded.allow_during_sprint and dogma.status.is_sprinting() then
 		return CTX.SPRINT
 	end
 	return CTX.OK

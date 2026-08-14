@@ -1,0 +1,91 @@
+--[[
+	Safety Save
+
+	Every 500ms, if not in combat: write `save safety_save` when
+	  - always_min minutes have passed since the last one (0 = off), or
+	  - event_min minutes have passed and inventory / full heal / eat / drink
+	    is happening on this tick.
+	Last-save time is this load only.
+]]
+
+local CONFIG = _G.dogma_game_safety_save_conf
+
+local TICK_MS = 500
+local MIN_MS = 60 * 1000
+
+local next_at = 0
+local last_save_ms = 0
+local was_inv = false
+local was_eating = false
+local was_drinking = false
+local was_hp = 1
+
+local function on_option_change()
+	CONFIG.loaded.always_min = dogma.mcm.int(CONFIG.MOD_ID, "always_min", CONFIG.DEFAULTS.always_min)
+	CONFIG.loaded.event_min = dogma.mcm.int(CONFIG.MOD_ID, "event_min", CONFIG.DEFAULTS.event_min)
+end
+
+local function reset_session()
+	next_at = 0
+	last_save_ms = time_global()
+	was_inv = dogma.status.is_inv_open()
+	was_eating = dogma.status.is_eating()
+	was_drinking = dogma.status.is_drinking()
+	was_hp = dogma.status.health()
+end
+
+local function do_save()
+	exec_console_cmd("save safety_save")
+	last_save_ms = time_global()
+end
+
+local function actor_on_update()
+	local now = time_global()
+	if now < next_at then
+		return
+	end
+	next_at = now + TICK_MS
+
+	local actor = dogma.sys.ready(CONFIG.MOD_ID, db, on_option_change)
+	if not (actor and actor:alive()) then
+		return
+	end
+
+	local inv = dogma.status.is_inv_open()
+	local eating = dogma.status.is_eating()
+	local drinking = dogma.status.is_drinking()
+	local hp = dogma.status.health()
+	local event = (inv and not was_inv)
+		or (eating and not was_eating)
+		or (drinking and not was_drinking)
+		or (hp >= 1 and was_hp < 1)
+	was_inv = inv
+	was_eating = eating
+	was_drinking = drinking
+	was_hp = hp
+
+	if dogma.status.is_in_combat() then
+		return
+	end
+
+	local elapsed = now - last_save_ms
+	local always_min = CONFIG.loaded.always_min
+	if always_min > 0 and elapsed >= always_min * MIN_MS then
+		do_save()
+		return
+	end
+	if event and elapsed >= CONFIG.loaded.event_min * MIN_MS then
+		do_save()
+	end
+end
+
+function on_game_start()
+	dogma.load(CONFIG.MOD_ID)
+	on_option_change()
+	reset_session()
+	RegisterScriptCallback("actor_on_update", actor_on_update)
+	RegisterScriptCallback("on_option_change", on_option_change)
+	RegisterScriptCallback("on_game_load", reset_session)
+	RegisterScriptCallback("main_menu_on_init", reset_session)
+	RegisterScriptCallback("actor_on_net_destroy", reset_session)
+end

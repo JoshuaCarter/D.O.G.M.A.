@@ -57,18 +57,11 @@ local function pda_ui_blocking()
 	return ok and blocking
 end
 
-local function inventory_ui_blocking()
-	local ok, blocking = pcall(function()
-		return actor_menu and actor_menu.inventory_opened and actor_menu.inventory_opened()
-	end)
-	return ok and blocking
-end
-
 local function qaw_open_blocked()
 	if pda_ui_blocking() then
 		return true
 	end
-	if inventory_ui_blocking() then
+	if dogma.status.is_inv_open() then
 		return true
 	end
 	return false

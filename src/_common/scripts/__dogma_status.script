@@ -1,0 +1,337 @@
+--[[
+	Shared actor status. Costly tests run once; cheap / event-driven
+	flags are read live.
+
+	is_in_combat()  — 1s cache: online stalker/monster has actor as best_enemy
+	is_inv_open()   — actor_menu.inventory_opened()
+	is_eating()     — food use, latched 3s
+	is_drinking()   — drink use, latched 3s
+	is_weapon_lowered() — game.actor_weapon_lowered() (eat/meds/sprint/dialog/…)
+	is_sprinting()  — IsMoveState("mcSprint")
+	is_talking()    — actor:is_talking()
+	health()        — actor.health, 0–1
+	limbs()         — { head = {perm, temp}, torso, leftarm, rightarm, leftleg, rightleg } as 0–1
+	bhs()           — live BHS tables: health, timedhp, maxhp (or nil)
+]]
+
+local INTERVAL_MS = 1000
+local TICK_SEC = 1
+local CONSUME_MS = 3000
+
+local LIMBS = { "head", "torso", "leftarm", "rightarm", "leftleg", "rightleg" }
+
+local in_combat = false
+local next_at = 0
+local eating_until = 0
+local drinking_until = 0
+local bhs_health = nil
+local bhs_timedhp = nil
+local bhs_maxhp = nil
+
+local function npc_hunting_actor(npc, actor_id)
+	if not ((IsStalker and IsStalker(npc)) or (IsMonster and IsMonster(npc))) then
+		return false
+	end
+	if not npc:alive() then
+		return false
+	end
+	local enemy = npc:best_enemy()
+	return enemy and enemy:id() == actor_id
+end
+
+-- st.object skips offline / unbound storage. best_enemy is the engine hunt target.
+local function scan_combat()
+	local actor = db and db.actor
+	if not (actor and db.storage) then
+		return false
+	end
+	local actor_id = actor:id()
+	for id, st in pairs(db.storage) do
+		local npc = st and st.object
+		if npc and id ~= actor_id then
+			local ok, hit = pcall(npc_hunting_actor, npc, actor_id)
+			if ok and hit then
+				return true
+			end
+		end
+	end
+	return false
+end
+
+local function refresh()
+	local ok, engaged = pcall(scan_combat)
+	if ok then
+		in_combat = engaged
+	end
+end
+
+local function tick()
+	local now = time_global()
+	if now >= next_at then
+		next_at = now + INTERVAL_MS
+		refresh()
+	end
+	return false
+end
+
+local function ensure_tick()
+	if not CreateTimeEvent then
+		return
+	end
+	if RemoveTimeEvent then
+		pcall(RemoveTimeEvent, "dogma_status", "tick")
+	end
+	CreateTimeEvent("dogma_status", "tick", TICK_SEC, tick)
+end
+
+local function item_section(item)
+	if type(item) == "string" and item ~= "" then
+		return item
+	end
+	if not item then
+		return nil
+	end
+	local ok, sec = pcall(function()
+		return item:section()
+	end)
+	if ok and type(sec) == "string" and sec ~= "" then
+		return sec
+	end
+	return nil
+end
+
+local function item_kind(sec)
+	if not (sec and ini_sys and ini_sys.r_string_ex) then
+		return nil
+	end
+	return ini_sys:r_string_ex(sec, "kind")
+end
+
+local function is_drink_sec(sec)
+	if IsItem and IsItem("drink", sec) then
+		return true
+	end
+	return item_kind(sec) == "i_drink"
+end
+
+local function is_food_sec(sec)
+	if IsItem and IsItem("food", sec) then
+		return true
+	end
+	return item_kind(sec) == "i_food"
+end
+
+-- actor_on_item_use(item, section). Drink before food so a listed drink is not a meal.
+local function on_item_use(item, sec)
+	sec = item_section(sec) or item_section(item)
+	if not sec then
+		return
+	end
+	local until_ms = time_global() + CONSUME_MS
+	if is_drink_sec(sec) then
+		drinking_until = until_ms
+		return
+	end
+	if is_food_sec(sec) then
+		eating_until = until_ms
+	end
+end
+
+-- BHS health is 0–max (arms/legs ~4, head 2, torso ~8). Fraction vs that limb's max.
+local function limb_frac(hp, max)
+	hp = tonumber(hp)
+	if not hp then
+		return 0
+	end
+	max = tonumber(max)
+	if not max or max <= 0 then
+		max = 4
+	end
+	local f = hp / max
+	if f < 0 then
+		return 0
+	end
+	if f > 1 then
+		return 1
+	end
+	return f
+end
+
+local function tables_are_bhs(health, timedhp, maxhp)
+	return type(health) == "table"
+		and type(timedhp) == "table"
+		and type(maxhp) == "table"
+		and health.head ~= nil
+		and timedhp.head ~= nil
+		and tonumber(maxhp.head) ~= nil
+end
+
+local function dig_bhs_from_fn(fn, depth)
+	if depth > 5 or type(fn) ~= "function" then
+		return nil
+	end
+	if debug.getfenv then
+		local env = debug.getfenv(fn)
+		if tables_are_bhs(env.health, env.timedhp, env.maxhp) then
+			return env.health, env.timedhp, env.maxhp
+		end
+	end
+	local i = 1
+	while true do
+		local name, val = debug.getupvalue(fn, i)
+		if not name then
+			break
+		end
+		if type(val) == "function" then
+			local h, t, m = dig_bhs_from_fn(val, depth + 1)
+			if h then
+				return h, t, m
+			end
+		elseif name == "health" and type(val) == "table" and val.head ~= nil then
+			local timedhp, maxhp
+			local j = 1
+			while true do
+				local n2, v2 = debug.getupvalue(fn, j)
+				if not n2 then
+					break
+				end
+				if n2 == "timedhp" then
+					timedhp = v2
+				elseif n2 == "maxhp" then
+					maxhp = v2
+				end
+				j = j + 1
+			end
+			if tables_are_bhs(val, timedhp, maxhp) then
+				return val, timedhp, maxhp
+			end
+		end
+		i = i + 1
+	end
+	return nil
+end
+
+local function resolve_bhs()
+	if tables_are_bhs(bhs_health, bhs_timedhp, bhs_maxhp) then
+		return bhs_health, bhs_timedhp, bhs_maxhp
+	end
+	local mod = rawget(_G, "zzz_player_injuries") or zzz_player_injuries
+	if type(mod) ~= "table" then
+		return nil
+	end
+	if tables_are_bhs(mod.health, mod.timedhp, mod.maxhp) then
+		bhs_health, bhs_timedhp, bhs_maxhp = mod.health, mod.timedhp, mod.maxhp
+		return bhs_health, bhs_timedhp, bhs_maxhp
+	end
+	if type(mod.actor_on_update) == "function" then
+		local h, t, m = dig_bhs_from_fn(mod.actor_on_update, 0)
+		if h then
+			bhs_health, bhs_timedhp, bhs_maxhp = h, t, m
+			mod.health = h
+			mod.timedhp = t
+			mod.maxhp = m
+			return h, t, m
+		end
+	end
+	return nil
+end
+
+local function reset()
+	in_combat = false
+	next_at = 0
+	eating_until = 0
+	drinking_until = 0
+	bhs_health = nil
+	bhs_timedhp = nil
+	bhs_maxhp = nil
+end
+
+function on_game_start()
+	ensure_tick()
+	RegisterScriptCallback("actor_on_item_use", on_item_use)
+	RegisterScriptCallback("on_game_load", function()
+		reset()
+		ensure_tick()
+	end)
+	RegisterScriptCallback("main_menu_on_init", reset)
+	RegisterScriptCallback("main_menu_on_quit", reset)
+	RegisterScriptCallback("actor_on_net_destroy", reset)
+end
+
+function is_in_combat()
+	return in_combat
+end
+
+function is_inv_open()
+	local ok, opened = pcall(function()
+		return actor_menu and actor_menu.inventory_opened and actor_menu.inventory_opened()
+	end)
+	return ok and opened == true
+end
+
+function is_eating()
+	return time_global() < eating_until
+end
+
+function is_drinking()
+	return time_global() < drinking_until
+end
+
+function is_weapon_lowered()
+	local ok, lowered = pcall(function()
+		return game and game.actor_weapon_lowered and game.actor_weapon_lowered()
+	end)
+	return ok and lowered == true
+end
+
+function is_sprinting()
+	local ok, sprint = pcall(function()
+		return IsMoveState and IsMoveState("mcSprint")
+	end)
+	return ok and sprint == true
+end
+
+function is_talking()
+	local ok, talking = pcall(function()
+		local actor = db and db.actor
+		return actor and actor.is_talking and actor:is_talking()
+	end)
+	return ok and talking == true
+end
+
+function health()
+	local actor = db and db.actor
+	local h = actor and actor.health
+	if type(h) ~= "number" then
+		return 0
+	end
+	if h < 0 then
+		return 0
+	end
+	if h > 1 then
+		return 1
+	end
+	return h
+end
+
+function bhs()
+	return resolve_bhs()
+end
+
+-- BHS health[] is perm + temp. Permanent is health - timedhp.
+function limbs()
+	local health, timedhp, maxhp = resolve_bhs()
+	local out = {}
+	for i = 1, #LIMBS do
+		local key = LIMBS[i]
+		local hp = tonumber(health and health[key])
+		local temp = tonumber(timedhp and timedhp[key]) or 0
+		local max = maxhp and maxhp[key]
+		local perm = hp and (hp - temp) or nil
+		out[key] = {
+			perm = limb_frac(perm, max),
+			temp = limb_frac(temp, max),
+		}
+	end
+	return out
+end

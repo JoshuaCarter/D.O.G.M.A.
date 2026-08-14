@@ -57,7 +57,7 @@ local function can_use_keys()
 	if not (actor and actor:alive()) then
 		return false
 	end
-	if actor_menu and actor_menu.inventory_opened and actor_menu.inventory_opened() then
+	if dogma.status.is_inv_open() then
 		return false
 	end
 	return true

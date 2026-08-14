@@ -55,7 +55,6 @@ local function apply_thirst_blur()
 	end
 end
 
-local LIMBS = { "head", "torso", "leftarm", "rightarm", "leftleg", "rightleg" }
 local OPT_IN_ICONS = {
 	{ name = "Radiation", opt = "icons_radiation" },
 	{ name = "Bleed", opt = "icons_bleed" },
@@ -396,26 +395,21 @@ local function actor_pct_psy()
 end
 
 local function limbs_full()
-	local bhs = rawget(_G, "zzz_player_injuries")
-	local health = bhs and bhs.health
-	local maxhp = bhs and bhs.maxhp
-	if not (health and maxhp) then
-		return false
-	end
-	for i = 1, #LIMBS do
-		local k = LIMBS[i]
-		local h, m = health[k], maxhp[k]
-		if not (h and m) or h < m then
+	local vals = dogma.status.limbs()
+	local n = 0
+	for _, limb in pairs(vals) do
+		n = n + 1
+		if limb.perm < 1 then
 			return false
 		end
 	end
-	return true
+	return n > 0
 end
 
 local function compute_show(L, now)
 	local force = hold_key(L.key_bhs, L.key_bhs_modifier) or (flash_until > now)
 	local show_all = force
-		or (actor_pct("health", 100) < (L.hp_show_below_pct or 90))
+		or (dogma.status.health() * 100 < (L.hp_show_below_pct or 90))
 		or (actor_pct_psy() < (L.psy_show_below_pct or 90))
 		or (actor_pct("radiation", 0) > (L.rad_show_above_pct or 0))
 	local show_stam = show_all or (actor_pct("power", 100) < (L.stam_show_below_pct or 90))

@@ -94,8 +94,9 @@ local function on_actor_on_update()
 		return
 	end
 
-	local factor = desat_factor(actor.health) * (CONFIG.loaded.intensity or 1)
-	overlay(LOG.HEALTH, string.format("HP: %.2f", actor.health or 0))
+	local hp = dogma.status.health()
+	local factor = desat_factor(hp) * (CONFIG.loaded.intensity or 1)
+	overlay(LOG.HEALTH, string.format("HP: %.2f", hp))
 	overlay(LOG.DESAT, string.format("Desat: %.2f", factor))
 	ppe_active = set_ppe(ppe_active, factor)
 end

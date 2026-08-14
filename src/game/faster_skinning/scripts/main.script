@@ -358,10 +358,10 @@ local function slash_input_blocked()
 	if not db.actor then
 		return true
 	end
-	if db.actor.is_talking and db.actor:is_talking() then
+	if dogma.status.is_talking() then
 		return true
 	end
-	if actor_menu and actor_menu.get_last_mode and actor_menu.get_last_mode() ~= 0 then
+	if dogma.status.is_inv_open() then
 		return true
 	end
 	return false

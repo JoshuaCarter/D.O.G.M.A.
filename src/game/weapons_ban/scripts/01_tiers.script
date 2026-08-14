@@ -1,5 +1,6 @@
 --[[
 	Weapons Ban — tier buckets, category pick, map/rare helpers.
+	Sight/sil/ammo must be listed on a real gun; not a full ini_sys dump.
 	Loaded before main (01_ prefix).
 ]]
 
@@ -60,6 +61,11 @@ local buckets = {
 local buckets_built = false
 local cutoffs = {}
 local ammo_mag_equiv = {}
+-- Sections a real gun lists (ammo_class / scopes* / silencer_name). Debug
+-- leftovers often have icons + IsItem flags but no weapon points at them.
+local referenced_ammo = {}
+local referenced_sight = {}
+local referenced_sil = {}
 local rare_names = {}
 local rare_names_built = false
 local price_ini = nil
@@ -266,7 +272,120 @@ local function clear_buckets()
 		buckets[cat] = { {}, {}, {}, {}, {} }
 	end
 	ammo_mag_equiv = {}
+	referenced_ammo = {}
+	referenced_sight = {}
+	referenced_sil = {}
 	buckets_built = false
+end
+
+local function is_junk_section(sec)
+	if not sec or sec == "" then
+		return true
+	end
+	local s = string.lower(sec)
+	if string.find(s, "tch_", 1, true) then
+		return true
+	end
+	if string.sub(s, -3) == "_mp" or string.find(s, "_mp_", 1, true) then
+		return true
+	end
+	if string.sub(s, 1, 3) == "mp_" then
+		return true
+	end
+	if string.sub(s, -3) == "_cw" or string.find(s, "_cw_", 1, true) then
+		return true
+	end
+	if string.sub(s, -5) == "_base" or string.find(s, "_base_", 1, true) then
+		return true
+	end
+	if string.find(s, "debug", 1, true) or string.find(s, "dummy", 1, true) then
+		return true
+	end
+	if string.sub(s, 1, 5) == "test_" or string.find(s, "_test_", 1, true) then
+		return true
+	end
+	return false
+end
+
+local function csv_each(sec, key, fn)
+	local list = parse_list and parse_list(ini_sys, sec, key)
+	if not list then
+		local raw = ini_sys:r_string_ex(sec, key)
+		if raw and raw ~= "" then
+			list = str_explode(raw, ",")
+		end
+	end
+	if not list then
+		return
+	end
+	for i = 1, #list do
+		local tok = list[i]
+		if tok and tok ~= "" and tok ~= "none" then
+			fn(tok)
+		end
+	end
+end
+
+local function mark_scope_token(tok)
+	if not (tok and ini_sys:section_exist(tok)) then
+		return
+	end
+	local named = ini_sys:r_string_ex(tok, "scope_name")
+	if named and named ~= "" and named ~= "none" then
+		referenced_sight[named] = true
+	end
+	if IsItem and IsItem("scope", tok) then
+		referenced_sight[tok] = true
+	end
+end
+
+-- Only guns that look real (icon + not junk names) may validate loot.
+local function note_weapon_refs(sec)
+	if is_junk_section(sec) then
+		return
+	end
+	csv_each(sec, "ammo_class", function(a)
+		if is_worn_ammo(a) then
+			a = fresh_ammo_sec(a)
+		end
+		if a then
+			referenced_ammo[a] = true
+		end
+	end)
+	local sil_st = ini_sys:r_float_ex(sec, "silencer_status") or 0
+	if sil_st == 2 then
+		local sil = ini_sys:r_string_ex(sec, "silencer_name")
+		if sil and sil ~= "" and sil ~= "none" then
+			referenced_sil[sil] = true
+		end
+	end
+	local group = ini_sys:r_string_ex(sec, "modular_scope_group")
+	if group and group ~= "" and ini_sys:section_exist(group) then
+		csv_each(group, "scopes", mark_scope_token)
+	end
+	csv_each(sec, "scopes_sect", mark_scope_token)
+	csv_each(sec, "scopes", mark_scope_token)
+end
+
+local function is_quest_item(sec)
+	local q = ini_sys:r_string_ex(sec, "quest_item")
+	return q == "true" or q == "1"
+end
+
+local function allow_loot(cat, sec)
+	if is_junk_section(sec) or is_quest_item(sec) then
+		return false
+	end
+	if cat == "ammo" then
+		return referenced_ammo[sec] == true
+	end
+	if cat == "sight" then
+		return referenced_sight[sec] == true
+	end
+	if cat == "suppressor" then
+		return referenced_sil[sec] == true
+	end
+	return true
 end
 
 local function note_ammo_mag(sec)
@@ -298,7 +417,7 @@ local function build_parts_from_prices()
 	local n = prices:line_count("wpo_part_prices")
 	for i = 0, n - 1 do
 		local _ok, sec, val = prices:r_line("wpo_part_prices", i, "", "")
-		if sec ~= "" and is_weapon_part(sec) and ini_sys:section_exist(sec) then
+		if sec ~= "" and is_weapon_part(sec) and ini_sys:section_exist(sec) and not is_junk_section(sec) then
 			local cost = tonumber(val) or 0
 			local t = cost_to_tier(cost, "parts")
 			local bucket = buckets.parts[t]
@@ -314,26 +433,50 @@ local function build_buckets()
 		enforce_cutoffs(cat)
 	end
 
+	local pending = {}
 	ini_sys:section_for_each(function(sec)
 		if not ini_sys:r_float_ex(sec, "inv_grid_x") then
 			return false
 		end
 		if ini_sys:r_string_ex(sec, "ammo_class") then
 			note_ammo_mag(sec)
+			note_weapon_refs(sec)
 		end
 		local cat = classify_section(sec)
 		if cat and cat ~= "parts" then
+			pending[#pending + 1] = { sec, cat }
+		end
+		return false
+	end)
+	for i = 1, #pending do
+		local sec = pending[i][1]
+		local cat = pending[i][2]
+		if allow_loot(cat, sec) then
 			local cost = get_effective_cost(sec)
 			local t = cost_to_tier(cost, cat)
 			local bucket = buckets[cat][t]
 			bucket[#bucket + 1] = sec
 		end
-		return false
-	end)
+	end
 
 	build_parts_from_prices()
 	buckets_built = true
-	log("buckets built")
+	local function count_cat(cat)
+		local n = 0
+		local by = buckets[cat]
+		for t = 1, 5 do
+			n = n + #(by[t] or {})
+		end
+		return n
+	end
+	log(string.format(
+		"buckets sight=%d kit=%d sil=%d ammo=%d parts=%d",
+		count_cat("sight"),
+		count_cat("kit"),
+		count_cat("suppressor"),
+		count_cat("ammo"),
+		count_cat("parts")
+	))
 	dogma.perf.stop()
 end
 

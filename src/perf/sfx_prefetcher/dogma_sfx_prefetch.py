@@ -46,7 +46,7 @@ SIZE_CHOICES: tuple[tuple[str, int, str], ...] = (
     ("500kb", 500 * 1024, "500 KB"),
 )
 SIZE_BY_KEY = {key: (limit, label) for key, limit, label in SIZE_CHOICES}
-DEFAULT_SIZE_KEY = "100kb"
+DEFAULT_SIZE_KEY = "50kb"
 
 
 def _use_color() -> bool:

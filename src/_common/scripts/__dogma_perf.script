@@ -72,7 +72,7 @@ local function resolve_log_path()
 		return nil
 	end
 	local ok, path = pcall(function()
-		return getFS():update_path("$app_data_root$", LOG_NAME)
+		return getFS():update_path("$logs$", LOG_NAME)
 	end)
 	if ok and path and path ~= "" then
 		log_path = path

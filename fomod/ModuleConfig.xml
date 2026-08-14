@@ -6,6 +6,41 @@
 		<folder source="common\mo2" destination="mo2" />
 	</requiredInstallFiles>
 	<installSteps order="Explicit">
+		<installStep name="Preset">
+			<optionalFileGroups order="Explicit">
+				<group name="Install preset" type="SelectExactlyOne">
+					<plugins order="Explicit">
+						<plugin name="Baseline">
+							<description>Most features preselected. Weapons Ban is left off (traders still buy guns, ammo, and attachments).</description>
+							<conditionFlags>
+								<flag name="preset">baseline</flag>
+							</conditionFlags>
+							<typeDescriptor>
+								<type name="Recommended"/>
+							</typeDescriptor>
+						</plugin>
+						<plugin name="Pick and choose">
+							<description>Nothing preselected. Choose features on the next pages.</description>
+							<conditionFlags>
+								<flag name="preset">pick</flag>
+							</conditionFlags>
+							<typeDescriptor>
+								<type name="Optional"/>
+							</typeDescriptor>
+						</plugin>
+						<plugin name="All">
+							<description>Every listed feature preselected, including Weapons Ban.</description>
+							<conditionFlags>
+								<flag name="preset">all</flag>
+							</conditionFlags>
+							<typeDescriptor>
+								<type name="Optional"/>
+							</typeDescriptor>
+						</plugin>
+					</plugins>
+				</group>
+			</optionalFileGroups>
+		</installStep>
 		<installStep name="Weapons Ban">
 			<optionalFileGroups order="Explicit">
 				<group name="Core" type="SelectAny">
@@ -16,7 +51,17 @@
 								<folder source="game_weapons_ban\gamedata" destination="gamedata" priority="0" />
 							</files>
 							<typeDescriptor>
-								<type name="Recommended"/>
+								<dependencyType>
+									<defaultType name="Optional"/>
+									<patterns>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="all"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+									</patterns>
+								</dependencyType>
 							</typeDescriptor>
 						</plugin>
 					</plugins>
@@ -29,7 +74,23 @@
 								<folder source="tweaks_sobre_loadouts\gamedata" destination="gamedata" priority="0" />
 							</files>
 							<typeDescriptor>
-								<type name="Recommended"/>
+								<dependencyType>
+									<defaultType name="Optional"/>
+									<patterns>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="all"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="baseline"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+									</patterns>
+								</dependencyType>
 							</typeDescriptor>
 						</plugin>
 					</plugins>
@@ -46,7 +107,23 @@
 								<folder source="gui_fx_radiation\gamedata" destination="gamedata" priority="0" />
 							</files>
 							<typeDescriptor>
-								<type name="Recommended"/>
+								<dependencyType>
+									<defaultType name="Optional"/>
+									<patterns>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="all"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="baseline"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+									</patterns>
+								</dependencyType>
 							</typeDescriptor>
 						</plugin>
 						<plugin name="Bleed FX">
@@ -55,7 +132,23 @@
 								<folder source="gui_fx_bleed\gamedata" destination="gamedata" priority="0" />
 							</files>
 							<typeDescriptor>
-								<type name="Recommended"/>
+								<dependencyType>
+									<defaultType name="Optional"/>
+									<patterns>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="all"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="baseline"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+									</patterns>
+								</dependencyType>
 							</typeDescriptor>
 						</plugin>
 						<plugin name="Health FX">
@@ -64,7 +157,23 @@
 								<folder source="gui_fx_health\gamedata" destination="gamedata" priority="0" />
 							</files>
 							<typeDescriptor>
-								<type name="Recommended"/>
+								<dependencyType>
+									<defaultType name="Optional"/>
+									<patterns>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="all"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="baseline"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+									</patterns>
+								</dependencyType>
 							</typeDescriptor>
 						</plugin>
 						<plugin name="FPS">
@@ -74,7 +183,23 @@
 								<folder source="gui_fps\gamedata" destination="gamedata" priority="0" />
 							</files>
 							<typeDescriptor>
-								<type name="Recommended"/>
+								<dependencyType>
+									<defaultType name="Optional"/>
+									<patterns>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="all"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="baseline"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+									</patterns>
+								</dependencyType>
 							</typeDescriptor>
 						</plugin>
 						<plugin name="Minimap Toggle">
@@ -83,7 +208,23 @@
 								<folder source="gui_minimap\gamedata" destination="gamedata" priority="0" />
 							</files>
 							<typeDescriptor>
-								<type name="Recommended"/>
+								<dependencyType>
+									<defaultType name="Optional"/>
+									<patterns>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="all"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="baseline"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+									</patterns>
+								</dependencyType>
 							</typeDescriptor>
 						</plugin>
 						<plugin name="Stalker ID">
@@ -92,7 +233,23 @@
 								<folder source="gui_stalker_id\gamedata" destination="gamedata" priority="0" />
 							</files>
 							<typeDescriptor>
-								<type name="Recommended"/>
+								<dependencyType>
+									<defaultType name="Optional"/>
+									<patterns>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="all"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="baseline"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+									</patterns>
+								</dependencyType>
 							</typeDescriptor>
 						</plugin>
 						<plugin name="Better Disassemble Keybind">
@@ -101,7 +258,23 @@
 								<folder source="input_disassemble\gamedata" destination="gamedata" priority="0" />
 							</files>
 							<typeDescriptor>
-								<type name="Recommended"/>
+								<dependencyType>
+									<defaultType name="Optional"/>
+									<patterns>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="all"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="baseline"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+									</patterns>
+								</dependencyType>
 							</typeDescriptor>
 						</plugin>
 						<plugin name="Better Drop Keybind">
@@ -110,7 +283,23 @@
 								<folder source="input_drop\gamedata" destination="gamedata" priority="0" />
 							</files>
 							<typeDescriptor>
-								<type name="Recommended"/>
+								<dependencyType>
+									<defaultType name="Optional"/>
+									<patterns>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="all"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="baseline"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+									</patterns>
+								</dependencyType>
 							</typeDescriptor>
 						</plugin>
 						<plugin name="Weapon Stripper">
@@ -119,7 +308,23 @@
 								<folder source="input_stripping\gamedata" destination="gamedata" priority="0" />
 							</files>
 							<typeDescriptor>
-								<type name="Recommended"/>
+								<dependencyType>
+									<defaultType name="Optional"/>
+									<patterns>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="all"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="baseline"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+									</patterns>
+								</dependencyType>
 							</typeDescriptor>
 						</plugin>
 						<plugin name="Faster Skinning">
@@ -128,7 +333,23 @@
 								<folder source="game_faster_skinning\gamedata" destination="gamedata" priority="0" />
 							</files>
 							<typeDescriptor>
-								<type name="Recommended"/>
+								<dependencyType>
+									<defaultType name="Optional"/>
+									<patterns>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="all"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="baseline"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+									</patterns>
+								</dependencyType>
 							</typeDescriptor>
 						</plugin>
 						<plugin name="PDA Go Away">
@@ -137,7 +358,23 @@
 								<folder source="input_pda_go_away\gamedata" destination="gamedata" priority="0" />
 							</files>
 							<typeDescriptor>
-								<type name="Recommended"/>
+								<dependencyType>
+									<defaultType name="Optional"/>
+									<patterns>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="all"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="baseline"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+									</patterns>
+								</dependencyType>
 							</typeDescriptor>
 						</plugin>
 						<plugin name="Campfire Healing">
@@ -146,7 +383,23 @@
 								<folder source="game_campfire_healing\gamedata" destination="gamedata" priority="0" />
 							</files>
 							<typeDescriptor>
-								<type name="Recommended"/>
+								<dependencyType>
+									<defaultType name="Optional"/>
+									<patterns>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="all"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="baseline"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+									</patterns>
+								</dependencyType>
 							</typeDescriptor>
 						</plugin>
 						<plugin name="Pose Controls">
@@ -155,7 +408,23 @@
 								<folder source="input_pose_controls\gamedata" destination="gamedata" priority="0" />
 							</files>
 							<typeDescriptor>
-								<type name="Recommended"/>
+								<dependencyType>
+									<defaultType name="Optional"/>
+									<patterns>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="all"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="baseline"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+									</patterns>
+								</dependencyType>
 							</typeDescriptor>
 						</plugin>
 						<plugin name="True Prone">
@@ -164,7 +433,23 @@
 								<folder source="game_true_prone\gamedata" destination="gamedata" priority="0" />
 							</files>
 							<typeDescriptor>
-								<type name="Recommended"/>
+								<dependencyType>
+									<defaultType name="Optional"/>
+									<patterns>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="all"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="baseline"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+									</patterns>
+								</dependencyType>
 							</typeDescriptor>
 						</plugin>
 						<plugin name="Ammo Selector">
@@ -173,7 +458,23 @@
 								<folder source="game_ammo_selector\gamedata" destination="gamedata" priority="0" />
 							</files>
 							<typeDescriptor>
-								<type name="Recommended"/>
+								<dependencyType>
+									<defaultType name="Optional"/>
+									<patterns>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="all"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="baseline"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+									</patterns>
+								</dependencyType>
 							</typeDescriptor>
 						</plugin>
 						<plugin name="Better Equipable Controls">
@@ -182,7 +483,23 @@
 								<folder source="input_equipment_controls\gamedata" destination="gamedata" priority="0" />
 							</files>
 							<typeDescriptor>
-								<type name="Recommended"/>
+								<dependencyType>
+									<defaultType name="Optional"/>
+									<patterns>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="all"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="baseline"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+									</patterns>
+								</dependencyType>
 							</typeDescriptor>
 						</plugin>
 						<plugin name="Weapon Tooltips">
@@ -192,7 +509,23 @@
 								<folder source="gui_weapon_tooltips\gamedata" destination="gamedata" priority="0" />
 							</files>
 							<typeDescriptor>
-								<type name="Recommended"/>
+								<dependencyType>
+									<defaultType name="Optional"/>
+									<patterns>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="all"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="baseline"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+									</patterns>
+								</dependencyType>
 							</typeDescriptor>
 						</plugin>
 						<plugin name="Nearby Pickup Labels">
@@ -201,7 +534,23 @@
 								<folder source="gui_nearby_pickup_labels\gamedata" destination="gamedata" priority="0" />
 							</files>
 							<typeDescriptor>
-								<type name="Recommended"/>
+								<dependencyType>
+									<defaultType name="Optional"/>
+									<patterns>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="all"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="baseline"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+									</patterns>
+								</dependencyType>
 							</typeDescriptor>
 						</plugin>
 						<plugin name="ADS Zoom">
@@ -210,7 +559,23 @@
 								<folder source="game_ads_zoom\gamedata" destination="gamedata" priority="0" />
 							</files>
 							<typeDescriptor>
-								<type name="Recommended"/>
+								<dependencyType>
+									<defaultType name="Optional"/>
+									<patterns>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="all"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="baseline"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+									</patterns>
+								</dependencyType>
 							</typeDescriptor>
 						</plugin>
 						<plugin name="Free Zoom">
@@ -219,7 +584,23 @@
 								<folder source="game_free_zoom\gamedata" destination="gamedata" priority="0" />
 							</files>
 							<typeDescriptor>
-								<type name="Recommended"/>
+								<dependencyType>
+									<defaultType name="Optional"/>
+									<patterns>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="all"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="baseline"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+									</patterns>
+								</dependencyType>
 							</typeDescriptor>
 						</plugin>
 						<plugin name="Quieter Bush Rustle SFX For Dark Signal">
@@ -228,7 +609,23 @@
 								<folder source="tweaks_quieter_bush_rustle_sfx_for_dark_signal\gamedata" destination="gamedata" priority="0" />
 							</files>
 							<typeDescriptor>
-								<type name="Recommended"/>
+								<dependencyType>
+									<defaultType name="Optional"/>
+									<patterns>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="all"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="baseline"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+									</patterns>
+								</dependencyType>
 							</typeDescriptor>
 						</plugin>
 						<plugin name="Clear MCM Search Box">
@@ -237,7 +634,23 @@
 								<folder source="tweaks_clear_mcm_search_box\gamedata" destination="gamedata" priority="0" />
 							</files>
 							<typeDescriptor>
-								<type name="Recommended"/>
+								<dependencyType>
+									<defaultType name="Optional"/>
+									<patterns>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="all"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="baseline"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+									</patterns>
+								</dependencyType>
 							</typeDescriptor>
 						</plugin>
 						<plugin name="Sane NPC Combat Speeds">
@@ -246,7 +659,23 @@
 								<folder source="tweaks_sane_npc_combat_speeds\gamedata" destination="gamedata" priority="0" />
 							</files>
 							<typeDescriptor>
-								<type name="Recommended"/>
+								<dependencyType>
+									<defaultType name="Optional"/>
+									<patterns>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="all"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="baseline"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+									</patterns>
+								</dependencyType>
 							</typeDescriptor>
 						</plugin>
 						<plugin name="Dodge Pseudogiant Slam If Airborne">
@@ -255,7 +684,23 @@
 								<folder source="tweaks_dodge_pseudogiant_slam_if_airborne\gamedata" destination="gamedata" priority="0" />
 							</files>
 							<typeDescriptor>
-								<type name="Recommended"/>
+								<dependencyType>
+									<defaultType name="Optional"/>
+									<patterns>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="all"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="baseline"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+									</patterns>
+								</dependencyType>
 							</typeDescriptor>
 						</plugin>
 						<plugin name="No Controller Tube Spam">
@@ -264,7 +709,23 @@
 								<folder source="tweaks_no_controller_tube_spam\gamedata" destination="gamedata" priority="0" />
 							</files>
 							<typeDescriptor>
-								<type name="Recommended"/>
+								<dependencyType>
+									<defaultType name="Optional"/>
+									<patterns>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="all"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="baseline"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+									</patterns>
+								</dependencyType>
 							</typeDescriptor>
 						</plugin>
 						<plugin name="Fix New Game Loadout Tooltips">
@@ -273,7 +734,23 @@
 								<folder source="tweaks_fix_new_game_loadout_tooltips\gamedata" destination="gamedata" priority="0" />
 							</files>
 							<typeDescriptor>
-								<type name="Recommended"/>
+								<dependencyType>
+									<defaultType name="Optional"/>
+									<patterns>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="all"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="baseline"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+									</patterns>
+								</dependencyType>
 							</typeDescriptor>
 						</plugin>
 						<plugin name="Increase Blood Decal Range">
@@ -282,7 +759,23 @@
 								<folder source="tweaks_increase_blood_decal_range\gamedata" destination="gamedata" priority="0" />
 							</files>
 							<typeDescriptor>
-								<type name="Recommended"/>
+								<dependencyType>
+									<defaultType name="Optional"/>
+									<patterns>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="all"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+										<pattern>
+											<dependencies>
+												<flagDependency flag="preset" value="baseline"/>
+											</dependencies>
+											<type name="Recommended"/>
+										</pattern>
+									</patterns>
+								</dependencyType>
 							</typeDescriptor>
 						</plugin>
 					</plugins>

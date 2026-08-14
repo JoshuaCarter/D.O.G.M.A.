@@ -12,7 +12,10 @@ local HIT_CAP_MIN = 1
 local HIT_CAP_MAX = 20
 local UI_W = 1024
 local UI_H = 768
-local LINE_H = 18 -- letterica16
+local LINE_H_MIN = 10
+local LINE_H_MAX = 28
+local LINE_H_FALLBACK = 18
+local FONT_INI_REL = "ui\\ui_font_letterica16_russian"
 local PANEL_PAD = 12
 local PANEL_W_MIN = 200
 local PANEL_W_MAX = 1024
@@ -162,6 +165,79 @@ end
 
 local function hit_cap()
 	return clamp_ui(CONFIG.loaded.hit_cap, HIT_CAP_MIN, HIT_CAP_MAX, 10)
+end
+
+-- Atlas height from the live letterica16 .ini (1k/2k/4k packs change this, not the section name).
+local cached_font_px
+
+local function font_ini_height()
+	if cached_font_px then
+		return cached_font_px
+	end
+	if not (getFS and ini_file) then
+		return nil
+	end
+	local fs = getFS()
+	local prefix = ""
+	if ini_sys and ini_sys.r_string_ex then
+		prefix = ini_sys:r_string_ex("string_table", "font_prefix") or ""
+	end
+	local rels = { FONT_INI_REL .. prefix .. ".ini", FONT_INI_REL .. ".ini" }
+	for i = 1, #rels do
+		local rel = rels[i]
+		local ok_ex, exists = pcall(function()
+			return fs:exist("$game_textures$", rel)
+		end)
+		if ok_ex and exists then
+			local ok_path, full = pcall(function()
+				return fs:update_path("$game_textures$", rel)
+			end)
+			if ok_path and full then
+				local ok_ini, ini = pcall(ini_file, full)
+				if ok_ini and ini then
+					local function sect_h(sect)
+						local ok, h = pcall(function()
+							return ini:r_float(sect, "height")
+						end)
+						return (ok and tonumber(h)) or nil
+					end
+					local h = sect_h("symbol_coords")
+						or sect_h("mb_symbol_coords")
+						or sect_h("char widths")
+						or sect_h("font_size")
+					if h and h > 0 then
+						cached_font_px = h
+						return h
+					end
+				end
+			end
+		end
+	end
+	return nil
+end
+
+-- Same rule UILines uses: CurrentHeight_ / (screenH / 768).
+local function auto_line_height()
+	local font_px = font_ini_height() or LINE_H_FALLBACK
+	local scr_h = device() and tonumber(device().height)
+	if not scr_h or scr_h <= 0 then
+		return font_px
+	end
+	return font_px * UI_H / scr_h
+end
+
+local function line_height()
+	local manual = tonumber(CONFIG.loaded.line_height)
+	if manual and manual > 0 then
+		if manual < LINE_H_MIN then
+			return LINE_H_MIN
+		end
+		if manual > LINE_H_MAX then
+			return LINE_H_MAX
+		end
+		return manual
+	end
+	return auto_line_height()
 end
 
 local function rgb_code(rgb)
@@ -915,7 +991,7 @@ local function show_hit_summary()
 	local extra = frozen.footer and 2 or 0
 	local n = TITLE_LINES + math.max(hit_n, 1) + extra
 
-	local text_h = n * LINE_H
+	local text_h = math.floor(n * line_height() + 0.5)
 	local panel_h = text_h + PANEL_PAD * 2
 	local panel_w = panel_width()
 	local panel_x = 0
@@ -1236,6 +1312,7 @@ local function on_option_change()
 	CONFIG.loaded.enabled = dogma.mcm.bool(CONFIG.MOD_ID, "enabled")
 	CONFIG.loaded.panel_width = dogma.mcm.uint(CONFIG.MOD_ID, "panel_width", 410)
 	CONFIG.loaded.panel_top = dogma.mcm.uint(CONFIG.MOD_ID, "panel_top", 270)
+	CONFIG.loaded.line_height = dogma.mcm.float(CONFIG.MOD_ID, "line_height", 0)
 	CONFIG.loaded.hit_cap = dogma.mcm.uint(CONFIG.MOD_ID, "hit_cap", 10)
 	CONFIG.loaded.debug_log = dogma.dbg.logging()
 	if not death_armed then

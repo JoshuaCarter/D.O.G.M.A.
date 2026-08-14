@@ -13,8 +13,6 @@ common:
   default: true
   requires:
     - xlibs
-  disables:
-    - 95- Doom-like weapon inspection - Grokitach
   enables: []
 
 Debug:
@@ -33,10 +31,10 @@ SFX Prefetcher:
   stage: DEV
   default: true
   path: perf/sfx_prefetcher
-  desc: "Prefetches a generated list of loose mod sounds on load to reduce first-play hitching. Rebuild with D.O.G.M.A. SFX Prefetch / Optimize after changing sound mods."
+  desc: "Prefetches a generated list of loose mod sounds on load to reduce first-play hitching. Rebuild by running dogma_sfx_prefetch.py in the DOGMA mod folder after changing sound mods."
 
 New Game Layout:
-  stage: DEV
+  stage: RELEASE
   default: true
   path: gui/newgame_layout
   desc: "Wider New Game loadout panel. Optional Veteran/Survivalist and faction-base spawn defaults."
@@ -83,7 +81,7 @@ Stalker ID:
     - G.A.M.M.A. Crook's Identification UI Fix
 
 Reactive BHS:
-  stage: DEV
+  stage: RELEASE
   default: true
   path: gui/bhs_reactive
   desc: "Hide classic BHS and status icons by default; show BHS on limb damage or hold key; show opted-in status icons when not grey (with grey grace). Thirst blur starts at yellow (toggle)."
@@ -159,7 +157,7 @@ Campfire Healing:
     - 115- Campfire slowly regens life - arti
 
 Belt Glowsticks:
-  stage: DEV
+  stage: RELEASE
   default: true
   path: game/belt_glowsticks
   desc: "Drag a glowstick onto an artefact belt slot to wear it as a light. Double-click equips to belt by default (falls back to hands). Uses the glowstick light_section as-is."
@@ -167,7 +165,7 @@ Belt Glowsticks:
     - contains:Belt Glowsticks
 
 Better Exo Power Drain:
-  stage: DEV
+  stage: RELEASE
   default: true
   path: game/exo_power
   desc: "Replaces Exosuit drain system. No drain when not moving and more drain when moving (compared to base G.A.M.M.A.)."
@@ -207,7 +205,7 @@ Better Equipable Controls:
   desc: "Detector, Geiger, and Torch/Flashlight Controls binds force-equip matching devices into the detector slot."
 
 Pistol Slot:
-  stage: DEV
+  stage: RELEASE
   default: true
   path: game/pistol_slot
   desc: "Dedicated engine inventory slot 16 as a pistol holster (pistols still equip to primary/secondary). Adds a Pistol holster key under weapon binds in Settings → Controls."
@@ -227,19 +225,6 @@ Nearby Pickup Labels:
   default: true
   path: gui/nearby_pickup_labels
   desc: "Auto-show hold-Use style name labels on nearby pickable items (default 3 m, 0–10 m). Off while Use is held. Hides the look-at inventory icon by default."
-
-# True Fast Travel:
-#   stage: DEV
-#   default: true
-#   path: game/true_fast_travel
-#   desc: "Real path travel with spectator camera along the route, in-mod time simulation, LoS ambushes, walk-to-discover destinations. Blanks vanilla game_fast_travel so map FT does not return. Optional keybind teleports companions to you."
-#   disables:
-#     - 329- Fair Fast Travel - Catspaw
-#     - 329- Fair Fast Travel 2.7+ - Catspaw
-#     - 204- Limited Fast Travel (walking is good for your health) - Demonized
-#     - 218- Quick Companion Teleport (teleports rescue mission targets) - RazorShultz
-#   requires:
-#     - Tarkov-like Level Transitions
 
 ADS Zoom:
   stage: RELEASE

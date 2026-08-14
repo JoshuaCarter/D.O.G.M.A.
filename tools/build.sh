@@ -19,6 +19,7 @@
 #   src/<category>/<feature>/mo2/...        (sibling of gamedata/), e.g. mo2/tools/…
 #   src/<category>/<feature>/db/...         EXCEPTION: files under <mod>/db/
 #                                           (Anomaly archive mods, e.g. db/mods/*.db0)
+#   src/<category>/<feature>/*.py           EXCEPTION: <mod>/<file> (run-from-mod-dir tools)
 #
 # Scripts (prefix applied at build - src keeps short names like main.script):
 #   _common/scripts/__dogma_*        -> private impls
@@ -300,6 +301,16 @@ map_src_file() {
 		if is_gamedata_root "$cat"; then
 			bucket_rel="$rel"
 			path_key=""
+		elif (( ${#parts[@]} == 3 )) && [[ "$base" == *.py ]]; then
+			# src/<cat>/<feat>/*.py → <mod>/<file>
+			local feat="${parts[1]}"
+			should_skip_name "$feat" && return 1
+			_emit_kind="modroot"
+			_emit_src="$src_path"
+			_emit_rel="$base"
+			_emit_path_key="${cat}_${feat}"
+			_emit_base="$base"
+			return 0
 		elif (( ${#parts[@]} >= 3 )) && { is_gamedata_root "${parts[1]}" || is_modroot_bucket "${parts[1]}"; }; then
 			# Top-level feature: src/<feat|/ _debug>/<gamedata-root|mo2|db>/...
 			local feat_dir="$cat"
@@ -560,6 +571,15 @@ if [[ -n "$DEPLOY_MOD" ]]; then
 	fi
 	if [[ -d "$BUILD_ROOT/db" ]]; then
 		cp -a "$BUILD_ROOT/db" "$DEPLOY_MOD/db"
+	fi
+	# Loose files at mod root (e.g. dogma_sfx_prefetch.py).
+	if [[ -f "$MANIFEST_MODROOT" ]]; then
+		while IFS= read -r rel; do
+			[[ -z "$rel" || "$rel" == */* ]] && continue
+			if [[ -f "$BUILD_ROOT/$rel" ]]; then
+				cp -a "$BUILD_ROOT/$rel" "$DEPLOY_MOD/$rel"
+			fi
+		done < "$MANIFEST_MODROOT"
 	fi
 	write_mod_meta "$DEPLOY_MOD"
 fi

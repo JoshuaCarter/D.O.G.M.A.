@@ -292,22 +292,23 @@ def step_gc(mo2_root: Path, *, dry_run: bool) -> int:
 
 def resolve_sfx_builder(mo2_root: Path | None = None) -> Path | None:
     here = Path(__file__).resolve().parent
-    # Unified build: feature mo2/tools merges next to this file.
+    # Feature-root script ships at <mod>/dogma_sfx_prefetch.py (Optimize lives in mo2/tools/).
     candidates: list[Path] = [
+        here.parent.parent / "dogma_sfx_prefetch.py",
         here / "dogma_sfx_prefetch.py",
     ]
-    if here.name.lower() == "tools":
-        candidates.append(here.parent / "dogma_sfx_prefetch.py")
     try:
         repo = Path(__file__).resolve().parents[4]
         candidates.append(
-            repo / "src" / "perf" / "sfx_prefetcher" / "mo2" / "tools" / "dogma_sfx_prefetch.py"
+            repo / "src" / "perf" / "sfx_prefetcher" / "dogma_sfx_prefetch.py"
         )
     except IndexError:
         pass
     if mo2_root is not None:
         mods = Path(mo2_root) / "mods"
         if mods.is_dir():
+            for p in sorted(mods.glob("*/dogma_sfx_prefetch.py")):
+                candidates.append(p)
             for p in sorted(mods.glob("*/mo2/tools/dogma_sfx_prefetch.py")):
                 candidates.append(p)
     seen: set[Path] = set()

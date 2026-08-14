@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
 """Build dogma_sfx_prefetch.ltx from enabled MO2 mods' loose sounds.
 
-Ships with perf/sfx_prefetcher (unified build: mods/DOGMA/mo2/tools/).
-In-game prefetch is the feature's main.script (MCM can disable it).
+Run from the DOGMA mod folder (or pass --mo2-root). Writes:
 
-Skips .ogg files >= 100 KB (music / long ambience) so prefetch stays focused
-on short SFX that hitch on first play.
+  overwrite/gamedata/configs/dogma_sfx_prefetch.ltx
 
-  mods/DOGMA/mo2/tools/DOGMA SFX Prefetch.bat   (or D.O.G.M.A. Optimize)
-  overwrite/gamedata/configs/dogma_sfx_prefetch.ltx  (generated)
+Asks for a max .ogg size (100 KB / 500 KB / 1 MB / All) and fully
+replaces overwrite/gamedata/configs/dogma_sfx_prefetch.ltx.
 
   py -3 dogma_sfx_prefetch.py
+  py -3 dogma_sfx_prefetch.py --max-size 100kb
   py -3 dogma_sfx_prefetch.py --dry-run
 """
 
@@ -19,8 +18,6 @@ from __future__ import annotations
 import argparse
 import os
 import re
-import shutil
-import subprocess
 import sys
 from pathlib import Path
 
@@ -39,9 +36,15 @@ XRAY_OGG_COMMENT_MIN_LEN = {
     2: 20,  # + base volume
     3: 24,  # + max AI dist
 }
-# Skip files at/above this size (music / long ambience). Prefetching those
-# eats RAM and rarely helps short-SFX hitching.
-LARGE_FILE_MIN_BYTES = 100 * 1024
+# Skip files at/above this size (music / long ambience). None = keep all.
+SIZE_CHOICES: tuple[tuple[str, int | None, str], ...] = (
+    ("100kb", 100 * 1024, "100 KB"),
+    ("500kb", 500 * 1024, "500 KB"),
+    ("1mb", 1024 * 1024, "1 MB"),
+    ("all", None, "All"),
+)
+SIZE_BY_KEY = {key: (limit, label) for key, limit, label in SIZE_CHOICES}
+DEFAULT_SIZE_KEY = "100kb"
 
 
 def _use_color() -> bool:
@@ -116,18 +119,30 @@ def write_text_lines(path: Path, lines: list[str]) -> None:
     path.write_bytes(data.encode("utf-8"))
 
 
+def is_mo2_root(path: Path) -> bool:
+    return (path / "ModOrganizer.exe").is_file() or (path / "ModOrganizer.ini").is_file()
+
+
+def walk_up_for_mo2(start: Path) -> Path | None:
+    cur = start.resolve()
+    for path in (cur, *cur.parents):
+        if is_mo2_root(path):
+            return path
+    return None
+
+
 def resolve_mo2_root(explicit: str | None) -> Path:
     if explicit:
         return Path(explicit)
     env = (os.environ.get("MO2_ROOT") or "").strip()
     if env:
         return Path(env).expanduser()
-    cwd = Path.cwd()
-    if (cwd / "ModOrganizer.ini").is_file() or (cwd / "ModOrganizer.exe").is_file():
-        return cwd
+    found = walk_up_for_mo2(Path.cwd()) or walk_up_for_mo2(Path(__file__).resolve().parent)
+    if found:
+        return found
     raise FileNotFoundError(
-        "Could not find the MO2 instance root. Run from that folder, "
-        "pass --mo2-root, or set the MO2_ROOT environment variable."
+        "Could not find the MO2 instance root. Run this script from the DOGMA "
+        "mod folder (or the MO2 root), pass --mo2-root, or set MO2_ROOT."
     )
 
 
@@ -142,6 +157,9 @@ def list_enabled_mod_names(modlist_path: Path) -> list[str]:
 
 
 def find_dogma_mod_dir(mo2_root: Path, enabled_mods: list[str]) -> Path | None:
+    here = Path(__file__).resolve().parent
+    if here.name.lower() == DOGMA_MOD_NAME.lower() and here.is_dir():
+        return here
     mods_dir = mo2_root / "mods"
     exact = mods_dir / DOGMA_MOD_NAME
     if exact.is_dir():
@@ -225,9 +243,9 @@ def has_valid_xray_ogg_comment(path: Path) -> bool:
 
 def drop_large_files(
     entries: list[tuple[str, Path]],
-    min_bytes: int = LARGE_FILE_MIN_BYTES,
+    min_bytes: int | None,
 ) -> tuple[list[tuple[str, int]], list[tuple[str, int]]]:
-    """Keep entries strictly below min_bytes.
+    """Keep entries strictly below min_bytes. None keeps all.
 
     Returns (kept [(rel, size), ...], dropped [(rel, size), ...]).
     """
@@ -238,7 +256,7 @@ def drop_large_files(
             size = path.stat().st_size
         except OSError:
             size = 0
-        if size >= min_bytes:
+        if min_bytes is not None and size >= min_bytes:
             dropped.append((rel, size))
         else:
             kept.append((rel, size))
@@ -246,7 +264,10 @@ def drop_large_files(
 
 
 def collect_sound_paths(
-    mo2_root: Path, enabled_mods: list[str]
+    mo2_root: Path,
+    enabled_mods: list[str],
+    *,
+    max_bytes: int | None,
 ) -> tuple[list[tuple[str, int]], int, int, list[tuple[str, int]]]:
     """Return (kept[(rel, bytes)], scanned_files, skipped_invalid_ogg, dropped_large)."""
     # key -> (rel_path, file_path); later (higher priority) wins
@@ -285,17 +306,19 @@ def collect_sound_paths(
             skipped += 1
     info(f"Valid X-Ray comment: {len(valid)} (skipped invalid: {skipped})")
 
-    min_kb = LARGE_FILE_MIN_BYTES // 1024
-    kept, dropped_large = drop_large_files(valid)
-    if dropped_large:
-        warn(f"Dropping {len(dropped_large)} files >= {min_kb} KB")
+    kept, dropped_large = drop_large_files(valid, max_bytes)
+    if dropped_large and max_bytes is not None:
+        warn(f"Dropping {len(dropped_large)} files >= {max_bytes // 1024} KB")
     kept.sort(key=lambda t: t[0].lower())
     return kept, scanned, skipped, dropped_large
 
 
-def format_ltx(entries: list[tuple[str, int]]) -> tuple[list[str], int]:
-    """Build LTX lines. Returns (lines, total_bytes)."""
-    lines = [f"[{SECTION}]"]
+def format_ltx(entries: list[tuple[str, int]], *, size_label: str) -> tuple[list[str], int]:
+    """Build a full LTX (replaces any previous list). Returns (lines, total_bytes)."""
+    lines = [
+        f"; dogma_sfx_prefetch - max size {size_label}",
+        f"[{SECTION}]",
+    ]
     total_bytes = 0
     for i, (path, size) in enumerate(entries, start=1):
         total_bytes += size
@@ -303,95 +326,69 @@ def format_ltx(entries: list[tuple[str, int]]) -> tuple[list[str], int]:
     return lines, total_bytes
 
 
-def resolve_launch_exe(mo2_root: Path, then_launch: str) -> Path:
-    candidate = Path(then_launch)
-    if candidate.is_file():
-        return candidate.resolve()
-    try:
-        game_path = Path(read_mo2_ini_value(mo2_root / "ModOrganizer.ini", "gamePath"))
-    except (FileNotFoundError, ValueError):
-        game_path = None
-    search = []
-    if game_path:
-        search.append(game_path / then_launch)
-    search.append(mo2_root / then_launch)
-    search.append(Path.cwd() / then_launch)
-    for path in search:
-        if path.is_file():
-            return path.resolve()
-    raise FileNotFoundError(
-        f"Launch exe not found: {then_launch} (tried gamePath, mo2-root, cwd)"
-    )
-
-
-def remove_legacy_separate_mod(mo2_root: Path, modlist_path: Path, dry_run: bool) -> None:
-    legacy_dir = mo2_root / "mods" / LEGACY_SEPARATE_MOD
-    if legacy_dir.is_dir():
-        if dry_run:
-            warn(f"Dry run: would remove legacy mod {legacy_dir}")
-        else:
-            shutil.rmtree(legacy_dir)
-            ok(f"Removed legacy mod: {legacy_dir.name}")
-
-    lines = read_text_lines(modlist_path)
-    target = LEGACY_SEPARATE_MOD.lower()
-    kept = []
-    removed = False
-    for line in lines:
-        m = re.match(r"^([+\-])(.+)$", line)
-        if m and m.group(2).lower() == target:
-            removed = True
-            continue
-        kept.append(line)
-    if removed:
-        if dry_run:
-            warn(f"Dry run: would remove '{LEGACY_SEPARATE_MOD}' from modlist")
-        else:
-            write_text_lines(modlist_path, kept)
-            ok(f"Removed '{LEGACY_SEPARATE_MOD}' from modlist")
+def prompt_max_size() -> str:
+    info("Max .ogg size to prefetch:")
+    for i, (_key, _limit, label) in enumerate(SIZE_CHOICES, start=1):
+        info(f"  {i}) {label}")
+    while True:
+        try:
+            raw = input(f"Choice [1-{len(SIZE_CHOICES)}, default 1]: ").strip().lower()
+        except EOFError:
+            return DEFAULT_SIZE_KEY
+        if not raw:
+            return DEFAULT_SIZE_KEY
+        if raw in SIZE_BY_KEY:
+            return raw
+        if raw.isdigit():
+            idx = int(raw)
+            if 1 <= idx <= len(SIZE_CHOICES):
+                return SIZE_CHOICES[idx - 1][0]
+        warn("Enter 1-4, or 100kb / 500kb / 1mb / all.")
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description=(
             "Scan enabled MO2 mods for loose sounds and write dogma_sfx_prefetch.ltx "
-            "into overwrite/gamedata. Use DOGMA Optimize / DOGMA SFX Prefetch from "
-            "MO2 Executables (or run this script with --mo2-root)."
+            "into overwrite/gamedata. Run from the DOGMA mod folder."
         )
     )
     p.add_argument(
         "--mo2-root",
         default="",
-        help="MO2 instance folder (cwd, MO2_ROOT, or --mo2-root)",
+        help="MO2 instance folder (default: walk up from cwd / this script)",
     )
     p.add_argument("--profile", default="", help="MO2 profile (default: selected_profile)")
     p.add_argument("--dry-run", action="store_true", help="Scan and report; write nothing")
     p.add_argument(
         "--force",
         action="store_true",
-        help="Accepted for DOGMA Optimize / SFX Prefetch CLI compatibility (rebuild is always forced)",
+        help="Accepted for D.O.G.M.A. Optimize CLI compatibility (rebuild is always forced)",
     )
     p.add_argument(
-        "--then-launch",
+        "--max-size",
+        choices=[key for key, _limit, _label in SIZE_CHOICES],
         default="",
-        metavar="EXE",
-        help="After a successful write, launch this exe",
-    )
-    p.add_argument(
-        "launch_args",
-        nargs="*",
-        help="Args passed to --then-launch",
+        help="Max .ogg size to include (default: prompt, or 100kb if not a TTY)",
     )
     return p.parse_args(argv)
+
+
+def resolve_size_key(args: argparse.Namespace) -> str:
+    if args.max_size:
+        return args.max_size
+    if sys.stdin.isatty() and sys.stdout.isatty():
+        return prompt_max_size()
+    return DEFAULT_SIZE_KEY
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     mo2_root = resolve_mo2_root(args.mo2_root or None)
 
-    if not (mo2_root / "ModOrganizer.exe").is_file():
-        err(f"ModOrganizer.exe not found under: {mo2_root}")
-        err("Set MO2 Working Directory to the instance root, or pass --mo2-root")
+    if not is_mo2_root(mo2_root):
+        err(f"Not an MO2 instance root: {mo2_root}")
+        err("Run from the DOGMA mod folder, or pass --mo2-root")
         return 1
 
     profile = args.profile or read_mo2_ini_value(mo2_root / "ModOrganizer.ini", "selected_profile")
@@ -412,11 +409,16 @@ def main(argv: list[str] | None = None) -> int:
     if dogma_dir:
         info(f"DOGMA mod: {dogma_dir}")
 
-    entries, _scanned, _skipped, _dropped = collect_sound_paths(mo2_root, enabled)
+    size_key = resolve_size_key(args)
+    max_bytes, size_label = SIZE_BY_KEY[size_key]
+    info(f"Max size : {size_label}")
+
+    entries, _scanned, _skipped, _dropped = collect_sound_paths(
+        mo2_root, enabled, max_bytes=max_bytes
+    )
     info(f"Prefetch list: {len(entries)}")
 
     ltx_path = mo2_root / "overwrite" / LTX_REL
-    remove_legacy_separate_mod(mo2_root, modlist_path, args.dry_run)
 
     # Drop older copies (DOGMA mod and previous paths/names).
     stale = [
@@ -429,9 +431,11 @@ def main(argv: list[str] | None = None) -> int:
         (dogma_dir / "gamedata" / "configs" / "items" / "items" / LTX_NAME) if dogma_dir else None,
     ]
 
-    lines, total_bytes = format_ltx(entries)
+    lines, total_bytes = format_ltx(entries, size_label=size_label)
     total_mb = total_bytes // (1024 * 1024)
     if not args.dry_run:
+        if ltx_path.is_file():
+            ltx_path.unlink()
         write_text_lines(ltx_path, lines)
         ok(f"Wrote {ltx_path.relative_to(mo2_root)} ({len(entries)} entries, {total_mb} MB)")
         for old in stale:
@@ -439,25 +443,26 @@ def main(argv: list[str] | None = None) -> int:
                 old.unlink()
                 warn(f"Removed stale {old.relative_to(mo2_root)}")
     else:
-        info(f"Would write {ltx_path.relative_to(mo2_root)} ({len(entries)} entries, {total_mb} MB)")
-
-    if args.then_launch:
-        if args.dry_run:
-            warn(f"Dry run: skipping launch of {args.then_launch}")
-            return 0
-        exe = resolve_launch_exe(mo2_root, args.then_launch)
-        launch_args = [str(exe), *args.launch_args]
-        info(f"Launching: {' '.join(launch_args)}")
-        completed = subprocess.run(launch_args, check=False)
-        return int(completed.returncode)
+        info(f"Would replace {ltx_path.relative_to(mo2_root)} ({len(entries)} entries, {total_mb} MB)")
 
     ok("Done.")
     return 0
 
 
-if __name__ == "__main__":
+def pause() -> None:
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        return
     try:
-        raise SystemExit(main())
+        input("Press Enter to close...")
+    except EOFError:
+        pass
+
+
+if __name__ == "__main__":
+    code = 1
+    try:
+        code = main()
     except (FileNotFoundError, ValueError, RuntimeError, OSError) as exc:
         err(str(exc))
-        raise SystemExit(1) from exc
+    pause()
+    raise SystemExit(code)

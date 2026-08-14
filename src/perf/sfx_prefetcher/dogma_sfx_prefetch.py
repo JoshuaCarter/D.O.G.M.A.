@@ -5,7 +5,7 @@ Run from the DOGMA mod folder (or pass --mo2-root). Writes:
 
   overwrite/gamedata/configs/dogma_sfx_prefetch.ltx
 
-Asks for a max .ogg size (100 KB / 500 KB / 1 MB / All) and fully
+Asks for a max .ogg size (50–500 KB) and fully
 replaces overwrite/gamedata/configs/dogma_sfx_prefetch.ltx.
 
   py -3 dogma_sfx_prefetch.py
@@ -36,12 +36,14 @@ XRAY_OGG_COMMENT_MIN_LEN = {
     2: 20,  # + base volume
     3: 24,  # + max AI dist
 }
-# Skip files at/above this size (music / long ambience). None = keep all.
-SIZE_CHOICES: tuple[tuple[str, int | None, str], ...] = (
+# Skip files at/above this size (music / long ambience).
+SIZE_CHOICES: tuple[tuple[str, int, str], ...] = (
+    ("50kb", 50 * 1024, "50 KB"),
     ("100kb", 100 * 1024, "100 KB"),
+    ("200kb", 200 * 1024, "200 KB"),
+    ("300kb", 300 * 1024, "300 KB"),
+    ("400kb", 400 * 1024, "400 KB"),
     ("500kb", 500 * 1024, "500 KB"),
-    ("1mb", 1024 * 1024, "1 MB"),
-    ("all", None, "All"),
 )
 SIZE_BY_KEY = {key: (limit, label) for key, limit, label in SIZE_CHOICES}
 DEFAULT_SIZE_KEY = "100kb"
@@ -343,7 +345,8 @@ def prompt_max_size() -> str:
             idx = int(raw)
             if 1 <= idx <= len(SIZE_CHOICES):
                 return SIZE_CHOICES[idx - 1][0]
-        warn("Enter 1-4, or 100kb / 500kb / 1mb / all.")
+        keys = " / ".join(key for key, _limit, _label in SIZE_CHOICES)
+        warn(f"Enter 1-{len(SIZE_CHOICES)}, or {keys}.")
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -369,7 +372,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--max-size",
         choices=[key for key, _limit, _label in SIZE_CHOICES],
         default="",
-        help="Max .ogg size to include (default: prompt, or 100kb if not a TTY)",
+        help="Max .ogg size to include (default: prompt, or 50kb if not a TTY)",
     )
     return p.parse_args(argv)
 

@@ -12,15 +12,13 @@
 	  - In-game Accept: on_option_change clears slots, cache stays on.
 	  - ui_mcm.set drops that key only.
 
-	Debug (DOGMA → Debug → debug_log): clears/sets log immediately;
-	get hit/miss aggregates print at most once per SUMMARY_MS.
+	Debug (DOGMA → Debug → debug_log): cache-feed count prints once per SUMMARY_MS.
 ]]
 
 local CONFIG = _G.dogma_perf_mcm_runtime_read_cache_conf
 local MOD_ID = (CONFIG and CONFIG.MOD_ID) or "dogma/perf/mcm_runtime_read_cache"
 local TAG = "dogma_perf_mcm_runtime_read_cache"
 local SUMMARY_MS = 10000
-local TOP_N = 20
 
 local HOOK = _G.__dogma_perf_mcm_runtime_read_cache or {}
 _G.__dogma_perf_mcm_runtime_read_cache = HOOK
@@ -31,12 +29,7 @@ local present = HOOK.present or {}
 HOOK.cache = cache
 HOOK.present = present
 
-local hits = HOOK.hits or {}
-local misses = HOOK.misses or {}
-HOOK.hits = hits
-HOOK.misses = misses
-
-local hit_total = HOOK.hit_total or 0
+local feed_total = HOOK.feed_total or 0
 local miss_total = HOOK.miss_total or 0
 local last_flush_ms = HOOK.last_flush_ms or 0
 local logging_on = HOOK.logging_on or false
@@ -47,7 +40,7 @@ local wanted = HOOK.wanted
 if wanted == nil then
 	wanted = true
 end
-HOOK.hit_total = hit_total
+HOOK.feed_total = feed_total
 HOOK.miss_total = miss_total
 HOOK.last_flush_ms = last_flush_ms
 HOOK.logging_on = logging_on
@@ -102,15 +95,9 @@ local function emit(msg)
 end
 
 local function reset_window_stats()
-	for id in pairs(hits) do
-		hits[id] = nil
-	end
-	for id in pairs(misses) do
-		misses[id] = nil
-	end
-	hit_total = 0
+	feed_total = 0
 	miss_total = 0
-	HOOK.hit_total = 0
+	HOOK.feed_total = 0
 	HOOK.miss_total = 0
 end
 
@@ -129,25 +116,8 @@ local function wipe_slots()
 	end
 end
 
-local function note_hit(id)
-	hits[id] = (hits[id] or 0) + 1
-	hit_total = hit_total + 1
-	HOOK.hit_total = hit_total
-end
-
-local function note_miss(id)
-	misses[id] = (misses[id] or 0) + 1
-	miss_total = miss_total + 1
-	HOOK.miss_total = miss_total
-end
-
 local function flush_summary(force)
-	if not logging_on then
-		return
-	end
-	if hit_total == 0 and miss_total == 0 then
-		last_flush_ms = now_ms()
-		HOOK.last_flush_ms = last_flush_ms
+	if not logging_on or feed_total == 0 then
 		return
 	end
 	local t = now_ms()
@@ -156,43 +126,9 @@ local function flush_summary(force)
 	end
 	last_flush_ms = t
 	HOOK.last_flush_ms = t
-
-	local total = hit_total + miss_total
-	local uniq = {}
-	local n_uniq = 0
-	for id, n in pairs(hits) do
-		uniq[id] = (uniq[id] or 0) + n
-	end
-	for id, n in pairs(misses) do
-		uniq[id] = (uniq[id] or 0) + n
-	end
-	local ranked = {}
-	for id, n in pairs(uniq) do
-		n_uniq = n_uniq + 1
-		ranked[#ranked + 1] = { id = id, n = n, h = hits[id] or 0, m = misses[id] or 0 }
-	end
-	table.sort(ranked, function(a, b)
-		if a.n == b.n then
-			return tostring(a.id) < tostring(b.id)
-		end
-		return a.n > b.n
-	end)
-
-	local hit_pct = total > 0 and (100 * hit_total / total) or 0
-	emit(string.format(
-		"get window: total=%d hit=%d miss=%d hit_rate=%.1f%% unique=%d cached=%d active=%s",
-		total, hit_total, miss_total, hit_pct, n_uniq, count_present(), tostring(active)
-	))
-
-	local limit = math.min(TOP_N, #ranked)
-	for i = 1, limit do
-		local r = ranked[i]
-		emit(string.format("  #%d %s  reads=%d (hit=%d miss=%d)", i, tostring(r.id), r.n, r.h, r.m))
-	end
-	if #ranked > limit then
-		emit(string.format("  ... +%d more keys", #ranked - limit))
-	end
-
+	local total = feed_total + miss_total
+	local pct = total > 0 and math.floor(feed_total / total * 100 + 0.5) or 0
+	emit(string.format("mcm_runtime_read_cache hits=%d %%=%d", feed_total, pct))
 	reset_window_stats()
 end
 
@@ -255,15 +191,12 @@ local function patch_get_set()
 			return nil
 		end
 		local use = use_cache()
-		if use then
-			dogma.perf.start("mcm_read_cache", "get")
-		end
 		if use and present[id] then
 			if HOOK.logging_on then
-				note_hit(id)
+				feed_total = feed_total + 1
+				HOOK.feed_total = feed_total
 				flush_summary(false)
 			end
-			dogma.perf.stop()
 			return cache[id]
 		end
 		local value = orig_get(id)
@@ -271,10 +204,9 @@ local function patch_get_set()
 			present[id] = true
 			cache[id] = value
 			if HOOK.logging_on then
-				note_miss(id)
-				flush_summary(false)
+				miss_total = miss_total + 1
+				HOOK.miss_total = miss_total
 			end
-			dogma.perf.stop()
 		end
 		return value
 	end

@@ -255,11 +255,15 @@ local function patch_get_set()
 			return nil
 		end
 		local use = use_cache()
+		if use then
+			dogma.perf.start("mcm_read_cache", "get")
+		end
 		if use and present[id] then
 			if HOOK.logging_on then
 				note_hit(id)
 				flush_summary(false)
 			end
+			dogma.perf.stop()
 			return cache[id]
 		end
 		local value = orig_get(id)
@@ -270,6 +274,7 @@ local function patch_get_set()
 				note_miss(id)
 				flush_summary(false)
 			end
+			dogma.perf.stop()
 		end
 		return value
 	end

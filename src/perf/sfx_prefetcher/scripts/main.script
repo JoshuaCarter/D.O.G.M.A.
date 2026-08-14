@@ -28,6 +28,7 @@ function actor_on_first_update()
 	if not lines or lines < 1 then
 		return
 	end
+	dogma.perf.start("sfx_prefetcher", "actor_on_first_update")
 	local n = 0
 	for i = 0, lines - 1 do
 		local _, _, value = ini:r_line(SECTION, i, "", "")
@@ -39,6 +40,7 @@ function actor_on_first_update()
 	if n > 0 then
 		printf("[%s] prefetched %s sounds", TAG, tostring(n))
 	end
+	dogma.perf.stop()
 end
 
 function on_option_change()

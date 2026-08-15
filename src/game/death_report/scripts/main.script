@@ -1094,8 +1094,6 @@ local function show_hit_summary()
 		chunks[#chunks + 1] = frozen.footer
 	end
 
-	local text_h = math.floor(#chunks * line_height() + 0.5)
-	local panel_h = text_h + PANEL_PAD * 2
 	local panel_w = panel_width()
 	local panel_x = 0
 	local panel_y = report_panel_y()
@@ -1103,8 +1101,20 @@ local function show_hit_summary()
 	local text_y = panel_y + PANEL_PAD
 	local text_w = panel_w - PANEL_PAD * 2
 
-	show_panel(panel_x, panel_y, panel_w, panel_h)
-	set_text(HIT_STATIC, table.concat(chunks, "\\n"), text_x, text_y, text_w, text_h)
+	-- Parse first, then size the panel from the engine's real text height.
+	set_text(HIT_STATIC, table.concat(chunks, "\\n"), text_x, text_y, text_w, UI_H)
+	local text_h = 0
+	local tw = hud_wnd(HIT_STATIC)
+	if tw then
+		pcall(function()
+			tw:AdjustHeightToText()
+		end)
+		text_h = tonumber(tw.GetHeight and tw:GetHeight()) or 0
+	end
+	if text_h < 1 then
+		text_h = math.floor(#chunks * line_height() + 0.5)
+	end
+	show_panel(panel_x, panel_y, panel_w, text_h + PANEL_PAD * 2)
 end
 
 local function hide_hit_summary()

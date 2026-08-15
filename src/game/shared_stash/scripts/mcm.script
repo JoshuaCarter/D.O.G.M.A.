@@ -1,3 +1,21 @@
+-- game/shared_stash conf
+
+_G.dogma_game_shared_stash_conf = {
+	MOD_ID = "dogma/game/shared_stash",
+	DEFAULTS = {
+		one_per_level = true,
+	},
+	loaded = {
+		one_per_level = true,
+	},
+	-- Base inv_weight of workshop_item (Hideout Furniture)
+	BASE_WEIGHT = 10,
+	PDA_STASH_KEY = "dogma_game_shared_stash",
+	WORKSHOP_SECTION = "placeable_workshop",
+	WORKSHOP_ITEM = "workshop_item",
+	SHARED_SECTION = "dogma_game_shared_stash",
+}
+
 function on_mcm_load(options)
 	local CONFIG = _G.dogma_game_shared_stash_conf
 	dogma_mcm.attach(options, "game", "ui_mcm_menu_dogma_game", {

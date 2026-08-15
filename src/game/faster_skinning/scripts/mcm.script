@@ -1,3 +1,20 @@
+-- game/faster_skinning conf
+
+_G.dogma_game_faster_skinning_conf = {
+	MOD_ID = "dogma/game/faster_skinning",
+	DEFAULTS = {
+		["auto_crouch"] = true,
+		["look_at_mutant"] = true,
+		["look_at_offset"] = 0.6,
+		["skin_speed_multiplier"] = 1.5,
+		["slash_loot"] = true,
+		["pda_parts_tip"] = false,
+		["pickup_delay_ms"] = 200,
+	},
+	-- Filled by on_option_change (runs at boot before any read).
+	loaded = {},
+}
+
 function on_mcm_load(options)
 	local CONFIG = _G.dogma_game_faster_skinning_conf
 	dogma_mcm.attach(options, "game", "ui_mcm_menu_dogma_game", {

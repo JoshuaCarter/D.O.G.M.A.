@@ -1,3 +1,16 @@
+-- input/pda_go_away conf
+
+_G.dogma_input_pda_go_away_conf = {
+	MOD_ID = "dogma/input/pda_go_away",
+	DEFAULTS = {
+		["after_inventory"] = true,
+		["after_loot"] = true,
+		["after_teleport"] = true,
+	},
+	-- Filled by on_option_change (runs at boot before any read).
+	loaded = {},
+}
+
 function on_mcm_load(options)
 	local CONFIG = _G.dogma_input_pda_go_away_conf
 	dogma_mcm.attach(options, "input", "ui_mcm_menu_dogma_input", {

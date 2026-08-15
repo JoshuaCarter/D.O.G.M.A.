@@ -1,3 +1,66 @@
+-- gui/fps conf
+
+local defaults = {
+	["colors/graph_border_a"] = 200,
+	["colors/graph_border_b"] = 150,
+	["colors/graph_border_g"] = 150,
+	["colors/graph_border_r"] = 150,
+	["colors/graph_line_a"] = 150,
+	["colors/graph_line_b"] = 0,
+	["colors/graph_line_g"] = 255,
+	["colors/graph_line_r"] = 255,
+	["colors/text_a"] = 200,
+	["colors/text_b"] = 255,
+	["colors/text_g"] = 255,
+	["colors/text_r"] = 255,
+	["display"] = 0,
+	["enabled_default"] = true,
+	["max_fps"] = 144,
+	["minmax_window"] = 5,
+	["pos_anchor"] = 0,
+	["pos_x"] = 0,
+	["pos_y"] = 0,
+	["refresh_rate"] = 3,
+	["sample_window"] = 0.5,
+	["toggle_key"] = -1,
+	-- 0 = toggle, 1 = hold (show while held)
+	["key_mode"] = 0,
+	["vertical_spacing"] = 0,
+}
+
+_G.dogma_gui_fps_conf = {
+	MOD_ID = "dogma/gui/fps",
+	DEFAULTS = defaults,
+	loaded = {
+		toggle_key = defaults["toggle_key"],
+		key_mode = defaults["key_mode"],
+		enabled_default = defaults["enabled_default"],
+		display_mode = defaults["display"],
+		minmax_window = defaults["minmax_window"],
+		sample_window = defaults["sample_window"],
+		max_fps = defaults["max_fps"],
+		refresh_rate = defaults["refresh_rate"],
+		pos_anchor = defaults["pos_anchor"],
+		pos_x = defaults["pos_x"],
+		pos_y = defaults["pos_y"],
+		font = nil, -- set from FONTS in main after display mode loads
+		text_r = defaults["colors/text_r"],
+		text_g = defaults["colors/text_g"],
+		text_b = defaults["colors/text_b"],
+		text_a = defaults["colors/text_a"],
+		graph_line_r = defaults["colors/graph_line_r"],
+		graph_line_g = defaults["colors/graph_line_g"],
+		graph_line_b = defaults["colors/graph_line_b"],
+		graph_line_a = defaults["colors/graph_line_a"],
+		graph_border_r = defaults["colors/graph_border_r"],
+		graph_border_g = defaults["colors/graph_border_g"],
+		graph_border_b = defaults["colors/graph_border_b"],
+		graph_border_a = defaults["colors/graph_border_a"],
+		debug_log = true,
+		long_frame_threshold_ms = 0,
+	},
+}
+
 function on_mcm_load(options)
 	local CONFIG = _G.dogma_gui_fps_conf
 dogma_mcm.attach(options, "gui", "ui_mcm_menu_dogma_gui", {

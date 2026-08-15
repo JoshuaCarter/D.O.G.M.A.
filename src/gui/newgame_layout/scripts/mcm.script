@@ -1,3 +1,158 @@
+-- gui/newgame_layout conf
+--
+-- Patch lives in this *mcm.script so main.script (in-session) can share one
+-- wrap via _G. New Game UI is not loaded until MCM gather on a cold boot.
+
+local MOD_ID = "dogma/gui/newgame_layout"
+local HARD_INDEX = 3
+
+-- Location ids from plugins/new_game_start_locations.ltx (story-mode bases).
+local FACTION_DEFAULT_MAP = {
+	stalker = "rookie_village", -- Cordon
+	freedom = "military_base", -- Army Warehouses
+	dolg = "makeshift_barracks", -- Rostok / Bar
+	army = "research_institute", -- Agroprom
+	bandit = "northern_factory", -- Dark Valley
+	csky = "hidden_base", -- Swamps
+	ecolog = "sakharovs_bunker", -- Yantar
+	killer = "sports_center", -- Dead City
+	monolith = "cultural_center", -- Pripyat
+	greh = "red_forest_old_mine", -- Red Forest
+	-- isg: leave stock Random (no clear main base)
+	renegade = "tuzla_outpost", -- Swamps
+}
+
+local STATE = _G.__dogma_gui_newgame_layout or {}
+_G.__dogma_gui_newgame_layout = STATE
+
+local function opt(key)
+	if dogma_mcm and dogma_mcm.bool then
+		return dogma_mcm.bool(MOD_ID, key)
+	end
+	return true
+end
+
+local function force_hard_pick(self, list, table_key, selected_key)
+	if not opt("default_hard") then
+		return
+	end
+	local t = self[table_key]
+	if not (self[list] and t) then
+		return
+	end
+	local pick = t[HARD_INDEX] or t[1]
+	if not pick then
+		return
+	end
+	self[list]:SetText(game.translate_string(pick))
+	self[selected_key] = pick
+end
+
+local function force_map_pick(self)
+	if not opt("default_spawn") then
+		return
+	end
+	local want = FACTION_DEFAULT_MAP[self.selected_faction]
+	local t = self.table_map
+	-- Unlisted factions (e.g. ISG) keep stock Random.
+	if not want or not (self.list_map and t and #t > 0) then
+		return
+	end
+
+	local idx
+	for i = 1, #t do
+		if t[i] == want then
+			idx = i
+			break
+		end
+	end
+	if not idx then
+		for i = 1, #t do
+			if t[i] ~= "random_location" then
+				idx = i
+				break
+			end
+		end
+	end
+	if not idx then
+		return
+	end
+
+	local pick = t[idx]
+	if self.list_map.SetCurrentID then
+		self.list_map:SetCurrentID(idx)
+	end
+	self.list_map:SetText(game.translate_string("ui_st_" .. pick))
+	self.selected_map = pick
+	if self.UpdateMap then
+		self:UpdateMap()
+	end
+end
+
+local function wrap_loader(cls, method, list, table_key, selected_key, state_key)
+	if STATE[state_key] and cls[method] == STATE[state_key] then
+		return true
+	end
+	local base = cls[method]
+	if not base then
+		return false
+	end
+
+	local function wrapped(self, rand)
+		base(self, false)
+		force_hard_pick(self, list, table_key, selected_key)
+	end
+
+	cls[method] = wrapped
+	STATE[state_key] = wrapped
+	return true
+end
+
+local function wrap_load_map(cls)
+	if STATE.wrap_map and cls.LoadMap == STATE.wrap_map then
+		return true
+	end
+	local base = cls.LoadMap
+	if not base then
+		return false
+	end
+
+	local function wrapped(self, rand)
+		base(self, false)
+		force_map_pick(self)
+	end
+
+	cls.LoadMap = wrapped
+	STATE.wrap_map = wrapped
+	return true
+end
+
+local function patch_new_game()
+	local cls = ui_mm_faction_select and ui_mm_faction_select.UINewGame
+	if not cls then
+		return false
+	end
+
+	local ok_diff = wrap_loader(
+		cls, "LoadDifficulty", "list_difficulty", "table_difficulty", "selected_difficulty", "wrap_difficulty"
+	)
+	local ok_eco = wrap_loader(
+		cls, "LoadEconomy", "list_economy", "table_economy", "selected_economy", "wrap_economy"
+	)
+	local ok_map = wrap_load_map(cls)
+	return ok_diff and ok_eco and ok_map
+end
+
+_G.dogma_gui_newgame_layout_conf = {
+	MOD_ID = MOD_ID,
+	DEFAULTS = {
+		["default_hard"] = true,
+		["default_spawn"] = true,
+	},
+	loaded = {},
+	patch_new_game = patch_new_game,
+}
+
 --[[
 	New Game Layout - MCM + main-menu patch.
 

@@ -1,3 +1,19 @@
+-- gui/nearby_pickup_labels conf
+-- Auto show hold-Use style name labels on nearby pickable items.
+
+local defaults = {
+	["range"] = 3,
+	["hide_icons"] = true,
+}
+
+_G.dogma_gui_nearby_pickup_labels_conf = {
+	MOD_ID = "dogma/gui/nearby_pickup_labels",
+	DEFAULTS = defaults,
+	loaded = {
+		range = defaults["range"],
+	},
+}
+
 function on_mcm_load(options)
 	local CONFIG = _G.dogma_gui_nearby_pickup_labels_conf
 	dogma_mcm.attach(options, "gui", "ui_mcm_menu_dogma_gui", {

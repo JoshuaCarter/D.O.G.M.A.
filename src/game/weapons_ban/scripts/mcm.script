@@ -1,3 +1,47 @@
+-- game/weapons_ban conf - per-category price→tier cost cutoffs.
+
+local defaults = {
+	-- New-game extra ammo: boxes per owned start weapon (on top of loadout).
+	["extra_start_ammo_boxes"] = 5,
+	["sight_tier_cost_2"] = 5000,
+	["sight_tier_cost_3"] = 10000,
+	["sight_tier_cost_4"] = 25000,
+	["sight_tier_cost_5"] = 50000,
+	["kit_tier_cost_2"] = 9000,
+	["kit_tier_cost_3"] = 16000,
+	["kit_tier_cost_4"] = 28000,
+	["kit_tier_cost_5"] = 45000,
+	["suppressor_tier_cost_2"] = 2000,
+	["suppressor_tier_cost_3"] = 4000,
+	["suppressor_tier_cost_4"] = 8000,
+	["suppressor_tier_cost_5"] = 12000,
+	["ammo_tier_cost_2"] = 800,
+	["ammo_tier_cost_3"] = 1600,
+	["ammo_tier_cost_4"] = 3000,
+	["ammo_tier_cost_5"] = 6000,
+	["parts_tier_cost_2"] = 3000,
+	["parts_tier_cost_3"] = 4500,
+	["parts_tier_cost_4"] = 5500,
+	["parts_tier_cost_5"] = 7000,
+}
+
+local loaded = {}
+for k, v in pairs(defaults) do
+	loaded[k] = v
+end
+
+_G.dogma_game_weapons_ban_conf = {
+	MOD_ID = "dogma/game/weapons_ban",
+	DEFAULTS = defaults,
+	loaded = loaded,
+	CATS = { "sight", "kit", "suppressor", "ammo", "parts" },
+}
+
+function _G.dogma_game_weapons_ban_conf:ensure_dogma()
+	dogma.load(self.MOD_ID)
+	return dogma
+end
+
 function on_mcm_load(options)
 	local CONFIG = _G.dogma_game_weapons_ban_conf
 	local D = CONFIG.DEFAULTS

@@ -1,3 +1,27 @@
+-- gui/minimap conf
+-- Toggle / hold keybind for the HUD minimap (RavenAscendant Mini Map Toggle + hold).
+
+local defaults = {
+	["keybind"] = -1,
+	["modifier"] = 0,
+	-- 0 = toggle, 2 = hold (show while held; 1 was double, removed)
+	["mode"] = 2,
+	-- ms to wait after press/hold before showing (hide is immediate)
+	["show_delay_ms"] = 0,
+}
+
+_G.dogma_gui_minimap_conf = {
+	MOD_ID = "dogma/gui/minimap",
+	DEFAULTS = defaults,
+	loaded = {
+		enabled = true,
+		keybind = defaults["keybind"],
+		modifier = defaults["modifier"],
+		mode = defaults["mode"],
+		show_delay_ms = defaults["show_delay_ms"],
+	},
+}
+
 function on_mcm_load(options)
 	local CONFIG = _G.dogma_gui_minimap_conf
 	local kb_mod = (ui_mcm and ui_mcm.kb_mod_radio) or "radio_h"

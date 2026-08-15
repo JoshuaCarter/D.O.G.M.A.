@@ -26,12 +26,11 @@
 #   _common/scripts/dogma_mcm.script -> MCM-gather API (dogma_mcm.attach / …)
 #   _common/scripts/dogma.script     -> game-time API (dogma.mcm / .dbg / .load)
 #                               game-time: dogma.*; MCM scripts: dogma_mcm.*
-#                               bare _* names other than __dogma_* / _conf skipped
-#   …/scripts/_conf.script    -> dogma_{path}_conf.script
-#                               no zzzz_ - before that feature's zzzz_ body scripts
+#                               bare _* names other than __dogma_* skipped
 #   …/scripts/mcm.script      -> dogma_{path}_mcm.script   (*mcm.script glob)
-#                               _conf is prepended so main-menu MCM gather (which only
-#                               loads *mcm.script) still runs conf for _G setup
+#                               feature _G.dogma_*_conf lives in this file
+#   …/scripts/_data.script    -> prepended into that feature's mcm.script
+#                               (defaults pack snapshot; authoring-only)
 #   …/scripts/modxml_*.script -> modxml_dogma_{path}_*.script
 #                               keep modxml_ prefix - Modded Exes only gathers
 #                               that glob for DXML on_xml_read injection
@@ -183,8 +182,8 @@ should_skip_name() {
 		*.alao-bak | *.pyc | *.pyo | *.meta) return 0 ;;
 		# Authoring / pack source only — shipped via db/mods/*.db0 instead.
 		*.aimap | *.pdn) return 0 ;;
-		# _conf: feature defaults. __dogma_*: private; dogma_mcm: common index.
-		_conf.script | dogma_mcm.script | dogma.script | __dogma_*.script | _common | _debug) return 1 ;;
+		# __dogma_*: private; dogma_mcm: common index.
+		dogma_mcm.script | dogma.script | __dogma_*.script | _common | _debug) return 1 ;;
 		_*) return 0 ;;
 		*) return 1 ;;
 	esac
@@ -238,8 +237,8 @@ script_dest_basename() {
 	# Authoring may keep a legacy zzzz_ prefix; never double-prefix.
 	stem="${stem#zzzz_}"
 	case "$stem" in
-		_conf | mcm)
-			echo "dogma_${path_key}_${stem#_}.script"
+		mcm)
+			echo "dogma_${path_key}_mcm.script"
 			return 0
 			;;
 		modxml_*)
@@ -400,19 +399,11 @@ stage_file() {
 
 	if [[ -n "$path_key" && "$base" == "mcm.script" ]]; then
 		local data_src="${src_path%/*}/_data.script"
-		local conf_src="${src_path%/*}/_conf.script"
-		if [[ -f "$data_src" || -f "$conf_src" ]]; then
+		if [[ -f "$data_src" ]]; then
 			{
-				if [[ -f "$data_src" ]]; then
-					cat "$data_src"
-					echo ""
-					echo "-- dogma-build: _data prepended so MCM gather sees dogma_defaults_data"
-				fi
-				if [[ -f "$conf_src" ]]; then
-					cat "$conf_src"
-					echo ""
-					echo "-- dogma-build: conf prepended so main-menu MCM gather sets _G conf"
-				fi
+				cat "$data_src"
+				echo ""
+				echo "-- dogma-build: _data prepended so MCM gather sees dogma_defaults_data"
 				cat "$src_path"
 			} > "$staged"
 			printf '%s\n' "$dest_rel" >> "$MANIFEST"

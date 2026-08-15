@@ -1,9 +1,11 @@
 --[[
 	Death Report
 
-	Tracks recent hits while alive. On death: Tab toggles a styled hit summary
-	(off by default). Bleed / radiation / other over-time damage are pooled
-	separately. MCM preview shows the same panel while alive. No camera / spectate.
+	Snapshot known values before a hit, snapshot again after it applies,
+	store that delta + who/what caused it. Display only those readings.
+	Missing readings print "?". No estimated damage, no merged trackers.
+	On death: Tab toggles the summary (off by default). MCM preview while
+	alive. No camera / spectate.
 ]]
 
 local CONFIG = _G.dogma_game_death_report_conf
@@ -33,26 +35,25 @@ local PANEL_STATIC = "dogma_death_report_panel"
 
 -- Faithful bone → BHS limb (same ids as damage_location_fix / ADB).
 local HITBOX = {
-	[14] = "head", [15] = "head", [16] = "head", [17] = "head",
-	[18] = "head", [19] = "head",
-	[2] = "torso", [11] = "torso", [12] = "torso", [13] = "torso",
-	[20] = "leftarm", [21] = "leftarm", [22] = "leftarm", [23] = "leftarm",
-	[24] = "leftarm", [25] = "leftarm", [26] = "leftarm", [27] = "leftarm",
-	[28] = "leftarm", [29] = "leftarm", [30] = "leftarm", [31] = "leftarm",
-	[32] = "leftarm",
-	[33] = "rightarm", [34] = "rightarm", [35] = "rightarm", [36] = "rightarm",
-	[3] = "leftleg", [4] = "leftleg", [5] = "leftleg", [6] = "leftleg",
+	[1] = "torso", -- bip01
+	[2] = "torso", -- bip01_pelvis
+	[11] = "torso", [12] = "torso", [13] = "torso", -- spine / spine1 / spine2
+	[14] = "head", -- bip01_neck
+	[15] = "head", -- bip01_head
+	[16] = "head", [17] = "head", -- eyes
+	[18] = "head", [19] = "head", -- eyelid / jaw
+	[20] = "leftarm", -- bip01_l_clavicle
+	[21] = "leftarm", [22] = "leftarm", [23] = "leftarm", -- upperarm / forearm / hand
+	[24] = "leftarm", [25] = "leftarm", [26] = "leftarm",
+	[27] = "leftarm", [28] = "leftarm", [29] = "leftarm",
+	[30] = "leftarm", [31] = "leftarm", [32] = "leftarm", -- fingers
+	[33] = "rightarm", -- bip01_r_clavicle
+	[34] = "rightarm", [35] = "rightarm", [36] = "rightarm", -- upperarm / forearm / hand
+	[37] = "rightarm", [38] = "rightarm", [39] = "rightarm",
+	[40] = "rightarm", [41] = "rightarm", [42] = "rightarm",
+	[43] = "rightarm", [44] = "rightarm", [45] = "rightarm", -- fingers
+	[3] = "leftleg", [4] = "leftleg", [5] = "leftleg", [6] = "leftleg", -- thigh / calf / foot / toe
 	[7] = "rightleg", [8] = "rightleg", [9] = "rightleg", [10] = "rightleg",
-}
-
--- ADB body-part multipliers (used only when estimating via get_protection).
-local HITBOX_MULT = {
-	["head"] = 0.8,
-	["torso"] = 0.9,
-	["leftarm"] = 0.85,
-	["rightarm"] = 0.85,
-	["leftleg"] = 0.85,
-	["rightleg"] = 0.85,
 }
 
 local LIMB_DISPLAY = {
@@ -140,11 +141,16 @@ local adb_wrapped = false
 local bhs_rd_wrapped = false
 local pending_hit = nil
 local pending_snap = nil
+local pending_dot = nil
+local last_rad = nil
+local last_hp = nil
+local last_bleed = nil
+local BLEED_EPS = 0.01
 local refresh_if_preview = function() end
 local snapshot_limbs = function()
 	return {}
 end
-local finish_pending_limb = function() end
+local finish_pending = function() end
 
 -- BHS limb keys → summary labels. Limb HP is points, not 0-1; percent needs maxhp.
 local DIED_LIMBS = {
@@ -155,10 +161,6 @@ local DIED_LIMBS = {
 	{ key = "leftleg", label = "L Leg" },
 	{ key = "rightleg", label = "R Leg" },
 }
-
--- Running limb points from recorded hits (BHS tables are often still full at death).
-local limb_pts = {}
-local limb_max_pts = {}
 
 local function log(msg)
 	if CONFIG.loaded.debug_log then
@@ -303,9 +305,28 @@ local function actor_hp()
 	return tonumber(a.health)
 end
 
+-- Engine radiation hits add to this meter, not health.
+local function actor_radiation()
+	local a = db and db.actor
+	if not a then
+		return nil
+	end
+	return tonumber(a.radiation)
+end
+
+-- Wound bleed rate (conditions().BleedingSpeed). HP drain is applied in UpdateHealth.
+local function actor_bleeding()
+	local a = db and db.actor
+	if not a then
+		return nil
+	end
+	return tonumber(a.bleeding)
+end
+
 local function pct_num(frac)
-	if not frac then
-		return 0
+	frac = tonumber(frac)
+	if frac == nil then
+		return nil
 	end
 	local pct = math.floor(frac * 100 + 0.5)
 	if pct < 0 then
@@ -317,9 +338,16 @@ local function pct_num(frac)
 	return pct
 end
 
+local function pct_txt(pct)
+	if pct == nil then
+		return "?"
+	end
+	return tostring(pct) .. "%"
+end
+
 local function dmg_txt(pct)
-	if not pct or pct < 1 then
-		return "-<1%"
+	if pct == nil then
+		return "?"
 	end
 	return string.format("-%d%%", pct)
 end
@@ -327,8 +355,8 @@ end
 local function pts_pct(cur, maxv)
 	cur = tonumber(cur)
 	maxv = tonumber(maxv)
-	if not cur or not maxv or maxv <= 0 then
-		return 0
+	if cur == nil or not maxv or maxv <= 0 then
+		return nil
 	end
 	local pct = math.floor((cur / maxv) * 100 + 0.5)
 	if pct < 0 then
@@ -373,22 +401,68 @@ local function type_info(key)
 	return TYPE_INFO[key] or TYPE_INFO.unknown
 end
 
-local function limb_key(bone_id)
-	if bone_id == 65535 then
-		return "body"
+local function raw_bone_name(bone_id)
+	local a = db and db.actor
+	if not a or bone_id == nil then
+		return nil
 	end
-	if bone_id == 0 then
-		return "legs"
+	local ok, name = pcall(function()
+		return a:bone_name(bone_id)
+	end)
+	if ok and name and name ~= "" then
+		return name
 	end
-	return HITBOX[bone_id] or "body"
+	return nil
 end
 
-local function limb_key_for_mult(bone_id)
-	local label = HITBOX[bone_id]
-	if not label then
+local function infer_limb_from_name(s)
+	if not s or s == "" then
+		return nil
+	end
+	s = s:lower()
+	if s:find("head", 1, true) or s:find("neck", 1, true) or s:find("jaw", 1, true)
+		or s:find("eye", 1, true) then
+		return "head"
+	end
+	local left = s:match("^l_") or s:find("_l_", 1, true) or s:find("left", 1, true)
+	local right = s:match("^r_") or s:find("_r_", 1, true) or s:find("right", 1, true)
+	if s:find("thigh", 1, true) or s:find("calf", 1, true) or s:find("foot", 1, true)
+		or s:find("toe", 1, true) or s:find("leg", 1, true) then
+		if left then
+			return "leftleg"
+		end
+		if right then
+			return "rightleg"
+		end
+		return "legs"
+	end
+	if s:find("clav", 1, true) or s:find("arm", 1, true) or s:find("hand", 1, true)
+		or s:find("finger", 1, true) or s:find("wrist", 1, true) then
+		if left then
+			return "leftarm"
+		end
+		if right then
+			return "rightarm"
+		end
+	end
+	if s:find("spine", 1, true) or s:find("pelvis", 1, true) or s:find("hip", 1, true) then
 		return "torso"
 	end
-	return label
+	return nil
+end
+
+-- Bone name (then HITBOX id) picks the limb. Returns limb, exact bone name.
+local function resolve_bone(bone_id)
+	if bone_id == 65535 then
+		return "body", nil
+	end
+	-- Engine uses 0 for fall / no bone — not the skeleton root.
+	if bone_id == 0 then
+		return "legs", nil
+	end
+	local raw = raw_bone_name(bone_id)
+	local limb = infer_limb_from_name(raw) or HITBOX[bone_id]
+	return limb, raw
 end
 
 local function tr(id)
@@ -647,7 +721,7 @@ local function source_from_draftsman(draftsman, type_key)
 		end
 		if not name then
 			local sec = object_section(draftsman)
-			name = section_nice_name(sec, true) or "Stalker"
+			name = section_nice_name(sec, true)
 		end
 		return { name = name, faction = comm_label, comm = comm, kind = "stalker" }
 	end
@@ -657,7 +731,7 @@ local function source_from_draftsman(draftsman, type_key)
 	end)
 	if ok_mon and is_mon then
 		local name = object_char_name(draftsman) or section_nice_name(object_section(draftsman), true)
-		return { name = clean_source_name(name) or "Mutant", kind = "monster" }
+		return { name = clean_source_name(name), kind = "monster" }
 	end
 
 	local ok_an, is_an = pcall(function()
@@ -665,7 +739,7 @@ local function source_from_draftsman(draftsman, type_key)
 	end)
 	if ok_an and is_an then
 		return {
-			name = section_nice_name(object_section(draftsman), true) or "Anomaly",
+			name = section_nice_name(object_section(draftsman), true),
 			kind = "world",
 		}
 	end
@@ -756,6 +830,9 @@ local function format_dot_section()
 end
 
 local function hp_rgb(pct)
+	if pct == nil then
+		return {110, 110, 110}
+	end
 	if pct <= 0 then
 		return {180, 48, 48}
 	end
@@ -774,22 +851,34 @@ end
 local function body_after_and_dmg(e)
 	local before = e.hp_before
 	local after = e.hp_after
-	local dmg = e.damage or 0
-	if before and after and before > after + 0.0005 then
-		return after, before - after
+	if before == nil or after == nil then
+		return after, nil
 	end
-	if before then
-		return math.max(0, before - dmg), dmg
+	local dmg = before - after
+	if dmg < 0 then
+		dmg = 0
 	end
-	return nil, dmg
+	return after, dmg
 end
 
 local function format_hit_line(e)
 	local hp_after, body_dmg = body_after_and_dmg(e)
 	local hp_pct = pct_num(hp_after)
 	local body_pct = pct_num(body_dmg)
-	local limb = LIMB_DISPLAY[e.limb] or "Body"
-	local limb_dmg = e.limb_dmg_pct or 0
+	local limb = LIMB_DISPLAY[e.limb] or "?"
+	local limb_left
+	local limb_dmg
+	if e.limb_after ~= nil and e.limb_max then
+		limb_left = pts_pct(e.limb_after, e.limb_max)
+	end
+	if e.limb_before ~= nil and e.limb_after ~= nil and e.limb_max then
+		local d = e.limb_before - e.limb_after
+		if d < 0 then
+			d = 0
+		end
+		limb_dmg = pts_pct(d, e.limb_max)
+	end
+	local bone = (e.bone_name and e.bone_name ~= "") and e.bone_name or "?"
 
 	local fac_rgb
 	if e.kind == "stalker" then
@@ -800,10 +889,8 @@ local function format_hit_line(e)
 	local fac = rgb_code(fac_rgb)
 
 	local parts = {
-		COL.white .. "Body " .. tostring(hp_pct) .. "%",
-		COL.red .. "(" .. dmg_txt(body_pct) .. ")",
-		COL.white .. limb,
-		COL.orange .. "(" .. dmg_txt(limb_dmg) .. ")",
+		COL.white .. "Body " .. COL.red .. dmg_txt(body_pct) .. COL.white .. " (" .. pct_txt(hp_pct) .. ")",
+		COL.white .. limb .. " " .. COL.orange .. dmg_txt(limb_dmg) .. COL.white .. " (" .. pct_txt(limb_left) .. " " .. bone .. ")",
 		fac .. (e.name or "?"),
 	}
 	if e.faction and e.faction ~= "" then
@@ -841,11 +928,11 @@ local function actor_already_dead()
 	return hp ~= nil and hp <= 0
 end
 
-local function record_hit(shit, bone_id, damage, mitigated_frac)
+local function record_hit(shit, bone_id)
 	if actor_already_dead() then
 		return
 	end
-	if not shit or not damage or damage <= 0 then
+	if not shit then
 		return
 	end
 	local hit_type = shit.type
@@ -857,20 +944,19 @@ local function record_hit(shit, bone_id, damage, mitigated_frac)
 	if src.type_key then
 		tkey = src.type_key
 	end
+	-- Radiation is the dose meter (polled), not a body-HP tick.
+	if tkey == "radiation" then
+		return
+	end
 	if is_dot(tkey, src.kind) then
-		record_dot(tkey, damage)
-		refresh_if_preview()
+		pending_dot = { t = time_global(), key = tkey, hp_before = actor_hp() }
 		return
 	end
 
-	local hp_now = actor_hp()
-	local prev = hits[1]
-	if prev and prev.hp_before and prev.hp_after == nil then
-		prev.hp_after = hp_now
-	end
-
+	-- Do not attach an unfinished DoT tick to this hit's HP drop.
+	pending_dot = nil
 	pending_snap = snapshot_limbs()
-	local limb = limb_key(bone_id)
+	local limb, bone_name = resolve_bone(bone_id)
 
 	local wpn = weapon_obj(shit, shit.draftsman)
 	local wpn_name = weapon_label(wpn)
@@ -894,53 +980,13 @@ local function record_hit(shit, bone_id, damage, mitigated_frac)
 		comm = src.comm,
 		kind = src.kind,
 		limb = limb,
-		damage = damage,
-		mitigated = math.max(0, math.min(1, mitigated_frac or 0)),
+		bone_name = bone_name,
 		type_key = tkey,
 		weapon = wpn_name,
 		ammo = ammo,
-		hp_before = hp_now,
-		limb_after_pct = pending_snap and pending_snap[limb] or 0,
-		limb_dmg_pct = 0,
+		hp_before = actor_hp(),
 	})
 	pending_hit = hits[1]
-	refresh_if_preview()
-end
-
--- Match ADB shit_booster printf numbers from the same inputs.
-local function estimate_adb_damage(shit, bone_id, k_ap)
-	local power = shit.power or 0
-	local player_protection = 0
-	local premitigation = 0
-
-	local adb = rawget(_G, "grok_actor_damage_balancer")
-	if adb and type(adb.get_protection) == "function" then
-		local ok, pp, _lim, _ap, _hp, _abv, _hbv, pre = pcall(function()
-			return adb.get_protection(shit, bone_id, k_ap or 0)
-		end)
-		if ok then
-			player_protection = tonumber(pp) or 0
-			premitigation = tonumber(pre) or 0
-		end
-	end
-
-	if not (hit and shit.type == hit.fire_wound) then
-		premitigation = 0
-	end
-
-	if hit and shit.type == hit.fire_wound then
-		power = power * 0.8
-	elseif hit and shit.type == hit.wound then
-		power = power * 0.65
-	end
-
-	local key = limb_key_for_mult(bone_id)
-	power = power * (HITBOX_MULT[key] or 1.0)
-
-	local remain = (1 - premitigation) * (1 - player_protection)
-	local damage = power * remain
-	local mitigated = 1 - remain
-	return damage, mitigated
 end
 
 local function wrap_adb_shit_booster()
@@ -956,11 +1002,11 @@ local function wrap_adb_shit_booster()
 	local orig = adb.shit_booster
 	adb.shit_booster = function(shit, bone_id, k_ap)
 		if CONFIG.loaded.enabled and shit and (shit.power or 0) > 0 then
-			local damage, mitigated = estimate_adb_damage(shit, bone_id, k_ap)
-			record_hit(shit, bone_id, damage, mitigated)
+			record_hit(shit, bone_id)
 		end
 		local result = orig(shit, bone_id, k_ap)
-		finish_pending_limb()
+		finish_pending()
+		refresh_if_preview()
 		return result
 	end
 	adb.__dogma_death_report = true
@@ -1071,7 +1117,7 @@ local function show_hit_summary()
 	local chunks = {
 		COL.title .. title,
 		BLANK,
-		COL.muted .. "Last " .. tostring(hit_n > 0 and hit_n or hit_cap()) .. " hits:",
+		COL.muted .. "Last " .. tostring(hit_n) .. " hits:",
 	}
 	if hit_n == 0 then
 		chunks[#chunks + 1] = COL.muted .. "No hits in the last 30 seconds."
@@ -1176,96 +1222,67 @@ local function try_toggle_report(dik)
 	return true
 end
 
--- Limb HP is BHS points — only cur/maxhp is valid.
-local function limb_pct_of(cur, maxv)
-	cur = tonumber(cur)
-	maxv = tonumber(maxv)
-	if not cur or not maxv or maxv <= 0 then
-		return 0
-	end
-	local pct = math.floor((cur / maxv) * 100 + 0.5)
-	if pct < 0 then
-		return 0
-	end
-	if pct > 100 then
-		return 100
-	end
-	return pct
-end
-
--- Permanent `health` can stay at max while `timedhp` is current (HUD).
-local function bhs_limb_current(health, timedhp, maxhp, key)
+-- Permanent limb points only. BHS health[] is perm + temp.
+local function bhs_limb_perm(health, timedhp, maxhp, key)
 	local hp = tonumber(health and health[key])
 	local maxv = tonumber(maxhp and maxhp[key])
-	local temp = tonumber(timedhp and timedhp[key])
-	if not (hp and maxv and maxv > 0) then
+	if hp == nil or not timedhp or not maxv or maxv <= 0 then
 		return nil, maxv
 	end
-	if hp >= maxv and temp and temp > 0 and temp < maxv then
-		return temp, maxv
+	local temp = tonumber(timedhp[key]) or 0
+	local perm = hp - temp
+	if perm < 0 then
+		perm = 0
 	end
-	return hp, maxv
+	if perm > maxv then
+		perm = maxv
+	end
+	return perm, maxv
 end
 
-local function init_limb_state()
-	local health, timedhp, maxhp = dogma.status.bhs()
-	for i = 1, #DIED_LIMBS do
-		local k = DIED_LIMBS[i].key
-		local maxv = 11
-		local cur = limb_pts[k]
-		if maxhp then
-			maxv = tonumber(maxhp[k]) or 11
-		end
-		limb_max_pts[k] = maxv
-		if cur == nil then
-			local live = bhs_limb_current(health, timedhp, maxhp, k)
-			limb_pts[k] = live or maxv
-		end
-	end
-end
-
--- Same source as the Condition footer: live BHS (timedhp when permanent is still full).
 snapshot_limbs = function()
-	init_limb_state()
 	local health, timedhp, maxhp = dogma.status.bhs()
 	local out = {}
+	if not (health and timedhp and maxhp) then
+		return out
+	end
 	for i = 1, #DIED_LIMBS do
 		local k = DIED_LIMBS[i].key
-		local pct = pts_pct(limb_pts[k], limb_max_pts[k] or 11)
-		if health and maxhp then
-			local cur, maxv = bhs_limb_current(health, timedhp, maxhp, k)
-			if cur and maxv then
-				pct = limb_pct_of(cur, maxv)
-			end
+		local perm, maxv = bhs_limb_perm(health, timedhp, maxhp, k)
+		if perm ~= nil and maxv then
+			out[k] = { perm = perm, max = maxv }
 		end
-		out[k] = pct
 	end
 	return out
 end
 
-finish_pending_limb = function()
-	if not pending_hit or not pending_snap then
-		pending_hit = nil
+finish_pending = function()
+	if pending_dot then
+		local after = actor_hp()
+		local before = pending_dot.hp_before
+		if before ~= nil and after ~= nil and before > after then
+			record_dot(pending_dot.key, before - after)
+		end
+		if after ~= nil then
+			last_hp = after
+		end
+		pending_dot = nil
+	end
+	if not pending_hit then
 		pending_snap = nil
 		return
 	end
-	local now = snapshot_limbs()
-	local best_k, best_dmg, best_after = nil, 0, 0
-	for i = 1, #DIED_LIMBS do
-		local k = DIED_LIMBS[i].key
-		local before = pending_snap[k] or 0
-		local after = now[k] or before
-		local dmg = before - after
-		if dmg > best_dmg then
-			best_dmg = dmg
-			best_k = k
-			best_after = after
-		end
+	pending_hit.hp_after = actor_hp()
+	if pending_hit.hp_after ~= nil then
+		last_hp = pending_hit.hp_after
 	end
-	if best_k and best_dmg > 0 then
-		pending_hit.limb = best_k
-		pending_hit.limb_after_pct = best_after
-		pending_hit.limb_dmg_pct = best_dmg
+	local k = pending_hit.limb
+	local before = pending_snap and pending_snap[k]
+	local after = snapshot_limbs()[k]
+	if before and after then
+		pending_hit.limb_before = before.perm
+		pending_hit.limb_after = after.perm
+		pending_hit.limb_max = after.max or before.max
 	end
 	pending_hit = nil
 	pending_snap = nil
@@ -1283,24 +1300,9 @@ local function wrap_bhs_recieved_damage()
 	local orig = bhs.recieved_damage
 	bhs.recieved_damage = function(amount, bone_id)
 		local result = orig(amount, bone_id)
-		local health, timedhp, maxhp = dogma.status.bhs()
-		if health and maxhp then
-			for i = 1, #DIED_LIMBS do
-				local k = DIED_LIMBS[i].key
-				local cur, maxv = bhs_limb_current(health, timedhp, maxhp, k)
-				if maxv then
-					limb_max_pts[k] = maxv
-				end
-				-- Trust BHS when it actually dropped; ignore stale 100% at death.
-				if cur and maxv and cur < maxv then
-					limb_pts[k] = cur
-				elseif cur and limb_pts[k] == nil then
-					limb_pts[k] = cur
-				end
-			end
-		end
 		if not adb_wrapped then
-			finish_pending_limb()
+			finish_pending()
+			refresh_if_preview()
 		end
 		return result
 	end
@@ -1311,48 +1313,30 @@ local function wrap_bhs_recieved_damage()
 end
 
 local function format_condition_line()
-	init_limb_state()
 	local health, timedhp, maxhp = dogma.status.bhs()
-
 	local parts = {}
-	local any = false
 	for i = 1, #DIED_LIMBS do
 		local spec = DIED_LIMBS[i]
-		local k = spec.key
-		local track = pts_pct(limb_pts[k], limb_max_pts[k] or 11)
-		local bhs_pct
-		if health and maxhp then
-			local cur, maxv = bhs_limb_current(health, timedhp, maxhp, k)
-			if cur and maxv then
-				bhs_pct = limb_pct_of(cur, maxv)
-			end
-		end
-		local pct = track
-		if bhs_pct and bhs_pct < 100 and bhs_pct < track then
-			pct = bhs_pct
-		end
+		local cur, maxv = bhs_limb_perm(health, timedhp, maxhp, spec.key)
+		local pct = pts_pct(cur, maxv)
 		if i > 1 then
 			parts[#parts + 1] = COL.dim .. "   "
 		end
-		parts[#parts + 1] = rgb_code(hp_rgb(pct or 0)) .. string.format("%s %d%%", spec.label, pct or 0)
-		any = true
-	end
-	if not any then
-		return nil
+		parts[#parts + 1] = rgb_code(hp_rgb(pct)) .. spec.label .. " " .. pct_txt(pct)
 	end
 	return table.concat(parts)
 end
 
 -- Layout-only rows for the alive preview. Count follows Hits to remember.
 local DUMMY_HITS = {
-	{ hp_before = 0.94, hp_after = 0.81, damage = 0.13, limb = "torso", limb_dmg_pct = 12, name = "Yurik", faction = "Loners", comm = "stalker", kind = "stalker", weapon = "AKM", ammo = "7.62x39 mm" },
-	{ hp_before = 0.81, hp_after = 0.68, damage = 0.13, limb = "head", limb_dmg_pct = 28, name = "Wolf", faction = "Loners", comm = "stalker", kind = "stalker", weapon = "Fort-12", ammo = "9x18 mm" },
-	{ hp_before = 0.68, hp_after = 0.52, damage = 0.16, limb = "leftarm", limb_dmg_pct = 18, name = "Scar", faction = "Mercenaries", comm = "killer", kind = "stalker", weapon = "IL86", ammo = "5.56x45 mm" },
-	{ hp_before = 0.52, hp_after = 0.41, damage = 0.11, limb = "torso", limb_dmg_pct = 9, name = "Blind Dog", kind = "monster", weapon = "Claws" },
-	{ hp_before = 0.41, hp_after = 0.33, damage = 0.08, limb = "rightleg", limb_dmg_pct = 15, name = "Bloodsucker", kind = "monster", weapon = "Claws" },
-	{ hp_before = 0.33, hp_after = 0.22, damage = 0.11, limb = "torso", limb_dmg_pct = 10, name = "Petrenko", faction = "Duty", comm = "dolg", kind = "stalker", weapon = "AS Val", ammo = "9x39 mm" },
-	{ hp_before = 0.22, hp_after = 0.14, damage = 0.08, limb = "body", limb_dmg_pct = 0, name = "Fall", kind = "world" },
-	{ hp_before = 0.14, hp_after = 0.02, damage = 0.12, limb = "torso", limb_dmg_pct = 20, name = "Grenade", kind = "world", weapon = "Explosion" },
+	{ hp_before = 0.94, hp_after = 0.81, limb = "torso", bone_name = "bip01_pelvis", limb_before = 4, limb_after = 3, limb_max = 4, name = "Yurik", faction = "Loners", comm = "stalker", kind = "stalker", weapon = "AKM", ammo = "7.62x39 mm" },
+	{ hp_before = 0.81, hp_after = 0.68, limb = "head", bone_name = "bip01_head", limb_before = 4, limb_after = 3, limb_max = 4, name = "Wolf", faction = "Loners", comm = "stalker", kind = "stalker", weapon = "Fort-12", ammo = "9x18 mm" },
+	{ hp_before = 0.68, hp_after = 0.52, limb = "leftarm", bone_name = "bip01_l_forearm", limb_before = 4, limb_after = 3, limb_max = 4, name = "Scar", faction = "Mercenaries", comm = "killer", kind = "stalker", weapon = "IL86", ammo = "5.56x45 mm" },
+	{ hp_before = 0.52, hp_after = 0.41, limb = "torso", bone_name = "bip01_spine1", limb_before = 3, limb_after = 3, limb_max = 4, name = "Blind Dog", kind = "monster", weapon = "Claws" },
+	{ hp_before = 0.41, hp_after = 0.33, limb = "rightleg", bone_name = "bip01_r_thigh", limb_before = 4, limb_after = 3, limb_max = 4, name = "Bloodsucker", kind = "monster", weapon = "Claws" },
+	{ hp_before = 0.33, hp_after = 0.22, limb = "torso", bone_name = "bip01_spine2", limb_before = 3, limb_after = 2, limb_max = 4, name = "Petrenko", faction = "Duty", comm = "dolg", kind = "stalker", weapon = "AS Val", ammo = "9x39 mm" },
+	{ hp_before = 0.22, hp_after = 0.14, limb = "legs", name = "Fall", kind = "world" },
+	{ hp_before = 0.14, hp_after = 0.02, limb = "torso", bone_name = "bip01_spine1", limb_before = 2, limb_after = 1, limb_max = 4, name = "Grenade", kind = "world", weapon = "Explosion" },
 }
 
 local function dummy_dot_section()
@@ -1391,10 +1375,6 @@ local function freeze_hit_lines()
 		return
 	end
 	prune_hits()
-	local hp_now = actor_hp()
-	if hits[1] and hits[1].hp_before and hits[1].hp_after == nil then
-		hits[1].hp_after = hp_now
-	end
 	local lines = {}
 	for i = 1, #hits do
 		lines[#lines + 1] = { text = format_hit_line(hits[i]) }
@@ -1440,10 +1420,12 @@ local function reset_state()
 	report_visible = false
 	last_toggle_ms = 0
 	frozen = nil
-	limb_pts = {}
-	limb_max_pts = {}
 	pending_hit = nil
 	pending_snap = nil
+	pending_dot = nil
+	last_rad = nil
+	last_hp = nil
+	last_bleed = nil
 	clear_death_ui()
 end
 
@@ -1480,16 +1462,55 @@ local function actor_on_before_hit(shit, bone_id, flags)
 		return
 	end
 
-	-- When ADB is wrapped, physical hits are recorded in shit_booster.
-	-- Still record radiation / other paths that skip shit_booster.
+	-- When ADB is wrapped, hits (including world DoT) are recorded in
+	-- shit_booster so we can snapshot HP after the same call.
 	if adb_wrapped then
-		if hit and shit.type == hit.radiation then
-			record_hit(shit, bone_id, shit.power, 0)
-		end
 		return
 	end
 
-	record_hit(shit, bone_id, shit.power, 0)
+	record_hit(shit, bone_id)
+end
+
+local function flush_radiation()
+	local now = actor_radiation()
+	local gained = last_rad ~= nil and now ~= nil and now > last_rad
+	if gained then
+		record_dot("radiation", now - last_rad)
+	end
+	last_rad = now
+	return gained
+end
+
+-- Body HP lost while bleeding. Hit callbacks set last_hp after their own drop.
+local function flush_bleed()
+	local hp = actor_hp()
+	local bleed = actor_bleeding()
+	local recorded = false
+	if last_hp ~= nil and hp ~= nil and last_hp > hp
+		and last_bleed ~= nil and last_bleed > BLEED_EPS
+	then
+		record_dot("bleed", last_hp - hp)
+		recorded = true
+	end
+	last_hp = hp
+	last_bleed = bleed
+	return recorded
+end
+
+local function actor_on_update()
+	if not CONFIG.loaded.enabled or death_armed then
+		last_rad = actor_radiation()
+		last_hp = actor_hp()
+		last_bleed = actor_bleeding()
+		return
+	end
+	local changed = flush_radiation()
+	if flush_bleed() then
+		changed = true
+	end
+	if changed then
+		refresh_if_preview()
+	end
 end
 
 local function actor_on_before_death(whoID, flags)
@@ -1497,6 +1518,8 @@ local function actor_on_before_death(whoID, flags)
 		return
 	end
 
+	flush_radiation()
+	flush_bleed()
 	freeze_hit_lines()
 	arm_death_ui()
 	log(string.format("before_death hits=%d", frozen and frozen.lines and #frozen.lines or 0))
@@ -1536,7 +1559,6 @@ end
 
 local function actor_on_first_update()
 	wrap_hooks()
-	init_limb_state()
 	on_option_change()
 end
 
@@ -1547,6 +1569,7 @@ function on_game_start()
 	on_option_change()
 
 	RegisterScriptCallback("actor_on_before_hit", actor_on_before_hit)
+	RegisterScriptCallback("actor_on_update", actor_on_update)
 	RegisterScriptCallback("actor_on_before_death", actor_on_before_death)
 	RegisterScriptCallback("on_before_key_press", on_before_key_press)
 	RegisterScriptCallback("on_key_press", on_key_press)

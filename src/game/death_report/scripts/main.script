@@ -1147,20 +1147,24 @@ local function show_hit_summary()
 	local text_y = panel_y + PANEL_PAD
 	local text_w = panel_w - PANEL_PAD * 2
 
-	-- Parse first, then size the panel from the engine's real text height.
+	-- Background first, text once on top. Resize the same panel after measure.
+	local est_h = math.floor(#chunks * line_height() + 0.5)
+	remove_static(HIT_STATIC)
+	show_panel(panel_x, panel_y, panel_w, est_h + PANEL_PAD * 2)
 	set_text(HIT_STATIC, table.concat(chunks, "\\n"), text_x, text_y, text_w, UI_H)
-	local text_h = 0
 	local tw = hud_wnd(HIT_STATIC)
 	if tw then
 		pcall(function()
 			tw:AdjustHeightToText()
 		end)
-		text_h = tonumber(tw.GetHeight and tw:GetHeight()) or 0
+		local text_h = tonumber(tw.GetHeight and tw:GetHeight()) or 0
+		if text_h >= 1 then
+			local pw = hud_wnd(PANEL_STATIC)
+			if pw then
+				pw:SetWndSize(vector2():set(panel_w, text_h + PANEL_PAD * 2))
+			end
+		end
 	end
-	if text_h < 1 then
-		text_h = math.floor(#chunks * line_height() + 0.5)
-	end
-	show_panel(panel_x, panel_y, panel_w, text_h + PANEL_PAD * 2)
 end
 
 local function hide_hit_summary()
@@ -1188,17 +1192,6 @@ local function apply_report_visibility()
 	show_tab_prompt()
 end
 
-local function arm_death_ui()
-	if not CONFIG.loaded.enabled then
-		return
-	end
-	death_armed = true
-	report_visible = false
-	show_tab_prompt()
-	hide_hit_summary()
-	log("death UI armed (report off)")
-end
-
 local function tab_dik()
 	return (DIK_keys and DIK_keys.DIK_TAB) or 15
 end
@@ -1210,7 +1203,7 @@ local function try_toggle_report(dik)
 	if dik ~= tab_dik() then
 		return false
 	end
-	-- Both before_key_press and key_press can fire; debounce so Tab doesn't flip twice.
+	-- before_key_press, level_input wrap, and death poll can all see the same tap.
 	local now = time_global()
 	if (now - last_toggle_ms) < 200 then
 		return true
@@ -1220,6 +1213,74 @@ local function try_toggle_report(dik)
 	apply_report_visibility()
 	log(report_visible and "death report shown" or "death report hidden")
 	return true
+end
+
+-- game_over captures input, so on_before_key_press does not run. Poll Tab instead.
+local TAB_POLL = "tab_poll"
+
+local function stop_tab_poll()
+	RemoveTimeEvent(CONFIG.MOD_ID, TAB_POLL)
+end
+
+local function poll_tab()
+	if not death_armed then
+		return true
+	end
+	if dogma.input.is_key_pressed(tab_dik()) then
+		try_toggle_report(tab_dik())
+	end
+	return false
+end
+
+local function start_tab_poll()
+	dogma.input.is_key_down(tab_dik())
+	stop_tab_poll()
+	CreateTimeEvent(CONFIG.MOD_ID, TAB_POLL, 0, poll_tab)
+end
+
+local function arm_death_ui()
+	if not CONFIG.loaded.enabled then
+		return
+	end
+	death_armed = true
+	report_visible = false
+	show_tab_prompt()
+	hide_hit_summary()
+	start_tab_poll()
+	log("death UI armed (report off)")
+end
+
+-- Return true = this key must not open inventory / death menu.
+local function eat_tab_key(dik, bind)
+	if not CONFIG.loaded.enabled or not report_armed() then
+		return false
+	end
+	if dik == tab_dik() then
+		try_toggle_report(dik)
+		return true
+	end
+	-- Dead: inventory bind must not open a menu. Space / jump still reaches game_over.
+	if death_armed and key_bindings and bind == key_bindings.kINVENTORY then
+		return true
+	end
+	return false
+end
+
+local level_input_wrapped = false
+
+local function wrap_level_input()
+	if level_input_wrapped or not level_input or type(level_input.on_key_press) ~= "function" then
+		return
+	end
+	local orig = level_input.on_key_press
+	level_input.on_key_press = function(dik, bind, dis)
+		if eat_tab_key(dik, bind) then
+			return true
+		end
+		return orig(dik, bind, dis)
+	end
+	level_input_wrapped = true
+	log("wrapped level_input.on_key_press")
 end
 
 -- Permanent limb points only. BHS health[] is perm + temp.
@@ -1312,12 +1373,36 @@ local function wrap_bhs_recieved_damage()
 	return true
 end
 
-local function format_condition_line()
+-- Newest hit that stored a before/after for this limb. Live BHS is often
+-- still full at death; the hit snapshots are the measured values.
+local function last_limb_from_hits(list, key)
+	if not list then
+		return nil, nil
+	end
+	for i = 1, #list do
+		local e = list[i]
+		if e.limb == key and e.limb_after ~= nil then
+			return e.limb_after, e.limb_max
+		end
+	end
+	return nil, nil
+end
+
+local function format_condition_line(list)
 	local health, timedhp, maxhp = dogma.status.bhs()
 	local parts = {}
 	for i = 1, #DIED_LIMBS do
 		local spec = DIED_LIMBS[i]
-		local cur, maxv = bhs_limb_perm(health, timedhp, maxhp, spec.key)
+		local live, live_max = bhs_limb_perm(health, timedhp, maxhp, spec.key)
+		local hit_cur, hit_max = last_limb_from_hits(list, spec.key)
+		local cur, maxv
+		if live ~= nil and live_max and live < live_max then
+			cur, maxv = live, live_max
+		elseif hit_cur ~= nil then
+			cur, maxv = hit_cur, hit_max or live_max
+		else
+			cur, maxv = live, live_max
+		end
 		local pct = pts_pct(cur, maxv)
 		if i > 1 then
 			parts[#parts + 1] = COL.dim .. "   "
@@ -1355,15 +1440,17 @@ end
 
 local function freeze_preview_lines()
 	local lines = {}
+	local dummy = {}
 	local n = hit_cap()
 	for i = 1, n do
 		local e = DUMMY_HITS[((i - 1) % #DUMMY_HITS) + 1]
+		dummy[i] = e
 		lines[#lines + 1] = { text = format_hit_line(e) }
 	end
 	local dot_header, dot_lines = dummy_dot_section()
 	frozen = {
 		lines = lines,
-		footer = format_condition_line(),
+		footer = format_condition_line(dummy),
 		dot_header = dot_header,
 		dot_lines = dot_lines,
 	}
@@ -1374,6 +1461,7 @@ local function freeze_hit_lines()
 		freeze_preview_lines()
 		return
 	end
+	finish_pending()
 	prune_hits()
 	local lines = {}
 	for i = 1, #hits do
@@ -1382,7 +1470,7 @@ local function freeze_hit_lines()
 	local dot_header, dot_lines = format_dot_section()
 	frozen = {
 		lines = lines,
-		footer = format_condition_line(),
+		footer = format_condition_line(hits),
 		dot_header = dot_header,
 		dot_lines = dot_lines,
 	}
@@ -1426,6 +1514,7 @@ local function reset_state()
 	last_rad = nil
 	last_hp = nil
 	last_bleed = nil
+	stop_tab_poll()
 	clear_death_ui()
 end
 
@@ -1447,6 +1536,7 @@ local function on_option_change()
 		death_armed = false
 		preview_on = false
 		report_visible = false
+		stop_tab_poll()
 	elseif death_armed then
 		apply_report_visibility()
 	else
@@ -1536,20 +1626,15 @@ local function GUI_on_show(gui, str2)
 end
 
 local function on_before_key_press(dik, bind, dis, flags)
-	if try_toggle_report(dik) then
-		if flags then
-			flags.ret_value = false
-		end
+	if eat_tab_key(dik, bind) and flags then
+		flags.ret_value = false
 	end
-end
-
-local function on_key_press(dik)
-	try_toggle_report(dik)
 end
 
 local function wrap_hooks()
 	wrap_adb_shit_booster()
 	wrap_bhs_recieved_damage()
+	wrap_level_input()
 end
 
 local function on_game_load()
@@ -1572,7 +1657,6 @@ function on_game_start()
 	RegisterScriptCallback("actor_on_update", actor_on_update)
 	RegisterScriptCallback("actor_on_before_death", actor_on_before_death)
 	RegisterScriptCallback("on_before_key_press", on_before_key_press)
-	RegisterScriptCallback("on_key_press", on_key_press)
 	RegisterScriptCallback("GUI_on_show", GUI_on_show)
 	RegisterScriptCallback("on_game_load", on_game_load)
 	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)

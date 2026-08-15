@@ -1,0 +1,26 @@
+-- Death Report: game_over must only continue on Space (jump). Tab is ours.
+function on_xml_read()
+	RegisterScriptCallback("on_xml_read", function(xml_file_name, xml_obj)
+		if xml_file_name ~= [[ui\game_tutorials.xml]]
+			and xml_file_name ~= [[ui/game_tutorials.xml]]
+		then
+			return
+		end
+
+		local guards = xml_obj:query("game_over guard_key")
+		if guards[1] then
+			xml_obj:setText(guards[1], "jump")
+		else
+			local parent = xml_obj:query("game_over item")[1] or xml_obj:query("game_over")[1]
+			if parent then
+				xml_obj:insertFromXMLString("<guard_key>jump</guard_key>", parent)
+			end
+		end
+
+		local acts = xml_obj:query("game_over action[id=inventory]")
+		while acts[1] do
+			xml_obj:removeElement(acts[1])
+			acts = xml_obj:query("game_over action[id=inventory]")
+		end
+	end)
+end

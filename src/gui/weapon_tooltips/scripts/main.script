@@ -2881,13 +2881,13 @@ local function uiinfo_update_hook(self, obj, sec, flags)
 
 	base_uiinfo_update(self, obj, sec, flags)
 
-	-- Once per tooltip. Hover Update is per-frame; do not rebuild on dirty
-	-- while still hidden (that would spam until Show).
+	-- Table/layout once per tooltip. Custom stat text after every vanilla
+	-- fill: those rows use sentinel functors that paint "1" until we replace
+	-- them (slash / spread / burst / …).
 	local dirty = self.dogma_layout_dirty
 	if not same_item then
 		tooltip_logged = {}
 		refresh_weapon_damage_panel(self, obj, sec)
-		apply_custom_stat_display(self, obj, sec)
 		restack_positions(self)
 		self.dogma_layout_dirty = not (self.IsShown and self:IsShown())
 	elseif dirty and self.IsShown and self:IsShown() then
@@ -2896,6 +2896,7 @@ local function uiinfo_update_hook(self, obj, sec, flags)
 	elseif stats_overlap_table(self) then
 		restack_positions(self)
 	end
+	apply_custom_stat_display(self, obj, sec)
 	dogma.perf.stop()
 end
 

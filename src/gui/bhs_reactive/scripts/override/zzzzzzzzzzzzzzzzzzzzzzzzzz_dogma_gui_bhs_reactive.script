@@ -236,6 +236,7 @@ local function refresh_options()
 	L.psy_show_below_pct = clamp_int(dogma.mcm.int(CONFIG.MOD_ID, "psy_show_below_pct", d.psy_show_below_pct), 0, 100, d.psy_show_below_pct)
 	L.rad_show_above_pct = clamp_int(dogma.mcm.int(CONFIG.MOD_ID, "rad_show_above_pct", d.rad_show_above_pct), 0, 100, d.rad_show_above_pct)
 	L.show_when_temp_health = dogma.mcm.bool(CONFIG.MOD_ID, "show_when_temp_health", d.show_when_temp_health)
+	L.keep_showing_sec = clamp_int(dogma.mcm.int(CONFIG.MOD_ID, "keep_showing_sec", d.keep_showing_sec), 0, 10, d.keep_showing_sec)
 	L.hide_status_icons = dogma.mcm.bool(CONFIG.MOD_ID, "hide_status_icons", d.hide_status_icons)
 	L.key_icons = dogma.mcm.key(CONFIG.MOD_ID, "key_icons")
 	L.key_icons_modifier = dogma.mcm.int(CONFIG.MOD_ID, "key_icons_modifier", d.key_icons_modifier) or 0
@@ -448,8 +449,18 @@ local function conditions_show(L)
 end
 
 local function compute_show(L, now)
+	local cond = conditions_show(L)
+	if cond then
+		local keep = L.keep_showing_sec or 0
+		if keep > 0 then
+			local target = now + math.floor(keep * 1000)
+			if flash_until < target then
+				flash_until = target
+			end
+		end
+	end
 	local force = hold_key(L.key_bhs, L.key_bhs_modifier) or (flash_until > now)
-	local show_all = conditions_show(L) or force
+	local show_all = cond or force
 	local stam_th = L.stam_show_below_pct or 0
 	local show_stam = show_all or (stam_th > 0 and actor_pct("power", 100) < stam_th)
 	return force, show_all, show_stam

@@ -6,7 +6,8 @@
 	Prefer start/stop (no callback). time() is a thin wrapper for rare cases.
 
 	start(mod_id, method[, threshold_us])
-	  Label becomes "mod_id.method" (unique per feature). No-op if perf_log off.
+	  Label becomes "mod_id.method" (unique per feature). No-op if perf_log off
+	  or during level load (on_game_load through actor_on_first_update).
 	stop()
 	  Pop; always record stats while logging; warn if slow; return elapsed_us.
 	time(mod_id, method, fn)
@@ -14,14 +15,17 @@
 	  start/fn/stop; returns fn's returns.
 
 	Warnings require MCM dogma/debug perf_log. Threshold: call arg (µs) →
-	perf_warn_threshold_us → ≤0 = no console warn.
+	perf_warn_threshold_us → ≤0 = no console warn. One console/xray line per
+	key per 10s via console.say only (printf + say wrote the same line twice).
 
 	dogma_perf.log records every stop while perf_log is on (threshold only
-	gates console/xray warns). Rewritten every ~10s as a fixed-width table:
+	gates console/xray warns). First flush is 10s after first_update. Then
+	rewritten every ~10s as a fixed-width table:
 	  n  n/s  min  max  avg  key
 	Totals reset on game load (and when logging is toggled). Empty snapshots
-	are never written, so quit/menu reload/crash cannot blank the last flush.
-	Replace is write-to-.tmp then rename. Units: us.
+	are never written, so quit/menu reload cannot blank the last flush.
+	Failed writes cool down the same 10s — they do not retry every poll.
+	Overwrite dogma_perf.log in place. Units: us.
 
 	Timing uses engine profile_timer (QPC → microseconds) when available.
 	os.clock fallback is ~1ms quantum and cannot resolve sub-ms work.
@@ -42,6 +46,9 @@ local log_path = nil
 local log_path_tried = false
 -- Cached so hot start()/stop() paths avoid MCM lookups every call.
 local logging_on = false
+local load_quiet = true
+-- [label] = last console-warn game_ms
+local last_warn_ms = {}
 local use_profile_timer = false
 
 -- Detect once: luabind exposes profile_timer as a constructible class.
@@ -84,6 +91,9 @@ local function clear_stats()
 	for k in pairs(stats) do
 		stats[k] = nil
 	end
+	for k in pairs(last_warn_ms) do
+		last_warn_ms[k] = nil
+	end
 	flush_count = 0
 end
 
@@ -118,35 +128,20 @@ local function has_stats()
 	return next(stats) ~= nil
 end
 
--- Write tmp, rotate live → .bak, then tmp → live. Crash mid-flush leaves
--- .bak (and never truncates dogma_perf.log in place).
-local function replace_log(path, body)
-	local tmp = path .. ".tmp"
-	local bak = path .. ".bak"
-	local ok, f = pcall(io.open, tmp, "w")
+local function write_log(path, body)
+	local ok, f = pcall(io.open, path, "w")
 	if not (ok and f) then
 		return false
 	end
 	f:write(body)
 	f:close()
-	pcall(os.remove, bak)
-	pcall(os.rename, path, bak)
-	if pcall(os.rename, tmp, path) then
-		return true
-	end
-	ok, f = pcall(io.open, path, "w")
-	if not (ok and f) then
-		pcall(os.rename, bak, path)
-		pcall(os.remove, tmp)
-		return false
-	end
-	f:write(body)
-	f:close()
-	pcall(os.remove, tmp)
 	return true
 end
 
 local function write_summary()
+	local stamp = time_global and time_global() or 0
+	-- Cool down before I/O so a locked file cannot retry every poll.
+	last_flush_ms = stamp
 	if not has_stats() then
 		return
 	end
@@ -154,7 +149,6 @@ local function write_summary()
 	if not path then
 		return
 	end
-	local stamp = time_global and time_global() or 0
 	local lines = {
 		string.format(
 			"# dogma_perf (us) flush=%d interval=%ds game_ms=%d\n",
@@ -180,11 +174,9 @@ local function write_summary()
 		lines[#lines + 1] = fmt_row(s.n, cps, s.min, s.max, avg, label)
 		lines[#lines + 1] = "\n"
 	end
-	if not replace_log(path, table.concat(lines)) then
-		return
+	if write_log(path, table.concat(lines)) then
+		flush_count = flush_count + 1
 	end
-	flush_count = flush_count + 1
-	last_flush_ms = stamp
 end
 
 local function record(label, elapsed_us)
@@ -223,9 +215,18 @@ local function flush_tick()
 	if not logging_on then
 		return true -- stop timer
 	end
+	local now = time_global and time_global() or 0
+	if load_quiet then
+		-- Same-frame CreateTimeEvent fire must not unquiet mid first_update.
+		if (now - last_flush_ms) < 1 then
+			return false
+		end
+		load_quiet = false
+		last_flush_ms = now
+		return false
+	end
 	-- CreateTimeEvent(return false) often re-fires without re-arming the delay.
 	-- Gate the rewrite on game time so the log only updates every 10s.
-	local now = time_global and time_global() or 0
 	if (now - last_flush_ms) >= FLUSH_INTERVAL_MS then
 		write_summary()
 	end
@@ -242,18 +243,20 @@ local function ensure_flush_timer()
 	CreateTimeEvent("dogma_perf", "flush", FLUSH_POLL_SEC, flush_tick)
 end
 
-local function begin_session()
+local function begin_session(start_timer)
 	clear_stats()
 	stack = {}
 	last_flush_ms = time_global and time_global() or 0
-	ensure_flush_timer()
+	if start_timer then
+		ensure_flush_timer()
+	end
 end
 
 function sync()
 	local was_on = logging_on
 	logging_on = read_logging_enabled()
 	if logging_on and not was_on then
-		begin_session()
+		begin_session(not load_quiet)
 	elseif was_on and not logging_on then
 		write_summary()
 		clear_stats()
@@ -296,21 +299,25 @@ local function warn_slow(label, elapsed_us, threshold_us)
 	if threshold_us <= 0 or elapsed_us < threshold_us then
 		return
 	end
-	local msg = string.format(
-		"[dogma_perf] SLOW %s took %dus (threshold %dus)",
-		tostring(label or "?"),
-		math.floor(elapsed_us + 0.5),
-		threshold_us
-	)
-	printf("%s", msg)
+	local now = time_global and time_global() or 0
+	local prev = last_warn_ms[label]
+	if prev and (now - prev) < FLUSH_INTERVAL_MS then
+		return
+	end
+	last_warn_ms[label] = now
 	local console = rawget(_G, "__dogma_console")
 	if console and console.say then
-		console.say(msg, "yellow")
+		console.say(string.format(
+			"[dogma_perf] SLOW %s took %dus (threshold %dus)",
+			tostring(label or "?"),
+			math.floor(elapsed_us + 0.5),
+			threshold_us
+		), "yellow")
 	end
 end
 
 function start(mod_id, method, threshold_us)
-	if not logging_on then
+	if not logging_on or load_quiet then
 		return
 	end
 	local frame = {
@@ -383,15 +390,17 @@ end
 if RegisterScriptCallback then
 	RegisterScriptCallback("on_option_change", sync)
 	RegisterScriptCallback("on_game_load", function()
+		load_quiet = true
 		stack = {}
 		sync()
 		if logging_on then
-			begin_session()
+			begin_session(false)
 		end
 	end)
 	RegisterScriptCallback("actor_on_first_update", function()
 		sync()
 		if logging_on then
+			last_flush_ms = time_global and time_global() or 0
 			ensure_flush_timer()
 		end
 	end)

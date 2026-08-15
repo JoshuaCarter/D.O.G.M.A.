@@ -927,6 +927,7 @@ STAT_XML:ParseFile("utils.xml")
 
 local base_uiinfo_init
 local base_uiinfo_update
+local base_uiinfo_show
 
 local HIT_POWER_STAT = {
 	index = 3,
@@ -2629,12 +2630,9 @@ local function refresh_weapon_damage_panel(info, obj, sec)
 		return
 	end
 
-	if not info:IsShown() then
-		-- First rebuild can run while Pass still hides the dialog; recover on next tick.
-		info.dogma_layout_dirty = true
-		return
-	end
-
+	-- Fill even while Pass still hides the dialog. Positions stick; Show
+	-- restacks again once heights are final. Skipping here left the table
+	-- at XML y on top of stats until a later item change.
 	sec = sec or safe_section(obj)
 	if not sec or info:GetType(sec) ~= "weapon" then
 		return
@@ -2657,7 +2655,22 @@ local function refresh_weapon_damage_panel(info, obj, sec)
 		end
 		log_tooltip("panel_ok", string.format("%s: hover damage panel shown (%d rows)", sec, #damage_data.rows))
 	end
-	info.dogma_layout_dirty = false
+end
+
+local function restack_positions(info)
+	apply_compact_header(info)
+	sync_damage_layout(info)
+end
+
+-- Vanilla Sync_Finale puts stats under desc. If that ran after our stack,
+-- stats sit on the table. Cheap check; no AdjustHeightToText.
+local function stats_overlap_table(info)
+	local panel = info and info.dogma_wpn_damage
+	local stats = info and info.stats_dialog
+	if not (panel and stats and panel.IsShown and panel:IsShown() and stats:IsShown()) then
+		return false
+	end
+	return stats:GetWndPos().y < panel:GetWndPos().y + panel:GetHeight()
 end
 
 -- The details/workshop sheets build stats via utils_ui.get_stats_xml, which
@@ -2865,19 +2878,35 @@ local function uiinfo_update_hook(self, obj, sec, flags)
 	local oid = safe_id(obj)
 	local same_item = (oid and self.id and oid == self.id)
 		or (not obj and sec and self.section == sec)
-	local dirty = self.dogma_layout_dirty
 
 	base_uiinfo_update(self, obj, sec, flags)
 
-	-- Rebuild when the item changes, or when a prior pass left work pending.
-	if not same_item or dirty then
+	-- Once per tooltip. Hover Update is per-frame; do not rebuild on dirty
+	-- while still hidden (that would spam until Show).
+	local dirty = self.dogma_layout_dirty
+	if not same_item then
 		tooltip_logged = {}
-		apply_custom_stat_display(self, obj, sec)
-		apply_compact_header(self)
 		refresh_weapon_damage_panel(self, obj, sec)
-		sync_damage_layout(self)
+		apply_custom_stat_display(self, obj, sec)
+		restack_positions(self)
+		self.dogma_layout_dirty = not (self.IsShown and self:IsShown())
+	elseif dirty and self.IsShown and self:IsShown() then
+		restack_positions(self)
+		self.dogma_layout_dirty = false
+	elseif stats_overlap_table(self) then
+		restack_positions(self)
 	end
 	dogma.perf.stop()
+end
+
+local function uiinfo_show_hook(self, state)
+	if base_uiinfo_show then
+		base_uiinfo_show(self, state)
+	end
+	if state and self.dogma_layout_dirty then
+		restack_positions(self)
+		self.dogma_layout_dirty = false
+	end
 end
 
 local ui_hooks_ok = false
@@ -2902,6 +2931,15 @@ local function install_ui_hooks()
 	if not base_uiinfo_init then
 		base_uiinfo_init = utils_ui.UIInfoItem.__init
 		utils_ui.UIInfoItem.__init = uiinfo_init_hook
+	end
+
+	-- Pass/hover calls Update while hidden, then Show(true). Restack after
+	-- Show so desc/stats heights are the ones the player actually sees.
+	if utils_ui.UIInfoItem.Show and utils_ui.UIInfoItem.Show ~= uiinfo_show_hook then
+		if not base_uiinfo_show then
+			base_uiinfo_show = utils_ui.UIInfoItem.Show
+		end
+		utils_ui.UIInfoItem.Show = uiinfo_show_hook
 	end
 
 	ui_hooks_ok = true

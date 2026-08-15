@@ -1,0 +1,436 @@
+--[[
+	PDA Filters
+
+	Hides selected PDA / Dynamic News classes. Story/quest give_game_news
+	and xpda.send paths are untouched.
+
+	- Hostile faction nets + open-channel tips about hostiles
+	- PAW waypoint complete/fail tips
+	- Dynamic News producers (witness kills, loot, weather, …)
+]]
+
+local CONFIG = _G.dogma_gui_pda_filters_conf
+
+local FACTIONS = {
+	stalker = true,
+	monolith = true,
+	csky = true,
+	army = true,
+	killer = true,
+	ecolog = true,
+	dolg = true,
+	freedom = true,
+	bandit = true,
+	greh = true,
+	isg = true,
+	renegade = true,
+}
+
+-- DNM method name -> hide_* key. Missing methods are skipped.
+local DNM_METHODS = {
+	SeenDeathOfMutant = "hide_death_mutant",
+	GossipDeathOfMutant = "hide_death_mutant",
+	SeenDeathOfStalker = "hide_death_stalker",
+	GossipDeathByStalker = "hide_death_stalker",
+	SeenDeathByMutant = "hide_death_stalker",
+	ResponseOnDeathByStalker = "hide_death_stalker",
+	ResponseOnDeathByStalker_Fake = "hide_death_stalker",
+	ResponseOnDeathByMutant = "hide_death_stalker",
+	ResponseOnDeathByMutant_Fake = "hide_death_stalker",
+	GossipNearbyActivity = "hide_nearby_activity",
+	ResponseOnGossipNearbyActivity = "hide_nearby_activity",
+	SOSBattleOffline = "hide_nearby_activity",
+	DeathByStalker = "hide_generic_death",
+	DeathByMutant = "hide_generic_death",
+	DeathBySurge = "hide_generic_death",
+	ReportDeathByMutant = "hide_death_report",
+	ReportDeathByStalker = "hide_death_report",
+	ReportDeathBySurge = "hide_death_report",
+	FoundDead = "hide_found_dead",
+	KillWounded = "hide_kill_wounded",
+	GossipLoot = "hide_loot_corpse",
+	BoughtItems = "hide_loot_trade",
+	UpgradedItems = "hide_loot_upgrade",
+	FoundStash = "hide_loot_stash",
+	ResponseOnFoundStash = "hide_loot_stash",
+	FoundArtefact = "hide_artifact",
+	ResponseOnFoundArtefact = "hide_artifact",
+	GossipBounty = "hide_bounty",
+	CompanionAboutActor = "hide_companions",
+	CompanionAboutLevel = "hide_companions",
+	CompanionAboutLife = "hide_companions",
+	SpamRandom = "hide_random",
+	GossipWeather = "hide_weather",
+	GossipTime = "hide_time",
+	ReportZoneActivity = "hide_zone_activity",
+	GossipEmissionEnd = "hide_surge",
+	ReportNextEmission = "hide_surge",
+	ResponseOnDeathBySurges = "hide_surge",
+	ResponseOnDeathBySurges_Fake = "hide_surge",
+	DumbZombie = "hide_dumb_zombie",
+	ResponseOnDumbZombie = "hide_dumb_zombie",
+	RadioInHeli = "hide_heli",
+	ReportByFaction = "hide_faction_report",
+}
+
+local se_label_to_faction = nil
+local logged_highlight = false
+
+local YELLOW = "%c[255,255,255,0]"
+local RESET = "%c[default]"
+
+local function log(msg)
+	if dogma.dbg.logging() then
+		dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
+	end
+end
+
+local function hidden(key)
+	return CONFIG.loaded[key] == true
+end
+
+local function reload()
+	for key, def in pairs(CONFIG.DEFAULTS) do
+		CONFIG.loaded[key] = dogma.mcm.bool(CONFIG.MOD_ID, key, def)
+	end
+end
+
+local function dnm_class()
+	if DynamicNewsManager and type(DynamicNewsManager.PushToChannel) == "function" then
+		return DynamicNewsManager
+	end
+	local mod = rawget(_G, "dynamic_news_manager")
+	if mod and mod.DynamicNewsManager and type(mod.DynamicNewsManager.PushToChannel) == "function" then
+		return mod.DynamicNewsManager
+	end
+	return nil
+end
+
+local function normalize_faction(comm)
+	if type(comm) ~= "string" or comm == "" or comm == "none" then
+		return nil
+	end
+	if string.sub(comm, 1, 6) == "actor_" then
+		comm = string.sub(comm, 7)
+	end
+	local base = string.match(comm, "^(.+)_npc$") or comm
+	if not FACTIONS[base] then
+		return nil
+	end
+	return base
+end
+
+local function actor_faction()
+	local fn = rawget(_G, "get_actor_true_community") or get_actor_true_community
+	local comm = fn and fn() or nil
+	if not comm and db and db.actor then
+		local ok, c = pcall(function()
+			return db.actor:character_community()
+		end)
+		comm = ok and c or nil
+	end
+	return normalize_faction(comm)
+end
+
+local function is_hostile_faction(faction)
+	if not faction then
+		return false
+	end
+	local actor_comm = actor_faction()
+	if not actor_comm or actor_comm == faction then
+		return false
+	end
+	local gr = rawget(_G, "game_relations") or game_relations
+	if not (gr and gr.is_factions_enemies) then
+		return false
+	end
+	return gr.is_factions_enemies(actor_comm, faction)
+end
+
+local function channel_faction(name)
+	if type(name) ~= "string" or name == "" or name == "general" then
+		return nil
+	end
+	return normalize_faction(name)
+end
+
+local function community_of_ref(ref)
+	if ref == nil then
+		return nil
+	end
+
+	local function from_se(se)
+		if not se then
+			return nil
+		end
+		local ok, c = pcall(function()
+			if xcreature and xcreature.community then
+				return xcreature.community(se)
+			end
+			return se:community()
+		end)
+		return ok and normalize_faction(c) or nil
+	end
+
+	if type(ref) == "number" then
+		return from_se(alife_object and alife_object(ref))
+	end
+
+	local ok_go, c = pcall(function()
+		if ref.character_community then
+			return ref:character_community()
+		end
+		if ref.community then
+			return ref:community()
+		end
+		return nil
+	end)
+	if ok_go then
+		local fac = normalize_faction(c)
+		if fac then
+			return fac
+		end
+	end
+
+	local ok_id, id = pcall(function()
+		return ref:id()
+	end)
+	if ok_id and type(id) == "number" then
+		return from_se(alife_object and alife_object(id))
+	end
+
+	return from_se(ref)
+end
+
+local function ensure_se_labels()
+	if se_label_to_faction then
+		return
+	end
+	se_label_to_faction = {}
+	for fac in pairs(FACTIONS) do
+		local key6 = "st_dyn_news_comm_" .. fac .. "_6"
+		local label6 = game.translate_string(key6)
+		if label6 and label6 ~= "" and label6 ~= key6 then
+			se_label_to_faction[label6] = fac
+		end
+		local keyf = "st_faction_" .. fac
+		local labelf = game.translate_string(keyf)
+		if labelf and labelf ~= "" and labelf ~= keyf then
+			se_label_to_faction[labelf] = fac
+		end
+	end
+end
+
+local function faction_from_se_header(se)
+	if type(se) ~= "string" or se == "" then
+		return nil
+	end
+	ensure_se_labels()
+	local after = string.match(se, ",%s*(.+)$")
+	if after then
+		local fac = se_label_to_faction[after]
+		if fac then
+			return fac
+		end
+		local last = string.match(after, "([^,]+)$")
+		last = last and string.match(last, "^%s*(.-)%s*$")
+		fac = last and se_label_to_faction[last]
+		if fac then
+			return fac
+		end
+	end
+	return se_label_to_faction[se]
+end
+
+local function payload_faction(t)
+	if type(t) ~= "table" then
+		return nil
+	end
+	local from_id = community_of_ref(t.Id)
+	if from_id then
+		return from_id
+	end
+	local from_ic = normalize_faction(t.Ic)
+	if from_ic then
+		return from_ic
+	end
+	return faction_from_se_header(t.Se)
+end
+
+local function should_drop_hostile(name, t)
+	if is_hostile_faction(channel_faction(name)) then
+		return true
+	end
+	if name == "general" then
+		return is_hostile_faction(payload_faction(t))
+	end
+	return false
+end
+
+local function wrap_push(cls)
+	if not cls or type(cls.PushToChannel) ~= "function" or cls.__dogma_pda_filters_push then
+		return false
+	end
+	local orig = cls.PushToChannel
+	cls.PushToChannel = function(self, name, t, fifo)
+		if hidden("hide_hostile") and should_drop_hostile(name, t) then
+			return false
+		end
+		return orig(self, name, t, fifo)
+	end
+	cls.__dogma_pda_filters_push = true
+	return true
+end
+
+local function wrap_send_tip()
+	local h = rawget(_G, "dynamic_news_helper")
+	if not h or type(h.send_tip) ~= "function" or h.__dogma_pda_filters then
+		return false
+	end
+	local orig = h.send_tip
+	h.send_tip = function(msg, header, timeout, showtime, sender, sound, icon_by)
+		if hidden("hide_hostile") then
+			local fac = faction_from_se_header(header)
+			if not fac and icon_by == "gr" then
+				fac = normalize_faction(sender)
+			end
+			if is_hostile_faction(fac) then
+				return false
+			end
+		end
+		return orig(msg, header, timeout, showtime, sender, sound, icon_by)
+	end
+	h.__dogma_pda_filters = true
+	return true
+end
+
+local function wrap_dnm_methods(cls)
+	if not cls then
+		return false
+	end
+	local hooked = false
+	for name, key in pairs(DNM_METHODS) do
+		local orig = cls[name]
+		if type(orig) == "function" and not cls["__dogma_pda_f_" .. name] then
+			local filter_key = key
+			cls[name] = function(...)
+				if hidden(filter_key) then
+					return false
+				end
+				return orig(...)
+			end
+			cls["__dogma_pda_f_" .. name] = true
+			hooked = true
+		end
+	end
+	return hooked
+end
+
+local function wrap_name_yellow(text, name)
+	local ssub = string.sub
+	local lower_text = string.lower(text)
+	local lower_name = string.lower(name)
+	local nlen = #name
+	local ylen = #YELLOW
+	local out = ""
+	local i = 1
+	local found = false
+	while true do
+		local pos = string.find(lower_text, lower_name, i, true)
+		if not pos then
+			if not found then
+				return nil
+			end
+			return out .. ssub(text, i)
+		end
+		if pos > ylen and ssub(text, pos - ylen, pos - 1) == YELLOW then
+			out = out .. ssub(text, i, pos + nlen - 1)
+			i = pos + nlen
+		else
+			out = out .. ssub(text, i, pos - 1)
+				.. YELLOW .. ssub(text, pos, pos + nlen - 1) .. RESET
+			i = pos + nlen
+			found = true
+		end
+	end
+end
+
+local function highlight_wnd(wnd, name)
+	if not (wnd and wnd.GetText and wnd.SetText) then
+		return
+	end
+	local text = wnd:GetText()
+	if not text or text == "" then
+		return
+	end
+	local wrapped = wrap_name_yellow(text, name)
+	if not wrapped then
+		return
+	end
+	wnd:SetText(wrapped)
+	if not logged_highlight then
+		logged_highlight = true
+		dogma.console.say("PDA name highlighted in tip", "blue")
+	end
+end
+
+local function on_news_received(_, _, caption, msg)
+	if not CONFIG.loaded.highlight_name or not db.actor then
+		return
+	end
+	local name = db.actor:character_name()
+	if not name or name == "" then
+		return
+	end
+	highlight_wnd(caption, name)
+	highlight_wnd(msg, name)
+end
+
+local function wrap_waypoint()
+	if not (news_manager and type(news_manager.send_task) == "function") then
+		return false
+	end
+	if news_manager.__dogma_pda_filters_wp then
+		return true
+	end
+	local orig = news_manager.send_task
+	news_manager.send_task = function(actor, typ, tsk)
+		if hidden("hide_waypoint") and (typ == "complete" or typ == "fail" or typ == "reversed") then
+			if tsk and tsk.get_id and tsk:get_id() == "task_placeable_waypoint" then
+				return false
+			end
+		end
+		return orig(actor, typ, tsk)
+	end
+	news_manager.__dogma_pda_filters_wp = true
+	return true
+end
+
+local function patch()
+	local cls = dnm_class()
+	local hooked = wrap_push(cls)
+	hooked = wrap_dnm_methods(cls) or hooked
+	hooked = wrap_send_tip() or hooked
+	hooked = wrap_waypoint() or hooked
+	if hooked then
+		log("hooked")
+	end
+	return hooked
+end
+
+function on_game_start()
+	dogma.load(CONFIG.MOD_ID)
+	se_label_to_faction = nil
+	logged_highlight = false
+	reload()
+	patch()
+	RegisterScriptCallback("on_news_received", on_news_received)
+	RegisterScriptCallback("actor_on_first_update", patch)
+	RegisterScriptCallback("on_option_change", reload)
+	RegisterScriptCallback("on_game_load", function()
+		se_label_to_faction = nil
+		logged_highlight = false
+		reload()
+		patch()
+	end)
+end

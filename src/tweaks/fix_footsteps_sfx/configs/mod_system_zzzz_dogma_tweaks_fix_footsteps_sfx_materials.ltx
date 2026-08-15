@@ -24,9 +24,6 @@ material = creatures\medium
 ![m_controller_e]
 material = creatures\medium
 
-![m_flesh_e]
-material = creatures\medium
-
 ; --- fast ---
 ![m_snork_e]
 material = creatures\fast
@@ -37,12 +34,18 @@ material = creatures\fast
 ![fracture_normal]
 material = creatures\fast
 
+![m_bibliotekar_e]
+material = creatures\fast
+
 ; --- lurker ---
 ![m_lurker_e]
 material = creatures\lurker
 
-; --- hoof ---
+; --- hoof (flesh is vanilla hoof; medium paws made them inaudible) ---
 ![m_boar_e]
+material = creatures\hoof
+
+![m_flesh_e]
 material = creatures\hoof
 
 ; --- chimera ---
@@ -69,9 +72,37 @@ material = creatures\human
 ![m_zombie_e]
 material = creatures\human
 
-; Chimera: fewer step triggers so bank does not machine-gun.
+; Cat: Larkin names the run `stand_run_fwd_0`; the model uses vanilla `stand_run_0`,
+; so sprint played no steps. Same timings, louder power so the paw bank carries.
+![cat_step_params]
+stand_walk_fwd_0		=   3,   0.70,    1.6,    0.25,    1.2,    0.90,    1.6,    0.40,    1.6
+stand_walk_dmg_0		=   3,   0.80,    1.6,    0.25,    1.2,    0.70,    1.6,    0.20,    0.8
+stand_run_0				=   1,   0.97,    1.6,    0.25,    1.2,    0.50,    1.6,    0.40,    1.6
+stand_run_fwd_0			=   1,   0.97,    1.6,    0.25,    1.2,    0.50,    1.6,    0.40,    1.6
+stand_run_dmg_0			=   4,   0.50,    1.6,    0.20,    1.2,    0.50,    1.6,    0.70,    0.0
+
+; Chimera: vanilla walk is `stand_walk_0`; Larkin only has `stand_walk_fwd_0`.
+; Fewer cycles so the chimera bank does not machine-gun.
 ![m_chimera_step_params]
+stand_walk_0 			=   1,    0.53,    1.0,    0.01,    0.7,   0.53,    0.7,    0.01,    1.0
 stand_walk_fwd_0 		=   1,    0.53,    1.0,    0.01,    0.7,   0.53,    0.7,    0.01,    1.0
 stand_walk_fwd_dmg_0 	=   1,    0.63,    1.0,    0.96,    0.7,   0.36,    0.7,    0.97,    0.5
 stand_run_fwd_0	 		=   2,    0.15,    1.0,    0.25,    0.6,   0.01,    0.6,    0.90,    1.0
 stand_run_dmg_0	 		=   2,    0.15,    1.0,    0.40,    0.6,   0.01,    0.6,    0.01,    0.0
+
+; Fracture: vanilla run is `stand_run_fwd_0`; Larkin only has `stand_run_0`.
+![fracture_normal_step_params]
+stand_run_fwd_0					=   1,    0.60,    1.0,    0.36,    0.6,    0.32,    1.0,    0.12,    0.6
+
+; Zombie: vanilla run is `stand_run_fwd_0`; Larkin only has `stand_run_0/1/2`.
+![m_zombie_step_params]
+stand_run_fwd_0	 	=   3,    0.01,    1.0,    0.60,    0.6
+
+; Tushkano: Larkin set every step to 0.25 after we put them on medium to be heard.
+![m_tushkano_step_params]
+stand_walk_fwd_0 		=   1,    0.01,    1.0,    0.01,    1.0,    0.63,    1.0,    0.63,    1.0
+stand_walk_fwd_1 		=   1,    0.14,    1.0,    0.66,    1.0,    0.12,    1.0,    0.66,    1.0
+stand_walk_fwd_dmg_0	=   1,    0.00,    0.0,    0.01,    1.0,    0.50,    1.0,    0.63,    1.0
+stand_run_0	 			=   1,    0.31,    1.0,    0.44,    1.0,    0.97,    1.0,    0.44,    1.0
+stand_run_1	 			=   1,    0.00,    0.0,    0.00,    0.0,    0.97,    1.0,    0.44,    1.0
+stand_run_dmg_0	 		=   1,    0.00,    0.0,    0.36,    1.0,    0.12,    1.0,    0.01,    1.0

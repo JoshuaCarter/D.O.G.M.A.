@@ -1,0 +1,91 @@
+-- gui/pda_filters conf
+-- Check = hide that PDA / Dynamic News class. Existing DOGMA filters
+-- stay on by default; combat-witness spam is also hidden by default.
+
+_G.dogma_gui_pda_filters_conf = {
+	MOD_ID = "dogma/gui/pda_filters",
+	DEFAULTS = {
+		highlight_name = true,
+		hide_hostile = true,
+		hide_waypoint = true,
+		hide_death_mutant = true,
+		hide_death_stalker = true,
+		hide_nearby_activity = true,
+		hide_generic_death = false,
+		hide_death_report = false,
+		hide_found_dead = false,
+		hide_kill_wounded = false,
+		hide_loot_corpse = true,
+		hide_loot_stash = true,
+		hide_loot_trade = true,
+		hide_loot_upgrade = true,
+		hide_artifact = false,
+		hide_bounty = false,
+		hide_companions = false,
+		hide_random = false,
+		hide_weather = false,
+		hide_time = false,
+		hide_zone_activity = false,
+		hide_surge = false,
+		hide_dumb_zombie = false,
+		hide_heli = false,
+		hide_faction_report = false,
+	},
+	loaded = {},
+}
+
+function on_mcm_load(options)
+	local CONFIG = _G.dogma_gui_pda_filters_conf
+
+	local function check(id)
+		return {
+			id = id,
+			type = "check",
+			val = 1,
+			def = CONFIG.DEFAULTS[id],
+			hint = "dogma_gui_pda_filters_" .. id,
+		}
+	end
+
+	dogma_mcm.attach(options, "gui", "ui_mcm_menu_dogma_gui", {
+		id = "pda_filters",
+		sh = true,
+		text = "ui_mcm_menu_dogma_gui_pda_filters",
+		gr = dogma_mcm.with_header({
+			{
+				id = "page_description",
+				type = "desc",
+				text = "ui_mcm_dogma_gui_pda_filters_page_description",
+			},
+			check("highlight_name"),
+			{ id = "section_dogma", type = "line" },
+			check("hide_hostile"),
+			check("hide_waypoint"),
+			{ id = "section_combat", type = "line" },
+			check("hide_death_mutant"),
+			check("hide_death_stalker"),
+			check("hide_nearby_activity"),
+			check("hide_generic_death"),
+			check("hide_death_report"),
+			check("hide_found_dead"),
+			check("hide_kill_wounded"),
+			{ id = "section_loot", type = "line" },
+			check("hide_loot_corpse"),
+			check("hide_loot_stash"),
+			check("hide_loot_trade"),
+			check("hide_loot_upgrade"),
+			check("hide_artifact"),
+			{ id = "section_world", type = "line" },
+			check("hide_bounty"),
+			check("hide_companions"),
+			check("hide_random"),
+			check("hide_weather"),
+			check("hide_time"),
+			check("hide_zone_activity"),
+			check("hide_surge"),
+			check("hide_dumb_zombie"),
+			check("hide_heli"),
+			check("hide_faction_report"),
+		}),
+	})
+end

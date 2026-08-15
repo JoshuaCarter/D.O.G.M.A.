@@ -1289,25 +1289,25 @@ local function on_option_change()
 	if headers == "raw" or headers == "raw100" or headers == "names" then
 		CONFIG.loaded.column_headers = headers
 	else
-		CONFIG.loaded.column_headers = CONFIG.DEFAULTS["column_headers"]
+		CONFIG.loaded.column_headers = CONFIG.DEFAULTS.column_headers
 	end
 	local scale_from = dogma.mcm.string(CONFIG.MOD_ID, "color_scale_from")
 	if scale_from == "white" or scale_from == "grey" or scale_from == "darkgrey" then
 		CONFIG.loaded.color_scale_from = scale_from
 	else
-		CONFIG.loaded.color_scale_from = CONFIG.DEFAULTS["color_scale_from"]
+		CONFIG.loaded.color_scale_from = CONFIG.DEFAULTS.color_scale_from
 	end
 	local order = dogma.mcm.string(CONFIG.MOD_ID, "ammo_order")
 	if order == "ap" or order == "damage" or order == "default" then
 		CONFIG.loaded.ammo_order = order
 	else
-		CONFIG.loaded.ammo_order = CONFIG.DEFAULTS["ammo_order"]
+		CONFIG.loaded.ammo_order = CONFIG.DEFAULTS.ammo_order
 	end
 	local place = dogma.mcm.string(CONFIG.MOD_ID, "stat_row_placement")
 	if place == "after" or place == "start" or place == "inline" then
 		CONFIG.loaded.stat_row_placement = place
 	else
-		CONFIG.loaded.stat_row_placement = CONFIG.DEFAULTS["stat_row_placement"]
+		CONFIG.loaded.stat_row_placement = CONFIG.DEFAULTS.stat_row_placement
 	end
 	CONFIG.loaded.compact_header = dogma.mcm.bool(CONFIG.MOD_ID, "compact_header")
 	CONFIG.loaded.hide_description = dogma.mcm.bool(CONFIG.MOD_ID, "hide_description")

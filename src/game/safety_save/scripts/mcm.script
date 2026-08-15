@@ -2,27 +2,18 @@
 -- always_min: force a safety_save after this many minutes (0 = off).
 -- event_min: min minutes since last safety_save before inventory / full heal / eat / drink can save.
 
-local defaults = {
-	["always_min"] = 10,
-	["event_min"] = 3,
-	["show_text"] = true,
-	["on_inventory"] = true,
-	["on_heal"] = true,
-	["on_eat"] = true,
-	["on_drink"] = true,
-}
-
 _G.dogma_game_safety_save_conf = {
 	MOD_ID = "dogma/game/safety_save",
-	DEFAULTS = defaults,
+	DEFAULTS = {
+		always_min = 10,
+		event_min = 3,
+		show_text = true,
+		on_inventory = true,
+		on_heal = true,
+		on_eat = true,
+		on_drink = true,
+	},
 	loaded = {
-		always_min = defaults["always_min"],
-		event_min = defaults["event_min"],
-		show_text = defaults["show_text"],
-		on_inventory = defaults["on_inventory"],
-		on_heal = defaults["on_heal"],
-		on_eat = defaults["on_eat"],
-		on_drink = defaults["on_drink"],
 		debug_log = false,
 	},
 }
@@ -46,7 +37,7 @@ function on_mcm_load(options)
 				min = 0,
 				max = 30,
 				step = 1,
-				def = CONFIG.DEFAULTS["always_min"],
+				def = CONFIG.DEFAULTS.always_min,
 				hint = "dogma_game_safety_save_always_min",
 			},
 			{
@@ -56,42 +47,42 @@ function on_mcm_load(options)
 				min = 1,
 				max = 15,
 				step = 1,
-				def = CONFIG.DEFAULTS["event_min"],
+				def = CONFIG.DEFAULTS.event_min,
 				hint = "dogma_game_safety_save_event_min",
 			},
 			{
 				id = "show_text",
 				type = "check",
 				val = 1,
-				def = CONFIG.DEFAULTS["show_text"],
+				def = CONFIG.DEFAULTS.show_text,
 				hint = "dogma_game_safety_save_show_text",
 			},
 			{
 				id = "on_inventory",
 				type = "check",
 				val = 1,
-				def = CONFIG.DEFAULTS["on_inventory"],
+				def = CONFIG.DEFAULTS.on_inventory,
 				hint = "dogma_game_safety_save_on_inventory",
 			},
 			{
 				id = "on_heal",
 				type = "check",
 				val = 1,
-				def = CONFIG.DEFAULTS["on_heal"],
+				def = CONFIG.DEFAULTS.on_heal,
 				hint = "dogma_game_safety_save_on_heal",
 			},
 			{
 				id = "on_eat",
 				type = "check",
 				val = 1,
-				def = CONFIG.DEFAULTS["on_eat"],
+				def = CONFIG.DEFAULTS.on_eat,
 				hint = "dogma_game_safety_save_on_eat",
 			},
 			{
 				id = "on_drink",
 				type = "check",
 				val = 1,
-				def = CONFIG.DEFAULTS["on_drink"],
+				def = CONFIG.DEFAULTS.on_drink,
 				hint = "dogma_game_safety_save_on_drink",
 			},
 		}),

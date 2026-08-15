@@ -269,8 +269,8 @@ local function on_option_change()
 	CONFIG.loaded.debug_overlay = dogma.dbg.overlay_enabled()
 	CONFIG.loaded.enabled = dogma.mcm.bool(CONFIG.MOD_ID, "enable")
 	CONFIG.loaded.max_alpha = dogma.mcm.float(CONFIG.MOD_ID, "max_alpha")
-	CONFIG.loaded.style = dogma.mcm.int(CONFIG.MOD_ID, "style", CONFIG.DEFAULTS["style"])
-	CONFIG.loaded.scale = dogma.mcm.int(CONFIG.MOD_ID, "scale", CONFIG.DEFAULTS["scale"])
+	CONFIG.loaded.style = dogma.mcm.int(CONFIG.MOD_ID, "style", CONFIG.DEFAULTS.style)
+	CONFIG.loaded.scale = dogma.mcm.int(CONFIG.MOD_ID, "scale", CONFIG.DEFAULTS.scale)
 	dogma.dbg.set_enabled(CONFIG.MOD_ID, dogma.dbg.overlay_enabled())
 	if not CONFIG.loaded.enabled then
 		clear_all()
@@ -299,7 +299,7 @@ local function on_actor_on_update()
 
 	local bleed = actor.bleeding or 0
 	local target_layers = wound_layers(bleed)
-	local max_alpha = dogma.math.clamp01(CONFIG.loaded.max_alpha or CONFIG.DEFAULTS["max_alpha"])
+	local max_alpha = dogma.math.clamp01(CONFIG.loaded.max_alpha or CONFIG.DEFAULTS.max_alpha)
 	if max_alpha <= 0 then
 		target_layers = 0
 	end
@@ -315,9 +315,9 @@ local function on_actor_on_update()
 		appearance = 0
 	end
 
-	local scale_idx = CONFIG.loaded.scale or CONFIG.DEFAULTS["scale"]
+	local scale_idx = CONFIG.loaded.scale or CONFIG.DEFAULTS.scale
 	if scale_idx < 0 or scale_idx >= #CONFIG.SCALES then
-		scale_idx = CONFIG.DEFAULTS["scale"]
+		scale_idx = CONFIG.DEFAULTS.scale
 	end
 
 	if active_appearance ~= appearance then

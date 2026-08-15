@@ -1,18 +1,14 @@
 -- input/drop conf - shared loaded options for drop scripts.
 
-local defaults = {
-	["drop_safe_equipped"] = true,
-	["key_drop"] = -1,
-	["key_drop_mode"] = 2,
-	["key_drop_modifier"] = 0,
-}
-
 _G.dogma_input_drop_conf = {
 	MOD_ID = "dogma/input/drop",
-	DEFAULTS = defaults,
-	loaded = {
-		drop_safe_equipped = defaults["drop_safe_equipped"],
+	DEFAULTS = {
+		drop_safe_equipped = true,
+		key_drop = -1,
+		key_drop_mode = 2,
+		key_drop_modifier = 0,
 	},
+	loaded = {},
 }
 
 function _G.dogma_input_drop_conf:ensure_dogma()
@@ -81,7 +77,7 @@ function on_mcm_load(options)
 				id = "drop_safe_equipped",
 				type = "check",
 				val = 1,
-				def = CONFIG.DEFAULTS["drop_safe_equipped"],
+				def = CONFIG.DEFAULTS.drop_safe_equipped,
 				hint = "dogma_input_drop_drop_safe_equipped",
 			},
 		}),

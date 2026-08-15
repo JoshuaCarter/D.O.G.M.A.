@@ -1,22 +1,18 @@
 -- game/true_prone conf
 
-local defaults = {
-	["hide_prone_bones"] = true,
-	["prone_damage_mult"] = 1.1,
-}
-
 _G.dogma_game_true_prone_conf = {
 	MOD_ID = "dogma/game/true_prone",
-	DEFAULTS = defaults,
+	DEFAULTS = {
+		hide_prone_bones = true,
+		prone_damage_mult = 1.1,
+	},
 	loaded = {
 		enabled = true,
 		debug_log = true,
 		debug_overlay = false,
-		hide_prone_bones = defaults["hide_prone_bones"],
 		cam_height_stand = 1.65,
 		cam_height_crouch = 1.2,
 		cam_height_prone = 0.45,
-		prone_damage_mult = defaults["prone_damage_mult"],
 	},
 }
 
@@ -36,7 +32,7 @@ function on_mcm_load(options)
 				id = "hide_prone_bones",
 				type = "check",
 				val = 1,
-				def = CONFIG.DEFAULTS["hide_prone_bones"],
+				def = CONFIG.DEFAULTS.hide_prone_bones,
 				hint = "dogma_game_true_prone_hide_prone_bones",
 			},
 			{
@@ -46,7 +42,7 @@ function on_mcm_load(options)
 				min = 1.1,
 				max = 1.5,
 				step = 0.05,
-				def = CONFIG.DEFAULTS["prone_damage_mult"],
+				def = CONFIG.DEFAULTS.prone_damage_mult,
 				hint = "dogma_game_true_prone_prone_damage_mult",
 			},
 		}),

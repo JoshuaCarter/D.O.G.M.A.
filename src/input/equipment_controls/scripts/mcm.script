@@ -2,19 +2,16 @@
 -- Stock detector/geiger/torch: MCM key_mirror ↔ Settings → Controls.
 -- RF / Measurement / Glowstick: standalone MCM key_bind (DIK in axr_options, not engine customs).
 
-local defaults = {
-	["auto_bolt_on_detector"] = true,
-	["key_radio"] = -1,
-	["key_anomaly"] = -1,
-	["key_glowstick"] = -1,
-}
-
 _G.dogma_input_equipment_controls_conf = {
 	MOD_ID = "dogma/input/equipment_controls",
-	DEFAULTS = defaults,
+	DEFAULTS = {
+		auto_bolt_on_detector = true,
+		key_radio = -1,
+		key_anomaly = -1,
+		key_glowstick = -1,
+	},
 	loaded = {
 		enabled = true,
-		auto_bolt_on_detector = defaults["auto_bolt_on_detector"],
 		key_radio = nil,
 		key_anomaly = nil,
 		key_glowstick = nil,
@@ -52,7 +49,7 @@ function on_mcm_load(options)
 				id = "auto_bolt_on_detector",
 				type = "check",
 				val = 1,
-				def = CONFIG.DEFAULTS["auto_bolt_on_detector"],
+				def = CONFIG.DEFAULTS.auto_bolt_on_detector,
 				hint = "dogma_input_equipment_controls_auto_bolt_on_detector",
 			},
 			dogma_mcm.mcm.key_mirror("show_detector", function()

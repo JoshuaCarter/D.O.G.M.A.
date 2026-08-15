@@ -1,26 +1,19 @@
 -- game/ammo_selector conf
 -- Hold mode: MCM ammo_key (overlaps OK). Toggle: vanilla wpn_next in Settings→Controls.
 
-local defaults = {
-	-- Hold-mode key (MCM-only; may overlap engine binds). Unbound until set.
-	["ammo_key"] = -1,
-	-- 0 = toggle (vanilla release-open), 2 = hold (open on down, close on up)
-	["mode"] = 2,
-	-- Hold only: ms to wait before opening (release before this = no open).
-	["hold_delay_ms"] = 200,
-	-- Hold only: release while hovering a slot selects it (like a click).
-	["select_on_release"] = true,
-}
-
 _G.dogma_game_ammo_selector_conf = {
 	MOD_ID = "dogma/game/ammo_selector",
-	DEFAULTS = defaults,
-	loaded = {
-		ammo_key = defaults["ammo_key"],
-		mode = defaults["mode"],
-		hold_delay_ms = defaults["hold_delay_ms"],
-		select_on_release = defaults["select_on_release"],
+	DEFAULTS = {
+		-- Hold-mode key (MCM-only; may overlap engine binds). Unbound until set.
+		ammo_key = -1,
+		-- 0 = toggle (vanilla release-open), 2 = hold (open on down, close on up)
+		mode = 2,
+		-- Hold only: ms to wait before opening (release before this = no open).
+		hold_delay_ms = 200,
+		-- Hold only: release while hovering a slot selects it (like a click).
+		select_on_release = true,
 	},
+	loaded = {},
 }
 
 -- Ammo Selector MCM — Hold mode key + Toggle / Hold mode.
@@ -43,14 +36,14 @@ function on_mcm_load(options)
 				id = "ammo_key",
 				type = "key_bind",
 				val = 2,
-				def = CONFIG.DEFAULTS["ammo_key"],
+				def = CONFIG.DEFAULTS.ammo_key,
 				hint = "dogma_game_ammo_selector_ammo_key",
 			},
 			{
 				id = "mode",
 				type = kb_mod,
 				val = 2,
-				def = CONFIG.DEFAULTS["mode"],
+				def = CONFIG.DEFAULTS.mode,
 				hint = "dogma_game_ammo_selector_mode",
 				content = {
 					{ 0, "toggle" },
@@ -64,14 +57,14 @@ function on_mcm_load(options)
 				min = 0,
 				max = 1000,
 				step = 25,
-				def = CONFIG.DEFAULTS["hold_delay_ms"],
+				def = CONFIG.DEFAULTS.hold_delay_ms,
 				hint = "dogma_game_ammo_selector_hold_delay_ms",
 			},
 			{
 				id = "select_on_release",
 				type = "check",
 				val = 1,
-				def = CONFIG.DEFAULTS["select_on_release"],
+				def = CONFIG.DEFAULTS.select_on_release,
 				hint = "dogma_game_ammo_selector_select_on_release",
 			},
 		}),

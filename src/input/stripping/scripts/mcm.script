@@ -1,21 +1,17 @@
 -- input/stripping conf - shared loaded options for all strip scripts.
 
-local defaults = {
-	["block_companion_special_items"] = true,
-	["intercept_disassemble"] = true,
-	["keep_parts_with_weapon"] = true,
-	["key"] = -1,
-	["key_mode"] = 0,
-	["key_modifier"] = 0,
-}
-
 _G.dogma_input_stripping_conf = {
 	MOD_ID = "dogma/input/stripping",
-	DEFAULTS = defaults,
+	DEFAULTS = {
+		block_companion_special_items = true,
+		intercept_disassemble = true,
+		keep_parts_with_weapon = true,
+		key = -1,
+		key_mode = 0,
+		key_modifier = 0,
+	},
 	loaded = {
-		intercept_disassemble = defaults["intercept_disassemble"],
-		keep_parts_with_weapon = defaults["keep_parts_with_weapon"],
-		block_special_items = defaults["block_companion_special_items"],
+		block_special_items = true,
 	},
 }
 
@@ -82,7 +78,7 @@ function on_mcm_load(options)
 				id = "intercept_disassemble",
 				type = "check",
 				val = 1,
-				def = CONFIG.DEFAULTS["intercept_disassemble"],
+				def = CONFIG.DEFAULTS.intercept_disassemble,
 				hint = "dogma_input_stripping_intercept_disassemble",
 			},
 			kb_bind("key", "dogma_input_stripping_key"),
@@ -92,14 +88,14 @@ function on_mcm_load(options)
 				id = "keep_parts_with_weapon",
 				type = "check",
 				val = 1,
-				def = CONFIG.DEFAULTS["keep_parts_with_weapon"],
+				def = CONFIG.DEFAULTS.keep_parts_with_weapon,
 				hint = "dogma_input_stripping_keep_parts_with_weapon",
 			},
 			{
 				id = "block_companion_special_items",
 				type = "check",
 				val = 1,
-				def = CONFIG.DEFAULTS["block_companion_special_items"],
+				def = CONFIG.DEFAULTS.block_companion_special_items,
 				hint = "dogma_input_stripping_block_companion_special_items",
 			},
 		}),

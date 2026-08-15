@@ -81,8 +81,14 @@ local function clamp01(v)
 	return v
 end
 
-local function pct_to_byte(pct, mul)
-	return floor(255 * clamp01((tonumber(pct) or 0) / 100) * clamp01(mul) + 0.5)
+local function alpha_byte(a, mul)
+	local v = tonumber(a) or 0
+	if v < 0 then
+		v = 0
+	elseif v > 255 then
+		v = 255
+	end
+	return floor(v * clamp01(mul) + 0.5)
 end
 
 local function on_option_change()
@@ -107,9 +113,6 @@ local function on_option_change()
 	CONFIG.loaded.hide_line_on_pda = dogma.mcm.bool(id, "hide_line_on_pda")
 	CONFIG.loaded.line_keybind = dogma.mcm.key(id, "line_keybind")
 	CONFIG.loaded.line_width_px = dogma.mcm.uint(id, "line_width_px")
-	CONFIG.loaded.line_r = dogma.mcm.uint(id, "line_r")
-	CONFIG.loaded.line_g = dogma.mcm.uint(id, "line_g")
-	CONFIG.loaded.line_b = dogma.mcm.uint(id, "line_b")
 	CONFIG.loaded.line_a = dogma.mcm.uint(id, "line_a")
 end
 
@@ -143,9 +146,9 @@ local function apply_alphas(mul)
 	end
 	fade_mul = clamp01(mul)
 	local cfg = CONFIG.loaded
-	local name_a = pct_to_byte(cfg.name_a, fade_mul)
-	local rank_a = pct_to_byte(cfg.rank_a, fade_mul)
-	local icon_a = pct_to_byte(cfg.icon_a, fade_mul)
+	local name_a = alpha_byte(cfg.name_a, fade_mul)
+	local rank_a = alpha_byte(cfg.rank_a, fade_mul)
+	local icon_a = alpha_byte(cfg.icon_a, fade_mul)
 
 	HUD.name:TextControl():SetTextColor(GetARGB(name_a, name_r, name_g, name_b))
 	HUD.rank:TextControl():SetTextColor(GetARGB(rank_a, rank_r, rank_g, rank_b))
@@ -840,7 +843,7 @@ local function update_leader_line()
 		local mx = (ux + hx) * 0.5
 		local my = (uy + hy) * 0.5
 		local cfg = CONFIG.loaded
-		local a = floor((cfg.line_a or 200) * fade_mul + 0.5)
+		local a = floor((cfg.line_a or 80) * fade_mul + 0.5)
 		if a < 1 then
 			hide_line()
 			break
@@ -857,16 +860,10 @@ local function update_leader_line()
 		HUD.line_sh:SetTextureColor(GetARGB(floor(a * 0.6), 0, 0, 0))
 		HUD.line_sh:Show(true)
 
-		local lr = cfg.line_r or 255
-		local lg = cfg.line_g or 255
-		local lb = cfg.line_b or 255
-		if lr > 255 then lr = 255 end
-		if lg > 255 then lg = 255 end
-		if lb > 255 then lb = 255 end
 		HUD.line:SetWndSize(SIZE_VEC:set(len, thick))
 		HUD.line:SetWndPos(POS_VEC:set(mx - len * 0.5, my - thick * 0.5))
 		HUD.line:SetHeading(ang)
-		HUD.line:SetTextureColor(GetARGB(a, lr, lg, lb))
+		HUD.line:SetTextureColor(GetARGB(a, 255, 255, 255))
 		HUD.line:Show(true)
 	until true
 	dogma.perf.stop()

@@ -5,10 +5,10 @@
 _G.dogma_gui_fx_health_conf = {
 	MOD_ID = "dogma/gui/fx_health",
 	DEFAULTS = {
-		["enable"] = true,
-		["intensity"] = 1.0,
-		["hp_start"] = 0.8,
-		["hp_end"] = 0.1,
+		enable = true,
+		intensity = 1.0,
+		hp_start = 0.8,
+		hp_end = 0.1,
 	},
 	PPE = {
 		name = "dogma_health_desat.ppe",
@@ -33,7 +33,7 @@ function on_mcm_load(options)
 				id = "enable",
 				type = "check",
 				val = 1,
-				def = CONFIG.DEFAULTS["enable"],
+				def = CONFIG.DEFAULTS.enable,
 				hint = "dogma_gui_fx_health_enable",
 			},
 			{
@@ -43,7 +43,7 @@ function on_mcm_load(options)
 				min = 0.5,
 				max = 1,
 				step = 0.05,
-				def = CONFIG.DEFAULTS["hp_start"],
+				def = CONFIG.DEFAULTS.hp_start,
 				hint = "dogma_gui_fx_health_hp_start",
 			},
 			{
@@ -53,7 +53,7 @@ function on_mcm_load(options)
 				min = 0,
 				max = 0.5,
 				step = 0.05,
-				def = CONFIG.DEFAULTS["hp_end"],
+				def = CONFIG.DEFAULTS.hp_end,
 				hint = "dogma_gui_fx_health_hp_end",
 			},
 			{
@@ -63,7 +63,7 @@ function on_mcm_load(options)
 				min = 0,
 				max = 1,
 				step = 0.05,
-				def = CONFIG.DEFAULTS["intensity"],
+				def = CONFIG.DEFAULTS.intensity,
 				hint = "dogma_gui_fx_health_intensity",
 			},
 		}),

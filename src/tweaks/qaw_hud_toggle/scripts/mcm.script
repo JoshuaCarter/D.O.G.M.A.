@@ -1,20 +1,16 @@
 -- tweaks/qaw_hud_toggle conf
 -- Injects Hide HUD into HarukaSai / Balance / Overhaul QAW Controls MCM.
 
-local defaults = {
-	-- Stock QAW uses ShowDialog(true) and hides game indicators.
-	-- Default off so HUD (minimap, etc.) stays visible while the wheel is open.
-	["hide_hud"] = false,
-}
-
 _G.dogma_tweaks_qaw_hud_toggle_conf = {
 	MOD_ID = "dogma/tweaks/qaw_hud_toggle",
 	-- Path under QAW's own MCM tree (Controls tab).
 	QAW_HIDE_HUD_PATH = "haru_quick_action_wheel_mcm/controls/hide_hud",
-	DEFAULTS = defaults,
-	loaded = {
-		hide_hud = defaults["hide_hud"],
+	DEFAULTS = {
+		-- Stock QAW uses ShowDialog(true) and hides game indicators.
+		-- Default off so HUD (minimap, etc.) stays visible while the wheel is open.
+		hide_hud = false,
 	},
+	loaded = {},
 }
 
 --[[
@@ -31,7 +27,7 @@ local HIDE_HUD_OPT = {
 	id = "hide_hud",
 	type = "check",
 	val = 1,
-	def = CONFIG.DEFAULTS["hide_hud"],
+	def = CONFIG.DEFAULTS.hide_hud,
 	hint = "dogma_qaw_hide_hud",
 }
 

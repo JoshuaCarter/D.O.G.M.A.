@@ -4,23 +4,16 @@
 -- line_height: 0 = auto from letterica16 atlas height * 768 / screenH.
 -- hit_cap: recent hits kept (1-20).
 
-local defaults = {
-	["enabled"] = true,
-	["panel_width"] = 410,
-	["panel_top"] = 270,
-	["line_height"] = 0,
-	["hit_cap"] = 10,
-}
-
 _G.dogma_game_death_report_conf = {
 	MOD_ID = "dogma/game/death_report",
-	DEFAULTS = defaults,
+	DEFAULTS = {
+		enabled = true,
+		panel_width = 410,
+		panel_top = 270,
+		line_height = 0,
+		hit_cap = 10,
+	},
 	loaded = {
-		enabled = defaults["enabled"],
-		panel_width = defaults["panel_width"],
-		panel_top = defaults["panel_top"],
-		line_height = defaults["line_height"],
-		hit_cap = defaults["hit_cap"],
 		debug_log = true,
 	},
 }
@@ -41,7 +34,7 @@ function on_mcm_load(options)
 				id = "enabled",
 				type = "check",
 				val = 1,
-				def = CONFIG.DEFAULTS["enabled"],
+				def = CONFIG.DEFAULTS.enabled,
 				hint = "dogma_game_death_report_enabled",
 			},
 			{
@@ -51,7 +44,7 @@ function on_mcm_load(options)
 				min = 200,
 				max = 1024,
 				step = 10,
-				def = CONFIG.DEFAULTS["panel_width"],
+				def = CONFIG.DEFAULTS.panel_width,
 				hint = "dogma_game_death_report_panel_width",
 			},
 			{
@@ -61,7 +54,7 @@ function on_mcm_load(options)
 				min = 0,
 				max = 700,
 				step = 10,
-				def = CONFIG.DEFAULTS["panel_top"],
+				def = CONFIG.DEFAULTS.panel_top,
 				hint = "dogma_game_death_report_panel_top",
 			},
 			{
@@ -71,7 +64,7 @@ function on_mcm_load(options)
 				min = 0,
 				max = 28,
 				step = 0.5,
-				def = CONFIG.DEFAULTS["line_height"],
+				def = CONFIG.DEFAULTS.line_height,
 				hint = "dogma_game_death_report_line_height",
 			},
 			{
@@ -81,7 +74,7 @@ function on_mcm_load(options)
 				min = 1,
 				max = 20,
 				step = 1,
-				def = CONFIG.DEFAULTS["hit_cap"],
+				def = CONFIG.DEFAULTS.hit_cap,
 				hint = "dogma_game_death_report_hit_cap",
 			},
 		}),

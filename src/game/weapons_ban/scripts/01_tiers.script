@@ -124,6 +124,9 @@ local function is_outfit_or_misc_kit(sec)
 	if s == "cleaning_kit_u" then
 		return true
 	end
+	if string.sub(s, -4) == "_off" then
+		return true
+	end
 	if string.sub(s, 1, 3) == "af_" then
 		return true
 	end
@@ -131,7 +134,9 @@ local function is_outfit_or_misc_kit(sec)
 end
 
 local function is_firearm_repair_or_clean(sec)
-	if string.sub(sec, 1, 8) == "toolkit_" then
+	if sec == "toolkit_p" or sec == "toolkit_s"
+		or sec == "toolkit_r5" or sec == "toolkit_r7"
+	then
 		return true
 	end
 	if sec == "cleaning_kit_p" or sec == "cleaning_kit_s"
@@ -178,7 +183,7 @@ local function is_name_kit(sec)
 	if sfind(sec, "tactical_kit", 1, true) then
 		return true
 	end
-	if sfind(sec, "_kit", 1, true) then
+	if string.sub(sec, 1, 4) == "kit_" or sfind(sec, "_kit", 1, true) then
 		return true
 	end
 	return false
@@ -196,6 +201,10 @@ local function is_ammo_box(sec)
 	if IsItem and (IsItem("grenade_ammo", sec) or IsItem("fake_ammo", sec)) then
 		return false
 	end
+	-- GAMMA boxes also use kind=w_ammo; ammo_* is the box, not a magazine.
+	if string.sub(sec, 1, 5) == "ammo_" then
+		return true
+	end
 	local kind = ini_sys:r_string_ex(sec, "kind")
 	if kind == "w_ammo" then
 		return false
@@ -204,6 +213,25 @@ local function is_ammo_box(sec)
 		return true
 	end
 	return false
+end
+
+-- Inventory sight (not a scopes_sect token / kit optic package).
+local function is_real_sight(sec)
+	if not sec then
+		return false
+	end
+	local vis = string.lower(ini_sys:r_string_ex(sec, "visual") or "")
+	if string.find(vis, "wpn_tac_kit", 1, true) then
+		return false
+	end
+	local cls = string.upper(ini_sys:r_string_ex(sec, "class") or "")
+	if cls == "WP_SCOPE" then
+		return true
+	end
+	if string.find(vis, "wpn_addons", 1, true) or string.find(vis, "wpn_scope", 1, true) then
+		return true
+	end
+	return string.sub(sec, 1, 16) == "wpn_addon_scope"
 end
 
 -- OLD / BAD box sections (Anomaly suffixes). Never loot these.
@@ -283,7 +311,7 @@ local function classify_section(sec)
 	if is_name_kit(sec) then
 		return "kit"
 	end
-	if IsItem and IsItem("scope", sec) then
+	if is_real_sight(sec) then
 		return "sight"
 	end
 	if is_visual_kit(sec) then

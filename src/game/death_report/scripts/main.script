@@ -2,7 +2,8 @@
 	Death Report
 
 	Tracks recent hits while alive. On death: Tab toggles a styled hit summary
-	(off by default). No camera / spectate.
+	(off by default). Bleed / radiation / other over-time damage are pooled
+	separately. MCM preview shows the same panel while alive. No camera / spectate.
 ]]
 
 local CONFIG = _G.dogma_game_death_report_conf
@@ -20,7 +21,8 @@ local PANEL_PAD = 12
 local PANEL_W_MIN = 200
 local PANEL_W_MAX = 1024
 local PANEL_TOP_MAX = 700
-local TAB_PROMPT_Y = math.floor(UI_H * 0.5) + 50
+local PROMPT_H = 28
+local PROMPT_GAP = 4
 local TITLE_LINES = 2 -- title + blank
 local PANEL_TEX = "ui_inGame2_white_rect"
 local BHS_DAMAGESCALE = 0.85
@@ -102,6 +104,19 @@ local TYPE_INFO = {
 	unknown = { label = "Melee", rgb = {170, 170, 170} },
 }
 
+-- Always pooled (never a hit line). World fire/chem/psy/shock ticks too.
+local DOT_ALWAYS = {
+	radiation = true,
+	bleed = true,
+}
+local DOT_WORLD = {
+	burn = true,
+	chemical = true,
+	psy = true,
+	electric = true,
+}
+local DOT_ORDER = { "bleed", "radiation", "burn", "chemical", "psy", "electric" }
+
 local COL = {
 	title = "%c[255,255,214,140]",
 	white = "%c[255,255,255,255]",
@@ -115,12 +130,15 @@ local COL = {
 local TYPE_KEY = {}
 
 local hits = {} -- newest at index 1
+local dots = {} -- { t, key, amount } over-time ticks
 local death_armed = false
+local preview_on = false
 local report_visible = false
 local last_toggle_ms = 0
-local frozen = nil -- { lines, footer }
+local frozen = nil -- { lines, footer, dot_header, dot_lines }
 local adb_wrapped = false
 local bhs_rd_wrapped = false
+local refresh_if_preview = function() end
 
 -- BHS limb keys → summary labels. Limb HP is points, not 0-1; percent needs maxhp.
 local DIED_LIMBS = {
@@ -161,8 +179,26 @@ local function panel_top()
 	return clamp_ui(CONFIG.loaded.panel_top, 0, PANEL_TOP_MAX, 270)
 end
 
+-- Prompt sits above the panel; panel never starts higher than that stack.
+local function report_panel_y()
+	local min_y = PROMPT_H + PROMPT_GAP
+	local y = panel_top()
+	if y < min_y then
+		return min_y
+	end
+	return y
+end
+
 local function hit_cap()
 	return clamp_ui(CONFIG.loaded.hit_cap, HIT_CAP_MIN, HIT_CAP_MAX, 10)
+end
+
+local function dot_seconds()
+	return clamp_ui(CONFIG.loaded.dot_seconds, 0, 10, 5)
+end
+
+local function report_armed()
+	return death_armed or preview_on
 end
 
 -- Atlas height from the live letterica16 .ini (1k/2k/4k packs change this, not the section name).
@@ -659,6 +695,68 @@ local function prune_hits(now)
 	hits = kept
 end
 
+local function is_dot(tkey, kind)
+	if DOT_ALWAYS[tkey] then
+		return true
+	end
+	return kind == "world" and DOT_WORLD[tkey]
+end
+
+local function prune_dots(now)
+	now = now or time_global()
+	local win_ms = dot_seconds() * 1000
+	if win_ms <= 0 then
+		dots = {}
+		return
+	end
+	local kept = {}
+	for i = 1, #dots do
+		local e = dots[i]
+		if e and (now - e.t) <= win_ms then
+			kept[#kept + 1] = e
+		end
+	end
+	dots = kept
+end
+
+local function record_dot(tkey, amount)
+	if not amount or amount <= 0 then
+		return
+	end
+	if dot_seconds() <= 0 then
+		return
+	end
+	dots[#dots + 1] = { t = time_global(), key = tkey, amount = amount }
+	prune_dots()
+end
+
+local function format_dot_section()
+	local sec = dot_seconds()
+	if sec <= 0 then
+		return nil, nil
+	end
+	prune_dots()
+	local sums = {}
+	for i = 1, #dots do
+		local e = dots[i]
+		sums[e.key] = (sums[e.key] or 0) + e.amount
+	end
+	local lines = {}
+	for i = 1, #DOT_ORDER do
+		local key = DOT_ORDER[i]
+		local amt = sums[key]
+		if amt and amt > 0 then
+			local info = type_info(key)
+			lines[#lines + 1] = rgb_code(info.rgb) .. info.label .. COL.white .. ": " .. tostring(pct_num(amt)) .. "%"
+		end
+	end
+	if #lines == 0 then
+		return nil, nil
+	end
+	local header = COL.muted .. "Other damage over last " .. tostring(sec) .. " seconds"
+	return header, lines
+end
+
 local function hp_rgb(pct)
 	if pct <= 0 then
 		return {180, 48, 48}
@@ -788,6 +886,11 @@ local function record_hit(shit, bone_id, damage, mitigated_frac)
 	if src.type_key then
 		tkey = src.type_key
 	end
+	if is_dot(tkey, src.kind) then
+		record_dot(tkey, damage)
+		refresh_if_preview()
+		return
+	end
 
 	local hp_now = actor_hp()
 	local prev = hits[1]
@@ -829,6 +932,7 @@ local function record_hit(shit, bone_id, damage, mitigated_frac)
 		limb_after_pct = limb_after_pct,
 		limb_dmg_pct = limb_dmg_pct,
 	})
+	refresh_if_preview()
 end
 
 -- Match ADB shit_booster printf numbers from the same inputs.
@@ -987,27 +1091,29 @@ local function show_hit_summary()
 
 	local hit_n = frozen.lines and #frozen.lines or 0
 	local extra = frozen.footer and 2 or 0
-	local n = TITLE_LINES + math.max(hit_n, 1) + extra
+	local dot_n = 0
+	if frozen.dot_header and frozen.dot_lines then
+		dot_n = 1 + 1 + #frozen.dot_lines -- blank + header + lines
+	end
+	local n = TITLE_LINES + math.max(hit_n, 1) + extra + dot_n
 
 	local text_h = math.floor(n * line_height() + 0.5)
 	local panel_h = text_h + PANEL_PAD * 2
 	local panel_w = panel_width()
 	local panel_x = 0
-	local panel_y = panel_top()
-	if panel_y + panel_h > UI_H then
-		panel_y = UI_H - panel_h
-	end
-	if panel_y < 0 then
-		panel_y = 0
-	end
+	local panel_y = report_panel_y()
 	local text_x = PANEL_PAD
 	local text_y = panel_y + PANEL_PAD
 	local text_w = panel_w - PANEL_PAD * 2
 
 	show_panel(panel_x, panel_y, panel_w, panel_h)
 
+	local title = "DEATH REPORT"
+	if preview_on and not death_armed then
+		title = "DEATH REPORT (preview)"
+	end
 	local chunks = {
-		COL.title .. "DEATH REPORT",
+		COL.title .. title,
 		"",
 	}
 	if hit_n == 0 then
@@ -1015,6 +1121,13 @@ local function show_hit_summary()
 	else
 		for i = 1, hit_n do
 			chunks[#chunks + 1] = frozen.lines[i].text
+		end
+	end
+	if frozen.dot_header and frozen.dot_lines then
+		chunks[#chunks + 1] = ""
+		chunks[#chunks + 1] = frozen.dot_header
+		for i = 1, #frozen.dot_lines do
+			chunks[#chunks + 1] = frozen.dot_lines[i]
 		end
 	end
 	if frozen.footer then
@@ -1036,11 +1149,13 @@ local function show_tab_prompt()
 	else
 		msg = tr("ui_dogma_game_death_report_prompt") or "TAB to open death report"
 	end
-	set_text(TAB_STATIC, COL.title .. msg, PANEL_PAD, TAB_PROMPT_Y, UI_W - PANEL_PAD * 2, 28)
+	local y = report_panel_y() - PROMPT_H - PROMPT_GAP
+	set_text(TAB_STATIC, COL.title .. msg, PANEL_PAD, y, UI_W - PANEL_PAD * 2, PROMPT_H)
 end
 
 local function apply_report_visibility()
 	if report_visible then
+		refresh_if_preview()
 		show_hit_summary()
 	else
 		hide_hit_summary()
@@ -1064,7 +1179,7 @@ local function tab_dik()
 end
 
 local function try_toggle_report(dik)
-	if not CONFIG.loaded.enabled or not death_armed then
+	if not CONFIG.loaded.enabled or not report_armed() then
 		return false
 	end
 	if dik ~= tab_dik() then
@@ -1199,7 +1314,53 @@ local function format_condition_line()
 	return table.concat(parts)
 end
 
+-- Layout-only rows for the alive preview. Count follows Hits to remember.
+local DUMMY_HITS = {
+	{ hp_before = 0.94, hp_after = 0.81, damage = 0.13, limb = "torso", limb_dmg_pct = 12, name = "Yurik", faction = "Loners", comm = "stalker", kind = "stalker", weapon = "AKM", ammo = "7.62x39 mm" },
+	{ hp_before = 0.81, hp_after = 0.68, damage = 0.13, limb = "head", limb_dmg_pct = 28, name = "Wolf", faction = "Loners", comm = "stalker", kind = "stalker", weapon = "Fort-12", ammo = "9x18 mm" },
+	{ hp_before = 0.68, hp_after = 0.52, damage = 0.16, limb = "leftarm", limb_dmg_pct = 18, name = "Scar", faction = "Mercenaries", comm = "killer", kind = "stalker", weapon = "IL86", ammo = "5.56x45 mm" },
+	{ hp_before = 0.52, hp_after = 0.41, damage = 0.11, limb = "torso", limb_dmg_pct = 9, name = "Blind Dog", kind = "monster", weapon = "Claws" },
+	{ hp_before = 0.41, hp_after = 0.33, damage = 0.08, limb = "rightleg", limb_dmg_pct = 15, name = "Bloodsucker", kind = "monster", weapon = "Claws" },
+	{ hp_before = 0.33, hp_after = 0.22, damage = 0.11, limb = "torso", limb_dmg_pct = 10, name = "Petrenko", faction = "Duty", comm = "dolg", kind = "stalker", weapon = "AS Val", ammo = "9x39 mm" },
+	{ hp_before = 0.22, hp_after = 0.14, damage = 0.08, limb = "body", limb_dmg_pct = 0, name = "Fall", kind = "world" },
+	{ hp_before = 0.14, hp_after = 0.02, damage = 0.12, limb = "torso", limb_dmg_pct = 20, name = "Grenade", kind = "world", weapon = "Explosion" },
+}
+
+local function dummy_dot_section()
+	local sec = dot_seconds()
+	if sec <= 0 then
+		return nil, nil
+	end
+	local header = COL.muted .. "Other damage over last " .. tostring(sec) .. " seconds"
+	local lines = {
+		rgb_code(TYPE_INFO.bleed.rgb) .. "Bleed" .. COL.white .. ": 4%",
+		rgb_code(TYPE_INFO.radiation.rgb) .. "Radiation" .. COL.white .. ": 2%",
+		rgb_code(TYPE_INFO.burn.rgb) .. "Fire" .. COL.white .. ": 1%",
+	}
+	return header, lines
+end
+
+local function freeze_preview_lines()
+	local lines = {}
+	local n = hit_cap()
+	for i = 1, n do
+		local e = DUMMY_HITS[((i - 1) % #DUMMY_HITS) + 1]
+		lines[#lines + 1] = { text = format_hit_line(e) }
+	end
+	local dot_header, dot_lines = dummy_dot_section()
+	frozen = {
+		lines = lines,
+		footer = format_condition_line(),
+		dot_header = dot_header,
+		dot_lines = dot_lines,
+	}
+end
+
 local function freeze_hit_lines()
+	if preview_on and not death_armed then
+		freeze_preview_lines()
+		return
+	end
 	prune_hits()
 	local hp_now = actor_hp()
 	if hits[1] and hits[1].hp_before and hits[1].hp_after == nil then
@@ -1209,15 +1370,44 @@ local function freeze_hit_lines()
 	for i = 1, #hits do
 		lines[#lines + 1] = { text = format_hit_line(hits[i]) }
 	end
+	local dot_header, dot_lines = format_dot_section()
 	frozen = {
 		lines = lines,
 		footer = format_condition_line(),
+		dot_header = dot_header,
+		dot_lines = dot_lines,
 	}
+end
+
+refresh_if_preview = function()
+	if preview_on and report_visible and not death_armed then
+		freeze_hit_lines()
+		show_hit_summary()
+	end
+end
+
+local function apply_preview()
+	local want = CONFIG.loaded.enabled and CONFIG.loaded.preview
+	if want and not death_armed then
+		preview_on = true
+		freeze_hit_lines()
+		report_visible = true
+		apply_report_visibility()
+		return
+	end
+	if preview_on and not death_armed then
+		preview_on = false
+		report_visible = false
+		frozen = nil
+		clear_death_ui()
+	end
 end
 
 local function reset_state()
 	hits = {}
+	dots = {}
 	death_armed = false
+	preview_on = false
 	report_visible = false
 	last_toggle_ms = 0
 	frozen = nil
@@ -1232,16 +1422,22 @@ local function on_option_change()
 	CONFIG.loaded.panel_top = dogma.mcm.uint(CONFIG.MOD_ID, "panel_top", 270)
 	CONFIG.loaded.line_height = dogma.mcm.float(CONFIG.MOD_ID, "line_height", 0)
 	CONFIG.loaded.hit_cap = dogma.mcm.uint(CONFIG.MOD_ID, "hit_cap", 10)
+	CONFIG.loaded.dot_seconds = dogma.mcm.uint(CONFIG.MOD_ID, "dot_seconds", 5)
+	CONFIG.loaded.preview = dogma.mcm.bool(CONFIG.MOD_ID, "preview")
 	CONFIG.loaded.debug_log = dogma.dbg.logging()
 	if not death_armed then
 		prune_hits()
+		prune_dots()
 	end
 	if not CONFIG.loaded.enabled then
 		clear_death_ui()
 		death_armed = false
+		preview_on = false
 		report_visible = false
 	elseif death_armed then
 		apply_report_visibility()
+	else
+		apply_preview()
 	end
 end
 

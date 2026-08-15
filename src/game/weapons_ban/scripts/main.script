@@ -222,6 +222,9 @@ local function is_magazine(sec)
 	if not sec then
 		return false
 	end
+	if string.sub(sec, 1, 5) == "ammo_" then
+		return false
+	end
 	local kind = ini_sys:r_string_ex(sec, "kind")
 	return kind == "w_ammo"
 end
@@ -233,7 +236,9 @@ local function is_weapon_repair_kit(sec)
 	if not sec then
 		return false
 	end
-	if string.sub(sec, 1, 8) == "toolkit_" then
+	if sec == "toolkit_p" or sec == "toolkit_s"
+		or sec == "toolkit_r5" or sec == "toolkit_r7"
+	then
 		return true
 	end
 	local only = ini_sys:r_string_ex(sec, "repair_only")

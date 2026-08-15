@@ -1,0 +1,37 @@
+-- tweaks/persist_melancholy_weather conf
+-- Debug toggles: force-restore Melancholy weather after load / level spawn.
+
+_G.dogma_tweaks_persist_melancholy_weather_conf = {
+	MOD_ID = "dogma/tweaks/persist_melancholy_weather",
+	-- Checks live on the shared Tweaks page (path dogma/tweaks/<id>).
+	MCM_PAGE = "dogma/tweaks",
+	DEFAULTS = {
+		persist_melancholy_weather = true,
+		persist_melancholy_weather_lerp = false,
+	},
+}
+
+function on_mcm_load(options)
+	local CONFIG = _G.dogma_tweaks_persist_melancholy_weather_conf
+	dogma_mcm.append(options, "tweaks", "ui_mcm_menu_dogma_tweaks", {
+		{
+			id = "persist_melancholy_weather_description",
+			type = "desc",
+			text = "ui_mcm_dogma_tweaks_persist_melancholy_weather_page_description",
+		},
+		{
+			id = "persist_melancholy_weather",
+			type = "check",
+			val = 1,
+			def = CONFIG.DEFAULTS.persist_melancholy_weather,
+			hint = "dogma_tweaks_persist_melancholy_weather",
+		},
+		{
+			id = "persist_melancholy_weather_lerp",
+			type = "check",
+			val = 1,
+			def = CONFIG.DEFAULTS.persist_melancholy_weather_lerp,
+			hint = "dogma_tweaks_persist_melancholy_weather_lerp",
+		},
+	})
+end

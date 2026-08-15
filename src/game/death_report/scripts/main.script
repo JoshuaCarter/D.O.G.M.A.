@@ -23,7 +23,6 @@ local PANEL_W_MAX = 1024
 local PANEL_TOP_MAX = 700
 local PROMPT_H = 28
 local PROMPT_GAP = 4
-local TITLE_LINES = 3 -- title + blank + "Last X hits:"
 -- Engine ProcessNewLines drops empty remainders after \\n, so a space keeps the gap.
 local BLANK = " "
 local PANEL_TEX = "ui_inGame2_white_rect"
@@ -1065,25 +1064,6 @@ local function show_hit_summary()
 	end
 
 	local hit_n = frozen.lines and #frozen.lines or 0
-	local extra = frozen.footer and 4 or 0 -- blank + header + blank + conditions
-	local dot_n = 0
-	if frozen.dot_header then
-		local dots = frozen.dot_lines and #frozen.dot_lines or 0
-		dot_n = 1 + 1 + 1 + dots -- blank + header + blank + lines
-	end
-	local n = TITLE_LINES + math.max(hit_n, 1) + extra + dot_n
-
-	local text_h = math.floor(n * line_height() + 0.5)
-	local panel_h = text_h + PANEL_PAD * 2
-	local panel_w = panel_width()
-	local panel_x = 0
-	local panel_y = report_panel_y()
-	local text_x = PANEL_PAD
-	local text_y = panel_y + PANEL_PAD
-	local text_w = panel_w - PANEL_PAD * 2
-
-	show_panel(panel_x, panel_y, panel_w, panel_h)
-
 	local title = "DEATH REPORT"
 	if preview_on and not death_armed then
 		title = "DEATH REPORT (preview)"
@@ -1103,7 +1083,6 @@ local function show_hit_summary()
 	if frozen.dot_header then
 		chunks[#chunks + 1] = BLANK
 		chunks[#chunks + 1] = frozen.dot_header
-		chunks[#chunks + 1] = BLANK
 		local dots = frozen.dot_lines or {}
 		for i = 1, #dots do
 			chunks[#chunks + 1] = dots[i]
@@ -1112,10 +1091,19 @@ local function show_hit_summary()
 	if frozen.footer then
 		chunks[#chunks + 1] = BLANK
 		chunks[#chunks + 1] = COL.muted .. "Final Condition:"
-		chunks[#chunks + 1] = BLANK
 		chunks[#chunks + 1] = frozen.footer
 	end
 
+	local text_h = math.floor(#chunks * line_height() + 0.5)
+	local panel_h = text_h + PANEL_PAD * 2
+	local panel_w = panel_width()
+	local panel_x = 0
+	local panel_y = report_panel_y()
+	local text_x = PANEL_PAD
+	local text_y = panel_y + PANEL_PAD
+	local text_w = panel_w - PANEL_PAD * 2
+
+	show_panel(panel_x, panel_y, panel_w, panel_h)
 	set_text(HIT_STATIC, table.concat(chunks, "\\n"), text_x, text_y, text_w, text_h)
 end
 

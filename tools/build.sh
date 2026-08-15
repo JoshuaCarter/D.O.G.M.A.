@@ -56,26 +56,11 @@
 # deploy. package-fomod sets DOGMA_OUT and merges into its own stage dirs.
 set -eEuo pipefail
 
-# Shown on every non-zero exit (EXIT trap). ERR alone misses failures inside
-# functions unless errtrace (-E) is on; EXIT is the hard guarantee.
-FAIL_BANNER_SHOWN=0
-
-build_fail_banner() {
-	[[ "$FAIL_BANNER_SHOWN" == "1" ]] && return 0
-	FAIL_BANNER_SHOWN=1
-	# Fixed-width red bars — no tput (can fail / lie in VS Code / CI).
-	local n
-	for n in 1 2 3; do
-		printf '\033[41m\033[97m%80s\033[0m\n' '' >&2
-	done
-}
-
 build_fail() {
 	trap - ERR
 	local msg="${1:-build failed}"
 	local code="${2:-1}"
-	build_fail_banner
-	echo "build: FAILED — $msg" >&2
+	printf '\033[31m%s\033[0m\n' "build: FAILED — $msg" >&2
 	exit "$code"
 }
 
@@ -83,9 +68,6 @@ build_on_exit() {
 	local rc=$?
 	rm -rf "${STAGE:-}" "${STAGE_MODROOT:-}" 2>/dev/null || true
 	rm -f "${MANIFEST:-}" "${MANIFEST_MODROOT:-}" 2>/dev/null || true
-	if [[ "$rc" -ne 0 ]]; then
-		build_fail_banner
-	fi
 	exit "$rc"
 }
 
@@ -575,4 +557,4 @@ if [[ -n "$DEPLOY_MOD" ]]; then
 	write_mod_meta "$DEPLOY_MOD"
 fi
 
-echo "build: done ($count gamedata, $count_modroot modroot) at $(date '+%Y-%m-%d %H:%M:%S')"
+printf '\033[32m%s\033[0m\n' "build: done ($count gamedata, $count_modroot modroot) at $(date '+%Y-%m-%d %H:%M:%S')"

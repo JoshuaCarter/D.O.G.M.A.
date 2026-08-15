@@ -24,6 +24,8 @@ local PANEL_TOP_MAX = 700
 local PROMPT_H = 28
 local PROMPT_GAP = 4
 local TITLE_LINES = 3 -- title + blank + "Last X hits:"
+-- Engine ProcessNewLines drops empty remainders after \\n, so a space keeps the gap.
+local BLANK = " "
 local PANEL_TEX = "ui_inGame2_white_rect"
 
 local HIT_STATIC = "dogma_death_report_summary"
@@ -57,10 +59,10 @@ local HITBOX_MULT = {
 local LIMB_DISPLAY = {
 	["head"] = "Head",
 	["torso"] = "Torso",
-	["leftarm"] = "Left Arm",
-	["rightarm"] = "Right Arm",
-	["leftleg"] = "Left Leg",
-	["rightleg"] = "Right Leg",
+	["leftarm"] = "L Arm",
+	["rightarm"] = "R Arm",
+	["leftleg"] = "L Leg",
+	["rightleg"] = "R Leg",
 	["body"] = "Body",
 	["legs"] = "Legs",
 }
@@ -1088,7 +1090,7 @@ local function show_hit_summary()
 	end
 	local chunks = {
 		COL.title .. title,
-		"",
+		BLANK,
 		COL.muted .. "Last " .. tostring(hit_n > 0 and hit_n or hit_cap()) .. " hits:",
 	}
 	if hit_n == 0 then
@@ -1099,18 +1101,18 @@ local function show_hit_summary()
 		end
 	end
 	if frozen.dot_header then
-		chunks[#chunks + 1] = ""
+		chunks[#chunks + 1] = BLANK
 		chunks[#chunks + 1] = frozen.dot_header
-		chunks[#chunks + 1] = ""
+		chunks[#chunks + 1] = BLANK
 		local dots = frozen.dot_lines or {}
 		for i = 1, #dots do
 			chunks[#chunks + 1] = dots[i]
 		end
 	end
 	if frozen.footer then
-		chunks[#chunks + 1] = ""
+		chunks[#chunks + 1] = BLANK
 		chunks[#chunks + 1] = COL.muted .. "Final Condition:"
-		chunks[#chunks + 1] = ""
+		chunks[#chunks + 1] = BLANK
 		chunks[#chunks + 1] = frozen.footer
 	end
 

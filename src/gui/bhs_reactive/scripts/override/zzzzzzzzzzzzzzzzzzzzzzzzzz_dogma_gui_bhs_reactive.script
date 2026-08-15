@@ -232,7 +232,6 @@ local function refresh_options()
 	L.always_show = dogma.mcm.bool(CONFIG.MOD_ID, "always_show", d.always_show)
 	L.hp_show_below_pct = clamp_int(dogma.mcm.int(CONFIG.MOD_ID, "hp_show_below_pct", d.hp_show_below_pct), 0, 100, d.hp_show_below_pct)
 	L.limb_show_below_pct = clamp_int(dogma.mcm.int(CONFIG.MOD_ID, "limb_show_below_pct", d.limb_show_below_pct), 0, 100, d.limb_show_below_pct)
-	L.hide_stam = dogma.mcm.bool(CONFIG.MOD_ID, "hide_stam", d.hide_stam)
 	L.stam_show_below_pct = clamp_int(dogma.mcm.int(CONFIG.MOD_ID, "stam_show_below_pct", d.stam_show_below_pct), 0, 100, d.stam_show_below_pct)
 	L.psy_show_below_pct = clamp_int(dogma.mcm.int(CONFIG.MOD_ID, "psy_show_below_pct", d.psy_show_below_pct), 0, 100, d.psy_show_below_pct)
 	L.rad_show_above_pct = clamp_int(dogma.mcm.int(CONFIG.MOD_ID, "rad_show_above_pct", d.rad_show_above_pct), 0, 100, d.rad_show_above_pct)
@@ -268,7 +267,7 @@ end
 -- While we park BHS pieces, stock HUDUpdate must not RemoveCustomStatic (type 0/1 / H).
 local function ensure_bhs_statics_exist()
 	local L = CONFIG and CONFIG.loaded
-	if not L or not (L.hide_body or L.hide_stam) then
+	if not L or not L.hide_body then
 		return
 	end
 	if not (uv_show_fn and uv_show_idx) then
@@ -456,8 +455,8 @@ local function compute_show(L, now)
 	return force, show_all, show_stam
 end
 
-local function any_want_parked(L, show_all, show_stam)
-	return (L.hide_body and not show_all) or (L.hide_stam and not show_stam)
+local function any_want_parked(L, show_all)
+	return L.hide_body and not show_all
 end
 
 apply_parks = function(now)
@@ -476,7 +475,7 @@ apply_parks = function(now)
 	local park_bhs = L.hide_body and not show_all
 	park_pack(PACK_BODY, park_bhs)
 	park_pack(PACK_HP, park_bhs)
-	park_pack(PACK_STAM, L.hide_stam and not show_stam)
+	park_pack(PACK_STAM, L.hide_body and not show_stam)
 	park_psy(park_bhs)
 	park_rad(park_bhs)
 	dogma.perf.stop()
@@ -713,7 +712,7 @@ local function on_actor_update()
 	end
 	local now = time_global()
 	local grace = in_load_grace(now)
-	local force, show_all, show_stam = compute_show(L, now)
+	local force, show_all = compute_show(L, now)
 	local show_edge = show_all ~= show_all_prev
 	show_all_prev = show_all
 
@@ -723,7 +722,7 @@ local function on_actor_update()
 		ensure_bhs_hook()
 		ensure_bhs_statics_exist()
 	else
-		local want_park = any_want_parked(L, show_all, show_stam)
+		local want_park = any_want_parked(L, show_all)
 		local interval = want_park and PARK_REASSERT_MS or STATUS_TICK_MS
 		if force or show_edge or (now - last_park_tick >= interval) then
 			last_park_tick = now

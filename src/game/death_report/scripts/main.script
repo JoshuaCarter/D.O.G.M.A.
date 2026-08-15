@@ -23,9 +23,8 @@ local PANEL_W_MAX = 1024
 local PANEL_TOP_MAX = 700
 local PROMPT_H = 28
 local PROMPT_GAP = 4
-local TITLE_LINES = 2 -- title + blank
+local TITLE_LINES = 3 -- title + blank + "Last X hits:"
 local PANEL_TEX = "ui_inGame2_white_rect"
-local BHS_DAMAGESCALE = 0.85
 
 local HIT_STATIC = "dogma_death_report_summary"
 local TAB_STATIC = "dogma_death_report_prompt"
@@ -138,7 +137,13 @@ local last_toggle_ms = 0
 local frozen = nil -- { lines, footer, dot_header, dot_lines }
 local adb_wrapped = false
 local bhs_rd_wrapped = false
+local pending_hit = nil
+local pending_snap = nil
 local refresh_if_preview = function() end
+local snapshot_limbs = function()
+	return {}
+end
+local finish_pending_limb = function() end
 
 -- BHS limb keys → summary labels. Limb HP is points, not 0-1; percent needs maxhp.
 local DIED_LIMBS = {
@@ -334,29 +339,6 @@ local function pts_pct(cur, maxv)
 	return pct
 end
 
--- BHS limb points (same formula as damage_location_fix).
-local function bhs_limb_points(amount, limb, damagescale)
-	damagescale = damagescale or BHS_DAMAGESCALE
-	local d = math.ceil((amount * 100) / 11 * damagescale)
-	if limb == "head" then
-		d = math.ceil((amount * 2 * 100) / 11 * damagescale)
-		if d >= 8 then
-			d = 7
-		end
-		return d
-	end
-	if limb == "torso" and d >= 8 then
-		d = 7
-	end
-	if
-		(limb == "leftarm" or limb == "rightarm" or limb == "leftleg" or limb == "rightleg")
-		and d >= 4
-	then
-		d = 3
-	end
-	return d
-end
-
 local function init_type_keys()
 	if next(TYPE_KEY) then
 		return
@@ -435,12 +417,27 @@ local function title_case_words(s)
 	end))
 end
 
+local RANK_WORD = "Weak|Normal|Strong|Veteran|Expert|Master|Novice|Experienced|Average|Special"
+
+-- Drop leftover variant tokens: "Cat Weak B" / "Boar 2" / section tails _b _2.
+local function clean_source_name(s)
+	if not s or s == "" then
+		return s
+	end
+	s = s:gsub("%s+[A-Za-z]$", "")
+	s = s:gsub("%s+%d+$", "")
+	s = s:gsub("%s+(" .. RANK_WORD .. ")$", "")
+	return s
+end
+
 local function humanize_section(sec)
 	local s = sec
 	s = s:gsub("^zone_mine_", ""):gsub("^zone_", "")
+	s = s:gsub("_[a-z]$", "")
+	s = s:gsub("_%d+$", "")
 	s = s:gsub("_(weak|normal|strong|veteran|expert|master|novice|experienced|average|special)$", "")
 	s = s:gsub("_", " ")
-	return title_case_words(s)
+	return clean_source_name(title_case_words(s))
 end
 
 local function section_nice_name(sec, fallback)
@@ -659,7 +656,7 @@ local function source_from_draftsman(draftsman, type_key)
 	end)
 	if ok_mon and is_mon then
 		local name = object_char_name(draftsman) or section_nice_name(object_section(draftsman), true)
-		return { name = name or "Mutant", kind = "monster" }
+		return { name = clean_source_name(name) or "Mutant", kind = "monster" }
 	end
 
 	local ok_an, is_an = pcall(function()
@@ -753,7 +750,7 @@ local function format_dot_section()
 	if #lines == 0 then
 		return nil, nil
 	end
-	local header = COL.muted .. "Other damage over last " .. tostring(sec) .. " seconds"
+	local header = COL.muted .. "Other damage over last " .. tostring(sec) .. " seconds:"
 	return header, lines
 end
 
@@ -802,7 +799,7 @@ local function format_hit_line(e)
 	local fac = rgb_code(fac_rgb)
 
 	local parts = {
-		COL.white .. tostring(hp_pct) .. "%",
+		COL.white .. "Body " .. tostring(hp_pct) .. "%",
 		COL.red .. "(" .. dmg_txt(body_pct) .. ")",
 		COL.white .. limb,
 		COL.orange .. "(" .. dmg_txt(limb_dmg) .. ")",
@@ -818,33 +815,6 @@ local function format_hit_line(e)
 		parts[#parts + 1] = COL.muted .. e.ammo
 	end
 	return table.concat(parts, " ")
-end
-
-local function apply_limb_hit(limb, amount)
-	if not (limb == "head" or limb == "torso"
-		or limb == "leftarm" or limb == "rightarm"
-		or limb == "leftleg" or limb == "rightleg")
-	then
-		return 0, 0
-	end
-	local maxp = limb_max_pts[limb] or 11
-	if limb_pts[limb] == nil then
-		limb_pts[limb] = maxp
-	end
-	local before = limb_pts[limb]
-	local pts = bhs_limb_points(amount or 0, limb)
-	local after = before - pts
-	if after < 0 then
-		after = 0
-	end
-	limb_pts[limb] = after
-	local before_pct = pts_pct(before, maxp)
-	local after_pct = pts_pct(after, maxp)
-	local dmg_pct = before_pct - after_pct
-	if dmg_pct < 0 then
-		dmg_pct = 0
-	end
-	return after_pct, dmg_pct
 end
 
 local function push_hit(entry)
@@ -898,8 +868,8 @@ local function record_hit(shit, bone_id, damage, mitigated_frac)
 		prev.hp_after = hp_now
 	end
 
+	pending_snap = snapshot_limbs()
 	local limb = limb_key(bone_id)
-	local limb_after_pct, limb_dmg_pct = apply_limb_hit(limb, damage)
 
 	local wpn = weapon_obj(shit, shit.draftsman)
 	local wpn_name = weapon_label(wpn)
@@ -929,9 +899,10 @@ local function record_hit(shit, bone_id, damage, mitigated_frac)
 		weapon = wpn_name,
 		ammo = ammo,
 		hp_before = hp_now,
-		limb_after_pct = limb_after_pct,
-		limb_dmg_pct = limb_dmg_pct,
+		limb_after_pct = pending_snap and pending_snap[limb] or 0,
+		limb_dmg_pct = 0,
 	})
+	pending_hit = hits[1]
 	refresh_if_preview()
 end
 
@@ -987,7 +958,9 @@ local function wrap_adb_shit_booster()
 			local damage, mitigated = estimate_adb_damage(shit, bone_id, k_ap)
 			record_hit(shit, bone_id, damage, mitigated)
 		end
-		return orig(shit, bone_id, k_ap)
+		local result = orig(shit, bone_id, k_ap)
+		finish_pending_limb()
+		return result
 	end
 	adb.__dogma_death_report = true
 	adb_wrapped = true
@@ -1090,10 +1063,11 @@ local function show_hit_summary()
 	end
 
 	local hit_n = frozen.lines and #frozen.lines or 0
-	local extra = frozen.footer and 2 or 0
+	local extra = frozen.footer and 4 or 0 -- blank + header + blank + conditions
 	local dot_n = 0
-	if frozen.dot_header and frozen.dot_lines then
-		dot_n = 1 + 1 + #frozen.dot_lines -- blank + header + lines
+	if frozen.dot_header then
+		local dots = frozen.dot_lines and #frozen.dot_lines or 0
+		dot_n = 1 + 1 + 1 + dots -- blank + header + blank + lines
 	end
 	local n = TITLE_LINES + math.max(hit_n, 1) + extra + dot_n
 
@@ -1115,6 +1089,7 @@ local function show_hit_summary()
 	local chunks = {
 		COL.title .. title,
 		"",
+		COL.muted .. "Last " .. tostring(hit_n > 0 and hit_n or hit_cap()) .. " hits:",
 	}
 	if hit_n == 0 then
 		chunks[#chunks + 1] = COL.muted .. "No hits in the last 30 seconds."
@@ -1123,14 +1098,18 @@ local function show_hit_summary()
 			chunks[#chunks + 1] = frozen.lines[i].text
 		end
 	end
-	if frozen.dot_header and frozen.dot_lines then
+	if frozen.dot_header then
 		chunks[#chunks + 1] = ""
 		chunks[#chunks + 1] = frozen.dot_header
-		for i = 1, #frozen.dot_lines do
-			chunks[#chunks + 1] = frozen.dot_lines[i]
+		chunks[#chunks + 1] = ""
+		local dots = frozen.dot_lines or {}
+		for i = 1, #dots do
+			chunks[#chunks + 1] = dots[i]
 		end
 	end
 	if frozen.footer then
+		chunks[#chunks + 1] = ""
+		chunks[#chunks + 1] = COL.muted .. "Final Condition:"
 		chunks[#chunks + 1] = ""
 		chunks[#chunks + 1] = frozen.footer
 	end
@@ -1245,6 +1224,53 @@ local function init_limb_state()
 	end
 end
 
+-- Same source as the Condition footer: live BHS (timedhp when permanent is still full).
+snapshot_limbs = function()
+	init_limb_state()
+	local health, timedhp, maxhp = dogma.status.bhs()
+	local out = {}
+	for i = 1, #DIED_LIMBS do
+		local k = DIED_LIMBS[i].key
+		local pct = pts_pct(limb_pts[k], limb_max_pts[k] or 11)
+		if health and maxhp then
+			local cur, maxv = bhs_limb_current(health, timedhp, maxhp, k)
+			if cur and maxv then
+				pct = limb_pct_of(cur, maxv)
+			end
+		end
+		out[k] = pct
+	end
+	return out
+end
+
+finish_pending_limb = function()
+	if not pending_hit or not pending_snap then
+		pending_hit = nil
+		pending_snap = nil
+		return
+	end
+	local now = snapshot_limbs()
+	local best_k, best_dmg, best_after = nil, 0, 0
+	for i = 1, #DIED_LIMBS do
+		local k = DIED_LIMBS[i].key
+		local before = pending_snap[k] or 0
+		local after = now[k] or before
+		local dmg = before - after
+		if dmg > best_dmg then
+			best_dmg = dmg
+			best_k = k
+			best_after = after
+		end
+	end
+	if best_k and best_dmg > 0 then
+		pending_hit.limb = best_k
+		pending_hit.limb_after_pct = best_after
+		pending_hit.limb_dmg_pct = best_dmg
+	end
+	pending_hit = nil
+	pending_snap = nil
+end
+
 local function wrap_bhs_recieved_damage()
 	local bhs = rawget(_G, "zzz_player_injuries")
 	if not (bhs and type(bhs.recieved_damage) == "function") then
@@ -1273,6 +1299,9 @@ local function wrap_bhs_recieved_damage()
 				end
 			end
 		end
+		if not adb_wrapped then
+			finish_pending_limb()
+		end
 		return result
 	end
 	bhs.__dogma_death_report_rd = true
@@ -1285,7 +1314,7 @@ local function format_condition_line()
 	init_limb_state()
 	local health, timedhp, maxhp = dogma.status.bhs()
 
-	local parts = { COL.muted .. "Condition  " }
+	local parts = {}
 	local any = false
 	for i = 1, #DIED_LIMBS do
 		local spec = DIED_LIMBS[i]
@@ -1331,7 +1360,7 @@ local function dummy_dot_section()
 	if sec <= 0 then
 		return nil, nil
 	end
-	local header = COL.muted .. "Other damage over last " .. tostring(sec) .. " seconds"
+	local header = COL.muted .. "Other damage over last " .. tostring(sec) .. " seconds:"
 	local lines = {
 		rgb_code(TYPE_INFO.bleed.rgb) .. "Bleed" .. COL.white .. ": 4%",
 		rgb_code(TYPE_INFO.radiation.rgb) .. "Radiation" .. COL.white .. ": 2%",
@@ -1413,6 +1442,8 @@ local function reset_state()
 	frozen = nil
 	limb_pts = {}
 	limb_max_pts = {}
+	pending_hit = nil
+	pending_snap = nil
 	clear_death_ui()
 end
 

@@ -5,7 +5,7 @@
 	and xpda.send paths are untouched.
 
 	- Hostile faction nets + open-channel tips about hostiles
-	- PAW waypoint complete/fail tips
+	- PAW waypoint / pin tips (added, moved, removed, arrived, …)
 	- Dynamic News producers (witness kills, loot, weather, …)
 ]]
 
@@ -387,23 +387,38 @@ local function on_news_received(_, _, caption, msg)
 end
 
 local function wrap_waypoint()
-	if not (news_manager and type(news_manager.send_task) == "function") then
-		return false
-	end
-	if news_manager.__dogma_pda_filters_wp then
-		return true
-	end
-	local orig = news_manager.send_task
-	news_manager.send_task = function(actor, typ, tsk)
-		if hidden("hide_waypoint") and (typ == "complete" or typ == "fail" or typ == "reversed") then
-			if tsk and tsk.get_id and tsk:get_id() == "task_placeable_waypoint" then
+	local hooked = false
+
+	-- Task news: New / complete / fail / reversed for the PAW tracked waypoint.
+	if news_manager and type(news_manager.send_task) == "function" and not news_manager.__dogma_pda_filters_wp then
+		local orig = news_manager.send_task
+		news_manager.send_task = function(actor, typ, tsk)
+			if hidden("hide_waypoint") and tsk and tsk.get_id and tsk:get_id() == "task_placeable_waypoint" then
 				return false
 			end
+			return orig(actor, typ, tsk)
 		end
-		return orig(actor, typ, tsk)
+		news_manager.__dogma_pda_filters_wp = true
+		hooked = true
+	elseif news_manager and news_manager.__dogma_pda_filters_wp then
+		hooked = true
 	end
-	news_manager.__dogma_pda_filters_wp = true
-	return true
+
+	-- PAW's own tips (pins added/removed, moved, icon cycle, welcome, …).
+	local paw = rawget(_G, "tasks_placeable_waypoints")
+	if paw and type(paw.dotip) == "function" and not paw.__dogma_pda_filters then
+		local orig = paw.dotip
+		paw.dotip = function(...)
+			if hidden("hide_waypoint") then
+				return
+			end
+			return orig(...)
+		end
+		paw.__dogma_pda_filters = true
+		hooked = true
+	end
+
+	return hooked
 end
 
 local function patch()

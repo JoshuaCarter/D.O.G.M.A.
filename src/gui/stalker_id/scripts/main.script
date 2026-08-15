@@ -5,7 +5,7 @@
 	optional LOS). Both rays share one bush-pierce budget. Hipfire both 100m; binoculars both 200m;
 	other ADS/zoom keeps soft at 100m but exact at 200m. Leader line:
 	living non-hostiles normally, all living stalkers in binocs; never corpses.
-	Living hostile / zombified names are red; dead names are grey. Losing the target fades over 2s.
+	Living hostile / zombified names are red; dead names are grey. Losing the target fades over MCM fade-out time.
 ]]
 
 local CONFIG = _G.dogma_gui_stalker_id_conf
@@ -16,11 +16,10 @@ local UI_CENTER_X = UI_WIDTH * 0.5
 local UI_CX, UI_CY = 512, 384
 local ALIGN_CENTER = 2 -- CGameFont::alCenter
 local UPDATE_DELAY = 100
-local FADE_MS = 2000
 local NAME_HOSTILE_RGB = { 220, 48, 48 }
-local NAME_DEAD_RGB = { 200, 200, 200 }
+local NAME_DEAD_RGB = { 160, 160, 160 }
 local RANK_RGB = { 200, 200, 200 }
-local RANK_DEAD_RGB = { 160, 160, 160 }
+local RANK_DEAD_RGB = { 100, 100, 100 }
 
 -- Aim / nearest: pelvis. LOS: upper spine. Line tip: head (lifted toward crown).
 local BONES_AIM = { "bip01_pelvis" }
@@ -114,6 +113,7 @@ local function on_option_change()
 	CONFIG.loaded.line_keybind = dogma.mcm.key(id, "line_keybind")
 	CONFIG.loaded.line_width_px = dogma.mcm.uint(id, "line_width_px")
 	CONFIG.loaded.line_a = dogma.mcm.uint(id, "line_a")
+	CONFIG.loaded.fade_out_ms = dogma.mcm.uint(id, "fade_out_ms")
 end
 
 local function hide_all_patches(hud)
@@ -881,6 +881,11 @@ local function target_lost()
 	if not HUD then
 		return
 	end
+	local fade_ms = CONFIG.loaded.fade_out_ms or 0
+	if fade_ms <= 0 then
+		clear()
+		return
+	end
 	start_fade()
 	apply_alphas(1)
 end
@@ -889,12 +894,13 @@ local function update_fade()
 	if not fade_active then
 		return
 	end
+	local fade_ms = CONFIG.loaded.fade_out_ms or 0
 	local elapsed = time_global() - fade_start_ms
-	if elapsed >= FADE_MS then
+	if fade_ms <= 0 or elapsed >= fade_ms then
 		clear()
 		return
 	end
-	apply_alphas(1 - (elapsed / FADE_MS))
+	apply_alphas(1 - (elapsed / fade_ms))
 end
 
 function actor_on_update()

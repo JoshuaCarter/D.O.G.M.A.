@@ -1,0 +1,171 @@
+--[[
+	Inventory disassemble keybind.
+	Hold: one item under the cursor. A new inventory cell (not a new item
+	in the same cell) also fires. Hold on that cell to finish the stack.
+]]
+
+local CONFIG = _G.dogma_input_inventory_controls_conf
+local MOD_ID = CONFIG.MOD_ID
+
+local ALLOWED_BAGS = {
+	actor_bag = true,
+	actor_equ = true,
+	actor_belt = true,
+	npc_bag = true,
+	picker = true,
+}
+
+local key = nil
+local modifier = 0
+local stack_hold_ms = 3000
+local down_prev = false
+local hold = nil -- { bag, idx, section, t0 }
+
+local function log(msg)
+	if dogma.dbg.logging() then
+		dogma.dbg.log(MOD_ID, tostring(msg))
+	end
+end
+
+local function on_option_change()
+	CONFIG.loaded.disa_safe_equipped = dogma.mcm.bool(MOD_ID, "disa_safe_equipped")
+	key = dogma.mcm.key(MOD_ID, "key_disa")
+	modifier = dogma.mcm.int(MOD_ID, "key_disa_modifier", 0)
+	stack_hold_ms = dogma.mcm.float(MOD_ID, "disa_stack_hold", 3) * 1000
+	down_prev = false
+	hold = nil
+end
+
+local function inv_mode_ok(gui)
+	local mode = gui and gui.mode
+	return mode == "inventory" or mode == "loot"
+end
+
+local function get_cell(gui)
+	gui = gui or (ui_inventory and ui_inventory.GUI)
+	if not (gui and gui.hover) then
+		return nil
+	end
+	local bag, idx = gui.hover.bag, gui.hover.idx
+	if not (bag and ALLOWED_BAGS[bag] and idx) then
+		return nil
+	end
+	return bag, idx, gui
+end
+
+local function cell_obj(gui, bag, idx)
+	local cc = gui and gui.CC and gui.CC[bag]
+	return cc and cc:GetObj(idx)
+end
+
+local function is_equipped(obj)
+	if not (obj and db.actor and _G.SCANNED_SLOTS) then
+		return false
+	end
+	local id = obj:id()
+	local n = 0
+	for _ in pairs(_G.SCANNED_SLOTS) do
+		n = n + 1
+	end
+	for i = 0, n + 1 do
+		local slot_obj = db.actor:item_in_slot(i)
+		if slot_obj and slot_obj:id() == id then
+			return true
+		end
+	end
+	return false
+end
+
+local function do_disa(gui, obj)
+	if CONFIG.loaded.disa_safe_equipped and is_equipped(obj) then
+		return false
+	end
+	if not (item_parts and item_parts.menu_disassembly and item_parts.func_disassembly) then
+		return false
+	end
+	if not item_parts.menu_disassembly(obj) then
+		return false
+	end
+	item_parts.func_disassembly(obj)
+	if gui and gui.mode == "loot" and gui.On_Item_Update then
+		gui:On_Item_Update()
+	end
+	return true
+end
+
+local function begin_cell(bag, idx, section)
+	hold = { bag = bag, idx = idx, section = section, t0 = time_continual() }
+end
+
+local function fire_one(obj, bag, idx, gui)
+	local section = obj:section()
+	if do_disa(gui, obj) then
+		begin_cell(bag, idx, section)
+	else
+		begin_cell(bag, idx, nil)
+	end
+end
+
+local function fire_stack_step(obj, bag, idx, gui)
+	if not (hold and hold.section and obj:section() == hold.section) then
+		return
+	end
+	do_disa(gui, obj)
+end
+
+local function poll_binds(gui)
+	if not inv_mode_ok(gui) then
+		hold = nil
+		down_prev = false
+		return
+	end
+	if not key then
+		return
+	end
+
+	local down = dogma.input.is_key_down(key) and dogma.input.is_mod_down(modifier)
+	local pressed = down and not down_prev
+	down_prev = down
+	if not down then
+		hold = nil
+		return
+	end
+
+	local bag, idx, g = get_cell(gui)
+	local obj = bag and cell_obj(g, bag, idx)
+	if not bag then
+		hold = nil
+		return
+	end
+
+	if pressed or not hold then
+		if obj then
+			fire_one(obj, bag, idx, g)
+		end
+	elseif hold.bag ~= bag or hold.idx ~= idx then
+		if obj then
+			fire_one(obj, bag, idx, g)
+		else
+			begin_cell(bag, idx, nil)
+		end
+	elseif hold.section and obj and (time_continual() - hold.t0) >= stack_hold_ms then
+		fire_stack_step(obj, bag, idx, g)
+	end
+end
+
+local original_on_update = ui_inventory and ui_inventory.UIInventory and ui_inventory.UIInventory.Update
+if original_on_update then
+	function ui_inventory.UIInventory:Update()
+		original_on_update(self)
+		if dogma.sys.ready(MOD_ID, db) then
+			poll_binds(self)
+		end
+	end
+end
+
+function on_game_start()
+	dogma.load(MOD_ID)
+	RegisterScriptCallback("on_option_change", on_option_change)
+	on_option_change()
+	log("disassemble keys ready")
+end

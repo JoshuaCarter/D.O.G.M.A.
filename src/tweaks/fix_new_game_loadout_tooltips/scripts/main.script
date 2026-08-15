@@ -208,6 +208,18 @@ function fix(info)
 	info:Sync_H(tail, info.frame, SECTION_GAP)
 end
 
+-- Vanilla UIInfoItem:Show pins the dialog (cursor, then lift / top-of-screen
+-- when taller than 768). Sync_H above can grow the box after that clamp.
+local function clamp_tooltip(info)
+	if not info or not base_uiinfo_show then
+		return
+	end
+	if not (info.IsShown and info:IsShown()) then
+		return
+	end
+	base_uiinfo_show(info, true)
+end
+
 local function safe_id(obj)
 	if not obj then
 		return nil
@@ -244,22 +256,29 @@ local function uiinfo_update_hook(self, obj, sec, flags)
 	local dirty = self.dogma_layout_dirty
 	if not same_item then
 		fix(self)
-		self.dogma_layout_dirty = not (self.IsShown and self:IsShown())
+		if self.IsShown and self:IsShown() then
+			self.dogma_layout_dirty = false
+			clamp_tooltip(self)
+		else
+			self.dogma_layout_dirty = true
+		end
 	elseif dirty and self.IsShown and self:IsShown() then
 		fix(self)
 		self.dogma_layout_dirty = false
+		clamp_tooltip(self)
 	elseif stats_overlap_table(self) then
 		fix(self)
+		clamp_tooltip(self)
 	end
 end
 
 local function uiinfo_show_hook(self, state)
-	if base_uiinfo_show then
-		base_uiinfo_show(self, state)
-	end
 	if state and self.dogma_layout_dirty then
 		fix(self)
 		self.dogma_layout_dirty = false
+	end
+	if base_uiinfo_show then
+		base_uiinfo_show(self, state)
 	end
 end
 

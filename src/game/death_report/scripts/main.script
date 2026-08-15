@@ -141,6 +141,7 @@ local adb_wrapped = false
 local bhs_rd_wrapped = false
 local pending_hit = nil
 local pending_snap = nil
+local last_limbs = {} -- BHS key → { perm, max }, lowest remaining seen
 local pending_dot = nil
 local last_rad = nil
 local last_hp = nil
@@ -150,6 +151,7 @@ local refresh_if_preview = function() end
 local snapshot_limbs = function()
 	return {}
 end
+local remember_limbs = function() end
 local finish_pending = function() end
 
 -- BHS limb keys → summary labels. Limb HP is points, not 0-1; percent needs maxhp.
@@ -956,6 +958,7 @@ local function record_hit(shit, bone_id)
 	-- Do not attach an unfinished DoT tick to this hit's HP drop.
 	pending_dot = nil
 	pending_snap = snapshot_limbs()
+	remember_limbs(pending_snap)
 	local limb, bone_name = resolve_bone(bone_id)
 
 	local wpn = weapon_obj(shit, shit.draftsman)
@@ -1317,6 +1320,39 @@ snapshot_limbs = function()
 	return out
 end
 
+-- Keep the most damaged reading. Death often resets live BHS to full.
+remember_limbs = function(snap)
+	if not snap then
+		return
+	end
+	for k, v in pairs(snap) do
+		if v.perm ~= nil and v.max then
+			local prev = last_limbs[k]
+			if not prev or v.perm < prev.perm then
+				last_limbs[k] = { perm = v.perm, max = v.max }
+			end
+		end
+	end
+end
+
+-- Bone 0 is "legs" (not a BHS key). Use the worse of the two real legs.
+local function limb_from_snap(snap, key)
+	if not snap then
+		return nil
+	end
+	if key ~= "legs" then
+		return snap[key]
+	end
+	local l, r = snap.leftleg, snap.rightleg
+	if l and r then
+		if (l.perm / l.max) <= (r.perm / r.max) then
+			return l
+		end
+		return r
+	end
+	return l or r
+end
+
 finish_pending = function()
 	if pending_dot then
 		local after = actor_hp()
@@ -1337,9 +1373,11 @@ finish_pending = function()
 	if pending_hit.hp_after ~= nil then
 		last_hp = pending_hit.hp_after
 	end
+	local after_all = snapshot_limbs()
+	remember_limbs(after_all)
 	local k = pending_hit.limb
-	local before = pending_snap and pending_snap[k]
-	local after = snapshot_limbs()[k]
+	local before = limb_from_snap(pending_snap, k)
+	local after = limb_from_snap(after_all, k)
 	if before and after then
 		pending_hit.limb_before = before.perm
 		pending_hit.limb_after = after.perm
@@ -1394,10 +1432,13 @@ local function format_condition_line(list)
 	for i = 1, #DIED_LIMBS do
 		local spec = DIED_LIMBS[i]
 		local live, live_max = bhs_limb_perm(health, timedhp, maxhp, spec.key)
+		local saved = last_limbs[spec.key]
 		local hit_cur, hit_max = last_limb_from_hits(list, spec.key)
 		local cur, maxv
 		if live ~= nil and live_max and live < live_max then
 			cur, maxv = live, live_max
+		elseif saved then
+			cur, maxv = saved.perm, saved.max
 		elseif hit_cur ~= nil then
 			cur, maxv = hit_cur, hit_max or live_max
 		else
@@ -1510,6 +1551,7 @@ local function reset_state()
 	frozen = nil
 	pending_hit = nil
 	pending_snap = nil
+	last_limbs = {}
 	pending_dot = nil
 	last_rad = nil
 	last_hp = nil

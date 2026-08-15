@@ -4,7 +4,7 @@
 	Input via dogma.input (polled from inventory Update).
 ]]
 
-local CONFIG = _G.dogma_input_stripping_conf
+local CONFIG = _G.dogma_input_inventory_controls_conf
 local MOD_ID = CONFIG.MOD_ID
 
 local MODE_PRESS = 0
@@ -240,7 +240,7 @@ local original_on_update = ui_inventory and ui_inventory.UIInventory and ui_inve
 if original_on_update then
 	function ui_inventory.UIInventory:Update()
 		original_on_update(self)
-		if dogma.sys.ready(MOD_ID, db, on_option_change) then
+		if dogma.sys.ready(MOD_ID, db) then
 			poll_binds(self)
 		end
 	end

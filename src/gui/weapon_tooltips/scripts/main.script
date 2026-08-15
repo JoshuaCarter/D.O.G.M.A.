@@ -2662,6 +2662,19 @@ local function restack_positions(info)
 	sync_damage_layout(info)
 end
 
+-- Vanilla UIInfoItem:Show pins the dialog (cursor, then lift / top-of-screen
+-- when taller than 768). We Sync_H after that, so re-run Show with the
+-- final height. Call the captured Show, not self:Show (would re-enter us).
+local function clamp_tooltip(info)
+	if not info or not base_uiinfo_show then
+		return
+	end
+	if not (info.IsShown and info:IsShown()) then
+		return
+	end
+	base_uiinfo_show(info, true)
+end
+
 -- Vanilla Sync_Finale puts stats under desc. If that ran after our stack,
 -- stats sit on the table. Cheap check; no AdjustHeightToText.
 local function stats_overlap_table(info)
@@ -2889,24 +2902,33 @@ local function uiinfo_update_hook(self, obj, sec, flags)
 		tooltip_logged = {}
 		refresh_weapon_damage_panel(self, obj, sec)
 		restack_positions(self)
-		self.dogma_layout_dirty = not (self.IsShown and self:IsShown())
+		if self.IsShown and self:IsShown() then
+			self.dogma_layout_dirty = false
+			clamp_tooltip(self)
+		else
+			self.dogma_layout_dirty = true
+		end
 	elseif dirty and self.IsShown and self:IsShown() then
 		restack_positions(self)
 		self.dogma_layout_dirty = false
+		clamp_tooltip(self)
 	elseif stats_overlap_table(self) then
 		restack_positions(self)
+		clamp_tooltip(self)
 	end
 	apply_custom_stat_display(self, obj, sec)
 	dogma.perf.stop()
 end
 
 local function uiinfo_show_hook(self, state)
-	if base_uiinfo_show then
-		base_uiinfo_show(self, state)
-	end
+	-- Grow first so vanilla Show clamps against the real height (pin to top
+	-- when the box is taller than the screen).
 	if state and self.dogma_layout_dirty then
 		restack_positions(self)
 		self.dogma_layout_dirty = false
+	end
+	if base_uiinfo_show then
+		base_uiinfo_show(self, state)
 	end
 end
 

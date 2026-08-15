@@ -1,8 +1,10 @@
 ; NPC Move Speed
-; Source of truth: Anomaly 1.5.3 stalker_movement_speeds
-;   (C:\Anomaly\tools\_unpacked\configs\creatures\m_stalker.ltx)
+; Source of truth: Anomaly 1.5.3
+;   stalker:  C:\Anomaly\tools\_unpacked\configs\creatures\m_stalker.ltx
+;   zombied:  C:\Anomaly\tools\_unpacked\configs\creatures\m_stalker_zombied.ltx
 ; free / panic = Anomaly defaults
 ; danger (combat) = Anomaly x1.20
+; zombied move = 0.5 (Anomaly 0.8; they cannot crouch or run)
 ; ISG danger = Anomaly x1.50 (wired via isg_movement_speeds)
 ;
 ; Other mods that touch these tables (overridden by this DLTX when DOGMA is later):
@@ -39,6 +41,36 @@
 	free_stand_run_forward		= 3.0
 	; panic - Anomaly
 	panic_stand_run_forward		= 6.0
+
+![stalker_zombied_movement_speeds]
+	; danger / free - 0.5 (Anomaly 0.8)
+	;; crouch
+	;;; walk
+	danger_crouch_walk_forward	= 0.5 ; 0.8
+	danger_crouch_walk_backward	= 0.5 ; 0.575
+	danger_crouch_walk_left		= 0.5 ; 0.8
+	danger_crouch_walk_right	= 0.5 ; 0.8
+	;;; run
+	danger_crouch_run_forward	= 0.5 ; 0.8
+	danger_crouch_run_backward	= 0.5 ; 0.575
+	danger_crouch_run_left		= 0.5 ; 0.8
+	danger_crouch_run_right		= 0.5 ; 0.8
+	;; stand
+	;;; walk
+	danger_stand_walk_forward	= 0.5 ; 0.8
+	danger_stand_walk_backward	= 0.5 ; 0.8
+	danger_stand_walk_left		= 0.5 ; 0.8
+	danger_stand_walk_right		= 0.5 ; 0.8
+	;;; run
+	danger_stand_run_forward	= 0.5 ; 0.8
+	danger_stand_run_backward	= 0.5 ; 0.8
+	danger_stand_run_left		= 0.5 ; 0.8
+	danger_stand_run_right		= 0.5 ; 0.8
+	; free
+	free_stand_walk_forward		= 0.5 ; 0.8
+	free_stand_run_forward		= 0.5 ; 0.8
+	; panic - Anomaly
+	panic_stand_run_forward		= 7.0
 
 ; ISG: Anomaly has no separate bank (they use stalker_movement_speeds).
 ; Create one so combat can be +50% while free/panic stay Anomaly.

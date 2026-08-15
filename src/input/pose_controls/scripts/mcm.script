@@ -6,6 +6,7 @@ _G.dogma_input_pose_controls_conf = {
 	MOD_ID = "dogma/input/pose_controls",
 	DEFAULTS = {
 		walk_key = -1,
+		sprint_lean_freelook = true,
 	},
 	BINDS = {
 		-- Stock Controls row for engine accel (= prone under this mod).
@@ -38,6 +39,7 @@ _G.dogma_input_pose_controls_conf = {
 		toggle_mode = false,
 		debug_log = true,
 		debug_overlay = false,
+		sprint_lean_freelook = true,
 	},
 }
 
@@ -126,6 +128,14 @@ function on_mcm_load(options)
 	gr[#gr + 1] = dogma_mcm.mcm.key_mirror("accel", function()
 		return key_bindings and key_bindings.kACCEL
 	end):option("prone_key", "dogma_input_pose_controls_prone_key")
+	gr[#gr + 1] = { id = "line_sprint", type = "line" }
+	gr[#gr + 1] = {
+		id = "sprint_lean_freelook",
+		type = "check",
+		val = 1,
+		def = CONFIG.DEFAULTS.sprint_lean_freelook,
+		hint = "dogma_input_pose_controls_sprint_lean_freelook",
+	}
 
 	dogma_mcm.mcm.attach(options, "input", "ui_mcm_menu_dogma_input", {
 		id = "pose_controls",

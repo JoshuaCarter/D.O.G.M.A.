@@ -1,15 +1,12 @@
 --[[
 	Persist Melancholy Weather
 
-	Melancholy already writes category/preset into the save. On spawn, reset()
-	may roll a new preset, and load_state applies the saved one with
-	set_weather(..., false) which waits for the next hour boundary.
+	Keep the saved cycle (sunny stays sunny) across save/load. Day/night and
+	Melancholy's own later transitions are the engine/scheduler.
 
-	Named failure: save in rain, load under a different sky until the clock ticks.
-	Call path: actor_binder:reset → load_state → apply_loaded_state → reconcile.
-
-	Solid: force-apply the saved preset after load/reset.
-	Lerp: force previous preset, smooth to current, restore weight.
+	Named failure: load a sunny save and the sky is overcast until the next hour.
+	Call path: Melancholy apply_loaded_state uses set_weather(..., false).
+	We set the saved preset once on first update, when the clock is live.
 ]]
 
 local CONFIG = _G.dogma_tweaks_persist_melancholy_weather_conf
@@ -30,11 +27,6 @@ end
 
 local function persist_on()
 	return dogma.mcm.bool(PAGE, "persist_melancholy_weather", DEFS.persist_melancholy_weather)
-		or dogma.mcm.bool(PAGE, "persist_melancholy_weather_lerp", DEFS.persist_melancholy_weather_lerp)
-end
-
-local function lerp_on()
-	return dogma.mcm.bool(PAGE, "persist_melancholy_weather_lerp", DEFS.persist_melancholy_weather_lerp)
 end
 
 local function current_preset(self)
@@ -52,89 +44,21 @@ local function wfx(self)
 	return level.is_wfx_playing and level.is_wfx_playing()
 end
 
-local function weather_paused()
-	return weather and weather.is_paused and weather.is_paused()
-end
-
-local function apply_force(preset)
-	if not preset or weather_paused() then
-		return false
-	end
-	level.set_weather(preset, true)
-	return true
-end
-
-local function apply_lerp(last, current, weight)
-	if not (last and current and last ~= current and type(weight) == "number") then
-		return apply_force(current)
-	end
-	if weather_paused() then
-		return false
-	end
-	level.set_weather(last, true)
-	if level.set_weather_smooth then
-		level.set_weather_smooth(current)
-	else
-		level.set_weather(current, false)
-	end
-	if level.set_weather_weight then
-		local w = weight
-		if w < 0 then
-			w = 0
-		elseif w > 1 then
-			w = 1
-		end
-		level.set_weather_weight(w)
-	end
-	return true
-end
-
-local function restore(self, reason)
-	local tostr = tostring
+local function restore(self)
 	if not persist_on() or not outdoor(self) or wfx(self) then
 		return
 	end
-	local current = current_preset(self)
-	if not current then
+	if weather and weather.is_paused and weather.is_paused() then
 		return
 	end
-
-	local ok
-	if lerp_on() then
-		ok = apply_lerp(self._dogma_last_weather_file, current, self._dogma_weather_weight)
-	else
-		ok = apply_force(current)
-	end
-	if not ok then
+	local preset = current_preset(self)
+	if not preset then
 		return
 	end
-	log(
-		"restore %s preset=%s last=%s weight=%s lerp=%s",
-		tostr(reason),
-		tostr(current),
-		tostr(self._dogma_last_weather_file),
-		tostr(self._dogma_weather_weight),
-		tostr(lerp_on())
-	)
-	if reason == "load" and dogma.console and dogma.console.say then
-		dogma.console.say("Melancholy weather restored: " .. tostr(current), "blue")
-	end
-end
-
-local function snapshot_weight(self)
-	if not (self and level.get_weather_weight) then
-		return
-	end
-	self._dogma_weather_weight = level.get_weather_weight()
-end
-
-local function remember_last(self, preset)
-	local prev = self.weather_file
-	if (not prev or prev == "") and level.get_weather then
-		prev = level.get_weather()
-	end
-	if prev and prev ~= "" and prev ~= preset then
-		self._dogma_last_weather_file = prev
+	level.set_weather(preset, true)
+	log("restore preset=%s", tostring(preset))
+	if dogma.console and dogma.console.say then
+		dogma.console.say("Melancholy weather restored: " .. tostring(preset), "blue")
 	end
 end
 
@@ -143,60 +67,39 @@ local function patch()
 		return true
 	end
 	local WM = level_weathers and level_weathers.WeatherManager
-	if not (WM and WM.reset and WM.load_state and WM.save_state and WM.apply_weather) then
+	if not (WM and WM.load_state) then
 		return false
 	end
 
-	local orig_apply = WM.apply_weather
-	local orig_save = WM.save_state
 	local orig_load = WM.load_state
-	local orig_reset = WM.reset
-
-	WM.apply_weather = function(self, preset, mode)
-		remember_last(self, preset)
-		return orig_apply(self, preset, mode)
-	end
-
-	WM.save_state = function(self, m_data, ...)
-		local ret = orig_save(self, m_data, ...)
-		if persist_on() and m_data and m_data.weather_manager then
-			snapshot_weight(self)
-			m_data.weather_manager.dogma_last_weather_file = self._dogma_last_weather_file
-			m_data.weather_manager.dogma_weather_weight = self._dogma_weather_weight
-		end
-		return ret
-	end
-
 	WM.load_state = function(self, m_data, ...)
 		local ret = orig_load(self, m_data, ...)
-		local data = m_data and m_data.weather_manager
-		if data then
-			self._dogma_last_weather_file = data.dogma_last_weather_file
-			self._dogma_weather_weight = data.dogma_weather_weight
-		end
-		restore(self, "load")
-		return ret
-	end
-
-	WM.reset = function(self, ...)
-		local ret = orig_reset(self, ...)
-		restore(self, "reset")
+		HOOK_STATE.pending_load = persist_on()
 		return ret
 	end
 
 	HOOK_STATE.patched = true
-	log("patched WeatherManager reset/load/save/apply")
+	log("patched WeatherManager load_state")
 	return true
+end
+
+local function on_first_update()
+	if not HOOK_STATE.pending_load then
+		return
+	end
+	HOOK_STATE.pending_load = false
+	local mgr = level_weathers.get_weather_manager and level_weathers.get_weather_manager()
+	if mgr then
+		restore(mgr)
+	end
 end
 
 function on_game_start()
 	dogma.load(CONFIG.MOD_ID)
+	HOOK_STATE.pending_load = false
 	if not patch() then
 		log("Melancholy WeatherManager missing - persist skipped")
 		return
 	end
-	RegisterScriptCallback("on_level_changing", function()
-		local mgr = level_weathers.get_weather_manager and level_weathers.get_weather_manager()
-		snapshot_weight(mgr)
-	end)
+	RegisterScriptCallback("actor_on_first_update", on_first_update)
 end

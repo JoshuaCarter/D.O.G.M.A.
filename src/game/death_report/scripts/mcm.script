@@ -1,7 +1,6 @@
 -- game/death_report conf
 -- panel_width: UI-px (1024-wide hud). Default 410 = 40% of screen.
 -- panel_top: UI-px from top of screen. Default 270 ≈ previous auto Y.
--- line_height: 0 = auto from letterica16 atlas height * 768 / screenH.
 -- hit_cap: recent hits kept (1-20).
 -- dot_seconds: bleed/rad/other DoT window (0 = hide that section).
 -- preview: show the report while alive (layout / tracking test).
@@ -12,7 +11,6 @@ _G.dogma_game_death_report_conf = {
 		enabled = true,
 		panel_width = 410,
 		panel_top = 270,
-		line_height = 0,
 		hit_cap = 10,
 		dot_seconds = 5,
 		preview = false,
@@ -60,16 +58,6 @@ function on_mcm_load(options)
 				step = 10,
 				def = CONFIG.DEFAULTS.panel_top,
 				hint = "dogma_game_death_report_panel_top",
-			},
-			{
-				id = "line_height",
-				type = "track",
-				val = 2,
-				min = 0,
-				max = 28,
-				step = 0.5,
-				def = CONFIG.DEFAULTS.line_height,
-				hint = "dogma_game_death_report_line_height",
 			},
 			{
 				id = "hit_cap",

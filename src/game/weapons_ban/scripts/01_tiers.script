@@ -201,7 +201,11 @@ local function is_ammo_box(sec)
 	if IsItem and (IsItem("grenade_ammo", sec) or IsItem("fake_ammo", sec)) then
 		return false
 	end
-	-- GAMMA boxes also use kind=w_ammo; ammo_* is the box, not a magazine.
+	-- Engine reads k_ap on ammo (fatal if missing). ammo_dyno etc. share ammo_.
+	if ini_sys:r_float_ex(sec, "k_ap") == nil then
+		return false
+	end
+	-- GAMMA boxes also use kind=w_ammo; ammo_* with k_ap is the box, not a mag.
 	if string.sub(sec, 1, 5) == "ammo_" then
 		return true
 	end

@@ -1,5 +1,6 @@
 --[[
 	Workshop Shared Stash - place limit (1 per level) + dynamic carry weight.
+	On load, the shared box is moved onto the current map so any bench can open it.
 
 	Shared stash open/pickup logic lives in scripts/override/
 	(ui_furniture_workshop.script, bind_workshop_furniture.script).
@@ -248,6 +249,69 @@ local function on_actor_update()
 	update_carry_weight()
 end
 
+local function clear_spawn_cache(id)
+	if db.offline_objects and db.offline_objects[id] then
+		db.offline_objects[id].level_vertex_id = nil
+	end
+	if db.spawned_vertex_by_id then
+		db.spawned_vertex_by_id[id] = nil
+	end
+end
+
+local function teleport_id(id, pos, lvid, gvid)
+	local sim = alife()
+	if not (sim and id) then
+		return
+	end
+	clear_spawn_cache(id)
+	sim:teleport_object(id, gvid, lvid, pos)
+end
+
+local function bring_shared_to_current_level()
+	if not (db and db.actor) then
+		return
+	end
+	local m_data = m_state()
+	if not m_data then
+		return
+	end
+	local shared_id = m_data.dogma_game_shared_stash
+	local se = shared_id and xobject.se(shared_id)
+	if not (se and IsInvbox(nil, se:clsid())) then
+		return
+	end
+	if xobject.go(shared_id) then
+		return
+	end
+
+	local anchor = db.actor
+	local map = m_data.dogma_game_shared_stash_by_level
+	local wid = map and level and map[level.name()]
+	local workshop = wid and xobject.go(wid)
+	if workshop then
+		anchor = workshop
+	end
+
+	local pos = vec_set(anchor:position())
+	pos.y = pos.y - 50
+	local lvid = anchor:level_vertex_id()
+	local gvid = anchor:game_vertex_id()
+
+	local kids = {}
+	pcall(function()
+		for cid in alife():get_children(se) do
+			kids[#kids + 1] = cid
+		end
+	end)
+	for i = 1, #kids do
+		teleport_id(kids[i], pos, lvid, gvid)
+	end
+	teleport_id(shared_id, pos, lvid, gvid)
+	alife():set_switch_online(shared_id, true)
+	alife():set_switch_offline(shared_id, false)
+	log("moved shared stash " .. tostring(shared_id) .. " to " .. tostring(level and level.name()))
+end
+
 local function hf_on_furniture_place(id)
 	register_workshop(id)
 end
@@ -286,10 +350,15 @@ local function on_game_load()
 	update_carry_weight()
 end
 
+local function on_actor_first_update()
+	bring_shared_to_current_level()
+end
+
 function on_game_start()
 	dogma.load(MOD_ID)
 	on_option_change()
 	RegisterScriptCallback("actor_on_update", on_actor_update)
+	RegisterScriptCallback("actor_on_first_update", on_actor_first_update)
 	RegisterScriptCallback("on_game_load", on_game_load)
 	RegisterScriptCallback("on_option_change", on_option_change)
 	RegisterScriptCallback("hf_on_furniture_place", hf_on_furniture_place)

@@ -5,7 +5,6 @@
 local CONFIG = _G.dogma_game_shared_stash_conf
 local SHARED_SECTION = (CONFIG and CONFIG.SHARED_SECTION) or "dogma_game_shared_stash"
 local PDA_STASH_KEY = (CONFIG and CONFIG.PDA_STASH_KEY) or "dogma_game_shared_stash"
-local is_teleporting = false
 
 local function pr(...)
 	-- printf("WorkshopSharedStash - " .. string.format(...))
@@ -101,14 +100,6 @@ local function ensure_shared_near_workshop(workshop_id)
 	alife():set_switch_online(shared_id, true)
 	alife():set_switch_offline(shared_id, false)
 
-	if not xobject.go(shared_id) and TeleportObject then
-		local pos = vec_set(workshop:position())
-		pos.y = pos.y - 50
-		TeleportObject(shared_id, pos, workshop:level_vertex_id(), workshop:game_vertex_id())
-		is_teleporting = true
-		pr("teleported shared stash %s to workshop %s", tostring(shared_id), tostring(workshop_id))
-	end
-
 	cleanup_private_stash(workshop_id, shared_id)
 
 	return shared_id
@@ -134,7 +125,6 @@ local function UseStash(id)
 	if not box then
 		return false
 	end
-	is_teleporting = false
 	hide_hud_inventory()
 	box:use(db.actor)
 	return true
@@ -166,7 +156,6 @@ function OpenWorkshop(stashId)
 	if stashId and not xobject.go(stashId) then
 		return false
 	end
-	is_teleporting = false
 
 	if not (ui_workshop and ui_workshop.get_workshop_ui) then
 		return true
@@ -232,15 +221,12 @@ function UIFurnitureWorkshop:UseWorkshop()
 end
 
 function UIFurnitureWorkshop:AccessStash()
-	if is_teleporting then
-		return
-	end
 	local stash_id = GetStash(self.obj_id)
 	if not stash_id then
 		return
 	end
-	CreateTimeEvent("hf_workshop", "open_stash_" .. stash_id, 0, UseStash, stash_id)
 	self:Close()
+	CreateTimeEvent("hf_workshop", "open_stash_" .. stash_id, 0.1, UseStash, stash_id)
 end
 
 function UIFurnitureWorkshop:Pickup()

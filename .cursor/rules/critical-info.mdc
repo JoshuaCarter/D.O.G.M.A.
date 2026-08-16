@@ -2,3 +2,7 @@
 alwaysApply: true
 ---
 Real engine code here: C:\gamma_dev\xray-monolith-2026.7.13
+
+`CurrentGameUI()` (and wrappers like `ActorMenu.get_menu_mode`) has no null check — calling it, or broadcasting `on_option_change`, from `on_game_start` native-crashes because the HUD does not exist yet. Defer that work to `actor_on_first_update`.
+
+Where possible use dogma.x shared libs. If something should be moved into there, do it.

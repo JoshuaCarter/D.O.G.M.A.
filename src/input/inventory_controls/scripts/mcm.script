@@ -16,6 +16,8 @@ _G.dogma_input_inventory_controls_conf = {
 		key_drop_modifier = 0,
 		drop_stack_hold = 3,
 		drop_safe_equipped = true,
+		key_transfer = (DIK_keys and DIK_keys.DIK_LSHIFT) or 42,
+		key_transfer_modifier = 0,
 		key = -1,
 		key_mode = 0,
 		key_modifier = 0,
@@ -138,6 +140,9 @@ function on_mcm_load(options)
 				def = CONFIG.DEFAULTS.drop_safe_equipped,
 				hint = "dogma_input_inventory_controls_drop_safe_equipped",
 			},
+			{ id = "section_transfer", type = "line" },
+			kb_bind("key_transfer", "dogma_input_inventory_controls_key_transfer"),
+			kb_modifier("key_transfer_modifier"),
 			{ id = "section_stripping", type = "line" },
 			{
 				id = "intercept_disassemble",

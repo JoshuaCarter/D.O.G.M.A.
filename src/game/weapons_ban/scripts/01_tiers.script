@@ -735,21 +735,22 @@ local function cond_band(result_tier)
 end
 
 --------------------------------------------------------------------------------
--- Ammo quantity via RU budget (cost is per box; rounds = ru * box_size / cost)
+-- Ammo quantity via RU tickets (cost is per box; rounds = ru * box_size / cost)
 --------------------------------------------------------------------------------
+local RU_STEPS =	{ 0,    250,  500,  750,  1000, 1500, 2000, 2500, 3500, 4500, 6500, 8500 }
 local RANK_RU = {
-	novice = { 0, 1000 },
-	trainee = { 0, 1500 },
-	experienced = { 0, 2000 },
-	professional = { 0, 2500 },
-	veteran = { 0, 3000 },
-	expert = { 0, 3500 },
-	master = { 500, 4000 },
-	legend = { 1000, 5000 },
+	novice       = 	{ 1,    2,    3,    2,    1,    0,    0,    0,    0,    0,    0,    0    },
+	trainee      = 	{ 1,    1,    2,    3,    2,    1,    0,    0,    0,    0,    0,    0    },
+	experienced  = 	{ 1,    1,    1,    2,    3,    2,    1,    0,    0,    0,    0,    0    },
+	professional = 	{ 1,    1,    1,    1,    2,    3,    2,    1,    0,    0,    0,    0    },
+	veteran      = 	{ 1,    1,    1,    1,    2,    3,    4,    3,    2,    1,    0,    0    },
+	expert       = 	{ 1,    1,    1,    1,    1,    2,    3,    4,    3,    2,    1,    0    },
+	master       = 	{ 1,    1,    1,    1,    1,    1,    2,    3,    4,    3,    2,    1    },
+	legend       = 	{ 1,    1,    1,    1,    1,    1,    1,    2,    3,    4,    3,    2    },
 }
 local RANK_RU_FALLBACK = RANK_RU.experienced
 
--- Stash ammo result tier → rank band for RU rolls.
+-- Stash ammo result tier → rank tickets.
 local AMMO_TIER_RANK = {
 	[1] = "novice",
 	[2] = "trainee",
@@ -759,18 +760,12 @@ local AMMO_TIER_RANK = {
 }
 
 local function roll_ru_for_rank(rank_name)
-	local band = (rank_name and RANK_RU[rank_name]) or RANK_RU_FALLBACK
-	local lo, hi = band[1], band[2]
-	if hi < lo then
-		lo, hi = hi, lo
-	end
-	if hi <= 0 then
+	local tickets = (rank_name and RANK_RU[rank_name]) or RANK_RU_FALLBACK
+	local idx = dogma.rng.rand_from_tickets(tickets)
+	if not idx then
 		return 0
 	end
-	if lo < 0 then
-		lo = 0
-	end
-	return math.random(lo, hi)
+	return RU_STEPS[idx] or 0
 end
 
 local function roll_ru_for_ammo_tier(result_tier)
@@ -822,6 +817,7 @@ _G.dogma_game_weapons_ban_tiers = {
 	is_worn_ammo = is_worn_ammo,
 	fresh_ammo_sec = fresh_ammo_sec,
 	pick_fresh_ammo = pick_fresh_ammo,
+	RU_STEPS = RU_STEPS,
 	RANK_RU = RANK_RU,
 	AMMO_TIER_RANK = AMMO_TIER_RANK,
 	log = log,

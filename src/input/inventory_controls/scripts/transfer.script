@@ -1,0 +1,185 @@
+--[[
+	Inventory transfer keybind (GAMMA Fast Transfer + stack popup).
+	Hold: one item under the cursor. A new cell also fires.
+	Sort/rebuild that fills the same cell is locked until the cursor moves.
+	Stacked cells use GAMMA's batched Action_Move of child items.
+]]
+
+local CONFIG = _G.dogma_input_inventory_controls_conf
+local MOD_ID = CONFIG.MOD_ID
+
+local ALLOWED_BAGS = {
+	actor_bag = true,
+	npc_bag = true,
+	actor_trade = true,
+	actor_trade_bag = true,
+	npc_trade = true,
+	npc_trade_bag = true,
+	picker = true,
+}
+
+local BATCH_SIZE = 10
+local LSHIFT = DIK_keys.DIK_LSHIFT
+local RSHIFT = DIK_keys.DIK_RSHIFT
+
+local key = nil
+local modifier = 0
+local down_prev = false
+local hold = nil -- { bag, idx }
+
+local function log(msg)
+	if dogma.dbg.logging() then
+		dogma.dbg.log(MOD_ID, tostring(msg))
+	end
+end
+
+local function on_option_change()
+	key = dogma.mcm.key(MOD_ID, "key_transfer")
+	modifier = dogma.mcm.int(MOD_ID, "key_transfer_modifier", 0)
+	down_prev = false
+	hold = nil
+end
+
+local function inv_mode_ok(gui)
+	local mode = gui and gui.mode
+	return mode == "inventory" or mode == "loot" or mode == "trade"
+end
+
+local function key_down()
+	if not key then
+		return false
+	end
+	local down
+	if key == LSHIFT or key == RSHIFT then
+		down = dogma.input.is_shift_down()
+	else
+		down = dogma.input.is_key_down(key)
+	end
+	return down and dogma.input.is_mod_down(modifier)
+end
+
+local function get_cell(gui)
+	gui = gui or (ui_inventory and ui_inventory.GUI)
+	if not (gui and gui.hover) then
+		return nil
+	end
+	local bag, idx = gui.hover.bag, gui.hover.idx
+	if not (bag and ALLOWED_BAGS[bag] and idx) then
+		return nil
+	end
+	return bag, idx, gui
+end
+
+local function cell_obj(gui, bag, idx)
+	local cc = gui and gui.CC and gui.CC[bag]
+	return cc and cc:GetObj(idx)
+end
+
+local function move_childs(gui, obj, bag)
+	local cc = gui.CC and gui.CC[bag]
+	local ci = cc and cc.GetCell_ID and cc:GetCell_ID(obj:id())
+	if not (ci and ci.childs) then
+		gui:Action_Move(obj, bag)
+		return
+	end
+	local ids = {}
+	for id, _ in pairs(ci.childs) do
+		ids[#ids + 1] = id
+	end
+	ids[#ids + 1] = obj:id()
+	local i = 1
+	CreateTimeEvent("dogma_transfer", obj:id(), 0, function()
+		local g = ui_inventory and ui_inventory.GUI
+		if not (g and g.IsShown and g:IsShown()) then
+			return true
+		end
+		for _ = 1, BATCH_SIZE do
+			if i > #ids then
+				return true
+			end
+			local item = level.object_by_id(ids[i])
+			if item then
+				g:Action_Move(item, bag)
+			end
+			i = i + 1
+		end
+		return false
+	end)
+end
+
+local function do_transfer(gui, obj, bag, idx)
+	if not (gui and obj and gui.Action_Move) then
+		return false
+	end
+	if gui.Picker_Ownership then
+		bag, idx = gui:Picker_Ownership(bag, idx, obj)
+	end
+	if gui.Cond_Move and not gui:Cond_Move(obj, bag) then
+		return false
+	end
+	if gui.Cond_Childs and gui:Cond_Childs(obj, bag) then
+		move_childs(gui, obj, bag)
+	else
+		gui:Action_Move(obj, bag)
+	end
+	return true
+end
+
+local function begin_cell(bag, idx)
+	hold = { bag = bag, idx = idx }
+end
+
+local function fire_one(obj, bag, idx, gui)
+	do_transfer(gui, obj, bag, idx)
+	begin_cell(bag, idx)
+end
+
+local function poll_binds(gui)
+	if not inv_mode_ok(gui) then
+		hold = nil
+		down_prev = false
+		return
+	end
+	if not key then
+		return
+	end
+
+	local down = key_down()
+	local pressed = down and not down_prev
+	down_prev = down
+	if not down then
+		hold = nil
+		return
+	end
+
+	local bag, idx, g = get_cell(gui)
+	local obj = bag and cell_obj(g, bag, idx)
+	if not bag then
+		return
+	end
+
+	if pressed or not hold or hold.bag ~= bag or hold.idx ~= idx then
+		if obj then
+			fire_one(obj, bag, idx, g)
+		else
+			begin_cell(bag, idx)
+		end
+	end
+end
+
+local original_on_update = ui_inventory and ui_inventory.UIInventory and ui_inventory.UIInventory.Update
+if original_on_update then
+	function ui_inventory.UIInventory:Update()
+		original_on_update(self)
+		if dogma.sys.ready(MOD_ID, db) then
+			poll_binds(self)
+		end
+	end
+end
+
+function on_game_start()
+	dogma.load(MOD_ID)
+	RegisterScriptCallback("on_option_change", on_option_change)
+	on_option_change()
+	log("transfer keys ready")
+end

@@ -85,7 +85,7 @@ local function ensure_shared_near_workshop(workshop_id)
 
 	if not (se and IsInvbox(nil, se:clsid())) then
 		local pos = vec_set(workshop:position())
-		pos.y = pos.y - 50
+		pos.y = pos.y - 1000
 		se = alife_create(SHARED_SECTION, pos, workshop:level_vertex_id(), workshop:game_vertex_id())
 		if not se then
 			return nil

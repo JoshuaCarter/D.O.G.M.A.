@@ -37,6 +37,7 @@ function on_game_start()
 		return
 	end
 	dogma.load(CONFIG.MOD_ID)
-	apply_launch()
+	-- on_game_start is too early: notify hits CurrentGameUI() == nil.
+	RegisterScriptCallback("actor_on_first_update", apply_launch)
 	RegisterScriptCallback("mcm_option_change", apply_mcm)
 end

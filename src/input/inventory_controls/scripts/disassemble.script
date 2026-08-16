@@ -86,9 +86,19 @@ local function do_disa(gui, obj)
 	if not item_parts.menu_disassembly(obj) then
 		return false
 	end
+	local id = obj:id()
 	item_parts.func_disassembly(obj)
-	if gui and gui.mode == "loot" and gui.On_Item_Update then
-		gui:On_Item_Update()
+	-- Give-parts is a CreateTimeEvent (0s / 3s). Same-time events have
+	-- undefined order, so wait a tick after that delay before rebuilding loot.
+	if gui and gui.mode == "loot" then
+		local delay = actor_effects.is_animations_on() and 3.05 or 0.05
+		CreateTimeEvent("dogma_disa_loot", id, delay, function()
+			local g = ui_inventory and ui_inventory.GUI
+			if g and g.mode == "loot" and g.On_Item_Update then
+				g:On_Item_Update()
+			end
+			return true
+		end)
 	end
 	return true
 end

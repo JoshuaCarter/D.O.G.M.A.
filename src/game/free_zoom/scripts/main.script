@@ -5,7 +5,7 @@
 	  Free: both channels = free% (cleared on ADS enter; never while ADS)
 	  ADS world FOV: FOV zoom % (cap 15; skipped on magnified optical scopes)
 	  ADS HUD: Irons / Sights / Scopes % (caps 15 / 25 / 35)
-	Optional peripheral DOF (SSFX ssfx_wpn_dof_*) while free-zoomed / ADS.
+	Optional peripheral DOF (SSFX ssfx_wpn_dof_*) while free-zoomed. ADS DoF is left to SSS.
 	Console fov snaps; we lerp live → target quickly. Free/ADS publish tgt FOVs to
 	_G.dogma_fov_tgt_free / _G.dogma_fov_tgt_ads; lerp clamps so zoom-out never
 	passes the other system's more-zoomed floor.
@@ -275,12 +275,6 @@ local function refresh_config()
 		irons = clamp(dogma.mcm.int(ADS_MOD, "wads_irons"), 0, ADS_MAX.irons),
 		sight = clamp(dogma.mcm.int(ADS_MOD, "wads_sight"), 0, ADS_MAX.sight),
 		scope = clamp(dogma.mcm.int(ADS_MOD, "wads_scope"), 0, ADS_MAX.scope),
-	}
-	CONFIG.loaded.ads_dof = {
-		enabled = dogma.mcm.bool(ADS_MOD, "dof"),
-		irons = clamp(dogma.mcm.float(ADS_MOD, "dof_irons"), 0, 1),
-		sight = clamp(dogma.mcm.float(ADS_MOD, "dof_sight"), 0, 1),
-		scope = clamp(dogma.mcm.float(ADS_MOD, "dof_scope"), 0, 1),
 	}
 	CONFIG.loaded.wads_inc_key = dogma.mcm.key(ADS_MOD, "wads_inc_key")
 	CONFIG.loaded.wads_dec_key = dogma.mcm.key(ADS_MOD, "wads_dec_key")
@@ -888,12 +882,6 @@ local function apply_zoom_dof()
 	local intensity = 0
 	if free_on and not ads_on and CONFIG.loaded.free_dof then
 		intensity = CONFIG.loaded.free_dof_intensity or 0
-	elseif ads_on and CONFIG.loaded.ads_enabled then
-		local dof = CONFIG.loaded.ads_dof
-		if dof and dof.enabled then
-			local optic = optic_class()
-			intensity = dof[optic] or 0
-		end
 	end
 	if intensity > 0 then
 		local blur = intensity * DOF_BLUR_AT_FULL
@@ -1396,16 +1384,12 @@ local function on_option_change()
 	end
 
 	logf(
-		"opts: free_en=%s free=%d%% free_dof=%s/%.2f ads_fov=%d%% ads_dof=%s/%.2f/%.2f/%.2f hud=%d/%d/%d speed=%d%% sprint=%s empty_hands=%s scroll=%s reverse=%s steps=%d gap=%dms mode=%s key=%s mod=%d km=%d rmb=%d mmb=%d",
+		"opts: free_en=%s free=%d%% free_dof=%s/%.2f ads_fov=%d%% hud=%d/%d/%d speed=%d%% sprint=%s empty_hands=%s scroll=%s reverse=%s steps=%d gap=%dms mode=%s key=%s mod=%d km=%d rmb=%d mmb=%d",
 		tostr(CONFIG.loaded.enabled),
 		CONFIG.loaded.free_zoom,
 		tostr(CONFIG.loaded.free_dof),
 		CONFIG.loaded.free_dof_intensity or 0,
 		CONFIG.loaded.fov_zoom,
-		tostr(CONFIG.loaded.ads_dof and CONFIG.loaded.ads_dof.enabled),
-		(CONFIG.loaded.ads_dof and CONFIG.loaded.ads_dof.irons) or 0,
-		(CONFIG.loaded.ads_dof and CONFIG.loaded.ads_dof.sight) or 0,
-		(CONFIG.loaded.ads_dof and CONFIG.loaded.ads_dof.scope) or 0,
 		CONFIG.loaded.wads.irons,
 		CONFIG.loaded.wads.sight,
 		CONFIG.loaded.wads.scope,

@@ -586,21 +586,21 @@ local function gate_state_value(name, visual, now, icons_held)
 		grey_since[name] = nil
 		return 0
 	end
-	if visual >= 2 or icons_held then
-		if visual >= 2 then
-			grey_since[name] = nil
-		end
+	-- false = was yellow+ (grace starts when it drops to grey). nil = hold-only / expired.
+	if visual >= 2 then
+		grey_since[name] = false
+		return visual
+	end
+	if grey_since[name] == false then
+		grey_since[name] = now
+	end
+	if icons_held then
 		return visual
 	end
 	local grace = CONFIG.loaded.grey_hide_after_sec or 0
-	if grace <= 0 then
+	local started = grey_since[name]
+	if grace <= 0 or not started or now - started >= grace * 1000 then
 		grey_since[name] = nil
-		return 0
-	end
-	if not grey_since[name] then
-		grey_since[name] = now
-	end
-	if now - grey_since[name] >= grace * 1000 then
 		return 0
 	end
 	return visual
@@ -669,6 +669,15 @@ local function status_tick(now, icons_held)
 	if not L.hide_status_icons and not icons_held then
 		if gates_installed then
 			restore_gates()
+			local as = rawget(_G, "actor_status")
+			if as then
+				if as.activate_hud then
+					pcall(as.activate_hud)
+				end
+				if as.update_hud then
+					pcall(as.update_hud)
+				end
+			end
 		end
 		return
 	end
@@ -690,14 +699,9 @@ local function status_tick(now, icons_held)
 			end
 		end
 	end
-	local any = false
 	for name, _ in pairs(orig_functors) do
 		if opt_in_for(name) then
-			local shown = gate_state_value(name, call_orig_functor(name), now, icons_held)
-			cache_visual[name] = shown
-			if shown and shown >= 1 then
-				any = true
-			end
+			cache_visual[name] = gate_state_value(name, call_orig_functor(name), now, icons_held)
 		else
 			cache_visual[name] = 0
 			grey_since[name] = nil
@@ -708,7 +712,7 @@ local function status_tick(now, icons_held)
 	end
 	if as.update_hud then
 		pcall(as.update_hud)
-	elseif (any or icons_held) and as.HUD and as.HUD.Update then
+	elseif as.HUD and as.HUD.Update then
 		pcall(function()
 			as.HUD:Update(true)
 		end)
@@ -750,10 +754,10 @@ local function on_actor_update()
 	end
 
 	local icons_held = hold_key(L.key_icons, L.key_icons_modifier)
-	local press_edge = icons_held and not icons_hold_prev
+	local hold_edge = icons_held ~= icons_hold_prev
 	icons_hold_prev = icons_held
-	if L.hide_status_icons or icons_held then
-		if press_edge or (now - last_status_tick >= STATUS_TICK_MS) then
+	if L.hide_status_icons or icons_held or hold_edge then
+		if hold_edge or (now - last_status_tick >= STATUS_TICK_MS) then
 			last_status_tick = now
 			status_tick(now, icons_held)
 		elseif icons_held and actor_status and actor_status.activate_hud then

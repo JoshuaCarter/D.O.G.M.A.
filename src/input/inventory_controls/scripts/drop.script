@@ -2,6 +2,8 @@
 	Inventory drop keybind.
 	Hold: one item under the cursor. A new inventory cell (not a new item
 	in the same cell) also fires. Hold on that cell to finish the stack.
+	Sort/rebuild that drops hover or fills the same cell is locked until
+	the cursor moves.
 ]]
 
 local CONFIG = _G.dogma_input_inventory_controls_conf
@@ -19,7 +21,7 @@ local key = nil
 local modifier = 0
 local stack_hold_ms = 3000
 local down_prev = false
-local hold = nil -- { bag, idx, section, t0 }
+local hold = nil -- { bag, idx, section, t0, locked }
 
 local function log(msg)
 	if dogma.dbg.logging() then
@@ -98,8 +100,8 @@ local function do_drop(gui, obj, bag)
 	return true
 end
 
-local function begin_cell(bag, idx, section)
-	hold = { bag = bag, idx = idx, section = section, t0 = time_continual() }
+local function begin_cell(bag, idx, section, locked)
+	hold = { bag = bag, idx = idx, section = section, t0 = time_continual(), locked = locked or false }
 end
 
 local function fire_one(obj, bag, idx, gui)
@@ -139,21 +141,27 @@ local function poll_binds(gui)
 	local bag, idx, g = get_cell(gui)
 	local obj = bag and cell_obj(g, bag, idx)
 	if not bag then
-		hold = nil
+		if hold then
+			hold.locked = true
+		end
 		return
 	end
 
 	if pressed or not hold then
 		if obj then
 			fire_one(obj, bag, idx, g)
+		else
+			begin_cell(bag, idx, nil, true)
 		end
 	elseif hold.bag ~= bag or hold.idx ~= idx then
 		if obj then
 			fire_one(obj, bag, idx, g)
 		else
-			begin_cell(bag, idx, nil)
+			begin_cell(bag, idx, nil, true)
 		end
-	elseif hold.section and obj and (time_continual() - hold.t0) >= stack_hold_ms then
+	elseif not obj or hold.locked then
+		hold.locked = true
+	elseif hold.section and (time_continual() - hold.t0) >= stack_hold_ms then
 		fire_stack_step(obj, bag, idx, g)
 	end
 end

@@ -146,8 +146,8 @@ local function sync_parts(info, tail)
 end
 
 local function pick_header_tail(info)
-	-- Prefer desc when visible and non-zero height (Weapon Tooltips zeros height
-	-- when hide_description is on; Show(false) alone still leaves stock height).
+	-- Prefer desc when visible and non-zero height (Show(false) alone still
+	-- leaves stock height).
 	if info.desc and info.desc:IsShown() then
 		local h = 0
 		pcall(function()

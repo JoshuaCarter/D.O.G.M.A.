@@ -112,13 +112,8 @@ local function is_outfit_or_misc_kit(sec)
 	if sfind(s, "survival_kit", 1, true) then
 		return true
 	end
-	if sfind(s, "helmet_repair", 1, true) then
-		return true
-	end
-	if sfind(s, "exo_repair", 1, true) then
-		return true
-	end
-	if s == "light_repair_kit" or s == "medium_repair_kit" or s == "heavy_repair_kit" then
+	-- Armor / helmet / exo repair (not toolkit_p/s/r5/r7).
+	if sfind(s, "repair_kit", 1, true) then
 		return true
 	end
 	if s == "cleaning_kit_u" then

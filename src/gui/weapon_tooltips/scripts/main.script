@@ -821,6 +821,9 @@ local function apply_custom_stat_display(info, obj, sec)
 			ele.comp:SetTextComplexMode(false)
 		end
 	end
+	if not CONFIG.loaded.custom_stats_tooltips then
+		return
+	end
 	if (not sec or sec == "") and obj then
 		local ok, section = pcall(function()
 			return obj:section()
@@ -1209,6 +1212,61 @@ local function apply_enhanced_weapon_stats()
 	dogma.perf.stop()
 end
 
+local DOGMA_STAT_KEYS = {
+	"dogma_stalker_damage",
+	"dogma_ammo_damage",
+	"dogma_dispersion",
+	"dogma_spread",
+	"dogma_base_spread",
+	"dogma_movement_spread",
+	"dogma_bullet_drop",
+	"dogma_barrel_wear",
+	"dogma_burst_control",
+}
+
+-- Stock GAMMA/ADV rows only (no DOGMA extras, vanilla visibility).
+local function restore_default_weapon_stats()
+	if not utils_ui or not utils_ui.stats_table then
+		return
+	end
+	if utils_ui.prepare_stats_table then
+		utils_ui.prepare_stats_table()
+	end
+	local weapon_stats = utils_ui.stats_table["weapon"]
+	if not weapon_stats then
+		return
+	end
+	for key, _ in pairs(BASE_INDEX) do
+		cache_base_stat(weapon_stats, key)
+		set_base_stat(weapon_stats, key, true)
+	end
+	for i = 1, #DOGMA_STAT_KEYS do
+		weapon_stats[DOGMA_STAT_KEYS[i]] = nil
+	end
+end
+
+-- Shared stats_table is used by both surfaces; swap right before each render.
+local last_custom_stats = nil
+
+local function apply_weapon_stats(use_custom)
+	if last_custom_stats == use_custom then
+		return
+	end
+	if use_custom then
+		apply_enhanced_weapon_stats()
+	else
+		restore_default_weapon_stats()
+	end
+	last_custom_stats = use_custom
+end
+
+local function apply_standing_weapon_stats()
+	last_custom_stats = nil
+	apply_weapon_stats(
+		CONFIG.loaded.custom_stats_tooltips or CONFIG.loaded.custom_stats_details
+	)
+end
+
 local logged_once = {}
 -- Keys logged for the current tooltip open (reset when the hovered item changes).
 local tooltip_logged = {}
@@ -1269,7 +1327,10 @@ local tracked_infos = setmetatable({}, { __mode = "k" })
 local function on_option_change()
 	local tostr = tostring
 	local prev_debug = CONFIG.loaded.debug_log
-	CONFIG.loaded.show_damage_table = dogma.mcm.bool(CONFIG.MOD_ID, "show_damage_table")
+	CONFIG.loaded.damage_table_tooltips = dogma.mcm.bool(CONFIG.MOD_ID, "damage_table_tooltips")
+	CONFIG.loaded.damage_table_details = dogma.mcm.bool(CONFIG.MOD_ID, "damage_table_details")
+	CONFIG.loaded.custom_stats_tooltips = dogma.mcm.bool(CONFIG.MOD_ID, "custom_stats_tooltips")
+	CONFIG.loaded.custom_stats_details = dogma.mcm.bool(CONFIG.MOD_ID, "custom_stats_details")
 	CONFIG.loaded.show_hit_power = dogma.mcm.bool(CONFIG.MOD_ID, "show_hit_power")
 	CONFIG.loaded.show_stalker_damage = dogma.mcm.bool(CONFIG.MOD_ID, "show_stalker_damage")
 	CONFIG.loaded.show_mutant_damage = dogma.mcm.bool(CONFIG.MOD_ID, "show_mutant_damage")
@@ -1311,7 +1372,6 @@ local function on_option_change()
 		CONFIG.loaded.stat_row_placement = CONFIG.DEFAULTS.stat_row_placement
 	end
 	CONFIG.loaded.compact_header = dogma.mcm.bool(CONFIG.MOD_ID, "compact_header")
-	CONFIG.loaded.hide_description = dogma.mcm.bool(CONFIG.MOD_ID, "hide_description")
 	CONFIG.loaded.table_row_pad = dogma.mcm.uint(CONFIG.MOD_ID, "table_row_pad")
 	for i = 1, NUM_TORSO_TIERS do
 		CONFIG.loaded["show_torso_" .. i] = dogma.mcm.bool(CONFIG.MOD_ID, "show_torso_" .. i)
@@ -1351,15 +1411,17 @@ local function on_option_change()
 	dogma.dbg.set_enabled(CONFIG.MOD_ID, dogma.dbg.overlay_enabled())
 
 	refresh_enhanced_stat_labels()
-	apply_enhanced_weapon_stats()
+	apply_standing_weapon_stats()
 	for info in pairs(tracked_infos) do
 		info.id = nil
 		info.section = nil
 	end
 
 	log_once("config", string.format(
-		"config: table=%s hit=%s stalker=%s mutant=%s base=%s/%s/%s/%s/%s/%s/%s extra=%s/%s/%s/%s/%s place=%s headers=%s order=%s range=%s pellet%%=%s cond=%s/%s sil=%s/%s",
-		tostr(CONFIG.loaded.show_damage_table), tostr(CONFIG.loaded.show_hit_power),
+		"config: table=%s/%s custom=%s/%s hit=%s stalker=%s mutant=%s base=%s/%s/%s/%s/%s/%s/%s extra=%s/%s/%s/%s/%s place=%s headers=%s order=%s range=%s pellet%%=%s cond=%s/%s sil=%s/%s",
+		tostr(CONFIG.loaded.damage_table_tooltips), tostr(CONFIG.loaded.damage_table_details),
+		tostr(CONFIG.loaded.custom_stats_tooltips), tostr(CONFIG.loaded.custom_stats_details),
+		tostr(CONFIG.loaded.show_hit_power),
 		tostr(CONFIG.loaded.show_stalker_damage), tostr(CONFIG.loaded.show_mutant_damage),
 		tostr(CONFIG.loaded.show_accuracy), tostr(CONFIG.loaded.show_handling),
 		tostr(CONFIG.loaded.show_fire_rate), tostr(CONFIG.loaded.show_mag_size),
@@ -2438,7 +2500,7 @@ end
 local DETAILS_PANEL_WIDTH = 500
 
 local function add_details_damage_section(sheet, obj)
-	if not CONFIG.loaded.show_damage_table or not sheet or not sheet.scroll or not sheet.xml then
+	if not CONFIG.loaded.damage_table_details or not sheet or not sheet.scroll or not sheet.xml then
 		return
 	end
 
@@ -2510,41 +2572,26 @@ local function apply_description_visibility(info)
 	if not info or not info.desc then
 		return
 	end
-	local hide = CONFIG.loaded.hide_description
-	info.desc:Show(not hide)
-	-- Hide alone leaves stock height; Sync_Y/Sync_H still measure it unless zeroed.
-	if hide then
-		pcall(function()
-			info.desc:SetWndSize(vector2():set(info.desc:GetWidth(), 0))
-		end)
-	else
-		pcall(function()
-			info.desc:AdjustHeightToText()
-		end)
-	end
+	info.desc:Show(true)
+	pcall(function()
+		info.desc:AdjustHeightToText()
+	end)
 end
 
 local function sync_damage_layout(info)
 	apply_description_visibility(info)
 
-	local tail
-	if CONFIG.loaded.hide_description then
-		if info.note and info.note:IsShown() then
-			tail = info.note
-		else
-			tail = info.weight
-		end
-	else
-		tail = info.desc
-	end
+	local tail = info.desc
+	local after_table = CONFIG.loaded.damage_table_tooltips
+		and info.dogma_wpn_damage and info.dogma_wpn_damage:IsShown()
 
-	if CONFIG.loaded.show_damage_table and info.dogma_wpn_damage and info.dogma_wpn_damage:IsShown() then
+	if after_table then
 		info:Sync_Y(tail, info.dogma_wpn_damage, PANEL_TOP_OFFSET)
 		tail = info.dogma_wpn_damage
 	end
 
 	if info.stats_dialog:IsShown() then
-		info:Sync_Y(tail, info.stats_dialog, BOTTOM_OFFSET)
+		info:Sync_Y(tail, info.stats_dialog, after_table and BOTTOM_OFFSET or SECTION_GAP)
 		tail = info.stats_dialog
 	end
 
@@ -2597,19 +2644,15 @@ local function apply_compact_header(info)
 		set_wnd_y(info.value, weight_y)
 		if info.note and info.note:IsShown() then
 			info:Sync_Y(info.weight, info.note, SECTION_GAP)
-			if not CONFIG.loaded.hide_description then
-				info:Sync_Y(info.note, info.desc, SECTION_GAP - 5)
-			end
-		elseif not CONFIG.loaded.hide_description then
+			info:Sync_Y(info.note, info.desc, SECTION_GAP - 5)
+		else
 			info:Sync_Y(info.weight, info.desc, SECTION_GAP - 5)
 		end
 	else
 		set_wnd_y(info.weight, ys.weight)
 		set_wnd_y(info.value, ys.value)
 		set_wnd_y(info.note, ys.note)
-		if not CONFIG.loaded.hide_description then
-			set_wnd_y(info.desc, ys.desc)
-		end
+		set_wnd_y(info.desc, ys.desc)
 	end
 	apply_description_visibility(info)
 end
@@ -2625,8 +2668,8 @@ local function refresh_weapon_damage_panel(info, obj, sec)
 
 	hide_damage_panel(info)
 
-	if not CONFIG.loaded.show_damage_table then
-		log_once("table_disabled", "show_damage_table is off in MCM")
+	if not CONFIG.loaded.damage_table_tooltips then
+		log_once("table_disabled", "damage_table_tooltips is off in MCM")
 		return
 	end
 
@@ -2757,7 +2800,9 @@ local function get_stats_xml_hook(handler, obj, sec, gr, stat)
 		grp = utils_ui.stats_table and utils_ui.stats_table[grp]
 	end
 
-	if grp and not grp.track and grp.name and DOGMA_WHITE_STAT_NAMES[grp.name] then
+	if CONFIG.loaded.custom_stats_details
+		and grp and not grp.track and grp.name and DOGMA_WHITE_STAT_NAMES[grp.name]
+	then
 		local ok, st = pcall(build_white_stat_xml, handler, obj, sec, grp, stat)
 		if ok and st then
 			return st
@@ -2777,12 +2822,6 @@ local function itm_details_addtext_hook(self, xml, path, offset, txt)
 	if self.dogma_details_pending and path == "text_s_l" then
 		local obj = self.dogma_details_pending
 		self.dogma_details_pending = nil
-		if CONFIG.loaded.hide_description and ele then
-			ele:Show(false)
-			pcall(function()
-				ele:SetWndSize(vector2():set(ele:GetWidth(), 0))
-			end)
-		end
 		add_details_damage_section(self, obj)
 	end
 
@@ -2791,7 +2830,8 @@ end
 
 local function itm_details_reset_hook(self, obj)
 	dogma.perf.start("weapon_tooltips", "itm_details_reset")
-	if obj and CONFIG.loaded.show_damage_table then
+	apply_weapon_stats(CONFIG.loaded.custom_stats_details)
+	if obj and CONFIG.loaded.damage_table_details then
 		local sec = safe_section(obj)
 		if sec then
 			sec = ini_sys:r_string_ex(sec, "parent_section") or sec
@@ -2888,15 +2928,17 @@ end
 
 local function uiinfo_update_hook(self, obj, sec, flags)
 	dogma.perf.start("weapon_tooltips", "uiinfo_update")
+	apply_weapon_stats(CONFIG.loaded.custom_stats_tooltips)
 	local oid = safe_id(obj)
 	local same_item = (oid and self.id and oid == self.id)
 		or (not obj and sec and self.section == sec)
 
 	base_uiinfo_update(self, obj, sec, flags)
 
-	-- Table/layout once per tooltip. Custom stat text after every vanilla
-	-- fill: those rows use sentinel functors that paint "1" until we replace
-	-- them (slash / spread / burst / …).
+	-- Table/layout once per tooltip. Compact header + restack always run;
+	-- damage-table / custom-stat toggles only skip filling those extras.
+	-- Custom stat text after every vanilla fill: sentinel functors paint "1"
+	-- until we replace them (slash / spread / burst / …).
 	local dirty = self.dogma_layout_dirty
 	if not same_item then
 		tooltip_logged = {}
@@ -2971,7 +3013,7 @@ end
 
 local function on_console_execute(cmd)
 	if cmd == "g_game_difficulty" then
-		apply_enhanced_weapon_stats()
+		apply_standing_weapon_stats()
 		for info in pairs(tracked_infos) do
 			info.id = nil
 			info.section = nil
@@ -2991,7 +3033,7 @@ local function hook_stats_table_override()
 	local prev = ish_item_stats.override_stats_table
 	ish_item_stats.override_stats_table = function()
 		prev()
-		apply_enhanced_weapon_stats()
+		apply_standing_weapon_stats()
 		for info in pairs(tracked_infos) do
 			info.id = nil
 			info.section = nil
@@ -3061,7 +3103,7 @@ local callbacks_registered = false
 -- No db.actor / level dependency, so this is safe to call from main_menu_on_init
 -- (main menu boot, no game loaded yet) as well as on_game_start(). Idempotent -
 -- every install_* below no-ops if already installed; on_option_change() /
--- apply_enhanced_weapon_stats() are cheap to re-run and always safe to repeat.
+-- apply_standing_weapon_stats() are cheap to re-run and always safe to repeat.
 -- Callback registration is guarded separately so calling this twice (menu boot,
 -- then real on_game_start) never double-registers a callback.
 function early_init()
@@ -3114,7 +3156,7 @@ function on_game_start()
 	log_once("startup", string.format(
 		"loaded: dogma=%s, ui_hooks=%s, details_hook=%s, table=%s, hit=%s, mutant=%s, place=%s, stats_mod=%s",
 		tostr(dogma ~= nil), tostr(ui_hooks_ok), tostr(details_hook_ok),
-		tostr(CONFIG.loaded.show_damage_table), tostr(CONFIG.loaded.show_hit_power),
+		tostr(CONFIG.loaded.damage_table_tooltips), tostr(CONFIG.loaded.show_hit_power),
 		tostr(CONFIG.loaded.show_mutant_damage), tostr(CONFIG.loaded.stat_row_placement),
 		tostr(zzzz_dogma_gui_weapon_tooltips_stats and zzzz_dogma_gui_weapon_tooltips_stats.NAME ~= nil)))
 end

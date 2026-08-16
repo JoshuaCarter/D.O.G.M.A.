@@ -1,0 +1,57 @@
+-- input/menu_controls conf
+
+_G.dogma_input_menu_controls_conf = {
+	MOD_ID = "dogma/input/menu_controls",
+	DEFAULTS = {
+		-- DIK_TAB
+		close_key = 15,
+		trade = true,
+		crafting = true,
+		dialogue = true,
+	},
+	loaded = {},
+}
+
+function on_mcm_load(options)
+	local CONFIG = _G.dogma_input_menu_controls_conf
+	dogma_mcm.attach(options, "input", "ui_mcm_menu_dogma_input", {
+		id = "menu_controls",
+		sh = true,
+		text = "ui_mcm_menu_dogma_input_menu_controls",
+		gr = dogma_mcm.with_header({
+			{
+				id = "page_description",
+				type = "desc",
+				text = "ui_mcm_dogma_input_menu_controls_page_description",
+			},
+			{
+				id = "close_key",
+				type = "key_bind",
+				val = 2,
+				def = CONFIG.DEFAULTS.close_key,
+				hint = "dogma_input_menu_controls_close_key",
+			},
+			{
+				id = "trade",
+				type = "check",
+				val = 1,
+				def = CONFIG.DEFAULTS.trade,
+				hint = "dogma_input_menu_controls_trade",
+			},
+			{
+				id = "crafting",
+				type = "check",
+				val = 1,
+				def = CONFIG.DEFAULTS.crafting,
+				hint = "dogma_input_menu_controls_crafting",
+			},
+			{
+				id = "dialogue",
+				type = "check",
+				val = 1,
+				def = CONFIG.DEFAULTS.dialogue,
+				hint = "dogma_input_menu_controls_dialogue",
+			},
+		}),
+	})
+end

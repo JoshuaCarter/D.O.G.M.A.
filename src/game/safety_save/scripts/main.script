@@ -5,7 +5,7 @@
 	  - always_min minutes have passed since the last one (0 = off), or
 	  - event_min minutes have passed and inventory / full heal / eat / drink
 	    is happening on this tick.
-	Last-save time is this load only.
+	Last-save time is this load only (not reset on pause menu or level change).
 ]]
 
 local CONFIG = _G.dogma_game_safety_save_conf
@@ -48,13 +48,17 @@ local function on_option_change()
 	))
 end
 
-local function reset_session()
+local function reset_edges()
 	next_at = 0
-	last_save_ms = time_global()
 	was_inv = dogma.status.is_inv_open()
 	was_eating = dogma.status.is_eating()
 	was_drinking = dogma.status.is_drinking()
 	was_hp = dogma.status.health()
+end
+
+local function reset_session()
+	reset_edges()
+	last_save_ms = time_global()
 	log("session reset")
 end
 
@@ -107,6 +111,8 @@ local function actor_on_update()
 	if dogma.status.is_in_combat() then
 		if reason then
 			log("skip " .. reason .. " (combat)")
+		elseif always_min > 0 and elapsed >= always_min * MIN_MS then
+			log("skip always (combat)")
 		end
 		return
 	end
@@ -132,8 +138,8 @@ function on_game_start()
 	RegisterScriptCallback("actor_on_update", actor_on_update)
 	RegisterScriptCallback("on_option_change", on_option_change)
 	RegisterScriptCallback("on_game_load", reset_session)
-	RegisterScriptCallback("main_menu_on_init", reset_session)
-	RegisterScriptCallback("actor_on_net_destroy", reset_session)
+	RegisterScriptCallback("main_menu_on_init", reset_edges)
+	RegisterScriptCallback("actor_on_net_destroy", reset_edges)
 	log("loaded")
 end
 

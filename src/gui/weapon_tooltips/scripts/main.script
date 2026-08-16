@@ -2534,10 +2534,35 @@ local function add_details_damage_section(sheet, obj)
 	_st:SetAutoDelete(true)
 end
 
+local function wnd_right(wnd)
+	if not wnd then
+		return 0
+	end
+	return wnd:GetWndPos().x + wnd:GetWidth()
+end
+
+local function wnd_bottom(wnd)
+	if not wnd then
+		return 0
+	end
+	return wnd:GetWndPos().y + wnd:GetHeight()
+end
+
+local function place_below(info, tail, wnd, gap)
+	if not (wnd and wnd.IsShown and wnd:IsShown()) then
+		return tail
+	end
+	if tail then
+		info:Sync_Y(tail, wnd, gap)
+	end
+	return wnd
+end
+
 -- Parts beside stats (Raven vertical) or under ammo (horizontal).
+-- Returns tail, plus the right edge so the frame can grow sideways.
 local function sync_parts_layout(info, tail)
 	if not info.parts or not info.parts:IsShown() then
-		return tail
+		return tail, 0
 	end
 
 	local stats = info.stats_dialog
@@ -2552,20 +2577,18 @@ local function sync_parts_layout(info, tail)
 		if info.SyncPartsText then
 			info:SyncPartsText(true)
 		end
-		local parts_bottom = stats_pos.y + info.parts:GetHeight()
-		local tail_bottom = tail:GetWndPos().y + tail:GetHeight()
-		if parts_bottom > tail_bottom then
+		if wnd_bottom(info.parts) > wnd_bottom(tail) then
 			tail = info.parts
 		end
 	else
 		info:Sync_Y(tail, info.parts, SECTION_GAP)
-		tail = info.parts
 		if info.SyncPartsText then
 			info:SyncPartsText()
 		end
+		tail = info.parts
 	end
 
-	return tail
+	return tail, wnd_right(info.parts)
 end
 
 local function apply_description_visibility(info)
@@ -2578,31 +2601,48 @@ local function apply_description_visibility(info)
 	end)
 end
 
-local function sync_damage_layout(info)
-	apply_description_visibility(info)
-
-	local tail = info.desc
-	local after_table = CONFIG.loaded.damage_table_tooltips
-		and info.dogma_wpn_damage and info.dogma_wpn_damage:IsShown()
-
-	if after_table then
-		info:Sync_Y(tail, info.dogma_wpn_damage, PANEL_TOP_OFFSET)
-		tail = info.dogma_wpn_damage
+local function pick_header_tail(info)
+	if info.desc and info.desc:IsShown() then
+		local h = 0
+		pcall(function()
+			h = info.desc:GetHeight()
+		end)
+		if h > 0 then
+			return info.desc
+		end
 	end
-
-	if info.stats_dialog:IsShown() then
-		info:Sync_Y(tail, info.stats_dialog, after_table and BOTTOM_OFFSET or SECTION_GAP)
-		tail = info.stats_dialog
+	if info.note and info.note:IsShown() then
+		return info.note
 	end
+	return info.weight
+end
 
-	if info.ammo and info.ammo:IsShown() then
-		info:Sync_Y(tail, info.ammo, SECTION_GAP)
-		tail = info.ammo
+-- Show clamps self.dialog, not the frame. Sync_H only grows the frame.
+local function fit_dialog_to_frame(info, parts_right)
+	local frame = info.frame
+	if not frame then
+		return
 	end
-
-	tail = sync_parts_layout(info, tail)
-
-	info:Sync_H(tail, info.frame, SECTION_GAP)
+	local fw = frame:GetWidth()
+	local fh = frame:GetHeight()
+	if parts_right > 0 then
+		local need_w = parts_right - frame:GetWndPos().x + SECTION_GAP
+		if need_w > fw then
+			fw = need_w
+			frame:SetWndSize(vector2():set(fw, fh))
+			fh = frame:GetHeight()
+		end
+	end
+	local dialog = info.dialog
+	if dialog then
+		dialog:SetWndSize(vector2():set(math.max(dialog:GetWidth(), fw), fh))
+	end
+	-- Some Show paths clamp `self` rather than `dialog`.
+	if info.SetWndSize then
+		pcall(function()
+			info:SetWndSize(vector2():set(math.max(info:GetWidth(), fw), fh))
+		end)
+	end
 end
 
 -- Cache stock header Ys once (Sota utils.xml: name 16, weight/cost 34, note 52, desc 70).
@@ -2700,14 +2740,37 @@ local function refresh_weapon_damage_panel(info, obj, sec)
 	end
 end
 
-local function restack_positions(info)
+-- One stack: header → table → stats → ammo → parts → recipes → cooking →
+-- size frame+dialog. Call only after content (table / custom stats) is filled.
+function layout_tooltip(info)
+	if not info or not info.frame or not info.Sync_Y or not info.Sync_H then
+		return
+	end
+
 	apply_compact_header(info)
-	sync_damage_layout(info)
+
+	local tail = pick_header_tail(info)
+	if not tail then
+		return
+	end
+
+	local after_table = info.dogma_wpn_damage and info.dogma_wpn_damage:IsShown()
+	if after_table then
+		tail = place_below(info, tail, info.dogma_wpn_damage, PANEL_TOP_OFFSET)
+	end
+	tail = place_below(info, tail, info.stats_dialog, after_table and BOTTOM_OFFSET or SECTION_GAP)
+	tail = place_below(info, tail, info.ammo, SECTION_GAP)
+	local parts_right
+	tail, parts_right = sync_parts_layout(info, tail)
+	tail = place_below(info, tail, info.recipes, SECTION_GAP)
+	tail = place_below(info, tail, info.cooking, SECTION_GAP)
+
+	info:Sync_H(tail, info.frame, SECTION_GAP)
+	fit_dialog_to_frame(info, parts_right or 0)
 end
 
 -- Vanilla UIInfoItem:Show pins the dialog (cursor, then lift / top-of-screen
--- when taller than 768). We Sync_H after that, so re-run Show with the
--- final height. Call the captured Show, not self:Show (would re-enter us).
+-- when taller than 768). Call the captured Show, not self:Show.
 local function clamp_tooltip(info)
 	if not info or not base_uiinfo_show then
 		return
@@ -2716,17 +2779,6 @@ local function clamp_tooltip(info)
 		return
 	end
 	base_uiinfo_show(info, true)
-end
-
--- Vanilla Sync_Finale puts stats under desc. If that ran after our stack,
--- stats sit on the table. Cheap check; no AdjustHeightToText.
-local function stats_overlap_table(info)
-	local panel = info and info.dogma_wpn_damage
-	local stats = info and info.stats_dialog
-	if not (panel and stats and panel.IsShown and panel:IsShown() and stats:IsShown()) then
-		return false
-	end
-	return stats:GetWndPos().y < panel:GetWndPos().y + panel:GetHeight()
 end
 
 -- The details/workshop sheets build stats via utils_ui.get_stats_xml, which
@@ -2935,38 +2987,35 @@ local function uiinfo_update_hook(self, obj, sec, flags)
 
 	base_uiinfo_update(self, obj, sec, flags)
 
-	-- Table/layout once per tooltip. Compact header + restack always run;
-	-- damage-table / custom-stat toggles only skip filling those extras.
-	-- Custom stat text after every vanilla fill: sentinel functors paint "1"
-	-- until we replace them (slash / spread / burst / …).
-	local dirty = self.dogma_layout_dirty
+	-- Content first, then layout. Custom stat text after every vanilla fill
+	-- (sentinel functors paint "1" until replaced). Toggles only skip extras.
 	if not same_item then
 		tooltip_logged = {}
 		refresh_weapon_damage_panel(self, obj, sec)
-		restack_positions(self)
-		if self.IsShown and self:IsShown() then
+	end
+	apply_custom_stat_display(self, obj, sec)
+
+	local shown = self.IsShown and self:IsShown()
+	if not same_item then
+		if shown then
+			layout_tooltip(self)
 			self.dogma_layout_dirty = false
 			clamp_tooltip(self)
 		else
 			self.dogma_layout_dirty = true
 		end
-	elseif dirty and self.IsShown and self:IsShown() then
-		restack_positions(self)
+	elseif self.dogma_layout_dirty and shown then
+		layout_tooltip(self)
 		self.dogma_layout_dirty = false
 		clamp_tooltip(self)
-	elseif stats_overlap_table(self) then
-		restack_positions(self)
-		clamp_tooltip(self)
 	end
-	apply_custom_stat_display(self, obj, sec)
 	dogma.perf.stop()
 end
 
 local function uiinfo_show_hook(self, state)
-	-- Grow first so vanilla Show clamps against the real height (pin to top
-	-- when the box is taller than the screen).
-	if state and self.dogma_layout_dirty then
-		restack_positions(self)
+	-- Always stack before vanilla Show so the clamp sees the final dialog size.
+	if state then
+		layout_tooltip(self)
 		self.dogma_layout_dirty = false
 	end
 	if base_uiinfo_show then

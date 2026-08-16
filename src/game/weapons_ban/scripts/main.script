@@ -600,6 +600,48 @@ local function release_inventory_ids(ids)
 	end
 end
 
+-- Trade UI keeps released cells until reset; pack remaining with the
+-- active sort tab (same path as clicking a sort button).
+local function resort_open_trader_bag()
+	local gui = ui_inventory and ui_inventory.GUI
+	if not (gui and gui.mode == "trade") then
+		return
+	end
+	if gui.TMode_ResetInventories then
+		gui:TMode_ResetInventories()
+	else
+		local cc = gui.CC and gui.CC["npc_bag"]
+		if cc and cc.Reset then
+			cc:Reset()
+		end
+	end
+	if not gui.On_Sort then
+		return
+	end
+	local idx = 1
+	local btns = gui.sort_btn
+	if btns then
+		for i = 1, #btns do
+			if btns[i] and btns[i].GetCheck and btns[i]:GetCheck() then
+				idx = i
+				break
+			end
+		end
+	end
+	gui:On_Sort(idx, false)
+end
+
+local function schedule_trader_resort(npc_id)
+	if CreateTimeEvent then
+		CreateTimeEvent("dogma_wb_strip", "sort_" .. npc_id, 0, function()
+			resort_open_trader_bag()
+			return true
+		end)
+	else
+		resort_open_trader_bag()
+	end
+end
+
 local function strip_banned_from_trader(npc)
 	if not (npc and npc.iterate_inventory) then
 		return
@@ -610,6 +652,9 @@ local function strip_banned_from_trader(npc)
 		add_unique_rows(npc, rows)
 	end
 	release_inventory_ids(to_release)
+	if #to_release > 0 then
+		schedule_trader_resort(npc:id())
+	end
 	dogma.perf.stop()
 end
 

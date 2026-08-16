@@ -111,10 +111,24 @@ local function prepare_text_heights(info)
 	end)
 end
 
--- Parts in Tooltip may sit beside stats (vertical) or under ammo (horizontal).
+local function wnd_right(wnd)
+	if not wnd then
+		return 0
+	end
+	return wnd:GetWndPos().x + wnd:GetWidth()
+end
+
+local function wnd_bottom(wnd)
+	if not wnd then
+		return 0
+	end
+	return wnd:GetWndPos().y + wnd:GetHeight()
+end
+
+-- Parts beside stats (vertical) or under ammo (horizontal).
 local function sync_parts(info, tail)
 	if not info.parts or not info.parts:IsShown() then
-		return tail
+		return tail, 0
 	end
 
 	local stats = info.stats_dialog
@@ -129,25 +143,21 @@ local function sync_parts(info, tail)
 		if info.SyncPartsText then
 			info:SyncPartsText(true)
 		end
-		local parts_bottom = stats_pos.y + info.parts:GetHeight()
-		local tail_bottom = tail:GetWndPos().y + tail:GetHeight()
-		if parts_bottom > tail_bottom then
+		if wnd_bottom(info.parts) > wnd_bottom(tail) then
 			tail = info.parts
 		end
 	else
 		info:Sync_Y(tail, info.parts, SECTION_GAP)
-		tail = info.parts
 		if info.SyncPartsText then
 			info:SyncPartsText()
 		end
+		tail = info.parts
 	end
 
-	return tail
+	return tail, wnd_right(info.parts)
 end
 
 local function pick_header_tail(info)
-	-- Prefer desc when visible and non-zero height (Show(false) alone still
-	-- leaves stock height).
 	if info.desc and info.desc:IsShown() then
 		local h = 0
 		pcall(function()
@@ -163,9 +173,41 @@ local function pick_header_tail(info)
 	return info.weight
 end
 
--- Public: re-measure + restack one tooltip. Idempotent.
+local function fit_dialog_to_frame(info, parts_right)
+	local frame = info.frame
+	if not frame then
+		return
+	end
+	local fw = frame:GetWidth()
+	local fh = frame:GetHeight()
+	if parts_right > 0 then
+		local need_w = parts_right - frame:GetWndPos().x + SECTION_GAP
+		if need_w > fw then
+			fw = need_w
+			frame:SetWndSize(vector2():set(fw, fh))
+			fh = frame:GetHeight()
+		end
+	end
+	local dialog = info.dialog
+	if dialog then
+		dialog:SetWndSize(vector2():set(math.max(dialog:GetWidth(), fw), fh))
+	end
+	if info.SetWndSize then
+		pcall(function()
+			info:SetWndSize(vector2():set(math.max(info:GetWidth(), fw), fh))
+		end)
+	end
+end
+
+-- Public: one stack + size the dialog Show clamps. Idempotent.
 function fix(info)
 	if not info or not info.frame or not info.Sync_Y or not info.Sync_H then
+		return
+	end
+
+	-- Weapon Tooltips owns compact header + the same stack when installed.
+	if zzzz_dogma_gui_weapon_tooltips_main and zzzz_dogma_gui_weapon_tooltips_main.layout_tooltip then
+		zzzz_dogma_gui_weapon_tooltips_main.layout_tooltip(info)
 		return
 	end
 
@@ -176,11 +218,10 @@ function fix(info)
 		return
 	end
 
-	local after_panel = false
-	if info.dogma_wpn_damage and info.dogma_wpn_damage:IsShown() then
+	local after_panel = info.dogma_wpn_damage and info.dogma_wpn_damage:IsShown()
+	if after_panel then
 		info:Sync_Y(tail, info.dogma_wpn_damage, PANEL_TOP_OFFSET)
 		tail = info.dogma_wpn_damage
-		after_panel = true
 	end
 
 	if info.stats_dialog and info.stats_dialog:IsShown() then
@@ -193,7 +234,8 @@ function fix(info)
 		tail = info.ammo
 	end
 
-	tail = sync_parts(info, tail)
+	local parts_right
+	tail, parts_right = sync_parts(info, tail)
 
 	if info.recipes and info.recipes:IsShown() then
 		info:Sync_Y(tail, info.recipes, SECTION_GAP)
@@ -206,6 +248,7 @@ function fix(info)
 	end
 
 	info:Sync_H(tail, info.frame, SECTION_GAP)
+	fit_dialog_to_frame(info, parts_right or 0)
 end
 
 -- Vanilla UIInfoItem:Show pins the dialog (cursor, then lift / top-of-screen
@@ -233,15 +276,6 @@ local function safe_id(obj)
 	return nil
 end
 
-local function stats_overlap_table(info)
-	local panel = info and info.dogma_wpn_damage
-	local stats = info and info.stats_dialog
-	if not (panel and stats and panel.IsShown and panel:IsShown() and stats:IsShown()) then
-		return false
-	end
-	return stats:GetWndPos().y < panel:GetWndPos().y + panel:GetHeight()
-end
-
 local function uiinfo_update_hook(self, obj, sec, flags)
 	local oid = safe_id(obj)
 	local same_item = (oid and self.id and oid == self.id)
@@ -251,29 +285,26 @@ local function uiinfo_update_hook(self, obj, sec, flags)
 		base_uiinfo_update(self, obj, sec, flags)
 	end
 
-	-- Read dirty after the inner hook (Weapon Tooltips may set it). Once per
-	-- item; do not restack every hidden Update while waiting for Show.
-	local dirty = self.dogma_layout_dirty
+	-- Inner hook fills extras. Stack here only when already visible; Show
+	-- always stacks before the vanilla clamp.
+	local shown = self.IsShown and self:IsShown()
 	if not same_item then
-		fix(self)
-		if self.IsShown and self:IsShown() then
+		if shown then
+			fix(self)
 			self.dogma_layout_dirty = false
 			clamp_tooltip(self)
 		else
 			self.dogma_layout_dirty = true
 		end
-	elseif dirty and self.IsShown and self:IsShown() then
+	elseif self.dogma_layout_dirty and shown then
 		fix(self)
 		self.dogma_layout_dirty = false
-		clamp_tooltip(self)
-	elseif stats_overlap_table(self) then
-		fix(self)
 		clamp_tooltip(self)
 	end
 end
 
 local function uiinfo_show_hook(self, state)
-	if state and self.dogma_layout_dirty then
+	if state then
 		fix(self)
 		self.dogma_layout_dirty = false
 	end

@@ -1,0 +1,378 @@
+-- game/dogma_rules — lock + apply other mods' settings from dogma_rules.ltx.
+
+_G.dogma_game_dogma_rules_conf = {
+	MOD_ID = "dogma/game/dogma_rules",
+	LTX = "dogma_rules.ltx",
+	DEFAULTS = {},
+}
+
+local CONFIG = _G.dogma_game_dogma_rules_conf
+local SELF = "dogma_game_dogma_rules_mcm"
+local CLR_LOCK = GetARGB(255, 140, 140, 140)
+
+local VALUE_TYPES = {
+	check = true,
+	list = true,
+	track = true,
+	key_bind = true,
+	input = true,
+	radio_h = true,
+	radio_v = true,
+	preset = true,
+}
+
+local function parse_value(raw)
+	if raw == nil then
+		return nil
+	end
+	local s = tostring(raw):match("^%s*(.-)%s*$")
+	local low = s:lower()
+	if low == "true" then
+		return true
+	end
+	if low == "false" then
+		return false
+	end
+	local n = tonumber(s)
+	if n ~= nil then
+		return n
+	end
+	return s
+end
+
+local function read_section(ini, section, as_command)
+	local out = {}
+	if not (ini and ini.section_exist and ini:section_exist(section)) then
+		return out
+	end
+	local n = ini:line_count(section)
+	if not n or n < 1 then
+		return out
+	end
+	for i = 0, n - 1 do
+		local _, key, value = ini:r_line(section, i, "", "")
+		if key and key ~= "" and value and value ~= "" then
+			if as_command then
+				out[#out + 1] = value
+			else
+				out[#out + 1] = { path = key, value = parse_value(value), raw = value }
+			end
+		end
+	end
+	return out
+end
+
+function CONFIG.rules()
+	if CONFIG._rules then
+		return CONFIG._rules
+	end
+	local ini = ini_file(CONFIG.LTX)
+	CONFIG._rules = {
+		mcm = read_section(ini, "mcm", false),
+		options = read_section(ini, "options", false),
+		commands = read_section(ini, "commands", true),
+	}
+	return CONFIG._rules
+end
+
+local function split_path(path)
+	local parts = {}
+	for part in string.gmatch(tostring(path), "[^/]+") do
+		parts[#parts + 1] = part
+	end
+	return parts
+end
+
+local function find_in_node(node, parts, idx)
+	if not node or idx > #parts then
+		return nil
+	end
+	if node.id ~= parts[idx] then
+		return nil
+	end
+	if idx == #parts then
+		return VALUE_TYPES[node.type] and node or nil
+	end
+	local gr = node.gr
+	if not gr then
+		return nil
+	end
+	local nxt = parts[idx + 1]
+	for i = 1, #gr do
+		if gr[i].id == nxt then
+			return find_in_node(gr[i], parts, idx + 1)
+		end
+	end
+	return nil
+end
+
+local function find_option(root, path)
+	local parts = split_path(path)
+	if #parts < 2 then
+		return nil
+	end
+	if type(root) == "table" and root[1] and root.id == nil then
+		for i = 1, #root do
+			local found = find_in_node(root[i], parts, 1)
+			if found then
+				return found
+			end
+		end
+		return nil
+	end
+	return find_in_node(root, parts, 1)
+end
+
+local function coerce(opt, value)
+	if not opt then
+		return value
+	end
+	if opt.val == 1 then
+		return value == true or value == 1
+	end
+	if opt.val == 2 then
+		return tonumber(value) or value
+	end
+	return value
+end
+
+local function disable_ctrl(ctrl)
+	if ctrl and ctrl.Enable then
+		pcall(ctrl.Enable, ctrl, false)
+	end
+end
+
+local function lock_hook(_anchor, handlers)
+	if not handlers then
+		return
+	end
+	disable_ctrl(handlers.ctrl)
+	local tbl = handlers.ctrltbl
+	if tbl then
+		for i = 1, #tbl do
+			disable_ctrl(tbl[i])
+		end
+	end
+	local cap = handlers.cap
+	local tc = cap and cap.TextControl and cap:TextControl()
+	if tc and tc.SetTextColor then
+		tc:SetTextColor(CLR_LOCK)
+	end
+end
+
+local function wrap_ui_hook(opt)
+	local old = opt.ui_hook_functor
+	opt.ui_hook_functor = {
+		function(anchor, handlers, attrs, flags)
+			if old and old[1] and ui_mcm and ui_mcm.exec then
+				ui_mcm.exec(unpack(old), anchor, handlers, attrs, flags)
+			end
+			lock_hook(anchor, handlers)
+		end,
+	}
+end
+
+local function write_axr(section, key, value)
+	local cfg = axr_main and axr_main.config
+	if not (cfg and cfg.w_value) then
+		return
+	end
+	cfg:w_value(section, key, value)
+end
+
+local function lock_option(opt, path, value)
+	if not opt then
+		return
+	end
+	local v = coerce(opt, value)
+	opt.def = v
+	if opt.type ~= "key_bind" then
+		wrap_ui_hook(opt)
+	end
+	opt._dogma_rules_locked = true
+	if ui_mcm and ui_mcm.set then
+		ui_mcm.set(path, v)
+	else
+		write_axr("mcm", path, v)
+	end
+end
+
+local function lock_root(root)
+	if not root then
+		return
+	end
+	local rules = CONFIG.rules()
+	for i = 1, #rules.mcm do
+		local row = rules.mcm[i]
+		local opt = find_option(root, row.path)
+		if opt and not opt._dogma_rules_locked then
+			lock_option(opt, row.path, row.value)
+		end
+	end
+end
+
+local function wrap_mod(mod)
+	if not (mod and type(mod.on_mcm_load) == "function") then
+		return
+	end
+	if mod._dogma_rules_wrapped then
+		return
+	end
+	local orig = mod.on_mcm_load
+	mod.on_mcm_load = function(options, ...)
+		local tree, name = orig(options, ...)
+		lock_root(tree)
+		lock_root(options)
+		return tree, name
+	end
+	mod._dogma_rules_wrapped = true
+end
+
+local function wrap_others()
+	local fs = getFS()
+	if not (fs and fs.file_list_open_ex) then
+		return
+	end
+	local flist = fs:file_list_open_ex("$game_scripts$", bit_or(FS.FS_ListFiles, FS.FS_RootOnly), "*mcm.script")
+	if not flist then
+		return
+	end
+	for it = 0, flist:Size() - 1 do
+		local file = flist:GetAt(it)
+		local fname = file and file:NameShort()
+		if fname and #fname > 7 then
+			local name = fname:sub(1, #fname - 7)
+			if name ~= SELF then
+				wrap_mod(rawget(_G, name))
+			end
+		end
+	end
+end
+
+local function raw_lines()
+	local fs = getFS()
+	if not (fs and fs.update_path) then
+		return nil
+	end
+	local ok, path = pcall(function()
+		return fs:update_path("$game_config$", CONFIG.LTX)
+	end)
+	if not (ok and path) then
+		return nil
+	end
+	local okf, f = pcall(io.open, path, "r")
+	if not (okf and f) then
+		return nil
+	end
+	local lines = {}
+	for line in f:lines() do
+		if line ~= "" then
+			lines[#lines + 1] = line
+		end
+	end
+	f:close()
+	return lines
+end
+
+local function reprint_items()
+	local items = {}
+	local lines = raw_lines()
+	if lines and lines[1] then
+		for i = 1, #lines do
+			items[#items + 1] = {
+				id = "ltx_" .. i,
+				type = "desc",
+				text = lines[i],
+			}
+		end
+		return items
+	end
+	local rules = CONFIG.rules()
+	local function add_section(title, rows, is_cmd)
+		items[#items + 1] = { id = "hdr_" .. title, type = "title", text = "[" .. title .. "]" }
+		if not rows[1] then
+			items[#items + 1] = { id = "empty_" .. title, type = "desc", text = "; (empty)" }
+			return
+		end
+		for i = 1, #rows do
+			local row = rows[i]
+			local text = is_cmd and row or (row.path .. " = " .. tostring(row.raw or row.value))
+			items[#items + 1] = { id = title .. "_" .. i, type = "desc", text = text }
+		end
+	end
+	add_section("mcm", rules.mcm, false)
+	add_section("options", rules.options, false)
+	add_section("commands", rules.commands, true)
+	return items
+end
+
+function CONFIG.apply(opts)
+	opts = opts or {}
+	local rules = CONFIG.rules()
+	local options = ui_mcm and ui_mcm.options
+	local changes = {}
+	if options then
+		lock_root(options)
+		for i = 1, #rules.mcm do
+			local row = rules.mcm[i]
+			local opt = find_option(options, row.path)
+			if opt then
+				local v = coerce(opt, row.value)
+				if ui_mcm and ui_mcm.set then
+					ui_mcm.set(row.path, v)
+				else
+					write_axr("mcm", row.path, v)
+				end
+				changes[row.path] = true
+			end
+		end
+	end
+	for i = 1, #rules.options do
+		local row = rules.options[i]
+		write_axr("options", row.path, row.value)
+	end
+	local cfg = axr_main and axr_main.config
+	if cfg and cfg.save then
+		cfg:save()
+	end
+	if opts.commands then
+		for i = 1, #rules.commands do
+			if exec_console_cmd then
+				exec_console_cmd(rules.commands[i])
+			end
+		end
+	end
+	if opts.notify and SendScriptCallback then
+		SendScriptCallback("mcm_option_change", changes)
+		if level and level.present and level.present() then
+			SendScriptCallback("on_option_change", true)
+		end
+	end
+end
+
+wrap_others()
+
+function on_mcm_load(options)
+	wrap_others()
+	lock_root(options)
+
+	local items = {
+		{
+			id = "page_description",
+			type = "desc",
+			text = "ui_mcm_dogma_game_dogma_rules_page_description",
+		},
+		{ id = "line_ltx", type = "line" },
+	}
+	local reprint = reprint_items()
+	for i = 1, #reprint do
+		items[#items + 1] = reprint[i]
+	end
+
+	dogma_mcm.attach(options, "game", "ui_mcm_menu_dogma_game", {
+		id = "dogma_rules",
+		sh = true,
+		text = "ui_mcm_menu_dogma_game_dogma_rules",
+		gr = dogma_mcm.with_header(items),
+	})
+end

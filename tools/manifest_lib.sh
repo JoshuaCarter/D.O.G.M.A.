@@ -1,6 +1,6 @@
 # Shared manifest catalog loader for build.sh / package-fomod.sh.
-# Prefers config/ (manifest-third-party + dogma-features + dogma-tweaks), then legacy
-# manifest.yml / features.yml. Override with DOGMA_MANIFEST=<path>.
+# Reads config/manifest-dogma-features.yml + manifest-dogma-tweaks.yml.
+# Override with DOGMA_MANIFEST=<config dir>.
 # Usage: source this file, then dogma_load_manifest <min_stage>
 #   min_stage 1|local|dev → path mods with stage >= dev
 #   min_stage 2|release   → path mods with stage >= release
@@ -13,25 +13,14 @@ dogma_load_manifest() {
 		2 | release) min_stage=release ;;
 		0 | omit | off) min_stage=omit ;;
 	esac
-	local yml="${DOGMA_MANIFEST:-}"
-	if [[ -z "$yml" ]]; then
-		if [[ -f "$ROOT/config/manifest-third-party.yml" && -f "$ROOT/config/manifest-dogma-features.yml" && -f "$ROOT/config/manifest-dogma-tweaks.yml" ]]; then
-			yml="$ROOT/config"
-		elif [[ -f "$ROOT/config/manifest-third-party.yml" && -f "$ROOT/config/manifest-dogma-mods.yml" && -f "$ROOT/config/manifest-dogma-tweaks.yml" ]]; then
-			yml="$ROOT/config"
-		elif [[ -f "$ROOT/config/manifest-remote.yml" && -f "$ROOT/config/manifest-dogma-features.yml" && -f "$ROOT/config/manifest-dogma-tweaks.yml" ]]; then
-			yml="$ROOT/config"
-		elif [[ -f "$ROOT/config/manifest.yml" ]]; then
-			yml="$ROOT/config/manifest.yml"
-		elif [[ -f "$ROOT/config/features.yml" ]]; then
-			yml="$ROOT/config/features.yml"
-		else
-			yml="$ROOT/config"
-		fi
-	fi
+	local yml="${DOGMA_MANIFEST:-$ROOT/config}"
 	FEATURES=()
-	if [[ ! -e "$yml" ]]; then
+	if [[ ! -d "$yml" ]]; then
 		echo "manifest: missing $yml" >&2
+		return 1
+	fi
+	if [[ ! -f "$yml/manifest-dogma-features.yml" || ! -f "$yml/manifest-dogma-tweaks.yml" ]]; then
+		echo "manifest: need manifest-dogma-features.yml and manifest-dogma-tweaks.yml in $yml" >&2
 		return 1
 	fi
 
@@ -47,9 +36,6 @@ dogma_load_manifest() {
 		return 1
 	fi
 
-	# Do not use process substitution here - its exit status is easy to lose, and a
-	# failed parse must abort the build (otherwise FEATURES=() + prune wipes the mod).
-	# --check-src maps reserved dirs (common→_common, debug→_debug).
 	local list_file rc
 	list_file="$(mktemp)"
 	set +e

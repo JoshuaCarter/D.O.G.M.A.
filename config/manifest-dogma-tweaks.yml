@@ -1,10 +1,9 @@
-# DOGMA tweaks catalog (path: tweaks/… - always-on / no MCM options).
+# DOGMA tweaks catalog (path: tweaks/…).
 #
-# Loaded with manifest-third-party.yml + manifest-dogma-features.yml by dogma_mo2_lib.load_manifest.
-#
-# path: feature under src/<path>; package zip mo2/packages/<path_key>.zip
-# stage: OMIT | DEV | RELEASE
-# default: true|false - Setup / FOMOD checkbox (absent = false)
+# path: feature under src/<path>
+# stage: OMIT | DEV | RELEASE — local build includes stage >= dev
+# default: true|false — FOMOD checkbox hint (ModuleConfig.xml is the real picker)
+# enables / disables: MO2 folder names (same as src/<path>/modlist_delta.txt)
 #
 
 Quieter Bush Rustle SFX For Dark Signal:
@@ -68,8 +67,6 @@ Fix Geiger For Dynamic Rad Patches:
   default: true
   path: tweaks/fix_geiger_for_dynamic_rad_patches
   desc: "Geiger Counter reads Dynamic Radiation Patch levels (env mode)."
-  enables:
-    - G.A.M.M.A. Radiation Dynamic Areas
 
 Fix System Keybinds Not Sticking:
   stage: DEV
@@ -88,9 +85,6 @@ RF Mission Can Spawn On Current Map:
   default: true
   path: tweaks/rf_mission_can_spawn_on_current_map
   desc: RF packages can spawn on the map you are on. Needs Tweaki_Breeki / Cookbook RF packages.
-  enables:
-    - 154- RF Receiver Tasks - Tweaki_Breeki
-    - 332- QoL Patch to Tweak_Breeki's RF Receiver Hidden Packages - Cookbook
 
 Fix Footsteps SFX:
   stage: OMIT
@@ -105,34 +99,6 @@ Sane NPC Combat Speeds:
   desc: "Resets non-combat NPC speeds to Anomaly defaults. Combat speeds are +20% faster (+50% for ISG)."
   disables:
     - G.A.M.M.A. NPCs Faster Reactions
-
-AlifePlus Stubs:
-  stage: RELEASE
-  default: true
-  path: tweaks/alifeplus_stubs
-  desc: "Disables GAMMA Alife / stealth / spawn addons that fight AlifePlus (Night Mutants, ZCP, loot claim, stealth overhaul, …)."
-  disables:
-    - 248- Night Mutants - xcvb
-    - 311- NPC Stop Looting Dead Bodies - DTTheGunslinger
-    - 327- Semi Radiant AI - xcvb
-    - 45- Stealth Overhaul - xcvb
-    - 480- Squad Filler - xcvb
-    - G.A.M.M.A. AI Rework
-    - G.A.M.M.A. No NPC Friendly Fire
-    - G.A.M.M.A. NPC Loot Claim Remade
-    - G.A.M.M.A. NPC Spawns
-    - G.A.M.M.A. NPCs Faster Reactions
-    - G.A.M.M.A. Stealth Crash Fix
-    - G.A.M.M.A. ZCP 1.4 Balanced Spawns
-    - xcvb's Guards Spawner
-    - 483- Alife Plus - damian_sirbu
-    - 211- NPC Loot Claim (NPCs will kill you if you loot what they killed) - Vintar0 & Nullblank
-    - 231- More Aggressive NPC Looting (harder game, do not use with NPC Loot Claim) - Demonized
-    - 257- Zone Customization Project (ZCP) - Diphenhydramine-HCl
-    - ZCP 1.5d
-    - G.A.M.M.A. Dynamic Despawner
-    - No More Companion Friendly Fire
-    - 133- No more companions friendly fire - RavenAscendant
 
 Escorts Have No Friends:
   stage: RELEASE
@@ -175,8 +141,6 @@ Add SortingPlus Keybinds:
   default: true
   path: tweaks/add_sortingplus_keybinds
   desc: "SortingPlus favourite/junk MCM keybinds (K/J) and remember lists across new games."
-  enables:
-    - 110- SortingPlus - RavenAscendant
 
 Dodge Pseudogiant Slam If Airborne:
   stage: RELEASE
@@ -189,8 +153,6 @@ Fix Artifact Weights:
   default: true
   path: tweaks/fix_artifact_weights
   desc: "Restores artefact inventory weights from Artefacts Reinvention (weights were commented out in the shipped LTX)."
-  enables:
-    - G.A.M.M.A. Artefacts Reinvention
 
 Fix Double Mutant Hits:
   stage: RELEASE
@@ -203,11 +165,6 @@ Sobre Loadouts:
   default: true
   path: tweaks/sobre_loadouts
   desc: "New vanilla-like loadout options"
-  disables:
-    - Randomizer for New Game
-    - Drunks Alternative Starting Loadouts and Companions v
-  enables:
-    - G.A.M.M.A. Starting Loadouts
 
 Glowstick Lights:
   stage: RELEASE

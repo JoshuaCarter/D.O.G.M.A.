@@ -29,8 +29,6 @@
 #                               bare _* names other than __dogma_* skipped
 #   …/scripts/mcm.script      -> dogma_{path}_mcm.script   (*mcm.script glob)
 #                               feature _G.dogma_*_conf lives in this file
-#   …/scripts/_data.script    -> prepended into that feature's mcm.script
-#                               (defaults pack snapshot; authoring-only)
 #   …/scripts/modxml_*.script -> modxml_dogma_{path}_*.script
 #                               keep modxml_ prefix - Modded Exes only gathers
 #                               that glob for DXML on_xml_read injection
@@ -42,7 +40,7 @@
 #
 # Env:
 #   DOGMA_ONLY=spec    what to build:
-#                        (empty|all)  → common + features with config/features.yml >= local
+#                        (empty|all)  → common + features with manifest stage >= dev
 #                        common       → common only
 #                        cat/feat     → that feature only (e.g. game/free_zoom; ignores manifest)
 #                        feat         → top-level feature only (e.g. debug)
@@ -50,7 +48,7 @@
 #                      (gamedata + meta). Full builds only (not DOGMA_ONLY).
 #   DOGMA_OUT=path     override output gamedata (default: build/gamedata). Set by
 #                      package-fomod; skips wiping build/ and skips DOGMA_DEPLOY.
-#   DOGMA_NO_ALAO=1    skip ALAO on src/ before staging (same tool/flags as Optimize)
+#   DOGMA_NO_ALAO=1    skip ALAO on src/ before staging
 #
 # Default (no DOGMA_OUT): wipe build/, stage → build/, then optional full-replace
 # deploy. package-fomod sets DOGMA_OUT and merges into its own stage dirs.
@@ -377,20 +375,6 @@ stage_file() {
 
 	staged="$STAGE/$dest_rel"
 	mkdir -p "${staged%/*}"
-
-	if [[ -n "$path_key" && "$base" == "mcm.script" ]]; then
-		local data_src="${src_path%/*}/_data.script"
-		if [[ -f "$data_src" ]]; then
-			{
-				cat "$data_src"
-				echo ""
-				echo "-- dogma-build: _data prepended so MCM gather sees dogma_defaults_data"
-				cat "$src_path"
-			} > "$staged"
-			printf '%s\n' "$dest_rel" >> "$MANIFEST"
-			return 0
-		fi
-	fi
 
 	cp "$src_path" "$staged"
 	printf '%s\n' "$dest_rel" >> "$MANIFEST"

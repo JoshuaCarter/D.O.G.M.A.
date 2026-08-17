@@ -1,25 +1,20 @@
 # DOGMA features catalog (common + path mods with MCM / major systems).
 #
-# Loaded with manifest-third-party.yml + manifest-dogma-tweaks.yml by dogma_mo2_lib.load_manifest.
-#
-# path: feature under src/<path> (common→src/_common, debug→src/_debug on disk);
-#       package zip mo2/packages/<path_key>.zip
-# stage: OMIT | DEV | RELEASE
-# default: true|false - Setup / FOMOD checkbox (absent = false)
+# path: feature under src/<path> (common→src/_common, debug→src/_debug on disk)
+# stage: OMIT | DEV | RELEASE — local build includes stage >= dev
+# default: true|false — FOMOD checkbox hint (ModuleConfig.xml is the real picker)
+# enables / disables: MO2 folder names (same as src/<path>/modlist_delta.txt)
 #
 
 common:
   stage: OMIT
   default: true
-  requires:
-    - xlibs
-  enables: []
 
 Debug:
   stage: OMIT
   default: true
   path: debug
-  desc: "DEV ONLY - local builds only; never Setup / FOMOD"
+  desc: "DEV ONLY - local builds only; never FOMOD"
 
 MCM Runtime Read Cache:
   stage: DEV

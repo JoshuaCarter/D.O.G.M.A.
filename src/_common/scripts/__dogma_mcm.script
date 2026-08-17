@@ -12,7 +12,7 @@
 	  dogma / <shared page> / options   -- append() (e.g. Tweaks)
 	Categories are merged across feature scripts via attach().
 	Info-only tweaks share one leaf page via append().
-	Tail order under DOGMA: Defaults, … categories …, Tweaks, Debug.
+	Tail order under DOGMA: … categories …, Tweaks, Debug.
 ]]
 
 local BANNER_LINK = "dogma_mcm_banner"
@@ -218,24 +218,6 @@ function with_header(items)
 end
 
 -- Keep Tweaks second-to-last and Debug last under DOGMA (categories above both).
--- Defaults stays first.
-local function pin_head_pages(dogma)
-	local gr = dogma and dogma.gr
-	if not gr then
-		return
-	end
-	local def
-	for i = 1, #gr do
-		if gr[i].id == "defaults" then
-			def = table.remove(gr, i)
-			break
-		end
-	end
-	if def then
-		table.insert(gr, 1, def)
-	end
-end
-
 local function pin_tail_pages(dogma)
 	local gr = dogma and dogma.gr
 	if not gr then
@@ -294,7 +276,6 @@ function attach(options, cat_id, cat_text, page)
 		dogma.gr[#dogma.gr + 1] = cat
 	end
 	cat.gr[#cat.gr + 1] = page
-	pin_head_pages(dogma)
 	pin_tail_pages(dogma)
 end
 
@@ -326,7 +307,6 @@ function append(options, page_id, page_text, items)
 	for i = 1, #(items or {}) do
 		gr[#gr + 1] = items[i]
 	end
-	pin_head_pages(dogma)
 	pin_tail_pages(dogma)
 end
 
@@ -713,7 +693,6 @@ function register_debug_page(options)
 		if not replaced then
 			dogma.gr[#dogma.gr+1] = page
 		end
-		pin_head_pages(dogma)
 		pin_tail_pages(dogma)
 		return
 	end

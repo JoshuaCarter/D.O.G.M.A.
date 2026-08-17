@@ -6,6 +6,8 @@ Run from the DOGMA mod folder (or pass --mo2-root):
   py -3 dogma_modlist_delta.py
   py -3 dogma_modlist_delta.py --dry-run
 
+Shows the planned changes, then asks before writing.
+
 Collects +enable / -disable lines from every enabled MO2 mod that ships
 gamedata/configs/dogma/modlist_deltas/*.txt (or a root modlist_delta.txt)
 and flips matching lines in the selected profile's modlist.txt.
@@ -259,7 +261,7 @@ def main() -> int:
     )
     parser.add_argument("--mo2-root", help="MO2 instance root (default: walk up from cwd / this script)")
     parser.add_argument("--profile", default="", help="Profile name (default: selected_profile)")
-    parser.add_argument("--dry-run", action="store_true", help="Print changes without writing modlist.txt")
+    parser.add_argument("--dry-run", action="store_true", help="Preview only; do not ask to apply")
     args = parser.parse_args()
 
     try:
@@ -296,8 +298,12 @@ def main() -> int:
         info("Nothing to change.")
         return 0
 
-    if args.dry_run:
-        info(f"dry-run: would change {len(changed_off) + len(changed_on)} line(s)")
+    info(f"Would change {len(changed_off) + len(changed_on)} line(s).")
+    if args.dry_run or not _can_prompt():
+        return 0
+
+    if not ask_yes("Apply these changes?"):
+        info("Cancelled.")
         return 0
 
     dest = modlist.parent / f"{modlist.name}.{next_backup_suffix(modlist)}"
@@ -309,5 +315,32 @@ def main() -> int:
     return 0
 
 
+def _can_prompt() -> bool:
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
+def ask_yes(prompt: str) -> bool:
+    try:
+        raw = input(f"{prompt} [y/N]: ").strip().lower()
+    except EOFError:
+        return False
+    return raw in ("y", "yes")
+
+
+def pause() -> None:
+    if not _can_prompt():
+        return
+    try:
+        input("Press Enter to close...")
+    except EOFError:
+        pass
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    code = 1
+    try:
+        code = main()
+    except (FileNotFoundError, ValueError, RuntimeError, OSError) as exc:
+        err(str(exc))
+    pause()
+    raise SystemExit(code)

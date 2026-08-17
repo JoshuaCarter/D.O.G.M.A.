@@ -37,7 +37,7 @@ function ui_mm_faction_select.UINewGame.Main_Controls(self, rand)
 	self.ck_soulslike_mode_cap = xml:InitStatic("main_dialog:options:cap_check_story", self.dialog)
 	self.ck_soulslike_mode = xml:InitCheck("main_dialog:options:check_story", self.dialog)
 	self:Register(self.ck_soulslike_mode, "check_soulslike_mode")
-	self.ck_soulslike_mode_cap:SetText(game.translate_string("st_cap_check_soulslike_mode"))
+	self.ck_soulslike_mode_cap:TextControl():SetTextST("st_cap_check_soulslike_mode")
 
 	-- <options> origin 7,420. Name at 130,-24, then +1px; box at Ironman x.
 	set_xy(self.ck_soulslike_mode_cap, 7 + 130, 420 - 24 + 1)

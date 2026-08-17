@@ -25,7 +25,9 @@ Tweaks: `src/tweaks/<feature>/...` → MCM `D.O.G.M.A. → Tweaks` (one shared p
 
 `src/_common/mo2/...` and `src/<category>/<feature>/mo2/...` are **not** packed into gamedata. On deploy they land at `<mod>/mo2/...` next to `gamedata/` (e.g. `mods/DOGMA/mo2/DOGMA Setup.bat`). Local `build/mo2/` gets the same layout. Core always-on tools live under `src/_common/mo2/` (`DOGMA Setup.bat` at the mo2 root; internals in `mo2/tools/`).
 
-`src/<category>/<feature>/*.py` (file sitting in the feature folder, not under a gamedata/`mo2`/`db` bucket) ships to the mod root (`mods/DOGMA/dogma_sfx_prefetch.py`). Run those from the mod folder; they walk up to find the MO2 instance.
+`src/<category>/<feature>/*.py` and `src/_common/*.py` (file sitting in that folder, not under a gamedata/`mo2`/`db` bucket) ship to the mod root (`mods/DOGMA/dogma_sfx_prefetch.py`, `dogma_modlist_delta.py`). Run those from the mod folder; they walk up to find the MO2 instance.
+
+`src/<category>/<feature>/modlist_delta.txt` (`+` enable / `-` disable, same as MO2 `modlist.txt`) ships to `gamedata/configs/dogma/modlist_deltas/<path_key>.txt`. `dogma_modlist_delta.py` applies every enabled DOGMA mod's deltas to the current profile.
 
 ## Copy vs smush (inside a gamedata root)
 

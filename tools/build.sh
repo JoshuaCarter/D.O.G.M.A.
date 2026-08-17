@@ -20,6 +20,8 @@
 #   src/<category>/<feature>/db/...         EXCEPTION: files under <mod>/db/
 #                                           (Anomaly archive mods, e.g. db/mods/*.db0)
 #   src/<category>/<feature>/*.py           EXCEPTION: <mod>/<file> (run-from-mod-dir tools)
+#   src/_common/*.py                        EXCEPTION: <mod>/<file>
+#   src/<category>/<feature>/modlist_delta.txt → gamedata/configs/dogma/modlist_deltas/<path_key>.txt
 #
 # Scripts (prefix applied at build - src keeps short names like main.script):
 #   _common/scripts/__dogma_*        -> private impls
@@ -257,6 +259,15 @@ map_src_file() {
 	if [[ "$rel" == _common/* ]]; then
 		bucket_rel="${rel#_common/}"
 		path_key=""
+		# EXCEPTION: src/_common/*.py → <mod>/<file>
+		if [[ "$bucket_rel" == *.py && "$bucket_rel" != */* ]]; then
+			_emit_kind="modroot"
+			_emit_src="$src_path"
+			_emit_rel="$base"
+			_emit_path_key=""
+			_emit_base="$base"
+			return 0
+		fi
 		# EXCEPTION: _common/mo2|db/ → <MO2 mod>/<bucket>/ (always-on core tools / archives).
 		local common_bucket="${bucket_rel%%/*}"
 		if is_modroot_bucket "$common_bucket"; then
@@ -289,6 +300,16 @@ map_src_file() {
 			_emit_kind="modroot"
 			_emit_src="$src_path"
 			_emit_rel="$base"
+			_emit_path_key="${cat}_${feat}"
+			_emit_base="$base"
+			return 0
+		elif (( ${#parts[@]} == 3 )) && [[ "$base" == "modlist_delta.txt" ]]; then
+			# src/<cat>/<feat>/modlist_delta.txt → gamedata/configs/dogma/modlist_deltas/<path_key>.txt
+			local feat="${parts[1]}"
+			should_skip_name "$feat" && return 1
+			_emit_kind="gamedata"
+			_emit_src="$src_path"
+			_emit_rel="configs/dogma/modlist_deltas/${cat}_${feat}.txt"
 			_emit_path_key="${cat}_${feat}"
 			_emit_base="$base"
 			return 0

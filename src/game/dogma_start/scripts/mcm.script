@@ -1,0 +1,169 @@
+-- game/dogma_start conf
+--
+-- Replaces New Game Randomize with a D.O.G.M.A. start. Patch lives in this
+-- *mcm.script so a cold-boot New Game screen is already wrapped.
+
+local MOD_ID = "dogma/game/dogma_start"
+local HARD_INDEX = 3
+local BTN_TEXT = "D.O.G.M.A."
+local FLAG_SUB = "dogma_start_kit.flag"
+
+local STATE = _G.__dogma_game_dogma_start or {}
+_G.__dogma_game_dogma_start = STATE
+
+local function flag_path()
+	if not (getFS and getFS().update_path) then
+		return nil
+	end
+	local ok, path = pcall(function()
+		return getFS():update_path("$app_data_root$", FLAG_SUB)
+	end)
+	if ok and path and path ~= "" then
+		return path
+	end
+	return nil
+end
+
+local function write_flag()
+	local path = flag_path()
+	if not path then
+		return false
+	end
+	local f = io.open(path, "w")
+	if not f then
+		return false
+	end
+	f:write("1\n")
+	f:close()
+	return true
+end
+
+local function clear_flag()
+	local path = flag_path()
+	if not path then
+		return
+	end
+	pcall(os.remove, path)
+end
+
+local function force_hard_pick(self, list, table_key, selected_key)
+	local t = self[table_key]
+	if not (self[list] and t) then
+		return
+	end
+	local pick = t[HARD_INDEX] or t[1]
+	if not pick then
+		return
+	end
+	if self[list].SetCurrentID then
+		self[list]:SetCurrentID(HARD_INDEX)
+	end
+	self[list]:SetText(game.translate_string(pick))
+	self[selected_key] = pick
+end
+
+local function relabel(self)
+	if self.btn_random and self.btn_random.SetText then
+		self.btn_random:SetText(BTN_TEXT)
+	end
+end
+
+local function clear_purchases(self)
+	if self.LoadLoadout then
+		self:LoadLoadout(false)
+	elseif self.OnCheckResetList then
+		self:OnCheckResetList()
+	end
+end
+
+local function on_dogma_start(self)
+	clear_purchases(self)
+	force_hard_pick(self, "list_difficulty", "table_difficulty", "selected_difficulty")
+	force_hard_pick(self, "list_economy", "table_economy", "selected_economy")
+	write_flag()
+	relabel(self)
+	if self.OnStartGame then
+		self:OnStartGame()
+	end
+end
+
+local function wrap_on_randomize(cls)
+	if STATE.wrap_rand and cls.OnRandomize == STATE.wrap_rand then
+		return true
+	end
+	local base = cls.OnRandomize
+	if not base then
+		return false
+	end
+
+	local function wrapped(self)
+		on_dogma_start(self)
+	end
+
+	cls.OnRandomize = wrapped
+	STATE.wrap_rand = wrapped
+	return true
+end
+
+local function wrap_main_controls(cls)
+	if STATE.wrap_controls and cls.Main_Controls == STATE.wrap_controls then
+		return true
+	end
+	local base = cls.Main_Controls
+	if not base then
+		return false
+	end
+
+	local function wrapped(self, ...)
+		local r = base(self, ...)
+		wrap_on_randomize(cls)
+		relabel(self)
+		return r
+	end
+
+	cls.Main_Controls = wrapped
+	STATE.wrap_controls = wrapped
+	return true
+end
+
+local function patch_new_game()
+	local cls = ui_mm_faction_select and ui_mm_faction_select.UINewGame
+	if not cls then
+		return false
+	end
+	local ok = wrap_on_randomize(cls)
+	wrap_main_controls(cls)
+	return ok
+end
+
+_G.dogma_game_dogma_start_conf = {
+	MOD_ID = MOD_ID,
+	DEFAULTS = {},
+	loaded = {},
+	flag_path = flag_path,
+	write_flag = write_flag,
+	clear_flag = clear_flag,
+	patch_new_game = patch_new_game,
+}
+
+local CONFIG = _G.dogma_game_dogma_start_conf
+
+CONFIG.patch_new_game()
+RegisterScriptCallback("main_menu_on_init", CONFIG.patch_new_game)
+
+function on_mcm_load(options)
+	CONFIG.patch_new_game()
+
+	dogma_mcm.attach(options, "game", "ui_mcm_menu_dogma_game", {
+		id = "dogma_start",
+		sh = true,
+		text = "ui_mcm_menu_dogma_game_dogma_start",
+		gr = dogma_mcm.with_header({
+			{
+				id = "page_description",
+				type = "desc",
+				text = "ui_mcm_dogma_game_dogma_start_page_description",
+			},
+		}),
+	})
+end

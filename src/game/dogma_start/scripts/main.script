@@ -1,0 +1,159 @@
+--[[
+	DOGMA Start - grant the New Game kit after the D.O.G.M.A. button.
+
+	Menu wrap lives in mcm.script. This file consumes the pending-kit flag
+	on a new game and gives the items once.
+]]
+
+local CONFIG = _G.dogma_game_dogma_start_conf
+local MOD_ID = (CONFIG and CONFIG.MOD_ID) or "dogma/game/dogma_start"
+local SAVE_KEY = "dogma_start_kit"
+local FLAG_SUB = "dogma_start_kit.flag"
+local PARTS_COND = 50
+local START_MONEY = 500
+
+local KIT = {
+	{ sec = "itm_ammokit", n = 1 },
+	{ sec = "wpn_colt1911_n", n = 1, parts = true },
+	{ sec = "medkit", n = 2 },
+	{ sec = "yadylin", n = 2 },
+	{ sec = "helm_resp", n = 1 },
+}
+
+local function flag_path()
+	if CONFIG and CONFIG.flag_path then
+		return CONFIG.flag_path()
+	end
+	if not (getFS and getFS().update_path) then
+		return nil
+	end
+	local ok, path = pcall(function()
+		return getFS():update_path("$app_data_root$", FLAG_SUB)
+	end)
+	if ok and path and path ~= "" then
+		return path
+	end
+	return nil
+end
+
+local function has_flag()
+	local path = flag_path()
+	if not path then
+		return false
+	end
+	local f = io.open(path, "r")
+	if not f then
+		return false
+	end
+	f:close()
+	return true
+end
+
+local function clear_flag()
+	if CONFIG and CONFIG.clear_flag then
+		CONFIG.clear_flag()
+		return
+	end
+	local path = flag_path()
+	if path then
+		pcall(os.remove, path)
+	end
+end
+
+local function set_parts_50(obj)
+	if not (obj and item_parts and item_parts.get_parts_con and item_parts.set_parts_con) then
+		return false
+	end
+	local parts = item_parts.get_parts_con(obj, nil, true)
+	if type(parts) ~= "table" then
+		parts = item_parts.get_parts_con(obj:id(), nil, true)
+	end
+	if type(parts) ~= "table" then
+		return false
+	end
+	local any = false
+	for k, _ in pairs(parts) do
+		parts[k] = PARTS_COND
+		any = true
+	end
+	if not any then
+		return false
+	end
+	item_parts.set_parts_con(obj:id(), parts)
+	return true
+end
+
+local function apply_parts(id)
+	local obj = id and db.actor and db.actor.object_id and db.actor:object_id(id)
+	if not obj and id and level and level.object_by_id then
+		obj = level.object_by_id(id)
+	end
+	if obj and set_parts_50(obj) then
+		return true
+	end
+	return false
+end
+
+local function grant_kit()
+	local actor = db.actor
+	if has_alife_info and has_alife_info("start_equippment_handled") then
+		clear_flag()
+		return
+	end
+	if not has_flag() then
+		return
+	end
+	if not (db and actor) then
+		return
+	end
+
+	local ok, m_data = pcall(function()
+		return alife_storage_manager.get_state()
+	end)
+	if not (ok and m_data) then
+		return
+	end
+	if m_data[SAVE_KEY] then
+		clear_flag()
+		return
+	end
+	m_data[SAVE_KEY] = true
+	clear_flag()
+
+	if actor.money and actor.give_money then
+		db.actor:give_money(START_MONEY - db.actor:money())
+	end
+
+	local part_ids = {}
+	for i = 1, #KIT do
+		local e = KIT[i]
+		if not ini_sys or ini_sys:section_exist(e.sec) then
+			for _ = 1, e.n do
+				local se = alife_create_item(e.sec, actor)
+				if e.parts and se and se.id then
+					part_ids[#part_ids + 1] = se.id
+				end
+			end
+		end
+	end
+
+	for i = 1, #part_ids do
+		local id = part_ids[i]
+		if not apply_parts(id) and CreateTimeEvent then
+			CreateTimeEvent(MOD_ID, "parts_" .. tostring(id), 0.1, function()
+				apply_parts(id)
+				return true
+			end)
+		end
+	end
+end
+
+function on_game_start()
+	if CONFIG and dogma.load then
+		dogma.load(MOD_ID)
+	end
+	if CONFIG and CONFIG.patch_new_game then
+		CONFIG.patch_new_game()
+	end
+	RegisterScriptCallback("actor_on_first_update", grant_kit)
+end

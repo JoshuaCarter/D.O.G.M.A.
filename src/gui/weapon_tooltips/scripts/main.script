@@ -11,14 +11,14 @@
 	early_init() (below) does the actual hook install / stat setup - it touches
 	no db.actor / game state, only global tables (utils_ui, ish_item_stats,
 	ui_itm_details) and MCM reads. on_game_start() calls it (real new game /
-	save load). The Tooltips Fix tweak (tweaks/fix_new_game_loadout_tooltips), when installed, also
-	calls it on "main_menu_on_init" so the New Game character-creation Loadout
-	screen - which renders *before* any on_game_start fires - already has our
-	hooks and the GAMMA-rebalanced stats_table the first time it shows a
-	tooltip. Both callers are safe: every hook install below is guarded so
-	repeat calls just refresh CONFIG.loaded + re-apply the stat rows, and
-	everything must stay idempotent per-call and re-armed per-VM anyway (the
-	Lua VM is torn down and rebuilt during new-game creation).
+	save load). loadout.script also calls it on "main_menu_on_init" so the New
+	Game character-creation Loadout screen - which renders *before* any
+	on_game_start fires - already has our hooks and the GAMMA-rebalanced
+	stats_table the first time it shows a tooltip. Both callers are safe: every
+	hook install below is guarded so repeat calls just refresh CONFIG.loaded +
+	re-apply the stat rows, and everything must stay idempotent per-call and
+	re-armed per-VM anyway (the Lua VM is torn down and rebuilt during new-game
+	creation).
 ]]
 
 local CONFIG = _G.dogma_gui_weapon_tooltips_conf
@@ -3034,8 +3034,8 @@ local function install_ui_hooks()
 	if utils_ui.UIInfoItem.Update ~= uiinfo_update_hook then
 		-- Capture the underlying Update exactly once per Lua VM. Re-capturing
 		-- on a later re-install can grab a wrapper that itself chains back to
-		-- this hook (e.g. the Tooltips Fix tweak's), creating W->T->W infinite
-		-- recursion = engine stack-overflow crash on the first tooltip.
+		-- this hook, creating infinite recursion = engine stack-overflow crash
+		-- on the first tooltip.
 		if not base_uiinfo_update then
 			base_uiinfo_update = utils_ui.UIInfoItem.Update
 		end
@@ -3058,6 +3058,12 @@ local function install_ui_hooks()
 
 	ui_hooks_ok = true
 	return true
+end
+
+-- Public: put our Update/Show back outermost. Safe to call from the New Game
+-- open path (Loadout never runs actor_on_update). Captures base only once.
+function reclaim_ui_hooks()
+	return install_ui_hooks()
 end
 
 local function on_console_execute(cmd)
@@ -3123,6 +3129,14 @@ local function crosshair_range_m()
 end
 
 local function on_actor_update()
+	-- Reclaim if another mod re-wrapped Update/Show after us.
+	if ui_hooks_ok and utils_ui and utils_ui.UIInfoItem
+		and (utils_ui.UIInfoItem.Update ~= uiinfo_update_hook
+			or (utils_ui.UIInfoItem.Show and utils_ui.UIInfoItem.Show ~= uiinfo_show_hook))
+	then
+		install_ui_hooks()
+	end
+
 	local actor = dogma.sys.ready(CONFIG.MOD_ID, db, on_option_change)
 	if not actor then
 		return

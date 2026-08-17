@@ -2,6 +2,7 @@
 
 ## Important Notes
 
+- New Game Loadout: arms tooltip builders at the main menu so the first-session character-creation screen already shows G.A.M.M.A./DOGMA tooltips, class icons, loadout sort (misc → weapons → outfits, small to large), inventory cold-boot order, and point costs on icons.
 - Uses ballistic calculations from live CQC grok_bo / ammo (CQC loads above GBOOBS).
 - Assumed range is set by MCM (default 30m). For damage numbers, barrel condition is treated as 100% unless you toggle to use the live WPO barrel part.
 - Damage numbers also always factor in current difficulty and weapon hit power.

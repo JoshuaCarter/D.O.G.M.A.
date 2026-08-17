@@ -1,0 +1,144 @@
+--[[
+	DOGMA override of Jabbers Soulslike souslike_gamemode_injector_mcm.script.
+	scripts/override/ keeps this filename so we replace theirs.
+
+	Stock injector shoves Story/Azazel/Survival up and drops the checkbox on
+	Survival. We leave our layout alone and put label+check above Economy,
+	same x as Ironman Mode (name then box).
+]]
+
+local _Main_Controls = ui_mm_faction_select.UINewGame.Main_Controls
+local _Main_CallBacks = ui_mm_faction_select.UINewGame.Main_CallBacks
+local _OnStartGame = ui_mm_faction_select.UINewGame.OnStartGame
+local _OnCheckSetAzazel = ui_mm_faction_select.UINewGame.OnCheckSetAzazel
+
+local POS
+local function vec()
+	if not POS then
+		POS = vector2()
+	end
+	return POS
+end
+
+local function set_xy(wnd, x, y)
+	if wnd and wnd.SetWndPos then
+		wnd:SetWndPos(vec():set(x, y))
+	end
+end
+
+function ui_mm_faction_select.UINewGame.Main_Controls(self, rand)
+	_Main_Controls(self, rand)
+
+	-- Clone our Story row (68x20 label, 22x20 stretch checkbox). Their XML
+	-- is 40x20 / 35x23 and does not match. Parent to dialog so y=-24 is not
+	-- clipped by the options scroll (same as Economy).
+	local xml = CScriptXmlInit()
+	xml:ParseFile("ui_mm_faction_select_16.xml")
+	self.ck_soulslike_mode_cap = xml:InitStatic("main_dialog:options:cap_check_story", self.dialog)
+	self.ck_soulslike_mode = xml:InitCheck("main_dialog:options:check_story", self.dialog)
+	self:Register(self.ck_soulslike_mode, "check_soulslike_mode")
+	self.ck_soulslike_mode_cap:SetText(game.translate_string("st_cap_check_soulslike_mode"))
+
+	-- <options> origin 7,420. Name at 130,-24, then +1px; box at Ironman x.
+	set_xy(self.ck_soulslike_mode_cap, 7 + 130, 420 - 24 + 1)
+	set_xy(self.ck_soulslike_mode, 7 + 212, 420 - 24)
+
+	self.ck_states["ck_soulslike_mode"] = false
+end
+
+function ui_mm_faction_select.UINewGame.Main_CallBacks(self)
+	_Main_CallBacks(self)
+
+	self:AddCallback("check_soulslike_mode", ui_events.BUTTON_CLICKED, self.OnCheckSetSoulslike, self)
+	self:AddCallback("check_hardcore", ui_events.BUTTON_CLICKED, self.OnCheckHardcore, self)
+end
+
+function ui_mm_faction_select.UINewGame.OnStartGame(self)
+	if not self.access then
+		return
+	end
+
+	local character_name = self.character_name:GetText()
+	if axr_main and axr_main.config and character_name and character_name ~= "" then
+		local is_soulslike_mode = self.ck_soulslike_mode and self.ck_soulslike_mode:GetCheck() and true or nil
+		printf("[Soulslike] OnStartGame:is_soulslike_mode=" .. tostring(is_soulslike_mode))
+		axr_main.config:w_value("character_creation", "new_game_soulslike_mode", is_soulslike_mode)
+		axr_main.config:save()
+	end
+
+	_OnStartGame(self)
+end
+
+function ui_mm_faction_select.UINewGame.OnCheckSetAzazel(self)
+	_OnCheckSetAzazel(self)
+
+	if not self.access then
+		return
+	end
+
+	self.ck_soulslike_mode:SetCheck(false)
+	self.ck_states["ck_soulslike_mode"] = false
+end
+
+function ui_mm_faction_select.UINewGame:OnCheckHardcore()
+	if not self.access then
+		return
+	end
+
+	self.ck_soulslike_mode:SetCheck(false)
+	self.ck_states["ck_soulslike_mode"] = false
+end
+
+function ui_mm_faction_select.UINewGame:OnCheckSetSoulslike()
+	if not self.access then
+		return
+	end
+
+	self.ck_azazel_mode:SetCheck(false)
+	self.ck_states["ck_azazel_mode"] = false
+
+	self.ck_hardcore:SetCheck(false)
+	self.ck_states["ck_hardcore"] = false
+
+	self:LoadMap()
+end
+
+local function on_game_load(binder)
+	local config = axr_main.config
+	if not config then
+		printf("[Soulslike] on_game_load:no config")
+		return
+	end
+
+	local need_save
+	if USE_MARSHAL then
+		if config:r_value("character_creation", "new_game_soulslike_mode", 1) == true then
+			printf("[Soulslike] on_game_load:enable_soulslike_mode=true")
+			alife_storage_manager.get_state().enable_soulslike_mode = true
+			config:w_value("character_creation", "new_game_soulslike_mode")
+			need_save = true
+		end
+	end
+
+	if need_save then
+		config:save()
+	end
+end
+
+local function actor_on_first_update()
+	if not soulslike.IsSoulslikeMode() then
+		return
+	end
+
+	local state = alife_storage_manager.get_state()
+	if not state.soulslike_mode_initial_spawn_set and level.name() ~= "fake_start" then
+		printf("Initial spawn point set to " .. level.name())
+		soulslike.set_spawn(false)
+		state.soulslike_mode_initial_spawn_set = true
+	end
+end
+
+function on_game_start()
+	RegisterScriptCallback("on_game_load", on_game_load)
+	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+end

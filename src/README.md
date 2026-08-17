@@ -23,7 +23,7 @@ Tweaks: `src/tweaks/<feature>/...` → MCM `D.O.G.M.A. → Tweaks` (one shared p
 
 `src/<category>/<feature>/*.py` and `src/_common/*.py` (file sitting in that folder, not under a gamedata/`db` bucket) ship to the mod root (`mods/DOGMA/dogma_sfx_prefetch.py`, `dogma_modlist_delta.py`). Run those from the mod folder; they walk up to find the MO2 instance.
 
-`src/<category>/<feature>/modlist_delta.txt` (`+` enable / `-` disable, same as MO2 `modlist.txt`) ships to `gamedata/configs/dogma/modlist_deltas/<path_key>.txt`. `dogma_modlist_delta.py` applies every enabled DOGMA mod's deltas to the current profile.
+`src/<category>/<feature>/disables.txt` (one MO2 folder name per line) ships to the mod root. `dogma_modlist_delta.py` turns those mods off in the current profile.
 
 ## Copy vs smush (inside a gamedata root)
 

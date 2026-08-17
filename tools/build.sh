@@ -19,7 +19,7 @@
 #                                           (Anomaly archive mods, e.g. db/mods/*.db0)
 #   src/<category>/<feature>/*.py           EXCEPTION: <mod>/<file> (run-from-mod-dir tools)
 #   src/_common/*.py                        EXCEPTION: <mod>/<file>
-#   src/<category>/<feature>/modlist_delta.txt → gamedata/configs/dogma/modlist_deltas/<path_key>.txt
+#   src/<category>/<feature>/disables.txt     → <mod>/disables.txt (concat if several features)
 #
 # Scripts (prefix applied at build - src keeps short names like main.script):
 #   _common/scripts/__dogma_*        -> private impls
@@ -279,13 +279,13 @@ map_src_file() {
 			_emit_path_key="${cat}_${feat}"
 			_emit_base="$base"
 			return 0
-		elif (( ${#parts[@]} == 3 )) && [[ "$base" == "modlist_delta.txt" ]]; then
-			# src/<cat>/<feat>/modlist_delta.txt → gamedata/configs/dogma/modlist_deltas/<path_key>.txt
+		elif (( ${#parts[@]} == 3 )) && [[ "$base" == "disables.txt" ]]; then
+			# src/<cat>/<feat>/disables.txt → <mod>/disables.txt
 			local feat="${parts[1]}"
 			should_skip_name "$feat" && return 1
-			_emit_kind="gamedata"
+			_emit_kind="modroot"
 			_emit_src="$src_path"
-			_emit_rel="configs/dogma/modlist_deltas/${cat}_${feat}.txt"
+			_emit_rel="disables.txt"
 			_emit_path_key="${cat}_${feat}"
 			_emit_base="$base"
 			return 0
@@ -368,7 +368,14 @@ stage_file() {
 	if [[ "$kind" == "modroot" ]]; then
 		staged="$STAGE_MODROOT/$dest_rel"
 		mkdir -p "${staged%/*}"
-		cp "$src_path" "$staged"
+		if [[ "$dest_rel" == "disables.txt" && -f "$staged" ]]; then
+			{
+				printf '\n'
+				cat "$src_path"
+			} >> "$staged"
+		else
+			cp "$src_path" "$staged"
+		fi
 		printf '%s\n' "$dest_rel" >> "$MANIFEST_MODROOT"
 		return 0
 	fi

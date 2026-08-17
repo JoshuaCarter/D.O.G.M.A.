@@ -21,11 +21,7 @@ Tweaks: `src/tweaks/<feature>/...` → MCM `D.O.G.M.A. → Tweaks` (one shared p
 
 `scripts` `configs` `textures` `meshes` `anims` `sounds` `spawns`
 
-## Exception: `mo2/` (MO2 tools dir)
-
-`src/_common/mo2/...` and `src/<category>/<feature>/mo2/...` are **not** packed into gamedata. On deploy they land at `<mod>/mo2/...` next to `gamedata/` (e.g. `mods/DOGMA/mo2/DOGMA Setup.bat`). Local `build/mo2/` gets the same layout. Core always-on tools live under `src/_common/mo2/` (`DOGMA Setup.bat` at the mo2 root; internals in `mo2/tools/`).
-
-`src/<category>/<feature>/*.py` and `src/_common/*.py` (file sitting in that folder, not under a gamedata/`mo2`/`db` bucket) ship to the mod root (`mods/DOGMA/dogma_sfx_prefetch.py`, `dogma_modlist_delta.py`). Run those from the mod folder; they walk up to find the MO2 instance.
+`src/<category>/<feature>/*.py` and `src/_common/*.py` (file sitting in that folder, not under a gamedata/`db` bucket) ship to the mod root (`mods/DOGMA/dogma_sfx_prefetch.py`, `dogma_modlist_delta.py`). Run those from the mod folder; they walk up to find the MO2 instance.
 
 `src/<category>/<feature>/modlist_delta.txt` (`+` enable / `-` disable, same as MO2 `modlist.txt`) ships to `gamedata/configs/dogma/modlist_deltas/<path_key>.txt`. `dogma_modlist_delta.py` applies every enabled DOGMA mod's deltas to the current profile.
 
@@ -47,7 +43,7 @@ Wizard pages, plugin names, hover copy, and which folder each checkbox installs 
 
 Hover images (optional) live in `fomod/images/` and are referenced from that XML. `info.xml` is written at pack time from `meta.ini`.
 
-Release zip: `bash tools/package-fomod.sh` → `build/fomod/`. Common is always installed. FOMOD checkboxes are whatever `ModuleConfig.xml` lists. Root `config/manifest-dogma-*.yml` gates Setup packages: `omit` / `dev` / `release`. Pack catalog: `config/manifest-third-party.yml`. Local `Ctrl+Shift+B` builds `>= dev`; packaging ships Setup zips for `>= release`. MO2 entry point: `DOGMA Setup.bat`.
+Release zip: `bash tools/package-fomod.sh` → `build/fomod/`. Common is always installed. FOMOD checkboxes are whatever `ModuleConfig.xml` lists. Root `config/manifest-dogma-*.yml` gates which `src/` features a local `Ctrl+Shift+B` build includes (`omit` / `dev` / `release`).
 
 ## Common
 

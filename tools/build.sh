@@ -15,8 +15,6 @@
 #   src/.../installer/...                   leftover skip (FOMOD images live in fomod/images/)
 #   *.pdn                                   authoring only (Paint.NET; never shipped)
 #   *.png under gamedata                    authoring only (convert to DDS; MO2 modroot PNGs still ship)
-#   src/_common/mo2/...                     EXCEPTION: files under <mod>/mo2/
-#   src/<category>/<feature>/mo2/...        (sibling of gamedata/), e.g. mo2/tools/…
 #   src/<category>/<feature>/db/...         EXCEPTION: files under <mod>/db/
 #                                           (Anomaly archive mods, e.g. db/mods/*.db0)
 #   src/<category>/<feature>/*.py           EXCEPTION: <mod>/<file> (run-from-mod-dir tools)
@@ -49,7 +47,7 @@
 #                        cat/feat     → that feature only (e.g. game/free_zoom; ignores manifest)
 #                        feat         → top-level feature only (e.g. debug)
 #   DOGMA_DEPLOY=path  after a fresh build/, full-replace this MO2 mod folder
-#                      (gamedata + mo2 + meta). Full builds only (not DOGMA_ONLY).
+#                      (gamedata + meta). Full builds only (not DOGMA_ONLY).
 #   DOGMA_OUT=path     override output gamedata (default: build/gamedata). Set by
 #                      package-fomod; skips wiping build/ and skips DOGMA_DEPLOY.
 #   DOGMA_NO_ALAO=1    skip ALAO on src/ before staging (same tool/flags as Optimize)
@@ -117,7 +115,7 @@ if [[ ! -d "$SRC" ]]; then
 fi
 
 # Same ALAO command as DOGMA Optimize, on local src/ only (--direct).
-# alao_local.py clears *.alao-bak first so src/ is always re-fixed (not all-mods Optimize).
+# alao_local.py clears *.alao-bak first so src/ is always re-fixed.
 run_alao_local() {
 	if [[ -n "${DOGMA_NO_ALAO:-}" ]]; then
 		echo "build: skipping ALAO (DOGMA_NO_ALAO set)"
@@ -136,26 +134,6 @@ run_alao_local() {
 	fi
 	echo "build: ALAO on src/…"
 	"${py[@]}" "$ROOT/tools/alao_local.py"
-}
-
-run_gen_defaults() {
-	case "$ONLY" in
-		all | "" | common) ;;
-		*) return 0 ;;
-	esac
-	local py=()
-	if command -v py >/dev/null 2>&1; then
-		py=(py -3)
-	elif command -v python3 >/dev/null 2>&1; then
-		py=(python3)
-	elif command -v python >/dev/null 2>&1; then
-		py=(python)
-	else
-		echo "build: Python 3 required for gen_defaults.py" >&2
-		return 1
-	fi
-	echo "build: snapshot 3rd-party defaults…"
-	"${py[@]}" "$ROOT/tools/gen_defaults.py"
 }
 
 should_skip_name() {
@@ -428,7 +406,7 @@ src_in_scope() {
 	local sdir
 	case "$ONLY" in
 		all | "")
-			# common + debug are stage:OMIT (no Setup/FOMOD) but still ship locally.
+			# common + debug are stage:OMIT but still ship on a full local build.
 			[[ "$rel" == _common/* || "$rel" == _debug/* ]] && return 0
 			for sdir in "${FEATURE_SRC_DIRS[@]}"; do
 				[[ "$rel" == "$sdir"/* || "$rel" == "$sdir" ]] && return 0
@@ -490,7 +468,6 @@ if [[ -n "$DEPLOY_MOD" ]]; then
 fi
 
 run_alao_local || build_fail "ALAO failed"
-run_gen_defaults || build_fail "gen_defaults failed"
 echo "building..."
 
 # Stage every shippable file (quiet).
@@ -509,20 +486,6 @@ done < <(find "$SRC" \( -name assets -o -name installer -o -name __pycache__ \) 
 
 sort -u "$MANIFEST" -o "$MANIFEST"
 sort -u "$MANIFEST_MODROOT" -o "$MANIFEST_MODROOT"
-
-# Stage DOGMA MO2 config copies into the modroot stage (reference stays in repo config/).
-# Live catalog: features.yml + mods.yml.
-if [[ "$ONLY" == "all" || "$ONLY" == "" || "$ONLY" == "common" ]]; then
-	MO2_CFG_STAGE="$STAGE_MODROOT/mo2/config"
-	mkdir -p "$MO2_CFG_STAGE"
-	for _cat in features.yml mods.yml manifest.yml manifest-third-party.yml manifest-dogma-features.yml manifest-dogma-tweaks.yml suggestions.yml mcm_config.yml; do
-		if [[ -f "$ROOT/config/$_cat" ]]; then
-			cp "$ROOT/config/$_cat" "$MO2_CFG_STAGE/$_cat"
-			printf '%s\n' "mo2/config/$_cat" >> "$MANIFEST_MODROOT"
-		fi
-	done
-	sort -u "$MANIFEST_MODROOT" -o "$MANIFEST_MODROOT"
-fi
 
 count="$(wc -l < "$MANIFEST" | tr -d ' ')"
 count_modroot="$(wc -l < "$MANIFEST_MODROOT" | tr -d ' ')"

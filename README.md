@@ -2,32 +2,9 @@
 
 *Dorn's Own G.A.M.M.A. Modification Anthology*
 
-D.O.G.M.A. is two things:
+A FOMOD pick-and-choose collection of my mods, fixes, and tweaks for G.A.M.M.A.
 
-1. A `fomod` pick-and-choose collection of my mods, fixes, and tweaks.
-2. An opt-in, highly opinionated setup tool to configure G.A.M.M.A according to my preferences.
-
-If you just want to install my 'True Prone' or 'True Fast Travel' mods, you can. But what D.O.G.M.A. **really** exists to do is take a vanilla G.A.M.M.A. install and automatically set it up to be **better** (according to **me**) - it will add mods, disable mods, change default settings, add/remove config options, move files, delete files/dirs, etc. This *massively* simplifies the setup process for getting **my** kind of G.A.M.M.A. up and running.
-
-For example, the opt-in D.O.G.M.A. Setup tool has the option to install *Melancholy Weathers* which will do the following (not an exaustive list):
-
-Melancholy Weathers:
-
-*Due to being a paid/not-public mod, you will be instructed to supply the mod archive file.*
-
-- Download/install Enhanced Shader Color Grading, Screen Space Shaders, Dark Signal Soundscape Overhaul Melancholy Edition, Melancholy Weathers.
-- Disable the relevant preexisting SSS, DSSO, Atmospherics mods.
-- Disable "persistent weather" in settings
-- Delete shaders_cache
-- Run `cfg_load melancholy` on first launch
-
-
-## Which install?
-
-1. **FOMOD** - pick individual D.O.G.M.A. path mods (True Prone, True Fast Travel, tooltips, …) like a normal mod. Features that need a third-party pack note that in their description.
-2. **DOGMA Setup** in MO2 - wizard pages for third-party packs (`config/manifest-third-party.yml`), D.O.G.M.A. features (`config/manifest-dogma-features.yml`), and tweaks (`config/manifest-dogma-tweaks.yml`; `stage: release` or `dev`). Path mods unpack from `mo2/packages/`; url mods download as before. `stage: omit` is hidden from Setup; `dev` is local-only. FOMOD pages are `fomod/ModuleConfig.xml`.
-
-You can use both: install path mods via FOMOD, then run Setup for packs/disables/defaults (already-present path mods default off but still pull their `requires:`).
+Install the FOMOD zip in MO2. After that you can optionally run the scripts in the DOGMA mod folder (`dogma_modlist_delta.py`, `dogma_sfx_prefetch.py`).
 
 ## Why make an "anthology"?
 
@@ -42,8 +19,6 @@ For example:
 - I think it's stupid that crafting x15 AP ammo takes x30 casings, so I changed it to x15, but I also doubled the powder requirement so that it's not strictly easier to craft.
 - I added true prone, but I made it so you take extra damage when prone.
 - I don't like instant fast travel because it trivialises the world. So I made instant travel crazy expensive and added a facy fast travel mod (WIP) that lets you travel fast, but makes it still take time and doesn't remove the danger.
-
-My ultimate desire, which I may never really achieve, is a single mod who's installation process sets you (**me**) up almost completely for a better experience out of the box. This would includes changing/hiding many mods/config.
 
 ## Suggestions
 

@@ -5,18 +5,12 @@
 #   build/fomod/
 #     fomod/ModuleConfig.xml  info.xml  images/*.png
 #     common/gamedata/...
-#     common/mo2/...          (tools + packages/<path_key>.zip)
 #     <feature_id>/gamedata/...
 #     meta.ini  .mod_id
 #
-# Wizard copy and pages come from fomod/ModuleConfig.xml (hand-authored).
+# Wizard pages come from fomod/ModuleConfig.xml (hand-authored).
 # info.xml is written from meta.ini. Images: fomod/images/.
-#
-# Each manifest-gated path mod is also zipped to common/mo2/packages/<path_key>.zip
-# so DOGMA Setup can unpack features locally.
-#
 # Local full deploy is still tools/build.sh (all features merged).
-# Setup packages are gated by ROOT/config/manifest-dogma-*.yml (stage: release).
 # FOMOD checkboxes are whatever ModuleConfig.xml lists.
 set -euo pipefail
 
@@ -25,9 +19,6 @@ SRC="$ROOT/src"
 STAGE="$ROOT/build/fomod"
 BUILD="$ROOT/tools/build.sh"
 FOMOD_SRC="$ROOT/fomod/ModuleConfig.xml"
-
-# shellcheck source=manifest_lib.sh
-source "$ROOT/tools/manifest_lib.sh"
 
 dogma_py() {
 	if command -v py >/dev/null 2>&1; then
@@ -44,16 +35,6 @@ dogma_py() {
 
 xml_escape() {
 	sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g'
-}
-
-# Load ROOT/config manifests → FEATURES (stage >= release). Path mods only.
-load_manifest() {
-	dogma_load_manifest 2 || exit 1
-	if [[ "${#FEATURES[@]}" -eq 0 ]]; then
-		echo "package-fomod: config manifests have no release path mods (need stage: release)" >&2
-		exit 1
-	fi
-	echo "package-fomod: release path mods (${#FEATURES[@]} features)"
 }
 
 src_feature_dir() {
@@ -73,16 +54,11 @@ from pathlib import Path
 
 root = Path(sys.argv[1])
 xml_path = Path(sys.argv[2])
-sys.path.insert(0, str(root / "src" / "_common" / "mo2" / "tools"))
-import dogma_mo2_lib as lib
+sys.path.insert(0, str(root / "tools"))
+from manifest import feature_path_key, iter_path_features
 
 text = xml_path.read_text(encoding="utf-8")
-data = lib.load_manifest(root / "config")
-by_key = {
-    lib.feature_path_key(feat): feat
-    for feat, meta in data.features.items()
-    if not meta.always_on
-}
+by_key = {feature_path_key(feat): feat for feat, _stage in iter_path_features(root / "config")}
 
 ids: list[str] = []
 seen: set[str] = set()
@@ -125,8 +101,6 @@ VERSION="$(grep -E '^version=' "$ROOT/meta.ini" | head -1 | cut -d= -f2 | tr -d 
 [[ -n "$VERSION" ]] || VERSION="0.0.0"
 COMMENTS="$(grep -E '^comments=' "$ROOT/meta.ini" | head -1 | cut -d= -f2-)"
 [[ -n "$COMMENTS" ]] || COMMENTS="D.O.G.M.A. - Dorn's Own G.A.M.M.A. Modification Anthology."
-
-load_manifest
 
 XML_FEATURES=()
 xml_list="$(mktemp)"
@@ -189,34 +163,9 @@ package_one_feature() {
 	local id="${rel//\//_}"
 	echo "package-fomod: $rel -> $id"
 	DOGMA_OUT="$STAGE/$id/gamedata" DOGMA_ONLY="$rel" bash "$BUILD"
-
-	local pkg_dir="$STAGE/common/mo2/packages"
-	mkdir -p "$pkg_dir"
-	local pkg_zip="$pkg_dir/${id}.zip"
-	rm -f "$pkg_zip"
-	dogma_py - "$STAGE/$id" "$pkg_zip" <<'PY'
-import sys, zipfile
-from pathlib import Path
-root = Path(sys.argv[1])
-out = Path(sys.argv[2])
-with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-    for p in sorted(root.rglob("*")):
-        if p.is_file():
-            zf.write(p, p.relative_to(root).as_posix())
-print(f"package-fomod: package {out.name}")
-PY
 }
 
-# Stage every XML plugin folder, plus any release feature Setup still needs zipped.
-declare -A SEEN=()
-STAGE_LIST=()
-for rel in "${XML_FEATURES[@]}" "${FEATURES[@]}"; do
-	[[ -n "${SEEN[$rel]+x}" ]] && continue
-	SEEN[$rel]=1
-	STAGE_LIST+=("$rel")
-done
-
-for rel in "${STAGE_LIST[@]}"; do
+for rel in "${XML_FEATURES[@]}"; do
 	package_one_feature "$rel"
 done
 
@@ -236,10 +185,5 @@ fi
 if [[ -f "$ROOT/INFO.md" ]]; then
 	cp -a "$ROOT/INFO.md" "$STAGE/INFO.md"
 fi
-for _cat in manifest.yml manifest-third-party.yml manifest-dogma-features.yml manifest-dogma-tweaks.yml features.yml mods.yml suggestions.yml mcm_config.yml; do
-	if [[ -f "$ROOT/config/$_cat" ]]; then
-		cp -a "$ROOT/config/$_cat" "$STAGE/$_cat"
-	fi
-done
 
-echo "package-fomod: done (${#STAGE_LIST[@]} features staged, ${#XML_FEATURES[@]} FOMOD plugins) -> ${STAGE#"$ROOT"/}"
+echo "package-fomod: done (${#XML_FEATURES[@]} FOMOD plugins) -> ${STAGE#"$ROOT"/}"

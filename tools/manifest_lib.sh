@@ -49,7 +49,7 @@ dogma_load_manifest() {
 
 	# Do not use process substitution here - its exit status is easy to lose, and a
 	# failed parse must abort the build (otherwise FEATURES=() + prune wipes the mod).
-	# --check-src maps reserved dirs (common→_common, debug→_debug) via dogma_mo2_lib.
+	# --check-src maps reserved dirs (common→_common, debug→_debug).
 	local list_file rc
 	list_file="$(mktemp)"
 	set +e

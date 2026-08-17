@@ -2,9 +2,6 @@
 """Print DOGMA path-mod paths from config manifests (one per line).
 
 Used by tools/manifest_lib.sh for build.sh / package-fomod.sh.
-
-  py -3 tools/list_manifest_features.py --min-stage local
-  py -3 tools/list_manifest_features.py --min-stage release
 """
 
 from __future__ import annotations
@@ -13,22 +10,17 @@ import argparse
 import sys
 from pathlib import Path
 
-_REPO = Path(__file__).resolve().parent.parent
-_MO2 = _REPO / "src" / "_common" / "mo2" / "tools"
-if str(_MO2) not in sys.path:
-    sys.path.insert(0, str(_MO2))
+from manifest import iter_path_features, parse_stage, src_feature_dir, stage_meets
 
-import dogma_mo2_lib as lib  # noqa: E402
+_REPO = Path(__file__).resolve().parent.parent
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(
-        description="List DOGMA path mods (fomod gate) from manifest catalog"
-    )
+    p = argparse.ArgumentParser(description="List DOGMA path mods from manifest catalog")
     p.add_argument(
         "--manifest",
         default=str(_REPO / "config"),
-        help="Config dir or manifest-*.yml / manifest.yml / features.yml",
+        help="Config directory",
     )
     p.add_argument(
         "--min-stage",
@@ -45,25 +37,16 @@ def main() -> int:
     )
     args = p.parse_args()
 
-    path = Path(args.manifest)
-    data = lib.load_manifest(path)
-    min_stage = lib.parse_stage(args.min_stage)
+    config = Path(args.manifest)
+    if config.is_file():
+        config = config.parent
+    min_stage = parse_stage(args.min_stage)
     src = _REPO / "src"
-    # Preserve catalog order (third-party → features → tweaks; YAML key order).
-    for dep in data.suggested:
-        feat = (dep.path or "").replace("\\", "/").strip()
-        if not feat:
+    for feat, stage in iter_path_features(config):
+        if not stage_meets(stage, min_stage):
             continue
-        meta = data.features.get(feat)
-        if meta is None or meta.always_on:
-            continue
-        if not lib.stage_meets(meta.stage, min_stage):
-            continue
-        if args.check_src and not (src / lib.src_feature_dir(feat)).is_dir():
-            print(
-                f"manifest: entry missing under src/: {lib.src_feature_dir(feat)} ({feat})",
-                file=sys.stderr,
-            )
+        if args.check_src and not (src / src_feature_dir(feat)).is_dir():
+            print(f"manifest: entry missing under src/: {src_feature_dir(feat)} ({feat})", file=sys.stderr)
             return 1
         print(feat)
     return 0

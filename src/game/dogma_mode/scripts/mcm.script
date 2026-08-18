@@ -123,8 +123,14 @@ local function force_invictus(self)
 
 	local t = self.table_hardcore_lives
 	local list = self.list_hardcore_lives
+	-- Stock OnStartGame reads selected_hardcore_lives[1]; rows are {n, "st_…"}.
+	local function use_row(row)
+		if type(row) == "table" then
+			self.selected_hardcore_lives = row
+		end
+	end
 	if not list then
-		self.selected_hardcore_lives = LIVES
+		use_row(t and (t[LIVES] or t[1]))
 		return
 	end
 
@@ -150,7 +156,7 @@ local function force_invictus(self)
 	-- 1 life, 2 lives, … — index 2 is the 2-lives row when values are nested tables.
 	idx = idx or LIVES
 	set_combo_idx(list, idx)
-	self.selected_hardcore_lives = LIVES
+	use_row(t and t[idx])
 end
 
 local function clear_purchases(self)

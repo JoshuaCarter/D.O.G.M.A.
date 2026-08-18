@@ -127,6 +127,75 @@ local function wrap_load_map(cls)
 	return true
 end
 
+-- Main-menu New Game click sits over the loadout; eat purchases until LMB is up.
+local function mouse1_down()
+	local dik = DIK_keys and DIK_keys.MOUSE_1
+	return dik and key_state and key_state(dik) ~= 0
+end
+
+local function wrap_on_cc_mouse1(cls)
+	if STATE.wrap_mouse1 and cls.On_CC_Mouse1 == STATE.wrap_mouse1 then
+		return true
+	end
+	local base = cls.On_CC_Mouse1
+	if not base then
+		return false
+	end
+
+	local function wrapped(self, cont, idx)
+		if STATE.eat_click then
+			return
+		end
+		return base(self, cont, idx)
+	end
+
+	cls.On_CC_Mouse1 = wrapped
+	STATE.wrap_mouse1 = wrapped
+	return true
+end
+
+local function wrap_update(cls)
+	if STATE.wrap_update and cls.Update == STATE.wrap_update then
+		return true
+	end
+	local base = cls.Update
+
+	local function wrapped(self, ...)
+		if base then
+			base(self, ...)
+		end
+		if STATE.eat_click and not mouse1_down() then
+			STATE.eat_click = nil
+		end
+	end
+
+	cls.Update = wrapped
+	STATE.wrap_update = wrapped
+	return true
+end
+
+local function wrap_main_controls(cls)
+	if STATE.wrap_controls and cls.Main_Controls == STATE.wrap_controls then
+		return true
+	end
+	local base = cls.Main_Controls
+	if not base then
+		return false
+	end
+
+	local function wrapped(self, ...)
+		STATE.eat_click = mouse1_down() or nil
+		local r = base(self, ...)
+		wrap_on_cc_mouse1(cls)
+		wrap_update(cls)
+		return r
+	end
+
+	cls.Main_Controls = wrapped
+	STATE.wrap_controls = wrapped
+	return true
+end
+
 local function patch_new_game()
 	local cls = ui_mm_faction_select and ui_mm_faction_select.UINewGame
 	if not cls then
@@ -140,6 +209,9 @@ local function patch_new_game()
 		cls, "LoadEconomy", "list_economy", "table_economy", "selected_economy", "wrap_economy"
 	)
 	local ok_map = wrap_load_map(cls)
+	wrap_on_cc_mouse1(cls)
+	wrap_update(cls)
+	wrap_main_controls(cls)
 	return ok_diff and ok_eco and ok_map
 end
 

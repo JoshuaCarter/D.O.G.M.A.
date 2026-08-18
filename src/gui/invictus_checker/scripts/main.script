@@ -1,0 +1,113 @@
+--[[
+	Invictus Checker
+
+	true  = Invictus has not become impossible yet
+	false = it has (difficulty/economy changed, Ironman off, died-flag, debug…)
+	Does not care whether the achievement is earned or Afterglow is done.
+	true → false shows "Clamitas" for 30s.
+]]
+
+local CONFIG = _G.dogma_gui_invictus_checker_conf
+local MOD_ID = CONFIG.MOD_ID
+local HUD = "dogma_invictus_clamitas"
+local ALERT = "Clamitas"
+local POLL_MS = 5000
+local ALERT_MS = 30000
+
+local last_ok
+local last_poll = 0
+local hide_at
+
+local function info(id)
+	return has_alife_info and has_alife_info(id)
+end
+
+-- Impossibility flags from invictus_requirements() only — not Afterglow, not has_achievement.
+local function still_possible()
+	local gd, eco
+	if game_difficulties then
+		if game_difficulties.get_game_factor then
+			gd = game_difficulties.get_game_factor("type")
+		end
+		if game_difficulties.get_eco_factor then
+			eco = game_difficulties.get_eco_factor("type")
+		end
+	end
+	local iron = IsHardcoreMode and IsHardcoreMode()
+	return not info("story_mode_disabled")
+		and iron
+		and not info("ironman_flag_off")
+		and not info("ironman_flag_died")
+		and gd == 3
+		and eco == 3
+		and not info("diff_gameplay_flag_change")
+		and not info("diff_economy_flag_change")
+		and not info("debug_mode_flag_on")
+end
+
+local function hide()
+	hide_at = nil
+	local hud = get_hud and get_hud()
+	if hud and hud.GetCustomStatic and hud:GetCustomStatic(HUD) then
+		hud:RemoveCustomStatic(HUD)
+	end
+end
+
+local function show()
+	local hud = get_hud and get_hud()
+	if not hud then
+		return
+	end
+	if not hud:GetCustomStatic(HUD) then
+		hud:AddCustomStatic(HUD, true)
+	end
+	local cs = hud:GetCustomStatic(HUD)
+	local wnd = cs and cs.wnd and cs:wnd()
+	if wnd and wnd.SetText then
+		wnd:SetText(ALERT)
+	end
+	hide_at = time_global() + ALERT_MS
+end
+
+local function reset()
+	last_ok = nil
+	last_poll = 0
+	hide()
+end
+
+local function tick()
+	local now = time_global()
+	if hide_at and now >= hide_at then
+		hide()
+	end
+	if now < last_poll + POLL_MS then
+		return false
+	end
+	last_poll = now
+	if not dogma.sys.ready(MOD_ID, db, function()
+		CONFIG.loaded.enabled = dogma.mcm.bool(MOD_ID, "enabled", CONFIG.DEFAULTS.enabled)
+	end) then
+		return false
+	end
+	if not CONFIG.loaded.enabled then
+		return false
+	end
+	local ok = still_possible()
+	if last_ok == true and ok == false then
+		show()
+	end
+	last_ok = ok
+	return false
+end
+
+function on_game_start()
+	dogma.load(MOD_ID)
+	RegisterScriptCallback("on_game_load", reset)
+	RegisterScriptCallback("main_menu_on_init", reset)
+	RegisterScriptCallback("actor_on_net_destroy", reset)
+	RegisterScriptCallback("on_option_change", function()
+		CONFIG.loaded.enabled = dogma.mcm.bool(MOD_ID, "enabled", CONFIG.DEFAULTS.enabled)
+	end)
+	-- TimeEvent still runs while dead; actor_on_update does not.
+	CreateTimeEvent(MOD_ID, "tick", 0, tick)
+end

@@ -128,9 +128,14 @@ local function wrap_load_map(cls)
 end
 
 -- Main-menu New Game click sits over the loadout; eat purchases until LMB is up.
+-- Dialog is cached (ShowFactionUI); Main_Controls only runs on the first construct.
 local function mouse1_down()
 	local dik = DIK_keys and DIK_keys.MOUSE_1
 	return dik and key_state and key_state(dik) ~= 0
+end
+
+local function arm_eat()
+	STATE.eat_click = mouse1_down() or nil
 end
 
 local function wrap_on_cc_mouse1(cls)
@@ -143,6 +148,9 @@ local function wrap_on_cc_mouse1(cls)
 	end
 
 	local function wrapped(self, cont, idx)
+		if not STATE.active then
+			arm_eat()
+		end
 		if STATE.eat_click then
 			return
 		end
@@ -161,6 +169,10 @@ local function wrap_update(cls)
 	local base = cls.Update
 
 	local function wrapped(self, ...)
+		if not STATE.active then
+			STATE.active = true
+			arm_eat()
+		end
 		if base then
 			base(self, ...)
 		end
@@ -174,6 +186,26 @@ local function wrap_update(cls)
 	return true
 end
 
+local function wrap_on_quit(cls)
+	if STATE.wrap_quit and cls.OnQuit == STATE.wrap_quit then
+		return true
+	end
+	local base = cls.OnQuit
+	if not base then
+		return false
+	end
+
+	local function wrapped(self, ...)
+		STATE.active = nil
+		STATE.eat_click = nil
+		return base(self, ...)
+	end
+
+	cls.OnQuit = wrapped
+	STATE.wrap_quit = wrapped
+	return true
+end
+
 local function wrap_main_controls(cls)
 	if STATE.wrap_controls and cls.Main_Controls == STATE.wrap_controls then
 		return true
@@ -184,10 +216,11 @@ local function wrap_main_controls(cls)
 	end
 
 	local function wrapped(self, ...)
-		STATE.eat_click = mouse1_down() or nil
+		arm_eat()
 		local r = base(self, ...)
 		wrap_on_cc_mouse1(cls)
 		wrap_update(cls)
+		wrap_on_quit(cls)
 		return r
 	end
 
@@ -211,6 +244,7 @@ local function patch_new_game()
 	local ok_map = wrap_load_map(cls)
 	wrap_on_cc_mouse1(cls)
 	wrap_update(cls)
+	wrap_on_quit(cls)
 	wrap_main_controls(cls)
 	return ok_diff and ok_eco and ok_map
 end

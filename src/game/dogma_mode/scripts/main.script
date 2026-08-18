@@ -1,22 +1,19 @@
 --[[
-	DOGMA Mode - grant the New Game kit after the D.O.G.M.A. button.
-
-	Menu wrap lives in mcm.script. This file consumes the pending-kit flag
-	on a new game, stamps alife dogma_mode, and gives the items once.
+	DOGMA Mode — after D.O.G.M.A. Start: stamp dogma_mode, grant kit once.
+	1911 is already in the loadout string so stock on_game_load gave boxes.
 ]]
 
 local CONFIG = _G.dogma_game_dogma_mode_conf
 local MOD_ID = (CONFIG and CONFIG.MOD_ID) or "dogma/game/dogma_mode"
 local SAVE_KEY = "dogma_start_kit"
 local MODE_KEY = "dogma_mode"
-local FLAG_SUB = "dogma_start_kit.flag"
 local PARTS_COND = 50
 local START_MONEY = 500
+local WPN = "wpn_colt1911_n"
 
 local KIT = {
 	{ sec = "itm_ammokit", n = 1 },
-	{ sec = "wpn_colt1911_n", n = 1, parts = true },
-	{ sec = "medkit", n = 2 },
+	{ sec = "medkit", n = 1, uses = 2 },
 	{ sec = "yadylin", n = 2 },
 	{ sec = "helm_resp", n = 1 },
 }
@@ -25,16 +22,6 @@ local function flag_path()
 	if CONFIG and CONFIG.flag_path then
 		return CONFIG.flag_path()
 	end
-	if not (getFS and getFS().update_path) then
-		return nil
-	end
-	local ok, path = pcall(function()
-		return getFS():update_path("$app_data_root$", FLAG_SUB)
-	end)
-	if ok and path and path ~= "" then
-		return path
-	end
-	return nil
 end
 
 local function has_flag()
@@ -53,22 +40,23 @@ end
 local function clear_flag()
 	if CONFIG and CONFIG.clear_flag then
 		CONFIG.clear_flag()
-		return
-	end
-	local path = flag_path()
-	if path then
-		pcall(os.remove, path)
 	end
 end
 
-local function set_parts_50(obj)
+local function game_obj(id)
+	local obj = id and db.actor and db.actor.object_id and db.actor:object_id(id)
+	if not obj and id and level and level.object_by_id then
+		obj = level.object_by_id(id)
+	end
+	return obj
+end
+
+local function apply_parts(id)
+	local obj = game_obj(id)
 	if not (obj and item_parts and item_parts.get_parts_con and item_parts.set_parts_con) then
 		return false
 	end
 	local parts = item_parts.get_parts_con(obj, nil, true)
-	if type(parts) ~= "table" then
-		parts = item_parts.get_parts_con(obj:id(), nil, true)
-	end
 	if type(parts) ~= "table" then
 		return false
 	end
@@ -84,39 +72,37 @@ local function set_parts_50(obj)
 	return true
 end
 
-local function apply_parts(id)
-	local obj = id and db.actor and db.actor.object_id and db.actor:object_id(id)
-	if not obj and id and level and level.object_by_id then
-		obj = level.object_by_id(id)
-	end
-	if obj and set_parts_50(obj) then
+local function apply_uses(id, uses)
+	local obj = game_obj(id)
+	if obj and obj.set_remaining_uses then
+		obj:set_remaining_uses(uses)
 		return true
 	end
 	return false
 end
 
-local function mark_dogma_run()
-	local ok, m_data = pcall(function()
-		return alife_storage_manager.get_state()
-	end)
-	if ok and m_data then
-		m_data[MODE_KEY] = true
+local function later(name, id, fn)
+	if fn(id) or not CreateTimeEvent then
+		return
 	end
+	CreateTimeEvent(MOD_ID, name .. tostring(id), 0.1, function()
+		fn(id)
+		return true
+	end)
 end
 
 local function grant_kit()
-	local actor = db.actor
+	if not has_flag() then
+		return
+	end
 	if has_alife_info and has_alife_info("start_equippment_handled") then
 		clear_flag()
 		return
 	end
-	if not has_flag() then
+	local actor = db.actor
+	if not actor then
 		return
 	end
-	if not (db and actor) then
-		return
-	end
-
 	local ok, m_data = pcall(function()
 		return alife_storage_manager.get_state()
 	end)
@@ -128,103 +114,31 @@ local function grant_kit()
 		return
 	end
 	m_data[SAVE_KEY] = true
+	m_data[MODE_KEY] = true
 	clear_flag()
 
-	if actor.money and actor.give_money then
-		db.actor:give_money(START_MONEY - db.actor:money())
+	if actor.give_money then
+		actor:give_money(START_MONEY - actor:money())
 	end
 
-	local part_ids = {}
+	actor:iterate_inventory(function(_, itm)
+		if itm and itm:section() == WPN then
+			later("parts_", itm:id(), apply_parts)
+		end
+	end)
+
 	for i = 1, #KIT do
 		local e = KIT[i]
 		if not ini_sys or ini_sys:section_exist(e.sec) then
 			for _ = 1, e.n do
 				local se = alife_create_item(e.sec, actor)
-				if e.parts and se and se.id then
-					part_ids[#part_ids + 1] = se.id
+				if e.uses and se and se.id then
+					later("uses_", se.id, function(id)
+						return apply_uses(id, e.uses)
+					end)
 				end
 			end
 		end
-	end
-
-	for i = 1, #part_ids do
-		local id = part_ids[i]
-		if not apply_parts(id) and CreateTimeEvent then
-			CreateTimeEvent(MOD_ID, "parts_" .. tostring(id), 0.1, function()
-				apply_parts(id)
-				return true
-			end)
-		end
-	end
-end
-
-local GD_NAME = { [0] = "novice", [1] = "stalker", [2] = "veteran", [3] = "master" }
-
-local function scalar(v)
-	if v == nil then
-		return "nil"
-	end
-	if type(v) ~= "table" then
-		return tostring(v)
-	end
-	local inner = {}
-	for k, val in pairs(v) do
-		if type(val) ~= "table" then
-			inner[#inner + 1] = tostring(k) .. ":" .. tostring(val)
-		end
-	end
-	table.sort(inner)
-	return "{" .. table.concat(inner, ",") .. "}"
-end
-
--- Alife/engine values after load — not the New Game dialog copies.
-local function say_settings()
-	local sfind = string.find
-	local say = dogma and dogma.console and dogma.console.say
-	if not say then
-		return
-	end
-	local state
-	pcall(function()
-		state = alife_storage_manager.get_state()
-	end)
-	state = state or {}
-
-	local bits = {}
-	local gd = level and level.get_game_difficulty and level.get_game_difficulty()
-	bits[#bits + 1] = "engine_gd=" .. tostring(gd) .. "(" .. (GD_NAME[tonumber(gd)] or "?") .. ")"
-
-	for k, v in pairs(state) do
-		if type(k) == "string" then
-			local lk = string.lower(k)
-			if sfind(lk, "hardcore", 1, true)
-				or sfind(lk, "lives", 1, true)
-				or sfind(lk, "diff_", 1, true)
-				or sfind(lk, "econom", 1, true)
-				or sfind(lk, "soulslike", 1, true)
-				or sfind(lk, "ironman", 1, true)
-				or sfind(lk, "dogma", 1, true)
-				or k == "uuid"
-			then
-				bits[#bits + 1] = k .. "=" .. scalar(v)
-			end
-		end
-	end
-	if soulslike and soulslike.IsSoulslikeMode then
-		bits[#bits + 1] = "IsSoulslikeMode=" .. tostring(soulslike.IsSoulslikeMode())
-	end
-	table.sort(bits)
-	say("DOGMA mode: " .. table.concat(bits, " "), "yellow")
-end
-
-local function on_first_update()
-	local pending = has_flag()
-	if pending then
-		mark_dogma_run()
-	end
-	grant_kit()
-	if pending then
-		say_settings()
 	end
 end
 
@@ -235,5 +149,5 @@ function on_game_start()
 	if CONFIG and CONFIG.patch_new_game then
 		CONFIG.patch_new_game()
 	end
-	RegisterScriptCallback("actor_on_first_update", on_first_update)
+	RegisterScriptCallback("actor_on_first_update", grant_kit)
 end

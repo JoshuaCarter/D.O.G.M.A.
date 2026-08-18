@@ -30,3 +30,12 @@ function reset_mod(mod_id)
 	end
 end
 
+-- True only on saves started with the D.O.G.M.A. button (alife .scoc).
+function is_dogma_run()
+	if not (alife_storage_manager and alife_storage_manager.get_state) then
+		return false
+	end
+	local ok, m_data = pcall(alife_storage_manager.get_state)
+	return ok and m_data and m_data.dogma_mode == true
+end
+

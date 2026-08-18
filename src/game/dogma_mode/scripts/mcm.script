@@ -1,16 +1,16 @@
--- game/dogma_start conf
+-- game/dogma_mode conf
 --
 -- Replaces New Game Randomize with a D.O.G.M.A. start. Patch lives in this
 -- *mcm.script so a cold-boot New Game screen is already wrapped.
 
-local MOD_ID = "dogma/game/dogma_start"
+local MOD_ID = "dogma/game/dogma_mode"
 local HARD_INDEX = 3
 local LIVES = 2
 local BTN_TEXT = "D.O.G.M.A."
 local FLAG_SUB = "dogma_start_kit.flag"
 
-local STATE = _G.__dogma_game_dogma_start or {}
-_G.__dogma_game_dogma_start = STATE
+local STATE = _G.__dogma_game_dogma_mode or {}
+_G.__dogma_game_dogma_mode = STATE
 
 local function flag_path()
 	if not (getFS and getFS().update_path) then
@@ -116,9 +116,6 @@ local function force_invictus(self)
 	set_check(self, "ck_azazel_mode", false)
 	set_check(self, "ck_hardcore", true)
 	set_check(self, "ck_soulslike_mode", false)
-	if self.LoadMap then
-		self:LoadMap(false)
-	end
 
 	if self.LoadHardcoreLives then
 		self:LoadHardcoreLives(false)
@@ -164,22 +161,44 @@ local function clear_purchases(self)
 	end
 end
 
-local function on_dogma_start(self)
-	if STATE.starting then
+-- Frame 2: rebuild spawn list for Story (stock LoadMap). Keep the user's pick.
+local function apply_level(self)
+	local keep = self.selected_map
+	if self.LoadMap then
+		self:LoadMap(false)
+	end
+	local t = self.table_map
+	if not (keep and t and self.list_map) then
 		return
 	end
-	STATE.starting = true
+	for i = 1, #t do
+		if t[i] == keep then
+			self.selected_map = keep
+			self.list_map:SetText(game.translate_string("ui_st_" .. keep))
+			if self.UpdateMap then
+				self:UpdateMap()
+			end
+			return
+		end
+	end
+end
+
+local function apply_opts(self)
 	clear_purchases(self)
 	force_invictus(self)
-	-- After lives load: same hard picks the New Game defaults use.
 	force_hard_pick(self, "list_difficulty", "table_difficulty", "selected_difficulty")
 	force_hard_pick(self, "list_economy", "table_economy", "selected_economy")
 	write_flag()
 	relabel(self)
-	if self.OnStartGame then
-		self:OnStartGame()
+end
+
+local function on_dogma_mode(self)
+	if STATE.phase then
+		return
 	end
-	STATE.starting = false
+	apply_opts(self)
+	STATE.dlg = self
+	STATE.phase = "level"
 end
 
 local function wrap_on_randomize(cls)
@@ -192,11 +211,41 @@ local function wrap_on_randomize(cls)
 	end
 
 	local function wrapped(self)
-		on_dogma_start(self)
+		on_dogma_mode(self)
 	end
 
 	cls.OnRandomize = wrapped
 	STATE.wrap_rand = wrapped
+	return true
+end
+
+local function wrap_update(cls)
+	if STATE.wrap_update and cls.Update == STATE.wrap_update then
+		return true
+	end
+	local base = cls.Update
+
+	local function wrapped(self)
+		if base then
+			base(self)
+		end
+		if STATE.dlg ~= self then
+			return
+		end
+		if STATE.phase == "level" then
+			apply_level(self)
+			STATE.phase = "start"
+		elseif STATE.phase == "start" then
+			STATE.phase = nil
+			STATE.dlg = nil
+			if self.OnStartGame then
+				self:OnStartGame()
+			end
+		end
+	end
+
+	cls.Update = wrapped
+	STATE.wrap_update = wrapped
 	return true
 end
 
@@ -222,17 +271,19 @@ local function wrap_main_controls(cls)
 end
 
 local function patch_new_game()
-	STATE.starting = false
+	STATE.phase = nil
+	STATE.dlg = nil
 	local cls = ui_mm_faction_select and ui_mm_faction_select.UINewGame
 	if not cls then
 		return false
 	end
 	local ok = wrap_on_randomize(cls)
 	wrap_main_controls(cls)
+	wrap_update(cls)
 	return ok
 end
 
-_G.dogma_game_dogma_start_conf = {
+_G.dogma_game_dogma_mode_conf = {
 	MOD_ID = MOD_ID,
 	DEFAULTS = {},
 	loaded = {},
@@ -242,7 +293,7 @@ _G.dogma_game_dogma_start_conf = {
 	patch_new_game = patch_new_game,
 }
 
-local CONFIG = _G.dogma_game_dogma_start_conf
+local CONFIG = _G.dogma_game_dogma_mode_conf
 
 CONFIG.patch_new_game()
 RegisterScriptCallback("main_menu_on_init", CONFIG.patch_new_game)
@@ -251,14 +302,14 @@ function on_mcm_load(options)
 	CONFIG.patch_new_game()
 
 	dogma_mcm.attach(options, "game", "ui_mcm_menu_dogma_game", {
-		id = "dogma_start",
+		id = "dogma_mode",
 		sh = true,
-		text = "ui_mcm_menu_dogma_game_dogma_start",
+		text = "ui_mcm_menu_dogma_game_dogma_mode",
 		gr = dogma_mcm.with_header({
 			{
 				id = "page_description",
 				type = "desc",
-				text = "ui_mcm_dogma_game_dogma_start_page_description",
+				text = "ui_mcm_dogma_game_dogma_mode_page_description",
 			},
 		}),
 	})

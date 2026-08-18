@@ -1,13 +1,14 @@
 --[[
-	DOGMA Start - grant the New Game kit after the D.O.G.M.A. button.
+	DOGMA Mode - grant the New Game kit after the D.O.G.M.A. button.
 
 	Menu wrap lives in mcm.script. This file consumes the pending-kit flag
-	on a new game and gives the items once.
+	on a new game, stamps alife dogma_mode, and gives the items once.
 ]]
 
-local CONFIG = _G.dogma_game_dogma_start_conf
-local MOD_ID = (CONFIG and CONFIG.MOD_ID) or "dogma/game/dogma_start"
+local CONFIG = _G.dogma_game_dogma_mode_conf
+local MOD_ID = (CONFIG and CONFIG.MOD_ID) or "dogma/game/dogma_mode"
 local SAVE_KEY = "dogma_start_kit"
+local MODE_KEY = "dogma_mode"
 local FLAG_SUB = "dogma_start_kit.flag"
 local PARTS_COND = 50
 local START_MONEY = 500
@@ -92,6 +93,15 @@ local function apply_parts(id)
 		return true
 	end
 	return false
+end
+
+local function mark_dogma_run()
+	local ok, m_data = pcall(function()
+		return alife_storage_manager.get_state()
+	end)
+	if ok and m_data then
+		m_data[MODE_KEY] = true
+	end
 end
 
 local function grant_kit()
@@ -192,6 +202,7 @@ local function say_settings()
 				or string.find(lk, "econom", 1, true)
 				or string.find(lk, "soulslike", 1, true)
 				or string.find(lk, "ironman", 1, true)
+				or string.find(lk, "dogma", 1, true)
 				or k == "uuid"
 			then
 				bits[#bits + 1] = k .. "=" .. scalar(v)
@@ -202,11 +213,14 @@ local function say_settings()
 		bits[#bits + 1] = "IsSoulslikeMode=" .. tostring(soulslike.IsSoulslikeMode())
 	end
 	table.sort(bits)
-	say("DOGMA start: " .. table.concat(bits, " "), "yellow")
+	say("DOGMA mode: " .. table.concat(bits, " "), "yellow")
 end
 
 local function on_first_update()
 	local pending = has_flag()
+	if pending then
+		mark_dogma_run()
+	end
 	grant_kit()
 	if pending then
 		say_settings()

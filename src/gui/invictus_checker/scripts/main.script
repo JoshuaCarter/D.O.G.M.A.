@@ -92,6 +92,9 @@ local function tick()
 	if not CONFIG.loaded.enabled then
 		return false
 	end
+	if not (dogma.sys.is_dogma_run and dogma.sys.is_dogma_run()) then
+		return false
+	end
 	local ok = still_possible()
 	if last_ok == true and ok == false then
 		show()

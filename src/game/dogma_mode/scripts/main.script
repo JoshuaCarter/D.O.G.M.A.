@@ -179,6 +179,7 @@ end
 
 -- Alife/engine values after load — not the New Game dialog copies.
 local function say_settings()
+	local sfind = string.find
 	local say = dogma and dogma.console and dogma.console.say
 	if not say then
 		return
@@ -196,13 +197,13 @@ local function say_settings()
 	for k, v in pairs(state) do
 		if type(k) == "string" then
 			local lk = string.lower(k)
-			if string.find(lk, "hardcore", 1, true)
-				or string.find(lk, "lives", 1, true)
-				or string.find(lk, "diff_", 1, true)
-				or string.find(lk, "econom", 1, true)
-				or string.find(lk, "soulslike", 1, true)
-				or string.find(lk, "ironman", 1, true)
-				or string.find(lk, "dogma", 1, true)
+			if sfind(lk, "hardcore", 1, true)
+				or sfind(lk, "lives", 1, true)
+				or sfind(lk, "diff_", 1, true)
+				or sfind(lk, "econom", 1, true)
+				or sfind(lk, "soulslike", 1, true)
+				or sfind(lk, "ironman", 1, true)
+				or sfind(lk, "dogma", 1, true)
 				or k == "uuid"
 			then
 				bits[#bits + 1] = k .. "=" .. scalar(v)

@@ -6,7 +6,6 @@
 local MOD_ID = "dogma/game/dogma_start"
 local HARD_INDEX = 3
 local LIVES = 2
-local START_DELAY = 1
 local BTN_TEXT = "D.O.G.M.A."
 local FLAG_SUB = "dogma_start_kit.flag"
 
@@ -48,6 +47,7 @@ local function clear_flag()
 	pcall(os.remove, path)
 end
 
+-- Same pick as gui/newgame_layout (Veteran / Survivalist = index 3).
 local function force_hard_pick(self, list, table_key, selected_key)
 	local t = self[table_key]
 	if not (self[list] and t) then
@@ -56,9 +56,6 @@ local function force_hard_pick(self, list, table_key, selected_key)
 	local pick = t[HARD_INDEX] or t[1]
 	if not pick then
 		return
-	end
-	if self[list].SetCurrentID then
-		self[list]:SetCurrentID(HARD_INDEX)
 	end
 	self[list]:SetText(game.translate_string(pick))
 	self[selected_key] = pick
@@ -161,41 +158,22 @@ local function clear_purchases(self)
 	end
 end
 
-local function still_on_screen(self)
-	local btn = self and (self.btn_start or self.btn_random)
-	return btn and (not btn.IsShown or btn:IsShown())
-end
-
-local function start_now(self)
-	STATE.starting = false
-	if not still_on_screen(self) then
-		clear_flag()
-		return
-	end
-	if self.OnStartGame then
-		self:OnStartGame()
-	end
-end
-
 local function on_dogma_start(self)
 	if STATE.starting then
 		return
 	end
 	STATE.starting = true
 	clear_purchases(self)
+	force_invictus(self)
+	-- After lives load: same hard picks the New Game defaults use.
 	force_hard_pick(self, "list_difficulty", "table_difficulty", "selected_difficulty")
 	force_hard_pick(self, "list_economy", "table_economy", "selected_economy")
-	force_invictus(self)
 	write_flag()
 	relabel(self)
-	if CreateTimeEvent then
-		CreateTimeEvent(MOD_ID, "start", START_DELAY, function()
-			start_now(self)
-			return true
-		end)
-	else
-		start_now(self)
+	if self.OnStartGame then
+		self:OnStartGame()
 	end
+	STATE.starting = false
 end
 
 local function wrap_on_randomize(cls)

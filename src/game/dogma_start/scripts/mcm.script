@@ -108,11 +108,17 @@ local function set_combo_idx(list, idx)
 	end
 end
 
--- Ironman + 2 lives (INVICTUS: finish Lost to the Zone with at most one death).
+-- Invictus still-possible at start: Story, not Warfare, Ironman, 2 lives.
 -- Combo rows are often {id, n} tables; SetText(tostring(row)) shows "table: 0x…".
 local function force_invictus(self)
+	set_check(self, "ck_story", true)
+	set_check(self, "ck_warfare", false)
+	set_check(self, "ck_azazel_mode", false)
 	set_check(self, "ck_hardcore", true)
 	set_check(self, "ck_soulslike_mode", false)
+	if self.LoadMap then
+		self:LoadMap(false)
+	end
 
 	if self.LoadHardcoreLives then
 		self:LoadHardcoreLives(false)

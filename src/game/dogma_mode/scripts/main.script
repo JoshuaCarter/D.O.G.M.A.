@@ -124,16 +124,29 @@ local function grant_kit()
 		actor:give_money(START_MONEY - actor:money())
 	end
 
+	local have = {}
 	actor:iterate_inventory(function(_, itm)
-		if itm and is_pistol(itm:section()) then
+		if not itm then
+			return
+		end
+		local s = itm:section()
+		have[s] = (have[s] or 0) + 1
+		if is_pistol(s) then
 			later("parts_", itm:id(), apply_parts)
+		end
+		if s == "medkit" then
+			later("uses_", itm:id(), function(id)
+				return apply_uses(id, 2)
+			end)
 		end
 	end)
 
-	for i = 1, #KIT do
-		local e = KIT[i]
-		if not ini_sys or ini_sys:section_exist(e.sec) then
-			for _ = 1, e.n do
+	local kit = (CONFIG and CONFIG.KIT) or KIT
+	for i = 1, #kit do
+		local e = kit[i]
+		local need = e.n - (have[e.sec] or 0)
+		if need > 0 and (not ini_sys or ini_sys:section_exist(e.sec)) then
+			for _ = 1, need do
 				local se = alife_create_item(e.sec, actor)
 				if e.uses and se and se.id then
 					later("uses_", se.id, function(id)

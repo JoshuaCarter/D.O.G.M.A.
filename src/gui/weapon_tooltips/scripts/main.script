@@ -2559,7 +2559,8 @@ local function place_below(info, tail, wnd, gap)
 end
 
 -- Parts beside stats (Raven vertical) or under ammo (horizontal).
--- Returns tail, plus the right edge so the frame can grow sideways.
+-- parts_right is only set for the side-by-side case (never grow from a
+-- full-width parts strip under ammo — that ratchets the box after UI scale).
 local function sync_parts_layout(info, tail)
 	if not info.parts or not info.parts:IsShown() then
 		return tail, 0
@@ -2580,15 +2581,14 @@ local function sync_parts_layout(info, tail)
 		if wnd_bottom(info.parts) > wnd_bottom(tail) then
 			tail = info.parts
 		end
-	else
-		info:Sync_Y(tail, info.parts, SECTION_GAP)
-		if info.SyncPartsText then
-			info:SyncPartsText()
-		end
-		tail = info.parts
+		return tail, wnd_right(info.parts)
 	end
 
-	return tail, wnd_right(info.parts)
+	info:Sync_Y(tail, info.parts, SECTION_GAP)
+	if info.SyncPartsText then
+		info:SyncPartsText()
+	end
+	return info.parts, 0
 end
 
 local function apply_description_visibility(info)
@@ -2617,30 +2617,64 @@ local function pick_header_tail(info)
 	return info.weight
 end
 
--- Show clamps self.dialog, not the frame. Sync_H only grows the frame.
+-- Stock widths once. Later GetWidth() can be a previous grow or a UI-scale
+-- pixel value; max(old, new) never shrinks and the box stays huge.
+local function cache_box_widths(info)
+	if info.dogma_box_w or not info.frame then
+		return
+	end
+	info.dogma_box_w = {
+		frame = info.frame:GetWidth(),
+		dialog = info.dialog and info.dialog:GetWidth() or info.frame:GetWidth(),
+		self = info.GetWidth and info:GetWidth() or info.frame:GetWidth(),
+	}
+end
+
+-- Show clamps dialog/self. Height follows Sync_H; width is stock unless
+-- side-parts actually stick out past that stock width.
 local function fit_dialog_to_frame(info, parts_right)
 	local frame = info.frame
 	if not frame then
 		return
 	end
-	local fw = frame:GetWidth()
+	cache_box_widths(info)
+	local stock = info.dogma_box_w
+	local fw = stock and stock.frame or frame:GetWidth()
 	local fh = frame:GetHeight()
 	if parts_right > 0 then
 		local need_w = parts_right - frame:GetWndPos().x + SECTION_GAP
 		if need_w > fw then
 			fw = need_w
-			frame:SetWndSize(vector2():set(fw, fh))
-			fh = frame:GetHeight()
 		end
 	end
-	local dialog = info.dialog
-	if dialog then
-		dialog:SetWndSize(vector2():set(math.max(dialog:GetWidth(), fw), fh))
+	local extra = fw - (stock and stock.frame or fw)
+	frame:SetWndSize(vector2():set(fw, fh))
+	fh = frame:GetHeight()
+	if info.dialog then
+		info.dialog:SetWndSize(vector2():set((stock and stock.dialog or fw) + extra, fh))
 	end
-	-- Some Show paths clamp `self` rather than `dialog`.
 	if info.SetWndSize then
 		pcall(function()
-			info:SetWndSize(vector2():set(math.max(info:GetWidth(), fw), fh))
+			info:SetWndSize(vector2():set((stock and stock.self or fw) + extra, fh))
+		end)
+	end
+end
+
+local function reset_box_width(info)
+	cache_box_widths(info)
+	local stock = info.dogma_box_w
+	if not stock then
+		return
+	end
+	if info.frame then
+		info.frame:SetWndSize(vector2():set(stock.frame, info.frame:GetHeight()))
+	end
+	if info.dialog then
+		info.dialog:SetWndSize(vector2():set(stock.dialog, info.dialog:GetHeight()))
+	end
+	if info.SetWndSize then
+		pcall(function()
+			info:SetWndSize(vector2():set(stock.self, info:GetHeight()))
 		end)
 	end
 end
@@ -2747,6 +2781,7 @@ function layout_tooltip(info)
 		return
 	end
 
+	reset_box_width(info)
 	apply_compact_header(info)
 
 	local tail = pick_header_tail(info)
@@ -2961,6 +2996,7 @@ local function uiinfo_init_hook(self, owner, delay)
 	base_uiinfo_init(self, owner, delay)
 
 	tracked_infos[self] = true
+	cache_box_widths(self)
 	ensure_stat_slots(self)
 
 	if self.dogma_wpn_damage then

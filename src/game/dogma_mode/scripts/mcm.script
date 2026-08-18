@@ -1,10 +1,16 @@
 -- game/dogma_mode — menu wrap (must be *mcm.script for cold-boot New Game).
--- Randomize → PREP (fix settings + start pistol) or START (flag + LoadMap + OnStartGame).
+-- Randomize → PREP (settings + pistol + kit) or START (flag + LoadMap + OnStartGame).
 
 local MOD_ID = "dogma/game/dogma_mode"
 local HARD = 3
 local LIVES = 2
 local WPNS = { "wpn_colt1911_n", "wpn_sig220_n" }
+local KIT = {
+	{ sec = "itm_ammokit", n = 1 },
+	{ sec = "medkit", n = 1, uses = 2 },
+	{ sec = "yadylin", n = 2 },
+	{ sec = "helm_resp", n = 1 },
+}
 local FLAG_SUB = "dogma_start_kit.flag"
 
 local STATE = _G.__dogma_game_dogma_mode or {}
@@ -132,23 +138,39 @@ local function has_wpn(self)
 end
 
 local function is_ready(self)
-	local _, row = lives_row(self)
+	local lives = self.selected_hardcore_lives
 	local td, te = self.table_difficulty, self.table_economy
 	return is_on(self, "ck_story")
 		and not is_on(self, "ck_warfare")
 		and not is_on(self, "ck_azazel_mode")
 		and is_on(self, "ck_hardcore")
 		and not is_on(self, "ck_soulslike_mode")
-		and row and self.selected_hardcore_lives == row
+		and type(lives) == "table" and lives[1] == LIVES
 		and td and self.selected_difficulty == (td[HARD] or td[1])
 		and te and self.selected_economy == (te[HARD] or te[1])
 		and has_wpn(self)
 end
 
 local function relabel(self)
-	local tc = self.btn_random and self.btn_random.TextControl and self.btn_random:TextControl()
-	if tc and tc.SetText then
-		tc:SetText(is_ready(self) and "D.O.G.M.A. START" or "D.O.G.M.A. PREP")
+	local btn = self.btn_random
+	local tc = btn and btn.TextControl and btn:TextControl()
+	if tc and tc.SetTextST then
+		tc:SetTextST(is_ready(self) and "st_mm_btn_dogma_start" or "st_mm_btn_new_game_rand")
+	end
+end
+
+local function take(self, sec, n)
+	local shop = self.CC and self.CC["loadout"]
+	local inv = self.CC and self.CC["inventory"]
+	if not (sec and inv) then
+		return
+	end
+	for _ = 1, (n or 1) do
+		if shop and shop.TransferItem and has_sec(shop, sec) then
+			shop:TransferItem(inv, nil, sec)
+		elseif inv.AddItem then
+			inv:AddItem(nil, sec)
+		end
 	end
 end
 
@@ -158,11 +180,9 @@ local function prep(self)
 	elseif self.LoadLoadout then
 		self:LoadLoadout(false)
 	end
-	local shop = self.CC and self.CC["loadout"]
-	local inv = self.CC and self.CC["inventory"]
-	local wpn = pick_wpn(self)
-	if shop and inv and shop.TransferItem and wpn and has_sec(shop, wpn) then
-		shop:TransferItem(inv, nil, wpn)
+	take(self, pick_wpn(self), 1)
+	for i = 1, #KIT do
+		take(self, KIT[i].sec, KIT[i].n)
 	end
 	set_check(self, "ck_story", true)
 	set_check(self, "ck_warfare", false)
@@ -246,6 +266,17 @@ local function patch_new_game()
 	if not cls then
 		return false
 	end
+	wrap_once(cls, "Register", "wrap_reg", function(base)
+		if not base then
+			return
+		end
+		return function(self, wnd, name, ...)
+			if name == "btn_random" then
+				self.btn_random = wnd
+			end
+			return base(self, wnd, name, ...)
+		end
+	end)
 	wrap_once(cls, "OnRandomize", "wrap_rand", function(base)
 		if not base then
 			return
@@ -297,6 +328,7 @@ _G.dogma_game_dogma_mode_conf = {
 	write_flag = write_flag,
 	clear_flag = clear_flag,
 	patch_new_game = patch_new_game,
+	KIT = KIT,
 }
 
 local CONFIG = _G.dogma_game_dogma_mode_conf

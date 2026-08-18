@@ -1,10 +1,10 @@
 -- game/dogma_mode — menu wrap (must be *mcm.script for cold-boot New Game).
--- Randomize → Prep (fix settings + 1911) or Start (flag + LoadMap + OnStartGame).
+-- Randomize → PREP (fix settings + start pistol) or START (flag + LoadMap + OnStartGame).
 
 local MOD_ID = "dogma/game/dogma_mode"
 local HARD = 3
 local LIVES = 2
-local WPN = "wpn_colt1911_n"
+local WPNS = { "wpn_colt1911_n", "wpn_sig220_n" }
 local FLAG_SUB = "dogma_start_kit.flag"
 
 local STATE = _G.__dogma_game_dogma_mode or {}
@@ -82,17 +82,53 @@ local function lives_row(self)
 	end
 end
 
-local function has_wpn(self)
-	local inv = self.CC and self.CC["inventory"]
-	if not (inv and inv.cell) then
+local function has_sec(cont, sec)
+	if not (cont and cont.cell and sec) then
 		return false
 	end
-	for _, ci in pairs(inv.cell) do
-		if ci and ci.section == WPN and (not ci.IsShown or ci:IsShown()) then
+	for _, ci in pairs(cont.cell) do
+		if ci and ci.section == sec and (not ci.IsShown or ci:IsShown()) then
 			return true
 		end
 	end
 	return false
+end
+
+local function is_pistol(sec)
+	return sec and ini_sys and ini_sys:r_string_ex(sec, "kind") == "w_pistol"
+end
+
+local function cheapest_pistol(cont)
+	local best, cost
+	if not (cont and cont.cell) then
+		return
+	end
+	for _, ci in pairs(cont.cell) do
+		if ci and is_pistol(ci.section) and (not ci.IsShown or ci:IsShown()) then
+			local c = (ci.flags and (ci.flags.value or ci.flags.info)) or 0
+			if not cost or c < cost then
+				best, cost = ci.section, c
+			end
+		end
+	end
+	return best
+end
+
+local function pick_wpn(self)
+	local shop = self.CC and self.CC["loadout"]
+	local inv = self.CC and self.CC["inventory"]
+	for i = 1, #WPNS do
+		local sec = WPNS[i]
+		if has_sec(shop, sec) or has_sec(inv, sec) then
+			return sec
+		end
+	end
+	return cheapest_pistol(shop) or cheapest_pistol(inv)
+end
+
+local function has_wpn(self)
+	local wpn = pick_wpn(self)
+	return wpn and has_sec(self.CC and self.CC["inventory"], wpn)
 end
 
 local function is_ready(self)
@@ -112,7 +148,7 @@ end
 local function relabel(self)
 	local tc = self.btn_random and self.btn_random.TextControl and self.btn_random:TextControl()
 	if tc and tc.SetText then
-		tc:SetText(is_ready(self) and "D.O.G.M.A. Start" or "D.O.G.M.A. Prep")
+		tc:SetText(is_ready(self) and "D.O.G.M.A. START" or "D.O.G.M.A. PREP")
 	end
 end
 
@@ -124,8 +160,9 @@ local function prep(self)
 	end
 	local shop = self.CC and self.CC["loadout"]
 	local inv = self.CC and self.CC["inventory"]
-	if shop and inv and shop.TransferItem then
-		shop:TransferItem(inv, nil, WPN)
+	local wpn = pick_wpn(self)
+	if shop and inv and shop.TransferItem and wpn and has_sec(shop, wpn) then
+		shop:TransferItem(inv, nil, wpn)
 	end
 	set_check(self, "ck_story", true)
 	set_check(self, "ck_warfare", false)

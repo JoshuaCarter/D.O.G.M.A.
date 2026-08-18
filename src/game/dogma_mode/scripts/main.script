@@ -1,6 +1,6 @@
 --[[
 	DOGMA Mode — after D.O.G.M.A. Start: stamp dogma_mode, grant kit once.
-	1911 is already in the loadout string so stock on_game_load gave boxes.
+	Start pistol is already in the loadout string so stock on_game_load gave boxes.
 ]]
 
 local CONFIG = _G.dogma_game_dogma_mode_conf
@@ -9,7 +9,6 @@ local SAVE_KEY = "dogma_start_kit"
 local MODE_KEY = "dogma_mode"
 local PARTS_COND = 59
 local START_MONEY = 500
-local WPN = "wpn_colt1911_n"
 
 local KIT = {
 	{ sec = "itm_ammokit", n = 1 },
@@ -17,6 +16,10 @@ local KIT = {
 	{ sec = "yadylin", n = 2 },
 	{ sec = "helm_resp", n = 1 },
 }
+
+local function is_pistol(sec)
+	return sec and ini_sys and ini_sys:r_string_ex(sec, "kind") == "w_pistol"
+end
 
 local function flag_path()
 	if CONFIG and CONFIG.flag_path then
@@ -122,7 +125,7 @@ local function grant_kit()
 	end
 
 	actor:iterate_inventory(function(_, itm)
-		if itm and itm:section() == WPN then
+		if itm and is_pistol(itm:section()) then
 			later("parts_", itm:id(), apply_parts)
 		end
 	end)

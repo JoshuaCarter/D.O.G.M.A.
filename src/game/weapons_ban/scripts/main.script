@@ -6,7 +6,8 @@
 	Stashes: 0–3 weighted adds (sight/kit/sil/ammo/parts); ammo rolls use
 	tier→rank RU budgets for round counts.
 	Corpses: strip loose ammo, then one rank RU budget split across guns.
-	New game: N extra boxes per owned start weapon (on top of loadout).
+	New game: N extra boxes per owned start weapon (on top of loadout);
+	optional 59% parts on those guns (same as dogma_mode).
 	Replaces RNG Attach + Parts In Stashes.
 	Ammo Maker 1:1 craft (casing/bullet/powder per output round) lives in ammo_craft.script.
 ]]
@@ -28,7 +29,9 @@ local hooked_trade_ui = false
 -- Persist so we never double-grant within the new-game window before
 -- start_equippment_handled is given (~4s).
 local EXTRA_AMMO_SAVE_KEY = "dogma_wb_extra_start_ammo"
+local START_PARTS_SAVE_KEY = "dogma_wb_start_parts"
 local STASH_AMMO_SAVE_KEY = "dogma_wb_stash_ammo"
+local PARTS_COND = 59
 local ini_loadouts
 
 -- stash_id → { { sec, rounds }, ... } (ammo qty; not put in treasure caches)
@@ -46,6 +49,7 @@ local function on_option_change()
 	local L = CONFIG.loaded
 	local D = CONFIG.DEFAULTS
 	L.extra_start_ammo_boxes = dogma.mcm.int(MOD_ID, "extra_start_ammo_boxes", D.extra_start_ammo_boxes)
+	L.start_weapons_59_parts = dogma.mcm.bool(MOD_ID, "start_weapons_59_parts", D.start_weapons_59_parts)
 	for _, cat in ipairs(CONFIG.CATS) do
 		for _, n in ipairs({ 2, 3, 4, 5 }) do
 			local key = cat .. "_tier_cost_" .. n
@@ -165,6 +169,87 @@ local function give_extra_start_ammo()
 		log(string.format("new game +%s x%s", sec, cnt))
 		dogma.console.say(string.format("weapons ban: extra start ammo %s x%d", sec, cnt), "blue")
 	end
+end
+
+--------------------------------------------------------------------------------
+-- New-game start-weapon parts (same apply as dogma_mode)
+--------------------------------------------------------------------------------
+local function game_obj(id)
+	local obj = id and db.actor and db.actor.object_id and db.actor:object_id(id)
+	if not obj and id and level and level.object_by_id then
+		obj = level.object_by_id(id)
+	end
+	return obj
+end
+
+local function apply_parts(id)
+	local obj = game_obj(id)
+	if not (obj and item_parts and item_parts.get_parts_con and item_parts.set_parts_con) then
+		return false
+	end
+	local parts = item_parts.get_parts_con(obj, nil, true)
+	if type(parts) ~= "table" then
+		return false
+	end
+	local any = false
+	for k, _ in pairs(parts) do
+		parts[k] = PARTS_COND
+		any = true
+	end
+	if not any then
+		return false
+	end
+	item_parts.set_parts_con(obj:id(), parts)
+	return true
+end
+
+local function later(name, id, fn)
+	if fn(id) or not CreateTimeEvent then
+		return
+	end
+	local n = 0
+	CreateTimeEvent(MOD_ID, name .. tostring(id), 0.1, function()
+		n = n + 1
+		return fn(id) or n >= 10
+	end)
+end
+
+local function apply_start_weapon_parts()
+	if not dogma.sys.ready(MOD_ID, db, on_option_change) then
+		return
+	end
+	if not CONFIG.loaded.start_weapons_59_parts then
+		return
+	end
+	-- New game only: stock sets this after the delayed equipment pass.
+	if has_alife_info and has_alife_info("start_equippment_handled") then
+		return
+	end
+	if not (db and db.actor and db.actor.iterate_inventory) then
+		return
+	end
+
+	local ok, m_data = pcall(function()
+		return alife_storage_manager.get_state()
+	end)
+	if not (ok and m_data) then
+		return
+	end
+	if m_data[START_PARTS_SAVE_KEY] then
+		return
+	end
+	m_data[START_PARTS_SAVE_KEY] = true
+
+	db.actor:iterate_inventory(function(_temp, itm)
+		if not itm then
+			return
+		end
+		if not is_start_weapon_sec(itm:section()) then
+			return
+		end
+		later("parts_", itm:id(), apply_parts)
+		log(string.format("new game parts %s -> %s%%", itm:section(), PARTS_COND))
+	end)
 end
 
 --------------------------------------------------------------------------------
@@ -1181,6 +1266,7 @@ end
 local function actor_on_first_update()
 	try_hooks()
 	give_extra_start_ammo()
+	apply_start_weapon_parts()
 	if dogma.dbg.logging() and CreateTimeEvent then
 		CreateTimeEvent("dogma_wb_dbg", "trader_dump", 1.5, function()
 			dump_online_traders()

@@ -4,7 +4,8 @@
 	GAMMA BHS (type 2): body, limbs, psy, rad, stam share one visibility gate.
 	Hide = SetWndPos only (never Show). Force type 2 + healthstatus while
 	parking so BHS does not RemoveCustomStatic.
-	Load grace: no moves while BHS stagger-creates bars (scuffed_fix ~0.2s each).
+	Load wait: no parks until BHS limb bars exist and dest matches live health
+	(spawn is SetProgressPos(55)), then the engine fill lerp can finish.
 	Always-show conditions first, then damage/hold overrides. Stam threshold
 	alone → stam only. Status icons: separate functor gates.
 ]]
@@ -15,7 +16,14 @@ local STATUS_TICK_MS = 1000
 -- While HUD pieces should stay hidden, re-assert parks on this cadence so late
 -- BHS AddCustomStatic (scuffed_fix) still gets parked — not every actor update.
 local PARK_REASSERT_MS = 250
+-- Cap only: hide even if BHS never writes real dest (text HUD / missing bars).
 local LOAD_GRACE_MS = 10000
+-- BHS ParamBar spawn dest before the real health write.
+local FILL_SPAWN_POS = 55
+local FILL_MATCH = 2
+-- Engine lerp is current→dest at range*(1-inertion)*dt. GetProgressPos is dest
+-- only; wait this fraction of a full-range sweep after dest matches (inertion 0.5).
+local FILL_LERP_RANGE_SEC = 2
 local PARK_OFF = 4000
 local PARKED_X = -1000
 local FLAG = "__dogma_bhs_reactive"
@@ -102,9 +110,21 @@ local PACK_BODY = expand_stems({
 local PACK_HP = expand_stems({ "bhs_health_bar", "bhs_health_bar_bg" })
 local PACK_STAM = expand_stems({ "bhs_stamina_bar", "bhs_stamina_bar_bg" })
 
+local FILL_BARS = {
+	{ uv = "progress_health_head", limb = "head" },
+	{ uv = "progress_health_torso", limb = "torso" },
+	{ uv = "progress_health_rightarm", limb = "rightarm" },
+	{ uv = "progress_health_leftarm", limb = "leftarm" },
+	{ uv = "progress_health_rightleg", limb = "rightleg" },
+	{ uv = "progress_health_leftleg", limb = "leftleg" },
+}
+
 local flash_until = 0
 local heal_clamped = false
-local grace_until = 0
+local load_wait = false
+local grace_deadline = 0
+local fill_hide_at = 0
+local fill_uv = {}
 local last_status_tick = 0
 local last_park_tick = 0
 local last_heal_tick = 0
@@ -260,11 +280,111 @@ local function hold_key(key, mod)
 end
 
 local function start_load_grace()
-	grace_until = time_global() + LOAD_GRACE_MS
+	load_wait = true
+	fill_hide_at = 0
+	fill_uv = {}
+	grace_deadline = time_global() + LOAD_GRACE_MS
+end
+
+local function bar_from_uv(name)
+	local slot = fill_uv[name]
+	if not slot then
+		local bhs = rawget(_G, "zzz_player_injuries")
+		if not (bhs and type(bhs.actor_on_update) == "function") then
+			return nil
+		end
+		local fn, idx = find_upvalue_deep(bhs.actor_on_update, name)
+		if not (fn and idx) then
+			return nil
+		end
+		slot = { fn = fn, idx = idx }
+		fill_uv[name] = slot
+	end
+	local _, bar = debug.getupvalue(slot.fn, slot.idx)
+	return bar
+end
+
+-- True when BHS has created all limb bars and overwritten spawn dest (55) with live health.
+local function bhs_fill_dest_settled()
+	local limbs = dogma.status.limbs()
+	local n = 0
+	for i = 1, #FILL_BARS do
+		local spec = FILL_BARS[i]
+		local bar = bar_from_uv(spec.uv)
+		if not (bar and bar.GetProgressPos) then
+			return false
+		end
+		local ok, dest = pcall(function()
+			return bar:GetProgressPos()
+		end)
+		if not ok or dest == nil then
+			return false
+		end
+		local limb = limbs[spec.limb]
+		local want = ((limb and limb.perm or 0) + (limb and limb.temp or 0)) * 100
+		if math.abs(dest - FILL_SPAWN_POS) <= FILL_MATCH and math.abs(want - FILL_SPAWN_POS) > FILL_MATCH then
+			return false
+		end
+		if math.abs(dest - want) > FILL_MATCH then
+			return false
+		end
+		n = n + 1
+	end
+	return n == #FILL_BARS
+end
+
+local function fill_lerp_ms()
+	local ms = 0
+	for i = 1, #FILL_BARS do
+		local bar = bar_from_uv(FILL_BARS[i].uv)
+		if bar and bar.GetProgressPos then
+			local ok, dest = pcall(function()
+				return bar:GetProgressPos()
+			end)
+			local range = 100
+			if bar.GetRange_max and bar.GetRange_min then
+				local ok_r, r = pcall(function()
+					return bar:GetRange_max() - bar:GetRange_min()
+				end)
+				if ok_r and r and r > 1 then
+					range = r
+				end
+			end
+			if ok and dest then
+				local t = math.abs(dest) / range * FILL_LERP_RANGE_SEC * 1000
+				if t > ms then
+					ms = t
+				end
+			end
+		end
+	end
+	return math.floor(ms)
+end
+
+local function bhs_fills_finished(now)
+	if not bhs_fill_dest_settled() then
+		fill_hide_at = 0
+		return false
+	end
+	if fill_hide_at == 0 then
+		fill_hide_at = now + fill_lerp_ms()
+	end
+	return now >= fill_hide_at
 end
 
 local function in_load_grace(now)
-	return grace_until ~= 0 and now < grace_until
+	if not load_wait then
+		return false
+	end
+	if grace_deadline ~= 0 and now >= grace_deadline then
+		load_wait = false
+		return false
+	end
+	if bhs_fills_finished(now) then
+		load_wait = false
+		return false
+	end
+	return true
 end
 
 -- While we park BHS pieces, stock HUDUpdate must not RemoveCustomStatic (type 0/1 / H).
@@ -742,8 +862,9 @@ local function on_actor_update()
 	show_all_prev = show_all
 	show_stam_prev = show_stam
 
-	-- Grace: keep statics, no moves. While hiding, re-assert parks on a short
-	-- cadence (not every frame) so late BHS AddCustomStatic still gets parked.
+	-- Load wait: keep statics, no moves until BHS fill dests settle.
+	-- While hiding, re-assert parks on a short cadence (not every frame)
+	-- so late BHS AddCustomStatic still gets parked.
 	if grace then
 		ensure_bhs_hook()
 		ensure_bhs_statics_exist()
@@ -789,6 +910,10 @@ local function reset_park_state()
 	show_all_prev = false
 	show_stam_prev = false
 	stam_latched = false
+	load_wait = false
+	grace_deadline = 0
+	fill_hide_at = 0
+	fill_uv = {}
 	home = {}
 	local bhs = rawget(_G, "zzz_player_injuries")
 	if bhs and orig_rd and bhs.recieved_damage == wrapped_rd then
@@ -804,13 +929,12 @@ end
 
 local function on_game_load()
 	reset_park_state()
-	-- Start grace here so actor_on_update never parks before first_update.
+	-- Start wait here so actor_on_update never parks before first_update.
 	start_load_grace()
 end
 
 local function on_main_menu()
 	reset_park_state()
-	grace_until = 0
 end
 
 local function on_first_update()

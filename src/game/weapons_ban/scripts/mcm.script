@@ -5,6 +5,8 @@ _G.dogma_game_weapons_ban_conf = {
 	DEFAULTS = {
 		-- New-game extra ammo: boxes per owned start weapon (on top of loadout).
 		extra_start_ammo_boxes = 5,
+		-- New-game start weapons: set parts condition to 59% (same as dogma_mode).
+		start_weapons_59_parts = true,
 		sight_tier_cost_2 = 5000,
 		sight_tier_cost_3 = 10000,
 		sight_tier_cost_4 = 25000,
@@ -80,6 +82,13 @@ function on_mcm_load(options)
 				step = 1,
 				def = D["extra_start_ammo_boxes"],
 				hint = "dogma_game_weapons_ban_extra_start_ammo_boxes",
+			},
+			{
+				id = "start_weapons_59_parts",
+				type = "check",
+				val = 1,
+				def = D["start_weapons_59_parts"],
+				hint = "dogma_game_weapons_ban_start_weapons_59_parts",
 			},
 			cat_header("sight"),
 			track("sight", 2, 0, 150000, 500),

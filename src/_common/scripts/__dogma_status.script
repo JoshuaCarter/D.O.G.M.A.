@@ -10,6 +10,7 @@
 	is_sprinting()  — IsMoveState("mcSprint")
 	is_talking()    — actor:is_talking()
 	health()        — actor.health, 0–1
+	psy_health()    — actor.psy_health, 0–1
 	limbs()         — { head = {perm, temp}, torso, leftarm, rightarm, leftleg, rightleg } as 0–1
 	bhs()           — live BHS tables: health, timedhp, maxhp (or nil)
 ]]
@@ -332,19 +333,27 @@ function is_talking()
 	return ok and talking == true
 end
 
-function health()
-	local actor = db and db.actor
-	local h = actor and actor.health
-	if type(h) ~= "number" then
+local function clamp01(v)
+	if type(v) ~= "number" then
 		return 0
 	end
-	if h < 0 then
+	if v < 0 then
 		return 0
 	end
-	if h > 1 then
+	if v > 1 then
 		return 1
 	end
-	return h
+	return v
+end
+
+function health()
+	local actor = db and db.actor
+	return clamp01(actor and actor.health)
+end
+
+function psy_health()
+	local actor = db and db.actor
+	return clamp01(actor and actor.psy_health)
 end
 
 function bhs()

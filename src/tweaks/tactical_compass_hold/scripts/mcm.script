@@ -1,0 +1,99 @@
+-- tweaks/tactical_compass_hold conf
+-- Injects a hold keybind into Tactical Compass → Key binding.
+
+_G.dogma_tweaks_tactical_compass_hold_conf = {
+	MOD_ID = "dogma/tweaks/tactical_compass_hold",
+	HOLD_MOD = "tactic_compass",
+	HOLD_KEY = "tc_keybinds/keybind_hold",
+	loaded = {
+		hold_dik = nil,
+	},
+}
+
+--[[
+	Tactical Compass Hold - MCM
+
+	Injects hold key into tc_mcm → tc_keybinds (next to the stock toggle).
+]]
+
+local HOLD_KEY_OPT = {
+	id = "keybind_hold",
+	type = "key_bind",
+	val = 2,
+	def = -1,
+	hint = "dogma_tc_hold_key",
+}
+
+local function find_gr_child(gr, id)
+	if not gr then
+		return nil
+	end
+	for i = 1, #gr do
+		if gr[i].id == id then
+			return gr[i], i
+		end
+	end
+	return nil
+end
+
+local function inject_hold_key(tree)
+	if not tree or tree.id ~= "tactic_compass" or type(tree.gr) ~= "table" then
+		return
+	end
+	local keybinds = find_gr_child(tree.gr, "tc_keybinds")
+	if not (keybinds and type(keybinds.gr) == "table") then
+		return
+	end
+	if find_gr_child(keybinds.gr, "keybind_hold") then
+		return
+	end
+
+	local _, at_i = find_gr_child(keybinds.gr, "keybind")
+	local at = at_i and (at_i + 1) or (#keybinds.gr + 1)
+	table.insert(keybinds.gr, at, HOLD_KEY_OPT)
+end
+
+local function inject_into_options(options)
+	if not options then
+		return
+	end
+	for i = 1, #options do
+		if options[i].id == "tactic_compass" then
+			inject_hold_key(options[i])
+		end
+	end
+end
+
+local function wrap_tc_on_mcm_load()
+	local tc = rawget(_G, "tc_mcm")
+	if not (tc and type(tc.on_mcm_load) == "function") then
+		return
+	end
+	if tc._dogma_hold_mcm then
+		return
+	end
+	local orig = tc.on_mcm_load
+	tc.on_mcm_load = function(...)
+		local tree, name = orig(...)
+		if tree then
+			inject_hold_key(tree)
+		end
+		return tree, name
+	end
+	tc._dogma_hold_mcm = true
+end
+
+wrap_tc_on_mcm_load()
+
+function on_mcm_load(options)
+	wrap_tc_on_mcm_load()
+	inject_into_options(options)
+
+	dogma_mcm.append(options, "tweaks", "ui_mcm_menu_dogma_tweaks", {
+		{
+			id = "tactical_compass_hold_description",
+			type = "desc",
+			text = "ui_mcm_dogma_tweaks_tactical_compass_hold_page_description",
+		},
+	})
+end

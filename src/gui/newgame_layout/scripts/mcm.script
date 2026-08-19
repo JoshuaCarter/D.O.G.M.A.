@@ -5,6 +5,7 @@
 
 local MOD_ID = "dogma/gui/newgame_layout"
 local HARD_INDEX = 3
+local LIVES = 2
 
 -- Location ids from plugins/new_game_start_locations.ltx (story-mode bases).
 local FACTION_DEFAULT_MAP = {
@@ -32,8 +33,17 @@ local function opt(key)
 	return true
 end
 
+local function set_check(self, key, on)
+	if self[key] and self[key].SetCheck then
+		self[key]:SetCheck(on)
+	end
+	if self.ck_states then
+		self.ck_states[key] = on
+	end
+end
+
 local function force_hard_pick(self, list, table_key, selected_key)
-	if not opt("default_hard") then
+	if not (opt("default_hard") or opt("default_invictus")) then
 		return
 	end
 	local t = self[table_key]
@@ -46,6 +56,51 @@ local function force_hard_pick(self, list, table_key, selected_key)
 	end
 	self[list]:SetText(game.translate_string(pick))
 	self[selected_key] = pick
+end
+
+-- Same Invictus checks as dogma_mode PREP (not kit/money). After base so
+-- remember_new_game_settings cannot overwrite them on first visit.
+local function force_invictus(self)
+	if not opt("default_invictus") then
+		return
+	end
+	if not (self and self.CC) then
+		return
+	end
+	if self.selected_faction ~= "zombied" then
+		set_check(self, "ck_story", true)
+	end
+	set_check(self, "ck_warfare", false)
+	set_check(self, "ck_azazel_mode", false)
+	set_check(self, "ck_hardcore", true)
+	set_check(self, "ck_soulslike_mode", false)
+	if self.LoadHardcoreLives then
+		self:LoadHardcoreLives(false)
+	end
+	local t = self.table_hardcore_lives
+	if t then
+		for i = 1, #t do
+			local row = t[i]
+			if type(row) == "table" and row[1] == LIVES then
+				local list = self.list_hardcore_lives
+				if list then
+					if list.SetCurrentIdx then
+						list:SetCurrentIdx(i - 1)
+					end
+					if list.GetTextOf and list.SetText then
+						local text = list:GetTextOf(i - 1)
+						if text and text ~= "" then
+							list:SetText(text)
+						end
+					end
+				end
+				self.selected_hardcore_lives = row
+				break
+			end
+		end
+	end
+	force_hard_pick(self, "list_difficulty", "table_difficulty", "selected_difficulty")
+	force_hard_pick(self, "list_economy", "table_economy", "selected_economy")
 end
 
 local function force_map_pick(self)
@@ -176,6 +231,10 @@ local function wrap_update(cls)
 		if base then
 			base(self, ...)
 		end
+		if not STATE.invictus_done and self and self.CC then
+			STATE.invictus_done = true
+			force_invictus(self)
+		end
 		if STATE.eat_click and not mouse1_down() then
 			STATE.eat_click = nil
 		end
@@ -198,6 +257,7 @@ local function wrap_on_quit(cls)
 	local function wrapped(self, ...)
 		STATE.active = nil
 		STATE.eat_click = nil
+		STATE.invictus_done = nil
 		return base(self, ...)
 	end
 
@@ -253,6 +313,7 @@ _G.dogma_gui_newgame_layout_conf = {
 	MOD_ID = MOD_ID,
 	DEFAULTS = {
 		default_hard = true,
+		default_invictus = true,
 		default_spawn = true,
 	},
 	loaded = {},
@@ -267,8 +328,10 @@ _G.dogma_gui_newgame_layout_conf = {
 	patch never sees New Game on a cold boot.
 
 	Wraps LoadDifficulty / LoadEconomy / LoadMap so first open and Randomize
-	can pick Veteran + Survivalist + each faction's main base. Manual combo
-	changes still work (OnSelect*). MCM toggles gate those defaults.
+	can pick Veteran + Survivalist + each faction's main base. Optional
+	Invictus defaults (Story/Ironman/2 lives, Warfare/Azazel/Soulslike off)
+	apply once per visit after other New Game wraps. Manual combo changes
+	still work (OnSelect*). MCM toggles gate those defaults.
 
 	Soulslike checkbox: we replace their injector
 	(scripts/override/souslike_gamemode_injector_mcm.script).
@@ -298,6 +361,13 @@ function on_mcm_load(options)
 				val = 1,
 				def = CONFIG.DEFAULTS.default_hard,
 				hint = "dogma_gui_newgame_layout_default_hard",
+			},
+			{
+				id = "default_invictus",
+				type = "check",
+				val = 1,
+				def = CONFIG.DEFAULTS.default_invictus,
+				hint = "dogma_gui_newgame_layout_default_invictus",
 			},
 			{
 				id = "default_spawn",

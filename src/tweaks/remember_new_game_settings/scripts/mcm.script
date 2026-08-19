@@ -1,0 +1,378 @@
+-- tweaks/remember_new_game_settings
+-- Last-started New Game options (not loadout). Name, portrait, faction, spawn, modes, dropdowns.
+
+local MOD_ID = "dogma/tweaks/remember_new_game_settings"
+local SECTION = "dogma_new_game_remember"
+
+local CHECKS = {
+	{ "ck_story", "story" },
+	{ "ck_azazel_mode", "azazel" },
+	{ "ck_survival", "survival" },
+	{ "ck_warfare", "warfare" },
+	{ "ck_hardcore", "hardcore" },
+	{ "ck_routes", "routes" },
+	{ "ck_conditions", "conditions" },
+	{ "ck_campfire", "campfire" },
+	{ "ck_soulslike_mode", "soulslike" },
+	{ "ck_drx", "drx" },
+}
+
+local STATE = _G.__dogma_tweaks_remember_new_game_settings or {}
+_G.__dogma_tweaks_remember_new_game_settings = STATE
+
+local function cfg()
+	return axr_main and axr_main.config
+end
+
+local function r_str(c, key)
+	local v = c:r_value(SECTION, key, 3)
+	if v and v ~= "" then
+		return v
+	end
+end
+
+local function r_num(c, key)
+	return c:r_value(SECTION, key, 2)
+end
+
+local function r_on(c, key)
+	return c:r_value(SECTION, key, 1) == true
+end
+
+local function saved()
+	local c = cfg()
+	if not (c and c.r_value) then
+		return
+	end
+	local faction = r_str(c, "faction")
+	if not faction then
+		return
+	end
+	local s = {
+		faction = faction,
+		map = r_str(c, "map"),
+		name = r_str(c, "name"),
+		icon = r_str(c, "icon"),
+		difficulty = r_str(c, "difficulty"),
+		economy = r_str(c, "economy"),
+		lives = r_num(c, "lives"),
+		regen = r_num(c, "regen"),
+		timer = r_num(c, "timer"),
+		ck = {},
+	}
+	for i = 1, #CHECKS do
+		s.ck[CHECKS[i][1]] = r_on(c, CHECKS[i][2])
+	end
+	return s
+end
+
+local function set_check(self, key, on)
+	if self[key] and self[key].SetCheck then
+		self[key]:SetCheck(on)
+	end
+	if self.ck_states then
+		self.ck_states[key] = on
+	end
+end
+
+local function is_on(self, key)
+	if self[key] and self[key].GetCheck then
+		return self[key]:GetCheck() and true or false
+	end
+	return self.ck_states and self.ck_states[key] and true or false
+end
+
+local function row_n(sel)
+	return type(sel) == "table" and sel[1] or nil
+end
+
+local function can_start(self)
+	if not self.access then
+		return false
+	end
+	local t = self.character_name and self.character_name.GetText and self.character_name:GetText()
+	return t and t ~= ""
+end
+
+local function persist(self)
+	local c = cfg()
+	if not (c and c.w_value and can_start(self)) then
+		return
+	end
+	local name = self.character_name and self.character_name.GetText and self.character_name:GetText()
+	c:w_value(SECTION, "faction", self.selected_faction or nil)
+	c:w_value(SECTION, "map", self.selected_map or nil)
+	c:w_value(SECTION, "name", name and name:gsub(" ", "_") or nil)
+	c:w_value(SECTION, "icon", self.selected_icon or nil)
+	c:w_value(SECTION, "difficulty", self.selected_difficulty or nil)
+	c:w_value(SECTION, "economy", self.selected_economy or nil)
+	c:w_value(SECTION, "lives", row_n(self.selected_hardcore_lives))
+	c:w_value(SECTION, "regen", row_n(self.selected_hardcore_regen))
+	c:w_value(SECTION, "timer", row_n(self.selected_timer))
+	for i = 1, #CHECKS do
+		c:w_value(SECTION, CHECKS[i][2], is_on(self, CHECKS[i][1]) and true or nil)
+	end
+	if c.save then
+		c:save()
+	end
+end
+
+local function set_list(list, text, idx)
+	if not list then
+		return
+	end
+	if idx then
+		if list.SetCurrentIdx then
+			list:SetCurrentIdx(idx - 1)
+		end
+		if list.SetCurrentID then
+			list:SetCurrentID(idx)
+		end
+	end
+	if text and list.SetText then
+		list:SetText(text)
+	end
+end
+
+local function pick_id(self, list, table_key, selected_key, want)
+	local t = self[table_key]
+	if not (want and t and self[list]) then
+		return
+	end
+	for i = 1, #t do
+		if t[i] == want then
+			set_list(self[list], game.translate_string(want), i)
+			self[selected_key] = want
+			return
+		end
+	end
+end
+
+local function pick_row(self, list, table_key, selected_key, want, text_of)
+	local t = self[table_key]
+	if not t or not self[list] then
+		return
+	end
+	for i = 1, #t do
+		local row = t[i]
+		if type(row) == "table" and row[1] == want then
+			set_list(self[list], text_of(row), i)
+			self[selected_key] = row
+			return
+		end
+	end
+end
+
+local function apply_checks(self, s)
+	for i = 1, #CHECKS do
+		local key = CHECKS[i][1]
+		if self[key] then
+			set_check(self, key, s.ck[key] and true or false)
+		end
+	end
+end
+
+local function apply_faction(self, s)
+	if not (s.faction and self.LoadFaction) then
+		return
+	end
+	if self.table_faction and not self.table_faction[s.faction] then
+		return
+	end
+	self:LoadFaction(false, s.faction)
+	if self.UpdateDescr then
+		self:UpdateDescr()
+	end
+	if self.selected_faction == "zombied" and self.ck_story then
+		set_check(self, "ck_story", false)
+		if self.ck_story.Enable then
+			self.ck_story:Enable(false)
+		end
+	elseif self.ck_story and self.ck_story.Enable then
+		self.ck_story:Enable(true)
+	end
+end
+
+local function apply_dropdowns(self, s)
+	pick_id(self, "list_difficulty", "table_difficulty", "selected_difficulty", s.difficulty)
+	pick_id(self, "list_economy", "table_economy", "selected_economy", s.economy)
+	pick_row(self, "list_hardcore_lives", "table_hardcore_lives", "selected_hardcore_lives", s.lives, function(row)
+		return (row[1] or "") .. " " .. game.translate_string(row[2])
+	end)
+	pick_row(self, "list_hardcore_regen", "table_hardcore_regen", "selected_hardcore_regen", s.regen, function(row)
+		local n = row[1] and (round_idp and round_idp(row[1] / 24) or math.floor(row[1] / 24))
+		return (n and tostring(n) or "") .. " " .. game.translate_string(row[2])
+	end)
+	pick_row(self, "list_timer", "table_timer", "selected_timer", s.timer, function(row)
+		return (row[1] or "") .. " " .. game.translate_string(row[2])
+	end)
+end
+
+local function apply_name(self, s)
+	if s.name and self.character_name and self.character_name.SetText then
+		self.character_name:SetText(s.name:gsub("_", " "))
+	end
+end
+
+local function apply_icon(self, s)
+	if self.LoadIcon then
+		self:LoadIcon(false)
+	end
+	local t = self.table_icon
+	if not (s.icon and t) then
+		return
+	end
+	for i = 1, #t do
+		if t[i] == s.icon then
+			self.selected_icon = s.icon
+			if self.UpdateIcon then
+				self:UpdateIcon()
+			end
+			return
+		end
+	end
+end
+
+local function apply_map(self, s)
+	if self.LoadMap then
+		self:LoadMap(false)
+	end
+	local t = self.table_map
+	if not (s.map and t and self.list_map) then
+		return
+	end
+	for i = 1, #t do
+		if t[i] == s.map then
+			set_list(self.list_map, game.translate_string("ui_st_" .. s.map), i)
+			self.selected_map = s.map
+			if self.UpdateMap then
+				self:UpdateMap()
+			end
+			return
+		end
+	end
+end
+
+local function apply(self, reload_loadout)
+	local s = saved()
+	if not (s and self and self.CC) then
+		return
+	end
+	local prev = self.selected_faction
+	apply_faction(self, s)
+	apply_name(self, s)
+	apply_icon(self, s)
+	apply_checks(self, s)
+	apply_dropdowns(self, s)
+	apply_map(self, s)
+	if reload_loadout and prev ~= self.selected_faction and self.LoadLoadout then
+		self:LoadLoadout(false)
+	end
+end
+
+local function wrap_once(cls, key, state_key, make)
+	if STATE[state_key] then
+		return
+	end
+	local wrapped = make(cls[key])
+	if not wrapped then
+		return
+	end
+	cls[key] = wrapped
+	STATE[state_key] = wrapped
+end
+
+local function patch_new_game()
+	local cls = ui_mm_faction_select and ui_mm_faction_select.UINewGame
+	if not cls then
+		return false
+	end
+
+	wrap_once(cls, "OnStartGame", "wrap_start", function(base)
+		return function(self, ...)
+			persist(self)
+			if base then
+				return base(self, ...)
+			end
+		end
+	end)
+
+	wrap_once(cls, "UpdateAll", "wrap_all", function(base)
+		if not base then
+			return
+		end
+		return function(self, rand, faction)
+			if not rand then
+				return base(self, rand, faction)
+			end
+			local s = saved()
+			if s then
+				apply_checks(self, s)
+				if s.faction and (not self.table_faction or self.table_faction[s.faction]) then
+					faction = s.faction
+				end
+			end
+			local r = base(self, true, faction)
+			if s then
+				if self.selected_faction == "zombied" and self.ck_story then
+					set_check(self, "ck_story", false)
+					if self.ck_story.Enable then
+						self.ck_story:Enable(false)
+					end
+				end
+				apply_name(self, s)
+				apply_icon(self, s)
+				apply_dropdowns(self, s)
+				apply_map(self, s)
+			end
+			return r
+		end
+	end)
+
+	wrap_once(cls, "Update", "wrap_update", function(base)
+		return function(self, ...)
+			if self and self.CC and not self._dogma_remember_visit then
+				self._dogma_remember_visit = true
+				apply(self, true)
+			end
+			if base then
+				return base(self, ...)
+			end
+		end
+	end)
+
+	wrap_once(cls, "OnQuit", "wrap_quit", function(base)
+		return function(self, ...)
+			if self then
+				self._dogma_remember_visit = nil
+			end
+			if base then
+				return base(self, ...)
+			end
+		end
+	end)
+
+	return true
+end
+
+_G.dogma_tweaks_remember_new_game_settings_conf = {
+	MOD_ID = MOD_ID,
+	DEFAULTS = {},
+	loaded = {},
+	patch_new_game = patch_new_game,
+}
+
+local CONFIG = _G.dogma_tweaks_remember_new_game_settings_conf
+CONFIG.patch_new_game()
+RegisterScriptCallback("main_menu_on_init", CONFIG.patch_new_game)
+
+function on_mcm_load(options)
+	CONFIG.patch_new_game()
+	dogma_mcm.append(options, "tweaks", "ui_mcm_menu_dogma_tweaks", {
+		{
+			id = "remember_new_game_settings_description",
+			type = "desc",
+			text = "ui_mcm_dogma_tweaks_remember_new_game_settings_page_description",
+		},
+	})
+end

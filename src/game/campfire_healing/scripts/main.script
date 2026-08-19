@@ -7,7 +7,7 @@
 	No heal caps.
 
 	Two independent rates (MCM, seconds for a 20% step):
-	  Body: 20% / body_sec  → applied as +1% every (body_sec/20) seconds.
+	  Body + psy: 20% / body_sec → +1% each every (body_sec/20) seconds.
 	  Limbs: 20% / limb_sec → every limb_sec, convert 1 BHS point temp→perm
 	         on whichever limb currently has the lowest permanent HP and still
 	         has temp (re-picked every tick; never sticky).
@@ -157,8 +157,22 @@ local function heal_body_one_pct()
 	return true
 end
 
+local function heal_psy_one_pct()
+	local actor = db.actor
+	if not actor or dogma.status.psy_health() >= 1 then
+		return false
+	end
+	local amt = math.min(BODY_HEAL_PT, 1 - dogma.status.psy_health())
+	if amt <= 0 then
+		return false
+	end
+	actor:change_psy_health(amt)
+	return true
+end
+
 local function tick_body()
 	heal_body_one_pct()
+	heal_psy_one_pct()
 end
 
 local function tick_limb()

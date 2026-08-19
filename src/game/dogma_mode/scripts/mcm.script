@@ -4,6 +4,7 @@
 local MOD_ID = "dogma/game/dogma_mode"
 local HARD = 3
 local LIVES = 2
+local MONEY = 500
 local WPNS = { "wpn_colt1911_n", "wpn_sig220_n" }
 local KIT = {
 	{ sec = "itm_ammokit", n = 1 },
@@ -12,6 +13,7 @@ local KIT = {
 	{ sec = "helm_resp", n = 1 },
 }
 local FLAG_SUB = "dogma_start_kit.flag"
+local loadouts_ini
 
 local STATE = _G.__dogma_game_dogma_mode or {}
 _G.__dogma_game_dogma_mode = STATE
@@ -132,9 +134,36 @@ local function pick_wpn(self)
 	return cheapest_pistol(shop) or cheapest_pistol(inv)
 end
 
-local function has_wpn(self)
-	local wpn = pick_wpn(self)
-	return wpn and has_sec(self.CC and self.CC["inventory"], wpn)
+local function inv_counts(self)
+	local inv = self.CC and self.CC["inventory"]
+	local c = {}
+	if not (inv and inv.cell) then
+		return c
+	end
+	for _, ci in pairs(inv.cell) do
+		if ci and ci.section and (not ci.IsShown or ci:IsShown()) then
+			local n = 1 + (ci.CountChilds and ci:CountChilds() or 0)
+			c[ci.section] = (c[ci.section] or 0) + n
+		end
+	end
+	return c
+end
+
+local function same_inv(a, b)
+	if not (a and b) then
+		return false
+	end
+	for k, v in pairs(a) do
+		if b[k] ~= v then
+			return false
+		end
+	end
+	for k in pairs(b) do
+		if a[k] == nil then
+			return false
+		end
+	end
+	return true
 end
 
 local function is_ready(self)
@@ -148,21 +177,89 @@ local function is_ready(self)
 		and type(lives) == "table" and lives[1] == LIVES
 		and td and self.selected_difficulty == (td[HARD] or td[1])
 		and te and self.selected_economy == (te[HARD] or te[1])
-		and has_wpn(self)
+		and self.selected_money == MONEY
+		and same_inv(self._dogma_inv, inv_counts(self))
+end
+
+local function faction_money(self)
+	local fac = self.selected_faction
+	if not fac then
+		return
+	end
+	if not loadouts_ini then
+		loadouts_ini = ini_file("items\\settings\\new_game_loadouts.ltx")
+	end
+	return loadouts_ini and loadouts_ini:r_float_ex(fac .. "_money", "money")
+end
+
+local function restore_money(self)
+	local money = faction_money(self)
+	if not money then
+		return
+	end
+	self.selected_money = money
+	if self.UpdateMoney then
+		self:UpdateMoney()
+	end
+end
+
+local function has_name(self)
+	local t = self.character_name and self.character_name.GetText and self.character_name:GetText()
+	return t and t ~= ""
+end
+
+-- Stock never stores btn_random. Overlay one we own (same XML slot).
+-- Do not wrap C++ Register — that native-crashes.
+local function ensure_start_btn(self)
+	if self.btn_dogma_start or not (self.dialog and self.CC and CScriptXmlInit) then
+		return
+	end
+	local xml = CScriptXmlInit()
+	xml:ParseFile("ui_mm_faction_select_16.xml")
+	local btn = xml:Init3tButton("main_dialog:btn_random", self.dialog)
+	if not btn then
+		return
+	end
+	self:Register(btn, "btn_random")
+	self.btn_dogma_start = btn
 end
 
 local function relabel(self)
-	local btn = self.btn_random
+	ensure_start_btn(self)
+	local btn = self.btn_dogma_start
 	local tc = btn and btn.TextControl and btn:TextControl()
 	if tc and tc.SetTextST then
 		tc:SetTextST(is_ready(self) and "st_mm_btn_dogma_start" or "st_mm_btn_new_game_rand")
 	end
 end
 
+local on_click
+
+-- Engine AddCallback is (id, event, functor, object) — 3-arg does nothing.
+local function bind_click(self)
+	if self._dogma_bound or not (self.AddCallback and ui_events) then
+		return
+	end
+	self:AddCallback("btn_random", ui_events.BUTTON_CLICKED, on_click, self)
+	self._dogma_bound = true
+end
+
+local function arm(self)
+	if not (self and self.CC) then
+		return
+	end
+	local cls = ui_mm_faction_select and ui_mm_faction_select.UINewGame
+	if cls then
+		cls.OnRandomize = on_click
+	end
+	bind_click(self)
+	relabel(self)
+end
+
 local function take(self, sec, n)
 	local shop = self.CC and self.CC["loadout"]
 	local inv = self.CC and self.CC["inventory"]
-	if not (sec and inv) then
+	if not (sec and inv and (not ini_sys or ini_sys:section_exist(sec))) then
 		return
 	end
 	for _ = 1, (n or 1) do
@@ -175,15 +272,6 @@ local function take(self, sec, n)
 end
 
 local function prep(self)
-	if self.OnCheckResetList then
-		self:OnCheckResetList()
-	elseif self.LoadLoadout then
-		self:LoadLoadout(false)
-	end
-	take(self, pick_wpn(self), 1)
-	for i = 1, #KIT do
-		take(self, KIT[i].sec, KIT[i].n)
-	end
 	set_check(self, "ck_story", true)
 	set_check(self, "ck_warfare", false)
 	set_check(self, "ck_azazel_mode", false)
@@ -210,30 +298,33 @@ local function prep(self)
 	end
 	pick_hard(self, "list_difficulty", "table_difficulty", "selected_difficulty")
 	pick_hard(self, "list_economy", "table_economy", "selected_economy")
+	-- Economy select reloads the shop; take items after the final LoadLoadout.
+	if self.LoadLoadout then
+		self:LoadLoadout(false)
+	elseif self.OnCheckResetList then
+		self:OnCheckResetList()
+	end
+	take(self, pick_wpn(self), 1)
+	for i = 1, #KIT do
+		take(self, KIT[i].sec, KIT[i].n)
+	end
+	self.selected_money = MONEY
+	if self.UpdateMoney then
+		self:UpdateMoney()
+	end
+	local total = (self.points_used or 0) + (self.points_left or 0)
+	self.points_used = total
+	self.points_left = 0
+	if self.text_points_used then
+		self.text_points_used:SetText(tostring(total))
+	end
+	if self.text_points_left then
+		self.text_points_left:SetText("0")
+	end
+	self._dogma_inv = inv_counts(self)
 end
 
--- LoadMap then OnStartGame need a frame between them (menu has no TimeEvent).
-local function apply_level(self)
-	local keep = self.selected_map
-	if self.LoadMap then
-		self:LoadMap(false)
-	end
-	if not (keep and self.table_map and self.list_map) then
-		return
-	end
-	for i = 1, #self.table_map do
-		if self.table_map[i] == keep then
-			self.selected_map = keep
-			self.list_map:SetText(game.translate_string("ui_st_" .. keep))
-			if self.UpdateMap then
-				self:UpdateMap()
-			end
-			return
-		end
-	end
-end
-
-local function on_click(self)
+on_click = function(self)
 	if STATE.phase then
 		return
 	end
@@ -242,13 +333,24 @@ local function on_click(self)
 		relabel(self)
 		return
 	end
-	write_flag()
-	STATE.dlg = self
-	STATE.phase = "level"
+	if not has_name(self) then
+		return
+	end
+	if not write_flag() then
+		return
+	end
+	-- Same as stock Start. Do not LoadMap first — that native-crashed here.
+	STATE.phase = true
+	if self.OnStartGame then
+		self:OnStartGame()
+	end
+	STATE.phase = nil
 end
 
+-- Once per process. Re-wrapping Update stacks handlers and fires
+-- LoadMap + OnStartGame in the same frame (native crash / skipped start).
 local function wrap_once(cls, key, state_key, make)
-	if STATE[state_key] and cls[key] == STATE[state_key] then
+	if STATE[state_key] then
 		return
 	end
 	local wrapped = make(cls[key])
@@ -260,45 +362,40 @@ local function wrap_once(cls, key, state_key, make)
 end
 
 local function patch_new_game()
-	STATE.phase = nil
-	STATE.dlg = nil
 	local cls = ui_mm_faction_select and ui_mm_faction_select.UINewGame
 	if not cls then
 		return false
 	end
-	wrap_once(cls, "Register", "wrap_reg", function(base)
-		if not base then
-			return
-		end
-		return function(self, wnd, name, ...)
-			if name == "btn_random" then
-				self.btn_random = wnd
-			end
-			return base(self, wnd, name, ...)
-		end
-	end)
-	wrap_once(cls, "OnRandomize", "wrap_rand", function(base)
-		if not base then
-			return
-		end
-		return on_click
-	end)
+	cls.OnRandomize = on_click
 	wrap_once(cls, "Update", "wrap_update", function(base)
 		return function(self, ...)
 			if base then
 				base(self, ...)
 			end
-			if STATE.dlg == self and STATE.phase == "level" then
-				apply_level(self)
-				STATE.phase = "start"
-			elseif STATE.dlg == self and STATE.phase == "start" then
+			if not STATE.phase then
+				arm(self)
+			end
+		end
+	end)
+	wrap_once(cls, "OnCheckResetList", "wrap_reset", function(base)
+		if not base then
+			return
+		end
+		return function(self, ...)
+			local r = base(self, ...)
+			restore_money(self)
+			return r
+		end
+	end)
+	wrap_once(cls, "OnQuit", "wrap_quit", function(base)
+		return function(self, ...)
+			if STATE.phase then
+				clear_flag()
 				STATE.phase = nil
 				STATE.dlg = nil
-				if self.OnStartGame then
-					self:OnStartGame()
-				end
-			elseif not STATE.phase then
-				relabel(self)
+			end
+			if base then
+				return base(self, ...)
 			end
 		end
 	end)
@@ -308,12 +405,7 @@ local function patch_new_game()
 		end
 		return function(self, ...)
 			local r = base(self, ...)
-			wrap_once(cls, "OnRandomize", "wrap_rand", function(b)
-				if b then
-					return on_click
-				end
-			end)
-			relabel(self)
+			arm(self)
 			return r
 		end
 	end)

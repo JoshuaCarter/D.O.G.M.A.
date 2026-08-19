@@ -88,9 +88,10 @@ local function later(name, id, fn)
 	if fn(id) or not CreateTimeEvent then
 		return
 	end
+	local n = 0
 	CreateTimeEvent(MOD_ID, name .. tostring(id), 0.1, function()
-		fn(id)
-		return true
+		n = n + 1
+		return fn(id) or n >= 10
 	end)
 end
 

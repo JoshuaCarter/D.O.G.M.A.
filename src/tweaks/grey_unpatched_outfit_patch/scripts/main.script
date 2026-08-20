@@ -11,6 +11,10 @@ local CONFIG = _G.dogma_tweaks_grey_unpatched_outfit_patch_conf
 local HOOK_STATE = _G.__dogma_grey_unpatched_outfit_patch or {}
 _G.__dogma_grey_unpatched_outfit_patch = HOOK_STATE
 
+local function log(msg)
+	dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
+end
+
 local COLOR_ON = nil
 local COLOR_TORN = nil
 
@@ -46,16 +50,33 @@ local function cell_obj(cell)
 end
 
 local function tint_badge(ele, tbl, obj)
-	if not (ele and ele.SetTextureColor and is_badge(tbl)) then
+	local tostr = tostring
+	if not is_badge(tbl) then
+		return
+	end
+	local torn = is_unpatched(obj)
+	log(string.format(
+		"badge layer=%s tex=%s obj=%s torn=%s color_ok=%s",
+		tostr(tbl.icon_layer),
+		tostr(tbl.texture),
+		obj and obj:section() or "nil",
+		tostr(torn),
+		tostr(ele and ele.SetTextureColor ~= nil)
+	))
+	if not (ele and ele.SetTextureColor) then
 		return
 	end
 	colors()
-	ele:SetTextureColor(is_unpatched(obj) and COLOR_TORN or COLOR_ON)
+	ele:SetTextureColor(torn and COLOR_TORN or COLOR_ON)
 end
 
 local function wrap_layer_fn(layers, name)
 	local orig = layers[name]
-	if type(orig) ~= "function" or HOOK_STATE[name] then
+	if type(orig) ~= "function" then
+		log(name .. " missing (type=" .. type(orig) .. ")")
+		return
+	end
+	if HOOK_STATE[name] then
 		return
 	end
 	layers[name] = function(cell, ele, base, sec, tbl)
@@ -63,21 +84,26 @@ local function wrap_layer_fn(layers, name)
 		tint_badge(ele, tbl, cell_obj(cell))
 	end
 	HOOK_STATE[name] = true
+	log("wrapped " .. name)
 end
 
 local function refresh_icons()
 	if not (rax_icon_layers and rax_icon_layers.refresh) then
+		log("refresh skipped: no rax_icon_layers.refresh")
 		return
 	end
 	if dogma.status and dogma.status.is_inv_open and not dogma.status.is_inv_open() then
+		log("refresh skipped: inv closed")
 		return
 	end
+	log("refresh icons")
 	rax_icon_layers.refresh()
 end
 
 local function wrap_patch_action()
 	local gd = rawget(_G, "gameplay_disguise")
 	if not (gd and type(gd.menu_patch_action) == "function") then
+		log("menu_patch_action missing")
 		return
 	end
 	if gd.__dogma_grey_unpatched_outfit_patch then
@@ -85,14 +111,17 @@ local function wrap_patch_action()
 	end
 	local orig = gd.menu_patch_action
 	gd.menu_patch_action = function(obj)
+		log("menu_patch_action " .. tostring(obj and obj:section()))
 		orig(obj)
 		refresh_icons()
 	end
 	gd.__dogma_grey_unpatched_outfit_patch = true
+	log("wrapped menu_patch_action")
 end
 
 local function hook()
 	local layers = rawget(_G, "rax_icon_layers")
+	log("hook rax_icon_layers=" .. tostring(layers ~= nil))
 	if layers then
 		wrap_layer_fn(layers, "add_icon_layer")
 		wrap_layer_fn(layers, "add_texture_layer")
@@ -102,6 +131,7 @@ end
 
 function on_game_start()
 	dogma.load(CONFIG.MOD_ID)
+	log("on_game_start")
 	hook()
 	RegisterScriptCallback("on_game_load", hook)
 end

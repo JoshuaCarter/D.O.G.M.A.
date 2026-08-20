@@ -11,6 +11,8 @@
 	is_talking()    — actor:is_talking()
 	health()        — actor.health, 0–1
 	psy_health()    — actor.psy_health, 0–1
+	stamina()       — actor.power, 0–1
+	stamina_max()   — conditions().GetMaxPower(), 0–1 (cap shrinks with time/weight)
 	limbs()         — { head = {perm, temp}, torso, leftarm, rightarm, leftleg, rightleg } as 0–1
 	bhs()           — live BHS tables: health, timedhp, maxhp (or nil)
 ]]
@@ -354,6 +356,25 @@ end
 function psy_health()
 	local actor = db and db.actor
 	return clamp01(actor and actor.psy_health)
+end
+
+function stamina()
+	local actor = db and db.actor
+	return clamp01(actor and actor.power)
+end
+
+function stamina_max()
+	local actor = db and db.actor
+	if not actor then
+		return 1
+	end
+	local ok, m = pcall(function()
+		return actor:cast_Actor():conditions():GetMaxPower()
+	end)
+	if not (ok and type(m) == "number") then
+		return 1
+	end
+	return clamp01(m)
 end
 
 function bhs()

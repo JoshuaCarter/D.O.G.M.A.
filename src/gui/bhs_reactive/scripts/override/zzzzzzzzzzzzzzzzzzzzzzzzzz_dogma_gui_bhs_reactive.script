@@ -584,12 +584,17 @@ local function compute_show(L, now)
 	local force = hold_key(L.key_bhs, L.key_bhs_modifier) or (flash_until > now)
 	local show_all = cond or force
 	local stam_th = L.stam_show_below_pct or 0
-	local power = actor_pct("power", 100)
+	-- Fill vs current max. The cap shrinks, so absolute 100% is often unreachable.
+	local stam, max_stam = dogma.status.stamina(), dogma.status.stamina_max()
+	local fill = 100
+	if max_stam > 0.01 then
+		fill = (stam + 0.005 >= max_stam) and 100 or (stam / max_stam * 100)
+	end
 	if stam_th <= 0 then
 		stam_latched = false
-	elseif power < stam_th then
+	elseif fill < stam_th then
 		stam_latched = true
-	elseif power >= 100 then
+	elseif fill >= 100 then
 		stam_latched = false
 	end
 	local show_stam = show_all or stam_latched

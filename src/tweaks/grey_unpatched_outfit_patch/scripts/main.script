@@ -1,0 +1,107 @@
+--[[
+	Grey Unpatched Outfit Patch
+
+	Utjan always paints the faction badge on outfit cells. After the
+	patch is torn (`unpatched` on the item), grey that overlay.
+	Attached = no change. Cells only draw while an inventory is open.
+]]
+
+local CONFIG = _G.dogma_tweaks_grey_unpatched_outfit_patch_conf
+
+local HOOK_STATE = _G.__dogma_grey_unpatched_outfit_patch or {}
+_G.__dogma_grey_unpatched_outfit_patch = HOOK_STATE
+
+local COLOR_ON = nil
+local COLOR_TORN = nil
+
+local function colors()
+	if not COLOR_ON then
+		COLOR_ON = GetARGB(255, 255, 255, 255)
+		COLOR_TORN = GetARGB(200, 72, 72, 72)
+	end
+end
+
+local function is_unpatched(obj)
+	if not (obj and se_load_var) then
+		return false
+	end
+	local id = obj:id()
+	return se_load_var(id, obj:name(), "unpatched") or se_load_var(id, nil, "unpatched")
+end
+
+local function is_badge(tbl)
+	if not tbl then
+		return false
+	end
+	local layer = tbl.icon_layer
+	if layer and string.sub(layer, -6) == "_patch" then
+		return true
+	end
+	local tex = tbl.texture
+	return tex and string.find(tex, "ui_mm_faction_", 1, true) ~= nil
+end
+
+local function cell_obj(cell)
+	return cell and cell.ID and level and level.object_by_id and level.object_by_id(cell.ID)
+end
+
+local function tint_badge(ele, tbl, obj)
+	if not (ele and ele.SetTextureColor and is_badge(tbl)) then
+		return
+	end
+	colors()
+	ele:SetTextureColor(is_unpatched(obj) and COLOR_TORN or COLOR_ON)
+end
+
+local function wrap_layer_fn(layers, name)
+	local orig = layers[name]
+	if type(orig) ~= "function" or HOOK_STATE[name] then
+		return
+	end
+	layers[name] = function(cell, ele, base, sec, tbl)
+		orig(cell, ele, base, sec, tbl)
+		tint_badge(ele, tbl, cell_obj(cell))
+	end
+	HOOK_STATE[name] = true
+end
+
+local function refresh_icons()
+	if not (rax_icon_layers and rax_icon_layers.refresh) then
+		return
+	end
+	if dogma.status and dogma.status.is_inv_open and not dogma.status.is_inv_open() then
+		return
+	end
+	rax_icon_layers.refresh()
+end
+
+local function wrap_patch_action()
+	local gd = rawget(_G, "gameplay_disguise")
+	if not (gd and type(gd.menu_patch_action) == "function") then
+		return
+	end
+	if gd.__dogma_grey_unpatched_outfit_patch then
+		return
+	end
+	local orig = gd.menu_patch_action
+	gd.menu_patch_action = function(obj)
+		orig(obj)
+		refresh_icons()
+	end
+	gd.__dogma_grey_unpatched_outfit_patch = true
+end
+
+local function hook()
+	local layers = rawget(_G, "rax_icon_layers")
+	if layers then
+		wrap_layer_fn(layers, "add_icon_layer")
+		wrap_layer_fn(layers, "add_texture_layer")
+	end
+	wrap_patch_action()
+end
+
+function on_game_start()
+	dogma.load(CONFIG.MOD_ID)
+	hook()
+	RegisterScriptCallback("on_game_load", hook)
+end

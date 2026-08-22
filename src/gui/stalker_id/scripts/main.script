@@ -6,8 +6,9 @@
 	other ADS/zoom keeps soft at 100m but exact at 200m. Leader line:
 	living non-hostiles normally, all living stalkers in binocs; never corpses.
 	Living hostile / zombified names are red; dead names are grey. Losing the target fades over MCM fade-out time.
-	Unbound show-key always acquires; a bound key must be held to find a new target.
-	Release does not hide an already-acquired target — fade-out still runs.
+	Show always acquires and ignores the other show-when options. Otherwise
+	need ADS / free zoom / binoculars (if those toggles are on) or a bound
+	hold key. Unbound key is not a condition. Leaving a condition fades.
 ]]
 
 local CONFIG = _G.dogma_gui_stalker_id_conf
@@ -54,6 +55,7 @@ local LastHitObject = nil
 local line_target_id = nil
 local trigger = 0
 local grok_delay = 0
+local cond_was = false
 
 local fade_active = false
 local fade_start_ms = 0
@@ -95,7 +97,11 @@ end
 local function on_option_change()
 	local id = CONFIG.MOD_ID
 	CONFIG.loaded.enabled = dogma.mcm.bool(id, "enabled")
+	CONFIG.loaded.show_always = dogma.mcm.bool(id, "show_always")
 	CONFIG.loaded.show_keybind = dogma.mcm.key(id, "show_keybind")
+	CONFIG.loaded.show_when_ads = dogma.mcm.bool(id, "show_when_ads")
+	CONFIG.loaded.show_when_free_zoom = dogma.mcm.bool(id, "show_when_free_zoom")
+	CONFIG.loaded.show_when_binoc = dogma.mcm.bool(id, "show_when_binoc")
 	CONFIG.loaded.dead_id = dogma.mcm.bool(id, "dead_id")
 	CONFIG.loaded.name_id = dogma.mcm.bool(id, "name_id")
 	CONFIG.loaded.rank_id = dogma.mcm.bool(id, "rank_id")
@@ -118,21 +124,6 @@ local function on_option_change()
 	CONFIG.loaded.line_width_px = dogma.mcm.uint(id, "line_width_px")
 	CONFIG.loaded.line_a = dogma.mcm.uint(id, "line_a")
 	CONFIG.loaded.fade_out_ms = dogma.mcm.uint(id, "fade_out_ms")
-end
-
--- Unbound: always acquire. Bound: key must be down to find a new target.
--- Key-up does not hide an already-acquired target (fade still runs).
-local function can_acquire()
-	local key = CONFIG.loaded.show_keybind
-	if not key then
-		return true
-	end
-	return dogma.input and dogma.input.is_key_down(key)
-end
-
-local function show_key_pressed()
-	local key = CONFIG.loaded.show_keybind
-	return key and dogma.input and dogma.input.is_key_pressed(key)
 end
 
 local function hide_all_patches(hud)
@@ -609,6 +600,51 @@ local function is_ads_zoomed()
 	return fov < _fov_baseline * FOV_ZOOM_RATIO
 end
 
+-- Weapon ADS only (not binocs, not free zoom).
+local function is_weapon_ads()
+	if using_binocs() then
+		return false
+	end
+	local axr = axr_main
+	if axr and axr.weapon_is_zoomed then
+		return true
+	end
+	local tgt = rawget(_G, "dogma_fov_tgt_ads")
+	return type(tgt) == "number" and tgt > 0
+end
+
+local function is_free_zoomed()
+	if using_binocs() then
+		return false
+	end
+	local tgt = rawget(_G, "dogma_fov_tgt_free")
+	return type(tgt) == "number" and tgt > 0
+end
+
+-- Optional gates used only when Show always is off. Nil keybind is not a gate.
+local function show_cond()
+	local cfg = CONFIG.loaded
+	if cfg.show_when_ads and is_weapon_ads() then
+		return true
+	end
+	if cfg.show_when_free_zoom and is_free_zoomed() then
+		return true
+	end
+	if cfg.show_when_binoc and is_binoc_active() then
+		return true
+	end
+	local key = cfg.show_keybind
+	if key and dogma.input and dogma.input.is_key_down(key) then
+		return true
+	end
+	return false
+end
+
+-- Show always short-circuits so the other options are not even checked.
+local function want_acquire()
+	return CONFIG.loaded.show_always or show_cond()
+end
+
 -- Exact look-ray: 100m hipfire; 200m with binocs or other ADS/zoom.
 local function exact_max_range()
 	local cfg = CONFIG.loaded
@@ -924,6 +960,7 @@ end
 
 function actor_on_update()
 	if not CONFIG.loaded.enabled then
+		cond_was = false
 		if LastHitObject or fade_active or line_target_id then
 			LastHitObject = nil
 			clear()
@@ -939,8 +976,11 @@ function actor_on_update()
 	update_leader_line()
 
 	local tg = time_global()
-	-- Bound hold: first press is checked every frame and forces a find tick.
-	local force_tick = show_key_pressed()
+	-- Every frame: always-on, or a condition just became true (incl. first key down).
+	local always = CONFIG.loaded.show_always
+	local want = want_acquire()
+	local force_tick = not always and want and not cond_was
+	cond_was = not always and want
 
 	if trigger == 0 then
 		grok_delay = tg + UPDATE_DELAY
@@ -952,9 +992,8 @@ function actor_on_update()
 	end
 	trigger = 0
 
-	-- Key-up skips find so we don't acquire, but still hits the lost-target
-	-- path below so an already-shown ID can fade.
-	local obj = can_acquire() and find_id_target() or nil
+	-- No want: skip find, but still hit the lost-target path so fade can run.
+	local obj = want and find_id_target() or nil
 	local valid = HUD and obj ~= nil
 
 	if valid then
@@ -1018,7 +1057,7 @@ function npc_on_net_destroy(npc)
 end
 
 function GUI_on_show(gui, str2)
-	if not CONFIG.loaded.enabled or not can_acquire() then
+	if not CONFIG.loaded.enabled or not want_acquire() then
 		return
 	end
 	if gui == "Dialog" then

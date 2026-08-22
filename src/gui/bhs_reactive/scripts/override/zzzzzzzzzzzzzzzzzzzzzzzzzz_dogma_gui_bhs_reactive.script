@@ -8,7 +8,7 @@
 	(spawn is SetProgressPos(55)), then the engine fill lerp can finish.
 	Always-show conditions first, then damage/hold overrides. Stam threshold
 	alone → stam only. Status icons: separate functor gates.
-	Boosters hide with that strip; hold key shows them.
+	Boosters: never Show. Park only while hide-icons is on and hold key is up.
 ]]
 
 local CONFIG = _G.dogma_gui_bhs_reactive_conf
@@ -503,15 +503,28 @@ local BOOST_INDS = {
 	"m_ind_boost_rad",
 }
 
--- Engine buff icons (C++ Show every frame). Hold key only; never force on.
-local function park_boost_icons(want_parked)
+-- Never Show. Engine turns a buff on; we only park it.
+local function apply_boost_parks(want_parked)
 	local mgui = ActorMenu and ActorMenu.get_maingame and ActorMenu.get_maingame()
 	if not mgui then
 		return
 	end
 	for i = 1, #BOOST_INDS do
-		local key = BOOST_INDS[i]
-		park_wnd(mgui[key], key, want_parked)
+		park_wnd(mgui[BOOST_INDS[i]], BOOST_INDS[i], want_parked)
+	end
+end
+
+local function boost_tick()
+	local L = CONFIG and CONFIG.loaded
+	if L then
+		apply_boost_parks(L.hide_status_icons and not hold_key(L.key_icons, L.key_icons_modifier))
+	end
+	return false
+end
+
+local function ensure_boost_tick()
+	if CreateTimeEvent then
+		CreateTimeEvent("dogma_bhs_reactive", "boost", 0, boost_tick)
 	end
 end
 
@@ -768,13 +781,16 @@ local function ensure_gate_fn(name)
 	if GATE[name] then
 		return
 	end
-	GATE[name] = function()
-		return cache_visual[name] or 0
+	GATE[name] = function(visual_flag, ...)
+		if visual_flag then
+			return cache_visual[name] or 0
+		end
+		return call_orig_functor(name)
 	end
 end
 
 local function should_gate(def)
-	return type(def) == "table" and def.functor
+	return type(def) == "table" and def.functor and (def.typ or "state") ~= "booster"
 end
 
 local function install_gates()
@@ -820,7 +836,6 @@ local function status_tick(now, icons_held)
 		return
 	end
 	if not L.hide_status_icons and not icons_held then
-		park_boost_icons(false)
 		if gates_installed then
 			restore_gates()
 			local as = rawget(_G, "actor_status")
@@ -836,7 +851,6 @@ local function status_tick(now, icons_held)
 		return
 	end
 	dogma.perf.start("bhs_reactive", "status_tick")
-	park_boost_icons(L.hide_status_icons and not icons_held)
 	install_gates()
 	local as = rawget(_G, "actor_status")
 	if not (as and as.indicators) then
@@ -857,8 +871,7 @@ local function status_tick(now, icons_held)
 		if opt_in_for(name) then
 			cache_visual[name] = gate_state_value(name, call_orig_functor(name), now, icons_held)
 		else
-			-- Boosters and other non-opt-in: hold key only, never force on.
-			cache_visual[name] = icons_held and (call_orig_functor(name) or 0) or 0
+			cache_visual[name] = 0
 			grey_since[name] = nil
 		end
 	end
@@ -956,6 +969,7 @@ local function on_game_load()
 	reset_park_state()
 	-- Start wait here so actor_on_update never parks before first_update.
 	start_load_grace()
+	ensure_boost_tick()
 end
 
 local function on_main_menu()
@@ -971,6 +985,7 @@ local function on_first_update()
 		RegisterScriptCallback("actor_on_update", on_actor_update)
 		update_registered = true
 	end
+	ensure_boost_tick()
 	if CONFIG.loaded and CONFIG.loaded.hide_status_icons then
 		status_tick(time_global(), hold_key(CONFIG.loaded.key_icons, CONFIG.loaded.key_icons_modifier))
 	end
@@ -982,7 +997,6 @@ local function on_option_change()
 	local held = L and hold_key(L.key_icons, L.key_icons_modifier)
 	if L and not L.hide_status_icons and not held then
 		restore_gates()
-		park_boost_icons(false)
 	elseif L then
 		status_tick(time_global(), held)
 	end

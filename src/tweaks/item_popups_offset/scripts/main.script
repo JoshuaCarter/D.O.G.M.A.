@@ -1,0 +1,58 @@
+--[[
+	Item Popups Offset
+
+	APM AnimateWindow sets X from the right edge every frame and drops
+	stock pos_x. After that write, add the MCM offset injected under
+	Popup Messages → apm_main.
+]]
+
+local CONFIG = _G.dogma_tweaks_item_popups_offset_conf
+
+local HOOK_STATE = _G.__dogma_item_popups_offset_hooks or {}
+_G.__dogma_item_popups_offset_hooks = HOOK_STATE
+
+local function read_offset()
+	if ui_mcm and ui_mcm.get and not (ui_mcm.is_gathering and ui_mcm.is_gathering()) then
+		local ok, value = pcall(ui_mcm.get, CONFIG.APM_OFFSET_PATH)
+		if ok and value ~= nil then
+			return tonumber(value) or 0
+		end
+	end
+	return CONFIG.loaded.offset_x or CONFIG.DEFAULTS.offset_x
+end
+
+local function on_option_change()
+	CONFIG.loaded.offset_x = read_offset()
+end
+
+local function patch()
+	if HOOK_STATE.patched then
+		return true
+	end
+	local cls = rawget(_G, "UIPopupMessages")
+	if not (cls and type(cls.AnimateWindow) == "function") then
+		return false
+	end
+
+	local orig = cls.AnimateWindow
+	HOOK_STATE.orig = orig
+	function cls:AnimateWindow(wnd, anim_state)
+		local ret = orig(self, wnd, anim_state)
+		local dx = CONFIG.loaded.offset_x or 0
+		if dx ~= 0 and wnd and wnd.wnd then
+			local pos = wnd.wnd:GetWndPos()
+			wnd.wnd:SetWndPos(vector2():set(pos.x + dx, pos.y))
+		end
+		return ret
+	end
+	HOOK_STATE.patched = true
+	return true
+end
+
+function on_game_start()
+	dogma.load(CONFIG.MOD_ID)
+	on_option_change()
+	RegisterScriptCallback("on_option_change", on_option_change)
+	RegisterScriptCallback("actor_on_first_update", patch)
+	patch()
+end

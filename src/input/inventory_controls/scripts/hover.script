@@ -185,7 +185,11 @@ end
 local function poll_all(gui)
 	local was = still_was
 	for i = 1, #actions do
-		poll_action(actions[i], gui)
+		local act = actions[i]
+		if act.tick then
+			act.tick(gui)
+		end
+		poll_action(act, gui)
 	end
 	local now = still_active()
 	if was and not now then

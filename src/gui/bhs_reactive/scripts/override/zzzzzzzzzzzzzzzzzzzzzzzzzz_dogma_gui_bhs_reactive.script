@@ -8,6 +8,7 @@
 	(spawn is SetProgressPos(55)), then the engine fill lerp can finish.
 	Always-show conditions first, then damage/hold overrides. Stam threshold
 	alone → stam only. Status icons: separate functor gates.
+	Boosters hide with that strip; hold key shows them.
 ]]
 
 local CONFIG = _G.dogma_gui_bhs_reactive_conf
@@ -145,7 +146,6 @@ local home = {} -- key -> {x,y}
 local orig_functors = {}
 local cache_visual = {}
 local grey_since = {}
-local icon_typ = {}
 
 _G.dogma_bhs_reactive_icon = _G.dogma_bhs_reactive_icon or {}
 local GATE = _G.dogma_bhs_reactive_icon
@@ -492,6 +492,29 @@ local function park_rad(want_parked)
 	park_wnd(bar, "__rad", want_parked)
 end
 
+local BOOST_INDS = {
+	"m_ind_boost_psy",
+	"m_ind_boost_radia",
+	"m_ind_boost_chem",
+	"m_ind_boost_wound",
+	"m_ind_boost_weight",
+	"m_ind_boost_health",
+	"m_ind_boost_power",
+	"m_ind_boost_rad",
+}
+
+-- Engine buff icons (C++ Show every frame). Hold key only; never force on.
+local function park_boost_icons(want_parked)
+	local mgui = ActorMenu and ActorMenu.get_maingame and ActorMenu.get_maingame()
+	if not mgui then
+		return
+	end
+	for i = 1, #BOOST_INDS do
+		local key = BOOST_INDS[i]
+		park_wnd(mgui[key], key, want_parked)
+	end
+end
+
 local function actor_pct(field, fallback)
 	local a = db and db.actor
 	if not a then
@@ -745,16 +768,13 @@ local function ensure_gate_fn(name)
 	if GATE[name] then
 		return
 	end
-	GATE[name] = function(visual_flag, ...)
-		if visual_flag then
-			return cache_visual[name] or 0
-		end
-		return call_orig_functor(name)
+	GATE[name] = function()
+		return cache_visual[name] or 0
 	end
 end
 
 local function should_gate(def)
-	return type(def) == "table" and def.functor and (def.typ or "state") ~= "booster"
+	return type(def) == "table" and def.functor
 end
 
 local function install_gates()
@@ -767,11 +787,9 @@ local function install_gates()
 			local f = def.functor
 			if type(f) == "table" and f[1] ~= "dogma_bhs_reactive_icon" then
 				orig_functors[name] = f
-				icon_typ[name] = def.typ or "state"
 				ensure_gate_fn(name)
 				def.functor = { "dogma_bhs_reactive_icon", name, true }
 			elseif type(f) == "table" and f[1] == "dogma_bhs_reactive_icon" then
-				icon_typ[name] = def.typ or icon_typ[name] or "state"
 				ensure_gate_fn(name)
 			end
 		end
@@ -802,6 +820,7 @@ local function status_tick(now, icons_held)
 		return
 	end
 	if not L.hide_status_icons and not icons_held then
+		park_boost_icons(false)
 		if gates_installed then
 			restore_gates()
 			local as = rawget(_G, "actor_status")
@@ -817,6 +836,7 @@ local function status_tick(now, icons_held)
 		return
 	end
 	dogma.perf.start("bhs_reactive", "status_tick")
+	park_boost_icons(L.hide_status_icons and not icons_held)
 	install_gates()
 	local as = rawget(_G, "actor_status")
 	if not (as and as.indicators) then
@@ -828,7 +848,6 @@ local function status_tick(now, icons_held)
 			local f = def.functor
 			if type(f) == "table" and f[1] ~= "dogma_bhs_reactive_icon" then
 				orig_functors[name] = f
-				icon_typ[name] = def.typ or "state"
 				ensure_gate_fn(name)
 				def.functor = { "dogma_bhs_reactive_icon", name, true }
 			end
@@ -838,7 +857,8 @@ local function status_tick(now, icons_held)
 		if opt_in_for(name) then
 			cache_visual[name] = gate_state_value(name, call_orig_functor(name), now, icons_held)
 		else
-			cache_visual[name] = 0
+			-- Boosters and other non-opt-in: hold key only, never force on.
+			cache_visual[name] = icons_held and (call_orig_functor(name) or 0) or 0
 			grey_since[name] = nil
 		end
 	end
@@ -958,8 +978,13 @@ end
 
 local function on_option_change()
 	refresh_options()
-	if CONFIG and CONFIG.loaded and not CONFIG.loaded.hide_status_icons and not hold_key(CONFIG.loaded.key_icons, CONFIG.loaded.key_icons_modifier) then
+	local L = CONFIG and CONFIG.loaded
+	local held = L and hold_key(L.key_icons, L.key_icons_modifier)
+	if L and not L.hide_status_icons and not held then
 		restore_gates()
+		park_boost_icons(false)
+	elseif L then
+		status_tick(time_global(), held)
 	end
 	apply_parks(time_global())
 end

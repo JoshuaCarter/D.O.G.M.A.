@@ -6,28 +6,20 @@ _G.dogma_input_inventory_controls_conf = {
 	DEFAULTS = {
 		key_disa = -1,
 		key_disa_modifier = 0,
-		disa_stack_hold = 3,
-		disa_safe_equipped = true,
 		pda_grants_stash_coords = true,
 		tools_enabled = true,
 		attachments_enabled = true,
 		pda_parts_tip = false,
 		key_drop = -1,
 		key_drop_modifier = 0,
-		drop_stack_hold = 3,
-		drop_safe_equipped = true,
 		key_transfer = (DIK_keys and DIK_keys.DIK_LSHIFT) or 42,
 		key_transfer_modifier = 0,
 		key = -1,
-		key_mode = 0,
 		key_modifier = 0,
 		intercept_disassemble = true,
-		keep_parts_with_weapon = true,
-		block_companion_special_items = true,
 	},
 	loaded = {
 		attach_enabled = true,
-		block_special_items = true,
 	},
 }
 
@@ -67,19 +59,6 @@ function on_mcm_load(options)
 		}
 	end
 
-	local function stack_hold(id, hint)
-		return {
-			id = id,
-			type = "track",
-			val = 2,
-			min = 0,
-			max = 5,
-			step = 1,
-			def = CONFIG.DEFAULTS[id],
-			hint = hint,
-		}
-	end
-
 	dogma_mcm.attach(options, "input", "ui_mcm_menu_dogma_input", {
 		id = "inventory_controls",
 		sh = true,
@@ -90,17 +69,15 @@ function on_mcm_load(options)
 				type = "desc",
 				text = "ui_mcm_dogma_input_inventory_controls_page_description",
 			},
+			{ id = "section_transfer", type = "line" },
+			kb_bind("key_transfer", "dogma_input_inventory_controls_key_transfer"),
+			kb_modifier("key_transfer_modifier"),
+			{ id = "section_drop", type = "line" },
+			kb_bind("key_drop", "dogma_input_inventory_controls_key_drop"),
+			kb_modifier("key_drop_modifier"),
 			{ id = "section_disassemble", type = "line" },
 			kb_bind("key_disa", "dogma_input_inventory_controls_key_disa"),
 			kb_modifier("key_disa_modifier"),
-			stack_hold("disa_stack_hold", "dogma_input_inventory_controls_disa_stack_hold"),
-			{
-				id = "disa_safe_equipped",
-				type = "check",
-				val = 1,
-				def = CONFIG.DEFAULTS.disa_safe_equipped,
-				hint = "dogma_input_inventory_controls_disa_safe_equipped",
-			},
 			{
 				id = "pda_grants_stash_coords",
 				type = "check",
@@ -129,54 +106,15 @@ function on_mcm_load(options)
 				def = CONFIG.DEFAULTS.pda_parts_tip,
 				hint = "dogma_input_inventory_controls_pda_parts_tip",
 			},
-			{ id = "section_drop", type = "line" },
-			kb_bind("key_drop", "dogma_input_inventory_controls_key_drop"),
-			kb_modifier("key_drop_modifier"),
-			stack_hold("drop_stack_hold", "dogma_input_inventory_controls_drop_stack_hold"),
-			{
-				id = "drop_safe_equipped",
-				type = "check",
-				val = 1,
-				def = CONFIG.DEFAULTS.drop_safe_equipped,
-				hint = "dogma_input_inventory_controls_drop_safe_equipped",
-			},
-			{ id = "section_transfer", type = "line" },
-			kb_bind("key_transfer", "dogma_input_inventory_controls_key_transfer"),
-			kb_modifier("key_transfer_modifier"),
 			{ id = "section_stripping", type = "line" },
+			kb_bind("key", "dogma_input_inventory_controls_key_strip"),
+			kb_modifier("key_modifier"),
 			{
 				id = "intercept_disassemble",
 				type = "check",
 				val = 1,
 				def = CONFIG.DEFAULTS.intercept_disassemble,
 				hint = "dogma_input_inventory_controls_intercept_disassemble",
-			},
-			kb_bind("key", "dogma_input_inventory_controls_key_strip"),
-			kb_modifier("key_modifier"),
-			{
-				id = "key_mode",
-				type = kb_mod,
-				val = 2,
-				def = CONFIG.DEFAULTS.key_mode,
-				hint = "mcm_kb_mode",
-				content = {
-					{ 0, "mcm_kb_mode_press" },
-					{ 2, "mcm_kb_mode_hold" },
-				},
-			},
-			{
-				id = "keep_parts_with_weapon",
-				type = "check",
-				val = 1,
-				def = CONFIG.DEFAULTS.keep_parts_with_weapon,
-				hint = "dogma_input_inventory_controls_keep_parts_with_weapon",
-			},
-			{
-				id = "block_companion_special_items",
-				type = "check",
-				val = 1,
-				def = CONFIG.DEFAULTS.block_companion_special_items,
-				hint = "dogma_input_inventory_controls_block_companion_special_items",
 			},
 		}),
 	})

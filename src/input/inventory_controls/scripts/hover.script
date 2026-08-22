@@ -1,0 +1,292 @@
+--[[
+	Shared hold+hover for inventory keybinds.
+	Press+hold over a cell fires that cell (whole stack, except in the
+	stack popup). Moving to a new cell fires that cell too. Same cell is
+	locked so sort/rebuild cannot chain.
+
+	Drop/disassemble hold keeps the bag still: add/remove cells only, no
+	re-sort. SortingPlus/Seamless otherwise snap the list and the next
+	item jumps under the cursor. On key release the normal refresh runs.
+]]
+
+local MOD_ID = "dogma/input/inventory_controls"
+
+local actions = {}
+local in_action = false
+local still_was = false
+local original_on_hover = nil
+local hover_wrapper = nil
+local original_update_inventories = nil
+local update_inventories_wrapper = nil
+
+local function log(msg)
+	if dogma.dbg.logging() then
+		dogma.dbg.log(MOD_ID, tostring(msg))
+	end
+end
+
+local function cell_obj(gui, bag, idx)
+	local cc = gui and gui.CC and gui.CC[bag]
+	return cc and cc:GetObj(idx)
+end
+
+-- Picker rows are one item. Stacked cells are parent + childs.
+-- IDs are snapshotted first because acting mutates the cell.
+local function stack_items(gui, obj, bag)
+	if not obj then
+		return {}
+	end
+	if bag == "picker" then
+		return { obj }
+	end
+	local cc = gui and gui.CC and gui.CC[bag]
+	local ci = cc and cc.GetCell_ID and cc:GetCell_ID(obj:id())
+	local ids = {}
+	if ci and ci.childs then
+		for id, _ in pairs(ci.childs) do
+			ids[#ids + 1] = id
+		end
+	end
+	ids[#ids + 1] = obj:id()
+	local items = {}
+	for i = 1, #ids do
+		local item = level.object_by_id(ids[i])
+		if item then
+			items[#items + 1] = item
+		end
+	end
+	return items
+end
+
+local function fire_cell(act, obj, bag, idx, gui)
+	in_action = true
+	act.hold = { bag = bag, idx = idx }
+	act.fire(gui, obj, bag, idx)
+	in_action = false
+end
+
+local function on_cell(act, bag, idx, gui)
+	if not (bag and act.bags[bag]) then
+		return
+	end
+	local hold = act.hold
+	if hold and hold.bag == bag and hold.idx == idx then
+		if hold.locked or not cell_obj(gui, bag, idx) then
+			hold.locked = true
+		end
+		return
+	end
+	local obj = cell_obj(gui, bag, idx)
+	if obj then
+		fire_cell(act, obj, bag, idx, gui)
+	else
+		act.hold = { bag = bag, idx = idx, locked = true }
+	end
+end
+
+local function poll_action(act, gui)
+	if not act.mode_ok(gui) then
+		act.hold = nil
+		act.down_prev = false
+		return
+	end
+	local down = act.key_down()
+	local pressed = down and not act.down_prev
+	act.down_prev = down
+	if not down then
+		act.hold = nil
+		return
+	end
+
+	local hover = gui and gui.hover
+	local bag, idx = hover and hover.bag, hover and hover.idx
+	if not bag then
+		if act.hold then
+			act.hold.locked = true
+		end
+		return
+	end
+
+	if pressed or not act.hold or act.hold.bag ~= bag or act.hold.idx ~= idx then
+		on_cell(act, bag, idx, gui)
+	elseif not cell_obj(gui, bag, idx) or act.hold.locked then
+		act.hold.locked = true
+	end
+end
+
+local function still_active()
+	for i = 1, #actions do
+		local act = actions[i]
+		if act.still and act.down_prev then
+			return true
+		end
+	end
+	return false
+end
+
+-- Vanilla RefreshInventories: add missing, remove gone. Leaves holes.
+-- SortingPlus/Seamless replace that with a full re-sort.
+local function refresh_bag(cc, inv)
+	if not (cc and inv and cc.indx_id) then
+		return
+	end
+	local list = cc.indx_id
+	for id, obj in pairs(inv) do
+		if not list[id] then
+			cc:AddItem(obj, obj:section())
+		end
+	end
+	local gone = {}
+	for id, _ in pairs(list) do
+		if not inv[id] then
+			gone[#gone + 1] = id
+		end
+	end
+	for i = 1, #gone do
+		cc:RemoveItem_byID(gone[i])
+	end
+end
+
+local function still_refresh(gui)
+	if not (gui and gui.CC and gui.ParseInventory) then
+		return
+	end
+	local mode = gui.mode
+	if mode == "inventory" or mode == "repair" then
+		if db.actor then
+			refresh_bag(gui.CC.actor_bag, gui:ParseInventory(db.actor, nil, true))
+		end
+	elseif mode == "loot" then
+		if db.actor then
+			refresh_bag(gui.CC.actor_bag, gui:ParseInventory(db.actor, nil, true))
+		end
+		local npc = gui.GetPartner and gui:GetPartner()
+		if npc then
+			local inv
+			if gui.npc_is_companion and gui.ParseInventory_Companion then
+				inv = gui:ParseInventory_Companion(npc, true)
+			else
+				local is_box = IsInvbox and IsInvbox(npc)
+				local all = (not is_box) and npc.alive and (not npc:alive())
+				inv = gui:ParseInventory(npc, all, true)
+			end
+			refresh_bag(gui.CC.npc_bag, inv)
+		end
+	end
+end
+
+local function settle(gui)
+	gui = gui or (ui_inventory and ui_inventory.GUI)
+	if gui and gui.On_Item_Update then
+		gui:On_Item_Update()
+	end
+end
+
+local function poll_all(gui)
+	local was = still_was
+	for i = 1, #actions do
+		poll_action(actions[i], gui)
+	end
+	local now = still_active()
+	if was and not now then
+		settle(gui)
+	end
+	still_was = now
+end
+
+local function call_base_hover(self, idx)
+	if original_on_hover then
+		return original_on_hover(self, idx)
+	end
+end
+
+local function paint_on_hover(self, idx)
+	if in_action or not idx then
+		return call_base_hover(self, idx)
+	end
+	local bag = self.ID
+	local gui = ui_inventory and ui_inventory.GUI
+	for i = 1, #actions do
+		local act = actions[i]
+		if act.down_prev and act.mode_ok(gui) then
+			on_cell(act, bag, idx, gui)
+		end
+	end
+	return call_base_hover(self, idx)
+end
+
+local function reapply_still_patches()
+	local cls = ui_inventory and ui_inventory.UIInventory
+	if not cls then
+		return
+	end
+	if cls.UpdateInventories and cls.UpdateInventories ~= update_inventories_wrapper then
+		original_update_inventories = cls.UpdateInventories
+		update_inventories_wrapper = function(self)
+			if still_active() then
+				still_refresh(self)
+				return
+			end
+			return original_update_inventories(self)
+		end
+		cls.UpdateInventories = update_inventories_wrapper
+		log("UpdateInventories patched")
+	end
+end
+
+local function reapply_on_hover_patch()
+	local cc_class = utils_ui and utils_ui.UICellContainer
+	if not (cc_class and cc_class.On_Hover) then
+		return
+	end
+	if cc_class.On_Hover == hover_wrapper then
+		return
+	end
+	original_on_hover = cc_class.On_Hover
+	hover_wrapper = function(self, idx)
+		return paint_on_hover(self, idx)
+	end
+	cc_class.On_Hover = hover_wrapper
+	log("On_Hover patched")
+end
+
+local function register(spec)
+	spec.down_prev = false
+	spec.hold = nil
+	actions[#actions + 1] = spec
+	return spec
+end
+
+local function reset(spec)
+	if spec then
+		spec.down_prev = false
+		spec.hold = nil
+	end
+end
+
+_G.dogma_inv_hover = {
+	stack_items = stack_items,
+	register = register,
+	reset = reset,
+}
+
+local original_on_update = ui_inventory and ui_inventory.UIInventory and ui_inventory.UIInventory.Update
+if original_on_update then
+	function ui_inventory.UIInventory:Update()
+		original_on_update(self)
+		if dogma.sys.ready(MOD_ID, db) then
+			poll_all(self)
+		end
+	end
+end
+
+function on_game_start()
+	dogma.load(MOD_ID)
+	RegisterScriptCallback("actor_on_first_update", function()
+		reapply_on_hover_patch()
+		reapply_still_patches()
+	end)
+	reapply_on_hover_patch()
+	reapply_still_patches()
+	log("hover ready")
+end

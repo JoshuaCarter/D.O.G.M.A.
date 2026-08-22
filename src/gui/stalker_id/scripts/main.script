@@ -6,6 +6,8 @@
 	other ADS/zoom keeps soft at 100m but exact at 200m. Leader line:
 	living non-hostiles normally, all living stalkers in binocs; never corpses.
 	Living hostile / zombified names are red; dead names are grey. Losing the target fades over MCM fade-out time.
+	Unbound show-key always acquires; a bound key must be held to find a new target.
+	Release does not hide an already-acquired target — fade-out still runs.
 ]]
 
 local CONFIG = _G.dogma_gui_stalker_id_conf
@@ -92,6 +94,8 @@ end
 
 local function on_option_change()
 	local id = CONFIG.MOD_ID
+	CONFIG.loaded.enabled = dogma.mcm.bool(id, "enabled")
+	CONFIG.loaded.show_keybind = dogma.mcm.key(id, "show_keybind")
 	CONFIG.loaded.dead_id = dogma.mcm.bool(id, "dead_id")
 	CONFIG.loaded.name_id = dogma.mcm.bool(id, "name_id")
 	CONFIG.loaded.rank_id = dogma.mcm.bool(id, "rank_id")
@@ -114,6 +118,21 @@ local function on_option_change()
 	CONFIG.loaded.line_width_px = dogma.mcm.uint(id, "line_width_px")
 	CONFIG.loaded.line_a = dogma.mcm.uint(id, "line_a")
 	CONFIG.loaded.fade_out_ms = dogma.mcm.uint(id, "fade_out_ms")
+end
+
+-- Unbound: always acquire. Bound: key must be down to find a new target.
+-- Key-up does not hide an already-acquired target (fade still runs).
+local function can_acquire()
+	local key = CONFIG.loaded.show_keybind
+	if not key then
+		return true
+	end
+	return dogma.input and dogma.input.is_key_down(key)
+end
+
+local function show_key_pressed()
+	local key = CONFIG.loaded.show_keybind
+	return key and dogma.input and dogma.input.is_key_pressed(key)
 end
 
 local function hide_all_patches(hud)
@@ -904,6 +923,13 @@ local function update_fade()
 end
 
 function actor_on_update()
+	if not CONFIG.loaded.enabled then
+		if LastHitObject or fade_active or line_target_id then
+			LastHitObject = nil
+			clear()
+		end
+		return
+	end
 	if CONFIG.loaded.hide_on_death and db.actor and not db.actor:alive() then
 		return
 	end
@@ -913,19 +939,22 @@ function actor_on_update()
 	update_leader_line()
 
 	local tg = time_global()
-	local cfg = CONFIG.loaded
+	-- Bound hold: first press is checked every frame and forces a find tick.
+	local force_tick = show_key_pressed()
 
 	if trigger == 0 then
 		grok_delay = tg + UPDATE_DELAY
 		trigger = 1
 	end
 
-	if not (trigger == 1 and tg > grok_delay) then
+	if not force_tick and not (trigger == 1 and tg > grok_delay) then
 		return
 	end
 	trigger = 0
 
-	local obj = find_id_target()
+	-- Key-up skips find so we don't acquire, but still hits the lost-target
+	-- path below so an already-shown ID can fade.
+	local obj = can_acquire() and find_id_target() or nil
 	local valid = HUD and obj ~= nil
 
 	if valid then
@@ -989,6 +1018,9 @@ function npc_on_net_destroy(npc)
 end
 
 function GUI_on_show(gui, str2)
+	if not CONFIG.loaded.enabled or not can_acquire() then
+		return
+	end
 	if gui == "Dialog" then
 		local obj = mob_trade.GetTalkingNpc()
 		if obj and LastHitObject and LastHitObject:id() == obj:id() then

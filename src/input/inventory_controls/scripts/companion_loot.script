@@ -18,11 +18,6 @@ local function log(msg)
 	end
 end
 
-local function on_option_change()
-	CONFIG.loaded.block_special_items = dogma.mcm.bool(CONFIG.MOD_ID, "block_companion_special_items")
-	log(string.format("companion loot: block_special_items=%s", tostring(CONFIG.loaded.block_special_items)))
-end
-
 local function is_companion(npc)
 	return npc
 		and xcreature.is_stalker(npc)
@@ -64,9 +59,6 @@ local function on_item_before_move(flags, npc_id, obj, mode, bag)
 	if _G.dogma_strip_internal_move then
 		return
 	end
-	if not CONFIG.loaded.block_special_items then
-		return
-	end
 	if not (flags and npc_id and obj) then
 		return
 	end
@@ -95,8 +87,6 @@ end
 
 function on_game_start()
 	CONFIG:ensure_dogma()
-	RegisterScriptCallback("on_option_change", on_option_change)
 	RegisterScriptCallback("ActorMenu_on_item_before_move", on_item_before_move)
-	on_option_change()
 	log("companion loot: loaded")
 end

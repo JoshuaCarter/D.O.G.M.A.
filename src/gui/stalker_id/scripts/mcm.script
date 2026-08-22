@@ -3,6 +3,8 @@
 _G.dogma_gui_stalker_id_conf = {
 	MOD_ID = "dogma/gui/stalker_id",
 	DEFAULTS = {
+		enabled = true,
+		show_keybind = -1,
 		dead_id = true,
 		name_id = true,
 		rank_id = true,
@@ -41,6 +43,21 @@ function on_mcm_load(options)
 				type = "desc",
 				text = "ui_mcm_dogma_gui_stalker_id_page_description",
 			},
+			{
+				id = "enabled",
+				type = "check",
+				val = 1,
+				def = CONFIG.DEFAULTS.enabled,
+				hint = "dogma_gui_stalker_id_enabled",
+			},
+			{
+				id = "show_keybind",
+				type = "key_bind",
+				val = 2,
+				def = CONFIG.DEFAULTS.show_keybind,
+				hint = "dogma_gui_stalker_id_show_keybind",
+			},
+			{ id = "line_general", type = "line" },
 			{
 				id = "dead_id",
 				type = "check",

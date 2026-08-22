@@ -906,6 +906,35 @@ local function spawn_pending_stash_ammo(box)
 	end
 end
 
+-- Loot UI opens, then try_spawn_treasure alife_creates into the box.
+-- Vanilla retries ParseInventory once on the next frame; that can miss.
+local function refresh_open_stash_ui(box_id)
+	local gui = ui_inventory and ui_inventory.GUI
+	if not (gui and gui.mode == "loot") then
+		return
+	end
+	local partner = gui.GetPartner and gui:GetPartner()
+	if not (partner and partner.id and partner:id() == box_id) then
+		return
+	end
+	if gui.LMode_ResetNPCInventory then
+		gui:LMode_ResetNPCInventory()
+	elseif gui.LMode_ResetInventories then
+		gui:LMode_ResetInventories()
+	end
+end
+
+local function schedule_stash_ui_refresh(box_id)
+	if CreateTimeEvent then
+		CreateTimeEvent("dogma_wb_stash", "ui_" .. box_id, 0.1, function()
+			refresh_open_stash_ui(box_id)
+			return true
+		end)
+	else
+		refresh_open_stash_ui(box_id)
+	end
+end
+
 local function roll_stash_loot(id)
 	if not alife_object(id) then
 		return
@@ -985,6 +1014,7 @@ local function patched_try_spawn_treasure(box)
 	if type(pending) == "string" then
 		spawn_pending_stash_ammo(box)
 	end
+	schedule_stash_ui_refresh(id)
 end
 
 --------------------------------------------------------------------------------

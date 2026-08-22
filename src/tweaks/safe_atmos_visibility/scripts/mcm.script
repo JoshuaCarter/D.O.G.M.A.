@@ -1,0 +1,15 @@
+-- tweaks/safe_atmos_visibility conf (info-only MCM; always on while installed)
+
+_G.dogma_tweaks_safe_atmos_visibility_conf = {
+	MOD_ID = "dogma/tweaks/safe_atmos_visibility",
+}
+
+function on_mcm_load(options)
+	dogma_mcm.append(options, "tweaks", "ui_mcm_menu_dogma_tweaks", {
+		{
+			id = "safe_atmos_visibility_description",
+			type = "desc",
+			text = "ui_mcm_dogma_tweaks_safe_atmos_visibility_page_description",
+		},
+	})
+end

@@ -33,6 +33,7 @@ local cached_pause_in_combat = false
 local cached_fx_enable = true
 local cached_fx_intensity = 0.5
 local can_heal = false
+local last_heal_reason = nil
 local ppe_target = 0
 local ppe_applied = nil
 local ppe_active = false
@@ -40,6 +41,12 @@ local ppe_remove_at = 0
 local STATE_MS = 250
 local PPE_FADE_MS = 700
 local PPE_SPEED = 6
+
+local function log(msg)
+	if dogma.dbg.logging() then
+		dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
+	end
+end
 
 local function clamp_sec(sec, min_sec, max_sec, fallback)
 	sec = tonumber(sec) or fallback
@@ -175,18 +182,43 @@ local function tick_body()
 	heal_psy_one_pct()
 end
 
+local function limb_snapshot(health, timedhp, maxhp)
+	local parts = {}
+	for i = 1, #LIMBS do
+		local key = LIMBS[i]
+		local hp = tonumber(health[key])
+		local temp = tonumber(timedhp[key])
+		local max = tonumber(maxhp[key])
+		local perm = (hp and temp) and (hp - temp) or nil
+		parts[#parts + 1] = string.format("%s %s/%s/%s", key, tostring(perm), tostring(temp), tostring(max))
+	end
+	return table.concat(parts, " ")
+end
+
 local function tick_limb()
 	local health, timedhp, maxhp = dogma.status.bhs()
 	if not health then
+		log("limb skip: no BHS")
 		return
 	end
 	local key = pick_lowest_temp_limb(health, timedhp, maxhp)
 	if not key then
+		log("limb skip: no convertible temp | " .. limb_snapshot(health, timedhp, maxhp))
 		return
 	end
+	local hp = tonumber(health[key])
+	local temp = tonumber(timedhp[key])
+	local max = tonumber(maxhp[key])
+	local perm = hp - temp
 	if heal_limb_perm(health, timedhp, maxhp, key) then
 		save_limb(key, health, timedhp)
+		log(string.format(
+			"limb %s temp->perm +1 | perm %s->%s temp %s->%s max %s",
+			key, perm, perm + 1, temp, timedhp[key], max
+		))
 		dogma.console.say(string.format("campfire: limb %s temp->perm +1", key), "blue")
+	else
+		log("limb skip: convert failed " .. key .. " | " .. limb_snapshot(health, timedhp, maxhp))
 	end
 end
 
@@ -228,19 +260,30 @@ local function drive_ppe(dest)
 	ppe_applied = dest
 end
 
+local function set_heal(on, reason)
+	can_heal = on
+	if last_heal_reason == reason then
+		return
+	end
+	last_heal_reason = reason
+	log((on and "heal on: " or "heal off: ") .. reason)
+end
+
 local function refresh_heal_state()
-	can_heal = false
 	ppe_target = 0
 	if not db.actor then
+		set_heal(false, "no actor")
 		return
 	end
 	if not near_lit_campfire() then
+		set_heal(false, "not near lit fire")
 		return
 	end
 	if cached_pause_in_combat and dogma.status.is_in_combat() then
+		set_heal(false, "combat")
 		return
 	end
-	can_heal = true
+	set_heal(true, string.format("near fire | limb every %ss", cached_limb_sec))
 	if cached_fx_enable and dogma.status.health() < 1 then
 		ppe_target = cached_fx_intensity
 	end
@@ -306,6 +349,7 @@ end
 
 local function on_game_load()
 	can_heal = false
+	last_heal_reason = nil
 	next_state_tick = 0
 	clear_ppe()
 end

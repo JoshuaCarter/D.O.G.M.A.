@@ -347,7 +347,8 @@ local function step_toward(goal)
 		end
 	elseif goal == POSE.PRONE then
 		if pose == POSE.WALK then
-			pulse_bind(key_bindings.kACCEL)
+			-- Limp forces mcAccel (reads as walk). Add crouch: walk+crouch = prone.
+			pulse_bind(key_bindings.kCROUCH)
 		elseif pose == POSE.STAND then
 			pulse_bind(key_bindings.kCROUCH)
 		elseif pose == POSE.CROUCH then

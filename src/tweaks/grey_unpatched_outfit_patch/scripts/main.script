@@ -1,9 +1,12 @@
 --[[
 	Grey Unpatched Outfit Patch
 
-	Utjan always paints the faction badge on outfit cells. After the
-	patch is torn (`unpatched` on the item), grey that overlay.
-	Attached = no change. Cells only draw while an inventory is open.
+	Utjan paints the faction badge via rax_icon_layers functors.
+	Add_Layers calls a local add_icon_layer — wrapping the module field
+	does nothing. Wrap the functors instead.
+
+	Torn (`unpatched`): grey via *_inactive texture, or hide the badge.
+	Attached: no change. Cells only draw while an inventory is open.
 ]]
 
 local CONFIG = _G.dogma_tweaks_grey_unpatched_outfit_patch_conf
@@ -12,16 +15,10 @@ local HOOK_STATE = _G.__dogma_grey_unpatched_outfit_patch or {}
 _G.__dogma_grey_unpatched_outfit_patch = HOOK_STATE
 
 local function log(msg)
-	dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
-end
-
-local COLOR_ON = nil
-local COLOR_TORN = nil
-
-local function colors()
-	if not COLOR_ON then
-		COLOR_ON = GetARGB(255, 255, 255, 255)
-		COLOR_TORN = GetARGB(200, 72, 72, 72)
+	if CONFIG then
+		dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
+	else
+		printf("[dogma_tweaks_grey_unpatched_outfit_patch] %s", tostring(msg))
 	end
 end
 
@@ -38,62 +35,118 @@ local function is_badge(tbl)
 		return false
 	end
 	local layer = tbl.icon_layer
-	if layer and string.sub(layer, -6) == "_patch" then
+	if layer and (string.sub(layer, -6) == "_patch" or string.find(layer, "faction", 1, true)) then
 		return true
 	end
 	local tex = tbl.texture
-	return tex and string.find(tex, "ui_mm_faction_", 1, true) ~= nil
+	return tex and (string.find(tex, "ui_mm_faction_", 1, true) or string.find(tex, "faction", 1, true)) ~= nil
 end
 
-local function cell_obj(cell)
-	return cell and cell.ID and level and level.object_by_id and level.object_by_id(cell.ID)
+local function torn_badge(tbl)
+	local tex = tbl.texture
+	if tex and string.find(tex, "ui_mm_faction_", 1, true) and not string.find(tex, "_inactive", 1, true) then
+		tbl.texture = tex .. "_inactive"
+		return tbl
+	end
+	return nil
 end
 
-local function tint_badge(ele, tbl, obj)
-	local tostr = tostring
-	if not is_badge(tbl) then
-		return
+local function wrap_functor(fn)
+	if type(fn) ~= "function" or fn.__dogma_grey_patch then
+		return fn
 	end
-	local torn = is_unpatched(obj)
-	log(string.format(
-		"badge layer=%s tex=%s obj=%s torn=%s color_ok=%s",
-		tostr(tbl.icon_layer),
-		tostr(tbl.texture),
-		obj and obj:section() or "nil",
-		tostr(torn),
-		tostr(ele and ele.SetTextureColor ~= nil)
-	))
-	if not (ele and ele.SetTextureColor) then
-		return
+	local wrapped = function(cell, obj, sec)
+		local tostr = tostring
+		local tbl = fn(cell, obj, sec)
+		if not tbl then
+			return
+		end
+		local torn = is_unpatched(obj)
+		if torn or is_badge(tbl) then
+			log(string.format(
+				"layer sec=%s layer=%s tex=%s torn=%s badge=%s",
+				tostr(sec),
+				tostr(tbl.icon_layer),
+				tostr(tbl.texture),
+				tostr(torn),
+				tostr(is_badge(tbl))
+			))
+		end
+		if torn and is_badge(tbl) then
+			return torn_badge(tbl)
+		end
+		return tbl
 	end
-	colors()
-	ele:SetTextureColor(torn and COLOR_TORN or COLOR_ON)
+	wrapped.__dogma_grey_patch = true
+	return wrapped
 end
 
-local function wrap_layer_fn(layers, name)
-	local orig = layers[name]
-	if type(orig) ~= "function" then
-		log(name .. " missing (type=" .. type(orig) .. ")")
+local function find_upvalue_deep(fn, name, depth, seen)
+	depth = depth or 0
+	seen = seen or {}
+	if type(fn) ~= "function" or not debug or not debug.getupvalue or depth > 8 or seen[fn] then
+		return nil, nil, nil
+	end
+	seen[fn] = true
+	local i = 1
+	while true do
+		local n, v = debug.getupvalue(fn, i)
+		if not n then
+			break
+		end
+		if n == name then
+			return fn, i, v
+		end
+		if type(v) == "function" then
+			local of, oi, ov = find_upvalue_deep(v, name, depth + 1, seen)
+			if of then
+				return of, oi, ov
+			end
+		end
+		i = i + 1
+	end
+end
+
+local function wrap_icon_layers(icon_layers)
+	if type(icon_layers) ~= "table" then
+		return 0
+	end
+	local n = 0
+	for _, list in pairs(icon_layers) do
+		if type(list) == "table" then
+			for i, fn in pairs(list) do
+				if type(fn) == "function" and not fn.__dogma_grey_patch then
+					list[i] = wrap_functor(fn)
+					n = n + 1
+				end
+			end
+		end
+	end
+	return n
+end
+
+local function wrap_register()
+	local layers = rawget(_G, "rax_icon_layers")
+	if not (layers and type(layers.register) == "function") then
+		log("rax_icon_layers.register missing")
 		return
 	end
-	if HOOK_STATE[name] then
+	if layers.__dogma_grey_unpatched_outfit_patch then
 		return
 	end
-	layers[name] = function(cell, ele, base, sec, tbl)
-		orig(cell, ele, base, sec, tbl)
-		tint_badge(ele, tbl, cell_obj(cell))
+	local orig = layers.register
+	layers.register = function(name, functor)
+		return orig(name, wrap_functor(functor))
 	end
-	HOOK_STATE[name] = true
-	log("wrapped " .. name)
+	layers.__dogma_grey_unpatched_outfit_patch = true
+	log("wrapped register")
 end
 
 local function refresh_icons()
 	if not (rax_icon_layers and rax_icon_layers.refresh) then
-		log("refresh skipped: no rax_icon_layers.refresh")
 		return
 	end
 	if dogma.status and dogma.status.is_inv_open and not dogma.status.is_inv_open() then
-		log("refresh skipped: inv closed")
 		return
 	end
 	log("refresh icons")
@@ -120,17 +173,18 @@ local function wrap_patch_action()
 end
 
 local function hook()
-	local layers = rawget(_G, "rax_icon_layers")
-	log("hook rax_icon_layers=" .. tostring(layers ~= nil))
-	if layers then
-		wrap_layer_fn(layers, "add_icon_layer")
-		wrap_layer_fn(layers, "add_texture_layer")
-	end
+	wrap_register()
+	local add_layers = utils_ui and utils_ui.UICellItem and utils_ui.UICellItem.Add_Layers
+	local _, _, icon_layers = find_upvalue_deep(add_layers, "icon_layers")
+	local n = wrap_icon_layers(icon_layers)
+	log("hook functors=" .. tostring(n) .. " icon_layers=" .. tostring(icon_layers ~= nil))
 	wrap_patch_action()
 end
 
 function on_game_start()
-	dogma.load(CONFIG.MOD_ID)
+	if CONFIG then
+		dogma.load(CONFIG.MOD_ID)
+	end
 	log("on_game_start")
 	hook()
 	RegisterScriptCallback("on_game_load", hook)

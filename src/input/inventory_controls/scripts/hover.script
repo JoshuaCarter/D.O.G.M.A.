@@ -1,8 +1,9 @@
 --[[
 	Shared hold+hover for inventory keybinds.
-	Press+hold over a cell fires that cell (whole stack, except in the
-	stack popup). Moving to a new cell fires that cell too. Same cell is
-	locked so sort/rebuild cannot chain.
+	Press+hold over a cell fires that cell. Whole-stack binds expand
+	childs (including the opened stack in the picker). Single binds do
+	only the hovered row. Moving to a new cell fires that cell too.
+	Same cell is locked so sort/rebuild cannot chain.
 
 	Drop/disassemble hold keeps the bag still: add/remove cells only, no
 	re-sort. SortingPlus/Seamless otherwise snap the list and the next
@@ -30,32 +31,77 @@ local function cell_obj(gui, bag, idx)
 	return cc and cc:GetObj(idx)
 end
 
--- Picker rows are one item. Stacked cells are parent + childs.
--- IDs are snapshotted first because acting mutates the cell.
-local function stack_items(gui, obj, bag)
+local function owner_cell(gui, obj, bag)
+	if not (gui and gui.CC and obj) then
+		return nil
+	end
+	if bag == "picker" then
+		-- Children are not in the parent bag index. Use the opened cell.
+		local p = gui.CC.picker and gui.CC.picker.parent
+		local cc = p and p.bag and gui.CC[p.bag]
+		return cc and p.idx and cc.cell and cc.cell[p.idx]
+	end
+	local cc = gui.CC[bag]
+	return cc and cc.GetCell_ID and cc:GetCell_ID(obj:id())
+end
+
+-- Vanilla Action_Move ignores bag=="picker". Use the opened parent bag.
+-- Snapshot this before the picker hides and clears parent.
+local function source_bag(gui, bag)
+	if bag ~= "picker" then
+		return bag
+	end
+	local p = gui and gui.CC and gui.CC.picker and gui.CC.picker.parent
+	return p and p.bag or nil
+end
+
+-- whole: parent + childs (picker uses the opened parent cell).
+-- otherwise just the hovered object. IDs snapshotted first.
+local function stack_items(gui, obj, bag, whole)
 	if not obj then
 		return {}
 	end
-	if bag == "picker" then
+	if not whole then
 		return { obj }
 	end
-	local cc = gui and gui.CC and gui.CC[bag]
-	local ci = cc and cc.GetCell_ID and cc:GetCell_ID(obj:id())
-	local ids = {}
-	if ci and ci.childs then
-		for id, _ in pairs(ci.childs) do
-			ids[#ids + 1] = id
-		end
+	local ci = owner_cell(gui, obj, bag)
+	if not ci then
+		return { obj }
 	end
-	ids[#ids + 1] = obj:id()
+	local seen = {}
 	local items = {}
-	for i = 1, #ids do
-		local item = level.object_by_id(ids[i])
+	local function add(id)
+		if not id or seen[id] then
+			return
+		end
+		seen[id] = true
+		local item = level.object_by_id(id)
 		if item then
 			items[#items + 1] = item
 		end
 	end
+	add(ci.ID)
+	if ci.childs then
+		for id, _ in pairs(ci.childs) do
+			add(id)
+		end
+	end
 	return items
+end
+
+-- While the stack popup is under the cursor, use its row — not the parent cell.
+local function hover_cell(gui)
+	local pcc = gui and gui.CC and gui.CC.picker
+	if pcc and pcc.IsShown and pcc:IsShown() and pcc.IsCursorOverWindow and pcc:IsCursorOverWindow() then
+		local idx = pcc.hover and pcc.hover.idx
+		if idx then
+			return "picker", idx
+		end
+	end
+	local hover = gui and gui.hover
+	if hover then
+		return hover.bag, hover.idx
+	end
 end
 
 local function fire_cell(act, obj, bag, idx, gui)
@@ -98,8 +144,7 @@ local function poll_action(act, gui)
 		return
 	end
 
-	local hover = gui and gui.hover
-	local bag, idx = hover and hover.bag, hover and hover.idx
+	local bag, idx = hover_cell(gui)
 	if not bag then
 		if act.hold then
 			act.hold.locked = true
@@ -270,6 +315,7 @@ end
 
 _G.dogma_inv_hover = {
 	stack_items = stack_items,
+	source_bag = source_bag,
 	register = register,
 	reset = reset,
 }

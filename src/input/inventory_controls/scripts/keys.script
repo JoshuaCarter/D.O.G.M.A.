@@ -14,9 +14,12 @@ local ALLOWED_BAGS = {
 	picker = true,
 }
 
-local key = nil
-local modifier = 0
-local bind = nil
+local key_all = nil
+local mod_all = 0
+local key_one = nil
+local mod_one = 0
+local bind_all = nil
+local bind_one = nil
 
 local function log(msg)
 	if dogma.dbg.logging() then
@@ -29,26 +32,38 @@ local function inv_mode_ok(gui)
 	return mode == "inventory" or mode == "loot"
 end
 
-local function key_down()
-	return key and dogma.input.is_key_down(key) and dogma.input.is_mod_down(modifier)
+local function key_all_down()
+	return key_all and dogma.input.is_key_down(key_all) and dogma.input.is_mod_down(mod_all)
 end
 
-local function fire(gui, obj, bag, idx)
-	local api = _G.dogma_strip
-	if not (api and api.strip_hover) then
-		return
-	end
-	local items = _G.dogma_inv_hover.stack_items(gui, obj, bag)
-	for i = 1, #items do
-		api.strip_hover(items[i], bag, idx, gui)
+local function key_one_down()
+	return key_one and dogma.input.is_key_down(key_one) and dogma.input.is_mod_down(mod_one)
+end
+
+local function fire(whole)
+	return function(gui, obj, bag, idx)
+		local api = _G.dogma_strip
+		if not (api and api.strip_hover) then
+			return
+		end
+		local from = _G.dogma_inv_hover.source_bag(gui, bag) or bag
+		local items = _G.dogma_inv_hover.stack_items(gui, obj, bag, whole)
+		for i = 1, #items do
+			api.strip_hover(items[i], from, idx, gui)
+		end
 	end
 end
 
 local function on_option_change()
-	key = dogma.mcm.key(MOD_ID, "key")
-	modifier = dogma.mcm.int(MOD_ID, "key_modifier", 0)
-	if bind then
-		_G.dogma_inv_hover.reset(bind)
+	key_all = dogma.mcm.key(MOD_ID, "key")
+	mod_all = dogma.mcm.int(MOD_ID, "key_modifier", 0)
+	key_one = dogma.mcm.key(MOD_ID, "key_one")
+	mod_one = dogma.mcm.int(MOD_ID, "key_one_modifier", 0)
+	if bind_all then
+		_G.dogma_inv_hover.reset(bind_all)
+	end
+	if bind_one then
+		_G.dogma_inv_hover.reset(bind_one)
 	end
 end
 
@@ -56,11 +71,17 @@ function on_game_start()
 	dogma.load(MOD_ID)
 	RegisterScriptCallback("on_option_change", on_option_change)
 	on_option_change()
-	bind = _G.dogma_inv_hover.register({
-		key_down = key_down,
+	bind_all = _G.dogma_inv_hover.register({
+		key_down = key_all_down,
 		mode_ok = inv_mode_ok,
 		bags = ALLOWED_BAGS,
-		fire = fire,
+		fire = fire(true),
+	})
+	bind_one = _G.dogma_inv_hover.register({
+		key_down = key_one_down,
+		mode_ok = inv_mode_ok,
+		bags = ALLOWED_BAGS,
+		fire = fire(false),
 	})
 	log("strip keys ready")
 end

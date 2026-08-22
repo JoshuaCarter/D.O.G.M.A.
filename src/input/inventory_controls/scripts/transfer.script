@@ -1,7 +1,7 @@
 --[[
 	Inventory transfer keybind (hold+hover, replaces GAMMA Fast Transfer).
-	Stacked cells transfer every item. Picker rows transfer the hovered item.
-	Sort/rebuild that fills the same cell is locked until the cursor moves.
+	Stack bind: every item in the cell / opened picker stack.
+	Item bind: only the hovered row.
 ]]
 
 local CONFIG = _G.dogma_input_inventory_controls_conf
@@ -21,9 +21,12 @@ local BATCH_SIZE = 10
 local LSHIFT = DIK_keys.DIK_LSHIFT
 local RSHIFT = DIK_keys.DIK_RSHIFT
 
-local key = nil
-local modifier = 0
-local bind = nil
+local key_all = nil
+local mod_all = 0
+local key_one = nil
+local mod_one = 0
+local bind_all = nil
+local bind_one = nil
 local allow = 0
 local original_action_move = nil
 local original_action_move_all = nil
@@ -41,10 +44,15 @@ local function is_shift_key(dik)
 end
 
 local function on_option_change()
-	key = dogma.mcm.key(MOD_ID, "key_transfer")
-	modifier = dogma.mcm.int(MOD_ID, "key_transfer_modifier", 0)
-	if bind then
-		_G.dogma_inv_hover.reset(bind)
+	key_all = dogma.mcm.key(MOD_ID, "key_transfer")
+	mod_all = dogma.mcm.int(MOD_ID, "key_transfer_modifier", 0)
+	key_one = dogma.mcm.key(MOD_ID, "key_transfer_one")
+	mod_one = dogma.mcm.int(MOD_ID, "key_transfer_one_modifier", 0)
+	if bind_all then
+		_G.dogma_inv_hover.reset(bind_all)
+	end
+	if bind_one then
+		_G.dogma_inv_hover.reset(bind_one)
 	end
 end
 
@@ -53,37 +61,51 @@ local function inv_mode_ok(gui)
 	return mode == "inventory" or mode == "loot" or mode == "trade"
 end
 
-local function key_down()
-	if not key then
+local function dik_down(dik, modifier)
+	if not dik then
 		return false
 	end
 	local down
-	if key == LSHIFT or key == RSHIFT then
+	if dik == LSHIFT or dik == RSHIFT then
 		down = dogma.input.is_shift_down()
 	else
-		down = dogma.input.is_key_down(key)
+		down = dogma.input.is_key_down(dik)
 	end
 	return down and dogma.input.is_mod_down(modifier)
+end
+
+local function key_all_down()
+	return dik_down(key_all, mod_all)
+end
+
+local function key_one_down()
+	return dik_down(key_one, mod_one)
 end
 
 -- Stock/GAMMA shift-hover also calls Action_Move. When our bind is Shift,
 -- swallow those so only hold+hover runs.
 local function suppress_inner()
-	return allow == 0 and is_shift_key(key) and dogma.input.is_shift_down()
+	if allow ~= 0 then
+		return false
+	end
+	if is_shift_key(key_all) and dogma.input.is_shift_down() then
+		return true
+	end
+	if is_shift_key(key_one) and dogma.input.is_shift_down() then
+		return true
+	end
+	return false
 end
 
 local function tick(gui)
-	if gui and is_shift_key(key) and dogma.input.is_shift_down() then
+	if gui and suppress_inner() then
 		gui.holding_shift = false
 	end
 end
 
-local function move_one(gui, obj, bag, idx)
-	if not (gui and obj and gui.Action_Move) then
+local function move_one(gui, obj, bag)
+	if not (gui and obj and bag and gui.Action_Move) then
 		return
-	end
-	if gui.Picker_Ownership then
-		bag, idx = gui:Picker_Ownership(bag, idx, obj)
 	end
 	if gui.Cond_Move and not gui:Cond_Move(obj, bag) then
 		return
@@ -93,7 +115,7 @@ local function move_one(gui, obj, bag, idx)
 	allow = allow - 1
 end
 
-local function move_many(gui, items, bag, idx)
+local function move_many(gui, items, bag)
 	local ids = {}
 	for i = 1, #items do
 		ids[#ids + 1] = items[i]:id()
@@ -110,7 +132,7 @@ local function move_many(gui, items, bag, idx)
 			end
 			local item = level.object_by_id(ids[i])
 			if item then
-				move_one(g, item, bag, idx)
+				move_one(g, item, bag)
 			end
 			i = i + 1
 		end
@@ -118,13 +140,19 @@ local function move_many(gui, items, bag, idx)
 	end)
 end
 
-local function fire(gui, obj, bag, idx)
-	local items = _G.dogma_inv_hover.stack_items(gui, obj, bag)
-	if #items <= 1 then
-		move_one(gui, obj, bag, idx)
-		return
+local function fire(whole)
+	return function(gui, obj, bag)
+		local from = _G.dogma_inv_hover.source_bag(gui, bag)
+		if not from then
+			return
+		end
+		local items = _G.dogma_inv_hover.stack_items(gui, obj, bag, whole)
+		if #items <= 1 then
+			move_one(gui, obj, from)
+			return
+		end
+		move_many(gui, items, from)
 	end
-	move_many(gui, items, bag, idx)
 end
 
 local function reapply_move_patch()
@@ -160,12 +188,18 @@ function on_game_start()
 	RegisterScriptCallback("actor_on_first_update", reapply_move_patch)
 	on_option_change()
 	reapply_move_patch()
-	bind = _G.dogma_inv_hover.register({
-		key_down = key_down,
+	bind_all = _G.dogma_inv_hover.register({
+		key_down = key_all_down,
 		mode_ok = inv_mode_ok,
 		bags = ALLOWED_BAGS,
 		tick = tick,
-		fire = fire,
+		fire = fire(true),
+	})
+	bind_one = _G.dogma_inv_hover.register({
+		key_down = key_one_down,
+		mode_ok = inv_mode_ok,
+		bags = ALLOWED_BAGS,
+		fire = fire(false),
 	})
 	log("transfer keys ready")
 end

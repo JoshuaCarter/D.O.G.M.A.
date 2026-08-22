@@ -960,6 +960,29 @@ local function apply_fov(snap)
 	end
 end
 
+-- Other ADS/alt-aim mods write their default hud_fov/fov on kWPN_FUNC even
+-- when the gun has no alt-aim (engine SwitchZoomType is a no-op). We already
+-- sit on tgt so the steal sticks unless we pick up the console drift.
+local function adopt_stolen_console()
+	if not (ads_on and CONFIG.loaded.ads_enabled) then
+		return
+	end
+	if live_hud ~= nil then
+		local con = get_console_cmd(2, "hud_fov")
+		if con and math.abs(con - live_hud) > 0.0005 then
+			logf("ads hud stolen: console=%.4f live=%.4f tgt=%.4f", con, live_hud, tgt_hud or -1)
+			live_hud = con
+		end
+	end
+	if we_own_fov() and world_write and live_fov ~= nil then
+		local con = get_console_cmd(2, "fov")
+		if con and math.abs(con - live_fov) > 0.04 then
+			logf("ads fov stolen: console=%.2f live=%.2f tgt=%.2f", con, live_fov, tgt_fov or -1)
+			live_fov = con
+		end
+	end
+end
+
 local function poll_fov_smooth()
 	local sformat = string.format
 	local mabs = math.abs
@@ -968,6 +991,7 @@ local function poll_fov_smooth()
 		return
 	end
 	ensure_live_fov()
+	adopt_stolen_console()
 	local now = time_global() or 0
 	local dt = 0.016
 	if last_smooth_ms then

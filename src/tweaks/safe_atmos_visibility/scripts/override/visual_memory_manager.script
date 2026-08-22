@@ -45,7 +45,9 @@ local function actor_torch_on(who)
 		return true
 	end
 	local flash = actor:item_in_slot(9)
-	return flash and flash:section() == "device_flashlight" and actor:active_detector()
+	if flash then
+	    return flash and flash:section() == "device_flashlight" and actor:active_detector()
+	end
 end
 
 function get_visible_value(npc, who, time_delta, time_quant, luminocity, velocity_factor, velocity, distance, object_distance, always_visible_distance)

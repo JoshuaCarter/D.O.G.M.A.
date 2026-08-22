@@ -1,21 +1,29 @@
 --[[
 	Item Popups Offset
 
-	APM AnimateWindow sets X from the right edge every frame and drops
-	stock pos_x. After that write, add the MCM offset injected under
-	Popup Messages → apm_main.
+	APM's slide-in writes X from the right edge every frame (stock pos_x
+	does not stick). After ui_popup_messages.GUI:Update, shift each toast
+	by the offset injected under Popup Messages → apm_main.
 ]]
 
 local CONFIG = _G.dogma_tweaks_item_popups_offset_conf
 
-local HOOK_STATE = _G.__dogma_item_popups_offset_hooks or {}
-_G.__dogma_item_popups_offset_hooks = HOOK_STATE
+local function log(msg)
+	if dogma.dbg.logging() then
+		dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
+	end
+end
 
 local function read_offset()
 	if ui_mcm and ui_mcm.get and not (ui_mcm.is_gathering and ui_mcm.is_gathering()) then
-		local ok, value = pcall(ui_mcm.get, CONFIG.APM_OFFSET_PATH)
-		if ok and value ~= nil then
-			return tonumber(value) or 0
+		for _, path in ipairs({
+			CONFIG.APM_OFFSET_PATH,
+			"ui_popup_messages/offset_x",
+		}) do
+			local ok, value = pcall(ui_mcm.get, path)
+			if ok and value ~= nil then
+				return tonumber(value) or 0
+			end
 		end
 	end
 	return CONFIG.loaded.offset_x or CONFIG.DEFAULTS.offset_x
@@ -23,30 +31,79 @@ end
 
 local function on_option_change()
 	CONFIG.loaded.offset_x = read_offset()
+	log(string.format("opts: offset_x=%s", tostring(CONFIG.loaded.offset_x)))
+end
+
+local function apply_wnd(wnd, dx)
+	if not (wnd and wnd.wnd) then
+		return
+	end
+	local pos = wnd.wnd:GetWndPos()
+	if wnd._dogma_applied and pos.x == wnd._dogma_x then
+		if dx == wnd._dogma_dx then
+			return
+		end
+		local base = wnd._dogma_base
+		wnd.wnd:SetWndPos(vector2():set(base + dx, pos.y))
+		wnd._dogma_x = base + dx
+		wnd._dogma_dx = dx
+		return
+	end
+	local base = pos.x
+	wnd._dogma_base = base
+	wnd._dogma_dx = dx
+	wnd._dogma_x = base + dx
+	wnd._dogma_applied = true
+	if dx ~= 0 then
+		wnd.wnd:SetWndPos(vector2():set(base + dx, pos.y))
+	end
+end
+
+local function apply_gui(gui)
+	local winds = gui and gui.winds
+	if not winds then
+		return
+	end
+	local dx = read_offset()
+	CONFIG.loaded.offset_x = dx
+	for i = 1, #winds do
+		apply_wnd(winds[i], dx)
+	end
+end
+
+local function wrap_update(obj, label)
+	if not obj or obj._dogma_apm_offset then
+		return obj and obj._dogma_apm_offset
+	end
+	local orig = obj.Update
+	if type(orig) ~= "function" then
+		return false
+	end
+	local ok = pcall(function()
+		obj.Update = function(self)
+			orig(self)
+			apply_gui(self)
+		end
+		obj._dogma_apm_offset = true
+	end)
+	if ok and obj._dogma_apm_offset then
+		log("wrap " .. label)
+		return true
+	end
+	return false
 end
 
 local function patch()
-	if HOOK_STATE.patched then
-		return true
-	end
-	local cls = rawget(_G, "UIPopupMessages")
-	if not (cls and type(cls.AnimateWindow) == "function") then
+	local mod = rawget(_G, "ui_popup_messages")
+	if not mod then
 		return false
 	end
-
-	local orig = cls.AnimateWindow
-	HOOK_STATE.orig = orig
-	function cls:AnimateWindow(wnd, anim_state)
-		local ret = orig(self, wnd, anim_state)
-		local dx = CONFIG.loaded.offset_x or 0
-		if dx ~= 0 and wnd and wnd.wnd then
-			local pos = wnd.wnd:GetWndPos()
-			wnd.wnd:SetWndPos(vector2():set(pos.x + dx, pos.y))
-		end
-		return ret
+	local cls = rawget(_G, "UIPopupMessages") or rawget(mod, "UIPopupMessages")
+	wrap_update(cls, "UIPopupMessages.Update")
+	if not mod.GUI then
+		return false
 	end
-	HOOK_STATE.patched = true
-	return true
+	return wrap_update(mod.GUI, "ui_popup_messages.GUI.Update")
 end
 
 function on_game_start()
@@ -54,5 +111,6 @@ function on_game_start()
 	on_option_change()
 	RegisterScriptCallback("on_option_change", on_option_change)
 	RegisterScriptCallback("actor_on_first_update", patch)
+	RegisterScriptCallback("on_game_load", patch)
 	patch()
 end

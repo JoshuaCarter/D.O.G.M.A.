@@ -1,6 +1,8 @@
 --[[
 	Witnessed hits/kills: write personal goodwill on same-faction stalkers.
-	First seen threshold parks general_goodwill at -40; second slams -9000.
+	First seen hit parks general_goodwill at -40 (no longer friend).
+	2.0 lethals or 2 murders slams -9000.
+	Hit power comes from on_before_hit_after_calcs (npc_on_before_hit has power=0).
 	Visibility poke only after the slam, using the scan's has_los flag.
 ]]
 
@@ -163,6 +165,36 @@ local function collect_witnesses(victim)
 	return witnesses, was_seen
 end
 
+local function snap(npc, actor)
+	local tostr = tostring
+	local name = "?"
+	pcall(function()
+		name = npc:character_name()
+	end)
+	local pers, gen, rel = "?", "?", "?"
+	local ok_p, p = pcall(npc.goodwill, npc, actor)
+	if ok_p then
+		pers = tostr(p)
+	end
+	local ok_g, g = pcall(npc.general_goodwill, npc, actor)
+	if ok_g then
+		gen = tostr(g)
+	end
+	local ok_r, r = pcall(npc.relation, npc, actor)
+	if ok_r then
+		rel = tostr(r)
+	end
+	return string.format(
+		"%s#%s pers=%s gen=%s band=%s rel=%s",
+		name,
+		tostr(npc:id()),
+		pers,
+		gen,
+		tostr(dogma.alife.npc_relation_band(npc, actor)),
+		rel
+	)
+end
+
 local function remember(comm, damage, dead, witnesses)
 	local e = entry(comm)
 	e.damage = (tonumber(e.damage) or 0) + (tonumber(damage) or 0)
@@ -181,24 +213,31 @@ local function apply_writes(mem, witnesses)
 		return
 	end
 	local slam = (mem.murders or 0) >= 2 or (mem.damage or 0) >= 2
-	local park = (mem.murders or 0) >= 1 or (mem.damage or 0) >= 1
+	local park = (mem.murders or 0) >= 1 or (mem.damage or 0) > 0
 	for i = 1, #witnesses do
 		local w = witnesses[i]
 		local npc = w.npc
-		if npc and not is_excluded(npc) and not is_busy(npc) then
-			if slam then
-				pcall(npc.force_set_goodwill, npc, SLAM_GW, actor)
-				if w.has_los and npc.make_object_visible_somewhen then
-					pcall(npc.make_object_visible_somewhen, npc, actor)
-				end
-			elseif park then
-				pcall(npc.force_set_goodwill, npc, PARK_GW, actor)
+		if not (npc and not is_excluded(npc)) then
+			log("  skip gone " .. tostring(w.id))
+		elseif is_busy(npc) then
+			log("  skip busy " .. snap(npc, actor) .. " los=" .. tostring(w.has_los))
+		elseif slam then
+			log("  slam before " .. snap(npc, actor) .. " los=" .. tostring(w.has_los))
+			pcall(npc.force_set_goodwill, npc, SLAM_GW, actor)
+			if w.has_los and npc.make_object_visible_somewhen then
+				pcall(npc.make_object_visible_somewhen, npc, actor)
 			end
+			log("  slam after  " .. snap(npc, actor) .. " poke=" .. tostring(w.has_los))
+		elseif park then
+			log("  park before " .. snap(npc, actor) .. " los=" .. tostring(w.has_los))
+			pcall(npc.force_set_goodwill, npc, PARK_GW, actor)
+			log("  park after  " .. snap(npc, actor))
 		end
 	end
 end
 
 local function on_badwill(victim, damage, dead)
+	local tostr = tostring
 	if not (enabled() and victim and db.actor) then
 		return
 	end
@@ -214,30 +253,46 @@ local function on_badwill(victim, damage, dead)
 	end
 	local witnesses, was_seen = collect_witnesses(victim)
 	if not was_seen then
+		log(string.format(
+			"unseen %s dead=%s power=%.2f near=%d",
+			tostr(comm),
+			tostr(dead),
+			tonumber(damage) or 0,
+			#witnesses
+		))
 		return
 	end
 	local add_dmg = dead and 0 or (tonumber(damage) or 0)
+	if add_dmg <= 0 and not dead then
+		log("skip 0-power")
+		return
+	end
 	local mem = remember(comm, add_dmg, dead, witnesses)
-	apply_writes(mem, witnesses)
+	local slam = (mem.murders or 0) >= 2 or (mem.damage or 0) >= 2
 	log(string.format(
-		"%s dmg=%.2f murders=%s damage=%.2f witnesses=%d slam=%s",
+		"%s dead=%s lethals=+%.2f murders=%s dmg=%.2f witnesses=%d slam=%s",
 		comm,
+		tostr(dead),
 		add_dmg,
-		tostring(mem.murders),
+		tostr(mem.murders),
 		mem.damage,
 		#witnesses,
-		tostring((mem.murders or 0) >= 2 or (mem.damage or 0) >= 2)
+		tostr(slam)
 	))
+	apply_writes(mem, witnesses)
 end
 
-local function npc_on_before_hit(npc, shit)
-	if not (npc and shit and shit.draftsman) then
+-- Engine fills shit.power here. npc_on_before_hit is always 0 in this callback set.
+local function on_before_hit_after_calcs(shit, target)
+	if not (shit and target and shit.draftsman) then
 		return
 	end
 	if not is_player_side(shit.draftsman) then
 		return
 	end
-	on_badwill(npc, shit.power, false)
+	local power = tonumber(shit.power) or 0
+	log(string.format("after_calcs power=%.3f type=%s", power, tostring(shit.type)))
+	on_badwill(target, power, false)
 end
 
 local function npc_on_death_callback(victim, killer)
@@ -323,7 +378,7 @@ end
 
 function on_game_start()
 	dogma.load(CONFIG.MOD_ID)
-	RegisterScriptCallback("npc_on_before_hit", npc_on_before_hit)
+	RegisterScriptCallback("on_before_hit_after_calcs", on_before_hit_after_calcs)
 	RegisterScriptCallback("npc_on_death_callback", npc_on_death_callback)
 	RegisterScriptCallback("actor_on_sleep", actor_on_sleep)
 	RegisterScriptCallback("save_state", on_save_state)

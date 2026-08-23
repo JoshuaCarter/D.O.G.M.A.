@@ -24,9 +24,6 @@ local NAME_HOSTILE_RGB = { 255, 48, 48 }
 local NAME_FRIEND_RGB = { 48, 200, 48 }
 local NAME_NEUTRAL_RGB = { 255, 200, 48 }
 local NAME_DEAD_RGB = { 160, 160, 160 }
--- GetRelationType: attitude < -150 enemy, < 400 neutral, else friend.
-local GW_ENEMY = -150
-local GW_FRIEND = 400
 local RANK_RGB = { 200, 200, 200 }
 local RANK_DEAD_RGB = { 100, 100, 100 }
 
@@ -295,11 +292,7 @@ local function is_valid_community(community)
 end
 
 local function is_hostile(obj)
-	if not (obj and db.actor and game_object and game_object.enemy) then
-		return false
-	end
-	local ok, rel = pcall(obj.relation, obj, db.actor)
-	return ok and rel ~= nil and rel >= game_object.enemy
+	return dogma.alife.npc_relation_band(obj) == "enemy"
 end
 
 local function set_name_color_for(obj)
@@ -318,18 +311,12 @@ local function set_name_color_for(obj)
 		name_r, name_g, name_b = NAME_HOSTILE_RGB[1], NAME_HOSTILE_RGB[2], NAME_HOSTILE_RGB[3]
 		return
 	end
-	if not db.actor then
-		return
-	end
-	local ok, gw = pcall(obj.general_goodwill, obj, db.actor)
-	if not (ok and type(gw) == "number") then
-		return
-	end
-	if gw < GW_ENEMY then
+	local band = dogma.alife.npc_relation_band(obj)
+	if band == "enemy" then
 		name_r, name_g, name_b = NAME_HOSTILE_RGB[1], NAME_HOSTILE_RGB[2], NAME_HOSTILE_RGB[3]
-	elseif gw >= GW_FRIEND then
+	elseif band == "friend" then
 		name_r, name_g, name_b = NAME_FRIEND_RGB[1], NAME_FRIEND_RGB[2], NAME_FRIEND_RGB[3]
-	else
+	elseif band == "neutral" then
 		name_r, name_g, name_b = NAME_NEUTRAL_RGB[1], NAME_NEUTRAL_RGB[2], NAME_NEUTRAL_RGB[3]
 	end
 end

@@ -264,3 +264,31 @@ function npc_is_in_combat(npc, range)
 	end)
 	return ok_d and d <= range
 end
+
+-- GetAttitude sum. Combat / name color / leader line must all use this.
+function npc_general_goodwill(npc, who)
+	who = who or (db and db.actor)
+	if not (npc and who) then
+		return nil
+	end
+	local ok, gw = pcall(npc.general_goodwill, npc, who)
+	if ok and type(gw) == "number" then
+		return gw
+	end
+	return nil
+end
+
+-- Engine GetRelationType bands: < -150 enemy, < 400 neutral, else friend.
+function npc_relation_band(npc, who)
+	local gw = npc_general_goodwill(npc, who)
+	if gw == nil then
+		return nil
+	end
+	if gw < -150 then
+		return "enemy"
+	end
+	if gw >= 400 then
+		return "friend"
+	end
+	return "neutral"
+end

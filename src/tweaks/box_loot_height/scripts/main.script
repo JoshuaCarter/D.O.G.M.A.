@@ -1,0 +1,48 @@
+--[[
+	Box loot height
+
+	New unparented items (crate loot in front of you) often register at a
+	point in the floor. Raise that server position by MCM metres (0 = off).
+]]
+
+local CONFIG = _G.dogma_tweaks_box_loot_height_conf
+
+local function on_option_change()
+	CONFIG.loaded.height = dogma.mcm.float("dogma/tweaks", "box_loot_height", CONFIG.DEFAULTS.height)
+end
+
+local function server_object_on_register(se)
+	local h = CONFIG.loaded.height
+	if not (se and h and h > 0) then
+		return
+	end
+	if se.parent_id and se.parent_id ~= xconst.INVALID_ENTITY_ID then
+		return
+	end
+	local ok, sec = pcall(function()
+		return se:section_name()
+	end)
+	if not (ok and sec and ini_sys and ini_sys:r_string_ex(sec, "inv_name")) then
+		return
+	end
+	local p = se.position
+	if not p then
+		return
+	end
+	local bx, by, bz = p.x, p.y, p.z
+	se.position = vector():set(bx, by + h, bz)
+	if dogma.dbg.logging() then
+		local name = (xinventory and xinventory.get_item_name and xinventory.get_item_name(sec)) or sec
+		dogma.dbg.log(CONFIG.MOD_ID, string.format(
+			"%s  (%.2f, %.2f, %.2f) -> (%.2f, %.2f, %.2f)",
+			name, bx, by, bz, bx, by + h, bz
+		))
+	end
+end
+
+function on_game_start()
+	dogma.load(CONFIG.MOD_ID)
+	on_option_change()
+	RegisterScriptCallback("on_option_change", on_option_change)
+	RegisterScriptCallback("server_object_on_register", server_object_on_register)
+end

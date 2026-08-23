@@ -184,6 +184,7 @@ end
 
 -- Main-menu New Game click sits over the loadout; eat purchases until LMB is up.
 -- Dialog is cached (ShowFactionUI); Main_Controls only runs on the first construct.
+-- key_state: dogma.input TimeEvent does not tick on the main-menu New Game UI.
 local function mouse1_down()
 	local dik = DIK_keys and DIK_keys.MOUSE_1
 	return dik and key_state and key_state(dik) ~= 0

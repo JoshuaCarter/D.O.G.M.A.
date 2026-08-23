@@ -601,18 +601,9 @@ end
 local function cancel_key_pressed()
 	local space = space_dik()
 	local esc = escape_dik()
-	if dogma and dogma.input and dogma.input.is_key_pressed then
-		if dogma.input.is_key_pressed(space) or dogma.input.is_key_pressed(esc) then
-			return true
-		end
-	end
-	local down = false
-	if key_state then
-		down = (key_state(space) ~= 0) or (key_state(esc) ~= 0)
-	end
-	local was = tft.fly_cancel_key_down == true
-	tft.fly_cancel_key_down = down
-	return down and not was
+	dogma.input.is_key_down(space)
+	dogma.input.is_key_down(esc)
+	return dogma.input.is_key_pressed(space) or dogma.input.is_key_pressed(esc)
 end
 
 local function update_land(dt)

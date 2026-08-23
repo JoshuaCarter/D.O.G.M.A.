@@ -1,25 +1,26 @@
--- tweaks/item_popups_offset conf
--- Injects X offset into Anomaly Popup Messages → apm_main.
+-- tweaks/popup_messages conf
+-- Offset slider under Anomaly Popup Messages → apm_main.
+-- Dummy bayonet toast skip is always on while this feature is installed.
 
-_G.dogma_tweaks_item_popups_offset_conf = {
-	MOD_ID = "dogma/tweaks/item_popups_offset",
+_G.dogma_tweaks_popup_messages_conf = {
+	MOD_ID = "dogma/tweaks/popup_messages",
 	APM_TREE_ID = "ui_popup_messages",
 	APM_OFFSET_PATH = "ui_popup_messages/apm_main/offset_x",
 	DEFAULTS = {
-		offset_x = 0,
+		offset_x = -35,
 	},
 	loaded = {},
 }
 
 --[[
-	Item Popups Offset - MCM
+	Popup Messages - MCM
 
 	Injects offset_x into ui_popup_messages → apm_main (next to stock pos_x).
 	APM's AnimateWindow overwrites X from the right edge, so pos_x does not
 	stick; this slider is applied after that write.
 ]]
 
-local CONFIG = _G.dogma_tweaks_item_popups_offset_conf
+local CONFIG = _G.dogma_tweaks_popup_messages_conf
 
 local OFFSET_OPT = {
 	id = "offset_x",
@@ -79,7 +80,7 @@ local function wrap_one(m)
 	if not (m and type(m.on_mcm_load) == "function") then
 		return
 	end
-	if m._dogma_apm_offset_mcm then
+	if m._dogma_popup_messages_mcm then
 		return
 	end
 	local orig = m.on_mcm_load
@@ -90,13 +91,16 @@ local function wrap_one(m)
 		end
 		return tree, name
 	end
-	m._dogma_apm_offset_mcm = true
+	m._dogma_popup_messages_mcm = true
 end
 
 -- We gather before APM (*mcm.script is dogma_*). Wrap whatever owns the tree.
 local function wrap_apm_on_mcm_load()
 	for name, m in pairs(_G) do
-		if type(name) == "string" and string.find(name, "popup_messages", 1, true) then
+		if type(name) == "string"
+			and string.find(name, "popup_messages", 1, true)
+			and not string.find(name, "dogma_tweaks_popup_messages", 1, true)
+		then
 			wrap_one(m)
 		end
 	end
@@ -111,9 +115,9 @@ function on_mcm_load(options)
 
 	dogma_mcm.append(options, "tweaks", "ui_mcm_menu_dogma_tweaks", {
 		{
-			id = "item_popups_offset_description",
+			id = "popup_messages_description",
 			type = "desc",
-			text = "ui_mcm_dogma_tweaks_item_popups_offset_page_description",
+			text = "ui_mcm_dogma_tweaks_popup_messages_page_description",
 		},
 	})
 end

@@ -1,12 +1,17 @@
 --[[
-	Item Popups Offset
+	Popup Messages
 
-	APM's slide-in writes X from the right edge every frame (stock pos_x
-	does not stick). After ui_popup_messages.GUI:Update, shift each toast
-	by the offset injected under Popup Messages → apm_main.
+	X offset: APM's slide-in writes X from the right edge every frame (stock
+	pos_x does not stick). After ui_popup_messages.GUI:Update, shift each toast.
+
+	Quick melee: CQC / Teivaz creates an animation_hit_* dummy. Skip that
+	pickup toast. Real knife pickups still pop.
 ]]
 
-local CONFIG = _G.dogma_tweaks_item_popups_offset_conf
+local CONFIG = _G.dogma_tweaks_popup_messages_conf
+
+local HOOK_STATE = _G.__dogma_popup_messages_qm_hooks or {}
+_G.__dogma_popup_messages_qm_hooks = HOOK_STATE
 
 local function log(msg)
 	if dogma.dbg.logging() then
@@ -72,8 +77,8 @@ local function apply_gui(gui)
 end
 
 local function wrap_update(obj, label)
-	if not obj or obj._dogma_apm_offset then
-		return obj and obj._dogma_apm_offset
+	if not obj or obj._dogma_popup_messages_offset then
+		return obj and obj._dogma_popup_messages_offset
 	end
 	local orig = obj.Update
 	if type(orig) ~= "function" then
@@ -84,16 +89,16 @@ local function wrap_update(obj, label)
 			orig(self)
 			apply_gui(self)
 		end
-		obj._dogma_apm_offset = true
+		obj._dogma_popup_messages_offset = true
 	end)
-	if ok and obj._dogma_apm_offset then
+	if ok and obj._dogma_popup_messages_offset then
 		log("wrap " .. label)
 		return true
 	end
 	return false
 end
 
-local function patch()
+local function patch_offset()
 	local mod = rawget(_G, "ui_popup_messages")
 	if not mod then
 		return false
@@ -104,6 +109,45 @@ local function patch()
 		return false
 	end
 	return wrap_update(mod.GUI, "ui_popup_messages.GUI.Update")
+end
+
+local function is_qm_dummy(item)
+	if not item then
+		return false
+	end
+	local ok, sec = pcall(function()
+		return item:section()
+	end)
+	return ok and type(sec) == "string" and string.find(sec, "animation_hit", 1, true) ~= nil
+end
+
+local function patch_qm()
+	if HOOK_STATE.patched then
+		return true
+	end
+	local mod = rawget(_G, "popup_pickup")
+	if not (mod and type(mod.actor_on_item_take) == "function") then
+		return false
+	end
+
+	local orig = mod.actor_on_item_take
+	UnregisterScriptCallback("actor_on_item_take", orig)
+
+	HOOK_STATE.wrapped = function(item)
+		if is_qm_dummy(item) then
+			return
+		end
+		return orig(item)
+	end
+	mod.actor_on_item_take = HOOK_STATE.wrapped
+	RegisterScriptCallback("actor_on_item_take", HOOK_STATE.wrapped)
+	HOOK_STATE.patched = true
+	return true
+end
+
+local function patch()
+	patch_offset()
+	patch_qm()
 end
 
 function on_game_start()

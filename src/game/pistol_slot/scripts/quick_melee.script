@@ -130,7 +130,11 @@ local function our_hit_animation()
 		anm_state = 5
 	elseif anm_state == 5 and time_global() > anm_start + anm_time + 400 then
 		anm_state = 0
-	elseif anm_state ~= 0 and actor:active_slot() ~= anm_slot and time_global() > anm_start + anm_time + 400 then
+	elseif anm_state ~= 0 and actor:active_slot() ~= anm_slot then
+		local anm = actor:item_in_slot(anm_slot)
+		if anm then
+			alife():release(alife_object(anm:id()))
+		end
 		anm_state = 0
 	end
 end
@@ -167,6 +171,7 @@ function on_game_start()
 	RegisterScriptCallback("on_game_load", function()
 		installed = false
 		tries = 0
+		anm_state = 0
 		install()
 	end)
 	RegisterScriptCallback("on_before_key_press", function(_key, bind)

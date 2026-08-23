@@ -28,7 +28,7 @@ local next_limb_tick = 0
 local next_state_tick = 0
 local cached_range_sqr = 4
 local cached_body_sec = 30
-local cached_limb_sec = 20
+local cached_limb_sec = 10
 local cached_pause_in_combat = false
 local cached_fx_enable = true
 local cached_fx_intensity = 0.5
@@ -62,7 +62,7 @@ local function refresh_settings()
 	local body_sec = dogma.mcm.int(CONFIG.MOD_ID, "body_sec", CONFIG.DEFAULTS.body_sec)
 	local limb_sec = dogma.mcm.int(CONFIG.MOD_ID, "limb_sec", CONFIG.DEFAULTS.limb_sec)
 	cached_body_sec = clamp_sec(body_sec, 30, 100, 30)
-	cached_limb_sec = clamp_sec(limb_sec, 20, 100, 20)
+	cached_limb_sec = clamp_sec(limb_sec, 10, 100, 10)
 	local range_m = dogma.mcm.float(CONFIG.MOD_ID, "range_m", CONFIG.DEFAULTS.range_m)
 	range_m = dogma.math.clamp(tonumber(range_m) or CONFIG.DEFAULTS.range_m, 0, 5)
 	cached_range_sqr = range_m * range_m

@@ -1,0 +1,332 @@
+--[[
+	Witnessed hits/kills: write personal goodwill on same-faction stalkers.
+	First seen threshold parks general_goodwill at -40; second slams -9000.
+	Visibility poke only after the slam, using the scan's has_los flag.
+]]
+
+local CONFIG = _G.dogma_game_badwill_conf
+
+local WITNESS_M = 40
+local COMBAT_ALERT_M = 50
+local PARK_GW = -40
+local SLAM_GW = -9000
+local DECAY_PERSONAL = 2000
+local SAVE_KEY = "dogma_badwill"
+
+local SKIP_COMM = {
+	zombied = true,
+	arena_enemy = true,
+	trader = true,
+}
+
+local faction_memory = {}
+
+local function log(msg)
+	if dogma.dbg.logging() then
+		dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
+	end
+end
+
+local function enabled()
+	return dogma.mcm.bool(CONFIG.MOD_ID, "enabled", CONFIG.DEFAULTS.enabled)
+end
+
+local function is_player_side(obj)
+	if not obj then
+		return false
+	end
+	if db.actor and obj:id() == db.actor:id() then
+		return true
+	end
+	local ok, has = pcall(function()
+		return obj:has_info("npcx_is_companion")
+	end)
+	return ok and has
+end
+
+local function is_story(npc)
+	if not (npc and get_object_story_id) then
+		return false
+	end
+	local ok, sid = pcall(get_object_story_id, npc:id())
+	if not (ok and sid) then
+		return false
+	end
+	if sid == 65535 or sid == 4294967295 or sid == -1 or sid == 0 or sid == "" then
+		return false
+	end
+	return true
+end
+
+local function is_trader(npc)
+	if not npc then
+		return false
+	end
+	if clsid then
+		local ok, c = pcall(npc.clsid, npc)
+		if ok and (c == clsid.script_trader or c == clsid.trader) then
+			return true
+		end
+	end
+	return dogma.alife.community(npc) == "trader"
+end
+
+local function is_excluded(npc)
+	if not (npc and IsStalker and IsStalker(npc)) then
+		return true
+	end
+	local ok_alive, alive = pcall(npc.alive, npc)
+	if not (ok_alive and alive) then
+		return true
+	end
+	if is_player_side(npc) then
+		return true
+	end
+	local comm = dogma.alife.community(npc)
+	if comm and SKIP_COMM[comm] then
+		return true
+	end
+	if is_trader(npc) or is_story(npc) then
+		return true
+	end
+	return false
+end
+
+local function is_busy(npc)
+	local ok, enemy = pcall(npc.best_enemy, npc)
+	return ok and enemy ~= nil
+end
+
+local function entry(comm)
+	local e = faction_memory[comm]
+	if not e then
+		e = { damage = 0, murders = 0, witness_ids = {} }
+		faction_memory[comm] = e
+	end
+	if not e.witness_ids then
+		e.witness_ids = {}
+	end
+	return e
+end
+
+local function object_by_id(id)
+	local st = db.storage and db.storage[id]
+	return st and st.object
+end
+
+local function alife_exists(id)
+	local sim = alife()
+	if sim then
+	    return sim and sim:object(id) ~= nil
+	end
+end
+
+local function prune_ids(ids)
+	local keep = {}
+	for id in pairs(ids or {}) do
+		if object_by_id(id) or alife_exists(id) then
+			keep[id] = true
+		end
+	end
+	return keep
+end
+
+-- One LOS/FOV pass. has_los = LOS to the player (no second ray later).
+local function collect_witnesses(victim)
+	local witnesses = {}
+	local was_seen = false
+	local pos = victim:position()
+	local comm = dogma.alife.community(victim)
+	local near = dogma.alife.get_stalkers_near_point(pos, WITNESS_M, comm)
+	local actor = db.actor
+	if not actor then
+		return witnesses, false
+	end
+	for i = 1, #near do
+		local npc = near[i]
+		if not is_excluded(npc) then
+			local saw_victim
+			if dogma.alife.npc_is_in_combat(npc, COMBAT_ALERT_M) then
+				saw_victim = dogma.alife.npc_has_los_to_stalker(npc, victim, true)
+			else
+				saw_victim = dogma.alife.npc_has_los_to_stalker(npc, victim, false)
+			end
+			if saw_victim then
+				local has_los = dogma.alife.npc_has_los_to_stalker(npc, actor, false)
+				witnesses[#witnesses + 1] = { npc = npc, id = npc:id(), has_los = has_los }
+				if has_los then
+					was_seen = true
+				end
+			end
+		end
+	end
+	return witnesses, was_seen
+end
+
+local function remember(comm, damage, dead, witnesses)
+	local e = entry(comm)
+	e.damage = (tonumber(e.damage) or 0) + (tonumber(damage) or 0)
+	if dead then
+		e.murders = (tonumber(e.murders) or 0) + 1
+	end
+	for i = 1, #witnesses do
+		e.witness_ids[witnesses[i].id] = true
+	end
+	return e
+end
+
+local function apply_writes(mem, witnesses)
+	local actor = db.actor
+	if not actor then
+		return
+	end
+	local slam = (mem.murders or 0) >= 2 or (mem.damage or 0) >= 2
+	local park = (mem.murders or 0) >= 1 or (mem.damage or 0) >= 1
+	for i = 1, #witnesses do
+		local w = witnesses[i]
+		local npc = w.npc
+		if npc and not is_excluded(npc) and not is_busy(npc) then
+			if slam then
+				pcall(npc.force_set_goodwill, npc, SLAM_GW, actor)
+				if w.has_los and npc.make_object_visible_somewhen then
+					pcall(npc.make_object_visible_somewhen, npc, actor)
+				end
+			elseif park then
+				pcall(npc.force_set_goodwill, npc, PARK_GW, actor)
+			end
+		end
+	end
+end
+
+local function on_badwill(victim, damage, dead)
+	if not (enabled() and victim and db.actor) then
+		return
+	end
+	if not (IsStalker and IsStalker(victim)) then
+		return
+	end
+	if is_player_side(victim) then
+		return
+	end
+	local comm = dogma.alife.community(victim)
+	if not comm or SKIP_COMM[comm] or is_trader(victim) or is_story(victim) then
+		return
+	end
+	local witnesses, was_seen = collect_witnesses(victim)
+	if not was_seen then
+		return
+	end
+	local add_dmg = dead and 0 or (tonumber(damage) or 0)
+	local mem = remember(comm, add_dmg, dead, witnesses)
+	apply_writes(mem, witnesses)
+	log(string.format(
+		"%s dmg=%.2f murders=%s damage=%.2f witnesses=%d slam=%s",
+		comm,
+		add_dmg,
+		tostring(mem.murders),
+		mem.damage,
+		#witnesses,
+		tostring((mem.murders or 0) >= 2 or (mem.damage or 0) >= 2)
+	))
+end
+
+local function npc_on_before_hit(npc, shit)
+	if not (npc and shit and shit.draftsman) then
+		return
+	end
+	if not is_player_side(shit.draftsman) then
+		return
+	end
+	on_badwill(npc, shit.power, false)
+end
+
+local function npc_on_death_callback(victim, killer)
+	if not (victim and killer and is_player_side(killer)) then
+		return
+	end
+	on_badwill(victim, 0, true)
+end
+
+local function decay_entry(e)
+	e.damage = math.max(0, (tonumber(e.damage) or 0) - 1)
+	e.murders = math.max(0, (tonumber(e.murders) or 0) - 1)
+	local actor = db.actor
+	local keep = {}
+	for id in pairs(e.witness_ids or {}) do
+		local npc = object_by_id(id)
+		if npc then
+			if actor then
+				local ok, gw = pcall(npc.goodwill, npc, actor)
+				if ok and type(gw) == "number" and gw < 0 then
+					local next_gw = math.min(0, gw + DECAY_PERSONAL)
+					pcall(npc.set_goodwill, npc, next_gw, actor)
+				end
+			end
+			keep[id] = true
+		elseif alife_exists(id) then
+			keep[id] = true
+		end
+	end
+	e.witness_ids = keep
+end
+
+local function actor_on_sleep()
+	if not enabled() then
+		return
+	end
+	for _, e in pairs(faction_memory) do
+		decay_entry(e)
+	end
+	log("sleep decay")
+end
+
+local function on_save_state(m_data)
+	local dump = {}
+	for comm, e in pairs(faction_memory) do
+		dump[comm] = {
+			damage = tonumber(e.damage) or 0,
+			murders = tonumber(e.murders) or 0,
+			witness_ids = prune_ids(e.witness_ids),
+		}
+	end
+	m_data[SAVE_KEY] = dump
+end
+
+local function on_load_state(m_data)
+	local type_ = type
+	faction_memory = {}
+	local dump = m_data and m_data[SAVE_KEY]
+	if type_(dump) ~= "table" then
+		return
+	end
+	for comm, e in pairs(dump) do
+		if type_(e) == "table" then
+			local ids = {}
+			if type_(e.witness_ids) == "table" then
+				for k, v in pairs(e.witness_ids) do
+					local id = tonumber(k)
+					if id and (v == true or v == 1) then
+						ids[id] = true
+					elseif type_(v) == "number" then
+						ids[v] = true
+					end
+				end
+			end
+			faction_memory[comm] = {
+				damage = tonumber(e.damage) or 0,
+				murders = tonumber(e.murders) or 0,
+				witness_ids = ids,
+			}
+		end
+	end
+end
+
+function on_game_start()
+	dogma.load(CONFIG.MOD_ID)
+	RegisterScriptCallback("npc_on_before_hit", npc_on_before_hit)
+	RegisterScriptCallback("npc_on_death_callback", npc_on_death_callback)
+	RegisterScriptCallback("actor_on_sleep", actor_on_sleep)
+	RegisterScriptCallback("save_state", on_save_state)
+	RegisterScriptCallback("load_state", on_load_state)
+	log("loaded")
+end

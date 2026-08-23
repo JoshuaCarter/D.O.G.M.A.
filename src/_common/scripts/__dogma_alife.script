@@ -1,0 +1,266 @@
+--[[
+	Online stalker queries: FOV, bush-pierce LOS, nearby, in-combat.
+]]
+
+local DEFAULT_FOV_DEG = 80
+local DEFAULT_COMBAT_M = 100
+local LOOK_FLAGS = 3 -- rqtObject | rqtStatic
+local LOOK_BUSH_STEP = 0.2
+local BUSH_PIERCE = 1
+local BONES_CHEST = { "bip01_spine2", "bip01_spine1", "bip01_neck" }
+local BONES_HEAD = { "bip01_head" }
+local COS_CACHE = {}
+
+local pick = nil
+local RAY_POS = vector()
+local RAY_DIR = vector()
+
+local function cos_deg(deg)
+	local c = COS_CACHE[deg]
+	if c then
+		return c
+	end
+	c = math.cos(deg * math.pi / 180)
+	COS_CACHE[deg] = c
+	return c
+end
+
+local function fov_deg(fov)
+	if fov == true then
+		return DEFAULT_FOV_DEG
+	end
+	if type(fov) == "number" then
+		return fov
+	end
+	return nil
+end
+
+local function bone_pos(obj, bones)
+	if not (obj and bones) then
+		return nil
+	end
+	for i = 1, #bones do
+		local ok, p = pcall(obj.bone_position, obj, bones[i])
+		if ok and p then
+			return p
+		end
+	end
+	local ok, p = pcall(obj.position, obj)
+	if ok then
+		return p
+	end
+	return nil
+end
+
+local function is_bush_material(name)
+	return type(name) == "string" and name:find("bush", 1, true) ~= nil
+end
+
+function community(npc)
+	if not npc then
+		return nil
+	end
+	if xcreature and xcreature.community then
+		local se = alife() and alife():object(npc:id())
+		if se then
+			local ok, c = pcall(xcreature.community, se)
+			if ok and type(c) == "string" and c ~= "" then
+				return c
+			end
+		end
+	end
+	if character_community then
+		local ok, c = pcall(character_community, npc)
+		if ok and type(c) == "string" and c ~= "" then
+			return c
+		end
+	end
+	local ok, c = pcall(npc.character_community, npc)
+	if ok and type(c) == "string" and c ~= "" then
+		return c
+	end
+	return nil
+end
+
+function npc_has_fov_pos(npc, pos, fov)
+	if not (npc and pos) then
+		return false
+	end
+	local deg = fov_deg(fov)
+	if not deg then
+		deg = DEFAULT_FOV_DEG
+	end
+	local ok_dir, dir = pcall(npc.direction, npc)
+	local head = bone_pos(npc, BONES_HEAD)
+	if not (ok_dir and dir and head) then
+		return false
+	end
+	local dx = pos.x - head.x
+	local dy = pos.y - head.y
+	local dz = pos.z - head.z
+	local dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+	if dist < 0.05 then
+		return true
+	end
+	local inv = 1 / dist
+	local dot = (dir.x * dx + dir.y * dy + dir.z * dz) * inv
+	return dot >= cos_deg(deg)
+end
+
+function npc_has_fov_stalker(npc, stalker, fov)
+	return npc_has_fov_pos(npc, bone_pos(stalker, BONES_CHEST), fov)
+end
+
+-- First non-bush hit from origin along dir. nil = clear to `remaining`.
+local function first_block(ox, oy, oz, dx, dy, dz, remaining, ignore)
+	if not ray_pick then
+		return nil
+	end
+	if not pick then
+		pick = ray_pick()
+	end
+	pick:set_flags(LOOK_FLAGS)
+	RAY_DIR:set(dx, dy, dz)
+	local pierces = 0
+	while remaining > LOOK_BUSH_STEP and pierces <= BUSH_PIERCE do
+		RAY_POS:set(ox, oy, oz)
+		pick:set_position(RAY_POS)
+		pick:set_direction(RAY_DIR)
+		pick:set_range(remaining)
+		if ignore then
+			pick:set_ignore_object(ignore)
+		end
+		local ok, hit = pcall(function()
+			return pick:query()
+		end)
+		if not (ok and hit) then
+			return nil
+		end
+		local obj = pick:get_object()
+		if obj then
+			return obj, pick:get_distance()
+		end
+		local result = pick:get_result()
+		local hit_dist = pick:get_distance()
+		if not (result and hit_dist and hit_dist > 0 and is_bush_material(result.material_name)) then
+			return false, hit_dist
+		end
+		local step = hit_dist + LOOK_BUSH_STEP
+		ox = ox + dx * step
+		oy = oy + dy * step
+		oz = oz + dz * step
+		remaining = remaining - step
+		pierces = pierces + 1
+	end
+	return false, 0
+end
+
+function npc_has_los_to_pos(npc, pos, fov)
+	if not (npc and pos) then
+		return false
+	end
+	if fov and not npc_has_fov_pos(npc, pos, fov) then
+		return false
+	end
+	local head = bone_pos(npc, BONES_HEAD)
+	if not head then
+		return false
+	end
+	local dx = pos.x - head.x
+	local dy = pos.y - head.y
+	local dz = pos.z - head.z
+	local dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+	if dist < 0.05 then
+		return true
+	end
+	local inv = 1 / dist
+	dx, dy, dz = dx * inv, dy * inv, dz * inv
+	local block, hit_dist = first_block(head.x, head.y, head.z, dx, dy, dz, dist, npc)
+	if block == nil then
+		return true
+	end
+	if block == false then
+		return hit_dist and hit_dist >= dist - 0.05
+	end
+	return false
+end
+
+function npc_has_los_to_stalker(npc, stalker, fov)
+	if not (npc and stalker) then
+		return false
+	end
+	local chest = bone_pos(stalker, BONES_CHEST)
+	if not chest then
+		return false
+	end
+	if fov and not npc_has_fov_pos(npc, chest, fov) then
+		return false
+	end
+	local head = bone_pos(npc, BONES_HEAD)
+	if not head then
+		return false
+	end
+	local dx = chest.x - head.x
+	local dy = chest.y - head.y
+	local dz = chest.z - head.z
+	local dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+	if dist < 0.05 then
+		return true
+	end
+	local inv = 1 / dist
+	dx, dy, dz = dx * inv, dy * inv, dz * inv
+	local block, hit_dist = first_block(head.x, head.y, head.z, dx, dy, dz, dist + 0.35, npc)
+	if block == nil then
+		return true
+	end
+	if block == false then
+		return hit_dist and hit_dist >= dist - 0.05
+	end
+	local ok, bid = pcall(block.id, block)
+	local ok2, tid = pcall(stalker.id, stalker)
+	return ok and ok2 and bid == tid
+end
+
+function get_stalkers_near_point(pos, range, faction)
+	local out = {}
+	if not (pos and range and db and db.storage) then
+		return out
+	end
+	local actor_id = db.actor and db.actor:id()
+	for id, st in pairs(db.storage) do
+		local npc = st and st.object
+		if npc and id ~= actor_id and IsStalker and IsStalker(npc) then
+			local ok_alive, alive = pcall(npc.alive, npc)
+			if ok_alive and alive then
+				local ok_d, d = pcall(function()
+					return npc:position():distance_to(pos)
+				end)
+				if ok_d and d <= range then
+					if not faction or community(npc) == faction then
+						out[#out + 1] = npc
+					end
+				end
+			end
+		end
+	end
+	return out
+end
+
+function npc_is_in_combat(npc, range)
+	if not npc then
+		return false
+	end
+	range = range or DEFAULT_COMBAT_M
+	local ok, enemy = pcall(npc.best_enemy, npc)
+	if not (ok and enemy) then
+		return false
+	end
+	local ok_alive, alive = pcall(enemy.alive, enemy)
+	if not (ok_alive and alive) then
+		return false
+	end
+	local ok_d, d = pcall(function()
+		return npc:position():distance_to(enemy:position())
+	end)
+	return ok_d and d <= range
+end

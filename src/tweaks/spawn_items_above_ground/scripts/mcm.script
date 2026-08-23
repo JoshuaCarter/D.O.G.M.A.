@@ -1,0 +1,31 @@
+-- tweaks/spawn_items_above_ground conf
+-- Raise newly spawned world items so they do not start in the floor.
+
+_G.dogma_tweaks_spawn_items_above_ground_conf = {
+	MOD_ID = "dogma/tweaks/spawn_items_above_ground",
+	DEFAULTS = {
+		height = 0.2,
+	},
+	loaded = {},
+}
+
+function on_mcm_load(options)
+	local CONFIG = _G.dogma_tweaks_spawn_items_above_ground_conf
+	dogma_mcm.append(options, "tweaks", "ui_mcm_menu_dogma_tweaks", {
+		{
+			id = "spawn_items_above_ground_description",
+			type = "desc",
+			text = "ui_mcm_dogma_tweaks_spawn_items_above_ground_page_description",
+		},
+		{
+			id = "spawn_items_above_ground",
+			type = "track",
+			val = 2,
+			min = 0,
+			max = 1,
+			step = 0.05,
+			def = CONFIG.DEFAULTS.height,
+			hint = "dogma_tweaks_spawn_items_above_ground",
+		},
+	})
+end

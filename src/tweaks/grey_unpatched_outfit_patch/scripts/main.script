@@ -23,12 +23,17 @@ local function log(msg)
 	end
 end
 
+-- Main-menu / faction-select cells pass a section table, not a live item.
 local function is_unpatched(obj)
-	if not (obj and se_load_var) then
+	if not (obj and obj.id and se_load_var) then
 		return false
 	end
-	local id = obj:id()
-	return se_load_var(id, obj:name(), "unpatched") or se_load_var(id, nil, "unpatched")
+	local ok, id = pcall(obj.id, obj)
+	if not (ok and id) then
+		return false
+	end
+	local name = obj.name and obj:name()
+	return se_load_var(id, name, "unpatched") or se_load_var(id, nil, "unpatched")
 end
 
 local function section_community(sec)

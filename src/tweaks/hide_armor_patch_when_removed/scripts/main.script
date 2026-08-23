@@ -1,5 +1,5 @@
 --[[
-	Grey Unpatched Outfit Patch
+	Hide Armor Patch When Removed
 
 	Utjan paints the faction badge via rax_icon_layers functors.
 	Add_Layers calls a local add_icon_layer — wrapping the module field
@@ -9,17 +9,17 @@
 	Attached: no change. Cells only draw while an inventory is open.
 ]]
 
-local CONFIG = _G.dogma_tweaks_grey_unpatched_outfit_patch_conf
+local CONFIG = _G.dogma_tweaks_hide_armor_patch_when_removed_conf
 
-local HOOK_STATE = _G.__dogma_grey_unpatched_outfit_patch or {}
-_G.__dogma_grey_unpatched_outfit_patch = HOOK_STATE
+local HOOK_STATE = _G.__dogma_hide_armor_patch_when_removed or {}
+_G.__dogma_hide_armor_patch_when_removed = HOOK_STATE
 HOOK_STATE.wrapped = HOOK_STATE.wrapped or {}
 
 local function log(msg)
 	if CONFIG then
 		dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
 	else
-		printf("[dogma_tweaks_grey_unpatched_outfit_patch] %s", tostring(msg))
+		printf("[dogma_tweaks_hide_armor_patch_when_removed] %s", tostring(msg))
 	end
 end
 
@@ -156,14 +156,14 @@ local function wrap_register()
 		log("rax_icon_layers.register missing")
 		return
 	end
-	if layers.__dogma_grey_unpatched_outfit_patch then
+	if layers.__dogma_hide_armor_patch_when_removed then
 		return
 	end
 	local orig = layers.register
 	layers.register = function(name, functor)
 		return orig(name, wrap_functor(functor))
 	end
-	layers.__dogma_grey_unpatched_outfit_patch = true
+	layers.__dogma_hide_armor_patch_when_removed = true
 	log("wrapped register")
 end
 
@@ -184,7 +184,7 @@ local function wrap_patch_action()
 		log("menu_patch_action missing")
 		return
 	end
-	if gd.__dogma_grey_unpatched_outfit_patch then
+	if gd.__dogma_hide_armor_patch_when_removed then
 		return
 	end
 	local orig = gd.menu_patch_action
@@ -193,7 +193,7 @@ local function wrap_patch_action()
 		orig(obj)
 		refresh_icons()
 	end
-	gd.__dogma_grey_unpatched_outfit_patch = true
+	gd.__dogma_hide_armor_patch_when_removed = true
 	log("wrapped menu_patch_action")
 end
 

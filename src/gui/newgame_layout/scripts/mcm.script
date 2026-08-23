@@ -4,33 +4,96 @@
 -- wrap via _G. New Game UI is not loaded until MCM gather on a cold boot.
 
 local MOD_ID = "dogma/gui/newgame_layout"
-local HARD_INDEX = 3
-local LIVES = 2
+local SECTION = "dogma_new_game_remember"
 
--- Location ids from plugins/new_game_start_locations.ltx (story-mode bases).
-local FACTION_DEFAULT_MAP = {
-	stalker = "rookie_village", -- Cordon
-	freedom = "military_base", -- Army Warehouses
-	dolg = "makeshift_barracks", -- Rostok / Bar
-	army = "research_institute", -- Agroprom
-	bandit = "northern_factory", -- Dark Valley
-	csky = "hidden_base", -- Swamps
-	ecolog = "sakharovs_bunker", -- Yantar
-	killer = "sports_center", -- Dead City
-	monolith = "cultural_center", -- Pripyat
-	greh = "red_forest_old_mine", -- Red Forest
-	-- isg: leave stock Random (no clear main base)
-	renegade = "tuzla_outpost", -- Swamps
+local CHECKS = {
+	{ "ck_story", "story", "remember_story" },
+	{ "ck_azazel_mode", "azazel", "remember_azazel" },
+	{ "ck_survival", "survival", "remember_survival" },
+	{ "ck_warfare", "warfare", "remember_warfare" },
+	{ "ck_hardcore", "hardcore", "remember_hardcore" },
+	{ "ck_routes", "routes", "remember_routes" },
+	{ "ck_conditions", "conditions", "remember_conditions" },
+	{ "ck_campfire", "campfire", "remember_campfire" },
+	{ "ck_soulslike_mode", "soulslike", "remember_soulslike" },
+	{ "ck_drx", "drx", "remember_drx" },
+}
+
+local REMEMBER_OPTS = {
+	{ "remember_name", "dogma_gui_newgame_layout_remember_name" },
+	{ "remember_portrait", "dogma_gui_newgame_layout_remember_portrait" },
+	{ "remember_faction", "dogma_gui_newgame_layout_remember_faction" },
+	{ "remember_spawn", "dogma_gui_newgame_layout_remember_spawn" },
+	{ "remember_difficulty", "dogma_gui_newgame_layout_remember_difficulty" },
+	{ "remember_economy", "dogma_gui_newgame_layout_remember_economy" },
+	{ "remember_lives", "dogma_gui_newgame_layout_remember_lives" },
+	{ "remember_regen", "dogma_gui_newgame_layout_remember_regen" },
+	{ "remember_timer", "dogma_gui_newgame_layout_remember_timer" },
+	{ "remember_story", "dogma_gui_newgame_layout_remember_story" },
+	{ "remember_azazel", "dogma_gui_newgame_layout_remember_azazel" },
+	{ "remember_survival", "dogma_gui_newgame_layout_remember_survival" },
+	{ "remember_warfare", "dogma_gui_newgame_layout_remember_warfare" },
+	{ "remember_hardcore", "dogma_gui_newgame_layout_remember_hardcore" },
+	{ "remember_routes", "dogma_gui_newgame_layout_remember_routes" },
+	{ "remember_conditions", "dogma_gui_newgame_layout_remember_conditions" },
+	{ "remember_campfire", "dogma_gui_newgame_layout_remember_campfire" },
+	{ "remember_soulslike", "dogma_gui_newgame_layout_remember_soulslike" },
+	{ "remember_drx", "dogma_gui_newgame_layout_remember_drx" },
 }
 
 local STATE = _G.__dogma_gui_newgame_layout or {}
 _G.__dogma_gui_newgame_layout = STATE
 
-local function opt(key)
+local function want(key)
 	if dogma_mcm and dogma_mcm.bool then
 		return dogma_mcm.bool(MOD_ID, key)
 	end
 	return true
+end
+
+local function cfg()
+	return axr_main and axr_main.config
+end
+
+local function r_str(c, key)
+	local v = c:r_value(SECTION, key, 3)
+	if v and v ~= "" then
+		return v
+	end
+end
+
+local function r_num(c, key)
+	return c:r_value(SECTION, key, 2)
+end
+
+local function r_on(c, key)
+	return c:r_value(SECTION, key, 1) == true
+end
+
+local function saved()
+	local c = cfg()
+	if not (c and c.r_value) then
+		return
+	end
+	if c:r_value(SECTION, "started", 1) ~= true and not r_str(c, "faction") then
+		return
+	end
+	local s = {
+		faction = r_str(c, "faction"),
+		map = r_str(c, "map"),
+		name = r_str(c, "name"),
+		icon = r_str(c, "icon"),
+		difficulty = r_str(c, "difficulty"),
+		economy = r_str(c, "economy"),
+		lives = r_num(c, "lives"),
+		regen = r_num(c, "regen"),
+		timer = r_num(c, "timer"),
+		ck = {},
+	}
+	for i = 1, #CHECKS do
+		s.ck[CHECKS[i][1]] = r_on(c, CHECKS[i][2])
+	end
+	return s
 end
 
 local function set_check(self, key, on)
@@ -42,144 +105,220 @@ local function set_check(self, key, on)
 	end
 end
 
-local function force_hard_pick(self, list, table_key, selected_key)
-	if not (opt("default_hard") or opt("default_invictus")) then
+local function is_on(self, key)
+	if self[key] and self[key].GetCheck then
+		return self[key]:GetCheck() and true or false
+	end
+	return self.ck_states and self.ck_states[key] and true or false
+end
+
+local function row_n(sel)
+	return type(sel) == "table" and sel[1] or nil
+end
+
+local function can_start(self)
+	if not self.access then
+		return false
+	end
+	local t = self.character_name and self.character_name.GetText and self.character_name:GetText()
+	return t and t ~= ""
+end
+
+local function persist(self)
+	local c = cfg()
+	if not (c and c.w_value and can_start(self)) then
 		return
 	end
+	local name = self.character_name and self.character_name.GetText and self.character_name:GetText()
+	c:w_value(SECTION, "started", true)
+	c:w_value(SECTION, "faction", self.selected_faction or nil)
+	c:w_value(SECTION, "map", self.selected_map or nil)
+	c:w_value(SECTION, "name", name and name:gsub(" ", "_") or nil)
+	c:w_value(SECTION, "icon", self.selected_icon or nil)
+	c:w_value(SECTION, "difficulty", self.selected_difficulty or nil)
+	c:w_value(SECTION, "economy", self.selected_economy or nil)
+	c:w_value(SECTION, "lives", row_n(self.selected_hardcore_lives))
+	c:w_value(SECTION, "regen", row_n(self.selected_hardcore_regen))
+	c:w_value(SECTION, "timer", row_n(self.selected_timer))
+	for i = 1, #CHECKS do
+		c:w_value(SECTION, CHECKS[i][2], is_on(self, CHECKS[i][1]))
+	end
+	if c.save then
+		c:save()
+	end
+end
+
+local function set_list(list, text, idx)
+	if not list then
+		return
+	end
+	if idx then
+		if list.SetCurrentIdx then
+			list:SetCurrentIdx(idx - 1)
+		end
+		if list.SetCurrentID then
+			list:SetCurrentID(idx)
+		end
+	end
+	if text and list.SetText then
+		list:SetText(text)
+	end
+end
+
+local function pick_id(self, list, table_key, selected_key, want_id)
 	local t = self[table_key]
-	if not (self[list] and t) then
+	if not (want_id and t and self[list]) then
 		return
 	end
-	local pick = t[HARD_INDEX] or t[1]
-	if not pick then
-		return
-	end
-	self[list]:SetText(game.translate_string(pick))
-	self[selected_key] = pick
-end
-
--- Same Invictus checks as dogma_mode PREP (not kit/money). After base so
--- remember_new_game_settings cannot overwrite them on first visit.
-local function force_invictus(self)
-	if not opt("default_invictus") then
-		return
-	end
-	if not (self and self.CC) then
-		return
-	end
-	if self.selected_faction ~= "zombied" then
-		set_check(self, "ck_story", true)
-	end
-	set_check(self, "ck_warfare", false)
-	set_check(self, "ck_azazel_mode", false)
-	set_check(self, "ck_hardcore", true)
-	set_check(self, "ck_soulslike_mode", false)
-	if self.LoadHardcoreLives then
-		self:LoadHardcoreLives(false)
-	end
-	local t = self.table_hardcore_lives
-	if t then
-		for i = 1, #t do
-			local row = t[i]
-			if type(row) == "table" and row[1] == LIVES then
-				local list = self.list_hardcore_lives
-				if list then
-					if list.SetCurrentIdx then
-						list:SetCurrentIdx(i - 1)
-					end
-					if list.GetTextOf and list.SetText then
-						local text = list:GetTextOf(i - 1)
-						if text and text ~= "" then
-							list:SetText(text)
-						end
-					end
-				end
-				self.selected_hardcore_lives = row
-				break
-			end
-		end
-	end
-	force_hard_pick(self, "list_difficulty", "table_difficulty", "selected_difficulty")
-	force_hard_pick(self, "list_economy", "table_economy", "selected_economy")
-end
-
-local function force_map_pick(self)
-	if not opt("default_spawn") then
-		return
-	end
-	local want = FACTION_DEFAULT_MAP[self.selected_faction]
-	local t = self.table_map
-	-- Unlisted factions (e.g. ISG) keep stock Random.
-	if not want or not (self.list_map and t and #t > 0) then
-		return
-	end
-
-	local idx
 	for i = 1, #t do
-		if t[i] == want then
-			idx = i
-			break
+		if t[i] == want_id then
+			set_list(self[list], game.translate_string(want_id), i)
+			self[selected_key] = want_id
+			return
 		end
 	end
-	if not idx then
-		for i = 1, #t do
-			if t[i] ~= "random_location" then
-				idx = i
-				break
-			end
-		end
-	end
-	if not idx then
+end
+
+local function pick_row(self, list, table_key, selected_key, want_id, text_of)
+	local t = self[table_key]
+	if not t or not self[list] then
 		return
 	end
-
-	local pick = t[idx]
-	if self.list_map.SetCurrentID then
-		self.list_map:SetCurrentID(idx)
-	end
-	self.list_map:SetText(game.translate_string("ui_st_" .. pick))
-	self.selected_map = pick
-	if self.UpdateMap then
-		self:UpdateMap()
+	for i = 1, #t do
+		local row = t[i]
+		if type(row) == "table" and row[1] == want_id then
+			set_list(self[list], text_of(row), i)
+			self[selected_key] = row
+			return
+		end
 	end
 end
 
-local function wrap_loader(cls, method, list, table_key, selected_key, state_key)
-	if STATE[state_key] and cls[method] == STATE[state_key] then
-		return true
+local function apply_checks(self, s)
+	for i = 1, #CHECKS do
+		local key = CHECKS[i][1]
+		if want(CHECKS[i][3]) and self[key] then
+			set_check(self, key, s.ck[key] and true or false)
+		end
 	end
-	local base = cls[method]
-	if not base then
-		return false
-	end
-
-	local function wrapped(self, rand)
-		base(self, false)
-		force_hard_pick(self, list, table_key, selected_key)
-	end
-
-	cls[method] = wrapped
-	STATE[state_key] = wrapped
-	return true
 end
 
-local function wrap_load_map(cls)
-	if STATE.wrap_map and cls.LoadMap == STATE.wrap_map then
-		return true
+local function apply_zombied_story(self)
+	if self.selected_faction == "zombied" and self.ck_story then
+		set_check(self, "ck_story", false)
+		if self.ck_story.Enable then
+			self.ck_story:Enable(false)
+		end
+	elseif self.ck_story and self.ck_story.Enable then
+		self.ck_story:Enable(true)
 	end
-	local base = cls.LoadMap
-	if not base then
-		return false
-	end
+end
 
-	local function wrapped(self, rand)
-		base(self, false)
-		force_map_pick(self)
+local function apply_faction(self, s)
+	if not (want("remember_faction") and s.faction and self.LoadFaction) then
+		return
 	end
+	if self.table_faction and not self.table_faction[s.faction] then
+		return
+	end
+	self:LoadFaction(false, s.faction)
+	if self.UpdateDescr then
+		self:UpdateDescr()
+	end
+	apply_zombied_story(self)
+end
 
-	cls.LoadMap = wrapped
-	STATE.wrap_map = wrapped
-	return true
+local function apply_dropdowns(self, s)
+	if want("remember_difficulty") then
+		pick_id(self, "list_difficulty", "table_difficulty", "selected_difficulty", s.difficulty)
+	end
+	if want("remember_economy") then
+		pick_id(self, "list_economy", "table_economy", "selected_economy", s.economy)
+	end
+	if want("remember_lives") then
+		pick_row(self, "list_hardcore_lives", "table_hardcore_lives", "selected_hardcore_lives", s.lives, function(row)
+			return (row[1] or "") .. " " .. game.translate_string(row[2])
+		end)
+	end
+	if want("remember_regen") then
+		pick_row(self, "list_hardcore_regen", "table_hardcore_regen", "selected_hardcore_regen", s.regen, function(row)
+			local n = row[1] and (round_idp and round_idp(row[1] / 24) or math.floor(row[1] / 24))
+			return (n and tostring(n) or "") .. " " .. game.translate_string(row[2])
+		end)
+	end
+	if want("remember_timer") then
+		pick_row(self, "list_timer", "table_timer", "selected_timer", s.timer, function(row)
+			return (row[1] or "") .. " " .. game.translate_string(row[2])
+		end)
+	end
+end
+
+local function apply_name(self, s)
+	if want("remember_name") and s.name and self.character_name and self.character_name.SetText then
+		self.character_name:SetText(s.name:gsub("_", " "))
+	end
+end
+
+local function apply_icon(self, s)
+	if not want("remember_portrait") then
+		return
+	end
+	if self.LoadIcon then
+		self:LoadIcon(false)
+	end
+	local t = self.table_icon
+	if not (s.icon and t) then
+		return
+	end
+	for i = 1, #t do
+		if t[i] == s.icon then
+			self.selected_icon = s.icon
+			if self.UpdateIcon then
+				self:UpdateIcon()
+			end
+			return
+		end
+	end
+end
+
+local function apply_map(self, s)
+	if not want("remember_spawn") then
+		return
+	end
+	if self.LoadMap then
+		self:LoadMap(false)
+	end
+	local t = self.table_map
+	if not (s.map and t and self.list_map) then
+		return
+	end
+	for i = 1, #t do
+		if t[i] == s.map then
+			set_list(self.list_map, game.translate_string("ui_st_" .. s.map), i)
+			self.selected_map = s.map
+			if self.UpdateMap then
+				self:UpdateMap()
+			end
+			return
+		end
+	end
+end
+
+local function apply(self, reload_loadout)
+	local s = saved()
+	if not (s and self and self.CC) then
+		return
+	end
+	local prev = self.selected_faction
+	apply_faction(self, s)
+	apply_name(self, s)
+	apply_icon(self, s)
+	apply_checks(self, s)
+	apply_dropdowns(self, s)
+	apply_map(self, s)
+	if reload_loadout and prev ~= self.selected_faction and self.LoadLoadout then
+		self:LoadLoadout(false)
+	end
 end
 
 -- Main-menu New Game click sits over the loadout; eat purchases until LMB is up.
@@ -194,100 +333,87 @@ local function arm_eat()
 	STATE.eat_click = mouse1_down() or nil
 end
 
-local function wrap_on_cc_mouse1(cls)
-	if STATE.wrap_mouse1 and cls.On_CC_Mouse1 == STATE.wrap_mouse1 then
+local function wrap(cls, key, state_key, make)
+	if STATE[state_key] and cls[key] == STATE[state_key] then
 		return true
 	end
-	local base = cls.On_CC_Mouse1
-	if not base then
+	local wrapped = make(cls[key])
+	if not wrapped then
 		return false
 	end
+	cls[key] = wrapped
+	STATE[state_key] = wrapped
+	return true
+end
 
-	local function wrapped(self, cont, idx)
-		if not STATE.active then
-			arm_eat()
-		end
-		if STATE.eat_click then
+local function wrap_on_cc_mouse1(cls)
+	return wrap(cls, "On_CC_Mouse1", "wrap_mouse1", function(base)
+		if not base then
 			return
 		end
-		return base(self, cont, idx)
-	end
-
-	cls.On_CC_Mouse1 = wrapped
-	STATE.wrap_mouse1 = wrapped
-	return true
+		return function(self, cont, idx)
+			if not STATE.active then
+				arm_eat()
+			end
+			if STATE.eat_click then
+				return
+			end
+			return base(self, cont, idx)
+		end
+	end)
 end
 
 local function wrap_update(cls)
-	if STATE.wrap_update and cls.Update == STATE.wrap_update then
-		return true
-	end
-	local base = cls.Update
-
-	local function wrapped(self, ...)
-		if not STATE.active then
-			STATE.active = true
-			arm_eat()
+	return wrap(cls, "Update", "wrap_update", function(base)
+		return function(self, ...)
+			if not STATE.active then
+				STATE.active = true
+				arm_eat()
+			end
+			if self and self.CC and not self._dogma_remember_visit then
+				self._dogma_remember_visit = true
+				apply(self, true)
+			end
+			if base then
+				base(self, ...)
+			end
+			if STATE.eat_click and not mouse1_down() then
+				STATE.eat_click = nil
+			end
 		end
-		if base then
-			base(self, ...)
-		end
-		if not STATE.invictus_done and self and self.CC then
-			STATE.invictus_done = true
-			force_invictus(self)
-		end
-		if STATE.eat_click and not mouse1_down() then
-			STATE.eat_click = nil
-		end
-	end
-
-	cls.Update = wrapped
-	STATE.wrap_update = wrapped
-	return true
+	end)
 end
 
 local function wrap_on_quit(cls)
-	if STATE.wrap_quit and cls.OnQuit == STATE.wrap_quit then
-		return true
-	end
-	local base = cls.OnQuit
-	if not base then
-		return false
-	end
-
-	local function wrapped(self, ...)
-		STATE.active = nil
-		STATE.eat_click = nil
-		STATE.invictus_done = nil
-		return base(self, ...)
-	end
-
-	cls.OnQuit = wrapped
-	STATE.wrap_quit = wrapped
-	return true
+	return wrap(cls, "OnQuit", "wrap_quit", function(base)
+		if not base then
+			return
+		end
+		return function(self, ...)
+			STATE.active = nil
+			STATE.eat_click = nil
+			if self then
+				self._dogma_remember_visit = nil
+			end
+			return base(self, ...)
+		end
+	end)
 end
 
 local function wrap_main_controls(cls)
-	if STATE.wrap_controls and cls.Main_Controls == STATE.wrap_controls then
-		return true
-	end
-	local base = cls.Main_Controls
-	if not base then
-		return false
-	end
-
-	local function wrapped(self, ...)
-		arm_eat()
-		local r = base(self, ...)
-		wrap_on_cc_mouse1(cls)
-		wrap_update(cls)
-		wrap_on_quit(cls)
-		return r
-	end
-
-	cls.Main_Controls = wrapped
-	STATE.wrap_controls = wrapped
-	return true
+	return wrap(cls, "Main_Controls", "wrap_controls", function(base)
+		if not base then
+			return
+		end
+		return function(self, ...)
+			arm_eat()
+			local r = base(self, ...)
+			wrap_on_cc_mouse1(cls)
+			wrap_update(cls)
+			wrap_on_quit(cls)
+			return r
+		end
+	end)
 end
 
 local function patch_new_game()
@@ -296,27 +422,57 @@ local function patch_new_game()
 		return false
 	end
 
-	local ok_diff = wrap_loader(
-		cls, "LoadDifficulty", "list_difficulty", "table_difficulty", "selected_difficulty", "wrap_difficulty"
-	)
-	local ok_eco = wrap_loader(
-		cls, "LoadEconomy", "list_economy", "table_economy", "selected_economy", "wrap_economy"
-	)
-	local ok_map = wrap_load_map(cls)
+	wrap(cls, "OnStartGame", "wrap_start", function(base)
+		return function(self, ...)
+			persist(self)
+			if base then
+				return base(self, ...)
+			end
+		end
+	end)
+
+	wrap(cls, "UpdateAll", "wrap_all", function(base)
+		if not base then
+			return
+		end
+		return function(self, rand, faction)
+			if not rand then
+				return base(self, rand, faction)
+			end
+			local s = saved()
+			if s then
+				apply_checks(self, s)
+				if want("remember_faction") and s.faction and (not self.table_faction or self.table_faction[s.faction]) then
+					faction = s.faction
+				end
+			end
+			local r = base(self, true, faction)
+			if s then
+				apply_zombied_story(self)
+				apply_name(self, s)
+				apply_icon(self, s)
+				apply_dropdowns(self, s)
+				apply_map(self, s)
+			end
+			return r
+		end
+	end)
+
 	wrap_on_cc_mouse1(cls)
 	wrap_update(cls)
 	wrap_on_quit(cls)
 	wrap_main_controls(cls)
-	return ok_diff and ok_eco and ok_map
+	return true
+end
+
+local DEFAULTS = {}
+for i = 1, #REMEMBER_OPTS do
+	DEFAULTS[REMEMBER_OPTS[i][1]] = true
 end
 
 _G.dogma_gui_newgame_layout_conf = {
 	MOD_ID = MOD_ID,
-	DEFAULTS = {
-		default_hard = true,
-		default_invictus = true,
-		default_spawn = true,
-	},
+	DEFAULTS = DEFAULTS,
 	loaded = {},
 	patch_new_game = patch_new_game,
 }
@@ -328,11 +484,10 @@ _G.dogma_gui_newgame_layout_conf = {
 	zzzz_* body scripts are not loaded until a game session, so a main.script
 	patch never sees New Game on a cold boot.
 
-	Wraps LoadDifficulty / LoadEconomy / LoadMap so first open and Randomize
-	can pick Veteran + Survivalist + each faction's main base. Optional
-	Invictus defaults (Story/Ironman/2 lives, Warfare/Azazel/Soulslike off)
-	apply once per visit after other New Game wraps. Manual combo changes
-	still work (OnSelect*). MCM toggles gate those defaults.
+	Wider loadout panel (XML). Last-start settings restore on New Game /
+	Randomize, gated by MCM remember toggles (all on by default). Loadout
+	purchases are not remembered. LMB eat stops the New Game click from
+	buying the first shop cell.
 
 	Soulslike checkbox: we replace their injector
 	(scripts/override/souslike_gamemode_injector_mcm.script).
@@ -340,43 +495,33 @@ _G.dogma_gui_newgame_layout_conf = {
 
 local CONFIG = _G.dogma_gui_newgame_layout_conf
 
--- Top-level: runs when MCM gathers *mcm.script at main menu.
 CONFIG.patch_new_game()
+RegisterScriptCallback("main_menu_on_init", CONFIG.patch_new_game)
 
 function on_mcm_load(options)
 	CONFIG.patch_new_game()
+
+	local gr = {
+		{
+			id = "page_description",
+			type = "desc",
+			text = "ui_mcm_dogma_gui_newgame_layout_page_description",
+		},
+	}
+	for i = 1, #REMEMBER_OPTS do
+		gr[#gr + 1] = {
+			id = REMEMBER_OPTS[i][1],
+			type = "check",
+			val = 1,
+			def = true,
+			hint = REMEMBER_OPTS[i][2],
+		}
+	end
 
 	dogma_mcm.attach(options, "gui", "ui_mcm_menu_dogma_gui", {
 		id = "newgame_layout",
 		sh = true,
 		text = "ui_mcm_menu_dogma_gui_newgame_layout",
-		gr = dogma_mcm.with_header({
-			{
-				id = "page_description",
-				type = "desc",
-				text = "ui_mcm_dogma_gui_newgame_layout_page_description",
-			},
-			{
-				id = "default_hard",
-				type = "check",
-				val = 1,
-				def = CONFIG.DEFAULTS.default_hard,
-				hint = "dogma_gui_newgame_layout_default_hard",
-			},
-			{
-				id = "default_invictus",
-				type = "check",
-				val = 1,
-				def = CONFIG.DEFAULTS.default_invictus,
-				hint = "dogma_gui_newgame_layout_default_invictus",
-			},
-			{
-				id = "default_spawn",
-				type = "check",
-				val = 1,
-				def = CONFIG.DEFAULTS.default_spawn,
-				hint = "dogma_gui_newgame_layout_default_spawn",
-			},
-		}),
+		gr = dogma_mcm.with_header(gr),
 	})
 end

@@ -1,0 +1,15 @@
+-- tweaks/hide_armor_patch_when_removed conf (info-only MCM; always on while installed)
+
+_G.dogma_tweaks_hide_armor_patch_when_removed_conf = {
+	MOD_ID = "dogma/tweaks/hide_armor_patch_when_removed",
+}
+
+function on_mcm_load(options)
+	dogma_mcm.append(options, "tweaks", "ui_mcm_menu_dogma_tweaks", {
+		{
+			id = "hide_armor_patch_when_removed_description",
+			type = "desc",
+			text = "ui_mcm_dogma_tweaks_hide_armor_patch_when_removed_page_description",
+		},
+	})
+end

@@ -2,16 +2,27 @@
 	RF Receiver packages (Tweaki_Breeki / Cookbook / GAMMA Economy):
 
 	Stock picks the package map from tb_allmaps[current_level], which is only
-	neighbouring maps - never the map you are standing on. Spot pick itself is
-	already a flat random among tb_package_coords (no far-from-player filter).
+	neighbouring maps. Spot pick is a flat random among tb_package_coords.
 
-	Add the current level into each map's pool (when it has coords) so a package
-	can spawn on your map, including right next to you if the roll lands there.
+	Put the current level in that pool (when it has coords) so a package can
+	land on the map you are standing on.
 ]]
+
+local CONFIG = _G.dogma_tweaks_rf_mission_can_spawn_on_current_map_conf
+local MOD_ID = CONFIG and CONFIG.MOD_ID or "dogma/tweaks/rf_mission_can_spawn_on_current_map"
+
+local function log(msg)
+	if dogma.dbg.logging() then
+		dogma.dbg.log(MOD_ID, tostring(msg))
+	end
+end
 
 local function has_coords(map)
 	local spots = tb_package_coords and tb_package_coords[map]
-	return type(spots) == "table" and #spots > 0
+	if type(spots) ~= "table" then
+		return false
+	end
+	return (#spots > 0) or (next(spots) ~= nil)
 end
 
 local function list_has(list, map)
@@ -23,29 +34,39 @@ local function list_has(list, map)
 	return false
 end
 
+local function add_map(list, map)
+	if type(list) == "table" and map and has_coords(map) and not list_has(list, map) then
+		list[#list + 1] = map
+		return true
+	end
+	return false
+end
+
 local function allow_same_map_spawns()
 	if type(tb_allmaps) ~= "table" then
 		return false
 	end
 	for level_id, maps in pairs(tb_allmaps) do
-		if level_id ~= "default" and type(maps) == "table" and has_coords(level_id) then
-			if not list_has(maps, level_id) then
-				maps[#maps + 1] = level_id
+		if type(maps) == "table" then
+			if level_id == "default" then
+				local here = level and level.name and level.name()
+				add_map(maps, here)
+			elseif level_id and has_coords(level_id) then
+				add_map(maps, level_id)
 			end
 		end
 	end
 	return true
 end
 
-local function log_same_map_spawn(source)
-	if not (level and level.name and tb_package_in_level) then
-		return
+local function log_spawn(here)
+	local there = tb_package_in_level
+	local pool = here and tb_allmaps and tb_allmaps[here]
+	local n = (type(pool) == "table" and #pool) or 0
+	log(string.format("spawn here=%s there=%s pool=%s", tostring(here), tostring(there), tostring(n)))
+	if here and there == here then
+		dogma.console.say(string.format("RF package spawned on current map (%s)", here), "blue")
 	end
-	local here = level.name()
-	if tb_package_in_level ~= here then
-		return
-	end
-	dogma.console.say(string.format("RF package spawned on current map (%s, %s)", here, source or "spawn"), "blue")
 end
 
 local function hook_tb_spawn()
@@ -54,9 +75,11 @@ local function hook_tb_spawn()
 	end
 	local orig_radio = tb_radio_thing
 	function tb_radio_thing()
+		allow_same_map_spawns()
+		local here = level and level.name and level.name()
 		local ok = orig_radio()
 		if ok then
-			log_same_map_spawn("tb_radio_thing")
+			log_spawn(here)
 		end
 		return ok
 	end
@@ -65,9 +88,11 @@ local function hook_tb_spawn()
 	if type(failsafepackagespawn) == "function" and not failsafepackagespawn.__dogma_rf_same_map then
 		local orig_fail = failsafepackagespawn
 		function failsafepackagespawn()
+			allow_same_map_spawns()
+			local here = level and level.name and level.name()
 			local ok = orig_fail()
 			if ok then
-				log_same_map_spawn("failsafe")
+				log_spawn(here)
 			end
 			return ok
 		end
@@ -76,11 +101,10 @@ local function hook_tb_spawn()
 	return true
 end
 
--- TB_RF_Receiver_Packages.script loads earlier (no zzzz_); patch once here.
 allow_same_map_spawns()
 
 function on_game_start()
-	dogma.load("dogma/tweaks/rf_mission_can_spawn_on_current_map")
+	dogma.load(MOD_ID)
 	local function refresh()
 		allow_same_map_spawns()
 		hook_tb_spawn()

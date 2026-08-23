@@ -1224,15 +1224,23 @@ end
 
 -- game_over captures input, so on_before_key_press does not run. Poll Tab instead.
 local TAB_POLL = "tab_poll"
+local last_tab_frame = nil
 
 local function stop_tab_poll()
 	RemoveTimeEvent(CONFIG.MOD_ID, TAB_POLL)
+	last_tab_frame = nil
 end
 
 local function poll_tab()
 	if not death_armed then
 		return true
 	end
+	local d = device()
+	local frame = d and d.frame
+	if frame == last_tab_frame then
+		return false
+	end
+	last_tab_frame = frame
 	if dogma.input.is_key_pressed(tab_dik()) then
 		try_toggle_report(tab_dik())
 	end
@@ -1240,7 +1248,6 @@ local function poll_tab()
 end
 
 local function start_tab_poll()
-	dogma.input.is_key_down(tab_dik())
 	stop_tab_poll()
 	CreateTimeEvent(CONFIG.MOD_ID, TAB_POLL, 0, poll_tab)
 end

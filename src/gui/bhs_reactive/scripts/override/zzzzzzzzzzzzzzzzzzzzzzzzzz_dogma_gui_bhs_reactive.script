@@ -514,19 +514,6 @@ local function apply_boost_parks(want_parked)
 	end
 end
 
-local function boost_tick()
-	local L = CONFIG and CONFIG.loaded
-	if L then
-		apply_boost_parks(L.hide_status_icons and not hold_key(L.key_icons, L.key_icons_modifier))
-	end
-	return false
-end
-
-local function ensure_boost_tick()
-	if CreateTimeEvent then
-		CreateTimeEvent("dogma_bhs_reactive", "boost", 0, boost_tick)
-	end
-end
 
 local function actor_pct(field, fallback)
 	local a = db and db.actor
@@ -924,6 +911,7 @@ local function on_actor_update()
 	end
 
 	local icons_held = hold_key(L.key_icons, L.key_icons_modifier)
+	apply_boost_parks(L.hide_status_icons and not icons_held)
 	local hold_edge = icons_held ~= icons_hold_prev
 	icons_hold_prev = icons_held
 	if L.hide_status_icons or icons_held or hold_edge then
@@ -969,7 +957,6 @@ local function on_game_load()
 	reset_park_state()
 	-- Start wait here so actor_on_update never parks before first_update.
 	start_load_grace()
-	ensure_boost_tick()
 end
 
 local function on_main_menu()
@@ -985,7 +972,6 @@ local function on_first_update()
 		RegisterScriptCallback("actor_on_update", on_actor_update)
 		update_registered = true
 	end
-	ensure_boost_tick()
 	if CONFIG.loaded and CONFIG.loaded.hide_status_icons then
 		status_tick(time_global(), hold_key(CONFIG.loaded.key_icons, CONFIG.loaded.key_icons_modifier))
 	end

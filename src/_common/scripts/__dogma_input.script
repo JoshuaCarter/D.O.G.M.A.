@@ -9,6 +9,7 @@ local tostring = tostring
 local keys = {}
 -- on_key_press sets 2; we run first and decrement once so later updates still see >0.
 local any_pressed = 0
+local last_frame = nil
 
 local KeyStates = {
 	UP = 0,
@@ -30,30 +31,8 @@ local function is_uint(val)
 	return type(val) == "number" and val >= 0 and val == math.floor(val)
 end
 
-local function get_key(dik)
-	if not is_uint(dik) then
-		error("Invalid dik: " .. tostring(dik))
-	end
-
-	if not keys[dik] then
-		keys[dik] = {
-			down = false,
-			down_at = nil,
-			down_at_last = nil,
-			down_ms = nil,
-			up = true,
-			up_at = time_continual(),
-			up_ms = 0,
-		}
-	end
-
-	return keys[dik]
-end
-
-local function set_key_state(dik, state, time_ms)
-	local key = get_key(dik)
-
-	if state == KeyStates.DOWN then
+local function update_key(dik, key, time_ms)
+	if key_state(dik) ~= 0 then
 		-- reset up
 		key.up = false
 		key.up_at = nil
@@ -66,7 +45,7 @@ local function set_key_state(dik, state, time_ms)
 		else
 			key.down_ms = time_ms - key.down_at
 		end
-	elseif state == KeyStates.UP then
+	else
 		-- reset down
 		key.down = false
 		key.down_at_last = key.down_at
@@ -80,11 +59,29 @@ local function set_key_state(dik, state, time_ms)
 		else
 			key.up_ms = time_ms - key.up_at
 		end
-	else
-		error("Invalid key state: " .. state)
+	end
+end
+
+local function get_key(dik)
+	if not is_uint(dik) then
+		error("Invalid dik: " .. tostring(dik))
 	end
 
-	return key
+	if not keys[dik] then
+		-- init to mock up state, then update to actual key state
+		keys[dik] = {
+			down = false,
+			down_at = nil,
+			down_at_last = nil,
+			down_ms = nil,
+			up = true,
+			up_at = time_continual(),
+			up_ms = 1,
+		}
+		update_key(dik, keys[dik], time_continual())
+	end
+
+	return keys[dik]
 end
 
 local function update_keys()
@@ -93,16 +90,19 @@ local function update_keys()
 
 	local time_ms = time_continual()
 	for dik in pairs(keys) do
-		if key_state(dik) ~= 0 then
-			set_key_state(dik, KeyStates.DOWN, time_ms)
-		else
-			set_key_state(dik, KeyStates.UP, time_ms)
-		end
+		local key = get_key(dik)
+		update_key(dik, key, time_ms)
 	end
 end
 
--- actor_on_update is skipped while dead; ProcessEventQueue still runs (death cam, etc.).
 local function tick()
+	-- time event can be called more than once per frame/actor_on_update, so just noop on extra calls
+	local d = device()
+	local frame = d and d.frame
+	if frame == last_frame then
+		return false
+	end
+	last_frame = frame
 	update_keys()
 	return false
 end
@@ -114,9 +114,10 @@ end
 local function reset_keys()
 	keys = {}
 	any_pressed = 0
+	last_frame = nil
 end
 
-local function on_key_press(_dik)
+local function on_any_press(_dik)
 	any_pressed = 2
 end
 
@@ -129,7 +130,7 @@ function on_game_start()
 	RegisterScriptCallback("main_menu_on_init", reset_keys)
 	RegisterScriptCallback("main_menu_on_quit", reset_keys)
 	RegisterScriptCallback("actor_on_net_destroy", reset_keys)
-	RegisterScriptCallback("on_key_press", on_key_press)
+	RegisterScriptCallback("on_key_press", on_any_press)
 end
 
 --------------------------------------------------------------------------------

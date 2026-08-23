@@ -81,36 +81,34 @@ local function tick()
 		hide()
 	end
 	if now < last_poll + POLL_MS then
-		return false
+		return
 	end
 	last_poll = now
 	if not dogma.sys.ready(MOD_ID, db, function()
 		CONFIG.loaded.enabled = dogma.mcm.bool(MOD_ID, "enabled", CONFIG.DEFAULTS.enabled)
 	end) then
-		return false
+		return
 	end
 	if not CONFIG.loaded.enabled then
-		return false
+		return
 	end
 	if not (dogma.sys.is_dogma_run and dogma.sys.is_dogma_run()) then
-		return false
+		return
 	end
 	local ok = still_possible()
 	if last_ok == true and ok == false then
 		show()
 	end
 	last_ok = ok
-	return false
 end
 
 function on_game_start()
 	dogma.load(MOD_ID)
+	RegisterScriptCallback("actor_on_update", tick)
 	RegisterScriptCallback("on_game_load", reset)
 	RegisterScriptCallback("main_menu_on_init", reset)
 	RegisterScriptCallback("actor_on_net_destroy", reset)
 	RegisterScriptCallback("on_option_change", function()
 		CONFIG.loaded.enabled = dogma.mcm.bool(MOD_ID, "enabled", CONFIG.DEFAULTS.enabled)
 	end)
-	-- TimeEvent still runs while dead; actor_on_update does not.
-	CreateTimeEvent(MOD_ID, "tick", 0, tick)
 end

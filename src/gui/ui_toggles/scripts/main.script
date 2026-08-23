@@ -1,0 +1,360 @@
+--[[
+	UI Toggles
+
+	Minimap + companion list. Hidden unless their key shows them (hold/toggle).
+	Companion: hide slots after Update. Never dialog:Show.
+]]
+
+local CONFIG = _G.dogma_gui_ui_toggles_conf
+
+local MODE_TOGGLE = 0
+local MODE_HOLD = 2
+local FLAG = "__dogma_gui_ui_toggles"
+
+local companion_show = false
+local companion_latched = false
+local logged_missing = false
+
+local map_desired = false
+local map_show_at = nil
+local map_pending = false
+
+local function log(msg)
+	if dogma.dbg.logging() then
+		dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
+	end
+end
+
+local function now_ms()
+	return time_continual()
+end
+
+local function key_ok(key, modifier)
+	return key and key >= 0 and dogma.input.is_mod_down(modifier or 0)
+end
+
+--------------------------------------------------------------------------------
+-- Minimap
+--------------------------------------------------------------------------------
+
+local function maingame()
+	return ActorMenu and ActorMenu.get_maingame and ActorMenu.get_maingame()
+end
+
+local function option_shown()
+	if not (ui_options and ui_options.get) then
+		return false
+	end
+	local v = ui_options.get("video/hud/show_minimap")
+	return v ~= nil and v ~= false and v ~= 0
+end
+
+local function ui_minimap_enabled()
+	local ui = maingame()
+	if ui and ui.UIZoneMap then
+		return not ui.UIZoneMap.disabled
+	end
+	return option_shown()
+end
+
+local function map_delay()
+	local d = CONFIG.loaded.minimap_delay_ms
+	if type(d) ~= "number" or d < 0 then
+		return 0
+	end
+	return math.floor(d)
+end
+
+local function map_delay_elapsed()
+	if not map_show_at then
+		return true
+	end
+	local d = map_delay()
+	if d <= 0 then
+		return true
+	end
+	return (now_ms() - map_show_at) >= d
+end
+
+local function force_hud_draw()
+	if get_console_cmd and not get_console_cmd(1, "hud_draw") then
+		if exec_console_cmd then
+			exec_console_cmd("hud_draw 1")
+		elseif get_console then
+			local c = get_console()
+			if c and c.execute then
+				c:execute("hud_draw 1")
+			end
+		end
+	end
+end
+
+local function force_indicators()
+	if level and level.show_indicators then
+		level.show_indicators()
+	end
+	if show_indicators then
+		show_indicators(true)
+	end
+end
+
+local function set_minimap(want_show)
+	want_show = not not want_show
+	if ui_options and ui_options.set and option_shown() ~= want_show then
+		ui_options.set("video/hud/show_minimap", want_show)
+	end
+	local ui = maingame()
+	if ui and ui.UIZoneMap then
+		ui.UIZoneMap.disabled = not want_show
+		pcall(function()
+			ui.UIZoneMap.visible = want_show
+		end)
+		if ui.ShowZoneMap then
+			pcall(function()
+				ui:ShowZoneMap(want_show)
+			end)
+		end
+		if want_show and ui.DrawZoneMap then
+			pcall(function()
+				ui:DrawZoneMap()
+			end)
+		end
+		if ui.UIMotionIcon and ui.UIMotionIcon.Show then
+			ui.UIMotionIcon:Show(want_show)
+		end
+	end
+	if want_show then
+		force_hud_draw()
+		force_indicators()
+	end
+end
+
+local function hide_minimap()
+	map_desired = false
+	map_show_at = nil
+	map_pending = false
+	set_minimap(false)
+end
+
+local function begin_map_show()
+	map_desired = true
+	map_show_at = now_ms()
+	if map_delay_elapsed() then
+		set_minimap(true)
+		return true
+	end
+	return false
+end
+
+local function enforce_map()
+	if map_desired and map_delay_elapsed() then
+		set_minimap(true)
+	end
+end
+
+local function tick_minimap()
+	local key = CONFIG.loaded.minimap_key
+	local delay = map_delay()
+	if CONFIG.loaded.minimap_mode == MODE_HOLD then
+		if not key_ok(key, CONFIG.loaded.minimap_modifier) then
+			if map_desired then
+				hide_minimap()
+			end
+			return
+		end
+		if dogma.input.is_key_held(key, delay) then
+			if not map_desired then
+				map_desired = true
+				map_show_at = nil
+				set_minimap(true)
+			else
+				enforce_map()
+			end
+		elseif map_desired then
+			hide_minimap()
+		end
+		return
+	end
+	if key_ok(key, CONFIG.loaded.minimap_modifier) and dogma.input.is_key_pressed(key) then
+		if map_pending or map_desired or ui_minimap_enabled() then
+			hide_minimap()
+		else
+			map_pending = true
+			if begin_map_show() then
+				map_pending = false
+			end
+		end
+	end
+	if map_pending and map_delay_elapsed() then
+		map_pending = false
+		map_desired = true
+		set_minimap(true)
+	end
+	enforce_map()
+end
+
+--------------------------------------------------------------------------------
+-- Companion list
+--------------------------------------------------------------------------------
+
+local function companion_hud()
+	local axr = rawget(_G, "axr_companions")
+	return axr and axr.HUD
+end
+
+local function hide_slots(self)
+	local info = self and self.companion_info
+	if not info then
+		return
+	end
+	for i = 1, 8 do
+		local slot = info[i] and info[i].base
+		if slot and slot.Show then
+			pcall(function()
+				slot:Show(false)
+			end)
+		end
+	end
+end
+
+local function set_companion_show(want)
+	if want == companion_show then
+		return
+	end
+	companion_show = want
+	local h = companion_hud()
+	if not h then
+		return
+	end
+	if want then
+		if h.Update then
+			h:Update(true)
+		end
+	else
+		hide_slots(h)
+	end
+end
+
+local function tick_companion()
+	local key = CONFIG.loaded.companion_key
+	local want
+	if not (key and key >= 0) then
+		want = false
+		companion_latched = false
+	elseif CONFIG.loaded.companion_mode == MODE_HOLD then
+		want = key_ok(key, CONFIG.loaded.companion_modifier) and dogma.input.is_key_down(key)
+	else
+		if key_ok(key, CONFIG.loaded.companion_modifier) and dogma.input.is_key_pressed(key) then
+			companion_latched = not companion_latched
+		end
+		want = companion_latched
+	end
+	set_companion_show(want)
+end
+
+local function companion_class()
+	local axr = rawget(_G, "axr_companions")
+	return axr and axr.UICompanionList
+end
+
+local function patch_companion()
+	local cls = companion_class()
+	if not cls then
+		if not logged_missing then
+			logged_missing = true
+			log("axr_companions.UICompanionList missing")
+		end
+		return false
+	end
+	if cls[FLAG] then
+		return true
+	end
+
+	local orig_init = cls.InitControls
+	if orig_init then
+		cls.InitControls = function(self, ...)
+			orig_init(self, ...)
+			if not companion_show then
+				hide_slots(self)
+			end
+		end
+	end
+
+	local orig_update = cls.Update
+	if orig_update then
+		cls.Update = function(self, ...)
+			orig_update(self, ...)
+			if not companion_show then
+				hide_slots(self)
+			end
+		end
+	end
+
+	cls[FLAG] = true
+	log("patched UICompanionList")
+	return true
+end
+
+--------------------------------------------------------------------------------
+-- Lifecycle
+--------------------------------------------------------------------------------
+
+local function load_opts()
+	local L = CONFIG.loaded
+	local function mode_of(v)
+		if v == MODE_HOLD then
+			return MODE_HOLD
+		end
+		return MODE_TOGGLE
+	end
+
+	L.minimap_key = dogma.mcm.key(CONFIG.MOD_ID, "minimap_key")
+	L.minimap_modifier = dogma.mcm.int(CONFIG.MOD_ID, "minimap_modifier")
+	L.minimap_mode = mode_of(dogma.mcm.int(CONFIG.MOD_ID, "minimap_mode"))
+	L.minimap_delay_ms = dogma.mcm.uint(CONFIG.MOD_ID, "minimap_delay_ms")
+	L.companion_key = dogma.mcm.key(CONFIG.MOD_ID, "companion_key")
+	L.companion_modifier = dogma.mcm.int(CONFIG.MOD_ID, "companion_modifier")
+	L.companion_mode = mode_of(dogma.mcm.int(CONFIG.MOD_ID, "companion_mode"))
+end
+
+local function on_option_change()
+	load_opts()
+	companion_latched = false
+	set_companion_show(false)
+	hide_minimap()
+end
+
+local function actor_on_update()
+	if not dogma.sys.ready(CONFIG.MOD_ID, db, load_opts) then
+		return
+	end
+	tick_minimap()
+	tick_companion()
+end
+
+local function reset()
+	companion_show = false
+	companion_latched = false
+	map_desired = false
+	map_show_at = nil
+	map_pending = false
+end
+
+function on_game_start()
+	dogma.load(CONFIG.MOD_ID)
+	load_opts()
+	reset()
+	logged_missing = false
+	patch_companion()
+	RegisterScriptCallback("actor_on_first_update", function()
+		if not dogma.sys.ready(CONFIG.MOD_ID, db, load_opts) then
+			return
+		end
+		patch_companion()
+	end)
+	RegisterScriptCallback("on_option_change", on_option_change)
+	RegisterScriptCallback("actor_on_update", actor_on_update)
+	RegisterScriptCallback("on_game_load", reset)
+	RegisterScriptCallback("main_menu_on_init", reset)
+	RegisterScriptCallback("actor_on_net_destroy", reset)
+end

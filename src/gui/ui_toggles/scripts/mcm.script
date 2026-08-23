@@ -1,0 +1,112 @@
+-- gui/ui_toggles conf
+-- Hold/toggle keys for minimap + companion list. Hidden unless the key shows them.
+
+_G.dogma_gui_ui_toggles_conf = {
+	MOD_ID = "dogma/gui/ui_toggles",
+	DEFAULTS = {
+		minimap_key = -1,
+		minimap_modifier = 0,
+		-- 0 = toggle, 2 = hold
+		minimap_mode = 2,
+		minimap_delay_ms = 0,
+		companion_key = -1,
+		companion_modifier = 0,
+		companion_mode = 2,
+	},
+	loaded = {},
+}
+
+function on_mcm_load(options)
+	local CONFIG = _G.dogma_gui_ui_toggles_conf
+	local kb_mod = (ui_mcm and ui_mcm.kb_mod_radio) or "radio_h"
+	local mode_content = {
+		{ 0, "toggle" },
+		{ 2, "hold" },
+	}
+	local mod_content = {
+		{ 0, "mcm_kb_mod_none" },
+		{ 1, "mcm_kb_mod_shift" },
+		{ 2, "mcm_kb_mod_ctrl" },
+		{ 3, "mcm_kb_mod_alt" },
+	}
+
+	dogma_mcm.attach(options, "gui", "ui_mcm_menu_dogma_gui", {
+		id = "ui_toggles",
+		sh = true,
+		text = "ui_mcm_menu_dogma_gui_ui_toggles",
+		gr = dogma_mcm.with_header({
+			{
+				id = "page_description",
+				type = "desc",
+				text = "ui_mcm_dogma_gui_ui_toggles_page_description",
+			},
+			{
+				id = "hdr_minimap",
+				type = "desc",
+				text = "ui_mcm_dogma_gui_ui_toggles_minimap_section",
+			},
+			{
+				id = "minimap_key",
+				type = "key_bind",
+				val = 2,
+				def = CONFIG.DEFAULTS.minimap_key,
+				hint = "dogma_gui_ui_toggles_minimap_key",
+			},
+			{
+				id = "minimap_mode",
+				type = kb_mod,
+				val = 2,
+				def = CONFIG.DEFAULTS.minimap_mode,
+				hint = "dogma_gui_ui_toggles_minimap_mode",
+				content = mode_content,
+			},
+			{
+				id = "minimap_delay_ms",
+				type = "track",
+				val = 2,
+				min = 0,
+				max = 1000,
+				step = 25,
+				def = CONFIG.DEFAULTS.minimap_delay_ms,
+				hint = "dogma_gui_ui_toggles_minimap_delay_ms",
+			},
+			{
+				id = "minimap_modifier",
+				type = kb_mod,
+				val = 2,
+				def = CONFIG.DEFAULTS.minimap_modifier,
+				hint = "mcm_kb_modifier",
+				content = mod_content,
+			},
+			{ id = "line_companion", type = "line" },
+			{
+				id = "hdr_companion",
+				type = "desc",
+				text = "ui_mcm_dogma_gui_ui_toggles_companion_section",
+			},
+			{
+				id = "companion_key",
+				type = "key_bind",
+				val = 2,
+				def = CONFIG.DEFAULTS.companion_key,
+				hint = "dogma_gui_ui_toggles_companion_key",
+			},
+			{
+				id = "companion_mode",
+				type = kb_mod,
+				val = 2,
+				def = CONFIG.DEFAULTS.companion_mode,
+				hint = "dogma_gui_ui_toggles_companion_mode",
+				content = mode_content,
+			},
+			{
+				id = "companion_modifier",
+				type = kb_mod,
+				val = 2,
+				def = CONFIG.DEFAULTS.companion_modifier,
+				hint = "mcm_kb_modifier",
+				content = mod_content,
+			},
+		}),
+	})
+end

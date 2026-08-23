@@ -304,20 +304,34 @@ local function apply_map(self, s)
 	end
 end
 
+local function reload_shop(self)
+	if self.LoadLoadout then
+		self:LoadLoadout(false)
+	end
+end
+
 local function apply(self, reload_loadout)
 	local s = saved()
 	if not (s and self and self.CC) then
 		return
 	end
-	local prev = self.selected_faction
+	local prev_fac = self.selected_faction
+	local prev_diff = self.selected_difficulty
+	local prev_eco = self.selected_economy
 	apply_faction(self, s)
 	apply_name(self, s)
 	apply_icon(self, s)
 	apply_checks(self, s)
 	apply_dropdowns(self, s)
 	apply_map(self, s)
-	if reload_loadout and prev ~= self.selected_faction and self.LoadLoadout then
-		self:LoadLoadout(false)
+	-- Shop catalog + point budget are built from selected_difficulty / selected_economy.
+	-- Setting the dropdown text alone leaves the default easy/medium loadout on screen.
+	if reload_loadout and (
+		prev_fac ~= self.selected_faction
+		or prev_diff ~= self.selected_difficulty
+		or prev_eco ~= self.selected_economy
+	) then
+		reload_shop(self)
 	end
 end
 
@@ -448,11 +462,16 @@ local function patch_new_game()
 			end
 			local r = base(self, true, faction)
 			if s then
+				local prev_diff = self.selected_difficulty
+				local prev_eco = self.selected_economy
 				apply_zombied_story(self)
 				apply_name(self, s)
 				apply_icon(self, s)
 				apply_dropdowns(self, s)
 				apply_map(self, s)
+				if prev_diff ~= self.selected_difficulty or prev_eco ~= self.selected_economy then
+					reload_shop(self)
+				end
 			end
 			return r
 		end

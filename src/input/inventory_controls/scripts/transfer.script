@@ -27,20 +27,11 @@ local key_one = nil
 local mod_one = 0
 local bind_all = nil
 local bind_one = nil
-local allow = 0
-local original_action_move = nil
-local original_action_move_all = nil
-local move_wrapper = nil
-local move_all_wrapper = nil
 
 local function log(msg)
 	if dogma.dbg.logging() then
 		dogma.dbg.log(MOD_ID, tostring(msg))
 	end
-end
-
-local function is_shift_key(dik)
-	return dik == LSHIFT or dik == RSHIFT
 end
 
 local function on_option_change()
@@ -82,27 +73,6 @@ local function key_one_down()
 	return dik_down(key_one, mod_one)
 end
 
--- Stock/GAMMA shift-hover also calls Action_Move. When our bind is Shift,
--- swallow those so only hold+hover runs.
-local function suppress_inner()
-	if allow ~= 0 then
-		return false
-	end
-	if is_shift_key(key_all) and dogma.input.is_shift_down() then
-		return true
-	end
-	if is_shift_key(key_one) and dogma.input.is_shift_down() then
-		return true
-	end
-	return false
-end
-
-local function tick(gui)
-	if gui and suppress_inner() then
-		gui.holding_shift = false
-	end
-end
-
 local function move_one(gui, obj, bag)
 	if not (gui and obj and bag and gui.Action_Move) then
 		return
@@ -110,9 +80,7 @@ local function move_one(gui, obj, bag)
 	if gui.Cond_Move and not gui:Cond_Move(obj, bag) then
 		return
 	end
-	allow = allow + 1
 	gui:Action_Move(obj, bag)
-	allow = allow - 1
 end
 
 local function move_many(gui, items, bag)
@@ -155,44 +123,14 @@ local function fire(whole)
 	end
 end
 
-local function reapply_move_patch()
-	local cls = ui_inventory and ui_inventory.UIInventory
-	if not cls then
-		return
-	end
-	if cls.Action_Move and cls.Action_Move ~= move_wrapper then
-		original_action_move = cls.Action_Move
-		move_wrapper = function(self, obj, bag)
-			if suppress_inner() then
-				return
-			end
-			return original_action_move(self, obj, bag)
-		end
-		cls.Action_Move = move_wrapper
-	end
-	if cls.Action_Move_All and cls.Action_Move_All ~= move_all_wrapper then
-		original_action_move_all = cls.Action_Move_All
-		move_all_wrapper = function(self, obj, bag)
-			if suppress_inner() then
-				return
-			end
-			return original_action_move_all(self, obj, bag)
-		end
-		cls.Action_Move_All = move_all_wrapper
-	end
-end
-
 function on_game_start()
 	dogma.load(MOD_ID)
 	RegisterScriptCallback("on_option_change", on_option_change)
-	RegisterScriptCallback("actor_on_first_update", reapply_move_patch)
 	on_option_change()
-	reapply_move_patch()
 	bind_all = _G.dogma_inv_hover.register({
 		key_down = key_all_down,
 		mode_ok = inv_mode_ok,
 		bags = ALLOWED_BAGS,
-		tick = tick,
 		fire = fire(true),
 	})
 	bind_one = _G.dogma_inv_hover.register({

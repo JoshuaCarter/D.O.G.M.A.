@@ -96,6 +96,27 @@ local function our_hit_key()
 	knife_sec = nil
 end
 
+-- Same unstick as pistol draw: Activate(16) no-ops if 16 is already pending,
+-- and a leftover slot-14 dummy can freeze that swap. Rifles do not hit this.
+local function restore_weapon(actor)
+	local slot = last_slot or 0
+	if slot == PISTOL_SLOT then
+		local dummy = actor:item_in_slot(anm_slot)
+		if dummy then
+			local se = alife_object(dummy:id())
+			if se then
+				alife():release(se)
+			end
+		end
+		local pistol = actor:item_in_slot(PISTOL_SLOT)
+		if pistol and pistol.switch_state then
+			pistol:switch_state(3)
+		end
+		actor:activate_slot(0)
+	end
+	actor:activate_slot(slot)
+end
+
 local function our_hit_animation()
 	local actor = db.actor
 	if not actor then
@@ -126,15 +147,16 @@ local function our_hit_animation()
 		end
 		anm_state = 4
 	elseif anm_state == 4 and time_global() > anm_start + anm_time + 20 then
-		actor:activate_slot(last_slot)
+		restore_weapon(actor)
 		anm_state = 5
 	elseif anm_state == 5 and time_global() > anm_start + anm_time + 400 then
 		anm_state = 0
-	elseif anm_state ~= 0 and actor:active_slot() ~= anm_slot then
+	elseif anm_state ~= 0 and anm_state < 4 and actor:active_slot() ~= anm_slot then
 		local anm = actor:item_in_slot(anm_slot)
 		if anm then
 			alife():release(alife_object(anm:id()))
 		end
+		restore_weapon(actor)
 		anm_state = 0
 	end
 end

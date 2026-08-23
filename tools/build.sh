@@ -20,6 +20,11 @@
 #   src/<category>/<feature>/*.py           EXCEPTION: <mod>/<file> (run-from-mod-dir tools)
 #   src/_common/*.py                        EXCEPTION: <mod>/<file>
 #   src/<category>/<feature>/disables.txt     → <mod>/disables.txt (concat if several features)
+#   src/<category>/<feature>/stubs/*.script   → scripts/<basename>.script
+#   src/<feature>/stubs/*.script              → same (top-level feature)
+#   src/_common/stubs/*.script                → same (always-on)
+#                               FOMOD: just another gamedata script. Same as
+#                               scripts/override/ — dest is scripts/<name>.
 #
 # Scripts (prefix applied at build - src keeps short names like main.script):
 #   _common/scripts/__dogma_*        -> private impls
@@ -32,10 +37,11 @@
 #   …/scripts/modxml_*.script -> modxml_dogma_{path}_*.script
 #                               keep modxml_ prefix - Modded Exes only gathers
 #                               that glob for DXML on_xml_read injection
-#   …/scripts/override/*.script -> scripts/<basename>.script  (exact name - only
-#                               when disabled.ini cannot cover the conflict:
-#                               exo MCM replace, blank vanilla game_fast_travel,
-#                               Blindside/Keybinds scripts we must not disable)
+#   …/scripts/override/*.script -> scripts/<basename>.script  (exact name - real
+#                               replacement that must keep the rival filename)
+#   …/stubs/*.script          -> scripts/<basename>.script  (kill/blank a rival;
+#                               keep these out of scripts/ so they do not mix
+#                               with feature code)
 #   …/scripts/**/*.script     -> scripts/zzzz_dogma_{path}_<stem>.script
 #
 # Env:
@@ -185,6 +191,20 @@ src_dir_to_feature() {
 	esac
 }
 
+# Kill/blank a rival script. Exact basename under gamedata/scripts/.
+emit_stub_script() {
+	local src_path="$1"
+	local path_key="$2"
+	local base="$3"
+	[[ "$base" == *.script ]] || return 1
+	_emit_kind="gamedata"
+	_emit_src="$src_path"
+	_emit_rel="scripts/$base"
+	_emit_path_key="$path_key"
+	_emit_base="$base"
+	return 0
+}
+
 # path_key: category_feature or top-level feature. Empty = keep basename (_common/).
 script_dest_basename() {
 	local path_key="$1"
@@ -246,6 +266,10 @@ map_src_file() {
 		fi
 		# EXCEPTION: _common/mo2|db/ → <MO2 mod>/<bucket>/ (always-on core tools / archives).
 		local common_bucket="${bucket_rel%%/*}"
+		if [[ "$common_bucket" == "stubs" ]]; then
+			emit_stub_script "$src_path" "" "$base" || return 1
+			return 0
+		fi
 		if is_modroot_bucket "$common_bucket"; then
 			bucket_rel="${bucket_rel#"$common_bucket"/}"
 			[[ -n "$bucket_rel" && "$bucket_rel" != "$common_bucket" ]] || return 1
@@ -259,6 +283,10 @@ map_src_file() {
 			# Nested always-on: _common/<feat>/<gamedata-root>/... → path_key=<feat>
 			local rest="${bucket_rel#"$common_bucket"/}"
 			local nested_bucket="${rest%%/*}"
+			if [[ -n "$rest" && "$rest" != "$bucket_rel" ]] && [[ "$nested_bucket" == "stubs" ]]; then
+				emit_stub_script "$src_path" "$common_bucket" "$base" || return 1
+				return 0
+			fi
 			if [[ -n "$rest" && "$rest" != "$bucket_rel" ]] && is_gamedata_root "$nested_bucket"; then
 				path_key="$common_bucket"
 				bucket_rel="$rest"
@@ -309,6 +337,11 @@ map_src_file() {
 				return 0
 			fi
 
+			if [[ "$bucket" == "stubs" ]]; then
+				emit_stub_script "$src_path" "$path_key" "$base" || return 1
+				return 0
+			fi
+
 			is_gamedata_root "$bucket" || return 1
 			bucket_rel="${rel#"$feat_dir/"}"
 		else
@@ -327,6 +360,11 @@ map_src_file() {
 				_emit_rel="$bucket/$bucket_rel"
 				_emit_path_key="$path_key"
 				_emit_base="$base"
+				return 0
+			fi
+
+			if [[ "$bucket" == "stubs" ]]; then
+				emit_stub_script "$src_path" "$path_key" "$base" || return 1
 				return 0
 			fi
 

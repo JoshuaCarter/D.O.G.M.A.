@@ -13,6 +13,7 @@ local CONFIG = _G.dogma_tweaks_grey_unpatched_outfit_patch_conf
 
 local HOOK_STATE = _G.__dogma_grey_unpatched_outfit_patch or {}
 _G.__dogma_grey_unpatched_outfit_patch = HOOK_STATE
+HOOK_STATE.wrapped = HOOK_STATE.wrapped or {}
 
 local function log(msg)
 	if CONFIG then
@@ -30,16 +31,33 @@ local function is_unpatched(obj)
 	return se_load_var(id, obj:name(), "unpatched") or se_load_var(id, nil, "unpatched")
 end
 
-local function is_badge(tbl)
+local function section_community(sec)
+	if not sec then
+		return nil
+	end
+	if ini_sys and ini_sys.r_string_ex then
+		return ini_sys:r_string_ex(sec, "community")
+	end
+	return SYS_GetParam and SYS_GetParam(0, sec, "community")
+end
+
+local function is_badge(tbl, sec)
 	if not tbl then
 		return false
 	end
 	local layer = tbl.icon_layer
-	if layer and (string.sub(layer, -6) == "_patch" or string.find(layer, "faction", 1, true)) then
+	if layer and string.sub(layer, -6) == "_patch" then
 		return true
 	end
 	local tex = tbl.texture
-	return tex and (string.find(tex, "ui_mm_faction_", 1, true) or string.find(tex, "faction", 1, true)) ~= nil
+	if not tex then
+		return false
+	end
+	if string.find(tex, "ui_mm_faction_", 1, true) then
+		return true
+	end
+	local comm = section_community(sec)
+	return comm and comm ~= "" and tex == ("ui_dyn_eq_" .. comm)
 end
 
 local function torn_badge(tbl)
@@ -52,7 +70,7 @@ local function torn_badge(tbl)
 end
 
 local function wrap_functor(fn)
-	if type(fn) ~= "function" or fn.__dogma_grey_patch then
+	if type(fn) ~= "function" or HOOK_STATE.wrapped[fn] then
 		return fn
 	end
 	local wrapped = function(cell, obj, sec)
@@ -62,22 +80,24 @@ local function wrap_functor(fn)
 			return
 		end
 		local torn = is_unpatched(obj)
-		if torn or is_badge(tbl) then
+		local badge = is_badge(tbl, sec)
+		if torn or badge then
 			log(string.format(
 				"layer sec=%s layer=%s tex=%s torn=%s badge=%s",
 				tostr(sec),
 				tostr(tbl.icon_layer),
 				tostr(tbl.texture),
 				tostr(torn),
-				tostr(is_badge(tbl))
+				tostr(badge)
 			))
 		end
-		if torn and is_badge(tbl) then
+		if torn and badge then
 			return torn_badge(tbl)
 		end
 		return tbl
 	end
-	wrapped.__dogma_grey_patch = true
+	HOOK_STATE.wrapped[fn] = true
+	HOOK_STATE.wrapped[wrapped] = true
 	return wrapped
 end
 
@@ -115,7 +135,7 @@ local function wrap_icon_layers(icon_layers)
 	for _, list in pairs(icon_layers) do
 		if type(list) == "table" then
 			for i, fn in pairs(list) do
-				if type(fn) == "function" and not fn.__dogma_grey_patch then
+				if type(fn) == "function" and not HOOK_STATE.wrapped[fn] then
 					list[i] = wrap_functor(fn)
 					n = n + 1
 				end

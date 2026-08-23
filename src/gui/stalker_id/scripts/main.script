@@ -5,7 +5,8 @@
 	optional LOS). Both rays share one bush-pierce budget. Hipfire both 100m; binoculars both 200m;
 	other ADS/zoom keeps soft at 100m but exact at 200m. Leader line:
 	living non-hostiles normally, all living stalkers in binocs; never corpses.
-	Living hostile / zombified names are red; dead names are grey. Losing the target fades over MCM fade-out time.
+	Goodwill color (MCM): living names red / yellow / green from general_goodwill
+	bands; zombified red. Off: white. Dead names are grey. Losing the target fades over MCM fade-out time.
 	Show always acquires and ignores the other show-when options. Otherwise
 	need ADS / free zoom / binoculars (if those toggles are on) or a bound
 	hold key. Unbound key is not a condition. Leaving a condition fades.
@@ -20,7 +21,12 @@ local UI_CX, UI_CY = 512, 384
 local ALIGN_CENTER = 2 -- CGameFont::alCenter
 local UPDATE_DELAY = 100
 local NAME_HOSTILE_RGB = { 255, 48, 48 }
+local NAME_FRIEND_RGB = { 48, 200, 48 }
+local NAME_NEUTRAL_RGB = { 255, 200, 48 }
 local NAME_DEAD_RGB = { 160, 160, 160 }
+-- GetRelationType: attitude < -150 enemy, < 400 neutral, else friend.
+local GW_ENEMY = -150
+local GW_FRIEND = 400
 local RANK_RGB = { 200, 200, 200 }
 local RANK_DEAD_RGB = { 100, 100, 100 }
 
@@ -104,6 +110,7 @@ local function on_option_change()
 	CONFIG.loaded.show_when_binoc = dogma.mcm.bool(id, "show_when_binoc")
 	CONFIG.loaded.dead_id = dogma.mcm.bool(id, "dead_id")
 	CONFIG.loaded.name_id = dogma.mcm.bool(id, "name_id")
+	CONFIG.loaded.goodwill_color = dogma.mcm.bool(id, "goodwill_color")
 	CONFIG.loaded.rank_id = dogma.mcm.bool(id, "rank_id")
 	CONFIG.loaded.name_y = dogma.mcm.int(id, "name_y")
 	CONFIG.loaded.rank_y = dogma.mcm.int(id, "rank_y")
@@ -303,10 +310,27 @@ local function set_name_color_for(obj)
 		return
 	end
 	rank_r, rank_g, rank_b = RANK_RGB[1], RANK_RGB[2], RANK_RGB[3]
-	if is_zombied(obj:character_community()) or is_hostile(obj) then
+	name_r, name_g, name_b = 255, 255, 255
+	if not CONFIG.loaded.goodwill_color then
+		return
+	end
+	if is_zombied(obj:character_community()) then
 		name_r, name_g, name_b = NAME_HOSTILE_RGB[1], NAME_HOSTILE_RGB[2], NAME_HOSTILE_RGB[3]
+		return
+	end
+	if not db.actor then
+		return
+	end
+	local ok, gw = pcall(obj.general_goodwill, obj, db.actor)
+	if not (ok and type(gw) == "number") then
+		return
+	end
+	if gw < GW_ENEMY then
+		name_r, name_g, name_b = NAME_HOSTILE_RGB[1], NAME_HOSTILE_RGB[2], NAME_HOSTILE_RGB[3]
+	elseif gw >= GW_FRIEND then
+		name_r, name_g, name_b = NAME_FRIEND_RGB[1], NAME_FRIEND_RGB[2], NAME_FRIEND_RGB[3]
 	else
-		name_r, name_g, name_b = 255, 255, 255
+		name_r, name_g, name_b = NAME_NEUTRAL_RGB[1], NAME_NEUTRAL_RGB[2], NAME_NEUTRAL_RGB[3]
 	end
 end
 

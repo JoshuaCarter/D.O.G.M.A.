@@ -41,7 +41,7 @@ Catalog: `config/manifest.yml` (path, name, stage). Wizard pages: `config/fomod.
 
 `BETA`/`GOLD` only. Required: `src/<path>/fomod/desc.txt`. Optional: `image.png`.
 
-`bash tools/package-fomod.sh` → `build/fomod/`. Common always installs. `stage: LOCAL` is `Ctrl+Shift+B` only.
+`Ctrl+Shift+B` also writes `build/DOGMA.zip` and copies it to MO2 `downloads/` (Reinstall). `stage: LOCAL` is the fat merge only.
 
 ## Common
 

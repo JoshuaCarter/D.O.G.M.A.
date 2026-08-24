@@ -53,6 +53,8 @@
 #                        feat         → top-level feature only (e.g. debug)
 #   DOGMA_DEPLOY=path  after a fresh build/, full-replace this MO2 mod folder
 #                      (gamedata + meta). Full builds only (not DOGMA_ONLY).
+#                      Also copies build/DOGMA.zip to <instance>/downloads/.
+#   DOGMA_SKIP_FOMOD=1 skip package-fomod + zip on a full local build
 #   DOGMA_OUT=path     override output gamedata (default: build/gamedata). Set by
 #                      package-fomod; skips wiping build/ and skips DOGMA_DEPLOY.
 #   DOGMA_NO_ALAO=1    skip ALAO on src/ before staging
@@ -569,6 +571,20 @@ if [[ -n "$DEPLOY_MOD" ]]; then
 		done < "$MANIFEST_MODROOT"
 	fi
 	write_mod_meta "$DEPLOY_MOD"
+fi
+
+# Full local build also stages the FOMOD zip. Deploy copies it to MO2 downloads
+# so Reinstall opens the wizard (meta.ini installationFile=DOGMA.zip).
+if (( FRESH_BUILD )) && [[ "$ONLY" == "all" || "$ONLY" == "" ]] && [[ -z "${DOGMA_SKIP_FOMOD:-}" ]]; then
+	echo "build: packaging FOMOD"
+	DOGMA_NO_ALAO=1 bash "$ROOT/tools/package-fomod.sh" || build_fail "package-fomod failed"
+	if [[ -n "$DEPLOY_MOD" ]]; then
+		instance="$(cd "$(dirname "$DEPLOY_MOD")/.." && pwd)"
+		dl="$instance/downloads"
+		mkdir -p "$dl"
+		cp -a "$BUILD_ROOT/DOGMA.zip" "$dl/DOGMA.zip"
+		echo "build: FOMOD zip -> $dl/DOGMA.zip"
+	fi
 fi
 
 printf '\033[32m%s\033[0m\n' "build: done ($count gamedata, $count_modroot modroot) at $(date '+%Y-%m-%d %H:%M:%S')"

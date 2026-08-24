@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stage a FOMOD-ready tree under build/fomod/.
+# Stage a FOMOD-ready tree under build/fomod/ and zip it to build/DOGMA.zip.
 #
 # Layout:
 #   build/fomod/
@@ -17,6 +17,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SRC="$ROOT/src"
 STAGE="$ROOT/build/fomod"
+ZIP_OUT="$ROOT/build/DOGMA.zip"
 BUILD="$ROOT/tools/build.sh"
 GEN="$ROOT/tools/gen_fomod.py"
 MANIFEST="$ROOT/config/manifest.yml"
@@ -153,4 +154,21 @@ if [[ -f "$ROOT/INFO.md" ]]; then
 	cp -a "$ROOT/INFO.md" "$STAGE/INFO.md"
 fi
 
-echo "package-fomod: done (${#XML_FEATURES[@]} FOMOD plugins) -> ${STAGE#"$ROOT"/}"
+echo "package-fomod: zipping"
+dogma_py - "$STAGE" "$ZIP_OUT" <<'PY'
+import sys
+import zipfile
+from pathlib import Path
+
+stage = Path(sys.argv[1])
+out = Path(sys.argv[2])
+out.parent.mkdir(parents=True, exist_ok=True)
+if out.exists():
+	out.unlink()
+with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
+	for path in sorted(stage.rglob("*")):
+		if path.is_file():
+			zf.write(path, path.relative_to(stage).as_posix())
+PY
+
+echo "package-fomod: done (${#XML_FEATURES[@]} FOMOD plugins) -> ${STAGE#"$ROOT"/} ${ZIP_OUT#"$ROOT"/}"

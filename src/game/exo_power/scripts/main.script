@@ -9,6 +9,7 @@
 local CONFIG = _G.dogma_game_exo_power_conf
 
 local suit_drain = {}
+local orig_manage_drain = nil
 local warn = false
 local THRESHOLD = 25
 local gc = game.translate_string
@@ -43,6 +44,7 @@ local function clamp_mult(key, value)
 end
 
 local function on_option_change()
+	CONFIG.loaded.enabled = dogma.mcm.bool(CONFIG.MOD_ID, "enabled", CONFIG.DEFAULTS.enabled)
 	CONFIG.loaded.base_drain = clamp_mult("base_drain", dogma.mcm.float(CONFIG.MOD_ID, "base_drain", CONFIG.DEFAULTS.base_drain))
 	CONFIG.loaded.run_drain = clamp_mult("run_drain", dogma.mcm.float(CONFIG.MOD_ID, "run_drain", CONFIG.DEFAULTS.run_drain))
 	CONFIG.loaded.sprint_drain = clamp_mult("sprint_drain", dogma.mcm.float(CONFIG.MOD_ID, "sprint_drain", CONFIG.DEFAULTS.sprint_drain))
@@ -59,6 +61,12 @@ local function mult_for_move()
 end
 
 local function manage_drain()
+	if not CONFIG.loaded.enabled then
+		if orig_manage_drain then
+			return orig_manage_drain()
+		end
+		return
+	end
 	local exosuit = db.actor and db.actor:item_in_slot(7)
 	if not (exosuit and item_exo_device and item_exo_device.is_exo(exosuit)) then
 		return
@@ -93,7 +101,11 @@ local function manage_drain()
 end
 
 local function apply()
-	if item_exo_device then
+	if not item_exo_device then
+		return
+	end
+	if item_exo_device.manage_drain ~= manage_drain then
+		orig_manage_drain = item_exo_device.manage_drain
 		item_exo_device.manage_drain = manage_drain
 	end
 end

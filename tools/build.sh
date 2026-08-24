@@ -12,7 +12,8 @@
 #   Manifest paths, path_keys, and MCM ids stay unprefixed (common, debug).
 #
 #   src/.../assets/...                      authoring only (ignored; not shipped)
-#   src/.../installer/...                   leftover skip (FOMOD images live in fomod/images/)
+#   src/.../fomod/...                       authoring only (FOMOD desc/images)
+#   src/.../installer/...                   leftover skip
 #   *.pdn                                   authoring only (Paint.NET; never shipped)
 #   *.png under gamedata                    authoring only (convert to DDS; MO2 modroot PNGs still ship)
 #   src/<category>/<feature>/db/...         EXCEPTION: files under <mod>/db/
@@ -46,7 +47,7 @@
 #
 # Env:
 #   DOGMA_ONLY=spec    what to build:
-#                        (empty|all)  → common + features with manifest stage >= dev
+#                        (empty|all)  → common + features with manifest stage >= local
 #                        common       → common only
 #                        cat/feat     → that feature only (e.g. game/free_zoom; ignores manifest)
 #                        feat         → top-level feature only (e.g. debug)
@@ -144,7 +145,7 @@ should_skip_name() {
 	local base="$1"
 	case "$base" in
 		README | README.* | MOVE_MAP | MOVE_MAP.* | .gitkeep | .DS_Store | Thumbs.db) return 0 ;;
-		assets | installer | __pycache__) return 0 ;;
+		assets | fomod | installer | __pycache__) return 0 ;;
 		*.alao-bak | *.pyc | *.pyo | *.meta) return 0 ;;
 		# Authoring / pack source only — shipped via db/mods/*.db0 instead.
 		*.aimap | *.pdn) return 0 ;;
@@ -242,7 +243,7 @@ map_src_file() {
 	IFS=/ read -r -a parts <<< "$rel"
 	for part in "${parts[@]}"; do
 		case "$part" in
-			assets | installer) return 1 ;;
+			assets | fomod | installer) return 1 ;;
 			_common | _debug) ;; # reserved shippable src roots
 			_*)
 				[[ "$part" == "$base" ]] || return 1
@@ -435,8 +436,8 @@ src_in_scope() {
 	local sdir
 	case "$ONLY" in
 		all | "")
-			# common + debug are stage:OMIT but still ship on a full local build.
-			[[ "$rel" == _common/* || "$rel" == _debug/* ]] && return 0
+			# common is always-on (not a catalog checkbox).
+			[[ "$rel" == _common/* ]] && return 0
 			for sdir in "${FEATURE_SRC_DIRS[@]}"; do
 				[[ "$rel" == "$sdir"/* || "$rel" == "$sdir" ]] && return 0
 			done
@@ -471,7 +472,7 @@ if [[ "$ONLY" == "all" || "$ONLY" == "" ]]; then
 	if ((${#FEATURES[@]} == 0)) && [[ -z "${DOGMA_ALLOW_EMPTY:-}" ]]; then
 		build_fail "manifest yielded 0 features (fix YAML or set DOGMA_ALLOW_EMPTY=1)"
 	fi
-	echo "build: config manifests stage>=dev (${#FEATURES[@]} features)"
+	echo "build: config manifest stage>=local (${#FEATURES[@]} features)"
 	FEATURE_SRC_DIRS=()
 	for f in "${FEATURES[@]}"; do
 		FEATURE_SRC_DIRS+=("$(src_feature_dir "$f")")
@@ -511,7 +512,7 @@ while IFS= read -r -d '' src_path; do
 		*.png) [[ "$_emit_kind" == "gamedata" ]] && continue ;;
 	esac
 	stage_file "$_emit_kind" "$_emit_src" "$_emit_rel" "$_emit_path_key" "$_emit_base"
-done < <(find "$SRC" \( -name assets -o -name installer -o -name __pycache__ \) -prune -o -type f -print0)
+done < <(find "$SRC" \( -name assets -o -name fomod -o -name installer -o -name __pycache__ \) -prune -o -type f -print0)
 
 sort -u "$MANIFEST" -o "$MANIFEST"
 sort -u "$MANIFEST_MODROOT" -o "$MANIFEST_MODROOT"

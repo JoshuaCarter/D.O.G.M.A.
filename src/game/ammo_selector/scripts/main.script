@@ -13,14 +13,19 @@ local allow_open = false
 local holding = false
 
 local function on_option_change()
+	CONFIG.loaded.enabled = dogma.mcm.bool(CONFIG.MOD_ID, "enabled")
 	local mode = dogma.mcm.int(CONFIG.MOD_ID, "mode")
 	CONFIG.loaded.mode = (mode == MODE_HOLD) and MODE_HOLD or 0
 	CONFIG.loaded.ammo_key = dogma.mcm.key(CONFIG.MOD_ID, "ammo_key")
 	CONFIG.loaded.hold_delay_ms = dogma.mcm.uint(CONFIG.MOD_ID, "hold_delay_ms")
 	CONFIG.loaded.select_on_release = dogma.mcm.bool(CONFIG.MOD_ID, "select_on_release")
-	if CONFIG.loaded.mode ~= MODE_HOLD then
+	if not CONFIG.loaded.enabled or CONFIG.loaded.mode ~= MODE_HOLD then
 		holding = false
 	end
+end
+
+local function hold_active()
+	return CONFIG.loaded.enabled and CONFIG.loaded.mode == MODE_HOLD
 end
 
 local function shown(gui)
@@ -76,7 +81,7 @@ end
 
 local function gate(fn)
 	return function(...)
-		if CONFIG.loaded.mode == MODE_HOLD and not allow_open then
+		if hold_active() and not allow_open then
 			return
 		end
 		return fn(...)
@@ -101,7 +106,7 @@ local function ensure_no_cycle(cls)
 	end
 	local orig = cls.SwitchNextAmmo
 	cls.SwitchNextAmmo = function(self, ...)
-		if CONFIG.loaded.mode == MODE_HOLD then
+		if hold_active() then
 			return
 		end
 		return orig(self, ...)
@@ -122,7 +127,7 @@ local function actor_on_update()
 		holding = false
 		return
 	end
-	if CONFIG.loaded.mode ~= MODE_HOLD then
+	if not hold_active() then
 		return
 	end
 	patch()

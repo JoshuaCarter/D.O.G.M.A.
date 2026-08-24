@@ -58,7 +58,7 @@ local function zoomed_out_factor(scope_factor)
 end
 
 local function apply()
-	if not CONFIG.loaded.binoculars_zoomed_out then
+	if not (CONFIG.loaded.enabled and CONFIG.loaded.binoculars_zoomed_out) then
 		return true
 	end
 	local item = active_binoc()
@@ -79,7 +79,7 @@ local function apply()
 end
 
 local function on_zoom_in()
-	if not CONFIG.loaded.binoculars_zoomed_out then
+	if not (CONFIG.loaded.enabled and CONFIG.loaded.binoculars_zoomed_out) then
 		return
 	end
 	if not active_binoc() then
@@ -91,8 +91,9 @@ local function on_zoom_in()
 end
 
 function on_option_change()
+	CONFIG.loaded.enabled = dogma.mcm.bool(CONFIG.MOD_ID, "enabled")
 	CONFIG.loaded.binoculars_zoomed_out = dogma.mcm.bool(CONFIG.MOD_ID, "binoculars_zoomed_out")
-	if not CONFIG.loaded.binoculars_zoomed_out then
+	if not (CONFIG.loaded.enabled and CONFIG.loaded.binoculars_zoomed_out) then
 		RemoveTimeEvent(CONFIG.MOD_ID, APPLY)
 	end
 end

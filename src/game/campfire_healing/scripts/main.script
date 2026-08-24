@@ -30,6 +30,7 @@ local cached_range_sqr = 4
 local cached_body_sec = 30
 local cached_limb_sec = 10
 local cached_pause_in_combat = false
+local cached_enabled = true
 local cached_fx_enable = true
 local cached_fx_intensity = 0.5
 local can_heal = false
@@ -59,6 +60,7 @@ local function clamp_sec(sec, min_sec, max_sec, fallback)
 end
 
 local function refresh_settings()
+	cached_enabled = dogma.mcm.bool(CONFIG.MOD_ID, "enabled", CONFIG.DEFAULTS.enabled)
 	local body_sec = dogma.mcm.int(CONFIG.MOD_ID, "body_sec", CONFIG.DEFAULTS.body_sec)
 	local limb_sec = dogma.mcm.int(CONFIG.MOD_ID, "limb_sec", CONFIG.DEFAULTS.limb_sec)
 	cached_body_sec = clamp_sec(body_sec, 30, 100, 30)
@@ -70,7 +72,7 @@ local function refresh_settings()
 	cached_fx_enable = dogma.mcm.bool(CONFIG.MOD_ID, "fx_enable", CONFIG.DEFAULTS.fx_enable)
 	local fx_intensity = dogma.mcm.float(CONFIG.MOD_ID, "fx_intensity", CONFIG.DEFAULTS.fx_intensity)
 	cached_fx_intensity = dogma.math.clamp01(tonumber(fx_intensity) or CONFIG.DEFAULTS.fx_intensity)
-	if not cached_fx_enable then
+	if not cached_enabled or not cached_fx_enable then
 		ppe_target = 0
 	end
 end
@@ -308,8 +310,9 @@ local function tick_ppe(now)
 end
 
 local function actor_on_update()
-	if not db.actor then
+	if not db.actor or not cached_enabled then
 		clear_ppe()
+		can_heal = false
 		return
 	end
 
@@ -342,7 +345,7 @@ end
 
 local function on_option_change()
 	refresh_settings()
-	if not cached_fx_enable then
+	if not cached_enabled or not cached_fx_enable then
 		clear_ppe()
 	end
 end

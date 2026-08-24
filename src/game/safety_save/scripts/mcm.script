@@ -5,6 +5,7 @@
 _G.dogma_game_safety_save_conf = {
 	MOD_ID = "dogma/game/safety_save",
 	DEFAULTS = {
+		enabled = true,
 		always_min = 10,
 		event_min = 3,
 		show_text = true,
@@ -29,6 +30,13 @@ function on_mcm_load(options)
 				id = "page_description",
 				type = "desc",
 				text = "ui_mcm_dogma_game_safety_save_page_description",
+			},
+			{
+				id = "enabled",
+				type = "check",
+				val = 1,
+				def = CONFIG.DEFAULTS.enabled,
+				hint = "dogma_game_safety_save_enabled",
 			},
 			{
 				id = "always_min",

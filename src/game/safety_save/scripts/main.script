@@ -29,6 +29,7 @@ end
 local function on_option_change()
 	local tostr = tostring
 	CONFIG.loaded.debug_log = dogma.dbg.logging()
+	CONFIG.loaded.enabled = dogma.mcm.bool(CONFIG.MOD_ID, "enabled", CONFIG.DEFAULTS.enabled)
 	CONFIG.loaded.always_min = dogma.mcm.int(CONFIG.MOD_ID, "always_min", CONFIG.DEFAULTS.always_min)
 	CONFIG.loaded.event_min = dogma.mcm.int(CONFIG.MOD_ID, "event_min", CONFIG.DEFAULTS.event_min)
 	CONFIG.loaded.show_text = dogma.mcm.bool(CONFIG.MOD_ID, "show_text", CONFIG.DEFAULTS.show_text)
@@ -83,7 +84,7 @@ local function actor_on_update()
 	next_at = now + TICK_MS
 
 	local actor = dogma.sys.ready(CONFIG.MOD_ID, db, on_option_change)
-	if not (actor and actor:alive()) then
+	if not (actor and actor:alive()) or not CONFIG.loaded.enabled then
 		return
 	end
 

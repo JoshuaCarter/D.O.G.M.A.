@@ -7,7 +7,7 @@
 	tier→rank RU budgets for round counts.
 	Corpses: strip loose ammo, then one rank RU budget split across guns.
 	New game: N extra boxes per owned start weapon (on top of loadout);
-	optional 59% parts on those guns (same as dogma_mode).
+	optional 59% parts on those guns.
 	Replaces RNG Attach + Parts In Stashes.
 	Ammo Maker 1:1 craft (casing/bullet/powder per output round) lives in ammo_craft.script.
 ]]
@@ -172,7 +172,7 @@ local function give_extra_start_ammo()
 end
 
 --------------------------------------------------------------------------------
--- New-game start-weapon parts (same apply as dogma_mode)
+-- New-game start-weapon parts
 --------------------------------------------------------------------------------
 local function game_obj(id)
 	local obj = id and db.actor and db.actor.object_id and db.actor:object_id(id)
@@ -344,43 +344,33 @@ local function is_banned_combat_gear(obj, sec)
 	if not sec then
 		return false
 	end
+	if Tiers.is_ignored and Tiers.is_ignored(sec) then
+		return false
+	end
 	-- Knives stay tradable
 	if obj and IsMelee and IsMelee(obj) then
 		return false
 	end
+	if Tiers.is_listed and Tiers.is_listed(sec) then
+		return true
+	end
 
-	if Tiers.is_weapon_part(sec) then
-		return true
-	end
-	if Tiers.is_ammo_box(sec) then
-		return true
-	end
-	if is_magazine(sec) then
-		return true
-	end
-	if IsItem then
-		if IsItem("scope", sec) or IsItem("sil", sec) or IsItem("gl", sec) then
-			return true
+	local banned = Tiers.is_weapon_part(sec)
+		or Tiers.is_ammo_box(sec)
+		or is_magazine(sec)
+		or (IsItem and (IsItem("scope", sec) or IsItem("sil", sec) or IsItem("gl", sec)))
+		or Tiers.is_name_kit(sec)
+		or is_weapon_repair_kit(sec)
+		or string.find(ini_sys:r_string_ex(sec, "visual") or "", "wpn_tac_kit", 1, true)
+		or (obj and IsGrenade and IsGrenade(obj))
+		or (obj and IsWeapon and IsWeapon(obj))
+	if banned then
+		local cat = Tiers.classify_section and Tiers.classify_section(sec)
+		if cat and Tiers.note_unknown then
+			Tiers.note_unknown(cat, sec, "strip")
 		end
 	end
-	if Tiers.is_name_kit(sec) then
-		return true
-	end
-	if is_weapon_repair_kit(sec) then
-		return true
-	end
-	local visual = ini_sys:r_string_ex(sec, "visual") or ""
-	if string.find(visual, "wpn_tac_kit", 1, true) then
-		return true
-	end
-	if obj and IsGrenade and IsGrenade(obj) then
-		return true
-	end
-	-- Guns (non-melee already allowed above)
-	if obj and IsWeapon and IsWeapon(obj) then
-		return true
-	end
-	return false
+	return banned
 end
 
 -- Restocking vendors (buy_supplies). trade_generic / companions have none.
@@ -410,6 +400,7 @@ end
 -- Debug dump (debug MCM only):
 --   dogma_weapons_ban_debug.log  — unique trader-strip sections
 --   dogma_weapons_ban_pool.log   — unique loot-pool sections
+--   dogma_weapons_ban_scan.log   — scan hits not in the curated lists
 -- Same fixed columns so the two files can be compared side by side.
 --------------------------------------------------------------------------------
 local catalog = {}
@@ -638,6 +629,18 @@ local function dump_loot_pool()
 	end)
 	write_debug_table("dogma_weapons_ban_pool.log", rows)
 	log(string.format("dogma_weapons_ban_pool.log %d unique", #rows))
+end
+
+local function dump_scan_unknowns()
+	if not (dogma.dbg.logging() and Tiers and Tiers.each_unknown) then
+		return
+	end
+	local rows = {}
+	Tiers.each_unknown(function(kind, sec, why)
+		rows[#rows + 1] = { kind = kind, sec = sec, trader = why, map = "-" }
+	end)
+	write_debug_table("dogma_weapons_ban_scan.log", rows)
+	log(string.format("dogma_weapons_ban_scan.log %d unique", #rows))
 end
 
 -- utils_ui caches utils_item.get_item_trade_status in a local at load, so
@@ -1299,8 +1302,9 @@ local function actor_on_first_update()
 	apply_start_weapon_parts()
 	if dogma.dbg.logging() and CreateTimeEvent then
 		CreateTimeEvent("dogma_wb_dbg", "trader_dump", 1.5, function()
-			dump_online_traders()
 			dump_loot_pool()
+			dump_online_traders()
+			dump_scan_unknowns()
 			return true
 		end)
 	end

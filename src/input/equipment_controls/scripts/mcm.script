@@ -1,69 +1,114 @@
 -- input/equipment_controls conf
--- Stock detector/geiger/torch: MCM key_mirror ↔ Settings → Controls.
--- RF / Measurement / Glowstick: standalone MCM key_bind (DIK in axr_options, not engine customs).
+--
+-- MCM owns every key. Default unbound.
+-- take  = we replace stock → unbind Settings, swallow, we handle.
+-- keep  = stock must run → stamp Settings to our key, swallow only when we steal.
+-- none  = no Settings action.
+
+local BINDS = {
+	{ id = "key_bolt", hint = "dogma_input_equipment_controls_key_bolt", action = "wpn_6", kb = "kWPN_6" },
+	{ id = "key_torch", hint = "dogma_input_equipment_controls_key_torch", action = "torch", kb = "kTORCH", keep = true },
+	{ id = "key_glowstick", hint = "dogma_input_equipment_controls_key_glowstick" },
+	{ id = "key_detector", hint = "dogma_input_equipment_controls_key_detector", action = "show_detector", kb = "kDETECTOR" },
+	{ id = "key_geiger", hint = "dogma_input_equipment_controls_key_geiger", action = "custom14", kb = "kCUSTOM14" },
+	{ id = "key_radio", hint = "dogma_input_equipment_controls_key_radio" },
+	{ id = "key_anomaly", hint = "dogma_input_equipment_controls_key_anomaly" },
+}
+
+---@type table<string, boolean|integer>
+local DEFAULTS = { auto_bolt_on_detector = true }
+for i = 1, #BINDS do
+	DEFAULTS[BINDS[i].id] = -1
+end
+
+---@type table<string, boolean|number|nil>
+local loaded = { enabled = true }
 
 _G.dogma_input_equipment_controls_conf = {
 	MOD_ID = "dogma/input/equipment_controls",
-	DEFAULTS = {
-		auto_bolt_on_detector = true,
-		key_radio = -1,
-		key_anomaly = -1,
-		key_glowstick = -1,
-	},
-	loaded = {
-		enabled = true,
-		key_radio = nil,
-		key_anomaly = nil,
-		key_glowstick = nil,
-	},
+	BINDS = BINDS,
+	DEFAULTS = DEFAULTS,
+	loaded = loaded,
 }
-
--- Equipment Controls MCM
--- Detector / Geiger / Torch mirror Settings → Controls.
--- RF / Measurement / Glowstick are standalone MCM key_binds.
 
 local CONFIG = _G.dogma_input_equipment_controls_conf
 
-local function kb_bind(id, hint)
+local function mcm_dik(id)
+	local key = (dogma and dogma.mcm and dogma.mcm.key)
+		or (dogma_mcm and dogma_mcm.mcm and dogma_mcm.mcm.key)
+	if key then
+		return key(CONFIG.MOD_ID, id)
+	end
+end
+
+function CONFIG.sync_engine_actions()
+	local KM = __dogma_key_mirror_mcm
+	if not KM then
+		return
+	end
+	local dirty = false
+	for i = 1, #BINDS do
+		local b = BINDS[i]
+		if b.action then
+			local dik = mcm_dik(b.id)
+			if dik then
+				local mirror = KM.key_mirror(b.action, function()
+					return key_bindings and key_bindings[b.kb]
+				end)
+				local now = mirror:dik()
+				if b.keep then
+					if now ~= dik then
+						mirror:apply(dik)
+					end
+				elseif now > 0 then
+					exec_console_cmd("unbind " .. b.action)
+					dirty = true
+				end
+			end
+		end
+	end
+	if dirty then
+		exec_console_cmd("cfg_save")
+	end
+end
+
+local function kb_bind(b)
 	return {
-		id = id,
+		id = b.id,
 		type = "key_bind",
 		val = 2,
-		def = CONFIG.DEFAULTS[id],
-		hint = hint,
+		def = DEFAULTS[b.id],
+		hint = b.hint,
 	}
 end
 
+RegisterScriptCallback("on_option_change", CONFIG.sync_engine_actions)
+
 function on_mcm_load(options)
+	CONFIG.sync_engine_actions()
+
+	local gr = {
+		{
+			id = "page_description",
+			type = "desc",
+			text = "ui_mcm_dogma_input_equipment_controls_page_description",
+		},
+		{
+			id = "auto_bolt_on_detector",
+			type = "check",
+			val = 1,
+			def = DEFAULTS.auto_bolt_on_detector,
+			hint = "dogma_input_equipment_controls_auto_bolt_on_detector",
+		},
+	}
+	for i = 1, #BINDS do
+		gr[#gr + 1] = kb_bind(BINDS[i])
+	end
+
 	dogma_mcm.mcm.attach(options, "input", "ui_mcm_menu_dogma_input", {
 		id = "equipment_controls",
 		sh = true,
 		text = "ui_mcm_menu_dogma_input_equipment_controls",
-		gr = dogma_mcm.mcm.with_header({
-			{
-				id = "page_description",
-				type = "desc",
-				text = "ui_mcm_dogma_input_equipment_controls_page_description",
-			},
-			{
-				id = "auto_bolt_on_detector",
-				type = "check",
-				val = 1,
-				def = CONFIG.DEFAULTS.auto_bolt_on_detector,
-				hint = "dogma_input_equipment_controls_auto_bolt_on_detector",
-			},
-			dogma_mcm.mcm.key_mirror("show_detector", function()
-				return key_bindings and key_bindings.kDETECTOR
-			end):option("key_detector", "dogma_input_equipment_controls_key_detector"),
-			dogma_mcm.mcm.key_mirror("custom14", function()
-				return key_bindings and key_bindings.kCUSTOM14
-			end):option("key_geiger", "dogma_input_equipment_controls_key_geiger"),
-			kb_bind("key_radio", "dogma_input_equipment_controls_key_radio"),
-			kb_bind("key_anomaly", "dogma_input_equipment_controls_key_anomaly"),
-			dogma_mcm.mcm.key_mirror("torch", function()
-				return key_bindings and key_bindings.kTORCH
-			end):option("key_torch", "dogma_input_equipment_controls_key_torch"),
-			kb_bind("key_glowstick", "dogma_input_equipment_controls_key_glowstick"),
-		}),
+		gr = dogma_mcm.mcm.with_header(gr),
 	})
 end

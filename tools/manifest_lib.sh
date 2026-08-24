@@ -1,26 +1,28 @@
 # Shared manifest catalog loader for build.sh / package-fomod.sh.
-# Reads config/manifest-dogma-features.yml + manifest-dogma-tweaks.yml.
-# Override with DOGMA_MANIFEST=<config dir>.
+# Reads config/manifest.yml.
+# Override with DOGMA_MANIFEST=<config dir or manifest.yml>.
 # Usage: source this file, then dogma_load_manifest <min_stage>
-#   min_stage 1|local|dev → path mods with stage >= dev
-#   min_stage 2|release   → path mods with stage >= release
+#   min_stage 1|local → path mods with stage >= local
+#   min_stage beta    → path mods with stage >= beta (FOMOD)
+#   min_stage gold    → gold only
 # Sets FEATURES=(...) ; common is never listed (always included by callers).
 
 dogma_load_manifest() {
-	local min_stage="${1:?min_stage required (1/local/dev or 2/release)}"
+	local min_stage="${1:?min_stage required (local|beta|gold)}"
 	case "$min_stage" in
-		1 | local | dev) min_stage=dev ;;
-		2 | release) min_stage=release ;;
+		1 | local | dev) min_stage=local ;;
+		2 | release | gold) min_stage=gold ;;
+		beta) min_stage=beta ;;
 		0 | omit | off) min_stage=omit ;;
 	esac
 	local yml="${DOGMA_MANIFEST:-$ROOT/config}"
 	FEATURES=()
-	if [[ ! -d "$yml" ]]; then
-		echo "manifest: missing $yml" >&2
-		return 1
-	fi
-	if [[ ! -f "$yml/manifest-dogma-features.yml" || ! -f "$yml/manifest-dogma-tweaks.yml" ]]; then
-		echo "manifest: need manifest-dogma-features.yml and manifest-dogma-tweaks.yml in $yml" >&2
+	if [[ -f "$yml" ]]; then
+		:
+	elif [[ -d "$yml" && -f "$yml/manifest.yml" ]]; then
+		:
+	else
+		echo "manifest: missing $yml/manifest.yml" >&2
 		return 1
 	fi
 

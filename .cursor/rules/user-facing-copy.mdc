@@ -1,0 +1,42 @@
+---
+description: Player-facing copy stays short, plain, and free of internals. MCM, FOMOD, UI strings, in-game messages.
+alwaysApply: true
+---
+
+# Player-facing copy
+
+Text a player reads (MCM titles/descs, FOMOD `desc.txt`, UI/string tables, tips, toasts). Not chat with the developer. Not code comments.
+
+Write what they **do** and what they **see**. Cut how it is wired.
+
+Before writing a string, stop at the first rung that holds:
+
+1. Does a player need this to use the option? If no, drop it.
+2. Can the title carry it alone? Then no desc, or one short clause.
+3. One sentence. Player words. Done.
+4. Only add a second sentence for a gotcha they will actually hit (Off / 0 / hold vs tap).
+5. Never add internals "for completeness."
+
+## Cut
+
+- Script/bind/file names (`wpn_next`, `safety_save`, MCM-only)
+- How it is implemented (unbinds Settings, writes a key, anim still runs)
+- Engine slang (unpark, pack, overlap, callback, slot internals)
+- Modder jargon the vanilla UI does not already show
+- Exception lists unless the player will hit them and be confused
+- Non-ASCII. No arrows, em-dashes, smart quotes, or other Unicode. `->` and `-` only.
+
+Keep vanilla names they already see (`Settings -> Controls`). Keep 0 = off when a slider is not obvious.
+
+## Examples
+
+```
+BAD: Toggle uses vanilla Settings - Controls "Ammo Selector" (wpn_next). Hold uses the key below (MCM-only; may overlap other binds).
+GOOD: Toggle uses Settings -> Controls -> Ammo Selector. Hold uses the key below.
+
+BAD: Saving Torch writes Settings Torch so the stock headlamp anim still runs.
+GOOD: Torch toggles a headlamp if you have one, or a handheld light if you don't.
+
+BAD: Park the stock companion list. Hide is slots only, not dialog Show false.
+GOOD: Hide companion bars until you hold the key or their health drops below 100%.
+```

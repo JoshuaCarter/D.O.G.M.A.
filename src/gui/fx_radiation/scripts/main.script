@@ -56,6 +56,7 @@ end
 local function on_option_change()
 	CONFIG.loaded.debug_log = dogma.dbg.logging()
 	CONFIG.loaded.debug_overlay = dogma.dbg.overlay_enabled()
+	CONFIG.loaded.enabled = dogma.mcm.bool(CONFIG.MOD_ID, "enabled")
 	CONFIG.loaded.grain_enabled = dogma.mcm.bool(CONFIG.MOD_ID, "grain/enable")
 	CONFIG.loaded.blur_enabled = dogma.mcm.bool(CONFIG.MOD_ID, "desaturation/enable")
 	CONFIG.loaded.dual_enabled = dogma.mcm.bool(CONFIG.MOD_ID, "duality/enable")
@@ -177,7 +178,7 @@ local function on_actor_on_update()
 		return
 	end
 
-	if not actor:alive() then
+	if not CONFIG.loaded.enabled or not actor:alive() then
 		clear_all()
 		return
 	end

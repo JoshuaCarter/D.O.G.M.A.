@@ -245,7 +245,7 @@ local function mode_label()
 end
 
 local function refresh_config()
-	CONFIG.loaded.enabled = true
+	CONFIG.loaded.enabled = dogma.mcm.bool(CONFIG.MOD_ID, "enabled")
 	CONFIG.loaded.allow_during_sprint = dogma.mcm.bool(CONFIG.MOD_ID, "free_zoom/allow_during_sprint")
 	CONFIG.loaded.empty_hands_only = dogma.mcm.bool(CONFIG.MOD_ID, "free_zoom/empty_hands_only")
 	CONFIG.loaded.zoom_key = dogma.mcm.key(CONFIG.MOD_ID, "free_zoom/zoom_key")
@@ -270,6 +270,7 @@ local function refresh_config()
 	CONFIG.loaded.free_dof_intensity = clamp(dogma.mcm.float(CONFIG.MOD_ID, "free_zoom/dof_intensity"), 0, 1)
 
 	CONFIG.loaded.ads_enabled = (_G.dogma_game_ads_zoom_conf ~= nil)
+		and dogma.mcm.bool(ADS_MOD, "enabled")
 	CONFIG.loaded.fov_zoom = clamp(dogma.mcm.int(ADS_MOD, "fov_zoom"), 0, ADS_FOV_MAX)
 	CONFIG.loaded.wads = {
 		irons = clamp(dogma.mcm.int(ADS_MOD, "wads_irons"), 0, ADS_MAX.irons),

@@ -14,7 +14,7 @@ src/_common/<gamedata-root>/...    # vendored Common, not in MCM
 `_common` / `_debug` are underscore-prefixed **on disk only** (sort first / mark reserved). Manifest paths, package ids, and MCM keys stay `common` / `debug`.
 
 Example: `src/game/faster_skinning/scripts/...` → MCM `D.O.G.M.A. → Game → Faster Skinning`.  
-Top-level: `src/_debug/...` → MCM `D.O.G.M.A. → Debug` (DEV-only; not a category page).  
+Top-level: `src/_debug/...` → MCM `D.O.G.M.A. → Debug` (local stage; not a category page).  
 Tweaks: `src/tweaks/<feature>/...` → MCM `D.O.G.M.A. → Tweaks` (one shared page; each feature appends a description).
 
 ## Build roots merged into gamedata
@@ -37,13 +37,11 @@ Skip: `README*`, `MOVE_MAP*`, `.gitkeep`, `*.alao-bak`, `_` names.
 
 ## Installer (FOMOD)
 
-Wizard pages, plugin names, hover copy, and which folder each checkbox installs live in one file:
+Catalog: `config/manifest.yml` (path, name, stage). Wizard pages: `config/fomod.yml` (lists those paths).
 
-`fomod/ModuleConfig.xml`
+`BETA`/`GOLD` only. Required: `src/<path>/fomod/desc.txt`. Optional: `image.png`.
 
-Hover images (optional) live in `fomod/images/` and are referenced from that XML. `info.xml` is written at pack time from `meta.ini`.
-
-Release zip: `bash tools/package-fomod.sh` → `build/fomod/`. Common is always installed. FOMOD checkboxes are whatever `ModuleConfig.xml` lists. Root `config/manifest-dogma-*.yml` gates which `src/` features a local `Ctrl+Shift+B` build includes (`omit` / `dev` / `release`).
+`bash tools/package-fomod.sh` → `build/fomod/`. Common always installs. `stage: LOCAL` is `Ctrl+Shift+B` only.
 
 ## Common
 

@@ -1,9 +1,10 @@
 --[[
 	Equipment Controls
 
-	Detector / Geiger / RF / Measurement / Glowstick / Torch force-equip into the detector slot.
-	Artefact detector + auto-bolt: wait until RH empty (or already bolt), then bolt
-	+ detector together. RF/Geiger/Measurement/Glowstick never touch the bolt.
+	Detector / Geiger / RF / Anomaly / Glowstick / Torch force-equip into the detector slot.
+	Bolt key draws / holsters slot 6. Artefact detector + auto-bolt: wait until RH
+	empty (or already bolt), then bolt + detector together. RF/Geiger/Anomaly/Glowstick
+	never touch the bolt. MCM owns keys: take unbinds Settings, keep stamps it.
 ]]
 
 local CONFIG = _G.dogma_input_equipment_controls_conf or {
@@ -124,6 +125,17 @@ local function cancel_scanner_swap()
 	RemoveTimeEvent(CONFIG.MOD_ID, "auto_bolt")
 end
 
+-- Engine show_device/hide_device take bool. Lua stubs omit the arg.
+local function det_show(actor, fast)
+	---@diagnostic disable-next-line: redundant-parameter
+	actor:show_detector(fast)
+end
+
+local function det_hide(actor, fast)
+	---@diagnostic disable-next-line: redundant-parameter
+	actor:hide_detector(fast)
+end
+
 local function put_away_slot9(style)
 	local actor = db.actor
 	if not (actor and actor:active_detector()) then
@@ -132,7 +144,7 @@ local function put_away_slot9(style)
 	if style == "force" then
 		actor:force_hide_detector()
 	elseif actor.hide_detector then
-		actor:hide_detector(style == "fast")
+		det_hide(actor, style == "fast")
 	else
 		actor:force_hide_detector()
 	end
@@ -148,7 +160,7 @@ local function equip_and_show_detector(obj)
 	cancel_scanner_show()
 	CreateTimeEvent(CONFIG.MOD_ID, SCANNER_SHOW_EVENT, 0.1, function()
 		if db.actor and db.actor:alive() then
-			db.actor:show_detector(true)
+			det_show(db.actor, true)
 		end
 		scanner_busy = false
 		return true
@@ -160,7 +172,7 @@ local function cycle_detector(prev, next_obj, is_fast)
 		scanner_busy = false
 		return
 	end
-	db.actor:hide_detector(is_fast)
+	det_hide(db.actor, is_fast)
 	local next_id = next_obj:id()
 	CreateTimeEvent(CONFIG.MOD_ID, SCANNER_SWAP_EVENT, 0, function()
 		if not (db.actor and db.actor:alive() and scanner_busy) then
@@ -267,6 +279,18 @@ local function draw_bolt_now()
 	end
 end
 
+local function toggle_bolt()
+	local actor = db.actor
+	if not (actor and has_bolt()) then
+		return
+	end
+	if actor:active_slot() == BOLT_SLOT then
+		actor:activate_slot(0)
+		return
+	end
+	actor:activate_slot(BOLT_SLOT)
+end
+
 local function rh_empty()
 	local actor = db.actor
 	if not actor then
@@ -364,7 +388,7 @@ local function start_detector_after_hand(device_id, is_fast)
 		cancel_scanner_show()
 		CreateTimeEvent(CONFIG.MOD_ID, SCANNER_SHOW_EVENT, 0.1, function()
 			if db.actor and db.actor:alive() then
-				db.actor:show_detector(true)
+				det_show(db.actor, true)
 			end
 			scanner_busy = false
 			return true
@@ -394,7 +418,7 @@ local function force_equip_scanner(obj)
 				draw_bolt_now()
 			end
 			if db.actor and db.actor:alive() then
-				db.actor:show_detector(true)
+				det_show(db.actor, true)
 			end
 			scanner_busy = false
 		end
@@ -428,7 +452,7 @@ local function force_equip_scanner(obj)
 	end
 
 	local held = actor:active_item()
-	if rh_blocks_detector(held) then
+	if held and rh_blocks_detector(held) then
 		when_blocking_rh_clear(held:id(), go)
 		return
 	end
@@ -451,7 +475,7 @@ local function force_equip_glowstick(obj)
 			put_away_slot9("full")
 			return
 		end
-		actor:show_detector(true)
+		det_show(actor, true)
 		return
 	end
 
@@ -466,7 +490,7 @@ local function force_equip_glowstick(obj)
 	end
 
 	local held = actor:active_item()
-	if rh_blocks_detector(held) then
+	if held and rh_blocks_detector(held) then
 		when_blocking_rh_clear(held:id(), go)
 		return
 	end
@@ -483,36 +507,76 @@ end
 local function on_option_change()
 	CONFIG.loaded.enabled = true
 	CONFIG.loaded.auto_bolt_on_detector = dogma.mcm.bool(CONFIG.MOD_ID, "auto_bolt_on_detector")
-	CONFIG.loaded.key_radio = dogma.mcm.key(CONFIG.MOD_ID, "key_radio")
-	CONFIG.loaded.key_anomaly = dogma.mcm.key(CONFIG.MOD_ID, "key_anomaly")
-	CONFIG.loaded.key_glowstick = dogma.mcm.key(CONFIG.MOD_ID, "key_glowstick")
+	local binds = CONFIG.BINDS
+	if binds then
+		for i = 1, #binds do
+			local id = binds[i].id
+			---@type number|nil
+			local dik = dogma.mcm.key(CONFIG.MOD_ID, id)
+			CONFIG.loaded[id] = dik
+		end
+	end
+	if CONFIG.sync_engine_actions then
+		CONFIG.sync_engine_actions()
+	end
 end
 
-local function engine_dik(kb)
-	local bind = key_bindings and key_bindings[kb]
-	if not bind or not bind_to_dik then
-		return nil
-	end
-	local ok, dik = pcall(bind_to_dik, bind)
-	if ok and type(dik) == "number" and dik > 0 then
-		return dik
-	end
-end
+local PRESS = {
+	key_detector = function()
+		force_equip_scanner(find_scanner(is_artefact_detector))
+	end,
+	key_geiger = function()
+		force_equip_scanner(find_scanner(function(sec)
+			return sec == geiger_sec()
+		end))
+	end,
+	key_radio = function()
+		force_equip_scanner(find_scanner(function(sec)
+			return sec == radio_sec()
+		end))
+	end,
+	key_anomaly = function()
+		force_equip_scanner(find_scanner(function(sec)
+			return sec == anomaly_sec()
+		end))
+	end,
+	key_glowstick = function()
+		force_equip_glowstick(find_scanner(is_glowstick))
+	end,
+	key_torch = function()
+		if not has_headlamp() then
+			force_equip_scanner(find_scanner(is_handheld_flashlight))
+		end
+	end,
+	key_bolt = function()
+		toggle_bolt()
+	end,
+}
 
 local function ours(dik, bind)
 	if not dik and not bind then
 		return false
 	end
-	if bind == key_bindings.kDETECTOR or bind == key_bindings.kCUSTOM14 then
-		return true
+	local binds = CONFIG.BINDS
+	if not binds then
+		return false
 	end
-	if bind == key_bindings.kTORCH and not has_headlamp() then
-		return true
+	for i = 1, #binds do
+		local b = binds[i]
+		local our = CONFIG.loaded[b.id]
+		if our then
+			local steal = (not b.keep) or (not has_headlamp())
+			if steal then
+				if b.kb and bind == key_bindings[b.kb] then
+					return true
+				end
+				if dik == our then
+					return true
+				end
+			end
+		end
 	end
-	local rf = CONFIG.loaded.key_radio
-	local anomaly = CONFIG.loaded.key_anomaly
-	local glow = CONFIG.loaded.key_glowstick
-	return (rf and dik == rf) or (anomaly and dik == anomaly) or (glow and dik == glow)
+	return false
 end
 
 -- Swallow vanilla detector/torch/geiger. Equip is polled via dogma.input.
@@ -540,31 +604,19 @@ local function poll()
 		return
 	end
 
-	local detector = engine_dik("kDETECTOR")
-	local geiger = engine_dik("kCUSTOM14")
-	local torch = engine_dik("kTORCH")
-	local rf = CONFIG.loaded.key_radio
-	local anomaly = CONFIG.loaded.key_anomaly
-	local glow = CONFIG.loaded.key_glowstick
-
-	if pressed(detector) then
-		force_equip_scanner(find_scanner(is_artefact_detector))
-	elseif pressed(geiger) then
-		force_equip_scanner(find_scanner(function(sec)
-			return sec == geiger_sec()
-		end))
-	elseif pressed(rf) then
-		force_equip_scanner(find_scanner(function(sec)
-			return sec == radio_sec()
-		end))
-	elseif pressed(anomaly) then
-		force_equip_scanner(find_scanner(function(sec)
-			return sec == anomaly_sec()
-		end))
-	elseif pressed(glow) then
-		force_equip_glowstick(find_scanner(is_glowstick))
-	elseif pressed(torch) and not has_headlamp() then
-		force_equip_scanner(find_scanner(is_handheld_flashlight))
+	local binds = CONFIG.BINDS
+	if not binds then
+		return
+	end
+	for i = 1, #binds do
+		local b = binds[i]
+		if pressed(CONFIG.loaded[b.id]) then
+			local fn = PRESS[b.id]
+			if fn then
+				fn()
+			end
+			return
+		end
 	end
 end
 
@@ -574,4 +626,7 @@ function on_game_start()
 	RegisterScriptCallback("actor_on_update", poll)
 	RegisterScriptCallback("on_option_change", on_option_change)
 	RegisterScriptCallback("on_before_key_press", on_before_key_press)
+	RegisterScriptCallback("on_game_load", cancel_scanner_swap)
+	RegisterScriptCallback("main_menu_on_init", cancel_scanner_swap)
+	RegisterScriptCallback("actor_on_net_destroy", cancel_scanner_swap)
 end

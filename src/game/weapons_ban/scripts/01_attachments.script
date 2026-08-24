@@ -1,0 +1,226 @@
+--[[
+	Curated spawn / strip lists. Scan still fills gaps.
+	Ignore = no spawn, no strip, no scan log.
+	Loaded before 02_tiers.
+]]
+
+local STRIP = {}
+local KIND = {}
+local IGNORE = {}
+local BY_TIER = {
+	sight = { {}, {}, {}, {}, {} },
+	kit = { {}, {}, {}, {}, {} },
+	suppressor = { {}, {}, {}, {}, {} },
+}
+local COST = {
+	ammo = {},
+	parts = {},
+}
+
+local function add(cat, tier, ids)
+	local bucket = BY_TIER[cat][tier]
+	for i = 1, #ids do
+		local sec = ids[i]
+		STRIP[sec] = true
+		KIND[sec] = cat
+		bucket[#bucket + 1] = sec
+	end
+end
+
+local function add_cost(cat, ids)
+	local bucket = COST[cat]
+	for i = 1, #ids do
+		local sec = ids[i]
+		STRIP[sec] = true
+		KIND[sec] = cat
+		bucket[#bucket + 1] = sec
+	end
+end
+
+local function add_strip_only(ids)
+	for i = 1, #ids do
+		STRIP[ids[i]] = true
+	end
+end
+
+local function add_ignore(ids)
+	for i = 1, #ids do
+		IGNORE[ids[i]] = true
+	end
+end
+
+add("sight", 1, {
+	"pka", "kobra", "1p63", "wpn_addon_scope_zf4", "wpn_addon_scope_pu",
+	"aim_acro", "usp1", "side",
+})
+add("sight", 2, {
+	"ekp8_18", "okp", "ekp8_02", "p1x42", "pk6", "0kp2", "eot", "acog",
+	"romeo4", "d0cter", "ps01", "pso2", "aim_low", "aimpoint", "lco1",
+	"e0t2", "hco", "romeo8", "ac10632", "he510", "c-more", "aim_2k",
+	"gee36", "cortex", "kashtan_rmr", "1p76", "ac11090",
+})
+add("sight", 3, {
+	"1p87", "wpn_addon_scope_po4x34", "kp_sr2", "wpn_addon_grenade_launcher",
+	"pgo7gs", "compm4s", "1p78gs", "rmr", "mepro",
+	"wpn_addon_grenade_launcher_m203", "exps3", "pso1m21", "deltapoint",
+	"point_aimpro", "1p29", "monstrum", "trihawk", "uh2", "c79", "susat",
+	"bossxe", "vulcan", "1pn93", "specter", "chs", "spec_alt", "pn23",
+	"1pn93n2_1gs",
+})
+add("sight", 4, {
+	"kemper", "magnifier", "1p59", "wpn_addon_grenade_launcher_scar",
+	"triji", "ps320", "e0t2_magd", "tac30", "bravo4", "hamr", "razorhd",
+	"devo", "leupold", "marchf", "ado", "march_f_shorty", "skeet",
+})
+add("sight", 5, {
+	"uh1_magd", "mark8_rmr", "march_f_shorty_alt", "t12", "echo1",
+	"gauss_sight",
+})
+
+add("suppressor", 1, {
+	"wpn_sil_9mm", "wpn_sil_aps", "wpn_sil_45", "wpn_sil_osp9",
+	"wpn_sil_gemtech", "wpn_sil_sr1m", "wpn_sil_pmm",
+})
+add("suppressor", 2, {
+	"wpn_sil_pbs1", "wpn_sil_black_box", "wpn_sil_forester",
+})
+add("suppressor", 3, {
+	"wpn_sil_nato", "wpn_sil_57", "wpn_sil_geks545", "wpn_sil_tgp-a",
+	"wpn_sil_pbs4", "wpn_sil_vihr", "wpn_sil_9a91", "wpn_sil_atg",
+	"wpn_sil_kek12", "wpn_sil_ash12", "wpn_sil_salvo", "wpn_sil_daniel",
+	"wpn_sil_grot", "wpn_sil_pl15", "wpn_sil_m42k", "wpn_sil_veresk",
+	"wpn_sil_hex23", "wpn_sil_surfire", "wpn_sil_kac4", "wpn_sil_auga",
+})
+add("suppressor", 4, {
+	"wpn_sil_sr25", "wpn_sil_kzrzp", "wpn_sil_rotor", "wpn_sil_tgpv",
+	"wpn_sil_aac762", "wpn_sil_spec_isg",
+})
+add("suppressor", 5, {
+	"wpn_sil_lapu7",
+})
+
+add("kit", 1, {
+	"mod9", "pm_upgr_kit", "sr1upgr1", "226sig_kit", "pb_upgr_kit",
+	"u2p2g0r", "pl15_scolaz", "lazup_pl15", "upg220",
+	"m9_upgr_kit", "tt_upgr_kit", "cleaning_kit_p", "toolkit_p",
+})
+add("kit", 2, {
+	"silen98", "vitup", "kurtz", "gurza_up", "ots2_upgr_kit",
+	"kit_hunt", "cleaning_kit_s", "toolkit_s",
+})
+add("kit", 3, {
+	"23_up", "kab_up", "spectre_tactical_kit", "sr2_upkit", "5c_tik",
+	"admin", "mauser_kit", "sup", "infiltrator_tactical_kit",
+	"mono_kit", "psicho_rmr", "trijicon_rmr",
+	"cleaning_kit_r5", "toolkit_r5",
+})
+add("kit", 4, {
+	"bd", "vorkuta", "archangel", "magpul_pro", "mod_x_gen3", "shakal",
+	"swamp", "lapua700", "cleaning_kit_r7", "toolkit_r7",
+})
+add("kit", 5, {
+	"kit_aus_tri", "kit_sa5x_spec", "kit_fal_leup", "cut_kit",
+})
+
+add_cost("ammo", {
+	"ammo_11.43x23_fmj", "ammo_11.43x23_hydro",
+	"ammo_12.7x55_ap", "ammo_12.7x55_fmj",
+	"ammo_12x70_buck", "ammo_12x70_buck_self",
+	"ammo_12x76_bull", "ammo_12x76_dart", "ammo_12x76_zhekan",
+	"ammo_20x70_buck",
+	"ammo_23_eco", "ammo_23x75_barrikada", "ammo_23x75_shrapnel",
+	"ammo_338_federal", "ammo_357_hp_mag",
+	"ammo_5.45x39_ap", "ammo_5.45x39_ep", "ammo_5.45x39_fmj",
+	"ammo_5.56x45_ap", "ammo_5.56x45_fmj", "ammo_5.56x45_ss190",
+	"ammo_5.7x28_ss190", "ammo_5.7x28_ss195",
+	"ammo_7.62x25_p", "ammo_7.62x25_ps",
+	"ammo_7.62x39_ap", "ammo_7.62x39_fmj",
+	"ammo_7.62x51_ap", "ammo_7.62x51_fmj",
+	"ammo_7.62x54_7h1", "ammo_7.62x54_7h14", "ammo_7.62x54_ap",
+	"ammo_7.92x33_ap", "ammo_7.92x33_fmj",
+	"ammo_9x18_ap", "ammo_9x18_fmj", "ammo_9x18_pmm",
+	"ammo_9x19_ap", "ammo_9x19_fmj", "ammo_9x19_pbp",
+	"ammo_9x21_sp10",
+	"ammo_9x39_ap", "ammo_9x39_pab9",
+	"ammo_dyno", "ammo_gauss", "ammo_magnum_300", "ammo_pkm_100",
+})
+
+add_cost("parts", {
+	"prt_w_barrel_1", "prt_w_barrel_2", "prt_w_barrel_3", "prt_w_barrel_4",
+	"prt_w_barrel_5", "prt_w_barrel_6", "prt_w_barrel_7", "prt_w_barrel_8",
+	"prt_w_barrel_9", "prt_w_barrel_10", "prt_w_barrel_11", "prt_w_barrel_12",
+	"prt_w_barrel_13",
+	"prt_w_bolt_1", "prt_w_bolt_2", "prt_w_bolt_3", "prt_w_bolt_4",
+	"prt_w_bolt_5", "prt_w_bolt_6", "prt_w_bolt_7", "prt_w_bolt_8",
+	"prt_w_bolt_9", "prt_w_bolt_10", "prt_w_bolt_11", "prt_w_bolt_12",
+	"prt_w_bolt_13", "prt_w_bolt_14", "prt_w_bolt_15", "prt_w_bolt_16",
+	"prt_w_bolt_17",
+	"prt_w_bolt_carrier_1", "prt_w_bolt_carrier_2", "prt_w_bolt_carrier_3",
+	"prt_w_bolt_carrier_4", "prt_w_bolt_carrier_5", "prt_w_bolt_carrier_6",
+	"prt_w_bolt_carrier_7", "prt_w_bolt_carrier_8", "prt_w_bolt_carrier_9",
+	"prt_w_bolt_carrier_10", "prt_w_bolt_carrier_11",
+	"prt_w_gas_tube_1", "prt_w_gas_tube_2", "prt_w_gas_tube_3",
+	"prt_w_gas_tube_4", "prt_w_gas_tube_5", "prt_w_gas_tube_6",
+	"prt_w_gas_tube_7", "prt_w_gas_tube_8", "prt_w_gas_tube_9",
+	"prt_w_gas_tube_10", "prt_w_gas_tube_11",
+	"prt_w_p_barrel_1", "prt_w_p_barrel_2", "prt_w_p_barrel_3",
+	"prt_w_p_barrel_4", "prt_w_p_barrel_5", "prt_w_p_barrel_6",
+	"prt_w_p_barrel_7",
+	"prt_w_p_spring_1", "prt_w_p_spring_2", "prt_w_p_spring_3",
+	"prt_w_p_spring_4", "prt_w_p_spring_5", "prt_w_p_spring_6",
+	"prt_w_p_trigger_1", "prt_w_p_trigger_2", "prt_w_p_trigger_3",
+	"prt_w_p_trigger_4",
+	"prt_w_trigger_components_1", "prt_w_trigger_components_2",
+	"prt_w_trigger_components_3", "prt_w_trigger_components_4",
+	"prt_w_trigger_components_5", "prt_w_trigger_components_6",
+})
+
+-- Strip from traders, do not spawn.
+add_strip_only({
+	"wpn_sil_apb", "apsabigo", "rakurs", "wpn_sil_hexagon", "susatov",
+	"wpn_addon_grenade_launcher_monolit", "pritseldob",
+})
+
+-- Known junk / outfit. Scan will not spawn, strip, or log these.
+add_ignore({
+	"infiltrator_tactical_kit_off",
+	"spectre_tactical_kit_off",
+	"cleaning_kit_u",
+})
+
+local function fill_buckets(buckets)
+	for cat, tiers in pairs(BY_TIER) do
+		for t = 1, 5 do
+			local src = tiers[t]
+			local dst = buckets[cat][t]
+			for i = 1, #src do
+				local sec = src[i]
+				if ini_sys:section_exist(sec) then
+					dst[#dst + 1] = sec
+				end
+			end
+		end
+	end
+end
+
+local function each_cost(fn)
+	for cat, ids in pairs(COST) do
+		for i = 1, #ids do
+			fn(cat, ids[i])
+		end
+	end
+end
+
+_G.dogma_game_weapons_ban_lists = {
+	fill_buckets = fill_buckets,
+	each_cost = each_cost,
+	is_listed = function(sec)
+		return sec and STRIP[sec] == true
+	end,
+	is_ignored = function(sec)
+		return sec and IGNORE[sec] == true
+	end,
+	kind_of = function(sec)
+		return sec and KIND[sec]
+	end,
+}

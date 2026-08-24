@@ -3,6 +3,7 @@
 _G.dogma_gui_fx_radiation_conf = {
 	MOD_ID = "dogma/gui/fx_radiation",
 	DEFAULTS = {
+		enabled = true,
 		["desaturation/blur_max"] = 2000,
 		["desaturation/blur_min"] = 500,
 		["desaturation/enable"] = true,
@@ -37,6 +38,13 @@ dogma_mcm.attach(options, "gui", "ui_mcm_menu_dogma_gui", {
 				type = "desc",
 				text = "ui_mcm_dogma_gui_fx_radiation_page_description",
 			},
+					{
+						id = "enabled",
+						type = "check",
+						val = 1,
+						def = CONFIG.DEFAULTS.enabled,
+						hint = "dogma_gui_fx_radiation_enabled",
+					},
 					{
 						id = "grain/enable",
 						type = "check",

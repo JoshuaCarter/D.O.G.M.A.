@@ -3,6 +3,7 @@
 _G.dogma_game_free_zoom_conf = {
 	MOD_ID = "dogma/game/free_zoom",
 	DEFAULTS = {
+		enabled = true,
 		["free_zoom/allow_during_sprint"] = false,
 		["free_zoom/empty_hands_only"] = false,
 		["free_zoom/free_zoom"] = 40,
@@ -36,6 +37,13 @@ function on_mcm_load(options)
 				id = "zoom_description",
 				type = "desc",
 				text = "ui_mcm_dogma_game_free_zoom_zoom_description",
+			},
+			{
+				id = "enabled",
+				type = "check",
+				val = 1,
+				def = CONFIG.DEFAULTS.enabled,
+				hint = "dogma_game_free_zoom_enabled",
 			},
 			{ id = "line_zoom", type = "line" },
 			{

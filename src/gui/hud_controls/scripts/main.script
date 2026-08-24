@@ -1,0 +1,356 @@
+--[[
+	HUD Controls (minimap + companion)
+
+	Hide minimap + companion list unless hold key or a reactive
+	condition unparks them. Companion: hide slots after Update.
+	Never dialog:Show(false).
+]]
+
+local CONFIG = _G.dogma_gui_hud_controls_conf
+
+local FLAG = "__dogma_hud_controls_companion"
+
+local companion_show = false
+local companion_flash_until = 0
+local logged_missing = false
+
+local map_desired = false
+
+local function log(msg)
+	if dogma.dbg.logging() then
+		dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
+	end
+end
+
+local function hold_key(key, mod)
+	if not key or key < 0 then
+		return false
+	end
+	return dogma.input.is_mod_down(mod or 0) and dogma.input.is_key_down(key)
+end
+
+local function maingame()
+	return ActorMenu and ActorMenu.get_maingame and ActorMenu.get_maingame()
+end
+
+local function option_shown()
+	if not (ui_options and ui_options.get) then
+		return false
+	end
+	local v = ui_options.get("video/hud/show_minimap")
+	return v ~= nil and v ~= false and v ~= 0
+end
+
+local function force_hud_draw()
+	if get_console_cmd and not get_console_cmd(1, "hud_draw") then
+		if exec_console_cmd then
+			exec_console_cmd("hud_draw 1")
+		elseif get_console then
+			local c = get_console()
+			if c and c.execute then
+				c:execute("hud_draw 1")
+			end
+		end
+	end
+end
+
+local function force_indicators()
+	if level and level.show_indicators then
+		level.show_indicators()
+	end
+	if show_indicators then
+		show_indicators(true)
+	end
+end
+
+local function set_minimap(want_show)
+	want_show = not not want_show
+	if ui_options and ui_options.set and option_shown() ~= want_show then
+		ui_options.set("video/hud/show_minimap", want_show)
+	end
+	local ui = maingame()
+	if ui and ui.UIZoneMap then
+		ui.UIZoneMap.disabled = not want_show
+		pcall(function()
+			ui.UIZoneMap.visible = want_show
+		end)
+		if ui.ShowZoneMap then
+			pcall(function()
+				ui:ShowZoneMap(want_show)
+			end)
+		end
+		if want_show and ui.DrawZoneMap then
+			pcall(function()
+				ui:DrawZoneMap()
+			end)
+		end
+		if ui.UIMotionIcon and ui.UIMotionIcon.Show then
+			ui.UIMotionIcon:Show(want_show)
+		end
+	end
+	if want_show then
+		force_hud_draw()
+		force_indicators()
+	end
+end
+
+local function hide_minimap()
+	map_desired = false
+	set_minimap(false)
+end
+
+local function show_minimap_now()
+	if map_desired then
+		set_minimap(true)
+		return
+	end
+	map_desired = true
+	set_minimap(true)
+end
+
+local function tick_minimap()
+	local L = CONFIG.loaded
+	if not L.hide_minimap or hold_key(L.minimap_key, L.minimap_modifier) then
+		show_minimap_now()
+		return
+	end
+	if map_desired then
+		hide_minimap()
+	end
+end
+
+local function companion_hud()
+	local axr = rawget(_G, "axr_companions")
+	return axr and axr.HUD
+end
+
+local function hide_slots(self)
+	local info = self and self.companion_info
+	if not info then
+		return
+	end
+	for i = 1, 8 do
+		local slot = info[i] and info[i].base
+		if slot and slot.Show then
+			pcall(function()
+				slot:Show(false)
+			end)
+		end
+	end
+end
+
+local function companion_conditions(L)
+	if not L.companion_always_show then
+		return false
+	end
+	local hp_th = L.companion_hp_show_below_pct or 0
+	local want_combat = L.companion_show_in_combat
+	if hp_th <= 0 and not want_combat then
+		return false
+	end
+	local axr = rawget(_G, "axr_companions")
+	local clist = axr and axr.list_actor_squad_by_id and axr.list_actor_squad_by_id()
+	if not clist then
+		return false
+	end
+	for i = 1, #clist do
+		local st = db.storage[clist[i]]
+		local npc = st and st.object
+		if npc then
+			if hp_th > 0 and (npc.health or 0) * 100 < hp_th then
+				return true
+			end
+			if want_combat and npc.best_enemy and npc:best_enemy() then
+				return true
+			end
+		end
+	end
+	return false
+end
+
+local function companion_want()
+	local L = CONFIG.loaded
+	if not L.hide_companion then
+		return true
+	end
+	local now = time_global()
+	local cond = companion_conditions(L)
+	if cond then
+		local keep = L.companion_keep_showing_sec or 0
+		if keep > 0 then
+			local target = now + math.floor(keep * 1000)
+			if companion_flash_until < target then
+				companion_flash_until = target
+			end
+		end
+	end
+	return cond or hold_key(L.companion_key, L.companion_modifier) or companion_flash_until > now
+end
+
+local function note_companion_hurt(npc, amount)
+	local L = CONFIG.loaded
+	if not L.companion_show_on_hurt then
+		return
+	end
+	local sec = L.companion_hurt_sec
+	if type(sec) ~= "number" or sec <= 0 then
+		return
+	end
+	if type(amount) == "number" and amount <= 0 then
+		return
+	end
+	if not (npc and npc.has_info and npc:has_info("npcx_is_companion")) then
+		return
+	end
+	local target = time_global() + math.floor(sec * 1000)
+	if companion_flash_until < target then
+		companion_flash_until = target
+	end
+end
+
+-- Slots only. Never dialog:Show(false) - stock never turns that back on.
+local function apply_companion()
+	local want = companion_want()
+	local h = companion_hud()
+	local changed = want ~= companion_show
+	companion_show = want
+	if not h then
+		return
+	end
+	if not want then
+		hide_slots(h)
+		return
+	end
+	if not changed then
+		return
+	end
+	if h.dialog and h.dialog.Show then
+		pcall(function()
+			h.dialog:Show(true)
+		end)
+	end
+	if h.Update then
+		h:Update(true)
+	end
+end
+
+local function companion_class()
+	local axr = rawget(_G, "axr_companions")
+	return axr and axr.UICompanionList
+end
+
+local function patch_companion()
+	local cls = companion_class()
+	if not cls then
+		if not logged_missing then
+			logged_missing = true
+			log("axr_companions.UICompanionList missing")
+		end
+		return false
+	end
+	if cls[FLAG] then
+		return true
+	end
+
+	local orig_init = cls.InitControls
+	if orig_init then
+		cls.InitControls = function(self, ...)
+			orig_init(self, ...)
+			if not companion_show then
+				hide_slots(self)
+			end
+		end
+	end
+
+	local orig_update = cls.Update
+	if orig_update then
+		cls.Update = function(self, ...)
+			orig_update(self, ...)
+			if not companion_show then
+				hide_slots(self)
+			end
+		end
+	end
+
+	cls[FLAG] = true
+	log("patched UICompanionList")
+	return true
+end
+
+local function clamp_uint(v, max_v, fallback)
+	if type(v) ~= "number" then
+		v = fallback
+	end
+	if v < 0 then
+		v = 0
+	elseif v > max_v then
+		v = max_v
+	end
+	return v
+end
+
+local function load_opts()
+	local L, d = CONFIG.loaded, CONFIG.DEFAULTS
+	L.hide_minimap = dogma.mcm.bool(CONFIG.MOD_ID, "hide_minimap", d.hide_minimap)
+	L.minimap_key = dogma.mcm.key(CONFIG.MOD_ID, "minimap_key")
+	L.minimap_modifier = dogma.mcm.int(CONFIG.MOD_ID, "minimap_modifier", d.minimap_modifier) or 0
+	L.hide_companion = dogma.mcm.bool(CONFIG.MOD_ID, "hide_companion", d.hide_companion)
+	L.companion_key = dogma.mcm.key(CONFIG.MOD_ID, "companion_key")
+	L.companion_modifier = dogma.mcm.int(CONFIG.MOD_ID, "companion_modifier", d.companion_modifier) or 0
+	L.companion_show_on_hurt = dogma.mcm.bool(CONFIG.MOD_ID, "companion_show_on_hurt", d.companion_show_on_hurt)
+	L.companion_hurt_sec = clamp_uint(dogma.mcm.uint(CONFIG.MOD_ID, "companion_hurt_sec", d.companion_hurt_sec), 60, d.companion_hurt_sec)
+	L.companion_always_show = dogma.mcm.bool(CONFIG.MOD_ID, "companion_always_show", d.companion_always_show)
+	L.companion_hp_show_below_pct = clamp_uint(dogma.mcm.uint(CONFIG.MOD_ID, "companion_hp_show_below_pct", d.companion_hp_show_below_pct), 100, d.companion_hp_show_below_pct)
+	L.companion_show_in_combat = dogma.mcm.bool(CONFIG.MOD_ID, "companion_show_in_combat", d.companion_show_in_combat)
+	L.companion_keep_showing_sec = clamp_uint(dogma.mcm.uint(CONFIG.MOD_ID, "companion_keep_showing_sec", d.companion_keep_showing_sec), 10, d.companion_keep_showing_sec)
+end
+
+local function apply_minimap()
+	if CONFIG.loaded.hide_minimap then
+		hide_minimap()
+		return
+	end
+	show_minimap_now()
+end
+
+local function on_option_change()
+	load_opts()
+	companion_flash_until = 0
+	apply_companion()
+	apply_minimap()
+end
+
+local function actor_on_update()
+	if not dogma.sys.ready(CONFIG.MOD_ID, db, load_opts) then
+		return
+	end
+	tick_minimap()
+	apply_companion()
+end
+
+local function reset()
+	companion_show = false
+	companion_flash_until = 0
+	map_desired = false
+end
+
+function on_game_start()
+	dogma.load(CONFIG.MOD_ID)
+	load_opts()
+	reset()
+	logged_missing = false
+	patch_companion()
+	RegisterScriptCallback("actor_on_first_update", function()
+		if not dogma.sys.ready(CONFIG.MOD_ID, db, load_opts) then
+			return
+		end
+		patch_companion()
+	end)
+	RegisterScriptCallback("on_option_change", on_option_change)
+	RegisterScriptCallback("actor_on_update", actor_on_update)
+	RegisterScriptCallback("npc_on_hit_callback", note_companion_hurt)
+	RegisterScriptCallback("monster_on_hit_callback", note_companion_hurt)
+	RegisterScriptCallback("on_game_load", reset)
+	RegisterScriptCallback("main_menu_on_init", reset)
+	RegisterScriptCallback("actor_on_net_destroy", reset)
+end

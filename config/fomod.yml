@@ -1,0 +1,75 @@
+# FOMOD wizard. Lists paths from manifest.yml.
+# BETA/GOLD only. recommended default [baseline, all]. [] = never prechecked.
+# Desc: src/<path>/fomod/desc.txt  Image: src/<path>/fomod/image.png
+
+name: D.O.G.M.A.
+
+required:
+  - source: common/gamedata
+    dest: gamedata
+  - source: common/mo2
+    dest: mo2
+
+presets:
+  - id: baseline
+    name: Baseline
+    desc: Most features preselected. Weapons Ban is left off.
+    type: Recommended
+  - id: pick
+    name: Pick and choose
+    desc: Nothing preselected.
+  - id: all
+    name: All
+    desc: Every listed feature, including Weapons Ban.
+
+pages:
+  - name: Weapons Ban
+    groups:
+      - name: Core
+        plugins:
+          - path: game/weapons_ban
+            recommended: [all]
+      - name: Recommended
+        plugins:
+          - tweaks/sobre_loadouts
+  - name: GUI
+    groups:
+      - name: GUI
+        plugins:
+          - gui/fx_radiation
+          - gui/fx_bleed
+          - gui/fx_health
+          - gui/fps
+          - gui/hud_controls
+          - gui/stalker_id
+          - gui/weapon_tooltips
+          - gui/item_labels
+          - gui/pda_filters
+  - name: Input
+    groups:
+      - name: Input
+        plugins:
+          - input/inventory_controls
+          - input/pda_go_away
+          - input/pose_controls
+          - input/equipment_controls
+  - name: Gameplay
+    groups:
+      - name: Gameplay
+        plugins:
+          - game/faster_skinning
+          - game/campfire_healing
+          - game/badwill
+          - game/true_prone
+          - game/ammo_selector
+          - game/ads_zoom
+          - game/free_zoom
+          - path: game/dogma_rules
+            recommended: []
+  - name: Tweaks
+    groups:
+      - name: Tweaks
+        plugins:
+          - tweaks/sane_npc_combat_speeds
+          - tweaks/dodge_pseudogiant_slam_if_airborne
+          - tweaks/spawn_items_above_ground

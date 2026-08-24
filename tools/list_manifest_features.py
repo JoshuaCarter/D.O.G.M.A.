@@ -28,7 +28,7 @@ def main() -> int:
         "--min-fomod",
         dest="min_stage",
         default="local",
-        help="Include path mods with stage >= this (omit|dev|release; local=dev)",
+        help="Include path mods with stage >= this (omit|local|beta|gold)",
     )
     p.add_argument(
         "--check-src",

@@ -4,6 +4,7 @@
 _G.dogma_game_exo_power_conf = {
 	MOD_ID = "dogma/game/exo_power",
 	DEFAULTS = {
+		enabled = true,
 		base_drain = 0,
 		run_drain = 1,
 		sprint_drain = 3,
@@ -23,6 +24,13 @@ function on_mcm_load(options)
 				id = "page_description",
 				type = "desc",
 				text = "ui_mcm_dogma_game_exo_power_page_description",
+			},
+			{
+				id = "enabled",
+				type = "check",
+				val = 1,
+				def = CONFIG.DEFAULTS.enabled,
+				hint = "dogma_game_exo_power_enabled",
 			},
 			-- Idle default is 0 (2x still 0) - no slider; always no idle drain.
 			{

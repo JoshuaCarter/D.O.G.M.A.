@@ -1,0 +1,71 @@
+--[[
+    Weapons Ban — loot knobs. No item sections.
+    Loaded before 02_tiers.
+]]
+
+_G.dogma_game_weapons_ban_drops = {
+    LEVEL_TIERS = {
+        ["l01_escape"] = 1,
+        ["k00_marsh"] = 1,
+        ["l02_garbage"] = 2,
+        ["k01_darkscape"] = 2,
+        ["k02_trucks_cemetery"] = 3,
+        ["l03_agroprom"] = 3,
+        ["l04_darkvalley"] = 3,
+        ["l05_bar"] = 3,
+        ["l06_rostok"] = 3,
+        ["l08_yantar"] = 3,
+        ["l09_deadcity"] = 3,
+        ["l07_military"] = 4,
+        ["l10_red_forest"] = 4,
+        ["l10_radar"] = 4,
+        ["l10_limansk"] = 5,
+        ["l11_hospital"] = 5,
+        ["l11_pripyat"] = 5,
+        ["l12_stancia"] = 5,
+        ["l12_stancia_2"] = 5,
+        ["l13_generators"] = 5,
+        ["zaton"] = 5,
+        ["jupiter"] = 5,
+        ["pripyat"] = 5,
+    },
+
+    STASH_ITEM_TYPES_MAP    = { "ammo",    "parts",     "sight",    "suppressor",   "kit",    "gl"},
+    STASH_ITEM_TYPE_TIX     = {  50,        30,         20,         15,             5,       5},
+
+    -- Result tier vs stash map baseline
+    STASH_ITEM_TIER_MAP = { -2, -1, 0, 1, 2 },
+    STASH_ITEM_TIER_TIX = { 2, 8, 80, 8, 2 },
+
+    -- Extra stash items
+    STASH_BONUS_ROLL_MAP = { 0,  1,  2,  3,  4 },
+    STASH_BONUS_ROLL_TIX = { 90, 50, 30, 10, 1 },
+
+    STASH_PARTS_MAX_COND_MAP    = { 60,    65,    70,    75,    80,    85,    90,    95,    99   },
+    STASH_PARTS_COND_TIX = {
+        [1]                     = { 10,    20,    20,    10,    5,     1,     1,     1,     1     },
+        [2]                     = { 5,     10,    20,    20,    10,    5,     5,     3,     1     },
+        [3]                     = { 1,     5,     5,     10,    20,    20,    10,    5,     5     },
+        [4]                     = { 0,     1,     1,     5,     5,     10,    20,    20,    10    },
+        [5]                     = { 0,     1,     1,     1,     5,     5,     20,    40,    20    },
+    },
+
+    CORPSE_RANK_AMMO_RU_MAP     = { 0,     250,   750,   1250,  2000,  3000,  4000,  6000,  8000,  11000, 14000, 20000 },
+    CORPSE_RANK_AMMO_RU_TIX = {
+        novice                  = { 1,     1,     3,     5,     3,     1,     1,     0,     0,     0,     0,     0     },
+        trainee                 = { 1,     1,     1,     3,     5,     3,     1,     1,     0,     0,     0,     0     },
+        experienced             = { 1,     1,     1,     1,     3,     5,     3,     1,     1,     0,     0,     0     },
+        professional            = { 1,     1,     1,     1,     1,     3,     5,     3,     1,     1,     0,     0     },
+        veteran                 = { 1,     1,     1,     1,     1,     3,     5,     7,     5,     3,     1,     0     },
+        expert                  = { 1,     1,     1,     1,     1,     1,     3,     5,     7,     5,     3,     1     },
+        master                  = { 1,     1,     1,     1,     1,     1,     1,     3,     5,     7,     5,     3     },
+        legend                  = { 1,     1,     1,     1,     1,     1,     1,     1,     3,     7,     9,     7     },
+    },
+    STASH_TIER_TO_CORPSE_RANK = {
+        [1] = "professional",
+        [2] = "veteran",
+        [3] = "expert",
+        [4] = "master",
+        [5] = "legend",
+    },
+}

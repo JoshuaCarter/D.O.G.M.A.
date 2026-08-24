@@ -19,6 +19,10 @@ _G.dogma_game_weapons_ban_conf = {
 		suppressor_tier_cost_3 = 4000,
 		suppressor_tier_cost_4 = 8000,
 		suppressor_tier_cost_5 = 12000,
+		gl_tier_cost_2 = 8000,
+		gl_tier_cost_3 = 15000,
+		gl_tier_cost_4 = 22000,
+		gl_tier_cost_5 = 30000,
 		ammo_tier_cost_2 = 800,
 		ammo_tier_cost_3 = 1600,
 		ammo_tier_cost_4 = 3000,
@@ -29,7 +33,6 @@ _G.dogma_game_weapons_ban_conf = {
 		parts_tier_cost_5 = 7000,
 	},
 	loaded = {},
-	CATS = { "sight", "kit", "suppressor", "ammo", "parts" },
 }
 
 function _G.dogma_game_weapons_ban_conf:ensure_dogma()
@@ -105,6 +108,11 @@ function on_mcm_load(options)
 			track("suppressor", 3, 0, 25000, 250),
 			track("suppressor", 4, 0, 25000, 250),
 			track("suppressor", 5, 0, 25000, 250),
+			cat_header("gl"),
+			track("gl", 2, 0, 50000, 500),
+			track("gl", 3, 0, 50000, 500),
+			track("gl", 4, 0, 50000, 500),
+			track("gl", 5, 0, 50000, 500),
 			cat_header("ammo"),
 			track("ammo", 2, 0, 15000, 100),
 			track("ammo", 3, 0, 15000, 100),

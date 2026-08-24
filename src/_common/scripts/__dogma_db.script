@@ -1,0 +1,266 @@
+--[[
+    Item catalog from gamedata/configs/web_db/*.json
+]]
+
+local ROOT = "web_db\\"
+local loaded = false
+local names = {}
+local by_id = {}
+local groups = {}
+
+local FILES = {
+    pistol = "pistols.json",
+    smg = "smgs.json",
+    rifle = "rifles.json",
+    sniper = "snipers.json",
+    shotgun = "shotguns.json",
+    melee = "melee.json",
+    launcher = "launchers.json",
+    scope = "scopes.json",
+    silencer = "silencers.json",
+    gl = "grenade-launchers.json",
+    kit = "tactical-kits.json",
+    outfit = "outfits.json",
+    helmet = "helmets.json",
+    ammo = "ammo.json",
+    medicine = "medicine.json",
+    food = "food.json",
+    artefact = "artifacts.json",
+    explosive = "explosives.json",
+    belt = "belt-attachments.json",
+    part = "weapon-parts.json",
+    misc = "misc.json",
+}
+
+local UNIONS = {
+    weapon = { "pistol", "smg", "rifle", "sniper", "shotgun", "melee", "launcher" },
+    attachment = { "scope", "silencer", "gl", "kit" },
+    armor = { "outfit", "helmet" },
+}
+
+local LOAD_ORDER = {
+    "pistol", "smg", "rifle", "sniper", "shotgun", "melee", "launcher",
+    "scope", "silencer", "gl", "kit",
+    "outfit", "helmet",
+    "ammo", "medicine", "food", "artefact", "explosive", "belt",
+    "part",
+    "misc",
+}
+
+local function read_text(rel)
+    if not (getFS and getFS().update_path) then
+        return nil
+    end
+    local ok, abs = pcall(function()
+        return getFS():update_path("$game_config$", rel)
+    end)
+    if not (ok and abs and abs ~= "") then
+        return nil
+    end
+    local f = io.open(abs, "r")
+    if not f then
+        return nil
+    end
+    local s = f:read("*a")
+    f:close()
+    if s and s ~= "" then
+        return s
+    end
+    return nil
+end
+
+local function decode_file(file)
+    local text = read_text(ROOT .. file)
+    if not text then
+        return nil
+    end
+    local ok, data = pcall(__dogma_json.decode, text)
+    if ok then
+        return data
+    end
+    return nil
+end
+
+local function num(v)
+    if v == nil or v == "" then
+        return 0
+    end
+    if type(v) == "number" then
+        return v
+    end
+    local s = tostring(v):gsub("%%$", "")
+    return tonumber(s) or 0
+end
+
+local function decorate(row, typ)
+    row.type = typ
+    row.cost = num(row.st_upgr_cost)
+    row.weight = num(row.st_prop_weight)
+    local key = row.displayName or row.pda_encyclopedia_name
+    row.name = (key and names[key]) or key or row.id or ""
+    row.damage = num(row.ui_inv_damage)
+    row.ap = num(row.st_data_export_ap)
+    row.k_ap = num(row.st_data_export_k_ap)
+    row.box = num(row.st_data_export_ammo_box_size)
+    row.br = num(row.brClass)
+    row.ballistic = num(row.ui_inv_outfit_fire_wound_protection)
+    row.rad = num(row.ui_inv_outfit_radiation_protection)
+    row.slots = num(row.ui_inv_outfit_artefact_count)
+    row.carry = num(row.ui_inv_outfit_additional_weight)
+    row.hit = num(row.st_data_export_hit_power)
+    row.rof = num(row.ui_inv_rate_of_fire)
+    row.mag = num(row.base_mag_size)
+    row.recoil = num(row.ui_inv_recoil)
+    row.accuracy = num(row.ui_inv_accuracy)
+    row.handling = num(row.ui_inv_handling)
+    row.zoom = num(row.st_data_export_zoom_factor)
+    return row
+end
+
+local function add_row(typ, row)
+    if not (row and row.id) then
+        return
+    end
+    decorate(row, typ)
+    if not by_id[row.id] then
+        by_id[row.id] = row
+    end
+    local g = groups[typ]
+    g[#g + 1] = row
+end
+
+local function concat(types)
+    local out = {}
+    for i = 1, #types do
+        local g = groups[types[i]]
+        if g then
+            for j = 1, #g do
+                out[#out + 1] = g[j]
+            end
+        end
+    end
+    return out
+end
+
+local function load_names()
+    local data = decode_file("translations.json")
+    if data and type(data.en) == "table" then
+        names = data.en
+    end
+end
+
+local function load_all()
+    if loaded then
+        return
+    end
+    loaded = true
+    by_id = {}
+    groups = {}
+    load_names()
+    for i = 1, #LOAD_ORDER do
+        local typ = LOAD_ORDER[i]
+        groups[typ] = {}
+        local data = decode_file(FILES[typ])
+        local items = data and data.items
+        if items then
+            for j = 1, #items do
+                add_row(typ, items[j])
+            end
+        end
+    end
+    for name, types in pairs(UNIONS) do
+        groups[name] = concat(types)
+    end
+end
+
+local function ensure()
+    if not loaded then
+        load_all()
+    end
+end
+
+local function cmp(key, desc)
+    return function(a, b)
+        local va, vb = a[key], b[key]
+        local na, nb = tonumber(va), tonumber(vb)
+        if na and nb then
+            va, vb = na, nb
+        else
+            va = tostring(va or "")
+            vb = tostring(vb or "")
+        end
+        if va == vb then
+            return false
+        end
+        if desc then
+            return va > vb
+        end
+        return va < vb
+    end
+end
+
+function get(id, typ)
+    ensure()
+    if not id then
+        return nil
+    end
+    local row = by_id[id]
+    if not row then
+        return nil
+    end
+    if typ and row.type ~= typ then
+        return nil
+    end
+    return row
+end
+
+function list(typ, sort, dir)
+    ensure()
+    local src = typ and groups[typ]
+    if not src then
+        return {}
+    end
+    local out = {}
+    for i = 1, #src do
+        out[i] = src[i]
+    end
+    if sort then
+        table.sort(out, cmp(sort, dir == "desc"))
+    end
+    return out
+end
+
+local function wrap(typ)
+    return function(sort, dir)
+        return list(typ, sort, dir)
+    end
+end
+
+pistols = wrap("pistol")
+smgs = wrap("smg")
+rifles = wrap("rifle")
+snipers = wrap("sniper")
+shotguns = wrap("shotgun")
+melee = wrap("melee")
+launchers = wrap("launcher")
+weapons = wrap("weapon")
+scopes = wrap("scope")
+silencers = wrap("silencer")
+gls = wrap("gl")
+kits = wrap("kit")
+attachments = wrap("attachment")
+outfits = wrap("outfit")
+helmets = wrap("helmet")
+armor = wrap("armor")
+ammo = wrap("ammo")
+medicine = wrap("medicine")
+food = wrap("food")
+artifacts = wrap("artefact")
+explosives = wrap("explosive")
+belts = wrap("belt")
+parts = wrap("part")
+misc = wrap("misc")
+
+function on_game_start()
+    load_all()
+end

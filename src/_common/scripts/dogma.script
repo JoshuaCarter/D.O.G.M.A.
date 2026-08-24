@@ -1,7 +1,7 @@
 --[[
 	dogma.script - runtime API (full script load only).
 
-	dogma.mcm / .keys / .dbg / .console / .sys / .input / .math / .rng / .perf / .status / .alife / .load / …  — game-time
+	dogma.mcm / .keys / .dbg / .console / .sys / .input / .math / .rng / .perf / .status / .alife / .json / .db / .load / ...  game-time
 	MCM gather scripts use dogma_mcm.* (cannot see this module).
 ]]
 
@@ -18,6 +18,8 @@ status = __dogma_status
 console_once = __dogma_console_once
 item_stats = __dogma_item_stats.exports
 alife = __dogma_alife
+json = __dogma_json
+db = __dogma_db
 
 function load(mod_id)
 	sys.set_deps(mcm, dbg)

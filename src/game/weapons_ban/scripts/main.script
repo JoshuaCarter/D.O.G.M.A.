@@ -3,7 +3,7 @@
 
 	Trade: buy-block + strip banned combat gear from supply traders
 	(knives stay). Field stalkers untouched.
-	Stashes: 0–3 weighted adds (sight/kit/sil/ammo/parts); ammo rolls use
+	Stashes: 0–3 weighted adds (sight/kit/sil/gl/ammo/parts); ammo rolls use
 	tier→rank RU budgets for round counts.
 	Corpses: strip loose ammo, then one rank RU budget split across guns.
 	New game: N extra boxes per owned start weapon (on top of loadout);
@@ -14,6 +14,7 @@
 
 local CONFIG = _G.dogma_game_weapons_ban_conf
 local MOD_ID = CONFIG.MOD_ID
+local STASH_ITEM_TYPES_MAP = (_G.dogma_game_weapons_ban_drops or {}).STASH_ITEM_TYPES_MAP or {}
 local Tiers
 
 local original_set_random_stash
@@ -50,7 +51,7 @@ local function on_option_change()
 	local D = CONFIG.DEFAULTS
 	L.extra_start_ammo_boxes = dogma.mcm.int(MOD_ID, "extra_start_ammo_boxes", D.extra_start_ammo_boxes)
 	L.start_weapons_59_parts = dogma.mcm.bool(MOD_ID, "start_weapons_59_parts", D.start_weapons_59_parts)
-	for _, cat in ipairs(CONFIG.CATS) do
+	for _, cat in ipairs(STASH_ITEM_TYPES_MAP) do
 		for _, n in ipairs({ 2, 3, 4, 5 }) do
 			local key = cat .. "_tier_cost_" .. n
 			L[key] = dogma.mcm.int(MOD_ID, key, D[key])
@@ -949,7 +950,7 @@ local function roll_stash_loot(id)
 	Tiers.ensure()
 	local target = Tiers.base_tier_for_stash(id)
 	local sections = {}
-	local n = math.random(0, 3)
+	local n = Tiers.roll_stash_bonus()
 	for _ = 1, n do
 		local cat = Tiers.pick_category()
 		local rt = Tiers.pick_tier(target)

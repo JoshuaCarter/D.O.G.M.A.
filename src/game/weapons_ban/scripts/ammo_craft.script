@@ -1,11 +1,10 @@
 --[[
 	Weapons Ban — ammo craft 1:1
 
-	For Ammo Maker recipes (casing + powder + bullet), each part costs
-	recipe_amount × output box_size rounds (partial stacks OK).
-	Casing/bullet amounts are 1 (exact 1:1). Powder amounts are an integer
-	multiple of 1:1: round(vanilla_powder / box_size) per round.
-	Anything unexpected passes through to the original workshop handlers.
+	LoadRecipes overwrites GAMMA slots for keys in 01_recipes.
+	Each part costs recipe_amount × output box_size rounds.
+	Casing/bullet stay 1. Powder n is per round.
+	Not in RECIPE, or not casing+powder+bullet, uses the original handlers.
 ]]
 
 local CONFIG = _G.dogma_game_weapons_ban_conf
@@ -20,6 +19,32 @@ local function is_ammo_part(sec)
 	return starts_with(sec, "casing_")
 		or starts_with(sec, "powder_")
 		or starts_with(sec, "bullet_")
+end
+
+local function recipe_override(sec)
+	local rec = _G.dogma_game_weapons_ban_recipes
+	return rec and sec and rec[sec]
+end
+
+-- After GAMMA LoadRecipes: overwrite slots for keys in RECIPE.
+local function apply_recipes(self)
+	if not (self and self.recipes) then
+		return
+	end
+	for _, list in pairs(self.recipes) do
+		if type(list) == "table" then
+			for i = 1, #list do
+				local r = list[i]
+				local spec = r and recipe_override(r.sec)
+				if spec then
+					r[1] = { spec[1], 1 }
+					r[2] = { spec[2], spec[3] }
+					r[3] = { spec[4], 1 }
+					r[4] = nil
+				end
+			end
+		end
+	end
 end
 
 local function selected_recipe(self)
@@ -109,14 +134,20 @@ local function patch()
 
 	local wrapped_update = cls._dogma_wb_ammo_craft_update
 	local wrapped_craft = cls._dogma_wb_ammo_craft_craft
-	if cls[HOOK] and cls.UpdateItem == wrapped_update and cls.Craft == wrapped_craft then
+	local wrapped_load = cls._dogma_wb_ammo_craft_load
+	if cls[HOOK] and cls.UpdateItem == wrapped_update and cls.Craft == wrapped_craft
+		and cls.LoadRecipes == wrapped_load
+	then
 		return true
 	end
 
 	-- Chain current handlers (vanilla or Fixed Crafting / etc.).
 	local orig_update = cls.UpdateItem
 	local orig_craft = cls.Craft
-	if type(orig_update) ~= "function" or type(orig_craft) ~= "function" then
+	local orig_load = cls.LoadRecipes
+	if type(orig_update) ~= "function" or type(orig_craft) ~= "function"
+		or type(orig_load) ~= "function"
+	then
 		return false
 	end
 
@@ -133,7 +164,7 @@ local function patch()
 		end
 
 		local recipe = selected_recipe(self)
-		if not is_ammo_maker_recipe(recipe) then
+		if not (is_ammo_maker_recipe(recipe) and recipe_override(recipe.sec)) then
 			return orig_update(self, n, sec, amount, result, toolkit_idx, toolkit_sec)
 		end
 
@@ -176,12 +207,19 @@ local function patch()
 		return orig_craft(self)
 	end
 
+	local function load_hook(self, ...)
+		orig_load(self, ...)
+		apply_recipes(self)
+	end
+
 	cls.UpdateItem = update_hook
 	cls.Craft = craft_hook
+	cls.LoadRecipes = load_hook
 	cls._dogma_wb_ammo_craft_update = update_hook
 	cls._dogma_wb_ammo_craft_craft = craft_hook
+	cls._dogma_wb_ammo_craft_load = load_hook
 	cls[HOOK] = true
-	printf("[%s] patched UIWorkshopCraft ammo round-spend", TAG)
+	printf("[%s] patched UIWorkshopCraft ammo recipes + round-spend", TAG)
 	return true
 end
 

@@ -93,40 +93,56 @@ def parse_recommended(feat: str, raw) -> list[str] | None:
     return [str(x) for x in raw]
 
 
+def _feature_entry(feat: str, meta: dict, page: str, seen: set[str]) -> dict:
+    feat = feat.strip().replace("\\", "/")
+    if not feat:
+        raise ValueError("empty feature path")
+    if feat in seen:
+        raise ValueError(f"duplicate path {feat!r}")
+    seen.add(feat)
+    title = str(meta.get("name") or "").strip()
+    if not title:
+        raise ValueError(f"{feat}: missing name")
+    page = page.strip()
+    if not page:
+        raise ValueError(f"{feat}: missing page")
+    return {
+        "title": title,
+        "path": feat,
+        "stage": parse_stage(meta.get("stage", "omit")),
+        "page": page,
+        "desc": str(meta.get("desc") or "").strip(),
+        "recommended": parse_recommended(feat, meta.get("recommended")),
+    }
+
+
 def iter_feature_info(config_dir: Path) -> list[dict]:
-    """Each: title, path, stage, page, desc, recommended. Skips common."""
+    """Each: title, path, stage, page, desc, recommended. Skips common.
+
+    mods:
+      common: { name: Common }
+      Page Name:
+        cat/feat: { name, stage, desc? }
+    """
     data = load_manifest(config_dir)
     mods = data.get("mods")
     if not isinstance(mods, dict):
         raise ValueError("manifest.yml missing mods")
     out: list[dict] = []
     seen: set[str] = set()
-    for key, meta in mods.items():
-        feat = str(key).strip().replace("\\", "/")
-        if not feat or feat.lower() in SKIP_KEYS:
+    for key, val in mods.items():
+        key = str(key).strip().replace("\\", "/")
+        if not key or key.lower() in SKIP_KEYS:
             continue
-        if not isinstance(meta, dict):
+        if not isinstance(val, dict):
             continue
-        if feat in seen:
-            raise ValueError(f"duplicate path {feat!r}")
-        seen.add(feat)
-        title = str(meta.get("name") or "").strip()
-        if not title:
-            raise ValueError(f"{feat}: missing name")
-        page = str(meta.get("page") or "").strip()
-        if not page:
-            raise ValueError(f"{feat}: missing page")
-        desc = str(meta.get("desc") or "").strip()
-        out.append(
-            {
-                "title": title,
-                "path": feat,
-                "stage": parse_stage(meta.get("stage", "omit")),
-                "page": page,
-                "desc": desc,
-                "recommended": parse_recommended(feat, meta.get("recommended")),
-            }
-        )
+        if "/" in key:
+            out.append(_feature_entry(key, val, str(val.get("page") or ""), seen))
+            continue
+        for feat, meta in val.items():
+            if not isinstance(meta, dict):
+                continue
+            out.append(_feature_entry(str(feat), meta, key, seen))
     return out
 
 

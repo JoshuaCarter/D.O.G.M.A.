@@ -36,7 +36,7 @@ Skip: `README*`, `MOVE_MAP*`, `.gitkeep`, `*.alao-bak`, `_` names.
 
 ## Installer (FOMOD)
 
-Catalog: `fomod/manifest.yml` (`fomod` chrome + `mods` path/name/stage/page).
+Catalog: `fomod/manifest.yml` (`fomod` chrome + `mods` pages of path/name/stage).
 
 `BETA`/`GOLD` only. FOMOD desc is `desc:` on the feature (else the feature name). Hover image: `fomod/images/<path_key>.png` (e.g. `gui/fps` -> `gui_fps.png`).
 

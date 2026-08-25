@@ -5,7 +5,7 @@
 #   BETA  - local + FOMOD, checkbox name gets [BETA]
 #   OPTIN - local + FOMOD, never preselected
 #   GOLD  - local + FOMOD
-# page: FOMOD wizard page. First-seen page order. stage still gates the zip.
+# mods: common, then page name -> features. Page order = key order.
 # recommended: preset ids. Missing: GOLD -> [dogma, dogma-beta], BETA -> [dogma-beta].
 #   [] = never prechecked. pick is never in a default list.
 # intro: optional first page. Checkbox. desc is the right-pane text.
@@ -55,356 +55,304 @@ mods:
   common:
     name: Common
 
-  # WEAPONS BAN
-
-  game/weapons_ban:
-    name: Weapons Ban
-    stage: BETA
-    page: Weapons Ban
-    desc: |
-      According to G.A.M.M.A. lore, weapons trading is banned. And now traders act like it.
-      Traders no longer buy/sell weapon attachments, parts, repair kits, cleaning kits, or ammo.
-      You will only find these items in stashes and on corpses. In particular, ammo will now drop in more believable amounts.
-      Starting weapons are now poorer condition (59% parts) making the hunt for green barrels all the more rewarding.
-      This DOES make the early game more challenging, but not to an extreme degree.
-
-  tweaks/sobre_loadouts:
-    name: Sobre Loadouts
-    stage: BETA
-    page: Weapons Ban
-    desc: |
-      Complete rework of loadout options which maximises starting options, without compromising balance.
-      Each faction has unique options and largely respects their Nato/Warsaw preferences.
-      All weapons are A or B grade, and cost is relative to their actual performance.
-      Crucially, adds the gunsmithing tools to the loadout options for weapons ban mod.
-      [BETA] More balance testing needed.
-
-  gui/newgame:
-    name: New Game Layout
-    stage: BETA
-    page: Weapons Ban
-    desc: |
-      Changes the new game screen to give the loadout/inventory sections much more room.
-      [BETA] Only tested on 16x9 aspect ratio at 4k.
-
-  # GAMEPLAY
-
-  game/shared_stash:
-    name: Toolbench Shared Stash
-    stage: BETA
-    page: Gameplay
-
-  game/campfire_healing:
-    name: Campfire Healing
-    stage: GOLD
-    page: Gameplay
-
-  game/badwill:
-    name: Badwill
-    stage: OMIT
-    page: Gameplay
-
-  game/safety_save:
-    name: Safety Save
-    stage: GOLD
-    page: Gameplay
-
-  game/true_prone:
-    name: True Prone
-    stage: GOLD
-    page: Gameplay
-
-  game/ammo_selector:
-    name: Ammo Selector
-    stage: GOLD
-    page: Gameplay
-
-  game/death_report:
-    name: Death Report
-    stage: BETA
-    page: Gameplay
-
-  game/pistol_slot:
-    name: Pistol Slot
-    stage: BETA
-    page: Gameplay
-
-  game/ads_zoom:
-    name: ADS Zoom
-    stage: GOLD
-    page: Gameplay
-
-  game/free_zoom:
-    name: Free Zoom
-    stage: GOLD
-    page: Gameplay
-
-  # QUALITY OF LIFE
-
-  game/faster_skinning:
-    name: Faster Skinning
-    stage: GOLD
-    page: Quality of Life
-    desc: |
-      Adds a few ways to speed up skinning without losing immersion.
-      If note is the ability to draw your knife and slash a mutant to skin it.
-
-  game/exo_power:
-    name: Better Exo Power Drain
-    stage: BETA
-    page: Quality of Life
-    desc: |
-      No longer drains exo power when idle, but uses more power when moving.
-
-  game/belt_glowsticks:
-    name: Belt Glowsticks
-    stage: GOLD
-    page: Gameplay
-    desc: |
-      You can now drag glowsticks into a belt slot so you can have light with both hands free.
-      Glowstick light intensity is reduced by 50%
-      Glowstick ranges changed from 8/10/12/24m to 12/14/16/20m
-
-  # PERFORMANCE
-
-  perf/mcm_runtime_read_cache:
-    name: MCM Runtime Read Cache
-    stage: GOLD
-    page: Performance
-    desc: |
-      Did you know that many mods absolutely hammer mcm read ops at runtime, wasting precious millis? For shame!
-      Adds a Lua middle-man to cache mcm config reads and cache the values for 0 cost subsequent reads.
-      Doesn't prevent changes to mcm config at anytime, just avoids the overhead of spamming engine calls.
-
-  perf/sfx_prefetcher:
-    name: SFX Prefetcher
-    stage: GOLD
-    page: Performance
-    desc: |
-      Adds an SFX prefetcher that actually works.
-      Run the <GAMMA>/mods/DOGMA/dogma_sfx_prefetch.py script to compile a list of small sfx files (recomment default 50kb).
-      The mod will read that list on game load and preload those sfx files. Rerun script if you change audio packs, etc.
-
-  gui/fx_radiation:
-    name: Radiation FX
-    stage: GOLD
-    page: GUI
-
-  gui/fx_bleed:
-    name: Bleed FX
-    stage: GOLD
-    page: GUI
-
-  gui/fx_health:
-    name: Health FX
-    stage: GOLD
-    page: GUI
-
-  gui/fps:
-    name: FPS
-    stage: GOLD
-    page: GUI
-
-  gui/hud_controls:
-    name: HUD Controls
-    stage: BETA
-    page: GUI
-
-  gui/stalker_id:
-    name: Stalker ID
-    stage: GOLD
-    page: GUI
-
-  gui/weapon_tooltips:
-    name: Weapon Tooltips
-    stage: GOLD
-    page: GUI
-
-  gui/item_labels:
-    name: Item Labels
-    stage: GOLD
-    page: GUI
-
-  gui/pda_filters:
-    name: PDA Filters
-    stage: BETA
-    page: GUI
-
-  input/inventory_controls:
-    name: Inventory Controls
-    stage: BETA
-    page: Input
-
-  input/pda_go_away:
-    name: PDA Go Away
-    stage: GOLD
-    page: Input
-
-  input/menu_controls:
-    name: Menu Controls
-    stage: GOLD
-    page: Input
-
-  input/pose_controls:
-    name: Pose Controls
-    stage: GOLD
-    page: Input
-
-  input/equipment_controls:
-    name: Better Equipable Controls
-    stage: BETA
-    page: Input
-
-
-
-  tweaks/opaque_bushes:
-    name: Opaque Bushes
-    stage: GOLD
-    page: Tweaks
-
-  tweaks/passive_detector_beeps:
-    name: Passive Detector Beeps
-    stage: GOLD
-    page: Tweaks
-
-  tweaks/nvg_sticks_after_load:
-    name: NVG Sticks After Load
-    stage: LOCAL
-    page: Tweaks
-
-  tweaks/nvg_can_set_default_gain:
-    name: NVG Can Set Default Gain
-    stage: BETA
-    page: Tweaks
-
-  tweaks/qaw_reorder:
-    name: QAW Reorder
-    stage: GOLD
-    page: Tweaks
-
-  tweaks/hide_geiger_screen_text:
-    name: Hide Geiger Screen Text
-    stage: GOLD
-    page: Tweaks
-
-  tweaks/fix_damage_limb_allocation:
-    name: Fix Damage Limb Allocation
-    stage: BETA
-    page: Tweaks
-
-  tweaks/fix_geiger_for_dynamic_rad_patches:
-    name: Fix Geiger For Dynamic Rad Patches
-    stage: LOCAL
-    page: Tweaks
-
-  tweaks/fix_system_keybinds_not_sticking:
-    name: Fix System Keybinds Not Sticking
-    stage: BETA
-    page: Tweaks
-
-  tweaks/no_afterglow_delay:
-    name: No Afterglow Delay
-    stage: BETA
-    page: Tweaks
-
-  tweaks/rf_mission_can_spawn_on_current_map:
-    name: RF Mission Can Spawn On Current Map
-    stage: LOCAL
-    page: Tweaks
-
-  tweaks/fix_footsteps_sfx:
-    name: Fix Footsteps SFX
-    stage: OMIT
-    page: Tweaks
-
-  tweaks/sane_npc_combat_speeds:
-    name: Sane NPC Combat Speeds
-    stage: GOLD
-    page: Tweaks
-
-  tweaks/escorts_have_no_friends:
-    name: Escorts Have No Friends
-    stage: BETA
-    page: Tweaks
-
-  tweaks/no_guide_job_money_penalty:
-    name: No Guide Job Money Penalty
-    stage: BETA
-    page: Tweaks
-
-  tweaks/fanatic_stays_in_cordon:
-    name: Fanatic Stays In Cordon
-    stage: GOLD
-    page: Tweaks
-
-  tweaks/more_tasks:
-    name: More Tasks
-    stage: GOLD
-    page: Tweaks
-
-  tweaks/fix_voiced_actor_crash:
-    name: Fix Voiced Actor Crash
-    stage: GOLD
-    page: Tweaks
-
-  tweaks/fix_task_done_msg_crash:
-    name: Fix Task Done Msg Crash
-    stage: GOLD
-    page: Tweaks
-
-  tweaks/add_sortingplus_keybinds:
-    name: Add SortingPlus Keybinds
-    stage: GOLD
-    page: Tweaks
-
-  tweaks/dodge_pseudogiant_slam_if_airborne:
-    name: Dodge Pseudogiant Slam If Airborne
-    stage: GOLD
-    page: Tweaks
-
-  tweaks/spawn_items_above_ground:
-    name: Spawn Items Above Ground
-    stage: BETA
-    page: Tweaks
-
-  tweaks/fix_artifact_weights:
-    name: Fix Artifact Weights
-    stage: GOLD
-    page: Tweaks
-
-  tweaks/fix_double_mutant_hits:
-    name: Fix Double Mutant Hits
-    stage: BETA
-    page: Tweaks
-
-  tweaks/popup_messages:
-    name: Popup Messages
-    stage: GOLD
-    page: Tweaks
-
-  tweaks/quest_items_all_get_icon:
-    name: Quest Item Icon
-    stage: BETA
-    page: Tweaks
-
-  tweaks/hide_armor_patch_when_removed:
-    name: Hide Armor Patch When Removed
-    stage: GOLD
-    page: Tweaks
-
-  tweaks/safe_atmos_visibility:
-    name: Safe Atmos Visibility
-    stage: GOLD
-    page: Tweaks
-
-  # DEV
-
-  game/true_fast_travel:
-    name: True Fast Travel
-    stage: OMIT
-    page: DEV
-
-  game/dogma_rules:
-    name: Rules
-    stage: OMIT
-    page: DEV
+  Weapons Ban:
+    game/weapons_ban:
+      name: Weapons Ban
+      stage: BETA
+      desc: |
+        According to G.A.M.M.A. lore, weapons trading is banned. And now traders act like it.
+        Traders no longer buy/sell weapon attachments, parts, repair kits, cleaning kits, or ammo.
+        You will only find these items in stashes and on corpses. In particular, ammo will now drop in more believable amounts.
+        Starting weapons are now poorer condition (59% parts) making the hunt for green barrels all the more rewarding.
+        This DOES make the early game more challenging, but not to an extreme degree.
+
+    tweaks/sobre_loadouts:
+      name: Sobre Loadouts
+      stage: BETA
+      desc: |
+        Complete rework of loadout options which maximises starting options, without compromising balance.
+        Each faction has unique options and largely respects their Nato/Warsaw preferences.
+        All weapons are A or B grade, and cost is relative to their actual performance.
+        Crucially, adds the gunsmithing tools to the loadout options for weapons ban mod.
+        [BETA] More balance testing needed.
+
+    gui/newgame:
+      name: New Game Layout
+      stage: BETA
+      desc: |
+        Changes the new game screen to give the loadout/inventory sections much more room.
+        [BETA] Only tested on 16x9 aspect ratio at 4k.
+
+
+  Gameplay:
+    game/shared_stash:
+      name: Toolbench Shared Stash
+      stage: BETA
+
+    game/campfire_healing:
+      name: Campfire Healing
+      stage: GOLD
+
+    game/true_prone:
+      name: True Prone
+      stage: GOLD
+
+    game/death_report:
+      name: Death Report
+      stage: BETA
+
+    game/pistol_slot:
+      name: Pistol Slot
+      stage: BETA
+
+    game/ads_zoom:
+      name: ADS Zoom
+      stage: GOLD
+
+    game/free_zoom:
+      name: Free Zoom
+      stage: GOLD
+
+
+  Quality of Life:
+    game/faster_skinning:
+      name: Faster Skinning
+      stage: GOLD
+      desc: |
+        Adds a few ways to speed up skinning without losing immersion.
+        If note is the ability to draw your knife and slash a mutant to skin it.
+
+    game/exo_power:
+      name: Better Exo Power Drain
+      stage: BETA
+      desc: |
+        No longer drains exo power when idle, but uses more power when moving.
+
+    game/belt_glowsticks:
+      name: Belt Glowsticks
+      stage: GOLD
+      desc: |
+        You can now drag glowsticks into a belt slot to have light with occupying a hand.
+        Glowstick light intensity is reduced by 50%
+        Glowstick ranges changed from 8/10/12/24m to 12/14/16/20m
+
+    game/safety_save:
+      name: Safety Saves
+      stage: GOLD
+      desc: |
+        Adds conditional auto-saves so you don't have to spam quick/manual saves because a crash might lose your progress.
+        You can refine the frequency and conditions for saving, such as no more than x min, no less than x min, after closing inventory, after healing, etc.
+
+    game/ammo_selector:
+      name: Ammo Selector
+      stage: GOLD
+      desc: |
+        Adds a new ammo selector to the inventory screen.
+        You can now select the ammo type you want to use for each weapon.
+        This is a more efficient way to manage your ammo than the old system.
+
+
+  Performance:
+    perf/mcm_runtime_read_cache:
+      name: MCM Runtime Read Cache
+      stage: GOLD
+      desc: |
+        Did you know that many mods absolutely hammer mcm read ops at runtime, wasting precious millis? For shame!
+        Adds a Lua middle-man to cache mcm config reads and cache the values for 0 cost subsequent reads.
+        Doesn't prevent changes to mcm config at anytime, just avoids the overhead of spamming engine calls.
+
+    perf/sfx_prefetcher:
+      name: SFX Prefetcher
+      stage: GOLD
+      desc: |
+        Adds an SFX prefetcher that actually works.
+        Run the <GAMMA>/mods/DOGMA/dogma_sfx_prefetch.py script to compile a list of small sfx files (recomment default 50kb).
+        The mod will read that list on game load and preload those sfx files. Rerun script if you change audio packs, etc.
+
+
+  GUI:
+    gui/fx_radiation:
+      name: Radiation FX
+      stage: GOLD
+
+    gui/fx_bleed:
+      name: Bleed FX
+      stage: GOLD
+
+    gui/fx_health:
+      name: Health FX
+      stage: GOLD
+
+    gui/fps:
+      name: FPS
+      stage: GOLD
+
+    gui/hud_controls:
+      name: HUD Controls
+      stage: BETA
+
+    gui/stalker_id:
+      name: Stalker ID
+      stage: GOLD
+
+    gui/weapon_tooltips:
+      name: Weapon Tooltips
+      stage: GOLD
+
+    gui/item_labels:
+      name: Item Labels
+      stage: GOLD
+
+    gui/pda_filters:
+      name: PDA Filters
+      stage: BETA
+
+
+  Input:
+    input/inventory_controls:
+      name: Inventory Controls
+      stage: BETA
+
+    input/pda_go_away:
+      name: PDA Go Away
+      stage: GOLD
+
+    input/menu_controls:
+      name: Menu Controls
+      stage: GOLD
+
+    input/pose_controls:
+      name: Pose Controls
+      stage: GOLD
+
+    input/equipment_controls:
+      name: Better Equipable Controls
+      stage: BETA
+
+
+  Tweaks:
+    tweaks/opaque_bushes:
+      name: Opaque Bushes
+      stage: GOLD
+
+    tweaks/passive_detector_beeps:
+      name: Passive Detector Beeps
+      stage: GOLD
+
+    tweaks/nvg_sticks_after_load:
+      name: NVG Sticks After Load
+      stage: LOCAL
+
+    tweaks/nvg_can_set_default_gain:
+      name: NVG Can Set Default Gain
+      stage: BETA
+
+    tweaks/qaw_reorder:
+      name: QAW Reorder
+      stage: GOLD
+
+    tweaks/hide_geiger_screen_text:
+      name: Hide Geiger Screen Text
+      stage: GOLD
+
+    tweaks/fix_damage_limb_allocation:
+      name: Fix Damage Limb Allocation
+      stage: BETA
+
+    tweaks/fix_geiger_for_dynamic_rad_patches:
+      name: Fix Geiger For Dynamic Rad Patches
+      stage: LOCAL
+
+    tweaks/fix_system_keybinds_not_sticking:
+      name: Fix System Keybinds Not Sticking
+      stage: BETA
+
+    tweaks/no_afterglow_delay:
+      name: No Afterglow Delay
+      stage: BETA
+
+    tweaks/rf_mission_can_spawn_on_current_map:
+      name: RF Mission Can Spawn On Current Map
+      stage: LOCAL
+
+    tweaks/fix_footsteps_sfx:
+      name: Fix Footsteps SFX
+      stage: OMIT
+
+    tweaks/sane_npc_combat_speeds:
+      name: Sane NPC Combat Speeds
+      stage: GOLD
+
+    tweaks/escorts_have_no_friends:
+      name: Escorts Have No Friends
+      stage: BETA
+
+    tweaks/no_guide_job_money_penalty:
+      name: No Guide Job Money Penalty
+      stage: BETA
+
+    tweaks/fanatic_stays_in_cordon:
+      name: Fanatic Stays In Cordon
+      stage: GOLD
+
+    tweaks/more_tasks:
+      name: More Tasks
+      stage: GOLD
+
+    tweaks/fix_voiced_actor_crash:
+      name: Fix Voiced Actor Crash
+      stage: GOLD
+
+    tweaks/fix_task_done_msg_crash:
+      name: Fix Task Done Msg Crash
+      stage: GOLD
+
+    tweaks/add_sortingplus_keybinds:
+      name: Add SortingPlus Keybinds
+      stage: GOLD
+
+    tweaks/dodge_pseudogiant_slam_if_airborne:
+      name: Dodge Pseudogiant Slam If Airborne
+      stage: GOLD
+
+    tweaks/spawn_items_above_ground:
+      name: Spawn Items Above Ground
+      stage: BETA
+
+    tweaks/fix_artifact_weights:
+      name: Fix Artifact Weights
+      stage: GOLD
+
+    tweaks/fix_double_mutant_hits:
+      name: Fix Double Mutant Hits
+      stage: BETA
+
+    tweaks/popup_messages:
+      name: Popup Messages
+      stage: GOLD
+
+    tweaks/quest_items_all_get_icon:
+      name: Quest Item Icon
+      stage: BETA
+
+    tweaks/hide_armor_patch_when_removed:
+      name: Hide Armor Patch When Removed
+      stage: GOLD
+
+    tweaks/safe_atmos_visibility:
+      name: Safe Atmos Visibility
+      stage: GOLD
+
+
+  DEV:
+    game/true_fast_travel:
+      name: True Fast Travel
+      stage: OMIT
+
+    game/dogma_rules:
+      name: Rules
+      stage: OMIT
+
+    game/badwill:
+      name: Badwill
+      stage: OMIT

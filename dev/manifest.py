@@ -90,7 +90,7 @@ def parse_recommended(feat: str, raw) -> list[str] | None:
 
 
 def iter_feature_info(config_dir: Path) -> list[dict]:
-    """Each: title, path, stage, page, recommended. Skips common."""
+    """Each: title, path, stage, page, desc, recommended. Skips common."""
     data = load_manifest(config_dir)
     mods = data.get("mods")
     if not isinstance(mods, dict):
@@ -112,12 +112,14 @@ def iter_feature_info(config_dir: Path) -> list[dict]:
         page = str(meta.get("page") or "").strip()
         if not page:
             raise ValueError(f"{feat}: missing page")
+        desc = str(meta.get("desc") or "").strip()
         out.append(
             {
                 "title": title,
                 "path": feat,
                 "stage": parse_stage(meta.get("stage", "omit")),
                 "page": page,
+                "desc": desc,
                 "recommended": parse_recommended(feat, meta.get("recommended")),
             }
         )

@@ -39,15 +39,6 @@ def feature_fomod_dir(src: Path, feat: str) -> Path:
     return src / src_feature_dir(feat) / "fomod"
 
 
-def feature_desc(src: Path, feat: str, title: str) -> str:
-    desc_file = feature_fomod_dir(src, feat) / "desc.txt"
-    if desc_file.is_file():
-        text = desc_file.read_text(encoding="utf-8").strip()
-        if text:
-            return text
-    return title
-
-
 def modroot_names(src: Path, feat: str) -> list[str]:
     d = src / src_feature_dir(feat)
     names: list[str] = []
@@ -120,6 +111,46 @@ def plugin_label(feat: dict) -> str:
     return name
 
 
+def parse_intro(wizard: dict) -> dict | None:
+    raw = wizard.get("intro")
+    if raw is None or raw is False:
+        return None
+    if isinstance(raw, str):
+        desc, page, name = raw, "Welcome", "Continue"
+    elif isinstance(raw, dict):
+        desc = str(raw.get("desc") or raw.get("text") or "")
+        page = str(raw.get("page") or "Welcome").strip() or "Welcome"
+        name = str(raw.get("name") or "Continue").strip() or "Continue"
+    else:
+        raise ValueError("fomod intro must be a string or mapping")
+    desc = desc.strip()
+    if not desc:
+        raise ValueError("fomod intro needs desc")
+    return {"page": page, "name": name, "desc": desc}
+
+
+def intro_step_xml(wizard: dict) -> list[str]:
+    intro = parse_intro(wizard)
+    if not intro:
+        return []
+    return [
+        f'\t\t<installStep name="{esc_attr(intro["page"])}">',
+        '\t\t\t<optionalFileGroups order="Explicit">',
+        f'\t\t\t\t<group name="{esc_attr(intro["page"])}" type="SelectAtLeastOne">',
+        '\t\t\t\t\t<plugins order="Explicit">',
+        f'\t\t\t\t\t\t<plugin name="{esc_attr(intro["name"])}">',
+        f"\t\t\t\t\t\t\t<description>{esc_text(intro['desc'])}</description>",
+        "\t\t\t\t\t\t\t<typeDescriptor>",
+        '\t\t\t\t\t\t\t\t<type name="Optional"/>',
+        "\t\t\t\t\t\t\t</typeDescriptor>",
+        "\t\t\t\t\t\t</plugin>",
+        "\t\t\t\t\t</plugins>",
+        "\t\t\t\t</group>",
+        "\t\t\t</optionalFileGroups>",
+        "\t\t</installStep>",
+    ]
+
+
 def render_xml(wizard: dict, src: Path, plugins: list[dict]) -> str:
     lines = [
         '<?xml version="1.0" encoding="utf-8"?>',
@@ -135,9 +166,10 @@ def render_xml(wizard: dict, src: Path, plugins: list[dict]) -> str:
         lines.append(f'\t\t<folder source="{esc_attr(source)}" destination="{esc_attr(dest)}" />')
     for name in modroot_names(src, "common"):
         lines.append(
-            f'\t\t<file source="{esc_attr(win_path("common", name))}" destination="{esc_attr(name)}" />'
+            f'\t\t<file source="{esc_attr(name)}" destination="{esc_attr(name)}" />'
         )
     lines.extend(["\t</requiredInstallFiles>", '\t<installSteps order="Explicit">'])
+    lines.extend(intro_step_xml(wizard))
 
     lines.extend(
         [
@@ -208,7 +240,7 @@ def render_xml(wizard: dict, src: Path, plugins: list[dict]) -> str:
             )
             for feat in items:
                 folder = feature_path_key(feat["path"])
-                desc = feature_desc(src, feat["path"], feat["title"])
+                desc = feat.get("desc") or feat["title"]
                 image = feature_image(src, feat["path"])
                 lines.append(f'\t\t\t\t\t\t<plugin name="{esc_attr(plugin_label(feat))}">')
                 lines.append(f"\t\t\t\t\t\t\t<description>{esc_text(desc)}</description>")

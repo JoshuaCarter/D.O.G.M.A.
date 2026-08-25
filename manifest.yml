@@ -8,21 +8,44 @@
 # page: FOMOD wizard page. First-seen page order. stage still gates the zip.
 # recommended: preset ids. Missing: GOLD -> [dogma, dogma-beta], BETA -> [dogma-beta].
 #   [] = never prechecked. pick is never in a default list.
+# intro: optional first page. Checkbox. desc is the right-pane text.
+# desc on a feature: FOMOD right-pane text. Missing = feature name.
 # common is always-on (not a checkbox). No stage or page.
 
 fomod:
   name: D.O.G.M.A.
+  intro:
+    name: I CAN READ!
+    desc: |
+      READ ME FIRST!
+
+      Enlarged this window to bettter read text and see images.
+
+      D.O.G.M.A. Mod List: https://docs.google.com/spreadsheets/d/1iJBikJQvdHkTJ061XSbtOK3Gj6-Q8PVQ0tH8To23Kt4/edit?usp=sharing
+
+      This modpack is specifically built and tested with the D.O.G.M.A. mod list (on an anotherwise unmodified G.A.M.M.A. base).
+
+      Thus, DO NOT BLINDLY INSTALL this entire modpack and expect it to work flawlessly with your busted-ass setup (some features are fixes for mods in the list, etc).
+
+      If you're NOT following the D.O.G.M.A. mod list, then choose with care the features you want to install.
+
+      If you have issues, I don't want to know about it unless you provide debug logs (enable in mcm) or reliable reproduction steps.
+
   required:
-    - source: common/gamedata
+    - source: gamedata
       dest: gamedata
   presets:
     - id: dogma
-      name: D.O.G.M.A. (all non-beta features preselected)
-      desc: You closely follow the D.O.G.M.A. mod list and want a more stable experience.
+      name: D.O.G.M.A.
+      desc: |
+        You closely follow the D.O.G.M.A. mod list and want a more stable experience.
+        All non-beta features preselected.
       type: Recommended
     - id: dogma-beta
-      name: D.O.G.M.A. BETA (everything preselected)
-      desc: You closely follow the D.O.G.M.A. mod list and want beta features.
+      name: D.O.G.M.A. BETA
+      desc: |
+        You closely follow the D.O.G.M.A. mod list and want beta features.
+        Everything preselected.
     - id: pick
       name: Pick and choose
       desc: Nothing preselected.
@@ -31,15 +54,27 @@ mods:
   common:
     name: Common
 
+  # WEAPONS BAN
+
+  # PERFORMANCE
+
   perf/mcm_runtime_read_cache:
     name: MCM Runtime Read Cache
     stage: GOLD
     page: Performance
+    desc: |
+      Did you know that many mods absolutely hammer mcm read ops at runtime, wasting precious millis? For shame!
+      Adds a Lua middle-man to cache mcm config reads and cache the values for 0 cost subsequent reads.
+      Doesn't prevent changes to mcm config at anytime, just avoids the overhead of spamming engine calls.
 
   perf/sfx_prefetcher:
     name: SFX Prefetcher
     stage: GOLD
     page: Performance
+    desc: |
+      Adds an SFX prefetcher that actually works.
+      Run the <GAMMA>/mods/DOGMA/dogma_sfx_prefetch.py script to compile a list of small sfx files (recomment default 50kb).
+      The mod will read that list on game load and preload those sfx files. Rerun script if you change audio packs, etc.
 
   gui/newgame:
     name: New Game

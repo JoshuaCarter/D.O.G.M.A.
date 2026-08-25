@@ -4,7 +4,7 @@
 # Layout:
 #   .build/fomod/
 #     fomod/ModuleConfig.xml  info.xml  images/*.png
-#     common/gamedata/...
+#     gamedata/...            common (zip root so MO2 manual install looks valid)
 #     <feature_id>/gamedata/...
 #     meta.ini  .mod_id
 #
@@ -114,7 +114,7 @@ cat > "$STAGE/fomod/info.xml" <<EOF
 EOF
 
 echo "package-fomod: common"
-DOGMA_OUT="$STAGE/common/gamedata" DOGMA_ONLY=common bash "$BUILD"
+DOGMA_OUT="$STAGE/gamedata" DOGMA_ONLY=common bash "$BUILD"
 
 package_one_feature() {
 	local rel="$1"

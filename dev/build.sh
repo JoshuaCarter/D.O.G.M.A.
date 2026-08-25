@@ -575,8 +575,11 @@ if (( FRESH_BUILD )) && [[ "$ONLY" == "all" || "$ONLY" == "" ]] && [[ -z "${DOGM
 		instance="$(cd "$(dirname "$DEPLOY_MOD")/.." && pwd)"
 		dl="$instance/downloads"
 		mkdir -p "$dl"
-		cp -a "$BUILD_ROOT/DOGMA.zip" "$dl/DOGMA.zip"
-		echo "build: FOMOD zip -> $dl/DOGMA.zip"
+		if cp -a "$BUILD_ROOT/DOGMA.zip" "$dl/DOGMA.zip"; then
+			echo "build: FOMOD zip -> $dl/DOGMA.zip"
+		else
+			echo "build: WARN $dl/DOGMA.zip busy (close MO2 Reinstall / downloads). Zip is at $BUILD_ROOT/DOGMA.zip" >&2
+		fi
 	fi
 fi
 

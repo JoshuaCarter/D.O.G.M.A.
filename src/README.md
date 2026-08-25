@@ -38,7 +38,7 @@ Skip: `README*`, `MOVE_MAP*`, `.gitkeep`, `*.alao-bak`, `_` names.
 
 Catalog: `manifest.yml` (`fomod` chrome + `mods` path/name/stage/page).
 
-`BETA`/`GOLD` only. Optional: `src/<path>/fomod/desc.txt` (else the feature name), `image.png`.
+`BETA`/`GOLD` only. FOMOD desc is `desc:` on the feature in `manifest.yml` (else the feature name). Optional hover image: `src/<path>/fomod/image.png`.
 
 `Ctrl+Shift+B` also writes `.build/DOGMA.zip` and copies it to MO2 `downloads/` (Reinstall). `stage: LOCAL` is the fat merge only.
 

@@ -56,6 +56,7 @@ mods:
     name: Common
 
   Weapons Ban:
+
     game/weapons_ban:
       name: Weapons Ban
       stage: BETA
@@ -81,46 +82,62 @@ mods:
       stage: BETA
       desc: |
         Changes the new game screen to give the loadout/inventory sections much more room.
+        Not important for weapons ban, but makes the expanded loadout a lot nicer to use.
         [BETA] Only tested on 16x9 aspect ratio at 4k.
 
-
   Gameplay:
-    game/shared_stash:
-      name: Toolbench Shared Stash
-      stage: BETA
-
-    game/campfire_healing:
-      name: Campfire Healing
-      stage: GOLD
-
-    game/true_prone:
-      name: True Prone
-      stage: GOLD
-
-    game/death_report:
-      name: Death Report
-      stage: BETA
 
     game/pistol_slot:
       name: Pistol Slot
       stage: BETA
+      desc: |
+        Adds a fully functional pistol slot to the inventory screen. Yes, miracles do happen.
+
+    game/true_prone:
+      name: True Prone
+      stage: GOLD
+      desc: |
+        Makes prone actually function like prone, instead of being a low crouch.
+
+    game/campfire_healing:
+      name: Campfire Healing
+      stage: GOLD
+      desc: |
+        Faster campfire healing that also slowly converts temp limb health into permanent limb health.
+        This makes the game a bit easier (which is not my goal), but I find that this makes campfires a relevant/fun mechanic, rather than a source of endured tedium.
 
     game/ads_zoom:
       name: ADS Zoom
       stage: GOLD
+      desc: |
+        Replaces 'Adjustable Scope View - sneaky'.
+        Adds defaults zoom for irons, sights, scopes.
+        Saves overrides on a per weapon-type + optic-type.
+        Adds binoculars default zoomed out option.
 
     game/free_zoom:
       name: Free Zoom
       stage: GOLD
+      desc: |
+        Replaces 'Kute's Free Zoom'.
+        Adds mouse inputs and better syncing with ADS zoom.
 
+    game/shared_stash:
+      name: Toolbench Shared Stash
+      stage: BETA
+      desc: |
+        Makes Toolbench stashes all share their contents.
+        Can only place 1 toolbench per map.
+        Toolbench weight includes contents weight.
 
-  Quality of Life:
+  Gameplay QoL:
+
     game/faster_skinning:
       name: Faster Skinning
       stage: GOLD
       desc: |
         Adds a few ways to speed up skinning without losing immersion.
-        If note is the ability to draw your knife and slash a mutant to skin it.
+        Of note is the ability to draw your knife and slash a mutant to skin it (I love the knife-draw animation, and the pistol slot feature means i can have the knife equipped at all times).
 
     game/exo_power:
       name: Better Exo Power Drain
@@ -147,75 +164,86 @@ mods:
       name: Ammo Selector
       stage: GOLD
       desc: |
-        Adds a new ammo selector to the inventory screen.
-        You can now select the ammo type you want to use for each weapon.
-        This is a more efficient way to manage your ammo than the old system.
-
-
-  Performance:
-    perf/mcm_runtime_read_cache:
-      name: MCM Runtime Read Cache
-      stage: GOLD
-      desc: |
-        Did you know that many mods absolutely hammer mcm read ops at runtime, wasting precious millis? For shame!
-        Adds a Lua middle-man to cache mcm config reads and cache the values for 0 cost subsequent reads.
-        Doesn't prevent changes to mcm config at anytime, just avoids the overhead of spamming engine calls.
-
-    perf/sfx_prefetcher:
-      name: SFX Prefetcher
-      stage: GOLD
-      desc: |
-        Adds an SFX prefetcher that actually works.
-        Run the <GAMMA>/mods/DOGMA/dogma_sfx_prefetch.py script to compile a list of small sfx files (recomment default 50kb).
-        The mod will read that list on game load and preload those sfx files. Rerun script if you change audio packs, etc.
-
-
-  GUI:
-    gui/fx_radiation:
-      name: Radiation FX
-      stage: GOLD
-
-    gui/fx_bleed:
-      name: Bleed FX
-      stage: GOLD
-
-    gui/fx_health:
-      name: Health FX
-      stage: GOLD
-
-    gui/fps:
-      name: FPS
-      stage: GOLD
-
-    gui/hud_controls:
-      name: HUD Controls
-      stage: BETA
-
-    gui/stalker_id:
-      name: Stalker ID
-      stage: GOLD
+        An altered version of the base ammo selector to allow for hold-hover-release selection of ammo types.
 
     gui/weapon_tooltips:
       name: Weapon Tooltips
       stage: GOLD
-
-    gui/item_labels:
-      name: Item Labels
-      stage: GOLD
-
-    gui/pda_filters:
-      name: PDA Filters
-      stage: BETA
-
-
-  Input:
-    input/inventory_controls:
-      name: Inventory Controls
-      stage: BETA
+      desc: |
+        Adds detailed weapon damage numbers and non-arbitrary statistics to weapons tooltips.
+        Many options for which tables/stats to show, how they're presented, whether to factor actual gun condition in, etc.
+        E.g. "Accuracy: 95%" doesn't really tell me much, but "Spread: 0.32° / 6.51°" tells me exactly how accurate it is when stand-ADSing and run-hip-firing.
 
     input/pda_go_away:
       name: PDA Go Away
       stage: GOLD
+      desc: |
+        Prevents re-raising the PDA after closing an inventory or fast traveling.
+
+  HUD:
+
+    gui/hud_controls:
+      name: HUD Controls
+      stage: BETA
+      desc: |
+        Adds many keybinds and conditions for controlling when base-gamma hud elements are shows.
+        This allows you to have most/all hud elements hidden most of the time, and shown only when you want.
+        Coveres BHS (body/limb/psy/stam block, status icon, etc), minimap, and the companion ui.
+
+    gui/stalker_id:
+      name: Stalker ID
+      stage: GOLD
+      desc: |
+        Replaces the 'Identification UI' mod.
+        Centers the name/rank/icon horizontally on the screen (default top-center, can be moved vertically).
+        Has many options for how and what to show when. Some highlights:
+        Adds better aim-tollerance, and fades last id out over time, so it's less finiky to read an id during play.
+        Optional name colors based on that NPC's individual goodwill towards you.
+        Optional line from id to target to make it easier to see who you're iding - only works on hostiles via binoculars.
+        Many controls for when to show, e.g. only when holding a key, or ADS, or using binoculars, etc.
+
+    gui/item_labels:
+      name: Item Labels
+      stage: GOLD
+      desc: |
+        I'm not a fan of dotmarks (great mod, just not for me), and much prefer the default item labels (when holding use key).
+        This just shows them at all times within X meters.
+        It does let you see items without LoS, but I find that this feels more like an approximation of how well I'd find things IRL most of the time and saves me from manually checking every nook, etc.
+
+    gui/pda_filters:
+      name: PDA Filters
+      stage: BETA
+      desc: |
+        Many filters for PDA messages. Some highlights (things I don't like in particular):
+        - Hostile faction communications (why would they do that?).
+        - Kill witness messages (no you didn't just see me kill a snork in the tunnels under agroprom...)
+        - Trade brags (this is matters more for weapons ban feature - brags about buying an attachment don't really fit...)
+        - Custom waypoint messages.
+
+    gui/fx_radiation:
+      name: Radiation FX
+      stage: GOLD
+      desc: |
+        Better radiation FX that matches your current dose level rather than the environment (removing annoying grain when you're completely protected from it).
+        Can also be used to disable the grain FX entirely. Many controls for fine-tuning.
+
+    gui/fx_bleed:
+      name: Bleed FX
+      stage: GOLD
+      desc: |
+        Simple blood FX in the corner of the screen that matches your current bleed level (one corner? no biggy, 4? oh shit...).
+
+    gui/fx_health:
+      name: Health FX
+      stage: GOLD
+      desc: |
+        Simple desaturation FX that increases in intensity as you're health drops.
+
+  Input:
+
+    input/inventory_controls:
+      name: Inventory Controls
+      stage: BETA
 
     input/menu_controls:
       name: Menu Controls
@@ -229,8 +257,8 @@ mods:
       name: Better Equipable Controls
       stage: BETA
 
-
   Tweaks:
+
     tweaks/opaque_bushes:
       name: Opaque Bushes
       stage: GOLD
@@ -343,8 +371,38 @@ mods:
       name: Safe Atmos Visibility
       stage: GOLD
 
+  Misc:
+
+    game/death_report:
+      name: Death Report
+      stage: BETA
+      desc: |
+        On death, press tab to see a report of the damage sources that lead to your death.
+
+    gui/fps:
+      name: FPS
+      stage: GOLD
+
+  Performance:
+
+    perf/mcm_runtime_read_cache:
+      name: MCM Runtime Read Cache
+      stage: GOLD
+      desc: |
+        Did you know that many mods absolutely hammer mcm read ops at runtime, wasting precious millis? For shame!
+        Adds a Lua middle-man to cache mcm config reads and cache the values for 0 cost subsequent reads.
+        Doesn't prevent changes to mcm config at anytime, just avoids the overhead of spamming engine calls.
+
+    perf/sfx_prefetcher:
+      name: SFX Prefetcher
+      stage: GOLD
+      desc: |
+        Adds an SFX prefetcher that actually works.
+        Run the <GAMMA>/mods/DOGMA/dogma_sfx_prefetch.py script to compile a list of small sfx files (recomment default 50kb).
+        The mod will read that list on game load and preload those sfx files. Rerun script if you change audio packs, etc.
 
   DEV:
+
     game/true_fast_travel:
       name: True Fast Travel
       stage: OMIT

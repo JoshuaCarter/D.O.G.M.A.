@@ -144,7 +144,9 @@ local zoom_diag
 
 local on_mouse_wheel
 
-local clamp = dogma.math.clamp
+local function clamp(n, lo, hi)
+	return dogma.math.clamp(n, lo, hi)
+end
 
 local function log(msg)
 	if CONFIG.loaded.debug_log then

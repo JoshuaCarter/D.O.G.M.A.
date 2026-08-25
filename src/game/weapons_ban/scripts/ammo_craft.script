@@ -97,7 +97,8 @@ end
 local function update_round_ingredient(self, n, sec, amount, out_box)
 	local need = amount * out_box
 	local have = utils_item.get_amount(db.actor, sec) or 0
-	local name = ui_item.get_sec_name(sec)
+	local part = dogma.db.get(sec)
+	local name = (part and part.name ~= "" and part.name) or sec
 
 	self.craft_item[n] = {}
 	self.craft_item_remain[n] = {}

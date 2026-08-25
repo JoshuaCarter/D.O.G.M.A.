@@ -511,13 +511,13 @@ local function section_nice_name(sec, fallback)
 	if not sec or sec == "" then
 		return nil
 	end
-	local named = tr(sec)
-	if named then
-		return named
-	end
 	local row = dogma.db.get(sec)
 	if row and row.name and row.name ~= "" and not looks_like_id(row.name) then
 		return row.name
+	end
+	local named = tr(sec)
+	if named then
+		return named
 	end
 	if ui_item and ui_item.get_sec_name then
 		local n = ui_item.get_sec_name(sec)

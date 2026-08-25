@@ -66,14 +66,12 @@ local function item_name(sec)
 		return cached
 	end
 	local name = nil
-	if ui_item and ui_item.get_sec_name then
-		name = ui_item.get_sec_name(sec)
+	local row = dogma.db.get(sec)
+	if row and row.name and row.name ~= "" then
+		name = row.name
 	end
-	if (not name or name == "") and ini_sys and ini_sys.r_string_ex then
-		local id = ini_sys:r_string_ex(sec, "inv_name")
-		if id and id ~= "" and game and game.translate_string then
-			name = game.translate_string(id)
-		end
+	if (not name or name == "") and ui_item and ui_item.get_sec_name then
+		name = ui_item.get_sec_name(sec)
 	end
 	if not name or name == "" then
 		name = sec
@@ -103,7 +101,7 @@ local function can_pickup(obj)
 		return false
 	end
 	local sec = obj.section and obj:section()
-	if not sec or sec == "" then
+	if not sec or sec == "" or not dogma.db.get(sec) then
 		return false
 	end
 	return section_can_take(sec)

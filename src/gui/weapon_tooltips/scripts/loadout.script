@@ -80,7 +80,7 @@ local function build_sec_desc_header(sec)
 	end
 
 	-- Outfit / helmet / backpack / disassemble condition (fresh = 100%).
-	if IsItem("outfit", sec) or IsItem("helmet", sec)
+	if dogma.db.is_outfit(sec) or dogma.db.is_helmet(sec)
 		or IsItem("backpack", sec) or IsItem("disassemble", sec)
 	then
 		local clr = utils_xml.get_color_con and utils_xml.get_color_con(100) or clr_g
@@ -124,7 +124,7 @@ end
 
 -- Outfit property block from section (stock gates on IsOutfit(obj)).
 local function build_outfit_props_from_sec(sec)
-	if not sec or not ini_sys or not IsItem("outfit", sec) then
+	if not sec or not ini_sys or not dogma.db.is_outfit(sec) then
 		return ""
 	end
 
@@ -171,7 +171,7 @@ end
 local function build_desc_footer_hook(obj, sec, str)
 	local result = base_build_desc_footer and base_build_desc_footer(obj, sec, str) or (str or "")
 	-- Stock skips the outfit props block when obj is nil (IsOutfit(nil) == false).
-	if obj or not sec or not IsItem("outfit", sec) then
+	if obj or not sec or not dogma.db.is_outfit(sec) then
 		return result
 	end
 
@@ -271,7 +271,7 @@ local function wrap_outfit_functors()
 			if name == "FireWound" and sec and ini_sys and parse_list then
 				local bones = ini_sys:r_string_ex(sec, "bones_koeff_protection")
 				if bones and bones ~= "" then
-					local bone = IsItem("helmet", sec) and "bip01_head" or "bip01_spine"
+					local bone = dogma.db.is_helmet(sec) and "bip01_head" or "bip01_spine"
 					local vals = parse_list(ini_sys, bones, bone)
 					local br = vals and tonumber(vals[2])
 					if br then
@@ -362,14 +362,10 @@ local function loadout_group(sec)
 	if not sec then
 		return GROUP_MISC
 	end
-	if IsItem("helmet", sec) or IsItem("outfit", sec) then
+	if dogma.db.is_helmet(sec) or dogma.db.is_outfit(sec) then
 		return GROUP_OUTFIT
 	end
-	local kind = SYS_GetParam and SYS_GetParam(0, sec, "kind", "") or ""
-	if kind == "o_helmet" or string.sub(kind, 1, 2) == "o_" then
-		return GROUP_OUTFIT
-	end
-	if string.sub(kind, 1, 2) == "w_" then
+	if dogma.db.is_weapon(sec) then
 		return GROUP_WEAP
 	end
 	return GROUP_MISC

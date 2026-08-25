@@ -548,8 +548,7 @@ local function armor_input_from_ini(sec)
 	if (prots.telepathy_protection or 0) == 0 then
 		prots.telepathy_protection = ini_sys:r_float_ex(sec, "telepatic_protection") or 0
 	end
-	local is_helm = (IsItem and IsItem("helmet", sec))
-		or (string.find(sec, "helm", 1, true) ~= nil)
+	local is_helm = dogma.db.is_helmet(sec)
 	-- FireWound (ballistic) is bone armor (utils_item.get_outfit_protection).
 	local bones = ini_sys:r_string_ex(sec, "bones_koeff_protection")
 	if bones and bones ~= "" and parse_list then

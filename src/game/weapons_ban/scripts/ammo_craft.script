@@ -11,16 +11,6 @@ local CONFIG = _G.dogma_game_weapons_ban_conf
 local TAG = (CONFIG and CONFIG.MOD_ID or "dogma/game/weapons_ban"):gsub("/", "_")
 local HOOK = "_dogma_wb_ammo_craft"
 
-local function starts_with(s, prefix)
-	return type(s) == "string" and string.sub(s, 1, #prefix) == prefix
-end
-
-local function is_ammo_part(sec)
-	return starts_with(sec, "casing_")
-		or starts_with(sec, "powder_")
-		or starts_with(sec, "bullet_")
-end
-
 local function recipe_override(sec)
 	local rec = _G.dogma_game_weapons_ban_consts and _G.dogma_game_weapons_ban_consts.RECIPES
 	return rec and sec and rec[sec]
@@ -58,7 +48,7 @@ end
 
 -- Exactly one casing_*, one powder_*, one bullet_*; no other ingredients.
 local function is_ammo_maker_recipe(recipe)
-	if not (recipe and recipe.sec and IsItem("ammo", recipe.sec)) then
+	if not (recipe and recipe.sec and dogma.db.is_ammo(recipe.sec)) then
 		return false
 	end
 	local casing, powder, bullet, other = 0, 0, 0, 0
@@ -66,11 +56,11 @@ local function is_ammo_maker_recipe(recipe)
 		local slot = recipe[i]
 		if slot and slot[1] then
 			local sec = slot[1]
-			if starts_with(sec, "casing_") then
+			if dogma.db.is_ammo_casing(sec) then
 				casing = casing + 1
-			elseif starts_with(sec, "powder_") then
+			elseif dogma.db.is_ammo_powder(sec) then
 				powder = powder + 1
-			elseif starts_with(sec, "bullet_") then
+			elseif dogma.db.is_ammo_bullet(sec) then
 				bullet = bullet + 1
 			else
 				other = other + 1
@@ -90,7 +80,7 @@ local function spend_ammo_rounds(npc, section, need)
 		if remain <= 0 then
 			break
 		end
-		local obj = level.object_by_id(id)
+		local obj = dogma.alife.obj(id)
 		if obj and cnt and cnt > 0 then
 			if cnt <= remain then
 				alife_release_id(id)
@@ -168,11 +158,12 @@ local function patch()
 			return orig_update(self, n, sec, amount, result, toolkit_idx, toolkit_sec)
 		end
 
-		if not is_ammo_part(sec) then
+		if not dogma.db.is_ammo_part(sec) then
 			return orig_update(self, n, sec, amount, result, toolkit_idx, toolkit_sec)
 		end
 
-		local out_box = IsItem("ammo", recipe.sec)
+		local row = dogma.db.get(recipe.sec)
+		local out_box = row and row.box
 		if not (out_box and out_box > 0 and amount and amount > 0) then
 			return orig_update(self, n, sec, amount, result, toolkit_idx, toolkit_sec)
 		end

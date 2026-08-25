@@ -26,7 +26,7 @@ local function is_companion(npc)
 end
 
 local function is_strapped_weapon(obj)
-	return IsWeapon(obj)
+	return dogma.db.is_weapon(obj:section())
 		and se_load_var
 		and se_load_var(obj:id(), nil, "strapped_item")
 end

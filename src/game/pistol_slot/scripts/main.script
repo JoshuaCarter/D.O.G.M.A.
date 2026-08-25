@@ -36,7 +36,7 @@ local function ltx_slot(obj)
 end
 
 local function is_sidearm(obj)
-	if not obj or IsMelee(obj) or not IsWeapon(obj) then
+	if not obj or dogma.db.is_melee(obj:section()) or not dogma.db.is_weapon(obj:section()) then
 		return false
 	end
 	return ltx_slot(obj) == 1

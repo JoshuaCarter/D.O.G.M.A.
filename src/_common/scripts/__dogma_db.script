@@ -1,15 +1,16 @@
 --[[
-    Item catalog from gamedata/configs/web_db/*.json
+    Item catalog: gamedata/configs/db/web (website dump) + db/ext (ours).
 ]]
 
-local ROOT = "web_db\\"
+local WEB = "db\\web\\"
+local EXT = "db\\ext\\"
 local loaded = false
 local names = {}
 local by_id = {}
 local groups = {}
 local in_group = {}
 
-local FILES = {
+local WEB_FILES = {
     weapons_pistols = "pistols.json",
     weapons_smgs = "smgs.json",
     weapons_rifles = "rifles.json",
@@ -25,12 +26,18 @@ local FILES = {
     armor_outfits = "outfits.json",
     armor_helmets = "helmets.json",
     ammo = "ammo.json",
+    mutant_parts = "mutant-parts.json",
+    outfit_parts = "outfit-parts.json",
     medicine = "medicine.json",
     food = "food.json",
     artifacts = "artifacts.json",
     explosives = "explosives.json",
     belt_attachments = "belt-attachments.json",
     misc = "misc.json",
+}
+
+local EXT_FILES = {
+    ammo_parts = "ammo-parts.json",
 }
 
 local UNIONS = {
@@ -52,7 +59,8 @@ local LOAD_ORDER = {
     "weapon_attach_scopes", "weapon_attach_silencers",
     "weapon_attach_gls", "weapon_upgrade_kits",
     "armor_outfits", "armor_helmets",
-    "ammo", "medicine", "food", "artifacts", "explosives", "belt_attachments",
+    "ammo", "ammo_parts", "mutant_parts", "outfit_parts",
+    "medicine", "food", "artifacts", "explosives", "belt_attachments",
     "weapon_parts",
     "misc",
 }
@@ -79,8 +87,8 @@ local function read_text(rel)
     return nil
 end
 
-local function decode_file(file)
-    local text = read_text(ROOT .. file)
+local function decode_file(root, file)
+    local text = read_text(root .. file)
     if not text then
         return nil
     end
@@ -170,6 +178,21 @@ local function build_subs()
             groups.weapon_repair_kits[#groups.weapon_repair_kits + 1] = row
         end
     end
+    groups.ammo_casings = {}
+    groups.ammo_powder = {}
+    groups.ammo_bullets = {}
+    local parts = groups.ammo_parts or {}
+    for i = 1, #parts do
+        local row = parts[i]
+        local id = row.id
+        if starts(id, "casing_") then
+            groups.ammo_casings[#groups.ammo_casings + 1] = row
+        elseif starts(id, "powder_") then
+            groups.ammo_powder[#groups.ammo_powder + 1] = row
+        elseif starts(id, "bullet_") then
+            groups.ammo_bullets[#groups.ammo_bullets + 1] = row
+        end
+    end
 end
 
 local function index_all()
@@ -186,8 +209,18 @@ local function index_all()
     end
 end
 
+local function file_for(typ)
+    if WEB_FILES[typ] then
+        return WEB, WEB_FILES[typ]
+    end
+    if EXT_FILES[typ] then
+        return EXT, EXT_FILES[typ]
+    end
+    return nil
+end
+
 local function load_names()
-    local data = decode_file("translations.json")
+    local data = decode_file(WEB, "translations.json")
     if data and type(data.en) == "table" then
         names = data.en
     end
@@ -204,7 +237,8 @@ local function load_all()
     for i = 1, #LOAD_ORDER do
         local typ = LOAD_ORDER[i]
         groups[typ] = {}
-        local data = decode_file(FILES[typ])
+        local root, file = file_for(typ)
+        local data = file and decode_file(root, file)
         local items = data and data.items
         if items then
             for j = 1, #items do
@@ -284,6 +318,39 @@ function is_any(id, types)
     return false
 end
 
+function is_weapon(id) return is(id, "weapons") end
+function is_pistol(id) return is(id, "weapons_pistols") end
+function is_smg(id) return is(id, "weapons_smgs") end
+function is_rifle(id) return is(id, "weapons_rifles") end
+function is_sniper(id) return is(id, "weapons_snipers") end
+function is_shotgun(id) return is(id, "weapons_shotguns") end
+function is_melee(id) return is(id, "weapons_melee") end
+function is_launcher(id) return is(id, "weapons_launchers") end
+function is_attach(id) return is(id, "weapon_attach") end
+function is_scope(id) return is(id, "weapon_attach_scopes") end
+function is_silencer(id) return is(id, "weapon_attach_silencers") end
+function is_gl(id) return is(id, "weapon_attach_gls") end
+function is_upgrade_kit(id) return is(id, "weapon_upgrade_kits") end
+function is_repair_kit(id) return is(id, "weapon_repair_kits") end
+function is_cleaning_kit(id) return is(id, "weapon_cleaning_kits") end
+function is_weapon_part(id) return is(id, "weapon_parts") end
+function is_armor(id) return is(id, "armor") end
+function is_outfit(id) return is(id, "armor_outfits") end
+function is_helmet(id) return is(id, "armor_helmets") end
+function is_ammo(id) return is(id, "ammo") end
+function is_ammo_part(id) return is(id, "ammo_parts") end
+function is_ammo_casing(id) return is(id, "ammo_casings") end
+function is_ammo_powder(id) return is(id, "ammo_powder") end
+function is_ammo_bullet(id) return is(id, "ammo_bullets") end
+function is_medicine(id) return is(id, "medicine") end
+function is_food(id) return is(id, "food") end
+function is_artifact(id) return is(id, "artifacts") end
+function is_explosive(id) return is(id, "explosives") end
+function is_belt_attachment(id) return is(id, "belt_attachments") end
+function is_misc(id) return is(id, "misc") end
+function is_mutant_part(id) return is(id, "mutant_parts") end
+function is_outfit_part(id) return is(id, "outfit_parts") end
+
 function cost(id)
     local row = get(id)
     return (row and row.cost) or 0
@@ -335,6 +402,12 @@ armor_outfits = wrap("armor_outfits")
 armor_helmets = wrap("armor_helmets")
 
 ammo = wrap("ammo")
+ammo_parts = wrap("ammo_parts")
+ammo_casings = wrap("ammo_casings")
+ammo_powder = wrap("ammo_powder")
+ammo_bullets = wrap("ammo_bullets")
+mutant_parts = wrap("mutant_parts")
+outfit_parts = wrap("outfit_parts")
 medicine = wrap("medicine")
 food = wrap("food")
 artifacts = wrap("artifacts")

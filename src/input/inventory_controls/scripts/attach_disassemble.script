@@ -154,34 +154,11 @@ local function is_vanilla_disassemblable(sec)
 end
 
 local function get_effective_cost(sec)
-	local c = dogma.db and dogma.db.cost and dogma.db.cost(sec)
-	if c and c > 0 then
-		return c
-	end
-	local w = clamp_grid_dim(ini_sys:r_float_ex(sec, "inv_grid_width"))
-	local h = clamp_grid_dim(ini_sys:r_float_ex(sec, "inv_grid_height"))
-	return math.max(1000, w * h * 2000)
+	return dogma.db.cost(sec)
 end
 
 local function is_tac_kit(sec)
-	local sfind = string.find
-	if sfind(sec, "_kit", 1, true) then
-		return true
-	end
-	if sfind(sec, "_upgr_kit", 1, true) then
-		return true
-	end
-	if sfind(sec, "_up", 1, true) and not IsItem("scope", sec) and not IsItem("sil", sec) and not IsItem("gl", sec) then
-		return true
-	end
-	if sfind(sec, "mod9", 1, true) then
-		return true
-	end
-	local visual = ini_sys:r_string_ex(sec, "visual") or ""
-	if sfind(visual, "wpn_tac_kit", 1, true) then
-		return true
-	end
-	return false
+	return dogma.db.is_upgrade_kit(sec)
 end
 
 local function scope_optics_subtype(sec)
@@ -206,11 +183,11 @@ local function classify_attachment(sec)
 	if is_tac_kit(sec) then
 		kind = "kit"
 		size_class = kit_size_class(area)
-	elseif IsItem("sil", sec) then
+	elseif dogma.db.is_silencer(sec) then
 		kind = "sil"
-	elseif IsItem("gl", sec) then
+	elseif dogma.db.is_gl(sec) then
 		kind = "gl"
-	elseif IsItem("scope", sec) then
+	elseif dogma.db.is_scope(sec) then
 		kind = "scope"
 		subtype = scope_optics_subtype(sec)
 		size_class = scope_size_class(area)
@@ -235,7 +212,7 @@ local function classify_obj(obj)
 	if not obj then
 		return nil
 	end
-	if IsWeapon(obj) or IsOutfit(obj) or IsHeadgear(obj) then
+	if dogma.db.is_weapon(obj:section()) or dogma.db.is_outfit(obj:section()) or dogma.db.is_helmet(obj:section()) then
 		return nil
 	end
 	local sec = obj:section()

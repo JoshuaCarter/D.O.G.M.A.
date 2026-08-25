@@ -77,15 +77,7 @@ local SIZE_VEC = vector2()
 
 local floor, sqrt, atan2 = math.floor, math.sqrt, math.atan2
 
-local function clamp01(v)
-	if v < 0 then
-		return 0
-	end
-	if v > 1 then
-		return 1
-	end
-	return v
-end
+local clamp01 = dogma.math.clamp01
 
 local function alpha_byte(a, mul)
 	local v = tonumber(a) or 0
@@ -307,7 +299,7 @@ local function set_name_color_for(obj)
 	if not CONFIG.loaded.goodwill_color then
 		return
 	end
-	if is_zombied(obj:character_community()) then
+	if is_zombied(dogma.alife.community(obj)) then
 		name_r, name_g, name_b = NAME_HOSTILE_RGB[1], NAME_HOSTILE_RGB[2], NAME_HOSTILE_RGB[3]
 		return
 	end
@@ -364,7 +356,7 @@ local function display_faction(obj)
 	end
 
 	local cfg = CONFIG.loaded
-	local fact = obj:character_community()
+	local fact = dogma.alife.community(obj)
 	local name = obj:character_name()
 	local rank = game.translate_string("st_rank_" .. ranks.get_obj_rank_name(obj)) or ""
 
@@ -676,7 +668,7 @@ local function is_id_candidate(obj)
 	if not (obj.health > 0 or cfg.dead_id) then
 		return false
 	end
-	return is_valid_community(obj:character_community())
+	return is_valid_community(dogma.alife.community(obj))
 end
 
 -- Exact look-ray: first non-bush object under crosshair within range.

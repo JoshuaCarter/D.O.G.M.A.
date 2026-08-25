@@ -33,7 +33,7 @@ local function server_object_on_register(se)
 	local ok, sec = pcall(function()
 		return se:section_name()
 	end)
-	if not (ok and sec and ini_sys and ini_sys:r_string_ex(sec, "inv_name")) then
+	if not (ok and sec and dogma.db.get(sec)) then
 		return
 	end
 	local p = se.position
@@ -43,7 +43,8 @@ local function server_object_on_register(se)
 	local bx, by, bz = p.x, p.y, p.z
 	se.position = vector():set(bx, by + h, bz)
 	if dogma.dbg.logging() then
-		local name = (xinventory and xinventory.get_item_name and xinventory.get_item_name(sec)) or sec
+		local row = dogma.db.get(sec)
+		local name = (row and row.name) or sec
 		dogma.dbg.log(CONFIG.MOD_ID, string.format(
 			"%s  (%.2f, %.2f, %.2f) -> (%.2f, %.2f, %.2f)",
 			name, bx, by, bz, bx, by + h, bz

@@ -87,7 +87,7 @@ local function is_fav(sec)
 end
 
 local function is_sidearm(obj)
-	if not obj or IsMelee(obj) or not IsWeapon(obj) then
+	if not obj or dogma.db.is_melee(obj:section()) or not dogma.db.is_weapon(obj:section()) then
 		return false
 	end
 	local sec = obj:section()
@@ -254,13 +254,13 @@ local function rh_blocks_detector(held)
 	if IsBolt and IsBolt(held) then
 		return false
 	end
-	if (IsPistol and IsPistol(held)) or is_sidearm(held) then
+	if dogma.db.is_pistol(held:section()) or is_sidearm(held) then
 		return false
 	end
-	if IsMelee and IsMelee(held) then
+	if dogma.db.is_melee(held:section()) then
 		return false
 	end
-	return IsWeapon and IsWeapon(held)
+	return dogma.db.is_weapon(held:section())
 end
 
 local function has_bolt()

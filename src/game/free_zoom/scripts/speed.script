@@ -39,9 +39,9 @@ local function update_speeds()
     for k,v in pairs(sprint_modifiers) do
         sprint_coef = sprint_coef * v
     end
-    db.actor:set_actor_run_coef(clamp(speeds[0] * run_coef, 1, 10))
-    db.actor:set_actor_runback_coef(clamp(speeds[1] * run_coef, 1, 10))
-    db.actor:set_actor_sprint_koef(clamp(speeds[2] * sprint_coef, 1, 10))
+    db.actor:set_actor_run_coef(dogma.math.clamp(speeds[0] * run_coef, 1, 10))
+    db.actor:set_actor_runback_coef(dogma.math.clamp(speeds[1] * run_coef, 1, 10))
+    db.actor:set_actor_sprint_koef(dogma.math.clamp(speeds[2] * sprint_coef, 1, 10))
 end
 
 -- Usage: Add a speed modifier.

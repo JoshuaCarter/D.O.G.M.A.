@@ -88,7 +88,7 @@ local function manage_drain()
 		drain = -0.05
 	end
 
-	data.power = clamp(data.power - drain, 0, 400)
+	data.power = dogma.math.clamp(data.power - drain, 0, 400)
 	item_exo_device.set_data(id, data)
 
 	if warn and data.power > THRESHOLD then

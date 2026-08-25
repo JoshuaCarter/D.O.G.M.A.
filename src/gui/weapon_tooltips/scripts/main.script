@@ -167,15 +167,7 @@ local DIFFICULTY_MULT = {
 -- CQC head AP bonuses apply to eyes/eyelid/jaw/neck, not bip01_head.
 -- Our "vs Head" columns model bip01_head, so no AP boost.
 
-local function clamp(v, lo, hi)
-	if v < lo then
-		return lo
-	end
-	if v > hi then
-		return hi
-	end
-	return v
-end
+local clamp = dogma.math.clamp
 
 local function lerp(a, b, t)
 	return a + (b - a) * t

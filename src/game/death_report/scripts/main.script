@@ -515,6 +515,10 @@ local function section_nice_name(sec, fallback)
 	if named then
 		return named
 	end
+	local row = dogma.db.get(sec)
+	if row and row.name and row.name ~= "" and not looks_like_id(row.name) then
+		return row.name
+	end
 	if ui_item and ui_item.get_sec_name then
 		local n = ui_item.get_sec_name(sec)
 		if n and n ~= "" and n ~= sec and not looks_like_id(n) then
@@ -522,11 +526,6 @@ local function section_nice_name(sec, fallback)
 		end
 	end
 	if ini_sys and ini_sys.r_string_ex then
-		local inv = ini_sys:r_string_ex(sec, "inv_name") or ini_sys:r_string_ex(sec, "inv_name_short")
-		named = tr(inv)
-		if named then
-			return named
-		end
 		named = tr(ini_sys:r_string_ex(sec, "character_name"))
 		if named then
 			return named
@@ -645,7 +644,7 @@ local function ammo_label(obj)
 	if not obj then
 		return nil
 	end
-	if IsMelee and IsMelee(obj) then
+	if dogma.db.is_melee(obj:section()) then
 		return nil
 	end
 	if not obj.get_ammo_type then
@@ -699,9 +698,8 @@ local function source_from_draftsman(draftsman, type_key)
 	if ok_stalker and is_stalker then
 		local name = object_char_name(draftsman)
 		local comm, comm_label
-		local ok_c, c = pcall(function()
-			return draftsman:character_community()
-		end)
+		local c = dogma.alife.community(draftsman)
+		local ok_c = c ~= nil
 		if ok_c then
 			comm = c
 			comm_label = community_label(c)

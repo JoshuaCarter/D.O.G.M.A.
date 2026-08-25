@@ -81,7 +81,7 @@ end
 
 function actor_on_weapon_fired()
 	local wpn = db.actor and db.actor:active_item()
-	if not wpn or not IsWeapon(wpn) or IsMelee(wpn) or wpn:weapon_is_silencer() then
+	if not wpn or not dogma.db.is_weapon(wpn:section()) or dogma.db.is_melee(wpn:section()) or wpn:weapon_is_silencer() then
 		return
 	end
 	pewpew = SHOT_ADD

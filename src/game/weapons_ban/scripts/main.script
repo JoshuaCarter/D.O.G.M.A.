@@ -51,7 +51,7 @@ local function pick_ammo(ammo_list)
     local ok = {}
     for i = 1, #ammo_list do
         local s = ammo_list[i]
-        if dogma.db.is(s, "ammo") then
+        if dogma.db.is_ammo(s) then
             ok[#ok + 1] = s
         end
     end
@@ -80,7 +80,7 @@ end
 -- New-game extra ammo (same types as stock UINewGame owned-weapon grant)
 --------------------------------------------------------------------------------
 local function is_start_weapon_sec(sec)
-    return dogma.db.is(sec, "weapons") and not dogma.db.is(sec, "weapons_melee")
+    return dogma.db.is_weapon(sec) and not dogma.db.is_melee(sec)
 end
 
 local function ammo_sec_for_weapon(wpn_sec)
@@ -97,12 +97,12 @@ local function ammo_sec_for_weapon(wpn_sec)
     end
     if ini_loadouts then
         local ammo_type = ini_loadouts:r_string_ex("ammo_type_per_wpn", wpn_sec)
-        if dogma.db.is(ammo_type, "ammo") then
+        if dogma.db.is_ammo(ammo_type) then
             return ammo_type
         end
     end
     for i = 1, #ammo_tbl do
-        if dogma.db.is(ammo_tbl[i], "ammo") then
+        if dogma.db.is_ammo(ammo_tbl[i]) then
             return ammo_tbl[i]
         end
     end
@@ -296,10 +296,10 @@ local function is_banned_combat_gear(obj, sec)
     if not sec then
         return false
     end
-    if obj and IsMelee(obj) then
+    if obj and dogma.db.is_melee(obj:section()) then
         return false
     end
-    if dogma.db.is(sec, "weapons_melee") then
+    if dogma.db.is_melee(sec) then
         return false
     end
     return dogma.db.is_any(sec, CONSTS.STRIP_CATS)
@@ -566,7 +566,7 @@ local function spawn_pending_stash_ammo(box)
     pending_stash_ammo[id] = nil
     for i = 1, #list do
         local e = list[i]
-        if e and e.sec and e.rounds and e.rounds > 0 and dogma.db.is(e.sec, "ammo") then
+        if e and e.sec and e.rounds and e.rounds > 0 and dogma.db.is_ammo(e.sec) then
             alife_create_item(e.sec, box, { ammo = e.rounds })
             log(string.format("stash spawn ammo %s x%s", e.sec, e.rounds))
         end
@@ -695,7 +695,7 @@ local function strip_loose_ammo(npc)
         if not (id and alife_object(id)) then
             return
         end
-        if dogma.db.is(sec, "ammo") then
+        if dogma.db.is_ammo(sec) then
             to_release[#to_release + 1] = id
         end
     end)
@@ -724,7 +724,7 @@ local function collect_inventory_ammo_secs(npc)
             return
         end
         local sec = item:section()
-        if dogma.db.is(sec, "ammo") then
+        if dogma.db.is_ammo(sec) then
             found[sec] = true
         end
     end)
@@ -752,7 +752,7 @@ local function ammo_types_for_gun(wpn, inv_ammo)
     local allowed = {}
     for i = 1, #ammo_list do
         local s = ammo_list[i]
-        if dogma.db.is(s, "ammo") then
+        if dogma.db.is_ammo(s) then
             allowed[s] = true
         end
     end
@@ -800,13 +800,13 @@ local function inject_corpse_ammo(npc, inv_ammo)
         if not itm then
             return
         end
-        if not (IsWeapon and IsWeapon(nil, itm:clsid())) then
+        if not dogma.db.is_weapon(itm:section()) then
             return
         end
         if npc.marked_dropped and npc:marked_dropped(itm) then
             return
         end
-        if IsMelee and IsMelee(itm) then
+        if dogma.db.is_melee(itm:section()) then
             return
         end
         local types = ammo_types_for_gun(itm, inv_ammo)

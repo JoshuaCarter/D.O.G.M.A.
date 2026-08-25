@@ -50,14 +50,6 @@ local ADS_MAX = {
 }
 local ADS_FOV_MAX = 15
 
-local KIND_CAT = {
-	w_pistol = "pistol",
-	w_smg = "smg",
-	w_rifle = "rifle",
-	w_sniper = "sniper",
-	w_shotgun = "shotgun",
-	w_explosive = "explosive",
-}
 local free_on = false
 local ads_on = false
 -- Hold mode: true while a hold-source key (zoom key / RMB / MMB) is down.
@@ -152,15 +144,7 @@ local zoom_diag
 
 local on_mouse_wheel
 
-local function clamp(n, lo, hi)
-	if n < lo then
-		return lo
-	end
-	if n > hi then
-		return hi
-	end
-	return n
-end
+local clamp = dogma.math.clamp
 
 local function log(msg)
 	if CONFIG.loaded.debug_log then
@@ -430,11 +414,25 @@ end
 
 local function weapon_category()
 	local parent = parent_section()
-	if not parent or not (ini_sys and ini_sys.r_string_ex) then
+	if not parent then
 		return "rifle"
 	end
-	local kind = ini_sys:r_string_ex(parent, "kind")
-	return KIND_CAT[kind] or "rifle"
+	if dogma.db.is_pistol(parent) then
+		return "pistol"
+	end
+	if dogma.db.is_smg(parent) then
+		return "smg"
+	end
+	if dogma.db.is_sniper(parent) then
+		return "sniper"
+	end
+	if dogma.db.is_shotgun(parent) then
+		return "shotgun"
+	end
+	if dogma.db.is_launcher(parent) or dogma.db.is_explosive(parent) then
+		return "explosive"
+	end
+	return "rifle"
 end
 
 local function attached_scope_sec()

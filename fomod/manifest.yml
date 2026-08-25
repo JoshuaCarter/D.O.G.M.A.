@@ -57,6 +57,114 @@ mods:
 
   # WEAPONS BAN
 
+  game/weapons_ban:
+    name: Weapons Ban
+    stage: BETA
+    page: Weapons Ban
+    desc: |
+      According to G.A.M.M.A. lore, weapons trading is banned. And now traders act like it.
+      Traders no longer buy/sell weapon attachments, parts, repair kits, cleaning kits, or ammo.
+      You will only find these items in stashes and on corpses. In particular, ammo will now drop in more believable amounts.
+      Starting weapons are now poorer condition (59% parts) making the hunt for green barrels all the more rewarding.
+      This DOES make the early game more challenging, but not to an extreme degree.
+
+  tweaks/sobre_loadouts:
+    name: Sobre Loadouts
+    stage: BETA
+    page: Weapons Ban
+    desc: |
+      Complete rework of loadout options which maximises starting options, without compromising balance.
+      Each faction has unique options and largely respects their Nato/Warsaw preferences.
+      All weapons are A or B grade, and cost is relative to their actual performance.
+      Crucially, adds the gunsmithing tools to the loadout options for weapons ban mod.
+      [BETA] More balance testing needed.
+
+  gui/newgame:
+    name: New Game Layout
+    stage: BETA
+    page: Weapons Ban
+    desc: |
+      Changes the new game screen to give the loadout/inventory sections much more room.
+      [BETA] Only tested on 16x9 aspect ratio at 4k.
+
+  # GAMEPLAY
+
+  game/shared_stash:
+    name: Toolbench Shared Stash
+    stage: BETA
+    page: Gameplay
+
+  game/campfire_healing:
+    name: Campfire Healing
+    stage: GOLD
+    page: Gameplay
+
+  game/badwill:
+    name: Badwill
+    stage: OMIT
+    page: Gameplay
+
+  game/safety_save:
+    name: Safety Save
+    stage: GOLD
+    page: Gameplay
+
+  game/true_prone:
+    name: True Prone
+    stage: GOLD
+    page: Gameplay
+
+  game/ammo_selector:
+    name: Ammo Selector
+    stage: GOLD
+    page: Gameplay
+
+  game/death_report:
+    name: Death Report
+    stage: BETA
+    page: Gameplay
+
+  game/pistol_slot:
+    name: Pistol Slot
+    stage: BETA
+    page: Gameplay
+
+  game/ads_zoom:
+    name: ADS Zoom
+    stage: GOLD
+    page: Gameplay
+
+  game/free_zoom:
+    name: Free Zoom
+    stage: GOLD
+    page: Gameplay
+
+  # QUALITY OF LIFE
+
+  game/faster_skinning:
+    name: Faster Skinning
+    stage: GOLD
+    page: Quality of Life
+    desc: |
+      Adds a few ways to speed up skinning without losing immersion.
+      If note is the ability to draw your knife and slash a mutant to skin it.
+
+  game/exo_power:
+    name: Better Exo Power Drain
+    stage: BETA
+    page: Quality of Life
+    desc: |
+      No longer drains exo power when idle, but uses more power when moving.
+
+  game/belt_glowsticks:
+    name: Belt Glowsticks
+    stage: GOLD
+    page: Gameplay
+    desc: |
+      You can now drag glowsticks into a belt slot so you can have light with both hands free.
+      Glowstick light intensity is reduced by 50%
+      Glowstick ranges changed from 8/10/12/24m to 12/14/16/20m
+
   # PERFORMANCE
 
   perf/mcm_runtime_read_cache:
@@ -76,11 +184,6 @@ mods:
       Adds an SFX prefetcher that actually works.
       Run the <GAMMA>/mods/DOGMA/dogma_sfx_prefetch.py script to compile a list of small sfx files (recomment default 50kb).
       The mod will read that list on game load and preload those sfx files. Rerun script if you change audio packs, etc.
-
-  gui/newgame:
-    name: New Game
-    stage: GOLD
-    page: GUI
 
   gui/fx_radiation:
     name: Radiation FX
@@ -152,86 +255,7 @@ mods:
     stage: BETA
     page: Input
 
-  game/weapons_ban:
-    name: Weapons Ban
-    stage: BETA
-    page: Weapons Ban
 
-  game/shared_stash:
-    name: Toolbench Shared Stash
-    stage: BETA
-    page: Gameplay
-
-  game/faster_skinning:
-    name: Faster Skinning
-    stage: GOLD
-    page: Gameplay
-
-  game/campfire_healing:
-    name: Campfire Healing
-    stage: GOLD
-    page: Gameplay
-
-  game/badwill:
-    name: Badwill
-    stage: OMIT
-    page: Gameplay
-
-  game/safety_save:
-    name: Safety Save
-    stage: GOLD
-    page: Gameplay
-
-  game/dogma_rules:
-    name: Rules
-    stage: OMIT
-    page: Gameplay
-    recommended: []
-
-  game/belt_glowsticks:
-    name: Belt Glowsticks
-    stage: GOLD
-    page: Gameplay
-
-  game/exo_power:
-    name: Better Exo Power Drain
-    stage: BETA
-    page: Gameplay
-
-  game/true_prone:
-    name: True Prone
-    stage: GOLD
-    page: Gameplay
-
-  game/ammo_selector:
-    name: Ammo Selector
-    stage: GOLD
-    page: Gameplay
-
-  game/death_report:
-    name: Death Report
-    stage: BETA
-    page: Gameplay
-
-  game/pistol_slot:
-    name: Pistol Slot
-    stage: BETA
-    page: Gameplay
-
-  game/ads_zoom:
-    name: ADS Zoom
-    stage: GOLD
-    page: Gameplay
-
-  game/free_zoom:
-    name: Free Zoom
-    stage: GOLD
-    page: Gameplay
-
-  game/true_fast_travel:
-    name: True Fast Travel
-    stage: OMIT
-    page: Gameplay
 
   tweaks/opaque_bushes:
     name: Opaque Bushes
@@ -353,16 +377,6 @@ mods:
     stage: BETA
     page: Tweaks
 
-  tweaks/sobre_loadouts:
-    name: Sobre Loadouts
-    stage: GOLD
-    page: Weapons Ban
-
-  tweaks/glowstick_lights:
-    name: Glowstick Lights
-    stage: GOLD
-    page: Tweaks
-
   tweaks/popup_messages:
     name: Popup Messages
     stage: GOLD
@@ -382,3 +396,15 @@ mods:
     name: Safe Atmos Visibility
     stage: GOLD
     page: Tweaks
+
+  # DEV
+
+  game/true_fast_travel:
+    name: True Fast Travel
+    stage: OMIT
+    page: DEV
+
+  game/dogma_rules:
+    name: Rules
+    stage: OMIT
+    page: DEV

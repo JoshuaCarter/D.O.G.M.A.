@@ -1,5 +1,5 @@
 # Shared manifest catalog loader for build.sh / package-fomod.sh.
-# Reads manifest.yml at repo root.
+# Reads fomod/manifest.yml at repo root.
 # Override with DOGMA_MANIFEST=<dir or manifest.yml>.
 # Usage: source this file, then dogma_load_manifest <min_stage>
 #   min_stage 1|local → path mods with stage >= local
@@ -15,14 +15,16 @@ dogma_load_manifest() {
 		beta) min_stage=beta ;;
 		0 | omit | off) min_stage=omit ;;
 	esac
-	local yml="${DOGMA_MANIFEST:-$ROOT/manifest.yml}"
+	local yml="${DOGMA_MANIFEST:-$ROOT/fomod/manifest.yml}"
 	FEATURES=()
 	if [[ -f "$yml" ]]; then
 		:
+	elif [[ -d "$yml" && -f "$yml/fomod/manifest.yml" ]]; then
+		yml="$yml/fomod/manifest.yml"
 	elif [[ -d "$yml" && -f "$yml/manifest.yml" ]]; then
-		:
+		yml="$yml/manifest.yml"
 	else
-		echo "manifest: missing $yml/manifest.yml" >&2
+		echo "manifest: missing $yml" >&2
 		return 1
 	fi
 

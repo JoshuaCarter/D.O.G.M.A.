@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import shutil
 import sys
 from pathlib import Path
 
@@ -20,7 +19,8 @@ from manifest import (
     src_feature_dir,
 )
 
-IMAGE_NAMES = ("image.png", "image.jpg")
+IMAGE_EXTS = (".png", ".jpg")
+FOMOD_IMAGES = ROOT / "fomod" / "images"
 
 
 def esc_text(s: str) -> str:
@@ -35,8 +35,13 @@ def win_path(*parts: str) -> str:
     return "\\".join(parts)
 
 
-def feature_fomod_dir(src: Path, feat: str) -> Path:
-    return src / src_feature_dir(feat) / "fomod"
+def feature_image(feat: str) -> Path | None:
+    stem = feature_path_key(feat)
+    for ext in IMAGE_EXTS:
+        p = FOMOD_IMAGES / f"{stem}{ext}"
+        if p.is_file():
+            return p
+    return None
 
 
 def modroot_names(src: Path, feat: str) -> list[str]:
@@ -48,15 +53,6 @@ def modroot_names(src: Path, feat: str) -> list[str]:
         if p.is_file():
             names.append(p.name)
     return names
-
-
-def feature_image(src: Path, feat: str) -> Path | None:
-    d = feature_fomod_dir(src, feat)
-    for name in IMAGE_NAMES:
-        p = d / name
-        if p.is_file():
-            return p
-    return None
 
 
 def plugin_entries(features: list[dict], wizard: dict) -> list[dict]:
@@ -241,7 +237,7 @@ def render_xml(wizard: dict, src: Path, plugins: list[dict]) -> str:
             for feat in items:
                 folder = feature_path_key(feat["path"])
                 desc = feat.get("desc") or feat["title"]
-                image = feature_image(src, feat["path"])
+                image = feature_image(feat["path"])
                 lines.append(f'\t\t\t\t\t\t<plugin name="{esc_attr(plugin_label(feat))}">')
                 lines.append(f"\t\t\t\t\t\t\t<description>{esc_text(desc)}</description>")
                 if image:
@@ -266,20 +262,9 @@ def render_xml(wizard: dict, src: Path, plugins: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def copy_images(src: Path, plugins: list[dict], dest_dir: Path) -> None:
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    for p in plugins:
-        image = feature_image(src, p["path"])
-        if not image:
-            continue
-        dest = dest_dir / f"{feature_path_key(p['path'])}{image.suffix.lower()}"
-        shutil.copy2(image, dest)
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description="Generate FOMOD ModuleConfig.xml")
     parser.add_argument("--xml", required=True, help="write ModuleConfig.xml here")
-    parser.add_argument("--images-out", help="copy feature hover images here")
     args = parser.parse_args()
 
     config = ROOT
@@ -294,9 +279,6 @@ def main() -> int:
     out = Path(args.xml)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(xml, encoding="utf-8")
-
-    if args.images_out:
-        copy_images(ROOT / "src", plugins, Path(args.images_out))
 
     for p in plugins:
         print(p["path"])

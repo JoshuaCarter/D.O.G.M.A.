@@ -21,6 +21,7 @@ STAGE_ALIASES = {
 }
 
 MANIFEST_FILE = "manifest.yml"
+MANIFEST_REL = Path("fomod") / MANIFEST_FILE
 SKIP_KEYS = frozenset({"common"})
 FOMOD_STAGES = frozenset({"beta", "gold"})
 DEFAULT_RECOMMENDED = {
@@ -60,6 +61,9 @@ def src_feature_dir(feat: str) -> str:
 def manifest_path(config_dir: Path) -> Path:
     if config_dir.is_file():
         return config_dir
+    nested = config_dir / MANIFEST_REL
+    if nested.is_file() or not (config_dir / MANIFEST_FILE).is_file():
+        return nested
     return config_dir / MANIFEST_FILE
 
 

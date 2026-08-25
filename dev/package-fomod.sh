@@ -8,9 +8,9 @@
 #     <feature_id>/gamedata/...
 #     meta.ini  .mod_id
 #
-# Wizard: manifest.yml (fomod + mods, beta/gold) → dev/gen_fomod.py → ModuleConfig.xml
+# Wizard: fomod/manifest.yml → dev/gen_fomod.py → ModuleConfig.xml
 # info.xml is written from meta.ini.
-# Feature hover images: src/<path>/fomod/image.png
+# Feature hover images: fomod/images/<path_key>.png
 # Local full deploy is still dev/build.sh (stage >= local).
 set -euo pipefail
 
@@ -20,7 +20,7 @@ STAGE="$ROOT/.build/fomod"
 ZIP_OUT="$ROOT/.build/DOGMA.zip"
 BUILD="$ROOT/dev/build.sh"
 GEN="$ROOT/dev/gen_fomod.py"
-MANIFEST="$ROOT/manifest.yml"
+MANIFEST="$ROOT/fomod/manifest.yml"
 
 dogma_py() {
 	if command -v py >/dev/null 2>&1; then
@@ -61,6 +61,9 @@ fi
 
 rm -rf "$STAGE"
 mkdir -p "$STAGE/fomod/images"
+if [[ -d "$ROOT/fomod/images" ]]; then
+	cp -a "$ROOT/fomod/images/." "$STAGE/fomod/images/"
+fi
 
 VERSION="$(grep -E '^version=' "$ROOT/meta.ini" | head -1 | cut -d= -f2 | tr -d '[:space:]')"
 [[ -n "$VERSION" ]] || VERSION="0.0.0"
@@ -70,7 +73,7 @@ COMMENTS="$(grep -E '^comments=' "$ROOT/meta.ini" | head -1 | cut -d= -f2-)"
 XML_FEATURES=()
 xml_list="$(mktemp)"
 set +e
-dogma_py "$GEN" --xml "$STAGE/fomod/ModuleConfig.xml" --images-out "$STAGE/fomod/images" >"$xml_list" 2>"$xml_list.err"
+dogma_py "$GEN" --xml "$STAGE/fomod/ModuleConfig.xml" >"$xml_list" 2>"$xml_list.err"
 xml_rc=$?
 set -e
 if (( xml_rc != 0 )); then

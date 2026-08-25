@@ -9,6 +9,8 @@ local names = {}
 local by_id = {}
 local groups = {}
 local in_group = {}
+local EMPTY = {}
+local list_sorted = {}
 
 local WEB_FILES = {
     weapons_pistols = "pistols.json",
@@ -360,15 +362,22 @@ function list(typ, sort, dir)
     ensure()
     local src = typ and groups[typ]
     if not src then
-        return {}
+        return EMPTY
+    end
+    if not sort then
+        return src
+    end
+    local key = typ .. "\0" .. sort .. "\0" .. (dir or "")
+    local hit = list_sorted[key]
+    if hit then
+        return hit
     end
     local out = {}
     for i = 1, #src do
         out[i] = src[i]
     end
-    if sort then
-        table.sort(out, cmp(sort, dir == "desc"))
-    end
+    table.sort(out, cmp(sort, dir == "desc"))
+    list_sorted[key] = out
     return out
 end
 

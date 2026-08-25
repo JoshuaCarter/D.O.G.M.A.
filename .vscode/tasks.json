@@ -11,6 +11,11 @@
 			"label": "DOGMA: Build",
 			"type": "shell",
 			"command": "dev/build.sh",
+			"options": {
+				"env": {
+					"DOGMA_SKIP_FOMOD": "1"
+				}
+			},
 			"group": {
 				"kind": "build",
 				"isDefault": true
@@ -26,6 +31,31 @@
 			},
 			"problemMatcher": {
 				"owner": "dogma-build",
+				"pattern": {
+					"regexp": "^$"
+				},
+				"background": {
+					"activeOnStart": true,
+					"beginsPattern": ".",
+					"endsPattern": "."
+				}
+			}
+		},
+		{
+			"label": "DOGMA: Build FOMOD",
+			"type": "shell",
+			"command": "dev/build.sh",
+			"isBackground": true,
+			"presentation": {
+				"reveal": "always",
+				"focus": true,
+				"panel": "shared",
+				"clear": true,
+				"close": false,
+				"showReuseMessage": false
+			},
+			"problemMatcher": {
+				"owner": "dogma-build-fomod",
 				"pattern": {
 					"regexp": "^$"
 				},

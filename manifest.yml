@@ -3,10 +3,11 @@
 #   OMIT  - not in local build or FOMOD
 #   LOCAL - local build only
 #   BETA  - local + FOMOD, checkbox name gets [BETA]
+#   OPTIN - local + FOMOD, never preselected
 #   GOLD  - local + FOMOD
 # page: FOMOD wizard page. First-seen page order. stage still gates the zip.
-# recommended: preset ids. Missing: GOLD -> [gold, beta, all], BETA -> [beta, all].
-#   [] = never prechecked.
+# recommended: preset ids. Missing: GOLD -> [dogma, dogma-beta], BETA -> [dogma-beta].
+#   [] = never prechecked. pick is never in a default list.
 # common is always-on (not a checkbox). No stage or page.
 
 fomod:
@@ -15,19 +16,16 @@ fomod:
     - source: common/gamedata
       dest: gamedata
   presets:
-    - id: gold
-      name: Gold
-      desc: Most features preselected, except features in Beta.
+    - id: dogma
+      name: D.O.G.M.A. (all non-beta features preselected)
+      desc: You closely follow the D.O.G.M.A. mod list and want a more stable experience.
       type: Recommended
-    - id: beta
-      name: Beta
-      desc: Most features preselected, including Beta features.
+    - id: dogma-beta
+      name: D.O.G.M.A. BETA (everything preselected)
+      desc: You closely follow the D.O.G.M.A. mod list and want beta features.
     - id: pick
       name: Pick and choose
       desc: Nothing preselected.
-    - id: all
-      name: Everything
-      desc: Every feature is preselected.
 
 mods:
   common:
@@ -122,7 +120,6 @@ mods:
     name: Weapons Ban
     stage: BETA
     page: Weapons Ban
-    recommended: [all]
 
   game/shared_stash:
     name: Toolbench Shared Stash

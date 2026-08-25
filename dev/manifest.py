@@ -24,8 +24,8 @@ MANIFEST_FILE = "manifest.yml"
 SKIP_KEYS = frozenset({"common"})
 FOMOD_STAGES = frozenset({"beta", "gold"})
 DEFAULT_RECOMMENDED = {
-    "gold": ["gold", "beta", "all"],
-    "beta": ["beta", "all"],
+    "gold": ["dogma", "dogma-beta"],
+    "beta": ["dogma-beta"],
 }
 
 

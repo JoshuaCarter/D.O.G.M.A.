@@ -1,20 +1,20 @@
 --[[
-	Weapons Ban
+    Weapons Ban
 
-	Trade: buy-block + strip banned combat gear from supply traders
-	(knives stay). Field stalkers untouched.
-	Stashes: 0–3 weighted adds (sight/kit/sil/gl/ammo/parts); ammo rolls use
-	tier→rank RU budgets for round counts.
-	Corpses: strip loose ammo, then one rank RU budget split across guns.
-	New game: N extra boxes per owned start weapon (on top of loadout);
-	optional 59% parts on those guns.
-	Replaces RNG Attach + Parts In Stashes.
-	Ammo Maker 1:1 craft (casing/bullet/powder per output round) lives in ammo_craft.script.
+    Trade: buy-block + strip banned combat gear from supply traders
+    (knives stay). Field stalkers untouched.
+    Stashes: 0-3 weighted adds (scope/kit/silencer/gl/ammo/part); ammo rolls use
+    tier→rank RU budgets for round counts.
+    Corpses: strip loose ammo, then one rank RU budget split across guns.
+    New game: N extra boxes per owned start weapon (on top of loadout);
+    optional 59% parts on those guns.
+    Replaces RNG Attach + Parts In Stashes.
+    Ammo Maker 1:1 craft (casing/bullet/powder per output round) lives in ammo_craft.script.
 ]]
 
 local CONFIG = _G.dogma_game_weapons_ban_conf
 local MOD_ID = CONFIG.MOD_ID
-local STASH_ITEM_TYPES_MAP = (_G.dogma_game_weapons_ban_drops or {}).STASH_ITEM_TYPES_MAP or {}
+local CONSTS = _G.dogma_game_weapons_ban_consts
 local Tiers
 
 local original_set_random_stash
@@ -32,270 +32,265 @@ local hooked_trade_ui = false
 local EXTRA_AMMO_SAVE_KEY = "dogma_wb_extra_start_ammo"
 local START_PARTS_SAVE_KEY = "dogma_wb_start_parts"
 local STASH_AMMO_SAVE_KEY = "dogma_wb_stash_ammo"
-local PARTS_COND = 59
+local PARTS_COND = CONSTS.START_PARTS_COND
 local ini_loadouts
 
 -- stash_id → { { sec, rounds }, ... } (ammo qty; not put in treasure caches)
 local pending_stash_ammo = {}
 
 local function log(msg)
-	if Tiers and Tiers.log then
-		Tiers.log(msg)
-	elseif dogma.dbg.logging() then
-		dogma.dbg.log(MOD_ID, tostring(msg))
-	end
+    if dogma.dbg.logging() then
+        dogma.dbg.log(MOD_ID, tostring(msg))
+    end
+end
+
+local function pick_ammo(ammo_list)
+    if not ammo_list then
+        return nil
+    end
+    local ok = {}
+    for i = 1, #ammo_list do
+        local s = ammo_list[i]
+        if dogma.db.is(s, "ammo") then
+            ok[#ok + 1] = s
+        end
+    end
+    if #ok > 0 then
+        return ok[math.random(1, #ok)]
+    end
+    return nil
 end
 
 local function on_option_change()
-	local L = CONFIG.loaded
-	local D = CONFIG.DEFAULTS
-	L.extra_start_ammo_boxes = dogma.mcm.int(MOD_ID, "extra_start_ammo_boxes", D.extra_start_ammo_boxes)
-	L.start_weapons_59_parts = dogma.mcm.bool(MOD_ID, "start_weapons_59_parts", D.start_weapons_59_parts)
-	for _, cat in ipairs(STASH_ITEM_TYPES_MAP) do
-		for _, n in ipairs({ 2, 3, 4, 5 }) do
-			local key = cat .. "_tier_cost_" .. n
-			L[key] = dogma.mcm.int(MOD_ID, key, D[key])
-		end
-	end
-	if Tiers and Tiers.rebuild then
-		Tiers.rebuild()
-	end
+    local L = CONFIG.loaded
+    local D = CONFIG.DEFAULTS
+    L.extra_start_ammo_boxes = dogma.mcm.int(MOD_ID, "extra_start_ammo_boxes", D.extra_start_ammo_boxes)
+    L.start_weapons_59_parts = dogma.mcm.bool(MOD_ID, "start_weapons_59_parts", D.start_weapons_59_parts)
 end
 
 local function on_save_state(m_data)
-	m_data[STASH_AMMO_SAVE_KEY] = pending_stash_ammo
+    m_data[STASH_AMMO_SAVE_KEY] = pending_stash_ammo
 end
 
 local function on_load_state(m_data)
-	pending_stash_ammo = m_data[STASH_AMMO_SAVE_KEY] or {}
+    pending_stash_ammo = m_data[STASH_AMMO_SAVE_KEY] or {}
 end
 
 --------------------------------------------------------------------------------
 -- New-game extra ammo (same types as stock UINewGame owned-weapon grant)
 --------------------------------------------------------------------------------
 local function is_start_weapon_sec(sec)
-	if not sec then
-		return false
-	end
-	if not ini_sys:r_string_ex(sec, "ammo_class") then
-		return false
-	end
-	-- Stock UINewGame weapon test
-	local slot = ini_sys:r_float_ex(sec, "slot")
-	local ani_slot = ini_sys:r_float_ex(sec, "animation_slot")
-	if not slot then
-		return false
-	end
-	return ((slot == 0) and (ani_slot == 1)) or (slot == 1) or (slot == 2)
+    return dogma.db.is(sec, "weapons") and not dogma.db.is(sec, "weapons_melee")
 end
 
 local function ammo_sec_for_weapon(wpn_sec)
-	local ammo_class = ini_sys:r_string_ex(wpn_sec, "ammo_class")
-	if not ammo_class then
-		return nil
-	end
-	local ammo_tbl = str_explode(ammo_class, ",")
-	if not (ammo_tbl and ammo_tbl[1]) then
-		return nil
-	end
-	local sec_ammo = ammo_tbl[1]
-	if not ini_loadouts then
-		ini_loadouts = ini_file("items\\settings\\new_game_loadouts.ltx")
-	end
-	if ini_loadouts then
-		local ammo_type = ini_loadouts:r_string_ex("ammo_type_per_wpn", wpn_sec)
-		if ammo_type and ini_sys:section_exist(ammo_type) then
-			sec_ammo = ammo_type
-		end
-	end
-	if Tiers.is_worn_ammo(sec_ammo) then
-		sec_ammo = Tiers.fresh_ammo_sec(sec_ammo)
-	end
-	return sec_ammo
+    local ammo_class = ini_sys:r_string_ex(wpn_sec, "ammo_class")
+    if not ammo_class then
+        return nil
+    end
+    local ammo_tbl = str_explode(ammo_class, ",")
+    if not (ammo_tbl and ammo_tbl[1]) then
+        return nil
+    end
+    if not ini_loadouts then
+        ini_loadouts = ini_file("items\\settings\\new_game_loadouts.ltx")
+    end
+    if ini_loadouts then
+        local ammo_type = ini_loadouts:r_string_ex("ammo_type_per_wpn", wpn_sec)
+        if dogma.db.is(ammo_type, "ammo") then
+            return ammo_type
+        end
+    end
+    for i = 1, #ammo_tbl do
+        if dogma.db.is(ammo_tbl[i], "ammo") then
+            return ammo_tbl[i]
+        end
+    end
+    return nil
 end
 
 local function give_extra_start_ammo()
-	if not dogma.sys.ready(MOD_ID, db, on_option_change) then
-		return
-	end
-	local boxes = math.floor((CONFIG.loaded.extra_start_ammo_boxes or 0) + 0.5)
-	if boxes <= 0 then
-		return
-	end
-	-- New game only: stock sets this after the delayed equipment pass.
-	if has_alife_info and has_alife_info("start_equippment_handled") then
-		return
-	end
-	if not (db and db.actor and db.actor.iterate_inventory) then
-		return
-	end
+    if not dogma.sys.ready(MOD_ID, db, on_option_change) then
+        return
+    end
+    local boxes = math.floor((CONFIG.loaded.extra_start_ammo_boxes or 0) + 0.5)
+    if boxes <= 0 then
+        return
+    end
+    -- New game only: stock sets this after the delayed equipment pass.
+    if has_alife_info and has_alife_info("start_equippment_handled") then
+        return
+    end
+    if not (db and db.actor and db.actor.iterate_inventory) then
+        return
+    end
 
-	local ok, m_data = pcall(function()
-		return alife_storage_manager.get_state()
-	end)
-	if not (ok and m_data) then
-		return
-	end
-	if m_data[EXTRA_AMMO_SAVE_KEY] then
-		return
-	end
-	m_data[EXTRA_AMMO_SAVE_KEY] = true
+    local ok, m_data = pcall(function()
+        return alife_storage_manager.get_state()
+    end)
+    if not (ok and m_data) then
+        return
+    end
+    if m_data[EXTRA_AMMO_SAVE_KEY] then
+        return
+    end
+    m_data[EXTRA_AMMO_SAVE_KEY] = true
 
-	local ammo_to_spawn = {}
-	db.actor:iterate_inventory(function(_temp, itm)
-		if not itm then
-			return
-		end
-		local wpn_sec = itm:section()
-		if not is_start_weapon_sec(wpn_sec) then
-			return
-		end
-		local sec_ammo = ammo_sec_for_weapon(wpn_sec)
-		if not sec_ammo then
-			return
-		end
-		local box = ini_sys:r_float_ex(sec_ammo, "box_size") or 1
-		if box <= 0 then
-			box = 1
-		end
-		local add = math.floor(box * boxes)
-		if add <= 0 then
-			return
-		end
-		ammo_to_spawn[sec_ammo] = (ammo_to_spawn[sec_ammo] or 0) + add
-	end)
+    local ammo_to_spawn = {}
+    db.actor:iterate_inventory(function(_temp, itm)
+        if not itm then
+            return
+        end
+        local wpn_sec = itm:section()
+        if not is_start_weapon_sec(wpn_sec) then
+            return
+        end
+        local sec_ammo = ammo_sec_for_weapon(wpn_sec)
+        if not sec_ammo then
+            return
+        end
+        local box = ini_sys:r_float_ex(sec_ammo, "box_size") or 1
+        if box <= 0 then
+            box = 1
+        end
+        local add = math.floor(box * boxes)
+        if add <= 0 then
+            return
+        end
+        ammo_to_spawn[sec_ammo] = (ammo_to_spawn[sec_ammo] or 0) + add
+    end)
 
-	for sec, cnt in pairs(ammo_to_spawn) do
-		alife_create_item(sec, db.actor, { ammo = cnt })
-		log(string.format("new game +%s x%s", sec, cnt))
-		dogma.console.say(string.format("weapons ban: extra start ammo %s x%d", sec, cnt), "blue")
-	end
+    for sec, cnt in pairs(ammo_to_spawn) do
+        alife_create_item(sec, db.actor, { ammo = cnt })
+        log(string.format("new game +%s x%s", sec, cnt))
+        dogma.console.say(string.format("weapons ban: extra start ammo %s x%d", sec, cnt), "blue")
+    end
 end
 
 --------------------------------------------------------------------------------
 -- New-game start-weapon parts
 --------------------------------------------------------------------------------
 local function game_obj(id)
-	local obj = id and db.actor and db.actor.object_id and db.actor:object_id(id)
-	if not obj and id and level and level.object_by_id then
-		obj = level.object_by_id(id)
-	end
-	return obj
+    local obj = id and db.actor and db.actor.object_id and db.actor:object_id(id)
+    if not obj and id and level and level.object_by_id then
+        obj = level.object_by_id(id)
+    end
+    return obj
 end
 
 local function apply_parts(id)
-	local obj = game_obj(id)
-	if not (obj and item_parts and item_parts.get_parts_con and item_parts.set_parts_con) then
-		return false
-	end
-	local parts = item_parts.get_parts_con(obj, nil, true)
-	if type(parts) ~= "table" then
-		return false
-	end
-	local any = false
-	for k, _ in pairs(parts) do
-		parts[k] = PARTS_COND
-		any = true
-	end
-	if not any then
-		return false
-	end
-	item_parts.set_parts_con(obj:id(), parts)
-	return true
+    local obj = game_obj(id)
+    if not (obj and item_parts and item_parts.get_parts_con and item_parts.set_parts_con) then
+        return false
+    end
+    local parts = item_parts.get_parts_con(obj, nil, true)
+    if type(parts) ~= "table" then
+        return false
+    end
+    local any = false
+    for k, _ in pairs(parts) do
+        parts[k] = PARTS_COND
+        any = true
+    end
+    if not any then
+        return false
+    end
+    item_parts.set_parts_con(obj:id(), parts)
+    return true
 end
 
 local function later(name, id, fn)
-	if fn(id) or not CreateTimeEvent then
-		return
-	end
-	local n = 0
-	CreateTimeEvent(MOD_ID, name .. tostring(id), 0.1, function()
-		n = n + 1
-		return fn(id) or n >= 10
-	end)
+    if fn(id) or not CreateTimeEvent then
+        return
+    end
+    local n = 0
+    CreateTimeEvent(MOD_ID, name .. tostring(id), 0.1, function()
+        n = n + 1
+        return fn(id) or n >= 10
+    end)
 end
 
 local function apply_start_weapon_parts()
-	if not dogma.sys.ready(MOD_ID, db, on_option_change) then
-		return
-	end
-	if not CONFIG.loaded.start_weapons_59_parts then
-		return
-	end
-	-- New game only: stock sets this after the delayed equipment pass.
-	if has_alife_info and has_alife_info("start_equippment_handled") then
-		return
-	end
-	if not (db and db.actor and db.actor.iterate_inventory) then
-		return
-	end
+    if not dogma.sys.ready(MOD_ID, db, on_option_change) then
+        return
+    end
+    if not CONFIG.loaded.start_weapons_59_parts then
+        return
+    end
+    -- New game only: stock sets this after the delayed equipment pass.
+    if has_alife_info and has_alife_info("start_equippment_handled") then
+        return
+    end
+    if not (db and db.actor and db.actor.iterate_inventory) then
+        return
+    end
 
-	local ok, m_data = pcall(function()
-		return alife_storage_manager.get_state()
-	end)
-	if not (ok and m_data) then
-		return
-	end
-	if m_data[START_PARTS_SAVE_KEY] then
-		return
-	end
-	m_data[START_PARTS_SAVE_KEY] = true
+    local ok, m_data = pcall(function()
+        return alife_storage_manager.get_state()
+    end)
+    if not (ok and m_data) then
+        return
+    end
+    if m_data[START_PARTS_SAVE_KEY] then
+        return
+    end
+    m_data[START_PARTS_SAVE_KEY] = true
 
-	db.actor:iterate_inventory(function(_temp, itm)
-		if not itm then
-			return
-		end
-		if not is_start_weapon_sec(itm:section()) then
-			return
-		end
-		later("parts_", itm:id(), apply_parts)
-		log(string.format("new game parts %s -> %s%%", itm:section(), PARTS_COND))
-	end)
+    db.actor:iterate_inventory(function(_temp, itm)
+        if not itm then
+            return
+        end
+        if not is_start_weapon_sec(itm:section()) then
+            return
+        end
+        later("parts_", itm:id(), apply_parts)
+        log(string.format("new game parts %s -> %s%%", itm:section(), PARTS_COND))
+    end)
 end
 
 --------------------------------------------------------------------------------
 -- Cheese paid stash (copied from RNG Attach; NMN cannot rely on RNG when disabled)
 --------------------------------------------------------------------------------
 local function is_cheese_paid_stash(_hint)
-	local sfind = string.find
-	local act_pos = db.actor and db.actor:position()
-	if not act_pos then
-		return false
-	end
+    local sfind = string.find
+    local act_pos = db.actor and db.actor:position()
+    if not act_pos then
+        return false
+    end
 
-	for i = 2, 12 do
-		local info = debug.getinfo(i, "S")
-		if not info then
-			break
-		end
-		if info.short_src then
-			if sfind(info.short_src, "task", 1, true) then
-				return false
-			end
-			if sfind(info.short_src, "pda", 1, true) then
-				return false
-			end
-		end
-	end
+    for i = 2, 12 do
+        local info = debug.getinfo(i, "S")
+        if not info then
+            break
+        end
+        if info.short_src then
+            if sfind(info.short_src, "task", 1, true) then
+                return false
+            end
+            if sfind(info.short_src, "pda", 1, true) then
+                return false
+            end
+        end
+    end
 
-	for i = 1, 65534 do
-		local obj = level.object_by_id(i)
-		if obj then
-			local dist = obj:position():distance_to(act_pos)
-			if dist < 20 then
-				local obj_name = obj:name()
-				if obj_name then
-					if sfind(obj_name, "esc_m_trader", 1, true)
-						or sfind(obj_name, "mar_smart_terrain_base_stalker_leader_marsh", 1, true)
-						or sfind(obj_name, "mar_base_owl_stalker_trader", 1, true)
-					then
-						return true
-					end
-				end
-			end
-		end
-	end
-	return false
+    for i = 1, 65534 do
+        local obj = level.object_by_id(i)
+        if obj then
+            local dist = obj:position():distance_to(act_pos)
+            if dist < 20 then
+                local obj_name = obj:name()
+                if obj_name then
+                    if sfind(obj_name, "esc_m_trader", 1, true)
+                        or sfind(obj_name, "mar_smart_terrain_base_stalker_leader_marsh", 1, true)
+                        or sfind(obj_name, "mar_base_owl_stalker_trader", 1, true)
+                    then
+                        return true
+                    end
+                end
+            end
+        end
+    end
+    return false
 end
 
 --------------------------------------------------------------------------------
@@ -304,376 +299,89 @@ end
 -- (xr_motivator + nearby npc_on_update) so we do not hook it.
 -- Supply traders lose all banned combat stock (not knives).
 --------------------------------------------------------------------------------
-local function is_magazine(sec)
-	if not sec then
-		return false
-	end
-	if string.sub(sec, 1, 5) == "ammo_" then
-		return false
-	end
-	local kind = ini_sys:r_string_ex(sec, "kind")
-	return kind == "w_ammo"
-end
-
--- Firearm repair kits (GAMMA A–D = toolkit_p/s/r5/r7; repair_only is barrel_a..d).
--- Outfit/knife kits stay.
-local function is_weapon_repair_kit(sec)
-	local sfind = string.find
-	if not sec then
-		return false
-	end
-	if sec == "toolkit_p" or sec == "toolkit_s"
-		or sec == "toolkit_r5" or sec == "toolkit_r7"
-	then
-		return true
-	end
-	local only = ini_sys:r_string_ex(sec, "repair_only")
-	if not only then
-		return false
-	end
-	return sfind(only, "pistol", 1, true)
-		or sfind(only, "shotgun", 1, true)
-		or sfind(only, "rifle_5", 1, true)
-		or sfind(only, "rifle_7", 1, true)
-		or sfind(only, "barrel_a", 1, true)
-		or sfind(only, "barrel_b", 1, true)
-		or sfind(only, "barrel_c", 1, true)
-		or sfind(only, "barrel_d", 1, true)
-end
-
 local function is_banned_combat_gear(obj, sec)
-	if not sec then
-		return false
-	end
-	if Tiers.is_ignored and Tiers.is_ignored(sec) then
-		return false
-	end
-	-- Knives stay tradable
-	if obj and IsMelee and IsMelee(obj) then
-		return false
-	end
-	if Tiers.is_listed and Tiers.is_listed(sec) then
-		return true
-	end
-
-	local banned = Tiers.is_weapon_part(sec)
-		or Tiers.is_ammo_box(sec)
-		or is_magazine(sec)
-		or (IsItem and (IsItem("scope", sec) or IsItem("sil", sec) or IsItem("gl", sec)))
-		or Tiers.is_name_kit(sec)
-		or is_weapon_repair_kit(sec)
-		or string.find(ini_sys:r_string_ex(sec, "visual") or "", "wpn_tac_kit", 1, true)
-		or (obj and IsGrenade and IsGrenade(obj))
-		or (obj and IsWeapon and IsWeapon(obj))
-	if banned then
-		local cat = Tiers.classify_section and Tiers.classify_section(sec)
-		if cat and Tiers.note_unknown then
-			Tiers.note_unknown(cat, sec, "strip")
-		end
-	end
-	return banned
+    if not sec then
+        return false
+    end
+    if obj and IsMelee(obj) then
+        return false
+    end
+    if dogma.db.is(sec, "weapons_melee") then
+        return false
+    end
+    return dogma.db.is_any(sec, CONSTS.STRIP_CATS)
 end
 
 -- Restocking vendors (buy_supplies). trade_generic / companions have none.
 local function is_supply_trader(npc)
-	if not npc then
-		return false
-	end
-	if clsid then
-		local c = npc:clsid()
-		if c == clsid.script_trader or c == clsid.trader then
-			return true
-		end
-	end
-	local cfg = trade_manager.get_trade_profile(npc:id(), "cfg_ltx")
-	if not cfg or cfg == "items\\trade\\trade_generic.ltx" then
-		return false
-	end
-	local config = trade_manager.get_trade_cfg(cfg)
-	if not config then
-		return false
-	end
-	local supplies = config:r_string_ex("trader", "buy_supplies")
-	return supplies ~= nil and supplies ~= ""
-end
-
---------------------------------------------------------------------------------
--- Debug dump (debug MCM only):
---   dogma_weapons_ban_debug.log  — unique trader-strip sections
---   dogma_weapons_ban_pool.log   — unique loot-pool sections
---   dogma_weapons_ban_scan.log   — scan hits not in the curated lists
--- Same fixed columns so the two files can be compared side by side.
---------------------------------------------------------------------------------
-local catalog = {}
-local catalog_ready = false
-local ROW_FMT = "%-12s  %-48s  %-36s  %-24s"
-local ROW_SEP = string.rep("-", 12 + 48 + 36 + 24 + 6)
-
-local function loot_kind(item, sec)
-	local cat = Tiers and Tiers.classify_section and Tiers.classify_section(sec)
-	if cat then
-		return cat
-	end
-	if is_magazine(sec) then
-		return "mag"
-	end
-	if is_weapon_repair_kit(sec) then
-		return "repair_kit"
-	end
-	if item and IsGrenade and IsGrenade(item) then
-		return "grenade"
-	end
-	if item and IsWeapon and IsWeapon(item) then
-		return "weapon"
-	end
-	return "other"
-end
-
-local function debug_log_path(name)
-	if not (getFS and getFS().update_path) then
-		return nil
-	end
-	local ok, path = pcall(function()
-		return getFS():update_path("$logs$", name)
-	end)
-	if ok and path and path ~= "" then
-		return path
-	end
-	ok, path = pcall(function()
-		return getFS():update_path("$app_data_root$", "logs\\" .. name)
-	end)
-	if ok and path and path ~= "" then
-		return path
-	end
-	return nil
-end
-
-local function write_debug_table(name, rows)
-	local path = debug_log_path(name)
-	if not path then
-		return
-	end
-	table.sort(rows, function(a, b)
-		if a.kind ~= b.kind then
-			return a.kind < b.kind
-		end
-		return a.sec < b.sec
-	end)
-	local lines = {
-		string.format(ROW_FMT, "kind", "section", "trader", "map"),
-		ROW_SEP,
-	}
-	for i = 1, #rows do
-		local r = rows[i]
-		lines[#lines + 1] = string.format(ROW_FMT, r.kind, r.sec, r.trader or "-", r.map or "-")
-	end
-	local ok, f = pcall(io.open, path, "w")
-	if not (ok and f) then
-		return
-	end
-	f:write(table.concat(lines, "\n") .. "\n")
-	f:close()
-end
-
-local function catalog_key(kind, sec)
-	return kind .. "\t" .. sec
-end
-
-local function load_catalog(path)
-	local ok, f = pcall(io.open, path, "r")
-	if not (ok and f) then
-		return
-	end
-	for line in f:lines() do
-		if line ~= "" and string.sub(line, 1, 1) ~= "#" and not string.find(line, "^%-+") then
-			local kind, sec, trader, map = string.match(line, "^(%S+)%s+(%S+)%s+(%S+)%s+(%S+)%s*$")
-			if kind and kind ~= "kind" and sec then
-				catalog[catalog_key(kind, sec)] = {
-					kind = kind,
-					sec = sec,
-					trader = trader or "",
-					map = map or "",
-				}
-			end
-		end
-	end
-	f:close()
-end
-
-local function rewrite_catalog()
-	local rows = {}
-	for _, r in pairs(catalog) do
-		rows[#rows + 1] = r
-	end
-	write_debug_table("dogma_weapons_ban_debug.log", rows)
-end
-
-local function ensure_catalog()
-	if catalog_ready then
-		return
-	end
-	catalog_ready = true
-	local path = debug_log_path("dogma_weapons_ban_debug.log")
-	if path then
-		load_catalog(path)
-	end
+    if not npc then
+        return false
+    end
+    if clsid then
+        local c = npc:clsid()
+        if c == clsid.script_trader or c == clsid.trader then
+            return true
+        end
+    end
+    local cfg = trade_manager.get_trade_profile(npc:id(), "cfg_ltx")
+    if not cfg or cfg == "items\\trade\\trade_generic.ltx" then
+        return false
+    end
+    local config = trade_manager.get_trade_cfg(cfg)
+    if not config then
+        return false
+    end
+    local supplies = config:r_string_ex("trader", "buy_supplies")
+    return supplies ~= nil and supplies ~= ""
 end
 
 local function collect_banned_from_trader(npc)
-	local to_release = {}
-	local rows = {}
-	if not (npc and npc.iterate_inventory) then
-		return to_release, rows
-	end
-	npc:iterate_inventory(function(_temp, item)
-		if not (item and is_banned_combat_gear(item, item:section())) then
-			return
-		end
-		local id = item:id()
-		if not (id and alife_object(id)) then
-			return
-		end
-		to_release[#to_release + 1] = id
-		local sec = item:section()
-		rows[#rows + 1] = { kind = loot_kind(item, sec), sec = sec }
-	end)
-	return to_release, rows
-end
-
-local function merge_unique_rows(npc, rows)
-	if not npc or #rows == 0 then
-		return 0
-	end
-	ensure_catalog()
-	local map = (level and level.name and level.name()) or "?"
-	local trader = (npc.name and npc:name()) or "?"
-	local added = 0
-	for i = 1, #rows do
-		local r = rows[i]
-		local key = catalog_key(r.kind, r.sec)
-		if not catalog[key] then
-			catalog[key] = { kind = r.kind, sec = r.sec, trader = trader, map = map }
-			added = added + 1
-		end
-	end
-	return added
-end
-
-local function add_unique_rows(npc, rows)
-	if not dogma.dbg.logging() then
-		return 0
-	end
-	local added = merge_unique_rows(npc, rows)
-	if added > 0 then
-		rewrite_catalog()
-	end
-	return added
-end
-
-local function dump_online_traders()
-	if not dogma.dbg.logging() then
-		return true
-	end
-	ensure_catalog()
-	local seen = {}
-	local added = 0
-	local function consider(npc)
-		if not (npc and is_supply_trader(npc)) then
-			return
-		end
-		local id = npc:id()
-		if seen[id] then
-			return
-		end
-		seen[id] = true
-		local _ids, rows = collect_banned_from_trader(npc)
-		added = added + merge_unique_rows(npc, rows)
-	end
-	if db and db.storage then
-		for id, _ in pairs(db.storage) do
-			consider(level.object_by_id(id))
-		end
-	else
-		for i = 1, 65534 do
-			consider(level.object_by_id(i))
-		end
-	end
-	local n = 0
-	for _ in pairs(seen) do
-		n = n + 1
-	end
-	local total = 0
-	for _ in pairs(catalog) do
-		total = total + 1
-	end
-	if added > 0 then
-		rewrite_catalog()
-	end
-	log(string.format("dogma_weapons_ban_debug.log +%d new (%d traders, %d unique)", added, n, total))
-	return true
-end
-
-local function dump_loot_pool()
-	if not (dogma.dbg.logging() and Tiers and Tiers.each_loot_section) then
-		return
-	end
-	Tiers.ensure()
-	local seen = {}
-	local rows = {}
-	Tiers.each_loot_section(function(kind, sec)
-		local key = catalog_key(kind, sec)
-		if seen[key] then
-			return
-		end
-		seen[key] = true
-		rows[#rows + 1] = { kind = kind, sec = sec, trader = "-", map = "-" }
-	end)
-	write_debug_table("dogma_weapons_ban_pool.log", rows)
-	log(string.format("dogma_weapons_ban_pool.log %d unique", #rows))
-end
-
-local function dump_scan_unknowns()
-	if not (dogma.dbg.logging() and Tiers and Tiers.each_unknown) then
-		return
-	end
-	local rows = {}
-	Tiers.each_unknown(function(kind, sec, why)
-		rows[#rows + 1] = { kind = kind, sec = sec, trader = why, map = "-" }
-	end)
-	write_debug_table("dogma_weapons_ban_scan.log", rows)
-	log(string.format("dogma_weapons_ban_scan.log %d unique", #rows))
+    local to_release = {}
+    if not (npc and npc.iterate_inventory) then
+        return to_release
+    end
+    npc:iterate_inventory(function(_temp, item)
+        if not (item and is_banned_combat_gear(item, item:section())) then
+            return
+        end
+        local id = item:id()
+        if id and alife_object(id) then
+            to_release[#to_release + 1] = id
+        end
+    end)
+    return to_release
 end
 
 -- utils_ui caches utils_item.get_item_trade_status in a local at load, so
 -- patching the table never reaches Check_TradeMode / IsTradable. Hook those.
 local function patched_check_trade_mode(self, obj, sec)
-	local profile = self.container and self.container.trade_profile
-	if profile and obj and is_banned_combat_gear(obj, sec or obj:section()) then
-		self.flags.value = nil
-		self.flags.value_str = nil
-		self.flags.note = nil
-		self.flags.no_trade = nil
-		self.flags.note_str = nil
-		-- mode 2 = trader stock: hide cell
-		if profile.mode == 2 then
-			return true
-		end
-		-- mode 1 = player selling: show as no-trade
-		if profile.mode == 1 then
-			self.flags.note = 1
-			self.flags.no_trade = true
-			self.flags.note_str = game.translate_string("st_no_trade_tip_1")
-			return false
-		end
-	end
-	return original_check_trade_mode(self, obj, sec)
+    local profile = self.container and self.container.trade_profile
+    if profile and obj and is_banned_combat_gear(obj, sec or obj:section()) then
+        self.flags.value = nil
+        self.flags.value_str = nil
+        self.flags.note = nil
+        self.flags.no_trade = nil
+        self.flags.note_str = nil
+        -- mode 2 = trader stock: hide cell
+        if profile.mode == 2 then
+            return true
+        end
+        -- mode 1 = player selling: show as no-trade
+        if profile.mode == 1 then
+            self.flags.note = 1
+            self.flags.no_trade = true
+            self.flags.note_str = game.translate_string("st_no_trade_tip_1")
+            return false
+        end
+    end
+    return original_check_trade_mode(self, obj, sec)
 end
 
 local function patched_is_tradable(self, obj)
-	if obj and is_banned_combat_gear(obj, obj:section()) then
-		return false
-	end
-	return original_is_tradable(self, obj)
+    if obj and is_banned_combat_gear(obj, obj:section()) then
+        return false
+    end
+    return original_is_tradable(self, obj)
 end
 
 -- Only release ids that still have a server object. Trade strip runs
@@ -681,112 +389,109 @@ end
 -- whose se was already released (alife_release | no server object!), and a
 -- recycled id must not be released again.
 local function release_inventory_ids(ids)
-	for i = 1, #ids do
-		local id = ids[i]
-		if id and alife_object(id) then
-			alife_release_id(id)
-		end
-	end
+    for i = 1, #ids do
+        local id = ids[i]
+        if id and alife_object(id) then
+            alife_release_id(id)
+        end
+    end
 end
 
 -- Trade UI keeps released cells until reset; pack remaining with the
 -- active sort tab (same path as clicking a sort button).
 local function resort_open_trader_bag()
-	local gui = ui_inventory and ui_inventory.GUI
-	if not (gui and gui.mode == "trade") then
-		return
-	end
-	if gui.TMode_ResetInventories then
-		gui:TMode_ResetInventories()
-	else
-		local cc = gui.CC and gui.CC["npc_bag"]
-		if cc and cc.Reset then
-			cc:Reset()
-		end
-	end
-	if not gui.On_Sort then
-		return
-	end
-	local idx = 1
-	local btns = gui.sort_btn
-	if btns then
-		for i = 1, #btns do
-			if btns[i] and btns[i].GetCheck and btns[i]:GetCheck() then
-				idx = i
-				break
-			end
-		end
-	end
-	gui:On_Sort(idx, false)
+    local gui = ui_inventory and ui_inventory.GUI
+    if not (gui and gui.mode == "trade") then
+        return
+    end
+    if gui.TMode_ResetInventories then
+        gui:TMode_ResetInventories()
+    else
+        local cc = gui.CC and gui.CC["npc_bag"]
+        if cc and cc.Reset then
+            cc:Reset()
+        end
+    end
+    if not gui.On_Sort then
+        return
+    end
+    local idx = 1
+    local btns = gui.sort_btn
+    if btns then
+        for i = 1, #btns do
+            if btns[i] and btns[i].GetCheck and btns[i]:GetCheck() then
+                idx = i
+                break
+            end
+        end
+    end
+    gui:On_Sort(idx, false)
 end
 
 local function schedule_trader_resort(npc_id)
-	if CreateTimeEvent then
-		CreateTimeEvent("dogma_wb_strip", "sort_" .. npc_id, 0, function()
-			resort_open_trader_bag()
-			return true
-		end)
-	else
-		resort_open_trader_bag()
-	end
+    if CreateTimeEvent then
+        CreateTimeEvent("dogma_wb_strip", "sort_" .. npc_id, 0, function()
+            resort_open_trader_bag()
+            return true
+        end)
+    else
+        resort_open_trader_bag()
+    end
 end
 
 local function strip_banned_from_trader(npc)
-	if not (npc and npc.iterate_inventory) then
-		return
-	end
-	dogma.perf.start("weapons_ban", "strip_banned_from_trader")
-	local to_release, rows = collect_banned_from_trader(npc)
-	if #to_release > 0 then
-		add_unique_rows(npc, rows)
-	end
-	release_inventory_ids(to_release)
-	if #to_release > 0 then
-		schedule_trader_resort(npc:id())
-	end
-	dogma.perf.stop()
+    if not (npc and npc.iterate_inventory) then
+        return
+    end
+    dogma.perf.start("weapons_ban", "strip_banned_from_trader")
+    local to_release = collect_banned_from_trader(npc)
+    release_inventory_ids(to_release)
+    if #to_release > 0 then
+        schedule_trader_resort(npc:id())
+    end
+    dogma.perf.stop()
 end
 
 local function delayed_strip(npc_id)
-	local npc = level.object_by_id(npc_id)
-	if npc and npc:alive() and is_supply_trader(npc) then
-		strip_banned_from_trader(npc)
-	end
-	return true
+    local npc = level.object_by_id(npc_id)
+    if npc and npc:alive() and is_supply_trader(npc) then
+        strip_banned_from_trader(npc)
+    end
+    return true
 end
 
 -- Restock can land just after talk/trade opens; retry a few times then stop.
 local function strip_trader_on_interact(npc)
-	if not dogma.sys.ready(MOD_ID, db, on_option_change) then
-		return
-	end
-	if not npc then
-		return
-	end
-	if npc.alive and not npc:alive() then
-		return
-	end
-	if not is_supply_trader(npc) then
-		return
-	end
-	strip_banned_from_trader(npc)
-	local npc_id = npc:id()
-	if CreateTimeEvent then
-		CreateTimeEvent("dogma_wb_strip", "s1_" .. npc_id, 0.1, delayed_strip, npc_id)
-		CreateTimeEvent("dogma_wb_strip", "s2_" .. npc_id, 0.5, delayed_strip, npc_id)
-		CreateTimeEvent("dogma_wb_strip", "s3_" .. npc_id, 1.1, delayed_strip, npc_id)
-	end
+    if not dogma.sys.ready(MOD_ID, db, on_option_change) then
+        return
+    end
+    if not npc then
+        return
+    end
+    if npc.alive and not npc:alive() then
+        return
+    end
+    if not is_supply_trader(npc) then
+        return
+    end
+    strip_banned_from_trader(npc)
+    local npc_id = npc:id()
+    if CreateTimeEvent then
+        CreateTimeEvent("dogma_wb_strip", "s1_" .. npc_id, 0.1, delayed_strip, npc_id)
+        CreateTimeEvent("dogma_wb_strip", "s2_" .. npc_id, 0.5, delayed_strip, npc_id)
+        CreateTimeEvent("dogma_wb_strip", "s3_" .. npc_id, 1.1, delayed_strip, npc_id)
+    end
 end
 
 local function npc_on_use(npc)
-	strip_trader_on_interact(npc)
+    strip_trader_on_interact(npc)
 end
 
 local function ActorMenu_on_trade_started()
-	local actor = db.actor
-	if actor and actor.get_talking_npc then
-		strip_trader_on_interact(actor:get_talking_npc())
-	end
+    local actor = db.actor
+    if actor and actor.get_talking_npc then
+        strip_trader_on_interact(actor:get_talking_npc())
+    end
 end
 
 --------------------------------------------------------------------------------
@@ -798,530 +503,460 @@ end
 -- original set_random_stash replaces it, so keep the previous string.
 --------------------------------------------------------------------------------
 local function cache_of(id)
-	if not (treasure_manager and treasure_manager.caches and id) then
-		return nil
-	end
-	return treasure_manager.caches[id]
+    if not (treasure_manager and treasure_manager.caches and id) then
+        return nil
+    end
+    return treasure_manager.caches[id]
 end
 
 -- Keep a pending cache string (NPC deposits, etc.) when set_random_stash
 -- replaces the entry. Skip if already spawned (true).
 local function restore_existing_cache(id, prev)
-	if type(prev) ~= "string" or prev == "" then
-		return
-	end
-	local caches = treasure_manager and treasure_manager.caches
-	if not (caches and id) then
-		return
-	end
-	local cur = caches[id]
-	if cur == true then
-		return
-	end
-	if type(cur) == "string" and cur ~= "" then
-		if cur ~= prev then
-			caches[id] = prev .. "," .. cur
-		end
-		return
-	end
-	caches[id] = prev
+    if type(prev) ~= "string" or prev == "" then
+        return
+    end
+    local caches = treasure_manager and treasure_manager.caches
+    if not (caches and id) then
+        return
+    end
+    local cur = caches[id]
+    if cur == true then
+        return
+    end
+    if type(cur) == "string" and cur ~= "" then
+        if cur ~= prev then
+            caches[id] = prev .. "," .. cur
+        end
+        return
+    end
+    caches[id] = prev
 end
 
 local function append_stash_sections(id, sections)
-	if not (treasure_manager and treasure_manager.caches) or #sections == 0 then
-		return
-	end
-	local caches = treasure_manager.caches
-	local cur = caches[id]
-	if cur == true then
-		return
-	end
-	local add = table.concat(sections, ",")
-	if type(cur) == "string" and cur ~= "" then
-		caches[id] = cur .. "," .. add
-	else
-		caches[id] = add
-	end
-end
-
--- Replace/drop _bad/_verybad entries in stock treasure cache strings.
-local function scrub_worn_ammo_from_cache(id)
-	if not (treasure_manager and treasure_manager.caches and id) then
-		return
-	end
-	local caches = treasure_manager.caches
-	local cur = caches[id]
-	if type(cur) ~= "string" or cur == "" then
-		return
-	end
-	local parts = str_explode(cur, ",")
-	if not parts then
-		return
-	end
-	local out = {}
-	for i = 1, #parts do
-		local s = parts[i]
-		if not s or s == "" then
-			-- skip
-		elseif Tiers.is_worn_ammo(s) then
-			local fresh = Tiers.fresh_ammo_sec(s)
-			if fresh then
-				out[#out + 1] = fresh
-			end
-		else
-			out[#out + 1] = s
-		end
-	end
-	if #out > 0 then
-		caches[id] = table.concat(out, ",")
-	else
-		caches[id] = false
-	end
+    if not (treasure_manager and treasure_manager.caches) or #sections == 0 then
+        return
+    end
+    local caches = treasure_manager.caches
+    local cur = caches[id]
+    if cur == true then
+        return
+    end
+    local add = table.concat(sections, ",")
+    if type(cur) == "string" and cur ~= "" then
+        caches[id] = cur .. "," .. add
+    else
+        caches[id] = add
+    end
 end
 
 local function queue_stash_ammo(id, sec, rounds)
-	if not (id and sec and rounds and rounds > 0) then
-		return
-	end
-	local list = pending_stash_ammo[id]
-	if not list then
-		list = {}
-		pending_stash_ammo[id] = list
-	end
-	list[#list + 1] = { sec = sec, rounds = rounds }
+    if not (id and sec and rounds and rounds > 0) then
+        return
+    end
+    local list = pending_stash_ammo[id]
+    if not list then
+        list = {}
+        pending_stash_ammo[id] = list
+    end
+    list[#list + 1] = { sec = sec, rounds = rounds }
 end
 
 local function spawn_pending_stash_ammo(box)
-	if not box then
-		return
-	end
-	local id = box:id()
-	local list = pending_stash_ammo[id]
-	if not list then
-		return
-	end
-	pending_stash_ammo[id] = nil
-	for i = 1, #list do
-		local e = list[i]
-		if e and e.sec and e.rounds and e.rounds > 0 and Tiers.is_ammo_box(e.sec) then
-			alife_create_item(e.sec, box, { ammo = e.rounds })
-			log(string.format("stash spawn ammo %s x%s", e.sec, e.rounds))
-		end
-	end
+    if not box then
+        return
+    end
+    local id = box:id()
+    local list = pending_stash_ammo[id]
+    if not list then
+        return
+    end
+    pending_stash_ammo[id] = nil
+    for i = 1, #list do
+        local e = list[i]
+        if e and e.sec and e.rounds and e.rounds > 0 and dogma.db.is(e.sec, "ammo") then
+            alife_create_item(e.sec, box, { ammo = e.rounds })
+            log(string.format("stash spawn ammo %s x%s", e.sec, e.rounds))
+        end
+    end
 end
 
 -- Loot UI opens, then try_spawn_treasure alife_creates into the box.
 -- Vanilla retries ParseInventory once on the next frame; that can miss.
 local function refresh_open_stash_ui(box_id)
-	local gui = ui_inventory and ui_inventory.GUI
-	if not (gui and gui.mode == "loot") then
-		return
-	end
-	local partner = gui.GetPartner and gui:GetPartner()
-	if not (partner and partner.id and partner:id() == box_id) then
-		return
-	end
-	if gui.LMode_ResetNPCInventory then
-		gui:LMode_ResetNPCInventory()
-	elseif gui.LMode_ResetInventories then
-		gui:LMode_ResetInventories()
-	end
+    local gui = ui_inventory and ui_inventory.GUI
+    if not (gui and gui.mode == "loot") then
+        return
+    end
+    local partner = gui.GetPartner and gui:GetPartner()
+    if not (partner and partner.id and partner:id() == box_id) then
+        return
+    end
+    if gui.LMode_ResetNPCInventory then
+        gui:LMode_ResetNPCInventory()
+    elseif gui.LMode_ResetInventories then
+        gui:LMode_ResetInventories()
+    end
 end
 
 local function schedule_stash_ui_refresh(box_id)
-	if CreateTimeEvent then
-		CreateTimeEvent("dogma_wb_stash", "ui_" .. box_id, 0.1, function()
-			refresh_open_stash_ui(box_id)
-			return true
-		end)
-	else
-		refresh_open_stash_ui(box_id)
-	end
+    if CreateTimeEvent then
+        CreateTimeEvent("dogma_wb_stash", "ui_" .. box_id, 0.1, function()
+            refresh_open_stash_ui(box_id)
+            return true
+        end)
+    else
+        refresh_open_stash_ui(box_id)
+    end
 end
 
 local function roll_stash_loot(id)
-	if not alife_object(id) then
-		return
-	end
-	if cache_of(id) == true then
-		return
-	end
-	dogma.perf.start("weapons_ban", "roll_stash_loot")
-	Tiers.ensure()
-	local target = Tiers.base_tier_for_stash(id)
-	local sections = {}
-	local n = Tiers.roll_stash_bonus()
-	for _ = 1, n do
-		local cat = Tiers.pick_category()
-		local rt = Tiers.pick_tier(target)
-		local sec = Tiers.pick_section(cat, rt)
-		if sec and cat == "ammo" then
-			local ru, rank = Tiers.roll_ru_for_ammo_tier(rt)
-			local rounds = Tiers.rounds_for_ru(sec, ru)
-			if rounds > 0 then
-				queue_stash_ammo(id, sec, rounds)
-				log(string.format(
-					"stash +ammo t%s %s x%s (%s RU, rank=%s)",
-					rt,
-					sec,
-					rounds,
-					ru,
-					rank
-				))
-			end
-		elseif sec then
-			sections[#sections + 1] = sec
-			log(string.format("stash +%s t%s %s", cat, rt, sec))
-		end
-	end
-	append_stash_sections(id, sections)
-	dogma.perf.stop()
+    if not alife_object(id) then
+        return
+    end
+    if cache_of(id) == true then
+        return
+    end
+    dogma.perf.start("weapons_ban", "roll_stash_loot")
+    local target = Tiers.base_tier_for_stash(id)
+    local sections = {}
+    local n = Tiers.roll_stash_bonus()
+    for _ = 1, n do
+        local cat = Tiers.pick_category()
+        local rt = Tiers.pick_tier(target)
+        local sec = Tiers.pick_section(cat, rt)
+        if sec and cat == "ammo" then
+            local ru, rank = Tiers.roll_ru_for_ammo_tier(rt)
+            local rounds = Tiers.rounds_for_ru(sec, ru)
+            if rounds > 0 then
+                queue_stash_ammo(id, sec, rounds)
+                log(string.format(
+                    "stash +ammo t%s %s x%s (%s RU, rank=%s)",
+                    rt,
+                    sec,
+                    rounds,
+                    ru,
+                    rank
+                ))
+            end
+        elseif sec then
+            sections[#sections + 1] = sec
+            log(string.format("stash +%s t%s %s", cat, rt, sec))
+        end
+    end
+    append_stash_sections(id, sections)
+    dogma.perf.stop()
 end
 
 local function patched_set_random_stash(no_spot, hint, bonus_items, id, dbg)
-	local prev = cache_of(id)
-	local result = original_set_random_stash(no_spot, hint, bonus_items, id, dbg)
-	restore_existing_cache(id, prev)
+    local prev = cache_of(id)
+    local result = original_set_random_stash(no_spot, hint, bonus_items, id, dbg)
+    restore_existing_cache(id, prev)
 
-	if dbg then
-		return result
-	end
-	if not dogma.sys.ready(MOD_ID, db, on_option_change) then
-		return result
-	end
-	if not id then
-		return result
-	end
-	dogma.perf.start("weapons_ban", "set_random_stash")
-	scrub_worn_ammo_from_cache(id)
-	if is_cheese_paid_stash(hint) then
-		dogma.perf.stop()
-		return result
-	end
+    if dbg then
+        return result
+    end
+    if not dogma.sys.ready(MOD_ID, db, on_option_change) then
+        return result
+    end
+    if not id then
+        return result
+    end
+    dogma.perf.start("weapons_ban", "set_random_stash")
+    if is_cheese_paid_stash(hint) then
+        dogma.perf.stop()
+        return result
+    end
 
-	roll_stash_loot(id)
-	dogma.perf.stop()
-	return result
+    roll_stash_loot(id)
+    dogma.perf.stop()
+    return result
 end
 
 local function patched_try_spawn_treasure(box)
-	if not box then
-		original_try_spawn_treasure(box)
-		return
-	end
-	local id = box:id()
-	scrub_worn_ammo_from_cache(id)
-	-- Only inject queued ammo when this open actually spawns the cache
-	-- string. Already-looted (true) or empty (false) boxes keep their items.
-	local pending = cache_of(id)
-	original_try_spawn_treasure(box)
-	if type(pending) == "string" then
-		spawn_pending_stash_ammo(box)
-	end
-	schedule_stash_ui_refresh(id)
+    if not box then
+        original_try_spawn_treasure(box)
+        return
+    end
+    local id = box:id()
+    -- Only inject queued ammo when this open actually spawns the cache
+    -- string. Already-looted (true) or empty (false) boxes keep their items.
+    local pending = cache_of(id)
+    original_try_spawn_treasure(box)
+    if type(pending) == "string" then
+        spawn_pending_stash_ammo(box)
+    end
+    schedule_stash_ui_refresh(id)
 end
 
 --------------------------------------------------------------------------------
 -- Corpse ammo replace — one rank RU budget, split across kept guns
 --------------------------------------------------------------------------------
 local function strip_loose_ammo(npc)
-	local to_release = {}
-	npc:iterate_inventory(function(_temp, item)
-		if not item then
-			return
-		end
-		local sec = item:section()
-		local id = item:id()
-		if not (id and alife_object(id)) then
-			return
-		end
-		if Tiers.is_ammo_box(sec) then
-			to_release[#to_release + 1] = id
-		elseif IsAmmo and IsAmmo(item) and not (IsItem and IsItem("grenade_ammo", sec)) then
-			to_release[#to_release + 1] = id
-		end
-	end)
-	release_inventory_ids(to_release)
+    local to_release = {}
+    npc:iterate_inventory(function(_temp, item)
+        if not item then
+            return
+        end
+        local sec = item:section()
+        local id = item:id()
+        if not (id and alife_object(id)) then
+            return
+        end
+        if dogma.db.is(sec, "ammo") then
+            to_release[#to_release + 1] = id
+        end
+    end)
+    release_inventory_ids(to_release)
 end
 
 local function npc_rank_name(npc)
-	if not (npc and ranks and ranks.get_obj_rank_name) then
-		return nil
-	end
-	local ok, name = pcall(ranks.get_obj_rank_name, npc)
-	if ok and name and name ~= "" then
-		return name
-	end
-	return nil
+    if not (npc and ranks and ranks.get_obj_rank_name) then
+        return nil
+    end
+    local ok, name = pcall(ranks.get_obj_rank_name, npc)
+    if ok and name and name ~= "" then
+        return name
+    end
+    return nil
 end
 
--- Fresh ammo sections currently loose on the corpse (boxes / ammo items).
+-- Ammo sections currently loose on the corpse (db boxes only).
 local function collect_inventory_ammo_secs(npc)
-	local found = {}
-	if not (npc and npc.iterate_inventory) then
-		return found
-	end
-	npc:iterate_inventory(function(_temp, item)
-		if not item then
-			return
-		end
-		local sec = item:section()
-		if not sec then
-			return
-		end
-		local is_box = Tiers.is_ammo_box(sec)
-		local is_ammo = IsAmmo and IsAmmo(item) and not (IsItem and IsItem("grenade_ammo", sec))
-		if not (is_box or is_ammo) then
-			return
-		end
-		local fresh = sec
-		if Tiers.is_worn_ammo(sec) then
-			fresh = Tiers.fresh_ammo_sec(sec)
-		end
-		if fresh and not Tiers.is_worn_ammo(fresh) then
-			found[fresh] = true
-		end
-	end)
-	return found
+    local found = {}
+    if not (npc and npc.iterate_inventory) then
+        return found
+    end
+    npc:iterate_inventory(function(_temp, item)
+        if not item then
+            return
+        end
+        local sec = item:section()
+        if dogma.db.is(sec, "ammo") then
+            found[sec] = true
+        end
+    end)
+    return found
 end
 
 -- Ammo types this gun should drop: loaded type + matching inventory ammo.
--- Falls back to a random fresh ammo_class entry if nothing matched.
+-- Falls back to a random db ammo_class entry if nothing matched.
 local function ammo_types_for_gun(wpn, inv_ammo)
-	if not wpn then
-		return nil
-	end
-	local wpn_sec = wpn:section()
-	local ammo_list
-	if utils_item and utils_item.get_ammo then
-		ammo_list = utils_item.get_ammo(wpn_sec, wpn:id())
-	end
-	if not (ammo_list and #ammo_list > 0) then
-		ammo_list = parse_list(ini_sys, wpn_sec, "ammo_class")
-	end
-	if not (ammo_list and #ammo_list > 0) then
-		return nil
-	end
+    if not wpn then
+        return nil
+    end
+    local wpn_sec = wpn:section()
+    local ammo_list
+    if utils_item and utils_item.get_ammo then
+        ammo_list = utils_item.get_ammo(wpn_sec, wpn:id())
+    end
+    if not (ammo_list and #ammo_list > 0) then
+        ammo_list = parse_list(ini_sys, wpn_sec, "ammo_class")
+    end
+    if not (ammo_list and #ammo_list > 0) then
+        return nil
+    end
 
-	local allowed = {}
-	for i = 1, #ammo_list do
-		local s = ammo_list[i]
-		if s and s ~= "" then
-			if Tiers.is_worn_ammo(s) then
-				s = Tiers.fresh_ammo_sec(s)
-			end
-			if s and not Tiers.is_worn_ammo(s) then
-				allowed[s] = true
-			end
-		end
-	end
+    local allowed = {}
+    for i = 1, #ammo_list do
+        local s = ammo_list[i]
+        if dogma.db.is(s, "ammo") then
+            allowed[s] = true
+        end
+    end
 
-	local matched = {}
-	if wpn.get_ammo_type then
-		local ok, idx = pcall(function()
-			return wpn:get_ammo_type()
-		end)
-		if ok and idx ~= nil then
-			local loaded = ammo_list[idx + 1]
-			if loaded then
-				if Tiers.is_worn_ammo(loaded) then
-					loaded = Tiers.fresh_ammo_sec(loaded)
-				end
-				if loaded and allowed[loaded] then
-					matched[loaded] = true
-				end
-			end
-		end
-	end
-	if inv_ammo then
-		for sec, _ in pairs(inv_ammo) do
-			if allowed[sec] then
-				matched[sec] = true
-			end
-		end
-	end
+    local matched = {}
+    if wpn.get_ammo_type then
+        local ok, idx = pcall(function()
+            return wpn:get_ammo_type()
+        end)
+        if ok and idx ~= nil then
+            local loaded = ammo_list[idx + 1]
+            if loaded and allowed[loaded] then
+                matched[loaded] = true
+            end
+        end
+    end
+    if inv_ammo then
+        for sec, _ in pairs(inv_ammo) do
+            if allowed[sec] then
+                matched[sec] = true
+            end
+        end
+    end
 
-	local list = {}
-	for sec, _ in pairs(matched) do
-		list[#list + 1] = sec
-	end
-	if #list == 0 then
-		local fallback = Tiers.pick_fresh_ammo(ammo_list)
-		if fallback then
-			list[1] = fallback
-		end
-	end
-	if #list == 0 then
-		return nil
-	end
-	return list
+    local list = {}
+    for sec, _ in pairs(matched) do
+        list[#list + 1] = sec
+    end
+    if #list == 0 then
+        local fallback = pick_ammo(ammo_list)
+        if fallback then
+            list[1] = fallback
+        end
+    end
+    if #list == 0 then
+        return nil
+    end
+    return list
 end
 
 local function inject_corpse_ammo(npc, inv_ammo)
-	local rank = npc_rank_name(npc)
-	local gun_ammo = {}
-	npc:iterate_inventory(function(_temp, itm)
-		if not itm then
-			return
-		end
-		if not (IsWeapon and IsWeapon(nil, itm:clsid())) then
-			return
-		end
-		if npc.marked_dropped and npc:marked_dropped(itm) then
-			return
-		end
-		if IsMelee and IsMelee(itm) then
-			return
-		end
-		local types = ammo_types_for_gun(itm, inv_ammo)
-		if types then
-			gun_ammo[#gun_ammo + 1] = types
-		end
-	end)
-	if #gun_ammo == 0 then
-		return
-	end
-	local total_ru = Tiers.roll_ru_for_rank(rank)
-	if total_ru <= 0 then
-		return
-	end
-	local share = total_ru / #gun_ammo
-	local pooled = {}
-	for i = 1, #gun_ammo do
-		local types = gun_ammo[i]
-		local per = share / #types
-		for j = 1, #types do
-			local sec = types[j]
-			pooled[sec] = (pooled[sec] or 0) + per
-		end
-	end
-	for sec, ru in pairs(pooled) do
-		local rounds = Tiers.rounds_for_ru(sec, ru)
-		if rounds > 0 then
-			alife_create_item(sec, npc, { ammo = rounds })
-			log(string.format(
-				"corpse ammo %s x%s (%.0f RU share, total=%s, guns=%s, rank=%s)",
-				sec,
-				rounds,
-				ru,
-				total_ru,
-				#gun_ammo,
-				rank or "?"
-			))
-		end
-	end
+    local rank = npc_rank_name(npc)
+    local gun_ammo = {}
+    npc:iterate_inventory(function(_temp, itm)
+        if not itm then
+            return
+        end
+        if not (IsWeapon and IsWeapon(nil, itm:clsid())) then
+            return
+        end
+        if npc.marked_dropped and npc:marked_dropped(itm) then
+            return
+        end
+        if IsMelee and IsMelee(itm) then
+            return
+        end
+        local types = ammo_types_for_gun(itm, inv_ammo)
+        if types then
+            gun_ammo[#gun_ammo + 1] = types
+        end
+    end)
+    if #gun_ammo == 0 then
+        return
+    end
+    local total_ru = Tiers.roll_ru_for_rank(rank)
+    if total_ru <= 0 then
+        return
+    end
+    local share = total_ru / #gun_ammo
+    local pooled = {}
+    for i = 1, #gun_ammo do
+        local types = gun_ammo[i]
+        local per = share / #types
+        for j = 1, #types do
+            local sec = types[j]
+            pooled[sec] = (pooled[sec] or 0) + per
+        end
+    end
+    for sec, ru in pairs(pooled) do
+        local rounds = Tiers.rounds_for_ru(sec, ru)
+        if rounds > 0 then
+            alife_create_item(sec, npc, { ammo = rounds })
+            log(string.format(
+                "corpse ammo %s x%s (%.0f RU share, total=%s, guns=%s, rank=%s)",
+                sec,
+                rounds,
+                ru,
+                total_ru,
+                #gun_ammo,
+                rank or "?"
+            ))
+        end
+    end
 end
 
 local function patched_try_spawn_ammo(npc)
-	original_try_spawn_ammo(npc)
-	if not dogma.sys.ready(MOD_ID, db, on_option_change) then
-		return
-	end
-	if not npc then
-		return
-	end
-	dogma.perf.start("weapons_ban", "try_spawn_ammo")
-	-- Snapshot matching ammo before strip so we can reinject the same types.
-	local inv_ammo = collect_inventory_ammo_secs(npc)
-	strip_loose_ammo(npc)
-	inject_corpse_ammo(npc, inv_ammo)
-	if item_weapon and item_weapon.ammo_aggregation_full and CreateTimeEvent then
-		CreateTimeEvent(npc:id(), "dogma_wb_ammo_agg", 0, item_weapon.ammo_aggregation_full, npc:id())
-	end
-	dogma.perf.stop()
+    original_try_spawn_ammo(npc)
+    if not dogma.sys.ready(MOD_ID, db, on_option_change) then
+        return
+    end
+    if not npc then
+        return
+    end
+    dogma.perf.start("weapons_ban", "try_spawn_ammo")
+    -- Snapshot matching ammo before strip so we can reinject the same types.
+    local inv_ammo = collect_inventory_ammo_secs(npc)
+    strip_loose_ammo(npc)
+    inject_corpse_ammo(npc, inv_ammo)
+    if item_weapon and item_weapon.ammo_aggregation_full and CreateTimeEvent then
+        CreateTimeEvent(npc:id(), "dogma_wb_ammo_agg", 0, item_weapon.ammo_aggregation_full, npc:id())
+    end
+    dogma.perf.stop()
 end
 
 --------------------------------------------------------------------------------
 -- Hooks
 --------------------------------------------------------------------------------
 local function try_hook_stash()
-	if hooked_stash then
-		return
-	end
-	if not (treasure_manager and treasure_manager.set_random_stash) then
-		return
-	end
-	original_set_random_stash = treasure_manager.set_random_stash
-	treasure_manager.set_random_stash = patched_set_random_stash
-	hooked_stash = true
-	log("hooked treasure_manager.set_random_stash")
+    if hooked_stash then
+        return
+    end
+    if not (treasure_manager and treasure_manager.set_random_stash) then
+        return
+    end
+    original_set_random_stash = treasure_manager.set_random_stash
+    treasure_manager.set_random_stash = patched_set_random_stash
+    hooked_stash = true
+    log("hooked treasure_manager.set_random_stash")
 end
 
 local function try_hook_stash_spawn()
-	if hooked_stash_spawn then
-		return
-	end
-	if not (treasure_manager and treasure_manager.try_spawn_treasure) then
-		return
-	end
-	original_try_spawn_treasure = treasure_manager.try_spawn_treasure
-	treasure_manager.try_spawn_treasure = patched_try_spawn_treasure
-	hooked_stash_spawn = true
-	log("hooked treasure_manager.try_spawn_treasure")
+    if hooked_stash_spawn then
+        return
+    end
+    if not (treasure_manager and treasure_manager.try_spawn_treasure) then
+        return
+    end
+    original_try_spawn_treasure = treasure_manager.try_spawn_treasure
+    treasure_manager.try_spawn_treasure = patched_try_spawn_treasure
+    hooked_stash_spawn = true
+    log("hooked treasure_manager.try_spawn_treasure")
 end
 
 local function try_hook_ammo()
-	if hooked_ammo then
-		return
-	end
-	if not (death_manager and death_manager.try_spawn_ammo) then
-		return
-	end
-	original_try_spawn_ammo = death_manager.try_spawn_ammo
-	death_manager.try_spawn_ammo = patched_try_spawn_ammo
-	hooked_ammo = true
-	log("hooked death_manager.try_spawn_ammo")
+    if hooked_ammo then
+        return
+    end
+    if not (death_manager and death_manager.try_spawn_ammo) then
+        return
+    end
+    original_try_spawn_ammo = death_manager.try_spawn_ammo
+    death_manager.try_spawn_ammo = patched_try_spawn_ammo
+    hooked_ammo = true
+    log("hooked death_manager.try_spawn_ammo")
 end
 
 local function try_hook_trade_ui()
-	if hooked_trade_ui then
-		return
-	end
-	local cell = utils_ui and utils_ui.UICellItem
-	local cont = utils_ui and utils_ui.UICellContainer
-	if not (cell and cell.Check_TradeMode and cont and cont.IsTradable) then
-		return
-	end
-	original_check_trade_mode = cell.Check_TradeMode
-	original_is_tradable = cont.IsTradable
-	cell.Check_TradeMode = patched_check_trade_mode
-	cont.IsTradable = patched_is_tradable
-	hooked_trade_ui = true
-	log("hooked utils_ui trade Check_TradeMode + IsTradable")
+    if hooked_trade_ui then
+        return
+    end
+    local cell = utils_ui and utils_ui.UICellItem
+    local cont = utils_ui and utils_ui.UICellContainer
+    if not (cell and cell.Check_TradeMode and cont and cont.IsTradable) then
+        return
+    end
+    original_check_trade_mode = cell.Check_TradeMode
+    original_is_tradable = cont.IsTradable
+    cell.Check_TradeMode = patched_check_trade_mode
+    cont.IsTradable = patched_is_tradable
+    hooked_trade_ui = true
+    log("hooked utils_ui trade Check_TradeMode + IsTradable")
 end
 
 local function try_hooks()
-	try_hook_stash()
-	try_hook_stash_spawn()
-	try_hook_ammo()
-	try_hook_trade_ui()
+    try_hook_stash()
+    try_hook_stash_spawn()
+    try_hook_ammo()
+    try_hook_trade_ui()
 end
 
 local function actor_on_first_update()
-	try_hooks()
-	give_extra_start_ammo()
-	apply_start_weapon_parts()
-	if dogma.dbg.logging() and CreateTimeEvent then
-		CreateTimeEvent("dogma_wb_dbg", "trader_dump", 1.5, function()
-			dump_loot_pool()
-			dump_online_traders()
-			dump_scan_unknowns()
-			return true
-		end)
-	end
+    try_hooks()
+    give_extra_start_ammo()
+    apply_start_weapon_parts()
 end
 
 function on_game_start()
-	Tiers = _G.dogma_game_weapons_ban_tiers
-	dogma.load(MOD_ID)
+    Tiers = _G.dogma_game_weapons_ban_tiers
+    dogma.load(MOD_ID)
 
-	RegisterScriptCallback("on_option_change", on_option_change)
-	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
-	RegisterScriptCallback("npc_on_use", npc_on_use)
-	RegisterScriptCallback("ActorMenu_on_trade_started", ActorMenu_on_trade_started)
-	RegisterScriptCallback("save_state", on_save_state)
-	RegisterScriptCallback("load_state", on_load_state)
-	on_option_change()
-	try_hooks()
-	log("weapons_ban ready")
+    RegisterScriptCallback("on_option_change", on_option_change)
+    RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+    RegisterScriptCallback("npc_on_use", npc_on_use)
+    RegisterScriptCallback("ActorMenu_on_trade_started", ActorMenu_on_trade_started)
+    RegisterScriptCallback("save_state", on_save_state)
+    RegisterScriptCallback("load_state", on_load_state)
+    on_option_change()
+    try_hooks()
+    log("weapons_ban ready")
 end

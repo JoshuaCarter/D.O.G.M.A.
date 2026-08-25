@@ -1,7 +1,7 @@
 --[[
 	Weapons Ban — ammo craft 1:1
 
-	LoadRecipes overwrites GAMMA slots for keys in 01_recipes.
+	LoadRecipes overwrites GAMMA slots for keys in CONSTS.RECIPES.
 	Each part costs recipe_amount × output box_size rounds.
 	Casing/bullet stay 1. Powder n is per round.
 	Not in RECIPE, or not casing+powder+bullet, uses the original handlers.
@@ -22,7 +22,7 @@ local function is_ammo_part(sec)
 end
 
 local function recipe_override(sec)
-	local rec = _G.dogma_game_weapons_ban_recipes
+	local rec = _G.dogma_game_weapons_ban_consts and _G.dogma_game_weapons_ban_consts.RECIPES
 	return rec and sec and rec[sec]
 end
 

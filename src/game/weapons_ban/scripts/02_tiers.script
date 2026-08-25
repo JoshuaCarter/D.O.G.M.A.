@@ -1,911 +1,178 @@
 --[[
-	Weapons Ban — tier buckets, category pick, map/rare helpers.
-	Lists first, then scan. Ammo must be on a real gun.
-	Loaded before main (02_ prefix).
+    Weapons Ban — pick a section from dogma.db by cost band.
+    Map/yellow stash sets target tier. Tickets pick category + tier offset.
+    Loaded before main (02_ prefix).
 ]]
 
-local CONFIG = _G.dogma_game_weapons_ban_conf
-local MOD_ID = CONFIG.MOD_ID
-local D = _G.dogma_game_weapons_ban_drops or {}
-
-local RNG_STUB_COST = 10
-local STASH_PARTS_MAX_COND_MAP = D.STASH_PARTS_MAX_COND_MAP or {}
-local STASH_PARTS_COND_TIX = D.STASH_PARTS_COND_TIX or {}
-local LEVEL_TIERS = D.LEVEL_TIERS or {}
-local STASH_ITEM_TYPES_MAP = D.STASH_ITEM_TYPES_MAP or {}
-local STASH_ITEM_TYPE_TIX = D.STASH_ITEM_TYPE_TIX or {}
-local STASH_ITEM_TIER_MAP = D.STASH_ITEM_TIER_MAP or { -2, -1, 0, 1, 2 }
-local STASH_ITEM_TIER_TIX = D.STASH_ITEM_TIER_TIX or {}
-local STASH_BONUS_ROLL_MAP = D.STASH_BONUS_ROLL_MAP or { 0, 1, 2, 3 }
-local STASH_BONUS_ROLL_TIX = D.STASH_BONUS_ROLL_TIX or {}
-local CORPSE_RANK_AMMO_RU_MAP = D.CORPSE_RANK_AMMO_RU_MAP or {}
-local CORPSE_RANK_AMMO_RU_TIX = D.CORPSE_RANK_AMMO_RU_TIX or {}
-local STASH_TIER_TO_CORPSE_RANK = D.STASH_TIER_TO_CORPSE_RANK or {}
-local CORPSE_RANK_AMMO_RU_TIX_FALLBACK = CORPSE_RANK_AMMO_RU_TIX.experienced
-
-local buckets = {
-	sight = { {}, {}, {}, {}, {} },
-	kit = { {}, {}, {}, {}, {} },
-	suppressor = { {}, {}, {}, {}, {} },
-	gl = { {}, {}, {}, {}, {} },
-	ammo = { {}, {}, {}, {}, {} },
-	parts = { {}, {}, {}, {}, {} },
-}
-local buckets_built = false
-local spawn_set = {}
-local unknown = {}
-local cutoffs = {}
-local ammo_mag_equiv = {}
--- Sections a real gun lists (ammo_class / scopes* / silencer_name / grenade_launcher_name). Debug
--- leftovers often have icons + IsItem flags but no weapon points at them.
-local referenced_ammo = {}
-local referenced_sight = {}
-local referenced_sil = {}
-local referenced_gl = {}
-local rare_names = {}
-local rare_names_built = false
-local price_ini = nil
-
-local function log(msg)
-	if dogma.dbg.logging() then
-		dogma.dbg.log(MOD_ID, tostring(msg))
-	end
-end
+local CONSTS = _G.dogma_game_weapons_ban_consts
 
 local function clamp_tier(t)
-	return math.max(1, math.min(5, math.floor(t)))
-end
-
-local function load_price_ini()
-	if price_ini ~= nil then
-		return
-	end
-	price_ini = ini_file_ex("mod_system_zzzzzzzzzzzzzzzzzzz_GAMMA_items_price.ltx", true) or false
-end
-
-local function get_effective_cost(sec)
-	local live = ini_sys:r_float_ex(sec, "cost")
-	if live and live > RNG_STUB_COST then
-		return live
-	end
-	load_price_ini()
-	if price_ini then
-		local ref = price_ini:r_float_ex(sec, "cost")
-		if ref and ref > RNG_STUB_COST then
-			return ref
-		end
-	end
-	return live or 0
-end
-
--- Outfit / artefact / survival kits — not weapon loot.
-local function is_outfit_or_misc_kit(sec)
-	local sfind = string.find
-	local s = string.lower(sec)
-	if sfind(s, "sewing", 1, true) then
-		return true
-	end
-	if sfind(s, "survival_kit", 1, true) then
-		return true
-	end
-	-- Armor / helmet / exo repair (not toolkit_p/s/r5/r7).
-	if sfind(s, "repair_kit", 1, true) then
-		return true
-	end
-	if s == "cleaning_kit_u" then
-		return true
-	end
-	if string.sub(s, -4) == "_off" then
-		return true
-	end
-	if string.sub(s, 1, 3) == "af_" then
-		return true
-	end
-	return false
-end
-
-local function is_firearm_repair_or_clean(sec)
-	if sec == "toolkit_p" or sec == "toolkit_s"
-		or sec == "toolkit_r5" or sec == "toolkit_r7"
-	then
-		return true
-	end
-	if sec == "cleaning_kit_p" or sec == "cleaning_kit_s"
-		or sec == "cleaning_kit_r5" or sec == "cleaning_kit_r7"
-	then
-		return true
-	end
-	local only = ini_sys:r_string_ex(sec, "repair_only")
-	if not only then
-		return false
-	end
-	local sfind = string.find
-	return sfind(only, "pistol", 1, true)
-		or sfind(only, "shotgun", 1, true)
-		or sfind(only, "rifle_5", 1, true)
-		or sfind(only, "rifle_7", 1, true)
-		or sfind(only, "barrel_a", 1, true)
-		or sfind(only, "barrel_b", 1, true)
-		or sfind(only, "barrel_c", 1, true)
-		or sfind(only, "barrel_d", 1, true)
-end
-
--- Weapon upgrade / tac / firearm kits only. Guns (ammo_class) are not kits.
-local function is_name_kit(sec)
-	if not sec or sec == "" then
-		return false
-	end
-	if ini_sys:r_string_ex(sec, "ammo_class") then
-		return false
-	end
-	if is_outfit_or_misc_kit(sec) then
-		return false
-	end
-	if is_firearm_repair_or_clean(sec) then
-		return true
-	end
-	local sfind = string.find
-	if sfind(sec, "_upgr_kit", 1, true) or sfind(sec, "_upkit", 1, true) then
-		return true
-	end
-	if sec == "mod9" or sfind(sec, "_mod9", 1, true) then
-		return true
-	end
-	if sfind(sec, "tactical_kit", 1, true) then
-		return true
-	end
-	if string.sub(sec, 1, 4) == "kit_" or sfind(sec, "_kit", 1, true) then
-		return true
-	end
-	return false
-end
-
-local function is_visual_kit(sec)
-	local visual = ini_sys:r_string_ex(sec, "visual") or ""
-	return string.find(visual, "wpn_tac_kit", 1, true) ~= nil
-end
-
-local function is_ammo_box(sec)
-	if not sec then
-		return false
-	end
-	if IsItem and (IsItem("grenade_ammo", sec) or IsItem("fake_ammo", sec)) then
-		return false
-	end
-	-- Engine reads k_ap on ammo (fatal if missing). ammo_dyno etc. share ammo_.
-	if ini_sys:r_float_ex(sec, "k_ap") == nil then
-		return false
-	end
-	-- GAMMA boxes also use kind=w_ammo; ammo_* with k_ap is the box, not a mag.
-	if string.sub(sec, 1, 5) == "ammo_" then
-		return true
-	end
-	local kind = ini_sys:r_string_ex(sec, "kind")
-	if kind == "w_ammo" then
-		return false
-	end
-	if IsItem and IsItem("ammo", sec) then
-		return true
-	end
-	return false
-end
-
--- Inventory sight (not a scopes_sect token / kit optic package).
-local function is_real_sight(sec)
-	if not sec then
-		return false
-	end
-	local vis = string.lower(ini_sys:r_string_ex(sec, "visual") or "")
-	if string.find(vis, "wpn_tac_kit", 1, true) then
-		return false
-	end
-	local cls = string.upper(ini_sys:r_string_ex(sec, "class") or "")
-	if cls == "WP_SCOPE" then
-		return true
-	end
-	if string.find(vis, "wpn_addons", 1, true) or string.find(vis, "wpn_scope", 1, true) then
-		return true
-	end
-	return string.sub(sec, 1, 16) == "wpn_addon_scope"
-end
-
--- OLD / BAD box sections (Anomaly suffixes). Never loot these.
-local function is_worn_ammo(sec)
-	if not sec then
-		return false
-	end
-	if sec:sub(-8) == "_verybad" then
-		return true
-	end
-	if sec:sub(-4) == "_bad" then
-		return true
-	end
-	return false
-end
-
-local function fresh_ammo_sec(sec)
-	if not sec then
-		return nil
-	end
-	if sec:sub(-8) == "_verybad" then
-		sec = sec:sub(1, -9)
-	elseif sec:sub(-4) == "_bad" then
-		sec = sec:sub(1, -5)
-	end
-	if sec ~= "" and ini_sys:section_exist(sec) then
-		return sec
-	end
-	return nil
-end
-
--- Prefer non-worn entries from ammo_class; else map worn → fresh base.
-local function pick_fresh_ammo(ammo_list)
-	if not ammo_list then
-		return nil
-	end
-	local fresh = {}
-	for i = 1, #ammo_list do
-		local s = ammo_list[i]
-		if s and s ~= "" and not is_worn_ammo(s) and ini_sys:section_exist(s) then
-			fresh[#fresh + 1] = s
-		end
-	end
-	if #fresh > 0 then
-		return fresh[math.random(1, #fresh)]
-	end
-	for i = 1, #ammo_list do
-		local s = fresh_ammo_sec(ammo_list[i])
-		if s then
-			return s
-		end
-	end
-	return nil
-end
-
-local function is_weapon_part(sec)
-	return sec and string.find(sec, "prt_w", 1, true) ~= nil
-end
-
-local function lists()
-	return _G.dogma_game_weapons_ban_lists
-end
-
-local function is_ignored(sec)
-	local L = lists()
-	return L and L.is_ignored and L.is_ignored(sec)
-end
-
-local function is_listed(sec)
-	local L = lists()
-	return L and L.is_listed and L.is_listed(sec)
-end
-
-local function note_unknown(cat, sec, why)
-	if not sec or unknown[sec] then
-		return
-	end
-	if is_listed(sec) or is_ignored(sec) then
-		return
-	end
-	unknown[sec] = { cat = cat, why = why }
-	log(string.format("unlist %s %s %s", why, cat, sec))
-end
-
--- Loot category for a section, or nil.
-local function classify_section(sec)
-	if not sec or sec == "" or is_ignored(sec) then
-		return nil
-	end
-	if is_weapon_part(sec) then
-		return "parts"
-	end
-	if is_ammo_box(sec) then
-		if is_worn_ammo(sec) then
-			return nil
-		end
-		return "ammo"
-	end
-	local Lists = _G.dogma_game_weapons_ban_lists
-	local listed = Lists and Lists.kind_of and Lists.kind_of(sec)
-	if listed then
-		return listed
-	end
-	if IsItem and IsItem("gl", sec) then
-		return "gl"
-	end
-	if IsItem and IsItem("sil", sec) then
-		return "suppressor"
-	end
-	if is_name_kit(sec) then
-		return "kit"
-	end
-	if is_real_sight(sec) then
-		return "sight"
-	end
-	if is_visual_kit(sec) then
-		return "kit"
-	end
-	return nil
+    return dogma.math.clamp(math.floor(t), 1, 5)
 end
 
 local function cost_to_tier(cost, cat)
-	local c = cutoffs[cat]
-	if not c then
-		return 1
-	end
-	if cost >= c[5] then
-		return 5
-	end
-	if cost >= c[4] then
-		return 4
-	end
-	if cost >= c[3] then
-		return 3
-	end
-	if cost >= c[2] then
-		return 2
-	end
-	return 1
-end
-
-local function enforce_cutoffs(cat)
-	local L = CONFIG.loaded
-	local t2 = L[cat .. "_tier_cost_2"] or 0
-	local t3 = L[cat .. "_tier_cost_3"] or 0
-	local t4 = L[cat .. "_tier_cost_4"] or 0
-	local t5 = L[cat .. "_tier_cost_5"] or 0
-	if t3 <= t2 then
-		t3 = t2 + 1
-	end
-	if t4 <= t3 then
-		t4 = t3 + 1
-	end
-	if t5 <= t4 then
-		t5 = t4 + 1
-	end
-	cutoffs[cat] = { [2] = t2, [3] = t3, [4] = t4, [5] = t5 }
-end
-
-local function clear_buckets()
-	for _, cat in ipairs(STASH_ITEM_TYPES_MAP) do
-		buckets[cat] = { {}, {}, {}, {}, {} }
-	end
-	ammo_mag_equiv = {}
-	referenced_ammo = {}
-	referenced_sight = {}
-	referenced_sil = {}
-	referenced_gl = {}
-	spawn_set = {}
-	unknown = {}
-	buckets_built = false
-end
-
-local function put(cat, sec, tier)
-	if not sec or spawn_set[sec] then
-		return
-	end
-	local by = buckets[cat]
-	if not by then
-		return
-	end
-	local t = clamp_tier(tier)
-	local bucket = by[t]
-	if not bucket then
-		return
-	end
-	spawn_set[sec] = true
-	bucket[#bucket + 1] = sec
-end
-
-local function is_junk_section(sec)
-	local sfind = string.find
-	local ssub = string.sub
-	if not sec or sec == "" then
-		return true
-	end
-	local s = string.lower(sec)
-	if sfind(s, "tch_", 1, true) then
-		return true
-	end
-	if ssub(s, -3) == "_mp" or sfind(s, "_mp_", 1, true) then
-		return true
-	end
-	if ssub(s, 1, 3) == "mp_" then
-		return true
-	end
-	if ssub(s, -3) == "_cw" or sfind(s, "_cw_", 1, true) then
-		return true
-	end
-	if ssub(s, -5) == "_base" or sfind(s, "_base_", 1, true) then
-		return true
-	end
-	if sfind(s, "debug", 1, true) or sfind(s, "dummy", 1, true) then
-		return true
-	end
-	if ssub(s, 1, 5) == "test_" or sfind(s, "_test_", 1, true) then
-		return true
-	end
-	return false
-end
-
-local function csv_each(sec, key, fn)
-	local list = parse_list and parse_list(ini_sys, sec, key)
-	if not list then
-		local raw = ini_sys:r_string_ex(sec, key)
-		if raw and raw ~= "" then
-			list = str_explode(raw, ",")
-		end
-	end
-	if not list then
-		return
-	end
-	for i = 1, #list do
-		local tok = list[i]
-		if tok and tok ~= "" and tok ~= "none" then
-			fn(tok)
-		end
-	end
-end
-
-local function mark_scope_token(tok)
-	if not (tok and ini_sys:section_exist(tok)) then
-		return
-	end
-	local named = ini_sys:r_string_ex(tok, "scope_name")
-	if named and named ~= "" and named ~= "none" then
-		referenced_sight[named] = true
-	end
-	if IsItem and IsItem("scope", tok) then
-		referenced_sight[tok] = true
-	end
-end
-
--- Only guns that look real (icon + not junk names) may validate loot.
-local function note_weapon_refs(sec)
-	if is_junk_section(sec) then
-		return
-	end
-	csv_each(sec, "ammo_class", function(a)
-		if is_worn_ammo(a) then
-			a = fresh_ammo_sec(a)
-		end
-		if a then
-			referenced_ammo[a] = true
-		end
-	end)
-	local sil_st = ini_sys:r_float_ex(sec, "silencer_status") or 0
-	if sil_st == 2 then
-		local sil = ini_sys:r_string_ex(sec, "silencer_name")
-		if sil and sil ~= "" and sil ~= "none" then
-			referenced_sil[sil] = true
-		end
-	end
-	local gl_st = ini_sys:r_float_ex(sec, "grenade_launcher_status") or 0
-	if gl_st == 2 then
-		local gl = ini_sys:r_string_ex(sec, "grenade_launcher_name")
-		if gl and gl ~= "" and gl ~= "none" then
-			referenced_gl[gl] = true
-		end
-	end
-	local group = ini_sys:r_string_ex(sec, "modular_scope_group")
-	if group and group ~= "" and ini_sys:section_exist(group) then
-		csv_each(group, "scopes", mark_scope_token)
-	end
-	csv_each(sec, "scopes_sect", mark_scope_token)
-	csv_each(sec, "scopes", mark_scope_token)
+    local c = CONSTS.TIER_COST[cat]
+    if not c then
+        return 1
+    end
+    if cost >= c[5] then
+        return 5
+    end
+    if cost >= c[4] then
+        return 4
+    end
+    if cost >= c[3] then
+        return 3
+    end
+    if cost >= c[2] then
+        return 2
+    end
+    return 1
 end
 
 local function is_quest_item(sec)
-	local q = ini_sys:r_string_ex(sec, "quest_item")
-	return q == "true" or q == "1"
-end
-
-local function allow_loot(cat, sec)
-	if is_junk_section(sec) or is_quest_item(sec) then
-		return false
-	end
-	if cat == "ammo" then
-		return referenced_ammo[sec] == true
-	end
-	if cat == "sight" then
-		return referenced_sight[sec] == true
-	end
-	if cat == "suppressor" then
-		return referenced_sil[sec] == true
-	end
-	if cat == "gl" then
-		return referenced_gl[sec] == true
-	end
-	return true
-end
-
-local LISTED_TIER_CATS = { "sight", "kit", "suppressor", "gl" }
-
-local function fill_from_by_tier(cats, need_allow)
-	local L = lists()
-	local by = L and L.BY_TIER
-	if not by then
-		return
-	end
-	for i = 1, #cats do
-		local cat = cats[i]
-		local tiers = by[cat]
-		if tiers then
-			for t = 1, 5 do
-				local src = tiers[t]
-				if src then
-					for j = 1, #src do
-						local sec = src[j]
-						if ini_sys:section_exist(sec) then
-							if not need_allow or allow_loot(cat, sec) then
-								put(cat, sec, t)
-							end
-						end
-					end
-				end
-			end
-		end
-	end
-end
-
-local function fill_from_items(cat, need_allow)
-	local L = lists()
-	local ids = L and L.ITEMS and L.ITEMS[cat]
-	if not ids then
-		return
-	end
-	for i = 1, #ids do
-		local sec = ids[i]
-		if not spawn_set[sec] and ini_sys:section_exist(sec) then
-			if not need_allow or allow_loot(cat, sec) then
-				put(cat, sec, cost_to_tier(get_effective_cost(sec), cat))
-			end
-		end
-	end
-end
-
-local function note_ammo_mag(sec)
-	local list = parse_list and parse_list(ini_sys, sec, "ammo_class")
-	if not list then
-		return
-	end
-	local mag = ini_sys:r_float_ex(sec, "ammo_mag_size") or 0
-	if mag <= 0 then
-		return
-	end
-	for i = 1, #list do
-		local a = list[i]
-		if a and a ~= "" then
-			local prev = ammo_mag_equiv[a] or 0
-			if mag > prev then
-				ammo_mag_equiv[a] = mag
-			end
-		end
-	end
-end
-
-local function build_parts_from_prices()
-	local prices = ini_file("items\\settings\\part_prices.ltx")
-	if not (prices and prices:section_exist("wpo_part_prices")) then
-		log("WARN: part_prices.ltx missing")
-		return
-	end
-	local n = prices:line_count("wpo_part_prices")
-	for i = 0, n - 1 do
-		local _ok, sec, val = prices:r_line("wpo_part_prices", i, "", "")
-		if sec ~= "" and is_weapon_part(sec) and ini_sys:section_exist(sec) and not is_junk_section(sec) then
-			if not is_ignored(sec) then
-				if not spawn_set[sec] and not is_listed(sec) then
-					note_unknown("parts", sec, "spawn")
-				end
-				put("parts", sec, cost_to_tier(tonumber(val) or 0, "parts"))
-			end
-		end
-	end
-end
-
-local function build_buckets()
-	dogma.perf.start("weapons_ban", "build_buckets")
-	clear_buckets()
-	for _, cat in ipairs(STASH_ITEM_TYPES_MAP) do
-		enforce_cutoffs(cat)
-	end
-
-	fill_from_by_tier(LISTED_TIER_CATS)
-
-	local pending_ammo = {}
-	local pending_scan = {}
-	ini_sys:section_for_each(function(sec)
-		if not ini_sys:r_float_ex(sec, "inv_grid_x") then
-			return false
-		end
-		if ini_sys:r_string_ex(sec, "ammo_class") then
-			note_ammo_mag(sec)
-			note_weapon_refs(sec)
-		end
-		local cat = classify_section(sec)
-		if cat == "ammo" then
-			pending_ammo[#pending_ammo + 1] = sec
-		elseif cat and cat ~= "parts" then
-			pending_scan[#pending_scan + 1] = { sec, cat }
-		end
-		return false
-	end)
-
-	fill_from_by_tier({ "ammo" }, true)
-	fill_from_items("ammo", true)
-
-	for i = 1, #pending_ammo do
-		local sec = pending_ammo[i]
-		if allow_loot("ammo", sec) and not (is_listed(sec) or spawn_set[sec]) then
-			note_unknown("ammo", sec, "spawn")
-			put("ammo", sec, cost_to_tier(get_effective_cost(sec), "ammo"))
-		end
-	end
-
-	for i = 1, #pending_scan do
-		local sec = pending_scan[i][1]
-		local cat = pending_scan[i][2]
-		if not (is_ignored(sec) or is_listed(sec) or spawn_set[sec]) and allow_loot(cat, sec) then
-			note_unknown(cat, sec, "spawn")
-			put(cat, sec, cost_to_tier(get_effective_cost(sec), cat))
-		end
-	end
-
-	build_parts_from_prices()
-	fill_from_items("parts", false)
-	buckets_built = true
-	local function count_cat(cat)
-		local n = 0
-		local by = buckets[cat]
-		for t = 1, 5 do
-			n = n + #(by[t] or {})
-		end
-		return n
-	end
-	log(string.format(
-		"buckets sight=%d kit=%d sil=%d gl=%d ammo=%d parts=%d",
-		count_cat("sight"),
-		count_cat("kit"),
-		count_cat("suppressor"),
-		count_cat("gl"),
-		count_cat("ammo"),
-		count_cat("parts")
-	))
-	dogma.perf.stop()
-end
-
-local function ensure_buckets()
-	if not buckets_built then
-		build_buckets()
-	end
-end
-
-local function each_loot_section(fn)
-	ensure_buckets()
-	for _, cat in ipairs(STASH_ITEM_TYPES_MAP) do
-		local by = buckets[cat]
-		if by then
-			for t = 1, 5 do
-				local bucket = by[t]
-				if bucket then
-					for i = 1, #bucket do
-						fn(cat, bucket[i])
-					end
-				end
-			end
-		end
-	end
-end
-
-local function ensure_rare_names()
-	if rare_names_built then
-		return
-	end
-	rare_names_built = true
-	local ini = ini_file("items\\settings\\grok_treasure_manager.ltx")
-	if not (ini and ini:section_exist("rare_stashes_names")) then
-		log("WARN: rare_stashes_names missing")
-		return
-	end
-	local n = ini:line_count("rare_stashes_names")
-	for i = 0, n - 1 do
-		local _ok, kind = ini:r_line("rare_stashes_names", i, "", "")
-		if kind and kind ~= "" then
-			rare_names[kind] = true
-		end
-	end
+    local q = ini_sys:r_string_ex(sec, "quest_item")
+    return q == "true" or q == "1"
 end
 
 local function map_name_for_stash(id)
-	local se_box = id and xobject.se(id)
-	local lid = se_box and xlevel.get_level_id(se_box)
-	if not lid then
-		return nil
-	end
-	-- Raw engine name (not translated) — keys LEVEL_TIERS.
-	local sim = alife()
-	if not sim then
-		return nil
-	end
-	local ok, name = pcall(function()
-		return sim:level_name(lid)
-	end)
-	if ok then
-		return name
-	end
-	return nil
+    local se_box = id and xobject.se(id)
+    local lid = se_box and xlevel.get_level_id(se_box)
+    if not lid then
+        return nil
+    end
+    local sim = alife()
+    if not sim then
+        return nil
+    end
+    local ok, name = pcall(function()
+        return sim:level_name(lid)
+    end)
+    if ok then
+        return name
+    end
+    return nil
 end
 
+-- Grok paints yellow PDA stashes with the treasure_searched map spot.
 local function is_yellow_stash(id)
-	ensure_rare_names()
-	local se = id and xobject.se(id)
-	if not se then
-		return false
-	end
-	local name = se:name()
-	if not name then
-		return false
-	end
-	local lvl = map_name_for_stash(id) or ""
-	local str = string.find(name, "level_prefix_inventory_box", 1, true) and (lvl .. "_") or ""
-	return rare_names[str .. name] == true
+    return id and level.map_has_object_spot(id, "treasure_searched") > 0
 end
 
 local function base_tier_for_stash(id)
-	local lvl = map_name_for_stash(id)
-	local t = (lvl and LEVEL_TIERS[lvl]) or 3
-	if is_yellow_stash(id) then
-		t = t + 1
-	end
-	return clamp_tier(t)
+    local lvl = map_name_for_stash(id)
+    local t = (lvl and CONSTS.LEVEL_TIERS[lvl]) or CONSTS.DEFAULT_MAP_TIER
+    if is_yellow_stash(id) then
+        t = t + 1
+    end
+    return clamp_tier(t)
 end
 
 local function pick_category()
-	local idx = dogma.rng.rand_from_tickets(STASH_ITEM_TYPE_TIX)
-	return (idx and STASH_ITEM_TYPES_MAP[idx]) or "parts"
+    return CONSTS.STASH_ITEM_TYPE_MAP[dogma.rng.rand_from_tickets(CONSTS.STASH_ITEM_TYPE_TIX)]
 end
 
 local function pick_tier(target)
-	target = clamp_tier(target)
-	local idx = dogma.rng.rand_from_tickets(STASH_ITEM_TIER_TIX)
-	return clamp_tier(target + (idx and STASH_ITEM_TIER_MAP[idx] or 0))
+    target = clamp_tier(target)
+    local idx = dogma.rng.rand_from_tickets(CONSTS.STASH_ITEM_TIER_TIX)
+    return clamp_tier(target + (idx and CONSTS.STASH_ITEM_TIER_MAP[idx] or 0))
 end
 
 local function roll_stash_bonus()
-	local idx = dogma.rng.rand_from_tickets(STASH_BONUS_ROLL_TIX)
-	if not idx then
-		return 0
-	end
-	return STASH_BONUS_ROLL_MAP[idx] or 0
+    local idx = dogma.rng.rand_from_tickets(CONSTS.STASH_BONUS_ROLL_TIX)
+    if not idx then
+        return 0
+    end
+    return CONSTS.STASH_BONUS_ROLL_MAP[idx] or 0
 end
 
 local function pick_section(cat, result_tier)
-	ensure_buckets()
-	local by_tier = buckets[cat]
-	if not by_tier then
-		return nil
-	end
-	result_tier = clamp_tier(result_tier)
-	local function try(t)
-		local bucket = by_tier[t]
-		if bucket and #bucket > 0 then
-			return bucket[math.random(#bucket)]
-		end
-		return nil
-	end
-	local sec = try(result_tier)
-	if sec then
-		return sec
-	end
-	for t = result_tier - 1, 1, -1 do
-		sec = try(t)
-		if sec then
-			return sec
-		end
-	end
-	for t = result_tier + 1, 5 do
-		sec = try(t)
-		if sec then
-			return sec
-		end
-	end
-	return nil
+    result_tier = clamp_tier(result_tier)
+    local by = { {}, {}, {}, {}, {} }
+    local seen = {}
+    for i = 1, #CONSTS.FILL do
+        local e = CONSTS.FILL[i]
+        if e[2] == cat then
+            local rows = dogma.db.list(e[1])
+            for j = 1, #rows do
+                local sec = rows[j] and rows[j].id
+                if sec and not seen[sec] and not is_quest_item(sec) and ini_sys:section_exist(sec) then
+                    seen[sec] = true
+                    local t = cost_to_tier(dogma.db.cost(sec), cat)
+                    local b = by[t]
+                    b[#b + 1] = sec
+                end
+            end
+        end
+    end
+    local function try(t)
+        local b = by[t]
+        if b and #b > 0 then
+            return b[math.random(#b)]
+        end
+        return nil
+    end
+    local sec = try(result_tier)
+    if sec then
+        return sec
+    end
+    for t = result_tier - 1, 1, -1 do
+        sec = try(t)
+        if sec then
+            return sec
+        end
+    end
+    for t = result_tier + 1, 5 do
+        sec = try(t)
+        if sec then
+            return sec
+        end
+    end
+    return nil
 end
 
-local function mag_equiv_for_ammo(ammo_sec)
-	ensure_buckets()
-	local n = ammo_mag_equiv[ammo_sec]
-	if n and n > 0 then
-		return math.floor(n)
-	end
-	return 30
-end
-
-local function roll_stash_parts_cond(result_tier)
-	local tickets = STASH_PARTS_COND_TIX[clamp_tier(result_tier)] or STASH_PARTS_COND_TIX[1]
-	local idx = dogma.rng.rand_from_tickets(tickets) or 1
-	local hi = STASH_PARTS_MAX_COND_MAP[idx] or 60
-	local prev = STASH_PARTS_MAX_COND_MAP[idx - 1]
-	local lo = prev or 50
-	if hi < lo then
-		hi = lo
-	end
-	return { lo, hi }
-end
-
---------------------------------------------------------------------------------
--- Ammo quantity via RU tickets (cost is per box; rounds = ru * box_size / cost)
---------------------------------------------------------------------------------
 local function roll_ru_for_rank(rank_name)
-	local tickets = (rank_name and CORPSE_RANK_AMMO_RU_TIX[rank_name]) or CORPSE_RANK_AMMO_RU_TIX_FALLBACK
-	local idx = dogma.rng.rand_from_tickets(tickets)
-	if not idx then
-		return 0
-	end
-	return CORPSE_RANK_AMMO_RU_MAP[idx] or 0
+    local tix = CONSTS.CORPSE_RANK_AMMO_RU_TIX
+    local tickets = (rank_name and tix[rank_name]) or tix.experienced
+    local idx = dogma.rng.rand_from_tickets(tickets)
+    if not idx then
+        return 0
+    end
+    return CONSTS.CORPSE_RANK_AMMO_RU_MAP[idx] or 0
 end
 
 local function roll_ru_for_ammo_tier(result_tier)
-	local rank = STASH_TIER_TO_CORPSE_RANK[clamp_tier(result_tier)] or "experienced"
-	return roll_ru_for_rank(rank), rank
+    local rank = CONSTS.STASH_TIER_TO_CORPSE_RANK[clamp_tier(result_tier)] or "experienced"
+    return roll_ru_for_rank(rank), rank
 end
 
--- Hard cap: 10 boxes per RU→rounds conversion (start / stash / corpse).
 local function rounds_for_ru(ammo_sec, ru)
-	if not ammo_sec or not ru or ru <= 0 then
-		return 0
-	end
-	local cost = get_effective_cost(ammo_sec)
-	if not cost or cost <= 0 then
-		return 0
-	end
-	local box = ini_sys:r_float_ex(ammo_sec, "box_size") or 1
-	if box <= 0 then
-		box = 1
-	end
-	local rounds = math.floor(ru * box / cost)
-	local cap = math.floor(box * 10)
-	if rounds > cap then
-		rounds = cap
-	end
-	return rounds
+    if not ammo_sec or not ru or ru <= 0 then
+        return 0
+    end
+    local cost = dogma.db.cost(ammo_sec)
+    if not cost or cost <= 0 then
+        return 0
+    end
+    local box = ini_sys:r_float_ex(ammo_sec, "box_size") or 1
+    if box <= 0 then
+        box = 1
+    end
+    local rounds = math.floor(ru * box / cost)
+    local cap = math.floor(box * CONSTS.AMMO_ROUNDS_BOX_CAP)
+    if rounds > cap then
+        rounds = cap
+    end
+    return rounds
 end
 
 _G.dogma_game_weapons_ban_tiers = {
-	classify_section = classify_section,
-	is_ammo_box = is_ammo_box,
-	is_weapon_part = is_weapon_part,
-	is_name_kit = is_name_kit,
-	is_listed = is_listed,
-	is_ignored = is_ignored,
-	note_unknown = note_unknown,
-	each_unknown = function(fn)
-		for sec, e in pairs(unknown) do
-			fn(e.cat, sec, e.why)
-		end
-	end,
-	rebuild = build_buckets,
-	ensure = ensure_buckets,
-	each_loot_section = each_loot_section,
-	base_tier_for_stash = base_tier_for_stash,
-	is_yellow_stash = is_yellow_stash,
-	pick_category = pick_category,
-	pick_tier = pick_tier,
-	roll_stash_bonus = roll_stash_bonus,
-	pick_section = pick_section,
-	mag_equiv_for_ammo = mag_equiv_for_ammo,
-	roll_stash_parts_cond = roll_stash_parts_cond,
-	clamp_tier = clamp_tier,
-	get_effective_cost = get_effective_cost,
-	roll_ru_for_rank = roll_ru_for_rank,
-	roll_ru_for_ammo_tier = roll_ru_for_ammo_tier,
-	rounds_for_ru = rounds_for_ru,
-	is_worn_ammo = is_worn_ammo,
-	fresh_ammo_sec = fresh_ammo_sec,
-	pick_fresh_ammo = pick_fresh_ammo,
-	CORPSE_RANK_AMMO_RU_MAP = CORPSE_RANK_AMMO_RU_MAP,
-	CORPSE_RANK_AMMO_RU_TIX = CORPSE_RANK_AMMO_RU_TIX,
-	STASH_TIER_TO_CORPSE_RANK = STASH_TIER_TO_CORPSE_RANK,
-	log = log,
+    base_tier_for_stash = base_tier_for_stash,
+    pick_category = pick_category,
+    pick_tier = pick_tier,
+    roll_stash_bonus = roll_stash_bonus,
+    pick_section = pick_section,
+    roll_ru_for_rank = roll_ru_for_rank,
+    roll_ru_for_ammo_tier = roll_ru_for_ammo_tier,
+    rounds_for_ru = rounds_for_ru,
 }

@@ -7,43 +7,53 @@ local loaded = false
 local names = {}
 local by_id = {}
 local groups = {}
+local in_group = {}
 
 local FILES = {
-    pistol = "pistols.json",
-    smg = "smgs.json",
-    rifle = "rifles.json",
-    sniper = "snipers.json",
-    shotgun = "shotguns.json",
-    melee = "melee.json",
-    launcher = "launchers.json",
-    scope = "scopes.json",
-    silencer = "silencers.json",
-    gl = "grenade-launchers.json",
-    kit = "tactical-kits.json",
-    outfit = "outfits.json",
-    helmet = "helmets.json",
+    weapons_pistols = "pistols.json",
+    weapons_smgs = "smgs.json",
+    weapons_rifles = "rifles.json",
+    weapons_snipers = "snipers.json",
+    weapons_shotguns = "shotguns.json",
+    weapons_melee = "melee.json",
+    weapons_launchers = "launchers.json",
+    weapon_attach_scopes = "scopes.json",
+    weapon_attach_silencers = "silencers.json",
+    weapon_attach_gls = "grenade-launchers.json",
+    weapon_upgrade_kits = "tactical-kits.json",
+    weapon_parts = "weapon-parts.json",
+    armor_outfits = "outfits.json",
+    armor_helmets = "helmets.json",
     ammo = "ammo.json",
     medicine = "medicine.json",
     food = "food.json",
-    artefact = "artifacts.json",
-    explosive = "explosives.json",
-    belt = "belt-attachments.json",
-    part = "weapon-parts.json",
+    artifacts = "artifacts.json",
+    explosives = "explosives.json",
+    belt_attachments = "belt-attachments.json",
     misc = "misc.json",
 }
 
 local UNIONS = {
-    weapon = { "pistol", "smg", "rifle", "sniper", "shotgun", "melee", "launcher" },
-    attachment = { "scope", "silencer", "gl", "kit" },
-    armor = { "outfit", "helmet" },
+    weapons = {
+        "weapons_pistols", "weapons_smgs", "weapons_rifles", "weapons_snipers",
+        "weapons_shotguns", "weapons_melee", "weapons_launchers",
+    },
+    weapon_attach = {
+        "weapon_attach_scopes",
+        "weapon_attach_silencers",
+        "weapon_attach_gls",
+    },
+    armor = { "armor_outfits", "armor_helmets" },
 }
 
 local LOAD_ORDER = {
-    "pistol", "smg", "rifle", "sniper", "shotgun", "melee", "launcher",
-    "scope", "silencer", "gl", "kit",
-    "outfit", "helmet",
-    "ammo", "medicine", "food", "artefact", "explosive", "belt",
-    "part",
+    "weapons_pistols", "weapons_smgs", "weapons_rifles", "weapons_snipers",
+    "weapons_shotguns", "weapons_melee", "weapons_launchers",
+    "weapon_attach_scopes", "weapon_attach_silencers",
+    "weapon_attach_gls", "weapon_upgrade_kits",
+    "armor_outfits", "armor_helmets",
+    "ammo", "medicine", "food", "artifacts", "explosives", "belt_attachments",
+    "weapon_parts",
     "misc",
 }
 
@@ -142,6 +152,40 @@ local function concat(types)
     return out
 end
 
+local function starts(id, pfx)
+    return id:sub(1, #pfx) == pfx
+end
+
+-- Sub-cats sliced from a parent list.
+local function build_subs()
+    groups.weapon_cleaning_kits = {}
+    groups.weapon_repair_kits = {}
+    local misc = groups.misc or {}
+    for i = 1, #misc do
+        local row = misc[i]
+        local id = row.id
+        if starts(id, "cleaning_kit_") and id ~= "cleaning_kit_u" then
+            groups.weapon_cleaning_kits[#groups.weapon_cleaning_kits + 1] = row
+        elseif starts(id, "toolkit_") then
+            groups.weapon_repair_kits[#groups.weapon_repair_kits + 1] = row
+        end
+    end
+end
+
+local function index_all()
+    in_group = {}
+    for typ, rows in pairs(groups) do
+        local idx = {}
+        for i = 1, #rows do
+            local id = rows[i].id
+            if id then
+                idx[id] = true
+            end
+        end
+        in_group[typ] = idx
+    end
+end
+
 local function load_names()
     local data = decode_file("translations.json")
     if data and type(data.en) == "table" then
@@ -171,6 +215,8 @@ local function load_all()
     for name, types in pairs(UNIONS) do
         groups[name] = concat(types)
     end
+    build_subs()
+    index_all()
 end
 
 local function ensure()
@@ -208,10 +254,39 @@ function get(id, typ)
     if not row then
         return nil
     end
-    if typ and row.type ~= typ then
-        return nil
+    if typ then
+        local idx = in_group[typ]
+        if not (idx and idx[id]) then
+            return nil
+        end
     end
     return row
+end
+
+function is(id, typ)
+    ensure()
+    if not (id and typ) then
+        return false
+    end
+    local idx = in_group[typ]
+    return idx and idx[id] == true
+end
+
+function is_any(id, types)
+    if not (id and types) then
+        return false
+    end
+    for i = 1, #types do
+        if is(id, types[i]) then
+            return true
+        end
+    end
+    return false
+end
+
+function cost(id)
+    local row = get(id)
+    return (row and row.cost) or 0
 end
 
 function list(typ, sort, dir)
@@ -236,29 +311,35 @@ local function wrap(typ)
     end
 end
 
-pistols = wrap("pistol")
-smgs = wrap("smg")
-rifles = wrap("rifle")
-snipers = wrap("sniper")
-shotguns = wrap("shotgun")
-melee = wrap("melee")
-launchers = wrap("launcher")
-weapons = wrap("weapon")
-scopes = wrap("scope")
-silencers = wrap("silencer")
-gls = wrap("gl")
-kits = wrap("kit")
-attachments = wrap("attachment")
-outfits = wrap("outfit")
-helmets = wrap("helmet")
+weapons = wrap("weapons")
+weapons_pistols = wrap("weapons_pistols")
+weapons_smgs = wrap("weapons_smgs")
+weapons_rifles = wrap("weapons_rifles")
+weapons_snipers = wrap("weapons_snipers")
+weapons_shotguns = wrap("weapons_shotguns")
+weapons_melee = wrap("weapons_melee")
+weapons_launchers = wrap("weapons_launchers")
+
+weapon_attach = wrap("weapon_attach")
+weapon_attach_scopes = wrap("weapon_attach_scopes")
+weapon_attach_silencers = wrap("weapon_attach_silencers")
+weapon_attach_gls = wrap("weapon_attach_gls")
+
+weapon_upgrade_kits = wrap("weapon_upgrade_kits")
+weapon_repair_kits = wrap("weapon_repair_kits")
+weapon_cleaning_kits = wrap("weapon_cleaning_kits")
+weapon_parts = wrap("weapon_parts")
+
 armor = wrap("armor")
+armor_outfits = wrap("armor_outfits")
+armor_helmets = wrap("armor_helmets")
+
 ammo = wrap("ammo")
 medicine = wrap("medicine")
 food = wrap("food")
-artifacts = wrap("artefact")
-explosives = wrap("explosive")
-belts = wrap("belt")
-parts = wrap("part")
+artifacts = wrap("artifacts")
+explosives = wrap("explosives")
+belt_attachments = wrap("belt_attachments")
 misc = wrap("misc")
 
 function on_game_start()

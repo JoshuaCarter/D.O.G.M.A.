@@ -20,7 +20,6 @@ local TIER_COST_5 = 50000
 local SIL_DROP_MAX = 3
 local GL_DROP_MIN = 2
 local GL_DROP_MAX = 4
-local RNG_STUB_COST = 10
 local SIZE_AREA_MAX = 12 -- observed addon grid areas 1..12 (scopes are 1-2; kits hit 12)
 
 -- GAMMA Streamlined Upgrades: upgr_w_{1,2,3}_{internal,external,optical}
@@ -38,7 +37,6 @@ local ELECTRONIC_SECTION = {
 	"prt_i_transistors",
 }
 
-local price_ini = nil
 -- Call-time lookup: attach_drops sorts after this file under zzzz_dogma_* names.
 -- (Old pack relied on dogma_fieldstrip_attach_drops loading before zzzz_*_attach_disassemble.)
 
@@ -155,24 +153,10 @@ local function is_vanilla_disassemblable(sec)
 		or ini_parts:r_string_ex("con_parts_list", sec)
 end
 
-local function load_price_ini()
-	if price_ini then
-		return
-	end
-	price_ini = ini_file_ex("mod_system_zzzzzzzzzzzzzzzzzzz_GAMMA_items_price.ltx", true)
-end
-
 local function get_effective_cost(sec)
-	local live = ini_sys:r_float_ex(sec, "cost")
-	if live and live > RNG_STUB_COST then
-		return live
-	end
-	load_price_ini()
-	if price_ini then
-		local ref = price_ini:r_float_ex(sec, "cost")
-		if ref and ref > RNG_STUB_COST then
-			return ref
-		end
+	local c = dogma.db and dogma.db.cost and dogma.db.cost(sec)
+	if c and c > 0 then
+		return c
 	end
 	local w = clamp_grid_dim(ini_sys:r_float_ex(sec, "inv_grid_width"))
 	local h = clamp_grid_dim(ini_sys:r_float_ex(sec, "inv_grid_height"))
@@ -523,7 +507,6 @@ end
 
 function on_game_start()
 	CONFIG:ensure_dogma()
-	load_price_ini()
 	on_option_change()
 	apply_patches()
 

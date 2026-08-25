@@ -17,6 +17,10 @@ append = M.append
 with_header = M.with_header
 register_debug_page = M.register_debug_page
 
+function on_mcm_load(options)
+	M.register_debug_page(options)
+end
+
 --- Wire sys→mcm/dbg; optionally reset per-mod debug state.
 function load(mod_id)
 	local sys_mod = rawget(_G, "__dogma_sys")

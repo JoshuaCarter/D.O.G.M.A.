@@ -2,7 +2,7 @@
 	DOGMA MCM - getters, tree attach, shared Debug page, banner helper.
 
 	Private MCM API. MCM scripts: dogma_mcm.*; in-game: dogma.mcm.
-	Also registered as *mcm.script (API + defaults). Debug page is always-on.
+	Debug page is always-on (registered from dogma_mcm.on_mcm_load).
 
 	Key mirrors: __dogma_key_mirror_mcm (re-exported as key_mirror / migrate_key_to_mirror).
 
@@ -352,6 +352,16 @@ local VALUE_TYPES = {
 	preset = true,
 }
 
+local function clamp(n, lo, hi)
+	if n < lo then
+		return lo
+	end
+	if n > hi then
+		return hi
+	end
+	return n
+end
+
 local function resolve_def(gui, path, opt, v)
 	local value = gui:GetDefaultValue(path, opt, v)
 	if value ~= nil and v.type == "track" and v.min ~= nil and v.max ~= nil then
@@ -695,10 +705,6 @@ function register_debug_page(options)
 		return
 	end
 	return page, "dogma"
-end
-
-function on_mcm_load(options)
-	register_debug_page(options)
 end
 
 

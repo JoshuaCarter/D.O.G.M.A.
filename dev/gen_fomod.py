@@ -48,6 +48,17 @@ def feature_desc(src: Path, feat: str, title: str) -> str:
     return title
 
 
+def modroot_names(src: Path, feat: str) -> list[str]:
+    d = src / src_feature_dir(feat)
+    names: list[str] = []
+    if (d / "disables.txt").is_file():
+        names.append("disables.txt")
+    for p in sorted(d.glob("*.py")):
+        if p.is_file():
+            names.append(p.name)
+    return names
+
+
 def feature_image(src: Path, feat: str) -> Path | None:
     d = feature_fomod_dir(src, feat)
     for name in IMAGE_NAMES:
@@ -122,6 +133,10 @@ def render_xml(wizard: dict, src: Path, plugins: list[dict]) -> str:
         if not source or not dest:
             raise ValueError(f"required entry needs source and dest: {req!r}")
         lines.append(f'\t\t<folder source="{esc_attr(source)}" destination="{esc_attr(dest)}" />')
+    for name in modroot_names(src, "common"):
+        lines.append(
+            f'\t\t<file source="{esc_attr(win_path("common", name))}" destination="{esc_attr(name)}" />'
+        )
     lines.extend(["\t</requiredInstallFiles>", '\t<installSteps order="Explicit">'])
 
     lines.extend(
@@ -200,13 +215,16 @@ def render_xml(wizard: dict, src: Path, plugins: list[dict]) -> str:
                 if image:
                     dest_name = f"{folder}{image.suffix.lower()}"
                     lines.append(f'\t\t\t\t\t\t\t<image path="{esc_attr(win_path("fomod", "images", dest_name))}" />')
-                lines.extend(
-                    [
-                        "\t\t\t\t\t\t\t<files>",
-                        f'\t\t\t\t\t\t\t\t<folder source="{esc_attr(win_path(folder, "gamedata"))}" destination="gamedata" priority="0" />',
-                        "\t\t\t\t\t\t\t</files>",
-                    ]
-                )
+                file_lines = [
+                    "\t\t\t\t\t\t\t<files>",
+                    f'\t\t\t\t\t\t\t\t<folder source="{esc_attr(win_path(folder, "gamedata"))}" destination="gamedata" priority="0" />',
+                ]
+                for name in modroot_names(src, feat["path"]):
+                    file_lines.append(
+                        f'\t\t\t\t\t\t\t\t<file source="{esc_attr(win_path(folder, name))}" destination="{esc_attr(name)}" />'
+                    )
+                file_lines.append("\t\t\t\t\t\t\t</files>")
+                lines.extend(file_lines)
                 lines.extend(type_descriptor_xml(feat["recommended"], "\t\t\t\t\t\t\t"))
                 lines.append("\t\t\t\t\t\t</plugin>")
             lines.extend(["\t\t\t\t\t</plugins>", "\t\t\t\t</group>"])

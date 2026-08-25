@@ -577,13 +577,11 @@ end
 
 local function weapon_obj(shit, draftsman)
 	local wid = shit and shit.weapon_id
-	if not wid or wid == 0 or not level or not level.object_by_id then
+	if not wid or wid == 0 then
 		return nil
 	end
-	local ok, obj = pcall(function()
-		return level.object_by_id(wid)
-	end)
-	if not (ok and obj) then
+	local obj = dogma.alife.obj(wid)
+	if not obj then
 		return nil
 	end
 	if is_actor(obj) then

@@ -1,4 +1,5 @@
 --[[
+	Live objects: client by id, SE id to map name.
 	Online stalker queries: FOV, bush-pierce LOS, nearby, in-combat.
 ]]
 
@@ -54,6 +55,41 @@ end
 
 local function is_bush_material(name)
 	return type(name) == "string" and name:find("bush", 1, true) ~= nil
+end
+
+-- Actor inventory first, else level.object_by_id.
+function obj(id)
+	if not id then
+		return nil
+	end
+	local o = db and db.actor and db.actor.object_id and db.actor:object_id(id)
+	if o then
+		return o
+	end
+	if level and level.object_by_id then
+		return level.object_by_id(id)
+	end
+	return nil
+end
+
+-- Map the SE lives on (l01_escape etc). Not the actor's current map.
+function level_name(id)
+	local se = id and xobject.se(id)
+	local lid = se and xlevel.get_level_id(se)
+	if not lid then
+		return nil
+	end
+	local sim = alife()
+	if not sim then
+		return nil
+	end
+	local ok, name = pcall(function()
+		return sim:level_name(lid)
+	end)
+	if ok then
+		return name
+	end
+	return nil
 end
 
 function community(npc)

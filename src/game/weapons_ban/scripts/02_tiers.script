@@ -30,37 +30,13 @@ local function cost_to_tier(cost, cat)
     return 1
 end
 
-local function is_quest_item(sec)
-    local q = ini_sys:r_string_ex(sec, "quest_item")
-    return q == "true" or q == "1"
-end
-
-local function map_name_for_stash(id)
-    local se_box = id and xobject.se(id)
-    local lid = se_box and xlevel.get_level_id(se_box)
-    if not lid then
-        return nil
-    end
-    local sim = alife()
-    if not sim then
-        return nil
-    end
-    local ok, name = pcall(function()
-        return sim:level_name(lid)
-    end)
-    if ok then
-        return name
-    end
-    return nil
-end
-
 -- Grok paints yellow PDA stashes with the treasure_searched map spot.
 local function is_yellow_stash(id)
     return id and level.map_has_object_spot(id, "treasure_searched") > 0
 end
 
 local function base_tier_for_stash(id)
-    local lvl = map_name_for_stash(id)
+    local lvl = dogma.alife.level_name(id)
     local t = (lvl and CONSTS.LEVEL_TIERS[lvl]) or CONSTS.DEFAULT_MAP_TIER
     if is_yellow_stash(id) then
         t = t + 1
@@ -96,7 +72,7 @@ local function pick_section(cat, result_tier)
             local rows = dogma.db.list(e[1])
             for j = 1, #rows do
                 local sec = rows[j] and rows[j].id
-                if sec and not seen[sec] and not is_quest_item(sec) and ini_sys:section_exist(sec) then
+                if sec and not seen[sec] and ini_sys:section_exist(sec) then
                     seen[sec] = true
                     local t = cost_to_tier(dogma.db.cost(sec), cat)
                     local b = by[t]
@@ -154,7 +130,8 @@ local function rounds_for_ru(ammo_sec, ru)
     if not cost or cost <= 0 then
         return 0
     end
-    local box = ini_sys:r_float_ex(ammo_sec, "box_size") or 1
+    local row = dogma.db.get(ammo_sec)
+    local box = (row and row.box) or 1
     if box <= 0 then
         box = 1
     end

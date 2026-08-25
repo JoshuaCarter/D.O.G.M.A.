@@ -149,7 +149,8 @@ local function give_extra_start_ammo()
         if not sec_ammo then
             return
         end
-        local box = ini_sys:r_float_ex(sec_ammo, "box_size") or 1
+        local row = dogma.db.get(sec_ammo)
+        local box = (row and row.box) or 1
         if box <= 0 then
             box = 1
         end
@@ -170,16 +171,8 @@ end
 --------------------------------------------------------------------------------
 -- New-game start-weapon parts
 --------------------------------------------------------------------------------
-local function game_obj(id)
-    local obj = id and db.actor and db.actor.object_id and db.actor:object_id(id)
-    if not obj and id and level and level.object_by_id then
-        obj = level.object_by_id(id)
-    end
-    return obj
-end
-
 local function apply_parts(id)
-    local obj = game_obj(id)
+    local obj = dogma.alife.obj(id)
     if not (obj and item_parts and item_parts.get_parts_con and item_parts.set_parts_con) then
         return false
     end

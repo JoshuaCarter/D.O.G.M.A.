@@ -1,6 +1,6 @@
 """Headless render + texture audit for the UI editor.
 
-  py -3 dev/sage/render_preview.py [xml] [out.png]
+  py -3 tools/sage/render_preview.py [xml] [out.png]
 """
 
 from __future__ import annotations

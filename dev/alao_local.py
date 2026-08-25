@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Run ALAO on local DOGMA src/.
 
-  py -3 tools/alao_local.py
-  python3 tools/alao_local.py --dry-run
+  py -3 dev/alao_local.py
+  python3 dev/alao_local.py --dry-run
 
-Used by tools/build.sh and the git pre-commit hook. Skip via DOGMA_NO_ALAO=1
+Used by dev/build.sh and the git pre-commit hook. Skip via DOGMA_NO_ALAO=1
 in the environment (build only checks that; this CLI always runs when invoked).
 """
 

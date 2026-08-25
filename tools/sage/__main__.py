@@ -1,4 +1,4 @@
-"""Entry: python -m sage  OR  py -3 dev/sage/__main__.py"""
+"""Entry: python -m sage  OR  py -3 tools/sage/__main__.py"""
 
 from __future__ import annotations
 

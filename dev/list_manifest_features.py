@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Print DOGMA path-mod paths from config manifests (one per line).
 
-Used by tools/manifest_lib.sh for build.sh / package-fomod.sh.
+Used by dev/manifest_lib.sh for build.sh / package-fomod.sh.
 """
 
 from __future__ import annotations
@@ -19,8 +19,8 @@ def main() -> int:
     p = argparse.ArgumentParser(description="List DOGMA path mods from manifest catalog")
     p.add_argument(
         "--manifest",
-        default=str(_REPO / "config"),
-        help="Config directory",
+        default=str(_REPO),
+        help="Repo root or path to manifest.yml",
     )
     p.add_argument(
         "--min-stage",
@@ -38,8 +38,6 @@ def main() -> int:
     args = p.parse_args()
 
     config = Path(args.manifest)
-    if config.is_file():
-        config = config.parent
     min_stage = parse_stage(args.min_stage)
     src = _REPO / "src"
     for feat, stage in iter_path_features(config):

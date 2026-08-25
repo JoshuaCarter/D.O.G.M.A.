@@ -1,4 +1,4 @@
-"""Persistent on-disk cache under ``dev/sage/cache/`` (shader-cache style).
+"""Persistent on-disk cache under ``tools/sage/cache/`` (shader-cache style).
 
 Bump ``CACHE_VERSION`` when the on-disk layout changes — next open wipes the
 folder and regenerates. Path indexes are one JSON per install name

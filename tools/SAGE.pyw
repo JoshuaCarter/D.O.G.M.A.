@@ -1,6 +1,6 @@
 """Double-click launcher (no console on Windows).
 
-Lives in ``dev/`` next to the ``sage/`` package.
+Lives in ``tools/`` next to the ``sage/`` package.
 """
 
 from __future__ import annotations

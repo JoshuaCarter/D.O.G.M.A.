@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read path mods from config/manifest.yml."""
+"""Read path mods from manifest.yml."""
 
 from __future__ import annotations
 
@@ -21,17 +21,22 @@ STAGE_ALIASES = {
 }
 
 MANIFEST_FILE = "manifest.yml"
-FOMOD_FILE = "fomod.yml"
 SKIP_KEYS = frozenset({"common"})
 FOMOD_STAGES = frozenset({"beta", "gold"})
+DEFAULT_RECOMMENDED = {
+    "gold": ["gold", "beta", "all"],
+    "beta": ["beta", "all"],
+}
 
 
 def parse_stage(raw) -> str:
-    if raw is False:
+    if raw is None or raw is False:
         return "omit"
     if raw is True:
         raise ValueError("stage must be omit|local|beta|gold (got boolean true)")
     key = str(raw).strip().lower()
+    if not key:
+        return "omit"
     if key not in STAGE_ALIASES:
         raise ValueError(f"stage must be omit|local|beta|gold (got {raw!r})")
     return STAGE_ALIASES[key]
@@ -47,8 +52,8 @@ def feature_path_key(feat: str) -> str:
 
 def src_feature_dir(feat: str) -> str:
     f = feat.strip().replace("\\", "/").strip("/")
-    if f in ("common", "debug"):
-        return f"_{f}"
+    if f == "common":
+        return "_common"
     return f
 
 
@@ -76,12 +81,23 @@ def load_manifest(config_dir: Path) -> dict:
     return _yaml_load(path)
 
 
+def parse_recommended(feat: str, raw) -> list[str] | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, list):
+        raise ValueError(f"{feat}: recommended must be a list")
+    return [str(x) for x in raw]
+
+
 def iter_feature_info(config_dir: Path) -> list[dict]:
-    """Each: title, path, stage. Skips common."""
+    """Each: title, path, stage, page, recommended. Skips common."""
     data = load_manifest(config_dir)
+    mods = data.get("mods")
+    if not isinstance(mods, dict):
+        raise ValueError("manifest.yml missing mods")
     out: list[dict] = []
     seen: set[str] = set()
-    for key, meta in data.items():
+    for key, meta in mods.items():
         feat = str(key).strip().replace("\\", "/")
         if not feat or feat.lower() in SKIP_KEYS:
             continue
@@ -93,11 +109,16 @@ def iter_feature_info(config_dir: Path) -> list[dict]:
         title = str(meta.get("name") or "").strip()
         if not title:
             raise ValueError(f"{feat}: missing name")
+        page = str(meta.get("page") or "").strip()
+        if not page:
+            raise ValueError(f"{feat}: missing page")
         out.append(
             {
                 "title": title,
                 "path": feat,
                 "stage": parse_stage(meta.get("stage", "omit")),
+                "page": page,
+                "recommended": parse_recommended(feat, meta.get("recommended")),
             }
         )
     return out
@@ -109,18 +130,14 @@ def iter_path_features(config_dir: Path) -> list[tuple[str, str]]:
 
 
 def fomod_wizard(config_dir: Path) -> dict:
-    if config_dir.is_file():
-        config_dir = config_dir.parent
-    path = config_dir / FOMOD_FILE
-    if not path.is_file():
-        raise ValueError(f"missing {path}")
-    wizard = _yaml_load(path)
+    data = load_manifest(config_dir)
+    wizard = data.get("fomod")
+    if not isinstance(wizard, dict):
+        raise ValueError("manifest.yml missing fomod")
     if not wizard.get("name"):
-        raise ValueError("fomod.yml missing name")
+        raise ValueError("fomod missing name")
     if not wizard.get("presets"):
-        raise ValueError("fomod.yml missing presets")
+        raise ValueError("fomod missing presets")
     if not wizard.get("required"):
-        raise ValueError("fomod.yml missing required")
-    if not wizard.get("pages"):
-        raise ValueError("fomod.yml missing pages")
+        raise ValueError("fomod missing required")
     return wizard

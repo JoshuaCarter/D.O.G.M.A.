@@ -16,19 +16,19 @@ Live game mod tree is **read-only** for the agent unless the user **explicitly**
 - Default deploy root: `C:/GAMMA/mods/DOGMA/**`
 - Any path under another mod’s `gamedata/` used as the running game copy
 
-Do **not** “verify the fix” by opening or grepping deployed scripts. Use `src/` and `build/gamedata/` only.
+Do **not** “verify the fix” by opening or grepping deployed scripts. Use `src/` and `.build/gamedata/` only.
 
 ## Forbidden commands (unless user explicitly asked to deploy)
 
-- `DOGMA_DEPLOY=... tools/build.sh` (VS Code build task sets this — **user runs deploy, not the agent**)
+- `DOGMA_DEPLOY=... dev/build.sh` (VS Code build task sets this - **user runs deploy, not the agent**)
 - `cp`, `mv`, `rsync`, `robocopy`, or any copy **into** `C:/GAMMA/` or `**/GAMMA/mods/`
 - Manual single-file copy to deploy (e.g. `cp build/.../foo.script /c/GAMMA/mods/DOGMA/...`)
 
 ## Allowed
 
-- Edit/create/delete under `c:\gamma_dev\DOGMA\src\`, `config/`, `tools/`, `.cursor/`, etc.
-- Run **`tools/build.sh` without `DOGMA_DEPLOY`** → output goes to `build/gamedata/` only
-- Read `build/gamedata/` to confirm build output
+- Edit/create/delete under `c:\gamma_dev\DOGMA\src\`, `dev/`, `tools/`, `.cursor/`, etc.
+- Run **`dev/build.sh` without `DOGMA_DEPLOY`** → output goes to `.build/gamedata/` only
+- Read `.build/gamedata/` to confirm build output
 - Read `appdata/` in this repo (synced dev copies)
 
 ## After code changes

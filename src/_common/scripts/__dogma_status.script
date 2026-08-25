@@ -23,6 +23,14 @@ local CONSUME_MS = 3000
 local COMBAT_M = 150
 
 local LIMBS = { "head", "torso", "leftarm", "rightarm", "leftleg", "rightleg" }
+local LIMB_MAX = {
+	head = 8,
+	torso = 10,
+	leftarm = 4,
+	rightarm = 4,
+	leftleg = 4,
+	rightleg = 4,
+}
 
 local in_combat = false
 local next_at = 0
@@ -171,15 +179,15 @@ local function on_item_use(item, sec)
 	end
 end
 
--- BHS health is 0–max (arms/legs ~4, head 2, torso ~8). Fraction vs that limb's max.
-local function limb_frac(hp, max)
+-- BHS health is 0-max (arms/legs 4, head 8, torso 10). Fraction vs that limb's max.
+local function limb_frac(hp, max, key)
 	hp = tonumber(hp)
 	if not hp then
 		return 0
 	end
 	max = tonumber(max)
 	if not max or max <= 0 then
-		max = 4
+		max = LIMB_MAX[key] or 4
 	end
 	local f = hp / max
 	if f < 0 then
@@ -392,8 +400,8 @@ function limbs()
 		local max = maxhp and maxhp[key]
 		local perm = hp and (hp - temp) or nil
 		out[key] = {
-			perm = limb_frac(perm, max),
-			temp = limb_frac(temp, max),
+			perm = limb_frac(perm, max, key),
+			temp = limb_frac(temp, max, key),
 		}
 	end
 	return out

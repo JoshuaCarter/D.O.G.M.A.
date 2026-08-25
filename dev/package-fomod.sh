@@ -1,27 +1,26 @@
 #!/usr/bin/env bash
-# Stage a FOMOD-ready tree under build/fomod/ and zip it to build/DOGMA.zip.
+# Stage a FOMOD-ready tree under .build/fomod/ and zip it to .build/DOGMA.zip.
 #
 # Layout:
-#   build/fomod/
+#   .build/fomod/
 #     fomod/ModuleConfig.xml  info.xml  images/*.png
 #     common/gamedata/...
 #     <feature_id>/gamedata/...
 #     meta.ini  .mod_id
 #
-# Wizard: config/fomod.yml + manifest.yml (beta/gold) → tools/gen_fomod.py → ModuleConfig.xml
+# Wizard: manifest.yml (fomod + mods, beta/gold) → dev/gen_fomod.py → ModuleConfig.xml
 # info.xml is written from meta.ini.
 # Feature hover images: src/<path>/fomod/image.png
-# Local full deploy is still tools/build.sh (stage >= local).
+# Local full deploy is still dev/build.sh (stage >= local).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SRC="$ROOT/src"
-STAGE="$ROOT/build/fomod"
-ZIP_OUT="$ROOT/build/DOGMA.zip"
-BUILD="$ROOT/tools/build.sh"
-GEN="$ROOT/tools/gen_fomod.py"
-MANIFEST="$ROOT/config/manifest.yml"
-FOMOD_YML="$ROOT/config/fomod.yml"
+STAGE="$ROOT/.build/fomod"
+ZIP_OUT="$ROOT/.build/DOGMA.zip"
+BUILD="$ROOT/dev/build.sh"
+GEN="$ROOT/dev/gen_fomod.py"
+MANIFEST="$ROOT/manifest.yml"
 
 dogma_py() {
 	if command -v py >/dev/null 2>&1; then
@@ -43,7 +42,6 @@ xml_escape() {
 src_feature_dir() {
 	case "$1" in
 		common) echo "_common" ;;
-		debug) echo "_debug" ;;
 		*) echo "$1" ;;
 	esac
 }
@@ -54,10 +52,6 @@ if [[ ! -f "$BUILD" ]]; then
 fi
 if [[ ! -f "$MANIFEST" ]]; then
 	echo "package-fomod: missing $MANIFEST" >&2
-	exit 1
-fi
-if [[ ! -f "$FOMOD_YML" ]]; then
-	echo "package-fomod: missing $FOMOD_YML" >&2
 	exit 1
 fi
 if [[ ! -f "$GEN" ]]; then

@@ -5,11 +5,9 @@
 #   src/_common/<gamedata-rel>/...          -> <out>/<gamedata-rel>/...  (names kept)
 #   src/_common/<feat>/<gamedata-rel>/...   -> always-on nested (path_key=<feat>)
 #   src/<category>/<feature>/<gamedata-rel>/... -> <out>/<gamedata-rel>/...  (merged)
-#   src/_debug/<gamedata-rel>/...           -> top-level feature; path_key = debug
-#   src/<feature>/<gamedata-rel>/...        -> same (top-level; path_key = feature)
+#   src/<feature>/<gamedata-rel>/...        -> top-level feature; path_key = feature
 #
-#   Reserved dirs _common / _debug use a leading underscore on disk only.
-#   Manifest paths, path_keys, and MCM ids stay unprefixed (common, debug).
+#   Reserved dir _common uses a leading underscore on disk only.
 #
 #   src/.../assets/...                      authoring only (ignored; not shipped)
 #   src/.../fomod/...                       authoring only (FOMOD desc/images)
@@ -50,16 +48,16 @@
 #                        (empty|all)  → common + features with manifest stage >= local
 #                        common       → common only
 #                        cat/feat     → that feature only (e.g. game/free_zoom; ignores manifest)
-#                        feat         → top-level feature only (e.g. debug)
-#   DOGMA_DEPLOY=path  after a fresh build/, full-replace this MO2 mod folder
+#                        feat         → top-level feature only
+#   DOGMA_DEPLOY=path  after a fresh .build/, full-replace this MO2 mod folder
 #                      (gamedata + meta). Full builds only (not DOGMA_ONLY).
-#                      Also copies build/DOGMA.zip to <instance>/downloads/.
+#                      Also copies .build/DOGMA.zip to <instance>/downloads/.
 #   DOGMA_SKIP_FOMOD=1 skip package-fomod + zip on a full local build
-#   DOGMA_OUT=path     override output gamedata (default: build/gamedata). Set by
-#                      package-fomod; skips wiping build/ and skips DOGMA_DEPLOY.
+#   DOGMA_OUT=path     override output gamedata (default: .build/gamedata). Set by
+#                      package-fomod; skips wiping .build/ and skips DOGMA_DEPLOY.
 #   DOGMA_NO_ALAO=1    skip ALAO on src/ before staging
 #
-# Default (no DOGMA_OUT): wipe build/, stage → build/, then optional full-replace
+# Default (no DOGMA_OUT): wipe .build/, stage → .build/, then optional full-replace
 # deploy. package-fomod sets DOGMA_OUT and merges into its own stage dirs.
 set -eEuo pipefail
 
@@ -84,12 +82,12 @@ trap 'build_on_exit' EXIT
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SRC="$ROOT/src"
 ONLY="${DOGMA_ONLY:-all}"
-BUILD_ROOT="$ROOT/build"
+BUILD_ROOT="$ROOT/.build"
 
 # shellcheck source=manifest_lib.sh
-source "$ROOT/tools/manifest_lib.sh"
+source "$ROOT/dev/manifest_lib.sh"
 
-# DOGMA_OUT = packaging / override. Otherwise always build into build/.
+# DOGMA_OUT = packaging / override. Otherwise always build into .build/.
 DEPLOY_MOD=""
 FRESH_BUILD=0
 if [[ -n "${DOGMA_OUT:-}" ]]; then
@@ -140,7 +138,7 @@ run_alao_local() {
 		return 1
 	fi
 	echo "build: ALAO on src/…"
-	"${py[@]}" "$ROOT/tools/alao_local.py"
+	"${py[@]}" "$ROOT/dev/alao_local.py"
 }
 
 should_skip_name() {
@@ -152,7 +150,7 @@ should_skip_name() {
 		# Authoring / pack source only — shipped via db/mods/*.db0 instead.
 		*.aimap | *.pdn) return 0 ;;
 		# __dogma_*: private; dogma_mcm: common index.
-		dogma_mcm.script | dogma.script | __dogma_*.script | _common | _debug) return 1 ;;
+		dogma_mcm.script | dogma.script | __dogma_*.script | _common) return 1 ;;
 		_*) return 0 ;;
 		*) return 1 ;;
 	esac
@@ -176,11 +174,10 @@ is_gamedata_root() {
 	return 1
 }
 
-# Manifest / DOGMA_ONLY path → folder under src/ (_common / _debug on disk only).
+# Manifest / DOGMA_ONLY path → folder under src/ (_common on disk only).
 src_feature_dir() {
 	case "$1" in
 		common) echo "_common" ;;
-		debug) echo "_debug" ;;
 		*) echo "$1" ;;
 	esac
 }
@@ -189,7 +186,6 @@ src_feature_dir() {
 src_dir_to_feature() {
 	case "$1" in
 		_common) echo "common" ;;
-		_debug) echo "debug" ;;
 		*) echo "$1" ;;
 	esac
 }
@@ -246,7 +242,7 @@ map_src_file() {
 	for part in "${parts[@]}"; do
 		case "$part" in
 			assets | fomod | installer) return 1 ;;
-			_common | _debug) ;; # reserved shippable src roots
+			_common) ;; # reserved shippable src root
 			_*)
 				[[ "$part" == "$base" ]] || return 1
 				;;
@@ -321,7 +317,7 @@ map_src_file() {
 			_emit_base="$base"
 			return 0
 		elif (( ${#parts[@]} >= 3 )) && { is_gamedata_root "${parts[1]}" || is_modroot_bucket "${parts[1]}"; }; then
-			# Top-level feature: src/<feat|/ _debug>/<gamedata-root|mo2|db>/...
+			# Top-level feature: src/<feat>/<gamedata-root|mo2|db>/...
 			local feat_dir="$cat"
 			local feat
 			feat="$(src_dir_to_feature "$feat_dir")"
@@ -448,9 +444,6 @@ src_in_scope() {
 		common)
 			[[ "$rel" == _common/* ]]
 			;;
-		debug)
-			[[ "$rel" == _debug/* ]]
-			;;
 		*)
 			[[ "$rel" == "$ONLY_SRC_DIR"/* || "$rel" == "$ONLY_SRC_DIR" ]]
 			;;
@@ -458,7 +451,7 @@ src_in_scope() {
 }
 
 case "$ONLY" in
-	all | "" | common | debug) ;;
+	all | "" | common) ;;
 	*)
 		ONLY_SRC_DIR="$(src_feature_dir "$ONLY")"
 		[[ -d "$SRC/$ONLY_SRC_DIR" ]] || build_fail "DOGMA_ONLY=$ONLY not found at $SRC/$ONLY_SRC_DIR"
@@ -481,7 +474,7 @@ if [[ "$ONLY" == "all" || "$ONLY" == "" ]]; then
 	done
 fi
 
-# Fresh build/: clear everything first so ALAO report + outputs land in an empty tree.
+# Fresh .build/: clear everything first so ALAO report + outputs land in an empty tree.
 wipe_dir_contents() {
 	local root="$1"
 	mkdir -p "$root"
@@ -545,12 +538,12 @@ write_mod_meta() {
 	fi
 }
 
-# Local build/ is a complete mod tree (meta included).
+# Local .build/ is a complete mod tree (meta included).
 if (( FRESH_BUILD )); then
 	write_mod_meta "$MODROOT_OUT"
 fi
 
-# Full-replace MO2 mod from build/ (mod files only — not alao_report.html).
+# Full-replace MO2 mod from .build/ (mod files only - not alao_report.html).
 if [[ -n "$DEPLOY_MOD" ]]; then
 	echo "build: replacing $DEPLOY_MOD"
 	wipe_dir_contents "$DEPLOY_MOD"
@@ -577,7 +570,7 @@ fi
 # so Reinstall opens the wizard (meta.ini installationFile=DOGMA.zip).
 if (( FRESH_BUILD )) && [[ "$ONLY" == "all" || "$ONLY" == "" ]] && [[ -z "${DOGMA_SKIP_FOMOD:-}" ]]; then
 	echo "build: packaging FOMOD"
-	DOGMA_NO_ALAO=1 bash "$ROOT/tools/package-fomod.sh" || build_fail "package-fomod failed"
+	DOGMA_NO_ALAO=1 bash "$ROOT/dev/package-fomod.sh" || build_fail "package-fomod failed"
 	if [[ -n "$DEPLOY_MOD" ]]; then
 		instance="$(cd "$(dirname "$DEPLOY_MOD")/.." && pwd)"
 		dl="$instance/downloads"

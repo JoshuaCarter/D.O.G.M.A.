@@ -20,7 +20,7 @@ from .score import FACTIONS
 
 log = get_logger("export")
 
-# Always write under dev/sale/out — never the sobre_loadouts source tree.
+# Always write under tools/sale/out — never the sobre_loadouts source tree.
 _OUT_DIR = Path(__file__).resolve().parent / "out"
 _DEFAULT_EXPORT = _OUT_DIR / "new_game_loadouts.ltx"
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -145,5 +145,5 @@ def export_shop_ltx(
 
 
 def default_export_path(_gamma: Path | None = None) -> Path:
-    """Local export under ``dev/sale/out/new_game_loadouts.ltx``."""
+    """Local export under ``tools/sale/out/new_game_loadouts.ltx``."""
     return _DEFAULT_EXPORT

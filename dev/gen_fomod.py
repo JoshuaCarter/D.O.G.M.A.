@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate FOMOD ModuleConfig.xml from config/fomod.yml + manifest.yml."""
+"""Generate FOMOD ModuleConfig.xml from manifest.yml."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from manifest import (
+    DEFAULT_RECOMMENDED,
     FOMOD_STAGES,
     feature_path_key,
     fomod_wizard,
@@ -19,7 +20,6 @@ from manifest import (
     src_feature_dir,
 )
 
-DEFAULT_RECOMMENDED = ["baseline", "all"]
 IMAGE_NAMES = ("image.png", "image.jpg")
 
 
@@ -39,13 +39,13 @@ def feature_fomod_dir(src: Path, feat: str) -> Path:
     return src / src_feature_dir(feat) / "fomod"
 
 
-def feature_desc(src: Path, feat: str) -> str:
+def feature_desc(src: Path, feat: str, title: str) -> str:
     desc_file = feature_fomod_dir(src, feat) / "desc.txt"
     if desc_file.is_file():
         text = desc_file.read_text(encoding="utf-8").strip()
         if text:
             return text
-    raise ValueError(f"no desc for {feat} (need src/{src_feature_dir(feat)}/fomod/desc.txt)")
+    return title
 
 
 def feature_image(src: Path, feat: str) -> Path | None:
@@ -57,55 +57,21 @@ def feature_image(src: Path, feat: str) -> Path | None:
     return None
 
 
-def parse_plugin_item(raw) -> tuple[str, list[str] | None]:
-    if isinstance(raw, str):
-        feat = raw.strip().replace("\\", "/")
-        if not feat:
-            raise ValueError("empty plugin path")
-        return feat, None
-    if not isinstance(raw, dict):
-        raise ValueError(f"plugin must be a path or map: {raw!r}")
-    feat = str(raw.get("path") or "").strip().replace("\\", "/")
-    if not feat:
-        raise ValueError(f"plugin needs path: {raw!r}")
-    rec = raw.get("recommended") if "recommended" in raw else None
-    if rec is not None:
-        if not isinstance(rec, list):
-            raise ValueError(f"{feat}: recommended must be a list")
-        rec = [str(x) for x in rec]
-    return feat, rec
-
-
-def plugin_entries(catalog: dict[str, dict], wizard: dict) -> list[dict]:
+def plugin_entries(features: list[dict], wizard: dict) -> list[dict]:
     preset_ids = {str(p.get("id") or "") for p in wizard["presets"]}
     out: list[dict] = []
-    seen: set[str] = set()
-    for page in wizard["pages"]:
-        pname = str(page.get("name") or "")
-        if not pname:
-            raise ValueError("page needs name")
-        for group in page.get("groups") or []:
-            gname = str(group.get("name") or "")
-            if not gname:
-                raise ValueError(f"group on page {pname!r} needs name")
-            for raw in group.get("plugins") or []:
-                feat, rec = parse_plugin_item(raw)
-                if feat in seen:
-                    raise ValueError(f"duplicate plugin path {feat}")
-                seen.add(feat)
-                info = catalog.get(feat)
-                if not info:
-                    raise ValueError(f"fomod.yml unknown path {feat}")
-                if info["stage"] not in FOMOD_STAGES:
-                    raise ValueError(f"{feat}: listed in fomod.yml but stage is {info['stage']} (need beta|gold)")
-                if rec is None:
-                    rec = list(DEFAULT_RECOMMENDED)
-                unknown = [x for x in rec if x not in preset_ids]
-                if unknown:
-                    raise ValueError(f"{feat}: unknown recommended presets {unknown}")
-                out.append({**info, "page": pname, "group": gname, "recommended": rec})
+    for info in features:
+        if info["stage"] not in FOMOD_STAGES:
+            continue
+        rec = info["recommended"]
+        if rec is None:
+            rec = list(DEFAULT_RECOMMENDED.get(info["stage"], []))
+        unknown = [x for x in rec if x not in preset_ids]
+        if unknown:
+            raise ValueError(f"{info['path']}: unknown recommended presets {unknown}")
+        out.append({**info, "group": info["page"], "recommended": rec})
     if not out:
-        raise ValueError("fomod.yml has no plugins")
+        raise ValueError("manifest.yml has no beta/gold plugins")
     return out
 
 
@@ -227,7 +193,7 @@ def render_xml(wizard: dict, src: Path, plugins: list[dict]) -> str:
             )
             for feat in items:
                 folder = feature_path_key(feat["path"])
-                desc = feature_desc(src, feat["path"])
+                desc = feature_desc(src, feat["path"], feat["title"])
                 image = feature_image(src, feat["path"])
                 lines.append(f'\t\t\t\t\t\t<plugin name="{esc_attr(plugin_label(feat))}">')
                 lines.append(f"\t\t\t\t\t\t\t<description>{esc_text(desc)}</description>")
@@ -266,11 +232,10 @@ def main() -> int:
     parser.add_argument("--images-out", help="copy feature hover images here")
     args = parser.parse_args()
 
-    config = ROOT / "config"
+    config = ROOT
     try:
         wizard = fomod_wizard(config)
-        catalog = {r["path"]: r for r in iter_feature_info(config)}
-        plugins = plugin_entries(catalog, wizard)
+        plugins = plugin_entries(iter_feature_info(config), wizard)
         xml = render_xml(wizard, ROOT / "src", plugins)
     except (ValueError, RuntimeError) as exc:
         print(f"gen_fomod: {exc}", file=sys.stderr)

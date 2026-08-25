@@ -1,15 +1,14 @@
 #!/usr/bin/env bash
 # pre-push: catch appdata changes made after the last commit (CLI push path).
 # Commit+Push in Cursor/VS Code often skips pre-push (--no-verify); pre-commit handles that.
-# Install: bash tools/git-hooks/install.sh
+# Install: bash .githooks/install.sh
 # Skip:    DOGMA_NO_APPDATA_SYNC=1 git push …
 set -euo pipefail
 
 HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
 case "$HOOK_DIR" in
 	*/.git/hooks) ROOT="$(cd "$HOOK_DIR/../.." && pwd)" ;;
-	*/tools/git-hooks) ROOT="$(cd "$HOOK_DIR/../.." && pwd)" ;;
-	*) ROOT="$(cd "$HOOK_DIR/../.." && pwd)" ;;
+	*) ROOT="$(cd "$HOOK_DIR/.." && pwd)" ;;
 esac
 
 if [[ "${DOGMA_APPDATA_SYNC_PUSH:-}" == "1" ]]; then

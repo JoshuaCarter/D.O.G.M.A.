@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Point this repo at tracked hooks under tools/git-hooks/ (no copying into .git/hooks).
+# Point this repo at tracked hooks under .githooks/ (no copying into .git/hooks).
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-HOOKS_REL="tools/git-hooks"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+HOOKS_REL=".githooks"
 
 git -C "$ROOT" config core.hooksPath "$HOOKS_REL"
 

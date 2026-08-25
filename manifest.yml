@@ -1,0 +1,348 @@
+# Feature catalog + FOMOD wizard.
+# stage: OMIT | LOCAL | BETA | GOLD  (missing = OMIT)
+#   OMIT  - not in local build or FOMOD
+#   LOCAL - local build only
+#   BETA  - local + FOMOD, checkbox name gets [BETA]
+#   GOLD  - local + FOMOD
+# page: FOMOD wizard page. First-seen page order. stage still gates the zip.
+# recommended: preset ids. Missing: GOLD -> [gold, beta, all], BETA -> [beta, all].
+#   [] = never prechecked.
+# common is always-on (not a checkbox). No stage or page.
+
+fomod:
+  name: D.O.G.M.A.
+  required:
+    - source: common/gamedata
+      dest: gamedata
+  presets:
+    - id: gold
+      name: Gold
+      desc: Most features preselected, except features in Beta.
+      type: Recommended
+    - id: beta
+      name: Beta
+      desc: Most features preselected, including Beta features.
+    - id: pick
+      name: Pick and choose
+      desc: Nothing preselected.
+    - id: all
+      name: Everything
+      desc: Every feature is preselected.
+
+mods:
+  common:
+    name: Common
+
+  perf/mcm_runtime_read_cache:
+    name: MCM Runtime Read Cache
+    stage: GOLD
+    page: Performance
+
+  perf/sfx_prefetcher:
+    name: SFX Prefetcher
+    stage: GOLD
+    page: Performance
+
+  gui/newgame:
+    name: New Game
+    stage: GOLD
+    page: GUI
+
+  gui/fx_radiation:
+    name: Radiation FX
+    stage: GOLD
+    page: GUI
+
+  gui/fx_bleed:
+    name: Bleed FX
+    stage: GOLD
+    page: GUI
+
+  gui/fx_health:
+    name: Health FX
+    stage: GOLD
+    page: GUI
+
+  gui/fps:
+    name: FPS
+    stage: GOLD
+    page: GUI
+
+  gui/hud_controls:
+    name: HUD Controls
+    stage: BETA
+    page: GUI
+
+  gui/stalker_id:
+    name: Stalker ID
+    stage: GOLD
+    page: GUI
+
+  gui/weapon_tooltips:
+    name: Weapon Tooltips
+    stage: GOLD
+    page: GUI
+
+  gui/item_labels:
+    name: Item Labels
+    stage: GOLD
+    page: GUI
+
+  gui/pda_filters:
+    name: PDA Filters
+    stage: BETA
+    page: GUI
+
+  input/inventory_controls:
+    name: Inventory Controls
+    stage: BETA
+    page: Input
+
+  input/pda_go_away:
+    name: PDA Go Away
+    stage: GOLD
+    page: Input
+
+  input/menu_controls:
+    name: Menu Controls
+    stage: GOLD
+    page: Input
+
+  input/pose_controls:
+    name: Pose Controls
+    stage: GOLD
+    page: Input
+
+  input/equipment_controls:
+    name: Better Equipable Controls
+    stage: BETA
+    page: Input
+
+  game/weapons_ban:
+    name: Weapons Ban
+    stage: BETA
+    page: Weapons Ban
+    recommended: [all]
+
+  game/shared_stash:
+    name: Toolbench Shared Stash
+    stage: BETA
+    page: Gameplay
+
+  game/faster_skinning:
+    name: Faster Skinning
+    stage: GOLD
+    page: Gameplay
+
+  game/campfire_healing:
+    name: Campfire Healing
+    stage: GOLD
+    page: Gameplay
+
+  game/badwill:
+    name: Badwill
+    stage: OMIT
+    page: Gameplay
+
+  game/safety_save:
+    name: Safety Save
+    stage: GOLD
+    page: Gameplay
+
+  game/dogma_rules:
+    name: Rules
+    stage: OMIT
+    page: Gameplay
+    recommended: []
+
+  game/belt_glowsticks:
+    name: Belt Glowsticks
+    stage: GOLD
+    page: Gameplay
+
+  game/exo_power:
+    name: Better Exo Power Drain
+    stage: BETA
+    page: Gameplay
+
+  game/true_prone:
+    name: True Prone
+    stage: GOLD
+    page: Gameplay
+
+  game/ammo_selector:
+    name: Ammo Selector
+    stage: GOLD
+    page: Gameplay
+
+  game/death_report:
+    name: Death Report
+    stage: BETA
+    page: Gameplay
+
+  game/pistol_slot:
+    name: Pistol Slot
+    stage: BETA
+    page: Gameplay
+
+  game/ads_zoom:
+    name: ADS Zoom
+    stage: GOLD
+    page: Gameplay
+
+  game/free_zoom:
+    name: Free Zoom
+    stage: GOLD
+    page: Gameplay
+
+  tweaks/opaque_bushes:
+    name: Opaque Bushes
+    stage: GOLD
+    page: Tweaks
+
+  tweaks/passive_detector_beeps:
+    name: Passive Detector Beeps
+    stage: GOLD
+    page: Tweaks
+
+  tweaks/nvg_sticks_after_load:
+    name: NVG Sticks After Load
+    stage: LOCAL
+    page: Tweaks
+
+  tweaks/nvg_can_set_default_gain:
+    name: NVG Can Set Default Gain
+    stage: BETA
+    page: Tweaks
+    enables:
+      - 189- Beef's NVG - theRealBeef
+
+  tweaks/qaw_reorder:
+    name: QAW Reorder
+    stage: GOLD
+    page: Tweaks
+
+  tweaks/hide_geiger_screen_text:
+    name: Hide Geiger Screen Text
+    stage: GOLD
+    page: Tweaks
+
+  tweaks/fix_damage_limb_allocation:
+    name: Fix Damage Limb Allocation
+    stage: BETA
+    page: Tweaks
+
+  tweaks/fix_geiger_for_dynamic_rad_patches:
+    name: Fix Geiger For Dynamic Rad Patches
+    stage: LOCAL
+    page: Tweaks
+
+  tweaks/fix_system_keybinds_not_sticking:
+    name: Fix System Keybinds Not Sticking
+    stage: BETA
+    page: Tweaks
+
+  tweaks/no_afterglow_delay:
+    name: No Afterglow Delay
+    stage: BETA
+    page: Tweaks
+
+  tweaks/rf_mission_can_spawn_on_current_map:
+    name: RF Mission Can Spawn On Current Map
+    stage: LOCAL
+    page: Tweaks
+
+  tweaks/fix_footsteps_sfx:
+    name: Fix Footsteps SFX
+    stage: OMIT
+    page: Tweaks
+
+  tweaks/sane_npc_combat_speeds:
+    name: Sane NPC Combat Speeds
+    stage: GOLD
+    page: Tweaks
+
+  tweaks/escorts_have_no_friends:
+    name: Escorts Have No Friends
+    stage: BETA
+    page: Tweaks
+
+  tweaks/no_guide_job_money_penalty:
+    name: No Guide Job Money Penalty
+    stage: BETA
+    page: Tweaks
+
+  tweaks/fanatic_stays_in_cordon:
+    name: Fanatic Stays In Cordon
+    stage: GOLD
+    page: Tweaks
+
+  tweaks/more_tasks:
+    name: More Tasks
+    stage: GOLD
+    page: Tweaks
+
+  tweaks/fix_voiced_actor_crash:
+    name: Fix Voiced Actor Crash
+    stage: GOLD
+    page: Tweaks
+
+  tweaks/fix_task_done_msg_crash:
+    name: Fix Task Done Msg Crash
+    stage: GOLD
+    page: Tweaks
+
+  tweaks/add_sortingplus_keybinds:
+    name: Add SortingPlus Keybinds
+    stage: GOLD
+    page: Tweaks
+
+  tweaks/dodge_pseudogiant_slam_if_airborne:
+    name: Dodge Pseudogiant Slam If Airborne
+    stage: GOLD
+    page: Tweaks
+
+  tweaks/spawn_items_above_ground:
+    name: Spawn Items Above Ground
+    stage: BETA
+    page: Tweaks
+
+  tweaks/fix_artifact_weights:
+    name: Fix Artifact Weights
+    stage: GOLD
+    page: Tweaks
+
+  tweaks/fix_double_mutant_hits:
+    name: Fix Double Mutant Hits
+    stage: BETA
+    page: Tweaks
+
+  tweaks/sobre_loadouts:
+    name: Sobre Loadouts
+    stage: GOLD
+    page: Weapons Ban
+
+  tweaks/glowstick_lights:
+    name: Glowstick Lights
+    stage: GOLD
+    page: Tweaks
+
+  tweaks/popup_messages:
+    name: Popup Messages
+    stage: GOLD
+    page: Tweaks
+
+  tweaks/quest_items_all_get_icon:
+    name: Quest Item Icon
+    stage: BETA
+    page: Tweaks
+
+  tweaks/hide_armor_patch_when_removed:
+    name: Hide Armor Patch When Removed
+    stage: GOLD
+    page: Tweaks
+
+  tweaks/safe_atmos_visibility:
+    name: Safe Atmos Visibility
+    stage: GOLD
+    page: Tweaks

@@ -76,19 +76,19 @@ jobs:
       - name: Build FOMOD zip
         if: steps.check.outputs.exists == 'false'
         run: |
-          bash tools/package-fomod.sh
+          bash dev/package-fomod.sh
 
           # Stamp experimental builds so MO2 shows the short sha, not mainline version.
           if [[ "${{ steps.channel.outputs.kind }}" == "experimental" ]]; then
             VER="0.0.0-${{ steps.channel.outputs.version }}"
-            sed -i -E "s/^version=.*/version=${VER}/" build/fomod/meta.ini
-            sed -i -E "s/^newestVersion=.*/newestVersion=${VER}/" build/fomod/meta.ini
-            sed -i -E "s#<Version>[^<]*</Version>#<Version>${VER}</Version>#" build/fomod/fomod/info.xml
+            sed -i -E "s/^version=.*/version=${VER}/" .build/fomod/meta.ini
+            sed -i -E "s/^newestVersion=.*/newestVersion=${VER}/" .build/fomod/meta.ini
+            sed -i -E "s#<Version>[^<]*</Version>#<Version>${VER}</Version>#" .build/fomod/fomod/info.xml
           fi
 
           ZIP="${{ steps.channel.outputs.zip_name }}"
           (
-            cd build/fomod
+            cd .build/fomod
             zip -r "../../$ZIP" .
           )
 

@@ -1,20 +1,19 @@
 # DOGMA src
 
-Author here; `Ctrl+Shift+B` smushes into `build/gamedata/`.
+Author here; `Ctrl+Shift+B` smushes into `.build/gamedata/`.
 
 ## Layout (matches MCM)
 
 ```
 src/<category>/<feature>/<gamedata-root>/...
-src/_debug/<gamedata-root>/...     # top-level; manifest path / path_key = debug
 src/tweaks/<feature>/...           # simple always-on / no-options patches
-src/_common/<gamedata-root>/...    # vendored Common, not in MCM
+src/_common/<gamedata-root>/...    # always-on Common + Debug MCM page
 ```
 
-`_common` / `_debug` are underscore-prefixed **on disk only** (sort first / mark reserved). Manifest paths, package ids, and MCM keys stay `common` / `debug`.
+`_common` is underscore-prefixed **on disk only** (sort first / mark reserved).
 
 Example: `src/game/faster_skinning/scripts/...` → MCM `D.O.G.M.A. → Game → Faster Skinning`.  
-Top-level: `src/_debug/...` → MCM `D.O.G.M.A. → Debug` (local stage; not a category page).  
+Debug: always-on under Common → MCM `D.O.G.M.A. → Debug`.  
 Tweaks: `src/tweaks/<feature>/...` → MCM `D.O.G.M.A. → Tweaks` (one shared page; each feature appends a description).
 
 ## Build roots merged into gamedata
@@ -37,11 +36,11 @@ Skip: `README*`, `MOVE_MAP*`, `.gitkeep`, `*.alao-bak`, `_` names.
 
 ## Installer (FOMOD)
 
-Catalog: `config/manifest.yml` (path, name, stage). Wizard pages: `config/fomod.yml` (lists those paths).
+Catalog: `manifest.yml` (`fomod` chrome + `mods` path/name/stage/page).
 
-`BETA`/`GOLD` only. Required: `src/<path>/fomod/desc.txt`. Optional: `image.png`.
+`BETA`/`GOLD` only. Optional: `src/<path>/fomod/desc.txt` (else the feature name), `image.png`.
 
-`Ctrl+Shift+B` also writes `build/DOGMA.zip` and copies it to MO2 `downloads/` (Reinstall). `stage: LOCAL` is the fat merge only.
+`Ctrl+Shift+B` also writes `.build/DOGMA.zip` and copies it to MO2 `downloads/` (Reinstall). `stage: LOCAL` is the fat merge only.
 
 ## Common
 

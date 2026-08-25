@@ -13,24 +13,24 @@ Virtual **1024×768** HUD pixels (engine scales to the display). Child `x`/`y` f
 Double-click (no console):
 
 ```
-dev\SAGE.pyw
+tools\SAGE.pyw
 ```
 
-Diagnostics: `dev/sage/sage.log` (DEBUG, append-only; includes faulthandler). Check it after crashes — Qt often exits with no console traceback.
+Diagnostics: `tools/sage/sage.log` (DEBUG, append-only; includes faulthandler). Check it after crashes — Qt often exits with no console traceback.
 
-App icon art: `dev/sage/assets/sage.png` (64×64).
+App icon art: `tools/sage/assets/sage.png` (64×64).
 
 Or from a terminal:
 
 ```bash
-pip install -r dev/sage/requirements.txt
-py -3 dev/sage/__main__.py path/to/ui.xml
+pip install -r tools/sage/requirements.txt
+py -3 tools/sage/__main__.py path/to/ui.xml
 ```
 
 Headless preview dump:
 
 ```bash
-py -3 dev/sage/render_preview.py
+py -3 tools/sage/render_preview.py
 # → build/sage_preview.png
 ```
 
@@ -87,7 +87,7 @@ by `768/device_height` into HUD space — not by the digits in `letterica16`.
 placement is **top-left** unless XML sets `align` / `vert_align`. Missing
 atlas falls back to a plain QFont stand-in.
 
-**Local cache (`dev/sage/cache/`):** install indexes under `dds/`, `descr/`,
+**Local cache (`tools/sage/cache/`):** install indexes under `dds/`, `descr/`,
 `text/` — **one JSON per install name** (`anomaly.json`, `gamma.json`,
 `custom.json`; text adds `_{lang}`), each holding the winning path map for that
 install. Plus font glyph meta, decoded DDS PNGs (`dds_rgba/`), and low-res sheet

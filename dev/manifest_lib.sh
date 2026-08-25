@@ -1,6 +1,6 @@
 # Shared manifest catalog loader for build.sh / package-fomod.sh.
-# Reads config/manifest.yml.
-# Override with DOGMA_MANIFEST=<config dir or manifest.yml>.
+# Reads manifest.yml at repo root.
+# Override with DOGMA_MANIFEST=<dir or manifest.yml>.
 # Usage: source this file, then dogma_load_manifest <min_stage>
 #   min_stage 1|local → path mods with stage >= local
 #   min_stage beta    → path mods with stage >= beta (FOMOD)
@@ -15,7 +15,7 @@ dogma_load_manifest() {
 		beta) min_stage=beta ;;
 		0 | omit | off) min_stage=omit ;;
 	esac
-	local yml="${DOGMA_MANIFEST:-$ROOT/config}"
+	local yml="${DOGMA_MANIFEST:-$ROOT/manifest.yml}"
 	FEATURES=()
 	if [[ -f "$yml" ]]; then
 		:
@@ -41,7 +41,7 @@ dogma_load_manifest() {
 	local list_file rc
 	list_file="$(mktemp)"
 	set +e
-	"${py[@]}" "$ROOT/tools/list_manifest_features.py" --manifest "$yml" --min-stage "$min_stage" --check-src >"$list_file" 2>"$list_file.err"
+	"${py[@]}" "$ROOT/dev/list_manifest_features.py" --manifest "$yml" --min-stage "$min_stage" --check-src >"$list_file" 2>"$list_file.err"
 	rc=$?
 	set -e
 	if (( rc != 0 )); then

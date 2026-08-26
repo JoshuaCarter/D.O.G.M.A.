@@ -101,13 +101,6 @@ mods:
       desc: |
         Makes prone actually function like prone, instead of being a low crouch.
 
-    game/campfire_healing:
-      name: Campfire Healing
-      stage: GOLD
-      desc: |
-        Faster campfire healing that also slowly converts temp limb health into permanent limb health.
-        This makes the game a bit easier (which is not my goal), but I find that this makes campfires a relevant/fun mechanic, rather than a source of endured tedium.
-
     game/ads_zoom:
       name: ADS Zoom
       stage: GOLD
@@ -182,6 +175,25 @@ mods:
       desc: |
         Prevents re-raising the PDA after closing an inventory or fast traveling.
 
+    tweaks/passive_detector_beeps:
+      name: Passive Detector Beeps
+      stage: GOLD
+      desc: |
+        Makes the artifact detector beep once every 10s when an artifact is nearby.
+
+    tweaks/nvg_tweaks:
+      name: NVG Tweaks
+      stage: BETA
+      desc: |
+        Night vision stays on after a load or map change.
+        Adds MCM option to Beef's NVGs for default gain level.
+
+    tweaks/more_tasks:
+      name: More Tasks
+      stage: GOLD
+      desc: |
+        Simple tweaks that removes the 30% change for NPCs to not have tasks.
+
   HUD:
 
     gui/hud_controls:
@@ -212,16 +224,6 @@ mods:
         This just shows them at all times within X meters.
         It does let you see items without LoS, but I find that this feels more like an approximation of how well I'd find things IRL most of the time and saves me from manually checking every nook, etc.
 
-    gui/pda_filters:
-      name: PDA Filters
-      stage: BETA
-      desc: |
-        Many filters for PDA messages. Some highlights (things I don't like in particular):
-        - Hostile faction communications (why would they do that?).
-        - Kill witness messages (no you didn't just see me kill a snork in the tunnels under agroprom...)
-        - Trade brags (this is matters more for weapons ban feature - brags about buying an attachment don't really fit...)
-        - Custom waypoint messages.
-
     gui/fx_radiation:
       name: Radiation FX
       stage: GOLD
@@ -241,7 +243,36 @@ mods:
       desc: |
         Simple desaturation FX that increases in intensity as you're health drops.
 
-  Input:
+    gui/pda_filters:
+      name: PDA Filters
+      stage: BETA
+      desc: |
+        Many filters for PDA messages. Some highlights (things I don't like in particular):
+        - Hostile faction communications (why would they do that?).
+        - Kill witness messages (no you didn't just see me kill a snork in the tunnels under agroprom...)
+        - Trade brags (this is matters more for weapons ban feature - brags about buying an attachment don't really fit...)
+        - Custom waypoint messages.
+
+    tweaks/hide_geiger_screen_text:
+      name: Hide Geiger Screen Text
+      stage: GOLD
+      desc: |
+        Just hides the on-screen geiger counter "n mSv" text.
+
+    tweaks/qaw_reorder:
+      name: QAW Reorder
+      stage: BETA
+      desc: |
+        Adds keybind for changing the order of items in the Quick Action Wheel.
+        [BETA] Only tested with QAW Overhaul.
+
+    tweaks/popup_messages:
+      name: Popup Messages
+      stage: GOLD
+      desc: |
+        Stops Popup Message from showing knife pickup when doing a quick melee.
+
+  Inventory:
 
     input/inventory_controls:
       name: Inventory Controls
@@ -253,131 +284,83 @@ mods:
           - Uses optimal tool for disassembly (lowest condition that wont break).
           - Grants stash coords when disassembling PDAs (time saver).
 
-    input/menu_controls:
-      name: Menu Controls
-      stage: GOLD
-
-    input/pose_controls:
-      name: Pose Controls
-      stage: GOLD
-
-    input/equipment_controls:
-      name: Better Equipable Controls
-      stage: BETA
-
-  Tweaks:
-
-    tweaks/opaque_bushes:
-      name: Opaque Bushes
-      stage: GOLD
-
-    tweaks/passive_detector_beeps:
-      name: Passive Detector Beeps
-      stage: GOLD
-
-    tweaks/nvg_sticks_after_load:
-      name: NVG Sticks After Load
-      stage: LOCAL
-
-    tweaks/nvg_can_set_default_gain:
-      name: NVG Can Set Default Gain
-      stage: BETA
-
-    tweaks/qaw_reorder:
-      name: QAW Reorder
-      stage: GOLD
-
-    tweaks/hide_geiger_screen_text:
-      name: Hide Geiger Screen Text
-      stage: GOLD
-
-    tweaks/fix_damage_limb_allocation:
-      name: Fix Damage Limb Allocation
-      stage: BETA
-
-    tweaks/fix_geiger_for_dynamic_rad_patches:
-      name: Fix Geiger For Dynamic Rad Patches
-      stage: LOCAL
-
-    tweaks/fix_system_keybinds_not_sticking:
-      name: Fix System Keybinds Not Sticking
-      stage: BETA
-
-    tweaks/no_afterglow_delay:
-      name: No Afterglow Delay
-      stage: BETA
-
-    tweaks/rf_mission_can_spawn_on_current_map:
-      name: RF Mission Can Spawn On Current Map
-      stage: LOCAL
-
-    tweaks/fix_footsteps_sfx:
-      name: Fix Footsteps SFX
-      stage: OMIT
-
-    tweaks/sane_npc_combat_speeds:
-      name: Sane NPC Combat Speeds
-      stage: GOLD
-
-    tweaks/escorts_have_no_friends:
-      name: Escorts Have No Friends
-      stage: BETA
-
-    tweaks/no_guide_job_money_penalty:
-      name: No Guide Job Money Penalty
-      stage: BETA
-
-    tweaks/fanatic_stays_in_cordon:
-      name: Fanatic Stays In Cordon
-      stage: GOLD
-
-    tweaks/more_tasks:
-      name: More Tasks
-      stage: GOLD
-
-    tweaks/fix_voiced_actor_crash:
-      name: Fix Voiced Actor Crash
-      stage: GOLD
-
-    tweaks/fix_task_done_msg_crash:
-      name: Fix Task Done Msg Crash
-      stage: GOLD
-
     tweaks/add_sortingplus_keybinds:
       name: Add SortingPlus Keybinds
       stage: GOLD
-
-    tweaks/dodge_pseudogiant_slam_if_airborne:
-      name: Dodge Pseudogiant Slam If Airborne
-      stage: GOLD
-
-    tweaks/spawn_items_above_ground:
-      name: Spawn Items Above Ground
-      stage: BETA
-
-    tweaks/fix_artifact_weights:
-      name: Fix Artifact Weights
-      stage: GOLD
-
-    tweaks/fix_double_mutant_hits:
-      name: Fix Double Mutant Hits
-      stage: BETA
-
-    tweaks/popup_messages:
-      name: Popup Messages
-      stage: GOLD
+      desc: |
+        Adds keybinds to Sorting Plus for marking items and favorites/junk.
 
     tweaks/quest_items_all_get_icon:
       name: Quest Item Icon
       stage: BETA
+      desc: |
+        Makes it clearer when items are for quests.
 
     tweaks/hide_armor_patch_when_removed:
       name: Hide Armor Patch When Removed
       stage: GOLD
+      desc: |
+        Removes the patch icon from equipped armor when you have removed the patch.
 
-    tweaks/safe_atmos_visibility:
-      name: Safe Atmos Visibility
+  Alternate Inputs:
+
+    input/pose_controls:
+      name: Pose Controls
       stage: GOLD
+      desc: |
+        Adds keybinds for directly setting your pose to crouch, prone, walk, sprint. Rather than having to manually combine walk and crouch to go prone, etc.
+
+    input/equipment_controls:
+      name: Better Equipable Controls
+      stage: BETA
+      desc: |
+        Adds keybinds for various devices which will auto-equip that items from the backpack.
+        Includes: bolt, torch, glowstick, artifact detector, geiger counter, rf scanner, anomalous measurement device.
+
+    input/menu_controls:
+      name: Menu Controls
+      stage: GOLD
+      desc: |
+        Just adds a keybind for closing certain menus (other than escape).
+
+  Balance Tweaks:
+
+    tweaks/sane_npc_combat_speeds:
+      name: Sane NPC Combat Speeds
+      stage: BETA
+      desc: |
+        Makes NPC movement faster than Anomaly, but still slower then G.A.M.M.A. so that they don't look so rediculously.
+        Stalkers: Base Anomaly + 20%
+        ISG: Base Anomaly + 50%
+        Shambler zombies: 30% slower movement (to reduce floaty movement).
+        [BETA] Haven't tested thoroughly.
+
+    tweaks/fanatic_stays_in_cordon:
+      name: Fanatic Stays In Cordon
+      stage: GOLD
+      desc: |
+        Fanatic stays in cordon when you leave, and fail the training missions.
+
+    tweaks/escort_tweaks:
+      name: Escort Tweaks
+      stage: BETA
+      desc: |
+        Escorts join alone instead of bringing their squad.
+        Taking too long doesn't let them steal your money.
+
+    game/campfire_healing:
+      name: Campfire Healing
+      stage: GOLD
+      desc: |
+        Faster campfire healing that also slowly converts temp limb health into permanent limb health.
+        This makes the game a bit easier (which is not my goal), but I find that this makes campfires a relevant/fun mechanic, rather than a source of endured tedium.
+
+    tweaks/opaque_bushes:
+      name: Opaque Bushes
+      stage: BETA
+      desc: |
+        Makes NPCs treat bushes as opaque, not shooting through them as much and using them to block LoS.
+        [BETA] I have found this works quite well in practice but haven't tested in detail (perhaps it's due to alifeplus?).
 
   Misc:
 
@@ -390,6 +373,29 @@ mods:
     gui/fps:
       name: FPS
       stage: GOLD
+      desc: |
+        Adds a configurable FPS counter or graph.
+
+    tweaks/no_afterglow_delay:
+      name: No Afterglow Delay
+      stage: BETA
+      desc: |
+        Removes the random wait to begin the afterglow story mission.
+        [BETA] I've only confirmed it working once.
+
+    tweaks/fix_footsteps_sfx:
+      name: Fix Footsteps SFX
+      stage: OMIT
+      desc: |
+        Brutish fix for footsteps by including all the SFX and config in this mod.
+        [BETA] Haven't tested all the mutants yet.
+
+    tweaks/rf_mission_can_spawn_on_current_map:
+      name: RF Mission Can Spawn On Current Map
+      stage: LOCAL
+      desc: |
+        Make RF missions have a chance to spawn on current map.
+        [BETA] Haven't actually seen it work yet.
 
   Performance:
 
@@ -408,6 +414,75 @@ mods:
         Adds an SFX prefetcher that actually works.
         Run the <GAMMA>/mods/DOGMA/dogma_sfx_prefetch.py script to compile a list of small sfx files (recomment default 50kb).
         The mod will read that list on game load and preload those sfx files. Rerun script if you change audio packs, etc.
+
+  Bug Fixes:
+
+    tweaks/fix_double_mutant_hits:
+      name: Fix Double Mutant Hits
+      stage: BETA
+      desc: |
+        Stops mutants from dealing damage twice in one hit.
+        [BETA] Haven't actually tested.
+
+    tweaks/fix_damage_limb_allocation:
+      name: Fix Damage Limb Allocation
+      stage: BETA
+      desc: |
+        Improves how BHS allocates damage from bone to limb.
+        [BETA] Needs testing.
+
+    tweaks/fix_geiger_for_dynamic_rad_patches:
+      name: Fix Geiger For Dynamic Rad Patches
+      stage: BETA
+      desc: |
+        Makes the geiger counter work with dynamic radiation patches.
+        [BETA] Needs testing.
+
+    tweaks/spawn_items_above_ground:
+      name: Spawn Items Above Ground
+      stage: BETA
+      desc: |
+        Newly spawned items start higher to stop them falling through the ground.
+
+    tweaks/fix_artifact_weights:
+      name: Fix Artifact Weights
+      stage: GOLD
+      desc: |
+        New artifact weights taken directly from Grok github (lighter).
+
+    tweaks/dodge_pseudogiant_slam_if_airborne:
+      name: Dodge Pseudogiant Slam If Airborne
+      stage: GOLD
+      desc: |
+        No pseudogiant slam damage when you're airborne.
+
+    tweaks/fix_system_keybinds_not_sticking:
+      name: Fix System Keybinds Not Sticking
+      stage: BETA
+      desc: |
+        Prevents default keybinds from being applied when you unbind a system key.
+        [BETA] Works well but think one or two keys may be exceptions that need special handling.
+
+  Crash Fixes:
+
+    tweaks/safe_atmos_visibility:
+      name: Safe Atmos Visibility
+      stage: GOLD
+      desc: |
+        Fixes atmos crash when stealth mods are disabled.
+        Provides a safe vision script that keeps the core behaviour in tact.
+
+    tweaks/fix_voiced_actor_crash:
+      name: Fix Voiced Actor Crash
+      stage: GOLD
+      desc: |
+        Stops a crash when a companion shouts.
+
+    tweaks/fix_task_done_msg_crash:
+      name: Fix Task Done Msg Crash
+      stage: GOLD
+      desc: |
+        Stops a crash when you report a finished job and the NPC has no line.
 
   DEV:
 

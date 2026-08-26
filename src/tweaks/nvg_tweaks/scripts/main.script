@@ -1,21 +1,47 @@
 --[[
-	Beef's NVG keeps gain in a script-local (nvg_gain_current), hardcoded to 1.0.
-	Short-press walks (max-min)/3 - rungs 0..3. default_gain_step on Beef's MCM
-	is that rung index (stock default = 1 → gain 1.0 with stock min/max).
+	NVG Tweaks
+
+	Sticks: stock item_device turns NV off in device_binder:net_destroy on
+	level change. Torch light restores from the engine flag; NV is script-only.
+	Stash wanted state on level change / save; re-apply on first update.
+
+	Gain: Beef keeps gain in nvg_gain_current, hardcoded to 1.0.
+	Short-press walks (max-min)/3 - rungs 0..3. default_gain_step on Beef's
+	MCM is that rung (stock = 1).
 ]]
 
-local CONFIG = _G.dogma_tweaks_nvg_can_set_default_gain_conf
+local CONFIG = _G.dogma_tweaks_nvg_tweaks_conf
 
--- Beef: step_size = (max-min)/3 → rungs 0..3.
 local BEEF_GAIN_DIV = 3
 local BEEF_GAIN_MAX_RUNG = BEEF_GAIN_DIV
 
+local want_on = false
 local beef_brightness = nil
 local beef_gain_idx = nil
 local beef_dir_idx = nil
 
 local function nv_is_on()
 	return item_device and item_device.nv_state == true
+end
+
+local function stash()
+	want_on = nv_is_on()
+end
+
+local function restore()
+	if not want_on then
+		return
+	end
+	want_on = false
+	if not (db.actor and item_device and item_device.set_nightvision) then
+		return
+	end
+	local torch = db.actor:item_in_slot(10)
+	if not torch then
+		return
+	end
+	item_device.set_nightvision(torch:section(), true)
+	dogma.console.say("NVG state restored after load", "blue")
 end
 
 local function find_upvalue(fn, target)
@@ -95,13 +121,24 @@ local function apply_default_gain()
 	end
 end
 
-local function on_option_change()
+local function on_first_update()
+	restore()
 	apply_default_gain()
 end
 
 function on_game_start()
 	dogma.load(CONFIG.MOD_ID)
-	RegisterScriptCallback("actor_on_first_update", apply_default_gain)
-	RegisterScriptCallback("on_option_change", on_option_change)
+	RegisterScriptCallback("on_level_changing", stash)
+	RegisterScriptCallback("actor_on_first_update", on_first_update)
+	RegisterScriptCallback("on_option_change", apply_default_gain)
 	apply_default_gain()
+	if USE_MARSHAL then
+		RegisterScriptCallback("save_state", function(mdata)
+			mdata.dogma_tweaks_nvg_sticks_after_load_on = nv_is_on() or want_on
+		end)
+		RegisterScriptCallback("load_state", function(mdata)
+			want_on = mdata.dogma_tweaks_nvg_sticks_after_load_on == true
+				or mdata.dogma_hud_nvg_on == true
+		end)
+	end
 end

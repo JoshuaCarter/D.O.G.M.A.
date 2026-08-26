@@ -1,0 +1,15 @@
+-- tweaks/escort_tweaks conf (info-only MCM; always on while installed)
+
+_G.dogma_tweaks_escort_tweaks_conf = {
+	MOD_ID = "dogma/tweaks/escort_tweaks",
+}
+
+function on_mcm_load(options)
+	dogma_mcm.append(options, "tweaks", "ui_mcm_menu_dogma_tweaks", {
+		{
+			id = "escort_tweaks_description",
+			type = "desc",
+			text = "ui_mcm_dogma_tweaks_escort_tweaks_page_description",
+		},
+	})
+end

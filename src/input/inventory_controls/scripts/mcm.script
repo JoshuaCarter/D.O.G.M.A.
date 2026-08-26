@@ -10,8 +10,6 @@ _G.dogma_input_inventory_controls_conf = {
 		key_disa_one_modifier = 0,
 		pda_grants_stash_coords = true,
 		tools_enabled = true,
-		attachments_enabled = true,
-		pda_parts_tip = false,
 		key_drop = -1,
 		key_drop_modifier = 0,
 		key_drop_one = -1,
@@ -26,9 +24,7 @@ _G.dogma_input_inventory_controls_conf = {
 		key_one_modifier = 0,
 		intercept_disassemble = true,
 	},
-	loaded = {
-		attach_enabled = true,
-	},
+	loaded = {},
 }
 
 function _G.dogma_input_inventory_controls_conf:ensure_dogma()
@@ -105,20 +101,6 @@ function on_mcm_load(options)
 				val = 1,
 				def = CONFIG.DEFAULTS.tools_enabled,
 				hint = "dogma_input_inventory_controls_tools_enabled",
-			},
-			{
-				id = "attachments_enabled",
-				type = "check",
-				val = 1,
-				def = CONFIG.DEFAULTS.attachments_enabled,
-				hint = "dogma_input_inventory_controls_attachments_enabled",
-			},
-			{
-				id = "pda_parts_tip",
-				type = "check",
-				val = 1,
-				def = CONFIG.DEFAULTS.pda_parts_tip,
-				hint = "dogma_input_inventory_controls_pda_parts_tip",
 			},
 			{ id = "section_stripping", type = "line" },
 			kb_bind("key", "dogma_input_inventory_controls_key_strip"),

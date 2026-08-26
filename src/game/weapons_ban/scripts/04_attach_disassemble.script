@@ -1,18 +1,17 @@
 --[[
-	Input / Disassemble - attachment scrap.
+	Weapons Ban — attachment scrap.
 
-	Disassemble detached weapon attachments (scopes, silencers, GLs, tac kits)
-	into craft parts. Drop yields live in attach_drops.script (build:
-	zzzz_dogma_input_inventory_controls_attach_drops.script).
+	Detached scopes / silencers / GLs / tac kits → craft parts.
+	Drops: 03_attach_drops.script (_G.dogma_wb_attach_drops).
+	Scrap cost bands here are not stash TIER_COST.
 
-	Loads zzzz_ and re-patches on actor_on_first_update so menu_disassembly /
-	disassembly_item stay wrapped after sibling scripts (strip, tools).
+	Wraps item_parts.menu_disassembly / disassembly_item (drag-tool or any bind).
+	Re-patch on actor_on_first_update so later scripts do not steal the wrap.
 ]]
 
-local CONFIG = _G.dogma_input_inventory_controls_conf
+local CONFIG = _G.dogma_game_weapons_ban_conf
 local TIER_MIN = 1
 local TIER_MAX = 5
--- 	  TIER_COST_1 = 0
 local TIER_COST_2 = 5000
 local TIER_COST_3 = 10000
 local TIER_COST_4 = 25000
@@ -20,9 +19,8 @@ local TIER_COST_5 = 50000
 local SIL_DROP_MAX = 3
 local GL_DROP_MIN = 2
 local GL_DROP_MAX = 4
-local SIZE_AREA_MAX = 12 -- observed addon grid areas 1..12 (scopes are 1-2; kits hit 12)
+local SIZE_AREA_MAX = 12
 
--- GAMMA Streamlined Upgrades: upgr_w_{1,2,3}_{internal,external,optical}
 local UPGR_W_TYPES = { "internal", "external", "optical" }
 local PART_SECTION = {
 	scrap = "prt_i_scrap",
@@ -36,9 +34,6 @@ local ELECTRONIC_SECTION = {
 	"prt_i_resistors",
 	"prt_i_transistors",
 }
-
--- Call-time lookup: attach_drops sorts after this file under zzzz_dogma_* names.
--- (Old pack relied on dogma_fieldstrip_attach_drops loading before zzzz_*_attach_disassemble.)
 
 local patched_menu_disassembly = false
 local patched_disassembly_item = false
@@ -101,7 +96,6 @@ local function cost_to_tier(cost)
 	return 1
 end
 
--- Scopes: grid area 1 = small, 2 = medium (all GAMMA scopes are area 1 or 2).
 local function scope_size_class(area)
 	if area >= 2 then
 		return "medium"
@@ -109,7 +103,6 @@ local function scope_size_class(area)
 	return "small"
 end
 
--- Kits: small (1-2), medium (3-4), large (5+). Size sets tier floor and drop profile.
 local function kit_size_class(area)
 	if area > 4 then
 		return "large"
@@ -153,14 +146,6 @@ local function is_vanilla_disassemblable(sec)
 		or ini_parts:r_string_ex("con_parts_list", sec)
 end
 
-local function get_effective_cost(sec)
-	return dogma.db.cost(sec)
-end
-
-local function is_tac_kit(sec)
-	return dogma.db.is_upgrade_kit(sec)
-end
-
 local function scope_optics_subtype(sec)
 	if ini_sys:r_bool_ex(sec, "scope_nightvision") then
 		return "nv"
@@ -180,7 +165,7 @@ local function classify_attachment(sec)
 	local kind, subtype, size_class
 	local _, _, area = get_grid_metrics(sec)
 
-	if is_tac_kit(sec) then
+	if dogma.db.is_upgrade_kit(sec) then
 		kind = "kit"
 		size_class = kit_size_class(area)
 	elseif dogma.db.is_silencer(sec) then
@@ -195,7 +180,7 @@ local function classify_attachment(sec)
 		return nil
 	end
 
-	local cost = get_effective_cost(sec)
+	local cost = dogma.db.cost(sec)
 	local cost_tier = cost_to_tier(cost)
 	return {
 		kind = kind,
@@ -263,7 +248,7 @@ local function lookup_tier_row(cat, tier)
 end
 
 local function lookup_drops(info)
-	local drops = _G.dogma_strip_attach_drops
+	local drops = _G.dogma_wb_attach_drops
 	if not info or not drops then
 		return nil
 	end
@@ -320,7 +305,6 @@ local function resolve_drops_to_parts(drops)
 	return parts
 end
 
--- Vanilla item_parts.disassembly_item posts the same PDA list; swallow it when the toggle is off.
 local function call_orig_disassembly(orig, obj, obj_d)
 	if not orig then
 		return
@@ -411,12 +395,12 @@ local function perform_attachment_disassembly(obj, obj_d, info, orig_disassembly
 	game_statistics.increment_statistic("items_disassembled")
 	actor_effects.play_item_fx("disassemble_metal_fast")
 
-	CreateTimeEvent(0, "dogma_strip_attach_" .. id, delay, timer_give_parts, npc:id(), parts_tbl, name)
+	CreateTimeEvent(0, "dogma_wb_attach_" .. id, delay, timer_give_parts, npc:id(), parts_tbl, name)
 end
 
 local function make_menu_disassembly_wrapper(orig)
 	return function(obj)
-		if CONFIG.loaded.attach_enabled then
+		if CONFIG.loaded.attachments_enabled then
 			if classify_obj(obj) then
 				return game.translate_string("st_awr_disassembly_cloth")
 			end
@@ -427,7 +411,7 @@ end
 
 local function make_disassembly_item_wrapper(orig)
 	return function(obj, obj_d)
-		if CONFIG.loaded.attach_enabled then
+		if CONFIG.loaded.attachments_enabled then
 			local info = classify_obj(obj)
 			if info then
 				perform_attachment_disassembly(obj, obj_d, info, orig)
@@ -471,12 +455,11 @@ end
 
 local function on_option_change()
 	CONFIG.loaded.attachments_enabled = dogma.mcm.bool(CONFIG.MOD_ID, "attachments_enabled")
-	CONFIG.loaded.attach_enabled = CONFIG.loaded.attachments_enabled
 	CONFIG.loaded.pda_parts_tip = dogma.mcm.bool(CONFIG.MOD_ID, "pda_parts_tip")
 	CONFIG.loaded.attach_debug_log = dogma.dbg.logging()
 	log(string.format(
 		"attachments: enabled=%s menu_patched=%s item_patched=%s",
-		tostring(CONFIG.loaded.attach_enabled),
+		tostring(CONFIG.loaded.attachments_enabled),
 		tostring(patched_menu_disassembly),
 		tostring(patched_disassembly_item)
 	))

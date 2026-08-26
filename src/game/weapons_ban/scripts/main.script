@@ -122,10 +122,12 @@ local function give_extra_start_ammo()
         alife_create_item(sec, db.actor, { ammo = cnt })
         parts[#parts + 1] = string.format("%s x%s", sec, cnt)
     end
-    if #parts > 0 then
-        local msg = "new game ammo " .. table.concat(parts, ", ")
-        log(msg)
-        dogma.overlay.set(MOD_ID, 3, msg, "blue")
+    if #parts == 0 then
+        return
+    end
+    log("new game ammo")
+    for i = 1, #parts do
+        log("  + " .. parts[i])
     end
 end
 

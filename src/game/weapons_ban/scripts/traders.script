@@ -167,9 +167,7 @@ local function strip_banned_from_trader(npc)
     release_inventory_ids(to_release)
     if #to_release > 0 then
         local who = (npc.name and npc:name()) or (npc.section and npc:section()) or "?"
-        local msg = string.format("trader strip %s n=%s", who, #to_release)
-        log(msg, "yellow")
-        dogma.overlay.set(MOD_ID, 2, msg, "yellow")
+        log(string.format("trader strip %s n=%s", who, #to_release), "yellow")
         schedule_trader_resort(npc:id())
     end
     dogma.perf.stop()

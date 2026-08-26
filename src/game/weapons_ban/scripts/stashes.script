@@ -26,10 +26,6 @@ local function log(msg, color)
     dogma.log.log(MOD_ID, tostring(msg), color)
 end
 
-local function overlay_roll(msg, color)
-    dogma.overlay.set(MOD_ID, 1, tostring(msg), color)
-end
-
 -- Cheese paid stash (copied from RNG Attach; NMN cannot rely on RNG when disabled)
 local function is_cheese_paid_stash(_hint)
     local sfind = string.find
@@ -150,8 +146,12 @@ local function spawn_pending_stash_ammo(box)
             parts[#parts + 1] = string.format("%s x%s", e.sec, e.rounds)
         end
     end
-    if #parts > 0 then
-        log(string.format("stash %s spawn ammo %s", id, table.concat(parts, ", ")), "blue")
+    if #parts == 0 then
+        return
+    end
+    log(string.format("stash %s spawn ammo", id), "blue")
+    for i = 1, #parts do
+        log("  + " .. parts[i], "blue")
     end
 end
 
@@ -205,18 +205,26 @@ local function roll_stash_loot(id)
             local rounds = Tiers.rounds_for_ru(sec, ru)
             if rounds > 0 then
                 queue_stash_ammo(id, sec, rounds)
-                drops[#drops + 1] = string.format("%s x%s", sec, rounds)
+                drops[#drops + 1] = string.format(
+                    "ammo t%s %s x%s (%s RU, rank=%s)",
+                    rt, sec, rounds, ru, rank
+                )
             end
         elseif sec then
             sections[#sections + 1] = sec
-            drops[#drops + 1] = sec
+            drops[#drops + 1] = string.format("%s t%s %s", cat, rt, sec)
         end
     end
     append_stash_sections(id, sections)
-    local loot = (#drops > 0) and table.concat(drops, ", ") or "empty"
-    local msg = string.format("stash %s tier=%s bonus=%s -> %s", id, target, n, loot)
-    log(msg, (#drops > 0) and "green" or "gray")
-    overlay_roll(msg, (#drops > 0) and "green" or "gray")
+    local color = (#drops > 0) and "green" or "gray"
+    log(string.format("stash %s tier=%s bonus=%s", id, target, n), color)
+    if #drops == 0 then
+        log("  empty", "gray")
+    else
+        for i = 1, #drops do
+            log("  + " .. drops[i], color)
+        end
+    end
     dogma.perf.stop()
 end
 
@@ -236,9 +244,7 @@ local function patched_set_random_stash(no_spot, hint, bonus_items, id, dbg)
     end
     dogma.perf.start("weapons_ban", "set_random_stash")
     if is_cheese_paid_stash(hint) then
-        local msg = string.format("stash %s skip cheese", tostring(id))
-        log(msg, "yellow")
-        overlay_roll(msg, "yellow")
+        log(string.format("stash %s skip cheese", tostring(id)), "yellow")
         dogma.perf.stop()
         return result
     end

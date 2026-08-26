@@ -15,10 +15,6 @@ local function log(msg, color)
     dogma.log.log(MOD_ID, tostring(msg), color)
 end
 
-local function overlay_roll(msg, color)
-    dogma.overlay.set(MOD_ID, 0, tostring(msg), color)
-end
-
 local function npc_label(npc)
     if not npc then
         return "?"
@@ -208,7 +204,7 @@ local function inject_corpse_ammo(npc, inv_ammo)
         local rounds = Tiers.rounds_for_ru(sec, ru)
         if rounds > 0 then
             alife_create_item(sec, npc, { ammo = rounds })
-            drops[#drops + 1] = string.format("%s x%s", sec, rounds)
+            drops[#drops + 1] = string.format("%s x%s (%.0f RU)", sec, rounds, ru)
         end
     end
     return { rank = rank, guns = #gun_ammo, ru = total_ru, drops = drops }
@@ -220,28 +216,29 @@ local function log_corpse_roll(npc, result)
         if result.skip == "no guns" and not result.rank then
             return
         end
-        local msg = string.format(
+        log(string.format(
             "corpse %s skip %s rank=%s guns=%s",
             who,
             result.skip,
             result.rank or "?",
             result.guns or 0
-        )
-        log(msg, "gray")
-        overlay_roll(msg, "gray")
+        ), "gray")
         return
     end
-    local loot = (#result.drops > 0) and table.concat(result.drops, ", ") or "none"
-    local msg = string.format(
-        "corpse %s rank=%s guns=%s ru=%s -> %s",
+    log(string.format(
+        "corpse %s rank=%s guns=%s ru=%s",
         who,
         result.rank or "?",
         result.guns,
-        result.ru,
-        loot
-    )
-    log(msg, "green")
-    overlay_roll(msg, "green")
+        result.ru
+    ), "green")
+    if #result.drops == 0 then
+        log("  none", "gray")
+        return
+    end
+    for i = 1, #result.drops do
+        log("  + " .. result.drops[i], "green")
+    end
 end
 
 local function patched_try_spawn_ammo(npc)

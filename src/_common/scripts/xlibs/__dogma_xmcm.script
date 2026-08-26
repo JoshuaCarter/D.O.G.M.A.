@@ -1,0 +1,38 @@
+--- xmcm: MCM helpers (create_config)
+
+local pairs = pairs
+
+-- Config getter closure: reads ui_mcm.get(path) with fallback to the defaults table
+-- @safety SAFE - ui_mcm.get returns nil for missing keys, defaults table is fallback
+-- @cost O(1) per call | 0 luabind cached (axr_main.config ini_file_ex.cache hit + 2 string concats), ini luabind on first read per key
+-- Not for hot paths: snapshot into a local/cfg and refresh on option change (mcm.md snapshot pattern)
+local function create_getter(mod_id, defaults, path_builder)
+    return function(key)
+        if ui_mcm and not (ui_mcm.is_gathering and ui_mcm.is_gathering()) then
+            local path = path_builder and path_builder(key) or (mod_id .. "/" .. key)
+            local val = ui_mcm.get(path)
+            if val ~= nil then return val end
+        end
+        return defaults[key]
+    end
+end
+
+--- Create a complete MCM config: pre-seeded table, getter, and loader
+--- Seeds cfg from defaults at creation (no ui_mcm call); loader reads MCM when called
+--- @safety SAFE - creation is pure Lua table copy, loader delegates to create_getter
+--- @cost O(n) defaults at creation, O(n) per load() call | 0 luabind (pure Lua throughout)
+--- @param mod_id string MCM mod identifier
+--- @param defaults table Default values {key = value}
+--- @param path_builder function|nil Optional function(key) -> mcm_path
+--- @return table cfg Pre-seeded config table
+--- @return function getter Per-key getter function(key) -> value
+--- @return function load Loader that refreshes all cfg values from MCM
+function create_config(mod_id, defaults, path_builder)
+    local getter = create_getter(mod_id, defaults, path_builder)
+    local cfg = {}
+    for k, v in pairs(defaults) do cfg[k] = v end
+    local function load()
+        for k in pairs(defaults) do cfg[k] = getter(k) end
+    end
+    return cfg, getter, load
+end

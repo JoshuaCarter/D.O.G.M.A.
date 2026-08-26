@@ -1,0 +1,24 @@
+--- xtrace: Lightweight tracing - a monotonic id only (no path / span hierarchy)
+
+local trace_counter = 0
+
+local _NULL = { id = 0 }
+
+--- Create new trace with a fresh monotonic id
+--- @safety SAFE - pure Lua table
+--- @cost O(1) | 0 luabind (pure Lua table op)
+--- @return table Trace object with id
+function new()
+    trace_counter = trace_counter + 1
+    return { id = trace_counter }
+end
+
+--- Create trace only if condition true, else the shared null trace (id=0)
+--- Null trace shares the id field; zero allocation when disabled
+--- @safety SAFE - null singleton is pure Lua table
+--- @cost O(1) | 0 luabind (pure Lua table op)
+--- @param condition boolean
+--- @return table Trace or null trace
+function new_if(condition)
+    return condition and new() or _NULL
+end

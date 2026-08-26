@@ -1,0 +1,710 @@
+--- xcreature: Creature/entity identification and properties (stalkers, mutants, NPCs)
+
+local pairs, type, setmetatable = pairs, type, setmetatable
+local string = string
+local IsMonster, IsStalker, IsTrader, alife_character_community = IsMonster, IsStalker, IsTrader, alife_character_community
+local get_object_story_id, get_object_squad = get_object_story_id, get_object_squad
+local xobject, xdata = xobject, xdata
+local INVALID_ENTITY_ID = xconst.INVALID_ENTITY_ID
+
+ENTITY = {
+    STALKER = "stalker",
+    MUTANT = "mutant",
+}
+
+--- Stalker rank tier names, low to high, as returned by ranks.get_obj_rank_name. The single owner for
+--- the rank-name set: iterate it to build per-rank config keys and curve tables (mirrors the vanilla
+--- game_relations rating tiers and the mods' per-rank MCM slider suffixes).
+RANK_TIERS = { "novice", "trainee", "experienced", "professional", "veteran", "expert", "master", "legend" }
+
+--- Get class ID from entity
+--- Accepts ID, game_object, or server object; resolves to clsid via xobject.se + :clsid() luabind
+--- @safety SAFE - returns nil for invalid/missing entities, :clsid() never crashes
+--- @cost O(log n) | 1 luabind medium (alife_object: xr_map find) + 1 luabind trivial (clsid: enum return)
+--- @src anomaly/_g.script(2062), xray/xrGame/script_game_object_script.cpp
+--- @param input number|userdata|table Entity ID or object
+--- @return number|nil Class ID
+local function get_clsid(input)
+    if not input then return nil end
+    local input_type = type(input)
+    if input_type == "number" then input = xobject.se(input) end
+    if not input then return nil end
+    if input.clsid then return input:clsid() end
+    return nil
+end
+
+--- Check if entity is a stalker
+--- Shorthand: get_clsid + IsStalker(nil, cls) fast path
+--- @safety SAFE - returns false for nil/invalid
+--- @cost O(log n) | 1 luabind medium (alife_object) + 1 luabind trivial (clsid); IsStalker is pure Lua compare
+--- @src anomaly/_g.script(2820) IsStalker
+--- @param input number|userdata|table Entity ID or object
+--- @return boolean
+function is_stalker(input) local cls = get_clsid(input) return cls and IsStalker(nil, cls) or false end
+
+--- Check if entity is a Script_Trader (CSE class 37 / 36). Sidorovich-class story trader entities
+--- live in this class, not IsStalker; iterate this filter to cover them with bounded cost (~10
+--- entities vanilla Anomaly, ~30-100 with addons) vs the full alife pool.
+--- @safety SAFE - returns false for nil/invalid
+--- @cost O(log n) | 1 luabind medium (alife_object) + 1 luabind trivial (clsid); IsTrader is pure Lua compare
+--- @src anomaly/_g.script(2904) IsTrader
+--- @param input number|userdata|table Entity ID or object
+--- @return boolean
+function is_trader(input) local cls = get_clsid(input) return cls and IsTrader(nil, cls) or false end
+
+--- Check if entity is a mutant
+--- Shorthand: get_clsid + IsMonster(nil, cls) fast path
+--- @safety SAFE - returns false for nil/invalid
+--- @cost O(log n) | 1 luabind medium (alife_object) + 1 luabind trivial (clsid); IsMonster is pure Lua hash lookup on lazy-cached monster_classes
+--- @src anomaly/_g.script(2827) IsMonster
+--- @param input number|userdata|table Entity ID or object
+--- @return boolean
+function is_mutant(input) local cls = get_clsid(input) return cls and IsMonster(nil, cls) or false end
+
+--- Check if entity is an NPC (stalker or mutant)
+--- Shorthand: delegates to is_stalker || is_mutant
+--- @safety SAFE - returns false for nil/invalid
+--- @cost O(log n) | up to 4 luabind: stalker path 2 luabind (alife_object medium + clsid trivial), mutant path 2 more on miss
+--- @param input number|userdata|table Entity ID or object
+--- @return boolean
+function is_npc(input) return is_stalker(input) or is_mutant(input) end
+
+--- Clsid to species mapping (server + client clsids, vanilla + modded exes)
+--- Source: _g.script:2833-2866, ui_mutant_loot.script:34-54, xray-monolith object_factory
+local _clsid_to_species = {
+    [clsid.bloodsucker_s] = "bloodsucker", [clsid.bloodsucker] = "bloodsucker",
+    [clsid.boar_s] = "boar", [clsid.boar] = "boar",
+    [clsid.burer_s] = "burer", [clsid.burer] = "burer",
+    [clsid.chimera_s] = "chimera", [clsid.chimera] = "chimera",
+    [clsid.controller_s] = "controller", [clsid.controller] = "controller",
+    [clsid.dog_s] = "dog", [clsid.dog_red] = "dog",
+    [clsid.flesh_s] = "flesh", [clsid.flesh] = "flesh",
+    [clsid.gigant_s] = "gigant", [clsid.pseudo_gigant] = "gigant",
+    [clsid.psy_dog_s] = "psy_dog", [clsid.psy_dog_phantom_s] = "psy_dog",
+    [clsid.pseudodog_s] = "pseudodog", [clsid.dog_black] = "pseudodog",
+    [clsid.snork_s] = "snork", [clsid.snork] = "snork",
+    [clsid.tushkano_s] = "tushkano", [clsid.tushkano] = "tushkano",
+    [clsid.cat_s] = "cat", [clsid.cat] = "cat",
+    [clsid.fracture_s] = "fracture", [clsid.fracture] = "fracture",
+    [clsid.zombie_s] = "zombie", [clsid.zombie] = "zombie",
+    [clsid.poltergeist_s] = "poltergeist", [clsid.poltergeist] = "poltergeist",
+    [clsid.rat_s] = "rat", [clsid.rat] = "rat",
+}
+--- Modded exes (karlik, psysucker, lurker) -- guarded, not present in vanilla monolith
+if clsid.karlik_s then _clsid_to_species[clsid.karlik_s] = "karlik" end
+if clsid.karlik then _clsid_to_species[clsid.karlik] = "karlik" end
+if clsid.psysucker_s then _clsid_to_species[clsid.psysucker_s] = "psysucker" end
+if clsid.psysucker then _clsid_to_species[clsid.psysucker] = "psysucker" end
+if clsid.lurker_s then _clsid_to_species[clsid.lurker_s] = "lurker" end
+if clsid.lurker then _clsid_to_species[clsid.lurker] = "lurker" end
+
+--- Monster faction lookup for player_id fast reject (Lua field, zero bridge cost)
+local _is_monster_faction = {
+    ["monster_predatory_day"] = true, ["monster_predatory_night"] = true,
+    ["monster_vegetarian"] = true, ["monster_special"] = true,
+    ["monster_zombied_day"] = true, ["monster_zombied_night"] = true,
+    ["monster_zombied"] = true, ["monster"] = true, ["zoo_monster"] = true,
+}
+
+--- Check if a squad_descr faction string is a monster faction
+--- The set covers every faction value monster squad sections carry in squad_descr LTX
+--- (monster_predatory_day/night, monster_vegetarian, monster_special, monster_zombied_*,
+--- monster, zoo_monster). "zombied" is NOT a monster faction (stalker combatants).
+--- Use to classify squad.player_id or xsmart.section_faction results.
+--- @safety SAFE - nil returns false
+--- @cost O(1) | 0 luabind (pure Lua table lookup)
+--- @src anomaly/configs/misc/squad_descr/squad_descr_default_mutants.ltx
+--- @param faction string|nil Faction community string
+--- @return boolean True if the faction is a monster faction
+function is_monster_faction(faction)
+    return faction ~= nil and _is_monster_faction[faction] == true
+end
+
+--- Ambiguous clsids: modded creatures that reuse vanilla clsids when their own _s clsid is not registered.
+--- Built at load time. Empty if modded exe registers proper clsids. Only these trigger section_name fallback.
+local _ambiguous_clsids = {}
+local _ambiguous_prefixes = {}
+if not clsid.lurker_s then
+    _ambiguous_clsids[clsid.chimera_s] = true
+    _ambiguous_prefixes.lurker = "lurker"
+end
+if not clsid.psysucker_s then
+    _ambiguous_clsids[clsid.bloodsucker_s] = true
+    _ambiguous_prefixes.psysucker = "psysucker"
+end
+if not clsid.karlik_s then
+    _ambiguous_clsids[clsid.tushkano_s] = true
+    _ambiguous_prefixes.m_karlik = "karlik"
+    _ambiguous_prefixes.karlik = "karlik"
+end
+
+-- Per-NPC weak-key cache: clsid is invariant for a server entity's lifetime, so species is too.
+-- Mirrors _unscriptable_cache pattern. Stores `false` sentinel when species resolves to nil.
+local _species_cache = setmetatable({}, { __mode = "k" })
+
+-- Inner resolver: clsid -> species, with prefix fallback for ambiguous clsids
+-- @cost O(1) | 1-2 luabind (clsid + section_name for ambiguous)
+local function _resolve_clsid_species(se_npc)
+    local cls = se_npc:clsid()
+    local species = _clsid_to_species[cls]
+    if not species then return nil end
+    if not _ambiguous_clsids[cls] then return species end
+    local section = se_npc:section_name()
+    if not section then return species end
+    for prefix, name in pairs(_ambiguous_prefixes) do
+        if section:sub(1, #prefix) == prefix then return name end
+    end
+    return species
+end
+
+-- Cached wrapper: weak-key cache on the cse entity. Stores `false` sentinel for nil results.
+-- @cost O(1) | 0 luabind cached, 1-2 luabind on miss
+local function _resolve_npc_species(se_npc)
+    local cached = _species_cache[se_npc]
+    if cached ~= nil then return cached or nil end
+    local species = _resolve_clsid_species(se_npc)
+    _species_cache[se_npc] = species or false
+    return species
+end
+
+-- Per-squad weak-key cache: caches the full squad -> commander -> species chain.
+-- Squad species depends on commander species, which is invariant within a species-pure squad.
+-- AP squads are species-pure by design (mutant spawns don't mix species), so the cache is safe.
+local _squad_species_cache = setmetatable({}, { __mode = "k" })
+
+--- Get mutant species from any entity (squad, se_obj, game_object, or ID)
+--- For squads: player_id fast reject for stalkers (0 luabind); commander chain cached weak-keyed.
+--- For NPCs/game_objects: direct clsid + section fallback, cached per-NPC.
+--- Returns nil for stalkers, non-mutants, and unrecognized entities.
+--- @safety SAFE - nil-guarded throughout
+--- @cost O(1) | 0 luabind cached or stalker fast-reject; 5 luabind on miss for mutant squad (clsid + commander_id + alife_object + cmd:clsid)
+--- @src anomaly/_g.script(2833-2866), anomaly/ui_mutant_loot.script(34-54)
+--- @param input number|userdata Entity ID or object
+--- @return string|nil Species name ("bloodsucker", "dog", "lurker", etc.)
+function get_mutant_species(input)
+    local se = xobject.se(input)
+    if not se then return nil end
+    local pid = se.player_id
+    if pid and not _is_monster_faction[pid] then return nil end
+    local cached = _squad_species_cache[se]
+    if cached ~= nil then return cached or nil end
+    local cls = se:clsid()
+    local species
+    if cls == clsid.online_offline_group_s then
+        local cmd_id = se:commander_id()
+        if cmd_id and cmd_id ~= INVALID_ENTITY_ID then
+            local cmd = xobject.se(cmd_id)
+            if cmd then species = _resolve_npc_species(cmd) end
+        end
+    else
+        species = _resolve_npc_species(se)
+    end
+    if species then _squad_species_cache[se] = species end
+    return species
+end
+
+--- Get mutant variant (full NPC section) from any entity
+--- For squads: returns commander's section_name ("bloodsucker_red_strong", "dog_weak_brown")
+--- For NPCs: returns entity's section_name directly
+--- Returns nil for stalkers, non-mutants, and unrecognized entities
+--- @safety SAFE - nil-guarded throughout
+--- @cost O(1) | 0 luabind (stalker fast reject) | 4 luabind (mutant squad) | 2 luabind (NPC)
+--- @src anomaly/_g.script(2833-2866), anomaly/ui_mutant_loot.script(34-54)
+--- @param input number|userdata Entity ID or object
+--- @return string|nil Variant section name
+function get_mutant_variant(input)
+    local se = xobject.se(input)
+    if not se then return nil end
+    local pid = se.player_id
+    if pid and not _is_monster_faction[pid] then return nil end
+    local cls = se:clsid()
+    if cls == clsid.online_offline_group_s then
+        local cmd_id = se:commander_id()
+        if not cmd_id or cmd_id == INVALID_ENTITY_ID then return nil end
+        local cmd = xobject.se(cmd_id)
+        if not cmd then return nil end
+        if not _resolve_npc_species(cmd) then return nil end
+        return cmd:section_name()
+    end
+    if not _resolve_npc_species(se) then return nil end
+    return se:section_name()
+end
+
+--- Get faction community from entity
+--- Resolves via xobject.se then tries get_squad_community (squads) or alife_character_community (NPCs)
+--- @safety SAFE - returns nil for invalid entities
+--- @cost O(log n) | 2-3 luabind: alife_object medium + get_squad_community heavy (shared_str return) OR alife_character_community heavy (community shared_str)
+--- @src anomaly/_g.script(2273), anomaly/_g.script(2437)
+--- @param input number|userdata|table Entity ID or object
+--- @return string|nil Faction community
+function community(input)
+    local entity = xobject.se(input)
+    if not entity then return nil end
+    if entity.get_squad_community then
+        return entity:get_squad_community()
+    end
+    return alife_character_community(entity)
+end
+
+--- True when the combatant belongs to the STALKER community "zombied" - the mindless-shambler
+--- exclusion class combat-AI layers bail on (no deliberate-combatant modeling). NOT the mutant
+--- zombie species (get_mutant_species owns that; "zombied" is not a monster faction).
+--- @safety SAFE - community() nil-guards; a nil community is never "zombied"
+--- @cost O(log n) | community()'s 2-3 luabind (see community above)
+--- @src the community read above; the exclusion class per AlifeTactics architecture.md (Scope)
+--- @param input number|userdata|table entity id or object
+--- @return boolean true for a zombied-community stalker
+function is_zombied(input)
+    return community(input) == "zombied"
+end
+
+--- Relation of an online object to the actor: "enemy" | "neutral" | "friend", or nil if unresolvable.
+--- Uses the engine PER-NPC relation (what damage/hit decisions use), NOT faction community - so it honours
+--- individual overrides. nil when there is no actor or the object has no relation (e.g. an offline server obj).
+--- @safety SAFE - nil-guarded on actor; caller passes a live game_object
+--- @cost O(1) | 1 luabind (game_object:relation)
+--- @see xray/script_game_object_script2.cpp:133 (game_object:relation = CScriptGameObject::GetRelationType)
+--- @src anomaly game_object:relation; the >= game_object.enemy pattern (AlifePlus ap_ext_loot_claim.script:184)
+--- @param obj game_object online object (NPC / monster)
+--- @return string|nil "enemy" | "neutral" | "friend", or nil
+function relation_to_actor(obj)
+    local actor = db.actor
+    if not (obj and actor and obj.relation) then return nil end
+    local rel = obj:relation(actor)
+    if rel >= game_object.enemy then return "enemy" end
+    if rel <= game_object.friend then return "friend" end
+    return "neutral"
+end
+
+--- True if an online object is an enemy of the actor (per-NPC relation, not community). See relation_to_actor.
+--- @safety SAFE - delegates to relation_to_actor
+--- @cost O(1) | 1 luabind
+--- @param obj game_object online object
+--- @return boolean
+function is_enemy_to_actor(obj)
+    return relation_to_actor(obj) == "enemy"
+end
+
+--- Numeric per-NPC goodwill of an online object toward the actor (engine general_goodwill), or nil.
+--- Per-NPC attitude the vanilla PDA-icon gate reads (icon hidden while <= -1000), NOT faction community.
+--- @safety SAFE - nil-guarded on actor and the method; caller passes a live game_object
+--- @cost O(1) | 1 luabind (general_goodwill: GetAttitude)
+--- @src xray/script_game_object_script3.cpp:304 (general_goodwill = CScriptGameObject::GetAttitude)
+--- @param obj game_object online object (NPC)
+--- @return number|nil goodwill value, or nil if unresolvable
+function goodwill_to_actor(obj)
+    local actor = db.actor
+    if not (obj and actor and obj.general_goodwill) then return nil end
+    return obj:general_goodwill(actor)
+end
+
+--- Relation between two online objects: "enemy" | "neutral" | "friend", or nil if unresolvable.
+--- The general form of relation_to_actor: per-NPC engine relation (honours individual overrides), NOT community.
+--- @safety SAFE - nil-guarded on both objects and the method
+--- @cost O(1) | 1 luabind (game_object:relation)
+--- @src xray/script_game_object_script2.cpp:133 (game_object:relation = CScriptGameObject::GetRelationType)
+--- @param a game_object online object whose view is taken
+--- @param b game_object online target object
+--- @return string|nil "enemy" | "neutral" | "friend", or nil
+function relation(a, b)
+    if not (a and b and a.relation) then return nil end
+    local rel = a:relation(b)
+    if rel >= game_object.enemy then return "enemy" end
+    if rel <= game_object.friend then return "friend" end
+    return "neutral"
+end
+
+--- True if object a is an enemy of object b (per-NPC relation, not community). See relation.
+--- @safety SAFE - delegates to relation
+--- @cost O(1) | 1 luabind
+--- @param a game_object online object
+--- @param b game_object online target
+--- @return boolean
+function is_enemy(a, b)
+    return relation(a, b) == "enemy"
+end
+
+-- Mutant section prefix -> display name (inv_name often missing for mutants)
+local MUTANT_NAMES = {
+    gigant = "Pseudogiant",
+    pseudo_gigant = "Pseudogiant",
+    pseudogiant = "Pseudogiant",
+    bloodsucker = "Bloodsucker",
+    boar = "Boar",
+    burer = "Burer",
+    cat = "Cat",
+    chimera = "Chimera",
+    controller = "Controller",
+    dog = "Dog",
+    flesh = "Flesh",
+    fracture = "Fracture",
+    poltergeist = "Poltergeist",
+    pseudodog = "Pseudodog",
+    psy_dog = "Psy Dog",
+    psysucker = "Psysucker",
+    snork = "Snork",
+    tushkano = "Tushkano",
+    zombie = "Zombie",
+    lurker = "Lurker",
+    karlik = "Karlik",
+}
+
+-- Hash lookup for O(1) mutant name resolution
+-- Handles compound names (psy_dog) by checking part pairs
+local function _get_mutant_display_name(section)
+    local lower = section:lower()
+    local parts = {}
+    for part in lower:gmatch("[^_]+") do
+        parts[#parts + 1] = part
+    end
+
+    -- Check single parts and consecutive pairs against MUTANT_NAMES hash
+    for i = 1, #parts do
+        local part = parts[i]
+        if MUTANT_NAMES[part] then return MUTANT_NAMES[part] end
+        -- Check compound name (e.g., "psy" + "dog" = "psy_dog")
+        if i < #parts then
+            local compound = part .. "_" .. parts[i + 1]
+            if MUTANT_NAMES[compound] then return MUTANT_NAMES[compound] end
+        end
+    end
+    return nil
+end
+
+-- Translate key, return nil if untranslatable
+-- @cost O(log n) | 1 luabind medium (game.translate_string: std::map find on STRING_TABLE_MAP)
+local function _translate_or_nil(key)
+    local translated = game.translate_string(key)
+    return (translated and translated ~= key) and translated or nil
+end
+
+-- Session-fixed memo: section -> resolved display name. Locale is fixed per VM life and the
+-- VM restarts on every level transition / load, so entries can never go stale. Plain table on
+-- purpose: string keys are never weak-evicted.
+local _mutant_name_cache = {}
+
+-- Resolve mutant name: translation first (inv_name key, then the section id as a string-table
+-- key), the English MUTANT_NAMES hash only for sections with neither, section cleanup as the
+-- terminal fallback. Translate-first keeps localized names ahead of the baked English table
+-- (code-standards: User-Facing Text - Localized XML Only).
+-- @cost O(1) memo hit | 1-2 luabind heavy on miss (r_string_ex: lower_bound + lowercase + shared_str alloc; translate_string medium)
+local function _get_mutant_name(section)
+    local cached = _mutant_name_cache[section]
+    if cached then return cached end
+
+    local inv_name = ini_sys:r_string_ex(section, "inv_name")
+    local name = (inv_name and _translate_or_nil(inv_name))
+        or _translate_or_nil(section)
+        or _get_mutant_display_name(section)
+    if not name then
+        local clean = section:gsub("_normal", ""):gsub("_weak", ""):gsub("_strong", "")
+        name = clean:gsub("_", " "):gsub("^%l", string.upper)
+    end
+    _mutant_name_cache[section] = name
+    return name
+end
+
+--- Get translated name for entity (stalker or mutant)
+--- Stalkers use character_name(); mutants translate inv_name / section first, memoized per section,
+--- with the English hash and section cleanup as fallbacks (see _get_mutant_name).
+--- @safety SAFE - returns nil for nil entities and nameless stalkers; callers pick the fallback (locale purity, xlevel 1.4.0 precedent)
+--- @cost O(log n) | 2-4 luabind: stalker: alife_object + character_name heavy; mutant: alife_object + section_name heavy + (memo hit or r_string_ex heavy + translate)
+--- @src anomaly/_g.script(2062), xray/xrGame/script_game_object_script.cpp
+--- @param input number|table Entity ID or server object
+--- @return string|nil Translated name, or nil when the entity or its name is unavailable
+function get_name(input)
+    local entity = xobject.se(input)
+    if not entity then return nil end
+
+    if is_stalker(entity) then
+        local name = entity.character_name and entity:character_name()
+        return (name and name ~= "") and name or nil
+    end
+
+    local section = entity:section_name()
+    return section and _get_mutant_name(section) or nil
+end
+
+--- Get current money (rubles) of an inventory owner
+--- Money() always returns u32 across luabind; never nil for a valid CInventoryOwner.
+--- @safety SAFE - nil-guarded obj; Money() VERIFY trips only on non-CInventoryOwner
+--- @cost O(1) | 1 luabind medium (Money: smart_cast<CInventoryOwner*> + m_money field read)
+--- @src xray/xrGame/script_game_object_inventory_owner.cpp(674-679), xray/xrGame/InventoryOwner.h(117)
+--- @param obj game_object Inventory owner (actor or NPC)
+--- @return number Current rubles; 0 if obj nil
+function get_money(obj)
+    if not obj then return 0 end
+    return obj:money()
+end
+
+--- Give rubles to an inventory owner (positive credits, negative debits)
+--- Defends against engine u32 underflow on negative amount > balance: pre-clamps the
+--- magnitude so set_money never sees a wrapping subtraction (engine has no clamp at 0;
+--- m_money is u32 and the engine path is set_money(get_money() + money) where money is
+--- signed int promoted to u32 — negative overflow wraps to ~4e9 rubles).
+--- @safety SAFE - pre-clamps negative magnitude to current balance to defend against engine u32 wrap
+--- @cost O(1) | 1-2 luabind medium (Money on negative path + give_money: set_money + GE_MONEY persistence event)
+--- @src xray/xrGame/script_game_object_inventory_owner.cpp(703-709), xray/xrGame/InventoryOwner.cpp(635-650)
+--- @param obj game_object Target (actor or NPC)
+--- @param amount number Positive credits, negative debits
+--- @return boolean true on call, false if obj nil or amount nil/zero
+function give_money(obj, amount)
+    if not obj or not amount or amount == 0 then return false end
+    if amount < 0 then
+        local balance = obj:money()
+        if -amount > balance then amount = -balance end
+    end
+    obj:give_money(amount)
+    return true
+end
+
+--- Transfer rubles from one inventory owner to another (debit sender + credit recipient)
+--- Defends against engine u32 underflow: TransferMoney at script_game_object_inventory_owner.cpp:693
+--- has a dead `u32 - int < 0` guard (always false, compiler should warn -Wsign-compare /
+--- MSVC C4018), so without this pre-check the engine silently underflows sender's m_money
+--- to ~4e9 rubles when amount > balance. Engine PR pending — see todo-demonized-exes.md n015.
+--- @safety SAFE - pre-checks balance to defend against engine u32 underflow bug
+--- @cost O(1) | 2 luabind medium (Money on sender + TransferMoney: 2x set_money + 2x GE_MONEY persistence event)
+--- @src xray/xrGame/script_game_object_inventory_owner.cpp(681-701), xray/xrGame/InventoryOwner.cpp(635-650)
+--- @param from game_object Sender (debit)
+--- @param amount number Positive rubles to move
+--- @param to game_object Recipient (credit)
+--- @return boolean true on transfer, false if nil args, non-positive amount, or insufficient balance
+function transfer_money(from, amount, to)
+    if not from or not to or not amount or amount <= 0 then return false end
+    if from:money() < amount then return false end
+    from:transfer_money(amount, to)
+    return true
+end
+
+--- Make an online NPC a functional shopkeeper from a vanilla trade config, at runtime.
+--- trade_manager.trade_init only REGISTERS the config against the NPC id (and silently no-ops
+--- without db.actor); the buy/sell conditions and the stock are applied by trade_manager.update
+--- (setup_buy_sell_conditions -> engine buy_condition / sell_condition, then buy_supplies, which
+--- destroys + respawns the whole config supply list). stock_now forces that update immediately;
+--- without it the NPC's next xr_motivator update (xr_motivator.script:426) applies it. Does NOT
+--- touch character_community -- the NPC keeps its faction, so faction-scoped trade systems that hook
+--- trade_manager.update (a faction market) see it with no coupling. buy_supplies is heavy; a caller
+--- stocking many traders at once must frame-spread (xslice, one per frame), never loop.
+--- @scope online - needs the game object; trade_manager operates on the online NPC
+--- @safety SAFE - nil-guarded; no-op when npc / cfg missing or trade_manager unavailable; a bad
+--- cfg_path never crashes (ini_file yields an empty ini, update logs "Wrong section" and skips)
+--- @cost O(stock) | trade_init: config parse on first cfg use; update: 2 luabind (buy_condition + sell_condition) + 1 buy_supplies (full stock destroy + respawn) when stock_now
+--- @src anomaly/trade_manager.script(25 trade_init, 52 setup_buy_sell_conditions, 114 update), anomaly/xr_motivator.script(426)
+--- @src xray/xrGame/script_game_object_script3.cpp(410-416) buy_condition / sell_condition / buy_supplies
+--- @param npc game_object Online NPC to make a trader
+--- @param cfg_path string Trade config path, e.g. "items\\trade\\trade_generic_medic.ltx"
+--- @param stock_now boolean|nil Force conditions + stock now; omit to let the NPC's next motivator update apply them
+--- @return boolean true when the registration ran (not proof of stock), false on nil args or missing trade_manager
+function make_trader(npc, cfg_path, stock_now)
+    if not npc or not cfg_path then return false end
+    if type(trade_manager) ~= "table" or type(trade_manager.trade_init) ~= "function" then return false end
+    trade_manager.trade_init(npc, cfg_path)
+    if stock_now and type(trade_manager.update) == "function" then
+        trade_manager.update(npc, true)
+    end
+    return true
+end
+
+-- id-yielding iterator: lets caller validate via alife_object(id) before any method call on obj
+-- gameobjects_registry (modded-exes) and db.storage (vanilla) are both id-keyed
+local _online_iter_with_id = gameobjects_registry and function()
+    local k, obj
+    return function()
+        k, obj = next(gameobjects_registry, k)
+        return k, obj
+    end
+end or function()
+    local k, data
+    return function()
+        repeat k, data = next(db.storage, k) until not k or (data and data.object)
+        if not k then return nil end
+        return k, data.object
+    end
+end
+
+--- Iterator over online game objects yielding (id, obj) pairs
+--- Caller can validate destroyed-state via alife_object(id) without triggering "destroyed object" warnings
+--- @safety SAFE - id is taken from registry key, no method call on obj required to obtain it
+--- @cost O(n) online objects | 0 luabind (pure Lua next() on table)
+--- @src modded-exes/callbacks_gameobject.script(28-45), anomaly/db.script(15,70-83)
+--- @return function Iterator yielding (id, game_object) pairs
+function online_iter_with_id()
+    return _online_iter_with_id()
+end
+
+--- True if any mutant is online (first-found over the online object set, early-out on the first).
+--- The online set (db.storage) is what exists around the actor within switch distance - the level-wide-near
+--- presence the director gates the mutant category on. Not a range scan; the engine's own online window is the range.
+--- @safety SAFE - iterator + clsid check are nil-safe
+--- @cost O(n) online objects, early-out on first mutant | per object: 1 luabind (clsid via IsMonster)
+--- @src anomaly/db.script online storage; xray clsid via IsMonster
+--- @return boolean
+function any_mutant_online()
+    for _, obj in _online_iter_with_id() do
+        if obj and is_mutant(obj) then return true end
+    end
+    return false
+end
+
+--- True if any stalker OTHER than the actor is online (first-found, early-out). The actor is a stalker and
+--- is always present, so it is excluded - this answers "is another person around" (the gunfire gate).
+--- @safety SAFE - iterator + clsid check are nil-safe; actor id nil-guarded
+--- @cost O(n) online objects, early-out on first stalker | per object: 1 luabind (clsid via IsStalker)
+--- @src anomaly/db.script online storage; xray clsid via IsStalker
+--- @return boolean
+function any_human_online()
+    local actor = db.actor
+    local actor_id = actor and actor:id()
+    for id, obj in _online_iter_with_id() do
+        if id ~= actor_id and obj and is_stalker(obj) then return true end
+    end
+    return false
+end
+
+-- Fallback cap: bounds the clsid filter when db.OnlineMonsters is absent; sized above real online-object
+-- counts so it engages only under chaos-soak (a monster past it is missed, best-effort).
+local MONSTER_ITER_CAP = 400
+
+--- Iterator over online MONSTERS yielding (id, obj) pairs (best-effort mutant-presence + near-tier feed).
+--- Prefers a demonized db.OnlineMonsters id-array (parity with db.OnlineStalkers, pending PR); else a capped
+--- is_mutant filter over the full online set, so a monster past MONSTER_ITER_CAP is missed under heavy load.
+--- @safety SAFE - iterator + clsid check nil-safe; obj resolved through db.storage, a nil obj is yielded not raised
+--- @cost O(k) via registry (k monsters) | fallback O(min(n, CAP)) online objects, 1 clsid luabind each
+--- @src modded-exes/db.OnlineMonsters (pending PR), anomaly/db.script(7,149,164) db.OnlineStalkers parity
+--- @return function Iterator yielding (id, monster game_object) pairs
+function online_monster_iter()
+    local reg = db.OnlineMonsters
+    if reg then
+        local i = 0
+        return function()
+            i = i + 1
+            local id = reg[i]
+            if not id then return nil end
+            local st = db.storage[id]
+            return id, st and st.object or nil
+        end
+    end
+    local it = _online_iter_with_id()
+    local seen = 0
+    return function()
+        while seen < MONSTER_ITER_CAP do
+            local id, obj = it()
+            if not id then return nil end
+            seen = seen + 1
+            if obj and is_mutant(obj) then return id, obj end
+        end
+        return nil
+    end
+end
+
+-- Cache: weak keys so entries are removed when obj is GC'd
+local _unscriptable_cache = setmetatable({}, { __mode = "k" })
+
+-- Check unscriptable identity: story_id, companion, named NPC, squad story_id
+-- @cost O(1) | 3-5 luabind mixed: id trivial, story_id 0 (anomaly STORY_PAIRS lookup), IsStalker trivial, has_info medium (known_info find), section heavy (shared_str), squad 0 (anomaly Lua)
+local function _check_unscriptable(obj)
+    if not obj then return true end
+    local id = obj:id()
+    if get_object_story_id(id) then return true end
+    if IsStalker(obj) then
+        if obj:has_info("npcx_is_companion") then return true end
+        if xdata.unscriptable_npcs[obj:section()] then return true end
+    end
+    local squad = get_object_squad(obj)
+    if squad and get_object_story_id(squad.id) then return true end
+    return false
+end
+
+--- Check if creature is unscriptable (traders, leaders, companions, story chars)
+--- These NPCs cannot be scripted (scripted_target) - fixed to their role/location
+--- Checks story_id, companion info, xdata.unscriptable_npcs hash, and squad story_id; cached per game_object
+--- @safety SAFE - returns true for nil (fail-safe), all APIs return nil for invalid objects
+--- @cost O(1) cached | uncached: 3-5 luabind mixed (id trivial, IsStalker trivial, has_info medium known_info linear find, section heavy shared_str)
+--- @src anomaly/_g.script(2692) get_object_story_id, anomaly/_g.script(2437) get_object_squad
+--- @param obj game_object Game object
+--- @return boolean True if unscriptable (nil returns true for safety)
+function is_unscriptable(obj)
+    if not obj then return true end
+    local cached = _unscriptable_cache[obj]
+    if cached ~= nil then return cached end
+    local result = _check_unscriptable(obj)
+    _unscriptable_cache[obj] = result
+    return result
+end
+
+--- Server-entity (offline-safe) variant of is_unscriptable
+--- Reads only signals available without a game object: story_id registry, unscriptable_npcs
+--- section hash, and squad story_id. The companion has_info signal needs a game object and is
+--- omitted; offline consumers cover companions otherwise (they follow the actor online).
+--- @safety SAFE - returns true for nil (fail-safe), clsid/section_name/group_id nil-guarded
+--- @cost O(1) | 1-2 luabind (clsid trivial, section_name heavy shared_str only if stalker); story_id lookups 0 luabind (Lua registry)
+--- @src anomaly/_g.script(2692) get_object_story_id
+--- @param se_obj cse_alife_object Server object (online or offline)
+--- @return boolean True if unscriptable (nil returns true for safety)
+function is_unscriptable_se(se_obj)
+    if not se_obj then return true end
+    if get_object_story_id(se_obj.id) then return true end
+    if IsStalker(nil, se_obj:clsid()) and xdata.unscriptable_npcs[se_obj:section_name()] then return true end
+    local group_id = se_obj.group_id
+    if group_id and group_id ~= INVALID_ENTITY_ID and get_object_story_id(group_id) then return true end
+    return false
+end
+
+--- Check if creature is an active task giver (has task referencing its NPC ID or squad ID)
+--- Scans task_manager.task_info for active tasks where task_giver_id matches NPC ID or squad ID
+--- @safety SAFE - returns false for nil, task_manager nil-guarded
+--- @cost O(t) where t = active tasks (typically 3-10) | 1 luabind trivial (id) + get_object_squad 0 luabind (anomaly Lua); per-task pure Lua hash compare
+--- @src anomaly/axr_task_manager.script(793)
+--- @param obj game_object Game object
+--- @return boolean True if NPC is referenced by an active task
+function is_task_giver(obj)
+    if not obj then return false end
+    if not task_manager then return false end
+    local tm = task_manager.get_task_manager()
+    if not tm or not tm.task_info then return false end
+    local npc_id = obj:id()
+    local squad = get_object_squad(obj)
+    local squad_id = squad and squad.id
+    for _, tsk in pairs(tm.task_info) do
+        if tsk.status == "fail" or tsk.status == "completed" then goto continue end
+        local gid = tsk.task_giver_id
+        if not gid then goto continue end
+        if gid == npc_id or gid == squad_id then return true end
+        ::continue::
+    end
+    return false
+end
+
+-- =========================================================================
+-- Particles: safe attach / detach for creature-bound effects
+-- =========================================================================
+
+-- u16 bone sentinel; obj:get_bone_id returns it when the skeleton lacks the bone.
+local BI_NONE = 65535
+
+--- Attach particle group `name` to skeleton `bone`, guarded by the bone lookup. The one safe attach:
+--- callers never touch obj:start_particles directly. A missing bone would fire the engine
+--- R_ASSERT(play_bone != BI_NONE) inside start_particles, so the get_bone_id guard is mandatory. The
+--- particle NAME is not validated (no Lua existence API; a missing name is an engine fatal), so pass only
+--- config-referenced names. Particles have no lifecycle: the group follows the bone and dies with the
+--- game object (doc/library/modding/particles.md).
+--- @safety SAFE on a live object; the bone guard prevents the assert. Does NOT validate the particle name.
+--- @cost O(1) | 2 luabind trivial (get_bone_id + start_particles)
+--- @src xray/xrGame/script_game_object4.cpp:406-420
+--- @param obj game_object carrier
+--- @param name string particle group name (config-referenced)
+--- @param bone string skeleton bone name
+--- @return boolean true if attached, false when the skeleton lacks the bone
+function attach_particle(obj, name, bone)
+    if obj:get_bone_id(bone) == BI_NONE then return false end
+    obj:start_particles(name, bone)
+    return true
+end
+
+-- There is deliberately NO detach_particle. stop_particles trips the engine bone assert
+-- (script_game_object4.cpp:438) whenever the bone is not renderable at that instant - a hit, an
+-- animation, a death or offline transition - and bone visibility flips constantly, so neither an alive()
+-- nor a get_bone_id guard can prevent it (proven live 2026-08-14: stop asserted on a LIVE NPC with a valid
+-- bone). A creature particle has no safe stop: attach once and let it die with the game object
+-- (doc/library/modding/particles.md).

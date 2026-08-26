@@ -1,0 +1,60 @@
+--- xprofiler: High-precision code profiling using engine profile_timer (microseconds)
+
+local setmetatable = setmetatable
+
+local _NULL = {}
+function _NULL:start() return self end
+function _NULL:stop() return self end
+function _NULL:reset() return self end
+function _NULL:get_us() return 0 end
+function _NULL:get_ms() return 0 end
+
+local Profiler = {}
+Profiler.__index = Profiler
+
+function Profiler:start()
+    self._timer:start()
+    return self
+end
+
+function Profiler:stop()
+    self._timer:stop()
+    return self
+end
+
+function Profiler:reset()
+    self._timer = profile_timer()
+    return self
+end
+
+function Profiler:get_us()
+    return self._timer:time()
+end
+
+function Profiler:get_ms()
+    return self._timer:time() / 1000
+end
+
+--- Create a new profiler
+--- Wraps engine profile_timer C++ object (CPU::GetCLK tick counting, microsecond precision)
+--- @safety SAFE - profile_timer() constructor never fails (struct ctor zeroes accumulator/count)
+--- @cost O(1) | 1 luabind medium (profile_timer ctor: small struct alloc + zero-init)
+--- @src xray/xrServerEntities/script_engine_script.cpp(127) struct profile_timer_script, (253) class_ binding
+--- @return table Profiler object with :start(), :stop(), :get_us(), :get_ms(), :reset()
+function new()
+    return setmetatable({ _timer = profile_timer() }, Profiler)
+end
+
+--- Create profiler if condition true, else return null singleton (zero overhead)
+--- Null singleton has matching API (:start/:stop/:get_ms all no-op); zero luabind when disabled
+--- @safety SAFE - null singleton is pure Lua table
+--- @cost O(1) | 0 luabind if false, 1 luabind medium if true (profile_timer ctor)
+--- @src xray/xrServerEntities/script_engine_script.cpp(127,253)
+--- @param condition boolean
+--- @return table Profiler or null singleton
+function new_if(condition)
+    if not condition then return _NULL end
+    return new()
+end
+
+

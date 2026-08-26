@@ -1,0 +1,350 @@
+--- xsound: sound wrap - one-shots (play fire-and-forget; play_at retained/stoppable) + loops (acquire/release, volume lerp)
+
+local _NEXT_HANDLE = 1
+local _active = {}
+local _dead = {}
+local _registered = false
+local _last_tick = 0
+local TICK_MS = 100
+
+-- Forward declaration: play_at/acquire call _ensure_registered, which is defined below _tick. Without this
+-- the name resolves to a nil global at the earlier call sites (LUA runtime error on first play).
+local _ensure_registered
+
+local sound_object_t = sound_object
+local time_global = time_global
+local pairs, next = pairs, next
+local math_abs = math.abs
+local assert, type = assert, type
+
+--- Verified-safe sound paths. Sourced from vanilla scripts and configs/misc/sound/*.ltx.
+--- Usage: xsound.acquire(xsound.SND.PSY_ANTENNA_L, { volume = 0.7 })
+--- Missing paths log a Lua "File not found" error and fall back to $no_sound (no crash, script_sound.cpp:25), but waste a handle slot.
+--- @src anomaly/sr_psy_antenna.script(42): PSY_ANTENNA_L, PSY_ANTENNA_R
+--- @src anomaly/psi_storm_manager.script(384): PSI_STORM
+--- @src anomaly/bind_anomaly_field.script(283-284): EMI_BLOWOUT, EMI_BLOWOUT_FAR
+--- @src anomaly/sr_teleport.script(52): TINNITUS
+--- @src anomaly/configs/misc/script_sound.ltx: EARTHQUAKE, ORGANIC_MOAN, MONOLITH_HUM, WARLAB_NOISE, NOOS_TUNNEL, RADAR_1, RADAR_2
+--- @src anomaly/bind_dynamic_light.script(70): LIGHT_HUMMING
+SND = {
+    -- psy / horror whispers (stereo: pair _L + _R for in-head effect)
+    PSY_ANTENNA_L     = "anomaly\\psy_antenna_voices_1_l",
+    PSY_ANTENNA_R     = "anomaly\\psy_antenna_voices_1_r",
+    PSI_STORM         = "anomaly\\psi_storm_01",
+    EMI_BLOWOUT       = "anomaly\\emi_blowout",
+    EMI_BLOWOUT_FAR   = "anomaly\\emi_blowout_01",
+    TINNITUS          = "affects\\tinnitus3a",
+    -- ambient horror
+    EARTHQUAKE        = "ambient\\earthquake",
+    ORGANIC_MOAN      = "ambient\\organic_moan1",
+    MONOLITH_HUM      = "ambient\\monolith_1",
+    WARLAB_NOISE      = "ambient\\warlab_pod_noise",
+    NOOS_TUNNEL       = "ambient\\noos_tunnel_1",
+    RADAR_1           = "ambient\\radar_1",
+    RADAR_2           = "ambient\\radar_2",
+    LIGHT_HUMMING     = "ambient\\special\\light_humming",
+}
+
+--- Play a one-shot sound (fire-and-forget: no handle, no lerp).
+--- Uses play_no_feedback so the emitter is engine-owned and is NOT cut when the Lua object is
+--- garbage-collected -- play()/play_at_pos() set a feedback handle that ~CScriptSound stops on GC.
+--- For short cues that never need stopping; use play_at for a STOPPABLE one-shot, acquire/release for loops.
+--- @safety SAFE - nil-guarded on db.actor and sound_object_t constructor
+--- @cost O(1) | 1 luabind heavy (sound_object ctor + play_no_feedback)
+--- @src xray/xrGame/script_sound_script.cpp:51 (play_no_feedback); xrSound/SoundRender_Core.cpp:353-381 (detaches the emitter to engine ownership)
+--- @param snd_path string Sound path (e.g. "affects\\tinnitus3a", xsound.SND.*)
+--- @param opts table|nil { volume (default 1.0), position (vector -> 3D at that point; omit for 2D at-ear), freq (default 1.0) }
+--- @return boolean True if sound was played
+function play(snd_path, opts)
+    local actor = db.actor
+    if not actor then return false end
+    local snd = sound_object_t(snd_path)
+    if not snd then return false end
+    opts = opts or {}
+    local pos = opts.position
+    local flags = sound_object_t.s2d
+    if pos then flags = sound_object_t.s3d end
+    snd:play_no_feedback(actor, flags, 0, pos or vector():set(0, 0, 0), opts.volume or 1.0, opts.freq or 1.0)
+    return true
+end
+
+--- Play a one-shot with a RETAINED handle - the vanilla ambient call shape (sound_object -> play_at_pos ->
+--- volume property), so the sound CAN be stopped, unlike play(). The object is held in the module until it
+--- finishes (swept on the shared tick), so the GC never cuts it mid-play.
+--- @safety SAFE - nil-guarded on db.actor and the sound_object constructor
+--- @cost O(1) | 3-4 luabind heavy (ctor + play_at_pos + volume, s2d flag optional)
+--- @src anomaly/sound_ambient.script:144-165 (the vanilla call shape); xray/xrGame/script_sound.cpp:30-37 (GC cuts an unheld playing sound)
+--- @param snd_path string Sound path (backslashes, no .ogg)
+--- @param opts table|nil { position (vector; required for 3D), volume (default 1.0), s2d (true = at-ear 2D) }
+--- @return number|nil Handle for stop_shot/stop_shots, nil when not playable
+function play_at(snd_path, opts)
+    local actor = db.actor
+    if not actor then return nil end
+    opts = opts or {}
+    local snd = sound_object_t(snd_path)
+    if not snd then return nil end
+    local flags = opts.s2d and sound_object_t.s2d or sound_object_t.s3d
+    snd:play_at_pos(actor, opts.position or vector():set(0, 0, 0), 0, flags)
+    snd.volume = opts.volume or 1.0
+    local handle = _NEXT_HANDLE
+    _NEXT_HANDLE = _NEXT_HANDLE + 1
+    _active[handle] = {
+        sound         = snd,
+        path          = snd_path,
+        volume        = snd.volume,
+        target_volume = snd.volume,
+        smoothing     = 1.0,
+        releasing     = false,
+        oneshot       = true,
+    }
+    _ensure_registered()
+    return handle
+end
+
+--- Stop one retained one-shot immediately and free its slot.
+--- @safety SAFE - no-op on an unknown handle
+--- @cost O(1) | 1 luabind (stop)
+--- @param handle number Handle from play_at()
+--- @return boolean ok
+function stop_shot(handle)
+    local entry = _active[handle]
+    if not (entry and entry.oneshot) then return false end
+    if entry.sound:playing() then entry.sound:stop() end
+    _active[handle] = nil
+    return true
+end
+
+--- Stop every retained one-shot immediately (the dev-tab Stop). Looping handles are untouched.
+--- @safety SAFE
+--- @cost O(n_active) | 1 luabind per live shot (stop)
+function stop_shots()
+    for handle, entry in pairs(_active) do
+        if entry.oneshot and entry.sound:playing() then entry.sound:stop() end
+        if entry.oneshot then _dead[#_dead + 1] = handle end
+    end
+    for i = #_dead, 1, -1 do
+        _active[_dead[i]] = nil
+        _dead[i] = nil
+    end
+end
+
+--- Duration of a sound file in milliseconds, WITHOUT playing it. Constructs the sound_object (loads the
+--- source and its handle length), reads length(), then lets it GC -- no play means no feedback, so the
+--- collect is safe (~CScriptSound has nothing to cut). For spacing one-shots by their own length.
+--- @safety SAFE - no play, no retained handle, no db.actor needed
+--- @cost O(1) | 1 luabind heavy (sound_object ctor) + 1 length read
+--- @src xray/xrGame/script_sound_inline.h:11-15 (Length = iFloor(get_length_sec*1000)); xray/xrGame/script_sound.cpp:30-37 (GC-safe with no feedback)
+--- @param snd_path string Sound path (backslashes, no .ogg)
+--- @return number Duration in ms (0 if it could not load)
+function length(snd_path)
+    local snd = sound_object_t(snd_path)
+    if not snd then return 0 end
+    return snd:length() or 0
+end
+
+-- Step current toward target by smoothing per second
+-- @cost O(1) | 0 luabind
+local function _step(current, target, smoothing, dt_sec)
+    local delta = smoothing * dt_sec
+    if math_abs(target - current) <= delta then return target end
+    if current < target then return current + delta end
+    return current - delta
+end
+
+-- Per-frame volume lerp + auto-cleanup on releasing handles reaching 0
+-- @cost O(n_active) | 0 luabind (sound_object.volume is property assign)
+local function _tick()
+    local now = time_global()
+    if now - _last_tick < TICK_MS then return end
+    local dt_sec = (now - _last_tick) / 1000
+    _last_tick = now
+
+    for handle, entry in pairs(_active) do
+        local finished = entry.oneshot and not entry.sound:playing()
+        if not entry.oneshot and entry.volume ~= entry.target_volume then
+            entry.volume = _step(entry.volume, entry.target_volume, entry.smoothing, dt_sec)
+            entry.sound.volume = entry.volume
+        end
+        if not entry.oneshot and entry.releasing and entry.volume <= 0.001 then
+            entry.sound:stop()
+            finished = true
+        end
+        if finished then _dead[#_dead + 1] = handle end
+    end
+    for i = #_dead, 1, -1 do
+        _active[_dead[i]] = nil
+        _dead[i] = nil
+    end
+
+    if next(_active) == nil and _registered then
+        UnregisterScriptCallback("actor_on_update", _tick)
+        _registered = false
+    end
+end
+
+-- Register the actor_on_update callback on first acquire; idempotent on later calls
+-- @cost O(1) | 1 luabind (RegisterScriptCallback) on cold register, 0 luabind on hot path
+_ensure_registered = function()
+    if _registered then return end
+    _last_tick = time_global()
+    RegisterScriptCallback("actor_on_update", _tick)
+    _registered = true
+end
+
+--- Acquire a sound handle for a looping sound. Plays the sound immediately at volume 0 so the handle is live.
+--- Caller ramps the audible volume via set_volume(handle, target); release(handle) lerps back to 0 and frees the slot.
+--- @safety SAFE - guards db.actor, returns nil if sound_object constructor fails
+--- @cost O(1) | 1 luabind heavy (sound_object ctor + play_at_pos)
+--- @src xray/xrGame/script_sound_script.cpp sound_object bindings
+--- @param snd_path string Sound path (e.g. xsound.SND.PSY_ANTENNA_L), backslashes
+--- @param opts table|nil { looped (default true), s2d (default true), position (vector), smoothing (default 1.0) }
+--- @return number|nil handle
+function acquire(snd_path, opts)
+    if not db.actor then return nil end
+    opts = opts or {}
+    local snd = sound_object_t(snd_path)
+    if not snd then return nil end
+
+    local looped = opts.looped ~= false
+    local s2d    = opts.s2d ~= false
+    local flags  = s2d and sound_object_t.s2d or sound_object_t.s3d
+    if looped then flags = flags + sound_object_t.looped end
+
+    local pos = opts.position or vector():set(0, 0, 0)
+    snd:play_at_pos(db.actor, pos, 0, flags)
+    snd.volume = 0
+
+    local handle = _NEXT_HANDLE
+    _NEXT_HANDLE = _NEXT_HANDLE + 1
+    _active[handle] = {
+        sound         = snd,
+        path          = snd_path,
+        volume        = 0,
+        target_volume = 0,
+        smoothing     = opts.smoothing or 1.0,
+        releasing     = false,
+    }
+    _ensure_registered()
+    return handle
+end
+
+--- Set the target volume. Lerp drives current volume toward target each tick (100ms).
+--- @safety SAFE - rejects unknown or already-releasing handles
+--- @cost O(1) | 0 luabind (state write)
+--- @param handle number Handle from acquire()
+--- @param target number Target volume, clamped to [0, 1]
+--- @param smoothing number|nil Override smoothing for this transition (units/sec)
+--- @return boolean ok
+function set_volume(handle, target, smoothing)
+    local entry = _active[handle]
+    if not entry or entry.releasing then return false end
+    if target < 0 then target = 0 elseif target > 1 then target = 1 end
+    entry.target_volume = target
+    if smoothing then entry.smoothing = smoothing end
+    return true
+end
+
+--- Release the handle. Ramps volume to 0, then stops the sound and frees.
+--- @safety SAFE - no-op on unknown or already-releasing handle
+--- @cost O(1) | 0 luabind (state flag; stop happens on lerp completion)
+--- @param handle number Handle
+--- @return boolean ok
+function release(handle)
+    local entry = _active[handle]
+    if not entry or entry.releasing then return false end
+    entry.releasing     = true
+    entry.target_volume = 0
+    return true
+end
+
+--- Check if a handle is still tracked. Tracking ends when release()'s lerp finishes.
+--- @cost O(1) | 0 luabind (hash table lookup)
+--- @param handle number Handle from acquire()
+--- @return boolean True while the handle has an entry in _active
+function is_active(handle)
+    return _active[handle] ~= nil
+end
+
+--- Snapshot of a handle's state for diagnostics. Pure read, does not affect lerp or scheduling.
+--- @cost O(1) | 0 luabind (hash lookup + table copy of small fields)
+--- @param handle number Handle from acquire()
+--- @return table|nil { path, volume, target_volume, smoothing, releasing }, nil for unknown handle
+function inspect(handle)
+    local entry = _active[handle]
+    if not entry then return nil end
+    return {
+        path          = entry.path,
+        volume        = entry.volume,
+        target_volume = entry.target_volume,
+        smoothing     = entry.smoothing,
+        releasing     = entry.releasing,
+    }
+end
+
+-- ---- engine sound seams (trace + veto over the ambient soundscape) ----------------------------
+-- The demonized "ambient sound hooks" PR calls a named _G global at each engine sound-play site if
+-- the global is set, and applies { volume_mult } from the return (0 vetoes/silences, <1 attenuates,
+-- nil = vanilla). These are the PRIMITIVES only: xlibs owns the raw _G seams (mods never touch _G.*),
+-- and routes each call to one consumer-registered handler. All behavior - what to trace, whether to
+-- veto - lives in the handler, i.e. in the mod. Inert on a stock exe (the engine never calls the
+-- global) and while no handler is registered. The ambient sound sources reachable this way:
+--   COnAmbientBed  System A per-weather background bed  (GamePersistent WeathersUpdate)
+--   COnLevelMusic  level music track  (SMusicTrack::Play)
+
+-- global name (e.g. "COnAmbientBed") -> registered handler function
+local _sound_handlers = {}
+
+-- Install or remove one engine sound seam. The _G function re-reads _sound_handlers on each call so
+-- a later detach (nil) or swap takes effect immediately. NOT cleared on_game_start: axr_main calls
+-- module on_game_start() in filesystem order (axr_main.script:317-334), so a consumer registering in
+-- its own on_game_start (as_* sorts before xsound) would be silently wiped; handler and seam survive
+-- the reload together, consumers re-register idempotently.
+-- @cost O(1) | 0 luabind
+local function _set_sound_handler(global_name, handler)
+    assert(handler == nil or type(handler) == "function",
+        "xsound: sound handler for " .. global_name .. " must be a function or nil")
+    _sound_handlers[global_name] = handler
+    if handler then
+        _G[global_name] = function(...)
+            local current = _sound_handlers[global_name]
+            if not current then return nil end
+            return current(...)
+        end
+    else
+        _G[global_name] = nil
+    end
+end
+
+--- Register (or clear, with nil) the System A background-bed handler.
+--- handler: function(section, file, pos) -> nil | { volume_mult = number }
+--- @safety SAFE  @cost O(1) | 0 luabind
+--- @see xray/xrGame/GamePersistent.cpp (WeathersUpdate bed play site; fires _G.COnAmbientBed)
+--- @param handler function|nil
+function set_ambient_bed_handler(handler)
+    _set_sound_handler("COnAmbientBed", handler)
+end
+
+--- Register (or clear) the level-music handler.
+--- handler: function(file) -> nil | { volume_mult = number } (0 silences the track).
+--- @safety SAFE  @cost O(1) | 0 luabind
+--- @see xray/xrGame/level_sounds.cpp (SMusicTrack::Play; fires _G.COnLevelMusic)
+--- @param handler function|nil
+function set_level_music_handler(handler)
+    _set_sound_handler("COnLevelMusic", handler)
+end
+
+--- Reset all state on save load. Stops any playing sounds we still hold. Sound-seam handlers are
+--- intentionally NOT cleared here (see _set_sound_handler: on_game_start ordering would wipe them).
+function on_game_start()
+    for _, entry in pairs(_active) do
+        if entry.sound and entry.sound:playing() then
+            entry.sound:stop()
+        end
+    end
+    _active = {}
+    if _registered then
+        UnregisterScriptCallback("actor_on_update", _tick)
+        _registered = false
+    end
+    _NEXT_HANDLE = 1
+end

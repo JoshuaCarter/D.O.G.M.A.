@@ -1,0 +1,91 @@
+--- xmath: Math utilities (random selection, sampling, flat geometry)
+
+local math_random, math_min, type = math.random, math.min, type
+
+--- Squared flat (XZ) distance between two position vectors - the ground-plane displacement read.
+--- Squared so a radius compare needs no sqrt; flat so a height difference (stairs, a ledge) does
+--- not read as movement.
+--- @safety SAFE - pure Lua field reads
+--- @cost O(1) | 0 luabind (vector field math)
+--- @param a vector position
+--- @param b vector position
+--- @return number squared XZ distance in m^2
+function dist_flat_sqr(a, b)
+    local dx, dz = a.x - b.x, a.z - b.z
+    return dx * dx + dz * dz
+end
+
+--- Validate a caller-supplied position argument at a public spatial-query boundary.
+--- Returns true iff `pos` is a luabind vector (userdata). A nil returns false silently (an
+--- expected empty-input path). Any other non-vector type (function, table, number) is the
+--- signature of a foreign mod shadowing an object's C++ `position` member with a Lua method:
+--- luabind resolves the instance/class table before the C++ member (class_rep.cpp:1216-1253),
+--- so `obj.position` returns the function and every downstream `pos:distance_to_sqr()` / `pos.x`
+--- crashes with "attempt to index a function value". Returning false on that case lets the
+--- caller return its own empty result instead of a CTD.
+--- @src xray-monolith class_rep.cpp(1216-1253) instance/class table lookup precedes m_getters;
+---   xrServer_Objects_script.cpp(114) position is a def_readwrite C++ member on cse_abstract
+--- @safety SAFE - pure type() check
+--- @cost O(1) | 0 luabind (type() is a VM primitive)
+--- @param pos any value to validate
+--- @return boolean true if pos is a vector
+function check_pos(pos)
+    return type(pos) == "userdata"
+end
+
+--- True if position `pos` is within `radius` metres of (x, z) on the ground plane.
+--- Flat XZ (height ignored, so a ledge or stairs does not defeat it) and squared, so no sqrt.
+--- @safety SAFE - pure Lua field reads
+--- @cost O(1) | 0 luabind (vector field math)
+--- @param pos vector position to test
+--- @param x number target X coordinate
+--- @param z number target Z coordinate
+--- @param radius number range in metres
+--- @return boolean true if within range
+function in_range(pos, x, z, radius)
+    local dx, dz = pos.x - x, pos.z - z
+    return dx * dx + dz * dz <= radius * radius
+end
+
+--- Return random element from array
+--- Uses math.random for index selection; assumes #t > 0
+--- @safety SAFE - pure Lua, crashes on empty table (caller's responsibility)
+--- @cost O(1) | 0 luabind (pure Lua: math.random + table index)
+--- @param t table Array to sample from
+--- @return any Random element
+function sample(t)
+    return t[math_random(#t)]
+end
+
+--- Shuffle first n elements of array in-place
+--- Fisher-Yates partial shuffle: swaps each position with random later element
+--- @safety SAFE - pure Lua, mutates input table
+--- @cost O(n) | 0 luabind (pure Lua loop + math.random per step)
+--- @param t table Array to shuffle
+--- @param n number|nil Number of elements to shuffle (default: all)
+--- @return table Same array, shuffled
+function partial_shuffle(t, n)
+    n = n or #t
+    for i = 1, n do
+        local j = math_random(i, #t)
+        t[i], t[j] = t[j], t[i]
+    end
+    return t
+end
+
+--- Sample a uniformly random NUMBER of elements from array: k = random(1, min(n, #t))
+--- Delegates to partial_shuffle then picks the random count; the random-sized take is the
+--- contract (consumer dispatch variability). For an exact-count take, use partial_shuffle
+--- directly and slice (the xstash.find_stashes pattern).
+--- @safety SAFE - pure Lua, mutates input table
+--- @cost O(n) | 0 luabind (pure Lua loop + math.random per step)
+--- @param t table Source array
+--- @param n number Max elements to sample
+--- @return table Same array (first k elements are the sample), number k
+function sample_n(t, n)
+    if #t == 0 then return t, 0 end
+    local available = math_min(#t, n)
+    partial_shuffle(t, available)
+    return t, math_random(1, available)
+end
+

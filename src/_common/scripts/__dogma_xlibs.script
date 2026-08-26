@@ -1,0 +1,49 @@
+--[[
+	Vendored xlibs (Damian Sirbu). dogma.xlibs.xobject, etc.
+
+	Copies live in scripts/xlibs/. Update: drop gamedata/scripts/<name>.script
+	there as __dogma_<name>.script. Skip xlibs.script and xlibs_mcm.script.
+	Keep UPSTREAM. Do not edit the copies.
+]]
+
+local M = getfenv(1)
+
+-- Identifier form so the engine autoloads. _G aliases keep vendored files
+-- talking to each other by stock names (xobject.se, xconst, ...).
+local function bind(name, mod)
+	M[name] = mod
+	_G[name] = mod
+end
+
+bind("xconst", __dogma_xconst)
+bind("xstring", __dogma_xstring)
+bind("xtable", __dogma_xtable)
+bind("xmath", __dogma_xmath)
+bind("xfs", __dogma_xfs)
+bind("xltx", __dogma_xltx)
+bind("xtime", __dogma_xtime)
+bind("xslice", __dogma_xslice)
+bind("xtrace", __dogma_xtrace)
+bind("xttltable", __dogma_xttltable)
+bind("xlog", __dogma_xlog)
+bind("xevent", __dogma_xevent)
+bind("xbus", __dogma_xbus)
+bind("xpp", __dogma_xpp)
+bind("xprofiler", __dogma_xprofiler)
+bind("xinspect", __dogma_xinspect)
+bind("xprops", __dogma_xprops)
+bind("xchange", __dogma_xchange)
+bind("xmcm", __dogma_xmcm)
+bind("xobject", __dogma_xobject)
+bind("xlevel", __dogma_xlevel)
+bind("xinventory", __dogma_xinventory)
+bind("xcreature", __dogma_xcreature)
+bind("xactor", __dogma_xactor)
+bind("xdata", __dogma_xdata)
+bind("xsquad", __dogma_xsquad)
+bind("xsmart", __dogma_xsmart)
+bind("xsmart_spawn", __dogma_xsmart_spawn)
+bind("xstash", __dogma_xstash)
+bind("xpda", __dogma_xpda)
+bind("xsound", __dogma_xsound)
+bind("xcombat", __dogma_xcombat)

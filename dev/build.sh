@@ -27,8 +27,10 @@
 #
 # Scripts (prefix applied at build - src keeps short names like main.script):
 #   _common/scripts/__dogma_*        -> private impls
+#   _common/scripts/xlibs/           -> flatten to scripts/__dogma_*.script
+#                               vendored xlibs; dogma.xlibs / __dogma_xlibs
 #   _common/scripts/dogma_mcm.script -> MCM-gather API (dogma_mcm.attach / …)
-#   _common/scripts/dogma.script     -> game-time API (dogma.mcm / .dbg / .load)
+#   _common/scripts/dogma.script     -> game-time API (dogma.mcm / .dbg / .xlibs / .load)
 #                               game-time: dogma.*; MCM scripts: dogma_mcm.*
 #                               bare _* names other than __dogma_* skipped
 #   …/scripts/mcm.script      -> dogma_{path}_mcm.script   (*mcm.script glob)
@@ -376,6 +378,17 @@ map_src_file() {
 	is_gamedata_root "$bucket" || return 1
 
 	local dest_rel="$bucket_rel"
+	# Vendor folder stays nested in src; engine only loads scripts/*.script.
+	if [[ "$rel" == _common/scripts/xlibs/* ]]; then
+		[[ "$base" == *.script ]] || return 1
+		dest_rel="scripts/$base"
+		_emit_kind="gamedata"
+		_emit_src="$src_path"
+		_emit_rel="$dest_rel"
+		_emit_path_key="$path_key"
+		_emit_base="$base"
+		return 0
+	fi
 	if [[ -n "$path_key" && "$base" == *.script && "$bucket" == "scripts" ]]; then
 		# Flat under scripts/. override/ keeps exact basename (replace rival file).
 		if [[ "$bucket_rel" == scripts/override/* ]]; then

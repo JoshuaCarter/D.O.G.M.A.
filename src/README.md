@@ -44,7 +44,8 @@ Catalog: `fomod/manifest.yml` (`fomod` chrome + `mods` pages of path/name/stage)
 
 ## Common
 
-Runtime API: `dogma.script` (`dogma.mcm`, `dogma.input`, `dogma.dbg`, `dogma.status`, `dogma.load`, …).
+Runtime API: `dogma.script` (`dogma.mcm`, `dogma.input`, `dogma.dbg`, `dogma.status`, `dogma.xlibs`, `dogma.load`, …).
+Vendored xlibs: copies in `src/_common/scripts/xlibs/`. Wrapper `__dogma_xlibs.script` → `dogma.xlibs`.
 MCM gather: `dogma_mcm.attach` / `append` / `with_header`.
 Feature keybinds: MCM `key_bind` via `dogma.mcm.key()` + `dogma.input` (mod-only keys),
 or engine mirrors via `dogma.mcm.key_mirror` / `mirror_spec` (Settings → Controls ↔ MCM),
@@ -58,6 +59,6 @@ function on_game_start()
 	-- input: dogma.input.is_key_down(dik)
 	-- status: dogma.status.is_in_combat() / is_inv_open() / is_eating() / is_drinking()
 	--         / is_weapon_lowered() / is_sprinting() / is_talking() / health() / limbs() / bhs()
-	-- xlibs (separate MO2 mod): xconst.INVALID_LEVEL_VERTEX_ID
+	-- xlibs (vendored): dogma.xlibs.xconst.INVALID_LEVEL_VERTEX_ID
 end
 ```

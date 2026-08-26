@@ -1,0 +1,1232 @@
+--- xsmart: Smart terrain queries and checks
+
+local pairs, ipairs, next, type, alife_object, tostring = pairs, ipairs, next, type, alife_object, tostring
+local pcall, math, table, tonumber = pcall, math, table, tonumber
+local string_match, table_concat = string.match, table.concat
+local character_community = character_community
+local xobject, xsquad, xlevel, xttltable, xmath, xdata = xobject, xsquad, xlevel, xttltable, xmath, xdata
+
+--- Stalker faction community names used as props keys in simulation_objects_props.ltx
+local STALKER_FACTIONS = {
+    "bandit", "dolg", "ecolog", "freedom", "killer", "army",
+    "monolith", "stalker", "csky", "zombied", "greh", "isg", "renegade",
+}
+local _factions_cache = {}
+local _section_faction_cache = {}
+local _section_npc_max_cache = {}
+local _section_npc_range_cache = {}
+local ANOMALY_RADIUS_SQR = 2500
+
+JOB_TYPE_GENERIC_POINT = 0
+JOB_TYPE_CAMPFIRE_POINT = 1
+JOB_TYPE_TRADER = 15
+JOB_TYPE_MECHANIC = 16
+JOB_TYPE_MOB_HOME = 17
+
+--- Test smart.props[key] > 0. Used by all prop-flag predicates (is_base / is_lair / etc.).
+--- Reads simulation_objects_props.ltx flags; >0 means the flag is set.
+--- @src anomaly/simulation_objects.script(117)
+local function _prop_truthy(smart, key)
+    if not smart or not smart.props then return false end
+    local v = smart.props[key]
+    return v ~= nil and v > 0
+end
+
+--- @scope global - smart.props from simulation_objects_props.ltx loaded at on_register; same value on all levels regardless of online state
+--- @src doc/library/modding/online-offline-scoping.md
+--- @param smart smart_terrain
+--- @return boolean True if base (surge shelter, faction HQ)
+function is_base(smart) return _prop_truthy(smart, "base") end
+
+--- @scope global - smart.props from simulation_objects_props.ltx
+--- @param smart smart_terrain
+--- @return boolean True if lair (mutant nest)
+function is_lair(smart) return _prop_truthy(smart, "lair") end
+
+--- @scope global - smart.props from simulation_objects_props.ltx
+--- @param smart smart_terrain
+--- @return boolean True if resource point
+function is_resource(smart) return _prop_truthy(smart, "resource") end
+
+--- @scope global - smart.props from simulation_objects_props.ltx
+--- @param smart smart_terrain
+--- @return boolean True if territory (contestable)
+function is_territory(smart) return _prop_truthy(smart, "territory") end
+
+--- @scope global - smart.props from simulation_objects_props.ltx
+--- @param smart smart_terrain
+--- @return boolean True if smart has surge shelter (emission-safe indoor)
+--- @src anomaly/smart_terrain.script(1566), anomaly/surge_manager.script(1265)
+function has_surge_shelter(smart) return _prop_truthy(smart, "surge") end
+
+-- Walk a job table; type_id nil matches any (non-empty), >0 matches specific job_type_id.
+local function _has_jobs_in(jobs, type_id)
+    if not jobs or #jobs == 0 then return false end
+    if not type_id then return true end
+    for i = 1, #jobs do
+        if jobs[i].job_type_id == type_id then return true end
+    end
+    return false
+end
+
+--- Check if smart's stalker_jobs has any entry, or a specific job_type_id
+--- type_id nil matches any non-empty table; integer matches one job_type_id (e.g. JOB_TYPE_TRADER)
+--- @scope level - smart.stalker_jobs populated by gulag_general.load_job gated on smart_terrain.script:462 is_on_actor_level; nil for smarts on other levels
+--- @safety SAFE - pure Lua iteration, nil-guarded
+--- @cost O(k) k=jobs on smart (~10-30) | 0 luabind (pure Lua array scan)
+--- @src anomaly/gulag_general.script(281-303) job_info_by_job_type_id
+--- @src anomaly/smart_terrain.script(457-464) load_jobs is_on_actor_level gate
+--- @src doc/library/modding/online-offline-scoping.md current-level scope
+--- @param smart smart_terrain Smart terrain to check
+--- @param type_id number|nil Specific job_type_id, or nil for any non-empty
+--- @return boolean
+function has_stalker_jobs(smart, type_id)
+    return smart ~= nil and _has_jobs_in(smart.stalker_jobs, type_id)
+end
+
+--- Resolve the job a specific NPC currently holds at this smart.
+--- Reads the NPC's engine-bound .job -- the descriptor set in select_npc_job. Returns
+--- nil when the NPC has no npc_info entry (not arrived/registered, or smart offline: npc_info is
+--- populated only for online smarts on the actor's level) or holds no job yet. The descriptor
+--- carries .section ("logic@<smart>_<job>") and, for auto-generated jobs, .job_type_id (compare
+--- against JOB_TYPE_GENERIC_POINT / JOB_TYPE_CAMPFIRE_POINT / ...); exclusive LTX jobs carry
+--- .exclusive=true and no .job_type_id.
+--- @scope online - reads smart.npc_info; empty for offline / off-actor-level smarts
+--- @safety SAFE - pure Lua table reads, nil-guarded
+--- @cost O(1) | 0 luabind (npc_info is a pure Lua hash)
+--- @src anomaly/smart_terrain.script(771,801) the .job field set in select_npc_job
+--- @src anomaly/gulag_general.script(281-303) job_type_id table, (1183-1246) exclusive jobs
+--- @param smart smart_terrain Smart terrain to query
+--- @param npc_id number NPC server id
+--- @return table|nil Job descriptor { section, job_type_id?, exclusive? } or nil
+function get_job_for_npc(smart, npc_id)
+    if not smart or not smart.npc_info or not npc_id then return nil end
+    local info = smart.npc_info[npc_id]
+    return info and info.job
+end
+
+--- Clear an NPC's job assignment at a smart so the smart's next pass reselects one
+--- Unlinks the NPC from the occupancy map FIRST (every npc_by_job_section slot mapped to the id),
+--- then clears the four npc_info fields select_npc_job reads (job, job_id, begin_job, need_job);
+--- update_jobs then treats the NPC as needing a job and reassigns the highest-priority one whose
+--- precondition admits it. The unlink mirrors vanilla clear_job: without it a later
+--- clear_job(id, true) skips its own unlink (it walks the map only while info.job is set,
+--- smart_terrain.script:568-575), leaving a stale single-occupancy slot that other NPCs skip until
+--- the jobless-branch heal clears it (smart_terrain.script:740-742). No-op when the smart holds no
+--- npc_info entry for the id.
+--- @safety SAFE - nil-guarded on smart/npc_info/entry; pure Lua field writes
+--- @cost O(jobs with occupants) map walk | 0 luabind (npc_info / npc_by_job_section are Lua tables)
+--- @src anomaly/smart_terrain.script(566-580 clear_job unlink, 582 update_jobs, 626 select_npc_job)
+--- @param smart smart_terrain Smart the NPC is registered to
+--- @param npc_id number NPC id
+--- @return boolean True when a job entry was cleared, false when none was present
+function clear_npc_job(smart, npc_id)
+    if not smart or not smart.npc_info or not npc_id then return false end
+    local info = smart.npc_info[npc_id]
+    if not info then return false end
+    if smart.npc_by_job_section then
+        for sec, id in pairs(smart.npc_by_job_section) do
+            if id == npc_id then smart.npc_by_job_section[sec] = nil end
+        end
+    end
+    info.job = nil
+    info.job_id = nil
+    info.begin_job = false
+    info.need_job = "nil"
+    return true
+end
+
+--- Lazy per-NPC role cache. Roles are immutable in practice (section, community, and bound
+--- logic block don't change at runtime for service NPCs), so entries are populated on first
+--- query. The engine recycles freed server-entity ids (see the clsid guard in
+--- assign_squad_to_smart below), so each entry stores the section it was detected for and
+--- get_npc_roles re-detects when the section at the id changed - a recycled id can not
+--- serve the dead NPC's role set to its new holder. Memory cost is bounded by the lifetime
+--- NPC count (well under 50KB).
+--- Empty role sets are cached only if logic was bound at detection time (so pre-bind empty
+--- results don't stick when the NPC's logic binds later — first call returns empty, second
+--- call after bind returns the real role set).
+--- Entry shape: { sec = <section at detect time>, roles = <role set> }
+local _npc_role = {}
+
+-- Signal C of the role cascade: substring match on the NPC section name. See
+-- _detect_role for cascade orchestration and the per-signal rationale.
+-- @complexity O(1) | 9 string:find calls, bounded by literal pattern count.
+local function _section_roles(sec)
+    local roles = {}
+    if sec:find("mechanic") or sec:find("_tech") or sec:find("mech_mlr") or sec:find("mechan") then roles.mechanic = true end
+    if sec:find("medic") or sec:find("medik") or sec:find("doctor") then roles.medic = true end
+    if sec:find("trader") or sec:find("barm[ae]n") then roles.trader = true end
+    return roles
+end
+
+-- Signal D of the role cascade: NPC active logic-block `trade =` LTX field
+-- (Demonized's classifier; stalker_anomaly_mods/Trader Destockifier/trader_autoinject.script:85).
+-- companion catalogs are exclusion-only; returns sentinel "_exclude" so the caller can
+-- distinguish "no trade field set" (nil) from "explicitly companion-only" ("_exclude").
+-- @complexity O(1) | 1 db.storage lookup + 1 r_string_ex + at most 4 string:find.
+local function _trade_cat_role(npc)
+    local st = db.storage[npc:id()]
+    if not (st and st.ini and st.section_logic) then return nil end
+    local trade_cat = st.ini:r_string_ex(st.section_logic, "trade")
+    if not trade_cat then return nil end
+    if trade_cat:find("companion") then return "_exclude" end
+    if trade_cat:find("trade_generic_mechanic") then return "mechanic" end
+    if trade_cat:find("trade_generic_barman") then return "trader" end
+    if trade_cat:find("trade_generic_medic") then return "medic" end
+    -- Generic supplier default (Petrenko-style curated catalog).
+    return "trader"
+end
+
+-- Per-NPC role detection. Returns the SET of all roles the NPC fulfills (multi-role: an
+-- NPC like Pripyat Yar is both medic and trader, mechanics with dm_init_trader sell parts
+-- so they're mechanic+trader). Engine-authoritative gate is the trade = field declared in
+-- the NPC's active [logic@<section_logic>] block. Trade-side classification approach mirrors
+-- Trader Destockifier's get_trader_type by Demonized (stalker_anomaly_mods/Trader Destockifier .../
+-- trader_autoinject.script:85). All signals contribute additively; no early returns.
+--
+-- Signals (all checked, all contribute to the role set):
+--   A. character_community == "trader" -> roles.trader (Sidorovich-class universal-neutral)
+--   B. clsid == script_trader / clsid.trader -> roles.trader (Script_Trader-derived NPCs)
+--   C. _section_roles: section name substring patterns
+--        contains "mechanic" / "_tech" / "mech_mlr" / "mechan" -> roles.mechanic
+--        contains "medic" / "medik" / "doctor"                 -> roles.medic
+--        contains "trader" / "barm[ae]n"                       -> roles.trader
+--   D. _trade_cat_role: trade = field in active logic block
+--        contains "companion"              -> "_exclude" (no role; companions don't serve other squads)
+--        contains "trade_generic_mechanic" -> "mechanic"
+--        contains "trade_generic_barman"   -> "trader" (barman = trader role)
+--        contains "trade_generic_medic"    -> "medic"
+--        else                              -> "trader" (generic supplier / curated catalog)
+--      Absent trade = field -> nil (nothing added at this step).
+--
+-- The earlier single-role single-return design returned the FIRST signal that matched and
+-- missed multi-role NPCs (Yar was medic-only because section pattern returned "medic" before
+-- the trader signal could fire). The set-returning design captures every role the NPC actually
+-- fulfills, removing the early-return bias.
+--
+-- The level_spot signal (PDA map-icon hint) is intentionally NOT used: quest scripts set
+-- level_spot=trader on non-trader NPCs (Jupiter nuclear physicist for the detector-upgrade
+-- quest), causing false-positive trader classification. The trade = field is the engine's
+-- actual trade-catalog enabler — present iff the NPC has a trade catalog.
+--
+-- @complexity O(1) | 1 community + 1 clsid + delegates to _section_roles / _trade_cat_role
+--       (section read by get_npc_roles and passed in). All cached per NPC id after first call.
+local function _detect_role(npc, sec)
+    local roles = _section_roles(sec)
+    if character_community(npc) == "trader" then roles.trader = true end
+    local cls = npc:clsid()
+    if cls == clsid.script_trader or cls == clsid.trader then roles.trader = true end
+    local trade_role = _trade_cat_role(npc)
+    if trade_role and trade_role ~= "_exclude" then roles[trade_role] = true end
+    return roles
+end
+
+--- Get the SET of roles for an online NPC, cached for the session.
+--- Multi-role NPCs return a set with multiple keys true (e.g. {medic=true, trader=true}
+--- for Pripyat Yar). See _detect_role for the signal cascade and Demonized-classifier
+--- reference. Pre-bind empty sets not cached so a later call after logic binds re-detects.
+--- @safety SAFE - nil-guarded; all engine reads are standard game_object methods
+--- @cost O(1) | 1 luabind on hit (section verify vs id recycling), 2-5 luabind heavy on miss (community + clsid + section + optional r_string_ex)
+--- @complexity O(1) amortized | luabind cost as above
+--- @see anomaly/xr_logic.script:113 (engine trade= consumer)
+--- @src stalker_anomaly_mods/Trader Destockifier .../trader_autoinject.script:85 (Demonized get_trader_type);
+---      anomaly/utils_obj.script:74 (vanilla is_trader 4-signal); anomaly/xr_logic.script:113 (engine trade= consumer)
+--- @param npc game_object Online NPC game_object
+--- @return table Role set, e.g. {trader=true, medic=true}. Empty table for non-service NPCs.
+function get_npc_roles(npc)
+    if not npc then return {} end
+    local id = npc:id()
+    local sec = npc:section()
+    local entry = _npc_role[id]
+    if entry ~= nil and entry.sec == sec then return entry.roles end
+    local roles = _detect_role(npc, sec)
+    -- Cache positive results always. Cache empty sets only if logic was bound at detection
+    -- time (so pre-bind empty doesn't stick when the NPC's logic binds later).
+    if next(roles) ~= nil or (db.storage[id] and db.storage[id].section_logic) then
+        _npc_role[id] = { sec = sec, roles = roles }
+    end
+    return roles
+end
+
+--- Test if NPC is a trader. See get_npc_roles for the detection signals.
+--- @safety SAFE - delegates to get_npc_roles
+--- @cost O(1) | 1 luabind on hit (section verify), 2-5 luabind heavy on miss
+--- @param npc game_object Online NPC game_object
+--- @return boolean
+function is_trader_npc(npc)
+    return npc and get_npc_roles(npc).trader == true or false
+end
+
+--- Test if NPC is a medic. See get_npc_roles for the detection signals.
+--- @safety SAFE - delegates to get_npc_roles
+--- @cost O(1) | 1 luabind on hit (section verify), 2-5 luabind heavy on miss
+--- @param npc game_object Online NPC game_object
+--- @return boolean
+function is_medic_npc(npc)
+    return npc and get_npc_roles(npc).medic == true or false
+end
+
+--- Test if NPC is a mechanic. See get_npc_roles for the detection signals.
+--- @safety SAFE - delegates to get_npc_roles
+--- @cost O(1) | 1 luabind on hit (section verify), 2-5 luabind heavy on miss
+--- @param npc game_object Online NPC game_object
+--- @return boolean
+function is_mechanic_npc(npc)
+    return npc and get_npc_roles(npc).mechanic == true or false
+end
+
+-- Walk smart.npc_info, return first online live NPC whose role set contains the asked role.
+-- Engine-authoritative: smart.npc_info reflects the engine's smart roster (populated when
+-- NPC enters job logic on smart). Covers curated NPCs (in xdata.npc_roles) and uncurated /
+-- addon NPCs. Multi-role NPCs (Yar = medic+trader, mechanics with trader dialog) are found
+-- by both medic and trader lookups since they're tagged true for both in their role set.
+-- @cost O(n) n=npc_info entries (typically 5-30) | per entry: 1 medium (xobject.go), 1 trivial (alive), 1 cached role set lookup
+local function _get_role_at_smart(smart, role)
+    if not smart or not smart.npc_info then return nil end
+    for npc_id, _ in pairs(smart.npc_info) do
+        local npc = xobject.go(npc_id)
+        if npc and npc:alive() and get_npc_roles(npc)[role] == true then return npc end
+    end
+    return nil
+end
+
+--- Resolve the trader NPC at a smart. Walks smart.npc_info, returns first online live NPC
+--- whose get_npc_roles set contains "trader" (Demonized-style trade= classifier).
+--- @safety SAFE - nil-guarded; section_name is a standard CSE method
+--- @cost O(n) n=npc_info entries (typically 5-30) | per entry: 1 medium (xobject.go) + 1 trivial (alive) + cached role
+--- @src anomaly/smart_terrain.script(801) self.npc_info entries; anomaly/utils_obj.script(74) is_trader
+--- @param smart smart_terrain Smart terrain to query
+--- @return game_object|nil Online trader NPC, or nil if none online at this smart
+function get_trader_at_smart(smart)
+    return _get_role_at_smart(smart, "trader")
+end
+
+--- Resolve the medic NPC at a smart. Walks npc_info, returns first live NPC whose get_npc_roles set contains "medic".
+--- @safety SAFE - nil-guarded
+--- @cost O(n) n=npc_info entries | per entry: 1 medium (xobject.go) + 1 trivial (alive) + cached role
+--- @src anomaly/smart_terrain.script(801); anomaly/xr_conditions.script(67) check_npc_medic
+--- @param smart smart_terrain Smart terrain to query
+--- @return game_object|nil Online medic NPC, or nil if none online at this smart
+function get_medic_at_smart(smart)
+    return _get_role_at_smart(smart, "medic")
+end
+
+--- Resolve the mechanic NPC at a smart. Walks npc_info, returns first live NPC whose get_npc_roles set contains "mechanic".
+--- @safety SAFE - nil-guarded
+--- @cost O(n) n=npc_info entries | per entry: 1 medium (xobject.go) + 1 trivial (alive) + cached role
+--- @src anomaly/smart_terrain.script(801); anomaly/xr_conditions.script(60) check_npc_mechanic
+--- @param smart smart_terrain Smart terrain to query
+--- @return game_object|nil Online mechanic NPC, or nil if none online at this smart
+function get_mechanic_at_smart(smart)
+    return _get_role_at_smart(smart, "mechanic")
+end
+
+--- Test if any live online NPC at the smart has role="trader"
+--- @safety SAFE - delegates to _get_role_at_smart
+--- @cost O(n) n=npc_info entries | same as get_trader_at_smart
+--- @src anomaly/smart_terrain.script(801)
+--- @param smart smart_terrain Smart terrain to query
+--- @return boolean
+function has_trader_at_smart(smart)
+    return _get_role_at_smart(smart, "trader") ~= nil
+end
+
+--- Test if any live online NPC at the smart has role="medic"
+--- @safety SAFE - delegates to _get_role_at_smart
+--- @cost O(n) n=npc_info entries | same as get_medic_at_smart
+--- @src anomaly/smart_terrain.script(801)
+--- @param smart smart_terrain Smart terrain to query
+--- @return boolean
+function has_medic_at_smart(smart)
+    return _get_role_at_smart(smart, "medic") ~= nil
+end
+
+--- Test if any live online NPC at the smart has role="mechanic"
+--- @safety SAFE - delegates to _get_role_at_smart
+--- @cost O(n) n=npc_info entries | same as get_mechanic_at_smart
+--- @src anomaly/smart_terrain.script(801)
+--- @param smart smart_terrain Smart terrain to query
+--- @return boolean
+function has_mechanic_at_smart(smart)
+    return _get_role_at_smart(smart, "mechanic") ~= nil
+end
+
+--- Owner faction of the nearest live SELLER (trader/barman, medic, or mechanic) within `radius` of `pos`,
+--- or nil when none is near. A "base" is defined by a real seller being CLOSE - measured to the seller
+--- NPC ITSELF, never to a smart terrain: a smart's position is a misleading center point, the seller can
+--- sit tens of metres from it, and one base spans several smarts (proven in the field - the Rookie Village
+--- square and the Rostok checkpoint are their own smarts, but Sidorovich / the Barman stand 40-60m away).
+--- Returns the nearest seller's faction community (the owner) plus its distance; nil when no seller is
+--- within radius, i.e. not a base here. The raw `base` prop is over-assigned and ignored on purpose.
+--- ONLINE-ONLY: scans online game objects, so it only sees sellers on the loaded level near the actor -
+--- which is exactly the base you are standing in. Objective only: returns the OWNER, never a friendliness
+--- verdict (friendliness is per-actor; the caller relates the owner via game_relations). Warfare-correct -
+--- a captured base's seller changes faction, so the owner follows.
+--- @scope online - iterates online game objects via xcreature.online_iter_with_id
+--- @safety SAFE - nil-guarded on pos; skips non-stalkers; community nil-safe
+--- @cost O(n) online objects | per stalker: get_npc_roles (cached) + 1 distance; + 1 community on the winner
+--- @src anomaly/db.script online storage; anomaly/_g.script(2273,2437) community
+--- @param pos vector World position to measure from (the actor's position)
+--- @param radius number|nil Metres; default 60 (a base footprint)
+--- @return string|nil owner community, number|nil its distance - both nil if no seller within radius
+function base_owner_near(pos, radius)
+    if not pos then return nil end
+    radius = radius or 60
+    local best_dist, best = radius, nil
+    for _, obj in xcreature.online_iter_with_id() do
+        if not (obj and xcreature.is_stalker(obj)) then goto continue end
+        local roles = get_npc_roles(obj)
+        if not (roles.trader or roles.medic or roles.mechanic) then goto continue end
+        local seller_dist = pos:distance_to(obj:position())
+        if seller_dist < best_dist then best_dist, best = seller_dist, obj end
+        ::continue::
+    end
+    if not best then return nil end
+    return xcreature.community(best), best_dist
+end
+
+--- Check if smart has any non-stub stalker job
+--- Stubs (generic_point id=0, campfire_point id=1) are pushed unconditionally on every smart;
+--- non-stub = any other job_type_id (conditional auto-gen) or any exclusive LTX job (no
+--- job_type_id field; carries job.exclusive=true per gulag_general.script:1221,1238)
+--- @scope level - reads smart.stalker_jobs which load_jobs only populates for current-actor-level smarts (smart_terrain.script:462)
+--- @safety SAFE - pure Lua iteration, nil-guarded
+--- @cost O(k) k=jobs on smart (~10-30) | 0 luabind (pure Lua array scan)
+--- @src anomaly/gulag_general.script(308,340,492-526) unconditional vs conditional inits
+--- @src anomaly/gulag_general.script(1183-1246) add_exclusive_job (LTX exclusive jobs)
+--- @src doc/library/modding/job-system.md "Unconditional vs Conditional Inits"
+--- @param smart smart_terrain Smart terrain to check
+--- @return boolean
+function has_animated_stalker_jobs(smart)
+    if not smart then return false end
+    local jobs = smart.stalker_jobs
+    if not jobs or #jobs == 0 then return false end
+    for i = 1, #jobs do
+        local job = jobs[i]
+        if job.exclusive then return true end
+        local id = job.job_type_id
+        if id and id ~= JOB_TYPE_GENERIC_POINT and id ~= JOB_TYPE_CAMPFIRE_POINT then
+            return true
+        end
+    end
+    return false
+end
+
+--- Check if smart terrain has a campfire (a map-placed one at any distance, or a live one online).
+--- Consults xdata.campfire_smarts first (the static base-map set, offline + cross-level), then falls
+--- back to db.campfire_table_by_smart_names (bind_campfire, online scope) so player-placed / non-base
+--- fires still answer when near. Absent xdata entry + no online binder = false.
+--- @scope global - xdata.campfire_smarts covers offline base-map campfires cross-level; online table is fallback
+--- @safety SAFE - nil-guarded, next() guards empty sub-tables left by individual campfire net_destroy
+--- @cost O(1) | 1 luabind heavy (smart:name() shared_str alloc) + 2 pure-Lua hash reads
+--- @src anomaly/bind_campfire.script(272-278,295-302) online table; xray/ZoneCampfire.h campfire is immutable geometry
+--- @src doc/library/modding/online-offline-scoping.md online scope (fallback path)
+--- @param smart smart_terrain Smart terrain to check
+--- @return boolean True if smart has campfire(s)
+function has_campfire(smart)
+    if not smart then return false end
+    local name = smart:name()
+    if xdata.campfire_smarts[name] then return true end
+    local tbl = db.campfire_table_by_smart_names and db.campfire_table_by_smart_names[name]
+    return tbl and next(tbl) ~= nil or false
+end
+
+--- Test if a position is within radius of any campfire bound to the smart.
+--- Reads db.campfire_table_by_smart_names[smart:name()] (bind_campfire, online scope) and measures
+--- against each binder.object. Tells a real fire seat (the seat ring is <=8m from the fire,
+--- xr_campfire_point.script:65-101) from the campfire_point random-cover fallback, which lands
+--- decoupled from the fire.
+--- @scope online - campfire binders exist while the campfire is online (switch_distance)
+--- @safety SAFE - nil-guarded; binder.object guarded for the net_destroy transition edge
+--- @cost O(k) k=campfires at smart (1-3) | per fire: 1 luabind trivial (object:position) + distance_to_sqr inline
+--- @src anomaly/bind_campfire.script(20-27) campfire_table_by_smart_names binders with .object
+--- @param smart smart_terrain Smart terrain to query
+--- @param position vector World position to test
+--- @param radius number Meters
+--- @return boolean True if position is within radius of any bound campfire
+function is_near_campfire(smart, position, radius)
+    if not smart or not xmath.check_pos(position) then return false end
+    local fires = db.campfire_table_by_smart_names and db.campfire_table_by_smart_names[smart:name()]
+    if not fires then return false end
+    local r2 = radius * radius
+    for _, binder in pairs(fires) do
+        local obj = binder and binder.object
+        if obj and position:distance_to_sqr(obj:position()) <= r2 then return true end
+    end
+    return false
+end
+
+--- Check if smart terrain is near anomaly zones
+--- Proximity check against db.anomaly_by_name; online scope (switch_distance, not current-level)
+--- @scope online - db.anomaly_by_name populated by anomaly zone binders at net_spawn; binder.object is the online physics object. Same online_distance / offline_distance hysteresis as campfires.
+--- @safety SAFE - nil-guarded, no pcall. binder.object guarded for net_destroy transition edge case
+--- @cost O(k) k=online anomaly zones (5-15) | per zone: binder.object:position() 1 luabind trivial (Fvector return) + distance_to_sqr 1 luabind trivial (inline math)
+--- @src anomaly/db.script(29,94-100), anomaly/bind_anomaly_zone.script(485,492)
+--- @param smart smart_terrain Smart terrain to check
+--- @return boolean True if smart within 50m of any online anomaly zone
+function has_anomaly(smart)
+    if not smart then return false end
+    local smart_pos = smart.position
+    if not smart_pos then return false end
+    if not db.anomaly_by_name then return false end
+    for _, binder in pairs(db.anomaly_by_name) do
+        local obj = binder.object
+        if obj and smart_pos:distance_to_sqr(obj:position()) < ANOMALY_RADIUS_SQR then
+            return true
+        end
+    end
+    return false
+end
+
+--- Check if a WORLD POSITION is near an online anomaly zone (the pos-based twin of has_anomaly).
+--- Proximity check against db.anomaly_by_name; online scope (a zone is a binder only while online).
+--- @scope online - db.anomaly_by_name populated by anomaly zone binders at net_spawn
+--- @safety SAFE - nil-guarded on pos and db.anomaly_by_name; binder.object guarded for the net_destroy edge
+--- @cost O(k) k=online anomaly zones (5-15) | per zone: 1 luabind trivial (object:position) + distance_to_sqr inline
+--- @src anomaly/db.script(29,94-100), anomaly/bind_anomaly_zone.script(485,492)
+--- @param pos vector World position to measure from
+--- @param radius number|nil Metres; default 50 (matches has_anomaly)
+--- @return boolean True if pos is within radius of any online anomaly zone
+function anomaly_near(pos, radius)
+    if not (pos and db.anomaly_by_name) then return false end
+    local r2 = (radius or 50) * (radius or 50)
+    for _, binder in pairs(db.anomaly_by_name) do
+        local obj = binder.object
+        if obj and pos:distance_to_sqr(obj:position()) < r2 then return true end
+    end
+    return false
+end
+
+--- Get nearest smart terrain to actor
+--- Reads engine-maintained nearest_to_actor_smart table (updated every online smart tick, zero search cost)
+--- @scope online - smart_terrain.nearest_to_actor_smart is updated by smart tick gated on self.online (smart_terrain.script:1256); only online smarts compete for the slot
+--- @safety SAFE - nil-guarded, alife_object returns nil for invalid IDs
+--- @cost O(log n) | 1 luabind medium (alife_object: xr_map find)
+--- @src anomaly/smart_terrain.script(11,1256,1262), anomaly/se_actor.script(96), anomaly/axr_companions.script(412)
+--- @return se_smart|nil Nearest smart terrain to actor
+function get_actor_smart()
+    local data = smart_terrain and smart_terrain.nearest_to_actor_smart
+    if not data or not data.id then return nil end
+    return alife_object(data.id)
+end
+
+--- Check if smart terrain accepts a faction (Tier 1 of target_precondition)
+--- Dispatches by faction type: mutants check all/all_monster/props[faction], stalkers
+--- (including "zombied") check all/all_stalker/props[faction]. Mirrors engine
+--- target_precondition faction gate at smart_terrain.script:1531-1559. Tier 2 (zoning:
+--- lair/territory/base/resource/surge with time-of-day preconditions) is not checked.
+--- Use this for refill / population / mod logic that needs faction acceptance independent
+--- of routing time-of-day gates. Use full target_precondition for routing decisions.
+--- @scope global - smart.props from simulation_objects_props.ltx; is_squad_monster from _g.script
+--- @safety SAFE - pure Lua table reads, nil-guarded
+--- @cost O(1) | 0 luabind (pure Lua field/table reads)
+--- @src anomaly/smart_terrain.script(1531-1559), anomaly/_g.script(2344), anomaly/simulation_objects_props.ltx
+--- @param smart smart_terrain Smart terrain to check
+--- @param faction string Faction community (e.g. "bandit", "monster_predatory_day", "zombied")
+--- @return boolean True if smart accepts this faction's presence
+function accepts_faction(smart, faction)
+    if not smart or not faction then return false end
+    local props = smart.props
+    if not props then return false end
+    if props.all and props.all > 0 then return true end
+    if is_squad_monster[faction] then
+        if props.all_monster and props.all_monster > 0 then return true end
+    else
+        if props.all_stalker and props.all_stalker > 0 then return true end
+    end
+    return props[faction] and props[faction] > 0 or false
+end
+
+--- Get the faction (player_id) a squad section produces
+--- Reads the `faction` field from the squad's INI definition in configs/misc/squad_descr/.
+--- This is the same string that ends up as squad.player_id after SIMBOARD:create_squad,
+--- and the same string xcreature.community returns for a live squad spawned from this section.
+--- Coarse vocabulary: stalker factions ("bandit", "stalker", "dolg", ...) and monster_*
+--- categories ("monster_predatory_day", "monster_special", "monster_zombied_night", ...).
+--- No species-level granularity -- the section's npc_random field holds the species pool.
+--- Use this to classify a smart's respawn_params.squads pool by what it will spawn.
+--- @scope global - reads ini_sys (system.ltx merged INI); section metadata is static
+--- @safety SAFE - returns nil when section missing or has no faction field
+--- @cost O(1) | 0 luabind cached, 1 luabind medium on miss (session-lifetime per-section cache)
+--- @src anomaly/configs/misc/squad_descr/squad_descr_default_mutants.ltx, anomaly/configs/misc/squad_descr/squad_descr_default_stalkers.ltx
+--- @src anomaly/sim_board.script(139)
+--- @param section string Squad section name (e.g. "simulation_dog", "bandit_sim_squad_novice")
+--- @return string|nil Faction the squad will have (e.g. "monster_predatory_day", "bandit"), or nil
+function section_faction(section)
+    if not section then return nil end
+    local cached = _section_faction_cache[section]
+    if cached ~= nil then return cached or nil end
+    local faction = ini_sys:r_string_ex(section, "faction")
+    if not faction or faction == "" then
+        _section_faction_cache[section] = false
+        return nil
+    end
+    _section_faction_cache[section] = faction
+    return faction
+end
+
+--- Get the upper bound of a squad section's npc_in_squad field
+--- Parses "X, Y" returning Y (range upper) or "X" returning X. 0 when section missing or
+--- field absent. Pairs with section_faction for inspecting squad_descr sections: this
+--- returns "how many NPCs can spawn at most", section_faction returns "what faction they belong to".
+--- @safety SAFE - returns 0 when section missing, has no npc_in_squad field, or value unparseable
+--- @cost O(1) | 0 luabind cached, 1 luabind heavy on miss (ini_sys:r_string_ex: LTX section lookup + string alloc) + 1-2 pure-Lua regex matches
+--- @src anomaly/configs/misc/squad_descr/squad_descr_default_mutants.ltx, anomaly/configs/misc/squad_descr/squad_descr_default_stalkers.ltx
+--- @src anomaly/sim_board.script(149) create_squad reads npc_in_squad upper as the population cap
+--- @param section string Squad section name (e.g. "simulation_boar_3_5", "bandit_sim_squad_novice")
+--- @return number Upper bound of npc_in_squad, or 0 when section/field missing
+function get_section_npc_max(section)
+    if not section then return 0 end
+    local cached = _section_npc_max_cache[section]
+    if cached ~= nil then return cached end
+    local raw = ini_sys:r_string_ex(section, "npc_in_squad")
+    if not raw or raw == "" then
+        _section_npc_max_cache[section] = 0
+        return 0
+    end
+    local _, high = string_match(raw, "(%d+)%s*,%s*(%d+)")
+    local result
+    if high then
+        result = tonumber(high) or 0
+    else
+        result = tonumber(string_match(raw, "(%d+)")) or 0
+    end
+    _section_npc_max_cache[section] = result
+    return result
+end
+
+--- Get both bounds of a squad section's npc_in_squad field
+--- Parses "X, Y" returning (X, Y); a single "X" returns (X, X). (0, 0) when section or
+--- field missing. Same field get_section_npc_max reads; use this when the lower bound or
+--- the expected squad size ((min+max)/2 under the engine's uniform draw) is needed.
+--- @safety SAFE - returns 0, 0 when section missing, has no npc_in_squad field, or value unparseable
+--- @cost O(1) | 0 luabind cached, 1 luabind heavy on miss (ini_sys:r_string_ex: LTX section lookup + string alloc) + 1-2 pure-Lua regex matches
+--- @src anomaly/configs/misc/squad_descr/squad_descr_default_mutants.ltx, anomaly/configs/misc/squad_descr/squad_descr_default_stalkers.ltx
+--- @src anomaly/sim_squad_scripted.script(704-707) create_npc draws squad size uniformly from npc_in_squad
+--- @param section string Squad section name (e.g. "simulation_boar_3_5", "bandit_sim_squad_novice")
+--- @return number Lower bound of npc_in_squad, or 0 when section/field missing
+--- @return number Upper bound of npc_in_squad, or 0 when section/field missing
+function get_section_npc_range(section)
+    if not section then return 0, 0 end
+    local cached = _section_npc_range_cache[section]
+    if cached then return cached[1], cached[2] end
+    local raw = ini_sys:r_string_ex(section, "npc_in_squad")
+    local low, high
+    if raw and raw ~= "" then
+        low, high = string_match(raw, "(%d+)%s*,%s*(%d+)")
+        if not low then
+            low = string_match(raw, "(%d+)")
+            high = low
+        end
+    end
+    low = tonumber(low) or 0
+    high = tonumber(high) or 0
+    _section_npc_range_cache[section] = { low, high }
+    return low, high
+end
+
+--- Get stalker factions declared in smart terrain's props (LTX simulation_objects_props.ltx)
+--- Builds {[faction]=true} from props keys with value >0 (only STALKER_FACTIONS list); cached
+--- per smart.id since props are static INI. Use accepts_faction for the engine Tier 1 routing
+--- question (includes all/all_stalker fallbacks); use this when you need the literal explicit
+--- faction declaration set.
+--- @scope global - smart.props from simulation_objects_props.ltx
+--- @safety SAFE - pure Lua table reads (no luabind), nil-guarded
+--- @cost O(13) factions first call, O(1) cached | 0 luabind (props is a pure Lua table from LTX parse)
+--- @src anomaly/simulation_objects.script(117), anomaly/smart_terrain.script(1534)
+--- @param smart smart_terrain Smart terrain to check
+--- @return table Faction set {[faction]=true, ...} or empty table
+function get_declared_factions(smart)
+    if not smart then return {} end
+    local cached = _factions_cache[smart.id]
+    if cached then return cached end
+    local result = {}
+    if not smart.props then
+        _factions_cache[smart.id] = result
+        return result
+    end
+    for i = 1, #STALKER_FACTIONS do
+        local faction = STALKER_FACTIONS[i]
+        local val = smart.props[faction]
+        if val and val > 0 then
+            result[faction] = true
+        end
+    end
+    _factions_cache[smart.id] = result
+    return result
+end
+
+--- Check if smart terrain is empty (no squads assigned)
+--- Reads SIMBOARD.smarts[smart_id].squads; next() is cheapest empty check (no luabind).
+--- Signature matches the other SIMBOARD-indexing functions (get_smart_squads,
+--- has_squad_of_faction): takes smart_id directly so callers do not pay alife_object lookups.
+--- @scope global - SIMBOARD.smarts populated at server-entity register (sim_board.script init_smart); roster reflects sim intent, not physical occupancy
+--- @safety SAFE - pure Lua, nil-guarded at every level
+--- @cost O(1) | 0 luabind (pure Lua field/table reads)
+--- @src anomaly/sim_board.script(96), xcvb/night_mutants.script(92)
+--- @param smart_id number Smart terrain server entity ID
+--- @return boolean True if empty
+function is_smart_empty(smart_id)
+    if not smart_id then return true end
+    if not SIMBOARD or not SIMBOARD.smarts then return true end
+    local data = SIMBOARD.smarts[smart_id]
+    if not data or not data.squads then return true end
+    return next(data.squads) == nil
+end
+
+--- Get squads table for a smart terrain by ID
+--- Returns the raw SIMBOARD.smarts[id].squads hash ({[squad_id]=true}); caller iterates via next()
+--- @scope global - SIMBOARD.smarts populated at register
+--- @safety SAFE - pure Lua, nil-guarded at every level
+--- @cost O(1) | 0 luabind (pure Lua field/table reads)
+--- @src anomaly/sim_board.script(96,258)
+--- @param smart_id number Smart terrain server entity ID
+--- @return table|nil Squads table or nil if unavailable
+function get_smart_squads(smart_id)
+    if not smart_id then return nil end
+    if not SIMBOARD or not SIMBOARD.smarts then return nil end
+    local data = SIMBOARD.smarts[smart_id]
+    if not data or not data.squads then return nil end
+    return data.squads
+end
+
+local function _empty_iter() return nil end
+
+--- Iterate squads physically stationed at smart, capped (default 5).
+--- Walks SIMBOARD.smarts[smart_id].squads, yields each se whose current_action=1 AND
+--- current_target_id=smart_id (xsquad.is_stationed). Skips in-transit squads. The cap is a
+--- safety belt against mod-induced roster explosion: stops after `cap` non-excluded ids are
+--- inspected, regardless of how many were stationed. If every inspected id was in-transit the
+--- iterator yields zero. Cross-level safe (SIMBOARD persists offline + cross-level).
+---
+--- Closure-based: one closure + upvalues per call (~6 captures). next() over the hash is
+--- zero-allocation per step. Re-entrant: each call returns a fresh closure with fresh state.
+--- @safety SAFE - nil-guarded, single-pass snapshot of SIMBOARD roster at call time
+--- @cost O(min(n, cap)) | per yielded id: 1 medium (alife_object) + 0 luabind (is_stationed field reads)
+--- @src anomaly/sim_board.script(96,258), anomaly/sim_squad_scripted.script(295-323)
+--- @param smart_id number Smart terrain server entity ID
+--- @param exclude_id number|nil Squad id to skip (typically the candidate itself)
+--- @param cap number|nil Walk cap (default 5)
+--- @return function Iterator yielding stationed se squads
+function iter_stationed_squads(smart_id, exclude_id, cap)
+    local squads = get_smart_squads(smart_id)
+    if not squads then return _empty_iter end
+    cap = cap or 5
+    local checked = 0
+    local key = nil
+    return function()
+        while checked < cap do
+            local id = next(squads, key)
+            key = id
+            if not id then return nil end
+            if id == exclude_id then goto continue end
+            checked = checked + 1
+            local se = alife_object(id)
+            if xsquad.is_stationed(se, smart_id) then return se end
+            ::continue::
+        end
+        return nil
+    end
+end
+
+--- Get the SIMBOARD smarts-by-name dict for whole-world iteration. Callers iterate with
+--- pairs(); use this when an index build or cross-level scan needs every smart, not the
+--- filtered/ranked output of find_smart. Returns nil before SIMBOARD setup completes (pre
+--- actor_on_first_update); callers must nil-check.
+--- @scope global - SIMBOARD.smarts_by_names populated at sim_board init across all levels
+--- @safety SAFE - nil-guarded; returns nil if SIMBOARD or smarts_by_names is unavailable
+--- @complexity O(1) | 0 luabind, table identity return
+--- @see anomaly/sim_board.script (SIMBOARD.smarts_by_names initialized at sim_board setup)
+--- @return table|nil { [name] = smart_terrain, ... } or nil if SIMBOARD not loaded
+function smarts_by_names()
+    return SIMBOARD and SIMBOARD.smarts_by_names
+end
+
+--- Check if any squad of given faction is physically stationed at smart (optionally excluding one id)
+--- Wraps iter_stationed_squads with per-squad player_id match. Cross-level safe.
+--- @safety SAFE - delegates to iter_stationed_squads
+--- @cost O(min(n,5)) squads, short-circuits | per squad: 1 medium (alife_object) + 0 luabind
+--- @src anomaly/sim_board.script(96,258), anomaly/sim_squad_scripted.script(295-323)
+--- @param smart_id number Smart terrain server entity ID
+--- @param faction string Engine player_id / community string
+--- @param exclude_id number|nil Squad id to skip
+--- @return boolean
+function has_squad_of_faction(smart_id, faction, exclude_id)
+    if not faction then return false end
+    for se in iter_stationed_squads(smart_id, exclude_id) do
+        if se.player_id == faction then return true end
+    end
+    return false
+end
+
+--- Test if any squad physically stationed at smart is enemy of the asking community
+--- Wraps iter_stationed_squads with per-squad game_relations.is_factions_enemies check.
+--- Cross-level safe.
+--- @safety SAFE - delegates to iter_stationed_squads
+--- @cost O(min(n,5)) squads, short-circuits on first enemy | per squad: 1 medium (alife_object) + 0 luabind + game_relations cached hash
+--- @src anomaly/sim_board.script(96,258), anomaly/sim_squad_scripted.script(295-323), anomaly/game_relations.script(603)
+--- @param smart_id number Smart terrain server entity ID
+--- @param community string Engine player_id / community string asking "is this place hostile to me"
+--- @param exclude_id number|nil Squad id to skip
+--- @return boolean
+function has_enemy_squad(smart_id, community, exclude_id)
+    if not community then return false end
+    for se in iter_stationed_squads(smart_id, exclude_id) do
+        if game_relations.is_factions_enemies(community, se.player_id) then return true end
+    end
+    return false
+end
+
+local OCCUPANCY_TTL_SEC = 60
+local _occupancy_cache = xttltable.create_ttl_table({ default_ttl = OCCUPANCY_TTL_SEC })
+
+-- Set of communities with a stationed squad at the smart, or nil when none.
+-- @complexity O(min(n,5)) stationed squads | per squad: 1 medium (alife_object)
+local function _stationed_communities(smart_id)
+    local communities
+    for se in iter_stationed_squads(smart_id) do
+        communities = communities or {}
+        communities[se.player_id] = true
+    end
+    return communities
+end
+
+-- Snapshot one level: per smart, the set of stationed communities. nil before SIMBOARD setup.
+-- @complexity O(all smarts) x xlevel.get_level_id + _stationed_communities per level smart
+local function _build_level_occupancy(level_id)
+    local pool = SIMBOARD and SIMBOARD.smarts_by_names
+    if not pool then return nil end
+    local by_smart = {}
+    for _, smart in pairs(pool) do
+        if xlevel.get_level_id(smart) == level_id then
+            by_smart[smart.id] = _stationed_communities(smart.id)
+        end
+    end
+    return by_smart
+end
+
+-- True when any community in the set has a stationed squad in the communities set.
+-- @complexity O(communities at smart) pure Lua
+local function _matches_any(communities, faction_set)
+    for community in pairs(communities) do
+        if faction_set[community] then return true end
+    end
+    return false
+end
+
+--- Count smarts on a level where a squad of the given community (string) or of any community
+--- in the given set (table { [community] = true }) is physically stationed. A smart counts once
+--- per query no matter how many stationed squads match. Occupancy is the same SIMBOARD squads
+--- substrate Warfare's check_owner derives ownership from; this is its stateless read.
+--- Snapshot per level, refreshed after OCCUPANCY_TTL_SEC; presence changes at squad-travel
+--- speed, so staleness up to the TTL is invisible to callers gating expansion on it.
+--- @scope global - walks SIMBOARD.smarts_by_names across all levels on rebuild
+--- @safety SAFE - returns 0 on nil args or before SIMBOARD setup completes
+--- @cost O(smarts with squads on level) pure Lua cached | rebuild on miss: O(all smarts) x xlevel.get_level_id + iter_stationed_squads per level smart, once per level per TTL
+--- @src anomaly/sim_board.script(96,258), anomaly/sim_squad_scripted.script(295-323)
+--- @param factions string|table Community string, or set { [community] = true }
+--- @param level_id number Level id (xlevel.get_level_id)
+--- @return number Count of smarts with a stationed squad matching factions
+function get_faction_smart_count(factions, level_id)
+    if not factions or not level_id then return 0 end
+    local by_smart = _occupancy_cache:get(level_id)
+    if not by_smart then
+        by_smart = _build_level_occupancy(level_id)
+        if not by_smart then return 0 end
+        _occupancy_cache:set(level_id, by_smart)
+    end
+    local is_set = type(factions) == "table"
+    local count = 0
+    for _, communities in pairs(by_smart) do
+        local matched = is_set and _matches_any(communities, factions) or (not is_set and communities[factions])
+        if matched then count = count + 1 end
+    end
+    return count
+end
+
+--- Assign a squad to a smart's roster, or detach with nil. Wraps SIMBOARD:assign_squad_to_smart.
+--- Used by AP's dispatch/commit pair to keep SIMBOARD.smarts[id].squads aligned with AP-driven
+--- moves so has_squad_of_faction / garrison-floor queries read truth. Pass nil
+--- as smart_id on dispatch (clears source roster before engine specific_update bumps squad.smart_id);
+--- pass the destination id on arrival commit. Fires squad_on_leave_smart on source clear,
+--- squad_on_enter_smart on destination add.
+--- @safety SAFE - delegates to SIMBOARD; nil smart_id is the documented detach form
+--- @cost 1 luabind (SIMBOARD method call) + sim_board.script bookkeeping
+--- @src anomaly/sim_board.script(225-266)
+--- @param squad se_squad Squad server object
+--- @param smart_id number|nil Destination smart id, or nil to detach from current
+--- @return boolean True on delegate to SIMBOARD; false when squad/SIMBOARD nil or squad is not a sim_squad_scripted instance
+function assign_squad_to_smart(squad, smart_id)
+    if not squad or not SIMBOARD then return false end
+    -- Vanilla sim_board:assign_squad_to_smart calls squad:assign_smart unconditionally
+    -- (sim_board.script:264). Engine recycles freed server-entity ids; a caller may pass
+    -- the new (non-squad) occupant of a recycled id without realizing. Class-guard via
+    -- xsquad.is_squad (clsid check) rejects those; returns false so consumers can log
+    -- the broken object with their own context.
+    if not xsquad.is_squad(squad) then return false end
+    SIMBOARD:assign_squad_to_smart(squad, smart_id)
+    return true
+end
+
+--- Reconcile the SIMBOARD roster after a squad's smart changed outside the roster-synced path.
+--- Vanilla sim_squad_scripted:assign_smart (invoked from specific_update / generic_update) sets
+--- squad.smart_id and re-registers NPC jobs but never updates SIMBOARD.smarts[id].squads /
+--- population, so capacity reads (has_capacity, is_smart_empty) drift. Given the smart id captured
+--- before the move, this syncs the roster to the current squad.smart_id: drops the stale source
+--- entry, adds the destination entry, recomputes each population via the engine's own
+--- smart_terrain_squad_count, and fires the leave/enter callbacks the blind path skipped. Every
+--- write is gated on table state, so on a base that already synced (e.g. a fixed overlay) it is a
+--- no-op; safe to run on top of any update-method wrapper chain.
+--- @safety SAFE - pure SIMBOARD table writes; nil-guarded; mutates no engine object
+--- @complexity O(n) squads per affected smart (population recount) | up to 2n luabind (alife_object per counted squad), 0-2 callback emits
+--- @src anomaly/sim_board.script(237-265) the synced path this mirrors
+--- @src anomaly/sim_squad_scripted.script(289,356) the roster-blind assign_smart calls
+--- @src anomaly/smart_terrain.script(1487-1496) smart_terrain_squad_count
+--- @param squad se_squad Squad whose smart_id may have changed
+--- @param from_smart_id number|nil Smart id captured before the vanilla update ran
+function reconcile_squad_roster(squad, from_smart_id)
+    if not squad or not SIMBOARD or not SIMBOARD.smarts then return end
+    local to_smart_id = squad.smart_id
+    if to_smart_id == from_smart_id then return end
+    local id = squad.id
+    local from = from_smart_id and SIMBOARD.smarts[from_smart_id]
+    if from and from.squads[id] then
+        from.squads[id] = nil
+        from.population = smart_terrain.smart_terrain_squad_count(from.squads)
+        SendScriptCallback("squad_on_leave_smart", squad, from.smrt)
+    end
+    local to = to_smart_id and SIMBOARD.smarts[to_smart_id]
+    if to and not to.squads[id] then
+        to.squads[id] = true
+        to.population = smart_terrain.smart_terrain_squad_count(to.squads)
+        SendScriptCallback("squad_on_enter_smart", squad, to.smrt)
+    end
+end
+
+-- Any-of acceptance check used by find_smart / find_first_smart when opts.factions is a set.
+-- @cost O(k) factions | 0 luabind (pure Lua pairs); short-circuits on first accept
+local function _accepts_any_faction(smart, fset)
+    for f in pairs(fset) do
+        if accepts_faction(smart, f) then return true end
+    end
+    return false
+end
+
+--- Find nearest smart terrain matching criteria
+--- Iterates opts.source (when provided) or SIMBOARD.smarts_by_names; cheapest filters first (exclude_id, factions, level_id), distance_to_sqr last
+--- @scope global - iterates the supplied pool. When opts.source is nil, walks SIMBOARD.smarts_by_names across all levels.
+--- Per-candidate scope depends on the filter caller provides (e.g. has_animated_stalker_jobs narrows to level scope,
+--- has_campfire to online scope, is_base global)
+--- @safety SAFE - nil-guarded; xlevel.get_level_id uses pcall internally
+--- @cost O(n) smarts in pool | per non-filtered smart: 1 luabind trivial (distance_to_sqr inline math); cheaper filters (exclude_id, factions, level_id) gate before distance
+--- @src anomaly/sim_board.script(96), anomaly/simulation_objects.script(117)
+--- @param pos vector Position to search from
+--- @param opts table { level_id, factions, min_distance, max_distance, exclude_id, filter, source }
+---   source: optional { [k] = smart, ... } iterable. When present, replaces SIMBOARD.smarts_by_names as the iteration pool.
+---   Use AlifePlus ap_core_cache.smarts_on_level(level_id) to fetch a per-level bucket.
+--- @return smart_terrain|nil Nearest matching smart
+function find_smart(pos, opts)
+    if not xmath.check_pos(pos) or not opts then return nil end
+    local pool = opts.source or (SIMBOARD and SIMBOARD.smarts_by_names)
+    if not pool then return nil end
+
+    local level_id = opts.level_id
+    local exclude_id = opts.exclude_id
+    local factions = opts.factions
+    local filter = opts.filter
+    local factions_check
+    if factions then
+        if type(factions) == "table" then factions_check = _accepts_any_faction else factions_check = accepts_faction end
+    end
+    local min_dist_sqr = -1
+    if opts.min_distance then min_dist_sqr = opts.min_distance * opts.min_distance end
+    local max_dist_sqr = math.huge
+    if opts.max_distance then max_dist_sqr = opts.max_distance * opts.max_distance end
+    local best, best_dist = nil, max_dist_sqr
+
+    for _, smart in pairs(pool) do
+        if not smart or not smart.position then goto continue end
+        if exclude_id and smart.id == exclude_id then goto continue end
+        if factions_check and not factions_check(smart, factions) then goto continue end
+        if level_id and xlevel.get_level_id(smart) ~= level_id then goto continue end
+        if filter and not filter(smart) then goto continue end
+        local dist_sqr = pos:distance_to_sqr(smart.position)
+        if dist_sqr > min_dist_sqr and dist_sqr < best_dist then
+            best, best_dist = smart, dist_sqr
+        end
+        ::continue::
+    end
+
+    return best
+end
+
+-- Per-smart predicate for find_first_smart; cheapest filters first
+-- @cost O(1) | 0-1 luabind (xlevel.get_level_id cached after first lookup; filter caller-provided)
+local function _smart_matches(smart, exclude_id, factions, factions_check, level_id, filter)
+    if not smart then return false end
+    if exclude_id and smart.id == exclude_id then return false end
+    if factions_check and not factions_check(smart, factions) then return false end
+    if level_id and xlevel.get_level_id(smart) ~= level_id then return false end
+    if filter and not filter(smart) then return false end
+    return true
+end
+
+--- Find the first smart matching criteria (no distance ranking)
+--- Distance-free variant of find_smart for cases where caller has no meaningful position
+--- (e.g. picking a destination from a different level's coordinate frame). Iterates in
+--- pool hash order; deterministic per session, but no spatial preference.
+--- Use find_smart when the caller has a comparable position; use this when "any matching" is enough.
+--- @scope global - iterates the supplied pool. When opts.source is nil, walks SIMBOARD.smarts_by_names across all levels.
+--- @safety SAFE - nil-guarded; xlevel.get_level_id uses pcall internally
+--- @cost O(n) smarts in pool, worst case (early exit on first match) | 0 luabind on filter-less hit
+--- @src anomaly/sim_board.script(96)
+--- @param opts table { level_id, factions, exclude_id, filter, source }
+---   source: optional { [k] = smart, ... } iterable. When present, replaces SIMBOARD.smarts_by_names as the iteration pool.
+--- @return smart_terrain|nil First matching smart, or nil if none
+function find_first_smart(opts)
+    if not opts then return nil end
+    local pool = opts.source or (SIMBOARD and SIMBOARD.smarts_by_names)
+    if not pool then return nil end
+    local factions = opts.factions
+    local factions_check
+    if factions then
+        if type(factions) == "table" then factions_check = _accepts_any_faction else factions_check = accepts_faction end
+    end
+    for _, smart in pairs(pool) do
+        if _smart_matches(smart, opts.exclude_id, factions, factions_check, opts.level_id, opts.filter) then
+            return smart
+        end
+    end
+    return nil
+end
+
+--- Nearest base for an NPC routing out of a fight: the nearest is_base smart with no enemy squad stationed (a
+--- place its enemies do not hold). Keys on actual squad occupancy, NOT declared faction props (most vanilla
+--- smarts declare none, so an accepts_faction filter matches nothing). nil when no base qualifies - the caller
+--- then flees in place rather than running to a non-base edge smart. Same find_smart + is_base reuse as
+--- AlifePlus's flee (ap_ext_consequences_basekill), with an occupancy gate instead of a fixed own-faction.
+--- With away_from_pos (a threat position), keeps only bases in the REAR hemisphere (bearing from pos points away
+--- from the threat), so a rout increases distance instead of curving back past it. The direction gate is a
+--- sign-only flat-XZ dot product (no sqrt/normalize) reusing the position delta, placed before the has_enemy_squad
+--- occupancy scan so a wrong-direction base is rejected before the expensive check. A threat sitting on pos drops
+--- the bias; nil then means no rear-hemisphere base qualifies, and the caller declines.
+--- @safety SAFE - nil when no non-enemy-held base (in the rear hemisphere, when away_from_pos is given)
+--- @cost O(n smarts x min(5,squads)) per find_smart, run at a maneuver commit (not per tick); +1 dot per candidate
+--- @see find_smart, is_base, has_enemy_squad
+--- @param community string the NPC's community
+--- @param pos vector the NPC's position
+--- @param opts table { level_id = number the level to search, away_from_pos = vector|nil threat position for
+---   rear-hemisphere bias, min_distance = number|nil metres floor so only bases at least that far qualify }
+--- @return smart_terrain|nil nearest qualifying non-enemy-held base, or nil
+function find_friendly_base(community, pos, opts)
+    if not community or not xmath.check_pos(pos) then return nil end
+    opts = opts or {}
+    local away_from_pos = opts.away_from_pos
+    local ax, az
+    if away_from_pos and xmath.check_pos(away_from_pos) then
+        ax, az = pos.x - away_from_pos.x, pos.z - away_from_pos.z
+        if (ax * ax + az * az) < 1 then ax = nil end
+    end
+    return find_smart(pos, { level_id = opts.level_id, min_distance = opts.min_distance,
+        filter = function(smart)
+            if not is_base(smart) then return false end
+            if ax then
+                local sp = smart.position
+                if (sp.x - pos.x) * ax + (sp.z - pos.z) * az <= 0 then return false end
+            end
+            return not has_enemy_squad(smart.id, community)
+        end })
+end
+
+-- Any section in recipe.squads has section_faction equal to faction? Short-circuits on match.
+-- @cost O(Q) sections per recipe (~1-5) | 0 luabind cached per section, else 1 luabind heavy via section_faction
+local function _recipe_has_faction(recipe, faction)
+    if not recipe.squads then return false end
+    for _, section in ipairs(recipe.squads) do
+        if section_faction(section) == faction then return true end
+    end
+    return false
+end
+
+-- Any recipe in smart.respawn_params produces this faction? Short-circuits on first matching recipe.
+-- @cost O(R*Q) recipes * sections | luabind via _recipe_has_faction (cached after first read per section)
+local function _smart_has_faction_recipe(smart, faction)
+    if not smart.respawn_params then return false end
+    for _, recipe in pairs(smart.respawn_params) do
+        if _recipe_has_faction(recipe, faction) then return true end
+    end
+    return false
+end
+
+--- Find all smart terrains on a level whose recipes spawn the given faction
+--- Walks SIMBOARD.smarts once; filters by xlevel.get_level_id == level_id then by recipe content
+--- via section_faction match. Returns smart objects directly (caller extracts .id if needed);
+--- smart terrains are not released mid-session so the references stay valid for the session.
+--- Answers the spawning-side question "which smarts on this level produce faction X"; distinct
+--- from accepts_faction (engine routing acceptance) and smart.faction (runtime holder).
+--- @safety SAFE - nil-guarded; returns empty array when SIMBOARD missing or no matches
+--- @cost O(S*R*Q) smarts * recipes * sections (R,Q typically 1-5) | 1 luabind trivial per smart (xlevel.get_level_id cached); section_faction cached per section
+--- @src anomaly/sim_board.script(96) SIMBOARD.smarts, anomaly/smart_terrain.script(1681-1700) respawn_params shape
+--- @src anomaly/configs/misc/squad_descr/squad_descr_default_mutants.ltx
+--- @param level_id number Engine level ID
+--- @param faction string Faction community ("bandit", "monster_predatory_day", "stalker", ...)
+--- @return table Array of smart_terrain server objects on the level whose recipes produce faction (empty if none)
+function find_smarts_spawning(level_id, faction)
+    local out = {}
+    if not level_id or not faction then return out end
+    if not SIMBOARD or not SIMBOARD.smarts then return out end
+    for _, rec in pairs(SIMBOARD.smarts) do
+        local smart = rec.smrt
+        if smart and xlevel.get_level_id(smart) == level_id and _smart_has_faction_recipe(smart, faction) then
+            out[#out + 1] = smart
+        end
+    end
+    return out
+end
+
+--- Check if squad has arrived at smart terrain
+--- Delegates to engine's am_i_reached: same game vertex -> true, different level -> false, distance <= arrive_dist^2
+--- @scope global - engine method on server entity, cross-level safe (returns false for different-level case)
+--- @safety SAFE - am_i_reached used by engine without pcall in specific_update
+--- @cost O(1) | 1 luabind medium (am_i_reached: gvid match check + Fvector distance_to)
+--- @src anomaly/smart_terrain.script(1440), anomaly/sim_squad_scripted.script(304)
+--- @param squad se_squad Squad to check
+--- @param smart smart_terrain Target smart terrain
+--- @return boolean True if arrived
+function is_arrived(squad, smart)
+    if not squad or not smart then return false end
+    if not smart.am_i_reached then return false end
+    return smart:am_i_reached(squad)
+end
+
+--- Get spatial proximity between squad and smart terrain
+--- Mirrors am_i_reached decision tree; returns distance, threshold, and match conditions for diagnostics
+--- @scope global - reads game_graph + server-entity position; cross-level safe (returns dist=-1 on level mismatch)
+--- @safety pcall: game_graph() is NULL singleton during transitions, see doc/library/modding/pcall-safety.md
+--- @cost O(1) | gvid match: 0 luabind; cross-vertex: 2 luabind trivial (vertex: ptr+offset, distance_to_sqr inline) + game_graph singleton lookup (pcall-guarded, cached)
+--- @src anomaly/smart_terrain.script(1440-1456)
+--- @param squad se_squad Squad to check
+--- @param smart se_smart_terrain Target smart terrain
+--- @return number dist Meters (0 = gvid match, -1 = different level)
+--- @return number threshold Applicable arrive threshold in meters
+--- @return boolean gvid_match Game vertex IDs match
+--- @return boolean same_level Both on same level
+function get_proximity(squad, smart)
+    if not squad or not smart then return -1, 0, false, false end
+    local sq_gvid = squad.m_game_vertex_id
+    local sm_gvid = smart.m_game_vertex_id
+    local threshold = smart.arrive_dist or 0
+    if sq_gvid == sm_gvid then
+        return 0, threshold, true, true
+    end
+    local ok, gg = pcall(game_graph)
+    if not ok or not gg then return -1, threshold, false, false end
+    local same_level = gg:vertex(sq_gvid):level_id() == gg:vertex(sm_gvid):level_id()
+    if not same_level then
+        return -1, threshold, false, false
+    end
+    if is_squad_monster and is_squad_monster[squad.player_id] and not squad.scripted_target then
+        threshold = 25
+    end
+    return math.sqrt(squad.position:distance_to_sqr(smart.position)), threshold, false, true
+end
+
+--- Check if every squad member has an engine-assigned job at the smart
+--- Snapshot of npc_info[id].job per member; detects the full-job-allocation freeze
+--- (smart_terrain.script:1369-1376 setup_logic loops on nil job). Reliable only when caller
+--- has gated on smart.online && smart.is_on_actor_level (engine select_npc_job is gated there
+--- too). Does NOT predict mid-dwell precondition-flip invalidation (surge start/end,
+--- day<->night for sleeper, zombie state, trader has_items_to_sell). Trailing members live in
+--- arriving_npc[] not npc_info[] for ~5s after positional arrival until engine drains —
+--- caller's polling cadence absorbs the race. For mutant squads (stype=1) this rarely returns
+--- false because mob_home stubs are oversupplied (gulag_general.script:1018-1022 pushes
+--- max_population*4 with no precondition)
+--- @scope online - reads smart.npc_info populated by smart_terrain:update_jobs gated on self.online AND
+--- is_on_actor_level (smart_terrain.script:582-588). Empty for offline smarts even on the actor's level
+--- @safety SAFE - pure Lua table reads (no luabind), nil-guarded
+--- @cost O(n) members | 0 luabind beyond squad_members iterator (xsquad.iter_member_ids returns plain numbers; npc_info is a pure Lua hash)
+--- @src anomaly/smart_terrain.script(309-327, 626-798, 1369-1376), anomaly/gulag_general.script(114-118), anomaly/gulag_general.script(1018-1022) mutant mob_home oversupply
+--- @param smart smart_terrain Smart terrain to check
+--- @param squad se_squad Squad whose members to verify
+--- @return boolean True if every member has a job
+function has_jobs_for(smart, squad)
+    if not smart or not squad then return false end
+    for member_id in xsquad.iter_member_ids(squad) do
+        local info = smart.npc_info and smart.npc_info[member_id]
+        if not info or not info.job then return false end
+    end
+    return true
+end
+
+-- Collect service-role NPC ids at a smart for diagnostic output. Reads role from
+-- xdata.npc_roles via the NPC's section name on the CSE. Offline-friendly.
+-- @cost O(n) n=npc_info entries | per entry: 1 medium (alife_object) + 1 heavy (section_name) + 1 hash
+local function _role_inventory(smart)
+    if not smart or not smart.npc_info then return {} end
+    local found, count = {}, 0
+    for npc_id, _ in pairs(smart.npc_info) do
+        local se = alife_object(npc_id)
+        if not se then goto continue end
+        local entry = xdata.npc_roles[se:section_name()]
+        if not entry then goto continue end
+        local role = entry.trader and "trader" or entry.medic and "medic" or entry.mechanic and "mechanic"
+        if not role or found[role] then goto continue end
+        found[role] = npc_id
+        count = count + 1
+        if count == 3 then break end
+        ::continue::
+    end
+    return found
+end
+
+--- Diagnostic dump of smarts with faction, level, and service-role inventory
+--- When level_id is provided, filters to that level only. Per-smart entry appends trader/medic/mechanic
+--- NPC ids when present (role read from xdata.npc_roles via section name).
+--- @scope global - iterates SIMBOARD.smarts; npc_info populated only for online smarts on actor's level
+--- @safety SAFE - pure Lua iteration, nil-guarded
+--- @cost O(n) smarts * O(m) npc_info per smart | per smart: 1 heavy (name) + role_inventory walk; xdata.npc_roles is O(1) per NPC
+--- @src anomaly/sim_board.script(96), anomaly/smart_terrain.script(801,1209)
+--- @param level_id number|nil Restrict iteration to this level when provided
+--- @return string Debug summary string
+function dump_smarts(level_id)
+    if not SIMBOARD or not SIMBOARD.smarts then return "no_simboard" end
+    local parts = {}
+    for id, data in pairs(SIMBOARD.smarts) do
+        local smart = data.smrt
+        if not smart then goto continue end
+        local smart_lv = xlevel.get_level_id(smart)
+        if level_id and smart_lv ~= level_id then goto continue end
+        local sf = {}
+        for k in pairs(get_declared_factions(smart)) do sf[#sf + 1] = k end
+        local found = _role_inventory(smart)
+        parts[#parts + 1] = id .. ":" .. (smart:name() or "?")
+            .. ":lv" .. tostring(smart_lv or "?")
+            .. ":fac=" .. (#sf > 0 and table_concat(sf, "/") or "none")
+            .. ":trader=" .. tostring(found.trader or "-")
+            .. ":medic="  .. tostring(found.medic or "-")
+            .. ":mech="   .. tostring(found.mechanic or "-")
+        ::continue::
+    end
+    return "filter_lv=" .. tostring(level_id or "nil")
+        .. " smarts=" .. #parts .. " [" .. table_concat(parts, ", ") .. "]"
+end
+
+--- Iterator over all smart terrains in SIMBOARD
+--- Stateful iterator using next() on SIMBOARD.smarts; skips entries without valid smrt ref
+--- @scope global - iterates SIMBOARD.smarts (all levels)
+--- @safety SAFE - nil-guarded, returns empty iterator when SIMBOARD unavailable
+--- @cost O(n) smarts | 0 luabind (pure Lua table iteration)
+--- @src anomaly/sim_board.script(96), anomaly/smart_terrain.script(1)
+--- @return function Iterator yielding smart terrain server objects
+function smart_iter()
+    if not SIMBOARD or not SIMBOARD.smarts then return function() return nil end end
+    local k, data
+    return function()
+        repeat
+            k, data = next(SIMBOARD.smarts, k)
+        until not k or (data and data.smrt)
+        return data and data.smrt
+    end
+end
+

@@ -1,38 +1,65 @@
 --[[
     Vendored xlibs (Damian Sirbu). Use via dogma.xlibs.xobject, not xobject.
+
+    Copies still write xconst / xobject. While they load, those names
+    point at our copies. Then we stamp the same names onto each copy's
+    env (the script table) and put _G back so the xlibs mod is untouched.
 ]]
 
 local M = getfenv(1)
+local saved = {}
 
-M["xconst"] = __dogma_xconst
-M["xstring"] = __dogma_xstring
-M["xtable"] = __dogma_xtable
-M["xmath"] = __dogma_xmath
-M["xfs"] = __dogma_xfs
-M["xltx"] = __dogma_xltx
-M["xtime"] = __dogma_xtime
-M["xslice"] = __dogma_xslice
-M["xtrace"] = __dogma_xtrace
-M["xttltable"] = __dogma_xttltable
-M["xlog"] = __dogma_xlog
-M["xevent"] = __dogma_xevent
-M["xbus"] = __dogma_xbus
-M["xpp"] = __dogma_xpp
-M["xprofiler"] = __dogma_xprofiler
-M["xinspect"] = __dogma_xinspect
-M["xprops"] = __dogma_xprops
-M["xchange"] = __dogma_xchange
-M["xmcm"] = __dogma_xmcm
-M["xobject"] = __dogma_xobject
-M["xlevel"] = __dogma_xlevel
-M["xinventory"] = __dogma_xinventory
-M["xcreature"] = __dogma_xcreature
-M["xactor"] = __dogma_xactor
-M["xdata"] = __dogma_xdata
-M["xsquad"] = __dogma_xsquad
-M["xsmart"] = __dogma_xsmart
-M["xsmart_spawn"] = __dogma_xsmart_spawn
-M["xstash"] = __dogma_xstash
-M["xpda"] = __dogma_xpda
-M["xsound"] = __dogma_xsound
-M["xcombat"] = __dogma_xcombat
+local function take(name, mod)
+    if saved[name] == nil then
+        saved[name] = { rawget(_G, name) }
+    end
+    rawset(_G, name, mod)
+    M[name] = mod
+end
+
+take("xconst", __dogma_xconst)
+take("xstring", __dogma_xstring)
+take("xtable", __dogma_xtable)
+take("xmath", __dogma_xmath)
+take("xfs", __dogma_xfs)
+take("xltx", __dogma_xltx)
+take("xtime", __dogma_xtime)
+take("xslice", __dogma_xslice)
+take("xtrace", __dogma_xtrace)
+take("xttltable", __dogma_xttltable)
+take("xlog", __dogma_xlog)
+take("xevent", __dogma_xevent)
+take("xbus", __dogma_xbus)
+take("xpp", __dogma_xpp)
+take("xprofiler", __dogma_xprofiler)
+take("xinspect", __dogma_xinspect)
+take("xprops", __dogma_xprops)
+take("xchange", __dogma_xchange)
+take("xmcm", __dogma_xmcm)
+take("xobject", __dogma_xobject)
+take("xlevel", __dogma_xlevel)
+take("xinventory", __dogma_xinventory)
+take("xcreature", __dogma_xcreature)
+take("xactor", __dogma_xactor)
+take("xdata", __dogma_xdata)
+take("xsquad", __dogma_xsquad)
+take("xsmart", __dogma_xsmart)
+take("xsmart_spawn", __dogma_xsmart_spawn)
+take("xstash", __dogma_xstash)
+take("xpda", __dogma_xpda)
+take("xsound", __dogma_xsound)
+take("xcombat", __dogma_xcombat)
+
+for name, mod in pairs(M) do
+    if type(mod) == "table" and type(name) == "string" and name:sub(1, 1) == "x" then
+        for other, sib in pairs(M) do
+            if type(sib) == "table" and type(other) == "string" and other:sub(1, 1) == "x" then
+                rawset(mod, other, sib)
+            end
+        end
+    end
+end
+
+for name, slot in pairs(saved) do
+    rawset(_G, name, slot[1])
+end

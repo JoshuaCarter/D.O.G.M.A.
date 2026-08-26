@@ -1,27 +1,19 @@
 --[[
-	DOGMA debug helpers (namespace module, no globals).
+	DOGMA debug overlay (namespace module, no globals).
 
-	Private impl; features use dogma.dbg (wired by dogma.script).
+	Features use dogma.overlay (wired by dogma.script).
 
-	overlay(source, order, msg, color) - on-screen HUD slots (colored).
-	log(mod_id, msg)                   - plain printf to the game log file only.
-	tag(mod_id)                        - "dogma/cat/feat" → "dogma_cat_feat"
-	logging() / overlay_enabled()      - global MCM toggles from DOGMA → Debug.
-
-	Log lines are always prefixed [dogma_{cat}_{feat}] (slashes → underscores).
+	set(source, order, msg, color) - HUD slot
+	clear(source)                  - wipe that source
+	enabled()                      - D.O.G.M.A. -> Debug -> debug overlay
 ]]
 
 local DEBUG_MOD = "dogma/debug"
 
--- MOD_ID "dogma/cat/feat" → log/HUD tag "dogma_cat_feat"
-function tag(mod_id)
-	return tostring(mod_id or "dogma"):gsub("/", "_")
-end
-
 local HUD_STATIC = "dogma_debug_overlay_text"
 local FALLBACK_STATIC = "debug_info"
 local PANEL_STATIC = "dogma_debug_overlay_panel"
-local text_static = HUD_STATIC
+local text_static = FALLBACK_STATIC
 local PANEL_TEX = "ui_inGame2_white_rect"
 local ORIGIN_X = 10
 local ORIGIN_Y = 50
@@ -29,52 +21,26 @@ local PANEL_PAD = 8
 local PANEL_W = 200
 local LINE_H = 16
 
-local COLORS = {
-	white       = "%c[255,255,255,255]",
-	light_gray  = "%c[255,210,210,210]",
-	gray        = "%c[255,160,160,160]",
-	dark_gray   = "%c[255,96,96,96]",
-	black       = "%c[255,16,16,16]",
-	light_red   = "%c[255,255,140,140]",
-	red         = "%c[255,255,64,64]",
-	dark_red    = "%c[255,170,32,32]",
-	light_green = "%c[255,150,255,150]",
-	green       = "%c[255,96,224,96]",
-	dark_green  = "%c[255,40,150,40]",
-	light_blue  = "%c[255,150,190,255]",
-	blue        = "%c[255,96,160,255]",
-	dark_blue   = "%c[255,48,90,200]",
-	light_yellow= "%c[255,255,240,150]",
-	yellow      = "%c[255,255,224,64]",
-	dark_yellow = "%c[255,200,170,32]",
-	light_cyan  = "%c[255,170,240,255]",
-	cyan        = "%c[255,96,224,255]",
-	dark_cyan   = "%c[255,40,160,180]",
-	light_orange= "%c[255,255,200,130]",
-	orange      = "%c[255,255,160,48]",
-	dark_orange = "%c[255,200,110,24]",
-	light_purple= "%c[255,210,170,255]",
-	purple      = "%c[255,170,96,255]",
-	dark_purple = "%c[255,110,48,170]",
-	light_pink  = "%c[255,255,190,225]",
-	pink        = "%c[255,255,128,200]",
-	dark_pink   = "%c[255,200,72,140]",
-	magenta     = "%c[255,255,64,255]",
-	teal        = "%c[255,32,170,160]",
-	lime        = "%c[255,170,255,64]",
-	brown       = "%c[255,150,100,60]",
-}
-
 local sources = {}
 
-local function resolve_color(color)
-	if color == nil then
-		return COLORS.white
+local function xml_ready()
+	return _G.dogma_dbg_overlay_xml == true
+end
+
+local function hud_code(color)
+	local log = rawget(_G, "__dogma_log")
+	if log and log.hud_color then
+		return log.hud_color(color)
 	end
-	if type(color) == "string" and color:sub(1, 3) == "%c[" then
-		return color
+	return "%c[255,255,255,255]"
+end
+
+local function tag(mod_id)
+	local log = rawget(_G, "__dogma_log")
+	if log and log.tag then
+		return log.tag(mod_id)
 	end
-	return COLORS[color] or COLORS.white
+	return tostring(mod_id or "dogma"):gsub("/", "_")
 end
 
 local function get_source(source)
@@ -85,7 +51,7 @@ local function get_source(source)
 	return sources[source]
 end
 
-local function any_overlay_content()
+local function any_content()
 	for _, s in pairs(sources) do
 		if next(s.slots) then
 			return true
@@ -114,14 +80,12 @@ local function remove_static(name)
 	end
 end
 
-local function try_add(hud, name)
+local function add_static(hud, name)
 	local cs = hud:GetCustomStatic(name)
 	if cs then
 		return cs
 	end
-	pcall(function()
-		hud:AddCustomStatic(name, true)
-	end)
+	hud:AddCustomStatic(name, true)
 	return hud:GetCustomStatic(name)
 end
 
@@ -130,29 +94,34 @@ local function get_static()
 	if not hud then
 		return nil
 	end
-	-- Panel needs DXML inject. Skip if the name is not in ui_custom_msgs.
-	try_add(hud, PANEL_STATIC)
-	local cs = try_add(hud, HUD_STATIC)
-	if cs then
-		text_static = HUD_STATIC
-		return cs
+	if xml_ready() then
+		add_static(hud, PANEL_STATIC)
+		local cs = add_static(hud, HUD_STATIC)
+		if cs then
+			text_static = HUD_STATIC
+			return cs
+		end
 	end
-	cs = try_add(hud, FALLBACK_STATIC)
+	local cs = add_static(hud, FALLBACK_STATIC)
 	if cs then
 		text_static = FALLBACK_STATIC
 	end
 	return cs
 end
 
-local function clear_overlay()
-	remove_static(HUD_STATIC)
-	remove_static(PANEL_STATIC)
-	if text_static == FALLBACK_STATIC then
+local function hide()
+	if text_static == HUD_STATIC then
+		remove_static(HUD_STATIC)
+		remove_static(PANEL_STATIC)
+	else
 		remove_static(FALLBACK_STATIC)
 	end
 end
 
 local function show_panel(x, y, w, h)
+	if not xml_ready() then
+		return
+	end
 	local wnd = hud_wnd(PANEL_STATIC, true)
 	if not wnd then
 		return
@@ -170,9 +139,28 @@ local function show_panel(x, y, w, h)
 	end)
 end
 
+local function mcm_bool(key, default)
+	if ui_mcm then
+		local value = ui_mcm.get(DEBUG_MOD .. "/" .. key)
+		if value ~= nil then
+			return value == true or value == 1
+		end
+	end
+	local conf = _G.dogma_debug_conf
+	local defaults = conf and conf.DEFAULTS
+	if defaults and defaults[key] ~= nil then
+		return defaults[key] == true or defaults[key] == 1
+	end
+	return default
+end
+
+function enabled()
+	return mcm_bool("debug_overlay", false)
+end
+
 local function render()
-	if not overlay_enabled() or not any_overlay_content() then
-		clear_overlay()
+	if not enabled() or not any_content() then
+		hide()
 		return
 	end
 
@@ -209,15 +197,14 @@ local function render()
 	end
 	table.sort(names)
 
+	local white = hud_code("white")
 	local lines = {}
 	for _, name in ipairs(names) do
 		local slots = sources[name].slots
-
 		if #lines > 0 then
 			lines[#lines + 1] = ""
 		end
-		lines[#lines + 1] = COLORS.white .. "[" .. tag(name) .. "]"
-
+		lines[#lines + 1] = white .. "[" .. tag(name) .. "]"
 		local max_order = -1
 		for order in pairs(slots) do
 			if order > max_order then
@@ -227,7 +214,7 @@ local function render()
 		for order = 0, max_order do
 			local slot = slots[order]
 			if slot then
-				lines[#lines + 1] = resolve_color(slot.color) .. slot.msg
+				lines[#lines + 1] = hud_code(slot.color) .. slot.msg
 			else
 				lines[#lines + 1] = ""
 			end
@@ -235,11 +222,10 @@ local function render()
 	end
 
 	if #lines == 0 then
-		clear_overlay()
+		hide()
 		return
 	end
 
-	-- Same as death report: estimate, draw panel, set text, measure, resize panel.
 	local est_h = math.floor(#lines * LINE_H + 0.5)
 	show_panel(ORIGIN_X, ORIGIN_Y, PANEL_W, est_h + PANEL_PAD * 2)
 	local tc = wnd:TextControl()
@@ -266,31 +252,8 @@ local function render()
 	end
 end
 
-local function mcm_bool(key, default)
-	if ui_mcm then
-		local value = ui_mcm.get(DEBUG_MOD .. "/" .. key)
-		if value ~= nil then
-			return value == true or value == 1
-		end
-	end
-	local conf = _G.dogma_debug_conf
-	local defaults = conf and conf.DEFAULTS
-	if defaults and defaults[key] ~= nil then
-		return defaults[key] == true or defaults[key] == 1
-	end
-	return default
-end
-
-function logging()
-	return mcm_bool("debug_log", true)
-end
-
-function overlay_enabled()
-	return mcm_bool("debug_overlay", false)
-end
-
-function overlay(source, order, msg, color)
-	if not overlay_enabled() then
+function set(source, order, msg, color)
+	if not enabled() then
 		return
 	end
 	local s = get_source(source)
@@ -298,14 +261,7 @@ function overlay(source, order, msg, color)
 	render()
 end
 
-function log(mod_id, msg)
-	if not logging() then
-		return
-	end
-	printf("[%s] %s", tag(mod_id), tostring(msg))
-end
-
-function clear_source(source)
+function clear(source)
 	if not source then
 		return
 	end
@@ -320,4 +276,3 @@ end
 function on_game_start()
 	RegisterScriptCallback("on_option_change", render)
 end
-

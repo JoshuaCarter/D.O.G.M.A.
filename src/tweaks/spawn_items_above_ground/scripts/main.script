@@ -43,10 +43,10 @@ local function server_object_on_register(se)
 	end
 	local bx, by, bz = p.x, p.y, p.z
 	se.position = vector():set(bx, by + h, bz)
-	if dogma.dbg.logging() then
+	if dogma.log.logging() then
 		local row = dogma.db.get(sec)
 		local name = (row and row.name) or sec
-		dogma.dbg.log(CONFIG.MOD_ID, string.format(
+		dogma.log.log(CONFIG.MOD_ID, string.format(
 			"%s  (%.2f, %.2f, %.2f) -> (%.2f, %.2f, %.2f)",
 			name, bx, by, bz, bx, by + h, bz
 		))

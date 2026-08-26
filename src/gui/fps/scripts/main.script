@@ -59,7 +59,7 @@ local last_frame_time_ms = nil
 -- player can usefully watch or time, so this mod only supports file logging.
 local function log(msg)
 	if CONFIG.loaded.debug_log then
-		dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
+		dogma.log.log(CONFIG.MOD_ID, tostring(msg))
 	end
 end
 
@@ -103,7 +103,7 @@ end
 
 local function on_option_change()
 	CONFIG.loaded.enabled_default = dogma.mcm.bool(CONFIG.MOD_ID, "enabled_default")
-	CONFIG.loaded.debug_log = dogma.dbg.logging()
+	CONFIG.loaded.debug_log = dogma.log.logging()
 	CONFIG.loaded.long_frame_threshold_ms = dogma.mcm.uint("dogma/debug", "fps_long_frame_threshold_ms")
 	CONFIG.loaded.toggle_key = dogma.mcm.key(CONFIG.MOD_ID, "toggle_key")
 	CONFIG.loaded.key_mode = dogma.mcm.int(CONFIG.MOD_ID, "key_mode")

@@ -115,7 +115,7 @@ end
 local function log_bhs_fix(ctx, stock_limb, fixed_limb, amount, damagescale)
 	local pts_before = bhs_limb_points(amount, stock_limb, damagescale)
 	local pts_after = bhs_limb_points(amount, fixed_limb, damagescale)
-	dogma.console.say(string.format(
+	dogma.log.log("dogma/tweaks/fix_damage_limb_allocation", string.format(
 		"limb damage fix (%s): %s %d pts -> %s %d pts (hit %.3f)",
 		ctx,
 		stock_limb,
@@ -187,7 +187,7 @@ local function patch_bhs()
 			end
 			local stock_limb = HITBOX[stock_bone] or "torso"
 			local pts = bhs_limb_points(amount, stock_limb, damagescale)
-			dogma.console.say(string.format(
+			dogma.log.log("dogma/tweaks/fix_damage_limb_allocation", string.format(
 				"limb damage fix (whole-body): %s %d pts -> skipped (hit %.3f)",
 				stock_limb,
 				pts,
@@ -208,7 +208,7 @@ local function patch_bhs()
 			end
 			local left_pts = math.floor(pts / 2)
 			local right_pts = pts - left_pts
-			dogma.console.say(string.format(
+			dogma.log.log("dogma/tweaks/fix_damage_limb_allocation", string.format(
 				"limb damage fix (fall): %s %d pts -> leftleg+rightleg %d pts (hit %.3f)",
 				stock_limb,
 				pts,
@@ -242,7 +242,7 @@ local function patch_bhs()
 			end
 			local base = math.floor(pts / n)
 			local rem = pts - base * n
-			dogma.console.say(string.format(
+			dogma.log.log("dogma/tweaks/fix_damage_limb_allocation", string.format(
 				"limb damage fix (unknown bone): %s %d pts -> 4-way %d pts (hit %.3f)",
 				stock_limb,
 				pts,
@@ -306,7 +306,7 @@ local function patch_adb()
 			local stock_limb = adb_hitboxes[stock_bone] or "torso"
 			local mult_before = HITBOX_MULT[stock_limb] or 1
 			local mult_after = HITBOX_MULT.torso
-			dogma.console.say(string.format(
+			dogma.log.log("dogma/tweaks/fix_damage_limb_allocation", string.format(
 				"limb damage fix (adb head-chain): %s -> torso, power %.3f->%.3f",
 				stock_limb,
 				shit.power * mult_before,

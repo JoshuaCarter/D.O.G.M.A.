@@ -22,13 +22,13 @@ local was_hp = 1
 
 local function log(msg)
 	if CONFIG.loaded.debug_log then
-		dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
+		dogma.log.log(CONFIG.MOD_ID, tostring(msg))
 	end
 end
 
 local function on_option_change()
 	local tostr = tostring
-	CONFIG.loaded.debug_log = dogma.dbg.logging()
+	CONFIG.loaded.debug_log = dogma.log.logging()
 	CONFIG.loaded.enabled = dogma.mcm.bool(CONFIG.MOD_ID, "enabled", CONFIG.DEFAULTS.enabled)
 	CONFIG.loaded.always_min = dogma.mcm.int(CONFIG.MOD_ID, "always_min", CONFIG.DEFAULTS.always_min)
 	CONFIG.loaded.event_min = dogma.mcm.int(CONFIG.MOD_ID, "event_min", CONFIG.DEFAULTS.event_min)
@@ -66,14 +66,14 @@ end
 local function do_save(reason)
 	exec_console_cmd("save safety_save")
 	last_save_ms = time_global()
-	dogma.console.say("safety save (" .. reason .. ")", "green")
 	if not CONFIG.loaded.show_text then
 		local hud = get_hud and get_hud()
 		if hud and hud.RemoveCustomStatic then
 			hud:RemoveCustomStatic("game_saved")
 		end
 	end
-	log("save (" .. reason .. ")")
+	dogma.log.log(CONFIG.MOD_ID, "save (" .. reason .. ")", "green")
+	dogma.overlay.set(CONFIG.MOD_ID, 0, "save " .. reason, "green")
 end
 
 local function actor_on_update()

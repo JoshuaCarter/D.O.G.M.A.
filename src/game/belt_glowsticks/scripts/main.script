@@ -119,6 +119,8 @@ local function convert_belt_item_to_device(item)
 	local cond = item:condition()
 	alife_release_id(id)
 	alife_create_item(target_sec, db.actor, { cond = cond })
+	dogma.log.log(MOD_ID, "belt -> device " .. target_sec, "blue")
+	dogma.overlay.set(MOD_ID, 0, "belt -> device", "blue")
 	return true
 end
 
@@ -149,6 +151,8 @@ local function convert_device_to_belt(item)
 	local new_id = se_obj.id
 	pending_new_belt_items[new_id] = true
 	convert_in_progress = true
+	dogma.log.log(MOD_ID, "device -> belt " .. target_sec, "blue")
+	dogma.overlay.set(MOD_ID, 0, "device -> belt", "blue")
 
 	CreateTimeEvent(MOD_ID, "belt_equip_" .. new_id, 0.1, function()
 		pcall(function()

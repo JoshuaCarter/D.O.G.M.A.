@@ -1,20 +1,35 @@
 --[[
     Vendored xlibs (Damian Sirbu). Use via dogma.xlibs.xobject, not xobject.
 
-    Copies still write xconst / xobject. While they load, those names
-    point at our copies. Then we stamp the same names onto each copy's
-    env (the script table) and put _G back so the xlibs mod is untouched.
+    Copies still write xconst / xobject. We do not keep those on _G.
+    Some copies (xcombat) put the API on an inner table named after
+    the stock module. Export that. Do not stamp a script's own name
+    onto itself or that inner table is gone.
 ]]
 
 local M = getfenv(1)
 local saved = {}
+local scripts = {}
 
-local function take(name, mod)
+local function api_of(script, name)
+    if type(script) ~= "table" then
+        return script
+    end
+    local inner = rawget(script, name)
+    if type(inner) == "table" then
+        return inner
+    end
+    return script
+end
+
+local function take(name, script)
     if saved[name] == nil then
         saved[name] = { rawget(_G, name) }
     end
-    rawset(_G, name, mod)
-    M[name] = mod
+    local api = api_of(script, name)
+    rawset(_G, name, api)
+    M[name] = api
+    scripts[name] = script
 end
 
 take("xconst", __dogma_xconst)
@@ -50,11 +65,11 @@ take("xpda", __dogma_xpda)
 take("xsound", __dogma_xsound)
 take("xcombat", __dogma_xcombat)
 
-for name, mod in pairs(M) do
-    if type(mod) == "table" and type(name) == "string" and name:sub(1, 1) == "x" then
-        for other, sib in pairs(M) do
-            if type(sib) == "table" and type(other) == "string" and other:sub(1, 1) == "x" then
-                rawset(mod, other, sib)
+for name, script in pairs(scripts) do
+    if type(script) == "table" then
+        for other, api in pairs(M) do
+            if other ~= name and type(api) == "table" and type(other) == "string" and other:sub(1, 1) == "x" then
+                rawset(script, other, api)
             end
         end
     end

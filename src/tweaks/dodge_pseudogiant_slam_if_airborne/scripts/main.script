@@ -11,7 +11,7 @@ local HOOK_STATE = _G.__dogma_pseudogiant_slam_hooks or {}
 _G.__dogma_pseudogiant_slam_hooks = HOOK_STATE
 
 local function log(msg)
-	dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
+	dogma.log.log(CONFIG.MOD_ID, tostring(msg))
 end
 
 function on_game_start()
@@ -23,8 +23,7 @@ function on_game_start()
 
 	local mod = _G.grok_actor_damage_balancer
 	if not mod or type(mod.actor_on_before_hit) ~= "function" then
-		printf("[%s] grok_actor_damage_balancer.actor_on_before_hit not found", CONFIG.MOD_ID:gsub("/", "_"))
-		dogma.console.say("pseudogiant slam dodge: grok hook missing", "red")
+		dogma.log.log(CONFIG.MOD_ID, "grok hook missing", "red")
 		return
 	end
 
@@ -50,7 +49,7 @@ function on_game_start()
 				flags.ret_value = false
 			end
 			log("dodged giant slam")
-			dogma.console.say("pseudogiant slam dodged (airborne)", "blue")
+			dogma.overlay.set(CONFIG.MOD_ID, 0, "dodged giant slam", "blue")
 			return
 		end
 		return grok_orig(shit, bone_id, flags)

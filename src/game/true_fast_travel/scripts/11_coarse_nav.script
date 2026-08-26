@@ -283,10 +283,6 @@ local function cn_try_load()
         cn_state().graph = nil
         if cn_missing_aimap_logged ~= level_name then
             cn_missing_aimap_logged = level_name
-            dogma.console.say(string.format(
-                "true fast travel: no aimap for %s (tried %s)",
-                tostr(level_name), table.concat(cands, ",")
-            ), "yellow")
         end
         dogma.perf.stop()
         return false
@@ -295,10 +291,6 @@ local function cn_try_load()
     if not g then
         cn_log("try_load: parse failed for %s: %s", tostr(used_name or level_name), tostr(err))
         cn_state().graph = nil
-        dogma.console.say(string.format(
-            "true fast travel: aimap parse failed for %s (%s)",
-            tostr(used_name or level_name), tostr(err)
-        ), "red")
         dogma.perf.stop()
         return false
     end
@@ -306,12 +298,6 @@ local function cn_try_load()
     cn_missing_aimap_logged = nil
     cn_log("loaded %s nodes=%d from %s (%.1f MB) [level=%s]",
         tostr(used_name or level_name), g.node_count, tostr(src), #blob / (1024 * 1024), tostr(level_name))
-    if used_name and used_name ~= level_name then
-        dogma.console.say(string.format(
-            "true fast travel: aimap loaded as %s (level.name=%s) %d nodes",
-            tostr(used_name), tostr(level_name), g.node_count
-        ), "blue")
-    end
     dogma.perf.stop()
     return true
 end

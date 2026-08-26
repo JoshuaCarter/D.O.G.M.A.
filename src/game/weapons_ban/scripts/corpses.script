@@ -11,10 +11,23 @@ local Tiers
 local original_try_spawn_ammo
 local hooked_ammo = false
 
-local function log(msg)
-    if dogma.dbg.logging() then
-        dogma.dbg.log(MOD_ID, tostring(msg))
+local function log(msg, color)
+    dogma.log.log(MOD_ID, tostring(msg), color)
+end
+
+local function overlay_roll(msg, color)
+    dogma.overlay.set(MOD_ID, 0, tostring(msg), color)
+end
+
+local function npc_label(npc)
+    if not npc then
+        return "?"
     end
+    local name = npc.name and npc:name()
+    if name and name ~= "" then
+        return name
+    end
+    return (npc.section and npc:section()) or "?"
 end
 
 local function pick_ammo(ammo_list)
@@ -174,11 +187,11 @@ local function inject_corpse_ammo(npc, inv_ammo)
         end
     end)
     if #gun_ammo == 0 then
-        return
+        return { skip = "no guns", rank = rank }
     end
     local total_ru = Tiers.roll_ru_for_rank(rank)
     if total_ru <= 0 then
-        return
+        return { skip = "ru 0", rank = rank, guns = #gun_ammo }
     end
     local share = total_ru / #gun_ammo
     local pooled = {}
@@ -190,21 +203,45 @@ local function inject_corpse_ammo(npc, inv_ammo)
             pooled[sec] = (pooled[sec] or 0) + per
         end
     end
+    local drops = {}
     for sec, ru in pairs(pooled) do
         local rounds = Tiers.rounds_for_ru(sec, ru)
         if rounds > 0 then
             alife_create_item(sec, npc, { ammo = rounds })
-            log(string.format(
-                "corpse ammo %s x%s (%.0f RU share, total=%s, guns=%s, rank=%s)",
-                sec,
-                rounds,
-                ru,
-                total_ru,
-                #gun_ammo,
-                rank or "?"
-            ))
+            drops[#drops + 1] = string.format("%s x%s", sec, rounds)
         end
     end
+    return { rank = rank, guns = #gun_ammo, ru = total_ru, drops = drops }
+end
+
+local function log_corpse_roll(npc, result)
+    local who = npc_label(npc)
+    if result.skip then
+        if result.skip == "no guns" and not result.rank then
+            return
+        end
+        local msg = string.format(
+            "corpse %s skip %s rank=%s guns=%s",
+            who,
+            result.skip,
+            result.rank or "?",
+            result.guns or 0
+        )
+        log(msg, "gray")
+        overlay_roll(msg, "gray")
+        return
+    end
+    local loot = (#result.drops > 0) and table.concat(result.drops, ", ") or "none"
+    local msg = string.format(
+        "corpse %s rank=%s guns=%s ru=%s -> %s",
+        who,
+        result.rank or "?",
+        result.guns,
+        result.ru,
+        loot
+    )
+    log(msg, "green")
+    overlay_roll(msg, "green")
 end
 
 local function patched_try_spawn_ammo(npc)
@@ -219,7 +256,7 @@ local function patched_try_spawn_ammo(npc)
     -- Snapshot matching ammo before strip so we can reinject the same types.
     local inv_ammo = collect_inventory_ammo_secs(npc)
     strip_loose_ammo(npc)
-    inject_corpse_ammo(npc, inv_ammo)
+    log_corpse_roll(npc, inject_corpse_ammo(npc, inv_ammo) or { skip = "no result" })
     if item_weapon and item_weapon.ammo_aggregation_full and CreateTimeEvent then
         CreateTimeEvent(npc:id(), "dogma_wb_ammo_agg", 0, item_weapon.ammo_aggregation_full, npc:id())
     end

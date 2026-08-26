@@ -1273,13 +1273,13 @@ local OVERLAY = {
 local function overlay(slot, msg)
 	if CONFIG.loaded.debug_overlay then
 		local s = slot or OVERLAY.RANGE
-		dogma.dbg.overlay(CONFIG.MOD_ID, s.order, tostring(msg), s.color)
+		dogma.overlay.set(CONFIG.MOD_ID, s.order, tostring(msg), s.color)
 	end
 end
 
 local function log(msg)
 	if CONFIG.loaded.debug_log then
-		dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
+		dogma.log.log(CONFIG.MOD_ID, tostring(msg))
 	end
 end
 
@@ -1390,8 +1390,8 @@ local function on_option_change()
 	if zzzz_dogma_gui_weapon_tooltips_stats and zzzz_dogma_gui_weapon_tooltips_stats.set_apply_silencer then
 		zzzz_dogma_gui_weapon_tooltips_stats.set_apply_silencer(CONFIG.loaded.apply_silencer_stats)
 	end
-	CONFIG.loaded.debug_log = dogma.dbg.logging()
-	CONFIG.loaded.debug_overlay = dogma.dbg.overlay_enabled()
+	CONFIG.loaded.debug_log = dogma.log.logging()
+	CONFIG.loaded.debug_overlay = dogma.overlay.enabled()
 
 	if CONFIG.loaded.debug_log and not prev_debug then
 		logged_once = {}

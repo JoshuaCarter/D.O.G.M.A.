@@ -120,7 +120,7 @@ local function fail_start(msg, style)
 	if tft_set_fft_trip_in_progress then tft_set_fft_trip_in_progress(false) end
 	if msg then
 		local color = (style == "error") and "red" or "yellow"
-		dogma.console.say("true fast travel: start failed - " .. tostring(msg), color)
+		dogma.log.log("dogma/game/true_fast_travel", "start failed - " .. tostring(msg), color)
 	end
 	if msg and tft_msg then tft_msg(msg, style or "warning") end
 	return false
@@ -208,16 +208,9 @@ local function start_travel_sequence(pos, lvid, gvid, is_transition, final_gvid)
 				chain, is_vertex, path_len, meta = c, iv, plen, m
 			else
 				tft_log("MVP path build failed: %s", tostring(c))
-				dogma.console.say("true fast travel: path build failed - " .. tostring(c), "yellow")
 			end
 		end
 		if not chain or #chain < 2 then
-			local lvl = (level and level.name) and level.name() or "?"
-			local aimap = (_G.tft_nav_mesh_graph_ready and _G.tft_nav_mesh_graph_ready()) and "ready" or "missing"
-			dogma.console.say(string.format(
-				"true fast travel: no path at start level=%s aimap=%s",
-				tostring(lvl), aimap
-			), "yellow")
 			result = fail_start(tft_str("tft_msg_no_nav_path"), "warning")
 			break
 		end
@@ -256,8 +249,8 @@ local function start_travel_sequence(pos, lvid, gvid, is_transition, final_gvid)
 		set_safety_active(120)
 
 		tft_log("MVP travel start %.0fm pts=%d", tft.travel_dist, #chain)
-		dogma.console.say(string.format(
-			"true fast travel: started %.0fm %d pts%s",
+		dogma.overlay.set("dogma/game/true_fast_travel", 0, string.format(
+			"travel %.0fm %d pts%s",
 			tft.travel_dist, #chain, tft.is_transition and " (transition)" or ""
 		), "blue")
 		result = true
@@ -270,7 +263,7 @@ local function stop_travel_logic(reason)
 	tft_log("MVP travel stop: %s", tostring(reason))
 	local r = tostring(reason or "stop")
 	local color = (r == "cancel" or r == "manual") and "yellow" or "blue"
-	dogma.console.say("true fast travel: stopped - " .. r, color)
+	dogma.overlay.set("dogma/game/true_fast_travel", 0, "stopped " .. r, color)
 	local prefer = tft.walk_prev_slot or tft.pda_holster_prefer
 	if _G.tft_cancel_fly_camera then
 		_G.tft_cancel_fly_camera()
@@ -288,7 +281,7 @@ local function complete_travel_sequence(opts)
 	opts = opts or {}
 	local reason = opts.reason or "arrive"
 	tft_log("MVP travel complete: %s", tostring(reason))
-	dogma.console.say("true fast travel: complete - " .. tostring(reason), "blue")
+	dogma.overlay.set("dogma/game/true_fast_travel", 0, "complete " .. tostring(reason), "green")
 
 	local prefer = tft.walk_prev_slot or tft.pda_holster_prefer
 	if db.actor and tft.dest_pos then

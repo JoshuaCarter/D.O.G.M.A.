@@ -16,13 +16,13 @@ local orig_func_disassembly = nil
 
 local function log(msg)
 	if CONFIG.loaded.debug_log then
-		dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
+		dogma.log.log(CONFIG.MOD_ID, tostring(msg))
 	end
 end
 
 local function on_option_change()
 	CONFIG.loaded.tools_enabled = dogma.mcm.bool(CONFIG.MOD_ID, "tools_enabled")
-	CONFIG.loaded.debug_log = dogma.dbg.logging()
+	CONFIG.loaded.debug_log = dogma.log.logging()
 end
 
 local function redirect_to_lowest_stack(obj_d, note)

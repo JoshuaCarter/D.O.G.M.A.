@@ -5,16 +5,14 @@
 ]]
 
 local _mcm = nil
-local _dbg = nil
 local loaded_configs = {}
 
-function set_deps(mcm, dbg)
+function set_deps(mcm)
 	_mcm = mcm
-	_dbg = dbg
 end
 
 function ready(mod_id, db, load_fn)
-	if not (_mcm and _dbg and db and db.actor) then
+	if not (_mcm and db and db.actor) then
 		return nil
 	end
 	if load_fn and not loaded_configs[mod_id] then

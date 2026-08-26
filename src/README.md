@@ -44,7 +44,7 @@ Catalog: `fomod/manifest.yml` (`fomod` chrome + `mods` pages of path/name/stage)
 
 ## Common
 
-Runtime API: `dogma.script` (`dogma.mcm`, `dogma.input`, `dogma.dbg`, `dogma.status`, `dogma.xlibs`, `dogma.load`, …).
+Runtime API: `dogma.script` (`dogma.mcm`, `dogma.input`, `dogma.log`, `dogma.overlay`, `dogma.status`, `dogma.xlibs`, `dogma.load`, …).
 Vendored xlibs: copies in `src/_common/scripts/xlibs/`. Wrapper `__dogma_xlibs.script` → `dogma.xlibs`.
 MCM gather: `dogma_mcm.attach` / `append` / `with_header`.
 Feature keybinds: MCM `key_bind` via `dogma.mcm.key()` + `dogma.input` (mod-only keys),
@@ -53,9 +53,10 @@ or vanilla `on_before_key_press` + `key_bindings`.
 
 ```lua
 function on_game_start()
-	dogma.load(MOD_ID)  -- resets per-mod dbg state
+	dogma.load(MOD_ID)  -- resets per-mod overlay state
 	-- live MCM: dogma.mcm.bool(MOD_ID, "x")
-	-- debug: dogma.dbg.logging() / dogma.dbg.overlay_enabled()
+	-- log: dogma.log.log(MOD_ID, msg, "green")  -- flog / clog / fclog / log (noop if debug log off)
+	-- overlay: dogma.overlay.enabled() / dogma.overlay.set(MOD_ID, 0, msg, "green")
 	-- input: dogma.input.is_key_down(dik)
 	-- status: dogma.status.is_in_combat() / is_inv_open() / is_eating() / is_drinking()
 	--         / is_weapon_lowered() / is_sprinting() / is_talking() / health() / limbs() / bhs()

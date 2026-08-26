@@ -14,10 +14,8 @@ local original_check_trade_mode
 local original_is_tradable
 local hooked_trade_ui = false
 
-local function log(msg)
-    if dogma.dbg.logging() then
-        dogma.dbg.log(MOD_ID, tostring(msg))
-    end
+local function log(msg, color)
+    dogma.log.log(MOD_ID, tostring(msg), color)
 end
 
 local function is_banned_combat_gear(obj, sec)
@@ -168,6 +166,10 @@ local function strip_banned_from_trader(npc)
     local to_release = collect_banned_from_trader(npc)
     release_inventory_ids(to_release)
     if #to_release > 0 then
+        local who = (npc.name and npc:name()) or (npc.section and npc:section()) or "?"
+        local msg = string.format("trader strip %s n=%s", who, #to_release)
+        log(msg, "yellow")
+        dogma.overlay.set(MOD_ID, 2, msg, "yellow")
         schedule_trader_resort(npc:id())
     end
     dogma.perf.stop()

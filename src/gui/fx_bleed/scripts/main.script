@@ -27,13 +27,13 @@ local LOG = {
 local function overlay(log_type, msg)
 	if CONFIG.loaded.debug_overlay then
 		local slot = log_type or LOG.LIFECYCLE
-		dogma.dbg.overlay(CONFIG.MOD_ID, slot.order, tostring(msg), slot.color)
+		dogma.overlay.set(CONFIG.MOD_ID, slot.order, tostring(msg), slot.color)
 	end
 end
 
 local function log(msg)
 	if CONFIG.loaded.debug_log then
-		dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
+		dogma.log.log(CONFIG.MOD_ID, tostring(msg))
 	end
 end
 
@@ -265,8 +265,8 @@ local function update_overlays(now, appearance, scale_idx, max_alpha)
 end
 
 local function on_option_change()
-	CONFIG.loaded.debug_log = dogma.dbg.logging()
-	CONFIG.loaded.debug_overlay = dogma.dbg.overlay_enabled()
+	CONFIG.loaded.debug_log = dogma.log.logging()
+	CONFIG.loaded.debug_overlay = dogma.overlay.enabled()
 	CONFIG.loaded.enabled = dogma.mcm.bool(CONFIG.MOD_ID, "enable")
 	CONFIG.loaded.max_alpha = dogma.mcm.float(CONFIG.MOD_ID, "max_alpha")
 	CONFIG.loaded.style = dogma.mcm.int(CONFIG.MOD_ID, "style", CONFIG.DEFAULTS.style)

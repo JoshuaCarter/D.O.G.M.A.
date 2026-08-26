@@ -83,7 +83,7 @@ local companion_pull_wait_frames = 0
 
 local function log(msg)
 	if CONFIG.loaded.debug_log then
-		dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
+		dogma.log.log(CONFIG.MOD_ID, tostring(msg))
 	end
 end
 
@@ -94,7 +94,7 @@ end
 local function on_option_change()
 	local tostr = tostring
 	CONFIG.loaded.intercept_disassemble = dogma.mcm.bool(CONFIG.MOD_ID, "intercept_disassemble")
-	CONFIG.loaded.debug_log = dogma.dbg.logging()
+	CONFIG.loaded.debug_log = dogma.log.logging()
 	log(string.format(
 		"on_option_change: intercept_disassemble=%s debug_log=%s onupdate_patched=%s cc_update_patched=%s func_disassembly_patched=%s sort_guard_patched=%s",
 		tostr(CONFIG.loaded.intercept_disassemble), tostr(CONFIG.loaded.debug_log),

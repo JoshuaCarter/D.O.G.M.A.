@@ -69,8 +69,8 @@ end
 local function sync_logging()
 	local on = false
 	local dogma = rawget(_G, "dogma")
-	if dogma and dogma.dbg and dogma.dbg.logging then
-		on = dogma.dbg.logging() == true
+	if dogma and dogma.log and dogma.log.logging then
+		on = dogma.log.logging() == true
 	end
 	logging_on = on
 	HOOK.logging_on = on
@@ -96,8 +96,8 @@ end
 
 local function emit(msg)
 	local dogma = rawget(_G, "dogma")
-	if dogma and dogma.dbg and dogma.dbg.log then
-		dogma.dbg.log(MOD_ID, msg)
+	if dogma and dogma.log and dogma.log.log then
+		dogma.log.log(MOD_ID, msg)
 		return
 	end
 	printf("[%s] %s", TAG, tostring(msg))

@@ -21,7 +21,7 @@ local disassembly_item_wrapper = nil
 
 local function log(msg)
 	if CONFIG.loaded.debug_log then
-		dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
+		dogma.log.log(CONFIG.MOD_ID, tostring(msg))
 	end
 end
 
@@ -222,7 +222,7 @@ end
 local function on_option_change()
 	if dogma then
 		CONFIG.loaded.pda_grants_stash_coords = dogma.mcm.bool(CONFIG.MOD_ID, "pda_grants_stash_coords")
-		CONFIG.loaded.debug_log = dogma.dbg.logging()
+		CONFIG.loaded.debug_log = dogma.log.logging()
 	end
 end
 

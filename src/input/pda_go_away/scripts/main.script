@@ -18,7 +18,7 @@ local MODE_TO_KIND = {
 
 local function log(msg)
 	if CONFIG.loaded.debug_log then
-		dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
+		dogma.log.log(CONFIG.MOD_ID, tostring(msg))
 	end
 end
 
@@ -27,7 +27,7 @@ local function on_option_change()
 	CONFIG.loaded.after_inventory = dogma.mcm.bool(CONFIG.MOD_ID, "after_inventory")
 	CONFIG.loaded.after_loot = dogma.mcm.bool(CONFIG.MOD_ID, "after_loot")
 	CONFIG.loaded.after_teleport = dogma.mcm.bool(CONFIG.MOD_ID, "after_teleport")
-	CONFIG.loaded.debug_log = dogma.dbg.logging()
+	CONFIG.loaded.debug_log = dogma.log.logging()
 	log(string.format(
 		"config: inventory=%s loot=%s teleport=%s debug=%s",
 		tostr(CONFIG.loaded.after_inventory), tostr(CONFIG.loaded.after_loot),
@@ -85,7 +85,6 @@ local function holster_pda_for(kind, site, on_close)
 			"holster_pda_for(%s) from %s: active_slot=%s -> activate_slot(%s) (slot_before_pda=%s, last_non_pda_slot=%s)",
 			kind, site, slot, target, tostr(slot_before_pda), tostr(last_non_pda_slot)
 		))
-		dogma.console.say(sformat("pda reequip suppressed (%s/%s) -> slot %s", kind, site, target), "blue")
 		db.actor:activate_slot(target)
 		restore_slot_for_ui = target
 		pda_holstered_for_ui = true
@@ -96,7 +95,6 @@ local function holster_pda_for(kind, site, on_close)
 			"holster_pda_for(%s) from %s: preempt active_slot=%s -> activate_slot(%s) (restore_slot_for_ui)",
 			kind, site, tostr(slot), restore_slot_for_ui
 		))
-		dogma.console.say(sformat("pda reequip preempt (%s/%s) -> slot %s", kind, site, restore_slot_for_ui), "blue")
 		db.actor:activate_slot(restore_slot_for_ui)
 		pda_holstered_for_ui = false
 		restore_slot_for_ui = nil
@@ -311,7 +309,6 @@ local function on_actor_on_update()
 						"holster_pda_on_teleport(position_jump): active_slot=%s -> activate_slot(%s) (slot_before_pda=%s, last_non_pda_slot=%s)",
 						slot, target, tostring(slot_before_pda), tostring(last_non_pda_slot)
 					))
-					dogma.console.say(string.format("pda reequip suppressed (teleport) -> slot %s", target), "blue")
 					db.actor:activate_slot(target)
 					holstered = true
 				elseif slot == 0 and target ~= 0 and (slot_before_pda or pda_holstered_for_ui or last_seen_slot == PDA_SLOT) then
@@ -343,7 +340,7 @@ function on_game_start()
 	-- Not gated by CONFIG.loaded.debug_log: at this point MCM options haven't been
 	-- read yet (that happens later via on_option_change), so the gate would
 	-- always be closed here regardless of the user's actual setting.
-	dogma.dbg.log(CONFIG.MOD_ID, "on_game_start: mod loaded")
+	dogma.log.log(CONFIG.MOD_ID, "on_game_start: mod loaded")
 
 	on_option_change()
 

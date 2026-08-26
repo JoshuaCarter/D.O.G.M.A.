@@ -150,7 +150,7 @@ end
 
 local function log(msg)
 	if CONFIG.loaded.debug_log then
-		dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
+		dogma.log.log(CONFIG.MOD_ID, tostring(msg))
 	end
 end
 
@@ -268,8 +268,8 @@ local function refresh_config()
 	CONFIG.loaded.wads_reset_key = dogma.mcm.key(ADS_MOD, "wads_reset_key")
 	CONFIG.loaded.wads_key_modifier = dogma.mcm.int(ADS_MOD, "wads_key_modifier")
 
-	CONFIG.loaded.debug_log = dogma.dbg.logging()
-	dogma.dbg.clear_source(CONFIG.MOD_ID)
+	CONFIG.loaded.debug_log = dogma.log.logging()
+	dogma.overlay.clear(CONFIG.MOD_ID)
 end
 
 local function reset_scroll_accum()

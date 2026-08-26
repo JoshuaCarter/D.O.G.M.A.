@@ -23,8 +23,8 @@ local PARTS_COND = CONSTS.START_PARTS_COND
 local ini_loadouts
 
 local function log(msg)
-    if dogma.dbg.logging() then
-        dogma.dbg.log(MOD_ID, tostring(msg))
+    if dogma.log.logging() then
+        dogma.log.log(MOD_ID, tostring(msg))
     end
 end
 
@@ -117,10 +117,15 @@ local function give_extra_start_ammo()
         ammo_to_spawn[sec_ammo] = (ammo_to_spawn[sec_ammo] or 0) + add
     end)
 
+    local parts = {}
     for sec, cnt in pairs(ammo_to_spawn) do
         alife_create_item(sec, db.actor, { ammo = cnt })
-        log(string.format("new game +%s x%s", sec, cnt))
-        dogma.console.say(string.format("weapons ban: extra start ammo %s x%d", sec, cnt), "blue")
+        parts[#parts + 1] = string.format("%s x%s", sec, cnt)
+    end
+    if #parts > 0 then
+        local msg = "new game ammo " .. table.concat(parts, ", ")
+        log(msg)
+        dogma.overlay.set(MOD_ID, 3, msg, "blue")
     end
 end
 

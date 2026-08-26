@@ -41,7 +41,7 @@ local pending_pickup_at = nil
 
 local function log(msg)
 	if CONFIG.loaded.debug_log then
-		dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
+		dogma.log.log(CONFIG.MOD_ID, tostring(msg))
 	end
 end
 
@@ -689,7 +689,7 @@ end
 
 local function on_option_change()
 	CONFIG.loaded.enabled = dogma.mcm.bool(CONFIG.MOD_ID, "enabled")
-	CONFIG.loaded.debug_log = dogma.dbg.logging()
+	CONFIG.loaded.debug_log = dogma.log.logging()
 	CONFIG.loaded.skin_speed_multiplier = dogma.mcm.float(CONFIG.MOD_ID, "skin_speed_multiplier")
 	CONFIG.loaded.auto_crouch = dogma.mcm.bool(CONFIG.MOD_ID, "auto_crouch")
 	CONFIG.loaded.look_at_mutant = dogma.mcm.bool(CONFIG.MOD_ID, "look_at_mutant")

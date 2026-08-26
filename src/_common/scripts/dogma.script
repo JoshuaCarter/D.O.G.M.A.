@@ -1,35 +1,34 @@
 --[[
 	dogma.script - runtime API (full script load only).
 
-	dogma.mcm / .keys / .dbg / .console / .sys / .input / .math / .rng / .perf / .status / .alife / .json / .db / .xlibs / .load / ...  game-time
+	dogma.mcm / .keys / .log / .overlay / .sys / .input / .math / .rng / .perf / .status / .alife / .json / .db / .xlibs / .load / ...  game-time
 	MCM gather scripts use dogma_mcm.* (cannot see this module).
 ]]
 
 xlibs = __dogma_xlibs
 mcm = __dogma_mcm
 keys = __dogma_key_mirror_mcm
-dbg = __dogma_dbg
-console = __dogma_console
+log = __dogma_log
+overlay = __dogma_overlay
 sys = __dogma_sys
 input = __dogma_input
 math = __dogma_math
 rng = __dogma_rng
 perf = __dogma_perf
 status = __dogma_status
-console_once = __dogma_console_once
 item_stats = __dogma_item_stats.exports
 alife = __dogma_alife
 json = __dogma_json
 db = __dogma_db
 
 function load(mod_id)
-	sys.set_deps(mcm, dbg)
+	sys.set_deps(mcm)
 	if perf and perf.sync then
 		perf.sync()
 	end
 	if mod_id then
 		sys.reset_mod(mod_id)
-		dbg.clear_source(mod_id)
+		overlay.clear(mod_id)
 	end
 	return getfenv(1)
 end

@@ -23,8 +23,8 @@ local xsquad = dogma.xlibs.xsquad
 local xsmart = dogma.xlibs.xsmart
 
 local function log(msg)
-	if dogma.dbg.logging() then
-		dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
+	if dogma.log.logging() then
+		dogma.log.log(CONFIG.MOD_ID, tostring(msg))
 	end
 end
 
@@ -118,10 +118,6 @@ local function strip_to_speaker(npc)
 		return
 	end
 	log(sformat("strip id=%s offline=%d online=%d", tostring(keep_id), #offline, #online))
-	dogma.console.say(sformat(
-		"escorts solo: id=%s offline=%d online=%d",
-		tostring(keep_id), #offline, #online
-	), "blue")
 	remove_members(squad, offline)
 	for i = 1, #online do
 		if not rehome_one(squad, online[i]) then
@@ -140,7 +136,6 @@ local function strip_to_speaker(npc)
 	end
 	if #still > 0 then
 		log(sformat("strip fallback remove %d still attached", #still))
-		dogma.console.say(sformat("escorts solo: fallback removed %d attached", #still), "yellow")
 		remove_members(squad, still)
 	end
 end
@@ -192,7 +187,6 @@ local function patch_solo(mod)
 
 	mod.__dogma_tweaks_escort_tweaks_solo = true
 	log("patched " .. tostring(mod))
-	dogma.console.say("escort tweaks: patched " .. tostring(mod), "blue")
 end
 
 local function without_out_money(fn, ...)

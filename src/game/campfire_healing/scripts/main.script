@@ -44,8 +44,8 @@ local PPE_FADE_MS = 700
 local PPE_SPEED = 6
 
 local function log(msg)
-	if dogma.dbg.logging() then
-		dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
+	if dogma.log.logging() then
+		dogma.log.log(CONFIG.MOD_ID, tostring(msg))
 	end
 end
 
@@ -218,7 +218,6 @@ local function tick_limb()
 			"limb %s temp->perm +1 | perm %s->%s temp %s->%s max %s",
 			key, perm, perm + 1, temp, timedhp[key], max
 		))
-		dogma.console.say(string.format("campfire: limb %s temp->perm +1", key), "blue")
 	else
 		log("limb skip: convert failed " .. key .. " | " .. limb_snapshot(health, timedhp, maxhp))
 	end

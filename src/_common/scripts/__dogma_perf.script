@@ -16,7 +16,7 @@
 
 	Warnings require MCM dogma/debug perf_log. Threshold: call arg (µs) →
 	perf_warn_threshold_us → ≤0 = no console warn. One console/xray line per
-	key per 10s via console.say only (printf + say wrote the same line twice).
+	key per 10s via engine log only (file + console wrote the same line twice).
 
 	dogma_perf.log records every stop while perf_log is on (threshold only
 	gates console/xray warns). First flush is 10s after first_update. Then
@@ -305,14 +305,14 @@ local function warn_slow(label, elapsed_us, threshold_us)
 		return
 	end
 	last_warn_ms[label] = now
-	local console = rawget(_G, "__dogma_console")
-	if console and console.say then
-		console.say(string.format(
+	local engine_log = rawget(_G, "log")
+	if engine_log then
+		engine_log("~" .. string.format(
 			"[dogma_perf] SLOW %s took %dus (threshold %dus)",
 			tostring(label or "?"),
 			math.floor(elapsed_us + 0.5),
 			threshold_us
-		), "yellow")
+		))
 	end
 end
 

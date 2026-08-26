@@ -397,10 +397,6 @@ local function build_path_preview(id, is_lc)
 			local lvl = (level and level.name) and level.name() or "?"
 			local aimap = (_G.tft_nav_mesh_graph_ready and _G.tft_nav_mesh_graph_ready()) and "ready" or "missing"
 			tft_log("path preview: nav mesh path failed (%.0fm straight) level=%s aimap=%s", dist, lvl, aimap)
-			dogma.console.say(string.format(
-				"true fast travel: path failed (%.0fm straight) level=%s aimap=%s",
-				dist, lvl, aimap
-			), "yellow")
 			tft.is_path_preview = false
 			tft.path_preview_id = nil
 			break
@@ -426,10 +422,6 @@ local function build_path_preview(id, is_lc)
 		tft.dot_count = #markers
 		tft_log("path preview: %d waypoints, %d markers (path %.0fm, straight %.0fm)",
 			#chain, #markers, path_len or dist, dist)
-		dogma.console.say(string.format(
-			"true fast travel: path found %d pts %.0fm (straight %.0fm)",
-			#chain, path_len or dist, dist
-		), "blue")
 
 		for i = 1, tft.dot_count do
 			local spot = markers[i] and markers[i].spot or tft_path.dot_spot_debug_edge

@@ -21,17 +21,19 @@ function on_mcm_load(options)
 	M.register_debug_page(options)
 end
 
---- Wire sys→mcm/dbg; optionally reset per-mod debug state.
+--- Wire sys→mcm; optionally reset per-mod overlay state.
 function load(mod_id)
 	local sys_mod = rawget(_G, "__dogma_sys")
-	local dbg_mod = rawget(_G, "__dogma_dbg")
-	if not (sys_mod and mcm and dbg_mod) then
+	local overlay_mod = rawget(_G, "__dogma_overlay")
+	if not (sys_mod and mcm) then
 		return getfenv(1)
 	end
-	sys_mod.set_deps(mcm, dbg_mod)
+	sys_mod.set_deps(mcm)
 	if mod_id then
 		sys_mod.reset_mod(mod_id)
-		dbg_mod.clear_source(mod_id)
+		if overlay_mod and overlay_mod.clear then
+			overlay_mod.clear(mod_id)
+		end
 	end
 	return getfenv(1)
 end

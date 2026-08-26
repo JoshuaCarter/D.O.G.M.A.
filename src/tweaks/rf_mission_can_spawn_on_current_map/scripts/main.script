@@ -12,8 +12,8 @@ local CONFIG = _G.dogma_tweaks_rf_mission_can_spawn_on_current_map_conf
 local MOD_ID = CONFIG and CONFIG.MOD_ID or "dogma/tweaks/rf_mission_can_spawn_on_current_map"
 
 local function log(msg)
-	if dogma.dbg.logging() then
-		dogma.dbg.log(MOD_ID, tostring(msg))
+	if dogma.log.logging() then
+		dogma.log.log(MOD_ID, tostring(msg))
 	end
 end
 
@@ -64,9 +64,6 @@ local function log_spawn(here)
 	local pool = here and tb_allmaps and tb_allmaps[here]
 	local n = (type(pool) == "table" and #pool) or 0
 	log(string.format("spawn here=%s there=%s pool=%s", tostring(here), tostring(there), tostring(n)))
-	if here and there == here then
-		dogma.console.say(string.format("RF package spawned on current map (%s)", here), "blue")
-	end
 end
 
 local function hook_tb_spawn()

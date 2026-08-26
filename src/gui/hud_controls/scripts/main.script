@@ -12,13 +12,14 @@ local FLAG = "__dogma_hud_controls_companion"
 
 local companion_show = false
 local companion_flash_until = 0
+local companion_cond_prev = false
 local logged_missing = false
 
 local map_desired = false
 
 local function log(msg)
-	if dogma.dbg.logging() then
-		dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
+	if dogma.log.logging() then
+		dogma.log.log(CONFIG.MOD_ID, tostring(msg))
 	end
 end
 
@@ -175,7 +176,7 @@ local function companion_want()
 	end
 	local now = time_global()
 	local cond = companion_conditions(L)
-	if cond then
+	if companion_cond_prev and not cond then
 		local keep = L.companion_keep_showing_sec or 0
 		if keep > 0 then
 			local target = now + math.floor(keep * 1000)
@@ -184,28 +185,8 @@ local function companion_want()
 			end
 		end
 	end
+	companion_cond_prev = cond
 	return cond or hold_key(L.companion_key, L.companion_modifier) or companion_flash_until > now
-end
-
-local function note_companion_hurt(npc, amount)
-	local L = CONFIG.loaded
-	if not L.companion_show_on_hurt then
-		return
-	end
-	local sec = L.companion_hurt_sec
-	if type(sec) ~= "number" or sec <= 0 then
-		return
-	end
-	if type(amount) == "number" and amount <= 0 then
-		return
-	end
-	if not (npc and npc.has_info and npc:has_info("npcx_is_companion")) then
-		return
-	end
-	local target = time_global() + math.floor(sec * 1000)
-	if companion_flash_until < target then
-		companion_flash_until = target
-	end
 end
 
 -- Slots only. Never dialog:Show(false) - stock never turns that back on.
@@ -297,8 +278,6 @@ local function load_opts()
 	L.hide_companion = dogma.mcm.bool(CONFIG.MOD_ID, "hide_companion", d.hide_companion)
 	L.companion_key = dogma.mcm.key(CONFIG.MOD_ID, "companion_key")
 	L.companion_modifier = dogma.mcm.int(CONFIG.MOD_ID, "companion_modifier", d.companion_modifier) or 0
-	L.companion_show_on_hurt = dogma.mcm.bool(CONFIG.MOD_ID, "companion_show_on_hurt", d.companion_show_on_hurt)
-	L.companion_hurt_sec = clamp_uint(dogma.mcm.uint(CONFIG.MOD_ID, "companion_hurt_sec", d.companion_hurt_sec), 60, d.companion_hurt_sec)
 	L.companion_always_show = dogma.mcm.bool(CONFIG.MOD_ID, "companion_always_show", d.companion_always_show)
 	L.companion_hp_show_below_pct = clamp_uint(dogma.mcm.uint(CONFIG.MOD_ID, "companion_hp_show_below_pct", d.companion_hp_show_below_pct), 100, d.companion_hp_show_below_pct)
 	L.companion_show_in_combat = dogma.mcm.bool(CONFIG.MOD_ID, "companion_show_in_combat", d.companion_show_in_combat)
@@ -331,6 +310,7 @@ end
 local function reset()
 	companion_show = false
 	companion_flash_until = 0
+	companion_cond_prev = false
 	map_desired = false
 end
 
@@ -348,8 +328,6 @@ function on_game_start()
 	end)
 	RegisterScriptCallback("on_option_change", on_option_change)
 	RegisterScriptCallback("actor_on_update", actor_on_update)
-	RegisterScriptCallback("npc_on_hit_callback", note_companion_hurt)
-	RegisterScriptCallback("monster_on_hit_callback", note_companion_hurt)
 	RegisterScriptCallback("on_game_load", reset)
 	RegisterScriptCallback("main_menu_on_init", reset)
 	RegisterScriptCallback("actor_on_net_destroy", reset)

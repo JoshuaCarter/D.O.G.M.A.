@@ -7,8 +7,8 @@ local tft_config = _G.tft_config
 local tft = _G.tft
 
 local function load_config()
-	tft_config.debug_overlay = dogma.dbg.overlay_enabled()
-	tft_config.debug_log = dogma.dbg.logging()
+	tft_config.debug_overlay = dogma.overlay.enabled()
+	tft_config.debug_log = dogma.log.logging()
 	local tf = dogma.mcm.number(CONFIG.MOD_ID, "time_factor_travel", CONFIG.DEFAULTS.time_factor_travel)
 	if tf < 1 then tf = 1 end
 	if tf > 10 then tf = 10 end
@@ -86,7 +86,6 @@ local function menu_no_option(reason, id, ln, detail)
 	if detail and detail ~= "" then
 		msg = msg .. " " .. detail
 	end
-	dogma.console.say(msg, "yellow")
 	tft_log("%s", msg)
 end
 
@@ -131,7 +130,7 @@ local function on_map_spot_menu_add_property(pui, id, ln, hint)
 
 		if not tft._menu_hook_logged then
 			tft._menu_hook_logged = true
-			dogma.console.say("true fast travel: map menu hook alive", "blue")
+			dogma.log.log(CONFIG.MOD_ID, "map menu hook alive", "blue")
 		end
 
 		if not tft.right_click_avail then
@@ -208,8 +207,8 @@ local function on_map_spot_menu_add_property(pui, id, ln, hint)
 		if tft_is_destination_unlocked and not tft_is_destination_unlocked(id) then
 			if tft_clear_path_preview then tft_clear_path_preview() end
 			pui:AddItem(tft_str("tft_menu_not_visited"))
-			dogma.console.say(sformat(
-				"true fast travel: offer Not visited id=%s kind=%s ln=%s",
+			dogma.log.log(CONFIG.MOD_ID, sformat(
+				"offer Not visited id=%s kind=%s ln=%s",
 				tostr(id), kind, tostr(ln)
 			), "blue")
 			return
@@ -221,14 +220,13 @@ local function on_map_spot_menu_add_property(pui, id, ln, hint)
 			end
 		end)
 		pui:AddItem(tft_str("tft_menu_travel_here"))
-		dogma.console.say(sformat(
-			"true fast travel: offer Travel here id=%s kind=%s ln=%s",
+		dogma.log.log(CONFIG.MOD_ID, sformat(
+			"offer Travel here id=%s kind=%s ln=%s",
 			tostr(id), kind, tostr(ln)
 		), "blue")
 	end, debug.traceback)
 	if not ok then
 		tft_log_error("map_spot_menu_add_property error: %s", tostring(err))
-		dogma.console.say("true fast travel: menu error - " .. tostring(err), "red")
 	end
 end
 
@@ -260,7 +258,6 @@ local function on_map_spot_menu_property_clicked(pui, id, ln, t)
 		end
 		if not target then
 			tft_log_error("menu click: no target id=%s err=%s", tostring(id), tostring(terr))
-			dogma.console.say("true fast travel: click no target id=" .. tostring(id), "yellow")
 			return
 		end
 
@@ -273,7 +270,6 @@ local function on_map_spot_menu_property_clicked(pui, id, ln, t)
 	end, debug.traceback)
 	if not ok then
 		tft_log_error("map_spot_menu_property_clicked error: %s", tostring(err))
-		dogma.console.say("true fast travel: click error - " .. tostring(err), "red")
 	end
 end
 
@@ -330,7 +326,7 @@ local function ensure_pda_property_box_patch()
 
 	if not tft._pda_patch_logged then
 		tft._pda_patch_logged = true
-		dogma.console.say("true fast travel: pda property box patched", "blue")
+		dogma.log.log(CONFIG.MOD_ID, "pda property box patched", "blue")
 	end
 	return true
 end
@@ -342,7 +338,7 @@ local function on_save_state(m_data)
 end
 
 local function actor_on_first_update()
-	dogma.console.say("true fast travel: actor first update", "blue")
+	dogma.log.log(CONFIG.MOD_ID, "actor first update", "blue")
 	ensure_pda_property_box_patch()
 	if tft_build_dynamic_map then pcall(tft_build_dynamic_map) end
 	if tft_schedule_index_travel_destinations then
@@ -353,7 +349,7 @@ local function actor_on_first_update()
 	if _G.tft_nav_mesh_try_load then pcall(_G.tft_nav_mesh_try_load) end
 	local aimap = (_G.tft_nav_mesh_graph_ready and _G.tft_nav_mesh_graph_ready()) and "ready" or "missing"
 	local lvl = (level and level.name) and level.name() or "?"
-	dogma.console.say(string.format("true fast travel: aimap %s level=%s", aimap, tostring(lvl)), aimap == "ready" and "blue" or "yellow")
+	dogma.log.log(CONFIG.MOD_ID, string.format("aimap %s level=%s", aimap, tostring(lvl)), aimap == "ready" and "blue" or "yellow")
 end
 
 local function on_game_load()
@@ -431,8 +427,7 @@ function on_game_start()
 	end
 
 	ensure_pda_property_box_patch()
-	dogma.console.say("true fast travel: started", "blue")
-	printf("[dogma_game_true_fast_travel] MVP main started")
+	dogma.log.log(CONFIG.MOD_ID, "started", "blue")
 end
 
 _G.refresh_active_config = refresh_active_config

@@ -72,21 +72,21 @@ local ENGINE_BINDS = {
 local TOGGLE_CMDS = { "g_crouch_toggle", "g_walk_toggle", "g_sprint_toggle" }
 
 local function log(msg)
-	if not (dogma.dbg) then
+	if not (dogma.log) then
 		return
 	end
 	if CONFIG.loaded.debug_log then
-		dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
+		dogma.log.log(CONFIG.MOD_ID, tostring(msg))
 	end
 end
 
 local function overlay(log_type, msg)
-	if not (dogma.dbg) then
+	if not (dogma.overlay) then
 		return
 	end
 	if CONFIG.loaded.debug_overlay then
 		local slot = log_type or LOG.POSE
-		dogma.dbg.overlay(CONFIG.MOD_ID, slot.order, tostring(msg), slot.color)
+		dogma.overlay.set(CONFIG.MOD_ID, slot.order, tostring(msg), slot.color)
 	end
 end
 
@@ -238,8 +238,8 @@ local function on_option_change()
 	CONFIG.loaded.enabled = true
 	-- Promote legacy MCM-only walk DIK into Controls if unbound.
 	dogma.mcm.migrate_key_to_mirror(CONFIG.MOD_ID, "walk_key", CONFIG.BINDS.walk)
-	CONFIG.loaded.debug_log = dogma.dbg.logging()
-	CONFIG.loaded.debug_overlay = dogma.dbg.overlay_enabled()
+	CONFIG.loaded.debug_log = dogma.log.logging()
+	CONFIG.loaded.debug_overlay = dogma.overlay.enabled()
 	CONFIG.loaded.sprint_lean_freelook = dogma.mcm.bool(CONFIG.MOD_ID, "sprint_lean_freelook")
 	-- Always refresh mirrored CONFIG.loaded from Controls (MCM curr already wrote
 	-- Accept changes into the engine).

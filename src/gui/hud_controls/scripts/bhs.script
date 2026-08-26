@@ -6,8 +6,8 @@
 	parking so BHS does not RemoveCustomStatic.
 	Load wait: no parks until BHS limb bars exist and dest matches live health
 	(spawn is SetProgressPos(55)), then the engine fill lerp can finish.
-	Always-show conditions first, then damage/hold overrides. Stam threshold
-	alone → stam only. Status icons: separate functor gates.
+	Show = hold key or resource thresholds. Stam threshold alone → stam only.
+	Status icons: separate functor gates.
 	Boosters: never Show. Park only while hide-icons is on and hold key is up.
 ]]
 
@@ -27,7 +27,6 @@ local FILL_MATCH = 2
 local FILL_LERP_RANGE_SEC = 2
 local PARK_OFF = 4000
 local PARKED_X = -1000
-local FLAG = "__dogma_hud_controls_bhs"
 
 -- Stock thirst blur starts at gray. Yellow = soft flash; orange/red follows deprivation.
 local THIRST_PPE = "yantar_underground_psi.ppe"
@@ -121,17 +120,16 @@ local FILL_BARS = {
 }
 
 local flash_until = 0
-local heal_clamped = false
 local load_wait = false
 local grace_deadline = 0
 local fill_hide_at = 0
 local fill_uv = {}
 local last_status_tick = 0
 local last_park_tick = 0
-local last_heal_tick = 0
 local icons_hold_prev = false
 local show_all_prev = false
 local show_stam_prev = false
+local cond_prev = false
 local stam_latched = false
 local gates_installed = false
 local update_registered = false
@@ -139,7 +137,6 @@ local update_registered = false
 local uv_show_fn, uv_show_idx = nil, nil
 local uv_hs_fn, uv_hs_idx = nil, nil
 local uv_change_fn, uv_change_idx = nil, nil
-local wrapped_rd, orig_rd = nil, nil
 local scratch_pos = nil
 local home = {} -- key -> {x,y}
 
@@ -151,7 +148,7 @@ _G.dogma_hud_controls_icon = _G.dogma_hud_controls_icon or {}
 local GATE = _G.dogma_hud_controls_icon
 
 -- Forward decls (Lua locals must exist before mutually recursive callers).
-local ensure_bhs_hook, apply_parks, begin_or_refresh_damage
+local ensure_bhs_hook, apply_parks
 
 local function find_upvalue(fn, name)
 	if type(fn) ~= "function" or not (debug and debug.getupvalue) then
@@ -248,9 +245,6 @@ local function refresh_options()
 	L.hide_body = dogma.mcm.bool(CONFIG.MOD_ID, "hide_body", d.hide_body)
 	L.key_bhs = dogma.mcm.key(CONFIG.MOD_ID, "key_bhs")
 	L.key_bhs_modifier = dogma.mcm.int(CONFIG.MOD_ID, "key_bhs_modifier", d.key_bhs_modifier) or 0
-	L.show_on_damage = dogma.mcm.bool(CONFIG.MOD_ID, "show_on_damage", d.show_on_damage)
-	L.sec = clamp_int(dogma.mcm.int(CONFIG.MOD_ID, "sec", d.sec), 0, 60, d.sec)
-	L.full_heal_clamp_sec = clamp_int(dogma.mcm.int(CONFIG.MOD_ID, "full_heal_clamp_sec", d.full_heal_clamp_sec), 0, 60, d.full_heal_clamp_sec)
 	L.always_show = dogma.mcm.bool(CONFIG.MOD_ID, "always_show", d.always_show)
 	L.hp_show_below_pct = clamp_int(dogma.mcm.int(CONFIG.MOD_ID, "hp_show_below_pct", d.hp_show_below_pct), 0, 100, d.hp_show_below_pct)
 	L.limb_show_below_pct = clamp_int(dogma.mcm.int(CONFIG.MOD_ID, "limb_show_below_pct", d.limb_show_below_pct), 0, 100, d.limb_show_below_pct)
@@ -539,18 +533,6 @@ local function actor_pct_psy()
 	return (psy or 1) * 100
 end
 
-local function limbs_full()
-	local vals = dogma.status.limbs()
-	local n = 0
-	for _, limb in pairs(vals) do
-		n = n + 1
-		if limb.perm < 1 then
-			return false
-		end
-	end
-	return n > 0
-end
-
 -- One pass: any limb perm below pct (0–100), and any temp (green) health.
 local function limb_conditions(pct)
 	if not select(1, dogma.status.bhs()) then
@@ -595,7 +577,9 @@ end
 
 local function compute_show(L, now)
 	local cond = conditions_show(L)
-	if cond then
+	-- Hysteresis only when the condition drops. Refreshing while true
+	-- pins flash at keep_showing_sec for the whole time you stand in it.
+	if cond_prev and not cond then
 		local keep = L.keep_showing_sec or 0
 		if keep > 0 then
 			local target = now + math.floor(keep * 1000)
@@ -604,6 +588,7 @@ local function compute_show(L, now)
 			end
 		end
 	end
+	cond_prev = cond
 	local force = hold_key(L.key_bhs, L.key_bhs_modifier) or (flash_until > now)
 	local show_all = cond or force
 	local stam_th = L.stam_show_below_pct or 0
@@ -633,7 +618,7 @@ end
 
 local function overlay_bhs(L, now, force, show_all, show_stam, grace)
 	local sformat = string.format
-	if not dogma.dbg.overlay_enabled() then
+	if not dogma.overlay.enabled() then
 		return
 	end
 	local id = CONFIG.MOD_ID
@@ -658,7 +643,7 @@ local function overlay_bhs(L, now, force, show_all, show_stam, grace)
 		why[#why + 1] = "hold"
 	end
 	if flash_on then
-		why[#why + 1] = "flash " .. overlay_sec(flash_until, now) .. "s"
+		why[#why + 1] = "keep " .. overlay_sec(flash_until, now) .. "s"
 	end
 	if hp_hit then
 		why[#why + 1] = "hp"
@@ -703,9 +688,9 @@ local function overlay_bhs(L, now, force, show_all, show_stam, grace)
 	end
 	local stam_th = L.stam_show_below_pct or 0
 
-	dogma.dbg.overlay(id, 0, "BHS " .. state, show_all and "green" or (show_stam and "yellow" or "gray"))
-	dogma.dbg.overlay(id, 1, "why: " .. table.concat(why, ", "), "white")
-	dogma.dbg.overlay(id, 2, sformat(
+	dogma.overlay.set(id, 0, "BHS " .. state, show_all and "green" or (show_stam and "yellow" or "gray"))
+	dogma.overlay.set(id, 1, "why: " .. table.concat(why, ", "), "white")
+	dogma.overlay.set(id, 2, sformat(
 		"hp %.0f/%d  limb %s/%d  psy %.0f/%d  rad %.0f/%d  temp %s",
 		hp, hp_th,
 		limb_below and "low" or "ok", limb_th,
@@ -713,19 +698,18 @@ local function overlay_bhs(L, now, force, show_all, show_stam, grace)
 		rad, rad_th,
 		has_temp and "yes" or "no"
 	), "cyan")
-	dogma.dbg.overlay(id, 3, sformat(
-		"flash %ss  heal_clamp %s  grace %s",
+	dogma.overlay.set(id, 3, sformat(
+		"keep %ss  grace %s",
 		overlay_sec(flash_until, now),
-		heal_clamped and "on" or "off",
 		grace and overlay_sec(grace_deadline, now) .. "s" or "off"
 	), "yellow")
-	dogma.dbg.overlay(id, 4, sformat(
+	dogma.overlay.set(id, 4, sformat(
 		"stam %s  fill %.0f/%d  latch %s",
 		show_stam and "SHOW" or "hide",
 		fill, stam_th,
 		stam_latched and "on" or "off"
 	), "orange")
-	dogma.dbg.overlay(id, 5, sformat(
+	dogma.overlay.set(id, 5, sformat(
 		"hold %s  force %s  hide_body %s",
 		hold and "yes" or "no",
 		force and "yes" or "no",
@@ -759,61 +743,18 @@ apply_parks = function(now)
 	dogma.perf.stop()
 end
 
-local function apply_heal_clamp(now)
-	local L = CONFIG and CONFIG.loaded
-	if not L or heal_clamped or flash_until <= now or not limbs_full() then
-		return
-	end
-	heal_clamped = true
-	local target = now + math.floor((L.full_heal_clamp_sec or 0) * 1000)
-	if flash_until > target then
-		flash_until = target
-	end
-end
-
-begin_or_refresh_damage = function()
-	local L = CONFIG and CONFIG.loaded
-	if not L or not L.show_on_damage then
-		return
-	end
-	local sec = L.sec or 0
-	if sec <= 0 then
-		return
-	end
-	local now = time_global()
-	flash_until = now + math.floor(sec * 1000)
-	heal_clamped = false
-	apply_parks(now)
-end
-
 ensure_bhs_hook = function()
 	local bhs = rawget(_G, "zzz_player_injuries")
-	if not (bhs and type(bhs.recieved_damage) == "function") then
+	if not (bhs and type(bhs.actor_on_update) == "function") then
 		return false
 	end
-	if bhs.recieved_damage == wrapped_rd and uv_show_fn and uv_hs_fn then
+	if uv_show_fn and uv_hs_fn then
 		return true
 	end
 	if not (debug and debug.getupvalue and debug.setupvalue) then
 		return false
 	end
-	if not resolve_upvalues(bhs) then
-		return false
-	end
-	if bhs.recieved_damage ~= wrapped_rd then
-		local inner = bhs.recieved_damage
-		if not orig_rd then
-			orig_rd = inner
-		end
-		wrapped_rd = function(...)
-			local ret = inner(...)
-			begin_or_refresh_damage()
-			return ret
-		end
-		bhs.recieved_damage = wrapped_rd
-	end
-	bhs[FLAG] = true
-	return true
+	return resolve_upvalues(bhs)
 end
 
 local function call_orig_functor(name)
@@ -1012,12 +953,8 @@ local function on_actor_update()
 		end
 	end
 
-	if force and flash_until > now and (now - last_heal_tick >= STATUS_TICK_MS) then
-		last_heal_tick = now
-		apply_heal_clamp(now)
-	elseif flash_until ~= 0 and now >= flash_until then
+	if flash_until ~= 0 and now >= flash_until then
 		flash_until = 0
-		heal_clamped = false
 	end
 
 	local icons_held = hold_key(L.key_icons, L.key_icons_modifier)
@@ -1038,30 +975,23 @@ end
 
 local function reset_park_state()
 	flash_until = 0
-	heal_clamped = false
 	last_status_tick = 0
 	last_park_tick = 0
-	last_heal_tick = 0
 	icons_hold_prev = false
 	show_all_prev = false
 	show_stam_prev = false
+	cond_prev = false
 	stam_latched = false
 	load_wait = false
 	grace_deadline = 0
 	fill_hide_at = 0
 	fill_uv = {}
 	home = {}
-	local bhs = rawget(_G, "zzz_player_injuries")
-	if bhs and orig_rd and bhs.recieved_damage == wrapped_rd then
-		bhs.recieved_damage = orig_rd
-		bhs[FLAG] = nil
-	end
-	wrapped_rd, orig_rd = nil, nil
 	uv_show_fn, uv_show_idx = nil, nil
 	uv_hs_fn, uv_hs_idx = nil, nil
 	uv_change_fn, uv_change_idx = nil, nil
 	restore_gates()
-	dogma.dbg.clear_source(CONFIG.MOD_ID)
+	dogma.overlay.clear(CONFIG.MOD_ID)
 end
 
 local function on_game_load()
@@ -1107,7 +1037,6 @@ function on_game_start()
 	dogma.load(CONFIG.MOD_ID)
 	refresh_options()
 	RegisterScriptCallback("actor_on_first_update", on_first_update)
-	RegisterScriptCallback("actor_on_before_hit", begin_or_refresh_damage)
 	RegisterScriptCallback("on_option_change", on_option_change)
 	RegisterScriptCallback("on_game_load", on_game_load)
 	RegisterScriptCallback("main_menu_on_init", on_main_menu)

@@ -164,7 +164,7 @@ local DIED_LIMBS = {
 
 local function log(msg)
 	if CONFIG.loaded.debug_log then
-		dogma.dbg.log(CONFIG.MOD_ID, tostring(msg))
+		dogma.log.log(CONFIG.MOD_ID, tostring(msg))
 	end
 end
 
@@ -1575,7 +1575,7 @@ local function on_option_change()
 	CONFIG.loaded.hit_cap = dogma.mcm.uint(CONFIG.MOD_ID, "hit_cap", 10)
 	CONFIG.loaded.dot_seconds = dogma.mcm.uint(CONFIG.MOD_ID, "dot_seconds", 5)
 	CONFIG.loaded.preview = dogma.mcm.bool(CONFIG.MOD_ID, "preview")
-	CONFIG.loaded.debug_log = dogma.dbg.logging()
+	CONFIG.loaded.debug_log = dogma.log.logging()
 	if not death_armed then
 		prune_hits()
 		prune_dots()

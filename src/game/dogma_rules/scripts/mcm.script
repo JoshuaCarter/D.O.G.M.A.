@@ -348,6 +348,15 @@ function CONFIG.apply(opts)
 			SendScriptCallback("on_option_change", true)
 		end
 	end
+	if dogma and dogma.log and dogma.log.log then
+		dogma.log.log(CONFIG.MOD_ID, string.format(
+			"applied mcm=%s options=%s commands=%s notify=%s",
+			#rules.mcm,
+			#rules.options,
+			opts.commands and #rules.commands or 0,
+			tostring(opts.notify and true or false)
+		), "blue")
+	end
 end
 
 wrap_others()

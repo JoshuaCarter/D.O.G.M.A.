@@ -1,0 +1,103 @@
+--[[
+	DOGMA log (namespace module, no globals).
+
+	Features use dogma.log (wired by dogma.script).
+
+	flog(mod_id, msg, color)   - file only (printf)
+	clog(mod_id, msg, color)   - in-game console (engine log)
+	fclog(mod_id, msg, color)  - both
+	log(mod_id, msg, color)    - alias of fclog
+
+	All no-op when D.O.G.M.A. -> Debug -> debug log is off.
+	Lines are prefixed [dogma_cat_feat]. Color names shared with overlay.
+]]
+
+local DEBUG_MOD = "dogma/debug"
+local engine_log = rawget(_G, "log")
+
+-- Shared palette: console mark + HUD %c. Aliases fold to a mark that exists.
+local PALETTE = {
+	white       = { mark = "",  hud = "%c[255,255,255,255]" },
+	gray        = { mark = "*", hud = "%c[255,160,160,160]" },
+	red         = { mark = "!", hud = "%c[255,255,64,64]" },
+	green       = { mark = "+", hud = "%c[255,96,224,96]" },
+	blue        = { mark = "@", hud = "%c[255,96,160,255]" },
+	yellow      = { mark = "~", hud = "%c[255,255,224,64]" },
+	cyan        = { mark = "#", hud = "%c[255,96,224,255]" },
+	orange      = { mark = "=", hud = "%c[255,255,160,48]" },
+	purple      = { mark = "$", hud = "%c[255,170,96,255]" },
+}
+
+local ALIAS = {
+	light_gray = "gray", dark_gray = "gray", black = "gray",
+	light_red = "red", dark_red = "red",
+	light_green = "green", dark_green = "green", lime = "green", teal = "green",
+	light_blue = "blue", dark_blue = "blue",
+	light_yellow = "yellow", dark_yellow = "yellow",
+	light_cyan = "cyan", dark_cyan = "cyan",
+	light_orange = "orange", dark_orange = "orange", brown = "orange",
+	light_purple = "purple", dark_purple = "purple",
+	light_pink = "purple", pink = "purple", dark_pink = "purple", magenta = "purple",
+}
+
+local function swatch(color)
+	if type(color) == "string" and color:sub(1, 3) == "%c[" then
+		return { mark = "", hud = color }
+	end
+	local name = ALIAS[color] or color
+	return PALETTE[name] or PALETTE.white
+end
+
+function tag(mod_id)
+	return tostring(mod_id or "dogma"):gsub("/", "_")
+end
+
+function hud_color(color)
+	return swatch(color).hud
+end
+
+local function mcm_bool(key, default)
+	if ui_mcm then
+		local value = ui_mcm.get(DEBUG_MOD .. "/" .. key)
+		if value ~= nil then
+			return value == true or value == 1
+		end
+	end
+	local conf = _G.dogma_debug_conf
+	local defaults = conf and conf.DEFAULTS
+	if defaults and defaults[key] ~= nil then
+		return defaults[key] == true or defaults[key] == 1
+	end
+	return default
+end
+
+function logging()
+	return mcm_bool("debug_log", true)
+end
+
+local function line(mod_id, msg)
+	return "[" .. tag(mod_id) .. "] " .. tostring(msg)
+end
+
+function flog(mod_id, msg, color)
+	if not logging() then
+		return
+	end
+	printf("%s%s", swatch(color).mark, line(mod_id, msg))
+end
+
+function clog(mod_id, msg, color)
+	if not logging() or not engine_log then
+		return
+	end
+	engine_log(swatch(color).mark .. line(mod_id, msg))
+end
+
+function fclog(mod_id, msg, color)
+	flog(mod_id, msg, color)
+	clog(mod_id, msg, color)
+end
+
+function log(mod_id, msg, color)
+	fclog(mod_id, msg, color)
+end

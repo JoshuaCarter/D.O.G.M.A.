@@ -107,44 +107,88 @@ def plugin_label(feat: dict) -> str:
     return name
 
 
+INTRO_FLAG = "dogma_intro"
+INTRO_OK = "ok"
+
+
 def parse_intro(wizard: dict) -> dict | None:
     raw = wizard.get("intro")
     if raw is None or raw is False:
         return None
     if isinstance(raw, str):
         desc, page, name = raw, "Welcome", "Continue"
+        refuse = "I am blind"
     elif isinstance(raw, dict):
         desc = str(raw.get("desc") or raw.get("text") or "")
         page = str(raw.get("page") or "Welcome").strip() or "Welcome"
         name = str(raw.get("name") or "Continue").strip() or "Continue"
+        refuse = str(raw.get("refuse") or "I have not read this").strip() or "I have not read this"
     else:
         raise ValueError("fomod intro must be a string or mapping")
     desc = desc.strip()
     if not desc:
         raise ValueError("fomod intro needs desc")
-    return {"page": page, "name": name, "desc": desc}
+    if refuse == name:
+        raise ValueError("fomod intro refuse must differ from name")
+    return {"page": page, "name": name, "refuse": refuse, "desc": desc}
+
+
+def intro_visible_xml() -> list[str]:
+    return [
+        "\t\t\t<visible>",
+        f'\t\t\t\t<flagDependency flag="{INTRO_FLAG}" value="{INTRO_OK}"/>',
+        "\t\t\t</visible>",
+    ]
+
+
+def intro_plugin_xml(name: str, desc: str, ack: bool) -> list[str]:
+    lines = [
+        f'\t\t\t\t\t\t<plugin name="{esc_attr(name)}">',
+        f"\t\t\t\t\t\t\t<description>{esc_text(desc)}</description>",
+    ]
+    if ack:
+        lines.extend(
+            [
+                "\t\t\t\t\t\t\t<conditionFlags>",
+                f'\t\t\t\t\t\t\t\t<flag name="{INTRO_FLAG}">{INTRO_OK}</flag>',
+                "\t\t\t\t\t\t\t</conditionFlags>",
+            ]
+        )
+    lines.extend(
+        [
+            "\t\t\t\t\t\t\t<typeDescriptor>",
+            '\t\t\t\t\t\t\t\t<type name="Optional"/>',
+            "\t\t\t\t\t\t\t</typeDescriptor>",
+            "\t\t\t\t\t\t</plugin>",
+        ]
+    )
+    return lines
 
 
 def intro_step_xml(wizard: dict) -> list[str]:
     intro = parse_intro(wizard)
     if not intro:
         return []
-    return [
+    # MO2: one plugin + SelectAtLeastOne/ExactlyOne becomes SelectAll
+    # (checked + grey). Two radios, refuse first so they must pick the ack.
+    # Later pages are hidden until dogma_intro=ok.
+    lines = [
         f'\t\t<installStep name="{esc_attr(intro["page"])}">',
         '\t\t\t<optionalFileGroups order="Explicit">',
-        f'\t\t\t\t<group name="{esc_attr(intro["page"])}" type="SelectAtLeastOne">',
+        f'\t\t\t\t<group name="{esc_attr(intro["page"])}" type="SelectExactlyOne">',
         '\t\t\t\t\t<plugins order="Explicit">',
-        f'\t\t\t\t\t\t<plugin name="{esc_attr(intro["name"])}">',
-        f"\t\t\t\t\t\t\t<description>{esc_text(intro['desc'])}</description>",
-        "\t\t\t\t\t\t\t<typeDescriptor>",
-        '\t\t\t\t\t\t\t\t<type name="Optional"/>',
-        "\t\t\t\t\t\t\t</typeDescriptor>",
-        "\t\t\t\t\t\t</plugin>",
-        "\t\t\t\t\t</plugins>",
-        "\t\t\t\t</group>",
-        "\t\t\t</optionalFileGroups>",
-        "\t\t</installStep>",
     ]
+    lines.extend(intro_plugin_xml(intro["refuse"], intro["desc"], ack=False))
+    lines.extend(intro_plugin_xml(intro["name"], intro["desc"], ack=True))
+    lines.extend(
+        [
+            "\t\t\t\t\t</plugins>",
+            "\t\t\t\t</group>",
+            "\t\t\t</optionalFileGroups>",
+            "\t\t</installStep>",
+        ]
+    )
+    return lines
 
 
 def render_xml(wizard: dict, src: Path, plugins: list[dict]) -> str:
@@ -166,10 +210,12 @@ def render_xml(wizard: dict, src: Path, plugins: list[dict]) -> str:
         )
     lines.extend(["\t</requiredInstallFiles>", '\t<installSteps order="Explicit">'])
     lines.extend(intro_step_xml(wizard))
+    gate = intro_visible_xml() if parse_intro(wizard) else []
 
     lines.extend(
         [
             '\t\t<installStep name="Preset">',
+            *gate,
             '\t\t\t<optionalFileGroups order="Explicit">',
             '\t\t\t\t<group name="Install preset" type="SelectExactlyOne">',
             '\t\t\t\t\t<plugins order="Explicit">',
@@ -222,6 +268,7 @@ def render_xml(wizard: dict, src: Path, plugins: list[dict]) -> str:
         lines.extend(
             [
                 f'\t\t<installStep name="{esc_attr(pname)}">',
+                *gate,
                 '\t\t\t<optionalFileGroups order="Explicit">',
             ]
         )

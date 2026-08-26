@@ -1,12 +1,11 @@
 -- game/weapons_ban conf
-
-local CONSTS = _G.dogma_game_weapons_ban_consts
+-- This file loads as dogma_*_mcm (before zzzz_01_consts). Do not index CONSTS here.
 
 _G.dogma_game_weapons_ban_conf = {
 	MOD_ID = "dogma/game/weapons_ban",
 	DEFAULTS = {
-		extra_start_ammo_boxes = CONSTS.EXTRA_START_AMMO_BOXES,
-		start_weapons_59_parts = CONSTS.START_WEAPONS_59_PARTS,
+		extra_start_ammo_boxes = 5,
+		start_weapons_59_parts = true,
 		attachments_enabled = true,
 		pda_parts_tip = false,
 	},
@@ -24,13 +23,18 @@ function _G.dogma_game_weapons_ban_conf:load_mcm()
 	local id = self.MOD_ID
 	L.extra_start_ammo_boxes = dogma.mcm.int(id, "extra_start_ammo_boxes", D.extra_start_ammo_boxes)
 	L.start_weapons_59_parts = dogma.mcm.bool(id, "start_weapons_59_parts", D.start_weapons_59_parts)
-	L.attachments_enabled = dogma.mcm.bool(id, "attachments_enabled")
-	L.pda_parts_tip = dogma.mcm.bool(id, "pda_parts_tip")
+	L.attachments_enabled = dogma.mcm.bool(id, "attachments_enabled", D.attachments_enabled)
+	L.pda_parts_tip = dogma.mcm.bool(id, "pda_parts_tip", D.pda_parts_tip)
 	L.attach_debug_log = dogma.dbg.logging()
 end
 
 function on_mcm_load(options)
 	local CONFIG = _G.dogma_game_weapons_ban_conf
+	local CONSTS = _G.dogma_game_weapons_ban_consts
+	if CONSTS then
+		CONFIG.DEFAULTS.extra_start_ammo_boxes = CONSTS.EXTRA_START_AMMO_BOXES
+		CONFIG.DEFAULTS.start_weapons_59_parts = CONSTS.START_WEAPONS_59_PARTS
+	end
 	local D = CONFIG.DEFAULTS
 
 	dogma_mcm.attach(options, "game", "ui_mcm_menu_dogma_game", {

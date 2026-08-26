@@ -317,7 +317,7 @@ local function perform_attachment_disassembly(obj, obj_d, info, orig_disassembly
     ))
 
     local itms_disassemble = GetItemList("disassemble")
-    local degr_val = obj_d and itms_disassemble[obj_d:section()]
+    local degr_val = obj_d and itms_disassemble and itms_disassemble[obj_d:section()]
     if obj_d and degr_val then
         utils_item.degrade(obj_d, degr_val)
     end

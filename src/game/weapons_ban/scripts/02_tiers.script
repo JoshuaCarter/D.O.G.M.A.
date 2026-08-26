@@ -1,7 +1,7 @@
 --[[
     Weapons Ban — pick a section from dogma.db by cost band.
     Map/yellow stash sets target tier. Tickets pick category + tier offset.
-    Loaded before main (02_ prefix).
+    Loaded before feature scripts (02_ prefix).
 ]]
 
 local CONSTS = _G.dogma_game_weapons_ban_consts
@@ -10,21 +10,20 @@ local function clamp_tier(t)
     return dogma.math.clamp(math.floor(t), 1, 5)
 end
 
-local function cost_to_tier(cost, cat)
-    local c = CONSTS.TIER_COST[cat]
-    if not c then
+local function cost_to_tier(cost, bands)
+    if not bands then
         return 1
     end
-    if cost >= c[5] then
+    if cost >= bands[5] then
         return 5
     end
-    if cost >= c[4] then
+    if cost >= bands[4] then
         return 4
     end
-    if cost >= c[3] then
+    if cost >= bands[3] then
         return 3
     end
-    if cost >= c[2] then
+    if cost >= bands[2] then
         return 2
     end
     return 1
@@ -37,7 +36,7 @@ end
 
 local function base_tier_for_stash(id)
     local lvl = dogma.alife.level_name(id)
-    local t = (lvl and CONSTS.LEVEL_TIERS[lvl]) or CONSTS.DEFAULT_MAP_TIER
+    local t = (lvl and CONSTS.STASH_LEVEL_TIERS[lvl]) or CONSTS.STASH_DEFAULT_TIER
     if is_yellow_stash(id) then
         t = t + 1
     end
@@ -66,15 +65,15 @@ local function pick_section(cat, result_tier)
     result_tier = clamp_tier(result_tier)
     local by = { {}, {}, {}, {}, {} }
     local seen = {}
-    for i = 1, #CONSTS.FILL do
-        local e = CONSTS.FILL[i]
+    for i = 1, #CONSTS.STASH_FILL_CATS do
+        local e = CONSTS.STASH_FILL_CATS[i]
         if e[2] == cat then
             local rows = dogma.db.list(e[1])
             for j = 1, #rows do
                 local sec = rows[j] and rows[j].id
                 if sec and not seen[sec] and ini_sys:section_exist(sec) then
                     seen[sec] = true
-                    local t = cost_to_tier(dogma.db.cost(sec), cat)
+                    local t = cost_to_tier(dogma.db.cost(sec), CONSTS.STASH_TIER_COST[cat])
                     local b = by[t]
                     b[#b + 1] = sec
                 end
@@ -144,6 +143,7 @@ local function rounds_for_ru(ammo_sec, ru)
 end
 
 _G.dogma_game_weapons_ban_tiers = {
+    cost_to_tier = cost_to_tier,
     base_tier_for_stash = base_tier_for_stash,
     pick_category = pick_category,
     pick_tier = pick_tier,

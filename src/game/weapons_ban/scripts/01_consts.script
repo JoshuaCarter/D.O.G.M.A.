@@ -1,7 +1,7 @@
 --[[
     Weapons Ban — knobs. No item sections.
     Loaded before 02_tiers / mcm / ammo_craft.
-    RECIPES: not listed = leave GAMMA. Powder n is per round.
+    AMMO_RECIPES: not listed = leave GAMMA. Powder n is per round.
 ]]
 
 _G.dogma_game_weapons_ban_consts = {
@@ -9,40 +9,8 @@ _G.dogma_game_weapons_ban_consts = {
     START_WEAPONS_59_PARTS = true,
     START_PARTS_COND = 59,
     AMMO_ROUNDS_BOX_CAP = 10,
-    DEFAULT_MAP_TIER = 3,
 
-    STRIP_CATS = {
-        "weapons",
-        "weapon_attach",
-        "weapon_upgrade_kits",
-        "weapon_repair_kits",
-        "weapon_cleaning_kits",
-        "ammo",
-        "weapon_parts",
-        "explosives",
-    },
-
-    FILL = {
-        { "weapon_attach_scopes", "scope" },
-        { "weapon_upgrade_kits", "kit" },
-        { "weapon_cleaning_kits", "kit" },
-        { "weapon_repair_kits", "kit" },
-        { "weapon_attach_silencers", "silencer" },
-        { "weapon_attach_gls", "gl" },
-        { "ammo", "ammo" },
-        { "weapon_parts", "part" },
-    },
-
-    TIER_COST = {
-        scope    = { [2] = 5000,  [3] = 10000, [4] = 25000, [5] = 50000 },
-        kit      = { [2] = 9000,  [3] = 16000, [4] = 28000, [5] = 45000 },
-        silencer = { [2] = 2000,  [3] = 4000,  [4] = 8000,  [5] = 12000 },
-        gl       = { [2] = 8000,  [3] = 15000, [4] = 22000, [5] = 30000 },
-        ammo     = { [2] = 800,   [3] = 1600,  [4] = 3000,  [5] = 6000  },
-        part     = { [2] = 3000,  [3] = 4500,  [4] = 5500,  [5] = 7000  },
-    },
-
-    LEVEL_TIERS = {
+    STASH_LEVEL_TIERS = {
         ["l01_escape"] = 1,
         ["k00_marsh"] = 1,
         ["l02_garbage"] = 2,
@@ -67,7 +35,38 @@ _G.dogma_game_weapons_ban_consts = {
         ["jupiter"] = 5,
         ["pripyat"] = 5,
     },
+    STASH_DEFAULT_TIER = 3,
 
+    TRADER_STRIP_CATS = {
+        "weapons",
+        "weapon_attach",
+        "weapon_upgrade_kits",
+        "weapon_repair_kits",
+        "weapon_cleaning_kits",
+        "ammo",
+        "weapon_parts",
+        "explosives",
+    },
+
+    STASH_FILL_CATS = {
+        { "weapon_attach_scopes", "scope" },
+        { "weapon_upgrade_kits", "kit" },
+        { "weapon_cleaning_kits", "kit" },
+        { "weapon_repair_kits", "kit" },
+        { "weapon_attach_silencers", "silencer" },
+        { "weapon_attach_gls", "gl" },
+        { "ammo", "ammo" },
+        { "weapon_parts", "part" },
+    },
+
+    STASH_TIER_COST = {
+        scope    = { [2] = 5000,  [3] = 10000, [4] = 25000, [5] = 50000 },
+        kit      = { [2] = 9000,  [3] = 16000, [4] = 28000, [5] = 45000 },
+        silencer = { [2] = 2000,  [3] = 4000,  [4] = 8000,  [5] = 12000 },
+        gl       = { [2] = 8000,  [3] = 15000, [4] = 22000, [5] = 30000 },
+        ammo     = { [2] = 800,   [3] = 1600,  [4] = 3000,  [5] = 6000  },
+        part     = { [2] = 3000,  [3] = 4500,  [4] = 5500,  [5] = 7000  },
+    },
     STASH_ITEM_TYPE_MAP = { "ammo", "part", "scope", "silencer", "kit", "gl"},
     STASH_ITEM_TYPE_TIX = {  50,     30,     20,      15,         5,     5  },
 
@@ -96,7 +95,28 @@ _G.dogma_game_weapons_ban_consts = {
         [5] = "legend",
     },
 
-    RECIPES = {
+    -- Scrap bands stay separate from STASH_TIER_COST until merged.
+    SCRAP_TIER_COST = {
+        scope    = { [2] = 5000, [3] = 10000, [4] = 25000, [5] = 50000 },
+        kit      = { [2] = 5000, [3] = 10000, [4] = 25000, [5] = 50000 },
+        silencer = { [2] = 5000, [3] = 10000, [4] = 25000, [5] = 50000 },
+        gl       = { [2] = 5000, [3] = 10000, [4] = 25000, [5] = 50000 },
+    },
+    SCRAP_PARTS = {
+        scrap = "prt_i_scrap",
+        plastic = "prt_i_plastic",
+        fasteners = "prt_i_fasteners",
+        glass = "prt_i_glass",
+        battery = "batteries_dead",
+    },
+    SCRAP_ELECTRONICS = {
+        "prt_i_capacitors",
+        "prt_i_resistors",
+        "prt_i_transistors",
+    },
+    SCRAP_KIT_KINDS = { "internal", "external", "optical" },
+
+    AMMO_RECIPES = {
         ["ammo_9x18_ap"] = { "casing_p", "powder_1", 2, "bullet_pistol_ap" },
         ["ammo_9x18_fmj"] = { "casing_p", "powder_1", 1, "bullet_pistol" },
         ["ammo_9x18_pmm"] = { "casing_p", "powder_1", 2, "bullet_pistol" },

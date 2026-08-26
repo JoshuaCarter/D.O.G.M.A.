@@ -18,6 +18,17 @@ function _G.dogma_game_weapons_ban_conf:ensure_dogma()
 	return dogma
 end
 
+function _G.dogma_game_weapons_ban_conf:load_mcm()
+	local L = self.loaded
+	local D = self.DEFAULTS
+	local id = self.MOD_ID
+	L.extra_start_ammo_boxes = dogma.mcm.int(id, "extra_start_ammo_boxes", D.extra_start_ammo_boxes)
+	L.start_weapons_59_parts = dogma.mcm.bool(id, "start_weapons_59_parts", D.start_weapons_59_parts)
+	L.attachments_enabled = dogma.mcm.bool(id, "attachments_enabled")
+	L.pda_parts_tip = dogma.mcm.bool(id, "pda_parts_tip")
+	L.attach_debug_log = dogma.dbg.logging()
+end
+
 function on_mcm_load(options)
 	local CONFIG = _G.dogma_game_weapons_ban_conf
 	local D = CONFIG.DEFAULTS

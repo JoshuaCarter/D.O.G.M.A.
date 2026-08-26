@@ -1,0 +1,307 @@
+--[[
+    Weapons Ban — stash inject.
+
+    set_random_stash only queues section names in treasure_manager.caches; items
+    spawn on first open (try_spawn_treasure). Early alife_create_item shows only
+    our extras until the UI refreshes — append to the cache instead.
+    AlifePlus xstash.fill_stash also writes deposits into that same string;
+    original set_random_stash replaces it, so keep the previous string.
+    Ammo qty is not put in treasure caches (pending queue + save).
+]]
+
+local CONFIG = _G.dogma_game_weapons_ban_conf
+local MOD_ID = CONFIG.MOD_ID
+local STASH_AMMO_SAVE_KEY = "dogma_wb_stash_ammo"
+
+local Tiers
+local original_set_random_stash
+local original_try_spawn_treasure
+local hooked_stash = false
+local hooked_stash_spawn = false
+
+-- stash_id → { { sec, rounds }, ... }
+local pending_stash_ammo = {}
+
+local function log(msg)
+    if dogma.dbg.logging() then
+        dogma.dbg.log(MOD_ID, tostring(msg))
+    end
+end
+
+-- Cheese paid stash (copied from RNG Attach; NMN cannot rely on RNG when disabled)
+local function is_cheese_paid_stash(_hint)
+    local sfind = string.find
+    local act_pos = db.actor and db.actor:position()
+    if not act_pos then
+        return false
+    end
+
+    for i = 2, 12 do
+        local info = debug.getinfo(i, "S")
+        if not info then
+            break
+        end
+        if info.short_src then
+            if sfind(info.short_src, "task", 1, true) then
+                return false
+            end
+            if sfind(info.short_src, "pda", 1, true) then
+                return false
+            end
+        end
+    end
+
+    for i = 1, 65534 do
+        local obj = level.object_by_id(i)
+        if obj then
+            local dist = obj:position():distance_to(act_pos)
+            if dist < 20 then
+                local obj_name = obj:name()
+                if obj_name then
+                    if sfind(obj_name, "esc_m_trader", 1, true)
+                        or sfind(obj_name, "mar_smart_terrain_base_stalker_leader_marsh", 1, true)
+                        or sfind(obj_name, "mar_base_owl_stalker_trader", 1, true)
+                    then
+                        return true
+                    end
+                end
+            end
+        end
+    end
+    return false
+end
+
+local function cache_of(id)
+    if not (treasure_manager and treasure_manager.caches and id) then
+        return nil
+    end
+    return treasure_manager.caches[id]
+end
+
+-- Keep a pending cache string (NPC deposits, etc.) when set_random_stash
+-- replaces the entry. Skip if already spawned (true).
+local function restore_existing_cache(id, prev)
+    if type(prev) ~= "string" or prev == "" then
+        return
+    end
+    local caches = treasure_manager and treasure_manager.caches
+    if not (caches and id) then
+        return
+    end
+    local cur = caches[id]
+    if cur == true then
+        return
+    end
+    if type(cur) == "string" and cur ~= "" then
+        if cur ~= prev then
+            caches[id] = prev .. "," .. cur
+        end
+        return
+    end
+    caches[id] = prev
+end
+
+local function append_stash_sections(id, sections)
+    if not (treasure_manager and treasure_manager.caches) or #sections == 0 then
+        return
+    end
+    local caches = treasure_manager.caches
+    local cur = caches[id]
+    if cur == true then
+        return
+    end
+    local add = table.concat(sections, ",")
+    if type(cur) == "string" and cur ~= "" then
+        caches[id] = cur .. "," .. add
+    else
+        caches[id] = add
+    end
+end
+
+local function queue_stash_ammo(id, sec, rounds)
+    if not (id and sec and rounds and rounds > 0) then
+        return
+    end
+    local list = pending_stash_ammo[id]
+    if not list then
+        list = {}
+        pending_stash_ammo[id] = list
+    end
+    list[#list + 1] = { sec = sec, rounds = rounds }
+end
+
+local function spawn_pending_stash_ammo(box)
+    if not box then
+        return
+    end
+    local id = box:id()
+    local list = pending_stash_ammo[id]
+    if not list then
+        return
+    end
+    pending_stash_ammo[id] = nil
+    for i = 1, #list do
+        local e = list[i]
+        if e and e.sec and e.rounds and e.rounds > 0 and dogma.db.is_ammo(e.sec) then
+            alife_create_item(e.sec, box, { ammo = e.rounds })
+            log(string.format("stash spawn ammo %s x%s", e.sec, e.rounds))
+        end
+    end
+end
+
+-- Loot UI opens, then try_spawn_treasure alife_creates into the box.
+-- Vanilla retries ParseInventory once on the next frame; that can miss.
+local function refresh_open_stash_ui(box_id)
+    local gui = ui_inventory and ui_inventory.GUI
+    if not (gui and gui.mode == "loot") then
+        return
+    end
+    local partner = gui.GetPartner and gui:GetPartner()
+    if not (partner and partner.id and partner:id() == box_id) then
+        return
+    end
+    if gui.LMode_ResetNPCInventory then
+        gui:LMode_ResetNPCInventory()
+    elseif gui.LMode_ResetInventories then
+        gui:LMode_ResetInventories()
+    end
+end
+
+local function schedule_stash_ui_refresh(box_id)
+    if CreateTimeEvent then
+        CreateTimeEvent("dogma_wb_stash", "ui_" .. box_id, 0.1, function()
+            refresh_open_stash_ui(box_id)
+            return true
+        end)
+    else
+        refresh_open_stash_ui(box_id)
+    end
+end
+
+local function roll_stash_loot(id)
+    if not alife_object(id) then
+        return
+    end
+    if cache_of(id) == true then
+        return
+    end
+    dogma.perf.start("weapons_ban", "roll_stash_loot")
+    local target = Tiers.base_tier_for_stash(id)
+    local sections = {}
+    local n = Tiers.roll_stash_bonus()
+    for _ = 1, n do
+        local cat = Tiers.pick_category()
+        local rt = Tiers.pick_tier(target)
+        local sec = Tiers.pick_section(cat, rt)
+        if sec and cat == "ammo" then
+            local ru, rank = Tiers.roll_ru_for_ammo_tier(rt)
+            local rounds = Tiers.rounds_for_ru(sec, ru)
+            if rounds > 0 then
+                queue_stash_ammo(id, sec, rounds)
+                log(string.format(
+                    "stash +ammo t%s %s x%s (%s RU, rank=%s)",
+                    rt,
+                    sec,
+                    rounds,
+                    ru,
+                    rank
+                ))
+            end
+        elseif sec then
+            sections[#sections + 1] = sec
+            log(string.format("stash +%s t%s %s", cat, rt, sec))
+        end
+    end
+    append_stash_sections(id, sections)
+    dogma.perf.stop()
+end
+
+local function patched_set_random_stash(no_spot, hint, bonus_items, id, dbg)
+    local prev = cache_of(id)
+    local result = original_set_random_stash(no_spot, hint, bonus_items, id, dbg)
+    restore_existing_cache(id, prev)
+
+    if dbg then
+        return result
+    end
+    if not dogma.sys.ready(MOD_ID, db, function() CONFIG:load_mcm() end) then
+        return result
+    end
+    if not id then
+        return result
+    end
+    dogma.perf.start("weapons_ban", "set_random_stash")
+    if is_cheese_paid_stash(hint) then
+        dogma.perf.stop()
+        return result
+    end
+
+    roll_stash_loot(id)
+    dogma.perf.stop()
+    return result
+end
+
+local function patched_try_spawn_treasure(box)
+    if not box then
+        original_try_spawn_treasure(box)
+        return
+    end
+    local id = box:id()
+    -- Only inject queued ammo when this open actually spawns the cache
+    -- string. Already-looted (true) or empty (false) boxes keep their items.
+    local pending = cache_of(id)
+    original_try_spawn_treasure(box)
+    if type(pending) == "string" then
+        spawn_pending_stash_ammo(box)
+    end
+    schedule_stash_ui_refresh(id)
+end
+
+local function try_hook_stash()
+    if hooked_stash then
+        return
+    end
+    if not (treasure_manager and treasure_manager.set_random_stash) then
+        return
+    end
+    original_set_random_stash = treasure_manager.set_random_stash
+    treasure_manager.set_random_stash = patched_set_random_stash
+    hooked_stash = true
+    log("hooked treasure_manager.set_random_stash")
+end
+
+local function try_hook_stash_spawn()
+    if hooked_stash_spawn then
+        return
+    end
+    if not (treasure_manager and treasure_manager.try_spawn_treasure) then
+        return
+    end
+    original_try_spawn_treasure = treasure_manager.try_spawn_treasure
+    treasure_manager.try_spawn_treasure = patched_try_spawn_treasure
+    hooked_stash_spawn = true
+    log("hooked treasure_manager.try_spawn_treasure")
+end
+
+local function try_hooks()
+    try_hook_stash()
+    try_hook_stash_spawn()
+end
+
+local function on_save_state(m_data)
+    m_data[STASH_AMMO_SAVE_KEY] = pending_stash_ammo
+end
+
+local function on_load_state(m_data)
+    pending_stash_ammo = m_data[STASH_AMMO_SAVE_KEY] or {}
+end
+
+function on_game_start()
+    Tiers = _G.dogma_game_weapons_ban_tiers
+    CONFIG:ensure_dogma()
+    RegisterScriptCallback("actor_on_first_update", try_hooks)
+    RegisterScriptCallback("save_state", on_save_state)
+    RegisterScriptCallback("load_state", on_load_state)
+    try_hooks()
+    log("stash: loaded")
+end

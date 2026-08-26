@@ -1,0 +1,242 @@
+--[[
+    Weapons Ban — trade strip + buy-block.
+
+    Strip on talk/trade only. trade_manager.update runs on every stalker
+    (xr_motivator + nearby npc_on_update) so we do not hook it.
+    Supply traders lose all banned combat stock (not knives).
+]]
+
+local CONFIG = _G.dogma_game_weapons_ban_conf
+local MOD_ID = CONFIG.MOD_ID
+local CONSTS = _G.dogma_game_weapons_ban_consts
+
+local original_check_trade_mode
+local original_is_tradable
+local hooked_trade_ui = false
+
+local function log(msg)
+    if dogma.dbg.logging() then
+        dogma.dbg.log(MOD_ID, tostring(msg))
+    end
+end
+
+local function is_banned_combat_gear(obj, sec)
+    if not sec then
+        return false
+    end
+    if obj and dogma.db.is_melee(obj:section()) then
+        return false
+    end
+    if dogma.db.is_melee(sec) then
+        return false
+    end
+    return dogma.db.is_any(sec, CONSTS.TRADER_STRIP_CATS)
+end
+
+-- Restocking vendors (buy_supplies). trade_generic / companions have none.
+local function is_supply_trader(npc)
+    if not npc then
+        return false
+    end
+    if clsid then
+        local c = npc:clsid()
+        if c == clsid.script_trader or c == clsid.trader then
+            return true
+        end
+    end
+    local cfg = trade_manager.get_trade_profile(npc:id(), "cfg_ltx")
+    if not cfg or cfg == "items\\trade\\trade_generic.ltx" then
+        return false
+    end
+    local config = trade_manager.get_trade_cfg(cfg)
+    if not config then
+        return false
+    end
+    local supplies = config:r_string_ex("trader", "buy_supplies")
+    return supplies ~= nil and supplies ~= ""
+end
+
+local function collect_banned_from_trader(npc)
+    local to_release = {}
+    if not (npc and npc.iterate_inventory) then
+        return to_release
+    end
+    npc:iterate_inventory(function(_temp, item)
+        if not (item and is_banned_combat_gear(item, item:section())) then
+            return
+        end
+        local id = item:id()
+        if id and alife_object(id) then
+            to_release[#to_release + 1] = id
+        end
+    end)
+    return to_release
+end
+
+-- utils_ui caches utils_item.get_item_trade_status in a local at load, so
+-- patching the table never reaches Check_TradeMode / IsTradable. Hook those.
+local function patched_check_trade_mode(self, obj, sec)
+    local profile = self.container and self.container.trade_profile
+    if profile and obj and is_banned_combat_gear(obj, sec or obj:section()) then
+        self.flags.value = nil
+        self.flags.value_str = nil
+        self.flags.note = nil
+        self.flags.no_trade = nil
+        self.flags.note_str = nil
+        -- mode 2 = trader stock: hide cell
+        if profile.mode == 2 then
+            return true
+        end
+        -- mode 1 = player selling: show as no-trade
+        if profile.mode == 1 then
+            self.flags.note = 1
+            self.flags.no_trade = true
+            self.flags.note_str = game.translate_string("st_no_trade_tip_1")
+            return false
+        end
+    end
+    return original_check_trade_mode(self, obj, sec)
+end
+
+local function patched_is_tradable(self, obj)
+    if obj and is_banned_combat_gear(obj, obj:section()) then
+        return false
+    end
+    return original_is_tradable(self, obj)
+end
+
+-- Only release ids that still have a server object. Trade strip runs
+-- immediately plus delayed retries; client inventory can still list items
+-- whose se was already released (alife_release | no server object!), and a
+-- recycled id must not be released again.
+local function release_inventory_ids(ids)
+    for i = 1, #ids do
+        local id = ids[i]
+        if id and alife_object(id) then
+            alife_release_id(id)
+        end
+    end
+end
+
+-- Trade UI keeps released cells until reset; pack remaining with the
+-- active sort tab (same path as clicking a sort button).
+local function resort_open_trader_bag()
+    local gui = ui_inventory and ui_inventory.GUI
+    if not (gui and gui.mode == "trade") then
+        return
+    end
+    if gui.TMode_ResetInventories then
+        gui:TMode_ResetInventories()
+    else
+        local cc = gui.CC and gui.CC["npc_bag"]
+        if cc and cc.Reset then
+            cc:Reset()
+        end
+    end
+    if not gui.On_Sort then
+        return
+    end
+    local idx = 1
+    local btns = gui.sort_btn
+    if btns then
+        for i = 1, #btns do
+            if btns[i] and btns[i].GetCheck and btns[i]:GetCheck() then
+                idx = i
+                break
+            end
+        end
+    end
+    gui:On_Sort(idx, false)
+end
+
+local function schedule_trader_resort(npc_id)
+    if CreateTimeEvent then
+        CreateTimeEvent("dogma_wb_strip", "sort_" .. npc_id, 0, function()
+            resort_open_trader_bag()
+            return true
+        end)
+    else
+        resort_open_trader_bag()
+    end
+end
+
+local function strip_banned_from_trader(npc)
+    if not (npc and npc.iterate_inventory) then
+        return
+    end
+    dogma.perf.start("weapons_ban", "strip_banned_from_trader")
+    local to_release = collect_banned_from_trader(npc)
+    release_inventory_ids(to_release)
+    if #to_release > 0 then
+        schedule_trader_resort(npc:id())
+    end
+    dogma.perf.stop()
+end
+
+local function delayed_strip(npc_id)
+    local npc = level.object_by_id(npc_id)
+    if npc and npc:alive() and is_supply_trader(npc) then
+        strip_banned_from_trader(npc)
+    end
+    return true
+end
+
+-- Restock can land just after talk/trade opens; retry a few times then stop.
+local function strip_trader_on_interact(npc)
+    if not dogma.sys.ready(MOD_ID, db, function() CONFIG:load_mcm() end) then
+        return
+    end
+    if not npc then
+        return
+    end
+    if npc.alive and not npc:alive() then
+        return
+    end
+    if not is_supply_trader(npc) then
+        return
+    end
+    strip_banned_from_trader(npc)
+    local npc_id = npc:id()
+    if CreateTimeEvent then
+        CreateTimeEvent("dogma_wb_strip", "s1_" .. npc_id, 0.1, delayed_strip, npc_id)
+        CreateTimeEvent("dogma_wb_strip", "s2_" .. npc_id, 0.5, delayed_strip, npc_id)
+        CreateTimeEvent("dogma_wb_strip", "s3_" .. npc_id, 1.1, delayed_strip, npc_id)
+    end
+end
+
+local function npc_on_use(npc)
+    strip_trader_on_interact(npc)
+end
+
+local function ActorMenu_on_trade_started()
+    local actor = db.actor
+    if actor and actor.get_talking_npc then
+        strip_trader_on_interact(actor:get_talking_npc())
+    end
+end
+
+local function try_hook_trade_ui()
+    if hooked_trade_ui then
+        return
+    end
+    local cell = utils_ui and utils_ui.UICellItem
+    local cont = utils_ui and utils_ui.UICellContainer
+    if not (cell and cell.Check_TradeMode and cont and cont.IsTradable) then
+        return
+    end
+    original_check_trade_mode = cell.Check_TradeMode
+    original_is_tradable = cont.IsTradable
+    cell.Check_TradeMode = patched_check_trade_mode
+    cont.IsTradable = patched_is_tradable
+    hooked_trade_ui = true
+    log("hooked utils_ui trade Check_TradeMode + IsTradable")
+end
+
+function on_game_start()
+    CONFIG:ensure_dogma()
+    RegisterScriptCallback("npc_on_use", npc_on_use)
+    RegisterScriptCallback("ActorMenu_on_trade_started", ActorMenu_on_trade_started)
+    RegisterScriptCallback("actor_on_first_update", try_hook_trade_ui)
+    try_hook_trade_ui()
+    log("trader: loaded")
+end

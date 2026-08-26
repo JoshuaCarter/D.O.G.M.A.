@@ -1,10 +1,10 @@
 --[[
 	Weapons Ban — ammo craft 1:1
 
-	LoadRecipes overwrites GAMMA slots for keys in CONSTS.RECIPES.
+	LoadRecipes overwrites GAMMA slots for keys in CONSTS.AMMO_RECIPES.
 	Each part costs recipe_amount × output box_size rounds.
 	Casing/bullet stay 1. Powder n is per round.
-	Not in RECIPE, or not casing+powder+bullet, uses the original handlers.
+	Not in AMMO_RECIPES, or not casing+powder+bullet, uses the original handlers.
 ]]
 
 local CONFIG = _G.dogma_game_weapons_ban_conf
@@ -12,11 +12,11 @@ local TAG = (CONFIG and CONFIG.MOD_ID or "dogma/game/weapons_ban"):gsub("/", "_"
 local HOOK = "_dogma_wb_ammo_craft"
 
 local function recipe_override(sec)
-	local rec = _G.dogma_game_weapons_ban_consts and _G.dogma_game_weapons_ban_consts.RECIPES
+	local rec = _G.dogma_game_weapons_ban_consts and _G.dogma_game_weapons_ban_consts.AMMO_RECIPES
 	return rec and sec and rec[sec]
 end
 
--- After GAMMA LoadRecipes: overwrite slots for keys in RECIPE.
+-- After GAMMA LoadRecipes: overwrite slots for keys in AMMO_RECIPES.
 local function apply_recipes(self)
 	if not (self and self.recipes) then
 		return

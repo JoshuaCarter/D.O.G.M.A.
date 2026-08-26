@@ -1190,6 +1190,7 @@ end
 --- @param level_id number|nil Restrict iteration to this level when provided
 --- @return string Debug summary string
 function dump_smarts(level_id)
+    local tostr = tostring
     if not SIMBOARD or not SIMBOARD.smarts then return "no_simboard" end
     local parts = {}
     for id, data in pairs(SIMBOARD.smarts) do
@@ -1201,14 +1202,14 @@ function dump_smarts(level_id)
         for k in pairs(get_declared_factions(smart)) do sf[#sf + 1] = k end
         local found = _role_inventory(smart)
         parts[#parts + 1] = id .. ":" .. (smart:name() or "?")
-            .. ":lv" .. tostring(smart_lv or "?")
+            .. ":lv" .. tostr(smart_lv or "?")
             .. ":fac=" .. (#sf > 0 and table_concat(sf, "/") or "none")
-            .. ":trader=" .. tostring(found.trader or "-")
-            .. ":medic="  .. tostring(found.medic or "-")
-            .. ":mech="   .. tostring(found.mechanic or "-")
+            .. ":trader=" .. tostr(found.trader or "-")
+            .. ":medic="  .. tostr(found.medic or "-")
+            .. ":mech="   .. tostr(found.mechanic or "-")
         ::continue::
     end
-    return "filter_lv=" .. tostring(level_id or "nil")
+    return "filter_lv=" .. tostr(level_id or "nil")
         .. " smarts=" .. #parts .. " [" .. table_concat(parts, ", ") .. "]"
 end
 

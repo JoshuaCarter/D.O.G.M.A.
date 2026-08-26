@@ -553,6 +553,7 @@ end
 --- @param level_id number|nil Restrict to this level when provided
 --- @return string Diagnostic dump
 function dump_squads(level_id)
+    local tostr = tostring
     local parts = {}
     for squad in iter_squads() do
         local sq_lv = xlevel.get_level_id(squad)
@@ -560,17 +561,17 @@ function dump_squads(level_id)
         parts[#parts + 1] = string_format("%d:%s:pid=%s:lv%s:npc%d:at=%s:tgt=%s:role=%s",
             squad.id,
             squad.get_squad_community and squad:get_squad_community() or "?",
-            tostring(squad.player_id or "?"),
-            tostring(sq_lv or "?"),
+            tostr(squad.player_id or "?"),
+            tostr(sq_lv or "?"),
             squad:npc_count(),
-            tostring(squad.smart_id or "?"),
-            tostring(squad.assigned_target_id or "?"),
+            tostr(squad.smart_id or "?"),
+            tostr(squad.assigned_target_id or "?"),
             _commander_role(squad))
         ::continue::
     end
     if #parts == 0 then return "no_simboard" end
     return string_format("filter_lv=%s squads=%d [%s]",
-        tostring(level_id or "nil"), #parts, table_concat(parts, ", "))
+        tostr(level_id or "nil"), #parts, table_concat(parts, ", "))
 end
 
 --- Find squad matching criteria within distance range

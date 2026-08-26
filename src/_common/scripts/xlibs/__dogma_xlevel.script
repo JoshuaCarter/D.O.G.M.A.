@@ -269,7 +269,9 @@ DANGER_TIER_DEFAULT = 2
 function get_danger_tier(level)
     if type(level) == "number" then
         local sim = alife()
-        level = sim and sim:level_name(level) or nil
+        if sim then
+            level = sim and sim:level_name(level) or nil
+        end
     end
     return level and DANGER_TIER[level] or nil
 end

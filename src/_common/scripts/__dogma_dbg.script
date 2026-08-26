@@ -9,9 +9,6 @@
 	logging() / overlay_enabled()      - global MCM toggles from DOGMA → Debug.
 
 	Log lines are always prefixed [dogma_{cat}_{feat}] (slashes → underscores).
-
-	set_enabled(source, state) gates a source's overlay slots (still requires
-	global overlay_enabled()).
 ]]
 
 local DEBUG_MOD = "dogma/debug"
@@ -21,9 +18,16 @@ function tag(mod_id)
 	return tostring(mod_id or "dogma"):gsub("/", "_")
 end
 
-local HUD_STATIC = "debug_info"
+local HUD_STATIC = "dogma_debug_overlay_text"
+local FALLBACK_STATIC = "debug_info"
+local PANEL_STATIC = "dogma_debug_overlay_panel"
+local text_static = HUD_STATIC
+local PANEL_TEX = "ui_inGame2_white_rect"
 local ORIGIN_X = 10
-local ORIGIN_Y = 200
+local ORIGIN_Y = 50
+local PANEL_PAD = 8
+local PANEL_W = 200
+local LINE_H = 16
 
 local COLORS = {
 	white       = "%c[255,255,255,255]",
@@ -76,18 +80,49 @@ end
 local function get_source(source)
 	source = source or "default"
 	if not sources[source] then
-		sources[source] = { enabled = false, slots = {} }
+		sources[source] = { slots = {} }
 	end
 	return sources[source]
 end
 
 local function any_overlay_content()
 	for _, s in pairs(sources) do
-		if s.enabled and next(s.slots) then
+		if next(s.slots) then
 			return true
 		end
 	end
 	return false
+end
+
+local function hud_wnd(name, create)
+	local hud = get_hud()
+	if not hud then
+		return nil
+	end
+	local cs = hud:GetCustomStatic(name)
+	if not cs and create then
+		hud:AddCustomStatic(name, true)
+		cs = hud:GetCustomStatic(name)
+	end
+	return cs and cs:wnd()
+end
+
+local function remove_static(name)
+	local hud = get_hud()
+	if hud and hud:GetCustomStatic(name) then
+		hud:RemoveCustomStatic(name)
+	end
+end
+
+local function try_add(hud, name)
+	local cs = hud:GetCustomStatic(name)
+	if cs then
+		return cs
+	end
+	pcall(function()
+		hud:AddCustomStatic(name, true)
+	end)
+	return hud:GetCustomStatic(name)
 end
 
 local function get_static()
@@ -95,26 +130,48 @@ local function get_static()
 	if not hud then
 		return nil
 	end
-	local cs = hud:GetCustomStatic(HUD_STATIC)
-	if not cs then
-		hud:AddCustomStatic(HUD_STATIC, true)
-		cs = hud:GetCustomStatic(HUD_STATIC)
+	-- Panel needs DXML inject. Skip if the name is not in ui_custom_msgs.
+	try_add(hud, PANEL_STATIC)
+	local cs = try_add(hud, HUD_STATIC)
+	if cs then
+		text_static = HUD_STATIC
+		return cs
+	end
+	cs = try_add(hud, FALLBACK_STATIC)
+	if cs then
+		text_static = FALLBACK_STATIC
 	end
 	return cs
 end
 
 local function clear_overlay()
-	local hud = get_hud()
-	if not hud then
-		return
-	end
-	if hud:GetCustomStatic(HUD_STATIC) then
-		hud:RemoveCustomStatic(HUD_STATIC)
+	remove_static(HUD_STATIC)
+	remove_static(PANEL_STATIC)
+	if text_static == FALLBACK_STATIC then
+		remove_static(FALLBACK_STATIC)
 	end
 end
 
+local function show_panel(x, y, w, h)
+	local wnd = hud_wnd(PANEL_STATIC, true)
+	if not wnd then
+		return
+	end
+	wnd:SetWndPos(vector2():set(x, y))
+	wnd:SetWndSize(vector2():set(w, h))
+	pcall(function()
+		wnd:InitTexture(PANEL_TEX)
+	end)
+	pcall(function()
+		wnd:SetStretchTexture(true)
+	end)
+	pcall(function()
+		wnd:SetTextureColor(GetARGB(76, 8, 8, 10))
+	end)
+end
+
 local function render()
-	if not any_overlay_content() then
+	if not overlay_enabled() or not any_overlay_content() then
 		clear_overlay()
 		return
 	end
@@ -127,11 +184,26 @@ local function render()
 	if not wnd then
 		return
 	end
-	wnd:SetWndPos(vector2():set(ORIGIN_X, ORIGIN_Y))
+	local text_x = ORIGIN_X + PANEL_PAD
+	local text_y = ORIGIN_Y + PANEL_PAD
+	local text_w = PANEL_W - PANEL_PAD * 2
+	wnd:SetWndPos(vector2():set(text_x, text_y))
+	pcall(function()
+		wnd:SetWndSize(vector2():set(text_w, 768))
+	end)
+	pcall(function()
+		wnd:SetTextComplexMode(true)
+	end)
+	local font = GetFontLetterica16Russian and GetFontLetterica16Russian()
+	if font then
+		pcall(function()
+			wnd:SetFont(font)
+		end)
+	end
 
 	local names = {}
 	for name, s in pairs(sources) do
-		if s.enabled and next(s.slots) then
+		if next(s.slots) then
 			names[#names + 1] = name
 		end
 	end
@@ -163,11 +235,35 @@ local function render()
 	end
 
 	if #lines == 0 then
-		wnd:TextControl():SetTextST("")
+		clear_overlay()
 		return
 	end
 
-	wnd:TextControl():SetTextST(table.concat(lines, "\\n"))
+	-- Same as death report: estimate, draw panel, set text, measure, resize panel.
+	local est_h = math.floor(#lines * LINE_H + 0.5)
+	show_panel(ORIGIN_X, ORIGIN_Y, PANEL_W, est_h + PANEL_PAD * 2)
+	local tc = wnd:TextControl()
+	if tc then
+		pcall(function()
+			tc:SetTextComplexMode(true)
+		end)
+		if font then
+			pcall(function()
+				tc:SetFont(font)
+			end)
+		end
+		tc:SetText(table.concat(lines, "\\n"))
+	end
+	pcall(function()
+		wnd:AdjustHeightToText()
+	end)
+	local text_h = tonumber(wnd.GetHeight and wnd:GetHeight()) or 0
+	if text_h >= 1 then
+		local pw = hud_wnd(PANEL_STATIC)
+		if pw then
+			pw:SetWndSize(vector2():set(PANEL_W, text_h + PANEL_PAD * 2))
+		end
+	end
 end
 
 local function mcm_bool(key, default)
@@ -193,32 +289,11 @@ function overlay_enabled()
 	return mcm_bool("debug_overlay", false)
 end
 
-function set_enabled(source, state)
-	local s = get_source(source)
-	local on = state == true
-	if s.enabled == on then
-		return
-	end
-	s.enabled = on
-
-	if on then
-		printf("[%s] overlay enabled", tag(source))
-	else
-		printf("[%s] overlay disabled", tag(source))
-		s.slots = {}
-	end
-
-	render()
-end
-
 function overlay(source, order, msg, color)
 	if not overlay_enabled() then
 		return
 	end
 	local s = get_source(source)
-	if not s.enabled then
-		return
-	end
 	s.slots[order or 0] = { msg = tostring(msg), color = color }
 	render()
 end
@@ -240,5 +315,9 @@ function clear_source(source)
 	end
 	s.slots = {}
 	render()
+end
+
+function on_game_start()
+	RegisterScriptCallback("on_option_change", render)
 end
 

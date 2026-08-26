@@ -624,6 +624,115 @@ local function compute_show(L, now)
 	return force, show_all, show_stam
 end
 
+local function overlay_sec(until_ms, now)
+	if until_ms <= now then
+		return "0.0"
+	end
+	return string.format("%.1f", (until_ms - now) / 1000)
+end
+
+local function overlay_bhs(L, now, force, show_all, show_stam, grace)
+	local sformat = string.format
+	if not dogma.dbg.overlay_enabled() then
+		return
+	end
+	local id = CONFIG.MOD_ID
+	local hp = dogma.status.health() * 100
+	local psy = actor_pct_psy()
+	local rad = actor_pct("radiation", 0)
+	local limb_below, has_temp = limb_conditions(L.limb_show_below_pct or 0)
+	local hold = hold_key(L.key_bhs, L.key_bhs_modifier)
+	local hp_th = L.hp_show_below_pct or 0
+	local psy_th = L.psy_show_below_pct or 0
+	local rad_th = L.rad_show_above_pct or 0
+	local limb_th = L.limb_show_below_pct or 0
+	local hp_hit = L.always_show and hp_th > 0 and hp < hp_th
+	local psy_hit = L.always_show and psy_th > 0 and psy < psy_th
+	local rad_hit = L.always_show and rad_th > 0 and rad > rad_th
+	local limb_hit = L.always_show and limb_below
+	local temp_hit = L.always_show and L.show_when_temp_health and has_temp
+	local flash_on = flash_until > now
+
+	local why = {}
+	if hold then
+		why[#why + 1] = "hold"
+	end
+	if flash_on then
+		why[#why + 1] = "flash " .. overlay_sec(flash_until, now) .. "s"
+	end
+	if hp_hit then
+		why[#why + 1] = "hp"
+	end
+	if limb_hit then
+		why[#why + 1] = "limb"
+	end
+	if psy_hit then
+		why[#why + 1] = "psy"
+	end
+	if rad_hit then
+		why[#why + 1] = "rad"
+	end
+	if temp_hit then
+		why[#why + 1] = "temp"
+	end
+	if stam_latched and not show_all then
+		why[#why + 1] = "stam"
+	end
+	if grace then
+		why[#why + 1] = "load"
+	end
+	if #why == 0 then
+		why[1] = "none"
+	end
+
+	local state = "HIDDEN"
+	if not L.hide_body then
+		state = "ON (hide off)"
+	elseif grace then
+		state = "LOAD WAIT"
+	elseif show_all then
+		state = "SHOW"
+	elseif show_stam then
+		state = "STAM ONLY"
+	end
+
+	local stam, max_stam = dogma.status.stamina(), dogma.status.stamina_max()
+	local fill = 100
+	if max_stam > 0.01 then
+		fill = (stam + 0.005 >= max_stam) and 100 or (stam / max_stam * 100)
+	end
+	local stam_th = L.stam_show_below_pct or 0
+
+	dogma.dbg.overlay(id, 0, "BHS " .. state, show_all and "green" or (show_stam and "yellow" or "gray"))
+	dogma.dbg.overlay(id, 1, "why: " .. table.concat(why, ", "), "white")
+	dogma.dbg.overlay(id, 2, sformat(
+		"hp %.0f/%d  limb %s/%d  psy %.0f/%d  rad %.0f/%d  temp %s",
+		hp, hp_th,
+		limb_below and "low" or "ok", limb_th,
+		psy, psy_th,
+		rad, rad_th,
+		has_temp and "yes" or "no"
+	), "cyan")
+	dogma.dbg.overlay(id, 3, sformat(
+		"flash %ss  heal_clamp %s  grace %s",
+		overlay_sec(flash_until, now),
+		heal_clamped and "on" or "off",
+		grace and overlay_sec(grace_deadline, now) .. "s" or "off"
+	), "yellow")
+	dogma.dbg.overlay(id, 4, sformat(
+		"stam %s  fill %.0f/%d  latch %s",
+		show_stam and "SHOW" or "hide",
+		fill, stam_th,
+		stam_latched and "on" or "off"
+	), "orange")
+	dogma.dbg.overlay(id, 5, sformat(
+		"hold %s  force %s  hide_body %s",
+		hold and "yes" or "no",
+		force and "yes" or "no",
+		L.hide_body and "on" or "off"
+	), "gray")
+end
+
 local function any_want_parked(L, show_all)
 	return L.hide_body and not show_all
 end
@@ -883,6 +992,7 @@ local function on_actor_update()
 	local now = time_global()
 	local grace = in_load_grace(now)
 	local force, show_all, show_stam = compute_show(L, now)
+	overlay_bhs(L, now, force, show_all, show_stam, grace)
 	local show_edge = show_all ~= show_all_prev or show_stam ~= show_stam_prev
 	show_all_prev = show_all
 	show_stam_prev = show_stam
@@ -951,6 +1061,7 @@ local function reset_park_state()
 	uv_hs_fn, uv_hs_idx = nil, nil
 	uv_change_fn, uv_change_idx = nil, nil
 	restore_gates()
+	dogma.dbg.clear_source(CONFIG.MOD_ID)
 end
 
 local function on_game_load()

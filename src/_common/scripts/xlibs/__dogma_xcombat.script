@@ -2093,7 +2093,9 @@ local WPN_STATE_RELOAD = 7
 --- @return boolean true when the active weapon is reloading
 function xcombat.is_reloading(npc)
     local wpn = npc:active_item()
-    return wpn ~= nil and IsWeapon(wpn) and wpn:get_state() == WPN_STATE_RELOAD
+    if wpn then
+        return wpn ~= nil and IsWeapon(wpn) and wpn:get_state() == WPN_STATE_RELOAD
+    end
 end
 
 --- True while this combatant cannot effectively return fire - the TARGET-side sibling of body_busy

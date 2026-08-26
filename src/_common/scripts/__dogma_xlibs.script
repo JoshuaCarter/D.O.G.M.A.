@@ -1,49 +1,38 @@
 --[[
-	Vendored xlibs (Damian Sirbu). dogma.xlibs.xobject, etc.
-
-	Copies live in scripts/xlibs/. Update: drop gamedata/scripts/<name>.script
-	there as __dogma_<name>.script. Skip xlibs.script and xlibs_mcm.script.
-	Keep UPSTREAM. Do not edit the copies.
+    Vendored xlibs (Damian Sirbu). Use via dogma.xlibs.xobject, not xobject.
 ]]
 
 local M = getfenv(1)
 
--- Identifier form so the engine autoloads. _G aliases keep vendored files
--- talking to each other by stock names (xobject.se, xconst, ...).
-local function bind(name, mod)
-	M[name] = mod
-	_G[name] = mod
-end
-
-bind("xconst", __dogma_xconst)
-bind("xstring", __dogma_xstring)
-bind("xtable", __dogma_xtable)
-bind("xmath", __dogma_xmath)
-bind("xfs", __dogma_xfs)
-bind("xltx", __dogma_xltx)
-bind("xtime", __dogma_xtime)
-bind("xslice", __dogma_xslice)
-bind("xtrace", __dogma_xtrace)
-bind("xttltable", __dogma_xttltable)
-bind("xlog", __dogma_xlog)
-bind("xevent", __dogma_xevent)
-bind("xbus", __dogma_xbus)
-bind("xpp", __dogma_xpp)
-bind("xprofiler", __dogma_xprofiler)
-bind("xinspect", __dogma_xinspect)
-bind("xprops", __dogma_xprops)
-bind("xchange", __dogma_xchange)
-bind("xmcm", __dogma_xmcm)
-bind("xobject", __dogma_xobject)
-bind("xlevel", __dogma_xlevel)
-bind("xinventory", __dogma_xinventory)
-bind("xcreature", __dogma_xcreature)
-bind("xactor", __dogma_xactor)
-bind("xdata", __dogma_xdata)
-bind("xsquad", __dogma_xsquad)
-bind("xsmart", __dogma_xsmart)
-bind("xsmart_spawn", __dogma_xsmart_spawn)
-bind("xstash", __dogma_xstash)
-bind("xpda", __dogma_xpda)
-bind("xsound", __dogma_xsound)
-bind("xcombat", __dogma_xcombat)
+M["xconst"] = __dogma_xconst
+M["xstring"] = __dogma_xstring
+M["xtable"] = __dogma_xtable
+M["xmath"] = __dogma_xmath
+M["xfs"] = __dogma_xfs
+M["xltx"] = __dogma_xltx
+M["xtime"] = __dogma_xtime
+M["xslice"] = __dogma_xslice
+M["xtrace"] = __dogma_xtrace
+M["xttltable"] = __dogma_xttltable
+M["xlog"] = __dogma_xlog
+M["xevent"] = __dogma_xevent
+M["xbus"] = __dogma_xbus
+M["xpp"] = __dogma_xpp
+M["xprofiler"] = __dogma_xprofiler
+M["xinspect"] = __dogma_xinspect
+M["xprops"] = __dogma_xprops
+M["xchange"] = __dogma_xchange
+M["xmcm"] = __dogma_xmcm
+M["xobject"] = __dogma_xobject
+M["xlevel"] = __dogma_xlevel
+M["xinventory"] = __dogma_xinventory
+M["xcreature"] = __dogma_xcreature
+M["xactor"] = __dogma_xactor
+M["xdata"] = __dogma_xdata
+M["xsquad"] = __dogma_xsquad
+M["xsmart"] = __dogma_xsmart
+M["xsmart_spawn"] = __dogma_xsmart_spawn
+M["xstash"] = __dogma_xstash
+M["xpda"] = __dogma_xpda
+M["xsound"] = __dogma_xsound
+M["xcombat"] = __dogma_xcombat

@@ -1,0 +1,28 @@
+; G2X writes ![torch_definition] (shared player + NPC headlamp).
+; Engine uses torch_definition_actor for the player if it exists.
+; Keep G2X on the player. Put GAMMA (Nicer + leftover Anomaly) back on NPCs.
+; Does not touch flashlight_definition or device_torch attach.
+
+@[torch_definition_actor]:torch_definition
+omni_range             = 0
+omni_range_r2          = 0
+range                  = 55
+range_r2               = 55
+spot_angle             = 110
+color                  = 0.79,0.79,0.79,0.2
+color_r2               = 0.79,0.79,0.79,0.9
+color_animator         = empty
+volumetric             = false
+volumetric_for_actor   = false
+volumetric_quality     = 1.0
+volumetric_intensity   = 1.0
+volumetric_distance    = 1.0
+
+![torch_definition]
+omni_range             = 1.5
+omni_range_r2          = 0.75
+range                  = 30
+range_r2               = 30
+spot_angle             = 85
+color                  = 0.8,0.7,0.7,0.2
+color_r2               = 1.0,0.9,0.9,0.9

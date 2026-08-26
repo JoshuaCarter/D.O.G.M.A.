@@ -1,8 +1,9 @@
 --[[
 	Shared hold+hover for inventory keybinds.
-	Press+hold over a cell fires that cell. Whole-stack binds expand
-	childs (including the opened stack in the picker). Single binds do
-	only the hovered row. Moving to a new cell fires that cell too.
+	Press+hold over a cell fires that cell. All-stacks binds expand
+	childs. One-stack binds do only the hovered row. Picker rows are
+	already one stack: both binds stay on that row. Moving to a new
+	cell fires that cell too.
 	Same cell is locked so sort/rebuild cannot chain.
 
 	Drop/disassemble hold keeps the bag still: add/remove cells only, no
@@ -55,13 +56,13 @@ local function source_bag(gui, bag)
 	return p and p.bag or nil
 end
 
--- whole: parent + childs (picker uses the opened parent cell).
+-- whole: parent + childs. Picker rows are already one stack.
 -- otherwise just the hovered object. IDs snapshotted first.
 local function stack_items(gui, obj, bag, whole)
 	if not obj then
 		return {}
 	end
-	if not whole then
+	if not whole or bag == "picker" then
 		return { obj }
 	end
 	local ci = owner_cell(gui, obj, bag)

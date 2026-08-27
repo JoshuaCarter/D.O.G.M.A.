@@ -25,7 +25,8 @@ local session = nil
 local marked = {}
 local last_xslice_ms = 0
 local HUD_STATIC = "dogma_badwill_steal_prompt"
-local PROMPT_DY = 40
+local PROMPT_DY = 18
+local TAKEALL_NAMES = { "takeall_button", "take_all_button", "m_takeall_button", "takeall" }
 local prompt_text = nil
 local deny_wrapped = false
 local orig_deny = {}
@@ -191,15 +192,24 @@ local function loot_open_on(corpse_id)
 	return pid == corpse_id
 end
 
-local function find_gui_btn(needle)
+local function takeall_btn()
+	local type_ = type
 	local gui = loot_gui()
 	if not gui then
 		return nil
 	end
-	local want = needle:lower()
+	for i = 1, #TAKEALL_NAMES do
+		local btn = gui[TAKEALL_NAMES[i]]
+		if type_(btn) == "userdata" and btn.Show then
+			return btn
+		end
+	end
+	if type_(gui) ~= "table" then
+		return nil
+	end
 	for k, v in pairs(gui) do
-		if type(k) == "string" and k:lower():find(want, 1, true) then
-			if type(v) == "userdata" and v.Show then
+		if type_(k) == "string" and type_(v) == "userdata" and v.Show then
+			if k:lower():find("takeall", 1, true) or k:lower():find("take_all", 1, true) then
 				return v
 			end
 		end
@@ -208,11 +218,12 @@ local function find_gui_btn(needle)
 end
 
 local function set_takeall_shown(show)
-	local btn = find_gui_btn("takeall") or find_gui_btn("take_all")
-	if btn then
-		btn:Show(show)
-		takeall_hidden = not show
+	local btn = takeall_btn()
+	if not btn then
+		return
 	end
+	btn:Show(show)
+	takeall_hidden = not show
 end
 
 local function session_allows_take()
@@ -313,43 +324,49 @@ local function prompt_wnd()
 	return cs and cs:wnd()
 end
 
+local function match_search_font(wnd, qi)
+	if not (wnd and qi) then
+		return
+	end
+	local font = qi.GetFont and qi:GetFont()
+	local color = qi.GetTextColor and qi:GetTextColor()
+	local tc = wnd.TextControl and wnd:TextControl()
+	if font then
+		if wnd.SetFont then
+			pcall(wnd.SetFont, wnd, font)
+		end
+		if tc and tc.SetFont then
+			pcall(tc.SetFont, tc, font)
+		end
+	end
+	if color then
+		if wnd.SetTextColor then
+			pcall(wnd.SetTextColor, wnd, color)
+		end
+		if tc and tc.SetTextColor then
+			pcall(tc.SetTextColor, tc, color)
+		end
+	end
+end
+
 local function place_under_search(wnd)
-	local x, y, w, h = 0, 660, 1024, 40
+	local x, y, w, h = 0, 638, 1024, 28
 	local qi = quick_info_wnd()
-	if qi then
-		local abs = Frect()
-		local ok = pcall(qi.GetAbsoluteRect, qi, abs)
-		if ok and abs.y1 then
-			x = abs.x1
-			y = abs.y1 + PROMPT_DY
-			w = (abs.x2 - abs.x1)
-			h = (abs.y2 - abs.y1)
-			local ours = Frect()
-			if pcall(wnd.GetAbsoluteRect, wnd, ours) and ours.y1 then
-				local pos = wnd:GetWndPos()
-				if pos then
-					x = x - (ours.x1 - pos.x)
-					y = y - (ours.y1 - pos.y)
-				end
-			end
-		else
-			local pos = qi.GetWndPos and qi:GetWndPos()
-			if pos then
-				x = pos.x or x
-				y = (pos.y or y) + PROMPT_DY
-			end
-			if qi.GetWidth then
-				w = qi:GetWidth() or w
-			end
-			if qi.GetHeight then
-				h = qi:GetHeight() or h
-			end
+	if qi and qi.GetWndPos then
+		local pos = qi:GetWndPos()
+		if pos then
+			x = pos.x or x
+			y = (pos.y or y) + PROMPT_DY
+		end
+		if qi.GetWidth then
+			w = qi:GetWidth() or w
 		end
 	end
 	wnd:SetWndPos(vector2():set(x, y))
 	pcall(function()
 		wnd:SetWndSize(vector2():set(w, h))
 	end)
+	match_search_font(wnd, qi)
 end
 
 local function show_prompt(text)
@@ -532,6 +549,7 @@ local function start_xslice()
 end
 
 local function begin_session(corpse, claimer)
+	hide_prompt()
 	cancel_xslice()
 	local watch, hunt = collect_watch(claimer)
 	session = {

@@ -26,6 +26,22 @@ local function log(msg, color)
     dogma.log.log(MOD_ID, tostring(msg), color)
 end
 
+local function queue(id, msg, color)
+    local fn = _G.dogma_wb_queue_roll
+    if fn then
+        fn(id, msg, color)
+        return
+    end
+    log(msg, color)
+end
+
+local function flush(id)
+    local fn = _G.dogma_wb_flush_roll
+    if fn then
+        fn(id)
+    end
+end
+
 -- Cheese paid stash (copied from RNG Attach; NMN cannot rely on RNG when disabled)
 local function is_cheese_paid_stash(_hint)
     local sfind = string.find
@@ -217,12 +233,12 @@ local function roll_stash_loot(id)
     end
     append_stash_sections(id, sections)
     local color = (#drops > 0) and "green" or "gray"
-    log(string.format("stash %s tier=%s bonus=%s", id, target, n), color)
+    queue(id, string.format("stash %s tier=%s bonus=%s", id, target, n), color)
     if #drops == 0 then
-        log("  empty", "gray")
+        queue(id, "  empty", "gray")
     else
         for i = 1, #drops do
-            log("  + " .. drops[i], color)
+            queue(id, "  + " .. drops[i], color)
         end
     end
     dogma.perf.stop()
@@ -244,7 +260,7 @@ local function patched_set_random_stash(no_spot, hint, bonus_items, id, dbg)
     end
     dogma.perf.start("weapons_ban", "set_random_stash")
     if is_cheese_paid_stash(hint) then
-        log(string.format("stash %s skip cheese", tostring(id)), "yellow")
+        queue(id, string.format("stash %s skip cheese", tostring(id)), "yellow")
         dogma.perf.stop()
         return result
     end
@@ -264,6 +280,7 @@ local function patched_try_spawn_treasure(box)
     -- string. Already-looted (true) or empty (false) boxes keep their items.
     local pending = cache_of(id)
     original_try_spawn_treasure(box)
+    flush(id)
     if type(pending) == "string" then
         spawn_pending_stash_ammo(box)
     end

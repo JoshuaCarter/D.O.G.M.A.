@@ -329,51 +329,133 @@ end
 
 -- One actor_on_update for all field anoms (was a closure per spawn).
 local field_anoms = {}
-local actor_pos_frame = -1
-local actor_pos_cached = nil
-local notify_frame = -1
+local ax, ay, az = 0, 0, 0
+local pos_at = 0
+local notify_at = 0
 local notify_fn = nil
 local notify_beep = false
 local notify_active = false
+local notify_det_id = nil
+local ui_dirty = false
+local beep_snd = nil
+local POS_MS = 100
+local NOTIFY_MS = 250
 
-local function cached_actor_pos(actor)
-    local f = device().dwFrame
-    if actor_pos_frame ~= f or not actor_pos_cached then
-        actor_pos_frame = f
-        actor_pos_cached = actor:position()
-    end
-    return actor_pos_cached
-end
-
-local function dist_sqr(self, ax, ay, az)
-    local dx = (self.px or 0) - ax
-    local dy = (self.py or 0) - ay
-    local dz = (self.pz or 0) - az
+local function dist_sqr(self, px, py, pz)
+    local dx = (self.px or 0) - px
+    local dy = (self.py or 0) - py
+    local dz = (self.pz or 0) - pz
     return dx * dx + dy * dy + dz * dz
 end
 
-local function refresh_notify(actor)
-    local f = device().dwFrame
-    if notify_frame == f then
+local function refresh_actor_pos(actor, tg)
+    if tg - pos_at < POS_MS then
         return
     end
-    notify_frame = f
+    pos_at = tg
+    local p = actor:position()
+    ax, ay, az = p.x, p.y, p.z
+end
+
+local function refresh_notify(actor, tg)
+    if tg and notify_at ~= 0 and (tg - notify_at) < NOTIFY_MS then
+        return
+    end
+    notify_at = tg or time_global()
     local det = actor:item_in_slot(9)
-    local sec = det and det:section()
-    notify_fn = sec and detector_functions[sec] or nil
-    notify_beep = game_difficulties.get_game_factor("notify_anomaly") and true or false
+    local id = det and det:id()
+    if id ~= notify_det_id then
+        notify_det_id = id
+        local sec = det and det:section()
+        notify_fn = sec and detector_functions[sec] or nil
+        notify_beep = game_difficulties.get_game_factor("notify_anomaly") and true or false
+    end
     notify_active = actor:active_detector() and true or false
 end
 
-local function field_anom_tick(self, actor, ax, ay, az, tg)
-    if tg < self.on_update_time then
+local function da_beep()
+    if not beep_snd then
+        beep_snd = get_safe_sound_object("detectors\\da-2_beep1")
+    end
+    if beep_snd then
+        beep_snd:play(db.actor, 0, sound_object.s2d)
+    end
+end
+
+local function da_notify(self, distance_to_sqr, radius_sqr)
+    local og_dyn = bind_anomaly_field.dyn_anomalies
+    if og_dyn then
+        local dyn = self.level_name and og_dyn[self.level_name]
+        local st = dyn and dyn[self.obj_id]
+        if st ~= nil and not st then
+            return
+        end
+    end
+    local key = self.factor_key
+    detector_functions.detector_anomaly_factors[key] = 1 - distance_to_sqr / radius_sqr
+    ui_dirty = true
+    if not notify_active then
         return
     end
+    local sec = self.section
+    if notify_beep and (drx_da_main_mcm.new_anomalies_sections[sec] or drx_da_main_mcm.variations_anomalies_sections[sec])
+    or (not notify_beep) then
+        if not self.sound_threshold then
+            self.sound_threshold = 0
+        end
+        self.sound_threshold = self.sound_threshold + (1 - distance_to_sqr / radius_sqr) ^ 2
+        if self.sound_threshold > 1 then
+            da_beep()
+            self.sound_threshold = 0
+        end
+    end
+end
+
+local function flush_detector_ui()
+    if not ui_dirty then
+        return
+    end
+    ui_dirty = false
+    local ui = tasks_measure.get_UI()
+    if not (ui and ui.step <= 0) then
+        return
+    end
+    local df = detector_functions
+    if not notify_active then
+        if not df.detector_ui_black then
+            df.detector_ui_black = true
+            df.detector_ui_segs = -1
+            for i = 1, ui.step_tot do
+                ui.m_seg[i]:InitTextureEx("green_black_ano", "hud\\p3d")
+            end
+        end
+        return
+    end
+    local factor = 0
+    for _, v in pairs(df.detector_anomaly_factors) do
+        if v > factor then
+            factor = v
+        end
+    end
+    local segs = min(ui.step_tot, ceil(factor * 10))
+    if segs == df.detector_ui_segs and not df.detector_ui_black then
+        return
+    end
+    df.detector_ui_segs = segs
+    df.detector_ui_black = false
+    for i = 1, ui.step_tot do
+        ui.m_seg[i]:InitTextureEx(i <= segs and "green_seg_ano" or "green_black_ano", "hud\\p3d")
+    end
+end
+
+local function field_anom_tick(self, ax, ay, az, tg)
+    -- Park next due first so a notify error cannot spin this anom every frame.
+    self.on_update_time = tg + (self.on_update_timer_default or 100)
 
     local radius_sqr = self.radius_sqr
     local distance_to_sqr = dist_sqr(self, ax, ay, az)
     if distance_to_sqr <= radius_sqr then
-        if not (
+        if notify_fn and not (
             anomaly_detector_ignore[self.section]
         or  (
             self.level_name
@@ -383,26 +465,15 @@ local function field_anom_tick(self, actor, ax, ay, az, tg)
             and updated_anomaly_levels[self.level_name].anomalies_properties[self.obj_id]
             )
         ) then
-            if notify_fn then
-                local og_dyn_anomalies = bind_anomaly_field.dyn_anomalies
-                if not og_dyn_anomalies then
-                    notify_anomaly(self, actor, distance_to_sqr, radius_sqr, true)
-                else
-                    local lid = self.level_name
-                    local dyn = lid and og_dyn_anomalies[lid]
-                    local dyn_state = dyn and dyn[self.obj_id]
-                    if dyn_state == nil or dyn_state then
-                        notify_anomaly(self, actor, distance_to_sqr, radius_sqr, true)
-                    end
-                end
-            end
+            da_notify(self, distance_to_sqr, radius_sqr)
         end
         self.da_near = true
         self.on_update_timer = self.on_update_timer_default
     else
         if self.da_near then
-            detector_functions.detector_anomaly_remove_factor(detector_functions, self, actor, distance_to_sqr, radius_sqr, true)
+            detector_functions.detector_anomaly_factors[self.factor_key] = nil
             self.da_near = false
+            ui_dirty = true
         end
         self.on_update_timer = clamp(self.on_update_timer_default * (distance_to_sqr / radius_sqr * 0.5), self.on_update_timer_default, self.on_update_timer_max)
     end
@@ -416,18 +487,19 @@ function field_anoms_on_update()
         return
     end
     local tg = time_global()
-    local ax, ay, az
     local primed = false
     for _, self in pairs(field_anoms) do
         if self.object and tg >= self.on_update_time then
             if not primed then
-                local p = cached_actor_pos(actor)
-                refresh_notify(actor)
-                ax, ay, az = p.x, p.y, p.z
+                refresh_actor_pos(actor, tg)
+                refresh_notify(actor, tg)
                 primed = true
             end
-            field_anom_tick(self, actor, ax, ay, az, tg)
+            field_anom_tick(self, ax, ay, az, tg)
         end
+    end
+    if ui_dirty then
+        flush_detector_ui()
     end
 end
 
@@ -2754,40 +2826,16 @@ detector_functions = {
     detector_ui_black = false,
     detector_anomaly = function(self, anomaly, actor, distance_to_sqr, radius_sqr, custom_callback)
         if not custom_callback then return end
-        if notify_active then
-            local sec = anomaly.section
-
-            self:detector_anomaly_add_factor(anomaly, actor, distance_to_sqr, radius_sqr, custom_callback)
-            local factor = self:detector_anomaly_find_max_factor(anomaly, actor, distance_to_sqr, radius_sqr, custom_callback)
-
-            local ui = tasks_measure.get_UI()
-            if ui and ui.step <= 0 then
-                local segs = min(ui.step_tot, ceil(factor * 10))
-                if segs ~= self.detector_ui_segs or self.detector_ui_black then
-                    self.detector_ui_segs = segs
-                    self.detector_ui_black = false
-                    for i = 1, ui.step_tot do
-                        ui.m_seg[i]:InitTextureEx(i <= segs and "green_seg_ano" or "green_black_ano", "hud\\p3d")
-                    end
-                end
-            end
-
-            -- Play sound when detector is active
-            if  notify_beep
-            and (drx_da_main_mcm.new_anomalies_sections[sec] or drx_da_main_mcm.variations_anomalies_sections[sec])
-            or  (not notify_beep and notify_active)
-            then
-                self:play_anomaly_sound(anomaly, actor, distance_to_sqr, radius_sqr)
-            end
-        else
-            local ui = tasks_measure.get_UI()
-            if ui and ui.step <= 0 and not self.detector_ui_black then
-                self.detector_ui_black = true
-                self.detector_ui_segs = -1
-                for i = 1, ui.step_tot do
-                    ui.m_seg[i]:InitTextureEx("green_black_ano", "hud\\p3d")
-                end
-            end
+        if not notify_active then
+            return
+        end
+        local sec = anomaly.section
+        self:detector_anomaly_add_factor(anomaly, actor, distance_to_sqr, radius_sqr, custom_callback)
+        if  notify_beep
+        and (drx_da_main_mcm.new_anomalies_sections[sec] or drx_da_main_mcm.variations_anomalies_sections[sec])
+        or  (not notify_beep and notify_active)
+        then
+            self:play_anomaly_sound(anomaly, actor, distance_to_sqr, radius_sqr)
         end
     end,
 
@@ -2801,7 +2849,7 @@ detector_functions = {
 }
 
 function notify_anomaly(anomaly, actor, distance_to_sqr, radius_sqr, custom_callback)
-    refresh_notify(actor)
+    refresh_notify(actor, time_global())
     if notify_fn then
         notify_fn(detector_functions, anomaly, actor, distance_to_sqr, radius_sqr, custom_callback)
     elseif notify_beep and (drx_da_main_mcm.new_anomalies_sections[anomaly.section] or drx_da_main_mcm.variations_anomalies_sections[anomaly.section]) and not custom_callback then
@@ -2900,8 +2948,8 @@ bind_anomaly_field.anomaly_field_binder.update = function(self, delta)
         -- Get behaviour radius and check if actor inside it, then apply effect
         local actor = db.actor
         local radius_sqr = self.radius_sqr
-        local p = cached_actor_pos(actor)
-        local distance_to_sqr = dist_sqr(self, p.x, p.y, p.z)
+        refresh_actor_pos(actor, time_global())
+        local distance_to_sqr = dist_sqr(self, ax, ay, az)
         if distance_to_sqr <= radius_sqr then
             -- Open anomaly article
             open_anomaly_article(section)

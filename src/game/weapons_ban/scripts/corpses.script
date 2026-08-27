@@ -10,10 +10,49 @@ local MOD_ID = CONFIG.MOD_ID
 local Tiers
 local original_try_spawn_ammo
 local hooked_ammo = false
+local PENDING_ROLLS_KEY = "dogma_wb_pending_rolls"
+local pending_rolls = {}
 
 local function log(msg, color)
     dogma.log.log(MOD_ID, tostring(msg), color)
 end
+
+local function roll_id(id)
+    return tonumber(id) or id
+end
+
+local function queue_roll(id, msg, color)
+    id = roll_id(id)
+    if not id then
+        return
+    end
+    local list = pending_rolls[id]
+    if not list then
+        list = {}
+        pending_rolls[id] = list
+    end
+    list[#list + 1] = { tostring(msg), color }
+end
+
+local function flush_roll(id)
+    id = roll_id(id)
+    if not id then
+        return
+    end
+    local list = pending_rolls[id] or pending_rolls[tostring(id)]
+    if not list then
+        return
+    end
+    pending_rolls[id] = nil
+    pending_rolls[tostring(id)] = nil
+    for i = 1, #list do
+        local row = list[i]
+        log(row[1], row[2])
+    end
+end
+
+_G.dogma_wb_queue_roll = queue_roll
+_G.dogma_wb_flush_roll = flush_roll
 
 local function npc_label(npc)
     if not npc then
@@ -211,12 +250,13 @@ local function inject_corpse_ammo(npc, inv_ammo)
 end
 
 local function log_corpse_roll(npc, result)
+    local id = npc.id and npc:id()
     local who = npc_label(npc)
     if result.skip then
         if result.skip == "no guns" and not result.rank then
             return
         end
-        log(string.format(
+        queue_roll(id, string.format(
             "corpse %s skip %s rank=%s guns=%s",
             who,
             result.skip,
@@ -225,7 +265,7 @@ local function log_corpse_roll(npc, result)
         ), "gray")
         return
     end
-    log(string.format(
+    queue_roll(id, string.format(
         "corpse %s rank=%s guns=%s ru=%s",
         who,
         result.rank or "?",
@@ -233,11 +273,11 @@ local function log_corpse_roll(npc, result)
         result.ru
     ), "green")
     if #result.drops == 0 then
-        log("  none", "gray")
+        queue_roll(id, "  none", "gray")
         return
     end
     for i = 1, #result.drops do
-        log("  + " .. result.drops[i], "green")
+        queue_roll(id, "  + " .. result.drops[i], "green")
     end
 end
 
@@ -273,10 +313,37 @@ local function try_hook_ammo()
     log("hooked death_manager.try_spawn_ammo")
 end
 
+local function flush_open_loot()
+    local gui = ui_inventory and ui_inventory.GUI
+    if not (gui and gui.mode == "loot") then
+        return
+    end
+    local partner = gui.GetPartner and gui:GetPartner()
+    if partner and partner.id then
+        flush_roll(partner:id())
+    end
+end
+
+local function on_save_state(m_data)
+    m_data[PENDING_ROLLS_KEY] = pending_rolls
+end
+
+local function on_load_state(m_data)
+    pending_rolls = m_data[PENDING_ROLLS_KEY] or {}
+end
+
 function on_game_start()
     Tiers = _G.dogma_game_weapons_ban_tiers
     CONFIG:ensure_dogma()
     RegisterScriptCallback("actor_on_first_update", try_hook_ammo)
+    RegisterScriptCallback("ActorMenu_on_mode_changed", flush_open_loot)
+    RegisterScriptCallback("ActorMenu_on_before_init_mode", function(mode)
+        if mode == "loot" then
+            flush_open_loot()
+        end
+    end)
+    RegisterScriptCallback("save_state", on_save_state)
+    RegisterScriptCallback("load_state", on_load_state)
     try_hook_ammo()
     log("corpse ammo: loaded")
 end

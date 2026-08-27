@@ -8,7 +8,7 @@ local xobject = dogma.xlibs.xobject
 local xlevel = dogma.xlibs.xlevel
 local xcreature = dogma.xlibs.xcreature
 
-local DEFAULT_FOV_DEG = 80
+local DEFAULT_FOV_DEG = 100
 local DEFAULT_COMBAT_M = 100
 local LOOK_FLAGS = 3 -- rqtObject | rqtStatic
 local LOOK_BUSH_STEP = 0.2
@@ -18,9 +18,20 @@ local BONES_HEAD = { "bip01_head" }
 local COS_CACHE = {}
 
 local pick = nil
-local pick_ignore = nil
+local pick_ignore_id = nil
 local RAY_POS = vector()
 local RAY_DIR = vector()
+
+local function obj_id(obj)
+    if not obj then
+        return nil
+    end
+    local ok, id = pcall(obj.id, obj)
+    if ok then
+        return id
+    end
+    return nil
+end
 
 local function cos_deg(deg)
     local c = COS_CACHE[deg]
@@ -155,51 +166,53 @@ end
 -- bush_pierce 0/nil = one ray (bush = wall). N = recast through N bushes.
 -- returns: object, dist | false, dist (static) | nil (clear / fail)
 function ray(ox, oy, oz, dx, dy, dz, range, ignore, bush_pierce)
-	if not ray_pick or not range or range <= 0 then
-		return nil
-	end
-	-- set_ignore_object only appends. New pick when ignore changes.
-	if not pick or ignore ~= pick_ignore then
-		pick = ray_pick()
-		pick_ignore = ignore
-		if ignore then
-			pick:set_ignore_object(ignore)
-		end
-	end
-	local max_pierce = tonumber(bush_pierce) or 0
-	if max_pierce < 0 then
-		max_pierce = 0
-	end
-	pick:set_flags(LOOK_FLAGS)
-	RAY_DIR:set(dx, dy, dz)
-	local pierces = 0
-	local remaining = range
-	while remaining > 0 and pierces <= max_pierce do
-		RAY_POS:set(ox, oy, oz)
-		pick:set_position(RAY_POS)
-		pick:set_direction(RAY_DIR)
-		pick:set_range(remaining)
-		local ok, hit = pcall(pick.query, pick)
-		if not (ok and hit) then
-			return nil
-		end
-		local obj = pick:get_object()
-		if obj then
-			return obj, pick:get_distance()
-		end
-		local result = pick:get_result()
-		local hit_dist = pick:get_distance()
-		if not (result and hit_dist and hit_dist > 0 and is_bush_material(result.material_name)) then
-			return false, hit_dist
-		end
-		local step = hit_dist + LOOK_BUSH_STEP
-		ox = ox + dx * step
-		oy = oy + dy * step
-		oz = oz + dz * step
-		remaining = remaining - step
-		pierces = pierces + 1
-	end
-	return false, 0
+    if not ray_pick or not range or range <= 0 then
+        return nil
+    end
+    -- set_ignore_object only appends. New pick when ignore id changes.
+    -- game_object has no __eq; compare ids.
+    local ignore_id = obj_id(ignore)
+    if not pick or ignore_id ~= pick_ignore_id then
+        pick = ray_pick()
+        pick_ignore_id = ignore_id
+        if ignore then
+            pick:set_ignore_object(ignore)
+        end
+    end
+    local max_pierce = tonumber(bush_pierce) or 0
+    if max_pierce < 0 then
+        max_pierce = 0
+    end
+    pick:set_flags(LOOK_FLAGS)
+    RAY_DIR:set(dx, dy, dz)
+    local pierces = 0
+    local remaining = range
+    while remaining > 0 and pierces <= max_pierce do
+        RAY_POS:set(ox, oy, oz)
+        pick:set_position(RAY_POS)
+        pick:set_direction(RAY_DIR)
+        pick:set_range(remaining)
+        local ok, hit = pcall(pick.query, pick)
+        if not (ok and hit) then
+            return nil
+        end
+        local obj = pick:get_object()
+        if obj then
+            return obj, pick:get_distance()
+        end
+        local result = pick:get_result()
+        local hit_dist = pick:get_distance()
+        if not (result and hit_dist and hit_dist > 0 and is_bush_material(result.material_name)) then
+            return false, hit_dist
+        end
+        local step = hit_dist + LOOK_BUSH_STEP
+        ox = ox + dx * step
+        oy = oy + dy * step
+        oz = oz + dz * step
+        remaining = remaining - step
+        pierces = pierces + 1
+    end
+    return false, 0
 end
 
 function npc_has_los_to_pos(npc, pos, fov)
@@ -299,11 +312,11 @@ function has_los_to_object(from, obj, ignore)
 end
 
 local function dist_to_pos(npc, pos)
-	return npc:position():distance_to(pos)
+    return npc:position():distance_to(pos)
 end
 
 local function dist_between(a, b)
-	return a:position():distance_to(b:position())
+    return a:position():distance_to(b:position())
 end
 
 function get_stalkers_near_point(pos, range, faction)

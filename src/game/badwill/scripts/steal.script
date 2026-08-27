@@ -548,27 +548,29 @@ local function begin_session(corpse, claimer)
 end
 
 local function log_cfg()
+	local tostr = tostring
 	log(string.format(
 		"cfg on=%s key=%s mod=%s mode=%s hold=%s",
-		tostring(steal_on()),
-		tostring(steal_dik()),
-		tostring(steal_mod()),
-		tostring(steal_mode()),
-		tostring(steal_hold_ms())
+		tostr(steal_on()),
+		tostr(steal_dik()),
+		tostr(steal_mod()),
+		tostr(steal_mode()),
+		tostr(steal_hold_ms())
 	))
 end
 
 local function log_look(obj)
+	local tostr = tostring
 	local id = obj and obj:id() or 0
 	local v = obj and owners[id]
 	local claimer = living_claimer(v)
 	local sig = string.format(
 		"%s:%s:%s:%s:%s",
-		tostring(id),
-		tostring(claimer and claimer:id() or 0),
-		tostring(steal_dik()),
-		tostring(steal_mode()),
-		tostring(steal_mod())
+		tostr(id),
+		tostr(claimer and claimer:id() or 0),
+		tostr(steal_dik()),
+		tostr(steal_mode()),
+		tostr(steal_mod())
 	)
 	if sig == last_look then
 		return
@@ -580,17 +582,18 @@ local function log_look(obj)
 	end
 	log(string.format(
 		"look id=%s sec=%s have=%s claimer=%s key=%s mod=%s mode=%s",
-		tostring(id),
-		tostring(obj:section()),
-		tostring(v ~= nil),
-		tostring(claimer and claimer:id() or nil),
-		tostring(steal_dik()),
-		tostring(steal_mod()),
-		tostring(steal_mode())
+		tostr(id),
+		tostr(obj:section()),
+		tostr(v ~= nil),
+		tostr(claimer and claimer:id() or nil),
+		tostr(steal_dik()),
+		tostr(steal_mod()),
+		tostr(steal_mode())
 	))
 end
 
 local function try_open()
+	local tostr = tostring
 	if not steal_on() then
 		return
 	end
@@ -605,17 +608,18 @@ local function try_open()
 		log("fire no corpse")
 		return
 	end
-	local claimer = living_claimer(owners[corpse:id()])
+	local corpse_id = corpse:id()
+	local claimer = living_claimer(owners[corpse_id])
 	if not claimer then
-		log("fire no claimer id=" .. tostring(corpse:id()) .. " have=" .. tostring(owners[corpse:id()] ~= nil))
+		log("fire no claimer id=" .. tostr(corpse_id) .. " have=" .. tostr(owners[corpse_id] ~= nil))
 		return
 	end
 	local actor = db.actor
 	if not (actor and corpse.use) then
-		log("fire no use id=" .. tostring(corpse:id()))
+		log("fire no use id=" .. tostr(corpse_id))
 		return
 	end
-	log("fire id=" .. tostring(corpse:id()) .. " claimer=" .. tostring(claimer:id()))
+	log("fire id=" .. tostr(corpse_id) .. " claimer=" .. tostr(claimer:id()))
 	wrap_deny_move()
 	local ok, ret = pcall(corpse.use, corpse, actor)
 	if not ok then
@@ -630,6 +634,7 @@ local function try_open()
 end
 
 local function record_death(victim, killer)
+	local tostr = tostring
 	if not (victim and killer) then
 		return
 	end
@@ -639,38 +644,38 @@ local function record_death(victim, killer)
 	end
 	local victim_id, killer_id = victim:id(), killer:id()
 	if victim_id == killer_id then
-		log("claim skip suicide v=" .. tostring(victim_id))
+		log("claim skip suicide v=" .. tostr(victim_id))
 		return
 	end
 	if killer_id == actor:id() then
-		log("claim skip actor kill v=" .. tostring(victim_id))
+		log("claim skip actor kill v=" .. tostr(victim_id))
 		return
 	end
 	if CONFIG.is_player_side(killer) or CONFIG.is_player_side(victim) then
-		log("claim skip player-side v=" .. tostring(victim_id) .. " k=" .. tostring(killer_id))
+		log("claim skip player-side v=" .. tostr(victim_id) .. " k=" .. tostr(killer_id))
 		return
 	end
 	if CONFIG.is_story(victim) then
-		log("claim skip story v=" .. tostring(victim_id))
+		log("claim skip story v=" .. tostr(victim_id))
 		return
 	end
 	if not xcreature.is_stalker(killer) then
-		log("claim skip killer not stalker v=" .. tostring(victim_id) .. " k=" .. tostring(killer_id))
+		log("claim skip killer not stalker v=" .. tostr(victim_id) .. " k=" .. tostr(killer_id))
 		return
 	end
 	local comm = dogma.alife.community(killer)
 	if comm and CONFIG.SKIP_COMM[comm] then
-		log("claim skip comm=" .. tostring(comm) .. " v=" .. tostring(victim_id))
+		log("claim skip comm=" .. tostr(comm) .. " v=" .. tostr(victim_id))
 		return
 	end
 	local squad = get_object_squad and get_object_squad(killer)
 	local squad_id = squad and squad.id or nil
 	if squad_id and axr_companions and axr_companions.companion_squads and axr_companions.companion_squads[squad_id] then
-		log("claim skip companion squad v=" .. tostring(victim_id))
+		log("claim skip companion squad v=" .. tostr(victim_id))
 		return
 	end
 	owners[victim_id] = { killer = killer_id, squad = squad_id }
-	log("claim v=" .. tostring(victim_id) .. " k=" .. tostring(killer_id) .. " squad=" .. tostring(squad_id))
+	log("claim v=" .. tostr(victim_id) .. " k=" .. tostr(killer_id) .. " squad=" .. tostr(squad_id))
 end
 
 local function refresh_deadline()
@@ -750,20 +755,21 @@ local function on_save_state(m_data)
 end
 
 local function on_load_state(m_data)
+	local type_ = type
 	owners = {}
 	local saved = m_data and m_data[SAVE_KEY]
-	if type(saved) == "table" and type(saved.owner) == "table" then
+	if type_(saved) == "table" and type_(saved.owner) == "table" then
 		for k, v in pairs(saved.owner) do
 			local id = tonumber(k)
-			if id and type(v) == "table" then
+			if id and type_(v) == "table" then
 				ingest_owner(id, v, "save")
 			end
 		end
 	end
 	local ap = m_data and m_data.ap_ext_loot_claim
-	if type(ap) == "table" and type(ap.owner) == "table" then
+	if type_(ap) == "table" and type_(ap.owner) == "table" then
 		for k, v in pairs(ap.owner) do
-			if type(v) == "table" then
+			if type_(v) == "table" then
 				ingest_owner(tonumber(k), v, "ap")
 			end
 		end

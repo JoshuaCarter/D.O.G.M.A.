@@ -2,8 +2,8 @@
 	Item Labels. Hide look-at pickup icon.
 
 	DXML only loads modxml_*.script. Moves floating look-at pickup icon
-	off-screen when MCM hide_icons is on (default). Hold-Use name text is
-	killed separately via g_draw_pickup_item_names in main.script.
+	off-screen when Enabled and hide_icons are both on (default). Hold-Use
+	name text is killed separately via g_draw_pickup_item_names in main.script.
 ]]
 
 function on_xml_read()
@@ -16,7 +16,8 @@ function on_xml_read()
 		end
 		local CONFIG = _G.dogma_gui_item_labels_conf
 		if CONFIG and dogma and dogma.mcm
-			and not dogma.mcm.bool(CONFIG.MOD_ID, "hide_icons")
+			and (not dogma.mcm.bool(CONFIG.MOD_ID, "enabled")
+				or not dogma.mcm.bool(CONFIG.MOD_ID, "hide_icons"))
 		then
 			return
 		end

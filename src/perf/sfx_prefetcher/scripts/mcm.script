@@ -9,35 +9,6 @@ _G.dogma_perf_sfx_prefetcher_conf = {
 }
 
 local CONFIG = _G.dogma_perf_sfx_prefetcher_conf
-local LTX_NAME = "dogma_sfx_prefetch.ltx"
-local SECTION = "dogma_sfx_list"
-
-local function bank_count()
-	local ini = ini_file(LTX_NAME)
-	if not ini or not ini:section_exist(SECTION) then
-		return 0
-	end
-	local lines = ini:line_count(SECTION)
-	if not lines or lines < 1 then
-		return 0
-	end
-	local n = 0
-	for i = 0, lines - 1 do
-		local _, _, value = ini:r_line(SECTION, i, "", "")
-		if value and value ~= "" then
-			n = n + 1
-		end
-	end
-	return n
-end
-
-local function bank_desc()
-	local n = bank_count()
-	if n < 1 then
-		return "Prefetch bank: empty - run dogma_sfx_prefetch.py in the DOGMA mod folder."
-	end
-	return string.format("Prefetch bank: %d sounds", n)
-end
 
 function on_mcm_load(options)
 	dogma_mcm.attach(options, "perf", "ui_mcm_menu_dogma_perf", {
@@ -49,11 +20,6 @@ function on_mcm_load(options)
 				id = "page_description",
 				type = "desc",
 				text = "ui_mcm_dogma_perf_sfx_prefetcher_page_description",
-			},
-			{
-				id = "bank_count",
-				type = "desc",
-				text = bank_desc(),
 			},
 			{
 				id = "enable",

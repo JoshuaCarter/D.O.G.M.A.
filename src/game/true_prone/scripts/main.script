@@ -93,25 +93,19 @@ set_prone_bones_visible = function(actor, visible)
 		log("bones: hidden")
 	end
 
-	pcall(function()
-		actor:set_bone_visible("bip01_l_thigh", visible, true, false)
-	end)
-	pcall(function()
-		actor:set_bone_visible("bip01_r_thigh", visible, true, false)
-	end)
-	pcall(function()
-		actor:set_bone_visible("bip01_l_upperarm", visible, true, false)
-	end)
-	pcall(function()
-		actor:set_bone_visible("bip01_r_upperarm", visible, true, false)
-	end)
+	pcall(actor.set_bone_visible, actor, "bip01_l_thigh", visible, true, false)
+	pcall(actor.set_bone_visible, actor, "bip01_r_thigh", visible, true, false)
+	pcall(actor.set_bone_visible, actor, "bip01_l_upperarm", visible, true, false)
+	pcall(actor.set_bone_visible, actor, "bip01_r_upperarm", visible, true, false)
+end
+
+local function actor_cam_height(actor)
+	return device().cam_pos.y - actor:position().y
 end
 
 local function play_motion(actor, motion, mix_in)
 	overlay(LOG.ANIM, "Motion: " .. tostring(motion))
-	local ok = pcall(function()
-		actor:play_cycle(motion, mix_in)
-	end)
+	local ok = pcall(actor.play_cycle, actor, motion, mix_in)
 	if not ok then
 		log("play_cycle failed: " .. tostring(motion))
 	end
@@ -130,9 +124,7 @@ local function on_actor_on_update()
 
 	dogma.perf.start("true_prone", "actor_on_update")
 	-- nearest posture from camera height (feet to cam)
-	local ok, height = pcall(function()
-		return device().cam_pos.y - actor:position().y
-	end)
+	local ok, height = pcall(actor_cam_height, actor)
 	if not ok or not height then
 		height = CONFIG.loaded.cam_height_stand
 	end

@@ -126,6 +126,7 @@ local fill_hide_at = 0
 local fill_uv = {}
 local last_status_tick = 0
 local last_park_tick = 0
+local last_boost_tick = 0
 local icons_hold_prev = false
 local show_all_prev = false
 local show_stam_prev = false
@@ -308,9 +309,7 @@ local function bhs_fill_dest_settled()
 		if not (bar and bar.GetProgressPos) then
 			return false
 		end
-		local ok, dest = pcall(function()
-			return bar:GetProgressPos()
-		end)
+		local ok, dest = pcall(bar.GetProgressPos, bar)
 		if not ok or dest == nil then
 			return false
 		end
@@ -332,16 +331,16 @@ local function fill_lerp_ms()
 	for i = 1, #FILL_BARS do
 		local bar = bar_from_uv(FILL_BARS[i].uv)
 		if bar and bar.GetProgressPos then
-			local ok, dest = pcall(function()
-				return bar:GetProgressPos()
-			end)
+			local ok, dest = pcall(bar.GetProgressPos, bar)
 			local range = 100
 			if bar.GetRange_max and bar.GetRange_min then
-				local ok_r, r = pcall(function()
-					return bar:GetRange_max() - bar:GetRange_min()
-				end)
-				if ok_r and r and r > 1 then
-					range = r
+				local ok_max, rmax = pcall(bar.GetRange_max, bar)
+				local ok_min, rmin = pcall(bar.GetRange_min, bar)
+				if ok_max and ok_min and rmax and rmin then
+					local r = rmax - rmin
+					if r > 1 then
+						range = r
+					end
 				end
 			end
 			if ok and dest then
@@ -403,15 +402,11 @@ local function get_cs_wnd(name)
 	if not (hud and hud.GetCustomStatic) then
 		return nil
 	end
-	local ok_cs, cs = pcall(function()
-		return hud:GetCustomStatic(name)
-	end)
+	local ok_cs, cs = pcall(hud.GetCustomStatic, hud, name)
 	if not (ok_cs and cs) then
 		return nil
 	end
-	local ok, wnd = pcall(function()
-		return cs:wnd()
-	end)
+	local ok, wnd = pcall(cs.wnd, cs)
 	return ok and wnd or nil
 end
 
@@ -419,13 +414,15 @@ local function read_xy(wnd)
 	if not (wnd and wnd.GetWndPos) then
 		return nil
 	end
-	local ok, p = pcall(function()
-		return wnd:GetWndPos()
-	end)
+	local ok, p = pcall(wnd.GetWndPos, wnd)
 	if ok and p then
 		return p.x, p.y
 	end
 	return nil
+end
+
+local function set_wnd_xy(wnd, x, y)
+	wnd:SetWndPos(scratch_pos:set(x, y))
 end
 
 local function write_xy(wnd, x, y)
@@ -435,9 +432,7 @@ local function write_xy(wnd, x, y)
 	if not scratch_pos then
 		scratch_pos = vector2()
 	end
-	pcall(function()
-		wnd:SetWndPos(scratch_pos:set(x, y))
-	end)
+	pcall(set_wnd_xy, wnd, x, y)
 end
 
 -- Move only. Never Show().
@@ -918,9 +913,7 @@ local function status_tick(now, icons_held)
 	if as.update_hud then
 		pcall(as.update_hud)
 	elseif as.HUD and as.HUD.Update then
-		pcall(function()
-			as.HUD:Update(true)
-		end)
+		pcall(as.HUD.Update, as.HUD, true)
 	end
 	dogma.perf.stop()
 end
@@ -958,9 +951,13 @@ local function on_actor_update()
 	end
 
 	local icons_held = hold_key(L.key_icons, L.key_icons_modifier)
-	apply_boost_parks(L.hide_status_icons and not icons_held)
 	local hold_edge = icons_held ~= icons_hold_prev
 	icons_hold_prev = icons_held
+	local park_boost = L.hide_status_icons and not icons_held
+	if hold_edge or (park_boost and (now - last_boost_tick >= PARK_REASSERT_MS)) then
+		last_boost_tick = now
+		apply_boost_parks(park_boost)
+	end
 	if L.hide_status_icons or icons_held or hold_edge then
 		if hold_edge or (now - last_status_tick >= STATUS_TICK_MS) then
 			last_status_tick = now
@@ -977,6 +974,7 @@ local function reset_park_state()
 	flash_until = 0
 	last_status_tick = 0
 	last_park_tick = 0
+	last_boost_tick = 0
 	icons_hold_prev = false
 	show_all_prev = false
 	show_stam_prev = false
@@ -1028,6 +1026,9 @@ local function on_option_change()
 		status_tick(time_global(), held)
 	end
 	apply_parks(time_global())
+	if L then
+		apply_boost_parks(L.hide_status_icons and not held)
+	end
 end
 
 function on_game_start()

@@ -1,10 +1,14 @@
 -- game/badwill conf
--- Witnessed player hits/kills write personal goodwill on nearby same-faction stalkers.
+-- Witness hits/kills and steal-loot share one personal agro decay.
 
 _G.dogma_game_badwill_conf = {
 	MOD_ID = "dogma/game/badwill",
 	DEFAULTS = {
 		enabled = true,
+		steal_enabled = true,
+		steal_key = -1,
+		steal_timer = 30,
+		steal_nearby_faction = false,
 	},
 }
 
@@ -21,11 +25,53 @@ function on_mcm_load(options)
 				text = "ui_mcm_dogma_game_badwill_page_description",
 			},
 			{
+				id = "witness_header",
+				type = "title",
+				text = "ui_mcm_dogma_game_badwill_witness_header",
+			},
+			{
 				id = "enabled",
 				type = "check",
 				val = 1,
 				def = CONFIG.DEFAULTS.enabled,
 				hint = "dogma_game_badwill_enabled",
+			},
+			{ id = "line_steal", type = "line" },
+			{
+				id = "steal_header",
+				type = "title",
+				text = "ui_mcm_dogma_game_badwill_steal_header",
+			},
+			{
+				id = "steal_enabled",
+				type = "check",
+				val = 1,
+				def = CONFIG.DEFAULTS.steal_enabled,
+				hint = "dogma_game_badwill_steal_enabled",
+			},
+			{
+				id = "steal_key",
+				type = "key_bind",
+				val = 2,
+				def = CONFIG.DEFAULTS.steal_key,
+				hint = "dogma_game_badwill_steal_key",
+			},
+			{
+				id = "steal_timer",
+				type = "track",
+				val = 2,
+				min = 5,
+				max = 120,
+				step = 5,
+				def = CONFIG.DEFAULTS.steal_timer,
+				hint = "dogma_game_badwill_steal_timer",
+			},
+			{
+				id = "steal_nearby_faction",
+				type = "check",
+				val = 1,
+				def = CONFIG.DEFAULTS.steal_nearby_faction,
+				hint = "dogma_game_badwill_steal_nearby_faction",
 			},
 		}),
 	})

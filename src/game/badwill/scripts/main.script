@@ -4,6 +4,7 @@
 	2.0 lethals or 2 murders slams -9000.
 	Hit power comes from on_before_hit_after_calcs (npc_on_before_hit has power=0).
 	Visibility poke only after the slam, using the scan's has_los flag.
+	Steal (steal.script) slams through slam_npcs / track_agrod; sleep decays both.
 ]]
 
 local CONFIG = _G.dogma_game_badwill_conf
@@ -31,6 +32,10 @@ end
 
 local function enabled()
 	return dogma.mcm.bool(CONFIG.MOD_ID, "enabled", CONFIG.DEFAULTS.enabled)
+end
+
+local function steal_enabled()
+	return dogma.mcm.bool(CONFIG.MOD_ID, "steal_enabled", CONFIG.DEFAULTS.steal_enabled)
 end
 
 local function is_player_side(obj)
@@ -102,11 +107,12 @@ end
 local function entry(comm)
 	local e = faction_memory[comm]
 	if not e then
-		e = { damage = 0, murders = 0, witness_ids = {} }
+		e = { damage = 0, murders = 0, agrod_stalker_ids = {} }
 		faction_memory[comm] = e
 	end
-	if not e.witness_ids then
-		e.witness_ids = {}
+	if not e.agrod_stalker_ids then
+		e.agrod_stalker_ids = e.witness_ids or {}
+		e.witness_ids = nil
 	end
 	return e
 end
@@ -119,7 +125,7 @@ end
 local function alife_exists(id)
 	local sim = alife()
 	if sim then
-	    return sim and sim:object(id) ~= nil
+		return sim and sim:object(id) ~= nil
 	end
 end
 
@@ -131,6 +137,106 @@ local function prune_ids(ids)
 		end
 	end
 	return keep
+end
+
+local function parse_id_set(src)
+	local ids = {}
+	if type(src) ~= "table" then
+		return ids
+	end
+	for k, v in pairs(src) do
+		local id = tonumber(k)
+		if id and (v == true or v == 1) then
+			ids[id] = true
+		elseif type(v) == "number" then
+			ids[v] = true
+		end
+	end
+	return ids
+end
+
+local function track_agrod(comm, ids)
+	if not comm or not ids then
+		return
+	end
+	local e = entry(comm)
+	if ids[1] ~= nil then
+		for i = 1, #ids do
+			local id = tonumber(ids[i])
+			if id then
+				e.agrod_stalker_ids[id] = true
+			end
+		end
+		return
+	end
+	for k, v in pairs(ids) do
+		local id = tonumber(k)
+		if id and v then
+			e.agrod_stalker_ids[id] = true
+		elseif type(v) == "number" then
+			e.agrod_stalker_ids[v] = true
+		end
+	end
+end
+
+local function snap(npc, actor)
+	local tostr = tostring
+	local name = "?"
+	pcall(function()
+		name = npc:character_name()
+	end)
+	local pers, gen, rel = "?", "?", "?"
+	local ok_p, p = pcall(npc.goodwill, npc, actor)
+	if ok_p then
+		pers = tostr(p)
+	end
+	local ok_g, g = pcall(npc.general_goodwill, npc, actor)
+	if ok_g then
+		gen = tostr(g)
+	end
+	local ok_r, r = pcall(npc.relation, npc, actor)
+	if ok_r then
+		rel = tostr(r)
+	end
+	return string.format(
+		"%s#%s pers=%s gen=%s band=%s rel=%s",
+		name,
+		tostr(npc:id()),
+		pers,
+		gen,
+		tostr(dogma.alife.npc_relation_band(npc, actor)),
+		rel
+	)
+end
+
+local function slam_npcs(npcs)
+	local actor = db.actor
+	if not (actor and npcs) then
+		return
+	end
+	for i = 1, #npcs do
+		local item = npcs[i]
+		local npc = item
+		local has_los = true
+		if type(item) == "table" then
+			npc = item.npc
+			if item.has_los == false then
+				has_los = false
+			end
+		end
+		if npc and not is_excluded(npc) then
+			log("  slam before " .. snap(npc, actor) .. " los=" .. tostring(has_los))
+			pcall(npc.force_set_goodwill, npc, SLAM_GW, actor)
+			if has_los and npc.make_object_visible_somewhen then
+				pcall(npc.make_object_visible_somewhen, npc, actor)
+			end
+			local comm = dogma.alife.community(npc)
+			if comm then
+				track_agrod(comm, { npc:id() })
+			end
+			log("  slam after  " .. snap(npc, actor) .. " poke=" .. tostring(has_los))
+		end
+	end
 end
 
 -- One LOS/FOV pass. has_los = LOS to the player (no second ray later).
@@ -165,45 +271,17 @@ local function collect_witnesses(victim)
 	return witnesses, was_seen
 end
 
-local function snap(npc, actor)
-	local tostr = tostring
-	local name = "?"
-	pcall(function()
-		name = npc:character_name()
-	end)
-	local pers, gen, rel = "?", "?", "?"
-	local ok_p, p = pcall(npc.goodwill, npc, actor)
-	if ok_p then
-		pers = tostr(p)
-	end
-	local ok_g, g = pcall(npc.general_goodwill, npc, actor)
-	if ok_g then
-		gen = tostr(g)
-	end
-	local ok_r, r = pcall(npc.relation, npc, actor)
-	if ok_r then
-		rel = tostr(r)
-	end
-	return string.format(
-		"%s#%s pers=%s gen=%s band=%s rel=%s",
-		name,
-		tostr(npc:id()),
-		pers,
-		gen,
-		tostr(dogma.alife.npc_relation_band(npc, actor)),
-		rel
-	)
-end
-
 local function remember(comm, damage, dead, witnesses)
 	local e = entry(comm)
 	e.damage = (tonumber(e.damage) or 0) + (tonumber(damage) or 0)
 	if dead then
 		e.murders = (tonumber(e.murders) or 0) + 1
 	end
+	local ids = {}
 	for i = 1, #witnesses do
-		e.witness_ids[witnesses[i].id] = true
+		ids[#ids + 1] = witnesses[i].id
 	end
+	track_agrod(comm, ids)
 	return e
 end
 
@@ -222,12 +300,7 @@ local function apply_writes(mem, witnesses)
 		elseif is_busy(npc) then
 			log("  skip busy " .. snap(npc, actor) .. " los=" .. tostring(w.has_los))
 		elseif slam then
-			log("  slam before " .. snap(npc, actor) .. " los=" .. tostring(w.has_los))
-			pcall(npc.force_set_goodwill, npc, SLAM_GW, actor)
-			if w.has_los and npc.make_object_visible_somewhen then
-				pcall(npc.make_object_visible_somewhen, npc, actor)
-			end
-			log("  slam after  " .. snap(npc, actor) .. " poke=" .. tostring(w.has_los))
+			slam_npcs({ { npc = npc, has_los = w.has_los } })
 		elseif park then
 			log("  park before " .. snap(npc, actor) .. " los=" .. tostring(w.has_los))
 			pcall(npc.force_set_goodwill, npc, PARK_GW, actor)
@@ -302,12 +375,25 @@ local function npc_on_death_callback(victim, killer)
 	on_badwill(victim, 0, true)
 end
 
+local function has_agrod()
+	for _, e in pairs(faction_memory) do
+		if e.agrod_stalker_ids and next(e.agrod_stalker_ids) then
+			return true
+		end
+	end
+	return false
+end
+
+local function should_decay()
+	return enabled() or steal_enabled() or has_agrod()
+end
+
 local function decay_entry(e)
 	e.damage = math.max(0, (tonumber(e.damage) or 0) - 1)
 	e.murders = math.max(0, (tonumber(e.murders) or 0) - 1)
 	local actor = db.actor
 	local keep = {}
-	for id in pairs(e.witness_ids or {}) do
+	for id in pairs(e.agrod_stalker_ids or {}) do
 		local npc = object_by_id(id)
 		if npc then
 			if actor then
@@ -322,11 +408,11 @@ local function decay_entry(e)
 			keep[id] = true
 		end
 	end
-	e.witness_ids = keep
+	e.agrod_stalker_ids = keep
 end
 
 local function actor_on_sleep()
-	if not enabled() then
+	if not should_decay() then
 		return
 	end
 	for _, e in pairs(faction_memory) do
@@ -341,7 +427,7 @@ local function on_save_state(m_data)
 		dump[comm] = {
 			damage = tonumber(e.damage) or 0,
 			murders = tonumber(e.murders) or 0,
-			witness_ids = prune_ids(e.witness_ids),
+			agrod_stalker_ids = prune_ids(e.agrod_stalker_ids),
 		}
 	end
 	m_data[SAVE_KEY] = dump
@@ -356,25 +442,25 @@ local function on_load_state(m_data)
 	end
 	for comm, e in pairs(dump) do
 		if type_(e) == "table" then
-			local ids = {}
-			if type_(e.witness_ids) == "table" then
-				for k, v in pairs(e.witness_ids) do
-					local id = tonumber(k)
-					if id and (v == true or v == 1) then
-						ids[id] = true
-					elseif type_(v) == "number" then
-						ids[v] = true
-					end
-				end
+			local ids = parse_id_set(e.agrod_stalker_ids)
+			if not next(ids) then
+				ids = parse_id_set(e.witness_ids)
 			end
 			faction_memory[comm] = {
 				damage = tonumber(e.damage) or 0,
 				murders = tonumber(e.murders) or 0,
-				witness_ids = ids,
+				agrod_stalker_ids = ids,
 			}
 		end
 	end
 end
+
+CONFIG.is_excluded = is_excluded
+CONFIG.is_player_side = is_player_side
+CONFIG.is_story = is_story
+CONFIG.track_agrod = track_agrod
+CONFIG.slam_npcs = slam_npcs
+CONFIG.SKIP_COMM = SKIP_COMM
 
 function on_game_start()
 	dogma.load(CONFIG.MOD_ID)

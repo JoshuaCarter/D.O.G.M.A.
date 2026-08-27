@@ -1,8 +1,9 @@
 --[[
 	Stalker ID - centered Faction Identification replacement.
 
-	Every 100ms: exact camera look-ray first, then soft aim (screen tolerance +
-	optional LOS). Both rays share one bush-pierce budget. Hipfire both 100m; binoculars both 200m;
+	Exact look-ray every 50ms. Soft aim (screen tolerance + optional LOS)
+	every 100ms. Soft-aim LOS is xslice (ids, not a same-frame loop).
+	Both rays share one bush-pierce budget. Hipfire both 100m; binoculars both 200m;
 	other ADS/zoom keeps soft at 100m but exact at 200m. Leader line:
 	living non-hostiles normally, all living stalkers in binocs; never corpses.
 	Goodwill color (MCM): living names red / yellow / green from general_goodwill
@@ -13,13 +14,14 @@
 ]]
 
 local CONFIG = _G.dogma_gui_stalker_id_conf
+local xslice = dogma.xlibs.xslice
+local LOS_SLICE = "stalker_id_los"
 
 local UI_WIDTH = 1024
 local UI_HEIGHT = 768
 local UI_CENTER_X = UI_WIDTH * 0.5
 local UI_CX, UI_CY = 512, 384
 local ALIGN_CENTER = 2 -- CGameFont::alCenter
-local UPDATE_DELAY = 100
 local NAME_HOSTILE_RGB = { 255, 48, 48 }
 local NAME_FRIEND_RGB = { 48, 200, 48 }
 local NAME_NEUTRAL_RGB = { 255, 200, 48 }
@@ -33,12 +35,6 @@ local BONES_LOS = { "bip01_spine2", "bip01_spine1", "bip01_neck" }
 local BONES_LINE = { "bip01_head" }
 local HEAD_CROWN_LIFT = 0.12 -- metres above head bone ≈ top of head
 
--- Objects + statics. Bushes recast up to MCM bush_pierce; walls still block.
-local LOOK_FLAGS = 3 -- rqtObject | rqtStatic
-local LOOK_BUSH_STEP = 0.2 -- metres nudged past each bush hit to avoid re-hitting it
-local look_pick = nil
-local LOOK_POS = vector()
-local LOOK_DIR = vector()
 local LOOK_SCRATCH = vector()
 local W2U_SCRATCH = vector()
 
@@ -56,13 +52,15 @@ local HUD = nil
 local nametable = {}
 local LastHitObject = nil
 local line_target_id = nil
-local trigger = 0
-local grok_delay = 0
+local next_exact = 0
+local next_soft = 0
 local cond_was = false
 
 local fade_active = false
 local fade_start_ms = 0
 local fade_mul = 1
+local los_hit = false
+local los_range = 0
 local shown_faction = nil
 local name_r, name_g, name_b = 255, 255, 255
 local rank_r, rank_g, rank_b = RANK_RGB[1], RANK_RGB[2], RANK_RGB[3]
@@ -91,9 +89,18 @@ local function alpha_byte(a, mul)
 	return floor(v * clamp01(mul) + 0.5)
 end
 
+local function stop_los()
+	if xslice.is_active(LOS_SLICE) then
+		xslice.cancel(LOS_SLICE, true)
+	end
+end
+
 local function on_option_change()
 	local id = CONFIG.MOD_ID
 	CONFIG.loaded.enabled = dogma.mcm.bool(id, "enabled")
+	if not CONFIG.loaded.enabled then
+		stop_los()
+	end
 	CONFIG.loaded.show_always = dogma.mcm.bool(id, "show_always")
 	CONFIG.loaded.show_keybind = dogma.mcm.key(id, "show_keybind")
 	CONFIG.loaded.show_when_ads = dogma.mcm.bool(id, "show_when_ads")
@@ -113,6 +120,9 @@ local function on_option_change()
 	CONFIG.loaded.binoc_max_range = dogma.mcm.uint(id, "binoc_max_range")
 	CONFIG.loaded.aim_radius_px = dogma.mcm.uint(id, "aim_radius_px")
 	CONFIG.loaded.require_visible = dogma.mcm.bool(id, "require_visible")
+	if not CONFIG.loaded.require_visible then
+		stop_los()
+	end
 	CONFIG.loaded.bush_pierce = math.min(5, dogma.mcm.uint(id, "bush_pierce"))
 	CONFIG.loaded.hide_on_death = dogma.mcm.bool(id, "hide_on_death")
 	CONFIG.loaded.always_show_line = dogma.mcm.bool(id, "always_show_line")
@@ -163,9 +173,8 @@ local function apply_alphas(mul)
 	HUD.zombified:TextControl():SetTextColor(GetARGB(icon_a, 255, 255, 255))
 
 	if shown_faction and HUD.factions[shown_faction] then
-		pcall(function()
-			HUD.factions[shown_faction]:SetTextureColor(GetARGB(icon_a, 255, 255, 255))
-		end)
+		local st = HUD.factions[shown_faction]
+		pcall(st.SetTextureColor, st, GetARGB(icon_a, 255, 255, 255))
 	end
 end
 
@@ -181,6 +190,7 @@ local function start_fade()
 end
 
 local function clear()
+	stop_los()
 	cancel_fade()
 	shown_faction = nil
 	line_target_id = nil
@@ -189,6 +199,12 @@ local function clear()
 	if HUD then
 		HUD:Reset()
 	end
+end
+
+local function init_id_text(st)
+	local tc = st:TextControl()
+	tc:SetTextComplexMode(false)
+	tc:SetTextAlignment(ALIGN_CENTER)
 end
 
 class "UIStalkerIDHUD" (CUIScriptWnd)
@@ -215,14 +231,9 @@ function UIStalkerIDHUD:__init() super()
 	self.rank = xml:InitStatic("rank", self)
 	self.zombified = xml:InitStatic("zombified", self)
 
-	pcall(function()
-		self.name:TextControl():SetTextComplexMode(false)
-		self.name:TextControl():SetTextAlignment(ALIGN_CENTER)
-		self.rank:TextControl():SetTextComplexMode(false)
-		self.rank:TextControl():SetTextAlignment(ALIGN_CENTER)
-		self.zombified:TextControl():SetTextComplexMode(false)
-		self.zombified:TextControl():SetTextAlignment(ALIGN_CENTER)
-	end)
+	pcall(init_id_text, self.name)
+	pcall(init_id_text, self.rank)
+	pcall(init_id_text, self.zombified)
 
 	hide_all_patches(self)
 	clear_text(self)
@@ -246,6 +257,7 @@ local function activate_hud()
 end
 
 local function deactivate_hud()
+	stop_los()
 	if HUD ~= nil then
 		get_hud():RemoveDialogToRender(HUD)
 		HUD = nil
@@ -260,6 +272,7 @@ function on_screen_resolution_changed()
 end
 
 function actor_on_net_destroy()
+	stop_los()
 	if HUD ~= nil then
 		get_hud():RemoveDialogToRender(HUD)
 		HUD = nil
@@ -428,59 +441,15 @@ local function project_world(pos)
 	return ui.x, ui.y
 end
 
-local function is_bush_material(name)
-	if type(name) ~= "string" then
-		return false
-	end
-	return name:find("bush", 1, true) ~= nil
-end
-
--- Recast through up to bush_pierce static bushes. Returns the first non-bush
--- hit object (nil if a wall / miss). Shared by exact look-ray and LOS.
+-- First non-bush object (nil if wall / miss). Pierce from MCM.
 local function query_look_object(ox, oy, oz, dx, dy, dz, remaining)
-	if not look_pick then
-		look_pick = ray_pick()
-	end
-	local pick = look_pick
-	pick:set_flags(LOOK_FLAGS)
-	LOOK_DIR:set(dx, dy, dz)
-	local actor = db and db.actor
-	local max_pierce = CONFIG.loaded.bush_pierce or 0
-	local pierces = 0
-
-	while remaining > LOOK_BUSH_STEP and pierces <= max_pierce do
-		LOOK_POS:set(ox, oy, oz)
-		pick:set_position(LOOK_POS)
-		pick:set_direction(LOOK_DIR)
-		pick:set_range(remaining)
-		if actor then
-			pick:set_ignore_object(actor)
-		end
-
-		local ok, hit = pcall(function()
-			return pick:query()
-		end)
-		if not (ok and hit) then
-			return nil
-		end
-
-		local obj = pick:get_object()
-		if obj then
-			return obj
-		end
-
-		local result = pick:get_result()
-		local hit_dist = pick:get_distance()
-		if not (result and hit_dist and hit_dist > 0 and is_bush_material(result.material_name)) then
-			return nil
-		end
-
-		local step = hit_dist + LOOK_BUSH_STEP
-		ox = ox + dx * step
-		oy = oy + dy * step
-		oz = oz + dz * step
-		remaining = remaining - step
-		pierces = pierces + 1
+	local hit = dogma.alife.ray(
+		ox, oy, oz, dx, dy, dz, remaining,
+		db and db.actor,
+		CONFIG.loaded.bush_pierce
+	)
+	if hit then
+		return hit
 	end
 	return nil
 end
@@ -693,70 +662,45 @@ local function find_exact_target()
 	return nil
 end
 
-local function find_id_target()
-	-- Exact under crosshair + optional soft-aim iterate_nearest; runs on 100ms tick.
-	dogma.perf.start("stalker_id", "find_target")
-	local result = nil
-	repeat
-		local exact = find_exact_target()
-		if exact then
-			result = exact
-			break
-		end
+-- Soft-aim nearby: ids in the aim circle, closest-first. No LOS here.
+local function collect_soft_cands()
+	local cfg = CONFIG.loaded
+	local max_range = approx_max_range()
+	if max_range <= 0 or not (db and db.actor) or not level.iterate_nearest then
+		return nil, 0
+	end
+	if not HUD then
+		return nil, 0
+	end
 
-		local cfg = CONFIG.loaded
-		local max_range = approx_max_range()
-		if max_range <= 0 or not (db and db.actor) or not level.iterate_nearest then
-			break
-		end
-		if not HUD then
-			break
-		end
+	local apos = db.actor:position()
+	local actor_id = db.actor:id()
+	local radius = cfg.aim_radius_px or 0
+	local candidates = {}
 
-		local apos = db.actor:position()
-		local actor_id = db.actor:id()
-		local radius = cfg.aim_radius_px or 0
-		local candidates = {}
-
-		pcall(level.iterate_nearest, apos, max_range, function(obj)
-			if not obj then
-				return false
-			end
-			if obj:id() == 0 or obj:id() == actor_id then
-				return false
-			end
-			if not is_id_candidate(obj) then
-				return false
-			end
-
-			local sd = aim_screen_dist(obj, max_range, apos, radius)
-			if sd then
-				candidates[#candidates + 1] = { obj = obj, sd = sd }
-			end
+	pcall(level.iterate_nearest, apos, max_range, function(obj)
+		if not obj then
 			return false
-		end)
-
-		if #candidates == 0 then
-			break
 		end
-		table.sort(candidates, cand_screen_cmp)
-
-		if not cfg.require_visible then
-			result = candidates[1].obj
-			break
+		if obj:id() == 0 or obj:id() == actor_id then
+			return false
+		end
+		if not is_id_candidate(obj) then
+			return false
 		end
 
-		for i = 1, #candidates do
-			local obj = candidates[i].obj
-			local chest = los_pos(obj)
-			if chest and ray_hits_object(obj, chest, max_range) then
-				result = obj
-				break
-			end
+		local sd = aim_screen_dist(obj, max_range, apos, radius)
+		if sd then
+			candidates[#candidates + 1] = { id = obj:id(), sd = sd }
 		end
-	until true
-	dogma.perf.stop()
-	return result
+		return false
+	end)
+
+	if #candidates == 0 then
+		return nil, max_range
+	end
+	table.sort(candidates, cand_screen_cmp)
+	return candidates, max_range
 end
 
 local PDA_SLOT = 8
@@ -950,6 +894,77 @@ local function target_lost()
 	apply_alphas(1)
 end
 
+local function set_id_target(obj)
+	if not HUD then
+		return
+	end
+	if obj then
+		if LastHitObject then
+			if obj:id() ~= LastHitObject:id() then
+				target_enter(obj)
+			elseif fade_active then
+				target_enter(obj)
+			end
+		else
+			target_enter(obj)
+		end
+		LastHitObject = obj
+		line_target_id = obj:id()
+		return
+	end
+	if LastHitObject then
+		LastHitObject = nil
+		target_lost()
+	end
+end
+
+local function los_one(e)
+	local obj = level.object_by_id and level.object_by_id(e.id)
+	if not (obj and is_id_candidate(obj)) then
+		return true
+	end
+	local chest = los_pos(obj)
+	if chest and ray_hits_object(obj, chest, los_range) then
+		los_hit = true
+		set_id_target(obj)
+		return false
+	end
+	return true
+end
+
+local function on_los_done()
+	if not los_hit then
+		set_id_target(nil)
+	end
+end
+
+-- Exact: set target and kill the soft slice. Soft: keep the old ID until a hit or the list ends.
+local function try_exact()
+	local exact = find_exact_target()
+	if not exact then
+		return false
+	end
+	stop_los()
+	set_id_target(exact)
+	return true
+end
+
+local function try_soft()
+	local cands, max_range = collect_soft_cands()
+	if not cands then
+		set_id_target(nil)
+		return
+	end
+	if not CONFIG.loaded.require_visible then
+		local obj = level.object_by_id and level.object_by_id(cands[1].id)
+		set_id_target(obj)
+		return
+	end
+	los_hit = false
+	los_range = max_range
+	xslice.start(LOS_SLICE, cands, { step = 1, func = los_one, on_done = on_los_done })
+end
+
 local function update_fade()
 	if not fade_active then
 		return
@@ -966,6 +981,7 @@ end
 function actor_on_update()
 	if not CONFIG.loaded.enabled then
 		cond_was = false
+		stop_los()
 		if LastHitObject or fade_active or line_target_id then
 			LastHitObject = nil
 			clear()
@@ -987,40 +1003,36 @@ function actor_on_update()
 	local force_tick = not always and want and not cond_was
 	cond_was = not always and want
 
-	if trigger == 0 then
-		grok_delay = tg + UPDATE_DELAY
-		trigger = 1
-	end
-
-	if not force_tick and not (trigger == 1 and tg > grok_delay) then
+	if not want then
+		stop_los()
+		set_id_target(nil)
+		next_exact = 0
+		next_soft = 0
 		return
 	end
-	trigger = 0
 
-	-- No want: skip find, but still hit the lost-target path so fade can run.
-	local obj = want and find_id_target() or nil
-	local valid = HUD and obj ~= nil
+	local do_exact = force_tick or tg >= next_exact
+	local do_soft = force_tick or tg >= next_soft
+	if not do_exact and not do_soft then
+		return
+	end
 
-	if valid then
-		if LastHitObject then
-			if obj:id() ~= LastHitObject:id() then
-				target_enter(obj)
-			elseif fade_active then
-				target_enter(obj)
+	dogma.perf.start("stalker_id", "find_target")
+	if do_exact then
+		next_exact = tg + 50
+		if try_exact() then
+			if do_soft then
+				next_soft = tg + 100
 			end
-		else
-			target_enter(obj)
+			dogma.perf.stop()
+			return
 		end
-		LastHitObject = obj
-		line_target_id = obj:id()
-		return
 	end
-
-	if LastHitObject then
-		-- Keep line_target_id through fade so the leader line can track.
-		LastHitObject = nil
-		target_lost()
+	if do_soft and not xslice.is_active(LOS_SLICE) then
+		next_soft = tg + 100
+		try_soft()
 	end
+	dogma.perf.stop()
 end
 
 function actor_on_before_death()
@@ -1075,7 +1087,7 @@ function GUI_on_show(gui, str2)
 	end
 
 	if gui == "UIInventory" then
-		local obj = find_id_target()
+		local obj = find_exact_target()
 		if not (obj and IsStalker(obj)) then
 			return
 		end

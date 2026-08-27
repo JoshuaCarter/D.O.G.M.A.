@@ -133,9 +133,7 @@ local function item_section(item)
 	if not item then
 		return nil
 	end
-	local ok, sec = pcall(function()
-		return item:section()
-	end)
+	local ok, sec = pcall(item.section, item)
 	if ok and type(sec) == "string" and sec ~= "" then
 		return sec
 	end
@@ -307,9 +305,10 @@ function is_in_combat()
 end
 
 function is_inv_open()
-	local ok, opened = pcall(function()
-		return actor_menu and actor_menu.inventory_opened and actor_menu.inventory_opened()
-	end)
+	if not (actor_menu and actor_menu.inventory_opened) then
+		return false
+	end
+	local ok, opened = pcall(actor_menu.inventory_opened)
 	return ok and opened == true
 end
 
@@ -322,24 +321,27 @@ function is_drinking()
 end
 
 function is_weapon_lowered()
-	local ok, lowered = pcall(function()
-		return game and game.actor_weapon_lowered and game.actor_weapon_lowered()
-	end)
+	if not (game and game.actor_weapon_lowered) then
+		return false
+	end
+	local ok, lowered = pcall(game.actor_weapon_lowered)
 	return ok and lowered == true
 end
 
 function is_sprinting()
-	local ok, sprint = pcall(function()
-		return IsMoveState and IsMoveState("mcSprint")
-	end)
+	if not IsMoveState then
+		return false
+	end
+	local ok, sprint = pcall(IsMoveState, "mcSprint")
 	return ok and sprint == true
 end
 
 function is_talking()
-	local ok, talking = pcall(function()
-		local actor = db and db.actor
-		return actor and actor.is_talking and actor:is_talking()
-	end)
+	local actor = db and db.actor
+	if not (actor and actor.is_talking) then
+		return false
+	end
+	local ok, talking = pcall(actor.is_talking, actor)
 	return ok and talking == true
 end
 
@@ -371,14 +373,16 @@ function stamina()
 	return clamp01(actor and actor.power)
 end
 
+local function actor_max_power(actor)
+	return actor:cast_Actor():conditions():GetMaxPower()
+end
+
 function stamina_max()
 	local actor = db and db.actor
 	if not actor then
 		return 1
 	end
-	local ok, m = pcall(function()
-		return actor:cast_Actor():conditions():GetMaxPower()
-	end)
+	local ok, m = pcall(actor_max_power, actor)
 	if not (ok and type(m) == "number") then
 		return 1
 	end
@@ -389,20 +393,24 @@ function bhs()
 	return resolve_bhs()
 end
 
+-- Reused. Read now; do not stash across calls.
+local LIMB_OUT = {}
+for i = 1, #LIMBS do
+	LIMB_OUT[LIMBS[i]] = { perm = 0, temp = 0 }
+end
+
 -- BHS health[] is perm + temp. Permanent is health - timedhp.
 function limbs()
 	local health, timedhp, maxhp = resolve_bhs()
-	local out = {}
 	for i = 1, #LIMBS do
 		local key = LIMBS[i]
+		local slot = LIMB_OUT[key]
 		local hp = tonumber(health and health[key])
 		local temp = tonumber(timedhp and timedhp[key]) or 0
 		local max = maxhp and maxhp[key]
 		local perm = hp and (hp - temp) or nil
-		out[key] = {
-			perm = limb_frac(perm, max, key),
-			temp = limb_frac(temp, max, key),
-		}
+		slot.perm = limb_frac(perm, max, key)
+		slot.temp = limb_frac(temp, max, key)
 	end
-	return out
+	return LIMB_OUT
 end

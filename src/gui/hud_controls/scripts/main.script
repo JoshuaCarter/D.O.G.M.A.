@@ -11,6 +11,7 @@ local CONFIG = _G.dogma_gui_hud_controls_conf
 local FLAG = "__dogma_hud_controls_companion"
 
 local companion_show = false
+local companion_slots_hidden = false
 local companion_flash_until = 0
 local companion_cond_prev = false
 local logged_missing = false
@@ -64,6 +65,10 @@ local function force_indicators()
 	end
 end
 
+local function set_zonemap_visible(ui, want_show)
+	ui.UIZoneMap.visible = want_show
+end
+
 local function set_minimap(want_show)
 	want_show = not not want_show
 	if ui_options and ui_options.set and option_shown() ~= want_show then
@@ -72,18 +77,12 @@ local function set_minimap(want_show)
 	local ui = maingame()
 	if ui and ui.UIZoneMap then
 		ui.UIZoneMap.disabled = not want_show
-		pcall(function()
-			ui.UIZoneMap.visible = want_show
-		end)
+		pcall(set_zonemap_visible, ui, want_show)
 		if ui.ShowZoneMap then
-			pcall(function()
-				ui:ShowZoneMap(want_show)
-			end)
+			pcall(ui.ShowZoneMap, ui, want_show)
 		end
 		if want_show and ui.DrawZoneMap then
-			pcall(function()
-				ui:DrawZoneMap()
-			end)
+			pcall(ui.DrawZoneMap, ui)
 		end
 		if ui.UIMotionIcon and ui.UIMotionIcon.Show then
 			ui.UIMotionIcon:Show(want_show)
@@ -133,9 +132,7 @@ local function hide_slots(self)
 	for i = 1, 8 do
 		local slot = info[i] and info[i].base
 		if slot and slot.Show then
-			pcall(function()
-				slot:Show(false)
-			end)
+			pcall(slot.Show, slot, false)
 		end
 	end
 end
@@ -199,16 +196,18 @@ local function apply_companion()
 		return
 	end
 	if not want then
-		hide_slots(h)
+		if changed or not companion_slots_hidden then
+			hide_slots(h)
+			companion_slots_hidden = true
+		end
 		return
 	end
+	companion_slots_hidden = false
 	if not changed then
 		return
 	end
 	if h.dialog and h.dialog.Show then
-		pcall(function()
-			h.dialog:Show(true)
-		end)
+		pcall(h.dialog.Show, h.dialog, true)
 	end
 	if h.Update then
 		h:Update(true)
@@ -309,6 +308,7 @@ end
 
 local function reset()
 	companion_show = false
+	companion_slots_hidden = false
 	companion_flash_until = 0
 	companion_cond_prev = false
 	map_desired = false

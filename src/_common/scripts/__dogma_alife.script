@@ -1,6 +1,7 @@
 --[[
     Live objects: client by id, SE id to map name.
-    Online stalker queries: FOV, bush-pierce LOS, nearby, in-combat.
+    ray(): engine RayPick, optional bush recast.
+    Online stalker queries: FOV, LOS, nearby, in-combat.
 ]]
 
 local xobject = dogma.xlibs.xobject
@@ -17,6 +18,7 @@ local BONES_HEAD = { "bip01_head" }
 local COS_CACHE = {}
 
 local pick = nil
+local pick_ignore = nil
 local RAY_POS = vector()
 local RAY_DIR = vector()
 
@@ -87,9 +89,7 @@ function level_name(id)
     if not sim then
         return nil
     end
-    local ok, name = pcall(function()
-        return sim:level_name(lid)
-    end)
+    local ok, name = pcall(sim.level_name, sim, lid)
     if ok then
         return name
     end
@@ -151,48 +151,55 @@ function npc_has_fov_stalker(npc, stalker, fov)
     return npc_has_fov_pos(npc, bone_pos(stalker, BONES_CHEST), fov)
 end
 
--- First non-bush hit from origin along dir. nil = clear to `remaining`.
-local function first_block(ox, oy, oz, dx, dy, dz, remaining, ignore)
-    if not ray_pick then
-        return nil
-    end
-    if not pick then
-        pick = ray_pick()
-    end
-    pick:set_flags(LOOK_FLAGS)
-    RAY_DIR:set(dx, dy, dz)
-    local pierces = 0
-    while remaining > LOOK_BUSH_STEP and pierces <= BUSH_PIERCE do
-        RAY_POS:set(ox, oy, oz)
-        pick:set_position(RAY_POS)
-        pick:set_direction(RAY_DIR)
-        pick:set_range(remaining)
-        if ignore then
-            pick:set_ignore_object(ignore)
-        end
-        local ok, hit = pcall(function()
-            return pick:query()
-        end)
-        if not (ok and hit) then
-            return nil
-        end
-        local obj = pick:get_object()
-        if obj then
-            return obj, pick:get_distance()
-        end
-        local result = pick:get_result()
-        local hit_dist = pick:get_distance()
-        if not (result and hit_dist and hit_dist > 0 and is_bush_material(result.material_name)) then
-            return false, hit_dist
-        end
-        local step = hit_dist + LOOK_BUSH_STEP
-        ox = ox + dx * step
-        oy = oy + dy * step
-        oz = oz + dz * step
-        remaining = remaining - step
-        pierces = pierces + 1
-    end
-    return false, 0
+-- Engine RayPick. Reuses one pick + scratch vectors.
+-- bush_pierce 0/nil = one ray (bush = wall). N = recast through N bushes.
+-- returns: object, dist | false, dist (static) | nil (clear / fail)
+function ray(ox, oy, oz, dx, dy, dz, range, ignore, bush_pierce)
+	if not ray_pick or not range or range <= 0 then
+		return nil
+	end
+	-- set_ignore_object only appends. New pick when ignore changes.
+	if not pick or ignore ~= pick_ignore then
+		pick = ray_pick()
+		pick_ignore = ignore
+		if ignore then
+			pick:set_ignore_object(ignore)
+		end
+	end
+	local max_pierce = tonumber(bush_pierce) or 0
+	if max_pierce < 0 then
+		max_pierce = 0
+	end
+	pick:set_flags(LOOK_FLAGS)
+	RAY_DIR:set(dx, dy, dz)
+	local pierces = 0
+	local remaining = range
+	while remaining > 0 and pierces <= max_pierce do
+		RAY_POS:set(ox, oy, oz)
+		pick:set_position(RAY_POS)
+		pick:set_direction(RAY_DIR)
+		pick:set_range(remaining)
+		local ok, hit = pcall(pick.query, pick)
+		if not (ok and hit) then
+			return nil
+		end
+		local obj = pick:get_object()
+		if obj then
+			return obj, pick:get_distance()
+		end
+		local result = pick:get_result()
+		local hit_dist = pick:get_distance()
+		if not (result and hit_dist and hit_dist > 0 and is_bush_material(result.material_name)) then
+			return false, hit_dist
+		end
+		local step = hit_dist + LOOK_BUSH_STEP
+		ox = ox + dx * step
+		oy = oy + dy * step
+		oz = oz + dz * step
+		remaining = remaining - step
+		pierces = pierces + 1
+	end
+	return false, 0
 end
 
 function npc_has_los_to_pos(npc, pos, fov)
@@ -215,7 +222,7 @@ function npc_has_los_to_pos(npc, pos, fov)
     end
     local inv = 1 / dist
     dx, dy, dz = dx * inv, dy * inv, dz * inv
-    local block, hit_dist = first_block(head.x, head.y, head.z, dx, dy, dz, dist, npc)
+    local block, hit_dist = ray(head.x, head.y, head.z, dx, dy, dz, dist, npc, BUSH_PIERCE)
     if block == nil then
         return true
     end
@@ -249,7 +256,7 @@ function npc_has_los_to_stalker(npc, stalker, fov)
     end
     local inv = 1 / dist
     dx, dy, dz = dx * inv, dy * inv, dz * inv
-    local block, hit_dist = first_block(head.x, head.y, head.z, dx, dy, dz, dist + 0.35, npc)
+    local block, hit_dist = ray(head.x, head.y, head.z, dx, dy, dz, dist + 0.35, npc, BUSH_PIERCE)
     if block == nil then
         return true
     end
@@ -259,6 +266,44 @@ function npc_has_los_to_stalker(npc, stalker, fov)
     local ok, bid = pcall(block.id, block)
     local ok2, tid = pcall(stalker.id, stalker)
     return ok and ok2 and bid == tid
+end
+
+-- Clear path, static at the object, or hit on the object. Other object / short wall = false.
+function has_los_to_object(from, obj, ignore)
+    if not (from and obj) then
+        return false
+    end
+    local ok_p, pos = pcall(obj.position, obj)
+    if not (ok_p and pos) then
+        return false
+    end
+    local dx = pos.x - from.x
+    local dy = pos.y - from.y
+    local dz = pos.z - from.z
+    local dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+    if dist < 0.05 then
+        return true
+    end
+    local inv = 1 / dist
+    dx, dy, dz = dx * inv, dy * inv, dz * inv
+    local block, hit_dist = ray(from.x, from.y, from.z, dx, dy, dz, dist + 0.15, ignore, BUSH_PIERCE)
+    if block == nil then
+        return true
+    end
+    if block == false then
+        return hit_dist and hit_dist >= dist - 0.05
+    end
+    local ok, bid = pcall(block.id, block)
+    local ok2, tid = pcall(obj.id, obj)
+    return ok and ok2 and bid == tid
+end
+
+local function dist_to_pos(npc, pos)
+	return npc:position():distance_to(pos)
+end
+
+local function dist_between(a, b)
+	return a:position():distance_to(b:position())
 end
 
 function get_stalkers_near_point(pos, range, faction)
@@ -272,9 +317,7 @@ function get_stalkers_near_point(pos, range, faction)
         if npc and id ~= actor_id and IsStalker and IsStalker(npc) then
             local ok_alive, alive = pcall(npc.alive, npc)
             if ok_alive and alive then
-                local ok_d, d = pcall(function()
-                    return npc:position():distance_to(pos)
-                end)
+                local ok_d, d = pcall(dist_to_pos, npc, pos)
                 if ok_d and d <= range then
                     if not faction or community(npc) == faction then
                         out[#out + 1] = npc
@@ -299,9 +342,7 @@ function npc_is_in_combat(npc, range)
     if not (ok_alive and alive) then
         return false
     end
-    local ok_d, d = pcall(function()
-        return npc:position():distance_to(enemy:position())
-    end)
+    local ok_d, d = pcall(dist_between, npc, enemy)
     return ok_d and d <= range
 end
 

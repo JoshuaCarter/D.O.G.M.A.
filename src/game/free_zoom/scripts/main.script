@@ -214,9 +214,7 @@ local function wpn_label()
 	if not wpn then
 		return "nil"
 	end
-	local ok, sec = pcall(function()
-		return wpn:section()
-	end)
+	local ok, sec = pcall(wpn.section, wpn)
 	return (ok and sec) or "?"
 end
 
@@ -310,9 +308,7 @@ local function active_item_id()
 	if not wpn then
 		return nil
 	end
-	local ok, id = pcall(function()
-		return wpn:id()
-	end)
+	local ok, id = pcall(wpn.id, wpn)
 	if ok then
 		return id
 	end
@@ -323,9 +319,7 @@ local function active_item_sec()
 	if not wpn then
 		return nil
 	end
-	local ok, sec = pcall(function()
-		return wpn:section()
-	end)
+	local ok, sec = pcall(wpn.section, wpn)
 	if ok then
 		return sec
 	end
@@ -456,9 +450,7 @@ local function attached_scope_sec()
 	if wpn.cast_Weapon then
 		local gun = wpn:cast_Weapon()
 		if gun and gun.IsScopeAttached and gun:IsScopeAttached() and gun.GetScopeName then
-			local ok, name = pcall(function()
-				return gun:GetScopeName()
-			end)
+			local ok, name = pcall(gun.GetScopeName, gun)
 			if ok and type(name) == "string" and name ~= "" then
 				return name
 			end
@@ -634,9 +626,7 @@ local function rf_receiver_out()
 	if not det then
 		return false
 	end
-	local ok, sec = pcall(function()
-		return det:section()
-	end)
+	local ok, sec = pcall(det.section, det)
 	return ok and sec == "detector_radio"
 end
 
@@ -1331,9 +1321,7 @@ local function actor_on_changed_slot(new_slot, new_obj, prev_slot, prev_obj)
 		if not obj then
 			return nil
 		end
-		local ok, id = pcall(function()
-			return obj:id()
-		end)
+		local ok, id = pcall(obj.id, obj)
 		if ok then
 			return id
 		end

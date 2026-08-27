@@ -1,0 +1,615 @@
+--[[
+	Steal a claimed corpse. Own kill ledger (does not read AlifePlus).
+	Keybind opens via corpse:use(actor). Watch list collected once, xslice
+	1 LoS/frame every 1000ms. Slam who saw you. Sleep decay via main.script.
+]]
+
+local CONFIG = _G.dogma_game_badwill_conf
+local xobject = dogma.xlibs.xobject
+local xsquad = dogma.xlibs.xsquad
+local xcreature = dogma.xlibs.xcreature
+local xslice = dogma.xlibs.xslice
+local xpda = dogma.xlibs.xpda
+local xcombat = dogma.xlibs.xcombat
+
+local CAUGHT_MSG = "st_dogma_badwill_steal_caught"
+
+local SAVE_KEY = "dogma_badwill_steal"
+local QUEUE = "dogma_badwill_steal_los"
+local TICK = "tick"
+local FACTION_M = 100
+local XSLICE_GAP_MS = 1000
+
+local owners = {}
+local session = nil
+local marked = {}
+local last_xslice_ms = 0
+local last_tip_id = nil
+local deny_wrapped = false
+local orig_deny = {}
+local takeall_hidden = false
+
+local function log(msg)
+	if dogma.log.logging() then
+		dogma.log.log(CONFIG.MOD_ID, "steal " .. tostring(msg))
+	end
+end
+
+local function steal_on()
+	return dogma.mcm.bool(CONFIG.MOD_ID, "steal_enabled", CONFIG.DEFAULTS.steal_enabled)
+end
+
+local function steal_dik()
+	return dogma.mcm.key(CONFIG.MOD_ID, "steal_key", CONFIG.DEFAULTS.steal_key)
+end
+
+local function steal_timer_ms()
+	local sec = dogma.mcm.int(CONFIG.MOD_ID, "steal_timer", CONFIG.DEFAULTS.steal_timer)
+	if not sec or sec < 5 then
+		sec = 5
+	end
+	return sec * 1000
+end
+
+local function nearby_faction()
+	return dogma.mcm.bool(CONFIG.MOD_ID, "steal_nearby_faction", CONFIG.DEFAULTS.steal_nearby_faction)
+end
+
+local function is_dead_loot(obj)
+	if not obj then
+		return false
+	end
+	local ok, alive = pcall(obj.alive, obj)
+	if not (ok and alive == false) then
+		return false
+	end
+	if IsStalker and IsStalker(obj) then
+		return true
+	end
+	if IsMonster and IsMonster(obj) then
+		return true
+	end
+	return false
+end
+
+local function look_corpse()
+	local obj = level and level.get_target_obj and level.get_target_obj()
+	if is_dead_loot(obj) then
+		return obj
+	end
+	return nil
+end
+
+local function living_claimer(v)
+	if not v then
+		return nil
+	end
+	if v.squad then
+		local squad = xobject.se(v.squad)
+		if xsquad.is_squad and xsquad.is_squad(squad) then
+			for id in xsquad.iter_member_ids(squad) do
+				local m = xobject.go(id)
+				if m and m:alive() and IsStalker and IsStalker(m) then
+					return m
+				end
+			end
+		end
+	end
+	local killer = xobject.go(v.killer)
+	if killer and killer:alive() and IsStalker and IsStalker(killer) then
+		return killer
+	end
+	return nil
+end
+
+local function loot_blocked(obj)
+	if not obj then
+		return false
+	end
+	return living_claimer(owners[obj:id()]) ~= nil
+end
+
+local function loot_gui()
+	return ui_inventory and ui_inventory.GUI
+end
+
+local function loot_partner_id()
+	local gui = loot_gui()
+	if not gui then
+		return nil
+	end
+	return gui.npc_id
+end
+
+local function loot_open_on(corpse_id)
+	if not (corpse_id and dogma.status.is_inv_open()) then
+		return false
+	end
+	local pid = loot_partner_id()
+	return pid == corpse_id
+end
+
+local function find_gui_btn(needle)
+	local gui = loot_gui()
+	if not gui then
+		return nil
+	end
+	local want = needle:lower()
+	for k, v in pairs(gui) do
+		if type(k) == "string" and k:lower():find(want, 1, true) then
+			if type(v) == "userdata" and v.Show then
+				return v
+			end
+		end
+	end
+	return nil
+end
+
+local function set_takeall_shown(show)
+	local btn = find_gui_btn("takeall") or find_gui_btn("take_all")
+	if btn then
+		btn:Show(show)
+		takeall_hidden = not show
+	end
+end
+
+local function session_allows_take()
+	return session and session.corpse_id and loot_open_on(session.corpse_id)
+end
+
+local function wrap_deny_move()
+	if deny_wrapped then
+		return
+	end
+	local function wrap(tbl)
+		if not (tbl and tbl.deny_move) then
+			return
+		end
+		if orig_deny[tbl] then
+			return
+		end
+		local prev = tbl.deny_move
+		orig_deny[tbl] = prev
+		tbl.deny_move = function(flags)
+			if session_allows_take() then
+				return
+			end
+			return prev(flags)
+		end
+	end
+	wrap(rawget(_G, "xinventory"))
+	wrap(dogma.xlibs and dogma.xlibs.xinventory)
+	deny_wrapped = true
+end
+
+local function key_label(dik)
+	if not dik then
+		return nil
+	end
+	if dik_to_keyname then
+		local ok, name = pcall(dik_to_keyname, dik, true)
+		if not (ok and type(name) == "string" and name ~= "") then
+			ok, name = pcall(dik_to_keyname, dik, false)
+		end
+		if ok and type(name) == "string" and name ~= "" then
+			name = name:gsub("^DIK_", ""):gsub("^k", "")
+			if name ~= "" then
+				return name
+			end
+		end
+	end
+	return tostring(dik)
+end
+
+local function steal_prompt()
+	local dik = steal_dik()
+	local label = key_label(dik)
+	if not label then
+		return nil
+	end
+	local fmt = game.translate_string("st_dogma_badwill_steal_loot")
+	if not fmt or fmt == "st_dogma_badwill_steal_loot" then
+		fmt = "Steal loot (%s)"
+	end
+	return string.format(fmt, label)
+end
+
+local function set_tip(obj, text)
+	if not obj then
+		return false
+	end
+	if obj.set_tip_text and text then
+		local ok = pcall(obj.set_tip_text, obj, text)
+		if ok then
+			return true
+		end
+	end
+	return false
+end
+
+local function clear_tip(obj)
+	if not obj then
+		return
+	end
+	if obj.set_tip_text_default then
+		pcall(obj.set_tip_text_default, obj)
+	end
+end
+
+local function quick_info_wnd()
+	local mgui = ActorMenu and ActorMenu.get_maingame and ActorMenu.get_maingame()
+	if not mgui then
+		return nil
+	end
+	return mgui.UIStaticQuickHelp or mgui.quick_info or mgui.m_quick_info
+end
+
+local function write_quick_info(text)
+	local wnd = quick_info_wnd()
+	if not (wnd and text) then
+		return
+	end
+	if wnd.SetText then
+		pcall(wnd.SetText, wnd, text)
+	elseif wnd.SetTextST then
+		pcall(wnd.SetTextST, wnd, text)
+	end
+	if wnd.Show then
+		pcall(wnd.Show, wnd, true)
+	end
+end
+
+local function restore_tip()
+	if last_tip_id then
+		clear_tip(xobject.go(last_tip_id))
+		last_tip_id = nil
+	end
+end
+
+local function update_prompt(obj)
+	if not (steal_on() and steal_dik() and obj and loot_blocked(obj) and not dogma.status.is_inv_open()) then
+		restore_tip()
+		return
+	end
+	local text = steal_prompt()
+	if not text then
+		restore_tip()
+		return
+	end
+	local id = obj:id()
+	if last_tip_id and last_tip_id ~= id then
+		clear_tip(xobject.go(last_tip_id))
+	end
+	if set_tip(obj, text) then
+		last_tip_id = id
+		return
+	end
+	write_quick_info(text)
+	last_tip_id = id
+end
+
+local function collect_watch(claimer)
+	local watch = {}
+	local hunt = {}
+	local seen = {}
+	local function add(npc, is_hunt)
+		if not npc or CONFIG.is_excluded(npc) then
+			return
+		end
+		local id = npc:id()
+		if seen[id] then
+			return
+		end
+		seen[id] = true
+		watch[#watch + 1] = id
+		if is_hunt then
+			hunt[#hunt + 1] = id
+		end
+	end
+	add(claimer, true)
+	local squad = get_object_squad and get_object_squad(claimer)
+	if squad then
+		for id in xsquad.iter_member_ids(squad) do
+			add(xobject.go(id), true)
+		end
+	end
+	if nearby_faction() then
+		local actor = db.actor
+		local comm = dogma.alife.community(claimer)
+		if actor and comm then
+			local near = dogma.alife.get_stalkers_near_point(actor:position(), FACTION_M, comm)
+			for i = 1, #near do
+				add(near[i], false)
+			end
+		end
+	end
+	return watch, hunt
+end
+
+local function send_hunt(vid)
+	if not (session and session.hunt and vid) then
+		return
+	end
+	for i = 1, #session.hunt do
+		local npc = xobject.go(session.hunt[i])
+		if npc and npc:alive() then
+			xcombat.send_to(npc, vid)
+			pcall(function()
+				if game_object and game_object.level_path then
+					npc:set_path_type(game_object.level_path)
+				end
+				if anim and anim.danger then
+					npc:set_mental_state(anim.danger)
+				end
+				if move and move.run then
+					npc:set_movement_type(move.run)
+				end
+				if move and move.standing then
+					npc:set_body_state(move.standing)
+				end
+			end)
+		end
+	end
+end
+
+local function notify_caught(spotter, vid)
+	if spotter then
+		local ok = xpda.npc_tip(spotter, CAUGHT_MSG, { sound = "danger" })
+		if not ok then
+			xpda.send(spotter:character_name(), game.translate_string(CAUGHT_MSG), spotter:character_icon())
+		end
+	end
+	send_hunt(vid)
+end
+
+local function cancel_xslice()
+	if xslice.is_active(QUEUE) then
+		xslice.cancel(QUEUE, true)
+	end
+end
+
+local function clear_session()
+	cancel_xslice()
+	if takeall_hidden then
+		set_takeall_shown(true)
+	end
+	session = nil
+	marked = {}
+	log("session clear")
+end
+
+local function end_watch(reason)
+	if not session then
+		return
+	end
+	session.watching = false
+	cancel_xslice()
+	log("watch end " .. tostring(reason))
+	if not loot_open_on(session.corpse_id) then
+		clear_session()
+	end
+end
+
+local function on_xslice_done()
+	if not (session and session.watching) then
+		return
+	end
+	if #marked > 0 then
+		local actor = db.actor
+		local vid = actor and actor:level_vertex_id()
+		log("slam " .. tostring(#marked))
+		notify_caught(marked[1], vid)
+		CONFIG.slam_npcs(marked)
+		end_watch("slam")
+		return
+	end
+	log("pass none")
+end
+
+local function start_xslice()
+	if not (session and session.watching and session.watch and #session.watch > 0) then
+		return
+	end
+	if xslice.is_active(QUEUE) then
+		return
+	end
+	marked = {}
+	local actor = db.actor
+	if not actor then
+		return
+	end
+	xslice.start(QUEUE, session.watch, {
+		step = 1,
+		func = function(id)
+			local npc = xobject.go(id)
+			if npc and npc:alive() and dogma.alife.npc_has_los_to_stalker(npc, actor, true) then
+				marked[#marked + 1] = npc
+			end
+			return true
+		end,
+		on_done = on_xslice_done,
+	})
+	last_xslice_ms = time_global()
+	log("xslice n=" .. tostring(#session.watch))
+end
+
+local function begin_session(corpse, claimer)
+	cancel_xslice()
+	local watch, hunt = collect_watch(claimer)
+	session = {
+		corpse_id = corpse:id(),
+		deadline = time_global() + steal_timer_ms(),
+		watch = watch,
+		hunt = hunt,
+		watching = true,
+	}
+	takeall_hidden = false
+	set_takeall_shown(false)
+	start_xslice()
+	log("session corpse=" .. tostring(session.corpse_id) .. " watch=" .. tostring(#session.watch))
+end
+
+local function try_open()
+	if not steal_on() then
+		return
+	end
+	if dogma.status.is_inv_open() then
+		return
+	end
+	local dik = steal_dik()
+	if not (dik and dogma.input.is_key_pressed(dik)) then
+		return
+	end
+	local corpse = look_corpse()
+	if not corpse then
+		return
+	end
+	local claimer = living_claimer(owners[corpse:id()])
+	if not claimer then
+		return
+	end
+	local actor = db.actor
+	if not (actor and corpse.use) then
+		return
+	end
+	wrap_deny_move()
+	local ok, ret = pcall(corpse.use, corpse, actor)
+	if not ok then
+		log("use failed")
+		return
+	end
+	if ret == false then
+		log("use blocked")
+		return
+	end
+	begin_session(corpse, claimer)
+end
+
+local function record_death(victim, killer)
+	if not (victim and killer) then
+		return
+	end
+	local actor = db.actor
+	if not actor then
+		return
+	end
+	local victim_id, killer_id = victim:id(), killer:id()
+	if victim_id == killer_id then
+		return
+	end
+	if killer_id == actor:id() then
+		return
+	end
+	if CONFIG.is_player_side(killer) or CONFIG.is_player_side(victim) then
+		return
+	end
+	if CONFIG.is_story(victim) then
+		return
+	end
+	if not xcreature.is_stalker(killer) then
+		return
+	end
+	local comm = dogma.alife.community(killer)
+	if comm and CONFIG.SKIP_COMM[comm] then
+		return
+	end
+	local squad = get_object_squad and get_object_squad(killer)
+	local squad_id = squad and squad.id or nil
+	if squad_id and axr_companions and axr_companions.companion_squads and axr_companions.companion_squads[squad_id] then
+		return
+	end
+	owners[victim_id] = { killer = killer_id, squad = squad_id }
+	log("claim v=" .. tostring(victim_id) .. " k=" .. tostring(killer_id))
+end
+
+local function refresh_deadline()
+	if not (session and session.watching) then
+		return
+	end
+	if loot_open_on(session.corpse_id) then
+		session.deadline = time_global() + steal_timer_ms()
+		set_takeall_shown(false)
+	end
+end
+
+local function tick_watch()
+	if not session then
+		return
+	end
+	refresh_deadline()
+	if session.watching then
+		if time_global() > session.deadline and not loot_open_on(session.corpse_id) then
+			end_watch("timeout")
+			return
+		end
+		if time_global() - last_xslice_ms >= XSLICE_GAP_MS then
+			start_xslice()
+		end
+	elseif not loot_open_on(session.corpse_id) then
+		clear_session()
+	else
+		set_takeall_shown(false)
+	end
+end
+
+local function tick()
+	try_open()
+	update_prompt(look_corpse())
+	tick_watch()
+	return false
+end
+
+local function ensure_tick()
+	if RemoveTimeEvent then
+		pcall(RemoveTimeEvent, CONFIG.MOD_ID, TICK)
+	end
+	CreateTimeEvent(CONFIG.MOD_ID, TICK, 0, tick)
+end
+
+local function reset()
+	restore_tip()
+	clear_session()
+	ensure_tick()
+end
+
+local function on_save_state(m_data)
+	m_data[SAVE_KEY] = { owner = owners }
+end
+
+local function on_load_state(m_data)
+	owners = {}
+	local saved = m_data and m_data[SAVE_KEY]
+	if type(saved) ~= "table" or type(saved.owner) ~= "table" then
+		return
+	end
+	for k, v in pairs(saved.owner) do
+		local id = tonumber(k)
+		if id and type(v) == "table" and v.killer then
+			owners[id] = { killer = tonumber(v.killer), squad = v.squad and tonumber(v.squad) or nil }
+		end
+	end
+end
+
+local function on_item_before_move(flags, npc_id)
+	if not session_allows_take() then
+		return
+	end
+	if npc_id == session.corpse_id and flags then
+		flags.ret_value = true
+	end
+end
+
+function on_game_start()
+	dogma.load(CONFIG.MOD_ID)
+	ensure_tick()
+	RegisterScriptCallback("npc_on_death_callback", record_death)
+	RegisterScriptCallback("monster_on_death_callback", record_death)
+	RegisterScriptCallback("actor_on_first_update", wrap_deny_move)
+	RegisterScriptCallback("ActorMenu_on_item_before_move", on_item_before_move)
+	RegisterScriptCallback("save_state", on_save_state)
+	RegisterScriptCallback("load_state", on_load_state)
+	RegisterScriptCallback("on_game_load", reset)
+	RegisterScriptCallback("main_menu_on_init", reset)
+	RegisterScriptCallback("actor_on_net_destroy", reset)
+	log("loaded")
+end

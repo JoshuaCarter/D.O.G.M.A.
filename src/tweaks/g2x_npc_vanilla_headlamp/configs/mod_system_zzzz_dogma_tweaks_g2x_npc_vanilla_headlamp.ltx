@@ -1,14 +1,12 @@
-; G2X writes ![torch_definition] (shared player + NPC headlamp).
-; Engine uses torch_definition_actor for the player if it exists.
-; Keep G2X on the player. Put GAMMA (Nicer + leftover Anomaly) back on NPCs.
-; Does not touch flashlight_definition or device_torch attach.
+; Player headlamp uses torch_definition_actor if that section exists.
+; Full copy. Do not inherit torch_definition - DLTX parent-eval eats that
+; section's overrides and NPC lights come out empty.
+; Handheld flashlight_definition and device_torch attach stay G2X.
 
-@[torch_definition_actor]:torch_definition
-omni_range             = 0
-omni_range_r2          = 0
+@[torch_definition_actor]
+type                   = 2
 range                  = 55
 range_r2               = 55
-spot_angle             = 110
 color                  = 0.79,0.79,0.79,0.2
 color_r2               = 0.79,0.79,0.79,0.9
 color_animator         = empty
@@ -17,6 +15,16 @@ volumetric_for_actor   = false
 volumetric_quality     = 1.0
 volumetric_intensity   = 1.0
 volumetric_distance    = 1.0
+omni_type              = 1
+omni_range             = 0
+omni_range_r2          = 0
+omni_color             = 0.4,0.35,0.35,0.1
+omni_color_r2          = 0.5,0.45,0.45,0.1
+spot_texture           = internal\internal_light_torch_r2
+spot_angle             = 110
+glow_texture           = glow\glow_torch_r2
+glow_radius            = 0.2
+guide_bone             = lights_bone
 
 ![torch_definition]
 omni_range             = 1.5

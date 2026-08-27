@@ -123,9 +123,7 @@ local function do_look_at(action, look)
 		if not (target and db.actor) then
 			return
 		end
-		local ok, mp = pcall(function()
-			return target:bone_position(LOOK_AT_BONE)
-		end)
+		local ok, mp = pcall(target.bone_position, target, LOOK_AT_BONE)
 		if not (ok and mp and mp.y) then
 			return
 		end

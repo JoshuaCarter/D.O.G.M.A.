@@ -3,10 +3,12 @@
 
 	Auto-show hold-Use style item name labels for pickable world items within
 	MCM range (0 = no labels, max 10 m). Vanilla hold-Use names stay off
-	while enabled so ours do not stack and keep drawing without LoS.
+	while enabled so ours do not stack. Optional LOS: nearby ids go into
+	xslice, labels appear when the ray is clear.
 ]]
 
 local CONFIG = _G.dogma_gui_item_labels_conf
+local xslice = dogma.xlibs.xslice
 
 local UI_XML = "ui_dogma_gui_item_labels.xml"
 local LABEL_W = 256
@@ -15,7 +17,8 @@ local LABEL_HALF_W = LABEL_W * 0.5
 local LABEL_HALF_H = LABEL_H * 0.5
 local MAX_LABELS = 32
 local ALIGN_CENTER = 2 -- CGameFont::alCenter
-local UPDATE_DELAY = 250
+local UPDATE_DELAY = 200
+local LOS_SLICE = "item_labels_los"
 
 local HUD = nil
 local POS_VEC = vector2()
@@ -46,9 +49,20 @@ local function set_vanilla_names(on)
 	exec_console_cmd(on and "g_draw_pickup_item_names 1" or "g_draw_pickup_item_names 0")
 end
 
+local function stop_los()
+	if xslice.is_active(LOS_SLICE) then
+		xslice.cancel(LOS_SLICE, true)
+	end
+end
+
 local function on_option_change()
 	CONFIG.loaded.enabled = dogma.mcm.bool(CONFIG.MOD_ID, "enabled")
 	CONFIG.loaded.range = dogma.mcm.float(CONFIG.MOD_ID, "range")
+	CONFIG.loaded.require_los = dogma.mcm.bool(CONFIG.MOD_ID, "require_los")
+	if not CONFIG.loaded.require_los then
+		stop_los()
+	end
+	next_scan = 0
 	set_vanilla_names(not CONFIG.loaded.enabled)
 end
 
@@ -114,6 +128,46 @@ local function clear_tracked()
 	tracking = false
 end
 
+local function tracked_index(id)
+	for i = 1, #tracked do
+		if tracked[i].id == id then
+			return i
+		end
+	end
+end
+
+local function tracked_add(id, sec)
+	if tracked_index(id) then
+		return
+	end
+	tracked[#tracked + 1] = { id = id, sec = sec }
+	tracking = true
+end
+
+local function tracked_del(id)
+	local i = tracked_index(id)
+	if not i then
+		return
+	end
+	table.remove(tracked, i)
+	tracking = #tracked > 0
+end
+
+local function prune_tracked(keep)
+	local n = 0
+	for i = 1, #tracked do
+		local e = tracked[i]
+		if keep[e.id] then
+			n = n + 1
+			tracked[n] = e
+		end
+	end
+	for i = #tracked, n + 1, -1 do
+		tracked[i] = nil
+	end
+	tracking = n > 0
+end
+
 class "UIItemLabels" (CUIScriptWnd)
 
 function UIItemLabels:__init() super()
@@ -167,6 +221,7 @@ local function activate_hud()
 end
 
 local function deactivate_hud()
+	stop_los()
 	if HUD ~= nil then
 		get_hud():RemoveDialogToRender(HUD)
 		HUD = nil
@@ -175,16 +230,39 @@ local function deactivate_hud()
 end
 
 local function hide_labels()
+	stop_los()
 	if HUD then
 		HUD:HideAll()
 	end
 	clear_tracked()
 end
 
--- Expensive: iterate_nearest + filters. Cadence = UPDATE_DELAY (idle and while tracking).
-local function scan_nearby(actor, radius)
-	dogma.perf.start("item_labels", "scan")
-	clear_tracked()
+local function actor_eye()
+	local d = device and device()
+	if d and d.cam_pos then
+		return d.cam_pos
+	end
+	return db.actor and db.actor:position()
+end
+
+local function los_one(e)
+	local obj = level.object_by_id and level.object_by_id(e.id)
+	if not (obj and can_pickup(obj)) then
+		tracked_del(e.id)
+		return true
+	end
+	local eye = actor_eye()
+	if eye and dogma.alife.has_los_to_object(eye, obj, db.actor) then
+		tracked_add(e.id, e.sec)
+	else
+		tracked_del(e.id)
+	end
+	return true
+end
+
+local function collect_nearby(actor, radius)
+	local cand = {}
+	local keep = {}
 	local n = 0
 	level.iterate_nearest(actor:position(), radius, function(obj)
 		if n >= MAX_LABELS then
@@ -194,11 +272,36 @@ local function scan_nearby(actor, radius)
 			return
 		end
 		n = n + 1
-		tracked[n] = { id = obj:id(), sec = obj:section() }
+		cand[n] = { id = obj:id(), sec = obj:section() }
+		keep[obj:id()] = true
 	end)
-	tracking = n > 0
+	return cand, keep, n
+end
+
+-- Expensive: iterate_nearest + filters. Cadence = UPDATE_DELAY (idle and while tracking).
+-- LOS on: fill pending, xslice rays. Shown set stays until each id is rechecked.
+local function scan_nearby(actor, radius)
+	dogma.perf.start("item_labels", "scan")
+	local cand, keep, n = collect_nearby(actor, radius)
+	if not CONFIG.loaded.require_los then
+		stop_los()
+		clear_tracked()
+		for i = 1, n do
+			tracked[i] = cand[i]
+		end
+		tracking = n > 0
+		dogma.perf.stop()
+		return tracking
+	end
+	prune_tracked(keep)
+	if n == 0 then
+		dogma.perf.stop()
+		return false
+	end
+	xslice.start(LOS_SLICE, cand, { step = 1, func = los_one })
+	tracking = true
 	dogma.perf.stop()
-	return tracking
+	return true
 end
 
 -- Cheap: object_by_id + range + world2ui for cached ids (every frame while tracking).
@@ -268,11 +371,11 @@ local function on_actor_on_update()
 
 	local tg = time_global()
 	local due = tg >= next_scan
-	if not tracking and not due then
+	if not tracking and not due and not xslice.is_active(LOS_SLICE) then
 		return
 	end
 
-	if due then
+	if due and not (CONFIG.loaded.require_los and xslice.is_active(LOS_SLICE)) then
 		next_scan = tg + UPDATE_DELAY
 		if not scan_nearby(actor, radius) then
 			if HUD then

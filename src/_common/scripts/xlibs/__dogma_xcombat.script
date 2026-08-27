@@ -9,7 +9,8 @@ local vector, level, GetEvent = vector, level, GetEvent
 local move, state_mgr, state_mgr_direction = move, state_mgr, state_mgr_direction
 local db, alife_object, ini_sys, IsWeapon, xmath = db, alife_object, ini_sys, IsWeapon, xmath
 
-xcombat = xcombat or {}
+-- Fresh table. `xcombat or {}` reads _G.xcombat, autoloads stock xcombat.script, and we overwrite it.
+xcombat = {}
 
 local INVALID_LVID = 4294967295
 xcombat.INVALID_LVID = INVALID_LVID

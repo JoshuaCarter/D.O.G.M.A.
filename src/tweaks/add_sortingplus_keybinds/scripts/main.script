@@ -195,6 +195,18 @@ local function patch_sortingplus()
 	return true
 end
 
+local last_persist_fav = nil
+local last_persist_junk = nil
+
+local function persist_flags_changed()
+	local pf = persist_fav()
+	local pj = persist_junk()
+	local changed = pf ~= last_persist_fav or pj ~= last_persist_junk
+	last_persist_fav = pf
+	last_persist_junk = pj
+	return changed
+end
+
 local function apply_profile()
 	local n_fav, n_junk = 0, 0
 	if persist_fav() and STATE.base_fav then
@@ -212,6 +224,18 @@ local function apply_profile()
 	if n_fav > 0 or n_junk > 0 then
 		refresh_icons()
 		log(string.format("applied profile fav=%d junk=%d", n_fav, n_junk))
+	end
+end
+
+local function on_first_update()
+	last_persist_fav = persist_fav()
+	last_persist_junk = persist_junk()
+	apply_profile()
+end
+
+local function on_option_change()
+	if persist_flags_changed() then
+		apply_profile()
 	end
 end
 
@@ -237,8 +261,8 @@ function on_game_start()
 
 	-- Additions only - never wipe profile from an empty new-game save.
 	RegisterScriptCallback("load_state", merge_save_into_profile)
-	RegisterScriptCallback("actor_on_first_update", apply_profile)
-	RegisterScriptCallback("on_option_change", apply_profile)
+	RegisterScriptCallback("actor_on_first_update", on_first_update)
+	RegisterScriptCallback("on_option_change", on_option_change)
 
 	log("Better Favourites and Junk ready")
 end

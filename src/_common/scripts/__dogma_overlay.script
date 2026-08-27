@@ -139,23 +139,31 @@ local function show_panel(x, y, w, h)
 	end)
 end
 
-local function mcm_bool(key, default)
+local OVERLAY_PATH = DEBUG_MOD .. "/debug_overlay"
+local overlay_on = false
+local overlay_synced = false
+
+local function read_overlay_on()
 	if ui_mcm then
-		local value = ui_mcm.get(DEBUG_MOD .. "/" .. key)
+		local value = ui_mcm.get(OVERLAY_PATH)
 		if value ~= nil then
 			return value == true or value == 1
 		end
 	end
 	local conf = _G.dogma_debug_conf
 	local defaults = conf and conf.DEFAULTS
-	if defaults and defaults[key] ~= nil then
-		return defaults[key] == true or defaults[key] == 1
+	if defaults and defaults.debug_overlay ~= nil then
+		return defaults.debug_overlay == true or defaults.debug_overlay == 1
 	end
-	return default
+	return false
 end
 
 function enabled()
-	return mcm_bool("debug_overlay", false)
+	if not overlay_synced then
+		overlay_on = read_overlay_on()
+		overlay_synced = true
+	end
+	return overlay_on
 end
 
 local function render()
@@ -274,5 +282,9 @@ function clear(source)
 end
 
 function on_game_start()
-	RegisterScriptCallback("on_option_change", render)
+	RegisterScriptCallback("on_option_change", function()
+		overlay_on = read_overlay_on()
+		overlay_synced = true
+		render()
+	end)
 end

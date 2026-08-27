@@ -28,6 +28,16 @@ local last_tip_id = nil
 local deny_wrapped = false
 local orig_deny = {}
 local takeall_hidden = false
+local hold_fired = false
+
+local MODE_PRESS = 0
+local MODE_HOLD = 1
+
+local MOD_LABEL = {
+	[1] = "Shift+",
+	[2] = "Ctrl+",
+	[3] = "Alt+",
+}
 
 local function log(msg)
 	if dogma.log.logging() then
@@ -41,6 +51,52 @@ end
 
 local function steal_dik()
 	return dogma.mcm.key(CONFIG.MOD_ID, "steal_key", CONFIG.DEFAULTS.steal_key)
+end
+
+local function steal_mod()
+	return dogma.mcm.int(CONFIG.MOD_ID, "steal_key_modifier", CONFIG.DEFAULTS.steal_key_modifier)
+end
+
+local function steal_mode()
+	local mode = dogma.mcm.int(CONFIG.MOD_ID, "steal_key_mode", CONFIG.DEFAULTS.steal_key_mode)
+	if mode == MODE_HOLD then
+		return MODE_HOLD
+	end
+	return MODE_PRESS
+end
+
+local function steal_hold_ms()
+	local ms = dogma.mcm.int(CONFIG.MOD_ID, "steal_hold_ms", CONFIG.DEFAULTS.steal_hold_ms)
+	if not ms or ms < 500 then
+		return 500
+	end
+	if ms > 2000 then
+		return 2000
+	end
+	return ms
+end
+
+local function steal_fired()
+	local dik = steal_dik()
+	if not (dik and dogma.input.is_mod_down(steal_mod())) then
+		hold_fired = false
+		return false
+	end
+	if steal_mode() == MODE_HOLD then
+		if not dogma.input.is_key_down(dik) then
+			hold_fired = false
+			return false
+		end
+		if hold_fired then
+			return false
+		end
+		if dogma.input.is_key_held(dik, steal_hold_ms()) then
+			hold_fired = true
+			return true
+		end
+		return false
+	end
+	return dogma.input.is_key_pressed(dik)
 end
 
 local function steal_timer_ms()
@@ -211,7 +267,8 @@ local function steal_prompt()
 	if not fmt or fmt == "st_dogma_badwill_steal_loot" then
 		fmt = "Steal loot (%s)"
 	end
-	return string.format(fmt, label)
+	local prefix = MOD_LABEL[steal_mod()] or ""
+	return string.format(fmt, prefix .. label)
 end
 
 local function set_tip(obj, text)
@@ -456,8 +513,7 @@ local function try_open()
 	if dogma.status.is_inv_open() then
 		return
 	end
-	local dik = steal_dik()
-	if not (dik and dogma.input.is_key_pressed(dik)) then
+	if not steal_fired() then
 		return
 	end
 	local corpse = look_corpse()
@@ -567,6 +623,7 @@ local function ensure_tick()
 end
 
 local function reset()
+	hold_fired = false
 	restore_tip()
 	clear_session()
 	ensure_tick()

@@ -72,17 +72,7 @@ local OPT_IN_ICONS = {
 }
 local RATIO_SUFFIXES = { "", "_43", "_1610", "_16" }
 
-local function expand_stems(stems)
-	local out = {}
-	for i = 1, #stems do
-		for j = 1, #RATIO_SUFFIXES do
-			out[#out + 1] = stems[i] .. RATIO_SUFFIXES[j]
-		end
-	end
-	return out
-end
-
-local PACK_BODY = expand_stems({
+local STEMS_BODY = {
 	"body_health_system",
 	"body_health_system_2",
 	"body_health_system_text",
@@ -106,9 +96,9 @@ local PACK_BODY = expand_stems({
 	"bhs_health_leftleg_bar",
 	"bhs_health_leftleg_bar_bg",
 	"bhs_health_leftleg_bar_green",
-})
-local PACK_HP = expand_stems({ "bhs_health_bar", "bhs_health_bar_bg" })
-local PACK_STAM = expand_stems({ "bhs_stamina_bar", "bhs_stamina_bar_bg" })
+}
+local STEMS_HP = { "bhs_health_bar", "bhs_health_bar_bg" }
+local STEMS_STAM = { "bhs_stamina_bar", "bhs_stamina_bar_bg" }
 
 local FILL_BARS = {
 	{ uv = "progress_health_head", limb = "head" },
@@ -140,6 +130,8 @@ local uv_hs_fn, uv_hs_idx = nil, nil
 local uv_change_fn, uv_change_idx = nil, nil
 local scratch_pos = nil
 local home = {} -- key -> {x,y}
+local wnd_cache = {} -- name -> wnd
+local pack_suffix = nil
 
 local orig_functors = {}
 local cache_visual = {}
@@ -398,6 +390,10 @@ local function ensure_bhs_statics_exist()
 end
 
 local function get_cs_wnd(name)
+	local cached = wnd_cache[name]
+	if cached then
+		return cached
+	end
 	local hud = get_hud and get_hud()
 	if not (hud and hud.GetCustomStatic) then
 		return nil
@@ -407,7 +403,26 @@ local function get_cs_wnd(name)
 		return nil
 	end
 	local ok, wnd = pcall(cs.wnd, cs)
-	return ok and wnd or nil
+	if ok and wnd then
+		wnd_cache[name] = wnd
+		return wnd
+	end
+	return nil
+end
+
+local function live_suffix()
+	if pack_suffix ~= nil then
+		return pack_suffix
+	end
+	local stem = STEMS_BODY[1]
+	for i = 1, #RATIO_SUFFIXES do
+		local suf = RATIO_SUFFIXES[i]
+		if get_cs_wnd(stem .. suf) then
+			pack_suffix = suf
+			return suf
+		end
+	end
+	return nil
 end
 
 local function read_xy(wnd)
@@ -463,9 +478,14 @@ local function park_wnd(wnd, key, want_parked)
 	end
 end
 
-local function park_pack(names, want_parked)
-	for i = 1, #names do
-		park_wnd(get_cs_wnd(names[i]), names[i], want_parked)
+local function park_stems(stems, want_parked)
+	local suf = live_suffix()
+	if not suf then
+		return
+	end
+	for i = 1, #stems do
+		local name = stems[i] .. suf
+		park_wnd(get_cs_wnd(name), name, want_parked)
 	end
 end
 
@@ -730,9 +750,9 @@ apply_parks = function(now)
 	dogma.perf.start("hud_controls", "apply_parks")
 	local _, show_all, show_stam = compute_show(L, now)
 	local park_bhs = L.hide_body and not show_all
-	park_pack(PACK_BODY, park_bhs)
-	park_pack(PACK_HP, park_bhs)
-	park_pack(PACK_STAM, L.hide_body and not show_stam)
+	park_stems(STEMS_BODY, park_bhs)
+	park_stems(STEMS_HP, park_bhs)
+	park_stems(STEMS_STAM, L.hide_body and not show_stam)
 	park_psy(park_bhs)
 	park_rad(park_bhs)
 	dogma.perf.stop()
@@ -985,6 +1005,8 @@ local function reset_park_state()
 	fill_hide_at = 0
 	fill_uv = {}
 	home = {}
+	wnd_cache = {}
+	pack_suffix = nil
 	uv_show_fn, uv_show_idx = nil, nil
 	uv_hs_fn, uv_hs_idx = nil, nil
 	uv_change_fn, uv_change_idx = nil, nil

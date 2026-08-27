@@ -1,14 +1,175 @@
 --[[
 	DOGMA - Lua GC policy (LuaJIT / Lua 5.1).
 
-	Engine already steps via lua_gcstep + parallel GC (user.ltx).
+	Engine already steps via lua_gcstep + parallel GC (user.ltx / console):
+	  lua_gcstep, lua_parallel_gc, lua_parallel_gcstep,
+	  lua_parallel_gc_call_amount, lua_parallel_gc_debug, mt_script_gc
+	Those are C++. Lua cannot hook their duration.
+
 	Here we only tune collector policy:
 	  setpause 200  - default; start next cycle at 2x post-GC heap
 	  setstepmul 300 - slightly more aggressive than default 200
 	Invalid / rejected: collectgarbage("setstep", ...) - not a LuaJIT option.
+
+	gc_log (Debug MCM): watch collectgarbage("count"). Log heap drops and a
+	10s summary. That is "heap fell", not "C++ step took N us".
 ]]
 
+local DEBUG_MOD = "dogma/debug"
+local SRC = "dogma_lua_gc"
+local PAUSE = 200
+local STEPMUL = 300
+local DROP_KB = 256
+local SUM_MS = 10000
+local OVERLAY_MS = 500
+
+local logging = false
+local ticking = false
+local last_kb = 0
+local peak_kb = 0
+local min_kb = 0
+local drop_n = 0
+local drop_sum = 0
+local sum_at = 0
+local last_drop_ms = 0
+local overlay_at = 0
+local started = false
+local had_overlay = false
+
+local engine_log = rawget(_G, "log")
+
+local function emit(msg)
+	local line = "[dogma_debug] " .. msg
+	if printf then
+		printf("~%s", line)
+	end
+	if engine_log then
+		engine_log("~" .. line)
+	end
+end
+
+local function reset_watch(now, kb)
+	last_kb = kb
+	peak_kb = kb
+	min_kb = kb
+	drop_n = 0
+	drop_sum = 0
+	sum_at = now
+	last_drop_ms = 0
+	overlay_at = 0
+	started = kb > 0
+end
+
+local function mcm_gc_log()
+	if dogma and dogma.mcm then
+		return dogma.mcm.bool(DEBUG_MOD, "gc_log", false)
+	end
+	return false
+end
+
+local function overlay_set(msg)
+	if dogma and dogma.overlay and dogma.overlay.set then
+		dogma.overlay.set(SRC, 0, msg, "cyan")
+		had_overlay = true
+	end
+end
+
+local function overlay_clear()
+	if had_overlay and dogma and dogma.overlay and dogma.overlay.clear then
+		dogma.overlay.clear(SRC)
+	end
+	had_overlay = false
+end
+
+local function flush_summary(now)
+	emit(string.format(
+		"gc 10s heap %.0f kb peak %.0f min %.0f drops %d freed %.0f kb",
+		last_kb, peak_kb, min_kb, drop_n, drop_sum
+	))
+	drop_n = 0
+	drop_sum = 0
+	peak_kb = last_kb
+	min_kb = last_kb
+	sum_at = now
+end
+
+local function tick()
+	if not logging then
+		ticking = false
+		overlay_clear()
+		return true
+	end
+
+	local kb = collectgarbage("count")
+	local now = time_global()
+	if not started then
+		reset_watch(now, kb)
+		return false
+	end
+
+	if kb > peak_kb then
+		peak_kb = kb
+	end
+	if kb < min_kb then
+		min_kb = kb
+	end
+
+	local drop = last_kb - kb
+	if drop >= DROP_KB then
+		local dt = 0
+		if last_drop_ms > 0 then
+			dt = now - last_drop_ms
+		end
+		last_drop_ms = now
+		drop_n = drop_n + 1
+		drop_sum = drop_sum + drop
+		emit(string.format(
+			"gc drop %.0f kb  %.0f -> %.0f  since last %d ms",
+			drop, last_kb, kb, dt
+		))
+	end
+	last_kb = kb
+
+	if dogma and dogma.overlay and dogma.overlay.enabled and dogma.overlay.enabled() then
+		if overlay_at == 0 or (now - overlay_at) >= OVERLAY_MS then
+			overlay_at = now
+			overlay_set(string.format("lua heap %.0f kb", kb))
+		end
+	elseif had_overlay then
+		overlay_clear()
+	end
+
+	if (now - sum_at) >= SUM_MS then
+		flush_summary(now)
+	end
+	return false
+end
+
+local function ensure_tick()
+	if not logging or ticking or not CreateTimeEvent then
+		return
+	end
+	ticking = true
+	CreateTimeEvent(SRC, "heap", 0, tick)
+end
+
+local function refresh()
+	local on = mcm_gc_log()
+	if on and not logging then
+		reset_watch(time_global(), collectgarbage("count"))
+		emit(string.format("gc watch on  pause %d stepmul %d", PAUSE, STEPMUL))
+	elseif not on and logging then
+		overlay_clear()
+		started = false
+	end
+	logging = on
+	ensure_tick()
+end
+
 function on_game_start()
-	collectgarbage("setpause", 200)
-	collectgarbage("setstepmul", 300)
+	collectgarbage("setpause", PAUSE)
+	collectgarbage("setstepmul", STEPMUL)
+	RegisterScriptCallback("on_option_change", refresh)
+	RegisterScriptCallback("mcm_option_change", refresh)
+	RegisterScriptCallback("actor_on_first_update", refresh)
 end

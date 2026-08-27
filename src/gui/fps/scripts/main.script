@@ -405,6 +405,22 @@ local function argb_from_bytes(a, r, g, b)
 	return GetARGB(a, r, g, b)
 end
 
+-- Text windows are taller than the font cell. Bottom-anchor must use this
+-- (UI units) or y=0 leaves a gap under the glyphs.
+local function font_h_ui(text_wnd)
+	if not text_wnd then
+		return nil
+	end
+	pcall(text_wnd.SetTextComplexMode, text_wnd, false)
+	pcall(text_wnd.SetText, text_wnd, "0")
+	pcall(text_wnd.AdjustHeightToText, text_wnd)
+	local ok, h = pcall(text_wnd.GetHeight, text_wnd)
+	if ok and h and h > 1 then
+		return h
+	end
+	return nil
+end
+
 local function init_text_wnd(text_wnd, align)
 	pcall(function()
 		text_wnd:SetTextComplexMode(true)
@@ -518,15 +534,18 @@ function ui_dogma_fps:ApplyTextLayout(font_idx, anchor, mode)
 	local lbl_w = layout.lbl_w or (layout.val_x - layout.label_x)
 	local val_w = layout.val_w or 44
 	local row_h = layout.row_h or layout.simple.h or 22
+	local last_text_y = 0
 
 	if simple_only then
 		local simple_w = layout.simple.w or panel_w
 		local simple_x = right and 0 or layout.simple.x
-		self:PlaceTextWnd(self.fps_simple, simple_x, layout.simple.y, panel_w, layout.simple.h or row_h)
+		last_text_y = layout.simple.y or 0
+		self:PlaceTextWnd(self.fps_simple, simple_x, last_text_y, panel_w, layout.simple.h or row_h)
 	else
 		local y_fps = layout.row_y.fps
 		local y_min = layout.row_y.min + pad
 		local y_max = layout.row_y.max + pad * 2
+		last_text_y = y_max
 		if right then
 			self:PlaceTextWnd(self.fps_val, 0, y_fps, panel_w, row_h)
 			self:PlaceTextWnd(self.fps_lbl, 0, y_fps, panel_w - val_w, row_h)
@@ -546,7 +565,8 @@ function ui_dogma_fps:ApplyTextLayout(font_idx, anchor, mode)
 
 	self.layout = layout
 	self.content_w = panel_w
-	self.content_h = panel_h
+	local fh = font_h_ui(self.fps_simple)
+	self.content_h = fh and (last_text_y + fh) or panel_h
 	self:SetWndPanelSize(panel_w, panel_h)
 end
 

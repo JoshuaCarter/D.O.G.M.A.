@@ -24,11 +24,14 @@ local owners = {}
 local session = nil
 local marked = {}
 local last_xslice_ms = 0
-local last_tip_id = nil
+local HUD_STATIC = "dogma_badwill_steal_prompt"
+local PROMPT_DY = 40
+local prompt_text = nil
 local deny_wrapped = false
 local orig_deny = {}
 local takeall_hidden = false
 local hold_fired = false
+local last_look = nil
 
 local MODE_PRESS = 0
 local MODE_HOLD = 1
@@ -82,21 +85,24 @@ local function steal_fired()
 		hold_fired = false
 		return false
 	end
-	if steal_mode() == MODE_HOLD then
-		if not dogma.input.is_key_down(dik) then
-			hold_fired = false
-			return false
-		end
-		if hold_fired then
-			return false
-		end
-		if dogma.input.is_key_held(dik, steal_hold_ms()) then
-			hold_fired = true
-			return true
-		end
+	if not dogma.input.is_key_down(dik) then
+		hold_fired = false
 		return false
 	end
-	return dogma.input.is_key_pressed(dik)
+	if hold_fired then
+		return false
+	end
+	local hit
+	if steal_mode() == MODE_HOLD then
+		hit = dogma.input.is_key_held(dik, steal_hold_ms())
+	else
+		hit = dogma.input.is_key_pressed(dik)
+	end
+	if hit then
+		hold_fired = true
+		return true
+	end
+	return false
 end
 
 local function steal_timer_ms()
@@ -116,7 +122,7 @@ local function is_dead_loot(obj)
 		return false
 	end
 	local ok, alive = pcall(obj.alive, obj)
-	if not (ok and alive == false) then
+	if not ok or alive then
 		return false
 	end
 	if IsStalker and IsStalker(obj) then
@@ -271,28 +277,6 @@ local function steal_prompt()
 	return string.format(fmt, prefix .. label)
 end
 
-local function set_tip(obj, text)
-	if not obj then
-		return false
-	end
-	if obj.set_tip_text and text then
-		local ok = pcall(obj.set_tip_text, obj, text)
-		if ok then
-			return true
-		end
-	end
-	return false
-end
-
-local function clear_tip(obj)
-	if not obj then
-		return
-	end
-	if obj.set_tip_text_default then
-		pcall(obj.set_tip_text_default, obj)
-	end
-end
-
 local function quick_info_wnd()
 	local mgui = ActorMenu and ActorMenu.get_maingame and ActorMenu.get_maingame()
 	if not mgui then
@@ -301,48 +285,105 @@ local function quick_info_wnd()
 	return mgui.UIStaticQuickHelp or mgui.quick_info or mgui.m_quick_info
 end
 
-local function write_quick_info(text)
-	local wnd = quick_info_wnd()
-	if not (wnd and text) then
+local function hide_prompt()
+	if not prompt_text then
 		return
 	end
-	if wnd.SetText then
+	local hud = get_hud and get_hud()
+	if hud and hud.GetCustomStatic and hud:GetCustomStatic(HUD_STATIC) then
+		hud:RemoveCustomStatic(HUD_STATIC)
+	end
+	log("prompt hide")
+	prompt_text = nil
+end
+
+local function prompt_wnd()
+	if not _G.dogma_badwill_steal_xml then
+		return nil
+	end
+	local hud = get_hud and get_hud()
+	if not hud then
+		return nil
+	end
+	local cs = hud:GetCustomStatic(HUD_STATIC)
+	if not cs then
+		hud:AddCustomStatic(HUD_STATIC, true)
+		cs = hud:GetCustomStatic(HUD_STATIC)
+	end
+	return cs and cs:wnd()
+end
+
+local function place_under_search(wnd)
+	local x, y, w, h = 0, 660, 1024, 40
+	local qi = quick_info_wnd()
+	if qi then
+		local abs = Frect()
+		local ok = pcall(qi.GetAbsoluteRect, qi, abs)
+		if ok and abs.y1 then
+			x = abs.x1
+			y = abs.y1 + PROMPT_DY
+			w = (abs.x2 - abs.x1)
+			h = (abs.y2 - abs.y1)
+			local ours = Frect()
+			if pcall(wnd.GetAbsoluteRect, wnd, ours) and ours.y1 then
+				local pos = wnd:GetWndPos()
+				if pos then
+					x = x - (ours.x1 - pos.x)
+					y = y - (ours.y1 - pos.y)
+				end
+			end
+		else
+			local pos = qi.GetWndPos and qi:GetWndPos()
+			if pos then
+				x = pos.x or x
+				y = (pos.y or y) + PROMPT_DY
+			end
+			if qi.GetWidth then
+				w = qi:GetWidth() or w
+			end
+			if qi.GetHeight then
+				h = qi:GetHeight() or h
+			end
+		end
+	end
+	wnd:SetWndPos(vector2():set(x, y))
+	pcall(function()
+		wnd:SetWndSize(vector2():set(w, h))
+	end)
+end
+
+local function show_prompt(text)
+	local wnd = prompt_wnd()
+	if not wnd then
+		return
+	end
+	place_under_search(wnd)
+	local tc = wnd.TextControl and wnd:TextControl()
+	if tc and tc.SetText then
+		tc:SetText(text)
+	elseif wnd.SetText then
 		pcall(wnd.SetText, wnd, text)
-	elseif wnd.SetTextST then
-		pcall(wnd.SetTextST, wnd, text)
 	end
 	if wnd.Show then
 		pcall(wnd.Show, wnd, true)
 	end
-end
-
-local function restore_tip()
-	if last_tip_id then
-		clear_tip(xobject.go(last_tip_id))
-		last_tip_id = nil
+	if prompt_text ~= text then
+		log("prompt show " .. text)
+		prompt_text = text
 	end
 end
 
 local function update_prompt(obj)
 	if not (steal_on() and steal_dik() and obj and loot_blocked(obj) and not dogma.status.is_inv_open()) then
-		restore_tip()
+		hide_prompt()
 		return
 	end
 	local text = steal_prompt()
 	if not text then
-		restore_tip()
+		hide_prompt()
 		return
 	end
-	local id = obj:id()
-	if last_tip_id and last_tip_id ~= id then
-		clear_tip(xobject.go(last_tip_id))
-	end
-	if set_tip(obj, text) then
-		last_tip_id = id
-		return
-	end
-	write_quick_info(text)
-	last_tip_id = id
+	show_prompt(text)
 end
 
 local function collect_watch(claimer)
@@ -506,6 +547,49 @@ local function begin_session(corpse, claimer)
 	log("session corpse=" .. tostring(session.corpse_id) .. " watch=" .. tostring(#session.watch))
 end
 
+local function log_cfg()
+	log(string.format(
+		"cfg on=%s key=%s mod=%s mode=%s hold=%s",
+		tostring(steal_on()),
+		tostring(steal_dik()),
+		tostring(steal_mod()),
+		tostring(steal_mode()),
+		tostring(steal_hold_ms())
+	))
+end
+
+local function log_look(obj)
+	local id = obj and obj:id() or 0
+	local v = obj and owners[id]
+	local claimer = living_claimer(v)
+	local sig = string.format(
+		"%s:%s:%s:%s:%s",
+		tostring(id),
+		tostring(claimer and claimer:id() or 0),
+		tostring(steal_dik()),
+		tostring(steal_mode()),
+		tostring(steal_mod())
+	)
+	if sig == last_look then
+		return
+	end
+	last_look = sig
+	if not obj then
+		log("look none")
+		return
+	end
+	log(string.format(
+		"look id=%s sec=%s have=%s claimer=%s key=%s mod=%s mode=%s",
+		tostring(id),
+		tostring(obj:section()),
+		tostring(v ~= nil),
+		tostring(claimer and claimer:id() or nil),
+		tostring(steal_dik()),
+		tostring(steal_mod()),
+		tostring(steal_mode())
+	))
+end
+
 local function try_open()
 	if not steal_on() then
 		return
@@ -518,16 +602,20 @@ local function try_open()
 	end
 	local corpse = look_corpse()
 	if not corpse then
+		log("fire no corpse")
 		return
 	end
 	local claimer = living_claimer(owners[corpse:id()])
 	if not claimer then
+		log("fire no claimer id=" .. tostring(corpse:id()) .. " have=" .. tostring(owners[corpse:id()] ~= nil))
 		return
 	end
 	local actor = db.actor
 	if not (actor and corpse.use) then
+		log("fire no use id=" .. tostring(corpse:id()))
 		return
 	end
+	log("fire id=" .. tostring(corpse:id()) .. " claimer=" .. tostring(claimer:id()))
 	wrap_deny_move()
 	local ok, ret = pcall(corpse.use, corpse, actor)
 	if not ok then
@@ -551,31 +639,38 @@ local function record_death(victim, killer)
 	end
 	local victim_id, killer_id = victim:id(), killer:id()
 	if victim_id == killer_id then
+		log("claim skip suicide v=" .. tostring(victim_id))
 		return
 	end
 	if killer_id == actor:id() then
+		log("claim skip actor kill v=" .. tostring(victim_id))
 		return
 	end
 	if CONFIG.is_player_side(killer) or CONFIG.is_player_side(victim) then
+		log("claim skip player-side v=" .. tostring(victim_id) .. " k=" .. tostring(killer_id))
 		return
 	end
 	if CONFIG.is_story(victim) then
+		log("claim skip story v=" .. tostring(victim_id))
 		return
 	end
 	if not xcreature.is_stalker(killer) then
+		log("claim skip killer not stalker v=" .. tostring(victim_id) .. " k=" .. tostring(killer_id))
 		return
 	end
 	local comm = dogma.alife.community(killer)
 	if comm and CONFIG.SKIP_COMM[comm] then
+		log("claim skip comm=" .. tostring(comm) .. " v=" .. tostring(victim_id))
 		return
 	end
 	local squad = get_object_squad and get_object_squad(killer)
 	local squad_id = squad and squad.id or nil
 	if squad_id and axr_companions and axr_companions.companion_squads and axr_companions.companion_squads[squad_id] then
+		log("claim skip companion squad v=" .. tostring(victim_id))
 		return
 	end
 	owners[victim_id] = { killer = killer_id, squad = squad_id }
-	log("claim v=" .. tostring(victim_id) .. " k=" .. tostring(killer_id))
+	log("claim v=" .. tostring(victim_id) .. " k=" .. tostring(killer_id) .. " squad=" .. tostring(squad_id))
 end
 
 local function refresh_deadline()
@@ -609,8 +704,10 @@ local function tick_watch()
 end
 
 local function tick()
+	local corpse = look_corpse()
+	log_look(corpse)
 	try_open()
-	update_prompt(look_corpse())
+	update_prompt(corpse)
 	tick_watch()
 	return false
 end
@@ -622,11 +719,30 @@ local function ensure_tick()
 	CreateTimeEvent(CONFIG.MOD_ID, TICK, 0, tick)
 end
 
+local function ingest_owner(id, v, src)
+	local kid = v and tonumber(v.killer)
+	if not (id and kid) then
+		return false
+	end
+	local actor = db.actor
+	if actor and kid == actor:id() then
+		return false
+	end
+	if owners[id] then
+		return false
+	end
+	owners[id] = { killer = kid, squad = v.squad and tonumber(v.squad) or nil }
+	log("claim ingest src=" .. tostring(src) .. " v=" .. tostring(id) .. " k=" .. tostring(kid))
+	return true
+end
+
 local function reset()
 	hold_fired = false
-	restore_tip()
+	last_look = nil
+	hide_prompt()
 	clear_session()
 	ensure_tick()
+	log_cfg()
 end
 
 local function on_save_state(m_data)
@@ -636,15 +752,27 @@ end
 local function on_load_state(m_data)
 	owners = {}
 	local saved = m_data and m_data[SAVE_KEY]
-	if type(saved) ~= "table" or type(saved.owner) ~= "table" then
-		return
-	end
-	for k, v in pairs(saved.owner) do
-		local id = tonumber(k)
-		if id and type(v) == "table" and v.killer then
-			owners[id] = { killer = tonumber(v.killer), squad = v.squad and tonumber(v.squad) or nil }
+	if type(saved) == "table" and type(saved.owner) == "table" then
+		for k, v in pairs(saved.owner) do
+			local id = tonumber(k)
+			if id and type(v) == "table" then
+				ingest_owner(id, v, "save")
+			end
 		end
 	end
+	local ap = m_data and m_data.ap_ext_loot_claim
+	if type(ap) == "table" and type(ap.owner) == "table" then
+		for k, v in pairs(ap.owner) do
+			if type(v) == "table" then
+				ingest_owner(tonumber(k), v, "ap")
+			end
+		end
+	end
+	local n = 0
+	for _ in pairs(owners) do
+		n = n + 1
+	end
+	log("load n=" .. tostring(n))
 end
 
 local function on_item_before_move(flags, npc_id)
@@ -662,11 +790,15 @@ function on_game_start()
 	RegisterScriptCallback("npc_on_death_callback", record_death)
 	RegisterScriptCallback("monster_on_death_callback", record_death)
 	RegisterScriptCallback("actor_on_first_update", wrap_deny_move)
+	RegisterScriptCallback("actor_on_update", function()
+		tick()
+	end)
 	RegisterScriptCallback("ActorMenu_on_item_before_move", on_item_before_move)
 	RegisterScriptCallback("save_state", on_save_state)
 	RegisterScriptCallback("load_state", on_load_state)
 	RegisterScriptCallback("on_game_load", reset)
 	RegisterScriptCallback("main_menu_on_init", reset)
 	RegisterScriptCallback("actor_on_net_destroy", reset)
+	log_cfg()
 	log("loaded")
 end

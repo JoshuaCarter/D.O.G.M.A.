@@ -12,15 +12,15 @@
 
 local CONFIG = _G.dogma_game_safe_spawn_conf
 local xsquad = dogma.xlibs.xsquad
-local xobject = dogma.xlibs.xobject
 
-local MOVE_M = 0.35
+local MOVE_M = 5
 
 local active = false
 local until_ms = 0
 local origin = nil
 local actor_id = nil
 local quiet = {}
+local hidden = {}
 
 local function log(msg)
 	if CONFIG.loaded.debug_log then
@@ -53,40 +53,66 @@ local function refill_quiet()
 	end
 end
 
--- only_online: hide currently spawned companions. Restore always hits the whole roster
--- so a crash mid-grace cannot leave can_switch_online stuck false.
-local function companions_switch(online, only_online)
-	local sim = alife()
-	if not sim then
+-- Flags alone do not despawn someone already online. switch_offline does.
+local function hide_se(se, id)
+	if not (se and se.online) then
 		return
 	end
+	se:can_switch_online(false)
+	se:can_switch_offline(true)
+	if se.switch_offline then
+		se:switch_offline()
+	end
+	hidden[id] = true
+end
+
+local function hide_companions()
+	refill_quiet()
 	local squads = axr_companions and axr_companions.companion_squads
 	if not squads then
 		return
 	end
 	for sid, squad in pairs(squads) do
-		if type(sid) == "number" and alife_object(sid) then
-			if not only_online or (squad and squad.online) then
-				sim:set_switch_online(sid, online)
-				sim:set_switch_offline(sid, true)
-			end
+		if type(sid) == "number" then
+			hide_se(alife_object(sid), sid)
 		end
 		for id in xsquad.iter_member_ids(squad) do
-			if alife_object(id) and (not only_online or xobject.go(id)) then
-				sim:set_switch_online(id, online)
-				sim:set_switch_offline(id, true)
-			end
+			hide_se(alife_object(id), id)
 		end
 	end
 end
 
-local function hide_companions()
-	refill_quiet()
-	companions_switch(false, true)
-end
-
+-- Restore flags on the whole roster (crash cannot leave can_switch_online false).
+-- switch_online only the ones we hid this grace, so waiters stay where they were.
 local function show_companions()
-	companions_switch(true, false)
+	local squads = axr_companions and axr_companions.companion_squads
+	if squads then
+		for sid, squad in pairs(squads) do
+			if type(sid) == "number" then
+				local se = alife_object(sid)
+				if se then
+					se:can_switch_online(true)
+					se:can_switch_offline(true)
+					if hidden[sid] and not se.online and se.switch_online then
+						se:switch_online()
+					end
+				end
+			end
+			for id in xsquad.iter_member_ids(squad) do
+				local se = alife_object(id)
+				if se then
+					se:can_switch_online(true)
+					se:can_switch_offline(true)
+					if hidden[id] and not se.online and se.switch_online then
+						se:switch_online()
+					end
+				end
+			end
+		end
+	end
+	for id in pairs(hidden) do
+		hidden[id] = nil
+	end
 	clear_quiet()
 end
 

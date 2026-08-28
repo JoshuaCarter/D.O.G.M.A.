@@ -67,25 +67,6 @@ local function restore_slot_after_pda()
     return 0
 end
 
--- Inv-from-PDA can Register_UI("UIInventory") without Close. last_mode is 0,
--- Check_UI still true, is_hud_free / inventory_wnd_open stay latched until
--- loot Close unregisters. Same cleanup, only when the menu is already gone.
--- actor_menu_mode sets last_mode AFTER the mode_changed callback, so close
--- passes force (the new mode is already 0).
-local function drop_stale_inv_ui(site, force)
-    if not force and not (actor_menu and actor_menu.last_mode == 0) then
-        return
-    end
-    if Check_UI and Check_UI("UIInventory") and Unregister_UI then
-        log("drop_stale_inv_ui(" .. site .. "): Unregister leftover UIInventory")
-        Unregister_UI("UIInventory")
-    end
-    if db.actor and db.actor:has_info("inventory_wnd_open") then
-        log("drop_stale_inv_ui(" .. site .. "): disable inventory_wnd_open")
-        disable_info("inventory_wnd_open")
-    end
-end
-
 local function holster_pda_for(kind, site, on_close)
     local sformat = string.format
     local tostr = tostring
@@ -141,7 +122,6 @@ local function on_actor_menu_mode_changed(mode, last_mode)
         if kind then
             holster_pda_for(kind, "mode_changed(close)", true)
         end
-        drop_stale_inv_ui("mode_changed(close)", true)
     end
 end
 
@@ -269,7 +249,6 @@ local function log_active_slot_transitions()
         scan_stalkers_before_pda()
     elseif last_seen_slot == PDA_SLOT then
         slot_before_pda = nil
-        drop_stale_inv_ui("left_pda")
     end
 
     log(string.format(

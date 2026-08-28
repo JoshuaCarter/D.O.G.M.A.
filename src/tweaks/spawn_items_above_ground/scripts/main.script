@@ -4,12 +4,20 @@
 	After the level is live, new unparented items (crate loot) often register
 	in the floor. Raise that server position by MCM metres (0 = off).
 	Off during load / new game / map change so existing world loot is left alone.
+
+	Online inventory spawns (stashes, NPCs, corpses) register with parent_id
+	cleared; the owner is still sitting on that same point so we skip those.
 ]]
 
 local CONFIG = _G.dogma_tweaks_spawn_items_above_ground_conf
 local xconst = dogma.xlibs.xconst
+local INVALID = xconst.INVALID_ENTITY_ID
+local IsInvbox, IsStalker, IsMonster = IsInvbox, IsStalker, IsMonster
 
 local live = false
+-- 0.1m: engine copies owner pos exactly. Crate loot sits 0.3m above the crate.
+local OWNER_R = 0.1
+local owned = false
 
 local function on_option_change()
 	CONFIG.loaded.height = dogma.mcm.float("dogma/tweaks", "spawn_items_above_ground", CONFIG.DEFAULTS.height)
@@ -27,12 +35,31 @@ local server_object_on_register_anon_1 = function(se)
 	return se:section_name()
 end
 
+local owner_clsid_anon = function(obj)
+	return obj:clsid()
+end
+
+local function owner_near(obj)
+	if owned then
+		return
+	end
+	local ok, cls = pcall(owner_clsid_anon, obj)
+	if ok and cls and (IsInvbox(nil, cls) or IsStalker(nil, cls) or IsMonster(nil, cls)) then
+		owned = true
+	end
+end
+
+local iterate_owners_anon = function(pos)
+	level.iterate_nearest(pos, OWNER_R, owner_near)
+end
+
 local function server_object_on_register(se)
 	local h = CONFIG.loaded.height
 	if not (live and se and h and h > 0) then
 		return
 	end
-	if se.parent_id and se.parent_id ~= xconst.INVALID_ENTITY_ID then
+	-- parent_id 0 is the actor; only 65535 means world
+	if se.parent_id ~= INVALID then
 		return
 	end
 	local ok, sec = pcall(server_object_on_register_anon_1, se)
@@ -41,6 +68,11 @@ local function server_object_on_register(se)
 	end
 	local p = se.position
 	if not p then
+		return
+	end
+	owned = false
+	pcall(iterate_owners_anon, p)
+	if owned then
 		return
 	end
 	local bx, by, bz = p.x, p.y, p.z

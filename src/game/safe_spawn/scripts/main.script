@@ -1,0 +1,164 @@
+--[[
+	Safe Spawn
+
+	On level load (actor_on_first_update) and same-map Fair Fast Travel
+	(on_before_fast_travel + dest.online): NPCs stop treating the actor as an
+	enemy, companions stop treating anyone as an enemy. Runtime only
+	(on_enemy_eval) so companion combat orders are never rewritten.
+
+	Ends after duration_sec, or when the actor moves or fires.
+]]
+
+local CONFIG = _G.dogma_game_safe_spawn_conf
+local xsquad = dogma.xlibs.xsquad
+
+local MOVE_M = 0.35
+
+local active = false
+local until_ms = 0
+local origin = nil
+local actor_id = nil
+local quiet = {}
+
+local function log(msg)
+	if CONFIG.loaded.debug_log then
+		dogma.log.log(CONFIG.MOD_ID, tostring(msg))
+	end
+end
+
+local function on_option_change()
+	CONFIG.loaded.debug_log = dogma.log.logging()
+	CONFIG.loaded.enabled = dogma.mcm.bool(CONFIG.MOD_ID, "enabled", CONFIG.DEFAULTS.enabled)
+	CONFIG.loaded.duration_sec = dogma.mcm.int(CONFIG.MOD_ID, "duration_sec", CONFIG.DEFAULTS.duration_sec)
+end
+
+local function clear_quiet()
+	for id in pairs(quiet) do
+		quiet[id] = nil
+	end
+end
+
+local function refill_quiet()
+	clear_quiet()
+	local squads = axr_companions and axr_companions.companion_squads
+	if not squads then
+		return
+	end
+	for _, squad in pairs(squads) do
+		for id in xsquad.iter_member_ids(squad) do
+			quiet[id] = true
+		end
+	end
+end
+
+local function copy_pos(pos)
+	return vector():set(pos.x, pos.y, pos.z)
+end
+
+local function stop(reason)
+	if not active then
+		return
+	end
+	active = false
+	until_ms = 0
+	origin = nil
+	actor_id = nil
+	clear_quiet()
+	log("off (" .. reason .. ")")
+end
+
+local function arm(pos)
+	local actor = dogma.sys.ready(CONFIG.MOD_ID, db, on_option_change)
+	if not (actor and actor:alive()) or not CONFIG.loaded.enabled then
+		return
+	end
+	local sec = CONFIG.loaded.duration_sec
+	if not sec or sec <= 0 then
+		return
+	end
+	if not pos then
+		pos = actor:position()
+	end
+	active = true
+	actor_id = actor:id()
+	origin = copy_pos(pos)
+	until_ms = time_global() + sec * 1000
+	refill_quiet()
+	log("on " .. tostring(sec) .. "s")
+end
+
+local function on_enemy_eval(obj, enemy, flags)
+	if not active then
+		return
+	end
+	if actor_id and enemy and enemy:id() == actor_id then
+		flags.override = true
+		flags.result = false
+		return
+	end
+	if obj and quiet[obj:id()] then
+		flags.override = true
+		flags.result = false
+	end
+end
+
+local function actor_on_update()
+	if not active then
+		return
+	end
+	local actor = dogma.sys.ready(CONFIG.MOD_ID, db, on_option_change)
+	if not (actor and actor:alive()) or not CONFIG.loaded.enabled then
+		stop("off")
+		return
+	end
+	if time_global() >= until_ms then
+		stop("time")
+		return
+	end
+	if origin and actor:position():distance_to(origin) > MOVE_M then
+		stop("move")
+		return
+	end
+	if IsMoveState("mcAnyMove") then
+		stop("move")
+		return
+	end
+	refill_quiet()
+end
+
+local function actor_on_weapon_fired()
+	if active then
+		stop("shot")
+	end
+end
+
+local function actor_on_first_update()
+	arm()
+end
+
+local function on_before_fast_travel(trip)
+	if not (trip and trip.dest and trip.dest.online and trip.dpos) then
+		return
+	end
+	arm(trip.dpos)
+end
+
+local function reset()
+	stop("reset")
+end
+
+function on_game_start()
+	dogma.load(CONFIG.MOD_ID)
+	on_option_change()
+	RegisterScriptCallback("on_option_change", on_option_change)
+	RegisterScriptCallback("on_enemy_eval", on_enemy_eval)
+	RegisterScriptCallback("actor_on_update", actor_on_update)
+	RegisterScriptCallback("actor_on_weapon_fired", actor_on_weapon_fired)
+	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+	RegisterScriptCallback("on_game_load", reset)
+	RegisterScriptCallback("actor_on_net_destroy", reset)
+	if rawget(_G, "game_fast_travel") then
+		RegisterScriptCallback("on_before_fast_travel", on_before_fast_travel)
+	end
+	log("loaded")
+end

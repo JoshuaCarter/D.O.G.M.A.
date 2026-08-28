@@ -1,0 +1,47 @@
+-- game/safe_spawn conf
+-- After load / same-map fast travel: NPCs ignore the actor, companions ignore combat.
+-- Ends after duration_sec, or when the actor moves or fires.
+
+_G.dogma_game_safe_spawn_conf = {
+	MOD_ID = "dogma/game/safe_spawn",
+	DEFAULTS = {
+		enabled = true,
+		duration_sec = 30,
+	},
+	loaded = {
+		debug_log = false,
+	},
+}
+
+function on_mcm_load(options)
+	local CONFIG = _G.dogma_game_safe_spawn_conf
+	dogma_mcm.attach(options, "game", "ui_mcm_menu_dogma_game", {
+		id = "safe_spawn",
+		sh = true,
+		text = "ui_mcm_menu_dogma_game_safe_spawn",
+		gr = dogma_mcm.with_header({
+			{
+				id = "page_description",
+				type = "desc",
+				text = "ui_mcm_dogma_game_safe_spawn_page_description",
+			},
+			{
+				id = "enabled",
+				type = "check",
+				val = 1,
+				def = CONFIG.DEFAULTS.enabled,
+				hint = "dogma_game_safe_spawn_enabled",
+			},
+			{
+				id = "duration_sec",
+				type = "track",
+				val = 2,
+				min = 5,
+				max = 60,
+				step = 1,
+				def = CONFIG.DEFAULTS.duration_sec,
+				hint = "dogma_game_safe_spawn_duration_sec",
+			},
+		}),
+	})
+end

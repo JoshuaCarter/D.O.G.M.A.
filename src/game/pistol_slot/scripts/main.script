@@ -1,15 +1,15 @@
 --[[
-	Pistol Slot
+    Pistol Slot
 
-	Engine slot 16 + ui_inventory cell_16 as a pistol holster.
-	Pistols also keep primary/secondary (cells 2/3). Vision stays cell 5 only.
-	Ejects junk from holster (16) and vision (5). Re-applies routing over GAMMA
-	knife/binoc slot sharing. Controls "Weapon 4 (Pistol)" draws / holsters 16.
+    Engine slot 16 + ui_inventory cell_16 as a pistol holster.
+    Pistols also keep primary/secondary (cells 2/3). Vision stays cell 5 only.
+    Ejects junk from holster (16) and vision (5). Re-applies routing over GAMMA
+    knife/binoc slot sharing. Controls "Weapon 4 (Pistol)" draws / holsters 16.
 
-	LTX also registers slot 15 (unused) so slot 16 can exist — Anomaly slots
-	must be sequential after vanilla's last slot 14.
+    LTX also registers slot 15 (unused) so slot 16 can exist — Anomaly slots
+    must be sequential after vanilla's last slot 14.
 
-	Quick melee compat: quick_melee.script (patches quickdraw namespace, not _G).
+    Quick melee compat: quick_melee.script (patches quickdraw namespace, not _G).
 ]]
 
 local CONFIG = _G.dogma_game_pistol_slot_conf
@@ -21,64 +21,64 @@ local VISION_SLOT = 5
 local ANIM_SLOT = 14
 
 local function ltx_slot(obj)
-	if not (obj and ini_sys) then
-		return nil
-	end
-	local sec = obj:section()
-	if not sec then
-		return nil
-	end
-	local s = ini_sys:r_float_ex(sec, "slot")
-	if s == nil then
-		return nil
-	end
-	return tonumber(s)
+    if not (obj and ini_sys) then
+        return nil
+    end
+    local sec = obj:section()
+    if not sec then
+        return nil
+    end
+    local s = ini_sys:r_float_ex(sec, "slot")
+    if s == nil then
+        return nil
+    end
+    return tonumber(s)
 end
 
 local function is_sidearm(obj)
-	if not obj or dogma.db.is_melee(obj:section()) or not dogma.db.is_weapon(obj:section()) then
-		return false
-	end
-	return ltx_slot(obj) == 1
+    if not obj or dogma.db.is_melee(obj:section()) or not dogma.db.is_weapon(obj:section()) then
+        return false
+    end
+    return ltx_slot(obj) == 1
 end
 
 local function is_binocular(obj)
-	return obj ~= nil and ltx_slot(obj) == 4
+    return obj ~= nil and ltx_slot(obj) == 4
 end
 
 local function block(flags)
-	if flags then
-		flags.ret_value = false
-	end
+    if flags then
+        flags.ret_value = false
+    end
 end
 
 local function log(msg)
-	if dogma.log.logging() then
-		dogma.log.log(MOD_ID, tostring(msg))
-	end
+    if dogma.log.logging() then
+        dogma.log.log(MOD_ID, tostring(msg))
+    end
 end
 
 local function can_use_keys()
-	local actor = db.actor
-	if not (actor and actor:alive()) then
-		return false
-	end
-	if dogma.status.is_inv_open() then
-		return false
-	end
-	return true
+    local actor = db.actor
+    if not (actor and actor:alive()) then
+        return false
+    end
+    if dogma.status.is_inv_open() then
+        return false
+    end
+    return true
 end
 
 local function draw_dik()
-	local spec = CONFIG.BINDS and CONFIG.BINDS.draw
-	local bind = spec and dogma.keys.bind_kb(spec.kb)
-	if not bind or not bind_to_dik then
-		return nil
-	end
-	local ok, dik = pcall(bind_to_dik, bind)
-	if ok and type(dik) == "number" and dik > 0 then
-		return dik
-	end
+    local spec = CONFIG.BINDS and CONFIG.BINDS.draw
+    local bind = spec and dogma.keys.bind_kb(spec.kb)
+    if not bind or not bind_to_dik then
+        return nil
+    end
+    local ok, dik = pcall(bind_to_dik, bind)
+    if ok and type(dik) == "number" and dik > 0 then
+        return dik
+    end
 end
 
 -- Engine Activate no-ops when next is already this slot. Inventory::Update then
@@ -86,171 +86,174 @@ end
 -- left-hand device is attached (CheckCompatibility allows knife, not that
 -- pistol). Drawing knife changes next and unblocks 3/V; do the same here.
 local function toggle_pistol_holster()
-	local tostr = tostring
-	local actor = db.actor
-	if not actor then
-		return
-	end
-	local holstered = actor:item_in_slot(PISTOL_SLOT)
-	if not holstered then
-		log("draw: slot 16 empty (active=" .. tostr(actor:active_slot()) .. ")")
-		return
-	end
-	if not is_sidearm(holstered) then
-		log("draw: slot 16 not sidearm " .. tostr(holstered:section()))
-		return
-	end
-	local from_slot = actor:active_slot()
-	if from_slot == PISTOL_SLOT then
-		actor:activate_slot(0)
-		log("holster")
-		return
-	end
-	local dummy = actor:item_in_slot(ANIM_SLOT)
-	if dummy then
-		local se = alife_object(dummy:id())
-		if se then
-			alife():release(se)
-		end
-	end
-	if holstered.switch_state then
-		holstered:switch_state(3)
-	end
-	if from_slot ~= 0 then
-		actor:activate_slot(0)
-	end
-	actor:activate_slot(PISTOL_SLOT)
-	log("draw " .. tostr(holstered:section()) .. " from 16 (was " .. tostr(from_slot) .. ")")
+    local tostr = tostring
+    local actor = db.actor
+    if not actor then
+        return
+    end
+    local holstered = actor:item_in_slot(PISTOL_SLOT)
+    if not holstered then
+        log("draw: slot 16 empty (active=" .. tostr(actor:active_slot()) .. ")")
+        return
+    end
+    if not is_sidearm(holstered) then
+        log("draw: slot 16 not sidearm " .. tostr(holstered:section()))
+        return
+    end
+    local from_slot = actor:active_slot()
+    if from_slot == PISTOL_SLOT then
+        actor:activate_slot(0)
+        log("holster")
+        return
+    end
+    local dummy = actor:item_in_slot(ANIM_SLOT)
+    if dummy then
+        local se = alife_object(dummy:id())
+        if se then
+            alife():release(se)
+        end
+    end
+    if holstered.switch_state then
+        log("switch state 3")
+        holstered:switch_state(3)
+    end
+    if from_slot ~= 0 then
+        actor:activate_slot(0)
+        log("activate slot 0")
+    end
+    actor:activate_slot(PISTOL_SLOT)
+    log("draw " .. tostr(holstered:section()) .. " from 16 (was " .. tostr(from_slot) .. ")")
 end
 
 -- Swallow the engine bind so other handlers do not also fire. Draw is polled.
 local function on_before_key_press(_key, bind, _dis, flags)
-	if not dogma.sys.ready(MOD_ID, db) then
-		return
-	end
-	local draw_bind = CONFIG.BINDS and dogma.keys.bind_kb(CONFIG.BINDS.draw.kb)
-	if draw_bind and bind == draw_bind then
-		block(flags)
-	end
+    if not dogma.sys.ready(MOD_ID, db) then
+        return
+    end
+    local draw_bind = CONFIG.BINDS and dogma.keys.bind_kb(CONFIG.BINDS.draw.kb)
+    if draw_bind and bind == draw_bind then
+        block(flags)
+    end
 end
 
 local function poll()
-	if not dogma.sys.ready(MOD_ID, db) or not can_use_keys() then
-		return
-	end
-	local dik = draw_dik()
-	if dik and dogma.input.is_key_pressed(dik) then
-		toggle_pistol_holster()
-	end
+    if not dogma.sys.ready(MOD_ID, db) or not can_use_keys() then
+        return
+    end
+    local dik = draw_dik()
+    if dik and dogma.input.is_key_pressed(dik) then
+        log("key pressed")
+        toggle_pistol_holster()
+    end
 end
 
 local function eject_if(slot, keep_fn)
-	local item = db.actor:item_in_slot(slot)
-	if item and not keep_fn(item) then
-		db.actor:move_to_ruck(item)
-		return nil
-	end
-	return item
+    local item = db.actor:item_in_slot(slot)
+    if item and not keep_fn(item) then
+        db.actor:move_to_ruck(item)
+        return nil
+    end
+    return item
 end
 
 local function sync_holster_cell(cc)
-	local item = eject_if(PISTOL_SLOT, is_sidearm)
-	if item then
-		cc:AddItemManual(item, nil, PISTOL_CELL)
-	else
-		cc:RemoveItemManual(PISTOL_CELL)
-	end
+    local item = eject_if(PISTOL_SLOT, is_sidearm)
+    if item then
+        cc:AddItemManual(item, nil, PISTOL_CELL)
+    else
+        cc:RemoveItemManual(PISTOL_CELL)
+    end
 end
 
 -- Only the keys we care about. Re-applied over GAMMA binoc_pistol_knife.
 local function apply_slot_routing(gui)
-	local sc = gui.slot_cell
-	if not sc then
-		return
-	end
-	sc[1] = { 1 } -- knife/axe (LTX slot 0) → melee cell only (not vision)
-	-- Pistol: holster first on double-click, still primary/secondary.
-	sc[PISTOL_TYPE_KEY] = { PISTOL_CELL, 2, 3 }
-	sc[VISION_SLOT] = { VISION_SLOT } -- binoculars → vision only
+    local sc = gui.slot_cell
+    if not sc then
+        return
+    end
+    sc[1] = { 1 } -- knife/axe (LTX slot 0) → melee cell only (not vision)
+    -- Pistol: holster first on double-click, still primary/secondary.
+    sc[PISTOL_TYPE_KEY] = { PISTOL_CELL, 2, 3 }
+    sc[VISION_SLOT] = { VISION_SLOT } -- binoculars → vision only
 end
 
 local function ensure_equ_cells(cc)
-	-- Vanilla inits 1..13. Keep 14..PISTOL_CELL dense for #cc.cell highlight loops.
-	for i = ANIM_SLOT, PISTOL_CELL do
-		if not cc.cell[i] then
-			cc:AddItemManual(nil, nil, i)
-		end
-	end
+    -- Vanilla inits 1..13. Keep 14..PISTOL_CELL dense for #cc.cell highlight loops.
+    for i = ANIM_SLOT, PISTOL_CELL do
+        if not cc.cell[i] then
+            cc:AddItemManual(nil, nil, i)
+        end
+    end
 end
 
 local function patch_inventory_gui(gui)
-	local cc = gui.CC and gui.CC["actor_equ"]
-	if not cc then
-		return
-	end
+    local cc = gui.CC and gui.CC["actor_equ"]
+    if not cc then
+        return
+    end
 
-	apply_slot_routing(gui)
+    apply_slot_routing(gui)
 
-	if gui._dogma_pistol_slot_patched then
-		return
-	end
-	gui._dogma_pistol_slot_patched = true
+    if gui._dogma_pistol_slot_patched then
+        return
+    end
+    gui._dogma_pistol_slot_patched = true
 
-	ensure_equ_cells(cc)
+    ensure_equ_cells(cc)
 
-	local orig_update = gui.UpdateSlots
-	gui.UpdateSlots = function(self, ...)
-		-- Stock loop: engine slot i → slot_cell[i][1]. With [2]={16,...} that
-		-- would draw/clear cell 16 from engine slot 2. Identity for type 2 only.
-		local sc = self.slot_cell
-		local saved = sc[PISTOL_TYPE_KEY]
-		sc[PISTOL_TYPE_KEY] = { 2 }
-		orig_update(self, ...)
-		sc[PISTOL_TYPE_KEY] = saved
-		apply_slot_routing(self)
+    local orig_update = gui.UpdateSlots
+    gui.UpdateSlots = function(self, ...)
+        -- Stock loop: engine slot i → slot_cell[i][1]. With [2]={16,...} that
+        -- would draw/clear cell 16 from engine slot 2. Identity for type 2 only.
+        local sc = self.slot_cell
+        local saved = sc[PISTOL_TYPE_KEY]
+        sc[PISTOL_TYPE_KEY] = { 2 }
+        orig_update(self, ...)
+        sc[PISTOL_TYPE_KEY] = saved
+        apply_slot_routing(self)
 
-		eject_if(VISION_SLOT, is_binocular)
+        eject_if(VISION_SLOT, is_binocular)
 
-		local equ = self.CC and self.CC["actor_equ"]
-		if equ then
-			sync_holster_cell(equ)
-			local vision = db.actor:item_in_slot(VISION_SLOT)
-			if vision then
-				equ:AddItemManual(vision, nil, VISION_SLOT)
-			else
-				equ:RemoveItemManual(VISION_SLOT)
-			end
-		end
-	end
+        local equ = self.CC and self.CC["actor_equ"]
+        if equ then
+            sync_holster_cell(equ)
+            local vision = db.actor:item_in_slot(VISION_SLOT)
+            if vision then
+                equ:AddItemManual(vision, nil, VISION_SLOT)
+            else
+                equ:RemoveItemManual(VISION_SLOT)
+            end
+        end
+    end
 end
 
 local on_gui_show_anon_1 = function()
-	local g = ui_inventory and ui_inventory.GUI
-	if g then
-		apply_slot_routing(g)
-	end
-	return true
+    local g = ui_inventory and ui_inventory.GUI
+    if g then
+        apply_slot_routing(g)
+    end
+    return true
 end
 
 local function on_gui_show(name)
-	if name ~= "UIInventory" then
-		return
-	end
-	local gui = ui_inventory and ui_inventory.GUI
-	if not gui then
-		return
-	end
-	patch_inventory_gui(gui)
-	-- Next tick beats other GUI_on_show slot_cell patches (binoc_pistol_knife).
-	CreateTimeEvent("dogma_pistol_slot", "slot_route", 0, on_gui_show_anon_1)
+    if name ~= "UIInventory" then
+        return
+    end
+    local gui = ui_inventory and ui_inventory.GUI
+    if not gui then
+        return
+    end
+    patch_inventory_gui(gui)
+    -- Next tick beats other GUI_on_show slot_cell patches (binoc_pistol_knife).
+    CreateTimeEvent("dogma_pistol_slot", "slot_route", 0, on_gui_show_anon_1)
 end
 
 function on_game_start()
-	dogma.load(MOD_ID)
-	if _G.SCANNED_SLOTS then
-		_G.SCANNED_SLOTS[PISTOL_SLOT] = true
-	end
-	RegisterScriptCallback("actor_on_update", poll)
-	RegisterScriptCallback("GUI_on_show", on_gui_show)
-	RegisterScriptCallback("on_before_key_press", on_before_key_press)
+    dogma.load(MOD_ID)
+    if _G.SCANNED_SLOTS then
+        _G.SCANNED_SLOTS[PISTOL_SLOT] = true
+    end
+    RegisterScriptCallback("actor_on_update", poll)
+    RegisterScriptCallback("GUI_on_show", on_gui_show)
+    RegisterScriptCallback("on_before_key_press", on_before_key_press)
 end

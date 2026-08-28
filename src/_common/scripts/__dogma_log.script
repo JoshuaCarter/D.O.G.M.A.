@@ -3,10 +3,10 @@
 
 	Features use dogma.log (wired by dogma.script).
 
-	flog(mod_id, msg, color)   - file only (printf)
-	clog(mod_id, msg, color)   - in-game console (engine log)
-	fclog(mod_id, msg, color)  - both
-	log(mod_id, msg, color)    - alias of fclog
+	log(mod_id, msg, color)  - printf (file + ~ console; one write)
+	say(mod_id, msg, color)  - engine log(); same LogFile, still hits the file
+
+	No separate file-only / console-only split. ~ paints LogFile.
 
 	All no-op when D.O.G.M.A. -> Debug -> debug log is off.
 	Lines are prefixed [dogma_cat_feat]. Color names shared with overlay.
@@ -79,25 +79,16 @@ local function line(mod_id, msg)
 	return "[" .. tag(mod_id) .. "] " .. tostring(msg)
 end
 
-function flog(mod_id, msg, color)
+function log(mod_id, msg, color)
 	if not logging() then
 		return
 	end
 	printf("%s%s", swatch(color).mark, line(mod_id, msg))
 end
 
-function clog(mod_id, msg, color)
+function say(mod_id, msg, color)
 	if not logging() or not engine_log then
 		return
 	end
 	engine_log(swatch(color).mark .. line(mod_id, msg))
-end
-
-function fclog(mod_id, msg, color)
-	flog(mod_id, msg, color)
-	clog(mod_id, msg, color)
-end
-
-function log(mod_id, msg, color)
-	fclog(mod_id, msg, color)
 end

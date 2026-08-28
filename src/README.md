@@ -55,7 +55,8 @@ or vanilla `on_before_key_press` + `key_bindings`.
 function on_game_start()
 	dogma.load(MOD_ID)  -- resets per-mod overlay state
 	-- live MCM: dogma.mcm.bool(MOD_ID, "x")
-	-- log: dogma.log.log(MOD_ID, msg, "green")  -- flog / clog / fclog / log (noop if debug log off)
+	-- log: dogma.log.log(MOD_ID, msg, "green")  -- printf, file + ~ (noop if debug log off)
+	-- say: dogma.log.say(MOD_ID, msg, "green")  -- engine log(); same buffer, also hits the file
 	-- overlay: dogma.overlay.enabled() / dogma.overlay.set(MOD_ID, 0, msg, "green")
 	-- input: dogma.input.is_key_down(dik)
 	-- status: dogma.status.is_in_combat() / is_inv_open() / is_eating() / is_drinking()

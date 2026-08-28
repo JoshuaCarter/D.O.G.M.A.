@@ -63,6 +63,10 @@ end
 
 local function pick_section(cat, result_tier)
     result_tier = clamp_tier(result_tier)
+    local min_t = CONSTS.STASH_CAT_MIN_TIER[cat]
+    if min_t and result_tier < min_t then
+        return nil
+    end
     local by = { {}, {}, {}, {}, {} }
     local seen = {}
     for i = 1, #CONSTS.STASH_FILL_CATS do
@@ -74,6 +78,9 @@ local function pick_section(cat, result_tier)
                 if sec and not seen[sec] and ini_sys:section_exist(sec) then
                     seen[sec] = true
                     local t = cost_to_tier(dogma.db.cost(sec), CONSTS.STASH_TIER_COST[cat])
+                    if min_t and t < min_t then
+                        t = min_t
+                    end
                     local b = by[t]
                     b[#b + 1] = sec
                 end

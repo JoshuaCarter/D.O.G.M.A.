@@ -23,7 +23,7 @@ local function disarm()
 	live = false
 end
 
-local function server_object_on_register_pcall_1(se)
+local server_object_on_register_anon_1 = function(se)
 	return se:section_name()
 end
 
@@ -35,7 +35,7 @@ local function server_object_on_register(se)
 	if se.parent_id and se.parent_id ~= xconst.INVALID_ENTITY_ID then
 		return
 	end
-	local ok, sec = pcall(server_object_on_register_pcall_1, se)
+	local ok, sec = pcall(server_object_on_register_anon_1, se)
 	if not (ok and sec and dogma.db.get(sec)) then
 		return
 	end

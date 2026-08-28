@@ -265,6 +265,14 @@ local function paint_on_hover(self, idx)
 	return call_base_hover(self, idx)
 end
 
+local update_inventories_wrapper_anon_1 = function(self)
+	if still_active() then
+		still_refresh(self)
+		return
+	end
+	return original_update_inventories(self)
+end
+
 local function reapply_still_patches()
 	local cls = ui_inventory and ui_inventory.UIInventory
 	if not cls then
@@ -272,16 +280,14 @@ local function reapply_still_patches()
 	end
 	if cls.UpdateInventories and cls.UpdateInventories ~= update_inventories_wrapper then
 		original_update_inventories = cls.UpdateInventories
-		update_inventories_wrapper = function(self)
-			if still_active() then
-				still_refresh(self)
-				return
-			end
-			return original_update_inventories(self)
-		end
+		update_inventories_wrapper = update_inventories_wrapper_anon_1
 		cls.UpdateInventories = update_inventories_wrapper
 		log("UpdateInventories patched")
 	end
+end
+
+local hover_wrapper_anon_1 = function(self, idx)
+	return paint_on_hover(self, idx)
 end
 
 local function reapply_on_hover_patch()
@@ -293,9 +299,7 @@ local function reapply_on_hover_patch()
 		return
 	end
 	original_on_hover = cc_class.On_Hover
-	hover_wrapper = function(self, idx)
-		return paint_on_hover(self, idx)
-	end
+	hover_wrapper = hover_wrapper_anon_1
 	cc_class.On_Hover = hover_wrapper
 	log("On_Hover patched")
 end
@@ -331,12 +335,14 @@ if original_on_update then
 	end
 end
 
+local on_game_start_anon_1 = function()
+	reapply_on_hover_patch()
+	reapply_still_patches()
+end
+
 function on_game_start()
 	dogma.load(MOD_ID)
-	RegisterScriptCallback("actor_on_first_update", function()
-		reapply_on_hover_patch()
-		reapply_still_patches()
-	end)
+	RegisterScriptCallback("actor_on_first_update", on_game_start_anon_1)
 	reapply_on_hover_patch()
 	reapply_still_patches()
 	log("hover ready")

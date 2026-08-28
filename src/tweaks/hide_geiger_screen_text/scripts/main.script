@@ -18,6 +18,13 @@ local function is_msv_toast(text)
 	return text:match("^%-?%d+ " .. rad_unit .. "$") ~= nil
 end
 
+local actor_menu_set_msg_anon_1 = function(slot, text, ...)
+	if is_msv_toast(text) then
+		return
+	end
+	return ORIG(slot, text, ...)
+end
+
 local function patch()
 	if not (actor_menu and actor_menu.set_msg) then
 		return
@@ -25,12 +32,7 @@ local function patch()
 	if not ORIG then
 		ORIG = actor_menu.set_msg
 	end
-	actor_menu.set_msg = function(slot, text, ...)
-		if is_msv_toast(text) then
-			return
-		end
-		return ORIG(slot, text, ...)
-	end
+	actor_menu.set_msg = actor_menu_set_msg_anon_1
 end
 
 function on_game_start()

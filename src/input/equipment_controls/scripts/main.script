@@ -521,36 +521,56 @@ local function on_option_change()
 	end
 end
 
+local chunk_anon_1 = function()
+	toggle_bolt()
+end
+
+local chunk_anon_2 = function(sec)
+	return sec == radio_sec()
+end
+
+local chunk_anon_3 = function(sec)
+	return sec == geiger_sec()
+end
+
+local chunk_anon_4 = function(sec)
+	return sec == anomaly_sec()
+end
+
+local chunk_anon_5 = function()
+	force_equip_glowstick(find_scanner(is_glowstick))
+end
+
+local chunk_anon_6 = function()
+	force_equip_scanner(find_scanner(is_artefact_detector))
+end
+
+local chunk_anon_7 = function()
+	force_equip_scanner(find_scanner(chunk_anon_2))
+end
+
+local chunk_anon_8 = function()
+	force_equip_scanner(find_scanner(chunk_anon_3))
+end
+
+local chunk_anon_9 = function()
+	force_equip_scanner(find_scanner(chunk_anon_4))
+end
+
+local chunk_anon_10 = function()
+	if not has_headlamp() then
+		force_equip_scanner(find_scanner(is_handheld_flashlight))
+	end
+end
+
 local PRESS = {
-	key_detector = function()
-		force_equip_scanner(find_scanner(is_artefact_detector))
-	end,
-	key_geiger = function()
-		force_equip_scanner(find_scanner(function(sec)
-			return sec == geiger_sec()
-		end))
-	end,
-	key_radio = function()
-		force_equip_scanner(find_scanner(function(sec)
-			return sec == radio_sec()
-		end))
-	end,
-	key_anomaly = function()
-		force_equip_scanner(find_scanner(function(sec)
-			return sec == anomaly_sec()
-		end))
-	end,
-	key_glowstick = function()
-		force_equip_glowstick(find_scanner(is_glowstick))
-	end,
-	key_torch = function()
-		if not has_headlamp() then
-			force_equip_scanner(find_scanner(is_handheld_flashlight))
-		end
-	end,
-	key_bolt = function()
-		toggle_bolt()
-	end,
+	key_detector = chunk_anon_6,
+	key_geiger = chunk_anon_8,
+	key_radio = chunk_anon_7,
+	key_anomaly = chunk_anon_9,
+	key_glowstick = chunk_anon_5,
+	key_torch = chunk_anon_10,
+	key_bolt = chunk_anon_1,
 }
 
 local function ours(dik, bind)

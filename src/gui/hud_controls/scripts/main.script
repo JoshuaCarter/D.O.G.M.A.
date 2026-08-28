@@ -313,18 +313,20 @@ local function reset()
 	map_desired = false
 end
 
+local on_game_start_anon_1 = function()
+	if not dogma.sys.ready(CONFIG.MOD_ID, db, load_opts) then
+		return
+	end
+	patch_companion()
+end
+
 function on_game_start()
 	dogma.load(CONFIG.MOD_ID)
 	load_opts()
 	reset()
 	logged_missing = false
 	patch_companion()
-	RegisterScriptCallback("actor_on_first_update", function()
-		if not dogma.sys.ready(CONFIG.MOD_ID, db, load_opts) then
-			return
-		end
-		patch_companion()
-	end)
+	RegisterScriptCallback("actor_on_first_update", on_game_start_anon_1)
 	RegisterScriptCallback("on_option_change", on_option_change)
 	RegisterScriptCallback("actor_on_update", actor_on_update)
 	RegisterScriptCallback("on_game_load", reset)

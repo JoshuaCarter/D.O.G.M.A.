@@ -1,12 +1,14 @@
 -- Steal prompt HUD static. AddCustomStatic native-crashes if this node is missing.
-function on_xml_read()
-	RegisterScriptCallback("on_xml_read", function(xml_file_name, xml_obj)
-		if xml_file_name ~= [[ui\ui_custom_msgs.xml]] then
-			return
-		end
-		xml_obj:insertFromXMLString([[	<dogma_badwill_steal_prompt x="0" y="633" width="1024" height="28" complex_mode="1">
-		<text font="graffiti22" r="231" g="168" b="12" a="255" align="c" vert_align="c"/>
+local on_xml_read_anon_1 = function(xml_file_name, xml_obj)
+	if xml_file_name ~= [[ui\ui_custom_msgs.xml]] then
+	return
+	end
+	xml_obj:insertFromXMLString([[	<dogma_badwill_steal_prompt x="0" y="633" width="1024" height="28" complex_mode="1">
+	<text font="graffiti22" r="231" g="168" b="12" a="255" align="c" vert_align="c"/>
 	</dogma_badwill_steal_prompt>]])
-		_G.dogma_badwill_steal_xml = true
-	end)
+	_G.dogma_badwill_steal_xml = true
+end
+
+function on_xml_read()
+	RegisterScriptCallback("on_xml_read", on_xml_read_anon_1)
 end

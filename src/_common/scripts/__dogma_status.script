@@ -288,13 +288,15 @@ local function reset()
 	bhs_maxhp = nil
 end
 
+local on_game_start_anon_1 = function()
+	reset()
+	ensure_tick()
+end
+
 function on_game_start()
 	ensure_tick()
 	RegisterScriptCallback("actor_on_item_use", on_item_use)
-	RegisterScriptCallback("on_game_load", function()
-		reset()
-		ensure_tick()
-	end)
+	RegisterScriptCallback("on_game_load", on_game_start_anon_1)
 	RegisterScriptCallback("main_menu_on_init", reset)
 	RegisterScriptCallback("main_menu_on_quit", reset)
 	RegisterScriptCallback("actor_on_net_destroy", reset)

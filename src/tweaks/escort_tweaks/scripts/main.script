@@ -208,6 +208,10 @@ local function leave_line()
 	return game.translate_string("st_jg_18")
 end
 
+local mod_get_phrase3_anon_1 = function()
+	return leave_line()
+end
+
 local function patch_pay()
 	local mod = rawget(_G, "tasks_guide")
 	if not mod or mod.__dogma_tweaks_escort_tweaks_pay then
@@ -215,9 +219,7 @@ local function patch_pay()
 	end
 
 	-- Cancel dialog: original line, not st_jg_cancel / "taking that money"
-	mod.get_phrase3 = function()
-		return leave_line()
-	end
+	mod.get_phrase3 = mod_get_phrase3_anon_1
 
 	-- Dialog cancel: kick, no wallet take (stock fail(); Scrunkly omitted it)
 	local orig_fail = mod.fail

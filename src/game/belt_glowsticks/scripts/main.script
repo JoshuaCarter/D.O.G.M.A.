@@ -125,14 +125,14 @@ local function convert_belt_item_to_device(item)
 end
 
 -- Device → belt twin, then move_to_belt (delayed like Remember Outfit Belt / Lukis).
-local function convert_device_to_belt_pcall_1(db, new_id)
+local convert_device_to_belt_anon_1 = function(db, new_id)
 	local belt_item = db.actor:object_id(new_id)
 	if belt_item then
 		db.actor:move_to_belt(belt_item)
 	end
 end
 
-local function convert_device_to_belt_pcall_2(convert_belt_item_to_device, db, new_id)
+local convert_device_to_belt_anon_2 = function(convert_belt_item_to_device, db, new_id)
 	local current = db.actor:object_id(new_id)
 	if not current then
 		return
@@ -172,10 +172,10 @@ local function convert_device_to_belt(item)
 	dogma.overlay.set(MOD_ID, 0, "device -> belt", "blue")
 
 	CreateTimeEvent(MOD_ID, "belt_equip_" .. new_id, 0.1, function()
-		pcall(convert_device_to_belt_pcall_1, db, new_id)
+		pcall(convert_device_to_belt_anon_1, db, new_id)
 
 		CreateTimeEvent(MOD_ID, "belt_verify_" .. new_id, 0.1, function()
-			pcall(convert_device_to_belt_pcall_2, convert_belt_item_to_device, db, new_id)
+			pcall(convert_device_to_belt_anon_2, convert_belt_item_to_device, db, new_id)
 			convert_in_progress = false
 			return true
 		end)

@@ -76,7 +76,7 @@ local function apply_gui(gui)
 	end
 end
 
-local function wrap_update_pcall_1(apply_gui, obj, orig)
+local wrap_update_anon_1 = function(apply_gui, obj, orig)
 	obj.Update = function(self)
 		orig(self)
 		apply_gui(self)
@@ -92,7 +92,7 @@ local function wrap_update(obj, label)
 	if type(orig) ~= "function" then
 		return false
 	end
-	local ok = pcall(wrap_update_pcall_1, apply_gui, obj, orig)
+	local ok = pcall(wrap_update_anon_1, apply_gui, obj, orig)
 	if ok and obj._dogma_popup_messages_offset then
 		log("wrap " .. label)
 		return true
@@ -113,7 +113,7 @@ local function patch_offset()
 	return wrap_update(mod.GUI, "ui_popup_messages.GUI.Update")
 end
 
-local function is_qm_dummy_pcall_1(item)
+local is_qm_dummy_anon_1 = function(item)
 	return item:section()
 end
 
@@ -121,7 +121,7 @@ local function is_qm_dummy(item)
 	if not item then
 		return false
 	end
-	local ok, sec = pcall(is_qm_dummy_pcall_1, item)
+	local ok, sec = pcall(is_qm_dummy_anon_1, item)
 	return ok and type(sec) == "string" and string.find(sec, "animation_hit", 1, true) ~= nil
 end
 

@@ -10,10 +10,12 @@
 	(Shift+Geiger still toggles body / environment).
 ]]
 
+local on_game_start_anon_1 = function()
+	if item_device then
+		item_device.dosimeter_env_rads_mode = true
+	end
+end
+
 function on_game_start()
-	RegisterScriptCallback("actor_on_first_update", function()
-		if item_device then
-			item_device.dosimeter_env_rads_mode = true
-		end
-	end)
+	RegisterScriptCallback("actor_on_first_update", on_game_start_anon_1)
 end

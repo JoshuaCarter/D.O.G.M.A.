@@ -511,6 +511,8 @@ local function tick_pending_pickup()
 end
 
 -- Returns true if loot succeeded.
+local gui_ShowDialog_anon_1 = function() end
+
 local function instant_slash_loot(obj)
 	if not (ui_mutant_loot and ui_mutant_loot.UIMutantLoot) then
 		log("slash_loot: ui_mutant_loot missing")
@@ -528,7 +530,7 @@ local function instant_slash_loot(obj)
 	-- FillList builds loot + may fire mutant encyclopedia unlock. Skip ShowDialog so
 	-- tips aren't swallowed by an open loot UI (FDDA auto-loot closes first).
 	local orig_show = gui.ShowDialog
-	gui.ShowDialog = function() end
+	gui.ShowDialog = gui_ShowDialog_anon_1
 	local can_show = gui:Reset(obj)
 	gui.ShowDialog = orig_show
 	if not can_show then

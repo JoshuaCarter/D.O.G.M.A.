@@ -180,7 +180,7 @@ end
 function UIItemLabels:__finalize()
 end
 
-local function UIItemLabels_EnsureLabels_pcall_1(ALIGN_CENTER, pickup_color, tc)
+local UIItemLabels_EnsureLabels_anon_1 = function(ALIGN_CENTER, pickup_color, tc)
 	tc:SetTextComplexMode(false)
 	tc:SetTextAlignment(ALIGN_CENTER)
 	tc:SetTextColor(pickup_color())
@@ -193,7 +193,7 @@ function UIItemLabels:EnsureLabels(n)
 	while #self.labels < n do
 		local st = self.xml:InitStatic("label", self)
 		local tc = st:TextControl()
-		pcall(UIItemLabels_EnsureLabels_pcall_1, ALIGN_CENTER, pickup_color, tc)
+		pcall(UIItemLabels_EnsureLabels_anon_1, ALIGN_CENTER, pickup_color, tc)
 		st:Show(false)
 		self.labels[#self.labels + 1] = st
 	end

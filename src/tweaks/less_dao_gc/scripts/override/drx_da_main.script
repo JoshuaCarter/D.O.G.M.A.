@@ -75,7 +75,7 @@ end
 
 -- UTILS
 --Recursive print of tables similar to PHP print_r function
-local print_r = print_r or function(t)
+local chunk_anon_42 = function(t)
     local print_r_cache={}
     local function sub_print_r(t,indent)
         if (print_r_cache[tostring(t)]) then
@@ -100,10 +100,12 @@ local print_r = print_r or function(t)
     sub_print_r(t,"  ")
 end
 
+local print_r = print_r or chunk_anon_42
+
 --Protected function call to prevent crashes to desktop
 --Prints error in console if occured, otherwise proceed normally
 --Use for test only, slower than usual
-local try = try or function(func, ...)
+local chunk_anon_32 = function(func, ...)
     local status, error_or_result = pcall(func, ...)
     if not status then
         printf(error_or_result)
@@ -112,6 +114,8 @@ local try = try or function(func, ...)
         return error_or_result, status
     end
 end
+
+local try = try or chunk_anon_32
 
 -- Shuffle table, Fisher-Yates shuffle with preserving original table
 local function shuffle(t)
@@ -1026,6 +1030,11 @@ function clean_dynamic_anomalies_on_level(level_name, dont_clean_restrictions)
     -- clean_restriction_tables()
 end
 
+local clean_dynamic_anomalies_global_anon_1 = function()
+    exec_console_cmd("save " .. (user_name() or "") .. " - DAO tempsave")
+    return true
+end
+
 function clean_dynamic_anomalies_global()
     remove_all_restrictions()
     get_obj_restrictions(true)
@@ -1116,10 +1125,7 @@ function clean_dynamic_anomalies_global()
     end
     printf("Cleaned dynamic anomalies globally")
     if settings.save_after_cleanup then
-        CreateTimeEvent("drx_da_save_after_cleanup", 0, 0.1, function()
-            exec_console_cmd("save " .. (user_name() or "") .. " - DAO tempsave")
-            return true
-        end)
+        CreateTimeEvent("drx_da_save_after_cleanup", 0, 0.1, clean_dynamic_anomalies_global_anon_1)
     end
 end
 
@@ -2089,74 +2095,98 @@ local function ray_main(pos1, pos2, args)
     return pick
 end
 
+local chunk_anon_1 = function(factors)
+    return factors.section == "zone_mine_electric"
+end
+
+local condition_anon_1 = function() return true end
+
+local condition_anon_2 = function() return true end
+
+local chunk_anon_3 = function(self, anomaly, actor, distance_to_sqr, radius_sqr)
+    self.factors[anomaly.object:name()] = nil
+end
+
+local condition_anon_3 = function() return false end
+
+local chunk_anon_4 = function()
+    local t = {}
+    for i = 0, 360 do
+        t[i] = sin(i * 0.0174533)
+    end
+    return t
+end
+
+local condition_anon_4 = function() return false end
+
+local chunk_anon_5 = function()
+    local t = {}
+    for i = 0, 360 do
+        t[i] = cos(i * 0.0174533)
+    end
+    return t
+end
+
+local chunk_anon_33 = function(self, anomaly, actor, distance_to_sqr, radius_sqr, section, factor)
+    self.factors[anomaly.object:name()] = {
+        section = section or anomaly.object:section(),
+        factor = factor or 1 - distance_to_sqr / radius_sqr
+    }
+end
+
+local chunk_anon_38 = function(self, anomaly, actor, distance_to_sqr, radius_sqr, condition)
+    if is_empty(self.factors) then
+        return 1 - distance_to_sqr / radius_sqr
+    end
+
+    local factor = 0
+    if condition == nil or condition == true then
+        condition = condition_anon_2
+    elseif condition == false then
+        condition = condition_anon_4
+    end
+
+    for k, v in pairs(self.factors) do
+        if condition(v) then
+            factor = factor + v.factor
+        end
+    end
+    return factor
+end
+
+local chunk_anon_39 = function(self, anomaly, actor, distance_to_sqr, radius_sqr, condition)
+    if is_empty(self.factors) then
+        return 1 - distance_to_sqr / radius_sqr
+    end
+
+    local factor = 0
+    if condition == nil or condition == true then
+        condition = condition_anon_1
+    elseif condition == false then
+        condition = condition_anon_3
+    end
+
+    for k, v in pairs(self.factors) do
+        if v.factor > factor and condition(v) then
+            factor = v.factor
+        end
+    end
+    return factor
+end
+
 anomalies_vars = {
     -- Quick lookup of sine values by degrees
-    sin_lut = (function()
-        local t = {}
-        for i = 0, 360 do
-            t[i] = sin(i * 0.0174533)
-        end
-        return t
-    end)(),
+    sin_lut = (chunk_anon_4)(),
 
     -- Quick lookup of cosine values by degrees
-    cos_lut = (function()
-        local t = {}
-        for i = 0, 360 do
-            t[i] = cos(i * 0.0174533)
-        end
-        return t
-    end)(),
+    cos_lut = (chunk_anon_5)(),
 
     -- Current anomaly factors
     factors = {},
-    add_factor = function(self, anomaly, actor, distance_to_sqr, radius_sqr, section, factor)
-        self.factors[anomaly.object:name()] = {
-            section = section or anomaly.object:section(),
-            factor = factor or 1 - distance_to_sqr / radius_sqr
-        }
-    end,
-    remove_factor = function(self, anomaly, actor, distance_to_sqr, radius_sqr)
-        self.factors[anomaly.object:name()] = nil
-    end,
-    find_max_factor = function(self, anomaly, actor, distance_to_sqr, radius_sqr, condition)
-        if is_empty(self.factors) then
-            return 1 - distance_to_sqr / radius_sqr
-        end
-
-        local factor = 0
-        if condition == nil or condition == true then
-            condition = function() return true end
-        elseif condition == false then
-            condition = function() return false end
-        end
-
-        for k, v in pairs(self.factors) do
-            if v.factor > factor and condition(v) then
-                factor = v.factor
-            end
-        end
-        return factor
-    end,
-    find_factor_sum = function(self, anomaly, actor, distance_to_sqr, radius_sqr, condition)
-        if is_empty(self.factors) then
-            return 1 - distance_to_sqr / radius_sqr
-        end
-
-        local factor = 0
-        if condition == nil or condition == true then
-            condition = function() return true end
-        elseif condition == false then
-            condition = function() return false end
-        end
-
-        for k, v in pairs(self.factors) do
-            if condition(v) then
-                factor = factor + v.factor
-            end
-        end
-        return factor
-    end,
+    add_factor = chunk_anon_33,
+    remove_factor = chunk_anon_3,
+    find_max_factor = chunk_anon_39,
+    find_factor_sum = chunk_anon_38,
 
     zone_mine_gravitational_weak_tg = 0,
     zone_mine_electric_tg = 0,
@@ -2164,9 +2194,7 @@ anomalies_vars = {
         {code = 98324, file = "electra_mine.ppe", factor = 0},
         {code = 98325, file = "electra.ppe", factor = 0},
     },
-    zone_mine_electric_factor_function = function(factors)
-        return factors.section == "zone_mine_electric"
-    end
+    zone_mine_electric_factor_function = chunk_anon_1
 }
 
 -- Defined radius of anomalies behaviour
@@ -2179,176 +2207,267 @@ anomalies_near_actor_radii = {
 }
 
 -- Special anomalies behaviour if the actor is near an anomaly
+local chunk_anon_6 = function(anomaly, actor, distance_to_sqr, radius_sqr)
+    anomalies_near_actor_functions.zone_mine_electric(anomaly, actor, distance_to_sqr, radius_sqr)
+end
+
+local chunk_anon_7 = function(anomaly, actor, distance_to_sqr, radius_sqr)
+    anomalies_near_actor_functions.zone_mine_electric(anomaly, actor, distance_to_sqr, radius_sqr)
+end
+
+local chunk_anon_8 = function(anomaly, actor, distance_to_sqr, radius_sqr)
+    anomalies_near_actor_functions.zone_mine_electric(anomaly, actor, distance_to_sqr, radius_sqr)
+end
+
+local chunk_anon_9 = function(anomaly, actor, distance_to_sqr, radius_sqr)
+    anomalies_near_actor_functions.zone_mine_electric(anomaly, actor, distance_to_sqr, radius_sqr)
+end
+
+local chunk_anon_10 = function(anomaly, actor, distance_to_sqr, radius_sqr)
+    anomalies_near_actor_functions.zone_mine_electric(anomaly, actor, distance_to_sqr, radius_sqr)
+end
+
+local chunk_anon_11 = function(anomaly, actor, distance_to_sqr, radius_sqr)
+    anomalies_near_actor_functions.zone_mine_electric(anomaly, actor, distance_to_sqr, radius_sqr)
+end
+
+local chunk_anon_12 = function(anomaly, actor, distance_to_sqr, radius_sqr)
+    anomalies_near_actor_functions.zone_mine_electric(anomaly, actor, distance_to_sqr, radius_sqr)
+end
+
+local chunk_anon_13 = function(anomaly, actor, distance_to_sqr, radius_sqr)
+    anomalies_near_actor_functions.zone_mine_electric(anomaly, actor, distance_to_sqr, radius_sqr)
+end
+
+local chunk_anon_14 = function(anomaly, actor, distance_to_sqr, radius_sqr)
+    anomalies_near_actor_functions.zone_mine_electric(anomaly, actor, distance_to_sqr, radius_sqr)
+end
+
+local chunk_anon_15 = function(anomaly, actor, distance_to_sqr, radius_sqr)
+    anomalies_near_actor_functions.zone_mine_electric(anomaly, actor, distance_to_sqr, radius_sqr)
+end
+
+local chunk_anon_16 = function(anomaly, actor, distance_to_sqr, radius_sqr)
+    anomalies_near_actor_functions.zone_mine_electric(anomaly, actor, distance_to_sqr, radius_sqr)
+end
+
+local chunk_anon_18 = function(anomaly, actor, distance_to_sqr, radius_sqr)
+    anomalies_near_actor_functions.zone_mine_gravitational_weak(anomaly, actor, distance_to_sqr, radius_sqr)
+end
+
+local chunk_anon_19 = function(anomaly, actor, distance_to_sqr, radius_sqr)
+    anomalies_near_actor_functions.zone_mine_gravitational_weak(anomaly, actor, distance_to_sqr, radius_sqr)
+end
+
+local chunk_anon_20 = function(anomaly, actor, distance_to_sqr, radius_sqr)
+    anomalies_near_actor_functions.zone_mine_gravitational_weak(anomaly, actor, distance_to_sqr, radius_sqr)
+end
+
+local chunk_anon_21 = function(anomaly, actor, distance_to_sqr, radius_sqr)
+    anomalies_near_actor_functions.zone_mine_gravitational_weak(anomaly, actor, distance_to_sqr, radius_sqr)
+end
+
+local chunk_anon_22 = function(anomaly, actor, distance_to_sqr, radius_sqr)
+    anomalies_near_actor_functions.zone_mine_gravitational_weak(anomaly, actor, distance_to_sqr, radius_sqr)
+end
+
+local chunk_anon_23 = function(anomaly, actor, distance_to_sqr, radius_sqr)
+    anomalies_near_actor_functions.zone_mine_gravitational_weak(anomaly, actor, distance_to_sqr, radius_sqr)
+end
+
+local chunk_anon_24 = function(anomaly, actor, distance_to_sqr, radius_sqr)
+    anomalies_near_actor_functions.zone_mine_gravitational_weak(anomaly, actor, distance_to_sqr, radius_sqr)
+end
+
+local chunk_anon_25 = function(anomaly, actor, distance_to_sqr, radius_sqr)
+    anomalies_near_actor_functions.zone_mine_gravitational_weak(anomaly, actor, distance_to_sqr, radius_sqr)
+end
+
+local chunk_anon_26 = function(anomaly, actor, distance_to_sqr, radius_sqr)
+    anomalies_near_actor_functions.zone_mine_gravitational_weak(anomaly, actor, distance_to_sqr, radius_sqr, 1)
+end
+
+local chunk_anon_27 = function(anomaly, actor, distance_to_sqr, radius_sqr)
+    anomalies_near_actor_functions.zone_mine_gravitational_weak(anomaly, actor, distance_to_sqr, radius_sqr, 1)
+end
+
+local chunk_anon_28 = function(anomaly, actor, distance_to_sqr, radius_sqr)
+    anomalies_near_actor_functions.zone_mine_gravitational_weak(anomaly, actor, distance_to_sqr, radius_sqr, 1)
+end
+
+local chunk_anon_29 = function(anomaly, actor, distance_to_sqr, radius_sqr)
+    anomalies_near_actor_functions.zone_mine_gravitational_weak(anomaly, actor, distance_to_sqr, radius_sqr, 1)
+end
+
+local chunk_anon_37 = function(anomaly, actor, distance_to_sqr, radius_sqr)
+    local change_modifier = 1 - distance_to_sqr / radius_sqr
+    if not anomaly.trigger_threshold then anomaly.trigger_threshold = 0 end
+
+    anomaly.trigger_threshold = anomaly.trigger_threshold + change_modifier * 0.5
+    if anomaly.trigger_threshold >= 1 then
+        thirst_sleep_changer.change_thirst_small(0.01)
+        anomaly.trigger_threshold = 0
+    end
+
+    actor:change_power(-change_modifier * 0.002)
+end
+
+local chunk_anon_41 = function(anomaly, actor, distance_to_sqr, radius_sqr)
+    local key ="zone_mine_green_dragon_speed"
+    local steps_in = 70
+    local steps_out = 22
+
+    add_simple_timed_effect(1, function()
+        add_speed(key, ema(key, 0.5, 1, steps_in), false, true)
+        RemoveTimeEvent(key, key)
+    end, function()
+        CreateTimeEvent(key, key, 0, function()
+            add_speed(key, ema(key, 1, 1, steps_out, device().time_delta * 0.1), false, true)
+            if smoothed_values[key] >= 0.98 then
+                remove_speed(key)
+                return true
+            end
+        end)
+    end, key, 1)
+end
+
+local chunk_anon_43 = function(anomaly, actor, distance_to_sqr, radius_sqr)
+    local key = "zone_mine_sphere"
+
+    if not callbacks[key] then
+        register_callback("actor_on_before_hit", function(s_hit, bone_id, flags)
+            if s_hit.type == hit.fire_wound then
+                s_hit.power = s_hit.power * random_float(0, 0.5)
+                play_sound_on_actor("eugenium_anomaly\\sphere\\sphere_blowout", 0.9, random_float(0.95, 1.05))
+                local gibs = particles_object("artefact\\artefact_gravi")
+                if gibs and not gibs:playing() then
+                    gibs:play_at_pos(actor:position())
+                end
+            end
+        end, nil, key)
+    end
+
+    add_simple_timed_effect(1, nil, function()
+        unregister_callback(key)
+    end, key, 1)
+end
+
+local chunk_anon_44 = function(anomaly, actor, distance_to_sqr, radius_sqr, power_modifier)
+    local key = "zone_mine_gravitational_weak"
+    local tg = time_global()
+
+    if tg < anomalies_vars.zone_mine_gravitational_weak_tg and timed_effects[key] then return end
+    anomalies_vars.zone_mine_gravitational_weak_tg = tg + 1000
+
+    local power_modifier = (power_modifier or 2) * settings.gravitational_shake_modifier
+    local earthquake_cam_eff = 98323
+    if power_modifier > 0 then
+        local power = (1.03 - distance_to_sqr / radius_sqr) * power_modifier
+        level.add_cam_effector("camera_effects\\earthquake_40.anm", earthquake_cam_eff, false, "", 0, false, power)
+    end
+
+    add_simple_timed_effect(1, nil, function()
+        level.remove_cam_effector(earthquake_cam_eff)
+    end, key, 1)
+end
+
+local chunk_anon_46 = function(anomaly, actor, distance_to_sqr, radius_sqr)
+    if not anomaly.spawn_time then anomaly.spawn_time = 0 end
+    if time_elapsed < anomaly.spawn_time then return end
+
+    local spawn_cooldown = 300
+    local spawn_max_amount = 2
+    local spawn_table = {
+        "m_poltergeist_normal_tele",
+        "m_poltergeist_normal_flame",
+    }
+
+    printf("trying to spawn poltergeist")
+
+    if random() * 100 <= 0.5 then
+        anomaly.spawn_time = time_elapsed + spawn_cooldown
+        local actor_position = actor:position()
+        local actor_gvid = alife():actor().m_game_vertex_id
+        for i = 1, ceil(random() ^ 2 * spawn_max_amount) do
+            local spawn_position = vector():set(actor_position.x - random_float(5, 7), actor_position.y, actor_position.z - random_float(5, 7))
+            local spawn_section = spawn_table[random(#spawn_table)]
+
+            alife_create(spawn_section, spawn_position, level_vertex_id(spawn_position), actor_gvid)
+        end
+    end
+end
+
+local chunk_anon_47 = function(anomaly, actor, distance_to_sqr, radius_sqr)
+    local h = hit()
+    h.power = level_environment.is_actor_immune() and 0 or (1 - distance_to_sqr / radius_sqr) * 0.004
+    if h.power > 0 then
+        h.type = hit.telepatic
+        h.impulse = 0
+        h.direction = VEC_Z
+        h.draftsman = actor
+
+        actor:hit(h)
+
+        -- Artefacts protection
+        local hit_additional = 0
+        actor:iterate_belt( function(owner, obj)
+            local sec = obj:section()
+            local cond = obj:condition()
+            local immunities_sec = SYS_GetParam(0, sec, "hit_absorbation_sect", sec)
+            local prot = SYS_GetParam(2, immunities_sec, "telepatic_immunity", 0) * cond
+
+            -- Optional modifier for viability
+            prot = prot * 10
+            hit_additional = hit_additional + prot
+        end)
+
+        -- Final modifier
+        local hit_modifier = hit_additional >= 0 and 1 + hit_additional or 1 / (1 - hit_additional)
+        local actor_hit_power = h.power / hit_modifier * 0.375
+        change_psy_health(-actor_hit_power)
+    end
+end
+
 anomalies_near_actor_functions = {
 
     -- Darkness, spawns poltergeist behind the actor
-    zone_mine_darkness = function(anomaly, actor, distance_to_sqr, radius_sqr)
-        if not anomaly.spawn_time then anomaly.spawn_time = 0 end
-        if time_elapsed < anomaly.spawn_time then return end
-
-        local spawn_cooldown = 300
-        local spawn_max_amount = 2
-        local spawn_table = {
-            "m_poltergeist_normal_tele",
-            "m_poltergeist_normal_flame",
-        }
-
-        printf("trying to spawn poltergeist")
-
-        if random() * 100 <= 0.5 then
-            anomaly.spawn_time = time_elapsed + spawn_cooldown
-            local actor_position = actor:position()
-            local actor_gvid = alife():actor().m_game_vertex_id
-            for i = 1, ceil(random() ^ 2 * spawn_max_amount) do
-                local spawn_position = vector():set(actor_position.x - random_float(5, 7), actor_position.y, actor_position.z - random_float(5, 7))
-                local spawn_section = spawn_table[random(#spawn_table)]
-
-                alife_create(spawn_section, spawn_position, level_vertex_id(spawn_position), actor_gvid)
-            end
-        end
-    end,
+    zone_mine_darkness = chunk_anon_46,
 
     -- Green Dragon, lower speed by 50% near it
-    zone_mine_green_dragon = function(anomaly, actor, distance_to_sqr, radius_sqr)
-        local key ="zone_mine_green_dragon_speed"
-        local steps_in = 70
-        local steps_out = 22
-
-        add_simple_timed_effect(1, function()
-            add_speed(key, ema(key, 0.5, 1, steps_in), false, true)
-            RemoveTimeEvent(key, key)
-        end, function()
-            CreateTimeEvent(key, key, 0, function()
-                add_speed(key, ema(key, 1, 1, steps_out, device().time_delta * 0.1), false, true)
-                if smoothed_values[key] >= 0.98 then
-                    remove_speed(key)
-                    return true
-                end
-            end)
-        end, key, 1)
-    end,
+    zone_mine_green_dragon = chunk_anon_41,
 
     -- Radar, negative psy aura
-    zone_mine_radar = function(anomaly, actor, distance_to_sqr, radius_sqr)
-        local h = hit()
-        h.power = level_environment.is_actor_immune() and 0 or (1 - distance_to_sqr / radius_sqr) * 0.004
-        if h.power > 0 then
-            h.type = hit.telepatic
-            h.impulse = 0
-            h.direction = VEC_Z
-            h.draftsman = actor
-
-            actor:hit(h)
-
-            -- Artefacts protection
-            local hit_additional = 0
-            actor:iterate_belt( function(owner, obj)
-                local sec = obj:section()
-                local cond = obj:condition()
-                local immunities_sec = SYS_GetParam(0, sec, "hit_absorbation_sect", sec)
-                local prot = SYS_GetParam(2, immunities_sec, "telepatic_immunity", 0) * cond
-
-                -- Optional modifier for viability
-                prot = prot * 10
-                hit_additional = hit_additional + prot
-            end)
-
-            -- Final modifier
-            local hit_modifier = hit_additional >= 0 and 1 + hit_additional or 1 / (1 - hit_additional)
-            local actor_hit_power = h.power / hit_modifier * 0.375
-            change_psy_health(-actor_hit_power)
-        end
-    end,
+    zone_mine_radar = chunk_anon_47,
 
     -- Sphere, add 50-100% bullet damage resist
-    zone_mine_sphere = function(anomaly, actor, distance_to_sqr, radius_sqr)
-        local key = "zone_mine_sphere"
-
-        if not callbacks[key] then
-            register_callback("actor_on_before_hit", function(s_hit, bone_id, flags)
-                if s_hit.type == hit.fire_wound then
-                    s_hit.power = s_hit.power * random_float(0, 0.5)
-                    play_sound_on_actor("eugenium_anomaly\\sphere\\sphere_blowout", 0.9, random_float(0.95, 1.05))
-                    local gibs = particles_object("artefact\\artefact_gravi")
-                    if gibs and not gibs:playing() then
-                        gibs:play_at_pos(actor:position())
-                    end
-                end
-            end, nil, key)
-        end
-
-        add_simple_timed_effect(1, nil, function()
-            unregister_callback(key)
-        end, key, 1)
-    end,
+    zone_mine_sphere = chunk_anon_43,
 
     -- Springboard, camera effect dependant on distance
-    zone_mine_gravitational_weak = function(anomaly, actor, distance_to_sqr, radius_sqr, power_modifier)
-        local key = "zone_mine_gravitational_weak"
-        local tg = time_global()
+    zone_mine_gravitational_weak = chunk_anon_44,
 
-        if tg < anomalies_vars.zone_mine_gravitational_weak_tg and timed_effects[key] then return end
-        anomalies_vars.zone_mine_gravitational_weak_tg = tg + 1000
+    zone_mine_gravitational_average = chunk_anon_26,
 
-        local power_modifier = (power_modifier or 2) * settings.gravitational_shake_modifier
-        local earthquake_cam_eff = 98323
-        if power_modifier > 0 then
-            local power = (1.03 - distance_to_sqr / radius_sqr) * power_modifier
-            level.add_cam_effector("camera_effects\\earthquake_40.anm", earthquake_cam_eff, false, "", 0, false, power)
-        end
+    zone_mine_gravitational_strong = chunk_anon_27,
 
-        add_simple_timed_effect(1, nil, function()
-            level.remove_cam_effector(earthquake_cam_eff)
-        end, key, 1)
-    end,
+    zone_mine_vortex = chunk_anon_28,
 
-    zone_mine_gravitational_average = function(anomaly, actor, distance_to_sqr, radius_sqr)
-        anomalies_near_actor_functions.zone_mine_gravitational_weak(anomaly, actor, distance_to_sqr, radius_sqr, 1)
-    end,
+    zone_mine_springboard = chunk_anon_29,
 
-    zone_mine_gravitational_strong = function(anomaly, actor, distance_to_sqr, radius_sqr)
-        anomalies_near_actor_functions.zone_mine_gravitational_weak(anomaly, actor, distance_to_sqr, radius_sqr, 1)
-    end,
+    zone_mine_blast = chunk_anon_18,
 
-    zone_mine_vortex = function(anomaly, actor, distance_to_sqr, radius_sqr)
-        anomalies_near_actor_functions.zone_mine_gravitational_weak(anomaly, actor, distance_to_sqr, radius_sqr, 1)
-    end,
+    zone_gravi_zone = chunk_anon_19,
 
-    zone_mine_springboard = function(anomaly, actor, distance_to_sqr, radius_sqr)
-        anomalies_near_actor_functions.zone_mine_gravitational_weak(anomaly, actor, distance_to_sqr, radius_sqr, 1)
-    end,
+    zone_mosquito_bald = chunk_anon_20,
 
-    zone_mine_blast = function(anomaly, actor, distance_to_sqr, radius_sqr)
-        anomalies_near_actor_functions.zone_mine_gravitational_weak(anomaly, actor, distance_to_sqr, radius_sqr)
-    end,
+    zone_mosquito_bald_weak = chunk_anon_21,
 
-    zone_gravi_zone = function(anomaly, actor, distance_to_sqr, radius_sqr)
-        anomalies_near_actor_functions.zone_mine_gravitational_weak(anomaly, actor, distance_to_sqr, radius_sqr)
-    end,
+    zone_mosquito_bald_weak_noart = chunk_anon_22,
 
-    zone_mosquito_bald = function(anomaly, actor, distance_to_sqr, radius_sqr)
-        anomalies_near_actor_functions.zone_mine_gravitational_weak(anomaly, actor, distance_to_sqr, radius_sqr)
-    end,
+    zone_mosquito_bald_average = chunk_anon_23,
 
-    zone_mosquito_bald_weak = function(anomaly, actor, distance_to_sqr, radius_sqr)
-        anomalies_near_actor_functions.zone_mine_gravitational_weak(anomaly, actor, distance_to_sqr, radius_sqr)
-    end,
+    zone_mosquito_bald_strong = chunk_anon_24,
 
-    zone_mosquito_bald_weak_noart = function(anomaly, actor, distance_to_sqr, radius_sqr)
-        anomalies_near_actor_functions.zone_mine_gravitational_weak(anomaly, actor, distance_to_sqr, radius_sqr)
-    end,
-
-    zone_mosquito_bald_average = function(anomaly, actor, distance_to_sqr, radius_sqr)
-        anomalies_near_actor_functions.zone_mine_gravitational_weak(anomaly, actor, distance_to_sqr, radius_sqr)
-    end,
-
-    zone_mosquito_bald_strong = function(anomaly, actor, distance_to_sqr, radius_sqr)
-        anomalies_near_actor_functions.zone_mine_gravitational_weak(anomaly, actor, distance_to_sqr, radius_sqr)
-    end,
-
-    zone_mosquito_bald_strong_noart = function(anomaly, actor, distance_to_sqr, radius_sqr)
-        anomalies_near_actor_functions.zone_mine_gravitational_weak(anomaly, actor, distance_to_sqr, radius_sqr)
-    end,
+    zone_mosquito_bald_strong_noart = chunk_anon_25,
 
     -- Electra, static field
     zone_mine_electric = function(anomaly, actor, distance_to_sqr, radius_sqr, effector_modifier)
@@ -2490,49 +2609,27 @@ anomalies_near_actor_functions = {
         end, "zone_mine_electric_pda_glitch", 1)
     end,
 
-    zone_mine_electric_weak = function(anomaly, actor, distance_to_sqr, radius_sqr)
-        anomalies_near_actor_functions.zone_mine_electric(anomaly, actor, distance_to_sqr, radius_sqr)
-    end,
+    zone_mine_electric_weak = chunk_anon_6,
 
-    zone_mine_electric_average = function(anomaly, actor, distance_to_sqr, radius_sqr)
-        anomalies_near_actor_functions.zone_mine_electric(anomaly, actor, distance_to_sqr, radius_sqr)
-    end,
+    zone_mine_electric_average = chunk_anon_7,
 
-    zone_mine_electric_strong = function(anomaly, actor, distance_to_sqr, radius_sqr)
-        anomalies_near_actor_functions.zone_mine_electric(anomaly, actor, distance_to_sqr, radius_sqr)
-    end,
+    zone_mine_electric_strong = chunk_anon_8,
 
-    zone_mine_static = function(anomaly, actor, distance_to_sqr, radius_sqr)
-        anomalies_near_actor_functions.zone_mine_electric(anomaly, actor, distance_to_sqr, radius_sqr)
-    end,
+    zone_mine_static = chunk_anon_9,
 
-    zone_mine_static_weak = function(anomaly, actor, distance_to_sqr, radius_sqr)
-        anomalies_near_actor_functions.zone_mine_electric(anomaly, actor, distance_to_sqr, radius_sqr)
-    end,
+    zone_mine_static_weak = chunk_anon_10,
 
-    zone_mine_static_average = function(anomaly, actor, distance_to_sqr, radius_sqr)
-        anomalies_near_actor_functions.zone_mine_electric(anomaly, actor, distance_to_sqr, radius_sqr)
-    end,
+    zone_mine_static_average = chunk_anon_11,
 
-    zone_mine_static_strong = function(anomaly, actor, distance_to_sqr, radius_sqr)
-        anomalies_near_actor_functions.zone_mine_electric(anomaly, actor, distance_to_sqr, radius_sqr)
-    end,
+    zone_mine_static_strong = chunk_anon_12,
 
-    zone_witches_galantine = function(anomaly, actor, distance_to_sqr, radius_sqr)
-        anomalies_near_actor_functions.zone_mine_electric(anomaly, actor, distance_to_sqr, radius_sqr)
-    end,
+    zone_witches_galantine = chunk_anon_13,
 
-    zone_witches_galantine_weak = function(anomaly, actor, distance_to_sqr, radius_sqr)
-        anomalies_near_actor_functions.zone_mine_electric(anomaly, actor, distance_to_sqr, radius_sqr)
-    end,
+    zone_witches_galantine_weak = chunk_anon_14,
 
-    zone_witches_galantine_average = function(anomaly, actor, distance_to_sqr, radius_sqr)
-        anomalies_near_actor_functions.zone_mine_electric(anomaly, actor, distance_to_sqr, radius_sqr)
-    end,
+    zone_witches_galantine_average = chunk_anon_15,
 
-    zone_witches_galantine_strong = function(anomaly, actor, distance_to_sqr, radius_sqr)
-        anomalies_near_actor_functions.zone_mine_electric(anomaly, actor, distance_to_sqr, radius_sqr)
-    end,
+    zone_witches_galantine_strong = chunk_anon_16,
 
 
     -- Ball Lightning, charges batteries
@@ -2558,116 +2655,109 @@ anomalies_near_actor_functions = {
     end,
 
     -- Liquid Gold, drains stamina and thirst
-    zone_mine_gold = function(anomaly, actor, distance_to_sqr, radius_sqr)
-        local change_modifier = 1 - distance_to_sqr / radius_sqr
-        if not anomaly.trigger_threshold then anomaly.trigger_threshold = 0 end
-
-        anomaly.trigger_threshold = anomaly.trigger_threshold + change_modifier * 0.5
-        if anomaly.trigger_threshold >= 1 then
-            thirst_sleep_changer.change_thirst_small(0.01)
-            anomaly.trigger_threshold = 0
-        end
-
-        actor:change_power(-change_modifier * 0.002)
-    end,
+    zone_mine_gold = chunk_anon_37,
 
 }
 -- Special behaviour for anomalies after spawn
+local chunk_anon_49 = function(anomaly)
+    if anomaly.spawn_position then
+        local spawn_position = anomaly.spawn_position
+        local obj = anomaly.object
+        local obj_set_anomaly_position = obj.set_anomaly_position
+        local vector = vector()
+        local vector_set = vector.set
+        local key = obj:name()
+
+        local sin_lut = anomalies_vars.sin_lut
+        local cos_lut = anomalies_vars.cos_lut
+
+        local i = random_choice(0, 45, 90, 135, 180)
+        local i_step = random_choice(1, 2, 3)
+        local j = 0
+        local j_step = 1
+        if i_step == 1 then
+            j_step = random_choice(2, 3)
+        elseif i_step == 2 then
+            j_step = random_choice(1, 3)
+        elseif i_step == 3 then
+            j_step = random_choice(2, 4)
+        end
+
+        local full_circle = 360
+
+        local function generate_distance()
+            return random() * 2.5 + 0.5
+        end
+
+        local x_modifier = generate_distance() * random_choice(1, -1)
+        local z_modifier = generate_distance() * random_choice(1, -1)
+
+        local function wrap(i)
+            return i >= full_circle and i % full_circle or i
+        end
+
+        local max_offset_y = 0.5
+        local max_offset_y_low = spawn_position.y - max_offset_y
+        local max_offset_y_high = spawn_position.y + max_offset_y
+
+        local prev_pos_x = spawn_position.x
+        local prev_pos_y = spawn_position.y
+        local prev_pos_z = spawn_position.z
+        register_callback("actor_on_update", function()
+            if i >= full_circle then
+                i = i % full_circle
+            end
+
+            if j >= full_circle then
+                j = j % full_circle
+            end
+
+            local offset_x = spawn_position.x + sin_lut[i] * x_modifier
+            local offset_z = spawn_position.z + sin_lut[j] * z_modifier
+            local offset_y = spawn_position.y
+
+            -- Adjust to height by checking lvid
+            local lvid = level_vertex_id(vector_set(vector, offset_x, offset_y, offset_z))
+            if (lvid < 4294967295) then
+                local pos_y = level_vertex_position(lvid).y
+                if abs(pos_y - prev_pos_y) < max_offset_y then
+                    offset_y = pos_y
+                end
+                -- offset_y = clamp(pos_y, max_offset_y_low, max_offset_y_high)
+            end
+
+            obj_set_anomaly_position(obj, vector_set(vector, offset_x, offset_y, offset_z))
+            anomaly.px = offset_x
+            anomaly.py = offset_y
+            anomaly.pz = offset_z
+            prev_pos_x = offset_x
+            prev_pos_y = offset_y
+            prev_pos_z = offset_z
+
+            local delta = min(50, device().time_delta) / 22 -- Frame independent movement, less than 20 fps will be slower due to prevent sudden pops
+            i = floor(i + i_step * delta)
+            j = floor(j + j_step * delta)
+        end, nil, key)
+    end
+end
+
 anomalies_spawn_functions = {
 
     -- Ghost, wandering path along its start position
-    zone_mine_ghost = function(anomaly)
-        if anomaly.spawn_position then
-            local spawn_position = anomaly.spawn_position
-            local obj = anomaly.object
-            local obj_set_anomaly_position = obj.set_anomaly_position
-            local vector = vector()
-            local vector_set = vector.set
-            local key = obj:name()
-
-            local sin_lut = anomalies_vars.sin_lut
-            local cos_lut = anomalies_vars.cos_lut
-
-            local i = random_choice(0, 45, 90, 135, 180)
-            local i_step = random_choice(1, 2, 3)
-            local j = 0
-            local j_step = 1
-            if i_step == 1 then
-                j_step = random_choice(2, 3)
-            elseif i_step == 2 then
-                j_step = random_choice(1, 3)
-            elseif i_step == 3 then
-                j_step = random_choice(2, 4)
-            end
-
-            local full_circle = 360
-
-            local function generate_distance()
-                return random() * 2.5 + 0.5
-            end
-
-            local x_modifier = generate_distance() * random_choice(1, -1)
-            local z_modifier = generate_distance() * random_choice(1, -1)
-
-            local function wrap(i)
-                return i >= full_circle and i % full_circle or i
-            end
-
-            local max_offset_y = 0.5
-            local max_offset_y_low = spawn_position.y - max_offset_y
-            local max_offset_y_high = spawn_position.y + max_offset_y
-
-            local prev_pos_x = spawn_position.x
-            local prev_pos_y = spawn_position.y
-            local prev_pos_z = spawn_position.z
-            register_callback("actor_on_update", function()
-                if i >= full_circle then
-                    i = i % full_circle
-                end
-
-                if j >= full_circle then
-                    j = j % full_circle
-                end
-
-                local offset_x = spawn_position.x + sin_lut[i] * x_modifier
-                local offset_z = spawn_position.z + sin_lut[j] * z_modifier
-                local offset_y = spawn_position.y
-
-                -- Adjust to height by checking lvid
-                local lvid = level_vertex_id(vector_set(vector, offset_x, offset_y, offset_z))
-                if (lvid < 4294967295) then
-                    local pos_y = level_vertex_position(lvid).y
-                    if abs(pos_y - prev_pos_y) < max_offset_y then
-                        offset_y = pos_y
-                    end
-                    -- offset_y = clamp(pos_y, max_offset_y_low, max_offset_y_high)
-                end
-
-                obj_set_anomaly_position(obj, vector_set(vector, offset_x, offset_y, offset_z))
-                anomaly.px = offset_x
-                anomaly.py = offset_y
-                anomaly.pz = offset_z
-                prev_pos_x = offset_x
-                prev_pos_y = offset_y
-                prev_pos_z = offset_z
-
-                local delta = min(50, device().time_delta) / 22 -- Frame independent movement, less than 20 fps will be slower due to prevent sudden pops
-                i = floor(i + i_step * delta)
-                j = floor(j + j_step * delta)
-            end, nil, key)
-        end
-    end,
+    zone_mine_ghost = chunk_anon_49,
 
 }
 
 -- Special behaviour for anomalies after destroy
+local chunk_anon_2 = function(anomaly)
+    local key = anomaly.object:name()
+    unregister_callback(key)
+end
+
 anomalies_destroy_functions = {
 
     -- Ghost, destroy callback for wandering
-    zone_mine_ghost = function(anomaly)
-        local key = anomaly.object:name()
-        unregister_callback(key)
-    end,
+    zone_mine_ghost = chunk_anon_2,
 
 }
 
@@ -2789,63 +2879,75 @@ function find_nearest_anomaly(force_enabled)
     return distance, anom_id, anom_sec, anom_pos
 end
 
+local chunk_anon_17 = function(self, anomaly, actor, distance_to_sqr, radius_sqr, custom_callback)
+    self.detector_anomaly_factors[anomaly.factor_key or anomaly.object:name()] = nil
+end
+
+local chunk_anon_30 = function(self, anomaly, actor, distance_to_sqr, radius_sqr, custom_callback)
+    self.detector_anomaly_factors[anomaly.factor_key or anomaly.object:name()] = 1 - distance_to_sqr / radius_sqr
+end
+
+local chunk_anon_34 = function(self, anomaly, actor, distance_to_sqr, radius_sqr, custom_callback)
+    if custom_callback then return end
+    local sec = anomaly.section
+    if drx_da_main_mcm.new_anomalies_sections[sec] or drx_da_main_mcm.variations_anomalies_sections[sec] then
+        self:play_anomaly_sound(anomaly, actor, distance_to_sqr, radius_sqr)
+    end
+end
+
+local chunk_anon_35 = function(self, anomaly, actor, distance_to_sqr, radius_sqr)
+    if not anomaly.sound_threshold then anomaly.sound_threshold = 0 end
+    anomaly.sound_threshold = anomaly.sound_threshold + (1 - distance_to_sqr / radius_sqr) ^ 2
+    if anomaly.sound_threshold > 1 then
+        play_sound_on_actor("detectors\\da-2_beep1")
+        anomaly.sound_threshold = 0
+    end
+end
+
+local chunk_anon_36 = function(self, anomaly, actor, distance_to_sqr, radius_sqr, custom_callback)
+    if is_empty(self.detector_anomaly_factors) then
+        return 1 - distance_to_sqr / radius_sqr
+    end
+
+    local factor = 0
+    for k, v in pairs(self.detector_anomaly_factors) do
+        if v > factor then
+            factor = v
+        end
+    end
+    return factor
+end
+
+local chunk_anon_40 = function(self, anomaly, actor, distance_to_sqr, radius_sqr, custom_callback)
+    if not custom_callback then return end
+    if not notify_active then
+        return
+    end
+    local sec = anomaly.section
+    self:detector_anomaly_add_factor(anomaly, actor, distance_to_sqr, radius_sqr, custom_callback)
+    if  notify_beep
+    and (drx_da_main_mcm.new_anomalies_sections[sec] or drx_da_main_mcm.variations_anomalies_sections[sec])
+    or  (not notify_beep and notify_active)
+    then
+        self:play_anomaly_sound(anomaly, actor, distance_to_sqr, radius_sqr)
+    end
+end
+
 detector_functions = {
     -- Play sound
-    play_anomaly_sound = function(self, anomaly, actor, distance_to_sqr, radius_sqr)
-        if not anomaly.sound_threshold then anomaly.sound_threshold = 0 end
-        anomaly.sound_threshold = anomaly.sound_threshold + (1 - distance_to_sqr / radius_sqr) ^ 2
-        if anomaly.sound_threshold > 1 then
-            play_sound_on_actor("detectors\\da-2_beep1")
-            anomaly.sound_threshold = 0
-        end
-    end,
+    play_anomaly_sound = chunk_anon_35,
 
     -- Store anomaly factors to find biggest one for correct display of anomaly_detector bars
     detector_anomaly_factors = {},
-    detector_anomaly_add_factor = function(self, anomaly, actor, distance_to_sqr, radius_sqr, custom_callback)
-        self.detector_anomaly_factors[anomaly.factor_key or anomaly.object:name()] = 1 - distance_to_sqr / radius_sqr
-    end,
-    detector_anomaly_remove_factor = function(self, anomaly, actor, distance_to_sqr, radius_sqr, custom_callback)
-        self.detector_anomaly_factors[anomaly.factor_key or anomaly.object:name()] = nil
-    end,
-    detector_anomaly_find_max_factor = function(self, anomaly, actor, distance_to_sqr, radius_sqr, custom_callback)
-        if is_empty(self.detector_anomaly_factors) then
-            return 1 - distance_to_sqr / radius_sqr
-        end
-
-        local factor = 0
-        for k, v in pairs(self.detector_anomaly_factors) do
-            if v > factor then
-                factor = v
-            end
-        end
-        return factor
-    end,
+    detector_anomaly_add_factor = chunk_anon_30,
+    detector_anomaly_remove_factor = chunk_anon_17,
+    detector_anomaly_find_max_factor = chunk_anon_36,
 
     detector_ui_segs = -1,
     detector_ui_black = false,
-    detector_anomaly = function(self, anomaly, actor, distance_to_sqr, radius_sqr, custom_callback)
-        if not custom_callback then return end
-        if not notify_active then
-            return
-        end
-        local sec = anomaly.section
-        self:detector_anomaly_add_factor(anomaly, actor, distance_to_sqr, radius_sqr, custom_callback)
-        if  notify_beep
-        and (drx_da_main_mcm.new_anomalies_sections[sec] or drx_da_main_mcm.variations_anomalies_sections[sec])
-        or  (not notify_beep and notify_active)
-        then
-            self:play_anomaly_sound(anomaly, actor, distance_to_sqr, radius_sqr)
-        end
-    end,
+    detector_anomaly = chunk_anon_40,
 
-    detector_scientific = function(self, anomaly, actor, distance_to_sqr, radius_sqr, custom_callback)
-        if custom_callback then return end
-        local sec = anomaly.section
-        if drx_da_main_mcm.new_anomalies_sections[sec] or drx_da_main_mcm.variations_anomalies_sections[sec] then
-            self:play_anomaly_sound(anomaly, actor, distance_to_sqr, radius_sqr)
-        end
-    end
+    detector_scientific = chunk_anon_34
 }
 
 function notify_anomaly(anomaly, actor, distance_to_sqr, radius_sqr, custom_callback)
@@ -3070,56 +3172,58 @@ function npc_on_item_take(npc, obj)
 end
 
 -- Anomalies special hit behaviour
+local chunk_anon_48 = function(s_hit, bone_id, flags, actor)
+    printf("change_time")
+    local health = actor.health
+    local change_hours = random(3, 8)
+    local change_minutes = random(1, 59)
+
+    level.change_game_time(0, change_hours, change_minutes)
+    level_weathers.get_weather_manager():select_weather(true)
+    surge_manager.get_surge_manager().time_forwarded = true
+    psi_storm_manager.get_psi_storm_manager().time_forwarded = true
+
+    s_hit.power = 0.001
+
+    local fatigue_light_state = true
+    if fatigue_light then
+        fatigue_light_state = fatigue_light.enabled
+        fatigue_light.enabled = false
+    end
+    CreateTimeEvent("zone_mine_flash", "zone_mine_flash", 0.1, function()
+        local new_health = actor.health
+        actor:set_health_ex(health)
+        actor:change_health(-random_float(0.01, 0.04))
+
+        -- Change thirst and sleep, params are from vanilla actor_status_sleep/thirst scripts
+        local sleep_params = {
+            step = 27,
+            check_after_sec = 300,
+        }
+
+        local thirst_params = {
+            step = 30,
+            check_after_sec = 300
+        }
+
+        local change_sleep_amount = (change_hours * 3600 + change_minutes * 60) / sleep_params.check_after_sec * sleep_params.step * 0.01
+        local change_thirst_amount = (change_hours * 3600 + change_minutes * 60) / thirst_params.check_after_sec * thirst_params.step * 0.01
+
+        thirst_sleep_changer.change_sleep(round(change_sleep_amount))
+        thirst_sleep_changer.change_thirst(round(change_thirst_amount))
+
+        if fatigue_light then
+            fatigue_light.enabled = fatigue_light_state
+        end
+
+        return true
+    end)
+end
+
 anomalies_hit_functions = {
 
     -- Flash special hit behaviour - Time travel
-    zone_mine_flash = function(s_hit, bone_id, flags, actor)
-        printf("change_time")
-        local health = actor.health
-        local change_hours = random(3, 8)
-        local change_minutes = random(1, 59)
-
-        level.change_game_time(0, change_hours, change_minutes)
-        level_weathers.get_weather_manager():select_weather(true)
-        surge_manager.get_surge_manager().time_forwarded = true
-        psi_storm_manager.get_psi_storm_manager().time_forwarded = true
-
-        s_hit.power = 0.001
-
-        local fatigue_light_state = true
-        if fatigue_light then
-            fatigue_light_state = fatigue_light.enabled
-            fatigue_light.enabled = false
-        end
-        CreateTimeEvent("zone_mine_flash", "zone_mine_flash", 0.1, function()
-            local new_health = actor.health
-            actor:set_health_ex(health)
-            actor:change_health(-random_float(0.01, 0.04))
-
-            -- Change thirst and sleep, params are from vanilla actor_status_sleep/thirst scripts
-            local sleep_params = {
-                step = 27,
-                check_after_sec = 300,
-            }
-
-            local thirst_params = {
-                step = 30,
-                check_after_sec = 300
-            }
-
-            local change_sleep_amount = (change_hours * 3600 + change_minutes * 60) / sleep_params.check_after_sec * sleep_params.step * 0.01
-            local change_thirst_amount = (change_hours * 3600 + change_minutes * 60) / thirst_params.check_after_sec * thirst_params.step * 0.01
-
-            thirst_sleep_changer.change_sleep(round(change_sleep_amount))
-            thirst_sleep_changer.change_thirst(round(change_thirst_amount))
-
-            if fatigue_light then
-                fatigue_light.enabled = fatigue_light_state
-            end
-
-            return true
-        end)
-    end,
+    zone_mine_flash = chunk_anon_48,
 
     -- Radiation field: drain batteries of active items
     -- zone_field_radioactive = function(s_hit, bone_id, flags, actor)
@@ -3159,15 +3263,17 @@ anomalies_hit_functions = {
 }
 
 -- Anomalies special hit behaviour on monster
+local chunk_anon_31 = function(monster, s_hit, bone_id, flags, actor)
+    printf("flash got hit %s", monster:section())
+    s_hit.power = 0
+    flags.ret_value = false
+    safe_release_manager.release(alife_object(monster:id()))
+end
+
 anomalies_monster_hit_functions = {
 
     -- Flash special hit behaviour - Time travel
-    zone_mine_flash = function(monster, s_hit, bone_id, flags, actor)
-        printf("flash got hit %s", monster:section())
-        s_hit.power = 0
-        flags.ret_value = false
-        safe_release_manager.release(alife_object(monster:id()))
-    end,
+    zone_mine_flash = chunk_anon_31,
 
     -- Reduce power for Rebounder
     -- zone_mine_sphere = function(monster, s_hit, bone_id, flags, actor)
@@ -3185,28 +3291,30 @@ anomalies_monster_hit_functions = {
 }
 
 -- Also used for monsters, filter for npcs or monsters specifically in functions bodies
+local chunk_anon_45 = function(anomaly, npc, actor)
+    local key = "zone_mine_sphere_" .. npc:name()
+    if not callbacks[key] then
+        register_callback(IsStalker(npc) and "npc_on_before_hit" or "monster_on_before_hit", function(npc_hit, s_hit, bone_id, flags)
+            if s_hit.type == hit.fire_wound and npc_hit:name() == npc:name() then
+                s_hit.power = s_hit.power * random_float(0, 0.5)
+                play_sound_on_actor("eugenium_anomaly\\sphere\\sphere_blowout", 1, random_float(0.95, 1.05), anomaly.object)
+                local gibs = particles_object("artefact\\artefact_gravi")
+                if gibs and not gibs:playing() then
+                    gibs:play_at_pos(npc_hit:position())
+                end
+            end
+        end, nil, key)
+    end
+
+    add_simple_timed_effect(0.7, nil, function()
+        unregister_callback(key)
+    end, key, 1)
+end
+
 npc_on_near_anomalies_functions = {
 
     -- Rebounder effect for NPCs
-    zone_mine_sphere = function(anomaly, npc, actor)
-        local key = "zone_mine_sphere_" .. npc:name()
-        if not callbacks[key] then
-            register_callback(IsStalker(npc) and "npc_on_before_hit" or "monster_on_before_hit", function(npc_hit, s_hit, bone_id, flags)
-                if s_hit.type == hit.fire_wound and npc_hit:name() == npc:name() then
-                    s_hit.power = s_hit.power * random_float(0, 0.5)
-                    play_sound_on_actor("eugenium_anomaly\\sphere\\sphere_blowout", 1, random_float(0.95, 1.05), anomaly.object)
-                    local gibs = particles_object("artefact\\artefact_gravi")
-                    if gibs and not gibs:playing() then
-                        gibs:play_at_pos(npc_hit:position())
-                    end
-                end
-            end, nil, key)
-        end
-
-        add_simple_timed_effect(0.7, nil, function()
-            unregister_callback(key)
-        end, key, 1)
-    end,
+    zone_mine_sphere = chunk_anon_45,
 
 }
 
@@ -3545,6 +3653,11 @@ function update_dynamic_anomalies_on_level_after_surge(level_name)
 end
 
 -- Removes all anomalies forcefully
+local force_clean_dynamic_anomalies_global_anon_1 = function()
+    exec_console_cmd("save " .. (user_name() or "") .. " - DAO tempsave")
+    return true
+end
+
 function force_clean_dynamic_anomalies_global()
     remove_all_restrictions()
     get_obj_restrictions(true)
@@ -3664,9 +3777,6 @@ function force_clean_dynamic_anomalies_global()
 
     printf("Cleaned dynamic anomalies globally")
     if settings.save_after_cleanup then
-        CreateTimeEvent("drx_da_save_after_cleanup", 0, 0.1, function()
-            exec_console_cmd("save " .. (user_name() or "") .. " - DAO tempsave")
-            return true
-        end)
+        CreateTimeEvent("drx_da_save_after_cleanup", 0, 0.1, force_clean_dynamic_anomalies_global_anon_1)
     end
 end

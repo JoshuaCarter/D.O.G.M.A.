@@ -67,7 +67,7 @@ local LOAD_ORDER = {
     "misc",
 }
 
-local function read_text_pcall_1(getFS, rel)
+local read_text_anon_1 = function(getFS, rel)
     return getFS():update_path("$game_config$", rel)
 end
 
@@ -75,7 +75,7 @@ local function read_text(rel)
     if not (getFS and getFS().update_path) then
         return nil
     end
-    local ok, abs = pcall(read_text_pcall_1, getFS, rel)
+    local ok, abs = pcall(read_text_anon_1, getFS, rel)
     if not (ok and abs and abs ~= "") then
         return nil
     end

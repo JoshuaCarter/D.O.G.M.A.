@@ -182,6 +182,12 @@ local function install()
 	return true
 end
 
+local on_game_start_anon_1 = function(_key, bind)
+	if key_bindings and bind == key_bindings.kCUSTOM24 then
+		install()
+	end
+end
+
 function on_game_start()
 	CreateTimeEvent("dogma_pistol_slot", "qm_install", 0, function()
 		if install() then
@@ -196,9 +202,5 @@ function on_game_start()
 		anm_state = 0
 		install()
 	end)
-	RegisterScriptCallback("on_before_key_press", function(_key, bind)
-		if key_bindings and bind == key_bindings.kCUSTOM24 then
-			install()
-		end
-	end)
+	RegisterScriptCallback("on_before_key_press", on_game_start_anon_1)
 end

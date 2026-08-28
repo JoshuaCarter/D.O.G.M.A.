@@ -1,30 +1,32 @@
 -- Bleed FX: corner blood HUD statics (1024² atlas, 512² quadrant per corner).
 -- Position/size applied at runtime from MCM scale.
-function on_xml_read()
-	RegisterScriptCallback("on_xml_read", function(xml_file_name, xml_obj)
-		if xml_file_name ~= [[ui\ui_custom_msgs.xml]] then
-			return
-		end
+local on_xml_read_anon_1 = function(xml_file_name, xml_obj)
+	if xml_file_name ~= [[ui\ui_custom_msgs.xml]] then
+	return
+	end
 
-		local CONFIG = _G.dogma_gui_fx_bleed_conf
-		local parts = {}
-		for app = 0, CONFIG.APPEARANCES - 1 do
-			for _, corner in ipairs(CONFIG.CORNERS) do
-				local layout = CONFIG.CORNER_LAYOUT[corner]
-				parts[#parts + 1] = string.format(
-					[[	<dogma_bleed_%d_%s x="0" y="0" width="512" height="512" stretch="1">
-		<texture x="%d" y="%d" width="512" height="512">hud_blood_%d</texture>
+	local CONFIG = _G.dogma_gui_fx_bleed_conf
+	local parts = {}
+	for app = 0, CONFIG.APPEARANCES - 1 do
+	for _, corner in ipairs(CONFIG.CORNERS) do
+	local layout = CONFIG.CORNER_LAYOUT[corner]
+	parts[#parts + 1] = string.format(
+	[[	<dogma_bleed_%d_%s x="0" y="0" width="512" height="512" stretch="1">
+	<texture x="%d" y="%d" width="512" height="512">hud_blood_%d</texture>
 	</dogma_bleed_%d_%s>]],
-					app,
-					corner,
-					layout.tx,
-					layout.ty,
-					app,
-					app,
-					corner
-				)
-			end
-		end
-		xml_obj:insertFromXMLString(table.concat(parts, "\n"))
-	end)
+	app,
+	corner,
+	layout.tx,
+	layout.ty,
+	app,
+	app,
+	corner
+	)
+	end
+	end
+	xml_obj:insertFromXMLString(table.concat(parts, "\n"))
+end
+
+function on_xml_read()
+	RegisterScriptCallback("on_xml_read", on_xml_read_anon_1)
 end

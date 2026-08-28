@@ -1,16 +1,18 @@
 -- Debug overlay HUD statics. Sets dogma_dbg_overlay_xml after inject.
 -- AddCustomStatic native-crashes if these nodes are missing.
-function on_xml_read()
-	RegisterScriptCallback("on_xml_read", function(xml_file_name, xml_obj)
-		if xml_file_name ~= [[ui\ui_custom_msgs.xml]] then
-			return
-		end
-		xml_obj:insertFromXMLString([[	<dogma_debug_overlay_panel x="10" y="50" width="200" height="80" stretch="1">
-		<texture>ui_inGame2_white_rect</texture>
+local on_xml_read_anon_1 = function(xml_file_name, xml_obj)
+	if xml_file_name ~= [[ui\ui_custom_msgs.xml]] then
+	return
+	end
+	xml_obj:insertFromXMLString([[	<dogma_debug_overlay_panel x="10" y="50" width="200" height="80" stretch="1">
+	<texture>ui_inGame2_white_rect</texture>
 	</dogma_debug_overlay_panel>]])
-		xml_obj:insertFromXMLString([[	<dogma_debug_overlay_text x="18" y="58" width="184" height="400" complex_mode="1">
-		<text font="letterica16" r="220" g="220" b="220" a="255" align="l" vert_align="t"/>
+	xml_obj:insertFromXMLString([[	<dogma_debug_overlay_text x="18" y="58" width="184" height="400" complex_mode="1">
+	<text font="letterica16" r="220" g="220" b="220" a="255" align="l" vert_align="t"/>
 	</dogma_debug_overlay_text>]])
-		_G.dogma_dbg_overlay_xml = true
-	end)
+	_G.dogma_dbg_overlay_xml = true
+end
+
+function on_xml_read()
+	RegisterScriptCallback("on_xml_read", on_xml_read_anon_1)
 end

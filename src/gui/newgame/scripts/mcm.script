@@ -228,6 +228,19 @@ local function apply_faction(self, s)
 	apply_zombied_story(self)
 end
 
+local apply_dropdowns_anon_1 = function(row)
+	return (row[1] or "") .. " " .. game.translate_string(row[2])
+end
+
+local apply_dropdowns_anon_2 = function(row)
+	return (row[1] or "") .. " " .. game.translate_string(row[2])
+end
+
+local apply_dropdowns_anon_3 = function(row)
+	local n = row[1] and (round_idp and round_idp(row[1] / 24) or math.floor(row[1] / 24))
+	return (n and tostring(n) or "") .. " " .. game.translate_string(row[2])
+end
+
 local function apply_dropdowns(self, s)
 	if want("remember_difficulty") then
 		pick_id(self, "list_difficulty", "table_difficulty", "selected_difficulty", s.difficulty)
@@ -236,20 +249,13 @@ local function apply_dropdowns(self, s)
 		pick_id(self, "list_economy", "table_economy", "selected_economy", s.economy)
 	end
 	if want("remember_lives") then
-		pick_row(self, "list_hardcore_lives", "table_hardcore_lives", "selected_hardcore_lives", s.lives, function(row)
-			return (row[1] or "") .. " " .. game.translate_string(row[2])
-		end)
+		pick_row(self, "list_hardcore_lives", "table_hardcore_lives", "selected_hardcore_lives", s.lives, apply_dropdowns_anon_1)
 	end
 	if want("remember_regen") then
-		pick_row(self, "list_hardcore_regen", "table_hardcore_regen", "selected_hardcore_regen", s.regen, function(row)
-			local n = row[1] and (round_idp and round_idp(row[1] / 24) or math.floor(row[1] / 24))
-			return (n and tostring(n) or "") .. " " .. game.translate_string(row[2])
-		end)
+		pick_row(self, "list_hardcore_regen", "table_hardcore_regen", "selected_hardcore_regen", s.regen, apply_dropdowns_anon_3)
 	end
 	if want("remember_timer") then
-		pick_row(self, "list_timer", "table_timer", "selected_timer", s.timer, function(row)
-			return (row[1] or "") .. " " .. game.translate_string(row[2])
-		end)
+		pick_row(self, "list_timer", "table_timer", "selected_timer", s.timer, apply_dropdowns_anon_2)
 	end
 end
 
@@ -360,58 +366,64 @@ local function wrap(cls, key, state_key, make)
 	return true
 end
 
-local function wrap_on_cc_mouse1(cls)
-	return wrap(cls, "On_CC_Mouse1", "wrap_mouse1", function(base)
-		if not base then
+local wrap_on_cc_mouse1_anon_1 = function(base)
+	if not base then
+		return
+	end
+	return function(self, cont, idx)
+		if not STATE.active then
+			arm_eat()
+		end
+		if STATE.eat_click then
 			return
 		end
-		return function(self, cont, idx)
-			if not STATE.active then
-				arm_eat()
-			end
-			if STATE.eat_click then
-				return
-			end
-			return base(self, cont, idx)
+		return base(self, cont, idx)
+	end
+end
+
+local function wrap_on_cc_mouse1(cls)
+	return wrap(cls, "On_CC_Mouse1", "wrap_mouse1", wrap_on_cc_mouse1_anon_1)
+end
+
+local wrap_update_anon_1 = function(base)
+	return function(self, ...)
+		if not STATE.active then
+			STATE.active = true
+			arm_eat()
 		end
-	end)
+		if self and self.CC and not self._dogma_remember_visit then
+			self._dogma_remember_visit = true
+			apply(self, true)
+		end
+		if base then
+			base(self, ...)
+		end
+		if STATE.eat_click and not mouse1_down() then
+			STATE.eat_click = nil
+		end
+	end
 end
 
 local function wrap_update(cls)
-	return wrap(cls, "Update", "wrap_update", function(base)
-		return function(self, ...)
-			if not STATE.active then
-				STATE.active = true
-				arm_eat()
-			end
-			if self and self.CC and not self._dogma_remember_visit then
-				self._dogma_remember_visit = true
-				apply(self, true)
-			end
-			if base then
-				base(self, ...)
-			end
-			if STATE.eat_click and not mouse1_down() then
-				STATE.eat_click = nil
-			end
+	return wrap(cls, "Update", "wrap_update", wrap_update_anon_1)
+end
+
+local wrap_on_quit_anon_1 = function(base)
+	if not base then
+		return
+	end
+	return function(self, ...)
+		STATE.active = nil
+		STATE.eat_click = nil
+		if self then
+			self._dogma_remember_visit = nil
 		end
-	end)
+		return base(self, ...)
+	end
 end
 
 local function wrap_on_quit(cls)
-	return wrap(cls, "OnQuit", "wrap_quit", function(base)
-		if not base then
-			return
-		end
-		return function(self, ...)
-			STATE.active = nil
-			STATE.eat_click = nil
-			if self then
-				self._dogma_remember_visit = nil
-			end
-			return base(self, ...)
-		end
-	end)
+	return wrap(cls, "OnQuit", "wrap_quit", wrap_on_quit_anon_1)
 end
 
 local function wrap_main_controls(cls)
@@ -430,52 +442,56 @@ local function wrap_main_controls(cls)
 	end)
 end
 
+local patch_new_game_anon_1 = function(base)
+	return function(self, ...)
+		persist(self)
+		if base then
+			return base(self, ...)
+		end
+	end
+end
+
+local patch_new_game_anon_2 = function(base)
+	if not base then
+		return
+	end
+	return function(self, rand, faction)
+		if not rand then
+			return base(self, rand, faction)
+		end
+		local s = saved()
+		if s then
+			apply_checks(self, s)
+			if want("remember_faction") and s.faction and (not self.table_faction or self.table_faction[s.faction]) then
+				faction = s.faction
+			end
+		end
+		local r = base(self, true, faction)
+		if s then
+			local prev_diff = self.selected_difficulty
+			local prev_eco = self.selected_economy
+			apply_zombied_story(self)
+			apply_name(self, s)
+			apply_icon(self, s)
+			apply_dropdowns(self, s)
+			apply_map(self, s)
+			if prev_diff ~= self.selected_difficulty or prev_eco ~= self.selected_economy then
+				reload_shop(self)
+			end
+		end
+		return r
+	end
+end
+
 local function patch_new_game()
 	local cls = ui_mm_faction_select and ui_mm_faction_select.UINewGame
 	if not cls then
 		return false
 	end
 
-	wrap(cls, "OnStartGame", "wrap_start", function(base)
-		return function(self, ...)
-			persist(self)
-			if base then
-				return base(self, ...)
-			end
-		end
-	end)
+	wrap(cls, "OnStartGame", "wrap_start", patch_new_game_anon_1)
 
-	wrap(cls, "UpdateAll", "wrap_all", function(base)
-		if not base then
-			return
-		end
-		return function(self, rand, faction)
-			if not rand then
-				return base(self, rand, faction)
-			end
-			local s = saved()
-			if s then
-				apply_checks(self, s)
-				if want("remember_faction") and s.faction and (not self.table_faction or self.table_faction[s.faction]) then
-					faction = s.faction
-				end
-			end
-			local r = base(self, true, faction)
-			if s then
-				local prev_diff = self.selected_difficulty
-				local prev_eco = self.selected_economy
-				apply_zombied_story(self)
-				apply_name(self, s)
-				apply_icon(self, s)
-				apply_dropdowns(self, s)
-				apply_map(self, s)
-				if prev_diff ~= self.selected_difficulty or prev_eco ~= self.selected_economy then
-					reload_shop(self)
-				end
-			end
-			return r
-		end
-	end)
+	wrap(cls, "UpdateAll", "wrap_all", patch_new_game_anon_2)
 
 	wrap_on_cc_mouse1(cls)
 	wrap_update(cls)

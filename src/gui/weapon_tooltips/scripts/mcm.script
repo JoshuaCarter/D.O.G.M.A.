@@ -110,11 +110,13 @@ local function vanilla_check(id, def, hint)
 end
 
 -- After Reset pending, MCM paints stock grey; re-apply dark grey.
-RegisterScriptCallback("mcm_option_reset", function()
+local chunk_anon_1 = function()
 	for opt, _ in pairs(VANILLA_CAP) do
 		paint_vanilla_cap(opt, false)
 	end
-end)
+end
+
+RegisterScriptCallback("mcm_option_reset", chunk_anon_1)
 function on_mcm_load(options)
 	-- UINewGame may only exist after faction_select loads; re-assert hooks.
 	if zzzz_dogma_gui_weapon_tooltips_loadout

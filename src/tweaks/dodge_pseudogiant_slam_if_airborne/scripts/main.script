@@ -14,7 +14,7 @@ local function log(msg)
 	dogma.log.log(CONFIG.MOD_ID, tostring(msg))
 end
 
-local function HOOK_STATE_grok_pcall_1(shit) return shit.draftsman:section() end
+local HOOK_STATE_grok_anon_1 = function(shit) return shit.draftsman:section() end
 
 function on_game_start()
 	dogma.load(CONFIG.MOD_ID)
@@ -35,7 +35,7 @@ function on_game_start()
 	HOOK_STATE.grok = function(shit, bone_id, flags)
 		local slam = false
 		if shit and shit.draftsman and shit.type == hit.strike then
-			local ok, sec = pcall(HOOK_STATE_grok_pcall_1, shit)
+			local ok, sec = pcall(HOOK_STATE_grok_anon_1, shit)
 			slam = ok and sec and string.find(sec, "gigant", 1, true) ~= nil
 		end
 

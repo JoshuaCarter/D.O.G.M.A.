@@ -213,15 +213,15 @@ end
 -- Atlas height from the live letterica16 .ini (1k/2k/4k packs change this, not the section name).
 local cached_font_px
 
-local function sect_h_pcall_1(ini, sect)
+local sect_h_anon_1 = function(ini, sect)
 	return ini:r_float(sect, "height")
 end
 
-local function font_ini_height_pcall_1(fs, rel)
+local font_ini_height_anon_1 = function(fs, rel)
 	return fs:exist("$game_textures$", rel)
 end
 
-local function font_ini_height_pcall_2(fs, rel)
+local font_ini_height_anon_2 = function(fs, rel)
 	return fs:update_path("$game_textures$", rel)
 end
 
@@ -240,14 +240,14 @@ local function font_ini_height()
 	local rels = { FONT_INI_REL .. prefix .. ".ini", FONT_INI_REL .. ".ini" }
 	for i = 1, #rels do
 		local rel = rels[i]
-		local ok_ex, exists = pcall(font_ini_height_pcall_1, fs, rel)
+		local ok_ex, exists = pcall(font_ini_height_anon_1, fs, rel)
 		if ok_ex and exists then
-			local ok_path, full = pcall(font_ini_height_pcall_2, fs, rel)
+			local ok_path, full = pcall(font_ini_height_anon_2, fs, rel)
 			if ok_path and full then
 				local ok_ini, ini = pcall(ini_file, full)
 				if ok_ini and ini then
 					local function sect_h(sect)
-						local ok, h = pcall(sect_h_pcall_1, ini, sect)
+						local ok, h = pcall(sect_h_anon_1, ini, sect)
 						return (ok and tonumber(h)) or nil
 					end
 					local h = sect_h("symbol_coords")
@@ -398,7 +398,7 @@ local function type_info(key)
 	return TYPE_INFO[key] or TYPE_INFO.unknown
 end
 
-local function raw_bone_name_pcall_1(a, bone_id)
+local raw_bone_name_anon_1 = function(a, bone_id)
 	return a:bone_name(bone_id)
 end
 
@@ -407,7 +407,7 @@ local function raw_bone_name(bone_id)
 	if not a or bone_id == nil then
 		return nil
 	end
-	local ok, name = pcall(raw_bone_name_pcall_1, a, bone_id)
+	local ok, name = pcall(raw_bone_name_anon_1, a, bone_id)
 	if ok and name and name ~= "" then
 		return name
 	end
@@ -487,10 +487,12 @@ local function looks_like_id(s)
 	return s:match("^[a-z][a-z0-9]*$") ~= nil
 end
 
+local title_case_words_anon_1 = function(a, rest)
+	return a:upper() .. rest:lower()
+end
+
 local function title_case_words(s)
-	return (s:gsub("(%a)([%w]*)", function(a, rest)
-		return a:upper() .. rest:lower()
-	end))
+	return (s:gsub("(%a)([%w]*)", title_case_words_anon_1))
 end
 
 local RANK_WORD = "Weak|Normal|Strong|Veteran|Expert|Master|Novice|Experienced|Average|Special"
@@ -553,7 +555,7 @@ local function community_label(comm)
 	return tr("ui_st_" .. comm) or tr("st_" .. comm) or tr(comm) or title_case_words(comm:gsub("_", " "))
 end
 
-local function is_actor_pcall_1(obj)
+local is_actor_anon_1 = function(obj)
 	return obj:id()
 end
 
@@ -561,39 +563,39 @@ local function is_actor(obj)
 	if not (obj and db.actor) then
 		return false
 	end
-	local ok, id = pcall(is_actor_pcall_1, obj)
+	local ok, id = pcall(is_actor_anon_1, obj)
 	return ok and id == db.actor:id()
 end
 
-local function object_section_pcall_1(obj)
+local object_section_anon_1 = function(obj)
 	return obj:section()
 end
 
 local function object_section(obj)
-	local ok, sec = pcall(object_section_pcall_1, obj)
+	local ok, sec = pcall(object_section_anon_1, obj)
 	if ok and sec and sec ~= "" then
 		return sec
 	end
 	return nil
 end
 
-local function object_char_name_pcall_1(obj)
+local object_char_name_anon_1 = function(obj)
 	return obj:character_name()
 end
 
 local function object_char_name(obj)
-	local ok, name = pcall(object_char_name_pcall_1, obj)
+	local ok, name = pcall(object_char_name_anon_1, obj)
 	if ok and name and name ~= "" and not looks_like_id(name) then
 		return name
 	end
 	return nil
 end
 
-local function weapon_obj_pcall_1(obj)
+local weapon_obj_anon_1 = function(obj)
 	return obj:id()
 end
 
-local function weapon_obj_pcall_2(draftsman)
+local weapon_obj_anon_2 = function(draftsman)
 	return draftsman:id()
 end
 
@@ -610,8 +612,8 @@ local function weapon_obj(shit, draftsman)
 		return nil
 	end
 	if draftsman then
-		local ok_id, did = pcall(weapon_obj_pcall_2, draftsman)
-		local ok_oid, oid = pcall(weapon_obj_pcall_1, obj)
+		local ok_id, did = pcall(weapon_obj_anon_2, draftsman)
+		local ok_oid, oid = pcall(weapon_obj_anon_1, obj)
 		if ok_id and ok_oid and did == oid then
 			return nil
 		end
@@ -626,7 +628,7 @@ local function weapon_label(obj)
 	return section_nice_name(object_section(obj), false)
 end
 
-local function ammo_list_for_pcall_1(obj, utils_item)
+local ammo_list_for_anon_1 = function(obj, utils_item)
 	return utils_item.get_ammo(nil, obj:id())
 end
 
@@ -635,7 +637,7 @@ local function ammo_list_for(obj)
 		return nil
 	end
 	if utils_item and utils_item.get_ammo then
-		local ok, list = pcall(ammo_list_for_pcall_1, obj, utils_item)
+		local ok, list = pcall(ammo_list_for_anon_1, obj, utils_item)
 		if ok and list and list[1] then
 			return list
 		end
@@ -661,7 +663,7 @@ local function ammo_list_for(obj)
 	return list
 end
 
-local function ammo_label_pcall_1(obj)
+local ammo_label_anon_1 = function(obj)
 	return obj:get_ammo_type()
 end
 
@@ -679,7 +681,7 @@ local function ammo_label(obj)
 	if not list then
 		return nil
 	end
-	local ok, idx = pcall(ammo_label_pcall_1, obj)
+	local ok, idx = pcall(ammo_label_anon_1, obj)
 	if not (ok and idx ~= nil) then
 		return nil
 	end
@@ -709,15 +711,15 @@ local function world_source(type_key)
 	return info.label, type_key
 end
 
-local function source_from_draftsman_pcall_1(IsStalker, draftsman)
+local source_from_draftsman_anon_1 = function(IsStalker, draftsman)
 	return IsStalker and IsStalker(draftsman)
 end
 
-local function source_from_draftsman_pcall_2(IsMonster, draftsman)
+local source_from_draftsman_anon_2 = function(IsMonster, draftsman)
 	return IsMonster and IsMonster(draftsman)
 end
 
-local function source_from_draftsman_pcall_3(IsAnomaly, draftsman)
+local source_from_draftsman_anon_3 = function(IsAnomaly, draftsman)
 	return IsAnomaly and IsAnomaly(draftsman)
 end
 
@@ -727,7 +729,7 @@ local function source_from_draftsman(draftsman, type_key)
 		return { name = name, kind = "world", type_key = tkey }
 	end
 
-	local ok_stalker, is_stalker = pcall(source_from_draftsman_pcall_1, IsStalker, draftsman)
+	local ok_stalker, is_stalker = pcall(source_from_draftsman_anon_1, IsStalker, draftsman)
 	if ok_stalker and is_stalker then
 		local name = object_char_name(draftsman)
 		local comm, comm_label
@@ -747,13 +749,13 @@ local function source_from_draftsman(draftsman, type_key)
 		return { name = name, faction = comm_label, comm = comm, kind = "stalker" }
 	end
 
-	local ok_mon, is_mon = pcall(source_from_draftsman_pcall_2, IsMonster, draftsman)
+	local ok_mon, is_mon = pcall(source_from_draftsman_anon_2, IsMonster, draftsman)
 	if ok_mon and is_mon then
 		local name = object_char_name(draftsman) or section_nice_name(object_section(draftsman), true)
 		return { name = clean_source_name(name), kind = "monster" }
 	end
 
-	local ok_an, is_an = pcall(source_from_draftsman_pcall_3, IsAnomaly, draftsman)
+	local ok_an, is_an = pcall(source_from_draftsman_anon_3, IsAnomaly, draftsman)
 	if ok_an and is_an then
 		return {
 			name = section_nice_name(object_section(draftsman), true),
@@ -1083,23 +1085,23 @@ local function clear_death_ui()
 	remove_static(TAB_STATIC)
 end
 
-local function set_text_pcall_1(font, wnd)
+local set_text_anon_1 = function(font, wnd)
 	wnd:SetFont(font)
 end
 
-local function set_text_pcall_2(font, tc)
+local set_text_anon_2 = function(font, tc)
 	tc:SetFont(font)
 end
 
-local function set_text_pcall_3(wnd)
+local set_text_anon_3 = function(wnd)
 	wnd:SetTextComplexMode(true)
 end
 
-local function set_text_pcall_4(tc)
+local set_text_anon_4 = function(tc)
 	tc:SetTextComplexMode(true)
 end
 
-local function set_text_pcall_5(h, vector2, w, wnd)
+local set_text_anon_5 = function(h, vector2, w, wnd)
 	wnd:SetWndSize(vector2():set(w, h))
 end
 
@@ -1110,32 +1112,32 @@ local function set_text(name, text, x, y, w, h)
 	end
 	wnd:SetWndPos(vector2():set(x, y))
 	if w and h then
-		pcall(set_text_pcall_5, h, vector2, w, wnd)
+		pcall(set_text_anon_5, h, vector2, w, wnd)
 	end
-	pcall(set_text_pcall_3, wnd)
+	pcall(set_text_anon_3, wnd)
 	local font = GetFontLetterica16Russian and GetFontLetterica16Russian()
 	if font then
-		pcall(set_text_pcall_1, font, wnd)
+		pcall(set_text_anon_1, font, wnd)
 	end
 	local tc = wnd:TextControl()
 	if tc then
-		pcall(set_text_pcall_4, tc)
+		pcall(set_text_anon_4, tc)
 		if font then
-			pcall(set_text_pcall_2, font, tc)
+			pcall(set_text_anon_2, font, tc)
 		end
 		tc:SetText(text or "")
 	end
 end
 
-local function show_panel_pcall_1(PANEL_TEX, wnd)
+local show_panel_anon_1 = function(PANEL_TEX, wnd)
 	wnd:InitTexture(PANEL_TEX)
 end
 
-local function show_panel_pcall_2(wnd)
+local show_panel_anon_2 = function(wnd)
 	wnd:SetStretchTexture(true)
 end
 
-local function show_panel_pcall_3(GetARGB, wnd)
+local show_panel_anon_3 = function(GetARGB, wnd)
 	wnd:SetTextureColor(GetARGB(175, 8, 8, 10))
 end
 
@@ -1146,12 +1148,12 @@ local function show_panel(x, y, w, h)
 	end
 	wnd:SetWndPos(vector2():set(x, y))
 	wnd:SetWndSize(vector2():set(w, h))
-	pcall(show_panel_pcall_1, PANEL_TEX, wnd)
-	pcall(show_panel_pcall_2, wnd)
-	pcall(show_panel_pcall_3, GetARGB, wnd)
+	pcall(show_panel_anon_1, PANEL_TEX, wnd)
+	pcall(show_panel_anon_2, wnd)
+	pcall(show_panel_anon_3, GetARGB, wnd)
 end
 
-local function show_hit_summary_pcall_1(tw)
+local show_hit_summary_anon_1 = function(tw)
 	tw:AdjustHeightToText()
 end
 
@@ -1206,7 +1208,7 @@ local function show_hit_summary()
 	set_text(HIT_STATIC, table.concat(chunks, "\\n"), text_x, text_y, text_w, UI_H)
 	local tw = hud_wnd(HIT_STATIC)
 	if tw then
-		pcall(show_hit_summary_pcall_1, tw)
+		pcall(show_hit_summary_anon_1, tw)
 		local text_h = tonumber(tw.GetHeight and tw:GetHeight()) or 0
 		if text_h >= 1 then
 			local pw = hud_wnd(PANEL_STATIC)

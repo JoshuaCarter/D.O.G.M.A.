@@ -73,6 +73,14 @@ local function is_equipped(obj)
 	return false
 end
 
+local do_disa_anon_1 = function()
+	local g = ui_inventory and ui_inventory.GUI
+	if g and g.mode == "loot" and g.On_Item_Update then
+		g:On_Item_Update()
+	end
+	return true
+end
+
 local function do_disa(gui, obj)
 	if is_equipped(obj) then
 		return
@@ -89,13 +97,7 @@ local function do_disa(gui, obj)
 	-- undefined order, so wait a tick after that delay before rebuilding loot.
 	if gui and gui.mode == "loot" then
 		local delay = actor_effects.is_animations_on() and 3.05 or 0.05
-		CreateTimeEvent("dogma_disa_loot", id, delay, function()
-			local g = ui_inventory and ui_inventory.GUI
-			if g and g.mode == "loot" and g.On_Item_Update then
-				g:On_Item_Update()
-			end
-			return true
-		end)
+		CreateTimeEvent("dogma_disa_loot", id, delay, do_disa_anon_1)
 	end
 end
 

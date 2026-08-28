@@ -140,7 +140,7 @@ end
 
 -- Ammo types this gun should drop: loaded type + matching inventory ammo.
 -- Falls back to a random db ammo_class entry if nothing matched.
-local function ammo_types_for_gun_pcall_1(wpn)
+local ammo_types_for_gun_anon_1 = function(wpn)
     return wpn:get_ammo_type()
 end
 
@@ -170,7 +170,7 @@ local function ammo_types_for_gun(wpn, inv_ammo)
 
     local matched = {}
     if wpn.get_ammo_type then
-        local ok, idx = pcall(ammo_types_for_gun_pcall_1, wpn)
+        local ok, idx = pcall(ammo_types_for_gun_anon_1, wpn)
         if ok and idx ~= nil then
             local loaded = ammo_list[idx + 1]
             if loaded and allowed[loaded] then
@@ -283,9 +283,11 @@ local function log_corpse_roll(npc, result)
     end
 end
 
+local patched_try_spawn_ammo_anon_1 = function() CONFIG:load_mcm() end
+
 local function patched_try_spawn_ammo(npc)
     original_try_spawn_ammo(npc)
-    if not dogma.sys.ready(MOD_ID, db, function() CONFIG:load_mcm() end) then
+    if not dogma.sys.ready(MOD_ID, db, patched_try_spawn_ammo_anon_1) then
         return
     end
     if not npc then
@@ -334,16 +336,18 @@ local function on_load_state(m_data)
     pending_rolls = m_data[PENDING_ROLLS_KEY] or {}
 end
 
+local on_game_start_anon_1 = function(mode)
+    if mode == "loot" then
+        flush_open_loot()
+    end
+end
+
 function on_game_start()
     Tiers = _G.dogma_game_weapons_ban_tiers
     CONFIG:ensure_dogma()
     RegisterScriptCallback("actor_on_first_update", try_hook_ammo)
     RegisterScriptCallback("ActorMenu_on_mode_changed", flush_open_loot)
-    RegisterScriptCallback("ActorMenu_on_before_init_mode", function(mode)
-        if mode == "loot" then
-            flush_open_loot()
-        end
-    end)
+    RegisterScriptCallback("ActorMenu_on_before_init_mode", on_game_start_anon_1)
     RegisterScriptCallback("save_state", on_save_state)
     RegisterScriptCallback("load_state", on_load_state)
     try_hook_ammo()

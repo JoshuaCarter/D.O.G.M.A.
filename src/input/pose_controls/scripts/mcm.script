@@ -88,6 +88,18 @@ local function set_hold_toggle(mode)
 	exec_console_cmd("cfg_save")
 end
 
+local on_mcm_load_anon_1 = function()
+	return key_bindings and key_bindings.kACCEL
+end
+
+local on_mcm_load_anon_2 = function()
+	return key_bindings and key_bindings.kCROUCH
+end
+
+local on_mcm_load_anon_3 = function()
+	return key_bindings and (key_bindings.kSPRINT_TOGGLE or key_bindings.kSPRINT)
+end
+
 function on_mcm_load(options)
 	local kb_mod = (ui_mcm and ui_mcm.kb_mod_radio) or "radio_h"
 	local gr = {
@@ -115,19 +127,13 @@ function on_mcm_load(options)
 			type = "desc",
 			text = "ui_mcm_dogma_input_pose_controls_keys_desc",
 		},
-		dogma_mcm.mcm.key_mirror("sprint_toggle", function()
-			return key_bindings and (key_bindings.kSPRINT_TOGGLE or key_bindings.kSPRINT)
-		end):option("sprint_key", "dogma_input_pose_controls_sprint_key"),
+		dogma_mcm.mcm.key_mirror("sprint_toggle", on_mcm_load_anon_3):option("sprint_key", "dogma_input_pose_controls_sprint_key"),
 	}
 	if WALK_MIRROR then
 		gr[#gr + 1] = WALK_MIRROR:option("walk_key", "dogma_input_pose_controls_walk_key")
 	end
-	gr[#gr + 1] = dogma_mcm.mcm.key_mirror("crouch", function()
-		return key_bindings and key_bindings.kCROUCH
-	end):option("crouch_key", "dogma_input_pose_controls_crouch_key")
-	gr[#gr + 1] = dogma_mcm.mcm.key_mirror("accel", function()
-		return key_bindings and key_bindings.kACCEL
-	end):option("prone_key", "dogma_input_pose_controls_prone_key")
+	gr[#gr + 1] = dogma_mcm.mcm.key_mirror("crouch", on_mcm_load_anon_2):option("crouch_key", "dogma_input_pose_controls_crouch_key")
+	gr[#gr + 1] = dogma_mcm.mcm.key_mirror("accel", on_mcm_load_anon_1):option("prone_key", "dogma_input_pose_controls_prone_key")
 	gr[#gr + 1] = { id = "line_sprint", type = "line" }
 	gr[#gr + 1] = {
 		id = "sprint_lean_freelook",

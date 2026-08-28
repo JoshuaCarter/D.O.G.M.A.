@@ -65,7 +65,7 @@ local function ammo_sec_for_weapon(wpn_sec)
     return nil
 end
 
-local function give_extra_start_ammo_pcall_1(alife_storage_manager)
+local give_extra_start_ammo_anon_1 = function(alife_storage_manager)
     return alife_storage_manager.get_state()
 end
 
@@ -85,7 +85,7 @@ local function give_extra_start_ammo()
         return
     end
 
-    local ok, m_data = pcall(give_extra_start_ammo_pcall_1, alife_storage_manager)
+    local ok, m_data = pcall(give_extra_start_ammo_anon_1, alife_storage_manager)
     if not (ok and m_data) then
         return
     end
@@ -168,8 +168,19 @@ local function later(name, id, fn)
     end)
 end
 
-local function apply_start_weapon_parts_pcall_1(alife_storage_manager)
+local apply_start_weapon_parts_anon_2 = function(alife_storage_manager)
     return alife_storage_manager.get_state()
+end
+
+local apply_start_weapon_parts_anon_1 = function(_temp, itm)
+    if not itm then
+        return
+    end
+    if not is_start_weapon_sec(itm:section()) then
+        return
+    end
+    later("parts_", itm:id(), apply_parts)
+    log(string.format("new game parts %s -> %s%%", itm:section(), PARTS_COND))
 end
 
 local function apply_start_weapon_parts()
@@ -187,7 +198,7 @@ local function apply_start_weapon_parts()
         return
     end
 
-    local ok, m_data = pcall(apply_start_weapon_parts_pcall_1, alife_storage_manager)
+    local ok, m_data = pcall(apply_start_weapon_parts_anon_2, alife_storage_manager)
     if not (ok and m_data) then
         return
     end
@@ -196,16 +207,7 @@ local function apply_start_weapon_parts()
     end
     m_data[START_PARTS_SAVE_KEY] = true
 
-    db.actor:iterate_inventory(function(_temp, itm)
-        if not itm then
-            return
-        end
-        if not is_start_weapon_sec(itm:section()) then
-            return
-        end
-        later("parts_", itm:id(), apply_parts)
-        log(string.format("new game parts %s -> %s%%", itm:section(), PARTS_COND))
-    end)
+    db.actor:iterate_inventory(apply_start_weapon_parts_anon_1)
 end
 
 local function actor_on_first_update()

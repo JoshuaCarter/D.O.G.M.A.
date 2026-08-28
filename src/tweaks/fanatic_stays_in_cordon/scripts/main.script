@@ -157,19 +157,21 @@ local function abandon_if_needed()
 	pending = false
 end
 
+local schedule_abandon_anon_1 = function()
+	local d = device()
+	if d and d.precache_frame and d.precache_frame > 1 then
+		return false
+	end
+	abandon_if_needed()
+	return true
+end
+
 local function schedule_abandon()
 	if not CreateTimeEvent then
 		abandon_if_needed()
 		return
 	end
-	CreateTimeEvent(CONFIG.MOD_ID, "abandon", AFTER_LOAD_S, function()
-		local d = device()
-		if d and d.precache_frame and d.precache_frame > 1 then
-			return false
-		end
-		abandon_if_needed()
-		return true
-	end)
+	CreateTimeEvent(CONFIG.MOD_ID, "abandon", AFTER_LOAD_S, schedule_abandon_anon_1)
 end
 
 local function on_level_changing()
@@ -197,13 +199,15 @@ local function patch_no_teleport()
 	return true
 end
 
+local on_game_start_anon_1 = function()
+	patch_no_teleport()
+	schedule_abandon()
+end
+
 function on_game_start()
 	dogma.load(CONFIG.MOD_ID)
 	patch_no_teleport()
 	RegisterScriptCallback("on_game_load", patch_no_teleport)
 	RegisterScriptCallback("on_level_changing", on_level_changing)
-	RegisterScriptCallback("actor_on_first_update", function()
-		patch_no_teleport()
-		schedule_abandon()
-	end)
+	RegisterScriptCallback("actor_on_first_update", on_game_start_anon_1)
 end

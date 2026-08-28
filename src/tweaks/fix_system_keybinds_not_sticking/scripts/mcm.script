@@ -116,7 +116,7 @@ local function kb_id(entry)
 	return fallback
 end
 
-local function engine_dik_pcall_1(bind, bind_to_dik) return bind_to_dik(bind) end
+local engine_dik_anon_1 = function(bind, bind_to_dik) return bind_to_dik(bind) end
 
 local function engine_dik(bind, slot)
 	if bind == nil or not bind_to_dik then
@@ -135,7 +135,7 @@ local function engine_dik(bind, slot)
 		end
 	end
 	if slot ~= 1 then
-		local ok, dik = pcall(engine_dik_pcall_1, bind, bind_to_dik)
+		local ok, dik = pcall(engine_dik_anon_1, bind, bind_to_dik)
 		if ok and type(dik) == "number" and dik ~= 0 then
 			return dik
 		end
@@ -147,7 +147,7 @@ local function ensure_quit_escape()
 	exec_console_cmd("bind quit kESCAPE")
 end
 
-local function user_ltx_path_pcall_1(getFS)
+local user_ltx_path_anon_1 = function(getFS)
 	return getFS():update_path("$app_data_root$", "user.ltx")
 end
 
@@ -155,7 +155,7 @@ local function user_ltx_path()
 	if not (getFS and getFS().update_path) then
 		return nil
 	end
-	local ok, path = pcall(user_ltx_path_pcall_1, getFS)
+	local ok, path = pcall(user_ltx_path_anon_1, getFS)
 	if ok and path and path ~= "" then
 		return path
 	end

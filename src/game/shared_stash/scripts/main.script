@@ -44,7 +44,7 @@ local function ensure_level_map(m_data)
 	return m_data.dogma_game_shared_stash_by_level
 end
 
-local function se_is_workshop_pcall_1(se)
+local se_is_workshop_anon_1 = function(se)
 	return se:section_name()
 end
 
@@ -52,7 +52,7 @@ local function se_is_workshop(se)
 	if not se then
 		return false
 	end
-	local ok, sec = pcall(se_is_workshop_pcall_1, se)
+	local ok, sec = pcall(se_is_workshop_anon_1, se)
 	return ok and sec == WORKSHOP_SECTION
 end
 
@@ -206,7 +206,7 @@ local function contents_weight_for_carry(m_data)
 	return cached_contents_weight
 end
 
-local function update_carry_weight_pcall_1(item, target)
+local update_carry_weight_anon_1 = function(item, target)
 	item:set_weight(target)
 end
 
@@ -234,7 +234,7 @@ local function update_carry_weight()
 		dogma.perf.stop()
 		return
 	end
-	pcall(update_carry_weight_pcall_1, item, target)
+	pcall(update_carry_weight_anon_1, item, target)
 	last_applied_weight = target
 	log(string.format("workshop_item weight -> %.2f (base %.0f + contents %.2f)", target, BASE_WEIGHT, contents or 0))
 	dogma.perf.stop()
@@ -272,7 +272,7 @@ local function teleport_id(id, pos, lvid, gvid)
 	sim:teleport_object(id, gvid, lvid, pos)
 end
 
-local function bring_shared_to_current_level_pcall_1(alife, kids, se)
+local bring_shared_to_current_level_anon_1 = function(alife, kids, se)
 	for cid in alife():get_children(se) do
 		kids[#kids + 1] = cid
 	end
@@ -309,7 +309,7 @@ local function bring_shared_to_current_level()
 	local gvid = anchor:game_vertex_id()
 
 	local kids = {}
-	pcall(bring_shared_to_current_level_pcall_1, alife, kids, se)
+	pcall(bring_shared_to_current_level_anon_1, alife, kids, se)
 	for i = 1, #kids do
 		teleport_id(kids[i], pos, lvid, gvid)
 	end

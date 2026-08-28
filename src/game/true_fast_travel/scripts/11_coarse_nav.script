@@ -107,7 +107,7 @@ local function cn_aimap_rel_candidates(level_name)
     return { stem .. ".spawn", stem .. ".aimap" }
 end
 
-local function cn_ensure_dir_pcall_1(os, path)
+local cn_ensure_dir_anon_1 = function(os, path)
     os.execute('cmd /c mkdir "' .. path .. '" >nul 2>nul')
 end
 
@@ -115,17 +115,17 @@ local function cn_ensure_dir(path)
     if not path or path == "" then return false end
     path = path:gsub("/", "\\")
     if path:sub(-1) == "\\" then path = path:sub(1, -2) end
-    pcall(cn_ensure_dir_pcall_1, os, path)
+    pcall(cn_ensure_dir_anon_1, os, path)
     return true
 end
 
-local function cn_appdata_aimap_path_pcall_1(getFS)
+local cn_appdata_aimap_path_anon_1 = function(getFS)
     return getFS():update_path("$app_data_root$", "dogma_aimap_cache\\")
 end
 
 local function cn_appdata_aimap_path(level_name)
     if not (getFS and getFS().update_path) then return nil end
-    local ok, dir = pcall(cn_appdata_aimap_path_pcall_1, getFS)
+    local ok, dir = pcall(cn_appdata_aimap_path_anon_1, getFS)
     if not ok or not dir or dir == "" then return nil end
     dir = dir:gsub("/", "\\")
     if dir:sub(-1) ~= "\\" then dir = dir .. "\\" end
@@ -134,7 +134,7 @@ local function cn_appdata_aimap_path(level_name)
     return dir .. (level_name or "unknown") .. ".aimap"
 end
 
-local function cn_read_file_rb_pcall_1(abs_path, io)
+local cn_read_file_rb_anon_1 = function(abs_path, io)
     local f = io.open(abs_path, "rb")
     if not f then return nil end
     local s = f:read("*a")
@@ -144,12 +144,12 @@ end
 
 local function cn_read_file_rb(abs_path)
     if not abs_path then return nil end
-    local ok, data = pcall(cn_read_file_rb_pcall_1, abs_path, io)
+    local ok, data = pcall(cn_read_file_rb_anon_1, abs_path, io)
     if ok then return data end
     return nil
 end
 
-local function cn_write_file_wb_pcall_1(abs_path, data, error, io)
+local cn_write_file_wb_anon_1 = function(abs_path, data, error, io)
     local f = io.open(abs_path, "wb")
     if not f then error("open failed") end
     f:write(data)
@@ -158,11 +158,11 @@ end
 
 local function cn_write_file_wb(abs_path, data)
     if not (abs_path and data) then return false end
-    local ok = pcall(cn_write_file_wb_pcall_1, abs_path, data, error, io)
+    local ok = pcall(cn_write_file_wb_anon_1, abs_path, data, error, io)
     return ok == true
 end
 
-local function cn_vfs_read_rel_pcall_1(getFS, rel, string, table)
+local cn_vfs_read_rel_anon_1 = function(getFS, rel, string, table)
     local fr = getFS():r_open("$game_config$", rel)
     if not fr then return nil end
     local chunks = {}
@@ -185,13 +185,13 @@ end
 
 local function cn_vfs_read_rel(rel)
     if not getFS then return nil end
-    local ok, data = pcall(cn_vfs_read_rel_pcall_1, getFS, rel, string, table)
+    local ok, data = pcall(cn_vfs_read_rel_anon_1, getFS, rel, string, table)
     if ok then return data end
     cn_log("vfs read error (%s): %s", tostring(rel), tostring(data))
     return nil
 end
 
-local function cn_read_aimap_bytes_pcall_1(getFS, rel)
+local cn_read_aimap_bytes_anon_1 = function(getFS, rel)
     return getFS():update_path("$game_config$", rel)
 end
 
@@ -212,7 +212,7 @@ local function cn_read_aimap_bytes(level_name)
 
         -- 2) Loose file via update_path + io.open (dev / unpacked)
         if getFS and getFS().update_path then
-            local ok, abs = pcall(cn_read_aimap_bytes_pcall_1, getFS, rel)
+            local ok, abs = pcall(cn_read_aimap_bytes_anon_1, getFS, rel)
             if ok and abs and abs ~= "" then
                 local data = cn_read_file_rb(abs)
                 if data and data:sub(1, 8) == CN_MAGIC then
@@ -314,14 +314,14 @@ local function cn_try_load()
     return true
 end
 
-local function cn_clear_appdata_cache_pcall_1(os, path)
+local cn_clear_appdata_cache_anon_1 = function(os, path)
     os.remove(path)
 end
 
 local function cn_clear_appdata_cache(level_name)
     local path = cn_appdata_aimap_path(level_name or cn_level_name())
     if not path then return end
-    pcall(cn_clear_appdata_cache_pcall_1, os, path)
+    pcall(cn_clear_appdata_cache_anon_1, os, path)
 end
 
 local function cn_ensure_ready(force)
@@ -358,12 +358,12 @@ end
 -- Positions / nearest (engine lvid == aimap index)
 -- ============================================================
 
-local function cn_vertex_pos_pcall_1(level, lvid) return level.vertex_position(lvid) end
+local cn_vertex_pos_anon_1 = function(level, lvid) return level.vertex_position(lvid) end
 
 local function cn_vertex_pos(lvid, cache)
     if cache and cache[lvid] then return cache[lvid] end
     if not (level and level.vertex_position and cn_valid_lvid(lvid)) then return nil end
-    local ok, p = pcall(cn_vertex_pos_pcall_1, level, lvid)
+    local ok, p = pcall(cn_vertex_pos_anon_1, level, lvid)
     if not (ok and p and p.x) then return nil end
     local v = vector():set(p.x, p.y, p.z)
     if cache then cache[lvid] = v end
@@ -378,20 +378,20 @@ local function cn_lvid_in_graph(lvid)
 end
 
 -- Cheap point cover query only (no ring scan). Used for destinations / generic snaps.
-local function cn_resolve_lvid_pcall_1(level, pos) return level.vertex_id(pos) end
+local cn_resolve_lvid_anon_1 = function(level, pos) return level.vertex_id(pos) end
 
-local function cn_resolve_lvid_pcall_2(level, raised) return level.vertex_id(raised) end
+local cn_resolve_lvid_anon_2 = function(level, raised) return level.vertex_id(raised) end
 
 local function cn_resolve_lvid(pos, hint_lvid)
     local from_hint = cn_lvid_in_graph(hint_lvid)
     if from_hint then return from_hint end
     if not (pos and level and level.vertex_id) then return nil end
-    local ok, lvid = pcall(cn_resolve_lvid_pcall_1, level, pos)
+    local ok, lvid = pcall(cn_resolve_lvid_anon_1, level, pos)
     local hit = ok and cn_lvid_in_graph(lvid) or nil
     if hit then return hit end
     if pos.y then
         local raised = vector():set(pos.x, pos.y + 1.0, pos.z)
-        ok, lvid = pcall(cn_resolve_lvid_pcall_2, level, raised)
+        ok, lvid = pcall(cn_resolve_lvid_anon_2, level, raised)
         hit = ok and cn_lvid_in_graph(lvid) or nil
         if hit then return hit end
     end
@@ -401,11 +401,11 @@ end
 -- Travel always starts at the player. Prefer the engine's tracked actor node (O(1)) —
 -- level.vertex_id(actor_pos) can fail on slopes / feet-under-plane while the actor is
 -- still on a valid graph node. No nearest-node scan needed.
-local function cn_start_lvid_pcall_1(db) return db.actor:level_vertex_id() end
+local cn_start_lvid_anon_1 = function(db) return db.actor:level_vertex_id() end
 
 local function cn_start_lvid(start_pos, hint_lvid)
     if db and db.actor and db.actor.level_vertex_id then
-        local ok_a, actor_lvid = pcall(cn_start_lvid_pcall_1, db)
+        local ok_a, actor_lvid = pcall(cn_start_lvid_anon_1, db)
         local from_actor = ok_a and cn_lvid_in_graph(actor_lvid) or nil
         if from_actor then return from_actor end
     end
@@ -734,7 +734,7 @@ local function cn_is_pda_map_shown()
     return shown
 end
 
-local function cn_freeze_buried_dot_pcall_1(obj)
+local cn_freeze_buried_dot_anon_1 = function(obj)
     local shell = obj:get_physics_shell()
     if shell then
         shell:set_active(false)
@@ -746,7 +746,7 @@ local function cn_freeze_buried_dot(obj_id, attempts_left)
     attempts_left = attempts_left or 8
     local obj = xobject.go(obj_id)
     if obj then
-        pcall(cn_freeze_buried_dot_pcall_1, obj)
+        pcall(cn_freeze_buried_dot_anon_1, obj)
         return
     end
     if attempts_left <= 0 then return end
@@ -756,9 +756,9 @@ local function cn_freeze_buried_dot(obj_id, attempts_left)
     end)
 end
 
-local function cn_spawn_dot_pcall_1(level, pos) return level.vertex_id(pos) end
+local cn_spawn_dot_anon_1 = function(level, pos) return level.vertex_id(pos) end
 
-local function cn_spawn_dot_pcall_2(level, se, spot) level.map_add_object_spot_ser(se.id, spot, "") end
+local cn_spawn_dot_anon_2 = function(level, se, spot) level.map_add_object_spot_ser(se.id, spot, "") end
 
 local function cn_spawn_dot(ids, index, pos, spot)
     if not ids then return end
@@ -766,7 +766,7 @@ local function cn_spawn_dot(ids, index, pos, spot)
     if not (pos and pos.x and db.actor) then return end
     local lvid = nil
     if level and level.vertex_id then
-        local ok, v = pcall(cn_spawn_dot_pcall_1, level, pos)
+        local ok, v = pcall(cn_spawn_dot_anon_1, level, pos)
         if ok and cn_valid_lvid(v) then lvid = v end
     end
     if not lvid then lvid = db.actor:level_vertex_id() end
@@ -774,11 +774,11 @@ local function cn_spawn_dot(ids, index, pos, spot)
     local se = alife_create("device_pda", buried, lvid, db.actor:game_vertex_id())
     if not se then return end
     ids[index] = se.id
-    pcall(cn_spawn_dot_pcall_2, level, se, spot)
+    pcall(cn_spawn_dot_anon_2, level, se, spot)
     cn_freeze_buried_dot(se.id)
 end
 
-local function clear_table_pcall_1(level, obj_id, spot, xobject)
+local clear_table_anon_1 = function(level, obj_id, spot, xobject)
     if level and level.map_remove_object_spot then
         level.map_remove_object_spot(obj_id, spot)
     end
@@ -791,7 +791,7 @@ local function cn_clear_display()
     local st = cn_state()
     local function clear_table(ids, spot)
         for _, obj_id in pairs(ids or {}) do
-            pcall(clear_table_pcall_1, level, obj_id, spot, xobject)
+            pcall(clear_table_anon_1, level, obj_id, spot, xobject)
         end
     end
     clear_table(st.dot_ids, SPOT_NODE)
@@ -856,8 +856,13 @@ local function cn_on_actor_update()
     cn_sync_display_pda()
 end
 
-local function cn_on_level_change_pcall_1(RemoveTimeEvent)
+local cn_on_level_change_anon_2 = function(RemoveTimeEvent)
     RemoveTimeEvent("tft_cn", "load_after_level")
+end
+
+local cn_on_level_change_anon_1 = function()
+    pcall(cn_try_load)
+    return true
 end
 
 local function cn_on_level_change()
@@ -870,11 +875,8 @@ local function cn_on_level_change()
         tft.path_chain = nil
         tft.path_chain_meta = nil
     end
-    pcall(cn_on_level_change_pcall_1, RemoveTimeEvent)
-    CreateTimeEvent("tft_cn", "load_after_level", 2.0, function()
-        pcall(cn_try_load)
-        return true
-    end)
+    pcall(cn_on_level_change_anon_2, RemoveTimeEvent)
+    CreateTimeEvent("tft_cn", "load_after_level", 2.0, cn_on_level_change_anon_1)
 end
 
 local function cn_handle_key(key)

@@ -423,26 +423,56 @@ local function _ammo_bucket_spawnable()
     return list
 end
 
-local _SECTION_BUILDERS = {
-    medkit  = function() return _hand_set_to_list(_medkit_set)  end,
-    bandage = function() return _hand_set_to_list(_bandage_set) end,
-    antirad = function() return _hand_set_to_list(_antirad_set) end,
-    stim    = function() return _hand_set_to_list(_stim_set)    end,
-    pill    = function() return _hand_set_to_list(_pill_set)    end,
-    grenade = function() return _hand_set_to_list(_grenade_set) end,
+local chunk_anon_1 = function() return _hand_set_to_list(_medkit_set)  end
 
-    outfit            = function() return _itm_bucket_to_list("outfit")       end,
-    helmet            = function() return _itm_bucket_to_list("helmet")       end,
-    artefact          = function() return _itm_bucket_to_list("artefact")     end,
-    device            = function() return _itm_bucket_to_list("device")       end,
-    money             = function() return _itm_bucket_to_list("money")        end,
-    grenade_ammo      = function() return _itm_bucket_to_list("grenade_ammo") end,
+local chunk_anon_2 = function() return _hand_set_to_list(_bandage_set) end
+
+local chunk_anon_3 = function() return _hand_set_to_list(_antirad_set) end
+
+local chunk_anon_4 = function() return _hand_set_to_list(_stim_set)    end
+
+local chunk_anon_5 = function() return _hand_set_to_list(_pill_set)    end
+
+local chunk_anon_6 = function() return _hand_set_to_list(_grenade_set) end
+
+local chunk_anon_7 = function() return _itm_bucket_to_list("outfit")       end
+
+local chunk_anon_8 = function() return _itm_bucket_to_list("helmet")       end
+
+local chunk_anon_9 = function() return _itm_bucket_to_list("artefact")     end
+
+local chunk_anon_10 = function() return _itm_bucket_to_list("device")       end
+
+local chunk_anon_11 = function() return _itm_bucket_to_list("money")        end
+
+local chunk_anon_12 = function() return _itm_bucket_to_list("grenade_ammo") end
+
+local chunk_anon_13 = function() return _eatable_filtered_by_kind({ i_drink = true }) end
+
+local chunk_anon_14 = function() return _itm_buckets_union({ "tool", "part", "upgrade" }) end
+
+local chunk_anon_15 = function() return _eatable_filtered_by_kind({ i_food = true, i_mutant_cooked = true }) end
+
+local _SECTION_BUILDERS = {
+    medkit  = chunk_anon_1,
+    bandage = chunk_anon_2,
+    antirad = chunk_anon_3,
+    stim    = chunk_anon_4,
+    pill    = chunk_anon_5,
+    grenade = chunk_anon_6,
+
+    outfit            = chunk_anon_7,
+    helmet            = chunk_anon_8,
+    artefact          = chunk_anon_9,
+    device            = chunk_anon_10,
+    money             = chunk_anon_11,
+    grenade_ammo      = chunk_anon_12,
     ammo_not_equipped = _ammo_bucket_spawnable,
 
-    crafting = function() return _itm_buckets_union({ "tool", "part", "upgrade" }) end,
+    crafting = chunk_anon_14,
 
-    food  = function() return _eatable_filtered_by_kind({ i_food = true, i_mutant_cooked = true }) end,
-    drink = function() return _eatable_filtered_by_kind({ i_drink = true }) end,
+    food  = chunk_anon_15,
+    drink = chunk_anon_13,
 }
 
 local _category_sections_cache = {}

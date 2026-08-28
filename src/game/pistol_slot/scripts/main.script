@@ -224,6 +224,14 @@ local function patch_inventory_gui(gui)
 	end
 end
 
+local on_gui_show_anon_1 = function()
+	local g = ui_inventory and ui_inventory.GUI
+	if g then
+		apply_slot_routing(g)
+	end
+	return true
+end
+
 local function on_gui_show(name)
 	if name ~= "UIInventory" then
 		return
@@ -234,13 +242,7 @@ local function on_gui_show(name)
 	end
 	patch_inventory_gui(gui)
 	-- Next tick beats other GUI_on_show slot_cell patches (binoc_pistol_knife).
-	CreateTimeEvent("dogma_pistol_slot", "slot_route", 0, function()
-		local g = ui_inventory and ui_inventory.GUI
-		if g then
-			apply_slot_routing(g)
-		end
-		return true
-	end)
+	CreateTimeEvent("dogma_pistol_slot", "slot_route", 0, on_gui_show_anon_1)
 end
 
 function on_game_start()

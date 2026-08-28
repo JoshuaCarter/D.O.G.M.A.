@@ -100,7 +100,7 @@ def run_alao(target: Path, *, report: Path, dry_run: bool) -> int:
         str(target),
         "--fix",
         "--fix-nil",
-        "--fix-pcall",
+        "--hoist-anon-funcs",
         "--remove-dead-code",
         "--no-first-time-auto-backup",
         "--direct",

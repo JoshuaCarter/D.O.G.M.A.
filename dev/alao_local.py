@@ -37,6 +37,7 @@ def resolve_alao_root() -> Path | None:
     candidates: list[Path] = []
     if env:
         candidates.append(Path(env))
+    candidates.append(Path(r"c:\gamma_dev\anomaly_alao"))
     candidates.append(Path(r"c:\gamma_dev\ALAO"))
     candidates.append(_REPO.parent / "ALAO")
     for c in candidates:
@@ -99,6 +100,7 @@ def run_alao(target: Path, *, report: Path, dry_run: bool) -> int:
         str(target),
         "--fix",
         "--fix-nil",
+        "--fix-pcall",
         "--remove-dead-code",
         "--no-first-time-auto-backup",
         "--direct",

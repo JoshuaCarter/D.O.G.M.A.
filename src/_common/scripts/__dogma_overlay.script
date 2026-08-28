@@ -118,6 +118,18 @@ local function hide()
 	end
 end
 
+local function show_panel_pcall_1(PANEL_TEX, wnd)
+	wnd:InitTexture(PANEL_TEX)
+end
+
+local function show_panel_pcall_2(wnd)
+	wnd:SetStretchTexture(true)
+end
+
+local function show_panel_pcall_3(GetARGB, wnd)
+	wnd:SetTextureColor(GetARGB(76, 8, 8, 10))
+end
+
 local function show_panel(x, y, w, h)
 	if not xml_ready() then
 		return
@@ -128,15 +140,9 @@ local function show_panel(x, y, w, h)
 	end
 	wnd:SetWndPos(vector2():set(x, y))
 	wnd:SetWndSize(vector2():set(w, h))
-	pcall(function()
-		wnd:InitTexture(PANEL_TEX)
-	end)
-	pcall(function()
-		wnd:SetStretchTexture(true)
-	end)
-	pcall(function()
-		wnd:SetTextureColor(GetARGB(76, 8, 8, 10))
-	end)
+	pcall(show_panel_pcall_1, PANEL_TEX, wnd)
+	pcall(show_panel_pcall_2, wnd)
+	pcall(show_panel_pcall_3, GetARGB, wnd)
 end
 
 local OVERLAY_PATH = DEBUG_MOD .. "/debug_overlay"
@@ -166,6 +172,30 @@ function enabled()
 	return overlay_on
 end
 
+local function render_pcall_1(font, wnd)
+	wnd:SetFont(font)
+end
+
+local function render_pcall_2(font, tc)
+	tc:SetFont(font)
+end
+
+local function render_pcall_3(wnd)
+	wnd:AdjustHeightToText()
+end
+
+local function render_pcall_4(wnd)
+	wnd:SetTextComplexMode(true)
+end
+
+local function render_pcall_5(tc)
+	tc:SetTextComplexMode(true)
+end
+
+local function render_pcall_6(text_w, vector2, wnd)
+	wnd:SetWndSize(vector2():set(text_w, 768))
+end
+
 local function render()
 	if not enabled() or not any_content() then
 		hide()
@@ -184,17 +214,11 @@ local function render()
 	local text_y = ORIGIN_Y + PANEL_PAD
 	local text_w = PANEL_W - PANEL_PAD * 2
 	wnd:SetWndPos(vector2():set(text_x, text_y))
-	pcall(function()
-		wnd:SetWndSize(vector2():set(text_w, 768))
-	end)
-	pcall(function()
-		wnd:SetTextComplexMode(true)
-	end)
+	pcall(render_pcall_6, text_w, vector2, wnd)
+	pcall(render_pcall_4, wnd)
 	local font = GetFontLetterica16Russian and GetFontLetterica16Russian()
 	if font then
-		pcall(function()
-			wnd:SetFont(font)
-		end)
+		pcall(render_pcall_1, font, wnd)
 	end
 
 	local names = {}
@@ -238,19 +262,13 @@ local function render()
 	show_panel(ORIGIN_X, ORIGIN_Y, PANEL_W, est_h + PANEL_PAD * 2)
 	local tc = wnd:TextControl()
 	if tc then
-		pcall(function()
-			tc:SetTextComplexMode(true)
-		end)
+		pcall(render_pcall_5, tc)
 		if font then
-			pcall(function()
-				tc:SetFont(font)
-			end)
+			pcall(render_pcall_2, font, tc)
 		end
 		tc:SetText(table.concat(lines, "\\n"))
 	end
-	pcall(function()
-		wnd:AdjustHeightToText()
-	end)
+	pcall(render_pcall_3, wnd)
 	local text_h = tonumber(wnd.GetHeight and wnd:GetHeight()) or 0
 	if text_h >= 1 then
 		local pw = hud_wnd(PANEL_STATIC)

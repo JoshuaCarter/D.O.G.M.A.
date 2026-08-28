@@ -45,6 +45,26 @@ end
 --- @src xray/xrGame/script_game_object_script.cpp, anomaly/_g.script(2820)
 --- @param obj userdata Game object
 --- @return string Formatted representation
+local function userdata_pcall_1(obj) return obj:id() end
+
+local function userdata_pcall_2(obj) return obj:name() end
+
+local function userdata_pcall_3(obj) return obj:clsid() end
+
+local function userdata_pcall_4(obj) return obj:alive() end
+
+local function userdata_pcall_5(obj) return obj.group_id end
+
+local function userdata_pcall_6(obj) return obj:section() end
+
+local function userdata_pcall_7(obj) return obj.parent_id end
+
+local function userdata_pcall_8(obj) return obj:section_name() end
+
+local function userdata_pcall_9(character_community, obj) return character_community(obj) end
+
+local function userdata_pcall_10(obj, ranks) return ranks and ranks.get_obj_rank_name and ranks.get_obj_rank_name(obj) end
+
 function userdata(obj)
     if type(obj) ~= "userdata" then
         return tostring(obj)
@@ -53,38 +73,38 @@ function userdata(obj)
     local parts = {}
     local obj_type
 
-    local ok_cls, cls = pcall(function() return obj:clsid() end)
+    local ok_cls, cls = pcall(userdata_pcall_3, obj)
     if ok_cls and cls then
         obj_type = get_type(obj, cls)
     end
 
-    local ok_id, id = pcall(function() return obj:id() end)
+    local ok_id, id = pcall(userdata_pcall_1, obj)
     if ok_id and id then parts[#parts + 1] = "id=" .. id end
 
-    local ok_name, name = pcall(function() return obj:name() end)
+    local ok_name, name = pcall(userdata_pcall_2, obj)
     if ok_name and name then parts[#parts + 1] = "name=\"" .. name .. "\"" end
 
-    local ok_sec, sec = pcall(function() return obj:section() end)
-    if not ok_sec then ok_sec, sec = pcall(function() return obj:section_name() end) end
+    local ok_sec, sec = pcall(userdata_pcall_6, obj)
+    if not ok_sec then ok_sec, sec = pcall(userdata_pcall_8, obj) end
     if ok_sec and sec then parts[#parts + 1] = "sec=\"" .. sec .. "\"" end
 
     if obj_type == OBJECT_TYPE.STALKER or obj_type == OBJECT_TYPE.MONSTER then
-        local ok_comm, comm = pcall(function() return character_community(obj) end)
+        local ok_comm, comm = pcall(userdata_pcall_9, character_community, obj)
         if ok_comm and comm then parts[#parts + 1] = "community=\"" .. comm .. "\"" end
 
-        local ok_alive, alive = pcall(function() return obj:alive() end)
+        local ok_alive, alive = pcall(userdata_pcall_4, obj)
         if ok_alive then parts[#parts + 1] = "alive=" .. (alive and "true" or "false") end
     end
 
     if obj_type == OBJECT_TYPE.STALKER then
-        local ok_rank, rank = pcall(function() return ranks and ranks.get_obj_rank_name and ranks.get_obj_rank_name(obj) end)
+        local ok_rank, rank = pcall(userdata_pcall_10, obj, ranks)
         if ok_rank and rank then parts[#parts + 1] = "rank=\"" .. rank .. "\"" end
     end
 
-    local ok_parent, parent = pcall(function() return obj.parent_id end)
+    local ok_parent, parent = pcall(userdata_pcall_7, obj)
     if ok_parent and parent and parent ~= INVALID_ENTITY_ID then parts[#parts + 1] = "parent=" .. parent end
 
-    local ok_squad, squad = pcall(function() return obj.group_id end)
+    local ok_squad, squad = pcall(userdata_pcall_5, obj)
     if ok_squad and squad and squad ~= INVALID_ENTITY_ID then parts[#parts + 1] = "squad=" .. squad end
 
     if #parts == 0 then

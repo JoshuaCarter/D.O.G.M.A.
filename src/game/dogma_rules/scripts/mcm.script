@@ -249,14 +249,16 @@ local function wrap_others()
 	end
 end
 
+local function raw_lines_pcall_1(CONFIG, fs)
+	return fs:update_path("$game_config$", CONFIG.LTX)
+end
+
 local function raw_lines()
 	local fs = getFS()
 	if not (fs and fs.update_path) then
 		return nil
 	end
-	local ok, path = pcall(function()
-		return fs:update_path("$game_config$", CONFIG.LTX)
-	end)
+	local ok, path = pcall(raw_lines_pcall_1, CONFIG, fs)
 	if not (ok and path) then
 		return nil
 	end

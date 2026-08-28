@@ -13,6 +13,10 @@ local HEAR_SQR = 3600 -- 60m
 local CLOSE_SQR = 144 -- 12m
 local MID_SQR = 1600 -- 40m
 
+local function commander_dist_sqr_pcall_1(squad)
+	return squad:commander_id()
+end
+
 local function commander_dist_sqr()
 	local companions = rawget(_G, "axr_companions")
 	local squads = companions and companions.companion_squads
@@ -23,9 +27,7 @@ local function commander_dist_sqr()
 	if not squad then
 		return nil
 	end
-	local ok, id = pcall(function()
-		return squad:commander_id()
-	end)
+	local ok, id = pcall(commander_dist_sqr_pcall_1, squad)
 	if not ok or not id or id >= 65535 then
 		return nil
 	end

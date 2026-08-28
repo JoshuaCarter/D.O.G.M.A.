@@ -421,11 +421,13 @@ local function font_h_ui(text_wnd)
 	return nil
 end
 
+local function init_text_wnd_pcall_1(align, text_wnd)
+	text_wnd:SetTextComplexMode(true)
+	text_wnd:SetTextAlignment(align or 0)
+end
+
 local function init_text_wnd(text_wnd, align)
-	pcall(function()
-		text_wnd:SetTextComplexMode(true)
-		text_wnd:SetTextAlignment(align or 0)
-	end)
+	pcall(init_text_wnd_pcall_1, align, text_wnd)
 	return text_wnd
 end
 
@@ -483,17 +485,19 @@ function ui_dogma_fps:TextAlign()
 end
 
 -- Plain single-color text so SetTextAlignment works (%c[] complex tags break right align).
+local function ui_dogma_fps_SetWndText_pcall_1(align, self, text, text_wnd, tostring)
+	text_wnd:SetTextComplexMode(false)
+	text_wnd:SetTextAlignment(align)
+	text_wnd:SetTextColor(self:TextColor())
+	text_wnd:SetText(tostring(text))
+end
+
 function ui_dogma_fps:SetWndText(text_wnd, text)
 	if not text_wnd then
 		return
 	end
 	local align = self:TextAlign()
-	pcall(function()
-		text_wnd:SetTextComplexMode(false)
-		text_wnd:SetTextAlignment(align)
-		text_wnd:SetTextColor(self:TextColor())
-		text_wnd:SetText(tostring(text))
-	end)
+	pcall(ui_dogma_fps_SetWndText_pcall_1, align, self, text, text_wnd, tostring)
 end
 
 function ui_dogma_fps:PlaceTextWnd(text_wnd, x, y, w, h)
@@ -627,20 +631,26 @@ function ui_dogma_fps:InitGraph()
 	self:ApplyGraphColors(self.cfg)
 end
 
+local function ui_dogma_fps_ApplyStaticColor_pcall_1(graph_pixel)
+	graph_pixel:RemoveColorAnimation()
+end
+
+local function ui_dogma_fps_ApplyStaticColor_pcall_2(graph_pixel)
+	graph_pixel:SetStretchTexture(true)
+end
+
+local function ui_dogma_fps_ApplyStaticColor_pcall_3(GRAPH_TEXTURE, graph_pixel)
+	graph_pixel:InitTexture(GRAPH_TEXTURE)
+end
+
 function ui_dogma_fps:ApplyStaticColor(graph_pixel, r, g, b, a)
 	if not graph_pixel then
 		return
 	end
 	if not graph_pixel._dogma_graph_tex then
-		pcall(function()
-			graph_pixel:RemoveColorAnimation()
-		end)
-		pcall(function()
-			graph_pixel:InitTexture(GRAPH_TEXTURE)
-		end)
-		pcall(function()
-			graph_pixel:SetStretchTexture(true)
-		end)
+		pcall(ui_dogma_fps_ApplyStaticColor_pcall_1, graph_pixel)
+		pcall(ui_dogma_fps_ApplyStaticColor_pcall_3, GRAPH_TEXTURE, graph_pixel)
+		pcall(ui_dogma_fps_ApplyStaticColor_pcall_2, graph_pixel)
 		graph_pixel._dogma_graph_tex = true
 	end
 	graph_pixel:SetTextureColor(argb_from_bytes(a, r, g, b))

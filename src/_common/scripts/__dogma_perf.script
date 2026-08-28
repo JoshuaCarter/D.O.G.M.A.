@@ -52,10 +52,12 @@ local last_warn_ms = {}
 local use_profile_timer = false
 
 -- Detect once: luabind exposes profile_timer as a constructible class.
+local function chunk_pcall_1(profile_timer)
+	return profile_timer()
+end
+
 do
-	local ok, t = pcall(function()
-		return profile_timer()
-	end)
+	local ok, t = pcall(chunk_pcall_1, profile_timer)
 	use_profile_timer = ok and t ~= nil and type(t.start) == "function"
 		and type(t.stop) == "function" and type(t.time) == "function"
 end
@@ -70,6 +72,10 @@ local function now_us_fallback()
 	return 0
 end
 
+local function resolve_log_path_pcall_1(LOG_NAME, getFS)
+	return getFS():update_path("$logs$", LOG_NAME)
+end
+
 local function resolve_log_path()
 	if log_path_tried then
 		return log_path
@@ -78,9 +84,7 @@ local function resolve_log_path()
 	if not (getFS and getFS().update_path) then
 		return nil
 	end
-	local ok, path = pcall(function()
-		return getFS():update_path("$logs$", LOG_NAME)
-	end)
+	local ok, path = pcall(resolve_log_path_pcall_1, LOG_NAME, getFS)
 	if ok and path and path ~= "" then
 		log_path = path
 	end

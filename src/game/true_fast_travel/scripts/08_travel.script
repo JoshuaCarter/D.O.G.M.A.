@@ -8,9 +8,11 @@ local PDA_SLOT = 8
 -- Engine often re-equips PDA ~1-2s after holster (see pda_go_away); re-assert past that.
 local PDA_HOLSTER_GUARD_MS = 3000
 
+local function slot_has_item_pcall_1(db, slot) return db.actor:item_in_slot(slot) end
+
 local function slot_has_item(slot)
 	if not (db.actor and slot ~= nil) then return false end
-	local ok, item = pcall(function() return db.actor:item_in_slot(slot) end)
+	local ok, item = pcall(slot_has_item_pcall_1, db, slot)
 	return ok and item ~= nil
 end
 
@@ -25,29 +27,38 @@ local function pick_weapon_slot(prefer)
 	return 0
 end
 
-local function hide_pda_dialog()
-	pcall(function()
-		if not (ActorMenu and ActorMenu.get_pda_menu) then return end
-		local pda = ActorMenu.get_pda_menu()
-		if pda and pda.HideDialog then
-			-- Always HideDialog; IsShown can lag after custom cam / travel.
-			pda:HideDialog()
-		end
-	end)
+local function hide_pda_dialog_pcall_1(ActorMenu)
+	if not (ActorMenu and ActorMenu.get_pda_menu) then return end
+	local pda = ActorMenu.get_pda_menu()
+	if pda and pda.HideDialog then
+		-- Always HideDialog; IsShown can lag after custom cam / travel.
+		pda:HideDialog()
+	end
 end
+
+local function hide_pda_dialog()
+	pcall(hide_pda_dialog_pcall_1, ActorMenu)
+end
+
+local function activate_non_pda_pcall_1(db, target) db.actor:activate_slot(target) end
 
 local function activate_non_pda(prefer)
 	if not db.actor then return end
 	local target = pick_weapon_slot(prefer)
-	pcall(function() db.actor:activate_slot(target) end)
+	pcall(activate_non_pda_pcall_1, db, target)
 end
 
 -- Hide PDA UI + leave slot 8. Does not unequip the PDA item.
+local function holster_pda_pcall_1(db)
+	return db.actor:active_slot()
+end
+
 local function holster_pda(prefer)
 	if not db.actor then return end
 	hide_pda_dialog()
 	local cur = nil
-	pcall(function() cur = db.actor:active_slot() end)
+	local _ok, _cur = pcall(holster_pda_pcall_1, db)
+	if _ok then cur = _cur end
 	if cur == PDA_SLOT then
 		activate_non_pda(prefer)
 		return
@@ -70,6 +81,19 @@ local function journey_cam_active()
 	return tft.fly_active or tft.fly_phase ~= nil or tft.is_traveling
 end
 
+local function tick_pda_holster_guard_pcall_1(db)
+	return db.actor:active_slot()
+end
+
+local function tick_pda_holster_guard_pcall_2(ActorMenu)
+	if ActorMenu and ActorMenu.get_pda_menu then
+		local pda = ActorMenu.get_pda_menu()
+		if pda and pda.IsShown and pda:IsShown() and pda.HideDialog then
+			pda:HideDialog()
+		end
+	end
+end
+
 local function tick_pda_holster_guard()
 	local until_tg = tft.pda_holster_until
 	if not until_tg then return end
@@ -81,20 +105,14 @@ local function tick_pda_holster_guard()
 	end
 	if not db.actor then return end
 	local cur = nil
-	pcall(function() cur = db.actor:active_slot() end)
+	local _ok2, _cur2 = pcall(tick_pda_holster_guard_pcall_1, db)
+	if _ok2 then cur = _cur2 end
 	if cur == PDA_SLOT then
 		hide_pda_dialog()
 		activate_non_pda(tft.pda_holster_prefer)
 	else
 		-- Dialog can linger after slot already changed; only then.
-		pcall(function()
-			if ActorMenu and ActorMenu.get_pda_menu then
-				local pda = ActorMenu.get_pda_menu()
-				if pda and pda.IsShown and pda:IsShown() and pda.HideDialog then
-					pda:HideDialog()
-				end
-			end
-		end)
+		pcall(tick_pda_holster_guard_pcall_2, ActorMenu)
 	end
 end
 
@@ -125,6 +143,8 @@ local function fail_start(msg, style)
 	if msg and tft_msg then tft_msg(msg, style or "warning") end
 	return false
 end
+
+local function start_travel_sequence_pcall_1(db) return db.actor:level_vertex_id() end
 
 local function start_travel_sequence(pos, lvid, gvid, is_transition, final_gvid)
 	if not (db.actor and db.actor:alive() and pos and gvid) then
@@ -175,7 +195,7 @@ local function start_travel_sequence(pos, lvid, gvid, is_transition, final_gvid)
 		if not tft.start_pos then tft.start_pos = vector() end
 		local ap = db.actor:position()
 		tft.start_pos:set(ap.x, ap.y, ap.z)
-		local ok_sl, start_lvid = pcall(function() return db.actor:level_vertex_id() end)
+		local ok_sl, start_lvid = pcall(start_travel_sequence_pcall_1, db)
 		tft.start_lvid = (ok_sl and start_lvid) or nil
 
 		local dest_key = nil
@@ -277,6 +297,8 @@ local function stop_travel_logic(reason)
 	start_pda_holster_guard(prefer, PDA_HOLSTER_GUARD_MS)
 end
 
+local function complete_travel_sequence_pcall_1(db, tft) db.actor:set_actor_position(tft.dest_pos) end
+
 local function complete_travel_sequence(opts)
 	opts = opts or {}
 	local reason = opts.reason or "arrive"
@@ -285,7 +307,7 @@ local function complete_travel_sequence(opts)
 
 	local prefer = tft.walk_prev_slot or tft.pda_holster_prefer
 	if db.actor and tft.dest_pos then
-		pcall(function() db.actor:set_actor_position(tft.dest_pos) end)
+		pcall(complete_travel_sequence_pcall_1, db, tft)
 	end
 
 	tft.is_traveling = false

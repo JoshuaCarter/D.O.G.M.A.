@@ -65,6 +65,10 @@ local function ammo_sec_for_weapon(wpn_sec)
     return nil
 end
 
+local function give_extra_start_ammo_pcall_1(alife_storage_manager)
+    return alife_storage_manager.get_state()
+end
+
 local function give_extra_start_ammo()
     if not dogma.sys.ready(MOD_ID, db, on_option_change) then
         return
@@ -81,9 +85,7 @@ local function give_extra_start_ammo()
         return
     end
 
-    local ok, m_data = pcall(function()
-        return alife_storage_manager.get_state()
-    end)
+    local ok, m_data = pcall(give_extra_start_ammo_pcall_1, alife_storage_manager)
     if not (ok and m_data) then
         return
     end
@@ -166,6 +168,10 @@ local function later(name, id, fn)
     end)
 end
 
+local function apply_start_weapon_parts_pcall_1(alife_storage_manager)
+    return alife_storage_manager.get_state()
+end
+
 local function apply_start_weapon_parts()
     if not dogma.sys.ready(MOD_ID, db, on_option_change) then
         return
@@ -181,9 +187,7 @@ local function apply_start_weapon_parts()
         return
     end
 
-    local ok, m_data = pcall(function()
-        return alife_storage_manager.get_state()
-    end)
+    local ok, m_data = pcall(apply_start_weapon_parts_pcall_1, alife_storage_manager)
     if not (ok and m_data) then
         return
     end

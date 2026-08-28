@@ -38,6 +38,10 @@ local function steal_enabled()
 	return dogma.mcm.bool(CONFIG.MOD_ID, "steal_enabled", CONFIG.DEFAULTS.steal_enabled)
 end
 
+local function is_player_side_pcall_1(obj)
+	return obj:has_info("npcx_is_companion")
+end
+
 local function is_player_side(obj)
 	if not obj then
 		return false
@@ -45,9 +49,7 @@ local function is_player_side(obj)
 	if db.actor and obj:id() == db.actor:id() then
 		return true
 	end
-	local ok, has = pcall(function()
-		return obj:has_info("npcx_is_companion")
-	end)
+	local ok, has = pcall(is_player_side_pcall_1, obj)
 	return ok and has
 end
 
@@ -179,12 +181,15 @@ local function track_agrod(comm, ids)
 	end
 end
 
+local function snap_pcall_1(npc)
+	return npc:character_name()
+end
+
 local function snap(npc, actor)
 	local tostr = tostring
 	local name = "?"
-	pcall(function()
-		name = npc:character_name()
-	end)
+	local _ok, _name = pcall(snap_pcall_1, npc)
+	if _ok then name = _name end
 	local pers, gen, rel = "?", "?", "?"
 	local ok_p, p = pcall(npc.goodwill, npc, actor)
 	if ok_p then

@@ -121,13 +121,15 @@ local function normalize_faction(comm)
 	return base
 end
 
+local function actor_faction_pcall_1(db)
+	return db.actor:character_community()
+end
+
 local function actor_faction()
 	local fn = rawget(_G, "get_actor_true_community") or get_actor_true_community
 	local comm = fn and fn() or nil
 	if not comm and db and db.actor then
-		local ok, c = pcall(function()
-			return db.actor:character_community()
-		end)
+		local ok, c = pcall(actor_faction_pcall_1, db)
 		comm = ok and c or nil
 	end
 	return normalize_faction(comm)
@@ -155,6 +157,27 @@ local function channel_faction(name)
 	return normalize_faction(name)
 end
 
+local function community_of_ref_pcall_1(ref)
+	return ref:id()
+end
+
+local function from_se_pcall_1(se, xcreature)
+	if xcreature and xcreature.community then
+		return xcreature.community(se)
+	end
+	return se:community()
+end
+
+local function community_of_ref_pcall_2(ref)
+	if ref.character_community then
+		return ref:character_community()
+	end
+	if ref.community then
+		return ref:community()
+	end
+	return nil
+end
+
 local function community_of_ref(ref)
 	if ref == nil then
 		return nil
@@ -164,12 +187,7 @@ local function community_of_ref(ref)
 		if not se then
 			return nil
 		end
-		local ok, c = pcall(function()
-			if xcreature and xcreature.community then
-				return xcreature.community(se)
-			end
-			return se:community()
-		end)
+		local ok, c = pcall(from_se_pcall_1, se, xcreature)
 		return ok and normalize_faction(c) or nil
 	end
 
@@ -177,15 +195,7 @@ local function community_of_ref(ref)
 		return from_se(alife_object and alife_object(ref))
 	end
 
-	local ok_go, c = pcall(function()
-		if ref.character_community then
-			return ref:character_community()
-		end
-		if ref.community then
-			return ref:community()
-		end
-		return nil
-	end)
+	local ok_go, c = pcall(community_of_ref_pcall_2, ref)
 	if ok_go then
 		local fac = normalize_faction(c)
 		if fac then
@@ -193,9 +203,7 @@ local function community_of_ref(ref)
 		end
 	end
 
-	local ok_id, id = pcall(function()
-		return ref:id()
-	end)
+	local ok_id, id = pcall(community_of_ref_pcall_1, ref)
 	if ok_id and type(id) == "number" then
 		return from_se(alife_object and alife_object(id))
 	end

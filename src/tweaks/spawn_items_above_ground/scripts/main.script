@@ -23,6 +23,10 @@ local function disarm()
 	live = false
 end
 
+local function server_object_on_register_pcall_1(se)
+	return se:section_name()
+end
+
 local function server_object_on_register(se)
 	local h = CONFIG.loaded.height
 	if not (live and se and h and h > 0) then
@@ -31,9 +35,7 @@ local function server_object_on_register(se)
 	if se.parent_id and se.parent_id ~= xconst.INVALID_ENTITY_ID then
 		return
 	end
-	local ok, sec = pcall(function()
-		return se:section_name()
-	end)
+	local ok, sec = pcall(server_object_on_register_pcall_1, se)
 	if not (ok and sec and dogma.db.get(sec)) then
 		return
 	end

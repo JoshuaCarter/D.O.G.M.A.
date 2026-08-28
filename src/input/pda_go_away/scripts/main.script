@@ -164,6 +164,14 @@ end
 -- Always printf (not debug-gated): catches empty character community before
 -- PDA ranking/contacts can fatal on CCharacterInfo::GetById(null).
 -- Uses SE/xcreature only — game-object character_community() can itself assert.
+local function scan_stalkers_before_pda_pcall_1(se)
+	return se:community()
+end
+
+local function scan_stalkers_before_pda_pcall_2(IsStalker, npc)
+	return IsStalker and IsStalker(npc)
+end
+
 local function scan_stalkers_before_pda()
 	local tostr = tostring
 	if not (db and db.storage and db.actor) then
@@ -176,9 +184,7 @@ local function scan_stalkers_before_pda()
 	for id, st in pairs(db.storage) do
 		local npc = st and st.object
 		if npc and id ~= actor_id then
-			local ok_st, is_st = pcall(function()
-				return IsStalker and IsStalker(npc)
-			end)
+			local ok_st, is_st = pcall(scan_stalkers_before_pda_pcall_2, IsStalker, npc)
 			if ok_st and is_st then
 				total = total + 1
 				local name, sec = "?", "?"
@@ -194,9 +200,7 @@ local function scan_stalkers_before_pda()
 						comm = c
 					end
 				elseif se and se.community then
-					local ok_c, c = pcall(function()
-						return se:community()
-					end)
+					local ok_c, c = pcall(scan_stalkers_before_pda_pcall_1, se)
 					if ok_c then
 						comm = c
 					end

@@ -93,13 +93,15 @@ local function log_once(key, msg)
 	dbg(msg)
 end
 
+local function safe_id_pcall_1(obj)
+	return obj:id()
+end
+
 local function safe_id(obj)
 	if not obj then
 		return nil
 	end
-	local ok, id = pcall(function()
-		return obj:id()
-	end)
+	local ok, id = pcall(safe_id_pcall_1, obj)
 	if ok then
 		return id
 	end
@@ -176,17 +178,23 @@ local function wpn_param(obj, sec, key, default)
 end
 
 -- Attached silencer section when MCM apply_silencer_stats is on; else nil.
+local function attached_silencer_sec_pcall_1(obj, utils_item)
+	return utils_item.get_attached_silencer(obj)
+end
+
 local function attached_silencer_sec(obj)
 	if not APPLY_SILENCER or not obj or not utils_item or not utils_item.get_attached_silencer then
 		return nil
 	end
-	local ok, sil = pcall(function()
-		return utils_item.get_attached_silencer(obj)
-	end)
+	local ok, sil = pcall(attached_silencer_sec_pcall_1, obj, utils_item)
 	if ok and sil and sil ~= "" then
 		return sil
 	end
 	return nil
+end
+
+local function resolve_sec_pcall_1(obj)
+	return obj:section()
 end
 
 local function resolve_sec(obj, sec)
@@ -197,9 +205,7 @@ local function resolve_sec(obj, sec)
 		return nil
 	end
 	-- Avoid method calls on stale/non-object refs (crashes in IsWeapon via :clsid).
-	local ok, section = pcall(function()
-		return obj:section()
-	end)
+	local ok, section = pcall(resolve_sec_pcall_1, obj)
 	if not ok or not section then
 		return nil
 	end
@@ -328,6 +334,10 @@ end
 -- arti_jamming barrel roll: weapon_degradation * condition_shot_dec * 15000
 -- out of 1000 (independent of the separate non-barrel part roll). Lower is better.
 -- Silencer does not affect this.
+local function value_barrel_wear_pcall_1(obj)
+	return obj:condition()
+end
+
 function value_barrel_wear(obj, sec)
 	sec = resolve_sec(obj, sec)
 	if not is_weapon_section(sec) then
@@ -342,9 +352,7 @@ function value_barrel_wear(obj, sec)
 		thr = tonumber(a_arti_jamming_mcm.get_config("threshold")) or 85
 	end
 	if obj and obj.condition then
-		local ok, cond = pcall(function()
-			return obj:condition()
-		end)
+		local ok, cond = pcall(value_barrel_wear_pcall_1, obj)
 		if ok and cond and (cond * 100) >= thr then
 			return 0
 		end

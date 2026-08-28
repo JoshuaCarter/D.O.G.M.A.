@@ -464,6 +464,14 @@ local function companion_name_id_for_cap(cap)
 end
 
 -- Equipped weapon in the same slot (stock UIInfoItem compare target).
+local function slot_compare_weapon_pcall_1(obj)
+	return obj:id()
+end
+
+local function slot_compare_weapon_pcall_2(obj_b)
+	return obj_b:id()
+end
+
 local function slot_compare_weapon(info, obj, sec)
 	if not info or not info.can_compare or not obj or not sec or sec == "" then
 		return nil
@@ -479,12 +487,8 @@ local function slot_compare_weapon(info, obj, sec)
 	if not obj_b then
 		return nil
 	end
-	local ok_a, id_a = pcall(function()
-		return obj:id()
-	end)
-	local ok_b, id_b = pcall(function()
-		return obj_b:id()
-	end)
+	local ok_a, id_a = pcall(slot_compare_weapon_pcall_1, obj)
+	local ok_b, id_b = pcall(slot_compare_weapon_pcall_2, obj_b)
 	if ok_a and ok_b and id_a == id_b then
 		return nil
 	end
@@ -601,13 +605,15 @@ local function apply_numeric_compare(ele, val_a, val_b, lower_is_better, decimal
 	return true
 end
 
+local function resolve_compare_sec_pcall_1(obj_b)
+	return obj_b:section()
+end
+
 local function resolve_compare_sec(obj_b)
 	if not obj_b then
 		return nil
 	end
-	local ok, section = pcall(function()
-		return obj_b:section()
-	end)
+	local ok, section = pcall(resolve_compare_sec_pcall_1, obj_b)
 	if ok and section then
 		return ini_sys:r_string_ex(section, "parent_section") or section
 	end
@@ -805,6 +811,10 @@ local function apply_slash_damage_compare(ele, items_fn, obj, sec, obj_b)
 	return apply_multipart_compare(ele, diffs, 1, false, false, " / ")
 end
 
+local function apply_custom_stat_display_pcall_1(obj)
+	return obj:section()
+end
+
 local function apply_custom_stat_display(info, obj, sec)
 	if not info or not info.stats then
 		return
@@ -823,9 +833,7 @@ local function apply_custom_stat_display(info, obj, sec)
 		return
 	end
 	if (not sec or sec == "") and obj then
-		local ok, section = pcall(function()
-			return obj:section()
-		end)
+		local ok, section = pcall(apply_custom_stat_display_pcall_1, obj)
 		if ok and section then
 			sec = ini_sys:r_string_ex(section, "parent_section") or section
 		end
@@ -1439,26 +1447,30 @@ local function on_option_change()
 		tostr(CONFIG.loaded.apply_silencer_table), tostr(CONFIG.loaded.apply_silencer_stats)))
 end
 
+local function safe_id_pcall_1(obj)
+	return obj:id()
+end
+
 local function safe_id(obj)
 	if not obj then
 		return nil
 	end
-	local ok, id = pcall(function()
-		return obj:id()
-	end)
+	local ok, id = pcall(safe_id_pcall_1, obj)
 	if ok then
 		return id
 	end
 	return nil
 end
 
+local function safe_section_pcall_1(obj)
+	return obj:section()
+end
+
 local function safe_section(obj)
 	if not obj then
 		return nil
 	end
-	local ok, section = pcall(function()
-		return obj:section()
-	end)
+	local ok, section = pcall(safe_section_pcall_1, obj)
 	if ok and section then
 		return section
 	end
@@ -1614,13 +1626,15 @@ local function calc_range()
 end
 
 -- Barrel part condition 0..1. Missing parts data => 1.0.
+local function raw_barrel_condition_pcall_1(obj, se_load_var)
+	return se_load_var(obj:id(), obj:name(), "parts")
+end
+
 local function raw_barrel_condition(obj)
 	if not obj then
 		return 1
 	end
-	local ok, parts = pcall(function()
-		return se_load_var(obj:id(), obj:name(), "parts")
-	end)
+	local ok, parts = pcall(raw_barrel_condition_pcall_1, obj, se_load_var)
 	if not ok or type(parts) ~= "table" then
 		return 1
 	end
@@ -1650,10 +1664,12 @@ local function barrel_mult(obj, use_condition)
 end
 
 -- GAMMA character-creation difficulty (1-4). Falls back to engine gd index.
+local function difficulty_mult_pcall_1(alife_storage_manager)
+	return alife_storage_manager.get_state()
+end
+
 local function difficulty_mult()
-	local ok, state = pcall(function()
-		return alife_storage_manager.get_state()
-	end)
+	local ok, state = pcall(difficulty_mult_pcall_1, alife_storage_manager)
 	if ok and state and type(state.diff_game) == "table" then
 		local t = tonumber(state.diff_game.type)
 		if t and DIFFICULTY_MULT[t] then
@@ -1695,14 +1711,16 @@ local function npc_ammo_mult(ammo_sec)
 end
 
 -- CQC silencer_boost: 1.07 if attached silencer or integrated suppressor parent.
+local function silencer_mult_pcall_1(obj)
+	return obj:weapon_is_silencer()
+end
+
 local function silencer_mult(obj, sec, enabled)
 	if not enabled then
 		return 1
 	end
 	if obj then
-		local ok, has = pcall(function()
-			return obj:weapon_is_silencer()
-		end)
+		local ok, has = pcall(silencer_mult_pcall_1, obj)
 		if ok and has then
 			return SILENCER_BOOST
 		end
@@ -2381,10 +2399,12 @@ local function apply_armor_column_layout(fields)
 	end
 end
 
+local function create_damage_fields_pcall_1(DAMAGE_XML, parent)
+	return DAMAGE_XML:InitStatic("panel", parent)
+end
+
 local function create_damage_fields(parent, panel_x)
-	local ok, dlg = pcall(function()
-		return DAMAGE_XML:InitStatic("panel", parent)
-	end)
+	local ok, dlg = pcall(create_damage_fields_pcall_1, DAMAGE_XML, parent)
 	if not ok or not dlg then
 		log_once("panel_xml_fail", "create_damage_fields: ui_dogma_gui_weapon_tooltips.xml init failed")
 		return nil, nil
@@ -2608,22 +2628,27 @@ local function sync_parts_layout(info, tail)
 	return info.parts, 0
 end
 
+local function apply_description_visibility_pcall_1(info)
+	info.desc:AdjustHeightToText()
+end
+
 local function apply_description_visibility(info)
 	if not info or not info.desc then
 		return
 	end
 	info.desc:Show(true)
-	pcall(function()
-		info.desc:AdjustHeightToText()
-	end)
+	pcall(apply_description_visibility_pcall_1, info)
+end
+
+local function pick_header_tail_pcall_1(info)
+	return info.desc:GetHeight()
 end
 
 local function pick_header_tail(info)
 	if info.desc and info.desc:IsShown() then
 		local h = 0
-		pcall(function()
-			h = info.desc:GetHeight()
-		end)
+		local _ok, _h = pcall(pick_header_tail_pcall_1, info)
+		if _ok then h = _h end
 		if h > 0 then
 			return info.desc
 		end
@@ -2649,6 +2674,10 @@ end
 
 -- Show clamps dialog/self. Height follows Sync_H; width is stock unless
 -- side-parts actually stick out past that stock width.
+local function fit_dialog_to_frame_pcall_1(extra, fh, fw, info, stock, vector2)
+	info:SetWndSize(vector2():set((stock and stock.self or fw) + extra, fh))
+end
+
 local function fit_dialog_to_frame(info, parts_right)
 	local frame = info.frame
 	if not frame then
@@ -2671,10 +2700,12 @@ local function fit_dialog_to_frame(info, parts_right)
 		info.dialog:SetWndSize(vector2():set((stock and stock.dialog or fw) + extra, fh))
 	end
 	if info.SetWndSize then
-		pcall(function()
-			info:SetWndSize(vector2():set((stock and stock.self or fw) + extra, fh))
-		end)
+		pcall(fit_dialog_to_frame_pcall_1, extra, fh, fw, info, stock, vector2)
 	end
+end
+
+local function reset_box_width_pcall_1(info, stock, vector2)
+	info:SetWndSize(vector2():set(stock.self, info:GetHeight()))
 end
 
 local function reset_box_width(info)
@@ -2690,9 +2721,7 @@ local function reset_box_width(info)
 		info.dialog:SetWndSize(vector2():set(stock.dialog, info.dialog:GetHeight()))
 	end
 	if info.SetWndSize then
-		pcall(function()
-			info:SetWndSize(vector2():set(stock.self, info:GetHeight()))
-		end)
+		pcall(reset_box_width_pcall_1, info, stock, vector2)
 	end
 end
 

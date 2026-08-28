@@ -140,6 +140,10 @@ end
 
 -- Ammo types this gun should drop: loaded type + matching inventory ammo.
 -- Falls back to a random db ammo_class entry if nothing matched.
+local function ammo_types_for_gun_pcall_1(wpn)
+    return wpn:get_ammo_type()
+end
+
 local function ammo_types_for_gun(wpn, inv_ammo)
     if not wpn then
         return nil
@@ -166,9 +170,7 @@ local function ammo_types_for_gun(wpn, inv_ammo)
 
     local matched = {}
     if wpn.get_ammo_type then
-        local ok, idx = pcall(function()
-            return wpn:get_ammo_type()
-        end)
+        local ok, idx = pcall(ammo_types_for_gun_pcall_1, wpn)
         if ok and idx ~= nil then
             local loaded = ammo_list[idx + 1]
             if loaded and allowed[loaded] then

@@ -160,27 +160,29 @@ local function weapon_count(weapons)
 	return count
 end
 
+local function snapshot_owner_weapons_pcall_1(IsInvbox, dogma, owner, weapons, xinventory)
+	if IsInvbox and IsInvbox(owner) and owner.iterate_inventory_box then
+		owner:iterate_inventory_box(function(_, item)
+			if dogma.db.is_weapon(item:section()) then
+				weapons[item:id()] = item:section()
+			end
+		end, nil)
+	elseif owner.id then
+		xinventory.iterate_inventory(owner:id(), function(_, item)
+			if dogma.db.is_weapon(item:section()) then
+				weapons[item:id()] = item:section()
+			end
+		end)
+	end
+end
+
 local function snapshot_owner_weapons(owner)
 	local weapons = {}
 	if not owner then
 		return weapons
 	end
 	dogma.perf.start("stripping", "snapshot_owner_weapons")
-	local ok = pcall(function()
-		if IsInvbox and IsInvbox(owner) and owner.iterate_inventory_box then
-			owner:iterate_inventory_box(function(_, item)
-				if dogma.db.is_weapon(item:section()) then
-					weapons[item:id()] = item:section()
-				end
-			end, nil)
-		elseif owner.id then
-			xinventory.iterate_inventory(owner:id(), function(_, item)
-				if dogma.db.is_weapon(item:section()) then
-					weapons[item:id()] = item:section()
-				end
-			end)
-		end
-	end)
+	local ok = pcall(snapshot_owner_weapons_pcall_1, IsInvbox, dogma, owner, weapons, xinventory)
 	if not ok then
 		log("snapshot_owner_weapons: inventory scan errored")
 		dogma.perf.stop()
@@ -190,16 +192,18 @@ local function snapshot_owner_weapons(owner)
 	return weapons
 end
 
+local function snapshot_actor_inventory_ids_pcall_1(db, ids, xinventory)
+	xinventory.iterate_inventory(db.actor:id(), function(_, item)
+		ids[item:id()] = true
+	end)
+end
+
 local function snapshot_actor_inventory_ids()
 	local ids = {}
 	if not db.actor then
 		return ids
 	end
-	local ok = pcall(function()
-		xinventory.iterate_inventory(db.actor:id(), function(_, item)
-			ids[item:id()] = true
-		end)
-	end)
+	local ok = pcall(snapshot_actor_inventory_ids_pcall_1, db, ids, xinventory)
 	if not ok then
 		log("snapshot_actor_inventory_ids: iterate_inventory errored")
 		return {}
@@ -238,20 +242,22 @@ local function actor_ammo_count(item)
 	return item:ammo_get_count() or 0
 end
 
+local function snapshot_actor_ammo_sections_pcall_1(actor_ammo_count, counts, db, xinventory)
+	xinventory.iterate_inventory(db.actor:id(), function(_, item)
+		local count = actor_ammo_count(item)
+		if count > 0 then
+			local sec = item:section()
+			counts[sec] = (counts[sec] or 0) + count
+		end
+	end)
+end
+
 local function snapshot_actor_ammo_sections()
 	local counts = {}
 	if not db.actor then
 		return counts
 	end
-	local ok = pcall(function()
-		xinventory.iterate_inventory(db.actor:id(), function(_, item)
-			local count = actor_ammo_count(item)
-			if count > 0 then
-				local sec = item:section()
-				counts[sec] = (counts[sec] or 0) + count
-			end
-		end)
-	end)
+	local ok = pcall(snapshot_actor_ammo_sections_pcall_1, actor_ammo_count, counts, db, xinventory)
 	if not ok then
 		log("snapshot_actor_ammo_sections: iterate_inventory errored")
 		return {}
@@ -289,22 +295,24 @@ local function clear_reclaim_state()
 	kick_strip_queue()
 end
 
+local function build_reclaim_pending_ids_pcall_1(before, burst_obj_id, db, pending, reclaim_include_weapon, xinventory)
+	xinventory.iterate_inventory(db.actor:id(), function(_, item)
+		local id = item:id()
+		if not before[id] then
+			if reclaim_include_weapon or id ~= burst_obj_id then
+				pending[#pending + 1] = id
+			end
+		end
+	end)
+end
+
 local function build_reclaim_pending_ids()
 	local pending = {}
 	local before = burst_actor_inv_before or {}
 	if not db.actor then
 		return pending
 	end
-	local ok = pcall(function()
-		xinventory.iterate_inventory(db.actor:id(), function(_, item)
-			local id = item:id()
-			if not before[id] then
-				if reclaim_include_weapon or id ~= burst_obj_id then
-					pending[#pending + 1] = id
-				end
-			end
-		end)
-	end)
+	local ok = pcall(build_reclaim_pending_ids_pcall_1, before, burst_obj_id, db, pending, reclaim_include_weapon, xinventory)
 	if not ok then
 		log("build_reclaim_pending_ids: iterate_inventory errored")
 		return {}

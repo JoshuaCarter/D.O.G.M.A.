@@ -1,18 +1,10 @@
 --[[
-	Shared hold+hover for inventory keybinds.
-	Press+hold over a cell fires that cell. All-stacks binds expand
-	childs. One-stack binds do only the hovered row. Picker rows are
-	already one stack: both binds stay on that row. Moving to a new
-	cell fires that cell too.
+	Hold+hover inventory binds.
 
-	Race: fire and freeze used to start the same tick, after that
-	frame's UpdateInventories. SortingPlus/Seamless Reinit then packs
-	the next item into the hole under the cursor with a new idx, and
-	On_Hover treats that as a new cell. Same-idx lock cannot catch it.
-
-	Hold: tick 1 only freezes (still + Reinit/Reset/On_Sort blocked).
-	Tick 2 fires. After that, idx changes without mouse move are
-	layout, not paint. Key release runs the normal refresh.
+	Tick 1: freeze only. Tick 2: fire that cell. Mouse onto a new cell:
+	fire that too. Idx change with the mouse still is layout packing the
+	hole, not paint. still-binds block Reinit/Reset/On_Sort and only
+	add/remove cells until key up.
 ]]
 
 local MOD_ID = "dogma/input/inventory_controls"
@@ -21,16 +13,9 @@ local actions = {}
 local in_action = false
 local still_was = false
 local log_seq = 0
+local wrapped = {}
 local original_on_hover = nil
 local hover_wrapper = nil
-local original_update_inventories = nil
-local update_inventories_wrapper = nil
-local original_reinit = nil
-local reinit_wrapper = nil
-local original_cc_reset = nil
-local cc_reset_wrapper = nil
-local original_on_sort = nil
-local on_sort_wrapper = nil
 
 local function log(msg)
 	if dogma.log.logging() then
@@ -76,7 +61,6 @@ local function owner_cell(gui, obj, bag)
 		return nil
 	end
 	if bag == "picker" then
-		-- Children are not in the parent bag index. Use the opened cell.
 		local p = gui.CC.picker and gui.CC.picker.parent
 		local cc = p and p.bag and gui.CC[p.bag]
 		return cc and p.idx and cc.cell and cc.cell[p.idx]
@@ -85,8 +69,6 @@ local function owner_cell(gui, obj, bag)
 	return cc and cc.GetCell_ID and cc:GetCell_ID(obj:id())
 end
 
--- Vanilla Action_Move ignores bag=="picker". Use the opened parent bag.
--- Snapshot this before the picker hides and clears parent.
 local function source_bag(gui, bag)
 	if bag ~= "picker" then
 		return bag
@@ -95,8 +77,6 @@ local function source_bag(gui, bag)
 	return p and p.bag or nil
 end
 
--- whole: parent + childs. Picker rows are already one stack.
--- otherwise just the hovered object. IDs snapshotted first.
 local function stack_items(gui, obj, bag, whole)
 	if not obj then
 		return {}
@@ -129,7 +109,6 @@ local function stack_items(gui, obj, bag, whole)
 	return items
 end
 
--- While the stack popup is under the cursor, use its row, not the parent cell.
 local function hover_cell(gui)
 	local pcc = gui and gui.CC and gui.CC.picker
 	if pcc and pcc.IsShown and pcc:IsShown() and pcc.IsCursorOverWindow and pcc:IsCursorOverWindow() then
@@ -154,51 +133,58 @@ local function still_active()
 	return false
 end
 
-local function fire_cell(act, obj, bag, idx, gui)
-	in_action = true
-	act.hold = { bag = bag, idx = idx, locked = true }
+-- hold.armed: tick 1, freeze only. After fire/empty: parked on that cell.
+-- Follow the hover while the mouse is still so a packed hole becomes the
+-- parked cell and cannot fire. Paint only when the mouse moves to a new cell.
+local function set_hold(act, bag, idx, armed)
+	act.hold = { bag = bag, idx = idx, armed = armed }
 	mark_cursor(act.hold)
+end
+
+local function fire_or_park(act, bag, idx, gui)
+	local obj = cell_obj(gui, bag, idx)
+	set_hold(act, bag, idx, false)
+	if not obj then
+		log("empty " .. cell_desc(gui, bag, idx))
+		return
+	end
+	in_action = true
 	log(string.format("fire still=%s %s", tostring(still_active()), cell_desc(gui, bag, idx)))
 	act.fire(gui, obj, bag, idx)
 	in_action = false
 end
 
-local function on_cell(act, bag, idx, gui)
-	if not (bag and act.bags[bag]) then
-		return
-	end
-	local hold = act.hold
-	if hold and hold.bag == bag and hold.idx == idx then
-		if hold.locked or not cell_obj(gui, bag, idx) then
-			hold.locked = true
-		end
-		return
-	end
-	local obj = cell_obj(gui, bag, idx)
-	if obj then
-		fire_cell(act, obj, bag, idx, gui)
-	else
-		act.hold = { bag = bag, idx = idx, locked = true }
-		mark_cursor(act.hold)
-		log("empty " .. cell_desc(gui, bag, idx))
-	end
-end
-
-local function arm_hold(act, bag, idx)
-	act.hold = { bag = bag, idx = idx, armed = true, locked = true }
-	mark_cursor(act.hold)
-	log(string.format("arm still=%s active=%s %s[%s]", tostring(act.still), tostring(still_active()), tostring(bag), tostring(idx)))
-end
-
--- Layout can change idx under a still cursor. Only paint when the mouse moved.
-local function layout_hold(act, bag, idx, gui)
+local function follow_hover(act, bag, idx, gui)
 	local hold = act.hold
 	if hold.bag ~= bag or hold.idx ~= idx then
 		log(string.format("skip layout %s -> %s", cell_desc(gui, hold.bag, hold.idx), cell_desc(gui, bag, idx)))
 	end
 	hold.bag = bag
 	hold.idx = idx
-	hold.locked = true
+end
+
+local function step(act, bag, idx, gui)
+	if not (bag and act.bags[bag]) then
+		return
+	end
+	local hold = act.hold
+	if not hold then
+		set_hold(act, bag, idx, true)
+		log(string.format("arm still=%s active=%s %s[%s]", tostring(act.still), tostring(still_active()), tostring(bag), tostring(idx)))
+		return
+	end
+	if hold.armed then
+		hold.armed = false
+		fire_or_park(act, bag, idx, gui)
+		return
+	end
+	if not mouse_moved(hold) then
+		follow_hover(act, bag, idx, gui)
+		return
+	end
+	if hold.bag ~= bag or hold.idx ~= idx then
+		fire_or_park(act, bag, idx, gui)
+	end
 end
 
 local function poll_action(act, gui)
@@ -208,7 +194,6 @@ local function poll_action(act, gui)
 		return
 	end
 	local down = act.key_down()
-	local pressed = down and not act.down_prev
 	act.down_prev = down
 	if not down then
 		if act.hold then
@@ -217,41 +202,13 @@ local function poll_action(act, gui)
 		act.hold = nil
 		return
 	end
-
 	local bag, idx = hover_cell(gui)
-	if not bag then
-		if act.hold then
-			act.hold.locked = true
-		end
-		return
-	end
-
-	-- First tick of a hold: freeze only. Fire next tick.
-	if pressed or not act.hold then
-		arm_hold(act, bag, idx)
-		return
-	end
-
-	if act.hold.armed then
-		act.hold.armed = false
-		on_cell(act, bag, idx, gui)
-		return
-	end
-
-	if not mouse_moved(act.hold) then
-		layout_hold(act, bag, idx, gui)
-		return
-	end
-
-	if act.hold.bag ~= bag or act.hold.idx ~= idx then
-		on_cell(act, bag, idx, gui)
-	elseif not cell_obj(gui, bag, idx) or act.hold.locked then
-		act.hold.locked = true
+	if bag then
+		step(act, bag, idx, gui)
 	end
 end
 
 -- Vanilla RefreshInventories: add missing, remove gone. Leaves holes.
--- SortingPlus/Seamless replace that with a full re-sort.
 local function refresh_bag(cc, inv)
 	if not (cc and inv and cc.indx_id) then
 		return
@@ -315,11 +272,7 @@ end
 local function poll_all(gui)
 	local was = still_was
 	for i = 1, #actions do
-		local act = actions[i]
-		if act.tick then
-			act.tick(gui)
-		end
-		poll_action(act, gui)
+		poll_action(actions[i], gui)
 	end
 	local now = still_active()
 	if was and not now then
@@ -328,105 +281,74 @@ local function poll_all(gui)
 	still_was = now
 end
 
+local function still_block_cc(self)
+	return still_active() and self.ID ~= "picker"
+end
+
+local function wrap(obj, name, fn)
+	if not (obj and obj[name]) or wrapped[name] == obj[name] then
+		return
+	end
+	local orig = obj[name]
+	local wrapper = function(...)
+		return fn(orig, ...)
+	end
+	wrapped[name] = wrapper
+	obj[name] = wrapper
+	log(name .. " patched")
+end
+
+local function reapply_still_patches()
+	local cls = ui_inventory and ui_inventory.UIInventory
+	wrap(cls, "UpdateInventories", function(orig, self)
+		if still_active() then
+			still_refresh(self)
+			return
+		end
+		return orig(self)
+	end)
+	wrap(cls, "On_Sort", function(orig, self, ii, ignore)
+		if still_active() then
+			log("On_Sort blocked")
+			return
+		end
+		return orig(self, ii, ignore)
+	end)
+	local cc = utils_ui and utils_ui.UICellContainer
+	wrap(cc, "Reinit", function(orig, self, t, tf)
+		if still_block_cc(self) then
+			log("Reinit blocked " .. tostring(self.ID))
+			return
+		end
+		return orig(self, t, tf)
+	end)
+	wrap(cc, "Reset", function(orig, self, ...)
+		if still_block_cc(self) then
+			log("Reset blocked " .. tostring(self.ID))
+			return
+		end
+		return orig(self, ...)
+	end)
+end
+
 local function call_base_hover(self, idx)
 	if original_on_hover then
 		return original_on_hover(self, idx)
 	end
 end
 
-local function paint_blocked(act)
-	local hold = act.hold
-	if not hold then
-		return false
-	end
-	if hold.armed then
-		return true
-	end
-	return hold.locked and not mouse_moved(hold)
-end
-
 local function paint_on_hover(self, idx)
 	if in_action or not idx then
 		return call_base_hover(self, idx)
 	end
-	local bag = self.ID
 	local gui = ui_inventory and ui_inventory.GUI
 	for i = 1, #actions do
 		local act = actions[i]
-		if act.down_prev and act.mode_ok(gui) and not paint_blocked(act) then
-			on_cell(act, bag, idx, gui)
+		if act.down_prev and act.hold and act.mode_ok(gui) then
+			step(act, self.ID, idx, gui)
 		end
 	end
 	return call_base_hover(self, idx)
-end
-
-local function still_block_cc(self)
-	return still_active() and self.ID ~= "picker"
-end
-
-local update_inventories_wrapper_anon_1 = function(self)
-	if still_active() then
-		still_refresh(self)
-		return
-	end
-	return original_update_inventories(self)
-end
-
-local reinit_wrapper_anon_1 = function(self, t, tf)
-	if still_block_cc(self) then
-		log("Reinit blocked " .. tostring(self.ID))
-		return
-	end
-	return original_reinit(self, t, tf)
-end
-
-local cc_reset_wrapper_anon_1 = function(self, ...)
-	if still_block_cc(self) then
-		log("Reset blocked " .. tostring(self.ID))
-		return
-	end
-	return original_cc_reset(self, ...)
-end
-
-local on_sort_wrapper_anon_1 = function(self, ii, ignore)
-	if still_active() then
-		log("On_Sort blocked")
-		return
-	end
-	return original_on_sort(self, ii, ignore)
-end
-
-local function reapply_still_patches()
-	local cls = ui_inventory and ui_inventory.UIInventory
-	if cls then
-		if cls.UpdateInventories and cls.UpdateInventories ~= update_inventories_wrapper then
-			original_update_inventories = cls.UpdateInventories
-			update_inventories_wrapper = update_inventories_wrapper_anon_1
-			cls.UpdateInventories = update_inventories_wrapper
-			log("UpdateInventories patched")
-		end
-		if cls.On_Sort and cls.On_Sort ~= on_sort_wrapper then
-			original_on_sort = cls.On_Sort
-			on_sort_wrapper = on_sort_wrapper_anon_1
-			cls.On_Sort = on_sort_wrapper
-			log("On_Sort patched")
-		end
-	end
-	local cc_class = utils_ui and utils_ui.UICellContainer
-	if cc_class then
-		if cc_class.Reinit and cc_class.Reinit ~= reinit_wrapper then
-			original_reinit = cc_class.Reinit
-			reinit_wrapper = reinit_wrapper_anon_1
-			cc_class.Reinit = reinit_wrapper
-			log("Reinit patched")
-		end
-		if cc_class.Reset and cc_class.Reset ~= cc_reset_wrapper then
-			original_cc_reset = cc_class.Reset
-			cc_reset_wrapper = cc_reset_wrapper_anon_1
-			cc_class.Reset = cc_reset_wrapper
-			log("Reset patched")
-		end
-	end
 end
 
 local hover_wrapper_anon_1 = function(self, idx)

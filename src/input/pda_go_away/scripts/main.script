@@ -1,9 +1,9 @@
 --[[
     Don't Re-Equip PDA
 
-    When UI holsters the PDA (slot 8), the engine re-equips it ~1-2s after close.
-    Restore the last real weapon/knife/binoc slot instead of bare hands on UI
-    open/close and after teleport position jumps.
+    Inventory/loot already auto-lowers the PDA (CPda::Action -> Activate(0)).
+    Do not change slot on open: activate_slot(weapon) starts a draw and delays
+    the inventory open anim. After close, swap to the last real slot.
 ]]
 
 local CONFIG = _G.dogma_input_pda_go_away_conf
@@ -35,15 +35,12 @@ local function on_option_change()
     ))
 end
 
--- Continuously tracks the last real equip slot (guns, knife, binoc) so we
--- know what to restore instead of bare hands. slot_before_pda is captured
--- when active_slot transitions to the PDA, so gun -> PDA -> inventory ->
--- close restores the gun even if holstering briefly passes through
--- active_slot 0 in between.
+-- last_non_pda_slot: last real equip (guns, knife, binoc).
+-- slot_before_pda: captured on pull-out. Survives engine auto-lower 8 -> 0.
+-- pending_restore: this UI session started from PDA; restore only after close.
 local last_non_pda_slot = 0
 local slot_before_pda = nil
-local pda_holstered_for_ui = false
-local restore_slot_for_ui = nil
+local pending_restore = false
 local last_seen_slot = nil
 
 local function slot_has_item(slot)
@@ -57,8 +54,6 @@ local function restore_slot_after_pda()
     if last_non_pda_slot ~= 0 and slot_has_item(last_non_pda_slot) then
         return last_non_pda_slot
     end
-    -- Primary/secondary guns first, then knife/binoculars - fallback only when
-    -- slot_before_pda was not captured.
     for _, s in ipairs({ 1, 2, 3, 4 }) do
         if slot_has_item(s) then
             return s
@@ -67,40 +62,62 @@ local function restore_slot_after_pda()
     return 0
 end
 
-local function holster_pda_for(kind, site, on_close)
-    local sformat = string.format
-    local tostr = tostring
-    if not db.actor then
-        log(sformat("holster_pda_for(%s) from %s: skipped, no db.actor", kind, site))
+local function kind_enabled(kind)
+    return kind and CONFIG.loaded["after_" .. kind]
+end
+
+local function activate_restore(target, site)
+    if not db.actor or not target or target == 0 then
         return
     end
-    if not CONFIG.loaded["after_" .. kind] then
-        log(sformat("holster_pda_for(%s) from %s: skipped, config disabled", kind, site))
+    log(string.format(
+        "restore(%s): active_slot=%s -> activate_slot(%s) (slot_before_pda=%s, last_non_pda_slot=%s)",
+        site, tostring(db.actor:active_slot()), target, tostring(slot_before_pda), tostring(last_non_pda_slot)
+    ))
+    db.actor:activate_slot(target)
+    slot_before_pda = nil
+end
+
+-- Open: remember only. Engine already started PDA hide. Do not activate_slot.
+local function mark_pending_if_pda(kind, site)
+    local tostr = tostring
+    if not db.actor then
+        return
+    end
+    if not kind_enabled(kind) then
         return
     end
     local slot = db.actor:active_slot()
-    local target = restore_slot_after_pda()
-    if slot == PDA_SLOT then
-        log(sformat(
-            "holster_pda_for(%s) from %s: active_slot=%s -> activate_slot(%s) (slot_before_pda=%s, last_non_pda_slot=%s)",
-            kind, site, slot, target, tostr(slot_before_pda), tostr(last_non_pda_slot)
-        ))
-        db.actor:activate_slot(target)
-        restore_slot_for_ui = target
-        pda_holstered_for_ui = true
+    if slot ~= PDA_SLOT and last_seen_slot ~= PDA_SLOT and not slot_before_pda then
+        log(string.format("mark_pending(%s) from %s: skipped, PDA not involved (slot=%s)", kind, site, tostr(slot)))
         return
     end
-    if on_close and pda_holstered_for_ui and restore_slot_for_ui and restore_slot_for_ui ~= 0 then
-        log(sformat(
-            "holster_pda_for(%s) from %s: preempt active_slot=%s -> activate_slot(%s) (restore_slot_for_ui)",
-            kind, site, tostr(slot), restore_slot_for_ui
-        ))
-        db.actor:activate_slot(restore_slot_for_ui)
-        pda_holstered_for_ui = false
-        restore_slot_for_ui = nil
+    pending_restore = true
+    log(string.format(
+        "mark_pending(%s) from %s: slot=%s last_seen=%s slot_before_pda=%s",
+        kind, site, tostr(slot), tostr(last_seen_slot), tostr(slot_before_pda)
+    ))
+end
+
+local function restore_after_ui(kind, site)
+    if not db.actor then
         return
     end
-    log(sformat("holster_pda_for(%s) from %s: active_slot=%s, nothing to holster", kind, site, tostr(slot)))
+    if not kind_enabled(kind) then
+        return
+    end
+    if not pending_restore then
+        log(string.format("restore_after_ui(%s) from %s: skipped, no pending", kind, site))
+        return
+    end
+    pending_restore = false
+    activate_restore(restore_slot_after_pda(), site)
+end
+
+local function reset_restore_state()
+    pending_restore = false
+    slot_before_pda = nil
+    last_seen_slot = nil
 end
 
 local TELEPORT_DIST_SQR = 12 * 12
@@ -112,7 +129,7 @@ local function on_actor_menu_mode_changed(mode, last_mode)
     if mode ~= 0 and last_mode == 0 then
         local kind = MODE_TO_KIND[mode]
         if kind then
-            holster_pda_for(kind, "mode_changed(open)")
+            mark_pending_if_pda(kind, "mode_changed(open)")
         end
         return
     end
@@ -120,7 +137,7 @@ local function on_actor_menu_mode_changed(mode, last_mode)
     if mode == 0 then
         local kind = MODE_TO_KIND[last_mode]
         if kind then
-            holster_pda_for(kind, "mode_changed(close)", true)
+            restore_after_ui(kind, "mode_changed(close)")
         end
     end
 end
@@ -128,7 +145,7 @@ end
 local function on_actor_menu_before_init_mode(mode_str)
     log("ActorMenu_on_before_init_mode: " .. tostring(mode_str))
     if mode_str == "inventory" or mode_str == "loot" then
-        holster_pda_for(mode_str, "before_init_mode")
+        mark_pending_if_pda(mode_str, "before_init_mode")
     end
 end
 
@@ -149,7 +166,7 @@ local function patch_actor_menu()
         if orig_actor_menu.inventory_wnd_closed then
             orig_actor_menu.inventory_wnd_closed()
         end
-        holster_pda_for("inventory", "wnd_closed", true)
+        restore_after_ui("inventory", "wnd_closed")
     end
 
     function actor_menu.dead_body_search_wnd_closed()
@@ -157,13 +174,13 @@ local function patch_actor_menu()
         if orig_actor_menu.dead_body_search_wnd_closed then
             orig_actor_menu.dead_body_search_wnd_closed()
         end
-        holster_pda_for("loot", "wnd_closed", true)
+        restore_after_ui("loot", "wnd_closed")
     end
 end
 
 -- Always printf (not debug-gated): catches empty character community before
 -- PDA ranking/contacts can fatal on CCharacterInfo::GetById(null).
--- Uses SE/xcreature only — game-object character_community() can itself assert.
+-- Uses SE/xcreature only. Game-object character_community() can itself assert.
 local try_scan_stalkers_before_pda = function(se)
     return se:community()
 end
@@ -228,10 +245,8 @@ local function scan_stalkers_before_pda()
     dogma.perf.stop()
 end
 
--- Tick-accurate diagnostic + restore-slot tracking: logs every time
--- active_slot actually changes, captures slot_before_pda when the PDA is
--- pulled out, and remembers real equip slots without letting transient
--- holster-to-0 states wipe knife/binoc/weapon memory.
+-- Tick-accurate restore-slot tracking. 8 -> 0 (engine auto-lower) keeps
+-- slot_before_pda. 8 -> real slot (player switched) clears it.
 local function log_active_slot_transitions()
     local tostr = tostring
     local slot = db.actor:active_slot()
@@ -239,7 +254,6 @@ local function log_active_slot_transitions()
         return
     end
 
-    -- capture slot before PDA pull-out
     if slot == PDA_SLOT then
         if last_seen_slot and last_seen_slot ~= PDA_SLOT and last_seen_slot ~= 0 and slot_has_item(last_seen_slot) then
             slot_before_pda = last_seen_slot
@@ -247,7 +261,7 @@ local function log_active_slot_transitions()
             slot_before_pda = last_non_pda_slot
         end
         scan_stalkers_before_pda()
-    elseif last_seen_slot == PDA_SLOT then
+    elseif last_seen_slot == PDA_SLOT and slot ~= 0 then
         slot_before_pda = nil
     end
 
@@ -258,7 +272,6 @@ local function log_active_slot_transitions()
     ))
     last_seen_slot = slot
 
-    -- remember last real equip slot (guns, knife, binoc)
     if slot and slot ~= PDA_SLOT then
         if slot ~= 0 then
             last_non_pda_slot = slot
@@ -288,14 +301,6 @@ local function on_actor_on_update()
     patch_actor_menu()
     log_active_slot_transitions()
 
-    local inv_dik = bind_to_dik and key_bindings and bind_to_dik(key_bindings.kINVENTORY)
-    if inv_dik and inv_dik >= 0 and dogma.input.is_key_pressed(inv_dik) then
-        log(string.format("kINVENTORY pressed, active_slot=%s", tostring(db.actor:active_slot())))
-        if db.actor:active_slot() == PDA_SLOT then
-            holster_pda_for("inventory", "key_press(kINVENTORY)")
-        end
-    end
-
     -- teleport position jump: holster PDA when actor teleports
     if CONFIG.loaded.after_teleport then
         local pos = db.actor:position()
@@ -315,7 +320,7 @@ local function on_actor_on_update()
                     ))
                     db.actor:activate_slot(target)
                     holstered = true
-                elseif slot == 0 and target ~= 0 and (slot_before_pda or pda_holstered_for_ui or last_seen_slot == PDA_SLOT) then
+                elseif slot == 0 and target ~= 0 and (slot_before_pda or pending_restore or last_seen_slot == PDA_SLOT) then
                     log(string.format(
                         "holster_pda_on_teleport(position_jump): preempt active_slot=0 -> activate_slot(%s) (pending PDA restore)",
                         target
@@ -328,8 +333,7 @@ local function on_actor_on_update()
 
                 if holstered then
                     slot_before_pda = nil
-                    pda_holstered_for_ui = false
-                    restore_slot_for_ui = nil
+                    pending_restore = false
                     last_actor_pos = db.actor:position()
                 end
             end
@@ -354,4 +358,5 @@ function on_game_start()
     RegisterScriptCallback("ActorMenu_on_mode_changed", on_actor_menu_mode_changed)
     RegisterScriptCallback("on_option_change", on_option_change)
     RegisterScriptCallback("actor_on_update", on_actor_on_update)
+    RegisterScriptCallback("on_game_load", reset_restore_state)
 end

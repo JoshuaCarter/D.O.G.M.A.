@@ -1,6 +1,7 @@
 --[[
     Item catalog: gamedata/configs/db/web (website dump) + db/ext (ours).
     SKIP ids are omitted from list() only. get/is still see them.
+    craft-recipes.json is a recipe index (craft(id)), not an item cat.
 ]]
 
 local WEB = "db\\web\\"
@@ -12,6 +13,8 @@ local groups = {}
 local in_group = {}
 local EMPTY = {}
 local list_sorted = {}
+local recipes = {}
+local by_name = {}
 local SKIP = {
     ["wpn_addon_silencer"] = true,
 }
@@ -151,6 +154,12 @@ local function add_row(typ, row)
     if not by_id[row.id] then
         by_id[row.id] = row
     end
+    if row.displayName then
+        by_name[row.displayName] = row.id
+    end
+    if row.pda_encyclopedia_name then
+        by_name[row.pda_encyclopedia_name] = row.id
+    end
     local g = groups[typ]
     g[#g + 1] = row
 end
@@ -234,6 +243,42 @@ local function load_names()
     end
 end
 
+local function parse_amount(s)
+    if type(s) == "number" then
+        return math.floor(s)
+    end
+    local n = tostring(s or ""):match("(%d+)")
+    return tonumber(n) or 0
+end
+
+local function load_recipes()
+    recipes = {}
+    local data = decode_file(WEB, "craft-recipes.json")
+    if not data then
+        return
+    end
+    for _, cat in pairs(data) do
+        local items = cat and cat.items
+        if items then
+            for i = 1, #items do
+                local it = items[i]
+                if it and it.id and it.ingredients then
+                    local parts = {}
+                    for j = 1, #it.ingredients do
+                        local ing = it.ingredients[j]
+                        local key = ing and ing.name
+                        local sec = key and (by_name[key] or (by_id[key] and key))
+                        if sec then
+                            parts[#parts + 1] = { sec, parse_amount(ing.amount) }
+                        end
+                    end
+                    recipes[it.id] = parts
+                end
+            end
+        end
+    end
+end
+
 -- After index_all so is/get still see skipped ids.
 local function hide_skipped()
     if not next(SKIP) then
@@ -258,6 +303,8 @@ local function load_all()
     loaded = true
     by_id = {}
     groups = {}
+    recipes = {}
+    by_name = {}
     load_names()
     for i = 1, #LOAD_ORDER do
         local typ = LOAD_ORDER[i]
@@ -277,6 +324,7 @@ local function load_all()
     build_subs()
     index_all()
     hide_skipped()
+    load_recipes()
 end
 
 local function ensure()
@@ -380,6 +428,11 @@ function is_outfit_part(id) return is(id, "outfit_parts") end
 function cost(id)
     local row = get(id)
     return (row and row.cost) or 0
+end
+
+function craft(id)
+    ensure()
+    return id and recipes[id] or nil
 end
 
 function list(typ, sort, dir)

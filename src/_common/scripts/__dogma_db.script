@@ -1,5 +1,6 @@
 --[[
     Item catalog: gamedata/configs/db/web (website dump) + db/ext (ours).
+    SKIP ids are omitted from list() only. get/is still see them.
 ]]
 
 local WEB = "db\\web\\"
@@ -11,6 +12,9 @@ local groups = {}
 local in_group = {}
 local EMPTY = {}
 local list_sorted = {}
+local SKIP = {
+    ["wpn_addon_silencer"] = true,
+}
 
 local WEB_FILES = {
     weapons_pistols = "pistols.json",
@@ -230,6 +234,23 @@ local function load_names()
     end
 end
 
+-- After index_all so is/get still see skipped ids.
+local function hide_skipped()
+    if not next(SKIP) then
+        return
+    end
+    for typ, rows in pairs(groups) do
+        local out = {}
+        for i = 1, #rows do
+            local row = rows[i]
+            if not SKIP[row.id] then
+                out[#out + 1] = row
+            end
+        end
+        groups[typ] = out
+    end
+end
+
 local function load_all()
     if loaded then
         return
@@ -255,6 +276,7 @@ local function load_all()
     end
     build_subs()
     index_all()
+    hide_skipped()
 end
 
 local function ensure()

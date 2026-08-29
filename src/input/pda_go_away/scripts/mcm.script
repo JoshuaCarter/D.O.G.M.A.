@@ -5,6 +5,7 @@ _G.dogma_input_pda_go_away_conf = {
 	DEFAULTS = {
 		after_inventory = true,
 		after_loot = true,
+		after_trade = true,
 		after_teleport = true,
 	},
 	-- Filled by on_option_change (runs at boot before any read).
@@ -36,6 +37,13 @@ function on_mcm_load(options)
 				val = 1,
 				def = CONFIG.DEFAULTS.after_loot,
 				hint = "dogma_input_pda_go_away_after_loot",
+			},
+			{
+				id = "after_trade",
+				type = "check",
+				val = 1,
+				def = CONFIG.DEFAULTS.after_trade,
+				hint = "dogma_input_pda_go_away_after_trade",
 			},
 			{
 				id = "after_teleport",

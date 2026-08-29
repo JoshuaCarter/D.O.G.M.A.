@@ -1,7 +1,7 @@
 --[[
     Don't Re-Equip PDA
 
-    Inventory/loot already auto-lowers the PDA (CPda::Action -> Activate(0)).
+    Inventory/loot/trade already auto-lowers the PDA (CPda::Action -> Activate(0)).
     Do not change slot on open: activate_slot(weapon) starts a draw and delays
     the inventory open anim. After close, swap to the last real slot.
 ]]
@@ -12,6 +12,7 @@ local PDA_SLOT = 8
 
 local MODE_TO_KIND = {
     [1] = "inventory",
+    [2] = "trade",
     [4] = "loot",
 }
 
@@ -26,12 +27,14 @@ local function on_option_change()
     local tostr = tostring
     CONFIG.loaded.after_inventory = dogma.mcm.bool(CONFIG.MOD_ID, "after_inventory")
     CONFIG.loaded.after_loot = dogma.mcm.bool(CONFIG.MOD_ID, "after_loot")
+    CONFIG.loaded.after_trade = dogma.mcm.bool(CONFIG.MOD_ID, "after_trade")
     CONFIG.loaded.after_teleport = dogma.mcm.bool(CONFIG.MOD_ID, "after_teleport")
     CONFIG.loaded.debug_log = dogma.log.logging()
     log(string.format(
-        "config: inventory=%s loot=%s teleport=%s debug=%s",
+        "config: inventory=%s loot=%s trade=%s teleport=%s debug=%s",
         tostr(CONFIG.loaded.after_inventory), tostr(CONFIG.loaded.after_loot),
-        tostr(CONFIG.loaded.after_teleport), tostr(CONFIG.loaded.debug_log)
+        tostr(CONFIG.loaded.after_trade), tostr(CONFIG.loaded.after_teleport),
+        tostr(CONFIG.loaded.debug_log)
     ))
 end
 
@@ -144,7 +147,7 @@ end
 
 local function on_actor_menu_before_init_mode(mode_str)
     log("ActorMenu_on_before_init_mode: " .. tostring(mode_str))
-    if mode_str == "inventory" or mode_str == "loot" then
+    if mode_str == "inventory" or mode_str == "loot" or mode_str == "trade" then
         mark_pending_if_pda(mode_str, "before_init_mode")
     end
 end
@@ -160,6 +163,7 @@ local function patch_actor_menu()
 
     orig_actor_menu.inventory_wnd_closed = actor_menu.inventory_wnd_closed
     orig_actor_menu.dead_body_search_wnd_closed = actor_menu.dead_body_search_wnd_closed
+    orig_actor_menu.trade_wnd_closed = actor_menu.trade_wnd_closed
 
     function actor_menu.inventory_wnd_closed()
         log("actor_menu.inventory_wnd_closed fired")
@@ -175,6 +179,14 @@ local function patch_actor_menu()
             orig_actor_menu.dead_body_search_wnd_closed()
         end
         restore_after_ui("loot", "wnd_closed")
+    end
+
+    function actor_menu.trade_wnd_closed()
+        log("actor_menu.trade_wnd_closed fired")
+        if orig_actor_menu.trade_wnd_closed then
+            orig_actor_menu.trade_wnd_closed()
+        end
+        restore_after_ui("trade", "wnd_closed")
     end
 end
 

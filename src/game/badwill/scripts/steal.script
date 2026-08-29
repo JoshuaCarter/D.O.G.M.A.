@@ -142,8 +142,12 @@ local function is_dead_loot(obj)
 end
 
 local function look_corpse()
-    local obj = level and level.get_target_obj and level.get_target_obj()
-    if is_dead_loot(obj) then
+    local actor = db.actor
+    if not (actor and actor.get_actor_object_looking_at) then
+        return nil
+    end
+    local ok, obj = pcall(actor.get_actor_object_looking_at, actor)
+    if ok and is_dead_loot(obj) then
         return obj
     end
     return nil

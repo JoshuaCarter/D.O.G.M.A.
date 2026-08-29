@@ -3,8 +3,8 @@
 
     Tick 1: freeze only. Tick 2: fire that cell. Mouse onto a new cell:
     fire that too. Idx change with the mouse still is layout packing the
-    hole, not paint. still-binds block Reinit/Reset/On_Sort and only
-    add/remove cells until key up.
+    hole, not paint. still-binds block Reinit/Reset/On_Sort only.
+    UpdateInventories still runs so box take/put callbacks fire.
 ]]
 
 local MOD_ID = "dogma/input/inventory_controls"
@@ -210,60 +210,6 @@ local function poll_action(act, gui)
     end
 end
 
--- Vanilla RefreshInventories: add missing, remove gone. Leaves holes.
-local function refresh_bag(cc, inv)
-    local tostr = tostring
-    if not (cc and inv and cc.indx_id) then
-        return
-    end
-    local list = cc.indx_id
-    local bag = cc.ID
-    for id, obj in pairs(inv) do
-        if not list[id] then
-            log(string.format("still add %s#%s -> %s", obj:section(), tostr(id), tostr(bag)))
-            cc:AddItem(obj, obj:section())
-        end
-    end
-    local gone = {}
-    for id, _ in pairs(list) do
-        if not inv[id] then
-            gone[#gone + 1] = id
-        end
-    end
-    for i = 1, #gone do
-        log(string.format("still rem #%s from %s", tostr(gone[i]), tostr(bag)))
-        cc:RemoveItem_byID(gone[i])
-    end
-end
-
-local function still_refresh(gui)
-    if not (gui and gui.CC and gui.ParseInventory) then
-        return
-    end
-    local mode = gui.mode
-    if mode == "inventory" or mode == "repair" then
-        if db.actor then
-            refresh_bag(gui.CC.actor_bag, gui:ParseInventory(db.actor, nil, true))
-        end
-    elseif mode == "loot" then
-        if db.actor then
-            refresh_bag(gui.CC.actor_bag, gui:ParseInventory(db.actor, nil, true))
-        end
-        local npc = gui.GetPartner and gui:GetPartner()
-        if npc then
-            local inv
-            if gui.npc_is_companion and gui.ParseInventory_Companion then
-                inv = gui:ParseInventory_Companion(npc, true)
-            else
-                local is_box = IsInvbox and IsInvbox(npc)
-                local all = (not is_box) and npc.alive and (not npc:alive())
-                inv = gui:ParseInventory(npc, all, true)
-            end
-            refresh_bag(gui.CC.npc_bag, inv)
-        end
-    end
-end
-
 local function settle(gui)
     gui = gui or (ui_inventory and ui_inventory.GUI)
     if gui and gui.On_Item_Update then
@@ -301,14 +247,6 @@ local function wrap(obj, name, fn)
     log(name .. " patched")
 end
 
-local wrap_update_inventories = function(orig, self)
-    if still_active() then
-        still_refresh(self)
-        return
-    end
-    return orig(self)
-end
-
 local wrap_on_sort = function(orig, self, ii, ignore)
     if still_active() then
         log("On_Sort blocked")
@@ -335,7 +273,6 @@ end
 
 local function reapply_still_patches()
     local cls = ui_inventory and ui_inventory.UIInventory
-    wrap(cls, "UpdateInventories", wrap_update_inventories)
     wrap(cls, "On_Sort", wrap_on_sort)
     local cc = utils_ui and utils_ui.UICellContainer
     wrap(cc, "Reinit", wrap_reinit)

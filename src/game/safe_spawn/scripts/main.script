@@ -5,7 +5,8 @@
 	(on_before_fast_travel + dest.online): NPCs stop treating the actor and
 	companions as enemies (on_enemy_eval). Online companions are switched
 	offline so mutants cannot aggro them either. Companion combat orders
-	are never rewritten.
+	are never rewritten. When the grace ends they teleport near the actor
+	(walkable verts, not stacked on the actor or each other).
 
 	Ends after duration_sec, or when the actor moves or fires.
 ]]
@@ -14,6 +15,13 @@ local CONFIG = _G.dogma_game_safe_spawn_conf
 local xsquad = dogma.xlibs.xsquad
 
 local MOVE_M = 5
+local PULL_MIN_M = 0.5
+local PULL_RINGS = { 1, 2, 3 }
+local PULL_XZ = {
+	{ 1, 0 }, { 0.707, 0.707 }, { 0, 1 }, { -0.707, 0.707 },
+	{ -1, 0 }, { -0.707, -0.707 }, { 0, -1 }, { 0.707, -0.707 },
+}
+local pull_dir = vector()
 local HUD_STATIC = "dogma_game_safe_spawn_prompt"
 local HUD_FMT = "st_dogma_game_safe_spawn_visible"
 
@@ -175,17 +183,88 @@ local function hide_companions()
 	for sid, squad in pairs(squads) do
 		if type(sid) == "number" then
 			hide_se(alife_object(sid), sid)
-		end
-		for id in xsquad.iter_member_ids(squad) do
-			hide_se(alife_object(id), id)
+			for id in xsquad.iter_member_ids(squad) do
+				hide_se(alife_object(id), id)
+				if hidden[id] then
+					hidden[sid] = true
+				end
+			end
 		end
 	end
 end
 
+local function copy_pos(pos)
+	return vector():set(pos.x, pos.y, pos.z)
+end
+
+-- ponytail: 8-dir rings on navmesh; a one-vertex cell (doorway) still stacks. Upgrade: BFS neighbors.
+local function pick_pull_spot(from_lvid, spots, used, slot)
+	if not (level and level.vertex_in_direction) then
+		return nil
+	end
+	local n = #PULL_XZ
+	local start = (slot - 1) % n
+	for r = 1, #PULL_RINGS do
+		local dist = PULL_RINGS[r]
+		for i = 0, n - 1 do
+			local xz = PULL_XZ[(start + i) % n + 1]
+			pull_dir:set(xz[1], 0, xz[2])
+			local vid = level.vertex_in_direction(from_lvid, pull_dir, dist)
+			if vid and not used[vid] then
+				used[vid] = true
+				local pos = level.vertex_position(vid)
+				if pos then
+					local close = false
+					for s = 1, #spots do
+						if pos:distance_to(spots[s]) < PULL_MIN_M then
+							close = true
+							break
+						end
+					end
+					if not close then
+						local p = copy_pos(pos)
+						spots[#spots + 1] = p
+						return p, vid
+					end
+				end
+			end
+		end
+	end
+	return nil
+end
+
 -- Restore flags on the whole roster (crash cannot leave can_switch_online false).
 -- switch_online only the ones we hid this grace, so waiters stay where they were.
+-- Hidden members teleport to nearby walkable verts (not the actor vertex).
 local function show_companions()
 	local squads = axr_companions and axr_companions.companion_squads
+	local actor = db.actor
+	if squads and actor and next(hidden) and TeleportObject then
+		local pos = actor:position()
+		local lvid = actor:level_vertex_id()
+		local gvid = actor:game_vertex_id()
+		local can = axr_companions.companion_squad_can_teleport
+		if pos and lvid and gvid then
+			local spots = { copy_pos(pos) }
+			local used = { [lvid] = true }
+			local slot = 0
+			for sid, squad in pairs(squads) do
+				if type(sid) == "number" and hidden[sid] and squad and squad.commander_id then
+					if not can or can(squad) then
+						TeleportObject(sid, pos, lvid, gvid)
+						for id in xsquad.iter_member_ids(squad) do
+							slot = slot + 1
+							local p, v = pick_pull_spot(lvid, spots, used, slot)
+							if not p then
+								p, v = pos, lvid
+							end
+							TeleportObject(id, p, v, gvid)
+						end
+					end
+				end
+			end
+		end
+	end
 	if squads then
 		for sid, squad in pairs(squads) do
 			if type(sid) == "number" then
@@ -214,10 +293,6 @@ local function show_companions()
 		hidden[id] = nil
 	end
 	clear_quiet()
-end
-
-local function copy_pos(pos)
-	return vector():set(pos.x, pos.y, pos.z)
 end
 
 local function stop(reason)

@@ -1,0 +1,43 @@
+; Placeable hideout stash. Own mesh/icon/textures so you can restyle without the Metal Box item.
+; Mesh: meshes/dynamics/equipments/dogma_global_stash.ogf
+; Model tex: textures/prop/d_global_stash02*.dds
+; Icon: textures/ui/dogma_global_stash.dds (2x1 at 0,0)
+
+[dogma_global_stash_item]:tch_junk
+class                                   = II_ATTCH
+kind                                    = i_tool
+visual                                  = dynamics\equipments\dogma_global_stash.ogf
+description                             = st_dogma_global_stash_descr
+inv_name                                = st_dogma_global_stash
+inv_name_short                          = st_dogma_global_stash
+inv_grid_x                              = 0
+inv_grid_y                              = 0
+inv_grid_height                         = 1
+inv_grid_width                          = 2
+icons_texture                           = ui\dogma_global_stash
+cost                                    = 400000
+inv_weight                              = 40
+
+use1_functor                            = placeable_furniture.place_item
+use1_action_functor                     = placeable_furniture.func_place_item
+
+placeable_type                          = stash
+placeable_section                       = placeable_dogma_global_stash
+
+[placeable_dogma_global_stash]:inv_backpack
+visual                                  = dynamics\equipments\dogma_global_stash.ogf
+capacity                                = 400
+placeable_type                          = stash
+item_section                            = dogma_global_stash_item
+
+bounding_box_size                       = 0.657216, 0.341479, 0.308298
+bounding_box_origin                     = -0.000005, 0.154149, 0.000342,
+
+; Engine binds this script on spawn (build name). Open goes to the shared bolt.
+script                                  = zzzz_dogma_game_global_stash_bind
+
+; Shared inventory for every placed box. Tiny bolt. Contents stay on se.children.
+[dogma_game_global_stash]:hidden_box
+capacity                                = 400
+placeable_type                          = stash
+visual                                  = dynamics\devices\dev_bolt\dev_bolt.ogf

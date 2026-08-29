@@ -1,0 +1,19 @@
+-- Placeable bind. Use opens the shared bolt. Pickup stays HF vanilla.
+
+function init(obj)
+	obj:bind_object(hf_global_stash_wrapper(obj).binder)
+end
+
+class "hf_global_stash_wrapper" (bind_hf_base.hf_binder_wrapper)
+
+function hf_global_stash_wrapper:__init(obj) super(obj)
+end
+
+function hf_global_stash_wrapper:use(_who)
+	local api = _G.dogma_game_global_stash
+	if api and api.open_at then
+		api.open_at(self.object)
+		return
+	end
+	dogma.log.log("dogma/game/global_stash", "open_at missing", "red")
+end

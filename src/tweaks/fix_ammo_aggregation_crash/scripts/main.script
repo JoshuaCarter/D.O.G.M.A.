@@ -2,263 +2,33 @@
 	Fix Ammo Aggregation Crash
 
 	Vanilla item_weapon.ammo_aggregation releases ammo game objects whose
-	server entity is already gone, then reads ammo_get_count on the released
-	box. alife_release dumps a stack and the process dies the same tick
-	(close inventory + draw weapon is a common window).
+	server entity is already gone. alife_release dumps a stack and the
+	process dies the same tick (close inventory + draw weapon is a common
+	window).
 
-	Replace both entry points with the modern merge, but never release
-	without a server object, and never touch a box after release.
+	Wrap the stock functions. Do not reimplement merge or the verybad->bad
+	replace; that convert is how old ammo started showing up.
 ]]
 
 local CONFIG = _G.dogma_tweaks_fix_ammo_aggregation_crash_conf
-local xinventory = dogma.xlibs.xinventory
 
 local try_id = function(obj) return obj:id() end
-local try_section = function(obj) return obj:section() end
-local try_count = function(obj) return obj:ammo_get_count() end
-local try_box = function(obj) return obj:ammo_box_size() end
-local try_parent = function(obj) return obj:parent() end
-local try_clsid = function(se) return se:clsid() end
-local try_is_ammo = function(obj) return IsAmmo(obj) end
-local try_set_count = function(obj, n) return obj:ammo_set_count(n) end
+
+local orig_agg
 
 local function log(msg)
 	dogma.log.log(CONFIG.MOD_ID, msg)
 end
 
-local function go_id(obj)
-	if not obj then
-		return nil
-	end
-	local ok, id = pcall(try_id, obj)
-	if ok then
-		return id
-	end
-	return nil
-end
-
-local function go_sec(obj)
-	if not obj then
-		return nil
-	end
-	local ok, sec = pcall(try_section, obj)
-	if ok and type(sec) == "string" and sec ~= "" then
-		return sec
-	end
-	return nil
-end
-
-local function go_count(obj)
-	if not obj then
-		return nil
-	end
-	local ok, n = pcall(try_count, obj)
-	if ok and type(n) == "number" then
-		return n
-	end
-	return nil
-end
-
-local function go_box(obj)
-	if not obj then
-		return nil
-	end
-	local ok, n = pcall(try_box, obj)
-	if ok and type(n) == "number" then
-		return n
-	end
-	return nil
-end
-
--- Release only with a live SE. Count is taken first. Never use obj after.
-local function replace_box(obj, id, npc, new_section, ids, i)
-	local tostr = tostring
-	if not (ini_sys and ini_sys.section_exist and ini_sys:section_exist(new_section)) then
-		return false
-	end
-	local n = go_count(obj)
-	if not n then
-		log("skip replace, no count id=" .. tostr(id))
-		return false
-	end
-	if not alife_object(id) then
-		log("skip replace, no se id=" .. tostr(id))
-		table.remove(ids, i)
-		return true
-	end
-	xinventory.release_item_id(id)
-	table.remove(ids, i)
-	local created = alife_create_item(new_section, npc, { ammo = n })
-	if created then
-		ids[#ids + 1] = created.id
-		log("replace id=" .. tostr(id) .. " -> " .. new_section .. " n=" .. tostr(n))
-	end
-	return true
-end
-
-local ammo_aggregation_full_anon_1 = function(a, b)
-	return (go_count(a) or 0) > (go_count(b) or 0)
-end
-
-local function ammo_aggregation_full(npc_id)
-	if type(npc_id) == "userdata" then
-		npc_id = type(npc_id.id) == "function" and npc_id:id() or npc_id.id
-	end
-
-	local npc = get_object_by_id(npc_id)
-	if not npc then
-		return true
-	end
-	local se_npc = alife_object(npc_id)
-	if not se_npc then
-		return true
-	end
-
-	local ids = {}
-	for id in alife():get_children(se_npc) do
-		local se_item = alife_object(id)
-		if se_item then
-			local ok, cls = pcall(try_clsid, se_item)
-			if ok and IsAmmo(nil, cls) then
-				ids[#ids + 1] = id
-			end
-		end
-	end
-
-	CreateTimeEvent("ammo_aggregation_full_wait_for_gobj", npc_id, 0, function()
-		local by_sec = {}
-		local restart = false
-		for i = #ids, 1, -1 do
-			local id = ids[i]
-			if not alife_object(id) then
-				table.remove(ids, i)
-			else
-				local obj = get_object_by_id(id)
-				if not obj then
-					restart = true
-				else
-					local sec = go_sec(obj)
-					if not sec then
-						log("skip box, no sec id=" .. tostring(id))
-						table.remove(ids, i)
-					else
-						if _NO_DAMAGED_AMMO and string.find(sec, "verybad", 1, true) then
-							local new_sec = string.gsub(sec, "verybad", "bad")
-							if replace_box(obj, id, npc, new_sec, ids, i) then
-								restart = true
-							end
-						end
-						if not restart and sec == "ammo_12x70_buck_self" then
-							if replace_box(obj, id, npc, "ammo_12x70_buck", ids, i) then
-								restart = true
-							end
-						end
-						if not restart then
-							local n = go_count(obj)
-							local box = go_box(obj)
-							if n and box and n < box then
-								local list = by_sec[sec]
-								if not list then
-									list = {}
-									by_sec[sec] = list
-								end
-								list[#list + 1] = obj
-							end
-						end
-					end
-				end
-			end
-		end
-
-		if restart then
-			return false
-		end
-
-		local released = 0
-		for _, objects in pairs(by_sec) do
-			table.sort(objects, ammo_aggregation_full_anon_1)
-
-			local fill_i = 1
-			local src_i = #objects
-			while src_i > fill_i do
-				local src = objects[src_i]
-				local dst = objects[fill_i]
-				local dst_n = go_count(dst)
-				local src_n = go_count(src)
-				local box = go_box(dst)
-				if not (dst_n and src_n and box) then
-					log("skip merge, dead box")
-					break
-				end
-				local need = box - dst_n
-				local add = math.min(need, src_n)
-				local result = dst_n + add
-				local ok_set = pcall(try_set_count, dst, result)
-				if not ok_set then
-					log("skip merge, set failed")
-					break
-				end
-				if add == src_n then
-					local src_id = go_id(src)
-					if src_id and alife_object(src_id) then
-						xinventory.release_item_id(src_id)
-						released = released + 1
-					end
-					src_i = src_i - 1
-				else
-					if not pcall(try_set_count, src, src_n - add) then
-						log("skip merge, src set failed")
-						break
-					end
-				end
-				if result == box then
-					fill_i = fill_i + 1
-				end
-			end
-		end
-		if released > 0 then
-			log("merged, released empty=" .. tostring(released))
-		end
-		return true
-	end)
-
-	return true
-end
-
-local function ammo_aggregation(obj, _npc)
-	if not obj then
-		return true
-	end
-	local id = go_id(obj)
-	if not id or not alife_object(id) then
-		log("skip agg, no se")
-		return true
-	end
-	local ok_ammo, is_ammo = pcall(try_is_ammo, obj)
-	if not (ok_ammo and is_ammo) then
-		return true
-	end
-	local ok, parent = pcall(try_parent, obj)
-	if not (ok and parent) then
-		return true
-	end
-	local parent_id = go_id(parent)
-	if not parent_id then
-		log("skip agg, no parent id")
-		return true
-	end
-	CreateTimeEvent(
-		"ammo_aggregation_next_frame",
-		("%s_%s"):format(device():time_global(), parent_id),
-		0,
-		function()
-			if get_object_by_id(parent_id) then
-				ammo_aggregation_full(parent_id)
-			end
+local function wrap_agg(obj, npc)
+	if obj then
+		local ok, id = pcall(try_id, obj)
+		if not (ok and id and alife_object(id)) then
+			log("skip agg, no se")
 			return true
 		end
-	)
-	return true
+	end
+	return orig_agg(obj, npc)
 end
 
 local function patch()
@@ -269,8 +39,8 @@ local function patch()
 	if type(iw.ammo_aggregation) ~= "function" then
 		return false
 	end
-	iw.ammo_aggregation = ammo_aggregation
-	iw.ammo_aggregation_full = ammo_aggregation_full
+	orig_agg = iw.ammo_aggregation
+	iw.ammo_aggregation = wrap_agg
 	iw._dogma_ammo_agg_crash = true
 	log("patched item_weapon.ammo_aggregation")
 	return true

@@ -31,7 +31,7 @@ local function disarm()
 	live = false
 end
 
-local server_object_on_register_anon_1 = function(se)
+local try_server_object_on_register = function(se)
 	return se:section_name()
 end
 
@@ -62,7 +62,7 @@ local function server_object_on_register(se)
 	if se.parent_id ~= INVALID then
 		return
 	end
-	local ok, sec = pcall(server_object_on_register_anon_1, se)
+	local ok, sec = pcall(try_server_object_on_register, se)
 	if not (ok and sec and dogma.db.get(sec)) then
 		return
 	end

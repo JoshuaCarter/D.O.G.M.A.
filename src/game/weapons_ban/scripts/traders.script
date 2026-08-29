@@ -147,14 +147,14 @@ local function resort_open_trader_bag()
     gui:On_Sort(idx, false)
 end
 
-local schedule_trader_resort_anon_1 = function()
+local try_schedule_trader_resort = function()
     resort_open_trader_bag()
     return true
 end
 
 local function schedule_trader_resort(npc_id)
     if CreateTimeEvent then
-        CreateTimeEvent("dogma_wb_strip", "sort_" .. npc_id, 0, schedule_trader_resort_anon_1)
+        CreateTimeEvent("dogma_wb_strip", "sort_" .. npc_id, 0, try_schedule_trader_resort)
     else
         resort_open_trader_bag()
     end
@@ -184,10 +184,10 @@ local function delayed_strip(npc_id)
 end
 
 -- Restock can land just after talk/trade opens; retry a few times then stop.
-local strip_trader_on_interact_anon_1 = function() CONFIG:load_mcm() end
+local try_strip_trader_on_interact = function() CONFIG:load_mcm() end
 
 local function strip_trader_on_interact(npc)
-    if not dogma.sys.ready(MOD_ID, db, strip_trader_on_interact_anon_1) then
+    if not dogma.sys.ready(MOD_ID, db, try_strip_trader_on_interact) then
         return
     end
     if not npc then

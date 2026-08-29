@@ -461,19 +461,19 @@ end
 
 -- Safe engine/weapon snapshot for ADS crash diagnosis (all pcall'd).
 -- Must sit below active_item_id / scope helpers so those names bind as locals.
-local zoom_diag_anon_1 = function(db)
+local try_zoom_diag = function(db)
 	return db.actor:active_slot()
 end
 
-local zoom_diag_anon_2 = function(get_console_cmd)
+local try_zoom_diag_2 = function(get_console_cmd)
 	return get_console_cmd(2, "fov")
 end
 
-local zoom_diag_anon_3 = function(get_console_cmd)
+local try_zoom_diag_3 = function(get_console_cmd)
 	return get_console_cmd(2, "hud_fov")
 end
 
-local zoom_diag_anon_4 = function(string, tostring, wpn)
+local try_zoom_diag_4 = function(string, tostring, wpn)
 	local tostr = tostring
 	local gun = wpn.cast_Weapon and wpn:cast_Weapon()
 	if not gun then
@@ -517,8 +517,8 @@ zoom_diag = function(tag)
 		tostr(we_wrote_hud)
 	)
 
-	local ok_c, con_fov = pcall(zoom_diag_anon_2, get_console_cmd)
-	local ok_h, con_hud = pcall(zoom_diag_anon_3, get_console_cmd)
+	local ok_c, con_fov = pcall(try_zoom_diag_2, get_console_cmd)
+	local ok_h, con_hud = pcall(try_zoom_diag_3, get_console_cmd)
 	add(
 		"console fov=%s hud=%s",
 		(ok_c and con_fov and sformat("%.2f", con_fov)) or "?",
@@ -527,7 +527,7 @@ zoom_diag = function(tag)
 
 	local slot = "?"
 	if db and db.actor then
-		local ok_s, s = pcall(zoom_diag_anon_1, db)
+		local ok_s, s = pcall(try_zoom_diag, db)
 		if ok_s then
 			slot = tostr(s)
 		end
@@ -536,7 +536,7 @@ zoom_diag = function(tag)
 
 	local gun_bits = "no_gun"
 	if wpn then
-		local ok_g, bits = pcall(zoom_diag_anon_4, string, tostring, wpn)
+		local ok_g, bits = pcall(try_zoom_diag_4, string, tostring, wpn)
 		gun_bits = (ok_g and bits) or ("gun_err:" .. tostr(bits))
 	end
 	add("%s", gun_bits)

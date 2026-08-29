@@ -52,12 +52,12 @@ local last_warn_ms = {}
 local use_profile_timer = false
 
 -- Detect once: luabind exposes profile_timer as a constructible class.
-local chunk_anon_1 = function(profile_timer)
+local make_profile_timer = function(profile_timer)
 	return profile_timer()
 end
 
 do
-	local ok, t = pcall(chunk_anon_1, profile_timer)
+	local ok, t = pcall(make_profile_timer, profile_timer)
 	use_profile_timer = ok and t ~= nil and type(t.start) == "function"
 		and type(t.stop) == "function" and type(t.time) == "function"
 end
@@ -72,7 +72,7 @@ local function now_us_fallback()
 	return 0
 end
 
-local resolve_log_path_anon_1 = function(LOG_NAME, getFS)
+local try_resolve_log_path = function(LOG_NAME, getFS)
 	return getFS():update_path("$logs$", LOG_NAME)
 end
 
@@ -84,7 +84,7 @@ local function resolve_log_path()
 	if not (getFS and getFS().update_path) then
 		return nil
 	end
-	local ok, path = pcall(resolve_log_path_anon_1, LOG_NAME, getFS)
+	local ok, path = pcall(try_resolve_log_path, LOG_NAME, getFS)
 	if ok and path and path ~= "" then
 		log_path = path
 	end
@@ -367,7 +367,7 @@ function stop()
 end
 
 -- time(mod, method, fn) or time(mod, method, threshold_us, fn)
-local time_anon_1 = function(...)
+local try_time = function(...)
 	stop()
 	return ...
 end
@@ -388,7 +388,7 @@ function time(mod_id, method, a, b)
 	end
 	start(mod_id, method, threshold_us)
 	-- Preserve all returns (Lua 5.1 `{ fn() }` only keeps the first).
-	return (time_anon_1)(fn())
+	return (try_time)(fn())
 end
 
 -- Totals reset on game load only. Empty writes are skipped so the last

@@ -15,30 +15,30 @@ local function horizontal_dist(a, b)
 	return math.sqrt(dx * dx + dz * dz)
 end
 
-local lvid_accessible_anon_1 = function(level, lvid) return level.is_accessible_vertex_id(lvid) end
+local try_lvid_accessible = function(level, lvid) return level.is_accessible_vertex_id(lvid) end
 
 local function lvid_accessible(lvid)
 	if not valid_lvid(lvid) then return false end
 	if level.is_accessible_vertex_id then
-		local ok, acc = pcall(lvid_accessible_anon_1, level, lvid)
+		local ok, acc = pcall(try_lvid_accessible, level, lvid)
 		if ok and not acc then return false end
 	end
 	return true
 end
 
-local lvid_ground_pos_anon_1 = function(level, lvid) return level.vertex_position(lvid) end
+local try_lvid_ground_pos = function(level, lvid) return level.vertex_position(lvid) end
 
 local function lvid_ground_pos(lvid)
 	if not (valid_lvid(lvid) and level and level.vertex_position) then return nil, nil end
 	if not lvid_accessible(lvid) then return nil, nil end
-	local ok, snapped = pcall(lvid_ground_pos_anon_1, level, lvid)
+	local ok, snapped = pcall(try_lvid_ground_pos, level, lvid)
 	if not (ok and snapped and snapped.x) then return nil, nil end
 	return vector():set(snapped.x, snapped.y + 0.15, snapped.z), lvid
 end
 
 local DFT_RAY_DOWN = vector():set(0, -1, 0)
 
-local raycast_down_y_anon_1 = function(DFT_RAY_DOWN, flags, origin, range, ray_pick)
+local try_raycast_down_y = function(DFT_RAY_DOWN, flags, origin, range, ray_pick)
 	local pick = ray_pick(origin, DFT_RAY_DOWN, range, flags, nil)
 	if not pick then return nil end
 	pick:query()
@@ -53,12 +53,12 @@ local function raycast_down_y(x, origin_y, z, range)
 	end
 	local flags = bit.bor(rq_target.rqtStatic or 2, rq_target.rqtObstacle or 8)
 	local origin = vector():set(x, origin_y, z)
-	local ok, dist = pcall(raycast_down_y_anon_1, DFT_RAY_DOWN, flags, origin, range, ray_pick)
+	local ok, dist = pcall(try_raycast_down_y, DFT_RAY_DOWN, flags, origin, range, ray_pick)
 	if not ok or not dist then return nil end
 	return origin_y - dist
 end
 
-local ray_snap_ground_pos_anon_1 = function(level, result) return level.vertex_id(result) end
+local try_ray_snap_ground_pos = function(level, result) return level.vertex_id(result) end
 
 local function ray_snap_ground_pos(pos, opts)
 	opts = opts or {}
@@ -79,15 +79,15 @@ local function ray_snap_ground_pos(pos, opts)
 	end
 	local lvid = nil
 	if level and level.vertex_id then
-		local ok, v = pcall(ray_snap_ground_pos_anon_1, level, result)
+		local ok, v = pcall(try_ray_snap_ground_pos, level, result)
 		if ok and valid_lvid(v) then lvid = v end
 	end
 	return result, lvid
 end
 
-local find_ground_pos_anon_1 = function(level, pos) return level.vertex_id(pos) end
+local try_find_ground_pos = function(level, pos) return level.vertex_id(pos) end
 
-local find_ground_pos_anon_2 = function(level, test) return level.vertex_id(test) end
+local try_find_ground_pos_2 = function(level, test) return level.vertex_id(test) end
 
 local function find_ground_pos(pos, lvid, gvid, opts)
 	opts = opts or {}
@@ -130,7 +130,7 @@ local function find_ground_pos(pos, lvid, gvid, opts)
 		end
 	end
 
-	local ok_vid, vid = pcall(find_ground_pos_anon_1, level, pos)
+	local ok_vid, vid = pcall(try_find_ground_pos, level, pos)
 	if ok_vid and valid_lvid(vid) then
 		local p, lv = lvid_ground_pos(vid)
 		if p then return finish(p, lv) end
@@ -146,7 +146,7 @@ local function find_ground_pos(pos, lvid, gvid, opts)
 		local y = ref_y + (i % 2 == 0 and i or -i) * 0.5
 		for o = 1, #xz_offsets do
 			test:set(pos.x + xz_offsets[o][1], y, pos.z + xz_offsets[o][2])
-			local ok, v = pcall(find_ground_pos_anon_2, level, test)
+			local ok, v = pcall(try_find_ground_pos_2, level, test)
 			if ok and valid_lvid(v) then
 				local p, lv = lvid_ground_pos(v)
 				if p then return finish(p, lv) end
@@ -157,13 +157,13 @@ local function find_ground_pos(pos, lvid, gvid, opts)
 	return finish(vector():set(pos.x, pos.y, pos.z), lvid)
 end
 
-local ensure_level_graph_cache_anon_1 = function(gv) return gv:level_id() end
+local try_ensure_level_graph_cache = function(gv) return gv:level_id() end
 
-local ensure_level_graph_cache_anon_2 = function(gg, gvid) return gg:vertex(gvid) end
+local try_ensure_level_graph_cache_2 = function(gg, gvid) return gg:vertex(gvid) end
 
-local ensure_level_graph_cache_anon_3 = function(gv) return gv:level_point() end
+local try_ensure_level_graph_cache_3 = function(gv) return gv:level_point() end
 
-local ensure_level_graph_cache_anon_4 = function(gv) return gv:level_vertex_id() end
+local try_ensure_level_graph_cache_4 = function(gv) return gv:level_vertex_id() end
 
 local function ensure_level_graph_cache()
 	local lvl_id = tft_actor_level_id and tft_actor_level_id()
@@ -183,12 +183,12 @@ local function ensure_level_graph_cache()
 
 	for gvid = 0, 65534 do
 		if gg:valid_vertex_id(gvid) then
-			local ok, gv = pcall(ensure_level_graph_cache_anon_2, gg, gvid)
+			local ok, gv = pcall(try_ensure_level_graph_cache_2, gg, gvid)
 			if ok and gv then
-				local ok_l, lid = pcall(ensure_level_graph_cache_anon_1, gv)
+				local ok_l, lid = pcall(try_ensure_level_graph_cache, gv)
 				if ok_l and lid == lvl_id then
-					local ok_p, gpos = pcall(ensure_level_graph_cache_anon_3, gv)
-					local ok_lv, lv = pcall(ensure_level_graph_cache_anon_4, gv)
+					local ok_p, gpos = pcall(try_ensure_level_graph_cache_3, gv)
+					local ok_lv, lv = pcall(try_ensure_level_graph_cache_4, gv)
 					if ok_p and gpos and gpos.x and ok_lv and lv and lv ~= tft_invalid_lvid then
 						tft.graph_cache[#tft.graph_cache + 1] = {
 							gvid = gvid,
@@ -243,7 +243,7 @@ local function lerp_pos(p1, p2, ratio, out)
 	return out
 end
 
-local remove_path_spots_anon_1 = function(level, obj_id, tft_path)
+local try_remove_path_spots = function(level, obj_id, tft_path)
 	local spots = (tft_path and tft_path.dots) or {}
 	for i = 1, #spots do
 		local spot = spots[i]
@@ -255,10 +255,10 @@ end
 
 local function remove_path_spots(obj_id)
 	if not obj_id then return end
-	pcall(remove_path_spots_anon_1, level, obj_id, tft_path)
+	pcall(try_remove_path_spots, level, obj_id, tft_path)
 end
 
-local cleanup_dots_anon_1 = function(id, level)
+local try_cleanup_dots = function(id, level)
 	if level.map_has_object_spot(id, "primary_object") ~= 0 then
 		level.map_remove_object_spot(id, "primary_object")
 	end
@@ -271,7 +271,7 @@ local function cleanup_dots()
 	dogma.perf.start("tft", "cleanup_dots")
 	for _, id in pairs(tft.dot_ids or {}) do
 		remove_path_spots(id)
-		pcall(cleanup_dots_anon_1, id, level)
+		pcall(try_cleanup_dots, id, level)
 		local obj = xobject.se(id)
 		if obj then xobject.release(obj) end
 	end
@@ -283,7 +283,7 @@ local function cleanup_dots()
 	dogma.perf.stop()
 end
 
-local freeze_buried_dot_anon_1 = function(obj)
+local try_freeze_buried_dot = function(obj)
 	local shell = obj:get_physics_shell()
 	if shell then
 		shell:set_active(false)
@@ -295,7 +295,7 @@ local function freeze_buried_dot(obj_id, attempts_left)
 	attempts_left = attempts_left or 8
 	local obj = xobject.go(obj_id)
 	if obj then
-		pcall(freeze_buried_dot_anon_1, obj)
+		pcall(try_freeze_buried_dot, obj)
 		return
 	end
 	if attempts_left <= 0 then return end
@@ -457,13 +457,13 @@ local function build_path_preview(id, is_lc)
 	dogma.perf.stop()
 end
 
-local G_tft_resolve_menu_spot_from_click_anon_1 = function(id, ln) return id, ln end
+local G_tft_resolve_menu_spot_from_click = function(id, ln) return id, ln end
 
-local G_tft_is_registry_transition_door_anon_1 = function() return false end
+local G_tft_is_registry_transition_door = function() return false end
 
-local G_tft_clear_ambush_range_circle_anon_1 = function() end
+local G_tft_clear_ambush_range_circle = function() end
 
-local G_tft_purge_stuck_dot_pdas_anon_1 = function() end
+local G_tft_purge_stuck_dot_pdas = function() end
 
 do
 	_G.tft_find_ground_pos = find_ground_pos
@@ -477,9 +477,9 @@ do
 	_G.tft_clear_path_preview = clear_path_preview
 	_G.tft_build_path_preview = build_path_preview
 	_G.tft_preview_eligible = preview_eligible
-	_G.tft_purge_stuck_dot_pdas = G_tft_purge_stuck_dot_pdas_anon_1
-	_G.tft_clear_ambush_range_circle = G_tft_clear_ambush_range_circle_anon_1
-	_G.tft_is_registry_transition_door = G_tft_is_registry_transition_door_anon_1
-	_G.tft_resolve_menu_spot_from_click = G_tft_resolve_menu_spot_from_click_anon_1
+	_G.tft_purge_stuck_dot_pdas = G_tft_purge_stuck_dot_pdas
+	_G.tft_clear_ambush_range_circle = G_tft_clear_ambush_range_circle
+	_G.tft_is_registry_transition_door = G_tft_is_registry_transition_door
+	_G.tft_resolve_menu_spot_from_click = G_tft_resolve_menu_spot_from_click
 	printf("[dogma_game_true_fast_travel] MVP path helpers loaded")
 end

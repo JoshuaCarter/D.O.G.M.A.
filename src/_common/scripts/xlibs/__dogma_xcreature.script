@@ -508,7 +508,7 @@ end
 
 -- id-yielding iterator: lets caller validate via alife_object(id) before any method call on obj
 -- gameobjects_registry (modded-exes) and db.storage (vanilla) are both id-keyed
-local chunk_anon_1 = function()
+local gameobjects_iter = function()
     local k, obj
     return function()
         k, obj = next(gameobjects_registry, k)
@@ -516,7 +516,7 @@ local chunk_anon_1 = function()
     end
 end
 
-local chunk_anon_2 = function()
+local storage_iter = function()
     local k, data
     return function()
         repeat k, data = next(db.storage, k) until not k or (data and data.object)
@@ -525,7 +525,7 @@ local chunk_anon_2 = function()
     end
 end
 
-local _online_iter_with_id = gameobjects_registry and chunk_anon_1 or chunk_anon_2
+local _online_iter_with_id = gameobjects_registry and gameobjects_iter or storage_iter
 
 --- Iterator over online game objects yielding (id, obj) pairs
 --- Caller can validate destroyed-state via alife_object(id) without triggering "destroyed object" warnings

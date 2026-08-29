@@ -182,7 +182,7 @@ local function install()
 	return true
 end
 
-local on_game_start_anon_1 = function(_key, bind)
+local before_key_press_cb = function(_key, bind)
 	if key_bindings and bind == key_bindings.kCUSTOM24 then
 		install()
 	end
@@ -202,5 +202,5 @@ function on_game_start()
 		anm_state = 0
 		install()
 	end)
-	RegisterScriptCallback("on_before_key_press", on_game_start_anon_1)
+	RegisterScriptCallback("on_before_key_press", before_key_press_cb)
 end

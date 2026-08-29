@@ -252,7 +252,7 @@ if item_parts and item_parts.disassembly_item then
 	reapply_disassembly_item_patch()
 end
 
-local on_game_start_anon_1 = function()
+local on_actor_on_first_update = function()
 	reapply_disassembly_patch()
 	reapply_disassembly_item_patch()
 end
@@ -260,7 +260,7 @@ end
 function on_game_start()
 	CONFIG:ensure_dogma()
 	RegisterScriptCallback("on_option_change", on_option_change)
-	RegisterScriptCallback("actor_on_first_update", on_game_start_anon_1)
+	RegisterScriptCallback("actor_on_first_update", on_actor_on_first_update)
 	on_option_change()
 	reapply_disassembly_patch()
 	reapply_disassembly_item_patch()

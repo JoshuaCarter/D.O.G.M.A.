@@ -28,7 +28,7 @@ local function set_label(xml_obj, id, text)
 	))
 end
 
-local on_xml_read_anon_1 = function(xml_file_name, xml_obj)
+local xml_read_cb = function(xml_file_name, xml_obj)
 	if not is_keybinding_strings(xml_file_name) then
 		return
 	end
@@ -38,5 +38,5 @@ local on_xml_read_anon_1 = function(xml_file_name, xml_obj)
 end
 
 function on_xml_read()
-	RegisterScriptCallback("on_xml_read", on_xml_read_anon_1)
+	RegisterScriptCallback("on_xml_read", xml_read_cb)
 end

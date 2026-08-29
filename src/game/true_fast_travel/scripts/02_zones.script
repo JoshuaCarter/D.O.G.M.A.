@@ -6,9 +6,9 @@ local tft = _G.tft
 -- Forward declarations for this file's private (non-exported) helpers, so they can
 -- reference each other regardless of definition order below.
 local count_zone_edges, persist_zone_map, scan_transition_object, try_restore_zone_map, zone_map_pack, zone_map_unpack
-local build_level_names_registry_anon_1 = function(game_ini) return game_ini:line_count("levels") end
+local try_build_level_names_registry = function(game_ini) return game_ini:line_count("levels") end
 
-local build_level_names_registry_anon_2 = function(game_ini, i) return game_ini:r_line("levels", i, "", "") end
+local try_build_level_names_registry_2 = function(game_ini, i) return game_ini:r_line("levels", i, "", "") end
 
 local function build_level_names_registry()
     local tonum = tonumber
@@ -29,14 +29,14 @@ local function build_level_names_registry()
         return
     end
 
-    local ok_count, line_count = pcall(build_level_names_registry_anon_1, game_ini)
+    local ok_count, line_count = pcall(try_build_level_names_registry, game_ini)
     if not (ok_count and line_count and line_count > 0) then
         tft_log("ERROR: line_count on levels failed or empty")
         return
     end
 
     for i = 0, line_count - 1 do
-        local ok_line, ok, section, value = pcall(build_level_names_registry_anon_2, game_ini, i)
+        local ok_line, ok, section, value = pcall(try_build_level_names_registry_2, game_ini, i)
         if ok_line and ok and section and game_ini:section_exist(section) then
             local name = game_ini:line_exist(section, "name") and game_ini:r_string(section, "name")
             local id_str = game_ini:line_exist(section, "id") and game_ini:r_string(section, "id")
@@ -70,7 +70,7 @@ local function build_level_names_registry()
     tft.level_registry_built = true
 end
 
-local resolve_level_name_anon_1 = function(level_id, sim) return sim:level_name(level_id) end
+local try_resolve_level_name = function(level_id, sim) return sim:level_name(level_id) end
 
 local function resolve_level_name(level_id)
     local sgsub = string.gsub
@@ -88,7 +88,7 @@ local function resolve_level_name(level_id)
         if not sim then
             -- Game not initialized, fallback below
         else
-            local ok, n = pcall(resolve_level_name_anon_1, level_id, sim)
+            local ok, n = pcall(try_resolve_level_name, level_id, sim)
             if ok and n and n ~= "" then
                 name = n
             end
@@ -213,29 +213,29 @@ local function on_save_state(m_data)
     end
 end
 
-local scan_transition_object_anon_1 = function(obj)
+local try_scan_transition_object = function(obj)
     return obj:clsid()
 end
 
-local scan_transition_object_anon_2 = function(dg, gg) return gg:vertex(dg):level_id() end
+local try_scan_transition_object_2 = function(dg, gg) return gg:vertex(dg):level_id() end
 
-local scan_transition_object_anon_3 = function(dgv, gg) return gg:vertex(dgv):level_id() end
+local try_scan_transition_object_3 = function(dgv, gg) return gg:vertex(dgv):level_id() end
 
-local scan_transition_object_anon_4 = function(gg, obj) return gg:vertex(obj.m_game_vertex_id):level_id() end
+local try_scan_transition_object_4 = function(gg, obj) return gg:vertex(obj.m_game_vertex_id):level_id() end
 
-local scan_transition_object_anon_5 = function(gg, obj) return gg:vertex(obj.m_game_vertex_id):level_id() end
+local try_scan_transition_object_5 = function(gg, obj) return gg:vertex(obj.m_game_vertex_id):level_id() end
 
-local scan_transition_object_anon_6 = function(gg, obj) return gg:vertex(obj.m_game_vertex_id):level_id() end
+local try_scan_transition_object_6 = function(gg, obj) return gg:vertex(obj.m_game_vertex_id):level_id() end
 
 scan_transition_object = function(obj, sim, gg, total_ref)
     if not obj then return end
     local cls = 0
-    local _ok, _cls = pcall(scan_transition_object_anon_1, obj)
+    local _ok, _cls = pcall(try_scan_transition_object, obj)
     if _ok then cls = _cls end
     local sec = obj:section_name()
 
     if cls == clsid.level_changer or (clsid.level_changer_s and cls == clsid.level_changer_s) then
-        local ok_src, src_lid = pcall(scan_transition_object_anon_4, gg, obj)
+        local ok_src, src_lid = pcall(try_scan_transition_object_4, gg, obj)
         if ok_src then
             local src_name = resolve_level_name(src_lid)
             if src_name then
@@ -263,7 +263,7 @@ scan_transition_object = function(obj, sim, gg, total_ref)
 
         if not tft_is_trader_restrictor(obj_name) and is_lc then
             local src_name, dst_name
-            local ok_src, src_lid = pcall(scan_transition_object_anon_5, gg, obj)
+            local ok_src, src_lid = pcall(try_scan_transition_object_5, gg, obj)
             src_name = ok_src and resolve_level_name(src_lid)
 
             local dest_lvl = ini:line_exist("sr_level_changer", "dest_level") and ini:r_string("sr_level_changer", "dest_level")
@@ -271,7 +271,7 @@ scan_transition_object = function(obj, sim, gg, total_ref)
             if dest_lvl then
                 dst_name = resolve_level_name(dest_lvl)
             elseif dgv and gg:valid_vertex_id(dgv) then
-                local ok_dst, dst_lid = pcall(scan_transition_object_anon_3, dgv, gg)
+                local ok_dst, dst_lid = pcall(try_scan_transition_object_3, dgv, gg)
                 if ok_dst then dst_name = resolve_level_name(dst_lid) end
             end
 
@@ -301,14 +301,14 @@ scan_transition_object = function(obj, sim, gg, total_ref)
         end
     elseif _G.lc_extra_transitions and _G.lc_extra_transitions.lc_pool and _G.lc_extra_transitions.lc_pool[sec] then
         local v = _G.lc_extra_transitions.lc_pool[sec]
-        local ok_src, src_lid = pcall(scan_transition_object_anon_6, gg, obj)
+        local ok_src, src_lid = pcall(try_scan_transition_object_6, gg, obj)
         if ok_src then
             local src_name = resolve_level_name(src_lid)
             local dst_name
             if v.to_gvid then
                 local dg = tonumber(v.to_gvid)
                 if dg and gg:valid_vertex_id(dg) then
-                    local ok_dst, dst_lid = pcall(scan_transition_object_anon_2, dg, gg)
+                    local ok_dst, dst_lid = pcall(try_scan_transition_object_2, dg, gg)
                     if ok_dst then dst_name = resolve_level_name(dst_lid) end
                 end
             elseif v.link and _G.lc_extra_transitions.lc_pool[v.link] then
@@ -326,7 +326,7 @@ scan_transition_object = function(obj, sim, gg, total_ref)
     end
 end
 
-local build_dynamic_map_anon_1 = function(alife_storage_manager, persist_zone_map)
+local try_build_dynamic_map = function(alife_storage_manager, persist_zone_map)
     persist_zone_map(alife_storage_manager.get_state())
 end
 
@@ -391,7 +391,7 @@ local function build_dynamic_map()
     end
 
     tft_log("Zone map built: %d transitions (saved for this playthrough).", total)
-    pcall(build_dynamic_map_anon_1, alife_storage_manager, persist_zone_map)
+    pcall(try_build_dynamic_map, alife_storage_manager, persist_zone_map)
     dogma.perf.stop()
 end
 

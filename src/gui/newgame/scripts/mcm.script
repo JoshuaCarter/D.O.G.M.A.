@@ -228,15 +228,15 @@ local function apply_faction(self, s)
 	apply_zombied_story(self)
 end
 
-local apply_dropdowns_anon_1 = function(row)
+local try_apply_dropdowns = function(row)
 	return (row[1] or "") .. " " .. game.translate_string(row[2])
 end
 
-local apply_dropdowns_anon_2 = function(row)
+local try_apply_dropdowns_2 = function(row)
 	return (row[1] or "") .. " " .. game.translate_string(row[2])
 end
 
-local apply_dropdowns_anon_3 = function(row)
+local try_apply_dropdowns_3 = function(row)
 	local n = row[1] and (round_idp and round_idp(row[1] / 24) or math.floor(row[1] / 24))
 	return (n and tostring(n) or "") .. " " .. game.translate_string(row[2])
 end
@@ -249,13 +249,13 @@ local function apply_dropdowns(self, s)
 		pick_id(self, "list_economy", "table_economy", "selected_economy", s.economy)
 	end
 	if want("remember_lives") then
-		pick_row(self, "list_hardcore_lives", "table_hardcore_lives", "selected_hardcore_lives", s.lives, apply_dropdowns_anon_1)
+		pick_row(self, "list_hardcore_lives", "table_hardcore_lives", "selected_hardcore_lives", s.lives, try_apply_dropdowns)
 	end
 	if want("remember_regen") then
-		pick_row(self, "list_hardcore_regen", "table_hardcore_regen", "selected_hardcore_regen", s.regen, apply_dropdowns_anon_3)
+		pick_row(self, "list_hardcore_regen", "table_hardcore_regen", "selected_hardcore_regen", s.regen, try_apply_dropdowns_3)
 	end
 	if want("remember_timer") then
-		pick_row(self, "list_timer", "table_timer", "selected_timer", s.timer, apply_dropdowns_anon_2)
+		pick_row(self, "list_timer", "table_timer", "selected_timer", s.timer, try_apply_dropdowns_2)
 	end
 end
 
@@ -366,7 +366,7 @@ local function wrap(cls, key, state_key, make)
 	return true
 end
 
-local wrap_on_cc_mouse1_anon_1 = function(base)
+local try_wrap_on_cc_mouse1 = function(base)
 	if not base then
 		return
 	end
@@ -382,10 +382,10 @@ local wrap_on_cc_mouse1_anon_1 = function(base)
 end
 
 local function wrap_on_cc_mouse1(cls)
-	return wrap(cls, "On_CC_Mouse1", "wrap_mouse1", wrap_on_cc_mouse1_anon_1)
+	return wrap(cls, "On_CC_Mouse1", "wrap_mouse1", try_wrap_on_cc_mouse1)
 end
 
-local wrap_update_anon_1 = function(base)
+local try_wrap_update = function(base)
 	return function(self, ...)
 		if not STATE.active then
 			STATE.active = true
@@ -405,10 +405,10 @@ local wrap_update_anon_1 = function(base)
 end
 
 local function wrap_update(cls)
-	return wrap(cls, "Update", "wrap_update", wrap_update_anon_1)
+	return wrap(cls, "Update", "wrap_update", try_wrap_update)
 end
 
-local wrap_on_quit_anon_1 = function(base)
+local try_wrap_on_quit = function(base)
 	if not base then
 		return
 	end
@@ -423,7 +423,7 @@ local wrap_on_quit_anon_1 = function(base)
 end
 
 local function wrap_on_quit(cls)
-	return wrap(cls, "OnQuit", "wrap_quit", wrap_on_quit_anon_1)
+	return wrap(cls, "OnQuit", "wrap_quit", try_wrap_on_quit)
 end
 
 local function wrap_main_controls(cls)
@@ -442,7 +442,7 @@ local function wrap_main_controls(cls)
 	end)
 end
 
-local patch_new_game_anon_1 = function(base)
+local try_patch_new_game = function(base)
 	return function(self, ...)
 		persist(self)
 		if base then
@@ -451,7 +451,7 @@ local patch_new_game_anon_1 = function(base)
 	end
 end
 
-local patch_new_game_anon_2 = function(base)
+local try_patch_new_game_2 = function(base)
 	if not base then
 		return
 	end
@@ -489,9 +489,9 @@ local function patch_new_game()
 		return false
 	end
 
-	wrap(cls, "OnStartGame", "wrap_start", patch_new_game_anon_1)
+	wrap(cls, "OnStartGame", "wrap_start", try_patch_new_game)
 
-	wrap(cls, "UpdateAll", "wrap_all", patch_new_game_anon_2)
+	wrap(cls, "UpdateAll", "wrap_all", try_patch_new_game_2)
 
 	wrap_on_cc_mouse1(cls)
 	wrap_update(cls)

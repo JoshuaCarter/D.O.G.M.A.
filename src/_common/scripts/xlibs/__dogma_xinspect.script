@@ -45,25 +45,25 @@ end
 --- @src xray/xrGame/script_game_object_script.cpp, anomaly/_g.script(2820)
 --- @param obj userdata Game object
 --- @return string Formatted representation
-local userdata_anon_1 = function(obj) return obj:id() end
+local try_userdata = function(obj) return obj:id() end
 
-local userdata_anon_2 = function(obj) return obj:name() end
+local try_userdata_2 = function(obj) return obj:name() end
 
-local userdata_anon_3 = function(obj) return obj:clsid() end
+local try_userdata_3 = function(obj) return obj:clsid() end
 
-local userdata_anon_4 = function(obj) return obj:alive() end
+local try_userdata_4 = function(obj) return obj:alive() end
 
-local userdata_anon_5 = function(obj) return obj.group_id end
+local try_userdata_5 = function(obj) return obj.group_id end
 
-local userdata_anon_6 = function(obj) return obj:section() end
+local try_userdata_6 = function(obj) return obj:section() end
 
-local userdata_anon_7 = function(obj) return obj.parent_id end
+local try_userdata_7 = function(obj) return obj.parent_id end
 
-local userdata_anon_8 = function(obj) return obj:section_name() end
+local try_userdata_8 = function(obj) return obj:section_name() end
 
-local userdata_anon_9 = function(character_community, obj) return character_community(obj) end
+local try_userdata_9 = function(character_community, obj) return character_community(obj) end
 
-local userdata_anon_10 = function(obj, ranks) return ranks and ranks.get_obj_rank_name and ranks.get_obj_rank_name(obj) end
+local try_userdata_10 = function(obj, ranks) return ranks and ranks.get_obj_rank_name and ranks.get_obj_rank_name(obj) end
 
 function userdata(obj)
     if type(obj) ~= "userdata" then
@@ -73,38 +73,38 @@ function userdata(obj)
     local parts = {}
     local obj_type
 
-    local ok_cls, cls = pcall(userdata_anon_3, obj)
+    local ok_cls, cls = pcall(try_userdata_3, obj)
     if ok_cls and cls then
         obj_type = get_type(obj, cls)
     end
 
-    local ok_id, id = pcall(userdata_anon_1, obj)
+    local ok_id, id = pcall(try_userdata, obj)
     if ok_id and id then parts[#parts + 1] = "id=" .. id end
 
-    local ok_name, name = pcall(userdata_anon_2, obj)
+    local ok_name, name = pcall(try_userdata_2, obj)
     if ok_name and name then parts[#parts + 1] = "name=\"" .. name .. "\"" end
 
-    local ok_sec, sec = pcall(userdata_anon_6, obj)
-    if not ok_sec then ok_sec, sec = pcall(userdata_anon_8, obj) end
+    local ok_sec, sec = pcall(try_userdata_6, obj)
+    if not ok_sec then ok_sec, sec = pcall(try_userdata_8, obj) end
     if ok_sec and sec then parts[#parts + 1] = "sec=\"" .. sec .. "\"" end
 
     if obj_type == OBJECT_TYPE.STALKER or obj_type == OBJECT_TYPE.MONSTER then
-        local ok_comm, comm = pcall(userdata_anon_9, character_community, obj)
+        local ok_comm, comm = pcall(try_userdata_9, character_community, obj)
         if ok_comm and comm then parts[#parts + 1] = "community=\"" .. comm .. "\"" end
 
-        local ok_alive, alive = pcall(userdata_anon_4, obj)
+        local ok_alive, alive = pcall(try_userdata_4, obj)
         if ok_alive then parts[#parts + 1] = "alive=" .. (alive and "true" or "false") end
     end
 
     if obj_type == OBJECT_TYPE.STALKER then
-        local ok_rank, rank = pcall(userdata_anon_10, obj, ranks)
+        local ok_rank, rank = pcall(try_userdata_10, obj, ranks)
         if ok_rank and rank then parts[#parts + 1] = "rank=\"" .. rank .. "\"" end
     end
 
-    local ok_parent, parent = pcall(userdata_anon_7, obj)
+    local ok_parent, parent = pcall(try_userdata_7, obj)
     if ok_parent and parent and parent ~= INVALID_ENTITY_ID then parts[#parts + 1] = "parent=" .. parent end
 
-    local ok_squad, squad = pcall(userdata_anon_5, obj)
+    local ok_squad, squad = pcall(try_userdata_5, obj)
     if ok_squad and squad and squad ~= INVALID_ENTITY_ID then parts[#parts + 1] = "squad=" .. squad end
 
     if #parts == 0 then
@@ -114,34 +114,34 @@ function userdata(obj)
     return prefix .. "{" .. table_concat(parts, ", ") .. "}"
 end
 
-local chunk_anon_1 = function() return "nil" end
+local fmt_nil = function() return "nil" end
 
-local chunk_anon_2 = function() return "thread" end
+local fmt_thread = function() return "thread" end
 
-local chunk_anon_3 = function() return "function" end
+local fmt_function = function() return "function" end
 
-local chunk_anon_4 = function(v) return userdata(v) end
+local fmt_userdata = function(v) return userdata(v) end
 
-local chunk_anon_5 = function(v) return v and "true" or "false" end
+local fmt_boolean = function(v) return v and "true" or "false" end
 
-local chunk_anon_6 = function(v)
+local fmt_number = function(v)
     if v == math_floor(v) then return tostring(v) end
     return string_format("%.4f", v)
 end
 
-local chunk_anon_7 = function(v)
+local fmt_string = function(v)
     local truncated = v:len() > 64 and (v:sub(1, 64) .. "...") or v
     return "\"" .. truncated:gsub("\n", "\\n"):gsub("\r", "\\r"):gsub("\t", "\\t") .. "\""
 end
 
 local SIMPLE_TYPES = {
-    ["nil"] = chunk_anon_1,
-    ["boolean"] = chunk_anon_5,
-    ["number"] = chunk_anon_6,
-    ["string"] = chunk_anon_7,
-    ["function"] = chunk_anon_3,
-    ["thread"] = chunk_anon_2,
-    ["userdata"] = chunk_anon_4,
+    ["nil"] = fmt_nil,
+    ["boolean"] = fmt_boolean,
+    ["number"] = fmt_number,
+    ["string"] = fmt_string,
+    ["function"] = fmt_function,
+    ["thread"] = fmt_thread,
+    ["userdata"] = fmt_userdata,
 }
 
 local format_value

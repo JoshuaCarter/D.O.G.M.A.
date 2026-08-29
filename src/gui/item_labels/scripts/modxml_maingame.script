@@ -6,7 +6,7 @@
 	name text is killed separately via g_draw_pickup_item_names in main.script.
 ]]
 
-local on_xml_read_anon_1 = function(xml_file_name, xml_obj)
+local xml_read_cb = function(xml_file_name, xml_obj)
 	if xml_file_name ~= [[ui\maingame.xml]]
 		and xml_file_name ~= [[ui\maingame_16.xml]]
 		and xml_file_name ~= [[ui\maingame_21.xml]]
@@ -27,5 +27,5 @@ local on_xml_read_anon_1 = function(xml_file_name, xml_obj)
 end
 
 function on_xml_read()
-	RegisterScriptCallback("on_xml_read", on_xml_read_anon_1)
+	RegisterScriptCallback("on_xml_read", xml_read_cb)
 end

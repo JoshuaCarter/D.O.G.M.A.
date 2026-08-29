@@ -65,7 +65,7 @@ local function ammo_sec_for_weapon(wpn_sec)
     return nil
 end
 
-local give_extra_start_ammo_anon_1 = function(alife_storage_manager)
+local try_give_extra_start_ammo = function(alife_storage_manager)
     return alife_storage_manager.get_state()
 end
 
@@ -85,7 +85,7 @@ local function give_extra_start_ammo()
         return
     end
 
-    local ok, m_data = pcall(give_extra_start_ammo_anon_1, alife_storage_manager)
+    local ok, m_data = pcall(try_give_extra_start_ammo, alife_storage_manager)
     if not (ok and m_data) then
         return
     end
@@ -168,11 +168,11 @@ local function later(name, id, fn)
     end)
 end
 
-local apply_start_weapon_parts_anon_2 = function(alife_storage_manager)
+local try_apply_start_weapon_parts_2 = function(alife_storage_manager)
     return alife_storage_manager.get_state()
 end
 
-local apply_start_weapon_parts_anon_1 = function(_temp, itm)
+local try_apply_start_weapon_parts = function(_temp, itm)
     if not itm then
         return
     end
@@ -198,7 +198,7 @@ local function apply_start_weapon_parts()
         return
     end
 
-    local ok, m_data = pcall(apply_start_weapon_parts_anon_2, alife_storage_manager)
+    local ok, m_data = pcall(try_apply_start_weapon_parts_2, alife_storage_manager)
     if not (ok and m_data) then
         return
     end
@@ -207,7 +207,7 @@ local function apply_start_weapon_parts()
     end
     m_data[START_PARTS_SAVE_KEY] = true
 
-    db.actor:iterate_inventory(apply_start_weapon_parts_anon_1)
+    db.actor:iterate_inventory(try_apply_start_weapon_parts)
 end
 
 local function actor_on_first_update()

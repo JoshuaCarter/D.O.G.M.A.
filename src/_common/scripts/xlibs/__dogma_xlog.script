@@ -384,13 +384,13 @@ end
 --- @safety SAFE - all bindings are nil-checked in init(); getFS/update_path deferred to first flush
 --- @cost O(1) at startup | 0 luabind here (closures defer the work); first flush triggers 2 luabind heavy (getFS: FS singleton, update_path: string concat over path tree)
 --- @src xray/xrGame/fs_registrator_script.cpp(9,289), anomaly/_g.script(339,104), RavenAscendant/mcm_log.script(52)
-local on_game_start_anon_1 = function()
+local get_logs_path_fn = function()
     return getFS():update_path("$logs$", "")
 end
 
 function on_game_start()
     init({
-        get_logs_path = on_game_start_anon_1,
+        get_logs_path = get_logs_path_fn,
         create_timer = CreateTimeEvent,
         reset_timer = ResetTimeEvent,
         console_print = printf,

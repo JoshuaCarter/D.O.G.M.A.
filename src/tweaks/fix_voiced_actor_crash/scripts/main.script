@@ -13,7 +13,7 @@ local HEAR_SQR = 3600 -- 60m
 local CLOSE_SQR = 144 -- 12m
 local MID_SQR = 1600 -- 40m
 
-local commander_dist_sqr_anon_1 = function(squad)
+local try_commander_dist_sqr = function(squad)
 	return squad:commander_id()
 end
 
@@ -27,7 +27,7 @@ local function commander_dist_sqr()
 	if not squad then
 		return nil
 	end
-	local ok, id = pcall(commander_dist_sqr_anon_1, squad)
+	local ok, id = pcall(try_commander_dist_sqr, squad)
 	if not ok or not id or id >= 65535 then
 		return nil
 	end
@@ -88,7 +88,7 @@ local function patch_agdd()
 	return true
 end
 
-local mod_squad_near_anon_1 = function()
+local mod_squad_near = function()
 	local d = commander_dist_sqr()
 	return d ~= nil and d > CLOSE_SQR and d <= NEAR_SQR
 end
@@ -102,7 +102,7 @@ local function patch_axr()
 		return false
 	end
 	mod.squad_close = squad_close
-	mod.squad_near = mod_squad_near_anon_1
+	mod.squad_near = mod_squad_near
 	mod.squad_mid = squad_mid
 	mod.squad_far = squad_far
 	mod.squad_too_far = squad_too_far

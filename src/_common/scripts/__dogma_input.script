@@ -121,14 +121,14 @@ local function on_any_press(_dik)
 	any_pressed = 2
 end
 
-local on_game_start_anon_1 = function()
+local game_load_cb = function()
 	reset_keys()
 	ensure_tick()
 end
 
 function on_game_start()
 	ensure_tick()
-	RegisterScriptCallback("on_game_load", on_game_start_anon_1)
+	RegisterScriptCallback("on_game_load", game_load_cb)
 	RegisterScriptCallback("main_menu_on_init", reset_keys)
 	RegisterScriptCallback("main_menu_on_quit", reset_keys)
 	RegisterScriptCallback("actor_on_net_destroy", reset_keys)

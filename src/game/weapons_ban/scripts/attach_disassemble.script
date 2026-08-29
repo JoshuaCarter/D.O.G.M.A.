@@ -239,7 +239,7 @@ local function scrap_parts(info)
     return parts
 end
 
-local actor_menu_set_item_news_anon_1 = function() end
+local actor_menu_set_item_news = function() end
 
 local function call_orig_disassembly(orig, obj, obj_d)
     if not orig then
@@ -250,7 +250,7 @@ local function call_orig_disassembly(orig, obj, obj_d)
     end
     local news = actor_menu and actor_menu.set_item_news
     if news then
-        actor_menu.set_item_news = actor_menu_set_item_news_anon_1
+        actor_menu.set_item_news = actor_menu_set_item_news
     end
     orig(obj, obj_d)
     if news then

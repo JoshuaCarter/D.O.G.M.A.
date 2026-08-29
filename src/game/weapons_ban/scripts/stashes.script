@@ -244,7 +244,7 @@ local function roll_stash_loot(id)
     dogma.perf.stop()
 end
 
-local patched_set_random_stash_anon_1 = function() CONFIG:load_mcm() end
+local try_patched_set_random_stash = function() CONFIG:load_mcm() end
 
 local function patched_set_random_stash(no_spot, hint, bonus_items, id, dbg)
     local prev = cache_of(id)
@@ -254,7 +254,7 @@ local function patched_set_random_stash(no_spot, hint, bonus_items, id, dbg)
     if dbg then
         return result
     end
-    if not dogma.sys.ready(MOD_ID, db, patched_set_random_stash_anon_1) then
+    if not dogma.sys.ready(MOD_ID, db, try_patched_set_random_stash) then
         return result
     end
     if not id then

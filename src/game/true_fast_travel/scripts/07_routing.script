@@ -9,9 +9,9 @@ local tft = _G.tft
 
 -- Snap a level-changer object's position to a safe navmesh point near its anchor.
 -- Uses small local offsets only; rejects snaps that drift too far (wrong navmesh island).
-local try_snap_at_anon_1 = function(level, test_pos) return level.vertex_id(test_pos) end
+local vertex_id_at = function(level, test_pos) return level.vertex_id(test_pos) end
 
-local try_snap_at_anon_2 = function(level, lvid) return level.vertex_position(lvid) end
+local vertex_pos_at = function(level, lvid) return level.vertex_position(lvid) end
 
 snap_door_pos = function(obj, anchor_pos, max_drift_m)
     if not obj then return nil end
@@ -22,9 +22,9 @@ snap_door_pos = function(obj, anchor_pos, max_drift_m)
 
     local function try_snap_at(test_pos)
         if not level then return nil end
-        local ok, lvid = pcall(try_snap_at_anon_1, level, test_pos)
+        local ok, lvid = pcall(vertex_id_at, level, test_pos)
         if not ok or not lvid or lvid == tft_invalid_lvid or lvid == -1 then return nil end
-        local ok2, snapped = pcall(try_snap_at_anon_2, level, lvid)
+        local ok2, snapped = pcall(vertex_pos_at, level, lvid)
         if not (ok2 and snapped and snapped.x) then return nil end
         local result = vector():set(snapped.x, snapped.y + 0.12, snapped.z)
         local drift = (_G.tft_pos_drift and _G.tft_pos_drift(result, base))
@@ -48,7 +48,7 @@ snap_door_pos = function(obj, anchor_pos, max_drift_m)
     return nil
 end
 
-local advance_travel_time_anon_1 = function(game, psi_storm_manager, surge_manager)
+local try_advance_travel_time = function(game, psi_storm_manager, surge_manager)
     if surge_manager and surge_manager.get_surge_manager then
         local sm = surge_manager.get_surge_manager()
         if sm then
@@ -72,9 +72,9 @@ local advance_travel_time_anon_1 = function(game, psi_storm_manager, surge_manag
     end
 end
 
-local wipe_dangerous_stats_anon_1 = function(db, tft) db.actor.power = tft.target_stamina or 1.0 end
+local try_wipe_dangerous_stats = function(db, tft) db.actor.power = tft.target_stamina or 1.0 end
 
-local wipe_dangerous_stats_anon_2 = function(db, pcall, tft)
+local try_wipe_dangerous_stats_2 = function(db, pcall, tft)
     local actor = db.actor
     if actor then
         if actor.radiation and actor.radiation > 0 then
@@ -89,7 +89,7 @@ local wipe_dangerous_stats_anon_2 = function(db, pcall, tft)
         -- Respect an already-decided arrival/ambush stamina outcome (tft.target_stamina)
         -- instead of always snapping back to full - this can run after that outcome
         -- has been set (e.g. the post-teleport time jump right after an ambush).
-        pcall(wipe_dangerous_stats_anon_1, db, tft)
+        pcall(try_wipe_dangerous_stats, db, tft)
     end
 end
 
@@ -114,7 +114,7 @@ local function advance_travel_time(ratio, opts)
         end
 
         local function wipe_dangerous_stats()
-            pcall(wipe_dangerous_stats_anon_2, db, pcall, tft)
+            pcall(try_wipe_dangerous_stats_2, db, pcall, tft)
         end
         if not allow_surge then
             wipe_dangerous_stats()
@@ -123,7 +123,7 @@ local function advance_travel_time(ratio, opts)
         level.change_game_time(days, hrs, mins)
 
         if not allow_surge then
-            pcall(advance_travel_time_anon_1, game, psi_storm_manager, surge_manager)
+            pcall(try_advance_travel_time, game, psi_storm_manager, surge_manager)
             wipe_dangerous_stats()
         end
         local secs = diff_sec % 60

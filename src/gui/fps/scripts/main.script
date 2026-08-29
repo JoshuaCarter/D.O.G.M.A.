@@ -421,13 +421,13 @@ local function font_h_ui(text_wnd)
 	return nil
 end
 
-local init_text_wnd_anon_1 = function(align, text_wnd)
+local try_init_text_wnd = function(align, text_wnd)
 	text_wnd:SetTextComplexMode(true)
 	text_wnd:SetTextAlignment(align or 0)
 end
 
 local function init_text_wnd(text_wnd, align)
-	pcall(init_text_wnd_anon_1, align, text_wnd)
+	pcall(try_init_text_wnd, align, text_wnd)
 	return text_wnd
 end
 
@@ -485,7 +485,7 @@ function ui_dogma_fps:TextAlign()
 end
 
 -- Plain single-color text so SetTextAlignment works (%c[] complex tags break right align).
-local ui_dogma_fps_SetWndText_anon_1 = function(align, self, text, text_wnd, tostring)
+local ui_dogma_fps_SetWndText = function(align, self, text, text_wnd, tostring)
 	text_wnd:SetTextComplexMode(false)
 	text_wnd:SetTextAlignment(align)
 	text_wnd:SetTextColor(self:TextColor())
@@ -497,7 +497,7 @@ function ui_dogma_fps:SetWndText(text_wnd, text)
 		return
 	end
 	local align = self:TextAlign()
-	pcall(ui_dogma_fps_SetWndText_anon_1, align, self, text, text_wnd, tostring)
+	pcall(ui_dogma_fps_SetWndText, align, self, text, text_wnd, tostring)
 end
 
 function ui_dogma_fps:PlaceTextWnd(text_wnd, x, y, w, h)
@@ -631,15 +631,15 @@ function ui_dogma_fps:InitGraph()
 	self:ApplyGraphColors(self.cfg)
 end
 
-local ui_dogma_fps_ApplyStaticColor_anon_1 = function(graph_pixel)
+local try_ui_dogma_fps_ApplyStaticColor = function(graph_pixel)
 	graph_pixel:RemoveColorAnimation()
 end
 
-local ui_dogma_fps_ApplyStaticColor_anon_2 = function(graph_pixel)
+local try_ui_dogma_fps_ApplyStaticColor_2 = function(graph_pixel)
 	graph_pixel:SetStretchTexture(true)
 end
 
-local ui_dogma_fps_ApplyStaticColor_anon_3 = function(GRAPH_TEXTURE, graph_pixel)
+local try_ui_dogma_fps_ApplyStaticColor_3 = function(GRAPH_TEXTURE, graph_pixel)
 	graph_pixel:InitTexture(GRAPH_TEXTURE)
 end
 
@@ -648,9 +648,9 @@ function ui_dogma_fps:ApplyStaticColor(graph_pixel, r, g, b, a)
 		return
 	end
 	if not graph_pixel._dogma_graph_tex then
-		pcall(ui_dogma_fps_ApplyStaticColor_anon_1, graph_pixel)
-		pcall(ui_dogma_fps_ApplyStaticColor_anon_3, GRAPH_TEXTURE, graph_pixel)
-		pcall(ui_dogma_fps_ApplyStaticColor_anon_2, graph_pixel)
+		pcall(try_ui_dogma_fps_ApplyStaticColor, graph_pixel)
+		pcall(try_ui_dogma_fps_ApplyStaticColor_3, GRAPH_TEXTURE, graph_pixel)
+		pcall(try_ui_dogma_fps_ApplyStaticColor_2, graph_pixel)
 		graph_pixel._dogma_graph_tex = true
 	end
 	graph_pixel:SetTextureColor(argb_from_bytes(a, r, g, b))

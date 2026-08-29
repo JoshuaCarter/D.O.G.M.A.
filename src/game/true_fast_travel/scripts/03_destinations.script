@@ -49,25 +49,25 @@ end
 -- up with a generic "primary_object" spot and a custom hint/name instead. Without this check
 -- those PDA markers fell through every category (not lc/base/campfire/stash) and the menu
 -- silently added nothing at all, even though they're a real, valid transition.
-local is_scripted_lc_restrictor_anon_1 = function(se_obj) return se_obj:spawn_ini() end
+local try_is_scripted_lc_restrictor = function(se_obj) return se_obj:spawn_ini() end
 
-local is_scripted_lc_restrictor_anon_2 = function(se_obj)
+local try_is_scripted_lc_restrictor_2 = function(se_obj)
     return se_obj:clsid()
 end
 
-local is_scripted_lc_restrictor_anon_3 = function(ini) return ini:section_exist("sr_level_changer") end
+local try_is_scripted_lc_restrictor_3 = function(ini) return ini:section_exist("sr_level_changer") end
 
 is_scripted_lc_restrictor = function(id, se_obj)
     if not se_obj then se_obj = xobject.se(id) end
     if not se_obj then return false end
     local cls = 0
-    local ok_c, _cls4 = pcall(is_scripted_lc_restrictor_anon_2, se_obj)
+    local ok_c, _cls4 = pcall(try_is_scripted_lc_restrictor_2, se_obj)
     if ok_c then cls = _cls4 end
     if not ok_c then return false end
     if cls ~= clsid.script_restr and cls ~= clsid.space_restrictor then return false end
-    local ok_i, ini = pcall(is_scripted_lc_restrictor_anon_1, se_obj)
+    local ok_i, ini = pcall(try_is_scripted_lc_restrictor, se_obj)
     if not (ok_i and ini) then return false end
-    local ok_s, exists = pcall(is_scripted_lc_restrictor_anon_3, ini)
+    local ok_s, exists = pcall(try_is_scripted_lc_restrictor_3, ini)
     return ok_s and exists or false
 end
 
@@ -81,14 +81,14 @@ end
 -- PDA marker still deserves an explicit "Cannot travel here" instead of silence. Deliberately
 -- excludes stalkers/monsters/items/etc. so right-clicking an NPC or quest marker doesn't sprout
 -- a Fast Travel menu item just because it happened to fire this callback.
-local is_place_like_spot_anon_1 = function(se_obj)
+local try_is_place_like_spot = function(se_obj)
     return se_obj:clsid()
 end
 
 local function is_place_like_spot(se_obj)
     if not se_obj then return false end
     local cls = 0
-    local ok, _cls3 = pcall(is_place_like_spot_anon_1, se_obj)
+    local ok, _cls3 = pcall(try_is_place_like_spot, se_obj)
     if ok then cls = _cls3 end
     if not ok then return false end
     if cls == clsid.smart_terrain then return true end
@@ -98,17 +98,17 @@ local function is_place_like_spot(se_obj)
     return false
 end
 
-local read_transition_dest_info_anon_1 = function(se_obj)
+local try_read_transition_dest_info = function(se_obj)
     return se_obj:clsid()
 end
 
-local read_transition_dest_info_anon_2 = function(info, se_obj) info.dest_level = se_obj.dest_level_name end
+local try_read_transition_dest_info_2 = function(info, se_obj) info.dest_level = se_obj.dest_level_name end
 
-local read_transition_dest_info_anon_3 = function(info, se_obj) info.dest_lvid = se_obj.dest_level_vertex_id end
+local try_read_transition_dest_info_3 = function(info, se_obj) info.dest_lvid = se_obj.dest_level_vertex_id end
 
-local read_transition_dest_info_anon_4 = function(info, se_obj) info.dest_gvid = se_obj.dest_game_vertex_id or se_obj.m_dest_game_vertex_id end
+local try_read_transition_dest_info_4 = function(info, se_obj) info.dest_gvid = se_obj.dest_game_vertex_id or se_obj.m_dest_game_vertex_id end
 
-local read_transition_dest_info_anon_5 = function(info, se_obj)
+local try_read_transition_dest_info_5 = function(info, se_obj)
     if se_obj.dest_position and se_obj.dest_position.x then
         info.dest_pos = se_obj.dest_position
     end
@@ -118,14 +118,14 @@ local function read_transition_dest_info(se_obj)
     if not se_obj then return nil end
     local info = {}
     local cls = 0
-    local _ok3, _cls = pcall(read_transition_dest_info_anon_1, se_obj)
+    local _ok3, _cls = pcall(try_read_transition_dest_info, se_obj)
     if _ok3 then cls = _cls end
 
     if cls == clsid.level_changer or (clsid.level_changer_s and cls == clsid.level_changer_s) then
-        pcall(read_transition_dest_info_anon_4, info, se_obj)
-        pcall(read_transition_dest_info_anon_3, info, se_obj)
-        pcall(read_transition_dest_info_anon_2, info, se_obj)
-        pcall(read_transition_dest_info_anon_5, info, se_obj)
+        pcall(try_read_transition_dest_info_4, info, se_obj)
+        pcall(try_read_transition_dest_info_3, info, se_obj)
+        pcall(try_read_transition_dest_info_2, info, se_obj)
+        pcall(try_read_transition_dest_info_5, info, se_obj)
         return info
     end
 
@@ -159,19 +159,19 @@ local function humanize_level_name(name)
 end
 
 -- Same name resolution as sr_teleport / lc_extra confirmation dialogs.
-local transition_dest_label_for_door_anon_1 = function(o)
+local try_transition_dest_label_for_door = function(o)
     return o:name()
 end
 
-local transition_dest_label_for_door_anon_2 = function(se)
+local try_transition_dest_label_for_door_2 = function(se)
     return se:name()
 end
 
-local transition_dest_label_for_door_anon_3 = function(se)
+local try_transition_dest_label_for_door_3 = function(se)
     return se:section_name()
 end
 
-local transition_dest_label_for_door_anon_4 = function(online)
+local try_transition_dest_label_for_door_4 = function(online)
     return online:name()
 end
 
@@ -182,7 +182,7 @@ local function transition_dest_label_for_door(door_id)
 
     local online = xobject.go(door_id)
     local sec = nil
-    local _ok7, _sec = pcall(transition_dest_label_for_door_anon_3, se)
+    local _ok7, _sec = pcall(try_transition_dest_label_for_door_3, se)
     if _ok7 then sec = _sec end
     if online then
         pcall(function()
@@ -204,14 +204,14 @@ local function transition_dest_label_for_door(door_id)
     local sr_name = nil
     local oid = se.id
     if online then
-        local _ok8, _sr_name3 = pcall(transition_dest_label_for_door_anon_4, online)
+        local _ok8, _sr_name3 = pcall(try_transition_dest_label_for_door_4, online)
         if _ok8 then sr_name = _sr_name3 end
     elseif oid then
         local o = xobject.go(oid)
-        if o then local _ok, _sr_name = pcall(transition_dest_label_for_door_anon_1, o)
+        if o then local _ok, _sr_name = pcall(try_transition_dest_label_for_door, o)
         if _ok then sr_name = _sr_name end end
     end
-    if not sr_name then local _ok2, _sr_name2 = pcall(transition_dest_label_for_door_anon_2, se)
+    if not sr_name then local _ok2, _sr_name2 = pcall(try_transition_dest_label_for_door_2, se)
     if _ok2 then sr_name = _sr_name2 end end
     if sr_name and oid and string.find(sr_name, tostring(oid), 1, true) and get_object_story_id then
         local story = get_object_story_id(oid)
@@ -267,7 +267,7 @@ local function vec_str(v)
     return string.format("(%.0f,%.0f,%.0f)", v.x, v.y or 0, v.z or 0)
 end
 
-local is_base_anon_1 = function(se_obj) return se_obj:clsid() end
+local try_is_base = function(se_obj) return se_obj:clsid() end
 
 local function is_base(id, se_obj)
     if not id then return false end
@@ -277,7 +277,7 @@ local function is_base(id, se_obj)
     end
     if not se_obj then se_obj = xobject.se(id) end
     if not se_obj then return false end
-    local ok_cls, obj_cls = pcall(is_base_anon_1, se_obj)
+    local ok_cls, obj_cls = pcall(try_is_base, se_obj)
     if ok_cls and obj_cls == clsid.smart_terrain then return true end
     -- GAMMA / story location icons (not stalker companions / quest NPCs).
     if level and level.map_has_object_spot and is_place_like_spot(se_obj) then
@@ -287,7 +287,7 @@ local function is_base(id, se_obj)
     return false
 end
 
-local is_campfire_anon_1 = function(se_obj) return se_obj:clsid() end
+local try_is_campfire = function(se_obj) return se_obj:clsid() end
 
 local function is_campfire(id, se_obj)
     if is_campfire_spot(id) then return true end
@@ -295,24 +295,24 @@ local function is_campfire(id, se_obj)
         return true
     end
     if se_obj and clsid and clsid.zone_campfire then
-        local ok_cls, obj_cls = pcall(is_campfire_anon_1, se_obj)
+        local ok_cls, obj_cls = pcall(try_is_campfire, se_obj)
         if ok_cls and obj_cls == clsid.zone_campfire then return true end
     end
     return false
 end
 
-local is_player_stash_anon_1 = function(alife_storage_manager, id)
+local try_is_player_stash = function(alife_storage_manager, id)
     local m_data = alife_storage_manager.get_state()
     return m_data and m_data.player_created_stashes and m_data.player_created_stashes[id] ~= nil
 end
 
 local function is_player_stash(id)
     if not id or id <= 0 then return false end
-    local ok, owned = pcall(is_player_stash_anon_1, alife_storage_manager, id)
+    local ok, owned = pcall(try_is_player_stash, alife_storage_manager, id)
     return ok and owned == true
 end
 
-local is_travel_destination_anon_1 = function(se_obj) return se_obj:clsid() end
+local try_is_travel_destination = function(se_obj) return se_obj:clsid() end
 
 local function is_travel_destination(id)
     if not id or id <= 0 then return false end
@@ -322,20 +322,20 @@ local function is_travel_destination(id)
     if is_player_stash(id) then return true end
     if not se_obj then return false end
     if level.map_has_object_spot(id, "fast_travel") ~= 0 then return true end
-    local ok_cls, obj_cls = pcall(is_travel_destination_anon_1, se_obj)
+    local ok_cls, obj_cls = pcall(try_is_travel_destination, se_obj)
     if ok_cls and obj_cls == clsid.smart_terrain then return true end
     return false
 end
 
-local log_menu_diag_anon_1 = function(se_obj)
+local try_log_menu_diag = function(se_obj)
     return se_obj:clsid()
 end
 
-local log_menu_diag_anon_2 = function(se_obj)
+local try_log_menu_diag_2 = function(se_obj)
     return se_obj:name()
 end
 
-local log_menu_diag_anon_3 = function(se_obj)
+local try_log_menu_diag_3 = function(se_obj)
     return se_obj:section_name()
 end
 
@@ -343,11 +343,11 @@ local function log_menu_diag(id, se_obj, ln, hint)
     local tostr = tostring
     local cls, sec, name = 0, "?", "?"
     if se_obj then
-        local _ok4, _cls2 = pcall(log_menu_diag_anon_1, se_obj)
+        local _ok4, _cls2 = pcall(try_log_menu_diag, se_obj)
         if _ok4 then cls = _cls2 end
-        local _ok9, _sec2 = pcall(log_menu_diag_anon_3, se_obj)
+        local _ok9, _sec2 = pcall(try_log_menu_diag_3, se_obj)
         if _ok9 then sec = _sec2 end
-        local _ok5, _name = pcall(log_menu_diag_anon_2, se_obj)
+        local _ok5, _name = pcall(try_log_menu_diag_2, se_obj)
         if _ok5 then name = _name end
     end
     local lc_spot = get_level_changer_spot(id)
@@ -380,7 +380,7 @@ local function log_menu_diag(id, se_obj, ln, hint)
 end
 
 -- Horizontal (PDA map) distance - ignores height difference.
-local distance_pda_anon_1 = function(a, b, math)
+local try_distance_pda = function(a, b, math)
     local dx = a.x - b.x
     local dz = a.z - b.z
     return math.sqrt(dx * dx + dz * dz)
@@ -388,7 +388,7 @@ end
 
 local function distance_pda(a, b)
     if not (a and b) then return nil end
-    local ok, dist = pcall(distance_pda_anon_1, a, b, math)
+    local ok, dist = pcall(try_distance_pda, a, b, math)
     return ok and dist or nil
 end
 
@@ -436,13 +436,13 @@ local function pda_distance(pos_a, level_id_a, pos_b, level_id_b)
     return math.sqrt(dx * dx + dz * dz)
 end
 
-local hostile_near_pos_anon_1 = function(from_pos, hostile_can_spot_pos, radius, to_pos)
+local try_hostile_near_pos = function(from_pos, hostile_can_spot_pos, radius, to_pos)
     return hostile_can_spot_pos(to_pos, from_pos, radius)
 end
 
 local function hostile_near_pos(from_pos, to_pos, radius)
     if not (from_pos and to_pos) then return false end
-    local ok, result = pcall(hostile_near_pos_anon_1, from_pos, hostile_can_spot_pos, radius, to_pos)
+    local ok, result = pcall(try_hostile_near_pos, from_pos, hostile_can_spot_pos, radius, to_pos)
     return ok and result
 end
 
@@ -456,7 +456,7 @@ hostile_can_spot_pos = function(enemy_pos, scan_pos, radius)
     return has_clear_los(enemy_pos, scan_pos, radius)
 end
 
-local has_clear_los_anon_1 = function(dir, flags, len, origin, ray_pick)
+local try_has_clear_los = function(dir, flags, len, origin, ray_pick)
     local pick = ray_pick(origin, dir, len * 0.98, flags, nil)
     if not pick then return len end
     pick:query()
@@ -479,7 +479,7 @@ has_clear_los = function(from_pos, to_pos, max_dist)
     local dir = vector():set(dx / len, dy / len, dz / len)
     local origin = vector():set(ox, oy, oz)
     local flags = rq_target.rqtBoth or (bit.bor(rq_target.rqtStatic or 1, rq_target.rqtDynamic or 2))
-    local ok, hit_dist = pcall(has_clear_los_anon_1, dir, flags, len, origin, ray_pick)
+    local ok, hit_dist = pcall(try_has_clear_los, dir, flags, len, origin, ray_pick)
     if not ok or not hit_dist then return true end
     return hit_dist >= len * 0.92
 end
@@ -510,20 +510,20 @@ local function pos_drift(a, b)
     return distance_pda(a, b) or a:distance_to(b)
 end
 
-local graph_vertex_target_anon_1 = function(gg, gvid) return gg:vertex(gvid) end
+local try_graph_vertex_target = function(gg, gvid) return gg:vertex(gvid) end
 
-local graph_vertex_target_anon_2 = function(gv) return gv:level_point() end
+local try_graph_vertex_target_2 = function(gv) return gv:level_point() end
 
-local graph_vertex_target_anon_3 = function(gv) return gv:level_vertex_id() end
+local try_graph_vertex_target_3 = function(gv) return gv:level_vertex_id() end
 
 local function graph_vertex_target(gvid)
     if not (gvid and game_graph) then return nil end
     local gg = game_graph()
     if not (gg and gg.valid_vertex_id and gg:valid_vertex_id(gvid)) then return nil end
-    local ok, gv = pcall(graph_vertex_target_anon_1, gg, gvid)
+    local ok, gv = pcall(try_graph_vertex_target, gg, gvid)
     if not ok or not gv then return nil end
-    local ok_p, pos = pcall(graph_vertex_target_anon_2, gv)
-    local ok_l, lvid = pcall(graph_vertex_target_anon_3, gv)
+    local ok_p, pos = pcall(try_graph_vertex_target_2, gv)
+    local ok_l, lvid = pcall(try_graph_vertex_target_3, gv)
     if not (ok_p and pos and pos.x and ok_l and lvid and lvid ~= tft_invalid_lvid) then return nil end
     return {
         pos = vector():set(pos.x, pos.y, pos.z),
@@ -571,38 +571,38 @@ local function object_on_actor_level(se_obj, ln)
     return true
 end
 
-local object_position_anon_1 = function(obj) return obj:position() end
+local try_object_position = function(obj) return obj:position() end
 
-local object_position_anon_2 = function(se_obj) return se_obj.position end
+local try_object_position_2 = function(se_obj) return se_obj.position end
 
-local object_position_anon_3 = function(level, se_obj) return level.vertex_position(se_obj.m_level_vertex_id) end
+local try_object_position_3 = function(level, se_obj) return level.vertex_position(se_obj.m_level_vertex_id) end
 
 local function object_position(se_obj, id)
     -- Alife position first (bases, level changers); live objects use :position().
     if se_obj then
-        local ok_p, pos = pcall(object_position_anon_2, se_obj)
+        local ok_p, pos = pcall(try_object_position_2, se_obj)
         if ok_p and pos and type(pos) ~= "function" and pos.x then return pos end
     end
     if id then
         local obj = xobject.go(id)
         if obj then
-            local ok_op, opos = pcall(object_position_anon_1, obj)
+            local ok_op, opos = pcall(try_object_position, obj)
             if ok_op and opos and opos.x then return opos end
         end
     end
     if not se_obj then return nil end
     if se_obj.m_level_vertex_id and level and level.vertex_position then
-        local ok_v, vpos = pcall(object_position_anon_3, level, se_obj)
+        local ok_v, vpos = pcall(try_object_position_3, level, se_obj)
         if ok_v and vpos and vpos.x then return vpos end
     end
     return nil
 end
 
-local distance_to_object_anon_1 = function(se_obj)
+local try_distance_to_object = function(se_obj)
     return se_obj:name()
 end
 
-local distance_to_object_anon_2 = function(actor_lid, db, dest_lid, dest_pos, pda_distance)
+local try_distance_to_object_2 = function(actor_lid, db, dest_lid, dest_pos, pda_distance)
     return pda_distance(db.actor:position(), actor_lid, dest_pos, dest_lid)
 end
 
@@ -611,14 +611,14 @@ local function distance_to_object(se_obj, id)
     local dest_pos = object_position(se_obj, id)
     if not dest_pos then
         local name = "?"
-        if se_obj then local _ok6, _name2 = pcall(distance_to_object_anon_1, se_obj)
+        if se_obj then local _ok6, _name2 = pcall(try_distance_to_object, se_obj)
         if _ok6 then name = _name2 end end
         tft_log("distance: no position for id=%s name=%s", tostring(id), name)
         return nil
     end
     local actor_lid = actor_level_id()
     local dest_lid = object_level_id(se_obj)
-    local ok, dist = pcall(distance_to_object_anon_2, actor_lid, db, dest_lid, dest_pos, pda_distance)
+    local ok, dist = pcall(try_distance_to_object_2, actor_lid, db, dest_lid, dest_pos, pda_distance)
     return ok and dist or nil
 end
 
@@ -628,13 +628,13 @@ end
 -- vertex on THIS level that happens to share coordinates, which is how cross-zone guide
 -- travel used to land players underground. Only trust level.* lookups when the target is
 -- actually on the level the actor is standing on right now.
-local fallback_travel_target_anon_1 = function(gg, gvid) return gg:vertex(gvid) end
+local try_fallback_travel_target = function(gg, gvid) return gg:vertex(gvid) end
 
-local fallback_travel_target_anon_2 = function(level, pos) return level.vertex_id(pos) end
+local try_fallback_travel_target_2 = function(level, pos) return level.vertex_id(pos) end
 
-local fallback_travel_target_anon_3 = function(gv) return gv:level_vertex_id() end
+local try_fallback_travel_target_3 = function(gv) return gv:level_vertex_id() end
 
-local fallback_travel_target_anon_4 = function(gg, pos) return gg:nearest_vertex(pos) end
+local try_fallback_travel_target_4 = function(gg, pos) return gg:nearest_vertex(pos) end
 
 local function fallback_travel_target(id, se_obj, on_actor_level)
     if not se_obj then se_obj = xobject.se(id) end
@@ -645,19 +645,19 @@ local function fallback_travel_target(id, se_obj, on_actor_level)
     local lvid = se_obj.m_level_vertex_id
     local gvid = se_obj.m_game_vertex_id
     if on_actor_level and level and level.vertex_id then
-        local ok, lv = pcall(fallback_travel_target_anon_2, level, pos)
+        local ok, lv = pcall(try_fallback_travel_target_2, level, pos)
         if ok and lv and lv ~= tft_invalid_lvid then lvid = lv end
     end
 
     local gg = game_graph()
     if gg and gg.nearest_vertex then
-        local ok, near = pcall(fallback_travel_target_anon_4, gg, pos)
+        local ok, near = pcall(try_fallback_travel_target_4, gg, pos)
         if ok and near and near ~= tft_invalid_gvid then gvid = near end
     end
     if not (lvid and lvid ~= tft_invalid_lvid) and gvid and gg and gg.valid_vertex_id and gg:valid_vertex_id(gvid) then
-        local ok, gv = pcall(fallback_travel_target_anon_1, gg, gvid)
+        local ok, gv = pcall(try_fallback_travel_target, gg, gvid)
         if ok and gv then
-            local ok_l, lv = pcall(fallback_travel_target_anon_3, gv)
+            local ok_l, lv = pcall(try_fallback_travel_target_3, gv)
             if ok_l and lv and lv ~= tft_invalid_lvid then lvid = lv end
         end
     end
@@ -667,31 +667,31 @@ end
 
 -- Level changers: strict resolution (only type that may refuse travel).
 -- Bases and campfires: always resolve permissively via the branch after is_lc.
-local resolve_travel_target_impl_anon_1 = function(obj) return obj:position() end
+local try_resolve_travel_target_impl = function(obj) return obj:position() end
 
-local resolve_travel_target_impl_anon_2 = function(level, pos) return level.vertex_id(pos) end
+local try_resolve_travel_target_impl_2 = function(level, pos) return level.vertex_id(pos) end
 
-local resolve_travel_target_impl_anon_3 = function(obj) return obj:game_vertex_id() end
+local try_resolve_travel_target_impl_3 = function(obj) return obj:game_vertex_id() end
 
-local resolve_travel_target_impl_anon_4 = function(level, pos) return level.vertex_id(pos) end
+local try_resolve_travel_target_impl_4 = function(level, pos) return level.vertex_id(pos) end
 
-local resolve_travel_target_impl_anon_5 = function(level, pos) return level.vertex_id(pos) end
+local try_resolve_travel_target_impl_5 = function(level, pos) return level.vertex_id(pos) end
 
-local resolve_travel_target_impl_anon_6 = function(level, pos) return level.vertex_id(pos) end
+local try_resolve_travel_target_impl_6 = function(level, pos) return level.vertex_id(pos) end
 
-local resolve_travel_target_impl_anon_7 = function(level, pos) return level.vertex_id(pos) end
+local try_resolve_travel_target_impl_7 = function(level, pos) return level.vertex_id(pos) end
 
-local resolve_travel_target_impl_anon_8 = function(obj) return obj:level_vertex_id() end
+local try_resolve_travel_target_impl_8 = function(obj) return obj:level_vertex_id() end
 
-local resolve_travel_target_impl_anon_9 = function(gg, pos) return gg:nearest_vertex(pos) end
+local try_resolve_travel_target_impl_9 = function(gg, pos) return gg:nearest_vertex(pos) end
 
-local resolve_travel_target_impl_anon_10 = function(live_obj) return live_obj:game_vertex_id() end
+local try_resolve_travel_target_impl_10 = function(live_obj) return live_obj:game_vertex_id() end
 
-local resolve_travel_target_impl_anon_11 = function(level, lv) return level.vertex_position(lv) end
+local try_resolve_travel_target_impl_11 = function(level, lv) return level.vertex_position(lv) end
 
-local resolve_travel_target_impl_anon_12 = function(level, lv) return level.vertex_position(lv) end
+local try_resolve_travel_target_impl_12 = function(level, lv) return level.vertex_position(lv) end
 
-local resolve_travel_target_impl_anon_13 = function(live_obj) return live_obj:level_vertex_id() end
+local try_resolve_travel_target_impl_13 = function(live_obj) return live_obj:level_vertex_id() end
 
 local function resolve_travel_target_impl(id, ln, click_pos)
     if not id or id <= 0 then return nil, "invalid_id" end
@@ -714,8 +714,8 @@ local function resolve_travel_target_impl(id, ln, click_pos)
 
         local live_obj = xobject.go(id)
         if live_obj then
-            local ok_l, lv = pcall(resolve_travel_target_impl_anon_13, live_obj)
-            local ok_g, gv = pcall(resolve_travel_target_impl_anon_10, live_obj)
+            local ok_l, lv = pcall(try_resolve_travel_target_impl_13, live_obj)
+            local ok_g, gv = pcall(try_resolve_travel_target_impl_10, live_obj)
             if ok_l and lv and lv ~= tft_invalid_lvid then lvid = lv end
             if ok_g and gv and gv ~= tft_invalid_gvid then gvid = gv end
         end
@@ -729,7 +729,7 @@ local function resolve_travel_target_impl(id, ln, click_pos)
         end
 
         if not lvid and level and level.vertex_id then
-            local ok, lv = pcall(resolve_travel_target_impl_anon_2, level, pos)
+            local ok, lv = pcall(try_resolve_travel_target_impl_2, level, pos)
             if ok and lv and lv ~= tft_invalid_lvid then lvid = lv end
         end
         if not lvid and se_obj.m_level_vertex_id and se_obj.m_level_vertex_id ~= tft_invalid_lvid then
@@ -771,9 +771,9 @@ local function resolve_travel_target_impl(id, ln, click_pos)
     elseif on_actor_level then
         local obj = xobject.go(id)
         if obj then
-            local ok_p, lp = pcall(resolve_travel_target_impl_anon_1, obj)
-            local ok_l, lv = pcall(resolve_travel_target_impl_anon_8, obj)
-            local ok_g, gv = pcall(resolve_travel_target_impl_anon_3, obj)
+            local ok_p, lp = pcall(try_resolve_travel_target_impl, obj)
+            local ok_l, lv = pcall(try_resolve_travel_target_impl_8, obj)
+            local ok_g, gv = pcall(try_resolve_travel_target_impl_3, obj)
             if ok_p and lp and lp.x then pos = pos_copy(lp) end
             if ok_l and lv and lv ~= tft_invalid_lvid then lvid = lv end
             if ok_g and gv and gv ~= tft_invalid_gvid then gvid = gv end
@@ -809,7 +809,7 @@ local function resolve_travel_target_impl(id, ln, click_pos)
             gvid = graph.gvid
         end
     elseif not lvid and level and level.vertex_id then
-        local ok, lv = pcall(resolve_travel_target_impl_anon_4, level, pos)
+        local ok, lv = pcall(try_resolve_travel_target_impl_4, level, pos)
         if ok and lv and lv ~= tft_invalid_lvid then lvid = lv end
     end
 
@@ -831,7 +831,7 @@ local function resolve_travel_target_impl(id, ln, click_pos)
     local gg = game_graph()
     if not (gg and gg.valid_vertex_id and gg:valid_vertex_id(gvid)) then
         if gg and gg.nearest_vertex then
-            local ok, near = pcall(resolve_travel_target_impl_anon_9, gg, pos)
+            local ok, near = pcall(try_resolve_travel_target_impl_9, gg, pos)
             if ok and near and gg.valid_vertex_id and gg:valid_vertex_id(near) then
                 gvid = near
             else
@@ -855,11 +855,11 @@ local function resolve_travel_target_impl(id, ln, click_pos)
     if is_campfire(id, se_obj) and on_actor_level then
         pos = vector():set(pos.x - 1.5, pos.y, pos.z)
         if level and level.vertex_id then
-            local ok, lv = pcall(resolve_travel_target_impl_anon_5, level, pos)
+            local ok, lv = pcall(try_resolve_travel_target_impl_5, level, pos)
             if ok and lv and lv ~= tft_invalid_lvid then
                 lvid = lv
                 if level.vertex_position then
-                    local ok_p, snapped = pcall(resolve_travel_target_impl_anon_11, level, lv)
+                    local ok_p, snapped = pcall(try_resolve_travel_target_impl_11, level, lv)
                     if ok_p and snapped and snapped.x then
                         pos = vector():set(snapped.x, snapped.y + 0.12, snapped.z)
                     end
@@ -873,11 +873,11 @@ local function resolve_travel_target_impl(id, ln, click_pos)
         if click_drift and click_drift <= tft_travel_max_click_drift then
             pos = vector():set(click_pos.x, pos.y, click_pos.z)
             if on_actor_level and level and level.vertex_id then
-                local ok, lv = pcall(resolve_travel_target_impl_anon_6, level, pos)
+                local ok, lv = pcall(try_resolve_travel_target_impl_6, level, pos)
                 if ok and lv and lv ~= tft_invalid_lvid then
                     lvid = lv
                     if level.vertex_position then
-                        local ok_p, snapped = pcall(resolve_travel_target_impl_anon_12, level, lv)
+                        local ok_p, snapped = pcall(try_resolve_travel_target_impl_12, level, lv)
                         if ok_p and snapped and snapped.x then
                             pos = vector():set(snapped.x, snapped.y + 0.12, snapped.z)
                         end
@@ -896,7 +896,7 @@ local function resolve_travel_target_impl(id, ln, click_pos)
         elseif se_obj.m_level_vertex_id and se_obj.m_level_vertex_id ~= tft_invalid_lvid then
             lvid = se_obj.m_level_vertex_id
         elseif on_actor_level and level and level.vertex_id then
-            local ok, lv = pcall(resolve_travel_target_impl_anon_7, level, pos)
+            local ok, lv = pcall(try_resolve_travel_target_impl_7, level, pos)
             if ok and lv and lv ~= tft_invalid_lvid then lvid = lv end
         end
     end
@@ -933,7 +933,7 @@ local DISCOVER_BASE_M = 20
 local DISCOVER_CAMPFIRE_M = 10
 local DISCOVER_TRANSITION_M = 10
 local DISCOVER_STASH_M = 5
-local discovery_kind_and_radius_anon_1 = function(se) return se:clsid() end
+local try_discovery_kind_and_radius = function(se) return se:clsid() end
 
 local function discovery_kind_and_radius(id, se)
     if is_pda_transition(id, se) then
@@ -943,7 +943,7 @@ local function discovery_kind_and_radius(id, se)
         return "campfire", DISCOVER_CAMPFIRE_M
     end
     -- Smart terrains = bases (do NOT treat vanilla fast_travel spots as already unlocked).
-    local ok_cls, obj_cls = pcall(discovery_kind_and_radius_anon_1, se)
+    local ok_cls, obj_cls = pcall(try_discovery_kind_and_radius, se)
     if ok_cls and obj_cls == clsid.smart_terrain then
         return "base", DISCOVER_BASE_M
     end
@@ -989,7 +989,7 @@ end
 -- Index smart terrains / campfires for discovery proximity checks only.
 -- Do NOT add/remove PDA map icons — those belong to the game / other mods (FFT, etc.).
 -- Once per level load (see schedule_index_travel_destinations); not on the 1s discovery poll.
-local visit_anon_1 = function(obj) return obj:clsid() end
+local try_visit = function(obj) return obj:clsid() end
 
 local function index_travel_destinations()
     dogma.perf.start("tft", "index_destinations")
@@ -1003,7 +1003,7 @@ local function index_travel_destinations()
 
         local function visit(obj)
             if not obj then return end
-            local ok_cls, cls = pcall(visit_anon_1, obj)
+            local ok_cls, cls = pcall(try_visit, obj)
             if not ok_cls then return end
             local id = obj.id
             if cls == clsid.smart_terrain then
@@ -1035,12 +1035,12 @@ end
 
 -- Try now; on failure retry every 1s up to INDEX_MAX_ATTEMPTS, then error + stop.
 local INDEX_MAX_ATTEMPTS = 10
-local schedule_index_travel_destinations_anon_1 = function(RemoveTimeEvent)
+local try_schedule_index_travel_destinations = function(RemoveTimeEvent)
     RemoveTimeEvent("tft", "index_destinations")
 end
 
 local function schedule_index_travel_destinations()
-	pcall(schedule_index_travel_destinations_anon_1, RemoveTimeEvent)
+	pcall(try_schedule_index_travel_destinations, RemoveTimeEvent)
 	local attempts = 0
 	local function try()
 		attempts = attempts + 1
@@ -1088,7 +1088,7 @@ local function discover_destination(id, silent)
     return true
 end
 
-local poll_discoveries_anon_1 = function(a, b) return a.d2 < b.d2 end
+local try_poll_discoveries = function(a, b) return a.d2 < b.d2 end
 
 local function poll_discoveries()
     dogma.perf.start("tft", "poll_discoveries")
@@ -1170,7 +1170,7 @@ local function poll_discoveries()
         end
     end
 
-    table.sort(hits, poll_discoveries_anon_1)
+    table.sort(hits, try_poll_discoveries)
     for i = 1, #hits do
         discover_destination(hits[i].id, false)
     end

@@ -341,7 +341,7 @@ local function world_hud()
     return nil
 end
 
-local hide_prompt_anon_1 = function(HUD_STATIC, hud)
+local try_hide_prompt = function(HUD_STATIC, hud)
     if hud:GetCustomStatic(HUD_STATIC) then
         hud:RemoveCustomStatic(HUD_STATIC)
     end
@@ -354,7 +354,7 @@ local function hide_prompt()
     prompt_text = nil
     local hud = world_hud()
     if hud and hud.GetCustomStatic then
-        pcall(hide_prompt_anon_1, HUD_STATIC, hud)
+        pcall(try_hide_prompt, HUD_STATIC, hud)
     end
     log("prompt hide")
 end
@@ -382,7 +382,7 @@ local function prompt_wnd()
     return nil
 end
 
-local show_prompt_anon_1 = function(PROMPT_H, text, vector2, wnd, y)
+local try_show_prompt = function(PROMPT_H, text, vector2, wnd, y)
     wnd:SetWndPos(vector2():set(0, y))
     if wnd.SetWndSize then
         wnd:SetWndSize(vector2():set(1024, PROMPT_H))
@@ -411,7 +411,7 @@ local function show_prompt(text)
     if not wnd then
         return
     end
-    pcall(show_prompt_anon_1, PROMPT_H, text, vector2, wnd, prompt_y())
+    pcall(try_show_prompt, PROMPT_H, text, vector2, wnd, prompt_y())
     if prompt_text ~= text then
         log("prompt show " .. text)
         prompt_text = text
@@ -472,7 +472,7 @@ local function collect_watch(claimer)
     return watch, hunt
 end
 
-local send_hunt_anon_1 = function(anim, game_object, move, npc)
+local try_send_hunt = function(anim, game_object, move, npc)
     if game_object and game_object.level_path then
         npc:set_path_type(game_object.level_path)
     end
@@ -495,7 +495,7 @@ local function send_hunt(vid)
         local npc = xobject.go(session.hunt[i])
         if npc and npc:alive() then
             xcombat.send_to(npc, vid)
-            pcall(send_hunt_anon_1, anim, game_object, move, npc)
+            pcall(try_send_hunt, anim, game_object, move, npc)
         end
     end
 end
@@ -957,7 +957,7 @@ local function on_item_before_move(flags, npc_id)
     end
 end
 
-local on_game_start_anon_1 = function()
+local on_actor_on_first_update = function()
     wrap_deny_move()
     wrap_claim_tips()
 end
@@ -966,7 +966,7 @@ function on_game_start()
     dogma.load(CONFIG.MOD_ID)
     RegisterScriptCallback("npc_on_death_callback", record_death)
     RegisterScriptCallback("monster_on_death_callback", record_death)
-    RegisterScriptCallback("actor_on_first_update", on_game_start_anon_1)
+    RegisterScriptCallback("actor_on_first_update", on_actor_on_first_update)
     RegisterScriptCallback("actor_on_update", tick)
     RegisterScriptCallback("ActorMenu_on_item_before_move", on_item_before_move)
     RegisterScriptCallback("save_state", on_save_state)

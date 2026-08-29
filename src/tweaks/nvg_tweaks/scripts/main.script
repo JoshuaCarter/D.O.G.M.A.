@@ -126,7 +126,7 @@ local function on_first_update()
 	apply_default_gain()
 end
 
-local on_game_start_anon_1 = function(mdata)
+local on_save_state = function(mdata)
 	mdata.dogma_tweaks_nvg_sticks_after_load_on = nv_is_on() or want_on
 end
 
@@ -137,7 +137,7 @@ function on_game_start()
 	RegisterScriptCallback("on_option_change", apply_default_gain)
 	apply_default_gain()
 	if USE_MARSHAL then
-		RegisterScriptCallback("save_state", on_game_start_anon_1)
+		RegisterScriptCallback("save_state", on_save_state)
 		RegisterScriptCallback("load_state", function(mdata)
 			want_on = mdata.dogma_tweaks_nvg_sticks_after_load_on == true
 				or mdata.dogma_hud_nvg_on == true

@@ -423,56 +423,56 @@ local function _ammo_bucket_spawnable()
     return list
 end
 
-local chunk_anon_1 = function() return _hand_set_to_list(_medkit_set)  end
+local medkit_fn = function() return _hand_set_to_list(_medkit_set)  end
 
-local chunk_anon_2 = function() return _hand_set_to_list(_bandage_set) end
+local bandage_fn = function() return _hand_set_to_list(_bandage_set) end
 
-local chunk_anon_3 = function() return _hand_set_to_list(_antirad_set) end
+local antirad_fn = function() return _hand_set_to_list(_antirad_set) end
 
-local chunk_anon_4 = function() return _hand_set_to_list(_stim_set)    end
+local stim_fn = function() return _hand_set_to_list(_stim_set)    end
 
-local chunk_anon_5 = function() return _hand_set_to_list(_pill_set)    end
+local pill_fn = function() return _hand_set_to_list(_pill_set)    end
 
-local chunk_anon_6 = function() return _hand_set_to_list(_grenade_set) end
+local grenade_fn = function() return _hand_set_to_list(_grenade_set) end
 
-local chunk_anon_7 = function() return _itm_bucket_to_list("outfit")       end
+local outfit_fn = function() return _itm_bucket_to_list("outfit")       end
 
-local chunk_anon_8 = function() return _itm_bucket_to_list("helmet")       end
+local helmet_fn = function() return _itm_bucket_to_list("helmet")       end
 
-local chunk_anon_9 = function() return _itm_bucket_to_list("artefact")     end
+local artefact_fn = function() return _itm_bucket_to_list("artefact")     end
 
-local chunk_anon_10 = function() return _itm_bucket_to_list("device")       end
+local device_fn = function() return _itm_bucket_to_list("device")       end
 
-local chunk_anon_11 = function() return _itm_bucket_to_list("money")        end
+local money_fn = function() return _itm_bucket_to_list("money")        end
 
-local chunk_anon_12 = function() return _itm_bucket_to_list("grenade_ammo") end
+local grenade_ammo_fn = function() return _itm_bucket_to_list("grenade_ammo") end
 
-local chunk_anon_13 = function() return _eatable_filtered_by_kind({ i_drink = true }) end
+local drink_fn = function() return _eatable_filtered_by_kind({ i_drink = true }) end
 
-local chunk_anon_14 = function() return _itm_buckets_union({ "tool", "part", "upgrade" }) end
+local crafting_fn = function() return _itm_buckets_union({ "tool", "part", "upgrade" }) end
 
-local chunk_anon_15 = function() return _eatable_filtered_by_kind({ i_food = true, i_mutant_cooked = true }) end
+local food_fn = function() return _eatable_filtered_by_kind({ i_food = true, i_mutant_cooked = true }) end
 
 local _SECTION_BUILDERS = {
-    medkit  = chunk_anon_1,
-    bandage = chunk_anon_2,
-    antirad = chunk_anon_3,
-    stim    = chunk_anon_4,
-    pill    = chunk_anon_5,
-    grenade = chunk_anon_6,
+    medkit  = medkit_fn,
+    bandage = bandage_fn,
+    antirad = antirad_fn,
+    stim    = stim_fn,
+    pill    = pill_fn,
+    grenade = grenade_fn,
 
-    outfit            = chunk_anon_7,
-    helmet            = chunk_anon_8,
-    artefact          = chunk_anon_9,
-    device            = chunk_anon_10,
-    money             = chunk_anon_11,
-    grenade_ammo      = chunk_anon_12,
+    outfit            = outfit_fn,
+    helmet            = helmet_fn,
+    artefact          = artefact_fn,
+    device            = device_fn,
+    money             = money_fn,
+    grenade_ammo      = grenade_ammo_fn,
     ammo_not_equipped = _ammo_bucket_spawnable,
 
-    crafting = chunk_anon_14,
+    crafting = crafting_fn,
 
-    food  = chunk_anon_15,
-    drink = chunk_anon_13,
+    food  = food_fn,
+    drink = drink_fn,
 }
 
 local _category_sections_cache = {}

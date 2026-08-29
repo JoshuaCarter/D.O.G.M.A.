@@ -57,46 +57,46 @@ local function look_dir_to_hpb(dir)
 	return vector():set(h, p, 0)
 end
 
-local set_custom_cam_anon_1 = function(hpb, level, pos) level.set_cam_custom_position_direction(pos, hpb) end
+local try_set_custom_cam = function(hpb, level, pos) level.set_cam_custom_position_direction(pos, hpb) end
 
-local set_custom_cam_anon_2 = function(hpb, level, pos)
+local try_set_custom_cam_2 = function(hpb, level, pos)
 	level.set_cam_custom_position_direction(pos, hpb, 1, false, false)
 end
 
 local function set_custom_cam(pos, look_dir)
 	if not (pos and look_dir and level and level.set_cam_custom_position_direction) then return end
 	local hpb = look_dir_to_hpb(look_dir)
-	local ok = pcall(set_custom_cam_anon_2, hpb, level, pos)
+	local ok = pcall(try_set_custom_cam_2, hpb, level, pos)
 	if not ok then
-		pcall(set_custom_cam_anon_1, hpb, level, pos)
+		pcall(try_set_custom_cam, hpb, level, pos)
 	end
 end
 
-local clear_custom_cam_anon_1 = function(level) level.remove_cam_custom_position_direction() end
+local try_clear_custom_cam = function(level) level.remove_cam_custom_position_direction() end
 
 local function clear_custom_cam()
 	if level and level.remove_cam_custom_position_direction then
-		pcall(clear_custom_cam_anon_1, level)
+		pcall(try_clear_custom_cam, level)
 	end
 end
 
-local lock_input_anon_1 = function(level) level.disable_input() end
+local try_lock_input = function(level) level.disable_input() end
 
 local function lock_input()
-	if level and level.disable_input then pcall(lock_input_anon_1, level) end
+	if level and level.disable_input then pcall(try_lock_input, level) end
 end
 
-local unlock_input_anon_1 = function(level) level.enable_input() end
+local try_unlock_input = function(level) level.enable_input() end
 
 local function unlock_input()
-	if level and level.enable_input then pcall(unlock_input_anon_1, level) end
+	if level and level.enable_input then pcall(try_unlock_input, level) end
 end
 
-local console_exec_anon_1 = function(c, cmd) c:execute(cmd) end
+local try_console_exec = function(c, cmd) c:execute(cmd) end
 
 local function console_exec(cmd)
 	local c = get_console and get_console()
-	if c and c.execute then pcall(console_exec_anon_1, c, cmd) end
+	if c and c.execute then pcall(try_console_exec, c, cmd) end
 end
 
 -- Lua treats 0 as truthy, so `tonumber(x) or 1` does NOT reject 0.
@@ -142,41 +142,41 @@ local function force_time_factor_normal()
 	set_time_factor(1)
 end
 
-local stash_gravity_anon_1 = function(level) level.set_gravity(0) end
+local try_stash_gravity = function(level) level.set_gravity(0) end
 
-local stash_gravity_anon_2 = function(level) return level.gravity() end
+local try_stash_gravity_2 = function(level) return level.gravity() end
 
 local function stash_gravity()
 	if tft.walk_gravity_stashed then return end
 	local g = nil
 	if level and level.gravity then
-		local ok, gv = pcall(stash_gravity_anon_2, level)
+		local ok, gv = pcall(try_stash_gravity_2, level)
 		if ok then g = gv end
 	end
 	tft.walk_gravity_saved = g
 	tft.walk_gravity_stashed = true
 	if level and level.set_gravity and fly_cfg().zero_gravity ~= false then
-		pcall(stash_gravity_anon_1, level)
+		pcall(try_stash_gravity, level)
 	end
 end
 
-local restore_gravity_anon_1 = function(level, tft) level.set_gravity(tft.walk_gravity_saved) end
+local try_restore_gravity = function(level, tft) level.set_gravity(tft.walk_gravity_saved) end
 
 local function restore_gravity()
 	if not tft.walk_gravity_stashed then return end
 	if level and level.set_gravity and tft.walk_gravity_saved ~= nil then
-		pcall(restore_gravity_anon_1, level, tft)
+		pcall(try_restore_gravity, level, tft)
 	end
 	tft.walk_gravity_stashed = false
 	tft.walk_gravity_saved = nil
 end
 
 -- Body/world collision pops the actor up when dragged near geometry; disable for the trip.
-local set_actor_collision_anon_1 = function(db, enabled) db.actor:set_collision_off(not enabled) end
+local try_set_actor_collision = function(db, enabled) db.actor:set_collision_off(not enabled) end
 
 local function set_actor_collision(enabled)
 	if not (db.actor and db.actor.set_collision_off) then return end
-	pcall(set_actor_collision_anon_1, db, enabled)
+	pcall(try_set_actor_collision, db, enabled)
 end
 
 local function disable_actor_collision()
@@ -191,42 +191,42 @@ local function restore_actor_collision()
 	tft.walk_collision_off = nil
 end
 
-local dik_for_anon_1 = function(bind, bind_to_dik) return bind_to_dik(bind) end
+local try_dik_for = function(bind, bind_to_dik) return bind_to_dik(bind) end
 
 local function dik_for(bind)
 	if not (bind and bind_to_dik) then return nil end
-	local ok, dik = pcall(dik_for_anon_1, bind, bind_to_dik)
+	local ok, dik = pcall(try_dik_for, bind, bind_to_dik)
 	if ok and dik then return dik end
 	return bind
 end
 
-local hold_fwd_anon_1 = function(dik, level) level.hold_action(dik) end
+local try_hold_fwd = function(dik, level) level.hold_action(dik) end
 
 local function hold_fwd()
 	if not (level and level.hold_action and key_bindings) then return end
 	local dik = dik_for(key_bindings.kFWD)
 	if not dik then return end
-	pcall(hold_fwd_anon_1, dik, level)
+	pcall(try_hold_fwd, dik, level)
 	tft.walk_fwd_held = true
 end
 
-local release_fwd_anon_1 = function(dik, level) level.release_action(dik) end
+local try_release_fwd = function(dik, level) level.release_action(dik) end
 
 local function release_fwd()
 	if not (level and level.release_action and key_bindings) then return end
 	local dik = dik_for(key_bindings.kFWD)
-	if dik then pcall(release_fwd_anon_1, dik, level) end
+	if dik then pcall(try_release_fwd, dik, level) end
 	tft.walk_fwd_held = false
 end
 
-local active_slot_anon_1 = function(db)
+local try_active_slot = function(db)
 	return db.actor:active_slot()
 end
 
 local function active_slot()
 	if not db.actor then return nil end
 	local slot = nil
-	local _ok, _slot = pcall(active_slot_anon_1, db)
+	local _ok, _slot = pcall(try_active_slot, db)
 	if _ok then slot = _slot end
 	return slot
 end
@@ -251,13 +251,13 @@ local function restore_weapon_slot()
 	end
 end
 
-local force_weapon_hud_anon_1 = function(level)
+local try_force_weapon_hud = function(level)
 	if level and level.show_weapon then level.show_weapon(true) end
 end
 
 local function force_weapon_hud()
 	console_exec("hud_weapon 1")
-	pcall(force_weapon_hud_anon_1, level)
+	pcall(try_force_weapon_hud, level)
 end
 
 local function copy_v(p)
@@ -297,21 +297,21 @@ local function rotate_dir_toward(cur, tgt, dt, settle_s)
 end
 
 -- Snap interpolated samples back onto the AI mesh so chords don't clip walls.
-local mesh_snap_xz_anon_1 = function(level, pos) return level.vertex_id(pos) end
+local try_mesh_snap_xz = function(level, pos) return level.vertex_id(pos) end
 
-local mesh_snap_xz_anon_2 = function(level, raised) return level.vertex_id(raised) end
+local try_mesh_snap_xz_2 = function(level, raised) return level.vertex_id(raised) end
 
-local mesh_snap_xz_anon_3 = function(level, lvid) return level.vertex_position(lvid) end
+local try_mesh_snap_xz_3 = function(level, lvid) return level.vertex_position(lvid) end
 
 local function mesh_snap_xz(pos)
 	if not (pos and level and level.vertex_id and level.vertex_position) then return pos end
-	local ok, lvid = pcall(mesh_snap_xz_anon_1, level, pos)
+	local ok, lvid = pcall(try_mesh_snap_xz, level, pos)
 	if not (ok and lvid) then
 		local raised = vector():set(pos.x, (pos.y or 0) + 1.0, pos.z)
-		ok, lvid = pcall(mesh_snap_xz_anon_2, level, raised)
+		ok, lvid = pcall(try_mesh_snap_xz_2, level, raised)
 	end
 	if not (ok and lvid) then return pos end
-	local okp, p = pcall(mesh_snap_xz_anon_3, level, lvid)
+	local okp, p = pcall(try_mesh_snap_xz_3, level, lvid)
 	if okp and p then return vector():set(p.x, p.y, p.z) end
 	return pos
 end
@@ -459,7 +459,7 @@ local function dir_toward(from_eye, look_at)
 	return vector():set(nx, ny, nz)
 end
 
-local snapshot_cam_mps_anon_1 = function(db) return db.actor:get_actor_run_coef() end
+local try_snapshot_cam_mps = function(db) return db.actor:get_actor_run_coef() end
 
 local function snapshot_cam_mps()
 	local cfg = fly_cfg()
@@ -467,7 +467,7 @@ local function snapshot_cam_mps()
 	local baseline = tonumber(cfg.baseline_run_coef) or BASELINE_RUN_COEF
 	local coef = baseline
 	if db.actor and db.actor.get_actor_run_coef then
-		local ok, c = pcall(snapshot_cam_mps_anon_1, db)
+		local ok, c = pcall(try_snapshot_cam_mps, db)
 		if ok and c and c > 0 then coef = c end
 	end
 	local mps = ref * (coef / baseline)
@@ -481,23 +481,23 @@ local function move_dt(dt)
 	return (dt or 0.016) * travel_time_factor()
 end
 
-local face_direction_anon_1 = function(db, yaw) db.actor:set_actor_direction(yaw) end
+local try_face_direction = function(db, yaw) db.actor:set_actor_direction(yaw) end
 
-local face_direction_anon_2 = function(db, pitch, yaw) db.actor:set_actor_direction(yaw, pitch) end
+local try_face_direction_2 = function(db, pitch, yaw) db.actor:set_actor_direction(yaw, pitch) end
 
-local face_direction_anon_3 = function(db, pitch, vector, yaw) db.actor:set_actor_direction(vector():set(yaw, pitch, 0)) end
+local try_face_direction_3 = function(db, pitch, vector, yaw) db.actor:set_actor_direction(vector():set(yaw, pitch, 0)) end
 
 local function face_direction(dir)
 	if not (db.actor and dir) then return end
 	local hpb = look_dir_to_hpb(dir)
 	local yaw, pitch = -hpb.x, hpb.y or 0
 	-- Modded exes: yaw+pitch (and optional roll / HPB vector).
-	local ok = pcall(face_direction_anon_2, db, pitch, yaw)
+	local ok = pcall(try_face_direction_2, db, pitch, yaw)
 	if not ok then
-		ok = pcall(face_direction_anon_3, db, pitch, vector, yaw)
+		ok = pcall(try_face_direction_3, db, pitch, vector, yaw)
 	end
 	if not ok then
-		pcall(face_direction_anon_1, db, yaw)
+		pcall(try_face_direction, db, yaw)
 	end
 end
 
@@ -553,13 +553,13 @@ local function resolve_land_ground()
 	return copy_v(prefer)
 end
 
-local finish_arrive_anon_1 = function(db, land) db.actor:set_actor_position(land) end
+local try_finish_arrive = function(db, land) db.actor:set_actor_position(land) end
 
 local function finish_arrive()
 	local land = tft.fly_land_ground or resolve_land_ground()
 	local dir = tft.fly_land_dir or tft.fly_dir
 	if db.actor and land then
-		pcall(finish_arrive_anon_1, db, land)
+		pcall(try_finish_arrive, db, land)
 		tft.dest_pos = vector():set(land.x, land.y, land.z)
 	end
 	-- Apply full yaw+pitch to player cam before dropping custom cam.
@@ -653,7 +653,7 @@ local function cancel_key_pressed()
 	return dogma.input.is_key_pressed(space) or dogma.input.is_key_pressed(esc)
 end
 
-local update_land_anon_1 = function(body, db) db.actor:set_actor_position(body) end
+local try_update_land = function(body, db) db.actor:set_actor_position(body) end
 
 local function update_land(dt)
 	if cancel_key_pressed() then
@@ -694,7 +694,7 @@ local function update_land(dt)
 			lerp((from.y or 0) - eye_h, g.y or 0, t),
 			lerp(from.z, g.z, t)
 		)
-		pcall(update_land_anon_1, body, db)
+		pcall(try_update_land, body, db)
 	end
 
 	if t >= 1 then
@@ -702,7 +702,7 @@ local function update_land(dt)
 	end
 end
 
-local update_fly_anon_1 = function(db, ground) db.actor:set_actor_position(ground) end
+local try_update_fly = function(db, ground) db.actor:set_actor_position(ground) end
 
 local function update_fly(dt)
 	local fly = tft.fly_path
@@ -752,7 +752,7 @@ local function update_fly(dt)
 
 	set_custom_cam(eye, tft.fly_dir)
 	if db.actor and ground then
-		pcall(update_fly_anon_1, db, ground)
+		pcall(try_update_fly, db, ground)
 		face_direction(tft.fly_move_dir or tft.fly_dir)
 	end
 
@@ -780,7 +780,7 @@ local function fly_on_actor_update()
 	dogma.perf.stop()
 end
 
-local begin_fly_camera_anon_1 = function(db, fly) db.actor:set_actor_position(fly[1].ground) end
+local try_begin_fly_camera = function(db, fly) db.actor:set_actor_position(fly[1].ground) end
 
 local function begin_fly_camera()
 	if not probe_cam_api() then return false end
@@ -830,7 +830,7 @@ local function begin_fly_camera()
 	local p0 = pos_at_arc(fly, cum, total, 0)
 	if p0 then set_custom_cam(p0, tft.fly_dir) end
 	if db.actor and fly[1] and fly[1].ground then
-		pcall(begin_fly_camera_anon_1, db, fly)
+		pcall(try_begin_fly_camera, db, fly)
 		face_direction(tft.fly_move_dir)
 	end
 

@@ -249,7 +249,7 @@ local function wrap_others()
 	end
 end
 
-local raw_lines_anon_1 = function(CONFIG, fs)
+local try_raw_lines = function(CONFIG, fs)
 	return fs:update_path("$game_config$", CONFIG.LTX)
 end
 
@@ -258,7 +258,7 @@ local function raw_lines()
 	if not (fs and fs.update_path) then
 		return nil
 	end
-	local ok, path = pcall(raw_lines_anon_1, CONFIG, fs)
+	local ok, path = pcall(try_raw_lines, CONFIG, fs)
 	if not (ok and path) then
 		return nil
 	end

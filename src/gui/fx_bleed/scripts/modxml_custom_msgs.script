@@ -1,6 +1,6 @@
 -- Bleed FX: corner blood HUD statics (1024² atlas, 512² quadrant per corner).
 -- Position/size applied at runtime from MCM scale.
-local on_xml_read_anon_1 = function(xml_file_name, xml_obj)
+local xml_read_cb = function(xml_file_name, xml_obj)
 	if xml_file_name ~= [[ui\ui_custom_msgs.xml]] then
 	return
 	end
@@ -28,5 +28,5 @@ local on_xml_read_anon_1 = function(xml_file_name, xml_obj)
 end
 
 function on_xml_read()
-	RegisterScriptCallback("on_xml_read", on_xml_read_anon_1)
+	RegisterScriptCallback("on_xml_read", xml_read_cb)
 end

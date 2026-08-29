@@ -157,7 +157,7 @@ local function abandon_if_needed()
 	pending = false
 end
 
-local schedule_abandon_anon_1 = function()
+local try_schedule_abandon = function()
 	local d = device()
 	if d and d.precache_frame and d.precache_frame > 1 then
 		return false
@@ -171,7 +171,7 @@ local function schedule_abandon()
 		abandon_if_needed()
 		return
 	end
-	CreateTimeEvent(CONFIG.MOD_ID, "abandon", AFTER_LOAD_S, schedule_abandon_anon_1)
+	CreateTimeEvent(CONFIG.MOD_ID, "abandon", AFTER_LOAD_S, try_schedule_abandon)
 end
 
 local function on_level_changing()
@@ -199,7 +199,7 @@ local function patch_no_teleport()
 	return true
 end
 
-local on_game_start_anon_1 = function()
+local on_actor_on_first_update = function()
 	patch_no_teleport()
 	schedule_abandon()
 end
@@ -209,5 +209,5 @@ function on_game_start()
 	patch_no_teleport()
 	RegisterScriptCallback("on_game_load", patch_no_teleport)
 	RegisterScriptCallback("on_level_changing", on_level_changing)
-	RegisterScriptCallback("actor_on_first_update", on_game_start_anon_1)
+	RegisterScriptCallback("actor_on_first_update", on_actor_on_first_update)
 end

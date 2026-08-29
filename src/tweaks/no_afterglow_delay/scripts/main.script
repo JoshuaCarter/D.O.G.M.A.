@@ -32,12 +32,12 @@ local function on_info(_actor, info)
 	end
 end
 
-local on_game_start_anon_1 = function()
+local on_actor_on_first_update = function()
 	try_unlock_afterglow()
 end
 
 function on_game_start()
 	RegisterScriptCallback("actor_on_info_callback", on_info)
 	-- Mid-wait saves: MS done, OA gate not yet granted.
-	RegisterScriptCallback("actor_on_first_update", on_game_start_anon_1)
+	RegisterScriptCallback("actor_on_first_update", on_actor_on_first_update)
 end

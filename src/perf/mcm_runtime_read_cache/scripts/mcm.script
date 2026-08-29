@@ -246,16 +246,16 @@ local function patch_get_set()
 	return true
 end
 
-local register_lifecycle_anon_1 = function()
+local on_main_menu_on_init = function()
 	disable_cache("main_menu_on_init")
 end
 
-local register_lifecycle_anon_2 = function()
+local game_load_cb = function()
 	sync_wanted()
 	enable_cache("on_game_load")
 end
 
-local register_lifecycle_anon_3 = function()
+local option_change_cb = function()
 	sync_logging()
 	if active then
 		clear_slots("on_option_change")
@@ -271,11 +271,11 @@ local function register_lifecycle()
 		return
 	end
 	-- In-game Accept only (ui_mcm gates on level.present()).
-	RegisterScriptCallback("on_option_change", register_lifecycle_anon_3)
+	RegisterScriptCallback("on_option_change", option_change_cb)
 	-- Fresh enable when entering a loaded game; warm across later map loads.
-	RegisterScriptCallback("on_game_load", register_lifecycle_anon_2)
+	RegisterScriptCallback("on_game_load", game_load_cb)
 	-- Menu Accept skips on_option_change — do not cache until the next load.
-	RegisterScriptCallback("main_menu_on_init", register_lifecycle_anon_1)
+	RegisterScriptCallback("main_menu_on_init", on_main_menu_on_init)
 	HOOK.callbacks = true
 end
 

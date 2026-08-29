@@ -1220,10 +1220,10 @@ end
 --- @cost O(n) smarts | 0 luabind (pure Lua table iteration)
 --- @src anomaly/sim_board.script(96), anomaly/smart_terrain.script(1)
 --- @return function Iterator yielding smart terrain server objects
-local smart_iter_anon_1 = function() return nil end
+local try_smart_iter = function() return nil end
 
 function smart_iter()
-    if not SIMBOARD or not SIMBOARD.smarts then return smart_iter_anon_1 end
+    if not SIMBOARD or not SIMBOARD.smarts then return try_smart_iter end
     local k, data
     return function()
         repeat

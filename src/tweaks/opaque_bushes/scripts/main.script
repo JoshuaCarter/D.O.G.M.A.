@@ -60,7 +60,7 @@ end
 
 -- Fresh ray each probe - avoids sticky ignore lists / bad leftover state.
 -- rqtStatic only: engine material fill on object hits is unsafe on some builds.
-local probe_hits_bush_anon_1 = function(PROBE_RANGE, RQT_STATIC, dx, dy, dz, ignore, is_bush_material, ox, oy, oz, ray_pick, vector)
+local try_probe_hits_bush = function(PROBE_RANGE, RQT_STATIC, dx, dy, dz, ignore, is_bush_material, ox, oy, oz, ray_pick, vector)
 	local ray = ray_pick()
 	ray:set_flags(RQT_STATIC)
 	ray:set_range(PROBE_RANGE)
@@ -90,7 +90,7 @@ local function probe_hits_bush(ox, oy, oz, dx, dy, dz, ignore)
 	if not ray_pick then
 		return false
 	end
-	local ok, hit = pcall(probe_hits_bush_anon_1, PROBE_RANGE, RQT_STATIC, dx, dy, dz, ignore, is_bush_material, ox, oy, oz, ray_pick, vector)
+	local ok, hit = pcall(try_probe_hits_bush, PROBE_RANGE, RQT_STATIC, dx, dy, dz, ignore, is_bush_material, ox, oy, oz, ray_pick, vector)
 	return ok and hit == true
 end
 
@@ -106,31 +106,31 @@ local function position_in_foliage(x, y, z, ignore)
 	return false
 end
 
-local in_foliage_anon_1 = function(npc)
+local try_in_foliage = function(npc)
 	return npc:position()
 end
 
 local function in_foliage(npc)
-	local ok, pos = pcall(in_foliage_anon_1, npc)
+	local ok, pos = pcall(try_in_foliage, npc)
 	if not (ok and pos) then
 		return false
 	end
 	return position_in_foliage(pos.x, pos.y, pos.z, npc)
 end
 
-local fighting_actor_anon_1 = function(enemy)
+local try_fighting_actor = function(enemy)
 	return enemy:id()
 end
 
-local fighting_actor_anon_2 = function(enemy)
+local try_fighting_actor_2 = function(enemy)
 	return enemy:id()
 end
 
-local fighting_actor_anon_3 = function(npc)
+local try_fighting_actor_3 = function(npc)
 	return npc:get_enemy()
 end
 
-local fighting_actor_anon_4 = function(npc)
+local try_fighting_actor_4 = function(npc)
 	return npc:best_enemy()
 end
 
@@ -138,16 +138,16 @@ local function fighting_actor(npc)
 	if not db.actor then
 		return false
 	end
-	local ok, enemy = pcall(fighting_actor_anon_4, npc)
+	local ok, enemy = pcall(try_fighting_actor_4, npc)
 	if ok and enemy then
-		local ok_id, eid = pcall(fighting_actor_anon_1, enemy)
+		local ok_id, eid = pcall(try_fighting_actor, enemy)
 		if ok_id and eid == db.actor:id() then
 			return true
 		end
 	end
-	ok, enemy = pcall(fighting_actor_anon_3, npc)
+	ok, enemy = pcall(try_fighting_actor_3, npc)
 	if ok and enemy then
-		local ok_id, eid = pcall(fighting_actor_anon_2, enemy)
+		local ok_id, eid = pcall(try_fighting_actor_2, enemy)
 		if ok_id and eid == db.actor:id() then
 			return true
 		end
@@ -155,23 +155,23 @@ local function fighting_actor(npc)
 	return false
 end
 
-local already_moving_anon_1 = function(npc)
+local try_already_moving = function(npc)
 	return npc:path_completed()
 end
 
 local function already_moving(npc)
-	local ok, done = pcall(already_moving_anon_1, npc)
+	local ok, done = pcall(try_already_moving, npc)
 	if ok and done == false then
 		return true
 	end
 	return false
 end
 
-local resolve_accessible_anon_1 = function(npc, vid)
+local try_resolve_accessible = function(npc, vid)
 	return npc:accessible(vid)
 end
 
-local resolve_accessible_anon_2 = function(level, npc, vector, vid)
+local try_resolve_accessible_2 = function(level, npc, vector, vid)
 	local tmp = vector()
 	tmp:set(0, 0, 0)
 	local pos = level.vertex_position(vid)
@@ -182,22 +182,22 @@ local function resolve_accessible(npc, vid)
 	if type(vid) ~= "number" or vid < 0 or vid >= INVALID_LVID then
 		return nil
 	end
-	local ok_acc, accessible = pcall(resolve_accessible_anon_1, npc, vid)
+	local ok_acc, accessible = pcall(try_resolve_accessible, npc, vid)
 	if ok_acc and accessible then
 		return vid
 	end
-	local ok_n, nvid = pcall(resolve_accessible_anon_2, level, npc, vector, vid)
+	local ok_n, nvid = pcall(try_resolve_accessible_2, level, npc, vector, vid)
 	if ok_n and type(nvid) == "number" and nvid >= 0 and nvid < INVALID_LVID then
 		return nvid
 	end
 	return nil
 end
 
-local valid_destination_anon_1 = function(npc)
+local try_valid_destination = function(npc)
 	return npc:position()
 end
 
-local valid_destination_anon_2 = function(level, vid)
+local try_valid_destination_2 = function(level, vid)
 	return level.vertex_position(vid)
 end
 
@@ -206,11 +206,11 @@ local function valid_destination(npc, vid)
 	if not vid then
 		return nil
 	end
-	local ok, dest = pcall(valid_destination_anon_2, level, vid)
+	local ok, dest = pcall(try_valid_destination_2, level, vid)
 	if not (ok and dest) then
 		return nil
 	end
-	local ok_pos, npos = pcall(valid_destination_anon_1, npc)
+	local ok_pos, npos = pcall(try_valid_destination, npc)
 	if not (ok_pos and npos) then
 		return nil
 	end
@@ -223,32 +223,32 @@ local function valid_destination(npc, vid)
 	return vid
 end
 
-local try_best_cover_anon_1 = function(cover)
+local cover_vid = function(cover)
 	return cover:level_vertex_id()
 end
 
-local try_best_cover_anon_2 = function(COVER_MAX_ENEMY, COVER_MIN_ENEMY, center, enemy_pos, npc, radius)
+local best_cover = function(COVER_MAX_ENEMY, COVER_MIN_ENEMY, center, enemy_pos, npc, radius)
 	return npc:best_cover(center, enemy_pos, radius, COVER_MIN_ENEMY, COVER_MAX_ENEMY)
 end
 
 local function try_best_cover(npc, center, enemy_pos, radius)
-	local ok, cover = pcall(try_best_cover_anon_2, COVER_MAX_ENEMY, COVER_MIN_ENEMY, center, enemy_pos, npc, radius)
+	local ok, cover = pcall(best_cover, COVER_MAX_ENEMY, COVER_MIN_ENEMY, center, enemy_pos, npc, radius)
 	if not (ok and cover) then
 		return nil
 	end
-	local ok_v, vid = pcall(try_best_cover_anon_1, cover)
+	local ok_v, vid = pcall(cover_vid, cover)
 	if not (ok_v and vid) then
 		return nil
 	end
 	return valid_destination(npc, vid)
 end
 
-local pick_cover_vertex_anon_1 = function(npc)
+local try_pick_cover_vertex = function(npc)
 	return npc:position()
 end
 
 local function pick_cover_vertex(npc, enemy_pos)
-	local ok_pos, center = pcall(pick_cover_vertex_anon_1, npc)
+	local ok_pos, center = pcall(try_pick_cover_vertex, npc)
 	if not (ok_pos and center and npc.best_cover) then
 		return nil
 	end
@@ -285,15 +285,15 @@ local function pick_cover_vertex(npc, enemy_pos)
 	return nil
 end
 
-local pick_advance_vertex_anon_1 = function(npc)
+local try_pick_advance_vertex = function(npc)
 	return npc:position()
 end
 
-local pick_advance_vertex_anon_2 = function(npc)
+local try_pick_advance_vertex_2 = function(npc)
 	return npc:level_vertex_id()
 end
 
-local pick_advance_vertex_anon_3 = function(dir, dist, from, level)
+local try_pick_advance_vertex_3 = function(dir, dist, from, level)
 	return level.vertex_in_direction(from, dir, dist)
 end
 
@@ -301,8 +301,8 @@ local function pick_advance_vertex(npc, enemy_pos)
 	if not (level and level.vertex_in_direction) then
 		return nil
 	end
-	local ok_from, from = pcall(pick_advance_vertex_anon_2, npc)
-	local ok_pos, npos = pcall(pick_advance_vertex_anon_1, npc)
+	local ok_from, from = pcall(try_pick_advance_vertex_2, npc)
+	local ok_pos, npos = pcall(try_pick_advance_vertex, npc)
 	if not (ok_from and from and ok_pos and npos) then
 		return nil
 	end
@@ -326,18 +326,18 @@ local function pick_advance_vertex(npc, enemy_pos)
 
 	local dir = vector()
 	dir:set(dx, 0, dz)
-	local ok, vid = pcall(pick_advance_vertex_anon_3, dir, dist, from, level)
+	local ok, vid = pcall(try_pick_advance_vertex_3, dir, dist, from, level)
 	if not ok then
 		return nil
 	end
 	return valid_destination(npc, vid)
 end
 
-local send_to_anon_1 = function(npc, vid)
+local try_send_to = function(npc, vid)
 	npc:set_dest_level_vertex_id(vid)
 end
 
-local send_to_anon_2 = function(game_object, npc)
+local try_send_to_2 = function(game_object, npc)
 	if game_object and game_object.level_path then
 		npc:set_path_type(game_object.level_path)
 	end
@@ -345,17 +345,17 @@ end
 
 local function send_to(npc, vid)
 	-- Minimal movement poke - avoid state_mgr / utils_obj (scheme / nil table crashes).
-	pcall(send_to_anon_2, game_object, npc)
-	pcall(send_to_anon_1, npc, vid)
+	pcall(try_send_to_2, game_object, npc)
+	pcall(try_send_to, npc, vid)
 end
 
-local nudge_anon_1 = function(db)
+local try_nudge = function(db)
 	return db.actor:position()
 end
 
 local function nudge(npc, id)
 	local tostr = tostring
-	local ok_pos, enemy_pos = pcall(nudge_anon_1, db)
+	local ok_pos, enemy_pos = pcall(try_nudge, db)
 	if not (ok_pos and enemy_pos) then
 		return false
 	end
@@ -376,11 +376,11 @@ local function nudge(npc, id)
 	return true
 end
 
-local tick_inner_anon_1 = function(db)
+local try_tick_inner = function(db)
 	return db.actor:position()
 end
 
-local tick_inner_anon_2 = function(IsStalker, PUSH_COOLDOWN_MS, actor_pos, already_moving, db, fighting_actor, id, in_foliage, now, npc, nudge, nudged, range_sqr)
+local try_tick_inner_2 = function(IsStalker, PUSH_COOLDOWN_MS, actor_pos, already_moving, db, fighting_actor, id, in_foliage, now, npc, nudge, nudged, range_sqr)
 	if npc:id() == db.actor:id() then
 		return
 	end
@@ -422,7 +422,7 @@ local function tick_inner()
 	end
 	last_check = now
 
-	local ok_ap, actor_pos = pcall(tick_inner_anon_1, db)
+	local ok_ap, actor_pos = pcall(try_tick_inner, db)
 	if not (ok_ap and actor_pos) then
 		return
 	end
@@ -431,7 +431,7 @@ local function tick_inner()
 	for id, st in pairs(db.storage) do
 		local npc = st and st.object
 		if npc then
-			local ok_keep = pcall(tick_inner_anon_2, IsStalker, PUSH_COOLDOWN_MS, actor_pos, already_moving, db, fighting_actor, id, in_foliage, now, npc, nudge, nudged, range_sqr)
+			local ok_keep = pcall(try_tick_inner_2, IsStalker, PUSH_COOLDOWN_MS, actor_pos, already_moving, db, fighting_actor, id, in_foliage, now, npc, nudge, nudged, range_sqr)
 			if not ok_keep then
 				-- swallow per-NPC errors; keep ticking others
 			end

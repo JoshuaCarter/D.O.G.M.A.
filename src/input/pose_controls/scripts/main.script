@@ -52,27 +52,27 @@ local sprint_freelook_on = false
 local saved_freelook_toggle = nil
 local bind_dik
 
-local chunk_anon_1 = function() return key_bindings.kACCEL end
+local bind_accel = function() return key_bindings.kACCEL end
 
-local chunk_anon_2 = function() return key_bindings.kCROUCH end
+local bind_crouch = function() return key_bindings.kCROUCH end
 
-local chunk_anon_3 = function()
+local bind_walk = function()
 	return dogma.keys.bind_kb(CONFIG.BINDS.walk.kb)
 end
 
-local chunk_anon_4 = function() return key_bindings.kSPRINT_TOGGLE or key_bindings.kSPRINT end
+local bind_sprint = function() return key_bindings.kSPRINT_TOGGLE or key_bindings.kSPRINT end
 
 local ENGINE_BINDS = {
-	crouch = { action = "crouch", bind = chunk_anon_2, mcm = "crouch_key" },
-	prone = { action = "accel", bind = chunk_anon_1, mcm = "prone_key" },
+	crouch = { action = "crouch", bind = bind_crouch, mcm = "crouch_key" },
+	prone = { action = "accel", bind = bind_accel, mcm = "prone_key" },
 	sprint = {
 		action = "sprint_toggle",
-		bind = chunk_anon_4,
+		bind = bind_sprint,
 		mcm = "sprint_key",
 	},
 	walk = {
 		action = CONFIG.BINDS.walk.action,
-		bind = chunk_anon_3,
+		bind = bind_walk,
 		mcm = "walk_key",
 	},
 }
@@ -436,19 +436,19 @@ local function on_before_key_press(key, bind, _dis, flags)
 	end
 end
 
-local on_before_key_hold_anon_1 = function()
+local try_on_before_key_hold = function()
 	hold_bind(key_bindings.kCROUCH)
 	hold_bind(key_bindings.kACCEL)
 end
 
-local on_before_key_hold_anon_2 = function()
+local try_on_before_key_hold_2 = function()
 	if IsMoveState("mcAccel") then
 		set_bind_down(key_bindings.kACCEL, false)
 	end
 	hold_bind(key_bindings.kCROUCH)
 end
 
-local on_before_key_hold_anon_3 = function()
+local try_on_before_key_hold_3 = function()
 	if IsMoveState("mcCrouch") then
 		set_bind_down(key_bindings.kCROUCH, false)
 	end
@@ -476,20 +476,20 @@ local function on_before_key_hold(key, bind, _dis, flags)
 
 	if is_walk_bind(bind) then
 		block(flags)
-		with_synthetic_input(on_before_key_hold_anon_3)
+		with_synthetic_input(try_on_before_key_hold_3)
 		return
 	end
 
 	if bind == key_bindings.kCROUCH then
 		block(flags)
-		with_synthetic_input(on_before_key_hold_anon_2)
+		with_synthetic_input(try_on_before_key_hold_2)
 	elseif bind == key_bindings.kACCEL then
 		block(flags)
-		with_synthetic_input(on_before_key_hold_anon_1)
+		with_synthetic_input(try_on_before_key_hold)
 	end
 end
 
-local on_before_key_release_anon_1 = function()
+local try_on_before_key_release = function()
 	set_bind_down(key_bindings.kACCEL, false)
 end
 
@@ -504,7 +504,7 @@ local function on_before_key_release(key, bind, _dis, flags)
 
 	if use_hold_mode() then
 		if is_walk_bind(bind) and get_pose() == POSE.WALK then
-			with_synthetic_input(on_before_key_release_anon_1)
+			with_synthetic_input(try_on_before_key_release)
 			pending_goal = nil
 			log(string.format("walk key release -> %s", get_pose()))
 		end

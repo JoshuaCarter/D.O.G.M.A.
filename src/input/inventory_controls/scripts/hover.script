@@ -1,10 +1,10 @@
 --[[
-	Hold+hover inventory binds.
+    Hold+hover inventory binds.
 
-	Tick 1: freeze only. Tick 2: fire that cell. Mouse onto a new cell:
-	fire that too. Idx change with the mouse still is layout packing the
-	hole, not paint. still-binds block Reinit/Reset/On_Sort and only
-	add/remove cells until key up.
+    Tick 1: freeze only. Tick 2: fire that cell. Mouse onto a new cell:
+    fire that too. Idx change with the mouse still is layout packing the
+    hole, not paint. still-binds block Reinit/Reset/On_Sort and only
+    add/remove cells until key up.
 ]]
 
 local MOD_ID = "dogma/input/inventory_controls"
@@ -18,397 +18,408 @@ local original_on_hover = nil
 local hover_wrapper = nil
 
 local function log(msg)
-	if dogma.log.logging() then
-		log_seq = log_seq + 1
-		dogma.log.log(MOD_ID, string.format("#%d t=%d %s", log_seq, time_global(), tostring(msg)))
-	end
+    if dogma.log.logging() then
+        log_seq = log_seq + 1
+        dogma.log.log(MOD_ID, string.format("#%d t=%d %s", log_seq, time_global(), tostring(msg)))
+    end
 end
 
 local function cell_obj(gui, bag, idx)
-	local cc = gui and gui.CC and gui.CC[bag]
-	return cc and cc:GetObj(idx)
+    local cc = gui and gui.CC and gui.CC[bag]
+    return cc and cc:GetObj(idx)
 end
 
 local function cell_desc(gui, bag, idx)
-	local obj = cell_obj(gui, bag, idx)
-	if not obj then
-		return string.format("%s[%s]=empty", tostring(bag), tostring(idx))
-	end
-	return string.format("%s[%s]=%s#%s", tostring(bag), tostring(idx), obj:section(), tostring(obj:id()))
+    local tostr = tostring
+    local obj = cell_obj(gui, bag, idx)
+    if not obj then
+        return string.format("%s[%s]=empty", tostr(bag), tostr(idx))
+    end
+    return string.format("%s[%s]=%s#%s", tostr(bag), tostr(idx), obj:section(), tostr(obj:id()))
 end
 
 local function cursor_xy()
-	local p = GetCursorPosition()
-	return p.x, p.y
+    local p = GetCursorPosition()
+    return p.x, p.y
 end
 
 local function mark_cursor(hold)
-	local x, y = cursor_xy()
-	hold.mx = x
-	hold.my = y
+    local x, y = cursor_xy()
+    hold.mx = x
+    hold.my = y
 end
 
 local function mouse_moved(hold)
-	if not (hold and hold.mx) then
-		return true
-	end
-	local x, y = cursor_xy()
-	return math.abs(x - hold.mx) >= 2 or math.abs(y - hold.my) >= 2
+    if not (hold and hold.mx) then
+        return true
+    end
+    local x, y = cursor_xy()
+    return math.abs(x - hold.mx) >= 2 or math.abs(y - hold.my) >= 2
 end
 
 local function owner_cell(gui, obj, bag)
-	if not (gui and gui.CC and obj) then
-		return nil
-	end
-	if bag == "picker" then
-		local p = gui.CC.picker and gui.CC.picker.parent
-		local cc = p and p.bag and gui.CC[p.bag]
-		return cc and p.idx and cc.cell and cc.cell[p.idx]
-	end
-	local cc = gui.CC[bag]
-	return cc and cc.GetCell_ID and cc:GetCell_ID(obj:id())
+    if not (gui and gui.CC and obj) then
+        return nil
+    end
+    if bag == "picker" then
+        local p = gui.CC.picker and gui.CC.picker.parent
+        local cc = p and p.bag and gui.CC[p.bag]
+        return cc and p.idx and cc.cell and cc.cell[p.idx]
+    end
+    local cc = gui.CC[bag]
+    return cc and cc.GetCell_ID and cc:GetCell_ID(obj:id())
 end
 
 local function source_bag(gui, bag)
-	if bag ~= "picker" then
-		return bag
-	end
-	local p = gui and gui.CC and gui.CC.picker and gui.CC.picker.parent
-	return p and p.bag or nil
+    if bag ~= "picker" then
+        return bag
+    end
+    local p = gui and gui.CC and gui.CC.picker and gui.CC.picker.parent
+    return p and p.bag or nil
 end
 
 local function stack_items(gui, obj, bag, whole)
-	if not obj then
-		return {}
-	end
-	if not whole or bag == "picker" then
-		return { obj }
-	end
-	local ci = owner_cell(gui, obj, bag)
-	if not ci then
-		return { obj }
-	end
-	local seen = {}
-	local items = {}
-	local function add(id)
-		if not id or seen[id] then
-			return
-		end
-		seen[id] = true
-		local item = level.object_by_id(id)
-		if item then
-			items[#items + 1] = item
-		end
-	end
-	add(ci.ID)
-	if ci.childs then
-		for id, _ in pairs(ci.childs) do
-			add(id)
-		end
-	end
-	return items
+    if not obj then
+        return {}
+    end
+    if not whole or bag == "picker" then
+        return { obj }
+    end
+    local ci = owner_cell(gui, obj, bag)
+    if not ci then
+        return { obj }
+    end
+    local seen = {}
+    local items = {}
+    local function add(id)
+        if not id or seen[id] then
+            return
+        end
+        seen[id] = true
+        local item = level.object_by_id(id)
+        if item then
+            items[#items + 1] = item
+        end
+    end
+    add(ci.ID)
+    if ci.childs then
+        for id, _ in pairs(ci.childs) do
+            add(id)
+        end
+    end
+    return items
 end
 
 local function hover_cell(gui)
-	local pcc = gui and gui.CC and gui.CC.picker
-	if pcc and pcc.IsShown and pcc:IsShown() and pcc.IsCursorOverWindow and pcc:IsCursorOverWindow() then
-		local idx = pcc.hover and pcc.hover.idx
-		if idx then
-			return "picker", idx
-		end
-	end
-	local hover = gui and gui.hover
-	if hover then
-		return hover.bag, hover.idx
-	end
+    local pcc = gui and gui.CC and gui.CC.picker
+    if pcc and pcc.IsShown and pcc:IsShown() and pcc.IsCursorOverWindow and pcc:IsCursorOverWindow() then
+        local idx = pcc.hover and pcc.hover.idx
+        if idx then
+            return "picker", idx
+        end
+    end
+    local hover = gui and gui.hover
+    if hover then
+        return hover.bag, hover.idx
+    end
 end
 
 local function still_active()
-	for i = 1, #actions do
-		local act = actions[i]
-		if act.still and act.down_prev then
-			return true
-		end
-	end
-	return false
+    for i = 1, #actions do
+        local act = actions[i]
+        if act.still and act.down_prev then
+            return true
+        end
+    end
+    return false
 end
 
 -- hold.armed: tick 1, freeze only. After fire/empty: parked on that cell.
 -- Follow the hover while the mouse is still so a packed hole becomes the
 -- parked cell and cannot fire. Paint only when the mouse moves to a new cell.
 local function set_hold(act, bag, idx, armed)
-	act.hold = { bag = bag, idx = idx, armed = armed }
-	mark_cursor(act.hold)
+    act.hold = { bag = bag, idx = idx, armed = armed }
+    mark_cursor(act.hold)
 end
 
 local function fire_or_park(act, bag, idx, gui)
-	local obj = cell_obj(gui, bag, idx)
-	set_hold(act, bag, idx, false)
-	if not obj then
-		log("empty " .. cell_desc(gui, bag, idx))
-		return
-	end
-	in_action = true
-	log(string.format("fire still=%s %s", tostring(still_active()), cell_desc(gui, bag, idx)))
-	act.fire(gui, obj, bag, idx)
-	in_action = false
+    local obj = cell_obj(gui, bag, idx)
+    set_hold(act, bag, idx, false)
+    if not obj then
+        log("empty " .. cell_desc(gui, bag, idx))
+        return
+    end
+    in_action = true
+    log(string.format("fire still=%s %s", tostring(still_active()), cell_desc(gui, bag, idx)))
+    act.fire(gui, obj, bag, idx)
+    in_action = false
 end
 
 local function follow_hover(act, bag, idx, gui)
-	local hold = act.hold
-	if hold.bag ~= bag or hold.idx ~= idx then
-		log(string.format("skip layout %s -> %s", cell_desc(gui, hold.bag, hold.idx), cell_desc(gui, bag, idx)))
-	end
-	hold.bag = bag
-	hold.idx = idx
+    local hold = act.hold
+    if hold.bag ~= bag or hold.idx ~= idx then
+        log(string.format("skip layout %s -> %s", cell_desc(gui, hold.bag, hold.idx), cell_desc(gui, bag, idx)))
+    end
+    hold.bag = bag
+    hold.idx = idx
 end
 
 local function step(act, bag, idx, gui)
-	if not (bag and act.bags[bag]) then
-		return
-	end
-	local hold = act.hold
-	if not hold then
-		set_hold(act, bag, idx, true)
-		log(string.format("arm still=%s active=%s %s[%s]", tostring(act.still), tostring(still_active()), tostring(bag), tostring(idx)))
-		return
-	end
-	if hold.armed then
-		hold.armed = false
-		fire_or_park(act, bag, idx, gui)
-		return
-	end
-	if not mouse_moved(hold) then
-		follow_hover(act, bag, idx, gui)
-		return
-	end
-	if hold.bag ~= bag or hold.idx ~= idx then
-		fire_or_park(act, bag, idx, gui)
-	end
+    local tostr = tostring
+    if not (bag and act.bags[bag]) then
+        return
+    end
+    local hold = act.hold
+    if not hold then
+        set_hold(act, bag, idx, true)
+        log(string.format("arm still=%s active=%s %s[%s]", tostr(act.still), tostr(still_active()), tostr(bag), tostr(idx)))
+        return
+    end
+    if hold.armed then
+        hold.armed = false
+        fire_or_park(act, bag, idx, gui)
+        return
+    end
+    if not mouse_moved(hold) then
+        follow_hover(act, bag, idx, gui)
+        return
+    end
+    if hold.bag ~= bag or hold.idx ~= idx then
+        fire_or_park(act, bag, idx, gui)
+    end
 end
 
 local function poll_action(act, gui)
-	if not act.mode_ok(gui) then
-		act.hold = nil
-		act.down_prev = false
-		return
-	end
-	local down = act.key_down()
-	act.down_prev = down
-	if not down then
-		if act.hold then
-			log("key up")
-		end
-		act.hold = nil
-		return
-	end
-	local bag, idx = hover_cell(gui)
-	if bag then
-		step(act, bag, idx, gui)
-	end
+    if not act.mode_ok(gui) then
+        act.hold = nil
+        act.down_prev = false
+        return
+    end
+    local down = act.key_down()
+    act.down_prev = down
+    if not down then
+        if act.hold then
+            log("key up")
+        end
+        act.hold = nil
+        return
+    end
+    local bag, idx = hover_cell(gui)
+    if bag then
+        step(act, bag, idx, gui)
+    end
 end
 
 -- Vanilla RefreshInventories: add missing, remove gone. Leaves holes.
 local function refresh_bag(cc, inv)
-	if not (cc and inv and cc.indx_id) then
-		return
-	end
-	local list = cc.indx_id
-	local bag = cc.ID
-	for id, obj in pairs(inv) do
-		if not list[id] then
-			log(string.format("still add %s#%s -> %s", obj:section(), tostring(id), tostring(bag)))
-			cc:AddItem(obj, obj:section())
-		end
-	end
-	local gone = {}
-	for id, _ in pairs(list) do
-		if not inv[id] then
-			gone[#gone + 1] = id
-		end
-	end
-	for i = 1, #gone do
-		log(string.format("still rem #%s from %s", tostring(gone[i]), tostring(bag)))
-		cc:RemoveItem_byID(gone[i])
-	end
+    local tostr = tostring
+    if not (cc and inv and cc.indx_id) then
+        return
+    end
+    local list = cc.indx_id
+    local bag = cc.ID
+    for id, obj in pairs(inv) do
+        if not list[id] then
+            log(string.format("still add %s#%s -> %s", obj:section(), tostr(id), tostr(bag)))
+            cc:AddItem(obj, obj:section())
+        end
+    end
+    local gone = {}
+    for id, _ in pairs(list) do
+        if not inv[id] then
+            gone[#gone + 1] = id
+        end
+    end
+    for i = 1, #gone do
+        log(string.format("still rem #%s from %s", tostr(gone[i]), tostr(bag)))
+        cc:RemoveItem_byID(gone[i])
+    end
 end
 
 local function still_refresh(gui)
-	if not (gui and gui.CC and gui.ParseInventory) then
-		return
-	end
-	local mode = gui.mode
-	if mode == "inventory" or mode == "repair" then
-		if db.actor then
-			refresh_bag(gui.CC.actor_bag, gui:ParseInventory(db.actor, nil, true))
-		end
-	elseif mode == "loot" then
-		if db.actor then
-			refresh_bag(gui.CC.actor_bag, gui:ParseInventory(db.actor, nil, true))
-		end
-		local npc = gui.GetPartner and gui:GetPartner()
-		if npc then
-			local inv
-			if gui.npc_is_companion and gui.ParseInventory_Companion then
-				inv = gui:ParseInventory_Companion(npc, true)
-			else
-				local is_box = IsInvbox and IsInvbox(npc)
-				local all = (not is_box) and npc.alive and (not npc:alive())
-				inv = gui:ParseInventory(npc, all, true)
-			end
-			refresh_bag(gui.CC.npc_bag, inv)
-		end
-	end
+    if not (gui and gui.CC and gui.ParseInventory) then
+        return
+    end
+    local mode = gui.mode
+    if mode == "inventory" or mode == "repair" then
+        if db.actor then
+            refresh_bag(gui.CC.actor_bag, gui:ParseInventory(db.actor, nil, true))
+        end
+    elseif mode == "loot" then
+        if db.actor then
+            refresh_bag(gui.CC.actor_bag, gui:ParseInventory(db.actor, nil, true))
+        end
+        local npc = gui.GetPartner and gui:GetPartner()
+        if npc then
+            local inv
+            if gui.npc_is_companion and gui.ParseInventory_Companion then
+                inv = gui:ParseInventory_Companion(npc, true)
+            else
+                local is_box = IsInvbox and IsInvbox(npc)
+                local all = (not is_box) and npc.alive and (not npc:alive())
+                inv = gui:ParseInventory(npc, all, true)
+            end
+            refresh_bag(gui.CC.npc_bag, inv)
+        end
+    end
 end
 
 local function settle(gui)
-	gui = gui or (ui_inventory and ui_inventory.GUI)
-	if gui and gui.On_Item_Update then
-		log("settle")
-		gui:On_Item_Update()
-	end
+    gui = gui or (ui_inventory and ui_inventory.GUI)
+    if gui and gui.On_Item_Update then
+        log("settle")
+        gui:On_Item_Update()
+    end
 end
 
 local function poll_all(gui)
-	local was = still_was
-	for i = 1, #actions do
-		poll_action(actions[i], gui)
-	end
-	local now = still_active()
-	if was and not now then
-		settle(gui)
-	end
-	still_was = now
+    local was = still_was
+    for i = 1, #actions do
+        poll_action(actions[i], gui)
+    end
+    local now = still_active()
+    if was and not now then
+        settle(gui)
+    end
+    still_was = now
 end
 
 local function still_block_cc(self)
-	return still_active() and self.ID ~= "picker"
+    return still_active() and self.ID ~= "picker"
 end
 
 local function wrap(obj, name, fn)
-	if not (obj and obj[name]) or wrapped[name] == obj[name] then
-		return
-	end
-	local orig = obj[name]
-	local wrapper = function(...)
-		return fn(orig, ...)
-	end
-	wrapped[name] = wrapper
-	obj[name] = wrapper
-	log(name .. " patched")
+    if not (obj and obj[name]) or wrapped[name] == obj[name] then
+        return
+    end
+    local orig = obj[name]
+    local wrapper = function(...)
+        return fn(orig, ...)
+    end
+    wrapped[name] = wrapper
+    obj[name] = wrapper
+    log(name .. " patched")
+end
+
+local wrap_update_inventories = function(orig, self)
+    if still_active() then
+        still_refresh(self)
+        return
+    end
+    return orig(self)
+end
+
+local wrap_on_sort = function(orig, self, ii, ignore)
+    if still_active() then
+        log("On_Sort blocked")
+        return
+    end
+    return orig(self, ii, ignore)
+end
+
+local wrap_reset = function(orig, self, ...)
+    if still_block_cc(self) then
+        log("Reset blocked " .. tostring(self.ID))
+        return
+    end
+    return orig(self, ...)
+end
+
+local wrap_reinit = function(orig, self, t, tf)
+    if still_block_cc(self) then
+        log("Reinit blocked " .. tostring(self.ID))
+        return
+    end
+    return orig(self, t, tf)
 end
 
 local function reapply_still_patches()
-	local cls = ui_inventory and ui_inventory.UIInventory
-	wrap(cls, "UpdateInventories", function(orig, self)
-		if still_active() then
-			still_refresh(self)
-			return
-		end
-		return orig(self)
-	end)
-	wrap(cls, "On_Sort", function(orig, self, ii, ignore)
-		if still_active() then
-			log("On_Sort blocked")
-			return
-		end
-		return orig(self, ii, ignore)
-	end)
-	local cc = utils_ui and utils_ui.UICellContainer
-	wrap(cc, "Reinit", function(orig, self, t, tf)
-		if still_block_cc(self) then
-			log("Reinit blocked " .. tostring(self.ID))
-			return
-		end
-		return orig(self, t, tf)
-	end)
-	wrap(cc, "Reset", function(orig, self, ...)
-		if still_block_cc(self) then
-			log("Reset blocked " .. tostring(self.ID))
-			return
-		end
-		return orig(self, ...)
-	end)
+    local cls = ui_inventory and ui_inventory.UIInventory
+    wrap(cls, "UpdateInventories", wrap_update_inventories)
+    wrap(cls, "On_Sort", wrap_on_sort)
+    local cc = utils_ui and utils_ui.UICellContainer
+    wrap(cc, "Reinit", wrap_reinit)
+    wrap(cc, "Reset", wrap_reset)
 end
 
 local function call_base_hover(self, idx)
-	if original_on_hover then
-		return original_on_hover(self, idx)
-	end
+    if original_on_hover then
+        return original_on_hover(self, idx)
+    end
 end
 
 local function paint_on_hover(self, idx)
-	if in_action or not idx then
-		return call_base_hover(self, idx)
-	end
-	local gui = ui_inventory and ui_inventory.GUI
-	for i = 1, #actions do
-		local act = actions[i]
-		if act.down_prev and act.hold and act.mode_ok(gui) then
-			step(act, self.ID, idx, gui)
-		end
-	end
-	return call_base_hover(self, idx)
+    if in_action or not idx then
+        return call_base_hover(self, idx)
+    end
+    local gui = ui_inventory and ui_inventory.GUI
+    for i = 1, #actions do
+        local act = actions[i]
+        if act.down_prev and act.hold and act.mode_ok(gui) then
+            step(act, self.ID, idx, gui)
+        end
+    end
+    return call_base_hover(self, idx)
 end
 
-local hover_wrapper_anon_1 = function(self, idx)
-	return paint_on_hover(self, idx)
+local hover_wrapper_fn = function(self, idx)
+    return paint_on_hover(self, idx)
 end
 
 local function reapply_on_hover_patch()
-	local cc_class = utils_ui and utils_ui.UICellContainer
-	if not (cc_class and cc_class.On_Hover) then
-		return
-	end
-	if cc_class.On_Hover == hover_wrapper then
-		return
-	end
-	original_on_hover = cc_class.On_Hover
-	hover_wrapper = hover_wrapper_anon_1
-	cc_class.On_Hover = hover_wrapper
-	log("On_Hover patched")
+    local cc_class = utils_ui and utils_ui.UICellContainer
+    if not (cc_class and cc_class.On_Hover) then
+        return
+    end
+    if cc_class.On_Hover == hover_wrapper then
+        return
+    end
+    original_on_hover = cc_class.On_Hover
+    hover_wrapper = hover_wrapper_fn
+    cc_class.On_Hover = hover_wrapper
+    log("On_Hover patched")
 end
 
 local function register(spec)
-	spec.down_prev = false
-	spec.hold = nil
-	actions[#actions + 1] = spec
-	return spec
+    spec.down_prev = false
+    spec.hold = nil
+    actions[#actions + 1] = spec
+    return spec
 end
 
 local function reset(spec)
-	if spec then
-		spec.down_prev = false
-		spec.hold = nil
-	end
+    if spec then
+        spec.down_prev = false
+        spec.hold = nil
+    end
 end
 
 _G.dogma_inv_hover = {
-	stack_items = stack_items,
-	source_bag = source_bag,
-	register = register,
-	reset = reset,
+    stack_items = stack_items,
+    source_bag = source_bag,
+    register = register,
+    reset = reset,
 }
 
 local original_on_update = ui_inventory and ui_inventory.UIInventory and ui_inventory.UIInventory.Update
 if original_on_update then
-	function ui_inventory.UIInventory:Update()
-		original_on_update(self)
-		if dogma.sys.ready(MOD_ID, db) then
-			poll_all(self)
-		end
-	end
+    function ui_inventory.UIInventory:Update()
+        original_on_update(self)
+        if dogma.sys.ready(MOD_ID, db) then
+            poll_all(self)
+        end
+    end
 end
 
-local on_game_start_anon_1 = function()
-	reapply_on_hover_patch()
-	reapply_still_patches()
+local on_actor_on_first_update = function()
+    reapply_on_hover_patch()
+    reapply_still_patches()
 end
 
 function on_game_start()
-	dogma.load(MOD_ID)
-	RegisterScriptCallback("actor_on_first_update", on_game_start_anon_1)
-	reapply_on_hover_patch()
-	reapply_still_patches()
-	log("hover ready")
+    dogma.load(MOD_ID)
+    RegisterScriptCallback("actor_on_first_update", on_actor_on_first_update)
+    reapply_on_hover_patch()
+    reapply_still_patches()
+    log("hover ready")
 end

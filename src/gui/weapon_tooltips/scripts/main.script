@@ -22,6 +22,9 @@
 ]]
 
 local CONFIG = _G.dogma_gui_weapon_tooltips_conf
+-- Extra helpers live here. Main chunk is at the Lua 5.1 200-local cap;
+-- another `local function` fails the whole script load (no tooltip, no logs).
+local F = {}
 
 -- Canonical Momopate/vanilla weapon-row indices. Inline companions anchor to
 -- these even when the parent base row is MCM-hidden (drop-in replacement).
@@ -464,11 +467,11 @@ local function companion_name_id_for_cap(cap)
 end
 
 -- Equipped weapon in the same slot (stock UIInfoItem compare target).
-local try_slot_compare_weapon = function(obj)
+function F.try_slot_compare_weapon(obj)
 	return obj:id()
 end
 
-local try_slot_compare_weapon_2 = function(obj_b)
+function F.try_slot_compare_weapon_2(obj_b)
 	return obj_b:id()
 end
 
@@ -487,8 +490,8 @@ local function slot_compare_weapon(info, obj, sec)
 	if not obj_b then
 		return nil
 	end
-	local ok_a, id_a = pcall(try_slot_compare_weapon, obj)
-	local ok_b, id_b = pcall(try_slot_compare_weapon_2, obj_b)
+	local ok_a, id_a = pcall(F.try_slot_compare_weapon, obj)
+	local ok_b, id_b = pcall(F.try_slot_compare_weapon_2, obj_b)
 	if ok_a and ok_b and id_a == id_b then
 		return nil
 	end
@@ -605,7 +608,7 @@ local function apply_numeric_compare(ele, val_a, val_b, lower_is_better, decimal
 	return true
 end
 
-local try_resolve_compare_sec = function(obj_b)
+function F.try_resolve_compare_sec(obj_b)
 	return obj_b:section()
 end
 
@@ -613,7 +616,7 @@ local function resolve_compare_sec(obj_b)
 	if not obj_b then
 		return nil
 	end
-	local ok, section = pcall(try_resolve_compare_sec, obj_b)
+	local ok, section = pcall(F.try_resolve_compare_sec, obj_b)
 	if ok and section then
 		return ini_sys:r_string_ex(section, "parent_section") or section
 	end
@@ -811,13 +814,13 @@ local function apply_slash_damage_compare(ele, items_fn, obj, sec, obj_b)
 	return apply_multipart_compare(ele, diffs, 1, false, false, " / ")
 end
 
-local try_apply_custom_stat_display = function(obj)
+function F.try_apply_custom_stat_display(obj)
 	return obj:section()
 end
 
 local function apply_custom_stat_display(info, obj, sec)
 	if not info or not info.stats then
-		return
+		return 0
 	end
 	-- Stat slots are reused across items. Complex mode sticks and breaks stock
 	-- strings that contain '%' (Accuracy etc.) - always clear first.
@@ -830,21 +833,22 @@ local function apply_custom_stat_display(info, obj, sec)
 		end
 	end
 	if not CONFIG.loaded.custom_stats_tooltips then
-		return
+		return 0
 	end
 	if (not sec or sec == "") and obj then
-		local ok, section = pcall(try_apply_custom_stat_display, obj)
+		local ok, section = pcall(F.try_apply_custom_stat_display, obj)
 		if ok and section then
 			sec = ini_sys:r_string_ex(section, "parent_section") or section
 		end
 	end
 	-- Match GetType("weapon"): IsWeapon(sec) crashes - it calls :clsid() on the string.
 	if not sec or info:GetType(sec) ~= "weapon" then
-		return
+		return 0
 	end
 
 	local obj_b = slot_compare_weapon(info, obj, sec)
 	local painted = {}
+	local n = 0
 
 	for _, ele in pairs(info.stats) do
 		if ele.cap and ele.txt then
@@ -859,6 +863,7 @@ local function apply_custom_stat_display(info, obj, sec)
 				else
 					local custom = custom_stat_text(cap, obj, sec)
 					if custom then
+						n = n + 1
 						ele.cap:SetTextColor(CLR.white)
 						if cap == ENHANCED_STAT_LABELS.stalker_damage
 							or cap == ENHANCED_STAT_LABELS.ammo_damage
@@ -910,6 +915,7 @@ local function apply_custom_stat_display(info, obj, sec)
 			relocate_stock_compare_colors(ele, hit_power_row and CLR.white or nil)
 		end
 	end
+	return n
 end
 
 local PANEL_TOP_OFFSET = 0    -- gap below item description, above our damage panel
@@ -1330,7 +1336,7 @@ end
 -- or stat rows won't rebuild until a different item is hovered.
 local tracked_infos = setmetatable({}, { __mode = "k" })
 
-local function invalidate_hover_cache()
+function F.invalidate_hover_cache()
 	for info in pairs(tracked_infos) do
 		info.id = nil
 		info.section = nil
@@ -1425,7 +1431,7 @@ local function on_option_change()
 
 	refresh_enhanced_stat_labels()
 	apply_standing_weapon_stats()
-	invalidate_hover_cache()
+	F.invalidate_hover_cache()
 
 	log_once("config", string.format(
 		"config: table=%s/%s custom=%s/%s hit=%s stalker=%s mutant=%s base=%s/%s/%s/%s/%s/%s/%s extra=%s/%s/%s/%s/%s place=%s headers=%s order=%s range=%s pellet%%=%s cond=%s/%s sil=%s/%s",
@@ -1448,7 +1454,7 @@ local function on_option_change()
 		tostr(CONFIG.loaded.apply_silencer_table), tostr(CONFIG.loaded.apply_silencer_stats)))
 end
 
-local try_safe_id = function(obj)
+function F.try_safe_id(obj)
 	return obj:id()
 end
 
@@ -1456,14 +1462,14 @@ local function safe_id(obj)
 	if not obj then
 		return nil
 	end
-	local ok, id = pcall(try_safe_id, obj)
+	local ok, id = pcall(F.try_safe_id, obj)
 	if ok then
 		return id
 	end
 	return nil
 end
 
-local try_safe_section = function(obj)
+function F.try_safe_section(obj)
 	return obj:section()
 end
 
@@ -1471,7 +1477,7 @@ local function safe_section(obj)
 	if not obj then
 		return nil
 	end
-	local ok, section = pcall(try_safe_section, obj)
+	local ok, section = pcall(F.try_safe_section, obj)
 	if ok and section then
 		return section
 	end
@@ -1479,7 +1485,7 @@ local function safe_section(obj)
 end
 
 -- Own cache key. Do not use self.id - that field is often a window id, not the item.
-local function hover_key(obj, sec)
+function F.hover_key(obj, sec)
 	local oid = safe_id(obj)
 	if oid ~= nil then
 		return "i" .. tostring(oid)
@@ -1627,7 +1633,7 @@ local function calc_range()
 end
 
 -- Barrel part condition 0..1. Missing parts data => 1.0.
-local try_raw_barrel_condition = function(obj, se_load_var)
+function F.try_raw_barrel_condition(obj, se_load_var)
 	return se_load_var(obj:id(), obj:name(), "parts")
 end
 
@@ -1635,7 +1641,7 @@ local function raw_barrel_condition(obj)
 	if not obj then
 		return 1
 	end
-	local ok, parts = pcall(try_raw_barrel_condition, obj, se_load_var)
+	local ok, parts = pcall(F.try_raw_barrel_condition, obj, se_load_var)
 	if not ok or type(parts) ~= "table" then
 		return 1
 	end
@@ -1665,12 +1671,12 @@ local function barrel_mult(obj, use_condition)
 end
 
 -- GAMMA character-creation difficulty (1-4). Falls back to engine gd index.
-local try_difficulty_mult = function(alife_storage_manager)
+function F.try_difficulty_mult(alife_storage_manager)
 	return alife_storage_manager.get_state()
 end
 
 local function difficulty_mult()
-	local ok, state = pcall(try_difficulty_mult, alife_storage_manager)
+	local ok, state = pcall(F.try_difficulty_mult, alife_storage_manager)
 	if ok and state and type(state.diff_game) == "table" then
 		local t = tonumber(state.diff_game.type)
 		if t and DIFFICULTY_MULT[t] then
@@ -1712,7 +1718,7 @@ local function npc_ammo_mult(ammo_sec)
 end
 
 -- CQC silencer_boost: 1.07 if attached silencer or integrated suppressor parent.
-local try_silencer_mult = function(obj)
+function F.try_silencer_mult(obj)
 	return obj:weapon_is_silencer()
 end
 
@@ -1721,7 +1727,7 @@ local function silencer_mult(obj, sec, enabled)
 		return 1
 	end
 	if obj then
-		local ok, has = pcall(try_silencer_mult, obj)
+		local ok, has = pcall(F.try_silencer_mult, obj)
 		if ok and has then
 			return SILENCER_BOOST
 		end
@@ -1838,7 +1844,7 @@ end
 -- "default": leave utils_item.get_ammo order (matches tooltip ammo icons).
 -- class_only=true: always parse ammo_class (scoring / New Game). Live get_ammo
 -- with nil obj often returns only the first round and must not drive scores.
-local try_collect_sorted_ammo_rounds = function(a, b)
+function F.try_collect_sorted_ammo_rounds(a, b)
 	if CONFIG.loaded.ammo_order == "ap" then
 		if a.ap ~= b.ap then
 			return a.ap > b.ap
@@ -1927,7 +1933,7 @@ local function collect_sorted_ammo_rounds(obj, sec, max_count, class_only)
 	end
 
 	if CONFIG.loaded.ammo_order ~= "default" then
-		table.sort(rounds, try_collect_sorted_ammo_rounds)
+		table.sort(rounds, F.try_collect_sorted_ammo_rounds)
 	end
 
 	if max_count and #rounds > max_count then
@@ -2406,12 +2412,12 @@ local function apply_armor_column_layout(fields)
 	end
 end
 
-local try_create_damage_fields = function(DAMAGE_XML, parent)
+function F.try_create_damage_fields(DAMAGE_XML, parent)
 	return DAMAGE_XML:InitStatic("panel", parent)
 end
 
 local function create_damage_fields(parent, panel_x)
-	local ok, dlg = pcall(try_create_damage_fields, DAMAGE_XML, parent)
+	local ok, dlg = pcall(F.try_create_damage_fields, DAMAGE_XML, parent)
 	if not ok or not dlg then
 		log_once("panel_xml_fail", "create_damage_fields: ui_dogma_gui_weapon_tooltips.xml init failed")
 		return nil, nil
@@ -2785,6 +2791,7 @@ local function apply_compact_header(info)
 end
 
 local function refresh_weapon_damage_panel(info, obj, sec)
+	local sformat = string.format
 	if not info then
 		return
 	end
@@ -2806,6 +2813,8 @@ local function refresh_weapon_damage_panel(info, obj, sec)
 	-- at XML y on top of stats until a later item change.
 	sec = sec or safe_section(obj)
 	if not sec or info:GetType(sec) ~= "weapon" then
+		log_tooltip("skip_type", sformat(
+			"table skip sec=%s type=%s", tostring(sec), sec and tostring(info:GetType(sec)) or "nil"))
 		info.dogma_wpn_data = nil
 		return
 	end
@@ -2814,6 +2823,7 @@ local function refresh_weapon_damage_panel(info, obj, sec)
 
 	local damage_data = build_ammo_damage_rows(obj, sec)
 	if not damage_data then
+		log_tooltip("skip_data", sformat("%s: build_ammo_damage_rows nil", tostring(sec)))
 		return
 	end
 
@@ -2821,18 +2831,18 @@ local function refresh_weapon_damage_panel(info, obj, sec)
 	if fields then
 		local w = info.desc and info.desc:GetWidth()
 		if not populate_damage_fields(fields, damage_data, w) then
-			log_item_once("populate_fail", sec, string.format("%s: populate_damage_fields failed", sec))
+			log_item_once("populate_fail", sec, sformat("%s: populate_damage_fields failed", sec))
 			info.dogma_wpn_data = nil
 			info.dogma_wpn_damage:Show(false)
 			return
 		end
 		info.dogma_wpn_data = damage_data
-		log_tooltip("panel_ok", string.format("%s: hover damage panel shown (%d rows)", sec, #damage_data.rows))
+		log_tooltip("panel_ok", sformat("%s: hover damage panel shown (%d rows)", sec, #damage_data.rows))
 	end
 end
 
 -- Re-show a table we already built (vanilla Update hides the panel; do not recalc).
-local function restore_damage_panel(info)
+function F.restore_damage_panel(info)
 	if not info or not info.dogma_wpn_damage or not info.dogma_wpn_fields or not info.dogma_wpn_data then
 		return false
 	end
@@ -3085,26 +3095,32 @@ local function uiinfo_init_hook(self, owner, delay)
 end
 
 local function uiinfo_update_hook(self, obj, sec, flags)
+	local tostr = tostring
 	dogma.perf.start("weapon_tooltips", "uiinfo_update")
 	apply_weapon_stats(CONFIG.loaded.custom_stats_tooltips)
-	local key = hover_key(obj, sec)
-	local same_item = key ~= nil and self.dogma_hover_key == key
+	local key = F.hover_key(obj, sec)
+	local same_item = self.dogma_hover_key == key
 
 	base_uiinfo_update(self, obj, sec, flags)
 
 	-- Vanilla paints sentinel "1" on every real fill. Always replace after.
 	-- Relocate bails if compare text already has %c, so this does not grow.
-	apply_custom_stat_display(self, obj, sec)
+	local stats_n = apply_custom_stat_display(self, obj, sec)
 
+	local path = "same"
 	if not same_item then
 		self.dogma_hover_key = key
 		self.dogma_wpn_data = nil
 		tooltip_logged = {}
 		refresh_weapon_damage_panel(self, obj, sec)
+		path = "new"
 	elseif self.dogma_wpn_damage and not self.dogma_wpn_damage:IsShown() then
 		-- First Update can run before rows exist, or vanilla hides our panel.
-		if not restore_damage_panel(self) then
+		if F.restore_damage_panel(self) then
+			path = "restore"
+		else
 			refresh_weapon_damage_panel(self, obj, sec)
+			path = "refresh"
 		end
 		self.dogma_layout_dirty = true
 	end
@@ -3123,6 +3139,20 @@ local function uiinfo_update_hook(self, obj, sec, flags)
 		self.dogma_layout_dirty = false
 		clamp_tooltip(self)
 	end
+
+	local typ = "?"
+	local resolved = sec
+	if (not resolved or resolved == "") and obj then
+		resolved = safe_section(obj)
+	end
+	if resolved and self.GetType then
+		typ = tostr(self:GetType(resolved))
+	end
+	local panel = self.dogma_wpn_damage and self.dogma_wpn_damage:IsShown()
+	log_tooltip("trace", string.format(
+		"hover key=%s same=%s type=%s shown=%s panel=%s stats=%s path=%s sec=%s",
+		tostr(key), tostr(same_item), typ, tostr(shown),
+		tostr(panel), tostr(stats_n), path, tostr(resolved)))
 	dogma.perf.stop()
 end
 
@@ -3183,7 +3213,7 @@ end
 local function on_console_execute(cmd)
 	if cmd == "g_game_difficulty" then
 		apply_standing_weapon_stats()
-		invalidate_hover_cache()
+		F.invalidate_hover_cache()
 	end
 end
 
@@ -3200,7 +3230,7 @@ local function hook_stats_table_override()
 	ish_item_stats.override_stats_table = function()
 		prev()
 		apply_standing_weapon_stats()
-		invalidate_hover_cache()
+		F.invalidate_hover_cache()
 	end
 	ish_item_stats.dogma_gui_weapon_tooltips_wrapped = true
 end

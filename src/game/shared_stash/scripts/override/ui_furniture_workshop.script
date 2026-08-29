@@ -9,7 +9,7 @@ local SHARED_SECTION = (CONFIG and CONFIG.SHARED_SECTION) or "dogma_game_shared_
 local PDA_STASH_KEY = (CONFIG and CONFIG.PDA_STASH_KEY) or "dogma_game_shared_stash"
 
 local function pr(...)
-	-- printf("WorkshopSharedStash - " .. string.format(...))
+	printf("[dogma_game_shared_stash] " .. string.format(...))
 end
 
 local function register_pda_shim(m_data, shared_id)
@@ -73,34 +73,45 @@ local function cleanup_private_stash(workshop_id, shared_id)
 end
 
 local function ensure_shared_near_workshop(workshop_id)
+	local tostr = tostring
 	local workshop = workshop_id and xobject.go(workshop_id)
 	if not workshop then
+		pr("ensure: no workshop go id=%s", tostr(workshop_id))
 		return nil
 	end
 
 	local m_data = alife_storage_manager.get_state()
 	if not m_data then
+		pr("ensure: no m_data")
 		return nil
 	end
 	local shared_id = m_data.dogma_game_shared_stash
 	local se = shared_id and xobject.se(shared_id)
 
 	if not (se and IsInvbox(nil, se:clsid())) then
-		local pos = vec_set(workshop:position())
-		pos.y = pos.y - 1000
+		local pos = (CONFIG.dest_at and CONFIG.dest_at(workshop)) or vec_set(workshop:position())
 		se = alife_create(SHARED_SECTION, pos, workshop:level_vertex_id(), workshop:game_vertex_id())
 		if not se then
+			pr("ensure: alife_create failed")
 			return nil
 		end
 		m_data.dogma_game_shared_stash = se.id
 		shared_id = se.id
-		pr("created shared stash %s", tostring(shared_id))
+		alife():set_switch_online(shared_id, true)
+		alife():set_switch_offline(shared_id, false)
+		pr("ensure: created stash %s", tostr(shared_id))
+	else
+		local box = xobject.go(shared_id)
+		pr("ensure: existing stash=%s online=%s", tostr(shared_id), tostr(box ~= nil))
+		if not box then
+			pr("ensure: stash offline, plant at workshop %s", tostr(workshop_id))
+			if CONFIG and CONFIG.plant_shared then
+				CONFIG.plant_shared(workshop_id)
+			end
+		end
 	end
 
 	register_pda_shim(m_data, shared_id)
-
-	alife():set_switch_online(shared_id, true)
-	alife():set_switch_offline(shared_id, false)
 
 	cleanup_private_stash(workshop_id, shared_id)
 
@@ -122,11 +133,14 @@ function GetStash(id)
 	return ensure_shared_near_workshop(id)
 end
 
-local function UseStash(id)
-	local box = id and xobject.go(id)
+local function UseStash(workshop_id)
+	local stash_id = ensure_shared_near_workshop(workshop_id)
+	local box = stash_id and xobject.go(stash_id)
 	if not box then
+		pr("use: waiting go workshop=%s stash=%s", tostring(workshop_id), tostring(stash_id))
 		return false
 	end
+	pr("use: opening stash %s", tostring(stash_id))
 	hide_hud_inventory()
 	box:use(db.actor)
 	return true
@@ -154,11 +168,10 @@ function GiveStashItemsToActor(workshop_id, stash_id)
 end
 
 function OpenWorkshop(stashId)
-	-- Wait until shared box is online (cross-level teleport).
 	if stashId and not xobject.go(stashId) then
+		pr("open workshop: waiting stash go %s", tostring(stashId))
 		return false
 	end
-
 	if not (ui_workshop and ui_workshop.get_workshop_ui) then
 		return true
 	end
@@ -223,12 +236,16 @@ function UIFurnitureWorkshop:UseWorkshop()
 end
 
 function UIFurnitureWorkshop:AccessStash()
+	local tostr = tostring
+	pr("access click workshop=%s", tostr(self.obj_id))
 	local stash_id = GetStash(self.obj_id)
 	if not stash_id then
+		pr("access abort: GetStash nil")
 		return
 	end
 	self:Close()
-	CreateTimeEvent("hf_workshop", "open_stash_" .. stash_id, 0.1, UseStash, stash_id)
+	pr("access queued open_stash workshop=%s stash=%s", tostr(self.obj_id), tostr(stash_id))
+	CreateTimeEvent("hf_workshop", "open_stash_" .. tostr(self.obj_id), 0.1, UseStash, self.obj_id)
 end
 
 function UIFurnitureWorkshop:Pickup()

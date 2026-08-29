@@ -65,5 +65,10 @@ function hf_workshop_wrapper:pickup()
 		end
 	end
 
+	local CONFIG = _G.dogma_game_shared_stash_conf
+	if CONFIG and CONFIG.stow_shared then
+		CONFIG.stow_shared()
+	end
+
 	bind_hf_base.hf_binder_wrapper.pickup(self)
 end

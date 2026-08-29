@@ -4,6 +4,8 @@ _G.dogma_game_shared_stash_conf = {
 	MOD_ID = "dogma/game/shared_stash",
 	DEFAULTS = {
 		one_per_level = true,
+		offset_x = 0,
+		offset_y = 0,
 	},
 	loaded = {},
 	-- Base inv_weight of workshop_item (Hideout Furniture)
@@ -32,6 +34,26 @@ function on_mcm_load(options)
 				val = 1,
 				def = CONFIG.DEFAULTS.one_per_level,
 				hint = "dogma_game_shared_stash_one_per_level",
+			},
+			{
+				id = "offset_x",
+				type = "track",
+				val = 2,
+				min = -3,
+				max = 3,
+				step = 0.01,
+				def = CONFIG.DEFAULTS.offset_x,
+				hint = "dogma_game_shared_stash_offset_x",
+			},
+			{
+				id = "offset_y",
+				type = "track",
+				val = 2,
+				min = -3,
+				max = 3,
+				step = 0.01,
+				def = CONFIG.DEFAULTS.offset_y,
+				hint = "dogma_game_shared_stash_offset_y",
 			},
 		}),
 	})

@@ -1335,6 +1335,7 @@ local function invalidate_hover_cache()
 		info.id = nil
 		info.section = nil
 		info.dogma_hover_key = nil
+		info.dogma_wpn_data = nil
 	end
 end
 
@@ -2796,6 +2797,7 @@ local function refresh_weapon_damage_panel(info, obj, sec)
 
 	if not CONFIG.loaded.damage_table_tooltips then
 		log_once("table_disabled", "damage_table_tooltips is off in MCM")
+		info.dogma_wpn_data = nil
 		return
 	end
 
@@ -2804,6 +2806,7 @@ local function refresh_weapon_damage_panel(info, obj, sec)
 	-- at XML y on top of stats until a later item change.
 	sec = sec or safe_section(obj)
 	if not sec or info:GetType(sec) ~= "weapon" then
+		info.dogma_wpn_data = nil
 		return
 	end
 
@@ -2819,11 +2822,26 @@ local function refresh_weapon_damage_panel(info, obj, sec)
 		local w = info.desc and info.desc:GetWidth()
 		if not populate_damage_fields(fields, damage_data, w) then
 			log_item_once("populate_fail", sec, string.format("%s: populate_damage_fields failed", sec))
+			info.dogma_wpn_data = nil
 			info.dogma_wpn_damage:Show(false)
 			return
 		end
+		info.dogma_wpn_data = damage_data
 		log_tooltip("panel_ok", string.format("%s: hover damage panel shown (%d rows)", sec, #damage_data.rows))
 	end
+end
+
+-- Re-show a table we already built (vanilla Update hides the panel; do not recalc).
+local function restore_damage_panel(info)
+	if not info or not info.dogma_wpn_damage or not info.dogma_wpn_fields or not info.dogma_wpn_data then
+		return false
+	end
+	local w = info.desc and info.desc:GetWidth()
+	if not populate_damage_fields(info.dogma_wpn_fields, info.dogma_wpn_data, w) then
+		info.dogma_wpn_damage:Show(false)
+		return false
+	end
+	return true
 end
 
 -- One stack: header → table → stats → ammo → parts → recipes → cooking →
@@ -3074,14 +3092,21 @@ local function uiinfo_update_hook(self, obj, sec, flags)
 
 	base_uiinfo_update(self, obj, sec, flags)
 
-	-- Content first, then layout. Custom stat text after vanilla fill
-	-- (sentinel functors paint "1" until replaced). Same item: skip. Update
-	-- fires every hover frame; rebuilding/recoloring there tanks FPS.
+	-- Vanilla paints sentinel "1" on every real fill. Always replace after.
+	-- Relocate bails if compare text already has %c, so this does not grow.
+	apply_custom_stat_display(self, obj, sec)
+
 	if not same_item then
 		self.dogma_hover_key = key
+		self.dogma_wpn_data = nil
 		tooltip_logged = {}
 		refresh_weapon_damage_panel(self, obj, sec)
-		apply_custom_stat_display(self, obj, sec)
+	elseif self.dogma_wpn_damage and not self.dogma_wpn_damage:IsShown() then
+		-- First Update can run before rows exist, or vanilla hides our panel.
+		if not restore_damage_panel(self) then
+			refresh_weapon_damage_panel(self, obj, sec)
+		end
+		self.dogma_layout_dirty = true
 	end
 
 	local shown = self.IsShown and self:IsShown()

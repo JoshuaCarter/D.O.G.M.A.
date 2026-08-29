@@ -161,22 +161,27 @@ local function ema(key, value, def, steps, delta)
 end
 
 local get_safe_sound_object = xr_sound.get_safe_sound_object
+local snd_cache = {}
 local function play_sound_on_actor(snd, volume, frequency, obj)
 	if not snd then
 		printf("snd is nil")
 		return
 	end
 	local actor = db.actor
-	local snd = get_safe_sound_object(snd)
-	if snd then
+	local so = snd_cache[snd]
+	if not so then
+		so = get_safe_sound_object(snd)
+		snd_cache[snd] = so
+	end
+	if so then
 		if obj and obj:id() ~= AC_ID then
-			snd:play_at_pos(obj, obj:position(), 0, sound_object.s3d)
+			so:play_at_pos(obj, obj:position(), 0, sound_object.s3d)
 		else
-			snd:play(actor, 0, sound_object.s2d)
+			so:play(actor, 0, sound_object.s2d)
 		end
-		snd.volume = volume or 1
-		snd.frequency = frequency or 1
-		return snd
+		so.volume = volume or 1
+		so.frequency = frequency or 1
+		return so
 	end
 end
 
@@ -334,15 +339,15 @@ end
 local field_anoms = {}
 local ax, ay, az = 0, 0, 0
 local pos_at = 0
-local notify_at = 0
 local notify_fn = nil
 local notify_beep = false
 local notify_active = false
 local notify_det_id = nil
-local ui_dirty = false
 local beep_snd = nil
-local POS_MS = 100
-local NOTIFY_MS = 250
+local cached_ui = nil
+local cached_segs = -1
+local scan_at = 0
+local SCAN_MS = 200
 
 local function dist_sqr(self, px, py, pz)
 	local dx = (self.px or 0) - px
@@ -352,7 +357,8 @@ local function dist_sqr(self, px, py, pz)
 end
 
 local function refresh_actor_pos(actor, tg)
-	if tg - pos_at < POS_MS then
+	tg = tg or time_global()
+	if tg - pos_at < 100 then
 		return
 	end
 	pos_at = tg
@@ -360,11 +366,7 @@ local function refresh_actor_pos(actor, tg)
 	ax, ay, az = p.x, p.y, p.z
 end
 
-local function refresh_notify(actor, tg)
-	if tg and notify_at ~= 0 and (tg - notify_at) < NOTIFY_MS then
-		return
-	end
-	notify_at = tg or time_global()
+local function refresh_notify(actor)
 	local det = actor:item_in_slot(9)
 	local id = det and det:id()
 	if id ~= notify_det_id then
@@ -385,103 +387,40 @@ local function da_beep()
 	end
 end
 
-local function da_notify(self, distance_to_sqr, radius_sqr)
-	local og_dyn = bind_anomaly_field.dyn_anomalies
-	if og_dyn then
-		local dyn = self.level_name and og_dyn[self.level_name]
-		local st = dyn and dyn[self.obj_id]
-		if st ~= nil and not st then
-			return
-		end
-	end
-	local key = self.factor_key
-	detector_functions.detector_anomaly_factors[key] = 1 - distance_to_sqr / radius_sqr
-	ui_dirty = true
-	if not notify_active then
+local function set_detector_segs(segs)
+	if segs == cached_segs then
 		return
 	end
-	local sec = self.section
-	if notify_beep and (drx_da_main_mcm.new_anomalies_sections[sec] or drx_da_main_mcm.variations_anomalies_sections[sec])
-	or (not notify_beep) then
-		if not self.sound_threshold then
-			self.sound_threshold = 0
-		end
-		self.sound_threshold = self.sound_threshold + (1 - distance_to_sqr / radius_sqr) ^ 2
-		if self.sound_threshold > 1 then
-			da_beep()
-			self.sound_threshold = 0
-		end
+	if not cached_ui then
+		cached_ui = tasks_measure.get_UI()
 	end
-end
-
-local function flush_detector_ui()
-	if not ui_dirty then
-		return
-	end
-	ui_dirty = false
-	local ui = tasks_measure.get_UI()
+	local ui = cached_ui
 	if not (ui and ui.step <= 0) then
 		return
 	end
-	local df = detector_functions
-	if not notify_active then
-		if not df.detector_ui_black then
-			df.detector_ui_black = true
-			df.detector_ui_segs = -1
-			for i = 1, ui.step_tot do
-				ui.m_seg[i]:InitTextureEx("green_black_ano", "hud\\p3d")
-			end
-		end
-		return
-	end
-	local factor = 0
-	for _, v in pairs(df.detector_anomaly_factors) do
-		if v > factor then
-			factor = v
-		end
-	end
-	local segs = min(ui.step_tot, ceil(factor * 10))
-	if segs == df.detector_ui_segs and not df.detector_ui_black then
-		return
-	end
-	df.detector_ui_segs = segs
-	df.detector_ui_black = false
+	cached_segs = segs
 	for i = 1, ui.step_tot do
 		ui.m_seg[i]:InitTextureEx(i <= segs and "green_seg_ano" or "green_black_ano", "hud\\p3d")
 	end
 end
 
-local function field_anom_tick(self, ax, ay, az, tg)
-	-- Park next due first so a notify error cannot spin this anom every frame.
-	self.on_update_time = tg + (self.on_update_timer_default or 100)
-
-	local radius_sqr = self.radius_sqr
-	local distance_to_sqr = dist_sqr(self, ax, ay, az)
-	if distance_to_sqr <= radius_sqr then
-		if notify_fn and not (
-			anomaly_detector_ignore[self.section]
-		or	(
-			self.level_name
-			and updated_anomaly_levels[self.level_name]
-			and updated_anomaly_levels[self.level_name].disabled
-			and updated_anomaly_levels[self.level_name].anomalies_properties
-			and updated_anomaly_levels[self.level_name].anomalies_properties[self.obj_id]
-			)
-		) then
-			da_notify(self, distance_to_sqr, radius_sqr)
-		end
-		self.da_near = true
-		self.on_update_timer = self.on_update_timer_default
-	else
-		if self.da_near then
-			detector_functions.detector_anomaly_factors[self.factor_key] = nil
-			self.da_near = false
-			ui_dirty = true
-		end
-		self.on_update_timer = clamp(self.on_update_timer_default * (distance_to_sqr / radius_sqr * 0.5), self.on_update_timer_default, self.on_update_timer_max)
+local function anom_ignored(self)
+	if anomaly_detector_ignore[self.section] then
+		return true
 	end
+	local lid = self.level_name
+	local lvl = lid and updated_anomaly_levels[lid]
+	return lvl and lvl.disabled and lvl.anomalies_properties and lvl.anomalies_properties[self.obj_id]
+end
 
-	self.on_update_time = tg + self.on_update_timer
+local function anom_dyn_off(self)
+	local og_dyn = bind_anomaly_field.dyn_anomalies
+	if not og_dyn then
+		return false
+	end
+	local dyn = self.level_name and og_dyn[self.level_name]
+	local st = dyn and dyn[self.obj_id]
+	return st ~= nil and not st
 end
 
 function field_anoms_on_update()
@@ -490,19 +429,56 @@ function field_anoms_on_update()
 		return
 	end
 	local tg = time_global()
-	local primed = false
+	if tg < scan_at then
+		return
+	end
+	scan_at = tg + SCAN_MS
+
+	refresh_notify(actor)
+	if not notify_fn then
+		set_detector_segs(0)
+		return
+	end
+
+	refresh_actor_pos(actor, tg)
+	local best_f = 0
+	local best = nil
 	for _, self in pairs(field_anoms) do
-		if self.object and tg >= self.on_update_time then
-			if not primed then
-				refresh_actor_pos(actor, tg)
-				refresh_notify(actor, tg)
-				primed = true
+		if self.object and not anom_ignored(self) and not anom_dyn_off(self) then
+			local r2 = self.radius_sqr
+			if r2 then
+				local d2 = dist_sqr(self, ax, ay, az)
+				if d2 <= r2 then
+					local f = 1 - d2 / r2
+					if f > best_f then
+						best_f = f
+						best = self
+					end
+				end
 			end
-			field_anom_tick(self, ax, ay, az, tg)
 		end
 	end
-	if ui_dirty then
-		flush_detector_ui()
+
+	if not notify_active then
+		set_detector_segs(0)
+		return
+	end
+
+	set_detector_segs(min(10, ceil(best_f * 10)))
+	if not best then
+		return
+	end
+	local sec = best.section
+	if notify_beep and (drx_da_main_mcm.new_anomalies_sections[sec] or drx_da_main_mcm.variations_anomalies_sections[sec])
+	or (not notify_beep) then
+		if not best.sound_threshold then
+			best.sound_threshold = 0
+		end
+		best.sound_threshold = best.sound_threshold + best_f * best_f
+		if best.sound_threshold > 1 then
+			da_beep()
+			best.sound_threshold = 0
+		end
 	end
 end
 
@@ -2122,15 +2098,23 @@ end
 
 local try_condition_4 = function() return false end
 
+local function factor_key_of(anomaly)
+	return anomaly.factor_key or anomaly.object:name()
+end
+
 local remove_factor_fn = function(self, anomaly, actor, distance_to_sqr, radius_sqr)
-	self.factors[anomaly.object:name()] = nil
+	self.factors[factor_key_of(anomaly)] = nil
 end
 
 local add_factor_fn = function(self, anomaly, actor, distance_to_sqr, radius_sqr, section, factor)
-	self.factors[anomaly.object:name()] = {
-		section = section or anomaly.object:section(),
-		factor = factor or 1 - distance_to_sqr / radius_sqr
-	}
+	local key = factor_key_of(anomaly)
+	local t = self.factors[key]
+	if not t then
+		t = {}
+		self.factors[key] = t
+	end
+	t.section = section or anomaly.section or anomaly.object:section()
+	t.factor = factor or 1 - distance_to_sqr / radius_sqr
 end
 
 local find_factor_sum_fn = function(self, anomaly, actor, distance_to_sqr, radius_sqr, condition)
@@ -2311,44 +2295,54 @@ local zone_mine_gold_fn = function(anomaly, actor, distance_to_sqr, radius_sqr)
 	actor:change_power(-change_modifier * 0.002)
 end
 
-local zone_mine_green_dragon_fn = function(anomaly, actor, distance_to_sqr, radius_sqr)
-	local key ="zone_mine_green_dragon_speed"
-	local steps_in = 70
-	local steps_out = 22
+local function green_dragon_tick()
+	add_speed("zone_mine_green_dragon_speed", ema("zone_mine_green_dragon_speed", 0.5, 1, 70), false, true)
+	RemoveTimeEvent("zone_mine_green_dragon_speed", "zone_mine_green_dragon_speed")
+end
 
-	add_simple_timed_effect(1, function()
-		add_speed(key, ema(key, 0.5, 1, steps_in), false, true)
-		RemoveTimeEvent(key, key)
-	end, function()
-		CreateTimeEvent(key, key, 0, function()
-			add_speed(key, ema(key, 1, 1, steps_out, device().time_delta * 0.1), false, true)
-			if smoothed_values[key] >= 0.98 then
-				remove_speed(key)
-				return true
-			end
-		end)
-	end, key, 1)
+local function green_dragon_out_tick()
+	add_speed("zone_mine_green_dragon_speed", ema("zone_mine_green_dragon_speed", 1, 1, 22, device().time_delta * 0.1), false, true)
+	if smoothed_values["zone_mine_green_dragon_speed"] >= 0.98 then
+		remove_speed("zone_mine_green_dragon_speed")
+		return true
+	end
+end
+
+local function green_dragon_on_end()
+	CreateTimeEvent("zone_mine_green_dragon_speed", "zone_mine_green_dragon_speed", 0, green_dragon_out_tick)
+end
+
+local zone_mine_green_dragon_fn = function(anomaly, actor, distance_to_sqr, radius_sqr)
+	add_simple_timed_effect(1, green_dragon_tick, green_dragon_on_end, "zone_mine_green_dragon_speed", 1)
+end
+
+local function sphere_on_end()
+	unregister_callback("zone_mine_sphere")
+end
+
+local function sphere_on_hit(s_hit, bone_id, flags)
+	if s_hit.type == hit.fire_wound then
+		s_hit.power = s_hit.power * random_float(0, 0.5)
+		play_sound_on_actor("eugenium_anomaly\\sphere\\sphere_blowout", 0.9, random_float(0.95, 1.05))
+		local gibs = particles_object("artefact\\artefact_gravi")
+		if gibs and not gibs:playing() then
+			gibs:play_at_pos(db.actor:position())
+		end
+	end
 end
 
 local zone_mine_sphere_fn = function(anomaly, actor, distance_to_sqr, radius_sqr)
 	local key = "zone_mine_sphere"
 
 	if not callbacks[key] then
-		register_callback("actor_on_before_hit", function(s_hit, bone_id, flags)
-			if s_hit.type == hit.fire_wound then
-				s_hit.power = s_hit.power * random_float(0, 0.5)
-				play_sound_on_actor("eugenium_anomaly\\sphere\\sphere_blowout", 0.9, random_float(0.95, 1.05))
-				local gibs = particles_object("artefact\\artefact_gravi")
-				if gibs and not gibs:playing() then
-					gibs:play_at_pos(actor:position())
-				end
-			end
-		end, nil, key)
+		register_callback("actor_on_before_hit", sphere_on_hit, nil, key)
 	end
 
-	add_simple_timed_effect(1, nil, function()
-		unregister_callback(key)
-	end, key, 1)
+	add_simple_timed_effect(1, nil, sphere_on_end, key, 1)
+end
+
+local function grav_cam_on_end()
+	level.remove_cam_effector(98323)
 end
 
 local zone_mine_gravitational_weak_fn = function(anomaly, actor, distance_to_sqr, radius_sqr, power_modifier)
@@ -2365,9 +2359,7 @@ local zone_mine_gravitational_weak_fn = function(anomaly, actor, distance_to_sqr
 		level.add_cam_effector("camera_effects\\earthquake_40.anm", earthquake_cam_eff, false, "", 0, false, power)
 	end
 
-	add_simple_timed_effect(1, nil, function()
-		level.remove_cam_effector(earthquake_cam_eff)
-	end, key, 1)
+	add_simple_timed_effect(1, nil, grav_cam_on_end, key, 1)
 end
 
 local zone_mine_darkness_fn = function(anomaly, actor, distance_to_sqr, radius_sqr)
@@ -2396,8 +2388,51 @@ local zone_mine_darkness_fn = function(anomaly, actor, distance_to_sqr, radius_s
 	end
 end
 
+local scratch_vec_a = vector()
+local scratch_vec_b = vector()
+local electric_ray_args = {range = 0}
+local radar_hit = hit()
+local belt_shock_extra = 0
+local belt_shock_arts = 0
+local belt_psy_extra = 0
+
+local function clear_pda_glitch()
+	pda_glitch_value = nil
+end
+
+local function clear_electric_pp_98324()
+	level.remove_pp_effector(98324)
+end
+
+local function clear_electric_pp_98325()
+	level.remove_pp_effector(98325)
+end
+
+local electric_pp_clear = {
+	[98324] = clear_electric_pp_98324,
+	[98325] = clear_electric_pp_98325,
+}
+
+local function belt_shock_cb(owner, obj)
+	local sec = obj:section()
+	local cond = obj:condition()
+	local immunities_sec = SYS_GetParam(0, sec, "hit_absorbation_sect", sec)
+	local prot = SYS_GetParam(2, immunities_sec, "shock_immunity", 0) * cond
+	prot = prot * 5
+	belt_shock_arts = belt_shock_arts + prot
+	belt_shock_extra = belt_shock_extra + prot
+end
+
+local function belt_psy_cb(owner, obj)
+	local sec = obj:section()
+	local cond = obj:condition()
+	local immunities_sec = SYS_GetParam(0, sec, "hit_absorbation_sect", sec)
+	local prot = SYS_GetParam(2, immunities_sec, "telepatic_immunity", 0) * cond
+	belt_psy_extra = belt_psy_extra + prot * 10
+end
+
 local zone_mine_radar_fn = function(anomaly, actor, distance_to_sqr, radius_sqr)
-	local h = hit()
+	local h = radar_hit
 	h.power = level_environment.is_actor_immune() and 0 or (1 - distance_to_sqr / radius_sqr) * 0.004
 	if h.power > 0 then
 		h.type = hit.telepatic
@@ -2407,21 +2442,10 @@ local zone_mine_radar_fn = function(anomaly, actor, distance_to_sqr, radius_sqr)
 
 		actor:hit(h)
 
-		-- Artefacts protection
-		local hit_additional = 0
-		actor:iterate_belt( function(owner, obj)
-			local sec = obj:section()
-			local cond = obj:condition()
-			local immunities_sec = SYS_GetParam(0, sec, "hit_absorbation_sect", sec)
-			local prot = SYS_GetParam(2, immunities_sec, "telepatic_immunity", 0) * cond
+		belt_psy_extra = 0
+		actor:iterate_belt(belt_psy_cb)
 
-			-- Optional modifier for viability
-			prot = prot * 10
-			hit_additional = hit_additional + prot
-		end)
-
-		-- Final modifier
-		local hit_modifier = hit_additional >= 0 and 1 + hit_additional or 1 / (1 - hit_additional)
+		local hit_modifier = belt_psy_extra >= 0 and 1 + belt_psy_extra or 1 / (1 - belt_psy_extra)
 		local actor_hit_power = h.power / hit_modifier * 0.375
 		change_psy_health(-actor_hit_power)
 	end
@@ -2475,15 +2499,12 @@ anomalies_near_actor_functions = {
 		local distance_to = distance_to_sqr ^ 0.5
 		local reduction_coeff = 1
 
-		local anom_pos = anomaly.object:position()
-		-- anom_pos = level_vertex_id(anom_pos)
-		-- anom_pos = level_vertex_position(anom_pos)
-		local anom_pos_adjusted = vector():set(anom_pos.x, anom_pos.y + 0.3, anom_pos.z)
+		scratch_vec_a:set(anomaly.px or 0, (anomaly.py or 0) + 0.3, anomaly.pz or 0)
+		scratch_vec_b:set(anomaly.px or 0, anomaly.py or 0, anomaly.pz or 0)
 		local actor_pos = utils_obj.safe_bone_pos(actor, "bip01_spine")
-		-- local actor_pos = actor:position()
-		-- actor_pos = vector():set(actor_pos.x, actor_pos.y + 0.5, actor_pos.z)
-		local anom_to_actor_ray = ray_main(anom_pos_adjusted, actor_pos, {range = distance_to})
-		local actor_to_anom_ray = ray_main(actor_pos, anom_pos, {range = distance_to})
+		electric_ray_args.range = distance_to
+		local anom_to_actor_ray = ray_main(scratch_vec_a, actor_pos, electric_ray_args)
+		local actor_to_anom_ray = ray_main(actor_pos, scratch_vec_b, electric_ray_args)
 
 		if anom_to_actor_ray and actor_to_anom_ray then
 			local anom_to_actor_distance = anom_to_actor_ray:get_distance()
@@ -2531,19 +2552,11 @@ anomalies_near_actor_functions = {
 				hit_additional = hit_additional + prot
 			end
 
-			-- Artefacts protection
-			local artefacts_protection = 0
-			actor:iterate_belt( function(owner, obj)
-				local sec = obj:section()
-				local cond = obj:condition()
-				local immunities_sec = SYS_GetParam(0, sec, "hit_absorbation_sect", sec)
-				local prot = SYS_GetParam(2, immunities_sec, "shock_immunity", 0) * cond
-
-				-- Optional modifier for viability
-				prot = prot * 5
-				artefacts_protection = artefacts_protection + prot
-				hit_additional = hit_additional + prot
-			end)
+			belt_shock_extra = 0
+			belt_shock_arts = 0
+			actor:iterate_belt(belt_shock_cb)
+			local artefacts_protection = belt_shock_arts
+			hit_additional = hit_additional + belt_shock_extra
 
 			-- Final modifier
 			local hit_modifier = hit_additional >= 0 and 1 + hit_additional or 1 / (1 - hit_additional)
@@ -2596,16 +2609,11 @@ anomalies_near_actor_functions = {
 			end
 			level.set_pp_effector_factor(pps[i].code, effector_power * pps[i].factor)
 
-			add_simple_timed_effect(0.2, nil, function()
-				level.remove_pp_effector(pps[i].code)
-			end, key, 1)
+			add_simple_timed_effect(0.2, nil, electric_pp_clear[pps[i].code], key, 1)
 		end
 
-		-- PDA glitching, set value for binder, patch binder, see below
 		pda_glitch_value = clamp(mine_factor ^ 0.5, 0, 1)
-		add_simple_timed_effect(0.2, nil, function()
-			pda_glitch_value = nil
-		end, "zone_mine_electric_pda_glitch", 1)
+		add_simple_timed_effect(0.2, nil, clear_pda_glitch, "zone_mine_electric_pda_glitch", 1)
 	end,
 
 	zone_mine_electric_weak = zone_mine_electric_weak_fn,
@@ -2648,9 +2656,7 @@ anomalies_near_actor_functions = {
 
 		-- PDA glitching, set value for binder, patch binder, see below
 		pda_glitch_value = clamp(mine_factor ^ 0.5, 0, 1)
-		add_simple_timed_effect(0.2, nil, function()
-			pda_glitch_value = nil
-		end, "zone_mine_electric_pda_glitch", 1)
+		add_simple_timed_effect(0.2, nil, clear_pda_glitch, "zone_mine_electric_pda_glitch", 1)
 	end,
 
 	-- Liquid Gold, drains stamina and thirst
@@ -2715,14 +2721,19 @@ local zone_mine_ghost_fn = function(anomaly)
 			local offset_z = spawn_position.z + sin_lut[j] * z_modifier
 			local offset_y = spawn_position.y
 
-			-- Adjust to height by checking lvid
-			local lvid = level_vertex_id(vector_set(vector, offset_x, offset_y, offset_z))
-			if (lvid < 4294967295) then
-				local pos_y = level_vertex_position(lvid).y
-				if abs(pos_y - prev_pos_y) < max_offset_y then
-					offset_y = pos_y
+			-- Adjust to height by checking lvid (not every frame)
+			if not anomaly.ghost_lvid_at or (time_global() - anomaly.ghost_lvid_at) >= 150 then
+				anomaly.ghost_lvid_at = time_global()
+				local lvid = level_vertex_id(vector_set(vector, offset_x, offset_y, offset_z))
+				if (lvid < 4294967295) then
+					local pos_y = level_vertex_position(lvid).y
+					if abs(pos_y - prev_pos_y) < max_offset_y then
+						offset_y = pos_y
+					end
+					anomaly.ghost_y = offset_y
 				end
-				-- offset_y = clamp(pos_y, max_offset_y_low, max_offset_y_high)
+			elseif anomaly.ghost_y then
+				offset_y = anomaly.ghost_y
 			end
 
 			obj_set_anomaly_position(obj, vector_set(vector, offset_x, offset_y, offset_z))
@@ -2839,12 +2850,12 @@ anomaly_detector_ignore = {
 
 function find_nearest_anomaly(force_enabled)
 	local actor = db.actor
-	local actor_pos = actor:position()
-	local actor_pos_distance = actor_pos.distance_to_sqr
+	refresh_actor_pos(actor)
 	local distance = math.huge
 	local anom_id
 	local anom_pos
 	local anom_sec
+	local best_obj
 
 	local pairs = pairs
 	local level_object_by_id = level.object_by_id
@@ -2863,27 +2874,37 @@ function find_nearest_anomaly(force_enabled)
 			end
 
 			if enabled then
-				local pos = obj:position()
-				local d = actor_pos_distance(actor_pos, pos)
+				local fa = field_anoms[id]
+				local d
+				if fa then
+					d = dist_sqr(fa, ax, ay, az)
+				else
+					local pos = obj:position()
+					local dx, dy, dz = pos.x - ax, pos.y - ay, pos.z - az
+					d = dx * dx + dy * dy + dz * dz
+				end
 				if d < distance then
 					distance = d
 					anom_id = id
-					anom_pos = pos
-					anom_sec = obj:section()
+					best_obj = obj
+					anom_sec = fa and fa.section or obj:section()
 				end
 			end
 		end
 	end
 
+	if best_obj then
+		anom_pos = best_obj:position()
+	end
 	return distance, anom_id, anom_sec, anom_pos
 end
 
 local detector_anomaly_remove_factor_fn = function(self, anomaly, actor, distance_to_sqr, radius_sqr, custom_callback)
-	self.detector_anomaly_factors[anomaly.object:name()] = nil
+	self.detector_anomaly_factors[factor_key_of(anomaly)] = nil
 end
 
 local detector_anomaly_add_factor_fn = function(self, anomaly, actor, distance_to_sqr, radius_sqr, custom_callback)
-	self.detector_anomaly_factors[anomaly.object:name()] = 1 - distance_to_sqr / radius_sqr
+	self.detector_anomaly_factors[factor_key_of(anomaly)] = 1 - distance_to_sqr / radius_sqr
 end
 
 local detector_anomaly_find_max_factor_fn = function(self, anomaly, actor, distance_to_sqr, radius_sqr, custom_callback)
@@ -3060,45 +3081,51 @@ bind_anomaly_field.anomaly_field_binder.update = function(self, delta)
 	if not self.object then return end
 
 	local section = self.section
-	if anomalies_near_actor_functions[section] or (additional_articles_to_category.encyclopedia_anomalies[section] and not opened_articles.encyclopedia_anomalies[additional_articles_to_category.encyclopedia_anomalies[section]]) then
-		
-		-- Get behaviour radius and check if actor inside it, then apply effect
+	local need_near = anomalies_near_actor_functions[section]
+	local article = additional_articles_to_category.encyclopedia_anomalies[section]
+	local need_article = article and not opened_articles.encyclopedia_anomalies[article]
+	if need_near or need_article then
 		local actor = db.actor
-		local radius_sqr = self.radius_sqr
-		local distance_to_sqr = self.object:position():distance_to_sqr(actor:position())
-		if distance_to_sqr <= radius_sqr then
-			-- Open anomaly article
-			open_anomaly_article(section)
-
-			-- Beep near anoms if option enabled or have Svarog or Anomaly Detector
-			if not anomaly_detector_ignore[section] then
-				notify_anomaly(self, actor, distance_to_sqr, radius_sqr, false)
+		if actor then
+			-- Detector bar/beep is field_anoms_on_update. Do not box position or notify here.
+			refresh_actor_pos(actor)
+			local radius_sqr = self.radius_sqr
+			local distance_to_sqr = dist_sqr(self, ax, ay, az)
+			if distance_to_sqr <= radius_sqr then
+				if need_article then
+					open_anomaly_article(section)
+				end
+				if need_near then
+					anomalies_near_actor_functions[section](self, actor, distance_to_sqr, radius_sqr)
+				end
+			else
+				anomalies_vars.remove_factor(anomalies_vars, self, actor, distance_to_sqr, radius_sqr)
 			end
-
-			-- Behaviour near actor
-			if anomalies_near_actor_functions[section] then
-				anomalies_near_actor_functions[section](self, actor, distance_to_sqr, radius_sqr)
-			end
-
-			-- printf("actor near anomaly %s, firing effect, delta %s", section, delta)
-		else
-			anomalies_vars.remove_factor(anomalies_vars, self, actor, distance_to_sqr, radius_sqr)
 		end
 	end
 	if npc_on_near_anomalies_functions[section] then
 		if not self.iterate_nearest_func then
 			self.iterate_nearest_func = function(obj)
-				if obj 
+				if obj
 				and (IsStalker(obj) or IsMonster(obj))
 				and (obj.alive and obj:alive())
 				and obj:id() ~= AC_ID
-				and obj:position():distance_to_sqr(self.object:position()) <= self.radius_sqr
 				then
-					npc_on_near_anomalies_functions[section](self, obj, db.actor)
+					local p = obj:position()
+					local dx = p.x - (self.px or 0)
+					local dy = p.y - (self.py or 0)
+					local dz = p.z - (self.pz or 0)
+					if dx * dx + dy * dy + dz * dz <= self.radius_sqr then
+						npc_on_near_anomalies_functions[section](self, obj, db.actor)
+					end
 				end
 			end
 		end
-		level.iterate_nearest(self.object:position(), self.radius, self.iterate_nearest_func)
+		local tg = time_global()
+		if not self.npc_near_at or (tg - self.npc_near_at) >= 200 then
+			self.npc_near_at = tg
+			level.iterate_nearest(self.object:position(), self.radius, self.iterate_nearest_func)
+		end
 	end
 end
 
@@ -3164,9 +3191,9 @@ function actor_on_interaction(typ, obj, name)
 			end)
 		else
 			printf("surge happened globally at %s", get_time_elapsed())
-			printf("update artefacts on level %s after emission", level.name())
-			clean_artefacts_on_level(level.name())
-			spawn_artefacts_on_level(level.name())
+			printf("update artefacts on level %s after emission", level_name)
+			clean_artefacts_on_level(level_name)
+			spawn_artefacts_on_level(level_name)
 			build_anomalies_pos_tree()
 		end
 	end
@@ -3423,7 +3450,8 @@ local function on_option_change()
 	end
 
 	unregister_anomalies_behaviour()
-	if updated_anomaly_levels[level.name()] and not updated_anomaly_levels[level.name()].disabled then
+	local level_name = level.name()
+	if updated_anomaly_levels[level_name] and not updated_anomaly_levels[level_name].disabled then
 		if settings.enable_anomalies_behaviour or level_weathers.bLevelUnderground then
 			register_anomalies_behaviour()
 		else

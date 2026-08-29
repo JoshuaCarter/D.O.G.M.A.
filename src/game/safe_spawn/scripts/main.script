@@ -14,6 +14,8 @@ local CONFIG = _G.dogma_game_safe_spawn_conf
 local xsquad = dogma.xlibs.xsquad
 
 local MOVE_M = 5
+local HUD_STATIC = "dogma_game_safe_spawn_prompt"
+local HUD_FMT = "st_dogma_game_safe_spawn_visible"
 
 local active = false
 local until_ms = 0
@@ -21,6 +23,104 @@ local origin = nil
 local actor_id = nil
 local quiet = {}
 local hidden = {}
+local shown_sec = nil
+
+local hud_get_anon = function(get_hud)
+	return get_hud()
+end
+
+local hud_cs_anon = function(hud, name)
+	local cs = hud:GetCustomStatic(name)
+	if not cs then
+		hud:AddCustomStatic(name, true)
+		cs = hud:GetCustomStatic(name)
+	end
+	return cs
+end
+
+local hud_wnd_anon = function(cs)
+	return cs:wnd()
+end
+
+local hud_set_anon = function(wnd, text)
+	if wnd.SetTextComplexMode then
+		wnd:SetTextComplexMode(true)
+	end
+	local tc = wnd.TextControl and wnd:TextControl()
+	if tc and tc.SetText then
+		tc:SetText(text)
+	elseif wnd.SetText then
+		wnd:SetText(text)
+	end
+	if wnd.Show then
+		wnd:Show(true)
+	end
+end
+
+local hud_hide_anon = function(hud, name)
+	if hud:GetCustomStatic(name) then
+		hud:RemoveCustomStatic(name)
+	end
+end
+
+local function world_hud()
+	if not (db.actor and get_hud and _G.dogma_game_safe_spawn_xml) then
+		return nil
+	end
+	local ok, hud = pcall(hud_get_anon, get_hud)
+	if ok and hud then
+		return hud
+	end
+	return nil
+end
+
+local function hide_hud()
+	if not shown_sec then
+		return
+	end
+	shown_sec = nil
+	local hud = world_hud()
+	if hud and hud.GetCustomStatic then
+		pcall(hud_hide_anon, hud, HUD_STATIC)
+	end
+end
+
+local function show_hud(sec)
+	if shown_sec == sec then
+		return
+	end
+	local hud = world_hud()
+	if not hud then
+		return
+	end
+	local ok, cs = pcall(hud_cs_anon, hud, HUD_STATIC)
+	if not (ok and cs) then
+		return
+	end
+	local wok, wnd = pcall(hud_wnd_anon, cs)
+	if not (wok and wnd) then
+		return
+	end
+	local fmt = game.translate_string(HUD_FMT)
+	if not fmt or fmt == HUD_FMT then
+		fmt = "Visible in %s"
+	end
+	pcall(hud_set_anon, wnd, string.format(fmt, tostring(sec)))
+	shown_sec = sec
+end
+
+local function update_hud()
+	local left = until_ms - time_global()
+	if left < 0 then
+		left = 0
+	end
+	local sec = math.ceil(left / 1000)
+	if sec < 1 then
+		hide_hud()
+		return
+	end
+	show_hud(sec)
+end
 
 local function log(msg)
 	if CONFIG.loaded.debug_log then
@@ -122,6 +222,7 @@ end
 
 local function stop(reason)
 	if not active then
+		hide_hud()
 		show_companions()
 		return
 	end
@@ -129,6 +230,7 @@ local function stop(reason)
 	until_ms = 0
 	origin = nil
 	actor_id = nil
+	hide_hud()
 	show_companions()
 	log("off (" .. reason .. ")")
 end
@@ -150,6 +252,7 @@ local function arm(pos)
 	origin = copy_pos(pos)
 	until_ms = time_global() + sec * 1000
 	hide_companions()
+	update_hud()
 	log("on " .. tostring(sec) .. "s")
 end
 
@@ -193,6 +296,7 @@ local function actor_on_update()
 		stop("move")
 		return
 	end
+	update_hud()
 	hide_companions()
 end
 

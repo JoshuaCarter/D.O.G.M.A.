@@ -103,5 +103,11 @@ end
 
 function hf_global_stash_wrapper:pickup()
 	-- self:stop_fx()
+	local api = _G.dogma_game_global_stash
+	if api and api.pickup then
+		api.pickup(self.object)
+		return true
+	end
+	log("pickup missing", "red")
 	bind_hf_base.hf_binder_wrapper.pickup(self)
 end

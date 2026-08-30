@@ -9,8 +9,16 @@
 local CONFIG = _G.dogma_input_last_equip_conf
 local xcreature = dogma.xlibs.xcreature
 
-local PDA_SLOT = 8
-local STATE_IDLE = 0
+local SLOT_EMPTY = 0
+local SLOT_MELEE = 1
+local SLOT_SECONDARY = 2
+local SLOT_PRIMARY = 3
+local SLOT_GRENADE = 4
+local SLOT_VISION = 5
+local SLOT_BOLT = 6
+local SLOT_PDA = 8
+local SLOT_DEVICE = 9
+local SLOT_PISTOL = 16
 local WATCH_MS = 1000
 local TELEPORT_DIST_SQR = 12 * 12
 local SAVE_KEY = "dogma_input_last_equip_slot"
@@ -22,16 +30,16 @@ local MODE_TO_KIND = {
 }
 
 local SLOT_OPTS = {
-	{ id = "slot_knife", slot = 1 },
-	{ id = "slot_pistol", slot = 2 },
-	{ id = "slot_rifle", slot = 3 },
-	{ id = "slot_grenade", slot = 4 },
-	{ id = "slot_binocs", slot = 5 },
-	{ id = "slot_bolt", slot = 6 },
-	{ id = "slot_pda", slot = 8 },
-	{ id = "slot_detector", slot = 9 },
-	{ id = "slot_empty", slot = 0 },
-	{ id = "slot_pistol_holster", slot = 16 },
+	{ id = "slot_primary", slot = SLOT_PRIMARY },
+	{ id = "slot_secondary", slot = SLOT_SECONDARY },
+	{ id = "slot_pistol", slot = SLOT_PISTOL },
+	{ id = "slot_melee", slot = SLOT_MELEE },
+	{ id = "slot_grenade", slot = SLOT_GRENADE },
+	{ id = "slot_vision", slot = SLOT_VISION },
+	{ id = "slot_device", slot = SLOT_DEVICE },
+	{ id = "slot_pda", slot = SLOT_PDA },
+	{ id = "slot_bolt", slot = SLOT_BOLT },
+	{ id = "slot_empty", slot = SLOT_EMPTY },
 }
 
 local SLOT_KB = {
@@ -64,8 +72,6 @@ local last_x = nil
 local last_seen_slot = nil
 local watch_until = nil
 local extra_used = false
-local want_lower = false
-local lowered = false
 local need_load_restore = false
 local last_actor_pos = nil
 
@@ -85,20 +91,12 @@ local try_activate_slot = function(actor, slot)
 	actor:activate_slot(slot)
 end
 
-local try_get_state = function(item)
-	return item:get_state()
-end
-
 local try_position = function(actor)
 	return actor:position()
 end
 
 local try_bind_to_dik = function(bind)
 	return bind_to_dik(bind)
-end
-
-local try_lower_weapon = function()
-	game.actor_lower_weapon(true)
 end
 
 local try_scan_stalkers_before_pda = function(se)
@@ -172,17 +170,16 @@ local function on_option_change()
 	loaded.after_craft = dogma.mcm.bool(CONFIG.MOD_ID, "after_craft")
 	loaded.after_teleport = dogma.mcm.bool(CONFIG.MOD_ID, "after_teleport")
 	loaded.after_load = dogma.mcm.bool(CONFIG.MOD_ID, "after_load")
-	loaded.lower_after_draw = dogma.mcm.bool(CONFIG.MOD_ID, "lower_after_draw")
 	loaded.debug_log = dogma.log.logging()
 	refresh_slot_diks()
 	log(string.format(
-		"config: enabled=%s knife=%s pistol=%s rifle=%s grenade=%s binocs=%s bolt=%s pda=%s det=%s empty=%s holster=%s inv=%s loot=%s trade=%s talk=%s craft=%s tp=%s load=%s lower=%s",
-		tostr(loaded.enabled), tostr(loaded.slot_knife), tostr(loaded.slot_pistol), tostr(loaded.slot_rifle),
-		tostr(loaded.slot_grenade), tostr(loaded.slot_binocs), tostr(loaded.slot_bolt),
-		tostr(loaded.slot_pda), tostr(loaded.slot_detector), tostr(loaded.slot_empty),
-		tostr(loaded.slot_pistol_holster), tostr(loaded.after_inventory), tostr(loaded.after_loot),
+		"config: enabled=%s melee=%s secondary=%s primary=%s grenade=%s vision=%s bolt=%s pda=%s device=%s empty=%s pistol=%s inv=%s loot=%s trade=%s talk=%s craft=%s tp=%s load=%s",
+		tostr(loaded.enabled), tostr(loaded.slot_melee), tostr(loaded.slot_secondary), tostr(loaded.slot_primary),
+		tostr(loaded.slot_grenade), tostr(loaded.slot_vision), tostr(loaded.slot_bolt),
+		tostr(loaded.slot_pda), tostr(loaded.slot_device), tostr(loaded.slot_empty),
+		tostr(loaded.slot_pistol), tostr(loaded.after_inventory), tostr(loaded.after_loot),
 		tostr(loaded.after_trade), tostr(loaded.after_dialogue), tostr(loaded.after_craft),
-		tostr(loaded.after_teleport), tostr(loaded.after_load), tostr(loaded.lower_after_draw)
+		tostr(loaded.after_teleport), tostr(loaded.after_load)
 	))
 end
 
@@ -233,43 +230,20 @@ local function slot_input_down()
 end
 
 local function activate_target(target, site)
+	local tostr = tostring
 	if not db.actor then
 		return false
 	end
 	if target ~= 0 and not slot_has_item(target) then
-		log(string.format("skip(%s): empty target=%s", site, tostring(target)))
+		log(string.format("skip(%s): empty target=%s", site, tostr(target)))
 		return false
 	end
 	log(string.format(
 		"restore(%s): active_slot=%s -> activate_slot(%s) last_x=%s",
-		site, tostring(current_slot()), tostring(target), tostring(last_x)
+		site, tostr(current_slot()), tostr(target), tostr(last_x)
 	))
 	pcall(try_activate_slot, db.actor, target)
 	return true
-end
-
-local function try_lower_if_idle()
-	if lowered or not want_lower then
-		return
-	end
-	if not (game and game.actor_lower_weapon) then
-		return
-	end
-	if current_slot() ~= last_x then
-		return
-	end
-	local item = current_item()
-	if not (item and item.get_state) then
-		return
-	end
-	local ok, st = pcall(try_get_state, item)
-	if not (ok and st == STATE_IDLE) then
-		log("lower wait state=" .. tostring(st))
-		return
-	end
-	pcall(try_lower_weapon)
-	lowered = true
-	log("lowered")
 end
 
 local function start_restore(site)
@@ -288,8 +262,6 @@ local function start_restore(site)
 	end
 	watch_until = time_global() + WATCH_MS
 	extra_used = false
-	want_lower = CONFIG.loaded.lower_after_draw
-	lowered = false
 	log("watch start " .. site)
 end
 
@@ -308,10 +280,8 @@ local function tick_watch()
 		log(string.format("engine flip %s -> %s, extra assert", tostring(slot), tostring(last_x)))
 		activate_target(last_x, "engine_flip")
 	end
-	try_lower_if_idle()
 	if time_global() > watch_until then
 		watch_until = nil
-		try_lower_if_idle()
 		log("watch end")
 	end
 end
@@ -391,6 +361,7 @@ local function scan_stalkers_before_pda()
 end
 
 local function track_slot()
+	local tostr = tostring
 	local slot = current_slot()
 	if slot == last_seen_slot then
 		return
@@ -399,9 +370,9 @@ local function track_slot()
 	last_seen_slot = slot
 	log(string.format(
 		"active_slot %s -> %s last_x=%s watch=%s",
-		tostring(prev), tostring(slot), tostring(last_x), tostring(watch_until ~= nil)
+		tostr(prev), tostr(slot), tostr(last_x), tostr(watch_until ~= nil)
 	))
-	if slot == PDA_SLOT then
+	if slot == SLOT_PDA then
 		scan_stalkers_before_pda()
 	end
 	if watch_until and not slot_input_down() then
@@ -547,7 +518,6 @@ local function on_game_load()
 	extra_used = false
 	last_seen_slot = nil
 	last_actor_pos = nil
-	lowered = false
 	if CONFIG.loaded.after_load then
 		need_load_restore = true
 	end

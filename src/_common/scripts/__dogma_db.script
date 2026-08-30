@@ -1,13 +1,11 @@
 --[[
-    Item catalog: gamedata/configs/db/web (website dump) + db/ext (ours).
-    SKIP ids are omitted from list() only. get/is still see them.
-    craft-recipes.json is a recipe index (craft(id)), not an item cat.
+    dogma.db layers on STALKER_DB.
+    Ours: db/ext, SKIP (list only), prefix sub-cats, decorate aliases, craft remap.
+    Callers keep dogma cat names (weapons_pistols, artifacts, ...).
 ]]
 
-local WEB = "db\\web\\"
 local EXT = "db\\ext\\"
 local loaded = false
-local names = {}
 local by_id = {}
 local groups = {}
 local in_group = {}
@@ -19,34 +17,31 @@ local SKIP = {
     ["wpn_addon_silencer"] = true,
 }
 
-local WEB_FILES = {
-    weapons_pistols = "pistols.json",
-    weapons_smgs = "smgs.json",
-    weapons_rifles = "rifles.json",
-    weapons_snipers = "snipers.json",
-    weapons_shotguns = "shotguns.json",
-    weapons_melee = "melee.json",
-    weapons_launchers = "launchers.json",
-    weapon_attach_scopes = "scopes.json",
-    weapon_attach_silencers = "silencers.json",
-    weapon_attach_gls = "grenade-launchers.json",
-    weapon_upgrade_kits = "tactical-kits.json",
-    weapon_parts = "weapon-parts.json",
-    armor_outfits = "outfits.json",
-    armor_helmets = "helmets.json",
-    ammo = "ammo.json",
-    mutant_parts = "mutant-parts.json",
-    outfit_parts = "outfit-parts.json",
-    medicine = "medicine.json",
-    food = "food.json",
-    artifacts = "artifacts.json",
-    explosives = "explosives.json",
-    belt_attachments = "belt-attachments.json",
-    misc = "misc.json",
-}
-
-local EXT_FILES = {
-    ammo_parts = "ammo-parts.json",
+-- site slug -> dogma cat name (same table)
+local SITE = {
+    { "pistols", "weapons_pistols" },
+    { "smgs", "weapons_smgs" },
+    { "rifles", "weapons_rifles" },
+    { "snipers", "weapons_snipers" },
+    { "shotguns", "weapons_shotguns" },
+    { "melee", "weapons_melee" },
+    { "launchers", "weapons_launchers" },
+    { "scopes", "weapon_attach_scopes" },
+    { "silencers", "weapon_attach_silencers" },
+    { "grenade-launchers", "weapon_attach_gls" },
+    { "tactical-kits", "weapon_upgrade_kits" },
+    { "weapon-parts", "weapon_parts" },
+    { "outfits", "armor_outfits" },
+    { "helmets", "armor_helmets" },
+    { "ammo", "ammo" },
+    { "mutant-parts", "mutant_parts" },
+    { "outfit-parts", "outfit_parts" },
+    { "medicine", "medicine" },
+    { "food", "food" },
+    { "artefacts", "artifacts" },
+    { "explosives", "explosives" },
+    { "belt-attachments", "belt_attachments" },
+    { "misc", "misc" },
 }
 
 local UNIONS = {
@@ -59,35 +54,36 @@ local UNIONS = {
         "weapon_attach_silencers",
         "weapon_attach_gls",
     },
+    ["weapon-attach"] = {
+        "weapon_attach_scopes",
+        "weapon_attach_silencers",
+        "weapon_attach_gls",
+    },
     armor = { "armor_outfits", "armor_helmets" },
 }
 
-local LOAD_ORDER = {
-    "weapons_pistols", "weapons_smgs", "weapons_rifles", "weapons_snipers",
-    "weapons_shotguns", "weapons_melee", "weapons_launchers",
-    "weapon_attach_scopes", "weapon_attach_silencers",
-    "weapon_attach_gls", "weapon_upgrade_kits",
-    "armor_outfits", "armor_helmets",
-    "ammo", "ammo_parts", "mutant_parts", "outfit_parts",
-    "medicine", "food", "artifacts", "explosives", "belt_attachments",
-    "weapon_parts",
-    "misc",
-}
+local try_sdb_init = function()
+    return STALKER_DB.init()
+end
 
-local try_read_text = function(getFS, rel)
+local try_read_path = function(getFS, rel)
     return getFS():update_path("$game_config$", rel)
+end
+
+local try_open = function(abs)
+    return io.open(abs, "r")
 end
 
 local function read_text(rel)
     if not (getFS and getFS().update_path) then
         return nil
     end
-    local ok, abs = pcall(try_read_text, getFS, rel)
+    local ok, abs = pcall(try_read_path, getFS, rel)
     if not (ok and abs and abs ~= "") then
         return nil
     end
-    local f = io.open(abs, "r")
-    if not f then
+    local okf, f = pcall(try_open, abs)
+    if not (okf and f) then
         return nil
     end
     local s = f:read("*a")
@@ -98,8 +94,8 @@ local function read_text(rel)
     return nil
 end
 
-local function decode_file(root, file)
-    local text = read_text(root .. file)
+local function decode_ext(file)
+    local text = read_text(EXT .. file)
     if not text then
         return nil
     end
@@ -107,6 +103,7 @@ local function decode_file(root, file)
     if ok then
         return data
     end
+    printf("DOGMA.db: failed to decode ext %s", file)
     return nil
 end
 
@@ -125,8 +122,10 @@ local function decorate(row, typ)
     row.type = typ
     row.cost = num(row.st_upgr_cost)
     row.weight = num(row.st_prop_weight)
-    local key = row.displayName or row.pda_encyclopedia_name
-    row.name = (key and names[key]) or key or row.id or ""
+    if not row.name or row.name == "" then
+        local key = row.displayName or row.pda_encyclopedia_name
+        row.name = (key and STALKER_DB.translate(key)) or key or row.id or ""
+    end
     row.damage = num(row.ui_inv_damage)
     row.ap = num(row.st_data_export_ap)
     row.k_ap = num(row.st_data_export_k_ap)
@@ -146,22 +145,39 @@ local function decorate(row, typ)
     return row
 end
 
+local function remember_name(row)
+    if row.displayName then
+        by_name[row.displayName] = row.id
+        by_name[string.lower(row.displayName)] = row.id
+    end
+    if row.pda_encyclopedia_name then
+        by_name[row.pda_encyclopedia_name] = row.id
+        by_name[string.lower(row.pda_encyclopedia_name)] = row.id
+    end
+end
+
 local function add_row(typ, row)
     if not (row and row.id) then
         return
     end
     decorate(row, typ)
+    remember_name(row)
     if not by_id[row.id] then
         by_id[row.id] = row
     end
-    if row.displayName then
-        by_name[row.displayName] = row.id
-    end
-    if row.pda_encyclopedia_name then
-        by_name[row.pda_encyclopedia_name] = row.id
-    end
     local g = groups[typ]
     g[#g + 1] = row
+end
+
+local function take_site(slug, typ)
+    groups[typ] = {}
+    local src = STALKER_DB.list(slug)
+    for i = 1, #src do
+        add_row(typ, src[i])
+    end
+    if slug ~= typ then
+        groups[slug] = groups[typ]
+    end
 end
 
 local function concat(types)
@@ -181,7 +197,6 @@ local function starts(id, pfx)
     return id:sub(1, #pfx) == pfx
 end
 
--- Sub-cats sliced from a parent list.
 local function build_subs()
     groups.weapon_cleaning_kits = {}
     groups.weapon_repair_kits = {}
@@ -226,23 +241,6 @@ local function index_all()
     end
 end
 
-local function file_for(typ)
-    if WEB_FILES[typ] then
-        return WEB, WEB_FILES[typ]
-    end
-    if EXT_FILES[typ] then
-        return EXT, EXT_FILES[typ]
-    end
-    return nil
-end
-
-local function load_names()
-    local data = decode_file(WEB, "translations.json")
-    if data and type(data.en) == "table" then
-        names = data.en
-    end
-end
-
 local function parse_amount(s)
     if type(s) == "number" then
         return math.floor(s)
@@ -253,46 +251,72 @@ end
 
 local function load_recipes()
     recipes = {}
-    local data = decode_file(WEB, "craft-recipes.json")
-    if not data then
+    local missed = 0
+    -- ponytail: SDB.craft is raw; ammo_craft needs { sec, amount }
+    local function remap(id)
+        local rec = STALKER_DB.craft(id)
+        local ings = rec and rec.ingredients
+        if not ings then
+            return
+        end
+        local parts = {}
+        for i = 1, #ings do
+            local ing = ings[i]
+            local key = ing and ing.name
+            local sec = key and (by_name[key] or by_name[string.lower(key)] or (by_id[key] and key))
+            if sec then
+                parts[#parts + 1] = { sec, parse_amount(ing.amount) }
+            else
+                missed = missed + 1
+                printf("DOGMA.db: craft miss %s ingredient %s", id, tostring(key))
+            end
+        end
+        recipes[id] = parts
+    end
+    local raw = STALKER_DB.json("craft-recipes.json")
+    if type(raw) ~= "table" then
+        printf("DOGMA.db: craft-recipes missing")
         return
     end
-    for _, cat in pairs(data) do
+    for _, cat in pairs(raw) do
         local items = cat and cat.items
         if items then
             for i = 1, #items do
                 local it = items[i]
-                if it and it.id and it.ingredients then
-                    local parts = {}
-                    for j = 1, #it.ingredients do
-                        local ing = it.ingredients[j]
-                        local key = ing and ing.name
-                        local sec = key and (by_name[key] or (by_id[key] and key))
-                        if sec then
-                            parts[#parts + 1] = { sec, parse_amount(ing.amount) }
-                        end
-                    end
-                    recipes[it.id] = parts
+                if it and it.id then
+                    remap(it.id)
                 end
             end
         end
     end
+    if missed > 0 then
+        printf("DOGMA.db: craft unmatched ingredients %s", missed)
+    end
 end
 
--- After index_all so is/get still see skipped ids.
 local function hide_skipped()
     if not next(SKIP) then
         return
     end
+    local keys = {}
     for typ, rows in pairs(groups) do
-        local out = {}
-        for i = 1, #rows do
-            local row = rows[i]
-            if not SKIP[row.id] then
-                out[#out + 1] = row
+        keys[#keys + 1] = { typ, rows }
+    end
+    local mapped = {}
+    for i = 1, #keys do
+        local rows = keys[i][2]
+        if not mapped[rows] then
+            local out = {}
+            for j = 1, #rows do
+                if not SKIP[rows[j].id] then
+                    out[#out + 1] = rows[j]
+                end
             end
+            mapped[rows] = out
         end
-        groups[typ] = out
+    end
+    for i = 1, #keys do
+        groups[keys[i][1]] = mapped[keys[i][2]]
     end
 end
 
@@ -305,18 +329,30 @@ local function load_all()
     groups = {}
     recipes = {}
     by_name = {}
-    load_names()
-    for i = 1, #LOAD_ORDER do
-        local typ = LOAD_ORDER[i]
-        groups[typ] = {}
-        local root, file = file_for(typ)
-        local data = file and decode_file(root, file)
-        local items = data and data.items
-        if items then
-            for j = 1, #items do
-                add_row(typ, items[j])
-            end
+    if not (STALKER_DB and STALKER_DB.init) then
+        printf("DOGMA.db: STALKER_DB missing")
+        return
+    end
+    local ok = pcall(try_sdb_init)
+    if not ok then
+        printf("DOGMA.db: STALKER_DB.init failed")
+        return
+    end
+    local n_site = 0
+    for i = 1, #SITE do
+        local slug, typ = SITE[i][1], SITE[i][2]
+        take_site(slug, typ)
+        n_site = n_site + #(groups[typ] or EMPTY)
+    end
+    groups.ammo_parts = {}
+    local ext = decode_ext("ammo-parts.json")
+    local items = ext and ext.items
+    if items then
+        for j = 1, #items do
+            add_row("ammo_parts", items[j])
         end
+    else
+        printf("DOGMA.db: ext ammo-parts missing")
     end
     for name, types in pairs(UNIONS) do
         groups[name] = concat(types)
@@ -325,9 +361,10 @@ local function load_all()
     index_all()
     hide_skipped()
     load_recipes()
+    printf("DOGMA.db: loaded %s site rows, %s ammo_parts", n_site, #(groups.ammo_parts or EMPTY))
 end
 
-local function ensure()
+function init()
     if not loaded then
         load_all()
     end
@@ -354,11 +391,19 @@ local function cmp(key, desc)
 end
 
 function get(id, typ)
-    ensure()
+    init()
     if not id then
         return nil
     end
     local row = by_id[id]
+    if not row then
+        row = STALKER_DB.get(id)
+        if row then
+            decorate(row, row.type or "")
+            remember_name(row)
+            by_id[id] = row
+        end
+    end
     if not row then
         return nil
     end
@@ -372,7 +417,7 @@ function get(id, typ)
 end
 
 function is(id, typ)
-    ensure()
+    init()
     if not (id and typ) then
         return false
     end
@@ -431,12 +476,12 @@ function cost(id)
 end
 
 function craft(id)
-    ensure()
+    init()
     return id and recipes[id] or nil
 end
 
 function list(typ, sort, dir)
-    ensure()
+    init()
     local src = typ and groups[typ]
     if not src then
         return EMPTY
@@ -502,5 +547,5 @@ belt_attachments = wrap("belt_attachments")
 misc = wrap("misc")
 
 function on_game_start()
-    load_all()
+    init()
 end

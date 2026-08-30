@@ -1,20 +1,106 @@
 -- Placeable bind. Use opens the shared bolt. Pickup stays HF vanilla.
+-- Ripple is particles_object: inv_backpack is not a CParticlesPlayer.
+-- Play once. Do not tick: engine can free the PE, then move_to/playing is a native crash.
+
+local MOD_ID = "dogma/game/global_stash"
+local FX = "artefact\\af_gravi_idle"
+
+local xobject = dogma.xlibs.xobject
+
+local try_pos = function(obj)
+	return obj:position()
+end
+
+local try_id = function(obj)
+	return obj:id()
+end
+
+local try_play = function(fx, pos)
+	fx:play_at_pos(pos)
+end
+
+local try_stop = function(fx)
+	fx:stop()
+end
+
+local function log(msg, color)
+	dogma.log.log(MOD_ID, tostring(msg), color)
+end
+
+local function start_fx_for(id)
+	local obj = xobject.go(id)
+	if not obj then
+		if not xobject.se(id) then
+			log("fx abort: no se id=" .. tostring(id), "red")
+			return true
+		end
+		return false
+	end
+	local binder = obj:binded_object()
+	local wrap = binder and binder.wrapper
+	if wrap and wrap.start_fx then
+		wrap:start_fx()
+	else
+		log("fx abort: no wrapper id=" .. tostring(id), "red")
+	end
+	return true
+end
 
 function init(obj)
 	obj:bind_object(hf_global_stash_wrapper(obj).binder)
+	local ok, id = pcall(try_id, obj)
+	if ok and id then
+		CreateTimeEvent("dogma_game_global_stash", "fx_" .. tostring(id), 0.1, start_fx_for, id)
+	end
 end
 
 class "hf_global_stash_wrapper" (bind_hf_base.hf_binder_wrapper)
 
-function hf_global_stash_wrapper:__init(obj) super(obj)
+function hf_global_stash_wrapper:__init(obj)
+	super(obj)
+	self.fx = nil
+	local binder = self.binder
+	if binder and not binder.wrapper then
+		binder.wrapper = self
+	end
+end
+
+function hf_global_stash_wrapper:start_fx()
+	if self.fx then
+		return
+	end
+	local ok_p, pos = pcall(try_pos, self.object)
+	if not (ok_p and pos) then
+		log("fx abort: no pos", "red")
+		return
+	end
+	self.fx = particles_object(FX)
+	pcall(try_play, self.fx, pos)
+	local ok, id = pcall(try_id, self.object)
+	log("fx start id=" .. tostring(ok and id))
+end
+
+function hf_global_stash_wrapper:stop_fx()
+	if not self.fx then
+		return
+	end
+	pcall(try_stop, self.fx)
+	self.fx = nil
+	local ok, id = pcall(try_id, self.object)
+	log("fx stop id=" .. tostring(ok and id))
 end
 
 function hf_global_stash_wrapper:use(_who)
-	dogma.log.log("dogma/game/global_stash", "use id=" .. tostring(self.object and self.object:id()))
+	log("use id=" .. tostring(self.object and self.object:id()))
 	local api = _G.dogma_game_global_stash
 	if api and api.open_at then
 		api.open_at(self.object)
 		return
 	end
-	dogma.log.log("dogma/game/global_stash", "open_at missing", "red")
+	log("open_at missing", "red")
+end
+
+function hf_global_stash_wrapper:pickup()
+	self:stop_fx()
+	bind_hf_base.hf_binder_wrapper.pickup(self)
 end

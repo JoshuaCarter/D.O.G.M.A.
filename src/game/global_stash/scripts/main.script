@@ -166,6 +166,27 @@ local function se_is_ours(se)
     return ok and sec == SHARED_SEC
 end
 
+local function se_is_placeable(se)
+    if not se then
+        return false
+    end
+    local ok, sec = pcall(try_se_section, se)
+    return ok and sec == PLACEABLE_SEC
+end
+
+-- WPI zone_keeper Close calls GetStash. String keys (PDA / name) fatal in get_object_by_id.
+local function hf_id_is_ours(id)
+    if id == SHARED_SEC or id == PLACEABLE_SEC then
+        return true
+    end
+    local nid = tonumber(id)
+    if not nid then
+        return false
+    end
+    local se = xobject.se(nid)
+    return se_is_ours(se) or se_is_placeable(se)
+end
+
 local function remember_id(m_data, id)
     saved_id = id
     if m_data then
@@ -360,6 +381,75 @@ local function try_open(id)
     return true
 end
 
+local orig_get_stash
+local orig_create_stash
+local rebind_map_boxes
+
+local function bolt_for_hf(id)
+    local nid = tonumber(id)
+    local go = nid and xobject.go(nid)
+    if go then
+        local ok, sec = pcall(try_section, go)
+        if ok and sec == PLACEABLE_SEC then
+            return plant_at(go)
+        end
+    end
+    local actor = db.actor
+    if actor then
+        local dest, lvid, gvid = dest_of(actor)
+        if dest then
+            return plant_dest(dest, lvid, gvid)
+        end
+    end
+    return resolve_id()
+end
+
+local function hooked_get_stash(id)
+    if hf_id_is_ours(id) then
+        local bolt = bolt_for_hf(id)
+        log("GetStash ours id=" .. tostring(id) .. " bolt=" .. tostring(bolt))
+        return bolt
+    end
+    local nid = tonumber(id)
+    if nid and orig_get_stash then
+        return orig_get_stash(nid)
+    end
+    log("GetStash skip string=" .. tostring(id), "yellow")
+    return nil
+end
+
+local function hooked_create_stash(id)
+    if hf_id_is_ours(id) then
+        local bolt = bolt_for_hf(id)
+        log("CreateStash ours id=" .. tostring(id) .. " bolt=" .. tostring(bolt))
+        return bolt and xobject.se(bolt)
+    end
+    local nid = tonumber(id)
+    if nid and orig_create_stash then
+        return orig_create_stash(nid)
+    end
+    log("CreateStash skip string=" .. tostring(id), "yellow")
+    return nil
+end
+
+local function hook_hf()
+    local hf = rawget(_G, "ui_furniture_workshop")
+    if not (hf and hf.GetStash and hf.CreateStash) then
+        log("hf wrap skip: no workshop script", "red")
+        return
+    end
+    if orig_get_stash then
+        return
+    end
+    orig_get_stash = hf.GetStash
+    orig_create_stash = hf.CreateStash
+    hf.GetStash = hooked_get_stash
+    hf.CreateStash = hooked_create_stash
+    _G.GetStash = hooked_get_stash
+    _G.CreateStash = hooked_create_stash
+    log("hf GetStash wrapped")
+end
+
 function api.open_at(anchor)
 	if not anchor then
 		log("open abort: no anchor", "red")
@@ -392,6 +482,7 @@ local function maybe_bring()
 	planted_level = name
 	log("map now " .. tostring(name))
 	bring_to_map()
+	rebind_map_boxes()
 end
 
 -- HF fires place before the GO exists, then binds its stash wrapper. Wait, then put ours back.
@@ -423,6 +514,15 @@ local function rebind_placeable(id)
 		return
 	end
 	CreateTimeEvent("dogma_game_global_stash", "rebind_" .. tostring(id), 0.1, rebind_tick, id)
+end
+
+-- ponytail: O(65534) once per map. HF stash bind overwrites script= on load.
+rebind_map_boxes = function()
+	for i = 1, 65534 do
+		if se_is_placeable(xobject.se(i)) then
+			rebind_placeable(i)
+		end
+	end
 end
 
 local function on_save_state(m_data)
@@ -513,6 +613,7 @@ end
 
 function on_game_start()
     dogma.load(MOD_ID)
+    hook_hf()
     RegisterScriptCallback("actor_on_item_take", sync_sprint)
     RegisterScriptCallback("actor_on_item_drop", sync_sprint)
     RegisterScriptCallback("actor_on_item_take_from_box", sync_sprint)

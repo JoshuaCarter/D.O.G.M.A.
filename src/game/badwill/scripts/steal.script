@@ -133,28 +133,18 @@ local function nearby_faction()
     return dogma.mcm.bool(CONFIG.MOD_ID, "steal_nearby_faction", CONFIG.DEFAULTS.steal_nearby_faction)
 end
 
-local function is_living(obj)
+local function is_dead_loot(obj)
     if not obj then
         return false
     end
+    if not ((IsStalker and IsStalker(obj)) or (IsMonster and IsMonster(obj))) then
+        return false
+    end
     local ok, alive = pcall(obj.alive, obj)
-    if not (ok and alive and alive ~= 0) then
+    if ok and alive and alive ~= 0 then
         return false
     end
     return true
-end
-
-local function is_dead_loot(obj)
-    if not obj or is_living(obj) then
-        return false
-    end
-    if IsStalker and IsStalker(obj) then
-        return true
-    end
-    if IsMonster and IsMonster(obj) then
-        return true
-    end
-    return false
 end
 
 local function look_corpse()

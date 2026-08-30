@@ -668,7 +668,10 @@ local function relocate_stock_compare_colors(ele, value_clr)
 		return
 	end
 	-- Already color-coded. Re-wrapping prepends another %c every Update.
+	-- ComplexMode was cleared at the start of apply_custom_stat_display so
+	-- stock '%' values stay literal; turn it back on or the codes show as text.
 	if string.find(raw, "%c[", 1, true) then
+		ele.comp:SetTextComplexMode(true)
 		return
 	end
 	-- "(±N)" / "(±N%)" or bare "±N%"

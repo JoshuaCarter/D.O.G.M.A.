@@ -9,7 +9,6 @@
 local CONFIG = _G.dogma_input_last_equip_conf
 local xcreature = dogma.xlibs.xcreature
 
-local SLOT_EMPTY = 0
 local SLOT_MELEE = 1
 local SLOT_SECONDARY = 2
 local SLOT_PRIMARY = 3
@@ -39,7 +38,6 @@ local SLOT_OPTS = {
 	{ id = "slot_device", slot = SLOT_DEVICE },
 	{ id = "slot_pda", slot = SLOT_PDA },
 	{ id = "slot_bolt", slot = SLOT_BOLT },
-	{ id = "slot_empty", slot = SLOT_EMPTY },
 }
 
 local SLOT_KB = {
@@ -81,10 +79,6 @@ end
 
 local try_active_slot = function(actor)
 	return actor:active_slot()
-end
-
-local try_active_item = function(actor)
-	return actor:active_item()
 end
 
 local try_activate_slot = function(actor, slot)
@@ -173,10 +167,10 @@ local function on_option_change()
 	loaded.debug_log = dogma.log.logging()
 	refresh_slot_diks()
 	log(string.format(
-		"config: enabled=%s melee=%s secondary=%s primary=%s grenade=%s vision=%s bolt=%s pda=%s device=%s empty=%s pistol=%s inv=%s loot=%s trade=%s talk=%s craft=%s tp=%s load=%s",
+		"config: enabled=%s melee=%s secondary=%s primary=%s grenade=%s vision=%s bolt=%s pda=%s device=%s pistol=%s inv=%s loot=%s trade=%s talk=%s craft=%s tp=%s load=%s",
 		tostr(loaded.enabled), tostr(loaded.slot_melee), tostr(loaded.slot_secondary), tostr(loaded.slot_primary),
 		tostr(loaded.slot_grenade), tostr(loaded.slot_vision), tostr(loaded.slot_bolt),
-		tostr(loaded.slot_pda), tostr(loaded.slot_device), tostr(loaded.slot_empty),
+		tostr(loaded.slot_pda), tostr(loaded.slot_device),
 		tostr(loaded.slot_pistol), tostr(loaded.after_inventory), tostr(loaded.after_loot),
 		tostr(loaded.after_trade), tostr(loaded.after_dialogue), tostr(loaded.after_craft),
 		tostr(loaded.after_teleport), tostr(loaded.after_load)
@@ -193,26 +187,12 @@ local function current_slot()
 	end
 end
 
-local function current_item()
-	if not db.actor then
-		return nil
-	end
-	local ok, item = pcall(try_active_item, db.actor)
-	if ok then
-		return item
-	end
-end
-
 local function slot_has_item(slot)
 	if not (db.actor and slot and slot ~= 0) then
-		return slot == 0
+		return false
 	end
 	local ok, item = pcall(try_item_in_slot, db.actor, slot)
 	return ok and item ~= nil
-end
-
-local function rh_empty()
-	return current_item() == nil
 end
 
 local function slot_input_down()
@@ -234,7 +214,7 @@ local function activate_target(target, site)
 	if not db.actor then
 		return false
 	end
-	if target ~= 0 and not slot_has_item(target) then
+	if not slot_has_item(target) then
 		log(string.format("skip(%s): empty target=%s", site, tostr(target)))
 		return false
 	end
@@ -250,7 +230,7 @@ local function start_restore(site)
 	if not CONFIG.loaded.enabled then
 		return
 	end
-	if last_x == nil then
+	if last_x == nil or last_x == 0 then
 		log("skip(" .. site .. "): no last_x")
 		return
 	end
@@ -287,13 +267,7 @@ local function tick_watch()
 end
 
 local function maybe_record_slot(slot)
-	if slot == 0 then
-		if slot_watched[0] and rh_empty() then
-			last_x = 0
-		end
-		return
-	end
-	if slot_watched[slot] then
+	if slot ~= 0 and slot_watched[slot] then
 		last_x = slot
 	end
 end
@@ -535,7 +509,7 @@ end
 
 local function on_load_state(m_data)
 	local v = m_data and m_data[SAVE_KEY]
-	if type(v) == "number" then
+	if type(v) == "number" and v ~= 0 then
 		last_x = v
 	end
 end

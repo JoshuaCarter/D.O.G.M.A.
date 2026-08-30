@@ -10,6 +10,17 @@ local CONFIG = _G.dogma_game_weapons_ban_conf
 local TAG = (CONFIG and CONFIG.MOD_ID or "dogma/game/weapons_ban"):gsub("/", "_")
 local HOOK = "_dogma_wb_ammo_craft"
 
+local function recipe_sec(r)
+	if not r then
+		return nil
+	end
+	local s = r.sec or r.section or r.id
+	if type(s) == "string" and s ~= "" then
+		return s
+	end
+	return nil
+end
+
 local function recipe_override(sec)
 	local parts = dogma.db.craft(sec)
 	if not parts then
@@ -52,7 +63,7 @@ local function apply_recipes(self)
 		if type(list) == "table" then
 			for i = 1, #list do
 				local r = list[i]
-				local spec = r and recipe_override(r.sec)
+				local spec = r and recipe_override(recipe_sec(r))
 				if spec then
 					r[1] = { spec[1], 1 }
 					r[2] = { spec[2], spec[3] }
@@ -67,34 +78,30 @@ end
 local function selected_recipe(self)
 	local t = self.last_type
 	local idx = self.selected_index
-	if not (t and idx and self.recipes and self.recipes[t]) then
-		return nil
+	if t and idx and self.recipes and self.recipes[t] then
+		return self.recipes[t][idx]
 	end
-	return self.recipes[t][idx]
+	return nil
 end
 
--- Exactly one casing_*, one powder_*, one bullet_*; no other ingredients.
-local function is_ammo_maker_recipe(recipe)
-	if not (recipe and recipe.sec and dogma.db.is_ammo(recipe.sec)) then
-		return false
+local function selected_out(self)
+	local out = recipe_sec(selected_recipe(self))
+	if out then
+		return out
 	end
-	local casing, powder, bullet, other = 0, 0, 0, 0
-	for i = 1, 4 do
-		local slot = recipe[i]
-		if slot and slot[1] then
-			local sec = slot[1]
-			if dogma.db.is_ammo_casing(sec) then
-				casing = casing + 1
-			elseif dogma.db.is_ammo_powder(sec) then
-				powder = powder + 1
-			elseif dogma.db.is_ammo_bullet(sec) then
-				bullet = bullet + 1
-			else
-				other = other + 1
-			end
-		end
+	local cr = self.craft_item_r
+	if type(cr) == "table" and type(cr[1]) == "string" and cr[1] ~= "" then
+		return cr[1]
 	end
-	return casing == 1 and powder == 1 and bullet == 1 and other == 0
+	return nil
+end
+
+local function craft_cls()
+	local mod = rawget(_G, "ui_workshop") or ui_workshop
+	if mod and mod.UIWorkshopCraft then
+		return mod.UIWorkshopCraft
+	end
+	return rawget(_G, "UIWorkshopCraft")
 end
 
 local function spend_ammo_rounds(npc, section, need)
@@ -145,7 +152,7 @@ local function update_round_ingredient(self, n, sec, amount, out_box)
 end
 
 local function patch()
-	local cls = rawget(_G, "UIWorkshopCraft") or _G.UIWorkshopCraft
+	local cls = craft_cls()
 	if not cls then
 		return false
 	end
@@ -181,23 +188,32 @@ local function patch()
 			return orig_update(self, n, sec, amount, result, toolkit_idx, toolkit_sec)
 		end
 
-		local recipe = selected_recipe(self)
-		local spec = recipe and recipe_override(recipe.sec)
-		if not (is_ammo_maker_recipe(recipe) and spec) then
+		local out = selected_out(self)
+		local spec = recipe_override(out)
+		if not spec then
 			return orig_update(self, n, sec, amount, result, toolkit_idx, toolkit_sec)
 		end
 
-		if not dogma.db.is_ammo_part(sec) then
+		local part_sec, per = sec, 1
+		if dogma.db.is_ammo_part(sec) then
+			per = part_per_round(spec, sec)
+		elseif n == 1 then
+			part_sec, per = spec[1], 1
+		elseif n == 2 then
+			part_sec, per = spec[2], spec[3]
+		elseif n == 3 then
+			part_sec, per = spec[4], 1
+		else
 			return orig_update(self, n, sec, amount, result, toolkit_idx, toolkit_sec)
 		end
 
-		local out_box = dogma.db.get(recipe.sec).box
-		local per = part_per_round(spec, sec)
+		local row = dogma.db.get(out)
+		local out_box = row and row.box or 0
 		if not (out_box > 0 and per > 0) then
 			return orig_update(self, n, sec, amount, result, toolkit_idx, toolkit_sec)
 		end
 
-		update_round_ingredient(self, n, sec, per, out_box)
+		update_round_ingredient(self, n, part_sec, per, out_box)
 	end
 
 	local function craft_hook(self)
@@ -244,6 +260,19 @@ local function patch()
 end
 
 function on_game_start()
-	patch()
+	if patch() then
+		return
+	end
 	RegisterScriptCallback("actor_on_first_update", patch)
+	if not CreateTimeEvent then
+		return
+	end
+	local tries = 0
+	CreateTimeEvent("dogma_wb_ammo", "patch", 1, function()
+		if patch() then
+			return true
+		end
+		tries = tries + 1
+		return tries >= 30
+	end)
 end

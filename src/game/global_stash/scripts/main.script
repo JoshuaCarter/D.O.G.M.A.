@@ -5,7 +5,8 @@
     Open a box: park the bolt at that dummy, then swap ui_inventory.start.
     Park only before the UI opens. Mid-UI teleport crashes item moves.
     Map change does not move the bolt. First open on a map brings it to that box.
-    Id lives in save_state. Map load never creates.
+    CFS: dummy in range -> pin bolt and add it to GetStashesInRange. Offline bolt
+    parks at that dummy. Id lives in save_state. Map load never creates.
 ]]
 
 local MOD_ID = "dogma/game/global_stash"
@@ -31,7 +32,9 @@ local drain_from = nil
 local drain_to = nil
 local drain_n = 0
 local opening = false
+local dummies = {}
 local orig_ui_start
+local orig_get_stashes
 
 local try_object = function(actor, sec)
     return actor:object(sec)
@@ -113,6 +116,10 @@ end
 
 local try_distance = function(here, dest)
     return here:distance_to(dest)
+end
+
+local try_dist_safe = function(a, b)
+    return distance_between_safe(a, b)
 end
 
 local function log(msg, color)
@@ -323,69 +330,15 @@ local function plant_at(go)
     return plant_dest(dest, lvid, gvid)
 end
 
--- CFS range is to the bolt GO. Player range is to the dummy. Sit on the dummy.
--- Only call before UI. Teleporting an online bolt mid-UI crashes item moves.
+-- Online bolt stays. Alife snaps ~3m off the dummy; moving it every open dumps items.
 local function park_at(dummy)
-    local tostr = tostring
-    if not dummy then
-        log("park abort: no dummy", "red")
-        return
-    end
-    local ok, sec = pcall(try_section, dummy)
-    if not (ok and sec == PLACEABLE_SEC) then
-        log("park abort: not our box sec=" .. tostr(sec), "red")
-        return
-    end
-    local dest, lvid, gvid = dest_of(dummy)
-    if not dest then
-        log("park abort: no dest", "red")
-        return
-    end
-
-    local id = resolve_id()
-    if not id then
-        return plant_dest(dest, lvid, gvid)
-    end
-
-    local m_data = m_state()
-    remember_id(m_data, id)
-    local box = xobject.go(id)
-    local here
-    if box then
-        local ok_here, pos = pcall(try_pos, box)
-        if ok_here then
-            here = pos
-        end
-    else
-        local se = xobject.se(id)
-        here = se and se.position
-    end
-    local dist = -1
-    if here then
-        local ok_d, d = pcall(try_distance, here, dest)
-        if ok_d then
-            dist = d
-        end
-    end
-    if box and here and dist <= PARK_DIST then
-        log("park here id=" .. tostr(id))
-        return id
-    end
-
-    local sim = alife()
-    if not sim then
-        log("park abort: no sim", "red")
-        return
-    end
-    clear_spawn_cache(id)
-    local ok_tp = pcall(try_teleport, sim, id, gvid, lvid, dest)
-    if not ok_tp then
-        log("park teleport failed id=" .. tostr(id), "red")
-        return
-    end
-    pcall(try_online, sim, id)
-    log(string.format("park moved id=%s dist=%.3f", tostr(id), dist), "yellow")
-    return id
+	local id = resolve_id()
+	if id and xobject.go(id) then
+		remember_id(m_state(), id)
+		log("park online id=" .. tostring(id))
+		return id
+	end
+	return plant_at(dummy)
 end
 
 local function cloak_id(id)
@@ -587,6 +540,86 @@ local function hook_ui()
 	log("ui_inventory.start wrapped")
 end
 
+-- CFS ranges the dummy, then iterates the hidden box. Same portal as TAS.
+local function dummy_in_range(range)
+	if type(range) ~= "number" or not db.actor then
+		return
+	end
+	for id in pairs(dummies) do
+		local obj = xobject.go(id)
+		if obj then
+			local ok, dist = pcall(try_dist_safe, db.actor, obj)
+			if ok and dist and dist <= range then
+				return obj
+			end
+		end
+	end
+end
+
+local function list_has_id(list, id)
+	if not (list and id) then
+		return false
+	end
+	for i = 1, #list do
+		if list[i] == id then
+			return true
+		end
+	end
+	return false
+end
+
+local function cfs_bolt(range)
+	local dummy = dummy_in_range(range)
+	if not dummy then
+		return
+	end
+	local id = resolve_id()
+	if id and xobject.go(id) then
+		local sim = alife()
+		if sim then
+			pcall(try_online, sim, id)
+		end
+		return id
+	end
+	if opening then
+		return id
+	end
+	id = plant_at(dummy)
+	if id then
+		log("cfs plant bolt=" .. tostring(id) .. " at dummy")
+	end
+	return id
+end
+
+local function hooked_get_stashes(range)
+	local stashes
+	if orig_get_stashes then
+		stashes = orig_get_stashes(range)
+	end
+	if type(stashes) ~= "table" then
+		stashes = {}
+	end
+	local bolt = cfs_bolt(range)
+	if bolt and not list_has_id(stashes, bolt) then
+		stashes[#stashes + 1] = bolt
+	end
+	return stashes
+end
+
+local function hook_cfs()
+	if orig_get_stashes then
+		return true
+	end
+	if type(_G.GetStashesInRange) ~= "function" then
+		log("cfs wrap skip: no GetStashesInRange")
+		return true
+	end
+	orig_get_stashes = _G.GetStashesInRange
+	_G.GetStashesInRange = hooked_get_stashes
+	log("GetStashesInRange wrapped")
+	return true
+end
+
 -- Dummy must not take items if UI swap misses.
 local function on_item_before_move(flags, stash_id)
 	local nid = tonumber(stash_id)
@@ -620,6 +653,7 @@ local function maybe_bring()
 		return
 	end
 	planted_level = name
+	dummies = {}
 	log("map now " .. tostring(name))
 	rebind_map_boxes()
 end
@@ -644,6 +678,7 @@ local function rebind_tick(id)
 		return true
 	end
 	bind.init(obj)
+	dummies[id] = true
 	log("rebound placeable " .. tostring(id))
 	return true
 end
@@ -652,6 +687,7 @@ local function rebind_placeable(id)
 	if not id then
 		return
 	end
+	dummies[id] = true
 	CreateTimeEvent("dogma_game_global_stash", "rebind_" .. tostring(id), 0.1, rebind_tick, id)
 end
 
@@ -680,6 +716,7 @@ local function on_load()
     blocked = false
     planted_level = nil
     stocked = {}
+    dummies = {}
     pending_dummy = nil
     pending_mode = nil
     opening = false
@@ -692,6 +729,7 @@ local function on_destroy()
     planted_level = nil
     saved_id = nil
     stocked = {}
+    dummies = {}
     pending_dummy = nil
     pending_mode = nil
     opening = false
@@ -760,6 +798,7 @@ function on_game_start()
     dogma.load(MOD_ID)
     hook_hf()
     hook_ui()
+    CreateTimeEvent("dogma_game_global_stash", "cfs", 0.1, hook_cfs)
     RegisterScriptCallback("actor_on_item_take", sync_sprint)
     RegisterScriptCallback("actor_on_item_drop", sync_sprint)
     RegisterScriptCallback("actor_on_item_take_from_box", sync_sprint)

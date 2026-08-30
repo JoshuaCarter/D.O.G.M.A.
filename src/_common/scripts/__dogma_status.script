@@ -57,6 +57,14 @@ local function dist_to(npc, origin)
     return npc:position():distance_to(origin)
 end
 
+-- st.object can outlive the GO (save / net_destroy). clsid on that wrapper logs.
+local function live_go(id)
+    if not (id and level and level.object_by_id) then
+        return
+    end
+    return level.object_by_id(id)
+end
+
 -- st.object skips offline / unbound storage. best_enemy is the engine hunt target.
 local function scan_combat()
     local actor = db and db.actor
@@ -66,11 +74,13 @@ local function scan_combat()
     local actor_id = actor:id()
     local hunters = {}
     for id, st in pairs(db.storage) do
-        local npc = st and st.object
-        if npc and id ~= actor_id then
-            local ok, hit = pcall(npc_hunting_actor, npc, actor_id)
-            if ok and hit then
-                hunters[#hunters + 1] = npc
+        if st and id ~= actor_id then
+            local npc = live_go(id)
+            if npc then
+                local ok, hit = pcall(npc_hunting_actor, npc, actor_id)
+                if ok and hit then
+                    hunters[#hunters + 1] = npc
+                end
             end
         end
     end

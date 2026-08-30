@@ -48,10 +48,11 @@ end
 
 function init(obj)
 	obj:bind_object(hf_global_stash_wrapper(obj).binder)
-	local ok, id = pcall(try_id, obj)
-	if ok and id then
-		CreateTimeEvent("dogma_game_global_stash", "fx_" .. tostring(id), 0.1, start_fx_for, id)
-	end
+	-- FX parked
+	-- local ok, id = pcall(try_id, obj)
+	-- if ok and id then
+	-- 	CreateTimeEvent("dogma_game_global_stash", "fx_" .. tostring(id), 0.1, start_fx_for, id)
+	-- end
 end
 
 class "hf_global_stash_wrapper" (bind_hf_base.hf_binder_wrapper)
@@ -101,6 +102,6 @@ function hf_global_stash_wrapper:use(_who)
 end
 
 function hf_global_stash_wrapper:pickup()
-	self:stop_fx()
+	-- self:stop_fx()
 	bind_hf_base.hf_binder_wrapper.pickup(self)
 end

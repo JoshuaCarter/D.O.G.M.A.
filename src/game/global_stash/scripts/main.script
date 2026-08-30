@@ -391,7 +391,6 @@ end
 
 local orig_get_stash
 local orig_create_stash
-local rebind_map_boxes
 local start_with_bolt
 
 -- Close / craft must not teleport. Online bolt stays put.
@@ -641,6 +640,21 @@ local function on_stash_remove(data)
 	end
 end
 
+local function remember_dummy(id)
+	if id then
+		dummies[id] = true
+	end
+end
+
+-- ponytail: O(65534) once per map. Ids only, no bind_object.
+local function find_map_dummies()
+	for i = 1, 65534 do
+		if se_is_placeable(xobject.se(i)) then
+			dummies[i] = true
+		end
+	end
+end
+
 local function maybe_bring()
 	if not dogma.sys.ready(MOD_ID, db) then
 		return
@@ -655,49 +669,7 @@ local function maybe_bring()
 	planted_level = name
 	dummies = {}
 	log("map now " .. tostring(name))
-	rebind_map_boxes()
-end
-
--- HF fires place before the GO exists, then binds its stash wrapper. Wait, then put ours back.
-local function rebind_tick(id)
-	local obj = xobject.go(id)
-	if not obj then
-		if not xobject.se(id) then
-			log("rebind abort: no se id=" .. tostring(id), "red")
-			return true
-		end
-		return false
-	end
-	local ok, sec = pcall(try_section, obj)
-	if not (ok and sec == PLACEABLE_SEC) then
-		return true
-	end
-	local bind = rawget(_G, "zzzz_dogma_game_global_stash_bind")
-	if not (bind and bind.init) then
-		log("rebind skip: bind module missing", "red")
-		return true
-	end
-	bind.init(obj)
-	dummies[id] = true
-	log("rebound placeable " .. tostring(id))
-	return true
-end
-
-local function rebind_placeable(id)
-	if not id then
-		return
-	end
-	dummies[id] = true
-	CreateTimeEvent("dogma_game_global_stash", "rebind_" .. tostring(id), 0.1, rebind_tick, id)
-end
-
--- ponytail: O(65534) once per map. HF stash bind overwrites script= on load.
-rebind_map_boxes = function()
-	for i = 1, 65534 do
-		if se_is_placeable(xobject.se(i)) then
-			rebind_placeable(i)
-		end
-	end
+	find_map_dummies()
 end
 
 local function on_save_state(m_data)
@@ -809,7 +781,7 @@ function on_game_start()
     RegisterScriptCallback("actor_on_update", maybe_bring)
     RegisterScriptCallback("on_game_load", on_load)
     RegisterScriptCallback("actor_on_net_destroy", on_destroy)
-    RegisterScriptCallback("hf_on_furniture_place", rebind_placeable)
+    RegisterScriptCallback("hf_on_furniture_place", remember_dummy)
     RegisterScriptCallback("npc_on_use", stock_trader)
     RegisterScriptCallback("trader_on_restock", stock_restock)
     RegisterScriptCallback("ActorMenu_on_trade_started", stock_talking)

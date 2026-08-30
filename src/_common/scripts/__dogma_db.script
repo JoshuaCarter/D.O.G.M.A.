@@ -6,6 +6,7 @@
 
 local EXT = "db\\ext\\"
 local loaded = false
+local sdb = nil
 local by_id = {}
 local groups = {}
 local in_group = {}
@@ -62,8 +63,20 @@ local UNIONS = {
     armor = { "armor_outfits", "armor_helmets" },
 }
 
-local try_sdb_init = function()
-    return STALKER_DB.init()
+local function grab_sdb()
+    if sdb then
+        return true
+    end
+    if not (STALKER_DB and STALKER_DB.open) then
+        printf("DOGMA.db: STALKER_DB missing")
+        return false
+    end
+    sdb = STALKER_DB.open("dogma")
+    if not sdb then
+        printf("DOGMA.db: STALKER_DB.open failed")
+        return false
+    end
+    return true
 end
 
 local try_read_path = function(getFS, rel)
@@ -124,7 +137,7 @@ local function decorate(row, typ)
     row.weight = num(row.st_prop_weight)
     if not row.name or row.name == "" then
         local key = row.displayName or row.pda_encyclopedia_name
-        row.name = (key and STALKER_DB.translate(key)) or key or row.id or ""
+        row.name = (key and sdb.translate(key)) or key or row.id or ""
     end
     row.damage = num(row.ui_inv_damage)
     row.ap = num(row.st_data_export_ap)
@@ -171,7 +184,7 @@ end
 
 local function take_site(slug, typ)
     groups[typ] = {}
-    local src = STALKER_DB.list(slug)
+    local src = sdb.list(slug)
     for i = 1, #src do
         add_row(typ, src[i])
     end
@@ -252,9 +265,8 @@ end
 local function load_recipes()
     recipes = {}
     local missed = 0
-    -- ponytail: SDB.craft is raw; ammo_craft needs { sec, amount }
     local function remap(id)
-        local rec = STALKER_DB.craft(id)
+        local rec = sdb.craft(id)
         local ings = rec and rec.ingredients
         if not ings then
             return
@@ -273,7 +285,7 @@ local function load_recipes()
         end
         recipes[id] = parts
     end
-    local raw = STALKER_DB.json("craft-recipes.json")
+    local raw = sdb.json("craft-recipes.json")
     if type(raw) ~= "table" then
         printf("DOGMA.db: craft-recipes missing")
         return
@@ -324,20 +336,15 @@ local function load_all()
     if loaded then
         return
     end
+    if not sdb then
+        printf("DOGMA.db: STALKER_DB not open")
+        return
+    end
     loaded = true
     by_id = {}
     groups = {}
     recipes = {}
     by_name = {}
-    if not (STALKER_DB and STALKER_DB.init) then
-        printf("DOGMA.db: STALKER_DB missing")
-        return
-    end
-    local ok = pcall(try_sdb_init)
-    if not ok then
-        printf("DOGMA.db: STALKER_DB.init failed")
-        return
-    end
     local n_site = 0
     for i = 1, #SITE do
         local slug, typ = SITE[i][1], SITE[i][2]
@@ -365,7 +372,7 @@ local function load_all()
 end
 
 function init()
-    if not loaded then
+    if not loaded and sdb then
         load_all()
     end
 end
@@ -397,7 +404,7 @@ function get(id, typ)
     end
     local row = by_id[id]
     if not row then
-        row = STALKER_DB.get(id)
+        row = sdb and sdb.get(id)
         if row then
             decorate(row, row.type or "")
             remember_name(row)
@@ -547,5 +554,13 @@ belt_attachments = wrap("belt_attachments")
 misc = wrap("misc")
 
 function on_game_start()
-    init()
+    grab_sdb()
+    load_all()
+end
+
+function on_game_load()
+    grab_sdb()
+    if not loaded then
+        load_all()
+    end
 end

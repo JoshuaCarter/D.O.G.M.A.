@@ -2,8 +2,9 @@
     Global Stash: sprint lock + one shared bolt invbox.
 
     Place / pickup do nothing to the shared id.
-    Open a box: create the bolt if needed, teleport it there, open it.
-    Change map: if the id exists, bring it online at the actor and cloak once.
+    Open a box: park the bolt at that dummy, then swap ui_inventory.start.
+    Park only before the UI opens. Mid-UI teleport crashes item moves.
+    Map change does not move the bolt. First open on a map brings it to that box.
     Id lives in save_state. Map load never creates.
 ]]
 
@@ -16,6 +17,7 @@ local PARK_DIST = 0.005
 local xobject = dogma.xlibs.xobject
 local xsmart = dogma.xlibs.xsmart
 local xdata = dogma.xlibs.xdata
+local xinventory = dogma.xlibs.xinventory
 local api = {}
 _G.dogma_game_global_stash = api
 
@@ -23,6 +25,13 @@ local blocked = false
 local planted_level = nil
 local saved_id = nil
 local stocked = {}
+local pending_dummy = nil
+local pending_mode = nil
+local drain_from = nil
+local drain_to = nil
+local drain_n = 0
+local opening = false
+local orig_ui_start
 
 local try_object = function(actor, sec)
     return actor:object(sec)
@@ -66,12 +75,12 @@ local try_cloak = function(box)
     box:set_tip_text("")
 end
 
-local try_use = function(box, actor)
-    box:use(actor)
+local try_transfer = function(from, item, to)
+    xinventory.transfer_item(from, item, to)
 end
 
-local try_hide_hud = function()
-    hide_hud_inventory()
+local try_iterate_box = function(box, fn)
+    box:iterate_inventory_box(fn, box)
 end
 
 local try_m_state = function()
@@ -266,14 +275,12 @@ local function plant_dest(dest, lvid, gvid)
         log("created stash " .. tostr(id), "green")
     else
         remember_id(m_data, id)
-        local box = xobject.go(id)
-        local here = se.position
-        if box then
-            local ok_here, pos = pcall(try_pos, box)
-            if ok_here and pos then
-                here = pos
-            end
+        -- TAS rule: never teleport an online box. Mid-UI teleport = item-move crash.
+        if xobject.go(id) then
+            log("plant skip: online id=" .. tostr(id))
+            return id
         end
+        local here = se and se.position
         local dist = -1
         if here then
             local ok_d, d = pcall(try_distance, here, dest)
@@ -281,7 +288,7 @@ local function plant_dest(dest, lvid, gvid)
                 dist = d
             end
         end
-        log(string.format("plant existing stash=%s online=%s dist=%.3f", tostr(id), tostr(box ~= nil), dist))
+        log(string.format("plant existing stash=%s online=false dist=%.3f", tostr(id), dist))
         if not (here and dist <= PARK_DIST) then
             clear_spawn_cache(id)
             local ok_tp = pcall(try_teleport, sim, id, gvid, lvid, dest)
@@ -316,9 +323,78 @@ local function plant_at(go)
     return plant_dest(dest, lvid, gvid)
 end
 
+-- CFS range is to the bolt GO. Player range is to the dummy. Sit on the dummy.
+-- Only call before UI. Teleporting an online bolt mid-UI crashes item moves.
+local function park_at(dummy)
+    local tostr = tostring
+    if not dummy then
+        log("park abort: no dummy", "red")
+        return
+    end
+    local ok, sec = pcall(try_section, dummy)
+    if not (ok and sec == PLACEABLE_SEC) then
+        log("park abort: not our box sec=" .. tostr(sec), "red")
+        return
+    end
+    local dest, lvid, gvid = dest_of(dummy)
+    if not dest then
+        log("park abort: no dest", "red")
+        return
+    end
+
+    local id = resolve_id()
+    if not id then
+        return plant_dest(dest, lvid, gvid)
+    end
+
+    local m_data = m_state()
+    remember_id(m_data, id)
+    local box = xobject.go(id)
+    local here
+    if box then
+        local ok_here, pos = pcall(try_pos, box)
+        if ok_here then
+            here = pos
+        end
+    else
+        local se = xobject.se(id)
+        here = se and se.position
+    end
+    local dist = -1
+    if here then
+        local ok_d, d = pcall(try_distance, here, dest)
+        if ok_d then
+            dist = d
+        end
+    end
+    if box and here and dist <= PARK_DIST then
+        log("park here id=" .. tostr(id))
+        return id
+    end
+
+    local sim = alife()
+    if not sim then
+        log("park abort: no sim", "red")
+        return
+    end
+    clear_spawn_cache(id)
+    local ok_tp = pcall(try_teleport, sim, id, gvid, lvid, dest)
+    if not ok_tp then
+        log("park teleport failed id=" .. tostr(id), "red")
+        return
+    end
+    pcall(try_online, sim, id)
+    log(string.format("park moved id=%s dist=%.3f", tostr(id), dist), "yellow")
+    return id
+end
+
 local function cloak_id(id)
     local box = id and xobject.go(id)
     if not box then
+        if not (id and xobject.se(id)) then
+            log("cloak abort: no se id=" .. tostring(id), "red")
+            return true
+        end
         return false
     end
     local ok = pcall(try_cloak, box)
@@ -330,83 +406,45 @@ local function cloak_id(id)
     return true
 end
 
-local function bring_to_map()
-    local actor = db.actor
-    if not actor then
-        log("map: no actor", "red")
+local function drain_one(_, item)
+    if not (drain_from and drain_to and item) then
         return
     end
-
-    local id = resolve_id()
-    if not id then
-        log("map: no stash yet")
-        return
+    local ok = pcall(try_transfer, drain_from, item, drain_to)
+    if ok then
+        drain_n = drain_n + 1
     end
-    local box = xobject.go(id)
-	if box then
-		cloak_id(id)
-		return
-	end
-    log("map: bringing stash under actor")
-
-    local dest, lvid, gvid = dest_of(actor)
-    if not dest then
-        log("map: no actor dest", "red")
-        return
-    end
-    id = plant_dest(dest, lvid, gvid)
-    if not id then
-        return
-    end
-    if cloak_id(id) then
-        return
-    end
-    CreateTimeEvent("dogma_game_global_stash", "cloak_" .. tostring(id), 0.1, function()
-        return cloak_id(id)
-    end)
 end
 
-local function try_open(id)
-    local box = id and xobject.go(id)
-    if not box then
-        return false
+local function drain_dummy(dummy, bolt)
+    if not (dummy and bolt) then
+        return
     end
-    pcall(try_hide_hud)
-    local ok = pcall(try_use, box, db.actor)
-    if not ok then
-        log("use failed id=" .. tostring(id), "red")
-        return false
+    local ok_a, a = pcall(try_id, dummy)
+    local ok_b, b = pcall(try_id, bolt)
+    if not (ok_a and ok_b and a and b and a ~= b) then
+        return
     end
-    log("opened stash " .. tostring(id), "green")
-    return true
+    drain_from = dummy
+    drain_to = bolt
+    drain_n = 0
+    pcall(try_iterate_box, dummy, drain_one)
+    drain_from = nil
+    drain_to = nil
+    if drain_n > 0 then
+        log("drained dummy " .. tostring(a) .. " items=" .. tostring(drain_n), "yellow")
+    end
 end
 
 local orig_get_stash
 local orig_create_stash
 local rebind_map_boxes
+local start_with_bolt
 
-local function bolt_for_hf(id)
-    local nid = tonumber(id)
-    local go = nid and xobject.go(nid)
-    if go then
-        local ok, sec = pcall(try_section, go)
-        if ok and sec == PLACEABLE_SEC then
-            return plant_at(go)
-        end
-    end
-    local actor = db.actor
-    if actor then
-        local dest, lvid, gvid = dest_of(actor)
-        if dest then
-            return plant_dest(dest, lvid, gvid)
-        end
-    end
-    return resolve_id()
-end
-
+-- Close / craft must not teleport. Online bolt stays put.
 local function hooked_get_stash(id)
     if hf_id_is_ours(id) then
-        local bolt = bolt_for_hf(id)
+        local bolt = resolve_id()
         log("GetStash ours id=" .. tostring(id) .. " bolt=" .. tostring(bolt))
         return bolt
     end
@@ -418,9 +456,25 @@ local function hooked_get_stash(id)
     return nil
 end
 
+-- Place may create once. Never move an existing bolt.
 local function hooked_create_stash(id)
     if hf_id_is_ours(id) then
-        local bolt = bolt_for_hf(id)
+        local bolt = resolve_id()
+        if not bolt then
+            local nid = tonumber(id)
+            local go = nid and xobject.go(nid)
+            if go then
+                bolt = plant_at(go)
+            else
+                local actor = db.actor
+                if actor then
+                    local dest, lvid, gvid = dest_of(actor)
+                    if dest then
+                        bolt = plant_dest(dest, lvid, gvid)
+                    end
+                end
+            end
+        end
         log("CreateStash ours id=" .. tostring(id) .. " bolt=" .. tostring(bolt))
         return bolt and xobject.se(bolt)
     end
@@ -450,22 +504,108 @@ local function hook_hf()
     log("hf GetStash wrapped")
 end
 
-function api.open_at(anchor)
-	if not anchor then
-		log("open abort: no anchor", "red")
+local function show_bolt(id)
+	local bolt = xobject.go(id)
+	if not bolt then
+		if not xobject.se(id) then
+			log("ui start abort: no se id=" .. tostring(id), "red")
+			opening = false
+			pending_dummy = nil
+			pending_mode = nil
+			return true
+		end
+		return false
+	end
+	cloak_id(id)
+	if pending_dummy then
+		drain_dummy(pending_dummy, bolt)
+		pending_dummy = nil
+	end
+	opening = false
+	if orig_ui_start then
+		orig_ui_start(pending_mode or "loot", bolt)
+	end
+	pending_mode = nil
+	log("opened stash " .. tostring(id), "green")
+	return true
+end
+
+-- Same trick as The Anomalous Stash: swap dummy for the shared box in ui_inventory.start.
+-- Park at this dummy first so CFS range matches the box the player is standing at.
+start_with_bolt = function(mode, dummy)
+	if opening then
+		log("ui start skip: already opening")
 		return
 	end
-	local id = plant_at(anchor)
+	if not dummy then
+		log("ui start abort: no dummy", "red")
+		return
+	end
+	opening = true
+	pending_dummy = dummy
+	pending_mode = mode
+	local id = park_at(dummy)
 	if not id then
+		opening = false
+		pending_dummy = nil
+		pending_mode = nil
 		return
 	end
-	if try_open(id) then
+	if show_bolt(id) then
 		return
 	end
-	log("open: waiting go " .. tostring(id))
-	CreateTimeEvent("dogma_game_global_stash", "open_" .. tostring(id), 0.1, function()
-		return try_open(id)
-	end)
+	log("ui start: waiting go " .. tostring(id))
+	CreateTimeEvent("dogma_game_global_stash", "ui_" .. tostring(id), 0.1, show_bolt, id)
+end
+
+function api.open_at(anchor)
+	start_with_bolt("loot", anchor)
+end
+
+local function hooked_ui_start(mode, obj)
+	if obj then
+		local ok, sec = pcall(try_section, obj)
+		if ok and sec == PLACEABLE_SEC then
+			local ok_id, id = pcall(try_id, obj)
+			log("ui start dummy id=" .. tostring(ok_id and id))
+			start_with_bolt(mode, obj)
+			return
+		end
+	end
+	if orig_ui_start then
+		orig_ui_start(mode, obj)
+	end
+end
+
+local function hook_ui()
+	if orig_ui_start or not (ui_inventory and ui_inventory.start) then
+		log("ui wrap skip", "red")
+		return
+	end
+	orig_ui_start = ui_inventory.start
+	ui_inventory.start = hooked_ui_start
+	log("ui_inventory.start wrapped")
+end
+
+-- Dummy must not take items if UI swap misses.
+local function on_item_before_move(flags, stash_id)
+	local nid = tonumber(stash_id)
+	if nid and se_is_placeable(xobject.se(nid)) then
+		flags.ret_value = false
+		log("block put in dummy " .. tostring(nid), "yellow")
+	end
+end
+
+-- Take-all empty must not destroy dummy furniture or the shared bolt.
+local function on_stash_remove(data)
+	if not data then
+		return
+	end
+	local se = xobject.se(data.stash_id)
+	if se_is_ours(se) or se_is_placeable(se) then
+		data.cancel = true
+		log("stash remove cancel id=" .. tostring(data.stash_id))
+	end
 end
 
 local function maybe_bring()
@@ -481,7 +621,6 @@ local function maybe_bring()
 	end
 	planted_level = name
 	log("map now " .. tostring(name))
-	bring_to_map()
 	rebind_map_boxes()
 end
 
@@ -541,6 +680,9 @@ local function on_load()
     blocked = false
     planted_level = nil
     stocked = {}
+    pending_dummy = nil
+    pending_mode = nil
+    opening = false
     log("load, resync id=" .. tostring(saved_id))
     sync_sprint()
 end
@@ -550,6 +692,9 @@ local function on_destroy()
     planted_level = nil
     saved_id = nil
     stocked = {}
+    pending_dummy = nil
+    pending_mode = nil
+    opening = false
     log("reset (net destroy)")
 end
 
@@ -614,6 +759,7 @@ end
 function on_game_start()
     dogma.load(MOD_ID)
     hook_hf()
+    hook_ui()
     RegisterScriptCallback("actor_on_item_take", sync_sprint)
     RegisterScriptCallback("actor_on_item_drop", sync_sprint)
     RegisterScriptCallback("actor_on_item_take_from_box", sync_sprint)
@@ -630,5 +776,7 @@ function on_game_start()
     RegisterScriptCallback("ActorMenu_on_trade_started", stock_talking)
     RegisterScriptCallback("save_state", on_save_state)
     RegisterScriptCallback("load_state", on_load_state)
+    RegisterScriptCallback("ActorMenu_on_item_before_move", on_item_before_move)
+    RegisterScriptCallback("actor_on_stash_remove", on_stash_remove)
     log("game/global_stash ready")
 end

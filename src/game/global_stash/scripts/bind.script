@@ -10,6 +10,7 @@ function hf_global_stash_wrapper:__init(obj) super(obj)
 end
 
 function hf_global_stash_wrapper:use(_who)
+	dogma.log.log("dogma/game/global_stash", "use id=" .. tostring(self.object and self.object:id()))
 	local api = _G.dogma_game_global_stash
 	if api and api.open_at then
 		api.open_at(self.object)

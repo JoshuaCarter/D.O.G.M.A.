@@ -329,6 +329,10 @@ local function plant_shared(workshop_id)
 		log("plant abort: no workshop se id=" .. tostr(workshop_id))
 		return
 	end
+	if not se_is_workshop(se_ws) then
+		log("plant skip: not workshop id=" .. tostr(workshop_id))
+		return
+	end
 	local pos = go_ws and go_ws:position() or se_ws.position
 	local lvid = go_ws and go_ws:level_vertex_id() or se_ws.m_level_vertex_id
 	local gvid = go_ws and go_ws:game_vertex_id() or se_ws.m_game_vertex_id
@@ -398,12 +402,18 @@ end
 
 local function hf_on_furniture_place(id)
 	log("hf_on_furniture_place id=" .. tostring(id))
+	if not se_is_workshop(xobject.se(id)) then
+		return
+	end
 	register_workshop(id)
 	plant_shared(id)
 end
 
 local function hf_on_before_furniture_release(id)
 	log("hf_on_before_furniture_release id=" .. tostring(id))
+	if not se_is_workshop(xobject.se(id)) then
+		return
+	end
 	unregister_workshop(id)
 	stow_shared()
 end

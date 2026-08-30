@@ -1,0 +1,55 @@
+---
+description: End-user microcopy. Player words, not system jargon. Cut until every word earns its place.
+alwaysApply: true
+---
+
+# Microcopy, end-user text mode
+
+Whenever you write text a user will see (UI labels, settings, MCM, tooltips, errors, empty states, help, encyclopedia, confirmations, notifications), write for the person using the product — not for the developer who built it.
+
+Apply this automatically. Do not wait to be asked.
+
+## Ladder (stop at the first rung that holds)
+
+1. Would a first-time user be confused without this sentence? → no: cut it
+2. Is this an internal name (bone, script id, API error, formula constant, implementation detail)? → rewrite in the user's words, or drop it
+3. Does this belong beside the decision it informs? → if it's early or late, move or cut it
+4. Can this be one short clause? → make it one short clause
+5. Only then: the minimum words that set expectation, give feedback, or point the next action
+
+## Rules
+
+- Speak the user's language. Outcome words over system words (`Wrong password` not `Authentication failed`; `Hands: 40%` not bone/script ids).
+- Cut first. If removing a sentence creates no confusion, remove it.
+- Just-in-time: before = what they need to decide; during = the question they have now; after = one confirmation, then stop.
+- Specific over generic (`Save changes` not `OK`; `Saved.` not `Your changes have been successfully saved.`).
+- Errors: what happened + what to do next. Never blame the user. Never dump codes/tokens/HTTP status as the message.
+- Clarity beats personality. No pun that makes the action unclear.
+- Promise only what the product keeps.
+- Same term everywhere. Don't vary wording for variety.
+- Common place terms and acronyms that users will be familiar with are better than spelling the same idea out (`FPS`, `ADS`, `debuff`, `proc`). Keyboard keys / keybinds are fine player language.
+- Don't invent a second metaphor for the same feature. Pick one player term and, if needed, clarify in parentheses (`ADS zoom (brings the weapon closer)` not `ADS zoom and how close the gun sits`).
+- Name what the setting **is**, not only how it relates to something else (`Default zoom for all weapons` not `Same for every weapon`).
+- Controls: say what they **do** and what they apply to. Prefer verb + feature term + scope over bare constraints (`Increases the ADS zoom for this weapon and irons/sight/scope` not `While ADS. Only the gun you're holding`).
+- Quantify steps when the product has a fixed step (`Press: +10% ADS zoom. Hold: +10% repeatedly` not `Press: one step. Hold: every half second`).
+- Limits and caps: state **what** is limited and **how pieces combine**. Vague "caps at X with Y" is unclear (`Free zoom + ADS zoom cannot exceed 50%` or `Max zoom is 50%` not `Caps at 50% with ADS zoom`).
+- Plain language must match behaviour. Don't say `Off when...` if the truth is `Cannot be on when...`.
+- Developer-domain words that players also use in a different sense are traps (`world` in `world zoom` is engine FOV, not the Zone). Prefer the player's word for the outcome.
+- **Exception — install / compatibility:** when telling the user to disable another mod or change an external setting, be clearer and more explicit than usual UI microcopy. Name the other product, and state the condition (`Please disable "Adjustable Scope View" if you enable this`). Path-style settings warnings can stay detailed.
+
+## Anti-patterns
+
+- Developer concepts in player text (implementation, internals, raw constants unless an explicit Math/Advanced section)
+- Front-loaded walls of help nobody reads
+- Em-dashes as AI filler (`Saved. Close this tab.` not `Saved — you can close this tab.`)
+- Vague errors (`Something went wrong`)
+- Over-explaining what nobody was going to ask
+- Placeholder-as-label
+- Relational shorthand labels that never name the thing (`Same for…`, `Also…`) when the control is a default/value
+- Parallel coined phrases for one feature (`how close the gun sits` beside `ADS zoom`)
+- Constraint-only hints that skip the action (`Only while…` / `Only the…` with no verb)
+- Ambiguous caps that don't say what stacks or what "max" refers to
+
+## Check before you ship copy
+
+Read it as someone who does not know the codebase, but who DOES know the product/game. If they would need a glossary, or if it would be too vague, rewrite.

@@ -1,0 +1,45 @@
+---
+description: Lua script conventions for Dorn S.T.A.L.K.E.R. Anomaly mods
+globs: "**/*.script"
+alwaysApply: false
+---
+
+# Dorn script patterns
+
+Follow existing mods in this workspace. Typical `_main.script` layout:
+
+```lua
+local MOD_ID = "dorn_example"  -- matches .mod_id file
+local DORN_COMMON_VERSION = "dorn_common_<hash>" -- managed by sync-dorn-common.sh, do not hand-edit
+
+local DORN
+
+function on_game_start()
+	DORN = _G[DORN_COMMON_VERSION].load(MOD_ID)
+	-- register callbacks, read MCM via on_option_change
+end
+```
+
+## Naming and files
+
+| Item | Pattern |
+|------|---------|
+| Main logic | `dorn_<feature>_main.script` or `zzz_dorn_<feature>_NN_<area>.script` for large mods |
+| MCM registration | `dorn_<feature>_mcm.script` or `zzz_dorn_<feature>_mcm.script` |
+| Entry hook | `zzzz_dorn_<feature>_main.script` when splitting across files |
+| MOD_ID | snake_case, matches `.mod_id` and MCM namespace |
+| MCM keys | `"main/foo"`, `"development/debug_log"` via `DORN.mcm.bool/number/string/key` |
+
+## Boot and globals
+
+- Never call `process_file()` from a script being auto-loaded.
+- Resolve `DORN` inside `on_game_start()` only.
+- Synced common files: `dorn_mcm_<hash>.script`, `dorn_dbg_<hash>.script`, `dorn_sys_<hash>.script`, `dorn_common_<hash>.script` - do not hand-edit hashes.
+- Debug logging: `DORN.dbg.write(MOD_ID, slot.order, "[Tag] msg", slot.color)` behind `CONFIG.debug_log`.
+
+## Style
+
+- Tabs for indentation, LF line endings (see `.editorconfig`).
+- `local function` for module-private helpers; `function on_game_start()` etc. for engine callbacks.
+- CONFIG table for MCM-backed settings; LOG table for debug slot metadata.
+- Prefer inline logic over one-off helpers. Comments only for non-obvious engine behavior.

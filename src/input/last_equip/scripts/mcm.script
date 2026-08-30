@@ -1,0 +1,85 @@
+-- input/last_equip conf
+
+local DEFAULTS = {
+	enabled = true,
+	slot_knife = true,
+	slot_pistol = true,
+	slot_rifle = true,
+	slot_grenade = true,
+	slot_binocs = true,
+	slot_bolt = false,
+	slot_pda = false,
+	slot_detector = false,
+	slot_empty = false,
+	slot_pistol_holster = false,
+	after_inventory = true,
+	after_loot = true,
+	after_trade = true,
+	after_dialogue = true,
+	after_craft = true,
+	after_teleport = true,
+	after_load = false,
+	lower_after_draw = false,
+}
+
+_G.dogma_input_last_equip_conf = {
+	MOD_ID = "dogma/input/last_equip",
+	DEFAULTS = DEFAULTS,
+	loaded = {},
+}
+
+local function check(id)
+	return {
+		id = id,
+		type = "check",
+		val = 1,
+		def = DEFAULTS[id],
+		hint = "dogma_input_last_equip_" .. id,
+	}
+end
+
+function on_mcm_load(options)
+	dogma_mcm.attach(options, "input", "ui_mcm_menu_dogma_input", {
+		id = "last_equip",
+		sh = true,
+		text = "ui_mcm_menu_dogma_input_last_equip",
+		gr = dogma_mcm.with_header({
+			{
+				id = "main_description",
+				type = "desc",
+				text = "ui_mcm_dogma_input_last_equip_main_description",
+			},
+			check("enabled"),
+			{
+				id = "slots_header",
+				type = "title",
+				text = "ui_mcm_dogma_input_last_equip_slots_header",
+			},
+			check("slot_knife"),
+			check("slot_pistol"),
+			check("slot_rifle"),
+			check("slot_grenade"),
+			check("slot_binocs"),
+			check("slot_bolt"),
+			check("slot_pda"),
+			check("slot_detector"),
+			check("slot_empty"),
+			check("slot_pistol_holster"),
+			{ id = "line_after", type = "line" },
+			{
+				id = "after_header",
+				type = "title",
+				text = "ui_mcm_dogma_input_last_equip_after_header",
+			},
+			check("after_inventory"),
+			check("after_loot"),
+			check("after_trade"),
+			check("after_dialogue"),
+			check("after_craft"),
+			check("after_teleport"),
+			check("after_load"),
+			{ id = "line_lower", type = "line" },
+			check("lower_after_draw"),
+		}),
+	})
+end

@@ -1,0 +1,29 @@
+---
+description: XML files must use ASCII characters only
+globs: "**/*.xml"
+alwaysApply: false
+---
+
+# XML - ASCII only
+
+All XML under `gamedata/` must use **7-bit ASCII** in element text and attributes.
+
+## Forbidden in player-visible and config XML
+
+- Em dash, en dash, curly quotes, ellipsis character, non-breaking space
+- Any Unicode punctuation or symbols outside basic ASCII
+
+## Use ASCII substitutes
+
+| Instead of | Use |
+|------------|-----|
+| em dash | ` - ` (space-hyphen-space) |
+| en dash | `-` |
+| curly quotes | straight `"` or `'` |
+| ellipsis character | `...` |
+
+## Encoding
+
+String tables use `<?xml version="1.0" encoding="windows-1251"?>`. Stick to ASCII subset so encoding never surprises the game parser.
+
+Before finishing, scan new or edited XML for non-ASCII code points.

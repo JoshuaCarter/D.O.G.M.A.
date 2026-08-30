@@ -1,0 +1,32 @@
+---
+description: Player-facing README and in-game text - layman language, no tech jargon
+globs: "README.md,**/configs/text/**/*.xml"
+alwaysApply: false
+---
+
+# Player-facing documentation
+
+Applies to `README.md`, encyclopedia strings (`st_*`), MCM label strings (`ui_mcm_*`), and similar text players read.
+
+## Audience
+
+Write for **players installing the mod**, not developers. Be to the point about what the mod does in-game for the README, and detailed in the PDA guide (when we have one).
+
+## Include
+
+- What the mod changes in gameplay
+
+## Never include
+
+- Variable names, function names, file paths, script names
+- MCM key paths like `main/debug_log` or `MOD_ID` values
+- Engine callbacks, Lua globals, `process_file`, git/sync workflow
+- Implementation architecture or code structure
+
+## Tone and format
+
+- Match `Dorns_Fast_Travel/README.md`: clear headings, tables for stats, short paragraphs.
+- In-game strings: concise labels and tooltips; no trailing technical parentheticals.
+- ASCII punctuation only (see xml-ascii rule).
+
+**Test:** Would a player who has never opened `gamedata/` understand every sentence? If not, rewrite it.

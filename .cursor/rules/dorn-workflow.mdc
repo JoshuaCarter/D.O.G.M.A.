@@ -1,0 +1,32 @@
+---
+description: Dorn mod agent workflow - finish checklist, logging, minimal code
+alwaysApply: true
+---
+
+# Dorn mod agent workflow
+
+## Before marking work done
+
+1. **Lint and syntax-check** every file you touched. Run `ReadLints` on edited paths. Do not report completion while syntax or linter errors remain.
+2. **Verify references exist before use.** Grep or read the codebase for every function, global, callback, string id, and config key you reference. In Lua scripts: globals must be defined in an auto-loaded `.script` file; `DORN` is resolved only inside `on_game_start()`, never at file top level.
+3. **Re-read your diff** for typos in identifiers, wrong MOD_ID paths, and stale `DORN_COMMON_VERSION` strings.
+
+## Debugging runtime issues
+
+- **Only log file:** `c:\Anomaly\appdata\logs\xray_khada.log`
+- **Always read tail-first** (most recent errors at the bottom). Use `Read` with a negative `offset` (e.g. last 150-300 lines) before reading from the top.
+- Do not search other log paths unless the user explicitly names one.
+
+## Code size and structure
+
+- Do not add variables, helpers, or methods that are used once. Inline at the call site when logic is not reused.
+- Extract a helper only when the same logic appears in multiple places or a block is genuinely hard to follow inline.
+- Match scope to the task. No drive-by refactors or unrelated cleanups.
+
+## MCM / player-facing text
+
+Write `ui_mcm_*.xml` and encyclopedia copy for **players**, not developers: short, utilitarian, grouped equals (`Hands: 40%`), player words over bone/script ids, readable percents over raw formula constants unless in an explicit Math section.
+
+## Pattern source of truth
+
+When unsure about naming, file layout, MCM keys, or boot order, **read an existing Dorn mod** in this workspace (e.g. `Dorns_Bleed_Fix`, `Dorns_FPS_Counter`, `Dorns_Fast_Travel`) and follow what is already there. `Dorns_Common` defines shared infrastructure; feature mods define feature patterns.

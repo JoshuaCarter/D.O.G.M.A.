@@ -17,37 +17,22 @@ float teal_mask(float3 c)
 
 float4 main(p_flat I) : SV_Target
 {
+	float pulse = 0.1 + 0.9 * pow(0.5 + 0.5 * sin(timers.x * 0.62831853), 3.0);
     float2 uv = I.tcdh.xy;
     float3 c0 = tbase(uv);
-    float m0 = teal_mask(c0);
 
-    if (m0 > 0)
-    {
-        float4 color = float4(SRGBToLinear(c0), 1);
-        color.w *= m0 * 8.0;
-        return color;
-    }
-
-    float3 acc = 0;
-    float wsum = 0;
+    float avg = 0;
     [unroll]
     for (int y = -1; y <= 1; y++)
     {
         [unroll]
         for (int x = -1; x <= 1; x++)
-        {
-            if (x == 0 && y == 0)
-                continue;
-            float3 c = tbase(uv + float2(x, y) * TEXEL);
-            float m = teal_mask(c);
-            float w = m * ((x == 0 || y == 0) ? 1.0 : 0.5);
-            acc += SRGBToLinear(c) * w;
-            wsum += w;
-        }
+            avg += teal_mask(tbase(uv + float2(x, y) * TEXEL));
     }
-    clip(wsum - 1e-4);
+    avg /= 9.0;
+    clip(avg - 1e-4);
 
-    float4 color = float4(acc / wsum, 1);
-    color.w *= saturate(wsum / 6.0) * 4.0;
+    float4 color = float4(SRGBToLinear(c0), 1);
+    color.w *= avg * pulse * 0.1;
     return color;
 }

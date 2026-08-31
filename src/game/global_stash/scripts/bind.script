@@ -3,9 +3,10 @@
 -- Play once. Do not tick: engine can free the PE, then move_to/playing is a native crash.
 
 local MOD_ID = "dogma/game/global_stash"
-local FX = "artefact\\af_gravi_idle"
-
-local xobject = dogma.xlibs.xobject
+local FX = "dogma\\stash_air"
+local BOX_OX = -0.000008
+local BOX_OY = 0.231224
+local BOX_OZ = 0.000513
 
 local try_pos = function(obj)
 	return obj:position()
@@ -13,6 +14,14 @@ end
 
 local try_id = function(obj)
 	return obj:id()
+end
+
+local try_center = function(pos)
+	return vector():set(pos.x + BOX_OX, pos.y + BOX_OY, pos.z + BOX_OZ)
+end
+
+local try_make_fx = function(name)
+	return particles_object(name)
 end
 
 local try_play = function(fx, pos)
@@ -27,32 +36,12 @@ local function log(msg, color)
 	dogma.log.log(MOD_ID, tostring(msg), color)
 end
 
-local function start_fx_for(id)
-	local obj = xobject.go(id)
-	if not obj then
-		if not xobject.se(id) then
-			log("fx abort: no se id=" .. tostring(id), "red")
-			return true
-		end
-		return false
-	end
-	local binder = obj:binded_object()
-	local wrap = binder and binder.wrapper
-	if wrap and wrap.start_fx then
-		wrap:start_fx()
-	else
-		log("fx abort: no wrapper id=" .. tostring(id), "red")
-	end
-	return true
-end
-
 function init(obj)
-	obj:bind_object(hf_global_stash_wrapper(obj).binder)
-	-- FX parked
-	-- local ok, id = pcall(try_id, obj)
-	-- if ok and id then
-	-- 	CreateTimeEvent("dogma_game_global_stash", "fx_" .. tostring(id), 0.1, start_fx_for, id)
-	-- end
+	local wrap = hf_global_stash_wrapper(obj)
+	obj:bind_object(wrap.binder)
+	local ok, id = pcall(try_id, obj)
+	log("bind init id=" .. tostring(ok and id))
+	wrap:start_fx()
 end
 
 class "hf_global_stash_wrapper" (bind_hf_base.hf_binder_wrapper)
@@ -75,10 +64,20 @@ function hf_global_stash_wrapper:start_fx()
 		log("fx abort: no pos", "red")
 		return
 	end
-	self.fx = particles_object(FX)
-	pcall(try_play, self.fx, pos)
+	local ok_c, at = pcall(try_center, pos)
+	if not (ok_c and at) then
+		log("fx abort: no center", "red")
+		return
+	end
+	local ok_fx, fx = pcall(try_make_fx, FX)
+	if not (ok_fx and fx) then
+		log("fx abort: no pe " .. FX, "red")
+		return
+	end
+	self.fx = fx
+	pcall(try_play, self.fx, at)
 	local ok, id = pcall(try_id, self.object)
-	log("fx start id=" .. tostring(ok and id))
+	log("fx start id=" .. tostring(ok and id) .. " pe=" .. FX)
 end
 
 function hf_global_stash_wrapper:stop_fx()
@@ -102,7 +101,7 @@ function hf_global_stash_wrapper:use(_who)
 end
 
 function hf_global_stash_wrapper:pickup()
-	-- self:stop_fx()
+	self:stop_fx()
 	local api = _G.dogma_game_global_stash
 	if api and api.pickup then
 		api.pickup(self.object)

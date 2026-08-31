@@ -109,7 +109,7 @@ else
 	fi
 fi
 
-GAMEDATA_ROOTS="scripts configs textures meshes anims sounds spawns materials shaders"
+GAMEDATA_ROOTS="scripts configs textures meshes anims sounds spawns materials shaders particles"
 # Feature buckets that ship next to gamedata/ (MO2 mod root), not into gamedata.
 MODROOT_BUCKET="mo2"
 # Space-separated extra mod-root buckets (same mapping rules as mo2/).

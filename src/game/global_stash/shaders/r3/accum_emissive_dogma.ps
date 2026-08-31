@@ -1,0 +1,21 @@
+#include "common.h"
+#include "sload.h"
+
+float4 main(p_flat I) : SV_Target
+{
+    float3 srgb = tbase(I.tcdh);
+    float r = srgb.r;
+    float g = srgb.g;
+    float b = srgb.b;
+    clip(g - r);
+    clip(b - r);
+
+    float scale = max(0, g + b - 2.0 * r) * ((g - r) / g) * ((b - r) / b) * ((r + g + b) / 3.0);
+    scale = saturate(scale);
+    clip(scale - 0.01);
+
+    float3 D = SRGBToLinear(srgb);
+    float4 color = float4(D, 1);
+    color.w *= scale * 8.0;
+    return color;
+}

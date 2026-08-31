@@ -10,12 +10,14 @@
     Dummy is an invbox so engine Use opens loot and HF hold-Use never fires.
     Mute the dummy. Tap Use opens. Hold Use (or MCM key) picks the furniture up.
     Bolt stays. HF radial on this box is skipped so hold is pickup, not a menu.
+    Dummy GO gets a script_light (cyan omni, 2m). Same path as belt glowsticks.
 ]]
 
 local MOD_ID = "dogma/game/global_stash"
 local ITEM_SEC = "dogma_global_stash_item"
 local PLACEABLE_SEC = "placeable_dogma_global_stash"
 local SHARED_SEC = "dogma_game_global_stash"
+local LIGHT_RANGE = 2
 local PARK_DIST = 0.005
 local HOLD_MS = 1000
 local USE_RANGE = 2
@@ -28,17 +30,17 @@ local BOX_OY = 0.231224
 local BOX_OZ = 0.000513
 local BOX_R2 = 0
 for ix = -1, 1, 2 do
-	for iy = -1, 1, 2 do
-		for iz = -1, 1, 2 do
-			local x = BOX_OX + ix * BOX_HX
-			local y = BOX_OY + iy * BOX_HY
-			local z = BOX_OZ + iz * BOX_HZ
-			local r2 = x * x + y * y + z * z
-			if r2 > BOX_R2 then
-				BOX_R2 = r2
-			end
-		end
-	end
+    for iy = -1, 1, 2 do
+        for iz = -1, 1, 2 do
+            local x = BOX_OX + ix * BOX_HX
+            local y = BOX_OY + iy * BOX_HY
+            local z = BOX_OZ + iz * BOX_HZ
+            local r2 = x * x + y * y + z * z
+            if r2 > BOX_R2 then
+                BOX_R2 = r2
+            end
+        end
+    end
 end
 
 local xobject = dogma.xlibs.xobject
@@ -59,6 +61,7 @@ local drain_to = nil
 local drain_n = 0
 local opening = false
 local dummies = {}
+local lights = {}
 local muted = {}
 local pending_id = nil
 local pending_dik = nil
@@ -162,8 +165,8 @@ local try_target_dist = function()
 end
 
 local try_cam = function()
-	local d = device()
-	return d.cam_pos, d.cam_dir
+    local d = device()
+    return d.cam_pos, d.cam_dir
 end
 
 local try_dik_bind = function(dik)
@@ -177,6 +180,18 @@ end
 
 local try_release_id = function(id)
     xinventory.release_item_id(id)
+end
+
+local try_light_enable = function(light, on)
+    light.enabled = on
+end
+
+local try_light_update = function(light)
+    light:update()
+end
+
+local try_light_pos = function(light, pos)
+    light:set_position(pos.x + BOX_OX, pos.y + BOX_OY, pos.z + BOX_OZ)
 end
 
 local function log(msg, color)
@@ -245,6 +260,49 @@ local function se_is_placeable(se)
     end
     local ok, sec = pcall(try_se_section, se)
     return ok and sec == PLACEABLE_SEC
+end
+
+local function clear_light(id)
+    local light = lights[id]
+    if not light then
+        return
+    end
+    pcall(try_light_enable, light, false)
+    pcall(try_light_update, light)
+    lights[id] = nil
+    log("glow light off id=" .. tostring(id))
+end
+
+local function clear_all_lights()
+    for id in pairs(lights) do
+        clear_light(id)
+    end
+end
+
+-- belt_glowsticks/scripts/main.script update_belt_light
+local function tick_light(id)
+    local go = xobject.go(id)
+    if not go then
+        clear_light(id)
+        return
+    end
+    local light = lights[id]
+    if not light then
+        light = script_light()
+        light.type = 1
+        light.shadow = false
+        light.hud_mode = false
+        light.enabled = true
+        light.range = LIGHT_RANGE
+        light.color = fcolor():set(0.08, 0.15, 0.15, 0.1)
+        lights[id] = light
+        log("glow light on id=" .. tostring(id))
+    end
+    local ok, pos = pcall(try_pos, go)
+    if ok and pos then
+        pcall(try_light_pos, light, pos)
+        pcall(try_light_update, light)
+    end
 end
 
 -- WPI zone_keeper Close calls GetStash. String keys (PDA / name) fatal in get_object_by_id.
@@ -364,8 +422,8 @@ local function plant_dest(dest, lvid, gvid)
         end
     end
 
-	pcall(try_online, sim, id)
-	log("planted stash " .. tostr(id) .. " online")
+    pcall(try_online, sim, id)
+    log("planted stash " .. tostr(id) .. " online")
     return id
 end
 
@@ -389,13 +447,13 @@ end
 
 -- Online bolt stays. Alife snaps ~3m off the dummy; moving it every open dumps items.
 local function park_at(dummy)
-	local id = resolve_id()
-	if id and xobject.go(id) then
-		remember_id(m_state(), id)
-		log("park online id=" .. tostring(id))
-		return id
-	end
-	return plant_at(dummy)
+    local id = resolve_id()
+    if id and xobject.go(id) then
+        remember_id(m_state(), id)
+        log("park online id=" .. tostring(id))
+        return id
+    end
+    return plant_at(dummy)
 end
 
 local function cloak_id(id)
@@ -514,499 +572,506 @@ local function hook_hf()
 end
 
 local function show_bolt(id)
-	local bolt = xobject.go(id)
-	if not bolt then
-		if not xobject.se(id) then
-			log("ui start abort: no se id=" .. tostring(id), "red")
-			opening = false
-			pending_dummy = nil
-			pending_mode = nil
-			return true
-		end
-		return false
-	end
-	cloak_id(id)
-	if pending_dummy then
-		drain_dummy(pending_dummy, bolt)
-		pending_dummy = nil
-	end
-	opening = false
-	if orig_ui_start then
-		orig_ui_start(pending_mode or "loot", bolt)
-	end
-	pending_mode = nil
-	log("opened stash " .. tostring(id), "green")
-	return true
+    local bolt = xobject.go(id)
+    if not bolt then
+        if not xobject.se(id) then
+            log("ui start abort: no se id=" .. tostring(id), "red")
+            opening = false
+            pending_dummy = nil
+            pending_mode = nil
+            return true
+        end
+        return false
+    end
+    cloak_id(id)
+    if pending_dummy then
+        drain_dummy(pending_dummy, bolt)
+        pending_dummy = nil
+    end
+    opening = false
+    if orig_ui_start then
+        orig_ui_start(pending_mode or "loot", bolt)
+    end
+    pending_mode = nil
+    log("opened stash " .. tostring(id), "green")
+    return true
 end
 
 -- Same trick as The Anomalous Stash: swap dummy for the shared box in ui_inventory.start.
 -- Park at this dummy first so CFS range matches the box the player is standing at.
 start_with_bolt = function(mode, dummy)
-	if opening then
-		log("ui start skip: already opening")
-		return
-	end
-	if not dummy then
-		log("ui start abort: no dummy", "red")
-		return
-	end
-	opening = true
-	pending_dummy = dummy
-	pending_mode = mode
-	local id = park_at(dummy)
-	if not id then
-		opening = false
-		pending_dummy = nil
-		pending_mode = nil
-		return
-	end
-	if show_bolt(id) then
-		return
-	end
-	log("ui start: waiting go " .. tostring(id))
-	CreateTimeEvent("dogma_game_global_stash", "ui_" .. tostring(id), 0.1, show_bolt, id)
+    if opening then
+        log("ui start skip: already opening")
+        return
+    end
+    if not dummy then
+        log("ui start abort: no dummy", "red")
+        return
+    end
+    opening = true
+    pending_dummy = dummy
+    pending_mode = mode
+    local id = park_at(dummy)
+    if not id then
+        opening = false
+        pending_dummy = nil
+        pending_mode = nil
+        return
+    end
+    if show_bolt(id) then
+        return
+    end
+    log("ui start: waiting go " .. tostring(id))
+    CreateTimeEvent("dogma_game_global_stash", "ui_" .. tostring(id), 0.1, show_bolt, id)
 end
 
 function api.open_at(anchor)
-	start_with_bolt("loot", anchor)
+    start_with_bolt("loot", anchor)
 end
 
 local function hooked_ui_start(mode, obj)
-	if obj then
-		local ok, sec = pcall(try_section, obj)
-		if ok and sec == PLACEABLE_SEC then
-			local ok_id, id = pcall(try_id, obj)
-			log("ui start dummy id=" .. tostring(ok_id and id))
-			start_with_bolt(mode, obj)
-			return
-		end
-	end
-	if orig_ui_start then
-		orig_ui_start(mode, obj)
-	end
+    if obj then
+        local ok, sec = pcall(try_section, obj)
+        if ok and sec == PLACEABLE_SEC then
+            local ok_id, id = pcall(try_id, obj)
+            log("ui start dummy id=" .. tostring(ok_id and id))
+            start_with_bolt(mode, obj)
+            return
+        end
+    end
+    if orig_ui_start then
+        orig_ui_start(mode, obj)
+    end
 end
 
 local function hook_ui()
-	if orig_ui_start or not (ui_inventory and ui_inventory.start) then
-		log("ui wrap skip", "red")
-		return
-	end
-	orig_ui_start = ui_inventory.start
-	ui_inventory.start = hooked_ui_start
-	log("ui_inventory.start wrapped")
+    if orig_ui_start or not (ui_inventory and ui_inventory.start) then
+        log("ui wrap skip", "red")
+        return
+    end
+    orig_ui_start = ui_inventory.start
+    ui_inventory.start = hooked_ui_start
+    log("ui_inventory.start wrapped")
 end
 
 -- CFS ranges the dummy, then iterates the hidden box. Same portal as TAS.
 local function dummy_in_range(range)
-	if type(range) ~= "number" or not db.actor then
-		return
-	end
-	local best
-	local best_d
-	for id in pairs(dummies) do
-		local obj = xobject.go(id)
-		if obj then
-			local ok, dist = pcall(try_dist_safe, db.actor, obj)
-			if ok and dist and dist <= range then
-				if not best_d or dist < best_d then
-					best = obj
-					best_d = dist
-				end
-			end
-		end
-	end
-	return best
+    if type(range) ~= "number" or not db.actor then
+        return
+    end
+    local best
+    local best_d
+    for id in pairs(dummies) do
+        local obj = xobject.go(id)
+        if obj then
+            local ok, dist = pcall(try_dist_safe, db.actor, obj)
+            if ok and dist and dist <= range then
+                if not best_d or dist < best_d then
+                    best = obj
+                    best_d = dist
+                end
+            end
+        end
+    end
+    return best
 end
 
 local function list_has_id(list, id)
-	if not (list and id) then
-		return false
-	end
-	for i = 1, #list do
-		if list[i] == id then
-			return true
-		end
-	end
-	return false
+    if not (list and id) then
+        return false
+    end
+    for i = 1, #list do
+        if list[i] == id then
+            return true
+        end
+    end
+    return false
 end
 
 local function cfs_bolt(range)
-	local dummy = dummy_in_range(range)
-	if not dummy then
-		return
-	end
-	local id = resolve_id()
-	if id and xobject.go(id) then
-		local sim = alife()
-		if sim then
-			pcall(try_online, sim, id)
-		end
-		return id
-	end
-	if opening then
-		return id
-	end
-	id = plant_at(dummy)
-	if id then
-		log("cfs plant bolt=" .. tostring(id) .. " at dummy")
-	end
-	return id
+    local dummy = dummy_in_range(range)
+    if not dummy then
+        return
+    end
+    local id = resolve_id()
+    if id and xobject.go(id) then
+        local sim = alife()
+        if sim then
+            pcall(try_online, sim, id)
+        end
+        return id
+    end
+    if opening then
+        return id
+    end
+    id = plant_at(dummy)
+    if id then
+        log("cfs plant bolt=" .. tostring(id) .. " at dummy")
+    end
+    return id
 end
 
 local function hooked_get_stashes(range)
-	local stashes
-	if orig_get_stashes then
-		stashes = orig_get_stashes(range)
-	end
-	if type(stashes) ~= "table" then
-		stashes = {}
-	end
-	local bolt = cfs_bolt(range)
-	if bolt and not list_has_id(stashes, bolt) then
-		stashes[#stashes + 1] = bolt
-	end
-	return stashes
+    local stashes
+    if orig_get_stashes then
+        stashes = orig_get_stashes(range)
+    end
+    if type(stashes) ~= "table" then
+        stashes = {}
+    end
+    local bolt = cfs_bolt(range)
+    if bolt and not list_has_id(stashes, bolt) then
+        stashes[#stashes + 1] = bolt
+    end
+    return stashes
 end
 
 local function hook_cfs()
-	if orig_get_stashes then
-		return true
-	end
-	if type(_G.GetStashesInRange) ~= "function" then
-		log("cfs wrap skip: no GetStashesInRange")
-		return true
-	end
-	orig_get_stashes = _G.GetStashesInRange
-	_G.GetStashesInRange = hooked_get_stashes
-	log("GetStashesInRange wrapped")
-	return true
+    if orig_get_stashes then
+        return true
+    end
+    if type(_G.GetStashesInRange) ~= "function" then
+        log("cfs wrap skip: no GetStashesInRange")
+        return true
+    end
+    orig_get_stashes = _G.GetStashesInRange
+    _G.GetStashesInRange = hooked_get_stashes
+    log("GetStashesInRange wrapped")
+    return true
 end
 
 local function hooked_hf_radial(wrapper)
-	if wrapper and wrapper.object then
-		local ok, sec = pcall(try_section, wrapper.object)
-		if ok and sec == PLACEABLE_SEC then
-			log("hf radial skip: our box")
-			return
-		end
-	end
-	if orig_hf_radial then
-		return orig_hf_radial(wrapper)
-	end
+    if wrapper and wrapper.object then
+        local ok, sec = pcall(try_section, wrapper.object)
+        if ok and sec == PLACEABLE_SEC then
+            log("hf radial skip: our box")
+            return
+        end
+    end
+    if orig_hf_radial then
+        return orig_hf_radial(wrapper)
+    end
 end
 
 local function hook_hf_radial()
-	local pf = rawget(_G, "placeable_furniture")
-	if not (pf and pf.open_interact_gui) then
-		log("hf radial wrap skip")
-		return true
-	end
-	if orig_hf_radial then
-		return true
-	end
-	orig_hf_radial = pf.open_interact_gui
-	pf.open_interact_gui = hooked_hf_radial
-	log("hf radial wrapped")
-	return true
+    local pf = rawget(_G, "placeable_furniture")
+    if not (pf and pf.open_interact_gui) then
+        log("hf radial wrap skip")
+        return true
+    end
+    if orig_hf_radial then
+        return true
+    end
+    orig_hf_radial = pf.open_interact_gui
+    pf.open_interact_gui = hooked_hf_radial
+    log("hf radial wrapped")
+    return true
 end
 
 local function hook_late()
-	hook_cfs()
-	hook_hf_radial()
-	return true
+    hook_cfs()
+    hook_hf_radial()
+    return true
 end
 
 -- Dummy must not take items if UI swap misses.
 local function on_item_before_move(flags, stash_id)
-	local nid = tonumber(stash_id)
-	if nid and se_is_placeable(xobject.se(nid)) then
-		flags.ret_value = false
-		log("block put in dummy " .. tostring(nid), "yellow")
-	end
+    local nid = tonumber(stash_id)
+    if nid and se_is_placeable(xobject.se(nid)) then
+        flags.ret_value = false
+        log("block put in dummy " .. tostring(nid), "yellow")
+    end
 end
 
 -- Take-all empty must not destroy dummy furniture or the shared bolt.
 local function on_stash_remove(data)
-	if not data then
-		return
-	end
-	local se = xobject.se(data.stash_id)
-	if se_is_ours(se) or se_is_placeable(se) then
-		data.cancel = true
-		log("stash remove cancel id=" .. tostring(data.stash_id))
-	end
+    if not data then
+        return
+    end
+    local se = xobject.se(data.stash_id)
+    if se_is_ours(se) or se_is_placeable(se) then
+        data.cancel = true
+        log("stash remove cancel id=" .. tostring(data.stash_id))
+    end
 end
 
 local function remember_dummy(id)
-	if id then
-		dummies[id] = true
-	end
+    if not id then
+        return
+    end
+    if not se_is_placeable(xobject.se(id)) then
+        return
+    end
+    dummies[id] = true
 end
 
 local function mute_go(id)
-	local go = xobject.go(id)
-	if not go then
-		muted[id] = nil
-		return
-	end
-	local ok = pcall(try_mute, go)
-	if not ok then
-		muted[id] = nil
-		log("mute failed id=" .. tostring(id), "red")
-		return
-	end
-	if not muted[id] then
-		log("muted dummy " .. tostring(id))
-	end
-	muted[id] = true
+    local go = xobject.go(id)
+    if not go then
+        muted[id] = nil
+        return
+    end
+    local ok = pcall(try_mute, go)
+    if not ok then
+        muted[id] = nil
+        log("mute failed id=" .. tostring(id), "red")
+        return
+    end
+    if not muted[id] then
+        log("muted dummy " .. tostring(id))
+    end
+    muted[id] = true
 end
 
 -- Ray vs sphere at dummy origin. get_target_obj misses inv_backpack.
 local function ray_hit_t(cam, dir, pos)
-	local ox = pos.x - cam.x
-	local oy = pos.y - cam.y
-	local oz = pos.z - cam.z
-	local tca = ox * dir.x + oy * dir.y + oz * dir.z
-	local oc2 = ox * ox + oy * oy + oz * oz
-	if tca < 0 and oc2 > BOX_R2 then
-		return
-	end
-	local d2 = oc2 - tca * tca
-	if d2 > BOX_R2 then
-		return
-	end
-	local thc = math.sqrt(BOX_R2 - d2)
-	local t = tca - thc
-	if t < 0 then
-		t = tca + thc
-	end
-	if t < 0 then
-		return
-	end
-	return t
+    local ox = pos.x - cam.x
+    local oy = pos.y - cam.y
+    local oz = pos.z - cam.z
+    local tca = ox * dir.x + oy * dir.y + oz * dir.z
+    local oc2 = ox * ox + oy * oy + oz * oz
+    if tca < 0 and oc2 > BOX_R2 then
+        return
+    end
+    local d2 = oc2 - tca * tca
+    if d2 > BOX_R2 then
+        return
+    end
+    local thc = math.sqrt(BOX_R2 - d2)
+    local t = tca - thc
+    if t < 0 then
+        t = tca + thc
+    end
+    if t < 0 then
+        return
+    end
+    return t
 end
 
 local function look_dummy()
-	local ok_d, dist = pcall(try_target_dist)
-	if ok_d and dist and dist <= USE_RANGE then
-		local ok, obj = pcall(try_target)
-		if ok and obj then
-			local ok_s, sec = pcall(try_section, obj)
-			if ok_s and sec == PLACEABLE_SEC then
-				local ok_id, id = pcall(try_id, obj)
-				if ok_id and id then
-					remember_dummy(id)
-					mute_go(id)
-				end
-				return obj
-			end
-		end
-	end
-	local ok_c, cam, dir = pcall(try_cam)
-	if not (ok_c and cam and dir) then
-		return
-	end
-	local best
-	local best_t
-	for id in pairs(dummies) do
-		local obj = xobject.go(id)
-		if obj then
-			local ok_p, pos = pcall(try_pos, obj)
-			if ok_p and pos then
-				local t = ray_hit_t(cam, dir, pos)
-				if t and t <= USE_RANGE then
-					if not best_t or t < best_t then
-						best = obj
-						best_t = t
-					end
-				end
-			end
-		end
-	end
-	if best then
-		local ok_id, id = pcall(try_id, best)
-		if ok_id and id then
-			mute_go(id)
-		end
-	end
-	return best
+    local ok_d, dist = pcall(try_target_dist)
+    if ok_d and dist and dist <= USE_RANGE then
+        local ok, obj = pcall(try_target)
+        if ok and obj then
+            local ok_s, sec = pcall(try_section, obj)
+            if ok_s and sec == PLACEABLE_SEC then
+                local ok_id, id = pcall(try_id, obj)
+                if ok_id and id then
+                    dummies[id] = true
+                    mute_go(id)
+                end
+                return obj
+            end
+        end
+    end
+    local ok_c, cam, dir = pcall(try_cam)
+    if not (ok_c and cam and dir) then
+        return
+    end
+    local best
+    local best_t
+    for id in pairs(dummies) do
+        local obj = xobject.go(id)
+        if obj then
+            local ok_p, pos = pcall(try_pos, obj)
+            if ok_p and pos then
+                local t = ray_hit_t(cam, dir, pos)
+                if t and t <= USE_RANGE then
+                    if not best_t or t < best_t then
+                        best = obj
+                        best_t = t
+                    end
+                end
+            end
+        end
+    end
+    if best then
+        local ok_id, id = pcall(try_id, best)
+        if ok_id and id then
+            mute_go(id)
+        end
+    end
+    return best
 end
 
 local function pickup_dummy(obj)
-	local tostr = tostring
-	if not obj then
-		log("pickup abort: no go", "red")
-		return
-	end
-	local ok_id, id = pcall(try_id, obj)
-	if not (ok_id and id) then
-		log("pickup abort: no id", "red")
-		return
-	end
-	local actor = db.actor
-	if not actor then
-		log("pickup abort: no actor id=" .. tostr(id), "red")
-		return
-	end
-	if not se_is_placeable(xobject.se(id)) then
-		log("pickup abort: not dummy id=" .. tostr(id), "red")
-		return
-	end
-	local ok_item, se = pcall(try_create_item, ITEM_SEC, actor)
-	if not (ok_item and se) then
-		log("pickup abort: create item failed id=" .. tostr(id), "red")
-		return
-	end
-	local m_data = m_state()
-	if m_data and m_data.player_created_stashes then
-		m_data.player_created_stashes[id] = nil
-	end
-	if pending_dummy then
-		local ok_p, pid = pcall(try_id, pending_dummy)
-		if ok_p and pid == id then
-			opening = false
-			pending_dummy = nil
-			pending_mode = nil
-		end
-	end
-	dummies[id] = nil
-	muted[id] = nil
-	local ok_rel = pcall(try_release_id, id)
-	if not ok_rel then
-		log("pickup release failed id=" .. tostr(id), "red")
-		return
-	end
-	log("picked up dummy id=" .. tostr(id) .. " bolt=" .. tostr(resolve_id()), "green")
+    local tostr = tostring
+    if not obj then
+        log("pickup abort: no go", "red")
+        return
+    end
+    local ok_id, id = pcall(try_id, obj)
+    if not (ok_id and id) then
+        log("pickup abort: no id", "red")
+        return
+    end
+    local actor = db.actor
+    if not actor then
+        log("pickup abort: no actor id=" .. tostr(id), "red")
+        return
+    end
+    if not se_is_placeable(xobject.se(id)) then
+        log("pickup abort: not dummy id=" .. tostr(id), "red")
+        return
+    end
+    local ok_item, se = pcall(try_create_item, ITEM_SEC, actor)
+    if not (ok_item and se) then
+        log("pickup abort: create item failed id=" .. tostr(id), "red")
+        return
+    end
+    local m_data = m_state()
+    if m_data and m_data.player_created_stashes then
+        m_data.player_created_stashes[id] = nil
+    end
+    if pending_dummy then
+        local ok_p, pid = pcall(try_id, pending_dummy)
+        if ok_p and pid == id then
+            opening = false
+            pending_dummy = nil
+            pending_mode = nil
+        end
+    end
+    dummies[id] = nil
+    muted[id] = nil
+    clear_light(id)
+    local ok_rel = pcall(try_release_id, id)
+    if not ok_rel then
+        log("pickup release failed id=" .. tostr(id), "red")
+        return
+    end
+    log("picked up dummy id=" .. tostr(id) .. " bolt=" .. tostr(resolve_id()), "green")
 end
 
 function api.pickup(anchor)
-	pickup_dummy(anchor)
+    pickup_dummy(anchor)
 end
 
 local function latch_use(dummy, dik)
-	local ok, id = pcall(try_id, dummy)
-	if not (ok and id) then
-		return
-	end
-	pending_id = id
-	pending_dik = dik
-	picked = false
-	if dik then
-		dogma.input.is_key_down(dik)
-	end
-	log("use press dummy=" .. tostring(id) .. " dik=" .. tostring(dik))
+    local ok, id = pcall(try_id, dummy)
+    if not (ok and id) then
+        return
+    end
+    pending_id = id
+    pending_dik = dik
+    picked = false
+    if dik then
+        dogma.input.is_key_down(dik)
+    end
+    log("use press dummy=" .. tostring(id) .. " dik=" .. tostring(dik))
 end
 
 local function poll_use()
-	if not pending_id then
-		return
-	end
-	local dik = pending_dik
-	if not dik then
-		log("use abort: no dik id=" .. tostring(pending_id), "yellow")
-		pending_id = nil
-		pending_dik = nil
-		picked = false
-		return
-	end
-	local input = dogma.input
-	if input.is_key_down(dik) then
-		if not picked and input.is_key_held(dik, HOLD_MS) then
-			local obj = xobject.go(pending_id)
-			if obj then
-				pickup_dummy(obj)
-			else
-				log("pickup abort: dummy gone id=" .. tostring(pending_id), "yellow")
-			end
-			picked = true
-		end
-		return
-	end
-	if not picked then
-		local obj = xobject.go(pending_id)
-		if obj then
-			api.open_at(obj)
-		else
-			log("open abort: dummy gone id=" .. tostring(pending_id), "yellow")
-		end
-	end
-	pending_id = nil
-	pending_dik = nil
-	picked = false
+    if not pending_id then
+        return
+    end
+    local dik = pending_dik
+    if not dik then
+        log("use abort: no dik id=" .. tostring(pending_id), "yellow")
+        pending_id = nil
+        pending_dik = nil
+        picked = false
+        return
+    end
+    local input = dogma.input
+    if input.is_key_down(dik) then
+        if not picked and input.is_key_held(dik, HOLD_MS) then
+            local obj = xobject.go(pending_id)
+            if obj then
+                pickup_dummy(obj)
+            else
+                log("pickup abort: dummy gone id=" .. tostring(pending_id), "yellow")
+            end
+            picked = true
+        end
+        return
+    end
+    if not picked then
+        local obj = xobject.go(pending_id)
+        if obj then
+            api.open_at(obj)
+        else
+            log("open abort: dummy gone id=" .. tostring(pending_id), "yellow")
+        end
+    end
+    pending_id = nil
+    pending_dik = nil
+    picked = false
 end
 
 local function on_key_press(dik)
-	local pk = dogma.mcm.key(MOD_ID, "pickup_key", -1)
-	if pk and dik == pk then
-		local dummy = look_dummy()
-		if dummy then
-			pickup_dummy(dummy)
-		else
-			log("pickup key: no box in range")
-		end
-		return
-	end
-	if not key_bindings then
-		return
-	end
-	local ok, bind = pcall(try_dik_bind, dik)
-	if not (ok and bind == key_bindings.kUSE) then
-		return
-	end
-	local dummy = look_dummy()
-	if dummy then
-		latch_use(dummy, dik)
-	end
+    local pk = dogma.mcm.key(MOD_ID, "pickup_key", -1)
+    if pk and dik == pk then
+        local dummy = look_dummy()
+        if dummy then
+            pickup_dummy(dummy)
+        else
+            log("pickup key: no box in range")
+        end
+        return
+    end
+    if not key_bindings then
+        return
+    end
+    local ok, bind = pcall(try_dik_bind, dik)
+    if not (ok and bind == key_bindings.kUSE) then
+        return
+    end
+    local dummy = look_dummy()
+    if dummy then
+        latch_use(dummy, dik)
+    end
 end
 
 local function on_before_use(dik, bind, _dis, flags)
-	if not (key_bindings and bind == key_bindings.kUSE) then
-		return
-	end
-	local dummy = look_dummy()
-	if dummy then
-		flags.ret_value = false
-		latch_use(dummy, dik)
-	elseif pending_id then
-		flags.ret_value = false
-	end
+    if not (key_bindings and bind == key_bindings.kUSE) then
+        return
+    end
+    local dummy = look_dummy()
+    if dummy then
+        flags.ret_value = false
+        latch_use(dummy, dik)
+    elseif pending_id then
+        flags.ret_value = false
+    end
 end
 
 -- ponytail: O(65534) once per map. Ids only, no bind_object.
 local function find_map_dummies()
-	for i = 1, 65534 do
-		if se_is_placeable(xobject.se(i)) then
-			dummies[i] = true
-		end
-	end
+    for i = 1, 65534 do
+        if se_is_placeable(xobject.se(i)) then
+            dummies[i] = true
+        end
+    end
 end
 
 local function maybe_bring()
-	if not dogma.sys.ready(MOD_ID, db) then
-		return
-	end
-	if not (level and level.name) then
-		return
-	end
-	local name = level.name()
-	if name == planted_level then
-		return
-	end
-	planted_level = name
-	dummies = {}
-	muted = {}
-	log("map now " .. tostring(name))
-	find_map_dummies()
+    if not dogma.sys.ready(MOD_ID, db) then
+        return
+    end
+    if not (level and level.name) then
+        return
+    end
+    local name = level.name()
+    if name == planted_level then
+        return
+    end
+    planted_level = name
+    clear_all_lights()
+    dummies = {}
+    muted = {}
+    log("map now " .. tostring(name))
+    find_map_dummies()
 end
 
 local function on_update()
-	maybe_bring()
-	for id in pairs(dummies) do
-		if not muted[id] then
-			mute_go(id)
-		end
-	end
-	poll_use()
+    maybe_bring()
+    for id in pairs(dummies) do
+        if not muted[id] then
+            mute_go(id)
+        end
+        tick_light(id)
+    end
+    poll_use()
 end
 
 local function on_save_state(m_data)
@@ -1033,6 +1098,7 @@ local function on_load()
     pending_dummy = nil
     pending_mode = nil
     opening = false
+    clear_all_lights()
     log("load, resync id=" .. tostring(saved_id))
     sync_sprint()
 end
@@ -1050,6 +1116,7 @@ local function on_destroy()
     pending_dummy = nil
     pending_mode = nil
     opening = false
+    clear_all_lights()
     log("reset (net destroy)")
 end
 

@@ -58,6 +58,9 @@
 #   DOGMA_OUT=path     override output gamedata (default: .build/gamedata). Set by
 #                      package-fomod; skips wiping .build/ and skips DOGMA_DEPLOY.
 #   DOGMA_NO_ALAO=1    skip ALAO on src/ before staging
+#   DOGMA_SHADER_CACHE=path  wipe this dir after a fresh local build
+#                      (default: /c/Anomaly/appdata/shaders_cache)
+#   DOGMA_NO_SHADER_CACHE_WIPE=1  skip that wipe
 #
 # Default (no DOGMA_OUT): wipe .build/, stage → .build/, then optional full-replace
 # deploy. package-fomod sets DOGMA_OUT and merges into its own stage dirs.
@@ -592,6 +595,18 @@ if (( FRESH_BUILD )) && [[ "$ONLY" == "all" || "$ONLY" == "" ]] && [[ -z "${DOGM
 			echo "build: FOMOD zip -> $dl/DOGMA.zip"
 		else
 			echo "build: WARN $dl/DOGMA.zip busy (close MO2 Reinstall / downloads). Zip is at $BUILD_ROOT/DOGMA.zip" >&2
+		fi
+	fi
+fi
+
+# Stale DX cache keeps old .s/.ps after deploy. Fresh local builds only.
+if (( FRESH_BUILD )) && [[ -z "${DOGMA_NO_SHADER_CACHE_WIPE:-}" ]]; then
+	SHADER_CACHE="${DOGMA_SHADER_CACHE:-/c/Anomaly/appdata/shaders_cache}"
+	if [[ -e "$SHADER_CACHE" ]]; then
+		if rm -rf "$SHADER_CACHE"; then
+			echo "build: wiped $SHADER_CACHE"
+		else
+			echo "build: WARN could not wipe $SHADER_CACHE (game running?)" >&2
 		fi
 	fi
 fi

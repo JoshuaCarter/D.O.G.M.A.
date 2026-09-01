@@ -8,7 +8,7 @@ Every step this pack plays is a pair we wrote plus an OGG under `sounds/dogma_st
 
 X-Ray v3 blob: `min_dist 1`, `max_dist 40`, `base_volume 1.0`, `max_ai_dist 40`.
 
-All files are 44100 Hz mono.
+All files are 44100 Hz mono. After any comment stamp, rewrite that OGG page CRC. libvorbis rejects a bad checksum (`ov_info` NULL, boot fatal).
 
 Close volume is `base_volume` (clamped while dist <= min_dist). Raising `max_dist` does not make a step louder in your face. It only stretches the fade, so a quiet sample is still audible farther out. That is the point of 40.
 

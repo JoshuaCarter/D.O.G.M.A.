@@ -25,4 +25,5 @@ None. Every non-empty `step_sounds` path in this tweak has an OGG here.
 Empty `step_sounds` on purpose:
 
 - `creatures\rodent` - silent (rats / tushkano are remapped to medium)
-- a few object pairs (knife, bullet) copied from the mutant template
+
+Pairs are `@[` and `step_sounds` only. Last in load order wins those keys. Collide / break stay vanilla.

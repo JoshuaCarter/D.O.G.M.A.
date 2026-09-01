@@ -29,17 +29,21 @@ function actor_on_first_update()
 		return
 	end
 	dogma.perf.start("sfx_prefetcher", "actor_on_first_update")
-	local n = 0
+	local fs = getFS()
+	local ok = 0
+	local miss = 0
 	for i = 0, lines - 1 do
 		local _, _, value = ini:r_line(SECTION, i, "", "")
 		if value and value ~= "" then
-			level.prefetch_sound(value)
-			n = n + 1
+			if fs:exist("$game_sounds$", value .. ".ogg") ~= nil then
+				level.prefetch_sound(value)
+				ok = ok + 1
+			else
+				miss = miss + 1
+			end
 		end
 	end
-	if n > 0 then
-		printf("[%s] prefetched %s sounds", TAG, tostring(n))
-	end
+	printf("[%s] prefetched %s sounds (missing %s)", TAG, tostring(ok), tostring(miss))
 	dogma.perf.stop()
 end
 

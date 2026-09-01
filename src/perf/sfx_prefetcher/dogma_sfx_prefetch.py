@@ -5,11 +5,11 @@ Run from the DOGMA mod folder (or pass --mo2-root). Writes:
 
   overwrite/gamedata/configs/dogma_sfx_prefetch.ltx
 
-Asks for a max .ogg size (50–500 KB) and fully
+Asks for a max .ogg size (10 / 25 / 50 / 75 / 100 KB, default 50) and fully
 replaces overwrite/gamedata/configs/dogma_sfx_prefetch.ltx.
 
   py -3 dogma_sfx_prefetch.py
-  py -3 dogma_sfx_prefetch.py --max-size 100kb
+  py -3 dogma_sfx_prefetch.py --max-size 50kb
   py -3 dogma_sfx_prefetch.py --dry-run
 """
 
@@ -38,15 +38,15 @@ XRAY_OGG_COMMENT_MIN_LEN = {
 }
 # Skip files at/above this size (music / long ambience).
 SIZE_CHOICES: tuple[tuple[str, int, str], ...] = (
-    ("50kb", 50 * 1024, "50 KB"),
+    ("10kb", 10 * 1024, "10 KB"),
+    ("25kb", 25 * 1024, "25 KB"),
+    ("50kb", 50 * 1024, "50 KB (recommended)"),
+    ("75kb", 75 * 1024, "75 KB"),
     ("100kb", 100 * 1024, "100 KB"),
-    ("200kb", 200 * 1024, "200 KB"),
-    ("300kb", 300 * 1024, "300 KB"),
-    ("400kb", 400 * 1024, "400 KB"),
-    ("500kb", 500 * 1024, "500 KB"),
 )
 SIZE_BY_KEY = {key: (limit, label) for key, limit, label in SIZE_CHOICES}
 DEFAULT_SIZE_KEY = "50kb"
+DEFAULT_SIZE_IDX = next(i for i, (key, _, _) in enumerate(SIZE_CHOICES, start=1) if key == DEFAULT_SIZE_KEY)
 
 
 def _use_color() -> bool:
@@ -334,7 +334,7 @@ def prompt_max_size() -> str:
         info(f"  {i}) {label}")
     while True:
         try:
-            raw = input(f"Choice [1-{len(SIZE_CHOICES)}, default 1]: ").strip().lower()
+            raw = input(f"Choice [1-{len(SIZE_CHOICES)}, default {DEFAULT_SIZE_IDX}]: ").strip().lower()
         except EOFError:
             return DEFAULT_SIZE_KEY
         if not raw:

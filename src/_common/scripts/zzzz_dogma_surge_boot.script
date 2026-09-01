@@ -1,0 +1,42 @@
+--[[
+	F2 test map / new alife never hits surge actor_on_load, so last_surge_time
+	stays nil. Weather still calls diffSec on it (BusyHands catch).
+	Stamp the same init a first save would have done, before weather update.
+]]
+
+local TAG = "dogma_surge_boot"
+
+local function boot_mgr(get_fn, time_key)
+	if type(get_fn) ~= "function" then
+		return false
+	end
+	local mgr = get_fn()
+	if not mgr then
+		return false
+	end
+	if mgr._state_loaded and mgr[time_key] then
+		return false
+	end
+	if mgr.initialize then
+		mgr:initialize()
+	end
+	if not mgr[time_key] then
+		mgr[time_key] = game.get_game_time()
+	end
+	mgr._state_loaded = true
+	return true
+end
+
+function actor_on_first_update()
+	local sm = rawget(_G, "surge_manager")
+	local pm = rawget(_G, "psi_storm_manager")
+	local did_surge = boot_mgr(sm and sm.get_surge_manager, "last_surge_time")
+	local did_psi = boot_mgr(pm and pm.get_psi_storm_manager, "last_psi_storm_time")
+	if did_surge or did_psi then
+		printf("[%s] inited surge=%s psi=%s (no save state)", TAG, tostring(did_surge), tostring(did_psi))
+	end
+end
+
+function on_game_start()
+	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+end

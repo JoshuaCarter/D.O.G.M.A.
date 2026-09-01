@@ -26,4 +26,4 @@ Empty `step_sounds` on purpose:
 
 - `creatures\rodent` - silent (rats / tushkano are remapped to medium)
 
-Pairs are `@[` and `step_sounds` only. Last in load order wins those keys. Collide / break stay vanilla.
+Pairs are `@[` and `step_sounds` only. Files are named `material_pairs_zzzz_dogma_*.ltx` so DLTX include order is last (MO2 last is not enough: `material_pairs_*.ltx` is filename order). Collide / break stay vanilla.

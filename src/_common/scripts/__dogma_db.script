@@ -14,6 +14,7 @@ local EMPTY = {}
 local list_sorted = {}
 local recipes = {}
 local by_name = {}
+local name_miss = 0
 local SKIP = {
     ["wpn_addon_silencer"] = true,
 }
@@ -135,9 +136,15 @@ local function decorate(row, typ)
     row.type = typ
     row.cost = num(row.st_upgr_cost)
     row.weight = num(row.st_prop_weight)
-    if not row.name or row.name == "" then
-        local key = row.displayName or row.pda_encyclopedia_name
-        row.name = (key and sdb.translate(key)) or key or row.id or ""
+    local key = row.pda_encyclopedia_name or row.displayName
+    local name = key and sdb.translate(key)
+    if name and name ~= "" then
+        row.name = name
+    else
+        row.name = row.id or ""
+        if key then
+            name_miss = name_miss + 1
+        end
     end
     row.damage = num(row.ui_inv_damage)
     row.ap = num(row.st_data_export_ap)
@@ -345,6 +352,7 @@ local function load_all()
     groups = {}
     recipes = {}
     by_name = {}
+    name_miss = 0
     local n_site = 0
     for i = 1, #SITE do
         local slug, typ = SITE[i][1], SITE[i][2]
@@ -368,7 +376,7 @@ local function load_all()
     index_all()
     hide_skipped()
     load_recipes()
-    printf("DOGMA.db: loaded %s site rows, %s ammo_parts", n_site, #(groups.ammo_parts or EMPTY))
+    printf("DOGMA.db: loaded %s site rows, %s ammo_parts, name_miss %s", n_site, #(groups.ammo_parts or EMPTY), name_miss)
 end
 
 function init()

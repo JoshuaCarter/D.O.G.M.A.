@@ -1,8 +1,8 @@
 # Fix Footsteps SFX
 
-Mutant + stalker NPC steps (and exo servo). Not player (`creatures\actor`). Not collide/break banks.
+Mutant steps only. Not player. Not stalker NPCs. Not zombies (those used the human bank).
 
-Every step this pack plays is a pair we wrote plus an OGG under `sounds/dogma_steps/<bank>/`. No vanilla-path copies.
+Every step this pack plays is a pair we wrote plus an OGG under `sounds/mutant_steps/`. Flat dir. Engine path is `mutant_steps\<file>` (no extra folder per bank).
 
 ## Comment defaults (all shipped OGGs)
 
@@ -16,13 +16,9 @@ Engine ctor default without a comment is 300. That is not a footstep range. 40 i
 
 After Audacity export, restamp (rewrites page CRC):
 
-`py -3 stamp_ogg_comments.py sounds/creature_steps/water`
+`py -3 stamp_ogg_comments.py sounds/mutant_steps`
 
 Edit `stamp_ogg_comments.ini` next to the script. `--check` to inspect. CLI `--max` / `--vol` / `--min` / `--ai` override the ini.
-
-## Hoof (boar / flesh)
-
-These were comment-boosted here (`base_volume 2.2`, `min_dist 8`, `max_dist 70`) and re-encoded larger. Samples are the Solarint / vanilla hoof set (the usual correct ones). Restored from Solarint, then stamped to the defaults above. Live path: `dogma_steps\hoof\`.
 
 ## Missing step files
 
@@ -110,11 +106,10 @@ Engine surface -> meta bucket. For creatures only.
 
 |Creature|soft|hard|water|
 |---|---|---|
-|small|hoof_ground|hoof_hard|water_small|
-|medium|hoof_ground|hoof_hard|water_small|
-|large|hoof_ground|hoof_hard|water_small|
-|fast|hoof_ground|hoof_hard|water_small|
+|small|small1/2|small1/2|water_small|
+|medium|medium2/3|medium2/3|water_small|
+|large|large_step|large_step|water_small|
+|fast|step_fast|step_fast|water_small|
 |hoof|hoof_ground|hoof_hard|water_small|
-|lurker|hoof_ground|hoof_hard|water_small|
-|chimera|hoof_ground|hoof_hard|water_small|
-|zombie|hoof_ground|hoof_hard|water_small|
+|lurker|step_lurker|step_lurker|water_small|
+|chimera|step_chimera|step_chimera|water_small|

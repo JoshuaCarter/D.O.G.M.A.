@@ -22,16 +22,18 @@ local function engine_play_step(obj, path)
 		printf("%s missing ogg %s", LOG, path)
 		return
 	end
-	local snd = sound_object(path)
-	if not snd then
+	local snd2d = sound_object(path)
+	local snd3d = sound_object(path)
+	if not snd2d or not snd3d then
 		printf("%s sound_object fail %s", LOG, path)
 		return
 	end
-	-- CStepManager::play_next: flags 0, pos = object + 0.5y, vol = power
+	-- s2d first: if this is silent the file is dead. Then same call as play_next.
+	snd2d:play_no_feedback(db.actor, sound_object.s2d, 0, vector():set(0, 0, 0), 1.0, 1.0)
 	local pos = obj:position()
 	pos.y = pos.y + 0.5
-	snd:play_no_feedback(obj, sound_object.s3d, 0, pos, 1.0, 1.0)
-	printf("%s engine-play %s at %s", LOG, path, obj:section())
+	snd3d:play_no_feedback(obj, sound_object.s3d, 0, pos, 1.0, 1.0)
+	printf("%s engine-play 2d+3d %s at %s", LOG, path, obj:section())
 end
 
 local function log_near_monster(obj)

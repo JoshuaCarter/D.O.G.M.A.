@@ -18,6 +18,11 @@ Source tree: `c:\gamma_dev\xray-monolith-2026.7.13\xray-monolith-2026.7.13`
 
 6. **"Always `(creature, default)`."** Engine: `SetPLastMaterialIDX` skipped for `CBaseMonster`, `get_current_pair` reads `m_last_material_idx` (stays default). **Never dumped at runtime.** Leftover earth pairs in VFS made the experiment invalid. If last is actually ground and leftovers die, new mats (`fast`) have **null** pair -> silent.
 
+23:16 boot (after DOGMA full-replace):
+
+- VFS has `material_pairs_fast.ltx` (not DOGMA). That file added `fast|earth` and every other surface. Those new pairs have no `step_sounds` from us unless we overlay them.
+- Probe `engine-play test_steps\hoof_ground_1` ran. `test_steps` is the loud beep. If that call is silent, play/3D failed. If it beeps and walk does not, `play_next` did not run.
+
 What 22:47 did prove: `fast|default` added, `hoof|default` changed, no `Can't find sound` / bad rate for `test_steps`, live `material` / `step_params` strings. That is overlay + file exist. Not play.
 
 ---

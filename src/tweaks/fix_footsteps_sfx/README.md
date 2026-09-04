@@ -26,6 +26,6 @@ No ground-surface pairs. No empty `step_sounds =`. No reverse `:inherit`. Collid
 
 ## OGG comments
 
-X-Ray v3: `min_dist 1`, `max_dist 50`, `base_volume 1.0`, `max_ai_dist 40`, `game_type` `SOUND_TYPE_MONSTER_STEP`.
+X-Ray v3: `min_dist 1`, `max_dist 300`, `base_volume 1.0`, `max_ai_dist 300` (engine ctor defaults). `game_type` `SOUND_TYPE_MONSTER_STEP`.
 
 All files 44100 Hz mono. After export: `py -3 stamp_ogg_comments.py` (`dir=` in `stamp_ogg_comments.ini`). `--check` to inspect.

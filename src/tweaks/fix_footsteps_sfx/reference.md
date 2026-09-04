@@ -1,9 +1,28 @@
 # Mutant step override: engine proof
 
 Source tree: `c:\gamma_dev\xray-monolith-2026.7.13\xray-monolith-2026.7.13`
-Checked by four independent traces of the same files. Claims below are from those files plus one boot log (`xray_khada.log`, game started 04.09.2026 22:17:46).
 
-Not a guess: mutants do **not** pick the ground under their feet. `CStepManager` always looks up pair `(creature_material, default)`.
+## 0. Where the last proof was wrong
+
+22:47 boot still silent. These claims did not prove what they said:
+
+1. **"Pack ships one pair file."** Src does. The running VFS did not. Same log `Adding new material pair creatures\fast | materials\earth` (and default_object, grass, ...). Those sections are not in `mod_material_pairs_zzzz_dogma_mutants.ltx`. Root `#include "material_pairs_*.ltx"` pulls leftover `material_pairs_zzzz_*.ltx` from **any** mod / stale deploy. Overlay proof was about src, not what `GameMtlLib` walked.
+
+2. **"Lua play of `test_steps\\test` proves the OGG path."** Wrong file. Wrong if no position (`xsound` uses `s2d`). `s3d` is flags `0` (same as `play_next`) but that still is not `CStepManager` calling `play_next`. `hoof_ground_1` / `step_fast-01` / `test` are the same 5065-byte beep. Hearing `test` does not prove a step event fired.
+
+3. **"LTX `stand_run_0` present means steps arm."** `SStepInfo.disable` defaults **true** (`step_manager_defs.h:38`). Map fill is `ID_Cycle_Safe` at `reload`. Release miss = no log. LTX dump is not `m_steps_map`.
+
+4. **"max_dist 50 is correct because the step gate is 50 m."** Different checks. Step gate: camera-to-monster, then `play_next`. 3D cull: listener-to-emitter vs **OGG** `max_distance` (`SoundRender_Emitter_FSM.cpp:352-356`). Ctor default is **300** (`SoundRender_Source.cpp:9-12`). Attenuation is `(max-dist)/(max-min)`. 50 was never compared to a vanilla working step OGG (Anomaly `sounds.db0` packed; not unpacked here).
+
+5. **"Global != torso so `on_animation_start` fires."** Vanilla: torso stays invalid (`SAnimationPart::init`), so yes. Not dumped. AOM setting torso == global would skip (`control_animation.cpp:149`). `disable` stays true.
+
+6. **"Always `(creature, default)`."** Engine: `SetPLastMaterialIDX` skipped for `CBaseMonster`, `get_current_pair` reads `m_last_material_idx` (stays default). **Never dumped at runtime.** Leftover earth pairs in VFS made the experiment invalid. If last is actually ground and leftovers die, new mats (`fast`) have **null** pair -> silent.
+
+What 22:47 did prove: `fast|default` added, `hoof|default` changed, no `Can't find sound` / bad rate for `test_steps`, live `material` / `step_params` strings. That is overlay + file exist. Not play.
+
+---
+
+Not a guess from the **pointer wire**: `CStepManager` reads pair `(m_my_material_idx, m_last_material_idx)`. For `CBaseMonster` that second index is not hooked to the foot ray.
 
 ---
 
@@ -30,7 +49,7 @@ Boot log for this pack:
 [material_pairs.ltx] Changing existing material pair creatures\hoof | default, id 996
 ```
 
-Those two lines are the only pair lines that matter for snork/boar steps.
+Those two lines are the `@default` overlays. 22:47 also added `fast|earth` etc. from leftover VFS files. Do not treat src as the loaded set.
 
 ---
 
@@ -224,16 +243,11 @@ Reload map miss is the only release-silent path that can kill a moving mutant th
 
 Lua `xsound.play` / `sound_object` 2D: no max_dist cull, no occlusion. Same ogg can beep from script and stay silent from `play_no_feedback` if 3D cull hits.
 
-This pack stamps `min_dist=1`, `max_dist=50`, `base_volume=1`, `max_ai_dist=40`. Engine default without comment is max 300. Engine step gate is also 50 m.
+Stamp **ctor defaults**: `min_dist=1`, `max_dist=300`, `base_volume=1`, `max_ai_dist=300`. `game_type` `SOUND_TYPE_MONSTER_STEP` (`CreateSounds` uses `sg_SourceType` so the OGG blob is `g_type`). `g_type` is AI notify, not a listener mute.
 
-22:17 boot lua:
+Lua `sound_object` ctor uses `SOUND_TYPE_NO_SOUND`, not `sg_SourceType`. Playback still 3D. Do not treat lua hear as `play_next`.
 
-```
-ear probe test_steps\test ok=true
-3d probe at snork_normal
-```
-
-`test_steps\test` loads and plays from script (2D ear + 3D at snork). That does **not** prove `CStepManager` called `play_next`.
+Probe now: `play_no_feedback(monster, s3d=0, pos+0.5y, vol=1)` on `test_steps\hoof_ground_1` / `step_fast-01`. Same call as `play_next`. If that beeps and walking does not, `play_next` never ran.
 
 ---
 
@@ -254,7 +268,7 @@ To make a mutant play a new step bank:
 3. **OGGs**
    - 44100 Hz
    - Present at boot (pairs load at `OnAppStart`, not on spawn)
-   - X-Ray v3 comment optional; without it max_dist=300
+   - X-Ray v3 comment: match ctor (`min 1`, `max 300`, `vol 1`). Do not stamp 50 to "match" the step gate
 4. **step_params**
    - Creature `step_params = <section>`
    - Every played cycle name listed, exact (`stand_run_0`, `stand_run_fwd_0`, jump names)
@@ -280,19 +294,12 @@ To replace vanilla hoof/boar steps: step 2 on `@[creatures\hoof@default]` is suf
 | `test_steps` missing / bad rate at boot | no log lines |
 | snork `material` / `step_params` live | `creatures\fast`, `m_snork_step_params`, `stand_run_0` present |
 | boar `material` / `step_params` live | `creatures\hoof`, `m_boar_step_params` |
-| lua can play `test_steps\test` | yes 2D and 3D |
+| lua `test_steps\test` | **not a proof** (wrong file / not `play_next`) |
 
-So: overlay path works. OGG load works. Creature sections resolve. If the player still hears no **steps**, the remaining code paths are only:
-
-1. `m_steps_map` miss for the cycle actually playing (`disable=true`, no release log)
-2. `play_next` not reached (dist >= 50, null pair)
-3. 3D cull (`max_dist` / `psSoundCull`)
-4. `StepSounds.empty()` despite overlay (would require `CreateSounds` pushing nothing; empty string only)
-
-(1) is the only one that stays silent while the mutant is in your face and the pair is loaded. Release has no `Msg` for it. Next proof is a live dump of the playing `MotionID` vs `m_steps_map`, not another pair file.
+Overlay + file-exist is all the boot log can say. Next boot must log every `materials/material_pairs*.ltx` in VFS (leftovers) and beep the **pair** OGGs via `play_no_feedback` flags 0. If that beep is heard and walk is silent: `disable=true` or torso skip. If the beep is not heard: OGG/3D/stamp, not the pair LTX.
 
 ---
 
 ## 10. README
 
-`README.md` matches this recipe. Ground-surface buckets are gone. Actor / stalker steps are the same `CStepManager` function with last-material wired to ground. Out of scope for this pack.
+`README.md` matches the `@default` recipe. That recipe is only as good as last-material == default **and** a clean VFS (no leftover `material_pairs_zzzz_*.ltx`). Actor / stalker steps are the same `CStepManager` function with last-material wired to ground. Out of scope for this pack.

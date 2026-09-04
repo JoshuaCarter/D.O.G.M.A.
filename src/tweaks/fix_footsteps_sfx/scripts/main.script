@@ -1,4 +1,5 @@
--- Log live material + step_params. No probe playback.
+-- Prove VFS pair files + engine-identical 3D play of the pair OGGs.
+-- LTX keys are not m_steps_map. lua s2d is not CStepManager.
 
 local LOG = "[dogma_tweaks_fix_footsteps_sfx]"
 
@@ -13,6 +14,24 @@ local function log_step_line(params, key)
 		return
 	end
 	printf("%s %s %s = %s", LOG, params, key, ini:r_string(params, key))
+end
+
+local function engine_play_step(obj, path)
+	local fs = getFS()
+	if fs:exist("$game_sounds$", path .. ".ogg") == nil then
+		printf("%s missing ogg %s", LOG, path)
+		return
+	end
+	local snd = sound_object(path)
+	if not snd then
+		printf("%s sound_object fail %s", LOG, path)
+		return
+	end
+	-- CStepManager::play_next: flags 0, pos = object + 0.5y, vol = power
+	local pos = obj:position()
+	pos.y = pos.y + 0.5
+	snd:play_no_feedback(obj, sound_object.s3d, 0, pos, 1.0, 1.0)
+	printf("%s engine-play %s at %s", LOG, path, obj:section())
 end
 
 local function log_near_monster(obj)
@@ -34,9 +53,23 @@ local function log_near_monster(obj)
 		log_step_line(params, "stand_run_0")
 		log_step_line(params, "stand_run_fwd_0")
 	end
+	if mat == "creatures\\hoof" then
+		engine_play_step(obj, "test_steps\\hoof_ground_1")
+	elseif mat == "creatures\\fast" then
+		engine_play_step(obj, "test_steps\\step_fast-01")
+	end
 end
 
 function actor_on_first_update()
+	local names = dogma.xlibs.xfs.files("$game_data$", "materials\\", ".ltx")
+	local i = 1
+	while names[i] do
+		local n = names[i]
+		if string.find(n, "material_pairs", 1, true) then
+			printf("%s vfs materials/%s.ltx", LOG, n)
+		end
+		i = i + 1
+	end
 	log_step_line("m_snork_step_params", "stand_run_0")
 	log_step_line("m_boar_step_params", "stand_run_fwd_0")
 	level.iterate_nearest(db.actor:position(), 40, log_near_monster)

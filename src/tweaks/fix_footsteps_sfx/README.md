@@ -2,7 +2,7 @@
 
 Mutant steps only. Not player. Not stalker NPCs. Not zombies (those used the human bank).
 
-Every step this pack plays is a pair we wrote plus an OGG under `sounds/mutant_steps/`. Flat dir. Engine path is `mutant_steps\<file>` (no extra folder per bank).
+Every step this pack plays is a pair we wrote plus an OGG under `sounds/test_steps/`. Flat dir. Engine path is `test_steps\<file>` (no extra folder per bank).
 
 ## Comment defaults (all shipped OGGs)
 
@@ -16,9 +16,9 @@ Engine ctor default without a comment is 300. That is not a footstep range. 40 i
 
 After Audacity export, restamp (rewrites page CRC):
 
-`py -3 stamp_ogg_comments.py sounds/mutant_steps`
+`py -3 stamp_ogg_comments.py`
 
-Edit `stamp_ogg_comments.ini` next to the script. `--check` to inspect. CLI `--max` / `--vol` / `--min` / `--ai` override the ini.
+Dir is `dir=` in `stamp_ogg_comments.ini`. `--check` to inspect. CLI path / `--max` / `--vol` / `--min` / `--ai` override the ini.
 
 ## Missing step files
 

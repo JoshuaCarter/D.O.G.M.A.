@@ -4,10 +4,10 @@
 Audacity drops the binary first comment. Engine then uses ctor max_dist 300.
 This puts the pack blob back without re-encoding audio.
 
-  py -3 stamp_ogg_comments.py sounds/creature_steps/water
+  py -3 stamp_ogg_comments.py
   py -3 stamp_ogg_comments.py path/to/file.ogg --check
 
-Defaults live in stamp_ogg_comments.ini next to this script. CLI flags override.
+Dir + defaults live in stamp_ogg_comments.ini next to this script. CLI flags override.
 """
 
 from __future__ import annotations
@@ -317,6 +317,7 @@ def load_ini(here: Path) -> dict:
     max_dist = s.getfloat("max_dist")
     ai_raw = s.get("max_ai_dist", fallback="").strip()
     return {
+        "dir": s.get("dir", fallback="").strip(),
         "min_dist": s.getfloat("min_dist"),
         "max_dist": max_dist,
         "vol": s.getfloat("base_volume"),
@@ -341,7 +342,7 @@ def main() -> int:
     here = Path(__file__).resolve().parent
     ini = load_ini(here)
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("paths", nargs="+", type=Path, help="ogg files or dirs")
+    ap.add_argument("paths", nargs="*", type=Path, help="ogg files or dirs (default: ini dir)")
     ap.add_argument("--min", dest="min_dist", type=float, default=None)
     ap.add_argument("--max", dest="max_dist", type=float, default=None)
     ap.add_argument("--vol", dest="vol", type=float, default=None)
@@ -355,7 +356,10 @@ def main() -> int:
     vol = ini["vol"] if args.vol is None else args.vol
     ai = ini["ai_dist"] if args.ai_dist is None else args.ai_dist
     game_type = ini["game_type"] if args.game_type is None else args.game_type
-    files = collect([resolve_path(p, here) for p in args.paths])
+    raw_paths = args.paths or ([Path(ini["dir"])] if ini["dir"] else [])
+    if not raw_paths:
+        raise SystemExit(f"set dir= in {INI_NAME} or pass a path")
+    files = collect([resolve_path(p, here) for p in raw_paths])
     if not files:
         print("no ogg files", file=sys.stderr)
         return 1

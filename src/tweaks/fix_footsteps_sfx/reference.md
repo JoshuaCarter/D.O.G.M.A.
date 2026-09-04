@@ -18,10 +18,25 @@ Source tree: `c:\gamma_dev\xray-monolith-2026.7.13\xray-monolith-2026.7.13`
 
 6. **"Always `(creature, default)`."** Engine: `SetPLastMaterialIDX` skipped for `CBaseMonster`, `get_current_pair` reads `m_last_material_idx` (stays default). **Never dumped at runtime.** Leftover earth pairs in VFS made the experiment invalid. If last is actually ground and leftovers die, new mats (`fast`) have **null** pair -> silent.
 
-23:16 boot (after DOGMA full-replace):
+23:16 / 23:28 boots:
 
-- VFS has `material_pairs_fast.ltx` (not DOGMA). That file added `fast|earth` and every other surface. Those new pairs have no `step_sounds` from us unless we overlay them.
-- Probe `engine-play test_steps\hoof_ground_1` ran. `test_steps` is the loud beep. If that call is silent, play/3D failed. If it beeps and walk does not, `play_next` did not run.
+- VFS has `material_pairs_fast.ltx` (not DOGMA). That file added `fast|earth` and every other surface.
+- Probe logged `engine-play 2d+3d test_steps\hoof_ground_1` at first_update. User heard nothing.
+- That call is **not** proof the file is silent. Decoded PCM of `test_steps\hoof_ground_1.ogg`: 44100, ~57 ms, peak full-scale (32768). Same sha on every `test_steps` file.
+- `play_no_feedback` does **not** die on Lua GC. `i_destroy_source` is a no-op (`SoundRender_Core_SourceManager.cpp:29-32`). Emitter keeps `owner_data`.
+- 57 ms at `actor_on_first_update` is load-fade. Easy to miss. Not a walk proof. Not a mute proof.
+
+23:42 boot: `held 2d control=1 beep=2` at log 9887, then `intro_start game_loaded` at 9902. Timer ran **during load intro**. User heard long `tinnitus3a` (caught the tail). 57 ms beep was already over. Sitting on the load screen: both finished before enter.
+
+Play works. File path works (handle 2). Timing was the probe hole.
+
+23:56: dismiss ran. `beep_ms=0 tinnitus_ms=6000 mutant_ms=0`. Length is not "too short". Vanilla plays. Ours do not. Both our banks.
+
+Stamp was packing **one packet per page**. Pre-stamp `mutant_steps` is 3 pages: ident (BOS) | comment+setup | audio (EOS). Vorbis I / X-Ray layout. After stamp: 40 pages. Engine `ov_pcm_total` 0. miniaudio still decodes.
+
+`test_steps` also used libVorbis 20200704 / ffmpeg Lavf61. Engine decoder is the 2005-era one (`Xiph.Org libVorbis I 20050304` on working mutant files).
+
+Stamp now writes the 3-page layout. Restored pre-stamp mutant (2005) + original test beep, restamped. Need `mutant_ms` / `beep_ms` > 0.
 
 What 22:47 did prove: `fast|default` added, `hoof|default` changed, no `Can't find sound` / bad rate for `test_steps`, live `material` / `step_params` strings. That is overlay + file exist. Not play.
 
@@ -246,13 +261,13 @@ Reload map miss is the only release-silent path that can kill a moving mutant th
 
 `SOUND_TYPE_MONSTER_STEP` (`0x20008000`) is not a listener mute. Used for AI events. `g_type==0` skips AI notify only.
 
-Lua `xsound.play` / `sound_object` 2D: no max_dist cull, no occlusion. Same ogg can beep from script and stay silent from `play_no_feedback` if 3D cull hits.
+Lua `xsound.play` / `sound_object` 2D: no max_dist cull, no occlusion. Same ogg can beep from script and stay silent from 3D `play_no_feedback` if 3D cull hits.
 
 Stamp **ctor defaults**: `min_dist=1`, `max_dist=300`, `base_volume=1`, `max_ai_dist=300`. `game_type` `SOUND_TYPE_MONSTER_STEP` (`CreateSounds` uses `sg_SourceType` so the OGG blob is `g_type`). `g_type` is AI notify, not a listener mute.
 
 Lua `sound_object` ctor uses `SOUND_TYPE_NO_SOUND`, not `sg_SourceType`. Playback still 3D. Do not treat lua hear as `play_next`.
 
-Probe now: `play_no_feedback(monster, s3d=0, pos+0.5y, vol=1)` on `test_steps\hoof_ground_1` / `step_fast-01`. Same call as `play_next`. If that beeps and walking does not, `play_next` never ran.
+`i_destroy_source` is empty. Unheld `play_no_feedback` keeps playing. 23:42 2D ran before `intro_start game_loaded`. See section 0.
 
 ---
 
@@ -301,7 +316,7 @@ To replace vanilla hoof/boar steps: step 2 on `@[creatures\hoof@default]` is suf
 | boar `material` / `step_params` live | `creatures\hoof`, `m_boar_step_params` |
 | lua `test_steps\test` | **not a proof** (wrong file / not `play_next`) |
 
-Overlay + file-exist is all the boot log can say. Next boot must log every `materials/material_pairs*.ltx` in VFS (leftovers) and beep the **pair** OGGs via `play_no_feedback` flags 0. If that beep is heard and walk is silent: `disable=true` or torso skip. If the beep is not heard: OGG/3D/stamp, not the pair LTX.
+Overlay + file-exist is all the boot log can say. File PCM is loud. 23:28 first_update 2D is not a mute proof. Next boot: `held 2d control=` line 2 s after load. Then walk a boar/snork.
 
 ---
 

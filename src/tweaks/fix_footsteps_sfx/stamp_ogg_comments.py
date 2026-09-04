@@ -91,15 +91,27 @@ def packets_from_pages(pages: list[bytes]) -> list[tuple[bytes, int]]:
     return out
 
 
-def make_page(serial: int, seq: int, granule: int, flags: int, payload: bytes) -> bytes:
+def lace_packet(pkt: bytes) -> list[int]:
+    if not pkt:
+        return [0]
     segs: list[int] = []
-    left = len(payload)
-    while True:
-        n = min(255, left)
+    off = 0
+    while off < len(pkt):
+        n = min(255, len(pkt) - off)
         segs.append(n)
-        left -= n
-        if n < 255:
-            break
+        off += n
+    if len(pkt) % 255 == 0:
+        segs.append(0)
+    return segs
+
+
+def make_page_packets(serial: int, seq: int, granule: int, flags: int, packets: list[bytes]) -> bytes:
+    segs: list[int] = []
+    for pkt in packets:
+        segs.extend(lace_packet(pkt))
+    if not (1 <= len(segs) <= 255):
+        raise ValueError(f"bad segment count {len(segs)}")
+    body = b"".join(packets)
     header = bytearray(27 + len(segs))
     header[0:4] = b"OggS"
     header[4] = 0
@@ -110,41 +122,28 @@ def make_page(serial: int, seq: int, granule: int, flags: int, payload: bytes) -
     header[22:26] = b"\x00\x00\x00\x00"
     header[26] = len(segs)
     header[27:] = bytes(segs)
-    page = bytes(header) + payload
+    page = bytes(header) + body
     crc = crc32_ogg(page)
     return page[:22] + crc.to_bytes(4, "little") + page[26:]
 
 
-def pack_packet_pages(
-    serial: int,
-    seq0: int,
-    granule: int,
-    packet: bytes,
-    *,
-    bos: bool = False,
-    eos: bool = False,
-) -> tuple[list[bytes], int]:
-    """One packet, possibly split across pages. Returns (pages, next_seq)."""
-    pages = []
+def pack_audio_pages(serial: int, seq0: int, packets: list[bytes], last_gran: int) -> tuple[list[bytes], int]:
+    pages: list[bytes] = []
     seq = seq0
-    off = 0
-    first = True
-    while True:
-        chunk = packet[off : off + 255 * 255]
-        off += len(chunk)
-        last = off >= len(packet)
-        flags = 0
-        if not first:
-            flags |= 0x01
-        if first and bos:
-            flags |= 0x02
-        if last and eos:
-            flags |= 0x04
-        pages.append(make_page(serial, seq, granule if last else 0, flags, chunk))
+    batch: list[bytes] = []
+    segs = 0
+    for i, pkt in enumerate(packets):
+        extra = len(lace_packet(pkt))
+        if batch and segs + extra > 255:
+            pages.append(make_page_packets(serial, seq, 0, 0, batch))
+            seq += 1
+            batch = []
+            segs = 0
+        batch.append(pkt)
+        segs += extra
+    if batch:
+        pages.append(make_page_packets(serial, seq, last_gran, 0x04, batch))
         seq += 1
-        first = False
-        if last:
-            break
     return pages, seq
 
 
@@ -255,14 +254,15 @@ def stamp_file(
     new_comments = [blob] + keep_meta(comments)
     new_comment = build_comment_packet(vendor, new_comments)
 
-    seq = 0
-    out_pages, seq = pack_packet_pages(serial, seq, 0, ident, bos=True)
-    more, seq = pack_packet_pages(serial, seq, 0, new_comment)
+    # Vorbis I + X-Ray: page0 ident (BOS), page1 comment+setup, then audio. Last page EOS.
+    # One-packet-per-page made ov_pcm_total 0 on the engine decoder.
+    setup = packets[2][0]
+    audio = [pkt for pkt, _ in packets[3:]]
+    last_gran = packets[-1][1] if len(packets) > 3 else 0
+    out_pages = [make_page_packets(serial, 0, 0, 0x02, [ident])]
+    out_pages.append(make_page_packets(serial, 1, 0, 0, [new_comment, setup]))
+    more, _ = pack_audio_pages(serial, 2, audio, last_gran)
     out_pages.extend(more)
-    for i, (pkt, gran) in enumerate(packets[2:]):
-        eos = i == len(packets) - 3
-        more, seq = pack_packet_pages(serial, seq, gran, pkt, eos=eos)
-        out_pages.extend(more)
     new = b"".join(out_pages)
     if not dry:
         path.write_bytes(new)

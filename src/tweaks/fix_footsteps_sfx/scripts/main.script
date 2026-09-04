@@ -1,7 +1,14 @@
--- Prove VFS pair files + engine-identical 3D play of the pair OGGs.
--- LTX keys are not m_steps_map. lua s2d is not CStepManager.
+-- VFS dump on first_update. Beeps after load-screen dismiss (timer was firing during intro).
 
 local LOG = "[dogma_tweaks_fix_footsteps_sfx]"
+local BEEP = "test_steps\\hoof_ground_1"
+local MUTANT = "mutant_steps\\hoof_ground_1"
+
+local started = false
+local frames = 0
+local need_dismiss = false
+local prev_dismissed = nil
+local prev_prompt = nil
 
 local function log_step_line(params, key)
 	local ini = system_ini()
@@ -14,26 +21,6 @@ local function log_step_line(params, key)
 		return
 	end
 	printf("%s %s %s = %s", LOG, params, key, ini:r_string(params, key))
-end
-
-local function engine_play_step(obj, path)
-	local fs = getFS()
-	if fs:exist("$game_sounds$", path .. ".ogg") == nil then
-		printf("%s missing ogg %s", LOG, path)
-		return
-	end
-	local snd2d = sound_object(path)
-	local snd3d = sound_object(path)
-	if not snd2d or not snd3d then
-		printf("%s sound_object fail %s", LOG, path)
-		return
-	end
-	-- s2d first: if this is silent the file is dead. Then same call as play_next.
-	snd2d:play_no_feedback(db.actor, sound_object.s2d, 0, vector():set(0, 0, 0), 1.0, 1.0)
-	local pos = obj:position()
-	pos.y = pos.y + 0.5
-	snd3d:play_no_feedback(obj, sound_object.s3d, 0, pos, 1.0, 1.0)
-	printf("%s engine-play 2d+3d %s at %s", LOG, path, obj:section())
 end
 
 local function log_near_monster(obj)
@@ -55,14 +42,79 @@ local function log_near_monster(obj)
 		log_step_line(params, "stand_run_0")
 		log_step_line(params, "stand_run_fwd_0")
 	end
-	if mat == "creatures\\hoof" then
-		engine_play_step(obj, "test_steps\\hoof_ground_1")
-	elseif mat == "creatures\\fast" then
-		engine_play_step(obj, "test_steps\\step_fast-01")
+end
+
+local function log_beep_files()
+	local tostr = tostring
+	local names = dogma.xlibs.xfs.files("$game_sounds$", "test_steps\\", ".ogg")
+	local i = 1
+	local n = 0
+	while names[i] do
+		n = n + 1
+		i = i + 1
+	end
+	local xs = dogma.xlibs.xsound
+	printf("%s vfs test_steps n=%s beep_ms=%s tinnitus_ms=%s mutant_ms=%s", LOG, tostr(n), tostr(xs.length(BEEP)), tostr(xs.length("affects\\tinnitus3a")), tostr(xs.length(MUTANT)))
+end
+
+function start_beeps()
+	if started then
+		return
+	end
+	started = true
+	log_beep_files()
+	local xs = dogma.xlibs.xsound
+	local h_m = xs.play_at(MUTANT, { s2d = true, volume = 1.0 })
+	local h_b = xs.play_at(BEEP, { s2d = true, volume = 1.0 })
+	printf("%s held 2d mutant h=%s beep h=%s", LOG, tostring(h_m), tostring(h_b))
+end
+
+function on_load_dismissed()
+	if prev_dismissed then
+		prev_dismissed()
+	end
+	printf("%s load dismissed", LOG)
+	start_beeps()
+end
+
+function on_load_prompt()
+	if prev_prompt then
+		prev_prompt()
+	end
+	need_dismiss = true
+	printf("%s load prompt, wait dismiss", LOG)
+end
+
+function hook_load_screen()
+	local d = rawget(_G, "OnLoadingScreenDismissed")
+	if d ~= on_load_dismissed then
+		prev_dismissed = d
+		rawset(_G, "OnLoadingScreenDismissed", on_load_dismissed)
+	end
+	local p = rawget(_G, "OnLoadingScreenKeyPrompt")
+	if p ~= on_load_prompt then
+		prev_prompt = p
+		rawset(_G, "OnLoadingScreenKeyPrompt", on_load_prompt)
 	end
 end
 
+function actor_on_update()
+	if started then
+		return
+	end
+	if need_dismiss then
+		return
+	end
+	frames = frames + 1
+	if frames < 180 then
+		return
+	end
+	printf("%s fallback no load prompt", LOG)
+	start_beeps()
+end
+
 function actor_on_first_update()
+	hook_load_screen()
 	local names = dogma.xlibs.xfs.files("$game_data$", "materials\\", ".ltx")
 	local i = 1
 	while names[i] do
@@ -78,5 +130,7 @@ function actor_on_first_update()
 end
 
 function on_game_start()
+	hook_load_screen()
 	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+	RegisterScriptCallback("actor_on_update", actor_on_update)
 end

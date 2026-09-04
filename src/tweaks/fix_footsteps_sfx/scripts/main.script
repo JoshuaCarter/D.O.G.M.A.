@@ -1,7 +1,19 @@
--- Probe: play the test step once, dump nearby mutant material/step_params.
+-- Log live material + step_params. No probe playback.
 
 local LOG = "[dogma_tweaks_fix_footsteps_sfx]"
-local PROBE = "test_steps\\test"
+
+local function log_step_line(params, key)
+	local ini = system_ini()
+	if not ini:section_exist(params) then
+		printf("%s missing section %s", LOG, params)
+		return
+	end
+	if not ini:line_exist(params, key) then
+		printf("%s %s has no %s", LOG, params, key)
+		return
+	end
+	printf("%s %s %s = %s", LOG, params, key, ini:r_string(params, key))
+end
 
 local function log_near_monster(obj)
 	if not IsMonster(obj) then
@@ -18,11 +30,15 @@ local function log_near_monster(obj)
 		params = ini:r_string(sec, "step_params")
 	end
 	printf("%s near %s mat=%s step_params=%s", LOG, sec, mat, params)
+	if params ~= "?" then
+		log_step_line(params, "stand_run_0")
+		log_step_line(params, "stand_run_fwd_0")
+	end
 end
 
 function actor_on_first_update()
-	local ok = dogma.xlibs.xsound.play(PROBE, { volume = 1.0 })
-	printf("%s probe %s ok=%s", LOG, PROBE, tostring(ok))
+	log_step_line("m_snork_step_params", "stand_run_0")
+	log_step_line("m_boar_step_params", "stand_run_fwd_0")
 	level.iterate_nearest(db.actor:position(), 40, log_near_monster)
 end
 

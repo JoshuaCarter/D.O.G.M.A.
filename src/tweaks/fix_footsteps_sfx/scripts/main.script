@@ -1,0 +1,31 @@
+-- Probe: play the test step once, dump nearby mutant material/step_params.
+
+local LOG = "[dogma_tweaks_fix_footsteps_sfx]"
+local PROBE = "test_steps\\test"
+
+local function log_near_monster(obj)
+	if not IsMonster(obj) then
+		return
+	end
+	local sec = obj:section()
+	local ini = system_ini()
+	local mat = "?"
+	local params = "?"
+	if ini:line_exist(sec, "material") then
+		mat = ini:r_string(sec, "material")
+	end
+	if ini:line_exist(sec, "step_params") then
+		params = ini:r_string(sec, "step_params")
+	end
+	printf("%s near %s mat=%s step_params=%s", LOG, sec, mat, params)
+end
+
+function actor_on_first_update()
+	local ok = dogma.xlibs.xsound.play(PROBE, { volume = 1.0 })
+	printf("%s probe %s ok=%s", LOG, PROBE, tostring(ok))
+	level.iterate_nearest(db.actor:position(), 40, log_near_monster)
+end
+
+function on_game_start()
+	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
+end

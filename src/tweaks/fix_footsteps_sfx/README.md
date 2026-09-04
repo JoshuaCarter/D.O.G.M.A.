@@ -28,7 +28,7 @@ Empty `step_sounds` on purpose:
 
 - `creatures\rodent` - silent (rats / tushkano are remapped to medium)
 
-Pairs are `@[` and `step_sounds` only, creature-first (`creatures\X@surface`). No reverse `:inherit` sections: DLTX unions parents across files, so two banks writing opposite `:A@B` / `:B@A` is a fatal cycle. Engine RT table already maps both lookup orders from one pair. Files are named `material_pairs_zzzz_dogma_*.ltx` so include order is last (MO2 last is not enough). Collide / break stay vanilla.
+Pairs are `@[` and `step_sounds` only, creature-first (`creatures\X@surface`). No reverse `:inherit` sections: DLTX unions parents across files, so two banks writing opposite `:A@B` / `:B@A` is a fatal cycle. Engine RT table already maps both lookup orders from one pair. Files are `mod_material_pairs_zzzz_dogma_*.ltx` so DLTX owns the pair keys. Collide / break stay vanilla.
 
 ## Surface Meta Buckets For Creature Materials
 Engine surface -> meta bucket. For creatures only.

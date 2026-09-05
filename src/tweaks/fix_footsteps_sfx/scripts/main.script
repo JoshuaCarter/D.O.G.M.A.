@@ -1,7 +1,7 @@
 -- VFS dump on first_update. Beeps after load-screen dismiss (timer was firing during intro).
 
 local LOG = "[dogma_tweaks_fix_footsteps_sfx]"
-local BEEP = "test_steps\\hoof_ground_1"
+local BEEP = "mutant_steps\\hoof_ground_1"
 local MUTANT = "mutant_steps\\hoof_ground_1"
 
 local started = false
@@ -46,7 +46,7 @@ end
 
 local function log_beep_files()
 	local tostr = tostring
-	local names = dogma.xlibs.xfs.files("$game_sounds$", "test_steps\\", ".ogg")
+	local names = dogma.xlibs.xfs.files("$game_sounds$", "mutant_steps\\", ".ogg")
 	local i = 1
 	local n = 0
 	while names[i] do
@@ -54,7 +54,7 @@ local function log_beep_files()
 		i = i + 1
 	end
 	local xs = dogma.xlibs.xsound
-	printf("%s vfs test_steps n=%s beep_ms=%s tinnitus_ms=%s mutant_ms=%s", LOG, tostr(n), tostr(xs.length(BEEP)), tostr(xs.length("affects\\tinnitus3a")), tostr(xs.length(MUTANT)))
+	printf("%s vfs mutant_steps n=%s beep_ms=%s tinnitus_ms=%s mutant_ms=%s", LOG, tostr(n), tostr(xs.length(BEEP)), tostr(xs.length("affects\\tinnitus3a")), tostr(xs.length(MUTANT)))
 end
 
 function start_beeps()

@@ -8,7 +8,7 @@ Source tree: `c:\gamma_dev\xray-monolith-2026.7.13\xray-monolith-2026.7.13`
 
 1. **"Pack ships one pair file."** Src does. The running VFS did not. Same log `Adding new material pair creatures\fast | materials\earth` (and default_object, grass, ...). Those sections are not in `mod_material_pairs_zzzz_dogma_mutants.ltx`. Root `#include "material_pairs_*.ltx"` pulls leftover `material_pairs_zzzz_*.ltx` from **any** mod / stale deploy. Overlay proof was about src, not what `GameMtlLib` walked.
 
-2. **"Lua play of `test_steps\\test` proves the OGG path."** Wrong file. Wrong if no position (`xsound` uses `s2d`). `s3d` is flags `0` (same as `play_next`) but that still is not `CStepManager` calling `play_next`. `hoof_ground_1` / `step_fast-01` / `test` are the same 5065-byte beep. Hearing `test` does not prove a step event fired.
+2. **"Lua play of `mutant_steps\\test` proves the OGG path."** Wrong file. Wrong if no position (`xsound` uses `s2d`). `s3d` is flags `0` (same as `play_next`) but that still is not `CStepManager` calling `play_next`. `hoof_ground_1` / `step_fast-01` / `test` are the same 5065-byte beep. Hearing `test` does not prove a step event fired.
 
 3. **"LTX `stand_run_0` present means steps arm."** `SStepInfo.disable` defaults **true** (`step_manager_defs.h:38`). Map fill is `ID_Cycle_Safe` at `reload`. Release miss = no log. LTX dump is not `m_steps_map`.
 
@@ -21,8 +21,8 @@ Source tree: `c:\gamma_dev\xray-monolith-2026.7.13\xray-monolith-2026.7.13`
 23:16 / 23:28 boots:
 
 - VFS has `material_pairs_fast.ltx` (not DOGMA). That file added `fast|earth` and every other surface.
-- Probe logged `engine-play 2d+3d test_steps\hoof_ground_1` at first_update. User heard nothing.
-- That call is **not** proof the file is silent. Decoded PCM of `test_steps\hoof_ground_1.ogg`: 44100, ~57 ms, peak full-scale (32768). Same sha on every `test_steps` file.
+- Probe logged `engine-play 2d+3d mutant_steps\hoof_ground_1` at first_update. User heard nothing.
+- That call is **not** proof the file is silent. Decoded PCM of `mutant_steps\hoof_ground_1.ogg`: 44100, ~57 ms, peak full-scale (32768). Same sha on every `mutant_steps` file.
 - `play_no_feedback` does **not** die on Lua GC. `i_destroy_source` is a no-op (`SoundRender_Core_SourceManager.cpp:29-32`). Emitter keeps `owner_data`.
 - 57 ms at `actor_on_first_update` is load-fade. Easy to miss. Not a walk proof. Not a mute proof.
 
@@ -34,11 +34,11 @@ Play works. File path works (handle 2). Timing was the probe hole.
 
 Stamp was packing **one packet per page**. Pre-stamp `mutant_steps` is 3 pages: ident (BOS) | comment+setup | audio (EOS). Vorbis I / X-Ray layout. After stamp: 40 pages. Engine `ov_pcm_total` 0. miniaudio still decodes.
 
-`test_steps` also used libVorbis 20200704 / ffmpeg Lavf61. Engine decoder is the 2005-era one (`Xiph.Org libVorbis I 20050304` on working mutant files).
+`mutant_steps` also used libVorbis 20200704 / ffmpeg Lavf61. Engine decoder is the 2005-era one (`Xiph.Org libVorbis I 20050304` on working mutant files).
 
 Stamp now writes the 3-page layout. Restored pre-stamp mutant (2005) + original test beep, restamped. Need `mutant_ms` / `beep_ms` > 0.
 
-What 22:47 did prove: `fast|default` added, `hoof|default` changed, no `Can't find sound` / bad rate for `test_steps`, live `material` / `step_params` strings. That is overlay + file exist. Not play.
+What 22:47 did prove: `fast|default` added, `hoof|default` changed, no `Can't find sound` / bad rate for `mutant_steps`, live `material` / `step_params` strings. That is overlay + file exist. Not play.
 
 ---
 
@@ -149,7 +149,7 @@ Missing ogg: `Can't find sound` + fallback `$no_sound.ogg` (`SoundRender_Source_
 
 Not 44100: `Invalid source rate` + `LoadWave` false (`SoundRender_Source_loader.cpp:79-85`). Handle still exists. Play is not skipped on rate fail (`SoundRender_Core.cpp:353-355` checks handle only).
 
-This boot: no `Can't find sound` / `Invalid source rate` for `test_steps\`. Pair overlay ran. Sounds were created.
+This boot: no `Can't find sound` / `Invalid source rate` for `mutant_steps\`. Pair overlay ran. Sounds were created.
 
 ---
 
@@ -310,11 +310,11 @@ To replace vanilla hoof/boar steps: step 2 on `@[creatures\hoof@default]` is suf
 | `creatures\fast` material created | yes, id 103 |
 | pair `fast\|default` created | yes, id 1788 |
 | pair `hoof\|default` overlaid | yes, id 996 |
-| `step_sounds` keys present on those `@[` sections | yes (`test_steps\...`) |
-| `test_steps` missing / bad rate at boot | no log lines |
+| `step_sounds` keys present on those `@[` sections | yes (`mutant_steps\...`) |
+| `mutant_steps` missing / bad rate at boot | no log lines |
 | snork `material` / `step_params` live | `creatures\fast`, `m_snork_step_params`, `stand_run_0` present |
 | boar `material` / `step_params` live | `creatures\hoof`, `m_boar_step_params` |
-| lua `test_steps\test` | **not a proof** (wrong file / not `play_next`) |
+| lua `mutant_steps\test` | **not a proof** (wrong file / not `play_next`) |
 
 Overlay + file-exist is all the boot log can say. File PCM is loud. 23:28 first_update 2D is not a mute proof. Next boot: `held 2d control=` line 2 s after load. Then walk a boar/snork.
 

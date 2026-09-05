@@ -19,3 +19,60 @@ No empty `step_sounds =`. No reverse pair sections. Collide / break stay vanilla
 X-Ray v3: `min_dist 1`, `max_dist 300`, `base_volume 1.0`, `max_ai_dist 300` (engine ctor defaults). `game_type` `SOUND_TYPE_MONSTER_STEP`.
 
 All files 44100 Hz mono. After export: `py -3 stamp_ogg_comments.py` (`dir=` in `stamp_ogg_comments.ini`). `--check` to inspect.
+
+
+## Mutant Categories
+
+Mutants have these sfx categories (stalker = human steps, i.e. we don't handle it)
+
+|mutant type (inc partial match)|foot type|size (baseline)|
+|-|-|-|
+|baby_yaga|stalker|mid|
+|zombie|stalker|mid|
+|bloodsucker|foot|mid|
+|boar|hoof|mid|
+|burer|foot|mid|
+|cat|paw|mid|
+|chimera|claw|mid|
+|dog|paw|mid|
+|flesh|hoof|mid|
+|fracture|foot|mid|
+|gigant|foot|large|
+|karlik|foot|mid|
+|lurker|claw|mid|
+|bibliotekar|claw|large|
+|fracture|foot|mid|
+|controller|foot|mid|
+|psysucker|foot|mid|
+|pseudodog|paw|mid|
+|psydog|paw|mid|
+|psysucker|foot|mid|
+|rat|paw|small|
+|snork|foot|mid|
+|tushkano|claw|small|
+
+### Mutant Overrides
+
+|mutant type (exact match)|foot type|size (override)|
+|-|-|-|
+|bloodsucker_strong_big|foot|large|
+|burer_big|foot|large|
+|gigant_very_big|foot|huge|
+
+
+### OGG files are broken into these categories
+
+|foot type|foot size|surface type|file name|
+|-|-|-|-|
+|hoof|mid|soft|hoof_{mid}_soft_n|
+|hoof|mid|hard|hoof_{mid}_hard_n|
+|hoof|mid|hard|hoof_{mid}_wet_n|
+|paw|mid|soft|paw_{small|mid}_soft_n|
+|paw|mid|hard|paw_{small|mid}_hard_n|
+|paw|mid|hard|paw_{small|mid}_wet_n|
+|claw|mid|soft|claw_{small|mid|large}_soft_n|
+|claw|mid|hard|claw_{small|mid|large}_hard_n|
+|claw|mid|hard|claw_{small|mid|large}_wet_n|
+|foot|mid|soft|foot_{mid|large|huge}_soft_n|
+|foot|mid|hard|foot_{mid|large|huge}_hard_n|
+|foot|mid|hard|foot_{mid|large|huge}_wet_n|

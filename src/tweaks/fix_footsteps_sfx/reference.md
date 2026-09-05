@@ -316,7 +316,7 @@ To replace vanilla hoof/boar steps: step 2 on `@[creatures\hoof@default]` is suf
 | boar `material` / `step_params` live | `creatures\hoof`, `m_boar_step_params` |
 | lua `mutant_steps\test` | **not a proof** (wrong file / not `play_next`) |
 
-Overlay + file-exist is all the boot log can say. File PCM is loud. 23:28 first_update 2D is not a mute proof. Next boot: `held 2d control=` line 2 s after load. Then walk a boar/snork.
+Overlay + file-exist is all the boot log can say. Stamp 3-page layout is what made engine duration > 0. Walk proof is `CStepManager::play_next`, not a lua 2D hold.
 
 ---
 

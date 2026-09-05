@@ -10,7 +10,7 @@ Engine lookup for `CBaseMonster` is always pair `(creature_material, default)`. 
 2. Creature `material =` remaps onto those banks plus vanilla `hoof` / `medium` / `large`.
 3. Pair file overlays `@default` and the ground surfaces. Another VFS file (`material_pairs_fast.ltx`) creates empty `fast|earth` pairs; those get our `step_sounds`.
 4. `step_params` keys for cycles the engine actually plays (Larkin table + missing AOM/jump names).
-5. OGGs under `sounds/mutant_steps/` (loud beep so a step is obvious).
+5. OGGs under `sounds/mutant_steps/`.
 
 No empty `step_sounds =`. No reverse pair sections. Collide / break stay vanilla.
 

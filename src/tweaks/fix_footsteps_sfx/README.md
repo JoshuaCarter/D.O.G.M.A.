@@ -10,25 +10,30 @@ Engine lookup for `CBaseMonster` is always pair `(creature_material, default)`. 
 2. Creature `material =` remaps onto those banks plus vanilla `hoof` / `medium` / `large`.
 3. Pair file overlays `@default` and the ground surfaces. Another VFS file (`material_pairs_fast.ltx`) creates empty `fast|earth` pairs; those get our `step_sounds`.
 4. Larkin `step_params` (overrides Larkin if present) plus missing cycle names the engine plays.
-5. OGGs under `sounds/mutant_steps/`.
+5. OGGs under `sounds/mutants/`.
 
 No empty `step_sounds =`. No reverse pair sections. Collide / break stay vanilla.
 
 ## OGG comments
 
-X-Ray v3: `min_dist 1`, `max_dist 300`, `base_volume 1.0`, `max_ai_dist 300` (engine ctor defaults). `game_type` `SOUND_TYPE_MONSTER_STEP`.
+X-Ray v3: `min_dist 1`, `max_dist 300`, `base_volume 1.0`, `max_ai_dist 300` (engine ctor defaults). `game_type` `SOUND_TYPE_MONSTER`.
 
 All files 44100 Hz mono. After export: `py -3 stamp_ogg_comments.py` (`dir=` in `stamp_ogg_comments.ini`). `--check` to inspect.
 
+## SFX Structure
 
-## Mutant Categories
+- Mutants will map to ogg files partially based on their foot type: hoof, paw, claw, or foot. Each of those will have unique sounds.
+- Mutants will also map to ogg files based on their size.
+- Mutants will also map to ogg files based on the surface they stand on, we will break those down into soft, hard.
+- Mutants may map to multiple ogg files for any combination of the above.
+- Water sounds are shared more broadly across foot types
 
-Mutants have these sfx categories (stalker = human steps, i.e. we don't handle it)
+The result of the above rules is a file naming convention of one of:
+- `{hoof|paw|claw|foot}_{small|mid|large|huge}_{soft|hard}_{1-n}.ogg`
+- `water_{small|mid|large|huge}_{1-n}.ogg`
 
 |mutant type (inc partial match)|foot type|size (baseline)|
 |-|-|-|
-|baby_yaga|stalker|mid|
-|zombie|stalker|mid|
 |bloodsucker|foot|mid|
 |boar|hoof|mid|
 |burer|foot|mid|
@@ -50,8 +55,8 @@ Mutants have these sfx categories (stalker = human steps, i.e. we don't handle i
 |rat|paw|small|
 |snork|foot|mid|
 |tushkano|claw|small|
-
-### Mutant Overrides
+|baby_yaga|n/a|n/a|
+|zombie|n/a|n/a|
 
 |mutant type (exact match)|foot type|size (override)|
 |-|-|-|
@@ -59,19 +64,28 @@ Mutants have these sfx categories (stalker = human steps, i.e. we don't handle i
 |burer_big|foot|large|
 |gigant_very_big|foot|huge|
 
-## OGG files are broken into these categories
+### Resulting OGG files (not including generated step files)
 
-|foot type|foot size|surface type|file name|
-|-|-|-|-|
-|hoof|mid|soft|hoof_{mid}_soft_n|
-|hoof|mid|hard|hoof_{mid}_hard_n|
-|hoof|mid|hard|hoof_{mid}_wet_n|
-|paw|mid|soft|paw_{small|mid}_soft_n|
-|paw|mid|hard|paw_{small|mid}_hard_n|
-|paw|mid|hard|paw_{small|mid}_wet_n|
-|claw|mid|soft|claw_{small|mid|large}_soft_n|
-|claw|mid|hard|claw_{small|mid|large}_hard_n|
-|claw|mid|hard|claw_{small|mid|large}_wet_n|
-|foot|mid|soft|foot_{mid|large|huge}_soft_n|
-|foot|mid|hard|foot_{mid|large|huge}_hard_n|
-|foot|mid|hard|foot_{mid|large|huge}_wet_n|
+hoof_mid_soft_n
+hoof_mid_hard_n
+paw_mid_soft_n
+paw_mid_hard_n
+paw_small_soft_n
+paw_small_hard_n
+claw_small_soft_n
+claw_small_hard_n
+claw_mid_soft_n
+claw_mid_hard_n
+claw_large_soft_n
+claw_large_hard_n
+foot_mid_soft_n
+foot_mid_hard_n
+foot_large_soft_n
+foot_large_hard_n
+foot_huge_soft_n
+foot_huge_hard_n
+
+water_small_n
+water_mid_n
+water_large_n
+water_huge_n

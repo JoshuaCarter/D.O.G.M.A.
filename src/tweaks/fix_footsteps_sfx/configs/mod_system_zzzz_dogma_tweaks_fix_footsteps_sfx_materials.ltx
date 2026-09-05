@@ -1,4 +1,5 @@
-; Creature material= remaps + step_params keys. Late zzzz so DLTX wins last.
+; Creature material= remaps + missing cycle names. Late zzzz so DLTX wins last.
+; Larkin numbers live in mod_system_zzzz_dogma_tweaks_fix_footsteps_sfx_larkin.ltx.
 ; Pairs live in mod_material_pairs_zzzz_dogma_mutants.ltx.
 
 ; --- medium ---
@@ -987,136 +988,104 @@ material = creatures\large
 material = creatures\large
 
 
-; Cat: Larkin names the run `stand_run_fwd_0`; the model uses vanilla `stand_run_0`,
-; so sprint played no steps. Same timings, louder power so the paw bank carries.
-; AOM chase is `stand_run_attack_0`, not `stand_run_fwd_0`.
-; Jump pack is `run_jamp_0/1/2`. Larkin never listed them.
+; Missing cycle names only. Numbers copied from the Larkin line named in the comment.
+; Do not re-list keys that larkin.ltx already has.
+
+; Cat model run is `stand_run_0`; AOM chase is `stand_run_attack_0`; jump is `run_jamp_*`.
+; Larkin only has `stand_run_fwd_0`.
 @[cat_step_params]
-stand_walk_fwd_0        =   3,   0.70,    1.6,    0.25,    1.2,    0.90,    1.6,    0.40,    1.6
-stand_walk_dmg_0        =   3,   0.80,    1.6,    0.25,    1.2,    0.70,    1.6,    0.20,    0.8
-stand_run_0             =   1,   0.97,    1.6,    0.25,    1.2,    0.50,    1.6,    0.40,    1.6
-stand_run_fwd_0         =   1,   0.97,    1.6,    0.25,    1.2,    0.50,    1.6,    0.40,    1.6
-stand_run_attack_0      =   1,   0.97,    1.6,    0.25,    1.2,    0.50,    1.6,    0.40,    1.6
-stand_run_dmg_0         =   4,   0.50,    1.6,    0.20,    1.2,    0.50,    1.6,    0.70,    0.0
-run_jamp_0              =   1,   0.01,    1.6,    0.25,    1.2,    0.50,    1.6,    0.40,    1.6
-run_jamp_1              =   1,   0.01,    1.6,    0.25,    1.2,    0.50,    1.6,    0.40,    1.6
-run_jamp_2              =   1,   0.01,    1.6,    0.25,    1.2,    0.50,    1.6,    0.40,    1.6
+stand_run_0             =   1,   0.97,    1.0,    0.25,    0.7,    0.50,    1.0,    0.40,    1.0
+stand_run_attack_0      =   1,   0.97,    1.0,    0.25,    0.7,    0.50,    1.0,    0.40,    1.0
+run_jamp_0              =   1,   0.97,    1.0,    0.25,    0.7,    0.50,    1.0,    0.40,    1.0
+run_jamp_1              =   1,   0.97,    1.0,    0.25,    0.7,    0.50,    1.0,    0.40,    1.0
+run_jamp_2              =   1,   0.97,    1.0,    0.25,    0.7,    0.50,    1.0,    0.40,    1.0
 
-; Chimera: vanilla walk is `stand_walk_0`; Larkin only has `stand_walk_fwd_0`.
-; Fewer cycles so the chimera bank does not machine-gun.
-; Engine run-turn is `stand_run_turn_ls/rs_` (and 90), not `stand_turn_ls/rs_`.
+; Chimera walk is `stand_walk_0`. Chase-turn is `stand_run_turn_ls/rs_` (and 90).
 @[m_chimera_step_params]
-stand_walk_0            =   1,    0.53,    1.0,    0.01,    0.7,   0.53,    0.7,    0.01,    1.0
-stand_walk_fwd_0        =   1,    0.53,    1.0,    0.01,    0.7,   0.53,    0.7,    0.01,    1.0
-stand_walk_fwd_dmg_0    =   1,    0.63,    1.0,    0.96,    0.7,   0.36,    0.7,    0.97,    0.5
-stand_run_fwd_0         =   2,    0.15,    1.0,    0.25,    0.6,   0.01,    0.6,    0.90,    1.0
-stand_run_dmg_0         =   2,    0.15,    1.0,    0.40,    0.6,   0.01,    0.6,    0.01,    0.0
-stand_run_turn_ls_0     =   2,    0.15,    1.0,    0.25,    0.6,   0.01,    0.6,    0.90,    1.0
-stand_run_turn_rs_0     =   2,    0.15,    1.0,    0.25,    0.6,   0.01,    0.6,    0.90,    1.0
-stand_run_turn_90_ls_0  =   2,    0.15,    1.0,    0.25,    0.6,   0.01,    0.6,    0.90,    1.0
-stand_run_turn_90_rs_0  =   2,    0.15,    1.0,    0.25,    0.6,   0.01,    0.6,    0.90,    1.0
+stand_walk_0            =   6,    0.53,    1.0,    0.01,    0.7,   0.53,    0.7,    0.01,    1.0
+stand_run_turn_ls_0     =   5,    0.15,    1.0,    0.25,    0.6,   0.01,    0.6,    0.90,    1.0
+stand_run_turn_rs_0     =   5,    0.15,    1.0,    0.25,    0.6,   0.01,    0.6,    0.90,    1.0
+stand_run_turn_90_ls_0  =   5,    0.15,    1.0,    0.25,    0.6,   0.01,    0.6,    0.90,    1.0
+stand_run_turn_90_rs_0  =   5,    0.15,    1.0,    0.25,    0.6,   0.01,    0.6,    0.90,    1.0
 
-; Fracture: vanilla run is `stand_run_fwd_0`; Larkin only has `stand_run_0`.
+; Fracture run is `stand_run_fwd_0`. Larkin only has `stand_run_0`.
 @[fracture_normal_step_params]
 stand_run_fwd_0                 =   1,    0.60,    1.0,    0.36,    0.6,    0.32,    1.0,    0.12,    0.6
 
-; Bibliotekar uses m_fractur_step_params. Engine run is `stand_run_`, not `stand_run_fwd_`.
+; Bibliotekar uses m_fractur_step_params. Engine run is `stand_run_`. Larkin has no this section.
+; Times from fracture `stand_run_0` front pair.
 @[m_fractur_step_params]
-stand_run_0             =   1,    0.01,    1.0,    0.25,    0.6
-stand_run_dmg_0         =   1,    0.01,    1.0,    0.25,    0.6
+stand_run_0             =   1,    0.60,    1.0,    0.36,    0.6
+stand_run_dmg_0         =   1,    0.60,    1.0,    0.36,    0.6
 
-; Lurker: Larkin never defined timings. Solarint walk/run plus walk_fwd / run aliases.
-; SM_CHIMS, so chase-turn is chimera `stand_run_turn_ls/rs_`.
+; Lurker: Larkin never defined this section. SM_CHIMS, so chimera walk/run/turn.
 @[m_lurker_step_params]
-stand_walk_0            =   1,    0.01,    1.0,    0.25,    0.7
-stand_walk_fwd_0        =   1,    0.01,    1.0,    0.25,    0.7
-stand_run_fwd_0         =   1,    0.01,    1.0,    0.25,    0.6
-stand_run_0             =   1,    0.01,    1.0,    0.25,    0.6
-stand_run_turn_ls_0     =   1,    0.01,    1.0,    0.25,    0.6
-stand_run_turn_rs_0     =   1,    0.01,    1.0,    0.25,    0.6
-stand_run_turn_90_ls_0  =   1,    0.01,    1.0,    0.25,    0.6
-stand_run_turn_90_rs_0  =   1,    0.01,    1.0,    0.25,    0.6
+stand_walk_0            =   6,    0.53,    1.0,    0.01,    0.7,   0.53,    0.7,    0.01,    1.0
+stand_walk_fwd_0        =   6,    0.53,    1.0,    0.01,    0.7,   0.53,    0.7,    0.01,    1.0
+stand_run_fwd_0         =   5,    0.15,    1.0,    0.25,    0.6,   0.01,    0.6,    0.90,    1.0
+stand_run_0             =   5,    0.15,    1.0,    0.25,    0.6,   0.01,    0.6,    0.90,    1.0
+stand_run_turn_ls_0     =   5,    0.15,    1.0,    0.25,    0.6,   0.01,    0.6,    0.90,    1.0
+stand_run_turn_rs_0     =   5,    0.15,    1.0,    0.25,    0.6,   0.01,    0.6,    0.90,    1.0
+stand_run_turn_90_ls_0  =   5,    0.15,    1.0,    0.25,    0.6,   0.01,    0.6,    0.90,    1.0
+stand_run_turn_90_rs_0  =   5,    0.15,    1.0,    0.25,    0.6,   0.01,    0.6,    0.90,    1.0
 
+; Snork AOM swing + jump pack. Larkin already has walk/run/look/attack_2_2.
+@[m_snork_step_params]
+stand_run_fwd_0             =   1,    0.77,    1.0,    0.70,    0.7,    0.47,    1.0,    0.60,    1.0
+stand_run_attack_left_0     =   1,    0.77,    1.0,    0.70,    0.7,    0.47,    1.0,    0.60,    1.0
+stand_run_attack_right_0    =   1,    0.77,    1.0,    0.70,    0.7,    0.47,    1.0,    0.60,    1.0
+stand_attack_2_0            =   1,    0.97,    1.0,    0.97,    0.7,    0.22,    1.0,    0.97,    1.0
+stand_attack_2_1            =   1,    0.97,    1.0,    0.97,    0.7,    0.22,    1.0,    0.97,    1.0
+stand_somersault_0          =   1,    0.97,    1.0,    0.97,    0.7,    0.22,    1.0,    0.97,    1.0
 
-; Snork combat chase is ACT_RUN (`stand_run_0`). AOM left/right is only the swing override.
-; Larkin put 0.77/0.70 on run. Vanilla was 0.01/0.05. Late times never fire on that cycle.
-; Jump pack is stand_attack_2_0/1 + somersault. Missing from step_params = silent bound.
-![m_snork_step_params]
-stand_walk_fwd_0            =   1,    0.01,    1.0,    0.05,    1.0,    0.50,    1.0,    0.55,    1.0
-stand_walk_damaged_0        =   1,    0.01,    1.0,    0.05,    1.0,    0.50,    1.0,    0.55,    1.0
-stand_run_0                 =   1,    0.01,    1.0,    0.05,    1.0,    0.50,    1.0,    0.55,    1.0
-stand_run_damaged_0         =   1,    0.01,    1.0,    0.20,    1.0,    0.50,    1.0,    0.55,    1.0
-stand_run_fwd_0             =   1,    0.01,    1.0,    0.05,    1.0,    0.50,    1.0,    0.55,    1.0
-stand_run_look_left_0       =   1,    0.01,    1.0,    0.05,    1.0,    0.50,    1.0,    0.55,    1.0
-stand_run_look_right_0      =   1,    0.01,    1.0,    0.05,    1.0,    0.50,    1.0,    0.55,    1.0
-stand_run_attack_left_0     =   1,    0.01,    1.0,    0.05,    1.0,    0.50,    1.0,    0.55,    1.0
-stand_run_attack_right_0    =   1,    0.01,    1.0,    0.05,    1.0,    0.50,    1.0,    0.55,    1.0
-stand_steal_0               =   1,    0.01,    1.0,    0.05,    1.0,    0.50,    1.0,    0.55,    1.0
-stand_turn_ls_0             =   1,    0.01,    1.0,    0.05,    1.0,    0.50,    1.0,    0.55,    1.0
-stand_turn_rs_0             =   1,    0.01,    1.0,    0.05,    1.0,    0.50,    1.0,    0.55,    1.0
-stand_attack_0              =   1,    0.01,    1.0,    0.05,    1.0,    0.50,    1.0,    0.55,    1.0
-stand_attack_1              =   1,    0.01,    1.0,    0.05,    1.0,    0.50,    1.0,    0.55,    1.0
-stand_attack_2_0            =   1,    0.01,    1.0,    0.05,    1.0,    0.50,    1.0,    0.55,    1.0
-stand_attack_2_1            =   1,    0.01,    1.0,    0.05,    1.0,    0.50,    1.0,    0.55,    1.0
-stand_attack_2_2            =   1,    0.01,    1.0,    0.05,    1.0,    0.50,    1.0,    0.55,    1.0
-stand_somersault_0          =   1,    0.01,    1.0,    0.05,    1.0,    0.50,    1.0,    0.55,    1.0
-stand_look_around_0         =   1,    0.01,    1.0,    0.05,    1.0,    0.50,    1.0,    0.55,    1.0
-stand_threaten_0            =   1,    0.01,    1.0,    0.05,    1.0,    0.50,    1.0,    0.55,    1.0
-
-; Bloodsucker AOM: same names as snork. Larkin has `stand_attack_run_0` (lunge), not these.
-; Jump pack is boloto_jump_*.
+; Bloodsucker AOM + boloto jump. Larkin has `stand_attack_run_0` (lunge) and `stand_run_0`.
 @[m_bloodsucker_step_params]
 stand_run_attack_left_0     =   1,    0.10,    1.0,    0.60,    1.0
 stand_run_attack_right_0    =   1,    0.10,    1.0,    0.60,    1.0
-boloto_jump_prepare         =   1,    0.01,    1.0,    0.60,    1.0
-boloto_jump_fly             =   1,    0.01,    1.0,    0.60,    1.0
-boloto_jump_end             =   1,    0.01,    1.0,    0.60,    1.0
+boloto_jump_prepare         =   1,    0.10,    1.0,    0.60,    1.0
+boloto_jump_fly             =   1,    0.10,    1.0,    0.60,    1.0
+boloto_jump_end             =   1,    0.10,    1.0,    0.60,    1.0
 
-; Boar AOM is `stand_attack_run_left/right_0`. Larkin only has `stand_attack_run_0`.
+; Boar AOM. Larkin only has `stand_attack_run_0` / `stand_run_fwd_0`.
 @[m_boar_step_params]
 stand_attack_run_left_0     =   1,    0.35,    1.0,    0.55,    0.7,    0.01,    1.0,    0.90,    1.0
 stand_attack_run_right_0    =   1,    0.35,    1.0,    0.55,    0.7,    0.01,    1.0,    0.90,    1.0
 
-; Borya is SM_SNORK + AOM. Same jump pack as snork.
+; Borya is SM_SNORK + AOM. Larkin has no this section. Times from snork `stand_run_0` / `stand_attack_2_2`.
 @[m_borya_step_params]
-stand_run_attack_left_0     =   1,    0.01,    1.0,    0.05,    0.7
-stand_run_attack_right_0    =   1,    0.01,    1.0,    0.05,    0.7
-stand_run_fwd_0             =   1,    0.01,    1.0,    0.05,    0.7
-stand_run_look_left_0       =   1,    0.01,    1.0,    0.05,    0.7
-stand_run_look_right_0      =   1,    0.01,    1.0,    0.05,    0.7
-stand_attack_2_0            =   1,    0.01,    1.0,    0.05,    0.7
-stand_attack_2_1            =   1,    0.01,    1.0,    0.05,    0.7
-stand_somersault_0          =   1,    0.01,    1.0,    0.05,    0.7
+stand_run_attack_left_0     =   1,    0.77,    1.0,    0.70,    0.7,    0.47,    1.0,    0.60,    1.0
+stand_run_attack_right_0    =   1,    0.77,    1.0,    0.70,    0.7,    0.47,    1.0,    0.60,    1.0
+stand_run_fwd_0             =   1,    0.77,    1.0,    0.70,    0.7,    0.47,    1.0,    0.60,    1.0
+stand_run_look_left_0       =   1,    0.77,    1.0,    0.70,    0.7,    0.47,    1.0,    0.60,    1.0
+stand_run_look_right_0      =   1,    0.77,    1.0,    0.70,    0.7,    0.47,    1.0,    0.60,    1.0
+stand_attack_2_0            =   1,    0.97,    1.0,    0.97,    0.7,    0.22,    1.0,    0.97,    1.0
+stand_attack_2_1            =   1,    0.97,    1.0,    0.97,    0.7,    0.22,    1.0,    0.97,    1.0
+stand_somersault_0          =   1,    0.97,    1.0,    0.97,    0.7,    0.22,    1.0,    0.97,    1.0
 
-; Burer engine run-turn is `stand_run_fwd_turn_left/right_`. Vanilla never listed them.
+; Burer run-turn. Larkin commented `stand_run_fwd_0` is `5, 0.14, 1.0, 0.63, 0.6`.
 @[m_burer_step_params]
-stand_run_fwd_turn_left_0   =   1,    0.4,    1.0,    0.9,    0.6
-stand_run_fwd_turn_right_0  =   1,    0.4,    1.0,    0.9,    0.6
+stand_run_fwd_turn_left_0   =   5,    0.14,    1.0,    0.63,    0.6
+stand_run_fwd_turn_right_0  =   5,    0.14,    1.0,    0.63,    0.6
 
-; Gigant jumper is SM_SNORK. Same jump pack as snork.
+; Gigant jumper is SM_SNORK. Larkin gigant `stand_run_fwd_0` / `stand_attack_2`.
 @[gigant_jumper_step_params]
-stand_run_look_left_0       =   1,    0.01,    1.0,    0.05,    0.7
-stand_run_look_right_0      =   1,    0.01,    1.0,    0.05,    0.7
-stand_run_fwd_0             =   1,    0.01,    1.0,    0.05,    0.7
-stand_attack_2_0            =   1,    0.01,    1.0,    0.05,    0.7
-stand_attack_2_1            =   1,    0.01,    1.0,    0.05,    0.7
-stand_somersault_0          =   1,    0.01,    1.0,    0.05,    0.7
+stand_run_look_left_0       =   1,    0.01,    1.0,    0.53,    0.7
+stand_run_look_right_0      =   1,    0.01,    1.0,    0.53,    0.7
+stand_run_fwd_0             =   1,    0.01,    1.0,    0.53,    0.7
+stand_attack_2_0            =   1,    0.46,    1.0,    0.73,    0.7
+stand_attack_2_1            =   1,    0.46,    1.0,    0.73,    0.7
+stand_somersault_0          =   1,    0.46,    1.0,    0.73,    0.7
 
-; Dog jump pack is jump_ataka_01/02/03.
+; Dog jump pack. Larkin `stand_run_0`.
 @[m_dog_step_params]
-jump_ataka_01               =   1,    0.01,    0.75,   0.40,    0.70,    0.85,    0.75,    0.97,    0.75
-jump_ataka_02               =   1,    0.01,    0.75,   0.40,    0.70,    0.85,    0.75,    0.97,    0.75
-jump_ataka_03               =   1,    0.01,    0.75,   0.40,    0.70,    0.85,    0.75,    0.97,    0.75
+jump_ataka_01               =   1,    0.50,    0.75,   0.40,    0.70,    0.85,    0.75,    0.97,    0.75
+jump_ataka_02               =   1,    0.50,    0.75,   0.40,    0.70,    0.85,    0.75,    0.97,    0.75
+jump_ataka_03               =   1,    0.50,    0.75,   0.40,    0.70,    0.85,    0.75,    0.97,    0.75
 
-; Pseudodog jump pack is run_jamp_0/1/2. Larkin missed run_jamp_1.
+; Pseudodog jump pack. Larkin has `run_jamp_0` / `run_jamp_2`, missed `run_jamp_1`.
 @[m_pseudodog_step_params]
 run_jamp_1                  =   1,    0.01,    1.0,    0.17,    1.0,    0.50,    1.0,    0.61,    1.0
 
-; Tushkano: Larkin set every step to 0.25 after we put them on medium to be heard.
-@[m_tushkano_step_params]
-stand_walk_fwd_0        =   1,    0.01,    1.0,    0.01,    1.0,    0.63,    1.0,    0.63,    1.0
-stand_walk_fwd_1        =   1,    0.14,    1.0,    0.66,    1.0,    0.12,    1.0,    0.66,    1.0
-stand_walk_fwd_dmg_0    =   1,    0.00,    0.0,    0.01,    1.0,    0.50,    1.0,    0.63,    1.0
-stand_run_0             =   1,    0.31,    1.0,    0.44,    1.0,    0.97,    1.0,    0.44,    1.0
-stand_run_1             =   1,    0.00,    0.0,    0.00,    0.0,    0.97,    1.0,    0.44,    1.0
-stand_run_dmg_0         =   1,    0.00,    0.0,    0.36,    1.0,    0.12,    1.0,    0.01,    1.0
+; Zombie run is `stand_run_fwd_0`. Larkin only has `stand_run_0/1/2`.
+@[m_zombie_step_params]
+stand_run_fwd_0             =   3,    0.01,    1.0,    0.60,    0.6

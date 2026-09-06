@@ -60,6 +60,8 @@ local drain_from = nil
 local drain_to = nil
 local drain_n = 0
 local opening = false
+local bringing = false
+local bring_id = nil
 local dummies = {}
 local lights = {}
 local muted = {}
@@ -604,6 +606,10 @@ end
 -- Same trick as The Anomalous Stash: swap dummy for the shared box in ui_inventory.start.
 -- Park at this dummy first so CFS range matches the box the player is standing at.
 start_with_bolt = function(mode, dummy)
+    if bringing then
+        log("ui start skip: fetch bring")
+        return
+    end
     if opening then
         log("ui start skip: already opening")
         return
@@ -631,6 +637,69 @@ end
 
 function api.open_at(anchor)
     start_with_bolt("loot", anchor)
+end
+
+function api.box_go()
+    local id = resolve_id()
+    return id and xobject.go(id)
+end
+
+local function wait_bring()
+    if not bring_id then
+        bringing = false
+        return true
+    end
+    if xobject.go(bring_id) then
+        log("fetch bring done id=" .. tostring(bring_id))
+        bringing = false
+        bring_id = nil
+        return true
+    end
+    return false
+end
+
+-- TAS fetch QoL: if the bolt is offline, park it under the actor so
+-- iterate_inventory_box works for z_fetch_shows_count / taskboard.
+-- Same offset as TAS fetch_anomalous_stash: +50x +50z, y = -50.
+function api.ensure_online()
+    local id = resolve_id()
+    if not id then
+        log("fetch ensure: no stash id")
+        return
+    end
+    local go = xobject.go(id)
+    if go then
+        return go
+    end
+    local actor = db.actor
+    if not actor then
+        return
+    end
+    local dest, lvid, gvid = dest_of(actor)
+    if not dest then
+        log("fetch ensure: no actor dest", "red")
+        return
+    end
+    dest.x = dest.x + 50
+    dest.z = dest.z + 50
+    dest.y = -50
+    bringing = true
+    bring_id = id
+    log("fetch ensure: plant id=" .. tostring(id))
+    local planted = plant_dest(dest, lvid, gvid)
+    go = xobject.go(id)
+    if go then
+        bringing = false
+        bring_id = nil
+        return go
+    end
+    if not planted then
+        log("fetch ensure: plant failed", "red")
+        bringing = false
+        bring_id = nil
+        return
+    end
+    CreateTimeEvent("dogma_game_global_stash", "fetch_bring", 0, wait_bring)
 end
 
 local function hooked_ui_start(mode, obj)
@@ -705,7 +774,7 @@ local function cfs_bolt(range)
         end
         return id
     end
-    if opening then
+    if opening or bringing then
         return id
     end
     id = plant_at(dummy)
@@ -1102,6 +1171,8 @@ local function on_load()
     pending_dummy = nil
     pending_mode = nil
     opening = false
+    bringing = false
+    bring_id = nil
     clear_all_lights()
     log("load, resync id=" .. tostring(saved_id))
     sync_sprint()
@@ -1120,6 +1191,8 @@ local function on_destroy()
     pending_dummy = nil
     pending_mode = nil
     opening = false
+    bringing = false
+    bring_id = nil
     clear_all_lights()
     log("reset (net destroy)")
 end

@@ -147,22 +147,22 @@ run_alao_local() {
 }
 
 run_ogg_stamp() {
-    local script="$SRC/tweaks/fix_footsteps_sfx/stamp_ogg_comments.py"
-    [[ -f "$script" ]] || return 0
-    src_in_scope "$script" || return 0
-    local py=()
-    if command -v py >/dev/null 2>&1; then
-        py=(py -3)
-    elif command -v python3 >/dev/null 2>&1; then
-        py=(python3)
-    elif command -v python >/dev/null 2>&1; then
-        py=(python)
-    else
-        echo "build: Python 3 required to stamp ogg comments" >&2
-        return 1
-    fi
-    echo "build: stamp ogg comments…"
-    "${py[@]}" "$script"
+    # local script="$SRC/tweaks/fix_footsteps_sfx/stamp_ogg_comments.py"
+    # [[ -f "$script" ]] || return 0
+    # src_in_scope "$script" || return 0
+    # local py=()
+    # if command -v py >/dev/null 2>&1; then
+    #     py=(py -3)
+    # elif command -v python3 >/dev/null 2>&1; then
+    #     py=(python3)
+    # elif command -v python >/dev/null 2>&1; then
+    #     py=(python)
+    # else
+    #     echo "build: Python 3 required to stamp ogg comments" >&2
+    #     return 1
+    # fi
+    # echo "build: stamp ogg comments…"
+    # "${py[@]}" "$script"
 }
 
 should_skip_name() {

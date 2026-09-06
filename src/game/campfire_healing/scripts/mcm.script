@@ -1,6 +1,7 @@
 -- game/campfire_healing conf
 -- Lit campfire within range_m (0–5, def 2): convert existing limb temp→perm, heal body and psy.
--- body_sec / limb_sec: seconds for a 20% step (body 30–100 def 30; limbs 10–100 def 10).
+-- body_pct / psy_pct: % per second (0–1, def 1, step 0.1). 0 = off.
+-- limb_sec: seconds for a 20% step (10–100, def 10).
 -- pause_in_combat: optional; default off (heal even if something still has you as best_enemy).
 -- fx_enable / fx_intensity: orange PPE while body HP < 100% and a heal is running.
 
@@ -9,7 +10,8 @@ _G.dogma_game_campfire_healing_conf = {
 	DEFAULTS = {
 		enabled = true,
 		range_m = 3,
-		body_sec = 30,
+		body_pct = 1,
+		psy_pct = 1,
 		limb_sec = 10,
 		pause_in_combat = true,
 		fx_enable = true,
@@ -58,14 +60,24 @@ function on_mcm_load(options)
 				hint = "dogma_game_campfire_healing_pause_in_combat",
 			},
 			{
-				id = "body_sec",
+				id = "body_pct",
 				type = "track",
 				val = 2,
-				min = 30,
-				max = 100,
-				step = 1,
-				def = CONFIG.DEFAULTS.body_sec,
-				hint = "dogma_game_campfire_healing_body_sec",
+				min = 0,
+				max = 1,
+				step = 0.1,
+				def = CONFIG.DEFAULTS.body_pct,
+				hint = "dogma_game_campfire_healing_body_pct",
+			},
+			{
+				id = "psy_pct",
+				type = "track",
+				val = 2,
+				min = 0,
+				max = 1,
+				step = 0.1,
+				def = CONFIG.DEFAULTS.psy_pct,
+				hint = "dogma_game_campfire_healing_psy_pct",
 			},
 			{
 				id = "limb_sec",
@@ -89,7 +101,7 @@ function on_mcm_load(options)
 				type = "track",
 				val = 2,
 				min = 0,
-				max = 0.3,
+				max = 0.2,
 				step = 0.01,
 				def = CONFIG.DEFAULTS.fx_intensity,
 				hint = "dogma_game_campfire_healing_fx_intensity",

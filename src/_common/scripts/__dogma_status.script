@@ -3,7 +3,7 @@
     flags are read live.
 
     is_in_combat()  — 1s cache: a collected hunter (best_enemy = actor) is within COMBAT_M
-    is_inv_open()   — last_mode / talking / inventory GUI shown (not sticky wnd infos)
+    is_inv_open()   — talking, or engine ActorMenu:IsShown() (same as world-input / tutorials)
     is_eating()     — food use, latched 3s
     is_drinking()   — drink use, latched 3s
     is_weapon_lowered() — game.actor_weapon_lowered() (eat/meds/sprint/dialog/…)
@@ -316,25 +316,29 @@ function is_in_combat()
     return in_combat
 end
 
--- inventory_opened() is 5 alife infos. Those persist in the save and
--- desync from last_mode / Close. Loot happens to clear body_search_wnd_open.
-local inv_gui_shown = function(gui)
-    return gui:IsShown()
+-- Engine: CurrentGameUI()->GetActorMenu().IsShown(). Tutorials and
+-- Level_input use that. Lua ui_inventory.GUI:IsShown() sticks after Close.
+-- get_hud() is CurrentGameUI() and may be nil. ActorMenu.get_actor_menu
+-- native-crashes if HUD is missing — only call after get_hud().
+local try_actor_menu_shown = function(ActorMenu)
+    local menu = ActorMenu.get_actor_menu()
+    return menu and menu:IsShown()
 end
 
 function is_inv_open()
-    if actor_menu and actor_menu.last_mode and actor_menu.last_mode ~= 0 then
-        return true
-    end
     if is_talking() then
         return true
     end
-    local gui = ui_inventory and ui_inventory.GUI
-    if not gui then
+    if not (get_hud and get_hud()) then
         return false
     end
-    local ok, shown = pcall(inv_gui_shown, gui)
-    return ok and shown == true
+    if ActorMenu and ActorMenu.get_actor_menu then
+        local ok, shown = pcall(try_actor_menu_shown, ActorMenu)
+        if ok then
+            return shown == true
+        end
+    end
+    return actor_menu and actor_menu.last_mode and actor_menu.last_mode ~= 0
 end
 
 function is_eating()

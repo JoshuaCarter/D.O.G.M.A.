@@ -835,14 +835,17 @@ local function log_look(obj)
     local id = obj and obj:id() or 0
     local v = obj and owners[id]
     local claimer, why = claim_owner(obj)
+    local last_mode = actor_menu and actor_menu.last_mode or 0
     local sig = string.format(
-        "%s:%s:%s:%s:%s:%s",
+        "%s:%s:%s:%s:%s:%s:%s:%s",
         tostr(id),
         tostr(claimer and claimer:id() or 0),
         tostr(why),
         tostr(steal_dik()),
         tostr(steal_mode()),
-        tostr(steal_mod())
+        tostr(steal_mod()),
+        tostr(last_mode),
+        tostr(opening)
     )
     if sig == last_look then
         return
@@ -853,15 +856,17 @@ local function log_look(obj)
         return
     end
     log(string.format(
-        "look id=%s sec=%s have=%s claimer=%s why=%s key=%s mod=%s mode=%s",
+        "look id=%s sec=%s have=%s claimer=%s why=%s key=%s last_mode=%s xml=%s opening=%s talking=%s",
         tostr(id),
         tostr(obj:section()),
         tostr(v ~= nil),
         tostr(claimer and claimer:id() or nil),
         tostr(why),
         tostr(steal_dik()),
-        tostr(steal_mod()),
-        tostr(steal_mode())
+        tostr(last_mode),
+        tostr(_G.dogma_badwill_steal_xml),
+        tostr(opening),
+        tostr(dogma.status.is_talking())
     ))
 end
 

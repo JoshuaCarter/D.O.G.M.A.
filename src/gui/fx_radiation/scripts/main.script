@@ -1,9 +1,11 @@
 --[[
 	Radiation
 
-	Replaces stock radiation.ppe with a no-op so zone/location radiation postprocesses
-	draw nothing. This script applies our own graded grain PPEs from player body
-	radiation (db.actor.radiation).
+	Stock zone/mutant grain is CZoneEffector / AddEffector via
+	postprocess_rad. LTX deletes zone postprocess and points
+	pp_eff_name at dogma_rad_noop.ppe. actor_effects still adds
+	radiation.ppe on id 2020; we strip that each tick. Our graded
+	grain is body dose only.
 ]]
 
 local CONFIG = _G.dogma_gui_fx_radiation_conf
@@ -11,6 +13,21 @@ local CONFIG = _G.dogma_gui_fx_radiation_conf
 local PP_GRAIN_ID = 2021
 local PP_BLUR_ID = 2023
 local PP_DUAL_ID = 2024
+local STOCK_RAD_PP = 2020
+
+local PP_PROBE = {
+	"postprocess_rad",
+	"zone_field_radioactive",
+	"zone_radioactive",
+	"zone_radioactive_very_weak",
+	"zone_field_radioactive_very_weak",
+}
+
+local ARSZI_RAD_PP = 5608
+local PROBE_MS = 2000
+local last_probe = 0
+local near_secs = {}
+local near_n = 0
 
 local GRAIN_PPES = {
 	"dogma_grain_01.ppe",
@@ -29,6 +46,57 @@ local GRAIN_LEVELS = {}
 local current_ppe = nil
 local blur_active = false
 local dual_active = false
+local stock_silenced = false
+
+local try_remove_stock = function()
+	level.remove_pp_effector(STOCK_RAD_PP)
+	level.remove_pp_effector(ARSZI_RAD_PP)
+end
+
+local try_ini_str = function(sec, key)
+	return ini_sys:r_string_ex(sec, key)
+end
+
+local try_ini_num = function(sec, key)
+	return ini_sys:r_float_ex(sec, key)
+end
+
+local try_ini_exist = function(sec, key)
+	return ini_sys:line_exist(sec, key)
+end
+
+local try_env = function()
+	return level.get_env_rads()
+end
+
+local function keep_near_sec(sec)
+	if string.find(sec, "radioactive", 1, true) then
+		return true
+	end
+	local ok_p, has_p = pcall(try_ini_exist, sec, "postprocess")
+	if ok_p and has_p then
+		return true
+	end
+	local ok_a, has_a = pcall(try_ini_exist, sec, "radiation_pp_effector_name")
+	return ok_a and has_a
+end
+
+local function on_near_obj(obj)
+	if not obj then
+		return false
+	end
+	local sec = obj:section()
+	if sec and keep_near_sec(sec) then
+		near_n = near_n + 1
+		near_secs[near_n] = sec
+	end
+	return false
+end
+
+local try_near = function(pos)
+	near_n = 0
+	level.iterate_nearest(pos, 25, on_near_obj)
+end
 
 local LOG = {
 	LIFECYCLE = {order = 0, color = "gray"},
@@ -159,22 +227,59 @@ local function set_dual(msv)
 	)
 end
 
+local function silence_stock()
+	if not level then
+		return
+	end
+	local ok = pcall(try_remove_stock)
+	if ok and not stock_silenced then
+		stock_silenced = true
+		log("stock rad pp 2020 removed")
+	end
+end
+
+local function log_zone_pp()
+	local tostr = tostring
+	for i = 1, #PP_PROBE do
+		local sec = PP_PROBE[i]
+		local ok_e, exists = pcall(try_ini_exist, sec, "postprocess")
+		local ok_p, pp = pcall(try_ini_str, sec, "postprocess")
+		local ok_r, rmax = pcall(try_ini_num, sec, "radius_max")
+		local ok_n, pname = pcall(try_ini_str, sec, "pp_eff_name")
+		log(string.format(
+			"ini %s exist=%s postprocess=%s rmax=%s ppe=%s",
+			sec,
+			tostr(ok_e and exists),
+			tostr(ok_p and pp),
+			tostr(ok_r and rmax),
+			tostr(ok_n and pname)
+		))
+	end
+end
+
 local function clear_all()
 	if level then
 		level.remove_pp_effector(PP_GRAIN_ID)
 		level.remove_pp_effector(PP_BLUR_ID)
 		level.remove_pp_effector(PP_DUAL_ID)
+		pcall(try_remove_stock)
 	end
 	current_ppe = nil
 	blur_active = false
 	dual_active = false
+	stock_silenced = false
+	last_probe = 0
 end
 
 local function on_actor_on_update()
+	local sformat = string.format
+	local tostr = tostring
 	local actor = dogma.sys.ready(CONFIG.MOD_ID, db, on_option_change)
 	if not actor then
 		return
 	end
+
+	silence_stock()
 
 	if not CONFIG.loaded.enabled or not actor:alive() then
 		clear_all()
@@ -183,13 +288,51 @@ local function on_actor_on_update()
 
 	local radiation = actor.radiation or 0
 	local msv = radiation * 10000 * 0.387
+	local ok_env, env = pcall(try_env)
+	local env_n = (ok_env and env) or 0
 
-	overlay(LOG.RADS, string.format("Rads: %.2f", radiation))
-	overlay(LOG.MSV, string.format("MSV: %d", math.ceil(msv)))
+	overlay(LOG.RADS, sformat("Rads: %.4f env: %.3f", radiation, env_n))
+	overlay(LOG.MSV, sformat("MSV: %d", math.ceil(msv)))
 
 	set_grain(msv)
 	set_blur(msv)
 	set_dual(msv)
+
+	if CONFIG.loaded.debug_log then
+		local now = time_global()
+		if now - last_probe >= PROBE_MS then
+			last_probe = now
+			pcall(try_near, actor:position())
+			local bits = "none"
+			if near_n > 0 then
+				bits = ""
+				for i = 1, near_n do
+					local sec = near_secs[i]
+					local ok_e, exists = pcall(try_ini_exist, sec, "postprocess")
+					local ok_p, pp = pcall(try_ini_str, sec, "postprocess")
+					local ok_a, aura = pcall(try_ini_str, sec, "radiation_pp_effector_name")
+					if bits ~= "" then
+						bits = bits .. ","
+					end
+					bits = bits .. sformat(
+						"%s exist=%s pp=%s aura=%s",
+						sec,
+						tostr(ok_e and exists),
+						tostr(ok_p and pp),
+						tostr(ok_a and aura)
+					)
+				end
+			end
+			log(sformat(
+				"probe rads=%.4f msv=%d env=%.3f grain=%s near=%s",
+				radiation,
+				math.ceil(msv),
+				env_n,
+				tostr(current_ppe),
+				bits
+			))
+		end
+	end
 end
 
 function on_game_start()
@@ -198,7 +341,10 @@ function on_game_start()
 	current_ppe = nil
 	blur_active = false
 	dual_active = false
+	stock_silenced = false
+	last_probe = 0
 	on_option_change()
+	log_zone_pp()
 	RegisterScriptCallback("actor_on_update", on_actor_on_update)
 	RegisterScriptCallback("on_option_change", on_option_change)
 	RegisterScriptCallback("on_game_load", clear_all)

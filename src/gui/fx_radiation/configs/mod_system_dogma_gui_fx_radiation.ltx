@@ -1,0 +1,60 @@
+; Kill stock rad grain. CZoneEffector + mutant AddEffector both
+; load postprocess_rad -> pp_eff_name. Point that at our no-op
+; (unique name so GAMMA Postprocess radiation.ppe cannot win).
+; Engine fatals if noise.grain <= 0; intensity 0 is the no-op.
+; Delete zone postprocess so C++ never builds CZoneEffector.
+; radius 0 is backup if a leftover key still Creates one.
+; Missing-section ![] is a warning, not a fatal (Xr_ini.cpp).
+
+![postprocess_rad]
+pp_eff_name     = dogma_rad_noop.ppe
+radius_min      = 0
+radius_max      = 0
+
+![zone_field_radioactive]
+!postprocess
+
+![zone_radioactive]
+!postprocess
+
+![zone_field_radioactive_weak]
+!postprocess
+
+![zone_field_radioactive_average]
+!postprocess
+
+![zone_field_radioactive_strong]
+!postprocess
+
+![zone_radioactive_weak]
+!postprocess
+
+![zone_radioactive_average]
+!postprocess
+
+![zone_radioactive_strong]
+!postprocess
+
+![zone_field_radioactive_very_weak]
+!postprocess
+
+![zone_field_radioactive_below_average]
+!postprocess
+
+![zone_field_radioactive_above_average]
+!postprocess
+
+![zone_field_radioactive_lethal]
+!postprocess
+
+![zone_radioactive_very_weak]
+!postprocess
+
+![zone_radioactive_below_average]
+!postprocess
+
+![zone_radioactive_above_average]
+!postprocess
+
+![zone_radioactive_lethal]
+!postprocess

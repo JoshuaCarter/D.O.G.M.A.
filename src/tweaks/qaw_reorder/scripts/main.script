@@ -1,7 +1,8 @@
 --[[
 	Quick Action Wheel Reorder
 
-	Hold reorder key on a manual-tab wedge, move to another, release to swap.
+	Hold reorder key on a manual-tab wedge, move to another, release to move it.
+	Items between the two slots shift.
 	MCM key lives under QAW → Controls (injected by mcm.script).
 ]]
 
@@ -102,7 +103,10 @@ local function wrap_gui(gui, qaw)
 			local to = self.hovered_idx
 			local items = tm.tabs[drag_tab]
 			if items and to and to > 0 and to ~= drag_from and items[drag_from] and items[to] then
-				items[drag_from], items[to] = items[to], items[drag_from]
+				local from = drag_from
+				local item = table.remove(items, from)
+				table.insert(items, to, item)
+				log(string.format("move %s -> %s tab=%s", tostring(from), tostring(to), tostring(drag_tab)))
 				clear_drag(self)
 				self:UpdateItems()
 			else

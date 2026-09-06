@@ -30,7 +30,6 @@ local bind_one = nil
 local allow = 0
 local original_action_move = nil
 local original_action_move_all = nil
-local SND_RUCK = [[interface\inv_ruck]]
 
 local function log(msg)
 	if dogma.log.logging() then
@@ -105,17 +104,19 @@ local function tick(gui)
 	end
 end
 
--- Engine CUIActorMenu::PlaySnd has no debounce. Lua PlaySND gates 500ms
--- (wrong: next pile stays mute). One play per pile, not per stack item.
-local function play_move_snd()
-	local xs = dogma.xlibs and dogma.xlibs.xsound
-	if not (xs and xs.play) then
-		log("xsound missing")
+-- Vanilla take/put SFX is itms_manager.play_item_sound (snd_on_take by type).
+-- Take already fires it via actor_on_item_take. Put-in-box only plays if
+-- gui.npc_id matches the box. 25ms debounce inside = one hit per pile.
+local function play_item_snd(obj)
+	if not obj then
 		return
 	end
-	if not xs.play(SND_RUCK) then
-		log("inv_ruck play failed")
+	if not (itms_manager and itms_manager.play_item_sound) then
+		log("play_item_sound missing")
+		return
 	end
+	log("item snd " .. obj:section())
+	itms_manager.play_item_sound(obj, 0.75)
 end
 
 local function move_one(gui, obj, bag)
@@ -202,12 +203,12 @@ local function fire(whole)
 		local items = _G.dogma_inv_hover.stack_items(gui, obj, bag, whole)
 		if #items <= 1 then
 			if move_one(gui, obj, from) then
-				play_move_snd()
+				play_item_snd(obj)
 			end
 			return
 		end
 		move_many(gui, items, from)
-		play_move_snd()
+		play_item_snd(items[1])
 	end
 end
 

@@ -214,12 +214,16 @@ local function poll_action(act, gui)
     end
 end
 
--- Vanilla RefreshInventories: add missing, remove gone. Leaves holes.
--- SortingPlus/Seamless replace that with a full re-sort on every add.
+-- Vanilla LMode_RefreshInventories: add missing, remove gone, leave holes.
+-- Also fires take_from_box / put_in_box when both bags move the same id
+-- (treasure_manager marks the stash on take_from_box). SortingPlus/Seamless
+-- replace refresh with a full re-sort; we keep the vanilla add/rem only.
 local function refresh_bag(cc, inv)
     local tostr = tostring
+    local added = {}
+    local removed = {}
     if not (cc and inv and cc.indx_id) then
-        return
+        return added, removed
     end
     local list = cc.indx_id
     local bag = cc.ID
@@ -227,18 +231,21 @@ local function refresh_bag(cc, inv)
         if not list[id] then
             log(string.format("still add %s#%s -> %s", obj:section(), tostr(id), tostr(bag)))
             cc:AddItem(obj, obj:section())
+            added[id] = obj
         end
     end
     local gone = {}
     for id, _ in pairs(list) do
         if not inv[id] then
             gone[#gone + 1] = id
+            removed[id] = true
         end
     end
     for i = 1, #gone do
         log(string.format("still rem #%s from %s", tostr(gone[i]), tostr(bag)))
         cc:RemoveItem_byID(gone[i])
     end
+    return added, removed
 end
 
 local function still_refresh(gui)
@@ -251,20 +258,37 @@ local function still_refresh(gui)
             refresh_bag(gui.CC.actor_bag, gui:ParseInventory(db.actor, nil, true))
         end
     elseif mode == "loot" then
+        local added_a, removed_a
         if db.actor then
-            refresh_bag(gui.CC.actor_bag, gui:ParseInventory(db.actor, nil, true))
+            added_a, removed_a = refresh_bag(gui.CC.actor_bag, gui:ParseInventory(db.actor, nil, true))
         end
         local npc = gui.GetPartner and gui:GetPartner()
         if npc then
             local inv
+            local is_box = IsInvbox and IsInvbox(npc)
             if gui.npc_is_companion and gui.ParseInventory_Companion then
                 inv = gui:ParseInventory_Companion(npc, true)
             else
-                local is_box = IsInvbox and IsInvbox(npc)
                 local all = (not is_box) and npc.alive and (not npc:alive())
                 inv = gui:ParseInventory(npc, all, true)
             end
-            refresh_bag(gui.CC.npc_bag, inv)
+            local added_b, removed_b = refresh_bag(gui.CC.npc_bag, inv)
+            if is_box then
+                added_a = added_a or {}
+                removed_a = removed_a or {}
+                for id in pairs(removed_b) do
+                    if added_a[id] then
+                        log(string.format("take_from_box #%s", tostring(id)))
+                        SendScriptCallback("actor_on_item_take_from_box", npc, level.object_by_id(id))
+                    end
+                end
+                for id, obj in pairs(added_b) do
+                    if removed_a[id] then
+                        log(string.format("put_in_box #%s", tostring(id)))
+                        SendScriptCallback("actor_on_item_put_in_box", npc, obj)
+                    end
+                end
+            end
         end
     end
 end

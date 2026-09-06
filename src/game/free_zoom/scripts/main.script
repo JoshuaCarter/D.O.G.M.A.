@@ -54,6 +54,8 @@ local free_on = false
 local ads_on = false
 -- Hold mode: true while a hold-source key (zoom key / RMB / MMB) is down.
 local hold_zoom_latched = false
+-- After a combat hit, ignore hold-zoom until the hold key is released.
+local hold_hit_block = false
 
 local CTX = {
 	OK = "ok",
@@ -232,6 +234,7 @@ local function refresh_config()
 	CONFIG.loaded.enabled = dogma.mcm.bool(CONFIG.MOD_ID, "enabled")
 	CONFIG.loaded.allow_during_sprint = dogma.mcm.bool(CONFIG.MOD_ID, "free_zoom/allow_during_sprint")
 	CONFIG.loaded.empty_hands_only = dogma.mcm.bool(CONFIG.MOD_ID, "free_zoom/empty_hands_only")
+	CONFIG.loaded.zoom_out_on_hit = dogma.mcm.bool(CONFIG.MOD_ID, "free_zoom/zoom_out_on_hit")
 	CONFIG.loaded.zoom_key = dogma.mcm.key(CONFIG.MOD_ID, "free_zoom/zoom_key")
 	CONFIG.loaded.zoom_key_modifier = dogma.mcm.int(CONFIG.MOD_ID, "free_zoom/zoom_key_modifier")
 	-- Legacy MCM: Hold was 3 when Long occupied 2. Double (1) maps to toggle.
@@ -1077,6 +1080,7 @@ local function reset_session(resync_options, reason)
 	free_on = false
 	ads_on = false
 	hold_zoom_latched = false
+	hold_hit_block = false
 	clear_fov_targets()
 	reset_scroll_accum()
 	if resync_options then
@@ -1100,6 +1104,39 @@ end
 -- RELOAD always clears free (and ADS via handle_context).
 local function blocks_free(ctx)
 	return CTX_BLOCK_FREE[ctx] == true
+end
+
+local try_who_name = function(who)
+	return who:name()
+end
+
+-- Combat hit: bullet / creature / blast. Skip rads, bleed, field ticks, self/world.
+local function is_combat_hit(shit)
+	if not shit or (shit.power or 0) <= 0 then
+		return false
+	end
+	if not hit then
+		return false
+	end
+	local t = shit.type
+	if t == hit.radiation then
+		return false
+	end
+	local who = shit.draftsman
+	if not who then
+		return false
+	end
+	if db.actor and who:id() == db.actor:id() then
+		return false
+	end
+	if dogma.xlibs.xcreature.is_npc(who) then
+		return true
+	end
+	return t == hit.fire_wound
+		or t == hit.explosion
+		or t == hit.strike
+		or t == hit.wound
+		or (hit.wound_2 ~= nil and t == hit.wound_2)
 end
 
 local function clear_free_zoom(reason, defer_apply)
@@ -1404,7 +1441,7 @@ local function on_option_change()
 	end
 
 	logf(
-		"opts: free_en=%s free=%d%% free_dof=%s/%.2f ads_fov=%d%% hud=%d/%d/%d speed=%d%% sprint=%s empty_hands=%s scroll=%s reverse=%s steps=%d gap=%dms mode=%s key=%s mod=%d km=%d rmb=%d mmb=%d",
+		"opts: free_en=%s free=%d%% free_dof=%s/%.2f ads_fov=%d%% hud=%d/%d/%d speed=%d%% sprint=%s empty_hands=%s hit_out=%s scroll=%s reverse=%s steps=%d gap=%dms mode=%s key=%s mod=%d km=%d rmb=%d mmb=%d",
 		tostr(CONFIG.loaded.enabled),
 		CONFIG.loaded.free_zoom,
 		tostr(CONFIG.loaded.free_dof),
@@ -1416,6 +1453,7 @@ local function on_option_change()
 		CONFIG.loaded.move_speed,
 		tostr(CONFIG.loaded.allow_during_sprint),
 		tostr(CONFIG.loaded.empty_hands_only),
+		tostr(CONFIG.loaded.zoom_out_on_hit),
 		tostr(CONFIG.loaded.scroll_wheel_zoom),
 		tostr(CONFIG.loaded.scroll_wheel_reverse),
 		CONFIG.loaded.scroll_wheel_steps,
@@ -1652,9 +1690,17 @@ end
 local function poll_hold_zoom()
 	if not CONFIG.loaded.enabled then
 		hold_zoom_latched = false
+		hold_hit_block = false
 		return
 	end
 	local down = hold_source_down()
+	if hold_hit_block then
+		if not down then
+			hold_hit_block = false
+			hold_zoom_latched = false
+		end
+		return
+	end
 	if down then
 		hold_zoom_latched = true
 		if not free_on then
@@ -1791,6 +1837,31 @@ local function actor_on_weapon_reload()
 	handle_context(CTX.RELOAD)
 end
 
+local function actor_on_before_hit(shit, _bone_id, _flags)
+	if not CONFIG.loaded.enabled or not CONFIG.loaded.zoom_out_on_hit then
+		return
+	end
+	if not free_on then
+		return
+	end
+	if not is_combat_hit(shit) then
+		return
+	end
+	local who = shit.draftsman
+	local ok, name = pcall(try_who_name, who)
+	logf(
+		"hit zoom-out: type=%s who=%s power=%.3f mode=%s",
+		tostring(shit.type),
+		(ok and name) or "?",
+		shit.power or 0,
+		mode_label()
+	)
+	if hold_zoom_latched or hold_source_down() then
+		hold_hit_block = true
+	end
+	set_free_zoom(false, "hit")
+end
+
 local function on_actor_menu_open(name)
 	if not MENU_BLOCK[name] then
 		return
@@ -1861,6 +1932,7 @@ function on_game_start()
 	RegisterScriptCallback("actor_on_weapon_zoom_out", actor_on_weapon_zoom_out)
 	RegisterScriptCallback("actor_on_weapon_zoom_in", actor_on_weapon_zoom_in)
 	RegisterScriptCallback("actor_on_weapon_reload", actor_on_weapon_reload)
+	RegisterScriptCallback("actor_on_before_hit", actor_on_before_hit)
 	RegisterScriptCallback("actor_on_weapon_zoom_type_changed", actor_on_weapon_zoom_type_changed)
 	RegisterScriptCallback("actor_on_weapon_lower", actor_on_weapon_lower)
 	RegisterScriptCallback("actor_on_changed_slot", actor_on_changed_slot)

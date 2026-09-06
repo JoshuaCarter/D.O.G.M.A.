@@ -196,6 +196,9 @@ local function poll_action(act, gui)
         act.down_prev = false
         return
     end
+    if act.tick then
+        act.tick(gui)
+    end
     local down = act.key_down()
     act.down_prev = down
     if not down then

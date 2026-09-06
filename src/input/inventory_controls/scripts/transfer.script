@@ -27,11 +27,19 @@ local key_one = nil
 local mod_one = 0
 local bind_all = nil
 local bind_one = nil
+local allow = 0
+local original_action_move = nil
+local original_action_move_all = nil
+local SND_RUCK = [[interface\inv_ruck]]
 
 local function log(msg)
 	if dogma.log.logging() then
 		dogma.log.log(MOD_ID, tostring(msg))
 	end
+end
+
+local function is_shift_key(dik)
+	return dik == LSHIFT or dik == RSHIFT
 end
 
 local function on_option_change()
@@ -45,6 +53,12 @@ local function on_option_change()
 	if bind_one then
 		_G.dogma_inv_hover.reset(bind_one)
 	end
+	log(string.format(
+		"transfer keys all=%s one=%s suppress_shift=%s",
+		tostring(key_all),
+		tostring(key_one),
+		tostring(is_shift_key(key_all) or is_shift_key(key_one))
+	))
 end
 
 local function inv_mode_ok(gui)
@@ -73,14 +87,85 @@ local function key_one_down()
 	return dik_down(key_one, mod_one)
 end
 
+-- Stock/GAMMA shift-hover also calls Action_Move. When either of our
+-- transfer binds is Shift, swallow those so only hold+hover runs.
+local function suppress_inner()
+	if allow ~= 0 then
+		return false
+	end
+	if not dogma.input.is_shift_down() then
+		return false
+	end
+	return is_shift_key(key_all) or is_shift_key(key_one)
+end
+
+local function tick(gui)
+	if gui and suppress_inner() then
+		gui.holding_shift = false
+	end
+end
+
+-- Engine CUIActorMenu::PlaySnd has no debounce. Lua PlaySND gates 500ms
+-- (wrong: next pile stays mute). One play per pile, not per stack item.
+local function play_move_snd()
+	local xs = dogma.xlibs and dogma.xlibs.xsound
+	if not (xs and xs.play) then
+		log("xsound missing")
+		return
+	end
+	if not xs.play(SND_RUCK) then
+		log("inv_ruck play failed")
+	end
+end
+
 local function move_one(gui, obj, bag)
 	if not (gui and obj and bag and gui.Action_Move) then
-		return
+		return false
 	end
 	if gui.Cond_Move and not gui:Cond_Move(obj, bag) then
+		return false
+	end
+	allow = allow + 1
+	gui:Action_Move(obj, bag)
+	allow = allow - 1
+	return true
+end
+
+local function move_wrapper(self, obj, bag)
+	if suppress_inner() or not original_action_move then
 		return
 	end
-	gui:Action_Move(obj, bag)
+	return original_action_move(self, obj, bag)
+end
+
+local function move_all_wrapper(self, obj, bag)
+	if suppress_inner() or not original_action_move_all then
+		return
+	end
+	return original_action_move_all(self, obj, bag)
+end
+
+local function reapply_move_patch()
+	local cls = ui_inventory and ui_inventory.UIInventory
+	if not cls then
+		return
+	end
+	if cls.Action_Move and cls.Action_Move ~= move_wrapper then
+		original_action_move = cls.Action_Move
+		cls.Action_Move = move_wrapper
+		log("Action_Move patched")
+	end
+	if cls.Action_Move_All and cls.Action_Move_All ~= move_all_wrapper then
+		original_action_move_all = cls.Action_Move_All
+		cls.Action_Move_All = move_all_wrapper
+		log("Action_Move_All patched")
+	end
+end
+
+local function on_gui_on_show(name)
+	if name == "UIInventory" then
+		reapply_move_patch()
+	end
 end
 
 local function move_many(gui, items, bag)
@@ -116,22 +201,29 @@ local function fire(whole)
 		end
 		local items = _G.dogma_inv_hover.stack_items(gui, obj, bag, whole)
 		if #items <= 1 then
-			move_one(gui, obj, from)
+			if move_one(gui, obj, from) then
+				play_move_snd()
+			end
 			return
 		end
 		move_many(gui, items, from)
+		play_move_snd()
 	end
 end
 
 function on_game_start()
 	dogma.load(MOD_ID)
 	RegisterScriptCallback("on_option_change", on_option_change)
+	RegisterScriptCallback("actor_on_first_update", reapply_move_patch)
+	RegisterScriptCallback("GUI_on_show", on_gui_on_show)
 	on_option_change()
+	reapply_move_patch()
 	bind_all = _G.dogma_inv_hover.register({
 		key_down = key_all_down,
 		mode_ok = inv_mode_ok,
 		bags = ALLOWED_BAGS,
 		still = true,
+		tick = tick,
 		fire = fire(true),
 	})
 	bind_one = _G.dogma_inv_hover.register({
@@ -139,6 +231,7 @@ function on_game_start()
 		mode_ok = inv_mode_ok,
 		bags = ALLOWED_BAGS,
 		still = true,
+		tick = tick,
 		fire = fire(false),
 	})
 	log("transfer keys ready")

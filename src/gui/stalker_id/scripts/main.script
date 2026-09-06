@@ -9,7 +9,7 @@
 	Goodwill color (MCM): living names red / yellow / green from general_goodwill
 	bands; zombified red. Off: white. Dead names are grey. Losing the target fades over MCM fade-out time.
 	Show always acquires and ignores the other show-when options. Otherwise
-	need ADS / free zoom / binoculars (if those toggles are on) or a bound
+	need ADS / RMB hold / free zoom / binoculars (if those toggles are on) or a bound
 	hold key. Unbound key is not a condition. Leaving a condition fades.
 ]]
 
@@ -43,6 +43,7 @@ local LINE_HALO_REAL_PX = 1
 local PATCH_H = 24 -- faction patch / zombified row height in ui xml
 local LINE_START_BELOW_PX = 5 -- below bottom of patch (or zombified text)
 local FOV_ZOOM_RATIO = 0.7
+local DIK_RMB = (DIK_keys and DIK_keys.MOUSE_2) or 338
 local FACTION_KEYS = {
 	"stalker", "bandit", "csky", "army", "freedom", "dolg", "ecolog",
 	"killer", "monolith", "greh", "renegade", "isg",
@@ -104,6 +105,7 @@ local function on_option_change()
 	CONFIG.loaded.show_always = dogma.mcm.bool(id, "show_always")
 	CONFIG.loaded.show_keybind = dogma.mcm.key(id, "show_keybind")
 	CONFIG.loaded.show_when_ads = dogma.mcm.bool(id, "show_when_ads")
+	CONFIG.loaded.show_when_rmb = dogma.mcm.bool(id, "show_when_rmb")
 	CONFIG.loaded.show_when_free_zoom = dogma.mcm.bool(id, "show_when_free_zoom")
 	CONFIG.loaded.show_when_binoc = dogma.mcm.bool(id, "show_when_binoc")
 	CONFIG.loaded.dead_id = dogma.mcm.bool(id, "dead_id")
@@ -599,6 +601,10 @@ end
 local function show_cond()
 	local cfg = CONFIG.loaded
 	if cfg.show_when_ads and is_weapon_ads() then
+		return true
+	end
+	-- Raw RMB: key_state, not weapon ADS. Works fists / empty hands.
+	if cfg.show_when_rmb and dogma.input and dogma.input.is_key_down(DIK_RMB) then
 		return true
 	end
 	if cfg.show_when_free_zoom and is_free_zoomed() then

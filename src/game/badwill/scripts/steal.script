@@ -31,20 +31,19 @@ local marked = {}
 local last_xslice_ms = 0
 local HUD_STATIC = "dogma_badwill_steal_prompt"
 local PROMPT_H = 56
-local LOOK_HOLD_MS = 300
 local COL_STEAL = "%c[255,231,168,12]"
 local COL_OWNER = "%c[255,175,175,175]"
 local SEARCH_AWAY = -9999
 local TAKEALL_NAMES = { "takeall_button", "take_all_button", "m_takeall_button", "takeall" }
 local prompt_text = nil
+local prompt_skip_logged = false
 local search_home = nil
 local deny_wrapped = false
 local orig_deny = {}
+local orig_cond_move = nil
 local takeall_hidden = false
 local hold_fired = false
 local last_look = nil
-local held_corpse = nil
-local held_until = 0
 local opening = false
 local search_tip_ok = false
 local warn_n = 0
@@ -147,23 +146,41 @@ local function is_dead_loot(obj)
     return true
 end
 
+local try_parent = function(obj)
+    return obj.parent and obj:parent()
+end
+
+-- looking_at often hits a weapon on the body, not the corpse.
+local function corpse_from_look(obj)
+    if is_dead_loot(obj) then
+        return obj
+    end
+    if not obj then
+        return nil
+    end
+    local ok, parent = pcall(try_parent, obj)
+    if ok and is_dead_loot(parent) then
+        return parent
+    end
+    return nil
+end
+
 local function look_corpse()
     local actor = db.actor
     if not (actor and actor.get_actor_object_looking_at) then
-        held_corpse = nil
         return nil
     end
     local ok, obj = pcall(actor.get_actor_object_looking_at, actor)
-    if ok and is_dead_loot(obj) then
-        held_corpse = obj
-        held_until = time_global() + LOOK_HOLD_MS
-        return obj
+    return ok and corpse_from_look(obj) or nil
+end
+
+-- last_mode, not ActorMenu:IsShown(). Loot is last_mode=4 with IsShown false,
+-- so is_inv_open() stayed false, opening stuck, takes stayed AP-blocked.
+local function menu_up()
+    if dogma.status.is_talking() then
+        return true
     end
-    if held_corpse and time_global() < held_until and is_dead_loot(held_corpse) then
-        return held_corpse
-    end
-    held_corpse = nil
-    return nil
+    return actor_menu and actor_menu.last_mode and actor_menu.last_mode ~= 0
 end
 
 local function actor_id()
@@ -231,33 +248,59 @@ local function loot_blocked(obj)
 end
 
 local function loot_gui()
-    local gui = ui_inventory and ui_inventory.GUI
-    if type(gui) == "table" then
-        return gui
-    end
-    return nil
+    return ui_inventory and ui_inventory.GUI or nil
 end
 
+local try_loot_partner = function(gui)
+    return gui:GetPartner()
+end
+
+local function partner_id(gui)
+    if not (gui and gui.GetPartner) then
+        return nil
+    end
+    local ok, partner = pcall(try_loot_partner, gui)
+    if not (ok and partner) then
+        return nil
+    end
+    return partner:id()
+end
+
+-- last_mode=4 is loot. Do not require GetPartner: luabind partners have
+-- :id() but partner.id is often nil, which kept loot_open_on false and
+-- left the AP claim veto on.
 local function loot_open_on(corpse_id)
     if not (corpse_id and session and session.corpse_id == corpse_id) then
         return false
     end
-    return dogma.status.is_inv_open()
+    local gui = loot_gui()
+    if gui and gui.mode == "loot" then
+        local pid = partner_id(gui)
+        if pid then
+            return pid == corpse_id
+        end
+        return true
+    end
+    return actor_menu and actor_menu.last_mode == 4
 end
 
 local function takeall_btn()
+    local type_ = type
     local gui = loot_gui()
     if not gui then
         return nil
     end
     for i = 1, #TAKEALL_NAMES do
         local btn = gui[TAKEALL_NAMES[i]]
-        if type(btn) == "userdata" and btn.Show then
+        if type_(btn) == "userdata" and btn.Show then
             return btn
         end
     end
+    if type_(gui) ~= "table" then
+        return nil
+    end
     for k, v in pairs(gui) do
-        if type(k) == "string" and type(v) == "userdata" and v.Show then
+        if type_(k) == "string" and type_(v) == "userdata" and v.Show then
             if k:lower():find("takeall", 1, true) or k:lower():find("take_all", 1, true) then
                 return v
             end
@@ -296,6 +339,7 @@ local function wrap_deny_move()
         orig_deny[tbl] = prev
         tbl.deny_move = function(flags)
             if session_allows_take() then
+                log("deny skip")
                 return
             end
             return prev(flags)
@@ -304,6 +348,42 @@ local function wrap_deny_move()
     wrap(rawget(_G, "xinventory"))
     wrap(dogma.xlibs and dogma.xlibs.xinventory)
     deny_wrapped = true
+end
+
+-- AP may set flags.ret_value=false after our before_move. Cond_Move is
+-- the funnel; override after orig so steal-session takes from npc_bag.
+local function cond_move_wrap(self, obj, bag)
+    local ok = orig_cond_move and orig_cond_move(self, obj, bag)
+    if ok then
+        return true
+    end
+    if not (session and session.corpse_id and bag == "npc_bag") then
+        return ok
+    end
+    if self and self.mode and self.mode ~= "loot" then
+        return ok
+    end
+    log("cond allow corpse=" .. tostring(session.corpse_id))
+    return true
+end
+
+local function wrap_cond_move()
+    if orig_cond_move then
+        return
+    end
+    local cls = ui_inventory and ui_inventory.UIInventory
+    if not (cls and cls.Cond_Move) then
+        return
+    end
+    orig_cond_move = cls.Cond_Move
+    cls.Cond_Move = cond_move_wrap
+    log("cond wrap ok")
+end
+
+local function on_gui_on_show(name)
+    if name == "UIInventory" then
+        wrap_cond_move()
+    end
 end
 
 local function key_label(dik)
@@ -379,11 +459,8 @@ local function steal_prompt(obj)
     return COL_STEAL .. line1
 end
 
-local function world_hud()
-    if not (db.actor and get_hud and _G.dogma_badwill_steal_xml) then
-        return nil
-    end
-    if opening or dogma.status.is_inv_open() then
+local function hud_raw()
+    if not (db.actor and get_hud) then
         return nil
     end
     local ok, hud = pcall(get_hud)
@@ -391,6 +468,13 @@ local function world_hud()
         return hud
     end
     return nil
+end
+
+local function world_hud()
+    if opening or menu_up() then
+        return nil
+    end
+    return hud_raw()
 end
 
 local try_search_wnd = function(ActorMenu)
@@ -448,6 +532,19 @@ local function unpark_search()
     end
 end
 
+local try_get_cs = function(hud, name)
+    return hud:GetCustomStatic(name)
+end
+
+local try_add_cs = function(hud, name)
+    hud:AddCustomStatic(name, true)
+    return hud:GetCustomStatic(name)
+end
+
+local try_cs_wnd = function(cs)
+    return cs:wnd()
+end
+
 local try_hide_prompt = function(HUD_STATIC, hud)
     local cs = hud:GetCustomStatic(HUD_STATIC)
     local wnd = cs and cs.wnd and cs:wnd()
@@ -462,7 +559,7 @@ local function hide_prompt()
         return
     end
     prompt_text = nil
-    local hud = world_hud()
+    local hud = hud_raw()
     if hud and hud.GetCustomStatic then
         pcall(try_hide_prompt, HUD_STATIC, hud)
     end
@@ -475,18 +572,19 @@ local function prompt_wnd()
     if not hud then
         return nil
     end
-    local cs
-    local ok = pcall(function()
-        cs = hud:GetCustomStatic(HUD_STATIC)
-        if not cs then
-            hud:AddCustomStatic(HUD_STATIC, true)
-            cs = hud:GetCustomStatic(HUD_STATIC)
+    local ok, cs = pcall(try_get_cs, hud, HUD_STATIC)
+    if not (ok and cs) then
+        ok, cs = pcall(try_add_cs, hud, HUD_STATIC)
+        if not (ok and cs) then
+            if not prompt_skip_logged then
+                prompt_skip_logged = true
+                log("prompt skip add static fail")
+            end
+            return nil
         end
-    end)
-    if not (ok and cs and cs.wnd) then
-        return nil
     end
-    local wok, wnd = pcall(cs.wnd, cs)
+    _G.dogma_badwill_steal_xml = true
+    local wok, wnd = pcall(try_cs_wnd, cs)
     if wok then
         return wnd
     end
@@ -532,7 +630,8 @@ local function show_prompt(text)
 end
 
 local function update_prompt(obj)
-    if opening or dogma.status.is_inv_open() then
+    if opening or menu_up() then
+        hide_prompt()
         return
     end
     if not (steal_on() and steal_dik() and obj and loot_blocked(obj)) then
@@ -875,7 +974,7 @@ local function try_open()
     if not steal_on() then
         return
     end
-    if dogma.status.is_inv_open() then
+    if menu_up() then
         return
     end
     if not steal_fired() then
@@ -999,12 +1098,22 @@ local function refresh_deadline()
 end
 
 local function tick_watch()
+    local tostr = tostring
     if not session then
         opening = false
         return
     end
-    if opening and dogma.status.is_inv_open() then
+    if opening and menu_up() then
         opening = false
+        local gui = loot_gui()
+        log(string.format(
+            "opening cleared mode=%s last=%s partner=%s loot_open=%s gui=%s",
+            tostr(gui and gui.mode),
+            tostr(actor_menu and actor_menu.last_mode),
+            tostr(partner_id(gui)),
+            tostr(loot_open_on(session.corpse_id)),
+            tostr(type(gui))
+        ))
     end
     refresh_deadline()
     if session.watching then
@@ -1062,10 +1171,9 @@ end
 local function reset()
     hold_fired = false
     last_look = nil
-    held_corpse = nil
-    held_until = 0
     opening = false
     prompt_text = nil
+    prompt_skip_logged = false
     search_home = nil
     takeall_hidden = false
     session = nil
@@ -1120,11 +1228,12 @@ local function on_load_state(m_data)
 end
 
 local function on_item_before_move(flags, npc_id)
-    if not session_allows_take() then
+    if not (session and session.corpse_id and flags) then
         return
     end
-    if npc_id == session.corpse_id and flags then
+    if npc_id == session.corpse_id then
         flags.ret_value = true
+        log("before_move allow npc=" .. tostring(npc_id))
     end
 end
 
@@ -1132,6 +1241,7 @@ local on_actor_on_first_update = function()
     apply_pending()
     bind_ap_claim()
     wrap_deny_move()
+    wrap_cond_move()
     wrap_claim_tips()
 end
 
@@ -1144,6 +1254,7 @@ function on_game_start()
     RegisterScriptCallback("actor_on_first_update", on_actor_on_first_update)
     RegisterScriptCallback("actor_on_update", tick)
     RegisterScriptCallback("ActorMenu_on_item_before_move", on_item_before_move)
+    RegisterScriptCallback("GUI_on_show", on_gui_on_show)
     RegisterScriptCallback("save_state", on_save_state)
     RegisterScriptCallback("load_state", on_load_state)
     RegisterScriptCallback("on_game_load", reset)

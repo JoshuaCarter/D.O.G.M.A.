@@ -104,21 +104,6 @@ local function tick(gui)
 	end
 end
 
--- Vanilla take/put SFX is itms_manager.play_item_sound (snd_on_take by type).
--- Take already fires it via actor_on_item_take. Put-in-box only plays if
--- gui.npc_id matches the box. 25ms debounce inside = one hit per pile.
-local function play_item_snd(obj)
-	if not obj then
-		return
-	end
-	if not (itms_manager and itms_manager.play_item_sound) then
-		log("play_item_sound missing")
-		return
-	end
-	log("item snd " .. obj:section())
-	itms_manager.play_item_sound(obj, 0.75)
-end
-
 local function move_one(gui, obj, bag)
 	if not (gui and obj and bag and gui.Action_Move) then
 		return false
@@ -200,15 +185,14 @@ local function fire(whole)
 		if not from then
 			return
 		end
+		-- SFX is vanilla: take = actor_on_item_take, put = put_in_box from
+		-- still_refresh / LMode_RefreshInventories. Do not play_item_sound here.
 		local items = _G.dogma_inv_hover.stack_items(gui, obj, bag, whole)
 		if #items <= 1 then
-			if move_one(gui, obj, from) then
-				play_item_snd(obj)
-			end
+			move_one(gui, obj, from)
 			return
 		end
 		move_many(gui, items, from)
-		play_item_snd(items[1])
 	end
 end
 

@@ -61,6 +61,15 @@ local function roll_stash_bonus()
     return CONSTS.STASH_BONUS_ROLL_MAP[idx] or 0
 end
 
+local function roll_stash_cond(stash_tier)
+    stash_tier = clamp_tier(stash_tier)
+    local idx = dogma.rng.rand_from_tickets(CONSTS.STASH_PARTS_COND_TIX[stash_tier])
+    if not idx then
+        return nil
+    end
+    return dogma.rng.rand(CONSTS.STASH_PARTS_COND_MIN[idx], CONSTS.STASH_PARTS_COND_MAX[idx])
+end
+
 local function pick_section(cat, result_tier)
     result_tier = clamp_tier(result_tier)
     local min_t = CONSTS.STASH_CAT_MIN_TIER[cat]
@@ -75,7 +84,9 @@ local function pick_section(cat, result_tier)
             local rows = dogma.db.list(e[1])
             for j = 1, #rows do
                 local sec = rows[j] and rows[j].id
-                if sec and not seen[sec] and ini_sys:section_exist(sec) then
+                if sec and not seen[sec] and ini_sys:section_exist(sec)
+                    and (e[2] ~= "ammo" or dogma.db.is_craft_ammo(sec))
+                then
                     seen[sec] = true
                     local t = cost_to_tier(dogma.db.cost(sec), CONSTS.STASH_TIER_COST[cat])
                     if min_t and t < min_t then
@@ -118,9 +129,11 @@ local function roll_ru_for_rank(rank_name)
     local tickets = (rank_name and tix[rank_name]) or tix.experienced
     local idx = dogma.rng.rand_from_tickets(tickets)
     if not idx then
-        return 0
+        return 0, 0, 0
     end
-    return CONSTS.CORPSE_RANK_AMMO_RU_MAP[idx] or 0
+    return CONSTS.CORPSE_RANK_AMMO_RU_MAP[idx] or 0,
+        CONSTS.CORPSE_RANK_AMMO_RND_MIN[idx] or 0,
+        CONSTS.CORPSE_RANK_AMMO_RND_MAX[idx] or 0
 end
 
 local function roll_ru_for_ammo_tier(result_tier)
@@ -155,6 +168,7 @@ _G.dogma_game_weapons_ban_tiers = {
     pick_category = pick_category,
     pick_tier = pick_tier,
     roll_stash_bonus = roll_stash_bonus,
+    roll_stash_cond = roll_stash_cond,
     pick_section = pick_section,
     roll_ru_for_rank = roll_ru_for_rank,
     roll_ru_for_ammo_tier = roll_ru_for_ammo_tier,

@@ -53,12 +53,12 @@ local function ammo_sec_for_weapon(wpn_sec)
     end
     if ini_loadouts then
         local ammo_type = ini_loadouts:r_string_ex("ammo_type_per_wpn", wpn_sec)
-        if dogma.db.is_ammo(ammo_type) then
+        if dogma.db.is_craft_ammo(ammo_type) then
             return ammo_type
         end
     end
     for i = 1, #ammo_tbl do
-        if dogma.db.is_ammo(ammo_tbl[i]) then
+        if dogma.db.is_craft_ammo(ammo_tbl[i]) then
             return ammo_tbl[i]
         end
     end

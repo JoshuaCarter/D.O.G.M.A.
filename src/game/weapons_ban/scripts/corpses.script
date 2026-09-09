@@ -1,7 +1,12 @@
 --[[
     Weapons Ban — corpse ammo.
 
-    Strip loose ammo, then one rank RU budget split across kept guns.
+    Vanilla death ammo stays. Then one rank RU/min/max roll split across kept guns.
+    Each gun's ammo types are buckets. Every round (min and extras) is one
+    uniform pick among those types. Subtract that round's RU. After min,
+    leftover RU still buys the rolled round (even if it costs more), then
+    extras stop. Cap at `max`. Grenade ammo (OG-7B / VOG / M209) is skipped
+    for min; leftover RU can still buy it. Grenade-only guns skip min.
 ]]
 
 local CONFIG = _G.dogma_game_weapons_ban_conf
@@ -72,7 +77,7 @@ local function pick_ammo(ammo_list)
     local ok = {}
     for i = 1, #ammo_list do
         local s = ammo_list[i]
-        if dogma.db.is_ammo(s) then
+        if dogma.db.is_craft_ammo(s) then
             ok[#ok + 1] = s
         end
     end
@@ -139,7 +144,7 @@ local function collect_inventory_ammo_secs(npc)
 end
 
 -- Ammo types this gun should drop: loaded type + matching inventory ammo.
--- Falls back to a random db ammo_class entry if nothing matched.
+-- Craftable db ammo only. Falls back to a random ammo_class entry if nothing matched.
 local try_ammo_types_for_gun = function(wpn)
     return wpn:get_ammo_type()
 end
@@ -163,8 +168,10 @@ local function ammo_types_for_gun(wpn, inv_ammo)
     local allowed = {}
     for i = 1, #ammo_list do
         local s = ammo_list[i]
-        if dogma.db.is_ammo(s) then
+        if dogma.db.is_craft_ammo(s) then
             allowed[s] = true
+        elseif dogma.db.is_ammo(s) then
+            log("skip ammo " .. s .. " (no craft)")
         end
     end
 
@@ -202,6 +209,87 @@ local function ammo_types_for_gun(wpn, inv_ammo)
     return list
 end
 
+-- RU per round. Same units as rounds_for_ru (cost / box).
+local function round_cost(sec)
+    local cost = dogma.db.cost(sec)
+    if not cost or cost <= 0 then
+        return nil
+    end
+    local row = dogma.db.get(sec)
+    local box = (row and row.box) or 1
+    if box <= 0 then
+        box = 1
+    end
+    return cost / box
+end
+
+local function split_int(total, n, i)
+    local base = math.floor(total / n)
+    local rem = total - base * n
+    if i <= rem then
+        return base + 1
+    end
+    return base
+end
+
+-- Fill this gun: at least min_r rounds, never more than max_r.
+-- Every round is a uniform pick, then subtract that cost. Min picks skip
+-- grenade ammo. After min, leftover RU still grants the rolled round, then stop.
+local function allocate_gun_ammo(types, ru_budget, min_r, max_r)
+    local counts = {}
+    local k = #types
+    if k < 1 or max_r <= 0 then
+        return counts
+    end
+    if min_r > max_r then
+        min_r = max_r
+    end
+    local costs = {}
+    local min_idx = {}
+    local any_c = false
+    for i = 1, k do
+        local sec = types[i]
+        local c = round_cost(sec)
+        costs[i] = c
+        if c then
+            any_c = true
+        end
+        if not dogma.db.is_grenade_ammo(sec) then
+            min_idx[#min_idx + 1] = i
+        end
+    end
+    local min_k = #min_idx
+    if min_k < 1 then
+        min_r = 0
+    end
+    local ru = ru_budget
+    for n = 1, max_r do
+        local extra = n > min_r
+        if extra and (not any_c or ru <= 0) then
+            break
+        end
+        local i
+        if extra then
+            i = math.random(k)
+        else
+            i = min_idx[math.random(min_k)]
+        end
+        local sec = types[i]
+        counts[sec] = (counts[sec] or 0) + 1
+        local c = costs[i]
+        if c then
+            if extra and c > ru then
+                break
+            end
+            ru = ru - c
+            if ru < 0 then
+                ru = 0
+            end
+        end
+    end
+    return counts
+end
+
 local function inject_corpse_ammo(npc, inv_ammo)
     local rank = npc_rank_name(npc)
     local gun_ammo = {}
@@ -226,29 +314,39 @@ local function inject_corpse_ammo(npc, inv_ammo)
     if #gun_ammo == 0 then
         return { skip = "no guns", rank = rank }
     end
-    local total_ru = Tiers.roll_ru_for_rank(rank)
+    local total_ru, min_rounds, max_rounds = Tiers.roll_ru_for_rank(rank)
     if total_ru <= 0 then
         return { skip = "ru 0", rank = rank, guns = #gun_ammo }
     end
-    local share = total_ru / #gun_ammo
+    local n_guns = #gun_ammo
     local pooled = {}
-    for i = 1, #gun_ammo do
+    for i = 1, n_guns do
         local types = gun_ammo[i]
-        local per = share / #types
-        for j = 1, #types do
-            local sec = types[j]
-            pooled[sec] = (pooled[sec] or 0) + per
+        local counts = allocate_gun_ammo(
+            types,
+            total_ru / n_guns,
+            split_int(min_rounds, n_guns, i),
+            split_int(max_rounds, n_guns, i)
+        )
+        for sec, n in pairs(counts) do
+            pooled[sec] = (pooled[sec] or 0) + n
         end
     end
     local drops = {}
-    for sec, ru in pairs(pooled) do
-        local rounds = Tiers.rounds_for_ru(sec, ru)
+    for sec, rounds in pairs(pooled) do
         if rounds > 0 then
             alife_create_item(sec, npc, { ammo = rounds })
-            drops[#drops + 1] = string.format("%s x%s (%.0f RU)", sec, rounds, ru)
+            drops[#drops + 1] = string.format("%s x%s", sec, rounds)
         end
     end
-    return { rank = rank, guns = #gun_ammo, ru = total_ru, drops = drops }
+    return {
+        rank = rank,
+        guns = n_guns,
+        ru = total_ru,
+        min = min_rounds,
+        max = max_rounds,
+        drops = drops,
+    }
 end
 
 local function log_corpse_roll(npc, result)
@@ -268,11 +366,13 @@ local function log_corpse_roll(npc, result)
         return
     end
     queue_roll(id, string.format(
-        "corpse %s rank=%s guns=%s ru=%s",
+        "corpse %s rank=%s guns=%s ru=%s min=%s max=%s",
         who,
         result.rank or "?",
         result.guns,
-        result.ru
+        result.ru,
+        result.min or 0,
+        result.max or 0
     ), "green")
     if #result.drops == 0 then
         queue_roll(id, "  none", "gray")
@@ -294,9 +394,9 @@ local function patched_try_spawn_ammo(npc)
         return
     end
     dogma.perf.start("weapons_ban", "try_spawn_ammo")
-    -- Snapshot matching ammo before strip so we can reinject the same types.
+    -- Snapshot matching ammo so we inject the same types.
     local inv_ammo = collect_inventory_ammo_secs(npc)
-    strip_loose_ammo(npc)
+    -- strip_loose_ammo(npc)
     log_corpse_roll(npc, inject_corpse_ammo(npc, inv_ammo) or { skip = "no result" })
     if item_weapon and item_weapon.ammo_aggregation_full and CreateTimeEvent then
         CreateTimeEvent(npc:id(), "dogma_wb_ammo_agg", 0, item_weapon.ammo_aggregation_full, npc:id())

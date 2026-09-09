@@ -150,6 +150,7 @@ local function decorate(row, typ)
     row.ap = num(row.st_data_export_ap)
     row.k_ap = num(row.st_data_export_k_ap)
     row.box = num(row.st_data_export_ammo_box_size)
+    row.projectiles = num(row.st_data_export_projectiles)
     row.br = num(row.brClass)
     row.ballistic = num(row.ui_inv_outfit_fire_wound_protection)
     row.rad = num(row.ui_inv_outfit_radiation_protection)
@@ -472,6 +473,16 @@ function is_armor(id) return is(id, "armor") end
 function is_outfit(id) return is(id, "armor_outfits") end
 function is_helmet(id) return is(id, "armor_helmets") end
 function is_ammo(id) return is(id, "ammo") end
+-- OG-7B / VOG / M209. ammo.json projectiles=0. Not the explosives item cat.
+function is_grenade_ammo(id)
+    return is_ammo(id) and get(id).projectiles == 0
+end
+-- Workshop recipe in craft-recipes.json. Leftover calibers (4.6x30) are in
+-- ammo.json but have no ingredients; do not spawn those.
+function is_craft_ammo(id)
+    local r = is_ammo(id) and craft(id)
+    return r and #r > 0
+end
 function is_ammo_part(id) return is(id, "ammo_parts") end
 function is_ammo_casing(id) return is(id, "ammo_casings") end
 function is_ammo_powder(id) return is(id, "ammo_powder") end

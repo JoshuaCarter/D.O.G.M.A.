@@ -3,7 +3,7 @@
     flags are read live.
 
     is_in_combat()  — 1s cache: a collected hunter (best_enemy = actor) is within COMBAT_M
-    is_inv_open()   — talking, or engine ActorMenu:IsShown() (same as world-input / tutorials)
+    is_inv_open()   — talking, ActorMenu:IsShown(), or last_mode (loot can be up with IsShown false)
     is_eating()     — food use, latched 3s
     is_drinking()   — drink use, latched 3s
     is_weapon_lowered() — game.actor_weapon_lowered() (eat/meds/sprint/dialog/…)
@@ -334,8 +334,8 @@ function is_inv_open()
     end
     if ActorMenu and ActorMenu.get_actor_menu then
         local ok, shown = pcall(try_actor_menu_shown, ActorMenu)
-        if ok then
-            return shown == true
+        if ok and shown then
+            return true
         end
     end
     return actor_menu and actor_menu.last_mode and actor_menu.last_mode ~= 0

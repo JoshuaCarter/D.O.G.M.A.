@@ -1,9 +1,11 @@
 --[[
-	Last Equip
+    Last Equip
 
-	Remember the last watched hand slot. After chosen events, draw it once.
-	If the engine flips the slot with no slot key down, assert once more.
-	Do not activate_slot on UI open (starts a draw, delays the open anim).
+    Remember the last watched hand slot. After chosen events, draw it
+    once. Point of the mod: inventory close must not bring the PDA
+    back. Already holding that slot: do not activate_slot (same-slot
+    call holsters then draws). If the engine then empties hands or
+    puts the PDA back, assert last_x once.
 ]]
 
 local CONFIG = _G.dogma_input_last_equip_conf
@@ -23,43 +25,43 @@ local TELEPORT_DIST_SQR = 12 * 12
 local SAVE_KEY = "dogma_input_last_equip_slot"
 
 local MODE_TO_KIND = {
-	[1] = "inventory",
-	[2] = "trade",
-	[4] = "loot",
+    [1] = "inventory",
+    [2] = "trade",
+    [4] = "loot",
 }
 
 local SLOT_OPTS = {
-	{ id = "slot_primary", slot = SLOT_PRIMARY },
-	{ id = "slot_secondary", slot = SLOT_SECONDARY },
-	{ id = "slot_pistol", slot = SLOT_PISTOL },
-	{ id = "slot_melee", slot = SLOT_MELEE },
-	{ id = "slot_grenade", slot = SLOT_GRENADE },
-	{ id = "slot_vision", slot = SLOT_VISION },
-	{ id = "slot_device", slot = SLOT_DEVICE },
-	{ id = "slot_pda", slot = SLOT_PDA },
-	{ id = "slot_bolt", slot = SLOT_BOLT },
+    { id = "slot_primary", slot = SLOT_PRIMARY },
+    { id = "slot_secondary", slot = SLOT_SECONDARY },
+    { id = "slot_pistol", slot = SLOT_PISTOL },
+    { id = "slot_melee", slot = SLOT_MELEE },
+    { id = "slot_grenade", slot = SLOT_GRENADE },
+    { id = "slot_vision", slot = SLOT_VISION },
+    { id = "slot_device", slot = SLOT_DEVICE },
+    { id = "slot_pda", slot = SLOT_PDA },
+    { id = "slot_bolt", slot = SLOT_BOLT },
 }
 
 local SLOT_KB = {
-	"kWPN_1",
-	"kWPN_2",
-	"kWPN_3",
-	"kWPN_4",
-	"kWPN_5",
-	"kWPN_6",
-	"kNEXT_SLOT",
-	"kPREV_SLOT",
-	"kACTIVE_JOBS",
-	"kDETECTOR",
-	"kCUSTOM25",
+    "kWPN_1",
+    "kWPN_2",
+    "kWPN_3",
+    "kWPN_4",
+    "kWPN_5",
+    "kWPN_6",
+    "kNEXT_SLOT",
+    "kPREV_SLOT",
+    "kACTIVE_JOBS",
+    "kDETECTOR",
+    "kCUSTOM25",
 }
 
 local EQ_KEY_IDS = { "key_bolt", "key_detector" }
 
 local CRAFT_GUI = {
-	UIWorkshop = true,
-	UIFurnitureWorkshop = true,
-	ui_hf_workshop = true,
+    UIWorkshop = true,
+    UIFurnitureWorkshop = true,
+    ui_hf_workshop = true,
 }
 
 local slot_watched = {}
@@ -74,462 +76,482 @@ local need_load_restore = false
 local last_actor_pos = nil
 
 local try_item_in_slot = function(actor, slot)
-	return actor:item_in_slot(slot)
+    return actor:item_in_slot(slot)
 end
 
 local try_active_slot = function(actor)
-	return actor:active_slot()
+    return actor:active_slot()
 end
 
 local try_activate_slot = function(actor, slot)
-	actor:activate_slot(slot)
+    actor:activate_slot(slot)
 end
 
 local try_position = function(actor)
-	return actor:position()
+    return actor:position()
 end
 
 local try_bind_to_dik = function(bind)
-	return bind_to_dik(bind)
+    return bind_to_dik(bind)
 end
 
 local try_scan_stalkers_before_pda = function(se)
-	return se:community()
+    return se:community()
 end
 
 local try_scan_stalkers_before_pda_2 = function(IsStalker, npc)
-	return IsStalker and IsStalker(npc)
+    return IsStalker and IsStalker(npc)
 end
 
 local try_npc_name = function(npc)
-	return npc:name()
+    return npc:name()
 end
 
 local try_npc_sec = function(npc)
-	return npc:section()
+    return npc:section()
 end
 
 local function log(msg)
-	if CONFIG.loaded.debug_log then
-		dogma.log.log(CONFIG.MOD_ID, tostring(msg))
-	end
+    if CONFIG.loaded.debug_log then
+        dogma.log.log(CONFIG.MOD_ID, tostring(msg))
+    end
 end
 
 local function add_slot_dik(dik)
-	if not (dik and dik > 0) then
-		return
-	end
-	slot_diks_n = slot_diks_n + 1
-	slot_diks[slot_diks_n] = dik
+    if not (dik and dik > 0) then
+        return
+    end
+    slot_diks_n = slot_diks_n + 1
+    slot_diks[slot_diks_n] = dik
 end
 
 local function refresh_slot_diks()
-	slot_diks_n = 0
-	if not (key_bindings and bind_to_dik) then
-		return
-	end
-	for i = 1, #SLOT_KB do
-		local bind = key_bindings[SLOT_KB[i]]
-		if bind then
-			local ok, dik = pcall(try_bind_to_dik, bind)
-			if ok then
-				add_slot_dik(dik)
-			end
-		end
-	end
-	local eq = rawget(_G, "dogma_input_equipment_controls_conf")
-	if eq and dogma.mcm and dogma.mcm.key then
-		for i = 1, #EQ_KEY_IDS do
-			add_slot_dik(dogma.mcm.key(eq.MOD_ID, EQ_KEY_IDS[i]))
-		end
-	end
+    slot_diks_n = 0
+    if not (key_bindings and bind_to_dik) then
+        return
+    end
+    for i = 1, #SLOT_KB do
+        local bind = key_bindings[SLOT_KB[i]]
+        if bind then
+            local ok, dik = pcall(try_bind_to_dik, bind)
+            if ok then
+                add_slot_dik(dik)
+            end
+        end
+    end
+    local eq = rawget(_G, "dogma_input_equipment_controls_conf")
+    if eq and dogma.mcm and dogma.mcm.key then
+        for i = 1, #EQ_KEY_IDS do
+            add_slot_dik(dogma.mcm.key(eq.MOD_ID, EQ_KEY_IDS[i]))
+        end
+    end
 end
 
 local function on_option_change()
-	local tostr = tostring
-	local loaded = CONFIG.loaded
-	loaded.enabled = dogma.mcm.bool(CONFIG.MOD_ID, "enabled")
-	if not loaded.enabled then
-		watch_until = nil
-	end
-	for i = 1, #SLOT_OPTS do
-		local opt = SLOT_OPTS[i]
-		loaded[opt.id] = dogma.mcm.bool(CONFIG.MOD_ID, opt.id)
-		slot_watched[opt.slot] = loaded[opt.id]
-	end
-	loaded.after_inventory = dogma.mcm.bool(CONFIG.MOD_ID, "after_inventory")
-	loaded.after_loot = dogma.mcm.bool(CONFIG.MOD_ID, "after_loot")
-	loaded.after_trade = dogma.mcm.bool(CONFIG.MOD_ID, "after_trade")
-	loaded.after_dialogue = dogma.mcm.bool(CONFIG.MOD_ID, "after_dialogue")
-	loaded.after_craft = dogma.mcm.bool(CONFIG.MOD_ID, "after_craft")
-	loaded.after_teleport = dogma.mcm.bool(CONFIG.MOD_ID, "after_teleport")
-	loaded.after_load = dogma.mcm.bool(CONFIG.MOD_ID, "after_load")
-	loaded.debug_log = dogma.log.logging()
-	refresh_slot_diks()
-	log(string.format(
-		"config: enabled=%s melee=%s secondary=%s primary=%s grenade=%s vision=%s bolt=%s pda=%s device=%s pistol=%s inv=%s loot=%s trade=%s talk=%s craft=%s tp=%s load=%s",
-		tostr(loaded.enabled), tostr(loaded.slot_melee), tostr(loaded.slot_secondary), tostr(loaded.slot_primary),
-		tostr(loaded.slot_grenade), tostr(loaded.slot_vision), tostr(loaded.slot_bolt),
-		tostr(loaded.slot_pda), tostr(loaded.slot_device),
-		tostr(loaded.slot_pistol), tostr(loaded.after_inventory), tostr(loaded.after_loot),
-		tostr(loaded.after_trade), tostr(loaded.after_dialogue), tostr(loaded.after_craft),
-		tostr(loaded.after_teleport), tostr(loaded.after_load)
-	))
+    local tostr = tostring
+    local loaded = CONFIG.loaded
+    loaded.enabled = dogma.mcm.bool(CONFIG.MOD_ID, "enabled")
+    if not loaded.enabled then
+        watch_until = nil
+    end
+    for i = 1, #SLOT_OPTS do
+        local opt = SLOT_OPTS[i]
+        loaded[opt.id] = dogma.mcm.bool(CONFIG.MOD_ID, opt.id)
+        slot_watched[opt.slot] = loaded[opt.id]
+    end
+    loaded.after_inventory = dogma.mcm.bool(CONFIG.MOD_ID, "after_inventory")
+    loaded.after_loot = dogma.mcm.bool(CONFIG.MOD_ID, "after_loot")
+    loaded.after_trade = dogma.mcm.bool(CONFIG.MOD_ID, "after_trade")
+    loaded.after_dialogue = dogma.mcm.bool(CONFIG.MOD_ID, "after_dialogue")
+    loaded.after_craft = dogma.mcm.bool(CONFIG.MOD_ID, "after_craft")
+    loaded.after_teleport = dogma.mcm.bool(CONFIG.MOD_ID, "after_teleport")
+    loaded.after_load = dogma.mcm.bool(CONFIG.MOD_ID, "after_load")
+    loaded.debug_log = dogma.log.logging()
+    refresh_slot_diks()
+    log(string.format(
+        "config: enabled=%s melee=%s secondary=%s primary=%s grenade=%s vision=%s bolt=%s pda=%s device=%s pistol=%s inv=%s loot=%s trade=%s talk=%s craft=%s tp=%s load=%s",
+        tostr(loaded.enabled), tostr(loaded.slot_melee), tostr(loaded.slot_secondary), tostr(loaded.slot_primary),
+        tostr(loaded.slot_grenade), tostr(loaded.slot_vision), tostr(loaded.slot_bolt),
+        tostr(loaded.slot_pda), tostr(loaded.slot_device),
+        tostr(loaded.slot_pistol), tostr(loaded.after_inventory), tostr(loaded.after_loot),
+        tostr(loaded.after_trade), tostr(loaded.after_dialogue), tostr(loaded.after_craft),
+        tostr(loaded.after_teleport), tostr(loaded.after_load)
+    ))
 end
 
 local function current_slot()
-	if not db.actor then
-		return nil
-	end
-	local ok, slot = pcall(try_active_slot, db.actor)
-	if ok then
-		return slot
-	end
+    if not db.actor then
+        return nil
+    end
+    local ok, slot = pcall(try_active_slot, db.actor)
+    if ok then
+        return slot
+    end
 end
 
 local function slot_has_item(slot)
-	if not (db.actor and slot and slot ~= 0) then
-		return false
-	end
-	local ok, item = pcall(try_item_in_slot, db.actor, slot)
-	return ok and item ~= nil
+    if not (db.actor and slot and slot ~= 0) then
+        return false
+    end
+    local ok, item = pcall(try_item_in_slot, db.actor, slot)
+    return ok and item ~= nil
 end
 
 local function slot_input_down()
-	local input = dogma.input
-	if not input then
-		return false
-	end
-	for i = 1, slot_diks_n do
-		local dik = slot_diks[i]
-		if dik and (input.is_key_down(dik) or input.is_key_pressed(dik)) then
-			return true
-		end
-	end
-	return false
+    local input = dogma.input
+    if not input then
+        return false
+    end
+    for i = 1, slot_diks_n do
+        local dik = slot_diks[i]
+        if dik and (input.is_key_down(dik) or input.is_key_pressed(dik)) then
+            return true
+        end
+    end
+    return false
 end
 
 local function activate_target(target, site)
-	local tostr = tostring
-	if not db.actor then
-		return false
-	end
-	if not slot_has_item(target) then
-		log(string.format("skip(%s): empty target=%s", site, tostr(target)))
-		return false
-	end
-	log(string.format(
-		"restore(%s): active_slot=%s -> activate_slot(%s) last_x=%s",
-		site, tostr(current_slot()), tostr(target), tostr(last_x)
-	))
-	pcall(try_activate_slot, db.actor, target)
-	return true
+    local tostr = tostring
+    if not db.actor then
+        return false
+    end
+    if not slot_has_item(target) then
+        log(string.format("skip(%s): empty target=%s", site, tostr(target)))
+        return false
+    end
+    local slot = current_slot()
+    if slot == target then
+        log(string.format("skip(%s): already slot=%s", site, tostr(target)))
+        return true
+    end
+    log(string.format(
+        "restore(%s): active_slot=%s -> activate_slot(%s) last_x=%s",
+        site, tostr(slot), tostr(target), tostr(last_x)
+    ))
+    pcall(try_activate_slot, db.actor, target)
+    return true
+end
+
+local function arm_watch(site)
+    watch_until = time_global() + WATCH_MS
+    extra_used = false
+    log("watch start " .. site)
 end
 
 local function start_restore(site)
-	if not CONFIG.loaded.enabled then
-		return
-	end
-	if last_x == nil or last_x == 0 then
-		log("skip(" .. site .. "): no last_x")
-		return
-	end
-	if watch_until then
-		return
-	end
-	if not activate_target(last_x, site) then
-		return
-	end
-	watch_until = time_global() + WATCH_MS
-	extra_used = false
-	log("watch start " .. site)
+    if not CONFIG.loaded.enabled then
+        return
+    end
+    if last_x == nil or last_x == 0 then
+        log("skip(" .. site .. "): no last_x")
+        return
+    end
+    if watch_until then
+        return
+    end
+    if not slot_has_item(last_x) then
+        log(string.format("skip(%s): empty target=%s", site, tostring(last_x)))
+        return
+    end
+    local slot = current_slot()
+    if slot == last_x then
+        log(string.format("skip(%s): already slot=%s", site, tostring(last_x)))
+        arm_watch(site)
+        return
+    end
+    if not activate_target(last_x, site) then
+        return
+    end
+    arm_watch(site)
 end
 
 local function tick_watch()
-	if not watch_until then
-		return
-	end
-	if slot_input_down() then
-		log("watch cancel: player slot key")
-		watch_until = nil
-		return
-	end
-	local slot = current_slot()
-	if slot ~= last_x and not extra_used then
-		extra_used = true
-		log(string.format("engine flip %s -> %s, extra assert", tostring(slot), tostring(last_x)))
-		activate_target(last_x, "engine_flip")
-	end
-	if time_global() > watch_until then
-		watch_until = nil
-		log("watch end")
-	end
+    if not watch_until then
+        return
+    end
+    if slot_input_down() then
+        log("watch cancel: player slot key")
+        watch_until = nil
+        return
+    end
+    local slot = current_slot()
+    if slot ~= last_x and not extra_used then
+        extra_used = true
+        log(string.format("engine flip %s -> %s, extra assert", tostring(slot), tostring(last_x)))
+        activate_target(last_x, "engine_flip")
+    end
+    if time_global() > watch_until then
+        watch_until = nil
+        log("watch end")
+    end
 end
 
 local function maybe_record_slot(slot)
-	if slot ~= 0 and slot_watched[slot] then
-		last_x = slot
-	end
+    if slot ~= 0 and slot_watched[slot] then
+        last_x = slot
+    end
 end
 
 -- Always printf: empty community fatals PDA ranking (CCharacterInfo::GetById).
 -- SE/xcreature only. Game-object character_community() can itself assert.
 local function scan_stalkers_before_pda()
-	local tostr = tostring
-	if not (db and db.storage and db.actor) then
-		return
-	end
-	dogma.perf.start("last_equip", "scan_stalkers")
-	local actor_id = db.actor:id()
-	local total = 0
-	local bad = 0
-	for id, st in pairs(db.storage) do
-		local npc = st and st.object
-		if npc and id ~= actor_id then
-			local ok_st, is_st = pcall(try_scan_stalkers_before_pda_2, IsStalker, npc)
-			if ok_st and is_st then
-				total = total + 1
-				local name, sec = "?", "?"
-				local ok_n, n = pcall(try_npc_name, npc)
-				if ok_n and n then
-					name = n
-				end
-				local ok_s, s = pcall(try_npc_sec, npc)
-				if ok_s and s then
-					sec = s
-				end
-				local se = alife_object(id)
-				local comm = nil
-				if se and xcreature and xcreature.community then
-					local ok_c, c = pcall(xcreature.community, se)
-					if ok_c then
-						comm = c
-					end
-				elseif se and se.community then
-					local ok_c, c = pcall(try_scan_stalkers_before_pda, se)
-					if ok_c then
-						comm = c
-					end
-				end
-				local empty = (type(comm) ~= "string") or (comm == "") or (comm == "none")
-				if empty then
-					bad = bad + 1
-					printf(
-						"[dogma_input_last_equip] BAD STALKER id=%s name=%s sec=%s community=%s se=%s",
-						tostr(id),
-						tostr(name),
-						tostr(sec),
-						tostr(comm),
-						tostr(se ~= nil)
-					)
-				end
-			end
-		end
-	end
-	printf(
-		"[dogma_input_last_equip] pre-PDA stalker scan: total=%s bad_community=%s",
-		tostr(total),
-		tostr(bad)
-	)
-	dogma.perf.stop()
+    local tostr = tostring
+    if not (db and db.storage and db.actor) then
+        return
+    end
+    dogma.perf.start("last_equip", "scan_stalkers")
+    local actor_id = db.actor:id()
+    local total = 0
+    local bad = 0
+    for id, st in pairs(db.storage) do
+        local npc = st and st.object
+        if npc and id ~= actor_id then
+            local ok_st, is_st = pcall(try_scan_stalkers_before_pda_2, IsStalker, npc)
+            if ok_st and is_st then
+                total = total + 1
+                local name, sec = "?", "?"
+                local ok_n, n = pcall(try_npc_name, npc)
+                if ok_n and n then
+                    name = n
+                end
+                local ok_s, s = pcall(try_npc_sec, npc)
+                if ok_s and s then
+                    sec = s
+                end
+                local se = alife_object(id)
+                local comm = nil
+                if se and xcreature and xcreature.community then
+                    local ok_c, c = pcall(xcreature.community, se)
+                    if ok_c then
+                        comm = c
+                    end
+                elseif se and se.community then
+                    local ok_c, c = pcall(try_scan_stalkers_before_pda, se)
+                    if ok_c then
+                        comm = c
+                    end
+                end
+                local empty = (type(comm) ~= "string") or (comm == "") or (comm == "none")
+                if empty then
+                    bad = bad + 1
+                    printf(
+                        "[dogma_input_last_equip] BAD STALKER id=%s name=%s sec=%s community=%s se=%s",
+                        tostr(id),
+                        tostr(name),
+                        tostr(sec),
+                        tostr(comm),
+                        tostr(se ~= nil)
+                    )
+                end
+            end
+        end
+    end
+    printf(
+        "[dogma_input_last_equip] pre-PDA stalker scan: total=%s bad_community=%s",
+        tostr(total),
+        tostr(bad)
+    )
+    dogma.perf.stop()
 end
 
 local function track_slot()
-	local tostr = tostring
-	local slot = current_slot()
-	if slot == last_seen_slot then
-		return
-	end
-	local prev = last_seen_slot
-	last_seen_slot = slot
-	log(string.format(
-		"active_slot %s -> %s last_x=%s watch=%s",
-		tostr(prev), tostr(slot), tostr(last_x), tostr(watch_until ~= nil)
-	))
-	if slot == SLOT_PDA then
-		scan_stalkers_before_pda()
-	end
-	if watch_until and not slot_input_down() then
-		return
-	end
-	maybe_record_slot(slot)
+    local tostr = tostring
+    local slot = current_slot()
+    if slot == last_seen_slot then
+        return
+    end
+    local prev = last_seen_slot
+    last_seen_slot = slot
+    log(string.format(
+        "active_slot %s -> %s last_x=%s watch=%s",
+        tostr(prev), tostr(slot), tostr(last_x), tostr(watch_until ~= nil)
+    ))
+    if slot == SLOT_PDA then
+        scan_stalkers_before_pda()
+    end
+    if watch_until and not slot_input_down() then
+        return
+    end
+    maybe_record_slot(slot)
 end
 
 local function kind_enabled(kind)
-	return kind and CONFIG.loaded["after_" .. kind]
+    return kind and CONFIG.loaded["after_" .. kind]
 end
 
 local function restore_kind(kind, site)
-	if not kind_enabled(kind) then
-		return
-	end
-	start_restore(site)
+    if not kind_enabled(kind) then
+        return
+    end
+    start_restore(site)
 end
 
 local function on_actor_menu_mode_changed(mode, last_mode)
-	log(string.format("ActorMenu_on_mode_changed: mode=%s last_mode=%s", tostring(mode), tostring(last_mode)))
-	if mode == 0 then
-		restore_kind(MODE_TO_KIND[last_mode], "mode_changed(close)")
-	end
+    log(string.format("ActorMenu_on_mode_changed: mode=%s last_mode=%s", tostring(mode), tostring(last_mode)))
+    if mode == 0 then
+        restore_kind(MODE_TO_KIND[last_mode], "mode_changed(close)")
+    end
 end
 
 local function on_actor_menu_before_init_mode(mode_str)
-	log("ActorMenu_on_before_init_mode: " .. tostring(mode_str))
+    log("ActorMenu_on_before_init_mode: " .. tostring(mode_str))
 end
 
 local patched = false
 local orig_actor_menu = {}
 
 local function patch_actor_menu()
-	if patched or not actor_menu then
-		return
-	end
-	patched = true
+    if patched or not actor_menu then
+        return
+    end
+    patched = true
 
-	orig_actor_menu.inventory_wnd_closed = actor_menu.inventory_wnd_closed
-	orig_actor_menu.dead_body_search_wnd_closed = actor_menu.dead_body_search_wnd_closed
-	orig_actor_menu.trade_wnd_closed = actor_menu.trade_wnd_closed
+    orig_actor_menu.inventory_wnd_closed = actor_menu.inventory_wnd_closed
+    orig_actor_menu.dead_body_search_wnd_closed = actor_menu.dead_body_search_wnd_closed
+    orig_actor_menu.trade_wnd_closed = actor_menu.trade_wnd_closed
 
-	function actor_menu.inventory_wnd_closed()
-		log("actor_menu.inventory_wnd_closed")
-		if orig_actor_menu.inventory_wnd_closed then
-			orig_actor_menu.inventory_wnd_closed()
-		end
-		restore_kind("inventory", "wnd_closed")
-	end
+    function actor_menu.inventory_wnd_closed()
+        log("actor_menu.inventory_wnd_closed")
+        if orig_actor_menu.inventory_wnd_closed then
+            orig_actor_menu.inventory_wnd_closed()
+        end
+        restore_kind("inventory", "wnd_closed")
+    end
 
-	function actor_menu.dead_body_search_wnd_closed()
-		log("actor_menu.dead_body_search_wnd_closed")
-		if orig_actor_menu.dead_body_search_wnd_closed then
-			orig_actor_menu.dead_body_search_wnd_closed()
-		end
-		restore_kind("loot", "wnd_closed")
-	end
+    function actor_menu.dead_body_search_wnd_closed()
+        log("actor_menu.dead_body_search_wnd_closed")
+        if orig_actor_menu.dead_body_search_wnd_closed then
+            orig_actor_menu.dead_body_search_wnd_closed()
+        end
+        restore_kind("loot", "wnd_closed")
+    end
 
-	function actor_menu.trade_wnd_closed()
-		log("actor_menu.trade_wnd_closed")
-		if orig_actor_menu.trade_wnd_closed then
-			orig_actor_menu.trade_wnd_closed()
-		end
-		restore_kind("trade", "wnd_closed")
-	end
+    function actor_menu.trade_wnd_closed()
+        log("actor_menu.trade_wnd_closed")
+        if orig_actor_menu.trade_wnd_closed then
+            orig_actor_menu.trade_wnd_closed()
+        end
+        restore_kind("trade", "wnd_closed")
+    end
 end
 
 local function name_is_craft(name)
-	if type(name) ~= "string" or name == "" then
-		return false
-	end
-	if CRAFT_GUI[name] then
-		return true
-	end
-	return name:lower():find("workshop", 1, true)
+    if type(name) ~= "string" or name == "" then
+        return false
+    end
+    if CRAFT_GUI[name] then
+        return true
+    end
+    return name:lower():find("workshop", 1, true)
 end
 
 local function on_gui_hide(gui, extra)
-	if gui == "Dialog" then
-		restore_kind("dialogue", "gui_hide")
-		return
-	end
-	if name_is_craft(gui) or name_is_craft(extra) then
-		restore_kind("craft", "gui_hide")
-	end
+    log(string.format("GUI_on_hide gui=%s extra=%s", tostring(gui), tostring(extra)))
+    if gui == "Dialog" then
+        restore_kind("dialogue", "gui_hide")
+        return
+    end
+    if name_is_craft(gui) or name_is_craft(extra) then
+        restore_kind("craft", "gui_hide")
+    end
 end
 
 local function on_before_fast_travel()
-	if CONFIG.loaded.after_teleport then
-		start_restore("fast_travel")
-	end
+    if CONFIG.loaded.after_teleport then
+        start_restore("fast_travel")
+    end
 end
 
 local function tick_teleport()
-	if not CONFIG.loaded.after_teleport or not db.actor then
-		return
-	end
-	local ok, pos = pcall(try_position, db.actor)
-	if not (ok and pos) then
-		return
-	end
-	if last_actor_pos then
-		local dx = pos.x - last_actor_pos.x
-		local dy = pos.y - last_actor_pos.y
-		local dz = pos.z - last_actor_pos.z
-		if (dx * dx + dy * dy + dz * dz) >= TELEPORT_DIST_SQR then
-			log("teleport jump")
-			start_restore("teleport")
-			local ok2, pos2 = pcall(try_position, db.actor)
-			if ok2 then
-				last_actor_pos = pos2
-			end
-			return
-		end
-	end
-	last_actor_pos = pos
+    if not CONFIG.loaded.after_teleport or not db.actor then
+        return
+    end
+    local ok, pos = pcall(try_position, db.actor)
+    if not (ok and pos) then
+        return
+    end
+    if last_actor_pos then
+        local dx = pos.x - last_actor_pos.x
+        local dy = pos.y - last_actor_pos.y
+        local dz = pos.z - last_actor_pos.z
+        if (dx * dx + dy * dy + dz * dz) >= TELEPORT_DIST_SQR then
+            log("teleport jump")
+            start_restore("teleport")
+            local ok2, pos2 = pcall(try_position, db.actor)
+            if ok2 then
+                last_actor_pos = pos2
+            end
+            return
+        end
+    end
+    last_actor_pos = pos
 end
 
 local function on_actor_on_update()
-	if not dogma.sys.ready(CONFIG.MOD_ID, db, on_option_change) or not db.actor then
-		return
-	end
-	patch_actor_menu()
-	if not CONFIG.loaded.enabled then
-		return
-	end
-	track_slot()
-	tick_watch()
-	tick_teleport()
+    if not dogma.sys.ready(CONFIG.MOD_ID, db, on_option_change) or not db.actor then
+        return
+    end
+    patch_actor_menu()
+    if not CONFIG.loaded.enabled then
+        return
+    end
+    track_slot()
+    tick_watch()
+    tick_teleport()
 end
 
 local function on_actor_on_first_update()
-	patch_actor_menu()
-	if need_load_restore then
-		need_load_restore = false
-		start_restore("first_update")
-	end
+    patch_actor_menu()
+    if need_load_restore then
+        need_load_restore = false
+        start_restore("first_update")
+    end
 end
 
 local function on_game_load()
-	watch_until = nil
-	extra_used = false
-	last_seen_slot = nil
-	last_actor_pos = nil
-	if CONFIG.loaded.after_load then
-		need_load_restore = true
-	end
+    watch_until = nil
+    extra_used = false
+    last_seen_slot = nil
+    last_actor_pos = nil
+    if CONFIG.loaded.after_load then
+        need_load_restore = true
+    end
 end
 
 local function on_level_changing()
-	if CONFIG.loaded.after_load then
-		need_load_restore = true
-	end
+    if CONFIG.loaded.after_load then
+        need_load_restore = true
+    end
 end
 
 local function on_save_state(m_data)
-	m_data[SAVE_KEY] = last_x
+    m_data[SAVE_KEY] = last_x
 end
 
 local function on_load_state(m_data)
-	local v = m_data and m_data[SAVE_KEY]
-	if type(v) == "number" and v ~= 0 then
-		last_x = v
-	end
+    local v = m_data and m_data[SAVE_KEY]
+    if type(v) == "number" and v ~= 0 then
+        last_x = v
+    end
 end
 
 function on_game_start()
-	dogma.load(CONFIG.MOD_ID)
-	dogma.log.log(CONFIG.MOD_ID, "on_game_start: mod loaded")
-	on_option_change()
-	patch_actor_menu()
-	RegisterScriptCallback("ActorMenu_on_before_init_mode", on_actor_menu_before_init_mode)
-	RegisterScriptCallback("ActorMenu_on_mode_changed", on_actor_menu_mode_changed)
-	RegisterScriptCallback("GUI_on_hide", on_gui_hide)
-	RegisterScriptCallback("on_option_change", on_option_change)
-	RegisterScriptCallback("actor_on_update", on_actor_on_update)
-	RegisterScriptCallback("actor_on_first_update", on_actor_on_first_update)
-	RegisterScriptCallback("on_game_load", on_game_load)
-	RegisterScriptCallback("on_level_changing", on_level_changing)
-	RegisterScriptCallback("save_state", on_save_state)
-	RegisterScriptCallback("load_state", on_load_state)
-	if rawget(_G, "game_fast_travel") then
-		RegisterScriptCallback("on_before_fast_travel", on_before_fast_travel)
-	end
+    dogma.load(CONFIG.MOD_ID)
+    dogma.log.log(CONFIG.MOD_ID, "on_game_start: mod loaded")
+    on_option_change()
+    patch_actor_menu()
+    RegisterScriptCallback("ActorMenu_on_before_init_mode", on_actor_menu_before_init_mode)
+    RegisterScriptCallback("ActorMenu_on_mode_changed", on_actor_menu_mode_changed)
+    RegisterScriptCallback("GUI_on_hide", on_gui_hide)
+    RegisterScriptCallback("on_option_change", on_option_change)
+    RegisterScriptCallback("actor_on_update", on_actor_on_update)
+    RegisterScriptCallback("actor_on_first_update", on_actor_on_first_update)
+    RegisterScriptCallback("on_game_load", on_game_load)
+    RegisterScriptCallback("on_level_changing", on_level_changing)
+    RegisterScriptCallback("save_state", on_save_state)
+    RegisterScriptCallback("load_state", on_load_state)
+    if rawget(_G, "game_fast_travel") then
+        RegisterScriptCallback("on_before_fast_travel", on_before_fast_travel)
+    end
 end

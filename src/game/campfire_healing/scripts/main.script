@@ -14,7 +14,7 @@
 	         has temp (re-picked every tick; never sticky).
 
 	Body and limb timers run asynchronously.
-	Optional orange PPE while body HP < 100% and a heal is running.
+	Optional orange PPE while a heal is running (body, psy, or limb temp).
 	Disable other campfire heal mods to avoid stacking.
 ]]
 
@@ -274,23 +274,49 @@ local function set_heal(on, reason)
 	log((on and "heal on: " or "heal off: ") .. reason)
 end
 
+local function fx_needed()
+	if cached_body_pct > 0 and dogma.status.health() < 1 then
+		return true, "body"
+	end
+	if cached_psy_pct > 0 and dogma.status.psy_health() < 1 then
+		return true, "psy"
+	end
+	local health, timedhp, maxhp = dogma.status.bhs()
+	if health and pick_lowest_temp_limb(health, timedhp, maxhp) then
+		return true, "limb"
+	end
+	return false, "full"
+end
+
 local function refresh_heal_state()
-	ppe_target = 0
 	if not db.actor then
 		set_heal(false, "no actor")
+		ppe_target = 0
 		return
 	end
 	if not near_lit_campfire() then
 		set_heal(false, "not near lit fire")
+		ppe_target = 0
 		return
 	end
 	if cached_pause_in_combat and dogma.status.is_in_combat() then
 		set_heal(false, "combat")
+		ppe_target = 0
 		return
 	end
 	set_heal(true, string.format("near fire | body %.1f%%/s psy %.1f%%/s | limb every %ss", cached_body_pct, cached_psy_pct, cached_limb_sec))
-	if cached_fx_enable and dogma.status.health() < 1 then
-		ppe_target = cached_fx_intensity
+	local dest = 0
+	local why = "off"
+	if cached_fx_enable then
+		local needed
+		needed, why = fx_needed()
+		if needed then
+			dest = cached_fx_intensity
+		end
+	end
+	if dest ~= ppe_target then
+		log((dest > 0 and "ppe on: " or "ppe off: ") .. why)
+		ppe_target = dest
 	end
 end
 

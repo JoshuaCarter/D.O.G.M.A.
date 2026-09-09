@@ -163,13 +163,13 @@ end
 local try_snapshot_owner_weapons = function(IsInvbox, dogma, owner, weapons, xinventory)
 	if IsInvbox and IsInvbox(owner) and owner.iterate_inventory_box then
 		owner:iterate_inventory_box(function(_, item)
-			if dogma.db.is_weapon(item:section()) then
+			if IsWeapon(item) then
 				weapons[item:id()] = item:section()
 			end
 		end, nil)
 	elseif owner.id then
 		xinventory.iterate_inventory(owner:id(), function(_, item)
-			if dogma.db.is_weapon(item:section()) then
+			if IsWeapon(item) then
 				weapons[item:id()] = item:section()
 			end
 		end)
@@ -566,7 +566,7 @@ end
 local function resolve_burst_target()
 	if burst_obj_id then
 		local obj = get_object_by_id(burst_obj_id)
-		if obj and obj:parent() and dogma.db.is_weapon(obj:section()) then
+		if obj and obj:parent() and IsWeapon(obj) then
 			log(string.format(
 				"burst step: resolved target %s id=%s owner=%s",
 				obj:section(), tostring(obj:id()), owner_label(obj:parent())
@@ -578,7 +578,7 @@ local function resolve_burst_target()
 			local owner = get_object_by_id(burst_reconcile_owner_id)
 			if owner and try_adopt_new_weapon_id(owner, burst_reconcile_before_ids, burst_obj_id, "resolve-recovery", burst_pending_step) then
 				obj = get_object_by_id(burst_obj_id)
-				if obj and obj:parent() and dogma.db.is_weapon(obj:section()) then
+				if obj and obj:parent() and IsWeapon(obj) then
 					log(string.format(
 						"burst step: recovered target %s id=%s owner=%s",
 						obj:section(), tostring(obj:id()), owner_label(obj:parent())
@@ -647,7 +647,7 @@ local function try_adopt_new_weapon_id(owner, before_weapons, prev_id, context, 
 		-- owner's live inventory snapshot. After a section-swap detach the
 		-- old id can linger as a global object briefly even once iterate_
 		-- inventory no longer lists it (see reconcile-tick frame 4+ in logs).
-		if still_there and dogma.db.is_weapon(still_there:section()) and in_owner_inventory then
+		if still_there and IsWeapon(still_there) and in_owner_inventory then
 			if pending_step and step_still_pending(still_there, pending_step) then
 				log(sformat(
 					"burst step: %s still pending on id=%s (%s)",
@@ -757,7 +757,7 @@ end
 local function on_burst_owner_item_take(owner, item)
 	local sformat = string.format
 	local tostr = tostring
-	if not (burst_active and burst_waiting_reconcile and item and dogma.db.is_weapon(item:section())) then
+	if not (burst_active and burst_waiting_reconcile and item and IsWeapon(item)) then
 		return
 	end
 	local parent = item:parent()
@@ -1117,7 +1117,7 @@ kick_strip_queue = function()
 	while #strip_queue > 0 do
 		local next = table.remove(strip_queue, 1)
 		local obj = next and next.id and xobject.go(next.id)
-		if obj and dogma.db.is_weapon(obj:section()) then
+		if obj and IsWeapon(obj) then
 			log(string.format("strip_queue: starting %s id=%s", obj:section(), tostring(next.id)))
 			start_burst(obj, next.bag, next.idx)
 			return
@@ -1126,7 +1126,7 @@ kick_strip_queue = function()
 end
 
 local function enqueue_strip(obj, bag, idx)
-	if not (obj and dogma.db.is_weapon(obj:section())) then
+	if not (obj and IsWeapon(obj)) then
 		return
 	end
 	local id = obj:id()
@@ -1144,7 +1144,7 @@ end
 -- Called from keys.script inventory keybinds (hovered cell or stack).
 -- Non-weapons are skipped so hold+hover over mixed cells is safe.
 local function strip_hover(obj, bag, idx, gui)
-	if not (obj and dogma.db.is_weapon(obj:section())) then
+	if not (obj and IsWeapon(obj)) then
 		if obj then
 			log(string.format("strip_hover: not a weapon (%s)", obj:section()))
 		end
@@ -1253,7 +1253,7 @@ local disassembly_wrapper = nil
 
 local function make_disassembly_wrapper(orig)
 	return function(obj, obj_d)
-		if CONFIG.loaded.intercept_disassemble and obj and dogma.db.is_weapon(obj:section()) and not weapon_fully_stripped(obj) then
+		if CONFIG.loaded.intercept_disassemble and obj and IsWeapon(obj) and not weapon_fully_stripped(obj) then
 			log(string.format("%s: disassemble intercepted, field-stripping instead of disassembling", obj:section()))
 			local gui = ui_inventory and ui_inventory.GUI
 			local bag = gui and gui.hover and gui.hover.bag

@@ -6,6 +6,10 @@
 	pp_eff_name at dogma_rad_noop.ppe. actor_effects still adds
 	radiation.ppe on id 2020; we strip that each tick. Our graded
 	grain is body dose only.
+
+	anims/snd_shock.ppe is vanilla minus noise intensity (grain
+	scale stays > 0 so the engine does not fatal). Hits Arszi
+	low-psy 5607 and actor_effects bleed 2015.
 ]]
 
 local CONFIG = _G.dogma_gui_fx_radiation_conf
@@ -349,4 +353,5 @@ function on_game_start()
 	RegisterScriptCallback("on_option_change", on_option_change)
 	RegisterScriptCallback("on_game_load", clear_all)
 	log("loaded")
+	log("snd_shock.ppe grainless override")
 end

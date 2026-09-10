@@ -1,0 +1,22 @@
+-- tweaks/tactical_compass_y conf (info-only MCM; raises TC position slider max)
+
+_G.dogma_tweaks_tactical_compass_y_conf = {
+    MOD_ID = "dogma/tweaks/tactical_compass_y",
+}
+
+local POS_MAX = 768
+
+-- File load is before tc_position caches V.TC_POS_MAX into the in-game slider.
+if tc_variables then
+    tc_variables.TC_POS_MAX = POS_MAX
+end
+
+function on_mcm_load(options)
+    dogma_mcm.append(options, "tweaks", "ui_mcm_menu_dogma_tweaks", {
+        {
+            id = "tactical_compass_y_description",
+            type = "desc",
+            text = "ui_mcm_dogma_tweaks_tactical_compass_y_page_description",
+        },
+    })
+end

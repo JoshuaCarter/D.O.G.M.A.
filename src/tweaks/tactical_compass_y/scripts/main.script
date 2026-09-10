@@ -1,0 +1,46 @@
+--[[
+	Tactical Compass Y
+
+	Their in-game slider reads tc_variables.TC_POS_MAX at load (730).
+	Raise it to 768 so the compass can sit on the bottom of the HUD.
+]]
+
+local CONFIG = _G.dogma_tweaks_tactical_compass_y_conf
+local MOD_ID = CONFIG.MOD_ID
+local POS_MAX = 768
+
+local orig_init
+
+local function log(msg)
+	dogma.log.log(MOD_ID, tostring(msg))
+end
+
+local function patched_init(self)
+	orig_init(self)
+	local bar = self.track and self.track[1]
+	if bar and bar.SetOptFBounds then
+		bar:SetOptFBounds(0, POS_MAX)
+		log("panel max=" .. POS_MAX)
+	end
+end
+
+local function apply()
+	local V = rawget(_G, "tc_variables")
+	if not V then
+		log("skip: no tc_variables")
+		return
+	end
+	V.TC_POS_MAX = POS_MAX
+	local panel = tc_position and tc_position.TCPositionPanel
+	if panel and panel.InitControls and panel.InitControls ~= patched_init then
+		orig_init = panel.InitControls
+		panel.InitControls = patched_init
+		log("wrapped InitControls")
+	end
+	log("TC_POS_MAX=" .. tostring(V.TC_POS_MAX))
+end
+
+function on_game_start()
+	dogma.load(MOD_ID)
+	apply()
+end

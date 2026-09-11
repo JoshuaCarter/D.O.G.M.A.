@@ -398,9 +398,6 @@ local function patched_try_spawn_ammo(npc)
     local inv_ammo = collect_inventory_ammo_secs(npc)
     -- strip_loose_ammo(npc)
     log_corpse_roll(npc, inject_corpse_ammo(npc, inv_ammo) or { skip = "no result" })
-    if item_weapon and item_weapon.ammo_aggregation_full and CreateTimeEvent then
-        CreateTimeEvent(npc:id(), "dogma_wb_ammo_agg", 0, item_weapon.ammo_aggregation_full, npc:id())
-    end
     dogma.perf.stop()
 end
 

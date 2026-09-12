@@ -1,13 +1,9 @@
 --[[
     Stalker ID - centered Faction Identification replacement.
 
-    Exact look-ray every 50ms. Soft aim (center box + optional LOS)
-    every 50ms. Soft-aim LOS is xslice (ids, not a same-frame loop).
-    Both rays share one bush-pierce budget (hardcoded 1). Look rays also
-    pierce shoot-through / vis-transparent. Range is camera distance.
-    ID if a 1.8m stalker at that distance is at least min_size_px tall
-    (pinhole, screen center). Live FOV, no range cap. Cheap cone
-    (cam forward vs to-stalker, half-screen circle) before bones.
+    Look-ray to ID range first. Else outer cone (lower-back) and min
+    size, closest to farthest: each stalker gets their own size circle;
+    first bone in that circle wins. Range is min_size_px (pinhole, 1.8m).
     Leader line: living non-hostiles normally, all living stalkers in binocs;
     never corpses. Hidden on PDA. Goodwill color (MCM): living names red /
     yellow / green from general_goodwill bands; zombified red. Off: white.
@@ -18,8 +14,6 @@
 ]]
 
 local CONFIG = _G.dogma_gui_stalker_id_conf
-local xslice = dogma.xlibs.xslice
-local LOS_SLICE = "stalker_id_los"
 
 local UI_WIDTH = 1024
 local UI_HEIGHT = 768
@@ -33,13 +27,11 @@ local NAME_DEAD_RGB = { 160, 160, 160 }
 local RANK_RGB = { 200, 200, 200 }
 local RANK_DEAD_RGB = { 100, 100, 100 }
 
--- Soft box: any of these projected. LOS: upper spine. Line tip: head.
-local BONES_AIM = { "bip01_pelvis", "bip01_spine1", "bip01_spine2", "bip01_neck", "bip01_head" }
-local BONES_LOS = { "bip01_spine2", "bip01_spine1", "bip01_neck" }
-local BONES_LINE = { "bip01_head" }
-local HEAD_CROWN_LIFT = 0.12 -- metres above head bone ≈ top of head
+-- Only two bones: lower-back (outer + pick + LOS) and neck (pick + LOS + line).
+local BONE_NECK = "bip01_neck"
+local BONE_MID = "bip01_spine1"
+local BONES_BODY = { BONE_NECK, BONE_MID }
 
-local LOOK_SCRATCH = vector()
 local W2U_SCRATCH = vector()
 
 -- Line thickness: 1 real px (halo +1), converted to virtual UI space.
@@ -47,9 +39,12 @@ local LINE_HALO_REAL_PX = 1
 local PATCH_H = 24 -- faction patch / zombified row height in ui xml
 local PATCH_W = 18
 local LINE_START_BELOW_PX = 5 -- below bottom of patch (or zombified text)
+local LINE_HEAD_LIFT = 0.2 -- of on-screen stalker height, above neck
 local FOV_ZOOM_RATIO = 0.7
 local STALKER_H = 1.8 -- metres; standing height for pinhole size
-local CONE_R = 0.5 -- view cone / debug circle vs half-screen height
+local OUTER_R = 1 -- circle height = screen height
+local SIZE_RY_MIN = 1 -- 2x2 px
+local SIZE_RY_MAX = UI_CY -- full screen height
 local DEG2RAD = math.pi / 180
 local SEARCH_WHEN_OFF = 2000 -- iterate_nearest needs a radius when min_size is 0
 local DIK_RMB = (DIK_keys and DIK_keys.MOUSE_2) or 338
@@ -65,8 +60,7 @@ local nametable = {}
 local seen_comm = {}
 local LastHitObject = nil
 local line_target_id = nil
-local next_exact = 0
-local next_soft = 0
+local next_pick = 0
 local cond_was = false
 local miss_n = 0
 local ov_at = 0
@@ -77,8 +71,6 @@ local fade_active = false
 local fade_mode = "out"
 local fade_start_ms = 0
 local fade_mul = 1
-local los_hit = false
-local los_range = 0
 local shown_faction = nil
 local name_r, name_g, name_b = 255, 255, 255
 local rank_r, rank_g, rank_b = RANK_RGB[1], RANK_RGB[2], RANK_RGB[3]
@@ -112,19 +104,10 @@ local function alpha_byte(a, mul)
     return floor(v * clamp01(mul) + 0.5)
 end
 
-local function stop_los()
-    if xslice.is_active(LOS_SLICE) then
-        xslice.cancel(LOS_SLICE, true)
-    end
-end
-
 local function on_option_change()
     local tostr = tostring
     local id = CONFIG.MOD_ID
     CONFIG.loaded.enabled = dogma.mcm.bool(id, "enabled")
-    if not CONFIG.loaded.enabled then
-        stop_los()
-    end
     CONFIG.loaded.show_always = dogma.mcm.bool(id, "show_always")
     CONFIG.loaded.show_keybind = dogma.mcm.key(id, "show_keybind")
     CONFIG.loaded.show_when_ads = dogma.mcm.bool(id, "show_when_ads")
@@ -144,12 +127,7 @@ local function on_option_change()
     CONFIG.loaded.rank_a = dogma.mcm.uint(id, "rank_a")
     CONFIG.loaded.icon_a = dogma.mcm.uint(id, "icon_a")
     CONFIG.loaded.min_size_px = dogma.mcm.uint(id, "min_size_px")
-    CONFIG.loaded.aim_w_px = dogma.mcm.uint(id, "aim_w_px")
-    CONFIG.loaded.aim_h_px = dogma.mcm.uint(id, "aim_h_px")
-    CONFIG.loaded.require_visible = dogma.mcm.bool(id, "require_visible")
-    if not CONFIG.loaded.require_visible then
-        stop_los()
-    end
+    CONFIG.loaded.circle_size = dogma.mcm.uint(id, "circle_size")
     CONFIG.loaded.hide_on_death = dogma.mcm.bool(id, "hide_on_death")
     CONFIG.loaded.always_show_line = dogma.mcm.bool(id, "always_show_line")
     CONFIG.loaded.always_show_line_binoc = dogma.mcm.bool(id, "always_show_line_binoc")
@@ -163,7 +141,7 @@ local function on_option_change()
     log("opts fade_in_ms=" .. tostr(CONFIG.loaded.fade_in_ms)
         .. " fade_out_ms=" .. tostr(CONFIG.loaded.fade_out_ms)
         .. " min_size_px=" .. tostr(CONFIG.loaded.min_size_px)
-        .. " aim=" .. tostr(CONFIG.loaded.aim_w_px) .. "x" .. tostr(CONFIG.loaded.aim_h_px)
+        .. " circle_size=" .. tostr(CONFIG.loaded.circle_size)
         .. " icon_scale=" .. tostr(CONFIG.loaded.icon_scale))
     if HUD then
         apply_layout()
@@ -251,7 +229,6 @@ local function start_fade()
 end
 
 local function clear()
-    stop_los()
     cancel_fade()
     shown_faction = nil
     line_target_id = nil
@@ -358,7 +335,6 @@ local function activate_hud()
 end
 
 local function deactivate_hud()
-    stop_los()
     dbg_reset()
     if HUD ~= nil then
         get_hud():RemoveDialogToRender(HUD)
@@ -374,7 +350,6 @@ function on_screen_resolution_changed()
 end
 
 function actor_on_net_destroy()
-    stop_los()
     dbg_reset()
     if HUD ~= nil then
         get_hud():RemoveDialogToRender(HUD)
@@ -527,30 +502,12 @@ function refresh_layout()
     show_preview()
 end
 
-local function bone_pos(obj, bones, y_lift)
-    for i = 1, #bones do
-        local ok, p = pcall(obj.bone_position, obj, bones[i])
-        if ok and p then
-            if y_lift and y_lift ~= 0 then
-                return LOOK_SCRATCH:set(p.x, p.y + y_lift, p.z)
-            end
-            return p
-        end
+local function get_bone(obj, name)
+    local ok, p = pcall(obj.bone_position, obj, name)
+    if ok then
+        return p
     end
-    local p = obj:position()
-    return LOOK_SCRATCH:set(p.x, p.y + 1.2, p.z)
-end
-
-local function aim_pos(obj)
-    return bone_pos(obj, BONES_AIM, 0)
-end
-
-local function los_pos(obj)
-    return bone_pos(obj, BONES_LOS, 0)
-end
-
-local function line_tip_pos(obj)
-    return bone_pos(obj, BONES_LINE, HEAD_CROWN_LIFT)
+    return nil
 end
 
 local function project_world(pos)
@@ -579,32 +536,6 @@ local function query_look_object(ox, oy, oz, dx, dy, dz, remaining)
     return nil
 end
 
--- First non-bush hit from camera toward `to_pos`. True if that object is `target_obj`.
-local function ray_hits_object(target_obj, to_pos, max_range)
-    local d = device()
-    if not (ray_pick and d and d.cam_pos and target_obj and to_pos) then
-        return false
-    end
-
-    local ox, oy, oz = d.cam_pos.x, d.cam_pos.y, d.cam_pos.z
-    local dx = to_pos.x - ox
-    local dy = to_pos.y - oy
-    local dz = to_pos.z - oz
-    local dist = sqrt(dx * dx + dy * dy + dz * dz)
-    if dist < 0.05 then
-        return true
-    end
-    dx, dy, dz = dx / dist, dy / dist, dz / dist
-
-    local remaining = dist + 0.5
-    if max_range and remaining > max_range then
-        remaining = max_range
-    end
-
-    local obj = query_look_object(ox, oy, oz, dx, dy, dz, remaining)
-    return obj and obj:id() == target_obj:id()
-end
-
 local function cam_dist(pos)
     local d = device and device()
     if not (d and d.cam_pos and pos) then
@@ -616,36 +547,6 @@ end
 local function in_id_range(pos, max_range)
     local dist = cam_dist(pos)
     return dist and max_range and dist <= max_range
-end
-
-local function in_aim_box(sx, sy, hw, hh)
-    if not (sx and hw and hh and hw > 0 and hh > 0) then
-        return false
-    end
-    return abs(sx - UI_CX) <= hw and abs(sy - UI_CY) <= hh
-end
-
--- Any projected aim bone in camera range + center box. Score = closest dist^2.
-local function aim_screen_score(obj, max_range, hw, hh)
-    local best = nil
-    for i = 1, #BONES_AIM do
-        local ok, p = pcall(obj.bone_position, obj, BONES_AIM[i])
-        if ok and p and in_id_range(p, max_range) then
-            local sx, sy = project_world(p)
-            if sx and in_aim_box(sx, sy, hw, hh) then
-                local dx, dy = sx - UI_CX, sy - UI_CY
-                local sd = dx * dx + dy * dy
-                if not best or sd < best then
-                    best = sd
-                end
-            end
-        end
-    end
-    return best
-end
-
-local function cand_screen_cmp(a, b)
-    return a.sd < b.sd
 end
 
 local function is_binoc_held()
@@ -766,16 +667,16 @@ local function approx_max_range()
         log("range=" .. tostr(floor(r + 0.5))
             .. " fov=" .. tostr(_focal_fov)
             .. " min_px=" .. tostr(min_px)
-            .. " focal=" .. tostr(floor(_focal + 0.5))
-            .. " cone_cos=" .. tostr(floor(sqrt(1 / (1 + (tan(live_fov() * DEG2RAD * 0.5) * CONE_R) ^ 2)) * 1000 + 0.5) / 1000))
+            .. " focal=" .. tostr(floor(_focal + 0.5)))
     end
     return r
 end
 
--- Cone matches a circle CONE_R * screen-tall. Squared test, no sqrt.
+-- Outer: full-screen circle vs live FOV. Inner: per-target pinhole size.
 local cam_ox, cam_oy, cam_oz = 0, 0, 0
 local cam_dx, cam_dy, cam_dz = 0, 0, 1
-local cam_cos2 = 0
+local cam_outer_cos2 = 0
+local cam_outer_ry = UI_CY
 local cam_cone_ok = false
 
 local function refresh_cam_cone()
@@ -788,12 +689,17 @@ local function refresh_cam_cone()
     local dir = d.cam_dir
     cam_ox, cam_oy, cam_oz = p.x, p.y, p.z
     cam_dx, cam_dy, cam_dz = dir.x, dir.y, dir.z
-    local t = tan(live_fov() * DEG2RAD * 0.5) * CONE_R
-    cam_cos2 = 1 / (1 + t * t)
+    local live_half = tan(live_fov() * DEG2RAD * 0.5)
+    if live_half <= 0 then
+        return
+    end
+    local outer_t = live_half * OUTER_R
+    cam_outer_cos2 = 1 / (1 + outer_t * outer_t)
+    cam_outer_ry = UI_CY * OUTER_R
     cam_cone_ok = true
 end
 
-local function in_view_cone(pos)
+local function in_cone(pos, cos2)
     if not (cam_cone_ok and pos) then
         return true
     end
@@ -808,18 +714,36 @@ local function in_view_cone(pos)
     if along <= 0 then
         return false
     end
-    return along * along >= cam_cos2 * d2
+    return along * along >= cos2 * d2
 end
 
-local CONE_BONES = { "bip01_pelvis", "bip01_head" }
-local function in_view_cone_body(obj)
-    for i = 1, #CONE_BONES do
-        local ok, p = pcall(obj.bone_position, obj, CONE_BONES[i])
-        if ok and p and in_view_cone(p) then
-            return true
-        end
+local function in_outer_cone(pos)
+    return in_cone(pos, cam_outer_cos2)
+end
+
+local function in_ui_circle(sx, sy, ry)
+    if not (sx and ry and ry > 0) then
+        return false
     end
-    return false
+    local dx = (sx - UI_CX) / UI_KX
+    local dy = sy - UI_CY
+    return dx * dx + dy * dy <= ry * ry
+end
+
+-- Circle radius = half the 1.8m pinhole height (far small, close large).
+local function size_ry(pos)
+    local dist = cam_dist(pos)
+    if not dist then
+        return 0
+    end
+    local scale = (CONFIG.loaded.circle_size or 100) / 100
+    local ry = screen_h_px(dist) * 0.5 * scale
+    if ry < SIZE_RY_MIN then
+        ry = SIZE_RY_MIN
+    elseif ry > SIZE_RY_MAX then
+        ry = SIZE_RY_MAX
+    end
+    return ry
 end
 
 -- Optional gates used only when Show always is off. Nil keybind is not a gate.
@@ -869,86 +793,97 @@ local function is_id_candidate(obj)
     return is_valid_community(dogma.alife.community(obj))
 end
 
--- Exact look-ray: first non-bush object under crosshair within range.
-local function cam_look_object(max_range)
-    local d = device and device()
-    if not (ray_pick and d and d.cam_pos and d.cam_dir and max_range and max_range > 0) then
-        return nil
-    end
-    return query_look_object(
-        d.cam_pos.x, d.cam_pos.y, d.cam_pos.z,
-        d.cam_dir.x, d.cam_dir.y, d.cam_dir.z,
-        max_range)
+local pick_obj, pick_sd, pick_max, pick_actor_id, pick_dist
+local pick_ry, pick_sx, pick_sy = 0, nil, nil
+local SCAN = {}
+local scan_n = 0
+
+local function scan_dist_cmp(a, b)
+    return a.dist < b.dist
 end
 
-local function find_exact_target()
-    local obj = cam_look_object(approx_max_range())
-    if obj and is_id_candidate(obj) then
-        return obj
-    end
-    return nil
-end
-
-local SOFT_CANDS = {}
-local soft_n = 0
-local soft_apos, soft_actor_id, soft_max, soft_hw, soft_hh
-
-local function soft_iter(obj)
+local function pick_iter(obj)
     if not obj then
         return false
     end
-    if obj:id() == 0 or obj:id() == soft_actor_id then
+    if obj:id() == 0 or obj:id() == pick_actor_id then
         return false
     end
     if not is_id_candidate(obj) then
         return false
     end
-    if not in_view_cone_body(obj) then
+    local mid = get_bone(obj, BONE_MID)
+    if not (mid and in_outer_cone(mid) and in_id_range(mid, pick_max)) then
         return false
     end
-    local sd = aim_screen_score(obj, soft_max, soft_hw, soft_hh)
-    if sd then
-        soft_n = soft_n + 1
-        local s = SOFT_CANDS[soft_n]
-        if not s then
-            s = { id = 0, sd = 0 }
-            SOFT_CANDS[soft_n] = s
-        end
-        s.id = obj:id()
-        s.sd = sd
+    local dist = cam_dist(mid)
+    if not dist then
+        return false
     end
+    local best_sd, best_sx, best_sy = -1, nil, nil
+    for i = 1, #BONES_BODY do
+        local p = get_bone(obj, BONES_BODY[i])
+        if p then
+            local sx, sy = project_world(p)
+            if sx then
+                local dx = (sx - UI_CX) / UI_KX
+                local dy = sy - UI_CY
+                local sd = dx * dx + dy * dy
+                if best_sd < 0 or sd < best_sd then
+                    best_sd, best_sx, best_sy = sd, sx, sy
+                end
+            end
+        end
+    end
+    if best_sd < 0 then
+        return false
+    end
+    scan_n = scan_n + 1
+    local e = SCAN[scan_n]
+    if not e then
+        e = { obj = obj, sd = 0, ry = 0, sx = 0, sy = 0, dist = 0 }
+        SCAN[scan_n] = e
+    end
+    e.obj = obj
+    e.sd = best_sd
+    e.ry = size_ry(mid)
+    e.sx = best_sx
+    e.sy = best_sy
+    e.dist = dist
     return false
 end
 
--- Soft-aim nearby: ids in the aim box, closest-first. No LOS here.
-local function collect_soft_cands()
-    local cfg = CONFIG.loaded
-    local max_range = approx_max_range()
-    if max_range <= 0 or not (db and db.actor) or not level.iterate_nearest then
-        return nil, 0
+local function scan_center()
+    pick_obj = nil
+    pick_sd = 0
+    pick_dist = 0
+    pick_ry, pick_sx, pick_sy = 0, nil, nil
+    scan_n = 0
+    pick_max = approx_max_range()
+    if pick_max <= 0 or not (db and db.actor) or not level.iterate_nearest then
+        return
     end
-    if not HUD then
-        return nil, 0
-    end
-
-    soft_n = 0
-    soft_apos = db.actor:position()
-    soft_actor_id = db.actor:id()
-    soft_max = max_range
-    soft_hw = cfg.aim_w_px or 0
-    soft_hh = cfg.aim_h_px or 0
+    pick_actor_id = db.actor:id()
     refresh_cam_cone()
-    -- Slack: iterate is actor-origin; ID range is camera-to-bone.
-    pcall(level.iterate_nearest, soft_apos, max_range + 5, soft_iter)
-
-    if soft_n == 0 then
-        return nil, max_range
+    pcall(level.iterate_nearest, db.actor:position(), pick_max + 5, pick_iter)
+    if scan_n == 0 then
+        return
     end
-    for i = #SOFT_CANDS, soft_n + 1, -1 do
-        SOFT_CANDS[i] = nil
+    for i = #SCAN, scan_n + 1, -1 do
+        SCAN[i] = nil
     end
-    table.sort(SOFT_CANDS, cand_screen_cmp)
-    return SOFT_CANDS, max_range
+    table.sort(SCAN, scan_dist_cmp)
+    for i = 1, scan_n do
+        local e = SCAN[i]
+        if in_ui_circle(e.sx, e.sy, e.ry) then
+            pick_obj = e.obj
+            pick_sd = e.sd
+            pick_ry = e.ry
+            pick_sx, pick_sy = e.sx, e.sy
+            pick_dist = e.dist
+            return
+        end
+    end
 end
 
 local PDA_SLOT = 8
@@ -1040,11 +975,15 @@ local function update_leader_line()
             break
         end
 
-        local tip = line_tip_pos(obj)
+        local tip = get_bone(obj, BONE_NECK)
         local hx, hy = project_world(tip)
         if not hx then
             hide_line()
             break
+        end
+        local dist = cam_dist(tip)
+        if dist then
+            hy = hy - screen_h_px(dist) * LINE_HEAD_LIFT
         end
 
         refresh_ui_kx()
@@ -1055,30 +994,6 @@ local function update_leader_line()
         if screen_len < 1 then
             hide_line()
             break
-        end
-
-        -- Shorten by screen-space upper-spine→head span so tip sits near upper spine.
-        local spine = los_pos(obj)
-        local sx, sy = project_world(spine)
-        if sx then
-            local bdx = hx - sx
-            local bdy = hy - sy
-            local gap = sqrt(bdx * bdx + bdy * bdy)
-            if gap > 0 then
-                if gap > screen_len * 0.9 then
-                    gap = screen_len * 0.9
-                end
-                local f = gap / screen_len
-                hx = hx - dx * f
-                hy = hy - dy * f
-                dx = hx - ux
-                dy = hy - uy
-                screen_len = sqrt(dx * dx + dy * dy)
-                if screen_len < 1 then
-                    hide_line()
-                    break
-                end
-            end
         end
 
         local dxk = dx / UI_KX
@@ -1165,7 +1080,22 @@ local function set_id_target(obj)
     end
 end
 
--- One empty soft tick is a look-ray miss, not look-away. Two in a row drops.
+local function cam_look_id(max_range)
+    local d = device and device()
+    if not (ray_pick and d and d.cam_pos and d.cam_dir and max_range and max_range > 0) then
+        return nil
+    end
+    local obj = query_look_object(
+        d.cam_pos.x, d.cam_pos.y, d.cam_pos.z,
+        d.cam_dir.x, d.cam_dir.y, d.cam_dir.z,
+        max_range)
+    if obj and is_id_candidate(obj) then
+        return obj
+    end
+    return nil
+end
+
+-- Two empty pick ticks in a row drops the ID.
 local function miss_target()
     miss_n = miss_n + 1
     if miss_n >= 2 then
@@ -1174,53 +1104,34 @@ local function miss_target()
     end
 end
 
-local function los_one(e)
-    local obj = level.object_by_id and level.object_by_id(e.id)
-    if not (obj and is_id_candidate(obj)) then
-        return true
-    end
-    local chest = los_pos(obj)
-    if chest and ray_hits_object(obj, chest, los_range) then
-        los_hit = true
-        set_id_target(obj)
-        return false
-    end
-    return true
-end
-
-local function on_los_done()
-    if not los_hit then
-        miss_target()
-    end
-end
-
-local LOS_OPTS = { step = 1, func = los_one, on_done = on_los_done }
-
--- Exact: set target and kill the soft slice. Soft: keep the old ID until a hit or the list ends.
-local function try_exact()
-    local exact = find_exact_target()
-    if not exact then
-        return false
-    end
-    stop_los()
-    set_id_target(exact)
-    return true
-end
-
-local function try_soft()
-    local cands, max_range = collect_soft_cands()
-    if not cands then
+local function try_pick()
+    local tostr = tostring
+    if not HUD then
         miss_target()
         return
     end
-    if not CONFIG.loaded.require_visible then
-        local obj = level.object_by_id and level.object_by_id(cands[1].id)
-        set_id_target(obj)
+    local look = cam_look_id(approx_max_range())
+    if look then
+        if not LastHitObject or LastHitObject:id() ~= look:id() then
+            log("pick ray id=" .. tostr(look:id()))
+        end
+        set_id_target(look)
         return
     end
-    los_hit = false
-    los_range = max_range
-    xslice.start(LOS_SLICE, cands, LOS_OPTS)
+    scan_center()
+    if not pick_obj then
+        if LastHitObject then
+            log("pick none")
+        end
+        miss_target()
+        return
+    end
+    if not LastHitObject or LastHitObject:id() ~= pick_obj:id() then
+        log("pick circle id=" .. tostr(pick_obj:id())
+            .. " dist=" .. tostr(floor(pick_dist + 0.5))
+            .. " ry=" .. tostr(floor(pick_ry + 0.5)))
+    end
+    set_id_target(pick_obj)
 end
 
 local function update_fade()
@@ -1249,40 +1160,26 @@ local function update_fade()
 end
 
 local DBG_BONES = {
-    { "bip01_pelvis", 48, 255, 48 },
-    { "bip01_spine1", 255, 200, 48 },
-    { "bip01_spine2", 255, 200, 48 },
-    { "bip01_neck", 255, 200, 48 },
-    { "bip01_head", 48, 200, 255 },
+    { BONE_MID, 255, 200, 48 },
+    { BONE_NECK, 48, 200, 255 },
 }
-local DBG_ACTORS = 8
-local DBG_DOT_N = DBG_ACTORS * #DBG_BONES
-local DBG_BOX_N = 4
+local DBG_DOT_N = #DBG_BONES
 local DBG_CIRCLE_N = 32
 local DBG_DOT_SZ = 2
-local DBG_GREY = { 140, 140, 140 }
 local TWO_PI = math.pi * 2
 
 local dbg_dots = {}
-local dbg_ring = {}
-local dbg_circle = {}
+local dbg_outer = {}
+local dbg_inner = {}
 local dbg_ready = false
 local dbg_shown = false
-local dbg_n = 0
-local dbg_score_n = 0
-local dbg_apos
-local dbg_actor_id
-local DBG_OBJS = {}
-local DBG_SCORE = {}
-local DBG_SEARCH = 200
 
 dbg_reset = function()
     dbg_ready = false
     dbg_shown = false
     dbg_dots = {}
-    dbg_ring = {}
-    dbg_circle = {}
-    dbg_n = 0
+    dbg_outer = {}
+    dbg_inner = {}
 end
 
 local function dbg_hide()
@@ -1292,11 +1189,11 @@ local function dbg_hide()
     for i = 1, #dbg_dots do
         dbg_dots[i]:Show(false)
     end
-    for i = 1, #dbg_ring do
-        dbg_ring[i]:Show(false)
+    for i = 1, #dbg_outer do
+        dbg_outer[i]:Show(false)
     end
-    for i = 1, #dbg_circle do
-        dbg_circle[i]:Show(false)
+    for i = 1, #dbg_inner do
+        dbg_inner[i]:Show(false)
     end
     dbg_shown = false
 end
@@ -1315,26 +1212,24 @@ local function dbg_ensure()
         st:Show(false)
         dbg_dots[i] = st
     end
-    for i = 1, DBG_BOX_N do
+    for i = 1, DBG_CIRCLE_N do
         local st = xml:InitStatic("dbg_seg", HUD)
         st:EnableHeading(true)
         st:Show(false)
-        dbg_ring[i] = st
+        dbg_outer[i] = st
     end
     for i = 1, DBG_CIRCLE_N do
         local st = xml:InitStatic("dbg_seg", HUD)
         st:EnableHeading(true)
         st:Show(false)
-        dbg_circle[i] = st
+        dbg_inner[i] = st
     end
     dbg_ready = true
-    log("dbg hud dots=" .. tostring(DBG_DOT_N)
-        .. " box=" .. tostring(DBG_BOX_N)
-        .. " circle=" .. tostring(DBG_CIRCLE_N))
+    log("dbg hud dots=" .. tostring(DBG_DOT_N) .. " circle=" .. tostring(DBG_CIRCLE_N))
     return true
 end
 
-local function dbg_seg_line(st, x0, y0, x1, y1, thick)
+local function dbg_seg_line(st, x0, y0, x1, y1, thick, r, g, b)
     local dx, dy = x1 - x0, y1 - y0
     local dxk = dx / UI_KX
     local len = sqrt(dxk * dxk + dy * dy)
@@ -1347,23 +1242,11 @@ local function dbg_seg_line(st, x0, y0, x1, y1, thick)
     st:SetWndSize(SIZE_VEC:set(len, thick))
     st:SetWndPos(POS_VEC:set(mx - len * 0.5, my - thick * 0.5))
     st:SetHeading(atan2(-dy, dxk))
-    st:SetTextureColor(GetARGB(200, 255, 255, 255))
+    st:SetTextureColor(GetARGB(200, r, g, b))
     st:Show(true)
 end
 
--- Circle in UI space (matches cam cone). UI_KX keeps it round on widescreen.
-local function in_view_circle(sx, sy)
-    if not sx then
-        return false
-    end
-    local r = UI_CY * CONE_R
-    local dx = (sx - UI_CX) / UI_KX
-    local dy = sy - UI_CY
-    return dx * dx + dy * dy <= r * r
-end
-
-local function dbg_draw_cone_circle(thick)
-    local ry = UI_CY * CONE_R
+local function dbg_draw_circle(segs, ry, thick, r, g, b)
     local rx = ry * UI_KX
     local step = TWO_PI / DBG_CIRCLE_N
     local x1 = UI_CX + rx
@@ -1372,56 +1255,15 @@ local function dbg_draw_cone_circle(thick)
         local a = i * step
         local x2 = UI_CX + rx * cos(a)
         local y2 = UI_CY + ry * sin(a)
-        dbg_seg_line(dbg_circle[i], x1, y1, x2, y2, thick)
+        dbg_seg_line(segs[i], x1, y1, x2, y2, thick, r, g, b)
         x1, y1 = x2, y2
     end
 end
 
-local function dbg_score_cmp(a, b)
-    return a.sd < b.sd
-end
-
--- Collect on-screen candidates. ID range only colors them, does not hide them.
-local function dbg_iter(obj)
-    if not obj then
-        return false
+local function dbg_hide_circle(segs)
+    for i = 1, #segs do
+        segs[i]:Show(false)
     end
-    if obj:id() == 0 or obj:id() == dbg_actor_id then
-        return false
-    end
-    if not is_id_candidate(obj) then
-        return false
-    end
-    if not in_view_cone_body(obj) then
-        return false
-    end
-    -- Pelvis can sit outside the circle while head/spine are inside.
-    local best = -1
-    for bi = 1, #DBG_BONES do
-        local ok, p = pcall(obj.bone_position, obj, DBG_BONES[bi][1])
-        if ok and p then
-            local sx, sy = project_world(p)
-            if sx and in_view_circle(sx, sy) then
-                local dx, dy = sx - UI_CX, sy - UI_CY
-                local sd = dx * dx + dy * dy
-                if best < 0 or sd < best then
-                    best = sd
-                end
-            end
-        end
-    end
-    if best < 0 then
-        return false
-    end
-    dbg_score_n = dbg_score_n + 1
-    local e = DBG_SCORE[dbg_score_n]
-    if not e then
-        e = { obj = obj, sd = 0 }
-        DBG_SCORE[dbg_score_n] = e
-    end
-    e.obj = obj
-    e.sd = best
-    return false
 end
 
 local function update_dbg()
@@ -1434,88 +1276,41 @@ local function update_dbg()
     end
     dbg_shown = true
     refresh_ui_kx()
+    scan_center()
 
-    local cfg = CONFIG.loaded
-    local hw = cfg.aim_w_px or 0
-    local hh = cfg.aim_h_px or 0
-    local max_range = approx_max_range()
     local thick = line_thick_ui(1)
-    dbg_draw_cone_circle(thick)
-    if hw > 0 and hh > 0 then
-        local l, rgt = UI_CX - hw, UI_CX + hw
-        local top, bot = UI_CY - hh, UI_CY + hh
-        dbg_seg_line(dbg_ring[1], l, top, rgt, top, thick)
-        dbg_seg_line(dbg_ring[2], rgt, top, rgt, bot, thick)
-        dbg_seg_line(dbg_ring[3], rgt, bot, l, bot, thick)
-        dbg_seg_line(dbg_ring[4], l, bot, l, top, thick)
+    dbg_draw_circle(dbg_outer, cam_outer_ry, thick, 180, 180, 180)
+    if pick_obj and pick_ry > 1 then
+        dbg_draw_circle(dbg_inner, pick_ry, thick, 48, 220, 255)
     else
-        for i = 1, DBG_BOX_N do
-            dbg_ring[i]:Show(false)
-        end
+        dbg_hide_circle(dbg_inner)
     end
 
-    dbg_n = 0
-    dbg_score_n = 0
-    if db and db.actor and level.iterate_nearest then
-        dbg_apos = db.actor:position()
-        dbg_actor_id = db.actor:id()
-        local search = max_range
-        if search < DBG_SEARCH then
-            search = DBG_SEARCH
-        end
-        refresh_cam_cone()
-        pcall(level.iterate_nearest, dbg_apos, search, dbg_iter)
-    end
-    if dbg_score_n > 0 then
-        for i = #DBG_SCORE, dbg_score_n + 1, -1 do
-            DBG_SCORE[i] = nil
-        end
-        table.sort(DBG_SCORE, dbg_score_cmp)
-        dbg_n = dbg_score_n
-        if dbg_n > DBG_ACTORS then
-            dbg_n = DBG_ACTORS
-        end
-        for i = 1, dbg_n do
-            DBG_OBJS[i] = DBG_SCORE[i].obj
-        end
-    end
-    for i = dbg_n + 1, DBG_ACTORS do
-        DBG_OBJS[i] = nil
-    end
-
-    local di = 0
     local half = DBG_DOT_SZ * 0.5
-    for ai = 1, dbg_n do
-        local obj = DBG_OBJS[ai]
-        for bi = 1, #DBG_BONES do
-            di = di + 1
-            local spec = DBG_BONES[bi]
-            local st = dbg_dots[di]
-            local ok, p = pcall(obj.bone_position, obj, spec[1])
-            local sx, sy = nil, nil
-            if ok and p then
+    for bi = 1, #DBG_BONES do
+        local st = dbg_dots[bi]
+        local sx, sy = nil, nil
+        local p = nil
+        if pick_obj then
+            p = get_bone(pick_obj, DBG_BONES[bi][1])
+            if p then
                 sx, sy = project_world(p)
             end
-            if sx and in_view_circle(sx, sy) then
-                local r, g, b
-                if not in_id_range(p, max_range) then
-                    r, g, b = DBG_GREY[1], DBG_GREY[2], DBG_GREY[3]
-                elseif in_aim_box(sx, sy, hw, hh) then
-                    r, g, b = 48, 255, 48
-                else
-                    r, g, b = spec[2], spec[3], spec[4]
-                end
-                st:SetWndSize(SIZE_VEC:set(DBG_DOT_SZ, DBG_DOT_SZ))
-                st:SetWndPos(POS_VEC:set(sx - half, sy - half))
-                st:SetTextureColor(GetARGB(220, r, g, b))
-                st:Show(true)
-            else
-                st:Show(false)
-            end
         end
-    end
-    for i = di + 1, DBG_DOT_N do
-        dbg_dots[i]:Show(false)
+        if sx then
+            local r, g, b
+            if in_ui_circle(sx, sy, pick_ry) then
+                r, g, b = 48, 255, 48
+            else
+                r, g, b = DBG_BONES[bi][2], DBG_BONES[bi][3], DBG_BONES[bi][4]
+            end
+            st:SetWndSize(SIZE_VEC:set(DBG_DOT_SZ, DBG_DOT_SZ))
+            st:SetWndPos(POS_VEC:set(sx - half, sy - half))
+            st:SetTextureColor(GetARGB(220, r, g, b))
+            st:Show(true)
+        else
+            st:Show(false)
+        end
     end
 end
 
@@ -1536,15 +1331,15 @@ local function update_overlay()
     local tgt = "-"
     local sz = "-"
     if LastHitObject then
-        local pelvis = aim_pos(LastHitObject)
-        local dist = cam_dist(pelvis)
+        local mid = get_bone(LastHitObject, BONE_MID)
+        local dist = cam_dist(mid)
         if dist then
             tgt = sformat("%.0f", dist)
             sz = sformat("%.0f", screen_h_px(dist))
         end
     end
     dogma.overlay.set(CONFIG.MOD_ID, 0,
-        sformat("fov %.1f -> %.1f", settings_fov(), fov_now), "cyan")
+        sformat("fov %.1f -> %.1f ry %.0f", settings_fov(), fov_now, pick_ry), "cyan")
     dogma.overlay.set(CONFIG.MOD_ID, 1,
         sformat("size %s/%s rng %.0f tgt %s", sz, tostring(min_px), range, tgt), "yellow")
 end
@@ -1552,7 +1347,6 @@ end
 function actor_on_update()
     if not CONFIG.loaded.enabled then
         cond_was = false
-        stop_los()
         dbg_hide()
         if LastHitObject or fade_active or line_target_id then
             LastHitObject = nil
@@ -1565,8 +1359,8 @@ function actor_on_update()
         return
     end
 
-    update_overlay()
     update_dbg()
+    update_overlay()
     update_fade()
     update_leader_line()
 
@@ -1585,10 +1379,8 @@ function actor_on_update()
             return
         end
         miss_n = 0
-        stop_los()
         set_id_target(nil)
-        next_exact = 0
-        next_soft = 0
+        next_pick = 0
         return
     end
 
@@ -1597,27 +1389,12 @@ function actor_on_update()
         show_preview()
     end
 
-    local do_exact = force_tick or tg >= next_exact
-    local do_soft = force_tick or tg >= next_soft
-    if not do_exact and not do_soft then
+    if not (force_tick or tg >= next_pick) then
         return
     end
-
+    next_pick = tg + 50
     dogma.perf.start("stalker_id", "find_target")
-    if do_exact then
-        next_exact = tg + 50
-        if try_exact() then
-            if do_soft then
-                next_soft = tg + 50
-            end
-            dogma.perf.stop()
-            return
-        end
-    end
-    if do_soft and not xslice.is_active(LOS_SLICE) then
-        next_soft = tg + 50
-        try_soft()
-    end
+    try_pick()
     dogma.perf.stop()
     if force_preview and not LastHitObject then
         cancel_fade()
@@ -1679,12 +1456,12 @@ function GUI_on_show(gui, str2)
     end
 
     if gui == "UIInventory" then
-        local obj = find_exact_target()
+        local obj = LastHitObject
         if not is_id_candidate(obj) then
             return
         end
         if obj and obj.health <= 0 and LastHitObject and LastHitObject:id() == obj:id() then
-            local mid = utils_obj.safe_bone_pos(LastHitObject, "bip01_spine")
+            local mid = get_bone(LastHitObject, BONE_MID)
             local pos = device().cam_pos
             if mid and pos and pos:distance_to_sqr(mid) < 4.9 then
                 nametable[obj:character_name()] = true

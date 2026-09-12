@@ -6,10 +6,11 @@ local MARKER_GROUPS = {
     { name = "sleep" },
     { name = "stashes" },
     { name = "transitions" },
-    { name = "squads" },
-    { name = "corpses", desc = true },
-    { name = "campf", desc = true },
-    { name = "pump", desc = true },
+    { name = "friendly", show_hint = "show_icon_friendly" },
+    { name = "hostile", show_hint = "show_icon_hostile" },
+    { name = "corpses", show_hint = "show_icon_corpses" },
+    { name = "campf", show_hint = "show_icon_campf" },
+    { name = "pump", show_hint = "show_icon_pump" },
 }
 
 _G.dogma_gui_compass_conf = {
@@ -23,35 +24,38 @@ _G.dogma_gui_compass_conf = {
         keybind = -1,
         -- 0 = toggle, 1 = hold (show while held)
         keybind_mode = 0,
-        marker_shadow = true,
+        quest_always = true,
         quest_highlight = true,
         show_quest = true,
-        show_quest_dist = 100,
+        show_quest_dist = 200,
         is_quest_dist = true,
         show_unique = true,
         show_unique_dist = 30,
-        is_unique_dist = false,
-        show_sleep = false,
-        show_sleep_dist = 30,
-        is_sleep_dist = false,
+        is_unique_dist = true,
+        show_sleep = true,
+        show_sleep_dist = 10,
+        is_sleep_dist = true,
         show_stashes = true,
         show_stashes_dist = 50,
         is_stashes_dist = true,
         show_transitions = true,
         show_transitions_dist = 50,
         is_transitions_dist = true,
-        show_squads = false,
-        show_squads_dist = 100,
-        is_squads_dist = false,
+        show_friendly = true,
+        show_friendly_dist = 100,
+        is_friendly_dist = true,
+        show_hostile = true,
+        show_hostile_dist = 100,
+        is_hostile_dist = true,
         show_corpses = true,
         show_corpses_dist = 20,
-        is_corpses_dist = false,
+        is_corpses_dist = true,
         show_campf = true,
         show_campf_dist = 50,
-        is_campf_dist = false,
+        is_campf_dist = true,
         show_pump = true,
         show_pump_dist = 50,
-        is_pump_dist = false,
+        is_pump_dist = true,
     },
     loaded = {
         scale = 1,
@@ -106,7 +110,7 @@ function reload()
     L.style = V.STYLE
     L.marker_set = V.MARKER_SET
     L.compass_y = dogma.mcm.int(id, "compass_y")
-    L.marker_shadow = dogma.mcm.bool(id, "marker_shadow")
+    L.quest_always = dogma.mcm.bool(id, "quest_always")
     L.quest_highlight = dogma.mcm.bool(id, "quest_highlight")
 
     local groups = L.groups
@@ -124,7 +128,7 @@ function reload()
 
     local d = device()
     dogma.log.log(id, string.format(
-        "reload enabled=%s y=%s scale=%.2f res=%sx%s key=%s mode=%s shown=%s",
+        "reload enabled=%s y=%s scale=%.2f res=%sx%s key=%s mode=%s shown=%s quest_always=%s friend=%s host=%s",
         tostr(L.enabled),
         tostr(L.compass_y),
         L.scale,
@@ -132,7 +136,10 @@ function reload()
         tostr(d and d.height),
         tostr(L.keybind),
         tostr(L.keybind_mode),
-        tostr(L.shown)
+        tostr(L.shown),
+        tostr(L.quest_always),
+        tostr(L.groups.friendly and L.groups.friendly.enabled),
+        tostr(L.groups.hostile and L.groups.hostile.enabled)
     ))
 end
 
@@ -168,26 +175,40 @@ local function marker_block(list, group)
     local D = CONFIG.DEFAULTS
     local name = group.name
 
-    if group.desc then
-        list[#list + 1] = {
-            id = "m_" .. name .. "_desc",
-            type = "desc",
-            text = "ui_mcm_dogma_gui_compass_m_" .. name .. "_desc",
-        }
-    end
+    list[#list + 1] = {
+        id = "hdr_" .. name,
+        type = "desc",
+        text = "ui_mcm_dogma_gui_compass_hdr_" .. name,
+    }
     list[#list + 1] = {
         id = "show_" .. name,
         type = "check",
         val = 1,
         def = D["show_" .. name],
-        hint = hint("show_" .. name),
+        hint = hint(group.show_hint or "show_icon"),
     }
+    if name == "quest" then
+        list[#list + 1] = {
+            id = "quest_always",
+            type = "check",
+            val = 1,
+            def = D.quest_always,
+            hint = hint("quest_always"),
+        }
+        list[#list + 1] = {
+            id = "quest_highlight",
+            type = "check",
+            val = 1,
+            def = D.quest_highlight,
+            hint = hint("quest_highlight"),
+        }
+    end
     list[#list + 1] = {
         id = "is_" .. name .. "_dist",
         type = "check",
         val = 1,
         def = D["is_" .. name .. "_dist"],
-        hint = hint("is_" .. name .. "_dist"),
+        hint = hint("show_distance"),
     }
     list[#list + 1] = {
         id = "show_" .. name .. "_dist",
@@ -197,9 +218,8 @@ local function marker_block(list, group)
         max = 500,
         step = 5,
         def = D["show_" .. name .. "_dist"],
-        hint = hint("show_" .. name .. "_dist"),
+        hint = hint("within_range"),
     }
-    list[#list + 1] = { id = "line_" .. name, type = "line" }
 end
 
 function on_mcm_load(options)
@@ -253,33 +273,11 @@ function on_mcm_load(options)
                 { 1, "hold" },
             },
         },
-        { id = "line_markers", type = "line" },
-        {
-            id = "hdr_markers",
-            type = "desc",
-            text = "ui_mcm_dogma_gui_compass_markers_section",
-        },
-        {
-            id = "marker_shadow",
-            type = "check",
-            val = 1,
-            def = D.marker_shadow,
-            hint = hint("marker_shadow"),
-        },
-        {
-            id = "quest_highlight",
-            type = "check",
-            val = 1,
-            def = D.quest_highlight,
-            hint = hint("quest_highlight"),
-        },
+        { id = "line_groups", type = "line" },
     }
 
     for i = 1, #MARKER_GROUPS do
         marker_block(gr, MARKER_GROUPS[i])
-    end
-    if gr[#gr] and gr[#gr].type == "line" then
-        gr[#gr] = nil
     end
 
     dogma_mcm.attach(options, "gui", "ui_mcm_menu_dogma_gui", {

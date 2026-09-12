@@ -8,8 +8,8 @@ STYLE = {
 	node = "compass_s2",
 	compass_width = 360,
 	compass_inset = 0,
-	marker_offset = 8,
-	deadbody_offset = 30,
+	marker_offset = 5,
+	deadbody_offset = 27,
 }
 
 MARKER_SET = {
@@ -17,12 +17,14 @@ MARKER_SET = {
 	highlight_pad = 6,
 }
 
-TC_CARDINAL_TEXTURE_WIDTH = 4096
 TC_VISIBLE_DEGREES = 240
-
-TC_PX_PER_DEGREE = TC_CARDINAL_TEXTURE_WIDTH / (360 + TC_VISIBLE_DEGREES)
-TC_CARDINAL_WIDTH = TC_VISIBLE_DEGREES * TC_PX_PER_DEGREE
-TC_CARDINAL_HEIGHT = 100
+TC_CARDINAL_LINE_Y = 19
+TC_CARDINAL_STEP = 15
+-- Letters sit on the line at +1 - h/2. Lift so bottom is 3px above the 1px line.
+TC_LETTER_LIFT = 3
+-- Tick alpha vs distance from strip center (center chevron is 6.5 wide).
+TC_TICK_FADE_LO = 4
+TC_TICK_FADE_HI = 10
 
 TC_FADE_DISTANCE = 10
 
@@ -32,7 +34,7 @@ TC_LOOK_TOLERANCE = 10
 
 TC_TICK_MARKERS = 200
 TC_TICK_CLEANUP = 2000
-TC_TICK_VISIBILITY = 250
+TC_TICK_CAMPFIRE = 1000
 
 TC_COMPASS_SHADOW_ALPHA = 140
 TC_COMPASS_SHADOW_OFFSET = 0.5

@@ -5,8 +5,14 @@
 
 local CONFIG = _G.dogma_gui_compass_conf
 local defs = zzzz_dogma_gui_compass_02_defs
+local pcall = pcall
 
 list = {} -- [object id] = { [spot type] = entry }
+
+local CAMPFIRE_LIT = "campfire_lit"
+local CAMPFIRE_UNLIT = "campfire_unlit"
+local cf_ids = {}
+local cf_seen = {}
 
 local function make_entry(id, spot, category)
 	local group = defs.category_groups[category]
@@ -25,6 +31,7 @@ local function make_entry(id, spot, category)
 		alpha = 0,
 		show_distance = false,
 		y = 0,
+		x_off = 0,
 
 		-- ui handles and last applied state, written only by zzzz_dogma_gui_compass_05_hud
 		ui = nil,
@@ -55,7 +62,12 @@ function add(id, spot, category)
 	if spots[spot] then return end
 
 	local entry = make_entry(id, spot, category)
-	if entry then spots[spot] = entry end
+	if entry then
+		spots[spot] = entry
+		if spot == CAMPFIRE_LIT or spot == CAMPFIRE_UNLIT then
+			cf_seen[id] = true
+		end
+	end
 end
 
 function remove(id, spot)
@@ -82,6 +94,11 @@ function clear(id)
 	end
 
 	list[id] = nil
+end
+
+function reset()
+	list = {}
+	cf_seen = {}
 end
 
 local function probe_transitions(id)
@@ -118,8 +135,81 @@ end
 function drop_stale_spots()
 	for id, spots in pairs(list) do
 		for spot in pairs(spots) do
-			if level.map_has_object_spot(id, spot) == 0 then
-				remove(id, spot)
+			-- Lit/unlit is owned by sync_campfires. Map spots lag the live fire.
+			if spot ~= CAMPFIRE_LIT and spot ~= CAMPFIRE_UNLIT then
+				if level.map_has_object_spot(id, spot) == 0 then
+					remove(id, spot)
+				end
+			end
+		end
+	end
+end
+
+local function try_get_campfire(obj)
+	return obj:get_campfire()
+end
+
+local function try_campfire_on(cf)
+	return cf:is_on()
+end
+
+local function campfire_want_spot(id)
+	local stor = db.storage[id]
+	local obj = stor and stor.object
+	if not obj then
+		obj = level.object_by_id(id)
+	end
+	if obj and obj.get_campfire then
+		local ok_cf, cf = pcall(try_get_campfire, obj)
+		if ok_cf and cf then
+			local ok_on, on = pcall(try_campfire_on, cf)
+			if ok_on then
+				if on then
+					return CAMPFIRE_LIT
+				end
+				return CAMPFIRE_UNLIT
+			end
+		end
+	end
+
+	if level.map_has_object_spot(id, CAMPFIRE_LIT) ~= 0 then
+		return CAMPFIRE_LIT
+	end
+	if level.map_has_object_spot(id, CAMPFIRE_UNLIT) ~= 0 then
+		return CAMPFIRE_UNLIT
+	end
+	return nil
+end
+
+-- Map spots often lag until PDA/menu. Read the live fire and swap the icon.
+function sync_campfires()
+	for id, spots in pairs(list) do
+		if spots[CAMPFIRE_LIT] or spots[CAMPFIRE_UNLIT] then
+			cf_seen[id] = true
+		end
+	end
+
+	local n = 0
+	for id in pairs(cf_seen) do
+		n = n + 1
+		cf_ids[n] = id
+	end
+
+	for i = 1, n do
+		local id = cf_ids[i]
+		local want = campfire_want_spot(id)
+		if not want then
+			cf_seen[id] = nil
+			-- remove may nil list[id] after the last spot
+			remove(id, CAMPFIRE_LIT)
+			remove(id, CAMPFIRE_UNLIT)
+			dogma.log.log(CONFIG.MOD_ID, "campfire " .. tostring(id) .. " gone")
+		else
+			local drop = (want == CAMPFIRE_LIT) and CAMPFIRE_UNLIT or CAMPFIRE_LIT
+			remove(id, drop)
+			if not (list[id] and list[id][want]) then
+				add(id, want)
+				dogma.log.log(CONFIG.MOD_ID, "campfire " .. tostring(id) .. " -> " .. want)
 			end
 		end
 	end
@@ -153,6 +243,7 @@ end
 
 function load_state(m_data)
 	list = {}
+	cf_seen = {}
 
 	local saved = m_data.dogma_gui_compass_markers or m_data.tc_markers or m_data.init_markers
 	if not saved then return end

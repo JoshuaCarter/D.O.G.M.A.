@@ -1,6 +1,6 @@
 --[[
     Live objects: client by id, SE id to map name.
-    ray(): engine RayPick, optional bush recast.
+    ray(): engine RayPick, optional bush / see-through recast.
     Online stalker queries: FOV, LOS, nearby, in-combat.
 ]]
 
@@ -164,8 +164,12 @@ end
 
 -- Engine RayPick. Reuses one pick + scratch vectors.
 -- bush_pierce 0/nil = one ray (bush = wall). N = recast through N bushes.
+-- pierce_see (10th, default false): also recast shoot-through / vis-transparent
+-- when material_name is a non-empty string. Empty/missing material never pierces
+-- (script_rq_result defaults shoot_factor to 0).
+-- Hits beyond remaining are rejected (range).
 -- returns: object, dist | false, dist (static) | nil (clear / fail)
-function ray(ox, oy, oz, dx, dy, dz, range, ignore, bush_pierce)
+function ray(ox, oy, oz, dx, dy, dz, range, ignore, bush_pierce, pierce_see)
     if not ray_pick or not range or range <= 0 then
         return nil
     end
@@ -196,13 +200,29 @@ function ray(ox, oy, oz, dx, dy, dz, range, ignore, bush_pierce)
         if not (ok and hit) then
             return nil
         end
+        local hit_dist = pick:get_distance()
+        if not hit_dist or hit_dist <= 0 or hit_dist > remaining then
+            return nil
+        end
         local obj = pick:get_object()
         if obj then
-            return obj, pick:get_distance()
+            return obj, hit_dist
         end
         local result = pick:get_result()
-        local hit_dist = pick:get_distance()
-        if not (result and hit_dist and hit_dist > 0 and is_bush_material(result.material_name)) then
+        local name = result and result.material_name
+        local named = type(name) == "string" and name ~= ""
+        local bush = named and is_bush_material(name)
+        local see = false
+        if pierce_see and named then
+            local shoot = result.material_shoot_factor
+            local vis = result.material_vis_transparency_factor
+            if type(shoot) == "number" and shoot <= 0.001 then
+                see = true
+            elseif type(vis) == "number" and vis > 0.01 then
+                see = true
+            end
+        end
+        if not (bush or see) then
             return false, hit_dist
         end
         local step = hit_dist + LOOK_BUSH_STEP

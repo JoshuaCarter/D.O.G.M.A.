@@ -1,0 +1,291 @@
+-- gui/compass conf
+
+local MARKER_GROUPS = {
+    { name = "quest" },
+    { name = "unique" },
+    { name = "sleep" },
+    { name = "stashes" },
+    { name = "transitions" },
+    { name = "squads" },
+    { name = "corpses", desc = true },
+    { name = "campf", desc = true },
+    { name = "pump", desc = true },
+}
+
+_G.dogma_gui_compass_conf = {
+    MOD_ID = "dogma/gui/compass",
+    POS_MIN = 0,
+    POS_MAX = 768,
+    DEFAULTS = {
+        enabled = true,
+        compass_y = 747,
+        shown = 1,
+        keybind = -1,
+        -- 0 = toggle, 1 = hold (show while held)
+        keybind_mode = 0,
+        marker_shadow = true,
+        quest_highlight = true,
+        show_quest = true,
+        show_quest_dist = 100,
+        is_quest_dist = true,
+        show_unique = true,
+        show_unique_dist = 30,
+        is_unique_dist = false,
+        show_sleep = false,
+        show_sleep_dist = 30,
+        is_sleep_dist = false,
+        show_stashes = true,
+        show_stashes_dist = 50,
+        is_stashes_dist = true,
+        show_transitions = true,
+        show_transitions_dist = 50,
+        is_transitions_dist = true,
+        show_squads = false,
+        show_squads_dist = 100,
+        is_squads_dist = false,
+        show_corpses = true,
+        show_corpses_dist = 20,
+        is_corpses_dist = false,
+        show_campf = true,
+        show_campf_dist = 50,
+        is_campf_dist = false,
+        show_pump = true,
+        show_pump_dist = 50,
+        is_pump_dist = false,
+    },
+    loaded = {
+        scale = 1,
+        style = nil,
+        marker_set = nil,
+        groups = {},
+    },
+}
+
+local CONFIG = _G.dogma_gui_compass_conf
+
+-- HUD is authored for 16:9. Wider screens stretch X, so shrink width to match.
+local function aspect_scale()
+    local d = device()
+    local w = d and d.width
+    local h = d and d.height
+    if not (w and h and w > 0 and h > 0) then
+        return 1
+    end
+
+    local k = (16 / 9) / (w / h)
+    if k > 1 then
+        k = 1
+    elseif k < 0.5 then
+        k = 0.5
+    end
+
+    return k
+end
+
+function reload()
+    local tostr = tostring
+    local L = CONFIG.loaded
+    local V = zzzz_dogma_gui_compass_01_variables
+    local id = CONFIG.MOD_ID
+
+    L.enabled = dogma.mcm.bool(id, "enabled")
+    L.scale = aspect_scale()
+    L.keybind = dogma.mcm.key(id, "keybind")
+    L.keybind_mode = dogma.mcm.int(id, "keybind_mode")
+    if L.keybind_mode == 2 then
+        L.keybind_mode = 1
+        if ui_mcm then
+            ui_mcm.set(id .. "/keybind_mode", 1)
+        end
+    elseif L.keybind_mode ~= 1 then
+        L.keybind_mode = 0
+    end
+    if L.shown == nil then
+        L.shown = CONFIG.DEFAULTS.shown ~= 0
+    end
+    L.style = V.STYLE
+    L.marker_set = V.MARKER_SET
+    L.compass_y = dogma.mcm.int(id, "compass_y")
+    L.marker_shadow = dogma.mcm.bool(id, "marker_shadow")
+    L.quest_highlight = dogma.mcm.bool(id, "quest_highlight")
+
+    local groups = L.groups
+    for i = 1, #MARKER_GROUPS do
+        local name = MARKER_GROUPS[i].name
+        local group = groups[name]
+        if not group then
+            group = {}
+            groups[name] = group
+        end
+        group.enabled = dogma.mcm.bool(id, "show_" .. name)
+        group.show_distance = dogma.mcm.bool(id, "is_" .. name .. "_dist")
+        group.distance = dogma.mcm.float(id, "show_" .. name .. "_dist")
+    end
+
+    local d = device()
+    dogma.log.log(id, string.format(
+        "reload enabled=%s y=%s scale=%.2f res=%sx%s key=%s mode=%s shown=%s",
+        tostr(L.enabled),
+        tostr(L.compass_y),
+        L.scale,
+        tostr(d and d.width),
+        tostr(d and d.height),
+        tostr(L.keybind),
+        tostr(L.keybind_mode),
+        tostr(L.shown)
+    ))
+end
+
+function write_shown(on)
+    CONFIG.loaded.shown = on and true or false
+    dogma.log.log(CONFIG.MOD_ID, "shown=" .. tostring(CONFIG.loaded.shown))
+end
+
+local function hint(id)
+    return "dogma_gui_compass_" .. id
+end
+
+-- MCM: precondition {fn} -> fn(). False = skip widget. Track still in opt_val.
+local function hidden()
+    return false
+end
+
+local function in_level()
+    return level and level.present and level.present()
+end
+
+-- MCM: functor_ui {fn} -> fn(UI_MCM). zzzz_ not safe to index at gather.
+local function start_layout(gui)
+    local pos = rawget(_G, "zzzz_dogma_gui_compass_06_position")
+    if pos and pos.start then
+        pos.start(gui)
+        return
+    end
+    dogma.log.log(CONFIG.MOD_ID, "layout button: no position script")
+end
+
+local function marker_block(list, group)
+    local D = CONFIG.DEFAULTS
+    local name = group.name
+
+    if group.desc then
+        list[#list + 1] = {
+            id = "m_" .. name .. "_desc",
+            type = "desc",
+            text = "ui_mcm_dogma_gui_compass_m_" .. name .. "_desc",
+        }
+    end
+    list[#list + 1] = {
+        id = "show_" .. name,
+        type = "check",
+        val = 1,
+        def = D["show_" .. name],
+        hint = hint("show_" .. name),
+    }
+    list[#list + 1] = {
+        id = "is_" .. name .. "_dist",
+        type = "check",
+        val = 1,
+        def = D["is_" .. name .. "_dist"],
+        hint = hint("is_" .. name .. "_dist"),
+    }
+    list[#list + 1] = {
+        id = "show_" .. name .. "_dist",
+        type = "track",
+        val = 2,
+        min = 0,
+        max = 500,
+        step = 5,
+        def = D["show_" .. name .. "_dist"],
+        hint = hint("show_" .. name .. "_dist"),
+    }
+    list[#list + 1] = { id = "line_" .. name, type = "line" }
+end
+
+function on_mcm_load(options)
+    local D = CONFIG.DEFAULTS
+
+    local gr = {
+        {
+            id = "page_description",
+            type = "desc",
+            text = "ui_mcm_dogma_gui_compass_page_description",
+        },
+        {
+            id = "compass_y",
+            type = "track",
+            val = 2,
+            def = D.compass_y,
+            min = CONFIG.POS_MIN,
+            max = CONFIG.POS_MAX,
+            step = 1,
+            precondition = { hidden },
+        },
+        {
+            id = "enabled",
+            type = "check",
+            val = 1,
+            def = D.enabled,
+            hint = hint("enabled"),
+        },
+        {
+            id = "position",
+            type = "button",
+            functor_ui = { start_layout },
+            precondition = { in_level },
+        },
+        { id = "line_key", type = "line" },
+        {
+            id = "keybind",
+            type = "key_bind",
+            val = 2,
+            def = D.keybind,
+            hint = hint("keybind"),
+        },
+        {
+            id = "keybind_mode",
+            type = (ui_mcm and ui_mcm.kb_mod_radio) or "radio_h",
+            val = 2,
+            def = D.keybind_mode,
+            hint = hint("keybind_mode"),
+            content = {
+                { 0, "toggle" },
+                { 1, "hold" },
+            },
+        },
+        { id = "line_markers", type = "line" },
+        {
+            id = "hdr_markers",
+            type = "desc",
+            text = "ui_mcm_dogma_gui_compass_markers_section",
+        },
+        {
+            id = "marker_shadow",
+            type = "check",
+            val = 1,
+            def = D.marker_shadow,
+            hint = hint("marker_shadow"),
+        },
+        {
+            id = "quest_highlight",
+            type = "check",
+            val = 1,
+            def = D.quest_highlight,
+            hint = hint("quest_highlight"),
+        },
+    }
+
+    for i = 1, #MARKER_GROUPS do
+        marker_block(gr, MARKER_GROUPS[i])
+    end
+    if gr[#gr] and gr[#gr].type == "line" then
+        gr[#gr] = nil
+    end
+
+    dogma_mcm.attach(options, "gui", "ui_mcm_menu_dogma_gui", {
+        id = "compass",
+        sh = true,
+        text = "ui_mcm_menu_dogma_gui_compass",
+        gr = dogma_mcm.with_header(gr),
+    })
+end

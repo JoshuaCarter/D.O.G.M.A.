@@ -1,0 +1,664 @@
+-- Tactical Compass -- HUD window: compass strip and PDA spot markers.
+-- Adapted from A.N.T.H.O.L.O.G.Y. (original author(?): Zateynik Melinite)
+-- Credits: Strogglet15, Tronex, RavenAscendant
+-- Compass reworked by: explorerbee, markers implementation: explorerbee
+
+local CONFIG = _G.dogma_gui_compass_conf
+local V = zzzz_dogma_gui_compass_01_variables
+local defs = zzzz_dogma_gui_compass_02_defs
+local utils = zzzz_dogma_gui_compass_03_utils
+
+local abs, atan2, floor = math.abs, math.atan2, math.floor
+local time_global, device = time_global, device
+
+local CARDINAL_W = V.TC_CARDINAL_WIDTH
+local CARDINAL_H = V.TC_CARDINAL_HEIGHT
+local PX_PER_DEG = V.TC_PX_PER_DEGREE
+
+local RAD_TO_PX = (180 / math.pi) * PX_PER_DEG
+local FULL_TURN = 360 * PX_PER_DEG
+
+local COMPASS_SHADOW_ALPHA = V.TC_COMPASS_SHADOW_ALPHA
+local COMPASS_SHADOW_OFF = V.TC_COMPASS_SHADOW_OFFSET
+
+local MARKER_SHADOW_ALPHA = V.TC_MARKER_SHADOW_ALPHA
+local MARKER_SHADOW_OFF = V.TC_MARKER_SHADOW_OFFSET
+
+local CREATE_BUDGET = V.TC_CREATE_BUDGET
+
+HUD = nil
+enabled = true
+force_visible = false
+
+local function scale_width(widget, k)
+	if not widget then return end
+
+	local pos = widget:GetWndPos()
+
+	widget:SetWndSize(vector2():set(widget:GetWidth() * k, widget:GetHeight()))
+	widget:SetWndPos(vector2():set(pos.x * k, pos.y))
+end
+
+class "TCHud" (CUIScriptWnd)
+
+function TCHud:__init()
+	super()
+
+	self:InitControls()
+end
+
+function TCHud:InitControls()
+	self:SetAutoDelete(true)
+
+	local loaded = CONFIG.loaded
+	local size_k = loaded.scale or 1
+	if abs(size_k - 1) < 0.001 then size_k = 1 end
+
+	self.size_k = size_k
+
+	local style = loaded.style
+
+	self.style = style
+	self.compass_width = style.compass_width * size_k
+	self.compass_x = V.TC_SCREEN_CENTER - (style.compass_inset + style.compass_width / 2) * size_k
+
+	utils.set_scale(self.compass_width / V.TC_COMPASS_BASE_WIDTH)
+
+	self.tmr_visibility = 0
+	self.tmr_markers = 0
+	self.tmr_cleanup = 0
+
+	self.visible = nil
+	self.last_px = nil
+
+	-- Reused every frame instead of allocating a vector2/Frect per call
+	self.pos = vector2()
+	self.rect = Frect()
+
+	self.active = {}
+	self.active_count = 0
+	self.active_max = 0
+
+	self.xml_compass = CScriptXmlInit()
+	self.xml_compass:ParseFile("ui_dogma_gui_compass.xml")
+
+	local node = style.node
+
+	self.compass = self.xml_compass:InitStatic(node, self)
+
+	self.cardinal_shadow = self:InitShadow(node .. ":cardinal_dir")
+	self.cardinal_dir = self.xml_compass:InitStatic(node .. ":cardinal_dir", self.compass)
+
+	self.frame_shadow = self:InitShadow(node .. ":static_frame")
+	self.static_frame = self.xml_compass:InitStatic(node .. ":static_frame", self.compass)
+
+	if size_k ~= 1 then
+		scale_width(self.compass, size_k)
+		scale_width(self.cardinal_shadow, size_k)
+		scale_width(self.cardinal_dir, size_k)
+		scale_width(self.frame_shadow, size_k)
+		scale_width(self.static_frame, size_k)
+	end
+
+	self.xml_markers = CScriptXmlInit()
+	self.xml_markers:ParseFile("ui_dogma_gui_compass_markers.xml")
+
+	self.marker_node = loaded.marker_set.node
+	self.highlight_pad = loaded.marker_set.highlight_pad
+	self.marker_shadow = loaded.marker_shadow
+
+	-- Child of the strip so icon X/Y share the same widget box as the letters.
+	self.markers = self.xml_markers:InitStatic(self.marker_node, self.compass)
+
+	if size_k ~= 1 then
+		scale_width(self.markers, size_k)
+	end
+
+	self.highlight = {}
+
+	for _, kind in pairs({ "primary", "secondary" }) do
+		local hl = self.xml_markers:InitStatic(self.marker_node .. ":marker_highlight_" .. kind, self.markers)
+
+		if hl then
+			hl:Show(false)
+			self.highlight[kind] = hl
+		end
+	end
+
+	self.highlight_kind = nil
+	self.highlight_entry = nil
+	self.active_target = nil
+
+	-- Hide the outer 12.5% each side (same 75% band as before, now local).
+	self.band_inset = self.compass_width * 0.125
+
+	self:UpdateLayout()
+	dogma.log.log(CONFIG.MOD_ID, string.format(
+		"hud strip=%.1f inset=%.1f",
+		self.compass_width,
+		self.band_inset
+	))
+end
+
+-- Dark copy of a widget, one step below it in draw order.
+-- Must be called before the widget itself is initialised.
+function TCHud:InitShadow(path)
+	local shadow = self.xml_compass:InitStatic(path, self.compass)
+	if not shadow then return nil end
+
+	local pos = shadow:GetWndPos()
+
+	shadow:SetWndPos(vector2():set(pos.x + COMPASS_SHADOW_OFF, pos.y + COMPASS_SHADOW_OFF))
+	shadow:SetTextureColor(GetARGB(COMPASS_SHADOW_ALPHA, 0, 0, 0))
+
+	return shadow
+end
+
+function TCHud:UpdateLayout()
+	self.compass_y = CONFIG.loaded.compass_y
+
+	self.compass:SetWndPos(self.pos:set(self.compass_x, self.compass_y))
+
+	self.tmr_markers = 0 -- marker rows move with the strip
+end
+
+function TCHud:Update()
+	CUIScriptWnd.Update(self)
+
+	local tg = time_global()
+
+	self:PollKey()
+
+	if tg >= self.tmr_visibility then
+		self.tmr_visibility = tg + V.TC_TICK_VISIBILITY
+
+		local visible = force_visible or (CONFIG.loaded.enabled and enabled and main_hud_shown())
+
+		if visible ~= self.visible then
+			self.visible = visible
+			self.compass:Show(visible)
+			self.markers:Show(visible)
+			dogma.log.log(CONFIG.MOD_ID, "hud visible=" .. tostring(visible))
+		end
+	end
+
+	if not self.visible then return end
+
+	local dev = device()
+
+	self:UpdateCompass(dev.cam_dir)
+
+	if tg >= self.tmr_cleanup then
+		self.tmr_cleanup = tg + V.TC_TICK_CLEANUP
+		zzzz_dogma_gui_compass_04_markers.drop_stale_spots()
+	end
+
+	if tg >= self.tmr_markers then
+		self.tmr_markers = tg + V.TC_TICK_MARKERS
+		self:RefreshMarkerState(dev.cam_pos)
+	end
+
+	self:RefreshMarkerPositions(dev.cam_pos, dev.cam_dir)
+end
+
+function TCHud:UpdateCompass(cam_dir)
+	local px = atan2(cam_dir.x, cam_dir.z) * RAD_TO_PX
+	if px < 0 then px = px + FULL_TURN end
+
+	-- Below half a pixel the shift is invisible; skip the engine call
+	if self.last_px and abs(px - self.last_px) < 0.5 then return end
+	self.last_px = px
+
+	self.rect:set(px, 0, px + CARDINAL_W, CARDINAL_H)
+
+	self.cardinal_shadow:SetTextureRect(self.rect)
+	self.cardinal_dir:SetTextureRect(self.rect)
+end
+
+function TCHud:CreateMarker(entry)
+	local path = self.marker_node .. ":marker_" .. entry.category
+
+	-- Attached before the icon: order of attachment is draw order
+	if self.marker_shadow then
+		local shadow = self.xml_markers:InitStatic(path, self.markers)
+
+		if shadow then
+			if self.size_k ~= 1 then
+				shadow:SetWndSize(vector2():set(shadow:GetWidth() * self.size_k, shadow:GetHeight()))
+			end
+
+			shadow:Show(false)
+
+			local text = shadow:TextControl()
+			if text and text.SetTextColor then
+				text:SetTextColor(GetARGB(MARKER_SHADOW_ALPHA, 0, 0, 0))
+			end
+
+			entry.shadow = shadow
+		end
+	end
+
+	local ui = self.xml_markers:InitStatic(path, self.markers)
+	if not ui then return nil end
+
+	if self.size_k ~= 1 then
+		ui:SetWndSize(vector2():set(ui:GetWidth() * self.size_k, ui:GetHeight()))
+	end
+
+	ui:Show(false)
+
+	entry.ui = ui
+	entry.w = ui:GetWidth()
+	entry.h = ui:GetHeight()
+	entry.half_width = entry.w / 2
+	entry.edge = entry.w * 0.75 / 2
+	entry.shown = false
+	entry.applied_alpha = -1
+	entry.applied_arrow = 0
+	entry.applied_text = ""
+
+	if not defs.no_arrow[entry.category] then
+		local arrow = self.xml_markers:InitStatic(path .. ":arrow", ui)
+
+		arrow:Show(false)
+
+		entry.arrow = arrow
+		entry.arrow_x = ui:GetWidth() / 2
+	end
+
+	return ui
+end
+
+function TCHud:ReleaseMarker(entry)
+	local ui = entry.ui
+	if not ui then return end
+
+	ui:Show(false)
+	if entry.shadow then entry.shadow:Show(false) end
+
+	if self.markers.DetachChild then
+		self.markers:DetachChild(ui)
+
+		if entry.shadow then self.markers:DetachChild(entry.shadow) end
+	end
+
+	entry.ui = nil
+	entry.arrow = nil
+	entry.shadow = nil
+	entry.shown = false
+	entry.x = nil
+end
+
+local function active_task_target()
+	local actor = db.actor
+	if not (actor and task_manager) then return nil end
+
+	local tm = task_manager.get_task_manager()
+	if not tm then return nil end
+
+	for _, t in pairs(tm.task_info) do
+		if t.current_target and t.t and actor:is_active_task(t.t) then
+			return t.current_target
+		end
+	end
+
+	return nil
+end
+
+function TCHud:RefreshMarkerState(cam_pos)
+	local style = self.style
+	local groups = CONFIG.loaded.groups
+
+	self.active_target = CONFIG.loaded.quest_highlight and active_task_target() or nil
+	self.create_budget = CREATE_BUDGET
+
+	local y_marker = style.marker_offset
+	local y_body = style.deadbody_offset
+
+	local active = self.active
+	local count = 0
+
+	for _, spots in pairs(zzzz_dogma_gui_compass_04_markers.list) do
+		for _, entry in pairs(spots) do
+			if self:RefreshMarker(entry, cam_pos, groups, y_marker, y_body) then
+				count = count + 1
+				active[count] = entry
+			end
+		end
+	end
+
+	for i = count + 1, self.active_max do
+		active[i] = nil
+	end
+
+	self.active_count = count
+	self.active_max = count
+end
+
+function TCHud:RefreshMarker(entry, cam_pos, groups, y_marker, y_body)
+	local group = groups[entry.group]
+
+	if not (group and group.enabled) then
+		return self:HideMarker(entry)
+	end
+
+	local wpos = utils.get_world_coordinates(entry.id)
+	if not wpos then
+		return self:HideMarker(entry)
+	end
+
+	local distance = floor(wpos:distance_to(cam_pos))
+	local alpha = utils.calc_alpha(distance, group.distance)
+
+	if alpha <= 0 then
+		return self:HideMarker(entry)
+	end
+
+	local ui = entry.ui
+
+	if not ui then
+		if self.create_budget <= 0 then return false end
+
+		self.create_budget = self.create_budget - 1
+		ui = self:CreateMarker(entry)
+	end
+
+	if not ui then return false end
+
+	entry.wpos:set(wpos.x, wpos.y, wpos.z)
+	entry.alpha = alpha
+	entry.show_distance = group.show_distance
+	entry.y = (entry.category == "deadbody") and y_body or y_marker
+
+	if distance ~= entry.distance then
+		entry.distance = distance
+		entry.distance_str = tostring(distance)
+	end
+
+	if alpha ~= entry.applied_alpha then
+		entry.applied_alpha = alpha
+
+		local color = GetARGB(alpha, 255, 255, 255)
+		ui:SetTextureColor(color)
+
+		if entry.arrow then entry.arrow:SetTextureColor(color) end
+
+		if entry.shadow then
+			entry.shadow:SetTextureColor(GetARGB(floor(alpha * MARKER_SHADOW_ALPHA / 255), 0, 0, 0))
+		end
+	end
+
+	return true
+end
+
+function TCHud:HideMarker(entry)
+	if entry.shown then
+		entry.shown = false
+
+		if entry.ui then entry.ui:Show(false) end
+		if entry.shadow then entry.shadow:Show(false) end
+	end
+
+	if entry.arrow and entry.applied_arrow ~= 0 then
+		entry.applied_arrow = 0
+		entry.arrow:Show(false)
+	end
+
+	return false
+end
+
+function TCHud:RefreshArrow(entry, cam_pos, centered)
+	local arrow = entry.arrow
+	if not arrow then return end
+
+	-- Up/down only while the icon is centered. Off-center or same height: none.
+	local state = 0
+	if centered then
+		local diff = floor(cam_pos.y) - floor(entry.wpos.y)
+		state = (diff < -2) and 1 or (diff > 2) and -1 or 0
+	end
+
+	-- InitTexture is expensive; only touch it when the direction actually flips
+	if state == entry.applied_arrow then return end
+	entry.applied_arrow = state
+
+	if state == 0 then
+		arrow:Show(false)
+		return
+	end
+
+	arrow:InitTexture(state == 1 and "tc_arrow_up" or "tc_arrow_down")
+	arrow:SetWndPos(self.pos:set(entry.arrow_x, -2))
+	arrow:SetTextureColor(GetARGB(entry.alpha, 255, 255, 255)) -- InitTexture resets it
+	arrow:Show(true)
+end
+
+-- Fast pass: only the horizontal position, and only for markers in range
+function TCHud:RefreshMarkerPositions(cam_pos, cam_dir)
+	local count = self.active_count
+	local hx, hz = cam_dir.x, cam_dir.z
+
+	-- looking straight up or down
+	if count == 0 or (hx * hx + hz * hz) < 0.000001 then
+		self:ShowHighlight(nil)
+
+		return
+	end
+
+	local cam_h = atan2(hx, hz)
+	local active = self.active
+	local band_lo = self.band_inset
+	local band_hi = self.compass_width - self.band_inset
+	local pos = self.pos
+
+	local target = self.active_target
+	local highlight = nil
+
+	for i = 1, count do
+		local entry = active[i]
+
+		if entry.ui then
+			local x = utils.calc_position(entry.wpos, cam_pos, cam_h)
+
+			entry.x = x
+
+			if x > band_lo + entry.edge and x < band_hi - entry.edge then
+				if not entry.shown then
+					entry.shown = true
+
+					entry.ui:Show(true)
+					if entry.shadow then entry.shadow:Show(true) end
+				end
+
+				entry.ui:SetWndPos(pos:set(x, entry.y))
+
+				if entry.id == target then
+					local hl = self.highlight[entry.category]
+
+					if hl then
+						if entry ~= self.highlight_entry then
+							self.highlight_entry = entry
+							local pad = self.highlight_pad
+
+							hl:SetWndSize(vector2():set(entry.w + pad, entry.h + pad))
+						end
+
+						hl:SetWndPos(pos:set(x, entry.y))
+						highlight = entry.category
+					end
+				end
+
+				if entry.shadow then
+					entry.shadow:SetWndPos(pos:set(x + MARKER_SHADOW_OFF, entry.y + MARKER_SHADOW_OFF))
+				end
+
+				local centered = utils.is_looking_at(x)
+				local text = (entry.show_distance and centered) and entry.distance_str or ""
+
+				if text ~= entry.applied_text then
+					entry.applied_text = text
+
+					entry.ui:TextControl():SetText(text)
+					if entry.shadow then entry.shadow:TextControl():SetText(text) end
+				end
+
+				self:RefreshArrow(entry, cam_pos, centered)
+			elseif entry.shown then
+				entry.shown = false
+
+				entry.ui:Show(false)
+				if entry.shadow then entry.shadow:Show(false) end
+				self:RefreshArrow(entry, cam_pos, false)
+			end
+		end
+	end
+
+	self:ShowHighlight(highlight)
+end
+
+-- Tracked by category name: CUIStatic has no __eq, comparing two of them crashes
+function TCHud:ShowHighlight(kind)
+	if kind == self.highlight_kind then return end
+
+	local prev = self.highlight_kind and self.highlight[self.highlight_kind]
+	if prev then prev:Show(false) end
+
+	local hl = kind and self.highlight[kind]
+	if hl then hl:Show(true) end
+
+	self.highlight_kind = kind
+end
+
+function TCHud:__finalize()
+end
+
+function activate()
+	if HUD then return end
+
+	dogma_gui_compass_mcm.reload()
+
+	HUD = TCHud()
+	apply_enabled()
+	get_hud():AddDialogToRender(HUD)
+	dogma.log.log(CONFIG.MOD_ID, "hud on")
+end
+
+function deactivate()
+	if not HUD then return end
+
+	get_hud():RemoveDialogToRender(HUD)
+	HUD = nil
+	dogma.log.log(CONFIG.MOD_ID, "hud off")
+
+	for _, spots in pairs(zzzz_dogma_gui_compass_04_markers.list) do
+		for _, entry in pairs(spots) do
+			entry.ui = nil
+			entry.arrow = nil
+			entry.shadow = nil
+			entry.shown = false
+			entry.x = nil
+			entry.applied_alpha = -1
+			entry.applied_arrow = 0
+			entry.applied_text = ""
+		end
+	end
+end
+
+function apply_enabled()
+	local loaded = CONFIG.loaded
+	local key = loaded.keybind
+	if not key or key < 0 then
+		enabled = true
+	elseif loaded.keybind_mode == 1 then
+		enabled = dogma.input.is_key_down(key)
+	else
+		enabled = loaded.shown
+	end
+end
+
+function TCHud:PollKey()
+	local loaded = CONFIG.loaded
+	if not loaded.enabled then
+		return
+	end
+
+	local key = loaded.keybind
+	if not key or key < 0 then
+		if not enabled then
+			enabled = true
+		end
+		return
+	end
+
+	if loaded.keybind_mode == 1 then
+		local want = dogma.input.is_key_down(key)
+		if want ~= enabled then
+			enabled = want
+			dogma.log.log(CONFIG.MOD_ID, "hold=" .. tostring(want))
+		end
+		return
+	end
+
+	if dogma.input.is_key_pressed(key) then
+		enabled = not enabled
+		dogma_gui_compass_mcm.write_shown(enabled)
+	end
+end
+
+local function on_actor_update()
+	if not dogma.sys.ready(CONFIG.MOD_ID, db, on_option_change) then
+		return
+	end
+end
+
+function on_option_change()
+	local loaded = CONFIG.loaded
+	local prev_shadow = loaded.marker_shadow
+	local prev_scale = loaded.scale
+
+	dogma_gui_compass_mcm.reload()
+	apply_enabled()
+
+	if loaded.marker_shadow ~= prev_shadow or loaded.scale ~= prev_scale then
+		deactivate()
+		activate()
+		return
+	end
+
+	if HUD then HUD:UpdateLayout() end
+end
+
+function on_screen_resolution_changed()
+	if not HUD then return end
+	deactivate()
+	activate()
+end
+
+function save_state(m_data)
+	m_data.dogma_gui_compass_shown = CONFIG.loaded.shown and 1 or 0
+	m_data.dogma_gui_compass_y = CONFIG.loaded.compass_y
+end
+
+function load_state(m_data)
+	local shown = m_data.dogma_gui_compass_shown
+	if shown ~= nil then
+		CONFIG.loaded.shown = shown ~= 0
+	end
+	local y = m_data.dogma_gui_compass_y
+	if y ~= nil then
+		CONFIG.loaded.compass_y = y
+	end
+	dogma.log.log(CONFIG.MOD_ID, "load shown=" .. tostring(CONFIG.loaded.shown) .. " y=" .. tostring(CONFIG.loaded.compass_y))
+end
+
+function on_game_start()
+	dogma.load(CONFIG.MOD_ID)
+	RegisterScriptCallback("actor_on_first_update", activate)
+	RegisterScriptCallback("actor_on_update", on_actor_update)
+	RegisterScriptCallback("actor_on_net_destroy", deactivate)
+	RegisterScriptCallback("actor_on_before_death", deactivate)
+	RegisterScriptCallback("on_option_change", on_option_change)
+	RegisterScriptCallback("on_screen_resolution_changed", on_screen_resolution_changed)
+	RegisterScriptCallback("save_state", save_state)
+	RegisterScriptCallback("load_state", load_state)
+end

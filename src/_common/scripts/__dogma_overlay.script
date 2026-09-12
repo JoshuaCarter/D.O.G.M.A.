@@ -6,39 +6,48 @@
 	set(source, order, msg, color) - HUD slot
 	clear(source)                  - wipe that source
 	enabled()                      - D.O.G.M.A. -> Debug -> debug overlay
+
+	Drawn via AddDialogToRender so it sits above ZoomTexture (binoc mask).
+	CustomStatic is under that mask. Do not call get_hud before first update.
 ]]
 
 local DEBUG_MOD = "dogma/debug"
-
-local HUD_STATIC = "dogma_debug_overlay_text"
-local FALLBACK_STATIC = "debug_info"
-local PANEL_STATIC = "dogma_debug_overlay_panel"
-local text_static = FALLBACK_STATIC
+local UI_XML = "ui_dogma_debug_overlay.xml"
 local PANEL_TEX = "ui_inGame2_white_rect"
 local ORIGIN_X = 10
 local ORIGIN_Y = 50
 local PANEL_PAD = 8
 local PANEL_W = 200
 local LINE_H = 16
+local UI_WIDTH = 1024
+local UI_HEIGHT = 768
+
+local POS_VEC
+local SIZE_VEC
 
 local sources = {}
+local HUD = nil
+local hud_ready = false
+local overlay_on = false
+local overlay_synced = false
+local OVERLAY_PATH = DEBUG_MOD .. "/debug_overlay"
 
-local function xml_ready()
-	return _G.dogma_dbg_overlay_xml == true
+local function log(msg)
+	__dogma_log.log(DEBUG_MOD, tostring(msg))
 end
 
 local function hud_code(color)
-	local log = rawget(_G, "__dogma_log")
-	if log and log.hud_color then
-		return log.hud_color(color)
+	local lg = rawget(_G, "__dogma_log")
+	if lg and lg.hud_color then
+		return lg.hud_color(color)
 	end
 	return "%c[255,255,255,255]"
 end
 
 local function tag(mod_id)
-	local log = rawget(_G, "__dogma_log")
-	if log and log.tag then
-		return log.tag(mod_id)
+	local lg = rawget(_G, "__dogma_log")
+	if lg and lg.tag then
+		return lg.tag(mod_id)
 	end
 	return tostring(mod_id or "dogma"):gsub("/", "_")
 end
@@ -59,95 +68,6 @@ local function any_content()
 	end
 	return false
 end
-
-local function hud_wnd(name, create)
-	local hud = get_hud()
-	if not hud then
-		return nil
-	end
-	local cs = hud:GetCustomStatic(name)
-	if not cs and create then
-		hud:AddCustomStatic(name, true)
-		cs = hud:GetCustomStatic(name)
-	end
-	return cs and cs:wnd()
-end
-
-local function remove_static(name)
-	local hud = get_hud()
-	if hud and hud:GetCustomStatic(name) then
-		hud:RemoveCustomStatic(name)
-	end
-end
-
-local function add_static(hud, name)
-	local cs = hud:GetCustomStatic(name)
-	if cs then
-		return cs
-	end
-	hud:AddCustomStatic(name, true)
-	return hud:GetCustomStatic(name)
-end
-
-local function get_static()
-	local hud = get_hud()
-	if not hud then
-		return nil
-	end
-	if xml_ready() then
-		add_static(hud, PANEL_STATIC)
-		local cs = add_static(hud, HUD_STATIC)
-		if cs then
-			text_static = HUD_STATIC
-			return cs
-		end
-	end
-	local cs = add_static(hud, FALLBACK_STATIC)
-	if cs then
-		text_static = FALLBACK_STATIC
-	end
-	return cs
-end
-
-local function hide()
-	if text_static == HUD_STATIC then
-		remove_static(HUD_STATIC)
-		remove_static(PANEL_STATIC)
-	else
-		remove_static(FALLBACK_STATIC)
-	end
-end
-
-local try_show_panel = function(PANEL_TEX, wnd)
-	wnd:InitTexture(PANEL_TEX)
-end
-
-local try_show_panel_2 = function(wnd)
-	wnd:SetStretchTexture(true)
-end
-
-local try_show_panel_3 = function(GetARGB, wnd)
-	wnd:SetTextureColor(GetARGB(76, 8, 8, 10))
-end
-
-local function show_panel(x, y, w, h)
-	if not xml_ready() then
-		return
-	end
-	local wnd = hud_wnd(PANEL_STATIC, true)
-	if not wnd then
-		return
-	end
-	wnd:SetWndPos(vector2():set(x, y))
-	wnd:SetWndSize(vector2():set(w, h))
-	pcall(try_show_panel, PANEL_TEX, wnd)
-	pcall(try_show_panel_2, wnd)
-	pcall(try_show_panel_3, GetARGB, wnd)
-end
-
-local OVERLAY_PATH = DEBUG_MOD .. "/debug_overlay"
-local overlay_on = false
-local overlay_synced = false
 
 local function read_overlay_on()
 	if ui_mcm then
@@ -172,28 +92,110 @@ function enabled()
 	return overlay_on
 end
 
-local try_render = function(font, wnd)
+class "UIDogmaOverlayHUD" (CUIScriptWnd)
+
+function UIDogmaOverlayHUD:__init() super()
+	self:SetWndRect(Frect():set(0, 0, UI_WIDTH, UI_HEIGHT))
+	self:SetAutoDelete(true)
+	local xml = CScriptXmlInit()
+	xml:ParseFile(UI_XML)
+	self.panel = xml:InitStatic("panel", self)
+	self.text = xml:InitStatic("text", self)
+	self.panel:Show(false)
+	self.text:Show(false)
+end
+
+function UIDogmaOverlayHUD:__finalize()
+end
+
+local try_panel_tex = function(tex, wnd)
+	wnd:InitTexture(tex)
+end
+
+local try_panel_stretch = function(wnd)
+	wnd:SetStretchTexture(true)
+end
+
+local try_panel_color = function(GetARGB, wnd)
+	wnd:SetTextureColor(GetARGB(76, 8, 8, 10))
+end
+
+local try_font_wnd = function(font, wnd)
 	wnd:SetFont(font)
 end
 
-local try_render_2 = function(font, tc)
+local try_font_tc = function(font, tc)
 	tc:SetFont(font)
 end
 
-local try_render_3 = function(wnd)
+local try_adjust = function(wnd)
 	wnd:AdjustHeightToText()
 end
 
-local try_render_4 = function(wnd)
+local try_complex_wnd = function(wnd)
 	wnd:SetTextComplexMode(true)
 end
 
-local try_render_5 = function(tc)
+local try_complex_tc = function(tc)
 	tc:SetTextComplexMode(true)
 end
 
-local try_render_6 = function(text_w, vector2, wnd)
-	wnd:SetWndSize(vector2():set(text_w, 768))
+local function ensure_vecs()
+	if POS_VEC then
+		return
+	end
+	POS_VEC = vector2()
+	SIZE_VEC = vector2()
+end
+
+local function detach()
+	if not HUD then
+		return
+	end
+	if hud_ready then
+		local hud = get_hud()
+		if hud then
+			hud:RemoveDialogToRender(HUD)
+		end
+	end
+	HUD = nil
+	log("overlay dialog detached")
+end
+
+local function attach()
+	if HUD then
+		return HUD
+	end
+	if not hud_ready then
+		return nil
+	end
+	local hud = get_hud()
+	if not hud then
+		log("overlay attach skipped: no hud")
+		return nil
+	end
+	ensure_vecs()
+	HUD = UIDogmaOverlayHUD()
+	hud:AddDialogToRender(HUD)
+	log("overlay dialog attached")
+	return HUD
+end
+
+local function hide()
+	detach()
+end
+
+local function show_panel(x, y, w, h)
+	local wnd = HUD and HUD.panel
+	if not wnd then
+		return
+	end
+	wnd:SetWndPos(POS_VEC:set(x, y))
+	wnd:SetWndSize(SIZE_VEC:set(w, h))
+	pcall(try_panel_tex, PANEL_TEX, wnd)
+	pcall(try_panel_stretch, wnd)
+	pcall(try_panel_color, GetARGB, wnd)
+	wnd:Show(true)
 end
 
 local function render()
@@ -201,24 +203,24 @@ local function render()
 		hide()
 		return
 	end
-
-	local cs = get_static()
-	if not cs then
+	local dlg = attach()
+	if not dlg then
 		return
 	end
-	local wnd = cs:wnd()
+
+	local wnd = dlg.text
 	if not wnd then
 		return
 	end
 	local text_x = ORIGIN_X + PANEL_PAD
 	local text_y = ORIGIN_Y + PANEL_PAD
 	local text_w = PANEL_W - PANEL_PAD * 2
-	wnd:SetWndPos(vector2():set(text_x, text_y))
-	pcall(try_render_6, text_w, vector2, wnd)
-	pcall(try_render_4, wnd)
+	wnd:SetWndPos(POS_VEC:set(text_x, text_y))
+	wnd:SetWndSize(SIZE_VEC:set(text_w, UI_HEIGHT))
+	pcall(try_complex_wnd, wnd)
 	local font = GetFontLetterica16Russian and GetFontLetterica16Russian()
 	if font then
-		pcall(try_render, font, wnd)
+		pcall(try_font_wnd, font, wnd)
 	end
 
 	local names = {}
@@ -262,18 +264,19 @@ local function render()
 	show_panel(ORIGIN_X, ORIGIN_Y, PANEL_W, est_h + PANEL_PAD * 2)
 	local tc = wnd:TextControl()
 	if tc then
-		pcall(try_render_5, tc)
+		pcall(try_complex_tc, tc)
 		if font then
-			pcall(try_render_2, font, tc)
+			pcall(try_font_tc, font, tc)
 		end
 		tc:SetText(table.concat(lines, "\\n"))
 	end
-	pcall(try_render_3, wnd)
+	pcall(try_adjust, wnd)
+	wnd:Show(true)
 	local text_h = tonumber(wnd.GetHeight and wnd:GetHeight()) or 0
 	if text_h >= 1 then
-		local pw = hud_wnd(PANEL_STATIC)
+		local pw = dlg.panel
 		if pw then
-			pw:SetWndSize(vector2():set(PANEL_W, text_h + PANEL_PAD * 2))
+			pw:SetWndSize(SIZE_VEC:set(PANEL_W, text_h + PANEL_PAD * 2))
 		end
 	end
 end
@@ -299,10 +302,41 @@ function clear(source)
 	render()
 end
 
+local function on_option_change()
+	overlay_on = read_overlay_on()
+	overlay_synced = true
+	render()
+end
+
+local function on_first_update()
+	hud_ready = true
+	render()
+end
+
+-- In-game ESC: GameUI is alive. Window stays in m_dialogsToRender until we
+-- RemoveDialogToRender. Nil-only lets SetAutoDelete GC the C++ wnd while
+-- OnFrame still Update/Draws it. MCM init allocs, GC runs, native crash.
+local function on_main_menu()
+	if HUD and hud_ready then
+		local hud = get_hud()
+		if hud then
+			hud:RemoveDialogToRender(HUD)
+			log("overlay dialog detached (menu)")
+		end
+	end
+	HUD = nil
+end
+
+-- Game UI is dying. Do not call get_hud.
+local function on_hud_gone()
+	HUD = nil
+	hud_ready = false
+end
+
 function on_game_start()
-	RegisterScriptCallback("on_option_change", function()
-		overlay_on = read_overlay_on()
-		overlay_synced = true
-		render()
-	end)
+	RegisterScriptCallback("on_option_change", on_option_change)
+	RegisterScriptCallback("actor_on_first_update", on_first_update)
+	RegisterScriptCallback("actor_on_net_destroy", on_hud_gone)
+	RegisterScriptCallback("main_menu_on_init", on_main_menu)
+	RegisterScriptCallback("main_menu_on_quit", render)
 end

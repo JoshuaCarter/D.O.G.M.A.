@@ -1,0 +1,93 @@
+-- Tactical Compass -- stateless helpers.
+
+local CONFIG = _G.dogma_gui_compass_conf
+local V = zzzz_dogma_gui_compass_01_variables
+
+local FADE = V.TC_FADE_DISTANCE
+local PI = math.pi
+local TWO_PI = 2 * PI
+local atan2 = math.atan2
+local abs, floor = math.abs, math.floor
+
+-- Local to the compass widget. Same deg map as SetTextureRect (240 deg in width).
+local half = V.TC_COMPASS_BASE_WIDTH / 2
+local px_per_rad = V.TC_COMPASS_BASE_WIDTH / V.TC_VISIBLE_DEGREES * (180 / PI)
+local look = V.TC_LOOK_TOLERANCE
+
+function set_scale(k)
+	local width = V.TC_COMPASS_BASE_WIDTH * k
+	half = width / 2
+	px_per_rad = width / V.TC_VISIBLE_DEGREES * (180 / PI)
+	look = V.TC_LOOK_TOLERANCE * k
+	dogma.log.log(CONFIG.MOD_ID, string.format(
+		"lockstep local width=%.1f px/deg=%.3f",
+		width,
+		width / V.TC_VISIBLE_DEGREES
+	))
+end
+
+function get_world_coordinates(id)
+	local obj = db.storage[id] and db.storage[id].object or level.object_by_id(id)
+
+	if obj then
+		if IsStalker(obj) or IsMonster(obj) then
+			return utils_obj.safe_bone_pos(obj, "bip01_head")
+		end
+
+		if type(obj.position) == "function" then
+			local pos = obj:position()
+
+			return pos and vector():set(pos.x, pos.y + 1, pos.z)
+		end
+	end
+
+	local se = alife_object(id)
+	if not (se and se.online) then return nil end
+
+	local cls = se:clsid()
+
+	if cls == clsid.smart_terrain then
+		local pos = se.position
+
+		return pos and vector():set(pos.x, pos.y + 1, pos.z)
+	end
+
+	if cls == clsid.online_offline_group_s then
+		local leader = se:commander_id()
+		local npc = leader and (db.storage[leader] and db.storage[leader].object or level.object_by_id(leader))
+
+		return npc and utils_obj.safe_bone_pos(npc, "bip01_head")
+	end
+
+	return nil
+end
+
+function calc_alpha(distance, threshold)
+	if threshold <= 0 then return 0 end
+	if distance <= threshold then return 255 end
+	if distance >= threshold + FADE then return 0 end
+
+	return floor(255 - ((distance - threshold) / FADE) * 255)
+end
+
+-- Same heading as the cardinal strip. No lerp: lerp would lag the ticks.
+function calc_position(world_pos, actor_pos, cam_h)
+	local dx = world_pos.x - actor_pos.x
+	local dz = world_pos.z - actor_pos.z
+	if dx * dx + dz * dz < 0.000001 then
+		return half
+	end
+
+	local d = atan2(dx, dz) - cam_h
+	if d > PI then
+		d = d - TWO_PI
+	elseif d < -PI then
+		d = d + TWO_PI
+	end
+
+	return half + d * px_per_rad
+end
+
+function is_looking_at(x)
+	return x and abs(x - half) <= look
+end

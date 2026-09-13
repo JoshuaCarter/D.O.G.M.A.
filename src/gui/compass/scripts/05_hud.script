@@ -164,7 +164,7 @@ function TCHud:InitControls()
 
 	self.highlight = {}
 
-	for _, kind in pairs({ "primary", "secondary" }) do
+	for _, kind in pairs({ "primary", "secondary", "turnin" }) do
 		local hl = self.xml_markers:InitStatic(self.marker_node .. ":marker_highlight_" .. kind, self.markers)
 
 		if hl then
@@ -268,6 +268,7 @@ function TCHud:Update()
 		self.tmr_campfire = tg + V.TC_TICK_CAMPFIRE
 		zzzz_dogma_gui_compass_04_markers.sync_campfires()
 		zzzz_dogma_gui_compass_04_markers.sync_companions()
+		zzzz_dogma_gui_compass_04_markers.sync_turnins()
 	end
 
 	if not self.visible then return end
@@ -509,6 +510,8 @@ function TCHud:RefreshMarker(entry, cam_pos, groups, y_marker)
 		local color
 		if entry.category == "squad_companion" then
 			color = GetARGB(alpha, 70, 210, 90)
+		elseif entry.category == "turnin" then
+			color = GetARGB(alpha, 0, 255, 0)
 		else
 			color = GetARGB(alpha, 255, 255, 255)
 		end
@@ -562,7 +565,14 @@ function TCHud:RefreshArrow(entry, cam_pos, centered)
 
 	arrow:InitTexture(state == 1 and "tc_arrow_up" or "tc_arrow_down")
 	arrow:SetWndPos(self.pos:set(entry.x or 0, entry.arrow_y))
-	arrow:SetTextureColor(GetARGB(entry.alpha, 255, 255, 255)) -- InitTexture resets it
+	-- InitTexture resets tint
+	local r, g, b = 255, 255, 255
+	if entry.category == "turnin" then
+		r, g, b = 0, 255, 0
+	elseif entry.category == "squad_companion" then
+		r, g, b = 70, 210, 90
+	end
+	arrow:SetTextureColor(GetARGB(entry.alpha, r, g, b))
 	arrow:Show(true)
 end
 

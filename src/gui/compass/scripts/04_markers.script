@@ -13,9 +13,11 @@ list = {} -- [object id] = { [spot type] = entry }
 local CAMPFIRE_LIT = "campfire_lit"
 local CAMPFIRE_UNLIT = "campfire_unlit"
 local COMPANION_SPOT = "companion_squad"
+local TURNIN_SPOT = "quest_turnin"
 local cf_ids = {}
 local cf_seen = {}
 local cmp_seen = {}
+local turnin_seen = {}
 
 local function make_entry(id, spot, category)
 	local group = defs.category_groups[category]
@@ -107,6 +109,7 @@ function reset()
 	list = {}
 	cf_seen = {}
 	cmp_seen = {}
+	turnin_seen = {}
 end
 
 local function probe_transitions(id)
@@ -144,7 +147,7 @@ function drop_stale_spots()
 	for id, spots in pairs(list) do
 		for spot in pairs(spots) do
 			-- Lit/unlit is owned by sync_campfires. Map spots lag the live fire.
-			if spot ~= CAMPFIRE_LIT and spot ~= CAMPFIRE_UNLIT and spot ~= COMPANION_SPOT then
+			if spot ~= CAMPFIRE_LIT and spot ~= CAMPFIRE_UNLIT and spot ~= COMPANION_SPOT and spot ~= TURNIN_SPOT then
 				if level.map_has_object_spot(id, spot) == 0 then
 					remove(id, spot)
 				end
@@ -256,6 +259,96 @@ function sync_companions()
 	end
 end
 
+local function giver_owns_target(gid, target)
+	if gid == target then return true end
+
+	local se = alife_object(gid)
+	if not (se and se.clsid and se:clsid() == clsid.online_offline_group_s) then
+		return false
+	end
+
+	local xs = dogma.xlibs and dogma.xlibs.xsquad
+	if not xs then return false end
+
+	for member_id in xs.iter_member_ids(se) do
+		if member_id == target then return true end
+	end
+
+	return false
+end
+
+local function set_category(entry, category)
+	if not category or entry.category == category then return end
+
+	if zzzz_dogma_gui_compass_05_hud.HUD then
+		zzzz_dogma_gui_compass_05_hud.HUD:ReleaseMarker(entry)
+	end
+
+	entry.category = category
+	entry.group = defs.category_groups[category] or entry.group
+	dogma.log.log(CONFIG.MOD_ID, "cat " .. tostring(entry.id) .. " " .. tostring(entry.spot) .. " -> " .. category)
+end
+
+-- Side-quest return NPCs. Minimap tints the white diamond green; no unique spot type.
+function sync_turnins()
+	local pairs_ = pairs
+	local tm = task_manager and task_manager.get_task_manager()
+	if not (tm and tm.task_info) then return end
+
+	for id in pairs_(turnin_seen) do
+		turnin_seen[id] = false
+	end
+
+	for _, tsk in pairs_(tm.task_info) do
+		local ct = tsk.current_target
+		local gid = tsk.task_giver_id
+		if ct and gid and not tsk.storyline and tsk.status ~= "fail" and tsk.status ~= "completed" then
+			if giver_owns_target(gid, ct) then
+				turnin_seen[ct] = true
+			end
+		end
+	end
+
+	for id, keep in pairs_(turnin_seen) do
+		if keep then
+			local spots = list[id]
+			local has_real = false
+			if spots then
+				for spot, entry in pairs_(spots) do
+					if spot ~= TURNIN_SPOT then
+						local cat = defs.spot_categories[spot]
+						if cat == "primary" or cat == "secondary" or entry.category == "turnin" then
+							set_category(entry, "turnin")
+							has_real = true
+						end
+					end
+				end
+			end
+
+			if has_real then
+				if spots and spots[TURNIN_SPOT] then
+					remove(id, TURNIN_SPOT)
+				end
+			elseif not (spots and spots[TURNIN_SPOT]) then
+				add(id, TURNIN_SPOT)
+				dogma.log.log(CONFIG.MOD_ID, "turnin " .. tostring(id) .. " add")
+			end
+		else
+			turnin_seen[id] = nil
+			remove(id, TURNIN_SPOT)
+			local spots = list[id]
+			if spots then
+				for spot, entry in pairs_(spots) do
+					if entry.category == "turnin" then
+						set_category(entry, defs.spot_categories[spot])
+					end
+				end
+			end
+			dogma.log.log(CONFIG.MOD_ID, "turnin " .. tostring(id) .. " gone")
+		end
+	end
+end
+
 function on_map_location_added(binder, spot, id)
 		if defs.blacklisted_spots[spot] then return end
 
@@ -270,7 +363,7 @@ function save_state(m_data)
 		local out
 
 		for spot, entry in pairs(spots) do
-			if spot ~= COMPANION_SPOT then
+			if spot ~= COMPANION_SPOT and spot ~= TURNIN_SPOT then
 				out = out or {}
 				out[spot] = entry.category
 			end
@@ -288,6 +381,7 @@ function load_state(m_data)
 	list = {}
 	cf_seen = {}
 	cmp_seen = {}
+	turnin_seen = {}
 
 	local saved = m_data.dogma_gui_compass_markers or m_data.tc_markers or m_data.init_markers
 	if not saved then return end

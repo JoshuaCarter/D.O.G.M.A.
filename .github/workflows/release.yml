@@ -73,24 +73,46 @@ jobs:
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Set up Python
+        if: steps.check.outputs.exists == 'false'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       - name: Build FOMOD zip
         if: steps.check.outputs.exists == 'false'
+        env:
+          DOGMA_ZIP: ${{ steps.channel.outputs.zip_name }}
         run: |
-          bash dev/package-fomod.sh
+          pip install PyYAML
 
-          # Stamp experimental builds so MO2 shows the short sha, not mainline version.
+          # Stamp before package-fomod so info.xml + meta.ini + zip match.
           if [[ "${{ steps.channel.outputs.kind }}" == "experimental" ]]; then
             VER="0.0.0-${{ steps.channel.outputs.version }}"
-            sed -i -E "s/^version=.*/version=${VER}/" .build/fomod/meta.ini
-            sed -i -E "s/^newestVersion=.*/newestVersion=${VER}/" .build/fomod/meta.ini
-            sed -i -E "s#<Version>[^<]*</Version>#<Version>${VER}</Version>#" .build/fomod/fomod/info.xml
+            sed -i -E "s/^version=.*/version=${VER}/" meta.ini
+            sed -i -E "s/^newestVersion=.*/newestVersion=${VER}/" meta.ini
           fi
 
-          ZIP="${{ steps.channel.outputs.zip_name }}"
-          (
-            cd .build/fomod
-            zip -r "../../$ZIP" .
-          )
+          bash dev/package-fomod.sh
+
+          python3 - "$DOGMA_ZIP" <<'PY'
+          import sys
+          import zipfile
+          from pathlib import Path
+
+          zpath = Path(sys.argv[1])
+          if not zpath.is_file() or zpath.stat().st_size == 0:
+              sys.exit(f"release zip missing or empty: {zpath}")
+          with zipfile.ZipFile(zpath) as zf:
+              names = zf.namelist()
+          need = ("fomod/ModuleConfig.xml", "fomod/info.xml", "meta.ini")
+          missing = [n for n in need if n not in names]
+          if missing:
+              sys.exit(f"{zpath} missing {missing}")
+          if not any(n.startswith("gamedata/") for n in names):
+              sys.exit(f"{zpath} has no gamedata/")
+          print(f"fomod zip ok: {zpath} ({len(names)} files, {zpath.stat().st_size} bytes)")
+          PY
 
       - name: Create release and attach zip
         if: steps.check.outputs.exists == 'false'
@@ -101,6 +123,7 @@ jobs:
           prerelease: ${{ steps.channel.outputs.prerelease }}
           make_latest: ${{ steps.channel.outputs.make_latest }}
           generate_release_notes: true
+          fail_on_unmatched_files: true
           body: ${{ steps.channel.outputs.body }}
           files: |
             ${{ steps.channel.outputs.zip_name }}

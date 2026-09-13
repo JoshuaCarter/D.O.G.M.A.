@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Stage a FOMOD-ready tree under .build/fomod/ and zip it to .build/DOGMA.zip.
+# Stage a FOMOD-ready tree under .build/fomod/ and zip it.
+# Zip dest: $DOGMA_ZIP, or .build/DOGMA.zip.
 #
 # Layout:
 #   .build/fomod/
@@ -17,10 +18,17 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SRC="$ROOT/src"
 STAGE="$ROOT/.build/fomod"
-ZIP_OUT="$ROOT/.build/DOGMA.zip"
+ZIP_OUT="${DOGMA_ZIP:-$ROOT/.build/DOGMA.zip}"
 BUILD="$ROOT/dev/build.sh"
 GEN="$ROOT/dev/gen_fomod.py"
 MANIFEST="$ROOT/fomod/manifest.yml"
+
+# Packaging stages files. ALAO is local/pre-commit src prep, not a CI dep.
+export DOGMA_NO_ALAO=1
+
+if [[ "$ZIP_OUT" != /* && "$ZIP_OUT" != [A-Za-z]:* ]]; then
+	ZIP_OUT="$ROOT/$ZIP_OUT"
+fi
 
 dogma_py() {
 	if command -v py >/dev/null 2>&1; then

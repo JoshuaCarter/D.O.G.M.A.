@@ -2,7 +2,7 @@
     Stalker ID - centered Faction Identification replacement.
 
     Look-ray to ID range first (fade in immediately). Else outer cone
-    and min size, closest to farthest: own size circle, first fit wins
+    and min size, closest to farthest: own size circle, first with LOS
     after a 250ms hold. Fade in 250ms, fade out 500ms. Line only when
     fully faded in. Range is min_size_px (pinhole, 1.8m).
     Leader line: living non-hostiles normally, all living stalkers in binocs;
@@ -538,6 +538,48 @@ local function query_look_object(ox, oy, oz, dx, dy, dz, remaining)
     return nil
 end
 
+-- Cam to bone. Wall = no. Hit this stalker or clear = yes. Same pierce as look-ray.
+local function los_to(pos, obj)
+    local d = device and device()
+    if not (d and d.cam_pos and pos and obj) then
+        return false
+    end
+    local cam = d.cam_pos
+    local dx = pos.x - cam.x
+    local dy = pos.y - cam.y
+    local dz = pos.z - cam.z
+    local dist = sqrt(dx * dx + dy * dy + dz * dz)
+    if dist < 0.05 then
+        return true
+    end
+    local inv = 1 / dist
+    local hit = dogma.alife.ray(
+        cam.x, cam.y, cam.z,
+        dx * inv, dy * inv, dz * inv,
+        dist + 0.35,
+        db and db.actor,
+        1,
+        true
+    )
+    if hit == false then
+        return false
+    end
+    if not hit then
+        return true
+    end
+    return hit:id() == obj:id()
+end
+
+local function circle_los(obj)
+    for i = 1, #BONES_BODY do
+        local p = get_bone(obj, BONES_BODY[i])
+        if p and los_to(p, obj) then
+            return true
+        end
+    end
+    return false
+end
+
 local function cam_dist(pos)
     local d = device and device()
     if not (d and d.cam_pos and pos) then
@@ -795,6 +837,7 @@ end
 
 local pick_obj, pick_sd, pick_max, pick_actor_id, pick_dist
 local pick_ry, pick_sx, pick_sy = 0, nil, nil
+local los_miss_id = -1
 local SCAN = {}
 local scan_n = 0
 
@@ -876,12 +919,18 @@ local function scan_center()
     for i = 1, scan_n do
         local e = SCAN[i]
         if in_ui_circle(e.sx, e.sy, e.ry) then
-            pick_obj = e.obj
-            pick_sd = e.sd
-            pick_ry = e.ry
-            pick_sx, pick_sy = e.sx, e.sy
-            pick_dist = e.dist
-            return
+            if circle_los(e.obj) then
+                pick_obj = e.obj
+                pick_sd = e.sd
+                pick_ry = e.ry
+                pick_sx, pick_sy = e.sx, e.sy
+                pick_dist = e.dist
+                return
+            end
+            if e.obj:id() ~= los_miss_id then
+                los_miss_id = e.obj:id()
+                log("circle los miss id=" .. tostring(e.obj:id()))
+            end
         end
     end
 end

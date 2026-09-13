@@ -17,6 +17,15 @@ local by_name = {}
 local name_miss = 0
 local SKIP = {
     ["wpn_addon_silencer"] = true,
+    ["ammo_23_eco"] = true,
+}
+
+-- Dump gaps. Same cats as the real item. Strip/stash use list/is.
+-- ied_rpg_new: live IED; dump only has unobtainable ied_rpg.
+-- magnifier: Eotech magnifier lens; dump left it in materials (skipped).
+local EXTRA = {
+    { "ied_rpg_new", "explosives", "st_ied_rpg" },
+    { "magnifier", "weapon_attach_scopes", "st_addon_scope_mag" },
 }
 
 -- site slug -> dogma cat name (same table)
@@ -359,6 +368,13 @@ local function load_all()
         local slug, typ = SITE[i][1], SITE[i][2]
         take_site(slug, typ)
         n_site = n_site + #(groups[typ] or EMPTY)
+    end
+    for i = 1, #EXTRA do
+        local id, typ, key = EXTRA[i][1], EXTRA[i][2], EXTRA[i][3]
+        if not by_id[id] then
+            add_row(typ, { id = id, displayName = key, pda_encyclopedia_name = key })
+            printf("DOGMA.db: extra %s -> %s", id, typ)
+        end
     end
     groups.ammo_parts = {}
     local ext = decode_ext("ammo-parts.json")

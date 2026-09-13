@@ -5,7 +5,6 @@
 
 local CONFIG = _G.dogma_gui_compass_conf
 local V = zzzz_dogma_gui_compass_01_variables
-local defs = zzzz_dogma_gui_compass_02_defs
 local utils = zzzz_dogma_gui_compass_03_utils
 
 local abs, atan2, floor = math.abs, math.atan2, math.floor
@@ -360,15 +359,13 @@ function TCHud:CreateMarker(entry)
 	entry.applied_arrow = 0
 	entry.applied_text = ""
 
-	if not defs.no_arrow[entry.category] then
-		-- Child of the strip, not the icon, so Y matches 12px markers.
-		local arrow = self.xml_markers:InitStatic(path .. ":arrow", self.markers)
+	-- Child of the strip, not the icon, so Y matches 12px markers.
+	local arrow = self.xml_markers:InitStatic(path .. ":arrow", self.markers)
 
-		arrow:Show(false)
+	arrow:Show(false)
 
-		entry.arrow = arrow
-		entry.arrow_y = -3
-	end
+	entry.arrow = arrow
+	entry.arrow_y = -3
 
 	return ui
 end
@@ -423,14 +420,13 @@ function TCHud:RefreshMarkerState(cam_pos)
 	self.create_budget = CREATE_BUDGET
 
 	local y_marker = style.marker_offset
-	local y_body = style.deadbody_offset
 
 	local active = self.active
 	local count = 0
 
 	for _, spots in pairs(zzzz_dogma_gui_compass_04_markers.list) do
 		for _, entry in pairs(spots) do
-			if self:RefreshMarker(entry, cam_pos, groups, y_marker, y_body) then
+			if self:RefreshMarker(entry, cam_pos, groups, y_marker) then
 				count = count + 1
 				active[count] = entry
 			end
@@ -445,7 +441,7 @@ function TCHud:RefreshMarkerState(cam_pos)
 	self.active_max = count
 end
 
-function TCHud:RefreshMarker(entry, cam_pos, groups, y_marker, y_body)
+function TCHud:RefreshMarker(entry, cam_pos, groups, y_marker)
 	local group_name = entry.group
 	if group_name == "squads" then
 		group_name = utils.squad_mcm_group(entry.id)
@@ -485,9 +481,7 @@ function TCHud:RefreshMarker(entry, cam_pos, groups, y_marker, y_body)
 	entry.show_distance = group.show_distance
 	local y = y_marker
 	local x_off = 0
-	if entry.category == "deadbody" then
-		y = y_body
-	elseif entry.category == "campfire_lit" or entry.category == "campfire_unlit" then
+	if entry.category == "campfire_lit" or entry.category == "campfire_unlit" then
 		y = y_marker + 1
 		x_off = 1
 	end

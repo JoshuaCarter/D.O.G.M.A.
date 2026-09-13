@@ -1,9 +1,10 @@
 --[[
     Stalker ID - centered Faction Identification replacement.
 
-    Look-ray to ID range first. Else outer cone (lower-back) and min
-    size, closest to farthest: each stalker gets their own size circle;
-    first bone in that circle wins. Range is min_size_px (pinhole, 1.8m).
+    Look-ray to ID range first (fade in immediately). Else outer cone
+    and min size, closest to farthest: own size circle, first fit wins
+    after a 250ms hold. Fade in 250ms, fade out 500ms. Line only when
+    fully faded in. Range is min_size_px (pinhole, 1.8m).
     Leader line: living non-hostiles normally, all living stalkers in binocs;
     never corpses. Hidden on PDA. Goodwill color (MCM): living names red /
     yellow / green from general_goodwill bands; zombified red. Off: white.
@@ -45,6 +46,9 @@ local STALKER_H = 1.8 -- metres; standing height for pinhole size
 local OUTER_R = 1 -- circle height = screen height
 local SIZE_RY_MIN = 1 -- 2x2 px
 local SIZE_RY_MAX = UI_CY -- full screen height
+local FADE_IN_MS = 250
+local FADE_OUT_MS = 500
+local CIRCLE_HOLD_MS = 250
 local DEG2RAD = math.pi / 180
 local SEARCH_WHEN_OFF = 2000 -- iterate_nearest needs a radius when min_size is 0
 local DIK_RMB = (DIK_keys and DIK_keys.MOUSE_2) or 338
@@ -62,8 +66,9 @@ local LastHitObject = nil
 local line_target_id = nil
 local next_pick = 0
 local cond_was = false
-local miss_n = 0
 local ov_at = 0
+local hold_id = nil
+local hold_at = 0
 local dbg_reset = function() end
 local apply_layout = function() end
 
@@ -132,15 +137,11 @@ local function on_option_change()
     CONFIG.loaded.always_show_line = dogma.mcm.bool(id, "always_show_line")
     CONFIG.loaded.always_show_line_binoc = dogma.mcm.bool(id, "always_show_line_binoc")
     CONFIG.loaded.line_a = dogma.mcm.uint(id, "line_a")
-    CONFIG.loaded.fade_out_ms = dogma.mcm.uint(id, "fade_out_ms")
-    CONFIG.loaded.fade_in_ms = dogma.mcm.uint(id, "fade_in_ms")
     CONFIG.loaded.debug_overlay = dogma.overlay.enabled()
     if not CONFIG.loaded.enabled or not CONFIG.loaded.debug_overlay then
         dogma.overlay.clear(id)
     end
-    log("opts fade_in_ms=" .. tostr(CONFIG.loaded.fade_in_ms)
-        .. " fade_out_ms=" .. tostr(CONFIG.loaded.fade_out_ms)
-        .. " min_size_px=" .. tostr(CONFIG.loaded.min_size_px)
+    log("opts min_size_px=" .. tostr(CONFIG.loaded.min_size_px)
         .. " circle_size=" .. tostr(CONFIG.loaded.circle_size)
         .. " icon_scale=" .. tostr(CONFIG.loaded.icon_scale))
     if HUD then
@@ -200,13 +201,6 @@ local function cancel_fade()
 end
 
 local function start_fade_in()
-    local fade_ms = CONFIG.loaded.fade_in_ms or 0
-    if fade_ms <= 0 then
-        cancel_fade()
-        apply_alphas(1)
-        log("fade_in snap")
-        return
-    end
     if fade_active and fade_mode == "in" then
         return
     end
@@ -216,19 +210,27 @@ local function start_fade_in()
     end
     fade_active = true
     fade_mode = "in"
-    fade_start_ms = time_global() - floor(from * fade_ms + 0.5)
+    fade_start_ms = time_global() - floor(from * FADE_IN_MS + 0.5)
     apply_alphas(from)
-    log("fade_in start ms=" .. tostring(fade_ms) .. " from=" .. tostring(from))
+    log("fade_in start from=" .. tostring(from))
 end
 
 local function start_fade()
+    local from = clamp01(fade_mul)
     fade_active = true
     fade_mode = "out"
-    fade_start_ms = time_global()
-    log("fade_out start ms=" .. tostring(CONFIG.loaded.fade_out_ms or 0))
+    fade_start_ms = time_global() - floor((1 - from) * FADE_OUT_MS + 0.5)
+    apply_alphas(from)
+    log("fade_out start from=" .. tostring(from))
+end
+
+local function reset_hold()
+    hold_id = nil
+    hold_at = 0
 end
 
 local function clear()
+    reset_hold()
     cancel_fade()
     shown_faction = nil
     line_target_id = nil
@@ -958,7 +960,7 @@ end
 
 local function update_leader_line()
     -- Active ID or fading: line_target_id is kept through fade, cleared on clear().
-    if not (HUD and line_target_id and want_line() and fade_mul > 0 and (LastHitObject or fade_active)) then
+    if not (HUD and line_target_id and want_line() and fade_mul >= 1 and not fade_active) then
         hide_line()
         return
     end
@@ -1046,13 +1048,7 @@ local function target_lost()
     if not HUD then
         return
     end
-    local fade_ms = CONFIG.loaded.fade_out_ms or 0
-    if fade_ms <= 0 then
-        clear()
-        return
-    end
     start_fade()
-    apply_alphas(1)
 end
 
 local function set_id_target(obj)
@@ -1060,7 +1056,6 @@ local function set_id_target(obj)
         return
     end
     if obj then
-        miss_n = 0
         if LastHitObject then
             if obj:id() ~= LastHitObject:id() then
                 target_enter(obj)
@@ -1095,13 +1090,9 @@ local function cam_look_id(max_range)
     return nil
 end
 
--- Two empty pick ticks in a row drops the ID.
 local function miss_target()
-    miss_n = miss_n + 1
-    if miss_n >= 2 then
-        miss_n = 0
-        set_id_target(nil)
-    end
+    reset_hold()
+    set_id_target(nil)
 end
 
 local function try_pick()
@@ -1112,6 +1103,7 @@ local function try_pick()
     end
     local look = cam_look_id(approx_max_range())
     if look then
+        reset_hold()
         if not LastHitObject or LastHitObject:id() ~= look:id() then
             log("pick ray id=" .. tostr(look:id()))
         end
@@ -1126,11 +1118,28 @@ local function try_pick()
         miss_target()
         return
     end
-    if not LastHitObject or LastHitObject:id() ~= pick_obj:id() then
-        log("pick circle id=" .. tostr(pick_obj:id())
-            .. " dist=" .. tostr(floor(pick_dist + 0.5))
-            .. " ry=" .. tostr(floor(pick_ry + 0.5)))
+    local id = pick_obj:id()
+    local showing = LastHitObject and LastHitObject:id() == id
+    local fading_out = fade_active and fade_mode == "out"
+    if showing and not fading_out then
+        set_id_target(pick_obj)
+        return
     end
+    local now = time_global()
+    if hold_id ~= id then
+        hold_id = id
+        hold_at = now
+        log("circle hold id=" .. tostr(id))
+    end
+    if now - hold_at < CIRCLE_HOLD_MS then
+        if LastHitObject and LastHitObject:id() ~= id then
+            set_id_target(nil)
+        end
+        return
+    end
+    log("circle hold done id=" .. tostr(id)
+        .. " dist=" .. tostr(floor(pick_dist + 0.5))
+        .. " ry=" .. tostr(floor(pick_ry + 0.5)))
     set_id_target(pick_obj)
 end
 
@@ -1140,23 +1149,21 @@ local function update_fade()
     end
     local elapsed = time_global() - fade_start_ms
     if fade_mode == "in" then
-        local fade_ms = CONFIG.loaded.fade_in_ms or 0
-        if fade_ms <= 0 or elapsed >= fade_ms then
+        if elapsed >= FADE_IN_MS then
             fade_active = false
             fade_mode = "out"
             apply_alphas(1)
             log("fade_in done")
             return
         end
-        apply_alphas(elapsed / fade_ms)
+        apply_alphas(elapsed / FADE_IN_MS)
         return
     end
-    local fade_ms = CONFIG.loaded.fade_out_ms or 0
-    if fade_ms <= 0 or elapsed >= fade_ms then
+    if elapsed >= FADE_OUT_MS then
         clear()
         return
     end
-    apply_alphas(1 - (elapsed / fade_ms))
+    apply_alphas(1 - (elapsed / FADE_OUT_MS))
 end
 
 local DBG_BONES = {
@@ -1378,7 +1385,7 @@ function actor_on_update()
             show_preview()
             return
         end
-        miss_n = 0
+        reset_hold()
         set_id_target(nil)
         next_pick = 0
         return

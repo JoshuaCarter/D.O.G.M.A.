@@ -96,8 +96,20 @@ function is_looking_at(x)
 	return x and abs(x - half) <= look
 end
 
--- Warfare spots stay one category list; MCM is friend vs enemy.
+function is_player_companion(id)
+	local xs = dogma.xlibs and dogma.xlibs.xsquad
+	if not (xs and id) then
+		return false
+	end
+	local squad = xs.get_squad_by_member(id)
+	return squad and xs.is_companion(squad)
+end
+
+-- Warfare spots stay one category list; MCM is companion / friend / enemy.
 function squad_mcm_group(id)
+	if is_player_companion(id) then
+		return "companions"
+	end
 	local stor = db.storage[id]
 	local obj = stor and stor.object
 	if not obj then

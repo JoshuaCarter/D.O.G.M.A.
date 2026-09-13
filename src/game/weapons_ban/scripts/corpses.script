@@ -1,7 +1,10 @@
 --[[
     Weapons Ban — corpse ammo.
 
-    Vanilla death ammo stays. Then one rank RU/min/max roll split across kept guns.
+    Vanilla death ammo stays except leftover _bad/_verybad boxes.
+    Those get stripped here if they are still on the corpse after vanilla
+    spawn. Fresh stacks (already converted) are left alone. Then one rank
+    RU/min/max roll split across kept guns.
     Each gun's ammo types are buckets. Every round (min and extras) is one
     uniform pick among those types. Subtract that round's RU. After min,
     leftover RU still buys the rolled round (even if it costs more), then
@@ -96,8 +99,16 @@ local function release_inventory_ids(ids)
     end
 end
 
-local function strip_loose_ammo(npc)
+-- Old / damaged boxes only. Skip if vanilla or GAMMA already turned
+-- the stack into fresh (no suffix left). Collect ids first so we never
+-- release during iterate or fight a mid-convert alife_release.
+local function is_degraded_ammo(sec)
+    return sec and (sec:sub(-8) == "_verybad" or sec:sub(-4) == "_bad")
+end
+
+local function strip_degraded_ammo(npc)
     local to_release = {}
+    local counts = {}
     npc:iterate_inventory(function(_temp, item)
         if not item then
             return
@@ -107,11 +118,18 @@ local function strip_loose_ammo(npc)
         if not (id and alife_object(id)) then
             return
         end
-        if dogma.db.is_ammo(sec) then
-            to_release[#to_release + 1] = id
+        if not (dogma.db.is_ammo(sec) and is_degraded_ammo(sec)) then
+            return
         end
+        to_release[#to_release + 1] = id
+        local n = (item.ammo_get_count and item:ammo_get_count()) or 1
+        counts[sec] = (counts[sec] or 0) + n
     end)
+    if #to_release == 0 then
+        return counts
+    end
     release_inventory_ids(to_release)
+    return counts
 end
 
 local function npc_rank_name(npc)
@@ -352,8 +370,9 @@ end
 local function log_corpse_roll(npc, result)
     local id = npc.id and npc:id()
     local who = npc_label(npc)
+    local stripped = result.stripped
     if result.skip then
-        if result.skip == "no guns" and not result.rank then
+        if result.skip == "no guns" and not result.rank and not (stripped and next(stripped)) then
             return
         end
         queue_roll(id, string.format(
@@ -363,17 +382,25 @@ local function log_corpse_roll(npc, result)
             result.rank or "?",
             result.guns or 0
         ), "gray")
+    else
+        queue_roll(id, string.format(
+            "corpse %s rank=%s guns=%s ru=%s min=%s max=%s",
+            who,
+            result.rank or "?",
+            result.guns,
+            result.ru,
+            result.min or 0,
+            result.max or 0
+        ), "green")
+    end
+    if stripped then
+        for sec, n in pairs(stripped) do
+            queue_roll(id, string.format("  - %s x%s", sec, n), "gray")
+        end
+    end
+    if result.skip then
         return
     end
-    queue_roll(id, string.format(
-        "corpse %s rank=%s guns=%s ru=%s min=%s max=%s",
-        who,
-        result.rank or "?",
-        result.guns,
-        result.ru,
-        result.min or 0,
-        result.max or 0
-    ), "green")
     if #result.drops == 0 then
         queue_roll(id, "  none", "gray")
         return
@@ -396,8 +423,10 @@ local function patched_try_spawn_ammo(npc)
     dogma.perf.start("weapons_ban", "try_spawn_ammo")
     -- Snapshot matching ammo so we inject the same types.
     local inv_ammo = collect_inventory_ammo_secs(npc)
-    -- strip_loose_ammo(npc)
-    log_corpse_roll(npc, inject_corpse_ammo(npc, inv_ammo) or { skip = "no result" })
+    local stripped = strip_degraded_ammo(npc)
+    local result = inject_corpse_ammo(npc, inv_ammo) or { skip = "no result" }
+    result.stripped = stripped
+    log_corpse_roll(npc, result)
     dogma.perf.stop()
 end
 

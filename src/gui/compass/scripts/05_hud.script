@@ -5,6 +5,7 @@
 
 local CONFIG = _G.dogma_gui_compass_conf
 local V = zzzz_dogma_gui_compass_01_variables
+local defs = zzzz_dogma_gui_compass_02_defs
 local utils = zzzz_dogma_gui_compass_03_utils
 
 local abs, atan2, floor = math.abs, math.atan2, math.floor
@@ -266,6 +267,7 @@ function TCHud:Update()
 	if tg >= self.tmr_campfire then
 		self.tmr_campfire = tg + V.TC_TICK_CAMPFIRE
 		zzzz_dogma_gui_compass_04_markers.sync_campfires()
+		zzzz_dogma_gui_compass_04_markers.sync_companions()
 	end
 
 	if not self.visible then return end
@@ -443,7 +445,15 @@ end
 
 function TCHud:RefreshMarker(entry, cam_pos, groups, y_marker)
 	local group_name = entry.group
-	if group_name == "squads" then
+	if group_name == "squads" or group_name == "companions" then
+		local want_cat = utils.is_player_companion(entry.id) and "squad_companion" or defs.spot_categories[entry.spot]
+		if want_cat and want_cat ~= entry.category then
+			if entry.ui then
+				self:ReleaseMarker(entry)
+			end
+			entry.category = want_cat
+			entry.group = defs.category_groups[want_cat] or entry.group
+		end
 		group_name = utils.squad_mcm_group(entry.id)
 	end
 	local group = groups[group_name]
@@ -496,7 +506,12 @@ function TCHud:RefreshMarker(entry, cam_pos, groups, y_marker)
 	if alpha ~= entry.applied_alpha then
 		entry.applied_alpha = alpha
 
-		local color = GetARGB(alpha, 255, 255, 255)
+		local color
+		if entry.category == "squad_companion" then
+			color = GetARGB(alpha, 70, 210, 90)
+		else
+			color = GetARGB(alpha, 255, 255, 255)
+		end
 		ui:SetTextureColor(color)
 
 		if entry.arrow then entry.arrow:SetTextureColor(color) end

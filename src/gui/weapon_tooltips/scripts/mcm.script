@@ -3,58 +3,58 @@
 -- DOGMA-added stats (hit power, damages, spread, etc.) default on.
 
 _G.dogma_gui_weapon_tooltips_conf = {
-	MOD_ID = "dogma/gui/weapon_tooltips",
-	DEFAULTS = {
-		ammo_order = "default",
-		apply_silencer_stats = false,
-		apply_silencer_table = false,
-		burst_threshold = 3,
-		calc_range = 30,
-		color_scale_from = "darkgrey",
-		column_headers = "names",
-		compact_header = true,
-		custom_stats_details = true,
-		custom_stats_tooltips = true,
-		damage_table_details = true,
-		damage_table_tooltips = true,
-		drop_range = 200,
-		pellet_hit_pct = 100,
-		show_accuracy = false,
-		show_barrel_wear = true,
-		show_bullet_drop = true,
-		show_burst_control = true,
-		show_dispersion = true,
-		show_fire_rate = true,
-		show_handling = false,
-		show_head_1 = true,
-		show_head_2 = true,
-		show_head_3 = true,
-		show_head_4 = true,
-		show_head_5 = true,
-		show_hit_power = true,
-		show_mag_size = true,
-		show_mutant_damage = true,
-		show_muzzle_velocity = false,
-		show_recoil = false,
-		show_reliability = false,
-		show_spread = true,
-		show_stalker_damage = true,
-		show_torso_1 = true,
-		show_torso_2 = true,
-		show_torso_3 = true,
-		show_torso_4 = true,
-		show_torso_5 = true,
-		show_torso_6 = true,
-		show_torso_7 = true,
-		show_torso_8 = true,
-		show_torso_9 = true,
-		stat_row_placement = "inline",
-		table_row_pad = 0,
-		use_condition_stats = false,
-		use_condition_table = false,
-	},
-	-- Filled by on_option_change (runs at boot before any read).
-	loaded = {},
+    MOD_ID = "dogma/gui/weapon_tooltips",
+    DEFAULTS = {
+        ammo_order = "default",
+        apply_silencer_stats = false,
+        apply_silencer_table = false,
+        burst_threshold = 3,
+        calc_range = 30,
+        color_scale_from = "darkgrey",
+        column_headers = "names",
+        compact_header = true,
+        custom_stats_details = true,
+        custom_stats_tooltips = true,
+        damage_table_details = true,
+        damage_table_tooltips = true,
+        drop_range = 200,
+        pellet_hit_pct = 100,
+        show_accuracy = false,
+        show_barrel_wear = true,
+        show_bullet_drop = true,
+        show_burst_control = true,
+        show_dispersion = true,
+        show_fire_rate = true,
+        show_handling = false,
+        show_head_1 = true,
+        show_head_2 = true,
+        show_head_3 = true,
+        show_head_4 = true,
+        show_head_5 = true,
+        show_hit_power = true,
+        show_mag_size = true,
+        show_mutant_damage = true,
+        show_muzzle_velocity = false,
+        show_recoil = false,
+        show_reliability = false,
+        show_spread = true,
+        show_stalker_damage = true,
+        show_torso_1 = true,
+        show_torso_2 = true,
+        show_torso_3 = true,
+        show_torso_4 = true,
+        show_torso_5 = true,
+        show_torso_6 = true,
+        show_torso_7 = true,
+        show_torso_8 = true,
+        show_torso_9 = false,
+        stat_row_placement = "inline",
+        table_row_pad = 0,
+        use_condition_stats = false,
+        use_condition_table = false,
+    },
+    -- Filled by on_option_change (runs at boot before any read).
+    loaded = {},
 }
 
 -- Vanilla GAMMA rows: dark-grey MCM captions (DOGMA rows stay default).
@@ -65,444 +65,444 @@ local CLR_VANILLA = GetARGB(255, 80, 80, 80) -- same as color_scale_from darkgre
 local CLR_PENDING = GetARGB(255, 250, 150, 75) -- MCM pending (clr_o)
 
 local function paint_vanilla_cap(opt, pending)
-	local cap = VANILLA_CAP[opt]
-	if not cap then
-		return
-	end
-	local tc = cap.TextControl and cap:TextControl()
-	if not tc then
-		return
-	end
-	tc:SetTextColor(pending and CLR_PENDING or CLR_VANILLA)
+    local cap = VANILLA_CAP[opt]
+    if not cap then
+        return
+    end
+    local tc = cap.TextControl and cap:TextControl()
+    if not tc then
+        return
+    end
+    tc:SetTextColor(pending and CLR_PENDING or CLR_VANILLA)
 end
 
 local function vanilla_ui_hook(_anchor, handlers, attrs, flags)
-	if not (flags and flags.etype == "check" and handlers and handlers.cap and attrs) then
-		return
-	end
-	local opt = attrs.id
-	VANILLA_CAP[opt] = handlers.cap
-	local pending = false
-	if handlers.ctrl and handlers.ctrl.GetCheck and flags.path and ui_mcm then
-		local shown = handlers.ctrl:GetCheck()
-		local saved = ui_mcm.get(tostring(flags.path) .. "/" .. tostring(opt))
-		pending = (shown and true or false) ~= (saved and true or false)
-	end
-	paint_vanilla_cap(opt, pending)
+    if not (flags and flags.etype == "check" and handlers and handlers.cap and attrs) then
+        return
+    end
+    local opt = attrs.id
+    VANILLA_CAP[opt] = handlers.cap
+    local pending = false
+    if handlers.ctrl and handlers.ctrl.GetCheck and flags.path and ui_mcm then
+        local shown = handlers.ctrl:GetCheck()
+        local saved = ui_mcm.get(tostring(flags.path) .. "/" .. tostring(opt))
+        pending = (shown and true or false) ~= (saved and true or false)
+    end
+    paint_vanilla_cap(opt, pending)
 end
 
 local function vanilla_on_select(path, opt, value, _attrs)
-	local saved = ui_mcm and ui_mcm.get(tostring(path) .. "/" .. tostring(opt))
-	local pending = (value and true or false) ~= (saved and true or false)
-	paint_vanilla_cap(opt, pending)
+    local saved = ui_mcm and ui_mcm.get(tostring(path) .. "/" .. tostring(opt))
+    local pending = (value and true or false) ~= (saved and true or false)
+    paint_vanilla_cap(opt, pending)
 end
 
 local function vanilla_check(id, def, hint)
-	return {
-		id = id,
-		type = "check",
-		val = 1,
-		def = def,
-		hint = hint,
-		ui_hook_functor = { vanilla_ui_hook },
-		on_selection_functor = { vanilla_on_select },
-	}
+    return {
+        id = id,
+        type = "check",
+        val = 1,
+        def = def,
+        hint = hint,
+        ui_hook_functor = { vanilla_ui_hook },
+        on_selection_functor = { vanilla_on_select },
+    }
 end
 
 -- After Reset pending, MCM paints stock grey; re-apply dark grey.
 local on_mcm_option_reset = function()
-	for opt, _ in pairs(VANILLA_CAP) do
-		paint_vanilla_cap(opt, false)
-	end
+    for opt, _ in pairs(VANILLA_CAP) do
+        paint_vanilla_cap(opt, false)
+    end
 end
 
 RegisterScriptCallback("mcm_option_reset", on_mcm_option_reset)
 function on_mcm_load(options)
-	-- UINewGame may only exist after faction_select loads; re-assert hooks.
-	if zzzz_dogma_gui_weapon_tooltips_loadout
-		and zzzz_dogma_gui_weapon_tooltips_loadout.patch_new_game_ui
-	then
-		zzzz_dogma_gui_weapon_tooltips_loadout.patch_new_game_ui()
-	end
+    -- UINewGame may only exist after faction_select loads; re-assert hooks.
+    if zzzz_dogma_gui_weapon_tooltips_loadout
+        and zzzz_dogma_gui_weapon_tooltips_loadout.patch_new_game_ui
+    then
+        zzzz_dogma_gui_weapon_tooltips_loadout.patch_new_game_ui()
+    end
 
-	local CONFIG = _G.dogma_gui_weapon_tooltips_conf
-	dogma_mcm.attach(options, "gui", "ui_mcm_menu_dogma_gui", {
-		id = "weapon_tooltips",
-		sh = true,
-		text = "ui_mcm_menu_dogma_gui_weapon_tooltips",
-		gr = dogma_mcm.with_header({
-			{
-				id = "page_description",
-				type = "desc",
-				text = "ui_mcm_dogma_gui_weapon_tooltips_page_description",
-			},
-			{
-				id = "loadout_description",
-				type = "desc",
-				text = "ui_mcm_dogma_gui_weapon_tooltips_loadout_description",
-			},
-			{
-				id = "hdr_general",
-				type = "title",
-				text = "ui_mcm_dogma_gui_weapon_tooltips_hdr_general",
-			},
-			{
-				id = "ammo_order",
-				type = "list",
-				val = 0,
-				def = CONFIG.DEFAULTS.ammo_order,
-				hint = "dogma_gui_weapon_tooltips_ammo_order",
-				content = {
-					{ "default", "default" },
-					{ "damage", "damage" },
-					{ "ap", "ap" },
-				},
-			},
-			{
-				id = "pellet_hit_pct",
-				type = "track",
-				val = 2,
-				min = 1,
-				max = 100,
-				step = 1,
-				def = CONFIG.DEFAULTS.pellet_hit_pct,
-				hint = "dogma_gui_weapon_tooltips_pellet_hit_pct",
-			},
-			{
-				id = "compact_header",
-				type = "check",
-				val = 1,
-				def = CONFIG.DEFAULTS.compact_header,
-				hint = "dogma_gui_weapon_tooltips_compact_header",
-			},
-			{
-				id = "damage_table_tooltips",
-				type = "check",
-				val = 1,
-				def = CONFIG.DEFAULTS.damage_table_tooltips,
-				hint = "dogma_gui_weapon_tooltips_damage_table_tooltips",
-			},
-			{
-				id = "damage_table_details",
-				type = "check",
-				val = 1,
-				def = CONFIG.DEFAULTS.damage_table_details,
-				hint = "dogma_gui_weapon_tooltips_damage_table_details",
-			},
-			{
-				id = "custom_stats_tooltips",
-				type = "check",
-				val = 1,
-				def = CONFIG.DEFAULTS.custom_stats_tooltips,
-				hint = "dogma_gui_weapon_tooltips_custom_stats_tooltips",
-			},
-			{
-				id = "custom_stats_details",
-				type = "check",
-				val = 1,
-				def = CONFIG.DEFAULTS.custom_stats_details,
-				hint = "dogma_gui_weapon_tooltips_custom_stats_details",
-			},
-			{ id = "line_general", type = "line" },
-			{
-				id = "hdr_damage_table",
-				type = "title",
-				text = "ui_mcm_dogma_gui_weapon_tooltips_hdr_damage_table",
-			},
-			{
-				id = "table_row_pad",
-				type = "track",
-				val = 2,
-				min = 0,
-				max = 10,
-				step = 1,
-				def = CONFIG.DEFAULTS.table_row_pad,
-				hint = "dogma_gui_weapon_tooltips_table_row_pad",
-			},
-			{
-				id = "column_headers",
-				type = "list",
-				val = 0,
-				def = CONFIG.DEFAULTS.column_headers,
-				hint = "dogma_gui_weapon_tooltips_column_headers",
-				content = {
-					{ "names", "names" },
-					{ "raw100", "raw100" },
-					{ "raw", "raw" },
-				},
-			},
-			{
-				id = "color_scale_from",
-				type = "list",
-				val = 0,
-				def = CONFIG.DEFAULTS.color_scale_from,
-				hint = "dogma_gui_weapon_tooltips_color_scale_from",
-				content = {
-					{ "white", "white" },
-					{ "grey", "grey" },
-					{ "darkgrey", "darkgrey" },
-				},
-			},
-			{
-				id = "calc_range",
-				type = "track",
-				val = 2,
-				min = 0,
-				max = 200,
-				step = 1,
-				def = CONFIG.DEFAULTS.calc_range,
-				hint = "dogma_gui_weapon_tooltips_calc_range",
-			},
-			{
-				id = "use_condition_table",
-				type = "check",
-				val = 1,
-				def = CONFIG.DEFAULTS.use_condition_table,
-				hint = "dogma_gui_weapon_tooltips_use_condition_table",
-			},
-			{
-				id = "apply_silencer_table",
-				type = "check",
-				val = 1,
-				def = CONFIG.DEFAULTS.apply_silencer_table,
-				hint = "dogma_gui_weapon_tooltips_apply_silencer_table",
-			},
-			{
-				id = "hdr_armor_cols_torso",
-				type = "title",
-				text = "ui_mcm_dogma_gui_weapon_tooltips_hdr_armor_cols_torso",
-			},
-			{
-				id = "show_torso_1",
-				type = "check",
-				val = 1,
-				def = CONFIG.DEFAULTS.show_torso_1,
-				hint = "dogma_gui_weapon_tooltips_show_torso_1",
-			},
-			{
-				id = "show_torso_2",
-				type = "check",
-				val = 1,
-				def = CONFIG.DEFAULTS.show_torso_2,
-				hint = "dogma_gui_weapon_tooltips_show_torso_2",
-			},
-			{
-				id = "show_torso_3",
-				type = "check",
-				val = 1,
-				def = CONFIG.DEFAULTS.show_torso_3,
-				hint = "dogma_gui_weapon_tooltips_show_torso_3",
-			},
-			{
-				id = "show_torso_4",
-				type = "check",
-				val = 1,
-				def = CONFIG.DEFAULTS.show_torso_4,
-				hint = "dogma_gui_weapon_tooltips_show_torso_4",
-			},
-			{
-				id = "show_torso_5",
-				type = "check",
-				val = 1,
-				def = CONFIG.DEFAULTS.show_torso_5,
-				hint = "dogma_gui_weapon_tooltips_show_torso_5",
-			},
-			{
-				id = "show_torso_6",
-				type = "check",
-				val = 1,
-				def = CONFIG.DEFAULTS.show_torso_6,
-				hint = "dogma_gui_weapon_tooltips_show_torso_6",
-			},
-			{
-				id = "show_torso_7",
-				type = "check",
-				val = 1,
-				def = CONFIG.DEFAULTS.show_torso_7,
-				hint = "dogma_gui_weapon_tooltips_show_torso_7",
-			},
-			{
-				id = "show_torso_8",
-				type = "check",
-				val = 1,
-				def = CONFIG.DEFAULTS.show_torso_8,
-				hint = "dogma_gui_weapon_tooltips_show_torso_8",
-			},
-			{
-				id = "show_torso_9",
-				type = "check",
-				val = 1,
-				def = CONFIG.DEFAULTS.show_torso_9,
-				hint = "dogma_gui_weapon_tooltips_show_torso_9",
-			},
-			{
-				id = "hdr_armor_cols_head",
-				type = "title",
-				text = "ui_mcm_dogma_gui_weapon_tooltips_hdr_armor_cols_head",
-			},
-			{
-				id = "show_head_1",
-				type = "check",
-				val = 1,
-				def = CONFIG.DEFAULTS.show_head_1,
-				hint = "dogma_gui_weapon_tooltips_show_head_1",
-			},
-			{
-				id = "show_head_2",
-				type = "check",
-				val = 1,
-				def = CONFIG.DEFAULTS.show_head_2,
-				hint = "dogma_gui_weapon_tooltips_show_head_2",
-			},
-			{
-				id = "show_head_3",
-				type = "check",
-				val = 1,
-				def = CONFIG.DEFAULTS.show_head_3,
-				hint = "dogma_gui_weapon_tooltips_show_head_3",
-			},
-			{
-				id = "show_head_4",
-				type = "check",
-				val = 1,
-				def = CONFIG.DEFAULTS.show_head_4,
-				hint = "dogma_gui_weapon_tooltips_show_head_4",
-			},
-			{
-				id = "show_head_5",
-				type = "check",
-				val = 1,
-				def = CONFIG.DEFAULTS.show_head_5,
-				hint = "dogma_gui_weapon_tooltips_show_head_5",
-			},
-			{ id = "line_damage_table", type = "line" },
-			{
-				id = "hdr_stat_list",
-				type = "title",
-				text = "ui_mcm_dogma_gui_weapon_tooltips_hdr_stat_list",
-			},
-			{
-				id = "stat_row_placement",
-				type = "list",
-				val = 0,
-				def = CONFIG.DEFAULTS.stat_row_placement,
-				hint = "dogma_gui_weapon_tooltips_stat_row_placement",
-				content = {
-					{ "inline", "inline" },
-					{ "start", "start" },
-					{ "after", "after" },
-				},
-			},
-			{
-				id = "drop_range",
-				type = "track",
-				val = 2,
-				min = 100,
-				max = 2000,
-				step = 50,
-				def = CONFIG.DEFAULTS.drop_range,
-				hint = "dogma_gui_weapon_tooltips_drop_range",
-			},
-			{
-				id = "burst_threshold",
-				type = "track",
-				val = 2,
-				min = 1,
-				max = 10,
-				step = 0.5,
-				def = CONFIG.DEFAULTS.burst_threshold,
-				hint = "dogma_gui_weapon_tooltips_burst_threshold",
-			},
-			{
-				id = "use_condition_stats",
-				type = "check",
-				val = 1,
-				def = CONFIG.DEFAULTS.use_condition_stats,
-				hint = "dogma_gui_weapon_tooltips_use_condition_stats",
-			},
-			{
-				id = "apply_silencer_stats",
-				type = "check",
-				val = 1,
-				def = CONFIG.DEFAULTS.apply_silencer_stats,
-				hint = "dogma_gui_weapon_tooltips_apply_silencer_stats",
-			},
-			{
-				id = "show_hit_power",
-				type = "check",
-				val = 1,
-				def = CONFIG.DEFAULTS.show_hit_power,
-				hint = "dogma_gui_weapon_tooltips_show_hit_power",
-			},
-			{
-				id = "show_stalker_damage",
-				type = "check",
-				val = 1,
-				def = CONFIG.DEFAULTS.show_stalker_damage,
-				hint = "dogma_gui_weapon_tooltips_show_stalker_damage",
-			},
-			{
-				id = "show_mutant_damage",
-				type = "check",
-				val = 1,
-				def = CONFIG.DEFAULTS.show_mutant_damage,
-				hint = "dogma_gui_weapon_tooltips_show_mutant_damage",
-			},
-			vanilla_check("show_accuracy", CONFIG.DEFAULTS.show_accuracy, "dogma_gui_weapon_tooltips_show_accuracy"),
-			{
-				id = "show_spread",
-				type = "check",
-				val = 1,
-				def = CONFIG.DEFAULTS.show_spread,
-				hint = "dogma_gui_weapon_tooltips_show_spread",
-			},
-			{
-				id = "show_dispersion",
-				type = "check",
-				val = 1,
-				def = CONFIG.DEFAULTS.show_dispersion,
-				hint = "dogma_gui_weapon_tooltips_show_dispersion",
-			},
-			vanilla_check("show_handling", CONFIG.DEFAULTS.show_handling, "dogma_gui_weapon_tooltips_show_handling"),
-			vanilla_check("show_fire_rate", CONFIG.DEFAULTS.show_fire_rate, "dogma_gui_weapon_tooltips_show_fire_rate"),
-			vanilla_check("show_mag_size", CONFIG.DEFAULTS.show_mag_size, "dogma_gui_weapon_tooltips_show_mag_size"),
-			vanilla_check("show_muzzle_velocity", CONFIG.DEFAULTS.show_muzzle_velocity, "dogma_gui_weapon_tooltips_show_muzzle_velocity"),
-			{
-				id = "show_bullet_drop",
-				type = "check",
-				val = 1,
-				def = CONFIG.DEFAULTS.show_bullet_drop,
-				hint = "dogma_gui_weapon_tooltips_show_bullet_drop",
-			},
-			vanilla_check("show_reliability", CONFIG.DEFAULTS.show_reliability, "dogma_gui_weapon_tooltips_show_reliability"),
-			{
-				id = "show_barrel_wear",
-				type = "check",
-				val = 1,
-				def = CONFIG.DEFAULTS.show_barrel_wear,
-				hint = "dogma_gui_weapon_tooltips_show_barrel_wear",
-			},
-			vanilla_check("show_recoil", CONFIG.DEFAULTS.show_recoil, "dogma_gui_weapon_tooltips_show_recoil"),
-			{
-				id = "show_burst_control",
-				type = "check",
-				val = 1,
-				def = CONFIG.DEFAULTS.show_burst_control,
-				hint = "dogma_gui_weapon_tooltips_show_burst_control",
-			},
-		}),
-	})
+    local CONFIG = _G.dogma_gui_weapon_tooltips_conf
+    dogma_mcm.attach(options, "gui", "ui_mcm_menu_dogma_gui", {
+        id = "weapon_tooltips",
+        sh = true,
+        text = "ui_mcm_menu_dogma_gui_weapon_tooltips",
+        gr = dogma_mcm.with_header({
+            {
+                id = "page_description",
+                type = "desc",
+                text = "ui_mcm_dogma_gui_weapon_tooltips_page_description",
+            },
+            {
+                id = "loadout_description",
+                type = "desc",
+                text = "ui_mcm_dogma_gui_weapon_tooltips_loadout_description",
+            },
+            {
+                id = "hdr_general",
+                type = "title",
+                text = "ui_mcm_dogma_gui_weapon_tooltips_hdr_general",
+            },
+            {
+                id = "ammo_order",
+                type = "list",
+                val = 0,
+                def = CONFIG.DEFAULTS.ammo_order,
+                hint = "dogma_gui_weapon_tooltips_ammo_order",
+                content = {
+                    { "default", "default" },
+                    { "damage", "damage" },
+                    { "ap", "ap" },
+                },
+            },
+            {
+                id = "pellet_hit_pct",
+                type = "track",
+                val = 2,
+                min = 1,
+                max = 100,
+                step = 1,
+                def = CONFIG.DEFAULTS.pellet_hit_pct,
+                hint = "dogma_gui_weapon_tooltips_pellet_hit_pct",
+            },
+            {
+                id = "compact_header",
+                type = "check",
+                val = 1,
+                def = CONFIG.DEFAULTS.compact_header,
+                hint = "dogma_gui_weapon_tooltips_compact_header",
+            },
+            {
+                id = "damage_table_tooltips",
+                type = "check",
+                val = 1,
+                def = CONFIG.DEFAULTS.damage_table_tooltips,
+                hint = "dogma_gui_weapon_tooltips_damage_table_tooltips",
+            },
+            {
+                id = "damage_table_details",
+                type = "check",
+                val = 1,
+                def = CONFIG.DEFAULTS.damage_table_details,
+                hint = "dogma_gui_weapon_tooltips_damage_table_details",
+            },
+            {
+                id = "custom_stats_tooltips",
+                type = "check",
+                val = 1,
+                def = CONFIG.DEFAULTS.custom_stats_tooltips,
+                hint = "dogma_gui_weapon_tooltips_custom_stats_tooltips",
+            },
+            {
+                id = "custom_stats_details",
+                type = "check",
+                val = 1,
+                def = CONFIG.DEFAULTS.custom_stats_details,
+                hint = "dogma_gui_weapon_tooltips_custom_stats_details",
+            },
+            { id = "line_general", type = "line" },
+            {
+                id = "hdr_damage_table",
+                type = "title",
+                text = "ui_mcm_dogma_gui_weapon_tooltips_hdr_damage_table",
+            },
+            {
+                id = "table_row_pad",
+                type = "track",
+                val = 2,
+                min = 0,
+                max = 10,
+                step = 1,
+                def = CONFIG.DEFAULTS.table_row_pad,
+                hint = "dogma_gui_weapon_tooltips_table_row_pad",
+            },
+            {
+                id = "column_headers",
+                type = "list",
+                val = 0,
+                def = CONFIG.DEFAULTS.column_headers,
+                hint = "dogma_gui_weapon_tooltips_column_headers",
+                content = {
+                    { "names", "names" },
+                    { "raw100", "raw100" },
+                    { "raw", "raw" },
+                },
+            },
+            {
+                id = "color_scale_from",
+                type = "list",
+                val = 0,
+                def = CONFIG.DEFAULTS.color_scale_from,
+                hint = "dogma_gui_weapon_tooltips_color_scale_from",
+                content = {
+                    { "white", "white" },
+                    { "grey", "grey" },
+                    { "darkgrey", "darkgrey" },
+                },
+            },
+            {
+                id = "calc_range",
+                type = "track",
+                val = 2,
+                min = 0,
+                max = 200,
+                step = 1,
+                def = CONFIG.DEFAULTS.calc_range,
+                hint = "dogma_gui_weapon_tooltips_calc_range",
+            },
+            {
+                id = "use_condition_table",
+                type = "check",
+                val = 1,
+                def = CONFIG.DEFAULTS.use_condition_table,
+                hint = "dogma_gui_weapon_tooltips_use_condition_table",
+            },
+            {
+                id = "apply_silencer_table",
+                type = "check",
+                val = 1,
+                def = CONFIG.DEFAULTS.apply_silencer_table,
+                hint = "dogma_gui_weapon_tooltips_apply_silencer_table",
+            },
+            {
+                id = "hdr_armor_cols_torso",
+                type = "title",
+                text = "ui_mcm_dogma_gui_weapon_tooltips_hdr_armor_cols_torso",
+            },
+            {
+                id = "show_torso_1",
+                type = "check",
+                val = 1,
+                def = CONFIG.DEFAULTS.show_torso_1,
+                hint = "dogma_gui_weapon_tooltips_show_torso_1",
+            },
+            {
+                id = "show_torso_2",
+                type = "check",
+                val = 1,
+                def = CONFIG.DEFAULTS.show_torso_2,
+                hint = "dogma_gui_weapon_tooltips_show_torso_2",
+            },
+            {
+                id = "show_torso_3",
+                type = "check",
+                val = 1,
+                def = CONFIG.DEFAULTS.show_torso_3,
+                hint = "dogma_gui_weapon_tooltips_show_torso_3",
+            },
+            {
+                id = "show_torso_4",
+                type = "check",
+                val = 1,
+                def = CONFIG.DEFAULTS.show_torso_4,
+                hint = "dogma_gui_weapon_tooltips_show_torso_4",
+            },
+            {
+                id = "show_torso_5",
+                type = "check",
+                val = 1,
+                def = CONFIG.DEFAULTS.show_torso_5,
+                hint = "dogma_gui_weapon_tooltips_show_torso_5",
+            },
+            {
+                id = "show_torso_6",
+                type = "check",
+                val = 1,
+                def = CONFIG.DEFAULTS.show_torso_6,
+                hint = "dogma_gui_weapon_tooltips_show_torso_6",
+            },
+            {
+                id = "show_torso_7",
+                type = "check",
+                val = 1,
+                def = CONFIG.DEFAULTS.show_torso_7,
+                hint = "dogma_gui_weapon_tooltips_show_torso_7",
+            },
+            {
+                id = "show_torso_8",
+                type = "check",
+                val = 1,
+                def = CONFIG.DEFAULTS.show_torso_8,
+                hint = "dogma_gui_weapon_tooltips_show_torso_8",
+            },
+            {
+                id = "show_torso_9",
+                type = "check",
+                val = 1,
+                def = CONFIG.DEFAULTS.show_torso_9,
+                hint = "dogma_gui_weapon_tooltips_show_torso_9",
+            },
+            {
+                id = "hdr_armor_cols_head",
+                type = "title",
+                text = "ui_mcm_dogma_gui_weapon_tooltips_hdr_armor_cols_head",
+            },
+            {
+                id = "show_head_1",
+                type = "check",
+                val = 1,
+                def = CONFIG.DEFAULTS.show_head_1,
+                hint = "dogma_gui_weapon_tooltips_show_head_1",
+            },
+            {
+                id = "show_head_2",
+                type = "check",
+                val = 1,
+                def = CONFIG.DEFAULTS.show_head_2,
+                hint = "dogma_gui_weapon_tooltips_show_head_2",
+            },
+            {
+                id = "show_head_3",
+                type = "check",
+                val = 1,
+                def = CONFIG.DEFAULTS.show_head_3,
+                hint = "dogma_gui_weapon_tooltips_show_head_3",
+            },
+            {
+                id = "show_head_4",
+                type = "check",
+                val = 1,
+                def = CONFIG.DEFAULTS.show_head_4,
+                hint = "dogma_gui_weapon_tooltips_show_head_4",
+            },
+            {
+                id = "show_head_5",
+                type = "check",
+                val = 1,
+                def = CONFIG.DEFAULTS.show_head_5,
+                hint = "dogma_gui_weapon_tooltips_show_head_5",
+            },
+            { id = "line_damage_table", type = "line" },
+            {
+                id = "hdr_stat_list",
+                type = "title",
+                text = "ui_mcm_dogma_gui_weapon_tooltips_hdr_stat_list",
+            },
+            {
+                id = "stat_row_placement",
+                type = "list",
+                val = 0,
+                def = CONFIG.DEFAULTS.stat_row_placement,
+                hint = "dogma_gui_weapon_tooltips_stat_row_placement",
+                content = {
+                    { "inline", "inline" },
+                    { "start", "start" },
+                    { "after", "after" },
+                },
+            },
+            {
+                id = "drop_range",
+                type = "track",
+                val = 2,
+                min = 100,
+                max = 2000,
+                step = 50,
+                def = CONFIG.DEFAULTS.drop_range,
+                hint = "dogma_gui_weapon_tooltips_drop_range",
+            },
+            {
+                id = "burst_threshold",
+                type = "track",
+                val = 2,
+                min = 1,
+                max = 10,
+                step = 0.5,
+                def = CONFIG.DEFAULTS.burst_threshold,
+                hint = "dogma_gui_weapon_tooltips_burst_threshold",
+            },
+            {
+                id = "use_condition_stats",
+                type = "check",
+                val = 1,
+                def = CONFIG.DEFAULTS.use_condition_stats,
+                hint = "dogma_gui_weapon_tooltips_use_condition_stats",
+            },
+            {
+                id = "apply_silencer_stats",
+                type = "check",
+                val = 1,
+                def = CONFIG.DEFAULTS.apply_silencer_stats,
+                hint = "dogma_gui_weapon_tooltips_apply_silencer_stats",
+            },
+            {
+                id = "show_hit_power",
+                type = "check",
+                val = 1,
+                def = CONFIG.DEFAULTS.show_hit_power,
+                hint = "dogma_gui_weapon_tooltips_show_hit_power",
+            },
+            {
+                id = "show_stalker_damage",
+                type = "check",
+                val = 1,
+                def = CONFIG.DEFAULTS.show_stalker_damage,
+                hint = "dogma_gui_weapon_tooltips_show_stalker_damage",
+            },
+            {
+                id = "show_mutant_damage",
+                type = "check",
+                val = 1,
+                def = CONFIG.DEFAULTS.show_mutant_damage,
+                hint = "dogma_gui_weapon_tooltips_show_mutant_damage",
+            },
+            vanilla_check("show_accuracy", CONFIG.DEFAULTS.show_accuracy, "dogma_gui_weapon_tooltips_show_accuracy"),
+            {
+                id = "show_spread",
+                type = "check",
+                val = 1,
+                def = CONFIG.DEFAULTS.show_spread,
+                hint = "dogma_gui_weapon_tooltips_show_spread",
+            },
+            {
+                id = "show_dispersion",
+                type = "check",
+                val = 1,
+                def = CONFIG.DEFAULTS.show_dispersion,
+                hint = "dogma_gui_weapon_tooltips_show_dispersion",
+            },
+            vanilla_check("show_handling", CONFIG.DEFAULTS.show_handling, "dogma_gui_weapon_tooltips_show_handling"),
+            vanilla_check("show_fire_rate", CONFIG.DEFAULTS.show_fire_rate, "dogma_gui_weapon_tooltips_show_fire_rate"),
+            vanilla_check("show_mag_size", CONFIG.DEFAULTS.show_mag_size, "dogma_gui_weapon_tooltips_show_mag_size"),
+            vanilla_check("show_muzzle_velocity", CONFIG.DEFAULTS.show_muzzle_velocity, "dogma_gui_weapon_tooltips_show_muzzle_velocity"),
+            {
+                id = "show_bullet_drop",
+                type = "check",
+                val = 1,
+                def = CONFIG.DEFAULTS.show_bullet_drop,
+                hint = "dogma_gui_weapon_tooltips_show_bullet_drop",
+            },
+            vanilla_check("show_reliability", CONFIG.DEFAULTS.show_reliability, "dogma_gui_weapon_tooltips_show_reliability"),
+            {
+                id = "show_barrel_wear",
+                type = "check",
+                val = 1,
+                def = CONFIG.DEFAULTS.show_barrel_wear,
+                hint = "dogma_gui_weapon_tooltips_show_barrel_wear",
+            },
+            vanilla_check("show_recoil", CONFIG.DEFAULTS.show_recoil, "dogma_gui_weapon_tooltips_show_recoil"),
+            {
+                id = "show_burst_control",
+                type = "check",
+                val = 1,
+                def = CONFIG.DEFAULTS.show_burst_control,
+                hint = "dogma_gui_weapon_tooltips_show_burst_control",
+            },
+        }),
+    })
 end
 
 --[[
-	Force-load loadout.script into the menu VM: scripts load lazily on first
-	global reference, and axr_main's load-everything loop only runs from
-	on_game_start(). MCM's gather_options() force-loads all *mcm.script files
-	from main_menu:__init__, strictly before main_menu_on_init is sent, so
-	this reference gets loadout.script's main_menu_on_init registration in
-	time for the first New Game Loadout screen.
+    Force-load loadout.script into the menu VM: scripts load lazily on first
+    global reference, and axr_main's load-everything loop only runs from
+    on_game_start(). MCM's gather_options() force-loads all *mcm.script files
+    from main_menu:__init__, strictly before main_menu_on_init is sent, so
+    this reference gets loadout.script's main_menu_on_init registration in
+    time for the first New Game Loadout screen.
 ]]
 local loadout = zzzz_dogma_gui_weapon_tooltips_loadout
 if loadout and loadout.patch_new_game_ui then
-	loadout.patch_new_game_ui()
+    loadout.patch_new_game_ui()
 end

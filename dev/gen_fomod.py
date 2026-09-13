@@ -67,7 +67,8 @@ def plugin_entries(features: list[dict], wizard: dict) -> list[dict]:
         unknown = [x for x in rec if x not in preset_ids]
         if unknown:
             raise ValueError(f"{info['path']}: unknown recommended presets {unknown}")
-        out.append({**info, "group": info["page"], "recommended": rec})
+        # Page already titles the step. Same name on the group = double header in MO2.
+        out.append({**info, "group": "", "recommended": rec})
     if not out:
         raise ValueError("manifest.yml has no beta/gold plugins")
     return out
@@ -175,7 +176,7 @@ def intro_step_xml(wizard: dict) -> list[str]:
     lines = [
         f'\t\t<installStep name="{esc_attr(intro["page"])}">',
         '\t\t\t<optionalFileGroups order="Explicit">',
-        f'\t\t\t\t<group name="{esc_attr(intro["page"])}" type="SelectExactlyOne">',
+        '\t\t\t\t<group name="" type="SelectExactlyOne">',
         '\t\t\t\t\t<plugins order="Explicit">',
     ]
     lines.extend(intro_plugin_xml(intro["refuse"], intro["desc"], ack=False))

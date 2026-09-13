@@ -23,7 +23,6 @@ local PANEL_W_MAX = 1024
 local PANEL_TOP_MAX = 700
 local PROMPT_H = 28
 local PROMPT_GAP = 4
-local PROMPT_Y = 50
 -- Engine ProcessNewLines drops empty remainders after \\n, so a space keeps the gap.
 local BLANK = " "
 local PANEL_TEX = "ui_inGame2_white_rect"
@@ -185,17 +184,16 @@ local function panel_width()
 end
 
 local function panel_top()
-	return clamp_ui(CONFIG.loaded.panel_top, 0, PANEL_TOP_MAX, 90)
+	return clamp_ui(CONFIG.loaded.panel_top, 0, PANEL_TOP_MAX, 50)
 end
 
--- Prompt stays at the top. Panel cannot cover it.
+-- Title (TAB open/close) then report, one stack. MCM panel_top is the title Y.
+local function prompt_y()
+	return panel_top()
+end
+
 local function report_panel_y()
-	local min_y = PROMPT_Y + PROMPT_H + PROMPT_GAP
-	local y = panel_top()
-	if y < min_y then
-		return min_y
-	end
-	return y
+	return prompt_y() + PROMPT_H + PROMPT_GAP
 end
 
 local function hit_cap()
@@ -1230,7 +1228,7 @@ local function show_tab_prompt()
 	else
 		msg = tr("ui_dogma_game_death_report_prompt") or "TAB to open death report"
 	end
-	set_text(TAB_STATIC, COL.title .. msg, PANEL_PAD, PROMPT_Y, UI_W - PANEL_PAD * 2, PROMPT_H)
+	set_text(TAB_STATIC, COL.title .. msg, PANEL_PAD, prompt_y(), UI_W - PANEL_PAD * 2, PROMPT_H)
 end
 
 local function apply_report_visibility()
@@ -1619,7 +1617,7 @@ end
 local function on_option_change()
 	CONFIG.loaded.enabled = dogma.mcm.bool(CONFIG.MOD_ID, "enabled")
 	CONFIG.loaded.panel_width = dogma.mcm.uint(CONFIG.MOD_ID, "panel_width", 410)
-	CONFIG.loaded.panel_top = dogma.mcm.uint(CONFIG.MOD_ID, "panel_top", 90)
+	CONFIG.loaded.panel_top = dogma.mcm.uint(CONFIG.MOD_ID, "panel_top", 50)
 	CONFIG.loaded.hit_cap = dogma.mcm.uint(CONFIG.MOD_ID, "hit_cap", 10)
 	CONFIG.loaded.dot_seconds = dogma.mcm.uint(CONFIG.MOD_ID, "dot_seconds", 5)
 	CONFIG.loaded.preview = dogma.mcm.bool(CONFIG.MOD_ID, "preview")

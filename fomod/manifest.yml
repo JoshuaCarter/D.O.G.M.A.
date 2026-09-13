@@ -70,14 +70,14 @@ mods:
 
     game/weapons_ban:
       name: Weapons Ban
-      stage: BETA
+      stage: GOLD
       desc: |
         According to G.A.M.M.A. lore, weapons trading is banned. And now traders act like it.
 
         Traders no longer buy/sell weapon attachments, parts, repair kits, cleaning kits, or ammo.
         You will only find these items in stashes and on corpses. In particular, ammo will now drop in more believable amounts.
 
-        Starting weapons are now poorer condition (59% parts) making the hunt for green barrels all the more rewarding.
+        Starting weapons are now poorer condition (59% parts) making the hunt for green barrels more important and rewarding.
 
         Weapon attachments can now be disassembled for scrap/screws/plastic/glass/electronics.
         Dissassembling weapon kits will also give you random weapon upgrades.
@@ -86,7 +86,7 @@ mods:
 
     tweaks/sobre_loadouts:
       name: New Game Loadout Options
-      stage: BETA
+      stage: GOLD
       desc: |
         Complete rework of loadout options which maximises starting options, without compromising balance.
         Each faction has unique options and largely respects their Nato/Warsaw preferences.
@@ -94,8 +94,6 @@ mods:
         All weapons are A or B grade, and cost is relative to their actual performance.
 
         Crucially, adds the gunsmithing tools to the loadout options for weapons ban mod.
-
-        [BETA] More balance testing needed.
 
     gui/newgame:
       name: New Game UI
@@ -106,7 +104,7 @@ mods:
 
         Not important for weapons ban, but makes the expanded loadout a lot nicer to use.
 
-        [BETA] Only tested on 16x9 aspect ratio at 4k.
+        [BETA] Only tested on 16x9 aspect ratio at 4k res with 2k fonts.
 
   Gameplay General:
 
@@ -114,7 +112,7 @@ mods:
       name: Pistol Slot
       stage: GOLD
       desc: |
-        Adds a fully functional pistol slot to the inventory screen. Yes, miracles do happen.
+        Adds a fully functional pistol slot to the inventory screen and a dedicated system keybind for it. Yes, miracles do happen.
 
     game/true_prone:
       name: True Prone
@@ -128,41 +126,39 @@ mods:
       name: ADS Zoom
       stage: GOLD
       desc: |
-        Replaces 'Adjustable Scope View - sneaky'.
         - Adds defaults zoom for irons, sights, scopes.
         - Overrides are saved per weapon/optic type combo (not specific instance of a weapon etc).
         - Adds binoculars default zoomed out option.
+
+        Disables: "Adjustable Scope View - sneaky"
 
     game/free_zoom:
       name: Free Zoom
       stage: GOLD
       desc: |
-        Replaces 'Kute's Free Zoom'.
         - Adds mouse inputs and better syncing with ADS zoom.
 
-    game/shared_stash:
-      name: Toolbench Universal Stash
-      stage: OMIT
-      desc: |
-        - Makes Toolbench stashes all share their contents.
-        - Can only place 1 toolbench per map.
-        - Toolbench weight includes contents weight.
-
-        I want to replace this with a custom item/recipe/etc
+        Disables: "Kute's Free Zoom"
 
     game/global_stash:
       name: Global Stash
-      stage: BETA
+      stage: GOLD
       desc: |
         Placeable anomalous metal box that lets you access the items inside from any other anomalous metal box.
 
+        Made to feel at home in the zone and within G.A.M.M.A. progression (20-30k cost, or non-trivial crafting recipes).
+
     game/badwill:
       name: Badwill
-      stage: LOCAL
+      stage: BETA
       desc: |
-        Manages NPC agression toward the player in a limited way when the player performance specific bad actions:
-        - Allows the player to steal loot from other stalkers and incurr their wrath if spotted by them, their squad, or their faction.
+        NOTE: Intended for use with AlifePlus.
+
+        Manages NPC agression toward the player in a limited way when the player performance specific bad actions.
+        - Allows the player to steal loot from other stalkers and incurr their wrath if spotted during or shortly after the theft.
         - Player can no longer shoot member of friendly faction and be ignored. Witnesses will be out for your blood for a time.
+
+        [BETA] Needs testing and kinks worked out - especially murder witnessing.
 
   Gameplay QoL:
 
@@ -180,6 +176,8 @@ mods:
       desc: |
         No longer drains exo power when idle, but uses more power when moving.
 
+        [BETA] Haven't really tested this yet.
+
     game/belt_glowsticks:
       name: Glowsticks in Belt Slots
       stage: GOLD
@@ -196,13 +194,13 @@ mods:
       desc: |
         Adds conditional auto-saves so you don't have to spam quick/manual saves because a crash might lose your progress.
 
-        You can refine the frequency and conditions for saving, such as no more than x min, no less than x min, after closing inventory, after healing, etc.
-
     game/safe_spawn:
       name: Safe Spawn
-      stage: LOCAL
+      stage: GOLD
       desc: |
-        After you load a map or fast travel, enemies ignore you for 30 seconds, or until you move or shoot. Companions hold fire too.
+        After you load a map or fast travel, you are invisible for 30 seconds until you move or shoot.
+
+        Disables Cypret's SafeSpawn
 
     gui/weapon_tooltips:
       name: Weapon Tooltips
@@ -215,29 +213,23 @@ mods:
 
         E.g. "Accuracy: 95%" doesn't really tell me much, but "Spread: 0.32° / 6.51°" tells me exactly how accurate it is when stand-ADSing and run-hip-firing.
 
-        Note, 1080p poors may have a hard time fitting much additional content in their tooltips, so you may want to show tables just in the details section.
-
-    input/pda_go_away:
-      name: PDA Go Away
-      stage: OMIT
-      desc: |
-        Prevents re-raising the PDA after closing inventory, loot, trade, or fast traveling.
+        NOTE: 1080p poors may have a hard time fitting much additional content in their tooltips, so you may want to show tables just in the details section.
 
     input/last_equip:
       name: Last Equipped
-      stage: BETA
+      stage: GOLD
       desc: |
-        Auto equip last slot (toggles for each) after an event, such as closing inventory (toggles for many)
+        Auto equip last slot (toggles for each) after an event, such as closing inventory (toggles for many).
 
     tweaks/passive_detector_beeps:
       name: Passive Detector Beeps
-      stage: BETA
+      stage: GOLD
       desc: |
         Makes the artifact detector beep once every 10s when an artifact is nearby.
 
     tweaks/nvg_tweaks:
       name: NVG Tweaks
-      stage: BETA
+      stage: GOLD
       desc: |
         Night vision stays on after a load or map change.
 
@@ -252,12 +244,11 @@ mods:
   HUD:
 
     gui/compass:
-      name: Tactical Compass
-      stage: LOCAL
+      name: Compass
+      stage: GOLD
       desc: |
+        Alternative, customized version of 'Tactical Compass' mod.
         HUD compass with your PDA map spots on it.
-
-        Please disable the standalone "Tactical Compass" addon if you enable this. Two compasses will stack if both run.
 
     gui/hud_controls:
       name: HUD Controls
@@ -278,16 +269,15 @@ mods:
         Centers the name/rank/icon horizontally on the screen (default top-center, can be moved vertically).
 
         Has many options for how and what to show ids, such as:
-        - Adds better aim-tollerance, and fades last id out over time, so it's less finiky to read an id during play.
+        - Better detection, range, and aim-tollerance.
         - Optional name colors based on that NPC's individual goodwill towards you.
-        - Optional line from id to target to make it easier to see who you're iding - only works on hostiles via binoculars.
-        - Many controls for when to show, e.g. only when holding a key, or ADS, or using binoculars, etc.
+        - Toggles for when to show, e.g. only when holding a key, or ADS, or using binoculars, etc.
 
     gui/item_labels:
       name: Item Labels
       stage: GOLD
       desc: |
-        This is a very simple replacement for dotmarks for those like me who prefer the default Anomaly item labels (i.e. holding use key).
+        This is a very simple replacement for dotmarks for those like me who prefer the default Anomaly item labels (normally shown when holding 'use' key).
 
         This just shows them at all times within X meters.
 
@@ -317,7 +307,7 @@ mods:
 
     gui/pda_filters:
       name: PDA Filters
-      stage: BETA
+      stage: GOLD
       desc: |
         Many filters for PDA messages. Some highlights (things I don't like in particular):
         - Hostile faction communications (why would they do that?).
@@ -349,7 +339,7 @@ mods:
 
     input/inventory_controls:
       name: Inventory Controls
-      stage: BETA
+      stage: GOLD
       desc: |
         Makes inventory controls for transfer/drop/disassemble/strip behave consistently.
 
@@ -371,6 +361,8 @@ mods:
       desc: |
         Makes it clearer when items are for quests.
 
+        [BETA] Barely tested.
+
     tweaks/hide_armor_patch_when_removed:
       name: Hide Armor Patch When Removed
       stage: GOLD
@@ -387,7 +379,7 @@ mods:
 
     input/equipment_controls:
       name: Better Equipable Controls
-      stage: BETA
+      stage: GOLD
       desc: |
         Adds keybinds for various devices which will auto-equip that items from the backpack, including:
         - Bolt
@@ -416,15 +408,13 @@ mods:
 
     tweaks/sane_npc_combat_speeds:
       name: Sane NPC Combat Speeds
-      stage: BETA
+      stage: GOLD
       desc: |
         Makes NPC movement faster than Anomaly, but still slower then G.A.M.M.A. so that they don't look so rediculous.
 
         - Stalkers: Base Anomaly + 20%
         - ISG: Base Anomaly + 50%
         - Shambler zombies: 30% slower movement (to reduce floaty movement).
-
-        [BETA] Haven't tested thoroughly.
 
     tweaks/fanatic_stays_in_cordon:
       name: Fanatic Stays In Cordon
@@ -434,7 +424,7 @@ mods:
 
     tweaks/escort_tweaks:
       name: Escort Tweaks
-      stage: BETA
+      stage: GOLD
       desc: |
         Escorts join alone instead of bringing their squad.
 
@@ -450,17 +440,17 @@ mods:
 
     tweaks/opaque_bushes:
       name: Opaque Bushes
-      stage: BETA
+      stage: GOLD
       desc: |
         Makes NPCs treat bushes as opaque, not shooting through them as much, and use them to block LoS.
 
-        [BETA] I have found this works quite well in practice but haven't tested in detail.
+        This sounds cheaty but I have found this works quite well in practice.
 
   Misc:
 
     game/death_report:
       name: Death Report
-      stage: BETA
+      stage: GOLD
       desc: |
         On death, press tab to see a report of the damage sources that lead to your death.
 
@@ -480,11 +470,9 @@ mods:
 
     tweaks/fix_footsteps_sfx:
       name: Fix Footsteps SFX
-      stage: BETA
+      stage: GOLD
       desc: |
-        Mutant footsteps.
-
-        [BETA] Haven't tested all the mutants yet.
+        Mutant footsteps you can actually hear - designed to function without depending on other mods and tested against all mutants.
 
     tweaks/rf_mission_can_spawn_on_current_map:
       name: RF Mission Can Spawn On Current Map
@@ -492,7 +480,7 @@ mods:
       desc: |
         Make RF missions have a chance to spawn on current map.
 
-        [BETA] Haven't actually seen it work yet.
+        [BETA] Haven't actually seen it work yet...
 
   Performance:
 
@@ -518,7 +506,7 @@ mods:
 
     tweaks/less_dao_gc:
       name: Less DAO Stutter
-      stage: LOCAL
+      stage: BETA
       desc: |
         Needs Dynamic Anomalies Overhaul.
 
@@ -532,7 +520,7 @@ mods:
       desc: |
         Stops mutants from dealing damage twice in one hit.
 
-        [BETA] Haven't actually tested.
+        [BETA] Needs testing.
 
     tweaks/fix_damage_limb_allocation:
       name: Fix Damage Limb Allocation
@@ -556,6 +544,8 @@ mods:
       desc: |
         Newly spawned items start higher to stop them falling through the ground.
 
+        [BETA] I have still seen them fall through the ground so this isn't the only cause...
+
     tweaks/fix_artifact_weights:
       name: Fix Artifact Weights
       stage: GOLD
@@ -570,11 +560,11 @@ mods:
 
     tweaks/fix_system_keybinds_not_sticking:
       name: Fix System Keybinds Not Sticking
-      stage: BETA
+      stage: GOLD
       desc: |
         Prevents default keybinds from being applied when you unbind a system key.
 
-        [BETA] Works well but think one or two keys may be exceptions that need special handling.
+        NOTE: Works well but think one or two keys may be exceptions that need special handling.
 
   Crash Fixes:
 
@@ -599,10 +589,6 @@ mods:
         Stops a crash when you report a finished job and the NPC has no line.
 
   DEV:
-
-    game/true_fast_travel:
-      name: True Fast Travel
-      stage: OMIT
 
     game/dogma_rules:
       name: Rules

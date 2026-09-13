@@ -678,7 +678,6 @@ end
 local cam_ox, cam_oy, cam_oz = 0, 0, 0
 local cam_dx, cam_dy, cam_dz = 0, 0, 1
 local cam_outer_cos2 = 0
-local cam_outer_ry = UI_CY
 local cam_cone_ok = false
 
 local function refresh_cam_cone()
@@ -697,7 +696,6 @@ local function refresh_cam_cone()
     end
     local outer_t = live_half * OUTER_R
     cam_outer_cos2 = 1 / (1 + outer_t * outer_t)
-    cam_outer_ry = UI_CY * OUTER_R
     cam_cone_ok = true
 end
 
@@ -1176,7 +1174,6 @@ local DBG_DOT_SZ = 2
 local TWO_PI = math.pi * 2
 
 local dbg_dots = {}
-local dbg_outer = {}
 local dbg_inner = {}
 local dbg_ready = false
 local dbg_shown = false
@@ -1185,7 +1182,6 @@ dbg_reset = function()
     dbg_ready = false
     dbg_shown = false
     dbg_dots = {}
-    dbg_outer = {}
     dbg_inner = {}
 end
 
@@ -1195,9 +1191,6 @@ local function dbg_hide()
     end
     for i = 1, #dbg_dots do
         dbg_dots[i]:Show(false)
-    end
-    for i = 1, #dbg_outer do
-        dbg_outer[i]:Show(false)
     end
     for i = 1, #dbg_inner do
         dbg_inner[i]:Show(false)
@@ -1218,12 +1211,6 @@ local function dbg_ensure()
         local st = xml:InitStatic("dbg_dot", HUD)
         st:Show(false)
         dbg_dots[i] = st
-    end
-    for i = 1, DBG_CIRCLE_N do
-        local st = xml:InitStatic("dbg_seg", HUD)
-        st:EnableHeading(true)
-        st:Show(false)
-        dbg_outer[i] = st
     end
     for i = 1, DBG_CIRCLE_N do
         local st = xml:InitStatic("dbg_seg", HUD)
@@ -1286,7 +1273,6 @@ local function update_dbg()
     scan_center()
 
     local thick = line_thick_ui(1)
-    dbg_draw_circle(dbg_outer, cam_outer_ry, thick, 180, 180, 180)
     if pick_obj and pick_ry > 1 then
         dbg_draw_circle(dbg_inner, pick_ry, thick, 48, 220, 255)
     else

@@ -4,7 +4,7 @@
 
 A FOMOD pick-and-choose collection of my mods, fixes, and tweaks for G.A.M.M.A.
 
-Install the FOMOD zip in MO2. After that you can optionally run the scripts in the DOGMA mod folder (`dogma_modlist_delta.py`, `dogma_sfx_prefetch.py`).
+Install the FOMOD zip in MO2. After that you can optionally run `dogma_sfx_prefetch.py` in the DOGMA mod folder.
 
 ## Why make an "anthology"?
 

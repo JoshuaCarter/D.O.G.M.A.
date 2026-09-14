@@ -170,6 +170,7 @@ should_skip_name() {
     case "$base" in
         README | README.* | MOVE_MAP | MOVE_MAP.* | .gitkeep | .DS_Store | Thumbs.db) return 0 ;;
         assets | fomod | installer | __pycache__) return 0 ;;
+        dogma_modlist_delta.py) return 0 ;;
         *.alao-bak | *.pyc | *.pyo | *.meta) return 0 ;;
         # Authoring / pack source only — shipped via db/mods/*.db0 instead.
         *.aimap | *.pdn) return 0 ;;

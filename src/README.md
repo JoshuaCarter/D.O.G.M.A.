@@ -20,7 +20,7 @@ Tweaks: `src/tweaks/<feature>/...` → MCM `D.O.G.M.A. → Tweaks` (one shared p
 
 `scripts` `configs` `textures` `meshes` `anims` `sounds` `spawns`
 
-`src/<category>/<feature>/*.py` and `src/_common/*.py` (file sitting in that folder, not under a gamedata/`db` bucket) ship to the mod root (`mods/DOGMA/dogma_sfx_prefetch.py`, `dogma_modlist_delta.py`). Run those from the mod folder; they walk up to find the MO2 instance.
+`src/<category>/<feature>/*.py` and `src/_common/*.py` (file sitting in that folder, not under a gamedata/`db` bucket) ship to the mod root (`mods/DOGMA/dogma_sfx_prefetch.py`). Run those from the mod folder; they walk up to find the MO2 instance. `dogma_modlist_delta.py` is authoring-only (not shipped).
 
 `src/<category>/<feature>/disables.txt` (one MO2 folder name per line) ships to the mod root. `dogma_modlist_delta.py` turns those mods off in the current profile.
 

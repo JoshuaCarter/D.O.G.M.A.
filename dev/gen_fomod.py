@@ -50,7 +50,7 @@ def modroot_names(src: Path, feat: str) -> list[str]:
     if (d / "disables.txt").is_file():
         names.append("disables.txt")
     for p in sorted(d.glob("*.py")):
-        if p.is_file():
+        if p.is_file() and p.name != "dogma_modlist_delta.py":
             names.append(p.name)
     return names
 
@@ -118,20 +118,16 @@ def parse_intro(wizard: dict) -> dict | None:
         return None
     if isinstance(raw, str):
         desc, page, name = raw, "Welcome", "Continue"
-        refuse = "I am blind"
     elif isinstance(raw, dict):
         desc = str(raw.get("desc") or raw.get("text") or "")
         page = str(raw.get("page") or "Welcome").strip() or "Welcome"
         name = str(raw.get("name") or "Continue").strip() or "Continue"
-        refuse = str(raw.get("refuse") or "I have not read this").strip() or "I have not read this"
     else:
         raise ValueError("fomod intro must be a string or mapping")
     desc = desc.strip()
     if not desc:
         raise ValueError("fomod intro needs desc")
-    if refuse == name:
-        raise ValueError("fomod intro refuse must differ from name")
-    return {"page": page, "name": name, "refuse": refuse, "desc": desc}
+    return {"page": page, "name": name, "desc": desc}
 
 
 def intro_visible_xml() -> list[str]:
@@ -142,45 +138,33 @@ def intro_visible_xml() -> list[str]:
     ]
 
 
-def intro_plugin_xml(name: str, desc: str, ack: bool) -> list[str]:
-    lines = [
+def intro_plugin_xml(name: str, desc: str) -> list[str]:
+    return [
         f'\t\t\t\t\t\t<plugin name="{esc_attr(name)}">',
         f"\t\t\t\t\t\t\t<description>{esc_text(desc)}</description>",
+        "\t\t\t\t\t\t\t<conditionFlags>",
+        f'\t\t\t\t\t\t\t\t<flag name="{INTRO_FLAG}">{INTRO_OK}</flag>',
+        "\t\t\t\t\t\t\t</conditionFlags>",
+        "\t\t\t\t\t\t\t<typeDescriptor>",
+        '\t\t\t\t\t\t\t\t<type name="Recommended"/>',
+        "\t\t\t\t\t\t\t</typeDescriptor>",
+        "\t\t\t\t\t\t</plugin>",
     ]
-    if ack:
-        lines.extend(
-            [
-                "\t\t\t\t\t\t\t<conditionFlags>",
-                f'\t\t\t\t\t\t\t\t<flag name="{INTRO_FLAG}">{INTRO_OK}</flag>',
-                "\t\t\t\t\t\t\t</conditionFlags>",
-            ]
-        )
-    lines.extend(
-        [
-            "\t\t\t\t\t\t\t<typeDescriptor>",
-            '\t\t\t\t\t\t\t\t<type name="Optional"/>',
-            "\t\t\t\t\t\t\t</typeDescriptor>",
-            "\t\t\t\t\t\t</plugin>",
-        ]
-    )
-    return lines
 
 
 def intro_step_xml(wizard: dict) -> list[str]:
     intro = parse_intro(wizard)
     if not intro:
         return []
-    # MO2: one plugin + SelectAtLeastOne/ExactlyOne becomes SelectAll
-    # (checked + grey). Two radios, refuse first so they must pick the ack.
-    # Later pages are hidden until dogma_intro=ok.
+    # One plugin + SelectExactlyOne -> MO2 SelectAll (checked, grey).
+    # Later pages hidden until dogma_intro=ok.
     lines = [
         f'\t\t<installStep name="{esc_attr(intro["page"])}">',
         '\t\t\t<optionalFileGroups order="Explicit">',
         '\t\t\t\t<group name="" type="SelectExactlyOne">',
         '\t\t\t\t\t<plugins order="Explicit">',
     ]
-    lines.extend(intro_plugin_xml(intro["refuse"], intro["desc"], ack=False))
-    lines.extend(intro_plugin_xml(intro["name"], intro["desc"], ack=True))
+    lines.extend(intro_plugin_xml(intro["name"], intro["desc"]))
     lines.extend(
         [
             "\t\t\t\t\t</plugins>",

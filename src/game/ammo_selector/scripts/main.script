@@ -4,6 +4,8 @@
 	Toggle: vanilla. Hold: dogma.input opens after delay, closes on release
 	(optional hover-select). Gates start_ammo_wheel so vanilla release-open
 	cannot fight us; stubs SwitchNextAmmo so release does not cycle ammo.
+	Hold key: swallow that dik on keydown (whatever Settings bound it to).
+	Release before hold_delay_ms = tap reload. Past delay = wheel, no reload.
 ]]
 
 local CONFIG = _G.dogma_game_ammo_selector_conf
@@ -11,6 +13,26 @@ local MODE_HOLD = 2
 
 local allow_open = false
 local holding = false
+local swallowed = false
+local committed = false
+local was_down = false
+
+local function try_reload(actor)
+	actor:reload_weapon()
+end
+
+local function clear_press()
+	holding = false
+	swallowed = false
+	committed = false
+	was_down = false
+end
+
+local function log(msg)
+	if dogma.log.logging() then
+		dogma.log.log(CONFIG.MOD_ID, tostring(msg))
+	end
+end
 
 local function on_option_change()
 	CONFIG.loaded.enabled = dogma.mcm.bool(CONFIG.MOD_ID, "enabled")
@@ -20,12 +42,37 @@ local function on_option_change()
 	CONFIG.loaded.hold_delay_ms = dogma.mcm.uint(CONFIG.MOD_ID, "hold_delay_ms")
 	CONFIG.loaded.select_on_release = dogma.mcm.bool(CONFIG.MOD_ID, "select_on_release")
 	if not CONFIG.loaded.enabled or CONFIG.loaded.mode ~= MODE_HOLD then
-		holding = false
+		clear_press()
 	end
+	log(string.format(
+		"opts hold=%s ammo=%s delay=%s",
+		tostring(CONFIG.loaded.mode == MODE_HOLD),
+		tostring(CONFIG.loaded.ammo_key),
+		tostring(CONFIG.loaded.hold_delay_ms)
+	))
 end
 
 local function hold_active()
 	return CONFIG.loaded.enabled and CONFIG.loaded.mode == MODE_HOLD
+end
+
+-- ammo_key is a dik. bind is the engine action on that dik (often not Reload).
+local function on_before_key_press(dik, bind, _dis, flags)
+	if not dogma.sys.ready(CONFIG.MOD_ID, db, on_option_change) then
+		return
+	end
+	if not hold_active() then
+		return
+	end
+	local ammo = CONFIG.loaded.ammo_key
+	if not (ammo and ammo > 0 and dik == ammo) then
+		return
+	end
+	if flags then
+		flags.ret_value = false
+	end
+	swallowed = true
+	log(string.format("press dik=%s bind=%s swallow", tostring(dik), tostring(bind)))
 end
 
 local function shown(gui)
@@ -122,12 +169,39 @@ local function patch()
 	ensure_no_cycle(rawget_(_G, "UIWheelAmmoWuut"))
 end
 
+local function tap_reload()
+	local actor = db.actor
+	if not actor then
+		log("tap skip: no actor")
+		return
+	end
+	local ok, err = pcall(try_reload, actor)
+	if ok then
+		log("tap reload")
+	else
+		log("tap fail: " .. tostring(err))
+	end
+end
+
+local function on_release()
+	if holding then
+		log("release wheel")
+		select_or_close()
+	elseif swallowed and not committed then
+		tap_reload()
+	end
+	holding = false
+	swallowed = false
+	committed = false
+end
+
 local function actor_on_update()
 	if not dogma.sys.ready(CONFIG.MOD_ID, db, on_option_change) then
-		holding = false
+		clear_press()
 		return
 	end
 	if not hold_active() then
+		clear_press()
 		return
 	end
 	patch()
@@ -137,7 +211,9 @@ local function actor_on_update()
 		return
 	end
 
-	if dogma.input.is_key_down(dik) then
+	local down = dogma.input.is_key_down(dik)
+	if down then
+		was_down = true
 		if holding then
 			if not active_gui() then
 				holding = false
@@ -145,12 +221,16 @@ local function actor_on_update()
 		elseif active_gui() then
 			holding = true
 		elseif dogma.input.is_key_held(dik, CONFIG.loaded.hold_delay_ms or 0) then
+			if not committed then
+				log("hold open")
+			end
+			committed = true
 			open()
 			holding = active_gui() ~= nil
 		end
-	elseif holding then
-		select_or_close()
-		holding = false
+	elseif was_down then
+		was_down = false
+		on_release()
 	end
 end
 
@@ -159,4 +239,5 @@ function on_game_start()
 	RegisterScriptCallback("on_option_change", on_option_change)
 	RegisterScriptCallback("actor_on_first_update", patch)
 	RegisterScriptCallback("actor_on_update", actor_on_update)
+	RegisterScriptCallback("on_before_key_press", on_before_key_press)
 end

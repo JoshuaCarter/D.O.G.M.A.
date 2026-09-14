@@ -72,12 +72,16 @@ function on_game_start()
 	RegisterScriptCallback("on_option_change", on_option_change)
 	on_option_change()
 	bind_all = _G.dogma_inv_hover.register({
+		family = "strip",
+		whole = true,
 		key_down = key_all_down,
 		mode_ok = inv_mode_ok,
 		bags = ALLOWED_BAGS,
 		fire = fire(true),
 	})
 	bind_one = _G.dogma_inv_hover.register({
+		family = "strip",
+		whole = false,
 		key_down = key_one_down,
 		mode_ok = inv_mode_ok,
 		bags = ALLOWED_BAGS,

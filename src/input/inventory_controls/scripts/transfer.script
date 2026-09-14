@@ -204,6 +204,8 @@ function on_game_start()
 	on_option_change()
 	reapply_move_patch()
 	bind_all = _G.dogma_inv_hover.register({
+		family = "transfer",
+		whole = true,
 		key_down = key_all_down,
 		mode_ok = inv_mode_ok,
 		bags = ALLOWED_BAGS,
@@ -212,6 +214,8 @@ function on_game_start()
 		fire = fire(true),
 	})
 	bind_one = _G.dogma_inv_hover.register({
+		family = "transfer",
+		whole = false,
 		key_down = key_one_down,
 		mode_ok = inv_mode_ok,
 		bags = ALLOWED_BAGS,

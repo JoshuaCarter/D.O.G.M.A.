@@ -6,6 +6,10 @@
     hole, not paint. still-binds block Reinit/Reset/On_Sort, and
     UpdateInventories only add/removes cells. SortingPlus/Seamless
     sort-on-add otherwise packs the hole under the cursor.
+
+    One fire per tick. Pool is key down + mode + that bag. Transfer only
+    if a stash/corpse/trade is open. Rank: transfer, drop, disassemble,
+    strip. One stack beats all stacks.
 ]]
 
 local MOD_ID = "dogma/input/inventory_controls"
@@ -13,6 +17,12 @@ local MOD_ID = "dogma/input/inventory_controls"
 local actions = {}
 local in_action = false
 local still_was = false
+local RANK = {
+    transfer = 1,
+    drop = 2,
+    disa = 3,
+    strip = 4,
+}
 local log_seq = 0
 local wrapped = {}
 local original_on_hover = nil
@@ -135,6 +145,51 @@ local function still_active()
     return false
 end
 
+local function partner_open(gui)
+    local mode = gui and gui.mode
+    if mode == "trade" then
+        return true
+    end
+    if mode == "loot" then
+        return gui.GetPartner and gui:GetPartner() ~= nil
+    end
+    return false
+end
+
+local function better(a, b)
+    local ra = RANK[a.family] or 99
+    local rb = RANK[b.family] or 99
+    if ra ~= rb then
+        return ra < rb
+    end
+    if a.whole ~= b.whole then
+        return not a.whole
+    end
+    return false
+end
+
+local function pick(gui, bag)
+    if not bag then
+        return nil
+    end
+    local best = nil
+    for i = 1, #actions do
+        local act = actions[i]
+        if act.down_prev and act.mode_ok(gui) and act.bags[bag] then
+            if act.family ~= "transfer" or partner_open(gui) then
+                if not best or better(act, best) then
+                    best = act
+                end
+            end
+        end
+    end
+    return best
+end
+
+local function act_tag(act)
+    return string.format("%s whole=%s", tostring(act.family), tostring(act.whole))
+end
+
 -- hold.armed: tick 1, freeze only. After fire/empty: parked on that cell.
 -- Follow the hover while the mouse is still so a packed hole becomes the
 -- parked cell and cannot fire. Paint only when the mouse moves to a new cell.
@@ -151,7 +206,7 @@ local function fire_or_park(act, bag, idx, gui)
         return
     end
     in_action = true
-    log(string.format("fire still=%s %s", tostring(still_active()), cell_desc(gui, bag, idx)))
+    log(string.format("fire %s still=%s %s", act_tag(act), tostring(still_active()), cell_desc(gui, bag, idx)))
     act.fire(gui, obj, bag, idx)
     in_action = false
 end
@@ -173,7 +228,7 @@ local function step(act, bag, idx, gui)
     local hold = act.hold
     if not hold then
         set_hold(act, bag, idx, true)
-        log(string.format("arm still=%s active=%s %s[%s]", tostr(act.still), tostr(still_active()), tostr(bag), tostr(idx)))
+        log(string.format("arm %s still=%s active=%s %s[%s]", act_tag(act), tostr(act.still), tostr(still_active()), tostr(bag), tostr(idx)))
         return
     end
     if hold.armed then
@@ -190,7 +245,7 @@ local function step(act, bag, idx, gui)
     end
 end
 
-local function poll_action(act, gui)
+local function update_down(act, gui)
     if not act.mode_ok(gui) then
         act.hold = nil
         act.down_prev = false
@@ -200,17 +255,22 @@ local function poll_action(act, gui)
         act.tick(gui)
     end
     local down = act.key_down()
-    act.down_prev = down
     if not down then
         if act.hold then
-            log("key up")
+            log("key up " .. act_tag(act))
         end
         act.hold = nil
-        return
     end
-    local bag, idx = hover_cell(gui)
-    if bag then
-        step(act, bag, idx, gui)
+    act.down_prev = down
+end
+
+local function park_losers(win)
+    for i = 1, #actions do
+        local act = actions[i]
+        if act ~= win and act.hold then
+            log("lose " .. act_tag(act))
+            act.hold = nil
+        end
     end
 end
 
@@ -304,7 +364,15 @@ end
 local function poll_all(gui)
     local was = still_was
     for i = 1, #actions do
-        poll_action(actions[i], gui)
+        update_down(actions[i], gui)
+    end
+    local bag, idx = hover_cell(gui)
+    if bag then
+        local win = pick(gui, bag)
+        if win then
+            step(win, bag, idx, gui)
+        end
+        park_losers(win)
     end
     local now = still_active()
     if was and not now then
@@ -398,11 +466,9 @@ local function paint_on_hover(self, idx)
         return call_base_hover(self, idx)
     end
     local gui = ui_inventory and ui_inventory.GUI
-    for i = 1, #actions do
-        local act = actions[i]
-        if act.down_prev and act.hold and act.mode_ok(gui) then
-            step(act, self.ID, idx, gui)
-        end
+    local win = pick(gui, self.ID)
+    if win and win.hold then
+        step(win, self.ID, idx, gui)
     end
     return call_base_hover(self, idx)
 end

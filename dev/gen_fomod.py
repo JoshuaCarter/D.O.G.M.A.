@@ -44,13 +44,16 @@ def feature_image(feat: str) -> Path | None:
     return None
 
 
+SKIP_MODROOT_PY = frozenset({"dogma_modlist_delta.py", "stamp_ogg_comments.py"})
+
+
 def modroot_names(src: Path, feat: str) -> list[str]:
     d = src / src_feature_dir(feat)
     names: list[str] = []
     if (d / "disables.txt").is_file():
         names.append("disables.txt")
     for p in sorted(d.glob("*.py")):
-        if p.is_file() and p.name != "dogma_modlist_delta.py":
+        if p.is_file() and p.name not in SKIP_MODROOT_PY:
             names.append(p.name)
     return names
 

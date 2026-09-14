@@ -5,9 +5,14 @@
 	use the highest-rank scanner in slot/inventory (slot > fav > ruck on
 	ties) and match that item's engine filters: world artefact, in
 	af_class_*, rank <= detector class rank. Then play af_sound_1_.
+
+	GAMMA Artefacts Reinvention draws a nearby-artefact HUD icon via
+	grok_artefacts_bip.get_artefact. Wrap that functor so the icon stays
+	off. Their MCM and scan keep running.
 ]]
 
 local MOD_ID = "dogma/tweaks/passive_detector_beeps"
+local ORIG_BIP_GET
 local SLOT_MAX = 13
 local SCAN_MS = 5000
 local FALLBACK_SOUND = "detectors\\art_beep1"
@@ -212,6 +217,31 @@ local function play_beep(actor, path)
 	get_sound(path):play(actor, 0, sound_object.s2d)
 end
 
+local function hide_bip_icon(visual)
+	if not ORIG_BIP_GET then
+		return 0
+	end
+	if visual then
+		ORIG_BIP_GET(true)
+		return 0
+	end
+	return ORIG_BIP_GET(visual)
+end
+
+local function wrap_bip_icon()
+	if ORIG_BIP_GET then
+		return
+	end
+	local bip = rawget(_G, "grok_artefacts_bip")
+	if not (bip and type(bip.get_artefact) == "function") then
+		dogma.log.log(MOD_ID, "no grok artefact icon")
+		return
+	end
+	ORIG_BIP_GET = bip.get_artefact
+	bip.get_artefact = hide_bip_icon
+	dogma.log.log(MOD_ID, "hid grok artefact HUD icon")
+end
+
 local function on_update()
 	local now = time_global()
 	if now < next_scan then
@@ -241,5 +271,6 @@ local function on_update()
 end
 
 function on_game_start()
+	wrap_bip_icon()
 	RegisterScriptCallback("actor_on_update", on_update)
 end

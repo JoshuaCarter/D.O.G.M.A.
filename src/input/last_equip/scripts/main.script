@@ -1,11 +1,26 @@
 --[[
     Last Equip
 
-    Remember the last watched hand slot. After chosen events, draw it
-    once. Point of the mod: inventory close must not bring the PDA
-    back. Already holding that slot: do not activate_slot (same-slot
-    call holsters then draws). If the engine then empties hands or
-    puts the PDA back, assert last_x once.
+    Remember the last two watched hand slots. After chosen events, draw
+    last_x (PDA included if that slot is watched). After lowering PDA
+    (toggle), empty hands restore the slot from before the PDA. Opening
+    inventory / loot / trade / talk / craft also holsters the PDA: skip
+    that restore and let the menu-close path draw last_x. Already
+    holding the target: do not activate_slot (same-slot call holsters
+    then draws). If the engine then empties hands, assert once.
+
+    Detector is left-hand show_detector, not active_slot(). Empty RH +
+    detector out still reports slot 0, so record SLOT_DEVICE. Restore
+    holsters first (engine ToggleDevice otherwise Activate()s knife /
+    bolt / pistol), then shows the detector once RH is empty.
+
+    Inv close, empty RH: engine NeedActivation => ShowDevice(true)
+    (sndShow + anm_show_fast) on the same hands as the backpack script
+    anim. ShowDevice only runs if GetState==eHidden, so we switch_state
+    eIdle while hidden (no attach, no force_hide: detach plays
+    hand_idle_doun and freezes the bag). Wait HUD/RH/PDA. Then eHidden
+    and show_detector(false). GetState lags SwitchState: never flap
+    until GetState is actually eHidden. eIdle is a lie, not "already out".
 ]]
 
 local CONFIG = _G.dogma_input_last_equip_conf
@@ -21,8 +36,15 @@ local SLOT_PDA = 8
 local SLOT_DEVICE = 9
 local SLOT_PISTOL = 16
 local WATCH_MS = 1000
+local HUD_IDLE = 0
+local HUD_SHOWING = 1
+local HUD_HIDING = 2
+local HUD_HIDDEN = 3
+-- ponytail: hide poll can miss (get_state 65535); cap then restore anyway
+local HIDE_WAIT_MS = 3000
 local TELEPORT_DIST_SQR = 12 * 12
 local SAVE_KEY = "dogma_input_last_equip_slot"
+local SAVE_KEY_PREV = "dogma_input_last_equip_slot_prev"
 
 local MODE_TO_KIND = {
     [1] = "inventory",
@@ -69,11 +91,25 @@ local slot_diks = {}
 local slot_diks_n = 0
 
 local last_x = nil
+local last_xx = nil
 local last_seen_slot = nil
 local watch_until = nil
+local watch_slot = nil
 local extra_used = false
 local need_load_restore = false
 local last_actor_pos = nil
+local ui_open = false
+local pda_lower_wait = false
+local pending_site = nil
+local pending_allow_pda = nil
+local pending_until = nil
+local pending_suppressed = false
+local pending_skip_frame = false
+local pending_flap = false
+local pending_flap_site = nil
+local pending_flap_until = nil
+local device_show_sent = false
+local seq_t0 = nil
 
 local try_item_in_slot = function(actor, slot)
     return actor:item_in_slot(slot)
@@ -85,6 +121,31 @@ end
 
 local try_activate_slot = function(actor, slot)
     actor:activate_slot(slot)
+end
+
+local try_active_item = function(actor)
+    return actor:active_item()
+end
+
+local try_get_state = function(obj)
+    return obj:get_state()
+end
+
+local try_active_detector = function(actor)
+    return actor:active_detector()
+end
+
+-- false = anm_show (flap). true = anm_show_fast (stiff rotate).
+local try_show_detector = function(actor)
+    actor:show_detector(false)
+end
+
+local try_hud_motion_allowed = function()
+    return game.hud_motion_allowed()
+end
+
+local try_switch_state = function(obj, st)
+    obj:switch_state(st)
 end
 
 local try_position = function(actor)
@@ -115,6 +176,35 @@ local function log(msg)
     if CONFIG.loaded.debug_log then
         dogma.log.log(CONFIG.MOD_ID, tostring(msg))
     end
+end
+
+local function mark_seq()
+    seq_t0 = time_global()
+end
+
+local function log_ms(msg)
+    local tostr = tostring
+    if not CONFIG.loaded.debug_log then
+        return
+    end
+    local t = time_global()
+    if seq_t0 then
+        dogma.log.log(CONFIG.MOD_ID, string.format("%s t=%s ms=%s", tostr(msg), tostr(t), tostr(t - seq_t0)))
+        return
+    end
+    dogma.log.log(CONFIG.MOD_ID, string.format("%s t=%s", tostr(msg), tostr(t)))
+end
+
+local function clear_pending()
+    pending_site = nil
+    pending_allow_pda = nil
+    pending_until = nil
+    pending_suppressed = false
+    pending_skip_frame = false
+    pending_flap = false
+    pending_flap_site = nil
+    pending_flap_until = nil
+    device_show_sent = false
 end
 
 local function add_slot_dik(dik)
@@ -153,6 +243,11 @@ local function on_option_change()
     loaded.enabled = dogma.mcm.bool(CONFIG.MOD_ID, "enabled")
     if not loaded.enabled then
         watch_until = nil
+        watch_slot = nil
+        pda_lower_wait = false
+        ui_open = false
+        seq_t0 = nil
+        clear_pending()
     end
     for i = 1, #SLOT_OPTS do
         local opt = SLOT_OPTS[i]
@@ -166,16 +261,17 @@ local function on_option_change()
     loaded.after_craft = dogma.mcm.bool(CONFIG.MOD_ID, "after_craft")
     loaded.after_teleport = dogma.mcm.bool(CONFIG.MOD_ID, "after_teleport")
     loaded.after_load = dogma.mcm.bool(CONFIG.MOD_ID, "after_load")
+    loaded.after_pda = dogma.mcm.bool(CONFIG.MOD_ID, "after_pda")
     loaded.debug_log = dogma.log.logging()
     refresh_slot_diks()
     log(string.format(
-        "config: enabled=%s melee=%s secondary=%s primary=%s grenade=%s vision=%s bolt=%s pda=%s device=%s pistol=%s inv=%s loot=%s trade=%s talk=%s craft=%s tp=%s load=%s",
+        "config: enabled=%s melee=%s secondary=%s primary=%s grenade=%s vision=%s bolt=%s pda=%s device=%s pistol=%s inv=%s loot=%s trade=%s talk=%s craft=%s tp=%s load=%s pda_lower=%s",
         tostr(loaded.enabled), tostr(loaded.slot_melee), tostr(loaded.slot_secondary), tostr(loaded.slot_primary),
         tostr(loaded.slot_grenade), tostr(loaded.slot_vision), tostr(loaded.slot_bolt),
         tostr(loaded.slot_pda), tostr(loaded.slot_device),
         tostr(loaded.slot_pistol), tostr(loaded.after_inventory), tostr(loaded.after_loot),
         tostr(loaded.after_trade), tostr(loaded.after_dialogue), tostr(loaded.after_craft),
-        tostr(loaded.after_teleport), tostr(loaded.after_load)
+        tostr(loaded.after_teleport), tostr(loaded.after_load), tostr(loaded.after_pda)
     ))
 end
 
@@ -187,6 +283,116 @@ local function current_slot()
     if ok then
         return slot
     end
+end
+
+local function detector_shown()
+    if not db.actor then
+        return false
+    end
+    local ok, det = pcall(try_active_detector, db.actor)
+    return ok and det ~= nil
+end
+
+local function detector_item()
+    if not db.actor then
+        return nil
+    end
+    local ok, item = pcall(try_item_in_slot, db.actor, SLOT_DEVICE)
+    if ok then
+        return item
+    end
+end
+
+local function detector_state()
+    local item = detector_item()
+    if not item then
+        return nil
+    end
+    local ok, st = pcall(try_get_state, item)
+    if ok then
+        return st
+    end
+end
+
+-- ShowDevice(true) only if GetState==eHidden. eIdle blocks it without
+-- attach. Never force_hide here: detach_item_idx(1) with empty RH plays
+-- hand_idle_doun and overwrites the backpack script anim.
+local function block_engine_fast_show()
+    if detector_state() ~= HUD_HIDDEN then
+        return
+    end
+    local item = detector_item()
+    if not item then
+        return
+    end
+    pcall(try_switch_state, item, HUD_IDLE)
+    if not pending_suppressed then
+        pending_suppressed = true
+        log("block engine ShowDevice(true): hidden -> idle")
+    end
+end
+
+local function show_detector_flap(site)
+    device_show_sent = true
+    log_ms(string.format(
+        "restore(%s): empty RH -> show_detector flap last_x=%s last_xx=%s",
+        site, tostring(last_x), tostring(last_xx)
+    ))
+    pcall(try_show_detector, db.actor)
+end
+
+-- SwitchState is queued. show_detector only if GetState()==eHidden.
+-- No force_hide: after backpack that detach is pointless, during it
+-- it freezes the bag.
+local function restart_detector(site)
+    local st = detector_state()
+    if st and st ~= HUD_HIDDEN then
+        log(string.format("restart detector state=%s -> wait hidden then flap", tostring(st)))
+        local item = detector_item()
+        if item then
+            pcall(try_switch_state, item, HUD_HIDDEN)
+        end
+        pending_flap = true
+        pending_flap_site = site
+        pending_flap_until = time_global() + HIDE_WAIT_MS
+        return
+    end
+    show_detector_flap(site)
+end
+
+-- Detector out + empty RH is still slot 0. Treat it as last_x = device.
+local function held_slot()
+    local slot = current_slot()
+    if (not slot or slot == 0) and slot_watched[SLOT_DEVICE] and detector_shown() then
+        return SLOT_DEVICE
+    end
+    return slot
+end
+
+local function item_hud_busy(item)
+    if not item then
+        return false
+    end
+    local ok, st = pcall(try_get_state, item)
+    return ok and (st == HUD_HIDING or st == HUD_SHOWING)
+end
+
+-- Inv backpack is game.play_hud_motion, not slot 13 get_state.
+local function hud_is_busy()
+    local actor = db.actor
+    if not actor then
+        return false
+    end
+    local ok, item = pcall(try_active_item, actor)
+    if ok and item_hud_busy(item) then
+        return true
+    end
+    local ok_pda, pda = pcall(try_item_in_slot, actor, SLOT_PDA)
+    if ok_pda and item_hud_busy(pda) then
+        return true
+    end
+    local ok_allow, allow = pcall(try_hud_motion_allowed)
+    return ok_allow and allow == false
 end
 
 local function slot_has_item(slot)
@@ -211,86 +417,185 @@ local function slot_input_down()
     return false
 end
 
+local function holster_hands(site)
+    local slot = current_slot()
+    if not (slot and slot ~= 0) then
+        return false
+    end
+    log(string.format("holster(%s): active_slot=%s -> 0", site, tostring(slot)))
+    pcall(try_activate_slot, db.actor, 0)
+    return true
+end
+
 local function activate_target(target, site)
+    local sformat = string.format
     local tostr = tostring
     if not db.actor then
         return false
     end
     if not slot_has_item(target) then
-        log(string.format("skip(%s): empty target=%s", site, tostr(target)))
+        log(sformat("skip(%s): empty target=%s", site, tostr(target)))
         return false
+    end
+    if target == SLOT_DEVICE then
+        if holster_hands(site) then
+            return true
+        end
+        restart_detector(site)
+        return true
     end
     local slot = current_slot()
     if slot == target then
-        log(string.format("skip(%s): already slot=%s", site, tostr(target)))
+        log(sformat("skip(%s): already slot=%s", site, tostr(target)))
         return true
     end
-    log(string.format(
-        "restore(%s): active_slot=%s -> activate_slot(%s) last_x=%s",
-        site, tostr(slot), tostr(target), tostr(last_x)
+    log_ms(sformat(
+        "restore(%s): active_slot=%s -> activate_slot(%s) last_x=%s last_xx=%s",
+        site, tostr(slot), tostr(target), tostr(last_x), tostr(last_xx)
     ))
     pcall(try_activate_slot, db.actor, target)
     return true
 end
 
-local function arm_watch(site)
+local function restore_target(allow_pda)
+    if last_x and (allow_pda or last_x ~= SLOT_PDA) then
+        return last_x
+    end
+    if last_xx and (allow_pda or last_xx ~= SLOT_PDA) then
+        return last_xx
+    end
+end
+
+local function queue_hide_wait(site, allow_pda)
+    if not seq_t0 then
+        mark_seq()
+    end
+    pending_site = site
+    pending_allow_pda = allow_pda
+    pending_until = time_global() + HIDE_WAIT_MS
+    pending_skip_frame = true
+    log_ms("restore wait hide " .. site)
+    if restore_target(allow_pda) == SLOT_DEVICE then
+        block_engine_fast_show()
+    end
+end
+
+local function arm_watch(site, target)
     watch_until = time_global() + WATCH_MS
+    watch_slot = target
     extra_used = false
     log("watch start " .. site)
 end
 
-local function start_restore(site)
+local function tick_pending_flap()
+    if not pending_flap then
+        return
+    end
+    if slot_input_down() then
+        log("restore flap cancel: player slot key")
+        pending_flap = false
+        pending_flap_site = nil
+        pending_flap_until = nil
+        return
+    end
+    local st = detector_state()
+    local timed_out = pending_flap_until and time_global() >= pending_flap_until
+    if st and st ~= HUD_HIDDEN and not timed_out then
+        return
+    end
+    local site = pending_flap_site or "flap"
+    pending_flap = false
+    pending_flap_site = nil
+    pending_flap_until = nil
+    if timed_out then
+        log_ms("restore flap wait timeout " .. site)
+        local item = detector_item()
+        if item then
+            pcall(try_switch_state, item, HUD_HIDDEN)
+        end
+    end
+    show_detector_flap(site)
+    arm_watch(site, SLOT_DEVICE)
+end
+
+local function start_restore(site, allow_pda, skip_hide)
     if not CONFIG.loaded.enabled then
         return
     end
-    if last_x == nil or last_x == 0 then
+    local target = restore_target(allow_pda)
+    if not target then
         log("skip(" .. site .. "): no last_x")
         return
     end
     if watch_until then
         return
     end
-    if not slot_has_item(last_x) then
-        log(string.format("skip(%s): empty target=%s", site, tostring(last_x)))
+    if not slot_has_item(target) then
+        log(string.format("skip(%s): empty target=%s", site, tostring(target)))
         return
     end
-    local slot = current_slot()
-    if slot == last_x then
-        log(string.format("skip(%s): already slot=%s", site, tostring(last_x)))
-        arm_watch(site)
+    local slot = held_slot()
+    if not skip_hide and hud_is_busy() then
+        queue_hide_wait(site, allow_pda)
         return
     end
-    if not activate_target(last_x, site) then
+    if target ~= SLOT_DEVICE and slot == target then
+        log(string.format("skip(%s): already slot=%s", site, tostring(target)))
+        arm_watch(site, target)
         return
     end
-    arm_watch(site)
+    if not activate_target(target, site) then
+        return
+    end
+    if pending_flap then
+        return
+    end
+    arm_watch(site, target)
 end
 
 local function tick_watch()
     if not watch_until then
         return
     end
-    if slot_input_down() then
+    local slot = current_slot()
+    if slot_input_down() and slot and slot ~= 0 then
         log("watch cancel: player slot key")
         watch_until = nil
+        watch_slot = nil
         return
     end
-    local slot = current_slot()
-    if slot ~= last_x and not extra_used then
+    local want = watch_slot or restore_target(true)
+    if want == SLOT_DEVICE then
+        if slot and slot ~= 0 then
+            if not extra_used then
+                extra_used = true
+                log(string.format("engine flip %s -> device, holster", tostring(slot)))
+            end
+            pcall(try_activate_slot, db.actor, 0)
+        elseif not detector_shown() and not device_show_sent and not pending_flap then
+            activate_target(SLOT_DEVICE, "engine_flip")
+        end
+    elseif want and held_slot() ~= want and not extra_used then
         extra_used = true
-        log(string.format("engine flip %s -> %s, extra assert", tostring(slot), tostring(last_x)))
-        activate_target(last_x, "engine_flip")
+        log(string.format("engine flip %s -> %s, extra assert", tostring(slot), tostring(want)))
+        activate_target(want, "engine_flip")
     end
     if time_global() > watch_until then
         watch_until = nil
+        watch_slot = nil
         log("watch end")
     end
 end
 
 local function maybe_record_slot(slot)
-    if slot ~= 0 and slot_watched[slot] then
-        last_x = slot
+    if not (slot and slot ~= 0 and slot_watched[slot]) then
+        return
     end
+    if slot == last_x then
+        return
+    end
+    last_xx = last_x
+    last_x = slot
 end
 
 -- Always printf: empty community fatals PDA ranking (CCharacterInfo::GetById).
@@ -357,18 +662,28 @@ end
 
 local function track_slot()
     local tostr = tostring
-    local slot = current_slot()
+    local slot = held_slot()
     if slot == last_seen_slot then
         return
     end
     local prev = last_seen_slot
     last_seen_slot = slot
     log(string.format(
-        "active_slot %s -> %s last_x=%s watch=%s",
-        tostr(prev), tostr(slot), tostr(last_x), tostr(watch_until ~= nil)
+        "active_slot %s -> %s last_x=%s last_xx=%s watch=%s",
+        tostr(prev), tostr(slot), tostr(last_x), tostr(last_xx), tostr(watch_until ~= nil)
     ))
     if slot == SLOT_PDA then
         scan_stalkers_before_pda()
+    end
+    if prev == SLOT_PDA and slot == 0 and CONFIG.loaded.after_pda then
+        pda_lower_wait = true
+        if not seq_t0 then
+            mark_seq()
+        end
+        log_ms("pda_lower wait")
+    end
+    if ui_open then
+        return
     end
     if watch_until and not slot_input_down() then
         return
@@ -384,17 +699,92 @@ local function restore_kind(kind, site)
     if not kind_enabled(kind) then
         return
     end
-    start_restore(site)
+    pda_lower_wait = false
+    if pending_site then
+        return
+    end
+    if watch_until then
+        return
+    end
+    mark_seq()
+    log_ms("close " .. site)
+    queue_hide_wait(site, true)
+end
+
+local function ui_blocks_pda_lower()
+    if ui_open then
+        return true
+    end
+    local status = dogma.status
+    return status and status.is_inv_open and status.is_inv_open()
+end
+
+local function flush_pda_lower()
+    if not pda_lower_wait then
+        return
+    end
+    pda_lower_wait = false
+    if ui_blocks_pda_lower() then
+        log("skip(pda_lower): ui open last_x=" .. tostring(last_x))
+        return
+    end
+    if not seq_t0 then
+        mark_seq()
+    end
+    start_restore("pda_lower", false)
+end
+
+local function tick_pending_restore()
+    if not pending_site then
+        return
+    end
+    if restore_target(pending_allow_pda) == SLOT_DEVICE then
+        block_engine_fast_show()
+    end
+    if slot_input_down() then
+        log("restore wait cancel: player slot key")
+        clear_pending()
+        return
+    end
+    if pending_site == "pda_lower" and ui_blocks_pda_lower() then
+        log("skip(pda_lower): ui open during hide wait last_x=" .. tostring(last_x))
+        clear_pending()
+        return
+    end
+    local timed_out = pending_until and time_global() >= pending_until
+    if hud_is_busy() and not timed_out then
+        pending_skip_frame = false
+        return
+    end
+    if pending_skip_frame then
+        pending_skip_frame = false
+        return
+    end
+    local site = pending_site
+    local allow = pending_allow_pda
+    local det_st = detector_state()
+    clear_pending()
+    if timed_out then
+        log_ms(string.format("restore wait hide timeout %s det=%s", site, tostring(det_st)))
+    else
+        log_ms(string.format("restore wait hide done %s det=%s", site, tostring(det_st)))
+    end
+    start_restore(site, allow, true)
 end
 
 local function on_actor_menu_mode_changed(mode, last_mode)
     log(string.format("ActorMenu_on_mode_changed: mode=%s last_mode=%s", tostring(mode), tostring(last_mode)))
-    if mode == 0 then
-        restore_kind(MODE_TO_KIND[last_mode], "mode_changed(close)")
+    ui_open = mode ~= 0
+    if mode ~= 0 then
+        watch_until = nil
+        watch_slot = nil
+        return
     end
+    restore_kind(MODE_TO_KIND[last_mode], "mode_changed(close)")
 end
 
 local function on_actor_menu_before_init_mode(mode_str)
+    ui_open = true
     log("ActorMenu_on_before_init_mode: " .. tostring(mode_str))
 end
 
@@ -446,20 +836,29 @@ local function name_is_craft(name)
     return name:lower():find("workshop", 1, true)
 end
 
+local function on_gui_show(gui, extra)
+    log(string.format("GUI_on_show gui=%s extra=%s", tostring(gui), tostring(extra)))
+    if gui == "Dialog" or name_is_craft(gui) or name_is_craft(extra) then
+        ui_open = true
+    end
+end
+
 local function on_gui_hide(gui, extra)
     log(string.format("GUI_on_hide gui=%s extra=%s", tostring(gui), tostring(extra)))
     if gui == "Dialog" then
+        ui_open = false
         restore_kind("dialogue", "gui_hide")
         return
     end
     if name_is_craft(gui) or name_is_craft(extra) then
+        ui_open = false
         restore_kind("craft", "gui_hide")
     end
 end
 
 local function on_before_fast_travel()
     if CONFIG.loaded.after_teleport then
-        start_restore("fast_travel")
+        start_restore("fast_travel", true)
     end
 end
 
@@ -477,7 +876,7 @@ local function tick_teleport()
         local dz = pos.z - last_actor_pos.z
         if (dx * dx + dy * dy + dz * dz) >= TELEPORT_DIST_SQR then
             log("teleport jump")
-            start_restore("teleport")
+            start_restore("teleport", true)
             local ok2, pos2 = pcall(try_position, db.actor)
             if ok2 then
                 last_actor_pos = pos2
@@ -496,7 +895,10 @@ local function on_actor_on_update()
     if not CONFIG.loaded.enabled then
         return
     end
+    flush_pda_lower()
     track_slot()
+    tick_pending_restore()
+    tick_pending_flap()
     tick_watch()
     tick_teleport()
 end
@@ -505,15 +907,20 @@ local function on_actor_on_first_update()
     patch_actor_menu()
     if need_load_restore then
         need_load_restore = false
-        start_restore("first_update")
+        start_restore("first_update", true)
     end
 end
 
 local function on_game_load()
     watch_until = nil
+    watch_slot = nil
     extra_used = false
     last_seen_slot = nil
     last_actor_pos = nil
+    ui_open = false
+    pda_lower_wait = false
+    seq_t0 = nil
+    clear_pending()
     if CONFIG.loaded.after_load then
         need_load_restore = true
     end
@@ -527,12 +934,17 @@ end
 
 local function on_save_state(m_data)
     m_data[SAVE_KEY] = last_x
+    m_data[SAVE_KEY_PREV] = last_xx
 end
 
 local function on_load_state(m_data)
     local v = m_data and m_data[SAVE_KEY]
     if type(v) == "number" and v ~= 0 then
         last_x = v
+    end
+    local prev = m_data and m_data[SAVE_KEY_PREV]
+    if type(prev) == "number" and prev ~= 0 then
+        last_xx = prev
     end
 end
 
@@ -543,6 +955,7 @@ function on_game_start()
     patch_actor_menu()
     RegisterScriptCallback("ActorMenu_on_before_init_mode", on_actor_menu_before_init_mode)
     RegisterScriptCallback("ActorMenu_on_mode_changed", on_actor_menu_mode_changed)
+    RegisterScriptCallback("GUI_on_show", on_gui_show)
     RegisterScriptCallback("GUI_on_hide", on_gui_hide)
     RegisterScriptCallback("on_option_change", on_option_change)
     RegisterScriptCallback("actor_on_update", on_actor_on_update)

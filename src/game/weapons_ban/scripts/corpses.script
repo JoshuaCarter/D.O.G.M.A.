@@ -62,6 +62,15 @@ end
 _G.dogma_wb_queue_roll = queue_roll
 _G.dogma_wb_flush_roll = flush_roll
 
+local function queue_stripped(id, stripped)
+    if not stripped then
+        return
+    end
+    for sec, n in pairs(stripped) do
+        queue_roll(id, string.format("  - %s x%s", sec, n), "gray")
+    end
+end
+
 local function npc_label(npc)
     if not npc then
         return "?"
@@ -99,9 +108,9 @@ local function release_inventory_ids(ids)
     end
 end
 
--- Old / damaged boxes only. Skip if vanilla or GAMMA already turned
--- the stack into fresh (no suffix left). Collect ids first so we never
--- release during iterate or fight a mid-convert alife_release.
+-- Old / damaged boxes only. Dump ammo cat is fresh ids; _bad is not
+-- in dogma.db.is_ammo. Suffix is the real mark. Skip if already fresh.
+-- Collect ids first so we never release during iterate.
 local function is_degraded_ammo(sec)
     return sec and (sec:sub(-8) == "_verybad" or sec:sub(-4) == "_bad")
 end
@@ -109,6 +118,9 @@ end
 local function strip_degraded_ammo(npc)
     local to_release = {}
     local counts = {}
+    if not (npc and npc.iterate_inventory) then
+        return counts
+    end
     npc:iterate_inventory(function(_temp, item)
         if not item then
             return
@@ -118,7 +130,7 @@ local function strip_degraded_ammo(npc)
         if not (id and alife_object(id)) then
             return
         end
-        if not (dogma.db.is_ammo(sec) and is_degraded_ammo(sec)) then
+        if not is_degraded_ammo(sec) then
             return
         end
         to_release[#to_release + 1] = id
@@ -393,11 +405,7 @@ local function log_corpse_roll(npc, result)
             result.max or 0
         ), "green")
     end
-    if stripped then
-        for sec, n in pairs(stripped) do
-            queue_roll(id, string.format("  - %s x%s", sec, n), "gray")
-        end
-    end
+    queue_stripped(id, stripped)
     if result.skip then
         return
     end
@@ -449,9 +457,13 @@ local function flush_open_loot()
         return
     end
     local partner = gui.GetPartner and gui:GetPartner()
-    if partner and partner.id then
-        flush_roll(partner:id())
+    if not (partner and partner.id) then
+        return
     end
+    -- Death spawn can land after try_spawn_ammo. Catch leftovers here
+    -- before the loot UI builds.
+    queue_stripped(partner:id(), strip_degraded_ammo(partner))
+    flush_roll(partner:id())
 end
 
 local function on_save_state(m_data)

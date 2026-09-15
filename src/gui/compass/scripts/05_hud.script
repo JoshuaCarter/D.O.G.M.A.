@@ -26,6 +26,11 @@ local MARKER_SHADOW_ALPHA = V.TC_MARKER_SHADOW_ALPHA
 local MARKER_SHADOW_OFF = V.TC_MARKER_SHADOW_OFFSET
 
 local CREATE_BUDGET = V.TC_CREATE_BUDGET
+local HL_RGB = {
+	primary = { 255, 240, 0 },
+	secondary = { 255, 255, 255 },
+	turnin = { 0, 255, 0 },
+}
 
 HUD = nil
 enabled = true
@@ -181,6 +186,7 @@ function TCHud:InitControls()
 	-- Hide the outer 12.5% each side (same 75% band as before, now local).
 	self.band_inset = self.compass_width * 0.125
 	self.chrome_a = -1
+	self.marker_a = -1
 
 	self:UpdateLayout()
 	dogma.log.log(CONFIG.MOD_ID, string.format(
@@ -264,11 +270,41 @@ function TCHud:ApplyChromeAlpha()
 	dogma.log.log(CONFIG.MOD_ID, "chrome_a=" .. tostring(a))
 end
 
+function TCHud:ApplyMarkerAlpha()
+	local a = CONFIG.loaded.marker_a or 255
+	if a < 0 then
+		a = 0
+	elseif a > 255 then
+		a = 255
+	end
+	if a == self.marker_a then
+		return
+	end
+	self.marker_a = a
+	local list = zzzz_dogma_gui_compass_04_markers.list
+	if list then
+		for _, spots in pairs(list) do
+			for _, entry in pairs(spots) do
+				entry.applied_alpha = -1
+			end
+		end
+	end
+	for kind, rgb in pairs(HL_RGB) do
+		local hl = self.highlight[kind]
+		if hl then
+			hl:SetTextureColor(GetARGB(a, rgb[1], rgb[2], rgb[3]))
+		end
+	end
+	self.tmr_markers = 0
+	dogma.log.log(CONFIG.MOD_ID, "marker_a=" .. tostring(a))
+end
+
 function TCHud:UpdateLayout()
 	self.compass_y = CONFIG.loaded.compass_y
 
 	self.compass:SetWndPos(self.pos:set(self.compass_x, self.compass_y))
 	self:ApplyChromeAlpha()
+	self:ApplyMarkerAlpha()
 
 	self.tmr_markers = 0 -- marker rows move with the strip
 end
@@ -504,6 +540,10 @@ function TCHud:RefreshMarker(entry, cam_pos, groups, y_marker)
 
 	local distance = floor(wpos:distance_to(cam_pos))
 	local alpha = tracked and 255 or utils.calc_alpha(distance, group.distance)
+	local max_a = self.marker_a or 255
+	if max_a < 255 then
+		alpha = floor(alpha * max_a / 255)
+	end
 
 	if alpha <= 0 then
 		return self:HideMarker(entry)
@@ -549,11 +589,20 @@ function TCHud:RefreshMarker(entry, cam_pos, groups, y_marker)
 			color = GetARGB(alpha, 255, 255, 255)
 		end
 		ui:SetTextureColor(color)
+		local txt = ui:TextControl()
+		if txt and txt.SetTextColor then
+			txt:SetTextColor(GetARGB(alpha, 255, 255, 255))
+		end
 
 		if entry.arrow then entry.arrow:SetTextureColor(color) end
 
 		if entry.shadow then
-			entry.shadow:SetTextureColor(GetARGB(floor(alpha * MARKER_SHADOW_ALPHA / 255), 0, 0, 0))
+			local sa = floor(alpha * MARKER_SHADOW_ALPHA / 255)
+			entry.shadow:SetTextureColor(GetARGB(sa, 0, 0, 0))
+			local st = entry.shadow:TextControl()
+			if st and st.SetTextColor then
+				st:SetTextColor(GetARGB(sa, 0, 0, 0))
+			end
 		end
 	end
 

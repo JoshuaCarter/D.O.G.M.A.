@@ -40,6 +40,10 @@ local function in_level()
     return level and level.present and level.present()
 end
 
+local function not_in_level()
+    return not in_level()
+end
+
 -- MCM: functor_ui {fn} -> fn(UI_MCM). zzzz_ not safe to index at gather.
 local function start_layout(gui)
     local pos = rawget(_G, "zzzz_dogma_gui_stalker_id_position")
@@ -74,6 +78,13 @@ function on_mcm_load(options)
                 type = "button",
                 functor_ui = { start_layout },
                 precondition = { in_level },
+            },
+            {
+                id = "position_need_game",
+                type = "desc",
+                text = "ui_mcm_dogma_gui_stalker_id_position_need_game",
+                clr = { 255, 255, 220, 0 },
+                precondition = { not_in_level },
             },
             {
                 id = "show_always",

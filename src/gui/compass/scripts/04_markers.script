@@ -14,10 +14,19 @@ local CAMPFIRE_LIT = "campfire_lit"
 local CAMPFIRE_UNLIT = "campfire_unlit"
 local COMPANION_SPOT = "companion_squad"
 local TURNIN_SPOT = "quest_turnin"
+local TRACKED_SPOT = "quest_tracked"
 local cf_ids = {}
 local cf_seen = {}
 local cmp_seen = {}
 local turnin_seen = {}
+local tracked_synth_id = nil
+
+local QUEST_SPOTS = {
+	storyline_task_location = "primary",
+	storyline_task_location_complex_timer = "primary",
+	secondary_task_location = "secondary",
+	secondary_task_location_complex_timer = "secondary",
+}
 
 local function make_entry(id, spot, category)
 	local group = defs.category_groups[category]
@@ -110,6 +119,7 @@ function reset()
 	cf_seen = {}
 	cmp_seen = {}
 	turnin_seen = {}
+	tracked_synth_id = nil
 end
 
 local function probe_transitions(id)
@@ -147,7 +157,7 @@ function drop_stale_spots()
 	for id, spots in pairs(list) do
 		for spot in pairs(spots) do
 			-- Lit/unlit is owned by sync_campfires. Map spots lag the live fire.
-			if spot ~= CAMPFIRE_LIT and spot ~= CAMPFIRE_UNLIT and spot ~= COMPANION_SPOT and spot ~= TURNIN_SPOT then
+			if spot ~= CAMPFIRE_LIT and spot ~= CAMPFIRE_UNLIT and spot ~= COMPANION_SPOT and spot ~= TURNIN_SPOT and spot ~= TRACKED_SPOT then
 				if level.map_has_object_spot(id, spot) == 0 then
 					remove(id, spot)
 				end
@@ -349,6 +359,81 @@ function sync_turnins()
 	end
 end
 
+local function task_has_quest_spot(id)
+	local spots = list[id]
+	if not spots then
+		return false
+	end
+	for spot, entry in pairs(spots) do
+		if spot ~= TRACKED_SPOT then
+			local cat = defs.spot_categories[spot] or entry.category
+			if cat == "primary" or cat == "secondary" then
+				return true
+			end
+		end
+	end
+	return false
+end
+
+-- Engine CGameTask spots often skip actor_map_location_added. Probe + synth diamond.
+function sync_tracked_task()
+	local actor = db.actor
+	local tm = task_manager and task_manager.get_task_manager()
+	if not (actor and tm and tm.task_info) then
+		if tracked_synth_id then
+			remove(tracked_synth_id, TRACKED_SPOT)
+			tracked_synth_id = nil
+		end
+		return
+	end
+
+	local tsk
+	for _, t in pairs(tm.task_info) do
+		if t.current_target and t.t and actor:is_active_task(t.t) then
+			tsk = t
+			break
+		end
+	end
+
+	local target = tsk and tsk.current_target
+	if tracked_synth_id and tracked_synth_id ~= target then
+		remove(tracked_synth_id, TRACKED_SPOT)
+		dogma.log.log(CONFIG.MOD_ID, "tracked synth " .. tostring(tracked_synth_id) .. " gone")
+		tracked_synth_id = nil
+	end
+
+	if not target then
+		return
+	end
+
+	if task_has_quest_spot(target) then
+		if list[target] and list[target][TRACKED_SPOT] then
+			remove(target, TRACKED_SPOT)
+			tracked_synth_id = nil
+		end
+		return
+	end
+
+	for spot, cat in pairs(QUEST_SPOTS) do
+		if level.map_has_object_spot(target, spot) ~= 0 then
+			add(target, spot, cat)
+			dogma.log.log(CONFIG.MOD_ID, "tracked probe " .. tostring(target) .. " " .. spot)
+			if list[target] and list[target][TRACKED_SPOT] then
+				remove(target, TRACKED_SPOT)
+				tracked_synth_id = nil
+			end
+			return
+		end
+	end
+
+	local cat = tsk.storyline and "primary" or "secondary"
+	if not (list[target] and list[target][TRACKED_SPOT]) then
+		add(target, TRACKED_SPOT, cat)
+		tracked_synth_id = target
+		dogma.log.log(CONFIG.MOD_ID, "tracked synth " .. tostring(target) .. " " .. cat)
+	end
+end
+
 function on_map_location_added(binder, spot, id)
 		if defs.blacklisted_spots[spot] then return end
 
@@ -363,7 +448,7 @@ function save_state(m_data)
 		local out
 
 		for spot, entry in pairs(spots) do
-			if spot ~= COMPANION_SPOT and spot ~= TURNIN_SPOT then
+			if spot ~= COMPANION_SPOT and spot ~= TURNIN_SPOT and spot ~= TRACKED_SPOT then
 				out = out or {}
 				out[spot] = entry.category
 			end
@@ -382,6 +467,7 @@ function load_state(m_data)
 	cf_seen = {}
 	cmp_seen = {}
 	turnin_seen = {}
+	tracked_synth_id = nil
 
 	local saved = m_data.dogma_gui_compass_markers or m_data.tc_markers or m_data.init_markers
 	if not saved then return end

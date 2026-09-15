@@ -334,6 +334,7 @@ function TCHud:Update()
 		zzzz_dogma_gui_compass_04_markers.sync_campfires()
 		zzzz_dogma_gui_compass_04_markers.sync_companions()
 		zzzz_dogma_gui_compass_04_markers.sync_turnins()
+		zzzz_dogma_gui_compass_04_markers.sync_tracked_task()
 	end
 
 	if not self.visible then return end
@@ -369,8 +370,8 @@ function TCHud:UpdateCompass(cam_dir)
 		if on_strip and c.fade then
 			a = tick_fade(abs(x - mid))
 		end
-		local max_a = self.chrome_a
-		if max_a and max_a < 255 then
+		local max_a = self.chrome_a or 255
+		if max_a < 255 then
 			a = floor(a * max_a / 255)
 		end
 
@@ -483,6 +484,8 @@ function TCHud:RefreshMarkerState(cam_pos)
 	local style = self.style
 	local groups = CONFIG.loaded.groups
 
+	zzzz_dogma_gui_compass_04_markers.sync_tracked_task()
+
 	local target = active_task_target()
 	if target ~= self.task_target then
 		self.task_target = target
@@ -527,7 +530,13 @@ function TCHud:RefreshMarker(entry, cam_pos, groups, y_marker)
 		group_name = utils.squad_mcm_group(entry.id)
 	end
 	local group = groups[group_name]
-	local tracked = CONFIG.loaded.quest_always and self.task_target and entry.id == self.task_target
+	local on_task = self.task_target and entry.id == self.task_target
+	local is_quest = group_name == "quest" or group_name == "turnin"
+	-- quest_always is the diamond, not every icon parked on that NPC.
+	if on_task and not is_quest then
+		return self:HideMarker(entry)
+	end
+	local tracked = CONFIG.loaded.quest_always and on_task and is_quest
 
 	if not tracked and not (group and group.enabled) then
 		return self:HideMarker(entry)
@@ -709,6 +718,10 @@ function TCHud:RefreshMarkerPositions(cam_pos, cam_dir)
 						end
 
 						hl:SetWndPos(pos:set(x + entry.x_off, entry.y))
+						local rgb = HL_RGB[entry.category]
+						if rgb then
+							hl:SetTextureColor(GetARGB(entry.alpha, rgb[1], rgb[2], rgb[3]))
+						end
 						highlight = entry.category
 					end
 				end

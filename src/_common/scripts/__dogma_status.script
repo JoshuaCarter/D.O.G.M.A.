@@ -10,6 +10,9 @@
     is_sprinting()  — IsMoveState("mcSprint")
     is_talking()    — actor:is_talking()
     health()        — actor.health, 0–1
+    hunger()        — 1 - satiety, 0–1 (higher = hungrier)
+    thirst()        — water deprivation, 0–1 (higher = thirstier)
+    sleep()         — sleep deprivation, 0–1 (higher = sleepier)
     psy_health()    — actor.psy_health, 0–1
     stamina()       — actor.power, 0–1
     stamina_max()   — conditions().GetMaxPower(), 0–1 (cap shrinks with time/weight)
@@ -390,6 +393,45 @@ end
 function health()
     local actor = db and db.actor
     return clamp01(actor and actor.health)
+end
+
+-- Missing actor / script = 0 so a later real value cannot look like recovery.
+function hunger()
+    local actor = db and db.actor
+    if not actor then
+        return 0
+    end
+    return clamp01(1 - (actor.satiety or 0))
+end
+
+local try_need_fn = function(fn)
+    return fn()
+end
+
+function thirst()
+    local ast = rawget(_G, "actor_status_thirst")
+    local fn = ast and ast.get_water_deprivation
+    if not fn then
+        return 0
+    end
+    local ok, v = pcall(try_need_fn, fn)
+    if not (ok and type(v) == "number") then
+        return 0
+    end
+    return clamp01(v)
+end
+
+function sleep()
+    local ast = rawget(_G, "actor_status_sleep")
+    local fn = ast and ast.get_sleep_deprivation
+    if not fn then
+        return 0
+    end
+    local ok, v = pcall(try_need_fn, fn)
+    if not (ok and type(v) == "number") then
+        return 0
+    end
+    return clamp01(v)
 end
 
 function psy_health()

@@ -3,8 +3,8 @@
 
 	Every 500ms, if not in combat: write `save safety_save` when
 	  - always_min minutes have passed since the last one (0 = off), or
-	  - event_min minutes have passed and inventory / full heal / eat / drink
-	    is happening on this tick.
+	  - event_min minutes have passed and inventory / full heal / hunger /
+	    thirst / sleep recovery is happening on this tick.
 	Last-save time is this load only (not reset on pause menu or level change).
 ]]
 
@@ -12,13 +12,15 @@ local CONFIG = _G.dogma_game_safety_save_conf
 
 local TICK_MS = 500
 local MIN_MS = 60 * 1000
+local NEED_EPS = 0.001
 
 local next_at = 0
 local last_save_ms = 0
 local was_inv = false
-local was_eating = false
-local was_drinking = false
 local was_hp = 1
+local was_hunger = 0
+local was_thirst = 0
+local was_sleep = 0
 
 local function log(msg)
 	if CONFIG.loaded.debug_log then
@@ -37,24 +39,27 @@ local function on_option_change()
 	CONFIG.loaded.on_heal = dogma.mcm.bool(CONFIG.MOD_ID, "on_heal", CONFIG.DEFAULTS.on_heal)
 	CONFIG.loaded.on_eat = dogma.mcm.bool(CONFIG.MOD_ID, "on_eat", CONFIG.DEFAULTS.on_eat)
 	CONFIG.loaded.on_drink = dogma.mcm.bool(CONFIG.MOD_ID, "on_drink", CONFIG.DEFAULTS.on_drink)
+	CONFIG.loaded.on_sleep = dogma.mcm.bool(CONFIG.MOD_ID, "on_sleep", CONFIG.DEFAULTS.on_sleep)
 	log(string.format(
-		"options: always_min=%s event_min=%s show_text=%s inv=%s heal=%s eat=%s drink=%s",
+		"options: always_min=%s event_min=%s show_text=%s inv=%s heal=%s eat=%s drink=%s sleep=%s",
 		tostr(CONFIG.loaded.always_min),
 		tostr(CONFIG.loaded.event_min),
 		tostr(CONFIG.loaded.show_text),
 		tostr(CONFIG.loaded.on_inventory),
 		tostr(CONFIG.loaded.on_heal),
 		tostr(CONFIG.loaded.on_eat),
-		tostr(CONFIG.loaded.on_drink)
+		tostr(CONFIG.loaded.on_drink),
+		tostr(CONFIG.loaded.on_sleep)
 	))
 end
 
 local function reset_edges()
 	next_at = 0
 	was_inv = dogma.status.is_inv_open()
-	was_eating = dogma.status.is_eating()
-	was_drinking = dogma.status.is_drinking()
 	was_hp = dogma.status.health()
+	was_hunger = dogma.status.hunger()
+	was_thirst = dogma.status.thirst()
+	was_sleep = dogma.status.sleep()
 end
 
 local function reset_session()
@@ -89,23 +94,33 @@ local function actor_on_update()
 	end
 
 	local inv = dogma.status.is_inv_open()
-	local eating = dogma.status.is_eating()
-	local drinking = dogma.status.is_drinking()
 	local hp = dogma.status.health()
+	local hunger = dogma.status.hunger()
+	local thirst = dogma.status.thirst()
+	local sleep = dogma.status.sleep()
 	local reason
 	if CONFIG.loaded.on_inventory and inv and not was_inv then
 		reason = "inventory"
-	elseif CONFIG.loaded.on_eat and eating and not was_eating then
+	elseif CONFIG.loaded.on_eat and was_hunger - hunger >= NEED_EPS then
 		reason = "eat"
-	elseif CONFIG.loaded.on_drink and drinking and not was_drinking then
+	elseif CONFIG.loaded.on_drink and was_thirst - thirst >= NEED_EPS then
 		reason = "drink"
+	elseif CONFIG.loaded.on_sleep and was_sleep - sleep >= NEED_EPS then
+		reason = "sleep"
 	elseif CONFIG.loaded.on_heal and hp >= 1 and was_hp < 1 then
 		reason = "heal"
 	end
+	if reason then
+		log(string.format(
+			"edge %s hp=%.3f->%.3f hunger=%.3f->%.3f thirst=%.3f->%.3f sleep=%.3f->%.3f",
+			reason, was_hp, hp, was_hunger, hunger, was_thirst, thirst, was_sleep, sleep
+		))
+	end
 	was_inv = inv
-	was_eating = eating
-	was_drinking = drinking
 	was_hp = hp
+	was_hunger = hunger
+	was_thirst = thirst
+	was_sleep = sleep
 
 	local elapsed = now - last_save_ms
 	local always_min = CONFIG.loaded.always_min

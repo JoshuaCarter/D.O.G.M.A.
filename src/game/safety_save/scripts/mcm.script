@@ -1,6 +1,6 @@
 -- game/safety_save conf
 -- always_min: force a safety_save after this many minutes (0 = off).
--- event_min: min minutes since last safety_save before inventory / full heal / eat / drink can save.
+-- event_min: min minutes since last safety_save before inventory / full heal / hunger / thirst / sleep can save.
 
 _G.dogma_game_safety_save_conf = {
 	MOD_ID = "dogma/game/safety_save",
@@ -13,6 +13,7 @@ _G.dogma_game_safety_save_conf = {
 		on_heal = true,
 		on_eat = true,
 		on_drink = true,
+		on_sleep = true,
 	},
 	loaded = {
 		debug_log = false,
@@ -92,6 +93,13 @@ function on_mcm_load(options)
 				val = 1,
 				def = CONFIG.DEFAULTS.on_drink,
 				hint = "dogma_game_safety_save_on_drink",
+			},
+			{
+				id = "on_sleep",
+				type = "check",
+				val = 1,
+				def = CONFIG.DEFAULTS.on_sleep,
+				hint = "dogma_game_safety_save_on_sleep",
 			},
 		}),
 	})

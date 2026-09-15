@@ -14,13 +14,9 @@
     holsters first (engine ToggleDevice otherwise Activate()s knife /
     bolt / pistol), then shows the detector once RH is empty.
 
-    Inv close, empty RH: engine NeedActivation => ShowDevice(true)
-    (sndShow + anm_show_fast) on the same hands as the backpack script
-    anim. ShowDevice only runs if GetState==eHidden, so we switch_state
-    eIdle while hidden (no attach, no force_hide: detach plays
-    hand_idle_doun and freezes the bag). Wait HUD/RH/PDA. Then eHidden
-    and show_detector(false). GetState lags SwitchState: never flap
-    until GetState is actually eHidden. eIdle is a lie, not "already out".
+    Inv / loot / trade / talk / craft: note open, note closing, restore
+    only after closed. Do not touch detector or HUD hands while the
+    bag open/close script anim owns them.
 ]]
 
 local CONFIG = _G.dogma_input_last_equip_conf
@@ -36,12 +32,14 @@ local SLOT_PDA = 8
 local SLOT_DEVICE = 9
 local SLOT_PISTOL = 16
 local WATCH_MS = 1000
-local HUD_IDLE = 0
 local HUD_SHOWING = 1
 local HUD_HIDING = 2
 local HUD_HIDDEN = 3
--- ponytail: hide poll can miss (get_state 65535); cap then restore anyway
-local HIDE_WAIT_MS = 3000
+-- ponytail: bag close length is weight/anim, not a constant. Wait for
+-- hud busy to start then end. These are only start-grace and stuck cap.
+local BAG_START_MS = 250
+local HIDE_STUCK_MS = 8000
+local HIDE_WAIT_MS = HIDE_STUCK_MS
 local TELEPORT_DIST_SQR = 12 * 12
 local SAVE_KEY = "dogma_input_last_equip_slot"
 local SAVE_KEY_PREV = "dogma_input_last_equip_slot_prev"
@@ -103,11 +101,8 @@ local pda_lower_wait = false
 local pending_site = nil
 local pending_allow_pda = nil
 local pending_until = nil
-local pending_suppressed = false
-local pending_skip_frame = false
-local pending_flap = false
-local pending_flap_site = nil
-local pending_flap_until = nil
+local pending_seen_busy = false
+local pending_started = nil
 local device_show_sent = false
 local seq_t0 = nil
 
@@ -142,10 +137,6 @@ end
 
 local try_hud_motion_allowed = function()
     return game.hud_motion_allowed()
-end
-
-local try_switch_state = function(obj, st)
-    obj:switch_state(st)
 end
 
 local try_position = function(actor)
@@ -199,11 +190,8 @@ local function clear_pending()
     pending_site = nil
     pending_allow_pda = nil
     pending_until = nil
-    pending_suppressed = false
-    pending_skip_frame = false
-    pending_flap = false
-    pending_flap_site = nil
-    pending_flap_until = nil
+    pending_seen_busy = false
+    pending_started = nil
     device_show_sent = false
 end
 
@@ -314,24 +302,6 @@ local function detector_state()
     end
 end
 
--- ShowDevice(true) only if GetState==eHidden. eIdle blocks it without
--- attach. Never force_hide here: detach_item_idx(1) with empty RH plays
--- hand_idle_doun and overwrites the backpack script anim.
-local function block_engine_fast_show()
-    if detector_state() ~= HUD_HIDDEN then
-        return
-    end
-    local item = detector_item()
-    if not item then
-        return
-    end
-    pcall(try_switch_state, item, HUD_IDLE)
-    if not pending_suppressed then
-        pending_suppressed = true
-        log("block engine ShowDevice(true): hidden -> idle")
-    end
-end
-
 local function show_detector_flap(site)
     device_show_sent = true
     log_ms(string.format(
@@ -339,25 +309,6 @@ local function show_detector_flap(site)
         site, tostring(last_x), tostring(last_xx)
     ))
     pcall(try_show_detector, db.actor)
-end
-
--- SwitchState is queued. show_detector only if GetState()==eHidden.
--- No force_hide: after backpack that detach is pointless, during it
--- it freezes the bag.
-local function restart_detector(site)
-    local st = detector_state()
-    if st and st ~= HUD_HIDDEN then
-        log(string.format("restart detector state=%s -> wait hidden then flap", tostring(st)))
-        local item = detector_item()
-        if item then
-            pcall(try_switch_state, item, HUD_HIDDEN)
-        end
-        pending_flap = true
-        pending_flap_site = site
-        pending_flap_until = time_global() + HIDE_WAIT_MS
-        return
-    end
-    show_detector_flap(site)
 end
 
 -- Detector out + empty RH is still slot 0. Treat it as last_x = device.
@@ -441,7 +392,12 @@ local function activate_target(target, site)
         if holster_hands(site) then
             return true
         end
-        restart_detector(site)
+        local st = detector_state()
+        if st and st ~= HUD_HIDDEN then
+            log(sformat("skip(%s): detector already state=%s", site, tostr(st)))
+            return true
+        end
+        show_detector_flap(site)
         return true
     end
     local slot = current_slot()
@@ -472,12 +428,10 @@ local function queue_hide_wait(site, allow_pda)
     end
     pending_site = site
     pending_allow_pda = allow_pda
-    pending_until = time_global() + HIDE_WAIT_MS
-    pending_skip_frame = true
+    pending_started = time_global()
+    pending_until = pending_started + HIDE_STUCK_MS
+    pending_seen_busy = false
     log_ms("restore wait hide " .. site)
-    if restore_target(allow_pda) == SLOT_DEVICE then
-        block_engine_fast_show()
-    end
 end
 
 local function arm_watch(site, target)
@@ -485,37 +439,6 @@ local function arm_watch(site, target)
     watch_slot = target
     extra_used = false
     log("watch start " .. site)
-end
-
-local function tick_pending_flap()
-    if not pending_flap then
-        return
-    end
-    if slot_input_down() then
-        log("restore flap cancel: player slot key")
-        pending_flap = false
-        pending_flap_site = nil
-        pending_flap_until = nil
-        return
-    end
-    local st = detector_state()
-    local timed_out = pending_flap_until and time_global() >= pending_flap_until
-    if st and st ~= HUD_HIDDEN and not timed_out then
-        return
-    end
-    local site = pending_flap_site or "flap"
-    pending_flap = false
-    pending_flap_site = nil
-    pending_flap_until = nil
-    if timed_out then
-        log_ms("restore flap wait timeout " .. site)
-        local item = detector_item()
-        if item then
-            pcall(try_switch_state, item, HUD_HIDDEN)
-        end
-    end
-    show_detector_flap(site)
-    arm_watch(site, SLOT_DEVICE)
 end
 
 local function start_restore(site, allow_pda, skip_hide)
@@ -547,9 +470,6 @@ local function start_restore(site, allow_pda, skip_hide)
     if not activate_target(target, site) then
         return
     end
-    if pending_flap then
-        return
-    end
     arm_watch(site, target)
 end
 
@@ -572,7 +492,7 @@ local function tick_watch()
                 log(string.format("engine flip %s -> device, holster", tostring(slot)))
             end
             pcall(try_activate_slot, db.actor, 0)
-        elseif not detector_shown() and not device_show_sent and not pending_flap then
+        elseif not detector_shown() and not device_show_sent then
             activate_target(SLOT_DEVICE, "engine_flip")
         end
     elseif want and held_slot() ~= want and not extra_used then
@@ -738,9 +658,6 @@ local function tick_pending_restore()
     if not pending_site then
         return
     end
-    if restore_target(pending_allow_pda) == SLOT_DEVICE then
-        block_engine_fast_show()
-    end
     if slot_input_down() then
         log("restore wait cancel: player slot key")
         clear_pending()
@@ -751,21 +668,30 @@ local function tick_pending_restore()
         clear_pending()
         return
     end
-    local timed_out = pending_until and time_global() >= pending_until
-    if hud_is_busy() and not timed_out then
-        pending_skip_frame = false
-        return
-    end
-    if pending_skip_frame then
-        pending_skip_frame = false
-        return
+    local now = time_global()
+    local stuck = pending_until and now >= pending_until
+    local busy = hud_is_busy()
+    if busy then
+        if not pending_seen_busy then
+            pending_seen_busy = true
+            log_ms("restore wait hide busy")
+        end
+        if not stuck then
+            return
+        end
+    elseif not pending_seen_busy then
+        if pending_started and now < pending_started + BAG_START_MS then
+            return
+        end
+        log_ms("restore wait hide no bag")
     end
     local site = pending_site
     local allow = pending_allow_pda
     local det_st = detector_state()
+    local saw_busy = pending_seen_busy
     clear_pending()
-    if timed_out then
-        log_ms(string.format("restore wait hide timeout %s det=%s", site, tostring(det_st)))
+    if stuck then
+        log_ms(string.format("restore wait hide timeout %s det=%s busy=%s", site, tostring(det_st), tostring(saw_busy)))
     else
         log_ms(string.format("restore wait hide done %s det=%s", site, tostring(det_st)))
     end
@@ -898,7 +824,6 @@ local function on_actor_on_update()
     flush_pda_lower()
     track_slot()
     tick_pending_restore()
-    tick_pending_flap()
     tick_watch()
     tick_teleport()
 end

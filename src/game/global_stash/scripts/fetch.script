@@ -1,30 +1,25 @@
 --[[
-	Fetch task QoL. Same two gates as TAS fetch_anomalous_stash.script:
-	1. z_fetch_shows_count.extend_news_text: append stash count
-	2. Bring the bolt online on PDA taskboard init and Dialog show
-	   so iterate_inventory_box can see items.
+	Fetch stash count.
+
+	Real path (traced):
+	  trigger_fetch_func
+	    -> tasks_fetch.postpone_fetch_for_next_frame
+	      -> z_fetch_shows_count.extend_news_text
+	         OR a_ui_pda_inventory_cache.get_cached_fetch_count_text
+	      -> give_talk_message2
+	  iTheon/Gamma intercepts give_talk_message2 into task details.
+	  Vanilla dialog shows that same news text.
+
+	Both counters iterate m_data.workshop_stashes values (bolt ids)
+	that are online. We register there and plant bolts first.
 ]]
 
 local MOD_ID = "dogma/game/global_stash"
 
-local news_hooked = false
-local board_hooked = false
-local orig_extend_news
-local orig_board_init
-local count_sec
-local count_n
-
-local try_section = function(item)
-	return item:section()
-end
-
-local try_uses = function(item)
-	return item:get_remaining_uses()
-end
-
-local try_iterate = function(box, fn)
-	box:iterate_inventory_box(fn, box)
-end
+local orig_news
+local orig_cached
+local orig_postpone
+local logged = {}
 
 local function log(msg, color)
 	dogma.log.log(MOD_ID, tostring(msg), color)
@@ -34,122 +29,89 @@ local function get_api()
 	return _G.dogma_game_global_stash
 end
 
-local function find_needed(_npc, item)
-	local ok_s, sec = pcall(try_section, item)
-	if not (ok_s and sec == count_sec) then
-		return
-	end
-	local ok_u, uses = pcall(try_uses, item)
-	if ok_u and uses and uses > 1 then
-		count_n = count_n + uses
-	else
-		count_n = count_n + 1
-	end
-end
-
-local function count_in_box(box, section)
-	count_sec = section
-	count_n = 0
-	if not box then
-		return 0
-	end
-	local ok = pcall(try_iterate, box, find_needed)
-	if not ok then
-		log("fetch count iterate fail", "red")
-	end
-	return count_n
-end
-
-local function extend_news(text, section, amount)
-	text = orig_extend_news(text, section, amount)
+local function before_count(why)
 	local api = get_api()
 	if api and api.ensure_online then
 		api.ensure_online()
 	end
-	local boxes = api and api.boxes_go and api.boxes_go()
-	if not (boxes and boxes[1]) then
-		return text
-	end
-	local cnt = 0
-	for i = 1, #boxes do
-		cnt = cnt + count_in_box(boxes[i], section)
-	end
-	local clr_number
-	if cnt == 0 then
-		clr_number = utils_xml.get_color("d_red")
-	elseif amount and cnt >= amount then
-		clr_number = utils_xml.get_color("pda_green")
-	else
-		clr_number = utils_xml.get_color("pda_yellow")
-	end
-	local clr_txt = utils_xml.get_color("pda_white")
-	log(string.format("fetch news sec=%s stash=%s need=%s", tostring(section), tostring(cnt), tostring(amount)))
-	return text .. "\\n" .. string.format(
-		game.translate_string("st_dogma_global_stash_fetch_count"),
-		clr_txt,
-		clr_number,
-		cnt,
-		clr_txt
-	)
-end
-
-local function bring_online(why)
-	local api = get_api()
-	if not (api and api.ensure_online) then
-		return
-	end
-	log("fetch bring " .. tostring(why))
-	api.ensure_online()
-end
-
-local function on_gui_show(name)
-	if name == "Dialog" then
-		bring_online("dialog")
+	if not logged[why] then
+		logged[why] = true
+		log("fetch count via " .. tostring(why))
 	end
 end
 
-local function board_init(self)
-	orig_board_init(self)
-	bring_online("taskboard")
+local function wrapped_news(text, section, amount, task_id)
+	before_count("news")
+	return orig_news(text, section, amount, task_id)
+end
+
+local function wrapped_cached(a, b, c, d)
+	before_count("cached")
+	return orig_cached(a, b, c, d)
+end
+
+local function wrapped_postpone(task_id, section, amount)
+	before_count("postpone")
+	return orig_postpone(task_id, section, amount)
 end
 
 local function hook_news()
-	if news_hooked then
-		return true
-	end
-	if not (z_fetch_shows_count and z_fetch_shows_count.extend_news_text) then
+	local z = z_fetch_shows_count
+	if not (z and z.extend_news_text) then
+		log("fetch news skip")
 		return false
 	end
-	orig_extend_news = z_fetch_shows_count.extend_news_text
-	z_fetch_shows_count.extend_news_text = extend_news
-	news_hooked = true
+	if z.extend_news_text == wrapped_news then
+		return true
+	end
+	orig_news = z.extend_news_text
+	z.extend_news_text = wrapped_news
 	log("fetch news hooked")
 	return true
 end
 
-local function hook_board()
-	if board_hooked then
-		return true
-	end
-	local tab = ui_pda_taskboard_tab and ui_pda_taskboard_tab.pda_taskboard_tab
-	if not (tab and tab.InitControls) then
+local function hook_cached()
+	local a = a_ui_pda_inventory_cache
+	if not (a and a.get_cached_fetch_count_text) then
+		log("fetch cached skip")
 		return false
 	end
-	orig_board_init = tab.InitControls
-	tab.InitControls = board_init
-	board_hooked = true
-	log("fetch taskboard hooked")
+	if a.get_cached_fetch_count_text == wrapped_cached then
+		return true
+	end
+	orig_cached = a.get_cached_fetch_count_text
+	a.get_cached_fetch_count_text = wrapped_cached
+	log("fetch cached hooked")
+	return true
+end
+
+local function hook_postpone()
+	if not (tasks_fetch and tasks_fetch.postpone_fetch_for_next_frame) then
+		log("fetch postpone skip")
+		return false
+	end
+	if tasks_fetch.postpone_fetch_for_next_frame == wrapped_postpone then
+		return true
+	end
+	orig_postpone = tasks_fetch.postpone_fetch_for_next_frame
+	tasks_fetch.postpone_fetch_for_next_frame = wrapped_postpone
+	log("fetch postpone hooked")
+	return true
+end
+
+local function hook_all()
+	hook_news()
+	hook_cached()
+	hook_postpone()
+	local api = get_api()
+	if api and api.register_fetch then
+		api.register_fetch()
+	end
 	return true
 end
 
 function on_game_start()
-	if not hook_news() then
-		log("fetch skip: no z_fetch_shows_count")
-		return
-	end
-	RegisterScriptCallback("GUI_on_show", on_gui_show)
-	if not hook_board() then
-		log("fetch taskboard skip: no ui_pda_taskboard_tab", "yellow")
-	end
+	RegisterScriptCallback("on_game_load", hook_all)
+	CreateTimeEvent("dogma_game_global_stash", "fetch_late", 0.2, hook_all)
 	log("fetch ready")
 end

@@ -707,11 +707,6 @@ function api.open_at(anchor)
     start_with_bolt("loot", anchor)
 end
 
-function api.box_go()
-    local id = resolve_id(NETS[1])
-    return id and xobject.go(id)
-end
-
 function api.boxes_go()
     local t = {}
     for i = 1, #NETS do
@@ -740,8 +735,32 @@ local function wait_bring()
     return true
 end
 
+local try_alife_state = function()
+    return alife_storage_manager.get_state()
+end
+
+-- z_fetch / PDA cache count hideout boxes via workshop_stashes values.
+-- String keys so HF numeric dummy lookups do not collide.
+function api.register_fetch()
+    local ok, m_data = pcall(try_alife_state)
+    if not (ok and m_data) then
+        return
+    end
+    if not m_data.workshop_stashes then
+        m_data.workshop_stashes = {}
+    end
+    for i = 1, #NETS do
+        local net = NETS[i]
+        local id = resolve_id(net)
+        if m_data.workshop_stashes[net.shared] ~= id then
+            m_data.workshop_stashes[net.shared] = id
+            log("fetch register " .. net.shared .. "=" .. tostring(id))
+        end
+    end
+end
+
 -- TAS fetch QoL: if the bolt is offline, park it under the actor so
--- iterate_inventory_box works for z_fetch_shows_count / taskboard.
+-- iterate_inventory_box works for z_fetch / taskboard.
 -- Same offset as TAS fetch_anomalous_stash: +50x +50z, y = -50.
 function api.ensure_online()
     local actor = db.actor
@@ -781,6 +800,7 @@ function api.ensure_online()
         bringing = false
         bring_ids = {}
     end
+    api.register_fetch()
 end
 
 local function hooked_ui_start(mode, obj)
@@ -873,11 +893,20 @@ local function hooked_get_stashes(range)
             end
         end
     end
-    if not nearest then
-        return stashes
-    end
     for i = 1, #NETS do
-        local bolt = cfs_bolt(NETS[i], nearest)
+        local bolt
+        if nearest then
+            bolt = cfs_bolt(NETS[i], nearest)
+        else
+            local id = resolve_id(NETS[i])
+            if id and xobject.go(id) then
+                local sim = alife()
+                if sim then
+                    pcall(try_online, sim, id)
+                end
+                bolt = id
+            end
+        end
         if bolt and not list_has_id(stashes, bolt) then
             stashes[#stashes + 1] = bolt
         end
@@ -1271,6 +1300,7 @@ local function on_load()
     clear_all_lights()
     log("load, resync")
     sync_sprint()
+    api.register_fetch()
 end
 
 local function on_destroy()
@@ -1416,3 +1446,5 @@ function on_game_start()
     RegisterScriptCallback("actor_on_stash_remove", on_stash_remove)
     log("game/global_stash ready")
 end
+
+hook_cfs()

@@ -27,6 +27,8 @@ local NAME_NEUTRAL_RGB = { 255, 200, 48 }
 local NAME_DEAD_RGB = { 160, 160, 160 }
 local RANK_RGB = { 200, 200, 200 }
 local RANK_DEAD_RGB = { 100, 100, 100 }
+local TEXT_SHADOW_OFF = 1
+local TEXT_SHADOW_A = 140
 
 -- Only two bones: lower-back (outer + pick + LOS) and neck (pick + LOS + line).
 local BONE_NECK = "bip01_neck"
@@ -136,13 +138,15 @@ local function on_option_change()
     CONFIG.loaded.always_show_line = dogma.mcm.bool(id, "always_show_line")
     CONFIG.loaded.always_show_line_binoc = dogma.mcm.bool(id, "always_show_line_binoc")
     CONFIG.loaded.line_a = dogma.mcm.uint(id, "line_a")
+    CONFIG.loaded.text_shadow = dogma.mcm.bool(id, "text_shadow")
     CONFIG.loaded.debug_overlay = dogma.overlay.enabled()
     if not CONFIG.loaded.enabled or not CONFIG.loaded.debug_overlay then
         dogma.overlay.clear(id)
     end
     log("opts min_size_px=" .. tostr(CONFIG.loaded.min_size_px)
         .. " circle_size=" .. tostr(CONFIG.loaded.circle_size)
-        .. " icon_scale=" .. tostr(CONFIG.loaded.icon_scale))
+        .. " icon_scale=" .. tostr(CONFIG.loaded.icon_scale)
+        .. " text_shadow=" .. tostr(CONFIG.loaded.text_shadow))
     if HUD then
         apply_layout()
     end
@@ -156,11 +160,30 @@ local function hide_all_patches(hud)
     end
 end
 
+local function set_id_text(st, sh, text)
+    text = text or ""
+    st:TextControl():SetText(text)
+    if sh then
+        sh:TextControl():SetText(text)
+    end
+end
+
+local function paint_shadow(sh, a)
+    if not sh then
+        return
+    end
+    local sa = floor((a or 0) * TEXT_SHADOW_A / 255)
+    sh:TextControl():SetTextColor(GetARGB(sa, 0, 0, 0))
+end
+
 local function clear_text(hud)
-    hud.name:TextControl():SetText("")
-    hud.rank:TextControl():SetText("")
-    hud.zombified:TextControl():SetText("")
+    set_id_text(hud.name, hud.name_sh, "")
+    set_id_text(hud.rank, hud.rank_sh, "")
+    set_id_text(hud.zombified, hud.zombified_sh, "")
     hud.zombified:Show(false)
+    if hud.zombified_sh then
+        hud.zombified_sh:Show(false)
+    end
 end
 
 local function hide_line(hud)
@@ -185,6 +208,9 @@ local function apply_alphas(mul)
     HUD.name:TextControl():SetTextColor(GetARGB(name_a, name_r, name_g, name_b))
     HUD.rank:TextControl():SetTextColor(GetARGB(rank_a, rank_r, rank_g, rank_b))
     HUD.zombified:TextControl():SetTextColor(GetARGB(icon_a, 255, 255, 255))
+    paint_shadow(HUD.name_sh, name_a)
+    paint_shadow(HUD.rank_sh, rank_a)
+    paint_shadow(HUD.zombified_sh, icon_a)
 
     if shown_faction and HUD.factions[shown_faction] then
         local st = HUD.factions[shown_faction]
@@ -264,10 +290,29 @@ apply_layout = function()
     local cfg = CONFIG.loaded
     local isc = scale_pct(cfg.icon_scale) / 100
 
-    HUD.name:SetWndPos(POS_VEC:set(0, cfg.name_y or 20))
-    HUD.rank:SetWndPos(POS_VEC:set(0, cfg.rank_y or 32))
+    local name_y = cfg.name_y or 20
+    local rank_y = cfg.rank_y or 32
+    local icon_y = cfg.icon_y or 60
+    local shadow = cfg.text_shadow and true or false
+
+    HUD.name:SetWndPos(POS_VEC:set(0, name_y))
+    HUD.rank:SetWndPos(POS_VEC:set(0, rank_y))
     HUD.zombified:SetWndSize(SIZE_VEC:set(UI_WIDTH, PATCH_H * isc))
-    HUD.zombified:SetWndPos(POS_VEC:set(0, cfg.icon_y or 60))
+    HUD.zombified:SetWndPos(POS_VEC:set(0, icon_y))
+
+    if HUD.name_sh then
+        HUD.name_sh:SetWndPos(POS_VEC:set(TEXT_SHADOW_OFF, name_y + TEXT_SHADOW_OFF))
+        HUD.name_sh:Show(shadow)
+    end
+    if HUD.rank_sh then
+        HUD.rank_sh:SetWndPos(POS_VEC:set(TEXT_SHADOW_OFF, rank_y + TEXT_SHADOW_OFF))
+        HUD.rank_sh:Show(shadow)
+    end
+    if HUD.zombified_sh then
+        HUD.zombified_sh:SetWndSize(SIZE_VEC:set(UI_WIDTH, PATCH_H * isc))
+        HUD.zombified_sh:SetWndPos(POS_VEC:set(TEXT_SHADOW_OFF, icon_y + TEXT_SHADOW_OFF))
+        HUD.zombified_sh:Show(shadow and HUD.zombified:IsShown())
+    end
 
     local iw, ih = PATCH_W * isc, PATCH_H * isc
     for i = 1, #FACTION_KEYS do
@@ -306,12 +351,18 @@ function UIStalkerIDHUD:__init() super()
         self.factions[key .. "_dead"] = xml:InitStatic("patch_dead_" .. key, self)
     end
 
+    self.name_sh = xml:InitStatic("name", self)
     self.name = xml:InitStatic("name", self)
+    self.rank_sh = xml:InitStatic("rank", self)
     self.rank = xml:InitStatic("rank", self)
+    self.zombified_sh = xml:InitStatic("zombified", self)
     self.zombified = xml:InitStatic("zombified", self)
 
+    pcall(init_id_text, self.name_sh)
     pcall(init_id_text, self.name)
+    pcall(init_id_text, self.rank_sh)
     pcall(init_id_text, self.rank)
+    pcall(init_id_text, self.zombified_sh)
     pcall(init_id_text, self.zombified)
 
     hide_all_patches(self)
@@ -417,15 +468,18 @@ local function display(faction, name, rank, zombified)
     apply_layout()
 
     if name then
-        HUD.name:TextControl():SetText(name)
+        set_id_text(HUD.name, HUD.name_sh, name)
     end
     if rank then
-        HUD.rank:TextControl():SetText(rank)
+        set_id_text(HUD.rank, HUD.rank_sh, rank)
     end
 
     if zombified then
-        HUD.zombified:TextControl():SetText(zombified_text)
+        set_id_text(HUD.zombified, HUD.zombified_sh, zombified_text)
         HUD.zombified:Show(true)
+        if HUD.zombified_sh then
+            HUD.zombified_sh:Show(CONFIG.loaded.text_shadow and true or false)
+        end
         return
     end
 

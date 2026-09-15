@@ -180,6 +180,7 @@ function TCHud:InitControls()
 
 	-- Hide the outer 12.5% each side (same 75% band as before, now local).
 	self.band_inset = self.compass_width * 0.125
+	self.chrome_a = -1
 
 	self:UpdateLayout()
 	dogma.log.log(CONFIG.MOD_ID, string.format(
@@ -236,10 +237,38 @@ function TCHud:InitShadow(path)
 	return shadow
 end
 
+function TCHud:ApplyChromeAlpha()
+	local a = CONFIG.loaded.compass_a or 255
+	if a < 0 then
+		a = 0
+	elseif a > 255 then
+		a = 255
+	end
+	if a == self.chrome_a then
+		return
+	end
+	self.chrome_a = a
+	if self.static_frame then
+		self.static_frame:SetTextureColor(GetARGB(a, 255, 255, 255))
+	end
+	if self.frame_shadow then
+		self.frame_shadow:SetTextureColor(GetARGB(floor(COMPASS_SHADOW_ALPHA * a / 255), 0, 0, 0))
+	end
+	if self.center_mark then
+		self.center_mark:SetTextureColor(GetARGB(a, 255, 255, 255))
+	end
+	for i = 1, self.cardinal_count do
+		self.cardinals[i].alpha = -1
+	end
+	self.last_h = nil
+	dogma.log.log(CONFIG.MOD_ID, "chrome_a=" .. tostring(a))
+end
+
 function TCHud:UpdateLayout()
 	self.compass_y = CONFIG.loaded.compass_y
 
 	self.compass:SetWndPos(self.pos:set(self.compass_x, self.compass_y))
+	self:ApplyChromeAlpha()
 
 	self.tmr_markers = 0 -- marker rows move with the strip
 end
@@ -303,6 +332,10 @@ function TCHud:UpdateCompass(cam_dir)
 		local a = 255
 		if on_strip and c.fade then
 			a = tick_fade(abs(x - mid))
+		end
+		local max_a = self.chrome_a
+		if max_a and max_a < 255 then
+			a = floor(a * max_a / 255)
 		end
 
 		if on_strip and a > 0 then

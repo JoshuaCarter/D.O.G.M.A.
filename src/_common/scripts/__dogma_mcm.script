@@ -1,17 +1,17 @@
 --[[
-	DOGMA MCM - getters, tree attach, shared Debug page, banner helper.
+    DOGMA MCM - getters, tree attach, shared Debug page, banner helper.
 
-	Private MCM API. MCM scripts: dogma_mcm.*; in-game: dogma.mcm.
-	Debug page is always-on (registered from dogma_mcm.on_mcm_load).
+    Private MCM API. MCM scripts: dogma_mcm.*; in-game: dogma.mcm.
+    Debug page is always-on (registered from dogma_mcm.on_mcm_load).
 
-	Key mirrors: __dogma_key_mirror_mcm (re-exported as key_mirror / migrate_key_to_mirror).
+    Key mirrors: __dogma_key_mirror_mcm (re-exported as key_mirror / migrate_key_to_mirror).
 
-	Tree shape (MCM max 3 levels under the list root):
-	  dogma / <category> / <feature page> / options
-	  dogma / <shared page> / options   -- append() (e.g. Tweaks)
-	Categories are merged across feature scripts via attach().
-	Info-only tweaks share one leaf page via append().
-	Tail order under DOGMA: … categories …, Tweaks, Debug.
+    Tree shape (MCM max 3 levels under the list root):
+      dogma / <category> / <feature page> / options
+      dogma / <shared page> / options   -- append() (e.g. Tweaks)
+    Categories are merged across feature scripts via attach().
+    Info-only tweaks share one leaf page via append().
+    Tail order under DOGMA: … categories …, Tweaks, Debug.
 ]]
 
 local BANNER_LINK = "dogma_mcm_banner"
@@ -22,120 +22,120 @@ local BANNER_CAPTION_CLR = nil
 DEBUG_MOD = "dogma/debug"
 
 local function mods_list_slide_hook(_anchor, handlers)
-	if not BANNER_CAPTION_CLR then
-		BANNER_CAPTION_CLR = GetARGB(255, 96, 160, 255)
-	end
-	handlers.txt:SetText(BANNER_CAPTION)
-	handlers.txt:SetTextColor(BANNER_CAPTION_CLR)
+    if not BANNER_CAPTION_CLR then
+        BANNER_CAPTION_CLR = GetARGB(255, 96, 160, 255)
+    end
+    handlers.txt:SetText(BANNER_CAPTION)
+    handlers.txt:SetTextColor(BANNER_CAPTION_CLR)
 end
 
 local function path(mod_id, key)
-	return tostring(mod_id) .. "/" .. tostring(key)
+    return tostring(mod_id) .. "/" .. tostring(key)
 end
 
 -- CONFIG.MOD_ID "dogma/<cat>/<feat>" → _G.dogma_<cat>_<feat>_conf.DEFAULTS[key]
 local function conf_default(mod_id, key)
-	local feature = tostring(mod_id):match("^dogma/(.+)$")
-	if not feature then
-		return nil
-	end
-	local conf = _G["dogma_" .. feature:gsub("/", "_") .. "_conf"]
-	local defaults = conf and conf.DEFAULTS
-	return defaults and defaults[key]
+    local feature = tostring(mod_id):match("^dogma/(.+)$")
+    if not feature then
+        return nil
+    end
+    local conf = _G["dogma_" .. feature:gsub("/", "_") .. "_conf"]
+    local defaults = conf and conf.DEFAULTS
+    return defaults and defaults[key]
 end
 
 local function get(mod_id, key, default)
-	if default == nil then
-		default = conf_default(mod_id, key)
-	end
-	-- Illegal during *mcm.script load / on_mcm_load gather - fall back to def.
-	if ui_mcm and ui_mcm.is_gathering and ui_mcm.is_gathering() then
-		return default
-	end
-	if ui_mcm then
-		local ok, value = pcall(ui_mcm.get, path(mod_id, key))
-		if ok and value ~= nil then
-			return value
-		end
-		if not ok then
-			return default
-		end
-	end
-	return default
+    if default == nil then
+        default = conf_default(mod_id, key)
+    end
+    -- Illegal during *mcm.script load / on_mcm_load gather - fall back to def.
+    if ui_mcm and ui_mcm.is_gathering and ui_mcm.is_gathering() then
+        return default
+    end
+    if ui_mcm then
+        local ok, value = pcall(ui_mcm.get, path(mod_id, key))
+        if ok and value ~= nil then
+            return value
+        end
+        if not ok then
+            return default
+        end
+    end
+    return default
 end
 
 function bool(mod_id, key, default)
-	local value = get(mod_id, key, default)
-	return value == true or value == 1
+    local value = get(mod_id, key, default)
+    return value == true or value == 1
 end
 
 function number(mod_id, key, default)
-	local value = get(mod_id, key, default)
-	if type(value) == "number" then
-		return value
-	end
-	local n = tonumber(value)
-	if n ~= nil then
-		return n
-	end
-	if type(default) == "number" then
-		return default
-	end
-	local d = tonumber(default)
-	if d ~= nil then
-		return d
-	end
-	return 0
+    local value = get(mod_id, key, default)
+    if type(value) == "number" then
+        return value
+    end
+    local n = tonumber(value)
+    if n ~= nil then
+        return n
+    end
+    if type(default) == "number" then
+        return default
+    end
+    local d = tonumber(default)
+    if d ~= nil then
+        return d
+    end
+    return 0
 end
 
 function float(mod_id, key, default)
-	local value = get(mod_id, key, default)
-	if type(value) == "number" then
-		return value
-	end
-	local n = tonumber(value)
-	if n ~= nil then
-		return n
-	end
-	if type(default) == "number" then
-		return default
-	end
-	local d = tonumber(default)
-	if d ~= nil then
-		return d
-	end
-	return 0
+    local value = get(mod_id, key, default)
+    if type(value) == "number" then
+        return value
+    end
+    local n = tonumber(value)
+    if n ~= nil then
+        return n
+    end
+    if type(default) == "number" then
+        return default
+    end
+    local d = tonumber(default)
+    if d ~= nil then
+        return d
+    end
+    return 0
 end
 
 function int(mod_id, key, default)
-	local value = float(mod_id, key, default)
-	return math.floor(value + 0.5)
+    local value = float(mod_id, key, default)
+    return math.floor(value + 0.5)
 end
 
 function uint(mod_id, key, default)
-	local value = float(mod_id, key, default)
-	return math.max(0, math.floor(value + 0.5))
+    local value = float(mod_id, key, default)
+    return math.max(0, math.floor(value + 0.5))
 end
 
 function byte(mod_id, key, default)
-	local value = float(mod_id, key, default)
-	return math.floor(math.max(0, math.min(255, value + 0.5)))
+    local value = float(mod_id, key, default)
+    return math.floor(math.max(0, math.min(255, value + 0.5)))
 end
 
 function string(mod_id, key, default)
-	local value = get(mod_id, key, default)
-	if value == nil then
-		return nil
-	end
-	return tostring(value)
+    local value = get(mod_id, key, default)
+    if value == nil then
+        return nil
+    end
+    return tostring(value)
 end
 
 function key(mod_id, key, default)
-	local value = tonumber(get(mod_id, key, default))
-	if value == nil or value == -1 then
-		return nil
-	end
-	return value
+    local value = tonumber(get(mod_id, key, default))
+    if value == nil or value == -1 then
+        return nil
+    end
+    return value
 end
 
 --------------------------------------------------------------------------------
@@ -144,575 +144,575 @@ end
 --------------------------------------------------------------------------------
 
 local function keys()
-	return __dogma_key_mirror_mcm
+    return __dogma_key_mirror_mcm
 end
 
 function key_mirror(action, bind_fn)
-	local m = keys()
-	return m and m.key_mirror(action, bind_fn)
+    local m = keys()
+    return m and m.key_mirror(action, bind_fn)
 end
 
 function key_mirror_kb(action, kb)
-	local m = keys()
-	return m and m.key_mirror_kb(action, kb)
+    local m = keys()
+    return m and m.key_mirror_kb(action, kb)
 end
 
 function mirror_spec(spec)
-	local m = keys()
-	return m and m.mirror_spec(spec)
+    local m = keys()
+    return m and m.mirror_spec(spec)
 end
 
 function migrate_key_to_mirror(mod_id, mcm_key, mirror, opts)
-	local m = keys()
-	if m then
-		return m.migrate(mod_id, mcm_key, mirror, opts)
-	end
+    local m = keys()
+    if m then
+        return m.migrate(mod_id, mcm_key, mirror, opts)
+    end
 end
 
 function range(mod_id, min_key, max_key, min_default, max_default, min_floor)
-	local min_val = int(mod_id, min_key, min_default)
-	local max_val = int(mod_id, max_key, max_default)
-	local floor_val = min_floor or 1
+    local min_val = int(mod_id, min_key, min_default)
+    local max_val = int(mod_id, max_key, max_default)
+    local floor_val = min_floor or 1
 
-	if max_val > 0 and min_val >= max_val then
-		min_val = math.max(floor_val, max_val - 1)
-	end
+    if max_val > 0 and min_val >= max_val then
+        min_val = math.max(floor_val, max_val - 1)
+    end
 
-	local result = {
-		min = min_val,
-		max = max_val,
-	}
+    local result = {
+        min = min_val,
+        max = max_val,
+    }
 
-	function result:normalize(value)
-		if self.max <= 0 or self.max <= self.min then
-			return 0
-		end
-		if value < self.min then
-			return 0
-		end
-		if value >= self.max then
-			return 1
-		end
-		return (value - self.min) / (self.max - self.min)
-	end
+    function result:normalize(value)
+        if self.max <= 0 or self.max <= self.min then
+            return 0
+        end
+        if value < self.min then
+            return 0
+        end
+        if value >= self.max then
+            return 1
+        end
+        return (value - self.min) / (self.max - self.min)
+    end
 
-	return result
+    return result
 end
 
 function with_header(items)
-	local gr = {
-		{
-			id = "banner",
-			type = "slide",
-			link = BANNER_LINK,
-			size = { 512, 50 },
-			spacing = 20,
-			ui_hook_functor = { mods_list_slide_hook },
-		},
-	}
-	for i = 1, #items do
-		gr[#gr + 1] = items[i]
-	end
-	return gr
+    local gr = {
+        {
+            id = "banner",
+            type = "slide",
+            link = BANNER_LINK,
+            size = { 512, 50 },
+            spacing = 20,
+            ui_hook_functor = { mods_list_slide_hook },
+        },
+    }
+    for i = 1, #items do
+        gr[#gr + 1] = items[i]
+    end
+    return gr
 end
 
 -- Keep Tweaks second-to-last and Debug last under DOGMA (categories above both).
 local function pin_tail_pages(dogma)
-	local gr = dogma and dogma.gr
-	if not gr then
-		return
-	end
-	local function take(id)
-		for i = 1, #gr do
-			if gr[i].id == id then
-				return table.remove(gr, i)
-			end
-		end
-		return nil
-	end
-	local tweaks = take("tweaks")
-	local dbg = take("debug")
-	if tweaks then
-		gr[#gr + 1] = tweaks
-	end
-	if dbg then
-		gr[#gr + 1] = dbg
-	end
+    local gr = dogma and dogma.gr
+    if not gr then
+        return
+    end
+    local function take(id)
+        for i = 1, #gr do
+            if gr[i].id == id then
+                return table.remove(gr, i)
+            end
+        end
+        return nil
+    end
+    local tweaks = take("tweaks")
+    local dbg = take("debug")
+    if tweaks then
+        gr[#gr + 1] = tweaks
+    end
+    if dbg then
+        gr[#gr + 1] = dbg
+    end
 end
 
 local function ensure_dogma_root(options)
-	local dogma
-	for i = 1, #options do
-		if options[i].id == "dogma" then
-			dogma = options[i]
-			break
-		end
-	end
-	if not dogma then
-		dogma = { id = "dogma", text = "ui_mcm_menu_dogma", gr = {} }
-		options[#options + 1] = dogma
-	end
-	return dogma
+    local dogma
+    for i = 1, #options do
+        if options[i].id == "dogma" then
+            dogma = options[i]
+            break
+        end
+    end
+    if not dogma then
+        dogma = { id = "dogma", text = "ui_mcm_menu_dogma", gr = {} }
+        options[#options + 1] = dogma
+    end
+    return dogma
 end
 
 -- Merge a feature page under dogma/<category>. MCM does not deep-merge duplicate
 -- category ids from separate *mcm.script returns - call this instead of returning
 -- a category wrapper.
 function attach(options, cat_id, cat_text, page)
-	if not options then
-		return
-	end
-	local dogma = ensure_dogma_root(options)
-	local cat
-	for i = 1, #(dogma.gr or {}) do
-		if dogma.gr[i].id == cat_id then
-			cat = dogma.gr[i]
-			break
-		end
-	end
-	if not cat then
-		cat = { id = cat_id, text = cat_text, gr = {} }
-		dogma.gr[#dogma.gr + 1] = cat
-	end
-	cat.gr[#cat.gr + 1] = page
-	pin_tail_pages(dogma)
+    if not options then
+        return
+    end
+    local dogma = ensure_dogma_root(options)
+    local cat
+    for i = 1, #(dogma.gr or {}) do
+        if dogma.gr[i].id == cat_id then
+            cat = dogma.gr[i]
+            break
+        end
+    end
+    if not cat then
+        cat = { id = cat_id, text = cat_text, gr = {} }
+        dogma.gr[#dogma.gr + 1] = cat
+    end
+    cat.gr[#cat.gr + 1] = page
+    pin_tail_pages(dogma)
 end
 
 -- Append option rows to a shared leaf page under DOGMA (sibling of categories).
 -- First caller creates the page (banner via with_header); later callers append.
 -- Use for info-only features that share one page (e.g. Tweaks).
 function append(options, page_id, page_text, items)
-	if not options then
-		return
-	end
-	local dogma = ensure_dogma_root(options)
-	local page
-	for i = 1, #(dogma.gr or {}) do
-		if dogma.gr[i].id == page_id then
-			page = dogma.gr[i]
-			break
-		end
-	end
-	if not page then
-		page = {
-			id = page_id,
-			sh = true,
-			text = page_text,
-			gr = with_header({}),
-		}
-		dogma.gr[#dogma.gr + 1] = page
-	end
-	local gr = page.gr
-	for i = 1, #(items or {}) do
-		gr[#gr + 1] = items[i]
-	end
-	pin_tail_pages(dogma)
+    if not options then
+        return
+    end
+    local dogma = ensure_dogma_root(options)
+    local page
+    for i = 1, #(dogma.gr or {}) do
+        if dogma.gr[i].id == page_id then
+            page = dogma.gr[i]
+            break
+        end
+    end
+    if not page then
+        page = {
+            id = page_id,
+            sh = true,
+            text = page_text,
+            gr = with_header({}),
+        }
+        dogma.gr[#dogma.gr + 1] = page
+    end
+    local gr = page.gr
+    for i = 1, #(items or {}) do
+        gr[#gr + 1] = items[i]
+    end
+    pin_tail_pages(dogma)
 end
 
 -- Shared Debug defaults (also used when MCM has not written a value yet).
 _G.dogma_debug_conf = {
-	MOD_ID = DEBUG_MOD,
-	DEFAULTS = {
-		debug_log = true,
-		debug_overlay = false,
-		-- Feature-owned debug controls live here; features read via DEBUG_MOD.
-		inc_radiation_key = -1,
-		dec_radiation_key = -1,
-		inc_bleed_key = -1,
-		dec_bleed_key = -1,
-		inc_health_key = -1,
-		dec_health_key = -1,
-		inc_limb_head_key = -1,
-		dec_limb_head_key = -1,
-		inc_limb_torso_key = -1,
-		dec_limb_torso_key = -1,
-		inc_limb_leftarm_key = -1,
-		dec_limb_leftarm_key = -1,
-		inc_limb_rightarm_key = -1,
-		dec_limb_rightarm_key = -1,
-		inc_limb_leftleg_key = -1,
-		dec_limb_leftleg_key = -1,
-		inc_limb_rightleg_key = -1,
-		dec_limb_rightleg_key = -1,
-		fps_long_frame_threshold_ms = 0,
-		perf_log = false,
-		gc_log = false,
-		perf_warn_threshold_us = 0,
-	},
+    MOD_ID = DEBUG_MOD,
+    DEFAULTS = {
+        debug_log = true,
+        debug_overlay = false,
+        -- Feature-owned debug controls live here; features read via DEBUG_MOD.
+        inc_radiation_key = -1,
+        dec_radiation_key = -1,
+        inc_bleed_key = -1,
+        dec_bleed_key = -1,
+        inc_health_key = -1,
+        dec_health_key = -1,
+        inc_limb_head_key = -1,
+        dec_limb_head_key = -1,
+        inc_limb_torso_key = -1,
+        dec_limb_torso_key = -1,
+        inc_limb_leftarm_key = -1,
+        dec_limb_leftarm_key = -1,
+        inc_limb_rightarm_key = -1,
+        dec_limb_rightarm_key = -1,
+        inc_limb_leftleg_key = -1,
+        dec_limb_leftleg_key = -1,
+        inc_limb_rightleg_key = -1,
+        dec_limb_rightleg_key = -1,
+        fps_long_frame_threshold_ms = 0,
+        perf_log = false,
+        gc_log = false,
+        perf_warn_threshold_us = 0,
+    },
 }
 
 -- Option control types that store a value (skip desc/line/slide/button/…).
 local VALUE_TYPES = {
-	check = true,
-	list = true,
-	track = true,
-	key_bind = true,
-	input = true,
-	radio_h = true,
-	radio_v = true,
-	preset = true,
+    check = true,
+    list = true,
+    track = true,
+    key_bind = true,
+    input = true,
+    radio_h = true,
+    radio_v = true,
+    preset = true,
 }
 
 local function clamp(n, lo, hi)
-	if n < lo then
-		return lo
-	end
-	if n > hi then
-		return hi
-	end
-	return n
+    if n < lo then
+        return lo
+    end
+    if n > hi then
+        return hi
+    end
+    return n
 end
 
 local function resolve_def(gui, path, opt, v)
-	local value = gui:GetDefaultValue(path, opt, v)
-	if value ~= nil and v.type == "track" and v.min ~= nil and v.max ~= nil then
-		value = clamp(value, v.min, v.max)
-	end
-	return value
+    local value = gui:GetDefaultValue(path, opt, v)
+    if value ~= nil and v.type == "track" and v.min ~= nil and v.max ~= nil then
+        value = clamp(value, v.min, v.max)
+    end
+    return value
 end
 
 local function cache_page_defaults(gui, path, page)
-	local gr = page and page.gr
-	if not gr then
-		return
-	end
-	for i = 1, #gr do
-		local v = gr[i]
-		if VALUE_TYPES[v.type] and v.def ~= nil then
-			local value = resolve_def(gui, path, v.id, v)
-			if value ~= nil then
-				gui:CacheValue(path, v.id, value, v)
-			end
-		end
-	end
+    local gr = page and page.gr
+    if not gr then
+        return
+    end
+    for i = 1, #gr do
+        local v = gr[i]
+        if VALUE_TYPES[v.type] and v.def ~= nil then
+            local value = resolve_def(gui, path, v.id, v)
+            if value ~= nil then
+                gui:CacheValue(path, v.id, value, v)
+            end
+        end
+    end
 end
 
 -- Recurse dogma tree: leaf pages (sh) get CacheValue; categories walk children.
 local function walk_defaults(gui, node, path)
-	if not node then
-		return
-	end
-	if node.sh then
-		cache_page_defaults(gui, path, node)
-		return
-	end
-	local gr = node.gr
-	if not gr then
-		return
-	end
-	for i = 1, #gr do
-		local child = gr[i]
-		walk_defaults(gui, child, path .. "/" .. child.id)
-	end
+    if not node then
+        return
+    end
+    if node.sh then
+        cache_page_defaults(gui, path, node)
+        return
+    end
+    local gr = node.gr
+    if not gr then
+        return
+    end
+    for i = 1, #gr do
+        local child = gr[i]
+        walk_defaults(gui, child, path .. "/" .. child.id)
+    end
 end
 
 local function find_dogma_root()
-	local options = ui_mcm and ui_mcm.options
-	if not options then
-		return nil
-	end
-	for i = 1, #options do
-		if options[i].id == "dogma" then
-			return options[i]
-		end
-	end
-	return nil
+    local options = ui_mcm and ui_mcm.options
+    if not options then
+        return nil
+    end
+    for i = 1, #options do
+        if options[i].id == "dogma" then
+            return options[i]
+        end
+    end
+    return nil
 end
 
 -- Rebuild the open page on the next Update tick so scroll_opt:Clear does not
 -- destroy the clicked button while its click handler is still on the stack.
 local function defer_page_refresh(gui)
-	if not gui or gui._dogma_pending_refresh then
-		return
-	end
-	gui._dogma_pending_refresh = true
-	local orig_update = gui.Update
-	gui.Update = function(self)
-		self.Update = orig_update
-		self._dogma_pending_refresh = nil
-		if orig_update then
-			orig_update(self)
-		end
-		if self.last_path and self.last_curr_tree and self.scroll_opt then
-			self:Reset_opt(self.last_curr_tree, self.last_path)
-		end
-	end
+    if not gui or gui._dogma_pending_refresh then
+        return
+    end
+    gui._dogma_pending_refresh = true
+    local orig_update = gui.Update
+    gui.Update = function(self)
+        self.Update = orig_update
+        self._dogma_pending_refresh = nil
+        if orig_update then
+            orig_update(self)
+        end
+        if self.last_path and self.last_curr_tree and self.scroll_opt then
+            self:Reset_opt(self.last_curr_tree, self.last_path)
+        end
+    end
 end
 
 -- Pending-only: mirrors MCM Default / CacheValue - Accept applies, Reset discards.
 -- functor_ui passes the open UI_MCM as the trailing arg.
 function reset_all_dogma_pending(gui)
-	local dogma = find_dogma_root()
-	if not (gui and dogma) then
-		return
-	end
-	walk_defaults(gui, dogma, "dogma")
-	SendScriptCallback("mcm_option_restore_default")
-	if gui.owner and gui.owner.SetMsg then
-		gui.owner:SetMsg(game.translate_string("ui_mcm_dogma_debug_reset_all_dogma_msg"), 5)
-	end
-	defer_page_refresh(gui)
-	printf("[dogma_mcm] queued all D.O.G.M.A. options to defs (pending)")
+    local dogma = find_dogma_root()
+    if not (gui and dogma) then
+        return
+    end
+    walk_defaults(gui, dogma, "dogma")
+    SendScriptCallback("mcm_option_restore_default")
+    if gui.owner and gui.owner.SetMsg then
+        gui.owner:SetMsg(game.translate_string("ui_mcm_dogma_debug_reset_all_dogma_msg"), 5)
+    end
+    defer_page_refresh(gui)
+    printf("[dogma_mcm] queued all D.O.G.M.A. options to defs (pending)")
 end
 
 -- Shared Debug page under DOGMA (sibling of categories). Always registered.
 function register_debug_page(options)
-	local CONFIG = _G.dogma_debug_conf
-	local page = {
-		id = "debug",
-		sh = true,
-		text = "ui_mcm_menu_dogma_debug",
-		gr = with_header({
-			{
-				id = "page_description",
-				type = "desc",
-				text = "ui_mcm_dogma_debug_page_description",
-			},
-			{
-				id = "reset_all_dogma",
-				type = "button",
-				hint = "dogma_debug_reset_all_dogma",
-				functor_ui = { reset_all_dogma_pending },
-			},
-			{ id = "line_reset", type = "line" },
-			{
-				id = "debug_log",
-				type = "check",
-				val = 1,
-				def = CONFIG.DEFAULTS.debug_log,
-				hint = "dogma_debug_debug_log",
-			},
-			{
-				id = "debug_overlay",
-				type = "check",
-				val = 1,
-				def = CONFIG.DEFAULTS.debug_overlay,
-				hint = "dogma_debug_debug_overlay",
-			},
-			{ id = "line_vitals", type = "line" },
-			{
-				id = "hdr_vitals",
-				type = "desc",
-				text = "ui_mcm_dogma_debug_hdr_vitals",
-			},
-			{
-				id = "inc_radiation_key",
-				type = "key_bind",
-				val = 2,
-				def = CONFIG.DEFAULTS.inc_radiation_key,
-				hint = "dogma_debug_inc_radiation_key",
-			},
-			{
-				id = "dec_radiation_key",
-				type = "key_bind",
-				val = 2,
-				def = CONFIG.DEFAULTS.dec_radiation_key,
-				hint = "dogma_debug_dec_radiation_key",
-			},
-			{
-				id = "inc_bleed_key",
-				type = "key_bind",
-				val = 2,
-				def = CONFIG.DEFAULTS.inc_bleed_key,
-				hint = "dogma_debug_inc_bleed_key",
-			},
-			{
-				id = "dec_bleed_key",
-				type = "key_bind",
-				val = 2,
-				def = CONFIG.DEFAULTS.dec_bleed_key,
-				hint = "dogma_debug_dec_bleed_key",
-			},
-			{
-				id = "inc_health_key",
-				type = "key_bind",
-				val = 2,
-				def = CONFIG.DEFAULTS.inc_health_key,
-				hint = "dogma_debug_inc_health_key",
-			},
-			{
-				id = "dec_health_key",
-				type = "key_bind",
-				val = 2,
-				def = CONFIG.DEFAULTS.dec_health_key,
-				hint = "dogma_debug_dec_health_key",
-			},
-			{ id = "line_limbs", type = "line" },
-			{
-				id = "hdr_limbs",
-				type = "desc",
-				text = "ui_mcm_dogma_debug_hdr_limbs",
-			},
-			{
-				id = "inc_limb_head_key",
-				type = "key_bind",
-				val = 2,
-				def = CONFIG.DEFAULTS.inc_limb_head_key,
-				hint = "dogma_debug_inc_limb_head_key",
-			},
-			{
-				id = "dec_limb_head_key",
-				type = "key_bind",
-				val = 2,
-				def = CONFIG.DEFAULTS.dec_limb_head_key,
-				hint = "dogma_debug_dec_limb_head_key",
-			},
-			{
-				id = "inc_limb_torso_key",
-				type = "key_bind",
-				val = 2,
-				def = CONFIG.DEFAULTS.inc_limb_torso_key,
-				hint = "dogma_debug_inc_limb_torso_key",
-			},
-			{
-				id = "dec_limb_torso_key",
-				type = "key_bind",
-				val = 2,
-				def = CONFIG.DEFAULTS.dec_limb_torso_key,
-				hint = "dogma_debug_dec_limb_torso_key",
-			},
-			{
-				id = "inc_limb_leftarm_key",
-				type = "key_bind",
-				val = 2,
-				def = CONFIG.DEFAULTS.inc_limb_leftarm_key,
-				hint = "dogma_debug_inc_limb_leftarm_key",
-			},
-			{
-				id = "dec_limb_leftarm_key",
-				type = "key_bind",
-				val = 2,
-				def = CONFIG.DEFAULTS.dec_limb_leftarm_key,
-				hint = "dogma_debug_dec_limb_leftarm_key",
-			},
-			{
-				id = "inc_limb_rightarm_key",
-				type = "key_bind",
-				val = 2,
-				def = CONFIG.DEFAULTS.inc_limb_rightarm_key,
-				hint = "dogma_debug_inc_limb_rightarm_key",
-			},
-			{
-				id = "dec_limb_rightarm_key",
-				type = "key_bind",
-				val = 2,
-				def = CONFIG.DEFAULTS.dec_limb_rightarm_key,
-				hint = "dogma_debug_dec_limb_rightarm_key",
-			},
-			{
-				id = "inc_limb_leftleg_key",
-				type = "key_bind",
-				val = 2,
-				def = CONFIG.DEFAULTS.inc_limb_leftleg_key,
-				hint = "dogma_debug_inc_limb_leftleg_key",
-			},
-			{
-				id = "dec_limb_leftleg_key",
-				type = "key_bind",
-				val = 2,
-				def = CONFIG.DEFAULTS.dec_limb_leftleg_key,
-				hint = "dogma_debug_dec_limb_leftleg_key",
-			},
-			{
-				id = "inc_limb_rightleg_key",
-				type = "key_bind",
-				val = 2,
-				def = CONFIG.DEFAULTS.inc_limb_rightleg_key,
-				hint = "dogma_debug_inc_limb_rightleg_key",
-			},
-			{
-				id = "dec_limb_rightleg_key",
-				type = "key_bind",
-				val = 2,
-				def = CONFIG.DEFAULTS.dec_limb_rightleg_key,
-				hint = "dogma_debug_dec_limb_rightleg_key",
-			},
-			{ id = "line_fps", type = "line" },
-			{
-				id = "hdr_fps",
-				type = "desc",
-				text = "ui_mcm_dogma_debug_hdr_fps",
-			},
-			{
-				id = "fps_long_frame_threshold_desc",
-				type = "desc",
-				text = "ui_mcm_dogma_debug_fps_long_frame_threshold_desc",
-			},
-			{
-				id = "fps_long_frame_threshold_ms",
-				type = "track",
-				val = 2,
-				min = 0,
-				max = 1000,
-				step = 5,
-				def = CONFIG.DEFAULTS.fps_long_frame_threshold_ms,
-				hint = "dogma_debug_fps_long_frame_threshold_ms",
-			},
-			{ id = "line_perf", type = "line" },
-			{
-				id = "hdr_perf",
-				type = "desc",
-				text = "ui_mcm_dogma_debug_hdr_perf",
-			},
-			{
-				id = "perf_log",
-				type = "check",
-				val = 1,
-				def = CONFIG.DEFAULTS.perf_log,
-				hint = "dogma_debug_perf_log",
-			},
-			{
-				id = "gc_log",
-				type = "check",
-				val = 1,
-				def = CONFIG.DEFAULTS.gc_log,
-				hint = "dogma_debug_gc_log",
-			},
-			{
-				id = "perf_warn_threshold_desc",
-				type = "desc",
-				text = "ui_mcm_dogma_debug_perf_warn_threshold_desc",
-			},
-			{
-				id = "perf_warn_threshold_us",
-				type = "track",
-				val = 2,
-				min = 0,
-				max = 5000,
-				step = 100,
-				def = CONFIG.DEFAULTS.perf_warn_threshold_us,
-				hint = "dogma_debug_perf_warn_threshold_us",
-			},
-		}),
-	}
-	-- Insert under dogma, then pin last (features that attach later re-pin).
-	if options then
-		local dogma
-		for i = 1, #options do
-			if options[i].id == "dogma" then
-				dogma = options[i]
-				break
-			end
-		end
-		if not dogma then
-			dogma = { id = "dogma", text = "ui_mcm_menu_dogma", gr = {} }
-			options[#options+1] = dogma
-		end
-		local replaced
-		for i = 1, #(dogma.gr or {}) do
-			if dogma.gr[i].id == "debug" then
-				dogma.gr[i] = page
-				replaced = true
-				break
-			end
-		end
-		if not replaced then
-			dogma.gr[#dogma.gr+1] = page
-		end
-		pin_tail_pages(dogma)
-		return
-	end
-	return page, "dogma"
+    local CONFIG = _G.dogma_debug_conf
+    local page = {
+        id = "debug",
+        sh = true,
+        text = "ui_mcm_menu_dogma_debug",
+        gr = with_header({
+            {
+                id = "page_description",
+                type = "desc",
+                text = "ui_mcm_dogma_debug_page_description",
+            },
+            {
+                id = "reset_all_dogma",
+                type = "button",
+                hint = "dogma_debug_reset_all_dogma",
+                functor_ui = { reset_all_dogma_pending },
+            },
+            { id = "line_reset", type = "line" },
+            {
+                id = "debug_log",
+                type = "check",
+                val = 1,
+                def = CONFIG.DEFAULTS.debug_log,
+                hint = "dogma_debug_debug_log",
+            },
+            {
+                id = "debug_overlay",
+                type = "check",
+                val = 1,
+                def = CONFIG.DEFAULTS.debug_overlay,
+                hint = "dogma_debug_debug_overlay",
+            },
+            { id = "line_vitals", type = "line" },
+            {
+                id = "hdr_vitals",
+                type = "desc",
+                text = "ui_mcm_dogma_debug_hdr_vitals",
+            },
+            {
+                id = "inc_radiation_key",
+                type = "key_bind",
+                val = 2,
+                def = CONFIG.DEFAULTS.inc_radiation_key,
+                hint = "dogma_debug_inc_radiation_key",
+            },
+            {
+                id = "dec_radiation_key",
+                type = "key_bind",
+                val = 2,
+                def = CONFIG.DEFAULTS.dec_radiation_key,
+                hint = "dogma_debug_dec_radiation_key",
+            },
+            {
+                id = "inc_bleed_key",
+                type = "key_bind",
+                val = 2,
+                def = CONFIG.DEFAULTS.inc_bleed_key,
+                hint = "dogma_debug_inc_bleed_key",
+            },
+            {
+                id = "dec_bleed_key",
+                type = "key_bind",
+                val = 2,
+                def = CONFIG.DEFAULTS.dec_bleed_key,
+                hint = "dogma_debug_dec_bleed_key",
+            },
+            {
+                id = "inc_health_key",
+                type = "key_bind",
+                val = 2,
+                def = CONFIG.DEFAULTS.inc_health_key,
+                hint = "dogma_debug_inc_health_key",
+            },
+            {
+                id = "dec_health_key",
+                type = "key_bind",
+                val = 2,
+                def = CONFIG.DEFAULTS.dec_health_key,
+                hint = "dogma_debug_dec_health_key",
+            },
+            { id = "line_limbs", type = "line" },
+            {
+                id = "hdr_limbs",
+                type = "desc",
+                text = "ui_mcm_dogma_debug_hdr_limbs",
+            },
+            {
+                id = "inc_limb_head_key",
+                type = "key_bind",
+                val = 2,
+                def = CONFIG.DEFAULTS.inc_limb_head_key,
+                hint = "dogma_debug_inc_limb_head_key",
+            },
+            {
+                id = "dec_limb_head_key",
+                type = "key_bind",
+                val = 2,
+                def = CONFIG.DEFAULTS.dec_limb_head_key,
+                hint = "dogma_debug_dec_limb_head_key",
+            },
+            {
+                id = "inc_limb_torso_key",
+                type = "key_bind",
+                val = 2,
+                def = CONFIG.DEFAULTS.inc_limb_torso_key,
+                hint = "dogma_debug_inc_limb_torso_key",
+            },
+            {
+                id = "dec_limb_torso_key",
+                type = "key_bind",
+                val = 2,
+                def = CONFIG.DEFAULTS.dec_limb_torso_key,
+                hint = "dogma_debug_dec_limb_torso_key",
+            },
+            {
+                id = "inc_limb_leftarm_key",
+                type = "key_bind",
+                val = 2,
+                def = CONFIG.DEFAULTS.inc_limb_leftarm_key,
+                hint = "dogma_debug_inc_limb_leftarm_key",
+            },
+            {
+                id = "dec_limb_leftarm_key",
+                type = "key_bind",
+                val = 2,
+                def = CONFIG.DEFAULTS.dec_limb_leftarm_key,
+                hint = "dogma_debug_dec_limb_leftarm_key",
+            },
+            {
+                id = "inc_limb_rightarm_key",
+                type = "key_bind",
+                val = 2,
+                def = CONFIG.DEFAULTS.inc_limb_rightarm_key,
+                hint = "dogma_debug_inc_limb_rightarm_key",
+            },
+            {
+                id = "dec_limb_rightarm_key",
+                type = "key_bind",
+                val = 2,
+                def = CONFIG.DEFAULTS.dec_limb_rightarm_key,
+                hint = "dogma_debug_dec_limb_rightarm_key",
+            },
+            {
+                id = "inc_limb_leftleg_key",
+                type = "key_bind",
+                val = 2,
+                def = CONFIG.DEFAULTS.inc_limb_leftleg_key,
+                hint = "dogma_debug_inc_limb_leftleg_key",
+            },
+            {
+                id = "dec_limb_leftleg_key",
+                type = "key_bind",
+                val = 2,
+                def = CONFIG.DEFAULTS.dec_limb_leftleg_key,
+                hint = "dogma_debug_dec_limb_leftleg_key",
+            },
+            {
+                id = "inc_limb_rightleg_key",
+                type = "key_bind",
+                val = 2,
+                def = CONFIG.DEFAULTS.inc_limb_rightleg_key,
+                hint = "dogma_debug_inc_limb_rightleg_key",
+            },
+            {
+                id = "dec_limb_rightleg_key",
+                type = "key_bind",
+                val = 2,
+                def = CONFIG.DEFAULTS.dec_limb_rightleg_key,
+                hint = "dogma_debug_dec_limb_rightleg_key",
+            },
+            { id = "line_fps", type = "line" },
+            {
+                id = "hdr_fps",
+                type = "desc",
+                text = "ui_mcm_dogma_debug_hdr_fps",
+            },
+            {
+                id = "fps_long_frame_threshold_desc",
+                type = "desc",
+                text = "ui_mcm_dogma_debug_fps_long_frame_threshold_desc",
+            },
+            {
+                id = "fps_long_frame_threshold_ms",
+                type = "track",
+                val = 2,
+                min = 0,
+                max = 1000,
+                step = 5,
+                def = CONFIG.DEFAULTS.fps_long_frame_threshold_ms,
+                hint = "dogma_debug_fps_long_frame_threshold_ms",
+            },
+            { id = "line_perf", type = "line" },
+            {
+                id = "hdr_perf",
+                type = "desc",
+                text = "ui_mcm_dogma_debug_hdr_perf",
+            },
+            {
+                id = "perf_log",
+                type = "check",
+                val = 1,
+                def = CONFIG.DEFAULTS.perf_log,
+                hint = "dogma_debug_perf_log",
+            },
+            {
+                id = "gc_log",
+                type = "check",
+                val = 1,
+                def = CONFIG.DEFAULTS.gc_log,
+                hint = "dogma_debug_gc_log",
+            },
+            {
+                id = "perf_warn_threshold_desc",
+                type = "desc",
+                text = "ui_mcm_dogma_debug_perf_warn_threshold_desc",
+            },
+            {
+                id = "perf_warn_threshold_us",
+                type = "track",
+                val = 2,
+                min = 0,
+                max = 5000,
+                step = 100,
+                def = CONFIG.DEFAULTS.perf_warn_threshold_us,
+                hint = "dogma_debug_perf_warn_threshold_us",
+            },
+        }),
+    }
+    -- Insert under dogma, then pin last (features that attach later re-pin).
+    if options then
+        local dogma
+        for i = 1, #options do
+            if options[i].id == "dogma" then
+                dogma = options[i]
+                break
+            end
+        end
+        if not dogma then
+            dogma = { id = "dogma", text = "ui_mcm_menu_dogma", gr = {} }
+            options[#options+1] = dogma
+        end
+        local replaced
+        for i = 1, #(dogma.gr or {}) do
+            if dogma.gr[i].id == "debug" then
+                dogma.gr[i] = page
+                replaced = true
+                break
+            end
+        end
+        if not replaced then
+            dogma.gr[#dogma.gr+1] = page
+        end
+        pin_tail_pages(dogma)
+        return
+    end
+    return page, "dogma"
 end
 
 

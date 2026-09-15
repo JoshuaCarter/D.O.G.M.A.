@@ -4,213 +4,213 @@ local CONFIG = _G.dogma_gui_stalker_id_conf
 
 -- position.script can load before main. Never cache that table at file top.
 local function main()
-	return rawget(_G, "zzzz_dogma_gui_stalker_id_main")
+    return rawget(_G, "zzzz_dogma_gui_stalker_id_main")
 end
 
 local POS_MIN = 0
 local POS_MAX = 768
 
 local function read_int(key)
-	return dogma.mcm.int(CONFIG.MOD_ID, key)
+    return dogma.mcm.int(CONFIG.MOD_ID, key)
 end
 
 local function read_uint(key)
-	return dogma.mcm.uint(CONFIG.MOD_ID, key)
+    return dogma.mcm.uint(CONFIG.MOD_ID, key)
 end
 
 local function read_bool(key)
-	if dogma.mcm.bool(CONFIG.MOD_ID, key) then
-		return 1
-	end
-	return 0
+    if dogma.mcm.bool(CONFIG.MOD_ID, key) then
+        return 1
+    end
+    return 0
 end
 
 local function write_num(key, value)
-	if ui_mcm then
-		ui_mcm.set(CONFIG.MOD_ID .. "/" .. key, value)
-	end
-	CONFIG.loaded[key] = value
-	dogma.log.log(CONFIG.MOD_ID, key .. "=" .. tostring(value))
-	local m = main()
-	if m and m.refresh_layout then
-		m.refresh_layout()
-	end
+    if ui_mcm then
+        ui_mcm.set(CONFIG.MOD_ID .. "/" .. key, value)
+    end
+    CONFIG.loaded[key] = value
+    dogma.log.log(CONFIG.MOD_ID, key .. "=" .. tostring(value))
+    local m = main()
+    if m and m.refresh_layout then
+        m.refresh_layout()
+    end
 end
 
 local function write_bool(key, value)
-	local on = value ~= 0
-	if ui_mcm then
-		ui_mcm.set(CONFIG.MOD_ID .. "/" .. key, on)
-	end
-	CONFIG.loaded[key] = on
-	dogma.log.log(CONFIG.MOD_ID, key .. "=" .. tostring(on))
-	local m = main()
-	if m and m.refresh_layout then
-		m.refresh_layout()
-	end
+    local on = value ~= 0
+    if ui_mcm then
+        ui_mcm.set(CONFIG.MOD_ID .. "/" .. key, on)
+    end
+    CONFIG.loaded[key] = on
+    dogma.log.log(CONFIG.MOD_ID, key .. "=" .. tostring(on))
+    local m = main()
+    if m and m.refresh_layout then
+        m.refresh_layout()
+    end
 end
 
 local commands = {
-	{ name = "ui_mcm_dogma_gui_stalker_id_name_y", key = "name_y", kind = "int", min = POS_MIN, max = POS_MAX, step = 1 },
-	{ name = "ui_mcm_dogma_gui_stalker_id_rank_y", key = "rank_y", kind = "int", min = POS_MIN, max = POS_MAX, step = 1 },
-	{ name = "ui_mcm_dogma_gui_stalker_id_icon_y", key = "icon_y", kind = "int", min = POS_MIN, max = POS_MAX, step = 1 },
-	{ name = "ui_mcm_dogma_gui_stalker_id_icon_scale", key = "icon_scale", kind = "uint", min = 50, max = 200, step = 10 },
-	{ name = "ui_mcm_dogma_gui_stalker_id_name_id", key = "name_id", kind = "bool", min = 0, max = 1, step = 1 },
-	{ name = "ui_mcm_dogma_gui_stalker_id_rank_id", key = "rank_id", kind = "bool", min = 0, max = 1, step = 1 },
-	{ name = "ui_mcm_dogma_gui_stalker_id_goodwill_color", key = "goodwill_color", kind = "bool", min = 0, max = 1, step = 1 },
+    { name = "ui_mcm_dogma_gui_stalker_id_name_y", key = "name_y", kind = "int", min = POS_MIN, max = POS_MAX, step = 1 },
+    { name = "ui_mcm_dogma_gui_stalker_id_rank_y", key = "rank_y", kind = "int", min = POS_MIN, max = POS_MAX, step = 1 },
+    { name = "ui_mcm_dogma_gui_stalker_id_icon_y", key = "icon_y", kind = "int", min = POS_MIN, max = POS_MAX, step = 1 },
+    { name = "ui_mcm_dogma_gui_stalker_id_icon_scale", key = "icon_scale", kind = "uint", min = 50, max = 200, step = 10 },
+    { name = "ui_mcm_dogma_gui_stalker_id_name_id", key = "name_id", kind = "bool", min = 0, max = 1, step = 1 },
+    { name = "ui_mcm_dogma_gui_stalker_id_rank_id", key = "rank_id", kind = "bool", min = 0, max = 1, step = 1 },
+    { name = "ui_mcm_dogma_gui_stalker_id_goodwill_color", key = "goodwill_color", kind = "bool", min = 0, max = 1, step = 1 },
 }
 
 GUI = nil
 
 local function cmd_get(cmd)
-	if cmd.kind == "bool" then
-		return read_bool(cmd.key)
-	end
-	if cmd.kind == "uint" then
-		return read_uint(cmd.key)
-	end
-	return read_int(cmd.key)
+    if cmd.kind == "bool" then
+        return read_bool(cmd.key)
+    end
+    if cmd.kind == "uint" then
+        return read_uint(cmd.key)
+    end
+    return read_int(cmd.key)
 end
 
 local function cmd_set(cmd, val)
-	if cmd.kind == "bool" then
-		write_bool(cmd.key, val)
-		return
-	end
-	write_num(cmd.key, val)
+    if cmd.kind == "bool" then
+        write_bool(cmd.key, val)
+        return
+    end
+    write_num(cmd.key, val)
 end
 
 local function label_of(cmd, val)
-	if cmd.kind == "bool" then
-		if val ~= 0 then
-			return "On"
-		end
-		return "Off"
-	end
-	return tostring(val)
+    if cmd.kind == "bool" then
+        if val ~= 0 then
+            return "On"
+        end
+        return "Off"
+    end
+    return tostring(val)
 end
 
 class "SIDPositionPanel" (CUIScriptWnd)
 
 function SIDPositionPanel:__init() super()
-	self:InitControls()
-	RegisterScriptCallback("actor_on_net_destroy", self)
+    self:InitControls()
+    RegisterScriptCallback("actor_on_net_destroy", self)
 end
 
 function SIDPositionPanel:__finalize()
 end
 
 function SIDPositionPanel:actor_on_net_destroy()
-	self:Close()
+    self:Close()
 end
 
 function SIDPositionPanel:InitControls()
-	self:SetWndRect(Frect():set(0, 0, 1024, 768))
-	self:SetAutoDelete(true)
+    self:SetWndRect(Frect():set(0, 0, 1024, 768))
+    self:SetAutoDelete(true)
 
-	self.xml = CScriptXmlInit()
-	local xml = self.xml
-	xml:ParseFile("ui_options.xml")
+    self.xml = CScriptXmlInit()
+    local xml = self.xml
+    xml:ParseFile("ui_options.xml")
 
-	self.dialog = xml:InitStatic("ctrl_lighting", self)
-	xml:InitFrame("ctrl_lighting:frame", self.dialog)
+    self.dialog = xml:InitStatic("ctrl_lighting", self)
+    xml:InitFrame("ctrl_lighting:frame", self.dialog)
 
-	local cap = xml:InitStatic("ctrl_lighting:cap_main", self.dialog)
-	cap:TextControl():SetText(game.translate_string("ui_mcm_dogma_gui_stalker_id_position"))
+    local cap = xml:InitStatic("ctrl_lighting:cap_main", self.dialog)
+    cap:TextControl():SetText(game.translate_string("ui_mcm_dogma_gui_stalker_id_position"))
 
-	self.scroll = xml:InitScrollView("ctrl_lighting:scroll", self.dialog)
-	self.scroll:Clear()
+    self.scroll = xml:InitScrollView("ctrl_lighting:scroll", self.dialog)
+    self.scroll:Clear()
 
-	self.track = {}
-	self.value = {}
-	self.num = {}
+    self.track = {}
+    self.value = {}
+    self.num = {}
 
-	for i = 1, #commands do
-		local cmd = commands[i]
-		local val = math.floor((cmd_get(cmd) or 0) + 0.5)
+    for i = 1, #commands do
+        local cmd = commands[i]
+        local val = math.floor((cmd_get(cmd) or 0) + 0.5)
 
-		local row = xml:InitStatic("ctrl_lighting:st", nil)
-		xml:InitStatic("ctrl_lighting:cap", row):TextControl()
-			:SetText(game.translate_string(cmd.name))
+        local row = xml:InitStatic("ctrl_lighting:st", nil)
+        xml:InitStatic("ctrl_lighting:cap", row):TextControl()
+            :SetText(game.translate_string(cmd.name))
 
-		self.track[i] = xml:InitTrackBar("ctrl_lighting:track", row)
-		self.track[i]:SetStep(cmd.step)
-		self.track[i]:SetOptFBounds(cmd.min, cmd.max)
-		self.track[i]:SetFValue(val)
+        self.track[i] = xml:InitTrackBar("ctrl_lighting:track", row)
+        self.track[i]:SetStep(cmd.step)
+        self.track[i]:SetOptFBounds(cmd.min, cmd.max)
+        self.track[i]:SetFValue(val)
 
-		self.value[i] = val
-		self.num[i] = xml:InitTextWnd("ctrl_lighting:num", row)
-		self.num[i]:SetText(label_of(cmd, val))
+        self.value[i] = val
+        self.num[i] = xml:InitTextWnd("ctrl_lighting:num", row)
+        self.num[i]:SetText(label_of(cmd, val))
 
-		self.scroll:AddWindow(row, true)
-		row:SetAutoDelete(true)
-	end
+        self.scroll:AddWindow(row, true)
+        row:SetAutoDelete(true)
+    end
 end
 
 function SIDPositionPanel:Update()
-	CUIScriptWnd.Update(self)
+    CUIScriptWnd.Update(self)
 
-	for i, ctrl in pairs(self.track) do
-		if ctrl:IsCursorOverWindow() then
-			local val = math.floor(ctrl:GetFValue() + 0.5)
-			if val ~= self.value[i] then
-				self.value[i] = val
-				cmd_set(commands[i], val)
-				self.num[i]:SetText(label_of(commands[i], val))
-				return
-			end
-		end
-	end
+    for i, ctrl in pairs(self.track) do
+        if ctrl:IsCursorOverWindow() then
+            local val = math.floor(ctrl:GetFValue() + 0.5)
+            if val ~= self.value[i] then
+                self.value[i] = val
+                cmd_set(commands[i], val)
+                self.num[i]:SetText(label_of(commands[i], val))
+                return
+            end
+        end
+    end
 end
 
 function SIDPositionPanel:OnKeyboard(dik, keyboard_action)
-	local res = CUIScriptWnd.OnKeyboard(self, dik, keyboard_action)
-	if res == false and keyboard_action == ui_events.WINDOW_KEY_PRESSED then
-		if dik == DIK_keys.DIK_ESCAPE then
-			self:Close()
-		end
-	end
-	return res
+    local res = CUIScriptWnd.OnKeyboard(self, dik, keyboard_action)
+    if res == false and keyboard_action == ui_events.WINDOW_KEY_PRESSED then
+        if dik == DIK_keys.DIK_ESCAPE then
+            self:Close()
+        end
+    end
+    return res
 end
 
 function SIDPositionPanel:Close()
-	self:HideDialog()
-	self:Show(false)
-	Unregister_UI("SIDPositionPanel")
-	local m = main()
-	if m then
-		m.force_preview = false
-	end
-	GUI = nil
-	dogma.log.log(CONFIG.MOD_ID, "layout panel closed")
+    self:HideDialog()
+    self:Show(false)
+    Unregister_UI("SIDPositionPanel")
+    local m = main()
+    if m then
+        m.force_preview = false
+    end
+    GUI = nil
+    dogma.log.log(CONFIG.MOD_ID, "layout panel closed")
 end
 
 function start(mcm_dialog)
-	if not ui_mcm then
-		return
-	end
+    if not ui_mcm then
+        return
+    end
 
-	local m = main()
-	if not m then
-		dogma.log.log(CONFIG.MOD_ID, "layout panel skipped (no main)")
-		return
-	end
+    local m = main()
+    if not m then
+        dogma.log.log(CONFIG.MOD_ID, "layout panel skipped (no main)")
+        return
+    end
 
-	dogma.log.log(CONFIG.MOD_ID, "layout panel")
-	if mcm_dialog then
-		mcm_dialog:On_Cancel()
-	end
-	exec_console_cmd("main_menu off")
+    dogma.log.log(CONFIG.MOD_ID, "layout panel")
+    if mcm_dialog then
+        mcm_dialog:On_Cancel()
+    end
+    exec_console_cmd("main_menu off")
 
-	if not GUI then
-		GUI = SIDPositionPanel()
-	end
-	if GUI and not GUI:IsShown() then
-		m.force_preview = true
-		if m.show_preview then
-			m.show_preview()
-		end
-		GUI:ShowDialog(true)
-		Register_UI("SIDPositionPanel", "zzzz_dogma_gui_stalker_id_position")
-	end
+    if not GUI then
+        GUI = SIDPositionPanel()
+    end
+    if GUI and not GUI:IsShown() then
+        m.force_preview = true
+        if m.show_preview then
+            m.show_preview()
+        end
+        GUI:ShowDialog(true)
+        Register_UI("SIDPositionPanel", "zzzz_dogma_gui_stalker_id_position")
+    end
 end

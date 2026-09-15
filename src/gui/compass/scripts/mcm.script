@@ -21,6 +21,7 @@ _G.dogma_gui_compass_conf = {
     POS_MAX = 768,
     DEFAULTS = {
         enabled = true,
+        compass_a = 255,
         compass_y = 747,
         shown = 1,
         keybind = -1,
@@ -32,7 +33,7 @@ _G.dogma_gui_compass_conf = {
         show_quest_dist = 200,
         is_quest_dist = true,
         show_turnin = true,
-        show_turnin_dist = 200,
+        show_turnin_dist = 100,
         is_turnin_dist = true,
         show_unique = true,
         show_unique_dist = 30,
@@ -118,6 +119,7 @@ function reload()
     L.style = V.STYLE
     L.marker_set = V.MARKER_SET
     L.compass_y = dogma.mcm.int(id, "compass_y")
+    L.compass_a = dogma.mcm.uint(id, "compass_a")
     L.quest_always = dogma.mcm.bool(id, "quest_always")
     L.quest_highlight = dogma.mcm.bool(id, "quest_highlight")
 
@@ -136,9 +138,10 @@ function reload()
 
     local d = device()
     dogma.log.log(id, string.format(
-        "reload enabled=%s y=%s scale=%.2f res=%sx%s key=%s mode=%s shown=%s quest_always=%s friend=%s host=%s",
+        "reload enabled=%s y=%s a=%s scale=%.2f res=%sx%s key=%s mode=%s shown=%s quest_always=%s friend=%s host=%s",
         tostr(L.enabled),
         tostr(L.compass_y),
+        tostr(L.compass_a),
         L.scale,
         tostr(d and d.width),
         tostr(d and d.height),
@@ -261,6 +264,16 @@ function on_mcm_load(options)
             type = "button",
             functor_ui = { start_layout },
             precondition = { in_level },
+        },
+        {
+            id = "compass_a",
+            type = "track",
+            val = 2,
+            min = 0,
+            max = 255,
+            step = 1,
+            def = D.compass_a,
+            hint = hint("compass_a"),
         },
         { id = "line_key", type = "line" },
         {

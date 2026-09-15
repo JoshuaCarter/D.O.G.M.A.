@@ -1,0 +1,41 @@
+-- MCM type=button chrome is y=20 in a ~40px row (ui_mcm_16.xml).
+-- Gap above, overlap below. Patch at parse; MCM 1.7 blocks UI monkey-patches.
+
+local TAG = "dogma_mcm"
+
+local function is_mcm_ui(name)
+	name = string.gsub(tostring(name or ""), "/", "\\")
+	name = string.lower(name)
+	return name == [[ui\ui_mcm.xml]]
+		or name == [[ui\ui_mcm_16.xml]]
+		or name == "ui_mcm.xml"
+		or name == "ui_mcm_16.xml"
+end
+
+local function lift(xml_obj, q)
+	local res = xml_obj:query(q)
+	if not (res and res[1]) then
+		return 0
+	end
+	xml_obj:setElementAttr(res[1], { y = 0 })
+	return 1
+end
+
+local function xml_read_cb(xml_file_name, xml_obj)
+	if not is_mcm_ui(xml_file_name) then
+		return
+	end
+	local n = lift(xml_obj, "elements btn_button")
+		+ lift(xml_obj, "elements frame_button")
+		+ lift(xml_obj, "elements cap_button")
+	if n == 0 then
+		n = lift(xml_obj, "btn_button")
+			+ lift(xml_obj, "frame_button")
+			+ lift(xml_obj, "cap_button")
+	end
+	printf("[%s] mcm button y=0 file=%s n=%s", TAG, tostring(xml_file_name), tostring(n))
+end
+
+function on_xml_read()
+	RegisterScriptCallback("on_xml_read", xml_read_cb)
+end

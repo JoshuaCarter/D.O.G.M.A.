@@ -4,8 +4,6 @@
 
     is_in_combat()  — 1s cache: a collected hunter (best_enemy = actor) is within COMBAT_M
     is_inv_open()   — talking, ActorMenu:IsShown(), or last_mode (loot can be up with IsShown false)
-    is_eating()     — food use, latched 3s
-    is_drinking()   — drink use, latched 3s
     is_weapon_lowered() — game.actor_weapon_lowered() (eat/meds/sprint/dialog/…)
     is_sprinting()  — IsMoveState("mcSprint")
     is_talking()    — actor:is_talking()
@@ -22,7 +20,6 @@
 
 local INTERVAL_MS = 1000
 local TICK_SEC = 1
-local CONSUME_MS = 3000
 local COMBAT_M = 150
 
 local LIMBS = { "head", "torso", "leftarm", "rightarm", "leftleg", "rightleg" }
@@ -37,8 +34,6 @@ local LIMB_MAX = {
 
 local in_combat = false
 local next_at = 0
-local eating_until = 0
-local drinking_until = 0
 local bhs_health = nil
 local bhs_timedhp = nil
 local bhs_maxhp = nil
@@ -137,57 +132,6 @@ local function ensure_tick()
         pcall(RemoveTimeEvent, "dogma_status", "tick")
     end
     CreateTimeEvent("dogma_status", "tick", TICK_SEC, tick)
-end
-
-local function item_section(item)
-    if type(item) == "string" and item ~= "" then
-        return item
-    end
-    if not item then
-        return nil
-    end
-    local ok, sec = pcall(item.section, item)
-    if ok and type(sec) == "string" and sec ~= "" then
-        return sec
-    end
-    return nil
-end
-
-local function item_kind(sec)
-    if not (sec and ini_sys and ini_sys.r_string_ex) then
-        return nil
-    end
-    return ini_sys:r_string_ex(sec, "kind")
-end
-
-local function is_drink_sec(sec)
-    if IsItem and IsItem("drink", sec) then
-        return true
-    end
-    return item_kind(sec) == "i_drink"
-end
-
-local function is_food_sec(sec)
-    if IsItem and IsItem("food", sec) then
-        return true
-    end
-    return item_kind(sec) == "i_food"
-end
-
--- actor_on_item_use(item, section). Drink before food so a listed drink is not a meal.
-local function on_item_use(item, sec)
-    sec = item_section(sec) or item_section(item)
-    if not sec then
-        return
-    end
-    local until_ms = time_global() + CONSUME_MS
-    if is_drink_sec(sec) then
-        drinking_until = until_ms
-        return
-    end
-    if is_food_sec(sec) then
-        eating_until = until_ms
-    end
 end
 
 -- BHS health is 0-max (arms/legs 4, head 8, torso 10). Fraction vs that limb's max.
@@ -294,8 +238,6 @@ end
 local function reset()
     in_combat = false
     next_at = 0
-    eating_until = 0
-    drinking_until = 0
     bhs_health = nil
     bhs_timedhp = nil
     bhs_maxhp = nil
@@ -308,7 +250,6 @@ end
 
 function on_game_start()
     ensure_tick()
-    RegisterScriptCallback("actor_on_item_use", on_item_use)
     RegisterScriptCallback("on_game_load", game_load_cb)
     RegisterScriptCallback("main_menu_on_init", reset)
     RegisterScriptCallback("main_menu_on_quit", reset)
@@ -342,14 +283,6 @@ function is_inv_open()
         end
     end
     return actor_menu and actor_menu.last_mode and actor_menu.last_mode ~= 0
-end
-
-function is_eating()
-    return time_global() < eating_until
-end
-
-function is_drinking()
-    return time_global() < drinking_until
 end
 
 function is_weapon_lowered()

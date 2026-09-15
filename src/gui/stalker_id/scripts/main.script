@@ -133,7 +133,6 @@ local function on_option_change()
     CONFIG.loaded.icon_a = dogma.mcm.uint(id, "icon_a")
     CONFIG.loaded.min_size_px = dogma.mcm.uint(id, "min_size_px")
     CONFIG.loaded.circle_size = dogma.mcm.uint(id, "circle_size")
-    CONFIG.loaded.hide_on_death = dogma.mcm.bool(id, "hide_on_death")
     CONFIG.loaded.always_show_line = dogma.mcm.bool(id, "always_show_line")
     CONFIG.loaded.always_show_line_binoc = dogma.mcm.bool(id, "always_show_line_binoc")
     CONFIG.loaded.line_a = dogma.mcm.uint(id, "line_a")
@@ -1396,7 +1395,7 @@ function actor_on_update()
         end
         return
     end
-    if CONFIG.loaded.hide_on_death and db.actor and not db.actor:alive() then
+    if db.actor and not db.actor:alive() then
         dbg_hide()
         return
     end
@@ -1445,9 +1444,6 @@ function actor_on_update()
 end
 
 function actor_on_before_death()
-    if not CONFIG.loaded.hide_on_death then
-        return
-    end
     LastHitObject = nil
     clear()
 end

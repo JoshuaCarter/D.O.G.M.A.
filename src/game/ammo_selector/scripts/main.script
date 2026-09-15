@@ -5,7 +5,8 @@
 	(optional hover-select). Gates start_ammo_wheel so vanilla release-open
 	cannot fight us; stubs SwitchNextAmmo so release does not cycle ammo.
 	Hold key: swallow that dik on keydown (whatever Settings bound it to).
-	Release before hold_delay_ms = tap reload. Past delay = wheel, no reload.
+	Release before hold_delay_ms = pulse that same dik (same path as a real
+	press, so unjam scripts see it). Past delay = wheel, no reload.
 ]]
 
 local CONFIG = _G.dogma_game_ammo_selector_conf
@@ -16,9 +17,15 @@ local holding = false
 local swallowed = false
 local committed = false
 local was_down = false
+local pulsing = false
 
-local function try_reload(actor)
-	actor:reload_weapon()
+local function pulse_reload(dik)
+	pulsing = true
+	level.press_action(dik)
+	if level.release_action then
+		level.release_action(dik)
+	end
+	pulsing = false
 end
 
 local function clear_press()
@@ -61,7 +68,7 @@ local function on_before_key_press(dik, bind, _dis, flags)
 	if not dogma.sys.ready(CONFIG.MOD_ID, db, on_option_change) then
 		return
 	end
-	if not hold_active() then
+	if pulsing or not hold_active() then
 		return
 	end
 	local ammo = CONFIG.loaded.ammo_key
@@ -170,14 +177,19 @@ local function patch()
 end
 
 local function tap_reload()
-	local actor = db.actor
-	if not actor then
-		log("tap skip: no actor")
+	if not (level and level.press_action) then
+		log("tap skip: no press_action")
 		return
 	end
-	local ok, err = pcall(try_reload, actor)
+	local tap = CONFIG.loaded.ammo_key
+	if not (tap and tap > 0) then
+		log("tap skip: no ammo_key")
+		return
+	end
+	local ok, err = pcall(pulse_reload, tap)
+	pulsing = false
 	if ok then
-		log("tap reload")
+		log("tap key dik=" .. tostring(tap))
 	else
 		log("tap fail: " .. tostring(err))
 	end

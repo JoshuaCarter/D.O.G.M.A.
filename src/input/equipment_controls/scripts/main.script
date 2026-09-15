@@ -87,14 +87,23 @@ local function is_fav(sec)
 end
 
 local function is_sidearm(obj)
-	if not obj or dogma.db.is_melee(obj:section()) or not dogma.db.is_weapon(obj:section()) then
+	if not obj then
 		return false
 	end
 	local sec = obj:section()
+	if dogma.db.is_melee(sec) or not dogma.db.is_weapon(sec) then
+		return false
+	end
 	if not (sec and ini_sys) then
 		return false
 	end
 	local s = ini_sys:r_float_ex(sec, "slot")
+	if s == nil then
+		local parent = ini_sys:r_string_ex(sec, "parent_section")
+		if parent and parent ~= sec then
+			s = ini_sys:r_float_ex(parent, "slot")
+		end
+	end
 	return s ~= nil and tonumber(s) == 1
 end
 

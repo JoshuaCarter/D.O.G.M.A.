@@ -86,14 +86,27 @@ local function is_fav(sec)
 	return sp and sp.is_favorite and sp.is_favorite(sec) or false
 end
 
+local try_is_weapon = function(obj)
+	return IsWeapon(obj)
+end
+
+local try_is_melee = function(obj)
+	return IsMelee(obj)
+end
+
 local function is_sidearm(obj)
 	if not obj then
 		return false
 	end
-	local sec = obj:section()
-	if dogma.db.is_melee(sec) or not dogma.db.is_weapon(sec) then
+	local ok_m, melee = pcall(try_is_melee, obj)
+	if ok_m and melee then
 		return false
 	end
+	local ok_w, weap = pcall(try_is_weapon, obj)
+	if not (ok_w and weap) then
+		return false
+	end
+	local sec = obj:section()
 	if not (sec and ini_sys) then
 		return false
 	end

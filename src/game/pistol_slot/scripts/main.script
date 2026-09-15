@@ -37,15 +37,28 @@ local function ltx_slot(sec)
     return tonumber(s)
 end
 
+local try_is_weapon = function(obj)
+    return IsWeapon(obj)
+end
+
+local try_is_melee = function(obj)
+    return IsMelee(obj)
+end
+
+-- Vanilla pistol holster: LTX slot 1. Engine class, not dogma.db catalog.
 local function is_sidearm(obj)
     if not obj then
         return false
     end
-    local sec = obj:section()
-    if dogma.db.is_melee(sec) or not dogma.db.is_weapon(sec) then
+    local ok_m, melee = pcall(try_is_melee, obj)
+    if ok_m and melee then
         return false
     end
-    return ltx_slot(sec) == 1
+    local ok_w, weap = pcall(try_is_weapon, obj)
+    if not (ok_w and weap) then
+        return false
+    end
+    return ltx_slot(obj:section()) == 1
 end
 
 local function is_binocular(obj)
@@ -105,7 +118,6 @@ local function toggle_pistol_holster()
     if not is_sidearm(holstered) then
         local sec = holstered:section()
         log("draw: slot 16 not sidearm " .. tostr(sec)
-            .. " catalog=" .. tostr(dogma.db.catalog_id(sec))
             .. " slot=" .. tostr(ltx_slot(sec)))
         return
     end
@@ -162,7 +174,6 @@ local function eject_if(slot, keep_fn)
     if item and not keep_fn(item) then
         local sec = item:section()
         log("eject slot " .. tostr(slot) .. " " .. tostr(sec)
-            .. " catalog=" .. tostr(dogma.db.catalog_id(sec))
             .. " slot=" .. tostr(ltx_slot(sec)))
         db.actor:move_to_ruck(item)
         return nil

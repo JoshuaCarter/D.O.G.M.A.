@@ -2,12 +2,14 @@
     dogma.db layers on STALKER_DB.
     Ours: db/ext, SKIP (list only), prefix sub-cats, decorate aliases, craft remap.
     Callers keep dogma cat names (weapons_pistols, artifacts, ...).
+    is/get: listed dump id, else one parent_section hop (addon variants).
 ]]
 
 local EXT = "db\\ext\\"
 local loaded = false
 local sdb = nil
 local by_id = {}
+local listed = {}
 local groups = {}
 local in_group = {}
 local EMPTY = {}
@@ -15,6 +17,7 @@ local list_sorted = {}
 local recipes = {}
 local by_name = {}
 local name_miss = 0
+local parent_of = {}
 local SKIP = {
     ["wpn_addon_silencer"] = true,
     ["ammo_23_eco"] = true,
@@ -194,6 +197,7 @@ local function add_row(typ, row)
     remember_name(row)
     if not by_id[row.id] then
         by_id[row.id] = row
+        listed[row.id] = true
     end
     local g = groups[typ]
     g[#g + 1] = row
@@ -359,6 +363,8 @@ local function load_all()
     end
     loaded = true
     by_id = {}
+    listed = {}
+    parent_of = {}
     groups = {}
     recipes = {}
     by_name = {}
@@ -402,6 +408,27 @@ function init()
     end
 end
 
+local try_parent = function(ini, sec)
+    return ini:r_string_ex(sec, "parent_section")
+end
+
+local function ltx_parent(id)
+    local hit = parent_of[id]
+    if hit ~= nil then
+        return hit or nil
+    end
+    if not ini_sys then
+        return nil
+    end
+    local ok, p = pcall(try_parent, ini_sys, id)
+    if ok and p and p ~= "" and p ~= id then
+        parent_of[id] = p
+        return p
+    end
+    parent_of[id] = false
+    return nil
+end
+
 local function cmp(key, desc)
     return function(a, b)
         local va, vb = a[key], b[key]
@@ -422,18 +449,37 @@ local function cmp(key, desc)
     end
 end
 
+-- Dump section for this id. Listed children stay themselves (mp5k vs mp5).
+-- Addon variants are not in the dump; hop parent_section once.
+function catalog_id(id)
+    init()
+    if not id then
+        return nil
+    end
+    if listed[id] then
+        return id
+    end
+    local parent = ltx_parent(id)
+    if parent and listed[parent] then
+        return parent
+    end
+    return id
+end
+
 function get(id, typ)
     init()
     if not id then
         return nil
     end
-    local row = by_id[id]
+    local key = catalog_id(id)
+    local row = by_id[key]
     if not row then
         row = sdb and sdb.get(id)
         if row then
             decorate(row, row.type or "")
             remember_name(row)
             by_id[id] = row
+            key = id
         end
     end
     if not row then
@@ -441,7 +487,7 @@ function get(id, typ)
     end
     if typ then
         local idx = in_group[typ]
-        if not (idx and idx[id]) then
+        if not (idx and idx[key]) then
             return nil
         end
     end
@@ -454,7 +500,10 @@ function is(id, typ)
         return false
     end
     local idx = in_group[typ]
-    return idx and idx[id] == true
+    if not idx then
+        return false
+    end
+    return idx[catalog_id(id)] == true
 end
 
 function is_any(id, types)

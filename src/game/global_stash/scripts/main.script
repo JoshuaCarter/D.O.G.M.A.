@@ -1,5 +1,5 @@
 --[[
-    Global Stash: sprint lock + one shared bolt invbox.
+    Global Stash: sprint lock + one shared bolt invbox per box type.
 
     Place / pickup do nothing to the shared id.
     Open a box: park the bolt at that dummy, then swap ui_inventory.start.
@@ -14,9 +14,33 @@
 ]]
 
 local MOD_ID = "dogma/game/global_stash"
-local ITEM_SEC = "dogma_global_stash_item"
-local PLACEABLE_SEC = "placeable_dogma_global_stash"
-local SHARED_SEC = "dogma_game_global_stash"
+local NETS = {
+    {
+        item = "dogma_global_stash_item",
+        placeable = "placeable_dogma_global_stash",
+        shared = "dogma_game_global_stash",
+        save_key = "dogma_game_global_stash",
+    },
+    {
+        item = "dogma_global_stash_2_item",
+        placeable = "placeable_dogma_global_stash_2",
+        shared = "dogma_game_global_stash_2",
+        save_key = "dogma_game_global_stash_2",
+    },
+    {
+        item = "dogma_global_stash_3_item",
+        placeable = "placeable_dogma_global_stash_3",
+        shared = "dogma_game_global_stash_3",
+        save_key = "dogma_game_global_stash_3",
+    },
+}
+local net_by_placeable = {}
+local net_by_shared = {}
+for i = 1, #NETS do
+    local n = NETS[i]
+    net_by_placeable[n.placeable] = n
+    net_by_shared[n.shared] = n
+end
 local LIGHT_RANGE = 2
 local PARK_DIST = 0.005
 local HOLD_MS = 1000
@@ -52,7 +76,7 @@ _G.dogma_game_global_stash = api
 
 local blocked = false
 local planted_level = nil
-local saved_id = nil
+local saved = {}
 local stocked = {}
 local pending_dummy = nil
 local pending_mode = nil
@@ -61,7 +85,7 @@ local drain_to = nil
 local drain_n = 0
 local opening = false
 local bringing = false
-local bring_id = nil
+local bring_ids = {}
 local dummies = {}
 local lights = {}
 local muted = {}
@@ -204,6 +228,51 @@ local function log(msg, color)
     dogma.log.log(MOD_ID, tostring(msg), color)
 end
 
+local function sec_of_se(se)
+    if not se then
+        return
+    end
+    local ok, sec = pcall(try_se_section, se)
+    if ok then
+        return sec
+    end
+end
+
+local function net_of_shared_se(se)
+    local sec = sec_of_se(se)
+    return sec and net_by_shared[sec]
+end
+
+local function net_of_placeable_se(se)
+    local sec = sec_of_se(se)
+    return sec and net_by_placeable[sec]
+end
+
+local function net_of_go(go)
+    if not go then
+        return
+    end
+    local ok, sec = pcall(try_section, go)
+    if ok and sec then
+        return net_by_placeable[sec] or net_by_shared[sec]
+    end
+end
+
+local function hf_net(id)
+    if net_by_shared[id] then
+        return net_by_shared[id]
+    end
+    if net_by_placeable[id] then
+        return net_by_placeable[id]
+    end
+    local nid = tonumber(id)
+    if not nid then
+        return
+    end
+    local se = xobject.se(nid)
+    return net_of_shared_se(se) or net_of_placeable_se(se)
+end
+
 local function m_state()
     local ok, state = pcall(try_m_state)
     if ok then
@@ -239,8 +308,19 @@ local function sync_sprint()
     if not dogma.sys.ready(MOD_ID, db) then
         return
     end
-    local ok, obj = pcall(try_object, db.actor, ITEM_SEC)
-    set_blocked(ok and obj ~= nil)
+    local actor = db.actor
+    if not actor then
+        set_blocked(false)
+        return
+    end
+    for i = 1, #NETS do
+        local ok, obj = pcall(try_object, actor, NETS[i].item)
+        if ok and obj then
+            set_blocked(true)
+            return
+        end
+    end
+    set_blocked(false)
 end
 
 local function clear_spawn_cache(id)
@@ -253,19 +333,11 @@ local function clear_spawn_cache(id)
 end
 
 local function se_is_ours(se)
-    if not se then
-        return false
-    end
-    local ok, sec = pcall(try_se_section, se)
-    return ok and sec == SHARED_SEC
+    return net_of_shared_se(se) ~= nil
 end
 
 local function se_is_placeable(se)
-    if not se then
-        return false
-    end
-    local ok, sec = pcall(try_se_section, se)
-    return ok and sec == PLACEABLE_SEC
+    return net_of_placeable_se(se) ~= nil
 end
 
 local function clear_light(id)
@@ -312,31 +384,19 @@ local function tick_light(id)
 end
 
 -- WPI zone_keeper Close calls GetStash. String keys (PDA / name) fatal in get_object_by_id.
-local function hf_id_is_ours(id)
-    if id == SHARED_SEC or id == PLACEABLE_SEC then
-        return true
-    end
-    local nid = tonumber(id)
-    if not nid then
-        return false
-    end
-    local se = xobject.se(nid)
-    return se_is_ours(se) or se_is_placeable(se)
-end
-
-local function remember_id(m_data, id)
-    saved_id = id
+local function remember_id(net, m_data, id)
+    saved[net.save_key] = id
     if m_data then
-        m_data.dogma_game_global_stash = id
+        m_data[net.save_key] = id
     end
 end
 
 -- ponytail: O(65534) alife walk. Only when saved id is dead. Drop when orphans are gone.
-local function find_existing()
+local function find_existing(net)
     local found
     local extra = 0
     for i = 1, 65534 do
-        if se_is_ours(xobject.se(i)) then
+        if net_of_shared_se(xobject.se(i)) == net then
             if found then
                 extra = extra + 1
             else
@@ -345,23 +405,24 @@ local function find_existing()
         end
     end
     if extra > 0 then
-        log("orphan bolts extra=" .. tostring(extra) .. " kept=" .. tostring(found), "yellow")
+        log("orphan bolts extra=" .. tostring(extra) .. " kept=" .. tostring(found) .. " " .. net.shared, "yellow")
     end
     return found
 end
 
-local function resolve_id()
+local function resolve_id(net)
     local tostr = tostring
-    if se_is_ours(xobject.se(saved_id)) then
-        return saved_id
+    local id = saved[net.save_key]
+    if net_of_shared_se(xobject.se(id)) == net then
+        return id
     end
-    if saved_id then
-        log("saved id dead id=" .. tostr(saved_id), "yellow")
+    if id then
+        log("saved id dead id=" .. tostr(id) .. " " .. net.shared, "yellow")
     end
-    local found = find_existing()
+    local found = find_existing(net)
     if found then
-        remember_id(m_state(), found)
-        log("adopted stash " .. tostr(found), "yellow")
+        remember_id(net, m_state(), found)
+        log("adopted stash " .. tostr(found) .. " " .. net.shared, "yellow")
     end
     return found
 end
@@ -377,10 +438,10 @@ local function dest_of(go)
 end
 
 -- Create or teleport the bolt to dest. Pin online. Does not cloak.
-local function plant_dest(dest, lvid, gvid)
+local function plant_dest(net, dest, lvid, gvid)
     local tostr = tostring
     local sim = alife()
-    if not (sim and dest and lvid and gvid) then
+    if not (net and sim and dest and lvid and gvid) then
         log("plant abort: no sim/dest", "red")
         return
     end
@@ -390,22 +451,22 @@ local function plant_dest(dest, lvid, gvid)
         return
     end
 
-    local id = resolve_id()
+    local id = resolve_id(net)
     local se = id and xobject.se(id)
-    if not se_is_ours(se) then
-        local ok, created = pcall(try_alife_create, SHARED_SEC, dest, lvid, gvid)
+    if net_of_shared_se(se) ~= net then
+        local ok, created = pcall(try_alife_create, net.shared, dest, lvid, gvid)
         if not (ok and created) then
-            log("plant abort: alife_create failed", "red")
+            log("plant abort: alife_create failed " .. net.shared, "red")
             return
         end
         id = tonumber(created.id) or created.id
-        remember_id(m_data, id)
-        log("created stash " .. tostr(id), "green")
+        remember_id(net, m_data, id)
+        log("created stash " .. tostr(id) .. " " .. net.shared, "green")
     else
-        remember_id(m_data, id)
+        remember_id(net, m_data, id)
         -- TAS rule: never teleport an online box. Mid-UI teleport = item-move crash.
         if xobject.go(id) then
-            log("plant skip: online id=" .. tostr(id))
+            log("plant skip: online id=" .. tostr(id) .. " " .. net.shared)
             return id
         end
         local here = se and se.position
@@ -416,7 +477,7 @@ local function plant_dest(dest, lvid, gvid)
                 dist = d
             end
         end
-        log(string.format("plant existing stash=%s online=false dist=%.3f", tostr(id), dist))
+        log(string.format("plant existing stash=%s net=%s online=false dist=%.3f", tostr(id), net.shared, dist))
         if not (here and dist <= PARK_DIST) then
             clear_spawn_cache(id)
             local ok_tp = pcall(try_teleport, sim, id, gvid, lvid, dest)
@@ -424,12 +485,12 @@ local function plant_dest(dest, lvid, gvid)
                 log("teleport failed id=" .. tostr(id), "red")
                 return
             end
-            log("teleported stash " .. tostr(id), "yellow")
+            log("teleported stash " .. tostr(id) .. " " .. net.shared, "yellow")
         end
     end
 
     pcall(try_online, sim, id)
-    log("planted stash " .. tostr(id) .. " online")
+    log("planted stash " .. tostr(id) .. " " .. net.shared .. " online")
     return id
 end
 
@@ -439,7 +500,8 @@ local function plant_at(go)
         return
     end
     local ok, sec = pcall(try_section, go)
-    if not (ok and sec == PLACEABLE_SEC) then
+    local net = ok and sec and net_by_placeable[sec]
+    if not net then
         log("plant abort: not our box sec=" .. tostring(sec), "red")
         return
     end
@@ -448,15 +510,19 @@ local function plant_at(go)
         log("plant abort: no dest", "red")
         return
     end
-    return plant_dest(dest, lvid, gvid)
+    return plant_dest(net, dest, lvid, gvid)
 end
 
 -- Online bolt stays. Alife snaps ~3m off the dummy; moving it every open dumps items.
 local function park_at(dummy)
-    local id = resolve_id()
+    local net = net_of_go(dummy)
+    if not net then
+        return
+    end
+    local id = resolve_id(net)
     if id and xobject.go(id) then
-        remember_id(m_state(), id)
-        log("park online id=" .. tostring(id))
+        remember_id(net, m_state(), id)
+        log("park online id=" .. tostring(id) .. " " .. net.shared)
         return id
     end
     return plant_at(dummy)
@@ -516,9 +582,10 @@ local start_with_bolt
 
 -- Close / craft must not teleport. Online bolt stays put.
 local function hooked_get_stash(id)
-    if hf_id_is_ours(id) then
-        local bolt = resolve_id()
-        log("GetStash ours id=" .. tostring(id) .. " bolt=" .. tostring(bolt))
+    local net = hf_net(id)
+    if net then
+        local bolt = resolve_id(net)
+        log("GetStash ours id=" .. tostring(id) .. " net=" .. net.shared .. " bolt=" .. tostring(bolt))
         return bolt
     end
     local nid = tonumber(id)
@@ -531,8 +598,9 @@ end
 
 -- Place may create once. Never move an existing bolt.
 local function hooked_create_stash(id)
-    if hf_id_is_ours(id) then
-        local bolt = resolve_id()
+    local net = hf_net(id)
+    if net then
+        local bolt = resolve_id(net)
         if not bolt then
             local nid = tonumber(id)
             local go = nid and xobject.go(nid)
@@ -543,12 +611,12 @@ local function hooked_create_stash(id)
                 if actor then
                     local dest, lvid, gvid = dest_of(actor)
                     if dest then
-                        bolt = plant_dest(dest, lvid, gvid)
+                        bolt = plant_dest(net, dest, lvid, gvid)
                     end
                 end
             end
         end
-        log("CreateStash ours id=" .. tostring(id) .. " bolt=" .. tostring(bolt))
+        log("CreateStash ours id=" .. tostring(id) .. " net=" .. net.shared .. " bolt=" .. tostring(bolt))
         return bolt and xobject.se(bolt)
     end
     local nid = tonumber(id)
@@ -640,74 +708,87 @@ function api.open_at(anchor)
 end
 
 function api.box_go()
-    local id = resolve_id()
+    local id = resolve_id(NETS[1])
     return id and xobject.go(id)
 end
 
+function api.boxes_go()
+    local t = {}
+    for i = 1, #NETS do
+        local id = resolve_id(NETS[i])
+        local go = id and xobject.go(id)
+        if go then
+            t[#t + 1] = go
+        end
+    end
+    return t
+end
+
 local function wait_bring()
-    if not bring_id then
+    if not next(bring_ids) then
         bringing = false
         return true
     end
-    if xobject.go(bring_id) then
-        log("fetch bring done id=" .. tostring(bring_id))
-        bringing = false
-        bring_id = nil
-        return true
+    for id in pairs(bring_ids) do
+        if not xobject.go(id) then
+            return false
+        end
     end
-    return false
+    log("fetch bring done")
+    bringing = false
+    bring_ids = {}
+    return true
 end
 
 -- TAS fetch QoL: if the bolt is offline, park it under the actor so
 -- iterate_inventory_box works for z_fetch_shows_count / taskboard.
 -- Same offset as TAS fetch_anomalous_stash: +50x +50z, y = -50.
 function api.ensure_online()
-    local id = resolve_id()
-    if not id then
-        log("fetch ensure: no stash id")
-        return
-    end
-    local go = xobject.go(id)
-    if go then
-        return go
-    end
     local actor = db.actor
     if not actor then
         return
     end
-    local dest, lvid, gvid = dest_of(actor)
-    if not dest then
+    local base, lvid, gvid = dest_of(actor)
+    if not base then
         log("fetch ensure: no actor dest", "red")
         return
     end
-    dest.x = dest.x + 50
-    dest.z = dest.z + 50
-    dest.y = -50
-    bringing = true
-    bring_id = id
-    log("fetch ensure: plant id=" .. tostring(id))
-    local planted = plant_dest(dest, lvid, gvid)
-    go = xobject.go(id)
-    if go then
-        bringing = false
-        bring_id = nil
-        return go
+    local ox = base.x
+    local oz = base.z
+    local need_wait = false
+    for i = 1, #NETS do
+        local net = NETS[i]
+        local id = resolve_id(net)
+        if id and not xobject.go(id) then
+            local dest = vec_set(base)
+            dest.x = ox + 50 + (i - 1) * 2
+            dest.z = oz + 50
+            dest.y = -50
+            bringing = true
+            bring_ids[id] = true
+            log("fetch ensure: plant " .. net.shared .. " id=" .. tostring(id))
+            plant_dest(net, dest, lvid, gvid)
+            if xobject.go(id) then
+                bring_ids[id] = nil
+            else
+                need_wait = true
+            end
+        end
     end
-    if not planted then
-        log("fetch ensure: plant failed", "red")
+    if need_wait then
+        CreateTimeEvent("dogma_game_global_stash", "fetch_bring", 0, wait_bring)
+    else
         bringing = false
-        bring_id = nil
-        return
+        bring_ids = {}
     end
-    CreateTimeEvent("dogma_game_global_stash", "fetch_bring", 0, wait_bring)
 end
 
 local function hooked_ui_start(mode, obj)
     if obj then
         local ok, sec = pcall(try_section, obj)
-        if ok and sec == PLACEABLE_SEC then
+        if ok and net_by_placeable[sec] then
             local ok_id, id = pcall(try_id, obj)
-            log("ui start dummy id=" .. tostring(ok_id and id))
+            log("ui start dummy id=" .. tostring(ok_id and id) .. " sec=" .. tostring(sec))
             start_with_bolt(mode, obj)
             return
         end
@@ -728,27 +809,6 @@ local function hook_ui()
 end
 
 -- CFS ranges the dummy, then iterates the hidden box. Same portal as TAS.
-local function dummy_in_range(range)
-    if type(range) ~= "number" or not db.actor then
-        return
-    end
-    local best
-    local best_d
-    for id in pairs(dummies) do
-        local obj = xobject.go(id)
-        if obj then
-            local ok, dist = pcall(try_dist_safe, db.actor, obj)
-            if ok and dist and dist <= range then
-                if not best_d or dist < best_d then
-                    best = obj
-                    best_d = dist
-                end
-            end
-        end
-    end
-    return best
-end
-
 local function list_has_id(list, id)
     if not (list and id) then
         return false
@@ -761,13 +821,13 @@ local function list_has_id(list, id)
     return false
 end
 
-local function cfs_bolt(range)
-    local dummy = dummy_in_range(range)
-    if not dummy then
+-- Offline bolt parks at this dummy even if the dummy is the other type.
+local function cfs_bolt(net, dummy)
+    local id = resolve_id(net)
+    if not id then
         return
     end
-    local id = resolve_id()
-    if id and xobject.go(id) then
+    if xobject.go(id) then
         local sim = alife()
         if sim then
             pcall(try_online, sim, id)
@@ -777,9 +837,13 @@ local function cfs_bolt(range)
     if opening or bringing then
         return id
     end
-    id = plant_at(dummy)
+    local dest, lvid, gvid = dest_of(dummy)
+    if not dest then
+        return
+    end
+    id = plant_dest(net, dest, lvid, gvid)
     if id then
-        log("cfs plant bolt=" .. tostring(id) .. " at dummy")
+        log("cfs plant bolt=" .. tostring(id) .. " " .. net.shared)
     end
     return id
 end
@@ -792,9 +856,31 @@ local function hooked_get_stashes(range)
     if type(stashes) ~= "table" then
         stashes = {}
     end
-    local bolt = cfs_bolt(range)
-    if bolt and not list_has_id(stashes, bolt) then
-        stashes[#stashes + 1] = bolt
+    if type(range) ~= "number" or not db.actor then
+        return stashes
+    end
+    local nearest
+    local nearest_d
+    for id in pairs(dummies) do
+        local obj = xobject.go(id)
+        if obj then
+            local ok, dist = pcall(try_dist_safe, db.actor, obj)
+            if ok and dist and dist <= range then
+                if not nearest_d or dist < nearest_d then
+                    nearest = obj
+                    nearest_d = dist
+                end
+            end
+        end
+    end
+    if not nearest then
+        return stashes
+    end
+    for i = 1, #NETS do
+        local bolt = cfs_bolt(NETS[i], nearest)
+        if bolt and not list_has_id(stashes, bolt) then
+            stashes[#stashes + 1] = bolt
+        end
     end
     return stashes
 end
@@ -816,7 +902,7 @@ end
 local function hooked_hf_radial(wrapper)
     if wrapper and wrapper.object then
         local ok, sec = pcall(try_section, wrapper.object)
-        if ok and sec == PLACEABLE_SEC then
+        if ok and net_by_placeable[sec] then
             log("hf radial skip: our box")
             return
         end
@@ -927,7 +1013,7 @@ local function look_dummy()
         local ok, obj = pcall(try_target)
         if ok and obj then
             local ok_s, sec = pcall(try_section, obj)
-            if ok_s and sec == PLACEABLE_SEC then
+            if ok_s and net_by_placeable[sec] then
                 local ok_id, id = pcall(try_id, obj)
                 if ok_id and id then
                     dummies[id] = true
@@ -983,11 +1069,12 @@ local function pickup_dummy(obj)
         log("pickup abort: no actor id=" .. tostr(id), "red")
         return
     end
-    if not se_is_placeable(xobject.se(id)) then
+    local net = net_of_placeable_se(xobject.se(id))
+    if not net then
         log("pickup abort: not dummy id=" .. tostr(id), "red")
         return
     end
-    local ok_item, se = pcall(try_create_item, ITEM_SEC, actor)
+    local ok_item, se = pcall(try_create_item, net.item, actor)
     if not (ok_item and se) then
         log("pickup abort: create item failed id=" .. tostr(id), "red")
         return
@@ -1012,7 +1099,7 @@ local function pickup_dummy(obj)
         log("pickup release failed id=" .. tostr(id), "red")
         return
     end
-    log("picked up dummy id=" .. tostr(id) .. " bolt=" .. tostr(resolve_id()), "green")
+    log("picked up dummy id=" .. tostr(id) .. " net=" .. net.shared .. " bolt=" .. tostr(resolve_id(net)), "green")
 end
 
 function api.pickup(anchor)
@@ -1148,15 +1235,23 @@ local function on_update()
 end
 
 local function on_save_state(m_data)
-    if m_data then
-        m_data.dogma_game_global_stash = saved_id
+    if not m_data then
+        return
+    end
+    for i = 1, #NETS do
+        local n = NETS[i]
+        m_data[n.save_key] = saved[n.save_key]
     end
 end
 
 local function on_load_state(m_data)
-    local id = m_data and m_data.dogma_game_global_stash
-    saved_id = id and (tonumber(id) or id) or nil
-    log("load_state id=" .. tostring(saved_id))
+    saved = {}
+    for i = 1, #NETS do
+        local n = NETS[i]
+        local id = m_data and m_data[n.save_key]
+        saved[n.save_key] = id and (tonumber(id) or id) or nil
+        log("load_state " .. n.save_key .. "=" .. tostring(saved[n.save_key]))
+    end
 end
 
 local function on_load()
@@ -1172,16 +1267,16 @@ local function on_load()
     pending_mode = nil
     opening = false
     bringing = false
-    bring_id = nil
+    bring_ids = {}
     clear_all_lights()
-    log("load, resync id=" .. tostring(saved_id))
+    log("load, resync")
     sync_sprint()
 end
 
 local function on_destroy()
     blocked = false
     planted_level = nil
-    saved_id = nil
+    saved = {}
     stocked = {}
     dummies = {}
     muted = {}
@@ -1192,7 +1287,7 @@ local function on_destroy()
     pending_mode = nil
     opening = false
     bringing = false
-    bring_id = nil
+    bring_ids = {}
     clear_all_lights()
     log("reset (net destroy)")
 end
@@ -1218,16 +1313,16 @@ local function destock_npc(npc)
     if ok_id and id then
         stocked[id] = nil
     end
-    local ok_has, item = pcall(try_object, npc, ITEM_SEC)
-    if not (ok_has and item) then
-        return
+    for i = 1, #NETS do
+        local ok_has, item = pcall(try_object, npc, NETS[i].item)
+        if ok_has and item then
+            local ok_item_id, item_id = pcall(try_id, item)
+            if ok_item_id and item_id then
+                pcall(try_release_id, item_id)
+                log("destock npc=" .. tostring(ok_id and id) .. " item=" .. tostring(item_id) .. " " .. NETS[i].item)
+            end
+        end
     end
-    local ok_item_id, item_id = pcall(try_id, item)
-    if not (ok_item_id and item_id) then
-        return
-    end
-    pcall(try_release_id, item_id)
-    log("destock npc=" .. tostring(ok_id and id) .. " item=" .. tostring(item_id))
 end
 
 local function stock_trader(npc, force)
@@ -1251,19 +1346,31 @@ local function stock_trader(npc, force)
     if not is_supply_trader(npc) then
         return
     end
-    local ok_has, has = pcall(try_object, npc, ITEM_SEC)
-    if ok_has and has then
+    local missing = false
+    for i = 1, #NETS do
+        local ok_has, has = pcall(try_object, npc, NETS[i].item)
+        if not (ok_has and has) then
+            missing = true
+            break
+        end
+    end
+    if not missing then
         stocked[id] = true
         return
     end
     local ok_name, name = pcall(try_name, npc)
-    local ok, se = pcall(try_create_item, ITEM_SEC, npc)
-    if ok and se then
-        stocked[id] = true
-        log("stocked " .. tostring(ok_name and name or id))
-    else
-        log("stock fail " .. tostring(ok_name and name or id), "red")
+    for i = 1, #NETS do
+        local ok_has, has = pcall(try_object, npc, NETS[i].item)
+        if not (ok_has and has) then
+            local ok, se = pcall(try_create_item, NETS[i].item, npc)
+            if ok and se then
+                log("stocked " .. NETS[i].item .. " " .. tostring(ok_name and name or id))
+            else
+                log("stock fail " .. NETS[i].item .. " " .. tostring(ok_name and name or id), "red")
+            end
+        end
     end
+    stocked[id] = true
 end
 
 local function stock_talking()

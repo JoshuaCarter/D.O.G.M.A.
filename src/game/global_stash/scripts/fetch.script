@@ -63,11 +63,17 @@ end
 local function extend_news(text, section, amount)
 	text = orig_extend_news(text, section, amount)
 	local api = get_api()
-	local box = api and api.box_go and api.box_go()
-	if not box then
+	if api and api.ensure_online then
+		api.ensure_online()
+	end
+	local boxes = api and api.boxes_go and api.boxes_go()
+	if not (boxes and boxes[1]) then
 		return text
 	end
-	local cnt = count_in_box(box, section)
+	local cnt = 0
+	for i = 1, #boxes do
+		cnt = cnt + count_in_box(boxes[i], section)
+	end
 	local clr_number
 	if cnt == 0 then
 		clr_number = utils_xml.get_color("d_red")
@@ -89,10 +95,7 @@ end
 
 local function bring_online(why)
 	local api = get_api()
-	if not (api and api.ensure_online and api.box_go) then
-		return
-	end
-	if api.box_go() then
+	if not (api and api.ensure_online) then
 		return
 	end
 	log("fetch bring " .. tostring(why))

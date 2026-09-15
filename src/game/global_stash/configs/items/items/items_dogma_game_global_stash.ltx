@@ -2,6 +2,7 @@
 ; Mesh: meshes/dynamics/equipments/dogma_global_stash.ogf
 ; Model tex: textures/prop/d_global_stash02*.dds
 ; Icon: textures/ui/dogma_global_stash.dds (2x1 at 0,0)
+; Box II/III: same mesh (ogf albedo -> d_global_stash03 / 04), same bump as 02, icons _02 / _03. Own bolts.
 
 [dogma_global_stash_item]:tch_junk
 class                                   = II_ATTCH
@@ -39,6 +40,80 @@ script_binding                          = zzzz_dogma_game_global_stash_bind.init
 
 ; Shared inventory for every placed box. Tiny bolt. Contents stay on se.children.
 [dogma_game_global_stash]:hidden_box
+capacity                                = 1000
+placeable_type                          = stash
+visual                                  = dynamics\devices\dev_bolt\dev_bolt.ogf
+
+[dogma_global_stash_2_item]:tch_junk
+class                                   = II_ATTCH
+kind                                    = i_tool
+visual                                  = dynamics\equipments\dogma_global_stash_2.ogf
+description                             = st_dogma_global_stash_descr
+inv_name                                = st_dogma_global_stash_2
+inv_name_short                          = st_dogma_global_stash_2
+inv_grid_x                              = 0
+inv_grid_y                              = 0
+inv_grid_height                         = 1
+inv_grid_width                          = 2
+icons_texture                           = ui\dogma_global_stash_02
+cost                                    = 20000
+inv_weight                              = 30
+
+use1_functor                            = placeable_furniture.place_item
+use1_action_functor                     = placeable_furniture.func_place_item
+
+placeable_type                          = stash
+placeable_section                       = placeable_dogma_global_stash_2
+
+[placeable_dogma_global_stash_2]:inv_backpack
+visual                                  = dynamics\equipments\dogma_global_stash_2.ogf
+capacity                                = 1000
+placeable_type                          = stash
+item_section                            = dogma_global_stash_2_item
+
+bounding_box_size                       = 0.985824, 0.512219, 0.462447
+bounding_box_origin                     = -0.000008, 0.231224, 0.000513,
+
+script_binding                          = zzzz_dogma_game_global_stash_bind.init
+
+[dogma_game_global_stash_2]:hidden_box
+capacity                                = 1000
+placeable_type                          = stash
+visual                                  = dynamics\devices\dev_bolt\dev_bolt.ogf
+
+[dogma_global_stash_3_item]:tch_junk
+class                                   = II_ATTCH
+kind                                    = i_tool
+visual                                  = dynamics\equipments\dogma_global_stash_3.ogf
+description                             = st_dogma_global_stash_descr
+inv_name                                = st_dogma_global_stash_3
+inv_name_short                          = st_dogma_global_stash_3
+inv_grid_x                              = 0
+inv_grid_y                              = 0
+inv_grid_height                         = 1
+inv_grid_width                          = 2
+icons_texture                           = ui\dogma_global_stash_03
+cost                                    = 20000
+inv_weight                              = 30
+
+use1_functor                            = placeable_furniture.place_item
+use1_action_functor                     = placeable_furniture.func_place_item
+
+placeable_type                          = stash
+placeable_section                       = placeable_dogma_global_stash_3
+
+[placeable_dogma_global_stash_3]:inv_backpack
+visual                                  = dynamics\equipments\dogma_global_stash_3.ogf
+capacity                                = 1000
+placeable_type                          = stash
+item_section                            = dogma_global_stash_3_item
+
+bounding_box_size                       = 0.985824, 0.512219, 0.462447
+bounding_box_origin                     = -0.000008, 0.231224, 0.000513,
+
+script_binding                          = zzzz_dogma_game_global_stash_bind.init
+
+[dogma_game_global_stash_3]:hidden_box
 capacity                                = 1000
 placeable_type                          = stash
 visual                                  = dynamics\devices\dev_bolt\dev_bolt.ogf

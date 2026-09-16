@@ -111,6 +111,7 @@ local idx_box = {}
 local idx_cnt = {}
 local idx_cur_box
 local idx_logged_no_sec
+local idx_logged_tally
 local idx_rebuild
 
 local try_object = function(actor, sec)
@@ -320,6 +321,7 @@ local function closed_sec(fn)
     local i_v
     local sec_add
     local upgrade_scan
+    local tally_v
     local i = 1
     while i <= 24 do
         local ok, name, val = pcall(try_upvalue, fn, i)
@@ -335,6 +337,9 @@ local function closed_sec(fn)
                 sec_add = val
             end
         end
+        if name == "tally" and type_(val) == "table" then
+            tally_v = val
+        end
         if name == "self" and type_(val) == "table" then
             self_v = val
         end
@@ -345,6 +350,9 @@ local function closed_sec(fn)
     end
     if self_v and i_v and self_v.parts and self_v.parts[i_v] then
         return self_v.parts[i_v].sec
+    end
+    if tally_v then
+        return nil, false, nil, tally_v
     end
     if upgrade_scan then
         return nil, true, sec_add
@@ -376,9 +384,19 @@ local function idx_feed(func, range)
     if not dummy_in_range(range) then
         return
     end
-    local sec, upgrade_scan, sec_add = closed_sec(func)
+    local sec, upgrade_scan, sec_add, tally = closed_sec(func)
     if sec then
         idx_feed_sec(func, sec)
+        return
+    end
+    if tally then
+        for s, n in pairs(idx_n) do
+            tally[s] = (tally[s] or 0) + n
+        end
+        if not idx_logged_tally then
+            idx_logged_tally = true
+            log("idx merge tally")
+        end
         return
     end
     if upgrade_scan then

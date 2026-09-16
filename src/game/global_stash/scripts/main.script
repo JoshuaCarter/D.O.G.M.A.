@@ -739,28 +739,27 @@ local try_alife_state = function()
     return alife_storage_manager.get_state()
 end
 
--- z_fetch / PDA cache count hideout boxes via workshop_stashes values.
--- String keys so HF numeric dummy lookups do not collide.
-function api.register_fetch()
+-- Never put our bolts in workshop_stashes. Gamma walks every item in every
+-- registered box per fetch task. We count ourselves in fetch.script.
+function api.unregister_fetch()
     local ok, m_data = pcall(try_alife_state)
     if not (ok and m_data) then
         return
     end
-    if not m_data.workshop_stashes then
-        m_data.workshop_stashes = {}
+    local ws = m_data.workshop_stashes
+    if type(ws) ~= "table" then
+        return
     end
     for i = 1, #NETS do
-        local net = NETS[i]
-        local id = resolve_id(net)
-        if m_data.workshop_stashes[net.shared] ~= id then
-            m_data.workshop_stashes[net.shared] = id
-            log("fetch register " .. net.shared .. "=" .. tostring(id))
+        local key = NETS[i].shared
+        if ws[key] ~= nil then
+            ws[key] = nil
+            log("fetch unregister " .. key)
         end
     end
 end
 
--- TAS fetch QoL: if the bolt is offline, park it under the actor so
--- iterate_inventory_box works for z_fetch / taskboard.
+-- Plant offline bolts so fetch.script can iterate_inventory_box.
 -- Same offset as TAS fetch_anomalous_stash: +50x +50z, y = -50.
 function api.ensure_online()
     local actor = db.actor
@@ -800,7 +799,7 @@ function api.ensure_online()
         bringing = false
         bring_ids = {}
     end
-    api.register_fetch()
+    api.unregister_fetch()
 end
 
 local function hooked_ui_start(mode, obj)
@@ -1300,7 +1299,7 @@ local function on_load()
     clear_all_lights()
     log("load, resync")
     sync_sprint()
-    api.register_fetch()
+    api.unregister_fetch()
 end
 
 local function on_destroy()

@@ -1,117 +1,374 @@
 --[[
-	Fetch stash count.
+    Fetch stash count.
 
-	Real path (traced):
-	  trigger_fetch_func
-	    -> tasks_fetch.postpone_fetch_for_next_frame
-	      -> z_fetch_shows_count.extend_news_text
-	         OR a_ui_pda_inventory_cache.get_cached_fetch_count_text
-	      -> give_talk_message2
-	  iTheon/Gamma intercepts give_talk_message2 into task details.
-	  Vanilla dialog shows that same news text.
+    PDA fetch tab path (traced):
+      DrawTaskList
+        -> prepare_task_description -> trigger_fetch_func
+             -> tasks_fetch.postpone_fetch_for_next_frame
+                (Gamma replaces this with get_cached_fetch_count_text)
+        -> get_fetch_task_sort_priority -> live_stash_count
+      get_cached_fetch_count_text -> live_stash_count
+        live_stash_count walks every item in every online
+        m_data.workshop_stashes GO, per task, per call.
 
-	Both counters iterate m_data.workshop_stashes values (bolt ids)
-	that are online. We register there and plant bolts first.
+    9e95396 wrote our bolt into workshop_stashes so Gamma would see it.
+    Log: register 4330, then first postpone+cached, then 11s LONG FRAME
+    looping. Taskboard Update treats gap>500ms as PDA re-show; reset
+    cooldown is 3s; an 11s Draw clears it every frame.
+
+    Yesterday (pre-9e95396) counted our boxes ourselves and added them
+    to the fetch text. Scan once per frame/TTL, add that into Gamma's
+    "In stashes xN: [Location xN, ...]" line (current map).
 ]]
 
 local MOD_ID = "dogma/game/global_stash"
+local SCAN_TTL_MS = 2000
 
 local orig_news
 local orig_cached
-local orig_postpone
+local orig_sort
+local orig_sort_for
 local logged = {}
+local dump = {}
+local dump_ms = 0
+local scan_frame = -1
+local scan_n = 0
+
+local try_section = function(item)
+    return item:section()
+end
+
+local try_uses = function(item)
+    return item:get_remaining_uses()
+end
 
 local function log(msg, color)
-	dogma.log.log(MOD_ID, tostring(msg), color)
+    dogma.log.log(MOD_ID, tostring(msg), color)
 end
 
 local function get_api()
-	return _G.dogma_game_global_stash
+    return _G.dogma_game_global_stash
 end
 
-local function before_count(why)
-	local api = get_api()
-	if api and api.ensure_online then
-		api.ensure_online()
-	end
-	if not logged[why] then
-		logged[why] = true
-		log("fetch count via " .. tostring(why))
-	end
+local function add_item(_, item)
+    local ok, sec = pcall(try_section, item)
+    if not (ok and sec) then
+        return
+    end
+    local n = 1
+    local ok_u, uses = pcall(try_uses, item)
+    if ok_u and type(uses) == "number" and uses > 1 then
+        n = uses
+    end
+    dump[sec] = (dump[sec] or 0) + n
+    scan_n = scan_n + 1
 end
 
+local try_iter = function(box)
+    box:iterate_inventory_box(add_item, box)
+end
+
+local function scan()
+    local now = time_global()
+    if scan_frame == now then
+        return
+    end
+    if dump_ms > 0 and now - dump_ms < SCAN_TTL_MS then
+        return
+    end
+    scan_frame = now
+    for k in pairs(dump) do
+        dump[k] = nil
+    end
+    scan_n = 0
+    local api = get_api()
+    if api and api.unregister_fetch then
+        api.unregister_fetch()
+    end
+    if api and api.ensure_online then
+        api.ensure_online()
+    end
+    if not (api and api.boxes_go) then
+        log("fetch scan: no api")
+        return
+    end
+    local boxes = api.boxes_go()
+    if #boxes == 0 then
+        if not logged.empty then
+            logged.empty = true
+            log("fetch scan: no online boxes")
+        end
+        return
+    end
+    dogma.perf.start("global_stash", "fetch_scan")
+    for i = 1, #boxes do
+        pcall(try_iter, boxes[i])
+    end
+    dogma.perf.stop()
+    dump_ms = now
+    log("fetch scan boxes=" .. tostring(#boxes) .. " items=" .. tostring(scan_n))
+end
+
+local function stash_color(n, amount)
+    if n == 0 then
+        return utils_xml.get_color("d_red")
+    end
+    if amount and n >= amount then
+        return utils_xml.get_color("pda_green")
+    end
+    return utils_xml.get_color("pda_yellow")
+end
+
+local function loc_name()
+    local key = level.name()
+    if not key then
+        return nil
+    end
+    local t = game.translate_string(key)
+    if t and t ~= key then
+        return t
+    end
+    return key
+end
+
+local function colored_x(n, amount)
+    return stash_color(n, amount) .. "x" .. tostring(n) .. utils_xml.get_color("pda_white")
+end
+
+local function loc_entry(name, n, amount)
+    return utils_xml.get_color("pda_white") .. name .. " " .. colored_x(n, amount)
+end
+
+-- Skip %c[a,r,g,b] / [r,g,b] color tokens. Returns next index.
+local function skip_color(s, i)
+    local a, b = string.find(s, "^%%c%[%d+,%d+,%d+,%d+%]", i)
+    if a then
+        return b + 1
+    end
+    a, b = string.find(s, "^%[%d+,%d+,%d+,%d+%]", i)
+    if a then
+        return b + 1
+    end
+    a, b = string.find(s, "^%[%d+,%d+,%d+%]", i)
+    if a then
+        return b + 1
+    end
+    return i
+end
+
+local function find_list_close(s, open_i)
+    local i = open_i + 1
+    local n = #s
+    while i <= n do
+        local ni = skip_color(s, i)
+        if ni ~= i then
+            i = ni
+        elseif string.sub(s, i, i) == "]" then
+            return i
+        else
+            i = i + 1
+        end
+    end
+end
+
+-- Add our dump into Gamma's "In stashes xN: [Location xN, ...]" line.
+local function with_our_stashes(text, section, amount)
+    local sfind = string.find
+    local ssub = string.sub
+    local extra = dump[section] or 0
+    if extra <= 0 or not text then
+        return text
+    end
+    if not logged.suffix then
+        logged.suffix = true
+        log("fetch stash sec=" .. tostring(section) .. " extra=" .. tostring(extra) .. " need=" .. tostring(amount))
+    end
+    local clr_txt = utils_xml.get_color("pda_white")
+    local label = game.translate_string("st_inv_cache_stashes")
+    local pos = sfind(text, label, 1, true)
+    if not pos then
+        local i
+        local j
+        local num
+        local from = 1
+        while true do
+            local a, b, n = sfind(text, "x(%d+)", from)
+            if not a then
+                break
+            end
+            i, j, num = a, b, n
+            from = b + 1
+        end
+        if not i then
+            return text .. "\\n" .. clr_txt .. label .. " " .. colored_x(extra, amount)
+        end
+        local n = (tonumber(num) or 0) + extra
+        return ssub(text, 1, i - 1) .. colored_x(n, amount) .. ssub(text, j + 1)
+    end
+    local i, j, num = sfind(text, "x(%d+)", pos + #label)
+    local name = loc_name()
+    if not i then
+        local line = clr_txt .. label .. " " .. colored_x(extra, amount)
+        if name then
+            line = line .. ": [" .. loc_entry(name, extra, amount) .. clr_txt .. "]"
+        end
+        return text .. "\\n" .. line
+    end
+    local total = (tonumber(num) or 0) + extra
+    local out = ssub(text, 1, i - 1) .. colored_x(total, amount) .. ssub(text, j + 1)
+    if not name then
+        return out
+    end
+    local list_mark = sfind(out, ": [", pos, true)
+    if not list_mark then
+        return out .. ": [" .. loc_entry(name, extra, amount) .. clr_txt .. "]"
+    end
+    local open_i = list_mark + 2
+    local close_i = find_list_close(out, open_i)
+    if not close_i then
+        return out
+    end
+    local inside = ssub(out, open_i + 1, close_i - 1)
+    local name_pos = sfind(inside, name, 1, true)
+    if name_pos then
+        local xi, xj, xnum = sfind(inside, "x(%d+)", name_pos + #name)
+        if xi then
+            local loc_n = (tonumber(xnum) or 0) + extra
+            inside = ssub(inside, 1, xi - 1) .. colored_x(loc_n, amount) .. ssub(inside, xj + 1)
+        end
+    elseif inside == "" then
+        inside = loc_entry(name, extra, amount)
+    else
+        inside = loc_entry(name, extra, amount) .. clr_txt .. ", " .. inside
+    end
+    return ssub(out, 1, open_i) .. inside .. ssub(out, close_i)
+end
+
+local function bump_prio(prio, section, amount)
+    local n = dump[section] or 0
+    if n <= 0 or not amount then
+        return prio
+    end
+    if n >= amount then
+        if prio > 2 then
+            return 2
+        end
+        return prio
+    end
+    if prio > 3 then
+        return 3
+    end
+    return prio
+end
+
+-- Gamma cached_extend_news_text calls get_cached_fetch_count_text.
+-- If we hooked cached, orig_news already includes our suffix. Don't add twice.
 local function wrapped_news(text, section, amount, task_id)
-	before_count("news")
-	return orig_news(text, section, amount, task_id)
+    scan()
+    if not logged.news then
+        logged.news = true
+        log("fetch count via news")
+    end
+    local t = orig_news(text, section, amount, task_id)
+    if orig_cached then
+        return t
+    end
+    return with_our_stashes(t, section, amount)
 end
 
 local function wrapped_cached(a, b, c, d)
-	before_count("cached")
-	return orig_cached(a, b, c, d)
+    scan()
+    if not logged.cached then
+        logged.cached = true
+        log("fetch count via cached")
+    end
+    local t = orig_cached(a, b, c, d)
+    if c then
+        return with_our_stashes(t, b, c)
+    end
+    return with_our_stashes(t, a, b)
 end
 
-local function wrapped_postpone(task_id, section, amount)
-	before_count("postpone")
-	return orig_postpone(task_id, section, amount)
+local function wrapped_sort(task_id, npc_id)
+    scan()
+    local prio = orig_sort(task_id, npc_id)
+    local cache = a_ui_pda_inventory_cache
+    local params = cache and cache.get_fetch_task_params and cache.get_fetch_task_params(task_id, npc_id)
+    if params then
+        return bump_prio(prio, params.section, params.amount)
+    end
+    return prio
+end
+
+local function wrapped_sort_for(section, amount)
+    scan()
+    return bump_prio(orig_sort_for(section, amount), section, amount)
 end
 
 local function hook_news()
-	local z = z_fetch_shows_count
-	if not (z and z.extend_news_text) then
-		log("fetch news skip")
-		return false
-	end
-	if z.extend_news_text == wrapped_news then
-		return true
-	end
-	orig_news = z.extend_news_text
-	z.extend_news_text = wrapped_news
-	log("fetch news hooked")
-	return true
+    local z = z_fetch_shows_count
+    if not (z and z.extend_news_text) then
+        log("fetch news skip")
+        return false
+    end
+    if z.extend_news_text == wrapped_news then
+        return true
+    end
+    orig_news = z.extend_news_text
+    z.extend_news_text = wrapped_news
+    log("fetch news hooked")
+    return true
 end
 
 local function hook_cached()
-	local a = a_ui_pda_inventory_cache
-	if not (a and a.get_cached_fetch_count_text) then
-		log("fetch cached skip")
-		return false
-	end
-	if a.get_cached_fetch_count_text == wrapped_cached then
-		return true
-	end
-	orig_cached = a.get_cached_fetch_count_text
-	a.get_cached_fetch_count_text = wrapped_cached
-	log("fetch cached hooked")
-	return true
+    local a = a_ui_pda_inventory_cache
+    if not (a and a.get_cached_fetch_count_text) then
+        log("fetch cached skip")
+        return false
+    end
+    if a.get_cached_fetch_count_text == wrapped_cached then
+        return true
+    end
+    orig_cached = a.get_cached_fetch_count_text
+    a.get_cached_fetch_count_text = wrapped_cached
+    log("fetch cached hooked")
+    return true
 end
 
-local function hook_postpone()
-	if not (tasks_fetch and tasks_fetch.postpone_fetch_for_next_frame) then
-		log("fetch postpone skip")
-		return false
-	end
-	if tasks_fetch.postpone_fetch_for_next_frame == wrapped_postpone then
-		return true
-	end
-	orig_postpone = tasks_fetch.postpone_fetch_for_next_frame
-	tasks_fetch.postpone_fetch_for_next_frame = wrapped_postpone
-	log("fetch postpone hooked")
-	return true
+local function hook_sort()
+    local a = a_ui_pda_inventory_cache
+    if not (a and a.get_fetch_task_sort_priority) then
+        log("fetch sort skip")
+        return false
+    end
+    if a.get_fetch_task_sort_priority == wrapped_sort then
+        return true
+    end
+    orig_sort = a.get_fetch_task_sort_priority
+    a.get_fetch_task_sort_priority = wrapped_sort
+    if a.get_fetch_sort_priority_for then
+        orig_sort_for = a.get_fetch_sort_priority_for
+        a.get_fetch_sort_priority_for = wrapped_sort_for
+    end
+    log("fetch sort hooked")
+    return true
 end
 
 local function hook_all()
-	hook_news()
-	hook_cached()
-	hook_postpone()
-	local api = get_api()
-	if api and api.register_fetch then
-		api.register_fetch()
-	end
-	return true
+    dump_ms = 0
+    scan_frame = -1
+    hook_news()
+    hook_cached()
+    hook_sort()
+    local api = get_api()
+    if api and api.unregister_fetch then
+        api.unregister_fetch()
+    end
+    return true
 end
 
 function on_game_start()
-	RegisterScriptCallback("on_game_load", hook_all)
-	CreateTimeEvent("dogma_game_global_stash", "fetch_late", 0.2, hook_all)
-	log("fetch ready")
+    RegisterScriptCallback("on_game_load", hook_all)
+    CreateTimeEvent("dogma_game_global_stash", "fetch_late", 0.2, hook_all)
+    log("fetch ready")
 end

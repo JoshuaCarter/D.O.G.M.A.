@@ -103,7 +103,7 @@ local orig_get_stashes
 local orig_iterate_stashes
 local orig_hf_radial
 -- section -> {item id, ...}. Counts in idx_n. Deltas on put/take.
--- Rebuild only when the loot UI opens, never on craft/PDA.
+-- Persist in save_state. Rebuild when the loot UI opens, never on craft/PDA.
 local idx_ids = {}
 local idx_n = {}
 local idx_of = {}
@@ -374,7 +374,12 @@ local function idx_feed_sec(func, sec)
             n = n + 1
             i = i + 1
         else
-            idx_drop(id)
+            local box_id = idx_box[id]
+            if box_id and xobject.go(box_id) then
+                idx_drop(id)
+            else
+                i = i + 1
+            end
         end
     end
     return n

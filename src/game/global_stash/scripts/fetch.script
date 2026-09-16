@@ -1,46 +1,18 @@
 --[[
-    Fetch stash count.
+    Fetch stash count from idx. Never plant. Never iterate_inventory_box.
 
-    PDA fetch tab path (traced):
-      DrawTaskList
-        -> prepare_task_description -> trigger_fetch_func
-             -> tasks_fetch.postpone_fetch_for_next_frame
-                (Gamma replaces this with get_cached_fetch_count_text)
-        -> get_fetch_task_sort_priority -> live_stash_count
-      get_cached_fetch_count_text -> live_stash_count
-        live_stash_count walks every item in every online
-        m_data.workshop_stashes GO, per task, per call.
-
-    9e95396 wrote our bolt into workshop_stashes so Gamma would see it.
-    Log: register 4330, then first postpone+cached, then 11s LONG FRAME
-    looping. Taskboard Update treats gap>500ms as PDA re-show; reset
-    cooldown is 3s; an 11s Draw clears it every frame.
-
-    Yesterday (pre-9e95396) counted our boxes ourselves and added them
-    to the fetch text. Scan once per frame/TTL, add that into Gamma's
-    "In stashes xN: [Location xN, ...]" line (current map).
+    PDA: get_cached_fetch_count_text / live_stash_count walks
+    workshop_stashes + player_created_stashes GOs per task.
+    We stay off those lists. Add our idx_n into the stash line.
 ]]
 
 local MOD_ID = "dogma/game/global_stash"
-local SCAN_TTL_MS = 2000
 
 local orig_news
 local orig_cached
 local orig_sort
 local orig_sort_for
 local logged = {}
-local dump = {}
-local dump_ms = 0
-local scan_frame = -1
-local scan_n = 0
-
-local try_section = function(item)
-    return item:section()
-end
-
-local try_uses = function(item)
-    return item:get_remaining_uses()
-end
 
 local function log(msg, color)
     dogma.log.log(MOD_ID, tostring(msg), color)
@@ -50,63 +22,12 @@ local function get_api()
     return _G.dogma_game_global_stash
 end
 
-local function add_item(_, item)
-    local ok, sec = pcall(try_section, item)
-    if not (ok and sec) then
-        return
-    end
-    local n = 1
-    local ok_u, uses = pcall(try_uses, item)
-    if ok_u and type(uses) == "number" and uses > 1 then
-        n = uses
-    end
-    dump[sec] = (dump[sec] or 0) + n
-    scan_n = scan_n + 1
-end
-
-local try_iter = function(box)
-    box:iterate_inventory_box(add_item, box)
-end
-
-local function scan()
-    local now = time_global()
-    if scan_frame == now then
-        return
-    end
-    if dump_ms > 0 and now - dump_ms < SCAN_TTL_MS then
-        return
-    end
-    scan_frame = now
-    for k in pairs(dump) do
-        dump[k] = nil
-    end
-    scan_n = 0
+local function our_n(section)
     local api = get_api()
-    if api and api.unregister_fetch then
-        api.unregister_fetch()
+    if not (api and api.stash_count) then
+        return 0
     end
-    if api and api.ensure_online then
-        api.ensure_online()
-    end
-    if not (api and api.boxes_go) then
-        log("fetch scan: no api")
-        return
-    end
-    local boxes = api.boxes_go()
-    if #boxes == 0 then
-        if not logged.empty then
-            logged.empty = true
-            log("fetch scan: no online boxes")
-        end
-        return
-    end
-    dogma.perf.start("global_stash", "fetch_scan")
-    for i = 1, #boxes do
-        pcall(try_iter, boxes[i])
-    end
-    dogma.perf.stop()
-    dump_ms = now
-    log("fetch scan boxes=" .. tostring(#boxes) .. " items=" .. tostring(scan_n))
+    return api.stash_count(section)
 end
 
 local function stash_color(n, amount)
@@ -139,7 +60,6 @@ local function loc_entry(name, n, amount)
     return utils_xml.get_color("pda_white") .. name .. " " .. colored_x(n, amount)
 end
 
--- Skip %c[a,r,g,b] / [r,g,b] color tokens. Returns next index.
 local function skip_color(s, i)
     local a, b = string.find(s, "^%%c%[%d+,%d+,%d+,%d+%]", i)
     if a then
@@ -171,11 +91,10 @@ local function find_list_close(s, open_i)
     end
 end
 
--- Add our dump into Gamma's "In stashes xN: [Location xN, ...]" line.
 local function with_our_stashes(text, section, amount)
     local sfind = string.find
     local ssub = string.sub
-    local extra = dump[section] or 0
+    local extra = our_n(section)
     if extra <= 0 or not text then
         return text
     end
@@ -245,7 +164,7 @@ local function with_our_stashes(text, section, amount)
 end
 
 local function bump_prio(prio, section, amount)
-    local n = dump[section] or 0
+    local n = our_n(section)
     if n <= 0 or not amount then
         return prio
     end
@@ -261,10 +180,7 @@ local function bump_prio(prio, section, amount)
     return prio
 end
 
--- Gamma cached_extend_news_text calls get_cached_fetch_count_text.
--- If we hooked cached, orig_news already includes our suffix. Don't add twice.
 local function wrapped_news(text, section, amount, task_id)
-    scan()
     if not logged.news then
         logged.news = true
         log("fetch count via news")
@@ -277,7 +193,6 @@ local function wrapped_news(text, section, amount, task_id)
 end
 
 local function wrapped_cached(a, b, c, d)
-    scan()
     if not logged.cached then
         logged.cached = true
         log("fetch count via cached")
@@ -290,7 +205,6 @@ local function wrapped_cached(a, b, c, d)
 end
 
 local function wrapped_sort(task_id, npc_id)
-    scan()
     local prio = orig_sort(task_id, npc_id)
     local cache = a_ui_pda_inventory_cache
     local params = cache and cache.get_fetch_task_params and cache.get_fetch_task_params(task_id, npc_id)
@@ -301,7 +215,6 @@ local function wrapped_sort(task_id, npc_id)
 end
 
 local function wrapped_sort_for(section, amount)
-    scan()
     return bump_prio(orig_sort_for(section, amount), section, amount)
 end
 
@@ -355,8 +268,6 @@ local function hook_sort()
 end
 
 local function hook_all()
-    dump_ms = 0
-    scan_frame = -1
     hook_news()
     hook_cached()
     hook_sort()

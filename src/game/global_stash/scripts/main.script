@@ -5,8 +5,10 @@
     Open a box: park the bolt at that dummy, then swap ui_inventory.start.
     Park only before the UI opens. Mid-UI teleport crashes item moves.
     Map change does not move the bolt. First open on a map brings it to that box.
-    CFS: dummy in range -> pin bolt and add it to GetStashesInRange. Offline bolt
-    parks at that dummy. Id lives in save_state. Map load never creates.
+    CFS GetStashesInRange lists player_created / workshop / TAS hidden, then
+    IterateStashesInRange C++-walks every item in each. We never put the bolt
+    on that list. Dummy in range: feed matching section from idx. Id lives in
+    save_state. Map load never creates.
     Dummy is an invbox so engine Use opens loot and HF hold-Use never fires.
     Mute the dummy. Tap Use opens. Hold Use (or MCM key) picks the furniture up.
     Bolt stays. HF radial on this box is skipped so hold is pickup, not a menu.
@@ -74,6 +76,10 @@ local xinventory = dogma.xlibs.xinventory
 local api = {}
 _G.dogma_game_global_stash = api
 
+local function log(msg, color)
+    dogma.log.log(MOD_ID, tostring(msg), color)
+end
+
 local blocked = false
 local planted_level = nil
 local saved = {}
@@ -94,7 +100,18 @@ local pending_dik = nil
 local picked = false
 local orig_ui_start
 local orig_get_stashes
+local orig_iterate_stashes
 local orig_hf_radial
+-- section -> {item id, ...}. Counts in idx_n. Deltas on put/take.
+-- Rebuild only when the loot UI opens, never on craft/PDA.
+local idx_ids = {}
+local idx_n = {}
+local idx_of = {}
+local idx_box = {}
+local idx_cnt = {}
+local idx_cur_box
+local idx_logged_no_sec
+local idx_rebuild
 
 local try_object = function(actor, sec)
     return actor:object(sec)
@@ -156,6 +173,230 @@ end
 
 local try_id = function(obj)
     return obj:id()
+end
+
+local try_uses = function(item)
+    return item:get_remaining_uses()
+end
+
+local try_upvalue = function(fn, i)
+    return debug.getupvalue(fn, i)
+end
+
+local try_is_item = function(kind, sec)
+    return IsItem(kind, sec)
+end
+
+local function idx_wipe()
+    local pairs_ = pairs
+    for k in pairs_(idx_ids) do
+        idx_ids[k] = nil
+    end
+    for k in pairs_(idx_n) do
+        idx_n[k] = nil
+    end
+    for k in pairs_(idx_of) do
+        idx_of[k] = nil
+    end
+    for k in pairs_(idx_box) do
+        idx_box[k] = nil
+    end
+    for k in pairs_(idx_cnt) do
+        idx_cnt[k] = nil
+    end
+end
+
+local function idx_count_one(item)
+    local ok, uses = pcall(try_uses, item)
+    if ok and type(uses) == "number" and uses > 1 then
+        return uses
+    end
+    return 1
+end
+
+local function idx_drop(id)
+    local sec = idx_of[id]
+    if not sec then
+        return
+    end
+    local n = idx_cnt[id] or 1
+    idx_of[id] = nil
+    idx_box[id] = nil
+    idx_cnt[id] = nil
+    local left = (idx_n[sec] or 0) - n
+    if left > 0 then
+        idx_n[sec] = left
+    else
+        idx_n[sec] = nil
+    end
+    local t = idx_ids[sec]
+    if not t then
+        return
+    end
+    for i = 1, #t do
+        if t[i] == id then
+            t[i] = t[#t]
+            t[#t] = nil
+            break
+        end
+    end
+    if #t == 0 then
+        idx_ids[sec] = nil
+    end
+end
+local function idx_add(_, item)
+    local ok, sec = pcall(try_section, item)
+    local ok_id, id = pcall(try_id, item)
+    if not (ok and sec and ok_id and id) then
+        return
+    end
+    if idx_of[id] then
+        idx_drop(id)
+    end
+    local t = idx_ids[sec]
+    if not t then
+        t = {}
+        idx_ids[sec] = t
+    end
+    t[#t + 1] = id
+    idx_of[id] = sec
+    idx_box[id] = idx_cur_box
+    local n = idx_count_one(item)
+    idx_cnt[id] = n
+    idx_n[sec] = (idx_n[sec] or 0) + n
+end
+
+idx_rebuild = function()
+    idx_wipe()
+    local n = 0
+    for i = 1, #NETS do
+        local id = saved[NETS[i].save_key]
+        local go = id and xobject.go(id)
+        if go then
+            idx_cur_box = id
+            pcall(try_iterate_box, go, idx_add)
+        end
+    end
+    idx_cur_box = nil
+    for _, t in pairs(idx_ids) do
+        n = n + #t
+    end
+    log("idx rebuild items=" .. tostring(n))
+end
+
+function api.stash_count(sec)
+    if not sec then
+        return 0
+    end
+    return idx_n[sec] or 0
+end
+
+local try_range = function(a, b)
+    return distance_between_safe(a, b)
+end
+
+local function dummy_in_range(range)
+    if type(range) ~= "number" or not db.actor then
+        return false
+    end
+    for id in pairs(dummies) do
+        local obj = xobject.go(id)
+        if obj then
+            local ok, dist = pcall(try_range, db.actor, obj)
+            if ok and dist and dist <= range then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+local function closed_sec(fn)
+    local type_ = type
+    if type_(fn) ~= "function" or not debug or not debug.getupvalue then
+        return
+    end
+    local self_v
+    local i_v
+    local sec_add
+    local upgrade_scan
+    local i = 1
+    while i <= 24 do
+        local ok, name, val = pcall(try_upvalue, fn, i)
+        if not (ok and name) then
+            break
+        end
+        if (name == "sec" or name == "section" or name == "sec_part") and type_(val) == "string" then
+            return val
+        end
+        if name == "sec_add" then
+            upgrade_scan = true
+            if type_(val) == "string" then
+                sec_add = val
+            end
+        end
+        if name == "self" and type_(val) == "table" then
+            self_v = val
+        end
+        if name == "i" and type_(val) == "number" then
+            i_v = val
+        end
+        i = i + 1
+    end
+    if self_v and i_v and self_v.parts and self_v.parts[i_v] then
+        return self_v.parts[i_v].sec
+    end
+    if upgrade_scan then
+        return nil, true, sec_add
+    end
+end
+
+local function idx_feed_sec(func, sec)
+    local t = idx_ids[sec]
+    if not t then
+        return 0
+    end
+    local n = 0
+    local i = 1
+    while i <= #t do
+        local id = t[i]
+        local go = xobject.go(id)
+        if go then
+            func(xobject.go(idx_box[id]), go)
+            n = n + 1
+            i = i + 1
+        else
+            idx_drop(id)
+        end
+    end
+    return n
+end
+
+local function idx_feed(func, range)
+    if not dummy_in_range(range) then
+        return
+    end
+    local sec, upgrade_scan, sec_add = closed_sec(func)
+    if sec then
+        idx_feed_sec(func, sec)
+        return
+    end
+    if upgrade_scan then
+        if sec_add then
+            idx_feed_sec(func, sec_add)
+        end
+        for s in pairs(idx_ids) do
+            local ok, is_up = pcall(try_is_item, "upgrade", s)
+            if ok and is_up then
+                idx_feed_sec(func, s)
+            end
+        end
+        return
+    end
+    if not idx_logged_no_sec then
+        idx_logged_no_sec = true
+        log("idx skip feed: no section upvalue")
+    end
 end
 
 local try_name = function(obj)
@@ -222,10 +463,6 @@ end
 
 local try_light_pos = function(light, pos)
     light:set_position(pos.x + BOX_OX, pos.y + BOX_OY, pos.z + BOX_OZ)
-end
-
-local function log(msg, color)
-    dogma.log.log(MOD_ID, tostring(msg), color)
 end
 
 local function sec_of_se(se)
@@ -663,6 +900,8 @@ local function show_bolt(id)
         pending_dummy = nil
     end
     opening = false
+    idx_rebuild()
+    api.unregister_fetch()
     if orig_ui_start then
         orig_ui_start(pending_mode or "loot", bolt)
     end
@@ -672,7 +911,7 @@ local function show_bolt(id)
 end
 
 -- Same trick as The Anomalous Stash: swap dummy for the shared box in ui_inventory.start.
--- Park at this dummy first so CFS range matches the box the player is standing at.
+-- Rebuild idx here. Craft/PDA never walk the box.
 start_with_bolt = function(mode, dummy)
     if bringing then
         log("ui start skip: fetch bring")
@@ -719,22 +958,6 @@ function api.boxes_go()
     return t
 end
 
-local function wait_bring()
-    if not next(bring_ids) then
-        bringing = false
-        return true
-    end
-    for id in pairs(bring_ids) do
-        if not xobject.go(id) then
-            return false
-        end
-    end
-    log("fetch bring done")
-    bringing = false
-    bring_ids = {}
-    return true
-end
-
 local try_alife_state = function()
     return alife_storage_manager.get_state()
 end
@@ -747,59 +970,25 @@ function api.unregister_fetch()
         return
     end
     local ws = m_data.workshop_stashes
-    if type(ws) ~= "table" then
-        return
-    end
-    for i = 1, #NETS do
-        local key = NETS[i].shared
-        if ws[key] ~= nil then
-            ws[key] = nil
-            log("fetch unregister " .. key)
-        end
-    end
-end
-
--- Plant offline bolts so fetch.script can iterate_inventory_box.
--- Same offset as TAS fetch_anomalous_stash: +50x +50z, y = -50.
-function api.ensure_online()
-    local actor = db.actor
-    if not actor then
-        return
-    end
-    local base, lvid, gvid = dest_of(actor)
-    if not base then
-        log("fetch ensure: no actor dest", "red")
-        return
-    end
-    local ox = base.x
-    local oz = base.z
-    local need_wait = false
-    for i = 1, #NETS do
-        local net = NETS[i]
-        local id = resolve_id(net)
-        if id and not xobject.go(id) then
-            local dest = vec_set(base)
-            dest.x = ox + 50 + (i - 1) * 2
-            dest.z = oz + 50
-            dest.y = -50
-            bringing = true
-            bring_ids[id] = true
-            log("fetch ensure: plant " .. net.shared .. " id=" .. tostring(id))
-            plant_dest(net, dest, lvid, gvid)
-            if xobject.go(id) then
-                bring_ids[id] = nil
-            else
-                need_wait = true
+    if type(ws) == "table" then
+        for i = 1, #NETS do
+            local key = NETS[i].shared
+            if ws[key] ~= nil then
+                ws[key] = nil
+                log("fetch unregister ws " .. key)
             end
         end
     end
-    if need_wait then
-        CreateTimeEvent("dogma_game_global_stash", "fetch_bring", 0, wait_bring)
-    else
-        bringing = false
-        bring_ids = {}
+    local ps = m_data.player_created_stashes
+    if type(ps) == "table" then
+        for i = 1, #NETS do
+            local id = saved[NETS[i].save_key]
+            if id and ps[id] ~= nil then
+                ps[id] = nil
+                log("fetch unregister pcs " .. tostring(id))
+            end
+        end
     end
-    api.unregister_fetch()
 end
 
 local function hooked_ui_start(mode, obj)
@@ -827,103 +1016,64 @@ local function hook_ui()
     log("ui_inventory.start wrapped")
 end
 
--- CFS ranges the dummy, then iterates the hidden box. Same portal as TAS.
-local function list_has_id(list, id)
-    if not (list and id) then
-        return false
-    end
-    for i = 1, #list do
-        if list[i] == id then
-            return true
+local function bolt_id_set()
+    local t = {}
+    for i = 1, #NETS do
+        local id = saved[NETS[i].save_key]
+        if id then
+            t[id] = true
         end
     end
-    return false
+    return t
 end
 
--- Offline bolt parks at this dummy even if the dummy is the other type.
-local function cfs_bolt(net, dummy)
-    local id = resolve_id(net)
-    if not id then
-        return
+local function strip_ours(stashes)
+    if type(stashes) ~= "table" then
+        return {}
     end
-    if xobject.go(id) then
-        local sim = alife()
-        if sim then
-            pcall(try_online, sim, id)
+    local ours = bolt_id_set()
+    local out = {}
+    for i = 1, #stashes do
+        local id = stashes[i]
+        if not ours[id] then
+            out[#out + 1] = id
         end
-        return id
     end
-    if opening or bringing then
-        return id
-    end
-    local dest, lvid, gvid = dest_of(dummy)
-    if not dest then
-        return
-    end
-    id = plant_dest(net, dest, lvid, gvid)
-    if id then
-        log("cfs plant bolt=" .. tostring(id) .. " " .. net.shared)
-    end
-    return id
+    return out
 end
 
+-- CFS lists player_created / workshop / TAS hidden, then walks every item.
+-- Never add or plant our bolt. Dummy in range: Iterate wrap feeds idx.
 local function hooked_get_stashes(range)
     local stashes
     if orig_get_stashes then
         stashes = orig_get_stashes(range)
     end
-    if type(stashes) ~= "table" then
-        stashes = {}
+    return strip_ours(stashes)
+end
+
+local function hooked_iterate_stashes(func, range, exclude_id)
+    if orig_iterate_stashes then
+        orig_iterate_stashes(func, range, exclude_id)
     end
-    if type(range) ~= "number" or not db.actor then
-        return stashes
+    if type(range) == "number" and type(func) == "function" then
+        idx_feed(func, range)
     end
-    local nearest
-    local nearest_d
-    for id in pairs(dummies) do
-        local obj = xobject.go(id)
-        if obj then
-            local ok, dist = pcall(try_dist_safe, db.actor, obj)
-            if ok and dist and dist <= range then
-                if not nearest_d or dist < nearest_d then
-                    nearest = obj
-                    nearest_d = dist
-                end
-            end
-        end
-    end
-    for i = 1, #NETS do
-        local bolt
-        if nearest then
-            bolt = cfs_bolt(NETS[i], nearest)
-        else
-            local id = resolve_id(NETS[i])
-            if id and xobject.go(id) then
-                local sim = alife()
-                if sim then
-                    pcall(try_online, sim, id)
-                end
-                bolt = id
-            end
-        end
-        if bolt and not list_has_id(stashes, bolt) then
-            stashes[#stashes + 1] = bolt
-        end
-    end
-    return stashes
 end
 
 local function hook_cfs()
-    if orig_get_stashes then
-        return true
-    end
-    if type(_G.GetStashesInRange) ~= "function" then
+    if not orig_get_stashes and type(_G.GetStashesInRange) == "function" then
+        orig_get_stashes = _G.GetStashesInRange
+        _G.GetStashesInRange = hooked_get_stashes
+        log("GetStashesInRange wrapped")
+    elseif not orig_get_stashes then
         log("cfs wrap skip: no GetStashesInRange")
-        return true
     end
-    orig_get_stashes = _G.GetStashesInRange
-    _G.GetStashesInRange = hooked_get_stashes
-    log("GetStashesInRange wrapped")
+    if not orig_iterate_stashes and type(_G.IterateStashesInRange) == "function" then
+        orig_iterate_stashes = _G.IterateStashesInRange
+        _G.IterateStashesInRange = hooked_iterate_stashes
+        log("IterateStashesInRange wrapped")
+    end
     return true
 end
 
@@ -959,6 +1109,43 @@ local function hook_late()
     hook_cfs()
     hook_hf_radial()
     return true
+end
+
+local function our_bolt(id)
+    if not id then
+        return false
+    end
+    for i = 1, #NETS do
+        if saved[NETS[i].save_key] == id then
+            return true
+        end
+    end
+    return false
+end
+
+local function on_box_put(box, item)
+    sync_sprint()
+    if not box then
+        return
+    end
+    local ok, id = pcall(try_id, box)
+    if not (ok and our_bolt(id)) then
+        return
+    end
+    idx_cur_box = id
+    idx_add(box, item)
+    idx_cur_box = nil
+end
+
+local function on_box_take(box, item)
+    sync_sprint()
+    if not item then
+        return
+    end
+    local ok, id = pcall(try_id, item)
+    if ok and id and idx_of[id] then
+        idx_drop(id)
+    end
 end
 
 -- Dummy must not take items if UI swap misses.
@@ -1262,6 +1449,8 @@ local function on_update()
     poll_use()
 end
 
+local IDX_SAVE = "dogma_global_stash_idx"
+
 local function on_save_state(m_data)
     if not m_data then
         return
@@ -1270,16 +1459,59 @@ local function on_save_state(m_data)
         local n = NETS[i]
         m_data[n.save_key] = saved[n.save_key]
     end
+    m_data[IDX_SAVE] = {
+        n = idx_n,
+        ids = idx_ids,
+        box = idx_box,
+        cnt = idx_cnt,
+    }
 end
 
 local function on_load_state(m_data)
+    local pairs_ = pairs
+    local type_ = type
     saved = {}
+    idx_wipe()
     for i = 1, #NETS do
         local n = NETS[i]
         local id = m_data and m_data[n.save_key]
         saved[n.save_key] = id and (tonumber(id) or id) or nil
         log("load_state " .. n.save_key .. "=" .. tostring(saved[n.save_key]))
     end
+    local snap = m_data and m_data[IDX_SAVE]
+    if type_(snap) ~= "table" then
+        return
+    end
+    if type_(snap.n) == "table" then
+        for k, v in pairs_(snap.n) do
+            idx_n[k] = v
+        end
+    end
+    if type_(snap.ids) == "table" then
+        for sec, t in pairs_(snap.ids) do
+            if type_(t) == "table" then
+                idx_ids[sec] = t
+                for i = 1, #t do
+                    idx_of[t[i]] = sec
+                end
+            end
+        end
+    end
+    if type_(snap.box) == "table" then
+        for k, v in pairs_(snap.box) do
+            idx_box[k] = v
+        end
+    end
+    if type_(snap.cnt) == "table" then
+        for k, v in pairs_(snap.cnt) do
+            idx_cnt[k] = v
+        end
+    end
+    local n = 0
+    for _, t in pairs_(idx_ids) do
+        n = n + #t
+    end
+    log("load_state idx items=" .. tostring(n))
 end
 
 local function on_load()
@@ -1318,6 +1550,7 @@ local function on_destroy()
     bringing = false
     bring_ids = {}
     clear_all_lights()
+    idx_wipe()
     log("reset (net destroy)")
 end
 
@@ -1424,8 +1657,8 @@ function on_game_start()
     CreateTimeEvent("dogma_game_global_stash", "late", 0.1, hook_late)
     RegisterScriptCallback("actor_on_item_take", sync_sprint)
     RegisterScriptCallback("actor_on_item_drop", sync_sprint)
-    RegisterScriptCallback("actor_on_item_take_from_box", sync_sprint)
-    RegisterScriptCallback("actor_on_item_put_in_box", sync_sprint)
+    RegisterScriptCallback("actor_on_item_take_from_box", on_box_take)
+    RegisterScriptCallback("actor_on_item_put_in_box", on_box_put)
     RegisterScriptCallback("actor_on_item_use", sync_sprint)
     RegisterScriptCallback("actor_on_trade", sync_sprint)
     RegisterScriptCallback("actor_on_first_update", sync_sprint)

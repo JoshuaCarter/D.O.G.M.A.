@@ -18,6 +18,12 @@
 	Engine move states remain the source of truth so true_prone and other
 	mods can read pose via IsMoveState("mcCrouch") / IsMoveState("mcAccel").
 
+	Toggle: keys only set the latest wanted pose. One XOR pulse per frame.
+	Same-goal spam is ignored. A different key replaces intent.
+
+	Limp: flags lie (XOR adds accel). Crouch key = crouch box, prone key = prone box.
+	Arrival is cam height. Do not stand-retry while cam lerps.
+
 	Optional: while sprinting, Lean Left/Right pulse free look instead of lean.
 	If Free Look is unbound, a script-only virtual key is bound for the pulse.
 ]]
@@ -43,7 +49,13 @@ local LOG = {
 }
 
 local applying_pose = false
+-- g_walk_toggle flip for limp-prone must not run on_option_change (it would restore toggle).
+local mute_option = false
 local pending_goal = nil
+-- Pose we last pulsed from. Toggle XOR must not fire again until the engine moves.
+local step_from = nil
+-- Limp: we pulsed crouch from walk with wishful accel. Wait for cam, do not stand back up.
+local limp_prone_entering = false
 -- Player preference from MCM sync. Not the live console value -
 -- other mods temporarily flip g_crouch_toggle for scripted crouch pulses.
 local cached_crouch_toggle = false
@@ -109,6 +121,82 @@ local function get_pose()
 		return POSE.WALK
 	end
 	return POSE.STAND
+end
+
+local try_actor_limping = function(actor)
+	return actor:cast_Actor():conditions():IsLimping()
+end
+
+local try_cam_height = function(actor)
+	return device().cam_pos.y - actor:position().y
+end
+
+local function is_limping()
+	local actor = db and db.actor
+	if not actor then
+		return false
+	end
+	local ok, v = pcall(try_actor_limping, actor)
+	return ok and v
+end
+
+-- Limp XOR sets mcAccel on real only. Flags then read as prone while cam is still crouch.
+-- Box is picked from wishful accel at crouch-enter: accel on = box 2 (prone), off = box 1.
+-- Cam lerps; do not treat a mid-lerp sample as a miss.
+local function cam_posture()
+	local actor = db and db.actor
+	if not actor then
+		return POSE.STAND
+	end
+	local ok, h = pcall(try_cam_height, actor)
+	if not (ok and h) then
+		return POSE.STAND
+	end
+	local stand_h = 1.65
+	local crouch_h = 1.2
+	local prone_h = 0.45
+	local conf = _G.dogma_game_true_prone_conf
+	if conf and conf.loaded then
+		stand_h = conf.loaded.cam_height_stand or stand_h
+		crouch_h = conf.loaded.cam_height_crouch or crouch_h
+		prone_h = conf.loaded.cam_height_prone or prone_h
+	end
+	local ds = math.abs(h - stand_h)
+	local dc = math.abs(h - crouch_h)
+	local dp = math.abs(h - prone_h)
+	if dp <= dc and dp <= ds then
+		return POSE.PRONE
+	end
+	if dc <= ds then
+		return POSE.CROUCH
+	end
+	return POSE.STAND
+end
+
+-- Limp flags lie. Arrival is cam height.
+local function pose_reached(goal, pose)
+	if is_limping() then
+		local cam = cam_posture()
+		if goal == POSE.PRONE then
+			return cam == POSE.PRONE
+		end
+		if goal == POSE.CROUCH then
+			return cam == POSE.CROUCH
+		end
+		return cam == POSE.STAND
+	end
+	return pose == goal
+end
+
+-- Limp forces mcAccel. Stand is walk. Crouch and prone stay distinct (box 1 vs 2).
+local function resolve_goal(goal)
+	if not is_limping() then
+		return goal
+	end
+	if goal == POSE.STAND then
+		return POSE.WALK
+	end
+	return goal
 end
 
 local function use_hold_mode()
@@ -243,6 +331,9 @@ local function sync_sprint_freelook()
 end
 
 local function on_option_change()
+	if mute_option then
+		return
+	end
 	CONFIG.loaded.enabled = true
 	-- Promote legacy MCM-only walk DIK into Controls if unbound.
 	dogma.mcm.migrate_key_to_mirror(CONFIG.MOD_ID, "walk_key", CONFIG.BINDS.walk)
@@ -280,6 +371,10 @@ end
 local function is_walk_bind(bind)
 	local walk = dogma.keys.bind_kb(CONFIG.BINDS.walk.kb)
 	return walk and bind == walk
+end
+
+local function is_sprint_bind(bind)
+	return bind == key_bindings.kSPRINT_TOGGLE or bind == key_bindings.kSPRINT
 end
 
 bind_dik = function(bind)
@@ -329,11 +424,41 @@ local function hold_bind(bind)
 	end
 end
 
--- Toggle: one XOR pulse per step.
+-- Hold-mode accel ORs wishful. Toggle XOR can turn it off. Flip walk toggle off for the hold.
+local function or_wishful_accel()
+	local restore = not use_hold_mode()
+	if restore then
+		mute_option = true
+		exec_console_cmd("g_walk_toggle 0")
+	end
+	hold_bind(key_bindings.kACCEL)
+	if restore then
+		exec_console_cmd("g_walk_toggle 1")
+		mute_option = false
+	end
+end
+
+-- Toggle: one XOR pulse per step. Do not pulse again until the engine pose changes.
 local function step_toward(goal)
+	goal = resolve_goal(goal)
 	local pose = get_pose()
-	if pose == goal then
+	if pose_reached(goal, pose) then
+		if step_from or limp_prone_entering then
+			log(string.format("arrived %s flags=%s cam=%s limp=%s", goal, pose, cam_posture(), tostring(is_limping())))
+		end
+		step_from = nil
+		limp_prone_entering = false
 		return true
+	end
+	-- Limp: flags flip before cam. Wait. Exception: uncrouch landed, now enter prone.
+	if is_limping() and step_from then
+		local uncrouch_landed = goal == POSE.PRONE and not limp_prone_entering
+			and (pose == POSE.WALK or pose == POSE.STAND)
+		if not uncrouch_landed then
+			return false
+		end
+	elseif step_from == pose then
+		return false
 	end
 
 	if goal == POSE.STAND then
@@ -348,22 +473,35 @@ local function step_toward(goal)
 		if pose == POSE.PRONE then
 			pulse_bind(key_bindings.kACCEL)
 		elseif pose == POSE.WALK then
-			pulse_bind(key_bindings.kACCEL)
+			-- Limp walk already has accel. XOR walk would no-op; crouch enter is box 1.
+			if is_limping() then
+				pulse_bind(key_bindings.kCROUCH)
+			else
+				pulse_bind(key_bindings.kACCEL)
+			end
 		elseif pose == POSE.STAND then
 			pulse_bind(key_bindings.kCROUCH)
 		end
 	elseif goal == POSE.PRONE then
-		if pose == POSE.WALK then
-			-- Limp forces mcAccel (reads as walk). Add crouch: walk+crouch = prone.
-			pulse_bind(key_bindings.kCROUCH)
-		elseif pose == POSE.STAND then
+		if is_limping() then
+			if pose == POSE.WALK or pose == POSE.STAND then
+				or_wishful_accel()
+				limp_prone_entering = true
+				log(string.format("limp prone enter cam=%s", cam_posture()))
+				pulse_bind(key_bindings.kCROUCH)
+			else
+				-- Box 2 only on crouch-enter from walk. One uncrouch, then enter next frame.
+				log(string.format("limp prone uncrouch first flags=%s cam=%s", pose, cam_posture()))
+				pulse_bind(key_bindings.kCROUCH)
+			end
+		elseif pose == POSE.WALK or pose == POSE.STAND then
 			pulse_bind(key_bindings.kCROUCH)
 		elseif pose == POSE.CROUCH then
 			pulse_bind(key_bindings.kACCEL)
 		end
 	elseif goal == POSE.WALK then
 		if pose == POSE.PRONE then
-			pulse_bind(key_bindings.kACCEL)
+			pulse_bind(key_bindings.kCROUCH)
 		elseif pose == POSE.CROUCH then
 			pulse_bind(key_bindings.kCROUCH)
 		elseif pose == POSE.STAND then
@@ -371,17 +509,53 @@ local function step_toward(goal)
 		end
 	end
 
-	return get_pose() == goal
+	log(string.format("step %s -> %s limp=%s cam=%s", pose, goal, tostring(is_limping()), cam_posture()))
+	step_from = pose
+	return pose_reached(goal, get_pose())
 end
 
-local function run_transition(goal)
+local function drop_pending(reason)
+	if not pending_goal then
+		return
+	end
+	log(string.format("drop pending %s (%s)", pending_goal, reason))
+	pending_goal = nil
+	step_from = nil
+	limp_prone_entering = false
+end
+
+local function finish_pending()
+	if not pending_goal then
+		return
+	end
+	if dogma.status.is_sprinting() then
+		drop_pending("sprint")
+		return
+	end
+	if step_toward(pending_goal) then
+		pending_goal = nil
+		step_from = nil
+		limp_prone_entering = false
+	end
+end
+
+-- Latest key wins. Do not pulse here; actor_on_update does one step per frame.
+local function request_pose(goal)
+	goal = resolve_goal(goal)
+	local pose = get_pose()
+	if pose_reached(goal, pose) then
+		pending_goal = nil
+		step_from = nil
+		limp_prone_entering = false
+		return
+	end
+	if pending_goal == goal then
+		return
+	end
 	pending_goal = goal
-	with_synthetic_input(function()
-		if step_toward(goal) then
-			pending_goal = nil
-		end
-	end)
-	log(string.format("transition -> %s (engine: %s)", goal, get_pose()))
+	step_from = nil
+	limp_prone_entering = false
+	log(string.format("request %s (engine: %s limp=%s cam=%s)", goal, pose, tostring(is_limping()), cam_posture()))
 end
 
 local function on_before_key_press(key, bind, _dis, flags)
@@ -395,15 +569,21 @@ local function on_before_key_press(key, bind, _dis, flags)
 		return
 	end
 
+	-- Sprint owns stand. Do not XOR crouch/accel back on after the engine clears them.
+	if is_sprint_bind(bind) then
+		drop_pending("sprint key")
+		return
+	end
+
 	if is_walk_bind(bind) then
 		if use_hold_mode() then
 			block(flags)
 		else
 			block(flags)
 			if get_pose() == POSE.WALK then
-				run_transition(POSE.STAND)
+				request_pose(POSE.STAND)
 			else
-				run_transition(POSE.WALK)
+				request_pose(POSE.WALK)
 			end
 			overlay(LOG.KEY, "walk key")
 		end
@@ -418,19 +598,31 @@ local function on_before_key_press(key, bind, _dis, flags)
 	if bind == key_bindings.kCROUCH then
 		if not use_hold_mode() then
 			block(flags)
-			if get_pose() == POSE.CROUCH then
-				run_transition(POSE.STAND)
+			if is_limping() then
+				if cam_posture() == POSE.CROUCH then
+					request_pose(POSE.STAND)
+				else
+					request_pose(POSE.CROUCH)
+				end
+			elseif get_pose() == POSE.CROUCH then
+				request_pose(POSE.STAND)
 			else
-				run_transition(POSE.CROUCH)
+				request_pose(POSE.CROUCH)
 			end
 			overlay(LOG.KEY, "crouch key")
 		end
 	elseif bind == key_bindings.kACCEL and not use_hold_mode() then
 		block(flags)
-		if get_pose() == POSE.PRONE then
-			run_transition(POSE.STAND)
+		if is_limping() then
+			if cam_posture() == POSE.PRONE then
+				request_pose(POSE.STAND)
+			else
+				request_pose(POSE.PRONE)
+			end
+		elseif get_pose() == POSE.PRONE then
+			request_pose(POSE.STAND)
 		else
-			run_transition(POSE.PRONE)
+			request_pose(POSE.PRONE)
 		end
 		overlay(LOG.KEY, "prone key")
 	end
@@ -442,7 +634,7 @@ local try_on_before_key_hold = function()
 end
 
 local try_on_before_key_hold_2 = function()
-	if IsMoveState("mcAccel") then
+	if not is_limping() and IsMoveState("mcAccel") then
 		set_bind_down(key_bindings.kACCEL, false)
 	end
 	hold_bind(key_bindings.kCROUCH)
@@ -463,6 +655,11 @@ local function on_before_key_hold(key, bind, _dis, flags)
 	if CONFIG.loaded.sprint_lean_freelook and is_lookout_bind(bind) and dogma.status.is_sprinting() then
 		block(flags)
 		start_sprint_freelook()
+		return
+	end
+
+	if is_sprint_bind(bind) then
+		drop_pending("sprint hold")
 		return
 	end
 
@@ -527,11 +724,7 @@ local function on_actor_on_update()
 
 	-- Finish in-progress transitions even while loot UI is open (FDDA body search).
 	if pending_goal and mod_active() and actor_can_change_pose() and not use_hold_mode() then
-		with_synthetic_input(function()
-			if step_toward(pending_goal) then
-				pending_goal = nil
-			end
-		end)
+		with_synthetic_input(finish_pending)
 	end
 
 	if mod_active() and input_allowed() then
@@ -543,6 +736,13 @@ local function on_actor_on_update()
 	overlay(LOG.POSE, "pose: " .. get_pose())
 end
 
+local function reset_pose_state()
+	pending_goal = nil
+	step_from = nil
+	limp_prone_entering = false
+	stop_sprint_freelook()
+end
+
 function on_game_start()
 	dogma.load(CONFIG.MOD_ID)
 
@@ -552,8 +752,8 @@ function on_game_start()
 	RegisterScriptCallback("actor_on_first_update", on_actor_on_first_update)
 	RegisterScriptCallback("actor_on_update", on_actor_on_update)
 	RegisterScriptCallback("on_option_change", on_option_change)
-	RegisterScriptCallback("on_game_load", stop_sprint_freelook)
-	RegisterScriptCallback("main_menu_on_init", stop_sprint_freelook)
-	RegisterScriptCallback("actor_on_net_destroy", stop_sprint_freelook)
+	RegisterScriptCallback("on_game_load", reset_pose_state)
+	RegisterScriptCallback("main_menu_on_init", reset_pose_state)
+	RegisterScriptCallback("actor_on_net_destroy", reset_pose_state)
 	log("loaded")
 end

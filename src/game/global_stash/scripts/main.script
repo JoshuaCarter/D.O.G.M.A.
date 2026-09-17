@@ -7,12 +7,14 @@
     Map change does not move the bolt. First open on a map brings it to that box.
     CFS GetStashesInRange lists player_created / workshop / TAS hidden, then
     IterateStashesInRange C++-walks every item in each. We never put the bolt
-    on that list. Dummy in range: feed matching section from idx. Id lives in
-    save_state. Map load never creates.
+    on that list. Dummy in range: idx feed (one sec for craft, all secs otherwise).
+    Upgrade LoadInventory wrapped for upgradable weapons. Id lives in save_state.
+    Map load never creates.
     Dummy is an invbox so engine Use opens loot and HF hold-Use never fires.
     Mute the dummy. Tap Use opens. Hold Use (or MCM key) picks the furniture up.
     Bolt stays. HF radial on this box is skipped so hold is pickup, not a menu.
     Dummy GO gets a script_light (cyan omni, 2m). Same path as belt glowsticks.
+    meat_spoiling: shared bolt + placeable parent = frozen (same as fridge).
 ]]
 
 local MOD_ID = "dogma/game/global_stash"
@@ -38,10 +40,13 @@ local NETS = {
 }
 local net_by_placeable = {}
 local net_by_shared = {}
+local frozen_parent_secs = {}
 for i = 1, #NETS do
     local n = NETS[i]
     net_by_placeable[n.placeable] = n
     net_by_shared[n.shared] = n
+    frozen_parent_secs[n.shared] = true
+    frozen_parent_secs[n.placeable] = true
 end
 local LIGHT_RANGE = 2
 local PARK_DIST = 0.005
@@ -110,7 +115,6 @@ local idx_of = {}
 local idx_box = {}
 local idx_cnt = {}
 local idx_cur_box
-local idx_logged_no_sec
 local idx_logged_tally
 local idx_rebuild
 
@@ -184,8 +188,20 @@ local try_upvalue = function(fn, i)
     return debug.getupvalue(fn, i)
 end
 
-local try_is_item = function(kind, sec)
-    return IsItem(kind, sec)
+local try_ini_upgrades = function(sec)
+    return ini_sys:r_string_ex(sec, "upgrades")
+end
+
+local try_cfs_range = function()
+    return ui_mcm.get("craft_from_stashes/range")
+end
+
+local try_cell_shown = function(ci)
+    return ci:IsShown()
+end
+
+local try_cc_obj = function(cc, idx)
+    return cc:GetObj(idx)
 end
 
 local function idx_wipe()
@@ -319,8 +335,6 @@ local function closed_sec(fn)
     end
     local self_v
     local i_v
-    local sec_add
-    local upgrade_scan
     local tally_v
     local i = 1
     while i <= 24 do
@@ -330,12 +344,6 @@ local function closed_sec(fn)
         end
         if (name == "sec" or name == "section" or name == "sec_part") and type_(val) == "string" then
             return val
-        end
-        if name == "sec_add" then
-            upgrade_scan = true
-            if type_(val) == "string" then
-                sec_add = val
-            end
         end
         if name == "tally" and type_(val) == "table" then
             tally_v = val
@@ -352,10 +360,7 @@ local function closed_sec(fn)
         return self_v.parts[i_v].sec
     end
     if tally_v then
-        return nil, false, nil, tally_v
-    end
-    if upgrade_scan then
-        return nil, true, sec_add
+        return nil, tally_v
     end
 end
 
@@ -385,11 +390,19 @@ local function idx_feed_sec(func, sec)
     return n
 end
 
+local function idx_feed_all(func)
+    local n = 0
+    for sec in pairs(idx_ids) do
+        n = n + idx_feed_sec(func, sec)
+    end
+    return n
+end
+
 local function idx_feed(func, range)
     if not dummy_in_range(range) then
         return
     end
-    local sec, upgrade_scan, sec_add, tally = closed_sec(func)
+    local sec, tally = closed_sec(func)
     if sec then
         idx_feed_sec(func, sec)
         return
@@ -404,22 +417,7 @@ local function idx_feed(func, range)
         end
         return
     end
-    if upgrade_scan then
-        if sec_add then
-            idx_feed_sec(func, sec_add)
-        end
-        for s in pairs(idx_ids) do
-            local ok, is_up = pcall(try_is_item, "upgrade", s)
-            if ok and is_up then
-                idx_feed_sec(func, s)
-            end
-        end
-        return
-    end
-    if not idx_logged_no_sec then
-        idx_logged_no_sec = true
-        log("idx skip feed: no section upvalue")
-    end
+    idx_feed_all(func)
 end
 
 local try_name = function(obj)
@@ -1128,9 +1126,126 @@ local function hook_hf_radial()
     return true
 end
 
+local orig_meat_is_frozen
+
+local function stash_parent_frozen(se_obj)
+    if not se_obj then
+        return false
+    end
+    local pid = se_obj.parent_id
+    if not pid or pid >= 65535 then
+        return false
+    end
+    local se_parent = alife_object(pid)
+    if not se_parent then
+        return false
+    end
+    local ok, sec = pcall(try_se_section, se_parent)
+    return ok and frozen_parent_secs[sec] or false
+end
+
+local function hooked_meat_is_frozen(se_obj)
+    if orig_meat_is_frozen and orig_meat_is_frozen(se_obj) then
+        return true
+    end
+    return stash_parent_frozen(se_obj)
+end
+
+local function hook_meat_spoiling()
+    local ms = rawget(_G, "meat_spoiling")
+    if not (ms and ms.get_meat_is_frozen) then
+        log("meat_spoiling wrap skip")
+        return true
+    end
+    if orig_meat_is_frozen then
+        return true
+    end
+    orig_meat_is_frozen = ms.get_meat_is_frozen
+    ms.get_meat_is_frozen = hooked_meat_is_frozen
+    log("meat_spoiling get_meat_is_frozen wrapped")
+    return true
+end
+
+local orig_upgrade_load_inv
+
+local function cfs_range()
+    local ok, r = pcall(try_cfs_range)
+    if ok and type(r) == "number" then
+        return r
+    end
+    return 10
+end
+
+local function hooked_upgrade_load_inv(self)
+    orig_upgrade_load_inv(self)
+    local cc = self.CC
+    if not cc or not cc.cell then
+        return
+    end
+    local range = cfs_range()
+    if not dummy_in_range(range) then
+        return
+    end
+    local inv = {}
+    local seen = {}
+    local size_t = 0
+    for idx, ci in pairs(cc.cell) do
+        local ok_s, shown = pcall(try_cell_shown, ci)
+        if ok_s and shown then
+            local ok_o, obj = pcall(try_cc_obj, cc, idx)
+            if ok_o and obj then
+                local ok_id, id = pcall(try_id, obj)
+                if ok_id and id and not seen[id] then
+                    seen[id] = true
+                    size_t = size_t + 1
+                    inv[size_t] = obj
+                end
+            end
+        end
+    end
+    local function add_upgradable(_, obj)
+        local ok_id, id = pcall(try_id, obj)
+        if not (ok_id and id and not seen[id]) then
+            return
+        end
+        local ok_sec, sec = pcall(try_section, obj)
+        if not ok_sec then
+            return
+        end
+        local ok_u, upgr = pcall(try_ini_upgrades, sec)
+        if ok_u and upgr and upgr ~= "" then
+            seen[id] = true
+            size_t = size_t + 1
+            inv[size_t] = obj
+        end
+    end
+    idx_feed_all(add_upgradable)
+    if size_t > 0 then
+        cc:Reinit(inv)
+        log("upgrade LoadInventory idx items=" .. tostring(size_t))
+    end
+end
+
+local function hook_upgrade_load_inv()
+    local uw = rawget(_G, "ui_workshop")
+    if not (uw and uw.UIWorkshopUpgrade and uw.UIWorkshopUpgrade.LoadInventory) then
+        log("upgrade LoadInventory wrap skip")
+        return true
+    end
+    if orig_upgrade_load_inv then
+        return true
+    end
+    orig_upgrade_load_inv = uw.UIWorkshopUpgrade.LoadInventory
+    uw.UIWorkshopUpgrade.LoadInventory = hooked_upgrade_load_inv
+    log("upgrade LoadInventory wrapped")
+    return true
+end
+
 local function hook_late()
     hook_cfs()
     hook_hf_radial()
+    hook_meat_spoiling()
+    hook_upgrade_load_inv()
     return true
 end
 

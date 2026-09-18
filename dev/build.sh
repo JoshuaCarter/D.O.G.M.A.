@@ -44,6 +44,8 @@
 #                               keep these out of scripts/ so they do not mix
 #                               with feature code)
 #   …/scripts/**/*.script     -> scripts/zzzz_dogma_{path}_<stem>.script
+#   ammo_craft.script         -> scripts/zzzzzzzzzz_dogma_{path}_ammo_craft.script
+#                               (after zzzz_serious / zzzzz* / zzzzzzz_ workshop scripts)
 #
 # Env:
 #   DOGMA_ONLY=spec    what to build:
@@ -247,6 +249,10 @@ script_dest_basename() {
             ;;
         modxml_*)
             echo "modxml_dogma_${path_key}_${stem#modxml_}.script"
+            return 0
+            ;;
+        ammo_craft)
+            echo "zzzzzzzzzz_dogma_${path_key}_${stem}.script"
             return 0
             ;;
     esac

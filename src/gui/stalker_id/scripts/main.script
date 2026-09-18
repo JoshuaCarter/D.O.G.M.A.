@@ -53,6 +53,7 @@ local FADE_OUT_MS = 500
 local CIRCLE_HOLD_MS = 250
 local DEG2RAD = math.pi / 180
 local SEARCH_WHEN_OFF = 2000 -- iterate_nearest needs a radius when min_size is 0
+local RANGE_MAX_M = 2000
 local DIK_RMB = (DIK_keys and DIK_keys.MOUSE_2) or 338
 local FACTION_KEYS = {
     "stalker", "bandit", "csky", "army", "freedom", "dolg", "ecolog",
@@ -140,7 +141,7 @@ local function on_option_change()
     CONFIG.loaded.line_a = dogma.mcm.uint(id, "line_a")
     CONFIG.loaded.text_shadow = dogma.mcm.bool(id, "text_shadow")
     CONFIG.loaded.debug_overlay = dogma.overlay.enabled()
-    if not CONFIG.loaded.enabled or not CONFIG.loaded.debug_overlay then
+    if not CONFIG.loaded.debug_overlay then
         dogma.overlay.clear(id)
     end
     log("opts min_size_px=" .. tostr(CONFIG.loaded.min_size_px)
@@ -1409,6 +1410,28 @@ local function update_dbg()
     end
 end
 
+-- Same ray as ID / LOS. Dist is first non-pass hit (occ walls skipped).
+local function look_range_m()
+    local d = device and device()
+    if not (d and d.cam_pos and d.cam_dir) then
+        return nil
+    end
+    local cam = d.cam_pos
+    local dir = d.cam_dir
+    local hit, dist = dogma.alife.ray(
+        cam.x, cam.y, cam.z,
+        dir.x, dir.y, dir.z,
+        RANGE_MAX_M,
+        db and db.actor,
+        1,
+        true
+    )
+    if hit == nil then
+        return nil
+    end
+    return dist
+end
+
 local function update_overlay()
     local sformat = string.format
     if not CONFIG.loaded.debug_overlay then
@@ -1437,9 +1460,22 @@ local function update_overlay()
         sformat("fov %.1f -> %.1f ry %.0f", settings_fov(), fov_now, pick_ry), "cyan")
     dogma.overlay.set(CONFIG.MOD_ID, 1,
         sformat("size %s/%s rng %.0f tgt %s", sz, tostring(min_px), range, tgt), "yellow")
+    local look = look_range_m()
+    local look_txt
+    if look then
+        if look < 10 then
+            look_txt = sformat("Range  %.1fm", look)
+        else
+            look_txt = sformat("Range  %.0fm", look)
+        end
+    else
+        look_txt = sformat("Range  >%dm", RANGE_MAX_M)
+    end
+    dogma.overlay.set(CONFIG.MOD_ID, 2, look_txt, "cyan")
 end
 
 function actor_on_update()
+    update_overlay()
     if not CONFIG.loaded.enabled then
         cond_was = false
         dbg_hide()
@@ -1455,7 +1491,6 @@ function actor_on_update()
     end
 
     update_dbg()
-    update_overlay()
     update_fade()
     update_leader_line()
 

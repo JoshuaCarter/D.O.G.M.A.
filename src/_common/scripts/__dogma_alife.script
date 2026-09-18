@@ -1,6 +1,7 @@
 --[[
     Live objects: client by id, SE id to map name.
-    ray(): engine RayPick, optional bush / see-through recast.
+    ray(): engine RayPick. Recast bushes, vis-transparent, and
+    fShootFactor~0 (same as bullets through occ walls).
     Online stalker queries: FOV, LOS, nearby, in-combat.
 ]]
 
@@ -13,6 +14,10 @@ local DEFAULT_COMBAT_M = 100
 local LOOK_FLAGS = 3 -- rqtObject | rqtStatic
 local LOOK_BUSH_STEP = 0.2
 local BUSH_PIERCE = 1
+-- SGameMtl::flPassable (GameMtlLib.h:89). Physics-passable, not actor-obstacle.
+local FL_PASSABLE = 128
+-- Shoot-through recasts (occ walls, bushes). Bullets have no budget.
+local MAX_PASS_SKIP = 128
 local BONES_CHEST = { "bip01_spine2", "bip01_spine1", "bip01_neck" }
 local BONES_HEAD = { "bip01_head" }
 local COS_CACHE = {}
@@ -164,12 +169,13 @@ end
 
 -- Engine RayPick. Reuses one pick + scratch vectors.
 -- bush_pierce 0/nil = one ray (bush = wall). N = recast through N bushes.
--- pierce_see (10th, default false): also recast shoot-through / vis-transparent
--- when material_name is a non-empty string. Empty/missing material never pierces
--- (script_rq_result defaults shoot_factor to 0).
--- Hits beyond remaining are rejected (range).
+-- pierce_see (10th, default false): also recast vis-transparent (glass).
+-- fShootFactor ~ 0 always recasts (same as bullets: firetrace.cpp:461).
+-- Empty/missing material never pierces (script_rq_result defaults 0).
+-- dist is from the original origin, not the last recast.
 -- returns: object, dist | false, dist (static) | nil (clear / fail)
 function ray(ox, oy, oz, dx, dy, dz, range, ignore, bush_pierce, pierce_see)
+    local type_ = type
     if not ray_pick or not range or range <= 0 then
         return nil
     end
@@ -190,8 +196,9 @@ function ray(ox, oy, oz, dx, dy, dz, range, ignore, bush_pierce, pierce_see)
     pick:set_flags(LOOK_FLAGS)
     RAY_DIR:set(dx, dy, dz)
     local pierces = 0
+    local pass_skips = 0
     local remaining = range
-    while remaining > 0 and pierces <= max_pierce do
+    while remaining > 0 do
         RAY_POS:set(ox, oy, oz)
         pick:set_position(RAY_POS)
         pick:set_direction(RAY_DIR)
@@ -204,35 +211,50 @@ function ray(ox, oy, oz, dx, dy, dz, range, ignore, bush_pierce, pierce_see)
         if not hit_dist or hit_dist <= 0 or hit_dist > remaining then
             return nil
         end
+        local total = range - remaining + hit_dist
         local obj = pick:get_object()
         if obj then
-            return obj, hit_dist
+            return obj, total
         end
         local result = pick:get_result()
         local name = result and result.material_name
-        local named = type(name) == "string" and name ~= ""
-        local bush = named and is_bush_material(name)
-        local see = false
-        if pierce_see and named then
+        local named = type_(name) == "string" and name ~= ""
+        -- Named required: reset() leaves shoot_factor at 0.
+        local pass = false
+        if named then
             local shoot = result.material_shoot_factor
-            local vis = result.material_vis_transparency_factor
-            if type(shoot) == "number" and shoot <= 0.001 then
-                see = true
-            elseif type(vis) == "number" and vis > 0.01 then
-                see = true
+            if type_(shoot) == "number" and shoot <= 0.001 then
+                pass = true
+            else
+                local flags = result.material_flags
+                pass = type_(flags) == "number"
+                    and math.floor(flags / FL_PASSABLE) % 2 == 1
             end
         end
-        if not (bush or see) then
-            return false, hit_dist
+        if pass then
+            pass_skips = pass_skips + 1
+            if pass_skips > MAX_PASS_SKIP then
+                return false, total
+            end
+        else
+            local bush = named and is_bush_material(name)
+            local vis = false
+            if pierce_see and named then
+                local v = result.material_vis_transparency_factor
+                vis = type_(v) == "number" and v > 0.01
+            end
+            if not (bush or vis) or pierces > max_pierce then
+                return false, total
+            end
+            pierces = pierces + 1
         end
         local step = hit_dist + LOOK_BUSH_STEP
         ox = ox + dx * step
         oy = oy + dy * step
         oz = oz + dz * step
         remaining = remaining - step
-        pierces = pierces + 1
     end
-    return false, 0
+    return nil
 end
 
 function npc_has_los_to_pos(npc, pos, fov)

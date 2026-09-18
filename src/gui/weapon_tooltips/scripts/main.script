@@ -1286,18 +1286,6 @@ local logged_once = {}
 -- Keys logged for the current tooltip open (reset when the hovered item changes).
 local tooltip_logged = {}
 
-local OVERLAY = {
-	RANGE = { order = 1, color = "cyan" },
-}
-
--- HUD-only: for values that change every frame (crosshair range).
-local function overlay(slot, msg)
-	if CONFIG.loaded.debug_overlay then
-		local s = slot or OVERLAY.RANGE
-		dogma.overlay.set(CONFIG.MOD_ID, s.order, tostring(msg), s.color)
-	end
-end
-
 local function log(msg)
 	if CONFIG.loaded.debug_log then
 		dogma.log.log(CONFIG.MOD_ID, tostring(msg))
@@ -1422,6 +1410,9 @@ local function on_option_change()
 	end
 	CONFIG.loaded.debug_log = dogma.log.logging()
 	CONFIG.loaded.debug_overlay = dogma.overlay.enabled()
+	if dogma.overlay and dogma.overlay.clear then
+		dogma.overlay.clear(CONFIG.MOD_ID)
+	end
 
 	if CONFIG.loaded.debug_log and not prev_debug then
 		logged_once = {}
@@ -3238,37 +3229,6 @@ local function hook_stats_table_override()
 	ish_item_stats.dogma_gui_weapon_tooltips_wrapped = true
 end
 
--- Crosshair rangefinder (Development MCM). Casts along camera look; ignores actor.
--- Flags 3 = static + objects (same as cover-tilt / xcombat rqtBoth).
-local RANGEFINDER_MAX_M = 2000
-local rangefinder_pick = nil
-
-local function crosshair_range_m()
-	local d = device()
-	if not d or not d.cam_pos or not d.cam_dir then
-		return nil
-	end
-	if not rangefinder_pick then
-		rangefinder_pick = ray_pick()
-	end
-	local pick = rangefinder_pick
-	pick:set_flags(3)
-	pick:set_position(vector():set(d.cam_pos))
-	pick:set_direction(vector():set(d.cam_dir))
-	pick:set_range(RANGEFINDER_MAX_M)
-	if db and db.actor then
-		pick:set_ignore_object(db.actor)
-	end
-	if not pick:query() then
-		return nil
-	end
-	local dist = pick:get_distance()
-	if not dist or dist <= 0 then
-		return nil
-	end
-	return dist
-end
-
 local function on_actor_update()
 	-- Reclaim if another mod re-wrapped Update/Show after us.
 	if ui_hooks_ok and utils_ui and utils_ui.UIInfoItem
@@ -3277,27 +3237,6 @@ local function on_actor_update()
 	then
 		install_ui_hooks()
 	end
-
-	local actor = dogma.sys.ready(CONFIG.MOD_ID, db, on_option_change)
-	if not actor then
-		return
-	end
-
-	if not CONFIG.loaded.debug_overlay then
-		return
-	end
-	local dist = crosshair_range_m()
-	local msg
-	if dist then
-		if dist < 10 then
-			msg = string.format("Range  %.1fm", dist)
-		else
-			msg = string.format("Range  %.0fm", dist)
-		end
-	else
-		msg = string.format("Range  >%dm", RANGEFINDER_MAX_M)
-	end
-	overlay(OVERLAY.RANGE, msg)
 end
 
 local callbacks_registered = false

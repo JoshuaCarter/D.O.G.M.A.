@@ -337,6 +337,7 @@ _G.dogma_debug_conf = {
         fps_long_frame_threshold_ms = 0,
         perf_log = false,
         gc_log = false,
+        mcm_cache_log = false,
         perf_warn_threshold_us = 0,
     },
 }
@@ -667,6 +668,13 @@ function register_debug_page(options)
                 val = 1,
                 def = CONFIG.DEFAULTS.gc_log,
                 hint = "dogma_debug_gc_log",
+            },
+            {
+                id = "mcm_cache_log",
+                type = "check",
+                val = 1,
+                def = CONFIG.DEFAULTS.mcm_cache_log,
+                hint = "dogma_debug_mcm_cache_log",
             },
             {
                 id = "perf_warn_threshold_desc",

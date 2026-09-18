@@ -4,16 +4,18 @@
 _G.dogma_tweaks_qaw_reorder_conf = {
 	MOD_ID = "dogma/tweaks/qaw_reorder",
 	QAW_REORDER_KEY_PATH = "haru_quick_action_wheel_mcm/controls/reorder_key",
+	QAW_PERSIST_SLOTS_PATH = "haru_quick_action_wheel_mcm/controls/persist_slots",
 	loaded = {
 		reorder_key = 0,
+		persist_slots = false,
 	},
 }
 
 --[[
 	Quick Action Wheel Reorder - MCM
 
-	Injects reorder key into haru_quick_action_wheel_mcm → Controls (base,
-	G.A.M.M.A. Balance, and Overhaul all share that module id).
+	Injects reorder key into haru_quick_action_wheel_mcm -> Controls (base,
+	G.A.M.M.A. Balance, and Overhaul share that module id).
 ]]
 
 local REORDER_KEY_OPT = {
@@ -22,6 +24,14 @@ local REORDER_KEY_OPT = {
 	val = 2,
 	def = 0,
 	hint = "dogma_qaw_reorder_key",
+}
+
+local PERSIST_SLOTS_OPT = {
+	id = "persist_slots",
+	type = "check",
+	val = 1,
+	def = false,
+	hint = "dogma_qaw_persist_slots",
 }
 
 local function find_gr_child(gr, id)
@@ -36,7 +46,7 @@ local function find_gr_child(gr, id)
 	return nil
 end
 
-local function inject_reorder_key(tree)
+local function inject_controls(tree)
 	if not tree or type(tree.gr) ~= "table" then
 		return
 	end
@@ -44,18 +54,23 @@ local function inject_reorder_key(tree)
 	if not (controls and type(controls.gr) == "table") then
 		return
 	end
-	if find_gr_child(controls.gr, "reorder_key") then
-		return
+
+	if not find_gr_child(controls.gr, "reorder_key") then
+		-- After DOGMA hide_hud inject when present; else after hold; else append.
+		local _, at_i = find_gr_child(controls.gr, "hide_hud")
+		if not at_i then
+			_, at_i = find_gr_child(controls.gr, "hold")
+		end
+		local at = at_i and (at_i + 1) or (#controls.gr + 1)
+		table.insert(controls.gr, at, { id = "divider_dogma_reorder", type = "line" })
+		table.insert(controls.gr, at + 1, REORDER_KEY_OPT)
 	end
 
-	-- After DOGMA hide_hud inject when present; else after hold; else append.
-	local _, at_i = find_gr_child(controls.gr, "hide_hud")
-	if not at_i then
-		_, at_i = find_gr_child(controls.gr, "hold")
+	if not find_gr_child(controls.gr, "persist_slots") then
+		local _, at_i = find_gr_child(controls.gr, "reorder_key")
+		local at = at_i and (at_i + 1) or (#controls.gr + 1)
+		table.insert(controls.gr, at, PERSIST_SLOTS_OPT)
 	end
-	local at = at_i and (at_i + 1) or (#controls.gr + 1)
-	table.insert(controls.gr, at, { id = "divider_dogma_reorder", type = "line" })
-	table.insert(controls.gr, at + 1, REORDER_KEY_OPT)
 end
 
 local function inject_into_options(options)
@@ -64,7 +79,7 @@ local function inject_into_options(options)
 	end
 	for i = 1, #options do
 		if options[i].id == "haru_quick_action_wheel_mcm" then
-			inject_reorder_key(options[i])
+			inject_controls(options[i])
 		end
 	end
 end
@@ -81,7 +96,7 @@ local function wrap_qaw_on_mcm_load()
 	qaw.on_mcm_load = function(...)
 		local tree, name = orig(...)
 		if tree then
-			inject_reorder_key(tree)
+			inject_controls(tree)
 		end
 		return tree, name
 	end

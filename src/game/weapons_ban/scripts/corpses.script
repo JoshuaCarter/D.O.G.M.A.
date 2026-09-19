@@ -451,6 +451,42 @@ local function try_hook_ammo()
     log("hooked death_manager.try_spawn_ammo")
 end
 
+-- Same UI staleness stashes.script works around with schedule_stash_ui_refresh:
+-- the loot list can already be built from the pre-strip inventory, so a
+-- released _bad/_verybad stack still shows until the corpse is closed and
+-- reopened. Force a re-read once the release above has actually applied.
+local function refresh_open_corpse_ui(partner_id)
+    local gui = ui_inventory and ui_inventory.GUI
+    if not (gui and gui.mode == "loot") then
+        return
+    end
+    local partner = gui.GetPartner and gui:GetPartner()
+    if not (partner and partner.id and partner:id() == partner_id) then
+        return
+    end
+    if gui.LMode_ResetNPCInventory then
+        gui:LMode_ResetNPCInventory()
+    elseif gui.LMode_ResetInventories then
+        gui:LMode_ResetInventories()
+    end
+end
+
+local function schedule_corpse_ui_refresh(partner_id)
+    if CreateTimeEvent then
+        -- timer=0 is "next tick", not "now": CreateTimeEvent stamps
+        -- time_global()+0, and the pump only fires once tg is STRICTLY
+        -- greater than that stamp (_g_patches.script ProcessEventQueue), so
+        -- this still waits for the strip above to land, just for one frame
+        -- instead of 100ms of stale UI.
+        CreateTimeEvent("dogma_wb_corpse", "ui_" .. partner_id, 0, function()
+            refresh_open_corpse_ui(partner_id)
+            return true
+        end)
+    else
+        refresh_open_corpse_ui(partner_id)
+    end
+end
+
 local function flush_open_loot()
     local gui = ui_inventory and ui_inventory.GUI
     if not (gui and gui.mode == "loot") then
@@ -460,10 +496,15 @@ local function flush_open_loot()
     if not (partner and partner.id) then
         return
     end
+    local id = partner:id()
     -- Death spawn can land after try_spawn_ammo. Catch leftovers here
     -- before the loot UI builds.
-    queue_stripped(partner:id(), strip_degraded_ammo(partner))
-    flush_roll(partner:id())
+    local stripped = strip_degraded_ammo(partner)
+    queue_stripped(id, stripped)
+    flush_roll(id)
+    if next(stripped) then
+        schedule_corpse_ui_refresh(id)
+    end
 end
 
 local function on_save_state(m_data)

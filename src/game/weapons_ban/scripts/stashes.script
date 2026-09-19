@@ -188,7 +188,12 @@ end
 
 local function schedule_stash_ui_refresh(box_id)
     if CreateTimeEvent then
-        CreateTimeEvent("dogma_wb_stash", "ui_" .. box_id, 0.1, function()
+        -- timer=0 is "next tick", not "now": CreateTimeEvent stamps
+        -- time_global()+0, and the pump only fires once tg is STRICTLY
+        -- greater than that stamp (_g_patches.script ProcessEventQueue), so
+        -- this still waits for try_spawn_treasure's alife_create above to
+        -- land, just for one frame instead of 100ms of stale UI.
+        CreateTimeEvent("dogma_wb_stash", "ui_" .. box_id, 0, function()
             refresh_open_stash_ui(box_id)
             return true
         end)

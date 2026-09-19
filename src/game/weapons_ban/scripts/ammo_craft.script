@@ -291,8 +291,8 @@ local function patch()
     end
 
     local function update_hook(self, n, sec, amount, result, toolkit_idx, toolkit_sec)
-        if n == 1 then
-            self._dogma_ammo_cost = {}
+        if n == 1 and not result then
+            self._dogma_ammo_cost = nil
         end
 
         local r = selected_recipe(self)
@@ -318,7 +318,12 @@ local function patch()
         end
 
         retint_need(self, n, sec, need)
-        self._dogma_ammo_cost[n] = { sec = sec, need = need }
+        local cost = self._dogma_ammo_cost
+        if not cost then
+            cost = {}
+            self._dogma_ammo_cost = cost
+        end
+        cost[n] = { sec = sec, need = need }
     end
 
     local function craft_hook(self)
@@ -326,6 +331,7 @@ local function patch()
             return orig_craft(self)
         end
         local cost = self._dogma_ammo_cost
+        local spent = false
         if cost then
             for i = 1, 4 do
                 local entry = cost[i]
@@ -336,14 +342,18 @@ local function patch()
                         entry.need,
                         self.craft_item and self.craft_item[i]
                     )
+                    spent = true
                 end
             end
             self._dogma_ammo_cost = nil
-            if self.craft_item then
-                for i = 1, 4 do
-                    self.craft_item[i] = {}
-                    self.craft_item_remain[i] = {}
-                end
+        end
+        -- Only wipe after we spent. Empty cost used to be truthy and
+        -- cleared craft_item so vanilla Craft created the output for free.
+        if spent and self.craft_item then
+            log("ammo spend, wipe craft_item")
+            for i = 1, 4 do
+                self.craft_item[i] = {}
+                self.craft_item_remain[i] = {}
             end
         end
         return orig_craft(self)

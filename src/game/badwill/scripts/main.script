@@ -1,13 +1,22 @@
 --[[
 	Witnessed hits/kills: write personal goodwill on same-faction stalkers.
+	ForceSet already subtracts faction/community, so 3000 Duty is not the block.
 	First seen hit parks general_goodwill at -40 (no longer friend).
-	2.0 lethals or 2 murders slams -9000.
+	2.0 lethals, 2 murders, or 5 witnessed hits slams -9000 (enemy / red).
+	Hit count exists because armor flattens shit.power near 0; damage alone would
+	never reach the slam threshold on armored targets even after many real hits.
+	Red only: inject actor via xcombat.disclose_enemy AND bias selection via
+	xcombat.set_hit_redirect (memory alone loses selection to anyone currently seen).
+	must_see (default on): backshots with no lookers stay unseen.
+	Park never downgrades an already-enemy NPC back to yellow.
+	killer on npc_on_death_callback can be nil/wrong; a kill still counts if the
+	actor hit that npc within the last ACTOR_HIT_WINDOW_MS.
 	Hit power comes from on_before_hit_after_calcs (npc_on_before_hit has power=0).
-	Visibility poke only after the slam, using the scan's has_los flag.
 	Steal (steal.script) slams through slam_npcs / track_agrod; sleep decays both.
 ]]
 
 local CONFIG = _G.dogma_game_badwill_conf
+local xcombat = dogma.xlibs.xcombat
 
 local WITNESS_M = 40
 local COMBAT_ALERT_M = 50
@@ -15,6 +24,10 @@ local PARK_GW = -40
 local SLAM_GW = -9000
 local DECAY_PERSONAL = 2000
 local SAVE_KEY = "dogma_badwill"
+local ACTOR_HIT_WINDOW_MS = 3000
+local SLAM_HITS = 5
+local HIT_REDIRECT_MAX = 1500
+local HIT_REDIRECT_FALLOFF = 60
 
 local SKIP_COMM = {
 	zombied = true,
@@ -23,6 +36,7 @@ local SKIP_COMM = {
 }
 
 local faction_memory = {}
+local last_actor_hit = {}
 
 local function log(msg)
 	if dogma.log.logging() then
@@ -36,6 +50,10 @@ end
 
 local function steal_enabled()
 	return dogma.mcm.bool(CONFIG.MOD_ID, "steal_enabled", CONFIG.DEFAULTS.steal_enabled)
+end
+
+local function must_see()
+	return dogma.mcm.bool(CONFIG.MOD_ID, "must_see", CONFIG.DEFAULTS.must_see)
 end
 
 local try_is_player_side = function(obj)
@@ -109,9 +127,10 @@ end
 local function entry(comm)
 	local e = faction_memory[comm]
 	if not e then
-		e = { damage = 0, murders = 0, agrod_stalker_ids = {} }
+		e = { damage = 0, hits = 0, murders = 0, agrod_stalker_ids = {} }
 		faction_memory[comm] = e
 	end
+	e.hits = e.hits or 0
 	if not e.agrod_stalker_ids then
 		e.agrod_stalker_ids = e.witness_ids or {}
 		e.witness_ids = nil
@@ -214,6 +233,53 @@ local function snap(npc, actor)
 	)
 end
 
+-- Combat-side state: does the engine actually see the actor / who is its selected
+-- enemy / which brain operator is running. Separate from snap() (relation/goodwill)
+-- because a red name with the wrong values here is what "stands there, does nothing"
+-- looks like from the engine's side.
+local function combat_snap(npc, actor)
+	local tostr = tostring
+	local ok_be, best = pcall(npc.best_enemy, npc)
+	local best_id = ok_be and best and best:id()
+	return string.format(
+		"sees=%s best_enemy=%s op=%s",
+		tostr(xcombat.sees and xcombat.sees(npc, actor)),
+		tostr(best_id),
+		tostr(xcombat.get_operator and xcombat.get_operator(npc))
+	)
+end
+
+-- Attitude < -150 is enemy / red. enable_memory_object (what disclose_enemy calls) is a
+-- pure no-op when the NPC has NO EXISTING visual-memory entry for the actor at all -
+-- CVisualMemoryManager::enable() just does a find-and-toggle, it never inserts. disclose_enemy's
+-- own fallback for that (make_enemy_visible) is not a real bind on this engine (verified against
+-- xray-monolith src: zero occurrences) so its probe is permanently false here and the fallback
+-- never runs. Net effect: an NPC who has never once had the actor in view stays permanently
+-- unreachable through disclose_enemy alone - exactly "stands there, does not know where the
+-- shots come from". make_object_visible_somewhen DOES exist and DOES insert a fresh (not
+-- currently-visible) entry via a fictitious add_visible_object when none exists yet - call it
+-- first so enable_memory_object has something to toggle. set_hit_redirect then still needs real
+-- LOS to fire; this only gets the actor into the candidate pool at all.
+local function agro_if_enemy(npc, actor)
+	if not (npc and actor) then
+		return false
+	end
+	if dogma.alife.npc_relation_band(npc, actor) ~= "enemy" then
+		return false
+	end
+	if not (xcombat and xcombat.disclose_enemy) then
+		log("  agro skip no disclose")
+		return false
+	end
+	pcall(npc.make_object_visible_somewhen, npc, actor)
+	xcombat.disclose_enemy(npc, actor)
+	if xcombat.set_hit_redirect then
+		xcombat.set_hit_redirect(npc, HIT_REDIRECT_MAX, HIT_REDIRECT_FALLOFF)
+	end
+	log("  agro state " .. combat_snap(npc, actor))
+	return true
+end
+
 local function slam_npcs(npcs)
 	local actor = db.actor
 	if not (actor and npcs) then
@@ -232,14 +298,12 @@ local function slam_npcs(npcs)
 		if npc and not is_excluded(npc) then
 			log("  slam before " .. snap(npc, actor) .. " los=" .. tostring(has_los))
 			pcall(npc.force_set_goodwill, npc, SLAM_GW, actor)
-			if has_los and npc.make_object_visible_somewhen then
-				pcall(npc.make_object_visible_somewhen, npc, actor)
-			end
+			local agro = agro_if_enemy(npc, actor)
 			local comm = dogma.alife.community(npc)
 			if comm then
 				track_agrod(comm, { npc:id() })
 			end
-			log("  slam after  " .. snap(npc, actor) .. " poke=" .. tostring(has_los))
+			log("  slam after  " .. snap(npc, actor) .. " agro=" .. tostring(agro))
 		end
 	end
 end
@@ -255,11 +319,16 @@ local function collect_witnesses(victim)
 	if not actor then
 		return witnesses, false
 	end
+	local victim_id = victim:id()
+	local count_victim = not must_see()
 	for i = 1, #near do
 		local npc = near[i]
 		if not is_excluded(npc) then
+			local is_victim = npc:id() == victim_id
 			local saw_victim
-			if dogma.alife.npc_is_in_combat(npc, COMBAT_ALERT_M) then
+			if is_victim and count_victim then
+				saw_victim = true
+			elseif dogma.alife.npc_is_in_combat(npc, COMBAT_ALERT_M) then
 				saw_victim = dogma.alife.npc_has_los_to_stalker(npc, victim, true)
 			else
 				saw_victim = dogma.alife.npc_has_los_to_stalker(npc, victim, false)
@@ -267,7 +336,7 @@ local function collect_witnesses(victim)
 			if saw_victim then
 				local has_los = dogma.alife.npc_has_los_to_stalker(npc, actor, false)
 				witnesses[#witnesses + 1] = { npc = npc, id = npc:id(), has_los = has_los }
-				if has_los then
+				if has_los or (is_victim and count_victim) then
 					was_seen = true
 				end
 			end
@@ -281,6 +350,8 @@ local function remember(comm, damage, dead, witnesses)
 	e.damage = (tonumber(e.damage) or 0) + (tonumber(damage) or 0)
 	if dead then
 		e.murders = (tonumber(e.murders) or 0) + 1
+	else
+		e.hits = (tonumber(e.hits) or 0) + 1
 	end
 	local ids = {}
 	for i = 1, #witnesses do
@@ -290,26 +361,38 @@ local function remember(comm, damage, dead, witnesses)
 	return e
 end
 
+-- Armor eats most of shit.power, so a run of witnessed hits can stay under the damage
+-- threshold for a long time. Slam on hit count too so "shoot them several times" works
+-- against armored targets, not just raw damage.
+local function is_slam(mem)
+	return (mem.murders or 0) >= 2 or (mem.damage or 0) >= 2 or (mem.hits or 0) >= SLAM_HITS
+end
+
 local function apply_writes(mem, witnesses)
 	local actor = db.actor
 	if not actor then
 		return
 	end
-	local slam = (mem.murders or 0) >= 2 or (mem.damage or 0) >= 2
-	local park = (mem.murders or 0) >= 1 or (mem.damage or 0) > 0
+	local slam = is_slam(mem)
+	local park = (mem.murders or 0) >= 1 or (mem.damage or 0) > 0 or (mem.hits or 0) >= 1
 	for i = 1, #witnesses do
 		local w = witnesses[i]
 		local npc = w.npc
 		if not (npc and not is_excluded(npc)) then
 			log("  skip gone " .. tostring(w.id))
 		elseif is_busy(npc) then
-			log("  skip busy " .. snap(npc, actor) .. " los=" .. tostring(w.has_los))
+			log("  skip busy " .. snap(npc, actor) .. " los=" .. tostring(w.has_los) .. " " .. combat_snap(npc, actor))
 		elseif slam then
 			slam_npcs({ { npc = npc, has_los = w.has_los } })
 		elseif park then
-			log("  park before " .. snap(npc, actor) .. " los=" .. tostring(w.has_los))
-			pcall(npc.force_set_goodwill, npc, PARK_GW, actor)
-			log("  park after  " .. snap(npc, actor))
+			local ok_gen, gen = pcall(npc.general_goodwill, npc, actor)
+			if ok_gen and type(gen) == "number" and gen <= PARK_GW then
+				log("  park skip already-hostile " .. snap(npc, actor))
+			else
+				log("  park before " .. snap(npc, actor) .. " los=" .. tostring(w.has_los))
+				pcall(npc.force_set_goodwill, npc, PARK_GW, actor)
+				log("  park after  " .. snap(npc, actor))
+			end
 		end
 	end
 end
@@ -332,30 +415,31 @@ local function on_badwill(victim, damage, dead)
 	local witnesses, was_seen = collect_witnesses(victim)
 	if not was_seen then
 		log(string.format(
-			"unseen %s dead=%s power=%.2f near=%d",
+			"unseen %s dead=%s power=%.2f near=%d must_see=%s",
 			tostr(comm),
 			tostr(dead),
 			tonumber(damage) or 0,
-			#witnesses
+			#witnesses,
+			tostr(must_see())
 		))
 		return
 	end
-	local add_dmg = dead and 0 or (tonumber(damage) or 0)
-	if add_dmg <= 0 and not dead then
-		log("skip 0-power")
-		return
-	end
+	-- Armor can flatten a real bullet impact to ~0 power; still count it as a witnessed
+	-- hit so park/slam track "got shot" and not just "got hurt" (see is_slam / SLAM_HITS).
+	local add_dmg = dead and 0 or math.max(0, tonumber(damage) or 0)
 	local mem = remember(comm, add_dmg, dead, witnesses)
-	local slam = (mem.murders or 0) >= 2 or (mem.damage or 0) >= 2
+	local slam = is_slam(mem)
 	log(string.format(
-		"%s dead=%s lethals=+%.2f murders=%s dmg=%.2f witnesses=%d slam=%s",
+		"%s dead=%s lethals=+%.2f murders=%s dmg=%.2f hits=%s witnesses=%d slam=%s must_see=%s",
 		comm,
 		tostr(dead),
 		add_dmg,
 		tostr(mem.murders),
 		mem.damage,
+		tostr(mem.hits),
 		#witnesses,
-		tostr(slam)
+		tostr(slam),
+		tostr(must_see())
 	))
 	apply_writes(mem, witnesses)
 end
@@ -368,13 +452,40 @@ local function on_before_hit_after_calcs(shit, target)
 	if not is_player_side(shit.draftsman) then
 		return
 	end
+	local ok_id, id = pcall(target.id, target)
+	if ok_id and id then
+		last_actor_hit[id] = time_global()
+	end
 	local power = tonumber(shit.power) or 0
 	log(string.format("after_calcs power=%.3f type=%s", power, tostring(shit.type)))
 	on_badwill(target, power, false)
 end
 
+-- killer can be nil/misattributed on some death paths; fall back to "actor hit this npc
+-- moments ago" so a real actor kill is never missed just because the engine drops killer.
+local function killed_by_actor(victim, killer)
+	if is_player_side(killer) then
+		return true
+	end
+	local ok_id, id = pcall(victim.id, victim)
+	if not (ok_id and id) then
+		return false
+	end
+	local t = last_actor_hit[id]
+	return t ~= nil and (time_global() - t) <= ACTOR_HIT_WINDOW_MS
+end
+
 local function npc_on_death_callback(victim, killer)
-	if not (victim and killer and is_player_side(killer)) then
+	if not victim then
+		return
+	end
+	local ok_id, id = pcall(victim.id, victim)
+	local by_actor = killed_by_actor(victim, killer)
+	if ok_id and id then
+		last_actor_hit[id] = nil
+	end
+	log(string.format("death id=%s by_actor=%s killer_ok=%s", tostring(ok_id and id), tostring(by_actor), tostring(is_player_side(killer))))
+	if not by_actor then
 		return
 	end
 	on_badwill(victim, 0, true)
@@ -395,6 +506,7 @@ end
 
 local function decay_entry(e)
 	e.damage = math.max(0, (tonumber(e.damage) or 0) - 1)
+	e.hits = math.max(0, (tonumber(e.hits) or 0) - 1)
 	e.murders = math.max(0, (tonumber(e.murders) or 0) - 1)
 	local actor = db.actor
 	local keep = {}
@@ -431,6 +543,7 @@ local function on_save_state(m_data)
 	for comm, e in pairs(faction_memory) do
 		dump[comm] = {
 			damage = tonumber(e.damage) or 0,
+			hits = tonumber(e.hits) or 0,
 			murders = tonumber(e.murders) or 0,
 			agrod_stalker_ids = prune_ids(e.agrod_stalker_ids),
 		}
@@ -453,6 +566,7 @@ local function on_load_state(m_data)
 			end
 			faction_memory[comm] = {
 				damage = tonumber(e.damage) or 0,
+				hits = tonumber(e.hits) or 0,
 				murders = tonumber(e.murders) or 0,
 				agrod_stalker_ids = ids,
 			}

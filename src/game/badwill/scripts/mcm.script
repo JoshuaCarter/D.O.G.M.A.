@@ -5,6 +5,7 @@ _G.dogma_game_badwill_conf = {
     MOD_ID = "dogma/game/badwill",
     DEFAULTS = {
         enabled = true,
+        must_see = true,
         steal_enabled = true,
         steal_key = -1,
         steal_key_modifier = 0,
@@ -39,6 +40,13 @@ function on_mcm_load(options)
                 val = 1,
                 def = CONFIG.DEFAULTS.enabled,
                 hint = "dogma_game_badwill_enabled",
+            },
+            {
+                id = "must_see",
+                type = "check",
+                val = 1,
+                def = CONFIG.DEFAULTS.must_see,
+                hint = "dogma_game_badwill_must_see",
             },
             { id = "line_steal", type = "line" },
             {

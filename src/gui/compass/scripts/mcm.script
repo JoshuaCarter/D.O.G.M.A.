@@ -23,6 +23,11 @@ _G.dogma_gui_compass_conf = {
         enabled = true,
         compass_a = 255,
         marker_a = 255,
+        compass_w = 25,
+        show_line = true,
+        show_cardinals = true,
+        show_ticks = true,
+        show_center = true,
         compass_y = 747,
         shown = 1,
         keybind = -1,
@@ -122,6 +127,17 @@ function reload()
     L.compass_y = dogma.mcm.int(id, "compass_y")
     L.compass_a = dogma.mcm.uint(id, "compass_a")
     L.marker_a = dogma.mcm.uint(id, "marker_a")
+    local w = dogma.mcm.uint(id, "compass_w", CONFIG.DEFAULTS.compass_w)
+    if w < 1 then
+        w = 1
+    elseif w > 100 then
+        w = 100
+    end
+    L.compass_w = w
+    L.show_line = dogma.mcm.bool(id, "show_line")
+    L.show_cardinals = dogma.mcm.bool(id, "show_cardinals")
+    L.show_ticks = dogma.mcm.bool(id, "show_ticks")
+    L.show_center = dogma.mcm.bool(id, "show_center")
     L.quest_always = dogma.mcm.bool(id, "quest_always")
     L.quest_highlight = dogma.mcm.bool(id, "quest_highlight")
 
@@ -140,11 +156,16 @@ function reload()
 
     local d = device()
     dogma.log.log(id, string.format(
-        "reload enabled=%s y=%s a=%s marker_a=%s scale=%.2f res=%sx%s key=%s mode=%s shown=%s quest_always=%s friend=%s host=%s",
+        "reload enabled=%s y=%s a=%s marker_a=%s w=%s line=%s card=%s ticks=%s center=%s scale=%.2f res=%sx%s key=%s mode=%s shown=%s quest_always=%s friend=%s host=%s",
         tostr(L.enabled),
         tostr(L.compass_y),
         tostr(L.compass_a),
         tostr(L.marker_a),
+        tostr(L.compass_w),
+        tostr(L.show_line),
+        tostr(L.show_cardinals),
+        tostr(L.show_ticks),
+        tostr(L.show_center),
         L.scale,
         tostr(d and d.width),
         tostr(d and d.height),
@@ -278,6 +299,44 @@ function on_mcm_load(options)
             text = "ui_mcm_dogma_gui_compass_position_need_game",
             clr = { 255, 255, 220, 0 },
             precondition = { not_in_level },
+        },
+        {
+            id = "compass_w",
+            type = "track",
+            val = 2,
+            min = 1,
+            max = 100,
+            step = 1,
+            def = D.compass_w,
+            hint = hint("compass_w"),
+        },
+        {
+            id = "show_line",
+            type = "check",
+            val = 1,
+            def = D.show_line,
+            hint = hint("show_line"),
+        },
+        {
+            id = "show_cardinals",
+            type = "check",
+            val = 1,
+            def = D.show_cardinals,
+            hint = hint("show_cardinals"),
+        },
+        {
+            id = "show_ticks",
+            type = "check",
+            val = 1,
+            def = D.show_ticks,
+            hint = hint("show_ticks"),
+        },
+        {
+            id = "show_center",
+            type = "check",
+            val = 1,
+            def = D.show_center,
+            hint = hint("show_center"),
         },
         {
             id = "compass_a",

@@ -36,15 +36,6 @@ HUD = nil
 enabled = true
 force_visible = false
 
-local function scale_width(widget, k)
-	if not widget then return end
-
-	local pos = widget:GetWndPos()
-
-	widget:SetWndSize(vector2():set(widget:GetWidth() * k, widget:GetHeight()))
-	widget:SetWndPos(vector2():set(pos.x * k, pos.y))
-end
-
 -- Keep texels on whole pixels. Odd-wide widgets need a .5 center.
 local function snap_center(x, w)
 	if floor(w + 0.5) % 2 == 1 then
@@ -80,10 +71,7 @@ function TCHud:InitControls()
 	local style = loaded.style
 
 	self.style = style
-	self.compass_width = style.compass_width * size_k
-	self.compass_x = V.TC_SCREEN_CENTER - (style.compass_inset + style.compass_width / 2) * size_k
-
-	utils.set_scale(self.compass_width / V.TC_COMPASS_BASE_WIDTH)
+	self.base_w = style.compass_width
 
 	self.tmr_markers = 0
 	self.tmr_cleanup = 0
@@ -105,10 +93,7 @@ function TCHud:InitControls()
 	local node = style.node
 
 	self.compass = self.xml_compass:InitStatic(node, self)
-
-	if size_k ~= 1 then
-		scale_width(self.compass, size_k)
-	end
+	self.compass_h = self.compass:GetHeight()
 
 	self.cardinals = {}
 	self.cardinal_count = 0
@@ -137,22 +122,15 @@ function TCHud:InitControls()
 	end
 
 	self.center_mark = self.xml_compass:InitStatic(node .. ":cardinal_center", self.compass)
-	if self.center_mark then
-		self.center_mark:SetWndPos(self.pos:set(
-			snap_center(self.compass_width / 2, self.center_mark:GetWidth()),
-			CARDINAL_LINE_Y + 1 - self.center_mark:GetHeight() / 2
-		))
-	else
+	if not self.center_mark then
 		dogma.log.log(CONFIG.MOD_ID, "cardinal missing " .. node .. ":cardinal_center")
 	end
 
 	self.frame_shadow = self:InitShadow(node .. ":static_frame")
 	self.static_frame = self.xml_compass:InitStatic(node .. ":static_frame", self.compass)
-
-	if size_k ~= 1 then
-		scale_width(self.frame_shadow, size_k)
-		scale_width(self.static_frame, size_k)
-	end
+	local fp = self.static_frame and self.static_frame:GetWndPos()
+	self.frame_y = fp and fp.y or CARDINAL_LINE_Y
+	self.frame_h = self.static_frame and self.static_frame:GetHeight() or 1
 
 	self.xml_markers = CScriptXmlInit()
 	self.xml_markers:ParseFile("ui_dogma_gui_compass_markers.xml")
@@ -162,10 +140,7 @@ function TCHud:InitControls()
 
 	-- Child of the strip so icon X/Y share the same widget box as the ticks.
 	self.markers = self.xml_markers:InitStatic(self.marker_node, self.compass)
-
-	if size_k ~= 1 then
-		scale_width(self.markers, size_k)
-	end
+	self.markers_h = self.markers and self.markers:GetHeight() or 0
 
 	self.highlight = {}
 
@@ -183,8 +158,6 @@ function TCHud:InitControls()
 	self.active_target = nil
 	self.task_target = nil
 
-	-- Hide the outer 12.5% each side (same 75% band as before, now local).
-	self.band_inset = self.compass_width * 0.125
 	self.chrome_a = -1
 	self.marker_a = -1
 
@@ -223,6 +196,7 @@ function TCHud:AddCardinal(path, deg, letter)
 		y = y,
 		w = ui:GetWidth(),
 		half_w = ui:GetWidth() / 2,
+		letter = letter and true or false,
 		fade = not letter,
 		alpha = -1,
 		shown = false,
@@ -300,13 +274,80 @@ function TCHud:ApplyMarkerAlpha()
 end
 
 function TCHud:UpdateLayout()
-	self.compass_y = CONFIG.loaded.compass_y
+	local loaded = CONFIG.loaded
+	local size_k = loaded.scale or 1
+	if abs(size_k - 1) < 0.001 then
+		size_k = 1
+	end
+	self.size_k = size_k
 
+	local pct = loaded.compass_w or 25
+	if pct < 1 then
+		pct = 1
+	elseif pct > 100 then
+		pct = 100
+	end
+	local w = V.TC_SCREEN_WIDTH * (pct / 100)
+	local k = w / self.base_w
+
+	self.compass_width = w
+	self.compass_x = V.TC_SCREEN_CENTER - w / 2
+	self.compass_y = loaded.compass_y
+	self.band_inset = w * 0.125
+
+	utils.set_scale(k)
+
+	self.compass:SetWndSize(vector2():set(w, self.compass_h))
 	self.compass:SetWndPos(self.pos:set(self.compass_x, self.compass_y))
+
+	if self.static_frame then
+		self.static_frame:SetWndSize(vector2():set(w, self.frame_h))
+		self.static_frame:SetWndPos(self.pos:set(0, self.frame_y))
+	end
+	if self.frame_shadow then
+		self.frame_shadow:SetWndSize(vector2():set(w, self.frame_h))
+		self.frame_shadow:SetWndPos(self.pos:set(COMPASS_SHADOW_OFF, self.frame_y + COMPASS_SHADOW_OFF))
+	end
+	if self.markers then
+		self.markers:SetWndSize(vector2():set(w, self.markers_h))
+	end
+	if self.center_mark then
+		self.center_mark:SetWndPos(self.pos:set(
+			snap_center(w / 2, self.center_mark:GetWidth()),
+			CARDINAL_LINE_Y + 1 - self.center_mark:GetHeight() / 2
+		))
+		self.center_mark:Show(loaded.show_center ~= false)
+	end
+	if self.static_frame then
+		self.static_frame:Show(loaded.show_line ~= false)
+	end
+	if self.frame_shadow then
+		self.frame_shadow:Show(loaded.show_line ~= false)
+	end
+	for i = 1, self.cardinal_count do
+		local c = self.cardinals[i]
+		local want = (c.letter and loaded.show_cardinals ~= false)
+			or (not c.letter and loaded.show_ticks ~= false)
+		if not want and c.shown then
+			c.shown = false
+			c.ui:Show(false)
+		end
+	end
+
+	self.last_h = nil
+	self.tmr_markers = 0
 	self:ApplyChromeAlpha()
 	self:ApplyMarkerAlpha()
 
-	self.tmr_markers = 0 -- marker rows move with the strip
+	if self.strip_k ~= k then
+		self.strip_k = k
+		dogma.log.log(CONFIG.MOD_ID, string.format(
+			"width pct=%s k=%.3f strip=%.1f",
+			tostring(pct),
+			k,
+			w
+		))
+	end
 end
 
 function TCHud:Update()
@@ -362,8 +403,17 @@ function TCHud:UpdateCompass(cam_dir)
 	local mid = self.compass_width / 2
 	local n = self.cardinal_count
 
+	local loaded = CONFIG.loaded
 	for i = 1, n do
 		local c = self.cardinals[i]
+		local want = (c.letter and loaded.show_cardinals ~= false)
+			or (not c.letter and loaded.show_ticks ~= false)
+		if not want then
+			if c.shown then
+				c.shown = false
+				c.ui:Show(false)
+			end
+		else
 		local x = utils.bearing_x(c.rad, cam_h)
 		local on_strip = x > lo + c.half_w and x < hi - c.half_w
 		local a = 255
@@ -388,6 +438,7 @@ function TCHud:UpdateCompass(cam_dir)
 		elseif c.shown then
 			c.shown = false
 			c.ui:Show(false)
+		end
 		end
 	end
 end

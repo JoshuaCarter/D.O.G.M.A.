@@ -518,16 +518,23 @@ end
 
 function TCHud:RefreshMarker(entry, cam_pos, groups, y_marker)
 	local group_name = entry.group
-	if group_name == "squads" or group_name == "companions" then
-		local want_cat = utils.is_player_companion(entry.id) and "squad_companion" or defs.spot_categories[entry.spot]
-		if want_cat and want_cat ~= entry.category then
-			if entry.ui then
-				self:ReleaseMarker(entry)
-			end
-			entry.category = want_cat
-			entry.group = defs.category_groups[want_cat] or entry.group
+	if entry.spot == "companion_squad" then
+		group_name = "companions"
+	elseif group_name == "squads" or group_name == "companions" or entry.category == "companion" then
+		if utils.is_player_companion(entry.id) then
+			return self:HideMarker(entry)
 		end
-		group_name = utils.squad_mcm_group(entry.id)
+		if group_name == "squads" or group_name == "companions" then
+			local want_cat = defs.spot_categories[entry.spot]
+			if want_cat and want_cat ~= entry.category then
+				if entry.ui then
+					self:ReleaseMarker(entry)
+				end
+				entry.category = want_cat
+				entry.group = defs.category_groups[want_cat] or entry.group
+			end
+			group_name = utils.squad_mcm_group(entry.id)
+		end
 	end
 	local group = groups[group_name]
 	local on_task = self.task_target and entry.id == self.task_target
@@ -590,9 +597,7 @@ function TCHud:RefreshMarker(entry, cam_pos, groups, y_marker)
 		entry.applied_alpha = alpha
 
 		local color
-		if entry.category == "squad_companion" then
-			color = GetARGB(alpha, 70, 210, 90)
-		elseif entry.category == "turnin" then
+		if entry.category == "turnin" then
 			color = GetARGB(alpha, 0, 255, 0)
 		else
 			color = GetARGB(alpha, 255, 255, 255)
@@ -660,8 +665,6 @@ function TCHud:RefreshArrow(entry, cam_pos, centered)
 	local r, g, b = 255, 255, 255
 	if entry.category == "turnin" then
 		r, g, b = 0, 255, 0
-	elseif entry.category == "squad_companion" then
-		r, g, b = 70, 210, 90
 	end
 	arrow:SetTextureColor(GetARGB(entry.alpha, r, g, b))
 	arrow:Show(true)

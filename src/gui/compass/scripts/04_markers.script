@@ -236,6 +236,18 @@ function sync_campfires()
 	end
 end
 
+local function mark_companion(member_id)
+	if not member_id then
+		return
+	end
+	cmp_seen[member_id] = true
+	if list[member_id] and list[member_id][COMPANION_SPOT] then
+		return
+	end
+	add(member_id, COMPANION_SPOT)
+	dogma.log.log(CONFIG.MOD_ID, "companion " .. tostring(member_id) .. " add")
+end
+
 function sync_companions()
 	local xs = dogma.xlibs and dogma.xlibs.xsquad
 	local axr = rawget(_G, "axr_companions")
@@ -249,13 +261,18 @@ function sync_companions()
 
 	for squad_id in pairs(axr.companion_squads) do
 		local squad = alife_object(squad_id)
-		if squad then
+		if not squad then
+			dogma.log.log(CONFIG.MOD_ID, "companion squad miss id=" .. tostring(squad_id))
+		else
+			local n = 0
 			for member_id in xs.iter_member_ids(squad) do
-				cmp_seen[member_id] = true
-				if not list[member_id] then
-					add(member_id, COMPANION_SPOT)
-					dogma.log.log(CONFIG.MOD_ID, "companion " .. tostring(member_id) .. " add")
-				end
+				n = n + 1
+				mark_companion(member_id)
+			end
+			if n < 1 then
+				local cid = squad.commander_id and squad:commander_id()
+				dogma.log.log(CONFIG.MOD_ID, "companion squad empty id=" .. tostring(squad_id) .. " cmd=" .. tostring(cid))
+				mark_companion(cid)
 			end
 		end
 	end

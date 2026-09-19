@@ -234,7 +234,12 @@ local function pick_pull_spot(from_lvid, spots, used, slot)
 end
 
 -- Restore flags on the whole roster (crash cannot leave can_switch_online false).
--- switch_online only the ones we hid this grace, so waiters stay where they were.
+-- Never call switch_online ourselves: while hidden, LSS retries bringing the squad
+-- online every tick and is only rejected by can_switch_online(false) (see the
+-- "[LSS] Spawning object" spam during the grace window). The moment the flag flips
+-- true, that in-flight LSS retry completes the spawn on its own; a manual
+-- switch_online() here races it and can double-net_spawn the same id, which the
+-- engine does not survive (net_spawn "Object with ID already exists" hard crash).
 -- Hidden members teleport to nearby walkable verts (not the actor vertex).
 local function show_companions()
 	local squads = axr_companions and axr_companions.companion_squads
@@ -272,9 +277,6 @@ local function show_companions()
 				if se then
 					se:can_switch_online(true)
 					se:can_switch_offline(true)
-					if hidden[sid] and not se.online and se.switch_online then
-						se:switch_online()
-					end
 				end
 			end
 			for id in xsquad.iter_member_ids(squad) do
@@ -282,9 +284,6 @@ local function show_companions()
 				if se then
 					se:can_switch_online(true)
 					se:can_switch_offline(true)
-					if hidden[id] and not se.online and se.switch_online then
-						se:switch_online()
-					end
 				end
 			end
 		end

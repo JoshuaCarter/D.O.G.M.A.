@@ -262,6 +262,23 @@ local function split_int(total, n, i)
     return base
 end
 
+-- Mean RU/round across a gun's own ammo types. Guns with no costed types
+-- (all free/unpriced) fall back to 1 so they never get a zero weight.
+local function average_cost(types)
+    local total, n = 0, 0
+    for i = 1, #types do
+        local c = round_cost(types[i])
+        if c then
+            total = total + c
+            n = n + 1
+        end
+    end
+    if n == 0 then
+        return 1
+    end
+    return total / n
+end
+
 -- Fill this gun: at least min_r rounds, never more than max_r.
 -- Every round is a uniform pick, then subtract that cost. Min picks skip
 -- grenade ammo. After min, leftover RU still grants the rolled round, then stop.
@@ -349,12 +366,25 @@ local function inject_corpse_ammo(npc, inv_ammo)
         return { skip = "ru 0", rank = rank, guns = #gun_ammo }
     end
     local n_guns = #gun_ammo
+    -- Equal round CAPS (split_int below) mean equal RU would still favor
+    -- whichever gun's ammo is cheaper: it affords more extras before the
+    -- shared RU runs out, so it hits its cap while pricier ammo runs dry
+    -- first. Weight each gun's RU share by its own average RU/round so
+    -- every gun can afford roughly the same round count, not the same money.
+    local weights = {}
+    local weight_sum = 0
+    for i = 1, n_guns do
+        local w = average_cost(gun_ammo[i])
+        weights[i] = w
+        weight_sum = weight_sum + w
+    end
     local pooled = {}
     for i = 1, n_guns do
         local types = gun_ammo[i]
+        local ru_share = (weight_sum > 0) and (total_ru * weights[i] / weight_sum) or (total_ru / n_guns)
         local counts = allocate_gun_ammo(
             types,
-            total_ru / n_guns,
+            ru_share,
             split_int(min_rounds, n_guns, i),
             split_int(max_rounds, n_guns, i)
         )

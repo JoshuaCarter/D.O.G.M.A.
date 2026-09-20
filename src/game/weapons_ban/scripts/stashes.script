@@ -113,7 +113,7 @@ local function restore_existing_cache(id, prev)
     caches[id] = prev
 end
 
-local function queue_stash_ammo(id, sec, rounds, cond, count)
+local function queue_stash_ammo(id, sec, rounds, cond)
     if not (id and sec) then
         return
     end
@@ -125,7 +125,7 @@ local function queue_stash_ammo(id, sec, rounds, cond, count)
         list = {}
         pending_stash_ammo[id] = list
     end
-    list[#list + 1] = { sec = sec, rounds = rounds, cond = cond, count = count }
+    list[#list + 1] = { sec = sec, rounds = rounds, cond = cond }
 end
 
 local function spawn_pending_stash_ammo(box)
@@ -150,18 +150,12 @@ local function spawn_pending_stash_ammo(box)
                 if e.cond then
                     t.cond = e.cond
                 end
-                local n = (e.count and e.count > 0) and e.count or 1
-                for _ = 1, n do
-                    alife_create_item(e.sec, box, t)
-                end
-                local label = e.sec
+                alife_create_item(e.sec, box, t)
                 if e.cond then
-                    label = label .. string.format(" cond=%s", e.cond)
+                    parts[#parts + 1] = string.format("%s cond=%s", e.sec, e.cond)
+                else
+                    parts[#parts + 1] = e.sec
                 end
-                if n > 1 then
-                    label = label .. string.format(" x%s", n)
-                end
-                parts[#parts + 1] = label
             end
         end
     end
@@ -233,22 +227,30 @@ local function roll_stash_loot(id)
                     rt, sec, rounds, ru, rank
                 )
             end
+        elseif sec and cat == "part" then
+            -- N separate rolls, not N copies: each part gets its own
+            -- independently picked section and rolled condition.
+            local part_n = Tiers.roll_stash_part_count(target)
+            for j = 1, part_n do
+                local psec = (j == 1) and sec or Tiers.pick_section(cat, rt)
+                if psec then
+                    local cond = Tiers.roll_stash_cond(target)
+                    queue_stash_ammo(id, psec, nil, cond)
+                    if cond then
+                        drops[#drops + 1] = string.format("%s t%s %s cond=%s", cat, rt, psec, cond)
+                    else
+                        drops[#drops + 1] = string.format("%s t%s %s", cat, rt, psec)
+                    end
+                end
+            end
         elseif sec then
-            local cond, count = Tiers.roll_stash_cond(target)
-            if cat ~= "part" then
-                count = nil
-            end
-            queue_stash_ammo(id, sec, nil, cond, count)
-            local label
+            local cond = Tiers.roll_stash_cond(target)
+            queue_stash_ammo(id, sec, nil, cond)
             if cond then
-                label = string.format("%s t%s %s cond=%s", cat, rt, sec, cond)
+                drops[#drops + 1] = string.format("%s t%s %s cond=%s", cat, rt, sec, cond)
             else
-                label = string.format("%s t%s %s", cat, rt, sec)
+                drops[#drops + 1] = string.format("%s t%s %s", cat, rt, sec)
             end
-            if count and count > 1 then
-                label = label .. string.format(" x%s", count)
-            end
-            drops[#drops + 1] = label
         end
     end
     local color = (#drops > 0) and "green" or "gray"

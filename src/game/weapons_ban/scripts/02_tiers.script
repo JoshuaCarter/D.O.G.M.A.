@@ -61,17 +61,27 @@ local function roll_stash_bonus()
     return CONSTS.STASH_BONUS_ROLL_MAP[idx] or 0
 end
 
--- cond and count share one idx roll: the same tier band that decides how
--- worn a part is also decides how many of it drop (STASH_PARTS_COUNT_MIN/MAX).
 local function roll_stash_cond(stash_tier)
     stash_tier = clamp_tier(stash_tier)
     local idx = dogma.rng.rand_from_tickets(CONSTS.STASH_PARTS_COND_TIX[stash_tier])
     if not idx then
-        return nil, 1
+        return nil
     end
-    local cond = dogma.rng.rand(CONSTS.STASH_PARTS_COND_MIN[idx], CONSTS.STASH_PARTS_COND_MAX[idx])
-    local count = dogma.rng.rand(CONSTS.STASH_PARTS_COUNT_MIN[idx], CONSTS.STASH_PARTS_COUNT_MAX[idx])
-    return cond, count
+    return dogma.rng.rand(CONSTS.STASH_PARTS_COND_MIN[idx], CONSTS.STASH_PARTS_COND_MAX[idx])
+end
+
+-- How many SEPARATE part rolls a "part" bonus slot gets - not N copies of one
+-- roll. Each roll gets its own pick_section + roll_stash_cond, so 2 here means
+-- 2 independently-picked parts (possibly different sections, definitely
+-- independent conditions), not the same part x2. Same idx table as cond
+-- (STASH_PARTS_COND_TIX) since both track "how generous is this tier band".
+local function roll_stash_part_count(stash_tier)
+    stash_tier = clamp_tier(stash_tier)
+    local idx = dogma.rng.rand_from_tickets(CONSTS.STASH_PARTS_COND_TIX[stash_tier])
+    if not idx then
+        return 1
+    end
+    return dogma.rng.rand(CONSTS.STASH_PARTS_COUNT_MIN[idx], CONSTS.STASH_PARTS_COUNT_MAX[idx])
 end
 
 local function pick_section(cat, result_tier)
@@ -173,6 +183,7 @@ _G.dogma_game_weapons_ban_tiers = {
     pick_tier = pick_tier,
     roll_stash_bonus = roll_stash_bonus,
     roll_stash_cond = roll_stash_cond,
+    roll_stash_part_count = roll_stash_part_count,
     pick_section = pick_section,
     roll_ru_for_rank = roll_ru_for_rank,
     roll_ru_for_ammo_tier = roll_ru_for_ammo_tier,

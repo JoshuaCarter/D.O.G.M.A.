@@ -15,6 +15,8 @@
 ]]
 
 local CONFIG = _G.dogma_gui_stalker_id_conf
+local xslice = dogma.xlibs.xslice
+local LOS_SLICE = "stalker_id_los"
 
 local UI_WIDTH = 1024
 local UI_HEIGHT = 768
@@ -403,6 +405,8 @@ function on_screen_resolution_changed()
 end
 
 function actor_on_net_destroy()
+    xslice.cancel(LOS_SLICE, true)
+    scan_resolved = true
     dbg_reset()
     if HUD ~= nil then
         get_hud():RemoveDialogToRender(HUD)
@@ -894,6 +898,7 @@ local pick_ry, pick_sx, pick_sy = 0, nil, nil
 local los_miss_id = -1
 local SCAN = {}
 local scan_n = 0
+local scan_resolved = true
 
 local function scan_dist_cmp(a, b)
     return a.dist < b.dist
@@ -950,43 +955,76 @@ local function pick_iter(obj)
     return false
 end
 
-local function scan_center()
+local CIRCLE_CAND = {}
+local circle_n = 0
+
+local function on_scan_done()
+    scan_resolved = true
+end
+
+-- One candidate's circle_los (up to #BONES_BODY rays) per xslice step, so a
+-- crowd near the crosshair spends its raycasts across frames instead of
+-- bursting them all in one scan (was up to 38ms in a single frame). Only
+-- called for entries that already passed the cheap in_ui_circle test.
+local function check_circle_candidate(e)
+    if circle_los(e.obj) then
+        pick_obj = e.obj
+        pick_sd = e.sd
+        pick_ry = e.ry
+        pick_sx, pick_sy = e.sx, e.sy
+        pick_dist = e.dist
+        return false -- stop the queue, we have our target
+    end
+    if e.obj:id() ~= los_miss_id then
+        los_miss_id = e.obj:id()
+        log("circle los miss id=" .. tostring(e.obj:id()))
+    end
+    return true -- drained, keep going
+end
+
+-- Cone cull + bone projection + sort + circle filter only - no raycasts yet.
+-- Cheap, so this still runs on the 50ms throttle. xslice (dogma.xlibs)
+-- drives check_circle_candidate one candidate per real frame from here.
+local function start_scan()
     pick_obj = nil
     pick_sd = 0
     pick_dist = 0
     pick_ry, pick_sx, pick_sy = 0, nil, nil
     scan_n = 0
+    scan_resolved = false
+    xslice.cancel(LOS_SLICE, true)
     pick_max = approx_max_range()
     if pick_max <= 0 or not (db and db.actor) or not level.iterate_nearest then
+        scan_resolved = true
         return
     end
     pick_actor_id = db.actor:id()
     refresh_cam_cone()
     pcall(level.iterate_nearest, db.actor:position(), pick_max + 5, pick_iter)
     if scan_n == 0 then
+        scan_resolved = true
         return
     end
     for i = #SCAN, scan_n + 1, -1 do
         SCAN[i] = nil
     end
     table.sort(SCAN, scan_dist_cmp)
+    circle_n = 0
     for i = 1, scan_n do
         local e = SCAN[i]
         if in_ui_circle(e.sx, e.sy, e.ry) then
-            if circle_los(e.obj) then
-                pick_obj = e.obj
-                pick_sd = e.sd
-                pick_ry = e.ry
-                pick_sx, pick_sy = e.sx, e.sy
-                pick_dist = e.dist
-                return
-            end
-            if e.obj:id() ~= los_miss_id then
-                los_miss_id = e.obj:id()
-                log("circle los miss id=" .. tostring(e.obj:id()))
-            end
+            circle_n = circle_n + 1
+            CIRCLE_CAND[circle_n] = e
         end
     end
+    for i = #CIRCLE_CAND, circle_n + 1, -1 do
+        CIRCLE_CAND[i] = nil
+    end
+    if circle_n == 0 then
+        scan_resolved = true
+        return
+    end
+    xslice.start(LOS_SLICE, CIRCLE_CAND, { step = 1, func = check_circle_candidate, on_done = on_scan_done })
 end
 
 local PDA_SLOT = 8
@@ -1205,13 +1243,24 @@ local function try_pick()
     local look = cam_look_id(approx_max_range())
     if look then
         reset_hold()
+        -- Cancel, not just flag: an in-flight xslice queue would otherwise
+        -- keep ticking in the background and could clobber pick_obj later.
+        xslice.cancel(LOS_SLICE, true)
+        scan_resolved = true
         if not LastHitObject or LastHitObject:id() ~= look:id() then
             log("pick ray id=" .. tostr(look:id()))
         end
         set_id_target(look)
         return
     end
-    scan_center()
+    if scan_resolved then
+        start_scan()
+    end
+    if not scan_resolved then
+        -- Still working through a crowd across frames - keep whatever is
+        -- already showing rather than flicker to "no target" mid-scan.
+        return
+    end
     if not pick_obj then
         if LastHitObject then
             log("pick none")
@@ -1479,6 +1528,8 @@ function actor_on_update()
     if not CONFIG.loaded.enabled then
         cond_was = false
         dbg_hide()
+        xslice.cancel(LOS_SLICE, true)
+        scan_resolved = true
         if LastHitObject or fade_active or line_target_id then
             LastHitObject = nil
             clear()
@@ -1502,6 +1553,8 @@ function actor_on_update()
     cond_was = not always and want
 
     if not want then
+        xslice.cancel(LOS_SLICE, true)
+        scan_resolved = true
         if force_preview then
             LastHitObject = nil
             cancel_fade()

@@ -47,49 +47,40 @@ local function npc_hunting_actor(npc, actor_id)
     end
     local enemy = npc:best_enemy()
     if enemy then
-        return enemy and enemy:id() == actor_id
+        return enemy ~= nil and enemy:id() == actor_id
     end
 end
 
-local function dist_to(npc, origin)
-    return npc:position():distance_to(origin)
-end
+-- iterate_nearest already bounds the scan to COMBAT_M, so any hit at all means
+-- "in combat" - no need to collect a hunters list and distance-filter it after
+-- (that used to scan every bound object in db.storage first, regardless of
+-- range). Once scan_hit is set, later visits are a single cheap flag check.
+local scan_actor_id
+local scan_hit = false
 
--- st.object can outlive the GO (save / net_destroy). clsid on that wrapper logs.
-local function live_go(id)
-    if not (id and level and level.object_by_id) then
+local function combat_near(npc)
+    if scan_hit or not npc then
         return
     end
-    return level.object_by_id(id)
+    local ok, hit = pcall(npc_hunting_actor, npc, scan_actor_id)
+    if ok and hit then
+        scan_hit = true
+    end
 end
 
--- st.object skips offline / unbound storage. best_enemy is the engine hunt target.
+local iterate_combat_near_anon = function(pos)
+    level.iterate_nearest(pos, COMBAT_M, combat_near)
+end
+
 local function scan_combat()
     local actor = db and db.actor
-    if not (actor and db.storage) then
+    if not (actor and level and level.iterate_nearest) then
         return false
     end
-    local actor_id = actor:id()
-    local hunters = {}
-    for id, st in pairs(db.storage) do
-        if st and id ~= actor_id then
-            local npc = live_go(id)
-            if npc then
-                local ok, hit = pcall(npc_hunting_actor, npc, actor_id)
-                if ok and hit then
-                    hunters[#hunters + 1] = npc
-                end
-            end
-        end
-    end
-    local origin = actor:position()
-    for i = 1, #hunters do
-        local ok, dist = pcall(dist_to, hunters[i], origin)
-        if ok and dist <= COMBAT_M then
-            return true
-        end
-    end
-    return false
+    scan_actor_id = actor:id()
+    scan_hit = false
+    pcall(iterate_combat_near_anon, actor:position())
+    return scan_hit
 end
 
 local function perf_start(method)

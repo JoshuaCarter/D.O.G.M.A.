@@ -113,7 +113,7 @@ local function restore_existing_cache(id, prev)
     caches[id] = prev
 end
 
-local function queue_stash_ammo(id, sec, rounds, cond)
+local function queue_stash_ammo(id, sec, rounds, cond, count)
     if not (id and sec) then
         return
     end
@@ -125,7 +125,7 @@ local function queue_stash_ammo(id, sec, rounds, cond)
         list = {}
         pending_stash_ammo[id] = list
     end
-    list[#list + 1] = { sec = sec, rounds = rounds, cond = cond }
+    list[#list + 1] = { sec = sec, rounds = rounds, cond = cond, count = count }
 end
 
 local function spawn_pending_stash_ammo(box)
@@ -150,12 +150,18 @@ local function spawn_pending_stash_ammo(box)
                 if e.cond then
                     t.cond = e.cond
                 end
-                alife_create_item(e.sec, box, t)
-                if e.cond then
-                    parts[#parts + 1] = string.format("%s cond=%s", e.sec, e.cond)
-                else
-                    parts[#parts + 1] = e.sec
+                local n = (e.count and e.count > 0) and e.count or 1
+                for _ = 1, n do
+                    alife_create_item(e.sec, box, t)
                 end
+                local label = e.sec
+                if e.cond then
+                    label = label .. string.format(" cond=%s", e.cond)
+                end
+                if n > 1 then
+                    label = label .. string.format(" x%s", n)
+                end
+                parts[#parts + 1] = label
             end
         end
     end
@@ -228,13 +234,21 @@ local function roll_stash_loot(id)
                 )
             end
         elseif sec then
-            local cond = Tiers.roll_stash_cond(target)
-            queue_stash_ammo(id, sec, nil, cond)
-            if cond then
-                drops[#drops + 1] = string.format("%s t%s %s cond=%s", cat, rt, sec, cond)
-            else
-                drops[#drops + 1] = string.format("%s t%s %s", cat, rt, sec)
+            local cond, count = Tiers.roll_stash_cond(target)
+            if cat ~= "part" then
+                count = nil
             end
+            queue_stash_ammo(id, sec, nil, cond, count)
+            local label
+            if cond then
+                label = string.format("%s t%s %s cond=%s", cat, rt, sec, cond)
+            else
+                label = string.format("%s t%s %s", cat, rt, sec)
+            end
+            if count and count > 1 then
+                label = label .. string.format(" x%s", count)
+            end
+            drops[#drops + 1] = label
         end
     end
     local color = (#drops > 0) and "green" or "gray"

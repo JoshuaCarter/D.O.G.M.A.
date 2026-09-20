@@ -61,13 +61,17 @@ local function roll_stash_bonus()
     return CONSTS.STASH_BONUS_ROLL_MAP[idx] or 0
 end
 
+-- cond and count share one idx roll: the same tier band that decides how
+-- worn a part is also decides how many of it drop (STASH_PARTS_COUNT_MIN/MAX).
 local function roll_stash_cond(stash_tier)
     stash_tier = clamp_tier(stash_tier)
     local idx = dogma.rng.rand_from_tickets(CONSTS.STASH_PARTS_COND_TIX[stash_tier])
     if not idx then
-        return nil
+        return nil, 1
     end
-    return dogma.rng.rand(CONSTS.STASH_PARTS_COND_MIN[idx], CONSTS.STASH_PARTS_COND_MAX[idx])
+    local cond = dogma.rng.rand(CONSTS.STASH_PARTS_COND_MIN[idx], CONSTS.STASH_PARTS_COND_MAX[idx])
+    local count = dogma.rng.rand(CONSTS.STASH_PARTS_COUNT_MIN[idx], CONSTS.STASH_PARTS_COUNT_MAX[idx])
+    return cond, count
 end
 
 local function pick_section(cat, result_tier)

@@ -1512,16 +1512,6 @@ local function poll_use()
 end
 
 local function on_key_press(dik)
-    local pk = dogma.mcm.key(MOD_ID, "pickup_key", -1)
-    if pk and dik == pk then
-        local dummy = look_dummy()
-        if dummy then
-            pickup_dummy(dummy)
-        else
-            log("pickup key: no box in range")
-        end
-        return
-    end
     if not key_bindings then
         return
     end

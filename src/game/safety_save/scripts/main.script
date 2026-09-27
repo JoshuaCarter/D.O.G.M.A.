@@ -1,11 +1,11 @@
 --[[
-	Safety Save
+    Safety Save
 
-	Every 500ms, if not in combat: write `save safety_save` when
-	  - always_min minutes have passed since the last one (0 = off), or
-	  - event_min minutes have passed and inventory / full heal / hunger /
-	    thirst / sleep recovery is happening on this tick.
-	Last-save time is this load only (not reset on pause menu or level change).
+    Every 500ms, if not in combat: write `save safety_save` when
+      - always_min minutes have passed since the last one (0 = off), or
+      - event_min minutes have passed and inventory / full heal / hunger /
+        thirst / sleep recovery is happening on this tick.
+    Last-save time is this load only (not reset on pause menu or level change).
 ]]
 
 local CONFIG = _G.dogma_game_safety_save_conf
@@ -23,139 +23,143 @@ local was_thirst = 0
 local was_sleep = 0
 
 local function log(msg)
-	if CONFIG.loaded.debug_log then
-		dogma.log.log(CONFIG.MOD_ID, tostring(msg))
-	end
+    if CONFIG.loaded.debug_log then
+        dogma.log.log(CONFIG.MOD_ID, tostring(msg))
+    end
 end
 
 local function on_option_change()
-	local tostr = tostring
-	CONFIG.loaded.debug_log = dogma.log.logging()
-	CONFIG.loaded.enabled = dogma.mcm.bool(CONFIG.MOD_ID, "enabled", CONFIG.DEFAULTS.enabled)
-	CONFIG.loaded.always_min = dogma.mcm.int(CONFIG.MOD_ID, "always_min", CONFIG.DEFAULTS.always_min)
-	CONFIG.loaded.event_min = dogma.mcm.int(CONFIG.MOD_ID, "event_min", CONFIG.DEFAULTS.event_min)
-	CONFIG.loaded.show_text = dogma.mcm.bool(CONFIG.MOD_ID, "show_text", CONFIG.DEFAULTS.show_text)
-	CONFIG.loaded.on_inventory = dogma.mcm.bool(CONFIG.MOD_ID, "on_inventory", CONFIG.DEFAULTS.on_inventory)
-	CONFIG.loaded.on_heal = dogma.mcm.bool(CONFIG.MOD_ID, "on_heal", CONFIG.DEFAULTS.on_heal)
-	CONFIG.loaded.on_eat = dogma.mcm.bool(CONFIG.MOD_ID, "on_eat", CONFIG.DEFAULTS.on_eat)
-	CONFIG.loaded.on_drink = dogma.mcm.bool(CONFIG.MOD_ID, "on_drink", CONFIG.DEFAULTS.on_drink)
-	CONFIG.loaded.on_sleep = dogma.mcm.bool(CONFIG.MOD_ID, "on_sleep", CONFIG.DEFAULTS.on_sleep)
-	log(string.format(
-		"options: always_min=%s event_min=%s show_text=%s inv=%s heal=%s eat=%s drink=%s sleep=%s",
-		tostr(CONFIG.loaded.always_min),
-		tostr(CONFIG.loaded.event_min),
-		tostr(CONFIG.loaded.show_text),
-		tostr(CONFIG.loaded.on_inventory),
-		tostr(CONFIG.loaded.on_heal),
-		tostr(CONFIG.loaded.on_eat),
-		tostr(CONFIG.loaded.on_drink),
-		tostr(CONFIG.loaded.on_sleep)
-	))
+    local tostr = tostring
+    CONFIG.loaded.debug_log = dogma.log.logging()
+    CONFIG.loaded.enabled = dogma.mcm.bool(CONFIG.MOD_ID, "enabled", CONFIG.DEFAULTS.enabled)
+    CONFIG.loaded.always_min = dogma.mcm.int(CONFIG.MOD_ID, "always_min", CONFIG.DEFAULTS.always_min)
+    CONFIG.loaded.event_min = dogma.mcm.int(CONFIG.MOD_ID, "event_min", CONFIG.DEFAULTS.event_min)
+    CONFIG.loaded.show_text = dogma.mcm.bool(CONFIG.MOD_ID, "show_text", CONFIG.DEFAULTS.show_text)
+    CONFIG.loaded.on_inventory = dogma.mcm.bool(CONFIG.MOD_ID, "on_inventory", CONFIG.DEFAULTS.on_inventory)
+    CONFIG.loaded.on_inventory_close = dogma.mcm.bool(CONFIG.MOD_ID, "on_inventory_close", CONFIG.DEFAULTS.on_inventory_close)
+    CONFIG.loaded.on_heal = dogma.mcm.bool(CONFIG.MOD_ID, "on_heal", CONFIG.DEFAULTS.on_heal)
+    CONFIG.loaded.on_eat = dogma.mcm.bool(CONFIG.MOD_ID, "on_eat", CONFIG.DEFAULTS.on_eat)
+    CONFIG.loaded.on_drink = dogma.mcm.bool(CONFIG.MOD_ID, "on_drink", CONFIG.DEFAULTS.on_drink)
+    CONFIG.loaded.on_sleep = dogma.mcm.bool(CONFIG.MOD_ID, "on_sleep", CONFIG.DEFAULTS.on_sleep)
+    log(string.format(
+        "options: always_min=%s event_min=%s show_text=%s inv=%s inv_close=%s heal=%s eat=%s drink=%s sleep=%s",
+        tostr(CONFIG.loaded.always_min),
+        tostr(CONFIG.loaded.event_min),
+        tostr(CONFIG.loaded.show_text),
+        tostr(CONFIG.loaded.on_inventory),
+        tostr(CONFIG.loaded.on_inventory_close),
+        tostr(CONFIG.loaded.on_heal),
+        tostr(CONFIG.loaded.on_eat),
+        tostr(CONFIG.loaded.on_drink),
+        tostr(CONFIG.loaded.on_sleep)
+    ))
 end
 
 local function reset_edges()
-	next_at = 0
-	was_inv = dogma.status.is_inv_open()
-	was_hp = dogma.status.health()
-	was_hunger = dogma.status.hunger()
-	was_thirst = dogma.status.thirst()
-	was_sleep = dogma.status.sleep()
+    next_at = 0
+    was_inv = dogma.status.is_inv_open()
+    was_hp = dogma.status.health()
+    was_hunger = dogma.status.hunger()
+    was_thirst = dogma.status.thirst()
+    was_sleep = dogma.status.sleep()
 end
 
 local function reset_session()
-	reset_edges()
-	last_save_ms = time_global()
-	log("session reset")
+    reset_edges()
+    last_save_ms = time_global()
+    log("session reset")
 end
 
 local function do_save(reason)
-	exec_console_cmd("save safety_save")
-	last_save_ms = time_global()
-	if not CONFIG.loaded.show_text then
-		local hud = get_hud and get_hud()
-		if hud and hud.RemoveCustomStatic then
-			hud:RemoveCustomStatic("game_saved")
-		end
-	end
-	dogma.log.log(CONFIG.MOD_ID, "save (" .. reason .. ")", "green")
-	dogma.overlay.set(CONFIG.MOD_ID, 0, "save " .. reason, "green")
+    exec_console_cmd("save safety_save")
+    last_save_ms = time_global()
+    if not CONFIG.loaded.show_text then
+        local hud = get_hud and get_hud()
+        if hud and hud.RemoveCustomStatic then
+            hud:RemoveCustomStatic("game_saved")
+        end
+    end
+    dogma.log.log(CONFIG.MOD_ID, "save (" .. reason .. ")", "green")
+    dogma.overlay.set(CONFIG.MOD_ID, 0, "save " .. reason, "green")
 end
 
 local function actor_on_update()
-	local now = time_global()
-	if now < next_at then
-		return
-	end
-	next_at = now + TICK_MS
+    local now = time_global()
+    if now < next_at then
+        return
+    end
+    next_at = now + TICK_MS
 
-	local actor = dogma.sys.ready(CONFIG.MOD_ID, db, on_option_change)
-	if not (actor and actor:alive()) or not CONFIG.loaded.enabled then
-		return
-	end
+    local actor = dogma.sys.ready(CONFIG.MOD_ID, db, on_option_change)
+    if not (actor and actor:alive()) or not CONFIG.loaded.enabled then
+        return
+    end
 
-	local inv = dogma.status.is_inv_open()
-	local hp = dogma.status.health()
-	local hunger = dogma.status.hunger()
-	local thirst = dogma.status.thirst()
-	local sleep = dogma.status.sleep()
-	local reason
-	if CONFIG.loaded.on_inventory and inv and not was_inv then
-		reason = "inventory"
-	elseif CONFIG.loaded.on_eat and was_hunger - hunger >= NEED_EPS then
-		reason = "eat"
-	elseif CONFIG.loaded.on_drink and was_thirst - thirst >= NEED_EPS then
-		reason = "drink"
-	elseif CONFIG.loaded.on_sleep and was_sleep - sleep >= NEED_EPS then
-		reason = "sleep"
-	elseif CONFIG.loaded.on_heal and hp >= 1 and was_hp < 1 then
-		reason = "heal"
-	end
-	if reason then
-		log(string.format(
-			"edge %s hp=%.3f->%.3f hunger=%.3f->%.3f thirst=%.3f->%.3f sleep=%.3f->%.3f",
-			reason, was_hp, hp, was_hunger, hunger, was_thirst, thirst, was_sleep, sleep
-		))
-	end
-	was_inv = inv
-	was_hp = hp
-	was_hunger = hunger
-	was_thirst = thirst
-	was_sleep = sleep
+    local inv = dogma.status.is_inv_open()
+    local hp = dogma.status.health()
+    local hunger = dogma.status.hunger()
+    local thirst = dogma.status.thirst()
+    local sleep = dogma.status.sleep()
+    local reason
+    if CONFIG.loaded.on_inventory and inv and not was_inv then
+        reason = "inventory"
+    elseif CONFIG.loaded.on_inventory_close and was_inv and not inv then
+        reason = "inventory_close"
+    elseif CONFIG.loaded.on_eat and was_hunger - hunger >= NEED_EPS then
+        reason = "eat"
+    elseif CONFIG.loaded.on_drink and was_thirst - thirst >= NEED_EPS then
+        reason = "drink"
+    elseif CONFIG.loaded.on_sleep and was_sleep - sleep >= NEED_EPS then
+        reason = "sleep"
+    elseif CONFIG.loaded.on_heal and hp >= 1 and was_hp < 1 then
+        reason = "heal"
+    end
+    if reason then
+        log(string.format(
+            "edge %s hp=%.3f->%.3f hunger=%.3f->%.3f thirst=%.3f->%.3f sleep=%.3f->%.3f",
+            reason, was_hp, hp, was_hunger, hunger, was_thirst, thirst, was_sleep, sleep
+        ))
+    end
+    was_inv = inv
+    was_hp = hp
+    was_hunger = hunger
+    was_thirst = thirst
+    was_sleep = sleep
 
-	local elapsed = now - last_save_ms
-	local always_min = CONFIG.loaded.always_min
-	if dogma.status.is_in_combat() then
-		if reason then
-			log("skip " .. reason .. " (combat)")
-		elseif always_min > 0 and elapsed >= always_min * MIN_MS then
-			log("skip always (combat)")
-		end
-		return
-	end
+    local elapsed = now - last_save_ms
+    local always_min = CONFIG.loaded.always_min
+    if dogma.status.is_in_combat() then
+        if reason then
+            log("skip " .. reason .. " (combat)")
+        elseif always_min > 0 and elapsed >= always_min * MIN_MS then
+            log("skip always (combat)")
+        end
+        return
+    end
 
-	if always_min > 0 and elapsed >= always_min * MIN_MS then
-		do_save("always")
-		return
-	end
-	if not reason then
-		return
-	end
-	if elapsed >= CONFIG.loaded.event_min * MIN_MS then
-		do_save(reason)
-	else
-		log(string.format("skip %s (cooldown %.1f/%s min)", reason, elapsed / MIN_MS, tostring(CONFIG.loaded.event_min)))
-	end
+    if always_min > 0 and elapsed >= always_min * MIN_MS then
+        do_save("always")
+        return
+    end
+    if not reason then
+        return
+    end
+    if elapsed >= CONFIG.loaded.event_min * MIN_MS then
+        do_save(reason)
+    else
+        log(string.format("skip %s (cooldown %.1f/%s min)", reason, elapsed / MIN_MS, tostring(CONFIG.loaded.event_min)))
+    end
 end
 
 function on_game_start()
-	dogma.load(CONFIG.MOD_ID)
-	on_option_change()
-	reset_session()
-	RegisterScriptCallback("actor_on_update", actor_on_update)
-	RegisterScriptCallback("on_option_change", on_option_change)
-	RegisterScriptCallback("on_game_load", reset_session)
-	RegisterScriptCallback("main_menu_on_init", reset_edges)
-	RegisterScriptCallback("actor_on_net_destroy", reset_edges)
-	log("loaded")
+    dogma.load(CONFIG.MOD_ID)
+    on_option_change()
+    reset_session()
+    RegisterScriptCallback("actor_on_update", actor_on_update)
+    RegisterScriptCallback("on_option_change", on_option_change)
+    RegisterScriptCallback("on_game_load", reset_session)
+    RegisterScriptCallback("main_menu_on_init", reset_edges)
+    RegisterScriptCallback("actor_on_net_destroy", reset_edges)
+    log("loaded")
 end
 

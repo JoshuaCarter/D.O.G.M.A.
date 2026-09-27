@@ -365,9 +365,14 @@ local function slash_input_blocked()
 	return false
 end
 
--- Pickup still wants you looking at the corpse (interact use-target).
+-- Real "Use" prompt target, not the crosshair aim ray: actor:get_actor_object_looking_at()
+-- mirrors m_pObjectWeLookingAt (Actor.cpp), which the engine only sets inside
+-- RQ.range < 2.0f - the same 2m gate the vanilla loot/use prompt itself uses.
+-- level.get_target_obj() is HUD().GetPick(), a long aim raycast with no range
+-- gate at all - using that let slash-loot fire from 40-50m away.
 local function use_target_dead_mutant()
-	local target = level.get_target_obj and level.get_target_obj()
+	local actor = db.actor
+	local target = actor and actor.get_actor_object_looking_at and actor:get_actor_object_looking_at()
 	if target and IsMonster(target) and not target:alive() then
 		return target
 	end

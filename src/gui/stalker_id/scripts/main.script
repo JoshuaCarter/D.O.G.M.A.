@@ -895,7 +895,10 @@ end
 
 local pick_obj, pick_sd, pick_max, pick_actor_id, pick_dist
 local pick_ry, pick_sx, pick_sy = 0, nil, nil
-local los_miss_id = -1
+-- Distinct-id dedup, not a single last-id: with several candidates in view,
+-- a single scalar gets invalidated every time a DIFFERENT one misses, so it
+-- stops suppressing repeats for the first one and both re-log every cycle.
+local los_missed = {}
 local SCAN = {}
 local scan_n = 0
 local scan_resolved = true
@@ -975,9 +978,10 @@ local function check_circle_candidate(e)
         pick_dist = e.dist
         return false -- stop the queue, we have our target
     end
-    if e.obj:id() ~= los_miss_id then
-        los_miss_id = e.obj:id()
-        log("circle los miss id=" .. tostring(e.obj:id()))
+    local id = e.obj:id()
+    if not los_missed[id] then
+        los_missed[id] = true
+        log("circle los miss id=" .. tostring(id))
     end
     return true -- drained, keep going
 end
@@ -996,6 +1000,7 @@ local function start_scan()
     pick_max = approx_max_range()
     if pick_max <= 0 or not (db and db.actor) or not level.iterate_nearest then
         scan_resolved = true
+        for k in pairs(los_missed) do los_missed[k] = nil end
         return
     end
     pick_actor_id = db.actor:id()
@@ -1003,6 +1008,9 @@ local function start_scan()
     pcall(level.iterate_nearest, db.actor:position(), pick_max + 5, pick_iter)
     if scan_n == 0 then
         scan_resolved = true
+        -- Nobody in the outer cone at all - player looked away. Forget past
+        -- misses so looking back at the same npc logs fresh, not silence.
+        for k in pairs(los_missed) do los_missed[k] = nil end
         return
     end
     for i = #SCAN, scan_n + 1, -1 do

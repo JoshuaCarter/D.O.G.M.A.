@@ -517,6 +517,39 @@ local function schedule_corpse_ui_refresh(partner_id)
     end
 end
 
+local WATCH_GROUP = "dogma_wb_corpse_watch"
+local WATCH_ID = "watch"
+local WATCH_INTERVAL_SEC = 0.1
+local WATCH_MAX_TRIES = 10
+
+local watch_tries = 0
+
+-- Backup net: flush_open_loot's own strip can still miss a race (vanilla
+-- spawn landing later, a second death-callback pass, etc.). Re-check every
+-- 100ms for up to 1s after open (10 tries), reading gui/partner fresh each
+-- poll (no captured state). Stops the moment it finds something, the budget
+-- runs out, or the loot UI closes / moves to a different corpse.
+local function watch_tick()
+    local gui = ui_inventory and ui_inventory.GUI
+    if not (gui and gui.mode == "loot") then
+        return true
+    end
+    local partner = gui.GetPartner and gui:GetPartner()
+    if not (partner and partner.id) then
+        return true
+    end
+    local id = partner:id()
+    local stripped = strip_degraded_ammo(partner)
+    if next(stripped) then
+        queue_stripped(id, stripped)
+        flush_roll(id)
+        schedule_corpse_ui_refresh(id)
+        return true
+    end
+    watch_tries = watch_tries + 1
+    return watch_tries >= WATCH_MAX_TRIES
+end
+
 local function flush_open_loot()
     local gui = ui_inventory and ui_inventory.GUI
     if not (gui and gui.mode == "loot") then
@@ -534,6 +567,12 @@ local function flush_open_loot()
     flush_roll(id)
     if next(stripped) then
         schedule_corpse_ui_refresh(id)
+    end
+    -- Backup net for whatever this strip still misses. CreateTimeEvent no-ops
+    -- if already scheduled, so this is safe to (re)arm on every loot open.
+    watch_tries = 0
+    if CreateTimeEvent then
+        CreateTimeEvent(WATCH_GROUP, WATCH_ID, WATCH_INTERVAL_SEC, watch_tick)
     end
 end
 

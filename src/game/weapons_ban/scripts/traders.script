@@ -3,7 +3,7 @@
 
     Strip on talk/trade only. trade_manager.update runs on every stalker
     (xr_motivator + nearby npc_on_update) so we do not hook it.
-    Supply traders lose all banned combat stock (not knives).
+    Supply traders lose all banned combat stock (not knives or binoculars).
 ]]
 
 local CONFIG = _G.dogma_game_weapons_ban_conf
@@ -18,6 +18,53 @@ local function log(msg, color)
     dogma.log.log(MOD_ID, tostring(msg), color)
 end
 
+-- Melee and binoculars stay. Any other wpn_ section is a gun or attachment.
+local KEEP_SEC = {
+    wpn_axe = true,
+    wpn_axe2 = true,
+    wpn_axe3 = true,
+    wpn_knife = true,
+    wpn_knife2 = true,
+    wpn_knife3 = true,
+    wpn_knife4 = true,
+    wpn_knife5 = true,
+    wpn_knife6 = true,
+    wpn_knife7 = true,
+    wpn_knife8 = true,
+    wpn_knife9 = true,
+    wpn_binoc = true,
+    wpn_binoc_inv = true,
+    wpn_upd = true,
+}
+
+local FALLBACK_LOGGED = {}
+
+local function obj_cls(obj)
+    if not (obj and obj.clsid and clsid) then
+        return nil
+    end
+    return obj:clsid()
+end
+
+local function keep_style(obj, sec)
+    if KEEP_SEC[sec] then
+        return true
+    end
+    local c = obj_cls(obj)
+    if not c then
+        return false
+    end
+    return c == clsid.wpn_knife_s or c == clsid.wpn_binocular_s
+end
+
+local function fallback_strip(sec, why)
+    if not FALLBACK_LOGGED[sec] then
+        FALLBACK_LOGGED[sec] = true
+        log(string.format("fallback strip sec=%s why=%s", sec, why), "yellow")
+    end
+    return true
+end
+
 local function is_banned_combat_gear(obj, sec)
     if not sec then
         return false
@@ -25,10 +72,22 @@ local function is_banned_combat_gear(obj, sec)
     if obj and dogma.db.is_melee(obj:section()) then
         return false
     end
-    if dogma.db.is_melee(sec) then
+    if dogma.db.is_melee(sec) or keep_style(obj, sec) then
         return false
     end
-    return dogma.db.is_any(sec, CONSTS.TRADER_STRIP_CATS)
+    if dogma.db.is_any(sec, CONSTS.TRADER_STRIP_CATS) then
+        return true
+    end
+    if sec:sub(1, 6) == "prt_w_"
+        or sec:sub(1, 7) == "casing_"
+        or sec:sub(1, 7) == "powder_"
+        or sec:sub(1, 7) == "bullet_" then
+        return fallback_strip(sec, "part")
+    end
+    if sec:sub(1, 4) == "wpn_" then
+        return fallback_strip(sec, "wpn")
+    end
+    return false
 end
 
 -- Restocking vendors (buy_supplies). trade_generic / companions have none.

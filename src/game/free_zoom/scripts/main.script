@@ -333,6 +333,18 @@ local function weapon_reloading()
 	return wpn:get_state() == 7
 end
 
+-- IsZoomed stays true through reload. Separate from get_state.
+local function weapon_zoomed()
+	if not (wpn and wpn.cast_Weapon) then
+		return false
+	end
+	local gun = wpn:cast_Weapon()
+	if not (gun and gun.IsZoomed) then
+		return false
+	end
+	return gun:IsZoomed()
+end
+
 
 -- Any equipped optic (sight or scope) - not irons. Engine IsScopeAttached misses
 -- some section-baked / DXR optics that utils_item still reports.
@@ -1093,7 +1105,7 @@ local function reset_session(resync_options, reason)
 	)
 end
 
--- RELOAD always clears free (and ADS via handle_context).
+-- RELOAD blocks free zoom. ADS zoom is sync_ads_zoom, not this context.
 local function blocks_free(ctx)
 	return CTX_BLOCK_FREE[ctx] == true
 end
@@ -1156,13 +1168,6 @@ local function handle_context(ctx)
 			reset_session(true, ctx)
 		end
 		return ctx
-	end
-
-	-- Reload / leave ADS path: always drop ADS zoom.
-	if ctx == CTX.RELOAD and ads_on then
-		ads_on = false
-		logf("ads out: reason=reload wpn=%s", wpn_label())
-		apply_fov()
 	end
 
 	-- Sprint / reload / GUI / etc.: drop free zoom; hold DIKs stay so poll re-applies when ok.
@@ -1286,6 +1291,45 @@ local function set_ads_zoom(want_ads, source)
 	return true
 end
 
+-- nil = ADS zoom on. A reason means hold hip.
+-- Reload does not clear IsZoomed; it only blocks zoom until state leaves 7.
+local function ads_zoom_block()
+	if not CONFIG.loaded.ads_enabled then
+		return "disabled"
+	end
+	if actor_dead() then
+		return "dead"
+	end
+	if dogma.status.is_weapon_lowered() then
+		return "lowered"
+	end
+	if weapon_reloading() then
+		return "reload"
+	end
+	if not weapon_zoomed() then
+		return "zoom"
+	end
+	return nil
+end
+
+local function sync_ads_zoom()
+	local why = ads_zoom_block()
+	local want = why == nil
+	if want == ads_on then
+		return
+	end
+	logf(
+		"ads state: %s -> %s why=%s zoomed=%s reload=%s wpn=%s",
+		ads_on and "on" or "off",
+		want and "on" or "off",
+		why or "zoom",
+		weapon_zoomed() and "yes" or "no",
+		weapon_reloading() and "yes" or "no",
+		wpn_label()
+	)
+	set_ads_zoom(want, why or "zoom")
+end
+
 -- Drop free + ADS and restore hip FOV (weapon lower / death / opts / etc.).
 local function reset_zoom(reason)
 	if not free_on and not ads_on then
@@ -1296,21 +1340,16 @@ local function reset_zoom(reason)
 	reset_session(false, reason)
 end
 
--- Weapon / detector / slot swaps: keep free zoom; ADS is gun-specific so drop it.
--- Draw/holster often snaps console FOV - resync live so smooth re-applies free zoom.
+-- Draw/holster often snaps console FOV. Resync live so free zoom re-applies.
+-- ADS zoom follows weapon_zoomed() on the next sync, not this swap.
 local function on_equipment_swap(reason)
-	local had_ads = ads_on
-	if ads_on then
-		logf("ads out: reason=%s keep_free=%s wpn=%s", tostring(reason), tostring(free_on), wpn_label())
-		ads_on = false
+	if not free_on then
+		return
 	end
-	if free_on then
-		live_fov = get_console_cmd(2, "fov") or live_fov
-		live_hud = get_console_cmd(2, "hud_fov") or live_hud
-		apply_fov()
-	elseif had_ads then
-		apply_fov()
-	end
+	logf("equip: reason=%s resync free wpn=%s", tostring(reason), wpn_label())
+	live_fov = get_console_cmd(2, "fov") or live_fov
+	live_hud = get_console_cmd(2, "hud_fov") or live_hud
+	apply_fov()
 end
 
 local function is_weapon_slot_bind(bind)
@@ -1559,9 +1598,10 @@ local function actor_on_update()
 		on_active_item_changed(prev_id, id, prev_sec, last_item_sec)
 	end
 
-	if CONFIG.loaded.enabled or (CONFIG.loaded.ads_enabled and ads_on) then
+	if CONFIG.loaded.enabled or CONFIG.loaded.ads_enabled or ads_on then
 		handle_context(get_context())
 	end
+	sync_ads_zoom()
 	poll_zoom_input()
 	if hot then
 		mark("update_before_smooth", nil)
@@ -1755,36 +1795,17 @@ on_mouse_wheel = function(dir, _flags)
 end
 
 local function actor_on_weapon_zoom_in()
-	if not CONFIG.loaded.ads_enabled then
-		return
-	end
-	if ads_on then
-		return
-	end
-
-	mark("cb_zoom_in_enter", nil, true)
+	mark("cb_zoom_in", nil, true)
 	refresh_wpn()
-	if not (wpn and wpn:cast_Weapon()) then
-		logf("ADS in ignored: no weapon (wpn=%s mode=%s)", wpn_label(), mode_label())
-		mark("cb_zoom_in_ignored", zoom_diag("no_wpn"), true)
-		return
-	end
-
-	logf("ADS in: wpn=%s from_mode=%s", wpn_label(), mode_label())
-	set_ads_zoom(true, "zoom_in")
-	-- If the process dies after this line, the crash is in engine zoom_in after our callback.
-	mark("cb_zoom_in_return_to_engine", zoom_diag("callback_done"), true)
+	sync_ads_zoom()
+	mark("cb_zoom_in_done", zoom_diag("callback_done"), true)
 end
 
 local function actor_on_weapon_zoom_out()
-	if not ads_on then
-		return
-	end
-	mark("cb_zoom_out_enter", nil, true)
+	mark("cb_zoom_out", nil, true)
 	refresh_wpn()
-	logf("ADS out: wpn=%s mode=%s", wpn_label(), mode_label())
-	set_ads_zoom(false, "zoom_out")
-	mark("cb_zoom_out_return_to_engine", zoom_diag("callback_done"), true)
+	sync_ads_zoom()
+	mark("cb_zoom_out_done", zoom_diag("callback_done"), true)
 end
 
 -- Optical <-> iron: re-assert ADS FOV ownership (free already cleared on ADS enter).
@@ -1813,11 +1834,15 @@ local function actor_on_weapon_zoom_type_changed()
 end
 
 local function actor_on_weapon_reload()
-	if not CONFIG.loaded.enabled then
-		return
-	end
-	logf("reload: mode=%s wpn=%s", mode_label(), wpn_label())
-	handle_context(CTX.RELOAD)
+	refresh_wpn()
+	logf(
+		"reload: zoomed=%s mode=%s wpn=%s",
+		weapon_zoomed() and "yes" or "no",
+		mode_label(),
+		wpn_label()
+	)
+	handle_context(get_context())
+	sync_ads_zoom()
 end
 
 local function actor_on_before_hit(shit, _bone_id, _flags)

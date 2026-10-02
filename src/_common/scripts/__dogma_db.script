@@ -26,9 +26,12 @@ local SKIP = {
 -- Dump gaps. Same cats as the real item. Strip/stash use list/is.
 -- ied_rpg_new: live IED; dump only has unobtainable ied_rpg.
 -- magnifier: Eotech magnifier lens; dump left it in materials (skipped).
+-- id, cat, name key, optional cost, optional weight.
+-- galil: Freedom Jupiter stock. scopes export omitted it, so trader strip skipped it.
 local EXTRA = {
     { "ied_rpg_new", "explosives", "st_ied_rpg" },
     { "magnifier", "weapon_attach_scopes", "st_addon_scope_mag" },
+    { "wpn_addon_scope_galil", "weapon_attach_scopes", "st_addon_scope_galil", "2560", "0.58" },
 }
 
 -- site slug -> dogma cat name (same table)
@@ -378,7 +381,13 @@ local function load_all()
     for i = 1, #EXTRA do
         local id, typ, key = EXTRA[i][1], EXTRA[i][2], EXTRA[i][3]
         if not by_id[id] then
-            add_row(typ, { id = id, displayName = key, pda_encyclopedia_name = key })
+            add_row(typ, {
+                id = id,
+                displayName = key,
+                pda_encyclopedia_name = key,
+                st_upgr_cost = EXTRA[i][4],
+                st_prop_weight = EXTRA[i][5],
+            })
             printf("DOGMA.db: extra %s -> %s", id, typ)
         end
     end

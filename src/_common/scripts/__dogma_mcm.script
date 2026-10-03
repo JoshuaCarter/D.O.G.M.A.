@@ -8,9 +8,7 @@
 
     Tree shape (MCM max 3 levels under the list root):
       dogma / <category> / <feature page> / options
-      dogma / <shared page> / options   -- append() (e.g. Tweaks)
     Categories are merged across feature scripts via attach().
-    Info-only tweaks share one leaf page via append().
     Tail order under DOGMA: … categories …, Tweaks, Debug.
 ]]
 
@@ -280,7 +278,6 @@ end
 
 -- Append option rows to a shared leaf page under DOGMA (sibling of categories).
 -- First caller creates the page (banner via with_header); later callers append.
--- Use for info-only features that share one page (e.g. Tweaks).
 function append(options, page_id, page_text, items)
     if not options then
         return

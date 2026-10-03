@@ -36,7 +36,17 @@ do
 	end
 end
 
--- No MCM page. Exists so build prepends _conf for main-menu gather.
-
-function on_mcm_load(_options)
+function on_mcm_load(options)
+	dogma_mcm.attach(options, "game", "ui_mcm_menu_dogma_game", {
+		id = "pistol_slot",
+		sh = true,
+		text = "ui_mcm_menu_dogma_game_pistol_slot",
+		gr = dogma_mcm.with_header({
+			{
+				id = "page_description",
+				type = "desc",
+				text = "ui_mcm_dogma_game_pistol_slot_page_description",
+			},
+		}),
+	})
 end

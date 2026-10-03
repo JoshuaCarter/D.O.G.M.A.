@@ -11,21 +11,26 @@ _G.dogma_tweaks_spawn_items_above_ground_conf = {
 
 function on_mcm_load(options)
 	local CONFIG = _G.dogma_tweaks_spawn_items_above_ground_conf
-	dogma_mcm.append(options, "tweaks", "ui_mcm_menu_dogma_tweaks", {
-		{
-			id = "spawn_items_above_ground_description",
-			type = "desc",
-			text = "ui_mcm_dogma_tweaks_spawn_items_above_ground_page_description",
-		},
-		{
-			id = "spawn_items_above_ground",
-			type = "track",
-			val = 2,
-			min = 0,
-			max = 1,
-			step = 0.05,
-			def = CONFIG.DEFAULTS.height,
-			hint = "dogma_tweaks_spawn_items_above_ground",
-		},
+	dogma_mcm.attach(options, "tweaks", "ui_mcm_menu_dogma_tweaks", {
+		id = "spawn_items_above_ground",
+		sh = true,
+		text = "ui_mcm_menu_dogma_tweaks_spawn_items_above_ground",
+		gr = dogma_mcm.with_header({
+			{
+				id = "page_description",
+				type = "desc",
+				text = "ui_mcm_dogma_tweaks_spawn_items_above_ground_page_description",
+			},
+			{
+				id = "height",
+				type = "track",
+				val = 2,
+				min = 0,
+				max = 1,
+				step = 0.05,
+				def = CONFIG.DEFAULTS.height,
+				hint = "dogma_tweaks_spawn_items_above_ground",
+			},
+		}),
 	})
 end

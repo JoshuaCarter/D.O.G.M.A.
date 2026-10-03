@@ -113,11 +113,16 @@ function on_mcm_load(options)
 	wrap_apm_on_mcm_load()
 	inject_into_options(options)
 
-	dogma_mcm.append(options, "tweaks", "ui_mcm_menu_dogma_tweaks", {
-		{
-			id = "popup_messages_description",
-			type = "desc",
-			text = "ui_mcm_dogma_tweaks_popup_messages_page_description",
-		},
+	dogma_mcm.attach(options, "tweaks", "ui_mcm_menu_dogma_tweaks", {
+		id = "popup_messages",
+		sh = true,
+		text = "ui_mcm_menu_dogma_tweaks_popup_messages",
+		gr = dogma_mcm.with_header({
+			{
+				id = "page_description",
+				type = "desc",
+				text = "ui_mcm_dogma_tweaks_popup_messages_page_description",
+			},
+		}),
 	})
 end

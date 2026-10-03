@@ -1,15 +1,20 @@
--- tweaks/hide_geiger_screen_text conf (info-only MCM; hides dosimeter tip)
+-- tweaks/hide_geiger_screen_text conf
 
 _G.dogma_tweaks_hide_geiger_screen_text_conf = {
 	MOD_ID = "dogma/tweaks/hide_geiger_screen_text",
 }
 
 function on_mcm_load(options)
-	dogma_mcm.append(options, "tweaks", "ui_mcm_menu_dogma_tweaks", {
-		{
-			id = "hide_geiger_screen_text_description",
-			type = "desc",
-			text = "ui_mcm_dogma_tweaks_hide_geiger_screen_text_page_description",
-		},
+	dogma_mcm.attach(options, "tweaks", "ui_mcm_menu_dogma_tweaks", {
+		id = "hide_geiger_screen_text",
+		sh = true,
+		text = "ui_mcm_menu_dogma_tweaks_hide_geiger_screen_text",
+		gr = dogma_mcm.with_header({
+			{
+				id = "page_description",
+				type = "desc",
+				text = "ui_mcm_dogma_tweaks_hide_geiger_screen_text_page_description",
+			},
+		}),
 	})
 end

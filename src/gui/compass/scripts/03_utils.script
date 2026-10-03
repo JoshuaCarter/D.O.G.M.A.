@@ -9,6 +9,10 @@ local TWO_PI = 2 * PI
 local atan2 = math.atan2
 local abs, floor = math.abs, math.floor
 
+-- time_global() stays put for a frame, so the actor's map is read once per frame.
+local here_id
+local here_ms
+
 -- Local to the compass widget. 360 px shows 240 deg.
 local half = V.TC_COMPASS_BASE_WIDTH / 2
 local px_per_rad = V.TC_COMPASS_BASE_WIDTH / V.TC_VISIBLE_DEGREES * (180 / PI)
@@ -54,7 +58,18 @@ function get_world_coordinates(id)
 		end
 	end
 
-	-- Same point the map uses when the object is not spawned (offline stash, smart, box).
+	-- Saved point is in that map's coordinates. Another map's number sits on top of you.
+	local xl = dogma.xlibs and dogma.xlibs.xlevel
+	if not xl then return nil end
+	local now = time_global() or 0
+	if here_ms ~= now then
+		here_ms = now
+		here_id = xl.get_actor_level_id()
+	end
+	if not here_id or xl.get_level_id(se) ~= here_id then
+		return nil
+	end
+
 	local pos = se.position
 	return pos and vector():set(pos.x, pos.y + 1, pos.z)
 end

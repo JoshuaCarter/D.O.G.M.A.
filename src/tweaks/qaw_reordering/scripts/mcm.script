@@ -1,8 +1,8 @@
--- extensions/quick_action_wheel_overhaul conf
+-- tweaks/qaw_reordering conf
 -- Injects reorder key into HarukaSai / Balance / Overhaul QAW Controls MCM.
 
-_G.dogma_extensions_quick_action_wheel_overhaul_conf = {
-	MOD_ID = "dogma/extensions/quick_action_wheel_overhaul",
+_G.dogma_tweaks_qaw_reordering_conf = {
+	MOD_ID = "dogma/tweaks/qaw_reordering",
 	QAW_REORDER_KEY_PATH = "haru_quick_action_wheel_mcm/controls/reorder_key",
 	QAW_PERSIST_SLOTS_PATH = "haru_quick_action_wheel_mcm/controls/persist_slots",
 	loaded = {
@@ -23,7 +23,7 @@ local REORDER_KEY_OPT = {
 	type = "key_bind",
 	val = 2,
 	def = 0,
-	hint = "dogma_quick_action_wheel_overhaul_key",
+	hint = "dogma_qaw_reordering_key",
 }
 
 local PERSIST_SLOTS_OPT = {
@@ -109,16 +109,11 @@ function on_mcm_load(options)
 	wrap_qaw_on_mcm_load()
 	inject_into_options(options)
 
-	dogma_mcm.attach(options, "extensions", "ui_mcm_menu_dogma_extensions", {
-		id = "quick_action_wheel_overhaul",
-		sh = true,
-		text = "ui_mcm_menu_dogma_extensions_quick_action_wheel_overhaul",
-		gr = dogma_mcm.with_header({
-			{
-				id = "page_description",
-				type = "desc",
-				text = "ui_mcm_dogma_extensions_quick_action_wheel_overhaul_page_description",
-			},
-		}),
+	dogma_mcm.append(options, "tweaks", "ui_mcm_menu_dogma_tweaks", {
+		{
+			id = "qaw_reordering_description",
+			type = "desc",
+			text = "ui_mcm_dogma_tweaks_qaw_reordering_page_description",
+		},
 	})
 end

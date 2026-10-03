@@ -7,7 +7,7 @@
     on load so new games keep it. Off by default. MCM under QAW -> Controls.
 ]]
 
-local CONFIG = _G.dogma_extensions_quick_action_wheel_overhaul_conf
+local CONFIG = _G.dogma_tweaks_qaw_reordering_conf
 local SECTION = "dogma_qaw_slots"
 local SEP = "|"
 
@@ -279,7 +279,7 @@ local function current_tab(qaw)
 end
 
 local function wrap_gui(gui, qaw)
-    if not gui or gui._dogma_quick_action_wheel_overhaul then
+    if not gui or gui._dogma_qaw_reordering then
         return
     end
 
@@ -361,7 +361,7 @@ local function wrap_gui(gui, qaw)
         end
     end
 
-    gui._dogma_quick_action_wheel_overhaul = true
+    gui._dogma_qaw_reordering = true
     log("wrap_gui")
 end
 
@@ -375,7 +375,7 @@ local function patch()
         return
     end
 
-    if not qaw._dogma_quick_action_wheel_overhaul_create_gui and type(qaw.create_GUI) == "function" then
+    if not qaw._dogma_qaw_reordering_create_gui and type(qaw.create_GUI) == "function" then
         local orig_create = qaw.create_GUI
         local function wrapped_create(...)
             orig_create(...)
@@ -383,7 +383,7 @@ local function patch()
             apply()
         end
         qaw.create_GUI = wrapped_create
-        qaw._dogma_quick_action_wheel_overhaul_create_gui = true
+        qaw._dogma_qaw_reordering_create_gui = true
         log("wrap create_GUI")
     end
 

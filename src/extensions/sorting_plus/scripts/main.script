@@ -1,0 +1,268 @@
+--[[
+	Better Favourites and Junk
+
+	MCM keybinds for SortingPlus fav/junk (unbound until set), and optional
+	profile persistence across new games (SortingPlus MCM toggles).
+]]
+
+local CONFIG = _G.dogma_extensions_sorting_plus_conf
+local MOD_ID = CONFIG.MOD_ID
+local SECTION_FAV = "dogma_item_favourites"
+local SECTION_JUNK = "dogma_item_junk"
+
+local STATE = _G.__dogma_extensions_sorting_plus or {}
+_G.__dogma_extensions_sorting_plus = STATE
+
+local function log(msg)
+	if dogma.log.logging() then
+		dogma.log.log(MOD_ID, tostring(msg))
+	end
+end
+
+local function sp()
+	return zzz_rax_sortingplus_mcm
+end
+
+local function cfg()
+	return axr_main and axr_main.config
+end
+
+local function mcm_bool(path, default)
+	if not ui_mcm then
+		return default
+	end
+	local v = ui_mcm.get(path)
+	if v == nil then
+		return default
+	end
+	return v == true or v == 1
+end
+
+local function mcm_dik(path, fallback)
+	local v = ui_mcm and tonumber(ui_mcm.get(path))
+	if v == nil then
+		return fallback
+	end
+	if v == -1 then
+		return nil
+	end
+	return v
+end
+
+local function persist_fav()
+	return mcm_bool("SortingPlus/persist_favorites", true)
+end
+
+local function persist_junk()
+	return mcm_bool("SortingPlus/persist_junk", true)
+end
+
+local function key_favorite()
+	return mcm_dik("SortingPlus/key_favorite", nil)
+end
+
+local function key_junk()
+	return mcm_dik("SortingPlus/key_junk", nil)
+end
+
+local function profile_set(section, sec, on, mark)
+	local c = cfg()
+	if not (c and sec) then
+		return
+	end
+	c:w_value(section, sec, on and mark or nil)
+	c:save()
+end
+
+local function profile_list(section)
+	local c = cfg()
+	if not c then
+		return {}
+	end
+	local t = c:collect_section(section) or {}
+	local out = {}
+	for sec, val in pairs(t) do
+		if val and val ~= "" then
+			out[sec] = true
+		end
+	end
+	return out
+end
+
+local function profile_merge(section, mark, extras)
+	if not extras then
+		return
+	end
+	local c = cfg()
+	if not c then
+		return
+	end
+	local have = profile_list(section)
+	local dirty = false
+	for sec, _ in pairs(extras) do
+		if sec and sec ~= "" and not have[sec] then
+			c:w_value(section, sec, mark)
+			dirty = true
+		end
+	end
+	if dirty then
+		c:save()
+	end
+end
+
+local function refresh_icons()
+	if rax_icon_layers and rax_icon_layers.refresh then
+		rax_icon_layers.refresh(1)
+	end
+end
+
+local function patch_sortingplus_keys()
+	if STATE.keys_patched then
+		return
+	end
+	local cell = utils_ui and utils_ui.UICellContainer
+	if not (cell and cell.OnKeyboard) then
+		return
+	end
+
+	local tg_wait = 0
+	local m = sp()
+
+	function cell:OnKeyboard(dik, keyboard_action)
+		local fav = key_favorite()
+		local junk = key_junk()
+		local tg = time_global and time_global() or 0
+
+		if (dik == fav or dik == junk) and fav ~= junk and tg > tg_wait and self.hover and self.hover.idx then
+			tg_wait = tg + 500
+			local indx = self.hover.idx
+			if self.cell and self.cell[indx] and self.cell[indx].section then
+				local sec = self.cell[indx].section
+				if dik == fav and m and m.set_favorite and m.is_favorite then
+					m.set_favorite(sec, not m.is_favorite(sec))
+					refresh_icons()
+				elseif dik == junk and m and m.set_junk and m.is_junk then
+					m.set_junk(sec, not m.is_junk(sec))
+					refresh_icons()
+				end
+			end
+		end
+
+		if self.OnKeyboardBase then
+			return self:OnKeyboardBase(dik, keyboard_action)
+		end
+	end
+
+	STATE.keys_patched = true
+end
+
+local function patch_sortingplus()
+	if STATE.patched then
+		return true
+	end
+	local m = sp()
+	if not (m and m.set_favorite and m.set_junk and m.is_favorite) then
+		return false
+	end
+
+	local base_fav = m.set_favorite
+	local base_junk = m.set_junk
+	STATE.base_fav = base_fav
+	STATE.base_junk = base_junk
+
+	m.set_favorite = function(sec, state)
+		base_fav(sec, state)
+		if persist_fav() then
+			profile_set(SECTION_FAV, sec, state and true or false, "favorites")
+		end
+		if state and persist_junk() then
+			profile_set(SECTION_JUNK, sec, false)
+		end
+	end
+
+	m.set_junk = function(sec, state)
+		base_junk(sec, state)
+		if persist_junk() then
+			profile_set(SECTION_JUNK, sec, state and true or false, "junk")
+		end
+		if state and persist_fav() then
+			profile_set(SECTION_FAV, sec, false)
+		end
+	end
+
+	patch_sortingplus_keys()
+	STATE.patched = true
+	return true
+end
+
+local last_persist_fav = nil
+local last_persist_junk = nil
+
+local function persist_flags_changed()
+	local pf = persist_fav()
+	local pj = persist_junk()
+	local changed = pf ~= last_persist_fav or pj ~= last_persist_junk
+	last_persist_fav = pf
+	last_persist_junk = pj
+	return changed
+end
+
+local function apply_profile()
+	local n_fav, n_junk = 0, 0
+	if persist_fav() and STATE.base_fav then
+		for sec, _ in pairs(profile_list(SECTION_FAV)) do
+			STATE.base_fav(sec, true)
+			n_fav = n_fav + 1
+		end
+	end
+	if persist_junk() and STATE.base_junk then
+		for sec, _ in pairs(profile_list(SECTION_JUNK)) do
+			STATE.base_junk(sec, true)
+			n_junk = n_junk + 1
+		end
+	end
+	if n_fav > 0 or n_junk > 0 then
+		refresh_icons()
+		log(string.format("applied profile fav=%d junk=%d", n_fav, n_junk))
+	end
+end
+
+local function on_first_update()
+	last_persist_fav = persist_fav()
+	last_persist_junk = persist_junk()
+	apply_profile()
+end
+
+local function on_option_change()
+	if persist_flags_changed() then
+		apply_profile()
+	end
+end
+
+local function merge_save_into_profile(mdata)
+	if not mdata then
+		return
+	end
+	if persist_fav() and mdata.rax_favorite_itms then
+		profile_merge(SECTION_FAV, "favorites", mdata.rax_favorite_itms)
+	end
+	if persist_junk() and mdata.rax_junk_itms then
+		profile_merge(SECTION_JUNK, "junk", mdata.rax_junk_itms)
+	end
+end
+
+function on_game_start()
+	dogma.load(MOD_ID)
+
+	if not patch_sortingplus() then
+		printf("[dogma_extensions_sorting_plus] SortingPlus API missing - skipped")
+		return
+	end
+
+	-- Additions only - never wipe profile from an empty new-game save.
+	RegisterScriptCallback("load_state", merge_save_into_profile)
+	RegisterScriptCallback("actor_on_first_update", on_first_update)
+	RegisterScriptCallback("on_option_change", on_option_change)
+
+	log("Better Favourites and Junk ready")
+end

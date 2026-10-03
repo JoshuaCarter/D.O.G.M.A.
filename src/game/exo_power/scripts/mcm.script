@@ -2,57 +2,57 @@
 -- Drain multipliers: MCM min = these defaults, max = 2x (idle stays 0).
 
 _G.dogma_game_exo_power_conf = {
-	MOD_ID = "dogma/game/exo_power",
-	DEFAULTS = {
-		enabled = true,
-		base_drain = 0,
-		run_drain = 1,
-		sprint_drain = 3,
-	},
-	loaded = {},
+    MOD_ID = "dogma/game/exo_power",
+    DEFAULTS = {
+        enabled = true,
+        base_drain = 0,
+        run_drain = 1,
+        sprint_drain = 2,
+    },
+    loaded = {},
 }
 
 function on_mcm_load(options)
-	local CONFIG = _G.dogma_game_exo_power_conf
-	local d = CONFIG.DEFAULTS
-	dogma_mcm.attach(options, "game", "ui_mcm_menu_dogma_game", {
-		id = "exo_power",
-		sh = true,
-		text = "ui_mcm_menu_dogma_game_exo_power",
-		gr = dogma_mcm.with_header({
-			{
-				id = "page_description",
-				type = "desc",
-				text = "ui_mcm_dogma_game_exo_power_page_description",
-			},
-			{
-				id = "enabled",
-				type = "check",
-				val = 1,
-				def = CONFIG.DEFAULTS.enabled,
-				hint = "dogma_game_exo_power_enabled",
-			},
-			-- Idle default is 0 (2x still 0) - no slider; always no idle drain.
-			{
-				id = "run_drain",
-				type = "track",
-				val = 2,
-				min = d.run_drain,
-				max = d.run_drain * 2,
-				step = 0.1,
-				def = d.run_drain,
-				hint = "dogma_game_exo_power_run_drain",
-			},
-			{
-				id = "sprint_drain",
-				type = "track",
-				val = 2,
-				min = d.sprint_drain,
-				max = d.sprint_drain * 2,
-				step = 0.1,
-				def = d.sprint_drain,
-				hint = "dogma_game_exo_power_sprint_drain",
-			},
-		}),
-	})
+    local CONFIG = _G.dogma_game_exo_power_conf
+    local d = CONFIG.DEFAULTS
+    dogma_mcm.attach(options, "game", "ui_mcm_menu_dogma_game", {
+        id = "exo_power",
+        sh = true,
+        text = "ui_mcm_menu_dogma_game_exo_power",
+        gr = dogma_mcm.with_header({
+            {
+                id = "page_description",
+                type = "desc",
+                text = "ui_mcm_dogma_game_exo_power_page_description",
+            },
+            {
+                id = "enabled",
+                type = "check",
+                val = 1,
+                def = CONFIG.DEFAULTS.enabled,
+                hint = "dogma_game_exo_power_enabled",
+            },
+            -- Idle default is 0 (2x still 0) - no slider; always no idle drain.
+            {
+                id = "run_drain",
+                type = "track",
+                val = 2,
+                min = d.run_drain,
+                max = d.run_drain * 2,
+                step = 0.1,
+                def = d.run_drain,
+                hint = "dogma_game_exo_power_run_drain",
+            },
+            {
+                id = "sprint_drain",
+                type = "track",
+                val = 2,
+                min = d.sprint_drain,
+                max = d.sprint_drain * 2,
+                step = 0.1,
+                def = d.sprint_drain,
+                hint = "dogma_game_exo_power_sprint_drain",
+            },
+        }),
+    })
 end

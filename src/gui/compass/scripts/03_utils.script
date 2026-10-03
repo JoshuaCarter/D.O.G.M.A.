@@ -42,24 +42,21 @@ function get_world_coordinates(id)
 	end
 
 	local se = alife_object(id)
-	if not (se and se.online) then return nil end
+	if not se then return nil end
 
-	local cls = se:clsid()
-
-	if cls == clsid.smart_terrain then
-		local pos = se.position
-
-		return pos and vector():set(pos.x, pos.y + 1, pos.z)
-	end
-
-	if cls == clsid.online_offline_group_s then
+	-- Squad: leader's head while he is spawned. His saved point is the fallback below.
+	if se:clsid() == clsid.online_offline_group_s then
 		local leader = se:commander_id()
 		local npc = leader and (db.storage[leader] and db.storage[leader].object or level.object_by_id(leader))
-
-		return npc and utils_obj.safe_bone_pos(npc, "bip01_head")
+		if npc then
+			local head = utils_obj.safe_bone_pos(npc, "bip01_head")
+			if head then return head end
+		end
 	end
 
-	return nil
+	-- Same point the map uses when the object is not spawned (offline stash, smart, box).
+	local pos = se.position
+	return pos and vector():set(pos.x, pos.y + 1, pos.z)
 end
 
 function calc_alpha(distance, threshold)

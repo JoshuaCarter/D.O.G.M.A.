@@ -17,7 +17,7 @@
 	hardcoded "You're paying me for wasting my time."
 ]]
 
-local CONFIG = _G.dogma_tweaks_escort_tweaks_conf
+local CONFIG = _G.dogma_game_escort_tweaks_conf
 local xobject = dogma.xlibs.xobject
 local xsquad = dogma.xlibs.xsquad
 local xsmart = dogma.xlibs.xsmart
@@ -157,7 +157,7 @@ local function room_for_solo(actor, npc, orig_room)
 end
 
 local function patch_solo(mod)
-	if not mod or mod.__dogma_tweaks_escort_tweaks_solo then
+	if not mod or mod.__dogma_game_escort_tweaks_solo then
 		return
 	end
 
@@ -185,7 +185,7 @@ local function patch_solo(mod)
 		end
 	end
 
-	mod.__dogma_tweaks_escort_tweaks_solo = true
+	mod.__dogma_game_escort_tweaks_solo = true
 	log("patched " .. tostring(mod))
 end
 
@@ -214,7 +214,7 @@ end
 
 local function patch_pay()
 	local mod = rawget(_G, "tasks_guide")
-	if not mod or mod.__dogma_tweaks_escort_tweaks_pay then
+	if not mod or mod.__dogma_game_escort_tweaks_pay then
 		return
 	end
 
@@ -251,7 +251,7 @@ local function patch_pay()
 		end
 	end
 
-	mod.__dogma_tweaks_escort_tweaks_pay = true
+	mod.__dogma_game_escort_tweaks_pay = true
 	log("patched tasks_guide leave/cancel")
 end
 

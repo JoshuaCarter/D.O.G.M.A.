@@ -1,9 +1,9 @@
--- gui/newgame conf
+-- gui/newgame_layout conf
 --
 -- Patch lives in this *mcm.script so main.script (in-session) can share one
 -- wrap via _G. New Game UI is not loaded until MCM gather on a cold boot.
 
-local MOD_ID = "dogma/gui/newgame"
+local MOD_ID = "dogma/gui/newgame_layout"
 local SECTION = "dogma_new_game_remember"
 
 local CHECKS = {
@@ -20,29 +20,29 @@ local CHECKS = {
 }
 
 local REMEMBER_OPTS = {
-	{ "remember_name", "dogma_gui_newgame_remember_name" },
-	{ "remember_portrait", "dogma_gui_newgame_remember_portrait" },
-	{ "remember_faction", "dogma_gui_newgame_remember_faction" },
-	{ "remember_spawn", "dogma_gui_newgame_remember_spawn" },
-	{ "remember_difficulty", "dogma_gui_newgame_remember_difficulty" },
-	{ "remember_economy", "dogma_gui_newgame_remember_economy" },
-	{ "remember_lives", "dogma_gui_newgame_remember_lives" },
-	{ "remember_regen", "dogma_gui_newgame_remember_regen" },
-	{ "remember_timer", "dogma_gui_newgame_remember_timer" },
-	{ "remember_story", "dogma_gui_newgame_remember_story" },
-	{ "remember_azazel", "dogma_gui_newgame_remember_azazel" },
-	{ "remember_survival", "dogma_gui_newgame_remember_survival" },
-	{ "remember_warfare", "dogma_gui_newgame_remember_warfare" },
-	{ "remember_hardcore", "dogma_gui_newgame_remember_hardcore" },
-	{ "remember_routes", "dogma_gui_newgame_remember_routes" },
-	{ "remember_conditions", "dogma_gui_newgame_remember_conditions" },
-	{ "remember_campfire", "dogma_gui_newgame_remember_campfire" },
-	{ "remember_soulslike", "dogma_gui_newgame_remember_soulslike" },
-	{ "remember_drx", "dogma_gui_newgame_remember_drx" },
+	{ "remember_name", "dogma_gui_newgame_layout_remember_name" },
+	{ "remember_portrait", "dogma_gui_newgame_layout_remember_portrait" },
+	{ "remember_faction", "dogma_gui_newgame_layout_remember_faction" },
+	{ "remember_spawn", "dogma_gui_newgame_layout_remember_spawn" },
+	{ "remember_difficulty", "dogma_gui_newgame_layout_remember_difficulty" },
+	{ "remember_economy", "dogma_gui_newgame_layout_remember_economy" },
+	{ "remember_lives", "dogma_gui_newgame_layout_remember_lives" },
+	{ "remember_regen", "dogma_gui_newgame_layout_remember_regen" },
+	{ "remember_timer", "dogma_gui_newgame_layout_remember_timer" },
+	{ "remember_story", "dogma_gui_newgame_layout_remember_story" },
+	{ "remember_azazel", "dogma_gui_newgame_layout_remember_azazel" },
+	{ "remember_survival", "dogma_gui_newgame_layout_remember_survival" },
+	{ "remember_warfare", "dogma_gui_newgame_layout_remember_warfare" },
+	{ "remember_hardcore", "dogma_gui_newgame_layout_remember_hardcore" },
+	{ "remember_routes", "dogma_gui_newgame_layout_remember_routes" },
+	{ "remember_conditions", "dogma_gui_newgame_layout_remember_conditions" },
+	{ "remember_campfire", "dogma_gui_newgame_layout_remember_campfire" },
+	{ "remember_soulslike", "dogma_gui_newgame_layout_remember_soulslike" },
+	{ "remember_drx", "dogma_gui_newgame_layout_remember_drx" },
 }
 
-local STATE = _G.__dogma_gui_newgame or {}
-_G.__dogma_gui_newgame = STATE
+local STATE = _G.__dogma_gui_newgame_layout or {}
+_G.__dogma_gui_newgame_layout = STATE
 
 local function want(key)
 	if dogma_mcm and dogma_mcm.bool then
@@ -505,7 +505,7 @@ for i = 1, #REMEMBER_OPTS do
 	DEFAULTS[REMEMBER_OPTS[i][1]] = true
 end
 
-_G.dogma_gui_newgame_conf = {
+_G.dogma_gui_newgame_layout_conf = {
 	MOD_ID = MOD_ID,
 	DEFAULTS = DEFAULTS,
 	loaded = {},
@@ -528,7 +528,7 @@ _G.dogma_gui_newgame_conf = {
 	(scripts/override/souslike_gamemode_injector_mcm.script).
 ]]
 
-local CONFIG = _G.dogma_gui_newgame_conf
+local CONFIG = _G.dogma_gui_newgame_layout_conf
 
 CONFIG.patch_new_game()
 RegisterScriptCallback("main_menu_on_init", CONFIG.patch_new_game)
@@ -540,7 +540,7 @@ function on_mcm_load(options)
 		{
 			id = "page_description",
 			type = "desc",
-			text = "ui_mcm_dogma_gui_newgame_page_description",
+			text = "ui_mcm_dogma_gui_newgame_layout_page_description",
 		},
 	}
 	for i = 1, #REMEMBER_OPTS do
@@ -554,9 +554,9 @@ function on_mcm_load(options)
 	end
 
 	dogma_mcm.attach(options, "gui", "ui_mcm_menu_dogma_gui", {
-		id = "newgame",
+		id = "newgame_layout",
 		sh = true,
-		text = "ui_mcm_menu_dogma_gui_newgame",
+		text = "ui_mcm_menu_dogma_gui_newgame_layout",
 		gr = dogma_mcm.with_header(gr),
 	})
 end

@@ -58,8 +58,88 @@ def modroot_names(src: Path, feat: str) -> list[str]:
     return names
 
 
-def plugin_entries(features: list[dict], wizard: dict) -> list[dict]:
+# Keep in sync with script_dest_basename in dev/build.sh.
+def script_dest_basename(path_key: str, src_base: str) -> str:
+    stem = src_base[:-7] if src_base.endswith(".script") else src_base
+    if stem.startswith("zzzz_"):
+        stem = stem[5:]
+    if stem == "mcm":
+        return f"dogma_{path_key}_mcm.script"
+    if stem.startswith("modxml_"):
+        return f"modxml_dogma_{path_key}_{stem[7:]}.script"
+    if stem == "ammo_craft":
+        return f"zzzzzzzzzz_dogma_{path_key}_{stem}.script"
+    return f"zzzz_dogma_{path_key}_{stem}.script"
+
+
+GAMEDATA_ROOTS = frozenset({
+    "scripts", "configs", "textures", "meshes", "anims", "sounds",
+    "spawns", "materials", "shaders", "particles",
+})
+
+
+def detect_preset_ids(wizard: dict) -> list[str]:
+    ids: list[str] = []
+    for preset in wizard["presets"]:
+        detect = preset.get("detect")
+        if detect is None or detect is False:
+            continue
+        if str(detect).strip().lower() != "files":
+            raise ValueError(f"preset {preset.get('id')!r}: detect must be files")
+        pid = str(preset.get("id") or "")
+        if not pid:
+            raise ValueError("detect preset needs id")
+        ids.append(pid)
+    return ids
+
+
+def feature_sentinel(src: Path, feat: str) -> str | None:
+    """Installed path that exists only when this feature was selected.
+
+    MO2 fileDependency is relative to the game root (parent of gamedata).
+    """
+    key = feature_path_key(feat)
+    root = src / src_feature_dir(feat)
+    scripts = root / "scripts"
+    names: list[str] = []
+    if scripts.is_dir():
+        for p in scripts.rglob("*"):
+            if not p.is_file() or p.suffix != ".script":
+                continue
+            rel = p.relative_to(scripts).as_posix()
+            if rel == "override" or rel.startswith("override/"):
+                continue
+            names.append(p.name)
+    if names:
+        base = "mcm.script" if "mcm.script" in names else sorted(names)[0]
+        return win_path("gamedata", "scripts", script_dest_basename(key, base))
+    needle = f"dogma_{key}"
+    hits: list[str] = []
+    if root.is_dir():
+        for p in root.rglob("*"):
+            if not p.is_file() or needle not in p.name.lower():
+                continue
+            rel = p.relative_to(root).as_posix()
+            bucket = rel.split("/", 1)[0]
+            if bucket not in GAMEDATA_ROOTS:
+                continue
+            hits.append(rel)
+    if not hits:
+        return None
+    return win_path("gamedata", *sorted(hits)[0].split("/"))
+
+
+def _self_check() -> None:
+    assert script_dest_basename("game_ads_zoom", "mcm.script") == "dogma_game_ads_zoom_mcm.script"
+    assert script_dest_basename("game_ads_zoom", "main.script") == "zzzz_dogma_game_ads_zoom_main.script"
+    assert script_dest_basename("game_x", "modxml_custom_msgs.script") == "modxml_dogma_game_x_custom_msgs.script"
+    got = feature_sentinel(ROOT / "src", "game/ads_zoom")
+    assert got == win_path("gamedata", "scripts", "dogma_game_ads_zoom_mcm.script"), got
+
+
+def plugin_entries(features: list[dict], wizard: dict, src: Path) -> list[dict]:
     preset_ids = {str(p.get("id") or "") for p in wizard["presets"]}
+    match_ids = set(detect_preset_ids(wizard))
     out: list[dict] = []
     for info in features:
         if info["stage"] not in FOMOD_STAGES:
@@ -70,16 +150,22 @@ def plugin_entries(features: list[dict], wizard: dict) -> list[dict]:
         unknown = [x for x in rec if x not in preset_ids]
         if unknown:
             raise ValueError(f"{info['path']}: unknown recommended presets {unknown}")
+        flagged = [x for x in rec if x in match_ids]
+        if flagged:
+            raise ValueError(f"{info['path']}: {flagged} detects installed files, not a recommended flag")
+        sentinel = feature_sentinel(src, info["path"]) if match_ids else None
+        if match_ids and not sentinel:
+            raise ValueError(f"{info['path']}: no unique installed file for detect:files")
         # Page already titles the step. Same name on the group = double header in MO2.
-        out.append({**info, "group": "", "recommended": rec})
+        out.append({**info, "group": "", "recommended": rec, "sentinel": sentinel})
     if not out:
         raise ValueError("manifest.yml has no beta/gold plugins")
     return out
 
 
-def type_descriptor_xml(recommended: list[str], indent: str) -> list[str]:
+def type_descriptor_xml(recommended: list[str], match_ids: list[str], sentinel: str | None, indent: str) -> list[str]:
     t = indent + "\t"
-    if not recommended:
+    if not recommended and not (match_ids and sentinel):
         return [f"{indent}<typeDescriptor>", f"{t}<type name=\"Optional\"/>", f"{indent}</typeDescriptor>"]
     lines = [
         f"{indent}<typeDescriptor>",
@@ -100,6 +186,20 @@ def type_descriptor_xml(recommended: list[str], indent: str) -> list[str]:
                 f"{pat}</pattern>",
             ]
         )
+    if sentinel:
+        for flag in match_ids:
+            for state in ("Active", "Inactive"):
+                lines.extend(
+                    [
+                        f"{pat}<pattern>",
+                        f"{inner}<dependencies>",
+                        f"{inner}\t<flagDependency flag=\"preset\" value=\"{esc_attr(flag)}\"/>",
+                        f"{inner}\t<fileDependency file=\"{esc_attr(sentinel)}\" state=\"{state}\"/>",
+                        f"{inner}</dependencies>",
+                        f"{inner}<type name=\"Recommended\"/>",
+                        f"{pat}</pattern>",
+                    ]
+                )
     lines.extend([f"{t}\t</patterns>", f"{t}</dependencyType>", f"{indent}</typeDescriptor>"])
     return lines
 
@@ -180,6 +280,7 @@ def intro_step_xml(wizard: dict) -> list[str]:
 
 
 def render_xml(wizard: dict, src: Path, plugins: list[dict]) -> str:
+    match_ids = detect_preset_ids(wizard)
     lines = [
         '<?xml version="1.0" encoding="utf-8"?>',
         '<config xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://qconsulting.ca/fo3/ModConfig5.0.xsd">',
@@ -288,7 +389,7 @@ def render_xml(wizard: dict, src: Path, plugins: list[dict]) -> str:
                     )
                 file_lines.append("\t\t\t\t\t\t\t</files>")
                 lines.extend(file_lines)
-                lines.extend(type_descriptor_xml(feat["recommended"], "\t\t\t\t\t\t\t"))
+                lines.extend(type_descriptor_xml(feat["recommended"], match_ids, feat.get("sentinel"), "\t\t\t\t\t\t\t"))
                 lines.append("\t\t\t\t\t\t</plugin>")
             lines.extend(["\t\t\t\t\t</plugins>", "\t\t\t\t</group>"])
         lines.extend(["\t\t\t</optionalFileGroups>", "\t\t</installStep>"])
@@ -304,9 +405,17 @@ def main() -> int:
 
     config = ROOT
     try:
+        _self_check()
         wizard = fomod_wizard(config)
-        plugins = plugin_entries(iter_feature_info(config), wizard)
-        xml = render_xml(wizard, ROOT / "src", plugins)
+        src = ROOT / "src"
+        plugins = plugin_entries(iter_feature_info(config), wizard, src)
+        match_ids = detect_preset_ids(wizard)
+        if match_ids:
+            print(
+                f"gen_fomod: detect {', '.join(match_ids)} ({len(plugins)} file checks)",
+                file=sys.stderr,
+            )
+        xml = render_xml(wizard, src, plugins)
     except (ValueError, RuntimeError) as exc:
         print(f"gen_fomod: {exc}", file=sys.stderr)
         return 1

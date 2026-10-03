@@ -8,6 +8,8 @@
 # mods: common, then page name -> features. Page order = key order.
 # recommended: preset ids. Missing: GOLD -> [dogma, dogma-beta], BETA -> [dogma-beta].
 #   [] = never prechecked. pick is never in a default list.
+# detect: files on a preset prechecks a feature only when that feature's files
+#   are already installed. Not a recommended id.
 # intro: optional first page. One preselected ack (MO2 greys a lone checkbox).
 #   name = checkbox. desc = right-pane text. Later pages hidden until ack.
 # desc on a feature: FOMOD right-pane text. Missing = feature name.
@@ -23,6 +25,7 @@ fomod:
       Use the discord feature list for feature details.
 
       Discord server: https://discord.gg/bcFeyrkUY7
+
       Feature list: https://discord.com/channels/1548570119188521032/1549264842752262194
 
   required:
@@ -43,6 +46,15 @@ fomod:
         Preselect all features including beta features.
 
         You closely follow the D.O.G.M.A. mod list and want beta features.
+
+    - id: installed
+      name: Modify Existing D.O.G.M.A. Install
+      detect: files
+      desc: |
+        Preselects features that are already installed.
+
+        ONLY WORKS IF YOU DO THIS:
+        MO2 -> Tools -> Settings -> Plugins -> Fomod Installer -> use_any_file = true
 
     - id: pick
       name: Self Serve

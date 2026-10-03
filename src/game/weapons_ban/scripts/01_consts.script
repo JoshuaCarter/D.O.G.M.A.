@@ -8,8 +8,6 @@ _G.dogma_game_weapons_ban_consts = {
     EXTRA_START_AMMO_BOXES = 5,
     START_WEAPONS_59_PARTS = true,
     START_PARTS_COND = 59,
-    AMMO_ROUNDS_BOX_CAP = 10,
-
     STASH_LEVEL_TIERS = {
         ["l01_escape"] = 1,
         ["k00_marsh"] = 1,
@@ -60,13 +58,14 @@ _G.dogma_game_weapons_ban_consts = {
         { "weapon_parts", "part" },
     },
 
+    -- Max cost still in that tier. Min is the previous max, or 0.
+    -- Above T5 stays T5. Ammo is the box cost.
     STASH_TIER_COST = {
-        scope    = { [2] = 5000,  [3] = 10000, [4] = 25000, [5] = 50000 },
-        kit      = { [2] = 9000,  [3] = 16000, [4] = 28000, [5] = 45000 },
-        silencer = { [2] = 2000,  [3] = 4000,  [4] = 8000,  [5] = 12000 },
-        gl       = { [2] = 8000,  [3] = 15000, [4] = 22000, [5] = 30000 },
-        ammo     = { [2] = 800,   [3] = 1600,  [4] = 3000,  [5] = 6000  },
-        part     = { [2] = 3000,  [3] = 4500,  [4] = 5500,  [5] = 7000  },
+        scope    = { [1] = 5000,  [2] = 10000, [3] = 25000, [4] = 50000, [5] = 999999 },
+        kit      = { [1] = 9000,  [2] = 16000, [3] = 28000, [4] = 45000, [5] = 999999 },
+        silencer = { [1] = 2000,  [2] = 4000,  [3] = 8000,  [4] = 12000, [5] = 999999 },
+        gl       = { [1] = 8000,  [2] = 15000, [3] = 24000, [4] = 30000, [5] = 999999 },
+        ammo     = { [1] = 1150,  [2] = 1650,  [3] = 2600,  [4] = 5450,  [5] = 999999 },
     },
     -- M203 costs T1. Never spawn GLs at T1; floor them to T2.
     STASH_CAT_MIN_TIER = { gl = 2 },
@@ -87,6 +86,9 @@ _G.dogma_game_weapons_ban_consts = {
 
     STASH_ITEM_TIER_MAP = { -2, -1,  0,  1,  2 },
     STASH_ITEM_TIER_TIX = {  2,  8,  80, 8,  2 },
+    -- Ammo only.
+    STASH_AMMO_TIER_MAP = { -2, -1, 0,  1,  2 },
+    STASH_AMMO_TIER_TIX = {  5, 20, 50, 20, 5 },
 
     STASH_BONUS_ROLL_MAP = { 0,  1,  2,  3,  4 },
     STASH_BONUS_ROLL_TIX = { 90, 50, 30, 10, 1 },

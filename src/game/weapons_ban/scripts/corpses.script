@@ -239,20 +239,6 @@ local function ammo_types_for_gun(wpn, inv_ammo)
     return list
 end
 
--- RU per round. Same units as rounds_for_ru (cost / box).
-local function round_cost(sec)
-    local cost = dogma.db.cost(sec)
-    if not cost or cost <= 0 then
-        return nil
-    end
-    local row = dogma.db.get(sec)
-    local box = (row and row.box) or 1
-    if box <= 0 then
-        box = 1
-    end
-    return cost / box
-end
-
 local function split_int(total, n, i)
     local base = math.floor(total / n)
     local rem = total - base * n
@@ -267,7 +253,7 @@ end
 local function average_cost(types)
     local total, n = 0, 0
     for i = 1, #types do
-        local c = round_cost(types[i])
+        local c = Tiers.round_cost(types[i])
         if c then
             total = total + c
             n = n + 1
@@ -277,64 +263,6 @@ local function average_cost(types)
         return 1
     end
     return total / n
-end
-
--- Fill this gun: at least min_r rounds, never more than max_r.
--- Every round is a uniform pick, then subtract that cost. Min picks skip
--- grenade ammo. After min, leftover RU still grants the rolled round, then stop.
-local function allocate_gun_ammo(types, ru_budget, min_r, max_r)
-    local counts = {}
-    local k = #types
-    if k < 1 or max_r <= 0 then
-        return counts
-    end
-    if min_r > max_r then
-        min_r = max_r
-    end
-    local costs = {}
-    local min_idx = {}
-    local any_c = false
-    for i = 1, k do
-        local sec = types[i]
-        local c = round_cost(sec)
-        costs[i] = c
-        if c then
-            any_c = true
-        end
-        if not dogma.db.is_grenade_ammo(sec) then
-            min_idx[#min_idx + 1] = i
-        end
-    end
-    local min_k = #min_idx
-    if min_k < 1 then
-        min_r = 0
-    end
-    local ru = ru_budget
-    for n = 1, max_r do
-        local extra = n > min_r
-        if extra and (not any_c or ru <= 0) then
-            break
-        end
-        local i
-        if extra then
-            i = math.random(k)
-        else
-            i = min_idx[math.random(min_k)]
-        end
-        local sec = types[i]
-        counts[sec] = (counts[sec] or 0) + 1
-        local c = costs[i]
-        if c then
-            if extra and c > ru then
-                break
-            end
-            ru = ru - c
-            if ru < 0 then
-                ru = 0
-            end
-        end
-    end
-    return counts
 end
 
 local function inject_corpse_ammo(npc, inv_ammo)
@@ -382,7 +310,7 @@ local function inject_corpse_ammo(npc, inv_ammo)
     for i = 1, n_guns do
         local types = gun_ammo[i]
         local ru_share = (weight_sum > 0) and (total_ru * weights[i] / weight_sum) or (total_ru / n_guns)
-        local counts = allocate_gun_ammo(
+        local counts = Tiers.allocate_gun_ammo(
             types,
             ru_share,
             split_int(min_rounds, n_guns, i),

@@ -10,6 +10,7 @@ local function clamp_tier(t)
     return dogma.math.clamp(math.floor(t), 1, 5)
 end
 
+-- Scrap bands: number is the minimum cost to enter that tier.
 local function cost_to_tier(cost, bands)
     if not bands then
         return 1
@@ -27,6 +28,20 @@ local function cost_to_tier(cost, bands)
         return 2
     end
     return 1
+end
+
+-- Stash bands: number is the max cost still in that tier. Above T5 stays T5.
+local function tier_by_max(cost, bands)
+    if not (cost and bands) then
+        return 1
+    end
+    for t = 1, 5 do
+        local cap = bands[t]
+        if cap and cost <= cap then
+            return t
+        end
+    end
+    return 5
 end
 
 -- Grok paints yellow PDA stashes with the treasure_searched map spot.
@@ -51,6 +66,26 @@ local function pick_tier(target)
     target = clamp_tier(target)
     local idx = dogma.rng.rand_from_tickets(CONSTS.STASH_ITEM_TIER_TIX)
     return clamp_tier(target + (idx and CONSTS.STASH_ITEM_TIER_MAP[idx] or 0))
+end
+
+local function pick_ammo_tier(target)
+    target = clamp_tier(target)
+    local idx = dogma.rng.rand_from_tickets(CONSTS.STASH_AMMO_TIER_TIX)
+    return clamp_tier(target + (idx and CONSTS.STASH_AMMO_TIER_MAP[idx] or 0))
+end
+
+-- RU per round (box cost / box size). Corpse gun weights use this.
+local function round_cost(sec)
+    local cost = dogma.db.cost(sec)
+    if not cost or cost <= 0 then
+        return nil
+    end
+    local row = dogma.db.get(sec)
+    local box = (row and row.box) or 1
+    if box <= 0 then
+        box = 1
+    end
+    return cost / box
 end
 
 local function roll_stash_bonus()
@@ -92,6 +127,7 @@ local function pick_section(cat, result_tier)
     end
     local by = { {}, {}, {}, {}, {} }
     local seen = {}
+    local any = cat == "part"
     for i = 1, #CONSTS.STASH_FILL_CATS do
         local e = CONSTS.STASH_FILL_CATS[i]
         if e[2] == cat then
@@ -102,12 +138,20 @@ local function pick_section(cat, result_tier)
                     and (e[2] ~= "ammo" or dogma.db.is_craft_ammo(sec))
                 then
                     seen[sec] = true
-                    local t = cost_to_tier(dogma.db.cost(sec), CONSTS.STASH_TIER_COST[cat])
-                    if min_t and t < min_t then
-                        t = min_t
+                    if any then
+                        local b = by[1]
+                        b[#b + 1] = sec
+                    else
+                        local cost = dogma.db.cost(sec)
+                        if cost then
+                            local t = tier_by_max(cost, CONSTS.STASH_TIER_COST[cat])
+                            if min_t and t < min_t then
+                                t = min_t
+                            end
+                            local b = by[t]
+                            b[#b + 1] = sec
+                        end
                     end
-                    local b = by[t]
-                    b[#b + 1] = sec
                 end
             end
         end
@@ -118,6 +162,9 @@ local function pick_section(cat, result_tier)
             return b[math.random(#b)]
         end
         return nil
+    end
+    if any then
+        return try(1)
     end
     local sec = try(result_tier)
     if sec then
@@ -150,30 +197,74 @@ local function roll_ru_for_rank(rank_name)
         CONSTS.CORPSE_RANK_AMMO_RND_MAX[idx] or 0
 end
 
-local function roll_ru_for_ammo_tier(result_tier)
-    local rank = CONSTS.STASH_TIER_TO_CORPSE_RANK[clamp_tier(result_tier)] or "experienced"
-    return roll_ru_for_rank(rank), rank
+-- Fill one gun: at least min_r rounds, never more than max_r.
+-- Every round is a uniform pick, then subtract that cost. Min picks skip
+-- grenade ammo. After min, leftover RU still grants the rolled round, then stop.
+local function allocate_gun_ammo(types, ru_budget, min_r, max_r)
+    local counts = {}
+    local k = #types
+    if k < 1 or max_r <= 0 then
+        return counts
+    end
+    if min_r > max_r then
+        min_r = max_r
+    end
+    local costs = {}
+    local min_idx = {}
+    local any_c = false
+    for i = 1, k do
+        local sec = types[i]
+        local c = round_cost(sec)
+        costs[i] = c
+        if c then
+            any_c = true
+        end
+        if not dogma.db.is_grenade_ammo(sec) then
+            min_idx[#min_idx + 1] = i
+        end
+    end
+    local min_k = #min_idx
+    if min_k < 1 then
+        min_r = 0
+    end
+    local ru = ru_budget
+    for n = 1, max_r do
+        local extra = n > min_r
+        if extra and (not any_c or ru <= 0) then
+            break
+        end
+        local i
+        if extra then
+            i = math.random(k)
+        else
+            i = min_idx[math.random(min_k)]
+        end
+        local sec = types[i]
+        counts[sec] = (counts[sec] or 0) + 1
+        local c = costs[i]
+        if c then
+            if extra and c > ru then
+                break
+            end
+            ru = ru - c
+            if ru < 0 then
+                ru = 0
+            end
+        end
+    end
+    return counts
 end
 
-local function rounds_for_ru(ammo_sec, ru)
-    if not ammo_sec or not ru or ru <= 0 then
-        return 0
+-- Stash tier -> corpse rank, two ticket rolls, keep the higher RU row.
+-- Min and max travel with that row. Does not pick an ammo section.
+local function roll_ru_for_stash_tier(result_tier)
+    local rank = CONSTS.STASH_TIER_TO_CORPSE_RANK[clamp_tier(result_tier)] or "experienced"
+    local ru, min_r, max_r = roll_ru_for_rank(rank)
+    local ru2, min2, max2 = roll_ru_for_rank(rank)
+    if ru2 > ru then
+        return ru2, min2, max2, rank
     end
-    local cost = dogma.db.cost(ammo_sec)
-    if not cost or cost <= 0 then
-        return 0
-    end
-    local row = dogma.db.get(ammo_sec)
-    local box = (row and row.box) or 1
-    if box <= 0 then
-        box = 1
-    end
-    local rounds = math.floor(ru * box / cost)
-    local cap = math.floor(box * CONSTS.AMMO_ROUNDS_BOX_CAP)
-    if rounds > cap then
-        rounds = cap
-    end
-    return rounds
+    return ru, min_r, max_r, rank
 end
 
 _G.dogma_game_weapons_ban_tiers = {
@@ -181,11 +272,13 @@ _G.dogma_game_weapons_ban_tiers = {
     base_tier_for_stash = base_tier_for_stash,
     pick_category = pick_category,
     pick_tier = pick_tier,
+    pick_ammo_tier = pick_ammo_tier,
     roll_stash_bonus = roll_stash_bonus,
     roll_stash_cond = roll_stash_cond,
     roll_stash_part_count = roll_stash_part_count,
     pick_section = pick_section,
     roll_ru_for_rank = roll_ru_for_rank,
-    roll_ru_for_ammo_tier = roll_ru_for_ammo_tier,
-    rounds_for_ru = rounds_for_ru,
+    roll_ru_for_stash_tier = roll_ru_for_stash_tier,
+    round_cost = round_cost,
+    allocate_gun_ammo = allocate_gun_ammo,
 }

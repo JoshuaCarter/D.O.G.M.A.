@@ -1,7 +1,7 @@
--- gui/fps conf
+-- gui/fps_counter conf
 
-_G.dogma_gui_fps_conf = {
-	MOD_ID = "dogma/gui/fps",
+_G.dogma_gui_fps_counter_conf = {
+	MOD_ID = "dogma/gui/fps_counter",
 	DEFAULTS = {
 		["colors/graph_border_a"] = 200,
 		["colors/graph_border_b"] = 150,
@@ -50,37 +50,37 @@ _G.dogma_gui_fps_conf = {
 }
 
 function on_mcm_load(options)
-	local CONFIG = _G.dogma_gui_fps_conf
+	local CONFIG = _G.dogma_gui_fps_counter_conf
 dogma_mcm.attach(options, "gui", "ui_mcm_menu_dogma_gui", {
-		id = "fps",
+		id = "fps_counter",
 		sh = true,
-		text = "ui_mcm_menu_dogma_gui_fps",
+		text = "ui_mcm_menu_dogma_gui_fps_counter",
 		gr = dogma_mcm.with_header({
 			{
 				id = "page_description",
 				type = "desc",
-				text = "ui_mcm_dogma_gui_fps_page_description",
+				text = "ui_mcm_dogma_gui_fps_counter_page_description",
 			},
 					{
 						id = "enabled_default",
 						type = "check",
 						val = 1,
 						def = CONFIG.DEFAULTS.enabled_default,
-						hint = "dogma_gui_fps_enabled_default",
+						hint = "dogma_gui_fps_counter_enabled_default",
 					},
 					{
 						id = "toggle_key",
 						type = "key_bind",
 						val = 2,
 						def = CONFIG.DEFAULTS.toggle_key,
-						hint = "dogma_gui_fps_toggle_key",
+						hint = "dogma_gui_fps_counter_toggle_key",
 					},
 					{
 						id = "key_mode",
 						type = (ui_mcm and ui_mcm.kb_mod_radio) or "radio_h",
 						val = 2,
 						def = CONFIG.DEFAULTS.key_mode,
-						hint = "dogma_gui_fps_key_mode",
+						hint = "dogma_gui_fps_counter_key_mode",
 						content = {
 							{ 0, "toggle" },
 							{ 1, "hold" },
@@ -91,7 +91,7 @@ dogma_mcm.attach(options, "gui", "ui_mcm_menu_dogma_gui", {
 						type = "list",
 						val = 2,
 						def = CONFIG.DEFAULTS.display,
-						hint = "dogma_gui_fps_display",
+						hint = "dogma_gui_fps_counter_display",
 						content = {
 							{ 0, "simple_small" },
 							{ 1, "simple_large" },
@@ -109,7 +109,7 @@ dogma_mcm.attach(options, "gui", "ui_mcm_menu_dogma_gui", {
 						max = 3,
 						step = 0.1,
 						def = CONFIG.DEFAULTS.sample_window,
-						hint = "dogma_gui_fps_sample_window",
+						hint = "dogma_gui_fps_counter_sample_window",
 					},
 					{
 						id = "max_fps",
@@ -119,7 +119,7 @@ dogma_mcm.attach(options, "gui", "ui_mcm_menu_dogma_gui", {
 						max = 500,
 						step = 1,
 						def = CONFIG.DEFAULTS.max_fps,
-						hint = "dogma_gui_fps_max_fps",
+						hint = "dogma_gui_fps_counter_max_fps",
 					},
 					{
 						id = "minmax_window",
@@ -129,7 +129,7 @@ dogma_mcm.attach(options, "gui", "ui_mcm_menu_dogma_gui", {
 						max = 10,
 						step = 1,
 						def = CONFIG.DEFAULTS.minmax_window,
-						hint = "dogma_gui_fps_minmax_window",
+						hint = "dogma_gui_fps_counter_minmax_window",
 					},
 					{
 						id = "refresh_rate",
@@ -139,7 +139,7 @@ dogma_mcm.attach(options, "gui", "ui_mcm_menu_dogma_gui", {
 						max = 10,
 						step = 1,
 						def = CONFIG.DEFAULTS.refresh_rate,
-						hint = "dogma_gui_fps_refresh_rate",
+						hint = "dogma_gui_fps_counter_refresh_rate",
 					},
 					{
 						id = "vertical_spacing",
@@ -149,7 +149,7 @@ dogma_mcm.attach(options, "gui", "ui_mcm_menu_dogma_gui", {
 						max = 10,
 						step = 1,
 						def = CONFIG.DEFAULTS.vertical_spacing,
-						hint = "dogma_gui_fps_vertical_spacing",
+						hint = "dogma_gui_fps_counter_vertical_spacing",
 					},
 					{ id = "line_pos", type = "line" },
 					{
@@ -157,7 +157,7 @@ dogma_mcm.attach(options, "gui", "ui_mcm_menu_dogma_gui", {
 						type = "list",
 						val = 2,
 						def = CONFIG.DEFAULTS.pos_anchor,
-						hint = "dogma_gui_fps_pos_anchor",
+						hint = "dogma_gui_fps_counter_pos_anchor",
 						content = {
 							{ 0, "top_left" },
 							{ 1, "top_right" },
@@ -173,7 +173,7 @@ dogma_mcm.attach(options, "gui", "ui_mcm_menu_dogma_gui", {
 						max = 1024,
 						step = 1,
 						def = CONFIG.DEFAULTS.pos_x,
-						hint = "dogma_gui_fps_pos_x",
+						hint = "dogma_gui_fps_counter_pos_x",
 					},
 					{
 						id = "pos_y",
@@ -183,19 +183,19 @@ dogma_mcm.attach(options, "gui", "ui_mcm_menu_dogma_gui", {
 						max = 768,
 						step = 1,
 						def = CONFIG.DEFAULTS.pos_y,
-						hint = "dogma_gui_fps_pos_y",
+						hint = "dogma_gui_fps_counter_pos_y",
 					},
 				
 				{ id = "line_colors", type = "line" },
 				{
 					id = "hdr_colors",
 					type = "desc",
-					text = "ui_mcm_dogma_gui_fps_colors_section",
+					text = "ui_mcm_dogma_gui_fps_counter_colors_section",
 				},
 					{
 						id = "text_color_desc",
 						type = "desc",
-						text = "ui_mcm_dogma_gui_fps_text_color_desc",
+						text = "ui_mcm_dogma_gui_fps_counter_text_color_desc",
 					},
 					{
 						id = "colors/text_r",
@@ -205,7 +205,7 @@ dogma_mcm.attach(options, "gui", "ui_mcm_menu_dogma_gui", {
 						max = 255,
 						step = 1,
 						def = CONFIG.DEFAULTS["colors/text_r"],
-						hint = "dogma_gui_fps_text_r",
+						hint = "dogma_gui_fps_counter_text_r",
 					},
 					{
 						id = "colors/text_g",
@@ -215,7 +215,7 @@ dogma_mcm.attach(options, "gui", "ui_mcm_menu_dogma_gui", {
 						max = 255,
 						step = 1,
 						def = CONFIG.DEFAULTS["colors/text_g"],
-						hint = "dogma_gui_fps_text_g",
+						hint = "dogma_gui_fps_counter_text_g",
 					},
 					{
 						id = "colors/text_b",
@@ -225,7 +225,7 @@ dogma_mcm.attach(options, "gui", "ui_mcm_menu_dogma_gui", {
 						max = 255,
 						step = 1,
 						def = CONFIG.DEFAULTS["colors/text_b"],
-						hint = "dogma_gui_fps_text_b",
+						hint = "dogma_gui_fps_counter_text_b",
 					},
 					{
 						id = "colors/text_a",
@@ -235,13 +235,13 @@ dogma_mcm.attach(options, "gui", "ui_mcm_menu_dogma_gui", {
 						max = 255,
 						step = 1,
 						def = CONFIG.DEFAULTS["colors/text_a"],
-						hint = "dogma_gui_fps_text_a",
+						hint = "dogma_gui_fps_counter_text_a",
 					},
 					{ id = "line_graph_colors", type = "line" },
 					{
 						id = "graph_line_color_desc",
 						type = "desc",
-						text = "ui_mcm_dogma_gui_fps_graph_line_color_desc",
+						text = "ui_mcm_dogma_gui_fps_counter_graph_line_color_desc",
 					},
 					{
 						id = "colors/graph_line_r",
@@ -251,7 +251,7 @@ dogma_mcm.attach(options, "gui", "ui_mcm_menu_dogma_gui", {
 						max = 255,
 						step = 1,
 						def = CONFIG.DEFAULTS["colors/graph_line_r"],
-						hint = "dogma_gui_fps_graph_line_r",
+						hint = "dogma_gui_fps_counter_graph_line_r",
 					},
 					{
 						id = "colors/graph_line_g",
@@ -261,7 +261,7 @@ dogma_mcm.attach(options, "gui", "ui_mcm_menu_dogma_gui", {
 						max = 255,
 						step = 1,
 						def = CONFIG.DEFAULTS["colors/graph_line_g"],
-						hint = "dogma_gui_fps_graph_line_g",
+						hint = "dogma_gui_fps_counter_graph_line_g",
 					},
 					{
 						id = "colors/graph_line_b",
@@ -271,7 +271,7 @@ dogma_mcm.attach(options, "gui", "ui_mcm_menu_dogma_gui", {
 						max = 255,
 						step = 1,
 						def = CONFIG.DEFAULTS["colors/graph_line_b"],
-						hint = "dogma_gui_fps_graph_line_b",
+						hint = "dogma_gui_fps_counter_graph_line_b",
 					},
 					{
 						id = "colors/graph_line_a",
@@ -281,12 +281,12 @@ dogma_mcm.attach(options, "gui", "ui_mcm_menu_dogma_gui", {
 						max = 255,
 						step = 1,
 						def = CONFIG.DEFAULTS["colors/graph_line_a"],
-						hint = "dogma_gui_fps_graph_line_a",
+						hint = "dogma_gui_fps_counter_graph_line_a",
 					},
 					{
 						id = "graph_border_color_desc",
 						type = "desc",
-						text = "ui_mcm_dogma_gui_fps_graph_border_color_desc",
+						text = "ui_mcm_dogma_gui_fps_counter_graph_border_color_desc",
 					},
 					{
 						id = "colors/graph_border_r",
@@ -296,7 +296,7 @@ dogma_mcm.attach(options, "gui", "ui_mcm_menu_dogma_gui", {
 						max = 255,
 						step = 1,
 						def = CONFIG.DEFAULTS["colors/graph_border_r"],
-						hint = "dogma_gui_fps_graph_border_r",
+						hint = "dogma_gui_fps_counter_graph_border_r",
 					},
 					{
 						id = "colors/graph_border_g",
@@ -306,7 +306,7 @@ dogma_mcm.attach(options, "gui", "ui_mcm_menu_dogma_gui", {
 						max = 255,
 						step = 1,
 						def = CONFIG.DEFAULTS["colors/graph_border_g"],
-						hint = "dogma_gui_fps_graph_border_g",
+						hint = "dogma_gui_fps_counter_graph_border_g",
 					},
 					{
 						id = "colors/graph_border_b",
@@ -316,7 +316,7 @@ dogma_mcm.attach(options, "gui", "ui_mcm_menu_dogma_gui", {
 						max = 255,
 						step = 1,
 						def = CONFIG.DEFAULTS["colors/graph_border_b"],
-						hint = "dogma_gui_fps_graph_border_b",
+						hint = "dogma_gui_fps_counter_graph_border_b",
 					},
 					{
 						id = "colors/graph_border_a",
@@ -326,7 +326,7 @@ dogma_mcm.attach(options, "gui", "ui_mcm_menu_dogma_gui", {
 						max = 255,
 						step = 1,
 						def = CONFIG.DEFAULTS["colors/graph_border_a"],
-						hint = "dogma_gui_fps_graph_border_a",
+						hint = "dogma_gui_fps_counter_graph_border_a",
 					},
 				
 		}),

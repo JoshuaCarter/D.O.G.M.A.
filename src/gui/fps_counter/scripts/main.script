@@ -17,7 +17,7 @@
 	which would otherwise look like a slow frame - so those are excluded too.
 ]]
 
-local CONFIG = _G.dogma_gui_fps_conf
+local CONFIG = _G.dogma_gui_fps_counter_conf
 
 local MODE_TOGGLE = 0
 local MODE_HOLD = 1
@@ -235,7 +235,7 @@ local function on_unique_update()
 	end
 	next_display_time = current_time_ms + interval
 
-	dogma.perf.start("fps", "unique_update")
+	dogma.perf.start("fps_counter", "unique_update")
 	-- average FPS over sample_window from recent frame timestamps
 	local fps = 0
 	if sample_buf.count > 0 then
@@ -305,7 +305,7 @@ local function on_actor_on_update()
 	poll_visibility_key()
 
 	if visible and not hud then
-		hud = ui_dogma_fps()
+		hud = ui_dogma_fps_counter()
 		hud:ApplyConfig(CONFIG.loaded)
 		get_hud():AddDialogToRender(hud)
 		next_display_time = 0
@@ -431,20 +431,20 @@ local function init_text_wnd(text_wnd, align)
 	return text_wnd
 end
 
-class "ui_dogma_fps" (CUIScriptWnd)
+class "ui_dogma_fps_counter" (CUIScriptWnd)
 
-function ui_dogma_fps:__init() super()
+function ui_dogma_fps_counter:__init() super()
 	self.cfg = CONFIG.loaded
 	self.display_mode = DISPLAY.SIMPLE_SMALL
 	self:InitControls()
 end
 
-function ui_dogma_fps:InitControls()
+function ui_dogma_fps_counter:InitControls()
 	self:SetWndRect(Frect():set(0, 0, UI_WIDTH, UI_HEIGHT))
 	self:SetAutoDelete(true)
 
 	self.xml = CScriptXmlInit()
-	self.xml:ParseFile("ui_dogma_fps_16.xml")
+	self.xml:ParseFile("ui_dogma_fps_counter_16.xml")
 
 	self.wnd = self.xml:InitStatic("wnd", self)
 	self.fps_simple = init_text_wnd(self.xml:InitTextWnd("wnd:fps_simple", self.wnd))
@@ -476,31 +476,31 @@ function ui_dogma_fps:InitControls()
 	self:SetDisplayMode(DISPLAY.SIMPLE_SMALL)
 end
 
-function ui_dogma_fps:TextColor()
+function ui_dogma_fps_counter:TextColor()
 	return argb_from_bytes(self.cfg.text_a, self.cfg.text_r, self.cfg.text_g, self.cfg.text_b)
 end
 
-function ui_dogma_fps:TextAlign()
+function ui_dogma_fps_counter:TextAlign()
 	return text_align_for_anchor(self.cfg.pos_anchor or ANCHOR.TOP_LEFT)
 end
 
 -- Plain single-color text so SetTextAlignment works (%c[] complex tags break right align).
-local ui_dogma_fps_SetWndText = function(align, self, text, text_wnd, tostring)
+local ui_dogma_fps_counter_SetWndText = function(align, self, text, text_wnd, tostring)
 	text_wnd:SetTextComplexMode(false)
 	text_wnd:SetTextAlignment(align)
 	text_wnd:SetTextColor(self:TextColor())
 	text_wnd:SetText(tostring(text))
 end
 
-function ui_dogma_fps:SetWndText(text_wnd, text)
+function ui_dogma_fps_counter:SetWndText(text_wnd, text)
 	if not text_wnd then
 		return
 	end
 	local align = self:TextAlign()
-	pcall(ui_dogma_fps_SetWndText, align, self, text, text_wnd, tostring)
+	pcall(ui_dogma_fps_counter_SetWndText, align, self, text, text_wnd, tostring)
 end
 
-function ui_dogma_fps:PlaceTextWnd(text_wnd, x, y, w, h)
+function ui_dogma_fps_counter:PlaceTextWnd(text_wnd, x, y, w, h)
 	if not text_wnd then
 		return
 	end
@@ -509,12 +509,12 @@ function ui_dogma_fps:PlaceTextWnd(text_wnd, x, y, w, h)
 	text_wnd:SetWndPos(HUD_LAYOUT_VEC:set(x, y))
 end
 
-function ui_dogma_fps:SetWndPanelSize(w, h)
+function ui_dogma_fps_counter:SetWndPanelSize(w, h)
 	self.wnd_rect:set(0, 0, w, h)
 	self.wnd:SetWndRect(self.wnd_rect)
 end
 
-function ui_dogma_fps:ApplyTextLayout(font_idx, anchor, mode)
+function ui_dogma_fps_counter:ApplyTextLayout(font_idx, anchor, mode)
 	local layout = HUD_LAYOUT.text[font_idx] or HUD_LAYOUT.text[0]
 	local right = anchor_is_right(anchor)
 	local simple_only = mode == DISPLAY.SIMPLE_SMALL or mode == DISPLAY.SIMPLE_LARGE
@@ -574,7 +574,7 @@ function ui_dogma_fps:ApplyTextLayout(font_idx, anchor, mode)
 	self:SetWndPanelSize(panel_w, panel_h)
 end
 
-function ui_dogma_fps:ApplyGraphLayout(graph_idx, anchor)
+function ui_dogma_fps_counter:ApplyGraphLayout(graph_idx, anchor)
 	local layout = HUD_LAYOUT.graph[graph_idx] or HUD_LAYOUT.graph[0]
 	local g = layout.graph
 	local vals = layout.values
@@ -613,7 +613,7 @@ function ui_dogma_fps:ApplyGraphLayout(graph_idx, anchor)
 	self:SetWndPanelSize(layout.wnd_w, panel_h)
 end
 
-function ui_dogma_fps:InitGraph()
+function ui_dogma_fps_counter:InitGraph()
 	if self.graph_root then
 		return
 	end
@@ -631,32 +631,32 @@ function ui_dogma_fps:InitGraph()
 	self:ApplyGraphColors(self.cfg)
 end
 
-local try_ui_dogma_fps_ApplyStaticColor = function(graph_pixel)
+local try_ui_dogma_fps_counter_ApplyStaticColor = function(graph_pixel)
 	graph_pixel:RemoveColorAnimation()
 end
 
-local try_ui_dogma_fps_ApplyStaticColor_2 = function(graph_pixel)
+local try_ui_dogma_fps_counter_ApplyStaticColor_2 = function(graph_pixel)
 	graph_pixel:SetStretchTexture(true)
 end
 
-local try_ui_dogma_fps_ApplyStaticColor_3 = function(GRAPH_TEXTURE, graph_pixel)
+local try_ui_dogma_fps_counter_ApplyStaticColor_3 = function(GRAPH_TEXTURE, graph_pixel)
 	graph_pixel:InitTexture(GRAPH_TEXTURE)
 end
 
-function ui_dogma_fps:ApplyStaticColor(graph_pixel, r, g, b, a)
+function ui_dogma_fps_counter:ApplyStaticColor(graph_pixel, r, g, b, a)
 	if not graph_pixel then
 		return
 	end
 	if not graph_pixel._dogma_graph_tex then
-		pcall(try_ui_dogma_fps_ApplyStaticColor, graph_pixel)
-		pcall(try_ui_dogma_fps_ApplyStaticColor_3, GRAPH_TEXTURE, graph_pixel)
-		pcall(try_ui_dogma_fps_ApplyStaticColor_2, graph_pixel)
+		pcall(try_ui_dogma_fps_counter_ApplyStaticColor, graph_pixel)
+		pcall(try_ui_dogma_fps_counter_ApplyStaticColor_3, GRAPH_TEXTURE, graph_pixel)
+		pcall(try_ui_dogma_fps_counter_ApplyStaticColor_2, graph_pixel)
 		graph_pixel._dogma_graph_tex = true
 	end
 	graph_pixel:SetTextureColor(argb_from_bytes(a, r, g, b))
 end
 
-function ui_dogma_fps:ApplyGraphColors(cfg)
+function ui_dogma_fps_counter:ApplyGraphColors(cfg)
 	if not self.graph_parts then
 		return
 	end
@@ -674,7 +674,7 @@ function ui_dogma_fps:ApplyGraphColors(cfg)
 	end
 end
 
-function ui_dogma_fps:EnsureGraphPart(idx)
+function ui_dogma_fps_counter:EnsureGraphPart(idx)
 	while self.graph_part_count < idx do
 		self.graph_part_count = self.graph_part_count + 1
 		local st = self.xml:InitStatic("wnd:graph_pixel", self.graph_root)
@@ -688,7 +688,7 @@ function ui_dogma_fps:EnsureGraphPart(idx)
 	return self.graph_parts[idx]
 end
 
-function ui_dogma_fps:PlaceGraphPart(idx, x, y, w, h)
+function ui_dogma_fps_counter:PlaceGraphPart(idx, x, y, w, h)
 	local st = self:EnsureGraphPart(idx)
 	local rect = self.part_rect
 	local pw = math.max(1, w)
@@ -710,7 +710,7 @@ function ui_dogma_fps:PlaceGraphPart(idx, x, y, w, h)
 	return idx + 1
 end
 
-function ui_dogma_fps:ClearGraph()
+function ui_dogma_fps_counter:ClearGraph()
 	if not self.graph_parts then
 		return
 	end
@@ -719,7 +719,7 @@ function ui_dogma_fps:ClearGraph()
 	end
 end
 
-function ui_dogma_fps:DrawGraph(buf, cfg)
+function ui_dogma_fps_counter:DrawGraph(buf, cfg)
 	if not display_uses_graph(cfg.display_mode) then
 		self:ClearGraph()
 		return
@@ -729,7 +729,7 @@ function ui_dogma_fps:DrawGraph(buf, cfg)
 		return
 	end
 
-	dogma.perf.start("fps", "draw_graph")
+	dogma.perf.start("fps_counter", "draw_graph")
 	self:InitGraph()
 	self.cfg = cfg
 	self:ApplyGraphColors(cfg)
@@ -808,7 +808,7 @@ function ui_dogma_fps:DrawGraph(buf, cfg)
 	dogma.perf.stop()
 end
 
-function ui_dogma_fps:SetDisplayMode(mode)
+function ui_dogma_fps_counter:SetDisplayMode(mode)
 	self.display_mode = mode
 	local graph = display_uses_graph(mode)
 	local detailed = mode >= DISPLAY.DETAILED_SMALL and not graph
@@ -829,14 +829,14 @@ function ui_dogma_fps:SetDisplayMode(mode)
 	self.graph_min_val:Show(graph)
 end
 
-function ui_dogma_fps:SetSimple(fps)
+function ui_dogma_fps_counter:SetSimple(fps)
 	if self.display_mode ~= DISPLAY.SIMPLE_SMALL and self.display_mode ~= DISPLAY.SIMPLE_LARGE then
 		return
 	end
 	self:SetWndText(self.fps_simple, fps)
 end
 
-function ui_dogma_fps:SetDetailed(fps, min_fps, max_fps)
+function ui_dogma_fps_counter:SetDetailed(fps, min_fps, max_fps)
 	if self.display_mode < DISPLAY.DETAILED_SMALL or display_uses_graph(self.display_mode) then
 		return
 	end
@@ -845,7 +845,7 @@ function ui_dogma_fps:SetDetailed(fps, min_fps, max_fps)
 	self:SetWndText(self.max_val, max_fps)
 end
 
-function ui_dogma_fps:SetGraphValues(fps, min_fps, max_fps)
+function ui_dogma_fps_counter:SetGraphValues(fps, min_fps, max_fps)
 	if not display_uses_graph(self.display_mode) then
 		return
 	end
@@ -854,7 +854,7 @@ function ui_dogma_fps:SetGraphValues(fps, min_fps, max_fps)
 	self:SetWndText(self.graph_min_val, min_fps)
 end
 
-function ui_dogma_fps:ApplyConfig(cfg)
+function ui_dogma_fps_counter:ApplyConfig(cfg)
 	self.cfg = cfg
 	local mode = cfg.display_mode or DISPLAY.SIMPLE_SMALL
 	local font_idx = display_font_idx(mode)

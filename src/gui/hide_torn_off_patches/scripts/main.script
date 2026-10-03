@@ -174,8 +174,10 @@ local function refresh_icons()
 	if dogma.status and dogma.status.is_inv_open and not dogma.status.is_inv_open() then
 		return
 	end
+	-- mode 1 re-sorts the open inventory, which rebuilds cells.
+	-- UpdateItems leaves the old badge on the cell.
 	log("refresh icons")
-	rax_icon_layers.refresh()
+	rax_icon_layers.refresh(1)
 end
 
 local function wrap_patch_action()

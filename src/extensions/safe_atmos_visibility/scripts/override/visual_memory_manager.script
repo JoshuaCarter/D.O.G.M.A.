@@ -1,0 +1,96 @@
+--[[
+	DOGMA extensions/safe_atmos_visibility - visual_memory_manager.script
+
+	This file replaces Atmospherics' leftover hook. If get_visible_value exists,
+	the engine uses it instead of C++ and never falls back.
+
+	Atmos + vanilla LTX was blind: Atmos did danger = time_quant * 2 for stalkers,
+	which needs Stealth/Faster Reactions LTX (tq 0.5 / 1.0). Vanilla tq is 0.001.
+
+	This hook uses the vanilla formula (works at tq 0.001):
+	  time_delta / time_quant * lum * (1 + vf * speed) * (view_range - dist) / (view_range - always_vis)
+
+	Extras only:
+	  1) actor torch / handheld flashlight → lum + 20/distance
+	  2) guard / sniper scheme → step * 0.5
+	  3) unsilenced shot → +7 on step for 0.16s
+
+	AlifeTactics set_vision_speed and ai_vision_speed_boost multiply AFTER this
+	return. Sound/scout is a different system.
+]]
+
+local pewpew = 0
+local TORCH_ADD = 20
+local SHOT_ADD = 7
+
+local function is_obj(o)
+	return o ~= nil and type(o) ~= "number"
+end
+
+local function vanilla_step(time_delta, time_quant, lum, velocity_factor, velocity, distance, object_distance, always_visible_distance)
+	local denom = distance - (always_visible_distance or 0)
+	if denom <= 0 then
+		denom = 0.00001
+	end
+	return (time_delta / time_quant) * lum * (1 + velocity_factor * velocity) * (distance - object_distance) / denom
+end
+
+local function actor_torch_on(who)
+	local actor = db.actor
+	if not (actor and is_obj(who) and who:id() == actor:id()) then
+		return false
+	end
+	local torch = actor:item_in_slot(10)
+	if torch and torch:torch_enabled() then
+		return true
+	end
+	local flash = actor:item_in_slot(9)
+	if flash then
+	    return flash and flash:section() == "device_flashlight" and actor:active_detector()
+	end
+end
+
+function get_visible_value(npc, who, time_delta, time_quant, luminocity, velocity_factor, velocity, distance, object_distance, always_visible_distance)
+	distance = distance <= 0 and 0.00001 or distance
+	if object_distance <= 0 then
+		object_distance = 0.00001
+	end
+	if time_quant <= 0 then
+		time_quant = 0.00001
+	end
+
+	local lum = luminocity
+	if actor_torch_on(who) then
+		lum = lum + TORCH_ADD / object_distance
+	end
+
+	local step = vanilla_step(time_delta, time_quant, lum, velocity_factor, velocity, distance, object_distance, always_visible_distance)
+
+	if is_obj(npc) and npc:alive() then
+		local st = db.storage[npc:id()]
+		if st and (st.active_scheme == "guard" or st.active_scheme == "sniper") then
+			step = step * 0.5
+		end
+	end
+
+	if pewpew > 0 then
+		step = step + SHOT_ADD
+	end
+	return step
+end
+
+function actor_on_weapon_fired()
+	local wpn = db.actor and db.actor:active_item()
+	if not wpn or not dogma.db.is_weapon(wpn:section()) or dogma.db.is_melee(wpn:section()) or wpn:weapon_is_silencer() then
+		return
+	end
+	pewpew = SHOT_ADD
+	CreateTimeEvent("dogma_vis", "shot_off", 0.16, function()
+		pewpew = 0
+		return true
+	end)
+end
+
+function on_game_start()
+	RegisterScriptCallback("actor_on_weapon_fired", actor_on_weapon_fired)
+end

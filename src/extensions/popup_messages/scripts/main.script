@@ -1,0 +1,164 @@
+--[[
+	Popup Messages
+
+	X offset: APM's slide-in writes X from the right edge every frame (stock
+	pos_x does not stick). After ui_popup_messages.GUI:Update, shift each toast.
+
+	Quick melee: CQC / Teivaz creates an animation_hit_* dummy. Skip that
+	pickup toast. Real knife pickups still pop.
+]]
+
+local CONFIG = _G.dogma_extensions_popup_messages_conf
+
+local HOOK_STATE = _G.__dogma_popup_messages_qm_hooks or {}
+_G.__dogma_popup_messages_qm_hooks = HOOK_STATE
+
+local function log(msg)
+	if dogma.log.logging() then
+		dogma.log.log(CONFIG.MOD_ID, tostring(msg))
+	end
+end
+
+local function read_offset()
+	if ui_mcm and ui_mcm.get and not (ui_mcm.is_gathering and ui_mcm.is_gathering()) then
+		for _, path in ipairs({
+			CONFIG.APM_OFFSET_PATH,
+			"ui_popup_messages/offset_x",
+		}) do
+			local ok, value = pcall(ui_mcm.get, path)
+			if ok and value ~= nil then
+				return tonumber(value) or 0
+			end
+		end
+	end
+	return CONFIG.loaded.offset_x or CONFIG.DEFAULTS.offset_x
+end
+
+local function on_option_change()
+	CONFIG.loaded.offset_x = read_offset()
+	log(string.format("opts: offset_x=%s", tostring(CONFIG.loaded.offset_x)))
+end
+
+local function apply_wnd(wnd, dx)
+	if not (wnd and wnd.wnd) then
+		return
+	end
+	local pos = wnd.wnd:GetWndPos()
+	if wnd._dogma_applied and pos.x == wnd._dogma_x then
+		if dx == wnd._dogma_dx then
+			return
+		end
+		local base = wnd._dogma_base
+		wnd.wnd:SetWndPos(vector2():set(base + dx, pos.y))
+		wnd._dogma_x = base + dx
+		wnd._dogma_dx = dx
+		return
+	end
+	local base = pos.x
+	wnd._dogma_base = base
+	wnd._dogma_dx = dx
+	wnd._dogma_x = base + dx
+	wnd._dogma_applied = true
+	if dx ~= 0 then
+		wnd.wnd:SetWndPos(vector2():set(base + dx, pos.y))
+	end
+end
+
+local function apply_gui(gui)
+	local winds = gui and gui.winds
+	if not winds then
+		return
+	end
+	local dx = read_offset()
+	CONFIG.loaded.offset_x = dx
+	for i = 1, #winds do
+		apply_wnd(winds[i], dx)
+	end
+end
+
+local try_wrap_update = function(apply_gui, obj, orig)
+	obj.Update = function(self)
+		orig(self)
+		apply_gui(self)
+	end
+	obj._dogma_popup_messages_offset = true
+end
+
+local function wrap_update(obj, label)
+	if not obj or obj._dogma_popup_messages_offset then
+		return obj and obj._dogma_popup_messages_offset
+	end
+	local orig = obj.Update
+	if type(orig) ~= "function" then
+		return false
+	end
+	local ok = pcall(try_wrap_update, apply_gui, obj, orig)
+	if ok and obj._dogma_popup_messages_offset then
+		log("wrap " .. label)
+		return true
+	end
+	return false
+end
+
+local function patch_offset()
+	local mod = rawget(_G, "ui_popup_messages")
+	if not mod then
+		return false
+	end
+	local cls = rawget(_G, "UIPopupMessages") or rawget(mod, "UIPopupMessages")
+	wrap_update(cls, "UIPopupMessages.Update")
+	if not mod.GUI then
+		return false
+	end
+	return wrap_update(mod.GUI, "ui_popup_messages.GUI.Update")
+end
+
+local try_is_qm_dummy = function(item)
+	return item:section()
+end
+
+local function is_qm_dummy(item)
+	if not item then
+		return false
+	end
+	local ok, sec = pcall(try_is_qm_dummy, item)
+	return ok and type(sec) == "string" and string.find(sec, "animation_hit", 1, true) ~= nil
+end
+
+local function patch_qm()
+	if HOOK_STATE.patched then
+		return true
+	end
+	local mod = rawget(_G, "popup_pickup")
+	if not (mod and type(mod.actor_on_item_take) == "function") then
+		return false
+	end
+
+	local orig = mod.actor_on_item_take
+	UnregisterScriptCallback("actor_on_item_take", orig)
+
+	HOOK_STATE.wrapped = function(item)
+		if is_qm_dummy(item) then
+			return
+		end
+		return orig(item)
+	end
+	mod.actor_on_item_take = HOOK_STATE.wrapped
+	RegisterScriptCallback("actor_on_item_take", HOOK_STATE.wrapped)
+	HOOK_STATE.patched = true
+	return true
+end
+
+local function patch()
+	patch_offset()
+	patch_qm()
+end
+
+function on_game_start()
+	dogma.load(CONFIG.MOD_ID)
+	on_option_change()
+	RegisterScriptCallback("on_option_change", on_option_change)
+	RegisterScriptCallback("actor_on_first_update", patch)
+	RegisterScriptCallback("on_game_load", patch)
+	patch()
+end

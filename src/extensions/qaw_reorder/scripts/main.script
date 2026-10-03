@@ -1,0 +1,406 @@
+--[[
+    Quick Action Wheel Reorder
+
+    Hold reorder key on a manual-tab wedge, move to another, release to move it.
+    Items between the two slots shift.
+    Optional: on save, write manual-tab slot order to the profile and apply
+    on load so new games keep it. Off by default. MCM under QAW -> Controls.
+]]
+
+local CONFIG = _G.dogma_extensions_qaw_reorder_conf
+local SECTION = "dogma_qaw_slots"
+local SEP = "|"
+
+local drag_from = nil
+local drag_tab = nil
+local reorder_was_held = false
+local applying = false
+
+local function log(msg)
+    if dogma.log.logging() then
+        dogma.log.log(CONFIG.MOD_ID, tostring(msg))
+    end
+end
+
+local function cfg()
+    return axr_main and axr_main.config
+end
+
+local function item_sec(item)
+    if type(item) == "string" and item ~= "" then
+        return item
+    end
+    if type(item) == "table" then
+        local s = item.section or item.sec or item[1]
+        if type(s) == "string" and s ~= "" then
+            return s
+        end
+    end
+    return nil
+end
+
+local function is_manual(tm, tab)
+    return tm.tabs[tab] and not (tm.dynamic_tabs and tm.dynamic_tabs[tab])
+end
+
+local function tab_secs(items)
+    local t = {}
+    for i = 1, #items do
+        local s = item_sec(items[i])
+        if s then
+            t[#t + 1] = s
+        end
+    end
+    return t
+end
+
+local function split_secs(s)
+    local out = {}
+    if type(s) ~= "string" or s == "" then
+        return out
+    end
+    for part in string.gmatch(s, "[^|]+") do
+        out[#out + 1] = part
+    end
+    return out
+end
+
+local function resolve_tab(tm, key)
+    if tm.tabs[key] ~= nil then
+        return key
+    end
+    local n = tonumber(key)
+    if n and tm.tabs[n] ~= nil then
+        return n
+    end
+    return nil
+end
+
+local function snapshot()
+    local tostr = tostring
+    if applying then
+        return
+    end
+    if not CONFIG.loaded.persist_slots then
+        log("snapshot skip: persist off")
+        return
+    end
+    local qaw = rawget(_G, "haru_quick_action_wheel_mcm")
+    local tm = qaw and qaw.TAB_MANAGER
+    local c = cfg()
+    if not (tm and tm.tabs and c and c.w_value and c.save) then
+        return
+    end
+    local ids = {}
+    local pending = {}
+    local n_item = 0
+    for tab, items in pairs(tm.tabs) do
+        if is_manual(tm, tab) and type(items) == "table" then
+            local key = tostr(tab)
+            local secs = tab_secs(items)
+            if #secs == 0 and #items > 0 then
+                log("snapshot miss tab=" .. key
+                    .. " n=" .. tostr(#items)
+                    .. " t0=" .. type(items[1]))
+            end
+            ids[#ids + 1] = key
+            pending[key] = table.concat(secs, SEP)
+            n_item = n_item + #secs
+        end
+    end
+    if n_item < 1 then
+        log("snapshot skip: empty")
+        return
+    end
+    table.sort(ids)
+    for i = 1, #ids do
+        local key = ids[i]
+        local line = pending[key]
+        c:w_value(SECTION, key, line ~= "" and line or nil)
+    end
+    c:w_value(SECTION, "_tabs", table.concat(ids, SEP))
+    c:save()
+    log(string.format("snapshot tabs=%s items=%s", tostr(#ids), tostr(n_item)))
+end
+
+local function apply()
+    local tostr = tostring
+    local type_ = type
+    if applying then
+        return
+    end
+    if not CONFIG.loaded.persist_slots then
+        log("apply skip: persist off")
+        return
+    end
+    local qaw = rawget(_G, "haru_quick_action_wheel_mcm")
+    local tm = qaw and qaw.TAB_MANAGER
+    local c = cfg()
+    if not (tm and tm.tabs and c and c.r_value) then
+        return
+    end
+    local keys = c:r_value(SECTION, "_tabs")
+    if type_(keys) ~= "string" or keys == "" then
+        return
+    end
+    local jobs = {}
+    local n_want = 0
+    for key in string.gmatch(keys, "[^|]+") do
+        local tab = resolve_tab(tm, key)
+        if tab and is_manual(tm, tab) then
+            local line = c:r_value(SECTION, key)
+            local want = split_secs(type_(line) == "string" and line or "")
+            n_want = n_want + #want
+            jobs[#jobs + 1] = { tab = tab, want = want }
+        end
+    end
+    if n_want < 1 then
+        log("apply skip: empty")
+        return
+    end
+    applying = true
+    local n_ok = 0
+    for i = 1, #jobs do
+        local tab = jobs[i].tab
+        local want = jobs[i].want
+        local have = tm.tabs[tab]
+        if type_(have) ~= "table" then
+            log("apply skip tab=" .. tostr(tab) .. ": no tab")
+        else
+            if type_(have.__sections) ~= "table" then
+                have.__sections = {}
+            end
+            if type_(have.__ids) ~= "table" then
+                have.__ids = {}
+            end
+            local by_sec = {}
+            for j = 1, #have do
+                local obj = have[j]
+                local s = item_sec(obj)
+                if s and type_(obj) == "table" and obj.class and obj.args and by_sec[s] == nil then
+                    by_sec[s] = obj
+                end
+            end
+            for j = #have, 1, -1 do
+                tm:RemoveItem(tab, j)
+            end
+            local kept = 0
+            for j = 1, #want do
+                local s = want[j]
+                local obj = by_sec[s]
+                if type_(obj) == "table" then
+                    have[#have + 1] = obj
+                    have.__sections[s] = true
+                    if obj.id then
+                        have.__ids[obj.id] = true
+                    end
+                    kept = kept + 1
+                else
+                    local n_before = #have
+                    tm:AddItem(tab, nil, s)
+                    if #have > n_before then
+                        kept = kept + 1
+                    else
+                        log("apply miss tab=" .. tostr(tab) .. " sec=" .. s)
+                    end
+                end
+            end
+            n_ok = n_ok + kept
+        end
+    end
+    applying = false
+    if n_ok < 1 then
+        log("apply skip: none added")
+        return
+    end
+    log(string.format("apply tabs=%s items=%s", tostr(#jobs), tostr(n_ok)))
+    if qaw.GUI and qaw.GUI.UpdateItems then
+        qaw.GUI:UpdateItems()
+    end
+end
+
+local function hide_drag_selection(gui)
+    if drag_from and gui and gui.options then
+        local opt = gui.options[drag_from]
+        if opt and opt.selected_bg then
+            opt.selected_bg:Show(false)
+        end
+    end
+end
+
+local function clear_drag(gui)
+    hide_drag_selection(gui)
+    drag_from = nil
+    drag_tab = nil
+end
+
+local function read_mcm_num(path, fallback)
+    if ui_mcm and ui_mcm.get and not (ui_mcm.is_gathering and ui_mcm.is_gathering()) then
+        local ok, value = pcall(ui_mcm.get, path)
+        if ok and value ~= nil then
+            return tonumber(value) or fallback
+        end
+    end
+    return fallback
+end
+
+local function read_mcm_bool(path, fallback)
+    if ui_mcm and ui_mcm.get and not (ui_mcm.is_gathering and ui_mcm.is_gathering()) then
+        local ok, value = pcall(ui_mcm.get, path)
+        if ok and value ~= nil then
+            return value == true or value == 1
+        end
+    end
+    return fallback
+end
+
+local function on_option_change()
+    CONFIG.loaded.reorder_key = read_mcm_num(
+        CONFIG.QAW_REORDER_KEY_PATH,
+        CONFIG.loaded.reorder_key or 0
+    )
+    CONFIG.loaded.persist_slots = read_mcm_bool(
+        CONFIG.QAW_PERSIST_SLOTS_PATH,
+        CONFIG.loaded.persist_slots
+    )
+    log(string.format(
+        "opts: reorder_key=%s persist_slots=%s",
+        tostring(CONFIG.loaded.reorder_key),
+        tostring(CONFIG.loaded.persist_slots)
+    ))
+end
+
+local function current_tab(qaw)
+    local tm = qaw.TAB_MANAGER
+    if not tm then
+        return nil
+    end
+    return tm.temp_tab or tm.current_tab
+end
+
+local function wrap_gui(gui, qaw)
+    if not gui or gui._dogma_qaw_reorder then
+        return
+    end
+
+    local orig_update = gui.UpdateCallback
+    local orig_keyboard = gui.OnKeyboardCallback
+    local orig_close = gui.Close
+
+    function gui:UpdateCallback()
+        if orig_update then
+            orig_update(self)
+        end
+
+        local reorder_key = CONFIG.loaded.reorder_key
+        local held = reorder_key > 0 and dogma.input.is_key_down(reorder_key)
+
+        local tm = qaw.TAB_MANAGER
+        local tab = current_tab(qaw)
+        local manual = tab and tm and tm.tabs[tab] and not tm.dynamic_tabs[tab]
+
+        if not manual or reorder_key <= 0 then
+            clear_drag(self)
+            reorder_was_held = held
+            return
+        end
+
+        if drag_tab and tab ~= drag_tab then
+            clear_drag(self)
+        end
+
+        local idx = self.hovered_idx
+        local has_hover = idx and idx > 0 and self.options and self.options[idx]
+
+        if held and not drag_from and has_hover then
+            drag_from = idx
+            drag_tab = tab
+        end
+
+        if drag_from and self.options[drag_from] and self.options[drag_from].selected_bg then
+            self.options[drag_from].selected_bg:Show(true)
+        end
+
+        if drag_from and reorder_was_held and not held then
+            local to = self.hovered_idx
+            local items = tm.tabs[drag_tab]
+            if items and to and to > 0 and to ~= drag_from and items[drag_from] and items[to] then
+                local from = drag_from
+                local item = table.remove(items, from)
+                table.insert(items, to, item)
+                log(string.format("move %s -> %s tab=%s", tostring(from), tostring(to), tostring(drag_tab)))
+                clear_drag(self)
+                self:UpdateItems()
+            else
+                clear_drag(self)
+            end
+        elseif not held then
+            clear_drag(self)
+        end
+
+        reorder_was_held = held
+    end
+
+    function gui:OnKeyboardCallback(dik, keyboard_action)
+        if drag_from and keyboard_action == ui_events.WINDOW_KEY_PRESSED then
+            if dik == DIK_keys.MOUSE_1 or dik == DIK_keys.MOUSE_2 then
+                return true
+            end
+        end
+        if orig_keyboard then
+            return orig_keyboard(self, dik, keyboard_action)
+        end
+        return false
+    end
+
+    function gui:Close()
+        clear_drag(self)
+        reorder_was_held = false
+        if orig_close then
+            return orig_close(self)
+        end
+    end
+
+    gui._dogma_qaw_reorder = true
+    log("wrap_gui")
+end
+
+local function patch()
+    if not dogma.sys.ready(CONFIG.MOD_ID, db, on_option_change) then
+        return
+    end
+
+    local qaw = rawget(_G, "haru_quick_action_wheel_mcm")
+    if not qaw then
+        return
+    end
+
+    if not qaw._dogma_qaw_reorder_create_gui and type(qaw.create_GUI) == "function" then
+        local orig_create = qaw.create_GUI
+        local function wrapped_create(...)
+            orig_create(...)
+            wrap_gui(qaw.GUI, qaw)
+            apply()
+        end
+        qaw.create_GUI = wrapped_create
+        qaw._dogma_qaw_reorder_create_gui = true
+        log("wrap create_GUI")
+    end
+
+    if qaw.GUI then
+        wrap_gui(qaw.GUI, qaw)
+    end
+end
+
+local function on_first_update()
+    patch()
+end
+
+function on_game_start()
+    dogma.load(CONFIG.MOD_ID)
+    RegisterScriptCallback("on_option_change", on_option_change)
+    RegisterScriptCallback("actor_on_first_update", on_first_update)
+    RegisterScriptCallback("save_state", snapshot)
+    patch()
+    log("on_game_start")
+end

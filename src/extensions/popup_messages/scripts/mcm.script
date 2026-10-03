@@ -1,0 +1,128 @@
+-- extensions/popup_messages conf
+-- Offset slider under Anomaly Popup Messages → apm_main.
+-- Dummy bayonet toast skip is always on while this feature is installed.
+
+_G.dogma_extensions_popup_messages_conf = {
+	MOD_ID = "dogma/extensions/popup_messages",
+	APM_TREE_ID = "ui_popup_messages",
+	APM_OFFSET_PATH = "ui_popup_messages/apm_main/offset_x",
+	DEFAULTS = {
+		offset_x = -35,
+	},
+	loaded = {},
+}
+
+--[[
+	Popup Messages - MCM
+
+	Injects offset_x into ui_popup_messages → apm_main (next to stock pos_x).
+	APM's AnimateWindow overwrites X from the right edge, so pos_x does not
+	stick; this slider is applied after that write.
+]]
+
+local CONFIG = _G.dogma_extensions_popup_messages_conf
+
+local OFFSET_OPT = {
+	id = "offset_x",
+	type = "track",
+	val = 2,
+	min = -512,
+	max = 512,
+	step = 1,
+	def = CONFIG.DEFAULTS.offset_x,
+	hint = "dogma_apm_offset_x",
+}
+
+local function find_gr_child(gr, id)
+	if not gr then
+		return nil
+	end
+	for i = 1, #gr do
+		if gr[i].id == id then
+			return gr[i], i
+		end
+	end
+	return nil
+end
+
+local function inject_offset(tree)
+	if not tree or tree.id ~= CONFIG.APM_TREE_ID or type(tree.gr) ~= "table" then
+		return
+	end
+	local main = find_gr_child(tree.gr, "apm_main")
+	if not (main and type(main.gr) == "table") then
+		return
+	end
+	if find_gr_child(main.gr, "offset_x") then
+		return
+	end
+
+	local _, at_i = find_gr_child(main.gr, "pos_x")
+	if not at_i then
+		_, at_i = find_gr_child(main.gr, "pos_y")
+	end
+	local at = at_i and (at_i + 1) or (#main.gr + 1)
+	table.insert(main.gr, at, OFFSET_OPT)
+end
+
+local function inject_into_options(options)
+	if not options then
+		return
+	end
+	for i = 1, #options do
+		if options[i].id == CONFIG.APM_TREE_ID then
+			inject_offset(options[i])
+		end
+	end
+end
+
+local function wrap_one(m)
+	if not (m and type(m.on_mcm_load) == "function") then
+		return
+	end
+	if m._dogma_popup_messages_mcm then
+		return
+	end
+	local orig = m.on_mcm_load
+	m.on_mcm_load = function(...)
+		local tree, name = orig(...)
+		if tree then
+			inject_offset(tree)
+		end
+		return tree, name
+	end
+	m._dogma_popup_messages_mcm = true
+end
+
+-- We gather before APM (*mcm.script is dogma_*). Wrap whatever owns the tree.
+local function wrap_apm_on_mcm_load()
+	for name, m in pairs(_G) do
+		if type(name) == "string"
+			and string.find(name, "popup_messages", 1, true)
+			and not string.find(name, "dogma_extensions_popup_messages", 1, true)
+		then
+			wrap_one(m)
+		end
+	end
+end
+
+-- Top-level: all *mcm.script modules exist before any on_mcm_load runs.
+wrap_apm_on_mcm_load()
+
+function on_mcm_load(options)
+	wrap_apm_on_mcm_load()
+	inject_into_options(options)
+
+	dogma_mcm.attach(options, "extensions", "ui_mcm_menu_dogma_extensions", {
+		id = "popup_messages",
+		sh = true,
+		text = "ui_mcm_menu_dogma_extensions_popup_messages",
+		gr = dogma_mcm.with_header({
+			{
+				id = "page_description",
+				type = "desc",
+				text = "ui_mcm_dogma_extensions_popup_messages_page_description",
+			},
+		}),
+	})
+end

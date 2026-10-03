@@ -97,7 +97,14 @@ local function wrap_functor(fn)
 			))
 		end
 		if torn and badge and dogma.mcm.bool(CONFIG.MOD_ID, "enabled", true) then
-			return torn_badge(tbl)
+			local grey = torn_badge(tbl)
+			if grey then
+				return grey
+			end
+			-- Returning nil leaves the old badge up. A 0-size layer replaces it.
+			tbl.w = 0
+			tbl.h = 0
+			return tbl
 		end
 		return tbl
 	end
@@ -156,28 +163,53 @@ local function wrap_register()
 		log("rax_icon_layers.register missing")
 		return
 	end
-	if layers.__dogma_gui_hide_torn_off_patches then
+	-- rawget: the module's missing-key lookup hits _G, and that name is our HOOK_STATE table.
+	if rawget(layers, "_dogma_hide_torn") then
 		return
 	end
 	local orig = layers.register
 	layers.register = function(name, functor)
 		return orig(name, wrap_functor(functor))
 	end
-	layers.__dogma_gui_hide_torn_off_patches = true
+	rawset(layers, "_dogma_hide_torn", true)
 	log("wrapped register")
 end
 
-local function refresh_icons()
-	if not (rax_icon_layers and rax_icon_layers.refresh) then
+local function update_shown_cells(cc)
+	if not (cc and cc.cell) then
 		return
 	end
-	if dogma.status and dogma.status.is_inv_open and not dogma.status.is_inv_open() then
+	for _, ci in pairs(cc.cell) do
+		if ci and ci.IsShown and ci:IsShown() and ci.Update then
+			ci:Update()
+		end
+	end
+end
+
+local function do_refresh()
+	local inv = GetActorMenu()
+	if not inv then
+		log("refresh skip: no inventory")
 		return
 	end
-	-- mode 1 re-sorts the open inventory, which rebuilds cells.
-	-- UpdateItems leaves the old badge on the cell.
+	if inv.UpdateItems then
+		inv:UpdateItems()
+	end
+	-- Equipped paper-doll is not in UpdateItems' bag list.
+	local cc = inv.CC and inv.CC["actor_equ"]
+	update_shown_cells(cc)
 	log("refresh icons")
-	rax_icon_layers.refresh(1)
+end
+
+local function refresh_icons()
+	if dogma.status and dogma.status.is_inv_open and not dogma.status.is_inv_open() then
+		log("refresh skip: inventory closed")
+		return
+	end
+	local ok, err = pcall(do_refresh)
+	if not ok then
+		log("refresh failed " .. tostring(err))
+	end
 end
 
 local function wrap_patch_action()
@@ -186,16 +218,30 @@ local function wrap_patch_action()
 		log("menu_patch_action missing")
 		return
 	end
-	if gd.__dogma_gui_hide_torn_off_patches then
+	if rawget(gd, "_dogma_hide_torn") then
 		return
 	end
 	local orig = gd.menu_patch_action
+	-- Sew animation calls the function it captured at load, after the anim,
+	-- not the live menu_patch_action. Refresh from that call too.
+	local owner, idx, captured = find_upvalue_deep(orig, "originalMPA")
+	if owner and debug and debug.setupvalue and type(captured) == "function" and not HOOK_STATE.wrapped[captured] then
+		local wrapped_cap = function(obj)
+			captured(obj)
+			log("patch applied " .. tostring(obj and obj:section()))
+			refresh_icons()
+		end
+		debug.setupvalue(owner, idx, wrapped_cap)
+		HOOK_STATE.wrapped[captured] = true
+		HOOK_STATE.wrapped[wrapped_cap] = true
+		log("wrapped captured patch action")
+	end
 	gd.menu_patch_action = function(obj)
 		log("menu_patch_action " .. tostring(obj and obj:section()))
 		orig(obj)
 		refresh_icons()
 	end
-	gd.__dogma_gui_hide_torn_off_patches = true
+	rawset(gd, "_dogma_hide_torn", true)
 	log("wrapped menu_patch_action")
 end
 

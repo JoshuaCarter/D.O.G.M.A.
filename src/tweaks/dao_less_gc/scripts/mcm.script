@@ -1,0 +1,15 @@
+-- tweaks/dao_less_gc conf (info-only MCM; always on while installed)
+
+_G.dogma_tweaks_dao_less_gc_conf = {
+	MOD_ID = "dogma/tweaks/dao_less_gc",
+}
+
+function on_mcm_load(options)
+	dogma_mcm.append(options, "tweaks", "ui_mcm_menu_dogma_tweaks", {
+		{
+			id = "dao_less_gc_description",
+			type = "desc",
+			text = "ui_mcm_dogma_tweaks_dao_less_gc_page_description",
+		},
+	})
+end

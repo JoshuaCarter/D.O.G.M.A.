@@ -5,13 +5,13 @@
 	profile persistence across new games (SortingPlus MCM toggles).
 ]]
 
-local CONFIG = _G.dogma_tweaks_add_sortingplus_keybinds_conf
+local CONFIG = _G.dogma_tweaks_sortingplus_keybinds_conf
 local MOD_ID = CONFIG.MOD_ID
 local SECTION_FAV = "dogma_item_favourites"
 local SECTION_JUNK = "dogma_item_junk"
 
-local STATE = _G.__dogma_tweaks_add_sortingplus_keybinds or {}
-_G.__dogma_tweaks_add_sortingplus_keybinds = STATE
+local STATE = _G.__dogma_tweaks_sortingplus_keybinds or {}
+_G.__dogma_tweaks_sortingplus_keybinds = STATE
 
 local function log(msg)
 	if dogma.log.logging() then
@@ -255,7 +255,7 @@ function on_game_start()
 	dogma.load(MOD_ID)
 
 	if not patch_sortingplus() then
-		printf("[dogma_tweaks_add_sortingplus_keybinds] SortingPlus API missing - skipped")
+		printf("[dogma_tweaks_sortingplus_keybinds] SortingPlus API missing - skipped")
 		return
 	end
 

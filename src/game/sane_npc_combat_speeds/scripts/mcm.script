@@ -1,0 +1,20 @@
+-- game/sane_npc_combat_speeds conf
+
+_G.dogma_game_sane_npc_combat_speeds_conf = {
+	MOD_ID = "dogma/game/sane_npc_combat_speeds",
+}
+
+function on_mcm_load(options)
+	dogma_mcm.attach(options, "game", "ui_mcm_menu_dogma_game", {
+		id = "sane_npc_combat_speeds",
+		sh = true,
+		text = "ui_mcm_menu_dogma_game_sane_npc_combat_speeds",
+		gr = dogma_mcm.with_header({
+			{
+				id = "page_description",
+				type = "desc",
+				text = "ui_mcm_dogma_game_sane_npc_combat_speeds_page_description",
+			},
+		}),
+	})
+end

@@ -1,0 +1,49 @@
+--[[
+	Sobre Loadouts - MCM + main-menu Thompson inject strip.
+
+	Why script (not LTX):
+	  G.A.M.M.A. Weapon Pack ships wpn_thompson_mcm.script which calls
+	  new_game_loadout_injector_mcm.add_item({ section = wpn_thompson_m1a1,
+	  points = 400, ... }). That inject is stacked on top of LTX during
+	  LoadLoadout, so both 400 (inject) and 420 (Sobre LTX) appear. LTX
+	  cannot cancel a script inject.
+
+	Why *mcm.script (not main.script / zzzz_*):
+	  New Game loadout runs at the main menu. MCM loads *mcm.script there;
+	  zzzz_ body scripts only load after a game session starts - so a
+	  main.script strip never sees the New Game screen on a cold boot.
+
+	Why on_mcm_load (not top-level only):
+	  gather_options() first touches _G[<every *mcm>] (running their
+	  top-level add_item, including wpn_thompson_mcm), THEN calls each
+	  on_mcm_load. remove_item here runs after the inject is registered.
+
+	Do NOT call remove_existing_item - that drops the LTX shop entry we keep.
+]]
+
+local THOMPSON = "wpn_thompson_m1a1"
+
+local function strip_thompson_inject()
+	local loadouts = rawget(_G, "new_game_loadout_injector_mcm")
+	if not (loadouts and loadouts.remove_item) then
+		return
+	end
+	loadouts.remove_item(THOMPSON)
+end
+
+function on_mcm_load(options)
+	strip_thompson_inject()
+
+	dogma_mcm.attach(options, "game", "ui_mcm_menu_dogma_game", {
+		id = "sobre_loadouts",
+		sh = true,
+		text = "ui_mcm_menu_dogma_game_sobre_loadouts",
+		gr = dogma_mcm.with_header({
+			{
+				id = "page_description",
+				type = "desc",
+				text = "ui_mcm_dogma_game_sobre_loadouts_page_description",
+			},
+		}),
+	})
+end

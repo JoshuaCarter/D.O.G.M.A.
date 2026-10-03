@@ -1,0 +1,276 @@
+--[[
+	Detector Subtle SFX
+
+	Every 5000ms, if the actor has an artefact detector that is not shown,
+	use the highest-rank scanner in slot/inventory (slot > fav > ruck on
+	ties) and match that item's engine filters: world artefact, in
+	af_class_*, rank <= detector class rank. Then play af_sound_1_.
+
+	GAMMA Artefacts Reinvention draws a nearby-artefact HUD icon via
+	grok_artefacts_bip.get_artefact. Wrap that functor so the icon stays
+	off. Their MCM and scan keep running.
+]]
+
+local MOD_ID = "dogma/game/passive_detector_beeps"
+local ORIG_BIP_GET
+local SLOT_MAX = 13
+local SCAN_MS = 5000
+local FALLBACK_SOUND = "detectors\\art_beep1"
+local FALLBACK_RADIUS = 30
+local PRIO_SLOT = 3
+local PRIO_FAV = 2
+local PRIO_RUCK = 1
+
+-- Same ranks the C++ detector constructors set (not detector ini).
+local DET_RANK = {
+	DET_SIMP = 1,
+	DET_ADVA = 2,
+	DET_ELIT = 3,
+	DET_SCIE = 3,
+}
+
+local next_scan = 0
+local snd_cache = {} -- path -> sound_object
+local af_class_cache = {} -- det_sec -> { [af_sec] = true }
+local pick_best
+local pick_rank
+local pick_prio
+local scan_actor
+local scan_det_sec
+local scan_det_rank
+local scan_af_set
+local scan_found = false
+
+local try_af_rank = function(obj)
+	return obj:GetAfRank()
+end
+
+local try_visible = function(obj)
+	return obj:getVisible()
+end
+
+local function geiger_sec()
+	return (item_device and item_device.device_geiger) or "detector_geiger"
+end
+
+local function detector_rank(sec)
+	if sec == geiger_sec() or sec == "detector_radio" then
+		return nil
+	end
+	return DET_RANK[ini_sys:r_string_ex(sec, "class")]
+end
+
+local function is_fav(sec)
+	local sp = zzz_rax_sortingplus_mcm
+	return sp and sp.is_favorite and sp.is_favorite(sec) or false
+end
+
+local function consider_scanner(it, prio)
+	if not it then
+		return
+	end
+	local rank = detector_rank(it:section())
+	if not rank then
+		return
+	end
+	if rank > pick_rank or (rank == pick_rank and prio > pick_prio) then
+		pick_best = it
+		pick_rank = rank
+		pick_prio = prio
+	end
+end
+
+local function consider_ruck(_, it)
+	if not it then
+		return
+	end
+	consider_scanner(it, is_fav(it:section()) and PRIO_FAV or PRIO_RUCK)
+end
+
+local function find_scanner(actor)
+	pick_best = nil
+	pick_rank = 0
+	pick_prio = 0
+	for s = 1, SLOT_MAX do
+		consider_scanner(actor:item_in_slot(s), PRIO_SLOT)
+	end
+	if actor.iterate_ruck then
+		actor:iterate_ruck(consider_ruck)
+	else
+		actor:iterate_inventory(consider_ruck, nil)
+	end
+	return pick_best, pick_rank
+end
+
+local function scanner_radius(sec)
+	local r = ini_sys:r_float_ex(sec, "af_radius")
+	if not r or r <= 0 then
+		return FALLBACK_RADIUS
+	end
+	return r
+end
+
+local function scanner_sound_path(sec)
+	local path = ini_sys:r_string_ex(sec, "af_sound_1_")
+	if path and path ~= "" then
+		return path
+	end
+	return FALLBACK_SOUND
+end
+
+local function get_sound(path)
+	local snd = snd_cache[path]
+	if snd then
+		return snd
+	end
+	snd = sound_object(path)
+	snd_cache[path] = snd
+	level.prefetch_sound(path)
+	return snd
+end
+
+local function af_classes(det_sec)
+	local set = af_class_cache[det_sec]
+	if set then
+		return set
+	end
+	set = {}
+	for i = 1, 80 do
+		local s = ini_sys:r_string_ex(det_sec, "af_class_" .. i)
+		if not s or s == "" then
+			break
+		end
+		set[s] = true
+	end
+	af_class_cache[det_sec] = set
+	return set
+end
+
+local function log_art(kind, obj, parent, af_rank, reason)
+	if not dogma.log.logging() then
+		return
+	end
+	local pos = obj:position()
+	local vis_ok, vis = pcall(try_visible, obj)
+	local parent_s = "world"
+	if parent then
+		parent_s = string.format("%s:%s", parent:section() or "?", parent:id())
+	end
+	dogma.log.log(MOD_ID, string.format(
+		"%s %s id=%s dist=%.1f pos=%.1f,%.1f,%.1f parent=%s vis=%s rank=%s det=%s det_rank=%s%s",
+		kind,
+		obj:section(),
+		obj:id(),
+		scan_actor:position():distance_to(pos),
+		pos.x, pos.y, pos.z,
+		parent_s,
+		vis_ok and tostring(vis) or "?",
+		tostring(af_rank or "?"),
+		scan_det_sec,
+		tostring(scan_det_rank),
+		reason and (" why=" .. reason) or ""
+	))
+end
+
+local function on_near_artefact(obj)
+	if not IsArtefact(obj) then
+		return
+	end
+	-- Equipped detector UpdateAf skips anything with H_Parent.
+	local parent = obj:parent()
+	if parent then
+		if not scan_actor or parent:id() ~= scan_actor:id() then
+			log_art("skip", obj, parent, nil, "parent")
+		end
+		return
+	end
+	local sec = obj:section()
+	local ok, af_rank = pcall(try_af_rank, obj)
+	if not (ok and af_rank) then
+		af_rank = ini_sys:r_float_ex(sec, "af_rank") or 0
+	end
+	if not scan_af_set[sec] then
+		log_art("skip", obj, nil, af_rank, "class")
+		return
+	end
+	if af_rank > scan_det_rank then
+		log_art("skip", obj, nil, af_rank, "rank")
+		return
+	end
+	scan_found = true
+	log_art("hit", obj, nil, af_rank, nil)
+end
+
+local function artefact_nearby(actor, radius, det_sec, det_rank)
+	dogma.perf.start("detector_beeps", "artefact_nearby")
+	scan_actor = actor
+	scan_det_sec = det_sec
+	scan_det_rank = det_rank
+	scan_af_set = af_classes(det_sec)
+	scan_found = false
+	level.iterate_nearest(actor:position(), radius, on_near_artefact)
+	dogma.perf.stop()
+	return scan_found
+end
+
+local function play_beep(actor, path)
+	get_sound(path):play(actor, 0, sound_object.s2d)
+end
+
+local function hide_bip_icon(visual)
+	if not ORIG_BIP_GET then
+		return 0
+	end
+	if visual then
+		ORIG_BIP_GET(true)
+		return 0
+	end
+	return ORIG_BIP_GET(visual)
+end
+
+local function wrap_bip_icon()
+	if ORIG_BIP_GET then
+		return
+	end
+	local bip = rawget(_G, "grok_artefacts_bip")
+	if not (bip and type(bip.get_artefact) == "function") then
+		dogma.log.log(MOD_ID, "no grok artefact icon")
+		return
+	end
+	ORIG_BIP_GET = bip.get_artefact
+	bip.get_artefact = hide_bip_icon
+	dogma.log.log(MOD_ID, "hid grok artefact HUD icon")
+end
+
+local function on_update()
+	local now = time_global()
+	if now < next_scan then
+		return
+	end
+	next_scan = now + SCAN_MS
+
+	local actor = db.actor
+	if not actor then
+		return
+	end
+	if actor:active_detector() then
+		return
+	end
+
+	local scanner, det_rank = find_scanner(actor)
+	if not scanner then
+		return
+	end
+
+	local sec = scanner:section()
+	if not artefact_nearby(actor, scanner_radius(sec), sec, det_rank) then
+		return
+	end
+
+	play_beep(actor, scanner_sound_path(sec))
+end
+
+function on_game_start()
+	wrap_bip_icon()
+	RegisterScriptCallback("actor_on_update", on_update)
+end

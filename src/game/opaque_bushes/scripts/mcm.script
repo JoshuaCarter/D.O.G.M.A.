@@ -1,0 +1,20 @@
+-- game/opaque_bushes conf
+
+_G.dogma_game_opaque_bushes_conf = {
+	MOD_ID = "dogma/game/opaque_bushes",
+}
+
+function on_mcm_load(options)
+	dogma_mcm.attach(options, "game", "ui_mcm_menu_dogma_game", {
+		id = "opaque_bushes",
+		sh = true,
+		text = "ui_mcm_menu_dogma_game_opaque_bushes",
+		gr = dogma_mcm.with_header({
+			{
+				id = "page_description",
+				type = "desc",
+				text = "ui_mcm_dogma_game_opaque_bushes_page_description",
+			},
+		}),
+	})
+end

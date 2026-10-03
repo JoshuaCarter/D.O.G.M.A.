@@ -16,11 +16,7 @@ _G.__dogma_gui_hide_torn_off_patches = HOOK_STATE
 HOOK_STATE.wrapped = HOOK_STATE.wrapped or {}
 
 local function log(msg)
-	if CONFIG then
-		dogma.log.log(CONFIG.MOD_ID, tostring(msg))
-	else
-		printf("[dogma_gui_hide_torn_off_patches] %s", tostring(msg))
-	end
+	dogma.log.log(CONFIG.MOD_ID, tostring(msg))
 end
 
 -- Main-menu / faction-select cells pass a section table, not a live item.
@@ -79,24 +75,11 @@ local function wrap_functor(fn)
 		return fn
 	end
 	local wrapped = function(cell, obj, sec)
-		local tostr = tostring
 		local tbl = fn(cell, obj, sec)
 		if not tbl then
 			return
 		end
-		local torn = is_unpatched(obj)
-		local badge = is_badge(tbl, sec)
-		if torn or badge then
-			log(string.format(
-				"layer sec=%s layer=%s tex=%s torn=%s badge=%s",
-				tostr(sec),
-				tostr(tbl.icon_layer),
-				tostr(tbl.texture),
-				tostr(torn),
-				tostr(badge)
-			))
-		end
-		if torn and badge and dogma.mcm.bool(CONFIG.MOD_ID, "enabled", true) then
+		if is_unpatched(obj) and is_badge(tbl, sec) and dogma.mcm.bool(CONFIG.MOD_ID, "enabled", true) then
 			local grey = torn_badge(tbl)
 			if grey then
 				return grey
@@ -104,7 +87,6 @@ local function wrap_functor(fn)
 			-- Returning nil leaves the old badge up. A 0-size layer replaces it.
 			tbl.w = 0
 			tbl.h = 0
-			return tbl
 		end
 		return tbl
 	end
@@ -163,7 +145,7 @@ local function wrap_register()
 		log("rax_icon_layers.register missing")
 		return
 	end
-	-- rawget: the module's missing-key lookup hits _G, and that name is our HOOK_STATE table.
+	-- rawget: a missing field on these modules falls through to _G.
 	if rawget(layers, "_dogma_hide_torn") then
 		return
 	end
@@ -172,10 +154,18 @@ local function wrap_register()
 		return orig(name, wrap_functor(functor))
 	end
 	rawset(layers, "_dogma_hide_torn", true)
-	log("wrapped register")
 end
 
-local function update_shown_cells(cc)
+local function do_refresh()
+	local inv = GetActorMenu()
+	if not inv then
+		return
+	end
+	if inv.UpdateItems then
+		inv:UpdateItems()
+	end
+	-- Equipped paper-doll is not in UpdateItems' bag list.
+	local cc = inv.CC and inv.CC["actor_equ"]
 	if not (cc and cc.cell) then
 		return
 	end
@@ -186,24 +176,8 @@ local function update_shown_cells(cc)
 	end
 end
 
-local function do_refresh()
-	local inv = GetActorMenu()
-	if not inv then
-		log("refresh skip: no inventory")
-		return
-	end
-	if inv.UpdateItems then
-		inv:UpdateItems()
-	end
-	-- Equipped paper-doll is not in UpdateItems' bag list.
-	local cc = inv.CC and inv.CC["actor_equ"]
-	update_shown_cells(cc)
-	log("refresh icons")
-end
-
 local function refresh_icons()
 	if dogma.status and dogma.status.is_inv_open and not dogma.status.is_inv_open() then
-		log("refresh skip: inventory closed")
 		return
 	end
 	local ok, err = pcall(do_refresh)
@@ -228,21 +202,18 @@ local function wrap_patch_action()
 	if owner and debug and debug.setupvalue and type(captured) == "function" and not HOOK_STATE.wrapped[captured] then
 		local wrapped_cap = function(obj)
 			captured(obj)
-			log("patch applied " .. tostring(obj and obj:section()))
 			refresh_icons()
 		end
 		debug.setupvalue(owner, idx, wrapped_cap)
 		HOOK_STATE.wrapped[captured] = true
 		HOOK_STATE.wrapped[wrapped_cap] = true
-		log("wrapped captured patch action")
 	end
 	gd.menu_patch_action = function(obj)
-		log("menu_patch_action " .. tostring(obj and obj:section()))
 		orig(obj)
 		refresh_icons()
 	end
 	rawset(gd, "_dogma_hide_torn", true)
-	log("wrapped menu_patch_action")
+	log("wrapped patch action captured=" .. tostring(type(captured) == "function"))
 end
 
 local function hook()
@@ -250,15 +221,14 @@ local function hook()
 	local add_layers = utils_ui and utils_ui.UICellItem and utils_ui.UICellItem.Add_Layers
 	local _, _, icon_layers = find_upvalue_deep(add_layers, "icon_layers")
 	local n = wrap_icon_layers(icon_layers)
-	log("hook functors=" .. tostring(n) .. " icon_layers=" .. tostring(icon_layers ~= nil))
+	if n > 0 then
+		log("hook functors=" .. tostring(n))
+	end
 	wrap_patch_action()
 end
 
 function on_game_start()
-	if CONFIG then
-		dogma.load(CONFIG.MOD_ID)
-	end
-	log("on_game_start")
+	dogma.load(CONFIG.MOD_ID)
 	hook()
 	RegisterScriptCallback("on_game_load", hook)
 end

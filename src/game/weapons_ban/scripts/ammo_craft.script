@@ -9,6 +9,11 @@
     per-round × dogma.db box. Orig collects full boxes; Craft drains
     that many rounds off those ids so spend matches the label.
 
+    Exo batteries (batteries_exo) use the same retint and spend.
+    GAMMA lists 2 gauss boxes (16 rounds). We require 4 rounds.
+    Only that slot is wiped, so copper / fasteners / scrap still
+    go through vanilla Craft.
+
     Built as zzzzzzzzzz_dogma_*_ammo_craft so on_game_start runs after
     zzzz_serious / zzzzz* / zzzzzzz_ workshop scripts.
 ]]
@@ -17,6 +22,10 @@ local CONFIG = _G.dogma_game_weapons_ban_conf
 local TAG = (CONFIG and CONFIG.MOD_ID or "dogma/game/weapons_ban"):gsub("/", "_")
 local HOOK = "_dogma_wb_ammo_craft"
 local POWDER_PER_MAX = 3
+local EXO_BATT_SEC = "batteries_exo"
+local EXO_GAUSS_SEC = "ammo_gauss"
+local EXO_GAUSS_NEED = 4
+local exo_gauss_logged = false
 
 local function log(msg, color)
     dogma.log.log(CONFIG.MOD_ID, tostring(msg), color)
@@ -164,6 +173,24 @@ local function retint_need(self, n, sec, need)
     utils_xml.set_icon(sec, not ok, self.itm_ico_temp[n], self.itm_ico[n])
 end
 
+-- Vanilla ANDs craft_allow inside UpdateItem before we rewrite need.
+-- A later ingredient's UpdateItem reads these flags again, so the
+-- gauss slot has to be true here or 4-7 rounds stays blocked.
+local function sync_craft_allow(self)
+    local allow = self.craft_allow
+    if not allow then
+        return
+    end
+    local ok = true
+    for i = 1, 4 do
+        if allow[i] == false then
+            ok = false
+            break
+        end
+    end
+    self.craft_allow_r = ok
+end
+
 -- Drain `need` rounds from orig's craft_item ids (stash+full boxes) then
 -- actor inventory. Do not release during iterate_inventory.
 local _grab_sec
@@ -302,6 +329,10 @@ local function patch()
         local out_box = (r and r._dogma_wb_box) or (row and row.box) or 0
         local need = (not result and n and sec and spec and out_box > 0)
             and ammo_need(spec, sec, n, out_box)
+        local exo_gauss = not result and out == EXO_BATT_SEC and sec == EXO_GAUSS_SEC
+        if not need and exo_gauss then
+            need = EXO_GAUSS_NEED
+        end
 
         local orig_amt = amount
         if need then
@@ -318,6 +349,17 @@ local function patch()
         end
 
         retint_need(self, n, sec, need)
+        if exo_gauss then
+            sync_craft_allow(self)
+            if not exo_gauss_logged then
+                exo_gauss_logged = true
+                log(string.format(
+                    "exo battery gauss need=%s allow=%s",
+                    need,
+                    tostring(self.craft_allow_r)
+                ))
+            end
+        end
         local cost = self._dogma_ammo_cost
         if not cost then
             cost = {}
@@ -331,29 +373,38 @@ local function patch()
             return orig_craft(self)
         end
         local cost = self._dogma_ammo_cost
-        local spent = false
         if cost then
+            local out = recipe_sec(selected_recipe(self)) or selected_out(self)
+            local exo = out == EXO_BATT_SEC
+            local exo_fail = false
             for i = 1, 4 do
                 local entry = cost[i]
                 if entry and entry.sec and entry.need then
-                    spend_ammo_rounds(
+                    local spent_ok = spend_ammo_rounds(
                         db.actor,
                         entry.sec,
                         entry.need,
                         self.craft_item and self.craft_item[i]
                     )
-                    spent = true
+                    -- Wipe only slots we paid for. Exo copper / fasteners /
+                    -- scrap stay so vanilla Craft still takes them.
+                    -- A failed exo spend must not wipe: vanilla would then
+                    -- create the battery without the gauss.
+                    if spent_ok or not exo then
+                        if self.craft_item then
+                            self.craft_item[i] = {}
+                            self.craft_item_remain[i] = {}
+                        end
+                        log(string.format("ammo spend wipe slot=%s %s", i, entry.sec), "gray")
+                    elseif not spent_ok then
+                        exo_fail = true
+                    end
                 end
             end
             self._dogma_ammo_cost = nil
-        end
-        -- Only wipe after we spent. Empty cost used to be truthy and
-        -- cleared craft_item so vanilla Craft created the output for free.
-        if spent and self.craft_item then
-            log("ammo spend, wipe craft_item")
-            for i = 1, 4 do
-                self.craft_item[i] = {}
-                self.craft_item_remain[i] = {}
+            if exo_fail then
+                log("exo gauss spend failed, skip craft", "red")
+                return
             end
         end
         return orig_craft(self)

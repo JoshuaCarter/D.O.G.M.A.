@@ -3,7 +3,7 @@
 
     LoadRecipes overwrites GAMMA slots for ammo recipes in dogma.db.craft.
     Casing/bullet 1 per round. Powder n from the dump, per round, capped
-    at 300% of casings (3/round). Cost = per-round × dogma.db box.
+    at 200% of casings (2/round). Cost = per-round × dogma.db box.
     Vanilla UpdateItem paints have / (part_box * amount). We let that
     (and nearby-stash wraps) count, then rewrite the need to
     per-round × dogma.db box. Orig collects full boxes; Craft drains
@@ -19,7 +19,7 @@
 local CONFIG = _G.dogma_game_weapons_ban_conf
 local TAG = (CONFIG and CONFIG.MOD_ID or "dogma/game/weapons_ban"):gsub("/", "_")
 local HOOK = "_dogma_wb_ammo_craft"
-local POWDER_PER_MAX = 3
+local POWDER_PER_MAX = 2
 local EXO_BATT_SEC = "batteries_exo"
 local EXO_GAUSS_SEC = "ammo_gauss"
 local EXO_CELL_SEC = "batteries_dead"

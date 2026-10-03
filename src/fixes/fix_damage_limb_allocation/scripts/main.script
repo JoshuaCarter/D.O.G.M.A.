@@ -1,0 +1,336 @@
+--[[
+	Damage Location Fix
+
+	Body Health System (Medik / Medications Balance / Voiced Actor) remaps hit
+	bones - notably a 25% chance that leg hits (including falls) jump to
+	torso/arms. Actor Damage Balancer also steals consecutive headshots.
+
+	This replaces only the hit→limb resolver (+ a thin recieved_damage wrap for
+	fall / unknown / whole-body special cases). Medik heal, HUD, and penalties
+	are untouched.
+]]
+
+-- Faithful bone → BHS limb. IDs from engine BoneID / stalker skeleton.
+local HITBOX = {
+	-- head
+	[14] = "head", -- bip01_neck
+	[15] = "head", -- bip01_head
+	[16] = "head", -- eye_left
+	[17] = "head", -- eye_right
+	[18] = "head", -- eyelid_1
+	[19] = "head", -- jaw_1
+	-- torso
+	[2] = "torso", -- bip01_pelvis
+	[11] = "torso", -- bip01_spine
+	[12] = "torso", -- bip01_spine1
+	[13] = "torso", -- bip01_spine2
+	-- left arm (+ typical finger ids)
+	[20] = "leftarm", -- bip01_l_clavicle
+	[21] = "leftarm", -- bip01_l_upperarm
+	[22] = "leftarm", -- bip01_l_forearm
+	[23] = "leftarm", -- bip01_l_hand
+	[24] = "leftarm",
+	[25] = "leftarm",
+	[26] = "leftarm",
+	[27] = "leftarm",
+	[28] = "leftarm",
+	[29] = "leftarm",
+	[30] = "leftarm",
+	[31] = "leftarm",
+	[32] = "leftarm",
+	-- right arm
+	[33] = "rightarm", -- bip01_r_clavicle
+	[34] = "rightarm", -- bip01_r_upperarm
+	[35] = "rightarm", -- bip01_r_forearm
+	[36] = "rightarm", -- bip01_r_hand
+	-- left leg / foot / toe
+	[3] = "leftleg", -- bip01_l_thigh
+	[4] = "leftleg", -- bip01_l_calf
+	[5] = "leftleg", -- bip01_l_foot
+	[6] = "leftleg", -- bip01_l_toe0
+	-- right leg / foot / toe
+	[7] = "rightleg", -- bip01_r_thigh
+	[8] = "rightleg", -- bip01_r_calf
+	[9] = "rightleg", -- bip01_r_foot
+	[10] = "rightleg", -- bip01_r_toe0
+}
+
+-- Representative bones used when we intentionally re-call BHS for a limb.
+local BONE_LEFT_LEG = 3
+local BONE_RIGHT_LEG = 7
+local BONES_ARMS_LEGS = { 20, 33, 3, 7 } -- LA, RA, LL, RL
+
+local function resolve_hitbox(bone_id)
+	return HITBOX[bone_id]
+end
+
+local function find_upvalue(fn, name)
+	if type(fn) ~= "function" or not debug or not debug.getupvalue then
+		return nil, nil
+	end
+	local i = 1
+	while true do
+		local n, v = debug.getupvalue(fn, i)
+		if not n then
+			return nil, nil
+		end
+		if n == name then
+			return i, v
+		end
+		i = i + 1
+	end
+end
+
+-- BHS limb points including head 2× and per-limb caps.
+local function bhs_limb_points(amount, limb, damagescale)
+	local d = math.ceil((amount * 100) / 11 * damagescale)
+	if limb == "head" then
+		d = math.ceil((amount * 2 * 100) / 11 * damagescale)
+		if d >= 8 then
+			d = 7
+		end
+		return d
+	end
+	if limb == "torso" and d >= 8 then
+		d = 7
+	end
+	if
+		(limb == "leftarm" or limb == "rightarm" or limb == "leftleg" or limb == "rightleg")
+		and d >= 4
+	then
+		d = 3
+	end
+	return d
+end
+
+-- Amount that ceils to exactly `pts` under BHS's non-head formula (no limb cap).
+-- Split by points, not hit power — halving amount and calling twice inflates via ceil.
+local function amount_for_limb_points(pts, damagescale)
+	if pts <= 0 or damagescale <= 0 then
+		return 0
+	end
+	return (pts - 0.01) * 11 / (100 * damagescale)
+end
+
+local function log_bhs_fix(ctx, stock_limb, fixed_limb, amount, damagescale)
+	local pts_before = bhs_limb_points(amount, stock_limb, damagescale)
+	local pts_after = bhs_limb_points(amount, fixed_limb, damagescale)
+	dogma.log.log("dogma/fixes/fix_damage_limb_allocation", string.format(
+		"limb damage fix (%s): %s %d pts -> %s %d pts (hit %.3f)",
+		ctx,
+		stock_limb,
+		pts_before,
+		fixed_limb,
+		pts_after,
+		amount
+	), "yellow")
+end
+
+-- ADB body-part multipliers (grok_actor_damage_balancer hitbox_mult).
+local HITBOX_MULT = {
+	head = 0.8,
+	torso = 0.9,
+	leftarm = 0.85,
+	rightarm = 0.85,
+	leftleg = 0.85,
+	rightleg = 0.85,
+}
+
+local function patch_bhs()
+	local bhs = rawget(_G, "zzz_player_injuries")
+	if not (bhs and type(bhs.recieved_damage) == "function") then
+		return false
+	end
+	if bhs.__dogma_damage_location_fix then
+		return true
+	end
+	if not (debug and debug.setupvalue) then
+		return false
+	end
+
+	local orig_rd = bhs.recieved_damage
+	local upvalue_owner = orig_rd
+	local last_idx = select(1, find_upvalue(upvalue_owner, "last_damaged_hitbox"))
+	if not last_idx and type(bhs.actor_on_hit_callback) == "function" then
+		upvalue_owner = bhs.actor_on_hit_callback
+		last_idx = select(1, find_upvalue(upvalue_owner, "last_damaged_hitbox"))
+	end
+	if not last_idx then
+		return false
+	end
+
+	local _, damagescale = find_upvalue(orig_rd, "damagescale")
+	if type(damagescale) ~= "number" then
+		damagescale = 0.85
+	end
+
+	-- Faithful bone → limb for normal hits.
+	bhs.actor_on_hit_callback = function(bone_id)
+		local part = resolve_hitbox(bone_id)
+		if part then
+			debug.setupvalue(upvalue_owner, last_idx, part)
+		end
+	end
+
+	bhs.recieved_damage = function(amount, bone_id)
+		-- Whole-body sentinel (rad / toxic anomalies). Never apply to limbs.
+		-- Pure hit.radiation also never reaches here via Actor Damage Balancer;
+		-- this covers bone_id 65535 if anything still forwards it.
+		local mrandom = math.random
+		if bone_id == 65535 then
+			local rand = mrandom(1, 5)
+			local stock_bone = 12
+			if rand == 4 then
+				stock_bone = 20
+			elseif rand == 5 then
+				stock_bone = 33
+			end
+			local stock_limb = HITBOX[stock_bone] or "torso"
+			local pts = bhs_limb_points(amount, stock_limb, damagescale)
+			dogma.log.log("dogma/fixes/fix_damage_limb_allocation", string.format(
+				"limb damage fix (whole-body): %s %d pts -> skipped (hit %.3f)",
+				stock_limb,
+				pts,
+				amount
+			), "yellow")
+			return
+		end
+
+		-- Fall / bottom-of-model: both legs, even split of BHS points (not hit
+		-- power — ceil-per-call would otherwise roughly double severity).
+		-- 1 BHS point → one random leg.
+		if bone_id == 0 then
+			local stock_limb = (mrandom(1, 2) == 1) and "leftleg" or "rightleg"
+			local pts = bhs_limb_points(amount, stock_limb, damagescale)
+			if pts <= 1 then
+				local leg = (stock_limb == "leftleg") and BONE_LEFT_LEG or BONE_RIGHT_LEG
+				return orig_rd(amount, leg)
+			end
+			local left_pts = math.floor(pts / 2)
+			local right_pts = pts - left_pts
+			dogma.log.log("dogma/fixes/fix_damage_limb_allocation", string.format(
+				"limb damage fix (fall): %s %d pts -> leftleg+rightleg %d pts (hit %.3f)",
+				stock_limb,
+				pts,
+				left_pts + right_pts,
+				amount
+			), "yellow")
+			if left_pts > 0 then
+				orig_rd(amount_for_limb_points(left_pts, damagescale), BONE_LEFT_LEG)
+			end
+			if right_pts > 0 then
+				orig_rd(amount_for_limb_points(right_pts, damagescale), BONE_RIGHT_LEG)
+			end
+			return
+		end
+
+		-- Unknown bone: arms + legs only. Split BHS points evenly when there
+		-- are enough for all four; otherwise one random limb from that pool.
+		if not HITBOX[bone_id] then
+			local pick = mrandom(1, 3)
+			local stock_bone = (pick == 1) and 35 or ((pick == 2) and 23 or 11)
+			local stock_limb = HITBOX[stock_bone]
+			local pts = bhs_limb_points(amount, stock_limb, damagescale)
+			local n = #BONES_ARMS_LEGS
+			if pts < n then
+				local fixed_bone = BONES_ARMS_LEGS[mrandom(1, n)]
+				local fixed_limb = HITBOX[fixed_bone]
+				if stock_limb ~= fixed_limb then
+					log_bhs_fix("unknown bone", stock_limb, fixed_limb, amount, damagescale)
+				end
+				return orig_rd(amount, fixed_bone)
+			end
+			local base = math.floor(pts / n)
+			local rem = pts - base * n
+			dogma.log.log("dogma/fixes/fix_damage_limb_allocation", string.format(
+				"limb damage fix (unknown bone): %s %d pts -> 4-way %d pts (hit %.3f)",
+				stock_limb,
+				pts,
+				pts,
+				amount
+			), "yellow")
+			for i = 1, n do
+				local share_pts = base + ((i <= rem) and 1 or 0)
+				if share_pts > 0 then
+					orig_rd(amount_for_limb_points(share_pts, damagescale), BONES_ARMS_LEGS[i])
+				end
+			end
+			return
+		end
+
+		local fixed = resolve_hitbox(bone_id)
+		if fixed == "leftleg" or fixed == "rightleg" then
+			if mrandom(1, 100) <= 25 then
+				local rand = mrandom(1, 3)
+				local stock_bone = (rand == 1) and 12 or ((rand == 2) and 20 or 33)
+				log_bhs_fix("leg hit", HITBOX[stock_bone], fixed, amount, damagescale)
+			end
+		elseif fixed == "leftarm" or fixed == "rightarm" then
+			if mrandom(1, 100) >= 92 then
+				log_bhs_fix("arm hit", "torso", fixed, amount, damagescale)
+			end
+		end
+
+		return orig_rd(amount, bone_id)
+	end
+
+	bhs.__dogma_damage_location_fix = true
+	return true
+end
+
+local BONE_TORSO = 12 -- bip01_spine1
+
+local function patch_adb()
+	local adb = rawget(_G, "grok_actor_damage_balancer")
+	if not (adb and type(adb.shit_booster) == "function") then
+		return false
+	end
+	if adb.__dogma_damage_location_fix then
+		return true
+	end
+
+	local orig = adb.shit_booster
+	local _, adb_hitboxes = find_upvalue(orig, "hitboxes")
+
+	adb.shit_booster = function(shit, bone_id, k_ap)
+		-- Stock ADB: no time window - just "was the previous processed hit a
+		-- head bone?" If yes, remap this hit (50% torso / 25% LA / 25% RA).
+		-- We keep that trigger; destination is always torso.
+		local prev = adb.previous_hitbox
+		if prev == nil then
+			prev = rawget(_G, "previous_hitbox")
+		end
+		if prev and adb_hitboxes and adb_hitboxes[prev] == "head" then
+			local rand = math.random(1, 100)
+			local stock_bone = (rand <= 50) and 12 or ((rand <= 75) and 21 or 34)
+			local stock_limb = adb_hitboxes[stock_bone] or "torso"
+			local mult_before = HITBOX_MULT[stock_limb] or 1
+			local mult_after = HITBOX_MULT.torso
+			dogma.log.log("dogma/fixes/fix_damage_limb_allocation", string.format(
+				"limb damage fix (adb head-chain): %s -> torso, power %.3f->%.3f",
+				stock_limb,
+				shit.power * mult_before,
+				shit.power * mult_after
+			), "yellow")
+			bone_id = BONE_TORSO
+		end
+		-- Clear so stock's own redirect does not also fire this call.
+		adb.previous_hitbox = nil
+		if rawget(_G, "previous_hitbox") ~= nil then
+			_G.previous_hitbox = nil
+		end
+		return orig(shit, bone_id, k_ap)
+	end
+	adb.__dogma_damage_location_fix = true
+	return true
+end
+
+local function apply()
+	patch_bhs()
+	patch_adb()
+end
+
+function on_game_start()
+	apply()
+	RegisterScriptCallback("actor_on_first_update", apply)
+end

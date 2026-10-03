@@ -1,0 +1,397 @@
+-- fixes/fix_system_keybinds_not_sticking conf
+--
+-- Rule: nothing should *feel* like a default bind except Exit → Escape.
+--
+-- Technical: default_controls.ltx is Exit-only (boot / Options→Default /
+-- cfg_save's leading `default_controls`). Full stock lists rewrite unbound
+-- keys back into user.ltx — Escape-unbind alone cannot stop that on boot.
+-- If another mod's stock default_controls.ltx wins the FS fight, unbound
+-- actions (arrow Turn Left/Right/etc.) still return on every launch because
+-- user.ltx only lists bound keys. Boot strip: unbind any ACTIONS entry that
+-- has no bind/bind_sec line in user.ltx (Accept path must not do this — the
+-- on-disk file is still pre-Apply).
+-- Functional: Escape unbinds in engine memory (UI-only "---" still left the
+-- old bind in cfg_save). Duplicate Controls rows on the same exe= are deduped
+-- by modxml_keybinds when a feature claims that action; unclaimed dupes remain.
+-- Also renames stock weapon Controls labels (see modxml_keybind_labels.script).
+
+_G.dogma_fixes_fix_system_keybinds_not_sticking_conf = {
+	MOD_ID = "dogma/fixes/fix_system_keybinds_not_sticking",
+	-- Console action → key_bindings field → EGameActions id fallback.
+	ACTIONS = {
+		{ "left", "kLEFT", 0 },
+		{ "right", "kRIGHT", 1 },
+		{ "up", "kUP", 2 },
+		{ "down", "kDOWN", 3 },
+		{ "jump", "kJUMP", 4 },
+		{ "crouch", "kCROUCH", 5 },
+		{ "accel", "kACCEL", 6 },
+		{ "sprint_toggle", "kSPRINT_TOGGLE", 7 },
+		{ "forward", "kFWD", 8 },
+		{ "back", "kBACK", 9 },
+		{ "lstrafe", "kL_STRAFE", 10 },
+		{ "rstrafe", "kR_STRAFE", 11 },
+		{ "llookout", "kL_LOOKOUT", 12 },
+		{ "rlookout", "kR_LOOKOUT", 13 },
+		{ "cam_1", "kCAM_1", 14 },
+		{ "cam_2", "kCAM_2", 15 },
+		{ "cam_3", "kCAM_3", 16 },
+		{ "cam_zoom_in", "kCAM_ZOOM_IN", 17 },
+		{ "cam_zoom_out", "kCAM_ZOOM_OUT", 18 },
+		{ "torch", "kTORCH", 19 },
+		{ "night_vision", "kNIGHT_VISION", 20 },
+		{ "show_detector", "kDETECTOR", 21 },
+		{ "wpn_1", "kWPN_1", 22 },
+		{ "wpn_2", "kWPN_2", 23 },
+		{ "wpn_3", "kWPN_3", 24 },
+		{ "wpn_4", "kWPN_4", 25 },
+		{ "wpn_5", "kWPN_5", 26 },
+		{ "wpn_6", "kWPN_6", 27 },
+		{ "wpn_next", "kWPN_NEXT", 29 },
+		{ "wpn_fire", "kWPN_FIRE", 30 },
+		{ "wpn_zoom", "kWPN_ZOOM", 31 },
+		{ "wpn_reload", "kWPN_RELOAD", 34 },
+		{ "wpn_func", "kWPN_FUNC", 35 },
+		{ "wpn_firemode_prev", "kWPN_FIREMODE_PREV", 36 },
+		{ "wpn_firemode_next", "kWPN_FIREMODE_NEXT", 37 },
+		{ "pause", "kPAUSE", 38 },
+		{ "drop", "kDROP", 39 },
+		{ "use", "kUSE", 40 },
+		{ "scores", "kSCORES", 41 },
+		{ "screenshot", "kSCREENSHOT", 44 },
+		{ "quit", "kQUIT", 45 },
+		{ "console", "kCONSOLE", 46 },
+		{ "inventory", "kINVENTORY", 47 },
+		{ "active_jobs", "kACTIVE_JOBS", 51 },
+		{ "next_slot", "kNEXT_SLOT", 57 },
+		{ "prev_slot", "kPREV_SLOT", 58 },
+		{ "quick_use_1", "kQUICK_USE_1", 61 },
+		{ "quick_use_2", "kQUICK_USE_2", 62 },
+		{ "quick_use_3", "kQUICK_USE_3", 63 },
+		{ "quick_use_4", "kQUICK_USE_4", 64 },
+		{ "quick_save", "kQUICK_SAVE", 65 },
+		{ "quick_load", "kQUICK_LOAD", 66 },
+		{ "custom1", "kCUSTOM1", 67 },
+		{ "custom2", "kCUSTOM2", 68 },
+		{ "custom3", "kCUSTOM3", 69 },
+		{ "custom4", "kCUSTOM4", 70 },
+		{ "custom5", "kCUSTOM5", 71 },
+		{ "custom6", "kCUSTOM6", 72 },
+		{ "custom7", "kCUSTOM7", 73 },
+		{ "custom8", "kCUSTOM8", 74 },
+		{ "custom9", "kCUSTOM9", 75 },
+		{ "custom10", "kCUSTOM10", 76 },
+		{ "custom11", "kCUSTOM11", 77 },
+		{ "custom12", "kCUSTOM12", 78 },
+		{ "custom13", "kCUSTOM13", 79 },
+		{ "custom14", "kCUSTOM14", 80 },
+		{ "custom15", "kCUSTOM15", 81 },
+		{ "custom16", "kCUSTOM16", 82 },
+		{ "custom17", "kCUSTOM17", 83 },
+		{ "custom18", "kCUSTOM18", 84 },
+		{ "custom19", "kCUSTOM19", 85 },
+		{ "custom20", "kCUSTOM20", 86 },
+		{ "custom21", "kCUSTOM21", 87 },
+		{ "custom22", "kCUSTOM22", 88 },
+		{ "custom23", "kCUSTOM23", 89 },
+		{ "custom24", "kCUSTOM24", 90 },
+		{ "custom25", "kCUSTOM25", 91 },
+		{ "safemode", "kSAFEMODE", 92 },
+		{ "freelook", "kFREELOOK", 93 },
+	},
+}
+
+local CONFIG = _G.dogma_fixes_fix_system_keybinds_not_sticking_conf
+
+local function enabled()
+	return true
+end
+
+local function kb_id(entry)
+	local field = entry[2]
+	local fallback = entry[3]
+	if key_bindings and field and key_bindings[field] ~= nil then
+		return key_bindings[field]
+	end
+	return fallback
+end
+
+local try_engine_dik = function(bind, bind_to_dik) return bind_to_dik(bind) end
+
+local function engine_dik(bind, slot)
+	if bind == nil or not bind_to_dik then
+		return -1
+	end
+	local attempts
+	if slot == 1 then
+		attempts = { function() return bind_to_dik(bind, 1) end }
+	else
+		attempts = { function() return bind_to_dik(bind, 0) end }
+	end
+	for i = 1, #attempts do
+		local ok, dik = pcall(attempts[i])
+		if ok and type(dik) == "number" and dik ~= 0 then
+			return dik
+		end
+	end
+	if slot ~= 1 then
+		local ok, dik = pcall(try_engine_dik, bind, bind_to_dik)
+		if ok and type(dik) == "number" and dik ~= 0 then
+			return dik
+		end
+	end
+	return -1
+end
+
+local function ensure_quit_escape()
+	exec_console_cmd("bind quit kESCAPE")
+end
+
+local try_user_ltx_path = function(getFS)
+	return getFS():update_path("$app_data_root$", "user.ltx")
+end
+
+local function user_ltx_path()
+	if not (getFS and getFS().update_path) then
+		return nil
+	end
+	local ok, path = pcall(try_user_ltx_path, getFS)
+	if ok and path and path ~= "" then
+		return path
+	end
+	return nil
+end
+
+-- Actions that have an explicit bind / bind_sec line in the saved user.ltx.
+-- cfg_save never writes unbound keys, so missing here means "stay unbound".
+local function saved_bind_actions()
+	local path = user_ltx_path()
+	if not path then
+		return nil
+	end
+	local f = io.open(path, "r")
+	if not f then
+		return nil
+	end
+	local saved = {}
+	for line in f:lines() do
+		local action = string.match(line, "^%s*bind_sec%s+(%S+)")
+			or string.match(line, "^%s*bind%s+(%S+)")
+		if action then
+			saved[action] = true
+		end
+	end
+	f:close()
+	return saved
+end
+
+-- Stock default_controls (when it wins over our Exit-only file) re-applies
+-- Turn Left/Right/Up/Down etc. on every launch. Clear anything the user did
+-- not persist — only safe once user.ltx is the source of truth (boot/load).
+local function strip_unsaved_defaults()
+	local saved = saved_bind_actions()
+	if not saved or not saved.quit then
+		return
+	end
+	for i = 1, #CONFIG.ACTIONS do
+		local action = CONFIG.ACTIONS[i][1]
+		if action ~= "quit" and not saved[action] then
+			exec_console_cmd("unbind " .. action)
+			exec_console_cmd("unbind_sec " .. action)
+		end
+	end
+end
+
+local function clear_escape_binds()
+	local esc = DIK_keys and DIK_keys.DIK_ESCAPE
+	if not esc then
+		ensure_quit_escape()
+		return
+	end
+	for i = 1, #CONFIG.ACTIONS do
+		local entry = CONFIG.ACTIONS[i]
+		local action = entry[1]
+		if action ~= "quit" then
+			local bind = kb_id(entry)
+			if bind ~= nil then
+				if engine_dik(bind, 0) == esc then
+					exec_console_cmd("unbind " .. action)
+				end
+				if engine_dik(bind, 1) == esc then
+					exec_console_cmd("unbind_sec " .. action)
+				end
+			end
+		end
+	end
+	ensure_quit_escape()
+end
+
+local function repair_keybinds()
+	if not enabled() then
+		return
+	end
+	clear_escape_binds()
+	ensure_quit_escape()
+end
+
+-- Boot / load only: strip stock leftovers, then Escape pin.
+local function repair_keybinds_boot()
+	if not enabled() then
+		return
+	end
+	strip_unsaved_defaults()
+	repair_keybinds()
+end
+
+CONFIG.enabled = enabled
+CONFIG.ensure_quit_escape = ensure_quit_escape
+CONFIG.clear_escape_binds = clear_escape_binds
+CONFIG.strip_unsaved_defaults = strip_unsaved_defaults
+CONFIG.repair_keybinds = repair_keybinds
+CONFIG.repair_keybinds_boot = repair_keybinds_boot
+
+--------------------------------------------------------------------------------
+-- ui_options hooks (Options → Controls → Keybinds)
+--------------------------------------------------------------------------------
+
+local STATE = _G.__dogma_fixes_fix_system_keybinds_not_sticking or {}
+_G.__dogma_fixes_fix_system_keybinds_not_sticking = STATE
+
+local function patch_ui_options()
+	local cls = ui_options and ui_options.UIOptions
+	if not (cls and cls.OnKeyboard and cls.On_Accept) then
+		return false
+	end
+	if STATE.wrap_keyboard and cls.OnKeyboard == STATE.wrap_keyboard then
+		return true
+	end
+
+	local base_keyboard = cls.OnKeyboard
+	local base_accept = cls.On_Accept
+	local base_default = cls.OnButton_Default
+
+	local function keybinds_page_open(self)
+		return self.Keybinds_Shown
+			and self.dlg_controls
+			and self.dlg_controls.IsShown
+			and self.dlg_controls:IsShown()
+	end
+
+	local function refresh_keybind_widgets()
+		if not COptionsManager then
+			return
+		end
+		local opt = COptionsManager()
+		opt:SetCurrentValues("key_binding")
+	end
+
+	-- C++ assigns Escape into the pending UI slot. Commit that to the engine,
+	-- then strip Escape from every non-quit action (unbinds the slot) and
+	-- refresh widgets + backups from engine so Apply/cfg_save see a real null.
+	-- UI-only "---" via conflict message left the old engine bind in memory,
+	-- so user.ltx kept lines like `bind cam_zoom_out kRBRACKET`.
+	local function escape_unbind_pending_slot()
+		if not COptionsManager then
+			return
+		end
+		local opt = COptionsManager()
+		opt:SaveValues("key_binding")
+		clear_escape_binds()
+		ensure_quit_escape()
+		opt:SetCurrentValues("key_binding")
+		opt:SaveBackupValues("key_binding")
+	end
+
+	local function wrap_keyboard(self, dik, keyboard_action)
+		if not enabled() then
+			return base_keyboard(self, dik, keyboard_action)
+		end
+
+		local res = CUIScriptWnd.OnKeyboard(self, dik, keyboard_action)
+		if keyboard_action == ui_events.WINDOW_KEY_PRESSED
+			and dik == DIK_keys.DIK_ESCAPE
+			and keybinds_page_open(self)
+		then
+			if res then
+				escape_unbind_pending_slot()
+				return true
+			end
+			self:OnButton_Cancel()
+			return res
+		end
+
+		if res == false and keyboard_action == ui_events.WINDOW_KEY_PRESSED
+			and dik == DIK_keys.DIK_ESCAPE
+		then
+			self:OnButton_Cancel()
+		end
+		return res
+	end
+
+	local function wrap_accept(self)
+		base_accept(self)
+		if enabled() then
+			repair_keybinds()
+			exec_console_cmd("cfg_save")
+		end
+	end
+
+	local function wrap_default(self)
+		base_default(self)
+		if enabled() then
+			-- Our default_controls.ltx is Exit-only; pin it and refresh UI.
+			ensure_quit_escape()
+			if keybinds_page_open(self) then
+				refresh_keybind_widgets()
+			end
+		end
+	end
+
+	cls.OnKeyboard = wrap_keyboard
+	cls.On_Accept = wrap_accept
+	if base_default then
+		cls.OnButton_Default = wrap_default
+	end
+	STATE.wrap_keyboard = wrap_keyboard
+	STATE.wrap_accept = wrap_accept
+	STATE.wrap_default = wrap_default
+	return true
+end
+
+CONFIG.patch_ui_options = patch_ui_options
+
+--[[
+	Keybinds Fix - MCM + main-menu ui_options patch.
+
+	Must live in *mcm.script: MCM loads those at the main menu.
+	Do not call ui_mcm.get / repair at top-level or inside on_mcm_load -
+	gather forbids it and a failed load corrupts later MCM Accept.
+]]
+
+local CONFIG = _G.dogma_fixes_fix_system_keybinds_not_sticking_conf
+
+local function patch_only()
+	if CONFIG.patch_ui_options then
+		CONFIG.patch_ui_options()
+	end
+end
+
+-- Top-level: patch Options UI only (no MCM getters).
+patch_only()
+
+function on_mcm_load(options)
+	patch_only()
+
+	dogma_mcm.attach(options, "fixes", "ui_mcm_menu_dogma_fixes", {
+		id = "fix_system_keybinds_not_sticking",
+		sh = true,
+		text = "ui_mcm_menu_dogma_fixes_fix_system_keybinds_not_sticking",
+		gr = dogma_mcm.with_header({
+			{
+				id = "page_description",
+				type = "desc",
+				text = "ui_mcm_dogma_fixes_fix_system_keybinds_not_sticking_page_description",
+			},
+		}),
+	})
+end

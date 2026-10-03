@@ -2,6 +2,7 @@
 
 _G.dogma_gui_hide_torn_off_patches_conf = {
 	MOD_ID = "dogma/gui/hide_torn_off_patches",
+	DEFAULTS = { enabled = true },
 }
 
 function on_mcm_load(options)
@@ -14,6 +15,13 @@ function on_mcm_load(options)
 				id = "page_description",
 				type = "desc",
 				text = "ui_mcm_dogma_gui_hide_torn_off_patches_page_description",
+			},
+			{
+				id = "enabled",
+				type = "check",
+				val = 1,
+				def = true,
+				hint = "dogma_gui_hide_torn_off_patches_enabled",
 			},
 		}),
 	})

@@ -1,9 +1,9 @@
 -- game/nvg_tweaks conf
--- Beef default gain step lives on Beef's MCM (override injects the slider).
 
 _G.dogma_game_nvg_tweaks_conf = {
 	MOD_ID = "dogma/game/nvg_tweaks",
 	DEFAULTS = {
+		sticks_after_load = true,
 		default_gain_step = 1,
 	},
 }
@@ -18,6 +18,23 @@ function on_mcm_load(options)
 				id = "page_description",
 				type = "desc",
 				text = "ui_mcm_dogma_game_nvg_tweaks_page_description",
+			},
+			{
+				id = "sticks_after_load",
+				type = "check",
+				val = 1,
+				def = true,
+				hint = "dogma_game_nvg_tweaks_sticks_after_load",
+			},
+			{
+				id = "default_gain_step",
+				type = "track",
+				val = 2,
+				min = 0,
+				max = 3,
+				step = 1,
+				def = 1,
+				hint = "dogma_game_nvg_tweaks_default_gain_step",
 			},
 		}),
 	})

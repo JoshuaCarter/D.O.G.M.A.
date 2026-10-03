@@ -221,6 +221,9 @@ local function hide_bip_icon(visual)
 	if not ORIG_BIP_GET then
 		return 0
 	end
+	if not dogma.mcm.bool(MOD_ID, "hide_icon", true) then
+		return ORIG_BIP_GET(visual)
+	end
 	if visual then
 		ORIG_BIP_GET(true)
 		return 0
@@ -243,6 +246,9 @@ local function wrap_bip_icon()
 end
 
 local function on_update()
+	if not dogma.mcm.bool(MOD_ID, "beep_holstered", true) then
+		return
+	end
 	local now = time_global()
 	if now < next_scan then
 		return

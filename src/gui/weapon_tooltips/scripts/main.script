@@ -1424,7 +1424,13 @@ local function on_option_change()
 	end
 
 	refresh_enhanced_stat_labels()
-	apply_standing_weapon_stats()
+	if not dogma.mcm.bool(CONFIG.MOD_ID, "enabled", true)
+		and ish_item_stats and ish_item_stats.override_stats_table
+	then
+		ish_item_stats.override_stats_table()
+	else
+		apply_standing_weapon_stats()
+	end
 	F.invalidate_hover_cache()
 
 	log_once("config", string.format(
@@ -3089,6 +3095,12 @@ local function uiinfo_init_hook(self, owner, delay)
 end
 
 local function uiinfo_update_hook(self, obj, sec, flags)
+	if not dogma.mcm.bool(CONFIG.MOD_ID, "enabled", true) then
+		if base_uiinfo_update then
+			return base_uiinfo_update(self, obj, sec, flags)
+		end
+		return
+	end
 	local tostr = tostring
 	dogma.perf.start("weapon_tooltips", "uiinfo_update")
 	apply_weapon_stats(CONFIG.loaded.custom_stats_tooltips)
@@ -3151,6 +3163,12 @@ local function uiinfo_update_hook(self, obj, sec, flags)
 end
 
 local function uiinfo_show_hook(self, state)
+	if not dogma.mcm.bool(CONFIG.MOD_ID, "enabled", true) then
+		if base_uiinfo_show then
+			return base_uiinfo_show(self, state)
+		end
+		return
+	end
 	-- Always stack before vanilla Show so the clamp sees the final dialog size.
 	if state then
 		layout_tooltip(self)
@@ -3223,7 +3241,9 @@ local function hook_stats_table_override()
 	local prev = ish_item_stats.override_stats_table
 	ish_item_stats.override_stats_table = function()
 		prev()
-		apply_standing_weapon_stats()
+		if dogma.mcm.bool(CONFIG.MOD_ID, "enabled", true) then
+			apply_standing_weapon_stats()
+		end
 		F.invalidate_hover_cache()
 	end
 	ish_item_stats.dogma_gui_weapon_tooltips_wrapped = true

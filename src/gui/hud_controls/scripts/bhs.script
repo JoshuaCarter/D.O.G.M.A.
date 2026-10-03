@@ -247,6 +247,10 @@ local function refresh_options()
 	L.show_when_temp_health = dogma.mcm.bool(CONFIG.MOD_ID, "show_when_temp_health", d.show_when_temp_health)
 	L.keep_showing_sec = clamp_int(dogma.mcm.int(CONFIG.MOD_ID, "keep_showing_sec", d.keep_showing_sec), 0, 10, d.keep_showing_sec)
 	L.hide_status_icons = dogma.mcm.bool(CONFIG.MOD_ID, "hide_status_icons", d.hide_status_icons)
+	if not dogma.mcm.bool(CONFIG.MOD_ID, "enabled", true) then
+		L.hide_body = false
+		L.hide_status_icons = false
+	end
 	L.key_icons = dogma.mcm.key(CONFIG.MOD_ID, "key_icons")
 	L.key_icons_modifier = dogma.mcm.int(CONFIG.MOD_ID, "key_icons_modifier", d.key_icons_modifier) or 0
 	L.icons_radiation = dogma.mcm.bool(CONFIG.MOD_ID, "icons_radiation", d.icons_radiation)

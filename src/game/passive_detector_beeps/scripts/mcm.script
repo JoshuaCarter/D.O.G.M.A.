@@ -2,6 +2,10 @@
 
 _G.dogma_game_passive_detector_beeps_conf = {
 	MOD_ID = "dogma/game/passive_detector_beeps",
+	DEFAULTS = {
+		beep_holstered = true,
+		hide_icon = true,
+	},
 }
 
 function on_mcm_load(options)
@@ -14,6 +18,20 @@ function on_mcm_load(options)
 				id = "page_description",
 				type = "desc",
 				text = "ui_mcm_dogma_game_passive_detector_beeps_page_description",
+			},
+			{
+				id = "beep_holstered",
+				type = "check",
+				val = 1,
+				def = true,
+				hint = "dogma_game_passive_detector_beeps_beep_holstered",
+			},
+			{
+				id = "hide_icon",
+				type = "check",
+				val = 1,
+				def = true,
+				hint = "dogma_game_passive_detector_beeps_hide_icon",
 			},
 		}),
 	})

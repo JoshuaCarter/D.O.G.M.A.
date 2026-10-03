@@ -20,18 +20,7 @@ local function log(msg)
 end
 
 local function read_offset()
-	if ui_mcm and ui_mcm.get and not (ui_mcm.is_gathering and ui_mcm.is_gathering()) then
-		for _, path in ipairs({
-			CONFIG.APM_OFFSET_PATH,
-			"ui_popup_messages/offset_x",
-		}) do
-			local ok, value = pcall(ui_mcm.get, path)
-			if ok and value ~= nil then
-				return tonumber(value) or 0
-			end
-		end
-	end
-	return CONFIG.loaded.offset_x or CONFIG.DEFAULTS.offset_x
+	return dogma.mcm.number(CONFIG.MOD_ID, "offset_x", CONFIG.DEFAULTS.offset_x)
 end
 
 local function on_option_change()
@@ -138,7 +127,7 @@ local function patch_qm()
 	UnregisterScriptCallback("actor_on_item_take", orig)
 
 	HOOK_STATE.wrapped = function(item)
-		if is_qm_dummy(item) then
+		if dogma.mcm.bool(CONFIG.MOD_ID, "hide_quick_melee", true) and is_qm_dummy(item) then
 			return
 		end
 		return orig(item)

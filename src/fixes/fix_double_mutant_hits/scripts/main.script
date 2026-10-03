@@ -4,14 +4,18 @@
 	If any mutant hits the actor twice within 500ms, the second hit is ignored.
 	Stops animation-skip / slope double-hits from applying twice.
 
-	Always on while installed. Broadened from Eroktics' chimera/lurker/snork fix
+	Broadened from Eroktics' chimera/lurker/snork fix
 	to all mutant attackers.
 ]]
 
+local CONFIG = _G.dogma_fixes_fix_double_mutant_hits_conf
 local last_hit_times = {}
 local DELAY_MS = 500
 
 local function actor_on_before_hit(s_hit, bone_id, flags)
+	if not dogma.mcm.bool(CONFIG.MOD_ID, "enabled", true) then
+		return
+	end
 	local draftsman = s_hit.draftsman
 	if not draftsman then
 		return

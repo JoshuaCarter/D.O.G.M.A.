@@ -280,6 +280,10 @@ local function load_opts()
 	L.companion_hp_show_below_pct = clamp_uint(dogma.mcm.uint(CONFIG.MOD_ID, "companion_hp_show_below_pct", d.companion_hp_show_below_pct), 100, d.companion_hp_show_below_pct)
 	L.companion_show_in_combat = dogma.mcm.bool(CONFIG.MOD_ID, "companion_show_in_combat", d.companion_show_in_combat)
 	L.companion_keep_showing_sec = clamp_uint(dogma.mcm.uint(CONFIG.MOD_ID, "companion_keep_showing_sec", d.companion_keep_showing_sec), 10, d.companion_keep_showing_sec)
+	if not dogma.mcm.bool(CONFIG.MOD_ID, "enabled", true) then
+		L.hide_minimap = false
+		L.hide_companion = false
+	end
 end
 
 local function apply_minimap()

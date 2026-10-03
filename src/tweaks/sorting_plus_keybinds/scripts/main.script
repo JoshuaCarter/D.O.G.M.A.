@@ -2,7 +2,7 @@
 	Better Favourites and Junk
 
 	MCM keybinds for SortingPlus fav/junk (unbound until set), and optional
-	profile persistence across new games (SortingPlus MCM toggles).
+	profile persistence across new games.
 ]]
 
 local CONFIG = _G.dogma_tweaks_sorting_plus_keybinds_conf
@@ -27,42 +27,20 @@ local function cfg()
 	return axr_main and axr_main.config
 end
 
-local function mcm_bool(path, default)
-	if not ui_mcm then
-		return default
-	end
-	local v = ui_mcm.get(path)
-	if v == nil then
-		return default
-	end
-	return v == true or v == 1
-end
-
-local function mcm_dik(path, fallback)
-	local v = ui_mcm and tonumber(ui_mcm.get(path))
-	if v == nil then
-		return fallback
-	end
-	if v == -1 then
-		return nil
-	end
-	return v
-end
-
 local function persist_fav()
-	return mcm_bool("SortingPlus/persist_favorites", true)
+	return dogma.mcm.bool(MOD_ID, "persist_favorites", true)
 end
 
 local function persist_junk()
-	return mcm_bool("SortingPlus/persist_junk", true)
+	return dogma.mcm.bool(MOD_ID, "persist_junk", true)
 end
 
 local function key_favorite()
-	return mcm_dik("SortingPlus/key_favorite", nil)
+	return dogma.mcm.key(MOD_ID, "key_favorite", -1)
 end
 
 local function key_junk()
-	return mcm_dik("SortingPlus/key_junk", nil)
+	return dogma.mcm.key(MOD_ID, "key_junk", -1)
 end
 
 local function profile_set(section, sec, on, mark)

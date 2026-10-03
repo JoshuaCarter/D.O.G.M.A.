@@ -4,6 +4,7 @@
 	Hides the dosimeter tip ("N mSv") that item_device shows on the Geiger key.
 ]]
 
+local CONFIG = _G.dogma_tweaks_hide_geiger_screen_text_conf
 local ORIG
 local rad_unit
 
@@ -19,7 +20,7 @@ local function is_msv_toast(text)
 end
 
 local actor_menu_set_msg = function(slot, text, ...)
-	if is_msv_toast(text) then
+	if dogma.mcm.bool(CONFIG.MOD_ID, "enabled", true) and is_msv_toast(text) then
 		return
 	end
 	return ORIG(slot, text, ...)

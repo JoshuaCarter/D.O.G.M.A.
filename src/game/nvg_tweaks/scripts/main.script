@@ -6,7 +6,7 @@
 	Stash wanted state on level change / save; re-apply on first update.
 
 	Gain: Beef keeps gain in nvg_gain_current, hardcoded to 1.0.
-	Short-press walks (max-min)/3 - rungs 0..3. default_gain_step on Beef's
+	Short-press walks (max-min)/3 - rungs 0..3. default_gain_step on our MCM.
 	MCM is that rung (stock = 1).
 ]]
 
@@ -24,12 +24,21 @@ local function nv_is_on()
 	return item_device and item_device.nv_state == true
 end
 
+local function sticks()
+	return dogma.mcm.bool(CONFIG.MOD_ID, "sticks_after_load", true)
+end
+
 local function stash()
+	if not sticks() then
+		want_on = false
+		return
+	end
 	want_on = nv_is_on()
 end
 
 local function restore()
-	if not want_on then
+	if not sticks() or not want_on then
+		want_on = false
 		return
 	end
 	want_on = false
@@ -59,13 +68,7 @@ local function find_upvalue(fn, target)
 end
 
 local function gain_step()
-	local step = CONFIG.DEFAULTS.default_gain_step
-	if z_beefs_nvgs_mcm and z_beefs_nvgs_mcm.get_config then
-		local value = z_beefs_nvgs_mcm.get_config("default_gain_step")
-		if value ~= nil then
-			step = value
-		end
-	end
+	local step = dogma.mcm.number(CONFIG.MOD_ID, "default_gain_step", CONFIG.DEFAULTS.default_gain_step)
 	step = math.floor((tonumber(step) or 0) + 0.5)
 	if step < 0 then
 		return 0
@@ -127,6 +130,10 @@ local function on_first_update()
 end
 
 local on_save_state = function(mdata)
+	if not sticks() then
+		mdata.dogma_game_nvg_sticks_after_load_on = false
+		return
+	end
 	mdata.dogma_game_nvg_sticks_after_load_on = nv_is_on() or want_on
 end
 

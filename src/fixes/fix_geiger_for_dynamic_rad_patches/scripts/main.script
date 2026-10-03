@@ -10,7 +10,12 @@
 	(Shift+Geiger still toggles body / environment).
 ]]
 
+local CONFIG = _G.dogma_fixes_fix_geiger_for_dynamic_rad_patches_conf
+
 local on_actor_on_first_update = function()
+	if not dogma.mcm.bool(CONFIG.MOD_ID, "env_mode", true) then
+		return
+	end
 	if item_device then
 		item_device.dosimeter_env_rads_mode = true
 	end

@@ -45,7 +45,7 @@ function on_game_start()
 			airborne = IsMoveState("mcJump", state) or IsMoveState("mcFall", state)
 		end
 
-		if slam and airborne then
+		if slam and airborne and dogma.mcm.bool(CONFIG.MOD_ID, "enabled", true) then
 			shit.power = 0
 			if flags then
 				flags.ret_value = false

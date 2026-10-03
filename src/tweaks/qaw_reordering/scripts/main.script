@@ -4,7 +4,7 @@
     Hold reorder key on a manual-tab wedge, move to another, release to move it.
     Items between the two slots shift.
     Optional: on save, write manual-tab slot order to the profile and apply
-    on load so new games keep it. Off by default. MCM under QAW -> Controls.
+    on load so new games keep it. Off by default.
 ]]
 
 local CONFIG = _G.dogma_tweaks_qaw_reordering_conf
@@ -234,35 +234,9 @@ local function clear_drag(gui)
     drag_tab = nil
 end
 
-local function read_mcm_num(path, fallback)
-    if ui_mcm and ui_mcm.get and not (ui_mcm.is_gathering and ui_mcm.is_gathering()) then
-        local ok, value = pcall(ui_mcm.get, path)
-        if ok and value ~= nil then
-            return tonumber(value) or fallback
-        end
-    end
-    return fallback
-end
-
-local function read_mcm_bool(path, fallback)
-    if ui_mcm and ui_mcm.get and not (ui_mcm.is_gathering and ui_mcm.is_gathering()) then
-        local ok, value = pcall(ui_mcm.get, path)
-        if ok and value ~= nil then
-            return value == true or value == 1
-        end
-    end
-    return fallback
-end
-
 local function on_option_change()
-    CONFIG.loaded.reorder_key = read_mcm_num(
-        CONFIG.QAW_REORDER_KEY_PATH,
-        CONFIG.loaded.reorder_key or 0
-    )
-    CONFIG.loaded.persist_slots = read_mcm_bool(
-        CONFIG.QAW_PERSIST_SLOTS_PATH,
-        CONFIG.loaded.persist_slots
-    )
+    CONFIG.loaded.reorder_key = dogma.mcm.key(CONFIG.MOD_ID, "reorder_key", -1) or 0
+    CONFIG.loaded.persist_slots = dogma.mcm.bool(CONFIG.MOD_ID, "persist_slots", false)
     log(string.format(
         "opts: reorder_key=%s persist_slots=%s",
         tostring(CONFIG.loaded.reorder_key),
@@ -290,6 +264,11 @@ local function wrap_gui(gui, qaw)
     function gui:UpdateCallback()
         if orig_update then
             orig_update(self)
+        end
+
+        if not dogma.mcm.bool(CONFIG.MOD_ID, "enabled", true) then
+            clear_drag(self)
+            return
         end
 
         local reorder_key = CONFIG.loaded.reorder_key

@@ -96,7 +96,7 @@ local function wrap_functor(fn)
 				tostr(badge)
 			))
 		end
-		if torn and badge then
+		if torn and badge and dogma.mcm.bool(CONFIG.MOD_ID, "enabled", true) then
 			return torn_badge(tbl)
 		end
 		return tbl

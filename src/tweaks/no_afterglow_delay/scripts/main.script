@@ -4,10 +4,14 @@
 	Grant it as soon as Mortal Sin ends so faction leaders offer Afterglow immediately.
 ]]
 
+local CONFIG = _G.dogma_tweaks_no_afterglow_delay_conf
 local MS_DONE = "mortal_sin_zone_hero"
 local OA_READY = "operation_afterglow_info_about_done"
 
 local function try_unlock_afterglow()
+	if not dogma.mcm.bool(CONFIG.MOD_ID, "enabled", true) then
+		return
+	end
 	if not db.actor then
 		return
 	end

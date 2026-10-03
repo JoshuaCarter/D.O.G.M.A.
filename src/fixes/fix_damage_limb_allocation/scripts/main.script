@@ -10,6 +10,12 @@
 	are untouched.
 ]]
 
+local MOD_ID = "dogma/fixes/fix_damage_limb_allocation"
+
+local function enabled()
+	return dogma.mcm.bool(MOD_ID, "enabled", true)
+end
+
 -- Faithful bone → BHS limb. IDs from engine BoneID / stalker skeleton.
 local HITBOX = {
 	-- head
@@ -165,7 +171,14 @@ local function patch_bhs()
 	end
 
 	-- Faithful bone → limb for normal hits.
+	local orig_hit = bhs.actor_on_hit_callback
 	bhs.actor_on_hit_callback = function(bone_id)
+		if not enabled() then
+			if orig_hit then
+				return orig_hit(bone_id)
+			end
+			return
+		end
 		local part = resolve_hitbox(bone_id)
 		if part then
 			debug.setupvalue(upvalue_owner, last_idx, part)
@@ -173,6 +186,9 @@ local function patch_bhs()
 	end
 
 	bhs.recieved_damage = function(amount, bone_id)
+		if not enabled() then
+			return orig_rd(amount, bone_id)
+		end
 		-- Whole-body sentinel (rad / toxic anomalies). Never apply to limbs.
 		-- Pure hit.radiation also never reaches here via Actor Damage Balancer;
 		-- this covers bone_id 65535 if anything still forwards it.
@@ -293,6 +309,9 @@ local function patch_adb()
 	local _, adb_hitboxes = find_upvalue(orig, "hitboxes")
 
 	adb.shit_booster = function(shit, bone_id, k_ap)
+		if not enabled() then
+			return orig(shit, bone_id, k_ap)
+		end
 		-- Stock ADB: no time window - just "was the previous processed hit a
 		-- head bone?" If yes, remap this hit (50% torso / 25% LA / 25% RA).
 		-- We keep that trigger; destination is always torso.

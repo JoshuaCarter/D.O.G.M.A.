@@ -9,6 +9,9 @@
     per-round × dogma.db box. Orig collects full boxes; Craft drains
     that many rounds off those ids so spend matches the label.
 
+    Exo batteries: the gauss slot is 1 box. A second recipe in
+    the same list swaps that slot for 16 headlamp batteries.
+
     Built as zzzzzzzzzz_dogma_*_ammo_craft so on_game_start runs after
     zzzz_serious / zzzzz* / zzzzzzz_ workshop scripts.
 ]]
@@ -17,6 +20,10 @@ local CONFIG = _G.dogma_game_weapons_ban_conf
 local TAG = (CONFIG and CONFIG.MOD_ID or "dogma/game/weapons_ban"):gsub("/", "_")
 local HOOK = "_dogma_wb_ammo_craft"
 local POWDER_PER_MAX = 3
+local EXO_BATT_SEC = "batteries_exo"
+local EXO_GAUSS_SEC = "ammo_gauss"
+local EXO_CELL_SEC = "batteries_dead"
+local EXO_CELL_NEED = 16
 
 local function log(msg, color)
     dogma.log.log(CONFIG.MOD_ID, tostring(msg), color)
@@ -75,6 +82,59 @@ local function part_per_round(spec, sec)
     return 1
 end
 
+-- Gauss amount is boxes. 1 box spends through vanilla Craft.
+-- Headlamp cells are batteries_dead, counted as items, so 16 is 16 cells.
+local function patch_exo_recipes(self)
+    if not (self and self.recipes) then
+        return
+    end
+    for _, list in pairs(self.recipes) do
+        if type(list) == "table" then
+            local extra = {}
+            for i = 1, #list do
+                local r = list[i]
+                if r and not r._dogma_exo_done and recipe_sec(r) == EXO_BATT_SEC then
+                    local gauss_i
+                    for s = 1, 4 do
+                        local slot = r[s]
+                        if slot and slot[1] == EXO_GAUSS_SEC then
+                            gauss_i = s
+                        end
+                    end
+                    if gauss_i then
+                        local was = r[gauss_i][2]
+                        r[gauss_i][2] = 1
+                        r._dogma_exo_done = true
+                        local dup = {
+                            sec = r.sec,
+                            tool = r.tool,
+                            rsp = r.rsp,
+                            _dogma_exo_done = true,
+                        }
+                        for s = 1, 4 do
+                            local slot = r[s]
+                            if slot then
+                                dup[s] = { slot[1], slot[2] }
+                            end
+                        end
+                        dup[gauss_i] = { EXO_CELL_SEC, EXO_CELL_NEED }
+                        extra[#extra + 1] = { i, dup }
+                        log(string.format(
+                            "exo recipe gauss boxes %s -> 1, alt %s x%s",
+                            tostring(was),
+                            EXO_CELL_SEC,
+                            EXO_CELL_NEED
+                        ), "gray")
+                    end
+                end
+            end
+            for n = #extra, 1, -1 do
+                table.insert(list, extra[n][1] + 1, extra[n][2])
+            end
+        end
+    end
+end
+
 -- After GAMMA LoadRecipes: overwrite slots for 3-part ammo dump recipes.
 local function apply_recipes(self)
     if not (self and self.recipes) then
@@ -111,6 +171,7 @@ local function apply_recipes(self)
             end
         end
     end
+    patch_exo_recipes(self)
 end
 
 local function selected_recipe(self)

@@ -1,7 +1,7 @@
 --[[
-	Escort Tweaks
+	Escort Tweaks - solo join
 
-	Solo: guide jobs + friend/paid hire - only the speaker joins.
+	Guide jobs + friend/paid hire: only the speaker joins.
 	- Offline squad mates are removed (they would pop in on accept).
 	- Online squad mates are moved to leftover squads (not deleted).
 	Hostage join and story/special companions (full story squads included) are untouched.
@@ -11,10 +11,6 @@
 	engine passes (npc, actor). Always resolve with dialogs.who_is_npc first -
 	gating on is_non_story(second_arg) before that skips the strip and the whole
 	squad joins.
-
-	Pay: restore Guide Tasks Fix leave/cancel - they walk, you don't get paid,
-	they don't take your wallet. Scrunkly's overlay recharged you and
-	hardcoded "You're paying me for wasting my time."
 ]]
 
 local CONFIG = _G.dogma_game_escort_tweaks_conf
@@ -28,12 +24,16 @@ local function log(msg)
 	end
 end
 
+local function solo_on()
+	return dogma.mcm.bool(CONFIG.MOD_ID, "solo", CONFIG.DEFAULTS.solo)
+end
+
 local function is_hostage(actor, npc)
 	local d = dialogs_axr_companion
 	return d and d.is_hostage_task_giver and d.is_hostage_task_giver(actor, npc)
 end
 
--- Story / special / unclassified → leave stock behaviour (full squads ok).
+-- Story / special / unclassified: leave stock behaviour (full squads ok).
 -- `npc` must already be the real NPC (who_is_npc), not a raw dialog speaker.
 local function is_hire_or_guide(mod, actor, npc)
 	if not (mod and mod.is_non_story) then
@@ -164,6 +164,9 @@ local function patch_solo(mod)
 	local orig_become = mod.become_actor_companion
 	if orig_become then
 		mod.become_actor_companion = function(first, second)
+			if not solo_on() then
+				return orig_become(first, second)
+			end
 			local npc = dialogs.who_is_npc(first, second)
 			-- Story squads usually use add_special_squad; if they hit this path,
 			-- is_non_story is false when the squad has a story id - leave intact.
@@ -177,6 +180,9 @@ local function patch_solo(mod)
 	local orig_room = mod.is_room_in_actor_squad
 	if orig_room then
 		mod.is_room_in_actor_squad = function(first, second)
+			if not solo_on() then
+				return orig_room(first, second)
+			end
 			local npc = dialogs.who_is_npc(first, second)
 			if not is_hire_or_guide(mod, db.actor or first, npc) then
 				return orig_room(first, second)
@@ -186,73 +192,7 @@ local function patch_solo(mod)
 	end
 
 	mod.__dogma_game_escort_tweaks_solo = true
-	log("patched " .. tostring(mod))
-end
-
-local function without_out_money(fn, ...)
-	local relocate = dialogs.relocate_money
-	dialogs.relocate_money = function(victim, num, typ)
-		if typ == "out" then
-			return
-		end
-		return relocate(victim, num, typ)
-	end
-	local ok, err = pcall(fn, ...)
-	dialogs.relocate_money = relocate
-	if not ok then
-		error(err)
-	end
-end
-
-local function leave_line()
-	return game.translate_string("st_jg_18")
-end
-
-local mod_get_phrase3 = function()
-	return leave_line()
-end
-
-local function patch_pay()
-	local mod = rawget(_G, "tasks_guide")
-	if not mod or mod.__dogma_game_escort_tweaks_pay then
-		return
-	end
-
-	-- Cancel dialog: original line, not st_jg_cancel / "taking that money"
-	mod.get_phrase3 = mod_get_phrase3
-
-	-- Dialog cancel: kick, no wallet take (stock fail(); Scrunkly omitted it)
-	local orig_fail = mod.fail
-	mod.fail = function(...)
-		if orig_fail then
-			without_out_money(orig_fail, ...)
-			return
-		end
-		game_statistics.increment_reputation(-500)
-		local npc = dialogs.who_is_npc(...)
-		if npc and axr_companions and axr_companions.remove_from_actor_squad then
-			utils_obj.execute_script_on_squad(npc, axr_companions.remove_from_actor_squad)
-		end
-	end
-
-	-- Late walk-off: same kick as fail(), original line, no wallet take
-	local orig_late = mod.fail_complete_late
-	if orig_late then
-		mod.fail_complete_late = function(...)
-			local send_tip = news_manager.send_tip
-			news_manager.send_tip = function(actor, _msg, timeout, sender, showtime, sender_id)
-				return send_tip(actor, leave_line(), timeout, sender, showtime, sender_id)
-			end
-			local ok, err = pcall(without_out_money, orig_late, ...)
-			news_manager.send_tip = send_tip
-			if not ok then
-				error(err)
-			end
-		end
-	end
-
-	mod.__dogma_game_escort_tweaks_pay = true
-	log("patched tasks_guide leave/cancel")
+	log("patched solo " .. tostring(mod))
 end
 
 local function patch_all()
@@ -260,12 +200,11 @@ local function patch_all()
 	if rawget(_G, "dialogs_axr_companion2") then
 		patch_solo(dialogs_axr_companion2)
 	end
-	patch_pay()
 end
 
 function on_game_start()
 	dogma.load(CONFIG.MOD_ID)
 	patch_all()
 	RegisterScriptCallback("on_game_load", patch_all)
-	log("ready")
+	log("solo ready")
 end

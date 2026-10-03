@@ -1,0 +1,110 @@
+--[[
+	Escort Tweaks - unpaid leave
+
+	Restore Guide Tasks Fix leave/cancel: they walk, you don't get paid,
+	they don't take your wallet. Scrunkly's overlay recharged you and
+	hardcoded "You're paying me for wasting my time."
+]]
+
+local CONFIG = _G.dogma_game_escort_tweaks_conf
+
+local function log(msg)
+	if dogma.log.logging() then
+		dogma.log.log(CONFIG.MOD_ID, tostring(msg))
+	end
+end
+
+local function unpaid_on()
+	return dogma.mcm.bool(CONFIG.MOD_ID, "unpaid", CONFIG.DEFAULTS.unpaid)
+end
+
+local function without_out_money(fn, ...)
+	local relocate = dialogs.relocate_money
+	dialogs.relocate_money = function(victim, num, typ)
+		if typ == "out" then
+			return
+		end
+		return relocate(victim, num, typ)
+	end
+	local ok, err = pcall(fn, ...)
+	dialogs.relocate_money = relocate
+	if not ok then
+		error(err)
+	end
+end
+
+local function leave_line()
+	return game.translate_string("st_dogma_game_escort_tweaks_leave")
+end
+
+local function mod_get_phrase3()
+	return leave_line()
+end
+
+local function patch_pay()
+	local mod = rawget(_G, "tasks_guide")
+	if not mod or mod.__dogma_game_escort_tweaks_pay then
+		return
+	end
+
+	local orig_phrase = mod.get_phrase3
+	-- Cancel dialog: our line, not st_jg_cancel / "taking that money"
+	mod.get_phrase3 = function(...)
+		if not unpaid_on() then
+			if orig_phrase then
+				return orig_phrase(...)
+			end
+			return
+		end
+		return mod_get_phrase3()
+	end
+
+	-- Dialog cancel: kick, no wallet take (stock fail(); Scrunkly omitted it)
+	local orig_fail = mod.fail
+	mod.fail = function(...)
+		if not unpaid_on() then
+			if orig_fail then
+				return orig_fail(...)
+			end
+			return
+		end
+		if orig_fail then
+			without_out_money(orig_fail, ...)
+			return
+		end
+		game_statistics.increment_reputation(-500)
+		local npc = dialogs.who_is_npc(...)
+		if npc and axr_companions and axr_companions.remove_from_actor_squad then
+			utils_obj.execute_script_on_squad(npc, axr_companions.remove_from_actor_squad)
+		end
+	end
+
+	-- Late walk-off: same kick as fail(), our line, no wallet take
+	local orig_late = mod.fail_complete_late
+	if orig_late then
+		mod.fail_complete_late = function(...)
+			if not unpaid_on() then
+				return orig_late(...)
+			end
+			local send_tip = news_manager.send_tip
+			news_manager.send_tip = function(actor, _msg, timeout, sender, showtime, sender_id)
+				return send_tip(actor, leave_line(), timeout, sender, showtime, sender_id)
+			end
+			local ok, err = pcall(without_out_money, orig_late, ...)
+			news_manager.send_tip = send_tip
+			if not ok then
+				error(err)
+			end
+		end
+	end
+
+	mod.__dogma_game_escort_tweaks_pay = true
+	log("patched tasks_guide leave/cancel")
+end
+
+function on_game_start()
+	dogma.load(CONFIG.MOD_ID)
+	patch_pay()
+	RegisterScriptCallback("on_game_load", patch_pay)
+	log("unpaid ready")
+end

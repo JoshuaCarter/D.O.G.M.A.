@@ -2,9 +2,16 @@
 
 _G.dogma_game_escort_tweaks_conf = {
 	MOD_ID = "dogma/game/escort_tweaks",
+	DEFAULTS = {
+		solo = true,
+		unpaid = true,
+		fanatic = true,
+	},
 }
 
 function on_mcm_load(options)
+	local CONFIG = _G.dogma_game_escort_tweaks_conf
+	local d = CONFIG.DEFAULTS
 	dogma_mcm.attach(options, "game", "ui_mcm_menu_dogma_game", {
 		id = "escort_tweaks",
 		sh = true,
@@ -14,6 +21,27 @@ function on_mcm_load(options)
 				id = "page_description",
 				type = "desc",
 				text = "ui_mcm_dogma_game_escort_tweaks_page_description",
+			},
+			{
+				id = "solo",
+				type = "check",
+				val = 1,
+				def = d.solo,
+				hint = "dogma_game_escort_tweaks_solo",
+			},
+			{
+				id = "unpaid",
+				type = "check",
+				val = 1,
+				def = d.unpaid,
+				hint = "dogma_game_escort_tweaks_unpaid",
+			},
+			{
+				id = "fanatic",
+				type = "check",
+				val = 1,
+				def = d.fanatic,
+				hint = "dogma_game_escort_tweaks_fanatic",
 			},
 		}),
 	})

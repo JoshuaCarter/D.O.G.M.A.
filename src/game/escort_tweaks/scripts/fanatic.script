@@ -1,5 +1,5 @@
 --[[
-	Fanatic Stays In Cordon
+	Escort Tweaks - Fanatic stays in Cordon
 
 	Training Day / Sid car-park help make Fanatic a companion. Stock training
 	join does not set companion_cannot_teleport, so axr_companions teleports him
@@ -11,7 +11,7 @@
 	  back to the rookie village smart.
 ]]
 
-local CONFIG = _G.dogma_tweaks_fanatic_stays_in_cordon_conf
+local CONFIG = _G.dogma_game_escort_tweaks_conf
 local xsquad = dogma.xlibs.xsquad
 local xlevel = dogma.xlibs.xlevel
 
@@ -31,6 +31,10 @@ local function log(msg)
 	if dogma.log.logging() then
 		dogma.log.log(CONFIG.MOD_ID, tostring(msg))
 	end
+end
+
+local function fanatic_on()
+	return dogma.mcm.bool(CONFIG.MOD_ID, "fanatic", CONFIG.DEFAULTS.fanatic)
 end
 
 local function is_fanat_squad(squad)
@@ -87,7 +91,7 @@ local function cancel_training_tasks()
 	end
 end
 
--- Stock remove_task_companion runs execute_script_on_squad → get_object_squad,
+-- Stock remove_task_companion runs execute_script_on_squad -> get_object_squad,
 -- which is whoever Fanatic is grouped with. Only strip HIS story squad.
 local function strip_companion_npc(id)
 	if not id then
@@ -140,6 +144,10 @@ local function send_fanat_to_village()
 end
 
 local function abandon_if_needed()
+	if not fanatic_on() then
+		pending = false
+		return
+	end
 	if not actor_off_cordon() then
 		pending = false
 		return
@@ -148,7 +156,7 @@ local function abandon_if_needed()
 	if not (pending or companion or has_training_task()) then
 		return
 	end
-	log("actor off Cordon — cancel Training Day")
+	log("actor off Cordon - cancel Training Day")
 	cancel_training_tasks()
 	if companion then
 		dismiss_fanat()
@@ -157,7 +165,7 @@ local function abandon_if_needed()
 	pending = false
 end
 
-local try_schedule_abandon = function()
+local function try_schedule_abandon()
 	local d = device()
 	if d and d.precache_frame and d.precache_frame > 1 then
 		return false
@@ -175,7 +183,7 @@ local function schedule_abandon()
 end
 
 local function on_level_changing()
-	if fanat_is_companion() then
+	if fanatic_on() and fanat_is_companion() then
 		pending = true
 	end
 end
@@ -184,22 +192,22 @@ local function patch_no_teleport()
 	if not (axr_companions and axr_companions.companion_squad_can_teleport) then
 		return false
 	end
-	if axr_companions.__dogma_fanatic_stays_in_cordon then
+	if axr_companions.__dogma_game_escort_tweaks_fanatic then
 		return true
 	end
 	local orig = axr_companions.companion_squad_can_teleport
 	axr_companions.companion_squad_can_teleport = function(squad)
-		if is_fanat_squad(squad) then
+		if fanatic_on() and is_fanat_squad(squad) then
 			return false
 		end
 		return orig(squad)
 	end
-	axr_companions.__dogma_fanatic_stays_in_cordon = true
+	axr_companions.__dogma_game_escort_tweaks_fanatic = true
 	log("patched companion_squad_can_teleport")
 	return true
 end
 
-local on_actor_on_first_update = function()
+local function on_actor_on_first_update()
 	patch_no_teleport()
 	schedule_abandon()
 end
@@ -210,4 +218,5 @@ function on_game_start()
 	RegisterScriptCallback("on_game_load", patch_no_teleport)
 	RegisterScriptCallback("on_level_changing", on_level_changing)
 	RegisterScriptCallback("actor_on_first_update", on_actor_on_first_update)
+	log("fanatic ready")
 end

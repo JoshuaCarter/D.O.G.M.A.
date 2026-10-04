@@ -665,11 +665,19 @@ local try_ammo_label = function(obj)
 	return obj:get_ammo_type()
 end
 
+local function is_melee_weapon(obj)
+	local sec = obj.section and obj:section()
+	if dogma.db.ready() then
+		return sec and dogma.db.is_melee(sec)
+	end
+	return clsid and obj.clsid and obj:clsid() == clsid.wpn_knife_s
+end
+
 local function ammo_label(obj)
 	if not obj then
 		return nil
 	end
-	if dogma.db.is_melee(obj:section()) then
+	if is_melee_weapon(obj) then
 		return nil
 	end
 	if not obj.get_ammo_type then

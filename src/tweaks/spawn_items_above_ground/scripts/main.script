@@ -53,6 +53,18 @@ local iterate_owners_anon = function(pos)
 	level.iterate_nearest(pos, OWNER_R, owner_near)
 end
 
+local function world_item(sec)
+	if dogma.db.ready() then
+		return dogma.db.get(sec) ~= nil
+	end
+	-- No catalog: inventory items have inv_name. Zones and NPCs do not.
+	if not (ini_sys and ini_sys.section_exist and ini_sys:section_exist(sec)) then
+		return false
+	end
+	local inv = ini_sys:r_string_ex(sec, "inv_name")
+	return inv ~= nil and inv ~= ""
+end
+
 local function server_object_on_register(se)
 	local h = CONFIG.loaded.height
 	if not (live and se and h and h > 0) then
@@ -63,7 +75,7 @@ local function server_object_on_register(se)
 		return
 	end
 	local ok, sec = pcall(try_server_object_on_register, se)
-	if not (ok and sec and dogma.db.get(sec)) then
+	if not (ok and sec and world_item(sec)) then
 		return
 	end
 	local p = se.position

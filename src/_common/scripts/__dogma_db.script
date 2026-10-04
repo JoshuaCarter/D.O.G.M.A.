@@ -419,6 +419,11 @@ function init()
     end
 end
 
+function ready()
+    init()
+    return loaded
+end
+
 local try_parent = function(ini, sec)
     return ini:r_string_ex(sec, "parent_section")
 end

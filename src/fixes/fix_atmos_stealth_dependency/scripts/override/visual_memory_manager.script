@@ -79,9 +79,24 @@ function get_visible_value(npc, who, time_delta, time_quant, luminocity, velocit
 	return step
 end
 
+local function unsilenced_gun(wpn)
+	local sec = wpn.section and wpn:section()
+	if dogma.db.ready() then
+		return sec and dogma.db.is_weapon(sec) and not dogma.db.is_melee(sec) and not wpn:weapon_is_silencer()
+	end
+	if clsid and wpn.clsid and wpn:clsid() == clsid.wpn_knife_s then
+		return false
+	end
+	-- Guns list ammo_class. Knives and bolted props do not.
+	if not (sec and ini_sys and ini_sys:r_string_ex(sec, "ammo_class")) then
+		return false
+	end
+	return not wpn:weapon_is_silencer()
+end
+
 function actor_on_weapon_fired()
 	local wpn = db.actor and db.actor:active_item()
-	if not wpn or not dogma.db.is_weapon(wpn:section()) or dogma.db.is_melee(wpn:section()) or wpn:weapon_is_silencer() then
+	if not wpn or not unsilenced_gun(wpn) then
 		return
 	end
 	pewpew = SHOT_ADD

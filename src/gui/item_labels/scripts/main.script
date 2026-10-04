@@ -115,7 +115,11 @@ local function can_pickup(obj)
 		return false
 	end
 	local sec = obj.section and obj:section()
-	if not sec or sec == "" or not dogma.db.get(sec) then
+	if not sec or sec == "" then
+		return false
+	end
+	-- Catalog skips junk sections. No db: any loose inventory item.
+	if dogma.db.ready() and not dogma.db.get(sec) then
 		return false
 	end
 	return section_can_take(sec)

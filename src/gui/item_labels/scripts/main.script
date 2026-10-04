@@ -74,6 +74,8 @@ local function pda_shown()
 	return pda and pda.IsShown and pda:IsShown()
 end
 
+-- row.name is UTF-8 from the db. This font is CP1251, so a Cyrillic
+-- letter draws as two glyphs. The string id is the same one inventory uses.
 local function item_name(sec)
 	local cached = name_cache[sec]
 	if cached then
@@ -81,8 +83,12 @@ local function item_name(sec)
 	end
 	local name = nil
 	local row = dogma.db.get(sec)
-	if row and row.name and row.name ~= "" then
-		name = row.name
+	local key = row and (row.pda_encyclopedia_name or row.displayName)
+	if key and key ~= "" and game.translate_string then
+		local s = game.translate_string(key)
+		if s and s ~= "" and s ~= key then
+			name = s
+		end
 	end
 	if (not name or name == "") and ui_item and ui_item.get_sec_name then
 		name = ui_item.get_sec_name(sec)

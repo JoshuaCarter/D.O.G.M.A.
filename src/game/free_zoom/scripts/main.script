@@ -4,7 +4,7 @@
 	Drivers → fov + hud_fov (shrink %: base * (1 - pct/100)):
 	  Free: both channels = free% (cleared on ADS enter; never while ADS)
 	  ADS world FOV: FOV zoom % (cap 15; skipped on magnified optical scopes)
-	  ADS HUD: Irons / Sights / Scopes % (caps 15 / 25 / 35)
+	  ADS HUD: Irons / Sights / Scopes % (caps 15 / 25 / 35). Alt-aim / laser uses Irons.
 	Optional peripheral DOF (SSFX ssfx_wpn_dof_*) while free-zoomed. ADS DoF is left to SSS.
 	Console fov snaps; we lerp live → target quickly. Free/ADS publish tgt FOVs to
 	_G.dogma_fov_tgt_free / _G.dogma_fov_tgt_ads; lerp clamps so zoom-out never
@@ -396,10 +396,22 @@ local function is_optical_ads()
 	return gun:IsZoomed() and gun:GetZoomType() == 0
 end
 
+-- Zoom type 1 is alt-aim (laser / canted). Grenade launcher is 2.
+local function alt_aim()
+	if not (wpn and wpn.cast_Weapon) then
+		return false
+	end
+	local gun = wpn:cast_Weapon()
+	if not (gun and gun.GetZoomType) then
+		return false
+	end
+	return gun:GetZoomType() == 1
+end
+
 -- Irons / Sight / Scope (Scope = optical magnified path; same gate as is_optical_ads).
--- Any attached optic is never irons.
+-- Alt-aim uses the irons zoom even when a sight or scope is mounted.
 local function optic_class()
-	if not scope_attached() then
+	if alt_aim() or not scope_attached() then
 		return "irons"
 	end
 	if is_optical_ads() then
@@ -589,7 +601,7 @@ zoom_diag = function(tag)
 end
 
 local function optic_key()
-	if not scope_attached() then
+	if alt_aim() or not scope_attached() then
 		return "irons"
 	end
 	return attached_scope_sec() or "scope"

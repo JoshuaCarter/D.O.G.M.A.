@@ -10,26 +10,6 @@ local function clamp_tier(t)
     return dogma.math.clamp(math.floor(t), 1, 5)
 end
 
--- Scrap bands: number is the minimum cost to enter that tier.
-local function cost_to_tier(cost, bands)
-    if not bands then
-        return 1
-    end
-    if cost >= bands[5] then
-        return 5
-    end
-    if cost >= bands[4] then
-        return 4
-    end
-    if cost >= bands[3] then
-        return 3
-    end
-    if cost >= bands[2] then
-        return 2
-    end
-    return 1
-end
-
 -- Stash bands: number is the max cost still in that tier. Above T5 stays T5.
 local function tier_by_max(cost, bands)
     if not (cost and bands) then
@@ -268,7 +248,6 @@ local function roll_ru_for_stash_tier(result_tier)
 end
 
 _G.dogma_game_weapons_ban_tiers = {
-    cost_to_tier = cost_to_tier,
     base_tier_for_stash = base_tier_for_stash,
     pick_category = pick_category,
     pick_tier = pick_tier,

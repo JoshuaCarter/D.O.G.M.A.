@@ -6,8 +6,6 @@ _G.dogma_game_weapons_ban_conf = {
 	DEFAULTS = {
 		extra_start_ammo_boxes = 5,
 		start_weapons_59_parts = true,
-		attachments_enabled = true,
-		pda_parts_tip = false,
 	},
 	loaded = {},
 }
@@ -23,9 +21,6 @@ function _G.dogma_game_weapons_ban_conf:load_mcm()
 	local id = self.MOD_ID
 	L.extra_start_ammo_boxes = dogma.mcm.int(id, "extra_start_ammo_boxes", D.extra_start_ammo_boxes)
 	L.start_weapons_59_parts = dogma.mcm.bool(id, "start_weapons_59_parts", D.start_weapons_59_parts)
-	L.attachments_enabled = dogma.mcm.bool(id, "attachments_enabled", D.attachments_enabled)
-	L.pda_parts_tip = dogma.mcm.bool(id, "pda_parts_tip", D.pda_parts_tip)
-	L.attach_debug_log = dogma.log.logging()
 end
 
 function on_mcm_load(options)
@@ -63,20 +58,6 @@ function on_mcm_load(options)
 				val = 1,
 				def = D.start_weapons_59_parts,
 				hint = "dogma_game_weapons_ban_start_weapons_59_parts",
-			},
-			{
-				id = "attachments_enabled",
-				type = "check",
-				val = 1,
-				def = D.attachments_enabled,
-				hint = "dogma_game_weapons_ban_attachments_enabled",
-			},
-			{
-				id = "pda_parts_tip",
-				type = "check",
-				val = 1,
-				def = D.pda_parts_tip,
-				hint = "dogma_game_weapons_ban_pda_parts_tip",
 			},
 		}),
 	})

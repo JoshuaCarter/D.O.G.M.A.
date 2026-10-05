@@ -210,7 +210,7 @@ end
 local function read_logging_enabled()
 	local mcm = rawget(_G, "__dogma_mcm")
 	if mcm and mcm.bool then
-		return mcm.bool(DEBUG_MOD, "perf_log", false)
+		return mcm.bool(DEBUG_MOD, "perf_log")
 	end
 	return false
 end
@@ -275,7 +275,7 @@ end
 local function default_threshold_us()
 	local mcm = rawget(_G, "__dogma_mcm")
 	if mcm and mcm.uint then
-		local us = mcm.uint(DEBUG_MOD, "perf_warn_threshold_us", 0)
+		local us = mcm.uint(DEBUG_MOD, "perf_warn_threshold_us")
 		if us > 0 then
 			return us
 		end

@@ -9,8 +9,8 @@ local defaults = {
 	["nvg_gain_min_mcm"] = 0.5,
 	["nvg_gain_offset_mcm"] = 1.0,
 	["nvg_washout_thresh_mcm"] = 0.1,
-	["nvg_view_through_scope_mcm"] = false,
-	["nvg_stays_pda_mcm"] = true,
+	["nvg_view_through_scope_mcm"] = true,
+	["nvg_stays_pda_mcm"] = false,
 	["shader_scope_compat"] = false,
 	["nvg_gen1_tubes_mcm"] = 1.0,
 	["nvg_gen2_tubes_mcm"] = 2.0,
@@ -79,18 +79,17 @@ function on_mcm_load()
 				step = 0.1,
 				def = defaults["nvg_washout_thresh_mcm"],
 			},
-			-- Stock Beef MCM uses def=true here (defaults table still has view_through=false for get_config).
 			{
 				id = "nvg_view_through_scope_mcm",
 				type = "check",
 				val = 1,
-				def = true,
+				def = defaults["nvg_view_through_scope_mcm"],
 			},
 			{
 				id = "nvg_stays_pda_mcm",
 				type = "check",
 				val = 1,
-				def = true,
+				def = defaults["nvg_stays_pda_mcm"],
 			},
 			{
 				id = "nvg_gen1_tubes_mcm",

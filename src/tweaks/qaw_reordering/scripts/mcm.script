@@ -4,7 +4,8 @@ _G.dogma_tweaks_qaw_reordering_conf = {
 	MOD_ID = "dogma/tweaks/qaw_reordering",
 	DEFAULTS = {
 		enabled = true,
-		reorder_key = -1,
+		-- DIK_LSHIFT
+		reorder_key = 42,
 		persist_slots = false,
 	},
 	loaded = {
@@ -15,6 +16,7 @@ _G.dogma_tweaks_qaw_reordering_conf = {
 }
 
 function on_mcm_load(options)
+	local CONFIG = _G.dogma_tweaks_qaw_reordering_conf
 	dogma_mcm.attach(options, "tweaks", "ui_mcm_menu_dogma_tweaks", {
 		id = "qaw_reordering",
 		sh = true,
@@ -36,7 +38,7 @@ function on_mcm_load(options)
 				id = "reorder_key",
 				type = "key_bind",
 				val = 2,
-				def = -1,
+				def = CONFIG.DEFAULTS.reorder_key,
 				hint = "dogma_qaw_reordering_key",
 			},
 			{

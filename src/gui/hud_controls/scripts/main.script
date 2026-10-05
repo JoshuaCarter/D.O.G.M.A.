@@ -14,7 +14,11 @@ local companion_show = false
 local companion_slots_hidden = false
 local companion_flash_until = 0
 local companion_cond_prev = false
+local companion_reason = ""
 local logged_missing = false
+local logged_no_list = false
+local logged_update_fail = false
+local orig_companion_update
 
 local map_desired = false
 
@@ -136,6 +140,31 @@ local function hide_slots(self)
 	end
 end
 
+local function companion_ids()
+	local axr = rawget(_G, "axr_companions")
+	if axr and axr.list_actor_squad_by_id then
+		return axr.list_actor_squad_by_id()
+	end
+	if not logged_no_list then
+		logged_no_list = true
+		log("companion squad list missing")
+	end
+	return nil
+end
+
+local function companion_npc(id)
+	local st = db.storage[id]
+	if st and st.object then
+		return st.object
+	end
+	if level and level.object_by_id then
+		return level.object_by_id(id)
+	end
+	return nil
+end
+
+-- "combat" is the actor being hunted (same flag as the rest of DOGMA).
+-- A companion with their own target still counts. Health is engine 0-1.
 local function companion_conditions(L)
 	if not L.companion_always_show then
 		return false
@@ -145,20 +174,24 @@ local function companion_conditions(L)
 	if hp_th <= 0 and not want_combat then
 		return false
 	end
-	local axr = rawget(_G, "axr_companions")
-	local clist = axr and axr.list_actor_squad_by_id and axr.list_actor_squad_by_id()
-	if not clist then
+	local clist = companion_ids()
+	if not (clist and clist[1]) then
 		return false
 	end
+	if want_combat and dogma.status and dogma.status.is_in_combat() then
+		return "combat"
+	end
 	for i = 1, #clist do
-		local st = db.storage[clist[i]]
-		local npc = st and st.object
+		local npc = companion_npc(clist[i])
 		if npc then
-			if hp_th > 0 and (npc.health or 0) * 100 < hp_th then
-				return true
+			if hp_th > 0 then
+				local hp = npc.health
+				if type(hp) == "number" and hp * 100 < hp_th then
+					return "hp"
+				end
 			end
 			if want_combat and npc.best_enemy and npc:best_enemy() then
-				return true
+				return "enemy"
 			end
 		end
 	end
@@ -168,6 +201,7 @@ end
 local function companion_want()
 	local L = CONFIG.loaded
 	if not L.hide_companion then
+		companion_reason = "unhidden"
 		return true
 	end
 	local now = time_global()
@@ -181,8 +215,21 @@ local function companion_want()
 			end
 		end
 	end
-	companion_cond_prev = cond
-	return cond or hold_key(L.companion_key, L.companion_modifier) or companion_flash_until > now
+	companion_cond_prev = cond and true or false
+	if cond then
+		companion_reason = cond
+		return true
+	end
+	if hold_key(L.companion_key, L.companion_modifier) then
+		companion_reason = "hold"
+		return true
+	end
+	if companion_flash_until > now then
+		companion_reason = "keep"
+		return true
+	end
+	companion_reason = ""
+	return false
 end
 
 -- Slots only. Never dialog:Show(false) - stock never turns that back on.
@@ -191,6 +238,9 @@ local function apply_companion()
 	local h = companion_hud()
 	local changed = want ~= companion_show
 	companion_show = want
+	if changed then
+		log(want and ("companion bars on " .. companion_reason) or "companion bars off")
+	end
 	if not h then
 		return
 	end
@@ -218,6 +268,38 @@ local function companion_class()
 	return axr and axr.UICompanionList
 end
 
+-- Scope zoom makes the stock list hide itself. Lift that only for this
+-- Update so combat bars can show while ADS. Inventory and dialog still hide them.
+local function companion_update(self, ...)
+	local main = rawget(_G, "axr_main")
+	local lift = companion_show and main or false
+	local binoc, scope
+	if lift then
+		binoc = main.binoc_is_zoomed
+		scope = main.scoped_weapon_is_zoomed
+		main.binoc_is_zoomed = false
+		main.scoped_weapon_is_zoomed = false
+	end
+	local ok, err = true, nil
+	if orig_companion_update then
+		ok, err = pcall(orig_companion_update, self, ...)
+	end
+	if lift then
+		main.binoc_is_zoomed = binoc
+		main.scoped_weapon_is_zoomed = scope
+	end
+	if not ok then
+		if not logged_update_fail then
+			logged_update_fail = true
+			log("companion update failed " .. tostring(err))
+		end
+		return
+	end
+	if not companion_show then
+		hide_slots(self)
+	end
+end
+
 local function patch_companion()
 	local cls = companion_class()
 	if not cls then
@@ -241,14 +323,9 @@ local function patch_companion()
 		end
 	end
 
-	local orig_update = cls.Update
-	if orig_update then
-		cls.Update = function(self, ...)
-			orig_update(self, ...)
-			if not companion_show then
-				hide_slots(self)
-			end
-		end
+	orig_companion_update = cls.Update
+	if orig_companion_update then
+		cls.Update = companion_update
 	end
 
 	cls[FLAG] = true
@@ -329,6 +406,8 @@ function on_game_start()
 	load_opts()
 	reset()
 	logged_missing = false
+	logged_no_list = false
+	logged_update_fail = false
 	patch_companion()
 	RegisterScriptCallback("actor_on_first_update", on_actor_on_first_update)
 	RegisterScriptCallback("on_option_change", on_option_change)

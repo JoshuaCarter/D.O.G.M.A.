@@ -381,7 +381,49 @@ local function scope_attached()
 	return false
 end
 
--- 3DSS optical ADS: scopes / engine own FOV - we never write console FOV.
+-- Engine owns the ADS picture when scope_zoom_factor > 0 (camera FOV = factor * 0.75)
+-- or scope_lense_fov > 0.005 (3DSS lens scales with console fov).
+-- A baked red dot is still IsScopeAttached (scope_status = 1) with both at 0,
+-- and the camera uses console fov, so world FOV zoom still applies.
+local LENS_FOV_MIN = 0.005
+local logged_dot_sec = nil
+
+local function scope_owns_world_fov()
+	local sec = active_item_sec()
+	if not (sec and ini_sys and ini_sys.r_float_ex) then
+		return true
+	end
+	local lens = ini_sys:r_float_ex(sec, "scope_lense_fov")
+	if type(lens) == "number" and lens > LENS_FOV_MIN then
+		return true
+	end
+	local zoom_sec = sec
+	local gun = wpn and wpn.cast_Weapon and wpn:cast_Weapon()
+	if gun and gun.GetScopeName then
+		local name = gun:GetScopeName()
+		if type(name) == "string" and name ~= "" then
+			zoom_sec = name
+		end
+	end
+	local zf = ini_sys:r_float_ex(zoom_sec, "scope_zoom_factor")
+	if zf == nil then
+		if logged_dot_sec ~= sec then
+			logged_dot_sec = sec
+			logf("fov zoom: scope_zoom_factor missing, optic keeps FOV wpn=%s read=%s", sec, zoom_sec)
+		end
+		return true
+	end
+	if zf > 0 then
+		return true
+	end
+	if logged_dot_sec ~= sec then
+		logged_dot_sec = sec
+		logf("fov zoom: optic has no magnification, world FOV applies wpn=%s", sec)
+	end
+	return false
+end
+
+-- 3DSS optical ADS: magnified scopes own FOV - we never write console FOV.
 local function is_optical_ads()
 	if not (wpn and wpn.cast_Weapon and z_3d_scopes) then
 		return false
@@ -393,7 +435,10 @@ local function is_optical_ads()
 	if not (gun and gun.IsScopeAttached and gun:IsScopeAttached()) then
 		return false
 	end
-	return gun:IsZoomed() and gun:GetZoomType() == 0
+	if not (gun:IsZoomed() and gun:GetZoomType() == 0) then
+		return false
+	end
+	return scope_owns_world_fov()
 end
 
 -- Zoom type 1 is alt-aim (laser / canted). Grenade launcher is 2.

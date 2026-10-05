@@ -1,20 +1,25 @@
 --[[
 	Safe Spawn
 
-	On level load (actor_on_first_update) and same-map Fair Fast Travel
-	(on_before_fast_travel + dest.online): NPCs stop treating the actor and
-	companions as enemies (on_enemy_eval). Online companions are switched
-	offline so mutants cannot aggro them either. Companion combat orders
-	are never rewritten. When the grace ends they teleport near the actor
-	(walkable verts, not stacked on the actor or each other).
+	Arms on the first actor update after a game load, and on the first
+	update after Fair Fast Travel (the teleport has already moved the
+	actor). Clears STYPE_VISIBLEFORAI on the actor so sight queries
+	skip them, and puts the flag back when the grace ends. Hits that
+	already landed are undone (actor_on_before_hit). Online companions
+	are switched offline so mutants cannot aggro them either. Companion
+	combat orders are never rewritten. When the grace ends they teleport
+	near the actor (walkable verts, not stacked on the actor or each
+	other).
 
-	Ends after duration_sec, or when the actor moves or fires.
+	Ends after duration_sec of unpaused time, or when the actor moves or fires.
 ]]
 
 local CONFIG = _G.dogma_game_safe_spawn_conf
 local xsquad = dogma.xlibs.xsquad
 
 local MOVE_M = 5
+local MAX_DT_MS = 1000 -- a longer gap is a pause or a stall, not grace time
+local AI_BIT = 8 -- STYPE_VISIBLEFORAI (1 << 3)
 local PULL_MIN_M = 0.5
 local PULL_RINGS = { 1, 2, 3 }
 local PULL_XZ = {
@@ -26,12 +31,20 @@ local HUD_STATIC = "dogma_game_safe_spawn_prompt"
 local HUD_FMT = "st_dogma_game_safe_spawn_visible"
 
 local active = false
-local until_ms = 0
+local left_ms = 0
+local pause_held = false
 local origin = nil
 local actor_id = nil
 local quiet = {}
 local hidden = {}
 local shown_sec = nil
+local arm_pending = false
+local arm_why = nil
+local logged_hit = false
+local hud_fail_logged = false
+local safe_hp = nil
+local sight_off = false
+local sight_fail = false
 
 local hud_get_anon = function(get_hud)
 	return get_hud()
@@ -72,11 +85,11 @@ local hud_hide_anon = function(hud, name)
 end
 
 local function world_hud()
-	if not (db.actor and get_hud and _G.dogma_game_safe_spawn_xml) then
+	if not (db.actor and get_hud) then
 		return nil
 	end
 	local ok, hud = pcall(hud_get_anon, get_hud)
-	if ok and hud then
+	if ok and hud and hud.AddCustomStatic then
 		return hud
 	end
 	return nil
@@ -94,31 +107,52 @@ local function hide_hud()
 end
 
 local function show_hud(sec)
-	if shown_sec == sec then
-		return
-	end
 	local hud = world_hud()
 	if not hud then
+		if not hud_fail_logged then
+			hud_fail_logged = true
+			log("prompt skip no hud")
+		end
 		return
 	end
-	local ok, cs = pcall(hud_cs_anon, hud, HUD_STATIC)
-	if not (ok and cs) then
+	local cs = hud.GetCustomStatic and hud:GetCustomStatic(HUD_STATIC)
+	if not cs then
+		local ok
+		ok, cs = pcall(hud_cs_anon, hud, HUD_STATIC)
+		if not (ok and cs) then
+			if not hud_fail_logged then
+				hud_fail_logged = true
+				log("prompt skip add fail")
+			end
+			return
+		end
+		shown_sec = nil
+	end
+	if shown_sec == sec then
 		return
 	end
 	local wok, wnd = pcall(hud_wnd_anon, cs)
 	if not (wok and wnd) then
+		shown_sec = nil
 		return
 	end
 	local fmt = game.translate_string(HUD_FMT)
 	if not fmt or fmt == HUD_FMT then
 		fmt = "Visible in %s"
 	end
-	pcall(hud_set_anon, wnd, string.format(fmt, tostring(sec)))
+	local sok = pcall(hud_set_anon, wnd, string.format(fmt, tostring(sec)))
+	if not sok then
+		shown_sec = nil
+		return
+	end
+	if not shown_sec then
+		log("prompt on")
+	end
 	shown_sec = sec
 end
 
 local function update_hud()
-	local left = until_ms - time_global()
+	local left = left_ms
 	if left < 0 then
 		left = 0
 	end
@@ -294,6 +328,47 @@ local function show_companions()
 	clear_quiet()
 end
 
+local function ai_bit_on(t)
+	return math.floor(t / AI_BIT) % 2 == 1
+end
+
+-- Vision frustum, stalker touch, and enemy selection all require this bit.
+-- The rendered model is not what they test.
+local function hide_from_ai(actor)
+	if not (actor and actor.get_spatial_type and actor.set_spatial_type) then
+		if actor and not sight_fail then
+			sight_fail = true
+			log("sight hide failed")
+		end
+		return
+	end
+	local t = actor:get_spatial_type()
+	if type(t) ~= "number" or not ai_bit_on(t) then
+		return
+	end
+	actor:set_spatial_type(t - AI_BIT)
+	if not sight_off then
+		sight_off = true
+		log("hidden from sight")
+	end
+end
+
+local function show_to_ai(actor)
+	if not sight_off then
+		return
+	end
+	sight_off = false
+	if not (actor and actor.get_spatial_type and actor.set_spatial_type) then
+		log("sight flag left off")
+		return
+	end
+	local t = actor:get_spatial_type()
+	if type(t) == "number" and not ai_bit_on(t) then
+		actor:set_spatial_type(t + AI_BIT)
+	end
+	log("visible to sight")
+end
+
 local function stop(reason)
 	if not active then
 		hide_hud()
@@ -301,33 +376,54 @@ local function stop(reason)
 		return
 	end
 	active = false
-	until_ms = 0
+	show_to_ai(db.actor)
+	left_ms = 0
+	pause_held = false
 	origin = nil
 	actor_id = nil
+	safe_hp = nil
 	hide_hud()
 	show_companions()
 	log("off (" .. reason .. ")")
 end
 
-local function arm(pos)
+local function arm(why)
+	local tostr = tostring
 	local actor = dogma.sys.ready(CONFIG.MOD_ID, db, on_option_change)
 	if not (actor and actor:alive()) or not CONFIG.loaded.enabled then
+		show_to_ai(actor)
+		log("skip (" .. tostr(why) .. ")")
 		return
 	end
 	local sec = CONFIG.loaded.duration_sec
 	if not sec or sec <= 0 then
+		show_to_ai(actor)
+		log("skip (" .. tostr(why) .. ") duration")
 		return
 	end
-	if not pos then
-		pos = actor:position()
-	end
 	active = true
+	logged_hit = false
+	hud_fail_logged = false
+	shown_sec = nil
 	actor_id = actor:id()
-	origin = copy_pos(pos)
-	until_ms = time_global() + sec * 1000
+	safe_hp = actor.health
+	origin = copy_pos(actor:position())
+	left_ms = sec * 1000
+	pause_held = false
 	hide_companions()
+	hide_from_ai(actor)
 	update_hud()
-	log("on " .. tostring(sec) .. "s")
+	log("on " .. tostr(sec) .. "s (" .. tostr(why) .. ")")
+end
+
+local function queue_arm(why)
+	if arm_pending then
+		return
+	end
+	arm_pending = true
+	arm_why = why
+	log("queued (" .. tostring(why) .. ")")
+	hide_from_ai(db.actor)
 end
 
 local function on_enemy_eval(obj, enemy, flags)
@@ -349,7 +445,37 @@ local function on_enemy_eval(obj, enemy, flags)
 	end
 end
 
+-- Grok's balancer applies health inside this callback and zeros the engine hit,
+-- and callback order is unordered. Zero the hit, then put health back if it
+-- already landed.
+local function actor_on_before_hit(shit, _bone_id, flags)
+	if not active then
+		return
+	end
+	if shit then
+		shit.power = 0
+	end
+	if flags then
+		flags.ret_value = false
+	end
+	local actor = db.actor
+	if actor and safe_hp and actor.health and actor.health < safe_hp then
+		actor.health = safe_hp
+	end
+	if not logged_hit then
+		logged_hit = true
+		log("hit ignored")
+	end
+end
+
 local function actor_on_update()
+	if arm_pending then
+		local why = arm_why
+		arm_pending = false
+		arm_why = nil
+		arm(why or "spawn")
+		return
+	end
 	if not active then
 		return
 	end
@@ -358,7 +484,22 @@ local function actor_on_update()
 		stop("off")
 		return
 	end
-	if time_global() >= until_ms then
+	if device():is_paused() then
+		if not pause_held then
+			pause_held = true
+			log("timer held")
+		end
+		update_hud()
+		hide_companions()
+		hide_from_ai(actor)
+		return
+	end
+	pause_held = false
+	local dt = device().time_delta
+	if type(dt) == "number" and dt > 0 and dt <= MAX_DT_MS then
+		left_ms = left_ms - dt
+	end
+	if left_ms <= 0 then
 		stop("time")
 		return
 	end
@@ -370,8 +511,13 @@ local function actor_on_update()
 		stop("move")
 		return
 	end
+	local hp = actor.health
+	if hp and (not safe_hp or hp > safe_hp) then
+		safe_hp = hp
+	end
 	update_hud()
 	hide_companions()
+	hide_from_ai(actor)
 end
 
 local function actor_on_weapon_fired()
@@ -381,14 +527,22 @@ local function actor_on_weapon_fired()
 end
 
 local function actor_on_first_update()
-	arm()
+	queue_arm("spawn")
 end
 
+-- Before the teleport. Same-map travel does not reload scripts, so the
+-- next actor update arms at the new position. A level change reloads
+-- scripts; on_game_load queues again.
 local function on_before_fast_travel(trip)
-	if not (trip and trip.dest and trip.dest.online and trip.dpos) then
+	if not (trip and trip.dpos) then
 		return
 	end
-	arm(trip.dpos)
+	queue_arm("travel")
+end
+
+local function on_game_load()
+	stop("load")
+	queue_arm("load")
 end
 
 local function reset()
@@ -402,8 +556,9 @@ function on_game_start()
 	RegisterScriptCallback("on_enemy_eval", on_enemy_eval)
 	RegisterScriptCallback("actor_on_update", actor_on_update)
 	RegisterScriptCallback("actor_on_weapon_fired", actor_on_weapon_fired)
+	RegisterScriptCallback("actor_on_before_hit", actor_on_before_hit)
 	RegisterScriptCallback("actor_on_first_update", actor_on_first_update)
-	RegisterScriptCallback("on_game_load", reset)
+	RegisterScriptCallback("on_game_load", on_game_load)
 	RegisterScriptCallback("actor_on_net_destroy", reset)
 	if rawget(_G, "game_fast_travel") then
 		RegisterScriptCallback("on_before_fast_travel", on_before_fast_travel)

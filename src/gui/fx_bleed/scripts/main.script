@@ -2,7 +2,7 @@
 	Bleed FX
 
 	Corner blood HUD overlays from hud_blood_0..2 atlases.
-	n wound tiers → n random corners (no overlap, max 4).
+	n wound tiers → n corners, in order: top left, top right, bottom left, bottom right.
 ]]
 
 local CONFIG = _G.dogma_gui_fx_bleed_conf
@@ -107,16 +107,12 @@ local function corner_in_use(corner)
 end
 
 local function pick_corner()
-	local pool = {}
 	for _, corner in ipairs(CONFIG.CORNERS) do
 		if not corner_in_use(corner) then
-			pool[#pool + 1] = corner
+			return corner
 		end
 	end
-	if #pool == 0 then
-		return nil
-	end
-	return pool[math.random(#pool)]
+	return nil
 end
 
 local function steady_count()

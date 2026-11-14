@@ -220,7 +220,7 @@ local function column_header_text(tier)
 	if mode == "raw100" then
 		return string.format("%d", math.floor(tier.armor * 100))
 	end
-	return tier.name
+	return game.translate_string("ui_dogma_gui_weapon_tooltips_tier_" .. (tier.name:lower():gsub("%+", "_plus")))
 end
 
 -- Fixed Type-column short names (≤6 chars). Source: ammo_type_label_reference.md.
@@ -2165,11 +2165,11 @@ local function apply_column_headers(fields)
 		fields.title:SetTextColor(CLR.white)
 	end
 	if fields.grp_torso then
-		fields.grp_torso:SetText("vs Torso Armor")
+		fields.grp_torso:SetText(game.translate_string("ui_dogma_gui_weapon_tooltips_vs_torso"))
 		fields.grp_torso:SetTextColor(CLR.white)
 	end
 	if fields.grp_head then
-		fields.grp_head:SetText("vs Head Armor")
+		fields.grp_head:SetText(game.translate_string("ui_dogma_gui_weapon_tooltips_vs_head"))
 		fields.grp_head:SetTextColor(CLR.white)
 	end
 
@@ -2350,7 +2350,7 @@ local function apply_armor_column_layout(fields)
 	if fields.grp_torso then
 		if any_torso then
 			fields.grp_torso:Show(true)
-			fields.grp_torso:SetText("vs Torso Armor")
+			fields.grp_torso:SetText(game.translate_string("ui_dogma_gui_weapon_tooltips_vs_torso"))
 			set_wnd_x(fields.grp_torso, torso_x)
 		else
 			fields.grp_torso:Show(false)
@@ -2359,7 +2359,7 @@ local function apply_armor_column_layout(fields)
 	if fields.grp_head then
 		if any_head then
 			fields.grp_head:Show(true)
-			fields.grp_head:SetText("vs Head Armor")
+			fields.grp_head:SetText(game.translate_string("ui_dogma_gui_weapon_tooltips_vs_head"))
 			set_wnd_x(fields.grp_head, head_x)
 		else
 			fields.grp_head:Show(false)
@@ -2499,9 +2499,9 @@ local function populate_damage_fields(fields, data, panel_width)
 	if fields.title then
 		local more = tonumber(data.more) or 0
 		if more > 0 then
-			fields.title:SetText(string.format("DAMAGE (+%d)", more))
+			fields.title:SetText(string.format(game.translate_string("ui_dogma_gui_weapon_tooltips_hdr_damage_more"), more))
 		else
-			fields.title:SetText("DAMAGE")
+			fields.title:SetText(game.translate_string("ui_dogma_gui_weapon_tooltips_hdr_damage"))
 		end
 	end
 

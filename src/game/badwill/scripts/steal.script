@@ -431,7 +431,12 @@ local function owner_line(obj)
     local comm = xcreature.community(v.killer)
     local fact = comm and game.translate_string(comm) or comm
     if not fact or fact == "" then
-        return "Killed by: " .. name
+        local sid = "st_dogma_badwill_steal_killed_by_noface"
+        local sfmt = game.translate_string(sid)
+        if not sfmt or sfmt == "" or sfmt == sid then
+            sfmt = "Killed by: %s"
+        end
+        return string.format(sfmt, name)
     end
     local fmt = game.translate_string("st_dogma_badwill_steal_killed_by")
     if not fmt or fmt == "st_dogma_badwill_steal_killed_by" then

@@ -416,6 +416,11 @@ def main() -> int:
                 file=sys.stderr,
             )
         xml = render_xml(wizard, src, plugins)
+        ru_path = ROOT / "fomod" / "ru.json"
+        if ru_path.is_file():
+            from fomod_ru import apply_ru
+
+            xml = apply_ru(xml, ru_path)
     except (ValueError, RuntimeError) as exc:
         print(f"gen_fomod: {exc}", file=sys.stderr)
         return 1

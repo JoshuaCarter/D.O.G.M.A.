@@ -65,6 +65,35 @@ local LIMB_DISPLAY = {
 	["unknown"] = "Limb",
 }
 
+-- Russian/other-language support: English display words -> string table ids (fallback: the English word).
+local WORD_ID = {
+	["Head"] = "head", ["Torso"] = "torso", ["L Arm"] = "larm", ["R Arm"] = "rarm",
+	["L Leg"] = "lleg", ["R Leg"] = "rleg", ["Body"] = "body", ["Limb"] = "limb",
+	["Gun"] = "gun", ["Claws"] = "claws", ["Strike"] = "strike", ["Fire"] = "fire",
+	["Explosion"] = "explosion", ["Radiation"] = "radiation", ["Psy"] = "psy",
+	["Chemical"] = "chemical", ["Electric"] = "electric", ["Bleed"] = "bleed",
+	["Melee"] = "melee", ["Fall"] = "fall", ["random"] = "random",
+}
+local function W(s)
+	local id = WORD_ID[s]
+	if not id then
+		return s
+	end
+	id = "st_dogma_dr_w_" .. id
+	local t = game.translate_string(id)
+	if t and t ~= "" and t ~= id then
+		return t
+	end
+	return s
+end
+local function TS(id, fallback)
+	local t = game.translate_string(id)
+	if t and t ~= "" and t ~= id then
+		return t
+	end
+	return fallback
+end
+
 -- Anomaly community colors (same keys as stalker_id / PDA factions).
 local COMM_RGB = {
 	stalker = {255, 200, 60},
@@ -844,13 +873,13 @@ local function format_dot_section()
 		local amt = sums[key]
 		if amt and amt > 0 then
 			local info = type_info(key)
-			lines[#lines + 1] = rgb_code(info.rgb) .. info.label .. COL.white .. ": " .. tostring(pct_num(amt)) .. "%"
+			lines[#lines + 1] = rgb_code(info.rgb) .. W(info.label) .. COL.white .. ": " .. tostring(pct_num(amt)) .. "%"
 		end
 	end
 	if #lines == 0 then
 		return nil, nil
 	end
-	local header = COL.muted .. "Other damage over last " .. tostring(sec) .. " seconds:"
+	local header = COL.muted .. string.format(TS("st_dogma_dr_dot_header", "Other damage over last %s seconds:"), tostring(sec))
 	return header, lines
 end
 
@@ -890,7 +919,7 @@ local function format_hit_line(e)
 	local hp_after, body_dmg = body_after_and_dmg(e)
 	local hp_pct = pct_num(hp_after)
 	local body_pct = pct_num(body_dmg)
-	local limb = LIMB_DISPLAY[e.limb] or "?"
+	local limb = W(LIMB_DISPLAY[e.limb] or "?")
 	local limb_left
 	local limb_dmg
 	if e.limb_after ~= nil and e.limb_max then
@@ -905,7 +934,7 @@ local function format_hit_line(e)
 	end
 	local bone
 	if e.limb == "unknown" then
-		bone = "random"
+		bone = W("random")
 	elseif e.bone_name and e.bone_name ~= "" then
 		bone = e.bone_name
 	else
@@ -922,21 +951,21 @@ local function format_hit_line(e)
 
 	local limb_paren
 	if e.limb == "unknown" then
-		limb_paren = pct_txt(limb_left) .. ", random"
+		limb_paren = pct_txt(limb_left) .. ", " .. W("random")
 	else
 		limb_paren = pct_txt(limb_left) .. " " .. bone
 	end
 
 	local parts = {
-		COL.white .. "Body " .. COL.red .. dmg_txt(body_pct) .. COL.white .. " (" .. pct_txt(hp_pct) .. ")",
+		COL.white .. W("Body") .. " " .. COL.red .. dmg_txt(body_pct) .. COL.white .. " (" .. pct_txt(hp_pct) .. ")",
 		COL.white .. limb .. " " .. COL.orange .. dmg_txt(limb_dmg) .. COL.white .. " (" .. limb_paren .. ")",
-		fac .. (e.name or "?"),
+		fac .. W(e.name or "?"),
 	}
 	if e.faction and e.faction ~= "" then
 		parts[#parts + 1] = fac .. "(" .. e.faction .. ")"
 	end
 	if e.weapon and e.weapon ~= "" then
-		parts[#parts + 1] = COL.muted .. e.weapon
+		parts[#parts + 1] = COL.muted .. W(e.weapon)
 	end
 	if e.ammo and e.ammo ~= "" then
 		parts[#parts + 1] = COL.muted .. e.ammo
@@ -1170,17 +1199,17 @@ local function show_hit_summary()
 	end
 
 	local hit_n = frozen.lines and #frozen.lines or 0
-	local title = "DEATH REPORT"
+	local title = TS("st_dogma_dr_title", "DEATH REPORT")
 	if preview_on and not death_armed then
-		title = "DEATH REPORT (preview)"
+		title = TS("st_dogma_dr_title_preview", "DEATH REPORT (preview)")
 	end
 	local chunks = {
 		COL.title .. title,
 		BLANK,
-		COL.muted .. "Last " .. tostring(hit_n) .. " hits:",
+		COL.muted .. string.format(TS("st_dogma_dr_last_hits", "Last %s hits:"), tostring(hit_n)),
 	}
 	if hit_n == 0 then
-		chunks[#chunks + 1] = COL.muted .. "No hits in the last 30 seconds."
+		chunks[#chunks + 1] = COL.muted .. TS("st_dogma_dr_no_hits", "No hits in the last 30 seconds.")
 	else
 		for i = 1, hit_n do
 			chunks[#chunks + 1] = frozen.lines[i].text
@@ -1196,7 +1225,7 @@ local function show_hit_summary()
 	end
 	if frozen.footer then
 		chunks[#chunks + 1] = BLANK
-		chunks[#chunks + 1] = COL.muted .. "Final Condition:"
+		chunks[#chunks + 1] = COL.muted .. TS("st_dogma_dr_final", "Final Condition:")
 		chunks[#chunks + 1] = frozen.footer
 	end
 
@@ -1510,7 +1539,7 @@ local function format_condition_line(list)
 		if i > 1 then
 			parts[#parts + 1] = COL.dim .. "   "
 		end
-		parts[#parts + 1] = rgb_code(hp_rgb(pct)) .. spec.label .. " " .. pct_txt(pct)
+		parts[#parts + 1] = rgb_code(hp_rgb(pct)) .. W(spec.label) .. " " .. pct_txt(pct)
 	end
 	return table.concat(parts)
 end
@@ -1532,11 +1561,11 @@ local function dummy_dot_section()
 	if sec <= 0 then
 		return nil, nil
 	end
-	local header = COL.muted .. "Other damage over last " .. tostring(sec) .. " seconds:"
+	local header = COL.muted .. string.format(TS("st_dogma_dr_dot_header", "Other damage over last %s seconds:"), tostring(sec))
 	local lines = {
-		rgb_code(TYPE_INFO.bleed.rgb) .. "Bleed" .. COL.white .. ": 4%",
-		rgb_code(TYPE_INFO.radiation.rgb) .. "Radiation" .. COL.white .. ": 2%",
-		rgb_code(TYPE_INFO.burn.rgb) .. "Fire" .. COL.white .. ": 1%",
+		rgb_code(TYPE_INFO.bleed.rgb) .. W("Bleed") .. COL.white .. ": 4%",
+		rgb_code(TYPE_INFO.radiation.rgb) .. W("Radiation") .. COL.white .. ": 2%",
+		rgb_code(TYPE_INFO.burn.rgb) .. W("Fire") .. COL.white .. ": 1%",
 	}
 	return header, lines
 end

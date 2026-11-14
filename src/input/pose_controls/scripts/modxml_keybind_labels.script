@@ -6,6 +6,10 @@ local LABELS = {
 	kb_walk = "Prone",
 }
 
+local LABELS_RU = { -- Windows-1251 bytes (the engine reads text\rus\*.xml as cp1251)
+	kb_walk = "\xCB\xE5\xF7\xFC",
+}
+
 local function is_keybinding_strings(xml_file_name)
 	return xml_file_name == [[text\eng\ui_st_keybinding.xml]]
 		or xml_file_name == [[text/eng/ui_st_keybinding.xml]]
@@ -31,7 +35,11 @@ local xml_read_cb = function(xml_file_name, xml_obj)
 	if not is_keybinding_strings(xml_file_name) then
 		return
 	end
-	for id, text in pairs(LABELS) do
+	local labels = LABELS
+	if string.find(xml_file_name, "rus", 1, true) then
+		labels = LABELS_RU
+	end
+	for id, text in pairs(labels) do
 		set_label(xml_obj, id, text)
 	end
 end

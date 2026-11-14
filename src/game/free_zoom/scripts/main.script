@@ -1578,7 +1578,17 @@ local OPTIC_FEED = {
 local function show_wads_level()
 	local pct, _, optic = resolve_ads()
 	local label = OPTIC_FEED[optic] or tostring(optic)
-	local msg = string.format("%s HUD: %d%%", label, pct)
+	local lid = "st_dogma_free_zoom_optic_" .. tostring(optic)
+	local lt = game.translate_string(lid)
+	if lt and lt ~= "" and lt ~= lid then
+		label = lt
+	end
+	local fid = "st_dogma_free_zoom_hud_msg"
+	local fmt = game.translate_string(fid)
+	if not fmt or fmt == "" or fmt == fid then
+		fmt = "%s HUD: %d%%"
+	end
+	local msg = string.format(fmt, label, pct)
 	if actor_menu and actor_menu.set_msg then
 		actor_menu.set_msg(1, msg, 1.5)
 	elseif news_manager and news_manager.send_tip and db.actor then

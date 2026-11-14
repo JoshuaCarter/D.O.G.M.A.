@@ -84,10 +84,17 @@ local function patch_keybinding_ui(xml_obj)
 	end)
 end
 
-local function patch_keybinding_strings(xml_obj)
+-- Russian Controls labels (Windows-1251 bytes: the engine reads text\rus\*.xml as cp1251).
+local RU_LABELS = {
+	["Weapon 4 (Pistol)"] = "\xCE\xF0\xF3\xE6\xE8\xE5\x20\x34\x20\x28\xEF\xE8\xF1\xF2\xEE\xEB\xE5\xF2\x29",
+	["Prone"] = "\xCB\xE5\xF7\xFC",
+	["Walk"] = "\xC8\xE4\xF2\xE8\x20\xF8\xE0\xE3\xEE\xEC",
+}
+
+local function patch_keybinding_strings(xml_obj, rus)
 	each_control(function(e)
 		if e.id and e.label then
-			ensure_string(xml_obj, e.id, e.label)
+			ensure_string(xml_obj, e.id, (rus and RU_LABELS[e.label]) or e.label)
 		end
 	end)
 end
@@ -97,10 +104,10 @@ local xml_read_cb = function(xml_file_name, xml_obj)
 		patch_keybinding_ui(xml_obj)
 		return
 	end
-	if xml_file_name == [[text\eng\ui_st_keybinding.xml]]
-		or xml_file_name == [[text\rus\ui_st_keybinding.xml]]
-	then
-		patch_keybinding_strings(xml_obj)
+	if xml_file_name == [[text\eng\ui_st_keybinding.xml]] then
+		patch_keybinding_strings(xml_obj, false)
+	elseif xml_file_name == [[text\rus\ui_st_keybinding.xml]] then
+		patch_keybinding_strings(xml_obj, true)
 	end
 end
 

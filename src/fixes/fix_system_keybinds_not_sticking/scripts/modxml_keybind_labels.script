@@ -7,6 +7,12 @@ local LABELS = {
 	kb_weapon3 = "Weapon 3 (Primary)",
 }
 
+local LABELS_RU = { -- Windows-1251 bytes (the engine reads text\rus\*.xml as cp1251)
+	kb_weapon1 = "\xCE\xF0\xF3\xE6\xE8\xE5\x20\x31\x20\x28\xE1\xEB\xE8\xE6\xED\xE8\xE9\x20\xE1\xEE\xE9\x29",
+	kb_weapon2 = "\xCE\xF0\xF3\xE6\xE8\xE5\x20\x32\x20\x28\xE7\xE0\xEF\xE0\xF1\xED\xEE\xE5\x29",
+	kb_weapon3 = "\xCE\xF0\xF3\xE6\xE8\xE5\x20\x33\x20\x28\xEE\xF1\xED\xEE\xE2\xED\xEE\xE5\x29",
+}
+
 local function is_keybinding_strings(xml_file_name)
 	return xml_file_name == [[text\eng\ui_st_keybinding.xml]]
 		or xml_file_name == [[text/eng/ui_st_keybinding.xml]]
@@ -32,7 +38,11 @@ local xml_read_cb = function(xml_file_name, xml_obj)
 	if not is_keybinding_strings(xml_file_name) then
 		return
 	end
-	for id, text in pairs(LABELS) do
+	local labels = LABELS
+	if string.find(xml_file_name, "rus", 1, true) then
+		labels = LABELS_RU
+	end
+	for id, text in pairs(labels) do
 		set_label(xml_obj, id, text)
 	end
 end
